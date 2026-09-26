@@ -2,14 +2,29 @@ import { DigitalTeamWorkflowCoordinator, type DigitalTeamWorkflowCoordinatorOpti
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import {
   digitalTeamWorkflowSchemaGeneration,
+  digitalTeamExecutionDefinition,
   missingDigitalTeamVerificationCommands,
+  normalizeDigitalTeamWorkflowDefinition,
+  validateDigitalTeamStructuredPlan,
   validateDigitalTeamWorkflowDefinition,
   type DigitalTeamStructuredResult,
   type DigitalTeamWorkflowDefinition,
 } from '../packages/shared/src/digitalTeamWorkflow.js';
-import { createZeusDatabase, DigitalEmployeeRepository, DigitalTeamNodeAttemptRepository, DigitalTeamWorkflowRunRepository, DigitalTeamWorkflowTemplateRepository, ProjectRepository, TaskRepository } from '../packages/storage/src/index.js';
+import {
+  createZeusDatabase,
+  DigitalEmployeeRepository,
+  DigitalTeamNodeAttemptRepository,
+  DigitalTeamWorkflowRunRepository,
+  DigitalTeamWorkflowTemplateRepository,
+  ProjectRepository,
+  TaskRepository,
+  TaskWorkPlanningRepository,
+  ZeusDatabase,
+} from '../packages/storage/src/index.js';
+import { migrateDigitalTeamWorkflowSchema } from '../packages/storage/src/digitalTeamWorkflowStore.js';
 
 /** 探针使用的完整 Git 基线提交。 */
 const baseSha = 'a'.repeat(40);
@@ -140,6 +155,176 @@ try {
     );
     assert(captureCode(() => coordinator.listRuns(project.id, 'missing-task')) === 'ZEUS_DIGITAL_TEAM_TASK_NOT_FOUND', '任务运行查询必须校验归属。');
     assert(captureCode(() => coordinator.createRun(project.id, existingInput, { ...context, operationIdentity: 'duplicate-task-operation' }, prepared)) === 'ZEUS_DIGITAL_TEAM_TASK_RUNNING', '当前任务的活动运行必须阻止重复创建。');
+    /** 隔离后续调度探针，不派发既有研发样例。 */
+    runs.update(boundRun.id, { expectedRevision: boundRun.revision, controlState: 'paused' });
+    /** 普通报告只配置实际工作与可选人工确认。 */
+    const reportDefinition = normalizeDigitalTeamWorkflowDefinition({
+      schemaGeneration: digitalTeamWorkflowSchemaGeneration,
+      viewport: { x: 0, y: 0, zoom: 1 },
+      nodes: [
+        { id: 'report', type: 'employee', position: { x: 200, y: 100 }, data: { title: '调研报告', employeeId: cto.id, purpose: 'work', executionMode: 'read_only', instructions: '整理已有资料。' } },
+        { id: 'accept', type: 'human_confirmation', position: { x: 400, y: 100 }, data: { title: '确认报告', purpose: 'final_acceptance', instructions: '核对实际结论。' } },
+      ],
+      edges: [{ id: 'report_accept', source: 'report', target: 'accept' }],
+    });
+    assert(validateDigitalTeamWorkflowDefinition(reportDefinition).length === 0, '普通报告无需研发节点或命令。');
+    assert(JSON.stringify(normalizeDigitalTeamWorkflowDefinition(reportDefinition)) === JSON.stringify(reportDefinition), '起止节点补齐必须幂等。');
+    /** 运行预检不访问不存在的 Git 仓库，也不要求代码授权。 */
+    const reportTemplate = templates.create({ projectId: project.id, name: '报告协作', description: '无 Git 报告探针。', definition: reportDefinition });
+    const reportTask = tasks.create({ projectId: project.id, title: '无 Git 的报告协作', taskType: 'requirement', description: '', createdFrom: 'digital-team-probe', sourceContext: {}, allowCodeChanges: false, allowGitCommit: false });
+    const reportInput = { templateId: reportTemplate.id, templateRevision: reportTemplate.revision, taskId: reportTask.id, expectedTaskUpdatedAt: reportTask.updatedAt, title: reportTask.title, description: '', taskFacts: {} };
+    const reportPrepared = await coordinator.prepareRun(project.id, reportInput);
+    assert(reportPrepared.baseRevisions.length === 0, '普通协作不应冻结 Git 基线。');
+    coordinator.createRun(project.id, reportInput, { ...context, operationIdentity: 'report-workflow' }, reportPrepared);
+    const reportRun = runs.listByTask(reportTask.id)[0]!;
+    completeEmployeeAttempt(attempts, reportRun.id, 'report', readOnlyResult('报告已形成。'), 0);
+    /** 使用真实调度入口和 SQLite；没有 Provider 或外部动作。 */
+    const runtimeCoordinator = new DigitalTeamWorkflowCoordinator({
+      templates,
+      runs,
+      attempts,
+      projects,
+      tasks,
+      isTaskTerminal: (record) => record.managementStatus === 'done',
+      now: () => new Date(),
+      save: () => database.save(),
+      publish: () => undefined,
+      taskWork: {
+        createWorkflowWorkItem: async () => {
+          throw new Error('探针在外部派发前停止。');
+        },
+      },
+    } as unknown as DigitalTeamWorkflowCoordinatorOptions);
+    await runtimeCoordinator.processRuns();
+    const rejectedApproval = attempts.getCurrentByNode(reportRun.id, 'accept')!;
+    runtimeCoordinator.decideApproval(reportRun.id, { nodeId: 'accept', attempt: rejectedApproval.attempt, expectedRevision: runs.getById(reportRun.id)!.revision, approved: false, reason: '补充报告依据。' }, context);
+    assert(attempts.getCurrentByNode(reportRun.id, 'report')?.status === 'invalidated', '报告被退回时必须让实际报告工作返工。');
+    completeEmployeeAttempt(attempts, reportRun.id, 'report', readOnlyResult('已补充报告依据。'), 0);
+    await runtimeCoordinator.processRuns();
+    /** 新确认绑定返工成果，迟到决定不能批准旧报告。 */
+    const approval = attempts.getCurrentByNode(reportRun.id, 'accept')!;
+    assert(approval.inputSha256 !== rejectedApproval.inputSha256 && approval.attempt === 2, '返工后必须生成不同的确认输入和新尝试。');
+    assert(
+      captureCode(() => runtimeCoordinator.decideApproval(reportRun.id, { nodeId: 'accept', attempt: rejectedApproval.attempt, expectedRevision: runs.getById(reportRun.id)!.revision, approved: true, reason: '' }, context)) ===
+        'ZEUS_DIGITAL_TEAM_APPROVAL_STALE',
+      '过期确认必须被拒绝。',
+    );
+    assert(approval?.status === 'awaiting_approval', '报告完成后应到达人工确认。');
+    const approvalInput = { nodeId: 'accept', attempt: approval.attempt, expectedRevision: runs.getById(reportRun.id)!.revision, approved: true, reason: '报告符合要求。' };
+    runtimeCoordinator.decideApproval(reportRun.id, approvalInput, context, await runtimeCoordinator.prepareApproval(reportRun.id, approvalInput));
+    assert(attempts.getCurrentByNode(reportRun.id, 'accept')?.approval?.boundSha256 === approval.inputSha256, '普通确认必须绑定当前输入，不依赖代码候选。');
+    assert(runs.getById(reportRun.id)?.status !== 'completed', '人工确认不能越过结束节点提前完成运行。');
+    await runtimeCoordinator.processRuns();
+    assert(runs.getById(reportRun.id)?.status === 'completed', '普通协作应按依赖到达结束。');
+    /** 冻结成员内可新增分工，汇总必须等待实际新增的成果。 */
+    const plannedDefinition = normalizeDigitalTeamWorkflowDefinition({
+      schemaGeneration: digitalTeamWorkflowSchemaGeneration,
+      viewport: { x: 0, y: 0, zoom: 1 },
+      nodes: [
+        {
+          id: 'leader',
+          type: 'employee',
+          position: { x: 200, y: 100 },
+          data: { title: '负责人', employeeId: cto.id, purpose: 'plan', executionMode: 'read_only', instructions: '', settings: { delegation: { employeeIds: [workerOne.id], maxDepth: 1, maxWorkItems: 2 } } },
+        },
+        { id: 'collect', type: 'employee', position: { x: 600, y: 100 }, data: { title: '汇总', employeeId: cto.id, purpose: 'summary', executionMode: 'read_only', instructions: '' } },
+      ],
+      edges: [{ id: 'leader_collect', source: 'leader', target: 'collect' }],
+    });
+    const addedAssignment = { nodeId: 'research', employeeId: workerOne.id, objective: '核对资料', scope: ['项目资料'], excludedScope: ['外部写入'], acceptanceCriteria: ['列明依据'], expectedDeliverables: ['报告'] };
+    const dynamicPlan = { summary: '分配一份调研。', assignments: [addedAssignment] };
+    assert(validateDigitalTeamStructuredPlan(plannedDefinition, dynamicPlan).length === 0, '已授权成员可以承担新增分工。');
+    assert(validateDigitalTeamStructuredPlan(plannedDefinition, { ...dynamicPlan, assignments: [{ ...addedAssignment, employeeId: workerTwo.id }] }).length > 0, '不能扩大授权成员范围。');
+    assert(
+      validateDigitalTeamStructuredPlan(plannedDefinition, {
+        ...dynamicPlan,
+        assignments: [
+          { ...addedAssignment, dependencyIds: ['second'] },
+          { ...addedAssignment, nodeId: 'second', dependencyIds: ['research'] },
+        ],
+      }).length > 0,
+      '新增分工不能形成循环。',
+    );
+    const plannedRun = runs.create({ projectId: project.id, taskId: reportTask.id, definition: plannedDefinition, taskFacts: {}, baseRevisions: [] });
+    assert(
+      plannedRun.roleSnapshots.some((role) => role.employeeId === workerOne.id),
+      '新增分工成员必须在启动时冻结。',
+    );
+    const derived = digitalTeamExecutionDefinition({ ...plannedRun, plan: dynamicPlan });
+    assert(
+      derived.edges.some((edge) => edge.source === 'research' && edge.target === 'collect'),
+      '汇总必须等待新增成果。',
+    );
+    assert(!plannedRun.definitionSnapshot.nodes.some((node) => node.id === 'research'), '新增分工不能篡改冻结模板。');
+    /** 提交与批准计划只保存事实，不解除其他分支的未知结果保护。 */
+    const unknownPlan = runs.update(plannedRun.id, { expectedRevision: plannedRun.revision, status: 'outcome_unknown', controlState: 'paused' });
+    const submittedPlan = runs.submitPlan(plannedRun.id, { expectedRevision: unknownPlan.revision, plan: dynamicPlan });
+    const approvedPlan = runs.approvePlan(plannedRun.id, { expectedRevision: submittedPlan.revision, planSha256: submittedPlan.planSha256!, actorId: 'probe' });
+    assert(submittedPlan.status === 'outcome_unknown' && approvedPlan.status === 'outcome_unknown', '计划变化和批准不能恢复未知结果中的运行。');
+    /** 同一员工已有两份在途工作时，第三份独立工作仍可进入实际派发预检。 */
+    const parallelDefinition = normalizeDigitalTeamWorkflowDefinition({ ...reportDefinition, nodes: [1, 2, 3].map((index) => ({ ...reportDefinition.nodes.find((node) => node.id === 'report')!, id: `parallel_${index}` })), edges: [] });
+    const parallelRun = runs.create({ projectId: project.id, taskId: reportTask.id, definition: parallelDefinition, taskFacts: {}, baseRevisions: [] });
+    const startAttempt = attempts.create({ runId: parallelRun.id, nodeId: parallelDefinition.nodes.find((node) => node.type === 'start')!.id, inputSha256: evidenceSha });
+    const activeStart = attempts.update(startAttempt.id, { expectedRevision: startAttempt.revision, status: 'active' });
+    attempts.update(activeStart.id, { expectedRevision: activeStart.revision, status: 'succeeded' });
+    for (const nodeId of ['parallel_1', 'parallel_2']) {
+      const pending = attempts.create({ runId: parallelRun.id, nodeId, inputSha256: evidenceSha });
+      attempts.update(pending.id, { expectedRevision: pending.revision, status: 'active' });
+    }
+    await runtimeCoordinator.processRuns();
+    assert(attempts.getCurrentByNode(parallelRun.id, 'parallel_3')?.status === 'failed', '独立工作不能被历史员工并发值或隐藏的两个名额拦住。');
+    runs.update(parallelRun.id, { expectedRevision: runs.getById(parallelRun.id)!.revision, controlState: 'paused' });
+    await runtimeCoordinator.close();
+    /** 构造旧配方和未启动安排，重跑专属迁移验证持久数据导入与幂等。 */
+    const legacyPlanning = new TaskWorkPlanningRepository(database);
+    const legacyRecipe = legacyPlanning.saveRecipe({
+      id: 'legacy_report_recipe',
+      projectId: project.id,
+      name: '旧报告配方',
+      revision: 0,
+      stages: [
+        {
+          title: '分析',
+          description: '整理结论',
+          settings: {},
+          requiredSkillIds: [],
+          advanceMode: 'auto',
+          acceptanceMode: 'manual',
+          assignments: [{ title: '调研', description: '分析资料', employeeId: cto.id, role: '分析员', settings: { promptOverride: '保留自定义要求' }, required: true, outputKinds: ['document'] }],
+        },
+      ],
+    });
+    const legacyTask = tasks.create({ projectId: project.id, title: '旧草稿任务', taskType: 'requirement', description: '', createdFrom: 'digital-team-probe', sourceContext: {} });
+    const legacyPlan = legacyPlanning.save(legacyTask.id, null, legacyRecipe.stages, {});
+    await database.save();
+    /** 从本探针数据新建迁移前夹具，不删除任何现存数据库的迁移账本或保护触发器。 */
+    const fixtureNative = new DatabaseSync(':memory:');
+    fixtureNative.exec('PRAGMA foreign_keys = OFF');
+    fixtureNative.prepare('ATTACH DATABASE ? AS source').run(databasePath);
+    for (const table of database.select<{ name: string; sql: string }>("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND sql IS NOT NULL")) {
+      fixtureNative.exec(table.sql);
+      const quoted = `"${table.name.replaceAll('"', '""')}"`;
+      const historyFilter = table.name === 'schema_migrations' ? " WHERE migration_id NOT IN ('20260926_digital_team_general_workflows', '20260926_employee_arrangements_to_team_templates')" : '';
+      fixtureNative.exec(`INSERT INTO ${quoted} SELECT * FROM source.${quoted}${historyFilter}`);
+    }
+    fixtureNative.exec('PRAGMA foreign_keys = ON');
+    assert(fixtureNative.prepare('PRAGMA foreign_key_check').all().length === 0, '迁移前夹具必须保留完整引用。');
+    const fixture = new ZeusDatabase(fixtureNative, ':memory:');
+    try {
+      migrateDigitalTeamWorkflowSchema(fixture);
+      const importedTemplates = new DigitalTeamWorkflowTemplateRepository(fixture);
+      assert(importedTemplates.getById(`imported_${legacyRecipe.id}`)?.ready, '旧配方应转成可执行模板。');
+      assert(
+        importedTemplates.getById(`imported_plan_${legacyPlan.id}`)?.definition.nodes.some((node) => node.type === 'employee' && node.data.settings?.promptOverride === '保留自定义要求'),
+        '旧草稿应保留本次配置。',
+      );
+      assert(new TaskWorkPlanningRepository(fixture).get(legacyTask.id)?.state === 'draft', '导入不能启动或覆盖原安排。');
+      const importedCount = importedTemplates.listByProject(project.id).length;
+      migrateDigitalTeamWorkflowSchema(fixture);
+      assert(importedTemplates.listByProject(project.id).length === importedCount, '重复启动不能重复导入模板。');
+    } finally {
+      await fixture.close();
+    }
     /** 创建时冻结画布、角色、任务事实和基线的运行。 */
     let run = runs.create({
       projectId: project.id,
@@ -190,6 +375,14 @@ try {
     run = runs.update(run.id, { expectedRevision: run.revision, status: 'summarizing' });
     /** CTO 汇总节点的成功尝试。 */
     const summaryAttempt = completeEmployeeAttempt(attempts, run.id, 'summary', readOnlyResult('CTO 已核对真实结果。'), run.planVersion);
+    /** 多个验证分支及等待中的人工确认都不能沿用已替换候选。 */
+    const secondVerification = completeEmployeeAttempt(attempts, run.id, 'verify_second', verifyResult(project.id), run.planVersion);
+    const candidateApproval = attempts.create({ runId: run.id, nodeId: 'final_approval', inputSha256: evidenceSha, status: 'awaiting_approval' });
+    run = runs.update(run.id, { expectedRevision: run.revision, candidateRevisions: [{ repositoryId: project.id, headSha: '9'.repeat(40), workspaceRef: join(probeRoot, 'candidate') }] });
+    assert(
+      [verifyAttempt, secondVerification, summaryAttempt, candidateApproval].every((attempt) => attempts.getById(attempt.id)?.status === 'invalidated'),
+      '候选变化必须使全部复核和确认分支失效。',
+    );
     /** 只读工作节点不能把未核对提交注入候选。 */
     const readOnlyDefinition = structuredClone(definition);
     const readOnlyWorker = readOnlyDefinition.nodes.find((node) => node.id === 'worker_one');
@@ -228,7 +421,7 @@ try {
     await reopened.close();
   }
   process.stdout.write(
-    `${JSON.stringify({ ok: true, checks: ['validation', 'authority', 'verification-commands', 'snapshot', 'parallel-rework', 'read-only-result', 'late-result', 'existing-task-binding', 'existing-task-conflict', 'existing-task-authority', 'restart'] })}\n`,
+    `${JSON.stringify({ ok: true, checks: ['validation', 'authority', 'verification-commands', 'snapshot', 'parallel-rework', 'read-only-result', 'late-result', 'existing-task-binding', 'existing-task-conflict', 'existing-task-authority', 'restart', 'no-git-workflow', 'approval-input-binding', 'dependency-completion', 'authorized-planning', 'parallel-dispatch', 'legacy-migration'] })}\n`,
   );
 } finally {
   await rm(probeRoot, { recursive: true, force: true });
@@ -274,6 +467,7 @@ function workflowDefinition(employeeIds: { cto: string; workerOne: string; worke
         position: position(900, 100),
         data: { title: '真实验证', employeeId: employeeIds.verifier, purpose: 'verify', executionMode: 'candidate_read_only', instructions: '验证准确候选。', verificationCommands: ['pnpm build'] },
       },
+      { id: 'verify_second', type: 'employee', position: position(900, 280), data: { title: '独立复核', employeeId: employeeIds.verifier, purpose: 'verify', executionMode: 'candidate_read_only', instructions: '复核准确候选。' } },
       { id: 'summary', type: 'employee', position: position(1080, 100), data: { title: 'CTO 汇总', employeeId: employeeIds.cto, purpose: 'summary', executionMode: 'read_only', instructions: '复用主会话汇总。' } },
       { id: 'final_approval', type: 'human_confirmation', position: position(1260, 100), data: { title: '最终验收', purpose: 'final_acceptance', instructions: '只验收当前候选。' } },
       { id: 'end', type: 'end', position: position(1440, 100), data: { title: '结束' } },
@@ -287,6 +481,8 @@ function workflowDefinition(employeeIds: { cto: string; workerOne: string; worke
       ['worker_two_integration', 'worker_two', 'integration'],
       ['integration_verify', 'integration', 'verify'],
       ['verify_summary', 'verify', 'summary'],
+      ['integration_verify_second', 'integration', 'verify_second'],
+      ['verify_second_summary', 'verify_second', 'summary'],
       ['summary_final', 'summary', 'final_approval'],
       ['final_end', 'final_approval', 'end'],
     ].map(([id, source, target]) => ({ id: `edge_${id}`, source, target })),

@@ -1,3 +1,4 @@
+import type { EmployeeWorkSettings } from './employeeWorkPlanning.js';
 import type { CommandActorKind } from './commandEnvelope.js';
 
 /** 数字团队流程定义的稳定结构身份。 */
@@ -101,6 +102,8 @@ export interface DigitalTeamEmployeeNodeData extends Record<string, unknown> {
   instructions: string;
   /** 候选验证节点必须逐条成功执行的精确命令；其他职责不使用。 */
   verificationCommands?: string[];
+  /** 本次工作覆盖员工默认配置，实际动作仍受任务授权约束。 */
+  settings?: EmployeeWorkSettings;
 }
 
 /** 人工确认节点配置。 */
@@ -165,6 +168,10 @@ export interface DigitalTeamWorkflowDefinition {
 
 /** 结构化规划中的单节点安排。 */
 export interface DigitalTeamPlanAssignment {
+  /** 新增分工必须选择规划节点已授权的成员；既有分工不能换人。 */
+  employeeId?: string;
+  /** 只引用同一计划中的分工，不能借依赖扩大执行范围。 */
+  dependencyIds?: string[];
   /** 对应员工实现节点身份。 */
   nodeId: string;
   /** 该节点的明确目标。 */
@@ -325,11 +332,11 @@ export interface DigitalTeamWorkflowRunRecord {
   candidateRevisions: DigitalTeamCandidateRevision[];
   /** 当前候选集合摘要。 */
   candidateSetSha256: string | null;
-  /** 最终验收绑定的候选集合摘要。 */
+  /** 历史固定研发流程的最终候选摘要；新确认保存在节点尝试中。 */
   finalApprovedCandidateSetSha256: string | null;
-  /** 最终验收用户身份。 */
+  /** 历史固定研发流程的最终验收用户身份。 */
   finalApprovedBy: string | null;
-  /** 最终验收时间。 */
+  /** 历史固定研发流程的最终验收时间。 */
   finalApprovedAt: string | null;
   /** 失败或未知结果说明。 */
   error: Record<string, unknown> | null;
@@ -576,7 +583,7 @@ export class DigitalTeamWorkflowValidationError extends Error {
   }
 }
 
-/** 校验草稿结构和完整研发闭环；返回空数组表示可以创建运行。 */
+/** 校验工作依赖与已选能力；返回空数组表示可以创建运行。 */
 export function validateDigitalTeamWorkflowDefinition(value: unknown): DigitalTeamWorkflowValidationIssue[] {
   const issues: DigitalTeamWorkflowValidationIssue[] = [];
   if (!isRecord(value) || value.schemaGeneration !== digitalTeamWorkflowSchemaGeneration || !Array.isArray(value.nodes) || !Array.isArray(value.edges) || !isViewport(value.viewport)) {
@@ -610,75 +617,75 @@ export function validateDigitalTeamWorkflowDefinition(value: unknown): DigitalTe
 
   const starts = nodes.filter((node) => node.type === 'start');
   const ends = nodes.filter((node) => node.type === 'end');
-  const integrations = nodes.filter((node) => node.type === 'code_integration');
+  /** 起止节点是内部结构约束；业务职责只在配置了对应步骤时校验。 */
   const plans = employeesByPurpose(nodes, 'plan');
-  const implementations = employeesByPurpose(nodes, 'work');
-  const verifications = employeesByPurpose(nodes, 'verify');
-  const summaries = employeesByPurpose(nodes, 'summary');
-  const planApprovals = approvalsByPurpose(nodes, 'plan_approval');
-  const finalApprovals = approvalsByPurpose(nodes, 'final_acceptance');
-  requireExactlyOne(issues, starts, 'ZEUS_DIGITAL_TEAM_WORKFLOW_START_COUNT', '流程必须且只能有一个开始节点。');
-  requireExactlyOne(issues, ends, 'ZEUS_DIGITAL_TEAM_WORKFLOW_END_COUNT', '流程必须且只能有一个结束节点。');
-  requireExactlyOne(issues, plans, 'ZEUS_DIGITAL_TEAM_WORKFLOW_PLAN_COUNT', '流程必须且只能有一个 CTO 规划节点。');
-  requireExactlyOne(issues, planApprovals, 'ZEUS_DIGITAL_TEAM_WORKFLOW_PLAN_APPROVAL_COUNT', '流程必须且只能有一个规划批准节点。');
-  requireExactlyOne(issues, integrations, 'ZEUS_DIGITAL_TEAM_WORKFLOW_INTEGRATION_COUNT', '流程必须且只能有一个代码集成节点。');
-  requireExactlyOne(issues, summaries, 'ZEUS_DIGITAL_TEAM_WORKFLOW_SUMMARY_COUNT', '流程必须且只能有一个 CTO 汇总节点。');
-  requireExactlyOne(issues, finalApprovals, 'ZEUS_DIGITAL_TEAM_WORKFLOW_FINAL_APPROVAL_COUNT', '流程必须且只能有一个最终人工验收节点。');
-  if (implementations.length === 0) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_IMPLEMENTATION_MISSING', message: '流程至少需要一个员工执行节点。' });
-  if (implementations.some((node) => node.data.executionMode === 'candidate_read_only') || !implementations.some((node) => node.data.executionMode === 'isolated_write')) {
-    issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_IMPLEMENTATION_MODE_INVALID', message: '执行节点允许只读或独立写入，且至少需要一个独立写入节点。' });
-  }
-  requireExactlyOne(issues, verifications, 'ZEUS_DIGITAL_TEAM_WORKFLOW_VERIFICATION_COUNT', '流程必须且只能有一个候选验证节点。');
-  if (verifications.some((node) => node.data.executionMode !== 'candidate_read_only')) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_VERIFICATION_MODE_INVALID', message: '候选验证节点必须只读核对集成候选。' });
-  if (verifications.some((node) => !Array.isArray(node.data.verificationCommands) || node.data.verificationCommands.length === 0)) {
-    issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_VERIFICATION_COMMANDS_MISSING', message: '候选验证节点必须配置至少一条真实验证命令。' });
-  }
-  if (plans.some((node) => node.data.executionMode !== 'read_only') || summaries.some((node) => node.data.executionMode !== 'read_only')) {
-    issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_CTO_MODE_INVALID', message: 'CTO 规划与汇总节点必须保持只读。' });
-  }
-  if (plans.length === 1 && summaries.length === 1 && plans[0]!.data.employeeId !== summaries[0]!.data.employeeId) {
-    issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_CTO_IDENTITY_MISMATCH', message: 'CTO 规划与汇总必须复用同一员工身份。' });
-  }
-  if (issues.some((issue) => issue.code.endsWith('_COUNT') || issue.code.endsWith('_MISSING'))) return issues;
+  const integrations = nodes.filter((node) => node.type === 'code_integration');
+  requireExactlyOne(issues, starts, 'ZEUS_DIGITAL_TEAM_WORKFLOW_START_COUNT', '流程需要一个开始节点。');
+  requireExactlyOne(issues, ends, 'ZEUS_DIGITAL_TEAM_WORKFLOW_END_COUNT', '流程需要一个结束节点。');
+  if (!nodes.some((node) => node.type === 'employee')) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_EMPLOYEE_MISSING', message: '请添加至少一位负责工作的员工。' });
+  if (plans.length > 1) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_PLAN_COUNT', message: '同一份协作安排只需要一位规划负责人。' });
+  if (integrations.length > 1) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_INTEGRATION_COUNT', message: '同一份代码候选只能由一个集成步骤生成。' });
+  if (starts.length !== 1 || ends.length !== 1) return issues;
 
+  /** 全部连接表示必须完成的依赖，不表示互斥分支。 */
   const outgoing = adjacency(nodes, edges, 'outgoing');
   const incoming = adjacency(nodes, edges, 'incoming');
   const start = starts[0]!;
   const end = ends[0]!;
-  if ((incoming.get(start.id)?.size ?? 0) > 0 || (outgoing.get(end.id)?.size ?? 0) > 0) {
-    issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_TERMINAL_EDGE_INVALID', message: '开始节点不能有上游，结束节点不能有下游。' });
-  }
-  if (hasCycle(nodes, outgoing)) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_CYCLE', message: '流程必须是无环有向图。' });
+  if ((incoming.get(start.id)?.size ?? 0) > 0 || (outgoing.get(end.id)?.size ?? 0) > 0) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_TERMINAL_EDGE_INVALID', message: '开始不能有上游，结束不能有下游。' });
+  if (hasCycle(nodes, outgoing)) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_CYCLE', message: '工作依赖不能形成循环。' });
   const fromStart = reachable(start.id, outgoing);
   const toEnd = reachable(end.id, incoming);
   for (const node of nodes) {
-    if (!fromStart.has(node.id) || !toEnd.has(node.id)) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_NODE_ORPHANED', message: '每个节点都必须位于开始到结束的有效路径上。', nodeId: node.id });
+    if (!fromStart.has(node.id) || !toEnd.has(node.id)) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_NODE_ORPHANED', message: '请把这一步连接到完整的工作流程。', nodeId: node.id });
+    if (node.type !== 'employee') continue;
+    if (node.data.settings?.delegation && node.data.purpose !== 'plan') issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_DELEGATION_INVALID', message: '新增分工由规划负责人统一安排，请把成员范围移到规划步骤。', nodeId: node.id });
+    if (['plan', 'summary'].includes(node.data.purpose) && node.data.executionMode !== 'read_only')
+      issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_CTO_MODE_INVALID', message: '规划和汇总保持只读；需要修改文件时请使用执行步骤。', nodeId: node.id });
+    if (node.data.executionMode === 'candidate_read_only') {
+      if (integrations.length !== 1) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_CANDIDATE_MISSING', message: '核对代码候选前，请配置代码集成步骤。', nodeId: node.id });
+      else requireAncestor(issues, integrations[0]!.id, node.id, outgoing, 'ZEUS_DIGITAL_TEAM_WORKFLOW_VERIFICATION_BYPASS', '核对代码候选必须等待集成完成。', node.id);
+    }
   }
-  if (issues.some((issue) => issue.code === 'ZEUS_DIGITAL_TEAM_WORKFLOW_CYCLE' || issue.code === 'ZEUS_DIGITAL_TEAM_WORKFLOW_NODE_ORPHANED')) return issues;
-
-  const plan = plans[0]!;
-  const planApproval = planApprovals[0]!;
-  const integration = integrations[0]!;
-  const summary = summaries[0]!;
-  const finalApproval = finalApprovals[0]!;
-  requireAncestor(issues, plan.id, planApproval.id, outgoing, 'ZEUS_DIGITAL_TEAM_WORKFLOW_PLAN_APPROVAL_BYPASS', '规划批准必须位于 CTO 规划之后。');
-  for (const node of nodes.filter((candidate) => candidate.type === 'employee' && candidate.data.purpose !== 'plan')) {
-    requireAncestor(issues, planApproval.id, node.id, outgoing, 'ZEUS_DIGITAL_TEAM_WORKFLOW_PLAN_APPROVAL_BYPASS', '规划批准前不能派发后续员工节点。', node.id);
+  for (const approval of approvalsByPurpose(nodes, 'plan_approval')) {
+    if (plans.length !== 1) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_PLAN_MISSING', message: '批准计划前，请配置规划负责人。', nodeId: approval.id });
+    else requireAncestor(issues, plans[0]!.id, approval.id, outgoing, 'ZEUS_DIGITAL_TEAM_WORKFLOW_PLAN_APPROVAL_BYPASS', '批准计划必须等待规划完成。', approval.id);
   }
-  for (const node of implementations) requireAncestor(issues, node.id, integration.id, outgoing, 'ZEUS_DIGITAL_TEAM_WORKFLOW_INTEGRATION_BYPASS', '所有写入节点都必须汇合到代码集成节点。', node.id);
-  for (const node of verifications) {
-    requireAncestor(issues, integration.id, node.id, outgoing, 'ZEUS_DIGITAL_TEAM_WORKFLOW_VERIFICATION_BYPASS', '候选验证必须位于代码集成之后。', node.id);
-    requireAncestor(issues, node.id, summary.id, outgoing, 'ZEUS_DIGITAL_TEAM_WORKFLOW_SUMMARY_BYPASS', 'CTO 汇总必须等待全部候选验证成功。', node.id);
-  }
-  requireAncestor(issues, summary.id, finalApproval.id, outgoing, 'ZEUS_DIGITAL_TEAM_WORKFLOW_FINAL_APPROVAL_BYPASS', '最终人工验收必须位于 CTO 汇总之后。');
-  requireAncestor(issues, finalApproval.id, end.id, outgoing, 'ZEUS_DIGITAL_TEAM_WORKFLOW_END_BYPASS', '结束节点必须等待最终人工验收。');
-  for (const gate of [planApproval, integration, summary, finalApproval]) {
-    if (!dominatesEnd(gate.id, start.id, end.id, outgoing)) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_GATE_BYPASS', message: '存在绕过批准、集成、汇总或最终验收的结束路径。', nodeId: gate.id });
-  }
-  if (!verifications.some((node) => dominatesEnd(node.id, integration.id, end.id, outgoing))) {
-    issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_VERIFICATION_BYPASS', message: '至少一个候选验证节点必须成为代码集成到结束的必经节点。' });
+  for (const integration of integrations) {
+    /** 集成只接受真正写入代码的上游，普通报告不需要这个步骤。 */
+    const writers = nodes.filter((node): node is DigitalTeamEmployeeNode => node.type === 'employee' && node.data.executionMode === 'isolated_write');
+    if (!writers.length) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_INTEGRATION_INPUT_MISSING', message: '代码集成需要至少一份代码工作；普通协作可移除此步骤。', nodeId: integration.id });
+    for (const writer of writers) requireAncestor(issues, writer.id, integration.id, outgoing, 'ZEUS_DIGITAL_TEAM_WORKFLOW_INTEGRATION_BYPASS', '代码集成必须等待全部代码工作完成。', writer.id);
   }
   return issues;
+}
+
+/** 为普通工作草稿补齐内部起止节点；显式连接、错误节点和循环交给校验器，不静默丢弃。 */
+export function normalizeDigitalTeamWorkflowDefinition(definition: DigitalTeamWorkflowDefinition): DigitalTeamWorkflowDefinition {
+  if (!isRecord(definition) || !Array.isArray(definition.nodes) || !Array.isArray(definition.edges) || definition.nodes.some((node) => !isNode(node)) || definition.edges.some((edge) => !isEdge(edge))) return definition;
+  /** 保留调用方草稿，自动生成的身份避开已有节点及连线。 */
+  const result = structuredClone(definition);
+  const occupied = new Set([...result.nodes.map((node) => node.id), ...result.edges.map((edge) => edge.id)]);
+  /** 内部身份只在冲突时增加确定后缀，重复规范化不会制造新节点。 */
+  const identity = (prefix: string): string => {
+    let candidate = prefix;
+    while (occupied.has(candidate)) candidate += '_';
+    occupied.add(candidate);
+    return candidate;
+  };
+  if (!result.nodes.some((node) => node.type === 'start')) {
+    const roots = result.nodes.filter((node) => !result.edges.some((edge) => edge.target === node.id));
+    const id = identity('workflow_start');
+    result.nodes.unshift({ id, type: 'start', position: { x: 0, y: 200 }, data: { title: '开始' } });
+    for (const root of roots) result.edges.push({ id: identity(`from_${id}_${root.id}`), source: id, target: root.id });
+  }
+  if (!result.nodes.some((node) => node.type === 'end')) {
+    const leaves = result.nodes.filter((node) => !result.edges.some((edge) => edge.source === node.id));
+    const id = identity('workflow_end');
+    result.nodes.push({ id, type: 'end', position: { x: 960, y: 200 }, data: { title: '结束' } });
+    for (const leaf of leaves) result.edges.push({ id: identity(`to_${leaf.id}_${id}`), source: leaf.id, target: id });
+  }
+  return result;
 }
 
 /** 在创建运行前强制要求完整合法的流程定义。 */
@@ -687,15 +694,74 @@ export function assertDigitalTeamWorkflowReady(value: unknown): asserts value is
   if (issues.length > 0) throw new DigitalTeamWorkflowValidationError(issues);
 }
 
-/** 校验 CTO 规划逐项覆盖全部实现节点且没有冒用其他节点。 */
+/** 校验负责人覆盖后续工作，并只向授权成员增加有边界的分工。 */
 export function validateDigitalTeamStructuredPlan(definition: DigitalTeamWorkflowDefinition, value: unknown): string[] {
-  if (!isRecord(value) || typeof value.summary !== 'string' || !value.summary.trim() || !Array.isArray(value.assignments)) return ['规划必须包含摘要和逐节点安排。'];
-  const expected = definition.nodes.filter((node): node is DigitalTeamEmployeeNode => node.type === 'employee' && node.data.purpose === 'work').map((node) => node.id);
-  const actual = value.assignments.filter(isPlanAssignment).map((assignment) => assignment.nodeId);
-  if (actual.length !== value.assignments.length) return ['规划安排必须包含节点、目标和完成标准。'];
-  if (new Set(actual).size !== actual.length) return ['同一实现节点不能重复规划。'];
-  if (expected.length !== actual.length || expected.some((nodeId) => !actual.includes(nodeId))) return ['规划必须且只能覆盖画布中的全部实现节点。'];
-  return [];
+  if (!isRecord(value) || typeof value.summary !== 'string' || !value.summary.trim() || !Array.isArray(value.assignments)) return ['规划必须包含摘要和逐项安排。'];
+  /** 先期调研可以在规划前完成，负责人只安排自己的后续工作。 */
+  const planner = definition.nodes.find((node): node is DigitalTeamEmployeeNode => node.type === 'employee' && node.data.purpose === 'plan');
+  if (!planner) return ['当前流程没有规划负责人。'];
+  /** 已明确安排的后续工作必须全部覆盖；额外分工只能使用事先授权的成员。 */
+  const afterPlan = reachable(planner.id, adjacency(definition.nodes, definition.edges, 'outgoing'));
+  const expected = definition.nodes.filter((node): node is DigitalTeamEmployeeNode => node.type === 'employee' && node.data.purpose === 'work' && afterPlan.has(node.id));
+  const assignments = value.assignments.filter(isPlanAssignment);
+  if (assignments.length !== value.assignments.length) return ['每份安排需要目标、范围、完成标准和交付物。'];
+  const actual = assignments.map((assignment) => assignment.nodeId);
+  if (new Set(actual).size !== actual.length) return ['同一分工不能重复规划。'];
+  if (expected.some((node) => !actual.includes(node.id))) return ['规划需要覆盖已经安排的全部工作。'];
+  const policy = planner?.data.settings?.delegation;
+  const additions = assignments.filter((assignment) => !expected.some((node) => node.id === assignment.nodeId));
+  if (
+    additions.length &&
+    (!policy || additions.length > policy.maxWorkItems || additions.some((assignment) => !assignment.employeeId || !policy.employeeIds.includes(assignment.employeeId) || definition.nodes.some((node) => node.id === assignment.nodeId)))
+  )
+    return ['新增分工必须选择已授权的团队成员，并遵守本次分工数量限制。'];
+  if (assignments.some((assignment) => assignment.employeeId && expected.some((node) => node.id === assignment.nodeId && node.data.employeeId !== assignment.employeeId))) return ['已经安排的工作不能在规划时更换员工。'];
+  if (assignments.some((assignment) => assignment.dependencyIds?.some((id) => !actual.includes(id) || id === assignment.nodeId))) return ['分工依赖只能引用本计划中的其他分工。'];
+  /** 生成图后复用同一个结构校验器，循环、孤立节点和代码现场要求均不能绕过。 */
+  return validateDigitalTeamWorkflowDefinition(digitalTeamExecutionDefinition({ definitionSnapshot: definition, plan: value as unknown as DigitalTeamStructuredPlan })).map((issue) => issue.message);
+}
+
+/** 从冻结模板与已登记计划派生执行图；模板本身不被改写，返工历史保留原有身份。 */
+export function digitalTeamExecutionDefinition(run: Pick<DigitalTeamWorkflowRunRecord, 'definitionSnapshot' | 'plan'>): DigitalTeamWorkflowDefinition {
+  if (!run.plan) return run.definitionSnapshot;
+  /** 规划节点及其确认点决定新增工作的入口。 */
+  const definition = structuredClone(run.definitionSnapshot);
+  const planner = definition.nodes.find((node): node is DigitalTeamEmployeeNode => node.type === 'employee' && node.data.purpose === 'plan');
+  if (!planner) return definition;
+  const outgoing = adjacency(definition.nodes, definition.edges, 'outgoing');
+  const afterPlan = reachable(planner.id, outgoing);
+  const approvals = definition.nodes.filter((node) => node.type === 'human_confirmation' && node.data.purpose === 'plan_approval' && afterPlan.has(node.id));
+  const entrances = approvals.length ? approvals : [planner];
+  const additions = run.plan.assignments.filter((assignment) => !definition.nodes.some((node) => node.id === assignment.nodeId));
+  /** 新分工默认分析资料；只有模板已明确授权的同成员代码职责才继承写入现场。 */
+  for (const [index, assignment] of additions.entries()) {
+    const role = definition.nodes.find((node): node is DigitalTeamEmployeeNode => node.type === 'employee' && node.data.purpose === 'work' && node.data.employeeId === assignment.employeeId);
+    definition.nodes.push({
+      id: assignment.nodeId,
+      type: 'employee',
+      position: { x: 760, y: 480 + index * 160 },
+      data: {
+        title: assignment.objective.slice(0, 120),
+        employeeId: assignment.employeeId ?? '',
+        purpose: 'work',
+        executionMode: role?.data.executionMode ?? 'read_only',
+        instructions: assignment.objective,
+        ...(role?.data.settings ? { settings: structuredClone(role.data.settings) } : {}),
+      },
+    });
+  }
+  /** 稳定连线身份来自节点身份，重复读取同一计划不会制造新连接。 */
+  const connect = (source: string, target: string): void => {
+    if (!definition.edges.some((edge) => edge.source === source && edge.target === target)) definition.edges.push({ id: `planned_${definition.edges.length}_${source.slice(0, 60)}_${target.slice(0, 60)}`, source, target });
+  };
+  for (const assignment of run.plan.assignments) for (const predecessor of assignment.dependencyIds ?? []) connect(predecessor, assignment.nodeId);
+  for (const assignment of additions) {
+    for (const entrance of entrances) connect(entrance.id, assignment.nodeId);
+    /** 已有复核、集成、汇总和结束都等待新增成果，规划确认本身不反向等待。 */
+    for (const node of run.definitionSnapshot.nodes)
+      if (afterPlan.has(node.id) && node.id !== planner.id && !approvals.some((approval) => approval.id === node.id) && !(node.type === 'employee' && node.data.purpose === 'work')) connect(assignment.nodeId, node.id);
+  }
+  return definition;
 }
 
 /** 判断普通 JSON 对象。 */
@@ -711,6 +777,33 @@ function isIdentity(value: unknown): value is string {
 /** 判断画布视口结构。 */
 function isViewport(value: unknown): value is DigitalTeamViewport {
   return isRecord(value) && Number.isFinite(value.x) && Number.isFinite(value.y) && Number.isFinite(value.zoom) && (value.zoom as number) > 0;
+}
+
+/** 节点覆盖只使用现有员工配置字段，数据库和前端共用同一结构边界。 */
+function isEmployeeSettings(value: unknown): value is EmployeeWorkSettings {
+  if (!isRecord(value) || Object.keys(value).some((key) => !['autonomyObjective', 'delegation', 'modelOverride', 'reasoningEffort', 'serviceTier', 'workMode', 'permissionMode', 'skillIds', 'promptOverride'].includes(key))) return false;
+  for (const key of ['autonomyObjective', 'modelOverride', 'reasoningEffort', 'serviceTier', 'promptOverride'])
+    if (value[key] !== undefined && value[key] !== null && (typeof value[key] !== 'string' || !(value[key] as string).trim())) return false;
+  if (value.workMode !== undefined && !['default', 'plan'].includes(String(value.workMode))) return false;
+  if (value.permissionMode !== undefined && !['read-only', 'auto', 'full-access'].includes(String(value.permissionMode))) return false;
+  if (value.skillIds !== undefined && (!Array.isArray(value.skillIds) || !value.skillIds.every(isIdentity))) return false;
+  if (value.delegation !== undefined) {
+    const policy = value.delegation;
+    if (
+      !isRecord(policy) ||
+      !Array.isArray(policy.employeeIds) ||
+      policy.employeeIds.length > 24 ||
+      !policy.employeeIds.every(isIdentity) ||
+      !Number.isInteger(policy.maxDepth) ||
+      Number(policy.maxDepth) < 1 ||
+      Number(policy.maxDepth) > 4 ||
+      !Number.isInteger(policy.maxWorkItems) ||
+      Number(policy.maxWorkItems) < 1 ||
+      Number(policy.maxWorkItems) > 48
+    )
+      return false;
+  }
+  return true;
 }
 
 /** 判断画布节点结构。 */
@@ -733,6 +826,7 @@ function isNode(value: unknown): value is DigitalTeamNode {
       digitalTeamEmployeePurposes.includes(value.data.purpose as DigitalTeamEmployeePurpose) &&
       digitalTeamExecutionModes.includes(value.data.executionMode as DigitalTeamExecutionMode) &&
       typeof value.data.instructions === 'string' &&
+      (value.data.settings === undefined || isEmployeeSettings(value.data.settings)) &&
       (value.data.verificationCommands === undefined ||
         (Array.isArray(value.data.verificationCommands) &&
           value.data.verificationCommands.length <= 16 &&
@@ -761,6 +855,8 @@ function isPlanAssignment(value: unknown): value is DigitalTeamPlanAssignment {
   return (
     isRecord(value) &&
     isIdentity(value.nodeId) &&
+    (value.employeeId === undefined || isIdentity(value.employeeId)) &&
+    (value.dependencyIds === undefined || (Array.isArray(value.dependencyIds) && value.dependencyIds.every(isIdentity))) &&
     typeof value.objective === 'string' &&
     Boolean(value.objective.trim()) &&
     isNonEmptyTextArray(value.scope) &&
@@ -836,10 +932,4 @@ function hasCycle(nodes: DigitalTeamNode[], outgoing: Map<string, Set<string>>):
 /** 要求上游节点可以到达下游节点。 */
 function requireAncestor(issues: DigitalTeamWorkflowValidationIssue[], ancestorId: string, descendantId: string, outgoing: Map<string, Set<string>>, code: string, message: string, nodeId?: string): void {
   if (!reachable(ancestorId, outgoing).has(descendantId)) issues.push({ code, message, ...(nodeId ? { nodeId } : {}) });
-}
-
-/** 删除候选关口后仍能到达结束即代表存在绕过路径。 */
-function dominatesEnd(gateId: string, sourceId: string, endId: string, outgoing: Map<string, Set<string>>): boolean {
-  if (gateId === sourceId || gateId === endId) return true;
-  return !reachable(sourceId, outgoing, gateId).has(endId);
 }

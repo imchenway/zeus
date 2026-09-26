@@ -12,6 +12,8 @@ import type { TaskDigitalEmployeeManagement, TaskDigitalEmployeeSkillClient } fr
 
 /** 安排组件只提交真实阶段、分工和控制命令，执行记录由父级统一读取。 */
 export interface TaskWorkPlanPanelProps {
+  /** 新安排使用统一数字团队入口，原阶段记录不创建新一代运行。 */
+  onArrangeTeam?(): void;
   /** 当前任务与项目构成所有请求的边界。 */
   taskId: string;
   /** 当前项目身份。 */
@@ -160,6 +162,10 @@ export function TaskWorkPlanPanel(props: TaskWorkPlanPanelProps) {
 
   /** 打开安排只复制现有配置，不产生运行。 */
   function edit(): void {
+    if (props.onArrangeTeam) {
+      props.onArrangeTeam();
+      return;
+    }
     props.management.dismissOperationError('plan:save');
     setDraft(plan ? planDraft(plan) : preset('development'));
     setSettings(plan?.settings ?? {});
@@ -413,13 +419,13 @@ export function TaskWorkPlanPanel(props: TaskWorkPlanPanelProps) {
         </div>
         <div className="digital-employee-actions">
           {!props.readOnly && (!plan || ['draft', 'completed', 'cancelled'].includes(plan.state)) ? (
-            <Button size="compact" variant={plan ? 'secondary' : 'primary'} onClick={edit}>
-              {plan ? (plan.state === 'draft' ? '编辑安排' : '安排新一轮工作') : '安排工作'}
+            <Button size="compact" variant={plan ? 'secondary' : 'primary'} onClick={edit} disabled={!props.onArrangeTeam}>
+              {plan ? '使用数字团队安排工作' : '安排团队协作'}
             </Button>
           ) : null}
-          {!props.readOnly && plan && ['draft', 'paused'].includes(plan.state) ? (
+          {!props.readOnly && plan && plan.state === 'paused' ? (
             <Button size="compact" disabled={busy} busy={props.management.busy === 'plan:running'} onClick={() => void control('running')}>
-              {plan.state === 'draft' ? '开始执行' : '继续执行'}
+              继续执行
             </Button>
           ) : null}
           {!props.readOnly && plan?.state === 'running' ? (

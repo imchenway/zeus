@@ -1,8 +1,10 @@
 import {
   digitalTeamApprovalPurposes,
+  digitalTeamExecutionDefinition,
   digitalTeamEmployeePurposes,
   digitalTeamWorkflowSchemaGeneration,
   validateDigitalTeamWorkflowDefinition,
+  normalizeDigitalTeamWorkflowDefinition,
   type DigitalTeamApprovalPurpose,
   type DigitalTeamEmployeeNode,
   type DigitalTeamEmployeePurpose,
@@ -30,7 +32,8 @@ import { FormDialog } from '../../ui/FormDialog.js';
 import { MotionPresence } from '../../ui/MotionPresence.js';
 import type { TaskRecord } from '../tasks/taskContracts.js';
 import { DigitalEmployeeAvatar } from '../digital-employees/DigitalEmployeeAvatar.js';
-import type { DigitalEmployeeRecord } from '../digital-employees/digitalEmployeeContracts.js';
+import { SettingsEditor } from '../digital-employees/TaskWorkPlanPanel.js';
+import type { DigitalEmployeeCapabilitiesSnapshot, DigitalEmployeeRecord } from '../digital-employees/digitalEmployeeContracts.js';
 import type { ProjectRecord } from '../projects/projectContracts.js';
 import { type DigitalTeamApiClient, type DigitalTeamRunProjection, type DigitalTeamTemplateSaveInput } from './digitalTeamApiClient.js';
 import { digitalTeamDragMime, isConnectionAllowed, WorkflowCanvas, type DigitalTeamCanvasRuntimeState, type DigitalTeamDragPayload } from './WorkflowCanvas.js';
@@ -62,12 +65,12 @@ const compactInspectorQuery = '(max-width: 1180px)';
 
 /** 运行状态的人话标签。 */
 const runStatusLabels: Record<string, string> = {
-  planning: 'CTO 规划中',
+  planning: '负责人规划中',
   awaiting_plan_approval: '等待规划批准',
   executing: '员工执行中',
   integrating: '正在集成候选',
-  verifying: '正在验证候选',
-  summarizing: 'CTO 汇总中',
+  verifying: '正在核对成果',
+  summarizing: '成果汇总中',
   awaiting_final_approval: '等待最终验收',
   completed: '已完成',
   failed: '失败',
@@ -114,6 +117,8 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   const [templates, setTemplates] = useState<DigitalTeamWorkflowTemplateRecord[]>([]);
   /** 当前项目的真实员工角色。 */
   const [employees, setEmployees] = useState<DigitalEmployeeRecord[]>([]);
+  /** 员工和团队共用实时模型与技能目录。 */
+  const [capabilities, setCapabilities] = useState<DigitalEmployeeCapabilitiesSnapshot | null>(null);
   /** 当前项目的运行历史。 */
   const [runs, setRuns] = useState<DigitalTeamWorkflowRunRecord[]>([]);
   /** 当前显式编辑的模板草稿。 */
@@ -149,6 +154,9 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   /** 项目切换代次防止迟到读取覆盖当前页面。 */
   const loadRevisionRef = useRef(0);
 
+  /** 代码动作才需要用户确认现场和本地修改范围。 */
+  const usesCode = draft.definition.nodes.some((node) => node.type === 'code_integration' || (node.type === 'employee' && node.data.executionMode !== 'read_only'));
+
   /** 员工名称索引供画布卡片与检查器复用。 */
   const employeeNames = useMemo(() => new Map(employees.map((employee) => [employee.id, employee.name])), [employees]);
   /** 共享图校验与当前项目角色核对共同决定模板能否启动。 */
@@ -165,18 +173,8 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
         issues.push({ code: 'ZEUS_DIGITAL_TEAM_EMPLOYEE_UNAVAILABLE', message: '员工节点必须绑定当前项目中已启用的真实数字员工。', nodeId: node.id });
       } else if (employee.entrypoint?.kind !== 'agent' || employee.entrypointMigrationState !== 'ready') {
         issues.push({ code: 'ZEUS_DIGITAL_TEAM_EMPLOYEE_NOT_READY', message: '员工节点绑定的角色尚未完成 Agent 配置，不能启动运行。', nodeId: node.id });
-      } else if (
-        node.data.executionMode === 'isolated_write' &&
-        (employee.permissionMode === 'read-only' ||
-          employee.entrypoint.authorityPolicy.permissionMode === 'read-only' ||
-          !employee.allowCodeChanges ||
-          !employee.entrypoint.authorityPolicy.allowCodeChanges ||
-          !employee.deliveryGrants.allowCommit ||
-          !employee.entrypoint.authorityPolicy.allowCommit)
-      ) {
-        issues.push({ code: 'ZEUS_DIGITAL_TEAM_EMPLOYEE_AUTHORITY_INCOMPATIBLE', message: '请在项目设置的数字员工中开启“允许修改代码”和“提交”，并将权限设为可执行命令。', nodeId: node.id });
-      } else if (node.data.purpose === 'verify' && (employee.permissionMode === 'read-only' || employee.entrypoint.authorityPolicy.permissionMode === 'read-only' || !employee.allowTests || !employee.entrypoint.authorityPolicy.allowTests)) {
-        issues.push({ code: 'ZEUS_DIGITAL_TEAM_EMPLOYEE_AUTHORITY_INCOMPATIBLE', message: '请在项目设置的数字员工中开启“允许执行验证”，并将权限从“只读”改为“请求批准”或“完全访问”。', nodeId: node.id });
+      } else if (node.data.executionMode === 'isolated_write' && (node.data.settings?.permissionMode ?? employee.entrypoint.authorityPolicy.permissionMode) === 'read-only') {
+        issues.push({ code: 'ZEUS_DIGITAL_TEAM_EMPLOYEE_AUTHORITY_INCOMPATIBLE', message: '请在这一步的本次配置中允许执行代码工作。', nodeId: node.id });
       }
     }
     return issues;
@@ -190,7 +188,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   /** 运行失败直接显示原因，避免成功创建提示掩盖后续派发失败。 */
   const runError = view === 'runs' && typeof selectedRunRecord?.error?.message === 'string' ? selectedRunRecord.error.message : null;
   /** 运行图严格使用创建时冻结的定义。 */
-  const runDefinition = selectedRunRecord?.definitionSnapshot ?? null;
+  const runDefinition = selectedRunRecord ? digitalTeamExecutionDefinition(selectedRunRecord) : null;
   /** 当前运行尝试按节点建立展示索引。 */
   const runStateByNodeId = useMemo(() => buildRunStateIndex(selectedRun?.currentAttempts ?? []), [selectedRun?.currentAttempts]);
   /** 历史运行使用创建时冻结的角色名称，不受当前员工改名或停用影响。 */
@@ -215,9 +213,15 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
       setLoading(true);
       setError(null);
       try {
-        const [nextTemplates, nextEmployees, nextRuns] = await Promise.all([api.loadDigitalTeamTemplates(projectId), api.loadProjectDigitalEmployees(projectId), api.loadDigitalTeamRuns(projectId, props.task?.id)]);
+        const [nextTemplates, nextEmployees, nextRuns, nextCapabilities] = await Promise.all([
+          api.loadDigitalTeamTemplates(projectId),
+          api.loadProjectDigitalEmployees(projectId),
+          api.loadDigitalTeamRuns(projectId, props.task?.id),
+          api.loadDigitalEmployeeCapabilities(),
+        ]);
         if (revision !== loadRevisionRef.current) return;
         setTemplates(nextTemplates);
+        setCapabilities(nextCapabilities);
         setEmployees(nextEmployees.filter((employee) => employee.enabled));
         /** 任务入口只展示当前任务运行；团队入口仍展示项目记录。 */
         const visibleRuns = props.task ? nextRuns.filter((run) => run.taskId === props.task!.id) : nextRuns;
@@ -315,7 +319,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
 
   /** 所有画布与表单修改共用脏状态。 */
   const changeDefinition = useCallback((definition: DigitalTeamWorkflowDefinition | ((current: DigitalTeamWorkflowDefinition) => DigitalTeamWorkflowDefinition)): void => {
-    setDraft((current) => ({ ...current, definition: typeof definition === 'function' ? definition(current.definition) : definition }));
+    setDraft((current) => ({ ...current, definition: normalizeDigitalTeamWorkflowDefinition(typeof definition === 'function' ? definition(current.definition) : definition) }));
     setDirty(true);
     setStatus('');
   }, []);
@@ -326,7 +330,19 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
       const resolvedPosition = position ?? nextNodePosition(draft.definition.nodes.length);
       const employee = payload.kind === 'employee' ? employees.find((candidate) => candidate.id === payload.employeeId) : undefined;
       const node = buildNode(payload, resolvedPosition, employee, draft.definition);
-      changeDefinition({ ...draft.definition, nodes: [...draft.definition.nodes, node] });
+      /** 默认接到当前工作的末尾，用户仍可显式调整并行依赖。 */
+      const end = draft.definition.nodes.find((candidate) => candidate.type === 'end');
+      const incoming = end ? draft.definition.edges.filter((edge) => edge.target === end.id) : [];
+      changeDefinition(
+        normalizeDigitalTeamWorkflowDefinition({
+          ...draft.definition,
+          nodes: [...draft.definition.nodes, node],
+          edges:
+            end && !['start', 'end'].includes(node.type)
+              ? [...draft.definition.edges.filter((edge) => edge.target !== end.id), ...incoming.map((edge) => ({ ...edge, target: node.id })), { id: `edge_${crypto.randomUUID()}`, source: node.id, target: end.id }]
+              : draft.definition.edges,
+        }),
+      );
       setSelectedNodeId(node.id);
     },
     [changeDefinition, draft.definition, employees],
@@ -346,7 +362,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
     setError(null);
   };
 
-  /** 新建直接给出完整研发闭环，角色不足时保留待配置槽位。 */
+  /** 默认按现有成员建立普通协作，研发流程由独立预设提供。 */
   const startNewTemplate = (): void => {
     if (dirty) {
       setError(zh ? '请先处理当前未保存修改。' : 'Resolve the current unsaved changes first.');
@@ -446,7 +462,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   /** 运行必须基于已保存且共享校验通过的精确模板修订。 */
   const createRun = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
-    if (!api || !projectId || !selectedTemplate || dirty || validationIssues.length > 0 || !runDraft.title.trim() || !runDraft.confirmCommittedBaseline) return;
+    if (!api || !projectId || !selectedTemplate || dirty || validationIssues.length > 0 || !runDraft.title.trim() || (usesCode && !runDraft.confirmCommittedBaseline)) return;
     setBusy(true);
     setError(null);
     try {
@@ -456,7 +472,14 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
         templateRevision: selectedTemplate.revision,
         title: runDraft.title.trim(),
         description: runDraft.description.trim(),
-        taskFacts: { title: runDraft.title.trim(), description: runDraft.description.trim(), source: 'digital_team', confirmCommittedBaseline: true },
+        taskFacts: {
+          title: runDraft.title.trim(),
+          description: runDraft.description.trim(),
+          source: 'digital_team',
+          confirmCommittedBaseline: runDraft.confirmCommittedBaseline,
+          allowCodeChanges: usesCode && runDraft.confirmCommittedBaseline,
+          allowGitCommit: usesCode && runDraft.confirmCommittedBaseline,
+        },
       });
       setRunDialogOpen(false);
       setRunDraft({ title: '', description: '', confirmCommittedBaseline: false });
@@ -540,6 +563,9 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
         node={selectedNode}
         definition={draft.definition}
         employees={employees}
+        client={props.client}
+        capabilities={capabilities}
+        projectId={projectId}
         issues={validationIssues.filter((issue) => issue.nodeId === selectedNode?.id)}
         onChange={(node) => replaceNode(draft.definition, node, changeDefinition)}
         onConnect={(source, target) => changeDefinition({ ...draft.definition, edges: [...draft.definition.edges, { id: `edge_${crypto.randomUUID()}`, source, target }] })}
@@ -653,6 +679,18 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                 <Button size="compact" onClick={startNewTemplate}>
                   <Plus aria-hidden="true" />
                   {zh ? '新建' : 'New'}
+                </Button>
+                <Button
+                  size="compact"
+                  disabled={dirty || busy}
+                  onClick={() => {
+                    setDraft(developmentTemplateDraft(employees));
+                    setDirty(true);
+                    setSelectedNodeId(null);
+                    setCanvasGeneration((current) => current + 1);
+                  }}
+                >
+                  研发预设
                 </Button>
                 <Button size="compact" onClick={() => void copyTemplate()} disabled={!selectedTemplate || dirty || busy}>
                   <Copy aria-hidden="true" />
@@ -832,17 +870,23 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
             description={
               zh
                 ? props.task
-                  ? '使用所选流程执行当前任务，保留任务身份和说明。创建后冻结流程、角色与已提交代码基线。'
-                  : '创建后冻结当前模板修订、全部角色配置、任务事实和项目基线。'
+                  ? '使用所选流程执行当前任务，保留任务身份和说明。开始前固定本次分工、员工配置和交付要求。'
+                  : '开始前固定当前安排、员工配置和交付要求。'
                 : 'This freezes the template revision, role settings, task facts, and project baseline.'
             }
             zh={zh}
             busy={busy}
-            submitLabel={zh ? '创建并开始规划' : 'Create and start planning'}
-            submitDisabled={!runDraft.title.trim() || !runDraft.confirmCommittedBaseline}
+            submitLabel={zh ? '开始协作' : 'Start work'}
+            submitDisabled={!runDraft.title.trim() || (usesCode && !runDraft.confirmCommittedBaseline)}
             onClose={() => setRunDialogOpen(false)}
             onSubmit={(event) => void createRun(event)}
           >
+            <p>
+              本次参与员工：
+              {[...new Set(draft.definition.nodes.flatMap((node) => (node.type === 'employee' ? [node.data.employeeId, ...(node.data.purpose === 'plan' ? (node.data.settings?.delegation?.employeeIds ?? []) : [])] : [])))]
+                .map((id) => employeeNames.get(id) ?? '待配置员工')
+                .join('、')}
+            </p>
             <label>
               <span>{zh ? '任务标题' : 'Task title'}</span>
               <input
@@ -870,17 +914,23 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                 }}
               />
             </label>
-            <label className="digital-team-baseline-confirmation">
-              <input
-                type="checkbox"
-                checked={runDraft.confirmCommittedBaseline}
-                onChange={(event) => {
-                  const confirmCommittedBaseline = event.currentTarget.checked;
-                  setRunDraft((current) => ({ ...current, confirmCommittedBaseline }));
-                }}
-              />
-              <span>{zh ? '我确认本次基线只包含当前已提交版本；工作目录中的未提交修改不会进入数字团队运行。' : 'I confirm this run uses the current committed revision only; uncommitted working-tree changes are excluded.'}</span>
-            </label>
+            {usesCode ? (
+              <label className="digital-team-baseline-confirmation">
+                <input
+                  type="checkbox"
+                  checked={runDraft.confirmCommittedBaseline}
+                  onChange={(event) => {
+                    const confirmCommittedBaseline = event.currentTarget.checked;
+                    setRunDraft((current) => ({ ...current, confirmCommittedBaseline }));
+                  }}
+                />
+                <span>
+                  {zh
+                    ? '我确认本次基线只包含当前已提交版本；工作目录中的未提交修改不会进入数字团队运行；允许本流程在隔离工作区修改代码并本地提交，不包含推送或发布。'
+                    : 'I confirm this run uses the current committed revision only; uncommitted working-tree changes are excluded.'}
+                </span>
+              </label>
+            ) : null}
           </FormDialog>
         ) : null}
       </MotionPresence>
@@ -915,10 +965,8 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
 function RolePalette(props: { employees: DigitalEmployeeRecord[]; onAdd(payload: DigitalTeamDragPayload): void }) {
   /** 五类节点中的四类流程节点不依赖员工身份。 */
   const processNodes: Array<{ type: Exclude<DigitalTeamNodeType, 'employee'>; label: string; description: string }> = [
-    { type: 'start', label: '开始', description: '冻结任务事实与项目基线' },
     { type: 'human_confirmation', label: '人工确认', description: '规划批准或最终验收' },
     { type: 'code_integration', label: '代码集成', description: '生成任务内候选版本' },
-    { type: 'end', label: '结束', description: '最终验收后的闭环终点' },
   ];
   return (
     <>
@@ -974,6 +1022,10 @@ function RolePalette(props: { employees: DigitalEmployeeRecord[]; onAdd(payload:
 
 /** 节点检查器按判别联合展示且只更新当前节点允许的字段。 */
 function NodeInspector(props: {
+  /** 本次配置复用员工目录与编辑器。 */
+  client: DashboardClient | null;
+  capabilities: DigitalEmployeeCapabilitiesSnapshot | null;
+  projectId: string;
   node: DigitalTeamNode | null;
   definition: DigitalTeamWorkflowDefinition;
   employees: DigitalEmployeeRecord[];
@@ -1002,7 +1054,7 @@ function NodeInspector(props: {
         <span>名称</span>
         <input value={node.data.title} maxLength={120} onChange={(event) => props.onChange({ ...node, data: { ...node.data, title: event.currentTarget.value } } as DigitalTeamNode)} />
       </label>
-      {node.type === 'employee' ? <EmployeeNodeFields node={node} employees={props.employees} onChange={props.onChange} /> : null}
+      {node.type === 'employee' ? <EmployeeNodeFields node={node} employees={props.employees} onChange={props.onChange} client={props.client} capabilities={props.capabilities} projectId={props.projectId} /> : null}
       {node.type === 'human_confirmation' ? <ApprovalNodeFields node={node} onChange={props.onChange} /> : null}
       {node.type === 'code_integration' ? (
         <>
@@ -1021,7 +1073,7 @@ function NodeInspector(props: {
           ))}
         </ul>
       ) : null}
-      <Button variant="danger" onClick={() => props.onDelete(node.id)}>
+      <Button variant="danger" disabled={node.type === 'start' || node.type === 'end'} onClick={() => props.onDelete(node.id)}>
         <Trash aria-hidden="true" />
         删除节点
       </Button>
@@ -1076,7 +1128,14 @@ function KeyboardConnectionEditor(props: { definition: DigitalTeamWorkflowDefini
 }
 
 /** 员工节点绑定真实项目员工，职责变化同时收紧代码现场。 */
-function EmployeeNodeFields(props: { node: DigitalTeamEmployeeNode; employees: DigitalEmployeeRecord[]; onChange(node: DigitalTeamNode): void }) {
+function EmployeeNodeFields(props: {
+  client: DashboardClient | null;
+  capabilities: DigitalEmployeeCapabilitiesSnapshot | null;
+  projectId: string;
+  node: DigitalTeamEmployeeNode;
+  employees: DigitalEmployeeRecord[];
+  onChange(node: DigitalTeamNode): void;
+}) {
   return (
     <>
       <label>
@@ -1099,22 +1158,22 @@ function EmployeeNodeFields(props: { node: DigitalTeamEmployeeNode; employees: D
           onChange={(purpose) =>
             props.onChange({
               ...props.node,
-              data: { ...props.node.data, purpose, executionMode: executionModeForPurpose(purpose), verificationCommands: purpose === 'verify' ? (props.node.data.verificationCommands ?? []) : undefined },
+              data: { ...props.node.data, purpose, executionMode: executionModeForPurpose(), verificationCommands: purpose === 'verify' ? (props.node.data.verificationCommands ?? []) : undefined },
             })
           }
           searchable={false}
           size="regular"
         />
       </label>
-      {props.node.data.purpose === 'work' ? (
+      {['work', 'verify'].includes(props.node.data.purpose) ? (
         <label>
           <span>代码现场</span>
           <ZeusSelect
             ariaLabel="选择工作节点代码现场"
             value={props.node.data.executionMode}
             options={[
-              { value: 'isolated_write', label: '独立写入分支 / worktree' },
-              { value: 'read_only', label: '只读分析' },
+              { value: 'read_only', label: '分析资料与已有成果' },
+              ...(props.node.data.purpose === 'work' ? [{ value: 'isolated_write' as const, label: '隔离修改代码' }] : [{ value: 'candidate_read_only' as const, label: '核对集成后的代码' }]),
             ]}
             onChange={(executionMode) => props.onChange({ ...props.node, data: { ...props.node.data, executionMode } })}
             searchable={false}
@@ -1127,13 +1186,25 @@ function EmployeeNodeFields(props: { node: DigitalTeamEmployeeNode; employees: D
           <strong>{executionModeLabel(props.node.data.executionMode)}</strong>
         </p>
       )}
+      <SettingsEditor
+        value={props.node.data.settings ?? {}}
+        employees={props.employees}
+        allowDelegation={props.node.data.purpose === 'plan'}
+        models={props.capabilities?.models ?? []}
+        goalsAvailable={props.capabilities?.goals?.enabled === true}
+        skillClient={props.client}
+        projectId={props.projectId}
+        label="本次工作配置"
+        employee={props.employees.find((employee) => employee.id === props.node.data.employeeId)}
+        onChange={(settings) => props.onChange({ ...props.node, data: { ...props.node.data, settings } })}
+      />
       <label>
         <span>目标与完成标准</span>
         <textarea rows={8} maxLength={12000} value={props.node.data.instructions} onChange={(event) => props.onChange({ ...props.node, data: { ...props.node.data, instructions: event.currentTarget.value } })} />
       </label>
       {props.node.data.purpose === 'verify' ? (
         <label>
-          <span>真实验证命令（每行一条）</span>
+          <span>需要执行的验证命令（可选，每行一条）</span>
           <textarea
             rows={5}
             maxLength={16000}
@@ -1189,7 +1260,7 @@ function ValidationPanel(props: { issues: Array<{ code: string; message: string;
           ))}
         </ul>
       ) : (
-        <span>保存当前修订后即可冻结并开始 CTO 规划。</span>
+        <span>保存后即可按当前分工开始协作。</span>
       )}
     </section>
   );
@@ -1222,18 +1293,8 @@ function RunInspector(props: {
     );
   /** 人工节点只有等待批准的当前尝试才能决定。 */
   const approvalAvailable = props.node.type === 'human_confirmation' && props.attempt?.status === 'awaiting_approval';
-  /** 最终验收展示当前候选实际绑定的验证结果。 */
-  const verificationAttempt = props.attempts.find((attempt) => {
-    const node = props.run!.definitionSnapshot.nodes.find((candidate) => candidate.id === attempt.nodeId);
-    return node?.type === 'employee' && node.data.purpose === 'verify';
-  });
-  /** 最终验收展示 CTO 当前汇总结论。 */
-  const summaryAttempt = props.attempts.find((attempt) => {
-    const node = props.run!.definitionSnapshot.nodes.find((candidate) => candidate.id === attempt.nodeId);
-    return node?.type === 'employee' && node.data.purpose === 'summary';
-  });
   /** 返工影响范围只按冻结图计算一次。 */
-  const reworkNodeIds = descendantNodeIds(props.run, props.node.id);
+  const reworkNodeIds = relatedNodeIds(props.run, props.node.id, 'downstream');
   /** 在途工作阻止返工；未知结果通过明确确认弃用，保留历史后创建新尝试。 */
   const reworkAvailable =
     !terminalRunStatuses.has(props.run.status) &&
@@ -1278,7 +1339,7 @@ function RunInspector(props: {
         </p>
       ) : null}
       {props.node.type === 'human_confirmation' && props.node.data.purpose === 'plan_approval' ? <PlanApprovalEvidence run={props.run} /> : null}
-      {props.node.type === 'human_confirmation' && props.node.data.purpose === 'final_acceptance' ? <FinalApprovalEvidence run={props.run} verification={verificationAttempt ?? null} summary={summaryAttempt ?? null} /> : null}
+      {props.node.type === 'human_confirmation' && props.node.data.purpose === 'final_acceptance' ? <FinalApprovalEvidence run={props.run} nodeId={props.node.id} attempts={props.attempts} /> : null}
       <AttemptHistory attempts={props.history.filter((attempt) => attempt.nodeId === props.node!.id)} />
       {approvalAvailable ? (
         <div className="digital-team-inspector-actions">
@@ -1320,12 +1381,13 @@ function AttemptHistory(props: { attempts: DigitalTeamNodeAttemptRecord[] }) {
   );
 }
 
-/** 返回运行图中目标节点及其全部后继，供返工按钮做在途保护。 */
-function descendantNodeIds(run: DigitalTeamWorkflowRunRecord, nodeId: string): Set<string> {
-  /** 正向邻接表只读取冻结运行图。 */
-  const outgoing = new Map(run.definitionSnapshot.nodes.map((node) => [node.id, [] as string[]]));
-  for (const edge of run.definitionSnapshot.edges) outgoing.get(edge.source)?.push(edge.target);
-  /** 待访问节点从返工目标自身开始。 */
+/** 按实际依赖查找上游成果或下游返工范围，包含目标自身。 */
+function relatedNodeIds(run: DigitalTeamWorkflowRunRecord, nodeId: string, direction: 'upstream' | 'downstream'): Set<string> {
+  /** 仅从冻结定义和当前计划派生依赖关系。 */
+  const definition = digitalTeamExecutionDefinition(run);
+  const outgoing = new Map(definition.nodes.map((node) => [node.id, [] as string[]]));
+  for (const edge of definition.edges) outgoing.get(direction === 'upstream' ? edge.target : edge.source)?.push(direction === 'upstream' ? edge.source : edge.target);
+  /** 待访问节点从当前目标自身开始。 */
   const pending = [nodeId];
   /** 结果同时用于去重。 */
   const result = new Set<string>();
@@ -1338,12 +1400,12 @@ function descendantNodeIds(run: DigitalTeamWorkflowRunRecord, nodeId: string): S
   return result;
 }
 
-/** 规划批准前展示真实结构化分工和本次任务内 Git 授权范围。 */
+/** 规划批准前展示真实分工与本次确认的范围。 */
 function PlanApprovalEvidence(props: { run: DigitalTeamWorkflowRunRecord }) {
   return (
-    <section className="digital-team-approval-evidence" aria-label="待批准研发计划">
-      <h3>待批准研发计划</h3>
-      <p>{props.run.plan?.summary ?? 'CTO 尚未提交可批准的结构化计划。'}</p>
+    <section className="digital-team-approval-evidence" aria-label="待确认工作计划">
+      <h3>待确认工作计划</h3>
+      <p>{props.run.plan?.summary ?? '负责人尚未提交可批准的结构化计划。'}</p>
       <ol>
         {(props.run.plan?.assignments ?? []).map((assignment) => (
           <li key={assignment.nodeId}>
@@ -1356,30 +1418,56 @@ function PlanApprovalEvidence(props: { run: DigitalTeamWorkflowRunRecord }) {
           </li>
         ))}
       </ol>
-      <p className="digital-team-approval-boundary">批准后允许任务内独立 worktree、分支、本地提交和候选集成；不允许推送、目标分支合入或发布。</p>
+      <p className="digital-team-approval-boundary">确认后按工作依赖执行当前分工，行动权限以本次任务授权为准。</p>
     </section>
   );
 }
 
-/** 最终验收前展示当前候选、真实验证与 CTO 汇总，不开放盲批。 */
-function FinalApprovalEvidence(props: { run: DigitalTeamWorkflowRunRecord; verification: DigitalTeamNodeAttemptRecord | null; summary: DigitalTeamNodeAttemptRecord | null }) {
+/** 人工确认展示本步骤实际收到的成果，代码分支再展示当前候选。 */
+function FinalApprovalEvidence(props: { run: DigitalTeamWorkflowRunRecord; nodeId: string; attempts: DigitalTeamNodeAttemptRecord[] }) {
+  /** 只展示当前确认的上游，不混入无依赖的其他分支。 */
+  const sourceIds = relatedNodeIds(props.run, props.nodeId, 'upstream');
+  sourceIds.delete(props.nodeId);
+  /** 冻结图提供可读名称与代码集成范围。 */
+  const definition = digitalTeamExecutionDefinition(props.run);
+  /** 失效、失败和旧尝试不能冒充本次待确认成果。 */
+  const sources = props.attempts.filter((attempt) => sourceIds.has(attempt.nodeId) && attempt.status === 'succeeded' && (attempt.result || attempt.artifactRef || attempt.approval));
+  /** 普通报告确认无需代码候选，独立代码分支也不会混入。 */
+  const hasCandidate = definition.nodes.some((node) => node.type === 'code_integration' && sourceIds.has(node.id));
   return (
-    <section className="digital-team-approval-evidence" aria-label="最终验收证据">
-      <h3>当前候选</h3>
-      <ul>
-        {props.run.candidateRevisions.map((candidate) => (
-          <li key={candidate.repositoryId}>
-            <strong>{candidate.repositoryId}</strong>
-            <span>{candidate.headSha}</span>
-          </li>
-        ))}
-      </ul>
-      <h3>真实验证</h3>
-      <p>{props.verification?.result ? `${props.verification.result.verification} · ${props.verification.result.summary}` : '尚无当前候选的验证结果。'}</p>
-      <p>{props.verification?.result ? `证据 ${props.verification.result.evidence.length} 项；剩余问题：${props.verification.result.remainingIssues.join('；') || '无'}` : null}</p>
-      <h3>CTO 汇总</h3>
-      <p>{props.summary?.result?.summary ?? '尚无 CTO 当前汇总。'}</p>
-      <p className="digital-team-approval-boundary">最终验收只完成本次运行，不会推送、合入主分支或发布。</p>
+    <section className="digital-team-approval-evidence" aria-label="待确认成果">
+      <h3>待确认成果</h3>
+      {sources.length ? (
+        <ul>
+          {sources.map((attempt) => (
+            <li key={attempt.id}>
+              <strong>{definition.nodes.find((node) => node.id === attempt.nodeId)?.data.title ?? attempt.nodeId}</strong>
+              <span>{attempt.result?.summary ?? attempt.approval?.reason ?? '已保存产物。'}</span>
+              {attempt.result ? (
+                <small>
+                  证据 {attempt.result.evidence.length} 项；剩余问题：{attempt.result.remainingIssues.join('；') || '无'}
+                </small>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p>尚无已完成的上游成果。</p>
+      )}
+      {hasCandidate ? (
+        <>
+          <h3>当前代码候选</h3>
+          <ul>
+            {props.run.candidateRevisions.map((candidate) => (
+              <li key={candidate.repositoryId}>
+                <strong>{candidate.repositoryId}</strong>
+                <span>{candidate.headSha}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+      <p className="digital-team-approval-boundary">确认只针对当前步骤收到的成果，后续工作按依赖继续。</p>
     </section>
   );
 }
@@ -1396,18 +1484,56 @@ function validInitialProjectId(projects: ProjectRecord[], initialProjectId?: str
 
 /** 新模板以空画布和稳定视口开始，允许保存不完整草稿。 */
 function emptyTemplateDraft(): TemplateDraft {
-  return { id: null, revision: null, name: '新研发流程', description: '', definition: { schemaGeneration: digitalTeamWorkflowSchemaGeneration, nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 0.8 } } };
+  return { id: null, revision: null, name: '新协作流程', description: '', definition: { schemaGeneration: digitalTeamWorkflowSchemaGeneration, nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 0.8 } } };
+}
+
+/** 普通协作从一位员工与明确交付开始；起止结构由系统补齐。 */
+function standardTemplateDraft(employees: DigitalEmployeeRecord[]): TemplateDraft {
+  /** 尚无员工时保留可配置槽位，不创建虚构身份。 */
+  const employeeId = employees[0]?.id ?? unassignedEmployeeId;
+  /** 多人协作允许负责人在已选成员中拆分任务；单人工作直接执行。 */
+  const members = employees.slice(1, 25).map((employee) => employee.id);
+  const nodes: DigitalTeamNode[] = members.length
+    ? [
+        {
+          id: 'plan',
+          type: 'employee',
+          position: { x: 250, y: 200 },
+          data: {
+            title: '安排协作',
+            employeeId,
+            purpose: 'plan',
+            executionMode: 'read_only',
+            instructions: '根据任务目标，在本次已授权成员中安排分工和依赖。每份分工需要清楚的范围、交付物和完成标准。',
+            settings: { delegation: { employeeIds: members, maxDepth: 1, maxWorkItems: 24 } },
+          },
+        },
+        { id: 'summary', type: 'employee', position: { x: 820, y: 200 }, data: { title: '汇总成果', employeeId, purpose: 'summary', executionMode: 'read_only', instructions: '核对各项真实成果，汇总任务结果、依据和未解决问题。' } },
+      ]
+    : [{ id: 'work', type: 'employee', position: { x: 300, y: 200 }, data: { title: '完成任务', employeeId, purpose: 'work', executionMode: 'read_only', instructions: '根据任务目标完成工作，提交可核对的成果并说明未解决问题。' } }];
+  return {
+    id: null,
+    revision: null,
+    name: '团队协作',
+    description: '',
+    definition: normalizeDigitalTeamWorkflowDefinition({
+      schemaGeneration: digitalTeamWorkflowSchemaGeneration,
+      viewport: { x: 24, y: 80, zoom: 0.8 },
+      nodes,
+      edges: members.length ? [{ id: 'plan_to_summary', source: 'plan', target: 'summary' }] : [],
+    }),
+  };
 }
 
 /** 用现有角色装配不可绕过的标准研发流程，两个开发节点默认并行。 */
-function standardTemplateDraft(employees: DigitalEmployeeRecord[]): TemplateDraft {
+function developmentTemplateDraft(employees: DigitalEmployeeRecord[]): TemplateDraft {
   /** 角色关键词只用于新草稿默认选择，所有节点仍可在检查器中调整。 */
   const matchesRole = (employee: DigitalEmployeeRecord, pattern: RegExp): boolean => pattern.test(`${employee.name} ${employee.role}`);
-  /** CTO 同时承担规划与汇总，确保复用主会话。 */
+  /** 负责人 同时承担规划与汇总，确保复用主会话。 */
   const ctoId = employees.find((employee) => matchesRole(employee, /cto|架构|技术负责人/iu))?.id ?? employees[0]?.id ?? unassignedEmployeeId;
   /** 验证优先绑定测试角色，没有专职角色时仍使用真实员工并允许手动修改。 */
   const verifierId = employees.find((employee) => matchesRole(employee, /qa|test|测试|验证|质量/iu))?.id ?? employees.at(-1)?.id ?? unassignedEmployeeId;
-  /** 开发节点优先使用两个非 CTO 员工，人员不足时复用已有真实身份而不制造员工。 */
+  /** 开发节点优先使用两个非 负责人 员工，人员不足时复用已有真实身份而不制造员工。 */
   const workerIds = employees
     .filter((employee) => employee.id !== ctoId && employee.id !== verifierId && employee.allowCodeChanges && employee.deliveryGrants.allowCommit && employee.permissionMode !== 'read-only')
     .map((employee) => employee.id);
@@ -1419,7 +1545,7 @@ function standardTemplateDraft(employees: DigitalEmployeeRecord[]): TemplateDraf
     viewport: { x: 24, y: 80, zoom: 0.56 },
     nodes: [
       { id: 'start', type: 'start', position: { x: 40, y: 220 }, data: { title: '开始' } },
-      { id: 'cto_plan', type: 'employee', position: { x: 280, y: 220 }, data: { title: 'CTO 规划', employeeId: ctoId, purpose: 'plan', executionMode: 'read_only', instructions: '按节点身份提交目标、范围、排除范围、验收标准和交付物。' } },
+      { id: 'cto_plan', type: 'employee', position: { x: 280, y: 220 }, data: { title: '负责人规划', employeeId: ctoId, purpose: 'plan', executionMode: 'read_only', instructions: '按节点身份提交目标、范围、排除范围、验收标准和交付物。' } },
       { id: 'plan_approval', type: 'human_confirmation', position: { x: 520, y: 220 }, data: { title: '批准研发计划', purpose: 'plan_approval', instructions: '核对规划覆盖全部开发节点且职责边界明确。' } },
       {
         id: 'work_primary',
@@ -1444,16 +1570,16 @@ function standardTemplateDraft(employees: DigitalEmployeeRecord[]): TemplateDraf
           purpose: 'verify',
           executionMode: 'candidate_read_only',
           instructions: '只读验证当前精确候选版本，逐条执行配置命令并提交证据和剩余问题。',
-          verificationCommands: ['pnpm lint', 'pnpm typecheck', 'pnpm build'],
+          verificationCommands: [],
         },
       },
       {
         id: 'cto_summary',
         type: 'employee',
         position: { x: 1480, y: 220 },
-        data: { title: 'CTO 汇总', employeeId: ctoId, purpose: 'summary', executionMode: 'read_only', instructions: '复用规划主会话，基于当前候选、验证和交付证据形成汇总。' },
+        data: { title: '成果汇总', employeeId: ctoId, purpose: 'summary', executionMode: 'read_only', instructions: '基于已批准计划、当前候选、验证和交付证据形成汇总。' },
       },
-      { id: 'final_acceptance', type: 'human_confirmation', position: { x: 1720, y: 220 }, data: { title: '最终人工验收', purpose: 'final_acceptance', instructions: '核对当前候选、真实验证和 CTO 汇总后决定是否验收。' } },
+      { id: 'final_acceptance', type: 'human_confirmation', position: { x: 1720, y: 220 }, data: { title: '最终人工验收', purpose: 'final_acceptance', instructions: '核对当前候选、真实验证和 成果汇总后决定是否验收。' } },
       { id: 'end', type: 'end', position: { x: 1960, y: 220 }, data: { title: '结束' } },
     ],
     edges: [
@@ -1469,7 +1595,7 @@ function standardTemplateDraft(employees: DigitalEmployeeRecord[]): TemplateDraf
       { id: 'acceptance_to_end', source: 'final_acceptance', target: 'end' },
     ],
   };
-  return { id: null, revision: null, name: '标准研发协作流程', description: 'CTO 规划、人工批准、双员工并行开发、候选集成、真实验证、CTO 汇总与最终验收。', definition };
+  return { id: null, revision: null, name: '标准研发协作流程', description: '负责人规划、人工批准、双员工并行开发、候选集成、真实验证、成果汇总与最终验收。', definition };
 }
 
 /** 已保存模板复制为可编辑草稿，不混入运行状态。 */
@@ -1483,10 +1609,7 @@ function nextNodePosition(index: number): { x: number; y: number } {
 }
 
 /** 按员工角色与现有节点给出可继续修改的默认职责。 */
-function defaultEmployeePurpose(employee: DigitalEmployeeRecord | undefined, definition: DigitalTeamWorkflowDefinition): DigitalTeamEmployeePurpose {
-  const role = `${employee?.role ?? ''} ${employee?.name ?? ''}`.toLocaleLowerCase();
-  if (role.includes('cto') || role.includes('架构')) return definition.nodes.some((node) => node.type === 'employee' && node.data.purpose === 'plan') ? 'summary' : 'plan';
-  if (role.includes('测试') || role.includes('验证') || role.includes('qa') || role.includes('test')) return 'verify';
+function defaultEmployeePurpose(): DigitalTeamEmployeePurpose {
   return 'work';
 }
 
@@ -1494,19 +1617,22 @@ function defaultEmployeePurpose(employee: DigitalEmployeeRecord | undefined, def
 function buildNode(payload: DigitalTeamDragPayload, position: { x: number; y: number }, employee: DigitalEmployeeRecord | undefined, definition: DigitalTeamWorkflowDefinition): DigitalTeamNode {
   const id = `node_${crypto.randomUUID()}`;
   if (payload.kind === 'employee') {
-    const purpose = defaultEmployeePurpose(employee, definition);
+    const purpose = defaultEmployeePurpose();
     return {
       id,
       type: 'employee',
       position,
-      data: { title: employee?.name ?? '员工节点', employeeId: payload.employeeId, purpose, executionMode: executionModeForPurpose(purpose), instructions: '', verificationCommands: purpose === 'verify' ? [] : undefined },
+      data: { title: employee?.name ?? '员工节点', employeeId: payload.employeeId, purpose, executionMode: executionModeForPurpose(), instructions: '', verificationCommands: purpose === 'verify' ? [] : undefined },
     };
   }
   if (payload.nodeType === 'start') return { id, type: 'start', position, data: { title: '开始' } };
   if (payload.nodeType === 'end') return { id, type: 'end', position, data: { title: '结束' } };
   if (payload.nodeType === 'code_integration') return { id, type: 'code_integration', position, data: { title: '代码集成', mode: 'merge', instructions: '整合全部当前有效写入交付，生成任务内候选版本。' } };
-  const purpose: DigitalTeamApprovalPurpose = definition.nodes.some((node) => node.type === 'human_confirmation' && node.data.purpose === 'plan_approval') ? 'final_acceptance' : 'plan_approval';
-  return { id, type: 'human_confirmation', position, data: { title: purpose === 'plan_approval' ? '批准研发计划' : '最终人工验收', purpose, instructions: '' } };
+  const purpose: DigitalTeamApprovalPurpose =
+    definition.nodes.some((node) => node.type === 'employee' && node.data.purpose === 'plan') && !definition.nodes.some((node) => node.type === 'human_confirmation' && node.data.purpose === 'plan_approval')
+      ? 'plan_approval'
+      : 'final_acceptance';
+  return { id, type: 'human_confirmation', position, data: { title: purpose === 'plan_approval' ? '确认工作计划' : '最终人工验收', purpose, instructions: '' } };
 }
 
 /** 替换单个节点而不改变边和视口。 */
@@ -1527,18 +1653,16 @@ function writeDragPayload(event: ReactDragEvent<HTMLElement>, payload: DigitalTe
 }
 
 /** 员工职责决定唯一允许的代码现场。 */
-function executionModeForPurpose(purpose: DigitalTeamEmployeePurpose): DigitalTeamEmployeeNode['data']['executionMode'] {
-  if (purpose === 'work') return 'isolated_write';
-  if (purpose === 'verify') return 'candidate_read_only';
+function executionModeForPurpose(): DigitalTeamEmployeeNode['data']['executionMode'] {
   return 'read_only';
 }
 
 /** 员工职责的人话标签。 */
 function employeePurposeLabel(purpose: DigitalTeamEmployeePurpose): string {
-  if (purpose === 'plan') return 'CTO 规划';
-  if (purpose === 'work') return '员工开发';
-  if (purpose === 'verify') return '候选验证';
-  return 'CTO 汇总';
+  if (purpose === 'plan') return '负责人规划';
+  if (purpose === 'work') return '员工执行';
+  if (purpose === 'verify') return '核对成果';
+  return '成果汇总';
 }
 
 /** 人工确认职责的人话标签。 */
@@ -1550,7 +1674,7 @@ function approvalPurposeLabel(purpose: DigitalTeamApprovalPurpose): string {
 function executionModeLabel(mode: DigitalTeamEmployeeNode['data']['executionMode']): string {
   if (mode === 'isolated_write') return '独立写入分支 / worktree';
   if (mode === 'candidate_read_only') return '候选版本只读验证';
-  return '只读规划与汇总';
+  return '分析资料与已有成果';
 }
 
 /** 五类节点的人话标签。 */
@@ -1618,11 +1742,11 @@ function decisionDescription(kind: RunDecision['kind'], zh: boolean, node: Digit
       : 'Confirm to discard current results, including unknown outcomes, for this node and all descendants. History and unaffected parallel branches are retained before a new attempt starts.';
   if (kind === 'approve' && node?.type === 'human_confirmation' && node.data.purpose === 'plan_approval') {
     return zh
-      ? '批准会固定当前计划，并授权本任务创建独立 worktree、分支、本地提交和内部候选集成；不包含推送、主分支合入或发布。'
+      ? '批准当前计划，并继续本次已授权的工作；这次确认不会扩大任务权限。'
       : 'Approval freezes this plan and authorizes task-local worktrees, branches, commits, and candidate integration. It does not authorize push, target-branch merge, or release.';
   }
   if (kind === 'approve' && node?.type === 'human_confirmation' && node.data.purpose === 'final_acceptance') {
-    return zh ? '验收只完成当前数字团队运行，不会推送、合入主分支或发布。' : 'Acceptance completes this workflow run only; it does not push, merge the target branch, or release.';
+    return zh ? '验收绑定当前上游成果，并允许依赖它的工作继续；不会执行推送或发布。' : 'Acceptance completes this workflow run only; it does not push, merge the target branch, or release.';
   }
   return zh ? '决定会绑定当前节点尝试和运行修订，重复或迟到提交不会推进其他尝试。' : 'The decision is bound to the current node attempt and run revision.';
 }

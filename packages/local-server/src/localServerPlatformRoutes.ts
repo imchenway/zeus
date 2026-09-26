@@ -3527,7 +3527,9 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     now,
     readOnlyValidation: Boolean(readOnlyValidation),
   });
-  taskWorkManagement.bindDigitalTeamTools(digitalTeamWorkflowCoordinator.workTools);
+  taskWorkManagement.bindDigitalTeamTools(digitalTeamWorkflowCoordinator.workTools, async () => {
+    await digitalTeamWorkflowCoordinator?.processRuns();
+  });
   registerDigitalTeamWorkflowRoutes({ server, application: workManagementCommands, coordinator: digitalTeamWorkflowCoordinator, save: () => db.save() });
 
   if (!readOnlyValidation) {

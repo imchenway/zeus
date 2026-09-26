@@ -74,10 +74,10 @@ const canvasNodeTypes: NodeTypes = Object.fromEntries(digitalTeamNodeTypes.map((
 
 /** 节点职责的人类可读名称。 */
 const employeePurposeLabels = {
-  plan: 'CTO 规划',
-  work: '员工开发',
-  verify: '候选验证',
-  summary: 'CTO 汇总',
+  plan: '负责人规划',
+  work: '员工执行',
+  verify: '核对成果',
+  summary: '成果汇总',
 } as const;
 
 /** 人工确认职责的人类可读名称。 */
@@ -112,6 +112,8 @@ function WorkflowCanvasSurface(props: WorkflowCanvasProps) {
     id: node.id,
     type: node.type,
     position: node.position,
+    /** 起止节点由系统维护，键盘删除也不能破坏内部边界。 */
+    deletable: node.type !== 'start' && node.type !== 'end',
     selected: props.selectedNodeId === node.id,
     data: {
       workflowNode: node,
@@ -243,8 +245,8 @@ function WorkflowNodeCard(props: NodeProps<CanvasNode>) {
         : node.type === 'code_integration'
           ? '合并候选'
           : node.type === 'start'
-            ? '任务事实与基线'
-            : '闭环完成';
+            ? '任务输入'
+            : '流程完成';
   /** 当前状态同时提供文字与视觉标记，不依赖颜色表达。 */
   const runtimeLabel = props.data.runtimeState ? `${props.data.runtimeState.status}${props.data.runtimeState.attempt ? ` · 第 ${props.data.runtimeState.attempt} 次` : ''}` : null;
   return (

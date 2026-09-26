@@ -1676,6 +1676,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         </aside>
         <div className="task-detail-main">
           <TaskDigitalEmployeePanel
+            onArrangeTeam={props.onUseDigitalTeam ? () => props.onUseDigitalTeam!({ kind: 'manage' }) : undefined}
             skillClient={props.digitalEmployeeSkillClient ?? null}
             key={props.task.id}
             taskId={props.task.id}

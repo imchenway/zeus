@@ -245,17 +245,17 @@ export interface TaskWorkManagementController {
     workspace: TaskWorkWorkspaceChoice;
     purpose: 'plan' | 'work' | 'verify' | 'summary';
     executionMode: 'read_only' | 'isolated_write' | 'candidate_read_only';
+    /** 当前节点显式覆盖员工默认配置。 */
+    settings?: EmployeeWorkSettings;
   }): Promise<{ item: TaskWorkItemRecord; run: TaskWorkRunRecord }>;
   /** 数字团队显式派发已准备运行，并返回耐久会话与提交身份。 */
   dispatchWorkflowRun(runId: string): Promise<{ run: TaskWorkRunRecord; submissionId: string | null; turnId: string | null }>;
-  /** CTO 汇总和员工返工继续原会话，并返回新的准确提交与轮次。 */
-  continueWorkflowConversation(input: { taskId: string; conversationId: string; content: string; operationIdentity: string }): Promise<{ submissionId: string; turnId: string | null }>;
   /** 数字团队暂停或返工时停止准确工作项现场。 */
   stopWorkflowWorkItem(workItemId: string, operationIdentity: string): Promise<void>;
   /** 结构化结果验真后同步旧工作项投影，不从最终文字生成交付。 */
   settleWorkflowWorkItem(workRunId: string, outcome: 'succeeded' | 'failed', message?: string): void;
   /** 运行期绑定数字团队结构化工具，避免初始化循环依赖。 */
-  bindDigitalTeamTools(tools: TaskWorkToolPort): void;
+  bindDigitalTeamTools(tools: TaskWorkToolPort, process: () => Promise<void>): void;
   close(): Promise<void>;
 }
 
@@ -266,6 +266,8 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
   let closed = false;
   /** 数字团队工具在两个协调器都完成构造后绑定。 */
   let digitalTeamTools: TaskWorkToolPort | null = null;
+  /** 团队与独立工作共用同一个串行调度循环，避免双定时器争抢。 */
+  let processDigitalTeams: (() => Promise<void>) | null = null;
 
   const schedule = (delay = tickMs): void => {
     if (closed || timer) return;
@@ -312,14 +314,13 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
           const task = requireTaskOrThrow(options, request.params.taskId);
           if (options.isTaskTerminal(task)) throw new TaskWorkStoreError('ZEUS_TASK_WORK_TASK_TERMINAL', '重新打开任务后才能安排工作。');
           const parsed = options.application.parse({ value: request.body, commandType: workManagementCommandTypes.taskWorkPlanSave, scopeKind: 'task', expectedScopeId: () => task.id });
-          const input = parsed.input as typeof request.body.input;
-          const stages = normalizeWorkStages(input.stages);
-          const settings = normalizeWorkSettings(input.settings);
           const result = options.application.executeCore({
             parsed,
             destinationId: 'task-work-planning-repository',
             resourceId: `task:${task.id}`,
-            mutateBusinessState: () => options.planning.save(task.id, input.expectedRevision, stages, settings),
+            mutateBusinessState: () => {
+              throw new TaskWorkStoreError('ZEUS_TASK_WORK_PLAN_MOVED', '新工作安排已统一到数字团队，请从任务的数字团队入口创建。', 409);
+            },
           });
           await options.save();
           kick();
@@ -339,6 +340,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
             destinationId: 'task-work-planning-repository',
             resourceId: `task:${task.id}`,
             mutateBusinessState: () => {
+              if (input.state === 'running' && options.planning.get(task.id)?.state === 'draft') throw new TaskWorkStoreError('ZEUS_TASK_WORK_PLAN_MOVED', '这份草稿已保留为数字团队模板，请从数字团队入口开始。', 409);
               const plan = options.planning.control(task.id, input.expectedRevision, input.state);
               for (const stage of plan.stages)
                 for (const item of stage.items) {
@@ -458,7 +460,9 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
           parsed,
           destinationId: 'task-work-planning-repository',
           resourceId: `employee_team_recipe:${input.id}`,
-          mutateBusinessState: () => options.planning.saveRecipe({ ...input, stages: normalizeWorkStages(input.stages) }),
+          mutateBusinessState: () => {
+            throw new TaskWorkStoreError('ZEUS_TASK_WORK_PLAN_MOVED', '团队模板已统一到数字团队，请在数字团队中保存。', 409);
+          },
         });
         await options.save();
         return result.result;
@@ -706,7 +710,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       kick();
       return created;
     },
-    createWorkflowWorkItem: async ({ taskId, employeeId, employeeSnapshot, sourceRef, title, description, supplementalInfo, workspace, purpose, executionMode }) => {
+    createWorkflowWorkItem: async ({ taskId, employeeId, employeeSnapshot, sourceRef, title, description, supplementalInfo, workspace, purpose, executionMode, settings }) => {
       const replay = options.items.getBySource('manual', sourceRef);
       if (replay?.currentRunId) {
         const run = options.runs.getById(replay.currentRunId);
@@ -715,26 +719,18 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       const task = requireTaskOrThrow(options, taskId);
       if (employeeSnapshot.id !== employeeId || employeeSnapshot.projectId !== task.projectId) throw new TaskWorkStoreError('ZEUS_DIGITAL_TEAM_EMPLOYEE_SNAPSHOT_INVALID', '冻结员工配置与当前节点不一致。');
       const employee = structuredClone(employeeSnapshot);
-      const preview = await resolvePreview(options, task, { employeeId, supplementalInfo, workspace }, employee);
+      const preview = await resolvePreview(options, task, { ...normalizeWorkSettings(settings), employeeId, supplementalInfo, workspace }, employee);
       if (preview.blockers.length > 0) throw new TaskWorkStoreError(preview.blockers[0]!.code, preview.blockers[0]!.message);
-      /** 节点职责随真实 TaskWorkRun 冻结，Provider 权限只能由服务端读取该字段。 */
-      preview.entrypoint = { ...(preview.entrypoint ?? {}), digitalTeamPurpose: purpose, digitalTeamExecutionMode: executionMode };
-      /** 角色顶层授权和 Agent 策略取交集；验证可运行测试，但始终不能改代码或提交。 */
+      /** 节点职责随真实工作运行冻结；负责人用团队计划分工，不进入旧安排委派通道。 */
+      preview.entrypoint = { ...(preview.entrypoint ?? {}), digitalTeamPurpose: purpose, digitalTeamExecutionMode: executionMode, delegationPolicy: null };
+      /** 节点显式说明需要的动作，任务授权仍由接纳层独立核对，员工默认不是授权上限。 */
       preview.authority = {
         ...preview.authority,
-        allowCodeChanges: preview.authority.allowCodeChanges === true && employee.allowCodeChanges,
-        allowTests: preview.authority.allowTests === true && employee.allowTests,
-        allowCommit: preview.authority.allowCommit === true && employee.deliveryGrants.allowCommit,
+        permissionMode: executionMode === 'read_only' ? 'read-only' : preview.authority.permissionMode,
+        allowCodeChanges: executionMode === 'isolated_write' && task.allowCodeChanges,
+        allowTests: executionMode !== 'read_only' && task.allowTests,
+        allowCommit: executionMode === 'isolated_write' && task.allowGitCommit,
       };
-      if (purpose !== 'work') {
-        preview.authority = {
-          ...preview.authority,
-          permissionMode: purpose === 'verify' ? preview.authority.permissionMode : 'read-only',
-          allowCodeChanges: false,
-          allowTests: purpose === 'verify' && preview.authority.allowTests === true,
-          allowCommit: false,
-        };
-      }
       const skillResources = await prepareSkillResourceSnapshots(options, task, preview);
       const itemId = stableIdentity('task_work_item', sourceRef);
       const created = createWorkItemFromPreview(options, task, employee, preview, itemId, { source: 'manual', sourceRef, title, description }, skillResources);
@@ -754,21 +750,6 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       const turn = submission && dispatched.run.conversationId ? options.conversationTurns.listByConversation(dispatched.run.conversationId).find((candidate) => candidate.clientSubmissionId === submission.id) : undefined;
       return { run: dispatched.run, submissionId: submission?.id ?? null, turnId: turn?.id ?? null };
     },
-    continueWorkflowConversation: async ({ taskId, conversationId, content, operationIdentity }) => {
-      const task = requireTaskOrThrow(options, taskId);
-      const project = options.projects.getById(task.projectId);
-      const conversation = options.conversations.getById(conversationId);
-      if (!project || !conversation || conversation.taskId !== task.id || conversation.projectId !== project.id) {
-        throw new TaskWorkStoreError('ZEUS_DIGITAL_TEAM_CONVERSATION_NOT_FOUND', '数字团队原会话不存在或不属于当前任务。', 404);
-      }
-      const accepted = await options.executeTaskConversationIdempotent(project, task, { mode: 'resume', conversationId, content }, operationIdentity);
-      const response = isRecord(accepted.body) ? accepted.body : {};
-      const submissionProjection = isRecord(response.submission) ? response.submission : {};
-      const submissionId = typeof submissionProjection.id === 'string' ? submissionProjection.id : null;
-      if (!submissionId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_ACCEPTANCE_NOT_DURABLE', '继续会话没有返回耐久提交身份。');
-      const turn = options.conversationTurns.listByConversation(conversationId).find((candidate) => candidate.clientSubmissionId === submissionId);
-      return { submissionId, turnId: turn?.id ?? null };
-    },
     stopWorkflowWorkItem: async (workItemId, operationIdentity) => {
       const item = options.items.getById(workItemId);
       if (!item || !isDigitalTeamWorkItem(item)) throw new TaskWorkStoreError('ZEUS_DIGITAL_TEAM_WORK_ITEM_NOT_FOUND', '数字团队工作项不存在。', 404);
@@ -786,8 +767,10 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       const activeItem = options.items.getById(item.id)!;
       if (!['completed', 'failed', 'cancelled'].includes(activeItem.status)) options.items.update(activeItem.id, { status: outcome === 'succeeded' ? 'completed' : 'failed', completedAt });
     },
-    bindDigitalTeamTools: (tools) => {
+    bindDigitalTeamTools: (tools, process) => {
       digitalTeamTools = tools;
+      processDigitalTeams = process;
+      kick();
     },
     close: async () => {
       closed = true;
@@ -1056,6 +1039,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
   }
 
   async function processRuns(): Promise<void> {
+    if (processDigitalTeams) await processDigitalTeams();
     await processArrangements();
     for (const runRecord of options.runs.listRecoverable(100)) {
       if (closed) return;
@@ -1150,7 +1134,7 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
   /** 对照分工身份解析每一层配置，独立会话不会虚构阶段。 */
   const planned = selection.plannedWorkItemId ? options.items.getById(selection.plannedWorkItemId) : null;
   if (selection.plannedWorkItemId && (!planned || planned.taskId !== task.id || planned.employeeId !== selection.employeeId)) throw new TaskWorkStoreError('ZEUS_TASK_WORK_ASSIGNMENT_CONFLICT', '分工或执行人已经改变，请重新读取。');
-  const plan = options.planning.get(task.id);
+  const plan = employeeSnapshot ? null : options.planning.get(task.id);
   const stage = planned?.arrangement?.stageId ? plan?.stages.find((candidate) => candidate.id === planned.arrangement!.stageId) : null;
   const effective = mergeEmployeeWorkSettings(plan?.settings, stage?.settings, planned?.arrangement?.settings, { ...selection, workMode: selection.workMode ?? undefined, permissionMode: selection.permissionMode ?? undefined });
   const requiredSkills = stage?.requiredSkillIds ?? [];
@@ -2786,37 +2770,4 @@ export function normalizeWorkSettings(value: unknown): EmployeeWorkSettings {
     result.skillIds = normalizeIdentities(value.skillIds);
   }
   return result;
-}
-
-/** 阶段安排在存储前完整规范化，保留用户明确填写的目标和交付条件。 */
-function normalizeWorkStages(value: unknown): EmployeeWorkStageInput[] {
-  if (!Array.isArray(value) || value.length < 1 || value.length > 12) throw new TaskWorkStoreError('ZEUS_TASK_WORK_PLAN_INVALID', '请安排 1 到 12 个阶段。', 400);
-  return value.map((stage) => {
-    if (!isRecord(stage) || !Array.isArray(stage.assignments) || !stage.assignments.length || stage.assignments.length > 24) throw new TaskWorkStoreError('ZEUS_TASK_WORK_PLAN_INVALID', '每个阶段需要 1 到 24 份明确分工。', 400);
-    if (!stage.assignments.some((assignment) => isRecord(assignment) && assignment.required !== false)) throw new TaskWorkStoreError('ZEUS_TASK_WORK_PLAN_INVALID', '每个阶段至少需要一份必要分工。', 400);
-    if (stage.acceptanceMode === 'checked' && (!Array.isArray(stage.verificationCommands) || !stage.verificationCommands.length)) throw new TaskWorkStoreError('ZEUS_TASK_WORK_PLAN_INVALID', '自动接纳需要至少一条明确的验证命令。', 400);
-    return {
-      title: requiredText(stage.title, '请填写阶段名称。', 240),
-      description: optionalText(stage.description, 4_000) ?? '',
-      settings: normalizeWorkSettings(stage.settings),
-      requiredSkillIds: Array.isArray(stage.requiredSkillIds) ? normalizeIdentities(stage.requiredSkillIds) : [],
-      advanceMode: optionalMember(stage.advanceMode, ['manual', 'auto'] as const, '阶段推进方式无效。') ?? 'auto',
-      verificationCommands: Array.isArray(stage.verificationCommands) ? stage.verificationCommands.map((command) => requiredText(command, '验证命令不能为空。', 2_000)).slice(0, 16) : [],
-      acceptanceMode: optionalMember(stage.acceptanceMode, ['manual', 'checked'] as const, '成果接纳方式无效。') ?? 'manual',
-      assignments: stage.assignments.map((assignment) => {
-        if (!isRecord(assignment)) throw new TaskWorkStoreError('ZEUS_TASK_WORK_PLAN_INVALID', '分工内容无效。', 400);
-        const outputKinds = Array.isArray(assignment.outputKinds) ? assignment.outputKinds : ['document'];
-        if (!outputKinds.length || outputKinds.some((kind) => !['document', 'code', 'verification', 'deployment'].includes(String(kind)))) throw new TaskWorkStoreError('ZEUS_TASK_WORK_PLAN_INVALID', '请选择实际需要的成果类型。', 400);
-        return {
-          title: requiredText(assignment.title, '请填写分工目标。', 240),
-          description: requiredText(assignment.description, '请填写工作边界与完成标准。', 4_000),
-          employeeId: optionalText(assignment.employeeId, 256) ?? null,
-          role: optionalText(assignment.role, 240) ?? '',
-          settings: normalizeWorkSettings(assignment.settings),
-          required: assignment.required !== false,
-          outputKinds: outputKinds as EmployeeWorkStageInput['assignments'][number]['outputKinds'],
-        };
-      }),
-    };
-  });
 }

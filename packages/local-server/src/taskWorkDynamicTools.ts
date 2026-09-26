@@ -90,7 +90,8 @@ export function zeusWorkDynamicTools(): CodexDynamicToolSpec[] {
         {
           type: 'function',
           name: 'submit_team_plan',
-          description: '仅供数字团队当前 CTO 规划节点提交结构化计划。计划必须逐一引用冻结流程中的员工 nodeId，并给出目标、范围、禁止事项和验收标准；本工具只登记当前轮次结果，不能批准计划或启动后继节点。',
+          description:
+            '仅供数字团队当前负责人规划节点提交结构化计划。计划必须覆盖规划后的既定工作；授权成员范围内的新增分工同时提供 employeeId 和新的 nodeId，并给出目标、范围、禁止事项和验收标准；本工具只登记当前轮次结果，不能批准计划或启动后继节点。',
           inputSchema: {
             type: 'object',
             properties: {
@@ -103,6 +104,8 @@ export function zeusWorkDynamicTools(): CodexDynamicToolSpec[] {
                   type: 'object',
                   properties: {
                     nodeId: { type: 'string', maxLength: 256 },
+                    employeeId: { type: 'string', maxLength: 256, description: '新增分工使用的已授权成员；已有分工保持原员工。' },
+                    dependencyIds: { type: 'array', items: { type: 'string', maxLength: 256 }, maxItems: 48, description: '同一计划中需要先完成的分工身份。' },
                     objective: { type: 'string', maxLength: 4_000 },
                     scope: { type: 'array', items: { type: 'string', maxLength: 1_000 }, maxItems: 64 },
                     excludedScope: { type: 'array', items: { type: 'string', maxLength: 1_000 }, maxItems: 64 },
