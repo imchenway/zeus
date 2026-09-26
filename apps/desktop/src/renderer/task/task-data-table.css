@@ -120,6 +120,11 @@
   gap: 4px;
 }
 
+/* 复用任务原位保存动效，在紧凑胶囊内替换箭头并保持垂直居中。 */
+.macos-ai-app .task-data-table-status > .task-save-spinner {
+  inset-block-start: calc(50% - 6px);
+}
+
 /* 冲突操作在已有弹层中显示，不挤高虚拟行。 */
 .task-data-table-priority-feedback {
   display: flex;

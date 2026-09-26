@@ -319,6 +319,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     taskTagFilter,
     taskTemplates,
     taskTerminalCleanupConfirmation,
+    pendingTaskStatuses,
     taskWorkspaceCopy,
     uiCopy,
     updatingTaskBusy,
@@ -1102,6 +1103,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                       taskTableEnumSortOrders={taskTableEnumSortOrders}
                       taskTableLayoutDirty={taskTableLayoutDirty}
                       creatingTaskBusy={creatingTaskBusy}
+                      pendingTaskStatuses={pendingTaskStatuses}
                       bulkActionBusy={updatingTaskBusy}
                       bulkActionStatus={taskBulkActionStatus}
                       modelPushEntry={

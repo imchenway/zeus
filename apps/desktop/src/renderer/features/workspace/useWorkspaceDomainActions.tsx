@@ -209,6 +209,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setNativeLegacyMessageLoadState,
     setNewConversationFocusRequest,
     setOptimisticTerminalTaskStatuses,
+    setPendingTaskStatuses,
     setPendingProjectDeleteId,
     setProjectCodeWorkspaceMode,
     setProjectConfig,
@@ -2063,9 +2064,14 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     pending.resolve(confirmed);
   }
 
+  /** 状态加载反馈覆盖排队、终态确认与保存刷新，并在所有退出路径释放。 */
   async function updateTaskManagementStatus(taskId: string, status: TaskManagementStatus, options: { expectedUpdatedAt?: string; reopenConversationId?: string } = {}): Promise<TaskEditResult | undefined> {
     const currentTask = (taskDetail?.id === taskId ? taskDetail : undefined) ?? snapshot.tasks.find((task) => task.id === taskId);
-    if (!props.onUpdateTaskManagementStatus || !currentTask || resolveTaskManagementStatus(currentTask) === status) return;
+    // 前一次写入未结束时，改回原状态也必须排队，不能当作无变化丢弃。
+    if (!props.onUpdateTaskManagementStatus || !currentTask || (resolveTaskManagementStatus(currentTask) === status && !taskMutationQueuesRef.current.has(taskId))) return;
+    /** 每次选择持有独立身份，较早的请求结束不能清除较晚选择的加载反馈。 */
+    const pending = { status };
+    setPendingTaskStatuses((current) => ({ ...current, [taskId]: pending }));
     const updateManagementStatus = props.onUpdateTaskManagementStatus;
     const projectStatusConfig = resolveTaskManagementStatusConfig(appShellSettings, currentTask.projectId);
     const statusLabel = formatConfiguredTaskManagementStatus(status, projectStatusConfig, appShellSettings.appLanguage);
@@ -2078,7 +2084,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         return next;
       });
     if (terminalStatus) setOptimisticTerminalTaskStatuses((current) => (current[taskId] === status ? current : { ...current, [taskId]: status }));
-    return enqueueTaskMutation(taskId, async () => {
+    return enqueueTaskMutation<TaskEditResult | undefined>(taskId, async () => {
       const expectedUpdatedAt = resolveTaskMutationVersion(taskId, options.expectedUpdatedAt ?? currentTask.updatedAt ?? '');
       setActionState('updating-task');
       try {
@@ -2119,6 +2125,14 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         recordLocalError('task-management-status-update', error);
         throw error;
       }
+    }).finally(() => {
+      setPendingTaskStatuses((current) => {
+        if (current[taskId] !== pending) return current;
+        /** 只移除当前请求，保留其他任务和后续选择的反馈。 */
+        const next = { ...current };
+        delete next[taskId];
+        return next;
+      });
     });
   }
 
