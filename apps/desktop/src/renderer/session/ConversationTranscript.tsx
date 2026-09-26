@@ -1086,12 +1086,12 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       const currentActivityItem = processLive ? latestTurnProcessActivityItem(row.segments) : null;
       /** 折叠入口只汇总当前已经加载的真实操作数。 */
       const processActivityCount = turnProcessActivityCount(row.segments);
-      /** 过程展开后保留原始顺序；面向用户的沟通已经作为普通时间线行显示。 */
+      /** 过程展开后保留原始顺序；完成轮次的中途说明也在这里回看。 */
       const renderProcessSegments = (active: boolean): ReactNode =>
         row.segments.map((segment, segmentIndex) => {
-          /** 思考与操作详情继续留在过程内，且不会覆盖主时间线里的助手文字。 */
+          /** 阶段说明属于过程内容，模型回复正文始终独立显示。 */
           const summary = segment.summary;
-          /** 分段已经排除助手沟通，这里只渲染真实过程内容。 */
+          /** 完成后包含中途说明，运行中只包含思考与操作明细。 */
           const rows = segment.rows;
           if (!summary && rows.length === 0) return null;
           return (
@@ -2182,7 +2182,7 @@ function renderTurnArtifacts(turnId: string, props: ConversationTranscriptProps,
   );
 }
 
-/** 连续执行记录按真实沟通边界收拢；用户输入和助手沟通始终保留在主会话流。 */
+/** 运行中按沟通边界展示进展；完成后将过程统一收在模型回复正文上方。 */
 export function projectTranscriptTurnRows(
   rows: readonly TranscriptRow[],
   activeTurnId: string | null = null,
@@ -2287,15 +2287,50 @@ export function projectTranscriptTurnRows(
     projected.splice(anchorIndex < 0 ? projected.length : anchorIndex + 1, 0, placeholder);
   }
 
+  /** 只有轮次明确完成且正文已到达才收拢，消息完成或空正文不能代替轮次终态。 */
+  const completedReplyKeys = new Map<string, string>();
+  for (const row of projected) {
+    if (row.kind !== 'item' || terminalTurnIds[row.item.turnId] !== 'completed' || !isTurnCompletionOutputItem(row.item) || !transcriptItemText(row.item).trim()) continue;
+    if (!completedReplyKeys.has(row.item.turnId)) completedReplyKeys.set(row.item.turnId, row.key);
+  }
+  /** 使用现有过程子行，保留操作和中途说明的先后顺序，不再按阶段重新排列。 */
+  const completedProcessRows = new Map<string, TranscriptRow[]>();
+  /** 被收拢的行只移入过程一次，用户输入、问题、错误和交付物继续独立显示。 */
+  const completedProcessKeys = new Set<string>();
+  for (const row of projected) {
+    /** 操作组已经归一到开场用户消息所属轮次。 */
+    const turnId = transcriptTurnRowTurnId(row);
+    if (!turnId || !completedReplyKeys.has(turnId) || (row.kind !== 'turn_work' && !isTurnProcessRow(row, true))) continue;
+    /** 空的历史过程入口也保留，展开后仍能按需补齐。 */
+    const processRows = completedProcessRows.get(turnId) ?? [];
+    if (row.kind === 'turn_work') {
+      for (const segment of row.segments) processRows.push(...(segment.summary ? [segment.summary, ...segment.rows] : segment.rows));
+    } else processRows.push(row);
+    completedProcessRows.set(turnId, processRows);
+    completedProcessKeys.add(row.key);
+  }
+  /** 完成态使用独立且稳定的展开身份，运行中手动展开不会阻止完成时自动收起。 */
+  const displayRows = projected.flatMap((row): TranscriptTurnRow[] => {
+    if (completedProcessKeys.has(row.key)) return [];
+    /** 模型正文原有身份不变，过程入口只放在它前面。 */
+    const turnId = transcriptTurnRowTurnId(row);
+    /** 未加载的过程允许为空，但无过程的轮次不新增空入口。 */
+    const processRows = turnId ? completedProcessRows.get(turnId) : undefined;
+    if (!turnId || completedReplyKeys.get(turnId) !== row.key || !processRows) return [row];
+    /** 单层过程直接展示所有明细，不增加阶段折叠。 */
+    const key = `turn-work:${encodeURIComponent(turnId)}:completed`;
+    return [{ kind: 'turn_work', key, turnId, segments: processRows.length ? [{ key: `${key}:content`, summary: null, rows: processRows }] : [], live: false, loadMore: true }, row];
+  });
+
   /** 当前状态只有一处：活动轮次最后一个过程组负责显示当前或最近动作。 */
   let liveProcessIndex = -1;
   if (activeTurnId && !terminalTurnIds[activeTurnId]) {
-    for (let index = 0; index < projected.length; index += 1) {
-      const candidate = projected[index]!;
+    for (let index = 0; index < displayRows.length; index += 1) {
+      const candidate = displayRows[index]!;
       if (candidate.kind === 'turn_work' && candidate.turnId === activeTurnId) liveProcessIndex = index;
     }
   }
-  return projected.map((row, index) => (row.kind === 'turn_work' && row.live !== (index === liveProcessIndex) ? { ...row, live: index === liveProcessIndex } : row));
+  return displayRows.map((row, index) => (row.kind === 'turn_work' && row.live !== (index === liveProcessIndex) ? { ...row, live: index === liveProcessIndex } : row));
 }
 
 function segmentTurnProcessRows(turnId: string, rows: readonly TranscriptRow[]): TranscriptTurnProcessSegment[] {
@@ -2423,7 +2458,8 @@ function mergeStageActivityRows(rows: readonly TranscriptRow[], turnId: string, 
   const categories = new Set(items.map(activityCategory));
   const merged: Extract<TranscriptRow, { kind: 'activity' }> = {
     kind: 'activity',
-    key: `activity-stage:${encodeURIComponent(turnId)}:${encodeURIComponent(stageIdentity)}`,
+    // 同一阶段可能被沟通切成多组；首条操作区分各组，完成后汇入同一过程也不会重号。
+    key: `activity-stage:${encodeURIComponent(turnId)}:${encodeURIComponent(stageIdentity)}:${encodeURIComponent(items[0]!.key)}`,
     items,
     category: categories.size === 1 ? activityCategory(items[0]!) : 'mixed',
     motionActive: activityRows.some((row) => row.motionActive),
@@ -2474,7 +2510,8 @@ function projectDeliverablesAfterFinalAnswer(rows: readonly TranscriptRow[]): re
   return projected;
 }
 
-function isTurnProcessRow(row: TranscriptRow): boolean {
+/** 只有完成态才收拢中途助手说明，最终正文与需要用户处理的消息保持外置。 */
+function isTurnProcessRow(row: TranscriptRow, collapseAssistantMessages = false): boolean {
   if (row.kind === 'answered_request') return true;
   if (row.kind === 'activity') return true;
   // 异步答复是已回答询问，和 PLAN 答题一样进入处理过程，不再充当开场用户消息。
@@ -2485,8 +2522,8 @@ function isTurnProcessRow(row: TranscriptRow): boolean {
   if (row.item.type === 'plan' || isAssistantDeliverableItem(row.item)) return false;
   // 思考内容保留独立的次要层级，不能冒充面向用户的进展说明。
   if (normalizeItemType(row.item.type) === 'reasoning') return true;
-  // 助手消息从创建起就固定在主会话；首个文字分片到达时不能从处理过程跳到正文位置。
-  if (itemRole(row.item) === 'assistant' || itemRole(row.item) === 'commentary') return false;
+  // 运行中助手消息从创建起固定在主会话，完成后才将非最终说明收进过程。
+  if (itemRole(row.item) === 'assistant' || itemRole(row.item) === 'commentary') return collapseAssistantMessages && !isFinalAnswerItem(row.item);
   // 明确失败需要直接可见，不能因为没有最终答复而藏进过程入口。
   if (itemRole(row.item) === 'error') return false;
   return itemRole(row.item) !== 'user' && !isFinalAnswerItem(row.item);
@@ -2546,6 +2583,10 @@ function defaultExpandedTurnProcessKeys(
   planContinuationProcessKeys: ReadonlySet<string> = new Set(),
 ): ReadonlySet<string> {
   const expanded = new Set(planContinuationProcessKeys);
+  // 已完成轮次默认收起，继续实施计划也不能重新自动展开上一轮过程。
+  for (const row of rows) {
+    if (row.kind === 'turn_work' && terminalTurnIds[row.turnId] === 'completed') expanded.delete(turnProcessExpansionKey(row.key));
+  }
   let latestTurnId: string | null = null;
   for (let index = rows.length - 1; index >= 0; index -= 1) {
     latestTurnId = transcriptTurnRowTurnId(rows[index]!);
