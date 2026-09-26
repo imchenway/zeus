@@ -3,7 +3,7 @@ import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import type { AppShellSettings, CodexConfigImportPreview } from '../apiClient.js';
 import type { CodexAccountSnapshot, CodexTaskPushModelCapability } from '../session/sessionTypes.js';
 import type { AiRuntimeAdapterStatus, CodexRuntimeUpdateStatus } from '../features/runtime/runtimeContracts.js';
-import { codexCapabilitiesChangedEvent, codexRuntimeUpdateProgressEvent, isCodexRuntimeUpdateStage, type CodexRuntimeUpdateProgress } from '../features/codex/codexApiClient.js';
+import { codexCapabilitiesChangedEvent, codexRuntimeUpdateCheckedEvent, codexRuntimeUpdateProgressEvent, isCodexRuntimeUpdateStage, type CodexRuntimeUpdateProgress } from '../features/codex/codexApiClient.js';
 import { authenticateCodexWithBrowser, completeCodexSubscriptionSetup, type CodexSubscriptionSetupInput } from '../codexLoginHandoff.js';
 import { openExternalHttpsUrlInMain } from '../appShellBridge.js';
 import { Button } from '../ui/Button.js';
@@ -189,7 +189,7 @@ export function useModelSetup(input: {
     const client = input.client;
     if (!input.settingsActive || !client || overviewClientRef.current === client) return;
     overviewClientRef.current = client;
-    void refreshCodexOverview(false);
+    void refreshCodexOverview('check_update');
   }, [input.settingsActive, input.client]);
 
   useEffect(() => {
@@ -205,6 +205,20 @@ export function useModelSetup(input: {
     window.addEventListener(codexRuntimeUpdateProgressEvent, receiveUpdateProgress);
     return () => window.removeEventListener(codexRuntimeUpdateProgressEvent, receiveUpdateProgress);
   }, []);
+
+  useEffect(() => {
+    /** 后台结果只更新同一份程序的提示，不能覆盖用户正在安装的版本。 */
+    const receiveUpdateCheck = (event: Event): void => {
+      /** 事件字段先核对再使用，缺失或其他安装路径的结果不进入当前页面。 */
+      const checked = (event as CustomEvent<CodexRuntimeUpdateStatus | undefined>).detail;
+      if (operation !== 'idle' || !checked || !['available', 'up_to_date', 'unavailable'].includes(checked.status) || typeof checked.managedInstallation !== 'boolean' || typeof checked.checkedAt !== 'string') return;
+      if (!(checked.currentVersion === null || typeof checked.currentVersion === 'string') || !(checked.latestVersion === null || typeof checked.latestVersion === 'string')) return;
+      if (!installationCheck?.resolvedCommandPath || checked.adapter?.resolvedCommandPath !== installationCheck.resolvedCommandPath) return;
+      setUpdateCheck(checked);
+    };
+    window.addEventListener(codexRuntimeUpdateCheckedEvent, receiveUpdateCheck);
+    return () => window.removeEventListener(codexRuntimeUpdateCheckedEvent, receiveUpdateCheck);
+  }, [operation, installationCheck]);
 
   useEffect(() => {
     /** 登录或重新连接完成后原地刷新模型目录，不清空已经显示的账号状态。 */
@@ -321,34 +335,32 @@ export function useModelSetup(input: {
     }
   }
 
-  /** 同步读取账号、当前模型和程序版本；手动检测发现新版本后立即完成更新。 */
-  async function refreshCodexOverview(checkUpdate: boolean): Promise<void> {
+  /** 检查和安装是两个明确动作；安装只使用用户已看到的目标版本。 */
+  async function refreshCodexOverview(action: 'refresh' | 'check_update' | 'install_update'): Promise<void> {
     /** 每次操作读取最新客户端，避免设置页切换后写回旧连接。 */
     const client = currentInputRef.current.client;
     if (!client || operation !== 'idle') return;
+    /** 点击安装时冻结页面上的目标，后台检查不能替换本次确认内容。 */
+    const targetVersion = action === 'install_update' && updateCheck?.status === 'available' && updateCheck.managedInstallation ? updateCheck.latestVersion : null;
+    if (action === 'install_update' && !targetVersion) return;
     /** 三类状态并行读取，账号结果不再等待版本检测完成后才显示。 */
     const request = ++requestRef.current;
-    setOperation(checkUpdate ? 'checking_update' : 'checking');
+    setOperation(targetVersion ? 'updating' : action === 'check_update' ? 'checking_update' : 'checking');
     setError(null);
-    if (checkUpdate) {
+    if (action === 'check_update') {
       setUpdateCheck(null);
       setUpdateProgress({ stage: 'checking', progress: null });
     }
     /** 更新完成后必须再读一次账号和模型，避免保留热切换前的目录快照。 */
-    let didUpdate = false;
-    /** 在线检测命中新版本时直接更新；按钮只表达一次完整的“检测并更新”操作。 */
+    const didUpdate = Boolean(targetVersion);
+    if (didUpdate) setUpdateProgress({ stage: 'preparing', progress: null });
+    /** 只读检查绝不接续安装，安装请求必须显式携带已确认版本。 */
     const runtimeRequest = (
-      checkUpdate
-        ? client.checkCodexUpdate().then(async (checked) => {
-            if (requestRef.current !== request || checked.status !== 'available') return { adapter: checked.adapter, update: checked };
-            setInstallationCheck(checked.adapter);
-            setUpdateCheck(checked);
-            setOperation('updating');
-            const updated = await client.updateCodex();
-            didUpdate = true;
-            return { adapter: updated.adapter, update: updated };
-          })
-        : client.checkRuntimeAdapter('codex').then((adapter) => ({ adapter, update: null }))
+      targetVersion
+        ? client.updateCodex(targetVersion).then((updated) => ({ adapter: updated.adapter, update: updated }))
+        : action === 'check_update'
+          ? client.checkCodexUpdate().then((checked) => ({ adapter: checked.adapter, update: checked }))
+          : client.checkRuntimeAdapter('codex').then((adapter) => ({ adapter, update: null }))
     ).then((runtime) => {
       if (requestRef.current === request) {
         setInstallationCheck(runtime.adapter);
@@ -395,6 +407,8 @@ export function useModelSetup(input: {
       const failed = [runtimeResult, ...finalAccountAndModelResults].find((result) => result.status === 'rejected');
       if (failed?.status === 'rejected') {
         overviewClientRef.current = null;
+        /** 安装结果不明时撤掉旧的安装按钮，先检测或重新连接，不能直接重发。 */
+        if (didUpdate) setUpdateCheck(null);
         setError(userFacingErrorCause(failed.reason));
       }
     } finally {
@@ -596,7 +610,7 @@ export function useModelSetup(input: {
       /** 允许既有总览入口接手状态回读；它会建立自己的请求代次。 */
       setOperation('idle');
       overviewClientRef.current = null;
-      await refreshCodexOverview(false);
+      await refreshCodexOverview('refresh');
     } catch (failure) {
       if (requestRef.current !== request) return;
       setOperation('idle');
@@ -709,7 +723,7 @@ export function CodexAccountSettings({ controller }: { controller: ModelSetupCon
   /** 只有 ChatGPT 账号认证成功才表示订阅已登录。 */
   const signedIn = account?.signedIn && account.accountType === 'chatgpt';
   /** 总览读取不完整时提供真实重连入口，不能把未知账号状态伪装成未登录。 */
-  const reconnectNeeded = Boolean(controller.error) && (!controller.accountChecked || !controller.modelsChecked);
+  const reconnectNeeded = Boolean(controller.error) && (!controller.accountChecked || !controller.modelsChecked || (typeof controller.error !== 'string' && controller.error?.code === 'ZEUS_CODEX_UPDATE_ACTIVATION_FAILED'));
   /** 复用所有模型选择入口的稳定排序，不在设置页另造目录顺序。 */
   const presentedModels = presentModelOptions(controller.models, '', zh ? 'zh-CN' : 'en-US').models;
   /** 只有下载器返回真实字节比例时才展示百分比。 */
@@ -791,10 +805,28 @@ export function CodexAccountSettings({ controller }: { controller: ModelSetupCon
         <p className="codex-update-state" role="status" aria-live="polite">
           {updateLabel}
         </p>
-        <Button variant="secondary" disabled={controller.operation !== 'idle'} busy={controller.operation === 'checking_update'} onClick={() => void controller.refreshCodexOverview(true)}>
+        <Button variant="secondary" disabled={controller.operation !== 'idle'} busy={controller.operation === 'checking_update'} onClick={() => void controller.refreshCodexOverview('check_update')}>
           {zh ? '检测更新' : 'Check for updates'}
         </Button>
       </div>
+      {controller.updateCheck?.status === 'available' ? (
+        controller.updateCheck.managedInstallation ? (
+          <div className="codex-update-row">
+            <p className="codex-update-state">
+              {zh
+                ? '更新后将重新连接。若连接失败，请先重新连接；Zeus 不会自动降级或用旧数据覆盖对话。'
+                : 'Updating reconnects Codex. If it fails, reconnect first; Zeus will not downgrade automatically or overwrite conversations with older data.'}
+            </p>
+            <Button variant="primary" disabled={controller.operation !== 'idle'} onClick={() => void controller.refreshCodexOverview('install_update')}>
+              {zh ? `安装 ${controller.updateCheck.latestVersion}` : `Install ${controller.updateCheck.latestVersion}`}
+            </Button>
+          </div>
+        ) : (
+          <p className="codex-update-state">
+            {zh ? '这份 Codex 由你自行安装。请使用原安装方式更新，再点击“检测更新”；Zeus 不会修改它。' : 'This Codex installation is managed outside Zeus. Update it with its original installer, then check again; Zeus will not modify it.'}
+          </p>
+        )
+      ) : null}
       {controller.operation === 'updating' ? (
         <div className="codex-update-progress">
           <div className="codex-update-progress-copy">

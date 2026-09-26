@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { createSettingsApiClient } from '../apps/desktop/src/renderer/features/settings/settingsApiClient.js';
+import { createRuntimeApiClient } from '../apps/desktop/src/renderer/features/runtime/runtimeApiClient.js';
+import { assertCodexUpdateTarget, isManagedCodexStandalone } from '../packages/local-server/src/runtimeQueryApplication.js';
 import { settingsPage } from '../apps/desktop/src/renderer/settings/SettingsPagination.js';
 import type { LocalApiTransport } from '../apps/desktop/src/renderer/transport/localApiTransport.js';
 import { chmod, lstat, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
@@ -49,6 +51,38 @@ assert.equal(settingsPage(20, 3), 2);
 observed.settingsInteraction = { saveOrder: true, failureRecovery: true, pageBoundary: true };
 
 try {
+  /** 更新检查和安装必须分开，安装来源与目标在服务端重新确认。 */
+  const codexHome = join(probeRoot, 'codex-home');
+  /** 只使用临时路径检查归属，不运行或更改机器上的任何 Codex。 */
+  const managedCodex = join(codexHome, 'packages', 'standalone', 'release', 'codex');
+  assert.equal(isManagedCodexStandalone(managedCodex, codexHome), true);
+  assert.equal(isManagedCodexStandalone(join(probeRoot, 'global', 'codex'), codexHome), false);
+  assert.equal(isManagedCodexStandalone(join(codexHome, 'packages', 'standalone-other', 'codex'), codexHome), false);
+  assert.equal(isManagedCodexStandalone('packages/standalone/codex', codexHome), false);
+  assert.equal(isManagedCodexStandalone(managedCodex, undefined), false);
+  /** 检测值与安装意图分开保存，覆盖检测后上游再次发布的变化。 */
+  const codexUpdate = { managedInstallation: true, status: 'available' as const, currentVersion: '0.150.1', latestVersion: '0.151.0' };
+  assert.doesNotThrow(() => assertCodexUpdateTarget(codexUpdate, '0.151.0'));
+  assert.throws(() => assertCodexUpdateTarget(codexUpdate, undefined), { code: 'ZEUS_CODEX_UPDATE_CONFIRMATION_REQUIRED' });
+  assert.throws(() => assertCodexUpdateTarget({ ...codexUpdate, managedInstallation: false }, '0.151.0'), { code: 'ZEUS_CODEX_UPDATE_EXTERNAL_INSTALLATION' });
+  assert.throws(() => assertCodexUpdateTarget({ ...codexUpdate, latestVersion: '0.152.0' }, '0.151.0'), { code: 'ZEUS_CODEX_UPDATE_TARGET_CHANGED' });
+  assert.doesNotThrow(() => assertCodexUpdateTarget({ ...codexUpdate, status: 'up_to_date', currentVersion: '0.151.0' }, '0.151.0'));
+  /** 记录客户端真实生成的请求，确认只读检查不会接续写入。 */
+  const codexRequests: Array<{ path: string; method: string; body: unknown }> = [];
+  /** 此传输只收集请求，不访问外部程序或更新源。 */
+  const codexClient = createRuntimeApiClient({
+    async request(path, init) {
+      codexRequests.push({ path, method: init?.method ?? 'GET', body: init?.body ? JSON.parse(String(init.body)) : null });
+      return codexUpdate;
+    },
+  } as LocalApiTransport);
+  await codexClient.checkCodexUpdate();
+  assert.deepEqual(codexRequests, [{ path: '/api/runtime/adapters/codex/update', method: 'GET', body: null }]);
+  await codexClient.updateCodex('0.151.0');
+  assert.equal(codexRequests[1]?.method, 'POST');
+  assert.deepEqual((codexRequests[1]?.body as { input: unknown }).input, { targetVersion: '0.151.0' });
+  observed.codexUpdate = { checkIsReadOnly: true, externalInstallationProtected: true, confirmedTargetRequired: true, targetChangeRejected: true };
+
   const db = await createZeusDatabase(join(probeRoot, 'probe.db'));
   try {
     db.execute(`CREATE TABLE settings_probe (id TEXT PRIMARY KEY, value_json TEXT NOT NULL)`);
@@ -391,7 +425,10 @@ try {
     );
     assertProbe(unknownInvocations === 1 && unknownCode === 'ZEUS_SETTINGS_COMMAND_OUTCOME_UNKNOWN' && replayCode === 'ZEUS_COMMAND_DELIVERY_REPLAY_BLOCKED', 'Unknown after write must block automatic resend.');
     assertProbe(secretWrites === 1 && !durableText.includes(secretSentinel) && !unknownAttempt.receipt.evidenceJson.includes(secretSentinel), 'Secret plaintext must not enter durable command evidence.');
-    assertProbe((observed.routeCounts as { total: number }).total === 9, '设置命令清单必须覆盖全局规则在内的九条路由。');
+    assertProbe(
+      settingsCommandRoutePolicy.externalOperations.includes('POST /api/runtime/adapters/codex/update') && settingsCommandRoutePolicy.externalOperations.includes('PUT /api/settings/agents'),
+      'Codex 安装与全局规则保存必须继续通过持久命令边界。',
+    );
     assertProbe(observed.quickCheck === 'ok', 'Temporary SQLite quick_check must pass.');
     console.log(JSON.stringify({ status: 'passed', observed }, null, 2));
   } finally {

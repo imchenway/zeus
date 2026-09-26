@@ -172,7 +172,17 @@ import { generateGitCommitMessage } from './gitCommitMessageGeneration.js';
 import { generateReleaseNotesWithDeepSeek } from './releaseNotesGeneration.js';
 import { registerReleaseUpdateApi } from './releaseUpdateApi.js';
 import { compareSemverLike } from './releaseCore.js';
-import { parseRuntimeArgs, RuntimeQueryApplication, runtimeSessionIsConfirmedTerminal, type CodexRuntimeUpdateStatus, type RuntimeSettingsSnapshot, toAiRuntimeLogEntry, toAiRuntimeSession } from './runtimeQueryApplication.js';
+import {
+  assertCodexUpdateTarget,
+  isManagedCodexStandalone,
+  parseRuntimeArgs,
+  RuntimeQueryApplication,
+  runtimeSessionIsConfirmedTerminal,
+  type CodexRuntimeUpdateStatus,
+  type RuntimeSettingsSnapshot,
+  toAiRuntimeLogEntry,
+  toAiRuntimeSession,
+} from './runtimeQueryApplication.js';
 import { registerRuntimeQueryRoutes } from './runtimeQueryRoutes.js';
 import { registerRuntimeSessionCommandRoutes } from './runtimeSessionCommandRoutes.js';
 import { type ParsedSettingsCommand, SettingsCommandApplication, settingsCommandHttpError, type SettingsCommandRequest, settingsCommandTypes } from './settingsCommandApplication.js';
@@ -226,8 +236,10 @@ function parseLatestCodexVersion(value: unknown): string {
 }
 
 /** 检查官方稳定版；只读取公开元数据，不下载或切换用户正在使用的程序。 */
-async function checkPublishedCodexUpdate(adapter: AiCliAdapterStatus, checkedAt: string): Promise<CodexRuntimeUpdateStatus> {
-  if (!adapter.version) return { adapter, status: 'unavailable', currentVersion: null, latestVersion: null, checkedAt };
+async function checkPublishedCodexUpdate(adapter: AiCliAdapterStatus, checkedAt: string, codexHome: string | undefined): Promise<CodexRuntimeUpdateStatus> {
+  /** 安装归属来自实际程序路径，不相信界面提供的安装方式。 */
+  const managedInstallation = isManagedCodexStandalone(adapter.resolvedCommandPath, codexHome);
+  if (!adapter.version) return { adapter, managedInstallation, status: 'unavailable', currentVersion: null, latestVersion: null, checkedAt };
   /** 单次检查总等待上限，页面不会因公网异常长期锁住。 */
   const signal = AbortSignal.timeout(10_000);
   /** 固定官方 HTTPS 来源且禁止重定向，避免版本判断漂移到未知站点。 */
@@ -254,6 +266,7 @@ async function checkPublishedCodexUpdate(adapter: AiCliAdapterStatus, checkedAt:
   const latestVersion = parseLatestCodexVersion(metadata);
   return {
     adapter,
+    managedInstallation,
     status: compareSemverLike(adapter.version, latestVersion) < 0 ? 'available' : 'up_to_date',
     currentVersion: adapter.version,
     latestVersion,
@@ -303,35 +316,24 @@ async function readOfficialCodexInstaller(onProgress: (progress: number | null, 
   return Buffer.from(`${source.slice(0, downloadFunctionStart)}${instrumentedDownloadFunction}${source.slice(downloadFunctionEnd + 2)}`);
 }
 
-/** 判断实际程序是否属于 Zeus 当前 CODEX_HOME 管理的 standalone。 */
-function isManagedCodexStandalone(commandPath: string, codexHome: string | undefined): codexHome is string {
-  if (!codexHome || !isAbsolute(codexHome)) return false;
-  /** realpath 探针返回发布目录中的真实程序，按受管根目录判断归属。 */
-  const managedRoot = `${resolve(codexHome, 'packages', 'standalone')}/`;
-  return resolve(commandPath).startsWith(managedRoot);
-}
-
-/** 调用官方 CLI 自更新或官方 standalone 安装器；不执行界面回传的命令。 */
+/** 只调用受管安装的官方安装器；全局程序不会被当作更新命令执行。 */
 async function runCodexSelfUpdate(commandPath: string, codexHome: string | undefined, targetVersion: string, onProgress: (progress: number | null, stage: string) => void): Promise<void> {
-  /** Zeus 管理的 standalone 使用同一官方安装脚本更新固定 current 链接。 */
-  const managed = isManagedCodexStandalone(commandPath, codexHome);
-  /** 仅受管安装需要下载脚本，普通 CLI 继续使用自身安装方式。 */
-  const installer = managed ? await readOfficialCodexInstaller(onProgress) : null;
-  /** 不通过 shell 解析命令行；受管脚本只作为标准输入交给系统 sh。 */
-  const executable = managed ? '/bin/sh' : commandPath;
-  /** 官方安装器由环境固定目标版本，普通安装继续调用原生 update 子命令。 */
-  const args = managed ? ['-s'] : ['update'];
+  if (!isManagedCodexStandalone(commandPath, codexHome)) throw Object.assign(new Error('请使用原安装方式更新这份 Codex。'), { code: 'ZEUS_CODEX_UPDATE_EXTERNAL_INSTALLATION' });
+  /** 受管脚本只作为标准输入交给系统 sh，目标版本固定为用户确认的版本。 */
+  const installer = await readOfficialCodexInstaller(onProgress);
   /** 更新命令只继承当前服务环境，并显式固定 Zeus 的 Codex 数据目录。 */
   const environment = {
     ...process.env,
-    ...(codexHome ? { CODEX_HOME: codexHome } : {}),
-    ...(managed ? { CODEX_INSTALL_DIR: join(codexHome, 'bin'), CODEX_RELEASE: targetVersion, CODEX_NON_INTERACTIVE: 'true' } : {}),
+    CODEX_HOME: codexHome,
+    CODEX_INSTALL_DIR: join(codexHome, 'bin'),
+    CODEX_RELEASE: targetVersion,
+    CODEX_NON_INTERACTIVE: 'true',
   };
   return new Promise((resolveUpdate, rejectUpdate) => {
     /** stdout 与 stderr 只用于有界错误诊断，安装脚本通过标准输入传递。 */
-    const child = spawn(executable, args, {
+    const child = spawn('/bin/sh', ['-s'], {
       shell: false,
-      stdio: [installer ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
       env: environment,
     });
     /** stdout 与 stderr 共同使用同一诊断预算。 */
@@ -340,6 +342,8 @@ async function runCodexSelfUpdate(commandPath: string, codexHome: string | undef
     let settled = false;
     /** 单独记录超时事实，不能依赖子进程最终上报的退出信号。 */
     let timedOut = false;
+    /** 输入失败仍等待子进程退出，避免维护窗口提前放开。 */
+    let inputFailure: Error | null = null;
     /** 强制结束计时器由统一完成路径清理。 */
     let forceTimer: ReturnType<typeof setTimeout> | null = null;
     /** 受管安装器的当前阶段由官方稳定输出推进。 */
@@ -349,8 +353,8 @@ async function runCodexSelfUpdate(commandPath: string, codexHome: string | undef
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
       output = Buffer.concat([output, bytes]).subarray(-codexUpdateOutputMaximumBytes);
       const text = output.toString('utf8');
-      if (managed && text.includes('Installing standalone package')) installerStage = 'installing';
-      else if (managed && text.includes('Downloading Codex CLI')) installerStage = 'downloading';
+      if (text.includes('Installing standalone package')) installerStage = 'installing';
+      else if (text.includes('Downloading Codex CLI')) installerStage = 'downloading';
       if (installerStage === 'downloading') {
         /** curl 的 progress-bar 百分比来自已下载字节与响应总字节。 */
         const matches = [...text.matchAll(/(\d{1,3}(?:\.\d+)?)%/gu)];
@@ -362,8 +366,6 @@ async function runCodexSelfUpdate(commandPath: string, codexHome: string | undef
     };
     child.stdout?.on('data', remember);
     child.stderr?.on('data', remember);
-    /** 脚本内容已经过来源与大小校验；EPIPE 由子进程退出路径统一报告。 */
-    if (installer) child.stdin?.end(installer);
     onProgress(null, 'preparing');
     /** 超时后先温和终止，进程退出事件负责最终收口。 */
     const timer = setTimeout(() => {
@@ -384,8 +386,15 @@ async function runCodexSelfUpdate(commandPath: string, codexHome: string | undef
       else resolveUpdate();
     };
     child.on('error', (cause) => finish(Object.assign(new Error('无法启动 Codex 官方更新命令。', { cause }), { code: 'ZEUS_CODEX_UPDATE_START_FAILED' })));
+    /** 安装器提前退出时，输入管道错误也走统一失败出口，不能让宿主崩溃。 */
+    child.stdin?.on('error', (cause) => {
+      inputFailure = Object.assign(new Error('无法向 Codex 安装器传递安装内容。', { cause }), { code: 'ZEUS_CODEX_UPDATE_FAILED' });
+      child.kill('SIGTERM');
+    });
+    child.stdin?.end(installer);
     child.on('close', (code, signal) => {
-      if (code === 0) {
+      if (inputFailure) return finish(inputFailure);
+      if (code === 0 && !timedOut) {
         onProgress(null, 'verifying');
         return finish();
       }
@@ -1108,27 +1117,34 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         };
       },
       /** 版本探针成功后才访问官方稳定版元数据，不安装或重启 Codex。 */
-      checkCodexUpdate: (adapter) => checkPublishedCodexUpdate(adapter, now().toISOString()),
+      checkCodexUpdate: async (adapter) => {
+        /** 检测只发布事实，供已打开的设置页接收后台检查结果。 */
+        const checked = await checkPublishedCodexUpdate(adapter, now().toISOString(), dependencies.codexHome);
+        publishRealtimeEvent('codex.update.checked', { ...checked });
+        return checked;
+      },
     },
     readSettings: () => platformMutableState.runtimeSettings,
     now,
   });
   registerRuntimeQueryRoutes({ server, application: runtimeQueries });
 
-  /** 自动更新与手动更新共用一条串行链，后到请求等待前一轮完成后重新检测。 */
+  /** 安装请求串行执行，后到请求仍需重新核对用户确认的版本。 */
   let codexUpdateChain: Promise<void> = Promise.resolve();
 
   /** 更新属于可恢复的外部写入：先记录命令，再调用官方 CLI，最后热切换运行实例。 */
-  server.post('/api/runtime/adapters/codex/update', async (request: FastifyRequest<{ Body: SettingsCommandRequest<Record<string, never>> }>, reply) => {
+  server.post('/api/runtime/adapters/codex/update', async (request: FastifyRequest<{ Body: SettingsCommandRequest<{ targetVersion: string }> }>, reply) => {
     try {
-      /** 空输入仍使用统一命令信封，断线后不会重复执行外部更新。 */
-      const parsed = settingsCommands.parse<Record<string, never>>({
+      /** 目标版本参与命令摘要，旧的空请求不能再触发静默安装。 */
+      const parsed = settingsCommands.parse<{ targetVersion: string }>({
         value: request.body,
         commandType: settingsCommandTypes.codexRuntimeUpdate,
         scopeKind: 'settings',
         expectedScopeId: () => 'codex-runtime-update',
       });
-      if (Object.keys(parsed.input).length > 0) return reply.code(400).send({ error: 'ZEUS_CODEX_UPDATE_INVALID', message: 'Codex 更新不接受额外参数。' });
+      if (Object.keys(parsed.input).length !== 1 || typeof parsed.input.targetVersion !== 'string') {
+        return reply.code(400).send({ error: 'ZEUS_CODEX_UPDATE_CONFIRMATION_REQUIRED', message: '请先检测更新，再选择要安装的 Codex 版本。' });
+      }
       if (readOnlyValidation) throw nativeApiError('ZEUS_CODEX_UPDATE_NOT_AVAILABLE', '只读验证模式不能更新 Codex。');
       /** 当前请求进入串行队列，前一轮完成后会重新检测是否仍需更新。 */
       const operation = codexUpdateChain.then(async () => {
@@ -1137,8 +1153,9 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           publishRealtimeEvent('codex.update.progress', { progress, stage });
         };
         reportProgress(null, 'checking');
-        /** 常规周期检测不占维护窗口；磁盘与活动进程都一致时才算已经完成。 */
+        /** 安装请求先重新检查，归属或目标版本变化时不得进入维护窗口。 */
         const detected = await runtimeQueries.checkCodexUpdate();
+        assertCodexUpdateTarget(detected, parsed.input.targetVersion);
         /** 远程守护进程可能跨越应用重启，必须用握手版本识别磁盘已更新但进程仍陈旧的状态。 */
         const detectedRuntimeState = codexAppServerManager.getState();
         /** 只有 ready 状态提供实际运行程序的可信版本。 */
@@ -1160,6 +1177,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           reportProgress(null, 'preparing');
           /** 服务端重新读取实际程序和官方版本，不信任界面上一次检测结果。 */
           const available = await runtimeQueries.checkCodexUpdate();
+          assertCodexUpdateTarget(available, parsed.input.targetVersion);
           /** 记录本轮是否执行或重放过外部更新；这种情况必须重新验证运行进程。 */
           let updateApplied = false;
           /** 默认沿用重新检测结果；真正更新后替换成持久化的更新回执。 */
@@ -1179,11 +1197,12 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
                 reportProgress(null, 'verifying');
                 /** 成功退出后重新探测同一配置，不能把 CLI 的文字提示当成更新成功。 */
                 const adapter = await runtimeQueries.checkAdapter('codex');
-                if (!adapter.available || !adapter.version || compareSemverLike(adapter.version, available.latestVersion!) < 0) {
-                  throw Object.assign(new Error('Codex 更新命令已结束，但实际版本没有达到目标版本。'), { code: 'ZEUS_CODEX_UPDATE_NOT_APPLIED' });
+                if (!adapter.available || adapter.version !== parsed.input.targetVersion) {
+                  throw Object.assign(new Error('Codex 安装结束，但无法确认程序与选择的版本一致。请重新检测，不要自动重试安装。'), { code: 'ZEUS_CODEX_UPDATE_NOT_APPLIED' });
                 }
                 return {
                   adapter,
+                  managedInstallation: isManagedCodexStandalone(adapter.resolvedCommandPath, dependencies.codexHome),
                   status: 'up_to_date',
                   currentVersion: adapter.version,
                   latestVersion: available.latestVersion,
@@ -1203,9 +1222,12 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
             updateApplied = true;
             /** 断线重放可能晚于后续升级；接管目标始终重新探测当前磁盘，不能沿用旧回执路径。 */
             const installedAdapter = await runtimeQueries.checkAdapter('codex');
-            if (!installedAdapter.available || !installedAdapter.version) throw nativeApiError('ZEUS_CODEX_UPDATE_NOT_APPLIED', 'Codex 更新后无法读取当前程序版本。');
+            if (!installedAdapter.available || installedAdapter.version !== parsed.input.targetVersion || !isManagedCodexStandalone(installedAdapter.resolvedCommandPath, dependencies.codexHome)) {
+              throw nativeApiError('ZEUS_CODEX_UPDATE_NOT_APPLIED', 'Codex 安装后程序来源或版本已变化，请重新检测。');
+            }
             updated = {
               adapter: installedAdapter,
+              managedInstallation: isManagedCodexStandalone(installedAdapter.resolvedCommandPath, dependencies.codexHome),
               status: compareSemverLike(installedAdapter.version, available.latestVersion) < 0 ? 'available' : 'up_to_date',
               currentVersion: installedAdapter.version,
               latestVersion: available.latestVersion,
@@ -1226,20 +1248,23 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           if (!runtimeSwitchRequired) return updated;
           if (!targetVersion || !updated.adapter.resolvedCommandPath) throw nativeApiError('ZEUS_CODEX_UPDATE_NOT_APPLIED', 'Codex 更新后无法确认可运行的程序版本。');
           reportProgress(null, 'switching');
-          if (platformMutableState.codexRemoteControlEnabled) {
-            /** 先关闭旧连接，防止断开守护进程时旧世代自动重连并再次拉起旧程序。 */
+          try {
+            /** 新程序可能改变共享状态；先关闭空闲旧实例，失败后也不能自动继续使用旧程序。 */
             await maintenance.deactivateCurrentGeneration();
-            /** 官方 stop 命令结束独立守护进程；下一次激活才会加载新 CLI。 */
-            await stopCodexRemoteControlDaemon(updated.adapter.resolvedCommandPath, dependencies.codexHome);
-          }
-          /** 新世代、版本握手和新模型目录全部成功后才允许维护窗口结束。 */
-          await activateCurrentCodexConfiguration({ syncSubscriptionModels: true, activateFreshGeneration: maintenance.activateFreshGeneration });
-          /** 主动刷新会发布模型更新事件，让所有模型选择器同步收到新目录。 */
-          const capabilities = await codexAppServerManager.refreshModels();
-          if (capabilities.providerVersion !== targetVersion) {
-            throw Object.assign(new Error(`Codex 已更新到 ${targetVersion}，但当前运行进程仍是 ${String(capabilities.providerVersion ?? 'unknown')}。`), {
-              code: 'ZEUS_CODEX_RUNTIME_VERSION_MISMATCH',
-            });
+            if (platformMutableState.codexRemoteControlEnabled) {
+              /** 官方 stop 命令结束独立守护进程；下一次激活才会加载新 CLI。 */
+              await stopCodexRemoteControlDaemon(updated.adapter.resolvedCommandPath, dependencies.codexHome);
+            }
+            /** 新世代、版本握手和新模型目录全部成功后才允许维护窗口结束。 */
+            await activateCurrentCodexConfiguration({ syncSubscriptionModels: true, activateFreshGeneration: maintenance.activateFreshGeneration });
+            /** 主动刷新会发布模型更新事件，让所有模型选择器同步收到新目录。 */
+            const capabilities = await codexAppServerManager.refreshModels();
+            if (capabilities.providerVersion !== targetVersion) {
+              throw Object.assign(new Error(`Codex 已安装 ${targetVersion}，但当前运行进程仍是 ${String(capabilities.providerVersion ?? 'unknown')}。`), { code: 'ZEUS_CODEX_RUNTIME_VERSION_MISMATCH' });
+            }
+          } catch (cause) {
+            /** 新程序可能已写入持久状态；连接失败不能自动降级或覆盖升级后的对话。 */
+            throw Object.assign(new Error('Codex 程序已安装，但连接尚未完成。请重新连接 Codex；Zeus 未自动降级或恢复旧对话数据。', { cause }), { code: 'ZEUS_CODEX_UPDATE_ACTIVATION_FAILED' });
           }
           return updated;
         });

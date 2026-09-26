@@ -3951,31 +3951,35 @@ export function createConversationApplicationOperations(dependencies: Conversati
   function sendNativeConversationApiError(reply: FastifyReply, error: unknown) {
     const code = isNativeApiRecord(error) && typeof error.code === 'string' ? error.code : 'ZEUS_NATIVE_CONVERSATION_API_ERROR';
     const message = error instanceof Error ? error.message : String(error);
-    const statusCode = code.endsWith('_NOT_FOUND')
-      ? 404
-      : code.includes('CONFLICT') ||
-          code.includes('LOGIN_REQUIRED') ||
-          code.includes('CHOICE_REQUIRED') ||
-          code.includes('READ_ONLY') ||
-          code.includes('NOT_EDITABLE') ||
-          code.includes('NOT_QUEUED') ||
-          code.includes('NOT_ACTIVE') ||
-          (code.startsWith('ZEUS_ASYNC_QUESTION_') && !code.endsWith('_INVALID')) ||
-          code.includes('NOT_INTERRUPTED') ||
-          code.includes('IN_PROGRESS') ||
-          code === 'ZEUS_CONVERSATION_ARCHIVE_STATE_UNCONFIRMED' ||
-          code.includes('MISMATCH') ||
-          code.includes('EXCEEDS_POLICY') ||
-          code.includes('EXCEEDS_REQUEST') ||
-          code.includes('ATTACHMENT_UNAVAILABLE') ||
-          code.includes('CONTEXT_CHANGED') ||
-          code.includes('NATIVE_DISABLED') ||
-          code.includes('NOT_AVAILABLE') ||
-          code.includes('STALE')
-        ? 409
-        : code.startsWith('ZEUS_INVALID_') || code.endsWith('_INVALID') || code.endsWith('_REQUIRED') || code.includes('_UNSUPPORTED')
-          ? 400
-          : 500;
+    /** 业务入口已明确分类的 HTTP 错误优先，避免把主动拒绝安装等情况误报为服务器故障。 */
+    const declaredStatusCode = isNativeApiRecord(error) && typeof error.statusCode === 'number' && Number.isInteger(error.statusCode) && error.statusCode >= 400 && error.statusCode <= 599 ? error.statusCode : null;
+    const statusCode =
+      declaredStatusCode ??
+      (code.endsWith('_NOT_FOUND')
+        ? 404
+        : code.includes('CONFLICT') ||
+            code.includes('LOGIN_REQUIRED') ||
+            code.includes('CHOICE_REQUIRED') ||
+            code.includes('READ_ONLY') ||
+            code.includes('NOT_EDITABLE') ||
+            code.includes('NOT_QUEUED') ||
+            code.includes('NOT_ACTIVE') ||
+            (code.startsWith('ZEUS_ASYNC_QUESTION_') && !code.endsWith('_INVALID')) ||
+            code.includes('NOT_INTERRUPTED') ||
+            code.includes('IN_PROGRESS') ||
+            code === 'ZEUS_CONVERSATION_ARCHIVE_STATE_UNCONFIRMED' ||
+            code.includes('MISMATCH') ||
+            code.includes('EXCEEDS_POLICY') ||
+            code.includes('EXCEEDS_REQUEST') ||
+            code.includes('ATTACHMENT_UNAVAILABLE') ||
+            code.includes('CONTEXT_CHANGED') ||
+            code.includes('NATIVE_DISABLED') ||
+            code.includes('NOT_AVAILABLE') ||
+            code.includes('STALE')
+          ? 409
+          : code.startsWith('ZEUS_INVALID_') || code.endsWith('_INVALID') || code.endsWith('_REQUIRED') || code.includes('_UNSUPPORTED')
+            ? 400
+            : 500);
     return reply
       .code(statusCode)
       .send({ error: code, message, cause: userFacingErrorCause(error).cause, ...(code.includes('STALE') || code.includes('RECOVERY_REQUIRED') || code === 'ZEUS_CONVERSATION_ARCHIVE_STATE_UNCONFIRMED' ? { recoveryRequired: true } : {}) });
