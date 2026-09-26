@@ -1518,15 +1518,37 @@ function reduceTranscriptPlacements(state: NativeSessionState, batch: NativeConv
   return { ...state, items, pendingRequests, removedTranscriptEntryIds, itemOrder: sortSessionItemOrder(candidateOrder, items), transcriptRevision: state.transcriptRevision + 1 };
 }
 
-/** 实时条目按正文时间线的唯一比较规则插入；没有持久位置的本地条目整段留在持久区之后。 */
+/** 实时条目按正文时间线插入；已开轮用户消息用后续事件的显式开场身份临时固定位置。 */
 function sortSessionItemOrder(order: readonly string[], items: Readonly<Record<string, NativeSessionItemBuffer>>): string[] {
   const previousIndex = new Map(order.map((key, index) => [key, index]));
-  return [...order].sort((leftKey, rightKey) =>
-    compareTranscriptTimelineOrder(
-      { entryId: items[leftKey]?.transcript?.placement.entryId ?? leftKey, order: items[leftKey]?.transcript?.placement.order ?? null, fallbackIndex: previousIndex.get(leftKey) ?? 0 },
-      { entryId: items[rightKey]?.transcript?.placement.entryId ?? rightKey, order: items[rightKey]?.transcript?.placement.order ?? null, fallbackIndex: previousIndex.get(rightKey) ?? 0 },
-    ),
-  );
+  /** Provider 后续事件携带的开场身份和首个位置，可在用户消息落库前固定其阅读位置。 */
+  const firstOrderByOpeningInputId = new Map<string, number>();
+  for (const item of Object.values(items)) {
+    const openingInputId = item.transcript?.placement.openingInputId;
+    const itemOrder = item.transcript?.placement.order;
+    if (!openingInputId || itemOrder === null || itemOrder === undefined) continue;
+    firstOrderByOpeningInputId.set(openingInputId, Math.min(firstOrderByOpeningInputId.get(openingInputId) ?? itemOrder, itemOrder));
+  }
+  /** 暂未落库的开场消息借用其首个后续事件的位置，正式位置到达后不会发生视觉跳位。 */
+  const timelineEntry = (key: string) => {
+    const item = items[key];
+    const persistentOrder = item?.transcript?.placement.order ?? null;
+    const openingInputId = item ? durableUserMessageIdentity(item) : null;
+    const anchoredOrder = persistentOrder === null && openingInputId ? (firstOrderByOpeningInputId.get(openingInputId) ?? null) : null;
+    return {
+      entryId: item?.transcript?.placement.entryId ?? openingInputId ?? key,
+      order: persistentOrder ?? anchoredOrder,
+      fallbackIndex: previousIndex.get(key) ?? 0,
+      anchored: anchoredOrder !== null,
+    };
+  };
+  return [...order].sort((leftKey, rightKey) => {
+    const left = timelineEntry(leftKey);
+    const right = timelineEntry(rightKey);
+    // 锚点与首个事件共用位置时，开场用户消息必须先出现；其他条目继续使用统一全序规则。
+    if (left.order !== null && left.order === right.order && left.anchored !== right.anchored) return left.anchored ? -1 : 1;
+    return compareTranscriptTimelineOrder(left, right);
+  });
 }
 
 /**

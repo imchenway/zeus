@@ -4978,6 +4978,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   padding: 2px 0 1px 18px;
 }
 
+/* 顶层处理过程已经表达层级，内部操作回到同一左边线，不再形成列表套列表。 */
+.session-codex-parity-v1 .session-turn-process-body .session-activity-body {
+  margin-inline: 0;
+  padding-inline: 0;
+}
+
 .session-codex-parity-v1 .session-activity-live {
   align-items: center;
   animation: session-markdown-block-reveal 140ms var(--session-ease-out) both;
@@ -5041,6 +5047,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   min-block-size: 24px;
 }
 
+/* 新操作随容器高度一起形成，历史记录和普通重渲染不重复播放。 */
+.session-codex-parity-v1 .session-activity-body > ol > li.is-entering {
+  animation: zeus-object-enter var(--zeus-motion-duration-object) var(--zeus-motion-ease-out) both;
+  transform-origin: left center;
+}
+
 .session-codex-parity-v1 .session-activity-item-icon {
   align-items: center;
   color: var(--session-text-muted);
@@ -5078,6 +5090,11 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   min-block-size: 28px;
   padding: 4px 8px;
   min-inline-size: 0;
+}
+
+/* 扁平过程行不再叠加第二层水平内边距。 */
+.session-codex-parity-v1 .session-turn-process-body .session-activity-item-summary {
+  padding-inline: 0;
 }
 
 .session-codex-parity-v1 .session-activity-item-summary::-webkit-details-marker {
@@ -9890,8 +9907,11 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .session-codex-parity-v1 .session-turn-process-caret {
+  .session-codex-parity-v1 .session-turn-process-caret,
+  .session-codex-parity-v1 .session-activity-body > ol > li.is-entering {
+    animation: none;
     transition: none;
+    transform: none;
   }
 }
 

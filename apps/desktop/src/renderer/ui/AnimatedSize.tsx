@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, type ReactNode } from 'react';
 
-/** 文本截断和“查看更多”保留原有内容语义，仅在用户切换时平滑改变整体高度。 */
-export function AnimatedSize({ changeKey, children }: { changeKey: boolean; children: ReactNode }) {
+/** 内容更新保留原有语义与组件身份，只在调用方标记的真实变化间平滑调整整体高度。 */
+export function AnimatedSize({ changeKey, children }: { changeKey: unknown; children: ReactNode }) {
   /** 动画只作用于这一组内容，不接管内部流式正文。 */
   const ref = useRef<HTMLDivElement>(null);
   /** 记录上一帧的真实高度，快速反向操作从当前可见位置继续。 */
