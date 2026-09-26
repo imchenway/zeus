@@ -859,7 +859,7 @@ const costDetailPopoverGap = 8;
 /** 费用明细浮层距离可视区域边缘的最小留白。 */
 const costDetailViewportInset = 12;
 
-/** 费用说明使用原生顶层浮层，并依据可视区域剩余空间左右翻转。 */
+/** 费用说明紧贴触发图标向下展开，空间不足时翻到上方。 */
 function CostBreakdownPopover(props: { entries: UsageModelCostBreakdown[]; label: string; language: Language }) {
   const text = copy[props.language];
   /** 每个指标独立关联触发按钮和浮层，保证多个费用指标同时存在时不串位。 */
@@ -869,24 +869,30 @@ function CostBreakdownPopover(props: { entries: UsageModelCostBreakdown[]; label
   const pinnedRef = useRef(false);
   const hoverCloseTimerRef = useRef<number | null>(null);
   const [open, setOpen] = useState(false);
-  /** 使用浮层实际尺寸判断：默认放右侧，右侧放不下时翻到左侧，并约束在可视区域内。 */
+  /** 按图标上下的实际空间定位；长表格在浮层内滚动，避免挤回图标所在行。 */
   const positionPopover = useCallback(() => {
     const trigger = triggerRef.current;
     const popover = popoverRef.current;
     if (!trigger || !popover?.matches(':popover-open')) return;
     const triggerRect = trigger.getBoundingClientRect();
+    /** 下方与上方可用高度均扣除图标间距和窗口留白。 */
+    const belowSpace = Math.max(0, window.innerHeight - costDetailViewportInset - triggerRect.bottom - costDetailPopoverGap);
+    /** 上方空间用于下方不足时翻转。 */
+    const aboveSpace = Math.max(0, triggerRect.top - costDetailViewportInset - costDetailPopoverGap);
+    // 先按较宽裕的一侧限高再测量，避免上次限高影响本次翻转判断。
+    popover.style.setProperty('--usage-cost-detail-available-height', `${Math.max(belowSpace, aboveSpace)}px`);
     const popoverRect = popover.getBoundingClientRect();
-    const rightSpace = window.innerWidth - costDetailViewportInset - triggerRect.right;
-    const placeOnLeft = rightSpace < popoverRect.width + costDetailPopoverGap;
-    const preferredLeft = placeOnLeft ? triggerRect.left - costDetailPopoverGap - popoverRect.width : triggerRect.right + costDetailPopoverGap;
+    /** 默认向下，只有下方放不下且上方更宽裕时才翻转。 */
+    const placeAbove = belowSpace < popoverRect.height && aboveSpace > belowSpace;
     const maximumLeft = Math.max(costDetailViewportInset, window.innerWidth - costDetailViewportInset - popoverRect.width);
-    const preferredTop = triggerRect.top + (triggerRect.height - popoverRect.height) / 2;
+    /** 浮层边缘始终与图标保持固定间距。 */
+    const preferredTop = placeAbove ? triggerRect.top - costDetailPopoverGap - popoverRect.height : triggerRect.bottom + costDetailPopoverGap;
     const maximumTop = Math.max(costDetailViewportInset, window.innerHeight - costDetailViewportInset - popoverRect.height);
-    const left = Math.min(Math.max(preferredLeft, costDetailViewportInset), maximumLeft);
+    /** 从图标左缘展开，靠近窗口边缘时仅沿水平方向避让。 */
+    const left = Math.min(Math.max(triggerRect.left, costDetailViewportInset), maximumLeft);
     const top = Math.min(Math.max(preferredTop, costDetailViewportInset), maximumTop);
     popover.style.setProperty('--usage-cost-detail-left', `${Math.round(left)}px`);
     popover.style.setProperty('--usage-cost-detail-top', `${Math.round(top)}px`);
-    popover.dataset.side = placeOnLeft ? 'left' : 'right';
   }, []);
 
   /** 取消延迟关闭，让鼠标可以跨过触发器与浮层之间的间距。 */

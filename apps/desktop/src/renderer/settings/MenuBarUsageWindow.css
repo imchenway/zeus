@@ -612,7 +612,8 @@ body:has(.menu-bar-usage-root),
   top: var(--usage-cost-detail-top, 12px);
   display: none;
   inline-size: min(324px, calc(100vw - 24px));
-  max-block-size: min(360px, calc(100vh - 24px));
+  /* 高度服从图标上方或下方的可用空间，长明细沿用内部表格滚动。 */
+  max-block-size: min(360px, calc(100vh - 24px), var(--usage-cost-detail-available-height, 360px));
   margin: 0;
   padding: 10px;
   overflow: hidden;
@@ -626,6 +627,8 @@ body:has(.menu-bar-usage-root),
 
 .menu-bar-usage-cost-detail:popover-open {
   display: grid;
+  /* 表头说明保持自然高度，只有表格区域随可用空间收缩并滚动。 */
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 4px;
 }
 
