@@ -31,6 +31,8 @@ import './digitalEmployees.css';
 export type TaskDigitalEmployeeSkillClient = Pick<NativeConversationAppClient, 'loadSkills'>;
 
 export interface TaskDigitalEmployeePanelProps {
+  /** 新协作统一进入数字团队，已有安排只保留运行与历史。 */
+  onArrangeTeam?(): void;
   /** 工作安排复用项目技能目录。 */
   skillClient?: TaskDigitalEmployeeSkillClient | null;
   /** 当前任务会话使用原始身份，不复制消息。 */
@@ -307,7 +309,15 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
           {pendingConversationRequests.length + pendingDecisions.length > 0 ? (
             <ManagerInbox requests={pendingConversationRequests} decisions={pendingDecisions} language={props.language} onOpenConversation={openConversation} onSelect={setDecisionOpen} />
           ) : null}
-          <TaskWorkPlanPanel taskId={props.taskId} projectId={props.projectId} client={props.client} skillClient={props.skillClient ?? null} management={props.management} readOnly={props.terminalReadOnly} />
+          <TaskWorkPlanPanel
+            onArrangeTeam={props.onArrangeTeam}
+            taskId={props.taskId}
+            projectId={props.projectId}
+            client={props.client}
+            skillClient={props.skillClient ?? null}
+            management={props.management}
+            readOnly={props.terminalReadOnly}
+          />
           {projection.workItems.some((item) => !item.arrangement || item.currentRunId) ? (
             <WorkItemBoard
               items={projection.workItems.filter((item) => !item.arrangement || item.currentRunId)}
