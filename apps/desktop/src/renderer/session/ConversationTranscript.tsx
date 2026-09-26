@@ -1869,6 +1869,8 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         items={row.items}
         category={row.category}
         language={options.props.language}
+        inline={options.insideWork}
+        enteringItemKeys={options.enteringItemIds}
         motionActive={row.motionActive || row.items.some(isLiveActivityItem) || row.items.some((item) => item.key === options.motionFocus?.itemKey)}
         onOpenResource={options.props.onOpenResource}
         onLoadResourcePreview={options.props.onLoadResourcePreview}
@@ -2196,14 +2198,14 @@ export function projectTranscriptTurnRows(
   /** 同一输入可被多段助手沟通切开，序号只区分这些真实阅读段。 */
   const processOrdinalByBoundary = new Map<string, number>();
   /** Provider 事件早于开场消息落库时，持久输入身份仍负责把过程放回用户消息之后。 */
-  const userAnchorByOpeningInputId = new Map<string, { index: number; rowKey: string }>();
+  const userAnchorByOpeningInputId = new Map<string, { index: number; rowKey: string; turnId: string }>();
   /** 缺少持久输入身份的旧记录只兼容同轮第一条普通用户消息。 */
-  const firstUserAnchorByTurn = new Map<string, { index: number; rowKey: string }>();
+  const firstUserAnchorByTurn = new Map<string, { index: number; rowKey: string; turnId: string }>();
   orderedRows.forEach((row, index) => {
     if (row.kind !== 'item' || row.questionAnswer || itemRole(row.item) !== 'user') return;
-    firstUserAnchorByTurn.set(row.item.turnId, firstUserAnchorByTurn.get(row.item.turnId) ?? { index, rowKey: row.key });
+    firstUserAnchorByTurn.set(row.item.turnId, firstUserAnchorByTurn.get(row.item.turnId) ?? { index, rowKey: row.key, turnId: row.item.turnId });
     const openingInputId = itemOpeningInputId(row.item);
-    if (openingInputId) userAnchorByOpeningInputId.set(openingInputId, { index, rowKey: row.key });
+    if (openingInputId) userAnchorByOpeningInputId.set(openingInputId, { index, rowKey: row.key, turnId: row.item.turnId });
   });
   /** 延迟项只改变乱序到达的摆放位置，不改写其持久顺序或身份。 */
   const deferredWorkByUserRowKey = new Map<string, TranscriptTurnWorkRow[]>();
@@ -2228,25 +2230,28 @@ export function projectTranscriptTurnRows(
       chunk.push(candidate);
       index += 1;
     }
-    loadedProcessTurnIds.add(turnId);
     /** 持久输入身份让实时、补页和重连后的首组保持同一个展开键。 */
     const openingInputId = transcriptRowOpeningInputId(chunk[0]!);
+    /** Pi 工具条目可能携带本地轮次编号；同一开场输入统一沿用用户消息的 Provider 轮次身份。 */
+    const userAnchor = openingInputId ? userAnchorByOpeningInputId.get(openingInputId) : firstUserAnchorByTurn.get(turnId);
+    const projectedTurnId = userAnchor?.turnId ?? turnId;
+    loadedProcessTurnIds.add(turnId);
+    loadedProcessTurnIds.add(projectedTurnId);
     const boundaryIdentity = openingInputId ?? turnId;
     /** 同一输入内后续过程组以出现次序稳定区分，不按命令文字去重。 */
-    const boundaryKey = `${turnId}\u0000${boundaryIdentity}`;
+    const boundaryKey = boundaryIdentity;
     const ordinal = processOrdinalByBoundary.get(boundaryKey) ?? 0;
     processOrdinalByBoundary.set(boundaryKey, ordinal + 1);
     const workRow: TranscriptTurnWorkRow = {
       kind: 'turn_work',
       key: `turn-work:${encodeURIComponent(boundaryIdentity)}${ordinal === 0 ? '' : `:segment:${ordinal}`}`,
-      turnId,
+      turnId: projectedTurnId,
       segments: segmentTurnProcessRows(turnId, chunk),
       live: false,
       // 每段都可触发同轮补页；仓储顺序会在补齐后重新形成真实阅读组。
       loadMore: true,
     };
     /** 只有明确晚到的用户消息才接管位置；正常顺序的过程原位输出。 */
-    const userAnchor = openingInputId ? userAnchorByOpeningInputId.get(openingInputId) : firstUserAnchorByTurn.get(turnId);
     if (userAnchor && userAnchor.index > chunkStartIndex) {
       const deferred = deferredWorkByUserRowKey.get(userAnchor.rowKey) ?? [];
       deferred.push(workRow);
@@ -2479,8 +2484,8 @@ function isTurnProcessRow(row: TranscriptRow): boolean {
   if (row.item.type === 'plan' || isAssistantDeliverableItem(row.item)) return false;
   // 思考内容保留独立的次要层级，不能冒充面向用户的进展说明。
   if (normalizeItemType(row.item.type) === 'reasoning') return true;
-  // 助手已经说给用户看的文字始终属于主会话；prework 只描述交付阶段，不再等同于内部过程。
-  if ((itemRole(row.item) === 'assistant' || itemRole(row.item) === 'commentary') && transcriptItemText(row.item).trim()) return false;
+  // 助手消息从创建起就固定在主会话；首个文字分片到达时不能从处理过程跳到正文位置。
+  if (itemRole(row.item) === 'assistant' || itemRole(row.item) === 'commentary') return false;
   // 明确失败需要直接可见，不能因为没有最终答复而藏进过程入口。
   if (itemRole(row.item) === 'error') return false;
   return itemRole(row.item) !== 'user' && !isFinalAnswerItem(row.item);

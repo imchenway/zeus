@@ -1,4 +1,5 @@
 import { Collapsible } from '../ui/Collapsible.js';
+import { AnimatedSize } from '../ui/AnimatedSize.js';
 import { type FocusEvent, type KeyboardEvent, createContext, useContext, memo, type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
@@ -98,6 +99,10 @@ interface SessionActivityGroupProps {
   items: NativeSessionItemBuffer[];
   language: SessionUiLanguage;
   category: SessionActivityCategory;
+  /** 外层处理过程已经负责展开时，直接显示操作明细，不再套第二层分组。 */
+  inline?: boolean;
+  /** 只让本轮真实新增的稳定条目播放一次入场，历史回放保持静止。 */
+  enteringItemKeys?: ReadonlySet<string>;
   motionActive?: boolean;
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
@@ -137,6 +142,42 @@ export const SessionActivityGroup = memo(function SessionActivityGroup(props: Se
     );
   }
 
+  /** 明细只在实际可见时创建，折叠态不提前构造长输出节点。 */
+  const body =
+    props.inline || open ? (
+      <div className="session-activity-body">
+        {detailItems.length > 0 ? (
+          <ol>
+            {detailItems.map((item) => (
+              <ActivityItemRow
+                key={item.key}
+                item={item}
+                language={props.language}
+                animateEntrance={props.enteringItemKeys?.has(item.key)}
+                motionActive={Boolean(active && props.motionActive && item.key === liveItem?.key)}
+                onOpenResource={props.onOpenResource}
+                onLoadToolResult={props.onLoadToolResult}
+                onLoadContent={props.onLoadContent}
+              />
+            ))}
+          </ol>
+        ) : null}
+        {imageResources.length > 0 ? (
+          <div className="session-activity-images">
+            <ConversationResourceCards resources={imageResources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
+          </div>
+        ) : null}
+      </div>
+    ) : null;
+
+  if (props.inline) {
+    return (
+      <section className="session-activity-group" data-active={active || undefined} data-activity-category={props.category} data-item-count={items.length} data-motion-active={props.motionActive || undefined}>
+        <AnimatedSize changeKey={items}>{body}</AnimatedSize>
+      </section>
+    );
+  }
+
   return (
     <section className="session-activity-group" data-active={active || undefined} data-activity-category={props.category} data-item-count={items.length} data-motion-active={props.motionActive || undefined} aria-label={summary}>
       <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
@@ -147,30 +188,7 @@ export const SessionActivityGroup = memo(function SessionActivityGroup(props: Se
           <span>{summary}</span>
           <CaretDown className="session-activity-caret" aria-hidden="true" weight="bold" />
         </summary>
-        {open ? (
-          <div className="session-activity-body">
-            {detailItems.length > 0 ? (
-              <ol>
-                {detailItems.map((item) => (
-                  <ActivityItemRow
-                    key={item.key}
-                    item={item}
-                    language={props.language}
-                    motionActive={Boolean(active && props.motionActive && item.key === liveItem?.key)}
-                    onOpenResource={props.onOpenResource}
-                    onLoadToolResult={props.onLoadToolResult}
-                    onLoadContent={props.onLoadContent}
-                  />
-                ))}
-              </ol>
-            ) : null}
-            {imageResources.length > 0 ? (
-              <div className="session-activity-images">
-                <ConversationResourceCards resources={imageResources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
-              </div>
-            ) : null}
-          </div>
-        ) : null}
+        {body}
       </details>
       {liveItem && !open ? <ActivityLiveRow item={liveItem} language={props.language} /> : null}
     </section>
@@ -181,6 +199,7 @@ function sameActivityGroupProps(previous: Readonly<SessionActivityGroupProps>, n
   if (
     previous.language !== next.language ||
     previous.category !== next.category ||
+    previous.inline !== next.inline ||
     previous.motionActive !== next.motionActive ||
     previous.onOpenResource !== next.onOpenResource ||
     previous.onLoadResourcePreview !== next.onLoadResourcePreview ||
@@ -189,7 +208,7 @@ function sameActivityGroupProps(previous: Readonly<SessionActivityGroupProps>, n
     previous.items.length !== next.items.length
   )
     return false;
-  return previous.items.every((item, index) => item === next.items[index]);
+  return previous.items.every((item, index) => item === next.items[index] && previous.enteringItemKeys?.has(item.key) === next.enteringItemKeys?.has(item.key));
 }
 
 export function isLiveActivityItem(item: Pick<NativeSessionItemBuffer, 'status'>): boolean {
@@ -215,6 +234,8 @@ function ActivityLiveRow(props: { item: NativeSessionItemBuffer; language: Sessi
 const ActivityItemRow = memo(function ActivityItemRow(props: {
   item: NativeSessionItemBuffer;
   language: SessionUiLanguage;
+  /** 入场只由外层稳定身份判定，组件重渲染不会重复播放。 */
+  animateEntrance?: boolean;
   motionActive?: boolean;
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
   onLoadToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage>;
@@ -244,7 +265,7 @@ const ActivityItemRow = memo(function ActivityItemRow(props: {
     <span className="session-activity-item-title">{title}</span>
   );
   return (
-    <li data-status={activityOutcome(props.item)} data-motion-active={props.motionActive || undefined}>
+    <li className={props.animateEntrance ? 'is-entering' : undefined} data-status={activityOutcome(props.item)} data-motion-active={props.motionActive || undefined}>
       <span className="session-activity-item-icon" aria-hidden="true">
         <Icon weight="regular" />
       </span>
