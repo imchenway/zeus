@@ -14,7 +14,7 @@ export function registerRuntimeQueryRoutes(options: { server: FastifyInstance; a
     }
   });
 
-  /** 在线更新检查供设置页显式检测使用；后台调度走带持久命令的更新入口。 */
+  /** 设置页与后台都只读取更新信息；安装必须另走用户确认过目标版本的命令入口。 */
   options.server.get('/api/runtime/adapters/codex/update', async (_request, reply) => {
     try {
       return await options.application.checkCodexUpdate();

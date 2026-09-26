@@ -1,4 +1,5 @@
 import type { AiCliAdapterDescriptor, AiCliAdapterStatus, AiRuntimeLogEntry, AiRuntimeSession, AiRuntimeTerminalSnapshot } from '@zeus/ai-runtime';
+import { isAbsolute, resolve } from 'node:path';
 import type { RuntimeLogStream, RuntimeSessionRepository, TerminalEventRepository, ZeusRuntimeLogRecord, ZeusRuntimeSessionRecord, ZeusTerminalEventRecord } from '@zeus/storage';
 
 export type RuntimeAutoConfirmationPolicy = 'never' | 'low_risk_only';
@@ -52,10 +53,30 @@ export interface RuntimeAdapterReadEffectPort {
 /** Codex 程序版本检测结果；模型权限仍由运行时目录单独决定。 */
 export interface CodexRuntimeUpdateStatus {
   adapter: AiCliAdapterStatus;
+  /** 只有 Zeus 管理的安装才允许由设置页执行更新。 */
+  managedInstallation: boolean;
   status: 'available' | 'up_to_date' | 'unavailable';
   currentVersion: string | null;
   latestVersion: string | null;
   checkedAt: string;
+}
+
+/** 只认探针解析出的绝对程序路径；目录名称相似或用户全局安装都不属于 Zeus。 */
+export function isManagedCodexStandalone(commandPath: string | null | undefined, codexHome: string | undefined): codexHome is string {
+  if (!commandPath || !isAbsolute(commandPath) || !codexHome || !isAbsolute(codexHome)) return false;
+  return resolve(commandPath).startsWith(`${resolve(codexHome, 'packages', 'standalone')}/`);
+}
+
+/** 安装前重验归属和用户确认的版本，禁止空请求触发更新或把新发布的版本偷偷替换进去。 */
+export function assertCodexUpdateTarget(update: Pick<CodexRuntimeUpdateStatus, 'managedInstallation' | 'status' | 'currentVersion' | 'latestVersion'>, targetVersion: unknown): asserts targetVersion is string {
+  if (typeof targetVersion !== 'string' || !/^\d+\.\d+\.\d+(?:-(?:alpha|beta)(?:\.\d+)*)?$/u.test(targetVersion)) {
+    throw queryError('ZEUS_CODEX_UPDATE_CONFIRMATION_REQUIRED', '请先检测更新，再选择要安装的 Codex 版本。', 400);
+  }
+  if (!update.managedInstallation) throw queryError('ZEUS_CODEX_UPDATE_EXTERNAL_INSTALLATION', '这份 Codex 由用户自行安装，请使用原安装方式更新。', 409);
+  if (update.status === 'unavailable') throw queryError('ZEUS_CODEX_UPDATE_NOT_AVAILABLE', '当前 Codex 程序不可更新，请重新检测。', 409);
+  /** 已安装目标版本时只允许复核运行状态，不重新下载或降级。 */
+  const expectedVersion = update.status === 'available' ? update.latestVersion : update.currentVersion;
+  if (targetVersion !== expectedVersion) throw queryError('ZEUS_CODEX_UPDATE_TARGET_CHANGED', 'Codex 版本已变化，请重新检测后再决定是否更新。', 409);
 }
 
 export interface LiveRuntimeReadPort {
@@ -95,7 +116,7 @@ export class RuntimeQueryApplication {
     /** 当前程序状态由服务端重新探测，不能相信界面回传的版本。 */
     const adapter = await this.checkAdapter('codex');
     if (!adapter.available || !adapter.version) {
-      return { adapter, status: 'unavailable', currentVersion: adapter.version, latestVersion: null, checkedAt: this.ports.now().toISOString() };
+      return { adapter, managedInstallation: false, status: 'unavailable', currentVersion: adapter.version, latestVersion: null, checkedAt: this.ports.now().toISOString() };
     }
     return this.ports.adapters.checkCodexUpdate(adapter);
   }

@@ -28,8 +28,8 @@ export interface RuntimeApiClient {
   checkRuntimeAdapter: (adapterId: string) => Promise<AiRuntimeAdapterStatus>;
   /** 只检查 Zeus 当前实际使用的 Codex 稳定版更新。 */
   checkCodexUpdate: () => Promise<CodexRuntimeUpdateStatus>;
-  /** 使用官方 CLI 更新 Zeus 当前实际使用的 Codex，并切换到新运行实例。 */
-  updateCodex: () => Promise<CodexRuntimeUpdateStatus>;
+  /** 只安装用户已看到并确认的受管 Codex 版本。 */
+  updateCodex: (targetVersion: string) => Promise<CodexRuntimeUpdateStatus>;
   loadRuntimeSessions: (input?: LoadRuntimeSessionsRequest) => Promise<AiRuntimeSession[]>;
   createRuntimeConfirmation: (input: CreateRuntimeConfirmationRequest) => Promise<RuntimeOperationConfirmation>;
   confirmRuntimeOperation: (confirmationId: string) => Promise<RuntimeOperationConfirmation>;
@@ -59,9 +59,9 @@ export function createRuntimeApiClient(transport: LocalApiTransport): RuntimeApi
     loadRuntimeAdapters: () => transport.request<AiRuntimeAdapterDescriptor[]>('/api/runtime/adapters'),
     checkRuntimeAdapter: (adapterId) => transport.request<AiRuntimeAdapterStatus>(`/api/runtime/adapters/${adapterId}/check`),
     checkCodexUpdate: () => transport.request<CodexRuntimeUpdateStatus>('/api/runtime/adapters/codex/update'),
-    updateCodex: async () => {
+    updateCodex: async (targetVersion) => {
       /** 写请求使用持久命令身份，连接中断时不会静默重复执行更新。 */
-      const body = await buildSettingsCommandRequest({ commandType: settingsClientCommandTypes.codexRuntimeUpdate, scopeKind: 'settings', scopeId: 'codex-runtime-update', operationPrefix: 'codex_runtime_update', value: {} });
+      const body = await buildSettingsCommandRequest({ commandType: settingsClientCommandTypes.codexRuntimeUpdate, scopeKind: 'settings', scopeId: 'codex-runtime-update', operationPrefix: 'codex_runtime_update', value: { targetVersion } });
       return transport.request<CodexRuntimeUpdateStatus>('/api/runtime/adapters/codex/update', jsonRequest('POST', body));
     },
     loadRuntimeSessions: (input) => transport.request<AiRuntimeSession[]>(`/api/runtime/sessions${toRuntimeSessionQuery(input)}`),

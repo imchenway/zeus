@@ -124,7 +124,7 @@ import {
 } from './workspaceSupport.js';
 import type { WorkspaceQueryState } from './useWorkspaceQueryState.js';
 import { useProjectRepositoryDiscovery } from './useProjectRepositoryDiscovery.js';
-import { codexCapabilitiesChangedEvent, codexRuntimeUpdateProgressEvent, isCodexRuntimeUpdateStage } from '../codex/codexApiClient.js';
+import { codexCapabilitiesChangedEvent, codexRuntimeUpdateCheckedEvent, codexRuntimeUpdateProgressEvent, isCodexRuntimeUpdateStage } from '../codex/codexApiClient.js';
 
 /** 旧偏好只保存裸模型名时，只有项目默认来源能解除同名歧义；其他情况一律要求用户重选。 */
 function resolveTaskModelPushCapability(capabilities: CodexTaskPushCapabilities, requestedIdentity: string) {
@@ -477,6 +477,10 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         if (event.type === 'codex.models.changed') {
           // 当前连接发布新目录后，所有模型选择器共用一次能力变更通知。
           if (event.payload.succeeded === true) window.dispatchEvent(new Event(codexCapabilitiesChangedEvent));
+          return;
+        }
+        if (event.type === 'codex.update.checked') {
+          window.dispatchEvent(new CustomEvent(codexRuntimeUpdateCheckedEvent, { detail: event.payload }));
           return;
         }
         if (event.type === 'codex.update.progress') {

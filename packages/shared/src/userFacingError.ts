@@ -919,6 +919,30 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ],
   ],
   [['ZEUS_CODEX_NOT_READY'], ['Codex 服务尚未就绪。请在“设置 → 模型供应商”中点击“重新连接 Codex”后再试。', 'Codex is not ready. Select Reconnect Codex under Settings → Model providers and try again.', 'model_settings']],
+  [
+    ['ZEUS_CODEX_UPDATE_EXTERNAL_INSTALLATION'],
+    ['这份 Codex 由你自行安装，Zeus 不会修改它。请使用原安装方式更新，再重新检测。', 'This Codex installation is managed outside Zeus. Update it with its original installer, then check again.', 'model_settings'],
+  ],
+  [
+    ['ZEUS_CODEX_UPDATE_CONFIRMATION_REQUIRED', 'ZEUS_CODEX_UPDATE_TARGET_CHANGED'],
+    ['Codex 更新需要确认当前目标版本。请重新检测后，再点击安装。', 'Check for Codex updates again, then select the version to install.', 'model_settings'],
+  ],
+  [
+    ['ZEUS_CODEX_UPDATE_BUSY', 'ZEUS_CODEX_MAINTENANCE_IN_PROGRESS'],
+    ['Codex 仍有任务、授权或更新正在处理，请完成后再更新。', 'Codex still has work, approvals, or an update in progress. Wait for them to finish before updating.', 'model_settings'],
+  ],
+  [
+    ['ZEUS_CODEX_UPDATE_NOT_APPLIED'],
+    ['安装结果尚未确认，请先重新检测 Codex 的实际版本，不要直接重复安装。', 'The installation result is unconfirmed. Check the actual Codex version before attempting another installation.', 'model_settings'],
+  ],
+  [
+    ['ZEUS_CODEX_UPDATE_ACTIVATION_FAILED'],
+    [
+      'Codex 程序已安装，但连接未完成。请点击“重新连接 Codex”。Zeus 未自动降级或用旧数据覆盖对话。',
+      'Codex is installed, but reconnection failed. Select Reconnect Codex. Zeus has not downgraded or overwritten conversations with older data.',
+      'model_settings',
+    ],
+  ],
   [['ZEUS_CODEX_LOGIN_TIMED_OUT'], ['登录等待超时，配置已保留。请重新登录。', 'Sign-in timed out. Your configuration is preserved; try again.', 'sign_in']],
   [['ZEUS_CODEX_LOGIN_FAILED'], ['这次 Codex 登录未完成，请重新登录；具体原因可查看详情。', 'This Codex sign-in did not complete. Sign in again and check the details for the cause.', 'sign_in']],
   [['ZEUS_CODEX_LOGIN_UNAVAILABLE'], ['这次 Codex 登录已失效，请重新发起登录。', 'This Codex sign-in is no longer available. Start a new sign-in.', 'sign_in']],

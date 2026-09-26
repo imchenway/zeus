@@ -35,6 +35,9 @@ export const codexCapabilitiesChangedEvent = 'zeus:codex-capabilities-changed';
 /** Codex 更新阶段通过窗口事件同步给设置页，不创建第二条轮询链路。 */
 export const codexRuntimeUpdateProgressEvent = 'zeus:codex-runtime-update-progress';
 
+/** 后台只读检查的结果与设置页共用，不代表已经安装或验证兼容性。 */
+export const codexRuntimeUpdateCheckedEvent = 'zeus:codex-runtime-update-checked';
+
 /** 只接受服务端定义的更新阶段。 */
 export function isCodexRuntimeUpdateStage(value: unknown): value is CodexRuntimeUpdateProgress['stage'] {
   return ['checking', 'preparing', 'downloading', 'installing', 'verifying', 'switching', 'completed'].includes(String(value));

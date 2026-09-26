@@ -70,7 +70,7 @@ import { type AutomaticUpdateScheduler, createAutomaticUpdateScheduler } from '.
 import { createZeusDataLayout, type ZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
 import { applyNetworkProxyAtStartup, createMacOSKeychainStore, readUnifiedConversationStoreMigrationStatus } from '@zeus/local-server';
 import { getFileBlame } from '@zeus/git-core';
-import { canonicalCommandInputJson, commandEnvelopeSchemaGeneration, normalizeNetworkProxySettings } from '@zeus/shared';
+import { normalizeNetworkProxySettings } from '@zeus/shared';
 import { checkNetworkProxyConnection, chromiumNetworkProxyConfig } from './networkProxy.js';
 import { prepareZeusDataRoot } from './zeusDataMigration.js';
 import { loadDesktopReadOnlyValidationDescriptor, readOnlyValidationManifestEnvironmentName, verifyDesktopReadOnlyValidationDescriptor } from './readOnlyValidationManifest.js';
@@ -320,36 +320,16 @@ function handleAutomaticUpdateResume(): void {
   automaticUpdateScheduler?.checkIfDue();
 }
 
-/** 通过既有设置命令边界静默检测并更新 Codex，不产生桌面通知。 */
-async function updateCodexAutomatically(): Promise<void> {
-  // 前台操作优先；静默更新只在 Zeus 位于后台时进入维护窗口。
+/** 后台只检测 Codex 更新；安装必须由设置页明确选择目标版本。 */
+async function checkCodexUpdateAutomatically(): Promise<void> {
+  // 前台操作优先；后台检查不安装程序，也不进入运行维护窗口。
   if (!localServerRuntime || isZeusApplicationForeground()) return;
-  /** 空输入也参与命令摘要，保持后台请求与设置页请求遵循同一校验。 */
-  const input = {};
-  /** 每次到期检测使用独立身份，服务端负责判断当前版本是否真的需要更新。 */
-  const operationIdentity = `automatic_codex_update_${randomUUID()}`;
-  /** Node 主进程直接计算规范摘要，避免反向依赖 Renderer。 */
-  const inputSha256 = createHash('sha256').update(canonicalCommandInputJson(input)).digest('hex');
-  /** 命令信封沿用设置页的稳定作用域和幂等规则。 */
-  const command = {
-    schemaGeneration: commandEnvelopeSchemaGeneration,
-    commandId: `command_settings_${randomUUID()}`,
-    commandType: 'settings.codex_runtime.update',
-    actor: { kind: 'local_api' as const, id: 'zeus-desktop-automatic-update' },
-    scope: { kind: 'settings' as const, id: 'codex-runtime-update' },
-    expectedRevision: null,
-    idempotencyKey: `settings.codex_runtime.update:${operationIdentity}`,
-    issuedAt: new Date().toISOString(),
-    payload: { operationIdentity, inputSha256 },
-  };
   /** Detached Core 可能刚完成切换，发送前刷新最新地址和令牌。 */
   const config = await localServerRuntime.refreshConfig();
   const response = await fetch(`${config.baseUrl}/api/runtime/adapters/codex/update`, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${config.apiToken}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ command, input }),
+    headers: { authorization: `Bearer ${config.apiToken}` },
   });
-  if (!response.ok) throw new Error(`Codex 静默更新失败（HTTP ${response.status}）。`);
+  if (!response.ok) throw new Error(`Codex 后台更新检查失败（HTTP ${response.status}）。`);
   await response.body?.cancel();
 }
 
@@ -3158,7 +3138,7 @@ async function initializeApplication(): Promise<void> {
           intervalMs: automaticUpdateTiming(automaticUpdateIntervalMs, 'ZEUS_AUTO_UPDATE_INTERVAL_MS', allowUntrustedReleaseUpdateTest),
           initialDelayMs: automaticUpdateTiming(automaticUpdateInitialDelayMs, 'ZEUS_AUTO_UPDATE_INITIAL_DELAY_MS', allowUntrustedReleaseUpdateTest),
           controller: homebrewUpdateController,
-          runSilentCompanionUpdate: updateCodexAutomatically,
+          checkCompanionUpdate: checkCodexUpdateAutomatically,
           onIndicatorChange: broadcastAutomaticUpdateIndicator,
           notifyReady: (latestVersion, showProgress) => {
             if (isZeusApplicationForeground() || !appShellSettings.desktopNotificationsEnabled || !Notification.isSupported()) return false;
