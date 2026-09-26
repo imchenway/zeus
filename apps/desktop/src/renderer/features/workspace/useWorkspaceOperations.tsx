@@ -52,6 +52,7 @@ import {
 } from './workspaceSupport.js';
 import type { WorkspaceQueryState } from './useWorkspaceQueryState.js';
 import type { WorkspaceDomainActions } from './useWorkspaceDomainActions.js';
+import type { DigitalTeamEntrySelection } from '../digital-teams/DigitalTeamWorkspace.js';
 
 export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions: WorkspaceDomainActions) {
   const {
@@ -1509,10 +1510,13 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
 
   /** 任务入口上下文只在数字团队页面使用，不改变任务和项目归属。 */
   const [digitalTeamTask, setDigitalTeamTask] = useState<TaskRecord | undefined>();
+  /** 任务详情下拉的准确目标只用于数字团队首次打开。 */
+  const [digitalTeamEntrySelection, setDigitalTeamEntrySelection] = useState<DigitalTeamEntrySelection | undefined>();
 
   function handleMainNavigate(target: WorkspaceViewId): void {
     const navigate = () => {
       setDigitalTeamTask(undefined);
+      setDigitalTeamEntrySelection(undefined);
       setActiveNavTarget(target);
       if (typeof window !== 'undefined') {
         // 只更新地址栏语义，不触发浏览器原生锚点滚动，避免左栏和主工作区一起跳到底部。
@@ -2009,11 +2013,13 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           resolveTaskManagementStatus(taskDetailPaneTask) === activeTaskManagementStatusConfig.roles.completedStatusId ||
           resolveTaskManagementStatus(taskDetailPaneTask) === activeTaskManagementStatusConfig.roles.cancelledStatusId
         }
-        onUseDigitalTeam={() => {
+        onUseDigitalTeam={(selection) => {
           setDigitalTeamTask(taskDetailPaneTask);
+          setDigitalTeamEntrySelection(selection);
           closeTaskDetail();
           setActiveNavTarget('digital-teams');
         }}
+        digitalTeamClient={props.commandClient ?? null}
         digitalEmployeeClient={props.commandClient ?? null}
         digitalEmployeeSkillClient={props.nativeConversationClient ?? null}
         conversations={taskDetailPaneConversations}
@@ -2119,12 +2125,14 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     );
   }
   return {
+    digitalTeamEntrySelection,
     digitalTeamTask,
     returnFromDigitalTeam: () => {
       if (!digitalTeamTask) return;
       setActiveNavTarget('projects');
       setTaskDetail(digitalTeamTask);
       setDigitalTeamTask(undefined);
+      setDigitalTeamEntrySelection(undefined);
     },
     activateCodexConfig,
     archiveRuntimeSession,

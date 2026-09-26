@@ -425,6 +425,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     rejectGenericRuntimeConfirmation,
     renderNativeConversationWorkspace,
     renderTaskDetailPaneContent,
+    digitalTeamEntrySelection,
     digitalTeamTask,
     returnFromDigitalTeam,
     repositoryPickerLabel,
@@ -919,8 +920,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             }
           >
             <toolPages.digitalTeams
-              key={digitalTeamTask?.id ?? 'team'}
+              key={`${digitalTeamTask?.id ?? 'team'}:${digitalTeamEntrySelection?.kind ?? 'manage'}:${digitalTeamEntrySelection?.kind === 'template' ? digitalTeamEntrySelection.templateId : digitalTeamEntrySelection?.kind === 'run' ? digitalTeamEntrySelection.runId : ''}`}
               task={digitalTeamTask}
+              initialSelection={digitalTeamEntrySelection}
               onBackToTask={digitalTeamTask ? returnFromDigitalTeam : undefined}
               onManageEmployees={(projectId) => {
                 /** 角色权限始终在所属项目的现有设置入口修改。 */

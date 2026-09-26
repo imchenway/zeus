@@ -2,9 +2,16 @@ import { DotsThreeIcon } from '@phosphor-icons/react/dist/csr/DotsThree';
 import { GitBranchIcon } from '@phosphor-icons/react/dist/csr/GitBranch';
 import { TrashIcon } from '@phosphor-icons/react/dist/csr/Trash';
 import { retainInputFocus } from '../ui/retainInputFocus.js';
-import type { UserFacingErrorCause } from '@zeus/shared';
 import { type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from 'react';
-import { isTaskPriority, type TaskAttachmentField, type TaskAttachmentReference, type TaskManagementStatusDefinition } from '@zeus/shared';
+import {
+  isTaskPriority,
+  type DigitalTeamWorkflowRunRecord,
+  type DigitalTeamWorkflowTemplateRecord,
+  type TaskAttachmentField,
+  type TaskAttachmentReference,
+  type TaskManagementStatusDefinition,
+  type UserFacingErrorCause,
+} from '@zeus/shared';
 import { type ProjectRecord, type TaskEventRecord, type TaskManagementStatus, type TaskPriority, type TaskRecord, type TaskType, type UpdateTaskRelationshipsRequest, type UpdateTaskRequest, ZeusApiError } from '../apiClient.js';
 import type { NativeConversationChoice } from '../session/sessionTypes.js';
 import type { CodexTaskPushCapabilities } from '../session/sessionTypes.js';
@@ -16,6 +23,8 @@ import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
 import { TaskDigitalEmployeeExecutor, TaskDigitalEmployeePanel, useTaskDigitalEmployeeManagement, type TaskDigitalEmployeeSkillClient } from '../features/digital-employees/TaskDigitalEmployeePanel.js';
 import type { DigitalEmployeeApiClient } from '../features/digital-employees/digitalEmployeeApiClient.js';
+import type { DigitalTeamApiClient } from '../features/digital-teams/digitalTeamApiClient.js';
+import type { DigitalTeamEntrySelection } from '../features/digital-teams/DigitalTeamWorkspace.js';
 import type { TaskWorkflowClient } from './TaskWorkflowSection.js';
 import type { TaskStageRecord } from '../features/tasks/taskContracts.js';
 import {
@@ -101,8 +110,10 @@ export interface TaskDetailPaneContentProps {
   conversationWorkspace?: ReactNode;
   /** 首次讨论复用原新建会话输入与耐久接纳。 */
   newConversationWorkspace?: ReactNode;
-  /** 从任务详情选择已保存的团队流程。 */
-  onUseDigitalTeam?(): void;
+  /** 从任务详情选择已保存流程、既有运行或管理入口。 */
+  onUseDigitalTeam?(selection: DigitalTeamEntrySelection): void;
+  /** 任务详情只读取数字团队模板和当前任务运行。 */
+  digitalTeamClient?: Pick<DigitalTeamApiClient, 'loadDigitalTeamTemplates' | 'loadDigitalTeamRuns'> | null;
   /** 打开当前项目员工管理，补齐可指派员工。 */
   onManageEmployees?(): void;
   onPushNewConversation: (taskId: string) => void;
@@ -165,6 +176,21 @@ type TaskAttachmentPasteRequest = {
 type TaskAttachmentPasteResult = {
   insertText?: string;
   updatedAt?: string;
+};
+
+/** 任务详情下拉使用简短运行状态，不暴露内部枚举。 */
+const taskDigitalTeamRunStatusLabels: Partial<Record<DigitalTeamWorkflowRunRecord['status'], string>> = {
+  planning: 'CTO 规划中',
+  awaiting_plan_approval: '等待规划批准',
+  executing: '员工执行中',
+  integrating: '正在集成候选',
+  verifying: '正在验证候选',
+  summarizing: 'CTO 汇总中',
+  awaiting_final_approval: '等待最终验收',
+  completed: '已完成',
+  failed: '失败',
+  outcome_unknown: '结果待核对',
+  cancelled: '已取消',
 };
 
 const taskEditCopies: Record<'zh-CN' | 'en-US', TaskEditCopy> = {
@@ -673,6 +699,101 @@ function TaskImmediateSelect<T extends string>(props: {
       />
       {showSaveSpinner ? <TaskSaveSpinner /> : null}
       <TaskEditFeedback state={saveState} copy={props.copy} statusId={statusId} onRetry={retrySave} onLoadLatest={loadLatestValue} />
+    </span>
+  );
+}
+
+/** 任务详情就地读取工作流和运行，管理动作保持为下拉中的独立选项。 */
+function TaskDigitalTeamSelector(props: {
+  task: TaskRecord;
+  client: Pick<DigitalTeamApiClient, 'loadDigitalTeamTemplates' | 'loadDigitalTeamRuns'> | null;
+  language: 'zh-CN' | 'en-US';
+  terminalReadOnly: boolean;
+  onSelect(selection: DigitalTeamEntrySelection): void;
+}) {
+  /** 当前语言决定下拉分组、状态和失败提示。 */
+  const zh = props.language === 'zh-CN';
+  /** 项目内可创建运行的已保存流程。 */
+  const [templates, setTemplates] = useState<DigitalTeamWorkflowTemplateRecord[]>([]);
+  /** 当前任务已有运行，供用户直接进入准确记录。 */
+  const [runs, setRuns] = useState<DigitalTeamWorkflowRunRecord[]>([]);
+  /** 首次读取与手动重试共用同一状态。 */
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'failed'>(props.client ? 'loading' : 'failed');
+  /** 递增后重新读取，不建立额外缓存。 */
+  const [loadRevision, setLoadRevision] = useState(0);
+
+  useEffect(() => {
+    if (!props.client) return;
+    let active = true;
+    setLoadState('loading');
+    void Promise.all([props.client.loadDigitalTeamTemplates(props.task.projectId), props.client.loadDigitalTeamRuns(props.task.projectId, props.task.id)])
+      .then(([nextTemplates, nextRuns]) => {
+        if (!active) return;
+        setTemplates(nextTemplates);
+        setRuns(nextRuns.filter((run) => run.taskId === props.task.id));
+        setLoadState('ready');
+      })
+      .catch(() => {
+        if (active) setLoadState('failed');
+      });
+    return () => {
+      active = false;
+    };
+  }, [loadRevision, props.client, props.task.id, props.task.projectId]);
+
+  /** 同一任务已有未结束运行时，只允许查看运行，避免并行冻结第二份流程。 */
+  const hasActiveRun = runs.some((run) => !['completed', 'failed', 'cancelled'].includes(run.status));
+  /** 下拉值携带来源类型，避免模板身份与运行身份碰撞。 */
+  const options = [
+    ...templates.map((template) => ({
+      value: `template:${template.id}`,
+      label: template.name,
+      group: zh ? '选择工作流' : 'Choose a workflow',
+      description: !template.ready
+        ? zh
+          ? '需要先在“管理工作流”中补齐配置'
+          : 'Complete this workflow in Manage workflows first'
+        : props.terminalReadOnly
+          ? zh
+            ? '任务已结束，仅可查看运行记录'
+            : 'This task is closed; only existing runs can be viewed'
+          : hasActiveRun
+            ? zh
+              ? '当前任务已有未结束运行'
+              : 'This task already has an active run'
+            : template.description || (zh ? `修订 ${template.revision}` : `Revision ${template.revision}`),
+      disabled: !template.ready || props.terminalReadOnly || hasActiveRun,
+    })),
+    ...runs.map((run) => ({
+      value: `run:${run.id}`,
+      label: `${zh ? '运行' : 'Run'} · ${new Date(run.createdAt).toLocaleString(props.language, { dateStyle: 'short', timeStyle: 'short' })}`,
+      group: zh ? '查看运行' : 'View runs',
+      description: zh ? (taskDigitalTeamRunStatusLabels[run.status] ?? run.status) : run.status.replaceAll('_', ' '),
+    })),
+    { value: 'manage', label: zh ? '管理工作流' : 'Manage workflows', group: zh ? '管理' : 'Manage', description: zh ? '创建或修改数字团队流程' : 'Create or edit digital team workflows' },
+  ];
+
+  return (
+    <span className="task-digital-team-selector">
+      <ZeusSelect
+        size="compact"
+        ariaLabel={zh ? '选择数字团队工作流或运行' : 'Choose a digital team workflow or run'}
+        value=""
+        options={options}
+        searchable={templates.length + runs.length > 8}
+        searchPlaceholder={zh ? '搜索工作流或运行' : 'Search workflows or runs'}
+        triggerLabel={loadState === 'loading' ? (zh ? '正在读取工作流…' : 'Loading workflows…') : zh ? '选择工作流 / 查看运行' : 'Choose workflow / view runs'}
+        onChange={(value) => {
+          if (value === 'manage') props.onSelect({ kind: 'manage' });
+          else if (value.startsWith('template:')) props.onSelect({ kind: 'template', templateId: value.slice('template:'.length) });
+          else if (value.startsWith('run:')) props.onSelect({ kind: 'run', runId: value.slice('run:'.length) });
+        }}
+      />
+      {loadState === 'failed' ? (
+        <Button variant="secondary" size="compact" onClick={() => setLoadRevision((current) => current + 1)}>
+          {zh ? '重新读取' : 'Reload'}
+        </Button>
+      ) : null}
     </span>
   );
 }
@@ -1320,9 +1441,13 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         <div className="task-detail-arrangement">
           <span className="task-detail-summary-row">
             <small>{zh ? '数字团队' : 'Digital team'}</small>
-            <Button size="compact" onClick={props.onUseDigitalTeam}>
-              {zh ? '选择工作流 / 查看运行' : 'Choose workflow / view runs'}
-            </Button>
+            <TaskDigitalTeamSelector
+              task={props.task}
+              client={props.digitalTeamClient ?? null}
+              language={props.language}
+              terminalReadOnly={props.terminalReadOnly}
+              onSelect={props.onUseDigitalTeam}
+            />
           </span>
         </div>
       ) : null}

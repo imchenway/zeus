@@ -20278,6 +20278,16 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   flex-wrap: wrap;
   gap: 10px;
 }
+/* 数字团队入口在任务详情内直接展开选择，读取失败时保留同排重试。 */
+.macos-ai-app .task-digital-team-selector {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-inline-size: 0;
+}
+.macos-ai-app .task-digital-team-selector > .zeus-select {
+  min-inline-size: 220px;
+}
 .macos-ai-app .task-assigned-employees,
 .macos-ai-app .task-assigned-employees > span {
   display: flex;

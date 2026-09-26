@@ -39,6 +39,9 @@ import './digitalTeams.css';
 /** 数字团队页面支持的两个真实数据视图。 */
 type DigitalTeamView = 'editor' | 'runs';
 
+/** 任务详情下拉进入数字团队时携带的明确目标。 */
+export type DigitalTeamEntrySelection = { kind: 'template'; templateId: string } | { kind: 'run'; runId: string } | { kind: 'manage' };
+
 /** 本地模板草稿只保留服务端允许保存的字段。 */
 type TemplateDraft = Pick<DigitalTeamTemplateSaveInput, 'name' | 'description' | 'definition'> & { id: string | null; revision: number | null };
 
@@ -85,6 +88,8 @@ export interface DigitalTeamWorkspaceProps {
   initialProjectId?: string;
   /** 从任务详情进入时，运行直接绑定该任务。 */
   task?: TaskRecord;
+  /** 从任务详情下拉选择的工作流、运行或管理入口。 */
+  initialSelection?: DigitalTeamEntrySelection;
   /** 返回原任务详情。 */
   onBackToTask?(): void;
   /** 打开当前项目的角色权限配置。 */
@@ -103,8 +108,8 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   const api = hasDigitalTeamApi(props.client) ? props.client : null;
   /** 初始项目优先沿用当前工作区。 */
   const [projectId, setProjectId] = useState(() => validInitialProjectId(props.projects, props.task?.projectId ?? props.initialProjectId));
-  /** 页面默认进入流程编辑器。 */
-  const [view, setView] = useState<DigitalTeamView>('editor');
+  /** 运行记录入口直接进入运行视图，其余入口从流程视图继续。 */
+  const [view, setView] = useState<DigitalTeamView>(() => (props.initialSelection?.kind === 'run' ? 'runs' : 'editor'));
   /** 当前项目的已保存模板。 */
   const [templates, setTemplates] = useState<DigitalTeamWorkflowTemplateRecord[]>([]);
   /** 当前项目的真实员工角色。 */
@@ -200,7 +205,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
 
   /** 并行读取模板、员工和运行，避免串行等待。 */
   const refreshProject = useCallback(
-    async (preferredTemplateId?: string | null, preferredRunId?: string | null): Promise<void> => {
+    async (preferredTemplateId?: string | null, preferredRunId?: string | null, entrySelection?: DigitalTeamEntrySelection): Promise<void> => {
       if (!api || !projectId) return;
       if (dirty) {
         setError(zh ? '当前流程尚未保存，请先保存或点击“重开”放弃修改。' : 'Save or reopen the current workflow before refreshing.');
@@ -222,7 +227,13 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
         setCanvasGeneration((current) => current + 1);
         setDirty(false);
         const nextRun = visibleRuns.find((run) => run.id === preferredRunId) ?? visibleRuns.find((run) => run.id === selectedRun?.run.id) ?? (props.task ? visibleRuns[0] : null);
-        if (props.task && nextRun) setView('runs');
+        if (entrySelection?.kind === 'template' && nextTemplate?.id === entrySelection.templateId && nextTemplate.ready && !visibleRuns.some((run) => !terminalRunStatuses.has(run.status))) {
+          setView('editor');
+          setRunDraft({ title: props.task?.title ?? nextTemplate.name, description: props.task?.description ?? nextTemplate.description, confirmCommittedBaseline: false });
+          setRunDialogOpen(true);
+        } else if (entrySelection?.kind === 'run' && nextRun?.id === entrySelection.runId) setView('runs');
+        else if (entrySelection?.kind === 'manage') setView('editor');
+        else if (props.task && nextRun) setView('runs');
         /** 刷新选中运行时重新读取尝试历史，不能只替换运行标题行。 */
         const nextProjection = nextRun ? await api.loadDigitalTeamRun(nextRun.id) : null;
         if (revision !== loadRevisionRef.current) return;
@@ -238,7 +249,11 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   );
 
   useEffect(() => {
-    void refreshProject();
+    void refreshProject(
+      props.initialSelection?.kind === 'template' ? props.initialSelection.templateId : undefined,
+      props.initialSelection?.kind === 'run' ? props.initialSelection.runId : undefined,
+      props.initialSelection,
+    );
     return () => {
       loadRevisionRef.current += 1;
     };
