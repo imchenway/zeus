@@ -1,8 +1,9 @@
 import { assistantMessageMetadata, classifyAssistantMessage } from '@zeus/shared';
 import type { CodexAppServerEvent, CodexThreadGoal } from '@zeus/ai-runtime';
-import { calculateCacheHitRate, parseCanonicalRequestUserInputQuestions, type ConversationResource, type NativeTokenUsageSnapshot } from '@zeus/shared';
+import { calculateCacheHitRate, codexUsageObservationIdentity, parseCanonicalRequestUserInputQuestions, type ConversationResource, type NativeTokenUsageSnapshot } from '@zeus/shared';
 import {
   projectConversationTurnFailure,
+  conversationModelRequestId,
   type ZeusConversationGoalRecord,
   type ZeusConversationItemRecord,
   type ZeusConversationPlanActionRecord,
@@ -1164,7 +1165,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       }
     }
     const settings = options.conversations.getProviderSettingsSnapshot(conversation.id);
-    const model = context?.model ?? settings?.model ?? conversation.providerModel;
+    const model = typeof params.model === 'string' ? params.model : (context?.model ?? settings?.model ?? conversation.providerModel);
     if (!model) throw coordinatorError('ZEUS_NATIVE_PROVIDER_EVENT_INVALID', 'Raw response event cannot resolve its model.');
     const usage = isRecord(params.usage) ? tokenUsageBreakdown(params.usage) : null;
     /** 原始响应按真实请求身份固定费用，后续累计通知不能重定价。 */
@@ -1178,30 +1179,30 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
             requestId: providerRequestId,
             model,
             modelSourceId: context?.modelSourceId ?? conversation.modelSourceId,
-            serviceTier: typeof params.serviceTier === 'string' ? params.serviceTier : (context?.serviceTier ?? settings?.serviceTier),
+            serviceTier: Object.prototype.hasOwnProperty.call(params, 'serviceTier') && (params.serviceTier === null || typeof params.serviceTier === 'string') ? params.serviceTier : (settings?.serviceTier ?? context?.serviceTier ?? null),
             usage,
             occurredAt: event.receivedAt,
           })
         : null;
-    const timing = modelRequestTiming.complete(conversation.id, turn.id);
-    const completedAt = event.receivedAt;
-    const measurementComplete = usage !== null && timing.firstTextOutputAt !== null && Date.parse(completedAt) > Date.parse(timing.firstTextOutputAt) && !timing.hasNonTextOutput;
     const recordedRequests = options.execution.listModelRequestsForTurn(conversation.id, turn.id);
-    const matchingFallback = usage
-      ? [...recordedRequests]
-          .reverse()
-          .find(
-            (request) =>
-              request.providerRequestId === null &&
-              request.inputTokens === usage.inputTokens &&
-              request.cachedInputTokens === usage.cachedInputTokens &&
-              request.cacheWriteInputTokens === usage.cacheWriteInputTokens &&
-              request.outputTokens === usage.outputTokens &&
-              request.reasoningOutputTokens === usage.reasoningOutputTokens &&
-              request.totalTokens === usage.totalTokens,
-          )
-      : undefined;
+    /** 费用账本已确认的内部身份同时用于请求观测；歧义不得另造一条请求。 */
+    const canonicalRequestId = requestEstimate ? requestEstimate.requestId : providerRequestId;
+    /** 老记录仍按真实响应身份识别，新记录按账本统一身份识别。 */
+    const observationIdentity = `codex-request:${threadId}:${canonicalRequestId}`;
+    /** 只按已确认的身份关联，避免用相同 Token 数覆盖另一请求的时序。 */
+    const matchingFallback = recordedRequests.find((request) => request.providerRequestId === providerRequestId || (canonicalRequestId !== null && request.id === conversationModelRequestId(conversation.id, observationIdentity)));
+    /** 迟到的另一类通知只补身份，不能清空已经开始的下一请求时序。 */
+    const timing = matchingFallback
+      ? { firstVisibleOutputAt: matchingFallback.firstVisibleOutputAt, firstTextOutputAt: matchingFallback.firstTextOutputAt, hasNonTextOutput: !matchingFallback.measurementComplete }
+      : canonicalRequestId === null
+        ? { firstVisibleOutputAt: null, firstTextOutputAt: null, hasNonTextOutput: true }
+        : modelRequestTiming.complete(conversation.id, turn.id);
+    /** 已观测请求保留其完成时间，重放不改变性能统计。 */
+    const completedAt = matchingFallback?.completedAt ?? event.receivedAt;
+    /** 仅纯文本且起止边界完整的请求可以参与速度统计。 */
+    const measurementComplete = usage !== null && timing.firstTextOutputAt !== null && Date.parse(completedAt) > Date.parse(timing.firstTextOutputAt) && !timing.hasNonTextOutput;
     if (matchingFallback) {
+      options.execution.enrichModelRequest(matchingFallback.id, { estimatedUsd: requestEstimate?.apiEquivalentUsd ?? null });
       options.execution.attachModelRequestMeasurement(matchingFallback.id, {
         providerRequestId,
         firstVisibleOutputAt: timing.firstVisibleOutputAt,
@@ -1209,14 +1210,14 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
         completedAt,
         measurementComplete,
       });
-    } else {
+    } else if (canonicalRequestId !== null) {
       const exactRequestCount = recordedRequests.filter((request) => request.providerRequestId !== null).length;
       options.execution.observeModelRequest({
         conversationId: conversation.id,
         turnId: turn.id,
         segmentId: segment.id,
         requestKind: exactRequestCount === 0 ? 'inference' : 'tool_continuation',
-        observationIdentity: `codex-response:${threadId}:${providerRequestId}`,
+        observationIdentity,
         modelId: model,
         contextWindow: null,
         inputTokens: usage?.inputTokens ?? null,
@@ -1254,16 +1255,37 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     const settings = options.conversations.getProviderSettingsSnapshot(conversation.id);
     const eventServiceTier = Object.prototype.hasOwnProperty.call(tokenUsage, 'serviceTier') && (tokenUsage.serviceTier === null || typeof tokenUsage.serviceTier === 'string') ? tokenUsage.serviceTier : undefined;
     const actualServiceTier = eventServiceTier !== undefined ? eventServiceTier : settings && Object.prototype.hasOwnProperty.call(settings, 'serviceTier') ? (settings.serviceTier ?? null) : (context?.serviceTier ?? null);
-    const model = context?.model ?? settings?.model ?? conversation.providerModel;
+    const model = typeof tokenUsage.model === 'string' ? tokenUsage.model : (context?.model ?? settings?.model ?? conversation.providerModel);
     if (!model) throw coordinatorError('ZEUS_NATIVE_PROVIDER_EVENT_INVALID', 'Token usage event cannot resolve its model.');
     const modelContextWindow = tokenUsage.modelContextWindow === null || tokenUsage.modelContextWindow === undefined ? null : requireNumber(tokenUsage.modelContextWindow, 'modelContextWindow');
+    /** 用原生线程和累计进度固化身份，容量通知和事件重放不能再产生新费用。 */
+    const observationId = codexUsageObservationIdentity(requireString(threadId, 'provider thread id'), providerTurnId, total);
+    /** 仅明确包含单请求用量的通知参与计价；累计量不能冒充一次请求。 */
+    const requestEstimate =
+      options.usage && isRecord(tokenUsage.last) && last.totalTokens > 0
+        ? await options.usage.recordRequest({
+            projectId: conversation.projectId,
+            conversationId: conversation.id,
+            providerThreadId: threadId!,
+            providerTurnId,
+            requestId: observationId,
+            observationId,
+            model,
+            modelSourceId: context?.modelSourceId ?? conversation.modelSourceId,
+            serviceTier: actualServiceTier,
+            usage: last,
+            occurredAt: event.receivedAt,
+          })
+        : null;
+    /** 有账本时以其关联结果为准；无账本时仅保留用量观测。 */
+    const canonicalRequestId = requestEstimate ? requestEstimate.requestId : isRecord(tokenUsage.last) && last.totalTokens > 0 ? observationId : null;
     const snapshot: NativeTokenUsageSnapshot = options.usage
       ? await options.usage.recordTurn({
           generationId: event.generationId,
           sequence: event.sequence,
           projectId: conversation.projectId,
           conversationId: conversation.id,
-          providerThreadId: requireString(conversation.providerThreadId, 'provider thread id'),
+          providerThreadId: requireString(threadId, 'provider thread id'),
           providerTurnId,
           model,
           modelSourceId: context?.modelSourceId ?? conversation.modelSourceId,
@@ -1292,24 +1314,16 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
         };
     options.conversations.upsertProviderTokenUsageSnapshot(conversation.id, snapshot);
     const segment = threadId ? options.execution.segmentByNativeSession(threadId, conversation.id) : undefined;
-    if (segment && turn) {
+    if (segment && turn && canonicalRequestId !== null) {
       const recordedRequests = options.execution.listModelRequestsForTurn(conversation.id, turn.id);
-      const latestRecordedRequest = recordedRequests.at(-1);
       // 用最近的模型产物划分请求边界；同轮曾经压缩不代表后续正常回答也是压缩。
       const turnModelItems = options.providerItems.listByConversation(conversation.id).filter((item) => item.turnId === turn.id && item.itemType !== 'userMessage');
       const latestModelItem = turnModelItems.reduce<ZeusConversationItemRecord | undefined>((latest, item) => (!latest || item.updatedAt > latest.updatedAt ? item : latest), undefined);
       const contextCompactionRequest = turnModelItems.some((item) => item.itemType === 'contextCompaction' && item.status === 'in_progress') || latestModelItem?.itemType === 'contextCompaction';
-      const exactRequest =
-        latestRecordedRequest &&
-        latestRecordedRequest.providerRequestId !== null &&
-        latestRecordedRequest.inputTokens === last.inputTokens &&
-        latestRecordedRequest.cachedInputTokens === last.cachedInputTokens &&
-        latestRecordedRequest.cacheWriteInputTokens === last.cacheWriteInputTokens &&
-        latestRecordedRequest.outputTokens === last.outputTokens &&
-        latestRecordedRequest.reasoningOutputTokens === last.reasoningOutputTokens &&
-        latestRecordedRequest.totalTokens === last.totalTokens
-          ? latestRecordedRequest
-          : undefined;
+      /** 复用两类事件已经对齐的内部请求身份。 */
+      const observationIdentity = `codex-request:${threadId}:${canonicalRequestId}`;
+      /** 重复累计通知只补信息，不清空下一请求的时序跟踪器。 */
+      const exactRequest = recordedRequests.find((request) => request.id === conversationModelRequestId(conversation.id, observationIdentity) || request.providerRequestId === canonicalRequestId);
       // 显式请求类型优先；兼容事件根据当前产物判别，压缩后的首次回答仍属于推理。
       const requestKind =
         tokenUsage.requestKind === 'context_compaction'
@@ -1326,7 +1340,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
                     ? 'tool_continuation'
                     : 'inference';
       if (exactRequest) {
-        options.execution.enrichModelRequest(exactRequest.id, { contextWindow: modelContextWindow, estimatedUsd: snapshot.lastApiEquivalentUsd });
+        options.execution.enrichModelRequest(exactRequest.id, { contextWindow: modelContextWindow, estimatedUsd: requestEstimate?.apiEquivalentUsd ?? null });
       } else {
         // 当前 Codex app-server 的兼容协议会在每个模型请求及其工具输出完成后发送
         // tokenUsage/updated，但不发送 rawResponse/completed。只有本段没有非文本输出时，
@@ -1340,7 +1354,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
           segmentId: segment.id,
           requestKind,
           // 老版本 app-server 没有 rawResponse 事件时仍保留精确用量，但不伪造请求时序。
-          observationIdentity: `codex:${providerTurnId}:${JSON.stringify([last.inputTokens, last.cachedInputTokens, last.cacheWriteInputTokens, last.outputTokens, last.reasoningOutputTokens, last.totalTokens, modelContextWindow])}`,
+          observationIdentity,
           modelId: model,
           contextWindow: modelContextWindow,
           inputTokens: last.inputTokens,
@@ -1349,7 +1363,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
           outputTokens: last.outputTokens,
           reasoningOutputTokens: last.reasoningOutputTokens,
           totalTokens: last.totalTokens,
-          estimatedUsd: snapshot.lastApiEquivalentUsd,
+          estimatedUsd: requestEstimate?.apiEquivalentUsd ?? null,
           usageComplete: true,
           providerRequestId: null,
           firstVisibleOutputAt: timing.firstVisibleOutputAt,
