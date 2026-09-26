@@ -821,15 +821,7 @@ export function CodexAccountSettings({ controller }: { controller: ModelSetupCon
           {controller.modelsChecked ? ` · ${presentedModels.length}` : ''}
         </strong>
         {!controller.modelsChecked ? (
-          <small>
-            {controller.error
-              ? zh
-                ? '暂时无法读取当前账号的模型目录。'
-                : 'The current account model catalog is temporarily unavailable.'
-              : zh
-                ? '正在读取当前账号的模型目录…'
-                : 'Loading the current account model catalog…'}
-          </small>
+          <small>{controller.error ? (zh ? '暂时无法读取当前账号的模型目录。' : 'The current account model catalog is temporarily unavailable.') : zh ? '正在读取当前账号的模型目录…' : 'Loading the current account model catalog…'}</small>
         ) : presentedModels.length === 0 ? (
           <small>{zh ? '当前运行时没有返回可用的 Codex 模型。' : 'The current runtime returned no available Codex models.'}</small>
         ) : (
