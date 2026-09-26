@@ -1441,13 +1441,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         <div className="task-detail-arrangement">
           <span className="task-detail-summary-row">
             <small>{zh ? '数字团队' : 'Digital team'}</small>
-            <TaskDigitalTeamSelector
-              task={props.task}
-              client={props.digitalTeamClient ?? null}
-              language={props.language}
-              terminalReadOnly={props.terminalReadOnly}
-              onSelect={props.onUseDigitalTeam}
-            />
+            <TaskDigitalTeamSelector task={props.task} client={props.digitalTeamClient ?? null} language={props.language} terminalReadOnly={props.terminalReadOnly} onSelect={props.onUseDigitalTeam} />
           </span>
         </div>
       ) : null}

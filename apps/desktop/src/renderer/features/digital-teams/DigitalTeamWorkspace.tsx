@@ -249,11 +249,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   );
 
   useEffect(() => {
-    void refreshProject(
-      props.initialSelection?.kind === 'template' ? props.initialSelection.templateId : undefined,
-      props.initialSelection?.kind === 'run' ? props.initialSelection.runId : undefined,
-      props.initialSelection,
-    );
+    void refreshProject(props.initialSelection?.kind === 'template' ? props.initialSelection.templateId : undefined, props.initialSelection?.kind === 'run' ? props.initialSelection.runId : undefined, props.initialSelection);
     return () => {
       loadRevisionRef.current += 1;
     };
