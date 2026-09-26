@@ -1606,6 +1606,8 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
               'agents.max_depth': 2,
               // 普通模式也使用原生问题卡，避免切换模型后只能在计划模式提问。
               'features.default_mode_request_user_input': true,
+              // 只为 Zeus 管理的线程开启原生步骤计划，不修改用户终端的 Codex 配置。
+              'tools.update_plan.enabled': true,
             },
           }),
           { traceIdentity: input.traceIdentity },
@@ -1663,6 +1665,8 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
               'features.multi_agent_v2.max_concurrent_threads_per_session': 5,
               'agents.max_depth': 2,
               'features.default_mode_request_user_input': true,
+              // 既有线程恢复时同样开启原生计划，沿用 thread/start 的宿主配置。
+              'tools.update_plan.enabled': true,
             },
           }),
           // 恢复耗时随完整历史增长，固定超时无法区分“仍在加载”和“已经失败”。

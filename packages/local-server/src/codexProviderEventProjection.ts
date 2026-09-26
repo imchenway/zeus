@@ -439,20 +439,19 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       }
       options.conversations.bindProvider(conversation.id, { providerId: 'codex', providerThreadId: threadId, providerModel: conversation.providerModel, providerState: 'active' });
       runStates.set(conversation.id, { type: 'active', turnId: providerTurnId, phase: 'prework' });
-      if (!existingTurn) {
-        broadcast = {
-          type: 'conversation.turn.started',
-          payload: {
-            conversationId: conversation.id,
-            projectId: conversation.projectId,
-            providerThreadId: threadId,
-            providerTurnId,
-            ...(turn.clientSubmissionId ? { submissionId: turn.clientSubmissionId } : {}),
-            status: 'running',
-            startedAt: turn.startedAt ?? timestamp,
-          },
-        };
-      }
+      /** 队列会预建持久轮次；是否已有数据库记录不能决定 Renderer 是否收到开始通知。 */
+      broadcast = {
+        type: 'conversation.turn.started',
+        payload: {
+          conversationId: conversation.id,
+          projectId: conversation.projectId,
+          providerThreadId: threadId,
+          providerTurnId,
+          ...(turn.clientSubmissionId ? { submissionId: turn.clientSubmissionId } : {}),
+          status: 'running',
+          startedAt: turn.startedAt ?? timestamp,
+        },
+      };
     }
   } else if (event.method === 'turn/plan/updated' && conversation && threadId) {
     const providerTurnId = providerTurnIdFrom(params);
