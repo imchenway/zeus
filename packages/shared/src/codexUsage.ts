@@ -7,6 +7,16 @@ export interface TokenUsageBreakdown {
   reasoningOutputTokens: number;
 }
 
+/** 固定字段顺序比较供应商用量，避免对象字段顺序影响请求关联。 */
+export function tokenUsageSignature(usage: TokenUsageBreakdown): string {
+  return JSON.stringify([usage.inputTokens, usage.cachedInputTokens, usage.cacheWriteInputTokens, usage.outputTokens, usage.reasoningOutputTokens, usage.totalTokens]);
+}
+
+/** 累计进度相同的通知是同一次观察；相同单次用量但累计进度不同的请求保持独立。 */
+export function codexUsageObservationIdentity(threadId: string, turnId: string, total: TokenUsageBreakdown): string {
+  return `codex-usage:${threadId}:${turnId}:${tokenUsageSignature(total)}`;
+}
+
 export interface CodexUsageRateSnapshot {
   /** 其他供应商的原币公开费率及依据。 */
   price?: import('./modelPricing.js').ModelPrice;

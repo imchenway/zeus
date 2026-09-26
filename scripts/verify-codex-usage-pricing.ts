@@ -1,16 +1,17 @@
 /** 缺价补算专项探针：临时数据库验证实际记账路径，按需运行，不加入发布门禁。 */
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CodexUsageLedgerRepository, ConversationRepository, ProjectRepository, SettingRepository, createZeusDatabase } from '../packages/storage/src/index.js';
-import { emptyTokenUsageBreakdown, estimateCodexUsage } from '../packages/shared/src/codexUsage.js';
+import { codexUsageObservationIdentity, emptyTokenUsageBreakdown, estimateCodexUsage } from '../packages/shared/src/codexUsage.js';
 import { createCodexUsageService } from '../packages/local-server/src/codexUsageService.js';
 import { parseBuiltInModelPrices, readBuiltInPricingPage } from '../packages/local-server/src/builtInModelPricing.js';
 import { readPricingDocument } from '../packages/local-server/src/modelPricingDocument.js';
 import { parseNewApiPricing, parseExtractedPrices, createModelPricingService, builtInPricingUrls, validModelPrice } from '../packages/local-server/src/modelPricingService.js';
 import { estimateModelPrice, aggregateRequestPrices, sumEstimatedCosts } from '../packages/shared/src/modelPricing.js';
 import { estimatePublishedCodexUsage, fetchPublishedCodexPricing, parsePublishedCodexPrices } from '../packages/local-server/src/codexUsagePricing.js';
+import { readCodexUsageHistory } from '../packages/local-server/src/codexUsageHistory.js';
 
 /** 探针专用模型不会与实际供应商模型或账号关联。 */
 const model = 'codex-price-probe';
@@ -28,6 +29,10 @@ const document = ['Standard', 'Fast']
 let now = Date.parse('2026-09-23T00:00:00.000Z');
 /** 真实用量中的缓存读取、写入和普通输入分别计价。 */
 const usage = { ...emptyTokenUsageBreakdown(), inputTokens: 1_000, cachedInputTokens: 400, cacheWriteInputTokens: 100, outputTokens: 200, totalTokens: 1_200 };
+/** 相同请求多次发生时生成真实推进的累计量，用于检查请求身份。 */
+function scaleUsage(count: number): typeof usage {
+  return Object.fromEntries(Object.entries(usage).map(([key, value]) => [key, value * count])) as typeof usage;
+}
 /** 原文验证一次，估算器消费已验证目录。 */
 const catalog = { document, fetchedAt: new Date(now).toISOString() };
 /** 提取的价格表用于各档位计算检查。 */
@@ -139,6 +144,7 @@ try {
   assert.equal(ledger.findByProviderTurn('codex', 'current', 'current')?.estimate.rateSnapshot.backfilledAt, undefined);
   assert.equal(downloads, 1);
   assert.equal(ledger.findByProviderTurn('codex', 'current', 'current')?.estimate.requests?.length, 1);
+  assert.equal(ledger.findByProviderTurn('codex', 'current', 'current')?.usageComplete, true);
   seed('not-published', 'codex', 'not-published');
   now = Date.now() + 2 * 60 * 60_000;
   await service.refreshMissingPricing();
@@ -155,12 +161,138 @@ try {
   assert.ok(nextRequest.apiEquivalentUsd! > 0.00305);
   assert.equal(updated.estimate.requests?.length, 2);
   assert.equal(updated.estimate.apiEquivalentUsd, 0.00305 + nextRequest.apiEquivalentUsd!);
+  /** 跨重启收到较早累计通知时，费用、用量和原日期都不能倒退。 */
+  const turnInput = {
+    generationId: 'probe',
+    sequence: 2,
+    projectId: 'probe',
+    conversationId: 'current',
+    providerThreadId: 'current',
+    providerTurnId: 'current',
+    model,
+    total: scaleUsage(2),
+    last: usage,
+    modelContextWindow: 1_000_000,
+    occurredAt: new Date(now).toISOString(),
+  };
+  await service.recordTurn(turnInput);
+  await service.recordTurn({ ...turnInput, generationId: 'restarted', total: usage, occurredAt: new Date(now - 1_000).toISOString() });
+  // 相同累计量在隔日重放时，也不能把已有费用移动到新的统计日期。
+  await service.recordTurn({ ...turnInput, generationId: 'restarted-again', occurredAt: new Date(now + 86_400_000).toISOString() });
+  assert.equal(ledger.findByProviderTurn('codex', 'current', 'current')?.usage.totalTokens, usage.totalTokens * 2);
+  assert.equal(ledger.findByProviderTurn('codex', 'current', 'current')?.occurredAt, turnInput.occurredAt);
+  /** 两类通知不论先后只形成一笔费用；同用量的新累计进度形成独立请求。 */
+  for (const order of ['observation-first', 'response-first'] as const) {
+    /** 每组使用独立线程和轮次，确保没有其它场景掩盖累计基线。 */
+    const requestInput = { projectId: 'probe', conversationId: order, providerThreadId: order, providerTurnId: order, model, serviceTier: 'priority', usage, occurredAt: new Date(now).toISOString() };
+    /** 第一条兼容通知的累计身份。 */
+    const observationId = codexUsageObservationIdentity(order, order, usage);
+    /** 同一请求的两个外部身份交替先到。 */
+    const inputs = [
+      { ...requestInput, requestId: observationId, observationId },
+      { ...requestInput, requestId: 'response-1' },
+    ];
+    if (order === 'response-first') inputs.reverse();
+    /** 首次返回的内部身份必须在后续关联中保持一致。 */
+    const first = await service.recordRequest(inputs[0]!);
+    assert.equal((await service.recordRequest(inputs[1]!)).requestId, first.requestId);
+    await service.recordRequest(inputs[0]!);
+    assert.equal(ledger.findByProviderTurn('codex', order, order)?.estimate.requests?.length, 1);
+    /** 新请求用量与上一笔完全相同，但累计进度已经推进。 */
+    const secondObservation = codexUsageObservationIdentity(order, order, scaleUsage(2));
+    await service.recordRequest({ ...requestInput, requestId: secondObservation, observationId: secondObservation });
+    await service.recordRequest({ ...requestInput, requestId: 'response-2' });
+    assert.equal(ledger.findByProviderTurn('codex', order, order)?.estimate.requests?.length, 2);
+    assert.equal(ledger.findByProviderTurn('codex', order, order)?.estimate.apiEquivalentUsd, first.apiEquivalentUsd! * 2);
+  }
+  /** 多个同用量候选不能猜测归属，也不能再新增一笔收费。 */
+  for (const index of [1, 2]) {
+    /** 累计进度区分两个真实请求。 */
+    const observationId = codexUsageObservationIdentity('ambiguous', 'ambiguous', scaleUsage(index));
+    await service.recordRequest({
+      projectId: 'probe',
+      conversationId: 'ambiguous',
+      providerThreadId: 'ambiguous',
+      providerTurnId: 'ambiguous',
+      requestId: observationId,
+      observationId,
+      model,
+      usage,
+      occurredAt: new Date(now).toISOString(),
+    });
+  }
+  assert.equal(
+    (await service.recordRequest({ projectId: 'probe', conversationId: 'ambiguous', providerThreadId: 'ambiguous', providerTurnId: 'ambiguous', requestId: 'late-response', model, usage, occurredAt: new Date(now).toISOString() })).requestId,
+    null,
+  );
+  assert.equal(ledger.findByProviderTurn('codex', 'ambiguous', 'ambiguous')?.estimate.requests?.length, 2);
+  /** 原生历史中的重复通知去重，但相同 last 的不同累计进度保留。 */
+  const historyPath = join(root, 'history.jsonl');
+  /** 原生协议使用下划线字段，缓存和推理用量不能在转换时丢失。 */
+  const nativeUsage = { input_tokens: 1_000, cached_input_tokens: 400, cache_write_input_tokens: 100, output_tokens: 200, reasoning_output_tokens: 0, total_tokens: 1_200 };
+  /** 文件只含用量元数据，不写入真实会话正文。 */
+  const historyEvents = [
+    { type: 'session_meta', payload: { id: 'history' } },
+    { type: 'turn_context', payload: { turn_id: 'turn', model, service_tier: 'priority' } },
+    ...[1, 1, 2].map((count) => ({
+      type: 'event_msg',
+      timestamp: new Date(now).toISOString(),
+      payload: { type: 'token_count', info: { last_token_usage: nativeUsage, total_token_usage: Object.fromEntries(Object.entries(nativeUsage).map(([key, value]) => [key, value * count])) } },
+    })),
+  ];
+  await writeFile(historyPath, historyEvents.map((entry) => JSON.stringify(entry)).join('\n'));
+  assert.equal((await readCodexUsageHistory(historyPath, 'history')).length, 2);
+  assert.equal((await readCodexUsageHistory(historyPath, 'wrong-thread')).length, 0);
+  /** 缺价请求保留快速档位，目录恢复后按单请求补价，随后新请求不遮掉补算标记。 */
+  const deferredModel = `${model}-later`;
+  await service.recordRequest({
+    projectId: 'probe',
+    conversationId: 'deferred',
+    providerThreadId: 'deferred',
+    providerTurnId: 'deferred',
+    requestId: 'first',
+    model: deferredModel,
+    serviceTier: 'priority',
+    usage,
+    occurredAt: new Date(now).toISOString(),
+  });
+  assert.equal(ledger.findByProviderTurn('codex', 'deferred', 'deferred')?.estimate.requests?.[0]?.estimate.rateSnapshot.serviceTier, 'priority');
+  servedDocument += document.replaceAll(model, deferredModel);
+  now += 2 * 60 * 60_000;
+  await service.refreshMissingPricing();
+  assert.ok(ledger.findByProviderTurn('codex', 'deferred', 'deferred')?.estimate.apiEquivalentUsd);
+  await service.recordRequest({
+    projectId: 'probe',
+    conversationId: 'deferred',
+    providerThreadId: 'deferred',
+    providerTurnId: 'deferred',
+    requestId: 'second',
+    model: deferredModel,
+    serviceTier: 'priority',
+    usage,
+    occurredAt: new Date(now).toISOString(),
+  });
+  assert.ok(ledger.findByProviderTurn('codex', 'deferred', 'deferred')?.estimate.rateSnapshot.backfilledAt);
+  await service.dispose();
+  service = createService();
+  await service.recordRequest({
+    projectId: 'probe',
+    conversationId: 'observation-first',
+    providerThreadId: 'observation-first',
+    providerTurnId: 'observation-first',
+    requestId: 'response-1',
+    model,
+    serviceTier: 'priority',
+    usage,
+    occurredAt: new Date(now).toISOString(),
+  });
+  assert.equal(ledger.findByProviderTurn('codex', 'observation-first', 'observation-first')?.estimate.requests?.length, 2);
   await service.dispose();
   service = createService(false);
   now += 10 * 60_000;
   await service.refreshMissingPricing();
-  assert.equal(downloads, 3);
-  console.log('通过：公开表解析、金额与档位、并发合并、历史补价标记、已知价格保留、离线缓存、新轮次计价、失败冷却、第三方隔离、只读禁写。');
+  assert.equal(downloads, 4);
+  console.log('通过：两类事件先后顺序、同用量独立请求、歧义不重计、重启重放、首轮完整性、原生历史身份、请求缺价恢复、补算标记保留，以及既有定价与隔离检查。');
 } finally {
   globalThis.fetch = originalFetch;
   await service?.dispose();

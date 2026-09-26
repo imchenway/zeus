@@ -49,8 +49,12 @@ export interface ModelPricingCatalog {
 
 /** 每次真实请求保存独立费率和用量，重放不新增收费。 */
 export interface UsageRequestPriceSnapshot {
-  /** 同一轮内稳定的真实请求身份。 */
+  /** 同一轮内稳定的内部请求身份，关联后仍保留首次记录的身份。 */
   id: string;
+  /** 真实响应身份；与累计用量观察身份共同指向同一笔费用。 */
+  responseId?: string;
+  /** 由线程、轮次和累计用量确定的观察身份，不使用单次 Token 数去重。 */
+  observationId?: string;
   /** 请求记录的时间。 */
   occurredAt: string;
   /** 供应商报告的用量。 */
@@ -60,8 +64,8 @@ export interface UsageRequestPriceSnapshot {
 }
 
 /** 统一空费率，缺价保留真实模型与用量。 */
-export function unavailableRateSnapshot(model: string): CodexUsageRateSnapshot {
-  return { catalogDate: 'unavailable', model, normalizedModel: null, serviceTier: null, longContext: false, creditsPerMillion: null, usdPerMillion: null, sourceUrls: [] };
+export function unavailableRateSnapshot(model: string, serviceTier: string | null = null): CodexUsageRateSnapshot {
+  return { catalogDate: 'unavailable', model, normalizedModel: null, serviceTier, longContext: false, creditsPerMillion: null, usdPerMillion: null, sourceUrls: [] };
 }
 
 /** 根据一条已校验的公开价格计算，缺少正在使用的缓存费率时保留未知。 */
@@ -136,6 +140,11 @@ export function aggregateRequestPrices(requests: UsageRequestPriceSnapshot[]): C
   const billableTokens = estimates.reduce((total, estimate) => total + estimate.billableTokens, 0);
   /** 分子来自各请求自己的费率覆盖范围。 */
   const pricedTokens = estimates.reduce((total, estimate) => total + estimate.pricedTokens, 0);
+  /** 任一请求补算后汇总持续保留标记，正常新请求不能遮掉历史依据。 */
+  const backfilledAt = estimates
+    .flatMap((estimate) => (estimate.rateSnapshot.backfilledAt ? [estimate.rateSnapshot.backfilledAt] : []))
+    .sort()
+    .at(-1);
   return {
     requests,
     costs: sumEstimatedCosts(estimates),
@@ -145,7 +154,7 @@ export function aggregateRequestPrices(requests: UsageRequestPriceSnapshot[]): C
     billableTokens,
     pricedTokens,
     coverage: billableTokens ? pricedTokens / billableTokens : null,
-    rateSnapshot: { ...(estimates.at(-1)?.rateSnapshot ?? unavailableRateSnapshot('')), sourceUrls: [...new Set(estimates.flatMap((estimate) => estimate.rateSnapshot.sourceUrls))] },
+    rateSnapshot: { ...(estimates.at(-1)?.rateSnapshot ?? unavailableRateSnapshot('')), ...(backfilledAt ? { backfilledAt } : {}), sourceUrls: [...new Set(estimates.flatMap((estimate) => estimate.rateSnapshot.sourceUrls))] },
   };
 }
 
