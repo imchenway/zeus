@@ -26,6 +26,14 @@ function verifyPackagedAppIdentity(appPath, variant) {
   if (basename(appPath) !== `${expected.name}.app` || actual.bundleId !== expected.bundleId || actual.name !== expected.name || actual.executable !== expected.executable || actual.version !== actual.buildVersion) {
     throw new Error(`Zeus 应用包身份不一致：variant=${variant} actual=${JSON.stringify(actual)}；请使用 pnpm package:mac 构建完整测试包。`);
   }
+  /** 只接受包内图标文件名，避免错误的元信息把校验指向包外资源。 */
+  const iconFile = readInfo('CFBundleIconFile');
+  if (basename(iconFile) !== iconFile) throw new Error('Zeus 应用包的 CFBundleIconFile 必须是资源文件名。');
+  /** 校验真实容器与声明长度，拦截把 PNG 改名为 ICNS 后直接打包的错误。 */
+  const icon = readFileSync(join(appPath, 'Contents', 'Resources', iconFile));
+  if (icon.length < 16 || icon.toString('ascii', 0, 4) !== 'icns' || icon.readUInt32BE(4) !== icon.length) {
+    throw new Error(`Zeus 应用图标不是完整的 ICNS 文件：${iconFile}；请用 iconutil 从源图生成，不能直接改扩展名。`);
+  }
   return actual;
 }
 
