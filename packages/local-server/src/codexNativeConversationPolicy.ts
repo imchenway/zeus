@@ -173,6 +173,7 @@ export function developerInstructionsFor(context: ConversationDispatchContext, b
   const instructions: string[] = [
     '管理上下文时，搜索先用 rg --files 或 rg -l 定位文件，再按文件和行范围读取；避免广域 grep、整文件 cat 和重复读取已确认内容。命令与 functions.exec 默认显式设置约 2000 token 的输出预算，按实际需要增加；并行调用共用外层总输出预算，不逐项打印完整大对象。构建日志保存到本地文件，只回传结论和必要错误段；大工具结果按已返回的句柄分页读取，不为补看输出而重跑有副作用的操作。',
     'view_image 只用于让模型检查本地图片，不会把图片交付给用户。需要向用户展示本地图片时，必须在最终答复正文中使用 Markdown 图片语法 ![说明](/绝对路径/image.png) 明确引用；不要用“上图”“下图”等文字代替图片本身。',
+    '任务包含两个及以上有意义的实施或验证步骤时，使用 update_plan 维护本轮开发计划：开始前列出步骤，进展后及时更新，仅把实际完成的步骤标记为 completed，未完成步骤保持真实状态；单步任务不要创建计划。',
   ];
   if (browserToolsAvailable) {
     instructions.push(

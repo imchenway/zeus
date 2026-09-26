@@ -45,6 +45,8 @@ export const piSdkBinaryVersion = `pi-sdk-${VERSION}`;
 export interface PiZeusToolRequest {
   requestId: string;
   session: AgentSessionIdentity;
+  /** 工具调用发生时的轮次身份，跨进程交付后也不能归入后续轮次。 */
+  nativeRunId: string;
   toolCallId: string;
   toolName: string;
   args: Record<string, unknown>;
@@ -852,7 +854,8 @@ function createZeusTools(getEntry: () => PiSessionEntry | null, broker: PiZeusTo
   const execute = async (toolCallId: string, toolName: PiZeusToolRequest['toolName'], args: Record<string, unknown>, signal?: AbortSignal) => {
     const entry = getEntry();
     if (!entry) throw runtimeError('ZEUS_PI_TOOL_SESSION_UNBOUND', 'Pi 工具尚未绑定 Zeus 会话。');
-    const result = await broker.execute({ requestId: `pi_tool_${randomUUID()}`, session: entry.identity, toolCallId, toolName, args, ...(signal ? { signal } : {}) });
+    if (!entry.activeRunId) throw runtimeError('ZEUS_PI_RUN_NOT_ACTIVE', 'Pi 工具没有对应的活动轮次。');
+    const result = await broker.execute({ requestId: `pi_tool_${randomUUID()}`, session: entry.identity, nativeRunId: entry.activeRunId, toolCallId, toolName, args, ...(signal ? { signal } : {}) });
     if (result.isError) throw runtimeError('ZEUS_PI_TOOL_EXECUTION_FAILED', result.text);
     /** 原始图片必须先由 Core 归档；不能静默丢图或把大图片塞进 Pi 历史。 */
     if (result.contentItems?.some((item) => item.type === 'image') && !result.imageReferences?.length) throw runtimeError('ZEUS_PI_TOOL_IMAGE_UNARCHIVED', '工具图片尚未归档，无法交给模型。');
@@ -942,6 +945,24 @@ function createZeusTools(getEntry: () => PiSessionEntry | null, broker: PiZeusTo
       parameters: Type.Object({ questions: Type.Array(Type.Object({ title: Type.String(), options: Type.Optional(Type.Array(Type.String(), { minItems: 1 })) }), { minItems: 1, maxItems: 3 }) }),
       executionMode: 'sequential',
       execute: (id, args, signal) => execute(id, 'request_user_input_async', args, signal),
+    }),
+    // 各模型共用本轮步骤计划；正式方案确认继续由 submit_plan 单独负责。
+    defineTool({
+      name: 'update_plan',
+      label: '更新开发计划',
+      description: '维护本轮开发计划。多步骤实施或验证任务开始时列出步骤，进展后及时更新；单步任务不创建计划。最多一个步骤为 in_progress，仅把实际完成的步骤标记为 completed，未完成步骤保持真实状态。此工具不提交正式方案，也不授权实施。',
+      parameters: Type.Object(
+        {
+          explanation: Type.Optional(Type.Union([Type.String({ maxLength: 1_000 }), Type.Null()])),
+          plan: Type.Array(Type.Object({ step: Type.String({ minLength: 1, maxLength: 400 }), status: Type.Union([Type.Literal('pending'), Type.Literal('in_progress'), Type.Literal('completed')]) }, { additionalProperties: false }), {
+            minItems: 1,
+            maxItems: 20,
+          }),
+        },
+        { additionalProperties: false },
+      ),
+      executionMode: 'sequential',
+      execute: (id, args, signal) => execute(id, 'update_plan', args, signal),
     }),
     defineTool({
       name: 'submit_plan',

@@ -2079,10 +2079,11 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
 
   async function executeTool(request: PiZeusToolRequest): Promise<PiZeusToolResult> {
     // 执行前确认结果归属，缺少身份时不能先运行工具再无界回传原文。
-    const run = [...runs.values()].reverse().find((candidate) => candidate.providerThreadId === request.session.nativeSessionId);
+    const run = runs.get(request.nativeRunId);
     const segment = run ? options.execution.segmentByNativeSession(request.session.nativeSessionId, run.conversationId) : null;
-    if (!run || !segment || (segment.state !== 'current' && segment.state !== 'provisional')) throw piError('ZEUS_TOOL_RESULT_CONTEXT_UNAVAILABLE', '工具调用缺少当前轮次的结果归档身份，尚未执行。');
-    const raw = await executeToolRaw(request);
+    if (!run || run.providerThreadId !== request.session.nativeSessionId || !segment || (segment.state !== 'current' && segment.state !== 'provisional'))
+      throw piError('ZEUS_TOOL_RESULT_CONTEXT_UNAVAILABLE', '工具调用缺少当前轮次的结果归档身份，尚未执行。');
+    const raw = await executeToolRaw(request, run);
     if (request.toolName === 'read_conversation_tool_result' || request.toolName === 'read_conversation_tool_image') return raw;
     const stageId = run.stageIdByToolCallId.get(request.toolCallId) ?? run.currentStageId;
     const protocolFamily = projectionProtocolFamily(run, segment);
@@ -2168,7 +2169,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     };
   }
 
-  async function executeToolRaw(request: PiZeusToolRequest): Promise<PiZeusToolResult> {
+  /** 使用工具入口已核实的轮次身份，避免计划更新重新按会话猜测归属。 */
+  async function executeToolRaw(request: PiZeusToolRequest, activeRun: PiRunContext): Promise<PiZeusToolResult> {
     const context = contexts.get(request.session.nativeSessionId);
     if (!context) throw piError('ZEUS_PI_TOOL_SESSION_UNBOUND', 'Pi 工具请求没有对应的 Zeus 会话。');
     if (['spawn_agent', 'followup_task', 'list_agents', 'wait_agent', 'stop_agent'].includes(request.toolName)) {
@@ -2214,6 +2216,20 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       if (!questions.length || questions.length > 3) throw piError('ZEUS_PI_QUESTION_INVALID', '异步提问需要一到三个有效问题。');
       const item = await persistToolMessage(context, request, 'agentMessage', questions.map((question) => question.question).join('\n'), payload);
       return { text: JSON.stringify({ providerItemId: item.providerItemId, providerTurnId: item.providerTurnId, status: 'pending', delivery: 'async' }) };
+    }
+    if (request.toolName === 'update_plan') {
+      /** 停止或结束后的迟到调用不得写入计划，也不能被挂到后续轮次。 */
+      const turn = options.turns.getById(activeRun.turnId);
+      if (request.signal?.aborted || interruptedRuns.has(activeRun.providerTurnId) || !turn || turn.completedAt || !['dispatching', 'running', 'waiting'].includes(turn.status)) {
+        throw piError('ZEUS_PI_RUN_NOT_ACTIVE', '开发计划只能更新当前正在执行的轮次。');
+      }
+      /** 同一份结构化计划同时用于持久存储与现有进度面板。 */
+      const plan = developmentPlanFrom(request.args);
+      /** 工具返回前提交真实状态，再沿用界面的事件合并与广播通道。 */
+      const updatedAt = options.now();
+      options.db.durableTransactionSync(() => options.turns.updatePlan(turn.id, plan, updatedAt));
+      publish('conversation.turn.plan.updated', context.conversationId, { threadId: activeRun.providerThreadId, turnId: activeRun.providerTurnId, updatedAt, plan });
+      return { text: `开发计划已更新，共 ${plan.steps.length} 步。` };
     }
     if (request.toolName === 'submit_plan') {
       if (context.workMode !== 'plan') throw piError('ZEUS_PI_PLAN_MODE_REQUIRED', '只有计划模式可以提交实施确认计划。');
@@ -3430,6 +3446,34 @@ function toPiRunDispatchContext(envelope: ContextDispatchEnvelope | null) {
 
 function redactArgs(args: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(args).map(([key, value]) => [key, key.toLowerCase().includes('content') || key === 'newText' || key === 'oldText' ? '[内容已隐藏]' : value]));
+}
+
+/** 将公开工具参数收敛为 Zeus 已有的计划状态，并拒绝会造成误导的并行进行中步骤。 */
+function developmentPlanFrom(value: Record<string, unknown>): Parameters<ConversationTurnRepository['updatePlan']>[1] {
+  if (!Array.isArray(value.plan) || value.plan.length === 0 || value.plan.length > 20) {
+    throw piError('ZEUS_DEVELOPMENT_PLAN_INVALID', '开发计划必须包含 1 到 20 个步骤。');
+  }
+  if (!(value.explanation === undefined || value.explanation === null || typeof value.explanation === 'string')) {
+    throw piError('ZEUS_DEVELOPMENT_PLAN_INVALID', '开发计划说明必须是文字或 null。');
+  }
+  /** 说明只保留有内容的短文本，避免计划栏被背景信息淹没。 */
+  const explanation = typeof value.explanation === 'string' ? value.explanation.trim() || null : null;
+  if (explanation && explanation.length > 1_000) throw piError('ZEUS_DEVELOPMENT_PLAN_INVALID', '开发计划说明不能超过 1000 个字符。');
+  /** 工具公开 snake_case，存储继续使用既有 camelCase 合同。 */
+  const steps: Array<{ step: string; status: 'pending' | 'inProgress' | 'completed' }> = value.plan.map((candidate, index) => {
+    if (!isRecord(candidate) || typeof candidate.step !== 'string') throw piError('ZEUS_DEVELOPMENT_PLAN_INVALID', `第 ${index + 1} 个计划步骤格式不正确。`);
+    /** 步骤文本去掉首尾空白后再执行长度约束。 */
+    const step = candidate.step.trim();
+    if (!step || step.length > 400) throw piError('ZEUS_DEVELOPMENT_PLAN_INVALID', `第 ${index + 1} 个计划步骤必须为 1 到 400 个字符。`);
+    if (candidate.status !== 'pending' && candidate.status !== 'in_progress' && candidate.status !== 'completed') {
+      throw piError('ZEUS_DEVELOPMENT_PLAN_INVALID', `第 ${index + 1} 个计划步骤状态不正确。`);
+    }
+    return { step, status: candidate.status === 'in_progress' ? ('inProgress' as const) : candidate.status };
+  });
+  if (steps.filter((step) => step.status === 'inProgress').length > 1) {
+    throw piError('ZEUS_DEVELOPMENT_PLAN_INVALID', '开发计划最多只能有一个进行中的步骤。');
+  }
+  return { explanation, steps };
 }
 
 function stringArg(value: unknown, label: string): string {
