@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
-import type { Skill } from '@earendil-works/pi-coding-agent';
-import type { LoadExtensionsResult, ResourceLoader } from '@earendil-works/pi-coding-agent/headless';
+import { createExtensionRuntime, type Skill, type LoadExtensionsResult, type ResourceLoader } from '@earendil-works/pi-coding-agent';
 import type { AgentRunSkillActivation } from './agentRuntimeContracts.js';
 
 interface PiHeadlessResourceLoaderOptions {
@@ -64,7 +63,8 @@ export class PiHeadlessResourceLoader implements ResourceLoader {
     this.extensionsResult = {
       extensions: [],
       errors: [],
-      runtime: createEmptyExtensionRuntime(),
+      // 官方空运行时负责订阅清理；扩展发现仍由 Zeus 禁用。
+      runtime: createExtensionRuntime(),
     };
     this.skillCatalog = options.skillCatalog ?? [];
     this.pluginSkills = (options.pluginSkills ?? []).map(toPiSkill);
@@ -165,6 +165,8 @@ export class PiHeadlessResourceLoader implements ResourceLoader {
   }
 
   async reload(): Promise<void> {
+    // 上一运行时会在 reload 时失效，新资源必须取得新的订阅生命周期。
+    this.extensionsResult.runtime = createExtensionRuntime();
     this.agentsFiles = loadProjectContextFiles(this.cwd, this.agentDir);
   }
 }
@@ -185,49 +187,6 @@ function toPiSkill(input: PiPluginSkillResource): Skill {
     },
     disableModelInvocation: false,
   };
-}
-
-function createEmptyExtensionRuntime(): LoadExtensionsResult['runtime'] {
-  const notInitialized = () => {
-    throw new Error('Pi 扩展运行时尚未初始化。');
-  };
-  const state: { staleMessage?: string } = {};
-  const runtime: LoadExtensionsResult['runtime'] = {
-    sendMessage: notInitialized,
-    sendUserMessage: notInitialized,
-    appendEntry: notInitialized,
-    setSessionName: notInitialized,
-    getSessionName: notInitialized,
-    setLabel: notInitialized,
-    getActiveTools: notInitialized,
-    getAllTools: notInitialized,
-    setActiveTools: notInitialized,
-    refreshTools: () => undefined,
-    getCommands: notInitialized,
-    setModel: () => Promise.reject(new Error('Pi 扩展运行时尚未初始化。')),
-    getThinkingLevel: notInitialized,
-    setThinkingLevel: notInitialized,
-    flagValues: new Map(),
-    pendingProviderRegistrations: [],
-    pendingNativeProviderRegistrations: [],
-    assertActive: () => {
-      if (state.staleMessage) throw new Error(state.staleMessage);
-    },
-    invalidate: (message) => {
-      state.staleMessage ??= message ?? 'Pi 会话已经失效。';
-    },
-    registerProvider: (name, config, extensionPath = '<zeus-headless>') => {
-      runtime.pendingProviderRegistrations.push({ name, config, extensionPath });
-    },
-    registerNativeProvider: (provider, extensionPath = '<zeus-headless>') => {
-      runtime.pendingNativeProviderRegistrations.push({ provider, extensionPath });
-    },
-    unregisterProvider: (name) => {
-      runtime.pendingProviderRegistrations = runtime.pendingProviderRegistrations.filter((registration) => registration.name !== name);
-      runtime.pendingNativeProviderRegistrations = runtime.pendingNativeProviderRegistrations.filter((registration) => registration.provider.id !== name);
-    },
-  };
-  return runtime;
 }
 
 function loadProjectContextFiles(cwd: string, agentDir: string): ContextFile[] {

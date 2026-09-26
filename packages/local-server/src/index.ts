@@ -1,3 +1,4 @@
+import { piSdkBinaryVersion } from '@zeus/ai-runtime';
 /** 桌面动态价格读取复用受限公网访问边界。 */
 export { readPricingDocument } from './modelPricingDocument.js';
 import { resolveContextCapacityPolicy } from './contextCapacitySupport.js';
@@ -1170,8 +1171,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           ? {
               contextWindowTokens: 256_000,
               reservedOutputTokens: 8_192,
-              contextWindowSource: 'pi_sdk_0.83.0_runtime_fallback_256000',
-              reservedOutputSource: 'pi_sdk_0.83.0_runtime_fallback_8192',
+              contextWindowSource: `${piSdkBinaryVersion}_runtime_fallback_256000`,
+              reservedOutputSource: `${piSdkBinaryVersion}_runtime_fallback_8192`,
               checkedAt: null,
             }
           : null;
@@ -1204,7 +1205,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       exact: false,
       source: null,
       checkedAt: budget.checkedAt,
-      reason: input.provider === 'codex' ? '当前 Codex app-server 没有请求前 token-count RPC；只能使用请求后的真实 usage 通知。' : 'Pi SDK 0.83.0 没有对完整待发请求进行精确预检计数的公共端口；运行后的 usage 不能替代预检。',
+      reason: input.provider === 'codex' ? '当前 Codex app-server 没有请求前 token-count RPC；只能使用请求后的真实 usage 通知。' : `${piSdkBinaryVersion} 没有对完整待发请求进行精确预检计数的公共端口；运行后的 usage 不能替代预检。`,
     };
     const envelope = await contextDispatch.compileForDispatch({
       project: { id: project.id, localPath: project.localPath },
@@ -2016,7 +2017,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         providerId: frozen.runtimeKind === 'codex' ? 'codex' : `pi:${frozen.connectionId ?? 'custom'}`,
         providerModel: frozen.connectionId ? modelRef(frozen.connectionId, frozen.modelId) : frozen.modelId,
         providerProtocolVersion: frozen.runtimeKind === 'codex' ? 'app-server' : piRuntimeWorkerProtocolVersion,
-        providerBinaryVersion: frozen.runtimeKind === 'pi' ? 'pi-sdk-0.83.0' : null,
+        providerBinaryVersion: frozen.runtimeKind === 'pi' ? piSdkBinaryVersion : null,
       };
       const lifecycle = conversationExecutionCoordinator.createLifecycle({
         conversationId,

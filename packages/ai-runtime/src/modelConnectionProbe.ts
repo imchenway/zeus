@@ -3,6 +3,7 @@ import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messag
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy';
 import { Type } from 'typebox';
+import { normalizeContext } from '@earendil-works/pi-ai/utils/transcript';
 import { applyModelAuthentication, toPiModel } from './piSdkRuntimeDriver.js';
 import { resolvePiThinkingLevel, type ConfiguredModelCapability, type ConfiguredModelDefinition, type ModelCapabilityEvidence, type ModelCapabilityState, type ModelConnectionRecord, type PiThinkingLevel } from './modelConnectionCatalog.js';
 
@@ -234,7 +235,7 @@ export async function generateConfiguredModelText(input: ProbeConfiguredModelInp
   const options: SimpleStreamOptions = { apiKey: input.apiKey, maxTokens: 8192, signal: input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(80_000)]) : AbortSignal.timeout(80_000) };
   /** 用户的密钥只发往原模型连接，不发往价格页面。 */
   const authenticated = (applyModelAuthentication(options, input.model.authenticationScheme) ?? options) as SimpleStreamOptions;
-  for await (const event of streamApiFor(model).streamSimple(model, { systemPrompt: input.system, messages: [{ role: 'user', content: input.text, timestamp: Date.now() }] }, authenticated)) {
+  for await (const event of streamApiFor(model).streamSimple(model, normalizeContext({ systemPrompt: input.system, messages: [{ role: 'user', content: input.text, timestamp: Date.now() }] }), authenticated)) {
     if (event.type === 'error') throw new Error('价格识别模型请求失败。');
     if (event.type === 'done') {
       if (event.message.stopReason !== 'stop') throw new Error('价格识别结果不完整。');
@@ -264,7 +265,7 @@ async function runProbeRequest(streams: ProviderStreams, piModel: Model<Api>, in
   const authenticated = (applyModelAuthentication(options, input.model.authenticationScheme) ?? options) as SimpleStreamOptions;
   let final: AssistantMessage | null = null;
   try {
-    for await (const event of streams.streamSimple(piModel, request.context, authenticated)) {
+    for await (const event of streams.streamSimple(piModel, normalizeContext(request.context), authenticated)) {
       if (event.type === 'text_delta' || event.type === 'thinking_delta' || event.type === 'toolcall_delta') observation.deltaCount += 1;
       else if (event.type === 'thinking_start') observation.thinkingSeen = true;
       else if (event.type === 'toolcall_end') observation.toolCallSeen = true;
