@@ -234,7 +234,7 @@ function verifyAutomaticQueueDispatchSelection(): Record<string, unknown> {
   return { selectedId: selected.id, blockedSelection: null, legacyHeadId: legacyQueued.id };
 }
 
-/** 真实转录投影同时核对沟通边界分组和用户、助手文字始终位于主会话流。 */
+/** 真实投影核对运行时进展可见、完成后单层收拢及模型正文始终外置。 */
 function verifyStageSummaryProcessGrouping(): Record<string, unknown> {
   const turnId = 'stage-turn';
   let timelineOrdinal = 0;
@@ -275,21 +275,24 @@ function verifyStageSummaryProcessGrouping(): Record<string, unknown> {
   const rows = projectTranscriptRows(items);
   const turnRows = projectTranscriptTurnRows(rows, null, { [turnId]: 'completed' });
   const workRows = turnRows.filter((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work');
-  assertBehavior(workRows.length === 4, '每段连续操作必须在助手沟通处结束，不能跨过可见说明合并。');
-  /** 操作分组继续保持全轮先后顺序，但不再接管助手沟通正文。 */
+  assertBehavior(workRows.length === 1, '完成轮次必须只有一个位于模型正文上方的过程入口。');
+  /** 完成后的过程保留所有中途说明和操作的先后顺序。 */
   const stages = workRows.flatMap((row) => row.segments);
-  assertBehavior(stages.length === 4, '四段连续操作必须各自保留一个过程阶段。');
+  assertBehavior(stages.length === 1, '完成过程直接展示明细，不恢复多余阶段分组。');
   assertBehavior(
     stages.every((stage) => stage.summary === null),
-    '助手沟通已经位于主会话，过程阶段不得再复制同一段文字。',
+    '中途说明按原顺序进入过程明细，不提升为重复摘要。',
   );
   assertBehavior(
     stages.every((stage) => !stage.rows.some((row) => row.kind === 'item' && row.item.type === 'reasoning')),
     '已完成轮次的 reasoning 摘要不得重新混入正文阶段。',
   );
   assertBehavior(
-    stages.every((stage) => stage.rows.filter((row) => row.kind === 'activity').length === 1),
-    '每个阶段的命令、工具或文件操作必须各自合并为一组。',
+    stages
+      .flatMap((stage) => stage.rows)
+      .flatMap((row) => (row.kind === 'activity' ? row.items.map((entry) => entry.key) : [row.key]))
+      .join('|') === 'bootstrap-command-a|summary-a|command-a|summary-b|tool-b|summary-c|file-c',
+    '收拢不能改变中途说明与操作的真实先后顺序。',
   );
   assertBehavior(
     workRows.every((row) => row.loadMore),
@@ -309,8 +312,11 @@ function verifyStageSummaryProcessGrouping(): Record<string, unknown> {
     assertBehavior(
       projected
         .map((row) => (row.kind === 'turn_work' ? `process:${row.segments.flatMap((segment) => segment.rows.flatMap((detail) => (detail.kind === 'activity' ? detail.items.map((entry) => entry.key) : [])).join(','))}` : row.key))
-        .join('|') === 'opening-user|process:bootstrap-command-a|summary-a|process:command-a|mid-user-a|summary-b|process:tool-b|mid-user-b|summary-c|process:file-c|final',
-      '运行和历史展示均须保持用户输入、连续操作、助手沟通的真实阅读顺序。',
+        .join('|') ===
+        (activeTurnId
+          ? 'opening-user|process:bootstrap-command-a|summary-a|process:command-a|mid-user-a|summary-b|process:tool-b|mid-user-b|summary-c|process:file-c|final'
+          : 'opening-user|mid-user-a|mid-user-b|process:bootstrap-command-a,command-a,tool-b,file-c|final'),
+      '运行时保持沟通顺序，完成后保留用户输入并在最终正文上方统一收起过程。',
     );
     assertBehavior(new Set(projected.map((row) => row.key)).size === projected.length, '同轮多个过程段必须有独立稳定身份。');
     assertBehavior(
@@ -318,6 +324,49 @@ function verifyStageSummaryProcessGrouping(): Record<string, unknown> {
       '处理过程不得收起或重复展示用户输入。',
     );
   }
+  /** 完成态独立展开身份使运行中手动展开的过程在结束时回到收起状态。 */
+  const liveWorkKeys = new Set(
+    projectTranscriptTurnRows(rows, turnId)
+      .filter((row) => row.kind === 'turn_work')
+      .map((row) => row.key),
+  );
+  assertBehavior(!liveWorkKeys.has(workRows[0]!.key), '完成态不能继承运行中的手动展开身份。');
+  assertBehavior(turnRows.at(-1)?.kind === 'item' && turnRows.at(-1)?.key === 'final', '最终正文必须留在过程入口之外并位于入口下方。');
+  /** 终态尚无正文时，继续显示已发生的进展，不能只剩耗时。 */
+  const withoutReply = rows.filter((row) => row.key !== 'final');
+  assertBehavior(
+    projectTranscriptTurnRows(withoutReply, null, { [turnId]: 'completed' }).some((row) => row.key === 'summary-c'),
+    '正文缺失时不能收起最后的可读进展。',
+  );
+  for (const status of ['failed', 'interrupted'] as const) {
+    assertBehavior(
+      projectTranscriptTurnRows(rows, null, { [turnId]: status }).some((row) => row.key === 'summary-c'),
+      '失败或中断不能采用正常完成的收拢规则。',
+    );
+  }
+  /** 历史首屏只加载开场和正文时，过程补页前后必须共用完成态入口。 */
+  const deferredRows = projectTranscriptTurnRows(
+    rows.filter((row) => row.key === 'opening-user' || row.key === 'final'),
+    null,
+    { [turnId]: 'completed' },
+    new Set([turnId]),
+  );
+  assertBehavior(deferredRows[1]?.key === workRows[0]!.key && deferredRows[2]?.key === 'final', '按需加载的过程入口必须稳定地位于最终正文上方。');
+  /** 同一原生阶段被中途说明切成多组，收拢后所有子行仍须有唯一身份。 */
+  const sameStageItems = [
+    item('same-user', 'userMessage', '检查过程归属。'),
+    item('same-command-a', 'commandExecution', ''),
+    { ...item('same-reasoning-a', 'reasoning', '第一段思考'), payload: { reasoningPresentation: 'process_text' } },
+    item('same-command-b', 'commandExecution', ''),
+    item('same-progress', 'agentMessage', '继续检查', 'commentary'),
+    item('same-command-c', 'commandExecution', ''),
+    { ...item('same-reasoning-b', 'reasoning', '第二段思考'), payload: { reasoningPresentation: 'process_text' } },
+    item('same-command-d', 'commandExecution', ''),
+    item('same-final', 'agentMessage', '检查完成', 'final_answer'),
+  ].map((entry) => ({ ...entry, stageId: 'same-stage' }));
+  /** 使用真实两级投影覆盖阶段内操作合并，而非只检查原始消息编号。 */
+  const sameStageChildren = projectTranscriptTurnRows(projectTranscriptRows(sameStageItems), null, { [turnId]: 'completed' }).flatMap((row) => (row.kind === 'turn_work' ? row.segments.flatMap((segment) => segment.rows) : []));
+  assertBehavior(sameStageChildren.length > 0 && new Set(sameStageChildren.map((row) => row.key)).size === sameStageChildren.length, '完成态的同阶段操作组不能产生重复子行身份。');
   /** 同一个显式阶段或缺少阶段身份时，都不能把引导后的活动归到引导前。 */
   for (const stageId of [undefined, 'same-stage']) {
     /** 此处不增加新摘要，直接覆盖工具在引导之后继续执行的情况。 */
@@ -338,7 +387,7 @@ function verifyStageSummaryProcessGrouping(): Record<string, unknown> {
   );
   return {
     mainStreamUserMessages: 3,
-    mainStreamAssistantMessages: 4,
+    mainStreamAssistantMessages: 1,
     stages: stages.map((stage) => ({
       summary: stage.summary?.kind === 'item' ? stage.summary.item.text : null,
       detailGroups: stage.rows.length,
