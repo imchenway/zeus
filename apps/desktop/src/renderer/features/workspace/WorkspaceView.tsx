@@ -1101,7 +1101,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                       taskTableLayoutDirty={taskTableLayoutDirty}
                       creatingTaskBusy={creatingTaskBusy}
                       bulkActionBusy={updatingTaskBusy}
-                      statusChangeBusy={updatingTaskBusy}
                       bulkActionStatus={taskBulkActionStatus}
                       modelPushEntry={
                         taskModelPushTaskId && (taskModelPushEntry === 'checking' || taskModelPushEntry === 'error')

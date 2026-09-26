@@ -197,7 +197,7 @@ function TaskPriorityCell({ task }: { task: TaskRecord }) {
           if (isTaskPriority(next)) void save(next, task.updatedAt ?? '');
         }}
         className={`task-status-select task-priority-select task-status-tone-${taskPriorityTone(value)}`}
-        disabled={Boolean(workspace.statusChangeBusy) || !workspace.onTaskPriorityChange || edit?.kind === 'saving'}
+        disabled={!workspace.onTaskPriorityChange || edit?.kind === 'saving'}
         searchable={false}
         footer={
           feedback ? (
@@ -257,7 +257,7 @@ function TaskCell(props: CustomCellRendererProps<TaskRowViewModel>) {
         onChange={(status) => workspace.onTaskStatusChange?.(task.id, status)}
         className="task-status-select task-status-custom"
         style={{ '--task-status-tone': workspace.statusDefinitions.find((status) => status.id === resolveTaskManagementStatus(task))?.color ?? '#6b7280' } as CSSProperties}
-        disabled={workspace.statusChangeBusy || !workspace.onTaskStatusChange}
+        disabled={!workspace.onTaskStatusChange}
         searchable={false}
       />
     );

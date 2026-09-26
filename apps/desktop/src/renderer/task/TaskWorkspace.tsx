@@ -171,7 +171,6 @@ export interface TaskWorkspaceProps {
   taskTableLayoutDirty?: boolean;
   creatingTaskBusy: boolean;
   bulkActionBusy?: boolean;
-  statusChangeBusy?: boolean;
   bulkActionStatus?: TaskWorkspaceBulkActionStatus;
   modelPushEntry?: { taskId: string; status: 'checking' | 'error'; error?: string | null };
   taskActionBusy?: boolean;
