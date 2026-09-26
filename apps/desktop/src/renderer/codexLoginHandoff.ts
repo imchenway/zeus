@@ -14,6 +14,12 @@ export interface CodexLoginHandoffInput {
   continueOriginalAction: () => void;
 }
 
+/** 只激活发起登录的受信 Zeus 窗口，调用方决定激活失败是否影响业务结果。 */
+async function activateRequestingZeusWindow(): Promise<void> {
+  const result = await activateRequestingZeusWindowInMain({ zeus: typeof window === 'undefined' ? undefined : window.zeus });
+  if (!result.activated) throw new Error(result.error ?? 'window_activation_failed');
+}
+
 /**
  * 统一收口 Zeus 发起的 Codex 浏览器登录：先展示成功并回到原窗口，再继续用户原操作。
  * 登录已经取消或被新请求替代时，每个异步边界都会停止回交，避免旧轮询抢占窗口或重复提交。
@@ -69,11 +75,7 @@ export async function completeCodexSubscriptionSetup(input: CodexSubscriptionSet
   await completeCodexLoginHandoff({
     isCurrent: input.isCurrent,
     showSuccess: () => input.showSuccess(account),
-    activateZeus: async () => {
-      /** 只激活发起接入的 Zeus 窗口。 */
-      const result = await activateRequestingZeusWindowInMain({ zeus: typeof window === 'undefined' ? undefined : window.zeus });
-      if (!result.activated) throw new Error(result.error ?? 'window_activation_failed');
-    },
+    activateZeus: activateRequestingZeusWindow,
     recordActivationError: input.recordActivationError,
     continueOriginalAction: () => input.continueOriginalAction(account),
   });
@@ -110,6 +112,13 @@ export async function authenticateCodexWithBrowser(
       if (status.status === 'succeeded') {
         loginId = null;
         input.onLoginId(null);
+        try {
+          // 浏览器已经确认认证成功，立即回到发起窗口；模型同步不能继续占住浏览器焦点。
+          await activateRequestingZeusWindow();
+        } catch (error) {
+          input.recordActivationError(error);
+        }
+        if (!input.isCurrent()) return;
         // 登录前的运行实例冻结了未认证目录；复用现有代际切换，保留旧实例正在执行的轮次。
         await completeCodexSubscriptionSetup(input);
         return;

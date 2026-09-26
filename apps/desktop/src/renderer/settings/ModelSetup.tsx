@@ -581,6 +581,29 @@ export function useModelSetup(input: {
     }
   }
 
+  /** 重建当前 Codex 运行实例后回读账号、模型和程序状态，不要求已登录用户重复授权。 */
+  async function reconnectCodex(): Promise<void> {
+    /** 使用最新客户端，避免设置页切换期间操作旧连接。 */
+    const client = currentInputRef.current.client;
+    if (!client || operation !== 'idle') return;
+    /** 重连与后续回读共用请求代次，迟到结果不能覆盖新操作。 */
+    const request = ++requestRef.current;
+    setOperation('activating');
+    setError(null);
+    try {
+      await client.activateCodexConfig({ syncSubscriptionModels: true });
+      if (requestRef.current !== request) return;
+      /** 允许既有总览入口接手状态回读；它会建立自己的请求代次。 */
+      setOperation('idle');
+      overviewClientRef.current = null;
+      await refreshCodexOverview(false);
+    } catch (failure) {
+      if (requestRef.current !== request) return;
+      setOperation('idle');
+      setError(userFacingErrorCause(failure));
+    }
+  }
+
   /** 仅在官方退出成功后清除显示；发生未知结果时要求重新检查。 */
   async function logoutAccount(): Promise<void> {
     if (!input.client || operation !== 'idle') return;
@@ -653,6 +676,7 @@ export function useModelSetup(input: {
     skipImport,
     importConfig,
     refreshCodexOverview,
+    reconnectCodex,
     logoutAccount,
     openInstallGuide,
   };
@@ -684,6 +708,8 @@ export function CodexAccountSettings({ controller }: { controller: ModelSetupCon
   const account = controller.account;
   /** 只有 ChatGPT 账号认证成功才表示订阅已登录。 */
   const signedIn = account?.signedIn && account.accountType === 'chatgpt';
+  /** 总览读取不完整时提供真实重连入口，不能把未知账号状态伪装成未登录。 */
+  const reconnectNeeded = Boolean(controller.error) && (!controller.accountChecked || !controller.modelsChecked);
   /** 复用所有模型选择入口的稳定排序，不在设置页另造目录顺序。 */
   const presentedModels = presentModelOptions(controller.models, '', zh ? 'zh-CN' : 'en-US').models;
   /** 只有下载器返回真实字节比例时才展示百分比。 */
@@ -730,9 +756,13 @@ export function CodexAccountSettings({ controller }: { controller: ModelSetupCon
                 ? zh
                   ? '未登录订阅账号'
                   : 'Subscription account is not signed in'
-                : zh
-                  ? '账号状态尚未检查'
-                  : 'Account status not checked'}
+                : controller.error
+                  ? zh
+                    ? '暂时无法读取账号状态'
+                    : 'Account status is temporarily unavailable'
+                  : zh
+                    ? '账号状态尚未检查'
+                    : 'Account status not checked'}
         </span>
       </header>
       <p>{zh ? '通过 ChatGPT 账号登录，仅用于 Zeus。第三方模型服务在下方管理。' : 'Sign in with ChatGPT for Zeus. Manage third-party model services below.'}</p>
@@ -741,11 +771,21 @@ export function CodexAccountSettings({ controller }: { controller: ModelSetupCon
           <Button variant="secondary" disabled={controller.operation !== 'idle'} onClick={() => void controller.logoutAccount()}>
             {zh ? '退出登录' : 'Sign out'}
           </Button>
-        ) : (
+        ) : controller.accountChecked ? (
           <Button variant="primary" disabled={controller.operation !== 'idle'} onClick={() => controller.open('codex')}>
             {zh ? '登录 Codex' : 'Sign in to Codex'}
           </Button>
-        )}
+        ) : null}
+        {reconnectNeeded ? (
+          <Button variant="primary" disabled={controller.operation !== 'idle'} busy={controller.operation === 'activating'} onClick={() => void controller.reconnectCodex()}>
+            {zh ? '重新连接 Codex' : 'Reconnect Codex'}
+          </Button>
+        ) : null}
+        {!signedIn && !controller.accountChecked && !reconnectNeeded ? (
+          <Button variant="primary" disabled>
+            {zh ? '正在读取账号状态…' : 'Loading account status…'}
+          </Button>
+        ) : null}
       </div>
       <div className="codex-update-row">
         <p className="codex-update-state" role="status" aria-live="polite">
@@ -781,7 +821,15 @@ export function CodexAccountSettings({ controller }: { controller: ModelSetupCon
           {controller.modelsChecked ? ` · ${presentedModels.length}` : ''}
         </strong>
         {!controller.modelsChecked ? (
-          <small>{zh ? '正在读取当前账号的模型目录…' : 'Loading the current account model catalog…'}</small>
+          <small>
+            {controller.error
+              ? zh
+                ? '暂时无法读取当前账号的模型目录。'
+                : 'The current account model catalog is temporarily unavailable.'
+              : zh
+                ? '正在读取当前账号的模型目录…'
+                : 'Loading the current account model catalog…'}
+          </small>
         ) : presentedModels.length === 0 ? (
           <small>{zh ? '当前运行时没有返回可用的 Codex 模型。' : 'The current runtime returned no available Codex models.'}</small>
         ) : (

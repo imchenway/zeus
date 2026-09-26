@@ -171,7 +171,7 @@ export function reportApplicationError(error: unknown, options: ApplicationError
     action: options.action,
   };
   const duplicate = queue.some((candidate) => candidate.language === entry.language && candidate.dedupeKey === entry.dedupeKey);
-  if (duplicate && options.showDetails) {
+  if (options.showDetails) {
     queue = [entry, ...queue.filter((candidate) => candidate.dedupeKey !== entry.dedupeKey)];
     notifyListeners();
   } else if (!duplicate) {

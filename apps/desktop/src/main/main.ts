@@ -322,7 +322,8 @@ function handleAutomaticUpdateResume(): void {
 
 /** 通过既有设置命令边界静默检测并更新 Codex，不产生桌面通知。 */
 async function updateCodexAutomatically(): Promise<void> {
-  if (!localServerRuntime) return;
+  // 前台操作优先；静默更新只在 Zeus 位于后台时进入维护窗口。
+  if (!localServerRuntime || isZeusApplicationForeground()) return;
   /** 空输入也参与命令摘要，保持后台请求与设置页请求遵循同一校验。 */
   const input = {};
   /** 每次到期检测使用独立身份，服务端负责判断当前版本是否真的需要更新。 */

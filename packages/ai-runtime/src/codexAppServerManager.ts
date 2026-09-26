@@ -907,10 +907,17 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
 
   /** 新连接会由官方组件预取远端目录；等待其落地后再读取，避免抢到旧名单。 */
   async function waitForFreshSubscriptionModels(generationId: string, providerVersion: string | null, freshSince: number): Promise<void> {
-    /** 同一连接可能再次发生账号通知，不能接纳切换前的读取。 */
-    const accountRevision = modelAccountRevision;
-    /** 登录身份与目录准备分别确认。 */
-    const account = parseAccountSnapshot(await retryableReadRpc(generationId, 'account/read', { refreshToken: false }), generationId, accountFingerprintSalt);
+    /** 登录身份必须在有界时间内稳定，避免通知风暴造成无界等待。 */
+    const accountDeadline = Date.now() + MODEL_CATALOG_SYNC_TIMEOUT_MS;
+    /** 账号读取与通知可能并发；只用同一修订前后都稳定的快照作为同步身份。 */
+    let accountRevision: number;
+    /** 稳定账号用于区分同一账号的重复通知和真实账号切换。 */
+    let account: CodexAccountSnapshot;
+    do {
+      accountRevision = modelAccountRevision;
+      account = parseAccountSnapshot(await retryableReadRpc(generationId, 'account/read', { refreshToken: false }), generationId, accountFingerprintSalt);
+      if (Date.now() >= accountDeadline && modelAccountRevision !== accountRevision) throw managerError('ZEUS_CODEX_MODEL_SYNC_FAILED', '账号状态持续变化，无法确认订阅模型目录。');
+    } while (modelAccountRevision !== accountRevision);
     if (!account.signedIn || account.accountType !== 'chatgpt') throw managerError('ZEUS_CODEX_MODEL_SYNC_FAILED', '当前连接尚未确认订阅账号，无法同步订阅模型。');
     /** 显式固定目录不会访问远端，必须给出可操作的原因。 */
     const configResponse = asRecord(await retryableReadRpc(generationId, 'config/read', { includeLayers: false }));
@@ -927,12 +934,23 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
         await catalogReader.close();
       }
     }
-    /** 等待期间持续核对连接所有权。 */
+    /** 独立目录读取完成后仍保留原有完整等待窗口。 */
     const deadline = Date.now() + MODEL_CATALOG_SYNC_TIMEOUT_MS;
+    /** 等待期间持续核对连接所有权；同一账号的重复通知只更新修订，不误报失败。 */
     while (Date.now() < deadline) {
-      if (preparingForShutdown || generationId !== currentGenerationId() || modelAccountRevision !== accountRevision) throw managerError('ZEUS_CODEX_MODEL_SYNC_FAILED', '目录同步期间连接或账号已改变，请重试。');
+      if (preparingForShutdown || generationId !== currentGenerationId()) throw managerError('ZEUS_CODEX_MODEL_SYNC_FAILED', '目录同步期间连接已改变，请重试。');
+      if (modelAccountRevision !== accountRevision) {
+        /** 账号通知本身不代表换号；重新读取并比较脱敏身份后继续等待。 */
+        const revisedAt = modelAccountRevision;
+        const revisedAccount = parseAccountSnapshot(await retryableReadRpc(generationId, 'account/read', { refreshToken: false }), generationId, accountFingerprintSalt);
+        if (modelAccountRevision !== revisedAt) continue;
+        if (!revisedAccount.signedIn || revisedAccount.accountType !== 'chatgpt' || revisedAccount.accountScopeId !== account.accountScopeId) {
+          throw managerError('ZEUS_CODEX_MODEL_SYNC_FAILED', '目录同步期间账号已改变，请重试。');
+        }
+        accountRevision = revisedAt;
+      }
       const cache = readCodexModelCatalogCache(codexHome, providerVersion);
-      if (cache && cache.fetchedAtMs >= freshSince) return;
+      if (cache && cache.fetchedAtMs >= freshSince && modelAccountRevision === accountRevision) return;
       await waitFor(100);
     }
     throw managerError('ZEUS_CODEX_MODEL_SYNC_FAILED', '账号已登录，但本次模型目录更新超时；旧目录未被当作同步成功。');

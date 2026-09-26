@@ -2588,7 +2588,7 @@ function readProviderUsageMetrics(db: ZeusDatabasePort, conversationId: string):
   const pricingSourceUrls = Array.isArray(value?.pricingSourceUrls) ? value.pricingSourceUrls.filter((url): url is string => typeof url === 'string' && url.trim().length > 0) : [];
   const historyComplete = value?.historyComplete === true;
   return {
-    costs,
+    ...(costs === undefined ? {} : { costs }),
     apiEquivalentUsd,
     priceCoverage,
     pricingCatalogDate,
