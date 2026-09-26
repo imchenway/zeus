@@ -213,6 +213,8 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const [zeusWindowForeground, setZeusWindowForeground] = useState(false);
   const [focusedArchivedConversation, setFocusedArchivedConversation] = useState<NativeConversationChoice | null>(null);
   const [optimisticTerminalTaskStatuses, setOptimisticTerminalTaskStatuses] = useState<Record<string, TaskManagementStatus>>({});
+  /** 按任务保留最后一次状态选择的请求身份，列表卸载和连续保存都不丢失加载反馈。 */
+  const [pendingTaskStatuses, setPendingTaskStatuses] = useState<Record<string, { status: TaskManagementStatus }>>({});
   const [taskTerminalCleanupConfirmation, setTaskTerminalCleanupConfirmation] = useState<{
     statusLabel: string;
     resolve: (confirmed: boolean) => void;
@@ -1353,6 +1355,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     nativeSessionTaskReadOnly,
     newConversationFocusRequest,
     optimisticTerminalTaskStatuses,
+    pendingTaskStatuses,
     orderedProjects,
     patchExportStatus,
     patchProjectConfigForm,
@@ -1489,6 +1492,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     setNativeLegacyMessageLoadState,
     setNewConversationFocusRequest,
     setOptimisticTerminalTaskStatuses,
+    setPendingTaskStatuses,
     setPatchExportStatus,
     setPendingProjectDeleteId,
     setProjectCodeWorkspaceMode,

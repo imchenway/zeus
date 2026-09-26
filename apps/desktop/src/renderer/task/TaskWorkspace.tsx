@@ -171,6 +171,8 @@ export interface TaskWorkspaceProps {
   taskTableLayoutDirty?: boolean;
   creatingTaskBusy: boolean;
   bulkActionBusy?: boolean;
+  /** 状态保存按任务显示最后一次选择，不把其他行置灰或阻止连续选择。 */
+  pendingTaskStatuses?: Readonly<Record<string, { status: TaskManagementStatus }>>;
   bulkActionStatus?: TaskWorkspaceBulkActionStatus;
   modelPushEntry?: { taskId: string; status: 'checking' | 'error'; error?: string | null };
   taskActionBusy?: boolean;

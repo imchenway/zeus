@@ -234,6 +234,8 @@ function TaskPriorityCell({ task }: { task: TaskRecord }) {
 /** 所有业务单元格沿用原有入口和显示规则。 */
 function TaskCell(props: CustomCellRendererProps<TaskRowViewModel>) {
   const { workspace } = useTaskTable();
+  /** 加载说明与当前单元格关联，虚拟行复用时仍保留有效的无障碍引用。 */
+  const statusFeedbackId = useId();
   const row = props.data;
   if (!row) return null;
   const task = row.task;
@@ -243,24 +245,44 @@ function TaskCell(props: CustomCellRendererProps<TaskRowViewModel>) {
   if (columnKey === 'actions') return <TaskActionCell task={task} />;
   const cell = row.cells[columnKey];
   if (columnKey === 'priority') return <TaskPriorityCell task={task} />;
-  if (columnKey === 'managementStatus')
+  if (columnKey === 'managementStatus') {
+    /** 展示最后一次选择，真实任务记录仍由保存结果更新。 */
+    const pending = workspace.pendingTaskStatuses?.[task.id];
+    /** 取消或失败后自动回到服务器已确认的状态。 */
+    const value = pending?.status ?? resolveTaskManagementStatus(task);
+    /** 自定义状态继续复用项目已有文案。 */
+    const label = workspace.statusLabels[value] || workspace.statusDefinitions.find((status) => status.id === value)?.label || formatTaskManagementStatus(value);
+    /** 文本反馈在减少动态效果时同样可辨识。 */
+    const feedback = pending ? (workspace.appLanguage === 'zh-CN' ? `正在更新为${label}…` : `Updating to ${label}…`) : '';
     return (
-      <ZeusSelect
-        size="compact"
-        ariaLabel={workspace.copy.taskStatusSelectAria(task.title)}
-        value={resolveTaskManagementStatus(task)}
-        options={
-          workspace.statusDefinitions.length
-            ? workspace.statusDefinitions.map((status) => ({ value: status.id, label: workspace.statusLabels[status.id] || status.label || formatTaskManagementStatus(status.id), color: status.color }))
-            : taskManagementStatuses.map((value) => ({ value, label: workspace.statusLabels[value] || formatTaskManagementStatus(value) }))
-        }
-        onChange={(status) => workspace.onTaskStatusChange?.(task.id, status)}
-        className="task-status-select task-status-custom"
-        style={{ '--task-status-tone': workspace.statusDefinitions.find((status) => status.id === resolveTaskManagementStatus(task))?.color ?? '#6b7280' } as CSSProperties}
-        disabled={!workspace.onTaskStatusChange}
-        searchable={false}
-      />
+      <>
+        <span className={`task-immediate-select task-data-table-status${pending ? ' is-saving' : ''}`} aria-busy={Boolean(pending) || undefined}>
+          <ZeusSelect
+            size="compact"
+            ariaLabel={workspace.copy.taskStatusSelectAria(task.title)}
+            ariaDescribedBy={pending ? statusFeedbackId : undefined}
+            value={value}
+            triggerLabel={pending ? (workspace.appLanguage === 'zh-CN' ? '更新中' : 'Saving') : undefined}
+            triggerTitle={feedback || undefined}
+            options={
+              workspace.statusDefinitions.length
+                ? workspace.statusDefinitions.map((status) => ({ value: status.id, label: workspace.statusLabels[status.id] || status.label || formatTaskManagementStatus(status.id), color: status.color }))
+                : taskManagementStatuses.map((value) => ({ value, label: workspace.statusLabels[value] || formatTaskManagementStatus(value) }))
+            }
+            onChange={(status) => workspace.onTaskStatusChange?.(task.id, status)}
+            className="task-status-select task-status-custom"
+            style={{ '--task-status-tone': workspace.statusDefinitions.find((status) => status.id === value)?.color ?? '#6b7280' } as CSSProperties}
+            disabled={!workspace.onTaskStatusChange}
+            searchable={false}
+          />
+          {pending ? <span className="task-save-spinner" aria-hidden="true" /> : null}
+        </span>
+        <span id={statusFeedbackId} className="sr-only" role="status">
+          {feedback}
+        </span>
+      </>
     );
+  }
   if (columnKey === 'taskType')
     return (
       <span title={cell.primary} className={`task-status-chip task-type-chip task-status-tone-${taskTypeTone(task.taskType)}`}>
