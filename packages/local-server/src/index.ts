@@ -1812,6 +1812,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     now: () => now().toISOString(),
     repairLegacyCodexSourceAlias: !readOnlyValidation,
     automaticPricing: !readOnlyValidation,
+    // 历史补算使用绑定会话和同轮配置证据，不读取当前设置猜档位。
+    execution: conversationExecution,
   });
   // 关闭服务时等待补价任务退出，避免数据库关闭后继续后台写入。
   server.addHook('onClose', () => codexUsageService.dispose());

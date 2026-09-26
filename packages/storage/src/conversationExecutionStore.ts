@@ -84,6 +84,11 @@ export interface ConversationModelHistoryRecord {
   confirmedAt: string;
 }
 
+/** 请求观察和费用补算共用持久身份，不按时间或 Token 数猜测旧记录。 */
+export function conversationModelRequestId(conversationId: string, observationIdentity: string): string {
+  return `conversation_model_request_${createHash('sha256').update(`${conversationId}\0${observationIdentity}`).digest('hex').slice(0, 24)}`;
+}
+
 export interface ConversationModelRequestUsageRecord {
   id: string;
   conversationId: string;
@@ -1346,7 +1351,7 @@ export class ConversationExecutionRepository {
   }
 
   observeModelRequest(input: Omit<ConversationModelRequestUsageRecord, 'id' | 'requestSequence'> & { observationIdentity?: string }): ConversationModelRequestUsageRecord {
-    const id = input.observationIdentity ? `conversation_model_request_${createHash('sha256').update(`${input.conversationId}\0${input.observationIdentity}`).digest('hex').slice(0, 24)}` : `conversation_model_request_${randomId(12)}`;
+    const id = input.observationIdentity ? conversationModelRequestId(input.conversationId, input.observationIdentity) : `conversation_model_request_${randomId(12)}`;
     const existing = this.modelRequestById(id);
     if (existing) return existing;
     const requestSequence = this.nextSequence(input.conversationId, 'model_request_sequence');
@@ -1411,6 +1416,37 @@ export class ConversationExecutionRepository {
       return null;
     }
     return { effort: typeof level === 'string' && level.trim() ? level.trim() : null, observedAt: row.observed_at };
+  }
+
+  /** 历史补价只接纳同一原生轮次的唯一已确认配置；降档或冲突的轮次保持未知。 */
+  codexTurnPricingContext(conversationId: string, threadId: string, providerTurnId: string): { model: string; serviceTier: string | null } | null {
+    /** 精确轮次关联配置证据和提交记录，不使用当前会话设置。 */
+    const rows = this.db.select<{ configuration_json: string; input_json: string }>(
+      `SELECT e.configuration_json, s.input_json FROM conversation_config_evidence e
+       JOIN conversation_turns t ON t.id = e.turn_id
+       JOIN conversation_submissions s ON s.id = t.client_submission_id
+       WHERE t.conversation_id = ? AND t.provider_thread_id = ? AND t.provider_turn_id = ? AND e.layer = 'runtime_acknowledged' AND e.mismatch = 0`,
+      [conversationId, threadId, providerTurnId],
+    );
+    /** 多条相同配置可重复确认，不同配置不能套用到整个轮次。 */
+    const contexts = new Map<string, { model: string; serviceTier: string | null }>();
+    for (const row of rows) {
+      /** 存储 JSON 也经过结构校验，缺失字段不是普通档位。 */
+      const configuration = parseJsonRecord(row.configuration_json);
+      /** 降档标记没有逐请求边界，因此不推测哪一笔仍为快速档位。 */
+      const submission = parseJsonRecord(row.input_json);
+      if (
+        submission.serviceTierDowngrade ||
+        typeof configuration.modelId !== 'string' ||
+        !Object.prototype.hasOwnProperty.call(configuration, 'serviceTier') ||
+        (configuration.serviceTier !== null && typeof configuration.serviceTier !== 'string')
+      )
+        return null;
+      /** 仅暴露计价必要的模型和服务档位。 */
+      const context = { model: configuration.modelId, serviceTier: configuration.serviceTier as string | null };
+      contexts.set(JSON.stringify(context), context);
+    }
+    return contexts.size === 1 ? [...contexts.values()][0]! : null;
   }
 
   /** 压缩完成项可能晚于用量到达；仅修正其起止范围内的请求，避免吞掉同轮普通回答的容量回报。 */
@@ -2588,7 +2624,7 @@ function readProviderUsageMetrics(db: ZeusDatabasePort, conversationId: string):
   const pricingSourceUrls = Array.isArray(value?.pricingSourceUrls) ? value.pricingSourceUrls.filter((url): url is string => typeof url === 'string' && url.trim().length > 0) : [];
   const historyComplete = value?.historyComplete === true;
   return {
-    costs,
+    ...(costs ? { costs } : {}),
     apiEquivalentUsd,
     priceCoverage,
     pricingCatalogDate,

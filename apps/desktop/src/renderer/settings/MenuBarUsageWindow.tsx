@@ -89,7 +89,7 @@ const copy = {
     statisticsSource: '统计来源',
     zeusLocalUsage: 'Zeus 本地统计',
     zeusLocalUsageHint: '只统计在 Zeus 中产生的用量；费用由本地账本按模型单价估算。',
-    costEstimateHint: '费用由 Zeus 本地账本按模型单价估算，只统计已定价的轮次；Codex 官方账户在其它客户端的用量不在此列。',
+    costEstimateHint: '费用由 Zeus 本地账本按请求单价估算，只合计已计价部分；覆盖率按可计费 Token 计算，不代表费用比例。',
     noPrice: '暂无价格',
     recentUsage: '每日 Token',
     accountUsage: 'Codex 账户统计',
@@ -161,7 +161,7 @@ const copy = {
     statisticsSource: 'Statistics source',
     zeusLocalUsage: 'Zeus local stats',
     zeusLocalUsageHint: 'Includes usage generated in Zeus only; cost is estimated from the local ledger using model rates.',
-    costEstimateHint: 'Cost is estimated from the local Zeus ledger using model rates and covers priced turns only; usage the Codex account records on other clients is not included.',
+    costEstimateHint: 'Local estimates sum priced requests only. Coverage measures billable tokens, not the share of total cost.',
     noPrice: 'No pricing',
     recentUsage: 'Daily tokens',
     accountUsage: 'Codex account stats',
@@ -582,6 +582,8 @@ function UsageOverview(props: { provider: UsageProviderSummary; language: Langua
   const menuId = useId();
   const [visibleMetrics, setVisibleMetrics] = useState(readStoredMetrics);
   const metrics = readMetricValues(provider, language);
+  /** 价格覆盖与用量采集完整性分开说明，不把部分金额伪装成完整费用。 */
+  const partialPricing = (provider.todayLocal.priceCoverage !== null && provider.todayLocal.priceCoverage < 1) || (provider.sevenDayLocal.priceCoverage !== null && provider.sevenDayLocal.priceCoverage < 1);
   /** 至少保留一个指标，取消最后一个可见项时保持原样。 */
   const toggleMetric = (id: MetricId) => {
     const selected = visibleMetrics.includes(id);
@@ -622,6 +624,13 @@ function UsageOverview(props: { provider: UsageProviderSummary; language: Langua
             <Metric key={id} {...metrics[id]} language={language} />
           ))}
       </dl>
+      {partialPricing && (
+        <p className="menu-bar-usage-pricing-note">
+          {language === 'zh-CN'
+            ? `已计价 Token：今日 ${formatPercent(provider.todayLocal.priceCoverage, language)} · 七日 ${formatPercent(provider.sevenDayLocal.priceCoverage, language)}；剩余用量尚未计价。`
+            : `Priced tokens: today ${formatPercent(provider.todayLocal.priceCoverage, language)} · 7 days ${formatPercent(provider.sevenDayLocal.priceCoverage, language)}. Remaining usage is unpriced.`}
+        </p>
+      )}
       {provider.sevenDayLocal.hasBackfilledPricing && <p className="menu-bar-usage-pricing-note">{language === 'zh-CN' ? '含历史补算：按补价时价格估算' : 'Includes historical usage estimated at backfill-time prices'}</p>}
     </section>
   );
@@ -754,14 +763,16 @@ function DailyBars(props: { provider: UsageProviderSummary; language: Language }
   /** 补齐近七日日期；开始记录之前保留缺失状态。 */
   const slots = buildDailySlots(props.provider, dimension, accountSource ? 'account' : 'local');
   const maximum = Math.max(...slots.flatMap((slot) => (slot.value && slot.value > 0 ? [slot.value] : [])), 1);
-  /** 按实际展示的七根柱汇总；缺失日期或当天尚不完整时标明已知下限。 */
+  /** 按实际展示的七根柱汇总；缺失日期或费用覆盖不足时保留不完整提示。 */
   const sevenDayTotal = slots.reduce((sum, slot) => sum + (slot.value ?? 0), 0);
   const sevenDayValue = costDimension
-    ? formatIncompleteUsd(
-        sevenDayTotal,
-        slots.every((slot) => slot.complete),
-        props.language,
-      )
+    ? props.provider.sevenDayLocal.apiEquivalentUsd === null
+      ? text.noPrice
+      : formatIncompleteUsd(
+          sevenDayTotal,
+          slots.every((slot) => slot.complete),
+          props.language,
+        )
     : accountSource
       ? formatIncompleteTokens(
           sevenDayTotal,
@@ -817,7 +828,7 @@ function DailyBars(props: { provider: UsageProviderSummary; language: Language }
       <div className="menu-bar-usage-bars-plot">
         {slots.map((slot) => {
           const state = slot.value === null ? 'missing' : slot.value === 0 ? 'zero' : 'positive';
-          const formatted = costDimension ? formatUsdText(slot.value, props.language) : slot.value === null ? '' : formatIncompleteTokens(slot.value, slot.complete, props.language);
+          const formatted = costDimension ? formatUsdText(slot.value, props.language, slot.complete) : slot.value === null ? '' : formatIncompleteTokens(slot.value, slot.complete, props.language);
           const value = slot.value === null ? text.missingDay : costDimension ? formatted : `${formatted} Token`;
           /** 七列共用有限宽度：token 的万级数字去掉小数，金额限制到两位小数；悬浮摘要保留原精度。 */
           const barLabel = slot.value === null ? '—' : formatted;
@@ -1070,6 +1081,8 @@ function buildDailySlots(provider: UsageProviderSummary, dimension: ChartDimensi
   const buckets = accountUsage ? (provider.dailyAccount ?? []) : provider.dailyLocal.map((day) => ({ date: day.date, totalTokens: dimension === 'cost' ? day.apiEquivalentUsd : day.totalTokens }));
   /** 按日期查找数值，本地采集起点只用于普通供应商的空白日期。 */
   const bucketsByDate = new Map(buckets.map((bucket) => [bucket.date, bucket.totalTokens]));
+  /** 费用有数值也可能只覆盖部分请求，每天独立保留缺价状态。 */
+  const pricingByDate = new Map(provider.dailyLocal.map((day) => [day.date, day.priceCoverage]));
   const collectionStart = timestampDateKey(provider.collectionStartedAt);
   /** 以本地自然日对应顶部今日指标，七天范围包含当天。 */
   const today = new Date();
@@ -1081,8 +1094,8 @@ function buildDailySlots(provider: UsageProviderSummary, dimension: ChartDimensi
     const dateKey = localDateKey(date);
     /** 官方缺失继续显示破折号；本地采集后的无记录日期才视作零，未定价日期按缺失处理。 */
     const recorded = bucketsByDate.get(dateKey);
-    const value = recorded === undefined || recorded === null ? (!accountUsage && collectionStart !== null && dateKey >= collectionStart ? 0 : null) : Math.max(0, recorded);
-    return { date: dateKey, value, complete: value !== null };
+    const value = recorded === null ? null : recorded === undefined ? (!accountUsage && collectionStart !== null && dateKey >= collectionStart ? 0 : null) : Math.max(0, recorded);
+    return { date: dateKey, value, complete: value !== null && (dimension !== 'cost' || recorded === undefined || pricingByDate.get(dateKey) === 1) };
   });
 }
 
@@ -1150,20 +1163,20 @@ function formatCurrency(value: number, language: Language, maximumFractionDigits
   }).format(value);
 }
 
-/** 估算费用：缺值或未定价返回占位文案，其余统一带 ~ 表示估算。 */
+/** 缺价与部分计价显式区分；波浪号只表示金额是估算。 */
 function formatUsd(value: number | null, coverage: number | null | undefined, language: Language, unavailable: string): string {
   if (value === null || !coverage) return unavailable;
-  return `~${formatCurrency(value, language)}`;
+  return `${coverage < 1 ? (language === 'zh-CN' ? '部分 ' : 'Partial ') : ''}~${formatCurrency(value, language)}`;
 }
 
 /** 柱图槽位金额：槽位已按天过滤缺失与未定价，这里只做格式化。 */
-function formatUsdText(value: number | null, language: Language): string {
-  return value === null ? '' : `~${formatCurrency(value, language)}`;
+function formatUsdText(value: number | null, language: Language, complete: boolean): string {
+  return value === null ? '' : formatIncompleteUsd(value, complete, language);
 }
 
-/** 费用汇总缺失日期表示已知下限，与 token 一样前缀 ≥。 */
+/** 不完整费用显示已计价部分，不能把估算金额表达成真实账单下限。 */
 function formatIncompleteUsd(value: number, complete: boolean, language: Language): string {
-  return `${complete ? '' : '≥'}~${formatCurrency(value, language)}`;
+  return `${complete ? '' : language === 'zh-CN' ? '部分 ' : 'Partial '}~${formatCurrency(value, language)}`;
 }
 
 /** 直接显示本地日期和时间，跨日重置无需悬停猜测。 */
