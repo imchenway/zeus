@@ -25,6 +25,8 @@ export interface AutomationRunRecord {
   automationId: string;
   automationRevisionId: string;
   projectId: string;
+  /** 本次触发在同一会话内处理的全部项目。 */
+  projectIds: string[];
   triggerKind: string;
   triggerIdentity: string;
   causalChainId: string;

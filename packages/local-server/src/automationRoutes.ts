@@ -8,6 +8,8 @@ export interface RegisterAutomationRoutesOptions {
   tasks: AutomationTaskRepository;
   runs: AutomationRunRepository;
   db: ZeusDatabasePort;
+  /** 无项目触发在写运行前按需创建托管工作区。 */
+  ensureTemporaryWorkspace(runIdentity: string): { id: string };
   kick(): void;
   now(): string;
 }
@@ -59,18 +61,24 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
       if (!task) throw new Error('ZEUS_AUTOMATION_CONFIG_NOT_FOUND: 自动化任务不存在。');
       const scheduledAt = options.now();
       const nonce = request.headers['idempotency-key'];
-      const items = tasks
+      /** 手动触发冻结当前启用项目，并只创建一条运行。 */
+      const projectIds = tasks
         .listTargets(task.id)
         .filter((target) => target.enabled)
-        .map((target) =>
-          runs.enqueue({
-            automationId: task.id,
-            projectId: target.projectId,
-            triggerKind: 'manual',
-            triggerIdentity: `manual:${nonce}`,
-            scheduledAt,
-          }),
-        );
+        .map((target) => target.projectId);
+      /** 先满足回执外键，再以空 projectIds 保留真实业务语义。 */
+      const projectId = projectIds[0] ?? options.ensureTemporaryWorkspace(`manual:${String(nonce)}`).id;
+      /** 响应仍保留 items 结构，但一次触发只含一个运行。 */
+      const items = [
+        runs.enqueue({
+          automationId: task.id,
+          projectIds,
+          projectId,
+          triggerKind: 'manual',
+          triggerIdentity: `manual:${nonce}`,
+          scheduledAt,
+        }),
+      ];
       return { statusCode: 202, body: { items } };
     });
   });

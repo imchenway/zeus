@@ -15,7 +15,7 @@ export function createAutomationConversationDispatch(options: {
   executeProjectConversationIdempotent: ConversationOperations['executeProjectConversationIdempotent'];
 }): AutomationSchedulerOptions['dispatch'] {
   const { conversations, modelConnections, executeConversationDispatchMessage, executeProjectConversationIdempotent } = options;
-  return async ({ run, snapshot, project }) => {
+  return async ({ run, snapshot, project, projects }) => {
     const digest = createHash('sha256').update(run.id).digest('hex').slice(0, 24);
     if (snapshot.conversationMode === 'original') {
       const originalConversation = snapshot.originalConversationId ? conversations.getById(snapshot.originalConversationId) : undefined;
@@ -38,6 +38,8 @@ export function createAutomationConversationDispatch(options: {
       return readAcceptance(response.body);
     }
     const idempotencyKey = `automation:${run.id}`;
+    /** 模型收到一份包含全部项目顺序的单轮指令。 */
+    const content = automationTurnPrompt(snapshot.prompt, projects);
     const connection = snapshot.modelSourceId === 'codex' ? undefined : modelConnections.listMetadata().find((candidate: { id: string }) => candidate.id === snapshot.modelSourceId);
     const configuredModel = connection?.models.find((candidate: { id: string }) => candidate.id === snapshot.modelId);
     // 命中的是模型连接就走 Zeus 内核；只有 Codex 订阅来源才交给 app-server。
@@ -46,7 +48,8 @@ export function createAutomationConversationDispatch(options: {
       project,
       {
         mode: 'create',
-        content: snapshot.prompt,
+        content,
+        displayText: snapshot.prompt,
         model: snapshot.modelSourceId === 'codex' ? snapshot.modelId : modelRef(snapshot.modelSourceId, snapshot.modelId),
         agentKind: runtimeKind,
         ...(snapshot.reasoningEffort ? { effort: snapshot.reasoningEffort } : {}),
@@ -65,9 +68,30 @@ export function createAutomationConversationDispatch(options: {
           : {}),
       },
       idempotencyKey,
+      undefined,
+      projects.length > 0 ? projects.map((target) => target.id) : [project.id],
     );
     return readAcceptance(result.body);
   };
+}
+
+/** 把服务端冻结的项目顺序写进本轮指令，模型不得再把项目拆成会话。 */
+function automationTurnPrompt(prompt: string, projects: Array<{ id: string; name: string; localPath: string }>): string {
+  if (projects.length === 0) {
+    return ['你正在执行一次无项目自动化。本次触发只有一个会话和一个轮次。', '本次运行未选择任何用户项目。不要读取、修改或推断任何用户项目；仅在 Zeus 临时工作区内完成不依赖项目的工作。', '', '用户指令：', prompt].join('\n');
+  }
+  /** 目标清单保留用户配置顺序，避免模型自行重排。 */
+  const targets = projects.map((project, index) => `${index + 1}. ${project.name}\n   目录：${project.localPath}`).join('\n');
+  return [
+    '你正在执行一次多项目自动化。本次触发只有一个会话和一个轮次。',
+    '请按下列顺序将用户指令应用到每个目标项目，保留项目之间的上下文，并明确区分各项目结果；不要为项目另建会话。',
+    '',
+    '目标项目：',
+    targets,
+    '',
+    '用户指令：',
+    prompt,
+  ].join('\n');
 }
 
 function readAcceptance(value: unknown): { conversationId: string; submissionId: string } {

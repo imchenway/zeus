@@ -1,8 +1,11 @@
 import { createHash } from 'node:crypto';
+import { temporaryWorkspaceId } from '@zeus/shared';
 import { randomId } from './randomId.js';
 import type { ZeusDatabasePort } from './databasePort.js';
 
 export const automationSchemaMigrationId = '20260829_0374_automation_tasks_v1';
+/** 把一次自动化触发的全部目标项目冻结到同一条运行。 */
+export const automationRunTargetsMigrationId = '20260926_0426_automation_run_targets';
 
 export const automationStatuses = ['active', 'paused', 'deleted'] as const;
 export const automationTriggerKinds = ['manual', 'once', 'interval', 'daily', 'weekly', 'rrule', 'event'] as const;
@@ -91,6 +94,8 @@ export interface AutomationRunRecord {
   automationId: string;
   automationRevisionId: string;
   projectId: string;
+  /** 本次触发按顺序处理的全部用户项目；空数组表示无项目运行。 */
+  projectIds: string[];
   triggerKind: string;
   triggerIdentity: string;
   causalChainId: string;
@@ -126,7 +131,10 @@ export type UpdateAutomationTaskInput = Partial<CreateAutomationTaskInput> & { e
 export interface EnqueueAutomationRunInput {
   id?: string;
   automationId: string;
-  projectId: string;
+  /** 一次触发的完整用户项目范围；空数组表示无项目运行。 */
+  projectIds: string[];
+  /** 无项目运行在写回执前必须提供已存在的临时工作区锚点。 */
+  projectId?: string;
   triggerKind: string;
   triggerIdentity: string;
   scheduledAt: string;
@@ -171,6 +179,7 @@ interface DbAutomationRunRow {
   automation_id: string;
   automation_revision_id: string;
   project_id: string;
+  project_ids_json: string | null;
   trigger_kind: string;
   trigger_identity: string;
   causal_chain_id: string;
@@ -199,7 +208,7 @@ const taskSelect = `id, name, description, prompt, status, current_revision_id, 
 
 const runSelect = `id, automation_id, automation_revision_id, project_id, trigger_kind, trigger_identity, causal_chain_id, status,
   queue_position, conversation_id, submission_id, attempt, unread, may_overlap_previous, previous_run_id, scheduled_at, accepted_at,
-  started_at, completed_at, error_code, error_message, created_at, updated_at`;
+  started_at, completed_at, error_code, error_message, project_ids_json, created_at, updated_at`;
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -232,6 +241,13 @@ function nullableBudget(value: number | null | undefined, field: string): number
 function stringArray(value: unknown, field: string): string[] {
   if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) throw new Error(`ZEUS_AUTOMATION_CONFIG_INVALID: ${field} 必须为字符串数组。`);
   return [...new Set(value.map((item) => item.trim()).filter(Boolean))];
+}
+
+/** 旧表需要非空项目锚点；无项目运行只接受 Zeus 临时工作区。 */
+function runAnchorProjectId(projectIds: string[], projectId?: string): string {
+  const anchor = projectIds[0] ?? projectId;
+  if (!anchor || (projectIds.length === 0 && anchor !== temporaryWorkspaceId)) throw new Error('ZEUS_AUTOMATION_TEMPORARY_WORKSPACE_REQUIRED: 无项目运行需要 Zeus 临时工作区。');
+  return anchor;
 }
 
 function parseJson<T>(value: string, fallback: T): T {
@@ -283,6 +299,13 @@ function normalizeSnapshot(input: CreateAutomationTaskInput | (Partial<CreateAut
   };
 }
 
+/** 已有会话沿用原项目权限边界，不能由自动化静默扩成跨项目会话。 */
+function validateConversationProjects(snapshot: AutomationDefinitionSnapshot, projectIds: string[]): void {
+  if (snapshot.conversationMode === 'original' && projectIds.length !== 1) {
+    throw new Error('ZEUS_AUTOMATION_CONFIG_ORIGINAL_CONVERSATION_SINGLE_PROJECT_REQUIRED: 追加原会话必须选择一个项目；无项目或多项目运行请新建独立会话。');
+  }
+}
+
 function mapTask(row: DbAutomationTaskRow): AutomationTaskRecord {
   return {
     id: row.id,
@@ -324,6 +347,7 @@ function mapRun(row: DbAutomationRunRow): AutomationRunRecord {
     automationId: row.automation_id,
     automationRevisionId: row.automation_revision_id,
     projectId: row.project_id,
+    projectIds: stringArray(parseJson<unknown>(row.project_ids_json ?? '', [row.project_id]), '运行项目'),
     triggerKind: row.trigger_kind,
     triggerIdentity: row.trigger_identity,
     causalChainId: row.causal_chain_id,
@@ -451,6 +475,28 @@ export function migrateAutomationSchema(db: ZeusDatabasePort): void {
       timestamp,
     ]);
   });
+  migrateAutomationRunTargets(db);
+}
+
+/** 为旧运行补成单项目范围，新运行由调度入口写入完整项目列表。 */
+function migrateAutomationRunTargets(db: ZeusDatabasePort): void {
+  /** 迁移摘要绑定新增字段与旧记录补齐规则。 */
+  const checksum = `sha256:${createHash('sha256').update('automation_runs:project_ids_json:single_trigger_multi_project').digest('hex')}`;
+  db.transaction(() => {
+    /** 已登记迁移必须与当前定义完全一致。 */
+    const existing = db.get<{ checksum: string }>(`SELECT checksum FROM schema_migrations WHERE migration_id = ?`, [automationRunTargetsMigrationId]);
+    if (existing) {
+      if (existing.checksum !== checksum) throw new Error('自动化运行项目迁移账本与当前结构定义不一致。');
+      return;
+    }
+    try {
+      db.execute(`ALTER TABLE automation_runs ADD COLUMN project_ids_json TEXT`);
+    } catch {
+      // 新库或恢复中的数据库可能已包含字段，账本仍在下方补齐。
+    }
+    db.execute(`UPDATE automation_runs SET project_ids_json = json_array(project_id) WHERE project_ids_json IS NULL`);
+    db.execute(`INSERT INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)`, [automationRunTargetsMigrationId, '自动化一次触发冻结全部目标项目', checksum, nowIso()]);
+  });
 }
 
 export class AutomationTaskRepository {
@@ -459,7 +505,7 @@ export class AutomationTaskRepository {
   create(input: CreateAutomationTaskInput): AutomationTaskRecord {
     const snapshot = normalizeSnapshot(input);
     const projectIds = stringArray(input.projectIds, '项目');
-    if (projectIds.length === 0) throw new Error('ZEUS_AUTOMATION_CONFIG_PROJECT_REQUIRED: 至少选择一个项目。');
+    validateConversationProjects(snapshot, projectIds);
     const id = input.id ?? `automation_${randomId(12)}`;
     const revisionId = `automation_revision_${randomId(12)}`;
     const timestamp = nowIso();
@@ -476,8 +522,8 @@ export class AutomationTaskRepository {
     if (!existing || existing.status === 'deleted') throw new Error('ZEUS_AUTOMATION_CONFIG_NOT_FOUND: 自动化任务不存在。');
     if (existing.revision !== input.expectedRevision) throw new Error('ZEUS_AUTOMATION_CONFIG_REVISION_CONFLICT: 配置已被更新，请刷新后重试。');
     const projectIds = input.projectIds === undefined ? this.listTargets(id).map((target) => target.projectId) : stringArray(input.projectIds, '项目');
-    if (projectIds.length === 0) throw new Error('ZEUS_AUTOMATION_CONFIG_PROJECT_REQUIRED: 至少选择一个项目。');
     const snapshot = normalizeSnapshot({ ...existing, ...input, projectIds });
+    validateConversationProjects(snapshot, projectIds);
     const revision = existing.revision + 1;
     const revisionId = `automation_revision_${randomId(12)}`;
     const timestamp = nowIso();
@@ -661,9 +707,17 @@ export class AutomationRunRepository {
   enqueue(input: EnqueueAutomationRunInput): AutomationRunRecord {
     const task = new AutomationTaskRepository(this.db).getById(input.automationId);
     if (!task || task.status !== 'active') throw new Error('ZEUS_AUTOMATION_TRIGGER_INACTIVE: 自动化任务未启用。');
+    /** 运行项目列表去重并保留选择顺序。 */
+    const projectIds = stringArray(input.projectIds, '运行项目');
+    /** 首项目用于普通运行归属；无项目运行由临时工作区兼容既有非空字段。 */
+    const projectId = runAnchorProjectId(projectIds, input.projectId);
     const timestamp = nowIso();
-    const existing = this.db.get<DbAutomationRunRow>(`SELECT ${runSelect} FROM automation_runs WHERE automation_id = ? AND project_id = ? AND trigger_identity = ?`, [input.automationId, input.projectId, input.triggerIdentity]);
+    /** 同一自动化触发身份全局幂等，不再按项目各建一条运行。 */
+    const existing = this.db.get<DbAutomationRunRow>(`SELECT ${runSelect} FROM automation_runs WHERE automation_id = ? AND trigger_identity = ? ORDER BY accepted_at, id LIMIT 1`, [input.automationId, input.triggerIdentity]);
     if (existing) return mapRun(existing);
+    if (task.conversationMode === 'original' && projectIds.length !== 1) {
+      return this.insertTerminal(input, task, 'blocked', 'ZEUS_AUTOMATION_CONFIG_ORIGINAL_CONVERSATION_SINGLE_PROJECT_REQUIRED', '追加原会话只能选择一个项目；请修改自动化配置。', timestamp);
+    }
     return this.db.transaction(() => {
       if (task.maxRunsPerDay !== null) {
         const dayStart = `${input.scheduledAt.slice(0, 10)}T00:00:00.000Z`;
@@ -674,7 +728,8 @@ export class AutomationRunRepository {
       if (task.permissionMode === 'full-access' && !new AutomationTaskRepository(this.db).hasFullAccessGrant(task.id, task.revision)) {
         return this.insertTerminal(input, task, 'blocked', 'ZEUS_AUTOMATION_PERMISSION_GRANT_REQUIRED', '当前修订的完全访问尚未授权。', timestamp);
       }
-      const active = this.listActive(task.id, input.projectId);
+      /** 阻塞策略作用于整次自动化，不再按项目拆分。 */
+      const active = this.listActive(task.id);
       if (task.blockStrategy === 'discard' && active.length > 0) return this.insertTerminal(input, task, 'cancelled', 'ZEUS_AUTOMATION_QUEUE_DISCARDED', '已按阻塞策略丢弃本次触发。', timestamp);
       let previousRunId: string | null = null;
       let mayOverlap = false;
@@ -684,7 +739,8 @@ export class AutomationRunRepository {
         mayOverlap = previous.status === 'dispatching' || previous.status === 'running';
         this.setTerminal(previous.id, 'outcome_unknown', 'ZEUS_AUTOMATION_DISPATCH_OUTCOME_UNKNOWN', '覆盖时无法证明旧 Provider 或外部命令已停止。');
       }
-      const queued = this.db.select<{ id: string }>(`SELECT id FROM automation_runs WHERE automation_id = ? AND project_id = ? AND status = 'queued' ORDER BY accepted_at, id`, [task.id, input.projectId]);
+      /** 队列容量同样按自动化整体计算。 */
+      const queued = this.db.select<{ id: string }>(`SELECT id FROM automation_runs WHERE automation_id = ? AND status = 'queued' ORDER BY accepted_at, id`, [task.id]);
       if (task.blockStrategy === 'serial' && active.length > 0 && queued.length >= task.queueCapacity) {
         this.setTerminal(queued[0]!.id, 'cancelled', 'ZEUS_AUTOMATION_QUEUE_EVICTED', '队列已满，已淘汰最早等待运行。');
       }
@@ -692,21 +748,37 @@ export class AutomationRunRepository {
       const causalChainId = input.causalChainId ?? `automation_chain_${randomId(12)}`;
       const queuePosition = task.blockStrategy === 'serial' && active.length > 0 ? queued.length + 1 : 0;
       this.db.execute(
-        `INSERT INTO automation_runs (id, automation_id, automation_revision_id, project_id, trigger_kind, trigger_identity, causal_chain_id,
+        `INSERT INTO automation_runs (id, automation_id, automation_revision_id, project_id, project_ids_json, trigger_kind, trigger_identity, causal_chain_id,
           status, queue_position, attempt, unread, may_overlap_previous, previous_run_id, scheduled_at, accepted_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, 0, 0, ?, ?, ?, ?, ?, ?)`,
-        [id, task.id, task.currentRevisionId, input.projectId, input.triggerKind, input.triggerIdentity, causalChainId, queuePosition, mayOverlap ? 1 : 0, previousRunId, input.scheduledAt, timestamp, timestamp, timestamp],
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, 0, 0, ?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          task.id,
+          task.currentRevisionId,
+          projectId,
+          JSON.stringify(projectIds),
+          input.triggerKind,
+          input.triggerIdentity,
+          causalChainId,
+          queuePosition,
+          mayOverlap ? 1 : 0,
+          previousRunId,
+          input.scheduledAt,
+          timestamp,
+          timestamp,
+          timestamp,
+        ],
       );
       this.db.execute(`INSERT OR IGNORE INTO automation_trigger_receipts (automation_id, project_id, trigger_identity, run_id, occurred_at, created_at) VALUES (?, ?, ?, ?, ?, ?)`, [
         task.id,
-        input.projectId,
+        projectId,
         input.triggerIdentity,
         id,
         input.scheduledAt,
         timestamp,
       ]);
       try {
-        this.db.execute(`INSERT INTO automation_causal_chain_members (causal_chain_id, automation_id, project_id, run_id, created_at) VALUES (?, ?, ?, ?, ?)`, [causalChainId, task.id, input.projectId, id, timestamp]);
+        this.db.execute(`INSERT INTO automation_causal_chain_members (causal_chain_id, automation_id, project_id, run_id, created_at) VALUES (?, ?, ?, ?, ?)`, [causalChainId, task.id, projectId, id, timestamp]);
       } catch {
         this.setTerminal(id, 'blocked', 'ZEUS_AUTOMATION_TRIGGER_CAUSAL_CYCLE', '因果链内已存在同一自动化与项目。');
       }
@@ -754,15 +826,15 @@ export class AutomationRunRepository {
       .select<DbAutomationRunRow>(
         `SELECT ${runSelect} FROM automation_runs r WHERE r.status = 'queued' AND COALESCE(r.queue_position, 0) = 0
        AND EXISTS (SELECT 1 FROM automation_tasks t WHERE t.id = r.automation_id AND t.status = 'active')
-       AND NOT EXISTS (SELECT 1 FROM automation_runs active WHERE active.automation_id = r.automation_id AND active.project_id = r.project_id
+       AND NOT EXISTS (SELECT 1 FROM automation_runs active WHERE active.automation_id = r.automation_id
          AND active.id <> r.id AND active.status IN ('dispatching', 'running')) ORDER BY r.accepted_at, r.id LIMIT ?`,
         [Math.max(1, Math.min(Math.trunc(limit), 100))],
       )
       .map(mapRun);
   }
 
-  listActive(automationId: string, projectId: string): AutomationRunRecord[] {
-    return this.db.select<DbAutomationRunRow>(`SELECT ${runSelect} FROM automation_runs WHERE automation_id = ? AND project_id = ? AND status IN ('dispatching', 'running') ORDER BY accepted_at, id`, [automationId, projectId]).map(mapRun);
+  listActive(automationId: string): AutomationRunRecord[] {
+    return this.db.select<DbAutomationRunRow>(`SELECT ${runSelect} FROM automation_runs WHERE automation_id = ? AND status IN ('dispatching', 'running') ORDER BY accepted_at, id`, [automationId]).map(mapRun);
   }
 
   /** 领取与状态核对共用事务，暂停后已取出的候选也不得继续派发。 */
@@ -857,17 +929,21 @@ export class AutomationRunRepository {
   }
 
   private insertTerminal(input: EnqueueAutomationRunInput, task: AutomationTaskRecord, status: Extract<AutomationRunStatus, 'blocked' | 'cancelled'>, errorCode: string, errorMessage: string, timestamp: string): AutomationRunRecord {
+    /** 终态运行也保留完整项目范围，便于界面解释失败对象。 */
+    const projectIds = stringArray(input.projectIds, '运行项目');
+    /** 终态无项目运行同样使用临时工作区兼容非空字段。 */
+    const projectId = runAnchorProjectId(projectIds, input.projectId);
     const id = input.id ?? `automation_run_${randomId(12)}`;
     const causalChainId = input.causalChainId ?? `automation_chain_${randomId(12)}`;
     this.db.execute(
-      `INSERT INTO automation_runs (id, automation_id, automation_revision_id, project_id, trigger_kind, trigger_identity, causal_chain_id, status,
+      `INSERT INTO automation_runs (id, automation_id, automation_revision_id, project_id, project_ids_json, trigger_kind, trigger_identity, causal_chain_id, status,
        attempt, unread, scheduled_at, accepted_at, completed_at, error_code, error_message, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, task.id, task.currentRevisionId, input.projectId, input.triggerKind, input.triggerIdentity, causalChainId, status, input.scheduledAt, timestamp, timestamp, errorCode, errorMessage, timestamp, timestamp],
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, task.id, task.currentRevisionId, projectId, JSON.stringify(projectIds), input.triggerKind, input.triggerIdentity, causalChainId, status, input.scheduledAt, timestamp, timestamp, errorCode, errorMessage, timestamp, timestamp],
     );
     this.db.execute(`INSERT OR IGNORE INTO automation_trigger_receipts (automation_id, project_id, trigger_identity, run_id, occurred_at, created_at) VALUES (?, ?, ?, ?, ?, ?)`, [
       task.id,
-      input.projectId,
+      projectId,
       input.triggerIdentity,
       id,
       input.scheduledAt,
@@ -879,13 +955,10 @@ export class AutomationRunRepository {
   private promoteNext(completedId: string): void {
     const completed = this.getById(completedId);
     if (!completed) return;
-    const next = this.db.get<{ id: string }>(`SELECT id FROM automation_runs WHERE automation_id = ? AND project_id = ? AND status = 'queued' ORDER BY accepted_at, id LIMIT 1`, [completed.automationId, completed.projectId]);
+    /** 当前运行结束后只提升同一自动化的下一次触发。 */
+    const next = this.db.get<{ id: string }>(`SELECT id FROM automation_runs WHERE automation_id = ? AND status = 'queued' ORDER BY accepted_at, id LIMIT 1`, [completed.automationId]);
     if (!next) return;
     this.db.execute(`UPDATE automation_runs SET queue_position = 0 WHERE id = ?`, [next.id]);
-    this.db.execute(`UPDATE automation_runs SET queue_position = queue_position - 1 WHERE automation_id = ? AND project_id = ? AND status = 'queued' AND queue_position > 0 AND id <> ?`, [
-      completed.automationId,
-      completed.projectId,
-      next.id,
-    ]);
+    this.db.execute(`UPDATE automation_runs SET queue_position = queue_position - 1 WHERE automation_id = ? AND status = 'queued' AND queue_position > 0 AND id <> ?`, [completed.automationId, next.id]);
   }
 }

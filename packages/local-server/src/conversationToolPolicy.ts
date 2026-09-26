@@ -40,9 +40,20 @@ const systemReadableRoots = [
 ];
 
 /** 使用系统隔离组件，明确收紧系统默认规则，不能隐式放开整个临时目录。 */
-export function conversationSandboxProfile(input: { cwd: string; scratchDirectory: string; permission: ConversationPermissionMode; workMode: ConversationCollaborationMode; readableRoots: readonly string[] }): string {
+export function conversationSandboxProfile(input: {
+  cwd: string;
+  scratchDirectory: string;
+  permission: ConversationPermissionMode;
+  workMode: ConversationCollaborationMode;
+  readableRoots: readonly string[];
+  writableRoots: readonly string[];
+}): string {
   const readable = [...new Set([...systemReadableRoots, input.cwd, input.scratchDirectory, ...input.readableRoots].map(canonicalToolPath))];
-  const writable = [canonicalToolPath(input.scratchDirectory), ...(effectiveToolPermission(input.permission, input.workMode) === 'read-only' ? [] : [canonicalToolPath(input.cwd)])];
+  /** 写权限只覆盖临时目录和服务端冻结的项目目录。 */
+  const writable = [
+    canonicalToolPath(input.scratchDirectory),
+    ...(effectiveToolPermission(input.permission, input.workMode) === 'read-only' ? [] : [...new Set((input.writableRoots.length ? input.writableRoots : [input.cwd]).map(canonicalToolPath))]),
+  ];
   // 动态加载器需要根目录本身的读取权限；仅限目录本身，不授权其后代。
   const readFilters = ['(literal "/")', ...readable.map((path) => `(subpath ${JSON.stringify(path)})`)];
   const writeFilters = [...writable.map((path) => `(subpath ${JSON.stringify(path)})`), '(literal "/dev/null")', '(literal "/dev/tty")', '(literal "/dev/ptmx")', '(regex #"^/dev/ttys[0-9]+$")'];
@@ -90,14 +101,25 @@ export function toolPathInside(path: string, root: string): boolean {
 }
 
 /** 只判定本次具体目标是否需要审批；调用方必须先审批、再执行一次。 */
-export function resolveConversationToolPath(input: { cwd: string; path: string; permission: ConversationPermissionMode; workMode: ConversationCollaborationMode; write: boolean; readableRoots: readonly string[] }): {
+export function resolveConversationToolPath(input: {
+  cwd: string;
+  path: string;
+  permission: ConversationPermissionMode;
+  workMode: ConversationCollaborationMode;
+  write: boolean;
+  readableRoots: readonly string[];
+  writableRoots: readonly string[];
+}): {
   path: string;
   requiresApproval: boolean;
 } {
   const permission = effectiveToolPermission(input.permission, input.workMode);
   if (input.write && permission === 'read-only') throw Object.assign(new Error('当前模式只允许读取，不能修改文件。'), { code: 'ZEUS_PI_TOOL_READ_ONLY' });
   const path = canonicalToolPath(resolve(input.cwd, input.path));
-  if (permission === 'full-access' || toolPathInside(path, canonicalToolPath(input.cwd))) return { path, requiresApproval: false };
-  if (!input.write && [...systemReadableRoots, ...input.readableRoots].some((root) => toolPathInside(path, canonicalToolPath(root)))) return { path, requiresApproval: false };
+  if (permission === 'full-access') return { path, requiresApproval: false };
+  /** 旧会话没有冻结列表时保持单项目 cwd 行为。 */
+  const writableRoots = input.writableRoots.length ? input.writableRoots : [input.cwd];
+  if (writableRoots.some((root) => toolPathInside(path, canonicalToolPath(root)))) return { path, requiresApproval: false };
+  if (!input.write && [...systemReadableRoots, ...input.readableRoots, ...writableRoots].some((root) => toolPathInside(path, canonicalToolPath(root)))) return { path, requiresApproval: false };
   return { path, requiresApproval: true };
 }

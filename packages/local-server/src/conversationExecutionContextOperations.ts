@@ -189,6 +189,23 @@ export function createConversationExecutionContextOperations(dependencies: Conve
             : (project?.localPath ?? projectRoot);
   }
 
+  /** 项目会话只恢复服务端登记过的冻结目录，拒绝数据库外路径扩大权限。 */
+  function resolveProjectConversationWritableRoots(conversation: ZeusConversationRecord, executionRoot: string): string[] {
+    /** 当前项目登记表是恢复权限的唯一可信来源。 */
+    const registeredRoots = new Set(projects.list().map((project) => resolve(project.localPath)));
+    /** 首条带目录上下文的提交记录保存原始冻结范围。 */
+    const contextualSubmission = conversationSubmissions.listByConversation(conversation.id).find((submission) => {
+      const context = parseJsonObject(submission.inputJson).context;
+      return isNativeApiRecord(context) && Array.isArray(context.writableRoots);
+    });
+    /** 持久上下文只作为候选值，仍需逐项对照当前项目登记表。 */
+    const context = contextualSubmission ? parseJsonObject(contextualSubmission.inputJson).context : null;
+    /** 无法完整验证时整体回退到会话主项目，绝不部分放宽权限。 */
+    const roots = isNativeApiRecord(context) && Array.isArray(context.writableRoots) ? context.writableRoots.filter((root): root is string => typeof root === 'string').map((root) => resolve(root)) : [];
+    /** 主目录必须与会话执行位置一致，其他目录必须仍属于已登记项目。 */
+    return roots[0] === resolve(executionRoot) && roots.every((root) => (root === resolve(executionRoot) || registeredRoots.has(root)) && existsSync(root) && statSync(root).isDirectory()) ? [...new Set(roots)] : [resolve(executionRoot)];
+  }
+
   async function ensureNativeConversationExecutionContext(input: {
     conversationId: string;
     mode: 'reconcile' | 'submit' | 'dispatch' | 'recover_queue' | 'restore';
@@ -233,7 +250,7 @@ export function createConversationExecutionContextOperations(dependencies: Conve
         /** 项目会话同样使用所属项目或已记录的路径，Pi 重启后不能退回宿主启动目录。 */
         const executionRoot = resolveNativeConversationExecutionRoot(conversation);
         if (!executionRoot || !existsSync(executionRoot) || !statSync(executionRoot).isDirectory()) throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', '会话工作目录不存在或不可用。');
-        return { projectLocalPath: resolve(executionRoot), writableRoots: [resolve(executionRoot)] };
+        return { projectLocalPath: resolve(executionRoot), writableRoots: resolveProjectConversationWritableRoots(conversation, executionRoot) };
       }
       const project = projects.getById(conversation.projectId);
       const task = tasks.getById(conversation.taskId);

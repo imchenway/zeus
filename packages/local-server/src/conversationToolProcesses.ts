@@ -23,6 +23,8 @@ export interface ConversationProcessOwner {
   workMode: ConversationCollaborationMode;
   /** 本轮已授权附件和 Skill 的只读目录。 */
   readableRoots: readonly string[];
+  /** 本轮由服务端冻结的可写项目目录。 */
+  writableRoots: readonly string[];
 }
 
 /** 复用受管进程，不维护第二套 spawn、日志或跨重启 PID 恢复机制。 */
@@ -69,7 +71,7 @@ export function createConversationToolProcesses(options: {
     const processId = `conversation_process_${createHash('sha256').update(`${owner.conversationId}:${owner.turnId}:${input.toolCallId}`).digest('hex').slice(0, 32)}`;
     const mode = input.escalated ? 'danger-full-access' : toolSandboxMode(owner.permissionMode, owner.workMode);
     const requestHash = createHash('sha256')
-      .update(JSON.stringify({ command: input.command, cwd: owner.cwd, mode, readableRoots: mode === 'danger-full-access' ? [] : owner.readableRoots }))
+      .update(JSON.stringify({ command: input.command, cwd: owner.cwd, mode, readableRoots: mode === 'danger-full-access' ? [] : owner.readableRoots, writableRoots: mode === 'danger-full-access' ? [] : owner.writableRoots }))
       .digest('hex');
     const previous = options.bindings.getProcess(processId);
     if (previous) {
@@ -96,7 +98,10 @@ export function createConversationToolProcesses(options: {
       }
       mkdirSync(scratchDirectory, { recursive: true, mode: 0o700 });
     }
-    const profile = mode === 'danger-full-access' ? null : conversationSandboxProfile({ cwd: owner.cwd, scratchDirectory, permission: owner.permissionMode, workMode: owner.workMode, readableRoots: owner.readableRoots });
+    const profile =
+      mode === 'danger-full-access'
+        ? null
+        : conversationSandboxProfile({ cwd: owner.cwd, scratchDirectory, permission: owner.permissionMode, workMode: owner.workMode, readableRoots: owner.readableRoots, writableRoots: owner.writableRoots });
     options.bindings.bindProcess({ processId, conversationId: owner.conversationId, turnId: owner.turnId, requestHash, permission: mode });
     await options.save();
     await options.runtime().startSession({
