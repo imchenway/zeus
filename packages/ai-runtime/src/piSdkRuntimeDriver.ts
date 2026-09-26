@@ -2,11 +2,12 @@ import { assertContextCapacitySupported, type PortableHistoryEntry } from '@zeus
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
-import { type Api, createProvider, envApiKeyAuth, type Model, type ProviderStreams, type StreamOptions } from '@earendil-works/pi-ai';
+import { type Api, type AssistantMessageEvent, createProvider, envApiKeyAuth, InMemoryCredentialStore, type Model, type ProviderStreams, type StreamOptions, type TranscriptContext } from '@earendil-works/pi-ai';
+import { lazyStream } from '@earendil-works/pi-ai/api/lazy';
 import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy';
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy';
-import { type AgentSession, type AgentSessionEvent, createAgentSession, defineTool, ModelRuntime, SessionManager, SettingsManager, type ToolDefinition } from '@earendil-works/pi-coding-agent/headless';
+import { type AgentSession, type AgentSessionEvent, createAgentSession, defineTool, estimateTokens, ModelRuntime, SessionManager, SettingsManager, type ToolDefinition, VERSION } from '@earendil-works/pi-coding-agent';
 import { type TSchema, Type } from 'typebox';
 import type {
   AcceptedAgentRun,
@@ -38,6 +39,9 @@ export interface PiRuntimeConnection extends ModelConnectionRecord {
   apiKey?: string;
 }
 
+/** 运行身份直接取官方 SDK 版本，避免模型快照与实际依赖版本漂移。 */
+export const piSdkBinaryVersion = `pi-sdk-${VERSION}`;
+
 export interface PiZeusToolRequest {
   requestId: string;
   session: AgentSessionIdentity;
@@ -58,10 +62,68 @@ export interface PiDynamicToolSpec {
 
 export type PiZeusToolContentItem = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
 
+/** 由 Core 归档生成的图片引用；原件只在受控模型请求中读取。 */
+export interface PiToolImageReference {
+  /** 当前工具结果身份，阻止跨工具混用引用。 */
+  toolCallId: string;
+  /** 会话图片归档句柄。 */
+  handle: string;
+  /** 图片在仅含文字的工具结果中的插入位置。 */
+  contentIndex: number;
+  /** 图片原件内容摘要。 */
+  sha256: string;
+  /** 图片原件字节数。 */
+  byteLength: number;
+  /** 图片媒体类型。 */
+  mimeType: string;
+  /** 普通投影保留既有大小限制，原图只由显式读图产生。 */
+  detail: 'low' | 'original';
+}
+
+/** Worker 向 Core 申请读取当前会话的一张归档图片。 */
+export interface PiToolImageRequest {
+  /** 真实运行会话身份。 */
+  session: AgentSessionIdentity;
+  /** 已保存在工具结果中的可信引用。 */
+  reference: PiToolImageReference;
+  /** 与当前模型请求一起取消。 */
+  signal?: AbortSignal;
+}
+
+/** ponytail: 单次图片物化限 20 MiB；超过后先压缩会话，确需更多时再接入按图片裁剪。 */
+const maximumPiToolImageRequestBytes = 20 * 1024 * 1024;
+
+/** 校验持久历史和 Worker 边界的图片引用，不能把任意工具详情当作文件读取授权。 */
+export function isPiToolImageReference(value: unknown): value is PiToolImageReference {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  /** 仅读取明确字段，拒绝无归属或无完整性信息的引用。 */
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.toolCallId === 'string' &&
+    record.toolCallId.length > 0 &&
+    typeof record.handle === 'string' &&
+    record.handle.startsWith('conversation_tool_image_') &&
+    typeof record.sha256 === 'string' &&
+    /^[a-f0-9]{64}$/u.test(record.sha256) &&
+    typeof record.byteLength === 'number' &&
+    Number.isSafeInteger(record.byteLength) &&
+    record.byteLength > 0 &&
+    record.byteLength <= maximumPiToolImageRequestBytes &&
+    typeof record.contentIndex === 'number' &&
+    Number.isSafeInteger(record.contentIndex) &&
+    record.contentIndex >= 0 &&
+    typeof record.mimeType === 'string' &&
+    record.mimeType.startsWith('image/') &&
+    (record.detail === 'low' || record.detail === 'original')
+  );
+}
+
 export interface PiZeusToolResult {
   text: string;
-  /** 图片工具结果完整交给模型接口，由接口返回实际结果，Zeus 不预先拦截或删图。 */
+  /** Core 归档前的工具内容；归档后只保留文字，图片改为受控引用。 */
   contentItems?: PiZeusToolContentItem[];
+  /** Core 生成的可投影图片；Pi 持久历史仅保存这些引用。 */
+  imageReferences?: PiToolImageReference[];
   details?: unknown;
   isError?: boolean;
 }
@@ -78,6 +140,8 @@ export interface PiZeusToolDefinitionSpec {
 
 export interface PiZeusToolBroker {
   execute(input: PiZeusToolRequest): Promise<PiZeusToolResult>;
+  /** 读取归档而不再次执行工具；缺失能力时拒绝发送引用图片。 */
+  readImage?(input: PiToolImageRequest): Promise<{ data: string; mimeType: string }>;
   respond?(input: RespondAgentInteractionInput): Promise<void>;
 }
 
@@ -210,7 +274,8 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
     if (!force && modelRuntimePromise) return modelRuntimePromise;
     modelRuntimePromise = (async () => {
       const connections = await options.loadConnections();
-      const runtime = await ModelRuntime.create({ modelsPath: null, allowModelNetwork: false });
+      // 认证只由 Zeus 注入，不读取用户独立安装的 Pi 全局认证文件。
+      const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null, allowModelNetwork: false });
       for (const connection of connections) {
         /** 连接目录里的每个模型都由 Zeus 内核执行；没有模型时不注册空 Provider。 */
         const connectionModels = connection.models;
@@ -225,17 +290,75 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
             auth: { apiKey: envApiKeyAuth(`${connection.name} API Key`, []) },
             models: connectionModels.map((model) => toPiModel(model, providerId, connection.baseUrl)),
             api: {
-              'openai-completions': withModelTransport(openAICompletionsApi(), authenticationSchemes, observePayload),
-              'openai-responses': withModelTransport(openAIResponsesApi(), authenticationSchemes, observePayload),
-              'anthropic-messages': withModelTransport(anthropicMessagesApi(), authenticationSchemes, observePayload),
+              'openai-completions': withModelTransport(openAICompletionsApi(), authenticationSchemes, observePayload, projectToolImages),
+              'openai-responses': withModelTransport(openAIResponsesApi(), authenticationSchemes, observePayload, projectToolImages),
+              'anthropic-messages': withModelTransport(anthropicMessagesApi(), authenticationSchemes, observePayload, projectToolImages),
             },
           }),
         );
-        if (connection.apiKey) await runtime.setRuntimeApiKey(providerId, connection.apiKey, { allowNetwork: false });
+        if (connection.apiKey) await runtime.setRuntimeApiKey(providerId, connection.apiKey);
       }
+      // 注册 Provider 会异步刷新目录；批量注册结束后等待最终认证快照，恢复会话才能按原模型选取。
+      await runtime.refresh({ allowNetwork: false });
       return { runtime, connections };
     })();
     return modelRuntimePromise;
+  }
+
+  /** 只物化当前请求中的受控工具图片；历史记录和 Pi 的规范上下文保持引用形式。 */
+  async function projectToolImages(model: Model<Api>, context: TranscriptContext, requestOptions?: StreamOptions): Promise<TranscriptContext> {
+    /** 按需复制消息，未包含图片引用的调用不增加 Core 往返。 */
+    const messages = context.messages.slice();
+    /** 先检查全部引用及总预算，再读取任何图片。 */
+    const pending: Array<{ messageIndex: number; reference: PiToolImageReference }> = [];
+    /** 请求内图片总量在读取原件前计算。 */
+    let bytes = 0;
+    for (const [messageIndex, message] of messages.entries()) {
+      if (message.role !== 'toolResult' || !message.details || typeof message.details !== 'object' || Array.isArray(message.details)) continue;
+      /** 保留命名空间中的空数组，防止第三方详情伪造受控引用。 */
+      const references = (message.details as Record<string, unknown>).zeusImages;
+      if (references === undefined) continue;
+      if (!Array.isArray(references)) throw runtimeError('ZEUS_PI_TOOL_IMAGE_INVALID', '工具图片引用格式无效。');
+      /** 插入位置必须保持 Core 记录的顺序，拒绝错位和重复位置。 */
+      let previousIndex = -1;
+      for (const reference of references) {
+        if (!isPiToolImageReference(reference) || reference.toolCallId !== message.toolCallId || reference.contentIndex > message.content.length || reference.contentIndex <= previousIndex)
+          throw runtimeError('ZEUS_PI_TOOL_IMAGE_INVALID', '工具图片引用与结果身份不一致。');
+        previousIndex = reference.contentIndex;
+        bytes += reference.byteLength;
+        if (bytes > maximumPiToolImageRequestBytes) throw runtimeError('ZEUS_PI_TOOL_IMAGE_LIMIT', '本次请求的工具图片超过 20 MiB，请压缩会话或分次读取图片。');
+        pending.push({ messageIndex, reference });
+      }
+    }
+    if (pending.length === 0) return context;
+    /** 复用官方图片估算，不复制上游常数；这不是模型实际计费量。 */
+    const imageTokens = estimateTokens({ role: 'user', content: [{ type: 'image', data: '', mimeType: 'image/png' }], timestamp: 0 });
+    /** 在实际网络写出前拒绝估算已超容量的请求。 */
+    const estimatedTokens = messages.reduce((sum, message) => sum + estimateTokens(message), 0) + pending.length * imageTokens;
+    if (estimatedTokens + (requestOptions?.maxTokens ?? model.maxTokens) > model.contextWindow) throw runtimeError('ZEUS_PI_TOOL_IMAGE_CONTEXT_LIMIT', '工具图片与当前历史超过模型上下文预算，请先压缩会话。');
+    /** 会话绑定由 Zeus 持有，不接受图片记录自行声明目标会话。 */
+    const entry = requestOptions?.sessionId ? sessions.get(requestOptions.sessionId) : undefined;
+    if (!entry || !options.toolBroker.readImage) throw runtimeError('ZEUS_PI_TOOL_IMAGE_SESSION_MISSING', '图片请求缺少受控会话或图片读取能力。');
+    /** 同一工具中的插入偏移独立累计，保持多图与说明的顺序。 */
+    const offsets = new Map<number, number>();
+    for (const { messageIndex, reference } of pending) {
+      requestOptions?.signal?.throwIfAborted();
+      /** 原件由 Core 按会话读取，信号保持同一次模型请求的生命周期。 */
+      const image = await options.toolBroker.readImage({ session: entry.identity, reference, signal: requestOptions?.signal });
+      requestOptions?.signal?.throwIfAborted();
+      if (image.mimeType !== reference.mimeType || Buffer.byteLength(image.data, 'base64') !== reference.byteLength) throw runtimeError('ZEUS_PI_TOOL_IMAGE_INVALID', '归档图片与引用不一致，未发送模型请求。');
+      /** 只替换请求副本，不改变 Pi 的规范历史。 */
+      const message = messages[messageIndex];
+      if (message.role !== 'toolResult') throw runtimeError('ZEUS_PI_TOOL_IMAGE_INVALID', '图片所属工具结果已变化。');
+      /** 多图分别插入各自说明后面。 */
+      const content = message.content.slice();
+      /** 当前工具已插入的图片数量。 */
+      const offset = offsets.get(messageIndex) ?? 0;
+      content.splice(reference.contentIndex + offset, 0, { type: 'image', ...image });
+      messages[messageIndex] = { ...message, content };
+      offsets.set(messageIndex, offset + 1);
+    }
+    return { ...context, messages };
   }
 
   async function observePayload(sessionId: string | undefined, model: Model<Api>, payload: unknown): Promise<void> {
@@ -271,6 +394,8 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
         defaultProjectTrust: 'never',
         enableAnalytics: false,
         enableInstallTelemetry: false,
+        // 本次升级不启用额外的后台保温请求，费用与请求接纳仍由 Zeus 管理。
+        cacheWarming: 'off',
       },
       { projectTrusted: false },
     );
@@ -282,7 +407,6 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
       pluginInstructions: readPluginInstructions('metadata' in input ? input.metadata : undefined),
     });
     await resourceLoader.reload();
-    installTransientToolImagePersistence(sessionManager);
     if ('metadata' in input) seedPortableContext(sessionManager, input.metadata);
     let entryRef: PiSessionEntry | null = null;
     const { session } = await createAgentSession({
@@ -522,7 +646,7 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
           available: configuredModels.length > 0,
           checkedAt: now(),
           adapterVersion: options.adapterVersion,
-          binaryVersion: 'pi-sdk-0.83.0',
+          binaryVersion: piSdkBinaryVersion,
           protocolVersion: 'sdk',
           reason: configuredModels.length > 0 ? `Pi SDK 已载入 ${configuredModels.length} 个带凭据模型。` : 'Pi SDK 已安装，但没有启用且配置凭据的模型连接。',
         };
@@ -531,7 +655,7 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
           available: false,
           checkedAt: now(),
           adapterVersion: options.adapterVersion,
-          binaryVersion: 'pi-sdk-0.83.0',
+          binaryVersion: piSdkBinaryVersion,
           protocolVersion: 'sdk',
           reason: error instanceof Error ? error.message : 'Pi SDK 初始化失败。',
         };
@@ -709,25 +833,6 @@ async function createDurableSessionManager(cwd: string, sessionDirectory: string
   return SessionManager.open(sessionPath, sessionDirectory, cwd);
 }
 
-/**
- * Pi 必须把真实图片交给当前 Provider，但恢复 JSONL 只保留受控制品引用。
- * SessionManager 接收消息时 Provider 已消费本轮工具结果，因此这里只改变持久副本，不预先删图。
- */
-function installTransientToolImagePersistence(sessionManager: SessionManager): void {
-  const original = sessionManager.appendMessage.bind(sessionManager) as SessionManager['appendMessage'];
-  sessionManager.appendMessage = ((message: Parameters<SessionManager['appendMessage']>[0]) => {
-    const record = message && typeof message === 'object' ? (message as unknown as Record<string, unknown>) : null;
-    if (!record || record.role !== 'toolResult' || !Array.isArray(record.content)) return original(message);
-    let replaced = false;
-    const content = record.content.flatMap((item) => {
-      if (!item || typeof item !== 'object' || Array.isArray(item) || (item as Record<string, unknown>).type !== 'image') return [item];
-      replaced = true;
-      return [{ type: 'text', text: '[Zeus 临时工具图片已在当前调用链传输；持久历史仅保留同一工具结果文本中的受控制品引用。]' }];
-    });
-    return original((replaced ? { ...record, content } : message) as Parameters<SessionManager['appendMessage']>[0]);
-  }) as SessionManager['appendMessage'];
-}
-
 /** 能力查询读取实际内置工具注册，不创建会话或触发 Provider 登录。 */
 export function readPiBuiltinToolCatalog(): PiZeusToolDefinitionSpec[] {
   return createZeusTools(
@@ -749,10 +854,13 @@ function createZeusTools(getEntry: () => PiSessionEntry | null, broker: PiZeusTo
     if (!entry) throw runtimeError('ZEUS_PI_TOOL_SESSION_UNBOUND', 'Pi 工具尚未绑定 Zeus 会话。');
     const result = await broker.execute({ requestId: `pi_tool_${randomUUID()}`, session: entry.identity, toolCallId, toolName, args, ...(signal ? { signal } : {}) });
     if (result.isError) throw runtimeError('ZEUS_PI_TOOL_EXECUTION_FAILED', result.text);
-    // 部分 SDK 传输会跳过不受支持的工具图片，必须在此显式报错，保留 Zeus 已归档产物。
+    /** 原始图片必须先由 Core 归档；不能静默丢图或把大图片塞进 Pi 历史。 */
+    if (result.contentItems?.some((item) => item.type === 'image') && !result.imageReferences?.length) throw runtimeError('ZEUS_PI_TOOL_IMAGE_UNARCHIVED', '工具图片尚未归档，无法交给模型。');
+    /** JSON 序列化同时落实新版 Pi 对工具详情的可序列化约束。 */
+    const details = JSON.parse(JSON.stringify({ ...(result.details && typeof result.details === 'object' && !Array.isArray(result.details) ? result.details : { value: result.details ?? null }), zeusImages: result.imageReferences ?? [] }));
     return {
-      content: result.contentItems?.length ? result.contentItems : [{ type: 'text' as const, text: result.text }],
-      details: result.details ?? null,
+      content: result.contentItems?.length ? result.contentItems.filter((item) => item.type === 'text') : [{ type: 'text' as const, text: result.text }],
+      details,
     };
   };
   const builtInTools: ToolDefinition[] = [
@@ -1128,7 +1236,20 @@ function withModelTransport(
   streams: ProviderStreams,
   authenticationSchemes: ReadonlyMap<string, ModelAuthenticationScheme>,
   observePayload: (sessionId: string | undefined, model: Model<Api>, payload: unknown) => Promise<void>,
+  projectContext: (model: Model<Api>, context: TranscriptContext, options?: StreamOptions) => Promise<TranscriptContext>,
 ): ProviderStreams {
+  /** 异步准备阶段的取消也使用 Pi 的取消终态，避免被 lazyStream 包装成模型故障。 */
+  function projectStream(model: Model<Api>, setup: () => Promise<AsyncIterable<AssistantMessageEvent>>, signal?: AbortSignal) {
+    /** 内层复用官方准备失败处理，外层只校正取消语义并保留 result() 能力。 */
+    const source = lazyStream(model, setup);
+    return lazyStream(model, async () => ({
+      async *[Symbol.asyncIterator]() {
+        for await (const event of source) {
+          yield event.type === 'error' && signal?.aborted ? { ...event, reason: 'aborted' as const, error: { ...event.error, stopReason: 'aborted' as const } } : event;
+        }
+      },
+    }));
+  }
   const optionsFor = (model: Model<Api>, options: StreamOptions | undefined): StreamOptions => {
     const authenticated = applyModelAuthentication(options, authenticationSchemes.get(model.id) ?? 'protocol_default') ?? {};
     const originalOnPayload = authenticated.onPayload;
@@ -1144,10 +1265,10 @@ function withModelTransport(
   };
   return {
     stream(model, context, options) {
-      return streams.stream(model, context, optionsFor(model, options));
+      return projectStream(model, async () => streams.stream(model, await projectContext(model, context, options), optionsFor(model, options)), options?.signal);
     },
     streamSimple(model, context, options) {
-      return streams.streamSimple(model, context, optionsFor(model, options));
+      return projectStream(model, async () => streams.streamSimple(model, await projectContext(model, context, options), optionsFor(model, options)), options?.signal);
     },
   };
 }

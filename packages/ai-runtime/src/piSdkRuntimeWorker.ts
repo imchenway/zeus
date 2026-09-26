@@ -9,6 +9,7 @@ import {
   serializePiRuntimeWorkerError,
   type PiRuntimeCoreToWorkerMessage,
   type PiRuntimeWorkerRequest,
+  type PiRuntimeWorkerReverseMethod,
   type PiRuntimeWorkerReverseResponse,
   type PiRuntimeWorkerToCoreMessage,
 } from './piRuntimeWorkerProtocol.js';
@@ -104,6 +105,8 @@ async function handleRequest(request: PiRuntimeWorkerRequest): Promise<unknown |
       },
       toolBroker: {
         execute: async (toolRequest) => reverseToolRequest(toolRequest),
+        /** 图片沿用反向请求的取消传播，不触发工具执行。 */
+        readImage: async ({ signal, ...input }) => (await reverseRequest('tool_image_read', input, signal)) as { data: string; mimeType: string },
         respond: async (response) => {
           await reverseRequest('tool_respond', response);
         },
@@ -240,7 +243,7 @@ function reverseRequest(method: Parameters<typeof sendReverseRequest>[0], payloa
   });
 }
 
-function sendReverseRequest(method: 'load_connections' | 'tool_execute' | 'tool_respond' | 'run_acceptance' | 'run_rejected' | 'provider_payload_observed', id: string, payload: unknown, traceIdentity: string | null): void {
+function sendReverseRequest(method: PiRuntimeWorkerReverseMethod, id: string, payload: unknown, traceIdentity: string | null): void {
   send({ kind: 'reverse_request', protocolVersion: piRuntimeWorkerProtocolVersion, generationId, traceIdentity, id, method, payload });
 }
 

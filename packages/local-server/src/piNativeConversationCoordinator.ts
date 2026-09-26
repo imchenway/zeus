@@ -1,3 +1,4 @@
+import { piSdkBinaryVersion } from '@zeus/ai-runtime';
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
 import type { AsyncQuestionAnswer, ConversationResource } from '@zeus/shared';
 import { createHash } from 'node:crypto';
@@ -11,11 +12,13 @@ import {
   type AgentRuntimeEvent,
   type AgentSessionIdentity,
   createPiRuntimeWorkerDriver,
+  isPiToolImageReference,
   modelConnectionRequestEndpoint,
   modelRef,
   type ModelProtocolFamily,
   parseModelRef,
   piRuntimeWorkerProtocolVersion,
+  type PiToolImageReference,
   type PiZeusToolBroker,
   type PiZeusToolContentItem,
   type PiZeusToolRequest,
@@ -261,6 +264,27 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
 
   const broker: PiZeusToolBroker = {
     execute: async (request) => executeTool(request),
+    /** 仅在当前产品会话中读取已经归档的图片，不能把持久引用变成任意文件读取。 */
+    readImage: async ({ session, reference, signal }) => {
+      signal?.throwIfAborted();
+      /** Worker 已核验运行身份，此处继续核验产品会话和完整性信息。 */
+      const context = contexts.get(session.nativeSessionId);
+      if (!context || !isPiToolImageReference(reference)) throw piError('ZEUS_PI_TOOL_IMAGE_INVALID', '图片引用缺少有效会话或完整性信息。');
+      /** 先核对元信息，错误引用不能触发原件读取。 */
+      const record = options.execution.getToolResult(reference.handle);
+      if (!record || record.conversationId !== context.conversationId || record.sha256 !== reference.sha256 || record.byteLength !== reference.byteLength || record.mimeType !== reference.mimeType) {
+        throw piError('ZEUS_PI_TOOL_IMAGE_INVALID', '图片引用与当前会话的归档记录不一致。');
+      }
+      /** 沿用制品库的所有者、内容摘要及普通图片大小限制。 */
+      const image = await options.toolResults.readImage({ conversationId: context.conversationId, handle: reference.handle, detail: reference.detail });
+      signal?.throwIfAborted();
+      /** 原件损坏、丢失或超出普通投影大小时，明确中止而非静默丢图。 */
+      const parsed = image.imageUrl ? parseImageDataUrl(image.imageUrl) : null;
+      if (!parsed || image.sha256 !== reference.sha256 || image.byteLength !== reference.byteLength || parsed.mimeType !== reference.mimeType) {
+        throw piError('ZEUS_PI_TOOL_IMAGE_INVALID', '归档图片无法按引用完整还原。');
+      }
+      return parsed;
+    },
     respond: async (input) => {
       const pending = pendingApprovals.get(input.requestId);
       if (!pending || pending.session.nativeSessionId !== input.session.nativeSessionId) throw piError('ZEUS_PI_APPROVAL_NOT_PENDING', 'Pi 工具审批已不在等待。');
@@ -674,7 +698,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
                 providerId: `pi:${input.model.sourceId ?? 'custom'}`,
                 providerModel: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
                 providerProtocolVersion: piRuntimeWorkerProtocolVersion,
-                providerBinaryVersion: 'pi-sdk-0.83.0',
+                providerBinaryVersion: piSdkBinaryVersion,
                 observedAt: createdAt,
               });
               return;
@@ -686,7 +710,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
               providerModel: input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId,
               providerState: 'active',
               providerProtocolVersion: piRuntimeWorkerProtocolVersion,
-              providerBinaryVersion: 'pi-sdk-0.83.0',
+              providerBinaryVersion: piSdkBinaryVersion,
               modelSourceId: input.model.sourceId,
               modelId: input.model.modelId,
             });
@@ -2044,6 +2068,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       createdAt: options.now(),
     });
     const imageArtifacts: Array<{ handle: string; sha256: string; byteLength: number; mimeType: string }> = [];
+    /** Core 生成引用，覆盖插件或工具自带的同名数据；图片不再穿过结果持久化链路。 */
+    const imageReferences: PiToolImageReference[] = [];
     const projectedContentItems: PiZeusToolContentItem[] = [{ type: 'text', text: stored.projection }];
     let imageOrdinal = 0;
     for (const item of raw.contentItems ?? []) {
@@ -2059,8 +2085,15 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       imageArtifacts.push({ handle: image.record.handle, sha256: image.record.sha256, byteLength: image.record.byteLength, mimeType: image.record.mimeType });
       projectedContentItems.push({ type: 'text', text: image.projectionText });
       if (image.projectedImageUrl) {
-        const parsed = parseImageDataUrl(image.projectedImageUrl);
-        if (parsed) projectedContentItems.push({ type: 'image', data: parsed.data, mimeType: parsed.mimeType });
+        imageReferences.push({
+          toolCallId: request.toolCallId,
+          handle: image.record.handle,
+          contentIndex: projectedContentItems.length,
+          sha256: image.record.sha256,
+          byteLength: image.record.byteLength,
+          mimeType: image.record.mimeType,
+          detail: 'low',
+        });
       }
     }
     options.execution.appendModelHistory({
@@ -2095,6 +2128,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       ...raw,
       text: stored.projection,
       contentItems: projectedContentItems,
+      imageReferences,
       details: {
         ...asRecord(raw.details),
         toolResultHandle: stored.record.handle,
@@ -2168,15 +2202,17 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       return { text: JSON.stringify(page), details: { offset: page.offset, nextOffset: page.nextOffset, totalCharacters: page.totalCharacters, sha256: page.sha256 } };
     }
     if (request.toolName === 'read_conversation_tool_image') {
+      /** 显式读取沿用原件授权，不把原图重新写入 Pi 会话。 */
+      const handle = stringArg(request.args.handle, '工具图片句柄');
       const image = await options.toolResults.readImage({
         conversationId: context.conversationId,
-        handle: stringArg(request.args.handle, '工具图片句柄'),
+        handle,
         detail: request.args.detail === 'original' ? 'original' : 'low',
       });
-      const parsed = image.imageUrl ? parseImageDataUrl(image.imageUrl) : null;
       return {
         text: image.projectionText,
-        contentItems: [{ type: 'text', text: image.projectionText }, ...(parsed ? ([{ type: 'image' as const, data: parsed.data, mimeType: parsed.mimeType }] as const) : [])],
+        contentItems: [{ type: 'text', text: image.projectionText }],
+        imageReferences: image.imageUrl ? [{ toolCallId: request.toolCallId, handle, contentIndex: 1, sha256: image.sha256, byteLength: image.byteLength, mimeType: image.mimeType, detail: image.detail }] : [],
         details: { mimeType: image.mimeType, byteLength: image.byteLength, sha256: image.sha256, detail: image.detail },
       };
     }

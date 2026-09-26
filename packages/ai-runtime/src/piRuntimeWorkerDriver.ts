@@ -30,6 +30,7 @@ import type {
   PiPortableHistoryImportInput,
   PiPortableHistoryImportResult,
   PiRuntimeConnection,
+  PiToolImageRequest,
   PiZeusToolBroker,
   PiZeusToolDefinitionSpec,
   PiZeusToolRequest,
@@ -306,6 +307,7 @@ export function createPiRuntimeWorkerDriver(options: CreatePiRuntimeWorkerDriver
         rememberCredentialValues(connections, knownCredentialValues);
         value = connections;
       } else if (request.method === 'tool_execute') value = await executeReverseTool(request);
+      else if (request.method === 'tool_image_read') value = await readReverseImage(request);
       else if (request.method === 'tool_respond') value = await options.toolBroker.respond?.(request.payload as RespondAgentInteractionInput);
       else if (request.method === 'run_acceptance') value = await acceptRun(request);
       else if (request.method === 'run_rejected') value = rejectRun(request);
@@ -335,6 +337,21 @@ export function createPiRuntimeWorkerDriver(options: CreatePiRuntimeWorkerDriver
     reverseControllers.set(request.id, controller);
     const input = request.payload as Omit<PiZeusToolRequest, 'signal'>;
     return options.toolBroker.execute({ ...input, signal: controller.signal });
+  }
+
+  /** 图片读取只接受当前 Worker 已绑定的会话，取消信号与本次反向请求共用。 */
+  async function readReverseImage(request: PiRuntimeWorkerReverseRequest) {
+    /** IPC 载荷仍需核对运行代次及会话路径，不能借用其他会话读取图片。 */
+    const input = request.payload as PiToolImageRequest | null;
+    /** 只认可 Core 接纳的会话绑定。 */
+    const binding = input?.session ? sessions.get(input.session.nativeSessionId) : undefined;
+    if (!input || !binding || input.session.agentKind !== 'pi' || input.session.runtimeInstanceId !== generationId || input.session.nativeSessionPath !== binding.identity.nativeSessionPath || !options.toolBroker.readImage) {
+      throw driverError('ZEUS_PI_TOOL_IMAGE_SESSION_MISSING', '工具图片请求不属于当前 Worker 的已绑定会话。');
+    }
+    /** 复用既有取消通道，Worker 中止后不再继续回传图片。 */
+    const controller = new AbortController();
+    reverseControllers.set(request.id, controller);
+    return options.toolBroker.readImage({ session: binding.identity, reference: input.reference, signal: controller.signal });
   }
 
   async function acceptRun(request: PiRuntimeWorkerReverseRequest): Promise<void> {

@@ -22,7 +22,7 @@ export type PiRuntimeWorkerMethod =
   | 'invalidateModelRuntime'
   | 'close';
 
-export type PiRuntimeWorkerReverseMethod = 'load_connections' | 'tool_execute' | 'tool_respond' | 'run_acceptance' | 'run_rejected' | 'provider_payload_observed';
+export type PiRuntimeWorkerReverseMethod = 'load_connections' | 'tool_execute' | 'tool_image_read' | 'tool_respond' | 'run_acceptance' | 'run_rejected' | 'provider_payload_observed';
 
 export interface PiRuntimeWorkerWireError {
   code: string;
@@ -193,7 +193,7 @@ function isWorkerMethod(value: unknown): value is PiRuntimeWorkerMethod {
 }
 
 function isReverseMethod(value: unknown): value is PiRuntimeWorkerReverseMethod {
-  return value === 'load_connections' || value === 'tool_execute' || value === 'tool_respond' || value === 'run_acceptance' || value === 'run_rejected' || value === 'provider_payload_observed';
+  return value === 'load_connections' || value === 'tool_execute' || value === 'tool_image_read' || value === 'tool_respond' || value === 'run_acceptance' || value === 'run_rejected' || value === 'provider_payload_observed';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

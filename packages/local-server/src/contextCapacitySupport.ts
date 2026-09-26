@@ -1,3 +1,4 @@
+import { piSdkBinaryVersion } from '@zeus/ai-runtime';
 import { contextCapacityChoices, type ContextCapacityCapability } from '@zeus/shared';
 import type { CodexCapabilitiesSnapshot, ModelConnectionRecord } from '@zeus/ai-runtime';
 
@@ -15,7 +16,7 @@ export function resolveContextCapacityPolicy(native: CodexCapabilitiesSnapshot |
   const contextWindow = model?.contextWindow ?? (runtime === 'codex' ? (budget?.maximumContextWindowTokens ?? budget?.contextWindowTokens) : null) ?? null;
   const identity = {
     runtime,
-    runtimeVersion: runtime === 'pi' ? 'pi-sdk-0.83.0' : (native?.providerVersion ?? null),
+    runtimeVersion: runtime === 'pi' ? piSdkBinaryVersion : (native?.providerVersion ?? null),
     sourceId: connection?.id ?? 'codex',
     sourceRevision: connection?.updatedAt ?? 'codex-managed-account',
     modelId,

@@ -1,3 +1,4 @@
+import { piSdkBinaryVersion } from '@zeus/ai-runtime';
 import { resolveContextCapacityPolicy } from './contextCapacitySupport.js';
 import { assertContextCapacity, assertContextCapacitySupported, contextCapacityUnavailableReason } from '@zeus/shared';
 import { resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
@@ -2711,7 +2712,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       providerId: input.agentKind === 'codex' ? 'codex' : `pi:${connectionId ?? 'custom'}`,
       providerModel: connectionId ? modelRef(connectionId, input.modelId) : input.modelId,
       providerProtocolVersion: input.agentKind === 'codex' ? 'app-server' : piRuntimeWorkerProtocolVersion,
-      providerBinaryVersion: input.agentKind === 'pi' ? 'pi-sdk-0.83.0' : null,
+      providerBinaryVersion: input.agentKind === 'pi' ? piSdkBinaryVersion : null,
     };
     return { route, configuredModel };
   }
