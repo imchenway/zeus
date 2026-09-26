@@ -941,7 +941,11 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ['ZEUS_CODEX_MODEL_AT_CAPACITY', 'serverOverloaded'],
     ['所选模型目前繁忙，无法处理这次请求。可以切换模型，或稍后再试。', 'The selected model is busy and cannot handle this request. Choose another model or try again later.', 'choose_model'],
   ],
-  [['ZEUS_CONTEXT_MODEL_WINDOW_UNAVAILABLE'], ['Zeus 未能读取所选模型的使用限制，暂时无法向它发送请求。请重新连接 Codex。', 'Zeus could not read the selected model’s limits and cannot send the request yet. Reconnect Codex.', 'settings']],
+  // 此错误同时用于订阅与第三方模型；不能一律要求重新连接 Codex。
+  [
+    ['ZEUS_CONTEXT_MODEL_WINDOW_UNAVAILABLE'],
+    ['暂时无法读取所选模型的使用限制，消息尚未发送。请检查模型配置，或选择其他模型。', 'The selected model’s limits are unavailable, so the message was not sent. Check the model configuration or choose another model.', 'model_settings'],
+  ],
   // 任务文档读取失败保留具体原因；缺少可选文档由读取入口正常处理，不会进入这些错误分支。
   [
     ['项目 docs 不是普通目录或是符号链接。', 'ZEUS_CONTEXT_SOURCE_PATH_INVALID: 项目 docs 不是普通目录或是符号链接。'],
@@ -978,6 +982,10 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ['找不到这段会话。它可能已被移除，请返回会话列表确认。', 'This conversation could not be found. It may have been removed; check the conversation list.'],
   ],
   [['ZEUS_PROJECT_NOT_FOUND'], ['找不到对应项目。请返回项目列表确认项目是否仍然存在。', 'The project could not be found. Check whether it is still available in the project list.']],
+  // 路径校验同时服务于变更记录和用户主动恢复，不将具体文件操作扩大成整段会话失败。
+  [['ZEUS_TURN_CHANGE_SET_PATH_FORBIDDEN'], ['部分文件超出本会话的工作目录，本轮修改无法撤销或重新应用。', 'Some files are outside this conversation’s working folder. Changes from this turn cannot be undone or reapplied.']],
+  [['ZEUS_TURN_CHANGE_SET_PATH_INVALID'], ['部分文件路径无效，本轮修改无法撤销或重新应用。', 'Some file paths are invalid. Changes from this turn cannot be undone or reapplied.']],
+  [['ZEUS_TURN_CHANGE_SET_UNAVAILABLE'], ['本轮文件变更记录不完整，无法安全撤销或重新应用。', 'File change records for this turn are incomplete. Changes cannot be safely undone or reapplied.']],
   [['ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED'], ['这段会话已归档，需要先恢复会话才能继续。', 'This conversation is archived. Restore it before continuing.']],
   [
     ['ZEUS_NATIVE_SUBMISSION_NOT_EDITABLE', 'ZEUS_NATIVE_SUBMISSION_NOT_RETRYABLE'],

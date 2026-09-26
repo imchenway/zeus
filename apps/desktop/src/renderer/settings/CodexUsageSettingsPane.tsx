@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { calculateUncachedInputTokens, type CodexLocalUsageDay, type CodexLocalUsageGroup, type CodexOfficialUsageSnapshot, type CodexUsageRange, type UsageAnalyticsSnapshot, type UsageProviderAnalytics } from '@zeus/shared';
 import { CalendarDotsIcon as CalendarDots } from '@phosphor-icons/react/dist/csr/CalendarDots';
 import { GaugeIcon as Gauge } from '@phosphor-icons/react/dist/csr/Gauge';
-import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { SettingsPagination, settingsPage, settingsPageSize } from './SettingsPagination.js';
 
 type UsageClient = {
@@ -35,7 +35,7 @@ const text = {
     unavailable: '不可用',
     signedOut: '尚未登录 Codex ChatGPT 账户。',
     unsupported: '当前登录方式不提供 ChatGPT 官方账户统计；本地 Zeus 明细仍可用。',
-    stale: '离线或刷新失败，当前显示上次成功数据。',
+    stale: '本次刷新未完成，当前显示上次成功读取的数据。',
     empty: '尚无可展示的用量数据。',
     noPrice: '暂无官方价格',
     range: '时间范围',
@@ -65,7 +65,7 @@ const text = {
     unavailable: 'Unavailable',
     signedOut: 'No Codex ChatGPT account is signed in.',
     unsupported: 'This sign-in method does not provide official ChatGPT account analytics. Zeus-local detail remains available.',
-    stale: 'Offline or refresh failed. Showing the last successful snapshot.',
+    stale: 'Refresh did not complete. Showing the last successful snapshot.',
     empty: 'No usage data is available yet.',
     noPrice: 'No official price available',
     range: 'Range',
@@ -76,6 +76,7 @@ const text = {
   },
 } as const;
 
+/** 用量读取失败只影响本页；保留旧数据、刷新入口和可主动查看的错误详情。 */
 export function CodexUsageSettingsPane(props: { client: UsageClient | null; language: Language; refreshRevision: number }) {
   const copy = text[props.language];
   const [range, setRange] = useState<CodexUsageRange>('30d');
@@ -86,9 +87,6 @@ export function CodexUsageSettingsPane(props: { client: UsageClient | null; lang
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const loadRevision = useRef(0);
-  useApplicationErrorDialog(error, {
-    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-  });
   const [filterOptions, setFilterOptions] = useState<{ projects: CodexLocalUsageGroup[]; models: CodexLocalUsageGroup[] }>({ projects: [], models: [] });
 
   const load = useCallback(async () => {
@@ -143,6 +141,12 @@ export function CodexUsageSettingsPane(props: { client: UsageClient | null; lang
       {loading && !snapshot ? (
         <p className="codex-usage-state" role="status">
           {copy.loading}
+        </p>
+      ) : null}
+      {error ? (
+        <p className="codex-usage-state" role="status">
+          {snapshot ? <span>{copy.stale} </span> : null}
+          <VisibleApplicationError error={error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
         </p>
       ) : null}
       {snapshot ? (
@@ -322,11 +326,9 @@ function UsageSection(props: { title: string; description: string; badge: string
   );
 }
 
+/** 官方统计不可用时在原位置说明，不因切换供应商或后台刷新弹出全局错误。 */
 function OfficialOverview(props: { snapshot: CodexOfficialUsageSnapshot; language: Language }) {
   const copy = text[props.language];
-  useApplicationErrorDialog(props.snapshot.state === 'unavailable' ? props.snapshot.error : null, {
-    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-  });
   if (props.snapshot.state === 'signed_out') return <p className="codex-usage-state">{copy.signedOut}</p>;
   if (props.snapshot.state === 'unsupported') return <p className="codex-usage-state">{copy.unsupported}</p>;
   if (props.snapshot.state === 'unavailable' && !props.snapshot.fetchedAt)

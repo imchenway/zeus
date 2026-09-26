@@ -1260,11 +1260,6 @@ export function isProviderThreadAlreadyAvailableError(error: unknown): boolean {
   return /\bno archived rollout found for thread id\b/i.test(error instanceof Error ? error.message : String(error));
 }
 
-export function isRejectedHistoricalFileChangeError(error: unknown): boolean {
-  const code = isRecord(error) && typeof error.code === 'string' ? error.code : null;
-  return code === 'ZEUS_TURN_CHANGE_SET_PATH_FORBIDDEN' || code === 'ZEUS_TURN_CHANGE_SET_PATH_INVALID';
-}
-
 export function isProviderTurnAlreadyEndedSteerError(error: unknown): boolean {
   return /\bno active turn to steer\b/i.test(error instanceof Error ? error.message : String(error));
 }

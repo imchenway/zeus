@@ -644,18 +644,10 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       <output className="sr-only" aria-live="polite" aria-atomic="true">
         {taskModelPushAnnouncement}
       </output>
-      {nativeConversationStatusSyncState !== 'connected' ? (
+      {/* 常规连接和同步不占用全局提示；只有列表可能过期时说明数据新鲜度。 */}
+      {nativeConversationStatusSyncState === 'stale' || nativeConversationStatusSyncState === 'reconnecting' ? (
         <output className="conversation-status-sync-indicator" data-state={nativeConversationStatusSyncState} role="status" aria-live="polite" aria-atomic="true">
-          {nativeConversationStatusSyncState === 'stale' ? null : <span className="conversation-status-sync-spinner" aria-hidden="true" />}
-          <span>
-            {nativeConversationStatusSyncState === 'stale'
-              ? appShellSettings.appLanguage === 'zh-CN'
-                ? '会话状态暂未同步，正在后台重试'
-                : 'Conversation status is unavailable; retrying in the background'
-              : appShellSettings.appLanguage === 'zh-CN'
-                ? '正在同步会话状态'
-                : 'Syncing conversation status'}
-          </span>
+          <span>{appShellSettings.appLanguage === 'zh-CN' ? '会话列表可能不是最新状态，正在自动恢复' : 'The conversation list may be outdated. Recovering automatically.'}</span>
         </output>
       ) : null}
       {storageRecoveryFault ? (

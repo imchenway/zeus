@@ -152,18 +152,18 @@ export function AsyncQuestionMessage(props: { item: NativeSessionItemBuffer; sta
   const zh = language === 'zh-CN';
   /** 实时与恢复状态统一解释。 */
   const { confirmed, pending, deliveryStatus, closed } = asyncQuestionStatus(item, state);
-  /** 接收、排队和未知送达分别显示，不把接收当作已回答。 */
+  /** 只说明答案状态；真正失败的恢复操作由对应答复气泡承载，不要求用户处理内部核对。 */
   const pendingLabel = ['paused', 'unconfirmed'].includes(deliveryStatus ?? '')
     ? zh
-      ? '回答送达尚未确认，请恢复会话'
-      : 'Answer delivery is unconfirmed. Recover the conversation.'
+      ? '回答是否送达尚未确定'
+      : 'Answer delivery is unconfirmed'
     : deliveryStatus === 'queued'
       ? zh
-        ? '回答已作为新消息排队'
-        : 'Answer queued as a new message'
+        ? '回答已排队'
+        : 'Answer queued'
       : zh
-        ? '回答已提交，正在确认送达'
-        : 'Answer submitted, confirming delivery';
+        ? '回答已提交'
+        : 'Answer submitted';
   /** 与原表单一致的草稿键，迁移展示位置不丢弃已填写答案。 */
   const requestId = asyncQuestionIdentity(item);
 

@@ -99,7 +99,7 @@ export function TurnChangeCard(props: {
         </nav>
       </header>
       {changeSet.conflict ? (
-        <p className="session-turn-change-error" role="alert">
+        <p className="session-turn-change-error" role={changeSet.state === 'unavailable' ? 'status' : 'alert'}>
           <VisibleApplicationError error={changeSet.conflict} language={zh ? 'zh-CN' : 'en'} />
         </p>
       ) : null}
@@ -358,7 +358,7 @@ export function TurnDiffWorkspace(props: {
         </nav>
       </header>
       {changeSet.conflict ? (
-        <p className="session-turn-change-error session-turn-diff-error" role="alert">
+        <p className="session-turn-change-error session-turn-diff-error" role={changeSet.state === 'unavailable' ? 'status' : 'alert'}>
           <VisibleApplicationError error={changeSet.conflict} language={zh ? 'zh-CN' : 'en'} />
         </p>
       ) : null}

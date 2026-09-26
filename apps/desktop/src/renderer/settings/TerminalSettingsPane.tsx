@@ -2,7 +2,7 @@ import { useEffect, useId, useState } from 'react';
 import type { SettingsApiClient } from '../features/settings/settingsApiClient.js';
 import { NativeControlRow, NativeSettingsPane } from '../features/workspace/workspaceSupport.js';
 import { Button } from '../ui/Button.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { SettingsSaveStatus, useSettingsAutosave } from './useSettingsAutosave.js';
 
 /** 启动命令需显式保存，避免编辑到一半的文本被新终端执行。 */
@@ -17,7 +17,6 @@ export function TerminalSettingsPane(props: { client: Pick<SettingsApiClient, 'l
   const [revision, setRevision] = useState(0);
   /** 复用设置页的顺序保存与失败反馈。 */
   const saving = useSettingsAutosave(props.language);
-  useApplicationErrorDialog(error, { language: zh ? 'zh-CN' : 'en' });
   useEffect(() => {
     /** 离开页面后不让旧请求覆盖新草稿。 */
     let disposed = false;
@@ -77,7 +76,12 @@ export function TerminalSettingsPane(props: { client: Pick<SettingsApiClient, 'l
       </NativeSettingsPane>
       <p id={helpId}>{zh ? '支持多行命令。切换标签、收起面板或重新连接不会重复执行。' : 'Supports multiple lines. Switching tabs, hiding the panel, or reconnecting does not run it again.'}</p>
       {error ? (
-        <Button onClick={() => setRevision((value) => value + 1)}>{zh ? '重新读取' : 'Retry loading'}</Button>
+        <div role="status">
+          <p>
+            <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
+          </p>
+          <Button onClick={() => setRevision((value) => value + 1)}>{zh ? '重新读取' : 'Retry loading'}</Button>
+        </div>
       ) : (
         <Button disabled={!props.client || command === null || saving.status === 'saving'} onClick={() => void save()}>
           {saving.status === 'saving' ? (zh ? '保存中…' : 'Saving…') : zh ? '保存终端设置' : 'Save terminal settings'}

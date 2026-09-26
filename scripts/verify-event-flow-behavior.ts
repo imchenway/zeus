@@ -1,4 +1,4 @@
-import { mkdtemp, rm, mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, readFile, writeFile, unlink, symlink } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { registerHooks } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -8,6 +8,7 @@ import type { CodexAppServerEvent, CodexAppServerManager } from '../packages/ai-
 import type { TranscriptTurnWorkRow } from '../apps/desktop/src/renderer/session/ConversationTranscript.js';
 import type { NativeSessionItemBuffer } from '../apps/desktop/src/renderer/session/sessionTypes.js';
 import type { TurnChangeSet } from '../packages/shared/src/conversationResources.js';
+import { describeUserFacingError } from '../packages/shared/src/userFacingError.js';
 import { createCodexProviderEventFlow } from '../packages/local-server/src/codexProviderEventFlow.js';
 import { filterCompatibilitySnapshotItemAliases } from '../packages/local-server/src/codexProviderHistoryProjection.js';
 import { selectAutomaticQueueDispatchCandidate } from '../packages/local-server/src/conversationQueueCoreMutationApplication.js';
@@ -73,8 +74,8 @@ async function verifyWorkspaceTurnChanges(): Promise<Record<string, unknown>> {
         createdAt: timestamp,
         updatedAt: timestamp,
       });
-    /** 验证对象就是线上文件变更服务。 */
-    const service = createTurnChangeSetService({
+    /** 共用真实仓储，后续重建服务以检查拒绝原因不会随内存丢失。 */
+    const serviceOptions = {
       db,
       projects,
       changeSets: new TurnChangeSetRepository(db),
@@ -82,7 +83,9 @@ async function verifyWorkspaceTurnChanges(): Promise<Record<string, unknown>> {
       auditLogs: new AuditLogRepository(db),
       idempotency: new IdempotencyRequestRepository(db),
       recoveryRoot: join(root, 'recovery'),
-    });
+    };
+    /** 验证对象就是线上文件变更服务。 */
+    const service = createTurnChangeSetService(serviceOptions);
     /** 本轮开始前的用户修改必须成为恢复起点。 */
     const turn = newTurn('mixed-edits');
     await service.beginWorkspace(conversation, 'mixed-submission');
@@ -147,7 +150,84 @@ async function verifyWorkspaceTurnChanges(): Promise<Record<string, unknown>> {
     await writeFile(join(workspace, paths[1]!), 'concurrent\n');
     await service.finishWorkspace({ conversation, turn: overlapTurn, timestamp });
     assertBehavior(service.seal({ conversation, turn: overlapTurn, timestamp })?.state === 'unavailable', '重叠目录变化不得自动撤销。');
-    return { files: changeSet.fileCount, scriptAndPatchMerged: true, dirtyBaselinePreserved: true, undoReapply: true, concurrentUndoBlocked: true };
+
+    /** 独立执行目录位于项目目录之外；授权必须以会话目录为准。 */
+    const executionRoot = join(root, 'execution');
+    await mkdir(executionRoot);
+    execFileSync('git', ['init', '--quiet', executionRoot]);
+    /** 越界文件始终保持原样，链接也不能放宽授权范围。 */
+    const outsidePath = join(root, 'outside.txt');
+    await writeFile(outsidePath, 'outside-original\n');
+    await symlink(outsidePath, join(executionRoot, 'linked.txt'));
+    /** 复用正式根目录解析入口，不能回退到项目根来放行路径。 */
+    const scopedOptions = { ...serviceOptions, getConversationRoot: () => executionRoot };
+    /** 实时记录、整轮补齐及封存共用同一实例。 */
+    const scopedService = createTurnChangeSetService(scopedOptions);
+    /** 同批拒绝绝对越界、上级目录、符号链接、非法路径与越界重命名。 */
+    const rejectedChanges = [
+      ...[outsidePath, '../outside.txt', 'linked.txt', 'invalid\0.txt'].map((path) => ({ path, kind: { type: 'add' }, diff: 'untrusted\n' })),
+      { path: 'rename.txt', kind: { type: 'update', move_path: outsidePath }, diff: '@@ -1 +1 @@\n-old\n+new\n' },
+    ];
+    /** 合法项即便排在被拒绝的项后面也应正常记录。 */
+    const mixedChanges = [...rejectedChanges, { path: 'inside.txt', kind: { type: 'add' }, diff: 'inside\n' }];
+    /** 路径拒绝只标记本轮记录不可恢复，不抛出会话级异常。 */
+    const rejectedTurn = newTurn('rejected-paths');
+    await scopedService.beginWorkspace(conversation, 'rejected-paths');
+    scopedService.bindWorkspace(conversation.id, 'rejected-paths', rejectedTurn.providerTurnId!);
+    scopedService.capture({ conversation, turn: rejectedTurn, providerItemId: 'mixed-paths', changes: mixedChanges, phase: 'pre', timestamp });
+    await writeFile(join(executionRoot, 'inside.txt'), 'inside\n');
+    scopedService.capture({ conversation, turn: rejectedTurn, providerItemId: 'mixed-paths', changes: mixedChanges, phase: 'post', timestamp });
+    await scopedService.finishWorkspace({ conversation, turn: rejectedTurn, timestamp });
+    /** 正常快照不能清除路径拒绝原因或生成越界文件恢复记录。 */
+    const rejectedSet = scopedService.seal({ conversation, turn: rejectedTurn, timestamp });
+    assertBehavior(rejectedSet?.state === 'unavailable' && rejectedSet.fileCount === 1 && rejectedSet.files[0]?.newPath === 'inside.txt', '混合事件应只记录合法文件，并禁止整轮恢复。');
+    assertBehavior(rejectedSet.conflict?.paths.length === 5 && rejectedSet.conflict.message.includes(executionRoot) && rejectedSet.conflict.message.includes(outsidePath), '重复事件的诊断应去重，并保留具体路径和会话目录。');
+    /** 摘要只说明对操作的影响，具体目录留在用户主动打开的详情中。 */
+    const explanation = describeUserFacingError(rejectedSet.conflict);
+    assertBehavior(
+      explanation.message.includes('本轮修改') && !explanation.message.includes(executionRoot) && explanation.details.includes(executionRoot) && explanation.details.includes(outsidePath),
+      '局部说明应使用中文并保留可诊断的具体路径。',
+    );
+    await db.save();
+    /** 新实例从真实仓储读取拒绝状态，随后合法事件也不能恢复整轮撤销。 */
+    const restartedService = createTurnChangeSetService(scopedOptions);
+    restartedService.capture({ conversation, turn: rejectedTurn, providerItemId: 'later-valid-event', changes: [{ path: 'inside.txt', kind: { type: 'add' }, diff: 'inside\n' }], phase: 'post', timestamp });
+    assertBehavior(restartedService.seal({ conversation, turn: rejectedTurn, timestamp })?.state === 'unavailable', '服务重建与后续事件不能清除持久化的路径拒绝。');
+    /** 即便旧界面继续发出操作请求，服务端也必须保持拒绝。 */
+    const unavailableUndo = await restartedService
+      .operate({ projectId: project.id, conversationId: conversation.id, turnId: rejectedTurn.id, action: 'undo', request: { changeSetId: rejectedSet.id, expectedState: 'applied', idempotencyKey: 'undo-rejected' } })
+      .then(
+        () => false,
+        (error) => error.code === 'ZEUS_TURN_CHANGE_SET_UNAVAILABLE',
+      );
+    assertBehavior(unavailableUndo, '不完整变更集不能通过旧请求撤销。');
+    /** 全部被拒绝时也必须保存可在本轮展示的原因，不能静默丢失。 */
+    const emptyTurn = newTurn('all-paths-rejected');
+    restartedService.capture({ conversation, turn: emptyTurn, providerItemId: 'rejected-only', changes: rejectedChanges, phase: 'post', timestamp });
+    /** 零文件不是成功空结果，而是带详情的局部不可恢复状态。 */
+    const emptySet = restartedService.seal({ conversation, turn: emptyTurn, timestamp });
+    assertBehavior(emptySet?.state === 'unavailable' && emptySet.fileCount === 0 && Boolean(emptySet.conflict), '全部拒绝的路径仍应保留局部原因。');
+    /** 未受影响的其他轮次仍可记录会话执行目录中的文件。 */
+    const validTurn = newTurn('valid-execution-path');
+    /** 使用绝对路径确认合法执行目录不因位于主项目外被误拒绝。 */
+    const validChanges = [{ path: join(executionRoot, 'valid.txt'), kind: { type: 'add' }, diff: 'valid\n' }];
+    restartedService.capture({ conversation, turn: validTurn, providerItemId: 'valid', changes: validChanges, phase: 'pre', timestamp });
+    await writeFile(join(executionRoot, 'valid.txt'), 'valid\n');
+    restartedService.capture({ conversation, turn: validTurn, providerItemId: 'valid', changes: validChanges, phase: 'post', timestamp });
+    /** 有完整记录的正常轮次继续支持原恢复流程。 */
+    const validSet = restartedService.seal({ conversation, turn: validTurn, timestamp });
+    assertBehavior(validSet?.state === 'applied' && validSet.files[0]?.reversible, '合法会话目录必须继续支持恢复。');
+    await unlink(join(executionRoot, 'valid.txt'));
+    await symlink(outsidePath, join(executionRoot, 'valid.txt'));
+    /** 主动恢复重新检查当前路径，不信任捕获时的历史授权结果。 */
+    const outsideUndo = await restartedService
+      .operate({ projectId: project.id, conversationId: conversation.id, turnId: validTurn.id, action: 'undo', request: { changeSetId: validSet.id, expectedState: 'applied', idempotencyKey: 'undo-outside-link' } })
+      .then(
+        () => false,
+        (error) => error.code === 'ZEUS_TURN_CHANGE_SET_PATH_FORBIDDEN',
+      );
+    assertBehavior(outsideUndo && (await readFile(outsidePath, 'utf8')) === 'outside-original\n', '主动恢复必须拒绝链接越界且不得修改目录外文件。');
+    return { files: changeSet.fileCount, scriptAndPatchMerged: true, dirtyBaselinePreserved: true, undoReapply: true, concurrentUndoBlocked: true, rejectedPathsLocalized: true, executionRootRespected: true, unsafeUndoBlocked: true };
   } finally {
     await db.close();
     await rm(root, { recursive: true, force: true });

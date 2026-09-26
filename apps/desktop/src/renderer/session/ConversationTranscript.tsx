@@ -2172,9 +2172,10 @@ function renderTurnArtifacts(turnId: string, props: ConversationTranscriptProps,
   const turn = props.state.turnsByProviderId[turnId];
   if (!turn) return null;
   const changeSet = props.state.changeSetsByProviderId[turnId];
+  // 全部路径被拒绝时没有可列出的文件，仍在本轮保留局部原因与详情入口。
   return (
     <>
-      {changeSet && changeSet.state !== 'capturing' && (changeSet.fileCount > 0 || changeSet.state === 'conflicted') ? (
+      {changeSet && changeSet.state !== 'capturing' && (changeSet.fileCount > 0 || changeSet.state === 'conflicted' || changeSet.conflict) ? (
         <TurnChangeCard changeSet={changeSet} language={props.language} onReview={props.onReviewTurnChanges} onOperate={props.onOperateTurnChangeSet} />
       ) : null}
     </>

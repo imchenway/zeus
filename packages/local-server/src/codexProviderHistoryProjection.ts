@@ -18,7 +18,6 @@ import {
   coordinatorError,
   findSnapshotTurn,
   isRecord,
-  isRejectedHistoricalFileChangeError,
   itemText,
   itemTypeFromValue,
   parseJsonRecord,
@@ -714,18 +713,15 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       });
     }
     if (item.itemType === 'fileChange') {
-      try {
-        options.changeSets.capture({
-          conversation,
-          turn,
-          providerItemId,
-          changes: itemPayload.changes,
-          phase: itemTerminal ? 'post' : 'pre',
-          timestamp,
-        });
-      } catch (error) {
-        if (!isRejectedHistoricalFileChangeError(error)) throw error;
-      }
+      // 与实时事件共用记录入口；路径拒绝保留为局部不可恢复原因，不在历史侧静默丢弃。
+      options.changeSets.capture({
+        conversation,
+        turn,
+        providerItemId,
+        changes: itemPayload.changes,
+        phase: itemTerminal ? 'post' : 'pre',
+        timestamp,
+      });
     }
     const itemResources = syncItemResources(conversation, turn, item, presentedItemPayload, item.textContent, timestamp);
     options.broadcast('conversation.item.updated', {

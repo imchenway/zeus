@@ -13468,28 +13468,6 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   white-space: normal;
 }
 
-.macos-ai-app .conversation-status-sync-spinner {
-  animation: conversation-status-sync-spin 0.85s linear infinite;
-  block-size: 11px;
-  border: 1.5px solid currentColor;
-  border-block-end-color: transparent;
-  border-radius: 50%;
-  inline-size: 11px;
-}
-
-@keyframes conversation-status-sync-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .macos-ai-app .conversation-status-sync-spinner {
-    animation: none;
-    border-block-end-color: currentColor;
-  }
-}
-
 /* 任务状态与优先级使用低饱和语义色；文字始终保留，运行中的动效直接复用会话列表的旋转标记。 */
 .macos-ai-app {
   --zeus-task-status-blue: oklch(48% 0.11 252);

@@ -53,9 +53,11 @@ import { adaptConversationSnapshotV2, mergeConversationHistoryV2, mergeConversat
 import { markConversationNavigationRenderReady } from '../performanceTraceContext.js';
 
 export const reconnectBackoffMs = [250, 500, 1_000, 2_000, 5_000] as const;
-/** 发送结果待核对的静默重试：指数退避、最多五次，全程只读权威状态，不重放消息。 */
+/** 常规只读核对次数；已接收消息阻挡待发队列时继续后台核对，不重放旧消息。 */
 export const pendingSendReconcileAttempts = 5 as const;
+/** 首次后台核对前的等待时间。 */
 export const pendingSendReconcileBaseDelayMs = 1_000 as const;
+/** 持续核对的最大间隔，避免断线期间密集读取。 */
 export const pendingSendReconcileMaxDelayMs = 16_000 as const;
 // 同一个会话项的增量按一帧窗口合并，兼顾 Markdown 成本与首字可见延迟。
 const RENDER_DELTA_COALESCE_MS = 16;
@@ -448,6 +450,8 @@ export interface SessionControllerDiagnostics {
 interface PendingSendEnvelope {
   /** 绑定原始异步问题，沿用现有提交及确认链路。 */
   questionAnswer?: AsyncQuestionAnswer;
+  /** 发送或入队时已经释放输入框，后续发送与确认不得再清空用户的新草稿。 */
+  composerConsumed?: boolean;
   fingerprint: string;
   content: string;
   displayText: string;
@@ -519,6 +523,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
   let pendingSend = persisted.pendingSend ?? null;
   let deferredSends: PendingSendEnvelope[] = (persisted.deferredSends ?? []).map((envelope) => ({
     ...envelope,
+    composerConsumed: true,
     startedAt: envelope.startedAt ?? new Date().toISOString(),
   }));
   let pendingBrowserCommentMarks = persisted.pendingBrowserCommentMarks ?? [];
@@ -667,7 +672,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
   let requestRefreshRetryAttempt = 0;
   /** 发送结果待核对的静默重试任务；同一时刻只允许一条。 */
   let pendingSendReconcileRun: Promise<void> | null = null;
+  /** 当前后台核对所属的消息，防止重复启动。 */
   let pendingSendReconcileEnvelope: PendingSendEnvelope | null = null;
+  /** 会话销毁时立即结束退避等待，不留下后台计时器。 */
+  let finishPendingSendReconcileWait: (() => void) | null = null;
   const requestsAwaitingDetails = new Set<string>();
   const resolvedRequestIds = new Set<string>();
   let targetedHydrationBuffer: BufferedRealtimeEvents | null = null;
@@ -1356,12 +1364,14 @@ export function createSessionController(options: CreateSessionControllerOptions)
     return matchingSubmissions.length > 0 && matchingSubmissions.every((submission) => submission.status === 'failed' || submission.status === 'deleted' || submission.status === 'cancelled' || isManualConfirmationSubmission(submission));
   }
 
+  /** 原消息取得终态后释放本地账本，让已有后续消息继续进入原发送队列。 */
   function finalizeTerminalEnvelope(envelope: PendingSendEnvelope): void {
     if (pendingSend !== envelope) return;
     pendingSend = null;
     dispatch({ type: 'send_succeeded' });
     persistDraft();
     options.client.forgetNativeMessageCommand?.(options.projectId, options.conversationId, envelope.idempotencyKey);
+    void flushDeferredSends();
   }
 
   function acceptedStatus(acceptance: NativeOperationAcceptance): string {
@@ -1452,17 +1462,19 @@ export function createSessionController(options: CreateSessionControllerOptions)
     return tracked;
   }
 
+  /** 只清理已确认的发送账本；输入框已交出后不再按旧内容清空新草稿。 */
   function finalizeDurableEnvelope(envelope: PendingSendEnvelope): void {
     if (pendingSend !== envelope) return;
     const queuedBrowserMark = enqueueBrowserCommentMark(envelope);
     // 先让 accepted envelope 与补偿账本同时落盘；第二阶段失败时仍可从任一身份安全重放。
     if (queuedBrowserMark) persistDraft();
-    clearDraftIfItStillMatches(envelope);
+    if (!envelope.composerConsumed) clearDraftIfItStillMatches(envelope);
     pendingSend = null;
     dispatch({ type: 'send_succeeded' });
     persistDraft();
     options.client.forgetNativeMessageCommand?.(options.projectId, options.conversationId, envelope.idempotencyKey);
     void flushPendingBrowserCommentMarks();
+    void flushDeferredSends();
   }
 
   function reservedBrowserCommentIds(allowedPending: PendingSendEnvelope | null = null): Set<string> {
@@ -1524,8 +1536,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return;
     }
     if (envelope.deliveryState !== 'accepted' || !envelope.acceptance) return;
-    if (await reconcileSubmissionReceipt(envelope)) return;
     if (!hasNativeOptimisticItem(state, envelope.clientUserMessageId)) projectAcceptedEnvelope(envelope);
+    // 回执属于后台核对；读取暂时失败不能拖住历史恢复或把整个会话判为连接失败。
+    schedulePendingSendReconcile(envelope);
   }
 
   /** 历史分页不能决定已接收消息的送达状态；只读回执也不会重放旧消息。 */
@@ -1590,11 +1603,11 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   /**
-   * 发送结果待核对的静默重试入口：指数退避、最多五次，全程只读取权威状态，绝不重放消息。
-   * 同一时刻只跑一条核对任务，界面上不出现任何错误提示。
+   * 发送结果只读核对：同一时刻只跑一条任务，绝不重放旧消息。
+   * 已接收的旧消息阻挡待发队列时持续核对，不能把五次退避耗尽当成要求用户接手的理由。
    */
   function schedulePendingSendReconcile(envelope: PendingSendEnvelope): void {
-    if (disposed || envelope.deliveryState === 'failed') return;
+    if (disposed || pendingSend !== envelope || envelope.deliveryState === 'failed') return;
     if (pendingSendReconcileRun) {
       // 同一信封只保留一条任务；换信封时等当前核对结束再补上，避免并发读写同一会话。
       if (pendingSendReconcileEnvelope === envelope) return;
@@ -1603,26 +1616,35 @@ export function createSessionController(options: CreateSessionControllerOptions)
     }
     pendingSendReconcileEnvelope = envelope;
     pendingSendReconcileRun = (async () => {
-      for (let attempt = 0; attempt < pendingSendReconcileAttempts; attempt += 1) {
+      for (let attempt = 0; attempt < pendingSendReconcileAttempts || (envelope.deliveryState === 'accepted' && deferredSends.length > 0); attempt += 1) {
         await waitForPendingSendReconcile(attempt);
         if (disposed || pendingSend !== envelope) return;
         // 用户正在重试或提交时让位，避免两条核对同时读写同一会话。
         if (activeOperation) continue;
         if (await reconcilePendingSendOnce(envelope)) return;
       }
-      // 静默重试用尽仍不打扰用户，只把结论写进本地运行日志，界面上保留原消息与重试入口。
-      window.zeus?.reportRendererRuntimeError?.(`待核对消息连续 ${pendingSendReconcileAttempts} 次未取得权威状态，已保留原消息与手动重试入口。`);
+      // 没有可自动推进的待发消息时停止常规轮询；后续发送或重连仍会重新启动核对。
+      window.zeus?.reportRendererRuntimeError?.(`待核对消息连续 ${pendingSendReconcileAttempts} 次未取得权威状态，已保留原消息。`);
     })().finally(() => {
       pendingSendReconcileRun = null;
       pendingSendReconcileEnvelope = null;
     });
   }
 
-  /** 第 n 次核对前的等待时间：1、2、4、8、16 秒。 */
+  /** 核对间隔逐步增至十六秒；会话关闭时取消计时并释放等待。 */
   function waitForPendingSendReconcile(attempt: number): Promise<void> {
-    const delay = Math.min(pendingSendReconcileMaxDelayMs, pendingSendReconcileBaseDelayMs * 2 ** attempt);
+    /** 达到上限后保持固定间隔，避免长期等待产生指数溢出。 */
+    const delay = Math.min(pendingSendReconcileMaxDelayMs, pendingSendReconcileBaseDelayMs * 2 ** Math.min(attempt, pendingSendReconcileAttempts));
     return new Promise((resolve) => {
-      setTimeout(resolve, delay);
+      /** 当前核对独占的计时器。 */
+      const timer = setTimeout(finish, delay);
+      /** 自然到期与主动销毁共用同一释放入口。 */
+      function finish(): void {
+        clearTimeout(timer);
+        if (finishPendingSendReconcileWait === finish) finishPendingSendReconcileWait = null;
+        resolve();
+      }
+      finishPendingSendReconcileWait = finish;
     });
   }
 
@@ -2232,6 +2254,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     return Promise.reject(error);
   }
 
+  /** 沿用冻结的发送身份提交消息，自动续发只更新原消息的展示。 */
   function submitEnvelope(envelope: PendingSendEnvelope): Promise<NativeOperationAcceptance | void> {
     const operation = `send:${envelope.fingerprint}`;
     // 水合后的并发回答也先复用操作，避免覆盖另一条正在确认的提交草稿。
@@ -2256,10 +2279,15 @@ export function createSessionController(options: CreateSessionControllerOptions)
           contextDraft: envelope.contextDraft,
           browserComments: envelope.browserSubmission?.comments ?? [],
           delivery: envelope.delivery,
-          ...(envelope.questionAnswer ? { questionAnswer: envelope.questionAnswer, preserveComposer: true } : {}),
+          ...(envelope.questionAnswer ? { questionAnswer: envelope.questionAnswer } : {}),
+          // 待发消息已经交出过输入框，自动续发只更新原气泡。
+          preserveComposer: Boolean(envelope.questionAnswer || envelope.composerConsumed),
           previousConversationState,
           startedAt: envelope.startedAt ?? new Date().toISOString(),
         });
+        // 本次输入已经交出；之后即使用户再次输入同样内容，旧回执也不能清空新草稿。
+        envelope.composerConsumed = true;
+        persistDraft();
         if (envelope.deliveryState === 'accepted' && envelope.acceptance) {
           dispatchSendAccepted(envelope.clientUserMessageId, envelope.acceptance);
           return envelope.acceptance;
@@ -2343,23 +2371,59 @@ export function createSessionController(options: CreateSessionControllerOptions)
         }
       },
       () => {
-        // 回答接收后立即释放表单；后台继续核对送达，失败仍由原发送账本保留。
-        if (envelope.questionAnswer) {
-          void reconcileAcceptedSend();
-          return;
-        }
-        return reconcileAcceptedSend().then(() => undefined);
+        // 服务端接收后立即释放发送操作；附属回执读取不能阻塞下一次输入或回答。
+        if (pendingSend?.deliveryState === 'accepted') schedulePendingSendReconcile(pendingSend);
       },
       false,
-    );
+    ).finally(() => {
+      // 仅发送链路负责接续队列，不让归档、删除等其他操作触发新的发送。
+      void flushDeferredSends();
+    });
   }
 
+  /** 普通消息与问题回答共用待发队列；只冻结一次内容，内部等待结束后自动接续。 */
+  function sendOrDeferEnvelope(envelope: PendingSendEnvelope): Promise<NativeOperationAcceptance | void> {
+    if (pendingSend?.deliveryState === 'accepted' || deferredSends.length > 0 || state.transportState !== 'ready' || state.snapshot?.id !== options.conversationId || !realtimeSubscribed) {
+      /** 原队首的明确重试仍留在队首；新消息才追加到已有后续消息之后。 */
+      const queuedEnvelope = { ...envelope, composerConsumed: true };
+      deferredSends = pendingSend?.clientUserMessageId === envelope.clientUserMessageId ? [queuedEnvelope, ...deferredSends] : [...deferredSends, queuedEnvelope];
+      if (pendingSend?.deliveryState !== 'accepted') pendingSend = null;
+      dispatch({
+        type: 'send_started',
+        clientUserMessageId: envelope.clientUserMessageId,
+        durableClientUserMessageId: envelope.clientUserMessageId,
+        draft: envelope.displayText,
+        attachments: envelope.composerAttachments,
+        submittedAttachments: envelope.attachments,
+        browserSubmission: envelope.browserSubmission,
+        contextDraft: envelope.contextDraft,
+        browserComments: envelope.browserSubmission?.comments ?? [],
+        delivery: envelope.delivery,
+        ...(envelope.questionAnswer ? { questionAnswer: envelope.questionAnswer, preserveComposer: true } : {}),
+        previousConversationState: state.conversationState,
+        startedAt: envelope.startedAt ?? new Date().toISOString(),
+        queuedUntilHydrated: true,
+      });
+      persistDraft();
+      if (state.transportState !== 'ready' || !realtimeSubscribed) {
+        void ensureRealtimeConnection().catch(() => undefined);
+      } else if (pendingSend?.deliveryState === 'accepted') {
+        schedulePendingSendReconcile(pendingSend);
+      } else {
+        void flushDeferredSends();
+      }
+      return Promise.resolve();
+    }
+    return submitEnvelope(envelope);
+  }
+
+  /** 连接就绪且上一条已核对时，按保存顺序发送待发消息。 */
   async function flushDeferredSends(): Promise<void> {
-    if (disposed || state.transportState !== 'ready' || !state.snapshot || activeOperation || pendingSend) return;
-    while (!disposed && state.transportState === 'ready' && state.snapshot && deferredSends.length > 0 && !activeOperation && !pendingSend) {
+    if (disposed || state.transportState !== 'ready' || !realtimeSubscribed || state.snapshot?.id !== options.conversationId || activeOperation || pendingSend) return;
+    while (!disposed && state.transportState === 'ready' && realtimeSubscribed && state.snapshot?.id === options.conversationId && deferredSends.length > 0 && !activeOperation && !pendingSend) {
       const envelope = deferredSends[0]!;
       deferredSends = deferredSends.slice(1);
-      persistDraft();
+      // submitEnvelope 同步写入 pendingSend 后统一保存，避免队列与发送账本之间出现丢失窗口。
       try {
         await submitEnvelope(envelope);
       } catch {
@@ -2415,6 +2479,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     });
     options.client.forgetNativeMessageCommand?.(options.projectId, options.conversationId, envelope.idempotencyKey);
     persistDraft();
+    void flushDeferredSends();
   }
 
   /** 同一连接和轮次的并发导航读取共用请求，不重复翻页。 */
@@ -2929,6 +2994,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     dispose() {
       if (disposed) return;
       disposed = true;
+      finishPendingSendReconcileWait?.();
       for (const context of transcriptHydrations) context.controller.abort(new DOMException('会话已关闭。', 'AbortError'));
       placementActions.length = 0;
       placementBufferBytes = 0;
@@ -3058,6 +3124,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         return updated;
       });
     },
+    /** 接收一次发送意图；内部确认未完成时保存到已有队列并自动接续。 */
     send(delivery, expectedTurnId, settings) {
       const normalizedExpectedTurnId = expectedTurnId || undefined;
       const requestedCollaborationMode = settings?.collaborationMode ?? state.snapshot?.collaborationMode ?? 'default';
@@ -3140,80 +3207,42 @@ export function createSessionController(options: CreateSessionControllerOptions)
         Boolean(pendingSend.computerUseRequested) === Boolean(appliedSettings?.computerUseRequested)
           ? pendingSend
           : null;
-      const exactPending = pendingSend?.fingerprint === fingerprint ? pendingSend : null;
-      if (pendingSend?.deliveryState === 'accepted' && !exactPending) {
-        const acceptedEnvelope = pendingSend;
-        // 冷历史首屏不会处理发送账本；续聊前先用权威快照销账旧 acceptance，不能让它永久阻断下一条消息。
-        return reconcileAcceptedSend().then(() => {
-          if (pendingSend === acceptedEnvelope) return rejectSend(new Error('上一条消息的送达状态仍待确认，已保留当前草稿，请重新连接后再试。'));
-          return controller.send(delivery, normalizedExpectedTurnId, settings);
-        });
-      }
+      const exactPending = pendingSend?.deliveryState !== 'accepted' && pendingSend?.fingerprint === fingerprint ? pendingSend : null;
       if (pendingSend && pendingSend.deliveryState !== 'accepted' && !exactPending && !reusableIdentity) {
         return rejectSend(new Error('上一条消息尚未确认是否被 Zeus 接收，请先重试或取消该消息。'));
       }
       if (browserSubmissionUsesReservedComments(browserSubmission, exactPending ?? reusableIdentity)) {
         return rejectSend(new Error('这些浏览器批注已属于待确认或已送达的消息。'));
       }
-      if (!pendingSend || pendingSend.fingerprint !== fingerprint) {
-        pendingSend = {
-          fingerprint,
-          content,
-          displayText,
-          draft,
-          attachments,
-          composerAttachments,
-          browserSubmission,
-          contextDraft,
-          delivery,
-          ...(normalizedExpectedTurnId ? { expectedTurnId: normalizedExpectedTurnId } : {}),
-          ...(appliedSettings?.model ? { model: appliedSettings.model } : {}),
-          ...(appliedSettings?.agentKind ? { agentKind: appliedSettings.agentKind } : {}),
-          ...(appliedSettings?.effort ? { effort: appliedSettings.effort } : {}),
-          ...(appliedSettings?.contextCapacityTokens !== undefined ? { contextCapacityTokens: appliedSettings.contextCapacityTokens } : {}),
-          ...(appliedSettings && Object.prototype.hasOwnProperty.call(appliedSettings, 'serviceTier') ? { serviceTier: appliedSettings.serviceTier } : {}),
-          ...(appliedSettings ? { permissionMode: appliedSettings.permissionMode } : {}),
-          collaborationMode: requestedCollaborationMode,
-          ...(appliedSettings?.pluginReferences?.length ? { pluginReferences: appliedSettings.pluginReferences } : {}),
-          ...(appliedSettings?.expertMentions?.length ? { expertMentions: appliedSettings.expertMentions } : {}),
-          ...(appliedSettings?.skillReferences?.length ? { skillReferences: appliedSettings.skillReferences } : {}),
-          ...(appliedSettings?.computerUseRequested ? { computerUseRequested: true } : {}),
-          // provider 尚未接受的失败提交只调整服务档位时，沿用原幂等身份重试。
-          idempotencyKey: reusableIdentity?.idempotencyKey ?? createId(),
-          clientUserMessageId: reusableIdentity?.clientUserMessageId ?? createId(),
-          startedAt: reusableIdentity?.startedAt ?? new Date().toISOString(),
-        };
-      }
-      const envelope = pendingSend;
-      if (state.transportState !== 'ready' || state.snapshot?.id !== options.conversationId || !realtimeSubscribed) {
-        pendingSend = null;
-        deferredSends = [...deferredSends, envelope];
-        dispatch({
-          type: 'send_started',
-          clientUserMessageId: envelope.clientUserMessageId,
-          durableClientUserMessageId: envelope.clientUserMessageId,
-          draft: envelope.displayText,
-          attachments: envelope.composerAttachments,
-          submittedAttachments: envelope.attachments,
-          browserSubmission: envelope.browserSubmission,
-          contextDraft: envelope.contextDraft,
-          browserComments: envelope.browserSubmission?.comments ?? [],
-          delivery: envelope.delivery,
-          ...(envelope.questionAnswer ? { questionAnswer: envelope.questionAnswer, preserveComposer: true } : {}),
-          previousConversationState: state.conversationState,
-          startedAt: envelope.startedAt ?? new Date().toISOString(),
-          queuedUntilHydrated: true,
-        });
-        persistDraft();
-        if (state.transportState === 'ready' || state.transportState === 'failed' || state.transportState === 'disconnected') {
-          void ensureRealtimeConnection().catch(() => undefined);
-        }
-        return Promise.resolve();
-      }
-      return submitEnvelope(envelope).then((acceptance) => {
-        void flushDeferredSends();
-        return acceptance;
-      });
+      /** 每次点击发送冻结独立消息；上一条的确认账本继续保留，不能被新草稿覆盖。 */
+      const envelope: PendingSendEnvelope = exactPending ?? {
+        fingerprint,
+        content,
+        displayText,
+        draft,
+        attachments,
+        composerAttachments,
+        browserSubmission,
+        contextDraft,
+        delivery,
+        ...(normalizedExpectedTurnId ? { expectedTurnId: normalizedExpectedTurnId } : {}),
+        ...(appliedSettings?.model ? { model: appliedSettings.model } : {}),
+        ...(appliedSettings?.agentKind ? { agentKind: appliedSettings.agentKind } : {}),
+        ...(appliedSettings?.effort ? { effort: appliedSettings.effort } : {}),
+        ...(appliedSettings?.contextCapacityTokens !== undefined ? { contextCapacityTokens: appliedSettings.contextCapacityTokens } : {}),
+        ...(appliedSettings && Object.prototype.hasOwnProperty.call(appliedSettings, 'serviceTier') ? { serviceTier: appliedSettings.serviceTier } : {}),
+        ...(appliedSettings ? { permissionMode: appliedSettings.permissionMode } : {}),
+        collaborationMode: requestedCollaborationMode,
+        ...(appliedSettings?.pluginReferences?.length ? { pluginReferences: appliedSettings.pluginReferences } : {}),
+        ...(appliedSettings?.expertMentions?.length ? { expertMentions: appliedSettings.expertMentions } : {}),
+        ...(appliedSettings?.skillReferences?.length ? { skillReferences: appliedSettings.skillReferences } : {}),
+        ...(appliedSettings?.computerUseRequested ? { computerUseRequested: true } : {}),
+        // provider 尚未接受的失败提交只调整服务档位时，沿用原幂等身份重试。
+        idempotencyKey: reusableIdentity?.idempotencyKey ?? createId(),
+        clientUserMessageId: reusableIdentity?.clientUserMessageId ?? createId(),
+        startedAt: reusableIdentity?.startedAt ?? new Date().toISOString(),
+      };
+      return sendOrDeferEnvelope(envelope);
     },
     async answerAsyncQuestion(item, answers, asNewMessage = false, answerAttachments = {}) {
       const questions = asyncMessageQuestions(item.payload);
@@ -3238,14 +3267,19 @@ export function createSessionController(options: CreateSessionControllerOptions)
       const fingerprint = JSON.stringify({ questionAnswer, content, delivery, attachments });
       if (activeOperation) {
         if (pendingSend?.fingerprint === fingerprint) return activeOperation.promise as Promise<NativeOperationAcceptance | void>;
-        throw new Error('上一条提交仍在确认中，请稍后回答。');
+        await activeOperation.promise;
       }
-      if (pendingSend?.deliveryState === 'accepted') await reconcileAcceptedSend();
-      if (pendingSend) {
+      /** 同一问题已经排队时复用原发送意图，不重复加入答案。 */
+      const queuedAnswer = deferredSends.find((entry) => entry.clientUserMessageId === identity);
+      if (queuedAnswer || (pendingSend?.clientUserMessageId === identity && pendingSend.deliveryState === 'accepted')) {
+        if ((queuedAnswer ?? pendingSend)?.fingerprint !== fingerprint) throw new Error('该问题的回答已经提交，本次未重复发送。请通过普通消息补充。');
+        return;
+      }
+      if (pendingSend && pendingSend.deliveryState !== 'accepted') {
         if (pendingSend.fingerprint !== fingerprint) throw new Error('上一条消息尚未确认送达，请先重试或取消。');
         return retryPendingSend(pendingSend.clientUserMessageId, 'continue');
       }
-      await ensureRealtimeConnection();
+      /** 原轮次身份随答案一起保存，等待期间结束也不能擅自改为新消息。 */
       const envelope: PendingSendEnvelope = {
         fingerprint,
         content,
@@ -3263,7 +3297,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         clientUserMessageId: identity,
         startedAt: new Date().toISOString(),
       };
-      return submitEnvelope(envelope);
+      return sendOrDeferEnvelope(envelope);
     },
     retryPendingSend,
     cancelPendingSend,
@@ -3283,7 +3317,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
           await applyAuthoritativeQueue(queue);
           /** 仅核对当前被点击的提交，不能借重试恢复其他失败消息。 */
           const submission = queue.submissions.find((entry) => entry.id === submissionId);
-          if (submission?.pausedReason === 'outcome_unknown') throw new Error('ZEUS_NATIVE_SUBMISSION_OUTCOME_UNKNOWN: 仍无法确认这条消息是否送达，已保留原消息，请稍后重试核对。');
+          // 核对尚无结论时保留原气泡及恢复入口，不把同一状态再次抛成操作失败，更不能自动重发。
+          if (submission?.pausedReason === 'outcome_unknown') return queue;
           if (!submission || submission.providerTurnId || !['paused', 'failed'].includes(submission.status)) {
             await applyAuthoritativeSnapshot(await loadConversationForHydration());
             return state.queue ?? queue;

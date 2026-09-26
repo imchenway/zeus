@@ -246,6 +246,7 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
     });
   }
 
+  /** 附属变更记录拒绝不可信路径时只限制本轮恢复能力，不中断 Provider 事件与会话正文。 */
   function capture(input: TurnChangeSetCaptureInput): TurnChangeSet | null {
     assertMutationAllowed();
     const changes = normalizeProviderChanges(input.changes);
@@ -254,11 +255,29 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
     if (!project) throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_PROJECT_MISSING', 'The project for this turn change set no longer exists.');
     const executionRoot = conversationExecutionRoot(input.conversation.id, project.localPath);
     const changeSet = ensureChangeSet(input.conversation, input.turn, input.timestamp);
+    /** 已拒绝的路径随变更集持久保存，后续合法事件和进程重建不能误恢复整轮撤销。 */
+    const previousConflict = parseConflict(changeSet.conflictJson);
+    /** 同批合法文件仍可记录，但不能解除先前拒绝造成的整轮恢复限制。 */
+    let pathRejection = isRejectedFileChangePathError(previousConflict) ? previousConflict : null;
     let capturedBytes = existingCaptureBytes(changeSet.id);
     const snapshotCandidates = new Set<string>();
     try {
       changes.forEach((change, sourceIndex) => {
-        const paths = changePaths(change, executionRoot);
+        /** 先通过完整路径校验；拒绝后不读取文件、不保存补丁，也不创建可操作的文件记录。 */
+        let paths: ReturnType<typeof changePaths>;
+        try {
+          paths = changePaths(change, executionRoot);
+        } catch (error) {
+          if (!isRejectedFileChangePathError(error)) throw error;
+          /** 重复事件只保留一份诊断，重命名同时列出源路径和目标路径。 */
+          const rejectedPaths = [...new Set([...(pathRejection?.paths ?? []), change.path, ...(change.kind.type === 'update' && change.kind.move_path ? [change.kind.move_path] : [])])];
+          pathRejection = {
+            code: pathRejection?.code ?? errorCode(error),
+            message: `部分文件变更未能安全记录，不能撤销或重新应用本轮修改。\n会话工作目录：${executionRoot}\n受影响的路径：\n${rejectedPaths.map((path) => JSON.stringify(path)).join('\n')}`,
+            paths: rejectedPaths,
+          };
+          return;
+        }
         const existing = options.files.listByChangeSet(changeSet.id).find((candidate) => candidate.sourceItemId === input.providerItemId && candidate.sourceIndex === sourceIndex);
         if (existing?.preBlobRef) snapshotCandidates.add(existing.preBlobRef);
         if (existing?.postBlobRef) snapshotCandidates.add(existing.postBlobRef);
@@ -323,9 +342,9 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
     }
     options.changeSets.upsert({
       ...changeSet,
-      state: 'capturing',
-      conflictJson: null,
-      unavailableReason: null,
+      state: pathRejection ? 'unavailable' : 'capturing',
+      conflictJson: pathRejection ? JSON.stringify(pathRejection) : null,
+      unavailableReason: pathRejection ? '部分文件变更未能安全记录，不能撤销或重新应用本轮修改。' : null,
       updatedAt: input.timestamp,
     });
     const result = getById(changeSet.id);
@@ -409,14 +428,20 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
     return result;
   }
 
+  /** 封存时保留所有影响整轮恢复的缺口，不把文件列表完整误判为恢复数据完整。 */
   function seal(input: { conversation: ZeusConversationWithMessagesRecord; turn: ZeusConversationTurnRecord; timestamp: string }): TurnChangeSet | null {
     assertMutationAllowed();
     const changeSet = options.changeSets.getByTurn(input.conversation.id, input.turn.id);
     if (!changeSet) return null;
     const files = aggregateChangeFiles(options.files.listByChangeSet(changeSet.id));
-    if (files.length === 0) return null;
+    /** 路径拒绝不能在封存时消失；全部文件被拒绝时也保留可查看的局部原因。 */
+    const conflict = parseConflict(changeSet.conflictJson);
+    /** 已落库的路径拒绝优先于后续完整快照，不猜测被排除文件的状态。 */
+    const pathRejection = isRejectedFileChangePathError(conflict) ? conflict : null;
+    if (files.length === 0 && !pathRejection) return null;
     const incompleteFile = files.find((file) => !file.reversible);
-    const unavailableReason = workspaceFailures.get(input.turn.id) ?? (incompleteFile ? (incompleteFile.unavailableReason ?? 'Turn change recovery data is incomplete.') : null);
+    const unavailableReason =
+      (pathRejection ? (changeSet.unavailableReason ?? pathRejection.message) : null) ?? workspaceFailures.get(input.turn.id) ?? (incompleteFile ? (incompleteFile.unavailableReason ?? 'Turn change recovery data is incomplete.') : null);
     workspaceFailures.delete(input.turn.id);
     const unifiedDiff =
       (!options.files.listByChangeSet(changeSet.id).some((file) => file.sourceItemId === workspaceSnapshotSource) && changeSet.unifiedDiff) ||
@@ -431,7 +456,7 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
       unifiedDiff,
       preImageDigest: digestFileStates(files, 'pre'),
       postImageDigest: digestFileStates(files, 'post'),
-      conflictJson: null,
+      conflictJson: pathRejection ? JSON.stringify(pathRejection) : null,
       unavailableReason,
       journalRef: null,
       updatedAt: input.timestamp,
@@ -515,12 +540,14 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
     }
   }
 
+  /** 主动恢复先核对整轮完整性和当前路径，再执行写入，避免越权或覆盖后续修改。 */
   function executeOperation(changeSet: ZeusTurnChangeSetRecord, action: 'undo' | 'reapply'): TurnChangeSetOperationResult {
     const project = options.projects.getById(changeSet.projectId);
     if (!project) throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_PROJECT_MISSING', 'The project for this turn change set no longer exists.');
     const executionRoot = conversationExecutionRoot(changeSet.conversationId, project.localPath);
     const files = aggregateChangeFiles(options.files.listByChangeSet(changeSet.id));
-    if (files.length === 0 || files.some((file) => !file.reversible)) {
+    // 留存的文件完整不代表整轮完整；被拒绝的路径不能通过旧界面请求绕过恢复限制。
+    if (changeSet.state === 'unavailable' || files.length === 0 || files.some((file) => !file.reversible)) {
       throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_UNAVAILABLE', changeSet.unavailableReason ?? 'This turn does not have complete recovery data.');
     }
     const fromState = action === 'undo' ? 'applied' : 'undone';
@@ -805,17 +832,19 @@ function changePaths(
   };
 }
 
+/** 变更记录和主动恢复共用安全边界，拒绝原因保留具体路径与会话目录供诊断。 */
 function normalizeProjectRelativePath(path: string, executionRoot: string): { absolutePath: string; relativePath: string } {
-  if (!path || path.includes('\0')) throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_PATH_INVALID', 'Provider file change path is invalid.');
+  if (!path || path.includes('\0')) throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_PATH_INVALID', `文件变更路径无效。\n文件：${JSON.stringify(path)}\n会话工作目录：${executionRoot}`);
   const root = resolve(executionRoot);
   const absolutePath = resolve(isAbsolute(path) ? path : resolve(root, path));
   if (!isInsideRoot(absolutePath, root) || absolutePath === root) {
-    throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_PATH_FORBIDDEN', 'Provider file change path is outside the conversation execution root.');
+    throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_PATH_FORBIDDEN', `文件变更路径不在本会话工作目录内。\n文件：${JSON.stringify(path)}\n会话工作目录：${root}`);
   }
   validateExistingAncestor(absolutePath, root);
   return { absolutePath, relativePath: relative(root, absolutePath).split(sep).join('/') };
 }
 
+/** 实际路径与现存父目录均须位于授权目录，符号链接不能扩大文件访问范围。 */
 function validateExistingAncestor(path: string, root: string): void {
   const rootRealPath = realpathSync(root);
   let ancestor = path;
@@ -823,13 +852,13 @@ function validateExistingAncestor(path: string, root: string): void {
     try {
       const ancestorRealPath = realpathSync(ancestor);
       if (!isInsideRoot(ancestorRealPath, rootRealPath)) {
-        throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_PATH_FORBIDDEN', 'Provider file change path resolves outside the conversation execution root.');
+        throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_PATH_FORBIDDEN', `文件路径实际指向本会话工作目录之外。\n文件：${JSON.stringify(path)}\n会话工作目录：${root}`);
       }
       return;
     } catch (error) {
       if (error instanceof Error && 'code' in error && (error as Error & { code?: unknown }).code !== 'ENOENT') throw error;
       const parent = dirname(ancestor);
-      if (parent === ancestor) throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_PATH_FORBIDDEN', 'No trusted ancestor exists for the provider file change path.');
+      if (parent === ancestor) throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_PATH_FORBIDDEN', `无法确认文件路径所属的可信目录。\n文件：${JSON.stringify(path)}\n会话工作目录：${root}`);
       ancestor = parent;
     }
   }
@@ -1292,6 +1321,11 @@ function isInsideRoot(candidate: string, root: string): boolean {
 
 function safeSegment(value: string): string {
   return createHash('sha256').update(value).digest('hex').slice(0, 20);
+}
+
+/** 仅收敛已明确拒绝的路径；数据库、磁盘及其他异常仍沿原错误链路处理。 */
+function isRejectedFileChangePathError(error: unknown): boolean {
+  return isRecord(error) && (error.code === 'ZEUS_TURN_CHANGE_SET_PATH_FORBIDDEN' || error.code === 'ZEUS_TURN_CHANGE_SET_PATH_INVALID');
 }
 
 function parseConflict(value: string | null): TurnChangeConflict | null {
