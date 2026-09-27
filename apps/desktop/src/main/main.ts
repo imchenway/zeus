@@ -411,11 +411,14 @@ function applyReadOnlyValidationDataRoot(descriptor: ReadOnlyValidationDescripto
 function applyPreparedDataRoot(root: string, legacyRoots: readonly string[] = [], knownProductionAdoptionRoots: readonly string[] = []): void {
   const profile = activeDataRootProfile();
   const keychainService = resolveDesktopKeychainService({ profile, dataRootPath: root });
+  /** 源码启动已经明确选择该根，可在无活动 Host 时为旧开发目录补发身份；打包身份不进入此分支。 */
+  const knownDevelopmentAdoptionRoots = profile === 'development' ? [root] : [];
   const preparation = prepareZeusDataRoot(root, legacyRoots, {
     profile,
     bundleId: expectedBundleIdForDataRootProfile(profile),
     keychainService,
     knownProductionAdoptionRoots,
+    knownDevelopmentAdoptionRoots,
   });
   zeusDataRootPath = preparation.layout.root;
   zeusDataLayout = preparation.layout;

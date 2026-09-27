@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { DatabaseSync } from 'node:sqlite';
 import { createLegacyFlatZeusDataLayout, createZeusDataLayout, type ZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
 import { prepareZeusDataRootIdentity, withZeusDataRootPreparationLock, zeusDataRootIdentityFileName, type ExpectedZeusDataRootIdentity, type ZeusDataRootIdentityMarker } from './dataRootIdentity.js';
+import { canonicalizeZeusDataRootPath } from './zeusDataRootPath.js';
 
 export type ZeusDataPreparationStatus = 'initialized' | 'already-layered' | 'migrated' | 'legacy-host-active';
 
@@ -17,6 +18,8 @@ export interface ZeusDataPreparationResult {
 export interface ZeusDataPreparationIdentityOptions extends ExpectedZeusDataRootIdentity {
   /** 仅限 Main 已知的正式默认根和历史 Application Support 根。 */
   knownProductionAdoptionRoots?: readonly string[];
+  /** 仅限 Main 本次源码启动明确选择的开发数据根。 */
+  knownDevelopmentAdoptionRoots?: readonly string[];
 }
 
 interface PathMapping {
@@ -121,8 +124,11 @@ const contentMirroredLegacyTopLevels = new Set(['task-attachments', 'conversatio
  * 旧执行宿主仍存活时只返回兼容布局，绝不与它争抢数据库或移动文件。
  */
 export function prepareZeusDataRoot(rootPath: string, legacyRoots: readonly string[] = [], identity: ZeusDataPreparationIdentityOptions): ZeusDataPreparationResult {
-  const root = normalizeAbsolutePath(rootPath, 'Zeus 数据根目录');
-  return withZeusDataRootPreparationLock(root, () => prepareZeusDataRootWithoutLock(root, legacyRoots, identity));
+  /** 所有布局、身份、锁和迁移都只使用同一个真实数据根。 */
+  const root = canonicalizeZeusDataRootPath(normalizeAbsolutePath(rootPath, 'Zeus 数据根目录'));
+  /** 旧根同样先规范化，避免迁移清单和路径替换混入系统别名。 */
+  const canonicalLegacyRoots = legacyRoots.map((legacyRoot) => canonicalizeZeusDataRootPath(normalizeAbsolutePath(legacyRoot, 'Zeus 旧数据根目录')));
+  return withZeusDataRootPreparationLock(root, () => prepareZeusDataRootWithoutLock(root, canonicalLegacyRoots, identity));
 }
 
 function prepareZeusDataRootWithoutLock(root: string, legacyRoots: readonly string[], identity: ZeusDataPreparationIdentityOptions): ZeusDataPreparationResult {
@@ -137,6 +143,7 @@ function prepareZeusDataRootWithoutLock(root: string, legacyRoots: readonly stri
     bundleId: identity.bundleId,
     keychainService: identity.keychainService,
     knownProductionAdoptionRoots: identity.knownProductionAdoptionRoots,
+    knownDevelopmentAdoptionRoots: identity.knownDevelopmentAdoptionRoots,
     writerAbsenceConfirmed: !writerMayExist,
   });
   const hasLayeredDatabase = existsSync(layered.database);
@@ -163,7 +170,8 @@ function prepareZeusDataRootWithoutLock(root: string, legacyRoots: readonly stri
 }
 
 export function readLatestZeusDataMigrationManifest(rootPath: string): MigrationManifest | null {
-  const layout = createZeusDataLayout(normalizeAbsolutePath(rootPath, 'Zeus 数据根目录'));
+  /** 维护入口与启动入口必须读取同一个真实根下的迁移清单。 */
+  const layout = createZeusDataLayout(canonicalizeZeusDataRootPath(normalizeAbsolutePath(rootPath, 'Zeus 数据根目录')));
   if (!existsSync(layout.migrationState)) return null;
   const names = readdirSync(layout.migrationState)
     .filter((name) => name.endsWith('.json'))
@@ -185,8 +193,10 @@ export function readLatestZeusDataMigrationManifest(rootPath: string): Migration
  * 该动作只提供给显式维护流程，应用启动不会自动调用。
  */
 export function retireVerifiedLegacyRoot(rootPath: string, legacyRootPath: string): { removedBytes: number; removedFiles: number } {
-  const root = normalizeAbsolutePath(rootPath, 'Zeus 数据根目录');
-  const legacyRoot = normalizeAbsolutePath(legacyRootPath, 'Zeus 旧数据根目录');
+  /** 显式回收也只比较真实路径，防止别名绕过父子目录保护。 */
+  const root = canonicalizeZeusDataRootPath(normalizeAbsolutePath(rootPath, 'Zeus 数据根目录'));
+  /** 旧根使用相同规范化规则，保证迁移清单能够精确匹配。 */
+  const legacyRoot = canonicalizeZeusDataRootPath(normalizeAbsolutePath(legacyRootPath, 'Zeus 旧数据根目录'));
   if (legacyRoot === root || isPathInside(legacyRoot, root) || isPathInside(root, legacyRoot)) throw new Error('Zeus 旧根与正式根存在包含关系，拒绝删除。');
   const layout = createZeusDataLayout(root);
   if (!existsSync(layout.database)) throw new Error('Zeus 分层数据库不存在，拒绝回收旧根。');
