@@ -1,5 +1,17 @@
-import { createContext, lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
-import { XIcon } from '@phosphor-icons/react/dist/csr/X';
+import { createContext, lazy, Suspense, useEffect, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
+import { ArrowCounterClockwiseIcon as ArrowCounterClockwise } from '@phosphor-icons/react/dist/csr/ArrowCounterClockwise';
+import { ArrowSquareOutIcon as ArrowSquareOut } from '@phosphor-icons/react/dist/csr/ArrowSquareOut';
+import { ArrowsInSimpleIcon as ArrowsInSimple } from '@phosphor-icons/react/dist/csr/ArrowsInSimple';
+import { ArrowsOutSimpleIcon as ArrowsOutSimple } from '@phosphor-icons/react/dist/csr/ArrowsOutSimple';
+import { DownloadSimpleIcon as DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple';
+import { EyeIcon as Eye } from '@phosphor-icons/react/dist/csr/Eye';
+import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
+import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
+import { GitDiffIcon as GitDiff } from '@phosphor-icons/react/dist/csr/GitDiff';
+import { MinusIcon as Minus } from '@phosphor-icons/react/dist/csr/Minus';
+import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
+import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { detectSourceLanguage, userFacingErrorCause, type FilePreviewItem, type FilePreviewRequest, type FileReview, type ConversationFileLocation, type UserFacingErrorCause } from '@zeus/shared';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
@@ -15,6 +27,15 @@ const CodeDiffView = lazy(() => import('./CodeDiffView.js').then((module) => ({ 
 /** Markdown 沿用受限渲染器，不加载任意活动 HTML。 */
 const Markdown = lazy(() => import('../session/ConversationMarkdown.js').then((module) => ({ default: module.ConversationMarkdown })));
 
+/** 图标按钮只接受一个功能名称，同时用于悬浮提示和无障碍名称。 */
+function PreviewIconButton({ label, children, ...buttonProps }: { label: string; children: ReactNode } & Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'aria-label' | 'className' | 'title' | 'type'>) {
+  return (
+    <button {...buttonProps} className="file-preview-icon-button" type="button" aria-label={label} title={label}>
+      {children}
+    </button>
+  );
+}
+
 /** 两类文件审阅共用切换入口；带行号先定位源码，普通打开优先查看差异。 */
 export function FileReviewContent(props: { review?: FileReview; zh: boolean; children: ReactNode }) {
   /** 用户选择只影响本次打开的文件。 */
@@ -27,12 +48,12 @@ export function FileReviewContent(props: { review?: FileReview; zh: boolean; chi
     <>
       {props.review?.diff ? (
         <nav className="file-preview-toolbar" aria-label={props.zh ? 'Git 差异与源码' : 'Git diff and source'}>
-          <button type="button" aria-pressed={showDiff} onClick={() => setShowDiff(true)}>
-            {props.zh ? 'Git 差异' : 'Git diff'}
-          </button>
-          <button type="button" aria-pressed={!showDiff} onClick={() => setShowDiff(false)}>
-            {props.zh ? '源码' : 'Source'}
-          </button>
+          <PreviewIconButton label={props.zh ? 'Git 差异' : 'Git diff'} aria-pressed={showDiff} onClick={() => setShowDiff(true)}>
+            <GitDiff size={18} aria-hidden="true" />
+          </PreviewIconButton>
+          <PreviewIconButton label={props.zh ? '源码' : 'Source'} aria-pressed={!showDiff} onClick={() => setShowDiff(false)}>
+            <FileCode size={18} aria-hidden="true" />
+          </PreviewIconButton>
           <span>{props.zh ? 'HEAD → 当前文件（含暂存与未暂存）' : 'HEAD → Current file (staged and unstaged)'}</span>
         </nav>
       ) : props.review?.diff === null ? (
@@ -145,7 +166,7 @@ function FilePreviewBody(props: { location?: ConversationFileLocation; identity:
           <strong>{simpleImage ? (props.zh ? '图片预览' : 'Image preview') : props.zh ? '文件预览' : 'File preview'}</strong>
           {simpleImage ? <span title={current?.name}>{current?.name}</span> : null}
           <button type="button" className="file-preview-close" aria-label={props.zh ? '关闭' : 'Close'} title={props.zh ? '关闭' : 'Close'} onClick={props.onClose}>
-            <XIcon size={18} aria-hidden="true" />
+            <X size={18} aria-hidden="true" />
           </button>
         </header>
       ) : null}
@@ -153,29 +174,29 @@ function FilePreviewBody(props: { location?: ConversationFileLocation; identity:
         <nav className="file-preview-toolbar" aria-label={props.zh ? '预览操作' : 'Preview actions'}>
           {props.children ? (
             <>
-              <button type="button" aria-pressed={showDiff} onClick={() => setMode('diff')}>
-                {props.zh ? '差异' : 'Diff'}
-              </button>
-              <button type="button" aria-pressed={!showDiff} onClick={() => setMode('preview')}>
-                {props.zh ? '内容预览' : 'Preview'}
-              </button>
+              <PreviewIconButton label={props.zh ? '差异' : 'Diff'} aria-pressed={showDiff} onClick={() => setMode('diff')}>
+                <GitDiff size={18} aria-hidden="true" />
+              </PreviewIconButton>
+              <PreviewIconButton label={props.zh ? '内容预览' : 'Preview'} aria-pressed={!showDiff} onClick={() => setMode('preview')}>
+                <Eye size={18} aria-hidden="true" />
+              </PreviewIconButton>
             </>
           ) : null}
           {!showDiff && !images && items && items.length > 1
             ? items.map((item, index) => (
-                <button key={index} type="button" aria-pressed={current === item} onClick={() => setSelected(index)}>
-                  {item.label}
-                </button>
+                <PreviewIconButton key={index} label={item.label} aria-pressed={current === item} onClick={() => setSelected(index)}>
+                  {index === 0 ? <ArrowCounterClockwise size={18} aria-hidden="true" /> : <ArrowClockwise size={18} aria-hidden="true" />}
+                </PreviewIconButton>
               ))
             : null}
           {attachment.kind === 'attachment' && items?.every((item) => item.kind === 'unavailable') ? (
-            <button type="button" onClick={() => void openAttachment()}>
-              {props.zh ? '打开附件' : 'Open attachment'}
-            </button>
+            <PreviewIconButton label={props.zh ? '打开附件' : 'Open attachment'} onClick={() => void openAttachment()}>
+              <ArrowSquareOut size={18} aria-hidden="true" />
+            </PreviewIconButton>
           ) : null}
-          <button type="button" onClick={() => setAttempt((value) => value + 1)}>
-            {error ? (props.zh ? '重试' : 'Retry') : props.zh ? '刷新' : 'Refresh'}
-          </button>
+          <PreviewIconButton label={error ? (props.zh ? '重试' : 'Retry') : props.zh ? '刷新' : 'Refresh'} onClick={() => setAttempt((value) => value + 1)}>
+            <ArrowClockwise size={18} aria-hidden="true" />
+          </PreviewIconButton>
         </nav>
       ) : null}
       {showDiff ? (
@@ -210,25 +231,25 @@ export function PreviewImage(props: { url: string; name: string; zh: boolean; on
       <div className="file-preview-toolbar" role="group" aria-label={props.zh ? '图片缩放' : 'Image zoom'}>
         <span>{dimensions}</span>
         {props.compact ? (
-          <button type="button" title={zoom ? (props.zh ? '适应窗口' : 'Fit') : props.zh ? '原始尺寸' : 'Actual size'} onClick={() => setZoom(zoom ? 0 : 1)}>
-            {zoom ? `${zoom * 100}%` : props.zh ? '适应窗口' : 'Fit'}
-          </button>
+          <PreviewIconButton label={zoom ? (props.zh ? '适应窗口' : 'Fit') : props.zh ? '原始尺寸' : 'Actual size'} onClick={() => setZoom(zoom ? 0 : 1)}>
+            {zoom ? <ArrowsInSimple size={18} aria-hidden="true" /> : <ArrowsOutSimple size={18} aria-hidden="true" />}
+          </PreviewIconButton>
         ) : (
           <>
-            <button type="button" aria-pressed={zoom === 0} onClick={() => setZoom(0)}>
-              {props.zh ? '适应窗口' : 'Fit'}
-            </button>
-            <button type="button" aria-pressed={zoom === 1} onClick={() => setZoom(1)}>
-              {props.zh ? '原始尺寸' : 'Actual size'}
-            </button>
+            <PreviewIconButton label={props.zh ? '适应窗口' : 'Fit'} aria-pressed={zoom === 0} onClick={() => setZoom(0)}>
+              <ArrowsInSimple size={18} aria-hidden="true" />
+            </PreviewIconButton>
+            <PreviewIconButton label={props.zh ? '原始尺寸' : 'Actual size'} aria-pressed={zoom === 1} onClick={() => setZoom(1)}>
+              <ArrowsOutSimple size={18} aria-hidden="true" />
+            </PreviewIconButton>
           </>
         )}
-        <button type="button" aria-label={props.zh ? '缩小' : 'Zoom out'} onClick={() => setZoom((value) => Math.max(0.25, (value || 1) / 2))}>
-          −
-        </button>
-        <button type="button" aria-label={props.zh ? '放大' : 'Zoom in'} onClick={() => setZoom((value) => Math.min(16, (value || 1) * 2))}>
-          +
-        </button>
+        <PreviewIconButton label={props.zh ? '缩小' : 'Zoom out'} onClick={() => setZoom((value) => Math.max(0.25, (value || 1) / 2))}>
+          <Minus size={18} aria-hidden="true" />
+        </PreviewIconButton>
+        <PreviewIconButton label={props.zh ? '放大' : 'Zoom in'} onClick={() => setZoom((value) => Math.min(16, (value || 1) * 2))}>
+          <Plus size={18} aria-hidden="true" />
+        </PreviewIconButton>
         {zoom && !props.compact ? <span>{zoom * 100}%</span> : null}
       </div>
       <div className="file-preview-checker">
@@ -282,22 +303,22 @@ function FilePreviewContent(props: { item: FilePreviewItem; zh: boolean }) {
       {item.id ? (
         <div className="file-preview-toolbar">
           {(markdown || item.mime === 'image/svg+xml') && item.content !== undefined ? (
-            <button type="button" aria-pressed={source} onClick={() => setSource(!source)}>
-              {source ? (props.zh ? '查看效果' : 'Rendered') : props.zh ? '查看源码' : 'Source'}
-            </button>
+            <PreviewIconButton label={source ? (props.zh ? '查看效果' : 'Rendered') : props.zh ? '查看源码' : 'Source'} aria-pressed={source} onClick={() => setSource(!source)}>
+              {source ? <Eye size={18} aria-hidden="true" /> : <FileCode size={18} aria-hidden="true" />}
+            </PreviewIconButton>
           ) : null}
-          <button type="button" onClick={() => void action('quick-look')}>
-            {props.zh ? '系统预览' : 'Quick Look'}
-          </button>
-          <button type="button" onClick={() => void action('open')}>
-            {props.zh ? '打开文件' : 'Open'}
-          </button>
-          <button type="button" onClick={() => void action('reveal')}>
-            {props.zh ? '定位文件' : 'Reveal'}
-          </button>
-          <button type="button" onClick={() => void action('export')}>
-            {props.zh ? '导出此版本' : 'Export version'}
-          </button>
+          <PreviewIconButton label={props.zh ? '系统预览' : 'Quick Look'} onClick={() => void action('quick-look')}>
+            <Eye size={18} aria-hidden="true" />
+          </PreviewIconButton>
+          <PreviewIconButton label={props.zh ? '打开文件' : 'Open'} onClick={() => void action('open')}>
+            <ArrowSquareOut size={18} aria-hidden="true" />
+          </PreviewIconButton>
+          <PreviewIconButton label={props.zh ? '定位文件' : 'Reveal'} onClick={() => void action('reveal')}>
+            <FolderOpen size={18} aria-hidden="true" />
+          </PreviewIconButton>
+          <PreviewIconButton label={props.zh ? '导出此版本' : 'Export version'} onClick={() => void action('export')}>
+            <DownloadSimple size={18} aria-hidden="true" />
+          </PreviewIconButton>
         </div>
       ) : null}
       {error ? (

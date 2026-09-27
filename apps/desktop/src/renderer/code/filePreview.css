@@ -16,7 +16,8 @@
   padding: 6px 10px;
   flex: 0 0 auto;
 }
-.file-preview button {
+.file-preview button,
+.file-preview-toolbar .file-preview-icon-button {
   font: inherit;
   color: inherit;
   background: transparent;
@@ -25,10 +26,31 @@
   padding: 3px 8px;
   cursor: pointer;
 }
-.file-preview button[aria-pressed='true'] {
+.file-preview button:hover:not(:disabled),
+.file-preview-toolbar .file-preview-icon-button:hover:not(:disabled) {
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+/* 所有预览入口共用同一图标点击盒，悬浮名称由按钮 title 提供。 */
+.file-preview-toolbar .file-preview-icon-button {
+  display: grid;
+  place-items: center;
+  flex: 0 0 30px;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+}
+.file-preview-icon-button > svg {
+  pointer-events: none;
+}
+.file-preview button[aria-pressed='true'],
+.file-preview-toolbar .file-preview-icon-button[aria-pressed='true'] {
+  color: #7255dc;
   background: color-mix(in srgb, #7255dc 15%, transparent);
 }
-.file-preview button:focus-visible {
+.file-preview button:focus-visible,
+.file-preview-toolbar .file-preview-icon-button:focus-visible {
   outline: 2px solid #7255dc;
   outline-offset: 2px;
 }
@@ -176,10 +198,6 @@
   margin-left: auto;
   border: 0;
   border-radius: 6px;
-}
-.file-preview-dialog-header .file-preview-close:hover,
-.file-preview-image-compact button:hover {
-  background: color-mix(in srgb, currentColor 8%, transparent);
 }
 /* 单图使用弹窗剩余空间；仅画布滚动，标题和缩放始终可达。 */
 .file-preview-simple-image,

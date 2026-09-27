@@ -2674,7 +2674,10 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
             return {
               name: (phase === 'pre' ? file.oldPath : file.newPath) || file.newPath || file.oldPath || '文件',
               label: phase === 'pre' ? '变更前 · 轮次快照' : '变更后 · 轮次快照',
-              ...(exists && path && hash ? { path, root: join(dataLayout.turnChangeSets, input.changeSetId, 'blobs'), sha256: hash } : { reason: exists ? '此轮次没有保存可用的历史文件内容。' : '此版本中不存在该文件。' }),
+              // 预览协议只传纯 SHA-256；存储哈希保留算法前缀。
+              ...(exists && path && hash
+                ? { path, root: join(dataLayout.turnChangeSets, input.changeSetId, 'blobs'), sha256: hash.replace(/^sha256:/u, '') }
+                : { reason: exists ? '此轮次没有保存可用的历史文件内容。' : '此版本中不存在该文件。' }),
             };
           }),
         };
