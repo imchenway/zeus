@@ -1692,7 +1692,20 @@ export interface NativeExpertExecutionProjection {
 }
 
 export type NativeConversationEvent =
-  | NativeEvent<'conversation.transport.changed', NativeEventIdentity & { transportKind?: string; providerState?: string; providerThreadId?: string }>
+  | NativeEvent<
+      'conversation.transport.changed',
+      NativeEventIdentity & {
+        transportKind?: string;
+        providerState?: string;
+        providerThreadId?: string;
+        /** Provider 断流后的后台核对阶段，不表示重新执行模型请求。 */
+        recoveryState?: 'reconnecting' | 'idle';
+        /** 当前只读核对次数；零表示没有正在进行的恢复。 */
+        reconnectAttempt?: number;
+        /** 本轮只读核对的最大次数。 */
+        reconnectAttempts?: number;
+      }
+    >
   | NativeEvent<'conversation.thread.changed', NativeEventIdentity & { providerThreadId?: string; providerState?: string }>
   | NativeEvent<'conversation.turn.started', NativeTurnEventPayload>
   | NativeEvent<'conversation.turn.completed', NativeTurnEventPayload>
@@ -1862,6 +1875,12 @@ export interface NativeSessionState {
   transcriptInitializing?: boolean;
   transportState: TransportState;
   reconnectAttempt: number;
+  /** Provider 回复流断开后的当前只读核对次数。 */
+  providerReconnectAttempt: number;
+  /** Provider 回复流断开后的最大只读核对次数。 */
+  providerReconnectAttempts: number;
+  /** 正在核对的 Provider 轮次身份。 */
+  providerReconnectTurnId: string | null;
   conversationState: ConversationState;
   projectId: string | null;
   conversationId: string | null;

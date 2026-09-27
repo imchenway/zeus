@@ -2048,6 +2048,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
   function stateNeedsRealtime(): boolean {
     // 目标仍在执行时不能按短暂空闲释放订阅。
     if (state.snapshot?.goal?.status === 'active') return true;
+    // Provider 断流恢复依赖后续只读核对事件，计数归零前必须保持订阅。
+    if (state.providerReconnectAttempt > 0) return true;
     if (pendingSend || deferredSends.length > 0) return true;
     if (state.pendingRequests.some((request) => request.status === 'pending')) return true;
     if (state.planImplementationRequests.some((request) => request.status === 'pending')) return true;

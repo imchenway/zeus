@@ -122,6 +122,9 @@ export function createInitialSessionState(): NativeSessionState {
   return {
     transportState: 'disconnected',
     reconnectAttempt: 0,
+    providerReconnectAttempt: 0,
+    providerReconnectAttempts: 0,
+    providerReconnectTurnId: null,
     conversationState: 'native_loading',
     projectId: null,
     conversationId: null,
@@ -686,6 +689,9 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
     projectId: snapshot.projectId,
     conversationId: snapshot.id,
     providerThreadId: snapshot.providerThreadId,
+    providerReconnectAttempt: 0,
+    providerReconnectAttempts: 0,
+    providerReconnectTurnId: null,
     activeTurnId,
     startedTurnId: activeTurnId,
     snapshot: { ...snapshot, turns: retainedTurns, changeSets: Object.values(changeSetsByProviderId) },
@@ -1985,6 +1991,25 @@ function applyProviderIdentityChange(state: NativeSessionState, payload: Record<
   const providerThreadId = stringValue(payload.providerThreadId) ?? stringValue(payload.threadId) ?? state.providerThreadId;
   const providerState = stringValue(payload.providerState);
   const transportKind = updateTransport ? stringValue(payload.transportKind) : null;
+  /** Provider 恢复进度与 Renderer 到本地服务的连接重试分开记录。 */
+  const recoveryState = stringValue(payload.recoveryState);
+  /** 非负整数才可进入进度显示，异常协议值按未提供处理。 */
+  const reconnectAttempt = numberValue(payload.reconnectAttempt);
+  /** 总次数至少为一，避免生成无意义的零分母。 */
+  const reconnectAttempts = numberValue(payload.reconnectAttempts);
+  /** 回复流恢复绑定原失败轮次，不能借当前活动轮次猜测。 */
+  const providerReconnectTurnId = stringValue(payload.providerTurnId) ?? stringValue(payload.turnId);
+  /** idle 明确结束本轮恢复；其他普通 transport 事件不清空正在运行的 Provider 核对。 */
+  const providerRecovery =
+    recoveryState === 'reconnecting' && reconnectAttempt !== null && reconnectAttempt > 0 && reconnectAttempts !== null && reconnectAttempts > 0
+      ? {
+          providerReconnectAttempt: Math.floor(reconnectAttempt),
+          providerReconnectAttempts: Math.floor(reconnectAttempts),
+          providerReconnectTurnId: providerReconnectTurnId ?? state.providerReconnectTurnId,
+        }
+      : recoveryState === 'idle'
+        ? { providerReconnectAttempt: 0, providerReconnectAttempts: 0, providerReconnectTurnId: null }
+        : {};
   const threadChanged = Boolean(providerThreadId && providerThreadId !== state.providerThreadId);
   const snapshot = state.snapshot
     ? {
@@ -2001,6 +2026,7 @@ function applyProviderIdentityChange(state: NativeSessionState, payload: Record<
     : null;
   return {
     ...state,
+    ...providerRecovery,
     providerThreadId,
     snapshot,
     ...(threadChanged
@@ -2011,6 +2037,9 @@ function applyProviderIdentityChange(state: NativeSessionState, payload: Record<
           terminalTurnIds: {},
           queue: null,
           pendingRequests: [],
+          providerReconnectAttempt: 0,
+          providerReconnectAttempts: 0,
+          providerReconnectTurnId: null,
           conversationState: providerState === 'failed' ? ('turn_failed' as const) : ('native_idle' as const),
         }
       : providerState === 'failed'

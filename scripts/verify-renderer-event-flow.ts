@@ -1116,6 +1116,46 @@ async function verifyIdleTransitionReleasesSubscription() {
   return { socketClosed: 1, connections: harness.connectedAfterSequences.length, transportState: 'ready' };
 }
 
+/** 验证 Provider 断流核对期间保留实时订阅，并向会话状态投影五次计数。 */
+async function verifyProviderStreamRecoveryStatus() {
+  /** 活跃探针先建立实时订阅，再模拟轮次失败后的只读恢复事件。 */
+  const harness = createHarness();
+  await harness.controller.start();
+  harness.emit(
+    conversationEvent(1, 'conversation.transport.changed', {
+      providerThreadId: threadId,
+      providerTurnId: 'stream-failed-turn',
+      providerState: 'failed',
+      recoveryState: 'reconnecting',
+      reconnectAttempt: 1,
+      reconnectAttempts: 5,
+    }),
+  );
+  /** 恢复计数必须进入生产状态，并使用会话时间线的重连展示。 */
+  const recovering = harness.controller.getState();
+  assert(recovering.providerReconnectAttempt === 1 && recovering.providerReconnectAttempts === 5, 'Provider stream recovery must expose the current attempt and five-attempt limit.');
+  assert(recovering.providerReconnectTurnId === 'stream-failed-turn', 'Provider stream recovery must bind the failed turn for transcript presentation.');
+  harness.emit(conversationEvent(2, 'conversation.queue.changed', { queue }));
+  /** 空队列不能在后台核对结束前关闭事件流。 */
+  assert(harness.sockets[0]?.closeCount === 0, 'Provider stream recovery must keep realtime synchronization subscribed.');
+  harness.emit(
+    conversationEvent(3, 'conversation.transport.changed', {
+      providerThreadId: threadId,
+      providerTurnId: 'stream-failed-turn',
+      providerState: 'idle',
+      recoveryState: 'idle',
+      reconnectAttempt: 0,
+      reconnectAttempts: 5,
+    }),
+  );
+  await waitUntil(() => harness.sockets[0]?.closeCount === 1, 'provider stream recovery realtime release');
+  /** 恢复完成后计数归零，空闲会话可释放实时订阅。 */
+  const recovered = harness.controller.getState();
+  assert(recovered.providerReconnectAttempt === 0 && recovered.providerReconnectTurnId === null, 'Provider stream recovery completion must clear transient retry state.');
+  harness.controller.dispose();
+  return { attempt: 1, attempts: 5, subscribedDuringRecovery: true, releasedAfterRecovery: true };
+}
+
 function conversationEvent(sequence: number, type: string, fields: Record<string, unknown> = {}): NativeRealtimeEventEnvelope {
   return {
     id: `event-${sequence}`,
@@ -1568,6 +1608,12 @@ if (process.argv.includes('--transcript-initialization-only')) {
   process.exit(0);
 }
 
+/** 回复流恢复专项仅运行本次状态与订阅检查，避开无关历史队列场景。 */
+if (process.argv.includes('--provider-stream-recovery-only')) {
+  console.log(JSON.stringify({ providerStreamRecoveryStatus: await verifyProviderStreamRecoveryStatus() }));
+  process.exit(0);
+}
+
 const placementTakeover = await verifyPlacementEpochTakeover();
 console.log(JSON.stringify({ placementTakeover }));
 
@@ -1600,6 +1646,7 @@ const result =
           queuedRetryReconciliation,
           activeSnapshotWatermarkSubscription: await verifyActiveSnapshotWatermarkSubscription(),
           idleTransitionReleasesSubscription: await verifyIdleTransitionReleasesSubscription(),
+          providerStreamRecoveryStatus: await verifyProviderStreamRecoveryStatus(),
           renderDeltaOverflow: await verifyRenderDeltaOverflow(),
           syncGapByteOverflow: await verifyGapByteOverflow(),
           contiguousGapReplay: await verifyContiguousGapReplay(),
