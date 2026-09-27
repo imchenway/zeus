@@ -264,10 +264,12 @@ function definitionFromWorkStages(stages: EmployeeWorkStageInput[], settings: Em
         position: { x: stageIndex * 620 + 250, y: index * 180 + 100 },
         data: {
           title: assignment.title,
-          instructions: [assignment.description, `预期成果：${assignment.outputKinds.join('、')}`, ...(assignment.required === false ? ['原安排中这份工作可选；当前流程按连线执行，启动前可移除此步骤。'] : [])].join('\n'),
+          instructions: assignment.description,
           employeeId: assignment.employeeId ?? '__unassigned_digital_team_employee__',
           purpose: 'work',
           executionMode: assignment.outputKinds.includes('code') ? 'isolated_write' : 'read_only',
+          acceptanceCriteria: [stage.description, ...(assignment.required === false ? ['这份工作原为可选分工，启动前请确认是否保留。'] : [])].filter(Boolean),
+          expectedDeliverables: assignment.outputKinds.map((kind) => ({ document: '文档成果', code: '代码变更与验证证据', verification: '核对结论与证据', deployment: '部署凭证' })[kind]),
           settings: mergeEmployeeWorkSettings(
             settings,
             stage.settings,
@@ -283,14 +285,7 @@ function definitionFromWorkStages(stages: EmployeeWorkStageInput[], settings: Em
     }
     predecessors = workers.map((node) => node.id);
     if (stage.acceptanceMode === 'checked') {
-      /** 代码检查绑定真实集成候选，报告检查保持普通成果核对。 */
-      const codeStage = workers.some((worker) => worker.data.executionMode === 'isolated_write');
-      if (codeStage) {
-        const id = `stage_${stageIndex}_integration`;
-        nodes.push({ id, type: 'code_integration', position: { x: stageIndex * 620 + 450, y: 100 }, data: { title: '整合代码成果', mode: 'merge', instructions: stage.description } });
-        connect(predecessors, id);
-        predecessors = [id];
-      }
+      /** 旧自动核对步骤继续由员工承担；候选准备由系统按代码依赖自动完成。 */
       const id = `stage_${stageIndex}_verification`;
       nodes.push({
         id,
@@ -299,29 +294,19 @@ function definitionFromWorkStages(stages: EmployeeWorkStageInput[], settings: Em
         data: {
           title: `核对：${stage.title}`,
           employeeId: workers[0]?.data.employeeId ?? '__unassigned_digital_team_employee__',
-          purpose: 'verify',
-          executionMode: codeStage ? 'candidate_read_only' : 'read_only',
+          purpose: 'work',
+          executionMode: 'read_only',
           instructions: stage.description,
-          verificationCommands: stage.verificationCommands ?? [],
+          acceptanceCriteria: stage.verificationCommands?.length ? stage.verificationCommands.map((command) => `命令成功：${command}`) : ['核对本阶段全部成果并给出明确结论。'],
+          expectedDeliverables: ['核对结论与真实证据'],
           settings: mergeEmployeeWorkSettings(settings, stage.settings),
         },
       });
       connect(predecessors, id);
       predecessors = [id];
-    } else {
-      const id = `stage_${stageIndex}_acceptance`;
-      nodes.push({ id, type: 'human_confirmation', position: { x: stageIndex * 620 + 560, y: 100 }, data: { title: `验收：${stage.title}`, purpose: 'final_acceptance', instructions: stage.description } });
-      connect(predecessors, id);
-      predecessors = [id];
-    }
-    if (stage.advanceMode === 'manual' && stageIndex < stages.length - 1) {
-      const id = `stage_${stageIndex}_continue`;
-      nodes.push({ id, type: 'human_confirmation', position: { x: stageIndex * 620 + 700, y: 100 }, data: { title: '确认继续下一阶段', purpose: 'final_acceptance', instructions: '前序成果已核对，确认现在开始下一阶段。' } });
-      connect(predecessors, id);
-      predecessors = [id];
     }
   }
-  return normalizeDigitalTeamWorkflowDefinition({ schemaGeneration: digitalTeamWorkflowSchemaGeneration, nodes, edges, viewport: { x: 0, y: 0, zoom: 0.8 } });
+  return { schemaGeneration: digitalTeamWorkflowSchemaGeneration, nodes, edges, viewport: { x: 0, y: 0, zoom: 0.8 } };
 }
 
 /** 管理项目内数字团队画布模板。 */
@@ -450,13 +435,20 @@ export class DigitalTeamWorkflowRunRepository {
         templateId,
       ]);
       if (!template || template.deleted_at || template.project_id !== input.projectId) throw storeError('ZEUS_DIGITAL_TEAM_TEMPLATE_NOT_FOUND', '运行来源模板不存在或不属于当前项目。', 404);
-      if (template.revision !== input.templateRevision || canonicalCommandInputJson(JSON.parse(template.definition_json)) !== canonicalCommandInputJson(input.definition))
+      if (
+        template.revision !== input.templateRevision ||
+        canonicalCommandInputJson(normalizeDigitalTeamWorkflowDefinition(JSON.parse(template.definition_json) as DigitalTeamWorkflowDefinition)) !== canonicalCommandInputJson(input.definition)
+      )
         throw storeError('ZEUS_DIGITAL_TEAM_TEMPLATE_CONFLICT', '流程模板已变化，请重新读取后创建运行。', 409);
       templateRevision = template.revision;
     }
     /** 员工节点能力与角色冻结在同一事务内核对，HTTP 调用不能绕过前端创建无效运行。 */
     const employeeNodes = input.definition.nodes.filter((node): node is DigitalTeamEmployeeNode => node.type === 'employee');
-    const employeeIds = [...new Set(employeeNodes.flatMap((node) => [node.data.employeeId, ...(node.data.purpose === 'plan' ? (node.data.settings?.delegation?.employeeIds ?? []) : [])]))];
+    const employeeIds = [
+      ...new Set(
+        employeeNodes.flatMap((node) => [node.data.employeeId, ...(input.definition.schemaGeneration !== digitalTeamWorkflowSchemaGeneration && node.data.purpose === 'plan' ? (node.data.settings?.delegation?.employeeIds ?? []) : [])]),
+      ),
+    ];
     const roleSnapshots = employeeIds.map((employeeId) =>
       freezeEmployee(
         this.db,
@@ -466,8 +458,7 @@ export class DigitalTeamWorkflowRunRepository {
       ),
     );
     const baseRevisions = normalizeBaseRevisions(input.baseRevisions);
-    if (input.definition.nodes.some((node) => node.type === 'code_integration' || (node.type === 'employee' && node.data.executionMode !== 'read_only')) && !baseRevisions.length)
-      throw storeError('ZEUS_DIGITAL_TEAM_BASE_REVISION_INVALID', '代码工作需要冻结仓库基线。');
+    if (input.definition.nodes.some((node) => node.type === 'employee' && node.data.executionMode === 'isolated_write') && !baseRevisions.length) throw storeError('ZEUS_DIGITAL_TEAM_BASE_REVISION_INVALID', '代码工作需要冻结仓库基线。');
     const id = input.id ? identity(input.id, 'run.id') : `digital_team_run_${randomId(12)}`;
     const timestamp = this.now();
     this.db.execute(
@@ -476,7 +467,7 @@ export class DigitalTeamWorkflowRunRepository {
         main_conversation_id, status, control_state, plan_json, plan_version, plan_sha256, approved_plan_sha256, plan_approved_by, plan_approved_at,
         candidate_revisions_json, candidate_set_sha256, final_approved_candidate_set_sha256, final_approved_by, final_approved_at, error_json,
         revision, created_at, updated_at, completed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'planning', 'running', NULL, 0, NULL, NULL, NULL, NULL, '[]', NULL, NULL, NULL, NULL, NULL, 1, ?, ?, NULL)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 'running', NULL, 0, NULL, NULL, NULL, NULL, '[]', NULL, NULL, NULL, NULL, NULL, 1, ?, ?, NULL)`,
       [
         id,
         identity(input.projectId, 'projectId'),
@@ -487,6 +478,7 @@ export class DigitalTeamWorkflowRunRepository {
         boundedJson(roleSnapshots, 'roleSnapshots'),
         boundedJson(input.taskFacts, 'taskFacts'),
         boundedJson(baseRevisions, 'baseRevisions'),
+        input.definition.schemaGeneration === digitalTeamWorkflowSchemaGeneration ? 'executing' : 'planning',
         timestamp,
         timestamp,
       ],
@@ -835,14 +827,16 @@ interface DigitalTeamNodeAttemptRow {
 
 /** 把模板行映射为领域记录。 */
 function mapTemplate(row: DigitalTeamWorkflowTemplateRow): DigitalTeamWorkflowTemplateRecord {
+  const definition = normalizeDigitalTeamWorkflowDefinition(parseJson<DigitalTeamWorkflowDefinition>(row.definition_json, 'template.definition'));
+  const validationIssues = validateDigitalTeamWorkflowDefinition(definition);
   return {
     id: row.id,
     projectId: row.project_id,
     name: row.name,
     description: row.description,
-    definition: parseJson<DigitalTeamWorkflowDefinition>(row.definition_json, 'template.definition'),
-    ready: validateDigitalTeamWorkflowDefinition(parseJson<DigitalTeamWorkflowDefinition>(row.definition_json, 'template.definition')).length === 0,
-    validationIssues: validateDigitalTeamWorkflowDefinition(parseJson<DigitalTeamWorkflowDefinition>(row.definition_json, 'template.definition')),
+    definition,
+    ready: validationIssues.length === 0,
+    validationIssues,
     revision: row.revision,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
