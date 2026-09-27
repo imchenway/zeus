@@ -4,9 +4,11 @@ import { retainInputFocus } from '../../ui/retainInputFocus.js';
 import { type ClipboardEvent as ReactClipboardEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import {
+  defaultTaskBranchPrefix,
   defaultTaskManagementStatusConfig,
   extractThirdPartyTaskLink,
   isTaskStatusFilter,
+  normalizeTaskBranchPrefix,
   normalizeTaskManagementStatusConfig,
   type ProjectCodeWorkspacePreference,
   type TaskManagementStatusConfig,
@@ -585,6 +587,7 @@ export type AppShellSettingsSavePayload = Pick<
   | 'appLanguage'
   | 'appearance'
   | 'mainLayout'
+  | 'taskBranchPrefix'
   | 'webviewDebugEnabled'
   | 'developerModeEnabled'
   | 'multiWindowEnabled'
@@ -947,6 +950,7 @@ export function normalizeRendererAppShellSettings(settings: AppShellSettings): A
   return {
     ...settings,
     mainLayout: settings.mainLayout === 'current' ? 'current' : 'upstream',
+    taskBranchPrefix: normalizeTaskBranchPrefix(settings.taskBranchPrefix) ?? defaultTaskBranchPrefix,
     collapsedProjectIds: Array.isArray(settings.collapsedProjectIds) ? [...new Set(settings.collapsedProjectIds.filter((id): id is string => typeof id === 'string' && Boolean(id.trim())).map((id) => id.trim()))].slice(0, 100) : [],
     taskTableColumns: normalizeTaskTableColumnPreferences(settings.taskTableColumns),
     taskTableColumnsByProject,
@@ -972,6 +976,7 @@ export function toAppShellSettingsSavePayload(settings: AppShellSettings, taskMa
     appLanguage: settings.appLanguage,
     appearance: settings.appearance,
     mainLayout: settings.mainLayout,
+    taskBranchPrefix: settings.taskBranchPrefix,
     webviewDebugEnabled: settings.webviewDebugEnabled,
     developerModeEnabled: settings.developerModeEnabled,
     multiWindowEnabled: settings.multiWindowEnabled,

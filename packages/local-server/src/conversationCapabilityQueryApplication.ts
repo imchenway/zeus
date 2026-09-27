@@ -67,6 +67,8 @@ interface ConversationCapabilityQueryPorts {
   };
   /** 读取全局默认模型；项目级默认模型已移除，新项目沿用该默认值。 */
   readDefaultModel(): string | null;
+  /** 读取新任务当前使用的分支前缀。 */
+  readTaskBranchPrefix(): string;
   codexNativeEnabled(): boolean;
   now(): Date;
 }
@@ -158,6 +160,8 @@ export class ConversationCapabilityQueryApplication {
     if (!taskId) throw queryError('ZEUS_TASK_ID_REQUIRED', 'taskId is required', 400);
     const task = this.ports.tasks.getById(taskId);
     if (!task || task.projectId !== project.id) throw queryError('ZEUS_TASK_NOT_FOUND', 'Task not found', 404);
+    /** 同一次能力快照冻结当前设置，避免仓库并发读取时出现多个分支前缀。 */
+    const taskBranchPrefix = this.ports.readTaskBranchPrefix();
     const taskContext = this.ports.taskContext.read(project, task);
     const currentAttachmentOptions = this.ports.taskContext.readAttachmentOptions(project, task);
     // GET 只消费已登记仓库；仓库发现、登记、fetch 与工作区准备仍属于显式 Command。
@@ -168,7 +172,7 @@ export class ConversationCapabilityQueryApplication {
     // 会话能力请求在后台读取；真正提交时仍由服务端权威校验登录状态。
     const [capabilities, repositoryCapabilities] = await Promise.all([
       this.readExisting(project, { readProviderAccount: false }),
-      mapWithConcurrency(registeredRepositories, (repository) => this.readRepositoryCapability(project, task, repository)),
+      mapWithConcurrency(registeredRepositories, (repository) => this.readRepositoryCapability(project, task, repository, taskBranchPrefix)),
     ]);
     const primaryRepository = repositoryCapabilities[0];
     const existingEnvironments = this.ports.environments.listByTask(task.id).flatMap((environment) => {
@@ -225,7 +229,7 @@ export class ConversationCapabilityQueryApplication {
         primaryClean: primaryRepository?.clean ?? true,
         defaultRemoteName: primaryRepository?.defaultRemoteName ?? '',
         sourceRefs: primaryRepository?.sourceRefs ?? [],
-        suggestedBranchName: buildTaskBranchName(task.taskCode, task.title, this.ports.environments.listByTask(task.id).length + 1),
+        suggestedBranchName: buildTaskBranchName(task.taskCode, task.title, this.ports.environments.listByTask(task.id).length + 1, taskBranchPrefix),
         worktreeRoot: join(dirname(project.localPath), '.zeus-worktrees'),
       },
     };
@@ -277,7 +281,7 @@ export class ConversationCapabilityQueryApplication {
     }
   }
 
-  private async readRepositoryCapability(project: ZeusProjectRecord, task: ZeusTaskRecord, registered: ZeusProjectRepositoryRecord) {
+  private async readRepositoryCapability(project: ZeusProjectRecord, task: ZeusTaskRecord, registered: ZeusProjectRepositoryRecord, taskBranchPrefix: string) {
     try {
       const repository = await this.ports.git.readRepositoryContext(registered.localPath);
       const clean = await this.ports.git.readWorktreeClean(registered.localPath, this.repositoryIgnoredPaths(project.id, registered.id, registered.localPath));
@@ -293,7 +297,7 @@ export class ConversationCapabilityQueryApplication {
         }),
       ];
       const localTaskBranches = repository.localBranches
-        .filter((branchName) => branchName.startsWith(buildTaskBranchPrefix(task.taskCode)))
+        .filter((branchName) => branchName.startsWith(buildTaskBranchPrefix(task.taskCode, taskBranchPrefix)))
         .map((branchName) => {
           const managed = this.ports.workspaces.getByRepositoryBranch(registered.id, branchName);
           const checkedOut = repository.worktrees.find((worktree) => worktree.branch === branchName);
@@ -315,7 +319,7 @@ export class ConversationCapabilityQueryApplication {
         unavailableReason: null,
         sourceRefs,
         localTaskBranches,
-        suggestedBranchName: buildTaskBranchName(task.taskCode, task.title, this.ports.environments.listByTask(task.id).length + 1),
+        suggestedBranchName: buildTaskBranchName(task.taskCode, task.title, this.ports.environments.listByTask(task.id).length + 1, taskBranchPrefix),
       };
     } catch {
       // 单仓被移除或失去访问权限时，其他仓库和任务表单仍可读取；不得伪造可选分支。
@@ -330,7 +334,7 @@ export class ConversationCapabilityQueryApplication {
         unavailableReason: '仓库暂时无法读取，请检查项目目录或刷新本地仓库。',
         sourceRefs: [],
         localTaskBranches: [],
-        suggestedBranchName: buildTaskBranchName(task.taskCode, task.title, this.ports.environments.listByTask(task.id).length + 1),
+        suggestedBranchName: buildTaskBranchName(task.taskCode, task.title, this.ports.environments.listByTask(task.id).length + 1, taskBranchPrefix),
       };
     }
   }

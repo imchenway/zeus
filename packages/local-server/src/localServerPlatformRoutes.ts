@@ -1338,6 +1338,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       readAttachmentOptions: (project, task) => inspectTaskPushAttachments(task, project.localPath).inspected.map((attachment: { option: TaskPushParentAttachmentOption }) => attachment.option),
     },
     readDefaultModel: () => platformMutableState.runtimeSettings.adapterModels.codex ?? null,
+    readTaskBranchPrefix: () => platformMutableState.appShellSettings.taskBranchPrefix,
     codexNativeEnabled: () => codexNativeEnabled,
     now,
   });

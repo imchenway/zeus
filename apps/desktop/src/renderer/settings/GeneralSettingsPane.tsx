@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { normalizeTaskBranchPrefix } from '@zeus/shared';
 import type { AppShellSettings } from '../apiClient.js';
 import type { SettingsApiClient } from '../features/settings/settingsApiClient.js';
 import { NativeControlRow, NativeSettingsPane } from '../features/workspace/workspaceSupport.js';
@@ -10,7 +11,7 @@ import { NetworkProxySettingsFields } from './NetworkProxySettingsFields.js';
 import { SettingsSaveStatus } from './useSettingsAutosave.js';
 
 /** 通用偏好只保存所属字段，避免自动保存顺带覆盖其他页面的配置。 */
-type GeneralPreferences = Pick<AppShellSettings, 'appLanguage' | 'appearance' | 'mainLayout' | 'desktopNotificationsEnabled' | 'networkProxy'>;
+type GeneralPreferences = Pick<AppShellSettings, 'appLanguage' | 'appearance' | 'mainLayout' | 'taskBranchPrefix' | 'desktopNotificationsEnabled' | 'networkProxy'>;
 
 /** 通用设置即时应用、顺序保存；失败后保留当前选择并提供重试。 */
 export function GeneralSettingsPane(props: {
@@ -30,6 +31,8 @@ export function GeneralSettingsPane(props: {
   const revision = useRef(0);
   /** 保存反馈不打断页面输入。 */
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
+  /** 前缀格式错误属于当前字段，不弹全局错误对话框。 */
+  const [taskBranchPrefixError, setTaskBranchPrefixError] = useState<string | null>(null);
 
   /** 原始设置不含代理草稿，只有通过校验的代理配置进入队列。 */
   async function save(patch: Partial<GeneralPreferences>): Promise<void> {
@@ -38,7 +41,14 @@ export function GeneralSettingsPane(props: {
     preferences.current = next;
     props.onChange((value) => ({ ...value, ...patch }));
     /** 请求仅包含通用偏好，保留其余设置的服务端当前值。 */
-    const input: GeneralPreferences = { appLanguage: next.appLanguage, appearance: next.appearance, mainLayout: next.mainLayout, desktopNotificationsEnabled: next.desktopNotificationsEnabled, networkProxy: next.networkProxy };
+    const input: GeneralPreferences = {
+      appLanguage: next.appLanguage,
+      appearance: next.appearance,
+      mainLayout: next.mainLayout,
+      taskBranchPrefix: next.taskBranchPrefix,
+      desktopNotificationsEnabled: next.desktopNotificationsEnabled,
+      networkProxy: next.networkProxy,
+    };
     /** 异步反馈的归属序号。 */
     const currentRevision = ++revision.current;
     setStatus('saving');
@@ -123,6 +133,47 @@ export function GeneralSettingsPane(props: {
           </label>
         </NativeControlRow>
       </NativeSettingsPane>
+      <section className="settings-product-section">
+        <h3>Git</h3>
+        <NativeSettingsPane label={zh ? '分支命名' : 'Branch naming'}>
+          <NativeControlRow
+            title={zh ? '任务分支前缀' : 'Task branch prefix'}
+            description={zh ? '用于后续新建的任务分支和会话工作树；无需输入结尾斜杠。' : 'Used for new task branches and conversation worktrees. Do not include a trailing slash.'}
+          >
+            <input
+              key={props.value.taskBranchPrefix}
+              aria-label={zh ? '任务分支前缀' : 'Task branch prefix'}
+              aria-describedby={taskBranchPrefixError ? 'task-branch-prefix-error' : undefined}
+              aria-invalid={Boolean(taskBranchPrefixError)}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="zeus"
+              defaultValue={props.value.taskBranchPrefix}
+              disabled={!props.client}
+              onChange={() => setTaskBranchPrefixError(null)}
+              onBlur={(event) => {
+                /** 交互结束时规范化一次，避免每个按键都写设置。 */
+                const taskBranchPrefix = normalizeTaskBranchPrefix(event.currentTarget.value);
+                if (!taskBranchPrefix) {
+                  setTaskBranchPrefixError(zh ? '请输入合法的 Git 分支前缀。' : 'Enter a valid Git branch prefix.');
+                  return;
+                }
+                event.currentTarget.value = taskBranchPrefix;
+                setTaskBranchPrefixError(null);
+                if (taskBranchPrefix !== props.value.taskBranchPrefix) void save({ taskBranchPrefix });
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.currentTarget.blur();
+              }}
+            />
+          </NativeControlRow>
+          {taskBranchPrefixError ? (
+            <p id="task-branch-prefix-error" className="settings-field-error" role="alert">
+              {taskBranchPrefixError}
+            </p>
+          ) : null}
+        </NativeSettingsPane>
+      </section>
       <section className="settings-product-section">
         <h3>{zh ? '网络' : 'Network'}</h3>
         <NativeSettingsPane label={zh ? '网络代理' : 'Network proxy'}>

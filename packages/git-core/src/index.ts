@@ -5,6 +5,7 @@ import { constants, realpathSync } from 'node:fs';
 import { copyFile, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
+import { defaultTaskBranchPrefix, normalizeTaskBranchPrefix } from '@zeus/shared';
 
 const execFileAsync = promisify(execFile);
 /** 当前工作台操作的取消、凭据环境和命令记录回调，彼此隔离。 */
@@ -98,6 +99,8 @@ export interface PrepareTaskWorktreeInput {
   taskTitle: string;
   workspaceId: string;
   branchName: string;
+  /** 新建或接管分支时要求的命名空间；null 仅用于恢复已登记工作区。 */
+  branchPrefix?: string | null;
   sourceRef: string;
   sourceKind?: 'local' | 'remote';
   sourceBranch?: string;
@@ -586,7 +589,7 @@ export function buildTaskEnvironmentRootPath(projectContainerPath: string, proje
 }
 
 /** 从任务编码、名称和开发线序号生成可读分支；最终合法性仍由 git check-ref-format 判定。 */
-export function buildTaskBranchName(taskCode: string, taskTitle: string, sequence: number): string {
+export function buildTaskBranchName(taskCode: string, taskTitle: string, sequence: number, branchPrefix = defaultTaskBranchPrefix): string {
   const slug =
     taskTitle
       .normalize('NFKD')
@@ -594,23 +597,34 @@ export function buildTaskBranchName(taskCode: string, taskTitle: string, sequenc
       .replace(/[^a-z0-9]+/gu, '-')
       .replace(/^-+|-+$/gu, '')
       .slice(0, 36) || 'task';
-  return `${buildTaskBranchPrefix(taskCode)}${slug}-${String(Math.max(1, Math.trunc(sequence))).padStart(2, '0')}`;
+  return `${buildTaskBranchPrefix(taskCode, branchPrefix)}${slug}-${String(Math.max(1, Math.trunc(sequence))).padStart(2, '0')}`;
 }
 
 /** 用任务编码限定可接管的既有本地任务分支，避免把其他任务分支登记到当前任务。 */
-export function buildTaskBranchPrefix(taskCode: string): string {
+export function buildTaskBranchPrefix(taskCode: string, branchPrefix = defaultTaskBranchPrefix): string {
+  /** 调用方只应传入设置层已校验的值；这里仍失败关闭，避免生成无命名空间的分支。 */
+  const normalizedPrefix = normalizeTaskBranchPrefix(branchPrefix);
+  if (!normalizedPrefix) throw gitCoreError('ZEUS_TASK_BRANCH_PREFIX_INVALID', 'Task branch prefix is invalid.');
+  /** 任务编码继续使用既有清洗规则，避免外部任务系统字符污染分支路径。 */
   const normalizedCode =
     taskCode
       .trim()
       .replace(/[^A-Za-z0-9._-]+/gu, '-')
       .replace(/^-+|-+$/gu, '') || 'TASK';
-  return `zeus/${normalizedCode}-`;
+  return `${normalizedPrefix}/${normalizedCode}-`;
 }
 
 /** 使用 Git 自己的规则校验分支名，避免复制一份会漂移的手写正则。 */
-export async function assertValidGitBranchName(cwd: string, branchName: string): Promise<string> {
+export async function assertValidGitBranchName(cwd: string, branchName: string, branchPrefix: string | null = defaultTaskBranchPrefix): Promise<string> {
   const normalized = branchName.trim();
-  if (!normalized.startsWith('zeus/')) throw gitCoreError('ZEUS_TASK_BRANCH_PREFIX_REQUIRED', 'Task branches must use the zeus/ prefix.');
+  if (branchPrefix !== null) {
+    /** 前缀校验与自动命名共用规范化规则，避免两条路径接受范围不同。 */
+    const normalizedPrefix = normalizeTaskBranchPrefix(branchPrefix);
+    if (!normalizedPrefix) throw gitCoreError('ZEUS_TASK_BRANCH_PREFIX_INVALID', 'Task branch prefix is invalid.');
+    if (!normalized.startsWith(`${normalizedPrefix}/`) || normalized.length <= normalizedPrefix.length + 1) {
+      throw gitCoreError('ZEUS_TASK_BRANCH_PREFIX_REQUIRED', `Task branches must use the ${normalizedPrefix}/ prefix.`);
+    }
+  }
   try {
     return await assertGitBranchFormat(cwd, normalized, 'task branch');
   } catch {
@@ -625,7 +639,7 @@ export async function assertValidGitBranchName(cwd: string, branchName: string):
 export async function prepareTaskWorktree(input: PrepareTaskWorktreeInput): Promise<PreparedTaskWorktree> {
   const context = input.repositoryContext ?? (await getGitRepositoryContext(input.repositoryPath));
   if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected project is not a Git repository.');
-  const branchName = await assertValidGitBranchName(context.topLevel, input.branchName);
+  const branchName = await assertValidGitBranchName(context.topLevel, input.branchName, input.branchPrefix === undefined ? defaultTaskBranchPrefix : input.branchPrefix);
   // 新建工作区按调用方选中的本机可用引用冻结精确提交；恢复只接受持久化对象 ID。
   const adoptLocalBranch = input.existingBranch && input.sourceKind === 'local';
   const sourceRef = input.existingBranch && !adoptLocalBranch ? requireGitObjectId(input.sourceRef, 'source commit') : input.sourceRef.trim();

@@ -351,6 +351,7 @@ export function createConversationExecutionContextOperations(dependencies: Conve
             taskTitle: task.title,
             workspaceId: member.id,
             branchName: member.branchName,
+            branchPrefix: null,
             sourceRef,
             sourceBranch: member.sourceBranch,
             existingBranch: true,
