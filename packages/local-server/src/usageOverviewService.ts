@@ -221,17 +221,18 @@ function aggregateCostBreakdown(rows: readonly CodexUsageLedgerRecord[]): UsageM
   for (const row of rows) {
     /** 新账本优先使用请求级快照；旧账本仍以整轮快照展示真实已知信息。 */
     const requests = row.estimate.requests?.length
-      ? row.estimate.requests.map((request) => ({ model: request.estimate.rateSnapshot.model || row.model, usage: request.usage, rateSnapshot: request.estimate.rateSnapshot }))
-      : [{ model: row.estimate.rateSnapshot.model || row.model, usage: row.usage, rateSnapshot: row.estimate.rateSnapshot }];
+      ? row.estimate.requests.map((request) => ({ model: request.estimate.rateSnapshot.model || row.model, usage: request.usage, estimate: request.estimate }))
+      : [{ model: row.estimate.rateSnapshot.model || row.model, usage: row.usage, estimate: row.estimate }];
     for (const request of requests) {
       /** 标准价格与历史 Codex 美元费率统一成前端只读结构。 */
-      const rate = usageModelRate(request.rateSnapshot);
+      const rate = usageModelRate(request.estimate.rateSnapshot);
       const key = JSON.stringify([request.model, rate]);
       const existing = groups.get(key);
       if (existing) {
         existing.usage = sumBreakdowns([existing.usage, request.usage]);
+        existing.estimatedCosts = sumEstimatedCosts([{ costs: existing.estimatedCosts, apiEquivalentUsd: null }, request.estimate]);
       } else {
-        groups.set(key, { model: request.model, rate, usage: { ...request.usage } });
+        groups.set(key, { model: request.model, rate, usage: { ...request.usage }, estimatedCosts: sumEstimatedCosts([request.estimate]) });
       }
     }
   }
