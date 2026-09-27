@@ -512,6 +512,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
               language={props.language}
               supportsAutoReview={Boolean(selectedCapability) && !['unsupported', 'needs_configuration'].includes(selectedCapability?.features?.autoReview.state ?? 'unknown')}
               value={props.permissionMode}
+              planMode={props.collaborationMode === 'plan'}
               disabled={props.readOnly === true || props.inputBlocked === true || !props.onRuntimeSettingsChange}
               onChange={(permissionMode) =>
                 props.onRuntimeSettingsChange?.({
@@ -526,6 +527,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
             <CollaborationModeControl
               language={props.language}
               value={props.collaborationMode}
+              formalPlanReady={props.state.planImplementationRequests.length > 0}
               disabled={props.readOnly === true || props.inputBlocked === true || !props.onRuntimeSettingsChange}
               onChange={(collaborationMode) =>
                 props.onRuntimeSettingsChange?.({

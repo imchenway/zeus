@@ -2218,6 +2218,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       return { text: JSON.stringify({ providerItemId: item.providerItemId, providerTurnId: item.providerTurnId, status: 'pending', delivery: 'async' }) };
     }
     if (request.toolName === 'update_plan') {
+      if (context.workMode === 'plan') throw piError('ZEUS_PI_PLAN_PROGRESS_FORBIDDEN', '计划模式不能使用执行清单；请在方案完整后调用 submit_plan 提交正式计划。');
       /** 停止或结束后的迟到调用不得写入计划，也不能被挂到后续轮次。 */
       const turn = options.turns.getById(activeRun.turnId);
       if (request.signal?.aborted || interruptedRuns.has(activeRun.providerTurnId) || !turn || turn.completedAt || !['dispatching', 'running', 'waiting'].includes(turn.status)) {
@@ -2233,6 +2234,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     }
     if (request.toolName === 'submit_plan') {
       if (context.workMode !== 'plan') throw piError('ZEUS_PI_PLAN_MODE_REQUIRED', '只有计划模式可以提交实施确认计划。');
+      if (options.providerItems.getLatestCompletedPlanByTurn(activeRun.turnId)) throw piError('ZEUS_PI_PLAN_ALREADY_SUBMITTED', '本轮已经提交正式计划；请结束本轮等待用户确认。');
       const item = await persistToolMessage(context, request, 'plan', stringArg(request.args.plan, '正式计划'), {});
       return { text: JSON.stringify({ providerItemId: item.providerItemId, status: 'submitted', message: '正式计划已保存。本轮结束后显示实施或继续完善入口；请勿自行开始实施。' }) };
     }
