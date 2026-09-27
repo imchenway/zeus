@@ -1,4 +1,4 @@
-import { classifyAssistantMessage } from '@zeus/shared';
+import { classifyAssistantMessage, emptyConversationContextDraft } from '@zeus/shared';
 import type { NativeSessionItemBuffer, NativeSessionState } from './sessionTypes.js';
 
 const emptyItems: NativeSessionState['items'] = Object.freeze({});
@@ -82,6 +82,37 @@ export function createConversationComposerStateSelector(): StateSelector {
     seenEventIds: emptySeenEvents,
     lastSequenceByGeneration: emptySequences,
     lastEventId: null,
+    transcriptRevision: 0,
+    feedbackEpoch: 0,
+    visibleFeedbackEpoch: 0,
+    error: null,
+  }));
+}
+
+/** 排队卡片只订阅权威队列和操作闸机，不随正文流、草稿或附件变化重绘。 */
+export function createConversationQueueStateSelector(): StateSelector {
+  return cachedSelector((state) => ({
+    ...state,
+    turnsByProviderId: emptyTurns,
+    changeSetsByProviderId: emptyChangeSets,
+    terminalTurnIds: emptyTerminalTurns,
+    items: emptyItems,
+    itemOrder: emptyItemOrder,
+    pendingRequests: emptyRequests,
+    planImplementationRequests: emptyPlanRequests,
+    providerSettings: null,
+    tokenUsage: null,
+    unifiedUsage: null,
+    sessionMetrics: null,
+    rateLimits: null,
+    mcpStartup: null,
+    seenEventIds: emptySeenEvents,
+    lastSequenceByGeneration: emptySequences,
+    lastEventId: null,
+    draft: '',
+    attachments: emptyAttachments,
+    browserSubmission: null,
+    contextDraft: emptyConversationContextDraft,
     transcriptRevision: 0,
     feedbackEpoch: 0,
     visibleFeedbackEpoch: 0,

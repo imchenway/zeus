@@ -57,3 +57,23 @@ export function isSubmissionWaitingInQueue(queue: NativeQueueSnapshot | null, su
   if (queue.state.type === 'dispatching') return queue.state.submissionId !== submission.id;
   return queue.state.type !== 'idle' || Boolean(queue.waitReason && queue.waitReason !== 'dispatch_pending') || visibleQueuedSubmissions(queue)[0]?.id !== submission.id;
 }
+
+/** 输入框卡片只承载可安全编辑的普通等待项，恢复和送达未知项继续使用原有状态入口。 */
+export function composerQueuedSubmissions(queue: NativeQueueSnapshot | null): NativeQueuedSubmission[] {
+  return visibleQueuedSubmissions(queue).filter(
+    (submission) =>
+      !submission.controlAction &&
+      !submission.providerTurnId &&
+      (submission.status === 'queued' || submission.status === 'paused') &&
+      submission.pausedReason !== 'outcome_unknown' &&
+      submission.pausedReason !== 'recovery_required' &&
+      submission.pausedReason !== 'recovered_unsent' &&
+      !submission.error?.recoveryRequired &&
+      isSubmissionWaitingInQueue(queue, submission),
+  );
+}
+
+/** 服务端重排要求完整提交 queued、paused 和 failed 成员，视图不能只传当前可见卡片。 */
+export function reorderableQueuedSubmissions(queue: NativeQueueSnapshot | null): NativeQueuedSubmission[] {
+  return visibleQueuedSubmissions(queue).filter((submission) => submission.status === 'queued' || submission.status === 'paused' || submission.status === 'failed');
+}

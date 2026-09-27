@@ -11,6 +11,7 @@ import { Button } from '../src/renderer/ui/Button.js';
 import { ConversationMarkdown } from '../src/renderer/session/ConversationMarkdown.js';
 import { ConversationInlineResource, ConversationResourceCards, defaultOpenTarget } from '../src/renderer/session/ConversationResources.js';
 import { ConversationComposer, type ComposerRuntimeSettings } from '../src/renderer/session/ConversationComposer.js';
+import { QueuedConversationMessages } from '../src/renderer/session/QueuedConversationMessages.js';
 import { SessionActivityGroup } from '../src/renderer/session/SessionActivity.js';
 import { SubagentWorkspace } from '../src/renderer/session/SubagentWorkspace.js';
 import { RuntimeDetails } from '../src/renderer/session/RuntimeDetails.js';
@@ -398,7 +399,7 @@ function QueueActionsQa() {
   const parameters = new URLSearchParams(window.location.search);
   /** 正常排队作为默认视觉对照，其他状态用于验证权限和恢复提示。 */
   const [scenario, setScenario] = useState(parameters.get('state') ?? 'queued');
-  /** 内容样本覆盖短消息、长文本、附件和连续排队。 */
+  /** 内容样本覆盖短消息、长文本、图文、纯附件和连续排队。 */
   const [sample, setSample] = useState(parameters.get('sample') ?? 'reference');
   /** 主题与窄栏只改变本页，不写入应用设置。 */
   const [dark, setDark] = useState(parameters.has('dark'));
@@ -410,6 +411,12 @@ function QueueActionsQa() {
   const [failAction, setFailAction] = useState(false);
   /** 保留每条原提交的操作结果，便于检查连续队列。 */
   const [outcomes, setOutcomes] = useState<Record<string, 'accepted' | 'deleted'>>({});
+  /** 编辑结果继续绑定原提交身份，便于核对单行摘要即时更新。 */
+  const [editedContent, setEditedContent] = useState<Record<string, string>>({});
+  /** 人工重排结果按服务端完整身份列表模拟回写。 */
+  const [queueOrder, setQueueOrder] = useState<string[]>([]);
+  /** 输入框草稿只服务当前预览，不触碰正式会话。 */
+  const [composerDraft, setComposerDraft] = useState('');
   /** 检查只读取当前场景中的生产组件。 */
   const surface = useRef<HTMLDivElement>(null);
   /** 显示操作回调与人工运行检查结果。 */
@@ -418,24 +425,33 @@ function QueueActionsQa() {
   const reference = language === 'zh-CN' ? '而且主智能体发送给子智能体的提示词为什么没显示?' : 'Why are the prompts sent from the main agent to subagents not displayed?';
   /** 长文本保留 Markdown 结构，并触发原有展开全文入口。 */
   const content =
-    sample === 'short'
-      ? language === 'zh-CN'
-        ? '好'
-        : 'OK'
-      : sample === 'long'
-        ? `${reference}\n\n${(language === 'zh-CN' ? '请保留每条消息的原始顺序，并确认附件与执行状态清晰可见。\n\n' : 'Keep the original message order, with attachments and execution state clearly visible.\n\n').repeat(26)}`
-        : reference;
+    sample === 'attachment-only'
+      ? ''
+      : sample === 'short'
+        ? language === 'zh-CN'
+          ? '好'
+          : 'OK'
+        : sample === 'long'
+          ? `${reference}\n\n${(language === 'zh-CN' ? '请保留每条消息的原始顺序，并确认附件与执行状态清晰可见。\n\n' : 'Keep the original message order, with attachments and execution state clearly visible.\n\n').repeat(26)}`
+          : reference;
   /** 多条消息共享权威队列，队首之外的引导由生产逻辑禁用。 */
-  const submissions = (sample === 'multiple' ? [content, language === 'zh-CN' ? '好' : 'OK', language === 'zh-CN' ? '也请检查深色主题。' : 'Also check the dark theme.'] : [content])
+  /** 场景先生成稳定身份，再按人工重排结果更新权威 position。 */
+  const baseSubmissions = (sample === 'multiple' ? [content, language === 'zh-CN' ? '好' : 'OK', language === 'zh-CN' ? '也请检查深色主题。' : 'Also check the dark theme.'] : [content])
     .map((text, index) => ({
       id: `qa-submission-${index + 1}`,
-      content: text,
+      content: editedContent[`qa-submission-${index + 1}`] ?? text,
       position: index + 1,
       status: scenario === 'accepted' || outcomes[`qa-submission-${index + 1}`] === 'accepted' ? 'resolved' : scenario === 'queued' || scenario === 'restoring' ? 'queued' : scenario === 'failed' ? 'failed' : 'paused',
       pausedReason: ['queued', 'accepted', 'restoring'].includes(scenario) ? null : scenario,
       providerTurnId: scenario === 'accepted' || outcomes[`qa-submission-${index + 1}`] === 'accepted' ? 'qa-turn' : null,
       createdAt: '2026-09-10T02:00:00Z',
-      attachments: sample === 'attachment' ? [{ name: '排队消息说明.md', mime: 'text/markdown', size: 128, kind: 'file' as const, localPath: '/qa/排队消息说明.md' }] : [],
+      attachments:
+        sample === 'attachment' || sample === 'attachment-only'
+          ? [
+              { name: '排队消息说明.md', mime: 'text/markdown', size: 128, kind: 'file' as const, localPath: '/qa/排队消息说明.md' },
+              { name: '界面参考图.png', mime: 'image/png', size: 2048, kind: 'image' as const, localPath: '/qa/界面参考图.png' },
+            ]
+          : [],
       error:
         scenario === 'outcome_unknown'
           ? { code: 'ZEUS_CODEX_RPC_PROTOCOL_ERROR', message: 'Codex 响应无法读取，已发出的操作需要核对结果。', recoveryRequired: true }
@@ -446,6 +462,20 @@ function QueueActionsQa() {
               : null,
     }))
     .filter((submission) => outcomes[submission.id] !== 'deleted');
+  /** 仅可重排状态参与服务端顺序，已接纳消息不应让人工重排结果失效。 */
+  const reorderableSubmissionIds = baseSubmissions.filter((submission) => ['queued', 'paused', 'failed'].includes(submission.status)).map((submission) => submission.id);
+  /** 删除消息后从既有顺序中剔除对应身份，模拟服务端回写剩余队列。 */
+  const persistedQueueOrder = queueOrder.filter((submissionId) => reorderableSubmissionIds.includes(submissionId));
+  /** 未重排身份沿用初始队列，已重排身份按完整可重排列表覆盖。 */
+  const orderedSubmissionIds = persistedQueueOrder.length === reorderableSubmissionIds.length ? persistedQueueOrder : reorderableSubmissionIds;
+  /** 最终快照与真实接口一样用 position 表达权威顺序。 */
+  const submissions = baseSubmissions
+    .map((submission) => {
+      /** 已完成消息不再占用排队位置，只保留原始历史位置。 */
+      const queuedPosition = orderedSubmissionIds.indexOf(submission.id);
+      return { ...submission, position: queuedPosition >= 0 ? queuedPosition + 1 : submission.position };
+    })
+    .sort((left, right) => left.position - right.position);
   /** 已接纳消息恢复为普通历史，检查底栏消失后不会重复正文或遗留占位。 */
   const acceptedItems: NativeSessionItemBuffer[] = submissions
     .filter((submission) => submission.status === 'resolved')
@@ -467,6 +497,7 @@ function QueueActionsQa() {
   /** 活动轮次确保普通队列正在等待，恢复原因直接传给生产投影。 */
   const state: NativeSessionState = {
     ...createInitialSessionState(),
+    draft: composerDraft,
     conversationId: 'qa-queue',
     transportState: 'ready',
     activeTurnId: 'qa-turn',
@@ -479,6 +510,8 @@ function QueueActionsQa() {
   /** 切换场景时清除本页模拟结果，避免上一场景影响新的操作检查。 */
   function resetPreview(): void {
     setOutcomes({});
+    setEditedContent({});
+    setQueueOrder([]);
     setResult('等待检查');
   }
   /** 延迟只用于观察真实按钮的处理中状态；失败不改变原提交。 */
@@ -496,22 +529,17 @@ function QueueActionsQa() {
   function checkActions(): void {
     /** 已接纳消息退出队列操作，其余按真实状态计算可见入口。 */
     const pendingCount = submissions.filter((submission) => submission.status !== 'resolved').length;
-    /** 正常排队与已确认未发送可取消，恢复期间仍由生产权限控制。 */
-    const expectedDelete = ['queued', 'restoring', 'recovered_unsent', 'preflight_failed'].includes(scenario) ? pendingCount : 0;
-    /** 引导入口只在 queued 状态显示，不可用原因由生产组件说明。 */
-    const expectedSteer = ['queued', 'restoring'].includes(scenario) ? pendingCount : 0;
+    /** 只有普通 queued 和安全 paused 项进入输入框卡片。 */
+    const expectedCards = ['queued', 'restoring', 'preflight_failed'].includes(scenario) ? pendingCount : 0;
     /** 送达未知只检查；写前失败和待恢复消息提供先核对再发送的重试。 */
     const expectedCheck = scenario === 'outcome_unknown' ? pendingCount : 0;
     /** 无需错误详情也能重试已确认未发送的消息。 */
     const expectedRetry = ['failed', 'preflight_failed', 'recovery_required', 'recovered_unsent'].includes(scenario) ? pendingCount : 0;
-    /** 发送前失败只在底栏说明消息未发出，原始失败原文交给下方发送状态提示。 */
-    const preflightStatus = language === 'zh-CN' ? '发送前检查未通过，消息尚未发送' : 'Preflight failed; the message was not sent';
-    const footerStatuses = [...(surface.current?.querySelectorAll('.session-queued-thread-footer .session-item-state') ?? [])].map((node) => node.textContent ?? '');
-    const preflightFooterMismatch = scenario === 'preflight_failed' && footerStatuses.some((text) => !text.includes(preflightStatus) || text.includes('消息在发送前失败。'));
+    /** 每条卡片固定提供五个操作入口；不可执行的箭头和引导保持可见但有禁用语义。 */
+    const queuedActionCount = surface.current?.querySelectorAll('.session-queued-message-actions button').length ?? 0;
     if (
-      surface.current?.querySelectorAll('.session-queued-thread-delete').length !== expectedDelete ||
-      surface.current?.querySelectorAll('.session-queued-thread-steer').length !== expectedSteer ||
-      preflightFooterMismatch ||
+      surface.current?.querySelectorAll('.session-queued-message').length !== expectedCards ||
+      queuedActionCount !== expectedCards * 5 ||
       [...(surface.current?.querySelectorAll('button') ?? [])].filter((button) => button.textContent === (language === 'zh-CN' ? '检查处理状态' : 'Check processing status')).length !== expectedCheck ||
       [...(surface.current?.querySelectorAll('button') ?? [])].filter((button) => button.textContent === (language === 'zh-CN' ? '重试' : 'Retry')).length !== expectedRetry
     )
@@ -551,9 +579,9 @@ function QueueActionsQa() {
                 resetPreview();
               }}
             >
-              {['reference', 'short', 'long', 'attachment', 'multiple'].map((value, index) => (
+              {['reference', 'short', 'long', 'attachment', 'attachment-only', 'multiple'].map((value, index) => (
                 <option key={value} value={value}>
-                  {['定稿正文', '短消息', '长文本', '附件', '多条排队'][index]}
+                  {['定稿正文', '短消息', '长文本', '图文消息', '纯附件', '多条排队'][index]}
                 </option>
               ))}
             </select>
@@ -576,16 +604,40 @@ function QueueActionsQa() {
       <p role="status" className="qa-error-layout-note">
         {result}
       </p>
-      <div ref={surface} style={{ maxWidth: narrow ? 360 : undefined, marginInline: 'auto' }}>
+      <div ref={surface} className="ai-workspace" style={{ display: 'flex', flexDirection: 'column', height: 620, maxWidth: narrow ? 360 : 960, marginInline: 'auto' }}>
         <ConversationTranscript
           state={state}
           language={language}
           transcriptHydrated
-          onSendQueuedNow={(id) => runAction(id, 'accepted')}
           onCancelQueuedSubmission={(id) => runAction(id, 'deleted')}
           onRetryQueuedSubmission={(id) => runAction(id, 'accepted')}
           onRecoverQueue={() => setResult('检查处理状态回调已触发')}
         />
+        <div className="session-composer-stack">
+          <QueuedConversationMessages
+            state={state}
+            language={language}
+            onEdit={(id, nextContent) => {
+              setEditedContent((current) => ({ ...current, [id]: nextContent }));
+              setResult(`编辑回调已触发：${id}`);
+            }}
+            onDelete={(id) => runAction(id, 'deleted')}
+            onSendNow={(id) => runAction(id, 'accepted')}
+            onReorder={(orderedIds) => {
+              setQueueOrder(orderedIds);
+              setResult(`重排回调已触发：${orderedIds.join(' → ')}`);
+            }}
+          />
+          <ConversationComposer
+            state={state}
+            language={language}
+            permissionMode="read-only"
+            collaborationMode="default"
+            onDraftChange={setComposerDraft}
+            onSubmit={() => setResult('输入框发送回调已触发')}
+            onInterrupt={() => setResult('停止回调已触发')}
+          />
+        </div>
       </div>
       <ApplicationErrorDialogHost />
     </main>
