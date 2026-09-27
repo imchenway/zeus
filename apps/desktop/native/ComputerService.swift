@@ -868,6 +868,8 @@ private final class ComputerService {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = false
         configuration.createsNewApplicationInstance = false
+        /** Zeus 识别该一次性意图后仅后台展示首个窗口；其他应用会安全忽略这个命名空间变量。 */
+        configuration.environment = ["ZEUS_COMPUTER_BACKGROUND_LAUNCH": "1"]
         let launched = try await NSWorkspace.shared.openApplication(at: applicationURL, configuration: configuration)
         /** 系统返回本次实际打开或复用的精确进程，避免再次按 bundle 猜测实例。 */
         if !launched.isTerminated { return launched }

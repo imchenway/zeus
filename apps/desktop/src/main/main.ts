@@ -97,6 +97,9 @@ import { executionHostProtocolVersion } from './executionHostProtocol.js';
 const resourceFileSystem = createRequire(import.meta.url)('original-fs') as typeof import('node:fs');
 /** 启动时固定资源包身份，运行期间禁止混用替换后的网页与旧进程。 */
 const startupResourceIdentity = app.isPackaged ? readPackagedResourceIdentity() : null;
+/** Computer Use 的后台启动意图只影响首次展示，读取后立即移除，避免传给 Core 或后续重启。 */
+let pendingComputerUseBackgroundLaunch = process.env.ZEUS_COMPUTER_BACKGROUND_LAUNCH === '1';
+delete process.env.ZEUS_COMPUTER_BACKGROUND_LAUNCH;
 let mainWindow: BrowserWindow | undefined;
 const windows = new Set<BrowserWindow>();
 let tray: Tray | undefined;
@@ -599,6 +602,13 @@ function revealMainWindow(window: BrowserWindow): void {
   app.focus({ steal: true });
 }
 
+/** Computer Use 冷启动只把首个窗口留在当前前台应用之后，不抢键盘焦点或切换活跃应用。 */
+function revealMainWindowInBackground(window: BrowserWindow): void {
+  if (window.isDestroyed()) return;
+  ensureMacOSDockIconVisible();
+  window.showInactive();
+}
+
 /** macOS 再次点击 Dock/Finder 或第二个进程启动时，优先恢复已有窗口；没有窗口才新建。 */
 async function revealOrCreateMainWindow(): Promise<void> {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -837,6 +847,9 @@ async function createWindow(): Promise<void> {
     revealMainWindow(mainWindow);
     return;
   }
+  /** 每个进程只允许最先创建的主窗口消费后台展示意图，后续用户窗口恢复正常前置行为。 */
+  const revealInBackground = pendingComputerUseBackgroundLaunch;
+  pendingComputerUseBackgroundLaunch = false;
 
   /** 资源校验必须先于原生窗口创建和偏好恢复。 */
   const rendererUrl = rendererEntryUrl();
@@ -948,7 +961,7 @@ async function createWindow(): Promise<void> {
     if (didRevealMainWindow) return;
     didRevealMainWindow = true;
     /** 共用入口负责恢复与保存，主窗口额外保留启动落屏日志。 */
-    const placement = reveal(() => revealMainWindow(window));
+    const placement = reveal(() => (revealInBackground ? revealMainWindowInBackground(window) : revealMainWindow(window)));
     console.info(
       'Zeus main window restoration',
       JSON.stringify({
