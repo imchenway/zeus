@@ -15,6 +15,7 @@ import { WorkspaceView } from './features/workspace/WorkspaceView.js';
 export {
   type MainNavTarget,
   type SettingsCategory,
+  SETTINGS_CATEGORIES,
   type NativeConversationChoiceTaskLoadState,
   beginNativeConversationChoiceTaskLoad,
   completeNativeConversationChoiceTaskLoad,

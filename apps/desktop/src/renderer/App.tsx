@@ -1,7 +1,7 @@
 import { type ComponentProps, useCallback, useEffect, useRef, useState } from 'react';
 import { RendererErrorBoundary } from './ErrorBoundary.js';
 import { reportApplicationError } from './ui/ApplicationErrorDialog.js';
-import { type MainNavTarget, type SettingsCategory, WorkspacePage } from './WorkspacePage.js';
+import { type MainNavTarget, type SettingsCategory, SETTINGS_CATEGORIES, WorkspacePage } from './WorkspacePage.js';
 
 export { buildProjectDirectoryResolution, buildTemplateTaskDraft } from './WorkspacePage.js';
 
@@ -114,7 +114,5 @@ function settingsCategoryFromHash(hash: string | undefined): SettingsCategory | 
     if (typeof window !== 'undefined') window.history.replaceState(null, '', '#settings-im');
     return 'im';
   }
-  return settingsCategories.includes(target as SettingsCategory) ? (target as SettingsCategory) : undefined;
+  return SETTINGS_CATEGORIES.includes(target as SettingsCategory) ? (target as SettingsCategory) : undefined;
 }
-
-const settingsCategories = ['general', 'usage', 'memory', 'agents', 'tasks', 'employees', 'runtime', 'models', 'browser', 'terminal', 'im', 'zentao', 'commands', 'release', 'data'] as const satisfies readonly SettingsCategory[];

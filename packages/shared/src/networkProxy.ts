@@ -28,6 +28,8 @@ export interface NetworkProxyAddressFields {
 export interface NetworkProxyConnectionResult {
   /** 收到 HTTP 响应时返回状态码，包含目标网站的拒绝响应。 */
   statusCode?: number;
+  /** 从发起请求到收到响应头或失败的毫秒数。 */
+  latencyMs: number;
   /** 失败按超时、代理认证或连接错误区分。 */
   error?: 'timeout' | 'authentication' | 'connection';
 }
@@ -38,6 +40,26 @@ export interface NetworkProxyCheckResult {
   browser: NetworkProxyConnectionResult;
   /** 模型宿主使用的 Node 网络检查。 */
   node: NetworkProxyConnectionResult;
+}
+
+/** Codex 订阅连接诊断；刷新账号凭据与模型目录，不发送收费推理请求。 */
+export interface CodexSubscriptionConnectionDiagnostic {
+  /** 成功表示订阅身份和模型目录均可用。 */
+  ok: boolean;
+  /** 失败发生在运行时、登录身份或模型目录阶段。 */
+  stage: 'runtime' | 'credential' | 'catalog';
+  /** 稳定错误码供界面区分恢复方向。 */
+  code: string;
+  /** 已脱敏的用户可读结论。 */
+  message: string;
+  /** 从诊断开始到完成或失败的毫秒数。 */
+  latencyMs: number;
+  /** 本次官方目录返回的可用模型标识。 */
+  modelIds: string[];
+  /** 订阅计划仅用于说明当前连接身份。 */
+  planType: string | null;
+  /** 诊断完成时间。 */
+  checkedAt: string;
 }
 
 /** 已有 URL 自动拆分；标准端口即使被 URL 规范化省略也能回填。 */

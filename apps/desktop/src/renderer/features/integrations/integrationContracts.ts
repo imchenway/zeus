@@ -132,6 +132,8 @@ export interface ModelConnectionDiagnostic {
   stage: 'configuration' | 'credential' | 'catalog';
   code: string;
   message: string;
+  /** 从开始检查到鉴权目录请求完成或失败的毫秒数。 */
+  latencyMs: number;
   checkedAt: string;
   discoveredModelCount: number | null;
 }

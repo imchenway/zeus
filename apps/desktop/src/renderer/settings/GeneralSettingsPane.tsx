@@ -7,11 +7,10 @@ import { notifyMainAppShellSettingsChanged } from '../appShellBridge.js';
 import { reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { Button } from '../ui/Button.js';
 import { ZeusSelect } from '../ZeusSelect.js';
-import { NetworkProxySettingsFields } from './NetworkProxySettingsFields.js';
 import { SettingsSaveStatus } from './useSettingsAutosave.js';
 
 /** 通用偏好只保存所属字段，避免自动保存顺带覆盖其他页面的配置。 */
-type GeneralPreferences = Pick<AppShellSettings, 'appLanguage' | 'appearance' | 'mainLayout' | 'taskBranchPrefix' | 'desktopNotificationsEnabled' | 'networkProxy'>;
+type GeneralPreferences = Pick<AppShellSettings, 'appLanguage' | 'appearance' | 'mainLayout' | 'taskBranchPrefix' | 'desktopNotificationsEnabled'>;
 
 /** 通用设置即时应用、顺序保存；失败后保留当前选择并提供重试。 */
 export function GeneralSettingsPane(props: {
@@ -47,7 +46,6 @@ export function GeneralSettingsPane(props: {
       mainLayout: next.mainLayout,
       taskBranchPrefix: next.taskBranchPrefix,
       desktopNotificationsEnabled: next.desktopNotificationsEnabled,
-      networkProxy: next.networkProxy,
     };
     /** 异步反馈的归属序号。 */
     const currentRevision = ++revision.current;
@@ -172,12 +170,6 @@ export function GeneralSettingsPane(props: {
               {taskBranchPrefixError}
             </p>
           ) : null}
-        </NativeSettingsPane>
-      </section>
-      <section className="settings-product-section">
-        <h3>{zh ? '网络' : 'Network'}</h3>
-        <NativeSettingsPane label={zh ? '网络代理' : 'Network proxy'}>
-          <NetworkProxySettingsFields language={props.value.appLanguage} value={props.value.networkProxy} disabled={!props.client} onChange={(networkProxy) => save({ networkProxy })} />
         </NativeSettingsPane>
       </section>
     </section>

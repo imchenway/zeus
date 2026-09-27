@@ -1,11 +1,44 @@
 import { session } from 'electron';
 import * as http from 'node:http';
 import * as https from 'node:https';
+import { randomUUID } from 'node:crypto';
 import { networkProxyRuntimeEnvironment } from '@zeus/local-server';
 import { networkProxyLoopbackBypass, normalizeNetworkProxySettings, type NetworkProxySettings, type NetworkProxyCheckResult, type NetworkProxyConnectionResult } from '@zeus/shared';
 
-/** 检查复用一个内存会话，串行执行以免两个窗口互相覆盖检查配置。 */
-let checkingConnection = false;
+/** 单条网络请求的最长等待时间。 */
+const networkRequestTimeoutMs = 10_000;
+
+/** Electron 原生代理切换和连接清理的最长等待时间。 */
+const electronNetworkOperationTimeoutMs = 10_000;
+
+/** 清理只做资源回收，不应延长用户可见检查。 */
+const electronNetworkCleanupTimeoutMs = 1_000;
+
+/** 为 Electron 不支持 AbortSignal 的 Promise 补上硬截止时间，防止设置页永久等待。 */
+async function withOperationTimeout<T>(operation: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
+  /** 超时句柄只活到当前操作结束。 */
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+/** 清理失败或迟到不能再次卡住已经完成的用户检查。 */
+async function closeConnectionsWithinDeadline(targetSession: Electron.Session): Promise<void> {
+  await withOperationTimeout(targetSession.closeAllConnections(), electronNetworkCleanupTimeoutMs, '连接清理超时。').catch(() => undefined);
+}
+
+/** 将请求耗时限制为非负整数，避免系统时钟调整污染显示。 */
+function elapsedMilliseconds(startedAt: number): number {
+  return Math.max(0, Math.round(performance.now() - startedAt));
+}
 
 /** 正式生效与检查共用 Chromium 配置，域名后缀保持与 NO_PROXY 一致。 */
 export function chromiumNetworkProxyConfig(settings: NetworkProxySettings): Electron.ProxyConfig {
@@ -24,14 +57,16 @@ export function chromiumNetworkProxyConfig(settings: NetworkProxySettings): Elec
 }
 
 /** 原始异常可能包含地址或凭据，仅返回固定错误分类。 */
-function connectionError(error: unknown): NetworkProxyConnectionResult {
+function connectionError(error: unknown, startedAt: number): NetworkProxyConnectionResult {
   /** 只在内部识别平台错误，不把原文传回界面。 */
   const message = error instanceof Error ? error.message : '';
-  return { error: /timeout|timed.out|aborted/iu.test(message) ? 'timeout' : /407|proxy.*auth/iu.test(message) ? 'authentication' : 'connection' };
+  return { latencyMs: elapsedMilliseconds(startedAt), error: /timeout|timed.out|aborted/iu.test(message) ? 'timeout' : /407|proxy.*auth/iu.test(message) ? 'authentication' : 'connection' };
 }
 
 /** 使用专用 Agent，不修改全局代理，不复用模型请求的连接。 */
 async function checkNodeConnection(settings: NetworkProxySettings, target: URL): Promise<NetworkProxyConnectionResult> {
+  /** 延迟从请求准备开始计算，包含代理连接和 TLS 握手。 */
+  const startedAt = performance.now();
   /** HTTP 与 HTTPS 分别使用原生代理实现。 */
   const transport = target.protocol === 'https:' ? https : http;
   /** 默认启动环境也可能无效，构造失败必须经过同一错误脱敏。 */
@@ -40,15 +75,17 @@ async function checkNodeConnection(settings: NetworkProxySettings, target: URL):
     agent = new transport.Agent({ proxyEnv: networkProxyRuntimeEnvironment(settings), keepAlive: false });
     return await new Promise<NetworkProxyConnectionResult>((resolve) => {
       /** 仅请求响应头，不下载目标正文，不跟随跳转。 */
-      const request = transport.request(target, { method: 'HEAD', agent, signal: AbortSignal.timeout(10_000) }, (response) => {
-        resolve(response.statusCode === 407 ? { error: 'authentication', statusCode: 407 } : { statusCode: response.statusCode });
+      const request = transport.request(target, { method: 'HEAD', agent, signal: AbortSignal.timeout(networkRequestTimeoutMs) }, (response) => {
+        /** 任何 HTTP 响应都证明网络已到达目标，407 单独标记代理认证问题。 */
+        const latencyMs = elapsedMilliseconds(startedAt);
+        resolve(response.statusCode === 407 ? { error: 'authentication', statusCode: 407, latencyMs } : { statusCode: response.statusCode, latencyMs });
         response.destroy();
       });
-      request.once('error', (error) => resolve(connectionError(error)));
+      request.once('error', (error) => resolve(connectionError(error, startedAt)));
       request.end();
     });
   } catch (error) {
-    return connectionError(error);
+    return connectionError(error, startedAt);
   } finally {
     agent?.destroy();
   }
@@ -62,28 +99,26 @@ export async function checkNetworkProxyConnection(value: unknown, address: unkno
   /** 不接受本地文件、用户名、密码或片段，防止检查意外带入登录信息。 */
   const target = URL.parse(address.trim());
   if (!target || !['http:', 'https:'].includes(target.protocol) || target.username || target.password || target.hash) throw new Error('检查网址只支持 HTTP/HTTPS，不能包含账号密码或片段。');
-  if (checkingConnection) throw new Error('已有连接检查正在进行，请稍后再试。');
-  checkingConnection = true;
-  /** 固定的非持久会话不会继承用户登录信息，也不会积累无界分区。 */
-  const isolatedSession = session.fromPartition('zeus-network-proxy-check', { cache: false });
+  /** 每次检查使用独立非持久会话；迟到的原生操作不会污染下一次检查。 */
+  const isolatedSession = session.fromPartition(`zeus-network-proxy-check-${randomUUID()}`, { cache: false });
   try {
-    await isolatedSession.setProxy(chromiumNetworkProxyConfig(settings));
+    await withOperationTimeout(isolatedSession.setProxy(chromiumNetworkProxyConfig(settings)), electronNetworkOperationTimeoutMs, '代理切换超时。');
+    /** 浏览器延迟包含 DNS、代理连接和 TLS 握手。 */
+    const browserStartedAt = performance.now();
     /** Chromium 请求只取响应头，拒绝携带浏览器凭据并禁止自动跳转。 */
     const browserCheck = isolatedSession
-      .fetch(target.href, { method: 'HEAD', credentials: 'omit', redirect: 'manual', cache: 'no-store', signal: AbortSignal.timeout(10_000) })
+      .fetch(target.href, { method: 'HEAD', credentials: 'omit', redirect: 'manual', cache: 'no-store', signal: AbortSignal.timeout(networkRequestTimeoutMs) })
       .then(async (response): Promise<NetworkProxyConnectionResult> => {
         await response.body?.cancel();
-        return response.status === 407 ? { error: 'authentication', statusCode: 407 } : { statusCode: response.status };
+        /** 407 只代表代理认证失败，其他响应码都保留为可达证据。 */
+        const latencyMs = elapsedMilliseconds(browserStartedAt);
+        return response.status === 407 ? { error: 'authentication', statusCode: 407, latencyMs } : { statusCode: response.status, latencyMs };
       })
-      .catch(connectionError);
+      .catch((error) => connectionError(error, browserStartedAt));
     /** 并行检查避免等待时间翻倍；结果各自说明网络范围。 */
     const [browser, node] = await Promise.all([browserCheck, checkNodeConnection(settings, target)]);
     return { browser, node };
   } finally {
-    try {
-      await isolatedSession.closeAllConnections();
-    } finally {
-      checkingConnection = false;
-    }
+    await closeConnectionsWithinDeadline(isolatedSession);
   }
 }
