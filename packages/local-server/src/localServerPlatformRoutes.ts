@@ -2,7 +2,7 @@ import { resolveContextCapacityPolicy } from './contextCapacitySupport.js';
 import { resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
 import { resolveInteractiveRuntimeShell } from './localServerPlatformSupport.js';
 import { missingTaskRepositories } from './taskRepositoryMembership.js';
-import type { FilePreviewIntent, FilePreviewRequest } from '@zeus/shared';
+import type { CodexSubscriptionConnectionDiagnostic, FilePreviewIntent, FilePreviewRequest } from '@zeus/shared';
 import { EmployeeMemoryProposalRepository } from '@zeus/storage';
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
 import { TaskWorkPlanningRepository, TaskWorkReviewRepository, TaskWorkDeploymentRepository } from '@zeus/storage';
@@ -519,6 +519,25 @@ export type LocalServerPlatformRouteDependencies = Record<string, any> & {
   readRuntimeTerminalTail(sessionId: string, maxBytes: number): { text: string; truncated: boolean };
   workManagementCommands: WorkManagementCommandApplication;
 };
+
+/** 订阅连接诊断必须比普通页面请求更早结束，避免设置页再次永久等待。 */
+const codexConnectionDiagnosticTimeoutMs = 15_000;
+
+/** 为不支持 AbortSignal 的 Codex RPC 组合补上用户可见的硬截止时间。 */
+async function withCodexConnectionDiagnosticTimeout<T>(operation: Promise<T>): Promise<T> {
+  /** 超时句柄只在本次诊断存活。 */
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(Object.assign(new Error('Codex 订阅连接检查在 15 秒内没有完成。'), { code: 'ZEUS_CODEX_CONNECTION_TIMEOUT' })), codexConnectionDiagnosticTimeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
 
 export async function registerLocalServerPlatformRoutes(dependencies: LocalServerPlatformRouteDependencies): Promise<{
   close(): Promise<void>;
@@ -3627,6 +3646,66 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       return await codexAppServerManager.readAccount();
     } catch (error) {
       return sendNativeConversationApiError(reply, error);
+    }
+  });
+
+  /** 显式检查订阅鉴权与模型目录；不创建会话、不发送推理请求。 */
+  server.post('/api/codex/connection/diagnose', async (): Promise<CodexSubscriptionConnectionDiagnostic> => {
+    /** 延迟覆盖 Provider RPC、凭据刷新与完整模型目录读取。 */
+    const startedAt = performance.now();
+    /** 失败阶段随实际推进更新，不能把目录失败误报成未登录。 */
+    let stage: CodexSubscriptionConnectionDiagnostic['stage'] = 'runtime';
+    /** 即使失败也返回已确认的计划类型，不暴露账号身份。 */
+    let planType: string | null = null;
+    /** 所有出口使用同一单调时钟。 */
+    const latencyMs = (): number => Math.max(0, Math.round(performance.now() - startedAt));
+    try {
+      return await withCodexConnectionDiagnosticTimeout(
+        (async () => {
+          stage = 'credential';
+          /** 强制刷新凭据，禁止用传输失败时的旧快照冒充本次成功。 */
+          const account = await codexAppServerManager.readAccount({ refreshToken: true, allowCachedOnTransportFailure: false, preferCached: false });
+          planType = account.planType;
+          if (!account.signedIn || account.accountType !== 'chatgpt') {
+            return {
+              ok: false,
+              stage,
+              code: 'ZEUS_CODEX_SUBSCRIPTION_REQUIRED',
+              message: '请先在“模型供应商”中登录 Codex 订阅。',
+              latencyMs: latencyMs(),
+              modelIds: [],
+              planType,
+              checkedAt: now().toISOString(),
+            };
+          }
+          stage = 'catalog';
+          /** 刷新当前运行世代的官方模型目录，结果随订阅可用模型变化。 */
+          const capabilities = await codexAppServerManager.refreshModels();
+          return {
+            ok: true,
+            stage,
+            code: 'ZEUS_CODEX_SUBSCRIPTION_AVAILABLE',
+            message: `Codex 订阅鉴权成功并返回 ${capabilities.models.length} 个模型。`,
+            latencyMs: latencyMs(),
+            modelIds: capabilities.models.map((model: CodexModelCapability) => model.model),
+            planType,
+            checkedAt: now().toISOString(),
+          };
+        })(),
+      );
+    } catch (error) {
+      /** 错误码和文案均先脱敏，避免 Provider 输出带入本地路径或凭据。 */
+      const code = error instanceof Error && 'code' in error && typeof (error as Error & { code?: unknown }).code === 'string' ? String((error as Error & { code: string }).code) : 'ZEUS_CODEX_CONNECTION_FAILED';
+      return {
+        ok: false,
+        stage,
+        code,
+        message: redactSensitiveText(error instanceof Error ? error.message : 'Codex 订阅连接检查失败。').text,
+        latencyMs: latencyMs(),
+        modelIds: [],
+        planType,
+        checkedAt: now().toISOString(),
+      };
     }
   });
 

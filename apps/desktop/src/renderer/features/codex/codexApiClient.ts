@@ -22,7 +22,7 @@ import type {
   TaskWorkspaceSnapshotResponse,
   TaskWorkspacesSnapshot,
 } from '../../session/sessionTypes.js';
-import type { CodexUsageAnalyticsSnapshot, CodexUsageRange, CodexUsageSummarySnapshot, UsageAnalyticsSnapshot, UsageOverviewSnapshot } from '@zeus/shared';
+import type { CodexSubscriptionConnectionDiagnostic, CodexUsageAnalyticsSnapshot, CodexUsageRange, CodexUsageSummarySnapshot, UsageAnalyticsSnapshot, UsageOverviewSnapshot } from '@zeus/shared';
 import type { CodexConfigActivationResult, CodexConfigImportPreview, CodexConfigImportResult, CodexLegacyImportResult, CodexLegacyImportSnapshot, SkillCatalog, SkillInstallResult, SkillInstallSource } from './codexContracts.js';
 import { buildCodexPublicCommandRequest, codexPublicClientCommandTypes, codexPublicClientScopeIds } from './codexPublicCommandClient.js';
 import { buildConversationStartCommandRequest, conversationStartClientCommandTypes } from '../conversations/conversationStartCommandClient.js';
@@ -56,6 +56,8 @@ export interface CodexApiClient {
   loadCodexTaskPushCapabilities: (projectId: string, taskId: string) => Promise<CodexTaskPushCapabilities>;
   refreshTaskPushRepositoryRemote: (projectId: string, taskId: string, repositoryId: string) => Promise<CodexTaskRepositoryCapability>;
   loadCodexAccount: () => Promise<CodexAccountSnapshot>;
+  /** 刷新订阅凭据与模型目录，不发送推理请求。 */
+  diagnoseCodexConnection: () => Promise<CodexSubscriptionConnectionDiagnostic>;
   loadCodexUsageSummary: () => Promise<CodexUsageSummarySnapshot>;
   loadUsageOverview: (refresh?: 'if-stale' | 'force') => Promise<UsageOverviewSnapshot>;
   loadUsageAnalytics: (input: { range: CodexUsageRange; projectId?: string; model?: string }) => Promise<UsageAnalyticsSnapshot>;
@@ -186,6 +188,7 @@ export function createCodexApiClient(transport: LocalApiTransport): CodexApiClie
       });
     },
     loadCodexAccount: () => transport.request<CodexAccountSnapshot>('/api/codex/account'),
+    diagnoseCodexConnection: () => transport.request<CodexSubscriptionConnectionDiagnostic>('/api/codex/connection/diagnose', { method: 'POST', body: '{}' }),
     loadCodexUsageSummary: () => transport.request<CodexUsageSummarySnapshot>('/api/codex/usage-summary'),
     loadUsageOverview,
     loadUsageAnalytics: (input) => {

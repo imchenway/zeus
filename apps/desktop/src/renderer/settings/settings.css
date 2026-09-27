@@ -526,6 +526,51 @@
     margin: 0;
     overflow-wrap: anywhere;
   }
+  /* 模型连接检测沿用设置行结构，清单直接承载模型来源、模型范围和结果。 */
+  .network-model-connection-check-row .native-control-slot > button {
+    min-block-size: 32px;
+  }
+  .network-model-connection-status {
+    display: grid;
+    gap: 8px;
+  }
+  .network-model-connection-results {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin: 0;
+    padding: 0;
+    border-block-start: 1px solid var(--zeus-product-border);
+    list-style: none;
+  }
+  .network-model-connection-results li {
+    display: grid;
+    gap: 4px;
+    min-inline-size: 0;
+    padding: 12px 0;
+    border-block-end: 1px solid var(--zeus-product-border);
+  }
+  .network-model-connection-results li:nth-child(odd) {
+    padding-inline-end: 16px;
+  }
+  .network-model-connection-results li:nth-child(even) {
+    padding-inline-start: 16px;
+    border-inline-start: 1px solid var(--zeus-product-border);
+  }
+  .network-model-connection-results strong {
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .network-model-connection-results :where(small, span) {
+    color: var(--zeus-product-muted);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+  .network-model-connection-results [data-state='success'] span {
+    color: var(--zeus-product-success, #2f7d4a);
+  }
+  .network-model-connection-results [data-state='failed'] span {
+    color: var(--zeus-product-danger, #b42318);
+  }
   :where(.settings-config-row, .settings-matrix-row, .settings-state-row, .settings-log-row, .settings-data-portability-row) {
     display: grid;
     grid-template-columns: 240px minmax(0, 1fr) auto;
@@ -1451,6 +1496,13 @@
     }
     .network-proxy-check-row {
       grid-template-columns: minmax(0, 1fr);
+    }
+    .network-model-connection-results {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .network-model-connection-results li:nth-child(n) {
+      padding-inline: 0;
+      border-inline-start: 0;
     }
     .task-enum-order-grid {
       grid-template-columns: 1fr;

@@ -20,6 +20,7 @@ import { RobotIcon } from '@phosphor-icons/react/dist/csr/Robot';
 import { PlugsConnectedIcon } from '@phosphor-icons/react/dist/csr/PlugsConnected';
 import { CubeIcon } from '@phosphor-icons/react/dist/csr/Cube';
 import { BrowserIcon } from '@phosphor-icons/react/dist/csr/Browser';
+import { GlobeIcon } from '@phosphor-icons/react/dist/csr/Globe';
 import { ChatCircleDotsIcon } from '@phosphor-icons/react/dist/csr/ChatCircleDots';
 import { PuzzlePieceIcon } from '@phosphor-icons/react/dist/csr/PuzzlePiece';
 import { TerminalIcon } from '@phosphor-icons/react/dist/csr/Terminal';
@@ -39,6 +40,7 @@ import { CodexConfigImportSettings } from '../../settings/CodexConfigImportSetti
 import { TerminalSettingsPane } from '../../settings/TerminalSettingsPane.js';
 import { BrowserSettingsPane } from '../../settings/BrowserSettingsPane.js';
 import { GeneralSettingsPane } from '../../settings/GeneralSettingsPane.js';
+import { NetworkSettingsPane } from '../../settings/NetworkSettingsPane.js';
 import { SettingsPagination, settingsPage, settingsPageSize } from '../../settings/SettingsPagination.js';
 import { CodexRemoteControlSettings } from '../../settings/CodexRemoteControlSettings.js';
 import { ModelConnectionsSettingsPane } from '../../settings/ModelConnectionsSettingsPane.js';
@@ -573,6 +575,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       group: settingsWorkspaceCopy.sectionGroups.integrations,
       items: [
         ['runtime', settingsWorkspaceCopy.categories.runtime, PlugsConnectedIcon],
+        ['network', settingsWorkspaceCopy.categories.network, GlobeIcon],
         ['models', settingsWorkspaceCopy.categories.models, CubeIcon],
         ['browser', settingsWorkspaceCopy.categories.browser, BrowserIcon],
         // IM 接入名称同时用于侧栏展示与设置搜索。
@@ -1985,6 +1988,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                 ) : null}
                 {settingsCategory === 'terminal' ? <TerminalSettingsPane client={props.commandClient ?? null} language={appShellSettings.appLanguage} /> : null}
                 {settingsCategory === 'browser' ? <BrowserSettingsPane language={appShellSettings.appLanguage} /> : null}
+                {settingsCategory === 'network' ? <NetworkSettingsPane value={appShellSettings} client={props.nativeConversationClient ?? null} onChange={setAppShellSettings} /> : null}
                 {settingsCategory === 'models' ? (
                   <>
                     <header className="settings-page-heading">
