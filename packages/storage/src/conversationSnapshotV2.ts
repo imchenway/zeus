@@ -1007,7 +1007,9 @@ export class ConversationSnapshotV2Repository {
       });
     let snapshotWithoutMetrics = buildSnapshot();
     while (snapshotWithoutMetrics.limits.responseBytes > byteLimit && activeItems.length > 0) {
-      activeItems.shift();
+      /** 响应超预算时先裁普通过程项，不能再次把阶段进展或当前动作挤出首屏。 */
+      const removableIndex = activeItems.findIndex((item) => !['agentMessage', 'assistantMessage', 'assistant', 'message', 'commentary', 'analysis'].includes(item.itemType) && item.status !== 'in_progress');
+      activeItems.splice(removableIndex < 0 ? 0 : removableIndex, 1);
       activeItemsTruncated = true;
       snapshotWithoutMetrics = buildSnapshot();
     }
@@ -1709,6 +1711,7 @@ export class ConversationSnapshotV2Repository {
         truncated: false,
       };
     }
+    /** 首屏名额优先保留用户可读进展和当前动作，避免长轮次的历史工具挤掉阶段边界。 */
     const rows = this.db.select<{
       id: string;
       provider_thread_id: string;
@@ -1726,11 +1729,14 @@ export class ConversationSnapshotV2Repository {
       delivery: string | null;
       protocol_family: string | null;
       stage_id: string | null;
+      total_count: number;
       started_at: string | null;
       completed_at: string | null;
       updated_at: string;
     }>(
-      `SELECT id, provider_thread_id, native_item_id, provider_item_id, item_type, status, phase,
+      `SELECT *
+         FROM (
+         SELECT id, provider_thread_id, native_item_id, provider_item_id, item_type, status, phase,
               substr(text_projection, 1, ?) AS text_preview,
               length(CAST(text_projection AS BLOB)) AS text_bytes,
               substr(payload_projection_json, 1, ?) AS payload_preview,
@@ -1738,11 +1744,17 @@ export class ConversationSnapshotV2Repository {
               CASE WHEN json_valid(payload_projection_json) THEN json_extract(payload_projection_json, '$.delivery') ELSE NULL END AS delivery,
               CASE WHEN json_valid(payload_projection_json) THEN json_extract(payload_projection_json, '$.protocolFamily') ELSE NULL END AS protocol_family,
               CASE WHEN json_valid(payload_projection_json) THEN json_extract(payload_projection_json, '$.stageId') ELSE NULL END AS stage_id,
+              COUNT(*) OVER () AS total_count,
               projection_truncated, started_at, completed_at, updated_at
          FROM conversation_provider_item_states
         WHERE conversation_id = ? AND turn_id = ?
           AND (phase = 'prework' OR status = 'in_progress' OR (json_valid(payload_projection_json) AND json_extract(payload_projection_json, '$.delivery') = 'async'))
         ORDER BY
+          CASE
+            WHEN item_type IN ('agentMessage', 'assistantMessage', 'assistant', 'message', 'commentary', 'analysis') THEN 0
+            WHEN status = 'in_progress' THEN 1
+            ELSE 2
+          END,
           CASE
             WHEN COALESCE(native_item_id, provider_item_id) GLOB 'item-[0-9]*'
             THEN CAST(substr(COALESCE(native_item_id, provider_item_id), 6) AS INTEGER)
@@ -1751,10 +1763,20 @@ export class ConversationSnapshotV2Repository {
           COALESCE(started_at, updated_at) DESC,
           updated_at DESC,
           id DESC
-        LIMIT ?`,
-      [previewCharacterLimit, previewCharacterLimit, conversationId, turnId, activeTurnItemLimit + 1],
+        LIMIT ?
+        ) AS selected_active_items
+        ORDER BY
+          CASE
+            WHEN COALESCE(native_item_id, provider_item_id) GLOB 'item-[0-9]*'
+            THEN CAST(substr(COALESCE(native_item_id, provider_item_id), 6) AS INTEGER)
+            ELSE NULL
+          END DESC,
+          COALESCE(started_at, updated_at) DESC,
+          updated_at DESC,
+          id DESC`,
+      [previewCharacterLimit, previewCharacterLimit, conversationId, turnId, activeTurnItemLimit],
     );
-    const selected = rows.slice(0, activeTurnItemLimit).reverse();
+    const selected = rows.reverse();
     return {
       items: selected.map((row, order) => ({
         id: row.id,
@@ -1780,7 +1802,7 @@ export class ConversationSnapshotV2Repository {
           facet: providerFacet(row.item_type),
         }),
       })),
-      truncated: rows.length > activeTurnItemLimit,
+      truncated: (selected[0]?.total_count ?? 0) > activeTurnItemLimit,
     };
   }
 

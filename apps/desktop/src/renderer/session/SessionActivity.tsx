@@ -111,15 +111,6 @@ interface SessionActivityGroupProps {
   onLoadContent?: (handle: string) => Promise<void>;
 }
 
-/** 活动轮次只把当前动作放在主时间线，完整历史仍由处理过程承载。 */
-export function SessionActivityCurrent(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage }) {
-  return (
-    <section className="session-activity-current">
-      <ActivityLiveRow item={props.item} language={props.language} />
-    </section>
-  );
-}
-
 /** 活动组保留真实过程；单条无详情的整理记录直接显示，避免标题与明细重复。 */
 export const SessionActivityGroup = memo(function SessionActivityGroup(props: SessionActivityGroupProps) {
   /** 摘要、活动行与展开详情使用同一份名称投影。 */

@@ -4,17 +4,7 @@ import { classifyAssistantMessage, conversationNavigationExcerpt, conversationQu
 import type { UserFacingErrorCause } from '@zeus/shared';
 import { userFacingErrorCause } from '@zeus/shared';
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import {
-  activityCategory,
-  isActiveSessionTurn,
-  isLiveActivityItem,
-  isOperationalActivityItem,
-  type SessionActivityCategory,
-  SessionActivityCurrent,
-  SessionActivityGroup,
-  SessionTurnDuration,
-  SessionTurnProcessDisclosure,
-} from './SessionActivity.js';
+import { activityCategory, isActiveSessionTurn, isLiveActivityItem, isOperationalActivityItem, type SessionActivityCategory, SessionActivityGroup, SessionTurnDuration, SessionTurnProcessDisclosure } from './SessionActivity.js';
 import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
 import { PlanSummary } from './PlanSummary.js';
 import type {
@@ -434,6 +424,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const answeredRequests = useMemo(() => props.state.pendingRequests.filter(isAnsweredUserInputRequest), [props.state.pendingRequests]);
   // 当前状态始终读取完整会话事件，不受活动列表的展示筛选影响。
   const activeStatusKind = transcriptRunStatus(props.state);
+  /** Codex 摘要与 Pi thinking/reasoning 共用当前进展位置，不按供应商或模型名称分支。 */
+  const activeReasoningItem = useMemo(() => latestActiveReasoningSummaryItem(items, activeTurnId), [activeTurnId, items]);
   // 创建中的会话尚未建立真实轮次时，由连接提示承担当前进度。
   const creatingSession = props.creationStatus?.state === 'creating' || props.creationStatus?.state === 'retrying';
   // 创建失败时保留创建错误，不再显示独立运行状态。
@@ -1082,8 +1074,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       const turnActive = turn ? isActiveSessionTurn(turn) : row.live;
       /** 只有当前输入所属的活动轮次显示外置进展。 */
       const processLive = row.live && turnActive;
-      /** 当前或最近动作来自真实运行条目，不能用思考标题替代面向用户的沟通。 */
-      const currentActivityItem = processLive ? latestTurnProcessActivityItem(row.segments) : null;
       /** 折叠入口只汇总当前已经加载的真实操作数。 */
       const processActivityCount = turnProcessActivityCount(row.segments);
       /** 过程展开后保留原始顺序；完成轮次的中途说明也在这里回看。 */
@@ -1119,18 +1109,10 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             </section>
           );
         });
-      /** 活动轮次只外置当前或最近动作，助手沟通本身已经按原顺序持续可读。 */
-      const livePreview =
-        processLive && currentActivityItem ? (
-          <div className="session-turn-process-preview">
-            <SessionActivityCurrent item={currentActivityItem} language={props.language} />
-          </div>
-        ) : null;
       if (!turn) {
         const hasProcessDetails = row.segments.length > 0 || (row.loadMore && turnProcessAvailable(props.state.snapshot, row.turnId));
         return (
           <>
-            {livePreview}
             {hasProcessDetails ? (
               <SessionTurnProcessDisclosure
                 language={props.language}
@@ -1158,7 +1140,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       const process = renderProcessSegments(processLive);
       return (
         <>
-          {livePreview}
           {hasProcessDetails ? (
             <SessionTurnProcessDisclosure
               language={props.language}
@@ -1340,7 +1321,13 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             </p>
           ) : null}
           {showCreationStatus && props.creationStatus ? <SessionCreationNotice status={props.creationStatus} language={props.language} /> : null}
-          {showStandaloneActiveStatus && activeStatusKind ? <TranscriptActiveStatus language={props.language} kind={activeStatusKind} /> : null}
+          {showStandaloneActiveStatus && activeStatusKind ? (
+            activeStatusKind === 'executing' && activeReasoningItem ? (
+              <SessionReasoningSummary item={activeReasoningItem} language={props.language} status={reasoningSummaryStatus(activeReasoningItem, props.state)} motionActive onVisibleContentChange={maintainLatestPosition} />
+            ) : (
+              <TranscriptActiveStatus language={props.language} kind={activeStatusKind} />
+            )
+          ) : null}
           {interactionAuthorityMissing && props.state.activeTurnId ? <InteractionAuthorityMissingNotice language={props.language} turnId={props.state.activeTurnId} onInterrupt={props.onInterrupt} /> : null}
           <span ref={latestContentMarkerRef} className="session-latest-content-marker" aria-hidden="true" />
         </section>
@@ -2394,27 +2381,6 @@ function compactInternalActivityStages(segments: Array<{ stageId: string | null;
   return compacted;
 }
 
-/** 优先显示仍在运行的真实动作；空档期保留最近完成动作，避免页面突然失去上下文。 */
-function latestTurnProcessActivityItem(segments: readonly TranscriptTurnProcessSegment[]): NativeSessionItemBuffer | null {
-  for (let segmentIndex = segments.length - 1; segmentIndex >= 0; segmentIndex -= 1) {
-    const rows = segments[segmentIndex]!.rows;
-    for (let rowIndex = rows.length - 1; rowIndex >= 0; rowIndex -= 1) {
-      const row = rows[rowIndex]!;
-      if (row.kind !== 'activity') continue;
-      const item = [...row.items].reverse().find(isLiveActivityItem);
-      if (item) return item;
-    }
-  }
-  for (let segmentIndex = segments.length - 1; segmentIndex >= 0; segmentIndex -= 1) {
-    const rows = segments[segmentIndex]!.rows;
-    for (let rowIndex = rows.length - 1; rowIndex >= 0; rowIndex -= 1) {
-      const row = rows[rowIndex]!;
-      if (row.kind === 'activity' && row.items.length > 0) return row.items.at(-1)!;
-    }
-  }
-  return null;
-}
-
 /** 操作数按原生条目计数，不用命令文本去重。 */
 function turnProcessActivityCount(segments: readonly TranscriptTurnProcessSegment[]): number {
   return segments.reduce((count, segment) => count + segment.rows.reduce((segmentCount, row) => segmentCount + (row.kind === 'activity' ? row.items.length : 0), 0), 0);
@@ -2734,11 +2700,6 @@ export function projectTranscriptRows(
     }
     currentActivityRun.items.push(entry.item);
   });
-  const activeReasoningItem =
-    effectiveActiveTurnId && !items.some((item) => item.turnId === effectiveActiveTurnId && isFinalAnswerItem(item))
-      ? [...items].reverse().find((item) => item.turnId === effectiveActiveTurnId && normalizeItemType(item.type) === 'reasoning' && !isReasoningProcessText(item) && latestReasoningSummaryText(item).length > 0)
-      : undefined;
-
   for (let index = 0; index < timeline.length; index += 1) {
     const entry = timeline[index]!;
     if (entry.kind === 'answered_request') {
@@ -2750,7 +2711,7 @@ export function projectTranscriptRows(
       // 多智能体协调事件统一进入右侧智能体面板，不在主会话重复暴露协议载荷。
       if (!isSubagentCoordinationItem(item)) {
         const stageIdentity = stageIdentityByTimelineIndex.get(index) ?? `${item.turnId}\u00000`;
-        // 状态摘要只显示活动轮最新一条；持久思考正文进入同一轮次的过程消息，不额外套折叠层。
+        // Codex 状态摘要由底部当前进展统一展示；Pi 持久思考正文继续留在处理过程供回看。
         if (normalizeItemType(item.type) === 'reasoning' && !isReasoningProcessText(item)) continue;
         if (!isOperationalActivityItem(item)) {
           rows.push({ kind: 'item', key: transcriptItemRenderKey(item), item, questionAnswer: questionAnswers.get(item.key) });
@@ -2771,13 +2732,13 @@ export function projectTranscriptRows(
       }
     }
   }
-  if (activeReasoningItem) {
-    const reasoningRow: TranscriptRow = { kind: 'item', key: transcriptItemRenderKey(activeReasoningItem), item: activeReasoningItem };
-    let lastActiveTurnRowIndex = rows.length - 1;
-    while (lastActiveTurnRowIndex >= 0 && transcriptRowTurnId(rows[lastActiveTurnRowIndex]!) !== activeReasoningItem.turnId) lastActiveTurnRowIndex -= 1;
-    rows.splice(lastActiveTurnRowIndex < 0 ? rows.length : lastActiveTurnRowIndex + 1, 0, reasoningRow);
-  }
   return rows;
+}
+
+/** 活动轮只选择最新的可读思考内容；Codex 摘要和 Pi 过程正文共享同一优先级。 */
+function latestActiveReasoningSummaryItem(items: readonly NativeSessionItemBuffer[], activeTurnId: string | null): NativeSessionItemBuffer | null {
+  if (!activeTurnId || items.some((item) => item.turnId === activeTurnId && isFinalAnswerItem(item))) return null;
+  return [...items].reverse().find((item) => item.turnId === activeTurnId && normalizeItemType(item.type) === 'reasoning' && item.status !== 'failed' && latestReasoningSummaryText(item).length > 0) ?? null;
 }
 
 function isTurnStageSummaryItem(item: NativeSessionItemBuffer): boolean {
@@ -2831,13 +2792,9 @@ export function isSubagentCoordinationItem(item: Pick<NativeSessionItemBuffer, '
   return type === 'collabagenttoolcall' || type === 'subagentactivity';
 }
 
-/** 状态摘要沿用轮次身份，持久思考正文和普通消息保留各自的稳定身份。 */
+/** 持久思考正文和普通消息保留各自的稳定身份。 */
 function transcriptItemRenderKey(item: NativeSessionItemBuffer): string {
   const entryId = item.transcript?.placement.entryId;
-  // 活动轮次只投影一条当前摘要；Provider 换 item 时仍沿用轮次级 DOM 身份，
-  // 让文字原位更新并固定在过程底部，不因新 item 被卸载后重新跳位。
-  // Pi 持久思考正文及旧折叠记录可在同轮出现多段，必须保留各自的条目身份。
-  if (normalizeItemType(item.type) === 'reasoning' && !isReasoningProcessText(item)) return `reasoning-summary:${encodeURIComponent(item.turnId)}`;
   const clientUserMessageId = itemRole(item) === 'user' ? (item.clientUserMessageId ?? item.durableClientUserMessageId) : null;
   // 用户消息的可见身份来自客户端消息 id；Provider 技术条目接管时不能替换整个消息节点。
   return clientUserMessageId ? `user-message:${encodeURIComponent(clientUserMessageId)}` : entryId ? `transcript:${encodeURIComponent(entryId)}` : item.key;
