@@ -3576,7 +3576,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       save: () => db.save(),
       now: automationNow,
       publish: publishRealtimeEvent,
-      dispatch: createAutomationConversationDispatch({ conversations, modelConnections, executeConversationDispatchMessage, executeProjectConversationIdempotent }),
+      dispatch: createAutomationConversationDispatch({ conversations, modelConnections, executeConversationDispatchMessage, executeProjectConversationIdempotent, publish: publishNativeConversationEvent }),
     });
     digitalEmployeeOrchestrator = createDigitalEmployeeOrchestrator({
       server,
