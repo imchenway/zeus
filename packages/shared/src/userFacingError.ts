@@ -433,8 +433,9 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ['ZEUS_TASK_ENVIRONMENT_CLOSED', 'ZEUS_TASK_WORKSPACE_CLOSED'],
     ['这个任务工作目录已关闭或移除，请选择可用目录或新建独立工作目录。', 'This task working folder was closed or removed. Select an available folder or create a separate working folder.'],
   ],
+  [['ZEUS_TARGET_HEAD_CHANGED'], ['合入期间目标分支发生了变化，请重新合入。', 'The target branch changed during the merge. Start the merge again.']],
   [
-    ['ZEUS_TASK_REPOSITORY_SNAPSHOT_CHANGED', 'ZEUS_TASK_PUSH_CONTEXT_CHANGED', 'ZEUS_TASK_HEAD_CHANGED', 'ZEUS_TARGET_HEAD_CHANGED', 'ZEUS_TASK_INTEGRATION_ATTEMPT_STALE'],
+    ['ZEUS_TASK_REPOSITORY_SNAPSHOT_CHANGED', 'ZEUS_TASK_PUSH_CONTEXT_CHANGED', 'ZEUS_TASK_HEAD_CHANGED', 'ZEUS_TASK_INTEGRATION_ATTEMPT_STALE'],
     ['任务或代码分支已发生变化，当前预览已过期。请重新打开预览，确认最新内容后继续。', 'The task or code branch has changed, so this preview is out of date. Reopen it and review the current content before continuing.'],
   ],
   [

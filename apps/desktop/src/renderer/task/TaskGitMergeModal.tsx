@@ -584,6 +584,44 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
           if (targetIssue) return { result: targetIssue };
 
           const action = mergeWorkspaceAction(workspace, integrations, targetBranch);
+          /** 过期候选重建时沿用用户首次确认的合入方式，普通新合入使用当前选择。 */
+          const integrationMode = action?.type === 'finalize' ? action.integration.mode : mode;
+          /** 建立最新候选并统一映射逐仓结果，供首次合入与过期恢复共用。 */
+          const startLatestIntegration = async () => {
+            try {
+              const response = await client.startTaskIntegration(taskId, workspace.id, { targetBranch, mode: integrationMode });
+              if ('conflictRecovery' in response) {
+                return {
+                  conflictRecovery: response.conflictRecovery,
+                  result: { workspaceId: workspace.id, repositoryName: label, status: 'attention' as const, message: workspaceConflictMessage(response.conflictRecovery, zh) },
+                };
+              }
+              if (response.integration.state === 'conflicted') {
+                return {
+                  integration: response.integration,
+                  result: {
+                    workspaceId: workspace.id,
+                    repositoryName: label,
+                    status: 'attention' as const,
+                    message: zh ? `已保留 ${response.integration.conflictFiles.length} 个冲突文件，需继续处理。` : `${response.integration.conflictFiles.length} conflict file(s) need attention.`,
+                  },
+                };
+              }
+              return {
+                integration: response.integration,
+                result: {
+                  workspaceId: workspace.id,
+                  repositoryName: label,
+                  status: response.integration.state === 'merged' ? ('succeeded' as const) : ('attention' as const),
+                  message: response.result ? deliveryFeedback(response.result, zh).text : zh ? '已准备合入结果。' : 'Merge result prepared.',
+                },
+              };
+            } catch (reason) {
+              const message = errorMessage(reason, zh);
+              if (isTargetBranchDirty(reason)) mergeBlockingError = mergeBlockingError ?? message;
+              return { result: { workspaceId: workspace.id, repositoryName: label, status: 'failed' as const, message } };
+            }
+          };
           if (action?.type === 'resolve_conflict')
             return {
               integration: action.integration,
@@ -608,6 +646,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                 },
               };
             } catch (reason) {
+              /** 服务端已关闭过期候选；本次用户动作直接基于最新目标重建并继续。 */
+              if (isTargetHeadChanged(reason)) return startLatestIntegration();
               const message = errorMessage(reason, zh);
               if (isTargetBranchDirty(reason)) mergeBlockingError = mergeBlockingError ?? message;
               return { result: { workspaceId: workspace.id, repositoryName: label, status: 'failed', message } };
@@ -619,39 +659,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
               return { result: { workspaceId: workspace.id, repositoryName: label, status: 'skipped', message: zh ? '当前任务提交已经合入。' : 'The current task commit is already merged.' } };
             return { result: { workspaceId: workspace.id, repositoryName: label, status: 'skipped', message: zh ? '没有可合入的任务分支成果。' : 'No task branch result is ready to merge.' } };
           }
-          try {
-            const response = await client.startTaskIntegration(taskId, workspace.id, { targetBranch, mode });
-            if ('conflictRecovery' in response) {
-              return {
-                conflictRecovery: response.conflictRecovery,
-                result: { workspaceId: workspace.id, repositoryName: label, status: 'attention', message: workspaceConflictMessage(response.conflictRecovery, zh) },
-              };
-            }
-            if (response.integration.state === 'conflicted') {
-              return {
-                integration: response.integration,
-                result: {
-                  workspaceId: workspace.id,
-                  repositoryName: label,
-                  status: 'attention',
-                  message: zh ? `已保留 ${response.integration.conflictFiles.length} 个冲突文件，需继续处理。` : `${response.integration.conflictFiles.length} conflict file(s) need attention.`,
-                },
-              };
-            }
-            return {
-              integration: response.integration,
-              result: {
-                workspaceId: workspace.id,
-                repositoryName: label,
-                status: response.integration.state === 'merged' ? 'succeeded' : 'attention',
-                message: response.result ? deliveryFeedback(response.result, zh).text : zh ? '已准备合入结果。' : 'Merge result prepared.',
-              },
-            };
-          } catch (reason) {
-            const message = errorMessage(reason, zh);
-            if (isTargetBranchDirty(reason)) mergeBlockingError = mergeBlockingError ?? message;
-            return { result: { workspaceId: workspace.id, repositoryName: label, status: 'failed', message } };
-          }
+          return startLatestIntegration();
         }),
       );
       const results = outcomes.map((outcome) => outcome.result);
