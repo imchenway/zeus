@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { resolve } from 'node:path';
 import type { ZeusDataRootProfile } from './dataRootIdentity.js';
+import { canonicalizeZeusDataRootPath } from './zeusDataRootPath.js';
 
 const productionKeychainService = 'Zeus';
 
@@ -11,6 +11,7 @@ const productionKeychainService = 'Zeus';
 export function resolveDesktopKeychainService(input: { profile: ZeusDataRootProfile; dataRootPath: string } | { testDistribution: boolean; dataRootPath: string }): string {
   const profile = 'profile' in input ? input.profile : input.testDistribution ? 'test' : 'production';
   if (profile === 'production') return productionKeychainService;
-  const identity = createHash('sha256').update(resolve(input.dataRootPath)).digest('hex').slice(0, 16);
+  /** 钥匙串隔离必须绑定真实数据根，避免 `/tmp` 与 `/private/tmp` 为同一目录生成两套凭据。 */
+  const identity = createHash('sha256').update(canonicalizeZeusDataRootPath(input.dataRootPath)).digest('hex').slice(0, 16);
   return profile === 'test' ? `Zeus Test ${identity}` : `Zeus Development ${identity}`;
 }

@@ -24,6 +24,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { DatabaseSync } from 'node:sqlite';
 import { resolveDesktopKeychainService } from './secretServiceIdentity.js';
 import { assertTestDataRootIsolation } from './testDataRootIsolation.js';
+import { canonicalizeZeusDataRootPath } from './zeusDataRootPath.js';
 
 export const zeusDataRootIdentityFileName = '.zeus-root-identity.json';
 export const zeusDataRootIdentitySchemaGeneration = 1;
@@ -84,6 +85,8 @@ export interface PrepareZeusDataRootIdentityInput extends ExpectedZeusDataRootId
   rootPath: string;
   /** 只允许 Main 在已持有数据根准备锁且确认无 writer 时传入。 */
   knownProductionAdoptionRoots?: readonly string[];
+  /** 只允许源码启动入口传入其明确选择的开发数据根。 */
+  knownDevelopmentAdoptionRoots?: readonly string[];
   writerAbsenceConfirmed?: boolean;
 }
 
@@ -151,7 +154,7 @@ export function keychainServiceIdentitySha256(keychainService: string): string {
 }
 
 /**
- * 在数据根准备锁内执行。空根可以认领；非空无标记根只有已知正式默认/legacy 根可安全补标。
+ * 在数据根准备锁内执行。空根可以认领；非空无标记根只有 Main 明确选择且无 writer 的正式/开发根可安全补标。
  */
 export function prepareZeusDataRootIdentity(input: PrepareZeusDataRootIdentityInput): ZeusDataRootIdentityMarker {
   const root = normalizeRoot(input.rootPath);
@@ -161,14 +164,13 @@ export function prepareZeusDataRootIdentity(input: PrepareZeusDataRootIdentityIn
   const rootExists = existsSync(root);
   if (rootExists) assertCanonicalOwnedRoot(root);
   const existingEntries = rootExists ? readdirSync(root) : [];
-  const mayAdoptKnownProductionRoot =
-    existingEntries.length > 0 &&
-    input.writerAbsenceConfirmed === true &&
-    expected.profile === 'production' &&
-    expected.bundleId === expectedBundleIdForDataRootProfile('production') &&
-    (input.knownProductionAdoptionRoots ?? []).some((candidate) => normalizeRoot(candidate) === root);
+  /** 正式根只接受内置默认/历史路径；开发根只接受本次源码启动明确选择的路径。 */
+  const knownAdoptionRoots = expected.profile === 'production' ? input.knownProductionAdoptionRoots : expected.profile === 'development' ? input.knownDevelopmentAdoptionRoots : undefined;
+  /** Test 仍必须走空根或显式离线认领，开发自愈不会放宽测试包隔离。 */
+  const mayAdoptKnownRoot =
+    existingEntries.length > 0 && input.writerAbsenceConfirmed === true && expected.bundleId === expectedBundleIdForDataRootProfile(expected.profile) && (knownAdoptionRoots ?? []).some((candidate) => normalizeRoot(candidate) === root);
 
-  if (existingEntries.length > 0 && !mayAdoptKnownProductionRoot) {
+  if (existingEntries.length > 0 && !mayAdoptKnownRoot) {
     if (expected.profile === 'development') {
       throw dataRootIdentityError(
         'ZEUS_DATA_ROOT_OFFLINE_ADOPTION_REQUIRED',
@@ -809,8 +811,7 @@ function sha256(value: string): string {
 }
 
 function normalizeRoot(rootPath: string): string {
-  if (!isAbsolute(rootPath) || resolve(rootPath) !== rootPath) throw dataRootIdentityError('ZEUS_DATA_ROOT_PATH_DRIFT', 'Zeus 数据根必须是规范绝对路径。');
-  return resolve(rootPath);
+  return canonicalizeZeusDataRootPath(rootPath);
 }
 
 function canonicalizePotentialPathForComparison(value: string): string {

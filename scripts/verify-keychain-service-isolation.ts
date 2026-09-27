@@ -2,16 +2,20 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { resolveDesktopKeychainService } from '../apps/desktop/src/main/secretServiceIdentity.js';
+import { canonicalizeZeusDataRootPath } from '../apps/desktop/src/main/zeusDataRootPath.js';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
-const canonicalTestRoot = resolve('/tmp/zeus-keychain-service-probe/root');
-const equivalentTestRoot = join(canonicalTestRoot, 'nested', '..');
-const otherTestRoot = resolve('/tmp/zeus-keychain-service-probe/other-root');
+/** 使用 macOS 常见 `/tmp` 别名模拟启动器传入路径。 */
+const configuredTestRoot = resolve('/tmp/zeus-keychain-service-probe/root');
+/** 真实根用于计算稳定的预期钥匙串身份。 */
+const canonicalTestRoot = canonicalizeZeusDataRootPath(configuredTestRoot);
+const equivalentTestRoot = join(configuredTestRoot, 'nested', '..');
+const otherTestRoot = canonicalizeZeusDataRootPath('/tmp/zeus-keychain-service-probe/other-root');
 const expectedTestService = `Zeus Test ${createHash('sha256').update(canonicalTestRoot).digest('hex').slice(0, 16)}`;
 
 const productionService = resolveDesktopKeychainService({ testDistribution: false, dataRootPath: canonicalTestRoot });
 const productionServiceFromOtherRoot = resolveDesktopKeychainService({ testDistribution: false, dataRootPath: otherTestRoot });
-const testService = resolveDesktopKeychainService({ testDistribution: true, dataRootPath: canonicalTestRoot });
+const testService = resolveDesktopKeychainService({ testDistribution: true, dataRootPath: configuredTestRoot });
 const equivalentTestService = resolveDesktopKeychainService({ testDistribution: true, dataRootPath: equivalentTestRoot });
 const otherTestService = resolveDesktopKeychainService({ testDistribution: true, dataRootPath: otherTestRoot });
 

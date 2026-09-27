@@ -20,6 +20,7 @@ import { executionHostProtocolVersion, executionHostRendezvousPath, type Executi
 import { startDesktopLocalServer } from '../apps/desktop/src/main/localServerRuntime.js';
 import { resolveDesktopKeychainService } from '../apps/desktop/src/main/secretServiceIdentity.js';
 import { prepareZeusDataRoot } from '../apps/desktop/src/main/zeusDataMigration.js';
+import { canonicalizeZeusDataRootPath } from '../apps/desktop/src/main/zeusDataRootPath.js';
 
 const probeRoot = await realpath(await mkdtemp(join(tmpdir(), 'zeus-data-root-identity-')));
 const observed: Record<string, unknown> = {};
@@ -39,6 +40,35 @@ try {
   assert.equal(testStats.nlink, 1);
 
   observed.directoryPermissions = await verifyDirectoryPermissions();
+
+  /** 父目录符号链接模拟 macOS `/tmp`，启动链应统一到真实路径而不是误报漂移。 */
+  const aliasTargetParent = join(probeRoot, 'canonical-parent');
+  /** 数据根的调用方路径经过该父目录别名。 */
+  const aliasParent = join(probeRoot, 'alias-parent');
+  await mkdir(aliasTargetParent, { mode: 0o700 });
+  await symlink(aliasTargetParent, aliasParent);
+  /** 实际数据根不是符号链接，只有其父路径使用别名。 */
+  const aliasedDevelopmentRoot = join(aliasParent, 'development-root');
+  await mkdir(aliasedDevelopmentRoot, { mode: 0o700 });
+  await writeFile(join(aliasedDevelopmentRoot, 'existing-user-data.txt'), 'must-survive\n', { mode: 0o600 });
+  /** 规范路径应落到真实父目录，并贯穿钥匙串与身份标记。 */
+  const canonicalDevelopmentRoot = canonicalizeZeusDataRootPath(aliasedDevelopmentRoot);
+  const aliasedDevelopmentPreparation = prepareZeusDataRoot(aliasedDevelopmentRoot, [], {
+    profile: 'development',
+    bundleId: expectedBundleIdForDataRootProfile('development'),
+    keychainService: resolveDesktopKeychainService({ profile: 'development', dataRootPath: aliasedDevelopmentRoot }),
+    knownDevelopmentAdoptionRoots: [aliasedDevelopmentRoot],
+  });
+  assert.equal(canonicalDevelopmentRoot, join(aliasTargetParent, 'development-root'));
+  assert.equal(aliasedDevelopmentPreparation.layout.root, canonicalDevelopmentRoot);
+  assert.equal(aliasedDevelopmentPreparation.rootIdentity.canonicalRoot, canonicalDevelopmentRoot);
+  assert.equal(await readFile(join(canonicalDevelopmentRoot, 'existing-user-data.txt'), 'utf8'), 'must-survive\n');
+  observed.parentAliasCanonicalization = {
+    canonicalRoot: relative(probeRoot, canonicalDevelopmentRoot),
+    keychainIdentityStable: resolveDesktopKeychainService({ profile: 'development', dataRootPath: aliasedDevelopmentRoot }) === resolveDesktopKeychainService({ profile: 'development', dataRootPath: canonicalDevelopmentRoot }),
+    sentinelPreserved: true,
+  };
+  assert.equal((observed.parentAliasCanonicalization as { keychainIdentityStable: boolean }).keychainIdentityStable, true);
 
   const development = claimEmptyRoot(join(probeRoot, 'empty-development-root'), 'development');
   observed.bundleIdentitySemantics = {
@@ -98,26 +128,24 @@ try {
     sentinel: 'must-survive\n',
   });
 
-  /** 开发目录同样拒绝非空无标记根，但必须提供开发模式可执行的恢复说明。 */
-  const developmentRecovery = rejectionCode(() => {
-    try {
-      claimEmptyRoot(customRoot, 'development');
-    } catch (error) {
-      assert.match((error as Error).message, /ZEUS_USER_DATA_DIR.*新的空目录/u);
-      assert.match((error as Error).message, /ZEUS_TEST_DISPLAY_ID/u);
-      assert.match((error as Error).message, /不支持开发目录/u);
-      /** 跨进程丢失 code 属性后，仍能从消息前缀识别原因，详情保留恢复说明。 */
-      const explanation = describeUserFacingError(new Error(`Error invoking remote method 'zeus:get-local-server-config': Error: ${(error as Error).message}`), 'zh-CN', '启动未能完成，请查看错误详情。');
-      assert.equal(explanation.message, '无法确认本地数据目录的归属，启动已停止。');
-      assert.match(explanation.details, /ZEUS_USER_DATA_DIR/u);
-      assert.equal(describeUserFacingError(error, 'en').message, 'Startup stopped because the local data folder could not be identified.');
-      throw error;
-    }
+  /** 未经 Main 明确选择的开发目录仍然拒绝自动认领。 */
+  const unknownDevelopmentRoot = rejectionCode(() => claimEmptyRoot(customRoot, 'development'));
+  assert.equal(unknownDevelopmentRoot, 'ZEUS_DATA_ROOT_OFFLINE_ADOPTION_REQUIRED');
+  /** Main 明确选择且没有活动 Host 的旧开发目录应原地补发身份，不再要求换空目录。 */
+  const developmentRecovery = prepareZeusDataRoot(customRoot, [], {
+    profile: 'development',
+    bundleId: expectedBundleIdForDataRootProfile('development'),
+    keychainService: resolveDesktopKeychainService({ profile: 'development', dataRootPath: customRoot }),
+    knownDevelopmentAdoptionRoots: [customRoot],
   });
-  assert.equal(developmentRecovery, 'ZEUS_DATA_ROOT_OFFLINE_ADOPTION_REQUIRED');
-  assert.equal(await pathExists(zeusDataRootIdentityPath(customRoot)), false);
+  assert.equal(developmentRecovery.rootIdentity.profile, 'development');
+  assert.equal(await pathExists(zeusDataRootIdentityPath(customRoot)), true);
   assert.equal(await readFile(sentinel, 'utf8'), 'must-survive\n');
-  observed.developmentRecovery = developmentRecovery;
+  observed.developmentRecovery = {
+    unknownRootRejected: unknownDevelopmentRoot,
+    selectedRootAdopted: true,
+    sentinelPreserved: true,
+  };
   /** 未识别错误在启动页使用简述，默认调用方仍保留既有原因解释。 */
   const unknownStartupError = 'unrecognized startup diagnostic /private/tmp/example';
   assert.equal(describeUserFacingError(unknownStartupError, 'zh-CN', '启动未能完成，请查看错误详情。').message, '启动未能完成，请查看错误详情。');
