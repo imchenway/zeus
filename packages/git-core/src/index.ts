@@ -253,6 +253,8 @@ export interface TaskBranchIntegrationStartResult {
   state: 'ready' | 'conflicted';
   resultHeadSha: string | null;
   conflictFiles: string[];
+  /** 冲突是否来自来源工作区未提交草稿与任务成果的叠加。 */
+  localChangesConflict?: boolean;
 }
 
 export interface TaskIntegrationConflictFile {
@@ -273,7 +275,54 @@ export interface FinalizedTaskBranchIntegration {
   localSyncStatus: 'synced' | 'pending';
   localHeadSha: string;
   localWorktreePath: string | null;
+  /** 来源草稿与任务成果产生的真实冲突；为空时只表示同步完成或仍有其他阻碍。 */
+  conflictFiles: string[];
 }
+
+/** 来源工作区草稿在隔离合入现场中的持久恢复信息。 */
+interface TaskIntegrationLocalChangesState {
+  /** 原来源工作区绝对路径，落回时必须仍绑定同一目标分支。 */
+  sourceWorktreePath: string;
+  /** 来源分支开始合入时的提交。 */
+  targetHeadSha: string;
+  /** 只包含任务分支已提交成果的合入提交。 */
+  resultHeadSha: string;
+  /** 以来源提交为父节点、只用于三方合并的临时快照提交。 */
+  sourceSnapshotCommitSha: string;
+  /** 来源工作区完整未提交内容对应的 Git 树。 */
+  sourceSnapshotTreeSha: string;
+  /** 来源工作区原暂存区对应的 Git 树，用于失败回滚。 */
+  sourceIndexTreeSha: string;
+  /** 快照时未跟踪的普通文件，用于精确清理后再落回。 */
+  sourceUntrackedPaths: string[];
+}
+
+/** 来源工作区同步结果同时承载可续办的冲突文件。 */
+interface TaskIntegrationLocalSync {
+  /** 本地来源分支是否已经推进。 */
+  localSyncStatus: 'synced' | 'pending';
+  /** 本地来源分支当前提交。 */
+  localHeadSha: string;
+  /** 来源分支当前检出目录；未检出时为空。 */
+  localWorktreePath: string | null;
+  /** 隔离现场中的来源草稿冲突文件。 */
+  conflictFiles: string[];
+}
+
+/** 一次来源工作区快照的 Git 对象与未跟踪文件清单。 */
+interface TaskIntegrationLocalChangesSnapshot {
+  /** 完整工作区内容对应的临时提交。 */
+  commitSha: string;
+  /** 完整工作区内容对应的树。 */
+  treeSha: string;
+  /** 原暂存区对应的树。 */
+  indexTreeSha: string;
+  /** 不受忽略规则排除的未跟踪普通文件。 */
+  untrackedPaths: string[];
+}
+
+/** 每个合入 worktree 独立保存来源草稿快照，不污染业务文件。 */
+const taskIntegrationLocalChangesStateName = 'zeus-local-changes.json';
 
 export type GitFileStatusCategory = 'added' | 'modified' | 'deleted' | 'renamed' | 'untracked' | 'conflict' | 'other';
 
@@ -777,9 +826,10 @@ async function adoptTaskDirectory(context: GitRepositoryContext, worktreePath: s
 
 /**
  * 与 Codex 托管 worktree 一致，把来源工作目录的 staged、unstaged、未跟踪文件和
- * `.worktreeinclude` 命中的忽略文件应用到新任务工作区。任一步失败都会由调用方回收。
+ * `.worktreeinclude` 命中的忽略文件应用到新任务工作区。来源合入快照可关闭忽略文件复制，
+ * 因为目标分支推进不会改写它们。任一步失败都会由调用方回收。
  */
-async function applyLocalChangesToTaskWorktree(sourcePath: string, targetPath: string, ignoredPaths: string[] = []): Promise<boolean> {
+async function applyLocalChangesToTaskWorktree(sourcePath: string, targetPath: string, ignoredPaths: string[] = [], includeConfiguredIgnored = true): Promise<boolean> {
   const ignored = ignoredPaths.map((path) => requireSafeWorkspacePath(path));
   const pathspec = ['.', ...ignored.flatMap((path) => [`:(exclude)${path}`, `:(exclude)${path}/**`])];
   const stagedPatch = await readGitDiffAllowChanges(sourcePath, ['diff', '--cached', '--binary', '--', ...pathspec]);
@@ -789,7 +839,7 @@ async function applyLocalChangesToTaskWorktree(sourcePath: string, targetPath: s
   const includeExists = await lstat(includeFile)
     .then((entry) => entry.isFile())
     .catch(() => false);
-  const includedIgnored = includeExists ? splitNullRecords((await runGit(sourcePath, ['ls-files', '--others', '--ignored', `--exclude-from=${includeFile}`, '-z', '--', ...pathspec])).stdout) : [];
+  const includedIgnored = includeConfiguredIgnored && includeExists ? splitNullRecords((await runGit(sourcePath, ['ls-files', '--others', '--ignored', `--exclude-from=${includeFile}`, '-z', '--', ...pathspec])).stdout) : [];
   const copyPaths = Array.from(new Set([...untracked, ...includedIgnored]));
   const hasChanges = Boolean(stagedPatch || unstagedPatch || copyPaths.length > 0);
   if (!hasChanges) return false;
@@ -1500,6 +1550,8 @@ export async function startTaskIntegrationAttempt(input: {
   conflictBranch: string;
   mode: 'merge' | 'squash';
   commitMessage: string;
+  /** 来源草稿冲突需要从原隔离现场复制同一份快照。 */
+  localChangesFromPath?: string;
 }): Promise<TaskBranchIntegrationStartResult> {
   const context = await getGitRepositoryContext(input.repositoryPath);
   if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected project is not a Git repository.');
@@ -1514,7 +1566,7 @@ export async function startTaskIntegrationAttempt(input: {
     if (registered.branch !== conflictBranch || registered.detached) {
       throw gitCoreError('ZEUS_TASK_CONFLICT_BRANCH_MISMATCH', 'The conflict worktree is not attached to its recorded conflict branch.');
     }
-    const conflictFiles = await readTaskIntegrationConflictPaths(integrationPath);
+    const [conflictFiles, localChanges] = await Promise.all([readTaskIntegrationConflictPaths(integrationPath), readTaskIntegrationLocalChangesState(integrationPath)]);
     return {
       integrationPath,
       targetBranch,
@@ -1525,6 +1577,7 @@ export async function startTaskIntegrationAttempt(input: {
       state: conflictFiles.length > 0 ? 'conflicted' : 'ready',
       resultHeadSha: conflictFiles.length > 0 ? null : await resolveCommit(integrationPath, 'HEAD'),
       conflictFiles,
+      localChangesConflict: Boolean(localChanges),
     };
   }
   await mkdir(dirname(integrationPath), { recursive: true });
@@ -1546,6 +1599,23 @@ export async function startTaskIntegrationAttempt(input: {
     }
     return { integrationPath, targetBranch, targetHeadSha, taskBranch, taskHeadSha, mode: input.mode, state: 'conflicted', resultHeadSha: null, conflictFiles };
   }
+  const resultHeadSha = await resolveCommit(integrationPath, 'HEAD');
+  const localChanges = input.localChangesFromPath ? await readTaskIntegrationLocalChangesState(input.localChangesFromPath) : null;
+  if (localChanges) {
+    const conflictFiles = await prepareTaskIntegrationLocalChangesMerge(integrationPath, { ...localChanges, resultHeadSha });
+    return {
+      integrationPath,
+      targetBranch,
+      targetHeadSha,
+      taskBranch,
+      taskHeadSha,
+      mode: input.mode,
+      state: conflictFiles.length > 0 ? 'conflicted' : 'ready',
+      resultHeadSha: conflictFiles.length > 0 ? null : resultHeadSha,
+      conflictFiles,
+      localChangesConflict: true,
+    };
+  }
   return {
     integrationPath,
     targetBranch,
@@ -1554,7 +1624,7 @@ export async function startTaskIntegrationAttempt(input: {
     taskHeadSha,
     mode: input.mode,
     state: 'ready',
-    resultHeadSha: await resolveCommit(integrationPath, 'HEAD'),
+    resultHeadSha,
     conflictFiles: [],
   };
 }
@@ -1569,12 +1639,17 @@ export async function readTaskIntegrationConflict(integrationPath: string, path:
   const safePath = requireSafeWorkspacePath(path);
   const conflicts = await readTaskIntegrationConflictPaths(integrationPath);
   if (!conflicts.includes(safePath)) throw gitCoreError('ZEUS_TASK_CONFLICT_NOT_FOUND', `Conflict file is no longer unresolved: ${safePath}`);
-  const [base, source, task, result] = await Promise.all([
+  const [base, second, third, result, localChanges] = await Promise.all([
     readGitStageText(integrationPath, 1, safePath),
     readGitStageText(integrationPath, 2, safePath),
     readGitStageText(integrationPath, 3, safePath),
     readWorkspaceText(integrationPath, safePath),
+    readTaskIntegrationLocalChangesState(integrationPath),
   ]);
+  /** 来源草稿叠加在任务成果上时，Git 的 ours/theirs 顺序与产品两栏相反。 */
+  const source = localChanges ? third : second;
+  /** 任务侧始终展示任务分支已经提交的结果。 */
+  const task = localChanges ? second : third;
   const fingerprint = createHash('sha256').update(safePath).update('\0').update(base).update('\0').update(source).update('\0').update(task).digest('hex');
   return { path: safePath, fingerprint, base, source, task, result };
 }
@@ -1605,6 +1680,16 @@ export async function writeTaskIntegrationDraft(integrationPath: string, path: s
 export async function completeTaskIntegrationCommit(input: { integrationPath: string; mode: 'merge' | 'squash'; commitMessage: string }): Promise<{ resultHeadSha: string }> {
   const conflicts = await readTaskIntegrationConflictPaths(input.integrationPath);
   if (conflicts.length > 0) throw gitCoreError('ZEUS_TASK_WORKSPACE_CONFLICTED', 'Resolve every conflict before completing the integration commit.');
+  const localChanges = await readTaskIntegrationLocalChangesState(input.integrationPath);
+  if (localChanges) {
+    // 来源草稿只形成最终工作区内容，不能被提交进目标分支历史。
+    await runGit(input.integrationPath, ['add', '-A']);
+    const mergeHead = await readGitStdout(input.integrationPath, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']);
+    if (mergeHead) await runGit(input.integrationPath, ['merge', '--quit']);
+    const resultHeadSha = await resolveCommit(input.integrationPath, 'HEAD');
+    if (resultHeadSha !== localChanges.resultHeadSha) throw gitCoreError('ZEUS_TARGET_HEAD_CHANGED', 'Integration result changed while local source changes were being resolved.');
+    return { resultHeadSha };
+  }
   const mergeHead = await readGitStdout(input.integrationPath, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']);
   const staged = splitLines(await readGitStdout(input.integrationPath, ['diff', '--cached', '--name-only']));
   if (mergeHead) {
@@ -1623,12 +1708,19 @@ export async function finalizeTaskBranchIntegration(input: { repositoryPath: str
   const resolvedTargetHeadSha = targetHeadSha ?? input.targetHeadSha;
   if (resolvedTargetHeadSha !== input.targetHeadSha) throw gitCoreError('ZEUS_TARGET_HEAD_CHANGED', 'Target branch advanced while the integration was being prepared.');
 
-  const localSync = await syncLocalTargetBranch({
-    repositoryPath: input.repositoryPath,
-    targetBranch,
-    targetHeadSha: input.targetHeadSha,
-    resultHeadSha,
-  });
+  const localChanges = await readTaskIntegrationLocalChangesState(input.integrationPath);
+  if (localChanges && (localChanges.targetHeadSha !== input.targetHeadSha || localChanges.resultHeadSha !== resultHeadSha)) {
+    throw gitCoreError('ZEUS_TASK_LOCAL_CHANGE_STATE_INVALID', 'Local source change snapshot does not match the recorded integration commits.');
+  }
+  const localSync = localChanges
+    ? await finalizeTaskIntegrationLocalChanges({ repositoryPath: input.repositoryPath, integrationPath: input.integrationPath, targetBranch, state: localChanges })
+    : await syncLocalTargetBranch({
+        repositoryPath: input.repositoryPath,
+        integrationPath: input.integrationPath,
+        targetBranch,
+        targetHeadSha: input.targetHeadSha,
+        resultHeadSha,
+      });
   // 本地来源分支暂时不安全时保留隔离合入结果，待用户清理原工作区后重试同步。
   if (localSync.localSyncStatus === 'synced') {
     const context = await getGitRepositoryContext(input.repositoryPath);
@@ -1662,13 +1754,202 @@ export async function cleanupTaskIntegrationWorktree(input: { repositoryPath: st
   return true;
 }
 
+/** 返回当前 worktree 私有 Git 目录中的来源草稿状态文件。 */
+async function taskIntegrationLocalChangesStatePath(integrationPath: string): Promise<string> {
+  const gitDirectory = await requireGitStdout(integrationPath, ['rev-parse', '--absolute-git-dir']);
+  return join(gitDirectory, taskIntegrationLocalChangesStateName);
+}
+
+/** 读取并校验隔离现场的来源草稿快照状态。 */
+async function readTaskIntegrationLocalChangesState(integrationPath: string): Promise<TaskIntegrationLocalChangesState | null> {
+  const statePath = await taskIntegrationLocalChangesStatePath(integrationPath);
+  const raw = await readFile(statePath, 'utf8').catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return '';
+    throw error;
+  });
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as Partial<TaskIntegrationLocalChangesState>;
+    const sourceWorktreePath = typeof value.sourceWorktreePath === 'string' && isAbsolute(value.sourceWorktreePath) ? resolve(value.sourceWorktreePath) : '';
+    const sourceUntrackedPaths = Array.isArray(value.sourceUntrackedPaths) ? value.sourceUntrackedPaths.map((path) => requireSafeWorkspacePath(String(path))) : null;
+    if (!sourceWorktreePath || !sourceUntrackedPaths) throw new Error('来源工作区路径或未跟踪文件清单无效。');
+    return {
+      sourceWorktreePath,
+      targetHeadSha: requireGitObjectId(value.targetHeadSha, 'local changes target head'),
+      resultHeadSha: requireGitObjectId(value.resultHeadSha, 'local changes integration result'),
+      sourceSnapshotCommitSha: requireGitObjectId(value.sourceSnapshotCommitSha, 'local changes snapshot commit'),
+      sourceSnapshotTreeSha: requireGitObjectId(value.sourceSnapshotTreeSha, 'local changes snapshot tree'),
+      sourceIndexTreeSha: requireGitObjectId(value.sourceIndexTreeSha, 'local changes index tree'),
+      sourceUntrackedPaths,
+    };
+  } catch (error) {
+    throw gitCoreError('ZEUS_TASK_LOCAL_CHANGE_STATE_INVALID', error instanceof Error ? error.message : '来源工作区快照状态无效。');
+  }
+}
+
+/** 持久保存来源草稿快照，使手工与 AI 续办读取同一事实。 */
+async function writeTaskIntegrationLocalChangesState(integrationPath: string, state: TaskIntegrationLocalChangesState): Promise<void> {
+  await writeFile(await taskIntegrationLocalChangesStatePath(integrationPath), `${JSON.stringify(state)}\n`, 'utf8');
+}
+
+/** 完成安全落地后移除 worktree 私有的来源草稿状态。 */
+async function clearTaskIntegrationLocalChangesState(integrationPath: string): Promise<void> {
+  await rm(await taskIntegrationLocalChangesStatePath(integrationPath), { force: true });
+}
+
+/**
+ * 在独立临时 worktree 中复制来源草稿并写成不可见的 Git 对象。
+ * 原来源目录和索引全程只读；忽略文件不会参与分支合入。
+ */
+async function captureTaskIntegrationLocalChanges(input: { repositoryPath: string; integrationPath: string; sourcePath: string; targetHeadSha: string }): Promise<TaskIntegrationLocalChangesSnapshot> {
+  const sourceHeadSha = await resolveCommit(input.sourcePath, 'HEAD');
+  if (sourceHeadSha !== input.targetHeadSha) throw gitCoreError('ZEUS_TARGET_HEAD_CHANGED', 'Source branch advanced while local changes were being captured.');
+  const conflictFiles = await readTaskIntegrationConflictPaths(input.sourcePath);
+  if (conflictFiles.length > 0) throw gitCoreError('ZEUS_TARGET_WORKTREE_CONFLICTED', 'Source worktree already contains unresolved conflicts.');
+  const sourceIndexTreeSha = requireGitObjectId(await requireGitStdout(input.sourcePath, ['write-tree']), 'source index tree');
+  const sourceUntrackedPaths = splitNullRecords((await runGit(input.sourcePath, ['ls-files', '--others', '--exclude-standard', '-z'])).stdout).map((path) => requireSafeWorkspacePath(path));
+  for (const path of sourceUntrackedPaths) {
+    const entry = await lstat(resolve(input.sourcePath, path));
+    if (!entry.isFile() || entry.isSymbolicLink()) throw gitCoreError('ZEUS_TARGET_WORKTREE_UNSUPPORTED', `Source worktree contains an unsupported untracked entry: ${path}`);
+  }
+  const context = await getGitRepositoryContext(input.repositoryPath);
+  if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'Source worktree repository is unavailable.');
+  const snapshotRoot = await mkdtemp(join(dirname(input.integrationPath), '.source-snapshot-'));
+  const snapshotPath = join(snapshotRoot, 'worktree');
+  let registered = false;
+  try {
+    await runGit(context.topLevel, ['worktree', 'add', '--detach', snapshotPath, input.targetHeadSha]);
+    registered = true;
+    await applyLocalChangesToTaskWorktree(input.sourcePath, snapshotPath, [], false);
+    await runGit(snapshotPath, ['add', '-A']);
+    const treeSha = requireGitObjectId(await requireGitStdout(snapshotPath, ['write-tree']), 'source snapshot tree');
+    const commitSha = requireGitObjectId(await requireGitStdout(snapshotPath, ['commit-tree', treeSha, '-p', input.targetHeadSha, '-m', 'Zeus 来源工作区临时快照']), 'source snapshot commit');
+    return { commitSha, treeSha, indexTreeSha: sourceIndexTreeSha, untrackedPaths: sourceUntrackedPaths };
+  } finally {
+    if (registered) await runGit(context.topLevel, ['worktree', 'remove', '--force', snapshotPath]).catch(() => undefined);
+    await rm(snapshotRoot, { recursive: true, force: true });
+  }
+}
+
+/** 来源工作区普通快进被重叠草稿阻挡时，在原隔离候选上建立三方冲突现场。 */
+async function prepareTaskIntegrationLocalChanges(input: { repositoryPath: string; integrationPath: string; targetBranch: string; targetHeadSha: string; resultHeadSha: string }): Promise<string[]> {
+  const context = await getGitRepositoryContext(input.repositoryPath);
+  const source = context.worktrees.find((entry) => entry.branch === input.targetBranch) ?? null;
+  if (!source) throw gitCoreError('ZEUS_TARGET_WORKTREE_UNAVAILABLE', 'Checked-out source worktree is unavailable.');
+  const snapshot = await captureTaskIntegrationLocalChanges({ repositoryPath: input.repositoryPath, integrationPath: input.integrationPath, sourcePath: source.path, targetHeadSha: input.targetHeadSha });
+  const state: TaskIntegrationLocalChangesState = {
+    sourceWorktreePath: resolve(source.path),
+    targetHeadSha: input.targetHeadSha,
+    resultHeadSha: input.resultHeadSha,
+    sourceSnapshotCommitSha: snapshot.commitSha,
+    sourceSnapshotTreeSha: snapshot.treeSha,
+    sourceIndexTreeSha: snapshot.indexTreeSha,
+    sourceUntrackedPaths: snapshot.untrackedPaths,
+  };
+  return prepareTaskIntegrationLocalChangesMerge(input.integrationPath, state);
+}
+
+/** 把同一来源草稿快照叠加到任务合入提交；真实冲突保留在当前隔离 worktree。 */
+async function prepareTaskIntegrationLocalChangesMerge(integrationPath: string, state: TaskIntegrationLocalChangesState): Promise<string[]> {
+  const currentHeadSha = await resolveCommit(integrationPath, 'HEAD');
+  if (currentHeadSha !== state.resultHeadSha) throw gitCoreError('ZEUS_TARGET_HEAD_CHANGED', 'Integration worktree is not at the recorded task result.');
+  await writeTaskIntegrationLocalChangesState(integrationPath, state);
+  try {
+    await runGitPreservingConflict(integrationPath, ['-c', 'merge.conflictStyle=diff3', 'merge', '--no-ff', '--no-commit', state.sourceSnapshotCommitSha]);
+    return readTaskIntegrationConflictPaths(integrationPath);
+  } catch (error) {
+    await runGit(integrationPath, ['reset', '--hard', state.resultHeadSha]).catch(() => undefined);
+    await clearTaskIntegrationLocalChangesState(integrationPath).catch(() => undefined);
+    throw error;
+  }
+}
+
+/** 读取两棵 Git 树之间的完整二进制补丁。 */
+async function readTaskIntegrationTreePatch(cwd: string, beforeTree: string, afterTree: string): Promise<string> {
+  return readGitDiffAllowChanges(cwd, ['diff', '--binary', beforeTree, afterTree, '--', '.']);
+}
+
+/** 读取两棵 Git 树之间的字面量相对路径。 */
+async function readTaskIntegrationChangedPaths(cwd: string, beforeTree: string, afterTree: string): Promise<string[]> {
+  return splitNullRecords((await runGit(cwd, ['diff', '--name-only', '-z', beforeTree, afterTree, '--', '.'])).stdout).map((path) => requireSafeWorkspacePath(path));
+}
+
+/** 只清理已快照且当前仍为未跟踪状态的精确路径，禁止扩大到整个工作区。 */
+async function cleanTaskIntegrationUntrackedPaths(cwd: string, paths: string[]): Promise<void> {
+  const uniquePaths = Array.from(new Set(paths.map((path) => requireSafeWorkspacePath(path))));
+  for (let offset = 0; offset < uniquePaths.length; offset += 128) {
+    await runGit(cwd, ['--literal-pathspecs', 'clean', '-fd', '--', ...uniquePaths.slice(offset, offset + 128)]);
+  }
+}
+
+/** 将树补丁应用为未暂存修改；空补丁不启动 Git 写操作。 */
+async function applyTaskIntegrationTreePatch(cwd: string, patch: string): Promise<void> {
+  if (patch) await runGit(cwd, ['apply', '--binary', '--whitespace=nowarn', '-'], patch);
+}
+
+/** 落地失败时用快照对象恢复来源分支、工作区内容和原暂存区。 */
+async function restoreTaskIntegrationLocalChanges(input: { sourcePath: string; integrationPath: string; state: TaskIntegrationLocalChangesState; originalPatch: string; cleanupPaths: string[] }): Promise<void> {
+  await runGit(input.sourcePath, ['reset', '--hard', input.state.targetHeadSha]);
+  await cleanTaskIntegrationUntrackedPaths(input.sourcePath, input.cleanupPaths);
+  await applyTaskIntegrationTreePatch(input.sourcePath, input.originalPatch);
+  await runGit(input.sourcePath, ['read-tree', input.state.sourceIndexTreeSha]);
+  const restored = await captureTaskIntegrationLocalChanges({ repositoryPath: input.sourcePath, integrationPath: input.integrationPath, sourcePath: input.sourcePath, targetHeadSha: input.state.targetHeadSha });
+  if (restored.treeSha !== input.state.sourceSnapshotTreeSha || restored.indexTreeSha !== input.state.sourceIndexTreeSha) {
+    throw gitCoreError('ZEUS_TARGET_WORKTREE_RESTORE_FAILED', 'Source worktree recovery did not reproduce the protected snapshot.');
+  }
+}
+
+/**
+ * 目标分支只推进到任务提交，再把用户确认后的组合内容落回为未暂存草稿。
+ * 写入前后都使用 Git 树校验；任一步失败会恢复原来源现场。
+ */
+async function finalizeTaskIntegrationLocalChanges(input: { repositoryPath: string; integrationPath: string; targetBranch: string; state: TaskIntegrationLocalChangesState }): Promise<TaskIntegrationLocalSync> {
+  const conflictFiles = await readTaskIntegrationConflictPaths(input.integrationPath);
+  if (conflictFiles.length > 0) {
+    return { localSyncStatus: 'pending', localHeadSha: input.state.targetHeadSha, localWorktreePath: input.state.sourceWorktreePath, conflictFiles };
+  }
+  const context = await getGitRepositoryContext(input.repositoryPath);
+  const source = context.worktrees.find((entry) => entry.branch === input.targetBranch && canonicalFilesystemPath(entry.path) === canonicalFilesystemPath(input.state.sourceWorktreePath));
+  if (!source) throw gitCoreError('ZEUS_TARGET_WORKTREE_CHANGED', 'Source branch is no longer checked out in its protected worktree.');
+  const current = await captureTaskIntegrationLocalChanges({ repositoryPath: input.repositoryPath, integrationPath: input.integrationPath, sourcePath: source.path, targetHeadSha: input.state.targetHeadSha });
+  if (current.treeSha !== input.state.sourceSnapshotTreeSha || current.indexTreeSha !== input.state.sourceIndexTreeSha) {
+    throw gitCoreError('ZEUS_TARGET_WORKTREE_CHANGED', 'Source worktree changed while local conflicts were being resolved.');
+  }
+  await runGit(input.integrationPath, ['add', '-A']);
+  const remaining = await readTaskIntegrationConflictPaths(input.integrationPath);
+  if (remaining.length > 0) return { localSyncStatus: 'pending', localHeadSha: input.state.targetHeadSha, localWorktreePath: source.path, conflictFiles: remaining };
+  const mergeHeadSha = await readGitStdout(input.integrationPath, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']);
+  if (mergeHeadSha) await runGit(input.integrationPath, ['merge', '--quit']);
+  const combinedTreeSha = requireGitObjectId(await requireGitStdout(input.integrationPath, ['write-tree']), 'resolved local changes tree');
+  const [originalPatch, combinedPatch, originalPaths, combinedPaths] = await Promise.all([
+    readTaskIntegrationTreePatch(input.integrationPath, input.state.targetHeadSha, input.state.sourceSnapshotTreeSha),
+    readTaskIntegrationTreePatch(input.integrationPath, input.state.resultHeadSha, combinedTreeSha),
+    readTaskIntegrationChangedPaths(input.integrationPath, input.state.targetHeadSha, input.state.sourceSnapshotTreeSha),
+    readTaskIntegrationChangedPaths(input.integrationPath, input.state.resultHeadSha, combinedTreeSha),
+  ]);
+  const cleanupPaths = Array.from(new Set([...input.state.sourceUntrackedPaths, ...originalPaths, ...combinedPaths]));
+  try {
+    await runGit(source.path, ['reset', '--hard', input.state.targetHeadSha]);
+    await cleanTaskIntegrationUntrackedPaths(source.path, cleanupPaths);
+    await runGit(source.path, ['merge', '--ff-only', input.state.resultHeadSha]);
+    await applyTaskIntegrationTreePatch(source.path, combinedPatch);
+    const verified = await captureTaskIntegrationLocalChanges({ repositoryPath: input.repositoryPath, integrationPath: input.integrationPath, sourcePath: source.path, targetHeadSha: input.state.resultHeadSha });
+    if (verified.treeSha !== combinedTreeSha) throw gitCoreError('ZEUS_TARGET_WORKTREE_VERIFICATION_FAILED', 'Resolved source worktree content does not match the isolated result.');
+  } catch (error) {
+    try {
+      await restoreTaskIntegrationLocalChanges({ sourcePath: source.path, integrationPath: input.integrationPath, state: input.state, originalPatch, cleanupPaths });
+    } catch (restoreError) {
+      throw gitCoreError('ZEUS_TARGET_WORKTREE_RESTORE_FAILED', `Source worktree recovery requires attention: ${commandFailureDetail(restoreError)}`);
+    }
+    throw error;
+  }
+  await runGit(input.integrationPath, ['reset', '--hard', input.state.resultHeadSha]);
+  await clearTaskIntegrationLocalChangesState(input.integrationPath);
+  return { localSyncStatus: 'synced', localHeadSha: input.state.resultHeadSha, localWorktreePath: source.path, conflictFiles: [] };
+}
+
 /** 本地合入完成后尽力同步来源分支；任何本地风险都降级为待同步，不反写用户现场。 */
-async function syncLocalTargetBranch(input: {
-  repositoryPath: string;
-  targetBranch: string;
-  targetHeadSha: string;
-  resultHeadSha: string;
-}): Promise<Pick<FinalizedTaskBranchIntegration, 'localSyncStatus' | 'localHeadSha' | 'localWorktreePath'>> {
+async function syncLocalTargetBranch(input: { repositoryPath: string; integrationPath: string; targetBranch: string; targetHeadSha: string; resultHeadSha: string }): Promise<TaskIntegrationLocalSync> {
   const context = await getGitRepositoryContext(input.repositoryPath);
   const checkedOut = context.worktrees.find((entry) => entry.branch === input.targetBranch) ?? null;
   if (checkedOut) {
@@ -1676,13 +1957,29 @@ async function syncLocalTargetBranch(input: {
       // Git 会保留不受快进影响的本机改动，并在可能覆盖改动时自行拒绝；不要把任意脏文件都误判成合入失败。
       await runGit(checkedOut.path, ['merge', '--ff-only', input.resultHeadSha]);
       const localHeadSha = await resolveCommit(checkedOut.path, 'HEAD');
-      return localHeadSha === input.resultHeadSha ? { localSyncStatus: 'synced', localHeadSha, localWorktreePath: checkedOut.path } : { localSyncStatus: 'pending', localHeadSha, localWorktreePath: checkedOut.path };
+      return localHeadSha === input.resultHeadSha
+        ? { localSyncStatus: 'synced', localHeadSha, localWorktreePath: checkedOut.path, conflictFiles: [] }
+        : { localSyncStatus: 'pending', localHeadSha, localWorktreePath: checkedOut.path, conflictFiles: [] };
     } catch {
+      const review = await getTaskWorkspaceReview(checkedOut.path).catch(() => null);
+      if (review && !review.clean && review.conflictFiles.length === 0 && review.headSha === input.targetHeadSha) {
+        try {
+          const conflictFiles = await prepareTaskIntegrationLocalChanges(input);
+          if (conflictFiles.length > 0) {
+            return { localSyncStatus: 'pending', localHeadSha: review.headSha, localWorktreePath: checkedOut.path, conflictFiles };
+          }
+          const state = await readTaskIntegrationLocalChangesState(input.integrationPath);
+          if (state) return finalizeTaskIntegrationLocalChanges({ repositoryPath: input.repositoryPath, integrationPath: input.integrationPath, targetBranch: input.targetBranch, state });
+        } catch {
+          // 无法安全快照或落回时继续保留隔离候选，不触碰来源现场。
+        }
+      }
       const localHeadSha = await resolveCommit(input.repositoryPath, localBranchRef(input.targetBranch)).catch(() => input.targetHeadSha);
       return {
         localSyncStatus: localHeadSha === input.resultHeadSha ? 'synced' : 'pending',
         localHeadSha,
         localWorktreePath: checkedOut.path,
+        conflictFiles: [],
       };
     }
   }
@@ -1692,7 +1989,7 @@ async function syncLocalTargetBranch(input: {
     if (currentLocalHead) {
       const { localOnly } = await compareCommits(input.repositoryPath, input.resultHeadSha, currentLocalHead);
       if (localOnly > 0) {
-        return { localSyncStatus: 'pending', localHeadSha: currentLocalHead, localWorktreePath: null };
+        return { localSyncStatus: 'pending', localHeadSha: currentLocalHead, localWorktreePath: null, conflictFiles: [] };
       }
       await runGit(input.repositoryPath, ['update-ref', `refs/heads/${input.targetBranch}`, input.resultHeadSha, currentLocalHead]);
     } else {
@@ -1704,9 +2001,10 @@ async function syncLocalTargetBranch(input: {
       localSyncStatus: localHeadSha === input.resultHeadSha ? 'synced' : 'pending',
       localHeadSha,
       localWorktreePath: null,
+      conflictFiles: [],
     };
   }
-  return { localSyncStatus: 'synced', localHeadSha: input.resultHeadSha, localWorktreePath: null };
+  return { localSyncStatus: 'synced', localHeadSha: input.resultHeadSha, localWorktreePath: null, conflictFiles: [] };
 }
 
 export type HighRiskGitOperation = 'commit' | 'stash' | 'apply_stash' | 'rollback' | 'branch' | 'switch_branch' | 'pull' | 'push';
