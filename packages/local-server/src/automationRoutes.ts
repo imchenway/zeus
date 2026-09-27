@@ -86,9 +86,13 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
   server.post('/api/automations/:automationId/status', async (request: FastifyRequest<{ Params: { automationId: string }; Body: { status?: string } }>, reply) => {
     return mutate(request, reply, () => {
       if (request.body.status !== 'active' && request.body.status !== 'paused') throw new Error('ZEUS_AUTOMATION_CONFIG_STATUS_INVALID: status 必须是 active 或 paused。');
+      const previous = tasks.getById(request.params.automationId);
+      if (!previous) throw new Error('ZEUS_AUTOMATION_CONFIG_NOT_FOUND: 自动化任务不存在。');
+      /** 恢复排程从当前时间重新计算，避免把暂停期间错过的时间点当成立即执行。 */
+      const nextRunAt = request.body.status === 'active' && previous.status === 'paused' ? computeNextRun(previous, new Date(options.now())) : previous.nextRunAt;
       const updated = tasks.setStatus(request.params.automationId, request.body.status);
-      if (updated.status === 'active' && !updated.nextRunAt) tasks.setNextRun(updated.id, computeNextRun(updated, new Date(options.now())));
-      return { statusCode: 200, body: updated };
+      if (updated.status === 'active' && previous.status === 'paused') tasks.setNextRun(updated.id, nextRunAt);
+      return { statusCode: 200, body: tasks.getById(updated.id)! };
     });
   });
 

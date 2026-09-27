@@ -9,12 +9,13 @@ type ConversationOperations = ReturnType<typeof createConversationApplicationOpe
 
 /** 自动化到会话的适配只负责请求映射；运行状态和恢复由调度器拥有。 */
 export function createAutomationConversationDispatch(options: {
-  conversations: Pick<ConversationRepository, 'getById'>;
+  conversations: Pick<ConversationRepository, 'getById' | 'updateTitle'>;
   modelConnections: Pick<ModelConnectionService, 'listMetadata'>;
   executeConversationDispatchMessage: ConversationOperations['executeConversationDispatchMessage'];
   executeProjectConversationIdempotent: ConversationOperations['executeProjectConversationIdempotent'];
+  publish(type: string, payload: Record<string, unknown>): void;
 }): AutomationSchedulerOptions['dispatch'] {
-  const { conversations, modelConnections, executeConversationDispatchMessage, executeProjectConversationIdempotent } = options;
+  const { conversations, modelConnections, executeConversationDispatchMessage, executeProjectConversationIdempotent, publish } = options;
   return async ({ run, snapshot, project, projects }) => {
     const digest = createHash('sha256').update(run.id).digest('hex').slice(0, 24);
     if (snapshot.conversationMode === 'original') {
@@ -71,7 +72,11 @@ export function createAutomationConversationDispatch(options: {
       undefined,
       projects.length > 0 ? projects.map((target) => target.id) : [project.id],
     );
-    return readAcceptance(result.body);
+    const acceptance = readAcceptance(result.body);
+    /** 自动化名称是这类会话的稳定产品身份，标题变更事件保证侧栏不保留提示词摘要。 */
+    conversations.updateTitle(acceptance.conversationId, snapshot.name);
+    publish('conversation.title.changed', { conversationId: acceptance.conversationId, title: snapshot.name });
+    return acceptance;
   };
 }
 
