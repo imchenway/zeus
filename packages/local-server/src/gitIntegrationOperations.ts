@@ -1797,7 +1797,12 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     try {
       await assertTaskIntegrationStillCurrent(resolved.project, resolved.workspace, resolved.integration);
     } catch (error) {
-      if (isStaleTaskIntegrationError(error)) workspaceGitReject(409, taskGitErrorCode(error), error instanceof Error ? error.message : 'Task integration became stale.');
+      if (isStaleTaskIntegrationError(error)) {
+        /** 释放过期候选的活跃唯一约束，让界面可以按最新分支重新建立候选。 */
+        taskIntegrations.update(resolved.integration.id, { state: 'failed', lastError: error instanceof Error ? error.message : 'Task integration became stale.' });
+        await db.save();
+        workspaceGitReject(409, taskGitErrorCode(error), error instanceof Error ? error.message : 'Task integration became stale.');
+      }
       throw error;
     }
     const result = await writeTaskIntegrationResolution(resolved.integration.integrationPath, path, value.content);
@@ -1814,6 +1819,9 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       await assertTaskIntegrationStillCurrent(project, workspace, integration);
     } catch (error) {
       if (isStaleTaskIntegrationError(error)) {
+        /** 过期候选不能继续占用活跃槽位；保留隔离现场，仅关闭其业务状态。 */
+        taskIntegrations.update(integration.id, { state: 'failed', lastError: error instanceof Error ? error.message : 'Task integration is no longer current.' });
+        await db.save();
         workspaceGitReject(409, taskGitErrorCode(error), error instanceof Error ? error.message : 'Task integration is no longer current.');
       }
       throw error;
