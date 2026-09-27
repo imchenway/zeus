@@ -569,7 +569,11 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
     const contextualContent = mode === 'prompt' ? appendUntrustedContext(input.content, input.untrustedContext) : input.content;
     const userContent = [
       ...explicitSkills,
-      ...(input.workMode === 'plan' ? ['本轮处于 Zeus 计划模式：只允许调查、读取和沟通，不得修改工作区或提前实施。形成完整方案后调用 submit_plan 保存正式计划，并结束本轮等待用户确认。'] : []),
+      ...(input.workMode === 'plan'
+        ? [
+            '本轮处于 Zeus 计划模式：只允许调查、读取和沟通，不得修改工作区或提前实施。先从代码、文档和运行现场查明可发现事实；只有仍会实质改变方案且无法查明的选择才使用 request_user_input 询问。方案达到可直接实施的程度后，只调用一次 submit_plan 保存完整正式计划；不得调用 update_plan，也不得在提交计划后自行开始实施。',
+          ]
+        : []),
       contextualContent,
     ].join('\n\n');
     const operation = mode === 'steer' ? entry.session.steer(userContent, images) : mode === 'follow_up' ? entry.session.followUp(userContent, images) : entry.session.prompt(userContent, promptOptions);
@@ -950,7 +954,8 @@ function createZeusTools(getEntry: () => PiSessionEntry | null, broker: PiZeusTo
     defineTool({
       name: 'update_plan',
       label: '更新开发计划',
-      description: '维护本轮开发计划。多步骤实施或验证任务开始时列出步骤，进展后及时更新；单步任务不创建计划。最多一个步骤为 in_progress，仅把实际完成的步骤标记为 completed，未完成步骤保持真实状态。此工具不提交正式方案，也不授权实施。',
+      description:
+        '仅在默认执行模式维护本轮开发计划。多步骤实施或验证任务开始时列出步骤，进展后及时更新；单步任务不创建计划。最多一个步骤为 in_progress，仅把实际完成的步骤标记为 completed，未完成步骤保持真实状态。计划模式禁止调用；此工具不提交正式方案，也不授权实施。',
       parameters: Type.Object(
         {
           explanation: Type.Optional(Type.Union([Type.String({ maxLength: 1_000 }), Type.Null()])),

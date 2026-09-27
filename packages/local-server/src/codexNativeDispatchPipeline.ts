@@ -15,6 +15,7 @@ import type {
 import {
   conversationSubmissionDispatchEnvelope,
   coordinatorError,
+  defaultModeDeveloperInstructions,
   developerInstructionsFor,
   isProviderThreadArchivedError,
   parseJsonRecord,
@@ -297,7 +298,10 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
         source: providerThreadId ? 'resume' : 'startup',
         ...(providerThreadId ? {} : { prompt: submissionText(submission) }),
       });
+      /** 线程级指令只保存跨模式稳定规则，不能把执行清单永久带进后续计划轮。 */
       const developerInstructions = [developerInstructionsFor(context, options.browserAutomation !== undefined), pluginPreparation?.developerInstructions ?? ''].filter(Boolean).join('\n');
+      /** 默认轮补充执行清单规则；计划轮必须把协作模板完全交还 app-server。 */
+      const turnDeveloperInstructions = context.workMode === 'default' ? [developerInstructions, defaultModeDeveloperInstructions()].filter(Boolean).join('\n') : null;
       const dynamicTools = [...conversationToolResultDynamicTools(), ...(zeusToolBroker ? zeusToolBroker.registry.codexTools : []), ...(pluginPreparation?.codexDynamicTools ?? [])];
       const providerBootstrapUtf8Bytes = Buffer.byteLength(
         JSON.stringify({
@@ -559,8 +563,8 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
                 settings: {
                   model: context.model,
                   reasoning_effort: wireEffort,
-                  /** 每轮重申当前宿主与插件规则，保证已存在的 Provider 线程也接收最新交付约定。 */
-                  developer_instructions: developerInstructions,
+                  /** 计划轮必须由 app-server 注入原生模板；稳定宿主规则已经通过 thread/start 交付。 */
+                  developer_instructions: turnDeveloperInstructions,
                 },
               },
             }

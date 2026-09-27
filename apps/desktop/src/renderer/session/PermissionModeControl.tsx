@@ -17,6 +17,8 @@ import type { SessionUiLanguage } from './ThreadItemView.js';
 export interface PermissionModeControlProps {
   language: SessionUiLanguage;
   value: NativePermissionMode;
+  /** 计划模式仅覆盖本轮实际权限，不改写用户保存的执行权限。 */
+  planMode?: boolean;
   disabled?: boolean;
   supportsAutoReview?: boolean;
   onChange: (permissionMode: NativePermissionMode) => void | Promise<void>;
@@ -48,6 +50,8 @@ const labels = {
     internetDescription: '访问网站，并可能向外部服务发送本机数据',
     risk: '这可能造成敏感数据丢失或泄露，也会增加提示词注入带来的风险。你可以随时切换回“请求批准”或“只读”模式。',
     locked: '权限模式只能在会话空闲时切换',
+    planOverride: '计划模式：只读分析',
+    planRestore: '实施后恢复',
     confirm: '确认开启',
     cancel: '取消',
   },
@@ -72,6 +76,8 @@ const labels = {
     internetDescription: 'Visit websites and potentially send local data to external services',
     risk: 'This can cause loss or exposure of sensitive data and increases the risk of prompt injection. You can switch back to Request approval or Read only at any time.',
     locked: 'Permission mode can change only while the conversation is idle',
+    planOverride: 'Plan mode: read-only analysis',
+    planRestore: 'Restores for implementation',
     confirm: 'Enable full access',
     cancel: 'Cancel',
   },
@@ -96,7 +102,9 @@ export function PermissionModeControl(props: PermissionModeControlProps) {
   ] as const;
   const selectedLabel = options.find((option) => option.value === props.value)?.label ?? copy.label;
   /** 当前入口复用选项图标，避免菜单和触发器表达不同权限。 */
-  const triggerIcon = options.find((option) => option.value === props.value)?.icon;
+  const triggerIcon = props.planMode ? <Eye size={20} weight="regular" /> : options.find((option) => option.value === props.value)?.icon;
+  /** 计划覆盖与保存偏好同时可见，避免把红色完全访问盾牌误当成本轮实际权限。 */
+  const effectiveLabel = props.planMode ? (props.language === 'zh-CN' ? `${copy.planOverride}；${copy.planRestore}：${selectedLabel}` : `${copy.planOverride}; ${copy.planRestore}: ${selectedLabel}`) : `${copy.label}: ${selectedLabel}`;
 
   function closeConfirmation(next?: NativePermissionMode): void {
     setConfirmingFullAccess(false);
@@ -112,8 +120,8 @@ export function PermissionModeControl(props: PermissionModeControlProps) {
       <ComposerDropdown
         triggerRef={triggerRef}
         label={copy.label}
-        title={props.disabled ? copy.locked : `${copy.label}：${selectedLabel}`}
-        triggerLabel={`${copy.label}：${selectedLabel}`}
+        title={props.disabled ? copy.locked : effectiveLabel}
+        triggerLabel={effectiveLabel}
         triggerIcon={triggerIcon}
         hideSelectedLabel
         className="session-permission-dropdown"
