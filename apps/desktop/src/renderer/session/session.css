@@ -9680,19 +9680,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   padding-block-end: 6px;
 }
 
-/* 活动轮次把当前或最近动作固定在过程入口上方，助手沟通继续按原顺序显示。 */
-.session-codex-parity-v1 .session-turn-process-preview {
-  display: grid;
-  gap: 6px;
-  inline-size: min(var(--session-thread-max), 100%);
-  min-inline-size: 0;
-}
-
-/* 当前动作沿用活动行语义，不再额外生成一个可展开的操作组。 */
-.session-codex-parity-v1 .session-activity-current {
-  min-inline-size: 0;
-}
-
 /* 数量是入口的次要信息，保持正文可读且允许窄栏换行。 */
 .session-codex-parity-v1 .session-turn-process-control > button > small {
   color: var(--session-text-subtle);
