@@ -30,7 +30,7 @@ import { latestReasoningSummaryText, reasoningSummaryStatus, SessionReasoningSum
 import { AnsweredRequestHistory, isAnsweredUserInputRequest, type AnsweredRequestHistoryProps } from './AnsweredRequestHistory.js';
 import { newItemMotionDurationMs, useNewItemMotionIds } from '../ui/useNewItemMotion.js';
 import { captureTranscriptViewportAnchor, compensateTranscriptViewportAnchor, type TranscriptViewportAnchor, useTranscriptViewportVirtualizer } from './transcriptViewportVirtualizer.js';
-import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { reportApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { isImageResource } from './ConversationResources.js';
 import { composerQueuedSubmissions, isUnacceptedTranscriptMessage, orderTranscriptItemsWithQueue, visibleQueuedSubmissions } from './conversationQueuePresentation.js';
 import type { McpAppToolCall, McpAppToolResult } from './McpAppFrame.js';
@@ -1060,7 +1060,12 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   }, []);
 
   const renderTranscriptTurnRow = (row: TranscriptViewportRow): ReactNode => {
-    if (row.kind === 'turn_failure') return <TurnFailureCard failure={row.failure} language={props.language} />;
+    if (row.kind === 'turn_failure') {
+      /** 后台仍在核对本轮时只显示统一运行状态，避免错误卡和重连状态同时闪烁。 */
+      const recovering = props.state.providerReconnectTurnId === row.turnId && props.state.providerReconnectAttempt > 0;
+      if (recovering) return null;
+      return <TurnFailureCard failure={row.failure} language={props.language} retainedAnswer={turnHasRetainedAssistantAnswer(items, row.turnId)} />;
+    }
     if (row.kind === 'navigation_placeholder') return <NavigationHistoryPlaceholder entry={row.entry} language={props.language} onLoad={historyHydrated ? props.onLoadNavigationTurn : undefined} />;
     if (row.kind === 'answered_request') return <AnsweredRequestHistory request={row.request} language={props.language} />;
     if (row.kind === 'turn_work') {
@@ -1334,7 +1339,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             activeStatusKind === 'executing' && activeReasoningItem ? (
               <SessionReasoningSummary item={activeReasoningItem} language={props.language} status={reasoningSummaryStatus(activeReasoningItem, props.state)} motionActive onVisibleContentChange={maintainLatestPosition} />
             ) : (
-              <TranscriptActiveStatus language={props.language} kind={activeStatusKind} />
+              <TranscriptActiveStatus language={props.language} kind={activeStatusKind} reconnectAttempt={props.state.providerReconnectAttempt || props.state.reconnectAttempt} reconnectAttempts={props.state.providerReconnectAttempts} />
             )
           ) : null}
           {interactionAuthorityMissing && props.state.activeTurnId ? <InteractionAuthorityMissingNotice language={props.language} turnId={props.state.activeTurnId} onInterrupt={props.onInterrupt} /> : null}
@@ -1514,14 +1519,31 @@ function ConversationNotice(props: { children: ReactNode; label: string; role?: 
 }
 
 /** 模型返回错误保留独立名称，避免与消息发送状态混淆。 */
-function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: SessionUiLanguage }) {
+function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: SessionUiLanguage; retainedAnswer: boolean }) {
   /** 错误名称和详情入口使用同一语言。 */
   const zh = props.language === 'zh-CN';
+  /** 已保留回答的断流不能再误报为“没有收到完整回复”。 */
+  const retainedStreamFailure = props.retainedAnswer && props.failure.cause?.code === 'responseStreamDisconnected';
+  if (retainedStreamFailure) {
+    return (
+      <ConversationNotice role="status" label={zh ? '回答已保留' : 'Response retained'}>
+        <span data-zeus-selectable="text">{zh ? '回答已保留，但 AI 服务未确认完整结束。你可以继续对话。' : 'The response was retained, but the AI service did not confirm a clean finish. You can continue the conversation.'}</span>
+        <button type="button" className="application-error-details-link" onClick={() => reportApplicationError(props.failure, { language: zh ? 'zh-CN' : 'en', showDetails: true })}>
+          {zh ? '错误详情' : 'Error details'}
+        </button>
+      </ConversationNotice>
+    );
+  }
   return (
     <ConversationNotice label={zh ? '模型返回错误' : 'Model error'}>
       <VisibleApplicationError error={props.failure} language={zh ? 'zh-CN' : 'en'} />
     </ConversationNotice>
   );
+}
+
+/** 判断失败轮次是否已经留下可读回答；只认非空最终回答，不把过程说明当作交付。 */
+function turnHasRetainedAssistantAnswer(items: readonly NativeSessionItemBuffer[], turnId: string): boolean {
+  return items.some((item) => item.turnId === turnId && isFinalAnswerItem(item) && item.text.trim().length > 0);
 }
 
 export type TranscriptRow =
@@ -1977,6 +1999,7 @@ function isSamePlanItem(openItem: NativeSessionItemBuffer | null | undefined, it
 
 /** 运行状态只读取正式轮次、请求、连接及过程事件，不从计时或正文猜测。 */
 export function transcriptRunStatus(state: NativeSessionState): 'starting' | 'executing' | 'compacting' | 'waiting_input' | 'waiting_approval' | 'reconnecting' | null {
+  if (state.providerReconnectAttempt > 0) return 'reconnecting';
   if (state.conversationState === 'starting_turn') return 'starting';
   if (!state.activeTurnId || state.terminalTurnIds[state.activeTurnId]) return null;
   if (state.transportState !== 'ready') return 'reconnecting';
@@ -1988,7 +2011,7 @@ export function transcriptRunStatus(state: NativeSessionState): 'starting' | 'ex
 }
 
 /** 任务耗时仍单独显示；此处不把时间增长当作模型继续推进的证据。 */
-function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: NonNullable<ReturnType<typeof transcriptRunStatus>> }): ReactNode {
+function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: NonNullable<ReturnType<typeof transcriptRunStatus>>; reconnectAttempt: number; reconnectAttempts: number }): ReactNode {
   // 整理状态与活动记录沿用同一套用户表述，由当前状态位置统一承载进度。
   const labels = {
     starting: ['正在启动处理', 'Starting processing'],
@@ -1998,9 +2021,16 @@ function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: NonN
     waiting_approval: ['等待审批，请处理审批事项', 'Waiting for your approval'],
     reconnecting: ['正在恢复连接，运行进度尚未确认', 'Reconnecting; progress is not yet confirmed'],
   };
+  /** Provider 五次核对显示明确计数；普通 Renderer 重连没有固定总数，保留原文案。 */
+  const retryLabel =
+    props.kind === 'reconnecting' && props.reconnectAttempt > 0 && props.reconnectAttempts > 0
+      ? props.language === 'zh-CN'
+        ? `正在恢复连接（${props.reconnectAttempt}/${props.reconnectAttempts}）`
+        : `Reconnecting (${props.reconnectAttempt}/${props.reconnectAttempts})`
+      : labels[props.kind][props.language === 'zh-CN' ? 0 : 1];
   return (
     <p className="session-transcript-thinking" role="status" aria-live="polite">
-      <SessionSweepText className="session-current-status-text" text={labels[props.kind][props.language === 'zh-CN' ? 0 : 1]} active />
+      <SessionSweepText className="session-current-status-text" text={retryLabel} active />
     </p>
   );
 }

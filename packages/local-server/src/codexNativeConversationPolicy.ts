@@ -264,6 +264,11 @@ export function providerTurnFailure(params: Record<string, unknown>, providerTur
   return Object.assign(coordinatorError('ZEUS_CODEX_TURN_FAILED', message), { providerTurnId, providerStatus });
 }
 
+/** 仅识别 Provider 明确报告的回复流提前断开，其他失败不得进入连接恢复重试。 */
+export function isProviderResponseStreamDisconnected(failure: Error): boolean {
+  return /stream disconnected before completion/iu.test(failure.message);
+}
+
 export function providerTurnFailureRecord(params: Record<string, unknown>, failure: Error & { code: string }): Record<string, unknown> {
   const turn = isRecord(params.turn) ? params.turn : {};
   const providerError = isRecord(turn.error) ? turn.error : isRecord(params.error) ? params.error : null;

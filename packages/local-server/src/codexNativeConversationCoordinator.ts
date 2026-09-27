@@ -135,6 +135,8 @@ export interface CodexNativeConversationRuntime extends CodexNativeConversationC
 
 const providerEventErrorsSettingKey = 'codex.native.provider_event_errors';
 const providerEventHotReceiptLimit = 10_000;
+/** 回复流断开后的只读核对间隔；最多五次，不重放原模型请求。 */
+const providerStreamRecoveryDelaysMs = [1_000, 2_000, 4_000, 8_000, 16_000] as const;
 
 export function createCodexNativeConversationCoordinator(options: CreateCodexNativeConversationCoordinatorOptions): CodexNativeConversationRuntime {
   const now = options.now;
@@ -159,6 +161,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   const failedTurnResults = new Map<string, Error & { code: string }>();
   const turnResultWaiters = new Map<string, NativeTurnResultWaiter[]>();
   const autoResolutionTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** 同一会话只运行一条回复流恢复链，避免重复事件制造并发轮询。 */
+  const providerStreamRecoveryRuns = new Map<string, Promise<void>>();
   // 敏感回答不能落入 submission JSON；仅在当前宿主内存中保留到新 turn 被 app-server 接受。
   const volatileSubmissionText = new Map<string, string>();
   let closing = false;
@@ -3013,6 +3017,87 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     requestQueueDrain,
   });
 
+  /** 等待下一次 Provider 只读核对；unref 避免退避计时阻挡服务退出。 */
+  function waitForProviderStreamRecovery(delayMs: number): Promise<void> {
+    return new Promise((resolve) => {
+      /** 当前恢复尝试的退避计时器。 */
+      const timer = setTimeout(resolve, delayMs);
+      timer.unref();
+    });
+  }
+
+  /**
+   * 回复流断开后指数退避读取 Provider 权威线程状态。
+   * 该流程只确认终态并恢复会话可用性，绝不重新发送可能已执行的模型轮次。
+   */
+  function scheduleProviderStreamRecovery(conversationId: string, providerThreadId: string, providerTurnId: string): void {
+    if (closing || closed || providerStreamRecoveryRuns.has(conversationId)) return;
+    /** 单会话恢复任务；成功或耗尽后从运行表移除。 */
+    const run = (async () => {
+      /** 最后一次失败证据用于恢复耗尽后的诊断事件。 */
+      let lastFailure: unknown = coordinatorError('ZEUS_NATIVE_PROVIDER_STATE_UNCONFIRMED', 'Provider 回复流断开后尚未确认线程空闲。');
+      try {
+        for (let index = 0; index < providerStreamRecoveryDelaysMs.length; index += 1) {
+          if (closing || closed) return;
+          /** 每次等待前重新读取会话，避免旧恢复链跨线程或覆盖其他恢复入口。 */
+          const conversation = options.conversations.getById(conversationId);
+          if (!conversation || conversation.providerThreadId !== providerThreadId || !['failed', 'active', 'waiting'].includes(conversation.providerState)) return;
+          /** 用户可见计数从一开始，与五个退避间隔逐项对应。 */
+          const attempt = index + 1;
+          options.broadcast('conversation.transport.changed', {
+            conversationId,
+            providerThreadId,
+            providerTurnId,
+            providerState: conversation.providerState,
+            recoveryState: 'reconnecting',
+            reconnectAttempt: attempt,
+            reconnectAttempts: providerStreamRecoveryDelaysMs.length,
+          });
+          await waitForProviderStreamRecovery(providerStreamRecoveryDelaysMs[index]!);
+          if (closing || closed) return;
+          try {
+            /** 权威读取只同步远端线程状态，不恢复订阅或重新执行模型请求。 */
+            const authority = await providerThreadAuthority.inspect(requireConversation(conversationId), null, { readOnly: true });
+            if (authority.type !== 'idle') {
+              lastFailure = coordinatorError('ZEUS_NATIVE_PROVIDER_STATE_UNCONFIRMED', 'Provider 回复流断开后仍报告活动轮次。');
+              continue;
+            }
+            await persist();
+            options.broadcast('conversation.queue.changed', { conversationId, providerThreadId, queueDispatchRequested: false });
+            return;
+          } catch (error) {
+            lastFailure = error;
+          }
+        }
+        options.broadcast('conversation.native.recovery_failed', {
+          conversationId,
+          providerThreadId,
+          providerTurnId,
+          error: serializeError(lastFailure),
+        });
+      } finally {
+        // 会话可能在退避期间经其他入口恢复；所有正常退出都必须清除前端计数。
+        if (!closing && !closed) {
+          /** 结束事件携带当前真实状态，不沿用恢复开始时的失败快照。 */
+          const current = options.conversations.getById(conversationId);
+          options.broadcast('conversation.transport.changed', {
+            conversationId,
+            providerThreadId,
+            providerTurnId,
+            providerState: current?.providerState ?? 'failed',
+            recoveryState: 'idle',
+            reconnectAttempt: 0,
+            reconnectAttempts: providerStreamRecoveryDelaysMs.length,
+          });
+        }
+      }
+    })();
+    providerStreamRecoveryRuns.set(conversationId, run);
+    void run.finally(() => {
+      if (providerStreamRecoveryRuns.get(conversationId) === run) providerStreamRecoveryRuns.delete(conversationId);
+    });
+  }
+
   const { dispatchSubmission, isPreparingDispatch } = createCodexNativeDispatchPipeline({
     assertSubmissionDispatchable,
     isClosed: () => closing || closed,
@@ -3232,6 +3317,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         reconcileTerminalTurnSubmissions,
         recoverExternalRequestUserInputAnswer: (conversation: ZeusConversationWithMessagesRecord, request: ZeusConversationServerRequestRecord, resolvedAt: string) => externalAnswerRecovery.recover(conversation, request, resolvedAt),
         recoverExternallyResolvedRequestUserInputAnswers: (conversation: ZeusConversationWithMessagesRecord, providerTurnId?: string) => externalAnswerRecovery.recoverAll(conversation, providerTurnId),
+        recoverProviderStreamFailure: scheduleProviderStreamRecovery,
         rejectTurnResultWaiters,
         resolveTurnResult,
         rememberProcessedProviderEvent,
