@@ -34,8 +34,15 @@ type ChartSource = 'local' | 'account';
 /** 柱图槽位：日期、数值与完整性，数值为 null 表示当天没有可用数据。 */
 type DailySlot = { date: string; value: number | null; complete: boolean };
 
-/** 指标展示值可选携带模型费用明细，非费用指标不创建说明入口。 */
-type MetricValue = { label: string; accessibleLabel?: string; value: string; detailLabel?: string; costBreakdown?: UsageModelCostBreakdown[] };
+/** 指标展示值可选携带模型费用明细和计价口径，非费用指标不创建说明入口。 */
+type MetricValue = {
+  label: string;
+  accessibleLabel?: string;
+  value: string;
+  detailLabel?: string;
+  costBreakdown?: UsageModelCostBreakdown[];
+  pricingMeta?: { priceCoverage: number | null; hasBackfilledPricing: boolean };
+};
 
 const copy = {
   'zh-CN': {
@@ -72,10 +79,14 @@ const copy = {
     sevenDayCostDetail: '近 7 日模型费用明细',
     averageTurnCostDetail: '近 7 日平均每轮费用明细',
     costDetailHint: 'Token 单价按每百万计',
+    pricingCoverage: '计价覆盖',
+    historicalBackfill: '含历史补算',
     showCostDetail: '查看模型、单价和 Token 明细',
     model: '模型',
     unitPrice: '单价',
     consumedTokens: '消耗 Token',
+    estimatedCost: '估算费用',
+    usageAndEstimatedCost: 'Token / 费用',
     inputPrice: '输入',
     cachedInputPrice: '缓存读',
     cacheWritePrice: '缓存写',
@@ -144,13 +155,17 @@ const copy = {
     sevenDayCostDetail: 'Model cost details · 7 days',
     averageTurnCostDetail: 'Average cost per turn details · 7 days',
     costDetailHint: 'Token rates are per million',
+    pricingCoverage: 'Pricing coverage',
+    historicalBackfill: 'Includes historical backfill',
     showCostDetail: 'Show model, rate, and token details',
     model: 'Model',
     unitPrice: 'Rate',
     consumedTokens: 'Tokens',
+    estimatedCost: 'Estimated cost',
+    usageAndEstimatedCost: 'Token / cost',
     inputPrice: 'Input',
-    cachedInputPrice: 'Cache read',
-    cacheWritePrice: 'Cache write',
+    cachedInputPrice: 'Read',
+    cacheWritePrice: 'Write',
     outputPrice: 'Output',
     perRequestPrice: 'Per request',
     overview: 'Usage overview',
@@ -582,8 +597,6 @@ function UsageOverview(props: { provider: UsageProviderSummary; language: Langua
   const menuId = useId();
   const [visibleMetrics, setVisibleMetrics] = useState(readStoredMetrics);
   const metrics = readMetricValues(provider, language);
-  /** 价格覆盖与用量采集完整性分开说明，不把部分金额伪装成完整费用。 */
-  const partialPricing = (provider.todayLocal.priceCoverage !== null && provider.todayLocal.priceCoverage < 1) || (provider.sevenDayLocal.priceCoverage !== null && provider.sevenDayLocal.priceCoverage < 1);
   /** 至少保留一个指标，取消最后一个可见项时保持原样。 */
   const toggleMetric = (id: MetricId) => {
     const selected = visibleMetrics.includes(id);
@@ -624,14 +637,6 @@ function UsageOverview(props: { provider: UsageProviderSummary; language: Langua
             <Metric key={id} {...metrics[id]} language={language} />
           ))}
       </dl>
-      {partialPricing && (
-        <p className="menu-bar-usage-pricing-note">
-          {language === 'zh-CN'
-            ? `已计价 Token：今日 ${formatPercent(provider.todayLocal.priceCoverage, language)} · 七日 ${formatPercent(provider.sevenDayLocal.priceCoverage, language)}；剩余用量尚未计价。`
-            : `Priced tokens: today ${formatPercent(provider.todayLocal.priceCoverage, language)} · 7 days ${formatPercent(provider.sevenDayLocal.priceCoverage, language)}. Remaining usage is unpriced.`}
-        </p>
-      )}
-      {provider.sevenDayLocal.hasBackfilledPricing && <p className="menu-bar-usage-pricing-note">{language === 'zh-CN' ? '含历史补算：按补价时价格估算' : 'Includes historical usage estimated at backfill-time prices'}</p>}
     </section>
   );
 }
@@ -653,6 +658,7 @@ function readMetricValues(provider: UsageProviderSummary, language: Language): R
       value: provider.todayLocalComplete === true ? formatUsd(provider.todayLocal.apiEquivalentUsd, provider.todayLocal.priceCoverage, language, text.noPrice) : '—',
       detailLabel: text.todayCostDetail,
       costBreakdown: provider.todayCostBreakdown ?? [],
+      pricingMeta: { priceCoverage: provider.todayLocal.priceCoverage, hasBackfilledPricing: provider.todayLocal.hasBackfilledPricing ?? false },
     },
     sevenDayTokens: { label: text.sevenDays, value: formatIncompleteTokens(provider.sevenDayLocal.totalTokens, provider.sevenDayLocalComplete, language) },
     sevenDayCost: {
@@ -661,6 +667,7 @@ function readMetricValues(provider: UsageProviderSummary, language: Language): R
       value: sevenDayLocalComplete ? formatUsd(provider.sevenDayLocal.apiEquivalentUsd, provider.sevenDayLocal.priceCoverage, language, text.noPrice) : '—',
       detailLabel: text.sevenDayCostDetail,
       costBreakdown: provider.sevenDayCostBreakdown ?? [],
+      pricingMeta: { priceCoverage: provider.sevenDayLocal.priceCoverage, hasBackfilledPricing: provider.sevenDayLocal.hasBackfilledPricing ?? false },
     },
     cacheHit: { label: text.cache, value: !sevenDayLocalComplete ? '—' : cacheAvailable ? formatPercent(provider.sevenDayLocal.cacheHitRate, language, '—') : text.cacheUnsupported },
     cacheSavings: { label: text.cacheSavings, value: sevenDayLocalComplete ? formatUsd(provider.sevenDayLocal.cacheSavingsUsd, provider.sevenDayLocal.priceCoverage, language, text.noPrice) : '—' },
@@ -671,6 +678,7 @@ function readMetricValues(provider: UsageProviderSummary, language: Language): R
       value: sevenDayLocalComplete ? averageTurnCost : '—',
       detailLabel: text.averageTurnCostDetail,
       costBreakdown: provider.sevenDayCostBreakdown ?? [],
+      pricingMeta: { priceCoverage: provider.sevenDayLocal.priceCoverage, hasBackfilledPricing: provider.sevenDayLocal.hasBackfilledPricing ?? false },
     },
   };
 }
@@ -857,7 +865,7 @@ function Metric(props: MetricValue & { language: Language }) {
     <div>
       <dt>
         <span aria-label={props.accessibleLabel}>{props.label}</span>
-        {props.costBreakdown?.length && props.detailLabel ? <CostBreakdownPopover entries={props.costBreakdown} label={props.detailLabel} language={props.language} /> : null}
+        {props.costBreakdown?.length && props.detailLabel ? <CostBreakdownPopover entries={props.costBreakdown} label={props.detailLabel} language={props.language} pricingMeta={props.pricingMeta} /> : null}
       </dt>
       <dd>{props.value}</dd>
     </div>
@@ -871,8 +879,10 @@ const costDetailPopoverGap = 8;
 const costDetailViewportInset = 12;
 
 /** 费用说明紧贴触发图标向下展开，空间不足时翻到上方。 */
-function CostBreakdownPopover(props: { entries: UsageModelCostBreakdown[]; label: string; language: Language }) {
+function CostBreakdownPopover(props: { entries: UsageModelCostBreakdown[]; label: string; language: Language; pricingMeta?: MetricValue['pricingMeta'] }) {
   const text = copy[props.language];
+  /** 只在口径确实需要解释时显示，完整且无补算的费用不增加噪音。 */
+  const pricingMeta = formatPricingMeta(props.pricingMeta, props.language);
   /** 每个指标独立关联触发按钮和浮层，保证多个费用指标同时存在时不串位。 */
   const popoverId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -996,7 +1006,7 @@ function CostBreakdownPopover(props: { entries: UsageModelCostBreakdown[]; label
               <tr>
                 <th scope="col">{text.model}</th>
                 <th scope="col">{text.unitPrice}</th>
-                <th scope="col">{text.consumedTokens}</th>
+                <th scope="col">{text.usageAndEstimatedCost}</th>
               </tr>
             </thead>
             <tbody>
@@ -1008,30 +1018,53 @@ function CostBreakdownPopover(props: { entries: UsageModelCostBreakdown[]; label
                       <span key={line}>{line}</span>
                     ))}
                   </td>
-                  <td>{formatTokens(entry.usage.totalTokens, props.language)}</td>
+                  <td aria-label={`${text.consumedTokens} ${formatTokens(entry.usage.totalTokens, props.language)}；${text.estimatedCost} ${formatModelEstimatedCost(entry, props.language)}`}>
+                    <span>{formatTokens(entry.usage.totalTokens, props.language)}</span>
+                    <span className="menu-bar-usage-model-estimated-cost">{formatModelEstimatedCost(entry, props.language)}</span>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        {pricingMeta ? <small className="menu-bar-usage-cost-detail-meta">{pricingMeta}</small> : null}
       </div>
     </div>
   );
 }
 
-/** 单价单元格完整列出实际使用过的计价类别，空费率明确显示暂无价格。 */
+/** 将计价覆盖和历史补算合并为一行明细说明。 */
+function formatPricingMeta(meta: MetricValue['pricingMeta'], language: Language): string | null {
+  if (!meta) return null;
+  const text = copy[language];
+  const parts: string[] = [];
+  if (meta.priceCoverage !== null && meta.priceCoverage < 1) parts.push(`${text.pricingCoverage} ${formatPercent(meta.priceCoverage, language)}`);
+  if (meta.hasBackfilledPricing) parts.push(text.historicalBackfill);
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
+
+/** 单价按普通输入输出、缓存读写压成两行，空费率明确显示暂无价格。 */
 function formatModelRate(entry: UsageModelCostBreakdown, language: Language): string[] {
   const text = copy[language];
   const rate = entry.rate;
   if (!rate) return [text.noPrice];
   if (rate.perRequest !== null) return [`${text.perRequestPrice} ${formatRateAmount(rate.perRequest, rate.currency, language)}`];
   if (!rate.perMillion) return [text.noPrice];
+  /** 普通输入输出始终成对展示，便于横向比较。 */
+  const lines = [`${text.inputPrice} ${formatRateAmount(rate.perMillion.input, rate.currency, language)} · ${text.outputPrice} ${formatRateAmount(rate.perMillion.output, rate.currency, language)}`];
   /** 缓存类别只在单价已知时显示，避免把未知误写成零。 */
-  const lines = [`${text.inputPrice} ${formatRateAmount(rate.perMillion.input, rate.currency, language)}`];
-  if (rate.perMillion.cachedInput !== null) lines.push(`${text.cachedInputPrice} ${formatRateAmount(rate.perMillion.cachedInput, rate.currency, language)}`);
-  if (rate.perMillion.cacheWrite !== null) lines.push(`${text.cacheWritePrice} ${formatRateAmount(rate.perMillion.cacheWrite, rate.currency, language)}`);
-  lines.push(`${text.outputPrice} ${formatRateAmount(rate.perMillion.output, rate.currency, language)}`);
+  const cacheRates: string[] = [];
+  if (rate.perMillion.cachedInput !== null) cacheRates.push(`${text.cachedInputPrice} ${formatRateAmount(rate.perMillion.cachedInput, rate.currency, language)}`);
+  if (rate.perMillion.cacheWrite !== null) cacheRates.push(`${text.cacheWritePrice} ${formatRateAmount(rate.perMillion.cacheWrite, rate.currency, language)}`);
+  if (cacheRates.length > 0) lines.push(cacheRates.join(' · '));
   return lines;
+}
+
+/** 每行费用直接展示后台按请求价格快照汇总的原币金额。 */
+function formatModelEstimatedCost(entry: UsageModelCostBreakdown, language: Language): string {
+  const costs = entry.estimatedCosts;
+  if (!costs?.length) return copy[language].noPrice;
+  return costs.map(({ currency, amount }) => `~${formatRateAmount(amount, currency, language)}`).join(' + ');
 }
 
 /** 费率保留原币种；美元与人民币使用熟悉符号，其他单位显示原始代码。 */
@@ -1169,10 +1202,10 @@ function formatCurrency(value: number, language: Language, maximumFractionDigits
   }).format(value);
 }
 
-/** 缺价与部分计价显式区分；波浪号只表示金额是估算。 */
+/** 主金额只标记估算属性；未计价范围由紧邻指标区的覆盖率说明统一承载。 */
 function formatUsd(value: number | null, coverage: number | null | undefined, language: Language, unavailable: string): string {
   if (value === null || !coverage) return unavailable;
-  return `${coverage < 1 ? (language === 'zh-CN' ? '部分 ' : 'Partial ') : ''}~${formatCurrency(value, language)}`;
+  return `~${formatCurrency(value, language)}`;
 }
 
 /** 柱图槽位金额：槽位已按天过滤缺失与未定价，这里只做格式化。 */

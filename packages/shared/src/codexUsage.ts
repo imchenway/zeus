@@ -111,6 +111,8 @@ export interface UsageModelCostBreakdown {
   model: string;
   rate: UsageModelRate | null;
   usage: TokenUsageBreakdown;
+  /** 该行按请求价格快照汇总的原币估算费用。 */
+  estimatedCosts: import('./modelPricing.js').EstimatedMoney[];
 }
 
 export interface UsageProviderSummary {

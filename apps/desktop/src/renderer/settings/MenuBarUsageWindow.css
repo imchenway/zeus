@@ -628,7 +628,7 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-cost-detail:popover-open {
   display: grid;
   /* 表头说明保持自然高度，只有表格区域随可用空间收缩并滚动。 */
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: 4px;
 }
 
@@ -640,6 +640,12 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-cost-detail > small {
   color: var(--usage-muted);
   font-size: 10px;
+}
+
+/* 计价口径只在费用明细中按需出现，避免概览长期占用两行。 */
+.menu-bar-usage-cost-detail > .menu-bar-usage-cost-detail-meta {
+  padding-block-start: 4px;
+  border-block-start: 1px solid var(--usage-line);
 }
 
 .menu-bar-usage-cost-table-scroll {
@@ -671,19 +677,24 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-cost-detail th:first-child {
-  inline-size: 34%;
+  inline-size: 22%;
   text-align: start;
 }
 
 .menu-bar-usage-cost-detail th:nth-child(2) {
-  inline-size: 42%;
+  inline-size: 50%;
   text-align: start;
 }
 
 .menu-bar-usage-cost-detail th:last-child,
 .menu-bar-usage-cost-detail td:last-child {
-  inline-size: 24%;
+  inline-size: 28%;
   text-align: end;
+}
+
+/* 结果列表头使用短文案并固定单行，避免“费用”孤立换行。 */
+.menu-bar-usage-cost-detail thead th:last-child {
+  white-space: nowrap;
 }
 
 .menu-bar-usage-cost-detail tbody th {
@@ -694,6 +705,18 @@ body:has(.menu-bar-usage-root),
   display: block;
   color: var(--usage-muted);
   line-height: 1.45;
+}
+
+/* 单价每组固定占一行，列宽优先保证中英文输入/输出和缓存读/写不拆行。 */
+.menu-bar-usage-cost-detail td:nth-child(2) span {
+  white-space: nowrap;
+  font-size: 10px;
+}
+
+/* 每行金额与 Token 共用结果列，和两行单价对齐，避免窄浮窗被第四列挤碎。 */
+.menu-bar-usage-cost-detail td .menu-bar-usage-model-estimated-cost {
+  color: var(--usage-text);
+  font-weight: 650;
 }
 
 .menu-bar-usage-metrics dd {
@@ -1386,15 +1409,6 @@ body:has(.menu-bar-usage-root),
   gap: 0;
   border-block-start: 1px solid var(--usage-line);
   background: var(--usage-panel);
-}
-
-/* 历史补价说明始终可见，窄浮窗中允许自然换行。 */
-.menu-bar-usage-pricing-note {
-  margin: 0 0 8px;
-  color: var(--usage-muted);
-  font-size: 11px;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
 }
 
 .menu-bar-usage-overview-head {
