@@ -180,19 +180,24 @@ export function failTaskModelPushPendingState(pending: TaskModelPushPendingState
   };
 }
 
-/** 真实身份只替换读写目标，稳定导航身份和当前工作面内容保持不变。 */
+/** 真实身份接管读写目标并确认首条任务消息，稳定导航身份和当前工作面内容保持不变。 */
 export function attachTaskModelPushChoice(pending: TaskModelPushPendingState, choice: NativeConversationChoice): TaskModelPushPendingState {
   const projectedChoice = { ...choice, navigationId: pending.navigationId, taskPushCreating: true };
   return {
     ...pending,
     choice: projectedChoice,
-    session: remapPendingSession(pending.session, projectedChoice),
+    session: sessionReducer(remapPendingSession(pending.session, projectedChoice), {
+      type: 'send_accepted',
+      clientUserMessageId: pending.request.clientUserMessageId,
+      status: 'active',
+    }),
     status: 'submitting',
     error: null,
     retryProgress: null,
   };
 }
 
+/** 后续排队消息发送完成后结束任务推送过渡态。 */
 export function acceptTaskModelPushPendingState(pending: TaskModelPushPendingState): TaskModelPushPendingState {
   if (!taskModelPushHasRealChoice(pending)) {
     throw new Error('Task model push cannot be accepted before a real conversation and provider thread are attached.');

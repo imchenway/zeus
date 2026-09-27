@@ -4,6 +4,7 @@ import { adaptConversationSnapshotV2, mergeConversationProcessV2, resumeCachedCo
 import { createHydratedSessionState, createInitialSessionState, sessionReducer } from '../apps/desktop/src/renderer/session/sessionReducer.ts';
 import type { NativePlanImplementationRequest, NativeRealtimeEventEnvelope, NativeQueueSnapshot, NativeSessionState, NativeConversationEvent } from '../apps/desktop/src/renderer/session/sessionTypes.ts';
 import { orderTranscriptItemsWithQueue } from '../apps/desktop/src/renderer/session/conversationQueuePresentation.ts';
+import { attachTaskModelPushChoice, type TaskModelPushPendingState } from '../apps/desktop/src/renderer/task/TaskModelPushPendingWorkspace.tsx';
 import type { TurnChangeSet } from '../packages/shared/src/conversationResources.ts';
 import type { ConversationTranscriptEnvelope } from '../packages/shared/src/conversationTranscriptWire.ts';
 
@@ -1542,6 +1543,39 @@ async function verifyTaskPushPlacement() {
     updatedAt: occurredAt,
     transcript: transcript('reply', 2048),
   };
+  /** 创建期工作面使用正式发送状态机建立首条任务卡。 */
+  const pendingSession = sessionReducer(
+    { ...createInitialSessionState(), projectId, conversationId, providerThreadId: threadId, conversationState: 'active_prework' },
+    {
+      type: 'send_started',
+      clientUserMessageId: 'task-first',
+      durableClientUserMessageId: 'task-first',
+      draft: '首条任务提示词',
+      attachments: [],
+      submittedAttachments: [],
+      browserSubmission: null,
+      contextDraft: { responseAnnotations: [], codeComments: [] },
+      browserComments: [],
+      delivery: 'queue',
+      previousConversationState: 'active_prework',
+      startedAt: occurredAt,
+      taskPushLayout: { kind: 'task_push', blocks: [], supplementalInfo: '', supplementalAttachments: [] },
+    },
+  );
+  /** 任务推送状态只读取这些真实交接字段，其余内容不参与本次位置断言。 */
+  const pendingTaskPush = {
+    navigationId: 'task-push:probe',
+    choice: { ...choice, id: 'task-push:probe', navigationId: 'task-push:probe', providerThreadId: null },
+    request: { clientUserMessageId: 'task-first' },
+    session: pendingSession,
+    status: 'submitting',
+  } as unknown as TaskModelPushPendingState;
+  /** 真实身份绑定已经代表首条消息耐久接纳，无需等待后续队列排空。 */
+  const attachedTaskPush = attachTaskModelPushChoice(pendingTaskPush, choice);
+  /** 接管后的首条消息用于同时核对发送状态与可见顺序。 */
+  const attachedOpening = attachedTaskPush.session.items[attachedTaskPush.session.itemOrder[0]!]!;
+  assert(attachedOpening.status === 'active' && attachedOpening.optimistic === true, '真实会话接管必须确认首条任务消息，同时保留 Provider 回显核对。');
+  assert(orderTranscriptItemsWithQueue([attachedOpening, reply], null)[0] === attachedOpening, '已接纳任务提示词不能再被队列展示规则移到回复之后。');
   /** 先接收正式用户回显，再补入只包含回复的历史页。 */
   let state = sessionReducer(createHydratedSessionState(snapshot), { type: 'event_received', event: userEvent as NativeConversationEvent });
   state = sessionReducer(state, { type: 'snapshot_v2_page_merged', snapshot: { ...snapshot, items: [reply] } });
@@ -1590,7 +1624,7 @@ async function verifyTaskPushPlacement() {
     /** 没有正式位置的后续事件必须进入恢复，不能再污染消息列表。 */
     recovered.emit(conversationEvent(1, 'conversation.item.started', { turnId: 'turn', itemId: 'missing-position', itemType: 'agentMessage', textContent: '不得投影' }));
     assert(!Object.values(recovered.controller.getState().items).some((item) => item.itemId === 'missing-position'), '缺少位置的实时消息不得进入列表。');
-    return { taskPromptFirst: true, queuePreserved: true, steeringPreserved: true, removalPreserved: true, coldOpenPreserved: true, recoveredInputReads: reads, missingLivePositionRejected: true };
+    return { taskPromptFirst: true, acceptedHandoffPreserved: true, queuePreserved: true, steeringPreserved: true, removalPreserved: true, coldOpenPreserved: true, recoveredInputReads: reads, missingLivePositionRejected: true };
   } finally {
     recovered.controller.dispose();
   }
