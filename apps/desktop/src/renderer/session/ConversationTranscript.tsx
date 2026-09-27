@@ -32,8 +32,7 @@ import { newItemMotionDurationMs, useNewItemMotionIds } from '../ui/useNewItemMo
 import { captureTranscriptViewportAnchor, compensateTranscriptViewportAnchor, type TranscriptViewportAnchor, useTranscriptViewportVirtualizer } from './transcriptViewportVirtualizer.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { isImageResource } from './ConversationResources.js';
-import { canSteerActiveTurn } from './ConversationComposer.js';
-import { isSubmissionWaitingInQueue, isUnacceptedTranscriptMessage, orderTranscriptItemsWithQueue, visibleQueuedSubmissions } from './conversationQueuePresentation.js';
+import { composerQueuedSubmissions, isUnacceptedTranscriptMessage, orderTranscriptItemsWithQueue, visibleQueuedSubmissions } from './conversationQueuePresentation.js';
 import type { McpAppToolCall, McpAppToolResult } from './McpAppFrame.js';
 import { ConversationNavigation, mergeNavigationEntries, navigationRowKey, useConversationNavigation, type TranscriptNavigationEntry } from './ConversationNavigation.js';
 
@@ -79,7 +78,6 @@ export interface ConversationTranscriptProps {
   onRetryPendingSend?: (clientUserMessageId: string, intent: 'check' | 'continue') => void | Promise<void>;
   onCancelPendingSend?: (clientUserMessageId: string) => void | Promise<void>;
   onCancelQueuedSubmission?: (submissionId: string) => void | Promise<void>;
-  onSendQueuedNow?: (submissionId: string) => void | Promise<void>;
   /** 时间线入口只打开底部答题区，不在历史中展开表单。 */
   onOpenAsyncQuestion?: (item: NativeSessionItemBuffer) => void;
   /** 当前会话工作面每次本地提交或编辑重发后递增；不依赖异步 Provider 投影推断用户发送。 */
@@ -341,7 +339,14 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const updateHistorySentinelIntersection = useCallback((intersecting: boolean) => setHistorySentinelIntersection({ conversationId: props.state.conversationId, intersecting }), [props.state.conversationId]);
   const activeTurnId = props.historyOnly ? null : props.state.activeTurnId;
   const queuedSubmissions = useMemo(() => visibleQueuedSubmissions(props.state.queue), [props.state.queue]);
-  const queuedClientUserMessageIds = useMemo(() => new Set(queuedSubmissions.map((submission) => submission.clientUserMessageId).filter((value): value is string => Boolean(value))), [queuedSubmissions]);
+  /** 输入框卡片接管的提交不能同时出现在会话时间线。 */
+  const composerQueue = useMemo(() => composerQueuedSubmissions(props.state.queue), [props.state.queue]);
+  /** 稳定提交身份覆盖冷开时由持久 submission 重建的本地消息。 */
+  const composerQueueSubmissionIds = useMemo(() => new Set(composerQueue.map((submission) => submission.id)), [composerQueue]);
+  /** 客户端消息身份覆盖首次提交后尚未取得本地提交身份的乐观消息。 */
+  const composerQueueClientUserMessageIds = useMemo(() => new Set(composerQueue.map((submission) => submission.clientUserMessageId).filter((value): value is string => Boolean(value))), [composerQueue]);
+  /** 引导、失败和恢复项仍由时间线承载，只有普通等待项进入输入框卡片。 */
+  const transcriptQueuedSubmissions = useMemo(() => queuedSubmissions.filter((submission) => !composerQueueSubmissionIds.has(submission.id)), [composerQueueSubmissionIds, queuedSubmissions]);
   /** 内容批次复用已建立的输入、阶段和父组索引。 */
   const previousProjection = useRef<TranscriptProjection | null>(null);
   const projectionContext = [
@@ -368,12 +373,16 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           .map((key) => props.state.items[key])
           .filter(
             (entry): entry is NativeSessionItemBuffer =>
-              Boolean(entry) && (!props.historyOnly || !entry.optimistic) && isVisibleTranscriptItem(entry) && isFormalPlanTranscriptItem(entry, props.state) && !isUnacceptedQueuedUserItem(entry, queuedClientUserMessageIds),
+              Boolean(entry) &&
+              (!props.historyOnly || !entry.optimistic) &&
+              isVisibleTranscriptItem(entry) &&
+              isFormalPlanTranscriptItem(entry, props.state) &&
+              !isComposerQueuedUserItem(entry, composerQueueSubmissionIds, composerQueueClientUserMessageIds),
           ),
       ),
-    [props.historyOnly, props.state.activeTurnId, props.state.itemOrder, props.state.items, props.state.planImplementationRequests, queuedClientUserMessageIds],
+    [composerQueueClientUserMessageIds, composerQueueSubmissionIds, props.historyOnly, props.state.activeTurnId, props.state.itemOrder, props.state.items, props.state.planImplementationRequests],
   );
-  const queuedSubmissionItems = useMemo(() => projectQueuedSubmissionItems(props.state, queuedSubmissions, persistedItems), [persistedItems, props.state.conversationId, props.state.providerThreadId, queuedSubmissions]);
+  const queuedSubmissionItems = useMemo(() => projectQueuedSubmissionItems(props.state, transcriptQueuedSubmissions, persistedItems), [persistedItems, props.state.conversationId, props.state.providerThreadId, transcriptQueuedSubmissions]);
   const projectedItems = useMemo(() => {
     if (contentProjection) return contentProjection.items;
     // 已确认消息沿用历史时间；仍在排队的补充留在记录末尾，避免切换后藏到旧回复上方。
@@ -1894,10 +1903,6 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
   }
   const showPendingDeliveryFeedback = row.item.optimistic && shouldShowPendingMessageDeliveryFeedback(row.item, options.showThinking);
   const queuedSubmission = queuedSubmissionForItem(row.item, options.props.state.queue);
-  const queuedSubmissionId = queuedSubmission && !queuedSubmission.controlAction && !queuedSubmission.providerTurnId ? queuedSubmission.id : undefined;
-  /** 送达未知或仍需核对的消息不能按未发送队列操作；保留身份供状态检查使用。 */
-  const queuedActionsAvailable = queuedSubmissionId && queuedSubmission?.pausedReason !== 'outcome_unknown' && queuedSubmission?.pausedReason !== 'recovery_required' && !queuedSubmission?.error?.recoveryRequired;
-  const queuedSteerDisabledReason = queuedSubmissionId && queuedSubmission?.status === 'queued' ? queuedSteerUnavailableReason(options.props.state, queuedSubmission, options.props.language) : undefined;
   return (
     <TranscriptV2ContentBoundary item={row.item} onLoadContent={options.props.onLoadV2Content}>
       <ThreadItemView
@@ -1920,12 +1925,6 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         onAddResponseAnnotation={options.props.onAddResponseAnnotation}
         onUpdateResponseAnnotation={options.props.onUpdateResponseAnnotation}
         onRemoveResponseAnnotation={options.props.onRemoveResponseAnnotation}
-        queuedSubmissionId={queuedSubmissionId}
-        waitingInQueue={isSubmissionWaitingInQueue(options.props.state.queue, queuedSubmission)}
-        conversationRestoring={Boolean(queuedSubmission && options.props.state.queue?.waitReason === 'conversation_restoring')}
-        queuedSteerDisabledReason={queuedSteerDisabledReason}
-        onSteerQueuedSubmission={queuedActionsAvailable && queuedSubmission?.status === 'queued' ? options.props.onSendQueuedNow : undefined}
-        onDeleteQueuedSubmission={queuedActionsAvailable && (queuedSubmission?.status === 'queued' || queuedSubmission?.status === 'paused') ? options.props.onCancelQueuedSubmission : undefined}
         onRetryExpertExecution={options.props.onRetryQueuedSubmission}
       />
       {showPendingDeliveryFeedback ? (
@@ -2966,14 +2965,13 @@ function timestampMillis(value: string | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function isUnacceptedQueuedUserItem(item: NativeSessionItemBuffer, queuedClientUserMessageIds: ReadonlySet<string>): boolean {
-  if (!item.optimistic || itemRole(item) !== 'user' || item.payload.delivery !== 'queue') return false;
-  // 已落库的本地 userMessage 只是仍在等待 Provider 接纳，不应再被队列替身挤掉。
-  if (item.localItemId) return false;
-  const clientUserMessageId = transcriptUserMessageClientIds(item)[0];
-  // Provider 的 active turn 会早于 userMessage/模型历史投影到达。此时不能因为 pending turn id
-  // 与 Provider turn id 不同就隐藏本地气泡；只有队列已经用同一客户端身份画出替身时才去重。
-  return Boolean(clientUserMessageId && queuedClientUserMessageIds.has(clientUserMessageId));
+function isComposerQueuedUserItem(item: NativeSessionItemBuffer, submissionIds: ReadonlySet<string>, clientUserMessageIds: ReadonlySet<string>): boolean {
+  if (!item.optimistic || itemRole(item) !== 'user') return false;
+  /** 提交身份覆盖冷开后由持久队列重建的本地消息。 */
+  const itemSubmissionIds = [item.localItemId, item.itemId, transcriptPayloadString(item, 'submissionId')].filter((value): value is string => Boolean(value));
+  if (itemSubmissionIds.some((identity) => submissionIds.has(identity))) return true;
+  /** 客户端身份覆盖首次入队后尚未补齐提交身份的乐观消息。 */
+  return transcriptUserMessageClientIds(item).some((identity) => clientUserMessageIds.has(identity));
 }
 
 function queuedSubmissionForItem(item: NativeSessionItemBuffer, queue: NativeQueueSnapshot | null): NativeQueuedSubmission | null {
@@ -2981,16 +2979,6 @@ function queuedSubmissionForItem(item: NativeSessionItemBuffer, queue: NativeQue
   if (submissionIds.length === 0) return null;
   const identities = new Set(submissionIds);
   return queue?.submissions.find((submission) => identities.has(submission.id)) ?? null;
-}
-
-function queuedSteerUnavailableReason(state: NativeSessionState, submission: NativeQueuedSubmission, language: SessionUiLanguage): string | null {
-  const queueHead = [...(state.queue?.submissions ?? [])]
-    .filter((candidate) => candidate.status === 'queued' || candidate.status === 'paused' || candidate.status === 'failed')
-    .sort((left, right) => left.position - right.position || (left.createdAt ?? '').localeCompare(right.createdAt ?? '') || left.id.localeCompare(right.id))[0];
-  if (!queueHead) return language === 'zh-CN' ? '队列状态尚未就绪' : 'The queue state is not ready yet';
-  if (queueHead.id !== submission.id) return language === 'zh-CN' ? '请先处理更早的排队消息' : 'Handle the earlier queued message first';
-  if (!canSteerActiveTurn(state)) return language === 'zh-CN' ? '当前回复还未准备好接受引导' : 'The current response is not ready for steering';
-  return null;
 }
 
 /**

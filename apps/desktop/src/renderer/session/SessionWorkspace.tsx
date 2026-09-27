@@ -26,6 +26,7 @@ import { codexCapabilitiesChangedEvent } from '../features/codex/codexApiClient.
 import { ZeusSelect } from '../ZeusSelect.js';
 import { canSteerActiveTurn, type ComposerRuntimeSettings, ConversationComposer, type ConversationComposerProps, resolveComposerKeyIntent } from './ConversationComposer.js';
 import { ConversationTranscript, type ConversationTranscriptProps, hasUnclaimedRecoveredRequestUserInput, type SessionCreationStatus } from './ConversationTranscript.js';
+import { QueuedConversationMessages, type QueuedConversationMessagesProps } from './QueuedConversationMessages.js';
 import { SessionPlanProgress } from './SessionActivity.js';
 import { LegacyConversationBanner } from './LegacyConversationBanner.js';
 import { hasPendingRequestDetails, PendingRequestSurface, requestKind } from './PendingRequestSurface.js';
@@ -76,7 +77,7 @@ import type {
 } from './sessionTypes.js';
 import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, serviceTierWireOverride } from './serviceTierSelection.js';
 import { type SessionController, type SessionControllerClient, useSessionControllerInstance, useSessionControllerSelector } from './useSessionController.js';
-import { createConversationComposerStateSelector, createConversationTranscriptStateSelector, createSessionWorkspaceStateSelector } from './sessionStateSlices.js';
+import { createConversationComposerStateSelector, createConversationQueueStateSelector, createConversationTranscriptStateSelector, createSessionWorkspaceStateSelector } from './sessionStateSlices.js';
 import { createSessionEscapeController, type SessionEscapeController, type SessionEscapeLayer, type SessionEscapeResult } from './useThreadScrollController.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { ConversationMarkdown } from './ConversationMarkdown.js';
@@ -868,7 +869,10 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     onAnswerAsyncQuestion: async (item, answers, asNewMessage, answerAttachments) => {
       await input.controller.answerAsyncQuestion(item, answers, asNewMessage, answerAttachments);
     },
-    onReorderQueue: (orderedSubmissionIds) => settle(input.controller.reorderQueue(orderedSubmissionIds)),
+    // 重排失败必须回到原卡片，不能像后台恢复操作一样静默吞掉。
+    onReorderQueue: async (orderedSubmissionIds) => {
+      await input.controller.reorderQueue(orderedSubmissionIds);
+    },
     onResumeQueue: () => settle(input.controller.resumeQueue()),
     // 检查失败回传消息旁的反馈，不由通用操作吞掉或重复弹窗。
     onRecoverQueue: async () => {
@@ -1562,6 +1566,13 @@ function SessionComposerProjection(props: Omit<ConversationComposerProps, 'state
   const { controller, state: fallbackState, ...composerProps } = props;
   const state = useOptionalSessionStateSlice(controller, fallbackState, createConversationComposerStateSelector);
   return <ConversationComposer {...composerProps} state={state} />;
+}
+
+/** 排队卡片独立订阅队列，避免输入编辑器跟随队列操作重建。 */
+function SessionQueueProjection(props: Omit<QueuedConversationMessagesProps, 'state'> & { state: NativeSessionState; controller?: SessionController }) {
+  const { controller, state: fallbackState, ...queueProps } = props;
+  const state = useOptionalSessionStateSlice(controller, fallbackState, createConversationQueueStateSelector);
+  return <QueuedConversationMessages {...queueProps} state={state} />;
 }
 
 const labels = {
@@ -2523,12 +2534,29 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     );
   }
 
+  /** 普通排队消息固定靠近底部输入区，所有操作继续使用权威提交身份。 */
+  function renderQueuedConversationMessages(): ReactNode {
+    if (!props.state || props.historyOnly || props.suppressComposer) return null;
+    return (
+      <SessionQueueProjection
+        state={props.state}
+        controller={props.stateController}
+        language={props.language}
+        onEdit={transcriptInteractionsEnabled ? actions.onEditQueuedSubmission : undefined}
+        onDelete={transcriptInteractionsEnabled ? actions.onDeleteQueuedSubmission : undefined}
+        onSendNow={transcriptInteractionsEnabled ? actions.onSendQueuedNow : undefined}
+        onReorder={transcriptInteractionsEnabled ? actions.onReorderQueue : undefined}
+      />
+    );
+  }
+
   /** 同步与异步表单共享底部容器，分别保留既有提交权限和生命周期。 */
   function renderBottomInteraction(): ReactNode {
     if (props.suppressComposer || props.historyOnly) return null;
     if (blockingPendingRequest) {
       return (
         <section className="session-interaction-dock" aria-label={props.language === 'zh-CN' ? '待处理交互' : 'Pending interaction'}>
+          {renderQueuedConversationMessages()}
           <PendingRequestSurface
             key={blockingPendingRequest.id}
             request={blockingPendingRequest}
@@ -2550,6 +2578,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     if (blockingPlanImplementationRequest) {
       return (
         <section className="session-interaction-dock" aria-label={props.language === 'zh-CN' ? '待处理交互' : 'Pending interaction'}>
+          {renderQueuedConversationMessages()}
           <PlanImplementationRequestSurface
             key={blockingPlanImplementationRequest.id}
             request={blockingPlanImplementationRequest}
@@ -2566,6 +2595,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     if (dockedAsyncQuestion && props.state && actions.onAnswerAsyncQuestion) {
       return (
         <section className="session-interaction-dock" aria-label={props.language === 'zh-CN' ? '待回答问题' : 'Question to answer'}>
+          {renderQueuedConversationMessages()}
           <AsyncQuestionPanel
             key={asyncQuestionIdentity(dockedAsyncQuestion)}
             item={dockedAsyncQuestion}
@@ -2857,7 +2887,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     onRetryPendingSend={transcriptInteractionsEnabled ? actions.onRetryPendingSend : undefined}
                     onCancelPendingSend={transcriptInteractionsEnabled ? actions.onCancelPendingSend : undefined}
                     onCancelQueuedSubmission={transcriptInteractionsEnabled ? actions.onDeleteQueuedSubmission : undefined}
-                    onSendQueuedNow={transcriptInteractionsEnabled ? actions.onSendQueuedNow : undefined}
                     onOpenAsyncQuestion={transcriptInteractionsEnabled && !props.suppressComposer && actions.onAnswerAsyncQuestion ? asyncQuestionDock.open : undefined}
                     openPlanItem={planWorkspaceItem}
                     onOpenPlan={(item) => {
@@ -2934,7 +2963,10 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                         </nav>
                       ) : null}
                       {goal ? <GoalRail goal={goal} language={props.language} onOpen={() => setGoalPanelOpen(true)} /> : null}
-                      {renderConversationComposer()}
+                      <div className="session-composer-stack">
+                        {renderQueuedConversationMessages()}
+                        {renderConversationComposer()}
+                      </div>
                     </>
                   )}
                   {!props.historyOnly && interruptArmed ? (

@@ -749,6 +749,7 @@
   background: var(--session-control);
   border: 1px solid var(--session-line-soft);
   border-radius: 12px;
+  box-shadow: 0 4px 14px var(--session-shadow-soft);
   flex: 0 0 auto;
   inline-size: min(var(--session-composer-max), calc(100% - (2 * var(--session-gutter))));
   margin: 0 auto 8px;
@@ -758,7 +759,7 @@
 
 .session-codex-parity-v1 .session-interaction-dock > .session-queued-messages {
   inline-size: 100%;
-  margin: 12px 0 0;
+  margin: 0 0 8px;
 }
 
 .session-codex-parity-v1 .session-queued-messages-header {
@@ -809,6 +810,12 @@
   padding: 7px 8px 7px 10px;
 }
 
+.session-codex-parity-v1 .session-queued-message[data-editing='true'] {
+  align-items: stretch;
+  background: transparent;
+  padding: 7px 8px 8px;
+}
+
 .session-codex-parity-v1 .session-queued-message[data-queue-status='paused'] {
   background: color-mix(in srgb, var(--session-warning) 5%, transparent);
 }
@@ -818,8 +825,65 @@
 }
 
 .session-codex-parity-v1 .session-queued-message-content {
+  align-items: center;
+  display: flex;
+  gap: 7px;
   min-inline-size: 0;
   overflow: hidden;
+}
+
+.session-codex-parity-v1 .session-queued-message-content > svg {
+  block-size: 15px;
+  color: var(--session-text-muted);
+  flex: 0 0 auto;
+  inline-size: 15px;
+}
+
+.session-codex-parity-v1 .session-queued-message-state {
+  color: var(--session-text-muted);
+  flex: 0 0 auto;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-queued-message-preview {
+  color: var(--session-text);
+  flex: 1 1 auto;
+  font-size: 12px;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 附件与正文各自保留可识别摘要；纯附件时文件名占据正文位置。 */
+.session-codex-parity-v1 .session-queued-message-attachment-summary {
+  align-items: center;
+  color: var(--session-text-muted);
+  display: inline-flex;
+  flex: 0 1 42%;
+  font-size: 11px;
+  gap: 4px;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-queued-message-attachment-summary[data-attachment-only='true'] {
+  color: var(--session-text);
+  flex: 1 1 auto;
+  font-size: 12px;
+}
+
+.session-codex-parity-v1 .session-queued-message-attachment-summary > svg {
+  block-size: 14px;
+  flex: 0 0 auto;
+  inline-size: 14px;
+}
+
+.session-codex-parity-v1 .session-queued-message-attachment-summary > span {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .session-codex-parity-v1 .session-queued-message-reference {
@@ -853,7 +917,7 @@
   align-items: center;
   color: var(--session-text-muted);
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 2px;
   justify-content: flex-end;
 }
@@ -867,7 +931,18 @@
   font-size: 11px;
   min-block-size: 28px;
   min-inline-size: 28px;
-  padding-inline: 7px;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .session-queued-message-actions button {
+  align-items: center;
+  display: inline-flex;
+  justify-content: center;
+}
+
+.session-codex-parity-v1 .session-queued-message-actions button > svg {
+  block-size: 15px;
+  inline-size: 15px;
 }
 
 .session-codex-parity-v1 .session-queued-message-actions .session-queued-message-steer {
@@ -876,11 +951,18 @@
 }
 
 .session-codex-parity-v1 .session-queued-message-actions button:hover:not(:disabled):not([aria-disabled='true']),
-.session-codex-parity-v1 .session-queued-message-actions button:focus-visible,
+.session-codex-parity-v1 .session-queued-message-actions button:focus-visible:not(:disabled):not([aria-disabled='true']),
 .session-codex-parity-v1 .session-queued-message-editor button:hover:not(:disabled):not([aria-disabled='true']),
 .session-codex-parity-v1 .session-queued-message-editor button:focus-visible {
   background: var(--session-control-hover);
   color: var(--session-text);
+}
+
+/* 删除操作在鼠标悬停和键盘聚焦时使用同一危险色反馈。 */
+.session-codex-parity-v1 .session-queued-message-actions .session-queued-message-delete:hover:not(:disabled),
+.session-codex-parity-v1 .session-queued-message-actions .session-queued-message-delete:focus-visible:not(:disabled) {
+  background: color-mix(in srgb, var(--session-danger) 9%, transparent);
+  color: var(--session-danger);
 }
 
 .session-codex-parity-v1 .session-queued-message-actions button:focus-visible,
@@ -891,46 +973,170 @@
 }
 
 .session-codex-parity-v1 .session-queued-message-actions button:disabled,
+.session-codex-parity-v1 .session-queued-message-actions button[aria-disabled='true'],
 .session-codex-parity-v1 .session-queued-message-editor button:disabled {
   color: color-mix(in srgb, var(--session-text-muted) 58%, transparent);
   cursor: default;
 }
 
 .session-codex-parity-v1 .session-queued-message-editor {
+  background: color-mix(in srgb, var(--session-text) 1.5%, var(--session-canvas));
+  border: 1px solid var(--session-line-soft);
+  border-radius: 12px;
   display: grid;
-  gap: 8px;
+  gap: 9px;
   grid-column: 1 / -1;
   inline-size: 100%;
   max-inline-size: 100%;
+  padding: 10px;
+}
+
+.session-codex-parity-v1 .session-queued-message-editor-heading {
+  align-items: center;
+  color: var(--session-text);
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  min-inline-size: 0;
+  padding-inline: 1px;
+}
+
+.session-codex-parity-v1 .session-queued-message-editor-heading > span {
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 620;
+  gap: 5px;
+}
+
+.session-codex-parity-v1 .session-queued-message-editor-heading svg {
+  block-size: 14px;
+  color: var(--zeus-brand-primary);
+  inline-size: 14px;
+}
+
+.session-codex-parity-v1 .session-queued-message-editor-heading > small {
+  color: var(--session-text-muted);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .session-codex-parity-v1 .session-queued-message-editor textarea {
-  background: transparent;
-  border: 1px solid var(--session-line);
-  border-radius: 8px;
+  appearance: none;
+  background: var(--session-canvas);
+  border: 1px solid var(--session-line-soft);
+  border-radius: 9px;
+  box-shadow: none;
+  color: var(--session-text);
+  font: inherit;
+  font-size: 12px;
   inline-size: 100%;
-  line-height: 1.58;
-  max-block-size: 42vh;
-  min-block-size: 72px;
-  padding: 7px 8px;
+  line-height: 1.5;
+  max-block-size: min(28vh, 180px);
+  min-block-size: 44px;
+  padding: 8px 9px;
   resize: none;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.session-codex-parity-v1 .session-queued-message-editor textarea:focus-visible {
+  border-color: var(--zeus-brand-primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--zeus-brand-primary) 14%, transparent);
+  outline: 0;
+}
+
+.session-codex-parity-v1 .session-queued-message-editor textarea::placeholder {
+  color: var(--session-text-muted);
+}
+
+/* 编辑附件沿用输入框的真实预览组件，但收紧高度，避免重新变成一张大卡片。 */
+.session-codex-parity-v1 .session-queued-message-attachments {
+  gap: 6px;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .session-queued-message-attachments .pending-resource-card {
+  block-size: 40px;
+  border-radius: 8px;
+  flex-basis: min(200px, calc(100vw - 80px));
+  grid-template-columns: 22px minmax(0, 1fr);
+  padding: 5px 8px;
+}
+
+.session-codex-parity-v1 .session-queued-message-attachments .pending-resource-visual {
+  block-size: 22px;
+  inline-size: 22px;
+}
+
+.session-codex-parity-v1 .session-queued-message-attachments .pending-resource-card[data-resource-kind='image'] {
+  block-size: 40px;
+  flex-basis: 40px;
+  inline-size: 40px;
+}
+
+.session-codex-parity-v1 .session-queued-message-attachments .pending-resource-card[data-resource-kind='image'] .pending-resource-visual {
+  block-size: 40px;
+  border-radius: 8px;
+  inline-size: 40px;
 }
 
 .session-codex-parity-v1 .session-queued-message-editor > footer {
   align-items: center;
   display: flex;
-  gap: 4px;
+  gap: 6px;
   justify-content: flex-end;
+  padding-block-start: 0;
 }
 
 .session-codex-parity-v1 .session-queued-message-editor > footer small {
-  color: var(--session-danger);
+  color: var(--session-text-muted);
+  font-size: 10px;
   margin-inline-end: auto;
+}
+
+.session-codex-parity-v1 .session-queued-message-editor .session-queued-message-editor-cancel,
+.session-codex-parity-v1 .session-queued-message-editor .session-queued-message-editor-save {
+  min-block-size: 30px;
+  min-inline-size: auto;
+  padding-inline: 11px;
+}
+
+.session-codex-parity-v1 .session-queued-message-editor .session-queued-message-editor-save {
+  background: var(--zeus-brand-primary);
+  color: white;
+  font-weight: 620;
+  padding-inline: 14px;
+}
+
+.session-codex-parity-v1 .session-queued-message-editor .session-queued-message-editor-save:hover:not(:disabled),
+.session-codex-parity-v1 .session-queued-message-editor .session-queued-message-editor-save:focus-visible:not(:disabled) {
+  background: var(--zeus-interaction-primary-hover);
+  color: white;
+}
+
+.session-codex-parity-v1 .session-queued-message-editor .session-queued-message-editor-save:active:not(:disabled) {
+  background: var(--zeus-interaction-primary-pressed);
+}
+
+.session-codex-parity-v1 .session-queued-message-editor .session-queued-message-editor-save:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--zeus-brand-primary) 20%, transparent);
+  outline: 0;
+}
+
+.session-codex-parity-v1 .session-queued-message-editor .session-queued-message-editor-save:disabled {
+  background: color-mix(in srgb, var(--zeus-brand-primary) 14%, var(--session-canvas));
+  color: color-mix(in srgb, var(--zeus-brand-primary) 58%, var(--session-text-muted));
 }
 
 .session-codex-parity-v1 .session-queued-message-error {
   color: var(--session-danger);
   display: block;
+  grid-column: 1 / -1;
   margin-block-start: 4px;
 }
 
@@ -5699,6 +5905,29 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   z-index: 5;
 }
 
+/* ZEUS-0732：排队卡片与输入框共用底部列宽，队列更新不重建编辑器。 */
+.session-codex-parity-v1 .session-composer-stack {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 6px;
+  inline-size: min(var(--session-composer-max), calc(100% - (2 * var(--session-gutter))));
+  margin: 0 auto 16px;
+  min-inline-size: 0;
+  position: relative;
+  z-index: 5;
+}
+
+.session-codex-parity-v1 .session-composer-stack > .session-composer-shell {
+  inline-size: 100%;
+  margin: 0;
+}
+
+.session-codex-parity-v1 .session-composer-stack > .session-queued-messages {
+  border-radius: 12px 12px 7px 7px;
+  inline-size: calc(100% - 16px);
+  margin: 0 8px -2px;
+}
+
 .session-codex-parity-v1 .session-interaction-dock {
   /* 为共用问答卡的四周阴影留出绘制空间，滚动时不贴边裁切。 */
   box-sizing: border-box;
@@ -6949,6 +7178,14 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
   .session-codex-parity-v1 .session-composer-shell {
     margin-block-end: max(10px, env(safe-area-inset-bottom, 0px));
+  }
+
+  .session-codex-parity-v1 .session-composer-stack {
+    margin-block-end: max(10px, env(safe-area-inset-bottom, 0px));
+  }
+
+  .session-codex-parity-v1 .session-composer-stack > .session-composer-shell {
+    margin-block-end: 0;
   }
 
   .session-codex-parity-v1 .session-interaction-dock {
