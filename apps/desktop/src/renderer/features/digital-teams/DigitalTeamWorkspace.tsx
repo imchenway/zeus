@@ -1,14 +1,9 @@
 import {
-  digitalTeamApprovalPurposes,
   digitalTeamExecutionDefinition,
-  digitalTeamEmployeePurposes,
   digitalTeamWorkflowSchemaGeneration,
   validateDigitalTeamWorkflowDefinition,
   normalizeDigitalTeamWorkflowDefinition,
-  type DigitalTeamApprovalPurpose,
   type DigitalTeamEmployeeNode,
-  type DigitalTeamEmployeePurpose,
-  type DigitalTeamHumanConfirmationNode,
   type DigitalTeamNode,
   type DigitalTeamNodeAttemptRecord,
   type DigitalTeamNodeType,
@@ -56,9 +51,6 @@ type RunDecision = { kind: 'approve' | 'reject' | 'rework'; nodeId: string; atte
 
 /** 无项目时使用的选择值。 */
 const noProjectValue = '__no_digital_team_project__';
-
-/** 尚未配置真实角色时保留节点槽位，运行前会显示并阻止缺失角色。 */
-const unassignedEmployeeId = '__unassigned_digital_team_employee__';
 
 /** 扣除项目侧栏后统一切换双列与详情抽屉，样式直接复用此状态。 */
 const compactInspectorQuery = '(max-width: 1180px)';
@@ -155,7 +147,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   const loadRevisionRef = useRef(0);
 
   /** 代码动作才需要用户确认现场和本地修改范围。 */
-  const usesCode = draft.definition.nodes.some((node) => node.type === 'code_integration' || (node.type === 'employee' && node.data.executionMode !== 'read_only'));
+  const usesCode = draft.definition.nodes.some((node) => node.type === 'employee' && node.data.executionMode === 'isolated_write');
 
   /** 员工名称索引供画布卡片与检查器复用。 */
   const employeeNames = useMemo(() => new Map(employees.map((employee) => [employee.id, employee.name])), [employees]);
@@ -328,21 +320,9 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   const addNode = useCallback(
     (payload: DigitalTeamDragPayload, position?: { x: number; y: number }): void => {
       const resolvedPosition = position ?? nextNodePosition(draft.definition.nodes.length);
-      const employee = payload.kind === 'employee' ? employees.find((candidate) => candidate.id === payload.employeeId) : undefined;
-      const node = buildNode(payload, resolvedPosition, employee, draft.definition);
-      /** 默认接到当前工作的末尾，用户仍可显式调整并行依赖。 */
-      const end = draft.definition.nodes.find((candidate) => candidate.type === 'end');
-      const incoming = end ? draft.definition.edges.filter((edge) => edge.target === end.id) : [];
-      changeDefinition(
-        normalizeDigitalTeamWorkflowDefinition({
-          ...draft.definition,
-          nodes: [...draft.definition.nodes, node],
-          edges:
-            end && !['start', 'end'].includes(node.type)
-              ? [...draft.definition.edges.filter((edge) => edge.target !== end.id), ...incoming.map((edge) => ({ ...edge, target: node.id })), { id: `edge_${crypto.randomUUID()}`, source: node.id, target: end.id }]
-              : draft.definition.edges,
-        }),
-      );
+      const employee = employees.find((candidate) => candidate.id === payload.employeeId);
+      const node = buildNode(payload, resolvedPosition, employee);
+      changeDefinition({ ...draft.definition, nodes: [...draft.definition.nodes, node] });
       setSelectedNodeId(node.id);
     },
     [changeDefinition, draft.definition, employees],
@@ -362,7 +342,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
     setError(null);
   };
 
-  /** 默认按现有成员建立普通协作，研发流程由独立预设提供。 */
+  /** 新模板从一个真实员工开始，后续员工和依赖均由用户按需添加。 */
   const startNewTemplate = (): void => {
     if (dirty) {
       setError(zh ? '请先处理当前未保存修改。' : 'Resolve the current unsaved changes first.');
@@ -390,7 +370,16 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
           ...draft.definition,
           // 编辑时保留换行；保存边界统一去除空行，避免点击保存与失焦先后影响结果。
           nodes: draft.definition.nodes.map((node) =>
-            node.type === 'employee' && node.data.purpose === 'verify' ? { ...node, data: { ...node.data, verificationCommands: (node.data.verificationCommands ?? []).map((command) => command.trim()).filter(Boolean) } } : node,
+            node.type === 'employee'
+              ? {
+                  ...node,
+                  data: {
+                    ...node.data,
+                    acceptanceCriteria: (node.data.acceptanceCriteria ?? []).map((item) => item.trim()).filter(Boolean),
+                    expectedDeliverables: (node.data.expectedDeliverables ?? []).map((item) => item.trim()).filter(Boolean),
+                  },
+                }
+              : node,
           ),
         },
       });
@@ -680,18 +669,6 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                   <Plus aria-hidden="true" />
                   {zh ? '新建' : 'New'}
                 </Button>
-                <Button
-                  size="compact"
-                  disabled={dirty || busy}
-                  onClick={() => {
-                    setDraft(developmentTemplateDraft(employees));
-                    setDirty(true);
-                    setSelectedNodeId(null);
-                    setCanvasGeneration((current) => current + 1);
-                  }}
-                >
-                  研发预设
-                </Button>
                 <Button size="compact" onClick={() => void copyTemplate()} disabled={!selectedTemplate || dirty || busy}>
                   <Copy aria-hidden="true" />
                   {zh ? '复制' : 'Copy'}
@@ -963,60 +940,34 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
 
 /** 左侧角色库只展示当前项目启用的真实员工，并提供拖拽的按钮替代。 */
 function RolePalette(props: { employees: DigitalEmployeeRecord[]; onAdd(payload: DigitalTeamDragPayload): void }) {
-  /** 五类节点中的四类流程节点不依赖员工身份。 */
-  const processNodes: Array<{ type: Exclude<DigitalTeamNodeType, 'employee'>; label: string; description: string }> = [
-    { type: 'human_confirmation', label: '人工确认', description: '规划批准或最终验收' },
-    { type: 'code_integration', label: '代码集成', description: '生成任务内候选版本' },
-  ];
   return (
-    <>
-      <section>
-        <div className="digital-team-section-heading">
-          <h2>角色库</h2>
-          <span>{props.employees.length}</span>
-        </div>
-        <p className="digital-team-help">拖入画布，或使用“添加”按钮。</p>
-        <div className="digital-team-palette-list">
-          {props.employees.length === 0 ? (
-            <p role="status">当前项目没有已启用的数字员工。</p>
-          ) : (
-            props.employees.map((employee) => (
-              <article key={employee.id} className="digital-team-palette-card" draggable onDragStart={(event) => writeDragPayload(event, { kind: 'employee', employeeId: employee.id })}>
-                <DigitalEmployeeAvatar avatarId={employee.avatarId} role={employee.role} />
-                <span>
-                  <strong>{employee.name}</strong>
-                  <small>
-                    {employee.role} · {employee.model ?? '项目默认模型'}
-                  </small>
-                </span>
-                <Button size="compact" aria-label={`添加员工节点 ${employee.name}`} onClick={() => props.onAdd({ kind: 'employee', employeeId: employee.id })}>
-                  添加
-                </Button>
-              </article>
-            ))
-          )}
-        </div>
-      </section>
-      <section>
-        <div className="digital-team-section-heading">
-          <h2>流程节点</h2>
-          <span>{processNodes.length}</span>
-        </div>
-        <div className="digital-team-palette-list">
-          {processNodes.map((item) => (
-            <article key={item.type} className="digital-team-palette-card is-process" draggable onDragStart={(event) => writeDragPayload(event, { kind: 'node', nodeType: item.type })}>
+    <section>
+      <div className="digital-team-section-heading">
+        <h2>数字员工</h2>
+        <span>{props.employees.length}</span>
+      </div>
+      <p className="digital-team-help">拖入画布，或使用“添加”按钮。同一员工可承担多个分工。</p>
+      <div className="digital-team-palette-list">
+        {props.employees.length === 0 ? (
+          <p role="status">当前项目没有已启用的数字员工。</p>
+        ) : (
+          props.employees.map((employee) => (
+            <article key={employee.id} className="digital-team-palette-card" draggable onDragStart={(event) => writeDragPayload(event, { kind: 'employee', employeeId: employee.id })}>
+              <DigitalEmployeeAvatar avatarId={employee.avatarId} role={employee.role} />
               <span>
-                <strong>{item.label}</strong>
-                <small>{item.description}</small>
+                <strong>{employee.name}</strong>
+                <small>
+                  {employee.role} · {employee.model ?? '项目默认模型'}
+                </small>
               </span>
-              <Button size="compact" aria-label={`添加${item.label}节点`} onClick={() => props.onAdd({ kind: 'node', nodeType: item.type })}>
+              <Button size="compact" aria-label={`添加员工节点 ${employee.name}`} onClick={() => props.onAdd({ kind: 'employee', employeeId: employee.id })}>
                 添加
               </Button>
             </article>
-          ))}
-        </div>
-      </section>
-    </>
+          ))
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -1055,16 +1006,6 @@ function NodeInspector(props: {
         <input value={node.data.title} maxLength={120} onChange={(event) => props.onChange({ ...node, data: { ...node.data, title: event.currentTarget.value } } as DigitalTeamNode)} />
       </label>
       {node.type === 'employee' ? <EmployeeNodeFields node={node} employees={props.employees} onChange={props.onChange} client={props.client} capabilities={props.capabilities} projectId={props.projectId} /> : null}
-      {node.type === 'human_confirmation' ? <ApprovalNodeFields node={node} onChange={props.onChange} /> : null}
-      {node.type === 'code_integration' ? (
-        <>
-          <p className="digital-team-field-note">自动整合上游开发成果，生成供验证的候选代码。</p>
-          <label>
-            <span>集成核对要求</span>
-            <textarea rows={6} maxLength={12000} value={node.data.instructions} onChange={(event) => props.onChange({ ...node, data: { ...node.data, instructions: event.currentTarget.value } })} />
-          </label>
-        </>
-      ) : null}
       <KeyboardConnectionEditor definition={props.definition} node={node} onConnect={props.onConnect} onDisconnect={props.onDisconnect} />
       {props.issues.length ? (
         <ul className="digital-team-node-issues">
@@ -1073,7 +1014,7 @@ function NodeInspector(props: {
           ))}
         </ul>
       ) : null}
-      <Button variant="danger" disabled={node.type === 'start' || node.type === 'end'} onClick={() => props.onDelete(node.id)}>
+      <Button variant="danger" onClick={() => props.onDelete(node.id)}>
         <Trash aria-hidden="true" />
         删除节点
       </Button>
@@ -1083,8 +1024,8 @@ function NodeInspector(props: {
 
 /** 键盘用户通过检查器添加或删除上游依赖，不依赖画布拖线手势。 */
 function KeyboardConnectionEditor(props: { definition: DigitalTeamWorkflowDefinition; node: DigitalTeamNode; onConnect(source: string, target: string): void; onDisconnect(edgeId: string): void }) {
-  /** 可选上游排除结束节点、自身、重复边和会形成环路的节点。 */
-  const candidates = props.definition.nodes.filter((candidate) => candidate.type !== 'end' && props.node.type !== 'start' && isConnectionAllowed(props.definition, candidate.id, props.node.id));
+  /** 可选上游排除自身、重复边和会形成环路的员工节点。 */
+  const candidates = props.definition.nodes.filter((candidate) => isConnectionAllowed(props.definition, candidate.id, props.node.id));
   /** 当前选择随候选变化自动回到第一个合法节点。 */
   const [sourceId, setSourceId] = useState(candidates[0]?.id ?? '');
   /** 当前节点已保存的直接上游连线。 */
@@ -1127,7 +1068,7 @@ function KeyboardConnectionEditor(props: { definition: DigitalTeamWorkflowDefini
   );
 }
 
-/** 员工节点绑定真实项目员工，职责变化同时收紧代码现场。 */
+/** 员工节点配置真实分工、完成标准、交付物与本次运行设置。 */
 function EmployeeNodeFields(props: {
   client: DashboardClient | null;
   capabilities: DigitalEmployeeCapabilitiesSnapshot | null;
@@ -1150,46 +1091,23 @@ function EmployeeNodeFields(props: {
         />
       </label>
       <label>
-        <span>节点职责</span>
+        <span>工作方式</span>
         <ZeusSelect
-          ariaLabel="选择员工节点职责"
-          value={props.node.data.purpose}
-          options={digitalTeamEmployeePurposes.map((purpose) => ({ value: purpose, label: employeePurposeLabel(purpose) }))}
-          onChange={(purpose) =>
-            props.onChange({
-              ...props.node,
-              data: { ...props.node.data, purpose, executionMode: executionModeForPurpose(), verificationCommands: purpose === 'verify' ? (props.node.data.verificationCommands ?? []) : undefined },
-            })
-          }
+          ariaLabel="选择员工工作方式"
+          value={props.node.data.executionMode}
+          options={[
+            { value: 'read_only', label: '分析资料与已有成果' },
+            { value: 'isolated_write', label: '隔离修改代码' },
+          ]}
+          onChange={(executionMode) => props.onChange({ ...props.node, data: { ...props.node.data, executionMode } })}
           searchable={false}
           size="regular"
         />
       </label>
-      {['work', 'verify'].includes(props.node.data.purpose) ? (
-        <label>
-          <span>代码现场</span>
-          <ZeusSelect
-            ariaLabel="选择工作节点代码现场"
-            value={props.node.data.executionMode}
-            options={[
-              { value: 'read_only', label: '分析资料与已有成果' },
-              ...(props.node.data.purpose === 'work' ? [{ value: 'isolated_write' as const, label: '隔离修改代码' }] : [{ value: 'candidate_read_only' as const, label: '核对集成后的代码' }]),
-            ]}
-            onChange={(executionMode) => props.onChange({ ...props.node, data: { ...props.node.data, executionMode } })}
-            searchable={false}
-            size="regular"
-          />
-        </label>
-      ) : (
-        <p className="digital-team-readonly-field">
-          <span>代码现场</span>
-          <strong>{executionModeLabel(props.node.data.executionMode)}</strong>
-        </p>
-      )}
       <SettingsEditor
         value={props.node.data.settings ?? {}}
         employees={props.employees}
-        allowDelegation={props.node.data.purpose === 'plan'}
+        allowDelegation={false}
         models={props.capabilities?.models ?? []}
         goalsAvailable={props.capabilities?.goals?.enabled === true}
         skillClient={props.client}
@@ -1199,42 +1117,26 @@ function EmployeeNodeFields(props: {
         onChange={(settings) => props.onChange({ ...props.node, data: { ...props.node.data, settings } })}
       />
       <label>
-        <span>目标与完成标准</span>
+        <span>分工说明</span>
         <textarea rows={8} maxLength={12000} value={props.node.data.instructions} onChange={(event) => props.onChange({ ...props.node, data: { ...props.node.data, instructions: event.currentTarget.value } })} />
       </label>
-      {props.node.data.purpose === 'verify' ? (
-        <label>
-          <span>需要执行的验证命令（可选，每行一条）</span>
-          <textarea
-            rows={5}
-            maxLength={16000}
-            value={(props.node.data.verificationCommands ?? []).join('\n')}
-            onChange={(event) => props.onChange({ ...props.node, data: { ...props.node.data, verificationCommands: event.currentTarget.value.split('\n') } })}
-          />
-        </label>
-      ) : null}
-    </>
-  );
-}
-
-/** 人工节点只允许规划批准与最终验收两种不可绕过的职责。 */
-function ApprovalNodeFields(props: { node: DigitalTeamHumanConfirmationNode; onChange(node: DigitalTeamNode): void }) {
-  return (
-    <>
       <label>
-        <span>确认类型</span>
-        <ZeusSelect
-          ariaLabel="选择人工确认类型"
-          value={props.node.data.purpose}
-          options={digitalTeamApprovalPurposes.map((purpose) => ({ value: purpose, label: approvalPurposeLabel(purpose) }))}
-          onChange={(purpose) => props.onChange({ ...props.node, data: { ...props.node.data, purpose } })}
-          searchable={false}
-          size="regular"
+        <span>完成标准（每行一项）</span>
+        <textarea
+          rows={5}
+          maxLength={12000}
+          value={(props.node.data.acceptanceCriteria ?? []).join('\n')}
+          onChange={(event) => props.onChange({ ...props.node, data: { ...props.node.data, acceptanceCriteria: event.currentTarget.value.split('\n') } })}
         />
       </label>
       <label>
-        <span>核对要求</span>
-        <textarea rows={8} maxLength={12000} value={props.node.data.instructions} onChange={(event) => props.onChange({ ...props.node, data: { ...props.node.data, instructions: event.currentTarget.value } })} />
+        <span>预期交付物（每行一项）</span>
+        <textarea
+          rows={5}
+          maxLength={12000}
+          value={(props.node.data.expectedDeliverables ?? []).join('\n')}
+          onChange={(event) => props.onChange({ ...props.node, data: { ...props.node.data, expectedDeliverables: event.currentTarget.value.split('\n') } })}
+        />
       </label>
     </>
   );
@@ -1487,30 +1389,28 @@ function emptyTemplateDraft(): TemplateDraft {
   return { id: null, revision: null, name: '新协作流程', description: '', definition: { schemaGeneration: digitalTeamWorkflowSchemaGeneration, nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 0.8 } } };
 }
 
-/** 普通协作从一位员工与明确交付开始；起止结构由系统补齐。 */
+/** 普通协作只预置一位真实员工，不替用户猜测额外角色或依赖。 */
 function standardTemplateDraft(employees: DigitalEmployeeRecord[]): TemplateDraft {
-  /** 尚无员工时保留可配置槽位，不创建虚构身份。 */
-  const employeeId = employees[0]?.id ?? unassignedEmployeeId;
-  /** 多人协作允许负责人在已选成员中拆分任务；单人工作直接执行。 */
-  const members = employees.slice(1, 25).map((employee) => employee.id);
-  const nodes: DigitalTeamNode[] = members.length
+  /** 没有可用员工时保留空草稿；草稿可保存，但运行门禁会阻止启动。 */
+  const employee = employees[0];
+  const nodes: DigitalTeamNode[] = employee
     ? [
         {
-          id: 'plan',
+          id: 'work',
           type: 'employee',
-          position: { x: 250, y: 200 },
+          position: { x: 300, y: 200 },
           data: {
-            title: '安排协作',
-            employeeId,
-            purpose: 'plan',
+            title: '完成任务',
+            employeeId: employee.id,
+            purpose: 'work',
             executionMode: 'read_only',
-            instructions: '根据任务目标，在本次已授权成员中安排分工和依赖。每份分工需要清楚的范围、交付物和完成标准。',
-            settings: { delegation: { employeeIds: members, maxDepth: 1, maxWorkItems: 24 } },
+            instructions: '根据原始任务目标完成当前分工，并提交可核对的成果。',
+            acceptanceCriteria: ['完成分工并说明未解决问题'],
+            expectedDeliverables: ['可核对的工作成果'],
           },
         },
-        { id: 'summary', type: 'employee', position: { x: 820, y: 200 }, data: { title: '汇总成果', employeeId, purpose: 'summary', executionMode: 'read_only', instructions: '核对各项真实成果，汇总任务结果、依据和未解决问题。' } },
       ]
-    : [{ id: 'work', type: 'employee', position: { x: 300, y: 200 }, data: { title: '完成任务', employeeId, purpose: 'work', executionMode: 'read_only', instructions: '根据任务目标完成工作，提交可核对的成果并说明未解决问题。' } }];
+    : [];
   return {
     id: null,
     revision: null,
@@ -1520,82 +1420,9 @@ function standardTemplateDraft(employees: DigitalEmployeeRecord[]): TemplateDraf
       schemaGeneration: digitalTeamWorkflowSchemaGeneration,
       viewport: { x: 24, y: 80, zoom: 0.8 },
       nodes,
-      edges: members.length ? [{ id: 'plan_to_summary', source: 'plan', target: 'summary' }] : [],
+      edges: [],
     }),
   };
-}
-
-/** 用现有角色装配不可绕过的标准研发流程，两个开发节点默认并行。 */
-function developmentTemplateDraft(employees: DigitalEmployeeRecord[]): TemplateDraft {
-  /** 角色关键词只用于新草稿默认选择，所有节点仍可在检查器中调整。 */
-  const matchesRole = (employee: DigitalEmployeeRecord, pattern: RegExp): boolean => pattern.test(`${employee.name} ${employee.role}`);
-  /** 负责人 同时承担规划与汇总，确保复用主会话。 */
-  const ctoId = employees.find((employee) => matchesRole(employee, /cto|架构|技术负责人/iu))?.id ?? employees[0]?.id ?? unassignedEmployeeId;
-  /** 验证优先绑定测试角色，没有专职角色时仍使用真实员工并允许手动修改。 */
-  const verifierId = employees.find((employee) => matchesRole(employee, /qa|test|测试|验证|质量/iu))?.id ?? employees.at(-1)?.id ?? unassignedEmployeeId;
-  /** 开发节点优先使用两个非 负责人 员工，人员不足时复用已有真实身份而不制造员工。 */
-  const workerIds = employees
-    .filter((employee) => employee.id !== ctoId && employee.id !== verifierId && employee.allowCodeChanges && employee.deliveryGrants.allowCommit && employee.permissionMode !== 'read-only')
-    .map((employee) => employee.id);
-  const firstWorkerId = workerIds[0] ?? unassignedEmployeeId;
-  const secondWorkerId = workerIds[1] ?? firstWorkerId;
-  /** 标准定义把批准、集成、验证和最终验收固定在所有结束路径上。 */
-  const definition: DigitalTeamWorkflowDefinition = {
-    schemaGeneration: digitalTeamWorkflowSchemaGeneration,
-    viewport: { x: 24, y: 80, zoom: 0.56 },
-    nodes: [
-      { id: 'start', type: 'start', position: { x: 40, y: 220 }, data: { title: '开始' } },
-      { id: 'cto_plan', type: 'employee', position: { x: 280, y: 220 }, data: { title: '负责人规划', employeeId: ctoId, purpose: 'plan', executionMode: 'read_only', instructions: '按节点身份提交目标、范围、排除范围、验收标准和交付物。' } },
-      { id: 'plan_approval', type: 'human_confirmation', position: { x: 520, y: 220 }, data: { title: '批准研发计划', purpose: 'plan_approval', instructions: '核对规划覆盖全部开发节点且职责边界明确。' } },
-      {
-        id: 'work_primary',
-        type: 'employee',
-        position: { x: 760, y: 100 },
-        data: { title: '并行开发 A', employeeId: firstWorkerId, purpose: 'work', executionMode: 'isolated_write', instructions: '在独立分支和工作区完成批准规划中分配给本节点的内容。' },
-      },
-      {
-        id: 'work_secondary',
-        type: 'employee',
-        position: { x: 760, y: 340 },
-        data: { title: '并行开发 B', employeeId: secondWorkerId, purpose: 'work', executionMode: 'isolated_write', instructions: '在独立分支和工作区完成批准规划中分配给本节点的内容。' },
-      },
-      { id: 'integration', type: 'code_integration', position: { x: 1000, y: 220 }, data: { title: '代码集成', mode: 'merge', instructions: '按固定顺序整合全部当前有效上游提交，只生成任务内部候选。' } },
-      {
-        id: 'verification',
-        type: 'employee',
-        position: { x: 1240, y: 220 },
-        data: {
-          title: '真实验证',
-          employeeId: verifierId,
-          purpose: 'verify',
-          executionMode: 'candidate_read_only',
-          instructions: '只读验证当前精确候选版本，逐条执行配置命令并提交证据和剩余问题。',
-          verificationCommands: [],
-        },
-      },
-      {
-        id: 'cto_summary',
-        type: 'employee',
-        position: { x: 1480, y: 220 },
-        data: { title: '成果汇总', employeeId: ctoId, purpose: 'summary', executionMode: 'read_only', instructions: '基于已批准计划、当前候选、验证和交付证据形成汇总。' },
-      },
-      { id: 'final_acceptance', type: 'human_confirmation', position: { x: 1720, y: 220 }, data: { title: '最终人工验收', purpose: 'final_acceptance', instructions: '核对当前候选、真实验证和 成果汇总后决定是否验收。' } },
-      { id: 'end', type: 'end', position: { x: 1960, y: 220 }, data: { title: '结束' } },
-    ],
-    edges: [
-      { id: 'start_to_plan', source: 'start', target: 'cto_plan' },
-      { id: 'plan_to_approval', source: 'cto_plan', target: 'plan_approval' },
-      { id: 'approval_to_primary', source: 'plan_approval', target: 'work_primary' },
-      { id: 'approval_to_secondary', source: 'plan_approval', target: 'work_secondary' },
-      { id: 'primary_to_integration', source: 'work_primary', target: 'integration' },
-      { id: 'secondary_to_integration', source: 'work_secondary', target: 'integration' },
-      { id: 'integration_to_verification', source: 'integration', target: 'verification' },
-      { id: 'verification_to_summary', source: 'verification', target: 'cto_summary' },
-      { id: 'summary_to_acceptance', source: 'cto_summary', target: 'final_acceptance' },
-      { id: 'acceptance_to_end', source: 'final_acceptance', target: 'end' },
-    ],
-  };
-  return { id: null, revision: null, name: '标准研发协作流程', description: '负责人规划、人工批准、双员工并行开发、候选集成、真实验证、成果汇总与最终验收。', definition };
 }
 
 /** 已保存模板复制为可编辑草稿，不混入运行状态。 */
@@ -1608,31 +1435,23 @@ function nextNodePosition(index: number): { x: number; y: number } {
   return { x: 80 + (index % 4) * 240, y: 80 + Math.floor(index / 4) * 150 };
 }
 
-/** 按员工角色与现有节点给出可继续修改的默认职责。 */
-function defaultEmployeePurpose(): DigitalTeamEmployeePurpose {
-  return 'work';
-}
-
-/** 构造判别联合节点，并根据职责收紧代码现场。 */
-function buildNode(payload: DigitalTeamDragPayload, position: { x: number; y: number }, employee: DigitalEmployeeRecord | undefined, definition: DigitalTeamWorkflowDefinition): DigitalTeamNode {
+/** 构造新的员工分工节点，不自动猜测依赖关系。 */
+function buildNode(payload: DigitalTeamDragPayload, position: { x: number; y: number }, employee: DigitalEmployeeRecord | undefined): DigitalTeamNode {
   const id = `node_${crypto.randomUUID()}`;
-  if (payload.kind === 'employee') {
-    const purpose = defaultEmployeePurpose();
-    return {
-      id,
-      type: 'employee',
-      position,
-      data: { title: employee?.name ?? '员工节点', employeeId: payload.employeeId, purpose, executionMode: executionModeForPurpose(), instructions: '', verificationCommands: purpose === 'verify' ? [] : undefined },
-    };
-  }
-  if (payload.nodeType === 'start') return { id, type: 'start', position, data: { title: '开始' } };
-  if (payload.nodeType === 'end') return { id, type: 'end', position, data: { title: '结束' } };
-  if (payload.nodeType === 'code_integration') return { id, type: 'code_integration', position, data: { title: '代码集成', mode: 'merge', instructions: '整合全部当前有效写入交付，生成任务内候选版本。' } };
-  const purpose: DigitalTeamApprovalPurpose =
-    definition.nodes.some((node) => node.type === 'employee' && node.data.purpose === 'plan') && !definition.nodes.some((node) => node.type === 'human_confirmation' && node.data.purpose === 'plan_approval')
-      ? 'plan_approval'
-      : 'final_acceptance';
-  return { id, type: 'human_confirmation', position, data: { title: purpose === 'plan_approval' ? '确认工作计划' : '最终人工验收', purpose, instructions: '' } };
+  return {
+    id,
+    type: 'employee',
+    position,
+    data: {
+      title: employee?.name ?? '员工分工',
+      employeeId: payload.employeeId,
+      purpose: 'work',
+      executionMode: 'read_only',
+      instructions: '',
+      acceptanceCriteria: [],
+      expectedDeliverables: [],
+    },
+  };
 }
 
 /** 替换单个节点而不改变边和视口。 */
@@ -1650,31 +1469,6 @@ function removeNode(definition: DigitalTeamWorkflowDefinition, nodeId: string, o
 function writeDragPayload(event: ReactDragEvent<HTMLElement>, payload: DigitalTeamDragPayload): void {
   event.dataTransfer.effectAllowed = 'copy';
   event.dataTransfer.setData(digitalTeamDragMime, JSON.stringify(payload));
-}
-
-/** 员工职责决定唯一允许的代码现场。 */
-function executionModeForPurpose(): DigitalTeamEmployeeNode['data']['executionMode'] {
-  return 'read_only';
-}
-
-/** 员工职责的人话标签。 */
-function employeePurposeLabel(purpose: DigitalTeamEmployeePurpose): string {
-  if (purpose === 'plan') return '负责人规划';
-  if (purpose === 'work') return '员工执行';
-  if (purpose === 'verify') return '核对成果';
-  return '成果汇总';
-}
-
-/** 人工确认职责的人话标签。 */
-function approvalPurposeLabel(purpose: DigitalTeamApprovalPurpose): string {
-  return purpose === 'plan_approval' ? '规划批准' : '最终人工验收';
-}
-
-/** 代码现场的人话标签。 */
-function executionModeLabel(mode: DigitalTeamEmployeeNode['data']['executionMode']): string {
-  if (mode === 'isolated_write') return '独立写入分支 / worktree';
-  if (mode === 'candidate_read_only') return '候选版本只读验证';
-  return '分析资料与已有成果';
 }
 
 /** 五类节点的人话标签。 */

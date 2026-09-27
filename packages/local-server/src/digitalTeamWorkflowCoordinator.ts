@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { getGitRepositoryContext, getGitWorktreeClean, getTaskWorkspaceReview, prepareWorkflowCandidate } from '@zeus/git-core';
 import {
   digitalTeamExecutionDefinition,
+  digitalTeamWorkflowSchemaGeneration,
   missingDigitalTeamVerificationCommands,
   validateDigitalTeamStructuredPlan,
   type DigitalTeamEmployeeNode,
@@ -236,7 +237,7 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
     )
       throw routeError('ZEUS_DIGITAL_TEAM_CODE_AUTHORITY_REQUIRED', '本次代码工作需要明确允许修改代码和本地提交；已有任务也必须允许这些动作。');
     /** 只有实际使用代码现场的步骤才冻结 Git 基线，普通协作不依赖仓库。 */
-    const needsRepository = template.definition.nodes.some((node) => node.type === 'code_integration' || (node.type === 'employee' && node.data.executionMode !== 'read_only'));
+    const needsRepository = template.definition.nodes.some((node) => node.type === 'employee' && node.data.executionMode === 'isolated_write');
     const repositories = needsRepository ? this.options.projectRepositories.listByProject(project.id) : [];
     if (!needsRepository) return { templateId: template.id, templateRevision: template.revision, baseRevisions: [], repositories };
     if (repositories.length === 0) throw routeError('ZEUS_DIGITAL_TEAM_REPOSITORY_REQUIRED', '项目尚未登记可冻结的 Git 仓库。');
@@ -254,7 +255,7 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
     return { templateId: template.id, templateRevision: template.revision, baseRevisions, repositories };
   }
 
-  /** 在统一 Core 事务中创建任务、冻结运行并完成开始节点。 */
+  /** 在统一 Core 事务中创建任务并冻结运行；当前员工根节点由依赖调度直接启动。 */
   createRun(projectId: string, input: DigitalTeamRunCreateInput, context: DigitalTeamCommandContext, preparedValue: unknown): unknown {
     const prepared = preparedValue as PreparedDigitalTeamRun;
     const template = this.options.templates.getById(prepared.templateId);
@@ -293,10 +294,12 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
       taskFacts,
       baseRevisions: prepared.baseRevisions,
     });
-    const startNode = digitalTeamExecutionDefinition(run).nodes.find((node) => node.type === 'start')!;
-    const start = this.options.attempts.create({ id: stableAttemptId(run.id, startNode.id, 1), runId: run.id, nodeId: startNode.id, inputSha256: inputDigest(run, startNode, []) });
-    const activeStart = this.options.attempts.update(start.id, { expectedRevision: start.revision, status: 'active', commandId: context.commandId, startedAt: this.options.now().toISOString() });
-    this.options.attempts.update(activeStart.id, { expectedRevision: activeStart.revision, status: 'succeeded', completedAt: this.options.now().toISOString() });
+    if (run.definitionSnapshot.schemaGeneration !== digitalTeamWorkflowSchemaGeneration) {
+      const startNode = digitalTeamExecutionDefinition(run).nodes.find((node) => node.type === 'start')!;
+      const start = this.options.attempts.create({ id: stableAttemptId(run.id, startNode.id, 1), runId: run.id, nodeId: startNode.id, inputSha256: inputDigest(run, startNode, []) });
+      const activeStart = this.options.attempts.update(start.id, { expectedRevision: start.revision, status: 'active', commandId: context.commandId, startedAt: this.options.now().toISOString() });
+      this.options.attempts.update(activeStart.id, { expectedRevision: activeStart.revision, status: 'succeeded', completedAt: this.options.now().toISOString() });
+    }
     return this.getRunProjection(run.id);
   }
 
@@ -415,7 +418,10 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
     if (unrelatedUnknown) throw routeError('ZEUS_DIGITAL_TEAM_UNKNOWN_OUTCOME', '未受本次返工影响的并行节点仍有未知结果，请先明确处置对应节点。');
     this.options.attempts.invalidateCurrentAndDescendants({ runId: run.id, nodeId: node.id, reason, invalidatedByAttemptId: this.options.attempts.getCurrentByNode(run.id, node.id)?.id });
     const targetStage = reworkRunStatus(node);
-    const clearsCandidate = affected.has(digitalTeamExecutionDefinition(run).nodes.find((candidate) => candidate.type === 'code_integration')?.id ?? '');
+    const clearsCandidate =
+      run.definitionSnapshot.schemaGeneration === digitalTeamWorkflowSchemaGeneration
+        ? [...affected].some((nodeId) => digitalTeamExecutionDefinition(run).nodes.some((candidate) => candidate.id === nodeId && candidate.type === 'employee' && candidate.data.executionMode === 'isolated_write'))
+        : affected.has(digitalTeamExecutionDefinition(run).nodes.find((candidate) => candidate.type === 'code_integration')?.id ?? '');
     this.options.runs.update(run.id, { expectedRevision: run.revision, status: targetStage, ...(clearsCandidate ? { candidateRevisions: [] } : {}), error: null });
     return this.getRunProjection(run.id);
   }
@@ -499,8 +505,22 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
         this.options.runs.update(run.id, { expectedRevision: latestRun.revision, status: 'completed', completedAt: this.options.now().toISOString(), error: null });
       }
     }
+    /** 当前团队没有开始和结束节点；全部真实员工分工成功就是团队完成。 */
+    let latestRun = this.options.runs.getById(run.id)!;
+    if (latestRun.definitionSnapshot.schemaGeneration === digitalTeamWorkflowSchemaGeneration) {
+      const nodes = digitalTeamExecutionDefinition(latestRun).nodes.filter((node): node is DigitalTeamEmployeeNode => node.type === 'employee');
+      const attempts = new Map(this.currentAttempts(latestRun).map((attempt) => [attempt.nodeId, attempt]));
+      if (nodes.length > 0 && nodes.every((node) => attempts.get(node.id)?.status === 'succeeded')) {
+        if (!(await this.integrateCurrentCandidate(latestRun))) return;
+        latestRun = this.options.runs.getById(latestRun.id)!;
+        this.options.runs.update(latestRun.id, { expectedRevision: latestRun.revision, status: 'completed', completedAt: this.options.now().toISOString(), error: null });
+      } else if (latestRun.status !== 'executing') {
+        this.options.runs.update(latestRun.id, { expectedRevision: latestRun.revision, status: 'executing' });
+      }
+      return;
+    }
     /** 阶段名称是当前活动的投影，不再成为另一套派发条件。 */
-    const latestRun = this.options.runs.getById(run.id)!;
+    latestRun = this.options.runs.getById(run.id)!;
     if (!['completed', 'failed', 'cancelled', 'outcome_unknown'].includes(latestRun.status)) {
       const attempts = this.currentAttempts(latestRun);
       const waiting = attempts.find((current) => current.status === 'awaiting_approval');
@@ -669,7 +689,23 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
 
   /** 写入节点从 exact base 和全部上游工作提交准备独立工作区。 */
   private async prepareEmployeeWorkspace(run: DigitalTeamWorkflowRunRecord, node: DigitalTeamEmployeeNode, attempt: DigitalTeamNodeAttemptRecord): Promise<ZeusTaskWorkspaceRecord | null> {
-    if (node.data.executionMode === 'read_only') return null;
+    if (node.data.executionMode === 'read_only') {
+      if (run.baseRevisions.length !== 1) return null;
+      const base = run.baseRevisions[0]!;
+      const upstreamCommitShas = collectUpstreamWorkCommits(run, node.id, this.currentAttempts(run), base.repositoryId);
+      if (upstreamCommitShas.length === 0) return null;
+      const repository = this.requireRepository(run.projectId, base.repositoryId);
+      const prepared = await prepareWorkflowCandidate({
+        repositoryPath: repository.localPath,
+        projectSlug: this.requireProject(run.projectId).slug,
+        candidateId: attempt.id,
+        branchName: workflowBranchName(run, node, attempt, repository.id),
+        baseSha: base.baseSha,
+        upstreamCommitShas,
+      });
+      if (prepared.state !== 'ready' || !prepared.candidateSha) throw routeError('ZEUS_DIGITAL_TEAM_WORKSPACE_CONFLICT', `上游代码成果存在未解决冲突：${prepared.conflictFiles.join('、')}`);
+      return this.registerPreparedWorkspace(run, attempt.id, repository, base, prepared.worktreePath, prepared.branchName, prepared.candidateSha);
+    }
     if (node.data.executionMode === 'candidate_read_only') {
       if (run.candidateRevisions.length !== 1) throw routeError('ZEUS_DIGITAL_TEAM_MULTI_REPOSITORY_UNSUPPORTED', '当前真实验证入口要求运行只有一个候选仓库。');
       const workspace = this.options.workspaces.getById(run.candidateRevisions[0]!.workspaceRef);
@@ -690,7 +726,7 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
       upstreamCommitShas,
     });
     if (prepared.state !== 'ready' || !prepared.candidateSha) throw routeError('ZEUS_DIGITAL_TEAM_WORKSPACE_CONFLICT', `工作节点存在未解决冲突：${prepared.conflictFiles.join('、')}`);
-    return this.registerPreparedWorkspace(run, attempt, repository, base, prepared.worktreePath, prepared.branchName, prepared.candidateSha);
+    return this.registerPreparedWorkspace(run, attempt.id, repository, base, prepared.worktreePath, prepared.branchName, prepared.candidateSha);
   }
 
   /** 集成节点只形成任务内部候选，不调用正式目标分支交付。 */
@@ -721,7 +757,7 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
         this.failAttempt(dispatching, 'ZEUS_DIGITAL_TEAM_INTEGRATION_CONFLICT', `候选存在冲突：${prepared.conflictFiles.join('、')}`);
         return;
       }
-      const workspace = this.registerPreparedWorkspace(run, attempt, repository, base, prepared.worktreePath, prepared.branchName, prepared.candidateSha);
+      const workspace = this.registerPreparedWorkspace(run, attempt.id, repository, base, prepared.worktreePath, prepared.branchName, prepared.candidateSha);
       let latestRun = this.options.runs.getById(run.id)!;
       if (latestRun.status === 'executing') latestRun = this.options.runs.update(latestRun.id, { expectedRevision: latestRun.revision, status: 'integrating' });
       latestRun = this.options.runs.update(latestRun.id, {
@@ -746,18 +782,63 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
     }
   }
 
+  /** 当前员工编排完成后自动形成任务内代码候选，不向团队画布暴露系统节点。 */
+  private async integrateCurrentCandidate(run: DigitalTeamWorkflowRunRecord): Promise<boolean> {
+    if (!run.definitionSnapshot.nodes.some((node) => node.type === 'employee' && node.data.executionMode === 'isolated_write') || run.candidateRevisions.length > 0) return true;
+    let latestRun = this.options.runs.getById(run.id)!;
+    if (latestRun.status !== 'integrating') latestRun = this.options.runs.update(latestRun.id, { expectedRevision: latestRun.revision, status: 'integrating', error: null });
+    await this.options.save();
+    const operationId = stableIdentity('digital_team_candidate', latestRun.id);
+    try {
+      if (latestRun.baseRevisions.length !== 1) throw routeError('ZEUS_DIGITAL_TEAM_MULTI_REPOSITORY_UNSUPPORTED', '当前自动代码候选入口要求项目只登记一个 Git 仓库。');
+      const base = latestRun.baseRevisions[0]!;
+      const repository = this.requireRepository(latestRun.projectId, base.repositoryId);
+      const upstreamCommitShas = collectAllWorkCommits(latestRun, this.currentAttempts(latestRun), base.repositoryId);
+      if (upstreamCommitShas.length === 0) throw routeError('ZEUS_DIGITAL_TEAM_INTEGRATION_INPUT_MISSING', '代码分工没有提交可集成的版本。');
+      const prepared = await prepareWorkflowCandidate({
+        repositoryPath: repository.localPath,
+        projectSlug: this.requireProject(latestRun.projectId).slug,
+        candidateId: operationId,
+        branchName: `zeus/digital-team-${sha256(`${latestRun.id}\0current-candidate\0${repository.id}`).slice(0, 20)}`,
+        baseSha: base.baseSha,
+        upstreamCommitShas,
+      });
+      if (prepared.state !== 'ready' || !prepared.candidateSha) {
+        this.options.runs.update(latestRun.id, {
+          expectedRevision: latestRun.revision,
+          status: 'failed',
+          error: { code: 'ZEUS_DIGITAL_TEAM_INTEGRATION_CONFLICT', message: `代码成果存在冲突：${prepared.conflictFiles.join('、')}。请返工相关员工分工后重试。` },
+        });
+        return false;
+      }
+      const workspace = this.registerPreparedWorkspace(latestRun, operationId, repository, base, prepared.worktreePath, prepared.branchName, prepared.candidateSha);
+      latestRun = this.options.runs.getById(latestRun.id)!;
+      this.options.runs.update(latestRun.id, {
+        expectedRevision: latestRun.revision,
+        status: 'executing',
+        candidateRevisions: [{ repositoryId: repository.id, headSha: prepared.candidateSha, workspaceRef: workspace.id }],
+        error: null,
+      });
+      return true;
+    } catch (error) {
+      latestRun = this.options.runs.getById(latestRun.id)!;
+      this.options.runs.update(latestRun.id, { expectedRevision: latestRun.revision, status: 'outcome_unknown', error: serializeError(error) });
+      return false;
+    }
+  }
+
   /** 把物理候选 worktree 登记为现有任务环境，供 task_push 精确复用。 */
   private registerPreparedWorkspace(
     run: DigitalTeamWorkflowRunRecord,
-    attempt: DigitalTeamNodeAttemptRecord,
+    operationId: string,
     repository: ZeusProjectRepositoryRecord,
     base: DigitalTeamBaseRevision,
     worktreePath: string,
     branchName: string,
     inputHeadSha: string,
   ): ZeusTaskWorkspaceRecord {
-    const environmentId = stableIdentity('task_environment', attempt.id).slice(0, 41);
-    const workspaceId = stableIdentity('task_workspace', `${attempt.id}\0${repository.id}`).slice(0, 39);
+    const environmentId = stableIdentity('task_environment', operationId).slice(0, 41);
+    const workspaceId = stableIdentity('task_workspace', `${operationId}\0${repository.id}`).slice(0, 39);
     const existing = this.options.workspaces.getById(workspaceId);
     if (existing) {
       if (existing.taskId !== run.taskId || existing.worktreePath !== worktreePath || existing.headSha !== inputHeadSha) throw routeError('ZEUS_DIGITAL_TEAM_WORKSPACE_MISMATCH', '恢复的工作区与冻结节点输入不一致。');
@@ -1182,7 +1263,7 @@ function buildNodePrompt(run: DigitalTeamWorkflowRunRecord, node: DigitalTeamEmp
     node.data.purpose === 'plan'
       ? '请使用 zeus_work.submit_team_plan 提交计划，逐项覆盖 planningScope.existingWork；需要额外分工时，只能使用本次已授权成员，以新的 nodeId、employeeId 和可选 dependencyIds 指定。'
       : '请使用 zeus_work.submit_team_result 提交结构化结果；最终文字不会推进流程。';
-  return `${node.data.instructions}\n\n数字团队冻结上下文：\n${stableJson({ runId: run.id, nodeId: node.id, attempt: attempt.attempt, executionMode: node.data.executionMode, planningScope, authorizedMembers: node.data.purpose === 'plan' ? run.roleSnapshots.filter((member) => node.data.settings?.delegation?.employeeIds.includes(member.employeeId)).map((member) => ({ employeeId: member.employeeId, name: member.configuration.name, role: member.configuration.role })) : undefined, reworkReason, taskFacts: run.taskFacts, plan: run.plan, baseRevisions: run.baseRevisions, candidateRevisions: run.candidateRevisions, verificationCommands: node.data.purpose === 'verify' ? node.data.verificationCommands : undefined, assignment, upstream })}\n\n${action}`;
+  return `${node.data.instructions}\n\n数字团队冻结上下文：\n${stableJson({ runId: run.id, nodeId: node.id, attempt: attempt.attempt, executionMode: node.data.executionMode, acceptanceCriteria: node.data.acceptanceCriteria, expectedDeliverables: node.data.expectedDeliverables, planningScope, authorizedMembers: node.data.purpose === 'plan' ? run.roleSnapshots.filter((member) => node.data.settings?.delegation?.employeeIds.includes(member.employeeId)).map((member) => ({ employeeId: member.employeeId, name: member.configuration.name, role: member.configuration.role })) : undefined, reworkReason, taskFacts: run.taskFacts, plan: run.plan, baseRevisions: run.baseRevisions, candidateRevisions: run.candidateRevisions, verificationCommands: node.data.purpose === 'verify' ? node.data.verificationCommands : undefined, assignment, upstream })}\n\n${action}`;
 }
 
 /** 构造符合现有分支约束的短稳定名字。 */

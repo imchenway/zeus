@@ -1,10 +1,13 @@
 import type { EmployeeWorkSettings } from './employeeWorkPlanning.js';
 import type { CommandActorKind } from './commandEnvelope.js';
 
-/** 数字团队流程定义的稳定结构身份。 */
-export const digitalTeamWorkflowSchemaGeneration = 'digital-team-workflow-2026-09-15' as const;
+/** 旧数字团队流程定义的结构身份，仅用于继续读取历史运行。 */
+export const legacyDigitalTeamWorkflowSchemaGeneration = 'digital-team-workflow-2026-09-15' as const;
 
-/** 画布允许持久化的节点类型。 */
+/** 当前数字团队流程定义的稳定结构身份。 */
+export const digitalTeamWorkflowSchemaGeneration = 'digital-team-workflow-2026-09-27' as const;
+
+/** 历史记录中可能出现的全部节点类型。 */
 export const digitalTeamNodeTypes = ['start', 'employee', 'human_confirmation', 'code_integration', 'end'] as const;
 
 /** 画布节点类型。 */
@@ -100,6 +103,10 @@ export interface DigitalTeamEmployeeNodeData extends Record<string, unknown> {
   executionMode: DigitalTeamExecutionMode;
   /** 节点目标与完成标准。 */
   instructions: string;
+  /** 用户可逐项核对的完成标准。 */
+  acceptanceCriteria?: string[];
+  /** 本分工需要形成的真实交付物。 */
+  expectedDeliverables?: string[];
   /** 候选验证节点必须逐条成功执行的精确命令；其他职责不使用。 */
   verificationCommands?: string[];
   /** 本次工作覆盖员工默认配置，实际动作仍受任务授权约束。 */
@@ -157,7 +164,7 @@ export interface DigitalTeamEdge {
 /** 可保存和冻结的数字团队画布定义。 */
 export interface DigitalTeamWorkflowDefinition {
   /** 结构身份。 */
-  schemaGeneration: typeof digitalTeamWorkflowSchemaGeneration;
+  schemaGeneration: typeof digitalTeamWorkflowSchemaGeneration | typeof legacyDigitalTeamWorkflowSchemaGeneration;
   /** 画布节点。 */
   nodes: DigitalTeamNode[];
   /** 有向依赖边。 */
@@ -583,19 +590,8 @@ export class DigitalTeamWorkflowValidationError extends Error {
   }
 }
 
-/** 校验工作依赖与已选能力；返回空数组表示可以创建运行。 */
-export function validateDigitalTeamWorkflowDefinition(value: unknown): DigitalTeamWorkflowValidationIssue[] {
-  const issues: DigitalTeamWorkflowValidationIssue[] = [];
-  if (!isRecord(value) || value.schemaGeneration !== digitalTeamWorkflowSchemaGeneration || !Array.isArray(value.nodes) || !Array.isArray(value.edges) || !isViewport(value.viewport)) {
-    return [{ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_SHAPE_INVALID', message: '流程定义缺少受支持的结构身份、节点或连线。' }];
-  }
-  if (value.nodes.length < 2 || value.nodes.length > 128 || value.edges.length > 512) {
-    issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_SIZE_INVALID', message: '流程需要 2 到 128 个节点，连线不能超过 512 条。' });
-  }
-  const nodes = value.nodes.filter(isNode);
-  const edges = value.edges.filter(isEdge);
-  if (nodes.length !== value.nodes.length) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_NODE_INVALID', message: '流程包含字段不完整或配置无效的节点。' });
-  if (edges.length !== value.edges.length) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_EDGE_INVALID', message: '流程包含字段不完整的连线。' });
+/** 校验节点、连线身份及连线端点。 */
+function validateGraphReferences(nodes: DigitalTeamNode[], edges: DigitalTeamEdge[], issues: DigitalTeamWorkflowValidationIssue[]): void {
   const nodeById = new Map<string, DigitalTeamNode>();
   for (const node of nodes) {
     if (nodeById.has(node.id)) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_NODE_DUPLICATE', message: '节点身份不能重复。', nodeId: node.id });
@@ -613,6 +609,51 @@ export function validateDigitalTeamWorkflowDefinition(value: unknown): DigitalTe
       issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_EDGE_ENDPOINT_INVALID', message: '连线必须连接两个不同的现有节点。', edgeId: edge.id });
     }
   }
+}
+
+/** 校验工作依赖与已选能力；返回空数组表示可以创建运行。 */
+export function validateDigitalTeamWorkflowDefinition(value: unknown): DigitalTeamWorkflowValidationIssue[] {
+  if (!isRecord(value) || !Array.isArray(value.nodes) || !Array.isArray(value.edges) || !isViewport(value.viewport)) {
+    return [{ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_SHAPE_INVALID', message: '团队编排缺少受支持的结构身份、员工分工或依赖关系。' }];
+  }
+  if (value.schemaGeneration === legacyDigitalTeamWorkflowSchemaGeneration) return validateLegacyDigitalTeamWorkflowDefinition(value);
+  if (value.schemaGeneration !== digitalTeamWorkflowSchemaGeneration) {
+    return [{ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_SHAPE_INVALID', message: '团队编排使用了不受支持的结构身份。' }];
+  }
+  const issues: DigitalTeamWorkflowValidationIssue[] = [];
+  if (value.nodes.length < 1 || value.nodes.length > 128 || value.edges.length > 512) {
+    issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_SIZE_INVALID', message: '请配置 1 到 128 份员工分工，依赖关系不能超过 512 条。' });
+  }
+  const nodes = value.nodes.filter(isCurrentNode);
+  const edges = value.edges.filter(isEdge);
+  if (nodes.length !== value.nodes.length) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_NODE_INVALID', message: '团队只能配置字段完整的员工分工。' });
+  if (edges.length !== value.edges.length) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_EDGE_INVALID', message: '团队包含字段不完整的依赖关系。' });
+  validateGraphReferences(nodes, edges, issues);
+  if (issues.some((issue) => ['ZEUS_DIGITAL_TEAM_WORKFLOW_NODE_INVALID', 'ZEUS_DIGITAL_TEAM_WORKFLOW_EDGE_INVALID', 'ZEUS_DIGITAL_TEAM_WORKFLOW_EDGE_ENDPOINT_INVALID'].includes(issue.code))) return issues;
+  if (hasCycle(nodes, adjacency(nodes, edges, 'outgoing'))) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_CYCLE', message: '员工分工的依赖关系不能形成循环。' });
+  for (const node of nodes) {
+    if (!node.data.instructions.trim()) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_INSTRUCTIONS_MISSING', message: '请填写这份分工需要完成的工作。', nodeId: node.id });
+    if (!node.data.acceptanceCriteria?.length) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_ACCEPTANCE_MISSING', message: '请填写至少一项完成标准。', nodeId: node.id });
+    if (!node.data.expectedDeliverables?.length) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_DELIVERABLE_MISSING', message: '请填写至少一项预期交付物。', nodeId: node.id });
+    if (node.data.settings?.delegation) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_DELEGATION_INVALID', message: '团队分工请直接添加员工，不在员工节点中再次委派。', nodeId: node.id });
+  }
+  return issues;
+}
+
+/** 校验旧流程快照，保证历史运行仍可读取和恢复。 */
+function validateLegacyDigitalTeamWorkflowDefinition(value: Record<string, unknown>): DigitalTeamWorkflowValidationIssue[] {
+  const issues: DigitalTeamWorkflowValidationIssue[] = [];
+  if (value.schemaGeneration !== legacyDigitalTeamWorkflowSchemaGeneration || !Array.isArray(value.nodes) || !Array.isArray(value.edges) || !isViewport(value.viewport)) {
+    return [{ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_SHAPE_INVALID', message: '历史流程定义缺少受支持的结构身份、节点或连线。' }];
+  }
+  if (value.nodes.length < 2 || value.nodes.length > 128 || value.edges.length > 512) {
+    issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_SIZE_INVALID', message: '历史流程需要 2 到 128 个节点，连线不能超过 512 条。' });
+  }
+  const nodes = value.nodes.filter(isNode);
+  const edges = value.edges.filter(isEdge);
+  if (nodes.length !== value.nodes.length) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_NODE_INVALID', message: '历史流程包含字段不完整或配置无效的节点。' });
+  if (edges.length !== value.edges.length) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_EDGE_INVALID', message: '历史流程包含字段不完整的连线。' });
+  validateGraphReferences(nodes, edges, issues);
   if (issues.some((issue) => ['ZEUS_DIGITAL_TEAM_WORKFLOW_NODE_INVALID', 'ZEUS_DIGITAL_TEAM_WORKFLOW_EDGE_INVALID', 'ZEUS_DIGITAL_TEAM_WORKFLOW_EDGE_ENDPOINT_INVALID'].includes(issue.code))) return issues;
 
   const starts = nodes.filter((node) => node.type === 'start');
@@ -660,32 +701,38 @@ export function validateDigitalTeamWorkflowDefinition(value: unknown): DigitalTe
   return issues;
 }
 
-/** 为普通工作草稿补齐内部起止节点；显式连接、错误节点和循环交给校验器，不静默丢弃。 */
+/** 把旧技术流程折叠为员工分工依赖；当前定义只补齐新字段，不增加隐藏节点。 */
 export function normalizeDigitalTeamWorkflowDefinition(definition: DigitalTeamWorkflowDefinition): DigitalTeamWorkflowDefinition {
   if (!isRecord(definition) || !Array.isArray(definition.nodes) || !Array.isArray(definition.edges) || definition.nodes.some((node) => !isNode(node)) || definition.edges.some((edge) => !isEdge(edge))) return definition;
-  /** 保留调用方草稿，自动生成的身份避开已有节点及连线。 */
-  const result = structuredClone(definition);
-  const occupied = new Set([...result.nodes.map((node) => node.id), ...result.edges.map((edge) => edge.id)]);
-  /** 内部身份只在冲突时增加确定后缀，重复规范化不会制造新节点。 */
-  const identity = (prefix: string): string => {
-    let candidate = prefix;
-    while (occupied.has(candidate)) candidate += '_';
-    occupied.add(candidate);
-    return candidate;
-  };
-  if (!result.nodes.some((node) => node.type === 'start')) {
-    const roots = result.nodes.filter((node) => !result.edges.some((edge) => edge.target === node.id));
-    const id = identity('workflow_start');
-    result.nodes.unshift({ id, type: 'start', position: { x: 0, y: 200 }, data: { title: '开始' } });
-    for (const root of roots) result.edges.push({ id: identity(`from_${id}_${root.id}`), source: id, target: root.id });
+  const employeeNodes = definition.nodes.filter((node): node is DigitalTeamEmployeeNode => node.type === 'employee');
+  if (definition.schemaGeneration === digitalTeamWorkflowSchemaGeneration && employeeNodes.length === definition.nodes.length) {
+    return structuredClone(definition);
   }
-  if (!result.nodes.some((node) => node.type === 'end')) {
-    const leaves = result.nodes.filter((node) => !result.edges.some((edge) => edge.source === node.id));
-    const id = identity('workflow_end');
-    result.nodes.push({ id, type: 'end', position: { x: 960, y: 200 }, data: { title: '结束' } });
-    for (const leaf of leaves) result.edges.push({ id: identity(`to_${leaf.id}_${id}`), source: leaf.id, target: id });
+  /** 旧职责、候选模式与技术节点只在升级边界收敛，当前编辑中的换行不能被提前吞掉。 */
+  const nodes = employeeNodes.map((node) => normalizeEmployeeNode(node));
+  /** 旧技术节点只传递依赖，最近的下游员工成为当前员工的直接后继。 */
+  const outgoing = adjacency(definition.nodes, definition.edges, 'outgoing');
+  const employeeIds = new Set(employeeNodes.map((node) => node.id));
+  const pairs = new Set<string>();
+  for (const source of employeeNodes) {
+    const pending = [...(outgoing.get(source.id) ?? [])];
+    const visited = new Set<string>();
+    while (pending.length > 0) {
+      const target = pending.shift()!;
+      if (visited.has(target)) continue;
+      visited.add(target);
+      if (employeeIds.has(target)) {
+        if (target !== source.id) pairs.add(`${source.id}\0${target}`);
+        continue;
+      }
+      pending.push(...(outgoing.get(target) ?? []));
+    }
   }
-  return result;
+  const edges = [...pairs].map((pair, index) => {
+    const [source, target] = pair.split('\0');
+    return { id: `employee_dependency_${index}_${source}_${target}`, source: source!, target: target! };
+  });
+  return { schemaGeneration: digitalTeamWorkflowSchemaGeneration, nodes, edges, viewport: structuredClone(definition.viewport) };
 }
 
 /** 在创建运行前强制要求完整合法的流程定义。 */
@@ -696,6 +743,7 @@ export function assertDigitalTeamWorkflowReady(value: unknown): asserts value is
 
 /** 校验负责人覆盖后续工作，并只向授权成员增加有边界的分工。 */
 export function validateDigitalTeamStructuredPlan(definition: DigitalTeamWorkflowDefinition, value: unknown): string[] {
+  if (definition.schemaGeneration === digitalTeamWorkflowSchemaGeneration) return ['当前团队已直接配置全部员工分工，不接受运行时新增规划。'];
   if (!isRecord(value) || typeof value.summary !== 'string' || !value.summary.trim() || !Array.isArray(value.assignments)) return ['规划必须包含摘要和逐项安排。'];
   /** 先期调研可以在规划前完成，负责人只安排自己的后续工作。 */
   const planner = definition.nodes.find((node): node is DigitalTeamEmployeeNode => node.type === 'employee' && node.data.purpose === 'plan');
@@ -723,6 +771,7 @@ export function validateDigitalTeamStructuredPlan(definition: DigitalTeamWorkflo
 
 /** 从冻结模板与已登记计划派生执行图；模板本身不被改写，返工历史保留原有身份。 */
 export function digitalTeamExecutionDefinition(run: Pick<DigitalTeamWorkflowRunRecord, 'definitionSnapshot' | 'plan'>): DigitalTeamWorkflowDefinition {
+  if (run.definitionSnapshot.schemaGeneration === digitalTeamWorkflowSchemaGeneration) return run.definitionSnapshot;
   if (!run.plan) return run.definitionSnapshot;
   /** 规划节点及其确认点决定新增工作的入口。 */
   const definition = structuredClone(run.definitionSnapshot);
@@ -806,6 +855,30 @@ function isEmployeeSettings(value: unknown): value is EmployeeWorkSettings {
   return true;
 }
 
+/** 把员工分工收敛为当前可编辑结构，旧职责只保留为普通工作。 */
+function normalizeEmployeeNode(node: DigitalTeamEmployeeNode): DigitalTeamEmployeeNode {
+  const executionMode = node.data.executionMode === 'isolated_write' ? 'isolated_write' : 'read_only';
+  return {
+    ...structuredClone(node),
+    type: 'employee',
+    data: {
+      ...structuredClone(node.data),
+      purpose: 'work',
+      executionMode,
+      acceptanceCriteria: node.data.acceptanceCriteria?.map((item) => item.trim()).filter(Boolean) ?? [`完成“${node.data.title}”并提交可核对结果`],
+      expectedDeliverables: node.data.expectedDeliverables?.map((item) => item.trim()).filter(Boolean) ?? [executionMode === 'isolated_write' ? '代码变更与验证证据' : '可核对的工作成果'],
+      verificationCommands: undefined,
+      settings: node.data.settings?.delegation ? { ...structuredClone(node.data.settings), delegation: undefined } : structuredClone(node.data.settings),
+    },
+  };
+}
+
+/** 判断当前画布允许保存的员工分工。 */
+function isCurrentNode(value: unknown): value is DigitalTeamEmployeeNode {
+  if (!isNode(value) || value.type !== 'employee' || value.data.purpose !== 'work' || value.data.executionMode === 'candidate_read_only') return false;
+  return (value.data.acceptanceCriteria === undefined || isNonEmptyTextArray(value.data.acceptanceCriteria)) && (value.data.expectedDeliverables === undefined || isNonEmptyTextArray(value.data.expectedDeliverables));
+}
+
 /** 判断画布节点结构。 */
 function isNode(value: unknown): value is DigitalTeamNode {
   if (
@@ -830,7 +903,11 @@ function isNode(value: unknown): value is DigitalTeamNode {
       (value.data.verificationCommands === undefined ||
         (Array.isArray(value.data.verificationCommands) &&
           value.data.verificationCommands.length <= 16 &&
-          value.data.verificationCommands.every((command) => typeof command === 'string' && Boolean(command.trim()) && command.length <= 1_000)))
+          value.data.verificationCommands.every((command) => typeof command === 'string' && Boolean(command.trim()) && command.length <= 1_000))) &&
+      (value.data.acceptanceCriteria === undefined ||
+        (Array.isArray(value.data.acceptanceCriteria) && value.data.acceptanceCriteria.length <= 32 && value.data.acceptanceCriteria.every((item) => typeof item === 'string' && Boolean(item.trim())))) &&
+      (value.data.expectedDeliverables === undefined ||
+        (Array.isArray(value.data.expectedDeliverables) && value.data.expectedDeliverables.length <= 32 && value.data.expectedDeliverables.every((item) => typeof item === 'string' && Boolean(item.trim()))))
     );
   }
   if (value.type === 'human_confirmation') return digitalTeamApprovalPurposes.includes(value.data.purpose as DigitalTeamApprovalPurpose) && typeof value.data.instructions === 'string';

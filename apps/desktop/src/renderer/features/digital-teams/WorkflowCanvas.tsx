@@ -25,8 +25,8 @@ import { useEffect, type DragEvent as ReactDragEvent } from 'react';
 /** 数字团队跨组件拖放使用的受限数据类型。 */
 export const digitalTeamDragMime = 'application/x-zeus-digital-team-node';
 
-/** 角色栏拖入画布时唯一允许传递的业务负载。 */
-export type DigitalTeamDragPayload = { kind: 'employee'; employeeId: string } | { kind: 'node'; nodeType: Exclude<DigitalTeamNodeType, 'employee'> };
+/** 角色栏拖入画布时唯一允许传递的员工身份。 */
+export type DigitalTeamDragPayload = { kind: 'employee'; employeeId: string };
 
 /** 运行节点投影只影响外观，不写回模板定义。 */
 export interface DigitalTeamCanvasRuntimeState {
@@ -72,14 +72,6 @@ type CanvasNode = Node<CanvasNodeData, DigitalTeamNodeType>;
 /** 五类节点共用稳定组件引用，避免实时状态更新时重建节点类型表。 */
 const canvasNodeTypes: NodeTypes = Object.fromEntries(digitalTeamNodeTypes.map((type) => [type, WorkflowNodeCard])) as NodeTypes;
 
-/** 节点职责的人类可读名称。 */
-const employeePurposeLabels = {
-  plan: '负责人规划',
-  work: '员工执行',
-  verify: '核对成果',
-  summary: '成果汇总',
-} as const;
-
 /** 人工确认职责的人类可读名称。 */
 const approvalPurposeLabels = {
   plan_approval: '规划批准',
@@ -112,8 +104,8 @@ function WorkflowCanvasSurface(props: WorkflowCanvasProps) {
     id: node.id,
     type: node.type,
     position: node.position,
-    /** 起止节点由系统维护，键盘删除也不能破坏内部边界。 */
-    deletable: node.type !== 'start' && node.type !== 'end',
+    /** 当前模板节点均可删除；历史运行图由只读模式统一保护。 */
+    deletable: true,
     selected: props.selectedNodeId === node.id,
     data: {
       workflowNode: node,
@@ -236,10 +228,10 @@ function WorkflowCanvasSurface(props: WorkflowCanvasProps) {
 function WorkflowNodeCard(props: NodeProps<CanvasNode>) {
   /** 当前持久业务节点决定卡片类型与内容。 */
   const node = props.data.workflowNode;
-  /** 员工与流程节点分别给出最关键的第二行信息。 */
+  /** 员工与历史流程节点分别给出最关键的第二行信息。 */
   const detail =
     node.type === 'employee'
-      ? `${employeePurposeLabels[node.data.purpose]} · ${props.data.employeeName ?? '未绑定员工'}`
+      ? `${node.data.executionMode === 'isolated_write' ? '隔离修改代码' : '分析资料与已有成果'} · ${props.data.employeeName ?? '未绑定员工'}`
       : node.type === 'human_confirmation'
         ? approvalPurposeLabels[node.data.purpose]
         : node.type === 'code_integration'
@@ -278,9 +270,6 @@ function parseDragPayload(value: string): DigitalTeamDragPayload | null {
     const parsed: unknown = JSON.parse(value);
     if (!parsed || typeof parsed !== 'object') return null;
     if ('kind' in parsed && parsed.kind === 'employee' && 'employeeId' in parsed && typeof parsed.employeeId === 'string' && parsed.employeeId.trim()) return { kind: 'employee', employeeId: parsed.employeeId };
-    if ('kind' in parsed && parsed.kind === 'node' && 'nodeType' in parsed && digitalTeamNodeTypes.includes(parsed.nodeType as DigitalTeamNodeType) && parsed.nodeType !== 'employee') {
-      return { kind: 'node', nodeType: parsed.nodeType as Exclude<DigitalTeamNodeType, 'employee'> };
-    }
     return null;
   } catch {
     return null;
@@ -289,11 +278,11 @@ function parseDragPayload(value: string): DigitalTeamDragPayload | null {
 
 /** 前端连线提示拒绝自环、重复边和新增环路。 */
 export function isConnectionAllowed(definition: DigitalTeamWorkflowDefinition, source: string, target: string): boolean {
-  /** 连接端点必须存在，且方向不能违背开始与结束节点。 */
+  /** 连接端点必须是现有员工分工。 */
   const sourceNode = definition.nodes.find((node) => node.id === source);
-  /** 目标必须是可接收输入的节点。 */
+  /** 目标也必须是现有员工分工。 */
   const targetNode = definition.nodes.find((node) => node.id === target);
-  if (!sourceNode || !targetNode || sourceNode.type === 'end' || targetNode.type === 'start') return false;
+  if (!sourceNode || !targetNode || sourceNode.type !== 'employee' || targetNode.type !== 'employee') return false;
   if (source === target || definition.edges.some((edge) => edge.source === source && edge.target === target)) return false;
   const outgoing = new Map(definition.nodes.map((node) => [node.id, [] as string[]]));
   for (const edge of definition.edges) outgoing.get(edge.source)?.push(edge.target);
