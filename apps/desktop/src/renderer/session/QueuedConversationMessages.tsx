@@ -219,6 +219,9 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                       </span>
                       {attachments.length > 0 ? <small>{copy.attachments(attachments.length)}</small> : null}
                     </header>
+                    {attachments.length > 0 ? (
+                      <ConversationComposerAttachments attachments={attachments} language={props.language} disabled={busy} ariaLabel={copy.attachments(attachments.length)} className="session-queued-message-attachments" />
+                    ) : null}
                     <label className="session-sr-only" htmlFor={`queued-message-${submission.id}`}>
                       {copy.editLabel}
                     </label>
@@ -232,9 +235,6 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                       onChange={(event) => setEditDraft(event.currentTarget.value)}
                       onKeyDown={handleEditKeyDown}
                     />
-                    {attachments.length > 0 ? (
-                      <ConversationComposerAttachments attachments={attachments} language={props.language} disabled={busy} ariaLabel={copy.attachments(attachments.length)} className="session-queued-message-attachments" />
-                    ) : null}
                     <footer>
                       <small aria-hidden="true">{copy.editShortcut}</small>
                       <button type="button" className="session-queued-message-editor-cancel" onClick={cancelEdit} disabled={busy}>
