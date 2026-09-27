@@ -34,6 +34,7 @@ import {
   hasSecretQuestion,
   integerValue,
   isRecord,
+  isProviderResponseStreamDisconnected,
   isToolResultItem,
   itemText,
   itemTypeFromMethod,
@@ -152,6 +153,9 @@ export interface CodexProviderEventProjectionDependencies {
 
   recoverExternallyResolvedRequestUserInputAnswers(conversation: ZeusConversationWithMessagesRecord, providerTurnId?: string): Promise<number>;
 
+  /** 回复流断开后只读核对 Provider 权威状态，不自动重放原轮次。 */
+  recoverProviderStreamFailure(conversationId: string, providerThreadId: string, providerTurnId: string): void;
+
   rejectTurnResultWaiters(key: string, error: Error): void;
 
   resolveTurnResult(result: NativeTurnResult): void;
@@ -197,6 +201,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     reconcileTerminalTurnSubmissions,
     recoverExternalRequestUserInputAnswer,
     recoverExternallyResolvedRequestUserInputAnswers,
+    recoverProviderStreamFailure,
     rejectTurnResultWaiters,
     resolveTurnResult,
     rememberProcessedProviderEvent,
@@ -240,6 +245,8 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
   let queueChangedAfterTurn = false;
   let sessionMetricsChanged = false;
   let createdPlanImplementationRequest: ZeusConversationPlanActionRecord | null = null;
+  /** 当前事件需要在耐久失败记录发布后启动的只读连接恢复。 */
+  let providerStreamRecovery: { conversationId: string; providerThreadId: string; providerTurnId: string } | null = null;
 
   function broadcastLinkedFileApprovalChanges(providerItemId: string, providerTurnId: string): void {
     if (!conversation) return;
@@ -495,6 +502,9 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     modelRequestTiming.clear(conversation.id, turn.id);
     sessionMetricsChanged = true;
     const failure = failed ? providerTurnFailure(params, providerTurnId) : null;
+    if (failure && isProviderResponseStreamDisconnected(failure)) {
+      providerStreamRecovery = { conversationId: conversation.id, providerThreadId: threadId, providerTurnId };
+    }
     const turnItems = options.providerItems.listByConversation(conversation.id).filter((item) => item.turnId === turn.id);
     const completedTurnItems = turnItems.filter((item) => item.status === 'completed');
     for (const streamedItem of turnItems.filter((item) => item.status === 'in_progress')) {
@@ -1614,6 +1624,9 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       conversationId: conversation.id,
       providerThreadId: conversation.providerThreadId,
     });
+  }
+  if (providerStreamRecovery) {
+    recoverProviderStreamFailure(providerStreamRecovery.conversationId, providerStreamRecovery.providerThreadId, providerStreamRecovery.providerTurnId);
   }
   if (drainAfterTurn && conversation) await drainQueuedSubmissions();
 }

@@ -9,7 +9,9 @@ import type { TranscriptTurnWorkRow } from '../apps/desktop/src/renderer/session
 import type { NativeSessionItemBuffer } from '../apps/desktop/src/renderer/session/sessionTypes.js';
 import type { TurnChangeSet } from '../packages/shared/src/conversationResources.js';
 import { describeUserFacingError } from '../packages/shared/src/userFacingError.js';
+import { projectConversationTurnFailure } from '../packages/storage/src/conversationSnapshotV2.js';
 import { createCodexProviderEventFlow } from '../packages/local-server/src/codexProviderEventFlow.js';
+import { isProviderResponseStreamDisconnected } from '../packages/local-server/src/codexNativeConversationPolicy.js';
 import { filterCompatibilitySnapshotItemAliases } from '../packages/local-server/src/codexProviderHistoryProjection.js';
 import { selectAutomaticQueueDispatchCandidate } from '../packages/local-server/src/conversationQueueCoreMutationApplication.js';
 import { ConversationEventFlowControl } from '../packages/local-server/src/eventFlowControl.js';
@@ -30,6 +32,29 @@ import {
   resolveSnapshotProviderItemId,
   scopedSnapshotProviderItemId,
 } from '../packages/storage/src/index.js';
+
+/** 验证 Provider 把已知断流降成 other 时，实时与历史共用的投影仍能给出明确原因。 */
+function verifyProviderStreamFailurePresentation(): Record<string, unknown> {
+  /** 使用真实故障文案，覆盖 request ID 存在时的完整匹配。 */
+  const rawMessage =
+    'stream disconnected before completion: An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID 5a794051-cd4c-45b3-8f47-8187e7cd7a75 in your message.';
+  /** 生产投影必须把模糊的 other 收窄为稳定断流身份。 */
+  const failure = projectConversationTurnFailure({
+    code: 'ZEUS_CODEX_TURN_FAILED',
+    message: rawMessage,
+    providerStatus: 'failed',
+    providerError: { codexErrorInfo: 'other' },
+  });
+  /** 中文展示必须复用统一错误目录，不能裸露英文 Provider 文案。 */
+  const explanation = describeUserFacingError(failure, 'zh-CN');
+  assertBehavior(failure.category === 'network', '回复流断开必须归类为网络连接问题。');
+  assertBehavior(failure.cause?.code === 'responseStreamDisconnected', 'other 必须收窄为 responseStreamDisconnected。');
+  assertBehavior(isProviderResponseStreamDisconnected(Object.assign(new Error(rawMessage), { code: 'ZEUS_CODEX_TURN_FAILED' })), '只有明确的回复流断开才应启动后台权威状态核对。');
+  assertBehavior(!isProviderResponseStreamDisconnected(Object.assign(new Error('Rate limit reached'), { code: 'ZEUS_CODEX_TURN_FAILED' })), '非连接故障不得进入回复流恢复重试。');
+  assertBehavior(explanation.message === 'AI 服务在回复结束前断开了连接，因此没有收到完整回复。', '断流必须显示明确的本地化说明。');
+  assertBehavior(explanation.details?.includes('5a794051-cd4c-45b3-8f47-8187e7cd7a75'), '诊断详情必须保留可提交给服务方的 request ID。');
+  return { category: failure.category, cause: failure.cause?.code ?? null, message: explanation.message };
+}
 
 /** 用真实临时目录与数据库验证脚本修改、原有脏内容和恢复保护，不调用外部模型。 */
 async function verifyWorkspaceTurnChanges(): Promise<Record<string, unknown>> {
@@ -859,7 +884,11 @@ const automaticQueueDispatch = verifyAutomaticQueueDispatchSelection();
 const stageSummaryGrouping = verifyStageSummaryProcessGrouping();
 const interruptedQueueTakeover = verifyInterruptedQueueTakeoverProjection();
 const realtimeChangeSetProjection = verifyRealtimeChangeSetProjection();
+/** Provider 断流使用同一生产投影和用户可见错误目录验证。 */
+const providerStreamFailure = verifyProviderStreamFailurePresentation();
 /** 同一事件流探针同时检查文件变化的真实捕获链路。 */
 const workspaceTurnChanges = await verifyWorkspaceTurnChanges();
 
-console.log(JSON.stringify({ status: 'passed', provider, sync, compatibilityItems, automaticQueueDispatch, stageSummaryGrouping, interruptedQueueTakeover, realtimeChangeSetProjection, workspaceTurnChanges }, null, 2));
+console.log(
+  JSON.stringify({ status: 'passed', provider, sync, compatibilityItems, automaticQueueDispatch, stageSummaryGrouping, interruptedQueueTakeover, realtimeChangeSetProjection, providerStreamFailure, workspaceTurnChanges }, null, 2),
+);

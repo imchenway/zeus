@@ -2240,6 +2240,15 @@ const copyErrorScenes: Array<{ id: string; title: string; error: UserFacingError
   { id: 'login', title: '未登录', error: { code: 'ZEUS_UNIFIED_QUEUE_HEAD_FAILED', message: 'Queue paused', cause: { code: 'ZEUS_CODEX_LOGIN_REQUIRED', message: 'Sign-in required' } } },
   { id: 'permission', title: '权限不足', error: { code: 'EACCES', message: 'Permission denied: /Users/example/private/data' } },
   { id: 'connection', title: '连接中断', error: { code: 'ECONNRESET', message: 'Connection reset' } },
+  {
+    id: 'stream',
+    title: '回复流断开',
+    error: {
+      code: 'ZEUS_CODEX_TURN_FAILED',
+      message: 'stream disconnected before completion: Please include the request ID 5a794051-cd4c-45b3-8f47-8187e7cd7a75.',
+      cause: { code: 'responseStreamDisconnected', message: 'stream disconnected before completion: Please include the request ID 5a794051-cd4c-45b3-8f47-8187e7cd7a75.' },
+    },
+  },
   { id: 'quota', title: '用量限制', error: { code: 'insufficient_quota', message: 'Usage limit reached' } },
   { id: 'rejected', title: '模型拒绝', error: { code: 'content_filter', message: 'Request declined by model service' } },
   { id: 'configuration', title: '配置错误', error: { code: 'ZEUS_MODEL_API_KEY_REQUIRED', message: 'API key missing' } },
@@ -2254,6 +2263,73 @@ const copyErrorScenes: Array<{ id: string; title: string; error: UserFacingError
   { id: 'unsent', title: '恢复未发消息', error: { code: 'ZEUS_RECOVERED_UNSENT_CONFIRMATION_REQUIRED', message: 'Recovered unsent message' } },
 ];
 
+/** 构造回复流断开的真实会话消息预览；恢复只改变显示状态，不重发原请求。 */
+function createStreamRecoveryQaState(error: UserFacingErrorCause, recovering: boolean): NativeSessionState {
+  /** 同一轮保留用户输入、已收到的回答和失败终态。 */
+  const items: NativeSessionItemBuffer[] = [
+    {
+      key: 'stream-user',
+      conversationId: 'copy-stream-qa',
+      threadId: 'copy-stream-thread',
+      turnId: 'copy-stream-turn',
+      itemId: 'stream-user',
+      type: 'userMessage',
+      phase: 'user',
+      text: '请继续完成当前任务。',
+      status: 'completed',
+      payload: {},
+      resources: [],
+      updatedAt: '2026-09-23T09:59:30.000Z',
+    },
+    {
+      key: 'stream-answer',
+      conversationId: 'copy-stream-qa',
+      threadId: 'copy-stream-thread',
+      turnId: 'copy-stream-turn',
+      itemId: 'stream-answer',
+      type: 'agentMessage',
+      phase: 'final_answer',
+      text: '已经完成主要处理，并保留了当前回答。',
+      status: 'completed',
+      payload: {},
+      resources: [],
+      updatedAt: '2026-09-23T09:59:33.000Z',
+    },
+  ];
+  return {
+    ...createInitialSessionState(),
+    conversationId: 'copy-stream-qa',
+    transportState: 'ready',
+    conversationState: 'idle',
+    items: Object.fromEntries(items.map((item) => [item.key, item])),
+    itemOrder: items.map((item) => item.key),
+    turnsByProviderId: {
+      'copy-stream-turn': {
+        id: 'copy-stream-turn',
+        providerTurnId: 'copy-stream-turn',
+        submissionId: null,
+        status: 'failed',
+        error: {
+          category: 'network',
+          code: error.code ?? null,
+          message: error.message,
+          providerStatus: 'failed',
+          additionalDetails: [],
+          cause: error.cause,
+        },
+        startedAt: '2026-09-23T09:59:30.000Z',
+        completedAt: '2026-09-23T09:59:34.000Z',
+        createdAt: '2026-09-23T09:59:30.000Z',
+        updatedAt: '2026-09-23T09:59:34.000Z',
+      },
+    },
+    terminalTurnIds: { 'copy-stream-turn': 'failed' },
+    providerReconnectAttempt: recovering ? 1 : 0,
+    providerReconnectAttempts: recovering ? 5 : 0,
+    providerReconnectTurnId: recovering ? 'copy-stream-turn' : null,
+  };
+}
+
 /** 切换状态并驱动生产组件，核对失败、检查、恢复和再次失败的操作语义。 */
 function CopyErrorQa() {
   const [language, setLanguage] = useState<'zh-CN' | 'en'>(new URLSearchParams(window.location.search).get('language') === 'en' ? 'en' : 'zh-CN');
@@ -2263,6 +2339,8 @@ function CopyErrorQa() {
   const checkCompletion = useRef<((error?: Error) => void) | null>(null);
   const zh = language === 'zh-CN';
   const error = selected.error;
+  /** 回复流场景复用生产时间线，直接核对计数动画和回答保留提示。 */
+  const streamTranscriptState = selected.id === 'stream' ? createStreamRecoveryQaState(error, phase === 'checking') : null;
   const item: NativeSessionItemBuffer = {
     key: 'copy-message',
     conversationId: 'copy-qa',
@@ -2348,6 +2426,7 @@ function CopyErrorQa() {
           <p role="status" aria-label="操作记录">
             {action}
           </p>
+          {streamTranscriptState ? <ConversationTranscript state={streamTranscriptState} language={zh ? 'zh-CN' : 'en-US'} transcriptHydrated /> : null}
         </section>
         <section className="qa-theme theme-dark" data-theme="dark">
           <h2>{zh ? '相同原因的深色显示' : 'The same cause in dark appearance'}</h2>
@@ -2356,6 +2435,15 @@ function CopyErrorQa() {
         </section>
       </div>
       <nav className="qa-scenes" aria-label="验收状态控制">
+        <Button
+          disabled={selected.id !== 'stream' || phase === 'checking'}
+          onClick={() => {
+            setPhase('checking');
+            setAction('正在只读核对 Provider 状态；未重发原请求');
+          }}
+        >
+          显示恢复 1/5
+        </Button>
         <Button disabled={phase !== 'checking'} onClick={() => finishCheck(false)}>
           完成检查：恢复
         </Button>

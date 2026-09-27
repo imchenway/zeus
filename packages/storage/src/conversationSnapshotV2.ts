@@ -2319,7 +2319,10 @@ export function projectConversationTurnFailure(value: unknown): ConversationSnap
     (typeof providerError.message === 'string' && providerError.message.trim() ? providerError.message : null) ??
     '智能体运行内核没有提供更具体的失败原因。';
   const message = sanitizeTurnFailureText(rawMessage);
-  const providerInfo = boundedFailureIdentity(typeof providerError.codexErrorInfo === 'string' ? providerError.codexErrorInfo : null);
+  /** Provider 可能把已知断流统称为 other；用稳定错误文本补回产品可识别的原因。 */
+  const reportedProviderInfo = boundedFailureIdentity(typeof providerError.codexErrorInfo === 'string' ? providerError.codexErrorInfo : null);
+  /** 只收窄已确认的断流文案，未知 other 仍保持未知，避免错误归因。 */
+  const providerInfo = (!reportedProviderInfo || reportedProviderInfo === 'other') && /stream disconnected before completion/iu.test(rawMessage) ? 'responseStreamDisconnected' : reportedProviderInfo;
   const capacity = providerInfo === 'serverOverloaded' || /selected model is at capacity/iu.test(message);
   const detail = typeof providerError.additionalDetails === 'string' ? sanitizeTurnFailureText(providerError.additionalDetails) : '';
   return {
@@ -2355,7 +2358,7 @@ function boundedFailureIdentity(value: string | null): string | null {
 function classifyTurnFailure(message: string): ConversationSnapshotV2TurnFailure['category'] {
   if (/\b(?:401|403)\b|auth(?:entication|orization)?|unauthori[sz]ed|api[-_ ]?key|登录|鉴权/iu.test(message)) return 'authentication';
   if (/\b429\b|rate[-_ ]?limit|too many requests|quota|capacity|overloaded|限流|配额|容量/iu.test(message)) return 'rate_limit';
-  if (/network|failed to fetch|connection|socket|timed?\s*out|timeout|dns|网络|连接|超时/iu.test(message)) return 'network';
+  if (/network|failed to fetch|connection|disconnected|socket|timed?\s*out|timeout|dns|网络|连接|超时/iu.test(message)) return 'network';
   if (/permission denied|sandbox|not allowed|forbidden|权限|沙箱/iu.test(message)) return 'permission';
   if (/\b400\b|invalid|unsupported|unknown model|model not found|reasoning_effort|参数|模型.*(?:不存在|不支持)/iu.test(message)) return 'configuration';
   return 'unknown';
