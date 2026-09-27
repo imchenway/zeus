@@ -81,6 +81,7 @@ import { createModelConnectionService } from './modelConnectionService.js';
 import { resolveWritableNonCodexLegacyConversation, type WritableNonCodexLegacyConversationContext } from './nonCodexLegacyRuntime.js';
 import { createPiNativeConversationCoordinator } from './piNativeConversationCoordinator.js';
 import { type RuntimeSettingsSnapshot } from './runtimeQueryApplication.js';
+import type { AppShellSettingsSnapshot } from './localServerSettingsNormalization.js';
 import { buildTaskConflictAiConversationTitle, buildTaskConflictAiPrompt } from './taskConflictAi.js';
 import type { ZeusConversationPluginRuntime } from './zeusConversationPluginRuntime.js';
 import type { ZeusPluginService } from './zeusPluginService.js';
@@ -118,7 +119,7 @@ export type ConversationApplicationOperationDependencies = Record<string, any> &
   idempotencyRequests: IdempotencyRequestRepository;
   modelConnections: ReturnType<typeof createModelConnectionService>;
   piNativeCoordinator: ReturnType<typeof createPiNativeConversationCoordinator>;
-  platformMutableState: { runtimeSettings: RuntimeSettingsSnapshot };
+  platformMutableState: { appShellSettings: AppShellSettingsSnapshot; runtimeSettings: RuntimeSettingsSnapshot };
   projectRepositories: ProjectRepositoryRegistrationRepository;
   projectSharedPaths: ProjectSharedPathRepository;
   projects: ProjectRepository;
@@ -474,7 +475,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       ? resolveNativeConversationExecutionRoot(input.conversation)
       : input.task
         ? input.project.localPath
-        : await prepareProjectConversationWorkspace(input.project, input.reservedConversationId, input.body.workspaceMode, input.body.worktree);
+        : await prepareProjectConversationWorkspace(input.project, input.reservedConversationId, input.body.workspaceMode, input.body.worktree, platformMutableState.appShellSettings.taskBranchPrefix);
     /** 与普通任务会话共用目录模式，冻结后供各员工通道继承。 */
     const executionWorkspaceMode = input.task ? (input.conversation ? taskConversationExecutionWorkspaceMode(input.conversation, input.project) : 'direct') : undefined;
     if (!executionRoot || (input.task && !executionWorkspaceMode)) throw nativeApiError('ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE', '讨论会话的工作目录身份不可用。');
@@ -2447,7 +2448,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         return providerWriteLifecycle.markRpcStarted(resourceId);
       },
     };
-    const executionRoot = reviewWorkspace?.localPath ?? (await prepareProjectConversationWorkspace(project, reservation.conversationId, body.workspaceMode, body.worktree));
+    const executionRoot = reviewWorkspace?.localPath ?? (await prepareProjectConversationWorkspace(project, reservation.conversationId, body.workspaceMode, body.worktree, platformMutableState.appShellSettings.taskBranchPrefix));
     /** 首项目始终使用实际执行目录，普通工作树不能授权回原项目。 */
     const executionRoots = reviewWorkspace ? [executionRoot] : [executionRoot, ...executionProjects.slice(1).map((target) => target.localPath)];
     /** 目录清单保存授权上限；只读和计划模式由运行策略统一禁止写入。 */

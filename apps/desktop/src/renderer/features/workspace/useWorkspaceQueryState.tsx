@@ -389,6 +389,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
       appLanguage: 'zh-CN',
       appearance: 'system',
       mainLayout: 'upstream',
+      taskBranchPrefix: 'zeus',
       webviewDebugEnabled: false,
       developerModeEnabled: false,
       multiWindowEnabled: true,

@@ -90,6 +90,8 @@ export type GitIntegrationOperationDependencies = Record<string, any> & {
   conversations: ConversationRepository;
   db: ZeusDatabase;
   getProjectGitQueries(): ProjectGitQueryApplication;
+  /** 始终读取当前已生效设置，让保存后的新任务立即使用新前缀。 */
+  readTaskBranchPrefix(): string;
   projectRepositories: ProjectRepositoryRegistrationRepository;
   projectSharedPaths: ProjectSharedPathRepository;
   projects: ProjectRepository;
@@ -127,6 +129,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     db,
     executeTaskConversationIdempotent,
     getProjectGitQueries,
+    readTaskBranchPrefix,
     mirrorTaskEnvironmentContainer,
     now,
     overlayTaskEnvironmentSharedPaths,
@@ -261,7 +264,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       remoteRefreshStatus,
       remoteRefreshError,
       sourceRefs,
-      suggestedBranchName: buildTaskBranchName(task.taskCode, task.title, taskEnvironments.listByTask(task.id).length + 1),
+      suggestedBranchName: buildTaskBranchName(task.taskCode, task.title, taskEnvironments.listByTask(task.id).length + 1, readTaskBranchPrefix()),
     };
   }
 
@@ -310,6 +313,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
             taskTitle: task.title,
             workspaceId: workspace.id,
             branchName: workspace.branchName,
+            branchPrefix: null,
             sourceRef: workspace.sourceHeadSha,
             existingBranch: true,
             ...(workspace.remoteName ? { existingRemoteRef: `${workspace.remoteName}/${workspace.remoteBranch}` } : {}),
@@ -389,6 +393,8 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
         return repository;
       });
       const sequence = taskEnvironments.listByTask(task.id).length + 1;
+      /** 同一提交批次冻结当前设置，所有仓库使用相同分支前缀。 */
+      const taskBranchPrefix = readTaskBranchPrefix();
       const preparations = registeredRepositories.map((registeredRepository, index) => ({
         registeredRepository,
         repository: repositoryContexts[index]!,
@@ -412,13 +418,13 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
           const requested = requestedById.get(registeredRepository.id);
           if (!requested) throw nativeApiError('ZEUS_TASK_REPOSITORY_SELECTION_INCOMPLETE', `Choose a source branch for ${registeredRepository.relativePath}.`);
           const requestedBranchName = typeof requested.branchName === 'string' ? requested.branchName.trim() : '';
-          const branchName = requestedBranchName || buildTaskBranchName(task.taskCode, task.title, sequence);
+          const branchName = requestedBranchName || buildTaskBranchName(task.taskCode, task.title, sequence, taskBranchPrefix);
           let sourceKind: 'local' | 'remote' = 'local';
           let sourceRef = branchName;
           let sourceBranch = branchName;
           let sourceRemoteName = '';
           if (adoptLocalBranch) {
-            if (!requestedBranchName || !requestedBranchName.startsWith(buildTaskBranchPrefix(task.taskCode)) || !repository.localBranches.includes(requestedBranchName)) {
+            if (!requestedBranchName || !requestedBranchName.startsWith(buildTaskBranchPrefix(task.taskCode, taskBranchPrefix)) || !repository.localBranches.includes(requestedBranchName)) {
               throw nativeApiError('ZEUS_TASK_LOCAL_BRANCH_INVALID', `Choose an existing local branch that belongs to ${task.taskCode}: ${registeredRepository.relativePath}.`);
             }
             if (repository.worktrees.some((worktree) => worktree.branch === requestedBranchName)) {
@@ -455,6 +461,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
             taskTitle: task.title,
             workspaceId,
             branchName,
+            branchPrefix: taskBranchPrefix,
             sourceRef,
             sourceKind,
             sourceBranch,
@@ -1397,6 +1404,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
         taskTitle: task.title,
         workspaceId,
         branchName: branchName,
+        branchPrefix: null,
         sourceRef: context.branch,
         sourceKind: 'local',
         sourceBranch: context.branch,

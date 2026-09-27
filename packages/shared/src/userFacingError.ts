@@ -315,7 +315,8 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ['所选代码仓库已不在当前项目中。请刷新仓库列表后重新选择。', 'The selected repository is no longer in this project. Refresh the repository list and select again.'],
   ],
   [['ZEUS_PROJECT_REPOSITORY_UNAVAILABLE'], ['项目代码仓库无法访问，或已不在允许的项目目录内。请检查仓库位置。', 'The project repository cannot be accessed or is outside the permitted project folder. Check its location.']],
-  [['ZEUS_TASK_BRANCH_PREFIX_REQUIRED'], ['任务分支名称必须以 zeus/ 开头，请修改分支名称。', 'Task branch names must start with zeus/. Update the branch name.']],
+  [['ZEUS_TASK_BRANCH_PREFIX_REQUIRED'], ['任务分支名称必须使用当前设置的前缀，请修改分支名称。', 'Task branch names must use the configured prefix. Update the branch name.']],
+  [['ZEUS_TASK_BRANCH_PREFIX_INVALID'], ['分支前缀不符合 Git 的命名要求，请修改通用设置。', 'The branch prefix does not meet Git naming requirements. Update it in General settings.']],
   [
     ['ZEUS_TASK_BRANCH_INVALID', 'ZEUS_GIT_BRANCH_INVALID'],
     ['分支名称不符合 Git 的命名要求，请检查名称。', 'The branch name does not meet Git’s naming requirements. Check the name.'],

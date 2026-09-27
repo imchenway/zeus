@@ -220,7 +220,11 @@ importers:
         specifier: 1.3.7
         version: 1.3.7
 
-  packages/git-core: {}
+  packages/git-core:
+    dependencies:
+      '@zeus/shared':
+        specifier: workspace:*
+        version: link:../shared
 
   packages/local-server:
     dependencies:

@@ -17,6 +17,8 @@ export interface NewConversationExecutionContextProps {
   projectId: string;
   projects: readonly Pick<ProjectRecord, 'id' | 'name' | 'localPath'>[];
   workspaceMode: 'direct' | 'worktree';
+  /** 新工作树分支必须使用的当前全局前缀。 */
+  taskBranchPrefix: string;
   worktree?: ConversationWorktreeOptions;
   onWorktreeChange: (options: ConversationWorktreeOptions) => void;
   onWorkspaceModeChange: (mode: 'direct' | 'worktree') => void;
@@ -60,7 +62,9 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
   const worktreeAvailable = loadState === 'ready' && sources.length > 0;
   const sourceAvailable = Boolean(props.worktree && sources.some((source) => source.kind === props.worktree?.sourceKind && source.ref === props.worktree.sourceRef));
   const branchName = props.worktree?.branchName.trim() ?? '';
-  const validWorktree = worktreeAvailable && sourceAvailable && branchName.startsWith('zeus/') && branchName.length > 'zeus/'.length;
+  /** 前缀已由设置边界规范化，这里只负责即时启用状态。 */
+  const branchNamespace = `${props.taskBranchPrefix}/`;
+  const validWorktree = worktreeAvailable && sourceAvailable && branchName.startsWith(branchNamespace) && branchName.length > branchNamespace.length;
   const branchLabel = snapshot?.detached ? (zh ? '游离 HEAD' : 'Detached HEAD') : snapshot?.branch || (loadState === 'loading' ? (zh ? '正在读取' : 'Loading') : zh ? '非 Git 目录' : 'Not a Git repository');
   const projectOptions = useMemo(
     () => [
@@ -142,8 +146,8 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
   useEffect(() => {
     if (temporary || props.workspaceMode !== 'worktree' || props.worktree || !worktreeAvailable) return;
     const source = sources.find((entry) => entry.kind === 'local' && entry.ref === snapshot?.branch) ?? sources[0];
-    if (source) props.onWorktreeChange({ sourceKind: source.kind, sourceRef: source.ref, branchName: `zeus/conversation-${crypto.randomUUID().slice(0, 8)}` });
-  }, [temporary, props.workspaceMode, props.worktree, props.onWorktreeChange, worktreeAvailable, sources, snapshot?.branch]);
+    if (source) props.onWorktreeChange({ sourceKind: source.kind, sourceRef: source.ref, branchName: `${props.taskBranchPrefix}/conversation-${crypto.randomUUID().slice(0, 8)}` });
+  }, [temporary, props.workspaceMode, props.worktree, props.onWorktreeChange, props.taskBranchPrefix, worktreeAvailable, sources, snapshot?.branch]);
 
   useEffect(() => {
     props.onBusyChange?.(branchBusy || projectBusy || refreshing || (!temporary && props.workspaceMode === 'worktree' && !validWorktree));
@@ -303,7 +307,7 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
                     <input
                       aria-label={zh ? '工作树分支名' : 'Worktree branch name'}
                       value={props.worktree?.branchName ?? ''}
-                      placeholder="zeus/conversation-example"
+                      placeholder={`${props.taskBranchPrefix}/conversation-example`}
                       spellCheck={false}
                       disabled={props.disabled || projectBusy || !props.worktree}
                       onChange={(event) => {
@@ -311,7 +315,7 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
                       }}
                     />
                   </label>
-                  <small>{zh ? '从所选分支创建，分支名须以 zeus/ 开头。' : 'Create from the selected branch. The new name must start with zeus/.'}</small>
+                  <small>{zh ? `从所选分支创建，分支名须以 ${branchNamespace} 开头。` : `Create from the selected branch. The new name must start with ${branchNamespace}.`}</small>
                   {props.worktree && !sourceAvailable && loadState === 'ready' ? <span role="alert">{zh ? '来源分支已不可用，请重新选择。' : 'The source branch is no longer available. Choose another branch.'}</span> : null}
                   <Button variant="secondary" size="compact" busy={refreshing} disabled={props.disabled || projectBusy || !snapshot?.remotes.length || !props.onExecuteProjectGit} onClick={() => void refreshRemoteBranches()}>
                     {zh ? '刷新远程分支' : 'Refresh remote branches'}

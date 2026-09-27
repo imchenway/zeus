@@ -14,6 +14,8 @@ export interface AppShellSettings {
   appearance: 'system' | 'light' | 'dark';
   /** 保留已持久化的布局值；界面分别显示为经典布局和紧凑布局。 */
   mainLayout: 'upstream' | 'current';
+  /** 新建任务与会话工作树使用的分支命名空间，不包含结尾斜杠。 */
+  taskBranchPrefix: string;
   webviewDebugEnabled: boolean;
   developerModeEnabled: boolean;
   multiWindowEnabled: boolean;
@@ -51,7 +53,17 @@ export interface AppShellSettings {
 export type UpdateAppShellSettingsRequest = Partial<
   Pick<
     AppShellSettings,
-    'appLanguage' | 'appearance' | 'mainLayout' | 'webviewDebugEnabled' | 'developerModeEnabled' | 'multiWindowEnabled' | 'backgroundModeEnabled' | 'desktopNotificationsEnabled' | 'openAtLoginEnabled' | 'autoUpdateChannel'
+    | 'appLanguage'
+    | 'appearance'
+    | 'mainLayout'
+    | 'taskBranchPrefix'
+    | 'webviewDebugEnabled'
+    | 'developerModeEnabled'
+    | 'multiWindowEnabled'
+    | 'backgroundModeEnabled'
+    | 'desktopNotificationsEnabled'
+    | 'openAtLoginEnabled'
+    | 'autoUpdateChannel'
   >
 > & {
   /** 省略时保留当前代理，兼容其他设置的局部保存。 */

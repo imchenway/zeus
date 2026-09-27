@@ -1931,6 +1931,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
         newConversationDrafts={newConversationDrafts}
         key={selectedNativeConversation ? `${selectedNativeConversation.projectId}:${selectedNativeConversation.navigationId ?? selectedNativeConversation.id}` : `new-conversation-${newConversationFocusRequest}`}
         language={appShellSettings.appLanguage}
+        taskBranchPrefix={appShellSettings.taskBranchPrefix}
         state={null}
         conversation={selectedNativeConversation}
         historyOnly={Boolean(selectedNativeConversation && selectedNativeConversationPresentation === 'history')}

@@ -78,7 +78,14 @@ export class SettingsCommandApplicationError extends Error {
   readonly name = 'SettingsCommandApplicationError';
 
   constructor(
-    readonly code: 'ZEUS_SETTINGS_COMMAND_INVALID' | 'ZEUS_SETTINGS_COMMAND_RESULT_MISSING' | 'ZEUS_SETTINGS_COMMAND_RESULT_TOO_LARGE' | 'ZEUS_SETTINGS_COMMAND_OUTCOME_UNKNOWN' | 'ZEUS_SETTINGS_COMMAND_EXPLICITLY_REJECTED',
+    readonly code:
+      | 'ZEUS_SETTINGS_COMMAND_INVALID'
+      | 'ZEUS_SETTINGS_COMMAND_RESULT_MISSING'
+      | 'ZEUS_SETTINGS_COMMAND_RESULT_TOO_LARGE'
+      | 'ZEUS_SETTINGS_COMMAND_OUTCOME_UNKNOWN'
+      | 'ZEUS_SETTINGS_COMMAND_EXPLICITLY_REJECTED'
+      | 'ZEUS_MODEL_SETUP_INVALID'
+      | 'ZEUS_TASK_BRANCH_PREFIX_INVALID',
     message: string,
     readonly statusCode: 400 | 409 | 413 | 500,
     readonly recoveryRequired = false,

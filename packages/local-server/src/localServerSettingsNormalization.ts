@@ -1,9 +1,23 @@
-import { defaultTaskManagementStatusConfig, isTaskStatusFilter, normalizeTaskManagementStatusConfig, type ProjectCodeWorkspacePreference, type TaskManagementStatusConfig, type TaskPageViewMode, type TaskStatusFilter } from '@zeus/shared';
+import {
+  defaultTaskBranchPrefix,
+  defaultTaskManagementStatusConfig,
+  isTaskStatusFilter,
+  normalizeNetworkProxySettings,
+  normalizeSidebarConversationFilters,
+  normalizeTaskBranchPrefix,
+  normalizeTaskManagementStatusConfig,
+  type NetworkProxySettings,
+  type ProjectCodeWorkspacePreference,
+  type SidebarConversationFilters,
+  type TaskManagementStatusConfig,
+  type TaskPageViewMode,
+  type TaskStatusFilter,
+} from '@zeus/shared';
 import type { TaskManagementStatus, TaskPriority } from '@zeus/storage';
 import { listAiCliAdapters, type AiCliAdapterDescriptor } from '@zeus/ai-runtime';
 import { parse } from 'node:path';
 import type { RuntimeAutoConfirmationPolicy, RuntimeSettingsSnapshot } from './runtimeQueryApplication.js';
-import { normalizeNetworkProxySettings, type NetworkProxySettings, normalizeSidebarConversationFilters, type SidebarConversationFilters } from '@zeus/shared';
+import { SettingsCommandApplicationError } from './settingsCommandApplication.js';
 
 interface TelegramNotificationSettingsSnapshot {
   enabled: boolean;
@@ -355,6 +369,8 @@ export interface AppShellSettingsSnapshot {
   appearance: AppAppearance;
   /** 主工作区布局；旧设置缺省时继续使用当前布局。 */
   mainLayout: 'upstream' | 'current';
+  /** 新建任务与会话工作树使用的分支命名空间，不包含结尾斜杠。 */
+  taskBranchPrefix: string;
   webviewDebugEnabled: boolean;
   developerModeEnabled: boolean;
   multiWindowEnabled: boolean;
@@ -396,6 +412,8 @@ export interface UpdateAppShellSettingsBody {
   appLanguage?: AppLanguage;
   appearance?: AppAppearance;
   mainLayout?: 'upstream' | 'current';
+  /** 新建任务与会话工作树使用的分支命名空间，不包含结尾斜杠。 */
+  taskBranchPrefix?: string;
   webviewDebugEnabled?: boolean;
   developerModeEnabled?: boolean;
   multiWindowEnabled?: boolean;
@@ -531,6 +549,7 @@ export function normalizeAppShellSettings(value: AppShellSettingsSnapshot | unde
     appLanguage,
     appearance,
     mainLayout,
+    taskBranchPrefix: normalizeTaskBranchPrefix(value?.taskBranchPrefix) ?? defaultTaskBranchPrefix,
     webviewDebugEnabled: value?.webviewDebugEnabled === true,
     developerModeEnabled: value?.developerModeEnabled === true,
     multiWindowEnabled: typeof value?.multiWindowEnabled === 'boolean' ? value.multiWindowEnabled : true,
@@ -569,8 +588,11 @@ export function normalizeAppShellSettings(value: AppShellSettingsSnapshot | unde
 export function patchAppShellSettings(current: AppShellSettingsSnapshot, input: UpdateAppShellSettingsBody, identities: SettingsIdentityCatalog): AppShellSettingsSnapshot {
   // 接入设置只接受显式合法值；普通设置省略字段时保留原状态。
   if (input.modelSetupStatus !== undefined && input.modelSetupStatus !== null && !['pending', 'skipped', 'completed'].includes(input.modelSetupStatus)) {
-    throw Object.assign(new Error('模型接入状态无效。'), { code: 'ZEUS_MODEL_SETUP_INVALID', statusCode: 400 });
+    throw new SettingsCommandApplicationError('ZEUS_MODEL_SETUP_INVALID', '模型接入状态无效。', 400);
   }
+  /** 显式保存无效前缀必须报错，不能静默恢复默认值并让用户误以为已生效。 */
+  const taskBranchPrefix = input.taskBranchPrefix === undefined ? current.taskBranchPrefix : normalizeTaskBranchPrefix(input.taskBranchPrefix);
+  if (!taskBranchPrefix) throw new SettingsCommandApplicationError('ZEUS_TASK_BRANCH_PREFIX_INVALID', '分支前缀不符合 Git 命名要求。', 400);
   return normalizeAppShellSettings(
     {
       ...current,
@@ -578,6 +600,7 @@ export function patchAppShellSettings(current: AppShellSettingsSnapshot, input: 
       appLanguage: input.appLanguage === 'en-US' || input.appLanguage === 'zh-CN' ? input.appLanguage : current.appLanguage,
       appearance: input.appearance ?? current.appearance,
       mainLayout: input.mainLayout === 'upstream' || input.mainLayout === 'current' ? input.mainLayout : current.mainLayout,
+      taskBranchPrefix,
       webviewDebugEnabled: typeof input.webviewDebugEnabled === 'boolean' ? input.webviewDebugEnabled : current.webviewDebugEnabled,
       developerModeEnabled: typeof input.developerModeEnabled === 'boolean' ? input.developerModeEnabled : current.developerModeEnabled,
       multiWindowEnabled: typeof input.multiWindowEnabled === 'boolean' ? input.multiWindowEnabled : current.multiWindowEnabled,

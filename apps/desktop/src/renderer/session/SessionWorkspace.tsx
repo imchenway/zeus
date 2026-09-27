@@ -1484,6 +1484,8 @@ export interface SessionWorkspaceProps {
   gitContext?: { client: DashboardClient; project: ProjectRecord };
   newConversationDrafts?: NewConversationDraftStore;
   language: SessionUiLanguage;
+  /** 新建项目会话工作树时使用的全局分支前缀。 */
+  taskBranchPrefix?: string;
   state: NativeSessionState | null;
   /** 真实会话用 selector 子组件订阅；本地创建态继续直接使用 state。 */
   stateController?: SessionController;
@@ -3098,6 +3100,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
           key={owner?.kind === 'task' ? `task:${props.task?.id}` : 'project'}
           drafts={props.newConversationDrafts}
           language={props.language}
+          taskBranchPrefix={props.taskBranchPrefix}
           owner={owner}
           task={props.task}
           projects={props.projects}
@@ -3250,6 +3253,8 @@ function isComposerWritableForFocus(state: NativeSessionState | null, readOnly: 
 export function NewConversationComposer(props: {
   drafts?: NewConversationDraftStore;
   language: SessionUiLanguage;
+  /** 新建项目会话工作树时使用的全局分支前缀。 */
+  taskBranchPrefix?: string;
   owner?: SessionConversationOwner;
   task: SessionWorkspaceTask | null;
   projects?: readonly Pick<ProjectRecord, 'id' | 'name' | 'localPath'>[];
@@ -3581,6 +3586,7 @@ export function NewConversationComposer(props: {
         {props.owner?.kind === 'project' && props.projects?.length ? (
           <NewConversationExecutionContext
             language={props.language}
+            taskBranchPrefix={props.taskBranchPrefix ?? 'zeus'}
             projectId={props.owner.projectId}
             projects={props.projects}
             workspaceMode={workspaceMode}
