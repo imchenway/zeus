@@ -368,6 +368,30 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ['代码仍有冲突，请先处理并确认所有冲突文件。', 'The code still has conflicts. Resolve and confirm all conflicting files first.'],
   ],
   [
+    ['ZEUS_TARGET_WORKTREE_CHANGED'],
+    [
+      '来源工作目录在冲突处理期间又发生了变化；Zeus 没有覆盖它。请刷新代码交付，核对最新草稿后重新处理。',
+      'The source working folder changed while conflicts were being resolved. Zeus did not overwrite it. Refresh code delivery, review the latest draft, and try again.',
+      'check',
+    ],
+  ],
+  [
+    ['ZEUS_TARGET_WORKTREE_CONFLICTED', 'ZEUS_TARGET_WORKTREE_UNSUPPORTED'],
+    [
+      '来源工作目录已有冲突，或包含当前流程不能安全处理的特殊文件。Zeus 已保留现场，请先处理该目录后重试。',
+      'The source working folder already has conflicts or contains a special file this flow cannot safely handle. Zeus preserved it. Resolve the folder state and try again.',
+      'check',
+    ],
+  ],
+  [
+    ['ZEUS_TARGET_WORKTREE_RESTORE_FAILED', 'ZEUS_TARGET_WORKTREE_VERIFICATION_FAILED', 'ZEUS_TASK_LOCAL_CHANGE_STATE_INVALID'],
+    [
+      '来源工作目录的安全落地未能确认，Zeus 已停止继续操作。请勿重复尝试，先查看错误详情并检查该目录的 Git 状态。',
+      'The safe update of the source working folder could not be confirmed, so Zeus stopped. Do not retry yet; review the error details and inspect the folder’s Git state first.',
+      'check',
+    ],
+  ],
+  [
     ['ZEUS_TASK_GIT_PATH_INVALID'],
     ['共享目录和嵌套仓库中的文件不能随上层仓库提交。请到所属仓库中提交。', 'Files in shared folders or nested repositories cannot be committed with the parent repository. Commit them in their own repository.'],
   ],

@@ -1685,17 +1685,30 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
         return workspaceGitResponse({ integration: updated }, 202);
       }
       const finalized = await finalizeTaskBranchIntegration({ repositoryPath, integrationPath: started.integrationPath, targetBranch, targetHeadSha: started.targetHeadSha, resultHeadSha: started.resultHeadSha! });
-      const pendingLocalSync = finalized.localSyncStatus === 'pending';
+      /** 来源草稿真实冲突优先进入既有冲突工作台，不再伪装成普通待同步。 */
+      const localConflict = finalized.conflictFiles.length > 0;
+      /** 没有可处理冲突但仍无法安全落地时才保留旧的待同步语义。 */
+      const pendingLocalSync = finalized.localSyncStatus === 'pending' && !localConflict;
       updated = taskIntegrations.update(integration.id, {
-        integrationPath: pendingLocalSync ? started.integrationPath : null,
+        integrationPath: pendingLocalSync || localConflict ? started.integrationPath : null,
         resultHeadSha: finalized.resultHeadSha,
-        state: pendingLocalSync ? 'pending_local_sync' : 'merged',
+        state: localConflict ? 'conflicted' : pendingLocalSync ? 'pending_local_sync' : 'merged',
         localSyncStatus: finalized.localSyncStatus,
         localHeadSha: finalized.localHeadSha,
         localWorktreePath: finalized.localWorktreePath,
-        conflictFiles: [],
+        conflictFiles: finalized.conflictFiles,
         lastError: null,
       });
+      if (localConflict) {
+        recordTaskEvent({
+          taskId: task.id,
+          eventType: 'task.git_integration.conflicted',
+          title: '来源工作区草稿与任务成果需要处理冲突',
+          payload: { integrationId: integration.id, workspaceId: workspace.id, targetBranch, conflictFiles: finalized.conflictFiles },
+        });
+        await db.save();
+        return workspaceGitResponse({ integration: updated, result: finalized }, 202);
+      }
       if (pendingLocalSync) {
         recordTaskEvent({
           taskId: task.id,
@@ -1805,17 +1818,30 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       targetHeadSha: integration.targetHeadSha,
       resultHeadSha: commit.resultHeadSha,
     });
-    const pendingLocalSync = finalized.localSyncStatus === 'pending';
+    /** 冲突收尾时也可能首次发现来源草稿重叠，继续留在同一处理现场。 */
+    const localConflict = finalized.conflictFiles.length > 0;
+    /** 只有没有冲突文件的本地阻碍才显示待同步。 */
+    const pendingLocalSync = finalized.localSyncStatus === 'pending' && !localConflict;
     const updated = taskIntegrations.update(integration.id, {
-      integrationPath: pendingLocalSync ? integration.integrationPath : null,
+      integrationPath: pendingLocalSync || localConflict ? integration.integrationPath : null,
       resultHeadSha: finalized.resultHeadSha,
-      state: pendingLocalSync ? 'pending_local_sync' : 'merged',
+      state: localConflict ? 'conflicted' : pendingLocalSync ? 'pending_local_sync' : 'merged',
       localSyncStatus: finalized.localSyncStatus,
       localHeadSha: finalized.localHeadSha,
       localWorktreePath: finalized.localWorktreePath,
-      conflictFiles: [],
+      conflictFiles: finalized.conflictFiles,
       lastError: null,
     });
+    if (localConflict) {
+      recordTaskEvent({
+        taskId: task.id,
+        eventType: 'task.git_integration.conflicted',
+        title: '来源工作区草稿与任务成果需要继续处理冲突',
+        payload: { integrationId: integration.id, workspaceId: workspace.id, targetBranch: integration.targetBranch, conflictFiles: finalized.conflictFiles },
+      });
+      await db.save();
+      return workspaceGitResponse({ integration: updated, result: finalized }, 202);
+    }
     if (pendingLocalSync) {
       recordTaskEvent({
         taskId: task.id,
@@ -1940,6 +1966,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
         taskHeadSha,
         mode: integration.mode,
         commitMessage: `${task.taskCode}: 合入 ${workspace.branchName}`,
+        ...(integration.integrationPath ? { localChangesFromPath: integration.integrationPath } : {}),
       });
 
       if (started.state === 'conflicted' && started.conflictFiles.includes(input.conflictPath)) {
@@ -1978,6 +2005,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
         conflictBranch: conflictWorkspace.branchName,
         mode: integration.mode,
         commitMessage: `${task.taskCode}: 合入 ${workspace.branchName}`,
+        sourceLocalChanges: started.localChangesConflict === true,
       });
       const operation = await startNativeTaskConversationFromPlan({
         agentKind: input.agentKind,
@@ -2154,24 +2182,38 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
         targetHeadSha: attempt.targetHeadSha,
         resultHeadSha: commit.resultHeadSha,
       });
-      const pendingLocalSync = finalized.localSyncStatus === 'pending';
+      /** AI 收尾后若来源草稿又形成新冲突，保留当前尝试作为下一轮处理现场。 */
+      const localConflict = finalized.conflictFiles.length > 0;
+      /** 无可处理冲突时才进入普通待同步。 */
+      const pendingLocalSync = finalized.localSyncStatus === 'pending' && !localConflict;
       if (integration.integrationPath && resolve(integration.integrationPath) !== resolve(attempt.worktreePath)) {
         await cleanupTaskIntegrationWorktree({ repositoryPath: workspace.repositoryPath || project.localPath, integrationPath: integration.integrationPath });
       }
       taskIntegrationAttempts.update(attempt.id, { state: 'completed', resultHeadSha: finalized.resultHeadSha, lastError: null });
       taskIntegrations.update(integration.id, {
-        integrationPath: pendingLocalSync ? attempt.worktreePath : null,
+        integrationPath: pendingLocalSync || localConflict ? attempt.worktreePath : null,
         resultHeadSha: finalized.resultHeadSha,
-        state: pendingLocalSync ? 'pending_local_sync' : 'merged',
+        state: localConflict ? 'conflicted' : pendingLocalSync ? 'pending_local_sync' : 'merged',
         localSyncStatus: finalized.localSyncStatus,
         localHeadSha: finalized.localHeadSha,
         localWorktreePath: finalized.localWorktreePath,
-        conflictFiles: [],
+        conflictFiles: finalized.conflictFiles,
         lastError: null,
       });
       for (const other of taskIntegrationAttempts.listByIntegration(integration.id)) {
         if (other.id === attempt.id || other.state === 'completed' || other.state === 'failed' || other.state === 'stale') continue;
         taskIntegrationAttempts.update(other.id, { state: 'stale', lastError: '另一条冲突处理尝试已先完成安全落地。' });
+      }
+      if (localConflict) {
+        recordTaskEvent({
+          taskId: task.id,
+          eventType: 'task.git_integration.conflicted',
+          title: '冲突处理：来源工作区草稿仍有冲突待处理',
+          payload: { integrationId: integration.id, attemptId: attempt.id, workspaceId: workspace.id, conversationId, targetBranch: integration.targetBranch, conflictFiles: finalized.conflictFiles },
+        });
+        await db.save();
+        publishRealtimeEvent('task.git_delivery.changed', { taskId: task.id, integrationId: integration.id, conversationId });
+        return;
       }
       if (pendingLocalSync) {
         recordTaskEvent({
@@ -2257,17 +2299,31 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
         targetHeadSha: integration.targetHeadSha,
         resultHeadSha: commit.resultHeadSha,
       });
-      const pendingLocalSync = finalized.localSyncStatus === 'pending';
+      /** 旧 AI 记录也必须把来源草稿冲突投影成可继续处理的冲突态。 */
+      const localConflict = finalized.conflictFiles.length > 0;
+      /** 无冲突文件的安全阻碍继续使用待同步态。 */
+      const pendingLocalSync = finalized.localSyncStatus === 'pending' && !localConflict;
       taskIntegrations.update(integration.id, {
-        integrationPath: pendingLocalSync ? integration.integrationPath : null,
+        integrationPath: pendingLocalSync || localConflict ? integration.integrationPath : null,
         resultHeadSha: finalized.resultHeadSha,
-        state: pendingLocalSync ? 'pending_local_sync' : 'merged',
+        state: localConflict ? 'conflicted' : pendingLocalSync ? 'pending_local_sync' : 'merged',
         localSyncStatus: finalized.localSyncStatus,
         localHeadSha: finalized.localHeadSha,
         localWorktreePath: finalized.localWorktreePath,
-        conflictFiles: [],
+        conflictFiles: finalized.conflictFiles,
         lastError: null,
       });
+      if (localConflict) {
+        recordTaskEvent({
+          taskId: task.id,
+          eventType: 'task.git_integration.conflicted',
+          title: '冲突处理：来源工作区草稿仍有冲突待处理',
+          payload: { integrationId: integration.id, workspaceId: workspace.id, conversationId, targetBranch: integration.targetBranch, conflictFiles: finalized.conflictFiles },
+        });
+        await db.save();
+        publishRealtimeEvent('task.git_delivery.changed', { taskId: task.id, integrationId: integration.id, conversationId });
+        return;
+      }
       if (pendingLocalSync) {
         recordTaskEvent({
           taskId: task.id,
