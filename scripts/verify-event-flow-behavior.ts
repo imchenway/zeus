@@ -6,11 +6,13 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { CodexAppServerEvent, CodexAppServerManager } from '../packages/ai-runtime/src/index.js';
 import type { TranscriptTurnWorkRow } from '../apps/desktop/src/renderer/session/ConversationTranscript.js';
-import type { NativeSessionItemBuffer } from '../apps/desktop/src/renderer/session/sessionTypes.js';
+import type { NativeConversationSnapshot, NativeSessionItemBuffer } from '../apps/desktop/src/renderer/session/sessionTypes.js';
+import { reconcileConversationHistoryCache } from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.js';
 import type { TurnChangeSet } from '../packages/shared/src/conversationResources.js';
 import { describeUserFacingError } from '../packages/shared/src/userFacingError.js';
 import { projectConversationTurnFailure } from '../packages/storage/src/conversationSnapshotV2.js';
 import { createCodexProviderEventFlow } from '../packages/local-server/src/codexProviderEventFlow.js';
+import { projectCodexProviderEvent, type CodexProviderEventProjectionDependencies } from '../packages/local-server/src/codexProviderEventProjection.js';
 import { isProviderResponseStreamDisconnected } from '../packages/local-server/src/codexNativeConversationPolicy.js';
 import { filterCompatibilitySnapshotItemAliases } from '../packages/local-server/src/codexProviderHistoryProjection.js';
 import { selectAutomaticQueueDispatchCandidate } from '../packages/local-server/src/conversationQueueCoreMutationApplication.js';
@@ -28,6 +30,7 @@ import {
   TurnChangeSetRepository,
   ConversationProviderItemRepository,
   ConversationSyncEventRepository,
+  type ZeusConversationTurnRecord,
   createZeusDatabase,
   resolveSnapshotProviderItemId,
   scopedSnapshotProviderItemId,
@@ -877,7 +880,120 @@ function assertBehavior(condition: unknown, message: string): asserts condition 
   if (!condition) throw new Error(`ZARCH 事件流行为核验失败：${message}`);
 }
 
+/** 验证 sealed 分段只接纳旧轮次终态，且不夺回当前 thread 的运行控制权。 */
+async function verifySealedSegmentTerminalProjection(): Promise<Record<string, unknown>> {
+  /** 当前运行态必须在旧轮次终止后保持不变。 */
+  const runStates = new Map([['conversation-sealed', { type: 'active' as const, turnId: 'turn-current', phase: 'prework' as const }]]);
+  /** 探针记录持久化前后的公开事件，确保终态落盘后才广播。 */
+  const effects: string[] = [];
+  /** 旧分段只拥有这一条尚未收口的轮次。 */
+  let sealedTurn: ZeusConversationTurnRecord = {
+    id: 'local-turn-sealed',
+    conversationId: 'conversation-sealed',
+    providerThreadId: 'thread-1',
+    providerTurnId: 'turn-1',
+    clientSubmissionId: 'submission-sealed',
+    status: 'running' as const,
+    errorJson: null,
+    planJson: null,
+    startedAt: '2026-08-21T11:59:00.000Z',
+    completedAt: null,
+    createdAt: '2026-08-21T11:59:00.000Z',
+    updatedAt: '2026-08-21T11:59:00.000Z',
+    agentKind: 'codex' as const,
+    nativeRunId: 'turn-1',
+  };
+  /** 这里只提供 sealed 分支会消费的依赖；误入普通完成链路会立即暴露缺失依赖。 */
+  const dependencies = {
+    options: {
+      execution: {
+        segmentByNativeSession: () => ({ id: 'segment-sealed', conversationId: 'conversation-sealed', state: 'sealed' }),
+        persistWarning: () => effects.push('warning-persisted'),
+      },
+      conversations: {
+        getByProviderThreadId: () => undefined,
+        getById: () => ({ id: 'conversation-sealed', projectId: 'project-sealed', providerThreadId: 'thread-current', messages: [], attentionUnread: false }),
+      },
+      turns: {
+        getByProvider: (providerThreadId: string, providerTurnId: string) => (providerThreadId === sealedTurn.providerThreadId && providerTurnId === sealedTurn.providerTurnId ? sealedTurn : undefined),
+        upsert: (input: typeof sealedTurn) => {
+          sealedTurn = input;
+          effects.push('turn-persisted');
+          return sealedTurn;
+        },
+      },
+      receipts: { record: () => effects.push('receipt-recorded') },
+      db: {
+        save: async () => {
+          effects.push('database-saved');
+        },
+      },
+      broadcast: (type: string) => effects.push(`broadcast:${type}`),
+    },
+    closed: false,
+    contexts: new Map(),
+    failedTurnResults: new Map(),
+    modelRequestTiming: { clear: () => effects.push('timing-cleared') },
+    runStates,
+    hasProcessedProviderEvent: () => false,
+    maintainProviderReceiptGenerations: () => undefined,
+    rememberProcessedProviderEvent: () => undefined,
+    reconcileTerminalTurnSubmissions: () => ({ primarySubmission: undefined, recoveryRequired: [], reconciledCount: 1 }),
+    resolveTurnResult: () => effects.push('waiter-resolved'),
+    rejectTurnResultWaiters: () => effects.push('waiter-rejected'),
+  } as unknown as CodexProviderEventProjectionDependencies;
+
+  await projectCodexProviderEvent(dependencies, providerEvent(100, 'turn/completed', { turn: { status: 'completed' } }));
+  assertBehavior(sealedTurn.status === 'completed' && sealedTurn.completedAt === '2026-08-21T12:00:00.000Z', 'sealed 分段的旧轮次终态没有持久化。');
+  assertBehavior(runStates.get('conversation-sealed')?.turnId === 'turn-current', '旧分段终态覆盖了当前运行态。');
+  assertBehavior(effects.indexOf('database-saved') < effects.indexOf('broadcast:conversation.turn.completed'), 'sealed 终态必须先落盘再广播。');
+  assertBehavior(!effects.includes('warning-persisted'), '合法的 sealed 终态不应被归类为迟到活动警告。');
+
+  await projectCodexProviderEvent(dependencies, providerEvent(101, 'item/started'));
+  assertBehavior(effects.includes('warning-persisted'), 'sealed 分段的非终态活动仍必须被拒绝并记录警告。');
+  return { status: sealedTurn.status, currentTurnId: runStates.get('conversation-sealed')?.turnId ?? null, effects };
+}
+
+/** 验证权威快照不再声明活动轮次时，深分页缓存不会复活旧分段的 running turn。 */
+function verifyAuthoritativeTurnCacheReconciliation(): Record<string, unknown> {
+  /** 两份快照使用连续的历史范围，确保探针进入缓存复用分支。 */
+  const paging = {
+    history: { loadedThroughSequence: 10, oldestLoadedSequence: 1, nextCursor: null, hasMore: false, loading: false, error: null },
+    historyByTurn: {},
+    processByTurn: {},
+  };
+  /** 只提供缓存协调器实际读取的 V2 结构身份。 */
+  const snapshotV2 = { structureGeneration: '2026-09-16-transcript-placement', collections: { modelHistory: { throughSequence: 10 } } };
+  /** 旧缓存同时包含已封存历史与错误残留的活动轮次。 */
+  const previous = {
+    id: 'conversation-cache',
+    snapshotV2,
+    v2Paging: paging,
+    items: [],
+    turns: [
+      { id: 'turn-history', providerTurnId: 'provider-history', status: 'completed' },
+      { id: 'turn-stale', providerTurnId: 'provider-stale', status: 'running' },
+    ],
+  } as unknown as NativeConversationSnapshot;
+  /** 权威快照已进入空闲态，只保留刚完成的当前轮次。 */
+  const authoritative = {
+    ...previous,
+    turns: [{ id: 'turn-current', providerTurnId: 'provider-current', status: 'completed' }],
+  } as unknown as NativeConversationSnapshot;
+  /** 协调后只允许终态历史与权威轮次继续存在。 */
+  const reconciliation = reconcileConversationHistoryCache(previous, authoritative);
+  const turnIds = reconciliation.snapshot.turns.map((turn) => turn.id);
+  assertBehavior(reconciliation.preserveCachedHistory, '连续历史范围应继续复用深分页缓存。');
+  assertBehavior(!turnIds.includes('turn-stale'), '权威快照移除的 running turn 不得从缓存复活。');
+  assertBehavior(turnIds.includes('turn-history') && turnIds.includes('turn-current'), '终态历史与权威当前轮次都应保留。');
+  return { preserveCachedHistory: reconciliation.preserveCachedHistory, turnIds };
+}
+
 const provider = await verifyCodexProviderEventFlow();
+/** 真实投影入口核对 sealed 分段终态与迟到活动的不同处理。 */
+const sealedSegmentTerminal = await verifySealedSegmentTerminalProjection();
+/** Renderer 缓存核对旧非终态不会在权威空闲快照后复活。 */
+const authoritativeTurnCache = verifyAuthoritativeTurnCacheReconciliation();
 const sync = await verifyConversationSyncFlow();
 const compatibilityItems = await verifyCompatibilityItemIdentity();
 const automaticQueueDispatch = verifyAutomaticQueueDispatchSelection();
@@ -890,5 +1006,22 @@ const providerStreamFailure = verifyProviderStreamFailurePresentation();
 const workspaceTurnChanges = await verifyWorkspaceTurnChanges();
 
 console.log(
-  JSON.stringify({ status: 'passed', provider, sync, compatibilityItems, automaticQueueDispatch, stageSummaryGrouping, interruptedQueueTakeover, realtimeChangeSetProjection, providerStreamFailure, workspaceTurnChanges }, null, 2),
+  JSON.stringify(
+    {
+      status: 'passed',
+      provider,
+      sealedSegmentTerminal,
+      authoritativeTurnCache,
+      sync,
+      compatibilityItems,
+      automaticQueueDispatch,
+      stageSummaryGrouping,
+      interruptedQueueTakeover,
+      realtimeChangeSetProjection,
+      providerStreamFailure,
+      workspaceTurnChanges,
+    },
+    null,
+    2,
+  ),
 );
