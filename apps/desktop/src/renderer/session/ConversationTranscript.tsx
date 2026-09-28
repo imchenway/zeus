@@ -2539,10 +2539,11 @@ function projectDeliverablesAfterFinalAnswer(rows: readonly TranscriptRow[]): re
 
 /** 只有完成态才收拢中途助手说明，最终正文与需要用户处理的消息保持外置。 */
 function isTurnProcessRow(row: TranscriptRow, collapseAssistantMessages = false): boolean {
-  if (row.kind === 'answered_request') return true;
+  // 已回答询问属于用户沟通正文，运行中和完成后都保持直接可见。
+  if (row.kind === 'answered_request') return false;
   if (row.kind === 'activity') return true;
-  // 异步答复是已回答询问，和 PLAN 答题一样进入处理过程，不再充当开场用户消息。
-  if (row.questionAnswer) return true;
+  // 思考过程中提交的结构化答复同样是用户消息，不能被完成态重新收进处理过程。
+  if (row.questionAnswer) return false;
   // 缺少实时回答权限的恢复问题必须直接出现在时间线，不能折叠进普通工具过程。
   if (isRecoveredRequestUserInputItem(row.item) || (itemRole(row.item) === 'assistant' && classifyAssistantMessage(row.item.payload, row.item.phase) === 'question')) return false;
   // 计划和明确交付资源属于最终产物，必须独立展示，不能折叠进“已处理”过程。

@@ -102,21 +102,23 @@ export function conversationQuestionNavigationExcerpt(payload: unknown, response
   const visible = containsSecret ? response.publicAnswers : response.answers;
   /** 只读经过结构检查的答案映射。 */
   const answers = visible && typeof visible === 'object' && !Array.isArray(visible) ? (visible as Record<string, unknown>) : {};
-  return {
-    prompt: conversationNavigationExcerpt(parsed.questions.map((question) => question.question).join('；'), 160),
-    response: conversationNavigationExcerpt(
-      parsed.questions
-        .map((question) => {
-          if (question.isSecret) return '敏感回答已提交';
-          if (response.type === 'external_resolution') return '答案尚未同步';
+  /** 导航只汇总可公开回放的答案；旧记录缺失正文时统一显示一次已回答。 */
+  const visibleAnswers =
+    response.type === 'external_resolution'
+      ? ['答案尚未同步']
+      : parsed.questions.flatMap((question) => {
+          if (question.isSecret) return ['敏感回答已提交'];
           /** 普通答案使用规范对象，敏感记录的公开答案使用字符串数组。 */
           const value = answers[question.id];
           /** 仅接受字符串数组，不序列化未知内容或附件路径。 */
           const values = containsSecret ? value : value && typeof value === 'object' && 'answers' in value ? value.answers : null;
-          return Array.isArray(values) && values.length && values.every((answer) => typeof answer === 'string') ? values.join('、') : '回答已提交，历史内容已脱敏';
-        })
-        .join('；'),
-      320,
-    ),
+          if (!Array.isArray(values) || !values.every((answer) => typeof answer === 'string')) return [];
+          /** 空白旧值不算可公开答案，避免导航回退成“没有文字答复”。 */
+          const text = values.map((answer) => answer.trim()).filter(Boolean).join('、');
+          return text ? [text] : [];
+        });
+  return {
+    prompt: conversationNavigationExcerpt(parsed.questions.map((question) => question.question).join('；'), 160),
+    response: conversationNavigationExcerpt(visibleAnswers.length > 0 ? visibleAnswers.join('；') : '已回答', 320),
   };
 }

@@ -26,7 +26,6 @@ const labels = {
     answerSyncFailed: '答案同步失败',
     answerSyncFailedDetail: '这个问题已在其他设备上处理，Zeus 尚未收到具体回答。',
     secretAnswer: '敏感回答已提交',
-    redactedAnswer: '回答已提交，历史内容已脱敏',
     region: '已回答询问',
     syncFailedRegion: '答案同步失败的询问',
     separator: '、',
@@ -48,7 +47,6 @@ const labels = {
     answerSyncFailed: 'Answer sync failed',
     answerSyncFailedDetail: 'This question was resolved on another device. Zeus has not received the answer.',
     secretAnswer: 'Secret answer submitted',
-    redactedAnswer: 'Answer submitted; historical content is redacted',
     region: 'Answered questions',
     syncFailedRegion: 'Question with an answer sync failure',
     separator: ', ',
@@ -92,7 +90,7 @@ export function AnsweredRequestHistory(props: AnsweredRequestHistoryProps) {
           const customAnswers = entry.question.options.length > 0 ? visibleSelfAuthoredAnswers.filter((answer) => !optionLabels.has(answer)) : [];
           const selfAuthoredAnswers = entry.question.kind === 'freeform' ? visibleSelfAuthoredAnswers : customAnswers;
           const showSelfAuthoredRow = (!entry.question.secret && selfAuthoredAnswers.length > 0) || entry.attachments.length > 0;
-          const showAnswerText = !answerUnavailable && !showSelfAuthoredRow && (entry.question.kind === 'freeform' || entry.question.secret || entry.answers === null);
+          const showAnswerText = !answerUnavailable && !showSelfAuthoredRow && (entry.question.secret || Boolean(entry.answers?.length) || entry.attachments.length > 0);
           return (
             <section key={entry.question.id}>
               {/* 标题与问题相同时只保留正文，避免异步题目重复显示。 */}
@@ -137,7 +135,7 @@ export function AnsweredRequestHistory(props: AnsweredRequestHistoryProps) {
                   ) : null}
                 </ul>
               ) : null}
-              {showAnswerText ? <p>{answerText(entry, copy.secretAnswer, copy.redactedAnswer, copy.separator, copy.attachmentCount)}</p> : null}
+              {showAnswerText ? <p>{answerText(entry, copy.secretAnswer, copy.separator, copy.attachmentCount)}</p> : null}
             </section>
           );
         })}
@@ -206,10 +204,10 @@ function answerMap(value: Record<string, unknown>): Record<string, string[]> {
   );
 }
 
-function answerText(entry: AnsweredQuestion, secretAnswer: string, redactedAnswer: string, separator: string, attachmentCount: (count: number) => string): string {
+function answerText(entry: AnsweredQuestion, secretAnswer: string, separator: string, attachmentCount: (count: number) => string): string {
   if (entry.question.secret) return secretAnswer;
   if (entry.attachments.length > 0 && (!entry.answers?.length || (entry.answers.length === 1 && (entry.answers[0] === '见附件' || entry.answers[0] === 'See attachments')))) return attachmentCount(entry.attachments.length);
-  return entry.answers?.length ? entry.answers.join(separator) : redactedAnswer;
+  return entry.answers?.join(separator) ?? '';
 }
 
 function isAttachmentOnlyAnswer(answer: string): boolean {

@@ -2629,6 +2629,8 @@ function NavigationQa() {
   );
   /** 规范答案沿用真实请求响应结构。 */
   const questionResponse = useMemo(() => ({ answers: { 'question-0': { answers: ['完整常见节点'] }, 'question-1': { answers: ['受限 JavaScript'] } } }), []);
+  /** 旧记录可能只保留已回答事实，用于确认界面不再补充脱敏占位文案。 */
+  const oldQuestionResponse = useMemo(() => ({ answers: {} }), []);
   /** 任务正文沿用发送时的布局快照，两条相同文字的独立发送仍分别保留。 */
   const taskLayout = useMemo(
     () =>
@@ -2683,10 +2685,13 @@ function NavigationQa() {
         response: '任务说明已保留，可以继续阅读完整内容。请连续移动鼠标，检查内容切换是否平稳、预览是否保持在窗口内，以及正文阅读位置是否保持。',
         status: 'completed',
         ...(questionHistory && index > 0
-          ? { ...conversationQuestionNavigationExcerpt(questionPayload, questionResponse), ...(index % 2 ? { id: `request:request-${index}`, requestId: `request-${index}`, clientUserMessageId: null, providerItemId: null } : {}) }
+          ? {
+              ...conversationQuestionNavigationExcerpt(questionPayload, index === count - 1 ? oldQuestionResponse : questionResponse),
+              ...(index === count - 1 ? { id: `request:request-${index}`, requestId: `request-${index}`, clientUserMessageId: null, providerItemId: null } : {}),
+            }
           : {}),
       })),
-    [count, taskHistory, questionHistory, questionPayload, questionResponse],
+    [count, oldQuestionResponse, taskHistory, questionHistory, questionPayload, questionResponse],
   );
   /** 目录首次读取与正文独立。 */
   const loadNavigation = useCallback(async () => {
@@ -2717,7 +2722,10 @@ function NavigationQa() {
         /** 超出当前目录的旧验收项不会进入新场景。 */
         const entry = entries[index];
         if (!entry || entry.requestId) return [];
-        return ['user', 'assistant'].map((role) => ({
+        /** 已公开答案与旧空答案分别进入同步、异步卡片，复用同一生产投影。 */
+        const visibleQuestionResponse = index === count - 1 ? oldQuestionResponse : questionResponse;
+        /** 普通发言与最终答复保持原有目录身份。 */
+        const messages: NativeSessionItemBuffer[] = ['user', 'assistant'].map((role) => ({
           key: `${role}-${index}`,
           conversationId,
           threadId: 'qa-navigation',
@@ -2733,7 +2741,7 @@ function NavigationQa() {
             v2Sequence: entry.sequence + (role === 'user' ? 0 : 1),
             ...(taskHistory && role === 'user' ? { taskPushLayout: taskLayout } : {}),
             ...(questionHistory && index > 0 && role === 'user'
-              ? { questionAnswer: { providerTurnId: entry.turnId, providerItemId: `question-source-${index}`, questions: questionPayload.questions, answers: questionResponse.answers } }
+              ? { questionAnswer: { providerTurnId: entry.turnId, providerItemId: `question-source-${index}`, questions: questionPayload.questions, answers: visibleQuestionResponse.answers } }
               : {}),
           },
           resources: [],
@@ -2751,6 +2759,36 @@ function NavigationQa() {
           },
           updatedAt: entry.occurredAt,
         }));
+        if (!questionHistory || index !== 0) return messages;
+        /** 独立工具活动保留一个真实处理过程，确认回答外置没有取消过程折叠。 */
+        const processItem: NativeSessionItemBuffer = {
+          key: `process-${index}`,
+          conversationId,
+          threadId: 'qa-navigation',
+          turnId: entry.turnId,
+          itemId: `process-${index}`,
+          providerItemId: `process-${index}`,
+          type: 'commandExecution',
+          phase: 'prework',
+          status: 'completed',
+          text: '',
+          payload: { command: ['pnpm', 'typecheck'] },
+          resources: [],
+          transcript: {
+            placement: {
+              entryId: `process-${index}`,
+              order: (index * 2 + 1) * 1024 + 512,
+              orderEpoch: 1,
+              placementRevision: 1,
+              turnId: entry.turnId,
+              openingInputId: `user-message:${entry.clientUserMessageId ?? index}`,
+              displayStageId: null,
+            },
+            sources: [{ domain: 'provider_item', scope: 'qa-navigation', sourceId: `process-${index}`, facet: 'activity', revision: 1, contentRevision: 1 }],
+          },
+          updatedAt: entry.occurredAt,
+        };
+        return [messages[0]!, processItem, messages[1]!];
       });
     return {
       ...createInitialSessionState(),
@@ -2770,7 +2808,7 @@ function NavigationQa() {
                 type: 'userInput',
                 status: 'resolved',
                 payload: questionPayload,
-                response: questionResponse,
+                response: index === count - 1 ? oldQuestionResponse : questionResponse,
                 containsSecret: false,
                 expiresAt: null,
                 createdAt: entry.occurredAt,
@@ -2789,7 +2827,7 @@ function NavigationQa() {
       ),
       terminalTurnIds: Object.fromEntries(entries.map((entry) => [entry.turnId, 'completed'])),
     };
-  }, [loaded, entries, count, taskHistory, taskLayout, questionHistory, questionPayload, questionResponse, conversationId]);
+  }, [loaded, entries, count, taskHistory, taskLayout, questionHistory, questionPayload, questionResponse, oldQuestionResponse, conversationId]);
 
   /** 持续生成经过正式归约器，使浏览器回归覆盖内容修订和增量投影。 */
   const projectedState = useRef<{ base: NativeSessionState; state: NativeSessionState } | null>(null);
@@ -2949,9 +2987,14 @@ function NavigationQa() {
                   ...(questionHistory
                     ? {
                         questionHistoryCheck:
-                          ticks?.length === (count > 1 ? count : 0) && surface.current?.querySelectorAll('.session-answered-request').length === Math.max(0, count - 1) && !surface.current?.querySelector('.session-navigation-placeholder')
+                          ticks?.length === (count > 1 ? count : 0) &&
+                          surface.current?.querySelectorAll('.session-answered-request').length === Math.max(0, count - 1) &&
+                          surface.current?.querySelectorAll('.session-turn-process').length === 1 &&
+                          !surface.current?.querySelector('.session-turn-process .session-answered-request') &&
+                          !surface.current?.textContent?.includes('回答已提交，历史内容已脱敏') &&
+                          !surface.current?.querySelector('.session-navigation-placeholder')
                             ? '通过'
-                            : '失败：卡片数量或定位异常',
+                            : '失败：答题卡、处理过程或旧记录展示异常',
                       }
                     : {}),
                   ...(taskHistory
