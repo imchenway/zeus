@@ -2547,16 +2547,18 @@
   flex-wrap: wrap;
 }
 
-/* 首次讨论与后续会话共用原输入框，正文空间有清楚的开始位置。 */
+/* 首次讨论与后续会话共用原输入框；引导留在可用空间中央，输入框固定在内容区底部。 */
 .task-conversation-new {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 24px;
+  display: grid;
   flex: 1;
+  gap: 24px;
+  grid-template-rows: minmax(0, 1fr) auto;
   min-height: 240px;
-  padding: 24px;
   overflow: auto;
+  padding: 24px;
+}
+.task-conversation-new > div:first-child {
+  align-self: center;
 }
 .task-conversation-new > div > strong {
   font-size: 18px;

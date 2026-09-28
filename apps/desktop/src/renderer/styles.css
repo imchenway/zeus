@@ -19593,11 +19593,11 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   padding-block-end: 0;
 }
 
-/* 要求常驻左侧，沟通与成果占据主要空间，两侧分别滚动。 */
+/* 要求常驻左侧并获得稳定阅读宽度，沟通区保留更大的工作空间，两侧分别滚动。 */
 .macos-ai-app .task-detail-workspace {
   display: grid;
   flex: 1;
-  grid-template-columns: minmax(280px, 0.9fr) minmax(0, 2fr);
+  grid-template-columns: minmax(340px, 2fr) minmax(0, 3fr);
   min-block-size: 0;
 }
 
@@ -20231,7 +20231,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   min-inline-size: 0;
 }
 
-/* 顶部只保留任务状态、实际员工与指派入口。 */
+/* 顶部只保留任务状态、实际员工与数字团队入口；宽度不足时整体自然换行。 */
 .macos-ai-app .task-detail-arrangement {
   display: flex;
   align-items: center;
