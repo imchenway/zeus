@@ -2586,7 +2586,12 @@ async function createMenuBarUsageCostDetailWindow(): Promise<BrowserWindow> {
   });
   menuBarUsageCostDetailWindow = window;
   window.setAlwaysOnTop(true, 'pop-up-menu');
-  window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  window.setVisibleOnAllWorkspaces(true, {
+    // 费用明细在全屏空间中仍跟随菜单栏浮窗显示。
+    visibleOnFullScreen: true,
+    // 保持 Zeus 的普通应用身份，避免 Electron 切换进程类型时隐藏 Dock 图标。
+    skipTransformProcessType: true,
+  });
   /** 用户进入明细窗口后取消父窗口的失焦关闭，保留键盘与文本选择。 */
   window.on('focus', () => cancelMenuBarUsageWindowBlurHide());
   /** 离开明细窗口时沿用父窗口的短延迟，避免窗口焦点切换误关。 */
@@ -2641,7 +2646,12 @@ async function createMenuBarUsageWindow(): Promise<BrowserWindow> {
   });
   menuBarUsageWindow = window;
   window.setAlwaysOnTop(true, 'pop-up-menu');
-  window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  window.setVisibleOnAllWorkspaces(true, {
+    // 菜单栏浮窗需要在全屏空间中保持可用。
+    visibleOnFullScreen: true,
+    // 保持 Zeus 的普通应用身份，避免 Electron 切换进程类型时隐藏 Dock 图标。
+    skipTransformProcessType: true,
+  });
   window.on('blur', () => scheduleMenuBarUsageWindowBlurHide(window));
   window.on('focus', () => cancelMenuBarUsageWindowBlurHide());
   window.on('closed', () => {
