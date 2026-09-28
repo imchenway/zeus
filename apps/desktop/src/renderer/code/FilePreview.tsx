@@ -163,8 +163,8 @@ function FilePreviewBody(props: { location?: ConversationFileLocation; identity:
     <section className={`file-preview${simpleImage ? ' file-preview-simple-image' : ''}`} aria-label={props.zh ? '文件预览' : 'File preview'}>
       {props.onClose ? (
         <header className="file-preview-dialog-header">
-          <strong>{simpleImage ? (props.zh ? '图片预览' : 'Image preview') : props.zh ? '文件预览' : 'File preview'}</strong>
-          {simpleImage ? <span title={current?.name}>{current?.name}</span> : null}
+          <strong title={simpleImage ? current?.name : undefined}>{simpleImage ? current?.name : props.zh ? '文件预览' : 'File preview'}</strong>
+          {simpleImage ? <span>{props.zh ? '图片预览' : 'Image preview'}</span> : null}
           <button type="button" className="file-preview-close" aria-label={props.zh ? '关闭' : 'Close'} title={props.zh ? '关闭' : 'Close'} onClick={props.onClose}>
             <X size={18} aria-hidden="true" />
           </button>

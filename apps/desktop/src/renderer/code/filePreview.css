@@ -94,26 +94,34 @@
   flex: 1;
   min-width: 0;
 }
-/* 透明网格沿用当前主题的面板和分隔色，图片像素保持原样。 */
+/* 预览画布只承担居中、滚动与留白，避免透明网格扩散到图片范围之外。 */
 .file-preview-checker {
   overflow: auto;
+  overscroll-behavior: contain;
   min-height: 180px;
   flex: 1;
   display: grid;
   place-items: center;
-  padding: 20px;
-  background-color: var(--zeus-product-panel);
-  background-image: conic-gradient(var(--zeus-product-line) 25%, transparent 0 50%, var(--zeus-product-line) 0 75%, transparent 0);
-  background-size: 20px 20px;
+  padding: clamp(24px, 4vw, 52px);
+  background: color-mix(in srgb, var(--zeus-product-canvas) 78%, var(--zeus-product-panel));
   color: var(--zeus-product-text);
 }
+/* 棋盘格只铺在图片元素自身，透明范围清晰但不会形成整屏视觉噪声。 */
 .file-preview-checker img {
   display: block;
-  width: 100%;
-  height: min(45vh, 420px);
+  width: auto;
+  height: auto;
   max-width: 100%;
   max-height: 60vh;
   object-fit: contain;
+  background-color: var(--zeus-product-panel, #fff);
+  background-image: conic-gradient(color-mix(in srgb, var(--zeus-product-text) 6%, transparent) 25%, transparent 0 50%, color-mix(in srgb, var(--zeus-product-text) 6%, transparent) 0 75%, transparent 0);
+  background-size: 12px 12px;
+  border-radius: 4px;
+  outline: 1px solid color-mix(in srgb, var(--zeus-product-text) 10%, transparent);
+  box-shadow:
+    0 18px 44px -28px rgb(15 23 42 / 0.46),
+    0 4px 14px -10px rgb(15 23 42 / 0.24);
 }
 .file-preview-checker img.is-actual-size {
   width: auto;
@@ -162,9 +170,12 @@
   overflow: hidden;
   background: var(--zeus-product-panel, #fff);
   color: var(--zeus-product-text, #222);
-  border-radius: 12px;
-  box-shadow: 0 12px 50px #0004;
+  border-radius: 14px;
+  box-shadow:
+    0 28px 80px -28px rgb(15 23 42 / 0.48),
+    0 10px 28px -18px rgb(15 23 42 / 0.32);
 }
+/* 标题栏以文件名为主信息，类型退居辅助位置。 */
 .file-preview-dialog-header {
   position: sticky;
   top: 0;
@@ -172,32 +183,36 @@
   background: var(--zeus-product-panel, #fff);
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
+  gap: 10px;
+  min-height: 52px;
+  padding: 8px 12px 8px 18px;
   flex-shrink: 0;
+  border-bottom: 1px solid var(--zeus-product-line-soft, var(--zeus-product-line));
 }
 .file-preview-dialog-header > strong {
-  flex-shrink: 0;
-  font-size: 14px;
-}
-/* 长附件名仅占一行，完整名称由悬停提示保留。 */
-.file-preview-dialog-header > span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
-  opacity: 0.6;
+  font-size: 13px;
+  font-weight: 600;
+}
+/* 类型标签只补充当前内容身份，不与文件名争夺视觉层级。 */
+.file-preview-dialog-header > span {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  color: var(--zeus-product-muted);
+  font-size: 11px;
 }
 .file-preview-dialog-header .file-preview-close {
   display: grid;
   place-items: center;
-  flex: 0 0 32px;
-  height: 32px;
+  flex: 0 0 36px;
+  height: 36px;
   padding: 0;
   margin-left: auto;
   border: 0;
-  border-radius: 6px;
+  border-radius: 8px;
 }
 /* 单图使用弹窗剩余空间；仅画布滚动，标题和缩放始终可达。 */
 .file-preview-simple-image,
@@ -207,32 +222,35 @@
 }
 .file-preview-image-compact > .file-preview-toolbar {
   order: 1;
-  justify-content: center;
-  padding: 8px 16px;
+  justify-content: flex-end;
+  min-height: 52px;
+  padding: 8px 12px 8px 18px;
+  border-top: 1px solid var(--zeus-product-line-soft, var(--zeus-product-line));
+  background: var(--zeus-product-panel, #fff);
   font-size: 12px;
 }
 .file-preview-image-compact > .file-preview-toolbar > span {
   margin-right: auto;
-  opacity: 0.6;
+  color: var(--zeus-product-muted);
   font-variant-numeric: tabular-nums;
 }
 .file-preview-image-compact button {
-  min-width: 32px;
-  min-height: 32px;
-  border: 0;
+  min-width: 36px;
+  min-height: 36px;
+  border-color: transparent;
+  border-radius: 8px;
 }
-/* 低对比棋盘跟随产品主题，保留透明区域辨识能力。 */
+/* 单图弹窗沿用中性画布，小图保持原生尺寸，只有大图才缩小适配。 */
 .file-preview-image-compact > .file-preview-checker {
   min-height: 0;
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
-  background-color: var(--zeus-product-panel, #fff);
-  background-image: conic-gradient(color-mix(in srgb, currentColor 5%, transparent) 25%, transparent 0 50%, color-mix(in srgb, currentColor 5%, transparent) 0 75%, transparent 0);
-  background-size: 16px 16px;
   color: inherit;
 }
 .file-preview-image-compact img:not(.is-actual-size) {
-  height: 100%;
+  width: auto;
+  height: auto;
+  max-width: 100%;
   max-height: 100%;
 }
 /* 放大后从左上角开始滚动，避免居中裁掉超出画布的图片边缘。 */
