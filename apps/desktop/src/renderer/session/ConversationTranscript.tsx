@@ -1125,13 +1125,13 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             <section className="session-turn-process-stage" data-current={row.live && projectedTurnWorkKeyByTurn.get(row.turnId) === row.key && segmentIndex === row.segments.length - 1 ? true : undefined} key={segment.key}>
               {summary ? (
                 <div className="session-turn-stage-summary">
-                  {renderTranscriptRow(summary, transcriptRowRenderOptions(renderProps, items, false, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId))}
+                  {renderTranscriptRow(summary, transcriptRowRenderOptions(renderProps, items, false, motionFocus, lastUserKey, active ? 'inline' : 'count', enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId))}
                 </div>
               ) : null}
               {rows.map((child) => {
                 const content = renderTranscriptRow(
                   child,
-                  transcriptRowRenderOptions(renderProps, items, showActiveStatus && activeTurnId === row.turnId, motionFocus, lastUserKey, true, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId),
+                  transcriptRowRenderOptions(renderProps, items, showActiveStatus && activeTurnId === row.turnId, motionFocus, lastUserKey, active ? 'inline' : 'count', enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId),
                 );
                 return active ? (
                   <div className="session-live-turn-row" key={child.key} data-navigation-row-key={child.key}>
@@ -1153,7 +1153,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             {hasProcessDetails ? (
               <SessionTurnProcessDisclosure
                 language={props.language}
-                itemCount={processActivityCount}
+                itemCount={processLive ? processActivityCount : undefined}
                 loading={Boolean(row.loadMore && processPaging?.loading)}
                 error={row.loadMore ? processPaging?.error : null}
                 open={expandedRowKeys.has(expansionKey)}
@@ -1182,7 +1182,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
               language={props.language}
               turn={turnActive || projectedTurnWorkKeyByTurn.get(row.turnId) !== row.key ? undefined : turn}
               requests={props.state.pendingRequests}
-              itemCount={processActivityCount}
+              itemCount={turnActive ? processActivityCount : undefined}
               loading={Boolean(row.loadMore && processPaging?.loading)}
               error={row.loadMore ? processPaging?.error : null}
               open={expandedRowKeys.has(expansionKey)}
@@ -1223,7 +1223,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     /** 只剩用户输入的结束轮次仍先显示输入，随后显示其耗时。 */
     const opensWithUserMessage = itemRole(lastRowItem) === 'user';
     /** 同一消息仅渲染一次，根据消息角色决定它与轮次摘要的先后关系。 */
-    const content = renderTranscriptRow(row, transcriptRowRenderOptions(renderProps, items, showActiveStatus, motionFocus, lastUserKey, false, enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId));
+    const content = renderTranscriptRow(row, transcriptRowRenderOptions(renderProps, items, showActiveStatus, motionFocus, lastUserKey, 'detail', enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId));
     return (
       <>
         {opensWithUserMessage ? content : null}
@@ -1881,7 +1881,7 @@ interface TranscriptRowRenderOptions {
   showThinking: boolean;
   motionFocus: SessionMotionFocus;
   lastUserKey: string | undefined;
-  insideWork: boolean;
+  activityPresentation: 'inline' | 'count' | 'detail';
   enteringItemIds: ReadonlySet<string>;
   onVisibleContentChange: () => void;
   responseAnnotationsByItemId: ReadonlyMap<string, ConversationResponseAnnotation[]>;
@@ -1893,12 +1893,12 @@ function transcriptRowRenderOptions(
   showThinking: boolean,
   motionFocus: SessionMotionFocus,
   lastUserKey: string | undefined,
-  insideWork: boolean,
+  activityPresentation: 'inline' | 'count' | 'detail',
   enteringItemIds: ReadonlySet<string>,
   onVisibleContentChange: () => void,
   responseAnnotationsByItemId: ReadonlyMap<string, ConversationResponseAnnotation[]>,
 ): TranscriptRowRenderOptions {
-  return { props, items, showThinking, motionFocus, lastUserKey, insideWork, enteringItemIds, onVisibleContentChange, responseAnnotationsByItemId };
+  return { props, items, showThinking, motionFocus, lastUserKey, activityPresentation, enteringItemIds, onVisibleContentChange, responseAnnotationsByItemId };
 }
 
 /** 按消息种类复用现有展示组件，轮次耗时由顶部处理过程统一呈现。 */
@@ -1910,7 +1910,8 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         items={row.items}
         category={row.category}
         language={options.props.language}
-        inline={options.insideWork}
+        inline={options.activityPresentation === 'inline'}
+        summaryMode={options.activityPresentation === 'count' ? 'count' : 'detail'}
         enteringItemKeys={options.enteringItemIds}
         motionActive={row.motionActive || row.items.some(isLiveActivityItem) || row.items.some((item) => item.key === options.motionFocus?.itemKey)}
         onOpenResource={options.props.onOpenResource}
@@ -1955,9 +1956,9 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         questionAnswer={row.questionAnswer}
         language={options.props.language}
         assistantLabel={options.props.assistantLabel}
-        isLatest={!options.insideWork && row.item.key === options.items[options.items.length - 1]?.key && !options.showThinking}
+        isLatest={options.activityPresentation === 'detail' && row.item.key === options.items[options.items.length - 1]?.key && !options.showThinking}
         animateEntrance={options.enteringItemIds.has(row.item.key)}
-        showAssistantActions={!options.insideWork && isFinalAnswerItem(row.item) && !options.showThinking}
+        showAssistantActions={options.activityPresentation === 'detail' && isFinalAnswerItem(row.item) && !options.showThinking}
         isLatestUser={row.item.key === options.lastUserKey}
         motionActive={row.item.key === options.motionFocus?.itemKey}
         onEdit={options.props.onEditUserItem}

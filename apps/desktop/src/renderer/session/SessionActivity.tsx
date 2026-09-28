@@ -99,8 +99,10 @@ interface SessionActivityGroupProps {
   items: NativeSessionItemBuffer[];
   language: SessionUiLanguage;
   category: SessionActivityCategory;
-  /** 外层处理过程已经负责展开时，直接显示操作明细，不再套第二层分组。 */
+  /** 运行中的外层过程直接显示操作明细，不隐藏实时进展。 */
   inline?: boolean;
+  /** 完成态过程只在内部操作入口显示数量，避免与外层耗时重复。 */
+  summaryMode?: 'detail' | 'count';
   /** 只让本轮真实新增的稳定条目播放一次入场，历史回放保持静止。 */
   enteringItemKeys?: ReadonlySet<string>;
   motionActive?: boolean;
@@ -117,7 +119,8 @@ export const SessionActivityGroup = memo(function SessionActivityGroup(props: Se
   const items = useNamedSkillItems(props.items);
   const liveItem = [...items].reverse().find((item) => activityOutcome(item) === 'running') ?? null;
   const active = Boolean(liveItem);
-  const summary = activitySummary(items, props.language, active);
+  /** 完成态过程把操作总数留在内层按钮，普通活动组仍显示具体动作摘要。 */
+  const summary = props.summaryMode === 'count' ? (props.language === 'zh-CN' ? `${items.length} 项操作` : `${items.length} ${items.length === 1 ? 'operation' : 'operations'}`) : activitySummary(items, props.language, active);
   const imageResources = activityImageResources(items);
   const detailItems = imageResources.length > 0 ? items.filter((item) => normalizeType(item.type) !== 'imageview' || item.resources.length === 0) : items;
   const [open, setOpen] = useState(false);
@@ -191,6 +194,7 @@ function sameActivityGroupProps(previous: Readonly<SessionActivityGroupProps>, n
     previous.language !== next.language ||
     previous.category !== next.category ||
     previous.inline !== next.inline ||
+    previous.summaryMode !== next.summaryMode ||
     previous.motionActive !== next.motionActive ||
     previous.onOpenResource !== next.onOpenResource ||
     previous.onLoadResourcePreview !== next.onLoadResourcePreview ||
