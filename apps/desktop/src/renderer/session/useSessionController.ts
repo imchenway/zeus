@@ -49,7 +49,15 @@ import {
   type TurnChangeSet,
   type TurnChangeSetOperationResult,
 } from './sessionTypes.js';
-import { adaptConversationSnapshotV2, mergeConversationHistoryV2, mergeConversationProcessV2, mergeConversationTurnHistoryV2, resumeCachedConversationSnapshot, updateConversationV2Paging } from './conversationSnapshotV2Adapter.js';
+import {
+  adaptConversationSnapshotV2,
+  mergeConversationHistoryV2,
+  mergeConversationProcessV2,
+  mergeConversationTurnHistoryV2,
+  resetConversationTurnDetailRange,
+  resumeCachedConversationSnapshot,
+  updateConversationV2Paging,
+} from './conversationSnapshotV2Adapter.js';
 import { markConversationNavigationRenderReady } from '../performanceTraceContext.js';
 
 export const reconnectBackoffMs = [250, 500, 1_000, 2_000, 5_000] as const;
@@ -428,7 +436,8 @@ export interface SessionController {
   loadNavigation(): Promise<ConversationNavigationSnapshot>;
   /** 导航只补齐指定轮次模型正文，处理过程继续由展开入口读取。 */
   loadNavigationTurn(turnId: string): Promise<void>;
-  loadTurnProcess(turnId: string): Promise<void>;
+  /** 正常完成的深历史由调用方明确要求从头读取，避免依赖有界轮次 DTO。 */
+  loadTurnProcess(turnId: string, startAtBeginning?: boolean): Promise<void>;
   loadConversationResources(): Promise<void>;
   loadTurnArtifacts(turnId: string): Promise<void>;
   loadV2Content(handle: string): Promise<void>;
@@ -691,6 +700,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
   const fullChangeSetHydrationRevisions = new Map<string, string>();
   /** 同一 Snapshot 内容句柄只允许一个完整读取任务。 */
   const completeContentLoads = new Map<string, Promise<void>>();
+  /** 同轮过程重建时让旧方向的迟到响应失效，避免覆盖新的首屏游标。 */
+  const turnDetailLoadRevisions = new Map<string, number>();
   /** 连接换代时立即唤醒完整内容读取的重试等待。 */
   const completeContentRetryWaiters = new Set<() => void>();
   // steer 请求确认前保留队列中的可见占位；只有 steering 事件或明确回队事件到达后才交给正常投影。
@@ -2691,8 +2702,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
     }
   }
 
-  /** 同时补齐本轮正文和过程；新会话从最近页开始，已有缓存沿原游标继续。 */
-  async function loadTurnProcessV2(turnIdentity: string): Promise<void> {
+  /** 同时补齐本轮正文和过程；正常完成轮次从头阅读，活动与异常轮次保留最近上下文。 */
+  async function loadTurnProcessV2(turnIdentity: string, startAtBeginning = false): Promise<void> {
     const loadProcess = options.client.loadNativeConversationProcessV2;
     const loadHistory = options.client.loadNativeConversationTurnModelHistoryV2;
     const current = state.snapshot;
@@ -2705,24 +2716,31 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const pagingKey = turn?.providerTurnId ?? turnIdentity;
     const currentProcessPage = current.v2Paging.processByTurn[pagingKey];
     const currentHistoryPage = current.v2Paging.historyByTurn?.[pagingKey];
-    /** 新读取先呈现最近过程；已存在的游标继续原方向，保留缓存的连续范围。 */
-    const direction = currentProcessPage?.direction ?? currentHistoryPage?.direction ?? (currentProcessPage?.loaded || currentHistoryPage?.loaded ? 'forward' : 'tail');
-    if (currentProcessPage?.loading || currentHistoryPage?.loading) return;
-    const shouldLoadProcess = Boolean(loadProcess && !(currentProcessPage?.loaded && !currentProcessPage.hasMore));
-    const shouldLoadHistory = Boolean(loadHistory && !(currentHistoryPage?.loaded && !currentHistoryPage.hasMore));
+    /** 失败和中断需要优先看到末尾错误上下文；只有正常完成态切换为从头阅读。 */
+    const preferredDirection = startAtBeginning || turn?.status === 'completed' ? 'forward' : 'tail';
+    /** 不完整末页不能直接改方向续游标，必须无游标重建两路连续范围。 */
+    const restartFromBeginning = preferredDirection === 'forward' && ((currentProcessPage?.direction === 'tail' && currentProcessPage.hasMore) || (currentHistoryPage?.direction === 'tail' && currentHistoryPage.hasMore));
+    /** 已存在的连续范围沿原方向续读；首次完成态直接从最早一页开始。 */
+    const direction = restartFromBeginning ? 'forward' : (currentProcessPage?.direction ?? currentHistoryPage?.direction ?? preferredDirection);
+    if (!restartFromBeginning && (currentProcessPage?.loading || currentHistoryPage?.loading)) return;
+    const shouldLoadProcess = Boolean(loadProcess && (restartFromBeginning || !(currentProcessPage?.loaded && !currentProcessPage.hasMore)));
+    const shouldLoadHistory = Boolean(loadHistory && (restartFromBeginning || !(currentHistoryPage?.loaded && !currentHistoryPage.hasMore)));
     if (!shouldLoadProcess && !shouldLoadHistory) return;
+    /** 每次真正发起读取都换代；完成态重建可以安全压过仍在途的末页请求。 */
+    const loadRevision = (turnDetailLoadRevisions.get(pagingKey) ?? 0) + 1;
+    turnDetailLoadRevisions.set(pagingKey, loadRevision);
     dispatchV2Snapshot(
-      updateConversationV2Paging(current, (paging) => ({
+      updateConversationV2Paging(restartFromBeginning ? resetConversationTurnDetailRange(current, pagingKey) : current, (paging) => ({
         ...paging,
         historyByTurn: shouldLoadHistory
           ? {
               ...paging.historyByTurn,
               [pagingKey]: {
                 direction,
-                nextCursor: currentHistoryPage?.nextCursor ?? null,
-                hasMore: currentHistoryPage?.hasMore ?? true,
+                nextCursor: restartFromBeginning ? null : (currentHistoryPage?.nextCursor ?? null),
+                hasMore: restartFromBeginning ? true : (currentHistoryPage?.hasMore ?? true),
                 loading: true,
-                loaded: currentHistoryPage?.loaded ?? false,
+                loaded: restartFromBeginning ? false : (currentHistoryPage?.loaded ?? false),
                 error: null,
               },
             }
@@ -2733,10 +2751,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
             ? {
                 [pagingKey]: {
                   direction,
-                  nextCursor: currentProcessPage?.nextCursor ?? null,
-                  hasMore: currentProcessPage?.hasMore ?? true,
+                  nextCursor: restartFromBeginning ? null : (currentProcessPage?.nextCursor ?? null),
+                  hasMore: restartFromBeginning ? true : (currentProcessPage?.hasMore ?? true),
                   loading: true,
-                  loaded: currentProcessPage?.loaded ?? false,
+                  loaded: restartFromBeginning ? false : (currentProcessPage?.loaded ?? false),
                   error: null,
                 },
               }
@@ -2746,7 +2764,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     );
     const processResult = shouldLoadProcess
       ? loadProcess!(options.projectId, options.conversationId, localTurnId, {
-          ...(currentProcessPage?.nextCursor ? { cursor: currentProcessPage.nextCursor } : {}),
+          ...(!restartFromBeginning && currentProcessPage?.nextCursor ? { cursor: currentProcessPage.nextCursor } : {}),
           // 首次读取与后续页使用同一小批量预算，避免长轮次一次挂载大量内容。
           direction,
           limit: 48,
@@ -2758,7 +2776,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       : Promise.resolve({ page: null, error: null as unknown });
     const historyResult = shouldLoadHistory
       ? loadHistory!(options.projectId, options.conversationId, localTurnId, {
-          ...(currentHistoryPage?.nextCursor ? { cursor: currentHistoryPage.nextCursor } : {}),
+          ...(!restartFromBeginning && currentHistoryPage?.nextCursor ? { cursor: currentHistoryPage.nextCursor } : {}),
           direction,
           limit: 48,
           byteLimit: 96 * 1024,
@@ -2768,7 +2786,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         )
       : Promise.resolve({ page: null, error: null as unknown });
     const [settledProcess, settledHistory] = await Promise.all([processResult, historyResult]);
-    if (disposed || generation !== connectionToken) return;
+    if (disposed || generation !== connectionToken || turnDetailLoadRevisions.get(pagingKey) !== loadRevision) return;
     const latest = state.snapshot;
     if (!latest?.snapshotV2 || !latest.v2Paging) return;
     let next = latest;
@@ -2783,10 +2801,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
               ...paging.historyByTurn,
               [pagingKey]: {
                 direction,
-                nextCursor: currentHistoryPage?.nextCursor ?? null,
-                hasMore: currentHistoryPage?.hasMore ?? true,
+                nextCursor: restartFromBeginning ? null : (currentHistoryPage?.nextCursor ?? null),
+                hasMore: restartFromBeginning ? true : (currentHistoryPage?.hasMore ?? true),
                 loading: false,
-                loaded: currentHistoryPage?.loaded ?? false,
+                loaded: restartFromBeginning ? false : (currentHistoryPage?.loaded ?? false),
                 error: errorMessage(settledHistory.error),
               },
             }
@@ -2796,10 +2814,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
               ...paging.processByTurn,
               [pagingKey]: {
                 direction,
-                nextCursor: currentProcessPage?.nextCursor ?? null,
-                hasMore: currentProcessPage?.hasMore ?? true,
+                nextCursor: restartFromBeginning ? null : (currentProcessPage?.nextCursor ?? null),
+                hasMore: restartFromBeginning ? true : (currentProcessPage?.hasMore ?? true),
                 loading: false,
-                loaded: currentProcessPage?.loaded ?? false,
+                loaded: restartFromBeginning ? false : (currentProcessPage?.loaded ?? false),
                 error: errorMessage(settledProcess.error),
               },
             }
