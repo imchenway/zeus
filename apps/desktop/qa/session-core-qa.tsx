@@ -650,6 +650,8 @@ function MessageLayoutQa() {
   const parameters = new URLSearchParams(window.location.search);
   /** 链接场景直接呈现最终答复，复现历史资源只有名称和编号的恢复结果。 */
   const links = parameters.has('links');
+  /** 操作组场景复现多段摘要、不同数量操作和重节点延迟挂载。 */
+  const processGroups = parameters.has('process-groups');
   /** 手动切换运行终态，检查每种耗时文案及过程折叠。 */
   const [status, setStatus] = useState<'running' | 'completed' | 'failed' | 'interrupted'>(links || parameters.has('completed') ? 'completed' : 'running');
   /** 检查真实正文节点与资源打开回调，不连接原生宿主或模型。 */
@@ -666,6 +668,8 @@ function MessageLayoutQa() {
   const [subagent, setSubagent] = useState(parameters.has('subagent'));
   /** 后台补入指令用于核验静态阅读位置，保持已有消息身份不变。 */
   const [followupCount, setFollowupCount] = useState(0);
+  /** 运行中新增操作只改变当前阶段数量，不重置任何展开选择。 */
+  const [extraOperation, setExtraOperation] = useState(false);
   /** 运行态只显示过程，结束后才加入最终答复。 */
   const active = status === 'running';
   /** 固定起止时间用于确认耗时始终为三分一秒。 */
@@ -704,6 +708,15 @@ function MessageLayoutQa() {
     createdAt: completedAt,
     updatedAt: completedAt,
   });
+  /** 图片操作使用现有资源卡片验证折叠时不挂载重节点。 */
+  const processImageResource: ConversationResource = {
+    ...resources[0]!,
+    id: 'process-image-resource',
+    itemId: 'layout-process-image',
+    displayName: '阶段截图.png',
+    projectRelativePath: 'artifacts/阶段截图.png',
+    iconKind: 'image',
+  };
   /** 真实节点必须可点击，已知网址不匹配或没有受信资源的链接继续保持不可打开。 */
   function checkLinks(): void {
     /** 标题不含后缀时仍按真实路径审阅，图片与网页保留各自默认入口。 */
@@ -764,8 +777,10 @@ function MessageLayoutQa() {
     /** 完成态仅保留一个耗时，时间未知或仍运行时不显示完成耗时。 */
     const durations = contentRef.current?.querySelectorAll('time.session-turn-duration') ?? [];
     /** 无过程的答复不能出现展开按钮。 */
-    const controls = contentRef.current?.querySelectorAll('.session-turn-process-control > button') ?? [];
-    if (durations.length !== (active || parameters.has('no-time') || parameters.has('no-end-time') ? 0 : 1) || controls.length !== (active || parameters.has('no-process') ? 0 : 1)) throw new Error('耗时或过程入口数量不正确');
+    const controls = contentRef.current?.querySelectorAll('.session-turn-process:not([data-label-kind="operations"]) > .session-turn-process-control > button') ?? [];
+    /** 运行态按可见阶段保留两个现有入口，完成后仍归并为整轮入口。 */
+    const expectedControlCount = parameters.has('no-process') ? 0 : processGroups ? (active ? 2 : 1) : active ? 0 : 1;
+    if (durations.length !== (active || parameters.has('no-time') || parameters.has('no-end-time') ? 0 : 1) || controls.length !== expectedControlCount) throw new Error('耗时或过程入口数量不正确');
     if (durations.length && durations[0]?.getAttribute('datetime') !== 'PT181S') throw new Error('耗时未沿用真实轮次的起止时间');
     /** 有后续交付资源时，耗时仍应位于最终正文前面。 */
     const answer = contentRef.current?.querySelector('.session-thread-item-assistant .session-markdown');
@@ -794,6 +809,32 @@ function MessageLayoutQa() {
     }
     setLinkResult('运行检查通过：耗时只显示一次，过程入口与轮次状态一致');
   }
+  /** 逐层点击真实生产组件，确认摘要、操作组和单条命令互不联动。 */
+  async function checkProcessGroups(): Promise<void> {
+    /** 连续两帧覆盖折叠动效的挂载提交。 */
+    const settle = () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    /** 外层关闭时，命令标题、输出和图片资源都不能进入 DOM。 */
+    const outerControl = contentRef.current?.querySelector<HTMLButtonElement>('.session-turn-process[data-label-kind="process"] > .session-turn-process-control > button');
+    if (!outerControl) throw new Error('操作组检查缺少外层处理过程入口');
+    if (contentRef.current?.querySelector('.session-activity-item-title, .session-activity-images')) throw new Error('外层折叠时提前挂载了操作详情');
+    if (outerControl.getAttribute('aria-expanded') !== 'true') outerControl.click();
+    await settle();
+    /** 两段摘要各自拥有独立操作组，文案必须由真实数量生成。 */
+    const groupControls = [...(contentRef.current?.querySelectorAll<HTMLButtonElement>('.session-turn-process[data-label-kind="operations"] > .session-turn-process-control > button') ?? [])];
+    const expectedLabels = parameters.has('en') ? ['View 1 operation', `View ${extraOperation ? 3 : 2} operations`] : ['查看 1 项操作', `查看 ${extraOperation ? 3 : 2} 项操作`];
+    if (groupControls.map((control) => control.textContent?.trim()).join('|') !== expectedLabels.join('|')) throw new Error(`操作组文案错误：${groupControls.map((control) => control.textContent).join('|')}`);
+    groupControls[0]!.click();
+    await settle();
+    if (groupControls[0]!.getAttribute('aria-expanded') !== 'true' || groupControls[1]!.getAttribute('aria-expanded') !== 'false') throw new Error('操作组展开状态发生联动');
+    /** 单条命令默认仍关闭，继续点击后才挂载命令、目录和输出。 */
+    const commandControl = contentRef.current?.querySelector<HTMLElement>('.session-activity-item-summary');
+    if (!commandControl || contentRef.current?.querySelector('.session-activity-item-detail-body')) throw new Error('单条命令详情默认状态错误');
+    commandControl.click();
+    await settle();
+    const detail = contentRef.current?.querySelector('.session-activity-item-detail-body');
+    if (!detail?.textContent?.includes('/Users/david/hypha/zeus') || !detail.textContent.includes('阶段检查通过')) throw new Error('单条命令详情未完整显示');
+    setLinkResult('运行检查通过：外层、操作组和单条命令三层状态独立');
+  }
   /** 合成数据仅经过真实渲染链，不连接或调用模型。 */
   const items: NativeSessionItemBuffer[] = [
     {
@@ -807,10 +848,38 @@ function MessageLayoutQa() {
     },
     ...(parameters.has('no-process')
       ? []
-      : [
-          { type: 'commandExecution', phase: 'prework', text: '', payload: { command: ['pnpm', 'build'] }, status: 'completed' },
-          { type: 'reasoning', phase: 'prework', text: 'Inspecting browser snapshot', payload: {}, status: active ? 'in_progress' : 'completed' },
-        ]),
+      : processGroups
+        ? [
+            { type: 'agentMessage', phase: 'prework', stageId: 'inspect', text: '先核对现有投影与分组边界。', payload: { role: 'commentary' }, status: 'completed' },
+            {
+              type: 'commandExecution',
+              phase: 'prework',
+              stageId: 'inspect',
+              text: '',
+              payload: { command: ['rg', '-n', 'SessionTurnProcessDisclosure', 'apps/desktop/src'], cwd: '/Users/david/hypha/zeus', aggregatedOutput: '阶段检查通过' },
+              status: 'completed',
+            },
+            { type: 'agentMessage', phase: 'prework', stageId: 'verify', text: '再验证失败、图片和长命令。', payload: { role: 'commentary' }, status: 'completed' },
+            {
+              type: 'commandExecution',
+              phase: 'prework',
+              stageId: 'verify',
+              text: '',
+              payload: {
+                command: ['pnpm', 'exec', 'playwright', 'test', '--project=chromium', '--grep', '处理过程分层折叠在窄窗口和英文环境保持可读'],
+                cwd: '/Users/david/hypha/zeus',
+                aggregatedOutput: '浏览器检查失败：示例失败操作',
+                exitCode: 1,
+              },
+              status: 'failed',
+            },
+            { type: 'imageView', phase: 'prework', stageId: 'verify', text: '', payload: { path: 'artifacts/阶段截图.png' }, resources: [processImageResource], status: 'completed' },
+            ...(extraOperation ? [{ type: 'webSearch', phase: 'prework', stageId: 'verify', text: '', payload: { query: 'Zeus 处理过程折叠' }, status: active ? 'in_progress' : 'completed' }] : []),
+          ]
+        : [
+            { type: 'commandExecution', phase: 'prework', text: '', payload: { command: ['pnpm', 'build'] }, status: 'completed' },
+            { type: 'reasoning', phase: 'prework', text: 'Inspecting browser snapshot', payload: {}, status: active ? 'in_progress' : 'completed' },
+          ]),
     ...(subagent ? [{ type: 'userMessage', phase: 'user', text: '', payload: { subagentInput: { sender: '/root', fromParent: true, contentState: 'unavailable' } }, status: 'completed' }] : []),
     ...(!active && !parameters.has('no-answer')
       ? [
@@ -833,16 +902,20 @@ function MessageLayoutQa() {
       payload: { subagentInput: { sender: '/root', fromParent: true, contentState: 'available' } },
       status: 'completed',
     })),
-  ].map((item, index) => ({
-    ...item,
-    key: `layout-${index}`,
-    itemId: `layout-${index}`,
-    conversationId: 'qa-layout',
-    threadId: 'qa-layout',
-    turnId: 'qa-layout-turn',
-    resources: item.type === 'fileChange' ? [{ ...resources[1]!, delivery: 'assistant' }] : links && item.phase === 'final_answer' ? resources : [],
-    updatedAt: completedAt,
-  }));
+  ].map((item, index) => {
+    /** 场景显式资源优先，避免通用交付资源覆盖图片操作。 */
+    const itemResources = 'resources' in item && Array.isArray(item.resources) ? item.resources : item.type === 'fileChange' ? [{ ...resources[1]!, delivery: 'assistant' as const }] : links && item.phase === 'final_answer' ? resources : [];
+    return {
+      ...item,
+      key: `layout-${index}`,
+      itemId: `layout-${index}`,
+      conversationId: 'qa-layout',
+      threadId: 'qa-layout',
+      turnId: 'qa-layout-turn',
+      resources: itemResources,
+      updatedAt: completedAt,
+    };
+  });
   /** 计时与终态均使用生产会话结构，覆盖无答复和缺少计时信息的轮次。 */
   const state: NativeSessionState = {
     ...createInitialSessionState(),
@@ -891,6 +964,8 @@ function MessageLayoutQa() {
             子智能体
           </Button>
           <Button onClick={checkLayout}>检查耗时入口</Button>
+          {processGroups ? <Button onClick={() => void checkProcessGroups().catch((error: unknown) => setLinkResult(String(error)))}>检查操作组</Button> : null}
+          {processGroups ? <Button onClick={() => setExtraOperation((value) => !value)}>{extraOperation ? '移除运行操作' : '新增运行操作'}</Button> : null}
           {subagent ? <Button onClick={() => setFollowupCount(followupCount + 1)}>补充指令</Button> : null}
           {links ? <Button onClick={checkLinks}>检查链接</Button> : null}
           {links ? <Button onClick={() => void checkSelectionToolbar().catch((error: unknown) => setLinkResult(String(error)))}>检查批注入口</Button> : null}

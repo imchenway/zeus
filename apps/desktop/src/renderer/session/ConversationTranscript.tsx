@@ -12,7 +12,6 @@ import type {
   ConversationResourcePreview,
   NativeConversationToolResultPage,
   NativePendingRequest,
-  NativePlanImplementationRequest,
   NativeQueuedSubmission,
   NativeQueueSnapshot,
   NativeSessionError,
@@ -516,27 +515,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     }
     return result;
   }, [turnRows, navigationEntries]);
-  const planContinuationTurnIdentities = useMemo(() => planContinuationSourceTurnIdentities(props.state), [props.state.planImplementationRequests, props.state.queue, props.state.turnsByProviderId]);
-  const planContinuationProcessKeys = useMemo(() => planContinuationProcessExpansionKeys(baseTurnRows, planContinuationTurnIdentities), [planContinuationTurnIdentities, baseTurnRows]);
-  const defaultExpandedRowKeys = useMemo(
-    () => defaultExpandedTurnProcessKeys(baseTurnRows, props.state.turnsByProviderId, props.state.terminalTurnIds, planContinuationProcessKeys),
-    [planContinuationProcessKeys, props.state.terminalTurnIds, props.state.turnsByProviderId, baseTurnRows],
-  );
-  const previousPlanContinuationProcessKeysRef = useRef<ReadonlySet<string>>(new Set());
-  useLayoutEffect(() => {
-    const previousKeys = previousPlanContinuationProcessKeysRef.current;
-    previousPlanContinuationProcessKeysRef.current = planContinuationProcessKeys;
-    const endedKeys = [...previousKeys].filter((key) => !planContinuationProcessKeys.has(key));
-    if (endedKeys.length === 0) return;
-    // 计划连续链结束时回到该轮历史默认值。只清理由派生默认展开影响过的来源 Plan，
-    // 避免实施期间的临时手动展开/收起覆盖泄漏到正常完成后的历史记录。
-    setRowExpansionOverrides((current) => {
-      if (!endedKeys.some((key) => current.has(key))) return current;
-      const next = new Map(current);
-      endedKeys.forEach((key) => next.delete(key));
-      return next;
-    });
-  }, [planContinuationProcessKeys]);
+  const defaultExpandedRowKeys = useMemo(() => defaultExpandedTurnProcessKeys(baseTurnRows, props.state.turnsByProviderId, props.state.terminalTurnIds), [props.state.terminalTurnIds, props.state.turnsByProviderId, baseTurnRows]);
   const expandedRowKeys = useMemo(() => {
     const expanded = new Set(defaultExpandedRowKeys);
     for (const [rowKey, open] of rowExpansionOverrides) {
@@ -2566,55 +2545,13 @@ function turnProcessExpansionKey(identity: string): string {
   return `turn-process:${identity}`;
 }
 
-function planContinuationSourceTurnIdentities(state: NativeSessionState): ReadonlySet<string> {
-  const orderedRequests = [...state.planImplementationRequests].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id));
-  const continuedRequest = orderedRequests.find((request) => planActionSubmissionIsInFlight(request, state));
-  const sourceRequest = continuedRequest ?? orderedRequests.find((request) => request.status === 'pending');
-  if (!sourceRequest) return new Set();
-
-  const identities = new Set([sourceRequest.turnId]);
-  const sourceTurn = turnByAnyIdentity(state.turnsByProviderId, sourceRequest.turnId);
-  if (sourceTurn) {
-    identities.add(sourceTurn.id);
-    if (sourceTurn.providerTurnId) identities.add(sourceTurn.providerTurnId);
-  }
-  return identities;
-}
-
-function planActionSubmissionIsInFlight(request: NativePlanImplementationRequest, state: NativeSessionState): boolean {
-  if ((request.status !== 'implemented' && request.status !== 'refinement_requested') || !request.submissionId) return false;
-  const submissionId = request.submissionId;
-  const queuedSubmission = state.queue?.submissions.find((submission) => submission.id === submissionId);
-  if (queuedSubmission && (queuedSubmission.status === 'queued' || queuedSubmission.status === 'dispatching' || queuedSubmission.status === 'active')) return true;
-  if (state.queue?.state.type === 'dispatching' && state.queue.state.submissionId === submissionId) return true;
-
-  const implementationTurn = Object.values(state.turnsByProviderId).find((turn) => turn.submissionId === submissionId && isActiveSessionTurn(turn));
-  if (!implementationTurn) return false;
-  const implementationTurnIdentities = new Set([implementationTurn.id, implementationTurn.providerTurnId].filter((turnId): turnId is string => Boolean(turnId)));
-  if (state.activeTurnId && implementationTurnIdentities.has(state.activeTurnId)) return true;
-  const queueState = state.queue?.state;
-  return Boolean((queueState?.type === 'active' || queueState?.type === 'waiting') && implementationTurnIdentities.has(queueState.turnId));
-}
-
 function turnByAnyIdentity(turnsByProviderId: NativeSessionState['turnsByProviderId'], identity: string) {
   return turnsByProviderId[identity] ?? Object.values(turnsByProviderId).find((turn) => turn.id === identity || turn.providerTurnId === identity);
 }
 
-function planContinuationProcessExpansionKeys(rows: readonly TranscriptTurnRow[], sourceTurnIdentities: ReadonlySet<string>): ReadonlySet<string> {
-  return new Set(rows.filter((row): row is TranscriptTurnWorkRow => row.kind === 'turn_work' && sourceTurnIdentities.has(row.turnId)).map((row) => turnProcessExpansionKey(row.key)));
-}
-
-function defaultExpandedTurnProcessKeys(
-  rows: readonly TranscriptTurnRow[],
-  turnsByProviderId: NativeSessionState['turnsByProviderId'],
-  terminalTurnIds: NativeSessionState['terminalTurnIds'],
-  planContinuationProcessKeys: ReadonlySet<string> = new Set(),
-): ReadonlySet<string> {
-  const expanded = new Set(planContinuationProcessKeys);
-  // 已完成轮次默认收起，继续实施计划也不能重新自动展开上一轮过程。
-  for (const row of rows) {
-    if (row.kind === 'turn_work' && terminalTurnIds[row.turnId] === 'completed') expanded.delete(turnProcessExpansionKey(row.key));
-  }
+function defaultExpandedTurnProcessKeys(rows: readonly TranscriptTurnRow[], turnsByProviderId: NativeSessionState['turnsByProviderId'], terminalTurnIds: NativeSessionState['terminalTurnIds']): ReadonlySet<string> {
+  /** 运行中与已完成过程统一默认收起，仅异常中断仍主动暴露最后现场。 */
+  const expanded = new Set<string>();
   let latestTurnId: string | null = null;
   for (let index = rows.length - 1; index >= 0; index -= 1) {
     latestTurnId = transcriptTurnRowTurnId(rows[index]!);
