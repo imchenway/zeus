@@ -3,7 +3,7 @@ import { createSessionController, type SessionControllerClient, sessionRealtimeB
 import { adaptConversationSnapshotV2, mergeConversationProcessV2, resumeCachedConversationSnapshot } from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.ts';
 import { createHydratedSessionState, createInitialSessionState, sessionReducer } from '../apps/desktop/src/renderer/session/sessionReducer.ts';
 import type { NativePlanImplementationRequest, NativeRealtimeEventEnvelope, NativeQueueSnapshot, NativeSessionState, NativeConversationEvent } from '../apps/desktop/src/renderer/session/sessionTypes.ts';
-import { orderTranscriptItemsWithQueue } from '../apps/desktop/src/renderer/session/conversationQueuePresentation.ts';
+import { composerQueuedSubmissions, orderTranscriptItemsWithQueue } from '../apps/desktop/src/renderer/session/conversationQueuePresentation.ts';
 import { attachTaskModelPushChoice, type TaskModelPushPendingState } from '../apps/desktop/src/renderer/task/TaskModelPushPendingWorkspace.tsx';
 import type { TurnChangeSet } from '../packages/shared/src/conversationResources.ts';
 import type { ConversationTranscriptEnvelope } from '../packages/shared/src/conversationTranscriptWire.ts';
@@ -1512,6 +1512,91 @@ async function verifyTranscriptInitializationRecovery() {
   return { normalReads: reads, choices, queueReads, cancelledReads, failedReads, disposedReads, budgetReads, budgetCancelled: aborted };
 }
 
+/** 复核活跃轮次后的普通发送从首帧开始只进入输入框排队区。 */
+function verifyActiveTurnQueueProjection() {
+  /** 活跃队列代表当前回复仍在生成，新消息必须等待本轮结束。 */
+  const activeQueue: NativeQueueSnapshot = { state: { type: 'active', turnId: 'active-turn', phase: 'prework' }, waitReason: 'current_turn', submissions: [] };
+  /** 最小活跃会话只保留本次投影需要的身份和队列事实。 */
+  const activeState: NativeSessionState = {
+    ...createInitialSessionState(),
+    projectId,
+    conversationId,
+    providerThreadId: threadId,
+    conversationState: 'active_prework',
+    queue: activeQueue,
+  };
+  /** 本地发送动作必须在 HTTP 回执前建立排队卡片。 */
+  const pendingState = sessionReducer(activeState, {
+    type: 'send_started',
+    clientUserMessageId: 'queued-client-message',
+    durableClientUserMessageId: 'queued-client-message',
+    draft: '排队补充消息',
+    attachments: [],
+    submittedAttachments: [],
+    browserSubmission: null,
+    contextDraft: { responseAnnotations: [], codeComments: [] },
+    browserComments: [],
+    delivery: 'queue',
+    previousConversationState: 'active_prework',
+    startedAt: occurredAt,
+  });
+  /** 本地卡片是唯一首帧投影，且权威身份到达前不可操作。 */
+  const pendingCards = composerQueuedSubmissions(pendingState);
+  assert(pendingCards.length === 1 && pendingCards[0]?.clientUserMessageId === 'queued-client-message' && pendingCards[0]?.localOnly, '活跃轮次后的本地消息必须立即进入不可操作的排队卡片。');
+  /** 时间线过滤使用同一客户端身份，不允许先渲染成会话气泡。 */
+  const pendingItem = pendingState.items[pendingState.itemOrder.at(-1)!]!;
+  assert(
+    pendingCards.some((submission) => submission.clientUserMessageId === pendingItem.clientUserMessageId),
+    '排队卡片必须接管同一条 optimistic 消息身份。',
+  );
+  /** 权威队列回显应原位替换本地卡片，并开放既有队列操作。 */
+  const durableState = sessionReducer(pendingState, {
+    type: 'queue_hydrated',
+    queue: {
+      ...activeQueue,
+      submissions: [
+        {
+          id: 'queued-submission',
+          conversationId,
+          clientUserMessageId: 'queued-client-message',
+          content: '排队补充消息',
+          composerDraft: '排队补充消息',
+          status: 'queued',
+          delivery: 'queue',
+          position: 1,
+          providerTurnId: null,
+          pausedReason: null,
+          createdAt: occurredAt,
+          updatedAt: occurredAt,
+        },
+      ],
+    },
+  });
+  /** 去重后仍只保留一个权威卡片。 */
+  const durableCards = composerQueuedSubmissions(durableState);
+  assert(durableCards.length === 1 && durableCards[0]?.id === 'queued-submission' && !durableCards[0]?.localOnly, '权威队列必须无闪烁替换本地卡片。');
+  /** 空闲会话的首条消息仍属于正式时间线，不能被本次规则误收进排队区。 */
+  const firstTurnState = sessionReducer(
+    { ...activeState, conversationState: 'ready', queue: { state: { type: 'idle' }, submissions: [] } },
+    {
+      type: 'send_started',
+      clientUserMessageId: 'first-turn-message',
+      durableClientUserMessageId: 'first-turn-message',
+      draft: '首轮消息',
+      attachments: [],
+      submittedAttachments: [],
+      browserSubmission: null,
+      contextDraft: { responseAnnotations: [], codeComments: [] },
+      browserComments: [],
+      delivery: 'queue',
+      previousConversationState: 'ready',
+      startedAt: occurredAt,
+    },
+  );
+  assert(composerQueuedSubmissions(firstTurnState).length === 0, '空闲会话首条消息不得进入输入框排队区。');
+  return { pendingCardImmediate: true, transcriptIdentityClaimed: true, durableReplacement: true, firstTurnPreserved: true };
+}
+
 /** 复核首条任务提示词在实时、队列和局部历史之间保持同一位置，旧缺位输入能一次恢复。 */
 async function verifyTaskPushPlacement() {
   /** 使用正式快照适配器建立与控制器缓存一致的空会话。 */
@@ -1628,6 +1713,12 @@ async function verifyTaskPushPlacement() {
   } finally {
     recovered.controller.dispose();
   }
+}
+
+/** 排队首帧专项只运行本地投影与权威接管检查。 */
+if (process.argv.includes('--active-queue-projection-only')) {
+  console.log(JSON.stringify({ activeTurnQueueProjection: verifyActiveTurnQueueProjection() }));
+  process.exit(0);
 }
 
 /** 专项入口复用现有脚本，避免与历史待发送重放断言混淆。 */

@@ -1649,6 +1649,16 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
   const key = existingOptimisticEntry?.[0] ?? optimisticUserItemKey(state, action.clientUserMessageId);
   const conversationId = state.conversationId ?? 'pending-conversation';
   const threadId = state.providerThreadId ?? 'pending-thread';
+  /** 活跃轮次后的普通发送应从首帧开始留在输入框排队区，而不是短暂进入会话正文。 */
+  const queuedForActiveTurn =
+    action.delivery === 'queue' &&
+    (action.previousConversationState === 'active_prework' ||
+      action.previousConversationState === 'active_final_answer' ||
+      action.previousConversationState === 'waiting_approval' ||
+      action.previousConversationState === 'waiting_user_input' ||
+      state.queue?.state.type === 'active' ||
+      state.queue?.state.type === 'waiting' ||
+      state.queue?.state.type === 'dispatching');
   const item: NativeSessionItemBuffer = {
     key,
     conversationId,
@@ -1662,6 +1672,7 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
     payload: {
       attachments: action.submittedAttachments,
       delivery: action.delivery,
+      ...(queuedForActiveTurn ? { queuedForActiveTurn: true } : {}),
       ...(action.questionAnswer ? { questionAnswer: action.questionAnswer } : {}),
       ...(action.queuedUntilHydrated ? { queuedUntilHydrated: true } : {}),
       ...(action.taskPushLayout ? { taskPushLayout: action.taskPushLayout } : {}),
