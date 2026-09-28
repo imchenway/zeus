@@ -24,6 +24,12 @@ private let axMessagingTimeoutSeconds: Float = 2
 private let minimumScreenshotBudgetMilliseconds: Double = 5_000
 /** 富格式粘贴只临时保存有界剪贴板，避免一次系统操作耗尽 Helper 内存。 */
 private let maximumPasteboardSnapshotBytes = 32 * 1024 * 1024
+/** 冷启动最多等待目标创建可控窗口；超时保持隐藏并返回明确失败。 */
+private let backgroundLaunchWindowTimeoutSeconds: TimeInterval = 10
+/** 恢复窗口与前台层级使用短轮询，避免固定长等待或持续争夺用户桌面。 */
+private let backgroundLaunchPollNanoseconds: UInt64 = 25_000_000
+/** 目标显示后给系统一秒落定隐藏和激活状态。 */
+private let backgroundLaunchRevealTimeoutSeconds: TimeInterval = 1
 
 /** 明确的界面完成条件；只确认观察到的状态，不推断外部业务已完成。 */
 private struct ComputerStateCondition {
@@ -865,15 +871,93 @@ private final class ComputerService {
         guard let applicationURL = applicationURL(for: identifier) else {
             throw ServiceFailure(code: "ZEUS_COMPUTER_APP_NOT_FOUND", message: "找不到可启动的应用：\(identifier)")
         }
+        /** 启动前真实前台应用只作初始兜底；期间用户切到其他应用时会更新保护目标。 */
+        let foregroundBeforeLaunch = NSWorkspace.shared.frontmostApplication
         let configuration = NSWorkspace.OpenConfiguration()
+        /** 系统启动本身不得激活目标应用。 */
         configuration.activates = false
+        /** 先隐藏完成冷启动，窗口就绪后再恢复并重建原前台层级。 */
+        configuration.hides = true
+        /** 同一路径已有实例时复用，避免 Computer Use 重复打开应用。 */
         configuration.createsNewApplicationInstance = false
+        /** 指定路径不得被另一个安装位置的同 bundle 应用替代。 */
+        configuration.allowsRunningApplicationSubstitution = false
         /** Zeus 识别该一次性意图后仅后台展示首个窗口；其他应用会安全忽略这个命名空间变量。 */
         configuration.environment = ["ZEUS_COMPUTER_BACKGROUND_LAUNCH": "1"]
         let launched = try await NSWorkspace.shared.openApplication(at: applicationURL, configuration: configuration)
-        /** 系统返回本次实际打开或复用的精确进程，避免再次按 bundle 猜测实例。 */
-        if !launched.isTerminated { return launched }
-        throw ServiceFailure(code: "ZEUS_COMPUTER_APP_LAUNCH_FAILED", message: "目标应用启动后立即退出，无法进入可控制状态：\(identifier)")
+        guard !launched.isTerminated else {
+            throw ServiceFailure(code: "ZEUS_COMPUTER_APP_LAUNCH_FAILED", message: "目标应用启动后立即退出，无法进入可控制状态：\(identifier)")
+        }
+        try await revealLaunchedApplicationInBackground(launched, preserving: foregroundBeforeLaunch)
+        /** 系统返回本次实际打开的精确进程，避免再次按 bundle 猜测实例。 */
+        return launched
+    }
+
+    /** 隐藏等待冷启动完成，再恢复用户当前前台；目标拒绝安全后台显示时不暴露半成功窗口。 */
+    private func revealLaunchedApplicationInBackground(_ launched: NSRunningApplication, preserving initialForeground: NSRunningApplication?) async throws {
+        /** 用户在冷启动期间切换应用时，以最近一次非目标前台为准。 */
+        var foregroundToPreserve = initialForeground
+        /** 目标窗口必须先在隐藏状态创建，避免启动页逐个覆盖用户桌面。 */
+        let windowDeadline = ProcessInfo.processInfo.systemUptime + backgroundLaunchWindowTimeoutSeconds
+        while !applicationHasWindow(pid: launched.processIdentifier) {
+            guard !launched.isTerminated else {
+                throw ServiceFailure(code: "ZEUS_COMPUTER_APP_LAUNCH_FAILED", message: "目标应用启动后立即退出，无法进入可控制状态。")
+            }
+            preserveForeground(whileLaunching: launched, latestForeground: &foregroundToPreserve)
+            guard ProcessInfo.processInfo.systemUptime < windowDeadline else {
+                _ = launched.hide()
+                preserveForeground(whileLaunching: launched, latestForeground: &foregroundToPreserve)
+                throw ServiceFailure(code: "ZEUS_COMPUTER_WINDOW_UNAVAILABLE", message: "目标应用已安全隐藏启动，但没有在十秒内创建可控制窗口；为避免遮挡当前桌面，本次未显示该应用。")
+            }
+            try await Task.sleep(nanoseconds: backgroundLaunchPollNanoseconds)
+        }
+
+        /** NSRunningApplication 是跨应用恢复窗口的公开系统入口；随后仍核对真实前台。 */
+        if launched.isHidden { _ = launched.unhide() }
+        preserveForeground(whileLaunching: launched, latestForeground: &foregroundToPreserve)
+        /** 即使前台身份未变也重新抬升其主窗口，修复“未激活但覆盖在上方”的真实现场。 */
+        if let foregroundToPreserve, !foregroundToPreserve.isTerminated { _ = foregroundToPreserve.activate(options: []) }
+        /** 目标可能在恢复窗口时自行激活；有界等待期间持续把最近用户前台放回上层。 */
+        let revealDeadline = ProcessInfo.processInfo.systemUptime + backgroundLaunchRevealTimeoutSeconds
+        repeat {
+            guard !launched.isTerminated else {
+                throw ServiceFailure(code: "ZEUS_COMPUTER_APP_LAUNCH_FAILED", message: "目标应用显示窗口前已退出，无法进入可控制状态。")
+            }
+            preserveForeground(whileLaunching: launched, latestForeground: &foregroundToPreserve)
+            if !launched.isHidden, NSWorkspace.shared.frontmostApplication?.processIdentifier != launched.processIdentifier { return }
+            guard ProcessInfo.processInfo.systemUptime < revealDeadline else { break }
+            try await Task.sleep(nanoseconds: backgroundLaunchPollNanoseconds)
+        } while true
+
+        /** 无法恢复用户前台时重新隐藏目标，失败也不能把窗口留在最上层。 */
+        _ = launched.hide()
+        preserveForeground(whileLaunching: launched, latestForeground: &foregroundToPreserve)
+        throw ServiceFailure(code: "ZEUS_COMPUTER_APP_BACKGROUND_LAUNCH_FAILED", message: "目标应用拒绝保持后台显示；为避免抢占当前桌面，已重新隐藏该应用。请手动打开后再继续控制。")
+    }
+
+    /** 跟随用户在启动期间的真实切换；只有目标自己抢到前台时才恢复最近的非目标应用。 */
+    private func preserveForeground(whileLaunching target: NSRunningApplication, latestForeground: inout NSRunningApplication?) {
+        guard let current = NSWorkspace.shared.frontmostApplication else { return }
+        if current.processIdentifier != target.processIdentifier {
+            latestForeground = current
+            return
+        }
+        guard let latestForeground, !latestForeground.isTerminated else { return }
+        _ = latestForeground.activate(options: [])
+    }
+
+    /** 读取所有系统窗口，只确认目标已创建普通尺寸窗口，不激活、抬升或捕获内容。 */
+    private func applicationHasWindow(pid: pid_t) -> Bool {
+        guard let windows = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]] else { return false }
+        return windows.contains { window in
+            guard (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
+                  (window[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
+                  (window[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 0 > 0,
+                  let bounds = window[kCGWindowBounds as String] as? [String: Any],
+                  let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary)
+            else { return false }
+            return frame.width > 1 && frame.height > 1
+        }
     }
 
     /** 只接受 bundle id、应用路径和常见应用目录下的显示名，不猜测其他位置的可执行文件。 */
