@@ -350,6 +350,29 @@ async function renderMenuBarUsageWithClient(client: DashboardClient): Promise<vo
   );
 }
 
+/** 独立费用明细只依赖主进程桥接数据，不启动 Dashboard API 客户端。 */
+async function renderMenuBarUsageCostDetail(): Promise<void> {
+  const [{ MenuBarUsageCostDetailWindow }, initialPayload] = await Promise.all([import('./settings/MenuBarUsageWindow.js'), window.zeus?.getMenuBarUsageCostDetail?.()]);
+  if (!initialPayload) throw new Error('菜单栏费用明细缺少首次展示数据。');
+  /** 独立窗口使用自己的透明 surface，避免继承菜单栏主体尺寸。 */
+  const root = document.getElementById('root');
+  if (!root) throw new Error('Zeus renderer root element is missing');
+  document.body.dataset.surface = 'menu-bar-usage-cost-detail';
+  document.title = initialPayload.label;
+  startupLanguage = initialPayload.language;
+  /** 错误界面语言与当前明细语言保持一致。 */
+  const errorLanguage = initialPayload.language === 'zh-CN' ? 'zh-CN' : 'en';
+  createRoot(root).render(
+    <>
+      <RendererErrorBoundary appLanguage={initialPayload.language} onFatalError={(error) => reportSurfaceFatalError(error, errorLanguage, 'MenuBarUsageCostDetailWindow')}>
+        <MenuBarUsageCostDetailWindow initialPayload={initialPayload} />
+        <RendererBootstrapReady />
+      </RendererErrorBoundary>
+      <ApplicationErrorDialogHost language={errorLanguage} />
+    </>,
+  );
+}
+
 async function renderTaskGitDeliveryWithClient(client: DashboardClient, taskId: string): Promise<void> {
   const [{ TaskGitDeliveryWindow }, task, snapshot, appShellSettings, currentContext] = await Promise.all([
     import('./task/TaskGitDeliveryWindow.js'),
@@ -442,9 +465,14 @@ function gitOperationReason(operation: string): string {
 
 async function hydrateRenderer(): Promise<void> {
   if (!window.zeus?.getLocalServerConfig) throw new Error('Electron 本地桥接未就绪');
-  await waitForConversationStoreMigration();
   const parameters = new URLSearchParams(window.location.search);
   const surface = parameters.get('surface');
+  /** 明细窗口不依赖本地服务或数据库迁移，避免无关启动状态阻塞短时悬浮展示。 */
+  if (surface === 'menu-bar-usage-cost-detail') {
+    await renderMenuBarUsageCostDetail();
+    return;
+  }
+  await waitForConversationStoreMigration();
   // App 模块和纯本地显示缓存不依赖执行宿主，先与宿主就绪检查并行。
   const mainWindowBootstrap = surface
     ? undefined
@@ -647,8 +675,17 @@ async function hydrateRendererWithExecutionHostRecovery(): Promise<void> {
 
 hydrateRendererWithExecutionHostRecovery().catch((error: unknown) => {
   const surface = new URLSearchParams(window.location.search).get('surface');
-  const auxiliarySurface = surface === 'menu-bar-usage' || surface === 'task-git-delivery' || surface === 'project-git-diff';
-  console.error(surface === 'menu-bar-usage' ? 'Zeus menu bar usage hydration failed' : surface === 'task-git-delivery' ? 'Zeus task Git delivery hydration failed' : 'Zeus dashboard hydration failed', error);
+  const auxiliarySurface = surface === 'menu-bar-usage' || surface === 'menu-bar-usage-cost-detail' || surface === 'task-git-delivery' || surface === 'project-git-diff';
+  console.error(
+    surface === 'menu-bar-usage'
+      ? 'Zeus menu bar usage hydration failed'
+      : surface === 'menu-bar-usage-cost-detail'
+        ? 'Zeus menu bar usage cost detail hydration failed'
+        : surface === 'task-git-delivery'
+          ? 'Zeus task Git delivery hydration failed'
+          : 'Zeus dashboard hydration failed',
+    error,
+  );
   renderStartupFailure(error);
   if (!auxiliarySurface) window.zeus?.reportRendererBootstrapReady?.();
 });

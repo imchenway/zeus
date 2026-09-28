@@ -106,10 +106,20 @@ export interface UsageModelRate {
   perRequest: number | null;
 }
 
+/** 账本已知价格目录的适用周期；结束日期为空表示当前最新目录。 */
+export interface UsageModelPricePeriod {
+  /** 价格目录开始日期，格式固定为 YYYY-MM-DD。 */
+  from: string;
+  /** 下一份目录生效前一天；当前最新目录为空。 */
+  to: string | null;
+}
+
 /** 同一模型和同一价格快照归为一行，调价后的记录保持分开。 */
 export interface UsageModelCostBreakdown {
   model: string;
   rate: UsageModelRate | null;
+  /** 只展示账本能够证明的价格目录周期，缺少有效目录日期时不猜测。 */
+  pricePeriod: UsageModelPricePeriod | null;
   usage: TokenUsageBreakdown;
   /** 该行按请求价格快照汇总的原币估算费用。 */
   estimatedCosts: import('./modelPricing.js').EstimatedMoney[];
