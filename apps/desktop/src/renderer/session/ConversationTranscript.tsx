@@ -1911,7 +1911,7 @@ function transcriptRowRenderOptions(
   return { props, items, showThinking, motionFocus, lastUserKey, activityPresentation, enteringItemIds, onVisibleContentChange, responseAnnotationsByItemId };
 }
 
-/** 按消息种类复用现有展示组件，轮次耗时由顶部处理过程统一呈现。 */
+/** 按消息种类复用现有展示组件；活动明细始终直出，折叠统一由轮次处理过程负责。 */
 function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOptions): ReactNode {
   if (row.kind === 'answered_request') return <AnsweredRequestHistory request={row.request} language={options.props.language} />;
   if (row.kind === 'activity') {
@@ -1920,7 +1920,6 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         items={row.items}
         category={row.category}
         language={options.props.language}
-        inline={options.activityPresentation === 'inline'}
         enteringItemKeys={options.enteringItemIds}
         motionActive={row.motionActive || row.items.some(isLiveActivityItem) || row.items.some((item) => item.key === options.motionFocus?.itemKey)}
         onOpenResource={options.props.onOpenResource}

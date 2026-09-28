@@ -99,8 +99,6 @@ interface SessionActivityGroupProps {
   items: NativeSessionItemBuffer[];
   language: SessionUiLanguage;
   category: SessionActivityCategory;
-  /** 外层处理过程已经负责展开时，直接显示操作明细，不再套第二层分组。 */
-  inline?: boolean;
   /** 只让本轮真实新增的稳定条目播放一次入场，历史回放保持静止。 */
   enteringItemKeys?: ReadonlySet<string>;
   motionActive?: boolean;
@@ -113,15 +111,12 @@ interface SessionActivityGroupProps {
 
 /** 活动组保留真实过程；单条无详情的整理记录直接显示，避免标题与明细重复。 */
 export const SessionActivityGroup = memo(function SessionActivityGroup(props: SessionActivityGroupProps) {
-  /** 摘要、活动行与展开详情使用同一份名称投影。 */
+  /** 活动行与展开详情使用同一份名称投影。 */
   const items = useNamedSkillItems(props.items);
   const liveItem = [...items].reverse().find((item) => activityOutcome(item) === 'running') ?? null;
   const active = Boolean(liveItem);
-  const summary = activitySummary(items, props.language, active);
   const imageResources = activityImageResources(items);
   const detailItems = imageResources.length > 0 ? items.filter((item) => normalizeType(item.type) !== 'imageview' || item.resources.length === 0) : items;
-  const [open, setOpen] = useState(false);
-  const GroupIcon = activityGroupIcon(items, liveItem);
 
   // 单条整理只有在没有正文详情、资源或可加载结果时才省去折叠层。
   const singleCompaction = items.length === 1 && normalizeType(items[0]!.type) === 'contextcompaction' && items[0]!.status !== 'failed' ? items[0]! : null;
@@ -133,55 +128,33 @@ export const SessionActivityGroup = memo(function SessionActivityGroup(props: Se
     );
   }
 
-  /** 明细只在实际可见时创建，折叠态不提前构造长输出节点。 */
-  const body =
-    props.inline || open ? (
-      <div className="session-activity-body">
-        {detailItems.length > 0 ? (
-          <ol>
-            {detailItems.map((item) => (
-              <ActivityItemRow
-                key={item.key}
-                item={item}
-                language={props.language}
-                animateEntrance={props.enteringItemKeys?.has(item.key)}
-                motionActive={Boolean(active && props.motionActive && item.key === liveItem?.key)}
-                onOpenResource={props.onOpenResource}
-                onLoadToolResult={props.onLoadToolResult}
-                onLoadContent={props.onLoadContent}
-              />
-            ))}
-          </ol>
-        ) : null}
-        {imageResources.length > 0 ? (
-          <div className="session-activity-images">
-            <ConversationResourceCards resources={imageResources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
-          </div>
-        ) : null}
-      </div>
-    ) : null;
-
-  if (props.inline) {
-    return (
-      <section className="session-activity-group" data-active={active || undefined} data-activity-category={props.category} data-item-count={items.length} data-motion-active={props.motionActive || undefined}>
-        <AnimatedSize changeKey={items}>{body}</AnimatedSize>
-      </section>
-    );
-  }
-
   return (
-    <section className="session-activity-group" data-active={active || undefined} data-activity-category={props.category} data-item-count={items.length} data-motion-active={props.motionActive || undefined} aria-label={summary}>
-      <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
-        <summary>
-          <span className="session-activity-group-icon" aria-hidden="true">
-            <GroupIcon weight="regular" />
-          </span>
-          <span>{summary}</span>
-          <CaretDown className="session-activity-caret" aria-hidden="true" weight="bold" />
-        </summary>
-        {body}
-      </details>
-      {liveItem && !open ? <ActivityLiveRow item={liveItem} language={props.language} /> : null}
+    <section className="session-activity-group" data-active={active || undefined} data-activity-category={props.category} data-item-count={items.length} data-motion-active={props.motionActive || undefined}>
+      <AnimatedSize changeKey={items}>
+        <div className="session-activity-body">
+          {detailItems.length > 0 ? (
+            <ol>
+              {detailItems.map((item) => (
+                <ActivityItemRow
+                  key={item.key}
+                  item={item}
+                  language={props.language}
+                  animateEntrance={props.enteringItemKeys?.has(item.key)}
+                  motionActive={Boolean(active && props.motionActive && item.key === liveItem?.key)}
+                  onOpenResource={props.onOpenResource}
+                  onLoadToolResult={props.onLoadToolResult}
+                  onLoadContent={props.onLoadContent}
+                />
+              ))}
+            </ol>
+          ) : null}
+          {imageResources.length > 0 ? (
+            <div className="session-activity-images">
+              <ConversationResourceCards resources={imageResources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
+            </div>
+          ) : null}
+        </div>
+      </AnimatedSize>
     </section>
   );
 }, sameActivityGroupProps);
@@ -190,7 +163,6 @@ function sameActivityGroupProps(previous: Readonly<SessionActivityGroupProps>, n
   if (
     previous.language !== next.language ||
     previous.category !== next.category ||
-    previous.inline !== next.inline ||
     previous.motionActive !== next.motionActive ||
     previous.onOpenResource !== next.onOpenResource ||
     previous.onLoadResourcePreview !== next.onLoadResourcePreview ||
@@ -680,98 +652,6 @@ export function SessionTurnProcessDisclosure(props: {
   );
 }
 
-/** 折叠摘要使用当轮技能名称；无法解析时只说明读取技能及数量。 */
-function activitySummary(items: NativeSessionItemBuffer[], language: SessionUiLanguage, active = false): string {
-  /** 单条原生操作直接显示具体对象，不必展开才能识别。 */
-  const nativeTitle = items.length === 1 ? nativeActivityTitle(items[0]!, language === 'zh-CN') : null;
-  if (nativeTitle) return nativeTitle;
-  /** 结束不等于成功，折叠时仍能看到失败、接管与未确认结果。 */
-  const outcomes = items.map(activityOutcome);
-  /** 只调整摘要文字，保留原有分组、顺序与展开行为。 */
-  const exceptions = [...new Set(outcomes)].filter((outcome) => outcome !== 'running' && outcome !== 'completed');
-  if (exceptions.length > 0) {
-    /** 单项异常直接指出对象；混合组同时保留总量，避免只看到“失败”。 */
-    const exceptionalItems = items.filter((item) => !['running', 'completed'].includes(activityOutcome(item)));
-    if (exceptionalItems.length === 1) {
-      const exceptionalTitle = activityItemTitle(exceptionalItems[0]!, language);
-      return items.length === 1 ? exceptionalTitle : `${items.length} ${language === 'zh-CN' ? '项操作' : items.length === 1 ? 'operation' : 'operations'} · ${exceptionalTitle}`;
-    }
-    return [
-      language === 'zh-CN' ? (active ? '正在处理' : '操作记录') : active ? 'Working' : 'Activity',
-      ...exceptions.map((outcome) => `${outcomes.filter((value) => value === outcome).length} ${language === 'zh-CN' ? '项' : '·'}${activityOutcomeLabel(outcome, language === 'zh-CN')}`),
-    ].join(' · ');
-  }
-  const compactions = items.filter((item) => normalizeType(item.type) === 'contextcompaction');
-  if (compactions.length === items.length) {
-    return language === 'zh-CN' ? (active ? '正在整理较早对话以继续工作' : '已整理较早对话') : active ? 'Organizing earlier conversation to continue' : 'Organized earlier conversation';
-  }
-  const fileChanges = items.filter((item) => ['filechange', 'file'].includes(normalizeType(item.type))).length;
-  const skills = activitySkillNames(items);
-  const commandItems = items.filter((item) => ['commandexecution', 'command'].includes(normalizeType(item.type)));
-  const webSearches = items.filter((item) => normalizeType(item.type) === 'websearch').length;
-  const imageViews = items.filter((item) => normalizeType(item.type) === 'imageview').length;
-  /** 结构化动作直接提供可核对数量，不再把不同规模都写成同一句话。 */
-  const actionTypes = commandItems.flatMap((item) => commandActions(item).map((action) => normalizeType(primitive(action.type) ?? '')));
-  /** 读取与列目录对用户都是获取文件信息，摘要合并计数。 */
-  const readCount = actionTypes.filter((type) => type === 'read' || type === 'listfiles').length;
-  /** 文件内搜索与网页搜索分别计数，避免混淆数据来源。 */
-  const fileSearchCount = actionTypes.filter((type) => type === 'search').length;
-  const genericCommandCount = commandItems.filter((item) => {
-    const actions = commandActions(item);
-    if (actions.length === 0) return true;
-    if (activitySkillNames([item]).length > 0 && actions.every((action) => ['read', 'listfiles'].includes(normalizeType(primitive(action.type) ?? '')))) return false;
-    return actions.some((action) => !['read', 'listfiles', 'search'].includes(normalizeType(primitive(action.type) ?? '')));
-  }).length;
-  /** 原生工具按真实来源显示，不与文件和命令动作串成同一个工具名。 */
-  const browserTools = items.some((item) => nativeActivityTool(item.payload)?.kind === 'browser');
-  /** 桌面操作使用独立来源，具体应用名称保留在每条操作上。 */
-  const computerTools = items.some((item) => nativeActivityTool(item.payload)?.kind === 'computer');
-  const otherTools = items.filter((item) => !nativeActivityTool(item.payload) && !['commandexecution', 'command', 'websearch', 'imageview', 'filechange', 'file', 'contextcompaction'].includes(normalizeType(item.type))).length;
-  if (language === 'zh-CN') {
-    if (active) {
-      const activeParts = [
-        fileChanges > 0 ? '编辑文件' : null,
-        readCount > 0 ? `读取 ${readCount} 个文件` : null,
-        fileSearchCount > 0 ? `搜索 ${fileSearchCount} 次` : null,
-        webSearches > 0 ? '搜索网页' : null,
-        skills.length > 0 ? '读取技能' : null,
-        imageViews > 0 ? '查看图像' : null,
-        genericCommandCount > 0 ? `运行 ${genericCommandCount} 条命令` : null,
-        browserTools ? '浏览器操作' : null,
-        computerTools ? '桌面操作' : null,
-        otherTools > 0 ? '使用工具' : null,
-      ].filter(Boolean);
-      return `正在处理：${activeParts.join(' · ')}`;
-    }
-    const completedParts = [
-      fileChanges > 0 ? '编辑了文件' : null,
-      readCount > 0 ? `读取了 ${readCount} 个文件` : null,
-      fileSearchCount > 0 ? `搜索了 ${fileSearchCount} 次` : null,
-      webSearches > 0 ? '搜索了网页' : null,
-      skills.length > 0 ? `读取了${skills.length === 1 ? (skills[0] ? ` ${skills[0]} ` : '') : ` ${skills.length} 个`}技能` : null,
-      imageViews > 0 ? `查看了 ${imageViews} 张图像` : null,
-      genericCommandCount > 0 ? `运行了 ${genericCommandCount} 条命令` : null,
-      browserTools ? '已进行浏览器操作' : null,
-      computerTools ? '已进行桌面操作' : null,
-      otherTools > 0 ? '使用了工具' : null,
-    ].filter(Boolean);
-    return completedParts.join(' · ') || '完成了处理';
-  }
-  const englishParts = [
-    fileChanges > 0 ? (active ? 'editing files' : 'edited files') : null,
-    readCount > 0 ? `${active ? 'reading' : 'read'} ${readCount} ${readCount === 1 ? 'file' : 'files'}` : null,
-    fileSearchCount > 0 ? `${active ? 'searching files' : 'searched files'} ${fileSearchCount} ${fileSearchCount === 1 ? 'time' : 'times'}` : null,
-    webSearches > 0 ? (active ? 'searching the web' : 'searched the web') : null,
-    skills.length > 0 ? `${active ? 'reading' : 'read'} ${skills.length === 1 ? `${skills[0] ? `${skills[0]} ` : ''}skill` : `${skills.length} skills`}` : null,
-    imageViews > 0 ? `${active ? 'viewing' : 'viewed'} ${imageViews} ${imageViews === 1 ? 'image' : 'images'}` : null,
-    genericCommandCount > 0 ? `${active ? 'running' : 'ran'} ${genericCommandCount} ${genericCommandCount === 1 ? 'command' : 'commands'}` : null,
-    browserTools ? (active ? 'browser operations' : 'performed browser operations') : null,
-    computerTools ? (active ? 'desktop operations' : 'performed desktop operations') : null,
-    otherTools > 0 ? (active ? 'using tools' : 'used tools') : null,
-  ].filter(Boolean);
-  return `${active ? 'Working: ' : ''}${englishParts.join(', ') || (active ? 'processing' : 'completed work')}`;
-}
-
 function activityImageResources(items: NativeSessionItemBuffer[]): ConversationResource[] {
   const resources = items.flatMap((item) => item.resources).filter(isImageResource);
   const unique = new Map<string, ConversationResource>();
@@ -786,20 +666,6 @@ function activityImageResources(items: NativeSessionItemBuffer[]): ConversationR
           },
     );
   return [...unique.values()];
-}
-
-/** 纯来源使用专属图标，混合组仍按已有类别展示。 */
-function activityGroupIcon(items: NativeSessionItemBuffer[], liveItem: NativeSessionItemBuffer | null) {
-  if (items.every((item) => nativeActivityTool(item.payload)?.kind === 'browser')) return Browser;
-  if (items.every((item) => nativeActivityTool(item.payload)?.kind === 'computer')) return Desktop;
-  if (items.some((item) => nativeActivityTool(item.payload))) return Wrench;
-  if (items.some((item) => ['filechange', 'file'].includes(normalizeType(item.type)))) return PencilSimple;
-  if (items.every((item) => normalizeType(item.type) === 'imageview')) return Image;
-  if (items.every((item) => activitySkillNames([item]).length > 0)) return Cube;
-  if (liveItem) return activityItemIcon(liveItem);
-  if (items.some((item) => commandActions(item).some((action) => normalizeType(primitive(action.type) ?? '') === 'search') || normalizeType(item.type) === 'websearch')) return MagnifyingGlass;
-  if (items.some((item) => commandActions(item).some((action) => ['read', 'listfiles'].includes(normalizeType(primitive(action.type) ?? ''))))) return BookOpen;
-  return activityItemIcon(items[items.length - 1]!);
 }
 
 /** 按读取路径去重；无法确认名称时保留技能计数，绝不显示目录哈希。 */
