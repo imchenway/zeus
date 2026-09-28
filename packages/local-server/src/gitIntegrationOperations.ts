@@ -234,8 +234,10 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       remoteRefreshError = refreshResults.find((result): result is string => Boolean(result)) ?? null;
       remoteRefreshStatus = remoteRefreshError ? 'failed' : 'succeeded';
     }
+    /** unborn 当前分支尚未写入 refs/heads，但仍是本地来源分支。 */
+    const localSourceBranches = !repository.detached && !repository.headSha && repository.branch && !repository.localBranches.includes(repository.branch) ? [repository.branch, ...repository.localBranches] : repository.localBranches;
     const sourceRefs = [
-      ...repository.localBranches.map((branch) => ({
+      ...localSourceBranches.map((branch) => ({
         ref: `refs/heads/${branch}`,
         label: branch,
         kind: 'local' as const,
@@ -315,7 +317,9 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
             branchName: workspace.branchName,
             branchPrefix: null,
             sourceRef: workspace.sourceHeadSha,
+            sourceBranch: workspace.sourceBranch,
             existingBranch: true,
+            includeLocalChanges: !workspace.sourceHeadSha,
             ...(workspace.remoteName ? { existingRemoteRef: `${workspace.remoteName}/${workspace.remoteBranch}` } : {}),
             ...(environment.rootPath && workspace.repositoryRelativePath ? { worktreePath: join(environment.rootPath, workspace.repositoryRelativePath) } : {}),
           });
@@ -436,7 +440,9 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
             const remotePrefix = 'refs/remotes/';
             sourceKind = requestedSourceRef.startsWith(remotePrefix) ? 'remote' : 'local';
             sourceRef = requestedSourceRef.startsWith(localPrefix) ? requestedSourceRef.slice(localPrefix.length) : requestedSourceRef.startsWith(remotePrefix) ? requestedSourceRef.slice(remotePrefix.length) : '';
-            const sourceExists = sourceKind === 'remote' ? repository.remoteBranches.includes(sourceRef) : repository.localBranches.includes(sourceRef);
+            /** 当前 unborn 分支没有本地引用，但名称和工作目录都已经由 Git 确认。 */
+            const sourceUnborn = sourceKind === 'local' && !repository.detached && !repository.headSha && sourceRef === repository.branch;
+            const sourceExists = sourceKind === 'remote' ? repository.remoteBranches.includes(sourceRef) : repository.localBranches.includes(sourceRef) || sourceUnborn;
             if (!sourceRef || !sourceExists) {
               throw nativeApiError('ZEUS_TASK_SOURCE_BRANCH_INVALID', `Choose an available local or locally known remote branch for ${registeredRepository.relativePath}.`);
             }
@@ -467,7 +473,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
             sourceBranch,
             existingBranch: adoptLocalBranch,
             worktreePath: targetPath,
-            includeLocalChanges: !adoptLocalBranch && sourceKind === 'local' && requested.includeLocalChanges === true,
+            includeLocalChanges: !adoptLocalBranch && sourceKind === 'local' && (!repository.headSha || requested.includeLocalChanges === true),
             ignoredPaths: projectRepositoryIgnoredPaths(project.id, registeredRepository.id, registeredRepository.localPath),
           });
           preparedMembers.push({ repository: registeredRepository, prepared, remoteName });
@@ -779,7 +785,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       sourceRemoteVerified: Boolean(sourceLocalHeadSha && sourceRemoteHeadSha === sourceLocalHeadSha),
       primaryBranch: repository.branch || null,
       localBranches: repository.localBranches,
-      targetBranches: repository.localBranches,
+      targetBranches: !repository.detached && !repository.headSha && repository.branch && !repository.localBranches.includes(repository.branch) ? [repository.branch, ...repository.localBranches] : repository.localBranches,
       ...(review.error ? { reviewError: review.error } : {}),
       ...(comparison.error ? { comparisonError: comparison.error } : {}),
     };
@@ -1367,10 +1373,10 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     /** Git 写出后不自动重试或删除目录，交由耐久命令保留未知结果。 */
     let writeStarted = false;
     try {
-      /** 来源只接受项目内真实仓库，且必须已有命名分支和首次提交。 */
+      /** 来源只接受项目内真实仓库；当前 unborn 命名分支同样可以补入任务环境。 */
       const context = await getGitRepositoryContext(repository.localPath);
-      if (!context.isRepository || context.detached || !context.headSha || (await realpath(context.topLevel)) !== (await realpath(repository.localPath)))
-        workspaceGitReject(409, 'ZEUS_PROJECT_REPOSITORY_UNAVAILABLE', '请先为仓库建立首次提交并检出一个本地分支。');
+      if (!context.isRepository || context.detached || !context.branch || (await realpath(context.topLevel)) !== (await realpath(repository.localPath)))
+        workspaceGitReject(409, 'ZEUS_PROJECT_REPOSITORY_UNAVAILABLE', '仓库需要检出一个本地命名分支。');
       /** 环境根与最近存在的父目录均复验，拒绝通过符号链接写入原项目或其他任务。 */
       const root = await realpath(environment.rootPath);
       /** 任务目录必须位于项目约定的隔离根内。 */
@@ -1605,10 +1611,11 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     const repositoryPath = workspace.repositoryPath || project.localPath;
     const repository = await getGitRepositoryContext(repositoryPath);
     if (!repository.isRepository) workspaceGitReject(409, 'ZEUS_TARGET_BRANCH_UNAVAILABLE', 'Project repository is unavailable.');
-    /** 合入目标只能是已有本地命名分支，不能把任务分支自身或任意 Git 引用当作目标。 */
+    /** 合入目标只能是本地命名分支；当前 unborn 来源也允许完成首次交付。 */
     const targetBranch = typeof value.targetBranch === 'string' ? value.targetBranch.trim() : workspace.sourceBranch;
     if (!targetBranch || targetBranch === workspace.branchName) workspaceGitReject(400, 'ZEUS_TARGET_BRANCH_INVALID', '请选择与任务分支不同的本地目标分支。');
-    if (!repository.localBranches.includes(targetBranch)) workspaceGitReject(409, 'ZEUS_TARGET_BRANCH_UNAVAILABLE', '所选目标分支在本地不存在，请刷新后重新选择。');
+    const targetUnborn = workspace.sourceHeadSha === '' && !repository.detached && !repository.headSha && repository.branch === targetBranch && targetBranch === workspace.sourceBranch;
+    if (!repository.localBranches.includes(targetBranch) && !targetUnborn) workspaceGitReject(409, 'ZEUS_TARGET_BRANCH_UNAVAILABLE', '所选目标分支在本地不存在，请刷新后重新选择。');
     if (workspace.worktreePath) {
       const taskReview = await readTaskWorkspaceReview(workspace);
       if (taskReview.conflictFiles.length > 0) {
@@ -1644,8 +1651,8 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     }
     const mode = value.mode === 'squash' ? 'squash' : 'merge';
     const taskHeadSha = await getGitBranchHead(repositoryPath, workspace.branchName);
-    /** 使用目标当前提交建立并发基线，不将已删除的目标回退成来源提交。 */
-    const targetHeadSha = await getGitBranchHead(repositoryPath, targetBranch);
+    /** 使用目标当前提交建立并发基线；unborn 首次交付以空字符串表示尚无提交。 */
+    const targetHeadSha = targetUnborn ? '' : await getGitBranchHead(repositoryPath, targetBranch);
     const active = taskIntegrations.findActive(workspace.id, targetBranch);
     if (active) return workspaceGitResponse({ integration: await readTaskIntegrationSnapshot(active) }, active.state === 'conflicted' ? 202 : 409);
     const integrationId = `task_integration_${createHash('sha256').update(`workspace_git_integration\0${workspace.id}\0${targetBranch}\0${operationIdentity}`).digest('hex').slice(0, 24)}`;

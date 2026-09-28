@@ -28,7 +28,9 @@ export async function prepareProjectConversationWorkspace(project: ZeusProjectRe
   if (registered && registered.branch !== branchName) throw workspaceError('此会话已创建了不同分支的工作树，请沿用原配置重试。');
   if (branchExists && registered?.branch !== branchName) throw workspaceError('该分支已存在，请为新工作树设置其他分支名。', 'ZEUS_TASK_BRANCH_ALREADY_EXISTS');
   if (context.worktrees.some((entry) => entry.branch === branchName && resolve(entry.path) !== resolve(worktreePath))) throw workspaceError('该分支已在其他工作目录使用。', 'ZEUS_TASK_BRANCH_ALREADY_EXISTS');
-  if (!existingBranch && !(selection.sourceKind === 'local' ? context.localBranches : context.remoteBranches).includes(sourceRef)) throw workspaceError('来源分支已不可用，请刷新分支并重新选择。');
+  /** git init 后的当前分支在首次提交前没有 refs/heads 引用，但仍能作为工作树来源。 */
+  const sourceUnborn = selection.sourceKind === 'local' && !context.detached && !context.headSha && sourceRef === context.branch;
+  if (!existingBranch && !(selection.sourceKind === 'local' ? context.localBranches.includes(sourceRef) || sourceUnborn : context.remoteBranches.includes(sourceRef))) throw workspaceError('来源分支已不可用，请刷新分支并重新选择。');
   const existingContext = existingBranch ? await getGitRepositoryContext(worktreePath) : null;
   const prepared = await prepareTaskWorktree({
     repositoryPath: project.localPath,
@@ -44,7 +46,7 @@ export async function prepareProjectConversationWorkspace(project: ZeusProjectRe
     ...(!existingBranch ? { sourceKind: selection.sourceKind } : {}),
     sourceBranch: selection.sourceKind === 'remote' ? sourceRef.slice(sourceRef.indexOf('/') + 1) : sourceRef,
     existingBranch,
-    includeLocalChanges: false,
+    includeLocalChanges: sourceUnborn,
   });
   return prepared.worktreePath;
 }

@@ -594,7 +594,7 @@ export async function discoverGitRepositories(containerPath: string, maxDepth = 
   const discovered = await mapWithConcurrency(candidates, 4, async (localPath) => {
     signal?.throwIfAborted();
     const [context, clean] = await Promise.all([getGitRepositoryContext(localPath), getGitWorktreeClean(localPath)]);
-    if (!context.isRepository || canonicalFilesystemPath(context.topLevel) !== localPath) throw new Error(`无法读取 Git 仓库 ${localPath}，请检查目录权限、仓库状态以及是否已有首次提交。`);
+    if (!context.isRepository || canonicalFilesystemPath(context.topLevel) !== localPath) throw new Error(`无法读取 Git 仓库 ${localPath}，请检查目录权限和仓库状态。`);
     const repositoryRelativePath = relative(containerRoot, localPath);
     if (repositoryRelativePath === '..' || repositoryRelativePath.startsWith(`..${sep}`) || isAbsolute(repositoryRelativePath)) return null;
     return {
@@ -689,34 +689,40 @@ export async function prepareTaskWorktree(input: PrepareTaskWorktreeInput): Prom
   const context = input.repositoryContext ?? (await getGitRepositoryContext(input.repositoryPath));
   if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected project is not a Git repository.');
   const branchName = await assertValidGitBranchName(context.topLevel, input.branchName, input.branchPrefix === undefined ? defaultTaskBranchPrefix : input.branchPrefix);
-  // 新建工作区按调用方选中的本机可用引用冻结精确提交；恢复只接受持久化对象 ID。
-  const adoptLocalBranch = input.existingBranch && input.sourceKind === 'local';
-  const sourceRef = input.existingBranch && !adoptLocalBranch ? requireGitObjectId(input.sourceRef, 'source commit') : input.sourceRef.trim();
-  const sourceBranch = adoptLocalBranch
-    ? await assertNamedBranchExists(context.topLevel, sourceRef, 'task branch')
-    : input.existingBranch
-      ? input.sourceBranch?.trim() || sourceRef
-      : input.sourceKind === 'remote'
-        ? await assertRemoteBranchExists(context.topLevel, sourceRef, input.sourceBranch)
-        : await assertNamedBranchExists(context.topLevel, sourceRef, 'source branch');
-  const sourceHeadSha = await resolveCommit(context.topLevel, input.existingBranch && !adoptLocalBranch ? sourceRef : input.sourceKind === 'remote' ? `refs/remotes/${sourceRef}` : localBranchRef(sourceRef));
+  /** unborn 来源只有分支名而没有引用；它仍是可用的本地开发起点。 */
+  const sourceUnborn =
+    input.sourceKind !== 'remote' && !context.detached && !context.headSha && (input.sourceRef.trim() === context.branch || (input.existingBranch && !input.sourceRef.trim() && input.sourceBranch?.trim() === context.branch));
   const registered = context.worktrees.find((entry) => entry.branch === branchName);
   if (registered) {
     if (!input.existingBranch) {
       throw gitCoreError('ZEUS_TASK_BRANCH_ALREADY_EXISTS', `Task branch already has a registered worktree: ${branchName}`);
     }
-    const headSha = await resolveCommit(registered.path, 'HEAD');
+    /** orphan 任务分支在首次提交前没有 refs/heads 引用，登记的 worktree 才是其稳定身份。 */
+    const headSha = (await readCommitIfPresent(registered.path, 'HEAD')) ?? '';
     return {
       topLevel: context.topLevel,
       worktreePath: registered.path,
       branchName,
-      sourceBranch,
-      sourceHeadSha,
+      sourceBranch: input.sourceBranch?.trim() || input.sourceRef.trim() || context.branch,
+      sourceHeadSha: input.sourceRef.trim(),
       headSha,
       reused: true,
       localChangesApplied: false,
     };
   }
+  // 新建工作区按调用方选中的本机可用引用冻结精确提交；恢复只接受持久化对象 ID。
+  const adoptLocalBranch = input.existingBranch && input.sourceKind === 'local';
+  const sourceRef = sourceUnborn ? context.branch : input.existingBranch && !adoptLocalBranch ? requireGitObjectId(input.sourceRef, 'source commit') : input.sourceRef.trim();
+  const sourceBranch = sourceUnborn
+    ? await assertGitBranchFormat(context.topLevel, input.sourceBranch?.trim() || context.branch, 'source branch')
+    : adoptLocalBranch
+      ? await assertNamedBranchExists(context.topLevel, sourceRef, 'task branch')
+      : input.existingBranch
+        ? input.sourceBranch?.trim() || sourceRef
+        : input.sourceKind === 'remote'
+          ? await assertRemoteBranchExists(context.topLevel, sourceRef, input.sourceBranch)
+          : await assertNamedBranchExists(context.topLevel, sourceRef, 'source branch');
+  const sourceHeadSha = sourceUnborn ? '' : await resolveCommit(context.topLevel, input.existingBranch && !adoptLocalBranch ? sourceRef : input.sourceKind === 'remote' ? `refs/remotes/${sourceRef}` : localBranchRef(sourceRef));
 
   const worktreePath = input.worktreePath ? resolve(input.worktreePath) : buildTaskWorktreePath(context.topLevel, input.projectSlug, input.taskCode, input.workspaceId);
   /** 先识别原目录；任何读取失败都不能当成目录不存在。 */
@@ -762,6 +768,8 @@ export async function prepareTaskWorktree(input: PrepareTaskWorktreeInput): Prom
     if (input.existingBranch) {
       if (localBranchExists) {
         await runGit(context.topLevel, ['worktree', 'add', worktreePath, branchName]);
+      } else if (sourceUnborn) {
+        await createUnbornTaskWorktree(context.topLevel, worktreePath, branchName);
       } else {
         const remoteRef = input.existingRemoteRef?.trim() ?? '';
         if (!remoteRef || !context.remoteBranches.includes(remoteRef)) {
@@ -769,12 +777,15 @@ export async function prepareTaskWorktree(input: PrepareTaskWorktreeInput): Prom
         }
         await runGit(context.topLevel, ['worktree', 'add', '-b', branchName, worktreePath, remoteRef]);
       }
+    } else if (sourceUnborn) {
+      await createUnbornTaskWorktree(context.topLevel, worktreePath, branchName);
     } else {
       await runGit(context.topLevel, ['worktree', 'add', '-b', branchName, worktreePath, sourceHeadSha]);
     }
     worktreeCreated = true;
-    const localChangesApplied = input.includeLocalChanges === true && !input.existingBranch ? await applyLocalChangesToTaskWorktree(context.topLevel, worktreePath, input.ignoredPaths) : false;
-    const headSha = await resolveCommit(worktreePath, 'HEAD');
+    /** 空仓库的全部项目文件都是来源内容，不能再要求用户额外勾选“未提交修改”。 */
+    const localChangesApplied = (sourceUnborn || input.includeLocalChanges === true) && (!input.existingBranch || sourceUnborn) ? await applyLocalChangesToTaskWorktree(context.topLevel, worktreePath, input.ignoredPaths) : false;
+    const headSha = (await readCommitIfPresent(worktreePath, 'HEAD')) ?? '';
     return {
       topLevel: context.topLevel,
       worktreePath,
@@ -808,9 +819,10 @@ async function adoptTaskDirectory(context: GitRepositoryContext, worktreePath: s
   /** 只清理本次确实创建的 Git 登记，禁止误删已有同名分支。 */
   let created = false;
   try {
-    await runGit(context.topLevel, ['worktree', 'add', '--no-checkout', '-b', branchName, temporaryPath, sourceHeadSha]);
+    if (sourceHeadSha) await runGit(context.topLevel, ['worktree', 'add', '--no-checkout', '-b', branchName, temporaryPath, sourceHeadSha]);
+    else await createUnbornTaskWorktree(context.topLevel, temporaryPath, branchName);
     created = true;
-    await runGit(temporaryPath, ['read-tree', 'HEAD']);
+    if (sourceHeadSha) await runGit(temporaryPath, ['read-tree', 'HEAD']);
     await copyFile(join(temporaryPath, '.git'), join(worktreePath, '.git'), constants.COPYFILE_EXCL);
     attached = true;
     await runGit(context.topLevel, ['worktree', 'repair', worktreePath]);
@@ -980,7 +992,9 @@ export async function getTaskWorkspaceFileDiff(cwd: string, path: string): Promi
   const safePath = requireSafeWorkspacePath(path);
   const review = await getTaskWorkspaceReview(cwd);
   const untracked = review.untrackedFiles.some((file) => file.path === safePath);
-  const diffText = untracked ? await readGitDiffAllowChanges(cwd, ['diff', '--no-index', '--binary', '--', '/dev/null', safePath]) : await readGitDiffAllowChanges(cwd, ['diff', 'HEAD', '--binary', '--', safePath]);
+  /** orphan 分支首次提交前使用空提交比较，不能把不存在的 HEAD 当成错误。 */
+  const baseline = review.headSha || (await createEmptyRootCommit(cwd));
+  const diffText = untracked ? await readGitDiffAllowChanges(cwd, ['diff', '--no-index', '--binary', '--', '/dev/null', safePath]) : await readGitDiffAllowChanges(cwd, ['diff', baseline, '--binary', '--', safePath]);
   return { path: safePath, diff: diffSummaryFromText(diffText) };
 }
 
@@ -989,16 +1003,30 @@ export async function getTaskBranchComparison(repositoryPath: string, sourceBran
   const context = repositoryContext ?? (await getGitRepositoryContext(repositoryPath));
   if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected project is not a Git repository.');
   const [safeSourceBranch, safeTaskBranch] = await Promise.all([assertGitBranchFormat(context.topLevel, sourceBranch, 'source branch'), assertNamedBranchExists(context.topLevel, taskBranch, 'task branch')]);
-  const sourceBranchRef = frozenSourceHeadSha ? requireGitObjectId(frozenSourceHeadSha, 'source commit') : localBranchRef(await assertNamedBranchExists(context.topLevel, safeSourceBranch, 'source branch'));
+  /** 显式空字符串表示任务从 unborn 来源开始；undefined 才表示读取当前来源分支。 */
+  const sourceUnborn = frozenSourceHeadSha !== undefined && frozenSourceHeadSha.trim() === '';
+  const sourceBranchRef = sourceUnborn
+    ? await createEmptyRootCommit(context.topLevel)
+    : frozenSourceHeadSha
+      ? requireGitObjectId(frozenSourceHeadSha, 'source commit')
+      : localBranchRef(await assertNamedBranchExists(context.topLevel, safeSourceBranch, 'source branch'));
   const taskBranchRef = localBranchRef(safeTaskBranch);
-  const [sourceHeadSha, taskHeadSha] = await Promise.all([resolveCommit(context.topLevel, sourceBranchRef), resolveCommit(context.topLevel, taskBranchRef)]);
-  const [mergeBaseSha, rawCounts, numStat, nameStatus] = await Promise.all([
-    requireGitStdout(context.topLevel, ['merge-base', sourceBranchRef, taskBranchRef]),
-    readGitStdout(context.topLevel, ['rev-list', '--left-right', '--count', `${sourceBranchRef}...${taskBranchRef}`]),
-    runGit(context.topLevel, ['diff', '--numstat', '-z', `${sourceBranchRef}...${taskBranchRef}`, '--', '.']).then((result) => result.stdout),
-    runGit(context.topLevel, ['diff', '--name-status', '-z', `${sourceBranchRef}...${taskBranchRef}`, '--', '.']).then((result) => result.stdout),
-  ]);
-  const counts = parseAheadBehind(rawCounts);
+  const [resolvedSourceHeadSha, taskHeadSha] = await Promise.all([resolveCommit(context.topLevel, sourceBranchRef), resolveCommit(context.topLevel, taskBranchRef)]);
+  /** 两个独立根提交没有 merge-base；空来源以确定性空提交直接比较任务历史。 */
+  const [mergeBaseSha, rawCounts, numStat, nameStatus] = sourceUnborn
+    ? await Promise.all([
+        Promise.resolve(resolvedSourceHeadSha),
+        requireGitStdout(context.topLevel, ['rev-list', '--count', taskBranchRef]).then((ahead) => `0 ${ahead}`),
+        runGit(context.topLevel, ['diff', '--numstat', '-z', sourceBranchRef, taskBranchRef, '--', '.']).then((result) => result.stdout),
+        runGit(context.topLevel, ['diff', '--name-status', '-z', sourceBranchRef, taskBranchRef, '--', '.']).then((result) => result.stdout),
+      ])
+    : await Promise.all([
+        requireGitStdout(context.topLevel, ['merge-base', sourceBranchRef, taskBranchRef]),
+        readGitStdout(context.topLevel, ['rev-list', '--left-right', '--count', `${sourceBranchRef}...${taskBranchRef}`]),
+        runGit(context.topLevel, ['diff', '--numstat', '-z', `${sourceBranchRef}...${taskBranchRef}`, '--', '.']).then((result) => result.stdout),
+        runGit(context.topLevel, ['diff', '--name-status', '-z', `${sourceBranchRef}...${taskBranchRef}`, '--', '.']).then((result) => result.stdout),
+      ]);
+  const counts = sourceUnborn ? { ahead: Number.parseInt(rawCounts.split(/\s+/u)[1] ?? '0', 10) || 0, behind: 0 } : parseAheadBehind(rawCounts);
   const statsByPath = new Map(parseGitNumStat(numStat).map((entry) => [entry.path, entry]));
   const files = parseGitNameStatus(nameStatus).map((entry) => {
     const stats = statsByPath.get(entry.path);
@@ -1013,7 +1041,7 @@ export async function getTaskBranchComparison(repositoryPath: string, sourceBran
   return {
     sourceBranch: safeSourceBranch,
     taskBranch: safeTaskBranch,
-    sourceHeadSha,
+    sourceHeadSha: sourceUnborn ? '' : resolvedSourceHeadSha,
     taskHeadSha,
     mergeBaseSha,
     ...counts,
@@ -1179,7 +1207,7 @@ export async function commitTaskWorkspace(input: CommitTaskWorkspaceInput): Prom
   /** 只整理用户选择的现存文件，不格式化重命名来源处可能重新创建的文件。 */
   const formattedPaths = await formatTaskCommitPaths(input.cwd, selectedPaths);
   // 来源目录里的暂存改动可能先被带入 worktree；共享目录和子仓库必须从父仓 index 中明确退出。
-  if (ignored.length > 0) await runGit(input.cwd, ['--literal-pathspecs', 'reset', '-q', 'HEAD', '--', ...ignored]);
+  if (ignored.length > 0 && review.headSha) await runGit(input.cwd, ['--literal-pathspecs', 'reset', '-q', 'HEAD', '--', ...ignored]);
   if (stagePaths.length > 0) await runGit(input.cwd, ['--literal-pathspecs', 'add', '-A', '--', ...stagePaths]);
   /** 从暂存结果确定最终路径；关闭重命名折叠以保留两端，排除新增后又删除的空变化。 */
   const stagedNames = paths.length > 0 ? splitNullRecords((await runGit(input.cwd, ['--literal-pathspecs', 'diff', '--cached', '--name-only', '--no-renames', '-z', '--', ...paths])).stdout) : [];
@@ -1271,7 +1299,10 @@ export async function reclaimTaskWorktree(input: {
   const context = await getGitRepositoryContext(input.repositoryPath);
   const registered = context.worktrees.find((entry) => canonicalFilesystemPath(entry.path) === canonicalFilesystemPath(input.worktreePath));
   if (!registered) throw gitCoreError('ZEUS_TASK_WORKTREE_NOT_REGISTERED', 'Task worktree is not registered in the project repository.');
-  if (!registered.branch || (await getGitBranchHead(context.topLevel, registered.branch)) !== review.headSha) {
+  /** 未产生任何文件的 orphan 任务没有分支引用，登记身份和空 HEAD 足以证明它仍未改变。 */
+  const registeredHeadSha = registered.branch ? await readCommitIfPresent(context.topLevel, localBranchRef(registered.branch)) : null;
+  const registeredUnborn = registered.branch === review.branch && !review.headSha && !input.sourceHeadSha;
+  if (!registered.branch || (!registeredUnborn && registeredHeadSha !== review.headSha)) {
     throw gitCoreError('ZEUS_TASK_LOCAL_BRANCH_UNAVAILABLE', '本地任务分支未完整保留当前提交，不能回收工作目录。');
   }
   await runGit(context.topLevel, ['worktree', 'remove', ...(input.ignoredPaths?.length ? ['--force'] : []), input.worktreePath]);
@@ -1492,14 +1523,35 @@ export async function startTaskBranchIntegration(input: {
   const context = await getGitRepositoryContext(input.repositoryPath);
   if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected project is not a Git repository.');
   const [targetBranch, taskBranch] = await Promise.all([assertGitBranchFormat(context.topLevel, input.targetBranch, 'target branch'), assertNamedBranchExists(context.topLevel, input.taskBranch, 'task branch')]);
-  const targetRef = input.targetRef?.trim() || localBranchRef(await assertNamedBranchExists(context.topLevel, targetBranch, 'target branch'));
-  const targetHeadSha = await resolveCommit(context.topLevel, targetRef);
+  /** 当前检出的 unborn 分支是合法首次交付目标，不能用 show-ref 存在性把它排除。 */
+  const targetRef = input.targetRef?.trim() || localBranchRef(targetBranch);
+  const resolvedTargetHeadSha = await readCommitIfPresent(context.topLevel, targetRef);
+  const targetUnborn = !resolvedTargetHeadSha && !input.targetRef?.trim() && !context.detached && !context.headSha && context.branch === targetBranch;
+  if (!resolvedTargetHeadSha && !targetUnborn) throw gitCoreError('ZEUS_GIT_BRANCH_NOT_FOUND', `Local branch does not exist: ${targetBranch}`);
+  const targetHeadSha = resolvedTargetHeadSha ?? '';
   const taskHeadSha = await resolveCommit(context.topLevel, localBranchRef(taskBranch));
   const integrationPath = join(dirname(context.topLevel), '.zeus-worktrees', safePathSegment(input.projectSlug || basename(context.topLevel)), '.integration', safePathSegment(input.integrationId));
   const registered = context.worktrees.find((entry) => canonicalFilesystemPath(entry.path) === canonicalFilesystemPath(integrationPath));
   if (!registered) {
     await mkdir(dirname(integrationPath), { recursive: true });
-    await runGit(context.topLevel, ['worktree', 'add', '--detach', integrationPath, targetHeadSha]);
+    await runGit(context.topLevel, ['worktree', 'add', '--detach', integrationPath, targetUnborn ? taskHeadSha : targetHeadSha]);
+  } else if (targetUnborn) {
+    /** 重用首次交付候选时重新固定当前任务提交，避免旧现场返回过期结果。 */
+    await runGit(integrationPath, ['reset', '--hard', taskHeadSha]);
+  }
+  /** 首次交付没有既有历史可合并；任务根提交本身就是唯一候选结果。 */
+  if (targetUnborn) {
+    return {
+      integrationPath,
+      targetBranch,
+      targetHeadSha: '',
+      taskBranch,
+      taskHeadSha,
+      mode: input.mode,
+      state: 'ready',
+      resultHeadSha: taskHeadSha,
+      conflictFiles: [],
+    };
   }
   try {
     if (input.mode === 'merge') {
@@ -1714,13 +1766,15 @@ export async function finalizeTaskBranchIntegration(input: { repositoryPath: str
   }
   const localSync = localChanges
     ? await finalizeTaskIntegrationLocalChanges({ repositoryPath: input.repositoryPath, integrationPath: input.integrationPath, targetBranch, state: localChanges })
-    : await syncLocalTargetBranch({
-        repositoryPath: input.repositoryPath,
-        integrationPath: input.integrationPath,
-        targetBranch,
-        targetHeadSha: input.targetHeadSha,
-        resultHeadSha,
-      });
+    : input.targetHeadSha
+      ? await syncLocalTargetBranch({
+          repositoryPath: input.repositoryPath,
+          integrationPath: input.integrationPath,
+          targetBranch,
+          targetHeadSha: input.targetHeadSha,
+          resultHeadSha,
+        })
+      : await syncUnbornLocalTargetBranch({ repositoryPath: input.repositoryPath, targetBranch, resultHeadSha });
   // 本地来源分支暂时不安全时保留隔离合入结果，待用户清理原工作区后重试同步。
   if (localSync.localSyncStatus === 'synced') {
     const context = await getGitRepositoryContext(input.repositoryPath);
@@ -1946,6 +2000,33 @@ async function finalizeTaskIntegrationLocalChanges(input: { repositoryPath: stri
   await runGit(input.integrationPath, ['reset', '--hard', input.state.resultHeadSha]);
   await clearTaskIntegrationLocalChangesState(input.integrationPath);
   return { localSyncStatus: 'synced', localHeadSha: input.state.resultHeadSha, localWorktreePath: source.path, conflictFiles: [] };
+}
+
+/** 首次交付原子创建来源分支，并让已检出目录保留全部文件内容为相对新 HEAD 的本地修改。 */
+async function syncUnbornLocalTargetBranch(input: { repositoryPath: string; targetBranch: string; resultHeadSha: string }): Promise<TaskIntegrationLocalSync> {
+  const context = await getGitRepositoryContext(input.repositoryPath);
+  const checkedOut = context.worktrees.find((entry) => entry.branch === input.targetBranch) ?? null;
+  const targetRef = localBranchRef(input.targetBranch);
+  const currentHeadSha = await readCommitIfPresent(context.topLevel, targetRef);
+  if (currentHeadSha) return { localSyncStatus: 'pending', localHeadSha: currentHeadSha, localWorktreePath: checkedOut?.path ?? null, conflictFiles: [] };
+  try {
+    /** create 指令在引用已出现时失败，避免首次交付覆盖并发产生的真实提交。 */
+    await runGit(context.topLevel, ['update-ref', '--stdin'], `create ${targetRef} ${input.resultHeadSha}\n`);
+    if (checkedOut) {
+      try {
+        /** mixed reset 只建立新 HEAD 的索引基线，不覆盖来源目录里的任何文件。 */
+        await runGit(checkedOut.path, ['reset', '--mixed', input.resultHeadSha]);
+      } catch (error) {
+        /** 索引同步失败时撤销刚创建的引用，使同一次交付可以安全重试。 */
+        await runGit(context.topLevel, ['update-ref', '--stdin'], `delete ${targetRef} ${input.resultHeadSha}\n`).catch(() => undefined);
+        throw error;
+      }
+    }
+  } catch {
+    const observedHeadSha = await readCommitIfPresent(context.topLevel, targetRef);
+    return { localSyncStatus: 'pending', localHeadSha: observedHeadSha ?? '', localWorktreePath: checkedOut?.path ?? null, conflictFiles: [] };
+  }
+  return { localSyncStatus: 'synced', localHeadSha: input.resultHeadSha, localWorktreePath: checkedOut?.path ?? null, conflictFiles: [] };
 }
 
 /** 本地合入完成后尽力同步来源分支；任何本地风险都降级为待同步，不反写用户现场。 */
@@ -2193,6 +2274,41 @@ async function assertGitBranchFormat(cwd: string, branchName: string | undefined
 
 function localBranchRef(branchName: string): string {
   return `refs/heads/${branchName}`;
+}
+
+/** 创建不挂到任何引用的确定性空提交，只为旧版 Git 建立 linked worktree 和空树比较基线。 */
+async function createEmptyRootCommit(cwd: string): Promise<string> {
+  /** mktree 会把空树写入对象库，后续 diff/show 可以按普通 Git 对象读取。 */
+  const emptyTreeSha = requireGitObjectId((await runGit(cwd, ['mktree'], '')).stdout.trim(), 'empty tree');
+  /** 内部对象使用固定身份和时间，既不依赖用户 Git 配置，也不会产生重复对象。 */
+  const execution = projectGitExecution.getStore();
+  return projectGitExecution.run(
+    {
+      ...execution,
+      env: {
+        ...execution?.env,
+        GIT_AUTHOR_NAME: 'Zeus',
+        GIT_AUTHOR_EMAIL: 'zeus@localhost',
+        GIT_COMMITTER_NAME: 'Zeus',
+        GIT_COMMITTER_EMAIL: 'zeus@localhost',
+        GIT_AUTHOR_DATE: '2000-01-01T00:00:00Z',
+        GIT_COMMITTER_DATE: '2000-01-01T00:00:00Z',
+      },
+    },
+    async () => requireGitObjectId((await runGit(cwd, ['commit-tree', emptyTreeSha, '-m', 'Zeus 空仓库工作树起点'])).stdout.trim(), 'empty root commit'),
+  );
+}
+
+/** 在兼容旧版 Git 的前提下创建 orphan linked worktree，不向用户分支历史写入引导提交。 */
+async function createUnbornTaskWorktree(repositoryPath: string, worktreePath: string, branchName: string): Promise<void> {
+  const bootstrapSha = await createEmptyRootCommit(repositoryPath);
+  await runGit(repositoryPath, ['worktree', 'add', '--detach', worktreePath, bootstrapSha]);
+  try {
+    await runGit(worktreePath, ['checkout', '--orphan', branchName]);
+  } catch (error) {
+    await runGit(repositoryPath, ['worktree', 'remove', '--force', worktreePath]).catch(() => undefined);
+    throw error;
+  }
 }
 
 async function defaultGitCommandRunner(cwd: string, args: string[], input?: string): Promise<GitRunnerResult> {
