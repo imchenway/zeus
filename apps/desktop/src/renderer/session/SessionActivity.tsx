@@ -609,7 +609,8 @@ export function SessionTurnProcessDisclosure(props: {
   /** 已加载的真实操作数量；只作摘要，不替代分页后的完整记录。 */
   itemCount?: number;
   open?: boolean;
-  onOpenChange?: (open: boolean) => void;
+  /** 触发元素用于上层在内容增高时保持精确的阅读锚点。 */
+  onOpenChange?: (open: boolean, trigger: HTMLButtonElement) => void;
 }) {
   const [internalOpen, setInternalOpen] = useState(false);
   const open = props.open ?? internalOpen;
@@ -649,10 +650,10 @@ export function SessionTurnProcessDisclosure(props: {
           title={accessibleLabel}
           aria-expanded={open}
           aria-controls={bodyId}
-          onClick={() => {
+          onClick={(event) => {
             const nextOpen = !open;
             if (props.open === undefined) setInternalOpen(nextOpen);
-            props.onOpenChange?.(nextOpen);
+            props.onOpenChange?.(nextOpen, event.currentTarget);
           }}
         >
           <span>{props.turn ? <SessionTurnDuration turn={props.turn} requests={props.requests ?? []} language={props.language} fallback={label} /> : label}</span>
