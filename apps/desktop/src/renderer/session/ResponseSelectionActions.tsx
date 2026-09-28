@@ -1,5 +1,5 @@
 import { MotionPresence, PopoverSurface } from '../ui/MotionPresence.js';
-import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type FormEvent, type KeyboardEvent, type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { SlidersHorizontalIcon as SlidersHorizontal } from '@phosphor-icons/react/dist/csr/SlidersHorizontal';
@@ -276,6 +276,18 @@ function ResponseAnnotationEditor(props: {
   useEffect(() => setNote(props.annotation?.note ?? ''), [props.annotation?.id, props.annotation?.note]);
   /** 操作文案与会话语言一致。 */
   const zh = props.language === 'zh-CN';
+  /** 点击确认和键盘确认共用同一条批注提交流程。 */
+  function submitAnnotation(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    props.onUpdate?.(props.annotation.id, note);
+    props.onClose();
+  }
+  /** 普通 Enter 提交；输入法确认和 Shift + Enter 保留原生输入行为。 */
+  function handleAnnotationKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    event.currentTarget.form?.requestSubmit();
+  }
   return (
     <PopoverSurface
       ref={props.editorRef}
@@ -286,23 +298,24 @@ function ResponseAnnotationEditor(props: {
       style={{ left: props.point.left, top: props.point.top, width: props.point.width, maxHeight: props.point.maxHeight }}
       aria-label={zh ? '回答批注' : 'Response annotation'}
     >
-      <div className="session-response-annotation-row">
+      <form className="session-response-annotation-row" onSubmit={submitAnnotation}>
         <button type="button" aria-label={zh ? '批注选项' : 'Annotation options'} aria-expanded={optionsOpen} onClick={() => setOptionsOpen((open) => !open)}>
           <SlidersHorizontal aria-hidden="true" />
         </button>
-        <textarea ref={textareaRef} autoFocus rows={1} value={note} aria-label={zh ? '批注内容' : 'Annotation text'} placeholder={zh ? '添加可选评论…' : 'Add an optional comment…'} onChange={(event) => setNote(event.currentTarget.value)} />
-        <button
-          type="button"
-          className="session-response-annotation-save"
-          aria-label={zh ? '完成批注' : 'Save annotation'}
-          onClick={() => {
-            props.onUpdate?.(props.annotation.id, note);
-            props.onClose();
-          }}
-        >
+        <textarea
+          ref={textareaRef}
+          autoFocus
+          rows={1}
+          value={note}
+          aria-label={zh ? '批注内容' : 'Annotation text'}
+          placeholder={zh ? '添加可选评论…' : 'Add an optional comment…'}
+          onChange={(event) => setNote(event.currentTarget.value)}
+          onKeyDown={handleAnnotationKeyDown}
+        />
+        <button type="submit" className="session-response-annotation-save" aria-label={zh ? '完成批注' : 'Save annotation'}>
           <Check aria-hidden="true" weight="bold" />
         </button>
-      </div>
+      </form>
       {optionsOpen ? (
         <div className="session-response-annotation-options">
           <button
@@ -312,7 +325,7 @@ function ResponseAnnotationEditor(props: {
               props.onClose();
             }}
           >
-            {zh ? '删除批注' : 'Delete annotation'}
+            {zh ? '删除本轮' : 'Delete turn'}
           </button>
           <button type="button" onClick={props.onClose}>
             {zh ? '取消' : 'Cancel'}
