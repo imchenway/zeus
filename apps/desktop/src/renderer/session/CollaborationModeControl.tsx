@@ -13,18 +13,18 @@ export function CollaborationModeControl(props: {
 }) {
   const plan = props.value === 'plan';
   const action = plan ? (props.language === 'zh-CN' ? '退出计划模式' : 'Exit plan mode') : props.language === 'zh-CN' ? '创建计划' : 'Create a plan';
-  /** 开启后持续说明本轮状态，避免轮次未产出计划时被误解为需要开放写权限。 */
+  /** 开启后持续说明规划状态，权限继续由独立控件表达。 */
   const title =
     props.language === 'zh-CN'
       ? plan
         ? props.formalPlanReady
           ? `计划模式：正式计划待确认；${action}`
-          : `计划模式：只读分析；尚未形成正式计划，下一条消息继续规划；${action}`
+          : `计划模式：正在规划，尚未形成正式计划，下一条消息继续规划；${action}`
         : `计划模式：关闭；${action}`
       : plan
         ? props.formalPlanReady
           ? `Plan mode: formal plan awaiting confirmation; ${action}`
-          : `Plan mode: read-only analysis; no formal plan yet, the next message continues planning; ${action}`
+          : `Plan mode: planning without implementation; no formal plan yet, the next message continues planning; ${action}`
         : `Plan mode: off; ${action}`;
   return (
     <button type="button" className="session-collaboration-mode" data-active={plan || undefined} aria-pressed={plan} aria-label={title} title={title} disabled={props.disabled} onClick={() => void props.onChange(plan ? 'default' : 'plan')}>

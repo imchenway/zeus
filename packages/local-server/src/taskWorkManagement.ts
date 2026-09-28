@@ -1,5 +1,5 @@
 import { ConversationGoalRepository } from '@zeus/storage';
-import { effectiveToolPermission, restrictToolPermission } from './conversationToolPolicy.js';
+import { restrictToolPermission } from './conversationToolPolicy.js';
 import { conversationCommandTypes, conversationInputSha256 } from './conversationCommandApplication.js';
 import { EmployeeMemoryProposalRepository } from '@zeus/storage';
 import { isProviderStopPendingTurn } from './codexProviderStopRecoveryApplication.js';
@@ -1973,7 +1973,7 @@ function assertPreviewFresh(preview: TaskWorkPreview, input: TaskWorkCreateInput
   if (preview.blockers.length > 0) throw new TaskWorkStoreError(preview.blockers[0]!.code, preview.blockers[0]!.message);
 }
 
-/** 任务委派复用本轮执行快照，计划模式只读，缺少可核对身份时不扩大权限。 */
+/** 任务委派复用本轮执行快照，缺少可核对身份时不扩大权限。 */
 function readWorkToolPermission(options: TaskWorkManagementOptions, conversationId: string, submissionId: string | null): 'read-only' | 'auto' | 'full-access' {
   /** 提交身份由工具原轮次确定，不能引用其他会话的权限。 */
   const submission = submissionId ? options.conversationSubmissions.getById(submissionId) : undefined;
@@ -1981,11 +1981,8 @@ function readWorkToolPermission(options: TaskWorkManagementOptions, conversation
   const snapshot = submission?.conversationId === conversationId && submission.executionSnapshotId ? options.conversationExecution.getExecutionSnapshot(submission.executionSnapshotId) : undefined;
   if (snapshot?.conversationId !== conversationId) return 'read-only';
   /** 工作安排只有三种目录权限，自动审查降为人工审查不会放宽授权。 */
-  const permission = effectiveToolPermission(
-    snapshot.permissionMode === 'full-access' ? 'full-access' : snapshot.permissionMode === 'auto' || snapshot.permissionMode === 'auto-review' ? 'auto' : 'read-only',
-    snapshot.collaborationMode === 'plan' ? 'plan' : 'default',
-  );
-  return permission === 'auto-review' ? 'auto' : permission;
+  const permission = snapshot.permissionMode === 'full-access' ? 'full-access' : snapshot.permissionMode === 'auto' || snapshot.permissionMode === 'auto-review' ? 'auto' : 'read-only';
+  return permission;
 }
 
 /** 新写入只接纳当前进行中的原生轮次，旧轮次只允许读取已接纳回执。 */

@@ -78,7 +78,7 @@ import { emitPluginCompactionHook } from './codexConversationDispatchContext.js'
 import type { ZeusPluginDynamicTool } from './zeusPluginMcpBroker.js';
 import { createZeusToolBroker, isZeusNativeToolMutation, type ZeusToolAuditEvent } from './zeusToolRegistry.js';
 import { searchPiWorkspace } from './piWorkspaceSearch.js';
-import { effectiveToolPermission, resolveConversationToolPath } from './conversationToolPolicy.js';
+import { resolveConversationToolPath } from './conversationToolPolicy.js';
 import type { ConversationToolProcesses } from './conversationToolProcesses.js';
 import type { NativeAcceptedOperation, RespondPlanImplementationRequestInput } from './codexNativeConversationContracts.js';
 import type { createConversationApplicationOperations } from './conversationApplicationOperations.js';
@@ -2272,12 +2272,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     if (nativeTool) {
       const activeRun = [...runs.values()].reverse().find((candidate) => candidate.providerThreadId === request.session.nativeSessionId);
       if (!activeRun) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', 'Pi 原生工具没有对应的活动轮次。');
-      if (
-        (nativeTool.namespace !== 'zeus_work' || context.workMode === 'plan') &&
-        effectiveToolPermission(context.permissionMode, context.workMode) === 'read-only' &&
-        isZeusNativeToolMutation(nativeTool.namespace, nativeTool.tool, request.args)
-      ) {
-        throw piError('ZEUS_PI_TOOL_READ_ONLY', '当前轮次为只读或计划模式，已拒绝该工具的写入操作。');
+      if (nativeTool.namespace !== 'zeus_work' && context.permissionMode === 'read-only' && isZeusNativeToolMutation(nativeTool.namespace, nativeTool.tool, request.args)) {
+        throw piError('ZEUS_PI_TOOL_READ_ONLY', '当前轮次为只读模式，已拒绝该工具的写入操作。');
       }
       // 与 Codex 共用原生宿主的全局开关，不按本轮输入框标签重复授权。
       const result = await zeusToolBroker!.invokePi({
@@ -2308,7 +2304,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     if (request.toolName === 'bash') {
       const command = stringArg(request.args.command, '命令');
       const escalated = request.args.sandbox_permissions === 'require_escalated';
-      if (escalated && effectiveToolPermission(context.permissionMode, context.workMode) === 'read-only') throw piError('ZEUS_PI_TOOL_READ_ONLY', '只读或计划模式不能升级到可写执行权限。');
+      if (escalated && context.permissionMode === 'read-only') throw piError('ZEUS_PI_TOOL_READ_ONLY', '只读模式不能升级到可写执行权限。');
       if (escalated && context.permissionMode !== 'full-access' && !(await requestApproval(context, request))) throw piError('ZEUS_PI_TOOL_DECLINED', '用户已拒绝命令权限升级。');
       const activeRun = [...runs.values()].reverse().find((candidate) => candidate.conversationId === context.conversationId);
       if (!activeRun) throw piError('ZEUS_PI_RUN_NOT_ACTIVE', '命令没有对应的活动轮次。');
@@ -2344,7 +2340,6 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       cwd: context.cwd,
       path: typeof request.args.path === 'string' ? request.args.path : '.',
       permission: context.permissionMode,
-      workMode: context.workMode,
       write: request.toolName === 'write' || request.toolName === 'edit',
       readableRoots: [...context.attachmentRoots, ...context.pluginSkillRoots],
       writableRoots: context.writableRoots,
@@ -2386,7 +2381,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
 
   async function executePluginTool(context: PiConversationContext, request: PiZeusToolRequest, tool: ZeusPluginDynamicTool): Promise<PiZeusToolResult> {
     if (!options.plugins) throw piError('ZEUS_PLUGIN_HOST_UNAVAILABLE', 'Plugin Host 当前不可用。');
-    if (effectiveToolPermission(context.permissionMode, context.workMode) === 'read-only' && !tool.readOnly) throw piError('ZEUS_PI_TOOL_READ_ONLY', '只读或计划模式仅允许明确声明只读的 MCP 工具。');
+    if (context.permissionMode === 'read-only' && !tool.readOnly) throw piError('ZEUS_PI_TOOL_READ_ONLY', '只读模式仅允许明确声明只读的 MCP 工具。');
     const pre = await options.plugins.emitHook({
       event: 'PreToolUse',
       conversationId: context.conversationId,

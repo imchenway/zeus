@@ -2,7 +2,6 @@ import { classifyAssistantMessage } from '@zeus/shared';
 import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { createHash } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
-import { effectiveToolPermission } from './conversationToolPolicy.js';
 import { dirname, extname, isAbsolute, relative, resolve } from 'node:path';
 import { type CodexAppServerEvent, type CodexCommandApprovalDecision, type CodexSandboxPolicy, type CodexServerRequestResponse, type CodexThreadSnapshot } from '@zeus/ai-runtime';
 import { commandEnvelopeSchemaGeneration, parseCommandEnvelope, type CommandEnvelope, type TokenUsageBreakdown } from '@zeus/shared';
@@ -51,7 +50,6 @@ interface ConversationDispatchContext {
 }
 
 export function providerPermissionProfile(context: ConversationDispatchContext): { sandbox: CodexSandboxPolicy; approvalPolicy: 'on-request' | 'never'; approvalsReviewer: 'user' | 'auto_review' } {
-  context = { ...context, permissionMode: effectiveToolPermission(context.permissionMode, context.workMode) };
   if (context.permissionMode === 'full-access') return { sandbox: { type: 'dangerFullAccess' }, approvalPolicy: 'never', approvalsReviewer: 'user' };
   if (context.permissionMode === 'auto' || context.permissionMode === 'auto-review') {
     return {

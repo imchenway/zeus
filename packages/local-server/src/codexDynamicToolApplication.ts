@@ -4,7 +4,6 @@ import type { ManagedConversationToolResultStore } from './conversationPortableC
 import type { CodexProviderCommandApplicationService } from './codexProviderCommandApplication.js';
 import type { ZeusConversationPluginRuntime } from './zeusConversationPluginRuntime.js';
 import { isZeusNativeToolMutation, type ZeusToolBroker } from './zeusToolRegistry.js';
-import { effectiveToolPermission } from './conversationToolPolicy.js';
 import type { ConversationPermissionMode, ConversationCollaborationMode } from '@zeus/storage';
 
 interface CodexDynamicToolApplicationOptions {
@@ -135,7 +134,7 @@ async function resolveResponse(input: {
       const catalog = await input.options.plugins.getCatalog(input.conversation.id);
       const tool = catalog.tools.find((candidate) => candidate.namespace === input.namespace && candidate.toolName === input.tool);
       if (!tool) throw dynamicToolError('ZEUS_PLUGIN_MCP_TOOL_NOT_FOUND', 'The requested MCP tool is not part of this conversation’s frozen Plugin snapshot.');
-      if (effectiveToolPermission(pluginContext.permissionMode, pluginContext.workMode) === 'read-only' && !tool.readOnly) throw dynamicToolError('ZEUS_NATIVE_TOOL_READ_ONLY', '只读或计划模式仅允许明确声明只读的 MCP 工具。');
+      if (pluginContext.permissionMode === 'read-only' && !tool.readOnly) throw dynamicToolError('ZEUS_NATIVE_TOOL_READ_ONLY', '只读模式仅允许明确声明只读的 MCP 工具。');
       const pre = await input.options.plugins.emitHook({
         event: 'PreToolUse',
         conversationId: input.conversation.id,
@@ -208,12 +207,8 @@ async function resolveResponse(input: {
     }
     const permissionContext = input.options.pluginContext(input.conversation.id);
     if (!permissionContext) throw dynamicToolError('ZEUS_TOOL_PERMISSION_CONTEXT_MISSING', '无法核实本轮工具权限。');
-    if (
-      (input.namespace !== 'zeus_work' || permissionContext.workMode === 'plan') &&
-      effectiveToolPermission(permissionContext.permissionMode, permissionContext.workMode) === 'read-only' &&
-      isZeusNativeToolMutation(input.namespace, input.tool, input.argumentsValue)
-    ) {
-      throw dynamicToolError('ZEUS_NATIVE_TOOL_READ_ONLY', '当前轮次为只读或计划模式，已拒绝该工具的写入操作。');
+    if (input.namespace !== 'zeus_work' && permissionContext.permissionMode === 'read-only' && isZeusNativeToolMutation(input.namespace, input.tool, input.argumentsValue)) {
+      throw dynamicToolError('ZEUS_NATIVE_TOOL_READ_ONLY', '当前轮次为只读模式，已拒绝该工具的写入操作。');
     }
     // Computer Use 由原生宿主按全局开关统一检查，输入框标签仅表达调用意图。
     const result = await input.options.toolBroker.invoke({
