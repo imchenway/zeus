@@ -221,6 +221,81 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
   const eventSegment = threadId ? options.execution.segmentByNativeSession(threadId) : undefined;
   const conversation = threadId ? (options.conversations.getByProviderThreadId(threadId) ?? (eventSegment ? options.conversations.getById(eventSegment.conversationId) : undefined)) : undefined;
   if (eventSegment?.state === 'sealed') {
+    /** sealed 分段只能收口自己已经拥有的轮次，不能重新绑定当前 Provider、队列或运行态。 */
+    const sealedProviderTurnId = providerTurnIdFrom(params);
+    /** Provider thread 与 turn 双重身份防止旧分段终态误写当前轮次。 */
+    const sealedTurn = threadId && sealedProviderTurnId ? options.turns.getByProvider(threadId, sealedProviderTurnId) : undefined;
+    if (event.method === 'turn/completed' && conversation && threadId && sealedProviderTurnId && sealedTurn) {
+      /** 重放终态只补收回执，不重复发布完成事件。 */
+      const alreadyTerminal = sealedTurn.status === 'completed' || sealedTurn.status === 'interrupted' || sealedTurn.status === 'failed';
+      /** 终态必须先持久化再发布，避免客户端在提交落盘前回读旧状态。 */
+      let sealedCompletionPayload: Record<string, unknown> | null = null;
+      /** 只有提交状态实际收口时才刷新队列。 */
+      let sealedQueueChanged = false;
+      if (!alreadyTerminal) {
+        /** 迟到终态沿用普通事件的 Provider 状态映射，但不触碰当前分段。 */
+        const terminalStatus = providerTurnTerminalStatus(params);
+        /** 失败详情只归属旧轮次及其提交记录。 */
+        const failure = terminalStatus === 'failed' ? providerTurnFailure(params, sealedProviderTurnId) : null;
+        /** 旧轮次终止后释放自己的请求计时，不影响当前 thread 的请求。 */
+        modelRequestTiming.clear(conversation.id, sealedTurn.id);
+        /** 精确关闭旧轮次，解除侧栏、Composer 与过程摘要对历史运行态的依赖。 */
+        const terminalTurn = options.turns.upsert({
+          ...sealedTurn,
+          status: terminalStatus,
+          ...(failure ? { error: providerTurnFailureRecord(params, failure) } : {}),
+          completedAt: event.receivedAt,
+          updatedAt: event.receivedAt,
+        });
+        /** 只收口实际投递到该 Provider turn 的提交，不推进当前队列。 */
+        const terminalReconciliation = reconcileTerminalTurnSubmissions(conversation, terminalTurn, event.receivedAt, failure ? providerTurnFailureRecord(params, failure) : undefined);
+        /** 等待旧轮次结果的内部调用仍应收到真实终态。 */
+        const resultKey = `${conversation.id}:${sealedProviderTurnId}`;
+        if (failure) {
+          failedTurnResults.set(resultKey, failure);
+          rejectTurnResultWaiters(resultKey, failure);
+        } else {
+          /** 最终正文已经由同一旧 thread 的消息事件持久化；这里仅读取，不接纳迟到正文。 */
+          const answer = [...(options.conversations.getById(conversation.id)?.messages ?? [])].reverse().find((message) => message.providerTurnId === sealedProviderTurnId && message.role === 'assistant')?.content ?? '';
+          resolveTurnResult({
+            conversationId: conversation.id,
+            providerThreadId: threadId,
+            providerTurnId: sealedProviderTurnId,
+            status: terminalStatus === 'interrupted' ? 'interrupted' : 'completed',
+            answer,
+          });
+        }
+        sealedCompletionPayload = {
+          conversationId: conversation.id,
+          projectId: conversation.projectId,
+          providerThreadId: threadId,
+          providerTurnId: sealedProviderTurnId,
+          status: terminalStatus,
+          completedAt: event.receivedAt,
+          ...(failure ? { error: projectConversationTurnFailure(providerTurnFailureRecord(params, failure)) } : {}),
+          hasUnreadAttention: options.conversations.getById(conversation.id)?.attentionUnread === true,
+          notificationEligible: false,
+          generationId: event.generationId,
+          sequence: event.sequence,
+        };
+        sealedQueueChanged = terminalReconciliation.reconciledCount > 0;
+      }
+      for (const receiptEvent of receiptEvents) {
+        const receiptIdentity = codexProviderEventIdentity(receiptEvent);
+        options.receipts.record(providerEventReceipt(receiptEvent, receiptIdentity));
+        maintainProviderReceiptGenerations(receiptEvent.generationId);
+        rememberProcessedProviderEvent(receiptEvent, receiptIdentity);
+      }
+      await options.db.save();
+      if (sealedCompletionPayload) options.broadcast('conversation.turn.completed', sealedCompletionPayload);
+      if (sealedQueueChanged) {
+        options.broadcast('conversation.queue.changed', {
+          conversationId: conversation.id,
+          providerThreadId: conversation.providerThreadId,
+        });
+      }
+      return;
+    }
     options.execution.persistWarning({
       conversationId: eventSegment.conversationId,
       warningKind: 'late_external_activity',

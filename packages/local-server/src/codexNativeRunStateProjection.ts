@@ -30,7 +30,10 @@ export function inferNativeConversationRunState(
   if (interruptedQueueSubmissions(submissions).some((submission) => submission.status === 'paused')) {
     return { type: 'paused', reason: 'interrupted' };
   }
-  const activeTurn = [...repositories.turns.listByConversation(conversation.id)].reverse().find((turn) => turn.status === 'running' || turn.status === 'waiting' || turn.status === 'dispatching');
+  /** 路由切换后 sealed thread 的残留非终态不能重新成为当前运行态。 */
+  const activeTurn = [...repositories.turns.listByConversation(conversation.id)]
+    .reverse()
+    .find((turn) => (!conversation.providerThreadId || turn.providerThreadId === conversation.providerThreadId) && (turn.status === 'running' || turn.status === 'waiting' || turn.status === 'dispatching'));
   if (activeTurn?.providerTurnId) {
     if (activeTurn.status === 'waiting') {
       const pending = repositories.requests.listByConversation(conversation.id).find((request) => request.turnId === activeTurn.id && isPendingInteractionAuthority(request));

@@ -1232,7 +1232,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
         type: 'paused' as const,
         reason: 'provider_archived' as const,
       };
-    const active = conversationTurns.getLatestActiveByConversation(conversation.id);
+    /** Codex 路由切换后只允许当前 Provider thread 驱动 Composer 与队列状态。 */
+    const activeCandidate = conversationTurns.getLatestActiveByConversation(conversation.id);
+    /** Pi 专家执行仍沿用会话级轮次；Codex 必须排除 sealed thread 的残留轮次。 */
+    const active = conversation.agentKind === 'codex' && conversation.providerThreadId && activeCandidate?.providerThreadId !== conversation.providerThreadId ? undefined : activeCandidate;
     if (
       active &&
       !active.providerTurnId &&

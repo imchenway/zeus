@@ -330,6 +330,10 @@ export function reconcileConversationHistoryCache(previous: NativeConversationSn
   const fresh = next.v2Paging.history;
   if (!historyRangesJoin(cached, fresh)) return { snapshot: next, preserveCachedHistory: false };
 
+  /** 权威首屏已经移除的非终态 turn 属于旧分段残留，历史缓存不得继续把它当成活动轮次。 */
+  const authoritativeTurnIds = new Set(next.turns.map((turn) => turn.id));
+  /** 历史 turn 仍可为深分页提供身份映射；只有会驱动运行 UI 的状态必须由最新快照明确声明。 */
+  const reusableTurns = previous.turns.filter((turn) => authoritativeTurnIds.has(turn.id) || !['running', 'waiting', 'dispatching'].includes(turn.status));
   return {
     snapshot: {
       ...next,
@@ -338,7 +342,7 @@ export function reconcileConversationHistoryCache(previous: NativeConversationSn
         previous.items.filter((item) => item.payload.v2ContentKind === 'model_history' || item.payload.v2ContentKind === 'process_detail'),
         next.items,
       ),
-      turns: [...new Map([...previous.turns, ...next.turns].map((turn) => [turn.id, turn])).values()],
+      turns: [...new Map([...reusableTurns, ...next.turns].map((turn) => [turn.id, turn])).values()],
       v2Paging: {
         ...next.v2Paging,
         historyByTurn: { ...previous.v2Paging.historyByTurn, ...next.v2Paging.historyByTurn },
