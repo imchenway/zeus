@@ -4,7 +4,7 @@ import { assertContextCapacity, assertContextCapacitySupported, contextCapacityU
 import { resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
 import { prepareProjectConversationWorkspace } from './projectConversationWorkspace.js';
 import { routeFingerprint } from './conversationExecutionCoordinator.js';
-import { effectiveToolPermission, restrictToolPermission } from './conversationToolPolicy.js';
+import { restrictToolPermission } from './conversationToolPolicy.js';
 import type { ConversationSubagentSummary } from './codexSubagentQueryApplication.js';
 import { selectEmployeeMemories } from './employeeMemoryContext.js';
 import { LongTermMemoryRepository } from '@zeus/storage';
@@ -837,7 +837,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       const rootId = ancestor?.rootId ?? parent.id;
       const depth = (ancestor?.depth ?? 0) + 1;
       if (depth > 2) throw new Error('子代理最多允许两层派生。');
-      const permissionMode = effectiveToolPermission(parentPermission, parentWorkMode);
+      const permissionMode = parentPermission;
       const sourceInput = submission ? parseJsonObject(submission.inputJson) : {};
       const contextJson = JSON.stringify({
         snapshot,
@@ -891,7 +891,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         delivery: 'queue',
         clientUserMessageId: `subagent-client-${identity}`,
         model: String(inherited.model),
-        permissionMode: restrictToolPermission(relation.permissionMode as ConversationPermissionMode, effectiveToolPermission(parentPermission, parentWorkMode)),
+        permissionMode: restrictToolPermission(relation.permissionMode as ConversationPermissionMode, parentPermission),
         collaborationMode: parentWorkMode,
         skillReferences: Array.isArray(inherited.skills)
           ? inherited.skills

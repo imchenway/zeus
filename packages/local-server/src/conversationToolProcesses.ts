@@ -2,8 +2,8 @@ import { createHash } from 'node:crypto';
 import { accessSync, constants, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AiRuntimeSessionManager } from '@zeus/ai-runtime';
-import type { ConversationCollaborationMode, ConversationPermissionMode, ConversationRuntimeRepository, RuntimeSessionRepository, TerminalEventRepository } from '@zeus/storage';
-import { canonicalToolPath, conversationSandboxProfile, effectiveToolPermission, restrictToolPermission, toolSandboxMode } from './conversationToolPolicy.js';
+import type { ConversationPermissionMode, ConversationRuntimeRepository, RuntimeSessionRepository, TerminalEventRepository } from '@zeus/storage';
+import { canonicalToolPath, conversationSandboxProfile, restrictToolPermission, toolSandboxMode } from './conversationToolPolicy.js';
 
 /** 进程归属使用会话身份，生命周期和输出沿用宿主 Runtime。 */
 export interface ConversationProcessOwner {
@@ -19,8 +19,6 @@ export interface ConversationProcessOwner {
   cwd: string;
   /** 本轮冻结的权限。 */
   permissionMode: ConversationPermissionMode;
-  /** 计划模式强制只读。 */
-  workMode: ConversationCollaborationMode;
   /** 本轮已授权附件和 Skill 的只读目录。 */
   readableRoots: readonly string[];
   /** 本轮由服务端冻结的可写项目目录。 */
@@ -67,9 +65,9 @@ export function createConversationToolProcesses(options: {
 
   /** 启动前持久化调用身份；相同调用即使结果未知也不自动重放。 */
   async function start(owner: ConversationProcessOwner, input: { toolCallId: string; command: string; escalated: boolean; yieldTimeMs?: number }) {
-    if (input.escalated && effectiveToolPermission(owner.permissionMode, owner.workMode) === 'read-only') throw new Error('只读或计划模式不能升级命令权限。');
+    if (input.escalated && owner.permissionMode === 'read-only') throw new Error('只读模式不能升级命令权限。');
     const processId = `conversation_process_${createHash('sha256').update(`${owner.conversationId}:${owner.turnId}:${input.toolCallId}`).digest('hex').slice(0, 32)}`;
-    const mode = input.escalated ? 'danger-full-access' : toolSandboxMode(owner.permissionMode, owner.workMode);
+    const mode = input.escalated ? 'danger-full-access' : toolSandboxMode(owner.permissionMode);
     const requestHash = createHash('sha256')
       .update(JSON.stringify({ command: input.command, cwd: owner.cwd, mode, readableRoots: mode === 'danger-full-access' ? [] : owner.readableRoots, writableRoots: mode === 'danger-full-access' ? [] : owner.writableRoots }))
       .digest('hex');
@@ -98,10 +96,7 @@ export function createConversationToolProcesses(options: {
       }
       mkdirSync(scratchDirectory, { recursive: true, mode: 0o700 });
     }
-    const profile =
-      mode === 'danger-full-access'
-        ? null
-        : conversationSandboxProfile({ cwd: owner.cwd, scratchDirectory, permission: owner.permissionMode, workMode: owner.workMode, readableRoots: owner.readableRoots, writableRoots: owner.writableRoots });
+    const profile = mode === 'danger-full-access' ? null : conversationSandboxProfile({ cwd: owner.cwd, scratchDirectory, permission: owner.permissionMode, readableRoots: owner.readableRoots, writableRoots: owner.writableRoots });
     options.bindings.bindProcess({ processId, conversationId: owner.conversationId, turnId: owner.turnId, requestHash, permission: mode });
     await options.save();
     await options.runtime().startSession({
@@ -121,14 +116,11 @@ export function createConversationToolProcesses(options: {
   }
 
   /** 输入只能送给当前宿主持有的同一进程；旧 PID 不可复用。 */
-  async function interact(
-    owner: Pick<ConversationProcessOwner, 'conversationId' | 'cwd' | 'permissionMode' | 'workMode'>,
-    input: { processId: string; action: 'read' | 'write' | 'stop'; cursor?: number; text?: string; yieldTimeMs?: number },
-  ) {
+  async function interact(owner: Pick<ConversationProcessOwner, 'conversationId' | 'cwd' | 'permissionMode'>, input: { processId: string; action: 'read' | 'write' | 'stop'; cursor?: number; text?: string; yieldTimeMs?: number }) {
     const { conversationId } = owner;
     assertOwner(conversationId, input.processId);
     if (input.action === 'write') {
-      const current = effectiveToolPermission(owner.permissionMode, owner.workMode);
+      const current = owner.permissionMode;
       const previous = options.bindings.getProcess(input.processId)!;
       const retained = previous.permission === 'danger-full-access' ? 'full-access' : previous.permission === 'workspace-write' ? 'auto' : 'read-only';
       if (current === 'read-only' || restrictToolPermission(retained, current) !== retained) throw new Error('旧进程权限超出本轮授权，不能继续输入；可以读取已有输出或停止。');

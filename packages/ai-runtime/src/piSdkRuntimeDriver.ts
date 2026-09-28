@@ -571,7 +571,7 @@ export function createPiSdkRuntimeDriver(options: CreatePiSdkRuntimeDriverOption
       ...explicitSkills,
       ...(input.workMode === 'plan'
         ? [
-            '本轮处于 Zeus 计划模式：只允许调查、读取和沟通，不得修改工作区或提前实施。先从代码、文档和运行现场查明可发现事实；只有仍会实质改变方案且无法查明的选择才使用 request_user_input 询问。方案达到可直接实施的程度后，只调用一次 submit_plan 保存完整正式计划；不得调用 update_plan，也不得在提交计划后自行开始实施。',
+            '本轮处于 Zeus 计划模式：可以调查、读取、沟通，并运行不会修改受版本控制文件的检查或构建；不得编辑受版本控制文件、执行方案或产生实施型副作用。先从代码、文档和运行现场查明可发现事实；只有仍会实质改变方案且无法查明的选择才使用 request_user_input 询问。方案达到可直接实施的程度后，只调用一次 submit_plan 保存完整正式计划；不得调用 update_plan，也不得在提交计划后自行开始实施。',
           ]
         : []),
       contextualContent,

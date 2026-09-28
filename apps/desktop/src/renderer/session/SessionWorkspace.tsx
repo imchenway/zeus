@@ -3739,7 +3739,6 @@ export function NewConversationComposer(props: {
             <PermissionModeControl
               language={props.language}
               value={permissionMode}
-              planMode={collaborationMode === 'plan'}
               supportsAutoReview={Boolean(selectedModel) && !['unsupported', 'needs_configuration'].includes(selectedModel?.features?.autoReview.state ?? 'unknown')}
               disabled={submitting || !props.owner}
               onChange={setPermissionMode}
