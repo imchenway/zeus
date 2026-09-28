@@ -461,6 +461,8 @@ export function TaskDataTable({ workspace, model, labels, children }: { workspac
         <AgGridReact<TaskRowViewModel>
           modules={taskTableModules}
           theme={taskTableTheme}
+          /* 列定义随操作回调刷新时保留已恢复的用户列顺序，避免回退到默认定义顺序。 */
+          maintainColumnOrder
           columnDefs={columns}
           defaultColDef={defaults}
           rowData={workspace.listState && workspace.listState !== 'ready' ? [] : model.rows}
