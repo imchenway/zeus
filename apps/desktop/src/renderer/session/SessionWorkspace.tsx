@@ -95,7 +95,7 @@ import { hasAvailableConversationModel, resolveModelCapability } from './modelSe
 import { GoalPanel, GoalRail } from './GoalPanel.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
 import { NewConversationExecutionContext } from './NewConversationExecutionContext.js';
-import { modelSetupRequestedEvent, reportApplicationError, useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError, modelSetupRequestedEvent, reportApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import type { ConversationModelSetupContext } from '../settings/ModelSetup.js';
 import { projectModelServiceTierSelection, toProjectModelServiceTierPreference, upsertProjectModelServiceTierPreference } from './projectServiceTierPreferences.js';
 import { StructuredComposerInput, type StructuredComposerSelection } from './StructuredComposerInput.js';
@@ -1739,6 +1739,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const [interruptArmed, setInterruptArmed] = useState(false);
   /** 子智能体列表仅由用户主动打开，历史加载和新增智能体不改变面板状态。 */
   const [contextWorkspace, setContextWorkspace] = useState<SessionContextWorkspace>({ kind: 'none' });
+  /** 关闭上下文工作区失败时保留当前工作面，并在本会话内说明原因。 */
+  const [contextWorkspaceError, setContextWorkspaceError] = useState<unknown>(null);
   /** 图片弹窗独立于右侧审阅，关闭后保留原有阅读位置。 */
   const [imagePreviewRequest, setImagePreviewRequest] = useState<FilePreviewRequest | null>(null);
   const contextWorkspaceRef = useRef<SessionContextWorkspace>(contextWorkspace);
@@ -1822,18 +1824,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     props.state?.transportState === 'failed' && ['ZEUS_CONVERSATION_TRANSCRIPT_INITIALIZATION_PENDING', 'ZEUS_CONVERSATION_TRANSCRIPT_INITIALIZATION_FAILED'].includes(props.state.error?.code ?? '') ? props.state.error : null;
   // 空闲历史会话只读本地快照，不存在“连接失败”；只有真实轮次、排队或待处理请求需要实时连接时才报告连接错误。
   const transportError = !transcriptPreparationError && realtimeExpected && props.state?.transportState === 'failed' && props.state.error?.retryable === false ? (props.state.error ?? props.loadError ?? copy.failed) : null;
-  useApplicationErrorDialog(props.historyOnly ? null : props.readOnlyGate?.error, {
-    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-  });
-  useApplicationErrorDialog(!props.historyOnly && props.loadState === 'error' ? (props.loadError ?? copy.failed) : null, {
-    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-  });
-  useApplicationErrorDialog(props.historyOnly ? null : transportError, {
-    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-  });
-  useApplicationErrorDialog(serviceTierPreferenceError, {
-    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-  });
+  /** 会话自身可恢复的失败留在会话工作面，不阻断用户操作其他会话。 */
+  const conversationSurfaceError = props.historyOnly ? null : props.loadState === 'error' ? (props.loadError ?? copy.failed) : (transportError ?? serviceTierPreferenceError ?? contextWorkspaceError);
   const serviceTierPreferenceProjectId = props.conversation?.projectId ?? owner?.projectId ?? null;
   useEffect(() => {
     if (!serviceTierPreferenceProjectId || !actions.onLoadProjectConfig) {
@@ -1848,7 +1840,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         if (active) setServiceTierPreferences(config.serviceTierPreferences ?? []);
       })
       .catch((error: unknown) => {
-        if (active) setServiceTierPreferenceError(reportApplicationError(error, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' }));
+        if (active) setServiceTierPreferenceError(formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
       });
     return () => {
       active = false;
@@ -1864,7 +1856,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       const saved = await actions.onSaveProjectModelServiceTierPreference(serviceTierPreferenceProjectId, preference);
       setServiceTierPreferences(saved.serviceTierPreferences ?? []);
     } catch (error) {
-      setServiceTierPreferenceError(reportApplicationError(error, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' }));
+      setServiceTierPreferenceError(formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
       try {
         const refreshed = await actions.onLoadProjectConfig?.(serviceTierPreferenceProjectId);
         if (refreshed) setServiceTierPreferences(refreshed.serviceTierPreferences ?? []);
@@ -2192,7 +2184,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       await actions.onRespondToRequest(request.id, response);
     } catch (error) {
       if (workspaceIdentityRef.current !== conversationId) return;
-      setRequestErrors((current) => ({ ...current, [request.id]: reportApplicationError(error, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' }) }));
+      setRequestErrors((current) => ({ ...current, [request.id]: formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en') }));
     } finally {
       responseGuard.finish(request.id);
     }
@@ -2269,7 +2261,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       if (workspaceIdentityRef.current !== conversationId) return;
       setRequestErrors((current) => ({
         ...current,
-        [request.id]: reportApplicationError(error, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' }),
+        [request.id]: formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'),
       }));
     } finally {
       responseGuard.finish(request.id);
@@ -2392,10 +2384,11 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     if (contextWorkspaceRef.current.kind === 'browser' && conversationId && window.zeus?.closeBrowserConversation) {
       if (closingBrowserConversationsRef.current.has(conversationId)) return;
       closingBrowserConversationsRef.current.add(conversationId);
+      setContextWorkspaceError(null);
       try {
         await window.zeus.closeBrowserConversation(conversationId);
       } catch (error) {
-        reportApplicationError(error, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' });
+        setContextWorkspaceError(error);
         return;
       } finally {
         closingBrowserConversationsRef.current.delete(conversationId);
@@ -2426,7 +2419,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       return true;
     } catch (error) {
       if (workspaceIdentityRef.current !== conversationId) return false;
-      setGoalError(reportApplicationError(error, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' }));
+      setGoalError(formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
       return false;
     } finally {
       if (workspaceIdentityRef.current === conversationId) setGoalBusy(false);
@@ -2811,11 +2804,18 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
           <span>
             <strong>{props.readOnlyGate.title}</strong>
             <small>{props.readOnlyGate.description}</small>
+            {props.readOnlyGate.error ? <VisibleApplicationError error={props.readOnlyGate.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} /> : null}
           </span>
           <button type="button" onClick={() => void props.readOnlyGate?.onAction()} disabled={props.readOnlyGate.busy} aria-busy={props.readOnlyGate.busy || undefined}>
             {props.readOnlyGate.busy ? (props.language === 'zh-CN' ? '正在重新打开…' : 'Reopening…') : props.readOnlyGate.actionLabel}
           </button>
         </section>
+      ) : null}
+
+      {conversationSurfaceError ? (
+        <p className="session-composer-unavailable" role="alert">
+          <VisibleApplicationError error={conversationSurfaceError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+        </p>
       ) : null}
 
       {legacy && props.conversation ? (
@@ -3393,9 +3393,8 @@ export function NewConversationComposer(props: {
     onError: setLocalError,
   });
 
-  useApplicationErrorDialog(localError ?? (props.loadState === 'error' ? props.loadError : null), {
-    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-  });
+  /** 新会话初始化和附件错误共用编辑器内的错误位。 */
+  const visibleLocalError = localError ?? (props.loadState === 'error' ? props.loadError : null);
 
   useEffect(() => {
     if (props.autoFocus) textareaRef.current?.focus();
@@ -3427,7 +3426,7 @@ export function NewConversationComposer(props: {
         if (active && snapshot) setCapabilities(snapshot);
       })
       .catch((error: unknown) => {
-        if (active) setLocalError(reportApplicationError(error, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' }));
+        if (active) setLocalError(formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
       })
       .finally(() => {
         if (active) setCapabilitiesLoading(false);
@@ -3584,7 +3583,7 @@ export function NewConversationComposer(props: {
       if (!accepted || typeof accepted !== 'object' || accepted.state !== 'preparing') props.drafts?.delete(draftKey);
       await props.onAccepted?.();
     } catch (error) {
-      setLocalError(reportApplicationError(error, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' }));
+      setLocalError(formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
     } finally {
       setSubmitting(false);
     }
@@ -3609,9 +3608,9 @@ export function NewConversationComposer(props: {
         onRemove={(attachment) => setAttachments((current) => current.filter((candidate) => candidate !== attachment))}
         onRestorePastedText={goalInputActive ? undefined : inputResources.restorePastedText}
       />
-      {localError ? (
-        <p className="session-new-conversation-error" role="status">
-          {typeof localError === 'string' ? localError : localError.message}
+      {visibleLocalError ? (
+        <p className="session-new-conversation-error" role="alert">
+          {typeof visibleLocalError === 'string' ? visibleLocalError : visibleLocalError.message}
         </p>
       ) : null}
       <div className="session-composer-input-frame" data-goal-input={goalInputActive ? 'true' : 'false'}>
@@ -3767,7 +3766,7 @@ export function NewConversationComposer(props: {
                       setAttachments((current) => mergeConversationAttachments(current, selected));
                     }
                   } catch (error) {
-                    setLocalError(reportApplicationError(error, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' }));
+                    setLocalError(formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
                   }
                 }}
               >

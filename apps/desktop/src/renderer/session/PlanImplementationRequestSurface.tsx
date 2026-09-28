@@ -5,7 +5,7 @@ import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paper
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { NativeConversationAttachment, NativePlanImplementationRequest } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ConversationComposerAttachments, conversationAttachmentIdentity } from './ConversationComposerAttachments.js';
 import { useConversationInputResources } from './useConversationInputResources.js';
 
@@ -44,10 +44,6 @@ export function PlanImplementationRequestSurface(props: {
   const primaryRef = useRef<HTMLButtonElement | null>(null);
   /** 展开修改意见后聚焦同一行的输入框。 */
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
-
-  useApplicationErrorDialog(props.error ?? resourceError, {
-    language: zh ? 'zh-CN' : 'en',
-  });
 
   /** 粘贴、原生剪贴板回退、拖入和长文本恢复均走共享资源入口。 */
   const inputResources = useConversationInputResources({
@@ -129,6 +125,11 @@ export function PlanImplementationRequestSurface(props: {
           <X aria-hidden="true" />
         </button>
       </header>
+      {(props.error ?? resourceError) ? (
+        <p className="session-request-invalid" role="alert">
+          <VisibleApplicationError error={props.error ?? resourceError} language={zh ? 'zh-CN' : 'en'} />
+        </p>
+      ) : null}
       <div className="session-question-options">
         <button ref={primaryRef} type="button" className="session-question-option is-primary" onClick={() => void props.onRespond(props.request.id, { action: 'implement' })} disabled={responding}>
           <span className="session-question-index">1</span>

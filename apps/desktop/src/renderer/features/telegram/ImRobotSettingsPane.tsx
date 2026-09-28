@@ -1,5 +1,5 @@
 import { Collapsible } from '../../ui/Collapsible.js';
-import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { SettingsSaveStatus, type SettingsSaveState } from '../../settings/useSettingsAutosave.js';
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
@@ -745,5 +745,5 @@ function formatDateTime(value: string): string {
 
 /** 显示当前语言的原因，并保留可展开的原始详情。 */
 function errorMessage(error: unknown, language: 'zh-CN' | 'en'): string {
-  return reportApplicationError(error, { language });
+  return formatVisibleApplicationError(error, language);
 }

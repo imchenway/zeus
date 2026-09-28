@@ -117,14 +117,18 @@ export class ConversationChoiceQueryApplication {
     };
   }
 
+  /** 归档列表按项目复用运行态投影上下文，避免随归档会话数量重复扫描全局队列。 */
   listArchivedChoices() {
-    const history: ZeusConversationRecord[] = [];
+    const choices: ReturnType<ConversationChoiceQueryApplication['toChoice']>[] = [];
     for (const project of [...this.ports.projects.list(), ...this.ports.projects.listArchived()]) {
-      history.push(
-        ...this.ports.conversations.listRecordsByProject(project.id, { archived: true }).filter((conversation) => (conversation.taskId !== null ? this.isMeaningfulTaskHistoryItem(conversation) : this.isProjectHistoryItem(conversation))),
-      );
+      const history = this.ports.conversations
+        .listRecordsByProject(project.id, { archived: true })
+        .filter((conversation) => (conversation.taskId !== null ? this.isMeaningfulTaskHistoryItem(conversation) : this.isProjectHistoryItem(conversation)));
+      if (history.length === 0) continue;
+      const context = this.buildContext(project.id);
+      choices.push(...history.map((conversation) => this.toChoice(conversation, context)));
     }
-    return history.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)).map((conversation) => this.toChoice(conversation, this.buildContext(conversation.projectId)));
+    return choices.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
   toChoice(conversation: ZeusConversationRecord, context: NativeConversationChoiceProjectionContext = this.buildContext(conversation.projectId)) {

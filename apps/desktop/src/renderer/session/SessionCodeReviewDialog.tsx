@@ -9,7 +9,7 @@ import { ModalPortal } from '../ui/ModalPortal.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { readConversationRuntimePreferences, writeConversationRuntimePreferences } from './conversationRuntimePreferences.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { SkillSelector } from '../features/skills/SkillSelector.js';
 import { readSkillWorkflowDefault } from '../features/skills/skillWorkflowPreferences.js';
 import type { CodexApiClient } from '../features/codex/codexApiClient.js';
@@ -64,9 +64,6 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
   const [form, setForm] = useState<SessionCodeReviewForm | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'submitting' | 'preparing' | 'error'>('loading');
   const [error, setError] = useState<unknown>(null);
-  useApplicationErrorDialog(error, {
-    language: zh ? 'zh-CN' : 'en',
-  });
   const [cancelPreparation, setCancelPreparation] = useState<(() => void) | null>(null);
 
   useEffect(() => {
@@ -206,6 +203,11 @@ export function SessionCodeReviewDialog(props: SessionCodeReviewDialogProps) {
         </header>
 
         <div className="session-code-review-body">
+          {error ? (
+            <p role="alert">
+              <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
+            </p>
+          ) : null}
           <section className="session-code-review-scope" aria-labelledby="session-code-review-scope-title">
             <span>
               <strong id="session-code-review-scope-title">{zh ? '审查范围' : 'Review scope'}</strong>

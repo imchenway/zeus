@@ -17,7 +17,7 @@ import type { ProjectCodeWorkspacePreference, ProjectSourceDirectorySnapshot, Pr
 import type { Text } from '@codemirror/state';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import './projectSourceWorkspace.css';
 import { SourceGitChanges, fileDiff, type SourceGitClient } from './SourceGitChanges.js';
 import type { GitDiffSummary } from '../features/git/gitContracts.js';
@@ -92,9 +92,6 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   const [notice, setNotice] = useState<string | null>(null);
   /** 只记录解码失败的内容版本；图片在磁盘更新后可自动重新预览。 */
   const [error, setError] = useState<unknown>(null);
-  useApplicationErrorDialog(error, {
-    language: zh ? 'zh-CN' : 'en',
-  });
   const [operation, setOperation] = useState<FileOperation>(null);
   const [operationName, setOperationName] = useState('');
   const [operationParent, setOperationParent] = useState('');
@@ -552,6 +549,15 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
             </>
           ) : null}
           <button type="button" aria-label={zh ? '关闭提示' : 'Dismiss'} onClick={() => setNotice(null)}>
+            <X aria-hidden="true" />
+          </button>
+        </div>
+      ) : null}
+
+      {error ? (
+        <div className="project-source-message" role="alert">
+          <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
+          <button type="button" aria-label={zh ? '关闭错误提示' : 'Dismiss error'} onClick={() => setError(null)}>
             <X aria-hidden="true" />
           </button>
         </div>

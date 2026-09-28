@@ -1,5 +1,5 @@
 import { MotionPresence } from '../toolPageHost.js';
-import { reportApplicationError, VisibleApplicationError } from '../toolPageHost.js';
+import { formatVisibleApplicationError, VisibleApplicationError } from '../toolPageHost.js';
 import { temporaryWorkspaceId } from '../toolPageHost.js';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { ArrowClockwiseIcon as Refresh } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
@@ -94,7 +94,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
         return { ...current, modelSourceId: preferred.sourceId ?? 'codex', modelId: preferred.model, reasoningEffort: preferred.defaultReasoningEffort ?? null };
       });
     } catch (cause) {
-      setError(reportApplicationError(cause, { language: zh ? 'zh-CN' : 'en' }));
+      setError(formatVisibleApplicationError(cause, zh ? 'zh-CN' : 'en'));
     } finally {
       setLoading(false);
     }
@@ -132,7 +132,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
         });
       })
       .catch((cause: unknown) => {
-        if (active) setExtensionsError(reportApplicationError(cause, { language: zh ? 'zh-CN' : 'en' }));
+        if (active) setExtensionsError(formatVisibleApplicationError(cause, zh ? 'zh-CN' : 'en'));
       })
       .finally(() => {
         if (active) setExtensionsLoading(false);
@@ -270,7 +270,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
       setEditingId(null);
       await refresh();
     } catch (cause) {
-      setError(reportApplicationError(cause, { language: zh ? 'zh-CN' : 'en' }));
+      setError(formatVisibleApplicationError(cause, zh ? 'zh-CN' : 'en'));
     } finally {
       setBusyId(null);
     }
@@ -286,7 +286,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
       await refresh();
       return true;
     } catch (cause) {
-      setError(reportApplicationError(cause, { language: zh ? 'zh-CN' : 'en' }));
+      setError(formatVisibleApplicationError(cause, zh ? 'zh-CN' : 'en'));
       return false;
     } finally {
       setBusyId(null);

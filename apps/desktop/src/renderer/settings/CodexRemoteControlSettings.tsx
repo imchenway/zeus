@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import type { RemoteControlApiClient } from '../features/remote/remoteControlApiClient.js';
 import { useRemoteControlFeatureController } from '../features/remote/useRemoteControlFeatureController.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 interface CodexRemoteControlSettingsProps {
   language: 'zh-CN' | 'en-US';
@@ -107,9 +107,6 @@ export function CodexRemoteControlSettings(props: CodexRemoteControlSettingsProp
   const busy = controller.snapshot.command !== 'idle';
   const message = controller.snapshot.message;
   const error = props.client ? (controller.snapshot.errorCause ?? controller.snapshot.error) : labels.unavailable;
-  useApplicationErrorDialog(error, {
-    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-  });
 
   useEffect(() => {
     if (!props.client || !pairing || pairing.claimed || pairingExpiresAtMs(pairing.expiresAt) <= Date.now()) return;
@@ -252,6 +249,11 @@ export function CodexRemoteControlSettings(props: CodexRemoteControlSettingsProp
         </section>
       </section>
       {message ? <p role="status">{message}</p> : null}
+      {error ? (
+        <p role="alert">
+          <VisibleApplicationError error={error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+        </p>
+      ) : null}
     </section>
   );
 }

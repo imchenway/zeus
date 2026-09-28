@@ -1,4 +1,3 @@
-import { reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { attachV2ResourcesToSnapshot } from './conversationResourceProjection.js';
 import { asyncMessageQuestions, formatAsyncQuestionAnswer, validateCanonicalRequestUserInputAnswers, type AsyncQuestionAnswer, type AsyncQuestionResponse } from '@zeus/shared';
 import { userFacingErrorCause } from '@zeus/shared';
@@ -3082,7 +3081,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
       persistDraft();
     },
     stageBrowserComments(prepared) {
-      if (browserSubmissionUsesReservedComments(prepared)) throw new Error('These browser comments already belong to a pending or delivered message.');
+      /** 已进入待发送或已发送消息的评论无需重复加入草稿。 */
+      if (browserSubmissionUsesReservedComments(prepared)) return;
       /** 同一评论重复确认只保留最新内容，跨网页评论继续累加。 */
       const comments = dedupeById([...(state.browserSubmission?.comments ?? []), ...structuredClone(prepared.comments)]);
       /** 截图按文件身份去重，不污染用户主动上传的附件。 */
@@ -3583,12 +3583,8 @@ export function useSessionControllerInstance(options: CreateSessionControllerOpt
     // 控制器持有最新草稿，连续确认无需等待 React 重绘，也不关闭浏览器。
     return window.zeus?.onBrowserEvent((event) => {
       if ((event.type !== 'comments_saved' && event.type !== 'comments_removed') || event.conversationId !== options.conversationId) return;
-      try {
-        if (event.type === 'comments_saved') controller.stageBrowserComments(event.prepared);
-        else controller.removeBrowserComments(event.commentIds);
-      } catch (error) {
-        reportApplicationError(error);
-      }
+      if (event.type === 'comments_saved') controller.stageBrowserComments(event.prepared);
+      else controller.removeBrowserComments(event.commentIds);
     });
   }, [controller, options.enabled, options.conversationId]);
   return controller;

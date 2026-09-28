@@ -21,6 +21,7 @@ import type { TaskAgentRunStatus } from '../apiClient.js';
 import { taskAgentRunStatusLabels } from '../task/TaskRunStatusChip.js';
 import { beginConversationNavigationTrace } from '../performanceTraceContext.js';
 import { ConversationContextMenu, type ConversationContextMenuLanguage } from './ConversationContextMenu.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 export interface ProjectConversationTaskGroup {
   taskId: string;
@@ -121,6 +122,8 @@ interface FlattenedConversation {
 export function ProjectConversationTree(props: ProjectConversationTreeProps) {
   const copy = labels[props.language];
   const [archivingConversationId, setArchivingConversationId] = useState<string | null>(null);
+  /** 归档失败只归属触发操作的会话行，不打断其他工作面。 */
+  const [archiveError, setArchiveError] = useState<{ conversationId: string; error: unknown } | null>(null);
   /** 在绘制禁用态之前也阻止重复点击。 */
   const archiveRequestRef = useRef<string | null>(null);
   /** 右键菜单状态 */
@@ -156,13 +159,16 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
   const enteringConversationIds = useNewItemMotionIds(allConversationIds);
   const fallbackTabStopId = props.selectedConversationId && conversationIds.includes(props.selectedConversationId) ? null : (conversationIds[0] ?? null);
 
-  /** 列表只显示归档进度，业务操作负责统一错误反馈。 */
+  /** 列表同时承接归档进度和失败原因。 */
   async function archiveConversation(conversation: NativeConversationChoice): Promise<void> {
     if (!props.onArchiveConversation || archiveRequestRef.current) return;
     archiveRequestRef.current = conversation.id;
     setArchivingConversationId(conversation.id);
+    setArchiveError(null);
     try {
       await props.onArchiveConversation(conversation);
+    } catch (error) {
+      setArchiveError({ conversationId: conversation.id, error });
     } finally {
       archiveRequestRef.current = null;
       setArchivingConversationId(null);
@@ -255,6 +261,11 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
             >
               {archiving ? <CircleNotch className="session-conversation-archive-spinner" aria-hidden="true" /> : <Archive aria-hidden="true" />}
             </button>
+          ) : null}
+          {archiveError?.conversationId === conversation.id ? (
+            <span className="session-conversation-row-error" role="alert">
+              <VisibleApplicationError error={archiveError.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+            </span>
           ) : null}
         </li>
       );

@@ -2,7 +2,6 @@ import { useRef, useState } from 'react';
 import type { AppShellSettings, DashboardClient } from '../apiClient.js';
 import { NativeSettingsPane } from '../features/workspace/workspaceSupport.js';
 import { notifyMainAppShellSettingsChanged } from '../appShellBridge.js';
-import { reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { Button } from '../ui/Button.js';
 import { NetworkProxySettingsFields } from './NetworkProxySettingsFields.js';
 import { SettingsSaveStatus } from './useSettingsAutosave.js';
@@ -45,10 +44,9 @@ export function NetworkSettingsPane(props: {
       const saved = await props.client.settings.saveAppShellSettings({ networkProxy });
       await notifyMainAppShellSettingsChanged({ zeus: window.zeus, settings: saved });
       if (currentRevision === revision.current) setStatus('saved');
-    } catch (error) {
+    } catch {
       if (currentRevision !== revision.current) return;
       setStatus('failed');
-      reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' });
     }
   }
 

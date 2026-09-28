@@ -3,7 +3,7 @@ import type { CodexTaskPushModelCapability } from './sessionTypes.js';
 import { SettingsEditor } from '../features/digital-employees/TaskWorkPlanPanel.js';
 import { DigitalEmployeeAvatar } from '../features/digital-employees/DigitalEmployeeAvatar.js';
 import { MotionPresence, PopoverSurface } from '../ui/MotionPresence.js';
-import { formatVisibleApplicationError, reportApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { type ClipboardEventHandler, type KeyboardEvent, type RefObject, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { SkillCatalog } from '../features/codex/codexContracts.js';
 import type { DigitalEmployeeRecord } from '../features/digital-employees/digitalEmployeeContracts.js';
@@ -160,7 +160,7 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
         if (active) setEmployees(value.filter((employee) => employee.enabled && employee.entrypointMigrationState === 'ready' && employee.entrypoint?.kind === 'agent'));
       })
       .catch((error: unknown) => {
-        if (active) setEmployeeError(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
+        if (active) setEmployeeError(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
       })
       .finally(() => {
         if (active) setLoadingEmployees(false);

@@ -1,4 +1,4 @@
-import { modelSetupRequestedEvent, reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError, modelSetupRequestedEvent } from '../../ui/ApplicationErrorDialog.js';
 import { useCallback, useMemo, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { cloneTaskManagementStatusConfig, type TaskManagementStatusConfig } from '@zeus/shared';
 import { notifyMainAppShellSettingsChanged, recordManualUpdateCheckInMain } from '../../appShellBridge.js';
@@ -592,7 +592,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     try {
       setCodexConfigImportPreview(await props.onInspectCodexConfigImport());
     } catch (error) {
-      setCodexConfigImportError(reportApplicationError(error, { language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en' }));
+      setCodexConfigImportError(formatVisibleApplicationError(error, appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en'));
     } finally {
       setCodexConfigImportLoading(false);
     }
@@ -608,7 +608,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
       setCodexConfigImportPreview(result);
       if (result.runtimeError) setCodexConfigImportError(result.runtimeError);
     } catch (error) {
-      setCodexConfigImportError(reportApplicationError(error, { language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en' }));
+      setCodexConfigImportError(formatVisibleApplicationError(error, appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en'));
     } finally {
       setCodexConfigImportLoading(false);
     }
@@ -622,7 +622,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
       const activation = await props.onActivateCodexConfig();
       setCodexConfigImportResult((current) => (current ? { ...current, ...activation, runtimeError: null } : current));
     } catch (error) {
-      setCodexConfigImportError(reportApplicationError(error, { language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en' }));
+      setCodexConfigImportError(formatVisibleApplicationError(error, appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en'));
     } finally {
       setCodexConfigImportLoading(false);
     }

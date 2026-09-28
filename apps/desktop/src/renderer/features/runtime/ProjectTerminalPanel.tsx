@@ -9,7 +9,7 @@ import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist
 import { StopIcon as Stop } from '@phosphor-icons/react/dist/csr/Stop';
 import { TerminalTabs } from './TerminalTabs.js';
 import { observeTerminalTheme, terminalDisplayOptions } from './terminalPresentation.js';
-import { useApplicationErrorDialog } from '../../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 
 /** 终端面板状态持久化存储键前缀。 */
 const TERMINAL_STATE_STORAGE_KEY_PREFIX = 'zeus.terminal-panel-state.';
@@ -87,8 +87,6 @@ export function ProjectTerminalPanel(props: { project: ProjectRecord; client: Da
   useEffect(() => {
     saveTerminalPanelState(props.project.id, { open, heightShare });
   }, [props.project.id, open, heightShare]);
-
-  useApplicationErrorDialog(error, { language: zh ? 'zh-CN' : 'en' });
 
   useEffect(() => {
     /** 卸载后不回写，轮询之间不并发。 */
@@ -309,6 +307,11 @@ export function ProjectTerminalPanel(props: { project: ProjectRecord; client: Da
                 </header>
                 <div className="project-terminal-content" role="tabpanel" id={panelId} aria-labelledby={selectedId ? `${panelId}-${selectedId}` : undefined}>
                   {loadFailed ? <p role="status">{zh ? '终端列表连接中断，正在重连…' : 'Terminal list disconnected. Reconnecting…'}</p> : null}
+                  {error ? (
+                    <p role="alert">
+                      <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
+                    </p>
+                  ) : null}
                   {selected ? (
                     <InteractiveTerminalPane key={`${selected.id}:${connection}`} client={props.client} session={selected} zh={zh} />
                   ) : (

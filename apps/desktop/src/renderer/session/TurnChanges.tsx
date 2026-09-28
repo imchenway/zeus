@@ -23,7 +23,7 @@ import {
 } from '@zeus/shared';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { CodeCommentPanel } from './CodeCommentPanel.js';
-import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { TaskGitDiffTable } from '../task/TaskGitDiffTable.js';
 import type { TaskGitFileDiff } from './sessionTypes.js';
 
@@ -40,9 +40,6 @@ export function TurnChangeCard(props: {
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState<ChangeAction | null>(null);
   const [error, setError] = useState<unknown>(null);
-  useApplicationErrorDialog(error && error !== props.changeSet.conflict?.message && error !== props.changeSet.unavailableReason ? error : null, {
-    language: zh ? 'zh-CN' : 'en',
-  });
   const [optimisticChangeSet, setOptimisticChangeSet] = useState<TurnChangeSet | null>(null);
   const changeSet = optimisticChangeSet && optimisticChangeSet.id === props.changeSet.id && optimisticChangeSet.updatedAt >= props.changeSet.updatedAt ? optimisticChangeSet : props.changeSet;
   const visibleFiles = expanded ? changeSet.files : changeSet.files.slice(0, 3);
@@ -101,6 +98,11 @@ export function TurnChangeCard(props: {
       {changeSet.conflict ? (
         <p className="session-turn-change-error" role={changeSet.state === 'unavailable' ? 'status' : 'alert'}>
           <VisibleApplicationError error={changeSet.conflict} language={zh ? 'zh-CN' : 'en'} />
+        </p>
+      ) : null}
+      {error && error !== changeSet.conflict?.message && error !== changeSet.unavailableReason ? (
+        <p className="session-turn-change-error" role="alert">
+          <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
         </p>
       ) : null}
       {visibleFiles.length ? (
@@ -164,9 +166,6 @@ export function TurnDiffWorkspace(props: {
   const titleRef = useRef<HTMLSpanElement | null>(null);
   const [busy, setBusy] = useState<ChangeAction | null>(null);
   const [error, setError] = useState<unknown>(null);
-  useApplicationErrorDialog(error && error !== props.changeSet.conflict?.message && error !== props.changeSet.unavailableReason ? error : null, {
-    language: zh ? 'zh-CN' : 'en',
-  });
   const [optimisticChangeSet, setOptimisticChangeSet] = useState<TurnChangeSet | null>(null);
   const [draftPosition, setDraftPosition] = useState<ConversationCodeCommentPosition | null>(null);
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
@@ -360,6 +359,11 @@ export function TurnDiffWorkspace(props: {
       {changeSet.conflict ? (
         <p className="session-turn-change-error session-turn-diff-error" role={changeSet.state === 'unavailable' ? 'status' : 'alert'}>
           <VisibleApplicationError error={changeSet.conflict} language={zh ? 'zh-CN' : 'en'} />
+        </p>
+      ) : null}
+      {error && error !== changeSet.conflict?.message && error !== changeSet.unavailableReason ? (
+        <p className="session-turn-change-error session-turn-diff-error" role="alert">
+          <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
         </p>
       ) : null}
       {!changeSet.conflict && changeSet.state === 'unavailable' && changeSet.unavailableReason ? (

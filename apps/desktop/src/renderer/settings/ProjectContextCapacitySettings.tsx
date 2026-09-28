@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { DashboardClient } from '../apiClient.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { Button } from '../ui/Button.js';
-import { reportApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 /** 项目级上下文容量只影响后续新会话；模型白名单与默认模型已移除，启用模型由供应商统一配置。 */
 type ProjectContextCapacityClient = Pick<DashboardClient, 'loadProjectConfig' | 'saveProjectConfig'>;
@@ -42,7 +42,7 @@ export function ProjectContextCapacitySettings(props: { projectId: string; langu
       })
       .catch((error: unknown) => {
         if (!active || scope !== requestScope.current) return;
-        setMessage(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
+        setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
         setStatus('failed');
       });
     return () => {
@@ -62,7 +62,7 @@ export function ProjectContextCapacitySettings(props: { projectId: string; langu
       setMessage(zh ? '上下文容量已保存。' : 'Context capacity saved.');
     } catch (error) {
       if (scope !== requestScope.current) return;
-      setMessage(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
+      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     } finally {
       if (scope === requestScope.current) {
         savingRef.current = false;

@@ -1,5 +1,5 @@
 import type { AppShellSettings, CodexConfigImportPreview, CodexConfigImportResult } from '../apiClient.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 interface CodexConfigImportSettingsProps {
   language: AppShellSettings['appLanguage'];
@@ -46,9 +46,6 @@ const copy = {
 export function CodexConfigImportSettings(props: CodexConfigImportSettingsProps) {
   const labels = copy[props.language];
   const activationRequired = Boolean(props.result && props.result.imported.length > 0 && !props.result.runtimeReloaded);
-  useApplicationErrorDialog(props.error, {
-    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-  });
   return (
     <section className="legacy-import-settings" aria-labelledby="codex-config-import-title">
       <header className="legacy-import-heading">
@@ -83,6 +80,11 @@ export function CodexConfigImportSettings(props: CodexConfigImportSettingsProps)
       ) : null}
       {(props.preview?.skipped.length ?? 0) > 0 ? <small>{labels.skipped(props.preview!.skipped.length)}</small> : null}
       {props.result && props.result.imported.length > 0 ? <p role="status">{labels.completed(props.result.imported.length, props.result.runtimeReloaded)}</p> : null}
+      {props.error ? (
+        <p role="alert">
+          <VisibleApplicationError error={props.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+        </p>
+      ) : null}
       <footer className="legacy-import-command-row">
         <span />
         <button type="button" disabled={props.loading || (!activationRequired && !props.preview?.available)} onClick={() => void (activationRequired ? props.onActivate() : props.onImport())}>

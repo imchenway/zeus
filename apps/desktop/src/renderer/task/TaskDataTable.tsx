@@ -22,7 +22,7 @@ import { isTaskPriority, type TaskPriority } from '@zeus/shared';
 import type { TaskRecord, TaskTableColumnKey } from '../apiClient.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { Button } from '../ui/Button.js';
-import { reportApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import {
   cycleTaskTableSort,
   defaultTaskTableColumnOrder,
@@ -180,7 +180,7 @@ function TaskPriorityCell({ task }: { task: TaskRecord }) {
       const result = await workspace.onTaskPriorityChange(task.id, { priority, expectedUpdatedAt });
       setEdit(task.id, result.kind === 'conflict' ? { value: priority, kind: 'conflict', latest: result.latest } : undefined);
     } catch (error) {
-      setEdit(task.id, { value: priority, kind: 'error', message: reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }) });
+      setEdit(task.id, { value: priority, kind: 'error', message: formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en') });
     }
   }
   return (

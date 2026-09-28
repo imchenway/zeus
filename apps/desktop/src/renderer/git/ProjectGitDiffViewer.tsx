@@ -5,7 +5,7 @@ import { ColumnsIcon as Columns } from '@phosphor-icons/react/dist/csr/Columns';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
 import { RowsIcon as Rows } from '@phosphor-icons/react/dist/csr/Rows';
 import type { DashboardClient, GitDiffHunk, GitDiffSummary, GitFileDiff } from '../apiClient.js';
-import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 /** 与会话和交付共用按可视区域渲染的差异视图。 */
 const CodeDiffView = lazy(() => import('../code/CodeDiffView.js').then((module) => ({ default: module.CodeDiffView })));
 
@@ -62,9 +62,6 @@ export function ProjectGitDiffWindow(props: {
   const [title, setTitle] = useState(props.filePath || (zh ? 'Git 差异' : 'Git diff'));
   const [selectedPath, setSelectedPath] = useState(props.filePath);
   const [error, setError] = useState<unknown>(null);
-  useApplicationErrorDialog(error, {
-    language: zh ? 'zh-CN' : 'en',
-  });
 
   useEffect(() => {
     let cancelled = false;

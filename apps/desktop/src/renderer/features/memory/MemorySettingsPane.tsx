@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import type { MemoryApiClient } from './memoryApiClient.js';
 import { memoryDisplayStatus, type MemoryCandidateInput, type MemoryEffect, type MemoryKind, type MemoryRecord, type MemoryScope } from './memoryContracts.js';
 import { useMemoryFeatureController } from './useMemoryFeatureController.js';
-import { reportApplicationError, VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError, VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { ModalPortal } from '../../ui/ModalPortal.js';
 import { Button } from '../../ui/Button.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
@@ -84,7 +84,7 @@ export function MemorySettingsPane(props: {
       setFormError(null);
       setSaved(true);
     } catch (error) {
-      setFormError(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
+      setFormError(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     }
   };
 
@@ -97,7 +97,7 @@ export function MemorySettingsPane(props: {
       setFormError(null);
       setSaved(true);
     } catch (error) {
-      setFormError(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
+      setFormError(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     }
   };
 

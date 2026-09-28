@@ -185,6 +185,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     setArchived: setArchivedConversations,
     setArchivedLoadState: setArchivedConversationLoadState,
     setRestoringConversationId: setRestoringArchivedConversationId,
+    loadArchived: loadArchivedConversations,
   } = useConversationFeatureController({
     client: props.nativeConversationClient?.conversations ?? null,
     initialTaskChoices: props.initialNativeConversationChoices,
@@ -221,6 +222,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   } | null>(null);
   const archivedConversations = conversationQuery.archived;
   const archivedConversationLoadState = conversationQuery.archivedLoadState;
+  const archivedConversationError = conversationQuery.errorCause ?? conversationQuery.error;
   const restoringArchivedConversationId = conversationQuery.restoringConversationId;
   const archivedConversationRefreshPromiseRef = useRef<Promise<void> | null>(null);
   const [newConversationFocusRequest, setNewConversationFocusRequest] = useState(0);
@@ -423,12 +425,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   );
   const { snapshot: settingsQuery, update: setAppShellSettings } = useSettingsFeatureController({ client: props.nativeConversationClient?.settings ?? null, initialValue: initialAppShellSettings });
   const appShellSettings = settingsQuery.value;
-  useApplicationErrorDialog(projectWorkspaceConfigError, {
-    language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en',
-  });
-  useApplicationErrorDialog(archivedConversationLoadState === 'error' ? (conversationQuery.errorCause ?? conversationQuery.error) : null, {
-    language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en',
-  });
   const appShellSettingsRef = useRef(appShellSettings);
   const codeWorkspacePreferenceTimerRef = useRef<number | null>(null);
   appShellSettingsRef.current = appShellSettings;
@@ -1285,6 +1281,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     appShellSettings,
     appShellSettingsRef,
     archivedConversationLoadState,
+    archivedConversationError,
     archivedConversationRefreshPromiseRef,
     archivedConversations,
     archivedProjects,
@@ -1398,6 +1395,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     setGlobalAgentSettingsDirty,
     projectTaskModelPushManagementStatus,
     projectWorkspaceConfigStatus,
+    projectWorkspaceConfigError,
     projectedRuntimeLogOutput,
     projectedTaskConversationChoices,
     reconcileNativeConversationProjectSnapshot,
@@ -1457,6 +1455,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     setAppShellSettings,
     setArchivedConversationLoadState,
     setArchivedConversations,
+    loadArchivedConversations,
     setArchivedProjects,
     setCodexConfigImportError,
     setCodexConfigImportLoading,

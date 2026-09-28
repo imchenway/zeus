@@ -1,11 +1,10 @@
 import { useRef, useState } from 'react';
-import { reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 /** 设置编辑共用写入状态，成功静默，失败保留可恢复反馈。 */
 export type SettingsSaveState = 'idle' | 'saving' | 'saved' | 'failed';
 
 /** 按交互顺序写入，失败不重放；调用方保留草稿并允许用户再次编辑。 */
-export function useSettingsAutosave(language: 'zh-CN' | 'en-US') {
+export function useSettingsAutosave() {
   /** 队列在组件离开后仍完成已经确认的本地写入。 */
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   /** 后来的修改不能被较早的回执标记为已保存。 */
@@ -24,9 +23,8 @@ export function useSettingsAutosave(language: 'zh-CN' | 'en-US') {
         if (revision.current === current) setStatus('saved');
         return true;
       },
-      (error: unknown) => {
+      () => {
         if (revision.current === current) setStatus('failed');
-        reportApplicationError(error, { language: language === 'zh-CN' ? 'zh-CN' : 'en' });
         return false;
       },
     );

@@ -34,7 +34,6 @@ import {
   toggleTaskTableColumn,
 } from './taskWorkspaceModel.js';
 import { TaskDataTable } from './TaskDataTable.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
 import type { TaskBoardSettingsSection } from './TaskBoardView.js';
 
 const LazyTaskBoardView = lazy(() => import('./TaskBoardView.js').then((module) => ({ default: module.TaskBoardView })));
@@ -219,9 +218,6 @@ function arrayShallowEqual<T>(left: readonly T[], right: readonly T[]): boolean 
 export function TaskWorkspace(props: TaskWorkspaceProps) {
   const [boardSettingsSection, setBoardSettingsSection] = useState<TaskBoardSettingsSection | null>(null);
   const [bulkTargetStatus, setBulkTargetStatus] = useState<TaskManagementStatus>(() => props.statusDefinitions[0]?.id ?? 'todo');
-  useApplicationErrorDialog(props.listState === 'error' ? props.copy.taskListErrorHelp : null, {
-    language: props.appLanguage === 'zh-CN' ? 'zh-CN' : 'en',
-  });
   /** 原生弹出层使用独立身份，浏览器负责顶层显示、外部点击和 Escape 关闭。 */
   const fieldSettingsId = useId();
   /** 更多动作与列设置分别关联各自的触发按钮。 */
@@ -636,13 +632,14 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                   </span>
                 </section>
               ) : taskListError ? (
-                // 弹窗负责错误事实；列表区只保留可恢复操作，避免关闭弹窗后失去重试入口。
-                <section className="project-inline-recovery-row task-list-state-row" aria-label={props.copy.taskListErrorTitle} role="status">
+                // 任务列表失败属于当前列表，直接显示原因和恢复入口，不阻断其他工作面。
+                <section className="project-inline-recovery-row task-list-state-row" aria-label={props.copy.taskListErrorTitle} role="alert">
                   <span className="task-list-state-mark" aria-hidden="true">
                     !
                   </span>
                   <span className="project-inline-recovery-copy task-list-state-copy">
-                    <strong>{props.copy.taskListErrorRetry}</strong>
+                    <strong>{props.copy.taskListErrorTitle}</strong>
+                    <small>{props.copy.taskListErrorHelp}</small>
                   </span>
                   <span className="task-list-state-action-rail">
                     <button type="button" className="task-list-state-primary-action" onClick={props.onRetryTaskList} disabled={!props.onRetryTaskList}>

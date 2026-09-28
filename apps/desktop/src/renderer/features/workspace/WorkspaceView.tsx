@@ -6,7 +6,7 @@ import { GlobalAgentSettingsPane } from '../../settings/GlobalAgentSettingsPane.
 import { FileTextIcon } from '@phosphor-icons/react/dist/csr/FileText';
 import type { UpdateAppShellSettingsRequest } from '../settings/settingsContracts.js';
 import type { ProjectSourceContentMatch, SidebarConversationFilters } from '@zeus/shared';
-import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
+import { reportApplicationError, VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { RuntimeXtermPane } from '../runtime/RuntimeXtermPane.js';
 import { handleInlineRailKeyboardNavigation } from './workspaceSupport.js';
 import { useModelSetup, ModelSetupDialog, CodexAccountSettings, type TaskModelSetupContext } from '../../settings/ModelSetup.js';
@@ -31,6 +31,7 @@ import type { DashboardClient, ProjectRecord } from '../../apiClient.js';
 import { openAutomaticUpdateIndicatorInMain } from '../../appShellBridge.js';
 import { ProjectGitWorkbench } from '../../git/ProjectGitWorkbench.js';
 import { conversationDisplayTitle } from '../../session/conversationDisplayTitle.js';
+import type { NativeConversationChoice } from '../../session/sessionTypes.js';
 import { TaskGitReviewModal } from '../../task/TaskGitReviewModal.js';
 import { persistPendingConflictAiStart, TaskGitMergeModal } from '../../task/TaskGitMergeModal.js';
 import { TaskModelPushModal, writeTaskModelPushPreferences } from '../../task/TaskModelPushModal.js';
@@ -169,6 +170,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     activeTaskManagementStatusLabels,
     activeTaskTableColumns,
     appShellSettings,
+    archivedConversationError,
     archivedConversationLoadState,
     archivedConversations,
     archivedProjects,
@@ -511,8 +513,10 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   const settingsPanelId = useId();
   /** 归档筛选只作用于当前列表，不修改任何会话。 */
   const [archiveQuery, setArchiveQuery] = useState('');
+  /** 恢复失败归属于归档列表，不升级为全局弹窗。 */
+  const [archiveActionError, setArchiveActionError] = useState<unknown>(null);
   /** 任务字段的写入状态；仅提交该页拥有的偏好。 */
-  const taskAutosave = useSettingsAutosave(appShellSettings.appLanguage);
+  const taskAutosave = useSettingsAutosave();
   /** 两个复合页共享各自页面标题处的保存反馈。 */
   const [modelSaveState, setModelSaveState] = useState<SettingsSaveState>('idle');
   /** 漏斗立即响应；复用客户端串行队列只保存该字段，不回填旧的整份设置响应。 */
@@ -540,6 +544,15 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   const [archiveProjectId, setArchiveProjectId] = useState('');
   /** 分页状态随列表缩短自动夹紧。 */
   const [archiveRequestedPage, setArchiveRequestedPage] = useState(1);
+  /** 恢复操作保留原条目，并由归档区域承接失败原因。 */
+  async function restoreArchivedConversation(conversation: NativeConversationChoice): Promise<void> {
+    setArchiveActionError(null);
+    try {
+      await restoreTaskConversation(conversation);
+    } catch (error) {
+      setArchiveActionError(error);
+    }
+  }
   /** 列表变化时一次关联项目和任务，搜索时不再逐条扫描全部任务。 */
   const archiveItems = useMemo(() => {
     /** 任务编号和标题来自当前任务记录。 */
@@ -2209,11 +2222,17 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                         <span className="settings-archived-conversation-list" aria-live="polite">
                           {archivedConversationLoadState === 'loading' ? <small>{settingsWorkspaceCopy.data.loadingArchivedConversations}</small> : null}
                           {archivedConversationLoadState === 'error' ? (
-                            <span className="settings-archived-conversation-state">
+                            <span className="settings-archived-conversation-state" role="alert">
+                              <VisibleApplicationError error={archivedConversationError ?? settingsWorkspaceCopy.data.archivedConversationsError} language={appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en'} />
                               <button type="button" onClick={() => void refreshArchivedConversations()}>
                                 {settingsWorkspaceCopy.data.retryArchivedConversations}
                               </button>
                             </span>
+                          ) : null}
+                          {archiveActionError ? (
+                            <small role="alert">
+                              <VisibleApplicationError error={archiveActionError} language={appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en'} />
+                            </small>
                           ) : null}
                           {archivedConversationLoadState === 'ready' && filteredArchives.length === 0 ? (
                             <small>
@@ -2234,7 +2253,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                                     {formatArchivedConversationDate(conversation.updatedAt, appShellSettings.appLanguage)}
                                   </time>
                                 </span>
-                                <button type="button" disabled={restoringArchivedConversationId !== null} onClick={() => void restoreTaskConversation(conversation)}>
+                                <button type="button" disabled={restoringArchivedConversationId !== null} onClick={() => void restoreArchivedConversation(conversation)}>
                                   {restoringArchivedConversationId === conversation.id ? settingsWorkspaceCopy.data.restoringArchivedConversation : settingsWorkspaceCopy.data.restoreArchivedConversation}
                                 </button>
                               </span>

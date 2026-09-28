@@ -1,6 +1,6 @@
 import { MotionPresence } from '../toolPageHost.js';
 import { FormDialog } from '../toolPageHost.js';
-import { reportApplicationError } from '../toolPageHost.js';
+import { formatVisibleApplicationError } from '../toolPageHost.js';
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
@@ -44,7 +44,7 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
       try {
         setCatalog(await props.client.loadSkills(undefined, forceReload));
       } catch (reason) {
-        setError(reportApplicationError(reason, { language: zh ? 'zh-CN' : 'en' }));
+        setError(formatVisibleApplicationError(reason, zh ? 'zh-CN' : 'en'));
       } finally {
         setLoading(false);
       }
@@ -100,7 +100,7 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
       await load(true);
       window.dispatchEvent(new Event(skillCatalogChangedEvent));
     } catch (reason) {
-      setInstallError(reportApplicationError(reason, { language: zh ? 'zh-CN' : 'en' }));
+      setInstallError(formatVisibleApplicationError(reason, zh ? 'zh-CN' : 'en'));
     } finally {
       setInstalling(false);
     }
@@ -121,7 +121,7 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
       await load(true);
       window.dispatchEvent(new Event(skillCatalogChangedEvent));
     } catch (reason) {
-      setError(reportApplicationError(reason, { language: zh ? 'zh-CN' : 'en' }));
+      setError(formatVisibleApplicationError(reason, zh ? 'zh-CN' : 'en'));
     } finally {
       setRemovingId(null);
     }

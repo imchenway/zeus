@@ -21,7 +21,7 @@ import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import type { DashboardClient } from '../../dashboardClient.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
-import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { Button } from '../../ui/Button.js';
 import { FormDialog } from '../../ui/FormDialog.js';
 import { MotionPresence } from '../../ui/MotionPresence.js';
@@ -1567,5 +1567,5 @@ function useCompactInspector(): boolean {
 
 /** 将未知错误交给统一产品错误映射。 */
 function applicationError(cause: unknown, zh: boolean): string {
-  return reportApplicationError(cause, { language: zh ? 'zh-CN' : 'en' });
+  return formatVisibleApplicationError(cause, zh ? 'zh-CN' : 'en');
 }

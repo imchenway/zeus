@@ -4,7 +4,6 @@ import type { AppShellSettings } from '../apiClient.js';
 import type { SettingsApiClient } from '../features/settings/settingsApiClient.js';
 import { NativeControlRow, NativeSettingsPane } from '../features/workspace/workspaceSupport.js';
 import { notifyMainAppShellSettingsChanged } from '../appShellBridge.js';
-import { reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { Button } from '../ui/Button.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { SettingsSaveStatus } from './useSettingsAutosave.js';
@@ -56,10 +55,9 @@ export function GeneralSettingsPane(props: {
       const saved = await props.client.saveAppShellSettings(input);
       await notifyMainAppShellSettingsChanged({ zeus: window.zeus, settings: saved });
       if (currentRevision === revision.current) setStatus('saved');
-    } catch (error) {
+    } catch {
       if (currentRevision === revision.current) {
         setStatus('failed');
-        reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' });
       }
     }
   }
