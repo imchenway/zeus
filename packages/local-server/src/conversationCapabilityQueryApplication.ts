@@ -287,8 +287,10 @@ export class ConversationCapabilityQueryApplication {
       const clean = await this.ports.git.readWorktreeClean(registered.localPath, this.repositoryIgnoredPaths(project.id, registered.id, registered.localPath));
       if (!repository.isRepository) throw queryError('ZEUS_PROJECT_REPOSITORY_UNAVAILABLE', `Project repository is unavailable: ${registered.relativePath}`);
       const defaultRemoteName = repository.remotes.includes('origin') ? 'origin' : (repository.remotes[0] ?? '');
+      /** unborn 当前分支没有 refs/heads 记录，但已经是 Git 确认的本地来源。 */
+      const localSourceBranches = !repository.detached && !repository.headSha && repository.branch && !repository.localBranches.includes(repository.branch) ? [repository.branch, ...repository.localBranches] : repository.localBranches;
       const sourceRefs = [
-        ...repository.localBranches.map((branch) => ({ ref: `refs/heads/${branch}`, label: branch, kind: 'local' as const, group: 'local', current: branch === repository.branch })),
+        ...localSourceBranches.map((branch) => ({ ref: `refs/heads/${branch}`, label: branch, kind: 'local' as const, group: 'local', current: branch === repository.branch })),
         ...repository.remoteBranches.map((ref) => {
           const separator = ref.indexOf('/');
           const remoteName = separator > 0 ? ref.slice(0, separator) : defaultRemoteName;

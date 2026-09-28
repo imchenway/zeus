@@ -630,7 +630,7 @@ export function resolveTaskModelPushInitialForm(
             // 来源默认使用真实当前本地分支，远端来源始终由用户明确选择。
             sourceRef: currentSourceRef,
             branchName: repository.suggestedBranchName,
-            includeLocalChanges: false,
+            includeLocalChanges: !repository.headSha,
           },
         ];
       }),
@@ -668,11 +668,11 @@ export function reconcileTaskPushRepositories(form: TaskModelPushForm, capabilit
         return [
           repository.id,
           previous
-            ? { ...previous, sourceRef: sourceAvailable ? previous.sourceRef : '', includeLocalChanges: sourceAvailable && previous.includeLocalChanges }
+            ? { ...previous, sourceRef: sourceAvailable ? previous.sourceRef : '', includeLocalChanges: sourceAvailable && (!repository.headSha || previous.includeLocalChanges) }
             : {
                 sourceRef: repository.sourceRefs.find((source) => source.current)?.ref ?? '',
                 branchName: repository.suggestedBranchName,
-                includeLocalChanges: false,
+                includeLocalChanges: !repository.headSha,
               },
         ];
       }),
@@ -1303,6 +1303,8 @@ export function TaskModelPushModal(props: {
                     includeLocalChanges: false,
                   };
                   const selectedSource = repository.sourceRefs.find((source) => source.ref === selection.sourceRef);
+                  /** unborn 来源的项目文件就是初始代码，不作为可选的“未提交修改”。 */
+                  const selectedSourceUnborn = !repository.headSha && selectedSource?.kind === 'local' && selectedSource.current;
                   const refreshing = props.refreshingRepositoryId === repository.id;
                   return (
                     <section key={repository.id} className="task-model-push-repository" aria-label={repository.name}>
@@ -1375,13 +1377,19 @@ export function TaskModelPushModal(props: {
                           ) : (
                             'Local branches and locally known remote branches are shown. Refresh manually when current remote state is needed.'
                           )
+                        ) : selectedSourceUnborn ? (
+                          zh ? (
+                            '该仓库尚无首次提交，将把当前项目文件带入独立工作树。完成提交后可直接交付到来源分支。'
+                          ) : (
+                            'This repository has no first commit. Current project files will seed the isolated worktree and can be delivered back after commit.'
+                          )
                         ) : zh ? (
                           '该仓库没有远端，将使用本地分支的代码。默认不包含未提交的修改。'
                         ) : (
                           'This repository has no remote, so local branch code will be used. Uncommitted changes are excluded by default.'
                         )}
                       </p>
-                      {selectedSource?.kind === 'local' && repository.clean === false ? (
+                      {selectedSource?.kind === 'local' && repository.clean === false && !selectedSourceUnborn ? (
                         <label className="task-model-push-concurrency-confirm">
                           <input
                             type="checkbox"

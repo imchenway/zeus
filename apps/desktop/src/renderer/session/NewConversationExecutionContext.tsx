@@ -52,12 +52,14 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
     [workbench, props.projectId],
   );
   const snapshot = rootRepository?.snapshot;
-  const sources = useMemo(
-    () => [
-      ...(snapshot?.localBranches ?? []).map((ref) => ({ ref, kind: 'local' as const })),
-      ...(snapshot?.remoteBranches ?? []).filter((ref) => ref.includes('/') && !ref.endsWith('/HEAD')).map((ref) => ({ ref, kind: 'remote' as const })),
-    ],
+  /** 首次提交前当前分支尚未进入 localBranches，仍需作为真实本地来源展示。 */
+  const localBranches = useMemo(
+    () => (!snapshot?.detached && !snapshot?.headSha && snapshot?.branch && !snapshot.localBranches.includes(snapshot.branch) ? [snapshot.branch, ...snapshot.localBranches] : (snapshot?.localBranches ?? [])),
     [snapshot],
+  );
+  const sources = useMemo(
+    () => [...localBranches.map((ref) => ({ ref, kind: 'local' as const })), ...(snapshot?.remoteBranches ?? []).filter((ref) => ref.includes('/') && !ref.endsWith('/HEAD')).map((ref) => ({ ref, kind: 'remote' as const }))],
+    [localBranches, snapshot?.remoteBranches],
   );
   const worktreeAvailable = loadState === 'ready' && sources.length > 0;
   const sourceAvailable = Boolean(props.worktree && sources.some((source) => source.kind === props.worktree?.sourceKind && source.ref === props.worktree.sourceRef));
@@ -86,7 +88,7 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
     if (!rootRepository) return [];
     const unavailableReason = zh ? '已在其他工作目录使用' : 'In use in another working folder';
     return [
-      ...rootRepository.snapshot.localBranches.map((branch) => {
+      ...localBranches.map((branch) => {
         const current = branch === rootRepository.snapshot.branch;
         const occupied = !current && checkedOutBranches.has(branch);
         return {
@@ -105,7 +107,7 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
         disabled: false,
       },
     ];
-  }, [checkedOutBranches, rootRepository, zh]);
+  }, [checkedOutBranches, localBranches, rootRepository, zh]);
 
   useEffect(() => {
     const version = ++loadVersionRef.current;
@@ -315,7 +317,15 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
                       }}
                     />
                   </label>
-                  <small>{zh ? `从所选分支创建，分支名须以 ${branchNamespace} 开头。` : `Create from the selected branch. The new name must start with ${branchNamespace}.`}</small>
+                  <small>
+                    {!snapshot?.headSha && props.worktree?.sourceKind === 'local' && props.worktree.sourceRef === snapshot?.branch
+                      ? zh
+                        ? `空仓库会把当前项目文件带入工作树；分支名须以 ${branchNamespace} 开头。`
+                        : `The current project files will seed this empty repository worktree. The new name must start with ${branchNamespace}.`
+                      : zh
+                        ? `从所选分支创建，分支名须以 ${branchNamespace} 开头。`
+                        : `Create from the selected branch. The new name must start with ${branchNamespace}.`}
+                  </small>
                   {props.worktree && !sourceAvailable && loadState === 'ready' ? <span role="alert">{zh ? '来源分支已不可用，请重新选择。' : 'The source branch is no longer available. Choose another branch.'}</span> : null}
                   <Button variant="secondary" size="compact" busy={refreshing} disabled={props.disabled || projectBusy || !snapshot?.remotes.length || !props.onExecuteProjectGit} onClick={() => void refreshRemoteBranches()}>
                     {zh ? '刷新远程分支' : 'Refresh remote branches'}
