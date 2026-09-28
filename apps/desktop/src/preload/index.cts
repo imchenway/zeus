@@ -213,8 +213,8 @@ contextBridge.exposeInMainWorld('zeus', {
     return () => ipcRenderer.removeListener('zeus:requesting-window-foreground-changed', handler);
   },
   hideMenuBarUsage: () => ipcRenderer.invoke('zeus:menu-bar-usage:hide'),
-  /** 将内容高度交给主进程校验，只调整当前菜单栏浮窗。 */
-  resizeMenuBarUsage: (height: number) => ipcRenderer.invoke('zeus:menu-bar-usage:resize', height),
+  /** 将内容高度和费用明细状态交给主进程校验，只调整当前菜单栏浮窗。 */
+  resizeMenuBarUsage: (height: number, detailExpanded: boolean) => ipcRenderer.invoke('zeus:menu-bar-usage:resize', height, detailExpanded),
   onMenuBarUsageSettingsChanged: (listener: (settings: unknown) => void) => {
     const handler = (_event: unknown, settings: unknown) => listener(settings);
     ipcRenderer.on('zeus:menu-bar-usage:settings', handler);

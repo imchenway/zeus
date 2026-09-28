@@ -1,4 +1,4 @@
-import { formatEstimatedCosts } from '@zeus/shared';
+import type { EstimatedMoney } from '@zeus/shared';
 import { CaretUpIcon as CaretUp } from '@phosphor-icons/react/dist/csr/CaretUp';
 import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
@@ -53,10 +53,10 @@ export function RuntimeDetails(props: RuntimeDetailsProps) {
           <RuntimeSummaryMetric label={copy.cacheHitRate} value={formatPercentageFact(props.runtime.usage.cacheHitRate, props.language)} />
           <RuntimeSummaryMetric label={zh ? '最近请求输出速率' : 'Latest output rate'} value={formatOutputRateFact(props.runtime.performance.latestOutputTokensPerSecond, props.language)} />
           <RuntimeSummaryMetric
-            label={zh ? '费用（估算）' : 'Estimated cost'}
+            label={zh ? '费用' : 'Cost'}
             value={
               props.runtime.usage.costs?.length
-                ? `${formatEstimatedCosts(props.runtime.usage.costs, null)}${props.runtime.usage.priceCoverage.state === 'available' && props.runtime.usage.priceCoverage.value === 1 ? '' : zh ? '（部分）' : ' (partial)'}`
+                ? `${formatRuntimeCosts(props.runtime.usage.costs, props.language)}${props.runtime.usage.priceCoverage.state === 'available' && props.runtime.usage.priceCoverage.value === 1 ? '' : zh ? '（部分）' : ' (partial)'}`
                 : formatCostSummary(props.runtime.usage.apiEquivalentUsd, props.runtime.usage.priceCoverage, costComplete, props.language)
             }
           />
@@ -89,8 +89,8 @@ export function RuntimeDetails(props: RuntimeDetailsProps) {
           <RuntimeUsageRow label={copy.cacheHitRate} value={formatPercentageFact(props.runtime.usage.cacheHitRate, props.language)} />
           <RuntimeUsageRow label={zh ? '最近输出速率' : 'Latest output rate'} value={formatOutputRateFact(props.runtime.performance.latestOutputTokensPerSecond, props.language)} />
           <RuntimeUsageRow
-            label={zh ? '费用（估算）' : 'Estimated cost'}
-            value={props.runtime.usage.costs?.length ? formatEstimatedCosts(props.runtime.usage.costs, null) : formatCoveredCost(props.runtime.usage.apiEquivalentUsd, props.runtime.usage.priceCoverage, props.language)}
+            label={zh ? '费用' : 'Cost'}
+            value={props.runtime.usage.costs?.length ? formatRuntimeCosts(props.runtime.usage.costs, props.language) : formatCoveredCost(props.runtime.usage.apiEquivalentUsd, props.runtime.usage.priceCoverage, props.language)}
           />
         </RuntimeDetailGroup>
         <RuntimeDetailGroup title={zh ? '环境' : 'Environment'} kind="environment">
@@ -259,9 +259,14 @@ function formatUsdEstimate(value: number, language: SessionUiLanguage): string {
   return `~$${formatted}`;
 }
 
+/** 会话费用统一以波浪号表达估算属性；美元使用符号，其他币种保留代码避免歧义。 */
+function formatRuntimeCosts(costs: EstimatedMoney[], language: SessionUiLanguage): string {
+  return costs.map(({ currency, amount }) => (currency === 'USD' ? formatUsdEstimate(amount, language) : `~${currency} ${new Intl.NumberFormat(language, { maximumFractionDigits: 6 }).format(amount)}`)).join(' + ');
+}
+
 function formatCostSummary(value: NativeRuntimeFact<number>, coverage: NativeRuntimeFact<number>, complete: boolean, language: SessionUiLanguage): ReactNode {
   if (complete && value.state === 'available') return formatUsdEstimate(value.value, language);
-  if (value.state === 'available' && coverage.state === 'available' && coverage.value > 0) return language === 'zh-CN' ? '估算不完整' : 'Estimate incomplete';
+  if (value.state === 'available' && coverage.state === 'available' && coverage.value > 0) return language === 'zh-CN' ? '费用不完整' : 'Cost incomplete';
   return value.state === 'unavailable' ? unavailableValue(language) : unavailableValue(language);
 }
 

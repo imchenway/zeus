@@ -236,7 +236,8 @@ function aggregateCostBreakdown(rows: readonly CodexUsageLedgerRecord[]): UsageM
       }
     }
   }
-  return [...groups.values()].sort((left, right) => left.model.localeCompare(right.model));
+  /** 费用明细优先展示 Token 消耗最大的分组，同量时按模型名稳定排序。 */
+  return [...groups.values()].sort((left, right) => right.usage.totalTokens - left.usage.totalTokens || left.model.localeCompare(right.model));
 }
 
 /** 把各供应商费率投影为同一展示口径，缺价继续保持未知。 */
