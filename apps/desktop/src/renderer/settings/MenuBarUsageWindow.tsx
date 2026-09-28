@@ -68,9 +68,9 @@ const copy = {
     sevenDaysSummary: '近 7 日',
     cache: '缓存命中率',
     cacheUnsupported: '供应源未提供',
-    cost: '近 7 日估算费用',
-    costShort: '7 日估算费用',
-    todayCost: '今日估算费用',
+    cost: '近 7 日费用',
+    costShort: '7 日费用',
+    todayCost: '今日费用',
     cacheSavings: '7 日缓存节省',
     sevenDayConversations: '7 日会话数',
     sevenDayTurns: '7 日轮次数',
@@ -85,7 +85,7 @@ const copy = {
     model: '模型',
     unitPrice: '单价',
     consumedTokens: '消耗 Token',
-    estimatedCost: '估算费用',
+    estimatedCost: '费用',
     usageAndEstimatedCost: 'Token / 费用',
     inputPrice: '输入',
     cachedInputPrice: '缓存读',
@@ -99,8 +99,8 @@ const copy = {
     dimensionCost: '费用',
     statisticsSource: '统计来源',
     zeusLocalUsage: 'Zeus 本地统计',
-    zeusLocalUsageHint: '只统计在 Zeus 中产生的用量；费用由本地账本按模型单价估算。',
-    costEstimateHint: '费用由 Zeus 本地账本按请求单价估算，只合计已计价部分；覆盖率按可计费 Token 计算，不代表费用比例。',
+    zeusLocalUsageHint: '只统计在 Zeus 中产生的用量；费用由本地账本按模型单价计算。',
+    costEstimateHint: '费用由 Zeus 本地账本按请求单价计算，只合计已计价部分；覆盖率按可计费 Token 计算，不代表费用比例。',
     noPrice: '暂无价格',
     recentUsage: '每日 Token',
     accountUsage: 'Codex 账户统计',
@@ -144,9 +144,9 @@ const copy = {
     sevenDaysSummary: '7 days',
     cache: 'Cache hit rate',
     cacheUnsupported: 'Not provided',
-    cost: 'Estimated cost · 7 days',
-    costShort: '7-day estimate',
-    todayCost: "Today's estimate",
+    cost: 'Cost · 7 days',
+    costShort: '7-day cost',
+    todayCost: "Today's cost",
     cacheSavings: 'Cache savings · 7 days',
     sevenDayConversations: 'Sessions · 7 days',
     sevenDayTurns: 'Turns · 7 days',
@@ -161,7 +161,7 @@ const copy = {
     model: 'Model',
     unitPrice: 'Rate',
     consumedTokens: 'Tokens',
-    estimatedCost: 'Estimated cost',
+    estimatedCost: 'Cost',
     usageAndEstimatedCost: 'Token / cost',
     inputPrice: 'Input',
     cachedInputPrice: 'Read',
@@ -175,8 +175,8 @@ const copy = {
     dimensionCost: 'Cost',
     statisticsSource: 'Statistics source',
     zeusLocalUsage: 'Zeus local stats',
-    zeusLocalUsageHint: 'Includes usage generated in Zeus only; cost is estimated from the local ledger using model rates.',
-    costEstimateHint: 'Local estimates sum priced requests only. Coverage measures billable tokens, not the share of total cost.',
+    zeusLocalUsageHint: 'Includes usage generated in Zeus only; cost is calculated from the local ledger using model rates.',
+    costEstimateHint: 'The local ledger sums priced requests only. Coverage measures billable tokens, not the share of total cost.',
     noPrice: 'No pricing',
     recentUsage: 'Daily tokens',
     accountUsage: 'Codex account stats',
@@ -228,7 +228,9 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
       const height = Math.ceil(document.documentElement.clientHeight - content.clientHeight + body.getBoundingClientRect().height);
       if (height === requestedHeight) return;
       requestedHeight = height;
-      void resizeWindow(height).catch((cause: unknown) => console.warn('菜单栏浮窗高度调整失败。', cause));
+      /** 明细打开时同步申请透明扩展区，关闭后恢复菜单栏主体宽度。 */
+      const detailExpanded = Boolean(document.querySelector('.menu-bar-usage-cost-detail:popover-open'));
+      void resizeWindow(height, detailExpanded).catch((cause: unknown) => console.warn('菜单栏浮窗尺寸调整失败。', cause));
     };
     /** 同时监听文字换行和窗口大小变化，不依赖固定额度条数估算。 */
     const observer = new ResizeObserver(updateHeight);
@@ -995,6 +997,11 @@ function CostBreakdownPopover(props: { entries: UsageModelCostBreakdown[]; label
           const nextOpen = event.currentTarget.matches(':popover-open');
           if (!nextOpen) pinnedRef.current = false;
           setOpen(nextOpen);
+          /** 等同组 Popover 切换完成后按最终状态扩缩透明宿主，避免旧浮层关闭事件抢先收窄。 */
+          window.requestAnimationFrame(() => {
+            const detailExpanded = Boolean(document.querySelector('.menu-bar-usage-cost-detail:popover-open'));
+            void window.zeus?.resizeMenuBarUsage?.(document.documentElement.clientHeight, detailExpanded).catch((cause: unknown) => console.warn('菜单栏费用明细宽度调整失败。', cause));
+          });
           if (nextOpen) positionPopover();
         }}
       >

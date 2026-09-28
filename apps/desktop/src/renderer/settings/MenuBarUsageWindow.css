@@ -24,8 +24,10 @@ body:has(.menu-bar-usage-root),
   --usage-accent-soft: color-mix(in srgb, var(--zeus-brand-primary) 10%, white);
   --usage-danger: #b64949;
   box-sizing: border-box;
-  inline-size: 100%;
+  /* 原生宿主临时加宽时主体仍保持菜单栏宽度，透明扩展区只承载费用明细。 */
+  inline-size: min(360px, 100%);
   block-size: 100%;
+  margin-inline: auto;
   /* 缩小浮窗外侧留白，让固定宽度更多用于内容。 */
   padding: 12px;
   color: var(--usage-text);
@@ -611,7 +613,8 @@ body:has(.menu-bar-usage-root),
   left: var(--usage-cost-detail-left, 12px);
   top: var(--usage-cost-detail-top, 12px);
   display: none;
-  inline-size: min(324px, calc(100vw - 24px));
+  /* 原生宿主展开后可越过 360px 菜单栏主体，窄视口仍保留两侧安全距离。 */
+  inline-size: min(480px, calc(100vw - 24px));
   /* 高度服从图标上方或下方的可用空间，长明细沿用内部表格滚动。 */
   max-block-size: min(360px, calc(100vh - 24px), var(--usage-cost-detail-available-height, 360px));
   margin: 0;
@@ -656,7 +659,7 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-cost-detail table {
   inline-size: 100%;
   border-collapse: collapse;
-  table-layout: fixed;
+  table-layout: auto;
   text-align: start;
   user-select: text;
 }
@@ -665,8 +668,9 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-cost-detail td {
   padding: 6px 5px;
   border-block-start: 1px solid var(--usage-line);
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
   vertical-align: top;
+  white-space: nowrap;
 }
 
 .menu-bar-usage-cost-detail thead th {
@@ -677,24 +681,20 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-cost-detail th:first-child {
-  inline-size: 22%;
+  /* 模型列只占最长模型名所需宽度，剩余空间交给单价列。 */
+  inline-size: 1%;
   text-align: start;
 }
 
 .menu-bar-usage-cost-detail th:nth-child(2) {
-  inline-size: 50%;
   text-align: start;
 }
 
 .menu-bar-usage-cost-detail th:last-child,
 .menu-bar-usage-cost-detail td:last-child {
-  inline-size: 28%;
+  /* 结果列按最长标题或结果收缩，避免固定比例制造空白。 */
+  inline-size: 1%;
   text-align: end;
-}
-
-/* 结果列表头使用短文案并固定单行，避免“费用”孤立换行。 */
-.menu-bar-usage-cost-detail thead th:last-child {
-  white-space: nowrap;
 }
 
 .menu-bar-usage-cost-detail tbody th {
@@ -707,9 +707,8 @@ body:has(.menu-bar-usage-root),
   line-height: 1.45;
 }
 
-/* 单价每组固定占一行，列宽优先保证中英文输入/输出和缓存读/写不拆行。 */
+/* 单价沿用较小字号，两组费率均由单元格的单行约束保证不拆分。 */
 .menu-bar-usage-cost-detail td:nth-child(2) span {
-  white-space: nowrap;
   font-size: 10px;
 }
 
