@@ -1403,7 +1403,8 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         </section>
       ) : null}
 
-      <div className="task-detail-arrangement" aria-label={zh ? '状态与执行人' : 'Status and employees'}>
+      {/* 高频管理项共用一行并允许自然换行，避免数字团队单独占用整行。 */}
+      <div className="task-detail-arrangement" aria-label={zh ? '状态、执行人与数字团队' : 'Status, employees, and digital team'}>
         <span className="task-detail-summary-row">
           <small>{zh ? '状态' : 'Status'}</small>
           <TaskImmediateSelect
@@ -1436,15 +1437,13 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             onLoadCapabilities={props.onLoadWorkflowCapabilities}
           />
         </span>
-      </div>
-      {props.onUseDigitalTeam ? (
-        <div className="task-detail-arrangement">
+        {props.onUseDigitalTeam ? (
           <span className="task-detail-summary-row">
             <small>{zh ? '数字团队' : 'Digital team'}</small>
             <TaskDigitalTeamSelector task={props.task} client={props.digitalTeamClient ?? null} language={props.language} terminalReadOnly={props.terminalReadOnly} onSelect={props.onUseDigitalTeam} />
           </span>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
       <div className="task-detail-workspace">
         <aside className="task-detail-sidebar" aria-label={zh ? '任务说明与属性' : 'Requirements and properties'}>
           {taskOverview}
