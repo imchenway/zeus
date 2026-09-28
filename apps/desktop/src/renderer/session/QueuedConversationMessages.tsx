@@ -82,7 +82,7 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
   /** 当前语言对应的短文案。 */
   const copy = labels[props.language];
   /** 卡片只展示可安全编辑的普通等待项。 */
-  const queue = useMemo(() => composerQueuedSubmissions(props.state.queue), [props.state.queue]);
+  const queue = useMemo(() => composerQueuedSubmissions(props.state), [props.state.itemOrder, props.state.items, props.state.queue]);
   /** 服务端重排要求携带完整可重排队列，不能只提交当前可见卡片。 */
   const reorderableQueue = useMemo(() => reorderableQueuedSubmissions(props.state.queue), [props.state.queue]);
   /** 当前展开编辑器的提交身份。 */
@@ -195,8 +195,10 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
       </output>
       <ol>
         {queue.map((submission) => {
+          /** 本地待接纳投影只负责稳定首帧位置，服务端身份到达前禁止修改。 */
+          const submissionWritable = writable && !submission.localOnly;
           /** 引导保持可聚焦，禁用原因通过标题和可访问名称说明。 */
-          const steerReason = queuedSteerUnavailableReason(props.state, reorderableQueue, submission, copy);
+          const steerReason = submission.localOnly ? copy.steerUnavailable : queuedSteerUnavailableReason(props.state, reorderableQueue, submission, copy);
           /** 上移只允许与相邻普通排队项交换。 */
           const canMoveUp = canMoveQueueSubmission(reorderableQueue, queue, submission.id, -1);
           /** 下移只允许与相邻普通排队项交换。 */
@@ -260,7 +262,7 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                 )}
                 {editingId === submission.id ? null : (
                   <footer className="session-queued-message-actions">
-                    <button type="button" title={copy.edit} aria-label={copy.edit} onClick={() => startEdit(submission)} disabled={!writable || busy || !props.onEdit}>
+                    <button type="button" title={copy.edit} aria-label={copy.edit} onClick={() => startEdit(submission)} disabled={!submissionWritable || busy || !props.onEdit}>
                       <PencilSimple aria-hidden="true" />
                     </button>
                     <button
@@ -268,9 +270,9 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                       className="session-queued-message-steer"
                       title={steerReason ?? copy.steerHelp}
                       aria-label={`${copy.steer}. ${steerReason ?? copy.steerHelp}`}
-                      aria-disabled={Boolean(!writable || busy || !props.onSendNow || steerReason)}
+                      aria-disabled={Boolean(!submissionWritable || busy || !props.onSendNow || steerReason)}
                       onClick={() => {
-                        if (!writable || busy || !props.onSendNow || steerReason) return;
+                        if (!submissionWritable || busy || !props.onSendNow || steerReason) return;
                         void runAction(submission.id, 'steer', () => props.onSendNow?.(submission.id));
                       }}
                     >
@@ -282,14 +284,14 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                       title={copy.remove}
                       aria-label={copy.remove}
                       onClick={() => void runAction(submission.id, 'delete', () => props.onDelete?.(submission.id))}
-                      disabled={!writable || busy || !props.onDelete}
+                      disabled={!submissionWritable || busy || !props.onDelete}
                     >
                       <Trash aria-hidden="true" />
                     </button>
-                    <button type="button" title={copy.moveUp} aria-label={copy.moveUp} onClick={() => void reorder(submission, -1)} disabled={!writable || busy || !props.onReorder || !canMoveUp}>
+                    <button type="button" title={copy.moveUp} aria-label={copy.moveUp} onClick={() => void reorder(submission, -1)} disabled={!submissionWritable || busy || !props.onReorder || !canMoveUp}>
                       <ArrowUp aria-hidden="true" />
                     </button>
-                    <button type="button" title={copy.moveDown} aria-label={copy.moveDown} onClick={() => void reorder(submission, 1)} disabled={!writable || busy || !props.onReorder || !canMoveDown}>
+                    <button type="button" title={copy.moveDown} aria-label={copy.moveDown} onClick={() => void reorder(submission, 1)} disabled={!submissionWritable || busy || !props.onReorder || !canMoveDown}>
                       <ArrowDown aria-hidden="true" />
                     </button>
                   </footer>

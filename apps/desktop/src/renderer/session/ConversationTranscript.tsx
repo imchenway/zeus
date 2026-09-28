@@ -342,7 +342,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const activeTurnId = props.historyOnly ? null : props.state.activeTurnId;
   const queuedSubmissions = useMemo(() => visibleQueuedSubmissions(props.state.queue), [props.state.queue]);
   /** 输入框卡片接管的提交不能同时出现在会话时间线。 */
-  const composerQueue = useMemo(() => composerQueuedSubmissions(props.state.queue), [props.state.queue]);
+  const composerQueue = useMemo(() => composerQueuedSubmissions(props.state), [props.state.itemOrder, props.state.items, props.state.queue]);
   /** 稳定提交身份覆盖冷开时由持久 submission 重建的本地消息。 */
   const composerQueueSubmissionIds = useMemo(() => new Set(composerQueue.map((submission) => submission.id)), [composerQueue]);
   /** 客户端消息身份覆盖首次提交后尚未取得本地提交身份的乐观消息。 */
