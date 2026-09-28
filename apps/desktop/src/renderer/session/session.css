@@ -6475,7 +6475,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
 .session-codex-parity-v1 .session-plan-summary {
   background: var(--session-canvas);
-  border: 0;
+  /* 计划正文与页面同色时保留主题细边框，避免圆角卡片边缘消失。 */
+  border: 1px solid var(--zeus-card-border, var(--session-line));
   border-radius: 10px;
   box-shadow: none;
   color: var(--session-text);
