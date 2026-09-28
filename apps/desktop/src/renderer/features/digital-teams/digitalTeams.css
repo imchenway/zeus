@@ -481,6 +481,21 @@
   gap: 6px;
 }
 
+/* 节点直接复用完整数字员工表单，窄检查器统一改为单列。 */
+.digital-team-employee-editor {
+  display: grid;
+  min-inline-size: 0;
+  gap: 14px;
+}
+
+.digital-team-inspector :where(.digital-employee-form-grid, .digital-employee-policy-grid, .digital-employee-grant-flow) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.digital-team-inspector .digital-employee-project-form {
+  gap: 16px;
+}
+
 .digital-team-readonly-field {
   display: grid;
   gap: 5px;

@@ -483,7 +483,7 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
             </section>
             <section className="digital-employee-editor-pane" aria-label={zh ? '项目员工配置' : 'Project employee configuration'}>
               {selectedEmployeeId && employeeDraftState ? (
-                <EmployeeEditor draft={employeeDraftState} projectId={props.projectId} skillClient={props.skillClient} language={props.language} deployCommands={deployCommands} capabilities={capabilities} onChange={editEmployee} />
+                <DigitalEmployeeEditor draft={employeeDraftState} projectId={props.projectId} skillClient={props.skillClient} language={props.language} deployCommands={deployCommands} capabilities={capabilities} onChange={editEmployee} />
               ) : (
                 <div className="digital-employee-empty-state">
                   <strong>{zh ? '选择员工查看项目配置' : 'Select an employee to configure'}</strong>
@@ -618,13 +618,14 @@ function SectionTab(props: { selected: boolean; label: string; onClick: () => vo
   );
 }
 
-function EmployeeEditor(props: {
+/** 数字员工所有入口共用同一份项目级配置表单，避免节点维护覆盖副本。 */
+export function DigitalEmployeeEditor(props: {
   draft: DigitalEmployeeDraft;
   projectId: string;
   skillClient: Pick<NativeConversationAppClient, 'loadSkills'> | null;
   language: DigitalEmployeeLanguage;
   deployCommands: CommandDefinition[];
-  capabilities: CodexConversationCapabilities | null;
+  capabilities: Pick<CodexConversationCapabilities, 'models'> | null;
   onChange: (draft: DigitalEmployeeDraft) => void;
 }) {
   const zh = props.language === 'zh-CN';

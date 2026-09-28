@@ -3,6 +3,7 @@ import {
   digitalTeamWorkflowSchemaGeneration,
   validateDigitalTeamWorkflowDefinition,
   normalizeDigitalTeamWorkflowDefinition,
+  type CommandDefinition,
   type DigitalTeamEmployeeNode,
   type DigitalTeamNode,
   type DigitalTeamNodeAttemptRecord,
@@ -27,8 +28,9 @@ import { FormDialog } from '../../ui/FormDialog.js';
 import { MotionPresence } from '../../ui/MotionPresence.js';
 import type { TaskRecord } from '../tasks/taskContracts.js';
 import { DigitalEmployeeAvatar } from '../digital-employees/DigitalEmployeeAvatar.js';
-import { SettingsEditor } from '../digital-employees/TaskWorkPlanPanel.js';
+import { DigitalEmployeeEditor } from '../digital-employees/ProjectDigitalEmployeesPanel.js';
 import type { DigitalEmployeeCapabilitiesSnapshot, DigitalEmployeeRecord } from '../digital-employees/digitalEmployeeContracts.js';
+import { employeeDraft, employeeInput, type DigitalEmployeeDraft } from '../digital-employees/digitalEmployeeUiSupport.js';
 import type { ProjectRecord } from '../projects/projectContracts.js';
 import { type DigitalTeamApiClient, type DigitalTeamRunProjection, type DigitalTeamTemplateSaveInput } from './digitalTeamApiClient.js';
 import { digitalTeamDragMime, isConnectionAllowed, WorkflowCanvas, type DigitalTeamCanvasRuntimeState, type DigitalTeamDragPayload } from './WorkflowCanvas.js';
@@ -109,6 +111,8 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   const [templates, setTemplates] = useState<DigitalTeamWorkflowTemplateRecord[]>([]);
   /** 当前项目的真实员工角色。 */
   const [employees, setEmployees] = useState<DigitalEmployeeRecord[]>([]);
+  /** 数字员工配置复用项目已启用的部署命令。 */
+  const [commands, setCommands] = useState<CommandDefinition[]>([]);
   /** 员工和团队共用实时模型与技能目录。 */
   const [capabilities, setCapabilities] = useState<DigitalEmployeeCapabilitiesSnapshot | null>(null);
   /** 当前项目的运行历史。 */
@@ -151,6 +155,8 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
 
   /** 员工名称索引供画布卡片与检查器复用。 */
   const employeeNames = useMemo(() => new Map(employees.map((employee) => [employee.id, employee.name])), [employees]);
+  /** 角色库只允许新增启用中的员工，已停用员工仍保留在既有节点中供重新配置。 */
+  const enabledEmployees = useMemo(() => employees.filter((employee) => employee.enabled), [employees]);
   /** 共享图校验与当前项目角色核对共同决定模板能否启动。 */
   const validationIssues = useMemo(() => {
     /** 结构问题先由 shared 权威校验器生成。 */
@@ -161,12 +167,12 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
       if (node.type !== 'employee') continue;
       /** 运行要求当前角色既存在又已经完成 Agent 配置。 */
       const employee = employeeById.get(node.data.employeeId);
-      if (!employee) {
+      if (!employee?.enabled) {
         issues.push({ code: 'ZEUS_DIGITAL_TEAM_EMPLOYEE_UNAVAILABLE', message: '员工节点必须绑定当前项目中已启用的真实数字员工。', nodeId: node.id });
       } else if (employee.entrypoint?.kind !== 'agent' || employee.entrypointMigrationState !== 'ready') {
         issues.push({ code: 'ZEUS_DIGITAL_TEAM_EMPLOYEE_NOT_READY', message: '员工节点绑定的角色尚未完成 Agent 配置，不能启动运行。', nodeId: node.id });
-      } else if (node.data.executionMode === 'isolated_write' && (node.data.settings?.permissionMode ?? employee.entrypoint.authorityPolicy.permissionMode) === 'read-only') {
-        issues.push({ code: 'ZEUS_DIGITAL_TEAM_EMPLOYEE_AUTHORITY_INCOMPATIBLE', message: '请在这一步的本次配置中允许执行代码工作。', nodeId: node.id });
+      } else if (node.data.executionMode === 'isolated_write' && employee.entrypoint.authorityPolicy.permissionMode === 'read-only') {
+        issues.push({ code: 'ZEUS_DIGITAL_TEAM_EMPLOYEE_AUTHORITY_INCOMPATIBLE', message: '请在数字员工配置中允许执行代码工作。', nodeId: node.id });
       }
     }
     return issues;
@@ -205,16 +211,18 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
       setLoading(true);
       setError(null);
       try {
-        const [nextTemplates, nextEmployees, nextRuns, nextCapabilities] = await Promise.all([
+        const [nextTemplates, nextEmployees, nextRuns, nextCapabilities, nextCommands] = await Promise.all([
           api.loadDigitalTeamTemplates(projectId),
           api.loadProjectDigitalEmployees(projectId),
           api.loadDigitalTeamRuns(projectId, props.task?.id),
           api.loadDigitalEmployeeCapabilities(),
+          api.loadProjectCommands(projectId),
         ]);
         if (revision !== loadRevisionRef.current) return;
         setTemplates(nextTemplates);
         setCapabilities(nextCapabilities);
-        setEmployees(nextEmployees.filter((employee) => employee.enabled));
+        setEmployees(nextEmployees);
+        setCommands(nextCommands.filter((command) => command.enabled));
         /** 任务入口只展示当前任务运行；团队入口仍展示项目记录。 */
         const visibleRuns = props.task ? nextRuns.filter((run) => run.taskId === props.task!.id) : nextRuns;
         setRuns(visibleRuns);
@@ -348,7 +356,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
       setError(zh ? '请先处理当前未保存修改。' : 'Resolve the current unsaved changes first.');
       return;
     }
-    setDraft(standardTemplateDraft(employees));
+    setDraft(standardTemplateDraft(enabledEmployees));
     setCanvasGeneration((current) => current + 1);
     setSelectedNodeId(null);
     setDirty(true);
@@ -436,7 +444,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   /** 重开恢复最近一次服务端保存的完整画布与视口。 */
   const reopenTemplate = (): void => {
     if (!selectedTemplate) {
-      setDraft(standardTemplateDraft(employees));
+      setDraft(standardTemplateDraft(enabledEmployees));
       setDirty(false);
     } else {
       setDraft(templateDraft(selectedTemplate));
@@ -552,14 +560,21 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
         node={selectedNode}
         definition={draft.definition}
         employees={employees}
+        employeeNames={employeeNames}
+        commands={commands}
         client={props.client}
         capabilities={capabilities}
         projectId={projectId}
+        language={props.language}
         issues={validationIssues.filter((issue) => issue.nodeId === selectedNode?.id)}
         onChange={(node) => replaceNode(draft.definition, node, changeDefinition)}
         onConnect={(source, target) => changeDefinition({ ...draft.definition, edges: [...draft.definition.edges, { id: `edge_${crypto.randomUUID()}`, source, target }] })}
         onDisconnect={(edgeId) => changeDefinition({ ...draft.definition, edges: draft.definition.edges.filter((edge) => edge.id !== edgeId) })}
         onDelete={(nodeId) => removeNode(draft.definition, nodeId, changeDefinition, setSelectedNodeId)}
+        onEmployeeSaved={(employee) => {
+          setEmployees((current) => current.map((candidate) => (candidate.id === employee.id ? employee : candidate)));
+          setStatus(zh ? `数字员工“${employee.name}”已保存。` : `Digital employee “${employee.name}” saved.`);
+        }}
       />
     ) : (
       <RunInspector
@@ -684,7 +699,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                 管理角色与权限
               </Button>
             ) : null}
-            <RolePalette employees={employees} onAdd={(payload) => addNode(payload)} />
+            <RolePalette employees={enabledEmployees} onAdd={(payload) => addNode(payload)} />
           </aside>
 
           <main className="digital-team-canvas-column">
@@ -946,7 +961,7 @@ function RolePalette(props: { employees: DigitalEmployeeRecord[]; onAdd(payload:
         <h2>数字员工</h2>
         <span>{props.employees.length}</span>
       </div>
-      <p className="digital-team-help">拖入画布，或使用“添加”按钮。同一员工可承担多个分工。</p>
+      <p className="digital-team-help">拖入画布，或使用“添加”按钮。同一员工可出现在多个协作节点。</p>
       <div className="digital-team-palette-list">
         {props.employees.length === 0 ? (
           <p role="status">当前项目没有已启用的数字员工。</p>
@@ -976,15 +991,19 @@ function NodeInspector(props: {
   /** 本次配置复用员工目录与编辑器。 */
   client: DashboardClient | null;
   capabilities: DigitalEmployeeCapabilitiesSnapshot | null;
+  commands: CommandDefinition[];
   projectId: string;
+  language: 'zh-CN' | 'en-US';
   node: DigitalTeamNode | null;
   definition: DigitalTeamWorkflowDefinition;
   employees: DigitalEmployeeRecord[];
+  employeeNames: ReadonlyMap<string, string>;
   issues: Array<{ message: string }>;
   onChange(node: DigitalTeamNode): void;
   onConnect(source: string, target: string): void;
   onDisconnect(edgeId: string): void;
   onDelete(nodeId: string): void;
+  onEmployeeSaved(employee: DigitalEmployeeRecord): void;
 }) {
   if (!props.node)
     return (
@@ -995,18 +1014,35 @@ function NodeInspector(props: {
     );
   /** 当前节点供各分支使用。 */
   const node = props.node;
+  /** 员工节点直接读取项目数字员工，不形成节点级配置副本。 */
+  const employee = node.type === 'employee' ? props.employees.find((candidate) => candidate.id === node.data.employeeId) : undefined;
   return (
     <div className="digital-team-inspector-content">
       <div className="digital-team-section-heading">
-        <h2>节点配置</h2>
+        <h2>{node.type === 'employee' ? '数字员工配置' : '节点配置'}</h2>
         <span>{nodeTypeLabel(node.type)}</span>
       </div>
-      <label>
-        <span>名称</span>
-        <input value={node.data.title} maxLength={120} onChange={(event) => props.onChange({ ...node, data: { ...node.data, title: event.currentTarget.value } } as DigitalTeamNode)} />
-      </label>
-      {node.type === 'employee' ? <EmployeeNodeFields node={node} employees={props.employees} onChange={props.onChange} client={props.client} capabilities={props.capabilities} projectId={props.projectId} /> : null}
-      <KeyboardConnectionEditor definition={props.definition} node={node} onConnect={props.onConnect} onDisconnect={props.onDisconnect} />
+      {node.type === 'employee' ? (
+        <EmployeeNodeFields
+          key={`${node.id}:${employee?.id ?? 'missing'}:${employee?.revision ?? 0}`}
+          node={node}
+          employees={props.employees}
+          employee={employee}
+          commands={props.commands}
+          onChange={props.onChange}
+          onEmployeeSaved={props.onEmployeeSaved}
+          client={props.client}
+          capabilities={props.capabilities}
+          projectId={props.projectId}
+          language={props.language}
+        />
+      ) : (
+        <label>
+          <span>名称</span>
+          <input value={node.data.title} maxLength={120} onChange={(event) => props.onChange({ ...node, data: { ...node.data, title: event.currentTarget.value } } as DigitalTeamNode)} />
+        </label>
+      )}
+      <KeyboardConnectionEditor definition={props.definition} employeeNames={props.employeeNames} node={node} onConnect={props.onConnect} onDisconnect={props.onDisconnect} />
       {props.issues.length ? (
         <ul className="digital-team-node-issues">
           {props.issues.map((issue, index) => (
@@ -1023,7 +1059,13 @@ function NodeInspector(props: {
 }
 
 /** 键盘用户通过检查器添加或删除上游依赖，不依赖画布拖线手势。 */
-function KeyboardConnectionEditor(props: { definition: DigitalTeamWorkflowDefinition; node: DigitalTeamNode; onConnect(source: string, target: string): void; onDisconnect(edgeId: string): void }) {
+function KeyboardConnectionEditor(props: {
+  definition: DigitalTeamWorkflowDefinition;
+  employeeNames: ReadonlyMap<string, string>;
+  node: DigitalTeamNode;
+  onConnect(source: string, target: string): void;
+  onDisconnect(edgeId: string): void;
+}) {
   /** 可选上游排除自身、重复边和会形成环路的员工节点。 */
   const candidates = props.definition.nodes.filter((candidate) => isConnectionAllowed(props.definition, candidate.id, props.node.id));
   /** 当前选择随候选变化自动回到第一个合法节点。 */
@@ -1040,7 +1082,11 @@ function KeyboardConnectionEditor(props: { definition: DigitalTeamWorkflowDefini
           <ZeusSelect
             ariaLabel="选择上游节点"
             value={selectedSourceId}
-            options={candidates.map((candidate) => ({ value: candidate.id, label: candidate.data.title, description: nodeTypeLabel(candidate.type) }))}
+            options={candidates.map((candidate) => ({
+              value: candidate.id,
+              label: candidate.type === 'employee' ? (props.employeeNames.get(candidate.data.employeeId) ?? candidate.data.title) : candidate.data.title,
+              description: nodeTypeLabel(candidate.type),
+            }))}
             onChange={setSourceId}
             searchable
             size="regular"
@@ -1056,7 +1102,13 @@ function KeyboardConnectionEditor(props: { definition: DigitalTeamWorkflowDefini
         <ul>
           {incoming.map((edge) => (
             <li key={edge.id}>
-              <span>{props.definition.nodes.find((node) => node.id === edge.source)?.data.title ?? edge.source}</span>
+              <span>
+                {nodeDisplayName(
+                  props.definition.nodes.find((node) => node.id === edge.source),
+                  props.employeeNames,
+                  edge.source,
+                )}
+              </span>
               <Button size="compact" aria-label="删除上游连线" onClick={() => props.onDisconnect(edge.id)}>
                 删除
               </Button>
@@ -1068,14 +1120,18 @@ function KeyboardConnectionEditor(props: { definition: DigitalTeamWorkflowDefini
   );
 }
 
-/** 员工节点配置真实分工、完成标准、交付物与本次运行设置。 */
+/** 员工节点只选择项目数字员工，并直接展示该员工的权威配置。 */
 function EmployeeNodeFields(props: {
   client: DashboardClient | null;
   capabilities: DigitalEmployeeCapabilitiesSnapshot | null;
+  commands: CommandDefinition[];
   projectId: string;
+  language: 'zh-CN' | 'en-US';
   node: DigitalTeamEmployeeNode;
   employees: DigitalEmployeeRecord[];
+  employee: DigitalEmployeeRecord | undefined;
   onChange(node: DigitalTeamNode): void;
+  onEmployeeSaved(employee: DigitalEmployeeRecord): void;
 }) {
   return (
     <>
@@ -1084,61 +1140,121 @@ function EmployeeNodeFields(props: {
         <ZeusSelect
           ariaLabel="选择执行员工"
           value={props.node.data.employeeId}
-          options={props.employees.map((employee) => ({ value: employee.id, label: employee.name, description: employee.role }))}
-          onChange={(employeeId) => props.onChange({ ...props.node, data: { ...props.node.data, employeeId } })}
+          options={props.employees.map((employee) => ({ value: employee.id, label: employee.name, description: employee.enabled ? employee.role : `${employee.role} · 已停用`, disabled: !employee.enabled }))}
+          onChange={(employeeId) => {
+            const employee = props.employees.find((candidate) => candidate.id === employeeId);
+            if (!employee) return;
+            props.onChange({
+              ...props.node,
+              data: {
+                ...props.node.data,
+                title: employee.name,
+                employeeId,
+                executionMode: employee.allowCodeChanges ? 'isolated_write' : 'read_only',
+                settings: undefined,
+              },
+            });
+          }}
           searchable
           size="regular"
         />
       </label>
-      <label>
-        <span>工作方式</span>
-        <ZeusSelect
-          ariaLabel="选择员工工作方式"
-          value={props.node.data.executionMode}
-          options={[
-            { value: 'read_only', label: '分析资料与已有成果' },
-            { value: 'isolated_write', label: '隔离修改代码' },
-          ]}
-          onChange={(executionMode) => props.onChange({ ...props.node, data: { ...props.node.data, executionMode } })}
-          searchable={false}
-          size="regular"
-        />
-      </label>
-      <SettingsEditor
-        value={props.node.data.settings ?? {}}
-        employees={props.employees}
-        allowDelegation={false}
-        models={props.capabilities?.models ?? []}
-        goalsAvailable={props.capabilities?.goals?.enabled === true}
-        skillClient={props.client}
-        projectId={props.projectId}
-        label="本次工作配置"
-        employee={props.employees.find((employee) => employee.id === props.node.data.employeeId)}
-        onChange={(settings) => props.onChange({ ...props.node, data: { ...props.node.data, settings } })}
-      />
-      <label>
-        <span>分工说明</span>
-        <textarea rows={8} maxLength={12000} value={props.node.data.instructions} onChange={(event) => props.onChange({ ...props.node, data: { ...props.node.data, instructions: event.currentTarget.value } })} />
-      </label>
-      <label>
-        <span>完成标准（每行一项）</span>
-        <textarea
-          rows={5}
-          maxLength={12000}
-          value={(props.node.data.acceptanceCriteria ?? []).join('\n')}
-          onChange={(event) => props.onChange({ ...props.node, data: { ...props.node.data, acceptanceCriteria: event.currentTarget.value.split('\n') } })}
-        />
-      </label>
-      <label>
-        <span>预期交付物（每行一项）</span>
-        <textarea
-          rows={5}
-          maxLength={12000}
-          value={(props.node.data.expectedDeliverables ?? []).join('\n')}
-          onChange={(event) => props.onChange({ ...props.node, data: { ...props.node.data, expectedDeliverables: event.currentTarget.value.split('\n') } })}
-        />
-      </label>
+      {props.employee ? (
+        <DigitalEmployeeNodeEditor employee={props.employee} commands={props.commands} client={props.client} capabilities={props.capabilities} projectId={props.projectId} language={props.language} onSaved={props.onEmployeeSaved} />
+      ) : (
+        <p className="digital-team-message is-error" role="alert">
+          当前节点绑定的数字员工不存在。
+        </p>
+      )}
     </>
+  );
+}
+
+/** 节点检查器复用数字员工编辑器，并把保存直接写回项目数字员工。 */
+function DigitalEmployeeNodeEditor(props: {
+  employee: DigitalEmployeeRecord;
+  commands: CommandDefinition[];
+  client: DashboardClient | null;
+  capabilities: DigitalEmployeeCapabilitiesSnapshot | null;
+  projectId: string;
+  language: 'zh-CN' | 'en-US';
+  onSaved(employee: DigitalEmployeeRecord): void;
+}) {
+  /** 节点内的临时编辑草稿不进入团队模板。 */
+  const [draft, setDraft] = useState<DigitalEmployeeDraft>(() => employeeDraft(props.employee));
+  /** 只有真实改动才开放放弃和保存。 */
+  const [changed, setChanged] = useState(false);
+  /** 员工保存与模板保存使用独立忙碌状态。 */
+  const [saving, setSaving] = useState(false);
+  /** 配置错误就地显示，不污染团队模板校验。 */
+  const [employeeError, setEmployeeError] = useState<string | null>(null);
+  /** 当前语言决定复用表单和错误文案。 */
+  const zh = props.language === 'zh-CN';
+
+  /** 保存直接更新权威数字员工，节点不接收任何覆盖字段。 */
+  const saveEmployee = async (): Promise<void> => {
+    if (!props.client || saving || !changed) return;
+    if (!draft.name.trim() || !draft.role.trim()) {
+      setEmployeeError(zh ? '员工名称和岗位不能为空。' : 'Employee name and role are required.');
+      return;
+    }
+    if (!draft.prompt.trim()) {
+      setEmployeeError(zh ? '员工提示词不能为空。' : 'The employee prompt is required.');
+      return;
+    }
+    setSaving(true);
+    setEmployeeError(null);
+    try {
+      const employee = await props.client.updateProjectDigitalEmployee(props.projectId, props.employee.id, props.employee.revision, employeeInput(draft));
+      props.onSaved(employee);
+    } catch (cause) {
+      setEmployeeError(applicationError(cause, zh));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /** 放弃只恢复员工当前已保存配置，不改变节点和连线。 */
+  const discardEmployee = (): void => {
+    setDraft(employeeDraft(props.employee));
+    setChanged(false);
+    setEmployeeError(null);
+  };
+
+  return (
+    <section className="digital-team-employee-editor" aria-label={zh ? '数字员工配置内容' : 'Digital employee configuration'}>
+      <p className="digital-employee-boundary-note">
+        {zh
+          ? '这里直接编辑项目数字员工；保存后其他入口立即读取同一份配置，团队节点不会创建覆盖副本。'
+          : 'This edits the project employee directly. Every entry point reads the same saved configuration, and the team node creates no override.'}
+      </p>
+      <DigitalEmployeeEditor
+        draft={draft}
+        projectId={props.projectId}
+        skillClient={props.client}
+        language={props.language}
+        deployCommands={props.commands}
+        capabilities={props.capabilities}
+        onChange={(next) => {
+          setDraft(next);
+          setChanged(true);
+          setEmployeeError(null);
+        }}
+      />
+      {employeeError ? (
+        <p className="digital-team-message is-error" role="alert">
+          {employeeError}
+        </p>
+      ) : null}
+      <div className="digital-team-inspector-actions">
+        <Button size="compact" disabled={!changed || saving} onClick={discardEmployee}>
+          {zh ? '放弃员工修改' : 'Discard employee changes'}
+        </Button>
+        <Button variant="primary" size="compact" busy={saving} disabled={!props.client || !changed} onClick={() => void saveEmployee()}>
+          {zh ? '保存数字员工' : 'Save employee'}
+        </Button>
+      </div>
+    </section>
   );
 }
 
@@ -1162,7 +1278,7 @@ function ValidationPanel(props: { issues: Array<{ code: string; message: string;
           ))}
         </ul>
       ) : (
-        <span>保存后即可按当前分工开始协作。</span>
+        <span>保存后即可按当前协作关系开始运行。</span>
       )}
     </section>
   );
@@ -1469,6 +1585,12 @@ function removeNode(definition: DigitalTeamWorkflowDefinition, nodeId: string, o
 function writeDragPayload(event: ReactDragEvent<HTMLElement>, payload: DigitalTeamDragPayload): void {
   event.dataTransfer.effectAllowed = 'copy';
   event.dataTransfer.setData(digitalTeamDragMime, JSON.stringify(payload));
+}
+
+/** 节点名称始终优先读取项目数字员工，其他节点继续使用流程内名称。 */
+function nodeDisplayName(node: DigitalTeamNode | undefined, employeeNames: ReadonlyMap<string, string>, fallback: string): string {
+  if (!node) return fallback;
+  return node.type === 'employee' ? (employeeNames.get(node.data.employeeId) ?? node.data.title) : node.data.title;
 }
 
 /** 五类节点的人话标签。 */
