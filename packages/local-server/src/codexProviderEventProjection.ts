@@ -1210,12 +1210,16 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     };
   } else if (event.method === 'thread/settings/updated' && conversation) {
     const settings = isRecord(params.threadSettings) ? params.threadSettings : params;
+    /** 原生通知报告完整协作配置，持久化时只保留稳定的模式枚举。 */
+    const collaborationMode: 'plan' | 'default' | undefined =
+      isRecord(settings.collaborationMode) && (settings.collaborationMode.mode === 'plan' || settings.collaborationMode.mode === 'default') ? settings.collaborationMode.mode : undefined;
     const snapshot = {
       generationId: event.generationId,
       sequence: event.sequence,
       model: requireString(settings.model, 'provider settings model'),
       ...(typeof settings.effort === 'string' ? { effort: settings.effort } : {}),
       ...(Object.prototype.hasOwnProperty.call(settings, 'serviceTier') && (settings.serviceTier === null || typeof settings.serviceTier === 'string') ? { serviceTier: settings.serviceTier } : {}),
+      ...(collaborationMode ? { collaborationMode } : {}),
     };
     options.conversations.upsertProviderSettingsSnapshot(conversation.id, snapshot);
     if (Object.prototype.hasOwnProperty.call(snapshot, 'serviceTier')) {

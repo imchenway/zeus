@@ -253,8 +253,30 @@ export interface CodexThreadSnapshot {
     model: string;
     effort?: string;
     serviceTier?: string | null;
+    /** Provider 当前实际采用的线程协作模式。 */
+    collaborationMode?: 'plan' | 'default';
   };
   [key: string]: unknown;
+}
+
+/** Codex 原生线程与轮次共用的协作模式配置。 */
+export interface CodexCollaborationMode {
+  mode: 'plan' | 'default';
+  settings: {
+    model: string;
+    reasoning_effort: string | null;
+    developer_instructions: string | null;
+  };
+}
+
+/** 幂等同步原生线程协作模式所需的完整上下文。 */
+export interface CodexThreadCollaborationModeInput extends CodexPerformanceTraceContext {
+  threadId: string;
+  /** 只供多世代管理器在重新接管线程时恢复正确工作目录，不进入线协议。 */
+  cwd?: string;
+  /** 仅供适配器确认线程设置 RPC 已写入传输层，不进入线协议。 */
+  requestWritten?: () => void;
+  collaborationMode: CodexCollaborationMode;
 }
 
 export interface CodexTurnStartInput extends CodexPerformanceTraceContext {
@@ -264,7 +286,7 @@ export interface CodexTurnStartInput extends CodexPerformanceTraceContext {
   additionalContext?: CodexBootstrapAdditionalContext;
   /** 仅供适配器确认 JSON-RPC 帧已经成功写入传输层，不进入线协议。 */
   requestWritten?: () => void;
-  collaborationMode?: { mode: 'plan' | 'default'; settings: { model: string; reasoning_effort: string | null; developer_instructions: string | null } };
+  collaborationMode?: CodexCollaborationMode;
   model?: string;
   effort?: string;
   serviceTier?: string | null;
@@ -532,6 +554,8 @@ export interface CodexAppServerManager {
   listThreadItems(input: { threadId: string; turnId: string; cursor?: string | null; limit?: number; sortDirection?: 'asc' | 'desc'; priority?: 'control' }): Promise<CodexThreadItemsPage>;
   listSkills(input: { cwds?: string[]; forceReload?: boolean }): Promise<CodexSkillsListEntry[]>;
   compactThread(input: CodexThreadCompactInput): Promise<void>;
+  /** 在新轮开始前更新 Provider 持久保存的线程协作模式。 */
+  setThreadCollaborationMode(input: CodexThreadCollaborationModeInput): Promise<void>;
   startTurn(input: CodexTurnStartInput): Promise<CodexTurnSnapshot>;
   steerTurn(input: CodexTurnSteerInput): Promise<{ turnId: string }>;
   interruptTurn(input: { threadId: string; turnId: string } & CodexPerformanceTraceContext): Promise<void>;
@@ -1420,6 +1444,19 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     return model;
   }
 
+  /** 在线程设置与轮次启动前统一验证协作模式引用的模型和推理强度。 */
+  function validateCodexCollaborationMode(capabilities: CodexCapabilitiesSnapshot, collaborationMode: CodexCollaborationMode): void {
+    /** 协作模式可以显式选择模型，必须按 Provider 当前目录重新校验。 */
+    const collaborationModel = requireModel(capabilities, collaborationMode.settings.model);
+    /** null 表示沿用该模式的默认推理强度。 */
+    const collaborationEffort = collaborationMode.settings.reasoning_effort;
+    if (collaborationEffort === null || collaborationModel.supportedReasoningEfforts.includes(collaborationEffort)) return;
+    throw Object.assign(new Error(`Configured Codex effort is unavailable: ${collaborationEffort}`), {
+      code: 'ZEUS_CODEX_EFFORT_UNAVAILABLE',
+      supportedEfforts: [...collaborationModel.supportedReasoningEfforts],
+    });
+  }
+
   return {
     refreshModels,
     ensureReady(input) {
@@ -1781,20 +1818,28 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const capabilities = await awaitCapabilities();
       await rpc(capabilities.generationId, 'thread/compact/start', { threadId: input.threadId }, { requestWritten: input.requestWritten, traceIdentity: input.traceIdentity });
     },
+    async setThreadCollaborationMode(input) {
+      /** 线程设置与轮次启动必须使用完全相同的线协议转换和模型能力校验。 */
+      const capabilities = await awaitCapabilities();
+      /** 原生协议使用 `none` 表示关闭推理，产品层继续保留 `off` 术语。 */
+      const collaborationMode = toCodexWireCollaborationMode(input.collaborationMode);
+      validateCodexCollaborationMode(capabilities, collaborationMode);
+      await rpc(
+        capabilities.generationId,
+        'thread/settings/update',
+        {
+          threadId: input.threadId,
+          collaborationMode,
+        },
+        { requestWritten: input.requestWritten, traceIdentity: input.traceIdentity },
+      );
+    },
     async startTurn(input) {
       const capabilities = await awaitCapabilities();
       const modelName = input.model ?? threadModels.get(input.threadId);
       const model = modelName ? requireModel(capabilities, modelName) : null;
       const wireEffort = toCodexWireReasoningEffort(input.effort);
-      const wireCollaborationMode = input.collaborationMode
-        ? {
-            ...input.collaborationMode,
-            settings: {
-              ...input.collaborationMode.settings,
-              reasoning_effort: toCodexWireReasoningEffort(input.collaborationMode.settings.reasoning_effort) ?? null,
-            },
-          }
-        : undefined;
+      const wireCollaborationMode = input.collaborationMode ? toCodexWireCollaborationMode(input.collaborationMode) : undefined;
       if (typeof wireEffort === 'string') {
         const supportedEfforts = model?.supportedReasoningEfforts ?? [];
         if (!model || !supportedEfforts.includes(wireEffort)) {
@@ -1808,16 +1853,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
         if (!model) throw managerError('ZEUS_CODEX_MODEL_UNAVAILABLE', 'Codex service tier validation requires a known model.');
         validateServiceTier(model, input.serviceTier);
       }
-      if (wireCollaborationMode) {
-        const collaborationModel = requireModel(capabilities, wireCollaborationMode.settings.model);
-        const collaborationEffort = wireCollaborationMode.settings.reasoning_effort;
-        if (collaborationEffort !== null && !collaborationModel.supportedReasoningEfforts.includes(collaborationEffort)) {
-          throw Object.assign(new Error(`Configured Codex effort is unavailable: ${collaborationEffort}`), {
-            code: 'ZEUS_CODEX_EFFORT_UNAVAILABLE',
-            supportedEfforts: [...collaborationModel.supportedReasoningEfforts],
-          });
-        }
-      }
+      if (wireCollaborationMode) validateCodexCollaborationMode(capabilities, wireCollaborationMode);
       const sandboxPolicy = input.sandboxPolicy === undefined ? undefined : normalizeTurnSandbox(input.sandboxPolicy);
       const response = asRecord(
         await rpc(
@@ -2320,10 +2356,30 @@ function validateServiceTier(model: CodexModelCapability, serviceTier: string | 
   });
 }
 
+/** 把产品层协作模式转换成 Codex app-server 接受的线协议取值。 */
+function toCodexWireCollaborationMode(collaborationMode: CodexCollaborationMode): CodexCollaborationMode {
+  return {
+    ...collaborationMode,
+    settings: {
+      ...collaborationMode.settings,
+      reasoning_effort: toCodexWireReasoningEffort(collaborationMode.settings.reasoning_effort) ?? null,
+    },
+  };
+}
+
+/** 只接收 Provider 明确报告的协作模式，不根据开发者指令内容反推。 */
+function providerCollaborationMode(response: Record<string, unknown>): 'plan' | 'default' | undefined {
+  /** thread/start 与 thread/resume 都把有效协作模式放在顶层配置字段。 */
+  const collaborationMode = isRecord(response.collaborationMode) ? response.collaborationMode : null;
+  if (!collaborationMode) return undefined;
+  return collaborationMode.mode === 'plan' || collaborationMode.mode === 'default' ? collaborationMode.mode : undefined;
+}
+
 function attachThreadProviderSettings(thread: CodexThreadSnapshot, generationId: string, response: Record<string, unknown>, model: string): CodexThreadSnapshot {
   const effort = typeof response.effort === 'string' ? response.effort : typeof response.reasoningEffort === 'string' ? response.reasoningEffort : undefined;
   const hasServiceTier = Object.prototype.hasOwnProperty.call(response, 'serviceTier');
   const serviceTier = typeof response.serviceTier === 'string' || response.serviceTier === null ? response.serviceTier : undefined;
+  const collaborationMode = providerCollaborationMode(response);
   return {
     ...thread,
     providerSettings: {
@@ -2332,6 +2388,7 @@ function attachThreadProviderSettings(thread: CodexThreadSnapshot, generationId:
       model,
       ...(effort ? { effort } : {}),
       ...(hasServiceTier && serviceTier !== undefined ? { serviceTier } : {}),
+      ...(collaborationMode ? { collaborationMode } : {}),
     },
   };
 }

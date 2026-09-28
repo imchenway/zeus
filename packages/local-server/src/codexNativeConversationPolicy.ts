@@ -183,7 +183,7 @@ export function developerInstructionsFor(context: ConversationDispatchContext, b
 
 /** 默认执行模式的过程清单规则；不得写入线程级指令或计划模式模板。 */
 export function defaultModeDeveloperInstructions(): string {
-  return '任务包含两个及以上有意义的实施或验证步骤时，使用 update_plan 维护本轮开发计划：开始前列出步骤，进展后及时更新，仅把实际完成的步骤标记为 completed，未完成步骤保持真实状态；单步任务不要创建计划。';
+  return '当前轮次为默认执行模式，Plan Mode 已明确结束，可以按用户要求实施。任务包含两个及以上有意义的实施或验证步骤时，使用 update_plan 维护本轮开发计划：开始前列出步骤，进展后及时更新，仅把实际完成的步骤标记为 completed，未完成步骤保持真实状态；单步任务不要创建计划。';
 }
 
 export function permissionModeFromValue(value: unknown, fallback: ConversationPermissionMode): ConversationPermissionMode {

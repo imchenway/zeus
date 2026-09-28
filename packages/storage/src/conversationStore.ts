@@ -253,6 +253,8 @@ export interface ConversationProviderSettingsSnapshot extends ProviderSequenceSn
   model: string;
   effort?: string;
   serviceTier?: string | null;
+  /** Provider 线程最近明确回报的实际协作模式。 */
+  collaborationMode?: 'plan' | 'default';
 }
 
 export interface ConversationProviderTokenUsageSnapshot extends ProviderSequenceSnapshot {
@@ -2940,12 +2942,13 @@ function validateProviderSettingsSnapshot(snapshot: unknown): asserts snapshot i
   assertProviderSequenceSnapshot(snapshot);
   const candidate = snapshot as ProviderSequenceSnapshot & Record<string, unknown>;
   assertNoSecretLikeProviderKeys(candidate);
-  assertOnlyKeys(candidate, ['generationId', 'sequence', 'model', 'effort', 'serviceTier'], 'provider settings snapshot');
+  assertOnlyKeys(candidate, ['generationId', 'sequence', 'model', 'effort', 'serviceTier', 'collaborationMode'], 'provider settings snapshot');
   if (
     typeof candidate.model !== 'string' ||
     !candidate.model.trim() ||
     (candidate.effort !== undefined && typeof candidate.effort !== 'string') ||
-    (candidate.serviceTier !== undefined && candidate.serviceTier !== null && typeof candidate.serviceTier !== 'string')
+    (candidate.serviceTier !== undefined && candidate.serviceTier !== null && typeof candidate.serviceTier !== 'string') ||
+    (candidate.collaborationMode !== undefined && candidate.collaborationMode !== 'plan' && candidate.collaborationMode !== 'default')
   ) {
     throw new Error('Invalid provider settings snapshot');
   }
