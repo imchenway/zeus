@@ -9,6 +9,8 @@ private let computerOutputLock = NSLock()
 private let applicationSwitchTabKeyCode: UInt16 = 48
 /** IOKit 仍会发布 AppKit 未命名的 NX_ZOOM 第 28 类事件，必须和现代 Magnify 一并让权。 */
 private let legacyZoomEventMask = NSEvent.EventTypeMask(rawValue: 1 << 28)
+/** 小于基本可交互尺寸的 AppKit 内部表面不构成可独立控制窗口。 */
+private let minimumControllableWindowSize = CGSize(width: 44, height: 32)
 
 /** 返回当前控制台是否锁屏；锁屏期间禁止继续使用不可见的旧观察。 */
 func computerSessionScreenIsLocked() -> Bool {
@@ -150,6 +152,8 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
     private var resumeItem: NSMenuItem?
     /** 同一目标应用本次可见的窗口，包括独立菜单和文件选择框。 */
     private(set) var availableWindows: [[String: Any]] = []
+    /** 最近一次明确观察时已有的普通窗口；动作后新增窗口必须重新选择，不能暗中转移控制。 */
+    private var observedWindowIds = Set<CGWindowID>()
 
     /** 原生进程身份用于跨轮次互斥；停止后立即释放应用占用。 */
     var targetProcessIdentifier: pid_t? {
@@ -260,6 +264,7 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
             guard target?.windowId == next.windowId, target?.pid == next.pid else {
                 throw ServiceFailure(code: "ZEUS_COMPUTER_OBSERVATION_REQUIRED", message: "目标窗口已变化，请重新观察。")
             }
+            observedWindowIds = Set(windows.filter { $0.windowLayer == 0 }.map(\.windowID))
             systemUnavailable = false
             if !paused { needsObservation = false }
         }
@@ -273,6 +278,70 @@ final class ComputerControlSession: NSObject, SCStreamOutput, SCStreamDelegate, 
             self.showControls()
         }
         return next
+    }
+
+    /** 返回动作之后新增的普通窗口；Sheet 仍归原窗口 AX 树处理，菜单和浮层不触发切换。 */
+    func newWindowsSinceObservation(pid: pid_t, sessionId: String) throws -> [[String: Any]] {
+        let baseline = try lock.withLock { () throws -> Set<CGWindowID> in
+            guard !stopped, let target, target.pid == pid, target.sessionId == sessionId else {
+                throw ServiceFailure(code: "ZEUS_COMPUTER_OBSERVATION_REQUIRED", message: "请先重新观察当前应用窗口。")
+            }
+            return observedWindowIds
+        }
+        guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return [] }
+        return windows.compactMap { window -> [String: Any]? in
+            guard (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
+                  (window[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
+                  let identifier = (window[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
+                  !baseline.contains(identifier),
+                  let bounds = window[kCGWindowBounds as String] as? [String: Any],
+                  let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary),
+                  frame.width >= minimumControllableWindowSize.width, frame.height >= minimumControllableWindowSize.height
+            else { return nil }
+            /** AppKit 可能短暂创建无 AXWindow 的内部小窗，不能把它当成需要用户选择的新窗口。 */
+            let title = window[kCGWindowName as String] as? String ?? ""
+            guard isAccessibilityWindow(pid: pid, frame: frame, title: title) else { return nil }
+            return [
+                "window_id": identifier,
+                "title": title,
+                "frame": ["x": frame.minX, "y": frame.minY, "width": frame.width, "height": frame.height],
+            ]
+        }.sorted { ($0["window_id"] as? CGWindowID ?? 0) < ($1["window_id"] as? CGWindowID ?? 0) }
+    }
+
+    /** 只接纳辅助功能层公开的真实窗口，并容忍系统截图裁掉的原生边框。 */
+    private func isAccessibilityWindow(pid: pid_t, frame: CGRect, title: String) -> Bool {
+        /** 应用窗口数组排除工具提示、屏幕共享徽标等内部 WindowServer 表面。 */
+        let application = AXUIElementCreateApplication(pid)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &value) == .success,
+              let windows = value as? [AXUIElement] else { return false }
+        return windows.contains { window in
+            var subroleValue: CFTypeRef?
+            _ = AXUIElementCopyAttributeValue(window, kAXSubroleAttribute as CFString, &subroleValue)
+            /** 只把标准窗口和独立对话框视作控制目标；内部浮层继续属于当前窗口。 */
+            guard ["AXStandardWindow", "AXDialog", "AXSystemDialog"].contains(subroleValue as? String ?? "") else { return false }
+            var positionValue: CFTypeRef?
+            var sizeValue: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &positionValue) == .success,
+                  AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeValue) == .success,
+                  let positionValue, let sizeValue,
+                  CFGetTypeID(positionValue) == AXValueGetTypeID(), CFGetTypeID(sizeValue) == AXValueGetTypeID() else { return false }
+            var position = CGPoint.zero
+            var size = CGSize.zero
+            guard AXValueGetValue(positionValue as! AXValue, .cgPoint, &position), AXValueGetValue(sizeValue as! AXValue, .cgSize, &size) else { return false }
+            /** ScreenCaptureKit 和 AX 对每条窗框最多允许三十二逻辑像素误差。 */
+            let candidate = CGRect(origin: position, size: size)
+            let tolerance = 32.0
+            guard abs(candidate.minX - frame.minX) <= tolerance,
+                  abs(candidate.minY - frame.minY) <= tolerance,
+                  abs(candidate.maxX - frame.maxX) <= tolerance,
+                  abs(candidate.maxY - frame.maxY) <= tolerance else { return false }
+            var titleValue: CFTypeRef?
+            _ = AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleValue)
+            let accessibilityTitle = titleValue as? String ?? ""
+            return accessibilityTitle.isEmpty || title.isEmpty || accessibilityTitle == title
+        }
     }
 
     /** 工具线程的输入闸门；窗口关闭、移动、暂停或撤销时均不投递输入。 */

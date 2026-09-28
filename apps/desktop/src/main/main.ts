@@ -97,7 +97,7 @@ import { executionHostProtocolVersion } from './executionHostProtocol.js';
 const resourceFileSystem = createRequire(import.meta.url)('original-fs') as typeof import('node:fs');
 /** 启动时固定资源包身份，运行期间禁止混用替换后的网页与旧进程。 */
 const startupResourceIdentity = app.isPackaged ? readPackagedResourceIdentity() : null;
-/** Computer Use 的后台启动意图只影响首次展示，读取后立即移除，避免传给 Core 或后续重启。 */
+/** Computer Use 的后台启动意图覆盖完整首次启动周期，初始化后的二次展示也不能抢前台。 */
 let pendingComputerUseBackgroundLaunch = process.env.ZEUS_COMPUTER_BACKGROUND_LAUNCH === '1';
 delete process.env.ZEUS_COMPUTER_BACKGROUND_LAUNCH;
 let mainWindow: BrowserWindow | undefined;
@@ -602,20 +602,25 @@ function revealMainWindow(window: BrowserWindow): void {
   app.focus({ steal: true });
 }
 
-/** Computer Use 冷启动只把首个窗口留在当前前台应用之后，不抢键盘焦点或切换活跃应用。 */
+/** Computer Use 冷启动只保留可捕获窗口；重复调用不得再次抬升已经显示的后台窗口。 */
 function revealMainWindowInBackground(window: BrowserWindow): void {
   if (window.isDestroyed()) return;
   ensureMacOSDockIconVisible();
-  window.showInactive();
+  if (!window.isVisible()) window.showInactive();
 }
 
 /** macOS 再次点击 Dock/Finder 或第二个进程启动时，优先恢复已有窗口；没有窗口才新建。 */
 async function revealOrCreateMainWindow(): Promise<void> {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    revealMainWindow(mainWindow);
+    /** 初始化完成后的第二次展示仍属于同一次 Computer Use 冷启动，消费后用户操作恢复正常前置行为。 */
+    const revealInBackground = pendingComputerUseBackgroundLaunch;
+    pendingComputerUseBackgroundLaunch = false;
+    if (revealInBackground) revealMainWindowInBackground(mainWindow);
+    else revealMainWindow(mainWindow);
     return;
   }
   await createWindow();
+  pendingComputerUseBackgroundLaunch = false;
 }
 
 function normalizeDragPoint(point: unknown): { screenX: number; screenY: number } | undefined {
@@ -847,10 +852,8 @@ async function createWindow(): Promise<void> {
     revealMainWindow(mainWindow);
     return;
   }
-  /** 每个进程只允许最先创建的主窗口消费后台展示意图，后续用户窗口恢复正常前置行为。 */
+  /** 首个窗口读取但不消费后台意图；启动协调器完成初始化后的二次展示仍需使用它。 */
   const revealInBackground = pendingComputerUseBackgroundLaunch;
-  pendingComputerUseBackgroundLaunch = false;
-
   /** 资源校验必须先于原生窗口创建和偏好恢复。 */
   const rendererUrl = rendererEntryUrl();
   const persistedWindowState = readPersistedMainWindowState(mainWindowStatePath());
