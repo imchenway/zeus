@@ -1,5 +1,5 @@
 import type { DigitalEmployeeAvatarId } from '@zeus/shared';
-import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import type {
   DigitalEmployeeAutomationActionKind,
   DigitalEmployeeAutomationTriggerKind,
@@ -226,7 +226,7 @@ export function nullable(value: string): string | null {
 
 /** 显示当前语言的原因，并保留可展开的原始详情。 */
 export function errorMessage(error: unknown, language: 'zh-CN' | 'en'): string {
-  return reportApplicationError(error, { language });
+  return formatVisibleApplicationError(error, language);
 }
 
 export function formatDateTime(value: string | null | undefined, language: DigitalEmployeeLanguage): string {

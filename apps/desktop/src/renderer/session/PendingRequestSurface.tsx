@@ -12,7 +12,7 @@ import { parseCanonicalRequestUserInputQuestions } from '@zeus/shared';
 import { openExternalHttpsUrlInMain } from '../appShellBridge.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { FullAccessConfirmation } from './PermissionModeControl.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import type { NativeConversationAttachment, NativePendingRequest, NativePermissionMode } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { autosizeTextarea } from './textareaAutosize.js';
@@ -163,16 +163,6 @@ export function PendingRequestSurface(props: PendingRequestSurfaceProps) {
   const decisions = supportedRequestDecisions(props.request);
   const autofocusDecision = defaultAutofocusDecision(decisions);
 
-  useApplicationErrorDialog(props.error, {
-    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-  });
-  useApplicationErrorDialog(mcpUrlError, {
-    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-  });
-  useApplicationErrorDialog(kind === 'unknown' ? copy.unsupportedHelp : null, {
-    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-  });
-
   useEffect(() => {
     if (props.autoFocus === false) return;
     firstControlRef.current?.focus();
@@ -255,6 +245,11 @@ export function PendingRequestSurface(props: PendingRequestSurfaceProps) {
             <p className="session-request-invalid" role="alert">
               <strong>{copy.invalidMcp}</strong>
               <span>{copy.invalidMcpHelp}</span>
+            </p>
+          ) : null}
+          {props.error || mcpUrlError ? (
+            <p className="session-request-invalid" role="alert">
+              <VisibleApplicationError error={props.error ?? mcpUrlError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
             </p>
           ) : null}
           <div className="session-request-actions">
@@ -377,6 +372,11 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
           </span>
         </header>
         <h2 className="session-compact-approval-question zeus-fidelity-text">{props.kind === 'command' ? copy.commandQuestion : copy.fileQuestion}</h2>
+        {props.error ? (
+          <p className="session-request-invalid" role="alert">
+            <VisibleApplicationError error={props.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+          </p>
+        ) : null}
         {props.approvalIssue ? (
           <p className="session-request-invalid" role="alert">
             <strong>{props.approvalIssue.title}</strong>
@@ -626,10 +626,6 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
   const actionsPlacement = currentQuestion.kind === 'freeform' ? 'freeform' : currentQuestion.allowOther ? 'other' : 'options';
   /** 单选预设答案点击即提交；自由输入和多选仍保留提交按钮。 */
   const showSubmitAction = currentQuestion.kind !== 'single' || otherSelected;
-
-  useApplicationErrorDialog(resourceError, {
-    language: zh ? 'zh-CN' : 'en',
-  });
 
   const inputResources = useConversationInputResources({
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
@@ -893,6 +889,11 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
         ) : null}
         {remainingMs !== null && !snoozedRef.current ? <small>{zh ? `${Math.max(0, Math.ceil(remainingMs / 1_000))} 秒后自动跳过` : `Auto-skip in ${Math.max(0, Math.ceil(remainingMs / 1_000))}s`}</small> : null}
       </p>
+      {props.error || resourceError ? (
+        <p className="session-request-invalid" role="alert">
+          <VisibleApplicationError error={props.error ?? resourceError} language={zh ? 'zh-CN' : 'en'} />
+        </p>
+      ) : null}
       <form
         className="session-question-panel session-rui-request"
         aria-busy={responding || undefined}

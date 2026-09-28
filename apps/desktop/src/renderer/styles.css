@@ -10663,6 +10663,14 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   position: relative;
 }
 
+/* 归档错误留在对应会话行，跨越标题和操作两列。 */
+.macos-ai-app .session-conversation-row-error {
+  color: var(--zeus-danger);
+  font-size: 11px;
+  grid-column: 1 / -1;
+  padding: 0 8px 4px 32px;
+}
+
 .macos-ai-app .session-conversation-archive-button {
   align-items: center;
   background: transparent;

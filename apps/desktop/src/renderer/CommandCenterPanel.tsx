@@ -29,7 +29,7 @@ import {
 } from './apiClient.js';
 import { Button } from './ui/Button.js';
 import { ModalPortal } from './ui/ModalPortal.js';
-import { useApplicationErrorDialog } from './ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError } from './ui/ApplicationErrorDialog.js';
 import './commandCenter.css';
 import { ProjectTerminalPanel } from './features/runtime/ProjectTerminalPanel.js';
 
@@ -250,9 +250,6 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  useApplicationErrorDialog(error, {
-    language: zh ? 'zh-CN' : 'en',
-  });
   const [notice, setNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState<CommandDefinition | 'new' | null>(null);
   const [draft, setDraft] = useState<CommandDraft>(emptyDraft);
@@ -691,6 +688,11 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
         <div className="command-center-live" role="status" aria-live="polite">
           {notice ? <span>{notice}</span> : null}
         </div>
+        {error ? (
+          <p className="command-center-empty" role="alert">
+            <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
+          </p>
+        ) : null}
 
         <section className="command-definition-list" aria-label={zh ? '命令定义列表' : 'Command definitions'}>
           {loading ? (

@@ -17,7 +17,7 @@ import type {
 } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
-import { reportApplicationError, useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskGitConflictWorkspace } from './TaskGitConflictWorkspace.js';
 import { TaskGitDiffTable } from './TaskGitDiffTable.js';
@@ -199,9 +199,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
 
   const selectedWorkspace = workspaceDetails[workspaceId] ?? null;
   const workspaceError = selectedWorkspace?.comparisonError ?? selectedWorkspace?.reviewError ?? null;
-  useApplicationErrorDialog(error ?? workspaceError, {
-    language: zh ? 'zh-CN' : 'en',
-  });
   /** 显式目标统一应用到全部仓库，不存在时也不回退为来源或其他待办目标。 */
   const targetBranchesByWorkspace = useMemo(() => Object.fromEntries((workspaceIndex?.items ?? []).map((workspace) => [workspace.id, selectedTargetBranch || workspace.sourceBranch])), [workspaceIndex?.items, selectedTargetBranch]);
   /** 汇总勾选仓库已有的本地分支；增减仓库时保留已选目标，缺失情况单独提示。 */
@@ -1000,6 +997,12 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
 
         <div className={`task-git-merge-status${feedback ? ` is-${feedback.tone}` : ''}`}>{feedback && (!feedback.action || conflictWorkspaceOpen) ? <DeliveryFeedbackNotice feedback={feedback} zh={zh} /> : null}</div>
 
+        {workspaceIndex && (error || workspaceError) ? (
+          <div className="task-git-merge-status is-error" role="alert">
+            <VisibleApplicationError error={error ?? workspaceError} language={zh ? 'zh-CN' : 'en'} />
+          </div>
+        ) : null}
+
         <div className="task-git-merge-content">
           {loading ? (
             <InitialLoadState zh={zh} />
@@ -1751,7 +1754,7 @@ function isTargetHeadChanged(error: unknown): boolean {
 }
 
 function errorMessage(error: unknown, zh: boolean): string {
-  return reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' });
+  return formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en');
 }
 
 function isTargetBranchDirty(error: unknown): boolean {

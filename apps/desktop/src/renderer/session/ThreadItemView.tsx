@@ -22,7 +22,7 @@ import {
 } from '@zeus/shared';
 import { ConversationGeneratedImage, ConversationPendingAttachmentImages, ConversationResourceCards, isImageResource, isPendingImageAttachment } from './ConversationResources.js';
 import { ResponseSelectionActions } from './ResponseSelectionActions.js';
-import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ConversationMarkdown, conversationMarkdownPhaseForStatus, type StructuredMessageToken } from './ConversationMarkdown.js';
 import { McpAppFrame, type McpAppToolCall, type McpAppToolResult } from './McpAppFrame.js';
 import { AnsweredRequestHistory, type AnsweredRequestHistoryProps } from './AnsweredRequestHistory.js';
@@ -434,14 +434,8 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const [editing, setEditing] = useState(false);
   const [editDraft, setEditDraft] = useState('');
   const [editError, setEditError] = useState<unknown>(null);
-  useApplicationErrorDialog(editError, {
-    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-  });
   const [queuedAction, setQueuedAction] = useState<'steer' | 'delete' | null>(null);
   const [queuedActionError, setQueuedActionError] = useState<unknown>(null);
-  useApplicationErrorDialog(queuedActionError, {
-    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-  });
   const [submittingEdit, setSubmittingEdit] = useState(false);
   const [retryingExpert, setRetryingExpert] = useState(false);
   const [markdownSettled, setMarkdownSettled] = useState(false);
@@ -626,6 +620,11 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
             onChange={(event) => setEditDraft(event.currentTarget.value)}
             onKeyDown={handleEditKeyDown}
           />
+          {editError ? (
+            <span role="alert">
+              <VisibleApplicationError error={editError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+            </span>
+          ) : null}
           <footer>
             <span />
             <button type="button" onClick={cancelEditing} disabled={submittingEdit}>
@@ -843,6 +842,11 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
                 </button>
               ) : null}
             </div>
+          ) : null}
+          {queuedActionError ? (
+            <span role="alert">
+              <VisibleApplicationError error={queuedActionError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+            </span>
           ) : null}
         </div>
       ) : null}

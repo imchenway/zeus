@@ -28,7 +28,7 @@ import type { ConversationFileIconKind, ConversationFileLocation, ConversationOp
 import { listConversationResourceOpenTargetsInMain } from '../appShellBridge.js';
 import type { NativeConversationAttachment } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
-import { formatVisibleApplicationError, useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 export interface ConversationResourceInteraction {
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
@@ -168,10 +168,6 @@ export function ConversationInlineResource(
   const location = rawLocation && !label.endsWith(rawLocation) ? rawLocation : null;
   const title = props.resource.kind === 'file' ? props.resource.projectRelativePath : props.resource.kind === 'website' ? props.resource.url : props.resource.displayName;
 
-  useApplicationErrorDialog(error, {
-    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-  });
-
   async function open(): Promise<void> {
     if (!props.onOpenResource || busy) return;
     setBusy(true);
@@ -192,6 +188,7 @@ export function ConversationInlineResource(
         <span>{label}</span>
         {location ? <span className="session-inline-resource-location">{location}</span> : null}
       </button>
+      {error ? <VisibleApplicationError error={error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} /> : null}
     </span>
   );
 }
@@ -400,10 +397,6 @@ function ConversationResourceCard(
   const [error, setError] = useState<unknown>(null);
   const subtitle = resourceSubtitle(props.resource, props.language);
 
-  useApplicationErrorDialog(error, {
-    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-  });
-
   async function open(target = defaultOpenTarget(props.resource)): Promise<void> {
     if (!props.onOpenResource || busy) return;
     setBusy(true);
@@ -429,6 +422,7 @@ function ConversationResourceCard(
         </span>
       </button>
       <OpenWithMenu resource={props.resource} language={props.language} disabled={busy} onOpen={(target) => open(target)} />
+      {error ? <VisibleApplicationError error={error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} /> : null}
     </article>
   );
 }
@@ -444,10 +438,6 @@ export function OpenWithMenu(props: { label?: string; applicationsOnly?: boolean
   const [targets, setTargets] = useState<ConversationResourceOpenTarget[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [menuPosition, setMenuPosition] = useState<{ left: number; top: number } | null>(null);
-
-  useApplicationErrorDialog(error, {
-    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-  });
 
   useEffect(() => {
     if (!open) return;
@@ -576,6 +566,11 @@ export function OpenWithMenu(props: { label?: string; applicationsOnly?: boolean
                 style={menuPositionStyle(menuPosition)}
               >
                 {loading ? <span className="session-open-with-status">{props.language === 'zh-CN' ? '正在检测应用…' : 'Detecting apps…'}</span> : null}
+                {error ? (
+                  <span className="session-open-with-status" role="alert">
+                    <VisibleApplicationError error={error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+                  </span>
+                ) : null}
                 {!loading && !error
                   ? targets.map((target) => (
                       <button

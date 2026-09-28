@@ -5,7 +5,7 @@ import { EyeSlashIcon } from '@phosphor-icons/react/dist/csr/EyeSlash';
 import type { SaveZentaoInstanceRequest, ZentaoInstanceRecord, ZentaoInstanceVerifyResult } from '@zeus/shared';
 import type { DashboardClient } from '../apiClient.js';
 import { Button } from '../ui/Button.js';
-import { reportApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 interface ZentaoInstanceDraft {
   id: string | null;
@@ -55,7 +55,7 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
       })
       .catch((error: unknown) => {
         if (!active) return;
-        setMessage(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
+        setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
         setStatus('idle');
       });
     return () => {
@@ -108,7 +108,7 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
       setPasswordVisible(true);
       if (result.password === null) setMessage(zh ? '当前实例未保存密码。' : 'No password is saved for this instance.');
     } catch (error) {
-      if (request === passwordRequest.current) setMessage(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
+      if (request === passwordRequest.current) setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     } finally {
       if (request === passwordRequest.current) setStatus('idle');
     }
@@ -143,7 +143,7 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
       setSaveState('saved');
     } catch (error) {
       setSaveState('failed');
-      setMessage(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
+      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     } finally {
       savingRef.current = false;
       setStatus('idle');
@@ -161,10 +161,10 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
           ? zh
             ? '已通过禅道登录验证。'
             : 'ZenTao sign-in verified.'
-          : reportApplicationError({ ...result, cause: result.cause ?? { code: `ZEUS_ZENTAO_${result.code.toUpperCase()}`, message: result.message } }, { language: zh ? 'zh-CN' : 'en' }),
+          : formatVisibleApplicationError({ ...result, cause: result.cause ?? { code: `ZEUS_ZENTAO_${result.code.toUpperCase()}`, message: result.message } }, zh ? 'zh-CN' : 'en'),
       );
     } catch (error) {
-      setMessage(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
+      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     } finally {
       setStatus('idle');
     }
@@ -178,7 +178,7 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
       await reloadInstances(draft.id);
       setMessage(zh ? '密码已从钥匙串清除，解析将回退为浏览器登录。' : 'Password cleared from Keychain. Parsing will fall back to browser sign-in.');
     } catch (error) {
-      setMessage(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
+      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     } finally {
       setStatus('idle');
     }
@@ -196,7 +196,7 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
       setConfirmDelete(false);
       setMessage(zh ? '禅道实例已删除。' : 'ZenTao instance deleted.');
     } catch (error) {
-      setMessage(reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' }));
+      setMessage(formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en'));
     } finally {
       setStatus('idle');
     }

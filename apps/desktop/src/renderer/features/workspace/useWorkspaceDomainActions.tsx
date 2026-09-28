@@ -60,7 +60,7 @@ import {
 } from '../../task/TaskModelPushPendingWorkspace.js';
 import { parseTaskAttachments, type TaskResourceAuthorizationResult, type TaskResourcePayload } from '../../task/taskAttachments.js';
 import { normalizeTaskTableEnumSortOrders, resolveTaskManagementStatus } from '../../task/taskWorkspaceModel.js';
-import { modelSetupRequestedEvent, reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
+import { modelSetupRequestedEvent } from '../../ui/ApplicationErrorDialog.js';
 import { reportStorageReadOnlyFault } from '../../storageRecoveryError.js';
 import { readSkillWorkflowDefault, workflowSkillSelectionRequest } from '../skills/skillWorkflowPreferences.js';
 import { createSessionOperationId } from '../../sessionOperationIdentity.js';
@@ -145,6 +145,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     appShellSettings,
     appShellSettingsRef,
     archivedConversationRefreshPromiseRef,
+    loadArchivedConversations,
     codeWorkspacePreferenceTimerRef,
     conversationNotificationRef,
     createProjectConfigForm,
@@ -190,8 +191,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setActiveNavTarget,
     setActiveProjectSection,
     setAppShellSettings,
-    setArchivedConversationLoadState,
-    setArchivedConversations,
     setArchivedProjects,
     setCodexUsageRevision,
     setConversationDraftOpen,
@@ -1444,14 +1443,10 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     if (!client) return;
     if (archivedConversationRefreshPromiseRef.current) return archivedConversationRefreshPromiseRef.current;
     const refresh = (async () => {
-      setArchivedConversationLoadState('loading');
       try {
-        const result = await client.loadArchivedConversations();
-        setArchivedConversations(result.choices);
-        setArchivedConversationLoadState('ready');
-      } catch (error) {
-        setArchivedConversationLoadState('error');
-        recordLocalError('archived-conversation-load', error);
+        await loadArchivedConversations();
+      } catch {
+        // 归档查询仓库已经保留失败原因；设置页就地展示并提供重试，不升级为全局弹窗。
       }
     })();
     archivedConversationRefreshPromiseRef.current = refresh;
@@ -1513,27 +1508,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   async function archiveConversation(conversation: NativeConversationChoice): Promise<void> {
     const client = props.nativeConversationClient;
     if (!client) return;
-    try {
-      await client.archiveNativeConversation(conversation.projectId, conversation.id);
-    } catch (error) {
-      /** 归档失败始终保留列表项；检查只核对已有状态，不再次归档或发送。 */
-      const language = appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en';
-      reportApplicationError(error, {
-        language,
-        title: language === 'zh-CN' ? `归档未完成：${conversation.title}` : `Archive not completed: ${conversation.title}`,
-        action:
-          describeUserFacingError(error, language).action === 'check'
-            ? {
-                label: language === 'zh-CN' ? '检查状态' : 'Check status',
-                onClick: async () => {
-                  if (!(await selectNativeConversation(conversation))) return;
-                  await client.recoverNativeQueue(conversation.projectId, conversation.id, 'check');
-                },
-              }
-            : undefined,
-      });
-      return;
-    }
+    /** 会话树负责把失败原因留在对应行；请求成功前不会移除原会话。 */
+    await client.archiveNativeConversation(conversation.projectId, conversation.id);
     removeConfirmedArchivedConversation(conversation.id, conversation.projectId, conversation.taskId ?? null, conversation.navigationId ?? conversation.id);
     void (conversation.taskId ? refreshNativeConversationChoices(conversation.taskId) : refreshNativeProjectConversationChoices(conversation.projectId)).catch(() => undefined);
     void refreshArchivedConversations();
@@ -1546,8 +1522,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     try {
       await client.restoreConversationArchive(conversation.projectId, conversation.id);
       await Promise.all([conversation.taskId ? refreshNativeConversationChoices(conversation.taskId) : refreshNativeProjectConversationChoices(conversation.projectId), refreshArchivedConversations()]);
-    } catch (error) {
-      recordLocalError('conversation-restore', error);
     } finally {
       setRestoringArchivedConversationId(null);
     }
@@ -2907,18 +2881,13 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   function failTaskModelPushDispatch(pending: TrackedTaskModelPushState, error: unknown): void {
     const message = redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage));
     taskModelPushDispatchingTaskIdsRef.current.delete(pending.task.id);
-    // 迟到的登录失败只留在原任务，不能把已经切换的工作面导航回来。
-    if (selectedNativeConversationIdRef.current !== (pending.choice.navigationId ?? pending.choice.id)) {
-      failTaskModelPushDispatch(pending, new Error('ZEUS_CODEX_LOGIN_REQUIRED'));
-      return;
-    }
+    // 迟到的失败按任务身份回写，不把已经切换的工作面导航回来。
     updateTaskModelPushPendingByTask((current) => {
       const active = current[pending.task.id];
       if (active?.request.idempotencyKey !== pending.request.idempotencyKey) return current;
       return { ...current, [pending.task.id]: { ...failTaskModelPushPendingState(active, message, error), origin: active.origin } };
     });
     setTaskModelPushAnnouncement(message);
-    reportApplicationError(error, { language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en' });
   }
 
   function retryTaskModelPush(taskId: string): void {

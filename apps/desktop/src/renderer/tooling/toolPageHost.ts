@@ -2,7 +2,7 @@
 export { MotionPresence } from '../ui/MotionPresence.js';
 /** 工具页通过宿主识别内部临时工作区，沿用共享标识而不直接依赖系统包。 */
 export { temporaryWorkspaceId } from '@zeus/shared';
-export { VisibleApplicationError, reportApplicationError } from '../ui/ApplicationErrorDialog.js';
+export { formatVisibleApplicationError, VisibleApplicationError, reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 export { type CodexTaskPushModelCapability } from '../session/sessionTypes.js';
 export { type DashboardClient, type ProjectRecord } from '../apiClient.js';
 export { Button } from '../ui/Button.js';

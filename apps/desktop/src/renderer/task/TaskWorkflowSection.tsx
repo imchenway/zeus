@@ -4,7 +4,7 @@ import type { CodexTaskPushCapabilities, CodexTaskPushModelCapability } from '..
 import type { TaskApiClient } from '../features/tasks/taskApiClient.js';
 import type { CreateTaskStageRequest, TaskRecord, TaskStageDeliverableRecord, TaskStageRecord, TaskWorkflowSnapshot, UpdateTaskStageRequest } from '../features/tasks/taskContracts.js';
 import { Button } from '../ui/Button.js';
-import { reportApplicationError, useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 
 export type TaskWorkflowClient = Pick<
@@ -52,7 +52,6 @@ export function TaskWorkflowSection(props: TaskWorkflowSectionProps) {
   const [manualContent, setManualContent] = useState('');
   const [openedDeliverable, setOpenedDeliverable] = useState<{ id: string; title: string; content: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  useApplicationErrorDialog(error, { language: zh ? 'zh-CN' : 'en' });
 
   useEffect(() => {
     let active = true;
@@ -148,6 +147,14 @@ export function TaskWorkflowSection(props: TaskWorkflowSectionProps) {
       const loaded = await props.client.loadTaskStageDeliverableContent(props.task.id, deliverable.id);
       setOpenedDeliverable({ id: deliverable.id, title: deliverable.title, content: loaded.content });
     });
+  }
+
+  if (error && workflow === undefined) {
+    return (
+      <section className="task-detail-block task-workflow-section" aria-label={zh ? '阶段交付' : 'Stage delivery'} role="alert">
+        <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
+      </section>
+    );
   }
 
   if (workflow === undefined) {
@@ -517,5 +524,5 @@ function deliverableStatus(status: TaskStageDeliverableRecord['status'], zh: boo
 }
 
 function visibleError(error: unknown, zh: boolean): string {
-  return reportApplicationError(error, { language: zh ? 'zh-CN' : 'en' });
+  return formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en');
 }

@@ -32,7 +32,7 @@ import { resolveModelCapability } from './modelSelection.js';
 import { useConversationInputResources } from './useConversationInputResources.js';
 import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, serviceTierSelectionValue, serviceTierWireOverride } from './serviceTierSelection.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { findProjectModelServiceTierPreference, projectModelServiceTierSelection } from './projectServiceTierPreferences.js';
 import { StructuredComposerInput, type StructuredComposerSelection } from './StructuredComposerInput.js';
 import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
@@ -151,9 +151,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const [goalDraft, setGoalDraft] = useState('');
   const [goalSubmitting, setGoalSubmitting] = useState(false);
   const [inputResourceError, setInputResourceError] = useState<unknown>(null);
-  useApplicationErrorDialog(inputResourceError, {
-    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-  });
   const [selectedModel, setSelectedModel] = useState(initialModel);
   /** 已持久化的下一轮容量；正在执行的请求保持原容量。 */
   const selectedCapacity = props.runtimeSettings?.contextCapacityTokens !== undefined ? props.runtimeSettings.contextCapacityTokens : (props.state.snapshot?.contextCapacityTokens ?? null);
@@ -394,6 +391,11 @@ export function ConversationComposer(props: ConversationComposerProps) {
       ) : null}
       {!goalInputActive && (props.state.contextDraft.responseAnnotations.length || props.state.contextDraft.codeComments.length) ? (
         <ContextDraftAttachment draft={props.state.contextDraft} language={props.language} disabled={!inputWritable || busy} onRemove={() => props.onContextDraftChange?.({ responseAnnotations: [], codeComments: [] })} />
+      ) : null}
+      {inputResourceError ? (
+        <p className="session-new-conversation-error" role="alert">
+          <VisibleApplicationError error={inputResourceError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+        </p>
       ) : null}
       <div className="session-composer-input-frame" data-goal-input={goalInputActive ? 'true' : 'false'}>
         {goalInputActive ? (

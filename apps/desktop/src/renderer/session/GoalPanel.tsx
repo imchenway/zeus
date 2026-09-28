@@ -2,7 +2,7 @@ import { Button } from '../ui/Button.js';
 import { Collapsible } from '../ui/Collapsible.js';
 import { useEffect, useId, useState } from 'react';
 import { ModalPortal } from '../ui/ModalPortal.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import type { NativeGoalCapability, NativeGoalSnapshot, NativeGoalTimelineEvent } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 
@@ -59,9 +59,6 @@ export function GoalPanel(props: GoalPanelProps) {
   const [objective, setObjective] = useState(props.goal?.objective ?? props.initialObjective ?? '');
   /** 清除目标前显示已有确认区域。 */
   const [confirmClear, setConfirmClear] = useState(false);
-  useApplicationErrorDialog(props.error, {
-    language: zh ? 'zh-CN' : 'en',
-  });
 
   useEffect(() => {
     if (!props.open) return;
@@ -114,6 +111,11 @@ export function GoalPanel(props: GoalPanelProps) {
                     ? '写清要达成什么、不能改什么、如何验证，以及何时停止。'
                     : 'Describe the goal, constraints, verification, and when to stop.'}
         </p>
+        {props.error ? (
+          <p className="session-goal-description" role="alert">
+            <VisibleApplicationError error={props.error} language={zh ? 'zh-CN' : 'en'} />
+          </p>
+        ) : null}
         <label className="session-goal-objective-field">
           <span>{zh ? '目标内容' : 'Objective'}</span>
           <textarea autoFocus={!props.goal} value={objective} readOnly={readOnly || !props.onSave || props.goal?.status === 'complete'} disabled={props.busy} onChange={(event) => setObjective(event.currentTarget.value)} />

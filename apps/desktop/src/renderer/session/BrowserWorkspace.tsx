@@ -16,7 +16,7 @@ import { SidebarSimpleIcon as SidebarSimple } from '@phosphor-icons/react/dist/c
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { ZeusBrowserApprovalDecision, ZeusBrowserApprovalRequest, ZeusBrowserCommand, ZeusBrowserConversationSnapshot, ZeusBrowserEvent, ZeusBrowserPreparedSubmission } from '@zeus/shared';
-import { useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 /** 浏览器正文保持原生视图，标签栏可挂到会话顶栏。 */
 interface BrowserWorkspaceProps {
@@ -145,9 +145,6 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   const findInputRef = useRef<HTMLInputElement | null>(null);
   const [staging, setStaging] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  useApplicationErrorDialog(snapshot ? error : null, {
-    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
-  });
   const activeTab = snapshot?.tabs.find((tab) => tab.id === snapshot.activeTabId) ?? null;
   const draftComments = activeTab?.comments.filter((comment) => comment.status === 'draft') ?? [];
 
@@ -485,6 +482,11 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   return (
     <section className="browser-workspace" aria-label={labels.title}>
       {props.toolbarHost ? createPortal(tabStrip, props.toolbarHost) : tabStrip}
+      {error ? (
+        <p role="alert">
+          <VisibleApplicationError error={error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+        </p>
+      ) : null}
 
       {activeTab.annotationMode && draftComments.length > 0 ? (
         <div className="browser-toolbar browser-annotation-toolbar">

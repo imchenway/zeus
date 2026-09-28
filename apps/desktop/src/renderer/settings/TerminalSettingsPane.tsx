@@ -16,7 +16,7 @@ export function TerminalSettingsPane(props: { client: Pick<SettingsApiClient, 'l
   /** 读取失败可在原页面重试。 */
   const [revision, setRevision] = useState(0);
   /** 复用设置页的顺序保存与失败反馈。 */
-  const saving = useSettingsAutosave(props.language);
+  const saving = useSettingsAutosave();
   useEffect(() => {
     /** 离开页面后不让旧请求覆盖新草稿。 */
     let disposed = false;

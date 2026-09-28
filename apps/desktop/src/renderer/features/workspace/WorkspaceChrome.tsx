@@ -40,7 +40,7 @@ import { type AppLanguage } from './workspaceCopy.js';
 import { Button } from '../../ui/Button.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
 import { ModalPortal } from '../../ui/ModalPortal.js';
-import { reportApplicationError } from '../../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { SourceListRow } from '../../ui/SourceListRow.js';
 import { useNewItemMotionIds } from '../../ui/useNewItemMotion.js';
 import { type AiRuntimeAdapterDescriptor, type AiRuntimeAdapterStatus, type AiRuntimeTerminalEvent, type ProjectConfig, type ProjectRecord, type RuntimeSettings, type TaskRecord } from '../../apiClient.js';
@@ -2064,7 +2064,7 @@ export function normalizeLocalUiError(error?: LocalUiErrorSnapshot): LocalUiErro
 }
 
 export function errorToLocalUiMessage(error: unknown, language: AppLanguage): string {
-  return reportApplicationError(error, { language: language === 'zh-CN' ? 'zh-CN' : 'en' });
+  return formatVisibleApplicationError(error, language === 'zh-CN' ? 'zh-CN' : 'en');
 }
 
 export function redactLocalUiErrorMessage(message: string): string {

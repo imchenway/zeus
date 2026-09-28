@@ -47,7 +47,7 @@ import { memo, useEffect, useId, useMemo, useRef, useState, type CSSProperties }
 import type { TaskAgentRunStatus, TaskRecord } from '../apiClient.js';
 import { Button } from '../ui/Button.js';
 import { ZeusSelect } from '../ZeusSelect.js';
-import { reportApplicationError, useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { parseTaskAttachments } from './taskAttachments.js';
 import { buildTaskBoardGroups, taskBoardActiveContent, taskBoardCardPropertyValues, taskBoardGroupOptions, type TaskBoardCardModel, type TaskBoardGroupModel, type TaskBoardProjectionContext } from './taskBoardModel.js';
@@ -1060,7 +1060,6 @@ export function TaskBoardView(props: TaskBoardViewProps) {
   const [announcement, setAnnouncement] = useState('');
   const [feedback, setFeedback] = useState<TaskBoardFeedback | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
-  const [operationError, setOperationError] = useState<unknown>(null);
   const updateSettingsRef = useRef(props.onUpdateSettings);
   const moveTaskRef = useRef(props.onMoveTask);
   const settingsOpen = props.settingsOpen ?? localSettingsOpen;
@@ -1074,7 +1073,6 @@ export function TaskBoardView(props: TaskBoardViewProps) {
     setLocalSettingsSection(section);
     props.onSettingsSectionChange?.(section);
   };
-  useApplicationErrorDialog(props.error || operationError, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' });
   useEffect(() => {
     updateSettingsRef.current = props.onUpdateSettings;
     moveTaskRef.current = props.onMoveTask;
@@ -1201,13 +1199,11 @@ export function TaskBoardView(props: TaskBoardViewProps) {
     try {
       const updated = await updateSettingsRef.current(patch);
       setLocalSnapshot(updated);
-      setOperationError(null);
       setFeedback({ kind: 'success', message: props.language === 'zh-CN' ? '看板设置已保存。' : 'Board settings saved.', timeoutMs: 4_000 });
       return updated;
     } catch (error) {
-      const message = reportApplicationError(error, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' });
+      const message = formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en');
       setSettingsError(message);
-      setOperationError(error);
       setFeedback({
         kind: 'error',
         message,
@@ -1232,7 +1228,6 @@ export function TaskBoardView(props: TaskBoardViewProps) {
     let optimisticTask = optimisticTaskForMove(card.task, settings.groupBy, card.groupId, targetGroupId);
     if (settings.subgroupBy) optimisticTask = optimisticTaskForMove(optimisticTask, settings.subgroupBy, card.subgroupId, targetSubgroupId);
     setLocalTasks((tasks) => tasks.map((task) => (task.id === optimisticTask.id ? optimisticTask : task)));
-    setOperationError(null);
     setAnnouncement(props.language === 'zh-CN' ? `正在移动“${card.task.title}”。` : `Moving “${card.task.title}”.`);
     try {
       const result = await moveTaskRef.current({
@@ -1263,8 +1258,7 @@ export function TaskBoardView(props: TaskBoardViewProps) {
         setFeedback({ kind: 'info', message, timeoutMs: 4_000 });
         return;
       }
-      const message = reportApplicationError(error, { language: props.language === 'zh-CN' ? 'zh-CN' : 'en' });
-      setOperationError(error);
+      const message = formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en');
       setAnnouncement(message);
       setFeedback({
         kind: 'error',
@@ -1424,6 +1418,14 @@ export function TaskBoardView(props: TaskBoardViewProps) {
 
   return (
     <section className="task-board-workbench" data-card-size={settings.cardSize} aria-label={props.language === 'zh-CN' ? '任务看板' : 'Task board'} aria-describedby={liveRegionId}>
+      {props.error ? (
+        <section className="task-board-feedback is-error" role="alert">
+          <VisibleApplicationError error={props.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+          <Button variant="secondary" size="compact" onClick={props.onReload}>
+            {props.language === 'zh-CN' ? '重新读取' : 'Reload'}
+          </Button>
+        </section>
+      ) : null}
       {feedback ? (
         <section className={`task-board-feedback is-${feedback.kind}`} role={feedback.kind === 'error' ? 'alert' : 'status'} aria-live={feedback.kind === 'error' ? 'assertive' : 'polite'}>
           <span>{feedback.message}</span>
@@ -1438,7 +1440,6 @@ export function TaskBoardView(props: TaskBoardViewProps) {
             aria-label={props.language === 'zh-CN' ? '关闭操作反馈' : 'Dismiss feedback'}
             onClick={() => {
               setFeedback(null);
-              setOperationError(null);
             }}
           >
             <X aria-hidden="true" />

@@ -2,7 +2,7 @@ import type { ConversationResource, ConversationFileLocation } from '@zeus/share
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { OpenWithMenu } from './ConversationResources.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import type { ConversationOpenTarget } from '@zeus/shared';
 import { FilePreview, FileReviewContent, PreviewImage } from '../code/FilePreview.js';
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -104,7 +104,6 @@ function SourceWorkspaceView(props: {
   }, [copiedResourceId]);
   /** 工具栏只展示当前文件的复制结果。 */
   const copied = copiedResourceId === props.preview.resource.id;
-  useApplicationErrorDialog(openError, { language: zh ? 'zh-CN' : 'en' });
   /** 统一处理复制与外部应用打开。 */
   async function openResource(target: ConversationOpenTarget): Promise<void> {
     try {
@@ -262,6 +261,11 @@ function SourceWorkspaceView(props: {
       aria-label={props.preview.kind === 'image' ? (zh ? '图片预览' : 'Image preview') : renderedMarkdown ? (zh ? 'Markdown 预览' : 'Markdown preview') : zh ? '源码预览' : 'Source preview'}
     >
       {props.toolbarHost ? createPortal(header, props.toolbarHost) : header}
+      {openError ? (
+        <p role="alert">
+          <VisibleApplicationError error={openError} language={zh ? 'zh-CN' : 'en'} />
+        </p>
+      ) : null}
       <div className="session-source-toolbar">
         <nav className="session-source-breadcrumbs" aria-label={zh ? '文件路径' : 'File path'} title={displayPath}>
           {displayPath.split('/').map((part, index) => (

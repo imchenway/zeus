@@ -1,4 +1,4 @@
-import { reportApplicationError, type ApplicationErrorLanguage } from '../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError, type ApplicationErrorLanguage } from '../ui/ApplicationErrorDialog.js';
 import { type ClipboardEvent, type DragEvent, type KeyboardEvent, type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import type { NativeConversationAttachment } from './sessionTypes.js';
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../ui/pendingResourcePolicy.js';
@@ -53,7 +53,7 @@ export function useConversationInputResources(options: UseConversationInputResou
     try {
       await operation();
     } catch (error) {
-      latest.current.onError(reportApplicationError(error, { language: latest.current.language }));
+      latest.current.onError(formatVisibleApplicationError(error, latest.current.language));
     } finally {
       if (mounted.current) setProcessingCount((current) => Math.max(0, current - 1));
       restoreFocus();

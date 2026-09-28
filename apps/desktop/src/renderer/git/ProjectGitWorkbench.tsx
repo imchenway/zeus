@@ -48,7 +48,7 @@ import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/c
 import type { DashboardClient, GitDiffHunk, GitFileDiff, ProjectGitAction, ProjectGitCommitDetail, ProjectGitOperationRecord, ProjectGitRepositoryWorkbenchItem, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
-import { reportApplicationError, useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError, reportApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { SideBySideDiff } from './ProjectGitDiffViewer.js';
 
 type GitTab = 'changes' | 'stash' | 'log' | 'console';
@@ -77,9 +77,6 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const [snapshot, setSnapshot] = useState<ProjectGitWorkbenchSnapshot | null>(() => readCachedProjectGitWorkbench(props.client, props.project.id));
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>(() => (snapshot ? 'ready' : 'loading'));
   const [error, setError] = useState<string | null>(null);
-  useApplicationErrorDialog(error, {
-    language: zh ? 'zh-CN' : 'en',
-  });
   const [tab, setTab] = useState<GitTab>(() => (props.conversationScope ? 'changes' : readRememberedTab(props.project.id)));
   const [subtree, setSubtree] = useState<{ repositoryId: string; path: string } | null>(null);
   const [selectedRepositoryId, setSelectedRepositoryId] = useState(() => projectGitViewPreferences.get(props.project.id)?.repositoryId ?? '');
@@ -700,6 +697,11 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       }}
       aria-label={zh ? '项目 Git 工作台' : 'Project Git workbench'}
     >
+      {error ? (
+        <section className="project-git-workbench-state" role="alert">
+          <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
+        </section>
+      ) : null}
       {busy || selectedRepository?.snapshot.integrationState ? (
         <div className="git-integration-actions">
           {' '}
@@ -2618,7 +2620,7 @@ function displayStashSubject(subject: string, zh: boolean): string {
 }
 
 function errorMessage(error: unknown, zh: boolean, options: { title?: string; action?: { label: string; onClick: () => void | Promise<void> } } = {}): string {
-  return reportApplicationError(error, { language: zh ? 'zh-CN' : 'en', ...options });
+  return options.title || options.action ? reportApplicationError(error, { language: zh ? 'zh-CN' : 'en', ...options }) : formatVisibleApplicationError(error, zh ? 'zh-CN' : 'en');
 }
 
 function errorHasCode(error: unknown, expected: string): boolean {

@@ -4,7 +4,7 @@ import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { GitBranchIcon as GitBranch } from '@phosphor-icons/react/dist/csr/GitBranch';
 import type { ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { Button } from '../ui/Button.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
@@ -40,7 +40,6 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
   const [workbench, setWorkbench] = useState<ProjectGitWorkbenchSnapshot | null>(null);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [error, setError] = useState<unknown>(null);
-  useApplicationErrorDialog(error, { language: zh ? 'zh-CN' : 'en' });
   const [refreshing, setRefreshing] = useState(false);
   const [projectBusy, setProjectBusy] = useState(false);
 
@@ -202,6 +201,11 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
 
   return (
     <>
+      {error ? (
+        <p className="session-new-conversation-error" role="alert">
+          <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
+        </p>
+      ) : null}
       <div className="session-new-conversation-context" aria-label={zh ? '新对话的工作位置' : 'Work location for the new conversation'}>
         <span className="session-new-conversation-context-control">
           <ZeusSelect

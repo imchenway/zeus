@@ -17,7 +17,7 @@ import type { NativeConversationChoice } from '../session/sessionTypes.js';
 import type { CodexTaskPushCapabilities } from '../session/sessionTypes.js';
 import { compareConversationCreatedAsc } from '../session/conversationOrdering.js';
 import { Button } from '../ui/Button.js';
-import { reportApplicationError, useApplicationErrorDialog, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../ui/pendingResourcePolicy.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
@@ -225,7 +225,7 @@ const taskEditCopies: Record<'zh-CN' | 'en-US', TaskEditCopy> = {
 };
 
 function taskEditErrorMessage(error: unknown, fallback: string, language: 'zh-CN' | 'en'): string {
-  return error === null || error === undefined || error === '' ? fallback : reportApplicationError(error, { language: language });
+  return error === null || error === undefined || error === '' ? fallback : formatVisibleApplicationError(error, language);
 }
 
 function normalizeTaskTagsInput(value: string): string[] {
@@ -912,9 +912,6 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
     event.stopPropagation();
     moreActionsRef.current.hidePopover();
   }
-  useApplicationErrorDialog(props.conversationsError, {
-    language: zh ? 'zh-CN' : 'en',
-  });
   useEffect(() => {
     setAttachmentSaveState({ kind: 'idle' });
     setUndoAttachment(null);

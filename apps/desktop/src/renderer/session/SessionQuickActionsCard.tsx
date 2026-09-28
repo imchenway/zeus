@@ -34,7 +34,7 @@ import type {
   TaskWorkspacesSnapshot,
 } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
-import { useApplicationErrorDialog } from '../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ProjectGitWorkbench } from '../git/ProjectGitWorkbench.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import type { DashboardClient, ProjectRecord, ProjectGitWorkbenchSnapshot, ProjectModelServiceTierPreference } from '../apiClient.js';
@@ -96,9 +96,6 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const [workspaces, setWorkspaces] = useState<TaskWorkspacesSnapshot | null>(null);
   const [workspaceState, setWorkspaceState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [workspaceError, setWorkspaceError] = useState<unknown>(null);
-  useApplicationErrorDialog(props.conversation.taskId ? workspaceError : null, {
-    language: zh ? 'zh-CN' : 'en',
-  });
   const taskId = props.task?.id ?? props.conversation.taskId;
   const gitClient = props.gitContext?.client;
   const conversationGitClient = useMemo(() => (!taskId && gitClient ? { ...gitClient, ...gitClient.forConversationGit(props.conversation.id) } : null), [gitClient, props.conversation.id, taskId]);
@@ -334,6 +331,11 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
 
   return (
     <div className="session-quick-actions-anchor" ref={rootRef} data-presentation={persistent ? 'persistent' : 'collapsed'}>
+      {props.conversation.taskId && workspaceError ? (
+        <span role="alert">
+          <VisibleApplicationError error={workspaceError} language={zh ? 'zh-CN' : 'en'} />
+        </span>
+      ) : null}
       {persistent || props.suppressed ? null : (
         <button
           ref={triggerRef}
