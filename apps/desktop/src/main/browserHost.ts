@@ -1445,6 +1445,7 @@ export class BrowserHost implements BrowserAutomationPort {
     return toolJson(result);
   }
 
+  /** 等待可见、可用或消失等真实页面状态，不把仅存在于 DOM 中误判为完成。 */
   private async invokeWaitTool(
     tab: LiveBrowserTab,
     args: Record<string, unknown>,
@@ -1453,18 +1454,37 @@ export class BrowserHost implements BrowserAutomationPort {
     success: boolean;
   }> {
     const selector = optionalString(args.selector);
+    const state = optionalString(args.state) ?? 'visible';
+    const expectedText = typeof args.text === 'string' ? args.text.replace(/\s+/g, ' ').trim() : undefined;
+    if (!selector && (args.state !== undefined || args.text !== undefined)) throw new TypeError('state and text require selector.');
+    if (!['attached', 'visible', 'hidden', 'detached', 'enabled'].includes(state)) throw new TypeError('state must be attached, visible, hidden, detached, or enabled.');
+    if (expectedText !== undefined && ['hidden', 'detached'].includes(state)) throw new TypeError('text cannot be combined with hidden or detached state.');
     const timeoutMs = boundedInteger(args.timeoutMs, 5_000, 0, 30_000);
     const startedAt = Date.now();
+    let lastObserved: Record<string, unknown> = {};
     while (Date.now() - startedAt <= timeoutMs) {
       if (!selector) {
         await new Promise((resolveDelay) => setTimeout(resolveDelay, timeoutMs));
         return toolJson({ waitedMs: timeoutMs });
       }
-      const found = await this.ensureView(tab).webContents.executeJavaScript(`Boolean(document.querySelector(${JSON.stringify(selector)}))`, true);
-      if (found) return toolJson({ selector, found: true, waitedMs: Date.now() - startedAt });
+      const observed = await this.ensureView(tab).webContents.executeJavaScript(
+        `(() => {
+          const element = document.querySelector(${JSON.stringify(selector)});
+          const connected = Boolean(element?.isConnected);
+          const style = connected ? getComputedStyle(element) : null;
+          const visible = Boolean(connected && element.getClientRects().length && style?.display !== 'none' && style?.visibility !== 'hidden' && style?.visibility !== 'collapse' && style?.opacity !== '0');
+          const enabled = Boolean(visible && !element.matches(':disabled') && element.getAttribute('aria-disabled') !== 'true' && !element.closest('[inert]'));
+          const text = connected ? (('innerText' in element ? element.innerText : element.textContent) ?? '').replace(/\\s+/g, ' ').trim() : null;
+          const states = { attached: connected, visible, hidden: !visible, detached: !connected, enabled };
+          return { matched: states[${JSON.stringify(state)}] && (${JSON.stringify(expectedText ?? null)} === null || text === ${JSON.stringify(expectedText ?? null)}), connected, visible, enabled, text_matched: ${JSON.stringify(expectedText === undefined)} || text === ${JSON.stringify(expectedText ?? null)} };
+        })()`,
+        true,
+      );
+      lastObserved = asRecord(observed);
+      if (lastObserved.matched === true) return toolJson({ selector, state, ...(expectedText === undefined ? {} : { text: expectedText }), waitedMs: Date.now() - startedAt });
       await new Promise((resolveDelay) => setTimeout(resolveDelay, Math.min(250, Math.max(0, timeoutMs - (Date.now() - startedAt)))));
     }
-    return toolText(`Timed out waiting for selector: ${selector}`, false);
+    return toolText(`Timed out waiting for ${state} selector ${selector}; last observed state: ${JSON.stringify(lastObserved)}`, false);
   }
 
   private async invokeClipboardTool(input: BrowserAutomationToolCall): Promise<{

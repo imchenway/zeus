@@ -152,10 +152,13 @@ export function zeusBrowserDynamicTools(): CodexDynamicToolSpec[] {
         {
           type: 'function',
           name: 'wait',
-          description: 'Wait for a page condition using selector; omit it only for a bounded delay. Prefer an observed condition to fixed sleeps.',
+          description:
+            'Wait for a real page condition using selector, state, and optional exact visible text; omit selector only for a bounded delay. Defaults to visible, not mere DOM existence. Page loading or a submit button still being present does not prove the requested business result.',
           inputSchema: objectSchema({
             tabId: stringProperty('Optional tab id; defaults to the active tab.'),
             selector: stringProperty('Optional CSS selector to wait for.'),
+            state: { type: 'string', enum: ['attached', 'visible', 'hidden', 'detached', 'enabled'], description: 'Required selector state; defaults to visible.' },
+            text: { type: 'string', maxLength: 20000, description: 'Optional exact visible text after whitespace normalization; only valid for attached, visible, or enabled states.' },
             timeoutMs: { type: 'integer', minimum: 0, maximum: 30000, description: 'Maximum wait duration; defaults to 5000 ms.' },
           }),
         },

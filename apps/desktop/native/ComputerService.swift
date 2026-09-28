@@ -17,6 +17,8 @@ private struct ElementSnapshot {
     let pid: pid_t
     let elements: [AXUIElement]
     let summaries: [[String: Any]]
+    /** 原生控件身份不随同级元素插入而变化，仅在本地差异计算中使用。 */
+    let identityKeys: [String]
     let complete: Bool
 }
 
@@ -24,12 +26,14 @@ private let axMessagingTimeoutSeconds: Float = 2
 private let minimumScreenshotBudgetMilliseconds: Double = 5_000
 /** 富格式粘贴只临时保存有界剪贴板，避免一次系统操作耗尽 Helper 内存。 */
 private let maximumPasteboardSnapshotBytes = 32 * 1024 * 1024
-/** 冷启动最多等待目标创建可控窗口；超时保持隐藏并返回明确失败。 */
+/** 冷启动最多等待目标创建可控窗口；超时保持后台并返回明确失败。 */
 private let backgroundLaunchWindowTimeoutSeconds: TimeInterval = 10
 /** 恢复窗口与前台层级使用短轮询，避免固定长等待或持续争夺用户桌面。 */
 private let backgroundLaunchPollNanoseconds: UInt64 = 25_000_000
 /** 目标显示后给系统一秒落定隐藏和激活状态。 */
 private let backgroundLaunchRevealTimeoutSeconds: TimeInterval = 1
+/** 这些截断原因不会因重复扫描同一范围自行恢复，等待应立即返回扩大范围的证据。 */
+private let terminalWaitTruncationReasons: Set<String> = ["element_limit", "depth_limit", "menu_children_unavailable"]
 
 /** 明确的界面完成条件；只确认观察到的状态，不推断外部业务已完成。 */
 private struct ComputerStateCondition {
@@ -498,7 +502,10 @@ private final class ComputerService {
         var satisfied = false
         var elements: [AXUIElement] = []
         var summaries: [[String: Any]] = []
+        var identityKeys: [String] = []
         var truncatedReason: String?
+        /** 独立窗口出现后停止在旧窗口等待，交由下一次观察明确选择窗口。 */
+        var transitionedWindows: [[String: Any]] = []
         /** 只有找到与采集窗口对应的窗口、面板或菜单树才声明完整。 */
         var windowMatched = false
         repeat {
@@ -511,6 +518,7 @@ private final class ComputerService {
             windowMatched = observedWindow != nil
             elements.removeAll(keepingCapacity: true)
             summaries.removeAll(keepingCapacity: true)
+            identityKeys.removeAll(keepingCapacity: true)
             var visited = Set<CFHashCode>()
             /** Finder 列视图包含大量屏幕外祖先目录，先完成当前窗口内的控件读取。 */
             var deferredElements: [(AXUIElement, Int)] = []
@@ -524,6 +532,7 @@ private final class ComputerService {
                 visited: &visited,
                 elements: &elements,
                 summaries: &summaries,
+                identityKeys: &identityKeys,
                 truncatedReason: &truncatedReason,
                 visibleFrame: target.frame,
                 deferredElements: &deferredElements,
@@ -538,7 +547,7 @@ private final class ComputerService {
             while deferredIndex < deferredElements.count && elements.count < maxElements && !deadlineExceeded(readDeadline) {
                 let (element, depth) = deferredElements[deferredIndex]
                 deferredIndex += 1
-                if walk(element: element, depth: depth, maxElements: maxElements, deadlineUnixMilliseconds: readDeadline, visited: &visited, elements: &elements, summaries: &summaries, truncatedReason: &truncatedReason, visibleFrame: target.frame, deferredElements: &deferredElements, progress: { _ in }) { break }
+                if walk(element: element, depth: depth, maxElements: maxElements, deadlineUnixMilliseconds: readDeadline, visited: &visited, elements: &elements, summaries: &summaries, identityKeys: &identityKeys, truncatedReason: &truncatedReason, visibleFrame: target.frame, deferredElements: &deferredElements, progress: { _ in }) { break }
             }
             // 停止后的大树读取立即退出，不继续占用其他轮次的原生请求队列。
             if control.targetProcessIdentifier == nil { throw ServiceFailure(code: "ZEUS_COMPUTER_STOPPED", message: "该轮次控制已停止，观察已取消。") }
@@ -553,7 +562,11 @@ private final class ComputerService {
             axMilliseconds += (ProcessInfo.processInfo.systemUptime - readStarted) * 1000
             readCount += 1
             satisfied = condition?.isSatisfied(by: summaries, complete: truncatedReason == nil, windowMatched: windowMatched) ?? false
-            guard let condition, !satisfied, !deadlineExceeded(readDeadline), (ProcessInfo.processInfo.systemUptime - waitStarted) * 1000 < condition.timeoutMilliseconds else { break }
+            if condition != nil, !satisfied, afterAction {
+                transitionedWindows = try control.newWindowsSinceObservation(pid: app.processIdentifier, sessionId: controlSessionId)
+            }
+            let terminalTruncation = truncatedReason.map { terminalWaitTruncationReasons.contains($0) } == true
+            guard let condition, !satisfied, transitionedWindows.isEmpty, !terminalTruncation, !deadlineExceeded(readDeadline), (ProcessInfo.processInfo.systemUptime - waitStarted) * 1000 < condition.timeoutMilliseconds else { break }
             // ponytail: 有界复用现有 AX 扫描；大型树确有瓶颈时再引入目标区域订阅。
             try await Task.sleep(nanoseconds: UInt64(min(100, max(0, remainingMilliseconds(until: readDeadline)))) * 1_000_000)
         } while true
@@ -561,7 +574,7 @@ private final class ComputerService {
         let confirmationMilliseconds = (ProcessInfo.processInfo.systemUptime - waitStarted) * 1000
         generation += 1
         let complete = truncatedReason == nil
-        let snapshot = ElementSnapshot(generation: generation, pid: app.processIdentifier, elements: elements, summaries: summaries, complete: complete)
+        let snapshot = ElementSnapshot(generation: generation, pid: app.processIdentifier, elements: elements, summaries: summaries, identityKeys: identityKeys, complete: complete)
         snapshots[app.processIdentifier] = snapshot
         snapshotHistory[generation] = snapshot
         if snapshotHistory.count > 8 {
@@ -584,7 +597,11 @@ private final class ComputerService {
             "observation": ["ax_started_at_unix_ms": axStartedAt.timeIntervalSince1970 * 1000, "ax_finished_at_unix_ms": axFinishedAt.timeIntervalSince1970 * 1000, "atomic": false],
         ]
         if condition != nil {
-            result["confirmation"] = ["status": satisfied ? "satisfied" : "timed_out", "scope": "accessibility_condition", "elapsed_ms": confirmationMilliseconds, "read_count": readCount]
+            let status = satisfied ? "satisfied" : !transitionedWindows.isEmpty ? "window_changed" : truncatedReason.map { terminalWaitTruncationReasons.contains($0) } == true ? "incomplete" : "timed_out"
+            var confirmation: [String: Any] = ["status": status, "scope": "accessibility_condition", "elapsed_ms": confirmationMilliseconds, "read_count": readCount]
+            if !transitionedWindows.isEmpty { confirmation["new_windows"] = transitionedWindows }
+            if status == "incomplete", let truncatedReason { confirmation["truncated_reason"] = truncatedReason }
+            result["confirmation"] = confirmation
         }
         if let truncatedReason { result["truncated_reason"] = truncatedReason }
         if isObservedMenu(target), let menu = try? await visualMenuSnapshot(target, notBefore: axCompletedTime) { result["visual_menu_items"] = menu.items }
@@ -627,6 +644,7 @@ private final class ComputerService {
         visited: inout Set<CFHashCode>,
         elements: inout [AXUIElement],
         summaries: inout [[String: Any]],
+        identityKeys: inout [String],
         truncatedReason: inout String?,
         visibleFrame: CGRect,
         deferredElements: inout [(AXUIElement, Int)],
@@ -663,6 +681,7 @@ private final class ComputerService {
         }
         elements.append(element)
         summaries.append(summary)
+        identityKeys.append(elementSnapshotIdentity(element, summary: summary))
         progress(elements.count)
         if deadlineExceeded(deadlineUnixMilliseconds) {
             truncatedReason = "deadline"
@@ -692,6 +711,7 @@ private final class ComputerService {
                 visited: &visited,
                 elements: &elements,
                 summaries: &summaries,
+                identityKeys: &identityKeys,
                 truncatedReason: &truncatedReason,
                 visibleFrame: childVisibleFrame,
                 deferredElements: &deferredElements,
@@ -831,6 +851,7 @@ private final class ComputerService {
         }
     }
 
+    /** 复用运行实例，未运行时按后台控制语义启动目标应用。 */
     private func resolveApplication(_ params: [String: Any]) async throws -> NSRunningApplication {
         guard let requested = params["app"] else {
             throw ServiceFailure(code: "ZEUS_COMPUTER_APP_REQUIRED", message: "Computer 请求缺少 app。")
@@ -876,8 +897,8 @@ private final class ComputerService {
         let configuration = NSWorkspace.OpenConfiguration()
         /** 系统启动本身不得激活目标应用。 */
         configuration.activates = false
-        /** 先隐藏完成冷启动，窗口就绪后再恢复并重建原前台层级。 */
-        configuration.hides = true
+        /** 虚拟输入和独立窗口采集需要可见窗口，但不要求目标应用成为前台。 */
+        configuration.hides = false
         /** 同一路径已有实例时复用，避免 Computer Use 重复打开应用。 */
         configuration.createsNewApplicationInstance = false
         /** 指定路径不得被另一个安装位置的同 bundle 应用替代。 */
@@ -893,13 +914,13 @@ private final class ComputerService {
         return launched
     }
 
-    /** 隐藏等待冷启动完成，再恢复用户当前前台；目标拒绝安全后台显示时不暴露半成功窗口。 */
+    /** 等待冷启动窗口创建并恢复用户当前前台；目标拒绝安全后台显示时不暴露半成功窗口。 */
     private func revealLaunchedApplicationInBackground(_ launched: NSRunningApplication, preserving initialForeground: NSRunningApplication?) async throws {
         /** 用户在冷启动期间切换应用时，以最近一次非目标前台为准。 */
         var foregroundToPreserve = initialForeground
-        /** 目标窗口必须先在隐藏状态创建，避免启动页逐个覆盖用户桌面。 */
+        /** 目标窗口创建期间持续保护用户前台，避免应用自己的启动逻辑抢走输入。 */
         let windowDeadline = ProcessInfo.processInfo.systemUptime + backgroundLaunchWindowTimeoutSeconds
-        while !applicationHasWindow(pid: launched.processIdentifier) {
+        while !(await applicationHasCapturableWindow(pid: launched.processIdentifier)) {
             guard !launched.isTerminated else {
                 throw ServiceFailure(code: "ZEUS_COMPUTER_APP_LAUNCH_FAILED", message: "目标应用启动后立即退出，无法进入可控制状态。")
             }
@@ -907,7 +928,7 @@ private final class ComputerService {
             guard ProcessInfo.processInfo.systemUptime < windowDeadline else {
                 _ = launched.hide()
                 preserveForeground(whileLaunching: launched, latestForeground: &foregroundToPreserve)
-                throw ServiceFailure(code: "ZEUS_COMPUTER_WINDOW_UNAVAILABLE", message: "目标应用已安全隐藏启动，但没有在十秒内创建可控制窗口；为避免遮挡当前桌面，本次未显示该应用。")
+                throw ServiceFailure(code: "ZEUS_COMPUTER_WINDOW_UNAVAILABLE", message: "目标应用没有在十秒内创建可控制窗口；为避免遮挡当前桌面，已安全隐藏该应用。")
             }
             try await Task.sleep(nanoseconds: backgroundLaunchPollNanoseconds)
         }
@@ -946,17 +967,11 @@ private final class ComputerService {
         _ = latestForeground.activate(options: [])
     }
 
-    /** 读取所有系统窗口，只确认目标已创建普通尺寸窗口，不激活、抬升或捕获内容。 */
-    private func applicationHasWindow(pid: pid_t) -> Bool {
-        guard let windows = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]] else { return false }
-        return windows.contains { window in
-            guard (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
-                  (window[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
-                  (window[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 0 > 0,
-                  let bounds = window[kCGWindowBounds as String] as? [String: Any],
-                  let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary)
-            else { return false }
-            return frame.width > 1 && frame.height > 1
+    /** 以真实 ScreenCaptureKit 可见窗口作为冷启动完成条件，避免普通窗口先出现但首次观察仍找不到。 */
+    private func applicationHasCapturableWindow(pid: pid_t) async -> Bool {
+        guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) else { return false }
+        return content.windows.contains { window in
+            window.owningApplication?.processID == pid && window.windowLayer >= 0 && window.frame.width > 1 && window.frame.height > 1
         }
     }
 
@@ -1296,12 +1311,16 @@ private final class ComputerService {
                 let before = bar.flatMap { numberValue(attribute($0, kAXValueAttribute)) }
                 let result = AXUIElementPerformAction(scrollTarget, action as CFString)
                 let after = try await observedScrollValue(bar, before: before, pid: app.processIdentifier)
-                if let before, let after, before != after {
-                    completed += 1
-                    if result != .success {
-                        return ["dispatched": "scroll", "semantic": true, "scroll_position_changed": true, "effect_verified": false, "direction": normalized, "pages": completed, "ax_error": result.rawValue, "scroll_value_before": initialValue ?? before, "scroll_value_after": after]
+                if let before, let after {
+                    if before != after {
+                        completed += 1
+                        if result != .success {
+                            return ["dispatched": "scroll", "semantic": true, "scroll_position_changed": true, "effect_verified": false, "direction": normalized, "pages": completed, "ax_error": result.rawValue, "scroll_value_before": initialValue ?? before, "scroll_value_after": after]
+                        }
+                        continue
                     }
-                    continue
+                    /** 已读回相同滚动位置即到达边界，不能继续重复投递剩余页数。 */
+                    return ["dispatched": "scroll", "semantic": true, "scroll_position_changed": completed > 0, "at_boundary": true, "effect_verified": false, "direction": normalized, "pages": completed, "scroll_value_before": initialValue ?? before, "scroll_value_after": after]
                 }
                 if result == .success { completed += 1; continue }
                 if result != .actionUnsupported && result != .notImplemented {
@@ -1453,7 +1472,7 @@ private final class ComputerService {
             guard singleLine,
                   let current = stringAttribute(target, kAXValueAttribute),
                   let selection = attribute(target, kAXSelectedTextRangeAttribute), CFGetTypeID(selection) == AXValueGetTypeID(), AXValueGetType(selection as! AXValue) == .cfRange else {
-                throw ServiceFailure(code: "ZEUS_COMPUTER_TEXT_INPUT_UNSUPPORTED", message: "目标控件不支持后台文字插入；请使用明确的粘贴操作或由用户接管。")
+                throw ServiceFailure(code: "ZEUS_COMPUTER_TEXT_INPUT_UNSUPPORTED", message: "目标控件不支持后台文字插入；纯文本 paste 使用同一路径，请勿换名重试。仅在允许覆盖整个单行值时使用 set_value，否则请由用户接管。")
             }
             var range = CFRange()
             guard AXValueGetValue(selection as! AXValue, .cfRange, &range), range.location >= 0, range.length >= 0,
@@ -1539,31 +1558,50 @@ private final class ComputerService {
         guard previous.complete, current.complete else {
             return ["previous_generation": previousGeneration, "current_generation": current.generation, "available": false, "reason": "incomplete_snapshot"]
         }
-        let keyed: ([[String: Any]]) -> [String: [String: Any]] = { values in
-            Dictionary(uniqueKeysWithValues: values.enumerated().map { index, value in
-                let key = [value["role"], value["subrole"], value["identifier"], value["title"], value["depth"]].map { String(describing: $0 ?? "") }.joined(separator: "\u{001f}") + "\u{001f}\(index)"
-                return (key, value)
-            })
+        /** 极少数原生哈希冲突只在冲突桶内使用序号，不让普通同级插入扰动后续元素。 */
+        let keyed: (ElementSnapshot) -> (order: [String], values: [String: [String: Any]]) = { snapshot in
+            var order: [String] = []
+            var values: [String: [String: Any]] = [:]
+            var occurrences: [String: Int] = [:]
+            for (index, value) in snapshot.summaries.enumerated() {
+                let base = snapshot.identityKeys.indices.contains(index) ? snapshot.identityKeys[index] : "fallback\u{001f}\(index)"
+                let occurrence = occurrences[base, default: 0]
+                occurrences[base] = occurrence + 1
+                let key = "\(base)\u{001f}\(occurrence)"
+                order.append(key)
+                values[key] = value
+            }
+            return (order, values)
         }
-        let old = keyed(previous.summaries)
-        let next = keyed(current.summaries)
-        let added = next.keys.filter { old[$0] == nil }.prefix(200).compactMap { next[$0] }
-        let removed = old.keys.filter { next[$0] == nil }.prefix(200).compactMap { old[$0] }
-        let changed = next.keys.compactMap { key -> [String: Any]? in
-            guard let before = old[key], let after = next[key] else { return nil }
-            let beforeData = try? JSONSerialization.data(withJSONObject: before, options: [.sortedKeys])
-            let afterData = try? JSONSerialization.data(withJSONObject: after, options: [.sortedKeys])
+        let old = keyed(previous)
+        let next = keyed(current)
+        let allAdded = next.order.filter { old.values[$0] == nil }.compactMap { next.values[$0] }
+        let allRemoved = old.order.filter { next.values[$0] == nil }.compactMap { old.values[$0] }
+        let allChanged = next.order.compactMap { key -> [String: Any]? in
+            guard let before = old.values[key], let after = next.values[key] else { return nil }
+            /** 索引和几何只属于本次观察；默认紧凑结果也不投影 frame，不能把整体布局移动冒充内容变化。 */
+            let transientKeys: Set<String> = ["element_index", "frame"]
+            let beforeData = try? JSONSerialization.data(withJSONObject: before.filter { !transientKeys.contains($0.key) }, options: [.sortedKeys])
+            let afterData = try? JSONSerialization.data(withJSONObject: after.filter { !transientKeys.contains($0.key) }, options: [.sortedKeys])
             return beforeData != afterData ? ["before": before, "after": after] : nil
-        }.prefix(200)
+        }
+        let added = Array(allAdded.prefix(200))
+        let removed = Array(allRemoved.prefix(200))
+        let changed = Array(allChanged.prefix(200))
         return [
             "previous_generation": previousGeneration,
             "current_generation": current.generation,
             "available": true,
-            "changed": Array(changed),
-            "added": Array(added),
-            "removed": Array(removed),
-            "truncated": added.count >= 200 || removed.count >= 200 || changed.count >= 200,
+            "changed": changed,
+            "added": added,
+            "removed": removed,
+            "truncated": allAdded.count > 200 || allRemoved.count > 200 || allChanged.count > 200,
         ]
+    }
+
+    /** 优先使用系统控件身份；标题和值只属于可变内容，不参与跨快照匹配。 */
+    private func elementSnapshotIdentity(_ element: AXUIElement, summary: [String: Any]) -> String {
+        [summary["role"], summary["subrole"], summary["identifier"], CFHash(element)].map { String(describing: $0 ?? "") }.joined(separator: "\u{001f}")
     }
 
     private func postClick(pid: pid_t, point: CGPoint, button: CGMouseButton, count: Int) throws {
