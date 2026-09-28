@@ -247,7 +247,8 @@ export interface SessionWorkspaceActions {
   onLoadSubagentThread?: (threadId: string) => Promise<NativeSubagentThreadSnapshot>;
   onOperateTurnChangeSet?: (changeSet: TurnChangeSet, action: 'undo' | 'reapply') => Promise<TurnChangeSetOperationResult>;
   onLoadEarlierHistory?: () => void | Promise<void>;
-  onLoadTurnProcess?: (turnId: string) => void | Promise<void>;
+  /** 深历史展开时保留从头或从尾读取的明确意图。 */
+  onLoadTurnProcess?: (turnId: string, startAtBeginning?: boolean) => void | Promise<void>;
   onLoadConversationResources?: () => void | Promise<void>;
   onLoadTurnArtifacts?: (turnId: string) => void | Promise<void>;
   onLoadV2Content?: (handle: string) => Promise<void>;
@@ -886,7 +887,7 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     onPermissionModeChange: (permissionMode) => settle(input.controller.setPermissionMode(permissionMode)),
     onCollaborationModeChange: (collaborationMode) => settle(input.controller.setCollaborationMode(collaborationMode)),
     onLoadEarlierHistory: () => settle(input.controller.loadEarlierHistory()),
-    onLoadTurnProcess: (turnId) => settle(input.controller.loadTurnProcess(turnId)),
+    onLoadTurnProcess: (turnId, startAtBeginning) => settle(input.controller.loadTurnProcess(turnId, startAtBeginning)),
     onLoadConversationResources: () => settle(input.controller.loadConversationResources()),
     onLoadTurnArtifacts: (turnId) => settle(input.controller.loadTurnArtifacts(turnId)),
     onLoadV2Content: (handle) => input.controller.loadV2Content(handle),

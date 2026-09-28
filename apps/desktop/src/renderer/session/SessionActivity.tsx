@@ -667,6 +667,11 @@ export function SessionTurnProcessDisclosure(props: {
       </div>
       <Collapsible id={bodyId} open={open}>
         <div className="session-turn-process-body">
+          {props.loading ? (
+            <p className="session-v2-page-status" role="status" aria-live="polite">
+              {props.language === 'zh-CN' ? '正在读取处理过程…' : 'Loading process…'}
+            </p>
+          ) : null}
           {props.children}
           {props.error ? (
             <p className="session-v2-page-error" role="alert">
