@@ -1,5 +1,5 @@
 import { readNativeSubmissionSkills } from './nativeConversationSubmissionInputs.js';
-import { type CodexThreadGoal, toCodexWireReasoningEffort } from '@zeus/ai-runtime';
+import { type CodexCollaborationMode, type CodexThreadGoal, toCodexWireReasoningEffort } from '@zeus/ai-runtime';
 import type { ConversationCollaborationMode, ConversationNextTurnSettings, ConversationRepository, ZeusConversationGoalRecord, ZeusConversationSubmissionRecord, ZeusConversationWithMessagesRecord } from '@zeus/storage';
 import { ensureInitialCodexGoal } from './codexGoalApplication.js';
 import type {
@@ -433,6 +433,17 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
       const profile = providerPermissionProfile(context);
       const serializedAt = now();
       const wireEffort = toCodexWireReasoningEffort(context.effort) ?? null;
+      /** 线程设置与当前轮次共用同一份冻结模式，禁止两次序列化产生漂移。 */
+      const collaborationMode: CodexCollaborationMode = {
+        mode: context.workMode,
+        settings: {
+          model: context.model,
+          reasoning_effort: wireEffort,
+          /** 计划轮必须由 app-server 注入原生模板；稳定宿主规则已经通过 thread/start 交付。 */
+          developer_instructions: turnDeveloperInstructions,
+        },
+      };
+      segmentLifecycle?.adapterSerialized({ collaborationMode: collaborationMode.mode }, { adapter: 'codex_app_server', method: 'thread/settings/update', protocol: 'openai_responses' }, serializedAt);
       segmentLifecycle?.adapterSerialized(
         {
           model: context.model,
@@ -545,30 +556,28 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
       providerWriteStarted = true;
       lease.contentWriteStarted = true;
       markDispatchRpcStarted(lease, submission.id);
+      /** 第一条 Provider 写入既可能是线程设置，也可能是轮次启动，两者共用真实写出回执。 */
+      const requestWritten = segmentLifecycle ? () => segmentLifecycle.markProviderWriteStarted() : undefined;
+      await options.manager.setThreadCollaborationMode({
+        threadId: providerThreadId,
+        cwd: context.projectLocalPath,
+        collaborationMode,
+        traceIdentity: commandTraceIdentity,
+        ...(requestWritten ? { requestWritten } : {}),
+      });
+      assertSubmissionDispatchable(submission.id);
       const turn = await options.manager.startTurn({
         threadId: providerThreadId,
         traceIdentity: commandTraceIdentity,
         clientUserMessageId: submission.clientMessageId,
         input: providerInput,
         ...(additionalContext ? { additionalContext } : {}),
-        ...(segmentLifecycle ? { requestWritten: () => segmentLifecycle.markProviderWriteStarted() } : {}),
+        ...(requestWritten ? { requestWritten } : {}),
         model: context.model,
         ...(wireEffort ? { effort: wireEffort } : {}),
         ...(Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? { serviceTier: context.serviceTier } : {}),
         summary: 'auto',
-        ...(context.workMode
-          ? {
-              collaborationMode: {
-                mode: context.workMode,
-                settings: {
-                  model: context.model,
-                  reasoning_effort: wireEffort,
-                  /** 计划轮必须由 app-server 注入原生模板；稳定宿主规则已经通过 thread/start 交付。 */
-                  developer_instructions: turnDeveloperInstructions,
-                },
-              },
-            }
-          : {}),
+        collaborationMode,
         cwd: context.projectLocalPath,
         approvalPolicy: profile.approvalPolicy,
         approvalsReviewer: profile.approvalsReviewer,

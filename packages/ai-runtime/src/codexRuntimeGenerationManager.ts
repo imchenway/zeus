@@ -654,6 +654,10 @@ export function createCodexRuntimeGenerationManager(
     async compactThread(input) {
       await withThreadOwner(input.threadId, undefined, (entry) => entry.manager.compactThread(input));
     },
+    /** 线程协作模式必须写入该线程所属世代，不能跟随当前活动实例漂移。 */
+    async setThreadCollaborationMode(input) {
+      await withThreadOwner(input.threadId, input.cwd, (entry) => entry.manager.setThreadCollaborationMode(input));
+    },
     async startTurn(input) {
       return withThreadOwner(input.threadId, input.cwd, async (entry) => {
         const turn = await entry.manager.startTurn(input);

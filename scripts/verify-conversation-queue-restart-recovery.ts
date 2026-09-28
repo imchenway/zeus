@@ -3,7 +3,17 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { CodexAccountSnapshot, CodexAppServerEvent, CodexAppServerManager, CodexCapabilitiesSnapshot, CodexThreadSnapshot, CodexTurnSnapshot, CodexTurnStartInput, CodexTurnSteerInput } from '@zeus/ai-runtime';
+import type {
+  CodexAccountSnapshot,
+  CodexAppServerEvent,
+  CodexAppServerManager,
+  CodexCapabilitiesSnapshot,
+  CodexThreadCollaborationModeInput,
+  CodexThreadSnapshot,
+  CodexTurnSnapshot,
+  CodexTurnStartInput,
+  CodexTurnSteerInput,
+} from '@zeus/ai-runtime';
 import { ConversationRepository, ConversationServerRequestRepository, ConversationSubmissionRepository, ConversationTurnRepository, createZeusDatabase } from '../packages/storage/src/index.js';
 import { conversationDispatchInputSha256 } from '../packages/local-server/src/conversationDispatchCommandApplication.js';
 import { conversationStartInputSha256 } from '../packages/local-server/src/conversationStartCommandApplication.js';
@@ -724,6 +734,8 @@ function createRestartProbeManager(input: { providerThreadId: string; turnIds: s
     accountScopeId: 'conversation-queue-restart-probe',
   };
   const listeners = new Set<(event: CodexAppServerEvent) => void | Promise<void>>();
+  /** 每次轮次启动前必须先收到同一线程、同一模式的持久设置更新。 */
+  const collaborationModeInputs: CodexThreadCollaborationModeInput[] = [];
   const startTurnInputs: CodexTurnStartInput[] = [];
   /** 引导接纳与历史回显分开，复现真实 Provider 的输入缓冲。 */
   const steerTurnInputs: CodexTurnSteerInput[] = [];
@@ -790,7 +802,15 @@ function createRestartProbeManager(input: { providerThreadId: string; turnIds: s
     },
     listThreads: async () => ({ data: [threadSnapshot()], nextCursor: null }),
     listSkills: async ({ cwds }: { cwds?: string[] }) => (cwds ?? []).map((cwd) => ({ cwd, skills: [], errors: [] })),
+    setThreadCollaborationMode: async (collaborationInput: CodexThreadCollaborationModeInput) => {
+      collaborationInput.requestWritten?.();
+      collaborationModeInputs.push(collaborationInput);
+    },
     startTurn: async (turnInput: CodexTurnStartInput) => {
+      /** 同步缺失、顺序错误或模式漂移都必须在现有重启探针中立即失败。 */
+      const collaborationInput = collaborationModeInputs[startTurnInputs.length];
+      assertBehavior(collaborationInput?.threadId === turnInput.threadId, 'turn/start 前没有同步同一 Provider 线程的协作模式。');
+      assertBehavior(collaborationInput.collaborationMode.mode === turnInput.collaborationMode?.mode, '线程设置与 turn/start 的协作模式发生漂移。');
       turnInput.requestWritten?.();
       startTurnInputs.push(turnInput);
       const turnId = input.turnIds[startTurnInputs.length - 1];

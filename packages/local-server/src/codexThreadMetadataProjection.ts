@@ -23,5 +23,6 @@ export function persistThreadProviderSettings(conversations: Pick<ConversationRe
     model: settings.model,
     ...(settings.effort ? { effort: settings.effort } : {}),
     ...(Object.prototype.hasOwnProperty.call(settings, 'serviceTier') ? { serviceTier: settings.serviceTier } : {}),
+    ...(settings.collaborationMode ? { collaborationMode: settings.collaborationMode } : {}),
   });
 }
