@@ -1133,13 +1133,13 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             <section className="session-turn-process-stage" data-current={row.live && projectedTurnWorkKeyByTurn.get(row.turnId) === row.key && segmentIndex === row.segments.length - 1 ? true : undefined} key={segment.key}>
               {summary ? (
                 <div className="session-turn-stage-summary">
-                  {renderTranscriptRow(summary, transcriptRowRenderOptions(renderProps, items, false, motionFocus, lastUserKey, active ? 'inline' : 'count', enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId))}
+                  {renderTranscriptRow(summary, transcriptRowRenderOptions(renderProps, items, false, motionFocus, lastUserKey, 'inline', enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId))}
                 </div>
               ) : null}
               {rows.map((child) => {
                 const content = renderTranscriptRow(
                   child,
-                  transcriptRowRenderOptions(renderProps, items, showActiveStatus && activeTurnId === row.turnId, motionFocus, lastUserKey, active ? 'inline' : 'count', enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId),
+                  transcriptRowRenderOptions(renderProps, items, showActiveStatus && activeTurnId === row.turnId, motionFocus, lastUserKey, 'inline', enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId),
                 );
                 return active ? (
                   <div className="session-live-turn-row" key={child.key} data-navigation-row-key={child.key}>
@@ -1161,7 +1161,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             {hasProcessDetails ? (
               <SessionTurnProcessDisclosure
                 language={props.language}
-                itemCount={processLive ? processActivityCount : undefined}
+                itemCount={processActivityCount}
                 loading={Boolean(row.loadMore && processPaging?.loading)}
                 error={row.loadMore ? processPaging?.error : null}
                 open={expandedRowKeys.has(expansionKey)}
@@ -1190,7 +1190,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
               language={props.language}
               turn={turnActive || projectedTurnWorkKeyByTurn.get(row.turnId) !== row.key ? undefined : turn}
               requests={props.state.pendingRequests}
-              itemCount={turnActive ? processActivityCount : undefined}
+              itemCount={processActivityCount}
               loading={Boolean(row.loadMore && processPaging?.loading)}
               error={row.loadMore ? processPaging?.error : null}
               open={expandedRowKeys.has(expansionKey)}
@@ -1891,7 +1891,7 @@ interface TranscriptRowRenderOptions {
   showThinking: boolean;
   motionFocus: SessionMotionFocus;
   lastUserKey: string | undefined;
-  activityPresentation: 'inline' | 'count' | 'detail';
+  activityPresentation: 'inline' | 'detail';
   enteringItemIds: ReadonlySet<string>;
   onVisibleContentChange: () => void;
   responseAnnotationsByItemId: ReadonlyMap<string, ConversationResponseAnnotation[]>;
@@ -1903,7 +1903,7 @@ function transcriptRowRenderOptions(
   showThinking: boolean,
   motionFocus: SessionMotionFocus,
   lastUserKey: string | undefined,
-  activityPresentation: 'inline' | 'count' | 'detail',
+  activityPresentation: 'inline' | 'detail',
   enteringItemIds: ReadonlySet<string>,
   onVisibleContentChange: () => void,
   responseAnnotationsByItemId: ReadonlyMap<string, ConversationResponseAnnotation[]>,
@@ -1921,7 +1921,6 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         category={row.category}
         language={options.props.language}
         inline={options.activityPresentation === 'inline'}
-        summaryMode={options.activityPresentation === 'count' ? 'count' : 'detail'}
         enteringItemKeys={options.enteringItemIds}
         motionActive={row.motionActive || row.items.some(isLiveActivityItem) || row.items.some((item) => item.key === options.motionFocus?.itemKey)}
         onOpenResource={options.props.onOpenResource}
