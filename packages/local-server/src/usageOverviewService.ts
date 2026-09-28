@@ -9,6 +9,7 @@ import {
   type TokenUsageBreakdown,
   type UsageAnalyticsSnapshot,
   type UsageModelCostBreakdown,
+  type UsageModelPricePeriod,
   type UsageModelRate,
   type UsageOverviewSnapshot,
   type UsageProviderAnalytics,
@@ -49,12 +50,18 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
     if (revision !== null && overviewCache?.key === key) return { ...overviewCache.snapshot, updatedAt: readAt.toISOString() };
     const connectionNames = new Map(connections.map((connection) => [connection.id, connection.name]));
     const connectionsById = new Map(connections.map((connection) => [connection.id, connection]));
-    const groups = new Map(groupRows(options.ledger.list({ since: addDays(startOfLocalDay(readAt), -6).toISOString() }), (row) => canonicalUsageProviderId(row.providerId)));
+    /** 价格周期需要完整账本；指标仍在内存中裁剪为近七日，避免旧用量进入概览。 */
+    const allRows = options.ledger.list();
+    /** 菜单栏可见用量只保留近七日。 */
+    const overviewRows = allRows.filter((row) => row.occurredAt >= addDays(startOfLocalDay(readAt), -6).toISOString());
+    /** 可见窗口与价格历史分别按供应源归组。 */
+    const groups = new Map(groupRows(overviewRows, (row) => canonicalUsageProviderId(row.providerId)));
+    const pricingGroups = new Map(groupRows(allRows, (row) => canonicalUsageProviderId(row.providerId)));
     const history = options.ledger.listOverviewProviders();
     const providerIds = new Set([...(official.state === 'available' && !history.some((entry) => entry.providerId === 'codex') ? ['codex'] : []), ...history.map((entry) => entry.providerId)]);
     const providers = [...providerIds]
       .map((providerId) => {
-        const provider = buildProviderSummary({ providerId, rows: groups.get(providerId) ?? [], readAt, official, connectionNames, connectionsById });
+        const provider = buildProviderSummary({ providerId, rows: groups.get(providerId) ?? [], pricingRows: pricingGroups.get(providerId) ?? [], readAt, official, connectionNames, connectionsById });
         const bounds = history.find((entry) => entry.providerId === providerId);
         if (bounds) {
           provider.collectionStartedAt = bounds.firstAt;
@@ -93,7 +100,7 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
       .map(([providerId, rows]): UsageProviderAnalytics => {
         const isCodex = providerId === 'codex';
         const filteredRows = rows.filter((row) => (!since || row.occurredAt >= since) && (!input.projectId || row.projectId === input.projectId) && (!input.model || row.model === input.model));
-        const provider = buildProviderSummary({ providerId, rows, readAt, official, connectionNames, connectionsById });
+        const provider = buildProviderSummary({ providerId, rows, pricingRows: rows, readAt, official, connectionNames, connectionsById });
         const pricingRows = filteredRows.length > 0 ? filteredRows : rows;
         const catalogDates = [...new Set(pricingRows.map((row) => row.estimate.rateSnapshot.catalogDate))].sort();
         const sourceUrls = [...new Set(pricingRows.flatMap((row) => row.estimate.rateSnapshot.sourceUrls))];
@@ -142,12 +149,14 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
 function buildProviderSummary(input: {
   providerId: string;
   rows: CodexUsageLedgerRecord[];
+  /** 价格周期使用完整供应源账本，不受概览时间窗口裁剪。 */
+  pricingRows: CodexUsageLedgerRecord[];
   readAt: Date;
   official: Awaited<ReturnType<CodexUsageService['refreshOfficialUsage']>>;
   connectionNames: Map<string, string>;
   connectionsById: Map<string, ReturnType<ModelConnectionService['listMetadata']>[number]>;
 }): UsageProviderSummary {
-  const { providerId, rows, readAt, official, connectionNames, connectionsById } = input;
+  const { providerId, rows, pricingRows, readAt, official, connectionNames, connectionsById } = input;
   const isCodex = providerId === 'codex';
   const sourceId = isCodex ? 'codex' : providerId.startsWith('api:') ? providerId.slice(4) : providerId;
   const connectionName = connectionNames.get(sourceId);
@@ -156,6 +165,8 @@ function buildProviderSummary(input: {
   const sevenDayRows = rows.filter((row) => row.occurredAt >= addDays(startOfLocalDay(readAt), -6).toISOString());
   const today = localDate(readAt);
   const sevenDayStart = localDate(addDays(startOfLocalDay(readAt), -6));
+  /** 价格周期必须参考该供应源的全部账本目录，不能只看今日或近七日窗口。 */
+  const pricePeriods = buildUsagePricePeriods(pricingRows);
   const accountDays = isCodex ? (official.dailyUsageBuckets?.filter((bucket) => bucket.startDate >= sevenDayStart && bucket.startDate <= today).map((bucket) => ({ date: bucket.startDate, totalTokens: bucket.tokens })) ?? null) : null;
   const latestLocalAt = rows.at(-1)?.occurredAt ?? readAt.toISOString();
   return {
@@ -174,10 +185,10 @@ function buildProviderSummary(input: {
     accountSevenDayTokens: accountDays && accountDays.length > 0 ? accountDays.reduce((sum, day) => sum + day.totalTokens, 0) : null,
     dailyAccount: accountDays,
     todayLocal: aggregateRows(todayRows),
-    todayCostBreakdown: aggregateCostBreakdown(todayRows),
+    todayCostBreakdown: aggregateCostBreakdown(todayRows, pricePeriods),
     todayLocalComplete: todayRows.every((row) => row.usageComplete),
     sevenDayLocal: aggregateRows(sevenDayRows),
-    sevenDayCostBreakdown: aggregateCostBreakdown(sevenDayRows),
+    sevenDayCostBreakdown: aggregateCostBreakdown(sevenDayRows, pricePeriods),
     sevenDayLocalComplete: sevenDayRows.every((row) => row.usageComplete),
     dailyLocal: groupRows(sevenDayRows, (row) => localDate(new Date(row.occurredAt))).map(([date, entries]) => ({ date, ...aggregateRows(entries) })) satisfies CodexLocalUsageDay[],
     collectionStartedAt: rows[0]?.occurredAt ?? null,
@@ -215,8 +226,8 @@ function aggregateRows(rows: readonly CodexUsageLedgerRecord[]): CodexLocalUsage
 }
 
 /** 按真实请求的模型和价格快照归组，避免用最后一次单价解释整段历史。 */
-function aggregateCostBreakdown(rows: readonly CodexUsageLedgerRecord[]): UsageModelCostBreakdown[] {
-  /** JSON 键只用于同一次聚合内识别完全相同的模型与费率。 */
+function aggregateCostBreakdown(rows: readonly CodexUsageLedgerRecord[], pricePeriods: ReadonlyMap<string, UsageModelPricePeriod>): UsageModelCostBreakdown[] {
+  /** JSON 键只用于同一次聚合内识别完全相同的模型、费率和目录日期。 */
   const groups = new Map<string, UsageModelCostBreakdown>();
   for (const row of rows) {
     /** 新账本优先使用请求级快照；旧账本仍以整轮快照展示真实已知信息。 */
@@ -226,18 +237,73 @@ function aggregateCostBreakdown(rows: readonly CodexUsageLedgerRecord[]): UsageM
     for (const request of requests) {
       /** 标准价格与历史 Codex 美元费率统一成前端只读结构。 */
       const rate = usageModelRate(request.estimate.rateSnapshot);
-      const key = JSON.stringify([request.model, rate]);
+      /** 同价但属于不同目录周期的记录也必须分行，避免日期范围和费用错配。 */
+      const catalogDate = validCatalogDate(request.estimate.rateSnapshot.catalogDate);
+      const key = JSON.stringify([request.model, rate, catalogDate]);
       const existing = groups.get(key);
       if (existing) {
         existing.usage = sumBreakdowns([existing.usage, request.usage]);
         existing.estimatedCosts = sumEstimatedCosts([{ costs: existing.estimatedCosts, apiEquivalentUsd: null }, request.estimate]);
       } else {
-        groups.set(key, { model: request.model, rate, usage: { ...request.usage }, estimatedCosts: sumEstimatedCosts([request.estimate]) });
+        groups.set(key, {
+          model: request.model,
+          rate,
+          pricePeriod: rate && catalogDate ? (pricePeriods.get(pricePeriodKey(request.model, catalogDate)) ?? null) : null,
+          usage: { ...request.usage },
+          estimatedCosts: sumEstimatedCosts([request.estimate]),
+        });
       }
     }
   }
   /** 费用明细优先展示 Token 消耗最大的分组，同量时按模型名稳定排序。 */
   return [...groups.values()].sort((left, right) => right.usage.totalTokens - left.usage.totalTokens || left.model.localeCompare(right.model));
+}
+
+/** 从供应源完整账本建立相邻价格目录周期，最新目录延续到至今。 */
+function buildUsagePricePeriods(rows: readonly CodexUsageLedgerRecord[]): Map<string, UsageModelPricePeriod> {
+  /** 同一模型可能在一个目录内包含多个档位，它们共享目录周期。 */
+  const datesByModel = new Map<string, Set<string>>();
+  for (const row of rows) {
+    /** 新账本逐请求读取真实快照，旧账本继续读取整轮快照。 */
+    const snapshots = row.estimate.requests?.length ? row.estimate.requests.map((request) => request.estimate.rateSnapshot) : [row.estimate.rateSnapshot];
+    for (const snapshot of snapshots) {
+      /** 缺价和非法日期不参与周期推断。 */
+      if (!usageModelRate(snapshot)) continue;
+      const catalogDate = validCatalogDate(snapshot.catalogDate);
+      if (!catalogDate) continue;
+      const model = snapshot.model || row.model;
+      const dates = datesByModel.get(model);
+      if (dates) dates.add(catalogDate);
+      else datesByModel.set(model, new Set([catalogDate]));
+    }
+  }
+  /** 返回值直接以模型和目录日期索引，费用聚合无需重复搜索。 */
+  const periods = new Map<string, UsageModelPricePeriod>();
+  for (const [model, dateSet] of datesByModel) {
+    const dates = [...dateSet].sort();
+    for (const [index, from] of dates.entries()) {
+      const next = dates[index + 1];
+      periods.set(pricePeriodKey(model, from), { from, to: next ? previousIsoDate(next) : null });
+    }
+  }
+  return periods;
+}
+
+/** 只接受规范日历日期，避免把 unavailable 或抓取异常值显示为生效周期。 */
+function validCatalogDate(value: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(value)) return null;
+  const instant = Date.parse(`${value}T00:00:00Z`);
+  return Number.isFinite(instant) && new Date(instant).toISOString().slice(0, 10) === value ? value : null;
+}
+
+/** 目录周期索引不使用费率内容，多个并行档位共享同一个时间边界。 */
+function pricePeriodKey(model: string, catalogDate: string): string {
+  return `${model}\u0000${catalogDate}`;
+}
+
+/** 相邻目录采用闭区间显示，因此结束日是下一目录开始日的前一天。 */
+function previousIsoDate(value: string): string {
+  return new Date(Date.parse(`${value}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
 }
 
 /** 把各供应商费率投影为同一展示口径，缺价继续保持未知。 */

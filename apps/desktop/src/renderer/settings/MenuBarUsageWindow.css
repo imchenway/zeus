@@ -24,7 +24,7 @@ body:has(.menu-bar-usage-root),
   --usage-accent-soft: color-mix(in srgb, var(--zeus-brand-primary) 10%, white);
   --usage-danger: #b64949;
   box-sizing: border-box;
-  /* 原生宿主临时加宽时主体仍保持菜单栏宽度，透明扩展区只承载费用明细。 */
+  /* 菜单栏主体始终占用固定原生宽度，费用明细由独立透明窗口承载。 */
   inline-size: min(360px, 100%);
   block-size: 100%;
   margin-inline: auto;
@@ -518,11 +518,11 @@ body:has(.menu-bar-usage-root),
   background: var(--usage-accent);
 }
 
-/* 两列统计让金额与长数字完整可读，四项指标共用相同布局。 */
+/* 三列按 Token、缓存命中率、费用排列，同一周期保持一行便于横向比较。 */
 .menu-bar-usage-metrics {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
   margin: 0;
   padding: 8px 0;
   border: 0;
@@ -606,33 +606,34 @@ body:has(.menu-bar-usage-root),
   border-radius: 5px;
 }
 
-/* 结构化费用明细进入顶层，位置由实际剩余空间计算，长模型列表自身滚动。 */
-.menu-bar-usage-cost-detail[popover] {
-  position: fixed;
-  inset: auto;
-  left: var(--usage-cost-detail-left, 12px);
-  top: var(--usage-cost-detail-top, 12px);
-  display: none;
-  /* 原生宿主展开后可越过 360px 菜单栏主体，窄视口仍保留两侧安全距离。 */
-  inline-size: min(480px, calc(100vw - 24px));
-  /* 高度服从图标上方或下方的可用空间，长明细沿用内部表格滚动。 */
-  max-block-size: min(360px, calc(100vh - 24px), var(--usage-cost-detail-available-height, 360px));
+/* 独立原生窗口只让真实面板着色，四周留白保持完全透明并容纳阴影。 */
+.menu-bar-usage-cost-detail-window-root {
+  inline-size: fit-content;
+  block-size: fit-content;
+  margin: 0;
+  padding: 8px;
+  overflow: hidden;
+  user-select: auto;
+}
+
+/* 结构化费用明细按内容收缩，长模型列表只在自身区域滚动。 */
+.menu-bar-usage-cost-detail-window {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 4px;
+  inline-size: fit-content;
+  min-inline-size: 0;
+  max-inline-size: 480px;
+  max-block-size: 360px;
   margin: 0;
   padding: 10px;
   overflow: hidden;
-  border: 1px solid var(--usage-line);
+  border: 0;
   border-radius: var(--usage-radius-control, 8px);
   background: var(--usage-panel-strong);
   box-shadow: var(--usage-shadow-soft);
   color: var(--usage-text);
   font-size: 11px;
-}
-
-.menu-bar-usage-cost-detail:popover-open {
-  display: grid;
-  /* 表头说明保持自然高度，只有表格区域随可用空间收缩并滚动。 */
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
-  gap: 4px;
 }
 
 .menu-bar-usage-cost-detail > strong {
@@ -652,12 +653,15 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-cost-table-scroll {
+  min-inline-size: 0;
+  max-inline-size: 100%;
   overflow: auto;
   overscroll-behavior: contain;
 }
 
 .menu-bar-usage-cost-detail table {
-  inline-size: 100%;
+  /* 表格只占三列单行内容所需宽度，不把宿主剩余空间分给任意一列。 */
+  inline-size: max-content;
   border-collapse: collapse;
   table-layout: auto;
   text-align: start;
@@ -681,8 +685,6 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-cost-detail th:first-child {
-  /* 模型列只占最长模型名所需宽度，剩余空间交给单价列。 */
-  inline-size: 1%;
   text-align: start;
 }
 
@@ -692,8 +694,6 @@ body:has(.menu-bar-usage-root),
 
 .menu-bar-usage-cost-detail th:last-child,
 .menu-bar-usage-cost-detail td:last-child {
-  /* 结果列按最长标题或结果收缩，避免固定比例制造空白。 */
-  inline-size: 1%;
   text-align: end;
 }
 
@@ -710,6 +710,12 @@ body:has(.menu-bar-usage-root),
 /* 单价沿用较小字号，两组费率均由单元格的单行约束保证不拆分。 */
 .menu-bar-usage-cost-detail td:nth-child(2) span {
   font-size: 10px;
+}
+
+/* 第三行只说明价格目录周期，使用次级颜色避免与单价争夺层级。 */
+.menu-bar-usage-cost-detail td:nth-child(2) .menu-bar-usage-price-period {
+  color: var(--usage-muted);
+  font-size: 9px;
 }
 
 /* 每行金额与 Token 共用结果列，和两行单价对齐，避免窄浮窗被第四列挤碎。 */

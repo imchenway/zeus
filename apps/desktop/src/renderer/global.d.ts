@@ -10,6 +10,7 @@ import type {
   ConversationResourceOpenTarget,
   CreateProjectSourceEntryInput,
   MoveProjectSourceEntryInput,
+  UsageModelCostBreakdown,
   ProjectSourceDirectorySnapshot,
   ProjectSourceContentSearchResult,
   ProjectSourceDocument,
@@ -50,6 +51,18 @@ type TaskInputResourceBridge = {
   characterCount?: number;
   previewUrl?: string;
   restorableText?: string;
+};
+
+/** 菜单栏主体与独立透明费用窗口之间共享的纯展示数据。 */
+type MenuBarUsageCostDetailBridgePayload = {
+  id: string;
+  label: string;
+  language: 'zh-CN' | 'en-US';
+  appearance: 'light' | 'dark' | 'system';
+  entries: UsageModelCostBreakdown[];
+  pricingMeta: string | null;
+  anchor: { x: number; y: number };
+  pinned: boolean;
 };
 
 declare global {
@@ -140,8 +153,22 @@ declare global {
       getRequestingWindowForeground: () => Promise<{ foreground: boolean }>;
       onRequestingWindowForegroundChanged: (listener: (foreground: boolean) => void) => () => void;
       hideMenuBarUsage: () => Promise<{ hidden: true }>;
-      /** 菜单栏浮窗随内容收缩，费用明细展开时返回主进程实际允许的宽高。 */
-      resizeMenuBarUsage: (height: number, detailExpanded: boolean) => Promise<{ width: number; height: number }>;
+      /** 菜单栏浮窗仅随内容调整高度，原生宽度保持 360px。 */
+      resizeMenuBarUsage: (height: number) => Promise<{ width: number; height: number }>;
+      /** 在指定屏幕锚点旁打开或更新独立透明费用明细窗口。 */
+      showMenuBarUsageCostDetail: (payload: MenuBarUsageCostDetailBridgePayload) => Promise<{ shown: true }>;
+      /** 未固定时延迟关闭费用明细，允许指针跨越原生窗口间距。 */
+      scheduleHideMenuBarUsageCostDetail: () => Promise<{ scheduled: true }>;
+      /** 指针进入触发器或明细窗口时取消延迟关闭。 */
+      cancelHideMenuBarUsageCostDetail: () => Promise<{ cancelled: true }>;
+      /** 立即关闭独立费用明细窗口。 */
+      hideMenuBarUsageCostDetail: () => Promise<{ hidden: true }>;
+      /** 独立费用 Renderer 读取首次展示数据。 */
+      getMenuBarUsageCostDetail: () => Promise<MenuBarUsageCostDetailBridgePayload>;
+      /** 独立费用 Renderer 按真实内容请求原生尺寸和位置。 */
+      resizeMenuBarUsageCostDetail: (width: number, height: number) => Promise<{ x: number; y: number; width: number; height: number }>;
+      /** 两个相关 Renderer 同步当前明细或关闭状态。 */
+      onMenuBarUsageCostDetailChanged: (listener: (payload: MenuBarUsageCostDetailBridgePayload | null) => void) => () => void;
       onMenuBarUsageSettingsChanged: (listener: (settings: { language: 'zh-CN' | 'en-US'; appearance: 'light' | 'dark' | 'system' }) => void) => () => void;
       showMainWindowFromMenuBarUsage: () => Promise<{ shown: boolean }>;
       openMenuBarUsageSettings: (category: 'usage' | 'runtime') => Promise<{ opened: boolean; category: 'usage' | 'runtime' }>;

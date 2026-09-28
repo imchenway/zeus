@@ -213,8 +213,26 @@ contextBridge.exposeInMainWorld('zeus', {
     return () => ipcRenderer.removeListener('zeus:requesting-window-foreground-changed', handler);
   },
   hideMenuBarUsage: () => ipcRenderer.invoke('zeus:menu-bar-usage:hide'),
-  /** 将内容高度和费用明细状态交给主进程校验，只调整当前菜单栏浮窗。 */
-  resizeMenuBarUsage: (height: number, detailExpanded: boolean) => ipcRenderer.invoke('zeus:menu-bar-usage:resize', height, detailExpanded),
+  /** 将内容高度交给主进程校验，菜单栏浮窗宽度保持不变。 */
+  resizeMenuBarUsage: (height: number) => ipcRenderer.invoke('zeus:menu-bar-usage:resize', height),
+  /** 在鼠标屏幕锚点旁显示独立透明费用明细窗口。 */
+  showMenuBarUsageCostDetail: (input: unknown) => ipcRenderer.invoke('zeus:menu-bar-usage:cost-detail-show', input),
+  /** 指针离开触发器或明细窗口时延迟关闭。 */
+  scheduleHideMenuBarUsageCostDetail: () => ipcRenderer.invoke('zeus:menu-bar-usage:cost-detail-schedule-hide'),
+  /** 指针进入任一关联窗口时取消延迟关闭。 */
+  cancelHideMenuBarUsageCostDetail: () => ipcRenderer.invoke('zeus:menu-bar-usage:cost-detail-cancel-hide'),
+  /** 点击取消固定、Escape 或外部点击时立即关闭。 */
+  hideMenuBarUsageCostDetail: () => ipcRenderer.invoke('zeus:menu-bar-usage:cost-detail-hide'),
+  /** 独立费用明细 Renderer 读取当前展示数据。 */
+  getMenuBarUsageCostDetail: () => ipcRenderer.invoke('zeus:menu-bar-usage:cost-detail-get'),
+  /** 独立费用窗口按内容请求真实原生尺寸。 */
+  resizeMenuBarUsageCostDetail: (width: number, height: number) => ipcRenderer.invoke('zeus:menu-bar-usage:cost-detail-resize', width, height),
+  /** 菜单栏主体和独立明细窗口同步当前展开内容。 */
+  onMenuBarUsageCostDetailChanged: (listener: (payload: unknown) => void) => {
+    const handler = (_event: unknown, payload: unknown) => listener(payload);
+    ipcRenderer.on('zeus:menu-bar-usage:cost-detail-changed', handler);
+    return () => ipcRenderer.removeListener('zeus:menu-bar-usage:cost-detail-changed', handler);
+  },
   onMenuBarUsageSettingsChanged: (listener: (settings: unknown) => void) => {
     const handler = (_event: unknown, settings: unknown) => listener(settings);
     ipcRenderer.on('zeus:menu-bar-usage:settings', handler);
