@@ -2728,23 +2728,6 @@
   }
 }
 
-/* 操作组摘要随会话列宽换行，展开后显示明细和图片缩略图。 */
-.session-codex-parity-v1 .session-activity-group > details > summary {
-  justify-content: flex-start;
-}
-
-.session-codex-parity-v1 .session-activity-group > details > summary > span:nth-child(2) {
-  min-inline-size: 0;
-  overflow-wrap: anywhere;
-  white-space: normal;
-}
-
-.session-codex-parity-v1 .session-activity-group > details > summary .session-activity-caret {
-  /* 长摘要折行时保留完整的展开箭头。 */
-  flex: 0 0 auto;
-  margin-inline-start: 0;
-}
-
 .session-codex-parity-v1 .session-activity-resource-link {
   appearance: none;
   background: transparent;
@@ -2789,7 +2772,7 @@
 }
 
 /* 计划、命令、文件、技能和上下文整理是语义图标，不得作为加载环旋转。 */
-.session-codex-parity-v1 :where(.session-activity-group-icon, .session-activity-item-icon, .session-plan-summary-symbol) {
+.session-codex-parity-v1 :where(.session-activity-item-icon, .session-plan-summary-symbol) {
   animation: none !important;
   transform: none !important;
   will-change: auto !important;
@@ -5125,55 +5108,19 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   white-space: break-spaces;
 }
 
-.session-codex-parity-v1 .session-activity-group > details > summary {
-  list-style: none;
-}
-
-.session-codex-parity-v1 .session-activity-group summary::-webkit-details-marker {
-  display: none;
-}
-
-.session-codex-parity-v1 .session-activity-group > details > summary {
-  align-items: center;
-  /* 过程行只让图标、标题和箭头构成命中区，正文剩余宽度保持空白。 */
-  inline-size: fit-content;
-  max-inline-size: 100%;
-  border-radius: 6px;
-  color: var(--session-text-muted);
-  cursor: pointer;
-  display: flex;
-  font-size: 14px;
-  font-weight: 590;
-  gap: 9px;
-  min-block-size: 28px;
-  /* 图标沿用正文列的起点，标题行不再额外横向缩进。 */
-  padding: 4px 0;
-}
-
-.session-codex-parity-v1 .session-activity-group > details > summary:hover:not(:disabled):not([aria-disabled='true']) {
-  color: var(--session-text);
-}
-
-.session-codex-parity-v1 :where(.session-activity-group > details > summary, .session-plan-trigger):focus-visible {
+.session-codex-parity-v1 .session-plan-trigger:focus-visible {
   border-radius: 7px;
   outline: 2px solid var(--session-focus-outline);
   outline-offset: 2px;
 }
 
-.session-codex-parity-v1 .session-activity-group > details > summary > svg:first-child {
-  block-size: 19px;
-  flex: 0 0 auto;
-  inline-size: 19px;
-}
-
-.session-codex-parity-v1 :where(.session-activity-caret, .session-plan-caret) {
+.session-codex-parity-v1 .session-plan-caret {
   block-size: 13px;
   inline-size: 13px;
   margin-inline-start: auto;
   transition: transform 140ms var(--session-ease-out);
 }
 
-.session-codex-parity-v1 .session-activity-group > details[open] .session-activity-caret,
 .session-codex-parity-v1 .session-plan-progress[data-open='true'] .session-plan-caret {
   transform: rotate(180deg);
 }
@@ -10738,7 +10685,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 /* ZEUS-0274：过程说明与顶层过程行共用正文尺寸，活动状态不得改变阅读层级。 */
 .session-codex-parity-v1 .session-commentary-flow .session-markdown,
 .session-codex-parity-v1 .session-reasoning-summary,
-.session-codex-parity-v1 .session-activity-group > details > summary,
 .session-codex-parity-v1 .session-activity-live,
 .session-codex-parity-v1 .session-activity-item-title,
 .session-codex-parity-v1 .session-transcript-thinking,
@@ -11762,18 +11708,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   display: none;
 }
 
-.session-codex-parity-v1 :where(.session-activity-group-icon, .session-activity-item-icon, .session-plan-summary-symbol) {
+.session-codex-parity-v1 :where(.session-activity-item-icon, .session-plan-summary-symbol) {
   align-items: center;
   border-radius: 999px;
   display: inline-grid;
   flex: 0 0 auto;
   justify-items: center;
-}
-
-.session-codex-parity-v1 .session-activity-group-icon,
-.session-codex-parity-v1 .session-activity-group-icon > svg {
-  block-size: 19px;
-  inline-size: 19px;
 }
 
 .session-codex-parity-v1 .session-plan-summary-symbol,
@@ -11942,7 +11882,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   padding-block-end: 72px;
 }
 
-.session-codex-parity-v1 .session-activity-group[data-active='true'] .session-activity-group-icon,
 .session-codex-parity-v1 .session-activity-group[data-active='true'] > .session-activity-live .session-activity-item-icon,
 .session-codex-parity-v1 .session-activity-group[data-active='true'] .session-activity-body li[data-motion-active='true'] > .session-activity-item-icon,
 .session-codex-parity-v1 .session-plan-summary[data-streaming='true'] .session-plan-summary-symbol {
@@ -12048,14 +11987,14 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 }
 
 /* 最终覆盖：语义图标保持静止，只有专用 CircleNotch / CSS 加载环旋转。 */
-.session-codex-parity-v1 :where(.session-activity-group-icon, .session-activity-item-icon, .session-plan-summary-symbol) {
+.session-codex-parity-v1 :where(.session-activity-item-icon, .session-plan-summary-symbol) {
   animation: none !important;
   transform: none !important;
   will-change: auto !important;
 }
 
 /* 命令与工具图标只表达活动类型，不再叠加蓝色圆底或光晕。 */
-.session-codex-parity-v1 :where(.session-activity-group-icon, .session-activity-item-icon) {
+.session-codex-parity-v1 .session-activity-item-icon {
   background: transparent !important;
   box-shadow: none !important;
 }
