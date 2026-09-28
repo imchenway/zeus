@@ -260,6 +260,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   latestVisibilityCallbackRef.current = props.onLatestContentVisibilityChange;
   const historyPrependAnchorRef = useRef<(TranscriptViewportAnchor & { frozenCursor: string }) | null>(null);
   const staticReadingAnchorRef = useRef<TranscriptViewportAnchor | null>(null);
+  /** 展开状态提交后立即补偿入口本身，避免首帧先跳动再由测量器纠正。 */
+  const pendingProcessAnchorRef = useRef<{ trigger: HTMLButtonElement; top: number } | null>(null);
   const previousTurnIdRef = useRef<string | null>(null);
   const activeTurnTrackingInitializedRef = useRef(false);
   const scrollController = useThreadScrollController();
@@ -1050,14 +1052,35 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     return () => observer.disconnect();
   }, [historyHydrated, maintainLatestPosition, props.state.conversationId]);
 
-  const setTranscriptRowExpanded = useCallback((rowKey: string, open: boolean): void => {
-    setRowExpansionOverrides((current) => {
-      if (current.get(rowKey) === open) return current;
-      const next = new Map(current);
-      next.set(rowKey, open);
-      return next;
-    });
-  }, []);
+  /** 用户主动展开过程时进入静态阅读，避免内容增高后的自动贴底移动入口。 */
+  const setTranscriptRowExpanded = useCallback(
+    (rowKey: string, open: boolean, trigger: HTMLButtonElement): void => {
+      if (containerRef.current) {
+        scrollController.onExplicitHistoryRequest();
+        rememberStaticReadingAnchor(containerRef.current);
+        pendingProcessAnchorRef.current = { trigger, top: trigger.getBoundingClientRect().top };
+        setReturnToLatestVisible(true);
+      }
+      setRowExpansionOverrides((current) => {
+        if (current.get(rowKey) === open) return current;
+        const next = new Map(current);
+        next.set(rowKey, open);
+        return next;
+      });
+    },
+    [rememberStaticReadingAnchor, scrollController],
+  );
+
+  useLayoutEffect(() => {
+    /** 只处理用户刚刚切换的过程入口，后续异步增高继续交给虚拟列表锚点。 */
+    const pendingAnchor = pendingProcessAnchorRef.current;
+    /** 会话切换或卸载期间不再补偿旧容器。 */
+    const container = containerRef.current;
+    if (!pendingAnchor || !container) return;
+    pendingProcessAnchorRef.current = null;
+    if (pendingAnchor.trigger.isConnected) container.scrollTop += pendingAnchor.trigger.getBoundingClientRect().top - pendingAnchor.top;
+    synchronizeTranscriptViewport(container);
+  }, [expandedRowKeys, synchronizeTranscriptViewport]);
 
   const renderTranscriptTurnRow = (row: TranscriptViewportRow): ReactNode => {
     if (row.kind === 'turn_failure') {
@@ -1134,7 +1157,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                 loading={Boolean(row.loadMore && processPaging?.loading)}
                 error={row.loadMore ? processPaging?.error : null}
                 open={expandedRowKeys.has(expansionKey)}
-                onOpenChange={(open) => setTranscriptRowExpanded(expansionKey, open)}
+                onOpenChange={(open, trigger) => setTranscriptRowExpanded(expansionKey, open, trigger)}
                 onOpen={async () => {
                   if (!row.loadMore) return;
                   if (!processPaging?.loaded || processPaging.error) await renderProps.onLoadTurnProcess?.(row.turnId);
@@ -1163,7 +1186,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
               loading={Boolean(row.loadMore && processPaging?.loading)}
               error={row.loadMore ? processPaging?.error : null}
               open={expandedRowKeys.has(expansionKey)}
-              onOpenChange={(open) => setTranscriptRowExpanded(expansionKey, open)}
+              onOpenChange={(open, trigger) => setTranscriptRowExpanded(expansionKey, open, trigger)}
               onOpen={async () => {
                 if (!row.loadMore) return;
                 if (!processPaging?.loaded || processPaging.error) await renderProps.onLoadTurnProcess?.(row.turnId);
@@ -1213,7 +1236,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             loading={Boolean(v2ProcessPaging?.loading)}
             error={v2ProcessPaging?.error}
             open={expandedRowKeys.has(expansionKey)}
-            onOpenChange={(open) => setTranscriptRowExpanded(expansionKey, open)}
+            onOpenChange={(open, trigger) => setTranscriptRowExpanded(expansionKey, open, trigger)}
             onOpen={async () => {
               if (!v2ProcessPaging?.loaded || v2ProcessPaging.error) await renderProps.onLoadTurnProcess?.(lastRowItem.turnId);
               await renderProps.onLoadTurnArtifacts?.(lastRowItem.turnId);
