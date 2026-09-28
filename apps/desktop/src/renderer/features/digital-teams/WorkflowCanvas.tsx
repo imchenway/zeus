@@ -228,10 +228,14 @@ function WorkflowCanvasSurface(props: WorkflowCanvasProps) {
 function WorkflowNodeCard(props: NodeProps<CanvasNode>) {
   /** 当前持久业务节点决定卡片类型与内容。 */
   const node = props.data.workflowNode;
-  /** 员工与历史流程节点分别给出最关键的第二行信息。 */
+  /** 员工节点始终显示权威数字员工名称，不显示历史节点标题副本。 */
+  const displayTitle = node.type === 'employee' ? (props.data.employeeName ?? node.data.title) : node.data.title;
+  /** 员工节点只展示团队执行方式，避免重复展示权威员工名称。 */
   const detail =
     node.type === 'employee'
-      ? `${node.data.executionMode === 'isolated_write' ? '隔离修改代码' : '分析资料与已有成果'} · ${props.data.employeeName ?? '未绑定员工'}`
+      ? node.data.executionMode === 'isolated_write'
+        ? '隔离修改代码'
+        : '分析资料与已有成果'
       : node.type === 'human_confirmation'
         ? approvalPurposeLabels[node.data.purpose]
         : node.type === 'code_integration'
@@ -242,10 +246,10 @@ function WorkflowNodeCard(props: NodeProps<CanvasNode>) {
   /** 当前状态同时提供文字与视觉标记，不依赖颜色表达。 */
   const runtimeLabel = props.data.runtimeState ? `${props.data.runtimeState.status}${props.data.runtimeState.attempt ? ` · 第 ${props.data.runtimeState.attempt} 次` : ''}` : null;
   return (
-    <article className={`digital-team-node is-${node.type}${props.selected ? ' is-selected' : ''}${props.data.issues.length ? ' has-error' : ''}`} aria-label={`${node.data.title}，${detail}`}>
+    <article className={`digital-team-node is-${node.type}${props.selected ? ' is-selected' : ''}${props.data.issues.length ? ' has-error' : ''}`} aria-label={`${displayTitle}，${detail}`}>
       {node.type !== 'start' ? <Handle type="target" position={Position.Left} isConnectable={props.isConnectable} aria-label="输入：连接上游节点" title="输入：从上游节点右侧拖到这里" /> : null}
       <span className="digital-team-node-kind">{nodeTypeLabel(node.type)}</span>
-      <strong>{node.data.title}</strong>
+      <strong>{displayTitle}</strong>
       <small>{detail}</small>
       {runtimeLabel ? <span className="digital-team-node-status">{runtimeLabel}</span> : null}
       {props.data.issues[0] ? <span className="digital-team-node-error">{props.data.issues[0]}</span> : null}

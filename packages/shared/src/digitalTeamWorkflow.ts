@@ -706,9 +706,9 @@ export function normalizeDigitalTeamWorkflowDefinition(definition: DigitalTeamWo
   if (!isRecord(definition) || !Array.isArray(definition.nodes) || !Array.isArray(definition.edges) || definition.nodes.some((node) => !isNode(node)) || definition.edges.some((edge) => !isEdge(edge))) return definition;
   const employeeNodes = definition.nodes.filter((node): node is DigitalTeamEmployeeNode => node.type === 'employee');
   if (definition.schemaGeneration === digitalTeamWorkflowSchemaGeneration && employeeNodes.length === definition.nodes.length) {
-    return structuredClone(definition);
+    return { ...structuredClone(definition), nodes: employeeNodes.map((node) => normalizeEmployeeNode(node)) };
   }
-  /** 旧职责、候选模式与技术节点只在升级边界收敛，当前编辑中的换行不能被提前吞掉。 */
+  /** 旧职责、候选模式与技术节点只在升级边界收敛。 */
   const nodes = employeeNodes.map((node) => normalizeEmployeeNode(node));
   /** 旧技术节点只传递依赖，最近的下游员工成为当前员工的直接后继。 */
   const outgoing = adjacency(definition.nodes, definition.edges, 'outgoing');
@@ -857,7 +857,12 @@ function isEmployeeSettings(value: unknown): value is EmployeeWorkSettings {
 
 /** 把员工分工收敛为当前可编辑结构，旧职责只保留为普通工作。 */
 function normalizeEmployeeNode(node: DigitalTeamEmployeeNode): DigitalTeamEmployeeNode {
+  /** 执行方式仍属于流程调度元数据，不进入数字员工配置表单。 */
   const executionMode = node.data.executionMode === 'isolated_write' ? 'isolated_write' : 'read_only';
+  /** 兼容字段由系统补齐，用户不再为节点维护第二份工作提示。 */
+  const acceptanceCriteria = node.data.acceptanceCriteria?.map((item) => item.trim()).filter(Boolean) ?? [];
+  /** 交付物同样只作为运行协议默认值存在。 */
+  const expectedDeliverables = node.data.expectedDeliverables?.map((item) => item.trim()).filter(Boolean) ?? [];
   return {
     ...structuredClone(node),
     type: 'employee',
@@ -865,10 +870,11 @@ function normalizeEmployeeNode(node: DigitalTeamEmployeeNode): DigitalTeamEmploy
       ...structuredClone(node.data),
       purpose: 'work',
       executionMode,
-      acceptanceCriteria: node.data.acceptanceCriteria?.map((item) => item.trim()).filter(Boolean) ?? [`完成“${node.data.title}”并提交可核对结果`],
-      expectedDeliverables: node.data.expectedDeliverables?.map((item) => item.trim()).filter(Boolean) ?? [executionMode === 'isolated_write' ? '代码变更与验证证据' : '可核对的工作成果'],
+      instructions: node.data.instructions.trim() || '根据当前任务目标和数字员工职责完成工作，并提交可核对结果。',
+      acceptanceCriteria: acceptanceCriteria.length ? acceptanceCriteria : [`完成“${node.data.title}”并提交可核对结果`],
+      expectedDeliverables: expectedDeliverables.length ? expectedDeliverables : [executionMode === 'isolated_write' ? '代码变更与验证证据' : '可核对的工作成果'],
       verificationCommands: undefined,
-      settings: node.data.settings?.delegation ? { ...structuredClone(node.data.settings), delegation: undefined } : structuredClone(node.data.settings),
+      settings: undefined,
     },
   };
 }

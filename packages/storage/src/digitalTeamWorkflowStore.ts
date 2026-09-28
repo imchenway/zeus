@@ -922,10 +922,10 @@ function freezeEmployee(db: ZeusDatabasePort, projectId: string, employeeId: str
   if (employee.entrypoint?.kind !== 'agent' || employee.entrypointMigrationState !== 'ready') {
     throw storeError('ZEUS_DIGITAL_TEAM_EMPLOYEE_NOT_READY', `数字员工“${employee.name}”尚未完成 Agent 配置。`, 409);
   }
-  /** 员工提供默认值，节点覆盖经服务端解析；实际动作授权由任务接纳层收口。 */
+  /** 数字员工是唯一配置来源；实际动作授权仍由任务接纳层收口。 */
   for (const node of nodes) {
-    const permission = node.data.settings?.permissionMode ?? employee.entrypoint.authorityPolicy.permissionMode;
-    if (node.data.executionMode === 'isolated_write' && permission === 'read-only') throw storeError('ZEUS_DIGITAL_TEAM_EMPLOYEE_AUTHORITY_INCOMPATIBLE', `请在工作“${node.data.title}”的本次配置中允许执行代码工作。`, 409);
+    if (node.data.executionMode === 'isolated_write' && employee.entrypoint.authorityPolicy.permissionMode === 'read-only')
+      throw storeError('ZEUS_DIGITAL_TEAM_EMPLOYEE_AUTHORITY_INCOMPATIBLE', `请在数字员工“${employee.name}”的配置中允许执行代码工作。`, 409);
   }
   return { employeeId: employee.id, employeeRevision: employee.revision, configuration: structuredClone(employee) as unknown as Record<string, unknown> };
 }

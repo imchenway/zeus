@@ -45,7 +45,7 @@ import type {
   DigitalTeamWorkflowRouteCoordinator,
 } from './digitalTeamWorkflowRoutes.js';
 import { DigitalTeamWorkflowRouteError } from './digitalTeamWorkflowRoutes.js';
-import { normalizeWorkSettings, type TaskWorkManagementController } from './taskWorkManagement.js';
+import type { TaskWorkManagementController } from './taskWorkManagement.js';
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
 import type { CreateUserTaskInput } from './workManagementCoreCommandRoutes.js';
 
@@ -144,11 +144,6 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
   /** 新建或按修订更新模板。 */
   saveTemplate(projectId: string, input: DigitalTeamTemplateSaveInput, operationIdentity: string): unknown {
     this.requireProject(projectId);
-    /** 与单员工工作复用同一配置边界，模板保存时即反馈非法覆盖。 */
-    if (isRecord(input.definition) && Array.isArray(input.definition.nodes))
-      for (const node of input.definition.nodes) {
-        if (isRecord(node) && node.type === 'employee' && isRecord(node.data)) node.data.settings = normalizeWorkSettings(node.data.settings);
-      }
     const id = typeof input.id === 'string' && input.id.trim() ? input.id.trim() : stableIdentity('digital_team_template', operationIdentity);
     const existing = this.options.templates.getById(id);
     if (existing) {
