@@ -946,9 +946,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const appShellSettingsKey = 'app.shell.settings';
   const codexAccountFingerprintSaltKey = 'codex.usage.account_fingerprint_salt';
   const conversationResourceBackfillSettingKey = 'conversation.resource_backfill';
-  // 仅补齐已完成答复遗漏的托管产物图片，保留已有资源。
-  /** 补齐 Pi 历史文件链接，仍保留已登记的资源和图片原件。 */
-  const conversationResourceBackfillRevision = '20260923_pi_conversation_resources';
+  /** 补齐历史图片查看与 Pi 文件链接，仍保留已登记的资源和图片原件。 */
+  const conversationResourceBackfillRevision = '20260929_image_view_resources';
   const localLogDirectory = dataLayout.localLogs;
   const localConfigPath = options.localConfigPath ?? dataLayout.localConfig;
   // 本地日志目录是设计书明确要求的物理落点；服务启动时创建，避免 UI 只展示一个不存在的路径。
@@ -1635,7 +1634,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   if (!readOnlyValidation && resourceBackfillState?.revision !== conversationResourceBackfillRevision) {
     const existingResourceCount = db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM conversation_resources`)?.count ?? 0;
     let conversationResourceBackfillCount = 0;
-    // 首次资源回填仍处理全部 item；升级只补最终答复图片和 Pi 已完成消息中的链接，
+    // 首次资源回填仍处理全部 item；升级只补图片查看、最终答复图片和 Pi 已完成消息中的链接，
     // 不把全部历史正文重新载入内存，也不覆盖已经存在的文件/网页资源。
     if (existingResourceCount === 0) {
       for (const conversation of conversations.listNativeBoundRecords()) {
@@ -1698,7 +1697,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           assistantImageArchiveRoot: conversationAttachmentRoot,
           artifactsDirectory: dataLayout.artifactsDirectory,
           now: item.updatedAt,
-        }).filter((resource) => item.agentKind === 'pi' || isDurableAssistantMarkdownImageResource(resource));
+        }).filter((resource) => item.itemType === 'imageView' || item.agentKind === 'pi' || isDurableAssistantMarkdownImageResource(resource));
         if (normalized.length === 0) continue;
         const existing = conversationResources.listByItem(item.id);
         // 同一 HTML 的正文链接和卡片共用目标，但属于两种展示，必须分别补齐。
