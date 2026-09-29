@@ -141,8 +141,8 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
       ) : props.newWorkspace && (creating || (!props.loading && choices.size === 0)) ? (
         <div className="task-conversation-new session-codex-parity-v1">
           <div>
-            <strong>{zh ? '在任务中讨论' : 'Discuss this task'}</strong>
-            <p>{zh ? '输入 @ 选择一位或多位数字员工。任务说明随讨论提供；需要执行开发流程时，在工作页安排分工。' : 'Use @ to select one or more digital employees. Task requirements accompany the discussion.'}</p>
+            <strong>{zh ? '开始任务讨论' : 'Start a task discussion'}</strong>
+            <p>{zh ? '输入 @ 邀请数字员工参与' : 'Type @ to invite digital employees.'}</p>
           </div>
           {props.newWorkspace}
         </div>

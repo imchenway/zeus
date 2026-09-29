@@ -305,7 +305,6 @@
 .macos-ai-app.zeus-shell
   :is(
     [role='tab'],
-    .task-work-cockpit-header nav button,
     .zeus-button[data-zeus-primitive='button'],
     .settings-section-button,
     .project-settings-section-tabs button,
@@ -318,7 +317,7 @@
   border-radius: var(--agentdesk-radius-tab);
 }
 
-.macos-ai-app.zeus-shell :is([role='tab'][aria-selected='true']:where(:not(.browser-tab)), .task-work-cockpit-header nav button.is-active) {
+.macos-ai-app.zeus-shell [role='tab'][aria-selected='true']:where(:not(.browser-tab)) {
   color: var(--agentdesk-accent-strong);
 }
 

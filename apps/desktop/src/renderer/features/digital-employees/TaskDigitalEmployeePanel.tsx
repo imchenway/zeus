@@ -1,6 +1,5 @@
 import { MotionPresence } from '../../ui/MotionPresence.js';
 import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
-import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
 import { CaretRightIcon } from '@phosphor-icons/react/dist/csr/CaretRight';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
@@ -178,7 +177,7 @@ type ManagementTab = 'collaboration' | 'work' | 'deliverables' | 'evidence';
 
 /** 在任务概览与工作管理间切换，不重复堆叠两套详情。 */
 export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
-  /** 页签和提示跟随应用语言。 */
+  /** 提示跟随应用语言。 */
   const zh = props.language === 'zh-CN';
   /** 进入详情直接对照任务说明阅读沟通内容。 */
   const [tab, setTab] = useState<ManagementTab>('collaboration');
@@ -186,17 +185,13 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
   const [conversationRequest, setConversationRequest] = useState<{ conversationId: string } | null>(null);
   /** 正式成果保留独立全文阅读状态。 */
   const [readingDeliverable, setReadingDeliverable] = useState<TaskWorkDeliverableRecord | null>(null);
-  /** 页签和内容区域共享无障碍身份。 */
-  const panelId = useId();
-  /** 固定页签顺序用于键盘导航。 */
-  const tabs = ['collaboration', 'work', 'deliverables', 'evidence'] as const;
   /** 选中的待处理事项继续使用原有确认弹窗。 */
   const [decisionOpen, setDecisionOpen] = useState<TaskWorkDecisionRecord | null>(null);
   /** 证据预览只读取用户选中的命令。 */
   const [commandEvidenceRunId, setCommandEvidenceRunId] = useState<string | null>(null);
 
   if (!props.client) return <p className="task-conversation-feedback">{zh ? '工作服务未连接，任务说明仍可编辑。' : 'The work service is disconnected. Task requirements remain editable.'}</p>;
-  const { projection, loadState, busy, error, load, act } = props.management;
+  const { projection, loadState, busy, error, act } = props.management;
   const pendingDecisions = projection?.managerDecisions.filter((decision) => decision.status === 'pending') ?? [];
   const pendingConversationRequests = projection?.conversationRequests ?? [];
 
@@ -211,42 +206,6 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
   }
   return (
     <section className="task-work-cockpit" aria-label={zh ? '任务内容与协作' : 'Task content and collaboration'}>
-      <header className="task-work-cockpit-header">
-        <nav role="tablist" aria-label={zh ? '任务详情页签' : 'Task detail tabs'}>
-          {tabs.map((value) => (
-            <button
-              key={value}
-              id={`${panelId}-${value}-tab`}
-              type="button"
-              role="tab"
-              aria-controls={`${panelId}-${value}`}
-              tabIndex={tab === value ? 0 : -1}
-              className={tab === value ? 'is-active' : undefined}
-              aria-selected={tab === value}
-              onClick={() => setTab(value)}
-              onKeyDown={(event) => {
-                /** 方向键、首尾键只切换页签，不影响正文草稿。 */
-                const index = tabs.indexOf(value);
-                /** 仅处理页签导航按键。 */
-                const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : null;
-                if (next === null) return;
-                event.preventDefault();
-                setTab(tabs[next]!);
-                document.getElementById(`${panelId}-${tabs[next]}-tab`)?.focus();
-              }}
-            >
-              {tabLabel(value, props.language)}
-              {value === 'deliverables' && projection?.deliverables.length ? <small>{projection.deliverables.length}</small> : null}
-            </button>
-          ))}
-        </nav>
-        <span>
-          <Button variant="secondary" size="compact" busy={loadState === 'loading'} aria-label={zh ? '刷新工作管理' : 'Refresh work management'} onClick={() => void load()}>
-            <ArrowsClockwise size={16} aria-hidden="true" />
-          </Button>
-        </span>
-      </header>
-
       {error ? (
         <p className="digital-employee-feedback is-error" role="alert">
           {error}
@@ -272,8 +231,8 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
           </small>
         </button>
       ) : null}
-      {/* 隐藏而不卸载正文，切换页签后仍能继续处理未保存的内容。 */}
-      <div id={`${panelId}-collaboration`} role="tabpanel" aria-labelledby={`${panelId}-collaboration-tab`} className="task-work-conversation-panel" hidden={tab !== 'collaboration'}>
+      {/* 沟通是任务详情默认正文；待办和已有工作仍可按上下文进入。 */}
+      <div role="region" aria-label={zh ? '沟通' : 'Conversation'} className="task-work-conversation-panel" hidden={tab !== 'collaboration'}>
         {projection && (pendingConversationRequests.length > 0 || pendingDecisions.length > 0) ? (
           <Button
             className="task-conversation-inbox"
@@ -282,7 +241,6 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
             onClick={() => {
               // 待办集中在工作页处理，聊天保留原会话及草稿。
               setTab('work');
-              document.getElementById(`${panelId}-work-tab`)?.focus();
             }}
           >
             {zh ? '待我处理' : 'Needs my attention'} · {pendingConversationRequests.length + pendingDecisions.length} · {zh ? '查看待办' : 'View pending items'}
@@ -305,7 +263,7 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
         />
       </div>
       {tab === 'work' && projection ? (
-        <div id={`${panelId}-work`} role="tabpanel" aria-labelledby={`${panelId}-work-tab`} className="task-work-collaboration">
+        <div role="region" aria-label={zh ? '工作' : 'Work'} className="task-work-collaboration">
           {pendingConversationRequests.length + pendingDecisions.length > 0 ? (
             <ManagerInbox requests={pendingConversationRequests} decisions={pendingDecisions} language={props.language} onOpenConversation={openConversation} onSelect={setDecisionOpen} />
           ) : null}
@@ -334,12 +292,12 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
         </div>
       ) : null}
       {tab === 'deliverables' && projection ? (
-        <div id={`${panelId}-deliverables`} role="tabpanel" aria-labelledby={`${panelId}-deliverables-tab`}>
+        <div role="region" aria-label={zh ? '成果' : 'Deliverables'}>
           <DeliverablesView deliverables={projection?.deliverables ?? []} language={props.language} onOpen={setReadingDeliverable} />
         </div>
       ) : null}
       {tab === 'evidence' && projection ? (
-        <div id={`${panelId}-evidence`} role="tabpanel" aria-labelledby={`${panelId}-evidence-tab`}>
+        <div role="region" aria-label={zh ? '运行记录' : 'Activity'}>
           <EvidenceView items={projection?.workItems ?? []} refs={projection?.evidenceRefs ?? []} language={props.language} onOpenConversation={openConversation} onOpenCommand={setCommandEvidenceRunId} />
         </div>
       ) : null}
@@ -1537,10 +1495,6 @@ function DecisionDialog(props: {
   );
 }
 
-/** 用户按沟通、工作、成果和记录的目的切换内容。 */
-function tabLabel(tab: ManagementTab, language: DigitalEmployeeLanguage): string {
-  return (language === 'zh-CN' ? { collaboration: '沟通', work: '工作', deliverables: '成果', evidence: '运行记录' } : { collaboration: 'Conversation', work: 'Work', deliverables: 'Deliverables', evidence: 'Activity' })[tab];
-}
 function employeeName(run: TaskWorkItemRecord['runs'][number] | undefined): string {
   return typeof run?.employeeSnapshot.name === 'string' ? run.employeeSnapshot.name : '';
 }

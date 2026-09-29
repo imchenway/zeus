@@ -883,7 +883,6 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
   const zh = props.language === 'zh-CN';
   const editCopy = taskEditCopies[props.language];
   const managementStatus = resolveTaskManagementStatus(props.task);
-  const taskIdentity = props.task.taskCode?.trim() || props.task.id;
   const latestEvent = props.events.at(-1);
   const taskAttachments = parseTaskAttachments(props.task.sourceContextJson);
   const modelPushCreating = props.modelPushOperation?.status === 'submitting';
@@ -1273,9 +1272,6 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
     <section className="product-drawer-pane task-detail-pane-content task-detail-pane-shell" aria-label={props.task.title}>
       <header className="task-detail-pane-header task-detail-summary-row">
         <span className="task-detail-pane-title">
-          <small>
-            {props.copy.taskCodeLabel ?? (zh ? '任务编码' : 'Task code')} {taskIdentity}
-          </small>
           <InlineTaskTextField
             task={props.task}
             label={editCopy.editTitle}
@@ -1442,6 +1438,29 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         ) : null}
       </div>
       <div className="task-detail-workspace">
+        {/* 沟通是任务详情的主工作区，DOM 与视觉顺序保持一致，键盘阅读不会绕到右侧属性后再返回。 */}
+        <div className="task-detail-main">
+          <TaskDigitalEmployeePanel
+            onArrangeTeam={props.onUseDigitalTeam ? () => props.onUseDigitalTeam!({ kind: 'manage' }) : undefined}
+            skillClient={props.digitalEmployeeSkillClient ?? null}
+            key={props.task.id}
+            taskId={props.task.id}
+            projectId={props.task.projectId}
+            terminalReadOnly={props.terminalReadOnly}
+            client={props.digitalEmployeeClient ?? null}
+            management={digitalEmployeeManagement}
+            language={props.language}
+            conversations={conversations}
+            conversationsLoading={props.conversationsLoading}
+            conversationsError={props.conversationsError}
+            activeConversationId={props.activeConversationId}
+            conversationWorkspace={props.conversationWorkspace}
+            newConversationWorkspace={props.terminalReadOnly ? null : props.newConversationWorkspace}
+            onSelectConversation={props.onSelectConversation ? (conversationId) => props.onSelectConversation!(props.task.id, conversationId) : undefined}
+            onReloadConversations={props.onReloadConversations ? () => props.onReloadConversations!(props.task.id) : undefined}
+            onOpenConversation={(conversationId) => props.onOpenConversation(props.task.id, conversationId)}
+          />
+        </div>
         <aside className="task-detail-sidebar" aria-label={zh ? '任务说明与属性' : 'Requirements and properties'}>
           {taskOverview}
           <details className="task-detail-properties">
@@ -1670,28 +1689,6 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             />
           </details>
         </aside>
-        <div className="task-detail-main">
-          <TaskDigitalEmployeePanel
-            onArrangeTeam={props.onUseDigitalTeam ? () => props.onUseDigitalTeam!({ kind: 'manage' }) : undefined}
-            skillClient={props.digitalEmployeeSkillClient ?? null}
-            key={props.task.id}
-            taskId={props.task.id}
-            projectId={props.task.projectId}
-            terminalReadOnly={props.terminalReadOnly}
-            client={props.digitalEmployeeClient ?? null}
-            management={digitalEmployeeManagement}
-            language={props.language}
-            conversations={conversations}
-            conversationsLoading={props.conversationsLoading}
-            conversationsError={props.conversationsError}
-            activeConversationId={props.activeConversationId}
-            conversationWorkspace={props.conversationWorkspace}
-            newConversationWorkspace={props.terminalReadOnly ? null : props.newConversationWorkspace}
-            onSelectConversation={props.onSelectConversation ? (conversationId) => props.onSelectConversation!(props.task.id, conversationId) : undefined}
-            onReloadConversations={props.onReloadConversations ? () => props.onReloadConversations!(props.task.id) : undefined}
-            onOpenConversation={(conversationId) => props.onOpenConversation(props.task.id, conversationId)}
-          />
-        </div>
       </div>
       {undoAttachment || attachmentSaveState.kind === 'saving' || attachmentSaveState.kind === 'error' || attachmentSaveState.kind === 'conflict' ? (
         <section className="task-detail-attachment-feedback" aria-live="polite" aria-busy={attachmentSaveState.kind === 'saving' || undefined}>

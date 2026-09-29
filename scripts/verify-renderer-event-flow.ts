@@ -1647,6 +1647,9 @@ async function verifyTaskPushPlacement() {
       taskPushLayout: { kind: 'task_push', blocks: [], supplementalInfo: '', supplementalAttachments: [] },
     },
   );
+  /** 任务推送是新会话首条消息，即使创建期工作面可交互，也不能被普通后续排队投影接管。 */
+  const pendingOpening = pendingSession.items[pendingSession.itemOrder[0]!]!;
+  assert(pendingOpening.payload.queuedForActiveTurn !== true && composerQueuedSubmissions(pendingSession).length === 0, '创建期首条任务提示词必须直接留在会话正文。');
   /** 任务推送状态只读取这些真实交接字段，其余内容不参与本次位置断言。 */
   const pendingTaskPush = {
     navigationId: 'task-push:probe',
