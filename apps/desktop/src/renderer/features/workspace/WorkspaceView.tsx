@@ -454,6 +454,10 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     updateTaskBoardSettings,
     workspaceDrawerPortalStyle,
   } = operations;
+  /** 任务详情各展示形态统一用任务编码作为顶栏身份，避免重复展示泛化标题。 */
+  const taskDetailPresentationLabel = taskDetailPaneTask
+    ? `${taskWorkspaceCopy.taskCodeLabel ?? (appShellSettings.appLanguage === 'zh-CN' ? '任务编码' : 'Task code')} ${taskDetailPaneTask.taskCode?.trim() || taskDetailPaneTask.id}`
+    : taskWorkspaceCopy.detailPaneLabel;
   const openProjectView: typeof openProjectSection = (project, section, codeMode = projectCodeWorkspaceMode) => {
     if (section === 'sessions') {
       const group = nativeConversationGroups.find((item) => item.projectId === project.id);
@@ -1077,12 +1081,12 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                 <>
                   {/* 默认仍是完整宽度的任务列表；看板可按项目切换，只有全页详情会临时替换任务工作区。 */}
                   {taskDetailPaneTask && taskDetailPresentation === 'full_page' ? (
-                    <section className="task-detail-full-page" aria-label={taskWorkspaceCopy.detailPaneLabel}>
+                    <section className="task-detail-full-page" aria-label={taskDetailPresentationLabel}>
                       <header className="task-detail-presentation-header">
                         <Button variant="secondary" size="compact" onClick={closeTaskDetail}>
                           {appShellSettings.appLanguage === 'zh-CN' ? '返回任务' : 'Back to tasks'}
                         </Button>
-                        <strong>{taskDetailPaneTask.title}</strong>
+                        <strong>{taskDetailPresentationLabel}</strong>
                       </header>
                       {renderTaskDetailPaneContent()}
                     </section>
@@ -1277,7 +1281,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     presentation="floating"
                     backdrop="dimmed"
                     size="wide"
-                    label={taskWorkspaceCopy.detailPaneLabel}
+                    label={taskDetailPresentationLabel}
                     backdropLabel={taskWorkspaceCopy.detailPaneBackdrop}
                     closeLabel={taskWorkspaceCopy.detailPaneClose}
                     className="task-detail-floating-drawer"
@@ -1290,10 +1294,10 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
               </MotionPresence>
               <MotionPresence>
                 {taskDetailPaneTask && taskDetailPresentation === 'center_peek' ? (
-                  <ModalPortal rootClassName="task-detail-center-portal" backdropClassName="task-detail-center-backdrop" onDismiss={closeTaskDetail} role="dialog" aria-label={taskWorkspaceCopy.detailPaneLabel}>
+                  <ModalPortal rootClassName="task-detail-center-portal" backdropClassName="task-detail-center-backdrop" onDismiss={closeTaskDetail} role="dialog" aria-label={taskDetailPresentationLabel}>
                     <section className="task-detail-center-dialog" data-modal-surface="dialog">
                       <header className="task-detail-presentation-header">
-                        <strong>{taskWorkspaceCopy.detailPaneLabel}</strong>
+                        <strong>{taskDetailPresentationLabel}</strong>
                         <Button variant="secondary" size="compact" onClick={closeTaskDetail} aria-label={taskWorkspaceCopy.detailPaneClose}>
                           {appShellSettings.appLanguage === 'zh-CN' ? '关闭' : 'Close'}
                         </Button>

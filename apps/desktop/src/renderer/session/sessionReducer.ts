@@ -1633,8 +1633,9 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
   const key = existingOptimisticEntry?.[0] ?? optimisticUserItemKey(state, action.clientUserMessageId);
   const conversationId = state.conversationId ?? 'pending-conversation';
   const threadId = state.providerThreadId ?? 'pending-thread';
-  /** 活跃轮次后的普通发送应从首帧开始留在输入框排队区，而不是短暂进入会话正文。 */
+  /** 活跃轮次后的普通发送进入输入框排队区；任务推送首条消息仍属于新会话正文。 */
   const queuedForActiveTurn =
+    !action.taskPushLayout &&
     action.delivery === 'queue' &&
     (action.previousConversationState === 'active_prework' ||
       action.previousConversationState === 'active_final_answer' ||

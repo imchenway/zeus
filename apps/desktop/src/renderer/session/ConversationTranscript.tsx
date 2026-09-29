@@ -446,8 +446,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const creatingSession = props.creationStatus?.state === 'creating' || props.creationStatus?.state === 'retrying';
   // 创建失败时保留创建错误，不再显示独立运行状态。
   const creationFailed = props.creationStatus?.state === 'failed';
-  // 真实轮次建立后，运行状态可以接管创建进度。
-  const realTurnStarted = Boolean(activeTurnId);
+  // 本地创建工作面使用合成轮次保持可交互；只有权威快照里的轮次才能接管创建进度。
+  const realTurnStarted = Boolean(activeTurnId && props.state.snapshot);
   // 创建期只保留一个主进度：真实轮次建立前显示连接，建立后由轮次状态或真实过程内容接管。
   const showCreationStatus = Boolean(props.creationStatus) && !(creatingSession && realTurnStarted);
   // 只有实际渲染的底部状态可以接管过程中的整理提示。

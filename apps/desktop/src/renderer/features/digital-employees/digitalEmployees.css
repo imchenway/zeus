@@ -994,86 +994,6 @@
   color: var(--zeus-control-text);
 }
 
-.macos-ai-app .task-work-cockpit-header {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  display: flex;
-  min-height: 48px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 0 18px;
-  border-block-end: 0;
-  background: var(--zeus-drawer-content-bg, var(--zeus-product-panel));
-}
-
-.macos-ai-app .task-work-cockpit-header nav,
-.macos-ai-app .task-work-cockpit-header > span {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.macos-ai-app .task-work-cockpit-header nav button {
-  position: relative;
-  display: inline-flex;
-  min-height: 48px;
-  align-items: center;
-  gap: 6px;
-  padding: 0 12px;
-  border: 0;
-  background: transparent;
-  color: var(--zeus-control-muted-text);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 650;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-/* 页签多于容器可用宽度时横向滚动，刷新按钮保留在同一行。 */
-.macos-ai-app .task-work-cockpit-header nav {
-  min-width: 0;
-  overflow-x: auto;
-}
-
-.macos-ai-app .task-work-cockpit-header > span {
-  flex-shrink: 0;
-}
-
-.macos-ai-app .task-work-cockpit-header nav button:focus-visible {
-  outline: 2px solid var(--zeus-product-accent);
-  outline-offset: -3px;
-}
-
-.macos-ai-app .task-work-cockpit-header nav button::after {
-  position: absolute;
-  /* 下划线留在按钮内，避免横向滚动容器因底部溢出而生成竖向滚动条。 */
-  inset: auto 10px 0;
-  height: 2px;
-  background: transparent;
-  content: '';
-}
-
-.macos-ai-app .task-work-cockpit-header nav button.is-active {
-  color: var(--zeus-control-text);
-}
-
-.macos-ai-app .task-work-cockpit-header nav button.is-active::after {
-  background: var(--zeus-accent, #2478d0);
-}
-
-.macos-ai-app .task-work-cockpit-header nav button small {
-  min-width: 18px;
-  padding: 1px 5px;
-  border-radius: 999px;
-  background: color-mix(in oklab, var(--zeus-accent, #2478d0) 12%, transparent);
-  color: var(--zeus-accent, #2478d0);
-  font-size: 10px;
-  text-align: center;
-}
-
 /* 协作始终按概况、待办、工作列表的阅读顺序排布，避免正文内再嵌套侧栏。 */
 .macos-ai-app .task-work-collaboration {
   display: grid;
@@ -1822,14 +1742,6 @@
 }
 
 @container task-work (max-width: 480px) {
-  .macos-ai-app .task-work-cockpit-header {
-    padding-inline: 8px;
-  }
-
-  .macos-ai-app .task-work-cockpit-header nav button {
-    padding-inline: 8px;
-  }
-
   .macos-ai-app .task-work-collaboration {
     padding: 18px 16px;
   }
@@ -1864,18 +1776,12 @@
   }
 }
 
-/* 会话独占剩余高度，页签切换保留同一发送控制器和草稿。 */
-.macos-ai-app .task-work-cockpit-header {
-  flex-shrink: 0;
-}
-.macos-ai-app .task-work-cockpit > [role='tabpanel'] {
-  min-block-size: 0;
-  overflow: auto;
-  flex: 1;
-}
+/* 会话独占剩余高度，沿用同一发送控制器和草稿。 */
 .macos-ai-app .task-work-cockpit > .task-work-conversation-panel {
   display: flex;
+  flex: 1;
   flex-direction: column;
+  min-block-size: 0;
   overflow: hidden;
 }
 .macos-ai-app .task-work-cockpit [hidden] {
@@ -1895,12 +1801,13 @@
   min-inline-size: 0;
 }
 .macos-ai-app .task-conversation-selector {
+  background: transparent;
+  border-block-end: 1px solid var(--zeus-product-line-soft);
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
   padding: 12px 18px;
-  border-block-end: 0;
 }
 .macos-ai-app .task-conversation-selector > .zeus-select {
   min-inline-size: 0;
@@ -2042,9 +1949,6 @@
   }
   .macos-ai-app .task-detail-arrangement {
     padding-inline: 16px;
-  }
-  .macos-ai-app .task-detail-sidebar {
-    border-inline-end: 0;
   }
 }
 
@@ -2588,15 +2492,18 @@
 }
 .task-conversation-new > div:first-child {
   align-self: center;
+  justify-self: center;
+  text-align: center;
 }
 .task-conversation-new > div > strong {
-  font-size: 18px;
+  font-size: 16px;
+  font-weight: 600;
 }
 .task-conversation-new > div > p {
-  font-size: 13px;
-  line-height: 1.7;
+  font-size: 12px;
+  line-height: 1.5;
   color: var(--zeus-control-muted-text);
-  max-width: 58ch;
+  margin-block: 8px 0;
 }
 .task-conversation-new .session-new-conversation-composer {
   width: 100%;
