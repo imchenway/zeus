@@ -509,6 +509,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     taskContext: taskModelSetupContext,
     requestedTaskStep: taskModelPushEntry === 'choose' || taskModelPushEntry === 'custom' ? taskModelPushEntry : undefined,
   });
+  /** 点击后立即展示确认面，模型接入分流完成前由弹窗承载真实加载状态。 */
+  const taskModelPushModalOpen = Boolean(modelSetupTask) && (taskModelPushEntry === 'checking' || taskModelPushEntry === 'confirmation') && !modelSetup.step;
   /** 侧栏选项与当前详情相互关联，键盘和读屏均可定位内容。 */
   const settingsPanelId = useId();
   /** 归档筛选只作用于当前列表，不修改任何会话。 */
@@ -1208,12 +1210,12 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
               </MotionPresence>
 
               <MotionPresence>
-                {Boolean(taskModelPushTaskId) && taskModelPushEntry === 'confirmation' && !modelSetup.step && (snapshot.tasks.find((task) => task.id === taskModelPushTaskId) ?? null) ? (
+                {taskModelPushModalOpen && modelSetupTask ? (
                   <TaskModelPushModal
-                    open={Boolean(taskModelPushTaskId) && taskModelPushEntry === 'confirmation' && !modelSetup.step}
+                    open={taskModelPushModalOpen}
                     language={appShellSettings.appLanguage}
-                    task={snapshot.tasks.find((task) => task.id === taskModelPushTaskId) ?? null}
-                    projectName={snapshot.projects.find((project) => project.id === snapshot.tasks.find((task) => task.id === taskModelPushTaskId)?.projectId)?.name}
+                    task={modelSetupTask}
+                    projectName={snapshot.projects.find((project) => project.id === modelSetupTask.projectId)?.name}
                     capabilities={taskModelPushCapabilities}
                     runtimeCapabilities={taskModelPushRuntimeCapabilities}
                     serviceTierPreferences={taskModelPushServiceTierPreferences}
@@ -1233,7 +1235,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     onServiceTierPreferenceChange={domainActions.saveTaskModelPushServiceTierPreference}
                     onRefreshRepository={(repositoryId) => void refreshTaskModelPushRepository(repositoryId)}
                     onRefreshLocalRepositories={() => void domainActions.refreshTaskModelPushRepositories()}
-                    onConnectModel={() => modelSetup.open('choose', taskModelSetupContext ?? null)}
+                    onConnectModel={taskModelPushEntry === 'confirmation' ? () => modelSetup.open('choose', taskModelSetupContext ?? null) : undefined}
                     onRetryModels={() => void domainActions.refreshTaskModelPushModels().catch(() => undefined)}
                     onClose={closeTaskModelPush}
                     onSubmit={(event) => void submitTaskModelPush(event)}

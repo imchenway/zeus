@@ -833,6 +833,7 @@ export function TaskModelPushModal(props: {
     <ModalPortal rootClassName="task-model-push-portal-root" backdropClassName="task-model-push-backdrop" dismissDisabled={busy} onDismiss={props.onClose} role="dialog" aria-labelledby="task-model-push-title">
       <form
         className="task-model-push-modal zeus-solid-form-surface"
+        aria-busy={props.status === 'loading' || undefined}
         onSubmit={props.onSubmit}
         onFocusCapture={(event) => {
           /** 保存接入按钮或具备稳定标识的输入框，返回时保持键盘位置。 */
@@ -1058,8 +1059,8 @@ export function TaskModelPushModal(props: {
 
             <TaskPushLayoutPreview layout={taskPushLayout} language={props.language} previewAttachments={[...(props.capabilities?.attachmentPreviewSources ?? []), ...props.form.supplementalAttachments]} />
             {props.status === 'loading' ? (
-              <p className="task-model-push-message">
-                {runtimeCapabilities ? (zh ? '正在读取任务上下文、模型配置与工作目录…' : 'Loading task context, model configuration and working folder…') : zh ? '正在读取模型配置…' : 'Loading model configuration…'}
+              <p className="task-model-push-message" role="status" aria-live="polite" aria-atomic="true">
+                {zh ? '正在准备模型、任务上下文与工作区…' : 'Preparing models, task context, and workspace…'}
               </p>
             ) : null}
           </div>
@@ -1231,7 +1232,7 @@ export function TaskModelPushModal(props: {
                 )}
               </section>
             ) : !props.capabilities ? (
-              <p className={props.status === 'error' ? 'task-model-push-error' : 'task-model-push-message'} role="status">
+              <p className={props.status === 'error' ? 'task-model-push-error' : 'task-model-push-message'} role={props.status === 'error' ? 'alert' : undefined}>
                 {props.status === 'error' ? (
                   <VisibleApplicationError error={props.error ?? (zh ? 'Git 仓库检查未完成。' : 'The Git repository check did not complete.')} language={zh ? 'zh-CN' : 'en'} />
                 ) : zh ? (
