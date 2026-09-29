@@ -650,7 +650,7 @@ function MessageLayoutQa() {
   const parameters = new URLSearchParams(window.location.search);
   /** 链接场景直接呈现最终答复，复现历史资源只有名称和编号的恢复结果。 */
   const links = parameters.has('links');
-  /** 操作组场景复现多段摘要、不同数量操作和重节点延迟挂载。 */
+  /** 多阶段场景复现摘要、不同数量操作和外层折叠的延迟挂载。 */
   const processGroups = parameters.has('process-groups');
   /** 手动切换运行终态，检查每种耗时文案及过程折叠。 */
   const [status, setStatus] = useState<'running' | 'completed' | 'failed' | 'interrupted'>(links || parameters.has('completed') ? 'completed' : 'running');
@@ -668,7 +668,7 @@ function MessageLayoutQa() {
   const [subagent, setSubagent] = useState(parameters.has('subagent'));
   /** 后台补入指令用于核验静态阅读位置，保持已有消息身份不变。 */
   const [followupCount, setFollowupCount] = useState(0);
-  /** 运行中新增操作只改变当前阶段数量，不重置任何展开选择。 */
+  /** 运行中新增操作只改变当前阶段内容，不重置外层展开选择。 */
   const [extraOperation, setExtraOperation] = useState(false);
   /** 运行态只显示过程，结束后才加入最终答复。 */
   const active = status === 'running';
@@ -777,7 +777,7 @@ function MessageLayoutQa() {
     /** 完成态仅保留一个耗时，时间未知或仍运行时不显示完成耗时。 */
     const durations = contentRef.current?.querySelectorAll('time.session-turn-duration') ?? [];
     /** 无过程的答复不能出现展开按钮。 */
-    const controls = [...(contentRef.current?.querySelectorAll('.session-turn-process:not([data-label-kind="operations"]) > .session-turn-process-control > button') ?? [])].filter((button) => !button.closest('.session-activity-group'));
+    const controls = [...(contentRef.current?.querySelectorAll('.session-turn-process > .session-turn-process-control > button') ?? [])].filter((button) => !button.closest('.session-activity-group'));
     /** 运行态按可见阶段保留两个现有入口，完成后仍归并为整轮入口。 */
     const expectedControlCount = parameters.has('no-process') ? 0 : processGroups ? (active ? 2 : 1) : active ? 0 : 1;
     if (durations.length !== (active || parameters.has('no-time') || parameters.has('no-end-time') ? 0 : 1) || controls.length !== expectedControlCount) throw new Error('耗时或过程入口数量不正确');
@@ -809,31 +809,47 @@ function MessageLayoutQa() {
     }
     setLinkResult('运行检查通过：耗时只显示一次，过程入口与轮次状态一致');
   }
-  /** 逐层点击真实生产组件，确认摘要、操作组和单条命令互不联动。 */
-  async function checkProcessGroups(): Promise<void> {
-    /** 连续两帧覆盖折叠动效的挂载提交。 */
-    const settle = () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  /** 点击唯一的过程入口后，确认阶段摘要和操作明细直接出现。 */
+  async function checkProcessContent(): Promise<void> {
+    /** 后台验收也要稳定等待折叠内容完成挂载。 */
+    const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 32));
+    /** 所有断言读取同一次提交后的真实内容根节点。 */
+    const content = contentRef.current;
+    if (!content) throw new Error('过程检查缺少会话内容');
     /** 外层关闭时，命令标题、输出和图片资源都不能进入 DOM。 */
-    const outerControl = contentRef.current?.querySelector<HTMLButtonElement>('.session-turn-process[data-label-kind="process"] > .session-turn-process-control > button');
-    if (!outerControl) throw new Error('操作组检查缺少外层处理过程入口');
-    if (contentRef.current?.querySelector('.session-activity-item-title, .session-activity-images')) throw new Error('外层折叠时提前挂载了操作详情');
-    if (outerControl.getAttribute('aria-expanded') !== 'true') outerControl.click();
-    await settle();
-    /** 两段摘要各自拥有独立操作组，文案必须由真实数量生成。 */
-    const groupControls = [...(contentRef.current?.querySelectorAll<HTMLButtonElement>('.session-turn-process[data-label-kind="operations"] > .session-turn-process-control > button') ?? [])];
-    const expectedLabels = parameters.has('en') ? ['View 1 operation', `View ${extraOperation ? 3 : 2} operations`] : ['查看 1 项操作', `查看 ${extraOperation ? 3 : 2} 项操作`];
-    if (groupControls.map((control) => control.textContent?.trim()).join('|') !== expectedLabels.join('|')) throw new Error(`操作组文案错误：${groupControls.map((control) => control.textContent).join('|')}`);
-    groupControls[0]!.click();
-    await settle();
-    if (groupControls[0]!.getAttribute('aria-expanded') !== 'true' || groupControls[1]!.getAttribute('aria-expanded') !== 'false') throw new Error('操作组展开状态发生联动');
+    const outerControl = content.querySelector<HTMLButtonElement>('.session-turn-process[data-label-kind="process"] > .session-turn-process-control > button');
+    if (!outerControl) throw new Error('过程检查缺少外层处理过程入口');
+    /** 首次检查覆盖外层折叠时的延迟挂载，重复检查沿用用户当前展开状态。 */
+    const outerInitiallyClosed = outerControl.getAttribute('aria-expanded') !== 'true';
+    if (outerInitiallyClosed) {
+      if (content.querySelector('.session-activity-item-title, .session-activity-images')) throw new Error('外层折叠时提前挂载了操作详情');
+      outerControl.click();
+      await settle();
+    }
+    /** 阶段只负责内容分组，不能再次生成折叠按钮。 */
+    const nestedControls = content.querySelectorAll('.session-activity-group .session-turn-process-control > button');
+    if (nestedControls.length) throw new Error('处理过程内部仍存在第二层操作组入口');
+    /** 两段摘要后的真实操作必须在外层展开时直接挂载。 */
+    const groups = [...content.querySelectorAll<HTMLElement>('.session-activity-group')];
+    const expectedCounts = [1, extraOperation ? 3 : 2];
+    if (groups.length !== expectedCounts.length || groups.some((group, index) => Number(group.dataset.itemCount) !== expectedCounts[index])) throw new Error('阶段操作没有按真实数量直接展示');
+    /** 分组只保留静态数量，不显示“查看/收起”动作。 */
+    const countLabels = groups.map((group) => group.querySelector('.session-activity-group-count')?.textContent?.trim());
+    const expectedLabels = parameters.has('en') ? ['1 operation', `${extraOperation ? 3 : 2} operations`] : ['1 项操作', `${extraOperation ? 3 : 2} 项操作`];
+    if (countLabels.join('|') !== expectedLabels.join('|')) throw new Error(`阶段操作数量文案错误：${countLabels.join('|')}`);
+    if (!content.querySelector('.session-activity-item-title') || !content.querySelector('.session-activity-images')) throw new Error('外层展开后缺少操作标题或图片资源');
     /** 单条命令默认仍关闭，继续点击后才挂载命令、目录和输出。 */
-    const commandControl = contentRef.current?.querySelector<HTMLElement>('.session-activity-item-summary');
-    if (!commandControl || contentRef.current?.querySelector('.session-activity-item-detail-body')) throw new Error('单条命令详情默认状态错误');
-    commandControl.click();
-    await settle();
-    const detail = contentRef.current?.querySelector('.session-activity-item-detail-body');
+    const commandControl = content.querySelector<HTMLElement>('.session-activity-item-summary');
+    if (!commandControl) throw new Error('操作明细缺少单条命令入口');
+    let detail = content.querySelector('.session-activity-item-detail-body');
+    if (outerInitiallyClosed && detail) throw new Error('单条命令详情默认状态错误');
+    if (!detail) {
+      commandControl.click();
+      await settle();
+      detail = content.querySelector('.session-activity-item-detail-body');
+    }
     if (!detail?.textContent?.includes('/Users/david/hypha/zeus') || !detail.textContent.includes('阶段检查通过')) throw new Error('单条命令详情未完整显示');
-    setLinkResult('运行检查通过：外层、操作组和单条命令三层状态独立');
+    setLinkResult('运行检查通过：阶段只显示操作数量，明细直接展示');
   }
   /** 合成数据仅经过真实渲染链，不连接或调用模型。 */
   const items: NativeSessionItemBuffer[] = [
@@ -973,7 +989,7 @@ function MessageLayoutQa() {
             子智能体
           </Button>
           <Button onClick={checkLayout}>检查耗时入口</Button>
-          {processGroups ? <Button onClick={() => void checkProcessGroups().catch((error: unknown) => setLinkResult(String(error)))}>检查操作组</Button> : null}
+          {processGroups ? <Button onClick={() => void checkProcessContent().catch((error: unknown) => setLinkResult(String(error)))}>检查过程内容</Button> : null}
           {processGroups ? <Button onClick={() => setExtraOperation((value) => !value)}>{extraOperation ? '移除运行操作' : '新增运行操作'}</Button> : null}
           {subagent ? <Button onClick={() => setFollowupCount(followupCount + 1)}>补充指令</Button> : null}
           {links ? <Button onClick={checkLinks}>检查链接</Button> : null}

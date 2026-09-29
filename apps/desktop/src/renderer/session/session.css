@@ -9854,15 +9854,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   min-inline-size: 0;
 }
 
-/* 阶段操作组复用过程折叠，但不重复外层轮次的留白和宽度收缩。 */
-.session-codex-parity-v1 .session-activity-group > .session-turn-process[data-label-kind='operations'] {
-  inline-size: 100%;
-  margin-block: 0;
-}
-
-/* 操作组入口紧贴阶段摘要，仍保留至少 24px 的可点击高度。 */
-.session-codex-parity-v1 .session-activity-group > .session-turn-process[data-label-kind='operations'] > .session-turn-process-control {
-  padding-block-end: 0;
+/* 阶段分组只显示操作数量，不再制造第二个折叠入口。 */
+.session-codex-parity-v1 .session-activity-group-count {
+  color: var(--session-text-muted);
+  font-size: 13px;
+  line-height: 20px;
+  margin: 0 0 2px;
 }
 
 /* 入口沿用正文内容列起点，底部分隔线覆盖同一列。 */
@@ -9928,11 +9925,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   gap: 6px;
   min-inline-size: 0;
   padding-block: 6px 2px;
-}
-
-/* 内层详情只在操作组展开后挂载，不再额外叠加轮次正文间距。 */
-.session-codex-parity-v1 .session-activity-group > .session-turn-process[data-label-kind='operations'] .session-turn-process-body {
-  padding-block: 2px 0;
 }
 
 .session-codex-parity-v1 .session-turn-process-body[hidden] {
