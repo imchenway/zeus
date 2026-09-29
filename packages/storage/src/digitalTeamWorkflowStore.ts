@@ -60,6 +60,9 @@ export type {
 /** 数字团队流程存储迁移身份。 */
 export const digitalTeamWorkflowSchemaMigrationId = '20260915_0630_digital_team_workflow';
 
+/** 团队模板脱离项目作用域的迁移身份。 */
+export const globalDigitalTeamTemplateMigrationId = '20260929_global_digital_team_templates';
+
 /** 数字团队存储边界错误。 */
 export class DigitalTeamWorkflowStoreError extends Error {
   /** 错误名称。 */
@@ -245,6 +248,46 @@ export function migrateDigitalTeamWorkflowSchema(db: ZeusDatabasePort): void {
         new Date().toISOString(),
       ]);
     });
+  migrateGlobalDigitalTeamTemplates(db);
+}
+
+/** 允许新团队模板不绑定项目，同时原样保留旧项目模板和历史运行引用。 */
+function migrateGlobalDigitalTeamTemplates(db: ZeusDatabasePort): void {
+  if (db.get('SELECT migration_id FROM schema_migrations WHERE migration_id = ?', [globalDigitalTeamTemplateMigrationId])) return;
+  db.transaction(() => {
+    const projectColumn = db.select<{ name: string; notnull: number }>('PRAGMA table_info(digital_team_workflow_templates)').find((column) => column.name === 'project_id');
+    if (projectColumn?.notnull) {
+      db.execute('PRAGMA defer_foreign_keys = ON');
+      db.execute(`
+        CREATE TABLE digital_team_workflow_templates_global (
+          id TEXT PRIMARY KEY,
+          project_id TEXT REFERENCES projects(id),
+          name TEXT NOT NULL,
+          description TEXT NOT NULL,
+          definition_json TEXT NOT NULL CHECK (json_valid(definition_json)),
+          ready INTEGER NOT NULL CHECK (ready IN (0, 1)),
+          validation_issues_json TEXT NOT NULL CHECK (json_valid(validation_issues_json)),
+          revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          deleted_at TEXT
+        )
+      `);
+      db.execute('INSERT INTO digital_team_workflow_templates_global SELECT * FROM digital_team_workflow_templates');
+      db.execute('DROP TABLE digital_team_workflow_templates');
+      db.execute('ALTER TABLE digital_team_workflow_templates_global RENAME TO digital_team_workflow_templates');
+      db.execute('CREATE INDEX idx_digital_team_templates_project ON digital_team_workflow_templates(project_id, deleted_at, updated_at DESC)');
+      if (db.select('PRAGMA foreign_key_check').length) throw storeError('ZEUS_DIGITAL_TEAM_SCHEMA_CONFLICT', '全局团队模板迁移后外键核对失败。', 500);
+      db.execute('PRAGMA defer_foreign_keys = OFF');
+    }
+    db.execute('CREATE INDEX IF NOT EXISTS idx_digital_team_templates_global ON digital_team_workflow_templates(deleted_at, updated_at DESC) WHERE project_id IS NULL');
+    db.execute('INSERT INTO schema_migrations(migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)', [
+      globalDigitalTeamTemplateMigrationId,
+      '允许数字团队模板独立于项目创建，旧项目模板继续保留',
+      createHash('sha256').update(globalDigitalTeamTemplateMigrationId).digest('hex'),
+      new Date().toISOString(),
+    ]);
+  });
 }
 
 /** 将旧有序阶段转换为明确工作依赖；不能满足实际执行条件的模板保留校验问题供用户调整。 */
@@ -309,7 +352,7 @@ function definitionFromWorkStages(stages: EmployeeWorkStageInput[], settings: Em
   return { schemaGeneration: digitalTeamWorkflowSchemaGeneration, nodes, edges, viewport: { x: 0, y: 0, zoom: 0.8 } };
 }
 
-/** 管理项目内数字团队画布模板。 */
+/** 管理全局及旧项目数字团队画布模板。 */
 export class DigitalTeamWorkflowTemplateRepository {
   /** 保存数据库和可替换时钟。 */
   constructor(
@@ -322,6 +365,11 @@ export class DigitalTeamWorkflowTemplateRepository {
     return this.db.select<DigitalTeamWorkflowTemplateRow>('SELECT * FROM digital_team_workflow_templates WHERE project_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC, id', [identity(projectId, 'projectId')]).map(mapTemplate);
   }
 
+  /** 读取全局团队模板。 */
+  listGlobal(): DigitalTeamWorkflowTemplateRecord[] {
+    return this.db.select<DigitalTeamWorkflowTemplateRow>('SELECT * FROM digital_team_workflow_templates WHERE project_id IS NULL AND deleted_at IS NULL ORDER BY updated_at DESC, id').map(mapTemplate);
+  }
+
   /** 按身份读取未删除模板。 */
   getById(id: string): DigitalTeamWorkflowTemplateRecord | undefined {
     const row = this.db.get<DigitalTeamWorkflowTemplateRow>('SELECT * FROM digital_team_workflow_templates WHERE id = ? AND deleted_at IS NULL', [identity(id, 'templateId')]);
@@ -330,7 +378,7 @@ export class DigitalTeamWorkflowTemplateRepository {
 
   /** 保存新画布；校验问题随草稿一起保存，不阻断继续编辑。 */
   create(input: CreateDigitalTeamWorkflowTemplateInput): DigitalTeamWorkflowTemplateRecord {
-    requireProject(this.db, input.projectId);
+    if (input.projectId) requireProject(this.db, input.projectId);
     const id = input.id ? identity(input.id, 'template.id') : `digital_team_template_${randomId(12)}`;
     const timestamp = this.now();
     const definition = normalizeDigitalTeamWorkflowDefinition(input.definition);
@@ -339,7 +387,7 @@ export class DigitalTeamWorkflowTemplateRepository {
       'INSERT INTO digital_team_workflow_templates(id, project_id, name, description, definition_json, ready, validation_issues_json, revision, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL)',
       [
         id,
-        identity(input.projectId, 'projectId'),
+        input.projectId ? identity(input.projectId, 'projectId') : null,
         boundedText(input.name, 'name', 160),
         boundedText(input.description, 'description', 2_000, true),
         boundedJson(definition, 'definition'),
@@ -425,29 +473,30 @@ export class DigitalTeamWorkflowRunRepository {
 
   /** 创建运行并一次冻结画布、全部角色、任务事实和逐仓 baseSha。 */
   create(input: CreateDigitalTeamWorkflowRunInput): DigitalTeamWorkflowRunRecord {
-    assertDigitalTeamWorkflowReady(input.definition);
+    let definition = normalizeDigitalTeamWorkflowDefinition(input.definition);
+    assertDigitalTeamWorkflowReady(definition);
     const task = this.db.get<{ project_id: string }>('SELECT project_id FROM tasks WHERE id = ?', [identity(input.taskId, 'taskId')]);
     if (!task || task.project_id !== input.projectId) throw storeError('ZEUS_DIGITAL_TEAM_TASK_NOT_FOUND', '任务不存在或不属于当前项目。', 404);
     const templateId = input.templateId ? identity(input.templateId, 'templateId') : null;
     let templateRevision: number | null = null;
     if (templateId) {
-      const template = this.db.get<{ project_id: string; revision: number; definition_json: string; deleted_at: string | null }>('SELECT project_id, revision, definition_json, deleted_at FROM digital_team_workflow_templates WHERE id = ?', [
-        templateId,
-      ]);
-      if (!template || template.deleted_at || template.project_id !== input.projectId) throw storeError('ZEUS_DIGITAL_TEAM_TEMPLATE_NOT_FOUND', '运行来源模板不存在或不属于当前项目。', 404);
-      if (
-        template.revision !== input.templateRevision ||
-        canonicalCommandInputJson(normalizeDigitalTeamWorkflowDefinition(JSON.parse(template.definition_json) as DigitalTeamWorkflowDefinition)) !== canonicalCommandInputJson(input.definition)
-      )
+      const template = this.db.get<{ project_id: string | null; revision: number; definition_json: string; deleted_at: string | null }>(
+        'SELECT project_id, revision, definition_json, deleted_at FROM digital_team_workflow_templates WHERE id = ?',
+        [templateId],
+      );
+      if (!template || template.deleted_at || (template.project_id !== null && template.project_id !== input.projectId)) throw storeError('ZEUS_DIGITAL_TEAM_TEMPLATE_NOT_FOUND', '运行来源模板不存在或不能用于当前项目。', 404);
+      /** 客户端只能提交模板中的节点配置，不能在创建运行时替换员工。 */
+      const sourceDefinition = normalizeDigitalTeamWorkflowDefinition(JSON.parse(template.definition_json) as DigitalTeamWorkflowDefinition);
+      if (template.revision !== input.templateRevision || canonicalCommandInputJson(sourceDefinition) !== canonicalCommandInputJson(definition))
         throw storeError('ZEUS_DIGITAL_TEAM_TEMPLATE_CONFLICT', '流程模板已变化，请重新读取后创建运行。', 409);
+      /** 全局节点按员工模板自动解析本项目唯一的启用实例，不再接收第二份用户绑定。 */
+      if (template.project_id === null) definition = resolveGlobalTeamEmployees(this.db, input.projectId, sourceDefinition);
       templateRevision = template.revision;
     }
     /** 员工节点能力与角色冻结在同一事务内核对，HTTP 调用不能绕过前端创建无效运行。 */
-    const employeeNodes = input.definition.nodes.filter((node): node is DigitalTeamEmployeeNode => node.type === 'employee');
+    const employeeNodes = definition.nodes.filter((node): node is DigitalTeamEmployeeNode => node.type === 'employee');
     const employeeIds = [
-      ...new Set(
-        employeeNodes.flatMap((node) => [node.data.employeeId, ...(input.definition.schemaGeneration !== digitalTeamWorkflowSchemaGeneration && node.data.purpose === 'plan' ? (node.data.settings?.delegation?.employeeIds ?? []) : [])]),
-      ),
+      ...new Set(employeeNodes.flatMap((node) => [node.data.employeeId, ...(definition.schemaGeneration !== digitalTeamWorkflowSchemaGeneration && node.data.purpose === 'plan' ? (node.data.settings?.delegation?.employeeIds ?? []) : [])])),
     ];
     const roleSnapshots = employeeIds.map((employeeId) =>
       freezeEmployee(
@@ -458,7 +507,7 @@ export class DigitalTeamWorkflowRunRepository {
       ),
     );
     const baseRevisions = normalizeBaseRevisions(input.baseRevisions);
-    if (input.definition.nodes.some((node) => node.type === 'employee' && node.data.executionMode === 'isolated_write') && !baseRevisions.length) throw storeError('ZEUS_DIGITAL_TEAM_BASE_REVISION_INVALID', '代码工作需要冻结仓库基线。');
+    if (definition.nodes.some((node) => node.type === 'employee' && node.data.executionMode === 'isolated_write') && !baseRevisions.length) throw storeError('ZEUS_DIGITAL_TEAM_BASE_REVISION_INVALID', '代码工作需要冻结仓库基线。');
     const id = input.id ? identity(input.id, 'run.id') : `digital_team_run_${randomId(12)}`;
     const timestamp = this.now();
     this.db.execute(
@@ -474,11 +523,11 @@ export class DigitalTeamWorkflowRunRepository {
         input.taskId,
         templateId,
         templateRevision,
-        boundedJson(input.definition, 'definitionSnapshot'),
+        boundedJson(definition, 'definitionSnapshot'),
         boundedJson(roleSnapshots, 'roleSnapshots'),
         boundedJson(input.taskFacts, 'taskFacts'),
         boundedJson(baseRevisions, 'baseRevisions'),
-        input.definition.schemaGeneration === digitalTeamWorkflowSchemaGeneration ? 'executing' : 'planning',
+        definition.schemaGeneration === digitalTeamWorkflowSchemaGeneration ? 'executing' : 'planning',
         timestamp,
         timestamp,
       ],
@@ -748,7 +797,7 @@ export class DigitalTeamNodeAttemptRepository {
 
 interface DigitalTeamWorkflowTemplateRow {
   id: string;
-  project_id: string;
+  project_id: string | null;
   name: string;
   description: string;
   definition_json: string;
@@ -912,6 +961,28 @@ function mapAttempt(row: DigitalTeamNodeAttemptRow): DigitalTeamNodeAttemptRecor
     completedAt: row.completed_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+/** 按节点选择的全局员工模板解析当前项目中唯一的启用实例。 */
+function resolveGlobalTeamEmployees(db: ZeusDatabasePort, projectId: string, definition: DigitalTeamWorkflowDefinition): DigitalTeamWorkflowDefinition {
+  /** 项目员工只承担运行时权限与配置落地，不再要求用户重复选择。 */
+  const employeeIdsByTemplate = new Map<string, string[]>();
+  for (const employee of new DigitalEmployeeRepository(db).listByProject(identity(projectId, 'projectId'))) {
+    if (!employee.enabled || !employee.templateId) continue;
+    const employeeIds = employeeIdsByTemplate.get(employee.templateId) ?? [];
+    employeeIds.push(employee.id);
+    employeeIdsByTemplate.set(employee.templateId, employeeIds);
+  }
+  return {
+    ...structuredClone(definition),
+    nodes: definition.nodes.map((node) => {
+      if (node.type !== 'employee') return structuredClone(node);
+      const employeeIds = employeeIdsByTemplate.get(node.data.employeeId) ?? [];
+      if (employeeIds.length === 0) throw storeError('ZEUS_DIGITAL_TEAM_EMPLOYEE_UNAVAILABLE', `流程节点“${node.data.title}”配置的数字员工尚未加入当前项目。`, 409);
+      if (employeeIds.length > 1) throw storeError('ZEUS_DIGITAL_TEAM_EMPLOYEE_AMBIGUOUS', `流程节点“${node.data.title}”配置的数字员工在当前项目存在多个启用实例，请只保留一个。`, 409);
+      return { ...structuredClone(node), data: { ...structuredClone(node.data), employeeId: employeeIds[0]! } };
+    }),
   };
 }
 

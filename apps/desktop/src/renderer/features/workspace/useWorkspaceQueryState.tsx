@@ -1,3 +1,4 @@
+import type { DigitalTeamEntrySelection } from '../digital-teams/DigitalTeamWorkspace.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GlobalAgentSettingsHandle } from '../../settings/GlobalAgentSettingsPane.js';
 import { projectTerminalOutput } from '@zeus/shared';
@@ -472,6 +473,12 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const gitDiffCopy = uiCopy.gitDiffWorkspace;
   const selectSearchPlaceholder = appShellSettings.appLanguage === 'zh-CN' ? '搜索选项' : 'Search options';
   const selectNoResults = appShellSettings.appLanguage === 'zh-CN' ? '没有匹配选项' : 'No matching options';
+  /** 任务入口上下文供团队页面和新建任务成功后的导航共用。 */
+  const [digitalTeamTask, setDigitalTeamTask] = useState<TaskRecord | undefined>();
+  /** 团队页面首次打开时选择的模板或运行。 */
+  const [digitalTeamEntrySelection, setDigitalTeamEntrySelection] = useState<DigitalTeamEntrySelection | undefined>();
+  /** 仅本次新建任务携带的团队，取消或完成后清空。 */
+  const [taskCreateTeamId, setTaskCreateTeamId] = useState<string | null>(null);
   const [taskCreateModalOpen, setTaskCreateModalOpen] = useState(false);
   const [taskDeleteDialogTaskId, setTaskDeleteDialogTaskId] = useState<string | null>(null);
   const [taskCreateForm, setTaskCreateForm] = useState<TaskCreateFormState>(() => buildTaskCreateInitialForm(appShellSettings.appLanguage));
@@ -1603,6 +1610,12 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     taskConversationReopenState,
     taskCreateError,
     taskCreateForm,
+    digitalTeamTask,
+    setDigitalTeamTask,
+    digitalTeamEntrySelection,
+    setDigitalTeamEntrySelection,
+    taskCreateTeamId,
+    setTaskCreateTeamId,
     taskCreateModalOpen,
     taskCreateReturnFocusRef,
     taskCreateTitleInputRef,
