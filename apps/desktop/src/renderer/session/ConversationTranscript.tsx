@@ -1911,7 +1911,7 @@ function transcriptRowRenderOptions(
   return { props, items, showThinking, motionFocus, lastUserKey, activityPresentation, enteringItemIds, onVisibleContentChange, responseAnnotationsByItemId };
 }
 
-/** 按消息种类复用现有展示组件；活动明细始终直出，折叠统一由轮次处理过程负责。 */
+/** 按消息种类复用现有展示组件；轮次过程、操作组和单条操作分别维护折叠状态。 */
 function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOptions): ReactNode {
   if (row.kind === 'answered_request') return <AnsweredRequestHistory request={row.request} language={options.props.language} />;
   if (row.kind === 'activity') {

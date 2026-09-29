@@ -666,6 +666,8 @@ function MessageLayoutQa() {
   const [subagent, setSubagent] = useState(parameters.has('subagent'));
   /** 后台补入指令用于核验静态阅读位置，保持已有消息身份不变。 */
   const [followupCount, setFollowupCount] = useState(0);
+  /** 运行中追加同阶段操作，核对数量变化不会重置内层展开状态。 */
+  const [additionalOperationCount, setAdditionalOperationCount] = useState(0);
   /** 运行态只显示过程，结束后才加入最终答复。 */
   const active = status === 'running';
   /** 固定起止时间用于确认耗时始终为三分一秒。 */
@@ -704,6 +706,8 @@ function MessageLayoutQa() {
     createdAt: completedAt,
     updatedAt: completedAt,
   });
+  /** 处理过程图片沿用真实文件资源卡，只替换演示身份和图标。 */
+  const processImageResource: ConversationResource = { ...resources[0]!, id: 'process-image-resource', displayName: '处理截图', projectRelativePath: 'docs/process.png', iconKind: 'image', presentation: 'card' };
   /** 真实节点必须可点击，已知网址不匹配或没有受信资源的链接继续保持不可打开。 */
   function checkLinks(): void {
     /** 标题不含后缀时仍按真实路径审阅，图片与网页保留各自默认入口。 */
@@ -764,7 +768,7 @@ function MessageLayoutQa() {
     /** 完成态仅保留一个耗时，时间未知或仍运行时不显示完成耗时。 */
     const durations = contentRef.current?.querySelectorAll('time.session-turn-duration') ?? [];
     /** 无过程的答复不能出现展开按钮。 */
-    const controls = contentRef.current?.querySelectorAll('.session-turn-process-control > button') ?? [];
+    const controls = [...(contentRef.current?.querySelectorAll('.session-turn-process-control > button') ?? [])].filter((button) => !button.closest('.session-activity-group'));
     if (durations.length !== (active || parameters.has('no-time') || parameters.has('no-end-time') ? 0 : 1) || controls.length !== (active || parameters.has('no-process') ? 0 : 1)) throw new Error('耗时或过程入口数量不正确');
     if (durations.length && durations[0]?.getAttribute('datetime') !== 'PT181S') throw new Error('耗时未沿用真实轮次的起止时间');
     /** 有后续交付资源时，耗时仍应位于最终正文前面。 */
@@ -794,6 +798,48 @@ function MessageLayoutQa() {
     }
     setLinkResult('运行检查通过：耗时只显示一次，过程入口与轮次状态一致');
   }
+  /** 展开轮次后核对阶段操作仍独立折叠，单条命令详情继续作为第三层。 */
+  async function checkProcessDisclosure(): Promise<void> {
+    /** 后台浏览器也需推进 React 布局效应，不能依赖可能暂停的动画帧。 */
+    const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 32));
+    /** 外层入口不属于任何活动组；运行中阶段可能分别挂在多个外层入口下。 */
+    const outerButtons = [...(contentRef.current?.querySelectorAll<HTMLButtonElement>('.session-turn-process-control > button') ?? [])].filter((button) => !button.closest('.session-activity-group'));
+    if (!outerButtons.length) throw new Error('分层折叠检查缺少轮次入口');
+    for (const outerButton of outerButtons) {
+      if (outerButton.getAttribute('aria-expanded') === 'true') continue;
+      outerButton.click();
+      await settle();
+    }
+    /** 每个真实活动组都应只暴露一个带数量的折叠按钮。 */
+    const groups = [...(contentRef.current?.querySelectorAll<HTMLElement>('.session-activity-group') ?? [])];
+    /** 操作组按钮必须由对应活动组自身提供，不能复用外层入口。 */
+    const groupButtons = groups.map((group) => group.querySelector<HTMLButtonElement>('.session-turn-process-control > button'));
+    if (groups.length < 2 || groupButtons.some((button) => !button)) throw new Error('分层折叠检查缺少阶段操作入口');
+    /** 当前页面语言决定可见文案和无障碍名称。 */
+    const language = parameters.has('en') ? 'en-US' : 'zh-CN';
+    groupButtons.forEach((button, index) => {
+      /** 数量直接读取生产活动组提供的真实条目数。 */
+      const count = Number(groups[index]!.dataset.itemCount);
+      /** 折叠文案同时覆盖英文单复数。 */
+      const expected = language === 'zh-CN' ? `查看 ${count} 项操作` : `View ${count} ${count === 1 ? 'operation' : 'operations'}`;
+      if (button?.textContent?.trim() !== expected || button.getAttribute('aria-label') !== expected || button.getAttribute('aria-expanded') !== 'false') throw new Error(`操作组折叠文案或语义错误：${button?.textContent}`);
+    });
+    if (contentRef.current?.querySelector('.session-activity-item-title')) throw new Error('操作组折叠时仍挂载了命令标题');
+    groupButtons[0]!.click();
+    await settle();
+    /** 首组展开后的条目数必须与折叠入口声明一致。 */
+    const firstCount = Number(groups[0]!.dataset.itemCount);
+    /** 展开态使用动作明确的收起文案。 */
+    const expandedLabel = language === 'zh-CN' ? `收起 ${firstCount} 项操作` : `Hide ${firstCount} ${firstCount === 1 ? 'operation' : 'operations'}`;
+    if (groupButtons[0]!.textContent?.trim() !== expandedLabel || groups[0]!.querySelectorAll('.session-activity-body > ol > li').length !== firstCount || groups[1]!.querySelector('.session-activity-item-title'))
+      throw new Error('展开一个操作组时影响了其他阶段或遗漏操作');
+    /** 单条命令仍需额外点击才挂载详情正文。 */
+    const command = groups[0]!.querySelector<HTMLElement>('.session-activity-item-summary');
+    command?.click();
+    await settle();
+    if (!groups[0]!.querySelector('.session-activity-item-detail-body')) throw new Error('单条命令详情没有保持独立折叠');
+    setLinkResult('运行检查通过：轮次、阶段操作和单条命令保持三层独立折叠');
+  }
   /** 合成数据仅经过真实渲染链，不连接或调用模型。 */
   const items: NativeSessionItemBuffer[] = [
     {
@@ -808,8 +854,25 @@ function MessageLayoutQa() {
     ...(parameters.has('no-process')
       ? []
       : [
-          { type: 'commandExecution', phase: 'prework', text: '', payload: { command: ['pnpm', 'build'] }, status: 'completed' },
-          { type: 'reasoning', phase: 'prework', text: 'Inspecting browser snapshot', payload: {}, status: active ? 'in_progress' : 'completed' },
+          { type: 'agentMessage', phase: 'commentary', text: '我会先核对当前会话投影与操作边界。', payload: { stageId: 'layout-stage-1' }, status: 'completed' },
+          { type: 'commandExecution', phase: 'prework', text: '', payload: { command: ['pnpm', 'lint'], stageId: 'layout-stage-1' }, status: 'completed' },
+          { type: 'commandExecution', phase: 'prework', text: '', payload: { command: ['pnpm', 'typecheck'], stageId: 'layout-stage-1' }, status: 'completed' },
+          { type: 'agentMessage', phase: 'commentary', text: '代码路径已经确认，接下来检查长命令、失败状态与图片资源。', payload: { stageId: 'layout-stage-2' }, status: 'completed' },
+          {
+            type: 'commandExecution',
+            phase: 'prework',
+            text: '',
+            payload: { command: ['/bin/zsh', '-lc', 'printf "long process output for disclosure verification"'], stageId: 'layout-stage-2' },
+            status: parameters.has('failed-operation') ? 'failed' : active ? 'in_progress' : 'completed',
+          },
+          ...(parameters.has('process-image') ? [{ type: 'imageView', phase: 'prework', text: '', payload: { stageId: 'layout-stage-2' }, status: 'completed' }] : []),
+          ...Array.from({ length: additionalOperationCount }, (_, index) => ({
+            type: 'commandExecution',
+            phase: 'prework',
+            text: '',
+            payload: { command: ['printf', `追加操作 ${index + 1}`], stageId: 'layout-stage-2' },
+            status: active ? 'in_progress' : 'completed',
+          })),
         ]),
     ...(subagent ? [{ type: 'userMessage', phase: 'user', text: '', payload: { subagentInput: { sender: '/root', fromParent: true, contentState: 'unavailable' } }, status: 'completed' }] : []),
     ...(!active && !parameters.has('no-answer')
@@ -840,7 +903,7 @@ function MessageLayoutQa() {
     conversationId: 'qa-layout',
     threadId: 'qa-layout',
     turnId: 'qa-layout-turn',
-    resources: item.type === 'fileChange' ? [{ ...resources[1]!, delivery: 'assistant' }] : links && item.phase === 'final_answer' ? resources : [],
+    resources: item.type === 'imageView' ? [processImageResource] : item.type === 'fileChange' ? [{ ...resources[1]!, delivery: 'assistant' }] : links && item.phase === 'final_answer' ? resources : [],
     updatedAt: completedAt,
   }));
   /** 计时与终态均使用生产会话结构，覆盖无答复和缺少计时信息的轮次。 */
@@ -891,6 +954,8 @@ function MessageLayoutQa() {
             子智能体
           </Button>
           <Button onClick={checkLayout}>检查耗时入口</Button>
+          <Button onClick={() => void checkProcessDisclosure().catch((error: unknown) => setLinkResult(String(error)))}>检查分层折叠</Button>
+          {active ? <Button onClick={() => setAdditionalOperationCount((count) => count + 1)}>追加运行操作</Button> : null}
           {subagent ? <Button onClick={() => setFollowupCount(followupCount + 1)}>补充指令</Button> : null}
           {links ? <Button onClick={checkLinks}>检查链接</Button> : null}
           {links ? <Button onClick={() => void checkSelectionToolbar().catch((error: unknown) => setLinkResult(String(error)))}>检查批注入口</Button> : null}
