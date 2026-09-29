@@ -1,5 +1,5 @@
 import { registerFilePreview } from './filePreview.js';
-import { filePreviewMime, filePreviewKind, filePreviewLimits, type FilePreviewIntent } from '@zeus/shared';
+import { filePreviewMime, filePreviewKind, filePreviewLimits, type FilePreviewIntent, type FilePreviewRequest } from '@zeus/shared';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, screen, session, shell, Tray } from 'electron';
 import { execFile as execFileCallback, spawn } from 'node:child_process';
 import { constants as fsConstants, existsSync, type FSWatcher, mkdtempSync } from 'node:fs';
@@ -692,28 +692,28 @@ function rendererEntryUrl(surface?: 'menu-bar-usage' | 'menu-bar-usage-cost-deta
   return url.toString();
 }
 
-async function openProjectGitDiffWindow(
-  parent: BrowserWindow,
-  input: {
-    projectId: string;
-    repositoryId: string;
-    filePath: string;
-    stage: 'combined' | 'staged' | 'unstaged';
-    commitHash?: string;
-    comparisonRef?: string;
-    comparisonMode?: 'current' | 'working-tree';
-  },
-): Promise<{ opened: true }> {
-  /** 先核对资源再创建窗口，失败时不留下空窗口或改写窗口记忆。 */
-  const rendererUrl = rendererEntryUrl('project-git-diff', {
-    projectId: input.projectId,
-    repositoryId: input.repositoryId,
-    filePath: input.filePath,
-    stage: input.stage,
-    ...(input.commitHash ? { commitHash: input.commitHash } : {}),
-    ...(input.comparisonRef ? { comparisonRef: input.comparisonRef } : {}),
-    ...(input.comparisonMode ? { comparisonMode: input.comparisonMode } : {}),
-  });
+/** 项目与任务文件共用原生差异窗口，读取身份通过参数明确区分。 */
+async function openProjectGitDiffWindow(parent: BrowserWindow, input: Extract<FilePreviewRequest, { kind: 'project-git' | 'task-git' }>): Promise<{ opened: true }> {
+  /** 先核对资源再创建窗口，任务窗口不携带项目默认仓库身份。 */
+  const rendererUrl = rendererEntryUrl(
+    'project-git-diff',
+    input.kind === 'task-git'
+      ? {
+          taskId: input.taskId,
+          workspaceId: input.workspaceId,
+          filePath: input.path,
+          scope: input.scope,
+        }
+      : {
+          projectId: input.projectId,
+          repositoryId: input.repositoryId,
+          filePath: input.path,
+          stage: input.stage ?? 'combined',
+          ...(input.commitHash ? { commitHash: input.commitHash } : {}),
+          ...(input.comparisonRef ? { comparisonRef: input.comparisonRef } : {}),
+          ...(input.comparisonMode ? { comparisonMode: input.comparisonMode } : {}),
+        },
+  );
   const workArea = screen.getDisplayMatching(parent.getBounds()).workArea;
   const width = Math.min(workArea.width, Math.max(900, Math.round(workArea.width * 0.84)));
   const height = Math.min(workArea.height, Math.max(620, Math.round(workArea.height * 0.82)));
@@ -1423,6 +1423,21 @@ function setupIpc(): void {
     }
     return openTaskGitDeliveryWindow(requestingWindow, candidate.taskId);
   });
+  /** 仅主窗口或当前任务的交付窗口可以打开任务文件差异。 */
+  ipcMain.handle('zeus:task-git-diff:open', async (event, input: unknown) => {
+    /** 校验来源主框架，防止子框架借用窗口权限。 */
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || event.senderFrame !== event.sender.mainFrame) throw new Error('任务差异请求来自不受信任的窗口。');
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('任务差异窗口请求无效。');
+    /** 所有必填业务身份必须有效；路径读取仍由 Core 的工作区边界校验。 */
+    const candidate = input as Record<string, unknown>;
+    for (const key of ['taskId', 'workspaceId', 'path'] as const) {
+      if (typeof candidate[key] !== 'string' || !candidate[key].trim() || candidate[key].includes('\0')) throw new TypeError(`任务差异窗口缺少有效的 ${key}。`);
+    }
+    if (candidate.kind !== 'task-git' || (candidate.scope !== 'working' && candidate.scope !== 'committed')) throw new TypeError('任务差异比较范围无效。');
+    if (!windows.has(requestingWindow) && taskGitDeliveryTaskByWindowId.get(requestingWindow.id) !== candidate.taskId) throw new Error('任务差异请求与交付窗口任务不符。');
+    return openProjectGitDiffWindow(requestingWindow, { kind: 'task-git', taskId: candidate.taskId as string, workspaceId: candidate.workspaceId as string, path: candidate.path as string, scope: candidate.scope });
+  });
   ipcMain.handle('zeus:project-git-diff:open', async (event, input: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('仓库差异窗口请求来自不受信任的主窗口。');
@@ -1432,9 +1447,10 @@ function setupIpc(): void {
     for (const key of required) if (typeof candidate[key] !== 'string') throw new TypeError(`仓库差异窗口缺少 ${key}。`);
     const stage = candidate.stage === 'staged' || candidate.stage === 'unstaged' ? candidate.stage : 'combined';
     return openProjectGitDiffWindow(requestingWindow, {
+      kind: 'project-git',
       projectId: candidate.projectId as string,
       repositoryId: candidate.repositoryId as string,
-      filePath: candidate.filePath as string,
+      path: candidate.filePath as string,
       stage,
       ...(typeof candidate.commitHash === 'string' && candidate.commitHash ? { commitHash: candidate.commitHash } : {}),
       ...(typeof candidate.comparisonRef === 'string' && candidate.comparisonRef ? { comparisonRef: candidate.comparisonRef } : {}),

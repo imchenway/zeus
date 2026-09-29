@@ -20,7 +20,10 @@ import { ModalPortal } from '../ui/ModalPortal.js';
 import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskGitConflictWorkspace } from './TaskGitConflictWorkspace.js';
-import { TaskGitDiffTable } from './TaskGitDiffTable.js';
+import { SideBySideDiff } from '../git/ProjectGitDiffViewer.js';
+import { GitPaneSeparator } from '../git/GitPaneSeparator.js';
+import { FolderIcon } from '@phosphor-icons/react/dist/csr/Folder';
+import { FileIcon } from '@phosphor-icons/react/dist/csr/File';
 import { type ConflictDocument, countUnresolvedConflictBlocks, createConflictDocument, serializeConflictForGit } from './taskConflictModel.js';
 
 type DeliveryClient = Pick<
@@ -364,6 +367,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     }
     let cancelled = false;
     setDiffLoading(true);
+    setFileDiff(null);
     void props.client
       .loadTaskWorkspaceFileDiff(props.task.id, selectedWorkspace.id, selectedFile, diffScope)
       .then((result) => {
@@ -937,13 +941,25 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     }
   }
 
-  function toggleFileSelection(nextId: string, path: string, selected: boolean): void {
+  /** 文件与目录共用一次选择更新；勾选文件会同时启用所属仓库。 */
+  function toggleFileSelection(nextId: string, paths: string[], selected: boolean): void {
     setSelectedPathsByWorkspace((current) => {
-      const currentPaths = current[nextId] ?? [];
-      const nextPaths = selected ? Array.from(new Set([...currentPaths, path])) : currentPaths.filter((candidate) => candidate !== path);
+      // 仓库未勾选时旧选择不参与提交，重新勾选目录只纳入该目录。
+      const currentPaths = selectedWorkspaceIdSet.has(nextId) ? (current[nextId] ?? []) : [];
+      const nextPaths = selected ? Array.from(new Set([...currentPaths, ...paths])) : currentPaths.filter((candidate) => !paths.includes(candidate));
       return { ...current, [nextId]: nextPaths };
     });
     if (selected) setSelectedWorkspaceIds((current) => Array.from(new Set([...current, nextId])));
+  }
+
+  /** 独立窗口直接携带任务工作区身份，不能用项目默认仓库代替任务分支。 */
+  async function openFileDiff(nextWorkspaceId: string, path: string): Promise<void> {
+    try {
+      if (!window.zeus?.openTaskGitDiffWindow) throw new Error(zh ? '独立差异窗口需要桌面应用。' : 'A separate diff window requires the desktop app.');
+      await window.zeus.openTaskGitDiffWindow({ kind: 'task-git', taskId: props.task.id, workspaceId: nextWorkspaceId, path, scope: diffScope });
+    } catch (reason) {
+      setError(errorMessage(reason, zh));
+    }
   }
 
   function openConflictWorkspace(): void {
@@ -1071,55 +1087,10 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                   onSelectFile={(nextWorkspaceId, path) => selectWorkspace(nextWorkspaceId, diffScope, path)}
                   onToggleWorkspace={toggleWorkspaceSelection}
                   onToggleBranch={toggleBranchSelection}
-                  onToggleFile={toggleFileSelection}
+                  onToggleFiles={toggleFileSelection}
+                  onOpenFile={(nextWorkspaceId, path) => void openFileDiff(nextWorkspaceId, path)}
                   onCopyBranch={copyBranchName}
                 />
-
-                <main className="task-git-review-main task-git-delivery-diff-main">
-                  <section className="task-git-review-diff" aria-label={zh ? '差异对比' : 'Diff'}>
-                    <span className="task-git-review-pane-title">
-                      <strong>
-                        {selectedWorkspace ? `${repositoryLabel(selectedWorkspace, zh)} / ${selectedFile || (zh ? '选择文件查看差异' : 'Select a file to view its diff')}` : zh ? '选择文件查看差异' : 'Select a file to view its diff'}
-                      </strong>
-                      {fileDiff?.fileDiffs[0] ? (
-                        <small>
-                          +{fileDiff.fileDiffs[0].addedLines} −{fileDiff.fileDiffs[0].deletedLines}
-                        </small>
-                      ) : null}
-                    </span>
-                    {!selectedFile ? (
-                      <div className="task-git-delivery-empty">
-                        <strong>
-                          {zh
-                            ? diffScope === 'working' && selectedWorkspace
-                              ? '当前仓库没有未提交文件'
-                              : '选择文件，查看代码变化'
-                            : diffScope === 'working' && selectedWorkspace
-                              ? 'No uncommitted files in this repository'
-                              : 'Select a file to review changes'}
-                        </strong>
-                        <p>{zh ? '从左侧选择文件查看差异，在右侧完成提交、合入和推送。' : 'Review files on the left, then commit, merge and push on the right.'}</p>
-                        {diffScope === 'working' && totalCommittedFiles > 0 ? (
-                          <Button variant="secondary" size="regular" onClick={() => setDiffScope('committed')} disabled={busy}>
-                            {zh ? '查看已提交成果' : 'Review committed changes'}
-                          </Button>
-                        ) : null}
-                      </div>
-                    ) : diffLoading ? (
-                      <p className="task-git-review-empty">{zh ? '正在读取差异…' : 'Loading diff…'}</p>
-                    ) : (
-                      <TaskGitDiffTable
-                        previewRequest={
-                          selectedWorkspace && props.task ? { kind: 'task-git', taskId: props.task.id, workspaceId: selectedWorkspace.id, path: selectedFile, scope: diffScope === 'committed' ? 'committed' : 'working' } : undefined
-                        }
-                        revision={snapshotRevision}
-                        diff={fileDiff?.fileDiffs[0] ?? null}
-                        hasSelection
-                        zh={zh}
-                      />
-                    )}
-                  </section>
-                </main>
 
                 <aside className="task-git-review-options task-git-delivery-actions">
                   <span>
@@ -1265,6 +1236,38 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                     {feedback?.action === 'push' ? <DeliveryFeedbackNotice feedback={feedback} zh={zh} /> : null}
                   </section>
                 </aside>
+                <GitPaneSeparator name="delivery-height" label={zh ? '调整文件区与差异区高度' : 'Resize files and diff'} axis="y" initial={42} min={25} max={65} />
+                <main className="task-git-review-main task-git-delivery-diff-main">
+                  <header className="task-git-review-pane-title">
+                    <strong title={selectedFile}>{selectedWorkspace ? `${repositoryLabel(selectedWorkspace, zh)} / ${selectedFile}` : zh ? '差异对比' : 'Diff'}</strong>
+                    <Button variant="secondary" size="compact" disabled={!selectedFile || busy} onClick={() => void openFileDiff(workspaceId, selectedFile)}>
+                      {zh ? '独立窗口打开' : 'Open in separate window'}
+                    </Button>
+                  </header>
+                  {!selectedFile ? (
+                    <div className="task-git-delivery-empty">
+                      <strong>{zh ? '选择文件，查看代码变化' : 'Select a file to review changes'}</strong>
+                      <p>{zh ? '从上方选择文件，双击可在独立窗口查看差异。' : 'Select a file above, or double-click to open its diff in a separate window.'}</p>
+                      {diffScope === 'working' && totalCommittedFiles > 0 ? (
+                        <Button variant="secondary" size="regular" onClick={() => setDiffScope('committed')} disabled={busy}>
+                          {zh ? '查看已提交成果' : 'Review committed changes'}
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : diffLoading ? (
+                    <p className="task-git-review-empty" role="status">
+                      {zh ? '正在读取差异…' : 'Loading diff…'}
+                    </p>
+                  ) : (
+                    <SideBySideDiff
+                      previewRequest={selectedWorkspace ? { kind: 'task-git', taskId: props.task.id, workspaceId: selectedWorkspace.id, path: selectedFile, scope: diffScope } : undefined}
+                      revision={snapshotRevision}
+                      diff={fileDiff}
+                      zh={zh}
+                      fill
+                    />
+                  )}
+                </main>
               </div>
             </div>
           )}
@@ -1318,6 +1321,7 @@ function DeliveryScopeBar(props: { selectedRepositories: number; totalRepositori
   );
 }
 
+/** 按任务分支、仓库与目录组织交付范围，审阅操作不改变勾选。 */
 function DeliveryRepositoryFileTree(props: {
   groups: DeliveryRepositoryGroup[];
   integrations: TaskIntegrationRecord[];
@@ -1338,9 +1342,13 @@ function DeliveryRepositoryFileTree(props: {
   onSelectFile: (workspaceId: string, path: string) => void;
   onToggleWorkspace: (workspaceId: string, selected: boolean) => void;
   onToggleBranch: (workspaceIds: string[], selected: boolean) => void;
-  onToggleFile: (workspaceId: string, path: string, selected: boolean) => void;
+  /** 目录批量选择与单文件选择共用状态入口。 */
+  onToggleFiles: (workspaceId: string, paths: string[], selected: boolean) => void;
+  /** 双击仅打开差异，不改变勾选范围。 */
+  onOpenFile: (workspaceId: string, path: string) => void;
   onCopyBranch: (branchName: string) => void | Promise<void>;
 }) {
+  /** 同一任务分支下的仓库保持现有排序与交付范围。 */
   const branchGroups = groupDeliveryRepositoriesByBranch(props.groups);
   return (
     <aside className="task-git-delivery-file-browser" aria-label={props.zh ? '按仓库分组的交付文件' : 'Delivery files grouped by repository'}>
@@ -1381,6 +1389,9 @@ function DeliveryRepositoryFileTree(props: {
                   <input
                     type="checkbox"
                     checked={allSelected}
+                    ref={(element) => {
+                      if (element) element.indeterminate = selectedCount > 0 && !allSelected;
+                    }}
                     aria-checked={selectedCount > 0 && !allSelected ? 'mixed' : allSelected}
                     onChange={(event) => props.onToggleBranch(workspaceIds, event.target.checked)}
                     disabled={props.disabled}
@@ -1399,46 +1410,37 @@ function DeliveryRepositoryFileTree(props: {
                 const workspaceSelected = props.selectedWorkspaceIds.has(workspaceId);
                 const selectedPaths = new Set(props.selectedPathsByWorkspace[workspaceId] ?? []);
                 return (
-                  <section key={workspaceId} className={`task-git-delivery-repository${props.focusedWorkspaceId === workspaceId ? ' is-focused' : ''}`}>
-                    <header>
+                  <details open key={workspaceId} className={`task-git-delivery-repository${props.focusedWorkspaceId === workspaceId ? ' is-focused' : ''}`}>
+                    <summary>
                       <label>
                         <input type="checkbox" checked={workspaceSelected} onChange={(event) => props.onToggleWorkspace(workspaceId, event.target.checked)} disabled={props.disabled || group.workspace.state === 'discarded'} />
                         <span>
                           <strong>{repositoryLabel(group.workspace, props.zh)}</strong>
+                          <small>
+                            {group.files.length} {props.zh ? '个文件' : 'files'}
+                          </small>
                           <small>{workspaceStateLabel(group.workspace, group.detail, props.detailStates[workspaceId], props.zh, props.integrations, props.targetBranches[workspaceId])}</small>
                         </span>
                       </label>
-                    </header>
+                    </summary>
                     {props.detailStates[workspaceId] === 'loading' ? <small className="task-git-delivery-repository-state">{props.zh ? '正在读取文件…' : 'Loading files…'}</small> : null}
                     {group.files.length > 0 ? (
-                      <ol>
-                        {group.files.map((file) => (
-                          <li key={file.path} className={props.focusedWorkspaceId === workspaceId && props.selectedFile === file.path ? 'is-active' : ''}>
-                            <div className="task-git-delivery-file-row">
-                              {props.diffScope === 'working' ? (
-                                <input
-                                  type="checkbox"
-                                  checked={selectedPaths.has(file.path)}
-                                  onChange={(event) => props.onToggleFile(workspaceId, file.path, event.target.checked)}
-                                  disabled={props.disabled || !workspaceSelected}
-                                  aria-label={props.zh ? `选择文件 ${file.path}` : `Select file ${file.path}`}
-                                />
-                              ) : null}
-                              <button type="button" onClick={() => props.onSelectFile(workspaceId, file.path)} disabled={props.disabled}>
-                                <span>{file.path}</span>
-                                <small>
-                                  {file.label}
-                                  {file.additions || file.deletions ? ` · +${file.additions} −${file.deletions}` : ''}
-                                </small>
-                              </button>
-                            </div>
-                          </li>
-                        ))}
-                      </ol>
+                      <DeliveryDirectoryFiles
+                        files={group.files}
+                        prefix=""
+                        selectedPaths={workspaceSelected ? selectedPaths : new Set()}
+                        selectedFile={props.focusedWorkspaceId === workspaceId ? props.selectedFile : ''}
+                        working={props.diffScope === 'working'}
+                        disabled={props.disabled || group.workspace.state === 'discarded'}
+                        zh={props.zh}
+                        onToggle={(paths, selected) => props.onToggleFiles(workspaceId, paths, selected)}
+                        onSelect={(path) => props.onSelectFile(workspaceId, path)}
+                        onOpen={(path) => props.onOpenFile(workspaceId, path)}
+                      />
                     ) : group.detail && !props.detailStates[workspaceId] ? (
                       <small className="task-git-delivery-repository-state">{props.diffScope === 'working' ? (props.zh ? '没有未提交文件' : 'No uncommitted files') : props.zh ? '没有已提交成果' : 'No committed result'}</small>
                     ) : null}
-                  </section>
+                  </details>
                 );
               })}
             </section>
@@ -1446,6 +1448,108 @@ function DeliveryRepositoryFileTree(props: {
         })}
       </div>
     </aside>
+  );
+}
+
+/** 目录仅组织显示和批量勾选；文件身份始终保留完整仓库相对路径。 */
+function DeliveryDirectoryFiles(props: {
+  /** 当前目录内的全部文件。 */
+  files: DeliveryFile[];
+  /** 已显示的父路径。 */
+  prefix: string;
+  /** 当前实际参与提交的文件。 */
+  selectedPaths: Set<string>;
+  /** 正在审阅的完整路径。 */
+  selectedFile: string;
+  /** 已提交范围只读，不显示提交勾选。 */
+  working: boolean;
+  /** 交付期间禁止改变范围。 */
+  disabled: boolean;
+  /** 当前显示语言。 */
+  zh: boolean;
+  /** 一次更新当前目录内的选择。 */
+  onToggle: (paths: string[], selected: boolean) => void;
+  /** 单击更新下方差异。 */
+  onSelect: (path: string) => void;
+  /** 双击打开独立窗口。 */
+  onOpen: (path: string) => void;
+}) {
+  /** 文件按下一级路径分组，目录排序在普通文件之前。 */
+  const entries = useMemo(() => {
+    /** 每个目录记录其后代，选择时无需重新扫描其他仓库。 */
+    const groups = new Map<string, DeliveryFile[]>();
+    for (const file of props.files) {
+      /** 尾部斜杠区分目录与叶子。 */
+      const remainder = file.path.slice(props.prefix.length);
+      /** 找到当前目录下一级边界。 */
+      const slash = remainder.indexOf('/');
+      /** 叶子保留文件名，目录保留末尾分隔符。 */
+      const name = slash < 0 ? remainder : remainder.slice(0, slash + 1);
+      /** 同目录后代共用一份集合。 */
+      const files = groups.get(name) ?? [];
+      files.push(file);
+      groups.set(name, files);
+    }
+    return [...groups].sort(([left], [right]) => Number(right.endsWith('/')) - Number(left.endsWith('/')) || left.localeCompare(right));
+  }, [props.files, props.prefix]);
+  return (
+    <ol>
+      {entries.map(([name, files]) => {
+        /** 目录和文件均使用完整路径作为稳定身份。 */
+        const path = props.prefix + name;
+        /** 目录节点展开子级，叶子节点打开差异。 */
+        const directory = name.endsWith('/');
+        /** 半选状态只统计当前有效提交范围。 */
+        const selectedCount = files.filter((file) => props.selectedPaths.has(file.path)).length;
+        /** 全选与半选分开设置到原生复选框。 */
+        const allSelected = selectedCount === files.length;
+        /** 已提交成果隐藏文件选择，仓库仍可用于交付。 */
+        const checkbox = props.working ? (
+          <input
+            type="checkbox"
+            checked={allSelected}
+            ref={(element) => {
+              if (element) element.indeterminate = selectedCount > 0 && !allSelected;
+            }}
+            aria-label={props.zh ? `选择${directory ? '目录' : '文件'} ${path}` : `Select ${directory ? 'directory' : 'file'} ${path}`}
+            onChange={(event) =>
+              props.onToggle(
+                files.map((file) => file.path),
+                event.target.checked,
+              )
+            }
+            disabled={props.disabled}
+          />
+        ) : null;
+        return (
+          <li key={path}>
+            {directory ? (
+              <details open className="task-git-delivery-directory">
+                <summary title={path}>
+                  {checkbox}
+                  <FolderIcon aria-hidden="true" />
+                  <span>{name.slice(0, -1)}</span>
+                  <small>{files.length}</small>
+                </summary>
+                <DeliveryDirectoryFiles {...props} files={files} prefix={path} />
+              </details>
+            ) : (
+              <div className={`task-git-delivery-file-row${props.selectedFile === path ? ' is-active' : ''}`}>
+                {checkbox}
+                <button type="button" title={path} aria-pressed={props.selectedFile === path} onClick={() => props.onSelect(path)} onDoubleClick={() => props.onOpen(path)} disabled={props.disabled}>
+                  <FileIcon aria-hidden="true" />
+                  <span>{name}</span>
+                  <small>
+                    {files[0].label}
+                    {files[0].additions || files[0].deletions ? ` · +${files[0].additions} −${files[0].deletions}` : ''}
+                  </small>
+                </button>
+              </div>
+            )}
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 

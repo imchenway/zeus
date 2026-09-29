@@ -32,15 +32,12 @@ interface SideBySideDiffProps {
   hunkDiscardLabel?: string;
 }
 
+/** 两种差异入口共用窗口，只从明确的业务来源读取内容。 */
 export function ProjectGitDiffWindow(props: {
-  client: Pick<DashboardClient, 'loadProjectGitWorkbench' | 'loadProjectGitCommit' | 'loadProjectGitComparisonDiff'>;
-  projectId: string;
-  repositoryId: string;
-  filePath: string;
-  stage: 'combined' | 'staged' | 'unstaged';
-  commitHash?: string;
-  comparisonRef?: string;
-  comparisonMode?: 'current' | 'working-tree';
+  /** 已有只读接口负责解析仓库和任务工作区。 */
+  client: Pick<DashboardClient, 'loadProjectGitWorkbench' | 'loadProjectGitCommit' | 'loadProjectGitComparisonDiff' | 'loadTaskWorkspaceFileDiff'>;
+  /** 任务与项目身份互斥，避免错误读取默认检出。 */
+  source: Extract<FilePreviewRequest, { kind: 'project-git' | 'task-git' }>;
   language: 'zh-CN' | 'en-US';
   /** 独立窗口沿用应用外观，系统模式由主题样式实时跟随。 */
   appearance: 'light' | 'dark' | 'system';
@@ -59,36 +56,45 @@ export function ProjectGitDiffWindow(props: {
     };
   }, [appearance]);
   const [diff, setDiff] = useState<GitDiffSummary | null>(null);
-  const [title, setTitle] = useState(props.filePath || (zh ? 'Git 差异' : 'Git diff'));
-  const [selectedPath, setSelectedPath] = useState(props.filePath);
+  const [title, setTitle] = useState(props.source.path || (zh ? 'Git 差异' : 'Git diff'));
+  const [selectedPath, setSelectedPath] = useState(props.source.path);
   const [error, setError] = useState<unknown>(null);
 
   useEffect(() => {
     let cancelled = false;
     setError(null);
-    const request = props.commitHash
-      ? props.client.loadProjectGitCommit(props.projectId, props.repositoryId, props.commitHash).then((detail) => {
-          setTitle(detail.commit.subject);
-          return detail.diff;
-        })
-      : props.comparisonRef
-        ? props.client.loadProjectGitComparisonDiff(props.projectId, props.repositoryId, props.comparisonRef, props.comparisonMode ?? 'current').then((summary) => {
-            setTitle(`${props.comparisonRef} · ${zh ? '分支差异' : 'Branch diff'}`);
-            return summary;
+    setDiff(null);
+    /** 捕获本轮来源；窗口永远按打开时的任务、文件及比较范围读取。 */
+    const source = props.source;
+    const request =
+      source.kind === 'task-git'
+        ? props.client.loadTaskWorkspaceFileDiff(source.taskId, source.workspaceId, source.path, source.scope).then((result) => {
+            if (!cancelled) setTitle(source.scope === 'working' ? (zh ? '本机未提交' : 'Local uncommitted') : zh ? '已提交成果' : 'Committed result');
+            return result.diff;
           })
-        : props.client.loadProjectGitWorkbench(props.projectId).then((workbench) => {
-            const repository = workbench.repositories.find((candidate) => candidate.id === props.repositoryId);
-            if (!repository) throw new Error(zh ? '仓库已不在当前项目中。' : 'The repository is no longer part of this project.');
-            const source = props.stage === 'staged' ? repository.snapshot.stagedDiff : props.stage === 'unstaged' ? repository.snapshot.unstagedDiff : repository.snapshot.diff;
-            setTitle(repository.name);
-            return source;
-          });
+        : source.commitHash
+          ? props.client.loadProjectGitCommit(source.projectId, source.repositoryId, source.commitHash).then((detail) => {
+              if (!cancelled) setTitle(detail.commit.subject);
+              return detail.diff;
+            })
+          : source.comparisonRef
+            ? props.client.loadProjectGitComparisonDiff(source.projectId, source.repositoryId, source.comparisonRef, source.comparisonMode ?? 'current').then((summary) => {
+                if (!cancelled) setTitle(`${source.comparisonRef} · ${zh ? '分支差异' : 'Branch diff'}`);
+                return summary;
+              })
+            : props.client.loadProjectGitWorkbench(source.projectId).then((workbench) => {
+                /** 项目工作台只在项目来源下解析仓库。 */
+                const repository = workbench.repositories.find((candidate) => candidate.id === source.repositoryId);
+                if (!repository) throw new Error(zh ? '仓库已不在当前项目中。' : 'The repository is no longer part of this project.');
+                if (!cancelled) setTitle(repository.name);
+                return source.stage === 'staged' ? repository.snapshot.stagedDiff : source.stage === 'unstaged' ? repository.snapshot.unstagedDiff : repository.snapshot.diff;
+              });
     void request
       .then((next) => {
         if (cancelled) return;
         setDiff(next);
         // 明确选择的非文本或未跟踪文件即使没有补丁，也必须保留其身份。
-        setSelectedPath(props.filePath || next.fileDiffs[0]?.newPath || next.fileDiffs[0]?.oldPath || '');
+        setSelectedPath(props.source.path || next.fileDiffs[0]?.newPath || next.fileDiffs[0]?.oldPath || '');
       })
       .catch((reason: unknown) => {
         if (!cancelled) setError(reason);
@@ -96,31 +102,14 @@ export function ProjectGitDiffWindow(props: {
     return () => {
       cancelled = true;
     };
-  }, [props.projectId, props.repositoryId, props.filePath, props.stage, props.commitHash, props.comparisonRef, props.comparisonMode]);
+  }, [props.client, props.source, zh]);
 
   useEffect(() => {
     document.title = selectedPath ? `${title} · ${selectedPath}` : title;
   }, [selectedPath, title]);
 
   const selectedDiff = useMemo(() => (diff && selectedPath ? selectFileDiff(diff, selectedPath) : diff), [diff, selectedPath]);
-  const viewer = selectedDiff ? (
-    <SideBySideDiff
-      previewRequest={{
-        kind: 'project-git',
-        projectId: props.projectId,
-        repositoryId: props.repositoryId,
-        path: selectedPath,
-        stage: props.stage,
-        commitHash: props.commitHash,
-        comparisonRef: props.comparisonRef,
-        comparisonMode: props.comparisonMode,
-      }}
-      diff={selectedDiff}
-      zh={zh}
-      title={selectedPath || title}
-      fill
-    />
-  ) : null;
+  const viewer = selectedDiff ? <SideBySideDiff previewRequest={{ ...props.source, path: selectedPath }} diff={selectedDiff} zh={zh} title={selectedPath || title} fill /> : null;
 
   return (
     <main className={`macos-ai-app zeus-shell theme-${appearance} project-git-diff-window`} aria-label={zh ? 'Git 差异窗口' : 'Git diff window'}>
@@ -135,10 +124,10 @@ export function ProjectGitDiffWindow(props: {
                 </small>
               </header>
               <div>
-                {props.filePath && !diff.fileDiffs.some((file) => file.newPath === props.filePath || file.oldPath === props.filePath) ? (
-                  <button type="button" className={props.filePath === selectedPath ? 'is-current' : ''} onClick={() => setSelectedPath(props.filePath)}>
+                {props.source.path && !diff.fileDiffs.some((file) => file.newPath === props.source.path || file.oldPath === props.source.path) ? (
+                  <button type="button" className={props.source.path === selectedPath ? 'is-current' : ''} onClick={() => setSelectedPath(props.source.path)}>
                     <File aria-hidden="true" />
-                    <span>{props.filePath}</span>
+                    <span>{props.source.path}</span>
                   </button>
                 ) : null}
                 {diff.fileDiffs.map((file) => {
