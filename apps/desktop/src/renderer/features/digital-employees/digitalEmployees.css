@@ -136,6 +136,35 @@
   font-style: normal;
 }
 
+/* 新增员工先选模板，弹窗宽度只扩到足够展示身份说明。 */
+.macos-ai-app .zeus-form-dialog.digital-employee-template-picker-dialog {
+  inline-size: min(640px, 100%);
+}
+
+/* 模板选项沿用员工列表的行结构，保持身份信息和来源可扫描。 */
+.macos-ai-app .digital-employee-template-picker {
+  display: grid;
+  gap: 6px;
+}
+
+/* 弹窗选项保持独立圆角，避免和主页面连续列表混淆。 */
+.macos-ai-app .digital-employee-template-choice {
+  border-radius: 9px;
+}
+
+/* 空白创建入口使用与员工头像同尺寸的本地符号，不引入新的图标资源。 */
+.macos-ai-app .digital-employee-template-blank-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px dashed color-mix(in oklab, var(--zeus-product-accent) 40%, var(--zeus-control-border));
+  border-radius: 9px;
+  color: var(--zeus-product-accent);
+  background: color-mix(in oklab, var(--zeus-product-accent) 7%, var(--zeus-product-panel));
+  font-size: 19px;
+}
+
 .macos-ai-app .digital-employee-avatar {
   display: grid;
   width: 32px;
