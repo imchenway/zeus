@@ -286,6 +286,14 @@ try {
     const failedQueue = await requestJson(runningServer!, `/api/projects/${projectId}/conversations/${conversationId}/queue-state`);
     return isRecord(failedQueue.body.state) && (failedQueue.body.state.type === 'idle' || failedQueue.body.state.type === 'paused');
   }, '服务尚未收口额度失败轮次。');
+  /** 服务类官方错误必须暂停原会话，并且不会自行重发刚失败的消息。 */
+  const serviceFailureInspection = new DatabaseSync(databasePath, { readOnly: true });
+  try {
+    assertBehavior(serviceFailureInspection.prepare('SELECT provider_state FROM conversations WHERE id = ?').get(conversationId)?.provider_state === 'paused', '额度失败后会话没有保持暂停。');
+    assertBehavior(restartedProvider.startTurnInputs.length === 1, '服务类失败后旧消息被自动重发。');
+  } finally {
+    serviceFailureInspection.close();
+  }
   /** 用户额度恢复后明确提交的下一条消息。 */
   const continueClientMessageId = `message_${randomUUID().replaceAll('-', '')}`;
   /** 沿用正常消息入口及真实统一队列，只控制外部 Provider 回执。 */
@@ -314,6 +322,36 @@ try {
   }
   assertBehavior(restartedProvider.startTurnInputs[1]?.clientUserMessageId === continueClientMessageId, '额度恢复后重发了旧消息。');
   assertBehavior(restartedProvider.startTurnInputs[1]?.threadId === providerThreadId, '额度恢复后丢失了原线程身份。');
+
+  /** 沙箱错误属于本地 Runtime 失败，不能伪装成 Provider 暂停。 */
+  await restartedProvider.failLatestTurn({ message: 'Sandbox command failed.', codexErrorInfo: 'sandboxError' });
+  await waitFor(async () => {
+    const failedQueue = await requestJson(runningServer!, `/api/projects/${projectId}/conversations/${conversationId}/queue-state`);
+    return isRecord(failedQueue.body.state) && failedQueue.body.state.type === 'idle';
+  }, '沙箱失败没有按真实执行失败收口。');
+  const runtimeFailureInspection = new DatabaseSync(databasePath, { readOnly: true });
+  try {
+    assertBehavior(runtimeFailureInspection.prepare('SELECT provider_state FROM conversations WHERE id = ?').get(conversationId)?.provider_state === 'failed', '沙箱错误被误判为 Provider 暂停。');
+  } finally {
+    runtimeFailureInspection.close();
+  }
+  /** 明确的新消息用于恢复后续探针现场，失败轮次本身仍不重放。 */
+  const runtimeContinueClientMessageId = `message_${randomUUID().replaceAll('-', '')}`;
+  const runtimeContinueInput = { content: '沙箱问题已处理，继续', idempotencyKey: `queue_${randomUUID().replaceAll('-', '')}`, clientUserMessageId: runtimeContinueClientMessageId, delivery: 'queue' };
+  const runtimeContinued = await requestJson(runningServer, `/api/projects/${projectId}/conversations/${conversationId}/messages`, {
+    method: 'POST',
+    body: commandRequest({
+      commandType: 'conversation.message.submit',
+      scopeKind: 'product_conversation',
+      scopeId: conversationId,
+      operationIdentity: runtimeContinueClientMessageId,
+      input: runtimeContinueInput,
+      inputSha256: conversationDispatchInputSha256(runtimeContinueInput),
+    }),
+  });
+  assertBehavior(runtimeContinued.status === 202, `沙箱失败后的新消息接纳失败：${runtimeContinued.status}`);
+  await waitFor(() => restartedProvider.startTurnInputs.length === 3, '沙箱失败后明确提交的新消息没有进入下一轮。', 8_000);
+  assertBehavior(restartedProvider.startTurnInputs[2]?.clientUserMessageId === runtimeContinueClientMessageId, '沙箱失败后重发了旧轮次。');
 
   /** 连续排队的附件始终使用本探针项目中的原资源。 */
   const queuedAttachmentPath = join(projectRoot, '排队附件.md');
@@ -408,7 +446,8 @@ try {
         preparingDispatchSurvivesHistoryCheck: true,
         preparingDispatchSurvivesThreadStatusNotification: true,
         threeIdenticalQueuedMessagesWithAttachment: true,
-        quotaFailureCanContinue: true,
+        providerFailurePausedWithoutReplay: true,
+        runtimeFailureRemainsFailed: true,
         temporaryDatabaseCleanup: 'finally',
       },
       null,
@@ -692,7 +731,7 @@ function createRestartProbeManager(input: { providerThreadId: string; turnIds: s
   /** 结束活动轮以唤醒下一条消息。 */
   completeTurn(index: number): Promise<void>;
   /** 控制真实服务收到的失败终态通知，不调用付费模型。 */
-  failLatestTurn(): Promise<void>;
+  failLatestTurn(error?: { message: string; codexErrorInfo: 'usageLimitExceeded' | 'sandboxError' }): Promise<void>;
 } {
   const generationId = `generation_${randomUUID().replaceAll('-', '')}`;
   const capabilities: CodexCapabilitiesSnapshot = {
@@ -892,13 +931,13 @@ function createRestartProbeManager(input: { providerThreadId: string; turnIds: s
     },
     completeTurn,
     /** 失败与回显共用递增序号，避免后续事件被当作重复通知。 */
-    async failLatestTurn() {
+    async failLatestTurn(error = { message: '账户额度已用尽', codexErrorInfo: 'usageLimitExceeded' }) {
       /** 故障只结束最新轮次，旧历史和线程身份保持真实关联。 */
       const turn = turns.at(-1);
       assertBehavior(turn, '没有可结束的 Provider 轮次。');
       turn.status = 'failed';
       turn.completedAt = new Date().toISOString();
-      turn.error = { message: '账户额度已用尽', codexErrorInfo: 'usageLimitExceeded' };
+      turn.error = error;
       await emit('turn/completed', { threadId: input.providerThreadId, turn });
     },
     get readThreadCalls() {

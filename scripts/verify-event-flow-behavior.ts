@@ -10,11 +10,12 @@ import type { NativeConversationSnapshot, NativeSessionItemBuffer } from '../app
 import { reconcileConversationHistoryCache } from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.js';
 import type { TurnChangeSet } from '../packages/shared/src/conversationResources.js';
 import { describeUserFacingError } from '../packages/shared/src/userFacingError.js';
-import { projectConversationTurnFailure } from '../packages/storage/src/conversationSnapshotV2.js';
+import { isProviderBlockingTurnFailure, projectConversationTurnFailure } from '../packages/storage/src/conversationSnapshotV2.js';
 import { createCodexProviderEventFlow } from '../packages/local-server/src/codexProviderEventFlow.js';
 import { projectCodexProviderEvent, type CodexProviderEventProjectionDependencies } from '../packages/local-server/src/codexProviderEventProjection.js';
 import { isProviderResponseStreamDisconnected } from '../packages/local-server/src/codexNativeConversationPolicy.js';
 import { filterCompatibilitySnapshotItemAliases } from '../packages/local-server/src/codexProviderHistoryProjection.js';
+import { conversationWorkExecutionState } from '../packages/local-server/src/conversationWorkExecutionState.js';
 import { selectAutomaticQueueDispatchCandidate } from '../packages/local-server/src/conversationQueueCoreMutationApplication.js';
 import { ConversationEventFlowControl } from '../packages/local-server/src/eventFlowControl.js';
 import { ConversationSyncProtocol } from '../packages/local-server/src/conversationSyncProtocol.js';
@@ -36,7 +37,7 @@ import {
   scopedSnapshotProviderItemId,
 } from '../packages/storage/src/index.js';
 
-/** 验证 Provider 把已知断流降成 other 时，实时与历史共用的投影仍能给出明确原因。 */
+/** 验证字符串与对象形式的官方错误共用脱敏投影，并只按结构化字段决定新事件语义。 */
 function verifyProviderStreamFailurePresentation(): Record<string, unknown> {
   /** 使用真实故障文案，覆盖 request ID 存在时的完整匹配。 */
   const rawMessage =
@@ -56,7 +57,55 @@ function verifyProviderStreamFailurePresentation(): Record<string, unknown> {
   assertBehavior(!isProviderResponseStreamDisconnected(Object.assign(new Error('Rate limit reached'), { code: 'ZEUS_CODEX_TURN_FAILED' })), '非连接故障不得进入回复流恢复重试。');
   assertBehavior(explanation.message === 'AI 服务在回复结束前断开了连接，因此没有收到完整回复。', '断流必须显示明确的本地化说明。');
   assertBehavior(explanation.details?.includes('5a794051-cd4c-45b3-8f47-8187e7cd7a75'), '诊断详情必须保留可提交给服务方的 request ID。');
-  return { category: failure.category, cause: failure.cause?.code ?? null, message: explanation.message };
+  assertBehavior(isProviderBlockingTurnFailure({ code: 'ZEUS_CODEX_TURN_FAILED', message: rawMessage, providerError: { codexErrorInfo: 'other' } }), '已确认的历史断流必须暂停后续执行。');
+
+  /** 对象形式错误保留官方判别字段和 HTTP 状态，但敏感信息不得进入会话。 */
+  const objectFailureRecord = {
+    code: 'ZEUS_CODEX_TURN_FAILED',
+    message: 'OpenAI request failed. Request ID req_official_503. api_key=sk-object-secret /Users/private/workspace\n    at provider.ts:42:1',
+    providerStatus: 'failed',
+    providerError: {
+      codexErrorInfo: { responseStreamConnectionFailed: { httpStatusCode: 503 } },
+      additionalDetails: 'Request ID req_official_503\nAuthorization: Bearer sk-additional-secret\n/Users/private/log.txt',
+    },
+  };
+  const objectFailure = projectConversationTurnFailure(objectFailureRecord);
+  const objectExplanation = describeUserFacingError(objectFailure, 'zh-CN');
+  assertBehavior(objectFailure.category === 'network', 'HTTP 503 的响应流错误必须归类为连接故障。');
+  assertBehavior(objectFailure.cause?.code === 'responseStreamConnectionFailed', '对象形式错误必须保留官方判别字段。');
+  assertBehavior(objectFailure.additionalDetails.includes('HTTP 状态：503'), '对象形式错误必须展示 HTTP 状态。');
+  assertBehavior(objectExplanation.details.includes('responseStreamConnectionFailed'), '展开详情必须展示官方错误码。');
+  assertBehavior(objectExplanation.details.includes('req_official_503'), '展开详情必须保留官方请求标识。');
+  assertBehavior(!/sk-object-secret|sk-additional-secret|\/Users\/private|provider\.ts:42/iu.test(objectExplanation.details), '错误详情不得暴露凭据、本机路径或堆栈。');
+  assertBehavior(isProviderBlockingTurnFailure(objectFailureRecord), '服务端 503 错误必须暂停会话。');
+
+  /** 字符串形式限流错误直接命中现有错误目录。 */
+  const rateLimitRecord = { code: 'ZEUS_CODEX_TURN_FAILED', message: 'Too many requests.', providerStatus: 'failed', providerError: { codexErrorInfo: 'rateLimitExceeded' } };
+  const rateLimitFailure = projectConversationTurnFailure(rateLimitRecord);
+  assertBehavior(rateLimitFailure.category === 'rate_limit', '字符串形式官方限流错误必须准确分类。');
+  assertBehavior(describeUserFacingError(rateLimitFailure, 'zh-CN').message === 'AI 服务收到的请求过多，暂时限制了使用。请等待限制解除后再继续。', '限流错误必须复用现有可读说明。');
+  assertBehavior(isProviderBlockingTurnFailure(rateLimitRecord), '官方限流错误必须暂停会话。');
+
+  /** 沙箱错误即使正文包含限流字样，也必须按真实 Runtime 失败处理。 */
+  const sandboxRecord = { code: 'ZEUS_CODEX_TURN_FAILED', message: 'rate limit text from a local tool', providerStatus: 'failed', providerError: { codexErrorInfo: 'sandboxError' } };
+  const sandboxFailure = projectConversationTurnFailure(sandboxRecord);
+  assertBehavior(sandboxFailure.category === 'permission', '结构化沙箱错误不得被宽泛正文正则误判为限流。');
+  assertBehavior(!isProviderBlockingTurnFailure(sandboxRecord), '沙箱或本地 Runtime 错误必须保持真实失败。');
+  /** 工作编排消费同一错误判断，服务类错误阻塞，Runtime 错误失败。 */
+  const workConversation = { stage: 'failed', providerState: 'paused' } as Parameters<typeof conversationWorkExecutionState>[0];
+  const submission = (error: Record<string, unknown>) =>
+    [{ status: 'failed', pausedReason: null, errorJson: JSON.stringify(error), updatedAt: '2026-09-28T00:00:00.000Z', createdAt: '2026-09-28T00:00:00.000Z', id: 'probe-submission' }] as Parameters<typeof conversationWorkExecutionState>[1];
+  const providerWorkState = conversationWorkExecutionState(workConversation, submission(rateLimitRecord));
+  const runtimeWorkState = conversationWorkExecutionState({ ...workConversation, providerState: 'failed' }, submission(sandboxRecord));
+  assertBehavior(providerWorkState.type === 'blocked', '服务类官方错误必须让任务工作保持阻塞。');
+  assertBehavior(runtimeWorkState.type === 'failed', '沙箱或 Runtime 错误必须让任务工作正常失败。');
+  return {
+    legacyDisconnect: { category: failure.category, cause: failure.cause?.code ?? null, message: explanation.message },
+    objectFailure: { category: objectFailure.category, cause: objectFailure.cause?.code ?? null, httpStatus: objectFailure.additionalDetails[0] ?? null },
+    rateLimit: rateLimitFailure.category,
+    sandbox: sandboxFailure.category,
+    workStates: { provider: providerWorkState.type, runtime: runtimeWorkState.type },
+  };
 }
 
 /** 用真实临时目录与数据库验证脚本修改、原有脏内容和恢复保护，不调用外部模型。 */

@@ -563,6 +563,7 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
       }
     }
     const executionState = conversationWorkExecutionState(conversation, options.conversationSubmissions.listByConversation(conversation.id));
+    if (executionState.type === 'blocked') throw orchestratorError(executionState.code, executionState.message, false, true);
     if (executionState.type === 'failed') throw orchestratorError(executionState.code, executionState.message, false);
     if (executionState.type === 'outcome_unknown') throw orchestratorError(executionState.code, executionState.message, true);
     if (executionState.type === 'waiting') {
@@ -863,9 +864,10 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
     await options.save();
   }
 
+  /** 将执行失败、结果未知和 Provider 阻塞分别落为准确的数字员工终态。 */
   async function failExecution(execution: DigitalEmployeeExecutionRecord, error: unknown): Promise<void> {
     const failure = normalizeOrchestratorError(error);
-    const status = failure.recoveryRequired ? 'blocked' : 'failed';
+    const status = failure.recoveryRequired || failure.blocked ? 'blocked' : 'failed';
     const current = options.executions.getById(execution.id);
     if (!current || current.status === 'delivered' || current.status === 'cancelled') return;
     const retryUnsafe = retryWouldDuplicateUnknownWork(failure.code);
@@ -1159,20 +1161,23 @@ function readTaskType(value: unknown): ZeusTaskRecord['taskType'] {
 interface OrchestratorFailure extends Error {
   code: string;
   recoveryRequired: boolean;
+  blocked: boolean;
 }
 
-function orchestratorError(code: string, message: string, recoveryRequired: boolean): OrchestratorFailure {
-  return Object.assign(new Error(message), { code, recoveryRequired });
+/** 构造可区分结果未知与外部服务阻塞的编排错误。 */
+function orchestratorError(code: string, message: string, recoveryRequired: boolean, blocked = false): OrchestratorFailure {
+  return Object.assign(new Error(message), { code, recoveryRequired, blocked });
 }
 
-function normalizeOrchestratorError(error: unknown): { code: string; message: string; recoveryRequired: boolean } {
+/** 统一数字员工异常，同时保留 Provider 阻塞而非执行失败的语义。 */
+function normalizeOrchestratorError(error: unknown): { code: string; message: string; recoveryRequired: boolean; blocked: boolean } {
   if (error instanceof Error) {
-    const candidate = error as Error & { code?: unknown; recoveryRequired?: unknown };
+    const candidate = error as Error & { code?: unknown; recoveryRequired?: unknown; blocked?: unknown };
     const code = typeof candidate.code === 'string' ? candidate.code : 'ZEUS_DIGITAL_EMPLOYEE_EXECUTION_FAILED';
     const outcomeUnknown = code.includes('OUTCOME_UNKNOWN') || candidate.recoveryRequired === true;
-    return { code, message: error.message || '数字员工执行失败。', recoveryRequired: outcomeUnknown };
+    return { code, message: error.message || '数字员工执行失败。', recoveryRequired: outcomeUnknown, blocked: candidate.blocked === true };
   }
-  return { code: 'ZEUS_DIGITAL_EMPLOYEE_EXECUTION_FAILED', message: '数字员工执行失败。', recoveryRequired: false };
+  return { code: 'ZEUS_DIGITAL_EMPLOYEE_EXECUTION_FAILED', message: '数字员工执行失败。', recoveryRequired: false, blocked: false };
 }
 
 function httpOrchestratorError(code: string, response: { statusCode: number; body: string }, recoveryRequired: boolean): OrchestratorFailure {
