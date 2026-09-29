@@ -413,6 +413,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
           providerGenerationId: commandProviderGenerationId,
         });
       }
+      /** 显式选择读取冻结副本；自动选择继续由 App Server 原生 Skill 目录按上下文预算处理。 */
       const skillCatalog = (await options.loadSkills?.(context.projectLocalPath, submission.id)) ?? [];
       const providerInput = submissionProviderInput(submission, context).map((item) => {
         if (item.type !== 'skill') return item;
@@ -420,11 +421,6 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
         const frozen = skillCatalog.find((skill) => skill.id === selected?.id);
         return frozen ? { ...item, path: frozen.path } : item;
       });
-      if (skillCatalog.length)
-        providerInput.push({
-          type: 'text',
-          text: `本轮普通 Skill 已冻结；自动选择和显式选择均读取以下路径，参考文件和脚本相对于同一目录解析：\n${JSON.stringify(skillCatalog.map(({ id, name, description, path }) => ({ id, name, description, path })))}`,
-        });
       const pluginPromptContext = await options.plugins?.beforeUserPrompt({
         conversationId: conversation.id,
         prompt: providerInput,

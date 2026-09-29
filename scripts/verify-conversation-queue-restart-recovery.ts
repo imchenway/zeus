@@ -25,6 +25,8 @@ type JsonObject = Record<string, unknown>;
 
 const probeRoot = await mkdtemp(join(tmpdir(), 'zeus-conversation-queue-restart-'));
 const dataRoot = join(probeRoot, 'data-root');
+/** 隔离 Skill 目录必须非空，才能覆盖目录不得混入用户正文的回归。 */
+const codexHome = join(dataRoot, 'providers', 'codex');
 const projectRoot = join(probeRoot, 'project');
 const databasePath = join(dataRoot, 'data', 'zeus.db');
 const apiToken = 'conversation-queue-restart-probe-token';
@@ -57,6 +59,10 @@ ContextDispatchApplicationService.prototype.compileForDispatch = async function 
 
 try {
   await mkdir(projectRoot, { recursive: true });
+  /** 本地 Skill 不依赖 Provider 目录，确保冻结结果真实非空。 */
+  const promptLayeringSkill = join(codexHome, 'skills', 'prompt-layering');
+  await mkdir(promptLayeringSkill, { recursive: true });
+  await writeFile(join(promptLayeringSkill, 'SKILL.md'), '---\nname: prompt-layering\ndescription: 验证 Skill 目录不会混入用户正文。\n---\n\n# 提示词分层\n', 'utf8');
   const firstProvider = createRestartProbeManager({
     providerThreadId,
     turnIds: [firstProviderTurnId],
@@ -115,6 +121,7 @@ try {
     ]);
     throw new Error(`${error instanceof Error ? error.message : String(error)}\nsnapshot=${JSON.stringify(snapshot.body, null, 2)}\nqueue=${JSON.stringify(queueState.body, null, 2)}`);
   }
+  assertBehavior(JSON.stringify(firstProvider.startTurnInputs[0]!.input) === JSON.stringify([{ type: 'text', text: firstConversationInput.content }]), '普通 Skill 目录被错误追加到用户正文。');
 
   await runningServer.prepareForShutdown();
   await runningServer.close();
@@ -701,7 +708,7 @@ async function startProbeServer(manager: CodexAppServerManager, instanceId: stri
     codexAppServerManager: manager,
     codexNativeEnabled: true,
     codexRuntimeCommandPath: '/usr/bin/true',
-    codexHome: join(dataRoot, 'providers', 'codex'),
+    codexHome,
     telegramToken: '',
     executionHost: {
       instanceId: `conversation-queue-restart-${instanceId}`,
