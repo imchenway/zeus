@@ -2269,11 +2269,11 @@ function setupIpc(): void {
     return { cleared: true, clearedAt: new Date().toISOString() };
   });
   // 仅主设置窗口可以检查网络，网页子框架不能借此发起任意请求。
-  ipcMain.handle('zeus:network-proxy:check', (event, settings: unknown, address: unknown) => {
+  ipcMain.handle('zeus:network-proxy:check', (event, settings: unknown, address: unknown, checkTarget: unknown) => {
     /** 绑定实际请求窗口和顶层页面，不接受调用方提供的窗口身份。 */
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || event.senderFrame !== event.sender.mainFrame) throw new Error('当前窗口不能检查网络代理。');
-    return checkNetworkProxyConnection(settings, address);
+    return checkNetworkProxyConnection(settings, address, checkTarget);
   });
   ipcMain.handle('zeus:export-patch', (_event, patch: unknown) =>
     exportPatchToFile({

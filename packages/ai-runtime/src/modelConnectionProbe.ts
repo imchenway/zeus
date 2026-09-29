@@ -30,6 +30,16 @@ export interface ModelProbeResult {
   message: string;
 }
 
+/** 供应商连接检查只返回一次最小真实文本请求的事实，不改写模型能力。 */
+export interface ModelConnectivityProbeResult {
+  /** 模型请求是否完整结束。 */
+  ok: boolean;
+  /** 服务端回报的实际模型标识；未回报时为空。 */
+  servedModelId: string | null;
+  /** 失败原因或成功结论，不包含凭据。 */
+  message: string;
+}
+
 /** 单次请求的观测记录；不含结论，只记录看到了什么。 */
 interface ProbeObservation {
   ok: boolean;
@@ -45,6 +55,8 @@ interface ProbeObservation {
 const probeToolName = 'zeus_capability_probe';
 /** 探测请求的输出预算：思考档位开启时思考内容会占用预算，留足空间再判断工具调用。 */
 const probeMaxTokens = 512;
+/** 连接检查只要求返回 ok，限制输出以减少用量。 */
+const connectivityProbeMaxTokens = 16;
 /** 单次探测请求超时；探测是可选操作，宁可给出明确失败也不长时间挂起。 */
 const defaultProbeTimeoutMs = 30_000;
 /** 逐档体检的档位上限：Pi 只有七个档位词，超过就不可能都发出去。 */
@@ -112,6 +124,23 @@ export async function probeConfiguredModel(input: ProbeConfiguredModelInput): Pr
     },
     message: summarizeProbe(model.id, textObservation, imageEvidence),
   };
+}
+
+/** 使用真实运行协议、鉴权和模型发起一次最小文本请求，成功才算连接可用。 */
+export async function probeConfiguredModelConnectivity(input: ProbeConfiguredModelInput): Promise<ModelConnectivityProbeResult> {
+  /** 连接探针与真实会话共用同一模型翻译和协议实现。 */
+  const piModel = toPiModel(input.model, `zeus-connectivity-${input.connection.id}`, input.connection.baseUrl);
+  const observation = await runProbeRequest(streamApiFor(piModel), piModel, input, {
+    context: {
+      systemPrompt: '你是 Zeus 的连接检查请求。不要调用工具，只回答 ok。',
+      messages: [{ role: 'user', content: '只回答：ok', timestamp: Date.now() }],
+    },
+    timeoutMs: input.timeoutMs ?? 20_000,
+    maxTokens: connectivityProbeMaxTokens,
+    reasoningLevel: 'off',
+  });
+  if (!observation.ok) return { ok: false, servedModelId: observation.servedModelId, message: observation.failure ?? '真实模型请求没有成功完成。' };
+  return { ok: true, servedModelId: observation.servedModelId, message: `模型 ${input.model.id} 已完成真实请求。` };
 }
 
 /** 单个档位的体检结果：这次请求到底看到了什么，不做任何推断。 */
@@ -246,7 +275,12 @@ export async function generateConfiguredModelText(input: ProbeConfiguredModelInp
 }
 
 /** 执行一次真实请求并把观测结果收敛成纯数据；失败只返回原因，不抛出。 */
-async function runProbeRequest(streams: ProviderStreams, piModel: Model<Api>, input: ProbeConfiguredModelInput, request: { context: Context; timeoutMs: number; reasoningLevel?: PiThinkingLevel | null }): Promise<ProbeObservation> {
+async function runProbeRequest(
+  streams: ProviderStreams,
+  piModel: Model<Api>,
+  input: ProbeConfiguredModelInput,
+  request: { context: Context; timeoutMs: number; reasoningLevel?: PiThinkingLevel | null; maxTokens?: number },
+): Promise<ProbeObservation> {
   const observation: ProbeObservation = { ok: false, failure: null, servedModelId: null, deltaCount: 0, thinkingSeen: false, toolCallSeen: false, usage: null };
   /**
    * 探测也走「用户词 → Pi 中转词」的同一条换算，用清单默认档跑；
@@ -256,7 +290,7 @@ async function runProbeRequest(streams: ProviderStreams, piModel: Model<Api>, in
   const reasoning: ThinkingLevel | null = preferredReasoning && preferredReasoning !== 'off' ? preferredReasoning : null;
   const options: SimpleStreamOptions = {
     apiKey: input.apiKey,
-    maxTokens: probeMaxTokens,
+    maxTokens: request.maxTokens ?? probeMaxTokens,
     signal: AbortSignal.timeout(request.timeoutMs),
     ...(input.fetch ? { fetch: input.fetch } : {}),
     ...(reasoning ? { reasoning } : {}),
