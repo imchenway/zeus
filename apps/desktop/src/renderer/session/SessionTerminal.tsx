@@ -5,6 +5,7 @@ import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { TerminalIcon as TerminalGlyph } from '@phosphor-icons/react/dist/csr/Terminal';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
+import { interactiveTerminalInitialSize } from '@zeus/shared';
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type {
   AiRuntimeSession,
@@ -40,6 +41,8 @@ const maximumTerminalTabs = 8;
 const maximumTerminalInputChunk = 32 * 1024;
 /** 容器停止变化后再同步 PTY，避免展开动画连续触发 Shell 重绘。 */
 const terminalResizeSettleDelayMs = 80;
+/** 首次测量最多等待这段时间，避免异常布局阻塞 Shell 启动。 */
+const terminalInitialMeasureDeadlineMs = 500;
 const alternateScreenResetSequence = '\u001b[?1049h\u001b[2J\u001b[H';
 const synchronizedOutputSequence = '\u001b[?2026h';
 
@@ -145,6 +148,10 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
   /** 切换按钮描述点击后的目标位置。 */
   const moveLabel = right ? copy.moveBottom : copy.moveRight;
   const panelRef = useRef<HTMLElement | null>(null);
+  /** 启动前从最终布局测量字符网格，避免 PTY 首屏使用错误列数。 */
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  /** 每个会话保留最近一次实际字符网格，标签切换时不回退到默认尺寸。 */
+  const sessionSizesRef = useRef(new Map<string, { cols: number; rows: number }>());
   const resizeStateRef = useRef<{ pointerId: number; startCoordinate: number; startSize: number } | null>(null);
   const activeSurfaceRef = useRef<TerminalSurfaceHandle | null>(null);
   const mountedRef = useRef(true);
@@ -243,6 +250,11 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
     activeSurfaceRef.current = surface;
   }, []);
 
+  /** 记录终端本地适配后的实际字符网格。 */
+  const rememberTerminalSize = useCallback((sessionId: string, size: { cols: number; rows: number }): void => {
+    sessionSizesRef.current.set(sessionId, size);
+  }, []);
+
   const startTerminal = useCallback(async (): Promise<void> => {
     if (startInFlightRef.current || phase.kind !== 'ready') return;
     startInFlightRef.current = true;
@@ -257,12 +269,16 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
         if (!shellAllowed) throw new Error(copy.permissionUnavailable);
         if (mountedRef.current) setPhase({ kind: 'ready', shellAllowed: true });
       }
+      /** 必须先等面板动画结束再创建 PTY，否则 zsh 会先按默认列数绘制一次 prompt。 */
+      const terminalSize = await measureTerminalSize(bodyRef.current);
       const request: Omit<StartRuntimeSessionRequest, 'confirmationId'> = {
         projectId: props.projectId,
         conversationId: props.conversationId,
         ...(props.taskId ? { taskId: props.taskId } : {}),
         command: integratedTerminalCommand,
         args: [...integratedTerminalArgs],
+        cols: terminalSize.cols,
+        rows: terminalSize.rows,
       };
       const confirmation = await props.client.createRuntimeConfirmation({
         action: 'start_generic_session',
@@ -272,6 +288,7 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
       const confirmed = await props.client.confirmRuntimeOperation(confirmation.id);
       const session = await props.client.startRuntimeSession({ ...request, confirmationId: confirmed.id });
       if (mountedRef.current) {
+        sessionSizesRef.current.set(session.id, terminalSize);
         setSessions((current) => [session, ...current.filter((candidate) => candidate.id !== session.id)].slice(0, maximumTerminalTabs));
         setActiveSessionId(session.id);
       }
@@ -499,7 +516,7 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
           </button>
         </div>
       ) : null}
-      <div className="session-terminal-body" role="tabpanel" id={panelId} aria-labelledby={activeSessionId ? `${panelId}-${activeSessionId}` : undefined}>
+      <div ref={bodyRef} className="session-terminal-body" role="tabpanel" id={panelId} aria-labelledby={activeSessionId ? `${panelId}-${activeSessionId}` : undefined}>
         {phase.kind === 'loading' ? (
           <TerminalEmptyState icon={<CircleNotch className="session-terminal-spinner" aria-hidden="true" />} title={copy.loading} />
         ) : phase.kind === 'unavailable' ? (
@@ -530,8 +547,10 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
             client={props.client}
             language={props.language}
             session={activeSession}
+            initialSize={sessionSizesRef.current.get(activeSession.id) ?? interactiveTerminalInitialSize}
             focusRequest={props.focusRequest}
             registerSurface={registerSurface}
+            onSizeChange={rememberTerminalSize}
             onStatusChange={(status) => updateSessionStatus(activeSession.id, status)}
             onError={setError}
           />
@@ -570,14 +589,18 @@ function TerminalViewport(props: {
   client: SessionTerminalClient;
   language: 'zh-CN' | 'en-US';
   session: AiRuntimeSession;
+  initialSize: { cols: number; rows: number };
   focusRequest: number;
   registerSurface: (surface: TerminalSurfaceHandle | null) => void;
+  onSizeChange: (sessionId: string, size: { cols: number; rows: number }) => void;
   onStatusChange: (status: AiRuntimeSessionStatus) => void;
   onError: (message: string | null) => void;
 }) {
   const copy = terminalCopy[props.language];
   const hostRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<import('@xterm/xterm').Terminal | null>(null);
+  /** 首屏尺寸只在当前会话挂载时读取，布局重渲染不能重建 xterm。 */
+  const initialSizeRef = useRef(props.initialSize);
   const onErrorRef = useRef(props.onError);
   const onStatusChangeRef = useRef(props.onStatusChange);
   const sessionStatusRef = useRef(props.session.status);
@@ -601,7 +624,9 @@ function TerminalViewport(props: {
     /** 稳定期计时器由后续尺寸变化重置。 */
     let resizeSettleTimer: number | null = null;
     /** 相同最终尺寸不重复触发 Shell 的 SIGWINCH。 */
-    let lastSentResize: { cols: number; rows: number } | null = null;
+    /** 当前会话挂载时已经用该尺寸创建 PTY，无需再发送一次相同 resize。 */
+    const initialSize = initialSizeRef.current;
+    let lastSentResize: { cols: number; rows: number } | null = initialSize;
     const bufferedEvents: ZeusRealtimeEvent[] = [];
     const seenLogIds = new Set<string>();
     const io = createTerminalIoPump(props.client, props.session.id, (ioError) => {
@@ -617,8 +642,8 @@ function TerminalViewport(props: {
           allowTransparency: false,
           convertEol: false,
           disableStdin: !terminalSessionIsLive(sessionStatusRef.current),
-          rows: 20,
-          cols: 80,
+          rows: initialSize.rows,
+          cols: initialSize.cols,
           scrollback: 10_000,
         });
         const fitAddon = new FitAddon();
@@ -677,6 +702,8 @@ function TerminalViewport(props: {
 
         /** xterm 每帧跟随容器，PTY 等尺寸稳定后再同步一次。 */
         function scheduleFit(): void {
+          /** 首屏输出必须先按 PTY 启动尺寸完成解析，否则 zsh 的行内清除会被提前换行。 */
+          if (hydrating) return;
           if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
           resizeFrame = requestAnimationFrame(() => {
             resizeFrame = null;
@@ -688,8 +715,16 @@ function TerminalViewport(props: {
             const proposed = fitAddon.proposeDimensions();
             if (!proposed) return;
             if (proposed.cols !== terminal.cols || proposed.rows !== terminal.rows) fitAddon.fit();
+            if (coldTuiRedrawPending) {
+              coldTuiRedrawPending = false;
+              bufferedEvents.length = 0;
+              cancelPendingResize();
+              redrawTimer = requestLiveTerminalRedraw(terminal, io, () => disposed);
+              return;
+            }
             /** 重新打开时即使 xterm 已是最终尺寸，也要补发此前因隐藏而取消的 PTY resize。 */
             const next = { cols: terminal.cols, rows: terminal.rows };
+            props.onSizeChange(props.session.id, next);
             if (lastSentResize?.cols === next.cols && lastSentResize.rows === next.rows) {
               cancelPendingResize();
               return;
@@ -714,10 +749,11 @@ function TerminalViewport(props: {
             if (reset && terminalSnapshotNeedsLiveRedraw(snapshot)) {
               rememberTerminalSnapshotLogs(snapshot, seenLogIds);
               // 截断尾部可能从半个 ANSI 帧开始；先进入干净的备用屏，再让仍存活的 TUI 通过 SIGWINCH 输出完整当前帧。
-              terminal.write(alternateScreenResetSequence);
+              await writeTerminalText(terminal, alternateScreenResetSequence);
               coldTuiRedrawPending = true;
             } else {
-              writeTerminalSnapshot(terminal, snapshot, seenLogIds);
+              const replayedSize = await writeTerminalSnapshot(terminal, snapshot, seenLogIds);
+              if (replayedSize) lastSentResize = replayedSize;
             }
             onStatusChangeRef.current(snapshot.status);
           } catch (refreshError) {
@@ -731,19 +767,25 @@ function TerminalViewport(props: {
           }
         }
 
-        scheduleFit();
+        /** 排空水合期事件后再开放实时写入，避免快照与首个 fit 交错。 */
+        async function finishHydration(): Promise<void> {
+          if (coldTuiRedrawPending) {
+            bufferedEvents.length = 0;
+          } else {
+            while (bufferedEvents.length > 0) {
+              for (const event of bufferedEvents.splice(0)) writeRealtimeEvent(terminal, event, seenLogIds);
+              await flushTerminalWrites(terminal);
+              if (disposed) return;
+            }
+          }
+          hydrating = false;
+          scheduleFit();
+          terminal.focus();
+        }
+
         void refresh(true).finally(() => {
           if (disposed) return;
-          hydrating = false;
-          if (coldTuiRedrawPending) {
-            coldTuiRedrawPending = false;
-            bufferedEvents.length = 0;
-            cancelPendingResize();
-            redrawTimer = requestLiveTerminalRedraw(terminal, io, () => disposed);
-          } else {
-            for (const event of bufferedEvents.splice(0)) writeRealtimeEvent(terminal, event, seenLogIds);
-          }
-          terminal.focus();
+          void finishHydration();
         });
         disposeBindings = () => {
           dataSubscription.dispose();
@@ -766,7 +808,7 @@ function TerminalViewport(props: {
       terminalRef.current?.dispose();
       terminalRef.current = null;
     };
-  }, [copy.startupFailed, props.client, props.language, props.registerSurface, props.session.id]);
+  }, [copy.startupFailed, props.client, props.language, props.onSizeChange, props.registerSurface, props.session.id]);
 
   useEffect(() => {
     if (terminalRef.current) terminalRef.current.options.disableStdin = !terminalSessionIsLive(props.session.status);
@@ -788,6 +830,75 @@ function TerminalEmptyState(props: { icon: ReactNode; title: string; detail?: st
       {props.action}
     </div>
   );
+}
+
+/** 等待终端内容区停止变化，覆盖首次展开和方向切换动画。 */
+function waitForTerminalLayout(container: HTMLElement): Promise<void> {
+  return new Promise((resolve) => {
+    /** 静默计时器在每次布局变化后重新开始。 */
+    let settleTimer: number | null = null;
+    /** 最长等待时间防止异常布局永久阻塞启动。 */
+    let deadlineTimer: number | null = null;
+    /** 观察器只服务本次启动测量。 */
+    const observer = new ResizeObserver(scheduleFinish);
+
+    /** 完成等待并释放一次性资源。 */
+    function finish(): void {
+      observer.disconnect();
+      if (settleTimer !== null) window.clearTimeout(settleTimer);
+      if (deadlineTimer !== null) window.clearTimeout(deadlineTimer);
+      resolve();
+    }
+
+    /** 每次尺寸变化后等待与 PTY resize 相同的稳定窗口。 */
+    function scheduleFinish(): void {
+      if (settleTimer !== null) window.clearTimeout(settleTimer);
+      settleTimer = window.setTimeout(finish, terminalResizeSettleDelayMs);
+    }
+
+    observer.observe(container);
+    scheduleFinish();
+    deadlineTimer = window.setTimeout(finish, terminalInitialMeasureDeadlineMs);
+  });
+}
+
+/** 在创建 PTY 前用真实 xterm 字体与边框测出首屏字符网格。 */
+async function measureTerminalSize(container: HTMLElement | null): Promise<{ cols: number; rows: number }> {
+  if (!container) return interactiveTerminalInitialSize;
+  await waitForTerminalLayout(container);
+  const bounds = container.getBoundingClientRect();
+  if (bounds.width <= 0 || bounds.height <= 0) return interactiveTerminalInitialSize;
+  await document.fonts.ready;
+  const [{ Terminal }, { FitAddon }] = await Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit')]);
+  /** 临时节点只复用正式终端的几何样式，不进入可见布局。 */
+  const host = document.createElement('div');
+  host.className = 'zeus-terminal-screen';
+  host.style.position = 'fixed';
+  host.style.left = '-10000px';
+  host.style.top = '0';
+  host.style.width = `${Math.round(bounds.width)}px`;
+  host.style.height = `${Math.round(bounds.height)}px`;
+  host.style.visibility = 'hidden';
+  host.style.pointerEvents = 'none';
+  document.body.append(host);
+  /** 测量实例与正式终端使用同一显示配置。 */
+  const terminal = new Terminal({
+    ...terminalDisplayOptions,
+    allowTransparency: false,
+    rows: interactiveTerminalInitialSize.rows,
+    cols: interactiveTerminalInitialSize.cols,
+  });
+  const fitAddon = new FitAddon();
+  try {
+    terminal.loadAddon(fitAddon);
+    terminal.open(host);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const proposed = fitAddon.proposeDimensions();
+    return proposed && proposed.cols > 0 && proposed.rows > 0 ? proposed : interactiveTerminalInitialSize;
+  } finally {
+    terminal.dispose();
+    host.remove();
+  }
 }
 
 function createTerminalIoPump(
@@ -861,7 +972,21 @@ function createTerminalIoPump(
   };
 }
 
-function writeTerminalSnapshot(terminal: import('@xterm/xterm').Terminal, snapshot: AiRuntimeTerminalSnapshot, seenLogIds: Set<string>): void {
+/** 写入终端首屏快照，并等待 xterm 完成 ANSI 解析。 */
+async function writeTerminalSnapshot(terminal: import('@xterm/xterm').Terminal, snapshot: AiRuntimeTerminalSnapshot, seenLogIds: Set<string>): Promise<{ cols: number; rows: number } | null> {
+  if (snapshot.replay && snapshot.replay.length > 0) {
+    rememberTerminalSnapshotLogs(snapshot, seenLogIds);
+    /** 最后一条尺寸事件就是当前 PTY 尺寸，避免水合后重复发送相同 resize。 */
+    let replayedSize: { cols: number; rows: number } | null = null;
+    for (const operation of snapshot.replay) {
+      if (operation.kind === 'resize') {
+        replayedSize = { cols: operation.cols, rows: operation.rows };
+        terminal.resize(operation.cols, operation.rows);
+      } else if (operation.text) await writeTerminalText(terminal, operation.text);
+    }
+    terminal.options.disableStdin = !terminalSessionIsLive(snapshot.status);
+    return replayedSize;
+  }
   const chunks: string[] = [];
   for (const log of snapshot.logs) {
     if (seenLogIds.has(log.id)) continue;
@@ -870,8 +995,19 @@ function writeTerminalSnapshot(terminal: import('@xterm/xterm').Terminal, snapsh
     chunks.push(log.text);
   }
   // 单次交给 xterm 解析，避免高频 TUI 冷回放时为每个数据库块建立独立解析任务。
-  if (chunks.length > 0) terminal.write(chunks.join(''));
+  if (chunks.length > 0) await writeTerminalText(terminal, chunks.join(''));
   terminal.options.disableStdin = !terminalSessionIsLive(snapshot.status);
+  return null;
+}
+
+/** 写入终端文本，并在 xterm 完成解析后继续后续尺寸操作。 */
+function writeTerminalText(terminal: import('@xterm/xterm').Terminal, text: string): Promise<void> {
+  return new Promise((resolve) => terminal.write(text, resolve));
+}
+
+/** 等待当前已排入 xterm 的全部写入完成，不额外修改终端内容。 */
+function flushTerminalWrites(terminal: import('@xterm/xterm').Terminal): Promise<void> {
+  return writeTerminalText(terminal, '');
 }
 
 function rememberTerminalSnapshotLogs(snapshot: AiRuntimeTerminalSnapshot, seenLogIds: Set<string>): void {

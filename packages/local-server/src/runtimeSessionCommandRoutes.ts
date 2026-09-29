@@ -30,6 +30,10 @@ interface CreateRuntimeSessionInput {
   command: string;
   args?: string[];
   cwd?: string;
+  /** 交互 PTY 首屏列数。 */
+  cols?: number;
+  /** 交互 PTY 首屏行数。 */
+  rows?: number;
   confirmationId?: string;
 }
 
@@ -41,6 +45,10 @@ interface RuntimeConfirmationSessionInput {
   command: string;
   args?: string[];
   cwd?: string;
+  /** 确认绑定的交互 PTY 首屏列数。 */
+  cols?: number;
+  /** 确认绑定的交互 PTY 首屏行数。 */
+  rows?: number;
 }
 
 interface CreateRuntimeConfirmationInput {
@@ -91,7 +99,7 @@ export interface RuntimeOperationConfirmation {
   riskLevel: 'high';
   reason: string;
   securityContext: RuntimeConfirmationSecurityContext;
-  session: Required<Pick<RuntimeConfirmationSessionInput, 'projectId' | 'command' | 'args' | 'cwd'>> & Pick<RuntimeConfirmationSessionInput, 'taskId' | 'conversationId'>;
+  session: Required<Pick<RuntimeConfirmationSessionInput, 'projectId' | 'command' | 'args' | 'cwd'>> & Pick<RuntimeConfirmationSessionInput, 'taskId' | 'conversationId' | 'cols' | 'rows'>;
   createdAt: string;
   confirmedAt: string | null;
   consumedAt: string | null;
@@ -323,6 +331,8 @@ export function registerRuntimeSessionCommandRoutes(options: {
             command: parsed.input.command,
             args: parsed.input.args ?? [],
             cwd: parsed.input.cwd ?? prepared.projectRoot,
+            cols: parsed.input.cols,
+            rows: parsed.input.rows,
             env: options.buildRuntimeProcessEnv(),
           });
           if (startupCommand) options.aiRuntimeManager.inputSession(session.id, `${startupCommand.replace(/\n/gu, '\r')}\r`);
@@ -724,7 +734,7 @@ async function prepareRuntimeConfirmation(options: Parameters<typeof registerRun
   if (input.action !== 'start_generic_session' || !input.reason?.trim() || !input.session?.projectId || !input.session.command) {
     throw new RuntimeSessionRouteError('ZEUS_INVALID_RUNTIME_CONFIRMATION', 'action, reason and session are required for runtime confirmation', 400);
   }
-  assertAllowedKeys(input.session, ['args', 'command', 'conversationId', 'cwd', 'projectId', 'taskId'], 'runtime.confirmation.session');
+  assertAllowedKeys(input.session, ['args', 'cols', 'command', 'conversationId', 'cwd', 'projectId', 'rows', 'taskId'], 'runtime.confirmation.session');
   if (options.resolveRegisteredRuntimeAdapter(input.session.command)?.id !== 'generic') {
     throw new RuntimeSessionRouteError('ZEUS_INVALID_RUNTIME_CONFIRMATION', 'runtime confirmation is only required for Generic shell sessions', 400);
   }
@@ -742,6 +752,8 @@ async function prepareRuntimeConfirmation(options: Parameters<typeof registerRun
     command: requiredIdentity(input.session.command, 'session.command'),
     args: optionalStringArray(input.session.args, 'session.args'),
     cwd: input.session.cwd ?? projectRoot,
+    ...(input.session.cols === undefined ? {} : { cols: terminalDimension(input.session.cols, 'session.cols') }),
+    ...(input.session.rows === undefined ? {} : { rows: terminalDimension(input.session.rows, 'session.rows') }),
   };
   await assertRuntimeSecurity(options, session, projectRoot, 'confirmation');
   return { reason: input.reason.trim(), session };
@@ -868,14 +880,22 @@ function parseEmptySessionCommand(
 }
 
 function validateRuntimeStartShape(input: CreateRuntimeSessionInput, commandType: string): void {
-  assertAllowedKeys(input, ['args', 'command', 'confirmationId', 'conversationId', 'cwd', 'projectId', 'taskId'], commandType);
+  assertAllowedKeys(input, ['args', 'cols', 'command', 'confirmationId', 'conversationId', 'cwd', 'projectId', 'rows', 'taskId'], commandType);
   requiredIdentity(input.projectId, 'projectId');
   requiredIdentity(input.command, 'command');
   if (input.taskId !== undefined) requiredIdentity(input.taskId, 'taskId');
   if (input.conversationId !== undefined) requiredIdentity(input.conversationId, 'conversationId');
   if (input.confirmationId !== undefined) requiredIdentity(input.confirmationId, 'confirmationId');
   if (input.cwd !== undefined) requiredIdentity(input.cwd, 'cwd');
+  if (input.cols !== undefined) terminalDimension(input.cols, 'cols');
+  if (input.rows !== undefined) terminalDimension(input.rows, 'rows');
   optionalStringArray(input.args, 'args');
+}
+
+/** PTY 尺寸只接受 node-pty 支持的正整数范围。 */
+function terminalDimension(value: unknown, field: string): number {
+  if (!Number.isInteger(value) || Number(value) < 1 || Number(value) > 10_000) throw new RuntimeSessionRouteError('ZEUS_INVALID_RUNTIME_TERMINAL_SIZE', `${field} must be an integer between 1 and 10000`, 400);
+  return Number(value);
 }
 
 function requirePendingConfirmation(confirmations: RuntimeConfirmationCapabilityRegistry, confirmationId: string): RuntimeOperationConfirmation {
@@ -930,6 +950,8 @@ function canConsumeGenericRuntimeConfirmation(confirmation: RuntimeOperationConf
     confirmation.session.conversationId === body.conversationId &&
     confirmation.session.command === body.command &&
     confirmation.session.cwd === (body.cwd ?? defaultCwd) &&
+    confirmation.session.cols === body.cols &&
+    confirmation.session.rows === body.rows &&
     confirmation.session.args.length === requestedArgs.length &&
     confirmation.session.args.every((value, index) => value === requestedArgs[index])
   );

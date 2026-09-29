@@ -32,7 +32,6 @@ const labels = {
     attachmentOnly: '仅附件消息',
     edit: '编辑排队消息',
     editLabel: '编辑排队消息内容',
-    editing: '编辑排队消息',
     editPlaceholder: '输入消息内容',
     editAttachmentPlaceholder: '添加说明（可选）',
     editShortcut: '⌘ Enter 保存',
@@ -57,7 +56,6 @@ const labels = {
     attachmentOnly: 'Attachment-only message',
     edit: 'Edit queued message',
     editLabel: 'Edit queued message content',
-    editing: 'Edit queued message',
     editPlaceholder: 'Enter message content',
     editAttachmentPlaceholder: 'Add a note (optional)',
     editShortcut: '⌘ Enter to save',
@@ -214,13 +212,6 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
               <article className="session-queued-message" data-queue-status={submission.status} data-editing={editingId === submission.id || undefined} aria-busy={actionId?.endsWith(submission.id) || undefined}>
                 {editingId === submission.id ? (
                   <form className="session-queued-message-editor" onSubmit={(event) => void saveEdit(event, submission)}>
-                    <header className="session-queued-message-editor-heading">
-                      <span>
-                        <PencilSimple aria-hidden="true" />
-                        {copy.editing}
-                      </span>
-                      {attachments.length > 0 ? <small>{copy.attachments(attachments.length)}</small> : null}
-                    </header>
                     {attachments.length > 0 ? (
                       <ConversationComposerAttachments attachments={attachments} language={props.language} disabled={busy} ariaLabel={copy.attachments(attachments.length)} className="session-queued-message-attachments" />
                     ) : null}
@@ -276,7 +267,7 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                         void runAction(submission.id, 'steer', () => props.onSendNow?.(submission.id));
                       }}
                     >
-                      <ArrowBendUpRight aria-hidden="true" />
+                      <ArrowBendUpRight aria-hidden="true" weight="bold" />
                     </button>
                     <button
                       type="button"

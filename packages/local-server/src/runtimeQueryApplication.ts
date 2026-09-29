@@ -1,4 +1,4 @@
-import type { AiCliAdapterDescriptor, AiCliAdapterStatus, AiRuntimeLogEntry, AiRuntimeSession, AiRuntimeTerminalSnapshot } from '@zeus/ai-runtime';
+import type { AiCliAdapterDescriptor, AiCliAdapterStatus, AiRuntimeLogEntry, AiRuntimeSession, AiRuntimeTerminalReplayOperation, AiRuntimeTerminalSnapshot } from '@zeus/ai-runtime';
 import { isAbsolute, resolve } from 'node:path';
 import type { RuntimeLogStream, RuntimeSessionRepository, TerminalEventRepository, ZeusRuntimeLogRecord, ZeusRuntimeSessionRecord, ZeusTerminalEventRecord } from '@zeus/storage';
 
@@ -87,8 +87,8 @@ export interface LiveRuntimeReadPort {
 
 interface RuntimeQueryPorts {
   runtimeSessions: Pick<RuntimeSessionRepository, 'list' | 'getById' | 'searchLogs' | 'listRecentLogs'>;
-  terminalEvents: Pick<TerminalEventRepository, 'listBySessionPage' | 'listRecentBySession'>;
-  readTerminalTail(sessionId: string, maxBytes: number): { text: string; truncated: boolean };
+  terminalEvents: Pick<TerminalEventRepository, 'listBySessionEventType' | 'listBySessionPage' | 'listRecentBySession'>;
+  readTerminalTail(sessionId: string, maxBytes: number): { text: string; truncated: boolean; startByte: number; totalBytes: number };
   liveRuntime: LiveRuntimeReadPort;
   adapters: RuntimeAdapterReadEffectPort;
   readSettings(): RuntimeSettingsSnapshot;
@@ -186,6 +186,8 @@ export class RuntimeQueryApplication {
     const rawTail = this.ports.readTerminalTail(session.id, byteBudget);
     if (rawTail.text) {
       const capturedAt = this.ports.now().toISOString();
+      /** resize 事件仅提供回放时序，原始输出正文仍来自共享追加文件。 */
+      const replay = buildTerminalReplay(rawTail, this.ports.terminalEvents.listBySessionEventType(session.id, 'resize'));
       return {
         sessionId: session.id,
         status: session.status,
@@ -202,6 +204,7 @@ export class RuntimeQueryApplication {
           // 空正文事件仅用于让 SSE 水合阶段按真实日志 ID 去重。
           ...page.items.map((event) => toTerminalReplayLog(event, false)),
         ],
+        ...(replay ? { replay } : {}),
         logsTruncated: rawTail.truncated,
         capturedAt,
       };
@@ -215,12 +218,15 @@ export class RuntimeQueryApplication {
       kept.unshift(item);
       keptBytes += bytes;
     }
+    /** 原始文件尚未落盘时仍按事件类型回放，控制面 JSON 不能显示成终端正文。 */
+    const replay = buildTerminalEventReplay(kept);
     return {
       sessionId: session.id,
       status: session.status,
       command: [session.command, ...session.args].join(' '),
       cwd: session.cwd,
-      logs: kept.map((event) => toTerminalReplayLog(event)),
+      logs: kept.map((event) => toTerminalReplayLog(event, false)),
+      ...(replay.length > 0 ? { replay } : {}),
       logsTruncated: page.total > kept.length,
       capturedAt: this.ports.now().toISOString(),
     };
@@ -294,6 +300,54 @@ export class RuntimeQueryApplication {
       ],
     };
   }
+}
+
+/** 文件日志尚为空时按 SQLite 事件顺序构造等价回放。 */
+function buildTerminalEventReplay(events: ZeusTerminalEventRecord[]): AiRuntimeTerminalReplayOperation[] {
+  const operations: AiRuntimeTerminalReplayOperation[] = [];
+  for (const event of events) {
+    if (event.eventType === 'resize') {
+      const size = parseTerminalResizeEvent(event);
+      if (size) operations.push({ kind: 'resize', cols: size.cols, rows: size.rows });
+      continue;
+    }
+    if ((event.eventType === 'stdout' || event.eventType === 'stderr') && event.content) operations.push({ kind: 'output', text: event.content });
+  }
+  return operations;
+}
+
+/** 解析持久化的字符网格与原始输出字节位置。 */
+function parseTerminalResizeEvent(event: ZeusTerminalEventRecord): { cols: number; rows: number; byteOffset: number } | null {
+  try {
+    const value = JSON.parse(event.content) as { cols?: unknown; rows?: unknown; byteOffset?: unknown };
+    if (!Number.isInteger(value.cols) || Number(value.cols) <= 0 || !Number.isInteger(value.rows) || Number(value.rows) <= 0 || !Number.isInteger(value.byteOffset) || Number(value.byteOffset) < 0) return null;
+    return { cols: Number(value.cols), rows: Number(value.rows), byteOffset: Number(value.byteOffset) };
+  } catch {
+    return null;
+  }
+}
+
+/** 按 resize 的原始字节边界拆分终端尾部，不改写任何输出字符。 */
+function buildTerminalReplay(rawTail: { text: string; startByte: number; totalBytes: number }, events: ZeusTerminalEventRecord[]): AiRuntimeTerminalReplayOperation[] | undefined {
+  /** 无效或落在文件尾部之外的元数据不能影响回放。 */
+  const points = events.map(parseTerminalResizeEvent).filter((point): point is NonNullable<typeof point> => point !== null && point.byteOffset <= rawTail.totalBytes);
+  if (points.length === 0) return undefined;
+  const buffer = Buffer.from(rawTail.text, 'utf8');
+  const operations: AiRuntimeTerminalReplayOperation[] = [];
+  /** 截断尾部从当时最后一个已知尺寸开始解释。 */
+  const startingSize = points.filter((point) => point.byteOffset <= rawTail.startByte).at(-1);
+  if (startingSize) operations.push({ kind: 'resize', cols: startingSize.cols, rows: startingSize.rows });
+  let cursor = 0;
+  for (const point of points) {
+    if (point.byteOffset <= rawTail.startByte) continue;
+    const relativeOffset = point.byteOffset - rawTail.startByte;
+    if (relativeOffset > buffer.length) break;
+    if (relativeOffset > cursor) operations.push({ kind: 'output', text: buffer.subarray(cursor, relativeOffset).toString('utf8') });
+    operations.push({ kind: 'resize', cols: point.cols, rows: point.rows });
+    cursor = relativeOffset;
+  }
+  if (cursor < buffer.length) operations.push({ kind: 'output', text: buffer.subarray(cursor).toString('utf8') });
+  return operations;
 }
 
 function toTerminalReplayLog(event: ZeusTerminalEventRecord, includeContent = true): AiRuntimeLogEntry {

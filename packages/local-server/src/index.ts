@@ -1468,6 +1468,18 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       await db.save();
     },
     onLog: persistRuntimeLog,
+    /** 尺寸作为回放元数据单独持久化，不修改或复制终端输出正文。 */
+    onTerminalSize: ({ sessionId, cols, rows, byteOffset, createdAt }) => {
+      const session = runtimeSessions.getById(sessionId);
+      terminalEvents.appendNext({
+        sessionId,
+        ...(session?.taskId ? { taskId: session.taskId } : {}),
+        eventType: 'resize',
+        content: JSON.stringify({ cols, rows, byteOffset }),
+        createdAt,
+      });
+      scheduleRuntimePersistenceSave();
+    },
   });
   const ownsCodexAppServerManager = options.codexAppServerManager === undefined;
   const codexNativeEnabled = !readOnlyValidation && options.codexNativeEnabled !== false;
@@ -3440,13 +3452,13 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     return sessionDirectory;
   }
 
-  function readRuntimeTerminalTail(sessionId: string, maxBytes: number): { text: string; truncated: boolean } {
+  function readRuntimeTerminalTail(sessionId: string, maxBytes: number): { text: string; truncated: boolean; startByte: number; totalBytes: number } {
     // 查询前先落下尚在 100ms 合并窗口内的块，避免快照标记已读后遗漏最后一帧。
     flushRuntimeLogFileWrites();
     const path = join(runtimeSessionDataDirectory(sessionId), 'terminal.raw.log');
-    if (!existsSync(path)) return { text: '', truncated: false };
+    if (!existsSync(path)) return { text: '', truncated: false, startByte: 0, totalBytes: 0 };
     const size = statSync(path).size;
-    if (size <= 0) return { text: '', truncated: false };
+    if (size <= 0) return { text: '', truncated: false, startByte: 0, totalBytes: 0 };
     const boundedMaxBytes = Math.min(4 * 1024 * 1024, Math.max(1, Math.trunc(maxBytes)));
     const overlapBytes = Math.min(4 * 1024, Math.max(0, size - boundedMaxBytes));
     const fileOffset = Math.max(0, size - boundedMaxBytes - overlapBytes);
@@ -3472,7 +3484,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       if (escapeIndex >= 0 && escapeIndex - start <= overlapBytes && (newlineIndex < 0 || escapeIndex <= newlineIndex)) start = escapeIndex;
       else if (newlineIndex >= 0 && newlineIndex - start <= overlapBytes) start = newlineIndex + 1;
     }
-    return { text: content.subarray(start).toString('utf8'), truncated: fileOffset + start > 0 };
+    const startByte = fileOffset + start;
+    return { text: content.subarray(start).toString('utf8'), truncated: startByte > 0, startByte, totalBytes: size };
   }
 
   function writeRuntimeSessionMetadata(session: AiRuntimeSession): void {
