@@ -32,8 +32,14 @@
 }
 
 .digital-team-empty h1,
+.digital-team-empty h2,
 .digital-team-empty p {
   margin: 0;
+}
+
+/* 首次创建入口保持单一主操作，不提前展示已配置的流程编辑器。 */
+.digital-team-empty > .zeus-button {
+  justify-self: center;
 }
 
 .digital-team-empty p,
@@ -79,13 +85,27 @@
   gap: 8px;
 }
 
+/* 顶部操作区按内容占宽，宽屏不挤压 Tab、项目选择和刷新按钮。 */
+.digital-team-header-actions {
+  flex-shrink: 0;
+}
+
 .digital-team-header-actions > .zeus-select {
+  flex-shrink: 0;
   inline-size: min(250px, 28vw);
+}
+
+/* 刷新是纯图标操作，固定为紧凑方形，避免继承文本按钮的水平留白。 */
+.digital-team-header-actions > .digital-team-refresh-button {
+  flex: 0 0 var(--zeus-control-height);
+  inline-size: var(--zeus-control-height);
+  padding-inline: 0;
 }
 
 /* 两个视图使用真正的 tab 语义和清晰焦点。 */
 .digital-team-view-switch {
   display: inline-flex;
+  flex-shrink: 0;
   gap: 2px;
   padding: 3px;
   border: 1px solid var(--zeus-product-line);
@@ -101,6 +121,7 @@
   color: var(--zeus-product-muted);
   background: transparent;
   font: inherit;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -133,15 +154,22 @@
   background: var(--zeus-control-danger-bg);
 }
 
-/* 编辑和运行都使用左目录、中画布、右检查器的同一比例。 */
+/* 编辑器把完整宽度留给画布；运行记录继续使用左侧历史列表。 */
 .digital-team-editor-layout,
 .digital-team-run-layout {
   display: grid;
   position: relative;
-  grid-template-columns: 238px minmax(260px, 1fr) 304px;
   min-block-size: 0;
   min-inline-size: 0;
   overflow: hidden;
+}
+
+.digital-team-editor-layout {
+  grid-template-columns: minmax(260px, 1fr) 304px;
+}
+
+.digital-team-run-layout {
+  grid-template-columns: 238px minmax(260px, 1fr) 304px;
 }
 
 .digital-team-library,
@@ -240,6 +268,46 @@
   color: var(--zeus-product-muted);
 }
 
+/* 模板切换是画布上方的轻量工具条，不再独占侧栏。 */
+.digital-team-template-browser {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 14px;
+  border-block-end: 1px solid var(--zeus-product-line);
+  background: var(--zeus-product-panel);
+}
+
+.digital-team-template-browser > .zeus-select {
+  inline-size: min(360px, 45%);
+}
+
+.digital-team-template-actions {
+  margin-block-start: 0;
+  flex-wrap: nowrap;
+}
+
+/* 成员选择器按需覆盖在按钮下方，不挤压画布。 */
+.digital-team-member-picker-anchor {
+  position: relative;
+}
+
+.digital-team-member-picker {
+  position: absolute;
+  inset-block-start: calc(100% + 8px);
+  inset-inline-end: 0;
+  z-index: 8;
+  inline-size: min(360px, 80vw);
+  max-block-size: min(520px, 70vh);
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 12px;
+  background: var(--zeus-product-panel);
+  box-shadow: var(--zeus-product-shadow, 0 12px 32px rgb(0 0 0 / 14%));
+}
+
 .digital-team-palette-card .digital-employee-avatar {
   inline-size: 34px;
   block-size: 34px;
@@ -256,6 +324,15 @@
   min-inline-size: 0;
   overflow: hidden;
   background: var(--zeus-product-canvas);
+}
+
+.digital-team-editor-layout .digital-team-canvas-column {
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+}
+
+/* 代码授权占独立内容行，画布继续使用剩余高度。 */
+.digital-team-editor-layout .digital-team-canvas-column:has(> .digital-team-baseline-confirmation) {
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
 }
 
 .digital-team-template-toolbar,
@@ -304,6 +381,9 @@
   grid-template-columns: auto 1fr;
   align-items: start;
   gap: 9px;
+  padding: 10px 14px;
+  border-block-end: 1px solid var(--zeus-product-line);
+  font-size: 12px;
 }
 
 .digital-team-workspace .digital-team-baseline-confirmation input {
@@ -659,9 +739,12 @@
 }
 
 /* 列数复用组件的抽屉状态，避免样式与面板显隐断点不一致。 */
-.digital-team-workspace:where([data-compact-inspector='true']) > .digital-team-editor-layout,
 .digital-team-workspace:where([data-compact-inspector='true']) > .digital-team-run-layout {
   grid-template-columns: 220px minmax(0, 1fr);
+}
+
+.digital-team-workspace:where([data-compact-inspector='true']) > .digital-team-editor-layout {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 /* 更窄窗口允许纵向重排，所有操作仍可到达。 */
@@ -676,7 +759,8 @@
   }
 
   .digital-team-header,
-  .digital-team-template-toolbar {
+  .digital-team-template-toolbar,
+  .digital-team-template-browser {
     align-items: stretch;
     flex-direction: column;
   }
@@ -697,7 +781,6 @@
     overflow: visible;
   }
 
-  .digital-team-library,
   .digital-team-run-list {
     max-block-size: 260px;
     border-inline-end: 0;
@@ -777,14 +860,12 @@
   font-size: 14px;
 }
 
-/* 角色管理入口使用相同侧栏内边距。 */
-.digital-team-library > button {
-  margin: 10px 16px 0;
-}
-
 /* 未选择节点时把配置栏空间还给画布，减少默认缩放下的拥挤。 */
 @media (min-width: 841px) {
-  .digital-team-workspace:not([data-inspector-open]) > .digital-team-editor-layout,
+  .digital-team-workspace:not([data-inspector-open]) > .digital-team-editor-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .digital-team-workspace:not([data-inspector-open]) > .digital-team-run-layout {
     grid-template-columns: 238px minmax(0, 1fr);
   }

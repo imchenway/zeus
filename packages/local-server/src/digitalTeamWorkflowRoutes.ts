@@ -68,12 +68,12 @@ export interface DigitalTeamCommandContext {
 
 /** 路由只依赖协调器的业务入口，避免 HTTP 层读取或拼接流程状态。 */
 export interface DigitalTeamWorkflowRouteCoordinator {
-  /** 列出项目模板。 */
-  listTemplates(projectId: string): unknown;
+  /** 列出全局模板或兼容读取旧项目模板。 */
+  listTemplates(projectId?: string | null): unknown;
   /** 保存模板。 */
-  saveTemplate(projectId: string, input: DigitalTeamTemplateSaveInput, operationIdentity: string): unknown;
+  saveTemplate(projectId: string | null, input: DigitalTeamTemplateSaveInput, operationIdentity: string): unknown;
   /** 删除模板。 */
-  deleteTemplate(projectId: string, templateId: string, expectedRevision: number): unknown;
+  deleteTemplate(projectId: string | null, templateId: string, expectedRevision: number): unknown;
   /** 列出项目运行。 */
   listRuns(projectId: string, taskId?: string): unknown;
   /** 读取含节点尝试的运行投影。 */
@@ -111,6 +111,7 @@ export function registerDigitalTeamWorkflowRoutes(options: {
   /** 将已提交 SQLite 状态刷入持久文件。 */
   save(): Promise<void>;
 }): void {
+  options.server.get('/api/digital-team-templates', async () => options.coordinator.listTemplates());
   options.server.get('/api/projects/:projectId/digital-team-templates', async (request: FastifyRequest<{ Params: { projectId: string } }>) => options.coordinator.listTemplates(request.params.projectId));
   options.server.get('/api/projects/:projectId/digital-team-runs', async (request: FastifyRequest<{ Params: { projectId: string }; Querystring: { taskId?: string } }>) =>
     options.coordinator.listRuns(request.params.projectId, request.query.taskId),
@@ -119,6 +120,24 @@ export function registerDigitalTeamWorkflowRoutes(options: {
     const projection = options.coordinator.getRunProjection(request.params.runId);
     return projection ?? reply.code(404).send({ error: 'ZEUS_DIGITAL_TEAM_RUN_NOT_FOUND', message: '数字团队运行不存在。' });
   });
+
+  options.server.post('/api/digital-team-templates', async (request: FastifyRequest<{ Body: WorkManagementMutationRequest<DigitalTeamTemplateSaveInput> }>, reply) =>
+    executeCoreRoute<DigitalTeamTemplateSaveInput>(options, reply, request.body, workManagementCommandTypes.digitalTeamTemplateSave, 'settings', 'digital-team-templates', (input, operationIdentity) =>
+      options.coordinator.saveTemplate(null, input, operationIdentity),
+    ),
+  );
+
+  options.server.put('/api/digital-team-templates/:templateId', async (request: FastifyRequest<{ Params: { templateId: string }; Body: WorkManagementMutationRequest<DigitalTeamTemplateSaveInput> }>, reply) =>
+    executeCoreRoute<DigitalTeamTemplateSaveInput>(options, reply, request.body, workManagementCommandTypes.digitalTeamTemplateSave, 'settings', 'digital-team-templates', (input, operationIdentity) =>
+      options.coordinator.saveTemplate(null, { ...input, id: request.params.templateId }, operationIdentity),
+    ),
+  );
+
+  options.server.delete('/api/digital-team-templates/:templateId', async (request: FastifyRequest<{ Params: { templateId: string }; Body: WorkManagementMutationRequest<{ expectedRevision: number }> }>, reply) =>
+    executeCoreRoute<{ expectedRevision: number }>(options, reply, request.body, workManagementCommandTypes.digitalTeamTemplateDelete, 'settings', 'digital-team-templates', (input) =>
+      options.coordinator.deleteTemplate(null, request.params.templateId, input.expectedRevision),
+    ),
+  );
 
   options.server.post('/api/projects/:projectId/digital-team-templates', async (request: FastifyRequest<{ Params: { projectId: string }; Body: WorkManagementMutationRequest<DigitalTeamTemplateSaveInput> }>, reply) =>
     executeCoreRoute<DigitalTeamTemplateSaveInput>(options, reply, request.body, workManagementCommandTypes.digitalTeamTemplateSave, 'project', request.params.projectId, (input, operationIdentity) =>
@@ -213,7 +232,7 @@ async function executeCoreRoute<TInput extends object>(
   reply: FastifyReply,
   value: unknown,
   commandType: (typeof workManagementCommandTypes)[keyof typeof workManagementCommandTypes],
-  scopeKind: 'project' | 'task',
+  scopeKind: 'project' | 'task' | 'settings',
   scopeId: string | (() => string),
   mutate: (input: TInput, operationIdentity: string, prepared: unknown, context: DigitalTeamCommandContext) => unknown,
   successStatusCode = 200,
@@ -262,7 +281,7 @@ function compactMutationResult(value: unknown): Record<string, unknown> {
   if (isRecord(value) && isRecord(value.run) && typeof value.run.id === 'string') {
     return { resourceKind: 'run', runId: value.run.id, taskId: value.run.taskId, projectId: value.run.projectId, revision: value.run.revision };
   }
-  if (isRecord(value) && typeof value.id === 'string' && typeof value.projectId === 'string') {
+  if (isRecord(value) && typeof value.id === 'string' && (typeof value.projectId === 'string' || value.projectId === null)) {
     return { resourceKind: 'template', templateId: value.id, projectId: value.projectId, revision: value.revision };
   }
   throw new DigitalTeamWorkflowRouteError(500, 'ZEUS_DIGITAL_TEAM_MUTATION_RESULT_INVALID', '数字团队命令没有返回可审计资源身份。');

@@ -9,6 +9,7 @@ import {
   type DigitalTeamNode,
   type DigitalTeamStructuredPlan,
   type DigitalTeamStructuredResult,
+  type DigitalTeamWorkflowDefinition,
 } from '@zeus/shared';
 import {
   type ArtifactStore,
@@ -16,7 +17,6 @@ import {
   type ConversationRepository,
   type ConversationSubmissionRepository,
   type ConversationTurnRepository,
-  type DigitalEmployeeRepository,
   type DigitalEmployeeRecord,
   type DigitalTeamBaseRevision,
   type DigitalTeamNodeAttemptRecord,
@@ -61,6 +61,8 @@ interface PreparedDigitalTeamRun {
   templateId: string;
   /** 已确认模板修订。 */
   templateRevision: number;
+  /** 已确认修订且可用于创建运行的团队定义。 */
+  definition: DigitalTeamWorkflowDefinition;
   /** 逐仓冻结基线。 */
   baseRevisions: DigitalTeamBaseRevision[];
   /** 逐仓登记记录，供后续 worktree 绑定。 */
@@ -89,8 +91,6 @@ export interface DigitalTeamWorkflowCoordinatorOptions {
   isTaskTerminal(task: ZeusTaskRecord): boolean;
   /** 项目仓库登记。 */
   projectRepositories: Pick<ProjectRepositoryRegistrationRepository, 'listByProject'>;
-  /** 数字员工仓储。 */
-  employees: Pick<DigitalEmployeeRepository, 'getById'>;
   /** 任务环境仓储。 */
   environments: TaskEnvironmentRepository;
   /** 任务工作区仓储。 */
@@ -135,19 +135,20 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
   /** 保存依赖，由工作管理共用的调度循环驱动恢复。 */
   constructor(private readonly options: DigitalTeamWorkflowCoordinatorOptions) {}
 
-  /** 列出项目模板。 */
-  listTemplates(projectId: string): unknown {
+  /** 列出全局模板；传入项目时继续兼容旧项目模板。 */
+  listTemplates(projectId: string | null = null): unknown {
+    if (!projectId) return this.options.templates.listGlobal();
     this.requireProject(projectId);
     return this.options.templates.listByProject(projectId);
   }
 
   /** 新建或按修订更新模板。 */
-  saveTemplate(projectId: string, input: DigitalTeamTemplateSaveInput, operationIdentity: string): unknown {
-    this.requireProject(projectId);
+  saveTemplate(projectId: string | null, input: DigitalTeamTemplateSaveInput, operationIdentity: string): unknown {
+    if (projectId) this.requireProject(projectId);
     const id = typeof input.id === 'string' && input.id.trim() ? input.id.trim() : stableIdentity('digital_team_template', operationIdentity);
     const existing = this.options.templates.getById(id);
     if (existing) {
-      if (existing.projectId !== projectId || !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision! < 1) throw routeError('ZEUS_DIGITAL_TEAM_TEMPLATE_CONFLICT', '模板不属于当前项目或缺少有效修订。');
+      if (existing.projectId !== projectId || !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision! < 1) throw routeError('ZEUS_DIGITAL_TEAM_TEMPLATE_CONFLICT', '模板作用域不匹配或缺少有效修订。');
       return this.options.templates.update(id, {
         expectedRevision: input.expectedRevision!,
         ...(typeof input.name === 'string' ? { name: input.name } : {}),
@@ -160,7 +161,7 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
   }
 
   /** 删除项目模板，历史运行继续读取自己的快照。 */
-  deleteTemplate(projectId: string, templateId: string, expectedRevision: number): unknown {
+  deleteTemplate(projectId: string | null, templateId: string, expectedRevision: number): unknown {
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) throw routeError('ZEUS_DIGITAL_TEAM_REVISION_INVALID', '模板修订无效。', 400);
     const template = this.options.templates.getById(templateId);
     if (!template || template.projectId !== projectId) throw routeError('ZEUS_DIGITAL_TEAM_TEMPLATE_NOT_FOUND', '数字团队流程模板不存在。', 404);
@@ -193,8 +194,8 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
   resolveMutationResult(result: unknown): unknown {
     if (!isRecord(result)) throw routeError('ZEUS_DIGITAL_TEAM_MUTATION_RESULT_INVALID', '数字团队命令回执缺少资源身份。', 500);
     if (result.resourceKind === 'run' && typeof result.runId === 'string') return this.getRunProjection(result.runId);
-    if (result.resourceKind === 'template' && typeof result.projectId === 'string' && typeof result.templateId === 'string') {
-      return this.options.templates.listByProject(result.projectId).find((template) => template.id === result.templateId) ?? result;
+    if (result.resourceKind === 'template' && typeof result.templateId === 'string') {
+      return this.options.templates.getById(result.templateId) ?? result;
     }
     throw routeError('ZEUS_DIGITAL_TEAM_MUTATION_RESULT_INVALID', '数字团队命令回执资源身份无效。', 500);
   }
@@ -203,8 +204,8 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
   publishMutation(result: unknown): void {
     if (!isRecord(result)) return;
     if (result.resourceKind === 'run' && typeof result.runId === 'string') this.publishRunChanged(result.runId);
-    else if (result.resourceKind === 'template' && typeof result.templateId === 'string' && typeof result.projectId === 'string') {
-      this.options.publish('digital_team.template.changed', { templateId: result.templateId, projectId: result.projectId, revision: result.revision });
+    else if (result.resourceKind === 'template' && typeof result.templateId === 'string') {
+      this.options.publish('digital_team.template.changed', { templateId: result.templateId, projectId: result.projectId ?? null, revision: result.revision });
     }
   }
 
@@ -218,23 +219,25 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
     const project = this.requireProject(projectId);
     if (!Number.isSafeInteger(input.templateRevision) || input.templateRevision < 1) throw routeError('ZEUS_DIGITAL_TEAM_REVISION_INVALID', '模板修订无效。', 400);
     const template = this.options.templates.getById(requiredText(input.templateId, '请选择流程模板。', 512));
-    if (!template || template.projectId !== project.id || template.revision !== input.templateRevision || !template.ready) {
+    if (!template || (template.projectId !== null && template.projectId !== project.id) || template.revision !== input.templateRevision || !template.ready) {
       throw routeError('ZEUS_DIGITAL_TEAM_TEMPLATE_CONFLICT', '流程模板不存在、尚未通过校验或已被修改。');
     }
+    /** 节点员工由模板唯一确定；存储边界会在创建运行时解析项目中的可执行实例。 */
+    const definition = template.definition;
     if (!requiredText(input.title, '任务名称不能为空。', 240) || typeof input.description !== 'string' || !isRecord(input.taskFacts)) {
       throw routeError('ZEUS_DIGITAL_TEAM_RUN_INVALID', '任务名称、说明和任务事实无效。', 400);
     }
     const existingTask = this.requireExistingTask(projectId, input);
     /** 写入需要本次用户授权和已有任务授权同时允许，员工默认不代替授权。 */
     if (
-      template.definition.nodes.some((node) => node.type === 'employee' && node.data.executionMode === 'isolated_write') &&
+      definition.nodes.some((node) => node.type === 'employee' && node.data.executionMode === 'isolated_write') &&
       (input.taskFacts.allowCodeChanges !== true || input.taskFacts.allowGitCommit !== true || (existingTask && (!existingTask.allowCodeChanges || !existingTask.allowGitCommit)))
     )
       throw routeError('ZEUS_DIGITAL_TEAM_CODE_AUTHORITY_REQUIRED', '本次代码工作需要明确允许修改代码和本地提交；已有任务也必须允许这些动作。');
     /** 只有实际使用代码现场的步骤才冻结 Git 基线，普通协作不依赖仓库。 */
-    const needsRepository = template.definition.nodes.some((node) => node.type === 'employee' && node.data.executionMode === 'isolated_write');
+    const needsRepository = definition.nodes.some((node) => node.type === 'employee' && node.data.executionMode === 'isolated_write');
     const repositories = needsRepository ? this.options.projectRepositories.listByProject(project.id) : [];
-    if (!needsRepository) return { templateId: template.id, templateRevision: template.revision, baseRevisions: [], repositories };
+    if (!needsRepository) return { templateId: template.id, templateRevision: template.revision, definition, baseRevisions: [], repositories };
     if (repositories.length === 0) throw routeError('ZEUS_DIGITAL_TEAM_REPOSITORY_REQUIRED', '项目尚未登记可冻结的 Git 仓库。');
     if (repositories.length !== 1) throw routeError('ZEUS_DIGITAL_TEAM_MULTI_REPOSITORY_UNSUPPORTED', '代码集成目前需要选择单一仓库；普通协作不受仓库数量限制。');
     const baseRevisions = await Promise.all(
@@ -247,14 +250,14 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
         return { repositoryId: repository.id, sourceRef: context.detached || !context.branch ? 'HEAD' : context.branch, baseSha: context.headSha };
       }),
     );
-    return { templateId: template.id, templateRevision: template.revision, baseRevisions, repositories };
+    return { templateId: template.id, templateRevision: template.revision, definition, baseRevisions, repositories };
   }
 
   /** 在统一 Core 事务中创建任务并冻结运行；当前员工根节点由依赖调度直接启动。 */
   createRun(projectId: string, input: DigitalTeamRunCreateInput, context: DigitalTeamCommandContext, preparedValue: unknown): unknown {
     const prepared = preparedValue as PreparedDigitalTeamRun;
     const template = this.options.templates.getById(prepared.templateId);
-    if (!template || template.projectId !== projectId || template.revision !== prepared.templateRevision || template.revision !== input.templateRevision) {
+    if (!template || (template.projectId !== null && template.projectId !== projectId) || template.revision !== prepared.templateRevision || template.revision !== input.templateRevision) {
       throw routeError('ZEUS_DIGITAL_TEAM_TEMPLATE_CONFLICT', '流程模板在预检后发生变化。');
     }
     const runId = stableIdentity('digital_team_run', context.operationIdentity);
@@ -285,7 +288,7 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
       taskId,
       templateId: template.id,
       templateRevision: template.revision,
-      definition: structuredClone(template.definition),
+      definition: structuredClone(prepared.definition),
       taskFacts,
       baseRevisions: prepared.baseRevisions,
     });

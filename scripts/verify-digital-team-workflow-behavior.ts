@@ -11,7 +11,16 @@ import {
   type DigitalTeamStructuredResult,
   type DigitalTeamWorkflowDefinition,
 } from '../packages/shared/src/digitalTeamWorkflow.js';
-import { createZeusDatabase, DigitalEmployeeRepository, DigitalTeamNodeAttemptRepository, DigitalTeamWorkflowRunRepository, DigitalTeamWorkflowTemplateRepository, ProjectRepository, TaskRepository } from '../packages/storage/src/index.js';
+import {
+  createZeusDatabase,
+  DigitalEmployeeRepository,
+  DigitalEmployeeTemplateRepository,
+  DigitalTeamNodeAttemptRepository,
+  DigitalTeamWorkflowRunRepository,
+  DigitalTeamWorkflowTemplateRepository,
+  ProjectRepository,
+  TaskRepository,
+} from '../packages/storage/src/index.js';
 
 /** 探针使用的真实证据摘要。 */
 const evidenceSha = 'e'.repeat(64);
@@ -30,6 +39,8 @@ try {
     const tasks = new TaskRepository(database);
     /** 数字员工持久化入口。 */
     const employees = new DigitalEmployeeRepository(database);
+    /** 全局数字员工模板持久化入口。 */
+    const employeeTemplates = new DigitalEmployeeTemplateRepository(database);
     /** 团队模板持久化入口。 */
     const templates = new DigitalTeamWorkflowTemplateRepository(database);
     /** 团队运行持久化入口。 */
@@ -38,19 +49,16 @@ try {
     const attempts = new DigitalTeamNodeAttemptRepository(database);
     /** 探针项目。 */
     const project = projects.create({ id: 'project_digital_team_probe', name: '数字团队探针', localPath: join(probeRoot, 'repository') });
-    /** 可重复用于多份分工的同一数字员工。 */
-    const employee = employees.create({
-      id: 'employee_digital_team_probe',
-      projectId: project.id,
+    /** 流程节点直接选择的全局数字员工模板。 */
+    const employeeTemplate = employeeTemplates.create({
+      id: 'digital_employee_template_probe',
       name: '综合员工',
       role: '分析与交付',
       prompt: '完成明确分工。',
-      enabled: true,
       permissionMode: 'read-only',
-      allowCodeChanges: false,
-      allowTests: false,
-      deliveryGrants: { allowCommit: false },
     });
+    /** 项目中的唯一启用实例由运行边界自动解析，不再由用户二次选择。 */
+    const employee = employees.createFromTemplate({ projectId: project.id, template: employeeTemplate, overrides: { id: 'employee_digital_team_probe' } });
     /** 单员工定义证明团队不需要开始、结束或其他系统节点。 */
     const singleDefinition = definition([employeeNode('single', employee.id, '独立完成任务')], []);
     assert(validateDigitalTeamWorkflowDefinition(singleDefinition).length === 0, '单员工团队必须可执行。');
@@ -85,6 +93,24 @@ try {
     /** 可运行模板冻结纯员工定义。 */
     const template = templates.create({ projectId: project.id, name: '并行团队', description: '', definition: parallelDefinition });
     assert(template.ready && template.definition.nodes.length === 3, '纯员工模板必须可运行。');
+    /** 全局模板成员直接引用节点中配置的员工模板身份。 */
+    const globalDefinition = definition([employeeNode('global_member', employeeTemplate.id, '全局成员')], []);
+    /** 全局模板不写入项目身份。 */
+    const globalTemplate = templates.create({ projectId: null, name: '全局团队', description: '', definition: globalDefinition });
+    assert(globalTemplate.projectId === null && templates.listGlobal().some((candidate) => candidate.id === globalTemplate.id), '全局团队模板必须独立于项目读取。');
+    /** 全局团队运行仍属于明确项目和任务。 */
+    const globalTask = tasks.create({ projectId: project.id, title: '验证全局团队绑定', taskType: 'requirement', description: '', createdFrom: 'digital-team-probe', sourceContext: {} });
+    /** 创建运行只提交节点定义，存储边界自动冻结本项目唯一的可执行实例。 */
+    const globalRun = runs.create({
+      projectId: project.id,
+      taskId: globalTask.id,
+      templateId: globalTemplate.id,
+      templateRevision: globalTemplate.revision,
+      definition: globalTemplate.definition,
+      taskFacts: { title: globalTask.title },
+      baseRevisions: [],
+    });
+    assert(globalRun.definitionSnapshot.nodes[0]?.type === 'employee' && globalRun.definitionSnapshot.nodes[0].data.employeeId === employee.id, '全局团队运行必须按节点配置自动冻结项目执行员工。');
     /** 并行调度任务。 */
     const parallelTask = tasks.create({ projectId: project.id, title: '验证并行根节点', taskType: 'requirement', description: '两个根员工直接开始。', createdFrom: 'digital-team-probe', sourceContext: {} });
     /** 并行运行从执行态开始，不创建隐藏开始节点。 */
@@ -132,7 +158,9 @@ try {
     await coordinator.processRuns();
     assert(runs.getById(singleRun.id)?.status === 'completed', '全部真实员工成功后团队必须完成。');
     await coordinator.close();
-    process.stdout.write(`${JSON.stringify({ ok: true, checks: ['single-employee', 'parallel-roots', 'dependency-gate', 'same-employee-reuse', 'legacy-collapse', 'empty-draft', 'all-employees-complete'] })}\n`);
+    process.stdout.write(
+      `${JSON.stringify({ ok: true, checks: ['single-employee', 'parallel-roots', 'dependency-gate', 'same-employee-reuse', 'legacy-collapse', 'empty-draft', 'global-template', 'run-node-employee-resolution', 'all-employees-complete'] })}\n`,
+    );
   } finally {
     await database.close();
   }
