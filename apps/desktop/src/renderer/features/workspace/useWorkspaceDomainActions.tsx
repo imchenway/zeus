@@ -2139,7 +2139,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     }
   }
 
-  /** 入口先检查接入；只有用户再次确认才会创建会话或执行任务。 */
+  /** 点击后立即打开弹窗并异步读取完整资料；只有用户再次确认才会创建会话或执行任务。 */
   async function openTaskModelPush(taskId: string, stage?: TaskStageRecord): Promise<void> {
     /** 当前任务及客户端属于同一次入口操作。 */
     const task = snapshot.tasks.find((candidate) => candidate.id === taskId);
@@ -2182,18 +2182,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setTaskModelPushError(null);
     taskModelPushEnvelopeRef.current.delete(task.id);
     try {
-      if (!client?.loadCodexConversationCapabilities) throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '本地服务暂不可用，请重新检查。' : 'The local service is unavailable. Check again.');
-      /** 账号与供应商独立于 Git 查询；查询异常不能作为未配置处理。 */
-      const [runtime, connections] = await Promise.all([client.loadCodexConversationCapabilities(task.projectId), client.loadModelConnections()]);
-      if (!isTaskModelPushRequestCurrent(request, entry.origin)) return;
-      setTaskModelPushRuntimeCapabilities(runtime);
-      /** 只选择下一工作面，不改写当前任务的模型选择。 */
-      const destination = resolveTaskModelPushEntry(runtime, connections.length > 0);
-      if (destination === 'confirmation') await loadTaskModelPushConfirmation(task, request, entry.origin);
-      else {
-        setTaskModelPushEntry(destination);
-        setTaskModelPushStatus('ready');
-      }
+      if (!client) throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '本地服务暂不可用，请重新加载。' : 'The local service is unavailable. Reload and try again.');
+      await loadTaskModelPushCapabilities(task, request, entry.origin);
     } catch (error) {
       if (!isTaskModelPushRequestCurrent(request, entry.origin)) return;
       entry.pending = false;
@@ -2208,21 +2198,29 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     return request === taskModelPushCapabilityRequestRef.current && isTaskModelPushOriginCurrent(origin, taskModelPushNavigationRef.current);
   }
 
-  /** 首次检查失败后按原任务阶段重查，不丢失阶段模型或权限。 */
+  /** 首次加载失败后按原任务阶段重试，不丢失阶段模型或权限。 */
   function retryTaskModelPushEntry(): void {
     /** 重试信息只在当前任务入口期间有效。 */
     const entry = taskModelPushEntryRef.current;
     if (entry && isTaskModelPushOriginCurrent(entry.origin, taskModelPushNavigationRef.current)) void openTaskModelPush(entry.taskId, entry.stage);
   }
 
-  /** 确认资料共用一条加载路径，接入返回时保留原表单与附件。 */
-  async function loadTaskModelPushConfirmation(task: TaskRecord, request: number, origin: TaskModelPushNavigationTarget, reference?: string | null): Promise<void> {
-    /** 目录与任务配置读取不会准备工作区或创建会话。 */
+  /** 完整资料共用一条加载路径，接入返回时保留原表单与附件。 */
+  async function loadTaskModelPushCapabilities(task: TaskRecord, request: number, origin: TaskModelPushNavigationTarget, reference?: string | null): Promise<void> {
+    /** 任务能力与项目偏好互不依赖，并行读取且不会准备工作区或创建会话。 */
     const client = props.nativeConversationClient;
     if (!client) throw new Error('ZEUS_MODEL_UNAVAILABLE');
     const [rawCapabilities, loadedProjectConfig] = await Promise.all([client.loadCodexTaskPushCapabilities(task.projectId, task.id), props.onLoadProjectConfig?.(task.projectId) ?? Promise.resolve(undefined)]);
     if (!isTaskModelPushRequestCurrent(request, origin)) return;
     const capabilities = normalizeTaskModelPushCapabilities(rawCapabilities);
+    setTaskModelPushRuntimeCapabilities(capabilities);
+    /** 首次加载只根据同一份完整快照选择下一工作面，不再发起独立模型预检。 */
+    const destination = resolveTaskModelPushEntry(capabilities, capabilities.hasConfiguredProvider);
+    if (reference === undefined && destination !== 'confirmation') {
+      setTaskModelPushEntry(destination);
+      setTaskModelPushStatus('ready');
+      return;
+    }
     /** Codex 登录优先保留当前 Codex 模型；供应商选择使用用户明确选中的引用。 */
     const previousModel = resolveModelCapability(capabilities.models, taskModelPushForm.model);
     const selected =
@@ -2280,22 +2278,19 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setTaskModelPushEntry('confirmation');
   }
 
-  /** 重查只刷新能力；接入完成才预选明确指定的模型，两者都不发送。 */
+  /** 重新加载完整能力；接入完成才预选明确指定的模型，两者都不发送。 */
   async function refreshTaskModelPushModels(reference?: string | null): Promise<void> {
     /** 请求身份覆盖关闭、切换项目和打开另一任务。 */
     const task = snapshot.tasks.find((candidate) => candidate.id === taskModelPushTaskId);
     const client = props.nativeConversationClient;
-    if (!task || !client?.loadCodexConversationCapabilities) throw new Error('ZEUS_MODEL_UNAVAILABLE');
+    if (!task || !client) throw new Error('ZEUS_MODEL_UNAVAILABLE');
     const request = ++taskModelPushCapabilityRequestRef.current;
     const origin = taskModelPushNavigationRef.current;
     setTaskModelPushStatus('loading');
     setTaskModelPushError(null);
     try {
-      /** 重新读取账号，不把前一次登录缓存当作本次结果。 */
-      const runtime = await client.loadCodexConversationCapabilities(task.projectId);
-      if (!isTaskModelPushRequestCurrent(request, origin)) return;
-      setTaskModelPushRuntimeCapabilities(runtime);
-      await loadTaskModelPushConfirmation(task, request, origin, reference);
+      /** 完整任务能力包含最新账号与模型目录，不再重复请求会话能力。 */
+      await loadTaskModelPushCapabilities(task, request, origin, reference);
     } catch (error) {
       if (!isTaskModelPushRequestCurrent(request, origin)) return;
       setTaskModelPushStatus('error');

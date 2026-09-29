@@ -58,6 +58,8 @@ interface ConversationCapabilityQueryPorts {
   submissions: Pick<ConversationSubmissionRepository, 'listByConversation' | 'hasInFlightByConversation'>;
   provider: ExistingProviderCapabilityReadPort;
   modelCatalog: {
+    /** 只读连接元数据，不重复读取钥匙串。 */
+    hasConfiguredProvider(): boolean;
     listSelectableModels(): Promise<SelectableConnectionModel[]>;
   };
   git: TaskPushGitReadPort;
@@ -154,7 +156,8 @@ export class ConversationCapabilityQueryApplication {
     return models.length > 0 ? snapshot : { ...snapshot, available: false, availabilityReason: '当前没有已就绪的 Provider 模型；GET 不会为了读取能力而启动 Provider。' };
   }
 
-  async readTaskPush(projectId: string, rawTaskId: string | undefined): Promise<Record<string, unknown>> {
+  /** 读取一次推送确认所需的模型、上下文和工作区快照；是否附带账号由调用入口决定。 */
+  async readTaskPush(projectId: string, rawTaskId: string | undefined, options: { readProviderAccount?: boolean } = {}): Promise<Record<string, unknown>> {
     const project = this.requireProject(projectId);
     const taskId = rawTaskId?.trim();
     if (!taskId) throw queryError('ZEUS_TASK_ID_REQUIRED', 'taskId is required', 400);
@@ -168,10 +171,9 @@ export class ConversationCapabilityQueryApplication {
     const registeredRepositories = this.ports.repositories.listByProject(project.id).filter((repository) => isPathInsideRoot(repository.localPath, project.localPath));
     // 状态与仓库清单在同一同步读取段冻结，避免扫描完成后拼出前后不一致的能力。
     const repositoryDiscovery = readProjectRepositoryDiscovery(this.ports.settings, project);
-    // Git、任务上下文和 Worktree 选择不能等待 Provider 账户通道。账户状态由独立的
-    // 会话能力请求在后台读取；真正提交时仍由服务端权威校验登录状态。
+    // GUI 查询把账号与 Git 并行读取；服务端内部调用继续跳过账号通道，避免增加命令路径延迟。
     const [capabilities, repositoryCapabilities] = await Promise.all([
-      this.readExisting(project, { readProviderAccount: false }),
+      this.readExisting(project, { readProviderAccount: options.readProviderAccount === true }),
       mapWithConcurrency(registeredRepositories, (repository) => this.readRepositoryCapability(project, task, repository, taskBranchPrefix)),
     ]);
     const primaryRepository = repositoryCapabilities[0];
@@ -204,6 +206,7 @@ export class ConversationCapabilityQueryApplication {
     });
     return {
       ...capabilities,
+      hasConfiguredProvider: this.ports.modelCatalog.hasConfiguredProvider(),
       taskId: task.id,
       canonicalPrompt: createTaskRuntimePrompt(task),
       taskContextRevision: taskContext.revision,
@@ -239,8 +242,14 @@ export class ConversationCapabilityQueryApplication {
     return { generationId: 'codex-unavailable', requiresOpenaiAuth: false, signedIn: false, accountType: null, planType: null };
   }
 
-  async buildConversationCapabilities(project: ZeusProjectRecord, codexCapabilities: CodexCapabilitiesSnapshot | null, codexAccount: CodexAccountSnapshot | UnavailableCodexAccount): Promise<ConversationCapabilitiesSnapshot> {
-    const connectionCatalog = await this.ports.modelCatalog.listSelectableModels();
+  /** 组装统一模型能力；调用方已开始目录读取时直接复用，避免串行等待账号。 */
+  async buildConversationCapabilities(
+    project: ZeusProjectRecord,
+    codexCapabilities: CodexCapabilitiesSnapshot | null,
+    codexAccount: CodexAccountSnapshot | UnavailableCodexAccount,
+    preloadedConnectionCatalog?: SelectableConnectionModel[],
+  ): Promise<ConversationCapabilitiesSnapshot> {
+    const connectionCatalog = preloadedConnectionCatalog ?? (await this.ports.modelCatalog.listSelectableModels());
     // 项目不再维护模型白名单；供应商中启用的模型全局可用，真实能力以运行探针结果为准。
     const models = mapConversationCapabilityModels(codexCapabilities, connectionCatalog).map((model) => ({ ...model, contextCapacity: this.ports.readContextCapacitySupport?.(model) }));
     if (models.length === 0) throw queryError('ZEUS_MODEL_UNAVAILABLE', '当前项目没有可用的 Codex 或 Pi 模型。');
@@ -262,9 +271,13 @@ export class ConversationCapabilityQueryApplication {
   private async readExisting(project: ZeusProjectRecord, options: { readProviderAccount?: boolean } = {}): Promise<ConversationCapabilitiesSnapshot> {
     const transport = this.ports.provider.getState();
     const codexCapabilities = this.ports.codexNativeEnabled() && transport.type === 'ready' ? transport.capabilities : null;
-    const codexAccount = codexCapabilities && options.readProviderAccount !== false ? await this.ports.provider.readAccount() : this.unavailableCodexAccount();
+    /** 账号通道和自定义模型钥匙串互不依赖，同时读取可避免新的后端瀑布。 */
+    const [codexAccount, connectionCatalog] = await Promise.all([
+      codexCapabilities && options.readProviderAccount !== false ? this.ports.provider.readAccount() : Promise.resolve(this.unavailableCodexAccount()),
+      this.ports.modelCatalog.listSelectableModels(),
+    ]);
     try {
-      return await this.buildConversationCapabilities(project, codexCapabilities, codexAccount);
+      return await this.buildConversationCapabilities(project, codexCapabilities, codexAccount, connectionCatalog);
     } catch (error) {
       if (!isRecord(error) || error.code !== 'ZEUS_MODEL_UNAVAILABLE') throw error;
       return {
