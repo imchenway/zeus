@@ -114,7 +114,10 @@ export function conversationQuestionNavigationExcerpt(payload: unknown, response
           const values = containsSecret ? value : value && typeof value === 'object' && 'answers' in value ? value.answers : null;
           if (!Array.isArray(values) || !values.every((answer) => typeof answer === 'string')) return [];
           /** 空白旧值不算可公开答案，避免导航回退成“没有文字答复”。 */
-          const text = values.map((answer) => answer.trim()).filter(Boolean).join('、');
+          const text = values
+            .map((answer) => answer.trim())
+            .filter(Boolean)
+            .join('、');
           return text ? [text] : [];
         });
   return {
