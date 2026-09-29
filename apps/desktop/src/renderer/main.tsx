@@ -405,7 +405,13 @@ async function renderProjectGitDiffWithClient(client: DashboardClient, parameter
   const projectId = parameters.get('projectId')?.trim();
   const repositoryId = parameters.get('repositoryId')?.trim();
   const filePath = parameters.get('filePath') ?? '';
-  if (!projectId || !repositoryId) throw new Error('仓库差异窗口缺少项目或仓库身份。');
+  /** 任务来源必须同时指定工作区和比较范围。 */
+  const taskId = parameters.get('taskId');
+  /** 任务工作区与项目仓库使用不同的身份。 */
+  const workspaceId = parameters.get('workspaceId');
+  /** 任务差异明确区分未提交文件和已提交成果。 */
+  const scope = parameters.get('scope');
+  if (taskId ? !workspaceId || !filePath || (scope !== 'working' && scope !== 'committed') : !projectId || !repositoryId) throw new Error('差异窗口缺少有效的读取身份。');
   const stage = parameters.get('stage') === 'staged' || parameters.get('stage') === 'unstaged' ? (parameters.get('stage') as 'staged' | 'unstaged') : 'combined';
   const root = document.getElementById('root');
   if (!root) throw new Error('Zeus renderer root element is missing');
@@ -417,13 +423,26 @@ async function renderProjectGitDiffWithClient(client: DashboardClient, parameter
       <RendererErrorBoundary appLanguage={appShellSettings.appLanguage} onFatalError={(error) => reportSurfaceFatalError(error, errorLanguage, 'ProjectGitDiffWindow')}>
         <ProjectGitDiffWindow
           client={client}
-          projectId={projectId}
-          repositoryId={repositoryId}
-          filePath={filePath}
-          stage={stage}
-          commitHash={parameters.get('commitHash') ?? undefined}
-          comparisonRef={parameters.get('comparisonRef') ?? undefined}
-          comparisonMode={parameters.get('comparisonMode') === 'working-tree' ? 'working-tree' : 'current'}
+          source={
+            taskId && workspaceId && (scope === 'working' || scope === 'committed')
+              ? {
+                  kind: 'task-git',
+                  taskId,
+                  workspaceId,
+                  path: filePath,
+                  scope,
+                }
+              : {
+                  kind: 'project-git',
+                  projectId: projectId!,
+                  repositoryId: repositoryId!,
+                  path: filePath,
+                  stage,
+                  commitHash: parameters.get('commitHash') ?? undefined,
+                  comparisonRef: parameters.get('comparisonRef') ?? undefined,
+                  comparisonMode: parameters.get('comparisonMode') === 'working-tree' ? 'working-tree' : 'current',
+                }
+          }
           language={appShellSettings.appLanguage}
           appearance={appShellSettings.appearance}
         />
