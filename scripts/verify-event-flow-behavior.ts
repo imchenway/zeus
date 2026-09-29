@@ -1,3 +1,5 @@
+import { createInitialSessionState, sessionReducer } from '../apps/desktop/src/renderer/session/sessionReducer.js';
+import { composerQueuedSubmissions, visibleQueuedSubmissions } from '../apps/desktop/src/renderer/session/conversationQueuePresentation.js';
 import { mkdtemp, rm, mkdir, readFile, writeFile, unlink, symlink } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { registerHooks } from 'node:module';
@@ -6,7 +8,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { CodexAppServerEvent, CodexAppServerManager } from '../packages/ai-runtime/src/index.js';
 import type { TranscriptTurnWorkRow } from '../apps/desktop/src/renderer/session/ConversationTranscript.js';
-import type { NativeConversationSnapshot, NativeSessionItemBuffer } from '../apps/desktop/src/renderer/session/sessionTypes.js';
+import type { NativeConversationSnapshot, NativeSessionItemBuffer, NativeQueueSnapshot, NativeSessionState } from '../apps/desktop/src/renderer/session/sessionTypes.js';
 import { reconcileConversationHistoryCache } from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.js';
 import type { TurnChangeSet } from '../packages/shared/src/conversationResources.js';
 import { describeUserFacingError } from '../packages/shared/src/userFacingError.js';
@@ -269,7 +271,7 @@ registerHooks({
     return nextLoad(url, context);
   },
 });
-const { coalesceSupersededInterruptedQueuedUserMessages, projectTranscriptRows, projectTranscriptTurnRows } = await import('../apps/desktop/src/renderer/session/ConversationTranscript.js');
+const { projectQueuedSubmissionItems, projectTranscriptRows, projectTranscriptTurnRows } = await import('../apps/desktop/src/renderer/session/ConversationTranscript.js');
 
 async function verifyCompatibilityItemIdentity(): Promise<Record<string, unknown>> {
   const firstScopedId = scopedSnapshotProviderItemId('turn-1', 'item-1');
@@ -506,64 +508,69 @@ function verifyStageSummaryProcessGrouping(): Record<string, unknown> {
   };
 }
 
-function verifyInterruptedQueueTakeoverProjection(): Record<string, unknown> {
-  const userItem = (input: { id: string; clientId: string; optimistic: boolean; status: string; timelineAt: string; updatedAt: string; pausedReason?: string; providerItemId?: string }): NativeSessionItemBuffer => ({
-    key: input.id,
-    conversationId: 'queue-takeover-conversation',
-    threadId: 'queue-takeover-thread',
-    turnId: input.providerItemId ? 'provider-turn' : `pending:${input.id}`,
-    itemId: input.id,
-    localItemId: input.id,
-    type: 'userMessage',
-    status: input.status,
-    phase: 'user',
-    text: '第二条引导消息',
-    payload: {
-      role: 'user',
-      content: '第二条引导消息',
+/** 回放同一身份在本地、队列、明确接纳之间的交接，正文不保存待发副本。 */
+function verifyQueueMessageOwnership(): Record<string, unknown> {
+  /** 原始创建时间早于重新排序的更新时间。 */
+  const createdAt = '2026-09-28T10:04:10.104Z';
+  /** 两条相同正文使用独立身份，附件只跟随第一条。 */
+  const submissions = ['first', 'repeat'].map((id, position) => ({
+    id,
+    clientUserMessageId: id,
+    conversationId: 'queue-owner',
+    content: '继续',
+    status: 'queued',
+    delivery: 'queue' as const,
+    position,
+    providerTurnId: null,
+    pausedReason: null,
+    createdAt,
+    updatedAt: '2026-09-28T10:43:42.246Z',
+    ...(position === 0 ? { attachments: [{ id: 'attachment', kind: 'file', name: '证据.txt', path: '/probe/证据.txt' }] } : {}),
+  }));
+  /** 直接经过生产 reducer，而非重写另一套队列归属逻辑。 */
+  let state: NativeSessionState = { ...createInitialSessionState(), conversationId: 'queue-owner', providerThreadId: 'thread', conversationState: 'active_prework' };
+  /** 本地发出、服务端尚未确认。 */
+  for (const submission of submissions)
+    state = sessionReducer(state, {
+      type: 'send_started',
+      clientUserMessageId: submission.id,
+      durableClientUserMessageId: submission.id,
+      draft: submission.content,
+      attachments: [],
+      submittedAttachments: [],
+      browserSubmission: null,
+      contextDraft: state.contextDraft,
+      browserComments: [],
       delivery: 'queue',
-      ...(input.pausedReason ? { pausedReason: input.pausedReason } : {}),
-    },
-    resources: [],
-    optimistic: input.optimistic,
-    clientUserMessageId: input.clientId,
-    durableClientUserMessageId: input.clientId,
-    ...(input.providerItemId ? { providerItemId: input.providerItemId } : {}),
-    timelineAt: input.timelineAt,
-    updatedAt: input.updatedAt,
-  });
-  const interrupted = userItem({
-    id: 'legacy-interrupted',
-    clientId: 'legacy-client',
-    optimistic: true,
-    status: 'paused',
-    pausedReason: 'interrupted',
-    timelineAt: '2026-08-25T09:48:45.131Z',
-    updatedAt: '2026-08-25T10:28:09.901Z',
-  });
-  const accepted = userItem({
-    id: 'provider-accepted',
-    clientId: 'provider-client',
-    optimistic: false,
-    status: 'completed',
-    providerItemId: 'provider-item',
-    timelineAt: '2026-08-25T10:28:09.615Z',
-    updatedAt: '2026-08-25T10:28:09.615Z',
-  });
-  const projected = coalesceSupersededInterruptedQueuedUserMessages([interrupted, accepted]);
-  assertBehavior(projected.length === 1 && projected[0]?.key === accepted.key, '旧 interrupted 气泡必须与 5 秒内同正文 Provider 接管项合并。');
-
-  const deliberateRepeat = userItem({
-    id: 'deliberate-repeat',
-    clientId: 'deliberate-client',
-    optimistic: false,
-    status: 'completed',
-    providerItemId: 'provider-item-2',
-    timelineAt: '2026-08-25T10:29:00.000Z',
-    updatedAt: '2026-08-25T10:29:00.000Z',
-  });
-  assertBehavior(coalesceSupersededInterruptedQueuedUserMessages([accepted, deliberateRepeat]).length === 2, '两条成功且正文相同的用户消息必须保留，不能用正文启发式吞掉真实重复发送。');
-  return { legacyProjectionCount: projected.length, preservedDeliberateRepeats: 2 };
+      previousConversationState: 'active_prework',
+      startedAt: createdAt,
+    });
+  assertBehavior(state.itemOrder.length === 2, '相同文本的两次本地发送必须保留两个身份。');
+  /** 队列接管后只展示权威提交，正文必须没有待发副本。 */
+  const queued: NativeQueueSnapshot = { throughEventSeq: 10, state: { type: 'active', turnId: 'turn', phase: 'prework' }, submissions: submissions as NativeQueueSnapshot['submissions'] };
+  state = sessionReducer(state, { type: 'queue_hydrated', queue: queued });
+  assertBehavior(state.itemOrder.length === 0 && composerQueuedSubmissions(state).length === 2, '队列接管必须移除本地正文副本，且不按内容去重。');
+  assertBehavior(composerQueuedSubmissions(state)[0]?.attachments?.length === 1, '附件必须随稳定提交身份保留。');
+  /** 失败与结果未知同样直接从权威队列生成。 */
+  const paused = { ...queued, throughEventSeq: 11, submissions: queued.submissions.map((submission) => ({ ...submission, status: 'paused', pausedReason: 'outcome_unknown' })) };
+  state = sessionReducer(state, { type: 'queue_hydrated', queue: paused });
+  assertBehavior(
+    projectQueuedSubmissionItems(state, visibleQueuedSubmissions(state.queue), []).every((item) => item.messageCreatedAt === createdAt),
+    '状态更新时间不能改变原始发送时间。',
+  );
+  /** 跨窗口删除后的队列先到，旧 HTTP 回执和旧队列读取后到。 */
+  const deleted: NativeQueueSnapshot = { ...queued, throughEventSeq: 12, submissions: [] };
+  state = sessionReducer(state, { type: 'queue_hydrated', queue: deleted });
+  state = sessionReducer(state, { type: 'queue_hydrated', queue: queued });
+  state = sessionReducer(state, { type: 'send_accepted', clientUserMessageId: 'first', status: 'queued', submissionId: 'first' });
+  assertBehavior(
+    state.queue?.throughEventSeq === 12 && state.itemOrder.length === 0 && composerQueuedSubmissions(state).length === 0 && projectQueuedSubmissionItems(state, visibleQueuedSubmissions(state.queue), []).length === 0,
+    '删除后迟到的队列与发送回执不得复活消息。',
+  );
+  /** 插话必须有明确接纳证据；较新队列不能吞掉迟到的接纳事件。 */
+  state = sessionReducer(state, { type: 'steering_submission_hydrated', submission: { ...queued.submissions[0]!, delivery: 'steer_now', status: 'steering', providerTurnId: 'turn' }, queue: { ...deleted, throughEventSeq: 11 } });
+  assertBehavior(state.itemOrder.length === 1 && state.items[state.itemOrder[0]!]!.messageCreatedAt === createdAt && state.queue?.throughEventSeq === 12, '明确接纳的插话正文与队列水位必须分别收敛。');
+  return { deletedVisibleMessages: 0, sameTextIdentities: 2, attachmentPreserved: true, lateReceiptRejected: true, originalCreatedAt: createdAt, steeringAccepted: true };
 }
 
 function verifyRealtimeChangeSetProjection(): Record<string, unknown> {
@@ -817,6 +824,12 @@ async function verifyConversationSyncFlow(): Promise<Record<string, unknown>> {
     assertBehavior(snapshot.droppedEphemeralEvents === 0, '当前 ephemeral 注册表为空，不应伪造临时事件丢弃计数。');
     const quickCheck = database.get<{ quick_check: string }>('PRAGMA quick_check')?.quick_check;
     assertBehavior(quickCheck === 'ok', `临时数据库 quick_check 失败：${quickCheck ?? 'missing'}`);
+    /** 队列快照与其耐久事件使用同一个序号，不借用发布前的水位。 */
+    const queueEvent = database.durableTransactionSync(() =>
+      protocol.append({ conversationId: 'queue-watermark', type: 'conversation.queue.changed', payload: { entityRevision: 1, queue: { throughEventSeq: 0, state: { type: 'idle' }, submissions: [] } } }),
+    );
+    assertBehavior((queueEvent.payload.queue as { throughEventSeq: number }).throughEventSeq === queueEvent.payload.sequence, '队列事件水位必须与持久同步序号相同。');
+    assertBehavior((protocol.listPage({ conversationId: 'queue-watermark' }).events[0]!.payload.queue as { throughEventSeq: number }).throughEventSeq === queueEvent.payload.sequence, '重连回放必须保持原队列水位。');
     return {
       cursorPages,
       baseline: { baseSequence: baseline.baseSequence, control: baselineSocket.messages.at(-1)?.type ?? null },
@@ -998,7 +1011,7 @@ const sync = await verifyConversationSyncFlow();
 const compatibilityItems = await verifyCompatibilityItemIdentity();
 const automaticQueueDispatch = verifyAutomaticQueueDispatchSelection();
 const stageSummaryGrouping = verifyStageSummaryProcessGrouping();
-const interruptedQueueTakeover = verifyInterruptedQueueTakeoverProjection();
+const queueMessageOwnership = verifyQueueMessageOwnership();
 const realtimeChangeSetProjection = verifyRealtimeChangeSetProjection();
 /** Provider 断流使用同一生产投影和用户可见错误目录验证。 */
 const providerStreamFailure = verifyProviderStreamFailurePresentation();
@@ -1016,7 +1029,7 @@ console.log(
       compatibilityItems,
       automaticQueueDispatch,
       stageSummaryGrouping,
-      interruptedQueueTakeover,
+      queueMessageOwnership,
       realtimeChangeSetProjection,
       providerStreamFailure,
       workspaceTurnChanges,

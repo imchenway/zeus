@@ -148,6 +148,8 @@ export interface NativeTurnFailureSnapshot {
 }
 
 export interface NativeItemSnapshot {
+  /** 用户原始创建时间，状态更新和模型确认不得改写。 */
+  messageCreatedAt?: string;
   id: string;
   turnId: string;
   providerItemId: string | null;
@@ -347,6 +349,8 @@ export type NativeQueueWaitReason =
   | 'dispatch_pending';
 
 export interface NativeQueueSnapshot {
+  /** 权威队列读取时的会话同步水位，不推进正文事件游标。 */
+  throughEventSeq: number;
   state: NativeConversationRunState;
   waitReason?: NativeQueueWaitReason;
   submissions: NativeQueuedSubmission[];
@@ -633,6 +637,8 @@ export interface NativeConversationSnapshotV2Turn {
 }
 
 export interface NativeConversationActiveItemV2 {
+  /** 用户原始创建时间，不跟随活动状态更新。 */
+  messageCreatedAt?: string;
   id: string;
   order: number;
   turnId: string;
@@ -720,6 +726,8 @@ export interface NativeConversationReadableSnapshot {
 }
 
 export interface NativeConversationModelHistoryV2Item {
+  /** 用户原始创建时间，状态更新和模型确认不得改写。 */
+  messageCreatedAt?: string;
   id: string;
   sequence: number;
   turnId: string;
@@ -1597,6 +1605,8 @@ export interface SendNativeMessageRequest {
 }
 
 export interface NativeOperationAcceptance {
+  /** 命令回执同时携带当前权威队列及会话同步水位。 */
+  queue?: NativeQueueSnapshot;
   operation: Record<string, unknown> & { status: string };
   conversation: Record<string, unknown> & { id: string };
   submission?: Record<string, unknown> & { id: string };
@@ -1825,6 +1835,8 @@ export function isNativeConversationEvent(event: NativeRealtimeEventEnvelope): e
 }
 
 export interface NativeSessionItemBuffer {
+  /** 用户原始创建时间，状态更新和模型确认不得改写。 */
+  messageCreatedAt?: string;
   key: string;
   conversationId: string;
   threadId: string;

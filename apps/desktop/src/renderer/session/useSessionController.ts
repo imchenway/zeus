@@ -704,7 +704,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
   /** 连接换代时立即唤醒完整内容读取的重试等待。 */
   const completeContentRetryWaiters = new Set<() => void>();
   // steer 请求确认前保留队列中的可见占位；只有 steering 事件或明确回队事件到达后才交给正常投影。
-  const pendingSteeringSubmissions = new Map<string, NativeQueuedSubmission>();
   let renderDeltaTimer: ReturnType<typeof setTimeout> | null = null;
   let activeOperation: { key: string; promise: Promise<unknown> } | null = null;
   let browserCommentMarkFlush: Promise<void> | null = null;
@@ -954,7 +953,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
 
   /** 统一收敛队列和已确认替换的本地消息投影。 */
   async function applyAuthoritativeQueue(queue: NativeQueueSnapshot, replacedSubmissionId?: string): Promise<void> {
-    const projectedQueue = queueWithPendingSteering(queue);
+    const projectedQueue = queue;
     // 替换成功才移除原提交的本地气泡；编辑、改路由与重试共用已有移除逻辑。
     if (replacedSubmissionId) dispatch({ type: 'queued_submission_deleted', submissionId: replacedSubmissionId, queue: projectedQueue });
     dispatch({ type: 'queue_hydrated', queue: projectedQueue });
@@ -970,11 +969,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     for (const sequence of pendingSyncGapEvents.keys()) {
       if (sequence <= snapshot.throughEventSeq) deletePendingSyncGapEvent(sequence);
     }
-    const settledSnapshot = settlePendingSteeringFromSnapshot(snapshot);
-    const projectedSnapshot = {
-      ...withoutResolvedRequests(settledSnapshot),
-      queue: queueWithPendingSteering(settledSnapshot.queue),
-    };
+    const projectedSnapshot = withoutResolvedRequests(snapshot);
     dispatch({ type: 'snapshot_hydrated', snapshot: projectedSnapshot });
     if (placementRecovery) await placementRecovery;
     void hydrateSessionMetrics(projectedSnapshot.id);
@@ -1017,46 +1012,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
     } finally {
       executionContextHydrationPending = false;
     }
-  }
-
-  function queueWithPendingSteering(queue: NativeQueueSnapshot): NativeQueueSnapshot {
-    if (pendingSteeringSubmissions.size === 0) return queue;
-    const submissions = [...queue.submissions];
-    let changed = false;
-    for (const [submissionId, pending] of pendingSteeringSubmissions) {
-      const index = submissions.findIndex((submission) => submission.id === submissionId);
-      if (index >= 0) {
-        const authoritative = submissions[index]!;
-        // queued/paused 是 send-now 明确回队或恢复的结果；不要再用本地“引导中”覆盖它。
-        if (authoritative.status !== 'dispatching' || authoritative.providerTurnId) {
-          pendingSteeringSubmissions.delete(submissionId);
-          continue;
-        }
-        if (submissions[index] !== pending) {
-          submissions[index] = pending;
-          changed = true;
-        }
-        continue;
-      }
-      submissions.push(pending);
-      changed = true;
-    }
-    return changed ? { ...queue, submissions } : queue;
-  }
-
-  function settlePendingSteeringFromSnapshot(snapshot: NativeConversationSnapshot): NativeConversationSnapshot {
-    if (pendingSteeringSubmissions.size === 0) return snapshot;
-    for (const [submissionId] of pendingSteeringSubmissions) {
-      const submission = snapshot.submissions.find((candidate) => candidate.id === submissionId);
-      // dispatching 且尚无 provider turn 仍是确认空窗；其他状态已经足以决定下一步投影。
-      if (submission && (submission.status !== 'dispatching' || submission.providerTurnId)) pendingSteeringSubmissions.delete(submissionId);
-    }
-    return snapshot;
-  }
-
-  function queueWithSubmission(queue: NativeQueueSnapshot, submission: NativeQueuedSubmission): NativeQueueSnapshot {
-    const submissions = queue.submissions.some((entry) => entry.id === submission.id) ? queue.submissions.map((entry) => (entry.id === submission.id ? submission : entry)) : [...queue.submissions, submission];
-    return { ...queue, submissions };
   }
 
   function flushRenderDeltas(): void {
@@ -1265,13 +1220,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return;
     }
     const suppressRequestAuthority = event.type === 'conversation.request.created' && requestId !== null && resolvedRequestIds.has(requestId);
-    if (event.type === 'conversation.submission.steering') {
-      const submissionId = typeof event.payload.submissionId === 'string' ? event.payload.submissionId : null;
-      if (submissionId) pendingSteeringSubmissions.delete(submissionId);
-    }
-    const eventQueue = event.type === 'conversation.queue.changed' ? nativeQueueSnapshotFrom(event.payload.queue) : null;
-    const projectedEvent: NativeConversationEvent = event.type === 'conversation.queue.changed' && eventQueue ? { ...event, payload: { ...event.payload, queue: queueWithPendingSteering(eventQueue) } } : event;
-    dispatch({ type: 'event_received', event: projectedEvent, ...(suppressRequestAuthority ? { suppressRequestAuthority: true } : {}) });
+    dispatch({ type: 'event_received', event, ...(suppressRequestAuthority ? { suppressRequestAuthority: true } : {}) });
     if (event.type === 'conversation.turn.completed' || ((event.type === 'conversation.item.started' || event.type === 'conversation.item.completed') && event.payload.itemType === 'commandExecution')) void hydrateExecutionContext();
     if (event.type === 'conversation.turn.change_set.changed') hydrateFullTerminalChangeSet(event);
     if (event.type === 'conversation.request.created' && !suppressRequestAuthority && requestId) {
@@ -1390,11 +1339,14 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   function dispatchSendAccepted(clientUserMessageId: string, acceptance: NativeOperationAcceptance): void {
+    // 回执携带读取时的水位；过期队列交给 reducer 拒绝，禁止回放初始排队副本。
+    if (acceptance.queue) dispatch({ type: 'queue_hydrated', queue: acceptance.queue });
     const providerTurnIdValue = acceptance.submission?.providerTurnId ?? acceptance.operation.providerTurnId;
     dispatch({
       type: 'send_accepted',
       clientUserMessageId,
       status: acceptedStatus(acceptance),
+      ...(typeof acceptance.submission?.createdAt === 'string' ? { messageCreatedAt: acceptance.submission.createdAt } : {}),
       ...(acceptance.submission?.id ? { submissionId: acceptance.submission.id } : {}),
       ...(typeof providerTurnIdValue === 'string' && providerTurnIdValue ? { providerTurnId: providerTurnIdValue } : {}),
     });
@@ -1501,27 +1453,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
     return browserSubmission.commentIds.some((commentId) => reserved.has(commentId));
   }
 
-  function projectAcceptedEnvelope(envelope: PendingSendEnvelope): void {
-    if (!envelope.acceptance) return;
-    dispatch({
-      type: 'send_started',
-      clientUserMessageId: envelope.clientUserMessageId,
-      durableClientUserMessageId: envelope.clientUserMessageId,
-      draft: envelope.displayText,
-      attachments: envelope.composerAttachments,
-      submittedAttachments: envelope.attachments,
-      browserSubmission: envelope.browserSubmission,
-      contextDraft: envelope.contextDraft,
-      browserComments: envelope.browserSubmission?.comments ?? [],
-      delivery: envelope.delivery,
-      ...(envelope.questionAnswer ? { questionAnswer: envelope.questionAnswer, preserveComposer: true } : {}),
-      previousConversationState: state.conversationState,
-      startedAt: envelope.startedAt ?? new Date().toISOString(),
-      preserveComposer: true,
-    });
-    dispatchSendAccepted(envelope.clientUserMessageId, envelope.acceptance);
-  }
-
   async function reconcilePersistedAcceptance(snapshot: NativeConversationSnapshot): Promise<void> {
     if (!pendingSend) return;
     let envelope = pendingSend;
@@ -1546,7 +1477,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return;
     }
     if (envelope.deliveryState !== 'accepted' || !envelope.acceptance) return;
-    if (!hasNativeOptimisticItem(state, envelope.clientUserMessageId)) projectAcceptedEnvelope(envelope);
     // 回执属于后台核对；读取暂时失败不能拖住历史恢复或把整个会话判为连接失败。
     schedulePendingSendReconcile(envelope);
   }
@@ -2034,6 +1964,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
 
   function emptyQueueWhileHydrating(): NativeQueueSnapshot {
     return {
+      throughEventSeq: 0,
       // Transport 仍保持 hydrating，因此所有写操作都 fail-closed；这里不能伪造恢复失败横幅。
       state: { type: 'idle' },
       submissions: [],
@@ -3029,7 +2960,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
       }
       targetedHydrationBuffer = null;
       syncGapRecoveryPromise = null;
-      pendingSteeringSubmissions.clear();
       for (const finish of [...completeContentRetryWaiters]) finish();
       completeContentLoads.clear();
       cancelPendingRequestRefreshRetry();
@@ -3378,98 +3308,14 @@ export function createSessionController(options: CreateSessionControllerOptions)
       );
     },
     sendQueuedNow(submissionId) {
-      const operation = `queue:send-now:${submissionId}`;
-      if (activeOperation && activeOperation.key === operation) return activeOperation.promise as Promise<NativeOperationAcceptance>;
-      if (activeOperation) return Promise.reject(new Error(`Session operation already in progress: ${activeOperation.key}`));
-
-      const queuedSubmission = state.queue?.submissions.find((submission) => submission.id === submissionId);
-      const pendingSubmission = queuedSubmission
-        ? {
-            ...queuedSubmission,
-            status: 'steering',
-            delivery: 'queue' as const,
-            providerTurnId: null,
-            updatedAt: new Date().toISOString(),
-          }
-        : null;
-      if (pendingSubmission) {
-        pendingSteeringSubmissions.set(submissionId, pendingSubmission);
-        dispatch({
-          type: 'queue_hydrated',
-          queue: state.queue
-            ? queueWithSubmission(state.queue, pendingSubmission)
-            : {
-                state: { type: 'active', turnId: state.activeTurnId ?? '', phase: 'prework' },
-                waitReason: 'current_turn',
-                submissions: [pendingSubmission],
-              },
-        });
-      }
-
-      const promise = runOperation(
-        operation,
+      return runOperation(
+        `queue:send-now:${submissionId}`,
         () => options.client.sendNativeQueuedNow(options.projectId, options.conversationId, submissionId),
-        (acceptance) => {
-          if (!acceptance.submission) return;
-          const accepted = acceptance.submission as unknown as Partial<NativeQueuedSubmission>;
-          // acceptance 只代表 Provider 接受 steer RPC；消息真正进入当前轮次仍以 steering 事件为准。
-          // 若服务端明确回队，则立即恢复正常队列投影，不能把它误画成当前轮次消息。
-          if (pendingSubmission && (accepted.status === 'queued' || accepted.status === 'paused' || accepted.status === 'failed')) {
-            pendingSteeringSubmissions.delete(submissionId);
-            const requeued = {
-              ...pendingSubmission,
-              ...accepted,
-              status: accepted.status,
-              delivery: 'queue' as const,
-              providerTurnId: accepted.providerTurnId ?? null,
-            } as NativeQueuedSubmission;
-            if (state.queue) dispatch({ type: 'queue_hydrated', queue: queueWithSubmission(state.queue, requeued) });
-          }
+        async (acceptance) => {
+          // 引导回执只交接当前权威队列，正文由明确的 Provider 接纳事件生成。
+          if (acceptance.queue) await applyAuthoritativeQueue(acceptance.queue);
         },
       );
-      return promise.catch(async (error) => {
-        /** 服务端明确拒绝且不要求恢复时，撤销本地占位并读取真实队列。网络未知仍保留原保护。 */
-        const failure = toSessionError(error, true);
-        /** HTTP 拒绝是可核对的服务端响应，不能仅凭缺少 recoveryRequired 判断网络失败。 */
-        const status = error && typeof error === 'object' && 'status' in error ? error.status : null;
-        if (typeof status === 'number' && status >= 400 && status < 500 && !failure.recoveryRequired) {
-          pendingSteeringSubmissions.delete(submissionId);
-          if (!disposed && queuedSubmission && state.queue) dispatch({ type: 'queue_hydrated', queue: queueWithSubmission(state.queue, queuedSubmission) });
-          try {
-            const queue = await options.client.loadNativeConversationQueueV2(options.projectId, options.conversationId);
-            if (!disposed) await applyAuthoritativeQueue(queue);
-          } catch {
-            // 状态刷新失败仍报告原拒绝；保留消息，后续正常同步继续收敛，不重发。
-          }
-          throw error;
-        }
-        const stillPending = pendingSteeringSubmissions.get(submissionId);
-        if (!disposed && stillPending) {
-          pendingSteeringSubmissions.delete(submissionId);
-          const sessionError = toSessionError(error, true);
-          const unconfirmed = {
-            ...stillPending,
-            status: 'paused',
-            delivery: 'queue' as const,
-            providerTurnId: null,
-            pausedReason: 'recovery_required',
-            error: {
-              code: sessionError.code ?? 'ZEUS_NATIVE_STEER_OUTCOME_UNKNOWN',
-              message: sessionError.message,
-              recoveryRequired: true,
-            },
-            updatedAt: new Date().toISOString(),
-          } as NativeQueuedSubmission;
-          if (state.queue) dispatch({ type: 'queue_hydrated', queue: queueWithSubmission(state.queue, unconfirmed) });
-          dispatch({
-            type: 'steering_submission_failed',
-            submissionId,
-            ...(stillPending.clientUserMessageId ? { clientUserMessageId: stillPending.clientUserMessageId } : {}),
-            error: sessionError,
-          });
-        }
-        throw error;
-      });
     },
     resumeQueue() {
       return runOperation(
@@ -3788,15 +3634,6 @@ function isNativeOperationAcceptance(value: unknown): value is NativeOperationAc
   return typeof acceptance.operation === 'object' && acceptance.operation !== null && typeof acceptance.conversation === 'object' && acceptance.conversation !== null && typeof acceptance.conversation.id === 'string';
 }
 
-function nativeOptimisticKey(state: NativeSessionState, clientUserMessageId: string): string {
-  return [state.conversationId ?? 'pending-conversation', state.providerThreadId ?? 'pending-thread', `pending:${clientUserMessageId}`, clientUserMessageId].map((part) => encodeURIComponent(part)).join('/');
-}
-
-function hasNativeOptimisticItem(state: NativeSessionState, clientUserMessageId: string): boolean {
-  const directItem = state.items[nativeOptimisticKey(state, clientUserMessageId)];
-  return Boolean(directItem?.optimistic || Object.values(state.items).some((item) => item.optimistic && (item.clientUserMessageId === clientUserMessageId || item.durableClientUserMessageId === clientUserMessageId)));
-}
-
 function isNativeAttachment(value: unknown): value is NativeConversationAttachment {
   if (typeof value !== 'object' || value === null) return false;
   const attachment = value as { name?: unknown; mime?: unknown; size?: unknown; localPath?: unknown; uploadRef?: unknown };
@@ -3896,13 +3733,6 @@ function snapshotItemClientUserMessageId(item: { type: string; payload: Record<s
 
 function isManualConfirmationSubmission(submission: NativeSubmissionReceipt): boolean {
   return (submission.status === 'queued' || submission.status === 'paused') && submission.pausedReason === 'user_confirmation' && !submission.providerTurnId;
-}
-
-function nativeQueueSnapshotFrom(value: unknown): NativeQueueSnapshot | null {
-  if (!value || typeof value !== 'object') return null;
-  const queue = value as Partial<NativeQueueSnapshot>;
-  if (!Array.isArray(queue.submissions) || !queue.state || typeof queue.state !== 'object') return null;
-  return queue as NativeQueueSnapshot;
 }
 
 function toSessionError(error: unknown, retryable: boolean): NativeSessionError {

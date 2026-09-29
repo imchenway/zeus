@@ -193,6 +193,7 @@ function activeTurnItems(items: readonly NativeConversationActiveItemV2[], provi
       startedAt: item.startedAt,
       completedAt: item.completedAt,
       updatedAt: item.updatedAt,
+      messageCreatedAt: item.messageCreatedAt,
       transcript: item.transcript,
     };
   });
@@ -600,6 +601,7 @@ function historyItems(items: NativeConversationModelHistoryV2Item[], providerTur
         startedAt: item.confirmedAt,
         completedAt: item.confirmedAt,
         updatedAt: item.confirmedAt,
+        messageCreatedAt: item.messageCreatedAt,
         transcript: item.transcript,
       },
     ];

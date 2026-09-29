@@ -394,7 +394,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const projectedItems = useMemo(() => {
     if (contentProjection) return contentProjection.items;
     // 已确认消息沿用历史时间；仍在排队的补充留在记录末尾，避免切换后藏到旧回复上方。
-    const durableItems = coalesceSupersededInterruptedQueuedUserMessages([...persistedItems, ...queuedSubmissionItems]);
+    const durableItems = [...persistedItems, ...queuedSubmissionItems];
     return orderTranscriptItemsWithQueue(props.projectPersistedPlans ? projectPersistedTurnPlans(props.state, durableItems) : durableItems, props.state.queue);
   }, [
     persistedItems,
@@ -2985,48 +2985,6 @@ function coalesceTranscriptUserMessages(items: readonly NativeSessionItemBuffer[
   return projected;
 }
 
-/**
- * 旧版队列恢复会把原 submission 标记为 interrupted，随后用新的客户端身份创建
- * Provider 接管项。两条记录都必须保留审计事实，但转录里不能把同一次发送画成两个
- * 用户气泡。这里只接受“无结构化载荷、正文完全相同、旧项更新时间与 Provider 项
- * 相差不超过 5 秒”的强证据；普通重复发送、失败后隔一段时间重发和附件消息均保留。
- */
-export function coalesceSupersededInterruptedQueuedUserMessages(items: readonly NativeSessionItemBuffer[]): NativeSessionItemBuffer[] {
-  const durableByFingerprint = new Map<string, NativeSessionItemBuffer[]>();
-  for (const item of items) {
-    const fingerprint = simpleUserMessageFingerprint(item);
-    if (!fingerprint || item.optimistic || !item.providerItemId) continue;
-    const candidates = durableByFingerprint.get(fingerprint) ?? [];
-    candidates.push(item);
-    durableByFingerprint.set(fingerprint, candidates);
-  }
-  return items.filter((item) => {
-    if (!item.optimistic || item.status !== 'paused' || item.payload.pausedReason !== 'interrupted' || item.payload.delivery !== 'queue') return true;
-    const fingerprint = simpleUserMessageFingerprint(item);
-    const interruptedAt = timestampMillis(item.updatedAt);
-    if (!fingerprint || interruptedAt === null) return true;
-    return !(durableByFingerprint.get(fingerprint) ?? []).some((candidate) => {
-      const acceptedAt = timestampMillis(transcriptTimelineAt(candidate));
-      return acceptedAt !== null && Math.abs(acceptedAt - interruptedAt) <= 5_000;
-    });
-  });
-}
-
-function simpleUserMessageFingerprint(item: NativeSessionItemBuffer): string | null {
-  if (itemRole(item) !== 'user' || item.resources.length > 0) return null;
-  if (Array.isArray(item.payload.attachments) && item.payload.attachments.length > 0) return null;
-  if (Array.isArray(item.payload.browserComments) && item.payload.browserComments.length > 0) return null;
-  if (recordValue(item.payload.conversationContext) || recordValue(item.payload.taskPushLayout)) return null;
-  const text = transcriptItemText(item).trim();
-  return text || null;
-}
-
-function timestampMillis(value: string | undefined): number | null {
-  if (!value) return null;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
 function isComposerQueuedUserItem(item: NativeSessionItemBuffer, submissionIds: ReadonlySet<string>, clientUserMessageIds: ReadonlySet<string>): boolean {
   if (!item.optimistic || itemRole(item) !== 'user') return false;
   /** 提交身份覆盖冷开后由持久队列重建的本地消息。 */
@@ -3047,7 +3005,8 @@ function queuedSubmissionForItem(item: NativeSessionItemBuffer, queue: NativeQue
  * Provider 轮次建立前就暂停的提交同样是已落库历史。它们不能只存在于队列状态里，
  * 否则冷开会话会过滤掉乐观消息，并把用户已经发送的内容渲染成整页空白。
  */
-function projectQueuedSubmissionItems(state: NativeSessionState, submissions: ReturnType<typeof visibleQueuedSubmissions>, persistedItems: readonly NativeSessionItemBuffer[]): NativeSessionItemBuffer[] {
+/** 从当前权威队列即时派生展示，删除后不保留任何正文副本。 */
+export function projectQueuedSubmissionItems(state: NativeSessionState, submissions: ReturnType<typeof visibleQueuedSubmissions>, persistedItems: readonly NativeSessionItemBuffer[]): NativeSessionItemBuffer[] {
   const visibleSubmissionIds = new Set(persistedItems.flatMap((item) => [item.localItemId, item.itemId, transcriptPayloadString(item, 'submissionId')]).filter((value): value is string => Boolean(value)));
   const visibleClientMessageIds = new Set(
     persistedItems
@@ -3061,7 +3020,7 @@ function projectQueuedSubmissionItems(state: NativeSessionState, submissions: Re
     const text = submission.composerDraft?.trim() || submission.content.trim();
     const hasVisibleResources = Boolean(submission.attachments?.length || submission.browserComments?.length || submission.conversationContext);
     if (!text && !hasVisibleResources) return [];
-    const timestamp = submission.createdAt ?? submission.updatedAt ?? '';
+    const timestamp = submission.createdAt ?? '';
     const deliveryError = submission.error
       ? {
           code: submission.error.code,
@@ -3097,6 +3056,7 @@ function projectQueuedSubmissionItems(state: NativeSessionState, submissions: Re
         resources: [],
         optimistic: true,
         ...(submission.clientUserMessageId ? { clientUserMessageId: submission.clientUserMessageId, durableClientUserMessageId: submission.clientUserMessageId } : {}),
+        messageCreatedAt: submission.createdAt,
         ...(timestamp ? { timelineAt: timestamp, updatedAt: submission.updatedAt ?? timestamp } : {}),
       },
     ];
