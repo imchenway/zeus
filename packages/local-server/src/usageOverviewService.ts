@@ -12,10 +12,11 @@ import {
   type UsageModelPricePeriod,
   type UsageModelRate,
   type UsageOverviewSnapshot,
+  type UsageOverviewRangeSummary,
   type UsageProviderAnalytics,
   type UsageProviderSummary,
 } from '@zeus/shared';
-import { type CodexUsageLedgerRecord, CodexUsageLedgerRepository, ConversationRepository, ProjectRepository } from '@zeus/storage';
+import { type CodexUsageLedgerRecord, CodexUsageLedgerRepository, type ConversationOutputRateMeasurement, type ConversationExecutionRepository, ConversationRepository, ProjectRepository } from '@zeus/storage';
 import type { CodexUsageService } from './codexUsageService.js';
 import type { ModelConnectionService } from './modelConnectionService.js';
 
@@ -25,7 +26,16 @@ interface CreateUsageOverviewServiceOptions {
   modelConnections: ModelConnectionService;
   projects: ProjectRepository;
   conversations: ConversationRepository;
+  execution: ConversationExecutionRepository;
   now?: () => Date;
+}
+
+/** 同一原生轮次内所有可测速文本请求的加权计算依据。 */
+interface OutputRateTotals {
+  /** 可见输出 Token 总量。 */
+  visibleOutputTokens: number;
+  /** 文本生成时长总和。 */
+  durationMs: number;
 }
 
 export interface UsageOverviewService {
@@ -40,28 +50,28 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
   /** 仅缓存最近一次概览；实际账本、日期、连接名称或官方快照变化即重算。 */
   let overviewCache: { key: string; snapshot: UsageOverviewSnapshot } | undefined;
 
-  /** 被动读取不刷新官方账户；仅汇总最近七天记录与数据库返回的历史边界。 */
+  /** 被动读取不刷新官方账户；汇总快捷时间范围与数据库返回的历史边界。 */
   async function read(): Promise<UsageOverviewSnapshot> {
     const official = options.codexUsage.readCachedOfficialUsage();
     const readAt = now();
     const connections = options.modelConnections.listMetadata();
     const revision = options.ledger.readRevision();
-    const key = JSON.stringify([revision, localDate(readAt), readAt.getTimezoneOffset(), connections, official]);
+    /** 请求计时不属于费用账本修订，必须纳入缓存身份才能及时显示新速率。 */
+    const outputMeasurements = options.execution.listOutputRateMeasurements();
+    const key = JSON.stringify([revision, localDate(readAt), readAt.getTimezoneOffset(), connections, official, outputMeasurements]);
     if (revision !== null && overviewCache?.key === key) return { ...overviewCache.snapshot, updatedAt: readAt.toISOString() };
+    const outputRateByTurn = indexOutputRateMeasurements(outputMeasurements);
     const connectionNames = new Map(connections.map((connection) => [connection.id, connection.name]));
     const connectionsById = new Map(connections.map((connection) => [connection.id, connection]));
-    /** 价格周期需要完整账本；指标仍在内存中裁剪为近七日，避免旧用量进入概览。 */
+    /** 快捷时间范围和价格周期都基于完整账本，返回值只包含轻量汇总。 */
     const allRows = options.ledger.list();
-    /** 菜单栏可见用量只保留近七日。 */
-    const overviewRows = allRows.filter((row) => row.occurredAt >= addDays(startOfLocalDay(readAt), -6).toISOString());
-    /** 可见窗口与价格历史分别按供应源归组。 */
-    const groups = new Map(groupRows(overviewRows, (row) => canonicalUsageProviderId(row.providerId)));
-    const pricingGroups = new Map(groupRows(allRows, (row) => canonicalUsageProviderId(row.providerId)));
+    /** 每个供应源只分组一次，具体时间范围在汇总阶段裁剪。 */
+    const groups = new Map(groupRows(allRows, (row) => canonicalUsageProviderId(row.providerId)));
     const history = options.ledger.listOverviewProviders();
     const providerIds = new Set([...(official.state === 'available' && !history.some((entry) => entry.providerId === 'codex') ? ['codex'] : []), ...history.map((entry) => entry.providerId)]);
     const providers = [...providerIds]
       .map((providerId) => {
-        const provider = buildProviderSummary({ providerId, rows: groups.get(providerId) ?? [], pricingRows: pricingGroups.get(providerId) ?? [], readAt, official, connectionNames, connectionsById });
+        const provider = buildProviderSummary({ providerId, rows: groups.get(providerId) ?? [], outputRateByTurn, readAt, official, connectionNames, connectionsById });
         const bounds = history.find((entry) => entry.providerId === providerId);
         if (bounds) {
           provider.collectionStartedAt = bounds.firstAt;
@@ -83,6 +93,7 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
     const connectionNames = new Map(connections.map((connection) => [connection.id, connection.name]));
     const connectionsById = new Map(connections.map((connection) => [connection.id, connection]));
     const allRows = options.ledger.list();
+    const outputRateByTurn = indexOutputRateMeasurements(options.execution.listOutputRateMeasurements());
     const groups = new Map<string, CodexUsageLedgerRecord[]>();
     for (const row of allRows) {
       const providerId = canonicalUsageProviderId(row.providerId);
@@ -100,7 +111,7 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
       .map(([providerId, rows]): UsageProviderAnalytics => {
         const isCodex = providerId === 'codex';
         const filteredRows = rows.filter((row) => (!since || row.occurredAt >= since) && (!input.projectId || row.projectId === input.projectId) && (!input.model || row.model === input.model));
-        const provider = buildProviderSummary({ providerId, rows, pricingRows: rows, readAt, official, connectionNames, connectionsById });
+        const provider = buildProviderSummary({ providerId, rows, outputRateByTurn, readAt, official, connectionNames, connectionsById });
         const pricingRows = filteredRows.length > 0 ? filteredRows : rows;
         const catalogDates = [...new Set(pricingRows.map((row) => row.estimate.rateSnapshot.catalogDate))].sort();
         const sourceUrls = [...new Set(pricingRows.flatMap((row) => row.estimate.rateSnapshot.sourceUrls))];
@@ -111,16 +122,16 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
           model: input.model ?? null,
           official: isCodex ? official : null,
           local: {
-            totals: aggregateRows(filteredRows),
-            daily: groupRows(filteredRows, (row) => localDate(new Date(row.occurredAt))).map(([date, entries]) => ({ date, ...aggregateRows(entries) })),
-            byModel: groupRows(filteredRows, (row) => row.model).map(([model, entries]) => ({ id: model, label: model, deleted: false, ...aggregateRows(entries) })),
+            totals: aggregateRows(filteredRows, outputRateByTurn),
+            daily: groupRows(filteredRows, (row) => localDate(new Date(row.occurredAt))).map(([date, entries]) => ({ date, ...aggregateRows(entries, outputRateByTurn) })),
+            byModel: groupRows(filteredRows, (row) => row.model).map(([model, entries]) => ({ id: model, label: model, deleted: false, ...aggregateRows(entries, outputRateByTurn) })),
             byProject: groupRows(filteredRows, (row) => row.projectId).map(([projectId, entries]) => {
               const project = options.projects.getById(projectId);
-              return { id: projectId, label: project?.name ?? '已删除项目', deleted: !project, ...aggregateRows(entries) };
+              return { id: projectId, label: project?.name ?? '已删除项目', deleted: !project, ...aggregateRows(entries, outputRateByTurn) };
             }),
             byConversation: groupRows(filteredRows, (row) => row.conversationId).map(([conversationId, entries]) => {
               const conversation = options.conversations.getRecordById(conversationId);
-              return { id: conversationId, label: conversation?.title || '已删除会话', deleted: !conversation, ...aggregateRows(entries) };
+              return { id: conversationId, label: conversation?.title || '已删除会话', deleted: !conversation, ...aggregateRows(entries, outputRateByTurn) };
             }),
             collectionStartedAt: rows[0]?.occurredAt ?? null,
           },
@@ -149,24 +160,32 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
 function buildProviderSummary(input: {
   providerId: string;
   rows: CodexUsageLedgerRecord[];
-  /** 价格周期使用完整供应源账本，不受概览时间窗口裁剪。 */
-  pricingRows: CodexUsageLedgerRecord[];
+  /** 所有可测速请求按原生轮次归并后的计算依据。 */
+  outputRateByTurn: ReadonlyMap<string, OutputRateTotals>;
   readAt: Date;
   official: Awaited<ReturnType<CodexUsageService['refreshOfficialUsage']>>;
   connectionNames: Map<string, string>;
   connectionsById: Map<string, ReturnType<ModelConnectionService['listMetadata']>[number]>;
 }): UsageProviderSummary {
-  const { providerId, rows, pricingRows, readAt, official, connectionNames, connectionsById } = input;
+  const { providerId, rows, outputRateByTurn, readAt, official, connectionNames, connectionsById } = input;
   const isCodex = providerId === 'codex';
   const sourceId = isCodex ? 'codex' : providerId.startsWith('api:') ? providerId.slice(4) : providerId;
   const connectionName = connectionNames.get(sourceId);
   const connection = connectionsById.get(sourceId);
   const todayRows = rows.filter((row) => row.occurredAt >= startOfLocalDay(readAt).toISOString());
   const sevenDayRows = rows.filter((row) => row.occurredAt >= addDays(startOfLocalDay(readAt), -6).toISOString());
+  const thirtyDayRows = rows.filter((row) => row.occurredAt >= addDays(startOfLocalDay(readAt), -29).toISOString());
   const today = localDate(readAt);
   const sevenDayStart = localDate(addDays(startOfLocalDay(readAt), -6));
   /** 价格周期必须参考该供应源的全部账本目录，不能只看今日或近七日窗口。 */
-  const pricePeriods = buildUsagePricePeriods(pricingRows);
+  const pricePeriods = buildUsagePricePeriods(rows);
+  /** 四个快捷范围共享同一聚合入口，避免 Renderer 自行重算账本口径。 */
+  const overviewRanges = {
+    today: buildOverviewRangeSummary(todayRows, pricePeriods, outputRateByTurn),
+    '7d': buildOverviewRangeSummary(sevenDayRows, pricePeriods, outputRateByTurn),
+    '30d': buildOverviewRangeSummary(thirtyDayRows, pricePeriods, outputRateByTurn),
+    all: buildOverviewRangeSummary(rows, pricePeriods, outputRateByTurn),
+  };
   const accountDays = isCodex ? (official.dailyUsageBuckets?.filter((bucket) => bucket.startDate >= sevenDayStart && bucket.startDate <= today).map((bucket) => ({ date: bucket.startDate, totalTokens: bucket.tokens })) ?? null) : null;
   const latestLocalAt = rows.at(-1)?.occurredAt ?? readAt.toISOString();
   return {
@@ -184,17 +203,21 @@ function buildProviderSummary(input: {
     accountTodayTokens: accountDays?.find((day) => day.date === today)?.totalTokens ?? null,
     accountSevenDayTokens: accountDays && accountDays.length > 0 ? accountDays.reduce((sum, day) => sum + day.totalTokens, 0) : null,
     dailyAccount: accountDays,
-    todayLocal: aggregateRows(todayRows),
-    todayCostBreakdown: aggregateCostBreakdown(todayRows, pricePeriods),
-    todayLocalComplete: todayRows.every((row) => row.usageComplete),
-    sevenDayLocal: aggregateRows(sevenDayRows),
-    sevenDayCostBreakdown: aggregateCostBreakdown(sevenDayRows, pricePeriods),
-    sevenDayLocalComplete: sevenDayRows.every((row) => row.usageComplete),
-    dailyLocal: groupRows(sevenDayRows, (row) => localDate(new Date(row.occurredAt))).map(([date, entries]) => ({ date, ...aggregateRows(entries) })) satisfies CodexLocalUsageDay[],
+    overviewRanges,
+    dailyLocal: groupRows(sevenDayRows, (row) => localDate(new Date(row.occurredAt))).map(([date, entries]) => ({ date, ...aggregateRows(entries, outputRateByTurn) })) satisfies CodexLocalUsageDay[],
     collectionStartedAt: rows[0]?.occurredAt ?? null,
     updatedAt: isCodex && official.fetchedAt && official.fetchedAt > latestLocalAt ? official.fetchedAt : latestLocalAt,
     stale: isCodex ? official.stale : false,
     error: isCodex ? official.error : null,
+  };
+}
+
+/** 统一构造菜单栏单个时间范围的指标与费用明细。 */
+function buildOverviewRangeSummary(rows: readonly CodexUsageLedgerRecord[], pricePeriods: ReadonlyMap<string, UsageModelPricePeriod>, outputRateByTurn: ReadonlyMap<string, OutputRateTotals>): UsageOverviewRangeSummary {
+  return {
+    local: aggregateRows(rows, outputRateByTurn),
+    costBreakdown: aggregateCostBreakdown(rows, pricePeriods),
+    complete: rows.every((row) => row.usageComplete),
   };
 }
 
@@ -204,13 +227,44 @@ function canonicalUsageProviderId(providerId: string): string {
   return providerId;
 }
 
-function aggregateRows(rows: readonly CodexUsageLedgerRecord[]): CodexLocalUsageTotals {
+/** 用产品会话、原生线程和轮次组成稳定键，避免不同供应源的同名轮次串数据。 */
+function outputRateKey(conversationId: string, providerThreadId: string, providerTurnId: string): string {
+  return JSON.stringify([conversationId, providerThreadId, providerTurnId]);
+}
+
+/** 同一轮可能包含工具前后多次文本请求；先归并依据，再由时间范围选择对应轮次。 */
+function indexOutputRateMeasurements(measurements: readonly ConversationOutputRateMeasurement[]): ReadonlyMap<string, OutputRateTotals> {
+  const result = new Map<string, OutputRateTotals>();
+  for (const measurement of measurements) {
+    const key = outputRateKey(measurement.conversationId, measurement.providerThreadId, measurement.providerTurnId);
+    const totals = result.get(key) ?? { visibleOutputTokens: 0, durationMs: 0 };
+    totals.visibleOutputTokens += measurement.visibleOutputTokens;
+    totals.durationMs += measurement.durationMs;
+    result.set(key, totals);
+  }
+  return result;
+}
+
+/** 汇总选中账本记录；请求速率按可见 Token 和真实文本生成时长加权。 */
+function aggregateRows(rows: readonly CodexUsageLedgerRecord[], outputRateByTurn: ReadonlyMap<string, OutputRateTotals>): CodexLocalUsageTotals {
   const usage = sumBreakdowns(rows.map((row) => row.usage));
   const billableTokens = rows.reduce((sum, row) => sum + row.estimate.billableTokens, 0);
   const pricedTokens = rows.reduce((sum, row) => sum + row.estimate.pricedTokens, 0);
   const creditValues = rows.flatMap((row) => (row.estimate.credits === null ? [] : [row.estimate.credits]));
   const usdValues = rows.flatMap((row) => (row.estimate.apiEquivalentUsd === null ? [] : [row.estimate.apiEquivalentUsd]));
   const savingsValues = rows.flatMap((row) => (row.estimate.cacheSavingsUsd === null ? [] : [row.estimate.cacheSavingsUsd]));
+  /** 同一范围按总 Token 与总时长加权，不能把长短请求的速率直接求平均。 */
+  const outputRateTotals = rows.reduce<OutputRateTotals>(
+    (total, row) => {
+      const measurement = outputRateByTurn.get(outputRateKey(row.conversationId, row.providerThreadId, row.providerTurnId));
+      if (measurement) {
+        total.visibleOutputTokens += measurement.visibleOutputTokens;
+        total.durationMs += measurement.durationMs;
+      }
+      return total;
+    },
+    { visibleOutputTokens: 0, durationMs: 0 },
+  );
   return {
     ...usage,
     costs: sumEstimatedCosts(rows.map((row) => row.estimate)),
@@ -218,6 +272,7 @@ function aggregateRows(rows: readonly CodexUsageLedgerRecord[]): CodexLocalUsage
     conversationCount: new Set(rows.map((row) => row.conversationId)).size,
     turnCount: rows.length,
     cacheHitRate: calculateCacheHitRate(usage),
+    outputTokensPerSecond: outputRateTotals.durationMs > 0 ? (outputRateTotals.visibleOutputTokens * 1_000) / outputRateTotals.durationMs : null,
     estimatedCredits: creditValues.length > 0 ? creditValues.reduce((sum, value) => sum + value, 0) : null,
     apiEquivalentUsd: usdValues.length > 0 ? usdValues.reduce((sum, value) => sum + value, 0) : null,
     cacheSavingsUsd: savingsValues.length > 0 ? savingsValues.reduce((sum, value) => sum + value, 0) : null,

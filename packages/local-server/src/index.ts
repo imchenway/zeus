@@ -1824,6 +1824,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     modelConnections,
     projects,
     conversations,
+    execution: conversationExecution,
     now,
   });
   let usageRefreshTimer: ReturnType<typeof setInterval> | undefined;

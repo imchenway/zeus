@@ -60,7 +60,6 @@ type MenuBarUsageCostDetailBridgePayload = {
   language: 'zh-CN' | 'en-US';
   appearance: 'light' | 'dark' | 'system';
   entries: UsageModelCostBreakdown[];
-  pricingMeta: string | null;
   anchor: { x: number; y: number };
   pinned: boolean;
 };
@@ -164,7 +163,7 @@ declare global {
       /** 立即关闭独立费用明细窗口。 */
       hideMenuBarUsageCostDetail: () => Promise<{ hidden: true }>;
       /** 独立费用 Renderer 读取首次展示数据。 */
-      getMenuBarUsageCostDetail: () => Promise<MenuBarUsageCostDetailBridgePayload>;
+      getMenuBarUsageCostDetail: () => Promise<MenuBarUsageCostDetailBridgePayload | null>;
       /** 独立费用 Renderer 按真实内容请求原生尺寸和位置。 */
       resizeMenuBarUsageCostDetail: (width: number, height: number) => Promise<{ x: number; y: number; width: number; height: number }>;
       /** 两个相关 Renderer 同步当前明细或关闭状态。 */

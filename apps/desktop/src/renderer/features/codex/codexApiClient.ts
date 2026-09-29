@@ -511,6 +511,13 @@ function normalizeLegacyCodexUsageOverview(analytics: CodexUsageAnalyticsSnapsho
   const sevenDayStart = localDateKey(sevenDayStartDate);
   const dailyAccount = analytics.official.dailyUsageBuckets?.filter((bucket) => bucket.startDate >= sevenDayStart && bucket.startDate <= today).map((bucket) => ({ date: bucket.startDate, totalTokens: bucket.tokens })) ?? null;
   const todayLocal = analytics.local.daily.find((bucket) => bucket.date === today) ?? emptyLocalUsageTotals();
+  /** 旧后台只返回七日分析；更长范围沿用已知下限并明确标记为不完整。 */
+  const overviewRanges = {
+    today: { local: todayLocal, costBreakdown: [], complete: false },
+    '7d': { local: analytics.local.totals, costBreakdown: [], complete: false },
+    '30d': { local: analytics.local.totals, costBreakdown: [], complete: false },
+    all: { local: analytics.local.totals, costBreakdown: [], complete: false },
+  };
   return {
     providers: [
       {
@@ -528,12 +535,7 @@ function normalizeLegacyCodexUsageOverview(analytics: CodexUsageAnalyticsSnapsho
         accountTodayTokens: dailyAccount?.find((bucket) => bucket.date === today)?.totalTokens ?? null,
         accountSevenDayTokens: dailyAccount && dailyAccount.length > 0 ? dailyAccount.reduce((sum, bucket) => sum + bucket.totalTokens, 0) : null,
         dailyAccount,
-        todayLocal,
-        todayCostBreakdown: [],
-        todayLocalComplete: false,
-        sevenDayLocal: analytics.local.totals,
-        sevenDayCostBreakdown: [],
-        sevenDayLocalComplete: false,
+        overviewRanges,
         dailyLocal: analytics.local.daily,
         collectionStartedAt: analytics.local.collectionStartedAt,
         updatedAt: analytics.updatedAt,
@@ -557,6 +559,7 @@ function emptyLocalUsageTotals() {
     conversationCount: 0,
     turnCount: 0,
     cacheHitRate: null,
+    outputTokensPerSecond: null,
     estimatedCredits: null,
     apiEquivalentUsd: null,
     cacheSavingsUsd: null,
