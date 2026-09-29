@@ -38,6 +38,8 @@ type TerminalPosition = 'right' | 'bottom';
 const minimumTerminalHeight = 160;
 const maximumTerminalTabs = 8;
 const maximumTerminalInputChunk = 32 * 1024;
+/** 容器停止变化后再同步 PTY，避免展开动画连续触发 Shell 重绘。 */
+const terminalResizeSettleDelayMs = 80;
 const alternateScreenResetSequence = '\u001b[?1049h\u001b[2J\u001b[H';
 const synchronizedOutputSequence = '\u001b[?2026h';
 
@@ -594,6 +596,12 @@ function TerminalViewport(props: {
     let hydrating = true;
     let coldTuiRedrawPending = false;
     let redrawTimer: number | null = null;
+    /** PTY 只接收容器稳定后的最后一个尺寸。 */
+    let pendingResize: { cols: number; rows: number } | null = null;
+    /** 稳定期计时器由后续尺寸变化重置。 */
+    let resizeSettleTimer: number | null = null;
+    /** 相同最终尺寸不重复触发 Shell 的 SIGWINCH。 */
+    let lastSentResize: { cols: number; rows: number } | null = null;
     const bufferedEvents: ZeusRealtimeEvent[] = [];
     const seenLogIds = new Set<string>();
     const io = createTerminalIoPump(props.client, props.session.id, (ioError) => {
@@ -617,7 +625,11 @@ function TerminalViewport(props: {
         terminal.loadAddon(fitAddon);
         terminalRef.current = terminal;
         terminal.open(hostRef.current);
-        const dataSubscription = terminal.onData((value) => io.input(value));
+        const dataSubscription = terminal.onData((value) => {
+          /** 用户输入前先提交最新尺寸，保证输入与 resize 在同一队列中有序执行。 */
+          flushPendingResize();
+          io.input(value);
+        });
         const resizeObserver = new ResizeObserver(() => scheduleFit());
         resizeObserver.observe(hostRef.current);
         /** 主题切换仅更新现有终端的颜色。 */
@@ -637,16 +649,52 @@ function TerminalViewport(props: {
         };
         props.registerSurface(surface);
 
+        /** 取消尚未稳定的远端尺寸，不影响 xterm 已完成的本地适配。 */
+        function cancelPendingResize(): void {
+          if (resizeSettleTimer !== null) window.clearTimeout(resizeSettleTimer);
+          resizeSettleTimer = null;
+          pendingResize = null;
+        }
+
+        /** 将稳定后的最新尺寸按既有 I/O 顺序发送给 PTY。 */
+        function flushPendingResize(): void {
+          if (resizeSettleTimer !== null) window.clearTimeout(resizeSettleTimer);
+          resizeSettleTimer = null;
+          /** 本轮稳定期内最后一次测得的字符网格。 */
+          const next = pendingResize;
+          pendingResize = null;
+          if (!next || (lastSentResize?.cols === next.cols && lastSentResize.rows === next.rows)) return;
+          lastSentResize = next;
+          io.resize(next);
+        }
+
+        /** 连续布局变化只保留最后一个字符网格尺寸。 */
+        function schedulePtyResize(size: { cols: number; rows: number }): void {
+          pendingResize = size;
+          if (resizeSettleTimer !== null) window.clearTimeout(resizeSettleTimer);
+          resizeSettleTimer = window.setTimeout(flushPendingResize, terminalResizeSettleDelayMs);
+        }
+
+        /** xterm 每帧跟随容器，PTY 等尺寸稳定后再同步一次。 */
         function scheduleFit(): void {
           if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
           resizeFrame = requestAnimationFrame(() => {
             resizeFrame = null;
             // 收起立即停止同步尺寸，保留后台终端大小，不把退出动画中的零高度写回 Shell。
-            if (!host || host.closest('[inert]') || host.clientHeight === 0) return;
+            if (!host || host.closest('[inert]') || host.clientWidth === 0 || host.clientHeight === 0) {
+              cancelPendingResize();
+              return;
+            }
             const proposed = fitAddon.proposeDimensions();
-            if (!proposed || (proposed.cols === terminal.cols && proposed.rows === terminal.rows)) return;
-            fitAddon.fit();
-            io.resize({ cols: terminal.cols, rows: terminal.rows });
+            if (!proposed) return;
+            if (proposed.cols !== terminal.cols || proposed.rows !== terminal.rows) fitAddon.fit();
+            /** 重新打开时即使 xterm 已是最终尺寸，也要补发此前因隐藏而取消的 PTY resize。 */
+            const next = { cols: terminal.cols, rows: terminal.rows };
+            if (lastSentResize?.cols === next.cols && lastSentResize.rows === next.rows) {
+              cancelPendingResize();
+              return;
+            }
+            schedulePtyResize(next);
           });
         }
 
@@ -690,6 +738,7 @@ function TerminalViewport(props: {
           if (coldTuiRedrawPending) {
             coldTuiRedrawPending = false;
             bufferedEvents.length = 0;
+            cancelPendingResize();
             redrawTimer = requestLiveTerminalRedraw(terminal, io, () => disposed);
           } else {
             for (const event of bufferedEvents.splice(0)) writeRealtimeEvent(terminal, event, seenLogIds);
@@ -712,6 +761,7 @@ function TerminalViewport(props: {
       disposeBindings?.();
       io.dispose();
       if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+      if (resizeSettleTimer !== null) window.clearTimeout(resizeSettleTimer);
       if (redrawTimer !== null) window.clearTimeout(redrawTimer);
       terminalRef.current?.dispose();
       terminalRef.current = null;
