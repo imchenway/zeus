@@ -8,7 +8,7 @@ type Language = AppShellSettings['appLanguage'];
 type Appearance = AppShellSettings['appearance'];
 type UsageClient = Pick<DashboardClient, 'loadUsageOverview' | 'subscribeEvents'>;
 
-/** 用量快照沿用原键；旧快照已有 overviewRanges，多余字段会被结构化读取自然忽略。 */
+/** 用量快照沿用原键；读取时校验当前渲染必需结构，让旧版缓存自然失效。 */
 const snapshotStorageKey = 'zeus.menu-bar-usage.snapshot';
 const selectionStorageKey = 'zeus.menu-bar-usage.selection';
 /** 菜单栏独立保存供应商顺序，不改变供应商配置或后台统计顺序。 */
@@ -1205,7 +1205,11 @@ function formatShortDate(value: string, language: Language): string {
 function readStoredSnapshot(): UsageOverviewSnapshot | null {
   try {
     const value = JSON.parse(localStorage.getItem(snapshotStorageKey) ?? 'null') as UsageOverviewSnapshot | null;
-    return value && Array.isArray(value.providers) && typeof value.updatedAt === 'string' ? value : null;
+    /** 缓存可能来自旧版结构；缺少当前渲染必需字段时等待实时读取，不能让菜单栏整页崩溃。 */
+    const compatible = value?.providers.every(
+      (provider) => Array.isArray(provider.dailyLocal) && overviewRangeOrder.every((range) => Boolean(provider.overviewRanges?.[range]?.local) && Array.isArray(provider.overviewRanges[range].costBreakdown)),
+    );
+    return value && Array.isArray(value.providers) && compatible && typeof value.updatedAt === 'string' ? value : null;
   } catch {
     return null;
   }
