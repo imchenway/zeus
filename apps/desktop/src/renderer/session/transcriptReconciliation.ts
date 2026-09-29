@@ -89,7 +89,7 @@ export function transcriptEntryId(item: Pick<NativeItemSnapshot, 'transcript'>):
 }
 
 /** 统一合并器只依赖内容、状态和来源证据，供快照与实时缓冲共同使用。 */
-type TranscriptContent = Pick<NativeItemSnapshot, 'text' | 'payload' | 'status'> & { transcript?: ConversationTranscriptEnvelope };
+type TranscriptContent = Pick<NativeItemSnapshot, 'text' | 'payload' | 'status' | 'messageCreatedAt'> & { transcript?: ConversationTranscriptEnvelope };
 
 /** 来源修订用于去重；正文权威只由实际载荷的内容修订决定。 */
 export function mergeTranscriptItem<T extends TranscriptContent>(previous: T, incoming: T): T {
@@ -102,10 +102,11 @@ export function mergeTranscriptItem<T extends TranscriptContent>(previous: T, in
   const content = keepContent ? previous : incoming;
   const placement = newestTranscriptPlacement(previous.transcript, incoming.transcript);
   const transcript = content.transcript && placement ? { ...content.transcript, placement } : (content.transcript ?? incoming.transcript);
-  if (content === previous && transcript?.placement === previous.transcript?.placement) return previous;
+  if (content === previous && transcript?.placement === previous.transcript?.placement && (!incoming.messageCreatedAt || incoming.messageCreatedAt === previous.messageCreatedAt)) return previous;
   return {
     ...incoming,
     text: content.text,
+    messageCreatedAt: incoming.messageCreatedAt ?? previous.messageCreatedAt,
     payload: content.payload,
     status: terminalStatus(previous.status, content.status),
     ...(transcript ? { transcript } : {}),

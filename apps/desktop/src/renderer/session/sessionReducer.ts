@@ -110,7 +110,7 @@ export type NativeSessionAction =
       /** 结果待核对属于可自行收敛的内部状态，允许不携带面向用户的错误。 */
       error?: NativeSessionError;
     }
-  | { type: 'send_accepted'; clientUserMessageId: string; status: string; submissionId?: string; providerTurnId?: string }
+  | { type: 'send_accepted'; clientUserMessageId: string; status: string; messageCreatedAt?: string; submissionId?: string; providerTurnId?: string }
   | { type: 'send_reconciliation_failed'; error: NativeSessionError }
   | { type: 'send_succeeded' };
 
@@ -357,6 +357,16 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
       const optimisticKey = optimisticEntry?.[0] ?? optimisticUserItemKey(state, action.clientUserMessageId);
       const optimistic = optimisticEntry?.[1];
       if (!optimistic) return { ...state, error: null };
+      // 接纳到提交队列即完成本地交接；初始回执不能把已删除或已执行的队列项重新写回正文。
+      if (action.submissionId && isUnacceptedTranscriptMessage(optimistic) && !action.providerTurnId) {
+        return {
+          ...state,
+          items: Object.fromEntries(Object.entries(state.items).filter(([key]) => key !== optimisticKey)),
+          itemOrder: state.itemOrder.filter((key) => key !== optimisticKey),
+          error: null,
+          transcriptRevision: state.transcriptRevision + 1,
+        };
+      }
       const terminal = action.providerTurnId ? state.terminalTurnIds[action.providerTurnId] : undefined;
       const payload: Record<string, unknown> = {
         ...optimistic.payload,
@@ -373,6 +383,7 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
           ...state.items,
           [optimisticKey]: {
             ...optimistic,
+            messageCreatedAt: action.messageCreatedAt ?? optimistic.messageCreatedAt,
             ...(action.providerTurnId ? { turnId: action.providerTurnId } : {}),
             status: terminal ? 'completed' : action.status,
             payload,
@@ -392,7 +403,9 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
 
 function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConversationSnapshot, reconcileHistoryCache = true): NativeSessionState {
   const historyReconciliation = reconcileHistoryCache ? reconcileConversationHistoryCache(state.snapshot, incomingSnapshot) : { snapshot: incomingSnapshot, preserveCachedHistory: true };
-  const snapshot = historyReconciliation.snapshot;
+  /** 正文页不能把较新的队列事实回退到请求发出时。 */
+  const snapshot =
+    state.queue && state.queue.throughEventSeq > historyReconciliation.snapshot.queue.throughEventSeq ? { ...historyReconciliation.snapshot, queue: state.queue, submissions: state.queue.submissions } : historyReconciliation.snapshot;
   /** 有界首屏未包含的已结束轮次仍可能拥有缓存过程；轮次身份必须随过程一起保留。 */
   const cachedTurns = state.conversationId === snapshot.id ? Object.values(state.turnsByProviderId).filter((turn) => isTerminalTurnStatus(turn.status)) : [];
   /** 首屏中的轮次仍以本次权威结果为准，缓存只补齐首屏范围外的归属。 */
@@ -492,6 +505,7 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
       resources: mergeDurableItemResources(previousDurableItem?.resources, item.resources),
       timelineAt,
       updatedAt: item.updatedAt,
+      messageCreatedAt: item.messageCreatedAt,
       transcript: item.transcript,
       ...(itemClientId ? { clientUserMessageId: itemClientId, durableClientUserMessageId: itemClientId } : {}),
     };
@@ -563,6 +577,7 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
           optimistic: false,
           ...(clientUserMessageId ? { clientUserMessageId, durableClientUserMessageId: clientUserMessageId } : {}),
           updatedAt: message.createdAt,
+          messageCreatedAt: message.createdAt,
         };
         continue;
       }
@@ -588,46 +603,9 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
       ...(message.providerItemId ? { providerItemId: message.providerItemId } : {}),
       timelineAt: message.createdAt,
       updatedAt: message.createdAt,
+      messageCreatedAt: message.createdAt,
     };
     orderedItems.push({ key, order: null, stableIndex: stableIndexForClient(clientUserMessageId) });
-  }
-
-  // Provider 尚未回放精确 userMessage 时，从持久 submission 恢复同一条用户消息。
-  // 排队阶段也保留稳定客户端身份，后续开轮只更新状态与 turnId，不把消息挪出再重建。
-  for (const submission of snapshot.submissions) {
-    const clientUserMessageId = submission.clientUserMessageId;
-    const pendingStatus = shouldProjectSubmissionMessage(submission);
-    if (!pendingStatus || !clientUserMessageId) continue;
-    const providerTurnId = submission.providerTurnId ?? `pending:${clientUserMessageId}`;
-    const itemId = `${submission.delivery === 'steer_now' ? 'steering' : 'submission'}:${submission.id}`;
-    const existingUserEntry = Object.entries(items).find(([, item]) => isUserMessageItem(item) && (userMessageClientIds(item).includes(clientUserMessageId) || stringValue(item.payload.submissionId) === submission.id));
-    if (existingUserEntry) {
-      const [key, existing] = existingUserEntry;
-      const submissionItem = submissionUserMessageItem(snapshot.id, threadId, submission, key, itemId, providerTurnId);
-      items[key] = {
-        ...existing,
-        status: submissionItem.status,
-        payload: mergeStableUserMessagePresentation(existing.payload, submissionItem.payload),
-        optimistic: submissionItem.optimistic,
-        clientUserMessageId,
-        durableClientUserMessageId: clientUserMessageId,
-        updatedAt: submissionItem.updatedAt ?? existing.updatedAt,
-      };
-      durableClientIds.add(clientUserMessageId);
-      continue;
-    }
-    if (durableClientIds.has(clientUserMessageId)) continue;
-    const key = previousUserItemKeys.get(clientUserMessageId) ?? nativeSessionItemKey(snapshot.id, threadId, providerTurnId, itemId);
-    const submissionItem = submissionUserMessageItem(snapshot.id, threadId, submission, key, itemId, providerTurnId);
-    const previousUserItem = previousUserItemsByClientId.get(clientUserMessageId);
-    items[key] = previousUserItem
-      ? {
-          ...submissionItem,
-          payload: mergeStableUserMessagePresentation(previousUserItem.payload, submissionItem.payload),
-        }
-      : submissionItem;
-    orderedItems.push({ key, order: null, stableIndex: stableIndexForClient(clientUserMessageId) });
-    durableClientIds.add(clientUserMessageId);
   }
 
   // A pending user message is renderer-owned until a durable conversation_message with
@@ -639,7 +617,8 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
     const knownSubmission = userMessageClientIds(item)
       .map((clientId) => submissionsByClientId.get(clientId))
       .find((submission): submission is NativeQueuedSubmission => Boolean(submission));
-    if (knownSubmission && shouldDiscardSubmissionProjection(knownSubmission)) continue;
+    // 权威队列接管后不再保留本地副本；接纳后的正文由持久消息来源提供。
+    if (knownSubmission) continue;
     if ((item.clientUserMessageId && durableClientIds.has(item.clientUserMessageId)) || (item.durableClientUserMessageId && durableClientIds.has(item.durableClientUserMessageId))) continue;
     items[key] = item;
     orderedItems.push({ key, order: item.transcript?.placement.order ?? null, stableIndex: stableIndexForClient(item.clientUserMessageId ?? item.durableClientUserMessageId ?? null) });
@@ -939,6 +918,7 @@ function equivalentSessionItem(left: NativeSessionItemBuffer, right: NativeSessi
     left.durableClientUserMessageId === right.durableClientUserMessageId &&
     left.timelineAt === right.timelineAt &&
     left.updatedAt === right.updatedAt &&
+    left.messageCreatedAt === right.messageCreatedAt &&
     sameSerializableValue(left.transcript, right.transcript) &&
     sameSerializableValue(left.payload, right.payload) &&
     sameSerializableValue(left.resources, right.resources)
@@ -1036,13 +1016,16 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
         createdAt: existingTurn?.createdAt ?? startedAt,
         updatedAt: event.createdAt,
       };
-      const queue = turnBase.queue
-        ? {
-            ...turnBase.queue,
-            state: { type: 'active' as const, turnId, phase: 'prework' as const },
-            submissions: submissionId ? turnBase.queue.submissions.filter((submission) => submission.id !== submissionId) : turnBase.queue.submissions,
-          }
-        : null;
+      const queue =
+        turnBase.queue && payload.sequence >= turnBase.queue.throughEventSeq
+          ? {
+              ...turnBase.queue,
+              throughEventSeq: payload.sequence,
+              state: { type: 'active' as const, turnId, phase: 'prework' as const },
+              // 回显前的待确认展示仍由权威队列接管；不能仅凭轮次开始删除提交。
+              submissions: turnBase.queue.submissions,
+            }
+          : turnBase.queue;
       const openingUserEntry = submissionId ? Object.entries(turnBase.items).find(([, item]) => item.optimistic && isUserMessageItem(item) && stringValue(item.payload.submissionId) === submissionId) : undefined;
       let items = turnBase.items;
       if (openingUserEntry) {
@@ -1177,7 +1160,7 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
       const queueBase = queuedThreadTransition ? applyProviderIdentityChange(base, payload, false) : base;
       const queue = isRecord(payload.queue) ? (payload.queue as unknown as NativeQueueSnapshot) : queueBase.queue;
       if (!queue) return queueBase;
-      const projected = projectQueueSubmissionMessages(queueBase, queue);
+      const projected = projectQueueSubmissionMessages(queueBase, { ...queue, throughEventSeq: payload.sequence });
       if (!queuedThreadTransition || queue.state.type !== 'active') return projected;
       return { ...projected, activeTurnId: queue.state.turnId, startedTurnId: queue.state.turnId };
     }
@@ -1469,6 +1452,7 @@ function reduceItemEvent(state: NativeSessionState, event: Extract<NativeConvers
     // 首次事件确定条目的时间线位置；delta/completed 只更新内容，不能让历史位置漂移。
     timelineAt: previous?.timelineAt ?? matchedUserItem?.timelineAt ?? event.createdAt,
     updatedAt: event.createdAt,
+    messageCreatedAt: stringValue(incomingPayload?.messageCreatedAt) ?? previous?.messageCreatedAt,
     ...(incomingTranscript || previous?.transcript ? { transcript: incomingTranscript ?? previous?.transcript } : {}),
   };
   /** 实时、历史与分页共用正文权威判定。 */
@@ -1683,6 +1667,7 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
     optimistic: true,
     clientUserMessageId: action.clientUserMessageId,
     durableClientUserMessageId: action.durableClientUserMessageId,
+    messageCreatedAt: action.startedAt,
     timelineAt: action.startedAt,
     updatedAt: action.startedAt,
   };
@@ -1706,95 +1691,40 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
   };
 }
 
-/** 迟到的已接纳提交按首次发言位置插入，已有历史顺序和待发队尾保持不变。 */
-function insertSubmissionTimelineItem(order: string[], items: NativeSessionState['items'], item: NativeSessionItemBuffer): string[] {
-  /** 未接纳消息继续交给队列排序；缺少首次时间时不猜测历史位置。 */
-  const timestamp = item.timelineAt;
-  if (isUnacceptedTranscriptMessage(item) || !timestamp) return [...order, item.key];
-  /** 只寻找插入点，不对整段历史重新排序，避免扰动原生消息与答题记录。 */
-  const index = order.findIndex((key) => {
-    /** 待发消息不作为历史时间锚点，其展示位置继续由队列决定。 */
-    const existing = items[key];
-    return Boolean(existing && !isUnacceptedTranscriptMessage(existing) && (existing.timelineAt ?? existing.updatedAt ?? '') > timestamp);
-  });
-  return index < 0 ? [...order, item.key] : [...order.slice(0, index), item.key, ...order.slice(index)];
-}
-
+/** 队列只拥有当前提交；本地发送在得到权威身份后移交，不复制成正文。 */
 function projectQueueSubmissionMessages(state: NativeSessionState, queue: NativeQueueSnapshot): NativeSessionState {
-  let items = state.items;
-  let itemOrder = state.itemOrder;
-  let transcriptChanged = false;
-  const conversationId = state.conversationId;
-  const threadId = state.providerThreadId ?? state.snapshot?.providerThreadId ?? 'unbound-thread';
-  // send-now 的本地交接先于 HTTP/事件确认完成。旧的 queued/dispatching 快照不能把
-  // 已经进入当前 turn 的 steer 消息重新画回队列，否则会出现“队列消失后又闪回”的断层。
-  const projectedQueue: NativeQueueSnapshot = {
-    ...queue,
-    submissions: queue.submissions.filter((submission) => !hasPendingSteeringProjection(state.items, submission)),
-  };
-
-  if (conversationId) {
-    for (const submission of projectedQueue.submissions) {
-      const clientUserMessageId = submission.clientUserMessageId;
-      if (!clientUserMessageId || !shouldProjectSubmissionMessage(submission)) continue;
-      const matchedEntry = Object.entries(items).find(([, item]) => isUserMessageItem(item) && (userMessageClientIds(item).includes(clientUserMessageId) || stringValue(item.payload.submissionId) === submission.id));
-
-      const key = matchedEntry?.[0] ?? optimisticUserItemKey(state, clientUserMessageId);
-      const previous = matchedEntry?.[1];
-      const turnId = submission.providerTurnId ?? `pending:${clientUserMessageId}`;
-      const itemId = `${submission.delivery === 'steer_now' ? 'steering' : 'submission'}:${submission.id}`;
-      const projected = submissionUserMessageItem(conversationId, threadId, submission, key, itemId, turnId);
-      const next = previous
-        ? {
-            // 队列只覆盖提交字段，保留已接纳消息的显示身份、位置与来源修订。
-            ...previous,
-            ...projected,
-            ...(!previous.optimistic
-              ? {
-                  itemId: previous.itemId,
-                  turnId: previous.turnId,
-                  ...(previous.localItemId ? { localItemId: previous.localItemId } : {}),
-                  ...(previous.providerItemId ? { providerItemId: previous.providerItemId } : {}),
-                }
-              : {}),
-            text: previous.text || projected.text,
-            resources: previous.resources,
-            payload: mergeSubmissionUserMessagePayload(previous.payload, submission),
-            timelineAt: previous.timelineAt ?? projected.timelineAt,
-          }
-        : projected;
-      if (previous && equivalentSessionItem(previous, next)) continue;
-      if (items === state.items) items = { ...state.items };
-      items[key] = next;
-      if (!previous) itemOrder = insertSubmissionTimelineItem(itemOrder, items, next);
-      transcriptChanged = true;
-    }
-  }
-
+  if (state.queue && queue.throughEventSeq < state.queue.throughEventSeq) return state;
+  /** 同一次提交仅凭稳定身份交接，普通重复文本仍是两条消息。 */
+  const submissionIds = new Set(queue.submissions.map((submission) => submission.id));
+  /** HTTP 回执到达前也能用客户端身份确认归属。 */
+  const clientIds = new Set(queue.submissions.map((submission) => submission.clientUserMessageId));
+  /** 只移交未接纳的本地输入，持久正文及已进入轮次的插话保留。 */
+  const removedKeys = new Set(
+    state.itemOrder.filter((key) => {
+      const item = state.items[key];
+      return item && isUserMessageItem(item) && isUnacceptedTranscriptMessage(item) && (submissionIds.has(stringValue(item.payload.submissionId) ?? '') || userMessageClientIds(item).some((id) => clientIds.has(id)));
+    }),
+  );
   return {
     ...state,
-    items,
-    itemOrder,
-    queue: projectedQueue,
-    conversationState: conversationStateFromQueue(projectedQueue, state),
-    transcriptRevision: state.transcriptRevision + (transcriptChanged ? 1 : 0),
+    items: removedKeys.size ? Object.fromEntries(Object.entries(state.items).filter(([key]) => !removedKeys.has(key))) : state.items,
+    itemOrder: removedKeys.size ? state.itemOrder.filter((key) => !removedKeys.has(key)) : state.itemOrder,
+    queue,
+    conversationState: conversationStateFromQueue(queue, state),
+    transcriptRevision: state.transcriptRevision + (removedKeys.size ? 1 : 0),
   };
-}
-
-function shouldProjectSubmissionMessage(submission: NativeQueuedSubmission): boolean {
-  if (submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active' || submission.status === 'failed' || submission.status === 'completed' || submission.status === 'resolved') return true;
-  return submission.status === 'paused';
-}
-
-function shouldDiscardSubmissionProjection(submission: NativeQueuedSubmission): boolean {
-  return submission.status === 'cancelled' || submission.status === 'deleted';
 }
 
 function projectSteeringSubmission(state: NativeSessionState, submission: NativeQueuedSubmission, authoritativeQueue?: NativeQueueSnapshot): NativeSessionState {
+  // 队列水位只约束队列；迟到的明确接纳证据仍须交给正文。
+  if (authoritativeQueue && state.queue && authoritativeQueue.throughEventSeq < state.queue.throughEventSeq) {
+    if (submission.status === 'paused') return state;
+    authoritativeQueue = state.queue;
+  }
   // 引导失败仍保留原消息及阻塞事实，不能被正常“引导中”投影从队列抹掉。
   if (submission.status === 'paused') {
     const queue = authoritativeQueue ?? state.queue;
-    if (queue) return projectQueueSubmissionMessages(state, { ...queue, submissions: [...queue.submissions.filter((entry) => entry.id !== submission.id), submission] });
+    if (queue) return projectQueueSubmissionMessages(state, queue);
   }
   const queue = authoritativeQueue
     ? { ...authoritativeQueue, submissions: authoritativeQueue.submissions.filter((entry) => entry.id !== submission.id) }
@@ -1827,7 +1757,7 @@ function projectSteeringSubmission(state: NativeSessionState, submission: Native
       : {}),
   };
   const items = { ...state.items, [key]: item };
-  const itemOrder = previousKey || state.itemOrder.includes(key) ? state.itemOrder : insertSubmissionTimelineItem(state.itemOrder, items, item);
+  const itemOrder = previousKey || state.itemOrder.includes(key) ? state.itemOrder : sortSessionItemOrder([...state.itemOrder, key], items);
   return {
     ...state,
     items,
@@ -1839,7 +1769,7 @@ function projectSteeringSubmission(state: NativeSessionState, submission: Native
 
 function markSteeringSubmissionUnconfirmed(state: NativeSessionState, submissionId: string, clientUserMessageId: string | undefined, error: NativeSessionError): NativeSessionState {
   const matchedEntry = Object.entries(state.items).find(
-    ([, item]) => item.optimistic && isUserMessageItem(item) && ((clientUserMessageId ? userMessageClientIds(item).includes(clientUserMessageId) : false) || stringValue(item.payload.submissionId) === submissionId),
+    ([, item]) => isUnacceptedTranscriptMessage(item) && isUserMessageItem(item) && ((clientUserMessageId ? userMessageClientIds(item).includes(clientUserMessageId) : false) || stringValue(item.payload.submissionId) === submissionId),
   );
   if (!matchedEntry) return { ...state, error };
   const [key, previous] = matchedEntry;
@@ -1861,24 +1791,13 @@ function markSteeringSubmissionUnconfirmed(state: NativeSessionState, submission
   };
 }
 
-function hasPendingSteeringProjection(items: Record<string, NativeSessionItemBuffer>, submission: NativeQueuedSubmission): boolean {
-  if (submission.status !== 'queued' && submission.status !== 'dispatching') return false;
-  if (submission.providerTurnId) return false;
-  return Object.values(items).some(
-    (item) =>
-      item.optimistic &&
-      isUserMessageItem(item) &&
-      stringValue(item.payload.delivery) === 'steer_now' &&
-      item.status !== 'failed' &&
-      item.status !== 'unconfirmed' &&
-      ((submission.clientUserMessageId ? userMessageClientIds(item).includes(submission.clientUserMessageId) : false) || stringValue(item.payload.submissionId) === submission.id),
-  );
-}
-
 function removeQueuedSubmissionProjection(state: NativeSessionState, submissionId: string, requestedClientUserMessageId: string | undefined, queue: NativeQueueSnapshot): NativeSessionState {
+  if (state.queue && queue.throughEventSeq < state.queue.throughEventSeq) return state;
   const clientUserMessageId = requestedClientUserMessageId ?? state.queue?.submissions.find((submission) => submission.id === submissionId)?.clientUserMessageId;
   const removedKeys = Object.entries(state.items)
-    .filter(([, item]) => item.optimistic && isUserMessageItem(item) && ((clientUserMessageId ? userMessageClientIds(item).includes(clientUserMessageId) : false) || stringValue(item.payload.submissionId) === submissionId))
+    .filter(
+      ([, item]) => isUnacceptedTranscriptMessage(item) && isUserMessageItem(item) && ((clientUserMessageId ? userMessageClientIds(item).includes(clientUserMessageId) : false) || stringValue(item.payload.submissionId) === submissionId),
+    )
     .map(([key]) => key);
   if (removedKeys.length === 0) {
     return { ...state, queue, conversationState: conversationStateFromQueue(queue, state) };
@@ -1912,7 +1831,8 @@ function submissionUserMessageItem(conversationId: string, threadId: string, sub
     optimistic: submission.status !== 'completed' && submission.status !== 'resolved',
     clientUserMessageId: submission.clientUserMessageId,
     durableClientUserMessageId: submission.clientUserMessageId,
-    timelineAt: submission.createdAt ?? submission.updatedAt,
+    messageCreatedAt: submission.createdAt,
+    timelineAt: submission.createdAt,
     updatedAt: submission.updatedAt ?? submission.createdAt,
   };
 }

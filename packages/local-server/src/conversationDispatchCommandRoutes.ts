@@ -44,6 +44,8 @@ interface RouteResponse<T = unknown> {
 }
 
 export interface ConversationDispatchCommandRouteOperations {
+  /** 命令完成并发布事件后读取队列；回执不重复发送过期快照。 */
+  readQueueState(params: ConversationParams): unknown;
   changeSet(input: { params: TurnParams; action: 'undo' | 'reapply'; changeSetId: string; expectedState: 'applied' | 'undone'; operationIdentity: string }): Promise<unknown>;
   message(input: {
     params: ConversationParams;
@@ -133,7 +135,7 @@ export function registerConversationDispatchCommandRoutes(options: {
         isExplicitRejection: isExplicitRouteRejection,
       });
       operations.afterMessageAccepted({ params: request.params, message: parsed.input, result: executed.result, replayed: executed.replayed });
-      return reply.code(executed.result.statusCode).send(executed.result.body);
+      return reply.code(executed.result.statusCode).send({ ...(executed.result.body as object), queue: operations.readQueueState(request.params) });
     } catch (error) {
       return sendRouteError(reply, error);
     }
@@ -152,7 +154,7 @@ export function registerConversationDispatchCommandRoutes(options: {
         mutateBusinessState: () => operations.queueUpdate({ params: request.params, content }),
       });
       afterCore(executed.replayed, 'queue_update', request.params, executed.result);
-      return executed.result;
+      return operations.readQueueState(request.params);
     } catch (error) {
       return sendRouteError(reply, error);
     }
@@ -169,7 +171,7 @@ export function registerConversationDispatchCommandRoutes(options: {
         mutateBusinessState: () => operations.queueRetry({ params: request.params }),
       });
       afterCore(executed.replayed, 'queue_retry', request.params, executed.result);
-      return reply.code(202).send(executed.result);
+      return reply.code(202).send(operations.readQueueState(request.params));
     } catch (error) {
       return sendRouteError(reply, error);
     }
@@ -187,7 +189,7 @@ export function registerConversationDispatchCommandRoutes(options: {
         mutateBusinessState: () => operations.queueReroute({ params: request.params, prepared }),
       });
       afterCore(executed.replayed, 'queue_reroute', request.params, executed.result);
-      return reply.code(202).send(executed.result);
+      return reply.code(202).send(operations.readQueueState(request.params));
     } catch (error) {
       return sendRouteError(reply, error);
     }
@@ -204,7 +206,7 @@ export function registerConversationDispatchCommandRoutes(options: {
         mutateBusinessState: () => operations.queueDelete({ params: request.params }),
       });
       afterCore(executed.replayed, 'queue_delete', request.params, executed.result);
-      return executed.result;
+      return operations.readQueueState(request.params);
     } catch (error) {
       return sendRouteError(reply, error);
     }
@@ -232,7 +234,7 @@ export function registerConversationDispatchCommandRoutes(options: {
           }),
         isExplicitRejection: isExplicitRouteRejection,
       });
-      return reply.code(202).send(executed.result);
+      return reply.code(202).send({ ...(executed.result as object), queue: operations.readQueueState(request.params) });
     } catch (error) {
       return sendRouteError(reply, error);
     }
@@ -304,7 +306,7 @@ export function registerConversationDispatchCommandRoutes(options: {
             }),
           isExplicitRejection: isExplicitRouteRejection,
         });
-        return reply.code(202).send(executed.result);
+        return reply.code(202).send({ ...(executed.result as object), queue: operations.readQueueState(request.params) });
       } catch (error) {
         return sendRouteError(reply, error);
       }
@@ -342,7 +344,7 @@ export function registerConversationDispatchCommandRoutes(options: {
       if (parsed.input.intent !== 'check' && parsed.input.intent !== 'continue') throw routeError('ZEUS_CONVERSATION_DISPATCH_COMMAND_INVALID', 'intent must be check or continue.', 400);
       /** 只读检查不记录外部写入开始，失败可安全再次检查。 */
       const intent = parsed.input.intent;
-      const executed = await application.executeExternal({
+      await application.executeExternal({
         parsed,
         destinationId: 'conversation-queue-recover',
         resourceId: request.params.conversationId,
@@ -351,7 +353,7 @@ export function registerConversationDispatchCommandRoutes(options: {
         invoke: () => operations.queueRecover({ params: request.params, operationIdentity: parsed.operationIdentity, intent }),
         isExplicitRejection: isExplicitRouteRejection,
       });
-      return reply.code(202).send(executed.result);
+      return reply.code(202).send(operations.readQueueState(request.params));
     } catch (error) {
       return sendRouteError(reply, error);
     }
@@ -372,7 +374,7 @@ export function registerConversationDispatchCommandRoutes(options: {
         mutateBusinessState: () => operations.queueReorder({ params: request.params, orderedSubmissionIds }),
       });
       afterCore(executed.replayed, 'queue_reorder', request.params, executed.result);
-      return executed.result;
+      return operations.readQueueState(request.params);
     } catch (error) {
       return sendRouteError(reply, error);
     }
@@ -417,7 +419,7 @@ export function registerConversationDispatchCommandRoutes(options: {
     try {
       const parsed = parseConversationCommand(request, commandType);
       assertExactInputKeys(parsed.input, [], parsed.command.commandType);
-      const executed = await application.executeExternal({
+      await application.executeExternal({
         parsed,
         destinationId,
         resourceId: request.params.conversationId,
@@ -425,7 +427,7 @@ export function registerConversationDispatchCommandRoutes(options: {
         invoke: () => invoke(parsed.operationIdentity),
         isExplicitRejection: isExplicitRouteRejection,
       });
-      return reply.code(202).send(executed.result);
+      return reply.code(202).send(operations.readQueueState(request.params));
     } catch (error) {
       return sendRouteError(reply, error);
     }

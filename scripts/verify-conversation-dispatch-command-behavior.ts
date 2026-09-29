@@ -276,6 +276,7 @@ try {
     };
 
     observed.recoveryIntents = await verifyRecoveryIntents(application, deliveries);
+    observed.queueReceiptWatermark = await verifyQueueReceiptWatermark(application);
     observed.queueSteerWriteBoundary = await verifyQueueSteerWriteBoundary(application, deliveries);
     const structure = await inspectStructure();
     observed.structure = structure;
@@ -317,6 +318,46 @@ try {
 }
 
 /** 在真实路由与账本上检查两个 Provider 共用的写前拒绝和写后未知边界。 */
+/** 真实 HTTP 与命令账本验证：变更后的队列水位不能来自旧的幂等结果。 */
+async function verifyQueueReceiptWatermark(application: ConversationDispatchCommandApplication) {
+  /** 每次发布队列事件才推进既有会话水位。 */
+  let throughEventSeq = 7;
+  /** 记录真实变更次数，重试命令不能再次删除。 */
+  let mutations = 0;
+  /** 返回独立对象，避免引用共享掩盖旧回执。 */
+  const queue = () => ({ throughEventSeq, state: { type: 'idle' }, submissions: [] });
+  /** 复用生产路由和命令执行边界。 */
+  const server = Fastify();
+  registerConversationDispatchCommandRoutes({
+    server,
+    application,
+    operations: {
+      readQueueState: queue,
+      queueDelete: () => {
+        mutations++;
+        return queue();
+      },
+      afterCoreAccepted: () => {
+        throughEventSeq++;
+      },
+    } as ConversationDispatchCommandRouteOperations,
+    sendNativeError: (reply, error) => reply.code(500).send({ error: String(error) }),
+    sendChangeSetError: (reply) => reply.code(500).send({ error: 'unexpected' }),
+  });
+  try {
+    /** 原命令在另一个窗口更新队列后原样重放。 */
+    const request = commandRequest({ label: 'queue-watermark', commandType: conversationDispatchCommandTypes.queueDelete, scopeKind: 'submission', scopeId: 'watermark-submission', operationIdentity: 'queue-watermark-delete', input: {} });
+    /** 沿用真实路由，核对完成后读取的水位。 */
+    const send = () => server.inject({ method: 'DELETE', url: '/api/projects/watermark-project/conversations/watermark-conversation/queue/watermark-submission', payload: request.body });
+    assertProbe((await send()).json().throughEventSeq === 8, '删除回执必须包含发布事件后的水位。');
+    throughEventSeq = 10;
+    assertProbe((await send()).json().throughEventSeq === 10 && mutations === 1, '重复命令必须返回当前队列，且不能重新执行删除。');
+    return { afterPublish: 8, replayWatermark: 10, mutationCount: mutations };
+  } finally {
+    await server.close();
+  }
+}
+
 async function verifyQueueSteerWriteBoundary(application: ConversationDispatchCommandApplication, deliveries: CommandDeliveryRepository) {
   /** 只控制末端 Provider 行为，路由、去重和回执均运行产品实现。 */
   const server = Fastify();
@@ -326,6 +367,8 @@ async function verifyQueueSteerWriteBoundary(application: ConversationDispatchCo
     server,
     application,
     operations: {
+      // 变更回执读取当前权威队列，不复用命令账本里的旧快照。
+      readQueueState: () => ({ throughEventSeq: 1, state: { type: 'idle' }, submissions: [] }),
       queueSendNow: async ({ params, providerWriteLifecycle }) => {
         calls.set(params.submissionId, (calls.get(params.submissionId) ?? 0) + 1);
         if (params.submissionId.endsWith('rejected')) throw Object.assign(new Error('队首检查未通过'), { code: 'ZEUS_NATIVE_QUEUE_HEAD_REQUIRED', statusCode: 409 });
@@ -593,6 +636,8 @@ async function verifyRecoveryIntents(application: ConversationDispatchCommandApp
     server,
     application,
     operations: {
+      // 变更回执读取当前权威队列，不复用命令账本里的旧快照。
+      readQueueState: () => ({ throughEventSeq: 1, state: { type: 'idle' }, submissions: [] }),
       queueRecover: async ({ intent }) => {
         if (intent === 'continue') {
           continuations += 1;

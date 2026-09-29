@@ -1192,11 +1192,13 @@ export function createConversationApplicationOperations(dependencies: Conversati
     };
   }
 
-  function toNativeQueueApiSnapshot(conversation: ZeusConversationRecord, submissions = conversationSubmissions.listQueueByConversation(conversation.id)) {
+  function toNativeQueueApiSnapshot(conversation: ZeusConversationRecord, submissions = conversationSubmissions.listQueueProjectionByConversation(conversation.id)) {
     const state = inferNativeConversationSnapshotState(conversation);
     // 目标轮次不能隐藏暂停项；它仍会阻塞队首，必须向界面暴露原始恢复原因。
-    const queuedSubmissions = submissions.filter((submission) => submission.status === 'queued' || submission.status === 'paused');
+    const queuedSubmissions = submissions;
     return {
+      // 与实时事件共用会话同步水位，不使用更新时间判断快照新旧。
+      throughEventSeq: db.get<{ latest_sequence: number }>('SELECT latest_sequence FROM conversation_sync_event_streams WHERE conversation_id = ? AND is_current = 1', [conversation.id])?.latest_sequence ?? 0,
       state,
       waitReason: inferNativeQueueWaitReason(conversation, state, queuedSubmissions),
       submissions: queuedSubmissions.map((submission, index) => toNativeSubmission(submission, { includeRecoveryPayload: true, fallbackPosition: index + 1 })),

@@ -152,7 +152,7 @@ function sanitizeSessionStateForPersistence(state: NativeSessionState): NativeSe
   try {
     const authoritativeItemOrder = state.itemOrder.filter((key) => state.items[key] && !state.items[key].optimistic);
     const authoritativeItems = Object.fromEntries(authoritativeItemOrder.map((key) => [key, state.items[key]]));
-    const emptyQueue = { state: { type: 'idle' as const }, submissions: [] };
+    const emptyQueue = { throughEventSeq: 0, state: { type: 'idle' as const }, submissions: [] };
     const resumedSnapshot = resumeCachedConversationSnapshot(state.snapshot);
     return {
       ...state,

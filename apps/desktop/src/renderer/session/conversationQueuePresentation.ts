@@ -51,7 +51,13 @@ export function orderTranscriptItemsWithQueue(items: readonly NativeSessionItemB
 /** 沿用提交的稳定队列顺序，保留模型接手前的消息及发送失败后的重试入口。 */
 export function visibleQueuedSubmissions(queue: NativeQueueSnapshot | null): NativeQueuedSubmission[] {
   return [...(queue?.submissions ?? [])]
-    .filter((submission) => submission.status === 'paused' || ((submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'steering' || submission.status === 'failed') && !submission.providerTurnId))
+    .filter(
+      (submission) =>
+        submission.status === 'paused' ||
+        submission.status === 'active' ||
+        submission.status === 'dispatching' ||
+        ((submission.status === 'queued' || submission.status === 'steering' || submission.status === 'failed') && !submission.providerTurnId),
+    )
     .sort((left, right) => left.position - right.position || (left.createdAt ?? '').localeCompare(right.createdAt ?? '') || left.id.localeCompare(right.id));
 }
 
@@ -111,7 +117,7 @@ export function composerQueuedSubmissions(state: NativeSessionState): ComposerQu
         position: durable.length + index + 1,
         providerTurnId: null,
         pausedReason: null,
-        createdAt: item.timelineAt,
+        createdAt: item.messageCreatedAt,
         updatedAt: item.updatedAt,
         localOnly: true,
       },

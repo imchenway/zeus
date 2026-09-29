@@ -235,6 +235,8 @@ function decodeStoredEvent(record: ConversationSyncEventRecord): DurableConversa
       conversationSchemaGeneration,
       syncStreamGeneration: conversationSyncProtocolGeneration,
       sequence: record.sequence,
+      // 使用已经分配的同一事件序号；重放不会重新计算水位或改变幂等内容。
+      ...(payload.queue && typeof payload.queue === 'object' ? { queue: { ...payload.queue, throughEventSeq: record.sequence } } : {}),
       entityRevision,
       durabilityLevel: payload.durabilityLevel,
     },

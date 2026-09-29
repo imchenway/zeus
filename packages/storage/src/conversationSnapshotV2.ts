@@ -120,6 +120,15 @@ const modelHistoryProviderItemSql = `COALESCE(
     ELSE NULL
   END
 )`;
+/** 用户原始创建时间由提交或精确 Provider 消息身份取得，不使用确认/更新时间。 */
+const modelHistoryMessageCreatedAtSql = `CASE WHEN conversation_model_history.role = 'user' THEN COALESCE(
+  (SELECT created_at FROM conversation_submissions
+    WHERE id = conversation_model_history.submission_id AND conversation_id = conversation_model_history.conversation_id),
+  (SELECT created_at FROM conversation_messages
+    WHERE conversation_id = conversation_model_history.conversation_id AND role = 'user'
+      AND provider_item_id = CASE WHEN json_valid(content_json)
+        THEN json_extract(content_json, '$.providerItemId') END)
+) END`;
 const modelHistoryReasoningSummarySql = `CASE
   WHEN json_valid(reasoning_source_json)
    AND COALESCE(json_extract(reasoning_source_json, '$.readableSummary'), 0) = 1
@@ -283,6 +292,8 @@ export interface ConversationSnapshotV2TurnSummary {
 }
 
 export interface ConversationSnapshotV2ActiveItem {
+  /** 用户消息原始创建时间，独立于条目进度更新。 */
+  messageCreatedAt?: string;
   id: string;
   order: number;
   turnId: string;
@@ -409,6 +420,8 @@ export interface ConversationTimelinePageItem {
 }
 
 export interface ConversationModelHistoryPageItem {
+  /** 用户原始创建时间；非用户条目不携带。 */
+  messageCreatedAt?: string;
   id: string;
   sequence: number;
   turnId: string;
@@ -669,6 +682,7 @@ interface ModelHistoryProjectionRow {
   turn_id: string;
   submission_id: string | null;
   client_user_message_id: string | null;
+  message_created_at: string | null;
   provider_item_id: string | null;
   reasoning_summary: number;
   assistant_phase: string | null;
@@ -743,6 +757,7 @@ export class ConversationSnapshotV2Repository {
       turn_id: string;
       provider_turn_id: string | null;
       client_user_message_id: string | null;
+      message_created_at: string | null;
       provider_item_id: string | null;
       segment_id: string;
       role: string;
@@ -758,6 +773,7 @@ export class ConversationSnapshotV2Repository {
         conversation_model_history.turn_id, turn.provider_turn_id, turn.status,
         submission.client_message_id AS client_user_message_id,
         ${modelHistoryProviderItemSql} AS provider_item_id,
+              ${modelHistoryMessageCreatedAtSql} AS message_created_at,
         conversation_model_history.role, conversation_model_history.segment_id, conversation_model_history.confirmed_at,
         ${modelHistoryAssistantPhaseSql} AS assistant_phase,
         ${modelHistoryAssistantMetadataSql} AS assistant_metadata_json,
@@ -807,7 +823,7 @@ export class ConversationSnapshotV2Repository {
           clientUserMessageId: row.client_user_message_id,
           providerItemId: row.provider_item_id,
           sequence: row.sequence,
-          occurredAt: row.confirmed_at,
+          occurredAt: row.message_created_at ?? row.confirmed_at,
           prompt: questionExcerpt ? redactSensitivePreview(questionExcerpt.prompt).text : conversationNavigationExcerpt(text, 160),
           response: questionExcerpt ? redactSensitivePreview(questionExcerpt.response).text : '',
           status: row.status,
@@ -1113,6 +1129,7 @@ export class ConversationSnapshotV2Repository {
                  FROM conversation_submissions
                  WHERE id = conversation_model_history.submission_id) AS client_user_message_id,
                 ${modelHistoryProviderItemSql}                        AS provider_item_id,
+              ${modelHistoryMessageCreatedAtSql} AS message_created_at,
                 ${modelHistoryReasoningSummarySql}                    AS reasoning_summary,
                 ${modelHistoryAssistantPhaseSql}                      AS assistant_phase,
               ${modelHistoryAssistantMetadataSql} AS assistant_metadata_json,
@@ -1160,6 +1177,7 @@ export class ConversationSnapshotV2Repository {
                FROM conversation_submissions
                WHERE id = conversation_model_history.submission_id) AS client_user_message_id,
               ${modelHistoryProviderItemSql}                        AS provider_item_id,
+              ${modelHistoryMessageCreatedAtSql} AS message_created_at,
               ${modelHistoryReasoningSummarySql}                    AS reasoning_summary,
               ${modelHistoryAssistantPhaseSql}                      AS assistant_phase,
               ${modelHistoryAssistantMetadataSql} AS assistant_metadata_json,
@@ -1202,6 +1220,7 @@ export class ConversationSnapshotV2Repository {
       `SELECT id, sequence, turn_id, submission_id,
               (SELECT client_message_id FROM conversation_submissions WHERE id = conversation_model_history.submission_id) AS client_user_message_id,
               ${modelHistoryProviderItemSql} AS provider_item_id,
+              ${modelHistoryMessageCreatedAtSql} AS message_created_at,
               ${modelHistoryReasoningSummarySql} AS reasoning_summary,
               ${modelHistoryAssistantPhaseSql} AS assistant_phase,
               ${modelHistoryAssistantMetadataSql} AS assistant_metadata_json,
@@ -1734,6 +1753,7 @@ export class ConversationSnapshotV2Repository {
       started_at: string | null;
       completed_at: string | null;
       updated_at: string;
+      message_created_at: string | null;
     }>(
       `SELECT *
          FROM (
@@ -1745,6 +1765,10 @@ export class ConversationSnapshotV2Repository {
               CASE WHEN json_valid(payload_projection_json) THEN json_extract(payload_projection_json, '$.delivery') ELSE NULL END AS delivery,
               CASE WHEN json_valid(payload_projection_json) THEN json_extract(payload_projection_json, '$.protocolFamily') ELSE NULL END AS protocol_family,
               CASE WHEN json_valid(payload_projection_json) THEN json_extract(payload_projection_json, '$.stageId') ELSE NULL END AS stage_id,
+              (SELECT message.created_at FROM conversation_messages AS message
+                WHERE message.conversation_id = conversation_provider_item_states.conversation_id
+                  AND message.provider_item_id = conversation_provider_item_states.provider_item_id
+                  AND message.role = 'user') AS message_created_at,
               COUNT(*) OVER () AS total_count,
               projection_truncated, started_at, completed_at, updated_at
          FROM conversation_provider_item_states
@@ -1785,6 +1809,7 @@ export class ConversationSnapshotV2Repository {
         turnId,
         providerItemId: row.provider_item_id,
         itemType: row.item_type,
+        ...(row.message_created_at ? { messageCreatedAt: row.message_created_at } : {}),
         status: row.status,
         phase: row.phase,
         protocolFamily: row.protocol_family,
@@ -1844,6 +1869,7 @@ export class ConversationSnapshotV2Repository {
       `SELECT id, sequence, turn_id, submission_id,
               (SELECT client_message_id FROM conversation_submissions WHERE id = conversation_model_history.submission_id) AS client_user_message_id,
               ${modelHistoryProviderItemSql} AS provider_item_id,
+              ${modelHistoryMessageCreatedAtSql} AS message_created_at,
               0 AS reasoning_summary,
               NULL AS assistant_phase,
               NULL AS assistant_metadata_json,
@@ -1870,6 +1896,7 @@ export class ConversationSnapshotV2Repository {
       `SELECT id, sequence, turn_id, submission_id,
               (SELECT client_message_id FROM conversation_submissions WHERE id = conversation_model_history.submission_id) AS client_user_message_id,
               ${modelHistoryProviderItemSql} AS provider_item_id,
+              ${modelHistoryMessageCreatedAtSql} AS message_created_at,
               ${modelHistoryReasoningSummarySql} AS reasoning_summary,
               ${modelHistoryAssistantPhaseSql} AS assistant_phase,
               ${modelHistoryAssistantMetadataSql} AS assistant_metadata_json,
@@ -1988,6 +2015,7 @@ export class ConversationSnapshotV2Repository {
       role: row.role,
       toolPairId: row.tool_pair_id,
       confirmedAt: row.confirmed_at,
+      ...(row.message_created_at ? { messageCreatedAt: row.message_created_at } : {}),
       actorKind: row.actor_kind,
       actorId: row.actor_id,
       actor: parseJsonRecordOrNull(row.actor_snapshot_json),

@@ -1778,6 +1778,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     server,
     application: conversationDispatchCommands,
     operations: {
+      readQueueState: (params) => toNativeQueueApiSnapshot(requireNativeQueueConversation(params)),
       changeSet: async ({ params, action, changeSetId, expectedState, operationIdentity }) =>
         turnChangeSetService.operate({
           projectId: params.projectId,
