@@ -5,6 +5,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { promisify } from 'node:util';
 import { homedir } from 'node:os';
 import type { CodexAppServerManager, CodexSkillMetadata, CodexSkillScope, CodexSkillsListEntry } from '@zeus/ai-runtime';
+import { skillFrontmatterScalar } from './skillFrontmatter.js';
 
 const execFileAsync = promisify(execFile);
 const maximumSkillNodes = 5_000;
@@ -327,8 +328,8 @@ async function inspectSkillSource(sourceDirectory: string): Promise<{ name: stri
   } catch {
     throw new CodexSkillServiceError('ZEUS_CODEX_SKILL_INVALID', 'Skill 根目录必须包含 SKILL.md。', 422);
   }
-  const name = frontmatterScalar(skillMarkdown, 'name');
-  const description = frontmatterScalar(skillMarkdown, 'description');
+  const name = skillFrontmatterScalar(skillMarkdown, 'name');
+  const description = skillFrontmatterScalar(skillMarkdown, 'description');
   if (!name || !description) throw new CodexSkillServiceError('ZEUS_CODEX_SKILL_INVALID', 'SKILL.md frontmatter 必须包含非空 name 和 description。', 422);
   if ([...name].length > 100 || /[\r\n\0]/u.test(name)) throw new CodexSkillServiceError('ZEUS_CODEX_SKILL_INVALID', 'Skill name 不能超过 100 个字符或包含换行。', 422);
   return { name, description };
@@ -381,43 +382,6 @@ async function toDescriptor(skill: CodexSkillMetadata, skillsRoot: string, cwd: 
     ...(skill.interface ? { interface: skill.interface } : {}),
     ...(skill.dependencies ? { dependencies: skill.dependencies } : {}),
   };
-}
-
-function frontmatterScalar(markdown: string, key: string): string | null {
-  const normalized = markdown.replaceAll('\r\n', '\n');
-  if (!normalized.startsWith('---\n')) return null;
-  const end = normalized.indexOf('\n---', 4);
-  if (end < 0) return null;
-  const lines = normalized.slice(4, end).split('\n');
-  const keyPattern = new RegExp(`^${key}\\s*:\\s*(.*)$`, 'u');
-  const lineIndex = lines.findIndex((line) => keyPattern.test(line));
-  if (lineIndex < 0) return null;
-  const raw = keyPattern.exec(lines[lineIndex]!)?.[1]?.trim() ?? '';
-  if (/^[>|][+-]?(?:\s+#.*)?$/u.test(raw)) {
-    const blockLines: string[] = [];
-    for (let index = lineIndex + 1; index < lines.length; index += 1) {
-      const line = lines[index]!;
-      if (line.trim() && !/^\s/u.test(line)) break;
-      blockLines.push(line);
-    }
-    const nonEmptyIndents = blockLines.filter((line) => line.trim()).map((line) => /^\s*/u.exec(line)?.[0].length ?? 0);
-    if (nonEmptyIndents.length === 0) return null;
-    const indentation = Math.min(...nonEmptyIndents);
-    const values = blockLines.map((line) => line.slice(Math.min(indentation, line.length)).trimEnd());
-    const value = raw.startsWith('>') ? values.join(' ').replace(/\s+/gu, ' ').trim() : values.join('\n').trim();
-    return value || null;
-  }
-  if (!raw) return null;
-  if (raw.startsWith('"') && raw.endsWith('"')) {
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      return typeof parsed === 'string' ? parsed.trim() : null;
-    } catch {
-      return null;
-    }
-  }
-  if (raw.startsWith("'") && raw.endsWith("'")) return raw.slice(1, -1).replaceAll("''", "'").trim();
-  return raw.replace(/\s+#.*$/u, '').trim();
 }
 
 function skillDirectory(path: string): string {

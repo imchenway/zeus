@@ -16,6 +16,7 @@ import {
 } from '@zeus/storage';
 import type { SecretStore } from './securityCore.js';
 import { inspectZeusPluginDirectory, ZeusPluginManifestError, type ZeusPluginManifestInspection } from './zeusPluginManifest.js';
+import { skillFrontmatterScalar } from './skillFrontmatter.js';
 import { discoverMarketplace, inspectSafeSourceTree, materializePluginSource, normalizePluginSource, ZeusPluginSourceError, type ZeusMarketplaceEntry, type ZeusPluginDirectSource } from './zeusPluginSource.js';
 
 const maximumMarketplaceNodes = 25_000;
@@ -130,6 +131,10 @@ export function createZeusPluginService(options: {
     for (const descriptor of plugins) {
       if (!descriptor.plugin.enabled || descriptor.providerLegacyConflict) continue;
       for (const skill of descriptor.revision.components.skills) {
+        /** 旧快照可能只保存了 YAML 块标记，按冻结文件恢复真实描述。 */
+        const skillRoot = resolveComponentPath(descriptor.revision.installPath, skill.path);
+        /** 新快照直接复用已解析描述，避免无意义磁盘读取。 */
+        const description = /^[>|][+-]?$/u.test(skill.description) ? (skillFrontmatterScalar(await readFile(join(skillRoot, 'SKILL.md'), 'utf8'), 'description') ?? skill.description) : skill.description;
         skills.push({
           id: `plugin:${descriptor.plugin.id}:skill:${skill.id}`,
           namespace: `${descriptor.plugin.name}/${skill.name}`,
@@ -137,8 +142,8 @@ export function createZeusPluginService(options: {
           pluginName: descriptor.plugin.name,
           pluginRevisionId: descriptor.revision.id,
           name: skill.name,
-          description: skill.description,
-          path: resolveComponentPath(descriptor.revision.installPath, skill.path),
+          description,
+          path: skillRoot,
           scope: descriptor.plugin.scope,
           sourceKind: descriptor.plugin.sourceKind,
         });
