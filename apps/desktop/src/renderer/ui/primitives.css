@@ -261,6 +261,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   transition-timing-function: var(--zeus-motion-ease-out), var(--zeus-motion-ease-out), linear, step-end;
 }
 
+/* 可见范围展开由原生高度动画接管；保留内容测量，退出期间继续禁止交互。 */
+.macos-ai-app [data-zeus-primitive='collapsible'][data-viewport-reveal='true'] {
+  content-visibility: visible;
+  transition: none;
+}
+
 /* 悬停保留浅紫色，按下与选中逐级加深，不把颜色深浅混作不同操作。 */
 .macos-ai-app {
   --zeus-interaction-hover: var(--zeus-brand-hover);

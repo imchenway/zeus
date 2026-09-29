@@ -636,7 +636,7 @@ export function SessionTurnProcessDisclosure(props: {
           <CaretDown className="session-turn-process-caret" aria-hidden="true" weight="bold" />
         </button>
       </div>
-      <Collapsible id={bodyId} open={open}>
+      <Collapsible id={bodyId} open={open} revealWithinViewport>
         <div className="session-turn-process-body">
           {props.loading ? (
             <p className="session-v2-page-status" role="status" aria-live="polite">
