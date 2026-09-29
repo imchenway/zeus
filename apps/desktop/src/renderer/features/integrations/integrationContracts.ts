@@ -129,12 +129,14 @@ export interface ModelConnectionDiagnostic {
   /** 保留连接检查的底层原因，供中英文错误摘要与详情使用。 */
   cause?: UserFacingErrorCause;
   ok: boolean;
-  stage: 'configuration' | 'credential' | 'catalog';
+  stage: 'configuration' | 'credential' | 'inference';
   code: string;
   message: string;
-  /** 从开始检查到鉴权目录请求完成或失败的毫秒数。 */
+  /** 从开始检查到真实模型请求完成或失败的毫秒数。 */
   latencyMs: number;
   checkedAt: string;
+  /** 本次真实请求选择的模型；未进入请求阶段时为空。 */
+  testedModelId: string | null;
   discoveredModelCount: number | null;
 }
 

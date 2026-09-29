@@ -463,16 +463,97 @@
     justify-content: flex-end;
     min-inline-size: 0;
   }
+  /* 网络页先说明“当前运行”和“已保存”，避免把待重启配置误当成供应商检查所用配置。 */
+  .network-runtime-summary {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-block: 1px solid var(--zeus-product-border);
+  }
+  .network-runtime-summary > div {
+    display: grid;
+    gap: 4px;
+    min-inline-size: 0;
+    padding: 14px 18px 14px 0;
+  }
+  .network-runtime-summary > div + div {
+    padding-inline: 18px 0;
+    border-inline-start: 1px solid var(--zeus-product-border);
+  }
+  .network-runtime-summary span {
+    color: var(--zeus-product-muted);
+    font-size: 11px;
+    font-weight: 650;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .network-runtime-summary strong {
+    overflow-wrap: anywhere;
+    font-size: 13px;
+    font-weight: 620;
+  }
+  .network-runtime-summary small {
+    color: var(--zeus-product-muted);
+    font-size: 11px;
+    line-height: 1.5;
+  }
+  .network-runtime-summary [data-state='restart'] small {
+    color: var(--zeus-status-warning-text, #8a5b12);
+  }
+  /* 三个工作区按操作顺序排列，使用留白和细分隔而非卡片堆叠。 */
+  .network-settings-group {
+    display: grid;
+    gap: 0;
+    padding-block: 10px 24px;
+    border-block-end: 1px solid var(--zeus-product-border);
+  }
+  .network-settings-group:last-of-type {
+    border-block-end: 0;
+  }
+  .network-settings-group-heading {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr);
+    align-items: start;
+    gap: 10px;
+    padding-block: 14px 4px;
+  }
+  .network-settings-group-heading > span {
+    display: grid;
+    inline-size: 24px;
+    block-size: 24px;
+    place-items: center;
+    border-radius: 999px;
+    background: var(--zeus-product-selected);
+    color: var(--zeus-product-text-subtle);
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .network-settings-group-heading h3 {
+    margin: 1px 0 3px;
+    color: var(--zeus-product-text);
+    font-size: 15px;
+    line-height: 1.35;
+  }
+  .network-settings-group-heading p {
+    margin: 0;
+    color: var(--zeus-product-muted);
+    font-size: 12px;
+    line-height: 1.55;
+  }
+  .network-settings-group .native-control-row {
+    min-block-size: 64px;
+    padding-block: 12px;
+  }
   /* 代理模式保留原生单选键盘操作，与独立端口输入使用同页对齐线。 */
   .network-proxy-modes {
     display: grid;
-    gap: 12px;
+    gap: 4px;
     inline-size: 100%;
   }
   .network-proxy-modes label {
     display: flex;
     align-items: center;
     gap: 8px;
+    min-block-size: 28px;
   }
   .network-proxy-modes input[type='radio'] {
     appearance: auto;
@@ -511,13 +592,22 @@
   }
   .network-proxy-results {
     display: grid;
-    gap: 12px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0;
+    margin: 0;
+    border-block: 1px solid var(--zeus-product-border);
     font-size: 12px;
   }
   .network-proxy-results > div {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px 16px;
+    display: grid;
+    grid-template-columns: minmax(96px, auto) minmax(0, 1fr);
+    gap: 8px 14px;
+    min-inline-size: 0;
+    padding-block: 12px;
+  }
+  .network-proxy-results > div + div {
+    padding-inline-start: 18px;
+    border-inline-start: 1px solid var(--zeus-product-border);
   }
   .network-proxy-results dt {
     font-weight: 600;
@@ -525,6 +615,15 @@
   .network-proxy-results dd {
     margin: 0;
     overflow-wrap: anywhere;
+  }
+  .network-proxy-results [data-state='checking'] dd {
+    color: var(--zeus-product-muted);
+  }
+  .network-proxy-results [data-state='success'] dd {
+    color: var(--zeus-product-success, #2f7d4a);
+  }
+  .network-proxy-results [data-state='failed'] dd {
+    color: var(--zeus-product-danger, #b42318);
   }
   /* 模型连接检测沿用设置行结构，清单直接承载模型来源、模型范围和结果。 */
   .network-model-connection-check-row .native-control-slot > button {
@@ -544,9 +643,9 @@
   }
   .network-model-connection-results li {
     display: grid;
-    gap: 4px;
+    gap: 5px;
     min-inline-size: 0;
-    padding: 12px 0;
+    padding: 14px 0;
     border-block-end: 1px solid var(--zeus-product-border);
   }
   .network-model-connection-results li:nth-child(odd) {
@@ -565,11 +664,21 @@
     font-size: 12px;
     overflow-wrap: anywhere;
   }
-  .network-model-connection-results [data-state='success'] span {
-    color: var(--zeus-product-success, #2f7d4a);
+  .network-model-result {
+    display: grid;
+    gap: 3px;
+    padding-block-start: 4px;
   }
-  .network-model-connection-results [data-state='failed'] span {
+  .network-model-connection-results [data-state='checking'] .network-model-result > span {
+    color: var(--zeus-product-muted);
+  }
+  .network-model-connection-results [data-state='success'] .network-model-result > span {
+    color: var(--zeus-product-success, #2f7d4a);
+    font-weight: 600;
+  }
+  .network-model-connection-results [data-state='failed'] .network-model-result > span {
     color: var(--zeus-product-danger, #b42318);
+    font-weight: 600;
   }
   :where(.settings-config-row, .settings-matrix-row, .settings-state-row, .settings-log-row, .settings-data-portability-row) {
     display: grid;
@@ -1497,6 +1606,16 @@
     .network-proxy-check-row {
       grid-template-columns: minmax(0, 1fr);
     }
+    .network-runtime-summary,
+    .network-proxy-results {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .network-runtime-summary > div + div,
+    .network-proxy-results > div + div {
+      padding-inline: 0;
+      border-inline-start: 0;
+      border-block-start: 1px solid var(--zeus-product-border);
+    }
     .network-model-connection-results {
       grid-template-columns: minmax(0, 1fr);
     }
@@ -1512,6 +1631,18 @@
     }
   }
   @media (max-width: 640px) {
+    .network-proxy-check {
+      align-items: stretch;
+      flex-direction: column;
+    }
+    .network-proxy-check > button {
+      inline-size: 100%;
+      min-block-size: 36px;
+    }
+    .network-settings-group-heading {
+      grid-template-columns: 24px minmax(0, 1fr);
+      gap: 8px;
+    }
     .settings-sidebar-shell {
       padding: 64px 12px 12px;
       max-block-size: 220px;

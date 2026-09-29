@@ -34,20 +34,15 @@ export interface NetworkProxyConnectionResult {
   error?: 'timeout' | 'authentication' | 'connection';
 }
 
-/** 两条网络链路分别报告，不将浏览器可用误报为模型可用。 */
-export interface NetworkProxyCheckResult {
-  /** Chromium 网络检查。 */
-  browser: NetworkProxyConnectionResult;
-  /** 模型宿主使用的 Node 网络检查。 */
-  node: NetworkProxyConnectionResult;
-}
+/** 单次只检查一条网络链路，让较快结果无需等待另一条超时。 */
+export type NetworkProxyCheckTarget = 'browser' | 'node';
 
-/** Codex 订阅连接诊断；刷新账号凭据与模型目录，不发送收费推理请求。 */
+/** Codex 订阅连接诊断；最终成功必须完成一次真实模型请求。 */
 export interface CodexSubscriptionConnectionDiagnostic {
-  /** 成功表示订阅身份和模型目录均可用。 */
+  /** 成功表示本次真实模型请求已经完成。 */
   ok: boolean;
-  /** 失败发生在运行时、登录身份或模型目录阶段。 */
-  stage: 'runtime' | 'credential' | 'catalog';
+  /** 失败发生在运行时、登录身份、模型目录或真实请求阶段。 */
+  stage: 'runtime' | 'credential' | 'catalog' | 'inference';
   /** 稳定错误码供界面区分恢复方向。 */
   code: string;
   /** 已脱敏的用户可读结论。 */
@@ -56,6 +51,8 @@ export interface CodexSubscriptionConnectionDiagnostic {
   latencyMs: number;
   /** 本次官方目录返回的可用模型标识。 */
   modelIds: string[];
+  /** 本次真实请求实际选择的模型；未进入请求阶段时为空。 */
+  testedModelId: string | null;
   /** 订阅计划仅用于说明当前连接身份。 */
   planType: string | null;
   /** 诊断完成时间。 */
