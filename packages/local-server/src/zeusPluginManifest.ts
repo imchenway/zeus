@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { lstat, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { PluginComponentSnapshot } from '@zeus/storage';
+import { skillFrontmatterScalar } from './skillFrontmatter.js';
 
 const maximumPluginNodes = 10_000;
 const maximumPluginBytes = 256 * 1024 * 1024;
@@ -143,9 +144,8 @@ async function inspectSkills(pluginRoot: string, manifestValue: unknown): Promis
       if (isNodeError(error, 'ENOENT')) continue;
       throw error;
     }
-    const frontmatter = parseFrontmatter(content);
-    const skillName = requiredKebabName(frontmatter.name ?? entry.name, `Skill ${entry.name} name`);
-    const description = optionalText(frontmatter.description, 4_000);
+    const skillName = requiredKebabName(skillFrontmatterScalar(content, 'name') ?? entry.name, `Skill ${entry.name} name`);
+    const description = optionalText(skillFrontmatterScalar(content, 'description'), 4_000);
     if (!description) throw new ZeusPluginManifestError('ZEUS_PLUGIN_MANIFEST_INVALID', `Skill ${skillName} 缺少 description。`);
     skills.push({ id: skillName, name: skillName, description, path: normalizedRelative(pluginRoot, skillRoot) });
   }
@@ -356,28 +356,6 @@ function rejectUnpublishedCapabilities(manifest: Record<string, unknown>): void 
   if (unknown.length > 0) {
     throw new ZeusPluginManifestError('ZEUS_PLUGIN_COMPONENT_UNSUPPORTED', `Manifest 包含当前公开规范之外的字段：${unknown.join(', ')}`);
   }
-}
-
-function parseFrontmatter(content: string): Record<string, string> {
-  if (!content.startsWith('---\n') && !content.startsWith('---\r\n')) return {};
-  const normalized = content.replaceAll('\r\n', '\n');
-  const end = normalized.indexOf('\n---\n', 4);
-  if (end < 0) return {};
-  const result: Record<string, string> = {};
-  for (const line of normalized.slice(4, end).split('\n')) {
-    const separator = line.indexOf(':');
-    if (separator <= 0) continue;
-    const key = line.slice(0, separator).trim();
-    const raw = line.slice(separator + 1).trim();
-    if (!key || !raw) continue;
-    result[key] = stripYamlString(raw);
-  }
-  return result;
-}
-
-function stripYamlString(value: string): string {
-  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) return value.slice(1, -1).trim();
-  return value;
 }
 
 function canonicalJson(value: unknown): string {

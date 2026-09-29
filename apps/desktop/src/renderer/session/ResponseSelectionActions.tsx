@@ -325,7 +325,7 @@ function ResponseAnnotationEditor(props: {
               props.onClose();
             }}
           >
-            {zh ? '删除本轮' : 'Delete turn'}
+            {zh ? '删除' : 'Delete'}
           </button>
           <button type="button" onClick={props.onClose}>
             {zh ? '取消' : 'Cancel'}
