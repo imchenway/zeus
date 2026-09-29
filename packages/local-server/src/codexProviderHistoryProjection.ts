@@ -2,6 +2,7 @@ import { assistantMessageMetadata } from '@zeus/shared';
 import { readCodexTurnItems, type CodexThreadSnapshot, type CodexTurnSnapshot } from '@zeus/ai-runtime';
 import type { ConversationResource } from '@zeus/shared';
 import {
+  isProviderBlockingTurnFailure,
   providerFacet,
   type ConversationTurnStatus,
   projectConversationTurnFailure,
@@ -483,6 +484,10 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     const wasTerminal = preservesTerminalSubmission || existingTurn?.status === 'completed' || existingTurn?.status === 'interrupted' || existingTurn?.status === 'failed';
     const stateChanged = !existingTurn || existingTurn.status !== status;
     const turnProjectionChanged = !existingTurn || existingTurn.status !== status || existingTurn.clientSubmissionId !== clientSubmissionId || existingTurn.startedAt !== startedAt || existingTurn.completedAt !== completedAt;
+    /** 历史恢复与实时事件复用同一份官方失败记录和阻塞判断。 */
+    const failureRecord = classification === 'failed' ? providerTurnFailureRecord({ turn: providerTurn }, providerTurnFailure({ turn: providerTurn }, providerTurn.id)) : undefined;
+    /** 只有官方服务不可用类错误暂停会话，本地执行错误仍保持失败。 */
+    const providerBlocked = failureRecord ? isProviderBlockingTurnFailure(failureRecord) : false;
     let turn = turnProjectionChanged
       ? options.turns.upsert({
           ...(existingTurn ? { id: existingTurn.id } : {}),
@@ -491,7 +496,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
           providerTurnId: providerTurn.id,
           clientSubmissionId,
           status,
-          ...(classification === 'failed' ? { error: providerTurnFailureRecord({ turn: providerTurn }, providerTurnFailure({ turn: providerTurn }, providerTurn.id)) } : {}),
+          ...(failureRecord ? { error: failureRecord } : {}),
           startedAt,
           completedAt,
           createdAt: existingTurn?.createdAt ?? startedAt,
@@ -509,7 +514,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       turn = options.turns.upsert({
         ...turn,
         status: turn.status,
-        ...(classification === 'failed' ? { error: providerTurnFailureRecord({ turn: providerTurn }, providerTurnFailure({ turn: providerTurn }, providerTurn.id)) } : {}),
+        ...(failureRecord ? { error: failureRecord } : {}),
         updatedAt: timestamp,
       });
     }
@@ -536,17 +541,11 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
         });
       }
     } else {
-      const terminalReconciliation = reconcileTerminalTurnSubmissions(
-        conversation,
-        turn,
-        completedAt ?? timestamp,
-        classification === 'failed' ? providerTurnFailureRecord({ turn: providerTurn }, providerTurnFailure({ turn: providerTurn }, providerTurn.id)) : undefined,
-      );
+      const terminalReconciliation = reconcileTerminalTurnSubmissions(conversation, turn, completedAt ?? timestamp, failureRecord);
       // 重新读取旧终态只补齐历史，不再次暂停用户在故障处理后新发的消息。
       if (classification === 'failed' && !wasTerminal) {
-        const failureRecord = providerTurnFailureRecord({ turn: providerTurn }, providerTurnFailure({ turn: providerTurn }, providerTurn.id));
         for (const queued of submissions.filter((entry) => entry.status === 'queued')) {
-          options.submissions.updateStatus(queued.id, 'paused', { pausedReason: 'recovery_required', error: failureRecord });
+          options.submissions.updateStatus(queued.id, 'paused', { pausedReason: 'recovery_required', ...(failureRecord ? { error: failureRecord } : {}) });
         }
       }
       const interruptedQueue = classification === 'interrupted' && !wasTerminal ? interruptedQueueSubmissions(submissions) : [];
@@ -559,7 +558,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
         providerId: 'codex',
         providerThreadId,
         providerModel: conversation.providerModel,
-        providerState: classification === 'failed' ? 'failed' : recoveryRequired || interruptedWithQueue ? 'paused' : 'ready',
+        providerState: classification === 'failed' ? (providerBlocked ? 'paused' : 'failed') : recoveryRequired || interruptedWithQueue ? 'paused' : 'ready',
       });
       runStates.set(conversation.id, classification === 'failed' || recoveryRequired ? { type: 'paused', reason: 'recovery_required' } : interruptedWithQueue ? { type: 'paused', reason: 'interrupted' } : { type: 'idle' });
       options.execution.resolveWarning(conversation.id, 'provider_interaction_authority_missing', completedAt ?? timestamp);
@@ -582,7 +581,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
           providerTurnId: providerTurn.id,
           status: classification,
           completedAt: completedAt ?? timestamp,
-          ...(classification === 'failed' ? { error: projectConversationTurnFailure(providerTurnFailureRecord({ turn: providerTurn }, providerTurnFailure({ turn: providerTurn }, providerTurn.id))) } : {}),
+          ...(failureRecord ? { error: projectConversationTurnFailure(failureRecord) } : {}),
         });
       }
       const resultKey = `${conversation.id}:${providerTurn.id}`;
@@ -979,12 +978,14 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
         const failureParams = { turn: snapshotTurn };
         const failure = providerTurnFailure(failureParams, providerTurnId);
         const failureRecord = providerTurnFailureRecord(failureParams, failure);
+        /** 恢复待处理轮次时仍按官方错误字段区分服务阻塞与真实执行失败。 */
+        const providerBlocked = isProviderBlockingTurnFailure(failureRecord);
         const failedTurn = options.turns.upsert({ ...turn, status: 'failed', error: failureRecord, completedAt: timestamp, updatedAt: timestamp });
         reconcileTerminalTurnSubmissions(conversation, failedTurn, timestamp, failureRecord);
         for (const queued of submissions.filter((entry) => entry.status === 'queued')) {
           options.submissions.updateStatus(queued.id, 'paused', { pausedReason: 'recovery_required', error: failureRecord });
         }
-        options.conversations.bindProvider(conversation.id, { providerId: 'codex', providerThreadId: turn.providerThreadId, providerModel: conversation.providerModel, providerState: 'failed' });
+        options.conversations.bindProvider(conversation.id, { providerId: 'codex', providerThreadId: turn.providerThreadId, providerModel: conversation.providerModel, providerState: providerBlocked ? 'paused' : 'failed' });
         runStates.set(conversation.id, { type: 'paused', reason: 'recovery_required' });
         const resultKey = `${conversation.id}:${providerTurnId}`;
         if (turnResultWaiters.has(resultKey)) {
@@ -1013,6 +1014,8 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       const terminalTurns = options.turns
         .listByConversation(conversationId)
         .filter((turn) => Boolean(turn.providerTurnId && candidateTurnIds.has(turn.providerTurnId)) && (turn.status === 'completed' || turn.status === 'interrupted' || turn.status === 'failed'));
+      /** Provider 服务类失败即使已收口提交，也必须保持暂停，等待用户明确继续。 */
+      const providerBlocked = terminalTurns.some((turn) => isProviderBlockingTurnFailure(parseJsonRecord(turn.errorJson ?? '{}')));
       let requiresRecovery = false;
       for (const turn of terminalTurns) {
         const result = reconcileTerminalTurnSubmissions(conversation, turn, turn.completedAt ?? turn.updatedAt);
@@ -1031,7 +1034,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
         const unresolvedAcceptedDelivery = options.submissions
           .listByConversation(conversation.id)
           .some((submission) => submission.status === 'dispatching' || submission.status === 'active' || (submission.status === 'paused' && submission.pausedReason === 'recovery_required' && Boolean(submission.providerTurnId)));
-        if (!unresolvedAcceptedDelivery) {
+        if (!unresolvedAcceptedDelivery && !providerBlocked) {
           options.conversations.bindProvider(conversation.id, {
             providerId: 'codex',
             providerThreadId: conversation.providerThreadId,

@@ -735,7 +735,7 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ['AI 服务的账户用量或余额已达限制，暂时无法继续。请检查该服务的用量与账单。', 'The AI service account has reached its usage or credit limit. Check the service’s usage and billing.', 'settings'],
   ],
   [
-    ['rate_limit_exceeded', 'rate_limit_error', 'tooManyRequests'],
+    ['rateLimitExceeded', 'rate_limit_exceeded', 'rate_limit_error', 'tooManyRequests'],
     ['AI 服务收到的请求过多，暂时限制了使用。请等待限制解除后再继续。', 'The AI service is receiving too many requests and has temporarily limited access. Wait until the limit clears before continuing.'],
   ],
   [
@@ -747,8 +747,10 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ['与 AI 服务的连接未能建立，无法读取回复。请检查该服务的连接设置。', 'A connection to the AI service could not be established. Check the service’s connection settings.', 'settings'],
   ],
   [['responseStreamDisconnected'], ['AI 服务在回复结束前断开了连接，因此没有收到完整回复。', 'The AI service disconnected before finishing its response, so the reply is incomplete.']],
+  [['responseTooManyFailedAttempts'], ['AI 服务连续多次未能完成响应，当前请求已经停止。请稍后再继续。', 'The AI service failed to complete the response repeatedly, so this request has stopped. Try again later.']],
+  [['internalServerError'], ['AI 服务内部发生错误，当前请求无法完成。请等待服务恢复后再继续。', 'The AI service encountered an internal error and could not complete this request. Wait for the service to recover.']],
   [
-    ['model_not_found'],
+    ['model_not_found', 'modelUnavailable'],
     ['AI 服务找不到所选模型，或当前账号无权使用它。请检查模型名称和账号权限。', 'The AI service cannot find the selected model, or this account cannot access it. Check the model name and account access.', 'choose_model'],
   ],
   [

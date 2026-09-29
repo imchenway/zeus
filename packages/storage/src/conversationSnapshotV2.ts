@@ -580,6 +580,7 @@ interface TurnRow {
   error_message: string | null;
   error_provider_status: string | null;
   error_provider_info: string | null;
+  error_provider_http_status: number | null;
   error_additional_details: string | null;
   /** 读取已有原因记录，不修改历史数据。 */
   error_cause_json: string | null;
@@ -2258,6 +2259,16 @@ function turnSummarySelectSql(): string {
                    ELSE NULL
                  END AS error_provider_info,
                  CASE
+                   WHEN json_valid(error_json)
+                    AND json_type(error_json, '$.providerError.codexErrorInfo') = 'object'
+                     THEN (SELECT CASE
+                       WHEN json_type(value, '$.httpStatusCode') = 'integer'
+                         THEN json_extract(value, '$.httpStatusCode')
+                       ELSE NULL
+                     END FROM json_each(json_extract(error_json, '$.providerError.codexErrorInfo')) LIMIT 1)
+                   ELSE NULL
+                 END AS error_provider_http_status,
+                 CASE
                    WHEN json_valid(error_json) THEN
                      CASE
                        WHEN json_type(error_json, '$.providerError.additionalDetails') = 'text'
@@ -2296,6 +2307,7 @@ function turnSummarySelectSql(): string {
                  started_at, completed_at, created_at, updated_at, agent_kind`;
 }
 
+/** 把持久化轮次中的官方错误字段还原到统一的脱敏失败投影。 */
 function turnFailure(row: TurnRow): ConversationSnapshotV2TurnFailure | null {
   if (row.has_error !== 1) return null;
   return projectConversationTurnFailure({
@@ -2305,9 +2317,86 @@ function turnFailure(row: TurnRow): ConversationSnapshotV2TurnFailure | null {
     cause: parseJsonRecordOrNull(row.error_cause_json),
     providerError: {
       codexErrorInfo: row.error_provider_info,
+      httpStatusCode: row.error_provider_http_status,
       additionalDetails: row.error_additional_details,
     },
   });
+}
+
+/** Codex 明确表示外部服务暂不可继续的错误身份；这类失败只阻塞后续执行，不改写本轮失败事实。 */
+const providerBlockingErrorCodes = new Set([
+  'unauthorized',
+  'invalid_api_key',
+  'authentication_error',
+  'usageLimitExceeded',
+  'insufficient_quota',
+  'quota_exceeded',
+  'billing_hard_limit_reached',
+  'rateLimitExceeded',
+  'rate_limit_exceeded',
+  'rate_limit_error',
+  'tooManyRequests',
+  'model_not_found',
+  'modelUnavailable',
+  'serverOverloaded',
+  'internalServerError',
+  'httpConnectionFailed',
+  'responseStreamConnectionFailed',
+  'responseStreamDisconnected',
+  'responseTooManyFailedAttempts',
+]);
+
+/** 结构化 Provider 错误的内部判别结果，不进入公共协议。 */
+interface ProviderFailureIdentity {
+  code: string | null;
+  httpStatusCode: number | null;
+  structured: boolean;
+}
+
+/** 从字符串或对象形式的官方错误中读取判别字段与 HTTP 状态。 */
+function providerFailureIdentity(failure: Record<string, unknown>, providerError: Record<string, unknown>, rawMessage: string): ProviderFailureIdentity {
+  const codexErrorInfo = providerError.codexErrorInfo;
+  let code: string | null = null;
+  let httpStatusCode = boundedHttpStatusCode(providerError.httpStatusCode);
+  let structured = false;
+  if (typeof codexErrorInfo === 'string') {
+    structured = true;
+    code = boundedFailureIdentity(codexErrorInfo);
+  } else if (isRecord(codexErrorInfo)) {
+    structured = true;
+    const entry = Object.entries(codexErrorInfo)[0];
+    if (entry) {
+      code = boundedFailureIdentity(entry[0]);
+      if (isRecord(entry[1])) httpStatusCode = boundedHttpStatusCode(entry[1].httpStatusCode) ?? httpStatusCode;
+    }
+  }
+  if (!code && isRecord(failure.cause)) {
+    code = boundedFailureIdentity(typeof failure.cause.code === 'string' ? failure.cause.code : null);
+    structured = code !== null;
+  }
+  /** 历史 Codex 只上报 other 时，用官方稳定断流文案恢复原有安全语义。 */
+  if ((!code || code === 'other') && /stream disconnected before completion/iu.test(rawMessage)) code = 'responseStreamDisconnected';
+  return { code, httpStatusCode, structured };
+}
+
+/** 只接受有效 HTTP 状态码，避免任意 Provider 数据进入错误详情。 */
+function boundedHttpStatusCode(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 100 && value <= 599 ? value : null;
+}
+
+/** 判断官方结构化错误是否要求暂停会话与阻塞上层工作，禁止据此自动重发。 */
+export function isProviderBlockingTurnFailure(value: unknown): boolean {
+  const failure = isRecord(value) ? value : {};
+  const providerError = isRecord(failure.providerError) ? failure.providerError : {};
+  const rawMessage = (typeof failure.message === 'string' && failure.message.trim() ? failure.message : null) ?? (typeof providerError.message === 'string' && providerError.message.trim() ? providerError.message : null) ?? '';
+  const identity = providerFailureIdentity(failure, providerError, rawMessage);
+  return Boolean(
+    (identity.code && providerBlockingErrorCodes.has(identity.code)) ||
+    identity.httpStatusCode === 401 ||
+    identity.httpStatusCode === 403 ||
+    identity.httpStatusCode === 429 ||
+    (identity.httpStatusCode !== null && identity.httpStatusCode >= 500),
+  );
 }
 
 /** 实时事件与 Snapshot V2 共用同一个有界脱敏投影，未经脱敏的 Provider 错误不进入客户端协议。 */
@@ -2319,19 +2408,23 @@ export function projectConversationTurnFailure(value: unknown): ConversationSnap
     (typeof providerError.message === 'string' && providerError.message.trim() ? providerError.message : null) ??
     '智能体运行内核没有提供更具体的失败原因。';
   const message = sanitizeTurnFailureText(rawMessage);
-  /** Provider 可能把已知断流统称为 other；用稳定错误文本补回产品可识别的原因。 */
-  const reportedProviderInfo = boundedFailureIdentity(typeof providerError.codexErrorInfo === 'string' ? providerError.codexErrorInfo : null);
-  /** 只收窄已确认的断流文案，未知 other 仍保持未知，避免错误归因。 */
-  const providerInfo = (!reportedProviderInfo || reportedProviderInfo === 'other') && /stream disconnected before completion/iu.test(rawMessage) ? 'responseStreamDisconnected' : reportedProviderInfo;
-  const capacity = providerInfo === 'serverOverloaded' || /selected model is at capacity/iu.test(message);
+  const providerIdentity = providerFailureIdentity(failure, providerError, rawMessage);
+  const providerInfo = providerIdentity.code;
+  /** 新事件只按官方字段识别容量错误；没有结构化字段的历史记录保留原兼容判断。 */
+  const capacity = providerInfo === 'serverOverloaded' || (!providerIdentity.structured && /selected model is at capacity/iu.test(message));
   const detail = typeof providerError.additionalDetails === 'string' ? sanitizeTurnFailureText(providerError.additionalDetails) : '';
+  const diagnosticDetails = [providerIdentity.httpStatusCode ? `HTTP 状态：${providerIdentity.httpStatusCode}` : '', detail && detail !== message ? detail : ''].filter(Boolean);
   return {
-    ...(isRecord(failure.cause) && Object.keys(failure.cause).length > 0 ? { cause: userFacingErrorCause(failure.cause) } : providerInfo ? { cause: userFacingErrorCause({ code: providerInfo, message: detail || message }) } : {}),
-    category: capacity ? 'rate_limit' : classifyTurnFailure(message),
+    ...(isRecord(failure.cause) && Object.keys(failure.cause).length > 0
+      ? { cause: userFacingErrorCause(failure.cause) }
+      : providerInfo
+        ? { cause: userFacingErrorCause({ code: providerInfo, message, ...(diagnosticDetails.length > 0 ? { details: diagnosticDetails.join('\n') } : {}) }) }
+        : {}),
+    category: classifyTurnFailure(providerInfo, providerIdentity.httpStatusCode, message, !providerIdentity.structured),
     code: capacity ? 'ZEUS_CODEX_MODEL_AT_CAPACITY' : boundedFailureIdentity(typeof failure.code === 'string' ? failure.code : null),
     message,
     providerStatus: boundedFailureIdentity(typeof failure.providerStatus === 'string' ? failure.providerStatus : null),
-    additionalDetails: detail && detail !== message ? [detail] : [],
+    additionalDetails: diagnosticDetails,
   };
 }
 
@@ -2355,7 +2448,34 @@ function boundedFailureIdentity(value: string | null): string | null {
   return candidate && /^[A-Za-z0-9_.:-]{1,120}$/u.test(candidate) ? candidate : null;
 }
 
-function classifyTurnFailure(message: string): ConversationSnapshotV2TurnFailure['category'] {
+/** 优先按官方结构化字段分类，仅在字段缺失的历史记录上使用文案兼容规则。 */
+function classifyTurnFailure(code: string | null, httpStatusCode: number | null, message: string, allowLegacyMessageFallback: boolean): ConversationSnapshotV2TurnFailure['category'] {
+  if (code === 'unauthorized' || code === 'invalid_api_key' || code === 'authentication_error' || httpStatusCode === 401 || httpStatusCode === 403) return 'authentication';
+  if (
+    code === 'usageLimitExceeded' ||
+    code === 'insufficient_quota' ||
+    code === 'quota_exceeded' ||
+    code === 'billing_hard_limit_reached' ||
+    code === 'rateLimitExceeded' ||
+    code === 'rate_limit_exceeded' ||
+    code === 'rate_limit_error' ||
+    code === 'tooManyRequests' ||
+    code === 'serverOverloaded' ||
+    httpStatusCode === 429
+  )
+    return 'rate_limit';
+  if (
+    code === 'httpConnectionFailed' ||
+    code === 'responseStreamConnectionFailed' ||
+    code === 'responseStreamDisconnected' ||
+    code === 'responseTooManyFailedAttempts' ||
+    code === 'internalServerError' ||
+    (httpStatusCode !== null && httpStatusCode >= 500)
+  )
+    return 'network';
+  if (code === 'sandboxError' || code === 'permission_denied' || code === 'permission_error') return 'permission';
+  if (code === 'badRequest' || code === 'model_not_found' || code === 'modelUnavailable' || httpStatusCode === 400) return 'configuration';
+  if (!allowLegacyMessageFallback) return 'unknown';
   if (/\b(?:401|403)\b|auth(?:entication|orization)?|unauthori[sz]ed|api[-_ ]?key|登录|鉴权/iu.test(message)) return 'authentication';
   if (/\b429\b|rate[-_ ]?limit|too many requests|quota|capacity|overloaded|限流|配额|容量/iu.test(message)) return 'rate_limit';
   if (/network|failed to fetch|connection|disconnected|socket|timed?\s*out|timeout|dns|网络|连接|超时/iu.test(message)) return 'network';

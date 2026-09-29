@@ -2,6 +2,7 @@ import { assistantMessageMetadata, classifyAssistantMessage } from '@zeus/shared
 import type { CodexAppServerEvent, CodexThreadGoal } from '@zeus/ai-runtime';
 import { calculateCacheHitRate, codexUsageObservationIdentity, parseCanonicalRequestUserInputQuestions, type ConversationResource, type NativeTokenUsageSnapshot } from '@zeus/shared';
 import {
+  isProviderBlockingTurnFailure,
   projectConversationTurnFailure,
   conversationModelRequestId,
   type ZeusConversationGoalRecord,
@@ -502,6 +503,10 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     modelRequestTiming.clear(conversation.id, turn.id);
     sessionMetricsChanged = true;
     const failure = failed ? providerTurnFailure(params, providerTurnId) : null;
+    /** 同一份官方失败记录同时驱动落库、展示和会话阻塞判断。 */
+    const failureRecord = failure ? providerTurnFailureRecord(params, failure) : undefined;
+    /** 外部服务类错误暂停会话；本地 Runtime 与工具错误仍保持真实失败。 */
+    const providerBlocked = failureRecord ? isProviderBlockingTurnFailure(failureRecord) : false;
     if (failure && isProviderResponseStreamDisconnected(failure)) {
       providerStreamRecovery = { conversationId: conversation.id, providerThreadId: threadId, providerTurnId };
     }
@@ -573,7 +578,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     const terminalTurn = options.turns.upsert({
       ...turn,
       status: terminalStatus,
-      ...(failure ? { error: providerTurnFailureRecord(params, failure) } : {}),
+      ...(failureRecord ? { error: failureRecord } : {}),
       completedAt: timestamp,
       updatedAt: timestamp,
     });
@@ -582,9 +587,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     options.changeSets.seal({ conversation, turn, timestamp });
     const submissions = options.submissions.listByConversation(conversation.id);
     const internalContextCompaction = turn.clientSubmissionId === null && turnItems.some((item) => item.itemType === 'contextCompaction');
-    const terminalReconciliation = internalContextCompaction
-      ? { primarySubmission: undefined, recoveryRequired: [], reconciledCount: 0 }
-      : reconcileTerminalTurnSubmissions(conversation, terminalTurn, timestamp, failure ? providerTurnFailureRecord(params, failure) : undefined);
+    const terminalReconciliation = internalContextCompaction ? { primarySubmission: undefined, recoveryRequired: [], reconciledCount: 0 } : reconcileTerminalTurnSubmissions(conversation, terminalTurn, timestamp, failureRecord);
     const activeSubmission = terminalReconciliation.primarySubmission;
     const recoveryRequiredSubmissions = terminalReconciliation.recoveryRequired;
     for (const submission of recoveryRequiredSubmissions) {
@@ -616,7 +619,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       providerId: 'codex',
       providerThreadId: threadId,
       providerModel: conversation.providerModel,
-      providerState: internalContextCompaction ? 'ready' : failed ? 'failed' : recoveryRequiredSubmissions.length > 0 || (interrupted && hasInterruptedQueue) ? 'paused' : 'ready',
+      providerState: internalContextCompaction ? 'ready' : failed ? (providerBlocked ? 'paused' : 'failed') : recoveryRequiredSubmissions.length > 0 || (interrupted && hasInterruptedQueue) ? 'paused' : 'ready',
     });
     const ephemeral = contexts.get(conversation.id)?.ephemeral === true;
     const conversationGoal = options.goals.get(conversation.id);
@@ -664,7 +667,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
         providerTurnId,
         status: terminalStatus,
         completedAt: timestamp,
-        ...(failure ? { error: projectConversationTurnFailure(providerTurnFailureRecord(params, failure)) } : {}),
+        ...(failureRecord ? { error: projectConversationTurnFailure(failureRecord) } : {}),
         hasUnreadAttention: options.conversations.getById(conversation.id)?.attentionUnread === true,
         notificationEligible: !internalContextCompaction && !conversationGoal,
         ...(internalContextCompaction ? { internalOperation: 'context_compaction' } : {}),

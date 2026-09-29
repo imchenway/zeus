@@ -1447,6 +1447,10 @@ async function processAgentRun(options: TaskWorkManagementOptions, run: TaskWork
   const conversation = options.conversations.getById(run.conversationId);
   if (!conversation || conversation.taskId !== run.taskId || conversation.projectId !== run.projectId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_CONVERSATION_MISSING', 'Agent 工作运行的会话已不可用。');
   const executionState = conversationWorkExecutionState(conversation, options.conversationSubmissions.listByConversation(conversation.id));
+  if (executionState.type === 'blocked') {
+    blockAgentRunForProviderFailure(options, run, executionState.code, executionState.message);
+    return;
+  }
   if (executionState.type === 'failed') throw new TaskWorkStoreError(executionState.code, executionState.message);
   if (executionState.type === 'outcome_unknown') {
     blockAgentRunForUnknownOutcome(options, run, executionState.code, executionState.message);
@@ -1616,6 +1620,21 @@ function blockAgentRunForUnknownOutcome(options: TaskWorkManagementOptions, run:
     expiresAt: null,
   });
   publishChanged(options, run.taskId, run.workItemId, 'outcome_unknown');
+}
+
+/** Provider 暂不可用时保留本轮失败审计，但将工作项停在可恢复的阻塞态。 */
+function blockAgentRunForProviderFailure(options: TaskWorkManagementOptions, run: TaskWorkRunRecord, code: string, message: string): void {
+  const completedAt = options.now().toISOString();
+  options.runs.update(run.id, { status: 'failed', errorCode: code, errorMessage: message, completedAt });
+  const item = options.items.getById(run.workItemId);
+  if (item && item.status !== 'blocked') options.items.update(item.id, { status: 'blocked' });
+  options.taskEvents.create({
+    taskId: run.taskId,
+    eventType: 'task.work_item.blocked',
+    title: 'AI 服务暂时不可用，工作项已阻塞',
+    payload: { workItemId: run.workItemId, runId: run.id, conversationId: run.conversationId, code, message },
+  });
+  publishChanged(options, run.taskId, run.workItemId, 'provider_blocked');
 }
 
 async function captureAgentDeliverable(options: TaskWorkManagementOptions, run: TaskWorkRunRecord, messages: Array<{ id: string; role: string; content: string }>): Promise<void> {
