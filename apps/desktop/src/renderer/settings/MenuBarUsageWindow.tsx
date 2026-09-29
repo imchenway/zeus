@@ -595,13 +595,15 @@ function readMetricValues(provider: UsageProviderSummary, language: Language, ra
   const local = summary.local;
   const complete = summary.complete === true;
   const cacheAvailable = provider.cacheUsageAvailable;
+  /** 今日范围无需重复解释单价周期，只隐藏周期，不改变费用聚合结果。 */
+  const costBreakdown = range === 'today' ? summary.costBreakdown.map((entry) => ({ ...entry, pricePeriod: null })) : summary.costBreakdown;
   return [
     { label: text.tokens, value: formatIncompleteTokens(local.totalTokens, summary.complete, language) },
     {
       label: text.cost,
       value: complete ? formatUsd(local.apiEquivalentUsd, local.priceCoverage, language, text.noPrice) : '—',
       detailLabel: text.costDetail,
-      costBreakdown: summary.costBreakdown,
+      costBreakdown,
     },
     { label: text.cacheHit, value: !complete ? '—' : cacheAvailable ? formatPercent(local.cacheHitRate, language, '—') : text.cacheUnsupported },
     { label: text.outputRate, value: formatOutputRate(local.outputTokensPerSecond ?? null, language) },
@@ -966,7 +968,7 @@ function CostBreakdownPanel(props: { entries: UsageModelCostBreakdown[]; label: 
   return (
     <section className="menu-bar-usage-cost-detail menu-bar-usage-cost-detail-window" role="dialog" aria-label={props.label}>
       <strong>{props.label}</strong>
-      <div className="menu-bar-usage-cost-table-scroll">
+      <div className="menu-bar-usage-cost-table-scroll" data-scrollable={props.entries.length > 8}>
         <table>
           <thead>
             <tr>
