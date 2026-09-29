@@ -375,8 +375,6 @@ declare global {
       openComputerPermissionSettings: (input: { permission: 'accessibility' | 'screen_capture' }) => Promise<{ opened: true; permission: 'accessibility' | 'screen_capture' }>;
       /** 会话内停止须携带控制身份；无参数为设置页全局停止。 */
       stopComputerUse: (input?: ZeusComputerControlIdentity) => Promise<ZeusComputerSettings>;
-      /** 用户恢复暂停，随后模型必须重新观察。 */
-      resumeComputerUse: (input: ZeusComputerControlIdentity) => Promise<{ resumed: true }>;
       onBrowserEvent: (listener: (event: ZeusBrowserEvent) => void) => () => void;
     };
   }

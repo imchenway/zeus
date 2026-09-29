@@ -543,13 +543,6 @@ function nativeUpdateProgressHelperPath(): string {
   return join(root, 'dist', 'native', 'ZeusUpdateProgress');
 }
 
-function computerServiceExecutablePath(): string {
-  if (app.isPackaged) {
-    return join(process.resourcesPath, '..', 'Helpers', 'Zeus Computer Service.app', 'Contents', 'MacOS', 'Zeus Computer Service');
-  }
-  return join(desktopRoot(), 'dist', 'native', 'Zeus Computer Service.app', 'Contents', 'MacOS', 'Zeus Computer Service');
-}
-
 function browserNativeMessagingHelperPath(): string {
   const root = desktopRoot();
   if (app.isPackaged && basename(root) === 'app.asar') return join(dirname(root), 'app.asar.unpacked', 'dist', 'native', 'ZeusBrowserNativeHost');
@@ -3282,9 +3275,6 @@ async function initializeApplication(): Promise<void> {
     await browserHost.initializeExternalBrowsers();
     computerHost = createComputerHost({
       statePath: dataLayout.computerState,
-      artifactRoot: dataLayout.computerArtifacts,
-      helperExecutable: computerServiceExecutablePath(),
-      parentPid: process.pid,
       mainCommandLedger: activeMainCommandLedger,
       readOnlyValidation: Boolean(readOnlyValidationDescriptor),
     });
