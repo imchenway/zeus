@@ -115,6 +115,19 @@ export function normalizeConversationResources(input: NormalizeConversationResou
     sourceIndex += 1;
   }
 
+  /** Codex 查看过的图片沿用会话资源授权，处理过程才能恢复与打开真实缩略图。 */
+  const viewedImage = normalizeViewedImageResource({
+    sourceIndex,
+    item: input.item,
+    payload: input.payload,
+    projectRoot: input.projectRoot,
+    trustedAttachmentRoots: input.trustedAttachmentRoots,
+  });
+  if (viewedImage) {
+    candidates.push(viewedImage);
+    sourceIndex += 1;
+  }
+
   for (const link of markdownLinks(input.text)) {
     const linkSourceIndex = sourceIndex++;
     const candidate =
@@ -222,6 +235,21 @@ export function normalizeConversationResources(input: NormalizeConversationResou
       authorityJson: JSON.stringify(authorityForCandidate(candidate)),
     };
   });
+}
+
+/** 只登记 Provider 明确确认的 imageView 路径，并重新核对工作区或附件授权边界。 */
+function normalizeViewedImageResource(input: { sourceIndex: number; item: ZeusConversationItemRecord; payload: Record<string, unknown>; projectRoot: string; trustedAttachmentRoots: readonly string[] }): AttachmentResourceCandidate | null {
+  if (input.item.itemType !== 'imageView') return null;
+  const rawPath = stringValue(input.payload.path ?? input.payload.filePath);
+  if (!rawPath) return null;
+  const absolutePath = isAbsolute(rawPath) ? rawPath : resolve(input.projectRoot, rawPath);
+  const candidate = normalizeAttachmentResource({
+    sourceIndex: input.sourceIndex,
+    value: { localPath: absolutePath, name: basename(absolutePath) },
+    projectRoot: input.projectRoot,
+    trustedAttachmentRoots: input.trustedAttachmentRoots,
+  });
+  return candidate?.previewKind === 'image' ? candidate : null;
 }
 
 /**

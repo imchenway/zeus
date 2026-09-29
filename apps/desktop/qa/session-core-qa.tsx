@@ -23,7 +23,7 @@ import { ThreadItemView } from '../src/renderer/session/ThreadItemView.js';
 import { ProjectConversationTree } from '../src/renderer/session/ProjectConversationTree.js';
 import type { NativeConversationChoice } from '../src/renderer/session/sessionTypes.js';
 import { TaskGitDiffTable } from '../src/renderer/task/TaskGitDiffTable.js';
-import type { ConversationCodeComment, ConversationOpenTarget, ConversationResource, ConversationResponseAnnotation, TurnChangeSet } from '@zeus/shared';
+import type { ConversationCodeComment, ConversationOpenTarget, ConversationResource, ConversationResourcePreview, ConversationResponseAnnotation, TurnChangeSet } from '@zeus/shared';
 import { ModalPortal } from '../src/renderer/ui/ModalPortal.js';
 import { AsyncQuestionPanel } from '../src/renderer/session/AsyncQuestionMessage.js';
 import { normalizeRequestQuestions, RequestUserInputPanel } from '../src/renderer/session/PendingRequestSurface.js';
@@ -1283,6 +1283,15 @@ function ResourceWorkspaceQa(props: { state: NativeSessionState; resources: Conv
 
 /** 主、子线程使用同一组场景数据；只模拟读取回调，不连接真实模型。 */
 function ThreadLayoutQa(props: { state: NativeSessionState; subagent: boolean; language: 'zh-CN' | 'en-US'; narrow: boolean; onNarrowChange: (narrow: boolean) => void; onClose: () => void }) {
+  /** 过程图片使用可辨认的内嵌图，避免布局验收把缺少读取回调误报成产品不可预览。 */
+  const processPreviewSvg =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180"><rect width="320" height="180" rx="16" fill="#111827"/><rect x="20" y="20" width="280" height="24" rx="6" fill="#334155"/><circle cx="36" cy="32" r="5" fill="#fb7185"/><circle cx="52" cy="32" r="5" fill="#fbbf24"/><circle cx="68" cy="32" r="5" fill="#4ade80"/><rect x="24" y="66" width="170" height="10" rx="5" fill="#60a5fa"/><rect x="24" y="88" width="245" height="10" rx="5" fill="#94a3b8"/><rect x="24" y="110" width="215" height="10" rx="5" fill="#94a3b8"/><text x="24" y="150" fill="#e2e8f0" font-family="system-ui" font-size="18">Stage screenshot</text></svg>';
+  /** 浏览器可直接读取的图片地址只服务当前隔离 QA。 */
+  const processPreviewDataUrl = `data:image/svg+xml,${encodeURIComponent(processPreviewSvg)}`;
+  /** 按生产回调形状返回图片，确认活动资源会进入真实缩略图分支。 */
+  async function loadProcessImagePreview(resource: ConversationResource): Promise<ConversationResourcePreview> {
+    return { kind: 'image', resource, mimeType: 'image/svg+xml', dataUrl: processPreviewDataUrl, byteLength: processPreviewSvg.length };
+  }
   /** 预览中的缺失指标沿用真实不可用值。 */
   const missing = { state: 'unavailable' as const, reason: '预览未提供该项数据' };
   /** 完整详情覆盖缺失指标、长目录与可复制的线程身份。 */
@@ -1382,7 +1391,7 @@ function ThreadLayoutQa(props: { state: NativeSessionState; subagent: boolean; l
               <RuntimeDetails runtime={runtime} scope="session" language={props.language} />
             </div>
           </header>
-          <ConversationTranscript state={props.state} language={props.language} transcriptHydrated />
+          <ConversationTranscript state={props.state} language={props.language} transcriptHydrated onLoadResourcePreview={loadProcessImagePreview} />
         </>
       )}
     </div>
