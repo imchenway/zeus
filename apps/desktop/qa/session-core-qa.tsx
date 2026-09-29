@@ -650,8 +650,10 @@ function MessageLayoutQa() {
   const parameters = new URLSearchParams(window.location.search);
   /** 链接场景直接呈现最终答复，复现历史资源只有名称和编号的恢复结果。 */
   const links = parameters.has('links');
+  /** 长过程覆盖九十三项操作和三十段思考，复现多屏内容的展开动效。 */
+  const longProcess = parameters.has('long-process');
   /** 多阶段场景复现摘要、不同数量操作和外层折叠的延迟挂载。 */
-  const processGroups = parameters.has('process-groups');
+  const processGroups = parameters.has('process-groups') || longProcess;
   /** 手动切换运行终态，检查每种耗时文案及过程折叠。 */
   const [status, setStatus] = useState<'running' | 'completed' | 'failed' | 'interrupted'>(links || parameters.has('completed') ? 'completed' : 'running');
   /** 检查真实正文节点与资源打开回调，不连接原生宿主或模型。 */
@@ -825,17 +827,34 @@ function MessageLayoutQa() {
       if (content.querySelector('.session-activity-item-title, .session-activity-images')) throw new Error('外层折叠时提前挂载了操作详情');
       outerControl.click();
       await settle();
+      /** 手动检查同时核对真实高度动画：长内容不能在一帧内全部展开。 */
+      const disclosure = outerControl.closest('.session-turn-process')?.querySelector<HTMLElement>('[data-viewport-reveal]');
+      /** 后台页面不依赖逐帧回调，通过原生动画时间点验证中间展开状态。 */
+      const animation = disclosure?.getAnimations()[0];
+      if (disclosure && animation) {
+        /** 先锁定终点，再检查中途确实只显露部分内容，最后恢复正常展开状态。 */
+        const frames = animation.effect?.getKeyframes() ?? [];
+        /** 高度终点必须受可见范围约束，短内容沿用自身高度。 */
+        const targetHeight = Number.parseFloat(String(frames.at(-1)?.blockSize));
+        animation.pause();
+        animation.currentTime = 70;
+        /** 实际中间高度应介于零和目标高度之间。 */
+        const middleHeight = disclosure.getBoundingClientRect().height;
+        animation.finish();
+        if (!(targetHeight > 0 && targetHeight <= window.innerHeight && middleHeight > 0 && middleHeight < targetHeight)) throw new Error('处理过程没有逐步展开可见内容');
+        await settle();
+      }
     }
     /** 阶段只负责内容分组，不能再次生成折叠按钮。 */
     const nestedControls = content.querySelectorAll('.session-activity-group .session-turn-process-control > button');
     if (nestedControls.length) throw new Error('处理过程内部仍存在第二层操作组入口');
     /** 两段摘要后的真实操作必须在外层展开时直接挂载。 */
     const groups = [...content.querySelectorAll<HTMLElement>('.session-activity-group')];
-    const expectedCounts = [1, extraOperation ? 3 : 2];
+    const expectedCounts = [1, extraOperation ? 3 : 2, ...(longProcess ? Array.from({ length: 30 }, () => 3) : [])];
     if (groups.length !== expectedCounts.length || groups.some((group, index) => Number(group.dataset.itemCount) !== expectedCounts[index])) throw new Error('阶段操作没有按真实数量直接展示');
     /** 分组只保留静态数量，不显示“查看/收起”动作。 */
     const countLabels = groups.map((group) => group.querySelector('.session-activity-group-count')?.textContent?.trim());
-    const expectedLabels = parameters.has('en') ? ['1 operation', `${extraOperation ? 3 : 2} operations`] : ['1 项操作', `${extraOperation ? 3 : 2} 项操作`];
+    const expectedLabels = expectedCounts.map((count) => (parameters.has('en') ? `${count} ${count === 1 ? 'operation' : 'operations'}` : `${count} 项操作`));
     if (countLabels.join('|') !== expectedLabels.join('|')) throw new Error(`阶段操作数量文案错误：${countLabels.join('|')}`);
     if (!content.querySelector('.session-activity-item-title') || !content.querySelector('.session-activity-images')) throw new Error('外层展开后缺少操作标题或图片资源');
     /** 单条命令默认仍关闭，继续点击后才挂载命令、目录和输出。 */
@@ -891,6 +910,27 @@ function MessageLayoutQa() {
             },
             { type: 'imageView', phase: 'prework', stageId: 'verify', text: '', payload: { path: 'artifacts/阶段截图.png' }, resources: [processImageResource], status: 'completed' },
             ...(extraOperation ? [{ type: 'webSearch', phase: 'prework', stageId: 'verify', text: '', payload: { query: 'Zeus 处理过程折叠' }, status: active ? 'in_progress' : 'completed' }] : []),
+            ...(longProcess
+              ? Array.from({ length: 30 }, (_, index) => [
+                  {
+                    type: 'agentMessage',
+                    phase: 'prework',
+                    stageId: `long-${index}`,
+                    text: `第 ${index + 1} 阶段：检查处理过程展开与静态阅读位置。\n\n${'核对阶段摘要、操作记录与正文的展示顺序，确认长内容展开后可以从开头连续阅读。\n\n'.repeat(3)}`,
+                    payload: { role: 'commentary' },
+                    status: 'completed',
+                  },
+                  { type: 'reasoning', phase: 'prework', stageId: `long-${index}`, text: '核对阶段摘要、操作记录与正文的展示顺序，确认长内容展开后可以从开头连续阅读。\n\n'.repeat(6), payload: {}, status: 'completed' },
+                  ...Array.from({ length: 3 }, (_, operation) => ({
+                    type: 'commandExecution',
+                    phase: 'prework',
+                    stageId: `long-${index}`,
+                    text: '',
+                    payload: { command: ['rg', '-n', `阶段-${index + 1}-操作-${operation + 1}`, 'apps/desktop/src'], cwd: '/Users/david/hypha/zeus', aggregatedOutput: '阶段检查通过' },
+                    status: 'completed',
+                  })),
+                ]).flat()
+              : []),
           ]
         : [
             { type: 'commandExecution', phase: 'prework', text: '', payload: { command: ['pnpm', 'build'] }, status: 'completed' },
