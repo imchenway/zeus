@@ -516,7 +516,7 @@ export type LocalServerPlatformRouteDependencies = Record<string, any> & {
   tasks: TaskRepository;
   telegramCommands: TelegramCommandApplication;
   terminalEvents: TerminalEventRepository;
-  readRuntimeTerminalTail(sessionId: string, maxBytes: number): { text: string; truncated: boolean };
+  readRuntimeTerminalTail(sessionId: string, maxBytes: number): { text: string; truncated: boolean; startByte: number; totalBytes: number };
   workManagementCommands: WorkManagementCommandApplication;
 };
 

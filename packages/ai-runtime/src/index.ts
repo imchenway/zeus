@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { basename, delimiter, isAbsolute, relative, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { normalizeTerminalChunk } from './terminalOutput.js';
-import { buildTaskPushPrompt, isInteractiveShellSession, type TaskPushPromptInput } from '@zeus/shared';
+import { buildTaskPushPrompt, interactiveTerminalInitialSize, isInteractiveShellSession, type TaskPushPromptInput } from '@zeus/shared';
 import { expandCliSearchPath, resolveCliSearchPath } from './cliSearchPath.js';
 
 export * from './codexAppServerManager.js';
@@ -286,6 +286,10 @@ export interface StartAiRuntimeSessionInput {
   args?: string[];
   cwd: string;
   env?: NodeJS.ProcessEnv;
+  /** 交互 PTY 的首屏列数；省略时使用 Runtime 默认值。 */
+  cols?: number;
+  /** 交互 PTY 的首屏行数；省略时使用 Runtime 默认值。 */
+  rows?: number;
   /** 普通工具命令明确关闭伪终端，仍保留标准输入和受管进程生命周期；省略时沿用终端后端。 */
   terminal?: boolean;
   /** 只保存在当前进程内，用于在任何日志回调前抹除声明式敏感参数值。 */
@@ -295,6 +299,10 @@ export interface StartAiRuntimeSessionInput {
 export interface AiRuntimeSpawnOptions {
   cwd: string;
   env?: NodeJS.ProcessEnv;
+  /** 交互 PTY 的首屏列数。 */
+  cols?: number;
+  /** 交互 PTY 的首屏行数。 */
+  rows?: number;
 }
 
 export interface AiRuntimeProcessHandle {
@@ -336,14 +344,14 @@ export interface CreateNodePtyRuntimeSpawnOptions {
   terminalName?: string;
 }
 
-export function createNodePtyRuntimeSpawn(pty: NodePtyRuntimeModule, options: CreateNodePtyRuntimeSpawnOptions = {}): AiRuntimeSpawn {
+export function createNodePtyRuntimeSpawn(pty: NodePtyRuntimeModule, defaults: CreateNodePtyRuntimeSpawnOptions = {}): AiRuntimeSpawn {
   return (command, args, spawnOptions) => {
     const child = pty.spawn(command, args, {
       cwd: spawnOptions.cwd,
       env: spawnOptions.env ?? process.env,
-      name: options.terminalName ?? 'xterm-256color',
-      cols: options.cols ?? 120,
-      rows: options.rows ?? 30,
+      name: defaults.terminalName ?? 'xterm-256color',
+      cols: spawnOptions.cols ?? defaults.cols ?? interactiveTerminalInitialSize.cols,
+      rows: spawnOptions.rows ?? defaults.rows ?? interactiveTerminalInitialSize.rows,
     });
     return {
       pid: child.pid,
@@ -414,9 +422,14 @@ export interface AiRuntimeTerminalSnapshot {
   command: string;
   cwd: string;
   logs: AiRuntimeLogEntry[];
+  /** 按原始字节偏移重建的输出与尺寸序列；存在时客户端必须优先使用。 */
+  replay?: AiRuntimeTerminalReplayOperation[];
   logsTruncated: boolean;
   capturedAt: string;
 }
+
+/** 终端回放保持原始输出不变，并在对应字节边界恢复当时的字符网格。 */
+export type AiRuntimeTerminalReplayOperation = { kind: 'output'; text: string } | { kind: 'resize'; cols: number; rows: number };
 
 export interface AiRuntimeSessionManager {
   startSession(input: StartAiRuntimeSessionInput): Promise<AiRuntimeSession>;
@@ -445,6 +458,8 @@ export interface CreateAiRuntimeSessionManagerOptions {
   onProcessStarted?: (process: { sessionId: string; pid: number }) => void | Promise<void>;
   /** 第二个参数仅供真实终端回放，保留 ANSI/光标控制序列但已执行敏感信息脱敏。 */
   onLog?: (log: AiRuntimeLogEntry, terminalText?: string) => void;
+  /** 记录 PTY 尺寸与此前已输出的 UTF-8 字节位置，供无损冷回放使用。 */
+  onTerminalSize?: (event: { sessionId: string; cols: number; rows: number; byteOffset: number; createdAt: string }) => void;
 }
 
 const MAX_IN_MEMORY_RUNTIME_LOG_ENTRIES = 2_000;
@@ -586,6 +601,8 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
   const stopEscalations = new Map<string, Promise<void>>();
   const orphanFinalizers = new Map<string, Promise<void>>();
   const redactedValues = new Map<string, string[]>();
+  /** 每个活跃 PTY 已持久化的原始输出字节数。 */
+  const terminalOutputBytes = new Map<string, number>();
   const pendingProcessOutputs = new Map<
     string,
     {
@@ -636,6 +653,7 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
     pruneRuntimeLogCaches(sessionId);
     const redactedTerminalText = terminalText === undefined ? undefined : redactExactValues(redactSensitiveText(terminalText), exactValues);
     options.onLog?.(entry, redactedTerminalText);
+    if (redactedTerminalText !== undefined) terminalOutputBytes.set(sessionId, (terminalOutputBytes.get(sessionId) ?? 0) + Buffer.byteLength(redactedTerminalText, 'utf8'));
   }
 
   function pruneRuntimeLogCaches(currentSessionId: string): void {
@@ -788,6 +806,7 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
     handles.delete(sessionId);
     stopRequestedSessions.delete(sessionId);
     redactedValues.delete(sessionId);
+    terminalOutputBytes.delete(sessionId);
     completionResolvers.get(sessionId)?.();
     completionResolvers.delete(sessionId);
     completionPromises.delete(sessionId);
@@ -944,6 +963,7 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
       handles.delete(sessionId);
       stopRequestedSessions.delete(sessionId);
       redactedValues.delete(sessionId);
+      terminalOutputBytes.delete(sessionId);
       completionResolvers.get(sessionId)?.();
       completionResolvers.delete(sessionId);
       completionPromises.delete(sessionId);
@@ -971,6 +991,7 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
       };
       const processIdentityToken = randomUUID();
       sessions.set(session.id, session);
+      terminalOutputBytes.set(session.id, 0);
       const completion = new Promise<void>((resolveCompletion) => {
         completionResolvers.set(session.id, resolveCompletion);
       });
@@ -987,10 +1008,16 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
         await options.onProcessIdentity?.({ sessionId: session.id, token: processIdentityToken });
         if (closing || closed) throw new Error('AI Runtime 正在关闭，不能继续启动新会话。');
         if (stopRequestedSessions.has(session.id)) throw new Error('AI Runtime 会话在 spawn 前已收到停止请求，已取消启动。');
+        /** 首屏尺寸必须排在任何 Shell 输出之前，冷回放才能恢复 zsh 的行内清除语义。 */
+        if (input.terminal !== false && input.cols !== undefined && input.rows !== undefined) {
+          options.onTerminalSize?.({ sessionId: session.id, cols: input.cols, rows: input.rows, byteOffset: 0, createdAt: now() });
+        }
         appendLog(session.id, 'system', `启动 AI Runtime 会话：${[input.command, ...(input.args ?? [])].join(' ')}`);
         // 命令的进程管理与终端设备分配分开，避免普通 AI 命令消耗系统伪终端。
         handle = (input.terminal === false ? spawnWithNodeChildProcess : spawn)(input.command, input.args ?? [], {
           cwd: input.cwd,
+          cols: input.cols,
+          rows: input.rows,
           env: {
             ...(input.env ?? process.env),
             [RUNTIME_PROCESS_IDENTITY_ENV]: processIdentityToken,
@@ -1006,6 +1033,7 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
           runtimeLifecycleErrors.push(logError);
         }
         redactedValues.delete(session.id);
+        terminalOutputBytes.delete(session.id);
         if (!closing && !closed) {
           try {
             options.onSessionChange?.(session);
@@ -1084,8 +1112,10 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
       const handle = handles.get(sessionId);
       if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols <= 0 || rows <= 0) throw new Error('Runtime 终端尺寸无效。');
       if (!handle?.resize) throw new Error('AI Runtime 当前会话不支持 resize。');
+      /** resize 前先固化此前输出，保证尺寸事件的字节位置与原始日志一致。 */
+      flushProcessOutput(sessionId);
       handle.resize(cols, rows);
-      // 尺寸变化属于易失控制面，高频拖动不能制造持久日志。
+      options.onTerminalSize?.({ sessionId, cols, rows, byteOffset: terminalOutputBytes.get(sessionId) ?? 0, createdAt: now() });
       return session;
     },
     getTerminalSnapshot(sessionId) {

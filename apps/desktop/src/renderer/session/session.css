@@ -719,7 +719,12 @@
 }
 
 .session-codex-parity-v1 .session-queued-thread-actions .session-queued-thread-steer {
-  color: var(--zeus-brand-text);
+  color: var(--session-accent);
+}
+
+/* 队列删除是破坏性操作，静止状态也直接使用危险色。 */
+.session-codex-parity-v1 .session-queued-thread-actions .session-queued-thread-delete {
+  color: var(--session-danger);
 }
 
 .session-codex-parity-v1 .session-queued-thread-actions button:hover:not(:disabled):not([aria-disabled='true']),
@@ -946,8 +951,13 @@
 }
 
 .session-codex-parity-v1 .session-queued-message-actions .session-queued-message-steer {
-  color: var(--zeus-brand-text);
+  color: var(--session-accent);
   font-weight: 610;
+}
+
+/* 队列删除是破坏性操作，静止状态也直接使用危险色。 */
+.session-codex-parity-v1 .session-queued-message-actions .session-queued-message-delete {
+  color: var(--session-danger);
 }
 
 .session-codex-parity-v1 .session-queued-message-actions button:hover:not(:disabled):not([aria-disabled='true']),
@@ -989,39 +999,7 @@
   inline-size: 100%;
   max-inline-size: 100%;
   padding: 10px;
-}
-
-.session-codex-parity-v1 .session-queued-message-editor-heading {
-  align-items: center;
-  color: var(--session-text);
-  display: flex;
-  gap: 8px;
-  justify-content: space-between;
-  min-inline-size: 0;
-  padding-inline: 1px;
-}
-
-.session-codex-parity-v1 .session-queued-message-editor-heading > span {
-  align-items: center;
-  display: inline-flex;
-  flex: 0 0 auto;
-  font-size: 12px;
-  font-weight: 620;
-  gap: 5px;
-}
-
-.session-codex-parity-v1 .session-queued-message-editor-heading svg {
-  block-size: 14px;
-  color: var(--zeus-brand-primary);
-  inline-size: 14px;
-}
-
-.session-codex-parity-v1 .session-queued-message-editor-heading > small {
-  color: var(--session-text-muted);
-  font-size: 10px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  position: relative;
 }
 
 .session-codex-parity-v1 .session-queued-message-editor textarea {
@@ -1036,8 +1014,8 @@
   inline-size: 100%;
   line-height: 1.5;
   max-block-size: min(28vh, 180px);
-  min-block-size: 44px;
-  padding: 8px 9px;
+  min-block-size: 84px;
+  padding: 8px 9px 44px;
   resize: none;
   transition:
     border-color 120ms ease,
@@ -1045,8 +1023,8 @@
 }
 
 .session-codex-parity-v1 .session-queued-message-editor textarea:focus-visible {
-  border-color: var(--zeus-brand-primary);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--zeus-brand-primary) 14%, transparent);
+  border-color: var(--session-divider-active);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--session-divider-active) 18%, transparent);
   outline: 0;
 }
 
@@ -1087,10 +1065,12 @@
 
 .session-codex-parity-v1 .session-queued-message-editor > footer {
   align-items: center;
+  bottom: 16px;
   display: flex;
   gap: 6px;
+  inset-inline: 20px;
   justify-content: flex-end;
-  padding-block-start: 0;
+  position: absolute;
 }
 
 .session-codex-parity-v1 .session-queued-message-editor > footer small {

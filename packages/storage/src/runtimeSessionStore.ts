@@ -692,6 +692,25 @@ export class TerminalEventRepository {
     return record;
   }
 
+  /** 为控制面事件分配当前会话的下一个单调序号。 */
+  appendNext(input: Omit<AppendTerminalEventInput, 'seq'>): ZeusTerminalEventRecord {
+    const seq = this.db.get<{ next_seq: number }>(`SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM terminal_events WHERE session_id = ?`, [input.sessionId])?.next_seq ?? 1;
+    return this.append({ ...input, seq });
+  }
+
+  /** 只读取指定类型的控制面事件，避免长终端回放扫描全部输出索引。 */
+  listBySessionEventType(sessionId: string, eventType: string): ZeusTerminalEventRecord[] {
+    return this.db
+      .select<DbTerminalEventRow>(
+        `SELECT id, session_id, task_id, seq, event_type, content, raw_chunk_path, created_at
+           FROM terminal_events
+          WHERE session_id = ? AND event_type = ?
+          ORDER BY seq ASC, created_at ASC`,
+        [sessionId, eventType],
+      )
+      .map(mapTerminalEventRow);
+  }
+
   listBySession(sessionId: string): ZeusTerminalEventRecord[] {
     return this.db
       .select<DbTerminalEventRow>(
