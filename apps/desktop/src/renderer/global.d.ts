@@ -4,7 +4,8 @@ import type { AutomaticUpdateIndicatorState } from './appShellBridge.js';
 import type { DashboardClientOptions, LocalBusinessDataSnapshot, LocalSettingsExportSnapshot } from './apiClient.js';
 import type {
   NetworkProxySettings,
-  NetworkProxyCheckResult,
+  NetworkProxyCheckTarget,
+  NetworkProxyConnectionResult,
   ConversationFileLocation,
   ConversationOpenTarget,
   ConversationResourceOpenTarget,
@@ -244,8 +245,8 @@ declare global {
         snapshot?: LocalBusinessDataSnapshot;
       }>;
       clearNetworkCache: () => Promise<{ cleared: boolean; clearedAt: string }>;
-      /** 使用当前草稿分别检查浏览器与模型宿主的网络。 */
-      checkNetworkProxyConnection: (settings: NetworkProxySettings, address: string) => Promise<NetworkProxyCheckResult>;
+      /** 使用当前草稿检查指定的浏览器或模型宿主网络。 */
+      checkNetworkProxyConnection: (settings: NetworkProxySettings, address: string, checkTarget: NetworkProxyCheckTarget) => Promise<NetworkProxyConnectionResult>;
       exportPatchToFile: (patch: unknown) => Promise<{ saved: boolean; filePath: string | null }>;
       openSource: (source: { projectRoot?: string; sourceRef: string; lineStart?: number }) => Promise<{
         opened: boolean;

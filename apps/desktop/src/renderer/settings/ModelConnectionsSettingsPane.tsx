@@ -853,9 +853,9 @@ export function ModelConnectionsSettingsPane(props: {
             <p className={`model-connection-diagnostic ${diagnostic.ok ? 'success' : 'warning'}`}>
               {diagnostic.ok ? (
                 zh ? (
-                  `已连接并读取到 ${diagnostic.discoveredModelCount ?? 0} 个模型。模型是否支持图片或工具调用仍需分别检查。`
+                  diagnostic.message
                 ) : (
-                  `Connected and found ${diagnostic.discoveredModelCount ?? 0} models. Image input and tool support still need to be checked separately.`
+                  `Model ${diagnostic.testedModelId ?? ''} completed a real request. Image and tool capabilities still require separate probes.`
                 )
               ) : (
                 <VisibleApplicationError error={diagnostic} language={zh ? 'zh-CN' : 'en'} />
@@ -896,8 +896,15 @@ export function ModelConnectionsSettingsPane(props: {
             <Button variant="secondary" size="compact" onClick={() => void refreshModels()} disabled={busy || !draft.id || !current?.apiKeyConfigured} busy={status === 'refreshing'}>
               {zh ? '获取模型' : 'Fetch models'}
             </Button>
-            <Button variant="secondary" size="compact" onClick={() => void diagnose()} disabled={busy || !draft.id}>
-              {zh ? '服务诊断' : 'Diagnose service'}
+            <Button
+              variant="secondary"
+              size="compact"
+              title={zh ? '使用第一个已启用模型发送一次最小真实请求，可能产生少量用量' : 'Send one minimal real request with the first enabled model; minor usage may be billed'}
+              onClick={() => void diagnose()}
+              disabled={busy || !draft.id || enabledModelCount === 0}
+              busy={status === 'loading'}
+            >
+              {zh ? '验证真实请求' : 'Verify real request'}
             </Button>
             <Button
               variant="secondary"

@@ -3,7 +3,7 @@ import * as http from 'node:http';
 import * as https from 'node:https';
 import { randomUUID } from 'node:crypto';
 import { networkProxyRuntimeEnvironment } from '@zeus/local-server';
-import { networkProxyLoopbackBypass, normalizeNetworkProxySettings, type NetworkProxySettings, type NetworkProxyCheckResult, type NetworkProxyConnectionResult } from '@zeus/shared';
+import { networkProxyLoopbackBypass, normalizeNetworkProxySettings, type NetworkProxySettings, type NetworkProxyConnectionResult } from '@zeus/shared';
 
 /** 单条网络请求的最长等待时间。 */
 const networkRequestTimeoutMs = 10_000;
@@ -91,22 +91,24 @@ async function checkNodeConnection(settings: NetworkProxySettings, target: URL):
   }
 }
 
-/** 两条链路用当前草稿检查，不保存配置、不影响任何运行中会话。 */
-export async function checkNetworkProxyConnection(value: unknown, address: unknown): Promise<NetworkProxyCheckResult> {
+/** 单条链路用当前草稿检查，不保存配置、不影响任何运行中会话。 */
+export async function checkNetworkProxyConnection(value: unknown, address: unknown, checkTarget: unknown): Promise<NetworkProxyConnectionResult> {
   /** 主进程重新校验，不信任渲染层传入的草稿。 */
   const settings = normalizeNetworkProxySettings(value);
   if (typeof address !== 'string' || address.length > 2048 || /[\s\\]/u.test(address.trim())) throw new Error('请填写有效的 HTTP 或 HTTPS 检查网址。');
+  if (checkTarget !== 'browser' && checkTarget !== 'node') throw new Error('请选择有效的网络检查链路。');
   /** 不接受本地文件、用户名、密码或片段，防止检查意外带入登录信息。 */
   const target = URL.parse(address.trim());
   if (!target || !['http:', 'https:'].includes(target.protocol) || target.username || target.password || target.hash) throw new Error('检查网址只支持 HTTP/HTTPS，不能包含账号密码或片段。');
+  if (checkTarget === 'node') return checkNodeConnection(settings, target);
   /** 每次检查使用独立非持久会话；迟到的原生操作不会污染下一次检查。 */
   const isolatedSession = session.fromPartition(`zeus-network-proxy-check-${randomUUID()}`, { cache: false });
+  /** 浏览器链路耗时覆盖代理切换、DNS、TLS 和响应头等待。 */
+  const browserStartedAt = performance.now();
   try {
     await withOperationTimeout(isolatedSession.setProxy(chromiumNetworkProxyConfig(settings)), electronNetworkOperationTimeoutMs, '代理切换超时。');
-    /** 浏览器延迟包含 DNS、代理连接和 TLS 握手。 */
-    const browserStartedAt = performance.now();
     /** Chromium 请求只取响应头，拒绝携带浏览器凭据并禁止自动跳转。 */
-    const browserCheck = isolatedSession
+    return await isolatedSession
       .fetch(target.href, { method: 'HEAD', credentials: 'omit', redirect: 'manual', cache: 'no-store', signal: AbortSignal.timeout(networkRequestTimeoutMs) })
       .then(async (response): Promise<NetworkProxyConnectionResult> => {
         await response.body?.cancel();
@@ -115,9 +117,8 @@ export async function checkNetworkProxyConnection(value: unknown, address: unkno
         return response.status === 407 ? { error: 'authentication', statusCode: 407, latencyMs } : { statusCode: response.status, latencyMs };
       })
       .catch((error) => connectionError(error, browserStartedAt));
-    /** 并行检查避免等待时间翻倍；结果各自说明网络范围。 */
-    const [browser, node] = await Promise.all([browserCheck, checkNodeConnection(settings, target)]);
-    return { browser, node };
+  } catch (error) {
+    return connectionError(error, browserStartedAt);
   } finally {
     await closeConnectionsWithinDeadline(isolatedSession);
   }

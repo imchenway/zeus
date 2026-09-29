@@ -8,6 +8,7 @@ import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
 import { TaskWorkPlanningRepository, TaskWorkReviewRepository, TaskWorkDeploymentRepository } from '@zeus/storage';
 import { hasDatabaseUriPassword } from './projectCore.js';
 import { createAutomationConversationDispatch } from './automationConversationDispatch.js';
+import { probeCodexConversation } from './codexConnectionDiagnostic.js';
 import {
   checkAiCliAdapter,
   type AiCliAdapterStatus,
@@ -521,7 +522,7 @@ export type LocalServerPlatformRouteDependencies = Record<string, any> & {
 };
 
 /** 订阅连接诊断必须比普通页面请求更早结束，避免设置页再次永久等待。 */
-const codexConnectionDiagnosticTimeoutMs = 15_000;
+const codexConnectionDiagnosticTimeoutMs = 35_000;
 
 /** 为不支持 AbortSignal 的 Codex RPC 组合补上用户可见的硬截止时间。 */
 async function withCodexConnectionDiagnosticTimeout<T>(operation: Promise<T>): Promise<T> {
@@ -531,7 +532,7 @@ async function withCodexConnectionDiagnosticTimeout<T>(operation: Promise<T>): P
     return await Promise.race([
       operation,
       new Promise<T>((_resolve, reject) => {
-        timeout = setTimeout(() => reject(Object.assign(new Error('Codex 订阅连接检查在 15 秒内没有完成。'), { code: 'ZEUS_CODEX_CONNECTION_TIMEOUT' })), codexConnectionDiagnosticTimeoutMs);
+        timeout = setTimeout(() => reject(Object.assign(new Error('Codex 订阅真实请求检查在 35 秒内没有完成。'), { code: 'ZEUS_CODEX_CONNECTION_TIMEOUT' })), codexConnectionDiagnosticTimeoutMs);
       }),
     ]);
   } finally {
@@ -3649,14 +3650,16 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     }
   });
 
-  /** 显式检查订阅鉴权与模型目录；不创建会话、不发送推理请求。 */
+  /** 显式检查订阅身份并用临时线程发送一次最小真实模型请求。 */
   server.post('/api/codex/connection/diagnose', async (): Promise<CodexSubscriptionConnectionDiagnostic> => {
-    /** 延迟覆盖 Provider RPC、凭据刷新与完整模型目录读取。 */
+    /** 延迟覆盖 Provider RPC、凭据刷新、模型目录与真实请求。 */
     const startedAt = performance.now();
     /** 失败阶段随实际推进更新，不能把目录失败误报成未登录。 */
     let stage: CodexSubscriptionConnectionDiagnostic['stage'] = 'runtime';
     /** 即使失败也返回已确认的计划类型，不暴露账号身份。 */
     let planType: string | null = null;
+    /** 只有进入真实请求阶段才记录测试模型。 */
+    let testedModelId: string | null = null;
     /** 所有出口使用同一单调时钟。 */
     const latencyMs = (): number => Math.max(0, Math.round(performance.now() - startedAt));
     try {
@@ -3674,6 +3677,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
               message: '请先在“模型供应商”中登录 Codex 订阅。',
               latencyMs: latencyMs(),
               modelIds: [],
+              testedModelId,
               planType,
               checkedAt: now().toISOString(),
             };
@@ -3681,13 +3685,21 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           stage = 'catalog';
           /** 刷新当前运行世代的官方模型目录，结果随订阅可用模型变化。 */
           const capabilities = await codexAppServerManager.refreshModels();
+          /** 隐藏模型不能用于用户对话，连接检查选择第一个可见模型。 */
+          const model = capabilities.models.find((candidate: CodexModelCapability) => candidate.raw.hidden !== true);
+          if (!model) throw Object.assign(new Error('Codex 订阅没有返回可用于对话的模型。'), { code: 'ZEUS_CODEX_MODEL_UNAVAILABLE' });
+          testedModelId = model.model;
+          stage = 'inference';
+          /** 临时线程只回答 ok，不携带项目内容、工具或写权限。 */
+          await probeCodexConversation({ manager: codexAppServerManager, model, cwd: zeusSkillDefaultCwd });
           return {
             ok: true,
             stage,
-            code: 'ZEUS_CODEX_SUBSCRIPTION_AVAILABLE',
-            message: `Codex 订阅鉴权成功并返回 ${capabilities.models.length} 个模型。`,
+            code: 'ZEUS_CODEX_INFERENCE_AVAILABLE',
+            message: `Codex 模型 ${model.displayName || model.model} 已完成真实请求；这证明当前连接可发起对话。`,
             latencyMs: latencyMs(),
             modelIds: capabilities.models.map((model: CodexModelCapability) => model.model),
+            testedModelId,
             planType,
             checkedAt: now().toISOString(),
           };
@@ -3703,6 +3715,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         message: redactSensitiveText(error instanceof Error ? error.message : 'Codex 订阅连接检查失败。').text,
         latencyMs: latencyMs(),
         modelIds: [],
+        testedModelId,
         planType,
         checkedAt: now().toISOString(),
       };
