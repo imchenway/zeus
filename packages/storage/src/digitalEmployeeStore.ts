@@ -11,6 +11,9 @@ export const digitalEmployeeWorkModes = ['default', 'plan'] as const;
 export const digitalEmployeeAutomationTriggerKinds = ['immediate', 'once', 'daily', 'weekly', 'interval', 'task_created', 'task_updated', 'task_status_changed', 'code_changed'] as const;
 export const digitalEmployeeAutomationActionKinds = ['assign_task', 'create_and_assign_task', 'explore_project'] as const;
 export const digitalEmployeeExecutionStatuses = ['queued', 'dispatching', 'running', 'waiting', 'delivery_pending', 'delivered', 'blocked', 'failed', 'cancelled'] as const;
+
+/** 判断指定任务是否仍会阻止删除数字员工。 */
+export type DigitalEmployeeTaskBlocksDeletion = (taskId: string) => boolean;
 export const digitalEmployeeExecutionSources = ['manual', 'task_pool', 'exploration', 'automation'] as const;
 export const digitalEmployeeDeliveryStages = ['none', 'commit', 'push', 'merge', 'deploy', 'complete', 'done'] as const;
 export const digitalEmployeeExecutionModes = ['legacy_single_conversation', 'staged'] as const;
@@ -775,10 +778,11 @@ export class DigitalEmployeeRepository {
     return this.getById(existing.id)!;
   }
 
-  delete(id: string, expectedRevision: number): DigitalEmployeeRecord {
+  /** 删除没有被非终态任务占用的数字员工，并保留历史任务中的员工快照。 */
+  delete(id: string, expectedRevision: number, taskBlocksDeletion: DigitalEmployeeTaskBlocksDeletion): DigitalEmployeeRecord {
     const existing = this.require(id);
     assertRevision(existing.revision, expectedRevision, '数字员工');
-    if (this.countActiveExecutions(id) > 0) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_ACTIVE', '数字员工仍有运行中或待交付的工作，不能删除。');
+    if (this.countActiveExecutions(id, taskBlocksDeletion) > 0) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_ACTIVE', '数字员工仍有运行中或待交付的工作，不能删除。');
     const timestamp = nextTimestamp(existing.updatedAt);
     this.db.transaction(() => {
       this.db.execute(`UPDATE digital_employee_automations SET enabled = 0, deleted_at = COALESCE(deleted_at, ?), updated_at = ?, revision = revision + 1 WHERE employee_id = ? AND deleted_at IS NULL`, [timestamp, timestamp, existing.id]);
@@ -788,11 +792,15 @@ export class DigitalEmployeeRepository {
     return existing;
   }
 
-  countActiveExecutions(employeeId: string): number {
-    const legacy =
-      this.db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM digital_employee_executions WHERE employee_id = ? AND status IN ('queued', 'dispatching', 'running', 'waiting', 'delivery_pending')`, [employeeId])?.count ?? 0;
-    const workItems = this.db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM task_work_items WHERE employee_id = ? AND status IN ('queued', 'active', 'waiting_manager', 'blocked')`, [employeeId])?.count ?? 0;
-    return legacy + workItems;
+  /** 只统计仍属于非终态任务或没有任务归属的活动工作。 */
+  countActiveExecutions(employeeId: string, taskBlocksDeletion: DigitalEmployeeTaskBlocksDeletion): number {
+    const legacy = this.db.select<{ task_id: string | null }>(`SELECT task_id FROM digital_employee_executions WHERE employee_id = ? AND status IN ('queued', 'dispatching', 'running', 'waiting', 'delivery_pending')`, [employeeId]);
+    const workItems = this.db.select<{ task_id: string }>(`SELECT task_id FROM task_work_items WHERE employee_id = ? AND status IN ('queued', 'active', 'waiting_manager', 'blocked')`, [employeeId]);
+    let active = 0;
+    for (const record of [...legacy, ...workItems]) {
+      if (record.task_id === null || taskBlocksDeletion(record.task_id)) active += 1;
+    }
+    return active;
   }
 
   private require(id: string): DigitalEmployeeRecord {

@@ -112,13 +112,15 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
         capabilitiesPromise,
       ]);
       if (revision !== configurationRevision.current) return;
+      /** 项目员工只能从用户已经创建的数字员工开始，内置模板不能绕过全局新增流程。 */
+      const nextEmployeeSources = nextTemplates.filter((template) => !template.builtIn);
       setTemplates(nextTemplates);
       setEmployees(nextEmployees);
       setAutomations(nextAutomations);
       setExecutions(nextExecutions);
       setCommands(nextCommands);
       if (modelRevision === capabilitiesRevision.current) setCapabilities(nextCapabilities);
-      setTemplateId((current) => (current && nextTemplates.some((template) => template.id === current) ? current : (nextTemplates[0]?.id ?? '')));
+      setTemplateId((current) => (current && nextEmployeeSources.some((template) => template.id === current) ? current : (nextEmployeeSources[0]?.id ?? '')));
       setSelectedEmployeeId((current) => {
         const selected = current ? nextEmployees.find((employee) => employee.id === current) : undefined;
         setEmployeeDraftState(selected ? (employeeDrafts.current.get(selected.id)?.draft ?? employeeDraft(selected)) : null);
@@ -169,6 +171,8 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
   }, [hasActiveExecutions, loadState, refreshExecutions]);
 
   const deployCommands = useMemo(() => commands.filter((command) => command.enabled), [commands]);
+  /** 项目只能添加用户创建的数字员工，内置模板仅在全局新增弹窗中出现。 */
+  const employeeSources = useMemo(() => templates.filter((template) => !template.builtIn), [templates]);
 
   function selectEmployee(record: DigitalEmployeeRecord): void {
     setSelectedEmployeeId(record.id);
@@ -441,18 +445,26 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
 
       {section === 'employees' ? (
         <div className="digital-employee-project-section" inert={busyAction !== null || loadState !== 'ready'} aria-busy={busyAction !== null}>
-          <section className="digital-employee-assignment-strip" aria-label={zh ? '从模板添加员工' : 'Add employee from template'}>
+          <section className="digital-employee-assignment-strip" aria-label={zh ? '从数字员工添加到项目' : 'Add a digital employee to the project'}>
             <span>
-              <strong>{zh ? '从全局模板添加' : 'Add from a global template'}</strong>
-              <small>{zh ? '添加后生成项目独立副本，权限默认关闭。' : 'Creates a project-owned copy with delivery grants off by default.'}</small>
+              <strong>{zh ? '添加已有数字员工' : 'Add an existing digital employee'}</strong>
+              <small>
+                {employeeSources.length === 0
+                  ? zh
+                    ? '请先在设置中创建数字员工。'
+                    : 'Create a digital employee in Settings first.'
+                  : zh
+                    ? '添加后生成项目独立副本，权限默认关闭。'
+                    : 'Creates a project-owned copy with delivery grants off by default.'}
+              </small>
             </span>
             <ZeusSelect
               size="regular"
-              ariaLabel={zh ? '选择数字员工模板' : 'Choose a digital employee template'}
+              ariaLabel={zh ? '选择已有数字员工' : 'Choose an existing digital employee'}
               value={templateId}
               onChange={setTemplateId}
-              options={templates.map((template) => ({ value: template.id, label: `${template.name} · ${template.role}`, group: template.builtIn ? (zh ? '内置' : 'Built-in') : zh ? '自定义' : 'Custom' }))}
-              disabled={templates.length === 0}
+              options={employeeSources.map((template) => ({ value: template.id, label: `${template.name} · ${template.role}` }))}
+              disabled={employeeSources.length === 0}
             />
             <Button variant="primary" size="compact" busy={busyAction === 'add-employee'} disabled={!templateId} onClick={() => void addEmployee()}>
               {zh ? '添加到项目' : 'Add to project'}
