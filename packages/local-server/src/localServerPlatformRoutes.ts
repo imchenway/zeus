@@ -1346,6 +1346,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       readAccount: () => codexAppServerManager.readAccount(),
     },
     modelCatalog: {
+      hasConfiguredProvider: () => modelConnections.listMetadata().length > 0,
       listSelectableModels: () => modelConnections.listSelectableModels(),
     },
     git: {

@@ -1130,6 +1130,8 @@ export interface CodexTaskPushCapabilities {
   relatedContextOptions: TaskPushRelatedContextOption[];
   /** 未配置模型和目录查询失败必须如实传递给推送确认。 */
   preferredModel: string | null;
+  /** 即使当前没有可用模型，也能区分已有连接和首次接入。 */
+  hasConfiguredProvider: boolean;
   available?: false;
   availabilityReason?: string;
   models: CodexTaskPushModelCapability[];

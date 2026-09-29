@@ -14,7 +14,7 @@ export function registerConversationCapabilityQueryRoutes(options: { server: Fas
 
   options.server.get('/api/projects/:projectId/codex-task-push-capabilities', async (request: FastifyRequest<{ Params: { projectId: string }; Querystring: { taskId?: string } }>, reply) => {
     try {
-      return await options.application.readTaskPush(request.params.projectId, request.query.taskId);
+      return await options.application.readTaskPush(request.params.projectId, request.query.taskId, { readProviderAccount: true });
     } catch (error) {
       return sendNativeQueryRouteError(reply, error);
     }
