@@ -137,8 +137,8 @@ export function TaskWorkPlanPanel(props: TaskWorkPlanPanelProps) {
   const [pendingSettings, setPendingSettings] = useState<{ id: string; revision: number; value: EmployeeWorkSettings } | null>(null);
   /** 防止保存中的编辑和重复操作。 */
   const busy = props.management.busy !== null;
-  /** 仅提供当前项目可执行员工，同时保留已选的历史名称。 */
-  const employees = props.management.employees;
+  /** 新分工只允许用户明确配置的项目员工；旧内置副本由历史工作视图继续展示。 */
+  const employees = props.management.assignableEmployees;
 
   useEffect(() => {
     if (!draft && !pendingSettings) return;

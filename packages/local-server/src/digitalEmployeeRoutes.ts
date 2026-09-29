@@ -237,7 +237,12 @@ export function registerDigitalEmployeeRoutes(options: DigitalEmployeeRouteOptio
         destinationId: 'digital-employee-repository',
         resourceId: `digital_employee:${current.id}`,
         mutateBusinessState: () => {
-          const record = options.employees.delete(current.id, parsed.input.expectedRevision);
+          /** 已结束或已删除任务中的历史工作不会继续占用员工。 */
+          const taskBlocksDeletion = (taskId: string): boolean => {
+            const task = options.tasks.getById(taskId);
+            return Boolean(task && !options.isTaskTerminal(task));
+          };
+          const record = options.employees.delete(current.id, parsed.input.expectedRevision, taskBlocksDeletion);
           audit(options, parsed, 'digital_employee.deleted', 'digital_employee', record.id, { projectId: record.projectId });
           return record;
         },
