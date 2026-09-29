@@ -19,7 +19,7 @@ interface SecuritySecretsSnapshot {
   externalApiKey: SecretPresenceLabel;
 }
 
-/** 仅注册凭据、集成账号和模型配置的 17 个公开 mutation；GET 与其他设置域不在此模块。 */
+/** 仅注册凭据、集成账号和模型配置的公开 mutation；GET 与其他设置域不在此模块。 */
 export function registerIntegrationCommandRoutes(options: {
   server: FastifyInstance;
   application: IntegrationCommandApplication;
@@ -265,8 +265,24 @@ export function registerIntegrationCommandRoutes(options: {
     try {
       const parsed = parseResourceCommand<EmptyInput>(application, request.body, integrationCommandTypes.modelConnectionDiagnose, 'provider_configuration', request.params.connectionId);
       assertExactKeys(parsed.input, [], parsed.command.commandType);
-      const probe = await application.executeReadOnlyProbe({ parsed, invoke: (): Promise<ModelConnectionDiagnostic> => options.modelConnections.diagnose(request.params.connectionId) });
-      return probe.result;
+      /** 真实模型请求可能计费，按外部操作记录并禁止结果未知时自动重放。 */
+      const mutation = await application.executeExternal({
+        parsed,
+        destinationId: 'model_connectivity',
+        resourceId: request.params.connectionId,
+        externalOperationId: externalOperationId(parsed),
+        invoke: (): Promise<ModelConnectionDiagnostic> => options.modelConnections.diagnose(request.params.connectionId),
+        mutateAcceptedBusinessState: (result) => {
+          options.appendAuditLog({
+            actorType: 'local_api',
+            action: 'model.connection.diagnosed',
+            resourceType: 'model_connection',
+            resourceId: request.params.connectionId,
+            payload: { ok: result.ok, stage: result.stage, code: result.code, testedModelId: result.testedModelId, latencyMs: result.latencyMs },
+          });
+        },
+      });
+      return mutation.result;
     } catch (error) {
       return sendIntegrationError(reply, error, options.redactSensitiveText, '模型连接诊断失败。');
     }

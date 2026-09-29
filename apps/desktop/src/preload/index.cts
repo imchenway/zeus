@@ -298,7 +298,7 @@ contextBridge.exposeInMainWorld('zeus', {
   importBusinessDataSnapshotFromFile: () => ipcRenderer.invoke('zeus:import-business-data-snapshot'),
   clearNetworkCache: () => ipcRenderer.invoke('zeus:clear-network-cache'),
   /** 仅检查当前草稿，不保存或切换运行代理。 */
-  checkNetworkProxyConnection: (settings: unknown, address: string) => ipcRenderer.invoke('zeus:network-proxy:check', settings, address),
+  checkNetworkProxyConnection: (settings: unknown, address: string, checkTarget: 'browser' | 'node') => ipcRenderer.invoke('zeus:network-proxy:check', settings, address, checkTarget),
   exportPatchToFile: (patch: unknown) => ipcRenderer.invoke('zeus:export-patch', patch),
   openSource: (source: unknown) => ipcRenderer.invoke('zeus:open-source', source),
   openExternalHttpsUrl: (url: string) => ipcRenderer.invoke('zeus:open-external-https-url', url),
