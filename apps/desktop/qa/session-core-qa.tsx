@@ -777,7 +777,7 @@ function MessageLayoutQa() {
     /** 完成态仅保留一个耗时，时间未知或仍运行时不显示完成耗时。 */
     const durations = contentRef.current?.querySelectorAll('time.session-turn-duration') ?? [];
     /** 无过程的答复不能出现展开按钮。 */
-    const controls = contentRef.current?.querySelectorAll('.session-turn-process:not([data-label-kind="operations"]) > .session-turn-process-control > button') ?? [];
+    const controls = [...(contentRef.current?.querySelectorAll('.session-turn-process:not([data-label-kind="operations"]) > .session-turn-process-control > button') ?? [])].filter((button) => !button.closest('.session-activity-group'));
     /** 运行态按可见阶段保留两个现有入口，完成后仍归并为整轮入口。 */
     const expectedControlCount = parameters.has('no-process') ? 0 : processGroups ? (active ? 2 : 1) : active ? 0 : 1;
     if (durations.length !== (active || parameters.has('no-time') || parameters.has('no-end-time') ? 0 : 1) || controls.length !== expectedControlCount) throw new Error('耗时或过程入口数量不正确');
@@ -904,7 +904,16 @@ function MessageLayoutQa() {
     })),
   ].map((item, index) => {
     /** 场景显式资源优先，避免通用交付资源覆盖图片操作。 */
-    const itemResources = 'resources' in item && Array.isArray(item.resources) ? item.resources : item.type === 'fileChange' ? [{ ...resources[1]!, delivery: 'assistant' as const }] : links && item.phase === 'final_answer' ? resources : [];
+    const itemResources =
+      'resources' in item && Array.isArray(item.resources)
+        ? item.resources
+        : item.type === 'imageView'
+          ? [processImageResource]
+          : item.type === 'fileChange'
+            ? [{ ...resources[1]!, delivery: 'assistant' as const }]
+            : links && item.phase === 'final_answer'
+              ? resources
+              : [];
     return {
       ...item,
       key: `layout-${index}`,
