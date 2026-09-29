@@ -112,6 +112,8 @@ export interface ResolvedNativeUserMessageSubmission {
 }
 
 export interface NativeUserMessageProjection extends ResolvedNativeUserMessageSubmission {
+  /** 本地提交或远端消息首次创建的时间。 */
+  messageCreatedAt: string;
   content: string;
 }
 

@@ -245,7 +245,7 @@ function AllProvidersOverview(props: { providers: UsageProviderAnalytics[]; lang
             <MetricGrid
               language={props.language}
               items={[
-                [copy.today, formatTokens(analytics.provider.todayLocal.totalTokens, props.language)],
+                [copy.today, formatTokens(analytics.provider.overviewRanges.today.local.totalTokens, props.language)],
                 [copy.selectedRange, formatTokens(analytics.local.totals.totalTokens, props.language)],
                 [props.language === 'zh-CN' ? '轮次数' : 'Turns', String(analytics.local.totals.turnCount)],
                 [props.language === 'zh-CN' ? '费用估算' : 'Estimated cost', formatEstimatedCosts(analytics.local.totals.costs, analytics.local.totals.apiEquivalentUsd)],
@@ -268,7 +268,7 @@ function LocalProviderOverview(props: { analytics: UsageProviderAnalytics; langu
           language={props.language}
           items={[
             [props.language === 'zh-CN' ? '供应商类型' : 'Provider type', props.language === 'zh-CN' ? 'API 供应商' : 'API provider'],
-            [props.language === 'zh-CN' ? '今日 Token' : 'Today tokens', formatTokens(props.analytics.provider.todayLocal.totalTokens, props.language)],
+            [props.language === 'zh-CN' ? '今日 Token' : 'Today tokens', formatTokens(props.analytics.provider.overviewRanges.today.local.totalTokens, props.language)],
             [props.language === 'zh-CN' ? '当前范围 Token' : 'Range tokens', formatTokens(totals.totalTokens, props.language)],
             [props.language === 'zh-CN' ? '轮次数' : 'Turns', String(totals.turnCount)],
             [props.language === 'zh-CN' ? '缓存命中率' : 'Cache hit rate', formatPercent(totals.cacheHitRate, props.language)],

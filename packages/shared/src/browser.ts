@@ -140,20 +140,14 @@ export interface ZeusComputerControlIdentity {
   sessionId: string;
 }
 
-/** 原生采集的实时缩略图，仅供所属会话展示，不作为历史消息持久化。 */
+/** CUA 返回的最近窗口画面，仅供所属会话展示，不作为历史消息持久化。 */
 export interface ZeusComputerPreview extends ZeusComputerControlIdentity {
   /** 当前受控应用的系统名称。 */
   appName: string;
-  /** 用户接管期间暂让输入，目标窗口空闲后恢复观察资格。 */
-  paused: boolean;
-  /** 恢复或窗口变化后需由模型重新观察。 */
+  /** 动作后需由模型重新观察，旧画面不能证明结果。 */
   needsObservation: boolean;
-  /** 锁屏、休眠或采集暂停期间关闭输入，等待系统恢复后重新观察。 */
-  systemUnavailable: boolean;
-  /** 有界 JPEG 缩略图；尚未产生首帧时为空。 */
+  /** 有界 CUA 图像；尚未产生首帧时为空。 */
   imageUrl: string | null;
-  /** 虚拟光标在受控窗口内的归一化位置。 */
-  cursor: { x: number; y: number } | null;
 }
 
 export interface ZeusRetiredNativeRuntimeState {

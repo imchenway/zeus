@@ -114,6 +114,20 @@ export interface ConversationModelRequestUsageRecord {
   occurredAt: string;
 }
 
+/** 已完成文本请求的输出速率计算依据，供跨会话用量概览按真实时长聚合。 */
+export interface ConversationOutputRateMeasurement {
+  /** 产品会话身份。 */
+  conversationId: string;
+  /** 原生线程身份。 */
+  providerThreadId: string;
+  /** 原生轮次身份。 */
+  providerTurnId: string;
+  /** 不含推理 Token 的可见输出量。 */
+  visibleOutputTokens: number;
+  /** 从首个文本增量到请求完成的毫秒数。 */
+  durationMs: number;
+}
+
 export interface ConversationProcessItemRecord {
   id: string;
   conversationId: string;
@@ -1608,6 +1622,34 @@ export class ConversationExecutionRepository {
     return readConversationSessionMetrics(this.db, conversationId, turnId);
   }
 
+  /** 读取具备完整文本计时的请求；非文本请求不会冲淡或覆盖真实输出速率。 */
+  listOutputRateMeasurements(): ConversationOutputRateMeasurement[] {
+    const rows = this.db.select<{
+      conversation_id: string;
+      provider_thread_id: string;
+      provider_turn_id: string;
+      output_tokens: number;
+      reasoning_output_tokens: number;
+      first_text_output_at: string;
+      completed_at: string;
+    }>(
+      `SELECT r.conversation_id, t.provider_thread_id, t.provider_turn_id,
+              r.output_tokens, r.reasoning_output_tokens, r.first_text_output_at, r.completed_at
+         FROM conversation_model_requests r
+         JOIN conversation_turns t ON t.id = r.turn_id
+        WHERE r.measurement_complete = 1
+          AND r.output_tokens IS NOT NULL AND r.reasoning_output_tokens IS NOT NULL
+          AND r.first_text_output_at IS NOT NULL AND r.completed_at IS NOT NULL
+          AND t.provider_thread_id IS NOT NULL AND t.provider_turn_id IS NOT NULL
+        ORDER BY r.request_sequence`,
+    );
+    return rows.flatMap((row) => {
+      const durationMs = elapsedMs(row.first_text_output_at, row.completed_at);
+      const visibleOutputTokens = row.output_tokens - row.reasoning_output_tokens;
+      return durationMs !== null && durationMs > 0 && visibleOutputTokens > 0 ? [{ conversationId: row.conversation_id, providerThreadId: row.provider_thread_id, providerTurnId: row.provider_turn_id, visibleOutputTokens, durationMs }] : [];
+    });
+  }
+
   private requireOpenSwitch(operationId: string): ConversationSwitchOperationRecord {
     const operation = this.getSwitch(operationId);
     if (!operation || !isOpenSwitch(operation)) throw new Error(`运行分段切换操作不可继续：${operationId}`);
@@ -2537,8 +2579,17 @@ function stringOrNull(value: unknown): string | null {
 export function readConversationSessionMetrics(db: ZeusDatabasePort, conversationId: string, turnId?: string | null): ConversationSessionMetricsSnapshot {
   const usage = readConversationUsageSnapshot(db, conversationId, turnId);
   const providerUsage = readProviderUsageMetrics(db, conversationId);
-  const latestRequest = usage.latestModelRequest;
-  const latestOutputTokensPerSecond = outputRate(latestRequest);
+  /** 工具调用等不可测速请求不能覆盖最近一次已经完整测得的文本输出速率。 */
+  const latestOutputTokensPerSecond =
+    db
+      .select<ModelRequestRow>(
+        `SELECT * FROM conversation_model_requests
+        WHERE conversation_id = ? AND request_kind <> 'context_compaction' AND measurement_complete = 1
+        ORDER BY request_sequence DESC`,
+        [conversationId],
+      )
+      .map((row) => outputRate(mapModelRequest(row)))
+      .find((rate): rate is number => rate !== null) ?? null;
   const latestTurn = db.get<{ id: string; started_at: string | null }>(`SELECT id, started_at FROM conversation_turns WHERE conversation_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`, [conversationId]);
   const latestFirstVisibleAt = latestTurn
     ? (db.get<{ first_visible_output_at: string | null }>(
@@ -2603,6 +2654,7 @@ export function readConversationSessionMetrics(db: ZeusDatabasePort, conversatio
   };
 }
 
+/** 仅在文本请求的 Token 与首尾时间都完整时计算输出速率。 */
 function outputRate(request: ConversationModelRequestUsageRecord | null): number | null {
   if (!request?.measurementComplete || request.outputTokens === null || request.reasoningOutputTokens === null) return null;
   const durationMs = elapsedMs(request.firstTextOutputAt, request.completedAt);

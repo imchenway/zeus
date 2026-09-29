@@ -248,28 +248,22 @@ assertProbe(nativeActivityTool({ toolName: 'plugin_zeus_browser_open' }) === nul
 /** 使用原生观察的应用名称，禁止从内部标识猜测产品。 */
 const desktopPresentation = conversationProcessPresentation('tool', {
   itemType: 'dynamicToolCall',
-  payload: { namespace: 'zeus_computer', tool: 'get_app_state', arguments: { app: 'com.github.electron' }, contentItems: [{ type: 'inputText', text: JSON.stringify({ application: { name: 'Zeus Test' } }) }], success: true },
+  payload: { namespace: 'zeus_computer', tool: 'get_window_state', arguments: { pid: 42, window_id: 7 }, contentItems: [{ type: 'inputText', text: JSON.stringify({ app_name: 'Zeus Test' }) }], success: true },
 });
 assertProbe(nativeActivityTitle({ status: 'completed', payload: desktopPresentation.payload }, true)?.includes('Zeus Test') === true, '历史投影必须保留工具身份和真实应用元信息。');
+assertProbe(!nativeActivityTitle({ status: 'completed', payload: { namespace: 'zeus_computer', tool: 'get_window_state', arguments: { pid: 42, window_id: 7 } } }, true)?.includes('window_id'), '缺少真实名称时不得在摘要暴露内部标识。');
+/** CUA 动作结果未知不能被已完成调用覆盖。 */
 assertProbe(
-  !nativeActivityTitle({ status: 'completed', payload: { namespace: 'zeus_computer', tool: 'get_app_state', arguments: { app: 'com.github.electron' } } }, true)?.includes('com.github.electron'),
-  '缺少真实名称时不得在摘要暴露内部标识。',
+  activityOutcome({ status: 'completed', payload: { namespace: 'zeus_computer', tool: 'click', contentItems: [{ type: 'inputText', text: JSON.stringify({ action: { outcome: 'unknown' } }) }] } }) === 'unknown',
+  '调用已返回不能覆盖 CUA 未确认结果。',
 );
-/** 已完成返回、用户接管与动作结果未知是不同的展示状态。 */
-for (const [result, expected] of [
-  [{ status: 'waiting_for_user' }, 'waiting'],
-  [{ status: 'user_control_resumed' }, 'observe'],
-  [{ action: { outcome: 'unknown' } }, 'unknown'],
-] as const) {
-  assertProbe(activityOutcome({ status: 'completed', payload: { namespace: 'zeus_computer', tool: 'click', contentItems: [{ type: 'inputText', text: JSON.stringify(result) }] } }) === expected, '调用已返回不能覆盖实际接管或未确认结果。');
-}
 assertProbe(activityOutcome({ status: 'completed', payload: { success: false } }) === 'failed' && activityOutcome({ status: 'completed', payload: { status: 'cancelled' } }) === 'cancelled', '结束记录仍保留失败与取消的真实状态。');
 assertProbe(activityOutcome({ status: 'completed', payload: failedCommand.payload }) === 'failed', '非零退出码不能显示已完成。');
-assertProbe(activityOutcome({ status: 'completed', payload: { namespace: 'zeus_computer', tool: 'click', v2ContentTruncated: true } }) === 'unknown', '桌面结果截断时不能丢失潜在的接管状态并误报完成。');
+assertProbe(activityOutcome({ status: 'completed', payload: { namespace: 'zeus_computer', tool: 'click', v2ContentTruncated: true } }) === 'unknown', 'CUA 结果截断时不能丢失动作状态并误报完成。');
 /** 工具展示可单独检查，不依赖后续长历史游标与数据库场景。 */
 if (process.argv.includes('--activity-presentation')) {
   await probeNavigation();
-  console.log('工具展示探针通过：原生身份、应用名称、失败、取消、接管与未确认结果。');
+  console.log('工具展示探针通过：原生身份、应用名称、失败、取消与 CUA 未确认结果。');
   process.exit(0);
 }
 assertProbe(

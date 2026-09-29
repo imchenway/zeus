@@ -2336,6 +2336,22 @@ export class ConversationSubmissionRepository {
       .map(mapConversationSubmissionRow);
   }
 
+  /** 展示交接包含尚在发送中的提交和未接纳的失败项，调度队首仍使用独立的可调度队列。 */
+  listQueueProjectionByConversation(conversationId: string): ZeusConversationSubmissionRecord[] {
+    return this.db
+      .select<DbConversationSubmissionRow>(
+        `SELECT * FROM conversation_submissions WHERE conversation_id = ?
+       AND (status IN ('queued', 'paused', 'dispatching') OR (status = 'failed' AND provider_turn_id IS NULL)
+         OR (status = 'active' AND NOT EXISTS (SELECT 1 FROM conversation_messages AS message
+           WHERE message.conversation_id = conversation_submissions.conversation_id AND message.role = 'user'
+             AND message.client_message_id = conversation_submissions.client_message_id)))
+       AND COALESCE(json_extract(input_json, '$.expertRound'), 0) <> 1
+       ORDER BY queue_position, created_at, id`,
+        [conversationId],
+      )
+      .map(mapConversationSubmissionRow);
+  }
+
   /** Provider 与专家路由共用的权威队列；展示层仍通过 listQueueByConversation 隐藏内部专家提交。 */
   listDispatchQueueByConversation(conversationId: string): ZeusConversationSubmissionRecord[] {
     return this.db

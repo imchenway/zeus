@@ -161,6 +161,7 @@ export function failTaskModelPushPendingState(pending: TaskModelPushPendingState
       items: failedItems,
       transcriptRevision: pending.session.transcriptRevision + 1,
       queue: {
+        throughEventSeq: 0,
         state: { type: 'idle' },
         submissions: [],
       },
@@ -254,6 +255,7 @@ export function enqueueTaskModelPushMessage(
       draft: '',
       attachments: [],
       queue: {
+        throughEventSeq: 0,
         state: { type: 'active', turnId: pending.session.activeTurnId ?? `${pending.navigationId}:turn`, phase: 'prework' },
         submissions: deferredMessages.filter((entry) => entry.status !== 'accepted').map(deferredMessageSubmission),
       },
@@ -269,6 +271,7 @@ export function updateTaskModelPushDeferredMessages(pending: TaskModelPushPendin
     session: {
       ...pending.session,
       queue: {
+        throughEventSeq: 0,
         state: { type: 'active', turnId: pending.session.activeTurnId ?? `${pending.navigationId}:turn`, phase: 'prework' },
         submissions: deferredMessages.filter((entry) => entry.status !== 'accepted').map(deferredMessageSubmission),
       },
@@ -335,7 +338,7 @@ function buildPendingTaskPushSession(choice: NativeConversationChoice, request: 
     providerThreadId: `${choice.id}:thread`,
     activeTurnId: turnId,
     startedTurnId: turnId,
-    queue: { state: { type: 'active', turnId, phase: 'prework' }, submissions: [] },
+    queue: { throughEventSeq: 0, state: { type: 'active', turnId, phase: 'prework' }, submissions: [] },
     providerSettings: {
       model: request.model,
       ...(request.effort ? { effort: request.effort } : {}),

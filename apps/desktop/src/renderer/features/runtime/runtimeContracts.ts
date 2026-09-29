@@ -148,9 +148,14 @@ export interface AiRuntimeTerminalSnapshot {
   command: string;
   cwd: string;
   logs: AiRuntimeLogEntry[];
+  /** 按原始输出位置恢复的字符网格与正文序列。 */
+  replay?: AiRuntimeTerminalReplayOperation[];
   logsTruncated?: boolean;
   capturedAt: string;
 }
+
+/** 输出正文保持原样，resize 只恢复其产生时的解释网格。 */
+export type AiRuntimeTerminalReplayOperation = { kind: 'output'; text: string } | { kind: 'resize'; cols: number; rows: number };
 
 export interface AiRuntimeTerminalEvent {
   id: string;
@@ -201,6 +206,10 @@ export interface StartRuntimeSessionRequest {
   command: string;
   args?: string[];
   cwd?: string;
+  /** 交互 PTY 从首个字节起使用的列数。 */
+  cols?: number;
+  /** 交互 PTY 从首个字节起使用的行数。 */
+  rows?: number;
   confirmationId?: string;
 }
 
@@ -212,6 +221,10 @@ export interface RuntimeConfirmationSessionRequest {
   command: string;
   args?: string[];
   cwd?: string;
+  /** 确认绑定的交互 PTY 首屏列数。 */
+  cols?: number;
+  /** 确认绑定的交互 PTY 首屏行数。 */
+  rows?: number;
 }
 
 export interface CreateRuntimeConfirmationRequest {
@@ -236,7 +249,7 @@ export interface RuntimeOperationConfirmation {
     commandPreview: string;
     redacted: boolean;
   };
-  session: Required<Pick<RuntimeConfirmationSessionRequest, 'projectId' | 'command' | 'args' | 'cwd'>> & Pick<RuntimeConfirmationSessionRequest, 'taskId' | 'conversationId'>;
+  session: Required<Pick<RuntimeConfirmationSessionRequest, 'projectId' | 'command' | 'args' | 'cwd'>> & Pick<RuntimeConfirmationSessionRequest, 'taskId' | 'conversationId' | 'cols' | 'rows'>;
   createdAt: string;
   confirmedAt: string | null;
   consumedAt: string | null;

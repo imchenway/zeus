@@ -125,7 +125,14 @@ export interface CodexProviderHistoryProjectionDependencies {
     createdAt: string,
   ): string | null;
 
-  projectProviderUserMessage(conversation: ZeusConversationWithMessagesRecord, turn: ZeusConversationTurnRecord, itemPayload: Record<string, unknown>, providerContent: string, providerItemId: string): NativeUserMessageProjection | null;
+  projectProviderUserMessage(
+    conversation: ZeusConversationWithMessagesRecord,
+    turn: ZeusConversationTurnRecord,
+    itemPayload: Record<string, unknown>,
+    providerContent: string,
+    providerItemId: string,
+    observedAt: string,
+  ): NativeUserMessageProjection | null;
 
   reconcileTerminalTurnSubmissions(
     conversation: ZeusConversationWithMessagesRecord,
@@ -623,8 +630,9 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     const identityPayload = compatibilitySnapshotItem ? { ...itemPayload, compatibilitySnapshotItemId: nativeProviderItemId } : itemPayload;
     const presentedItemPayload = sanitizeConversationItemPayload(itemType === 'userMessage' ? { ...identityPayload, ...submissionPresentation(conversation.id, turn, itemPayload) } : identityPayload);
     const existing = providerItemId === nativeProviderItemId ? existingRaw : options.providerItems.getByProvider(providerThreadId, providerItemId);
-    const userMessageProjection = itemType === 'userMessage' ? projectProviderUserMessage(conversation, turn, presentedItemPayload, itemText(itemPayload), providerItemId) : null;
+    const userMessageProjection = itemType === 'userMessage' ? projectProviderUserMessage(conversation, turn, presentedItemPayload, itemText(itemPayload), providerItemId, timestamp) : null;
     if (itemType === 'userMessage' && !userMessageProjection) return false;
+    if (userMessageProjection) presentedItemPayload.messageCreatedAt = userMessageProjection.messageCreatedAt;
     const completedProjection = userMessageProjection
       ? { ...completedItemProjection(existing, presentedItemPayload, itemType), textContent: userMessageProjection.content }
       : completedItemProjection(existing, presentedItemPayload, itemType);

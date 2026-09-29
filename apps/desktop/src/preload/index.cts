@@ -392,8 +392,6 @@ contextBridge.exposeInMainWorld('zeus', {
   /** 会话按钮携带控制身份；设置中的全局停止保留原有语义。 */
   stopComputerUse: (input?: { conversationId: string; sessionId: string }) =>
     invokeMainCommand('zeus:computer:stop', 'desktop.computer.stop', input ? 'product_conversation' : 'settings', input?.conversationId ?? 'computer-use-settings', input),
-  /** 用户继续仍经 Main 命令账本，不向模型暴露恢复工具。 */
-  resumeComputerUse: (input: { conversationId: string; sessionId: string }) => invokeMainCommand('zeus:computer:resume', 'desktop.computer.resume', 'product_conversation', input.conversationId, input),
   onBrowserEvent: (listener: (event: unknown) => void) => {
     const handler = (_event: unknown, value: unknown) => listener(value);
     ipcRenderer.on('zeus:browser-event', handler);

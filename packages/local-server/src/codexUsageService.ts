@@ -739,6 +739,7 @@ function aggregateRows(rows: readonly CodexUsageLedgerRecord[]): CodexLocalUsage
     conversationCount: new Set(rows.map((row) => row.conversationId)).size,
     turnCount: rows.length,
     cacheHitRate: calculateCacheHitRate(usage),
+    outputTokensPerSecond: null,
     estimatedCredits: creditValues.length > 0 ? creditValues.reduce((sum, value) => sum + value, 0) : null,
     apiEquivalentUsd: usdValues.length > 0 ? usdValues.reduce((sum, value) => sum + value, 0) : null,
     cacheSavingsUsd: savingsValues.length > 0 ? savingsValues.reduce((sum, value) => sum + value, 0) : null,

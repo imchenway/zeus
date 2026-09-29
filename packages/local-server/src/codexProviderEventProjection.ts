@@ -133,7 +133,14 @@ export interface CodexProviderEventProjectionDependencies {
     occurredAt: string;
   }): void;
 
-  projectProviderUserMessage(conversation: ZeusConversationWithMessagesRecord, turn: ZeusConversationTurnRecord, itemPayload: Record<string, unknown>, providerContent: string, providerItemId: string): NativeUserMessageProjection | null;
+  projectProviderUserMessage(
+    conversation: ZeusConversationWithMessagesRecord,
+    turn: ZeusConversationTurnRecord,
+    itemPayload: Record<string, unknown>,
+    providerContent: string,
+    providerItemId: string,
+    observedAt: string,
+  ): NativeUserMessageProjection | null;
 
   reconcileTerminalTurnSubmissions(
     conversation: ZeusConversationWithMessagesRecord,
@@ -761,8 +768,9 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     // 兼容 app-server 不发送 rawResponseItem/completed 的版本：模型一旦产出工具、命令、
     // 文件变更等非文本项，本次请求即不能用总输出 Token 计算纯文本生成速率。
     if (isNonTextModelRequestOutput(itemType)) modelRequestTiming.observe(conversation.id, turn.id, event.receivedAt, 'non_text');
-    const userMessageProjection = itemType === 'userMessage' ? projectProviderUserMessage(conversation, turn, presentedItemPayload, itemText(itemPayload), providerItemId) : null;
+    const userMessageProjection = itemType === 'userMessage' ? projectProviderUserMessage(conversation, turn, presentedItemPayload, itemText(itemPayload), providerItemId, event.receivedAt) : null;
     if (itemType === 'userMessage' && !userMessageProjection) return;
+    if (userMessageProjection) presentedItemPayload.messageCreatedAt = userMessageProjection.messageCreatedAt;
     const item = userMessageProjection
       ? options.providerItems.upsertProgress({
           conversationId: conversation.id,
@@ -1039,8 +1047,9 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     const presentedItemPayload = sanitizeConversationItemPayload(itemPayload.type === 'userMessage' ? { ...itemPayload, ...submissionPresentation(conversation.id, turn, itemPayload) } : itemPayload);
     const itemType = itemTypeFromValue(itemPayload.type);
     const existing = options.providerItems.getByProvider(threadId, providerItemId);
-    const userMessageProjection = itemType === 'userMessage' ? projectProviderUserMessage(conversation, turn, presentedItemPayload, itemText(itemPayload), providerItemId) : null;
+    const userMessageProjection = itemType === 'userMessage' ? projectProviderUserMessage(conversation, turn, presentedItemPayload, itemText(itemPayload), providerItemId, event.receivedAt) : null;
     if (itemType === 'userMessage' && !userMessageProjection) return;
+    if (userMessageProjection) presentedItemPayload.messageCreatedAt = userMessageProjection.messageCreatedAt;
     const completedProjection = userMessageProjection
       ? { ...completedItemProjection(existing, presentedItemPayload, itemType), textContent: userMessageProjection.content }
       : completedItemProjection(existing, presentedItemPayload, itemType);

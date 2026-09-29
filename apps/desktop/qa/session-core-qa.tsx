@@ -48,11 +48,11 @@ const scenes: QaScene[] = [
     answer: '',
     activities: [
       { type: 'dynamicToolCall', status: 'completed', payload: { namespace: 'zeus_browser', tool: 'open', arguments: { url: 'https://example.com/orders' }, success: true } },
-      { type: 'dynamicToolCall', status: 'completed', payload: { toolName: 'zeus_computer_get_app_state', arguments: { app: 'com.github.electron' }, output: JSON.stringify({ application: { name: 'Zeus Test' } }) } },
+      { type: 'dynamicToolCall', status: 'completed', payload: { toolName: 'zeus_computer_get_window_state', arguments: { pid: 42, window_id: 7 }, output: JSON.stringify({ app_name: 'Zeus Test' }) } },
       {
         type: 'dynamicToolCall',
         status: 'completed',
-        payload: { namespace: 'zeus_computer', tool: 'click', arguments: { app: 'com.github.electron' }, contentItems: [{ type: 'inputText', text: JSON.stringify({ status: 'waiting_for_user' }) }] },
+        payload: { namespace: 'zeus_computer', tool: 'click', arguments: { pid: 42, window_id: 7 }, contentItems: [{ type: 'inputText', text: JSON.stringify({ action: { outcome: 'unknown' } }) }] },
       },
       { type: 'dynamicToolCall', status: 'completed', payload: { namespace: 'zeus_browser', tool: 'click', success: false } },
       { type: 'commandExecution', status: 'completed', payload: { commandActions: [{ type: 'read', path: '/skills/accessibility/SKILL.md' }] } },

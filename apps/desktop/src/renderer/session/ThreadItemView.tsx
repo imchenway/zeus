@@ -507,8 +507,8 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   /** 状态与操作共同决定底栏；已确认未发送可只有操作，未知送达可只有状态。 */
   const showQueuedFooter = role === 'user' && Boolean(props.waitingInQueue && (optimisticStatus || showQueuedActions));
   const showMeta = !command && !recoveredRequestUserInput && (showVisibleRoleLabel || (!showQueuedFooter && Boolean(optimisticStatus)));
-  const messageTimestamp = formatMessageTimestamp(props.item, props.language);
-  const timestampSource = props.item.updatedAt ?? primitiveText(props.item.payload.createdAt);
+  const timestampSource = role === 'user' ? props.item.messageCreatedAt : props.item.updatedAt;
+  const messageTimestamp = formatMessageTimestamp(timestampSource, props.language);
   const canEdit = role === 'user' && props.isLatestUser && Boolean(props.onEdit) && !props.item.optimistic;
   const showRoleActions = role === 'user' || (role === 'assistant' && Boolean(props.showAssistantActions ?? props.isLatest));
   const remoteDeviceInput = role === 'user' && props.item.payload.inputOrigin === 'remote_device';
@@ -1287,8 +1287,8 @@ function MessageTimestamp(props: { dateTime: string; value: string }) {
   );
 }
 
-function formatMessageTimestamp(item: NativeSessionItemBuffer, language: SessionUiLanguage): string | null {
-  const source = item.updatedAt ?? primitiveText(item.payload.createdAt);
+/** 只格式化已确定来源的时间，用户消息不以状态更新时间兜底。 */
+function formatMessageTimestamp(source: string | undefined, language: SessionUiLanguage): string | null {
   if (!source) return null;
   const date = new Date(source);
   if (Number.isNaN(date.getTime())) return null;

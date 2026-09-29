@@ -576,7 +576,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   function toQueueSnapshot(conversationId: string): NativeQueueSnapshot {
     // 暂停的引导同样阻塞下一条，必须和队首校验使用同一队列。
-    const entries = options.submissions.listQueueByConversation(conversationId);
+    const entries = options.submissions.listQueueProjectionByConversation(conversationId);
     const state = runStates.get(conversationId) ?? { type: 'idle' as const };
     return {
       conversationId,
@@ -1547,6 +1547,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     itemPayload: Record<string, unknown>,
     providerContent: string,
     providerItemId: string,
+    observedAt: string,
   ): NativeUserMessageProjection | null {
     const existingProviderMessage = conversation.messages.find((message) => message.providerItemId === providerItemId);
     const existingClientIds = new Set(
@@ -1568,6 +1569,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     if (submissionInput.internalOperation === true) return null;
     return {
       ...resolved,
+      messageCreatedAt: resolved.submission?.createdAt ?? existingProviderMessage?.createdAt ?? observedAt,
       content: chooseNativeUserMessageContent({
         displayText: itemPayload.displayText,
         submissionDisplayText: submissionInput.displayText,
@@ -1617,7 +1619,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         ...(submission && typeof parseJsonRecord(submission.inputJson).requestAnswerId === 'string' ? { requestAnswerId: parseJsonRecord(submission.inputJson).requestAnswerId } : {}),
         ...(submission && isRecord(parseJsonRecord(submission.inputJson).questionAnswer) ? { questionAnswer: parseJsonRecord(submission.inputJson).questionAnswer } : {}),
       },
-      createdAt,
+      createdAt: projection.messageCreatedAt,
       providerThreadId,
       providerTurnId,
       providerItemId,

@@ -879,6 +879,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
                       input.prompt,
                       input.clientUserMessageId,
                       createdAt,
+                      submission.createdAt,
                       attachmentInput.attachments,
                       input.taskPushLayout,
                     );
@@ -938,7 +939,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         nativeRunId: run.nativeRunId,
       });
     if (!acceptedTurnProjection) {
-      if (!input.internalOperation) appendUserProjection(input.conversationId, session.nativeSessionId, turn.id, run.nativeRunId, input.prompt, input.clientUserMessageId, createdAt, attachmentInput.attachments, input.taskPushLayout);
+      if (!input.internalOperation)
+        appendUserProjection(input.conversationId, session.nativeSessionId, turn.id, run.nativeRunId, input.prompt, input.clientUserMessageId, createdAt, submission.createdAt, attachmentInput.attachments, input.taskPushLayout);
       options.submissions.updateStatus(submission.id, 'active', { providerTurnId: run.nativeRunId, updatedAt: run.acceptedAt });
     }
     // 统一 Segment 已在 run acceptance 事务中成为权威 current；这里仅刷新可重建的 legacy 会话状态。
@@ -1225,7 +1227,17 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
                     agentKind: 'pi',
                     nativeRunId: acceptance.nativeRunId,
                   });
-                  appendUserProjection(input.conversation.id, context.session.nativeSessionId, acceptedTurnProjection.id, acceptance.nativeRunId, input.content, input.clientUserMessageId, createdAt, attachmentInput.attachments);
+                  appendUserProjection(
+                    input.conversation.id,
+                    context.session.nativeSessionId,
+                    acceptedTurnProjection.id,
+                    acceptance.nativeRunId,
+                    input.content,
+                    input.clientUserMessageId,
+                    createdAt,
+                    submission.createdAt,
+                    attachmentInput.attachments,
+                  );
                   options.submissions.updateStatus(submission.id, 'active', { providerTurnId: acceptance.nativeRunId, updatedAt: acceptance.acceptedAt });
                   options.conversations.updateAgentRuntime(input.conversation.id, {
                     providerState: 'active',
@@ -1307,7 +1319,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         nativeRunId: run.nativeRunId,
       });
     if (!acceptedTurnProjection) {
-      appendUserProjection(input.conversation.id, context.session.nativeSessionId, turn.id, run.nativeRunId, input.content, input.clientUserMessageId, createdAt, attachmentInput.attachments);
+      appendUserProjection(input.conversation.id, context.session.nativeSessionId, turn.id, run.nativeRunId, input.content, input.clientUserMessageId, createdAt, submission.createdAt, attachmentInput.attachments);
       options.submissions.updateStatus(submission.id, 'active', { providerTurnId: run.nativeRunId, updatedAt: run.acceptedAt });
       options.conversations.updateAgentRuntime(input.conversation.id, {
         providerState: 'active',
@@ -1580,7 +1592,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         {
           durableTransactionSync: (operation) => options.db.durableTransactionSync(operation),
           projectTurn: () => {
-            appendUserProjection(input.conversation.id, context.session.nativeSessionId, run.turnId, run.providerTurnId, input.content, input.clientUserMessageId, createdAt, attachmentInput.attachments);
+            appendUserProjection(input.conversation.id, context.session.nativeSessionId, run.turnId, run.providerTurnId, input.content, input.clientUserMessageId, createdAt, submission.createdAt, attachmentInput.attachments);
             options.submissions.updateStatus(submission.id, 'resolved', { providerTurnId: accepted.nativeRunId, resolvedAt: accepted.acceptedAt, updatedAt: accepted.acceptedAt });
           },
         },
@@ -2042,19 +2054,21 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     content: string,
     clientMessageId: string,
     createdAt: string,
+    /** 提交首次创建时间，排队和重试不得修改。 */
+    messageCreatedAt: string,
     attachments: NativeConversationAttachmentInput[] = [],
     taskPushLayout?: TaskPushMessageLayout,
   ): void {
     const itemId = `pi_user_${clientMessageId}`;
     const attachmentMetadata = persistedPiAttachmentMetadata(attachments);
     // 先保存客户端身份，Provider 来源才能与已接纳的用户历史共用同一过程归属。
-    options.conversations.appendMessage({
+    const message = options.conversations.appendMessage({
       conversationId,
       role: 'user',
       content,
       source: 'pi_sdk',
       metadata: { clientUserMessageId: clientMessageId, agentKind: 'pi', cwd: contexts.get(threadId)?.cwd, ...(attachmentMetadata.length > 0 ? { attachments: attachmentMetadata } : {}), ...(taskPushLayout ? { taskPushLayout } : {}) },
-      createdAt,
+      createdAt: messageCreatedAt,
       providerThreadId: threadId,
       providerTurnId,
       providerItemId: itemId,
@@ -2068,7 +2082,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       providerItemId: itemId,
       itemType: 'userMessage',
       phase: 'prework',
-      payload: { clientUserMessageId: clientMessageId, agentKind: 'pi', ...(attachmentMetadata.length > 0 ? { attachments: attachmentMetadata } : {}), ...(taskPushLayout ? { taskPushLayout } : {}) },
+      payload: { messageCreatedAt: message.createdAt, clientUserMessageId: clientMessageId, agentKind: 'pi', ...(attachmentMetadata.length > 0 ? { attachments: attachmentMetadata } : {}), ...(taskPushLayout ? { taskPushLayout } : {}) },
       textContent: content,
       completedAt: createdAt,
       updatedAt: createdAt,

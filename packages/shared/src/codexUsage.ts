@@ -125,6 +125,19 @@ export interface UsageModelCostBreakdown {
   estimatedCosts: import('./modelPricing.js').EstimatedMoney[];
 }
 
+/** 菜单栏概览支持的快捷时间范围。 */
+export type UsageOverviewRange = 'today' | '7d' | '30d' | 'all';
+
+/** 单个快捷时间范围的本地汇总与费用明细。 */
+export interface UsageOverviewRangeSummary {
+  /** 当前范围内的本地用量汇总。 */
+  local: CodexLocalUsageTotals;
+  /** 当前范围内按模型和历史单价归组的费用依据。 */
+  costBreakdown: UsageModelCostBreakdown[];
+  /** 当前范围内所有账本记录是否都包含完整用量。 */
+  complete: boolean;
+}
+
 export interface UsageProviderSummary {
   providerId: string;
   sourceId: string;
@@ -140,14 +153,8 @@ export interface UsageProviderSummary {
   accountTodayTokens: number | null;
   accountSevenDayTokens: number | null;
   dailyAccount: Array<{ date: string; totalTokens: number }> | null;
-  todayLocal: CodexLocalUsageTotals;
-  /** 今日按模型和历史单价归组的费用依据。 */
-  todayCostBreakdown: UsageModelCostBreakdown[];
-  todayLocalComplete: boolean;
-  sevenDayLocal: CodexLocalUsageTotals;
-  /** 近七日按模型和历史单价归组的费用依据。 */
-  sevenDayCostBreakdown: UsageModelCostBreakdown[];
-  sevenDayLocalComplete: boolean;
+  /** 菜单栏快捷时间筛选所需的轻量汇总。 */
+  overviewRanges: Record<UsageOverviewRange, UsageOverviewRangeSummary>;
   dailyLocal: CodexLocalUsageDay[];
   collectionStartedAt: string | null;
   updatedAt: string;
@@ -169,6 +176,8 @@ export interface CodexLocalUsageTotals extends TokenUsageBreakdown {
   conversationCount: number;
   turnCount: number;
   cacheHitRate: number | null;
+  /** 当前范围内可测文本请求按 Token 与生成时长加权后的输出速率。 */
+  outputTokensPerSecond: number | null;
   estimatedCredits: number | null;
   apiEquivalentUsd: number | null;
   cacheSavingsUsd: number | null;

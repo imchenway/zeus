@@ -1,3 +1,6 @@
+/** 交互终端启动时统一使用该字符网格，确保 PTY 首屏输出能被显示端原样回放。 */
+export const interactiveTerminalInitialSize = { cols: 120, rows: 30 } as const;
+
 /** 交互终端使用登记的 shell；精确匹配参数，避免混入普通脚本和 AI 会话。 */
 export function isInteractiveShellSession(session: { command: string; args: readonly string[] }): boolean {
   /** 兼容系统登记的绝对路径，只把明确的交互启动参数当作终端。 */

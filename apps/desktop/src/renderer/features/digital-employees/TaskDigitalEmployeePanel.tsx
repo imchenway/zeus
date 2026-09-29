@@ -62,6 +62,8 @@ export interface TaskDigitalEmployeePanelProps {
 
 export interface TaskDigitalEmployeeManagement {
   employees: DigitalEmployeeRecord[];
+  /** 新任务只能选择用户明确配置的项目员工；内置模板生成的旧副本只保留历史展示。 */
+  assignableEmployees: DigitalEmployeeRecord[];
   projection: TaskWorkManagementProjection | null;
   loadState: 'loading' | 'ready' | 'failed';
   busy: string | null;
@@ -75,6 +77,8 @@ export interface TaskDigitalEmployeeManagement {
 export function useTaskDigitalEmployeeManagement(props: Pick<TaskDigitalEmployeePanelProps, 'taskId' | 'projectId' | 'client' | 'language'>): TaskDigitalEmployeeManagement {
   const zh = props.language === 'zh-CN';
   const [employees, setEmployees] = useState<DigitalEmployeeRecord[]>([]);
+  /** 新指派候选排除直接由内置模板生成的旧项目副本。 */
+  const [assignableEmployees, setAssignableEmployees] = useState<DigitalEmployeeRecord[]>([]);
   const [projection, setProjection] = useState<TaskWorkManagementProjection | null>(null);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'failed'>('loading');
   const [busy, setBusy] = useState<string | null>(null);
@@ -94,10 +98,13 @@ export function useTaskDigitalEmployeeManagement(props: Pick<TaskDigitalEmployee
     const generation = ++readGeneration.current;
     if (!hasLoaded.current) setLoadState('loading');
     try {
-      const [nextEmployees, nextProjection] = await Promise.all([props.client.loadProjectDigitalEmployees(props.projectId), props.client.loadTaskWorkManagement(props.taskId)]);
+      const [nextEmployees, nextTemplates, nextProjection] = await Promise.all([props.client.loadProjectDigitalEmployees(props.projectId), props.client.loadDigitalEmployeeTemplates(), props.client.loadTaskWorkManagement(props.taskId)]);
       if (generation !== readGeneration.current) return;
+      /** 只排除明确来自内置模板的项目副本；手工创建或来源已删除的独立员工仍然可用。 */
+      const builtInTemplateIds = new Set(nextTemplates.filter((template) => template.builtIn).map((template) => template.id));
       hasLoaded.current = true;
       setEmployees(nextEmployees);
+      setAssignableEmployees(nextEmployees.filter((employee) => !employee.templateId || !builtInTemplateIds.has(employee.templateId)));
       setProjection(nextProjection);
       errorOperation.current = null;
       setError(null);
@@ -114,6 +121,7 @@ export function useTaskDigitalEmployeeManagement(props: Pick<TaskDigitalEmployee
     hasLoaded.current = false;
     setProjection(null);
     setEmployees([]);
+    setAssignableEmployees([]);
     setError(null);
     void load();
     return () => {
@@ -171,7 +179,7 @@ export function useTaskDigitalEmployeeManagement(props: Pick<TaskDigitalEmployee
     setError(null);
   }, []);
 
-  return { employees, projection, loadState, busy, error, load, act, dismissOperationError };
+  return { employees, assignableEmployees, projection, loadState, busy, error, load, act, dismissOperationError };
 }
 
 type ManagementTab = 'collaboration' | 'work' | 'deliverables' | 'evidence';
@@ -656,7 +664,7 @@ export function TaskDigitalEmployeeExecutor(props: {
       props.management.projection?.plan?.stages.some((stage) => stage.items.some((item) => item.employeeId === employee.id && item.status !== 'cancelled')),
   );
   /** 停用员工保留历史身份，但不能成为新指派候选。 */
-  const runnableEmployees = props.management.employees.filter((employee) => employee.enabled && employee.entrypointMigrationState === 'ready' && employee.entrypoint?.kind === 'agent');
+  const runnableEmployees = props.management.assignableEmployees.filter((employee) => employee.enabled && employee.entrypointMigrationState === 'ready' && employee.entrypoint?.kind === 'agent');
   const options = [
     ...runnableEmployees.map((employee) => ({ value: employee.id, label: `${employee.name} · ${employee.role}`, icon: <DigitalEmployeeAvatar {...employee} />, searchText: `${employee.name} ${employee.role} ${employee.domain}` })),
   ];
@@ -687,7 +695,7 @@ export function TaskDigitalEmployeeExecutor(props: {
           emptyLabel={zh ? '没有匹配的数字员工' : 'No matching digital employees'}
           disabled={props.terminalReadOnly || props.management.loadState === 'loading' || props.management.busy !== null || runnableEmployees.length === 0}
           onChange={(employeeId) => {
-            const employee = props.management.employees.find((candidate) => candidate.id === employeeId);
+            const employee = props.management.assignableEmployees.find((candidate) => candidate.id === employeeId);
             if (employee) setSelectedEmployee(employee);
           }}
           triggerLabel={assignedEmployees.length ? (zh ? '指派工作' : 'Assign work') : zh ? '选择执行人' : 'Choose an employee'}
@@ -700,7 +708,7 @@ export function TaskDigitalEmployeeExecutor(props: {
         </Button>
       ) : props.onManageEmployees ? (
         <Button variant="secondary" size="compact" onClick={props.onManageEmployees}>
-          {zh ? '配置数字员工' : 'Set up employees'}
+          {zh ? '配置项目员工' : 'Set up project employees'}
         </Button>
       ) : (
         <span>{zh ? '项目尚无可指派员工' : 'No employees available'}</span>

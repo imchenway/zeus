@@ -518,10 +518,10 @@ body:has(.menu-bar-usage-root),
   background: var(--usage-accent);
 }
 
-/* 三列按 Token、缓存命中率、费用排列，同一周期保持一行便于横向比较。 */
+/* 两列逐行展示范围合计与加权平均，所有快捷时间范围共用同一布局。 */
 .menu-bar-usage-metrics {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin: 0;
   padding: 8px 0;
@@ -616,15 +616,15 @@ body:has(.menu-bar-usage-root),
   user-select: auto;
 }
 
-/* 结构化费用明细按内容收缩，长模型列表只在自身区域滚动。 */
+/* 费用明细由三列内容决定自然宽度，640px 只作为上限，避免短内容被机械拉宽。 */
 .menu-bar-usage-cost-detail-window {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 4px;
   inline-size: fit-content;
+  max-inline-size: min(640px, calc(100vw - 16px));
   min-inline-size: 0;
-  max-inline-size: 480px;
-  max-block-size: 360px;
+  max-block-size: calc(100vh - 16px);
   margin: 0;
   padding: 10px;
   overflow: hidden;
@@ -641,27 +641,18 @@ body:has(.menu-bar-usage-root),
   font-weight: 650;
 }
 
-.menu-bar-usage-cost-detail > small {
-  color: var(--usage-muted);
-  font-size: 10px;
-}
-
-/* 计价口径只在费用明细中按需出现，避免概览长期占用两行。 */
-.menu-bar-usage-cost-detail > .menu-bar-usage-cost-detail-meta {
-  padding-block-start: 4px;
-  border-block-start: 1px solid var(--usage-line);
-}
-
 .menu-bar-usage-cost-table-scroll {
   min-inline-size: 0;
   max-inline-size: 100%;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior: contain;
 }
 
 .menu-bar-usage-cost-detail table {
-  /* 表格只占三列单行内容所需宽度，不把宿主剩余空间分给任意一列。 */
+  /* 表格先采用内容自然宽度，达到面板上限后再换行，始终不产生横向滚动。 */
   inline-size: max-content;
+  max-inline-size: 100%;
   border-collapse: collapse;
   table-layout: auto;
   text-align: start;
@@ -672,13 +663,17 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-cost-detail td {
   padding: 6px 5px;
   border-block-start: 1px solid var(--usage-line);
-  overflow-wrap: normal;
+  overflow-wrap: anywhere;
   vertical-align: top;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .menu-bar-usage-cost-detail thead th {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
   border-block-start: 0;
+  background: var(--usage-panel-strong);
   color: var(--usage-muted);
   font-size: 10px;
   font-weight: 550;
@@ -745,16 +740,8 @@ body:has(.menu-bar-usage-root),
   justify-content: space-between;
   gap: 8px;
   font-size: 12px;
-  /* 图表标题与汇总共用字号和行高，仅用字重区分数值。 */
+  /* 来源和维度控件共享紧凑行高。 */
   line-height: 1.4;
-}
-
-.menu-bar-usage-bars figcaption dl {
-  display: grid;
-  gap: 10px;
-  margin: 0;
-  margin-inline-start: auto;
-  text-align: end;
 }
 
 /* 账户来源与原生悬浮说明并排，说明图标不挤压标题行。 */
@@ -835,22 +822,6 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-source-info:focus-visible {
   outline: 2px solid var(--usage-accent);
   border-radius: 4px;
-}
-
-.menu-bar-usage-bars figcaption dl > div {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  justify-content: end;
-  gap: 2px 6px;
-}
-
-.menu-bar-usage-bars figcaption dt {
-  color: var(--usage-muted);
-}
-
-.menu-bar-usage-bars figcaption dd {
-  font-weight: 600;
 }
 
 .menu-bar-usage-bars-plot {
@@ -1408,7 +1379,7 @@ body:has(.menu-bar-usage-root),
   }
 }
 
-/* 用量概览：标题、指标多选与指标网格共处一栏，与柱图共享同一块底色。 */
+/* 用量概览：标题、快捷范围与固定指标网格共处一栏。 */
 .menu-bar-usage-overview {
   display: grid;
   gap: 0;
@@ -1433,88 +1404,38 @@ body:has(.menu-bar-usage-root),
   line-height: 1.4;
 }
 
-/* 指标入口只用名称和箭头，点击区域保持 24px 便于触控。 */
-.menu-bar-usage-metrics-trigger {
+/* 快捷时间范围使用紧凑分段控件，在 360px 浮窗内仍完整展示四项。 */
+.menu-bar-usage-range {
   display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  min-block-size: 24px;
-  flex: 0 0 auto;
-  padding: 2px 8px;
+  min-inline-size: 0;
+  flex: 0 1 auto;
+  gap: 1px;
+  padding: 1px;
   border: 1px solid var(--usage-line);
   border-radius: var(--usage-radius-pill, 999px);
-  background: var(--usage-panel-strong);
+  background: var(--usage-panel);
+}
+
+.menu-bar-usage-range button {
+  min-block-size: 20px;
+  padding: 1px 5px;
+  border: 1px solid transparent;
+  border-radius: var(--usage-radius-pill, 999px);
+  background: transparent;
   color: var(--usage-muted);
   font: inherit;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 550;
-  transition:
-    background-color 140ms ease,
-    border-color 140ms ease,
-    color 140ms ease;
+  white-space: nowrap;
 }
 
-.menu-bar-usage-metrics-trigger svg {
-  inline-size: 12px;
-  block-size: 12px;
-}
-
-.menu-bar-usage-metrics-trigger:hover {
+.menu-bar-usage-range button[aria-pressed='true'] {
   border-color: var(--usage-accent-border);
-  background: var(--zeus-brand-hover);
-  color: var(--usage-text);
+  background: var(--usage-accent-soft);
+  color: var(--usage-accent-strong);
 }
 
-/* 多选面板挂在 popover 顶层，不被浮窗滚动区裁切；向左下展开保证始终留在 360px 浮窗内。 */
-.menu-bar-usage-metrics-menu[popover] {
-  position: fixed;
-  inset: auto;
-  margin: 4px 0;
-  inline-size: max-content;
-  min-inline-size: 148px;
-  max-inline-size: calc(100vw - 24px);
-  max-block-size: 252px;
-  overflow: auto;
-  padding: 5px;
-  border: 1px solid var(--usage-line);
-  border-radius: var(--usage-radius-control, 8px);
-  background: var(--usage-panel-strong);
-  box-shadow: var(--usage-shadow-soft);
-  color: var(--usage-text);
-  position-area: bottom span-left;
-  position-try-fallbacks: flip-block, flip-inline;
-}
-
-.menu-bar-usage-metrics-menu:popover-open {
-  display: grid;
-  gap: 2px;
-}
-
-/* 复选框保留原生语义与键盘行为，只收敛成紧凑的一行。 */
-.menu-bar-usage-metrics-option {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-block-size: 24px;
-  padding-inline: 6px;
-  border-radius: 6px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.menu-bar-usage-metrics-option:hover {
-  background: var(--zeus-brand-hover);
-}
-
-.menu-bar-usage-metrics-option input {
-  inline-size: 13px;
-  block-size: 13px;
-  flex: 0 0 13px;
-  margin: 0;
-  accent-color: var(--usage-accent);
-}
-
-/* 柱图图注同时容纳来源、维度切换与七日均值，间距按 4px 阶梯收敛。 */
+/* 柱图图注只容纳来源和最右侧维度切换，避免重复展示七日汇总。 */
 .menu-bar-usage-bars figcaption {
   position: relative;
   gap: var(--usage-space-1, 4px);
@@ -1553,6 +1474,7 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-dimension {
   display: inline-flex;
   flex: 0 0 auto;
+  margin-inline-start: auto;
   gap: 1px;
   padding: 1px;
   border: 1px solid var(--usage-line);

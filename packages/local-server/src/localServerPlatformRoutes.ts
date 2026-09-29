@@ -516,7 +516,7 @@ export type LocalServerPlatformRouteDependencies = Record<string, any> & {
   tasks: TaskRepository;
   telegramCommands: TelegramCommandApplication;
   terminalEvents: TerminalEventRepository;
-  readRuntimeTerminalTail(sessionId: string, maxBytes: number): { text: string; truncated: boolean };
+  readRuntimeTerminalTail(sessionId: string, maxBytes: number): { text: string; truncated: boolean; startByte: number; totalBytes: number };
   workManagementCommands: WorkManagementCommandApplication;
 };
 
@@ -1778,6 +1778,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     server,
     application: conversationDispatchCommands,
     operations: {
+      readQueueState: (params) => toNativeQueueApiSnapshot(requireNativeQueueConversation(params)),
       changeSet: async ({ params, action, changeSetId, expectedState, operationIdentity }) =>
         turnChangeSetService.operate({
           projectId: params.projectId,
