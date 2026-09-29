@@ -267,8 +267,8 @@ const testDistributionName = 'Zeus Test';
 const developmentDistributionName = 'Zeus Dev';
 /** 菜单栏主体保持固定宽度，高度按内容收缩；额度较多时最多占用此高度。 */
 const menuBarUsageWindowSize = { width: 360, height: 640 } as const;
-/** 费用明细窗口包含四周 8px 透明阴影留白，内容最大为 480×360px。 */
-const menuBarUsageCostDetailWindowSize = { width: 496, height: 376 } as const;
+/** 费用明细内容宽度最多 640px，原生测量窗口另含四周 8px 透明阴影留白。 */
+const menuBarUsageCostDetailMaximumWindowWidth = 656;
 const menuBarUsageWindowGap = 6;
 const menuBarUsageWindowBlurDelayMs = 150;
 /** 两个原生窗口之间允许指针跨越的延迟。 */
@@ -286,7 +286,6 @@ type MenuBarUsageCostDetailPayload = {
   language: 'zh-CN' | 'en-US';
   appearance: 'light' | 'dark' | 'system';
   entries: unknown[];
-  pricingMeta: string | null;
   anchor: Electron.Point;
   pinned: boolean;
 };
@@ -1625,6 +1624,12 @@ function setupIpc(): void {
     const payload = normalizeMenuBarUsageCostDetailPayload(input);
     cancelMenuBarUsageCostDetailHide();
     menuBarUsageCostDetailPayload = payload;
+    /** 已存在的窗口先隐藏并恢复完整测量高度，避免上一次收缩尺寸限制新内容。 */
+    const existingWindow = menuBarUsageCostDetailWindow;
+    if (existingWindow && !existingWindow.isDestroyed()) {
+      existingWindow.hide();
+      existingWindow.setBounds(resolveMenuBarUsageCostDetailMeasurementBounds(payload.anchor), false);
+    }
     await createMenuBarUsageCostDetailWindow();
     broadcastMenuBarUsageCostDetailPayload(payload);
     return { shown: true };
@@ -1650,8 +1655,7 @@ function setupIpc(): void {
   /** 独立费用窗口启动时读取当前内容；其他窗口不能获取该数据。 */
   ipcMain.handle('zeus:menu-bar-usage:cost-detail-get', (event) => {
     requireMenuBarUsageCostDetailWindow(event);
-    if (!menuBarUsageCostDetailPayload) throw new Error('菜单栏费用明细当前不可用。');
-    return menuBarUsageCostDetailPayload;
+    return menuBarUsageCostDetailPayload ?? null;
   });
   /** Renderer 按真实内容请求窗口尺寸，主进程负责限制尺寸并按屏幕锚点定位。 */
   ipcMain.handle('zeus:menu-bar-usage:cost-detail-resize', (event, requestedWidth: unknown, requestedHeight: unknown) => {
@@ -2385,7 +2389,6 @@ function normalizeMenuBarUsageCostDetailPayload(input: unknown): MenuBarUsageCos
   if (candidate.language !== 'zh-CN' && candidate.language !== 'en-US') throw new TypeError('菜单栏费用明细语言无效。');
   if (candidate.appearance !== 'light' && candidate.appearance !== 'dark' && candidate.appearance !== 'system') throw new TypeError('菜单栏费用明细外观无效。');
   if (!entries?.length || entries.length > 100 || entries.some((entry) => !entry || typeof entry !== 'object' || Array.isArray(entry))) throw new TypeError('菜单栏费用明细条目无效。');
-  if (candidate.pricingMeta !== null && (typeof candidate.pricingMeta !== 'string' || candidate.pricingMeta.length > 500)) throw new TypeError('菜单栏费用明细说明无效。');
   if (!anchor || typeof anchor.x !== 'number' || !Number.isFinite(anchor.x) || typeof anchor.y !== 'number' || !Number.isFinite(anchor.y)) throw new TypeError('菜单栏费用明细锚点无效。');
   if (typeof candidate.pinned !== 'boolean') throw new TypeError('菜单栏费用明细固定状态无效。');
   if (Buffer.byteLength(JSON.stringify(entries), 'utf8') > 256 * 1024) throw new TypeError('菜单栏费用明细数据过大。');
@@ -2395,7 +2398,6 @@ function normalizeMenuBarUsageCostDetailPayload(input: unknown): MenuBarUsageCos
     language: candidate.language,
     appearance: candidate.appearance,
     entries,
-    pricingMeta: candidate.pricingMeta,
     anchor: { x: anchor.x, y: anchor.y },
     pinned: candidate.pinned,
   };
@@ -2466,26 +2468,41 @@ function resizeMenuBarUsageCostDetailWindow(window: BrowserWindow, requestedWidt
   if (!payload) throw new Error('菜单栏费用明细当前不可用。');
   /** 锚点所在屏幕决定尺寸上限和翻转方向。 */
   const { workArea } = screen.getDisplayNearestPoint(payload.anchor);
+  /** 四周保留原生安全间距，CSS 内部另有 8px 透明阴影留白。 */
+  const availableWidth = Math.max(1, workArea.width - menuBarUsageWindowGap * 2);
+  /** 高度只受当前屏幕工作区限制，常规内容按真实高度完整展开。 */
+  const availableHeight = Math.max(1, workArea.height - menuBarUsageWindowGap * 2);
   /** 请求尺寸已包含 CSS 阴影留白，主进程只做整数化和屏幕边界限制。 */
-  const width = Math.max(1, Math.min(Math.ceil(requestedWidth), menuBarUsageCostDetailWindowSize.width, workArea.width));
-  /** 明细窗口高度受内容上限和当前工作区共同限制。 */
-  const height = Math.max(1, Math.min(Math.ceil(requestedHeight), menuBarUsageCostDetailWindowSize.height, workArea.height));
+  const width = Math.max(1, Math.min(Math.ceil(requestedWidth), availableWidth));
+  /** 超过屏幕的长列表由 Renderer 仅在表格区域纵向滚动。 */
+  const height = Math.max(1, Math.min(Math.ceil(requestedHeight), availableHeight));
   /** 窗口透明右边距提供 8px 鼠标间隔，因此窗口右边缘直接对齐锚点。 */
   const preferredX = Math.round(payload.anchor.x - width);
   /** 下方不足且上方空间更多时整体翻转，透明上下边距继续保留视觉间隔。 */
-  const belowSpace = workArea.y + workArea.height - payload.anchor.y;
-  const aboveSpace = payload.anchor.y - workArea.y;
+  const belowSpace = workArea.y + workArea.height - menuBarUsageWindowGap - payload.anchor.y;
+  const aboveSpace = payload.anchor.y - workArea.y - menuBarUsageWindowGap;
   const preferredY = belowSpace < height && aboveSpace > belowSpace ? Math.round(payload.anchor.y - height) : Math.round(payload.anchor.y);
   /** 靠近屏幕边缘时仅做必要内收。 */
-  const x = Math.max(workArea.x, Math.min(preferredX, workArea.x + workArea.width - width));
+  const x = Math.max(workArea.x + menuBarUsageWindowGap, Math.min(preferredX, workArea.x + workArea.width - width - menuBarUsageWindowGap));
   /** 纵向位置同样限制在工作区内。 */
-  const y = Math.max(workArea.y, Math.min(preferredY, workArea.y + workArea.height - height));
+  const y = Math.max(workArea.y + menuBarUsageWindowGap, Math.min(preferredY, workArea.y + workArea.height - height - menuBarUsageWindowGap));
   /** 最终边界同时作为 Renderer 的可审计结果返回。 */
   const bounds = { x, y, width, height };
   window.setBounds(bounds, false);
   if (menuBarUsageWindow?.isVisible()) window.showInactive();
   else window.hide();
   return bounds;
+}
+
+/** 隐藏窗口先占满可用高度，让 Renderer 判断完整内容是否真的需要纵向滚动。 */
+function resolveMenuBarUsageCostDetailMeasurementBounds(anchor: Electron.Point): Electron.Rectangle {
+  /** 锚点屏幕决定窄屏宽度和实际可用高度，多显示器之间不共用旧尺寸。 */
+  const { workArea } = screen.getDisplayNearestPoint(anchor);
+  /** 原生窗口宽度包含 640px 面板和两侧 8px 透明留白。 */
+  const width = Math.max(1, Math.min(menuBarUsageCostDetailMaximumWindowWidth, workArea.width - menuBarUsageWindowGap * 2));
+  /** 首次测量使用完整工作区高度，常规内容随后会收缩到真实高度。 */
+  const height = Math.max(1, workArea.height - menuBarUsageWindowGap * 2);
+  return { x: workArea.x + menuBarUsageWindowGap, y: workArea.y + menuBarUsageWindowGap, width, height };
 }
 
 function cancelMenuBarUsageWindowBlurHide(): void {
@@ -2557,9 +2574,12 @@ async function createMenuBarUsageCostDetailWindow(): Promise<BrowserWindow> {
   if (!parent || parent.isDestroyed()) throw new Error('菜单栏用量浮窗当前不可用。');
   /** 费用明细使用独立 Renderer surface，不加载菜单栏主体布局。 */
   const rendererUrl = rendererEntryUrl('menu-bar-usage-cost-detail');
-  /** 初始窗口按最大内容和阴影留白创建但保持隐藏，首次测量后再显示。 */
+  /** 当前载荷在创建前已校验，窗口按锚点屏幕的完整可用高度隐藏测量。 */
+  const payload = menuBarUsageCostDetailPayload;
+  if (!payload) throw new Error('菜单栏费用明细当前不可用。');
+  /** 初始窗口保持隐藏，Renderer 按真实内容收缩后再显示。 */
   const window = new BrowserWindow({
-    ...menuBarUsageCostDetailWindowSize,
+    ...resolveMenuBarUsageCostDetailMeasurementBounds(payload.anchor),
     parent,
     title: appShellSettings.appLanguage === 'zh-CN' ? `${desktopDisplayName()} 费用明细` : `${desktopDisplayName()} Cost Detail`,
     show: false,

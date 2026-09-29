@@ -51,7 +51,7 @@ export function RuntimeDetails(props: RuntimeDetailsProps) {
           <RuntimeSummaryMetric label={tokenScopeLabel} value={formatTokenFact(props.runtime.usage.totalTokens, props.language, true)} />
           <RuntimeSummaryMetric label={copy.contextUsage} value={contextUsage} />
           <RuntimeSummaryMetric label={copy.cacheHitRate} value={formatPercentageFact(props.runtime.usage.cacheHitRate, props.language)} />
-          <RuntimeSummaryMetric label={zh ? '最近请求输出速率' : 'Latest output rate'} value={formatOutputRateFact(props.runtime.performance.latestOutputTokensPerSecond, props.language)} />
+          <RuntimeSummaryMetric label={zh ? '请求输出速率' : 'Request output rate'} value={formatOutputRateFact(props.runtime.performance.latestOutputTokensPerSecond, props.language)} />
           <RuntimeSummaryMetric
             label={zh ? '费用' : 'Cost'}
             value={
@@ -87,7 +87,7 @@ export function RuntimeDetails(props: RuntimeDetailsProps) {
             />
           ) : null}
           <RuntimeUsageRow label={copy.cacheHitRate} value={formatPercentageFact(props.runtime.usage.cacheHitRate, props.language)} />
-          <RuntimeUsageRow label={zh ? '最近输出速率' : 'Latest output rate'} value={formatOutputRateFact(props.runtime.performance.latestOutputTokensPerSecond, props.language)} />
+          <RuntimeUsageRow label={zh ? '请求输出速率' : 'Request output rate'} value={formatOutputRateFact(props.runtime.performance.latestOutputTokensPerSecond, props.language)} />
           <RuntimeUsageRow
             label={zh ? '费用' : 'Cost'}
             value={props.runtime.usage.costs?.length ? formatRuntimeCosts(props.runtime.usage.costs, props.language) : formatCoveredCost(props.runtime.usage.apiEquivalentUsd, props.runtime.usage.priceCoverage, props.language)}

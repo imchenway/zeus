@@ -352,19 +352,20 @@ async function renderMenuBarUsageWithClient(client: DashboardClient): Promise<vo
 
 /** 独立费用明细只依赖主进程桥接数据，不启动 Dashboard API 客户端。 */
 async function renderMenuBarUsageCostDetail(): Promise<void> {
-  const [{ MenuBarUsageCostDetailWindow }, initialPayload] = await Promise.all([import('./settings/MenuBarUsageWindow.js'), window.zeus?.getMenuBarUsageCostDetail?.()]);
-  if (!initialPayload) throw new Error('菜单栏费用明细缺少首次展示数据。');
+  const [{ MenuBarUsageCostDetailWindow }, initialPayload = null] = await Promise.all([import('./settings/MenuBarUsageWindow.js'), window.zeus?.getMenuBarUsageCostDetail?.()]);
   /** 独立窗口使用自己的透明 surface，避免继承菜单栏主体尺寸。 */
   const root = document.getElementById('root');
   if (!root) throw new Error('Zeus renderer root element is missing');
   document.body.dataset.surface = 'menu-bar-usage-cost-detail';
-  document.title = initialPayload.label;
-  startupLanguage = initialPayload.language;
+  /** 首次悬停可能在窗口加载完成前结束；无载荷时保持空白并等待下一次主进程广播。 */
+  const initialLanguage = initialPayload?.language ?? startupLanguage;
+  if (initialPayload) document.title = initialPayload.label;
+  startupLanguage = initialLanguage;
   /** 错误界面语言与当前明细语言保持一致。 */
-  const errorLanguage = initialPayload.language === 'zh-CN' ? 'zh-CN' : 'en';
+  const errorLanguage = initialLanguage === 'zh-CN' ? 'zh-CN' : 'en';
   createRoot(root).render(
     <>
-      <RendererErrorBoundary appLanguage={initialPayload.language} onFatalError={(error) => reportSurfaceFatalError(error, errorLanguage, 'MenuBarUsageCostDetailWindow')}>
+      <RendererErrorBoundary appLanguage={initialLanguage} onFatalError={(error) => reportSurfaceFatalError(error, errorLanguage, 'MenuBarUsageCostDetailWindow')}>
         <MenuBarUsageCostDetailWindow initialPayload={initialPayload} />
         <RendererBootstrapReady />
       </RendererErrorBoundary>
