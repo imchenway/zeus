@@ -280,9 +280,9 @@ function aggregateRows(rows: readonly CodexUsageLedgerRecord[], outputRateByTurn
   };
 }
 
-/** 按真实请求的模型和价格快照归组，避免用最后一次单价解释整段历史。 */
+/** 按真实请求的模型和价格快照归组；相同模型同价只保留一行。 */
 function aggregateCostBreakdown(rows: readonly CodexUsageLedgerRecord[], pricePeriods: ReadonlyMap<string, UsageModelPricePeriod>): UsageModelCostBreakdown[] {
-  /** JSON 键只用于同一次聚合内识别完全相同的模型、费率和目录日期。 */
+  /** JSON 键只用于同一次聚合内识别完全相同的模型和费率。 */
   const groups = new Map<string, UsageModelCostBreakdown>();
   for (const row of rows) {
     /** 新账本优先使用请求级快照；旧账本仍以整轮快照展示真实已知信息。 */
@@ -292,26 +292,38 @@ function aggregateCostBreakdown(rows: readonly CodexUsageLedgerRecord[], pricePe
     for (const request of requests) {
       /** 标准价格与历史 Codex 美元费率统一成前端只读结构。 */
       const rate = usageModelRate(request.estimate.rateSnapshot);
-      /** 同价但属于不同目录周期的记录也必须分行，避免日期范围和费用错配。 */
       const catalogDate = validCatalogDate(request.estimate.rateSnapshot.catalogDate);
-      const key = JSON.stringify([request.model, rate, catalogDate]);
+      /** 同模型同价跨目录日期继续归为一行，目录日期只用于合并可见周期。 */
+      const key = JSON.stringify([request.model, rate]);
+      const pricePeriod = rate && catalogDate ? (pricePeriods.get(pricePeriodKey(request.model, catalogDate)) ?? null) : null;
       const existing = groups.get(key);
       if (existing) {
         existing.usage = sumBreakdowns([existing.usage, request.usage]);
         existing.estimatedCosts = sumEstimatedCosts([{ costs: existing.estimatedCosts, apiEquivalentUsd: null }, request.estimate]);
+        existing.pricePeriod = mergeUsagePricePeriods(existing.pricePeriod, pricePeriod);
       } else {
         groups.set(key, {
           model: request.model,
           rate,
-          pricePeriod: rate && catalogDate ? (pricePeriods.get(pricePeriodKey(request.model, catalogDate)) ?? null) : null,
+          pricePeriod,
           usage: { ...request.usage },
           estimatedCosts: sumEstimatedCosts([request.estimate]),
         });
       }
     }
   }
-  /** 费用明细优先展示 Token 消耗最大的分组，同量时按模型名稳定排序。 */
-  return [...groups.values()].sort((left, right) => right.usage.totalTokens - left.usage.totalTokens || left.model.localeCompare(right.model));
+  /** 最新价格周期优先；缺少周期的历史记录放在最后，再按模型和 Token 稳定排序。 */
+  return [...groups.values()].sort((left, right) => (right.pricePeriod?.from ?? '').localeCompare(left.pricePeriod?.from ?? '') || left.model.localeCompare(right.model) || right.usage.totalTokens - left.usage.totalTokens);
+}
+
+/** 合并同价记录的首尾周期；同价重新启用时按产品要求仍展示为一个整体跨度。 */
+function mergeUsagePricePeriods(current: UsageModelPricePeriod | null, next: UsageModelPricePeriod | null): UsageModelPricePeriod | null {
+  if (!current) return next;
+  if (!next) return current;
+  return {
+    from: current.from < next.from ? current.from : next.from,
+    to: current.to === null || next.to === null ? null : current.to > next.to ? current.to : next.to,
+  };
 }
 
 /** 从供应源完整账本建立相邻价格目录周期，最新目录延续到至今。 */
