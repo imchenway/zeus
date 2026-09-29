@@ -144,7 +144,7 @@ export function createZeusToolBroker(automation: BrowserAutomationPort | undefin
 
 export function isZeusNativeToolMutation(namespace: ZeusNativeToolNamespace, tool: string, args: Record<string, unknown>): boolean {
   if (namespace === 'zeus_work') return tool !== 'inspect';
-  if (namespace === 'zeus_computer') return tool !== 'list_apps' && tool !== 'get_app_state';
+  if (namespace === 'zeus_computer') return !['list_apps', 'list_windows', 'get_window_state', 'verify_state'].includes(tool);
   if (tool === 'invoke') {
     const path = typeof args.path === 'string' ? args.path : '';
     const contract = browserFrozenContractEntry(path);
@@ -186,7 +186,7 @@ function asSchemaRecord(value: unknown): Record<string, unknown> {
 
 function isSequentialTool(namespace: ZeusNativeToolNamespace, tool: string): boolean {
   if (namespace === 'zeus_work') return tool !== 'inspect';
-  if (namespace === 'zeus_computer') return tool !== 'list_apps' && tool !== 'get_app_state';
+  if (namespace === 'zeus_computer') return !['list_apps', 'list_windows'].includes(tool);
   return !['list_tabs', 'snapshot', 'element', 'wait', 'screenshot', 'downloads', 'catalog'].includes(tool);
 }
 

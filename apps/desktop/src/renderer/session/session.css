@@ -73,15 +73,6 @@
   text-align: center;
 }
 
-.session-computer-preview-cursor {
-  block-size: 16px;
-  color: #151515;
-  filter: drop-shadow(0 0 1px white);
-  inline-size: 16px;
-  pointer-events: none;
-  position: absolute;
-}
-
 .session-codex-parity-v1 .session-quick-actions-anchor {
   display: inline-flex;
   position: relative;

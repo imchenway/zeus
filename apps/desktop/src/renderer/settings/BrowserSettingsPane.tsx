@@ -45,7 +45,7 @@ const copy = {
     clearConfirm: '将清除独立浏览器 Profile 中的登录态、站点数据、授权和批注。此操作不可撤销，确定继续吗？',
     computerTitle: 'Computer Use',
     // 全局启用后会话即可按需使用，无需逐条消息选择。
-    computerHelp: '在此启用并完成 macOS 辅助功能和录屏授权后，AI 可在会话中操作其他应用，使用过程中无需再次授权。权限失效时，请回到此处补齐；可随时关闭或停止控制。',
+    computerHelp: '通过内置 CUA Driver 操作已明确观察的应用窗口。Zeus 只使用后台投递，不会自动切到前台；应用不支持后台操作时会直接失败。首次授权后请重新启动 Zeus。',
     computerEnable: '启用 Computer Use',
     computerStop: '立即停止控制',
     computerAccessibility: '辅助功能',
@@ -55,7 +55,7 @@ const copy = {
     computerRequestPermissions: '申请或重新检查权限',
     computerOpenAccessibility: '打开辅助功能设置',
     computerOpenScreenCapture: '打开录屏设置',
-    computerSettingsOpened: '已打开对应的 macOS 隐私设置；授权后请重新检查权限。',
+    computerSettingsOpened: '已打开对应的 macOS 隐私设置；授权后请重新启动 Zeus。',
     chromeEnable: '连接 Chrome 测试扩展',
     chromeHelp: '连接后，AI 可以在你授权的 Chrome 标签页中读取内容和操作页面。',
     edgeEnable: '连接 Edge 预览扩展',
@@ -109,7 +109,7 @@ const copy = {
     computerTitle: 'Computer Use',
     // 英文同步说明全局开关生效后的会话能力。
     computerHelp:
-      'Enable this and grant macOS Accessibility and Screen Recording permissions here. The AI can then operate other apps without further authorization during use. Return here if permissions become unavailable; you can disable access or stop control at any time.',
+      'Use the embedded CUA Driver only on explicitly observed app windows. Zeus forces background delivery and never falls back to foreground activation; unsupported apps fail explicitly. Restart Zeus after the first permission grant.',
     computerEnable: 'Enable Computer Use',
     computerStop: 'Stop control now',
     computerAccessibility: 'Accessibility',
@@ -119,7 +119,7 @@ const copy = {
     computerRequestPermissions: 'Request or recheck permissions',
     computerOpenAccessibility: 'Open Accessibility settings',
     computerOpenScreenCapture: 'Open Screen Recording settings',
-    computerSettingsOpened: 'The matching macOS privacy settings are open. Recheck permissions after granting access.',
+    computerSettingsOpened: 'The matching macOS privacy settings are open. Restart Zeus after granting access.',
     chromeEnable: 'Connect Chrome test extension',
     chromeHelp: 'Once connected, the AI can read and operate Chrome tabs you authorize.',
     edgeEnable: 'Connect Edge preview extension',

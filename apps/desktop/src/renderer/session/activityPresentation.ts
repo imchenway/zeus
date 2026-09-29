@@ -49,14 +49,12 @@ function activityResult(payload: Record<string, unknown>): Record<string, unknow
 export function activityOutcome(item: ActivityItem): ActivityOutcome {
   /** 字符串状态来自记录与原生返回，普通页面内容不能改变执行状态。 */
   const status = String(item.payload.status ?? item.status).toLowerCase();
-  /** 仅原生工具的协议结果允许提供接管和动作确认状态。 */
+  /** 仅原生工具的协议结果允许提供动作确认状态。 */
   const result = nativeActivityTool(item.payload) ? activityResult(item.payload) : {};
   if (item.status === 'failed' || status === 'failed' || item.payload.success === false || item.payload.isError === true || (typeof item.payload.exitCode === 'number' && item.payload.exitCode !== 0)) return 'failed';
   if (['cancelled', 'canceled', 'interrupted'].includes(item.status) || ['cancelled', 'canceled', 'interrupted'].includes(status)) return 'cancelled';
-  if (result.status === 'waiting_for_user') return 'waiting';
-  if (result.status === 'user_control_resumed') return 'observe';
   if (result.outcome === 'unknown' || record(result.action).outcome === 'unknown' || ['timed_out', 'observation_failed'].includes(String(record(result.confirmation).status)) || status === 'unknown') return 'unknown';
-  // 桌面返回截断时可能包含接管说明，未读到结果前不能宣称操作完成。
+  // CUA 结果被截断且未读到结构化状态时不能宣称操作完成。
   if (item.status === 'completed' && nativeActivityTool(item.payload)?.kind === 'computer' && item.payload.v2ContentTruncated === true && Object.keys(result).length === 0) return 'unknown';
   return item.status === 'completed' ? 'completed' : 'running';
 }
@@ -80,10 +78,15 @@ const actionNames: Record<string, readonly [string, string]> = {
   close_tab: ['关闭标签页', 'Close tab'],
   history: ['浏览历史操作', 'Navigate history'],
   list_apps: ['查看运行中的应用', 'Inspect running apps'],
-  get_app_state: ['观察应用界面', 'Inspect app'],
+  launch_app: ['启动应用', 'Launch app'],
+  list_windows: ['查看应用窗口', 'Inspect app windows'],
+  get_window_state: ['观察应用窗口', 'Inspect app window'],
   drag: ['拖动', 'Drag'],
   type_text: ['输入', 'Type'],
   set_value: ['设置控件值', 'Set value'],
+  hotkey: ['组合按键', 'Send hotkey'],
+  invoke_menu: ['调用应用菜单', 'Invoke app menu'],
+  verify_state: ['验证应用状态', 'Verify app state'],
   clipboard: ['剪贴板操作', 'Clipboard operation'],
   downloads: ['查看下载', 'Inspect downloads'],
   developer: ['开发工具操作', 'Developer tools'],
@@ -136,6 +139,7 @@ export function nativeActivityTitle(item: ActivityItem, zh: boolean): string | n
   /** 完成桌面输入仅说明动作已发送，不声称已验证界面效果。 */
   const outcome = activityOutcome(item);
   /** 观察与截图完成可以直接描述，其余桌面写操作使用保守结果词。 */
-  const status = outcome === 'completed' && tool.kind === 'computer' && !['list_apps', 'get_app_state', 'screenshot'].includes(tool.method) ? (zh ? '已发送操作' : 'Action sent') : activityOutcomeLabel(outcome, zh);
+  const status =
+    outcome === 'completed' && tool.kind === 'computer' && !['list_apps', 'list_windows', 'get_window_state', 'verify_state', 'screenshot'].includes(tool.method) ? (zh ? '已发送操作' : 'Action sent') : activityOutcomeLabel(outcome, zh);
   return [source, target ? target.slice(0, 100) : null, action, status].filter(Boolean).join(' · ');
 }
