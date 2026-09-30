@@ -160,6 +160,8 @@ contextBridge.exposeInMainWorld('zeus', {
   notifyTaskGitDeliveryCurrentContext: (context: unknown) => ipcRenderer.send('zeus:task-git-delivery:current-context-changed', context),
   notifyTaskGitDeliveryChanged: (taskId: string) => ipcRenderer.send('zeus:task-git-delivery:changed', taskId),
   openTaskGitDeliveryConversation: (input: unknown) => ipcRenderer.invoke('zeus:task-git-delivery:open-conversation', input),
+  /** 使用任务工作区及比较范围打开只读差异窗口。 */
+  openTaskGitDiffWindow: (input: unknown) => ipcRenderer.invoke('zeus:task-git-diff:open', input),
   openProjectGitDiffWindow: (input: unknown) => ipcRenderer.invoke('zeus:project-git-diff:open', input),
   loadProjectGitWorkbench: (projectId: string) => ipcRenderer.invoke('zeus:project-git:load-workbench', projectId),
   loadProjectGitHistory: (input: unknown) => ipcRenderer.invoke('zeus:project-git:load-history', input),

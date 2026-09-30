@@ -104,6 +104,8 @@ const ownershipGroups = [
       'task_work_review_notes',
       'task_work_deployment_receipts',
       'digital_team_workflow_templates',
+      // 放宽项目约束时使用的迁移中间表，事务完成后改回正式模板表名。
+      'digital_team_workflow_templates_global',
       'digital_team_workflow_runs',
       'digital_team_node_attempts',
       'employee_memory_proposals',

@@ -469,7 +469,13 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
     let itemClientId = isUserMessageType(item.type) ? (stringValue(item.payload.clientId) ?? stringValue(item.payload.clientUserMessageId)) : null;
     /** 同一条用户消息无论先到的是本地气泡还是落库条目，都按持久显示身份认作一条。 */
     const durableIdentityEntry = isUserMessageType(item.type) ? previousUserEntryByDurableIdentity.get(item.transcript.placement.entryId) : undefined;
-    const previousUserItem = (itemClientId ? previousUserItemsByClientId.get(itemClientId) : undefined) ?? (itemSubmissionId ? previousUserItemsBySubmissionId.get(itemSubmissionId) : undefined) ?? durableIdentityEntry?.item;
+    /** 活动预览可能缺少客户端身份；相同 Provider 消息仍应接管原输入，不重复加入正文顺序。 */
+    const previousProviderItem = item.providerItemId ? previousItemsByProviderId.get(item.providerItemId) : undefined;
+    const previousUserItem =
+      (itemClientId ? previousUserItemsByClientId.get(itemClientId) : undefined) ??
+      (itemSubmissionId ? previousUserItemsBySubmissionId.get(itemSubmissionId) : undefined) ??
+      durableIdentityEntry?.item ??
+      (isUserMessageType(item.type) && previousProviderItem?.turnId === turnId && isUserMessageItem(previousProviderItem) ? previousProviderItem : undefined);
     itemClientId ??= previousUserItem ? (userMessageClientIds(previousUserItem)[0] ?? null) : null;
     const existingProviderUserKey = itemClientId ? providerUserItemKeyByClientId.get(itemClientId) : undefined;
     if (existingProviderUserKey) {
@@ -1652,7 +1658,8 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
   const queuedForActiveTurn =
     !action.taskPushLayout &&
     action.delivery === 'queue' &&
-    (action.previousConversationState === 'active_prework' ||
+    (action.previousConversationState === 'starting_turn' ||
+      action.previousConversationState === 'active_prework' ||
       action.previousConversationState === 'active_final_answer' ||
       action.previousConversationState === 'waiting_approval' ||
       action.previousConversationState === 'waiting_user_input' ||

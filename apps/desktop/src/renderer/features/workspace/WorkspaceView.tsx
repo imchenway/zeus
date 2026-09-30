@@ -352,6 +352,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     openNativeConversationDrawer,
     openNativeConversationPage,
     openTaskCreateModal,
+    openTaskCreateForTeam,
     openTaskDetailPane,
     openTaskGitDelivery,
     openTaskModelPush,
@@ -937,13 +938,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             <toolPages.digitalTeams
               key={`${digitalTeamTask?.id ?? 'team'}:${digitalTeamEntrySelection?.kind ?? 'manage'}:${digitalTeamEntrySelection?.kind === 'template' ? digitalTeamEntrySelection.templateId : digitalTeamEntrySelection?.kind === 'run' ? digitalTeamEntrySelection.runId : ''}`}
               task={digitalTeamTask}
+              onCreateTask={openTaskCreateForTeam}
               initialSelection={digitalTeamEntrySelection}
               onBackToTask={digitalTeamTask ? returnFromDigitalTeam : undefined}
-              onManageEmployees={(projectId) => {
-                /** 角色权限始终在所属项目的现有设置入口修改。 */
-                const project = snapshot.projects.find((candidate) => candidate.id === projectId);
-                if (project) openProjectSection(project, 'project-settings');
-              }}
               client={props.commandClient ?? null}
               projects={snapshot.projects}
               initialProjectId={activeProjectId}
@@ -956,6 +953,38 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             />
           </Suspense>
         ) : null}
+        {/* 任务、会话和全局团队共用同一个任务创建入口。 */}
+        <MotionPresence>
+          {taskCreateModalOpen ? (
+            <TaskCreateModal
+              projects={snapshot.projects}
+              onProjectChange={(projectId) => setTaskCreateForm((current) => ({ ...current, projectId, parentTaskId: null }))}
+              open={taskCreateModalOpen}
+              copy={taskWorkspaceCopy}
+              form={taskCreateForm}
+              parentTasks={snapshot.tasks.filter((task) => task.projectId === taskCreateForm.projectId && taskHierarchyDepth(task, snapshot.tasks) < 3)}
+              error={taskCreateError}
+              busy={creatingTaskBusy}
+              titleInputRef={taskCreateTitleInputRef}
+              onFormChange={updateTaskCreateForm}
+              onTaskTypeChange={updateTaskCreateType}
+              onPriorityChange={updateTaskCreatePriority}
+              onParentChange={(parentTaskId) => setTaskCreateForm((current) => ({ ...current, parentTaskId }))}
+              onAuthorizeFiles={authorizeTaskCreateFiles}
+              onMaterializeResources={materializeTaskCreateResources}
+              onReadClipboardResources={readTaskCreateClipboardResources}
+              onParseThirdPartyLink={(url) => props.onParseThirdPartyTaskLink?.(url) ?? Promise.resolve({ kind: 'unsupported', sourceUrl: url })}
+              onApplyThirdPartyTaskInfo={applyThirdPartyTaskExtract}
+              onOpenThirdPartyLink={openThirdPartyLinkInBrowser}
+              onAddAttachments={addTaskCreateAttachments}
+              onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
+              onOpenAttachment={props.onOpenTaskAttachment}
+              onRemoveAttachment={removeTaskCreateAttachment}
+              onClose={closeTaskCreateModal}
+              onSubmit={(event) => void submitTaskCreateModal(event)}
+            />
+          ) : null}
+        </MotionPresence>
         {activeNavTarget === 'automations' ? (
           <toolPages.automations
             client={props.commandClient ?? null}
@@ -1179,39 +1208,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
               ) : taskDetailPaneTask || sessionDrawerTarget ? null : (
                 renderNativeConversationWorkspace((taskId) => void openTaskDetailPane(taskId))
               )}
-
-              {/* 任务详情也可从会话进入；创建表单必须与任务、会话共享显示边界。 */}
-              <MotionPresence>
-                {taskCreateModalOpen ? (
-                  <TaskCreateModal
-                    projects={snapshot.projects}
-                    onProjectChange={(projectId) => setTaskCreateForm((current) => ({ ...current, projectId, parentTaskId: null }))}
-                    open={taskCreateModalOpen}
-                    copy={taskWorkspaceCopy}
-                    form={taskCreateForm}
-                    parentTasks={snapshot.tasks.filter((task) => task.projectId === taskCreateForm.projectId && taskHierarchyDepth(task, snapshot.tasks) < 3)}
-                    error={taskCreateError}
-                    busy={creatingTaskBusy}
-                    titleInputRef={taskCreateTitleInputRef}
-                    onFormChange={updateTaskCreateForm}
-                    onTaskTypeChange={updateTaskCreateType}
-                    onPriorityChange={updateTaskCreatePriority}
-                    onParentChange={(parentTaskId) => setTaskCreateForm((current) => ({ ...current, parentTaskId }))}
-                    onAuthorizeFiles={authorizeTaskCreateFiles}
-                    onMaterializeResources={materializeTaskCreateResources}
-                    onReadClipboardResources={readTaskCreateClipboardResources}
-                    onParseThirdPartyLink={(url) => props.onParseThirdPartyTaskLink?.(url) ?? Promise.resolve({ kind: 'unsupported', sourceUrl: url })}
-                    onApplyThirdPartyTaskInfo={applyThirdPartyTaskExtract}
-                    onOpenThirdPartyLink={openThirdPartyLinkInBrowser}
-                    onAddAttachments={addTaskCreateAttachments}
-                    onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
-                    onOpenAttachment={props.onOpenTaskAttachment}
-                    onRemoveAttachment={removeTaskCreateAttachment}
-                    onClose={closeTaskCreateModal}
-                    onSubmit={(event) => void submitTaskCreateModal(event)}
-                  />
-                ) : null}
-              </MotionPresence>
 
               <MotionPresence>
                 {taskModelPushModalOpen && modelSetupTask ? (

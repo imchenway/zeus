@@ -243,12 +243,12 @@ export interface DigitalTeamStructuredResult {
   remainingIssues: string[];
 }
 
-/** 一条项目内可复制、删除和重开的流程模板投影。 */
+/** 一条可复制、删除和重开的团队模板投影。 */
 export interface DigitalTeamWorkflowTemplateRecord {
   /** 模板身份。 */
   id: string;
-  /** 所属项目。 */
-  projectId: string;
+  /** 旧模板的所属项目；null 表示可跨项目复用的全局团队模板。 */
+  projectId: string | null;
   /** 模板名称。 */
   name: string;
   /** 模板用途说明。 */
@@ -445,8 +445,8 @@ export interface DigitalTeamNodeAttemptRecord {
 export interface CreateDigitalTeamWorkflowTemplateInput {
   /** 可选稳定身份。 */
   id?: string;
-  /** 所属项目。 */
-  projectId: string;
+  /** 旧模板可保留所属项目；新团队使用 null。 */
+  projectId: string | null;
   /** 模板名称。 */
   name: string;
   /** 模板用途说明。 */

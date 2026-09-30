@@ -89,35 +89,71 @@ export function createConversationComposerStateSelector(): StateSelector {
   }));
 }
 
-/** 排队卡片只订阅权威队列和操作闸机，不随正文流、草稿或附件变化重绘。 */
+/** 排队卡片订阅权威队列、本地待接纳消息和操作闸机，不随正文流、草稿或附件变化重绘。 */
 export function createConversationQueueStateSelector(): StateSelector {
-  return cachedSelector((state) => ({
-    ...state,
-    turnsByProviderId: emptyTurns,
-    changeSetsByProviderId: emptyChangeSets,
-    terminalTurnIds: emptyTerminalTurns,
-    items: emptyItems,
-    itemOrder: emptyItemOrder,
-    pendingRequests: emptyRequests,
-    planImplementationRequests: emptyPlanRequests,
-    providerSettings: null,
-    tokenUsage: null,
-    unifiedUsage: null,
-    sessionMetrics: null,
-    rateLimits: null,
-    mcpStartup: null,
-    seenEventIds: emptySeenEvents,
-    lastSequenceByGeneration: emptySequences,
-    lastEventId: null,
-    draft: '',
-    attachments: emptyAttachments,
-    browserSubmission: null,
-    contextDraft: emptyConversationContextDraft,
-    transcriptRevision: 0,
-    feedbackEpoch: 0,
-    visibleFeedbackEpoch: 0,
-    error: null,
-  }));
+  /** 上次投影保留引用，正文流式更新时避免排队区空重绘。 */
+  let previousProjection: Pick<NativeSessionState, 'items' | 'itemOrder'> = { items: emptyItems, itemOrder: emptyItemOrder };
+  /** 原消息顺序未变时无需重复扫描完整历史。 */
+  let previousSourceItemOrder: NativeSessionState['itemOrder'] = emptyItemOrder;
+  /** 候选只包含少量 optimistic 用户消息，流式正文更新仅核对这些条目。 */
+  let candidateKeys: NativeSessionState['itemOrder'] = emptyItemOrder;
+  return cachedSelector((state) => {
+    if (state.itemOrder !== previousSourceItemOrder) {
+      previousSourceItemOrder = state.itemOrder;
+      candidateKeys = state.itemOrder.filter((key) => {
+        /** optimistic 用户消息可能在重试或接纳时改变排队状态。 */
+        const item = state.items[key];
+        return item?.optimistic === true && item.type === 'userMessage';
+      });
+    }
+    previousProjection = projectQueuedItems(state.items, candidateKeys, previousProjection);
+    return {
+      ...state,
+      turnsByProviderId: emptyTurns,
+      changeSetsByProviderId: emptyChangeSets,
+      terminalTurnIds: emptyTerminalTurns,
+      items: previousProjection.items,
+      itemOrder: previousProjection.itemOrder,
+      pendingRequests: emptyRequests,
+      planImplementationRequests: emptyPlanRequests,
+      providerSettings: null,
+      tokenUsage: null,
+      unifiedUsage: null,
+      sessionMetrics: null,
+      rateLimits: null,
+      mcpStartup: null,
+      seenEventIds: emptySeenEvents,
+      lastSequenceByGeneration: emptySequences,
+      lastEventId: null,
+      draft: '',
+      attachments: emptyAttachments,
+      browserSubmission: null,
+      contextDraft: emptyConversationContextDraft,
+      transcriptRevision: 0,
+      feedbackEpoch: 0,
+      visibleFeedbackEpoch: 0,
+      error: null,
+    };
+  });
+}
+
+/** 仅保留输入框排队卡片需要的本地乐观消息，并在内容未变时复用旧投影。 */
+function projectQueuedItems(items: NativeSessionState['items'], candidateKeys: NativeSessionState['itemOrder'], previous: Pick<NativeSessionState, 'items' | 'itemOrder'>): Pick<NativeSessionState, 'items' | 'itemOrder'> {
+  /** 排队消息按现有时间线顺序筛选，不能让对象枚举顺序改变卡片位置。 */
+  const nextEntries = candidateKeys.flatMap((key): Array<[string, NativeSessionItemBuffer]> => {
+    /** 只有活跃轮次后的普通本地发送会进入输入框排队区。 */
+    const item = items[key];
+    return item && itemNeededByComposerQueue(item) ? [[key, item]] : [];
+  });
+  /** 引用和顺序都未变化时返回旧投影，隔离无关正文增量。 */
+  const previousEntries = Object.entries(previous.items);
+  if (nextEntries.length === previousEntries.length && nextEntries.every(([key, item], index) => previousEntries[index]?.[0] === key && previousEntries[index]?.[1] === item)) return previous;
+  return { items: Object.fromEntries(nextEntries), itemOrder: nextEntries.map(([key]) => key) };
+}
+
+/** 判断条目是否属于输入框排队区需要即时展示的本地消息。 */
+function itemNeededByComposerQueue(item: NativeSessionItemBuffer): boolean {
+  return item.optimistic === true && item.type === 'userMessage' && item.payload.delivery === 'queue' && item.payload.queuedForActiveTurn === true && (item.status === 'pending' || item.status === 'queued');
 }
 
 function cachedSelector(project: (state: NativeSessionState) => NativeSessionState): StateSelector {

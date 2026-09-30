@@ -138,6 +138,10 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   /** 后台发现与当前推送弹窗的仓库更新共用独立生命周期。 */
   const refreshTaskModelPushRepositories = useProjectRepositoryDiscovery(state);
   const {
+    taskCreateTeamId,
+    setTaskCreateTeamId,
+    setDigitalTeamTask,
+    setDigitalTeamEntrySelection,
     actionState,
     activeProjectId,
     activeProjectIdRef,
@@ -1219,6 +1223,11 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         setTaskDetail(createdTask);
         setActiveProjectSection('tasks');
         setTaskDetailPaneTaskId(createdTask.id);
+        if (taskCreateTeamId) {
+          setDigitalTeamTask(createdTask);
+          setDigitalTeamEntrySelection({ kind: 'template', templateId: taskCreateTeamId });
+          setActiveNavTarget('digital-teams');
+        }
         if (props.onLoadTaskEvents) {
           // 已创建成功后，事件读取失败不能让用户重复创建任务。
           void props
@@ -1240,10 +1249,18 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
 
   /** 用户主动新建任务时，将当前项目固定为草稿目标。 */
   function openTaskCreateModal(parentTaskId: string | null = null): void {
+    setTaskCreateTeamId(null);
     taskCreateReturnFocusRef.current = typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setTaskCreateForm({ ...buildTaskCreateInitialForm(appShellSettings.appLanguage), projectId: activeProjectId ?? '', parentTaskId });
     setTaskCreateError('');
     setTaskCreateModalOpen(true);
+  }
+
+  /** 从团队页复用新建任务表单，成功后将团队带到真实任务。 */
+  function openTaskCreateForTeam(templateId: string, projectId: string): void {
+    openTaskCreateModal();
+    setTaskCreateTeamId(templateId);
+    setTaskCreateForm((current) => ({ ...current, projectId }));
   }
 
   /** 复制仅预填可编辑内容，目标选择和保存沿用新建任务流程。 */
@@ -1269,6 +1286,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   }
 
   function closeTaskCreateModal(): void {
+    setTaskCreateTeamId(null);
     setTaskCreateModalOpen(false);
     setTaskCreateError('');
     const restoreTaskCreateFocus = () => taskCreateReturnFocusRef.current?.focus();
@@ -3030,6 +3048,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     openNativeConversationDrawer,
     openNativeConversationPage,
     openTaskCreateModal,
+    openTaskCreateForTeam,
     openTaskCopyModal,
     openTaskDetailPane,
     openTaskGitDelivery,

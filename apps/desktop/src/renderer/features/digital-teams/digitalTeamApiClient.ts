@@ -46,12 +46,12 @@ export interface DigitalTeamRunCreateInput {
 
 /** 数字团队页面使用的真实本地 API。 */
 export interface DigitalTeamApiClient {
-  /** 读取项目模板。 */
-  loadDigitalTeamTemplates(projectId: string): Promise<DigitalTeamWorkflowTemplateRecord[]>;
+  /** 读取全局团队模板。 */
+  loadDigitalTeamTemplates(projectId?: string): Promise<DigitalTeamWorkflowTemplateRecord[]>;
   /** 新建或按修订保存模板。 */
-  saveDigitalTeamTemplate(projectId: string, input: DigitalTeamTemplateSaveInput): Promise<DigitalTeamWorkflowTemplateRecord>;
+  saveDigitalTeamTemplate(input: DigitalTeamTemplateSaveInput, legacyProjectId?: string | null): Promise<DigitalTeamWorkflowTemplateRecord>;
   /** 按修订删除模板。 */
-  deleteDigitalTeamTemplate(projectId: string, templateId: string, expectedRevision: number): Promise<DigitalTeamWorkflowTemplateRecord>;
+  deleteDigitalTeamTemplate(templateId: string, expectedRevision: number, legacyProjectId?: string | null): Promise<DigitalTeamWorkflowTemplateRecord>;
   /** 读取项目运行列表。 */
   loadDigitalTeamRuns(projectId: string, taskId?: string): Promise<DigitalTeamWorkflowRunRecord[]>;
   /** 读取单个运行完整投影。 */
@@ -96,30 +96,41 @@ export function createDigitalTeamApiClient(transport: LocalApiTransport): Digita
   };
 
   return {
-    loadDigitalTeamTemplates: (projectId) => transport.request(digitalTeamTemplatesPath(projectId)),
-    saveDigitalTeamTemplate: async (projectId, input) => {
+    loadDigitalTeamTemplates: async (projectId) => {
+      const globalTemplates = await transport.request<DigitalTeamWorkflowTemplateRecord[]>('/api/digital-team-templates');
+      if (!projectId) return globalTemplates;
+      const legacyTemplates = await transport.request<DigitalTeamWorkflowTemplateRecord[]>(digitalTeamTemplatesPath(projectId));
+      return [...globalTemplates, ...legacyTemplates.filter((template) => !globalTemplates.some((globalTemplate) => globalTemplate.id === template.id))];
+    },
+    saveDigitalTeamTemplate: async (input, legacyProjectId) => {
+      const scopeKind = legacyProjectId ? 'project' : 'settings';
+      const scopeId = legacyProjectId ?? 'digital-team-templates';
       const body = await buildWorkManagementCommandRequest({
         commandType: workManagementClientCommandTypes.digitalTeamTemplateSave,
-        scopeKind: 'project',
-        scopeId: () => projectId,
+        scopeKind,
+        scopeId: () => scopeId,
         operationPrefix: 'digital_team_template_save_',
         value: input,
         expectedRevision: input.expectedRevision,
       });
-      const path = input.id ? `${digitalTeamTemplatesPath(projectId)}/${encodeURIComponent(input.id)}` : digitalTeamTemplatesPath(projectId);
+      const collectionPath = legacyProjectId ? digitalTeamTemplatesPath(legacyProjectId) : '/api/digital-team-templates';
+      const path = input.id ? `${collectionPath}/${encodeURIComponent(input.id)}` : collectionPath;
       return transport.request(path, jsonRequest(input.id ? 'PUT' : 'POST', body));
     },
-    deleteDigitalTeamTemplate: async (projectId, templateId, expectedRevision) => {
+    deleteDigitalTeamTemplate: async (templateId, expectedRevision, legacyProjectId) => {
+      const scopeKind = legacyProjectId ? 'project' : 'settings';
+      const scopeId = legacyProjectId ?? 'digital-team-templates';
       const value = { expectedRevision };
       const body = await buildWorkManagementCommandRequest({
         commandType: workManagementClientCommandTypes.digitalTeamTemplateDelete,
-        scopeKind: 'project',
-        scopeId: () => projectId,
+        scopeKind,
+        scopeId: () => scopeId,
         operationPrefix: 'digital_team_template_delete_',
         value,
         expectedRevision,
       });
-      return transport.request(`${digitalTeamTemplatesPath(projectId)}/${encodeURIComponent(templateId)}`, jsonRequest('DELETE', body));
+      const collectionPath = legacyProjectId ? digitalTeamTemplatesPath(legacyProjectId) : '/api/digital-team-templates';
+      return transport.request(`${collectionPath}/${encodeURIComponent(templateId)}`, jsonRequest('DELETE', body));
     },
     loadDigitalTeamRuns: async (projectId, taskId) => rememberRuns(await transport.request<DigitalTeamWorkflowRunRecord[]>(`${digitalTeamRunsPath(projectId)}${taskId ? `?taskId=${encodeURIComponent(taskId)}` : ''}`)),
     loadDigitalTeamRun: async (runId) => {
@@ -168,7 +179,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** 项目模板集合路径。 */
+/** 旧项目模板集合路径，仅用于无损兼容已有本地数据。 */
 function digitalTeamTemplatesPath(projectId: string): string {
   return `/api/projects/${encodeURIComponent(projectId)}/digital-team-templates`;
 }

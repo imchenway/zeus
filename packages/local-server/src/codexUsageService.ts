@@ -434,12 +434,13 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
         longestRunningTurnSec: usage?.summary.longestRunningTurnSec ?? previous?.longestRunningTurnSec ?? null,
         currentStreakDays: usage?.summary.currentStreakDays ?? previous?.currentStreakDays ?? null,
         longestStreakDays: usage?.summary.longestStreakDays ?? previous?.longestStreakDays ?? null,
-        dailyUsageBuckets: usage ? usage.dailyUsageBuckets : (previous?.dailyUsageBuckets ?? null),
+        /** 官方瞬时缺少每日桶时保留同账户最近成功结果，避免账户趋势被空响应清除。 */
+        dailyUsageBuckets: usage?.dailyUsageBuckets ?? previous?.dailyUsageBuckets ?? null,
         rateLimitWindows: limits ? flattenRateLimitWindows(limits) : (previous?.rateLimitWindows ?? []),
         creditBalance: limits ? readCreditBalance(limits) : (previous?.creditBalance ?? null),
         creditsUnlimited: limits ? readCreditsUnlimited(limits) : (previous?.creditsUnlimited ?? false),
         fetchedAt,
-        stale: usageResult.status === 'rejected' || limitsResult.status === 'rejected',
+        stale: usageResult.status === 'rejected' || limitsResult.status === 'rejected' || (usage?.dailyUsageBuckets === null && previous?.dailyUsageBuckets != null),
         error: [usageResult, limitsResult].map(settledError).filter(Boolean).join('；') || null,
       };
       if (epoch !== officialAccountEpoch) return readCachedOfficialUsage();

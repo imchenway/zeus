@@ -4,6 +4,7 @@ import { adaptConversationSnapshotV2, mergeConversationProcessV2, resumeCachedCo
 import { createHydratedSessionState, createInitialSessionState, sessionReducer } from '../apps/desktop/src/renderer/session/sessionReducer.ts';
 import type { NativePlanImplementationRequest, NativeRealtimeEventEnvelope, NativeQueueSnapshot, NativeSessionState, NativeConversationEvent } from '../apps/desktop/src/renderer/session/sessionTypes.ts';
 import { composerQueuedSubmissions, orderTranscriptItemsWithQueue } from '../apps/desktop/src/renderer/session/conversationQueuePresentation.ts';
+import { createConversationQueueStateSelector } from '../apps/desktop/src/renderer/session/sessionStateSlices.ts';
 import { attachTaskModelPushChoice, type TaskModelPushPendingState } from '../apps/desktop/src/renderer/task/TaskModelPushPendingWorkspace.tsx';
 import type { TurnChangeSet } from '../packages/shared/src/conversationResources.ts';
 import type { ConversationTranscriptEnvelope } from '../packages/shared/src/conversationTranscriptWire.ts';
@@ -1544,7 +1545,7 @@ async function verifyTranscriptInitializationRecovery() {
 }
 
 /** 复核活跃轮次后的普通发送从首帧开始只进入输入框排队区。 */
-function verifyActiveTurnQueueProjection() {
+async function verifyActiveTurnQueueProjection() {
   /** 活跃队列代表当前回复仍在生成，新消息必须等待本轮结束。 */
   const activeQueue: NativeQueueSnapshot = { state: { type: 'active', turnId: 'active-turn', phase: 'prework' }, waitReason: 'current_turn', submissions: [] };
   /** 最小活跃会话只保留本次投影需要的身份和队列事实。 */
@@ -1574,6 +1575,11 @@ function verifyActiveTurnQueueProjection() {
   /** 本地卡片是唯一首帧投影，且权威身份到达前不可操作。 */
   const pendingCards = composerQueuedSubmissions(pendingState);
   assert(pendingCards.length === 1 && pendingCards[0]?.clientUserMessageId === 'queued-client-message' && pendingCards[0]?.localOnly, '活跃轮次后的本地消息必须立即进入不可操作的排队卡片。');
+  /** 组件真实使用的独立状态切片也必须保留本地消息，不能等服务端队列回执。 */
+  const pendingQueueSlice = createConversationQueueStateSelector()(pendingState);
+  /** 选择器投影后的首帧仍应立即得到同一张本地排队卡片。 */
+  const pendingSliceCards = composerQueuedSubmissions(pendingQueueSlice);
+  assert(pendingSliceCards.length === 1 && pendingSliceCards[0]?.clientUserMessageId === 'queued-client-message' && pendingSliceCards[0]?.localOnly, '排队区状态切片必须保留首帧本地卡片。');
   /** 时间线过滤使用同一客户端身份，不允许先渲染成会话气泡。 */
   const pendingItem = pendingState.items[pendingState.itemOrder.at(-1)!]!;
   assert(
@@ -1606,9 +1612,50 @@ function verifyActiveTurnQueueProjection() {
   /** 去重后仍只保留一个权威卡片。 */
   const durableCards = composerQueuedSubmissions(durableState);
   assert(durableCards.length === 1 && durableCards[0]?.id === 'queued-submission' && !durableCards[0]?.localOnly, '权威队列必须无闪烁替换本地卡片。');
+  /** 纯附件发送最容易发生在首轮仍处于 starting_turn 的接纳窗口。 */
+  const attachment = { name: '排队附件.png', mime: 'image/png', size: 2048, kind: 'image' as const, localPath: '/tmp/排队附件.png' };
+  /** 即使正文为空，附件也必须在首帧由排队卡片接管。 */
+  const attachmentOnlyState = sessionReducer(
+    { ...activeState, conversationState: 'starting_turn', queue: { state: { type: 'idle' }, submissions: [] } },
+    {
+      type: 'send_started',
+      clientUserMessageId: 'queued-attachment-only',
+      durableClientUserMessageId: 'queued-attachment-only',
+      draft: '',
+      attachments: [attachment],
+      submittedAttachments: [attachment],
+      browserSubmission: null,
+      contextDraft: { responseAnnotations: [], codeComments: [] },
+      browserComments: [],
+      delivery: 'queue',
+      previousConversationState: 'starting_turn',
+      startedAt: occurredAt,
+    },
+  );
+  /** 排队卡片保留附件且不制造伪正文，避免退化成会话中的引导气泡。 */
+  const attachmentOnlyCards = composerQueuedSubmissions(attachmentOnlyState);
+  assert(
+    attachmentOnlyCards.length === 1 && attachmentOnlyCards[0]?.content === '' && attachmentOnlyCards[0]?.attachments?.[0]?.name === attachment.name && attachmentOnlyCards[0]?.localOnly,
+    'starting_turn 中的纯附件消息必须直接进入排队卡片。',
+  );
+  /** 真实控制器入口同时验证纯附件不会被补成“回答批注”伪正文。 */
+  const attachmentHarness = createHarness(undefined, 0, true);
+  try {
+    await attachmentHarness.controller.start();
+    attachmentHarness.controller.setAttachments([attachment]);
+    await attachmentHarness.controller.send('queue');
+    /** 服务端请求保留空正文和附件，并且不发送虚构 displayText。 */
+    const attachmentRequest = attachmentHarness.sentMessages[0];
+    assert(
+      attachmentHarness.sendCalls() === 1 && attachmentRequest?.content === '' && attachmentRequest.displayText === undefined && Array.isArray(attachmentRequest.attachments) && attachmentRequest.attachments.length === 1,
+      '纯附件请求不得携带伪造的回答批注正文。',
+    );
+  } finally {
+    attachmentHarness.controller.dispose();
+  }
   /** 空闲会话的首条消息仍属于正式时间线，不能被本次规则误收进排队区。 */
   const firstTurnState = sessionReducer(
-    { ...activeState, conversationState: 'ready', queue: { state: { type: 'idle' }, submissions: [] } },
+    { ...activeState, conversationState: 'native_idle', queue: { state: { type: 'idle' }, submissions: [] } },
     {
       type: 'send_started',
       clientUserMessageId: 'first-turn-message',
@@ -1620,12 +1667,12 @@ function verifyActiveTurnQueueProjection() {
       contextDraft: { responseAnnotations: [], codeComments: [] },
       browserComments: [],
       delivery: 'queue',
-      previousConversationState: 'ready',
+      previousConversationState: 'native_idle',
       startedAt: occurredAt,
     },
   );
   assert(composerQueuedSubmissions(firstTurnState).length === 0, '空闲会话首条消息不得进入输入框排队区。');
-  return { pendingCardImmediate: true, transcriptIdentityClaimed: true, durableReplacement: true, firstTurnPreserved: true };
+  return { pendingCardImmediate: true, queueSliceImmediate: true, transcriptIdentityClaimed: true, durableReplacement: true, attachmentOnlyStartingTurnQueued: true, attachmentOnlyRequestTextPreserved: true, firstTurnPreserved: true };
 }
 
 /** 复核首条任务提示词在实时、队列和局部历史之间保持同一位置，旧缺位输入能一次恢复。 */
@@ -1749,6 +1796,89 @@ async function verifyTaskPushPlacement() {
   }
 }
 
+/** 异步答案从实时消息交接到缺少客户端身份的历史预览时，只保留一条正式输入。 */
+function verifyAnsweredInputHandoff() {
+  /** 复用正式首屏适配器与既有会话样本。 */
+  const snapshot = adaptConversationSnapshotV2({ snapshot: snapshotV2, history: historyV2, queue, requests: [], planImplementationRequests: [], choice, goal });
+  /** 原轮次结束后作为新消息发送的回答，仍携带完整原题。 */
+  const questionAnswer = {
+    providerTurnId: 'question-turn',
+    providerItemId: 'question-provider',
+    asNewMessage: true,
+    questions: [{ id: 'question_1', header: '存储配置', question: '请提供客服媒体存储配置。', isOther: false, isSecret: false, options: null }],
+    answers: { question_1: { answers: ['已提供存储配置'] } },
+  };
+  /** 答案附件与同一条消息一起保留。 */
+  const attachments = [{ name: '配置说明.txt', mime: 'text/plain', size: 4, localPath: '/tmp/answer-config.txt' }];
+  /** 实时开始事件先使用 Provider 显示身份。 */
+  const started = conversationEvent(1, 'conversation.item.started', {
+    turnId: 'turn',
+    itemId: 'answer-provider',
+    itemType: 'userMessage',
+    status: 'in_progress',
+    textContent: '已提供存储配置',
+    itemPayload: { clientId: 'answer-client', questionAnswer, attachments },
+    transcript: transcript('provider-answer-preview', 2048, 'answer-provider'),
+  });
+  /** 实时完成事件切换为用户消息的正式显示身份。 */
+  const completed = conversationEvent(2, 'conversation.item.completed', {
+    ...started.payload,
+    status: 'completed',
+    transcript: transcript('user-message:answer-client', 1024, 'answer-provider'),
+  });
+  /** 历史模型正文保留完整回答与客户端身份。 */
+  const canonical = {
+    id: 'user-message:answer-client',
+    providerItemId: 'answer-provider',
+    turnId: 'turn',
+    type: 'userMessage',
+    status: 'completed',
+    phase: 'prework',
+    text: '已提供存储配置',
+    payload: { clientId: 'answer-client', questionAnswer, attachments },
+    resources: [],
+    updatedAt: occurredAt,
+    transcript: transcript('user-message:answer-client', 1024, 'answer-provider'),
+  };
+  /** 活动预览缺少客户端身份，但保留同一 Provider 消息身份。 */
+  const preview = { ...canonical, id: 'provider-answer-preview', payload: { questionAnswer }, transcript: started.payload.transcript! };
+  for (const items of [
+    [canonical, preview],
+    [preview, canonical],
+  ]) {
+    /** 两种到达顺序都经过实时、水合与分页的正式归约入口。 */
+    let state = sessionReducer(createHydratedSessionState(snapshot), { type: 'event_received', event: started as NativeConversationEvent });
+    state = sessionReducer(state, { type: 'event_received', event: completed as NativeConversationEvent });
+    state = sessionReducer(state, { type: 'snapshot_hydrated', snapshot: { ...snapshot, items } });
+    state = sessionReducer(state, { type: 'snapshot_v2_page_merged', snapshot: { ...snapshot, items } });
+    assert(state.itemOrder.length === 1 && Object.keys(state.items).length === 1, '同一答案的实时消息与历史预览只能占一个正文位置。');
+    assert(state.items[state.itemOrder[0]!]!.payload.questionAnswer === questionAnswer && (state.items[state.itemOrder[0]!]!.payload.attachments as unknown[]).length === 1, '交接必须保留原题、回答及附件。');
+  }
+  /** 相同正文的独立输入拥有不同持久身份，必须继续保留。 */
+  const independent = {
+    ...canonical,
+    id: 'user-message:second-client',
+    providerItemId: 'second-provider',
+    payload: { ...canonical.payload, clientId: 'second-client' },
+    transcript: transcript('user-message:second-client', 3072, 'second-provider'),
+  };
+  /** 冷开读取正式身份，不能按答案文字合并真实的独立输入。 */
+  const cold = createHydratedSessionState({ ...snapshot, items: [canonical, independent] });
+  assert(cold.itemOrder.length === 2, '相同正文的两次独立输入必须保留两个正文位置。');
+  /** Provider 条目编号在别的轮次复用时，不得借用上一轮的客户端身份。 */
+  const otherTurn = { ...preview, id: 'other-turn-input', turnId: 'other-turn', transcript: transcript('other-turn-input', 4096, 'answer-provider', 'other-turn') };
+  /** 当前轮次身份也必须参与正式水合交接。 */
+  const separateTurns = sessionReducer(createHydratedSessionState({ ...snapshot, items: [canonical] }), { type: 'snapshot_hydrated', snapshot: { ...snapshot, items: [canonical, otherTurn] } });
+  assert(separateTurns.itemOrder.length === 2, '不同轮次复用 Provider 编号不能合并两条输入。');
+  return { singleAnswerPosition: true, bothArrivalOrders: true, answerAttachmentsPreserved: true, independentInputsPreserved: true };
+}
+
+/** 答案交接专项复用现有探针，不引入额外运行入口或依赖。 */
+if (process.argv.includes('--answered-input-handoff-only')) {
+  console.log(JSON.stringify({ answeredInputHandoff: verifyAnsweredInputHandoff() }));
+  process.exit(0);
+}
+
 /** 排队首帧专项只运行本地投影与权威接管检查。 */
 /** 结构专项直接运行分页控制器与 reducer，不受无关队列探针前置条件影响。 */
 if (process.argv.includes('--process-structure-only')) {
@@ -1757,7 +1887,7 @@ if (process.argv.includes('--process-structure-only')) {
 }
 
 if (process.argv.includes('--active-queue-projection-only')) {
-  console.log(JSON.stringify({ activeTurnQueueProjection: verifyActiveTurnQueueProjection() }));
+  console.log(JSON.stringify({ activeTurnQueueProjection: await verifyActiveTurnQueueProjection() }));
   process.exit(0);
 }
 
@@ -1800,6 +1930,7 @@ const result =
           stableHydrationPages,
           budget: sessionRealtimeBufferBudget,
           restoredSubmissionOrder,
+          answeredInputHandoff: verifyAnsweredInputHandoff(),
           truncatedTaskPushIdentity: verifyTruncatedTaskPushIdentityCoalescing(),
           internalPayloadVisibility: verifyInternalPayloadsStayOutOfTranscript(),
           processPageTerminalPreservation: verifyProcessPageDoesNotDowngradeLiveTerminalState(),

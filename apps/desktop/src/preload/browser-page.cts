@@ -114,7 +114,7 @@ function install(): void {
     .outline { position: fixed; pointer-events: none; border: 2px solid #6155d8; border-radius: 4px; background: rgb(97 85 216 / 14%); display: none; }
     .region { border-style: dashed; border-radius: 8px; background: rgb(97 85 216 / 12%); }
     .markers { position: fixed; inset: 0; pointer-events: none; }
-    .marker { position: fixed; width: 23px; height: 23px; border: 2px solid white; border-radius: 999px; background: #6155d8; color: white; display: grid; place-items: center; font: 650 11px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; box-shadow: 0 3px 12px rgb(15 23 42 / 24%); pointer-events: auto; cursor: pointer; transition: transform 120ms ease, box-shadow 120ms ease; }
+    .marker { position: fixed; width: 24px; height: 24px; border: 2px solid white; border-radius: 999px; background: #6155d8; color: white; display: grid; place-items: center; font: 650 11px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; box-shadow: 0 3px 12px rgb(15 23 42 / 24%); pointer-events: auto; cursor: pointer; transition: transform 120ms ease, box-shadow 120ms ease; }
     .marker:hover,.marker[data-focus="true"] { transform: scale(1.12); box-shadow: 0 4px 16px rgb(97 85 216 / 38%); }
     .editor-pin { position: fixed; width: 26px; height: 26px; border: 2px solid white; border-radius: 999px; background: #6155d8; box-shadow: 0 3px 12px rgb(15 23 42 / 24%); display: none; pointer-events: none; transform: translate(-50%, -50%); }
     .editor-pin::after { position: absolute; left: 2px; bottom: -3px; width: 8px; height: 8px; border: 2px solid white; border-top: 0; border-right: 0; border-radius: 0 0 0 6px; background: #6155d8; content: ""; transform: rotate(-18deg); }

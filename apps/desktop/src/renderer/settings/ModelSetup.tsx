@@ -704,6 +704,7 @@ function codexUpdateProgressLabel(stage: CodexRuntimeUpdateProgress['stage'], zh
   /** 中文与英文共用同一阶段顺序。 */
   const labels: Record<CodexRuntimeUpdateProgress['stage'], [string, string]> = {
     checking: ['正在检查最新版本', 'Checking the latest version'],
+    waiting: ['等待当前工作安全结束', 'Waiting for current work to finish safely'],
     preparing: ['正在准备更新', 'Preparing update'],
     downloading: ['正在下载 Codex', 'Downloading Codex'],
     installing: ['正在安装 Codex', 'Installing Codex'],

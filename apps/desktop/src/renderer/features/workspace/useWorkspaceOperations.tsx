@@ -52,10 +52,13 @@ import {
 } from './workspaceSupport.js';
 import type { WorkspaceQueryState } from './useWorkspaceQueryState.js';
 import type { WorkspaceDomainActions } from './useWorkspaceDomainActions.js';
-import type { DigitalTeamEntrySelection } from '../digital-teams/DigitalTeamWorkspace.js';
 
 export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions: WorkspaceDomainActions) {
   const {
+    digitalTeamTask,
+    setDigitalTeamTask,
+    digitalTeamEntrySelection,
+    setDigitalTeamEntrySelection,
     actionState,
     activeNavTarget,
     activeProjectId,
@@ -1507,11 +1510,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
       recordLocalError('renderer-action', error);
     }
   }
-
-  /** 任务入口上下文只在数字团队页面使用，不改变任务和项目归属。 */
-  const [digitalTeamTask, setDigitalTeamTask] = useState<TaskRecord | undefined>();
-  /** 任务详情下拉的准确目标只用于数字团队首次打开。 */
-  const [digitalTeamEntrySelection, setDigitalTeamEntrySelection] = useState<DigitalTeamEntrySelection | undefined>();
 
   function handleMainNavigate(target: WorkspaceViewId): void {
     const navigate = () => {

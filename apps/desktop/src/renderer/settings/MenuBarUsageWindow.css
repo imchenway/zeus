@@ -595,13 +595,13 @@ body:has(.menu-bar-usage-root),
   line-height: 1;
 }
 
-.menu-bar-usage-cost-detail-trigger:hover,
-.menu-bar-usage-cost-detail-trigger:focus-visible {
+.menu-bar-usage-cost-detail-trigger:hover {
   color: var(--usage-accent-strong);
 }
 
 .menu-bar-usage-cost-detail-trigger:focus-visible {
-  outline: 2px solid var(--usage-accent);
+  color: var(--usage-text);
+  outline: 2px solid color-mix(in srgb, var(--usage-text) 48%, transparent);
   outline-offset: -2px;
   border-radius: 5px;
 }
@@ -649,6 +649,41 @@ body:has(.menu-bar-usage-root),
   overscroll-behavior: contain;
 }
 
+/* 超过八行时固定为八行可视高度并启用纵向滚动，短列表继续按内容收缩。 */
+.menu-bar-usage-cost-table-scroll[data-scrollable='true'] {
+  max-block-size: 493px;
+  padding-inline-end: 8px;
+  overflow-y: auto;
+  scrollbar-color: color-mix(in srgb, var(--usage-muted) 18%, transparent) transparent;
+  scrollbar-width: thin;
+}
+
+/* 独立费用窗口不继承工作台滚动条作用域，因此在此复用透明轨道与低对比度圆角滑块。 */
+.menu-bar-usage-cost-table-scroll[data-scrollable='true']::-webkit-scrollbar {
+  inline-size: 8px;
+}
+
+.menu-bar-usage-cost-table-scroll[data-scrollable='true']::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.menu-bar-usage-cost-table-scroll[data-scrollable='true']::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--usage-muted) 18%, transparent);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: 999px;
+}
+
+.menu-bar-usage-cost-table-scroll[data-scrollable='true']::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--usage-accent) 28%, transparent);
+  background-clip: padding-box;
+}
+
+.menu-bar-usage-cost-table-scroll[data-scrollable='true']::-webkit-scrollbar-thumb:active {
+  background: color-mix(in srgb, var(--usage-accent) 42%, transparent);
+  background-clip: padding-box;
+}
+
 .menu-bar-usage-cost-detail table {
   /* 表格先采用内容自然宽度，达到面板上限后再换行，始终不产生横向滚动。 */
   inline-size: max-content;
@@ -694,6 +729,12 @@ body:has(.menu-bar-usage-root),
 
 .menu-bar-usage-cost-detail tbody th {
   font-weight: 600;
+}
+
+/* 长列表统一最小行高，让滚动阈值稳定对应八条记录，短列表仍按内容收缩。 */
+.menu-bar-usage-cost-table-scroll[data-scrollable='true'] tbody th,
+.menu-bar-usage-cost-table-scroll[data-scrollable='true'] tbody td {
+  block-size: 58px;
 }
 
 .menu-bar-usage-cost-detail td span {
@@ -799,14 +840,13 @@ body:has(.menu-bar-usage-root),
   background: var(--zeus-brand-hover);
 }
 
-/* 焦点环与浮窗内其他控件一致，深浅色都由品牌色保证可见。 */
+/* 原生下拉自身已有边界，选择后不再叠加额外焦点圈。 */
 .menu-bar-usage-source-select select:focus-visible {
-  outline: 2px solid var(--usage-accent);
-  outline-offset: 1px;
+  outline: 0;
 }
 
 .menu-bar-usage-source-select:focus-within {
-  color: var(--usage-accent-strong);
+  color: var(--usage-muted);
 }
 
 .menu-bar-usage-source-info {
@@ -820,7 +860,7 @@ body:has(.menu-bar-usage-root),
 
 /* 原生提示同时提供可聚焦入口和完整读屏文案。 */
 .menu-bar-usage-source-info:focus-visible {
-  outline: 2px solid var(--usage-accent);
+  outline: 2px solid color-mix(in srgb, var(--usage-text) 48%, transparent);
   border-radius: 4px;
 }
 
@@ -933,7 +973,7 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-root button:focus-visible {
-  outline: 2px solid var(--usage-accent);
+  outline: 2px solid color-mix(in srgb, var(--usage-text) 48%, transparent);
   outline-offset: 2px;
 }
 
@@ -1091,10 +1131,6 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-bars figcaption dt,
 .menu-bar-usage-bars-plot small {
   color: var(--usage-muted);
-}
-
-.menu-bar-usage-freshness[data-stale='true'] {
-  color: var(--usage-warning);
 }
 
 .menu-bar-usage-refresh {
@@ -1262,8 +1298,8 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-root button:focus-visible {
-  border-color: color-mix(in srgb, var(--usage-accent) 52%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--usage-accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--usage-text) 36%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--usage-text) 12%, transparent);
   outline: 0;
 }
 

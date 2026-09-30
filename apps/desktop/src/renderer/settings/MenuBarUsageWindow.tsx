@@ -92,7 +92,6 @@ const copy = {
     showZeus: '显示 Zeus',
     quitZeus: '退出 Zeus',
     retry: '重新读取',
-    stale: '上次成功结果',
     failed: '暂时无法更新用量',
     failedDetail: '未能读取本地用量数据，请重试。',
     codexOnlyCompatibility: '当前后台版本只能显示 Codex 用量；后台更新后将显示其他服务。',
@@ -158,7 +157,6 @@ const copy = {
     showZeus: 'Show Zeus',
     quitZeus: 'Quit Zeus',
     retry: 'Reload',
-    stale: 'Last successful result',
     failed: 'Usage cannot be updated',
     failedDetail: 'Local usage data could not be read. Please retry.',
     codexOnlyCompatibility: 'The current background service can only show Codex usage. Other services will appear after it is updated.',
@@ -341,8 +339,7 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
   const selectedProvider = providers.find((provider) => provider.providerId === selection) ?? null;
   // 顶部时间表示本次用量读取完成时间，供应源数据的新鲜度仍由卡片单独提示。
   const updatedAt = snapshot?.updatedAt;
-  const stale = Boolean(selectedProvider?.stale || error);
-  const freshness = updatedAt ? formatUpdatedAt(updatedAt, surfaceSettings.language, stale ? text.stale : '') : loading ? text.loading : error ? text.failed : text.loading;
+  const freshness = updatedAt ? formatUpdatedAt(updatedAt, surfaceSettings.language) : loading ? text.loading : error ? text.failed : text.loading;
 
   return (
     <main className="menu-bar-usage-root" data-appearance={surfaceSettings.appearance} lang={surfaceSettings.language} aria-label={surfaceSettings.language === 'zh-CN' ? 'Zeus 菜单栏用量浮窗' : 'Zeus menu bar usage'}>
@@ -353,7 +350,7 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
             <strong>Zeus</strong>
           </span>
           <span className="menu-bar-usage-refresh-status">
-            <small className="menu-bar-usage-freshness" data-stale={stale && !loading ? 'true' : 'false'} aria-live="polite" title={freshness}>
+            <small className="menu-bar-usage-freshness" aria-live="polite" title={freshness}>
               {freshness}
             </small>
             <button className="menu-bar-usage-refresh" type="button" aria-label={loading ? text.loading : text.retry} title={loading ? text.loading : text.retry} aria-busy={loading} disabled={loading} onClick={() => void load('force')}>
@@ -595,13 +592,15 @@ function readMetricValues(provider: UsageProviderSummary, language: Language, ra
   const local = summary.local;
   const complete = summary.complete === true;
   const cacheAvailable = provider.cacheUsageAvailable;
+  /** 今日范围无需重复解释单价周期，只隐藏周期，不改变费用聚合结果。 */
+  const costBreakdown = range === 'today' ? summary.costBreakdown.map((entry) => ({ ...entry, pricePeriod: null })) : summary.costBreakdown;
   return [
     { label: text.tokens, value: formatIncompleteTokens(local.totalTokens, summary.complete, language) },
     {
       label: text.cost,
       value: complete ? formatUsd(local.apiEquivalentUsd, local.priceCoverage, language, text.noPrice) : '—',
       detailLabel: text.costDetail,
-      costBreakdown: summary.costBreakdown,
+      costBreakdown,
     },
     { label: text.cacheHit, value: !complete ? '—' : cacheAvailable ? formatPercent(local.cacheHitRate, language, '—') : text.cacheUnsupported },
     { label: text.outputRate, value: formatOutputRate(local.outputTokensPerSecond ?? null, language) },
@@ -966,7 +965,7 @@ function CostBreakdownPanel(props: { entries: UsageModelCostBreakdown[]; label: 
   return (
     <section className="menu-bar-usage-cost-detail menu-bar-usage-cost-detail-window" role="dialog" aria-label={props.label}>
       <strong>{props.label}</strong>
-      <div className="menu-bar-usage-cost-table-scroll">
+      <div className="menu-bar-usage-cost-table-scroll" data-scrollable={props.entries.length > 8}>
         <table>
           <thead>
             <tr>
@@ -1193,9 +1192,9 @@ function formatReset(timestamp: number, language: Language, prefix: string): str
   return `${prefix} ${new Intl.DateTimeFormat(language, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(timestamp * 1_000))}`;
 }
 
-/** 正常状态仅显示时间；读取失败时保留过期数据说明。 */
-function formatUpdatedAt(value: string, language: Language, prefix: string): string {
-  return `${prefix ? `${prefix} ` : ''}${new Intl.DateTimeFormat(language, { hour: '2-digit', minute: '2-digit' }).format(new Date(value))}`;
+/** 顶部更新时间只显示时间，过期状态继续由颜色和完整提示表达。 */
+function formatUpdatedAt(value: string, language: Language): string {
+  return new Intl.DateTimeFormat(language, { hour: '2-digit', minute: '2-digit' }).format(new Date(value));
 }
 
 function formatShortDate(value: string, language: Language): string {

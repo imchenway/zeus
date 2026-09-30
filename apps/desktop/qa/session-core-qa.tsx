@@ -745,32 +745,39 @@ function MessageLayoutQa() {
     const paragraph = contentRef.current?.querySelector('.session-thread-item-assistant .session-markdown p');
     /** 浏览器原生选区驱动生产入口。 */
     const selection = window.getSelection();
-    if (!paragraph || !selection) throw new Error('批注检查失败：正文尚未就绪');
+    if (!paragraph || !selection) throw new Error('评论检查失败：正文尚未就绪');
     /** 等待选区事件与 React 提交完成，不改变生产帧调度。 */
     const settle = () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-    /** 选中首段，覆盖鼠标抬起后的入口生成。 */
+    /** 选中首段，覆盖正反向选择结束后的真实松手坐标。 */
     const range = document.createRange();
     range.selectNodeContents(paragraph);
+    for (const backward of [false, true]) {
+      selection.setBaseAndExtent(backward ? range.endContainer : range.startContainer, backward ? range.endOffset : range.startOffset, backward ? range.startContainer : range.endContainer, backward ? range.startOffset : range.endOffset);
+      /** 多行选择使用松手一端的片段，不使用整个选区外框。 */
+      const fragments = Array.from(range.getClientRects()).filter((rect) => rect.width > 0 && rect.height > 0);
+      const releaseRect = (backward ? fragments[0] : fragments.at(-1)) ?? range.getBoundingClientRect();
+      /** 松手点放在文字行内，验证右侧与上方各保留 6px。 */
+      const clientX = backward ? releaseRect.left + 1 : releaseRect.right - 1;
+      const clientY = releaseRect.bottom - 2;
+      paragraph.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX, clientY }));
+      await settle();
+      window.dispatchEvent(new Event('resize'));
+      paragraph.closest('.session-transcript')?.dispatchEvent(new Event('scroll'));
+      await settle();
+      /** 核对生产按钮与布局通知后的定位结果。 */
+      const toolbar = document.querySelector<HTMLElement>('.session-selection-toolbar:popover-open[data-motion-state="open"]:not([inert])');
+      if (!toolbar || toolbar.textContent !== '评论' || toolbar.offsetWidth > 100 || toolbar.offsetHeight < 24 || toolbar.offsetHeight > 34) throw new Error('评论入口文案或尺寸不符合预期');
+      /** 右侧放不下时仅夹紧到会话边界，避免按钮溢出。 */
+      const bounds = paragraph.closest('.session-transcript')?.getBoundingClientRect();
+      const expectedLeft = Math.max(Math.max(0, bounds?.left ?? 0), Math.min(clientX + 6, Math.min(window.innerWidth, bounds?.right ?? window.innerWidth) - toolbar.offsetWidth));
+      if (Math.abs(Number.parseFloat(toolbar.style.left) - expectedLeft) > 1 || toolbar.dataset.placement !== 'above' || Math.abs(Number.parseFloat(toolbar.style.top) - clientY + 6) > 1)
+        throw new Error('评论入口未对齐鼠标松手位置的右上方');
+    }
     selection.removeAllRanges();
-    selection.addRange(range);
-    paragraph.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
-    await settle();
-    window.dispatchEvent(new Event('resize'));
-    paragraph.closest('.session-transcript')?.dispatchEvent(new Event('scroll'));
-    await settle();
-    if (!document.querySelector('.session-selection-toolbar:popover-open[data-motion-state="open"]:not([inert])')) throw new Error('批注检查失败：布局通知误关闭入口');
-    /** 复用运行探针核对实际生产按钮的文案、紧凑尺寸和右上角定位。 */
-    const toolbar = document.querySelector<HTMLElement>('.session-selection-toolbar:popover-open');
-    if (!toolbar || toolbar.textContent !== '评论' || toolbar.offsetWidth > 100 || toolbar.offsetHeight < 24 || toolbar.offsetHeight > 34) throw new Error('评论入口文案或尺寸不符合预期');
-    /** 单行完整选区应以右边缘作为定位点，上方留出 6px。 */
-    const selectionRect = range.getBoundingClientRect();
-    if (Math.abs(Number.parseFloat(toolbar.style.left) - selectionRect.right) > 1 || toolbar.dataset.placement !== 'above' || Math.abs(Number.parseFloat(toolbar.style.top) - selectionRect.top + 6) > 1)
-      throw new Error('评论入口未对齐选区右上角');
-    selection.removeAllRanges();
     window.dispatchEvent(new Event('resize'));
     await settle();
-    if (document.querySelector('.session-selection-toolbar[data-motion-state="open"]')) throw new Error('批注检查失败：取消选区后入口未关闭');
-    setLinkResult('运行检查通过：布局通知保留批注入口，取消选区后正常关闭');
+    if (document.querySelector('.session-selection-toolbar[data-motion-state="open"]')) throw new Error('评论检查失败：取消选区后入口未关闭');
+    setLinkResult('运行检查通过：正反向选择均定位到松手点右上方，布局通知保留入口，取消选区后关闭');
   }
   /** 正文与来源入口应传回同一个受信编号，目标由产品原有打开流程决定。 */
   function openResource(resource: ConversationResource, target: ConversationOpenTarget): void {
@@ -1095,7 +1102,7 @@ function MessageLayoutQa() {
           {processGroups ? <Button onClick={() => setExtraOperation((value) => !value)}>{extraOperation ? '移除运行操作' : '新增运行操作'}</Button> : null}
           {subagent ? <Button onClick={() => setFollowupCount(followupCount + 1)}>补充指令</Button> : null}
           {links ? <Button onClick={checkLinks}>检查链接</Button> : null}
-          {links ? <Button onClick={() => void checkSelectionToolbar().catch((error: unknown) => setLinkResult(String(error)))}>检查批注入口</Button> : null}
+          {links ? <Button onClick={() => void checkSelectionToolbar().catch((error: unknown) => setLinkResult(String(error)))}>检查评论入口</Button> : null}
         </nav>
       </header>
       <div ref={contentRef} style={{ maxWidth: narrow ? 360 : 1000, margin: 'auto' }}>
@@ -1749,7 +1756,20 @@ function ComposerMarkdownQa() {
   const [state, setState] = useState(() => {
     /** 长记录与输入框放在同一真实容器内，核对返回最新按钮的悬停与滚动。 */
     const initial = createInitialSessionState();
-    if (!parameters.has('history')) return initial;
+    /** 固定评论仅用于真实摘要悬浮详情的交互验收。 */
+    const contextDraft = parameters.has('context-draft')
+      ? {
+          responseAnnotations: [
+            {
+              id: 'qa-response-annotation',
+              anchor: { itemId: 'qa-context-response', startOffset: 0, endOffset: 12, selectedText: '浏览器的评论功能需要和会话保持一致。' },
+              note: '悬浮后应显示选中文字和这条用户评论。',
+            },
+          ],
+          codeComments: [],
+        }
+      : initial.contextDraft;
+    if (!parameters.has('history')) return { ...initial, contextDraft };
     /** 单条长回复足以产生滚动距离，不连接模型或读取用户历史。 */
     const item = activity(
       {
@@ -1762,7 +1782,7 @@ function ComposerMarkdownQa() {
       0,
     );
     item.phase = 'final_answer';
-    return { ...initial, conversationId: item.conversationId, items: { [item.key]: item }, itemOrder: [item.key], terminalTurnIds: { [item.turnId]: 'completed' as const } };
+    return { ...initial, contextDraft, conversationId: item.conversationId, items: { [item.key]: item }, itemOrder: [item.key], terminalTurnIds: { [item.turnId]: 'completed' as const } };
   });
   /** 展示提交内容，便于比较缩进、转义和技能调用是否保留。 */
   const [submitted, setSubmitted] = useState('');
@@ -1955,6 +1975,7 @@ function ComposerMarkdownQa() {
           }}
           onAddAttachments={(attachments) => setState((current) => ({ ...current, attachments: [...current.attachments, ...attachments] }))}
           onRemoveAttachment={(attachment) => setState((current) => ({ ...current, attachments: current.attachments.filter((candidate) => candidate !== attachment) }))}
+          onContextDraftChange={(contextDraft) => setState((current) => ({ ...current, contextDraft }))}
           onDraftChange={(draft) => setState((current) => ({ ...current, draft }))}
           onSubmit={(_delivery, settings) => {
             // 当前验收页不加载技能目录，提交正文必须逐字符等于原始草稿。

@@ -1425,10 +1425,12 @@ function conversationContextDraft(value: unknown): ConversationContextDraft | nu
   return record as unknown as ConversationContextDraft;
 }
 
+/** 识别结构化评论的摘要正文，历史记录的原有标题也交由评论卡片展示。 */
 function isConversationContextPlaceholder(value: string): boolean {
-  return /^(?:回答批注|代码评论|Response annotations \(\d+\)|Code comments \(\d+\))$/u.test(value.trim());
+  return /^(?:回答(?:批注|评论)|代码评论|Response (?:annotations|comments) \(\d+\)|Code comments \(\d+\))$/u.test(value.trim());
 }
 
+/** 历史消息统一展示评论名称，回答原文和代码来源继续保留。 */
 function UserConversationContextSummary(props: { draft: ConversationContextDraft; language: SessionUiLanguage }) {
   const annotations = props.draft.responseAnnotations;
   const comments = props.draft.codeComments.length;
@@ -1436,25 +1438,25 @@ function UserConversationContextSummary(props: { draft: ConversationContextDraft
   const zh = props.language === 'zh-CN';
   if (annotations.length > 0) {
     return (
-      <section className="session-message-context-summary" aria-label={zh ? '回答批注' : 'Response annotations'}>
+      <section className="session-message-context-summary" aria-label={zh ? '回答评论' : 'Response comments'}>
         <header>
-          <strong>{zh ? '回答批注' : 'Response annotations'}</strong>
+          <strong>{zh ? '回答评论' : 'Response comments'}</strong>
           <span>{annotations.length}</span>
         </header>
         <div className="session-message-response-annotations">
           {annotations.map((annotation, index) => (
             <article key={annotation.id}>
-              <span>{zh ? `批注 ${index + 1}` : `Annotation ${index + 1}`}</span>
+              <span>{zh ? `评论 ${index + 1}` : `Comment ${index + 1}`}</span>
               <blockquote>{annotation.anchor.selectedText}</blockquote>
               {annotation.note?.trim() ? <p>{annotation.note.trim()}</p> : null}
             </article>
           ))}
         </div>
-        {comments ? <small>{zh ? `${comments} 个代码评论` : `${comments} ${comments === 1 ? 'code comment' : 'code comments'}`}</small> : null}
+        {comments ? <small>{zh ? `${comments} 条代码评论` : `${comments} ${comments === 1 ? 'code comment' : 'code comments'}`}</small> : null}
       </section>
     );
   }
-  const label = zh ? `${comments} 个评论` : `${comments} ${comments === 1 ? 'comment' : 'comments'}`;
+  const label = zh ? `${comments} 条评论` : `${comments} ${comments === 1 ? 'comment' : 'comments'}`;
   return <span className="session-message-context-summary">{label}</span>;
 }
 function primitiveText(value: unknown): string | null {
