@@ -50,12 +50,12 @@ function asyncQuestionStatus(item: NativeSessionItemBuffer, state: NativeSession
   const closed =
     Boolean(state.terminalTurnIds[item.turnId] || state.turnsByProviderId[item.turnId]?.completedAt) ||
     Object.values(state.items).some((candidate) => candidate.turnId === item.turnId && itemRole(candidate) === 'assistant' && candidate.status === 'completed' && classifyAssistantMessage(candidate.payload, candidate.phase) === 'final');
-  return { confirmed, pending, deliveryStatus, closed };
+  return { confirmed, pending, deliveryStatus, closed, awaitingAnswer: !confirmed && !pending };
 }
 
 /** 当前窗口内保留问题选择和稍后回答状态；重启后重新提醒未回答问题。 */
 interface AsyncQuestionDockSelection {
-  /** 正在填写的问题不会被后续提问或轮次结束替换。 */
+  /** 正在填写的问题保持选择；提交后由答复账本释放输入区。 */
   selectedId: string | null;
   /** 本窗口已接到的问题继续排队，不因原轮次结束丢掉后续题目。 */
   offered: Set<string>;
@@ -82,10 +82,10 @@ export function useAsyncQuestionDock(state: NativeSessionState | null, enabled: 
     if (conversationId) asyncQuestionDockSelections.set(conversationId, created);
     return created;
   }, [conversationId]);
-  /** 完整问题按持久位置排序；活动表单不依赖消息虚拟列表是否挂载。 */
+  /** 只把尚未提交的问题放入底部，已提交或已送达的回答继续由会话记录承载。 */
   const questions = state
     ? Object.values(state.items)
-        .filter((item) => item.status === 'completed' && itemRole(item) === 'assistant' && classifyAssistantMessage(item.payload, item.phase) === 'question' && !asyncQuestionStatus(item, state).confirmed)
+        .filter((item) => item.status === 'completed' && itemRole(item) === 'assistant' && classifyAssistantMessage(item.payload, item.phase) === 'question' && asyncQuestionStatus(item, state).awaitingAnswer)
         .sort((left, right) => {
           const leftOrder = left.transcript?.placement.order ?? null;
           const rightOrder = right.transcript?.placement.order ?? null;
@@ -99,12 +99,7 @@ export function useAsyncQuestionDock(state: NativeSessionState | null, enabled: 
   const selected =
     enabled && state
       ? (questions.find((item) => asyncQuestionIdentity(item) === selection.selectedId) ??
-        questions.find(
-          (item) =>
-            (selection.offered.has(asyncQuestionIdentity(item)) || (item.turnId === state.activeTurnId && !asyncQuestionStatus(item, state).closed)) &&
-            !selection.dismissed.has(asyncQuestionIdentity(item)) &&
-            !asyncQuestionStatus(item, state).pending,
-        ) ??
+        questions.find((item) => (selection.offered.has(asyncQuestionIdentity(item)) || (item.turnId === state.activeTurnId && !asyncQuestionStatus(item, state).closed)) && !selection.dismissed.has(asyncQuestionIdentity(item))) ??
         null)
       : null;
   /** 固定自动选择的身份，避免轮次结束或新增问题抢走表单。 */
@@ -134,10 +129,7 @@ export function useAsyncQuestionDock(state: NativeSessionState | null, enabled: 
   return {
     selected,
     questions: questions.filter(
-      (item) =>
-        state &&
-        !asyncQuestionStatus(item, state).pending &&
-        (item.turnId === state.activeTurnId || selection.offered.has(asyncQuestionIdentity(item)) || selection.dismissed.has(asyncQuestionIdentity(item)) || asyncQuestionIdentity(item) === selectedId),
+      (item) => state && (item.turnId === state.activeTurnId || selection.offered.has(asyncQuestionIdentity(item)) || selection.dismissed.has(asyncQuestionIdentity(item)) || asyncQuestionIdentity(item) === selectedId),
     ),
     open,
     dismiss,
@@ -151,7 +143,7 @@ export function AsyncQuestionMessage(props: { item: NativeSessionItemBuffer; sta
   /** 当前界面语言。 */
   const zh = language === 'zh-CN';
   /** 实时与恢复状态统一解释。 */
-  const { confirmed, pending, deliveryStatus, closed } = asyncQuestionStatus(item, state);
+  const { confirmed, pending, deliveryStatus, closed, awaitingAnswer } = asyncQuestionStatus(item, state);
   /** 只说明答案状态；真正失败的恢复操作由对应答复气泡承载，不要求用户处理内部核对。 */
   const pendingLabel = ['paused', 'unconfirmed'].includes(deliveryStatus ?? '')
     ? zh
@@ -190,7 +182,7 @@ export function AsyncQuestionMessage(props: { item: NativeSessionItemBuffer; sta
                   ? '有问题待回答'
                   : 'Answer requested'}
         </span>
-        {!confirmed && !pending && props.onOpen ? (
+        {awaitingAnswer && props.onOpen ? (
           <button type="button" onClick={() => props.onOpen?.(item)}>
             {zh ? '回答问题' : 'Answer question'}
           </button>
@@ -216,7 +208,7 @@ export function AsyncQuestionPanel(props: {
   const questions = useMemo(() => normalizeRequestQuestions({ payload: { questions: asyncMessageQuestions(item.payload) } }), [item.payload]);
   /** 服务端拒绝旧轮次后保留表单，让用户明确选择另发消息。 */
   const [rejectedTurn, setRejectedTurn] = useState(false);
-  /** 已接收的答案不能重复点击；正在提交时保持同一个表单实例。 */
+  /** 答复状态与底部选择共用账本，等待送达不再占用普通输入区。 */
   const status = asyncQuestionStatus(item, state);
   /** 当前表单是否需要明确的新消息动作。 */
   const closed = rejectedTurn || status.closed;
