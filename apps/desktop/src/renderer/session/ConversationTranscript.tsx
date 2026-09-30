@@ -1734,8 +1734,7 @@ function transcriptNavigationEntries(rows: readonly TranscriptTurnRow[], state: 
       return [{ ...entry, rowKey: navigationRowKey(entry) }];
     }
     if (row.kind !== 'item' || itemRole(row.item) !== 'user') return [];
-    if (row.questionAnswer && (row.item.optimistic || row.item.status !== 'completed')) return [];
-    /** 主时间线的用户发言和已确认异步答题卡共用原消息身份。 */
+    /** 已显示的答题卡也属于已加载正文；等待回显不能再插入同身份的历史占位。 */
     const item = row.item;
     /** 无文字发言仍可按附件名称辨认。 */
     const attachments = Array.isArray(item.payload.attachments)
@@ -2867,6 +2866,8 @@ export function projectQueuedSubmissionItems(state: NativeSessionState, submissi
           submissionId: submission.id,
           delivery: submission.delivery ?? 'queue',
           pausedReason: submission.pausedReason,
+          // 冷开与实时发送使用同一份题目和答案，不能把结构化回答恢复成普通引导消息。
+          ...(submission.questionAnswer ? { questionAnswer: submission.questionAnswer } : {}),
           ...(submission.attachments?.length ? { attachments: submission.attachments } : {}),
           ...(submission.browserComments?.length ? { browserComments: submission.browserComments } : {}),
           ...(submission.conversationContext ? { conversationContext: submission.conversationContext } : {}),

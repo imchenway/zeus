@@ -2851,6 +2851,8 @@ function NavigationQa() {
   const taskHistory = parameters.has('task-history');
   /** 同一目录混合普通发言、同步答题卡和异步答题卡。 */
   const questionHistory = parameters.has('question-history');
+  /** 答题卡在回执等待、结果未知和历史确认之间保持同一目录身份。 */
+  const [questionDelivery, setQuestionDelivery] = useState(parameters.get('question-delivery') ?? 'completed');
   /** 一张卡含两道题，核对聚合数量及预览答案。 */
   const questionPayload = useMemo(
     () => ({
@@ -2976,10 +2978,12 @@ function NavigationQa() {
           ...(role === 'user' ? { localItemId: entry.id, ...(entry.clientUserMessageId ? { clientUserMessageId: entry.clientUserMessageId } : {}) } : {}),
           type: role === 'user' ? 'userMessage' : 'agentMessage',
           phase: role === 'user' ? 'user' : 'final_answer',
-          status: 'completed',
+          status: questionHistory && index === 1 && role === 'user' ? questionDelivery : 'completed',
+          ...(questionHistory && index === 1 && role === 'user' ? { optimistic: questionDelivery !== 'completed' } : {}),
           text: role === 'user' ? entry.prompt : entry.response.repeat(3),
           payload: {
             v2Sequence: entry.sequence + (role === 'user' ? 0 : 1),
+            ...(questionHistory && index === 1 && role === 'user' ? { delivery: 'steer_now' } : {}),
             ...(taskHistory && role === 'user' ? { taskPushLayout: taskLayout } : {}),
             ...(questionHistory && index > 0 && role === 'user'
               ? { questionAnswer: { providerTurnId: entry.turnId, providerItemId: `question-source-${index}`, questions: questionPayload.questions, answers: visibleQuestionResponse.answers } }
@@ -3068,7 +3072,7 @@ function NavigationQa() {
       ),
       terminalTurnIds: Object.fromEntries(entries.map((entry) => [entry.turnId, 'completed'])),
     };
-  }, [loaded, entries, count, taskHistory, taskLayout, questionHistory, questionPayload, questionResponse, oldQuestionResponse, conversationId]);
+  }, [loaded, entries, count, taskHistory, taskLayout, questionHistory, questionDelivery, questionPayload, questionResponse, oldQuestionResponse, conversationId]);
 
   /** 持续生成经过正式归约器，使浏览器回归覆盖内容修订和增量投影。 */
   const projectedState = useRef<{ base: NativeSessionState; state: NativeSessionState } | null>(null);
@@ -3198,6 +3202,17 @@ function NavigationQa() {
         <a href="?navigation&count=0">空会话</a>
         <a href="?navigation&count=1">单条发言</a>
         <a href="?navigation&count=3&question-history">答题卡导航</a>
+        {questionHistory ? (
+          <label>
+            异步回答送达状态
+            <select value={questionDelivery} onChange={(event) => setQuestionDelivery(event.currentTarget.value)}>
+              <option value="dispatching">等待回执</option>
+              <option value="steering">等待回显</option>
+              <option value="unconfirmed">结果待确认</option>
+              <option value="completed">已确认</option>
+            </select>
+          </label>
+        ) : null}
         <a href="?navigation&count=7">短历史</a>
         <a href="?navigation&count=1000">长历史</a>
         <a href="?navigation&count=8&directory-failure">目录故障</a>
