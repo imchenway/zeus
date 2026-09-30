@@ -21,7 +21,7 @@ import {
 import { registerConversationSnapshotV2Api } from '../packages/local-server/src/conversationSnapshotV2Api.js';
 import { initializeConversationTranscriptIndexes, stopConversationTranscriptInitialization } from '../packages/storage/src/conversationTranscriptStore.js';
 import { mergeConversationProcessV2, mergeConversationTurnHistoryV2 } from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.js';
-import { createHydratedSessionState, sessionReducer } from '../apps/desktop/src/renderer/session/sessionReducer.js';
+import { createInitialSessionState, createHydratedSessionState, sessionReducer } from '../apps/desktop/src/renderer/session/sessionReducer.js';
 import { createTranscriptProjection, reuseTranscriptRows, reuseTranscriptTurnRows, updateTranscriptProjection } from '../apps/desktop/src/renderer/session/transcriptProjection.js';
 import { reconcileTranscriptItems } from '../apps/desktop/src/renderer/session/transcriptReconciliation.js';
 import { buildPersistedSessionViewCache, initialSessionHotCache, primePersistedSessionViewCache } from '../apps/desktop/src/renderer/session/sessionHotCache.js';
@@ -54,7 +54,7 @@ registerHooks({
 /** tsx 探针不经过 Vite 的 JSX 自动运行时，显式提供组件模块需要的 React 命名空间。 */
 (globalThis as typeof globalThis & { React: typeof import('react') }).React = await import('react');
 /** 将历史过程分页串联到正式行编号和轮次分组，覆盖同轮多段思考。 */
-const { projectTranscriptRows, projectTranscriptTurnRows, projectTranscriptFailureRows } = await import('../apps/desktop/src/renderer/session/ConversationTranscript.js');
+const { projectTranscriptRows, projectTranscriptTurnRows, projectTranscriptFailureRows, projectQueuedSubmissionItems } = await import('../apps/desktop/src/renderer/session/ConversationTranscript.js');
 /** 工作面入口也引用组件样式，必须在样式加载钩子安装后导入。 */
 const { resolveConversationNavigationId, resolveSelectedNativeConversationForProject } = await import('../apps/desktop/src/renderer/features/workspace/workspaceSupport.js');
 
@@ -95,6 +95,13 @@ function probeTranscript(entryId: string, order: number, openingInputId: string 
 if (process.argv.includes('--source-aliases-only')) {
   verifyTranscriptSourceAliases();
   console.log('transcript-source-aliases=passed');
+  process.exit(0);
+}
+
+/** 独立检查异步答题恢复，不依赖长历史与思考展示场景。 */
+if (process.argv.includes('--async-question-recovery')) {
+  verifyAsyncQuestionRecovery();
+  console.log('async-question-recovery=passed');
   process.exit(0);
 }
 
@@ -341,6 +348,31 @@ for (const status of ['paused', 'failed']) {
   );
 }
 assertProbe(orderTranscriptItemsWithQueue([confirmedHistory[1]!, confirmedHistory[0]!], null)[0]!.key === 'history-second', '排序补队列不能再次按时间改排持久历史。');
+
+/** 冷开等待回执的异步回答必须携带原题、答案和附件分组。 */
+function verifyAsyncQuestionRecovery(): void {
+  /** 独立的规范提交只包含本场景需要的持久字段。 */
+  const submission: NativeQueuedSubmission = {
+    id: 'async-answer',
+    content: '自己去查',
+    position: 1,
+    status: 'dispatching',
+    delivery: 'steer_now',
+    pausedReason: null,
+    questionAnswer: {
+      providerTurnId: 'question-turn',
+      providerItemId: 'question-source',
+      questions: [{ id: 'choice', header: '用户选择', question: '继续查找？', isOther: true, isSecret: false, options: [{ label: '自己去查', description: '' }] }],
+      answers: { choice: { answers: ['自己去查'] } },
+      answerAttachmentIndices: { choice: [0] },
+    },
+  };
+  /** 直接运行生产队列恢复和问答投影，不建立第二套恢复规则。 */
+  const restored = projectQueuedSubmissionItems(createInitialSessionState(), [submission], []);
+  assertProbe(restored[0]?.payload.questionAnswer === submission.questionAnswer, '队列恢复不能丢失结构化回答。');
+  assertProbe(projectTranscriptRows(restored).filter((row) => row.kind === 'item' && row.questionAnswer).length === 1, '冷开必须生成一张结构化回答卡片。');
+}
+verifyAsyncQuestionRecovery();
 
 const rowCount = 100_000;
 const rowKeys = Array.from({ length: rowCount }, (_, index) => `row-${index}`);
