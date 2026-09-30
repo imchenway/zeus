@@ -320,6 +320,8 @@ registerHooks({
     return nextLoad(url, context);
   },
 });
+/** Node 探针不经过 Vite 自动 JSX 运行时，沿用现有转录探针的 React 注入。 */
+(globalThis as typeof globalThis & { React: typeof import('react') }).React = await import('react');
 const { projectQueuedSubmissionItems, projectTranscriptRows, projectTranscriptTurnRows } = await import('../apps/desktop/src/renderer/session/ConversationTranscript.js');
 
 async function verifyCompatibilityItemIdentity(): Promise<Record<string, unknown>> {
@@ -526,6 +528,18 @@ function verifyStageSummaryProcessGrouping(): Record<string, unknown> {
   /** 使用真实两级投影覆盖阶段内操作合并，而非只检查原始消息编号。 */
   const sameStageChildren = projectTranscriptTurnRows(projectTranscriptRows(sameStageItems), null, { [turnId]: 'completed' }).flatMap((row) => (row.kind === 'turn_work' ? row.segments.flatMap((segment) => segment.rows) : []));
   assertBehavior(sameStageChildren.length > 0 && new Set(sameStageChildren.map((row) => row.key)).size === sameStageChildren.length, '完成态的同阶段操作组不能产生重复子行身份。');
+  assertBehavior(
+    sameStageChildren.flatMap((row) => (row.kind === 'activity' ? row.items.map((entry) => entry.key) : [row.key])).join('|') === 'same-command-a|same-reasoning-a|same-command-b|same-progress|same-command-c|same-reasoning-b|same-command-d',
+    '同一阶段的操作不能越过夹在中间的思考和沟通，收拢必须完整保留持久顺序。',
+  );
+  /** 补入更早的沟通段后，已知边界后的过程组不能按当前片段重新编号。 */
+  const tailRows = projectTranscriptTurnRows(projectTranscriptRows(sameStageItems.slice(4)), turnId);
+  /** 冷读直接重建同一份完整历史，不复用上一轮投影缓存。 */
+  const coldRows = projectTranscriptTurnRows(projectTranscriptRows(structuredClone(sameStageItems)), turnId);
+  /** 以真实操作身份定位原有后半段，避免用数组位置自证分组稳定。 */
+  const containingLaterCommand = (row: (typeof coldRows)[number]): boolean =>
+    row.kind === 'turn_work' && row.segments.some((segment) => segment.rows.some((child) => child.kind === 'activity' && child.items.some((entry) => entry.key === 'same-command-c')));
+  assertBehavior(tailRows.find(containingLaterCommand)?.key === coldRows.find(containingLaterCommand)?.key, '补入更早阶段或清除缓存重建不能改变已知沟通边界的过程身份。');
   /** 同一个显式阶段或缺少阶段身份时，都不能把引导后的活动归到引导前。 */
   for (const stageId of [undefined, 'same-stage']) {
     /** 此处不增加新摘要，直接覆盖工具在引导之后继续执行的情况。 */

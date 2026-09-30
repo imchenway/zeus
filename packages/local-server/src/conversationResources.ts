@@ -89,10 +89,9 @@ const maximumArchivedAssistantImageBatchBytes = 64 * 1_024 * 1_024;
 
 /** 两条执行链共用资源识别、授权及落盘，实时事件与重新打开会话读取同一份资源。 */
 export function syncConversationResources(input: NormalizeConversationResourcesInput, resources: ConversationResourceRepository): ConversationResource[] {
-  return resources
-    .replaceForItem(input.item.id, normalizeConversationResources(input), input.now)
-    .map(toConversationResource)
-    .filter((resource): resource is ConversationResource => resource !== null);
+  /** Provider 的后续事件可能只带状态而省略资源字段；空投影不能删除已经展示的持久资源。 */
+  const normalized = normalizeConversationResources(input);
+  return (normalized.length > 0 ? resources.replaceForItem(input.item.id, normalized, input.now) : resources.listByItem(input.item.id)).map(toConversationResource).filter((resource): resource is ConversationResource => resource !== null);
 }
 
 export function normalizeConversationResources(input: NormalizeConversationResourcesInput): Array<Omit<ZeusConversationResourceRecord, 'createdAt' | 'updatedAt'>> {

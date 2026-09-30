@@ -211,9 +211,9 @@ function turnDetailPaging(snapshot: NativeSessionState['snapshot'], turnId: stri
   };
 }
 
-/** 完成态的不完整末页需要重新从头读取，其余缓存沿现有游标继续。 */
-function turnProcessNeedsLoad(paging: ReturnType<typeof turnDetailPaging>, completed: boolean): boolean {
-  return !paging?.loaded || Boolean(paging.error) || Boolean(completed && paging.direction === 'tail' && paging.hasMore);
+/** 展开只准备尚未读取的详情；已读范围和错误重试都由分页入口接管。 */
+function turnProcessNeedsLoad(paging: ReturnType<typeof turnDetailPaging>): boolean {
+  return !paging?.loaded && !paging?.loading;
 }
 
 function turnProcessAvailable(snapshot: NativeSessionState['snapshot'], turnId: string): boolean {
@@ -1078,16 +1078,16 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     if (row.kind === 'answered_request') return <AnsweredRequestHistory request={row.request} language={props.language} />;
     if (row.kind === 'turn_work') {
       const turn = props.state.turnsByProviderId[row.turnId];
-      /** 更早过程只在用户向上浏览时补读，首屏贴底和重新挂载不触发连续追页。 */
+      /** 过程沿已有分页范围补齐，展开本身不改变读取方向。 */
       const processPaging = turnDetailPaging(props.state.snapshot, turn?.providerTurnId ?? row.turnId);
-      /** 只有正常完成态切换为从头阅读；中断和失败继续展示末尾上下文。 */
+      /** 只有首次读取时，正常完成态优先从头阅读。 */
       const turnCompleted = props.state.terminalTurnIds[row.turnId] === 'completed' || turn?.status === 'completed';
       /** 倒序读取时，补页入口放在已读过程之前。 */
       const earlierProcess = processPaging?.direction === 'tail';
-      /** 两种轮次展示共用一个补页入口，保留原有错误提示。 */
+      /** 缺页由用户明确补读，折叠内容重新挂载不能自动触发下一页。 */
       const pageSentinel =
         row.loadMore && processPaging?.loaded && processPaging.hasMore && renderProps.onLoadTurnProcess ? (
-          <V2AutoPageSentinel enabled={!earlierProcess || historyPagingArmed} loading={processPaging.loading} error={processPaging.error} language={props.language} turnId={row.turnId} onLoad={renderProps.onLoadTurnProcess} />
+          <TurnProcessPageControl earlier={earlierProcess} loading={processPaging.loading} error={processPaging.error} language={props.language} turnId={row.turnId} onLoad={renderProps.onLoadTurnProcess} />
         ) : null;
       const expansionKey = turnProcessExpansionKey(row.key);
       const containsCompletionAnchor = row.segments.some(
@@ -1147,7 +1147,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                 onOpenChange={(open, trigger) => setTranscriptRowExpanded(expansionKey, open, trigger)}
                 onOpen={async () => {
                   if (!row.loadMore) return;
-                  if (turnProcessNeedsLoad(processPaging, turnCompleted)) await renderProps.onLoadTurnProcess?.(row.turnId, turnCompleted);
+                  if (turnProcessNeedsLoad(processPaging)) await renderProps.onLoadTurnProcess?.(row.turnId, turnCompleted);
                   await renderProps.onLoadTurnArtifacts?.(row.turnId);
                 }}
               >
@@ -1176,7 +1176,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
               onOpenChange={(open, trigger) => setTranscriptRowExpanded(expansionKey, open, trigger)}
               onOpen={async () => {
                 if (!row.loadMore) return;
-                if (turnProcessNeedsLoad(processPaging, turnCompleted)) await renderProps.onLoadTurnProcess?.(row.turnId, turnCompleted);
+                if (turnProcessNeedsLoad(processPaging)) await renderProps.onLoadTurnProcess?.(row.turnId, turnCompleted);
                 await renderProps.onLoadTurnArtifacts?.(row.turnId);
               }}
             >
@@ -1198,7 +1198,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     const v2PagingKey = turn?.providerTurnId ?? turn?.id ?? lastRowItem.turnId;
     const expansionKey = turnProcessExpansionKey(v2PagingKey);
     const v2ProcessPaging = turnDetailPaging(props.state.snapshot, v2PagingKey);
-    /** 无过程行的完成轮次同样需要识别并转换旧末页缓存。 */
+    /** 没有详情的完成轮次首次从头读取，已有末页继续复用。 */
     const turnCompleted = props.state.terminalTurnIds[lastRowItem.turnId] === 'completed' || turn?.status === 'completed';
     const v2Turn = props.state.snapshot?.snapshotV2
       ? [...props.state.snapshot.snapshotV2.recentClosedTurns, ...(props.state.snapshot.snapshotV2.activeTurn ? [props.state.snapshot.snapshotV2.activeTurn] : [])].find(
@@ -1227,7 +1227,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             open={expandedRowKeys.has(expansionKey)}
             onOpenChange={(open, trigger) => setTranscriptRowExpanded(expansionKey, open, trigger)}
             onOpen={async () => {
-              if (turnProcessNeedsLoad(v2ProcessPaging, turnCompleted)) await renderProps.onLoadTurnProcess?.(lastRowItem.turnId, turnCompleted);
+              if (turnProcessNeedsLoad(v2ProcessPaging)) await renderProps.onLoadTurnProcess?.(lastRowItem.turnId, turnCompleted);
               await renderProps.onLoadTurnArtifacts?.(lastRowItem.turnId);
             }}
           >
@@ -1456,35 +1456,35 @@ function V2HistoryPageStatus(props: { state: NativeSessionState; language: Sessi
   );
 }
 
-/** 读取边界需要同时满足用户浏览意图和接近视口，避免自动贴底触发追页。 */
-function V2AutoPageSentinel(props: { enabled: boolean; loading: boolean; error: string | null | undefined; language: SessionUiLanguage; turnId: string; onLoad: (turnId: string, startAtBeginning?: boolean) => void | Promise<void> }) {
-  const sentinelRef = useRef<HTMLSpanElement | null>(null);
-  useEffect(() => {
-    const sentinel = sentinelRef.current;
-    if (!props.enabled || !sentinel || props.loading || props.error) return;
-    let requested = false;
-    const requestPage = (): void => {
-      if (requested) return;
-      requested = true;
-      void Promise.resolve(props.onLoad(props.turnId)).catch(() => undefined);
-    };
-    if (typeof IntersectionObserver === 'undefined') {
-      requestPage();
-      return;
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) requestPage();
-      },
-      { root: sentinel.closest('.session-transcript'), rootMargin: '240px 0px' },
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [props.enabled, props.error, props.loading, props.onLoad, props.turnId]);
+/** 显式补页保留已读内容，也使重新展开与读取更多成为独立操作。 */
+function TurnProcessPageControl(props: { earlier: boolean; loading: boolean; error: string | null | undefined; language: SessionUiLanguage; turnId: string; onLoad: (turnId: string) => void | Promise<void> }) {
+  /** 加载中继续保留入口位置，失败后从同一游标重试。 */
+  const label = props.loading
+    ? props.language === 'zh-CN'
+      ? '正在加载…'
+      : 'Loading…'
+    : props.error
+      ? props.language === 'zh-CN'
+        ? '重试'
+        : 'Retry'
+      : props.earlier
+        ? props.language === 'zh-CN'
+          ? '加载更早过程'
+          : 'Load earlier steps'
+        : props.language === 'zh-CN'
+          ? '加载更多过程'
+          : 'Load more steps';
   return (
-    <span ref={sentinelRef} className="session-v2-auto-page" role={props.error ? 'alert' : undefined}>
-      {props.error ? <VisibleApplicationError error={props.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} /> : null}
-    </span>
+    <div className="session-v2-content" data-process-page aria-busy={props.loading}>
+      {props.error ? (
+        <span role="alert">
+          <VisibleApplicationError error={props.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+        </span>
+      ) : null}
+      <button type="button" className="session-v2-page-action" disabled={props.loading} onClick={() => void Promise.resolve(props.onLoad(props.turnId)).catch(() => undefined)}>
+        {label}
+      </button>
+    </div>
   );
 }
 
@@ -2223,8 +2223,6 @@ export function projectTranscriptTurnRows(
   const projected: TranscriptTurnRow[] = [];
   /** 已加载过程用于判断是否还需生成一个空的按需加载入口。 */
   const loadedProcessTurnIds = new Set<string>();
-  /** 同一输入可被多段助手沟通切开，序号只区分这些真实阅读段。 */
-  const processOrdinalByBoundary = new Map<string, number>();
   /** Provider 事件早于开场消息落库时，持久输入身份仍负责把过程放回用户消息之后。 */
   const userAnchorByOpeningInputId = new Map<string, { index: number; rowKey: string; turnId: string }>();
   /** 缺少持久输入身份的旧记录只兼容同轮第一条普通用户消息。 */
@@ -2250,33 +2248,36 @@ export function projectTranscriptTurnRows(
     }
     /** 记录本组在持久时间线中的起点，用于判断是否真的早于用户消息到达。 */
     const chunkStartIndex = index;
+    /** 即使输入正文尚未补齐，持久输入归属也必须切断不同输入的过程。 */
+    const openingInputId = transcriptRowOpeningInputId(row);
     /** 只收拢相邻的过程行；任意用户输入、助手沟通、交互或交付物都会结束本组。 */
     const chunk = [row];
     while (index + 1 < orderedRows.length) {
       const candidate = orderedRows[index + 1]!;
-      if (transcriptRowTurnId(candidate) !== turnId || !isTurnProcessRow(candidate)) break;
+      if (transcriptRowTurnId(candidate) !== turnId || transcriptRowOpeningInputId(candidate) !== openingInputId || !isTurnProcessRow(candidate)) break;
       chunk.push(candidate);
       index += 1;
     }
-    /** 持久输入身份让实时、补页和重连后的首组保持同一个展开键。 */
-    const openingInputId = transcriptRowOpeningInputId(chunk[0]!);
     /** Pi 工具条目可能携带本地轮次编号；同一开场输入统一沿用用户消息的 Provider 轮次身份。 */
     const userAnchor = openingInputId ? userAnchorByOpeningInputId.get(openingInputId) : firstUserAnchorByTurn.get(turnId);
     const projectedTurnId = userAnchor?.turnId ?? turnId;
     loadedProcessTurnIds.add(turnId);
     loadedProcessTurnIds.add(projectedTurnId);
     const boundaryIdentity = openingInputId ?? turnId;
-    /** 同一输入内后续过程组以出现次序稳定区分，不按命令文字去重。 */
-    const boundaryKey = boundaryIdentity;
-    const ordinal = processOrdinalByBoundary.get(boundaryKey) ?? 0;
-    processOrdinalByBoundary.set(boundaryKey, ordinal + 1);
+    /** 沟通边界以消息身份区分，补入更早过程不能给后续组重新编号。 */
+    const boundaryRow = orderedRows[chunkStartIndex - 1];
+    /** 首组沿用开场身份；后续组绑定真正切断过程的消息。 */
+    const boundaryKey = boundaryRow && boundaryRow.key !== userAnchor?.rowKey ? boundaryRow.key : null;
+    /** 相同持久历史在冷读和补页后生成同一个过程身份。 */
+    const key = `turn-work:${encodeURIComponent(boundaryIdentity)}${boundaryKey ? `:after:${encodeURIComponent(boundaryKey)}` : ''}`;
     const workRow: TranscriptTurnWorkRow = {
       kind: 'turn_work',
-      key: `turn-work:${encodeURIComponent(boundaryIdentity)}${ordinal === 0 ? '' : `:segment:${ordinal}`}`,
+      key,
       turnId: projectedTurnId,
-      segments: segmentTurnProcessRows(turnId, chunk),
+      // 行投影已经确定顺序与相邻操作组，此处只包裹显示，不按阶段再次收集或合并。
+      segments: [{ key: `${key}:content`, summary: null, rows: chunk }],
       live: false,
-      // 每段都可触发同轮补页；仓储顺序会在补齐后重新形成真实阅读组。
+      // 每段都可补齐同轮历史；新页沿持久位置加入原有顺序。
       loadMore: true,
     };
     /** 只有明确晚到的用户消息才接管位置；正常顺序的过程原位输出。 */
@@ -2360,93 +2361,9 @@ export function projectTranscriptTurnRows(
   return displayRows.map((row, index) => (row.kind === 'turn_work' && row.live !== (index === liveProcessIndex) ? { ...row, live: index === liveProcessIndex } : row));
 }
 
-function segmentTurnProcessRows(turnId: string, rows: readonly TranscriptRow[]): TranscriptTurnProcessSegment[] {
-  const segments: Array<{ stageId: string | null; summary: TranscriptRow | null; rows: TranscriptRow[] }> = [];
-  const segmentByStageId = new Map<string, (typeof segments)[number]>();
-  let current: (typeof segments)[number] | null = null;
-  const appendSegment = (stageId: string | null): (typeof segments)[number] => {
-    const segment = { stageId, summary: null, rows: [] };
-    segments.push(segment);
-    if (stageId) segmentByStageId.set(stageId, segment);
-    return segment;
-  };
-
-  for (const row of deduplicateAdjacentStageSummaries(rows)) {
-    const stageId = transcriptRowStageId(row);
-    if (stageId) {
-      current = segmentByStageId.get(stageId) ?? appendSegment(stageId);
-      if (isTurnStageSummaryRow(row)) current.summary ??= row;
-      else current.rows.push(row);
-      continue;
-    }
-    if (isTurnStageSummaryRow(row)) {
-      // 旧记录没有 stageId，仍沿用“首条摘要接管前置过程、后续摘要开启新阶段”的时序规则。
-      if (!current || current.summary) current = appendSegment(null);
-      current.summary = row;
-      continue;
-    }
-    current ??= appendSegment(null);
-    current.rows.push(row);
-  }
-
-  /** 仅展示边界参与分段；没有可见说明的内部阶段不再制造重复入口。 */
-  const visibleSegments = compactInternalActivityStages(segments);
-  return visibleSegments.map((segment, index) => {
-    const identityRow = segment.summary ?? segment.rows[0];
-    const identity = segment.stageId ?? identityRow?.key ?? `empty-${index}`;
-    return {
-      key: `turn-process-stage:${encodeURIComponent(turnId)}:${encodeURIComponent(identity)}`,
-      summary: segment.summary,
-      rows: mergeStageActivityRows(segment.rows, turnId, identity),
-    };
-  });
-}
-
-/** 连续纯操作阶段沿用最近的可见说明，同时保留每条操作的真实顺序和身份。 */
-function compactInternalActivityStages(segments: Array<{ stageId: string | null; summary: TranscriptRow | null; rows: TranscriptRow[] }>): Array<{ stageId: string | null; summary: TranscriptRow | null; rows: TranscriptRow[] }> {
-  /** 返回新数组，避免修改阶段投影和后续分页复用的数据。 */
-  const compacted: Array<{ stageId: string | null; summary: TranscriptRow | null; rows: TranscriptRow[] }> = [];
-  for (const segment of segments) {
-    /** 用户可见说明和非操作内容都是真实阅读边界。 */
-    const activityOnly = segment.rows.length > 0 && segment.rows.every((row) => row.kind === 'activity');
-    const previous = compacted.at(-1);
-    /** 只有连续两段都不夹杂其他可见内容时才跨内部阶段收拢。 */
-    const previousAcceptsActivity = Boolean(previous && previous.rows.every((row) => row.kind === 'activity'));
-    if (!segment.summary && activityOnly && previousAcceptsActivity) {
-      previous!.rows.push(...segment.rows);
-      continue;
-    }
-    compacted.push({ ...segment, rows: [...segment.rows] });
-  }
-  return compacted;
-}
-
 /** 操作数按原生条目计数，不用命令文本去重。 */
 function turnProcessActivityCount(segments: readonly TranscriptTurnProcessSegment[]): number {
   return segments.reduce((count, segment) => count + segment.rows.reduce((segmentCount, row) => segmentCount + (row.kind === 'activity' ? row.items.length : 0), 0), 0);
-}
-
-/** 只合并相邻且规范化后完全相同的阶段摘要，不使用模糊文本匹配。 */
-function deduplicateAdjacentStageSummaries(rows: readonly TranscriptRow[]): TranscriptRow[] {
-  const projected: TranscriptRow[] = [];
-  for (const row of rows) {
-    const previous = projected.at(-1);
-    if (previous && isTurnStageSummaryRow(previous) && isTurnStageSummaryRow(row) && normalizedStageSummaryText(previous) === normalizedStageSummaryText(row)) continue;
-    projected.push(row);
-  }
-  return projected;
-}
-
-/** 将阶段摘要中的空白差异规范化后用于严格相等比较。 */
-function normalizedStageSummaryText(row: TranscriptRow): string {
-  return row.kind === 'item' ? transcriptItemText(row.item).replace(/\s+/gu, ' ').trim() : '';
-}
-
-/** 读取一行过程内容显式携带的展示阶段。 */
-function transcriptRowStageId(row: TranscriptRow): string | null {
-  if (row.kind === 'answered_request') return null;
-  const items = row.kind === 'item' ? [row.item] : row.items;
-  return items.map(itemStageId).find((stageId): stageId is string => Boolean(stageId)) ?? null;
 }
 
 /** 读取一行过程内容所属的持久普通输入。 */
@@ -2454,38 +2371,6 @@ function transcriptRowOpeningInputId(row: TranscriptRow): string | null {
   if (row.kind === 'answered_request') return null;
   const items = row.kind === 'item' ? [row.item] : row.items;
   return items.map(itemOpeningInputId).find((openingInputId): openingInputId is string => Boolean(openingInputId)) ?? null;
-}
-
-function mergeStageActivityRows(rows: readonly TranscriptRow[], turnId: string, stageIdentity: string): TranscriptRow[] {
-  const activityRows = rows.filter((row): row is Extract<TranscriptRow, { kind: 'activity' }> => row.kind === 'activity');
-  if (activityRows.length <= 1) return [...rows];
-
-  const items = activityRows.flatMap((row) => row.items);
-  const categories = new Set(items.map(activityCategory));
-  const merged: Extract<TranscriptRow, { kind: 'activity' }> = {
-    kind: 'activity',
-    // 同一阶段可能被沟通切成多组；首条操作区分各组，完成后汇入同一过程也不会重号。
-    key: `activity-stage:${encodeURIComponent(turnId)}:${encodeURIComponent(stageIdentity)}:${encodeURIComponent(items[0]!.key)}`,
-    items,
-    category: categories.size === 1 ? activityCategory(items[0]!) : 'mixed',
-    motionActive: activityRows.some((row) => row.motionActive),
-  };
-  let emitted = false;
-  const projected: TranscriptRow[] = [];
-  for (const row of rows) {
-    if (row.kind !== 'activity') {
-      projected.push(row);
-      continue;
-    }
-    if (emitted) continue;
-    emitted = true;
-    projected.push(merged);
-  }
-  return projected;
-}
-
-function isTurnStageSummaryRow(row: TranscriptRow): boolean {
-  return row.kind === 'item' && isTurnStageSummaryItem(row.item);
 }
 
 /** 明确交付给用户的资源属于最终产物，统一放到该轮最终正文之后，不能夹在处理过程与正文之间。 */
@@ -2649,8 +2534,7 @@ export function projectTranscriptRows(
     timeline.splice(insertionIndex < 0 ? timeline.length : insertionIndex, 0, { kind: 'answered_request', request });
   }
 
-  // 新投影优先使用协议层给出的稳定 stageId；旧记录才继续按摘要出现顺序推断阶段。
-  const stageOrdinalByTurn = new Map<string, number>();
+  // 优先读取持久阶段；缺失阶段的记录使用真实摘要身份，不按已加载片段编号。
   const currentStageIdentityByTurn = new Map<string, string>();
   const stageIdentityByTimelineIndex = new Map<number, string>();
   /** 同一展示阶段也不能跨越普通用户插话合并工具活动。 */
@@ -2673,13 +2557,10 @@ export function projectTranscriptRows(
       stageIdentityByTimelineIndex.set(index, identity);
       return;
     }
-    let ordinal = stageOrdinalByTurn.get(turnId) ?? 0;
     if (entry.kind === 'item' && isTurnStageSummaryItem(entry.item)) {
-      ordinal += 1;
-      stageOrdinalByTurn.set(turnId, ordinal);
-      currentStageIdentityByTurn.set(turnId, `${inputBoundary}\u0000legacy:${ordinal}`);
+      currentStageIdentityByTurn.set(turnId, `${inputBoundary}\u0000summary:${transcriptItemRenderKey(entry.item)}`);
     }
-    stageIdentityByTimelineIndex.set(index, currentStageIdentityByTurn.get(turnId) ?? `${inputBoundary}\u0000legacy:${ordinal}`);
+    stageIdentityByTimelineIndex.set(index, currentStageIdentityByTurn.get(turnId) ?? `${inputBoundary}\u0000opening`);
   });
 
   /** 操作只在相邻且属于同一展示阶段时合并；任意沟通内容都会切断分组。 */
@@ -2722,7 +2603,7 @@ export function projectTranscriptRows(
           const categories = new Set(groupedItems.map(activityCategory));
           rows.push({
             kind: 'activity',
-            key: `activity:${encodeURIComponent(stageIdentity)}:${encodeURIComponent(groupedItems[0]!.key)}`,
+            key: `activity:${encodeURIComponent(stageIdentity)}:${encodeURIComponent(transcriptItemRenderKey(groupedItems[0]!))}`,
             items: groupedItems,
             category: categories.size === 1 ? activityCategory(groupedItems[0]!) : 'mixed',
             motionActive: groupedItems.some((candidate) => candidate.key === currentActivityItemKey),

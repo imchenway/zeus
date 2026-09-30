@@ -9918,14 +9918,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   min-inline-size: 0;
 }
 
-/* 阶段分组只显示操作数量，不再制造第二个折叠入口。 */
-.session-codex-parity-v1 .session-activity-group-count {
-  color: var(--session-text-muted);
-  font-size: 13px;
-  line-height: 20px;
-  margin: 0 0 2px;
-}
-
 /* 入口沿用正文内容列起点，底部分隔线覆盖同一列。 */
 .session-codex-parity-v1 .session-turn-process-control {
   align-items: center;
@@ -10070,12 +10062,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
 .session-codex-parity-v1 .session-v2-page-action {
   justify-self: start;
-}
-
-.session-codex-parity-v1 .session-v2-auto-page {
-  color: var(--session-text-muted);
-  font-size: 11px;
-  min-block-size: 1px;
 }
 
 .session-codex-parity-v1 .session-v2-deferred-artifacts {

@@ -654,6 +654,12 @@ function MessageLayoutQa() {
   const longProcess = parameters.has('long-process');
   /** 多阶段场景复现摘要、不同数量操作和外层折叠的延迟挂载。 */
   const processGroups = parameters.has('process-groups') || longProcess;
+  /** 分页场景保留已读末页，明确点击补页才模拟读完剩余范围。 */
+  const processPaging = parameters.has('process-paging');
+  /** 读取次数独立于渲染，用于核对反复展开没有隐式请求。 */
+  const processReadCount = useRef(0);
+  /** 仅补页按钮能够更新本场景的读取进度。 */
+  const [processPageFinished, setProcessPageFinished] = useState(false);
   /** 手动切换运行终态，检查每种耗时文案及过程折叠。 */
   const [status, setStatus] = useState<'running' | 'completed' | 'failed' | 'interrupted'>(links || parameters.has('completed') ? 'completed' : 'running');
   /** 检查真实正文节点与资源打开回调，不连接原生宿主或模型。 */
@@ -787,9 +793,12 @@ function MessageLayoutQa() {
     const durations = contentRef.current?.querySelectorAll('time.session-turn-duration') ?? [];
     /** 无过程的答复不能出现展开按钮。 */
     const controls = [...(contentRef.current?.querySelectorAll('.session-turn-process > .session-turn-process-control > button') ?? [])].filter((button) => !button.closest('.session-activity-group'));
+    /** 有操作数的入口按产品要求只显示数量，不再把耗时塞进同一个按钮。 */
+    const countOnlyControl = controls.some((control) => /\d+\s*(?:项操作|operations?)/u.test(control.textContent?.trim() ?? ''));
     /** 运行态按可见阶段保留两个现有入口，完成后仍归并为整轮入口。 */
     const expectedControlCount = parameters.has('no-process') ? 0 : processGroups ? (active ? 2 : 1) : active ? 0 : 1;
-    if (durations.length !== (active || parameters.has('no-time') || parameters.has('no-end-time') ? 0 : 1) || controls.length !== expectedControlCount) throw new Error('耗时或过程入口数量不正确');
+    const expectedDurationCount = active || parameters.has('no-time') || parameters.has('no-end-time') || countOnlyControl ? 0 : 1;
+    if (durations.length !== expectedDurationCount || controls.length !== expectedControlCount) throw new Error('耗时或过程入口数量不正确');
     if (durations.length && durations[0]?.getAttribute('datetime') !== 'PT181S') throw new Error('耗时未沿用真实轮次的起止时间');
     /** 有后续交付资源时，耗时仍应位于最终正文前面。 */
     const answer = contentRef.current?.querySelector('.session-thread-item-assistant .session-markdown');
@@ -820,14 +829,38 @@ function MessageLayoutQa() {
   }
   /** 点击唯一的过程入口后，确认阶段摘要和操作明细直接出现。 */
   async function checkProcessContent(): Promise<void> {
-    /** 后台验收也要稳定等待折叠内容完成挂载。 */
-    const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 32));
+    /** 后台页会限制定时器；消息队列等待 React 提交，不依赖可见帧或计时器。 */
+    const settle = () =>
+      new Promise<void>((resolve) => {
+        /** 每次等待独立关闭两个端口，不给验收页留下后台资源。 */
+        const channel = new MessageChannel();
+        channel.port1.onmessage = () => {
+          channel.port1.close();
+          channel.port2.close();
+          resolve();
+        };
+        channel.port2.postMessage(null);
+      });
+    /** 后台 React 提交可能晚于定时器；以真实状态为准，超时保留失败结果。 */
+    const waitForState = async (ready: () => boolean): Promise<void> => {
+      /** 单个状态最多等待三秒，避免验收入口无限挂起。 */
+      const deadline = performance.now() + 3000;
+      while (!ready() && performance.now() < deadline) await settle();
+      if (!ready()) throw new Error('等待折叠状态提交超时');
+    };
     /** 所有断言读取同一次提交后的真实内容根节点。 */
     const content = contentRef.current;
     if (!content) throw new Error('过程检查缺少会话内容');
+    /** 每段真实操作数量同时生成外层总数与展开后的分组数据。 */
+    const expectedCounts = [1, extraOperation ? 3 : 2, ...(longProcess ? Array.from({ length: 30 }, () => 3) : [])];
+    /** 外层只显示整轮已加载操作总数。 */
+    const expectedOuterCount = expectedCounts.reduce((total, count) => total + count, 0);
     /** 外层关闭时，命令标题、输出和图片资源都不能进入 DOM。 */
     const outerControl = content.querySelector<HTMLButtonElement>('.session-turn-process[data-label-kind="process"] > .session-turn-process-control > button');
     if (!outerControl) throw new Error('过程检查缺少外层处理过程入口');
+    /** 可见入口只显示数量，查看或收起动作仅保留给无障碍名称与箭头。 */
+    const expectedOuterText = parameters.has('en') ? `${expectedOuterCount} ${expectedOuterCount === 1 ? 'operation' : 'operations'}` : `${expectedOuterCount} 项操作`;
+    if (outerControl.textContent?.trim() !== expectedOuterText) throw new Error(`处理过程入口仍有多余文案：${outerControl.textContent?.trim()}`);
     /** 首次检查覆盖外层折叠时的延迟挂载，重复检查沿用用户当前展开状态。 */
     const outerInitiallyClosed = outerControl.getAttribute('aria-expanded') !== 'true';
     if (outerInitiallyClosed) {
@@ -857,12 +890,10 @@ function MessageLayoutQa() {
     if (nestedControls.length) throw new Error('处理过程内部仍存在第二层操作组入口');
     /** 两段摘要后的真实操作必须在外层展开时直接挂载。 */
     const groups = [...content.querySelectorAll<HTMLElement>('.session-activity-group')];
-    const expectedCounts = [1, extraOperation ? 3 : 2, ...(longProcess ? Array.from({ length: 30 }, () => 3) : [])];
     if (groups.length !== expectedCounts.length || groups.some((group, index) => Number(group.dataset.itemCount) !== expectedCounts[index])) throw new Error('阶段操作没有按真实数量直接展示');
-    /** 分组只保留静态数量，不显示“查看/收起”动作。 */
-    const countLabels = groups.map((group) => group.querySelector('.session-activity-group-count')?.textContent?.trim());
-    const expectedLabels = expectedCounts.map((count) => (parameters.has('en') ? `${count} ${count === 1 ? 'operation' : 'operations'}` : `${count} 项操作`));
-    if (countLabels.join('|') !== expectedLabels.join('|')) throw new Error(`阶段操作数量文案错误：${countLabels.join('|')}`);
+    /** 操作总数只允许出现在外层入口，阶段分组不能重复显示数量或动作。 */
+    if (content.querySelector('.session-activity-group-count')) throw new Error('处理过程内部仍重复显示操作数量');
+    if (outerControl.textContent?.trim() !== expectedOuterText) throw new Error('展开处理过程后入口文案发生变化');
     if (!content.querySelector('.session-activity-item-title') || !content.querySelector('.session-activity-images')) throw new Error('外层展开后缺少操作标题或图片资源');
     /** 单条命令默认仍关闭，继续点击后才挂载命令、目录和输出。 */
     const commandControl = content.querySelector<HTMLElement>('.session-activity-item-summary');
@@ -875,7 +906,24 @@ function MessageLayoutQa() {
       detail = content.querySelector('.session-activity-item-detail-body');
     }
     if (!detail?.textContent?.includes('/Users/david/hypha/zeus') || !detail.textContent.includes('阶段检查通过')) throw new Error('单条命令详情未完整显示');
-    setLinkResult('运行检查通过：阶段只显示操作数量，明细直接展示');
+    /** 记录消息身份及顺序，折叠卸载后重新挂载仍必须得到同一结构。 */
+    const structure = () => [...content.querySelectorAll<HTMLElement>('.session-turn-process [data-navigation-row-key]')].map((node) => node.dataset.navigationRowKey).join('|');
+    /** 此时的结构已经完成操作、思考和资源投影。 */
+    const beforeStructure = structure();
+    /** 后台页可能暂停动画时间线；显式结束退出动画，只核对真实卸载与重建结果。 */
+    const readsBeforeToggle = processReadCount.current;
+    outerControl.click();
+    await waitForState(() => outerControl.getAttribute('aria-expanded') === 'false');
+    content
+      .querySelector('[data-viewport-reveal]')
+      ?.getAnimations()
+      .forEach((animation) => animation.finish());
+    await waitForState(() => !content.querySelector('.session-activity-item-title'));
+    outerControl.click();
+    await waitForState(() => outerControl.getAttribute('aria-expanded') === 'true' && Boolean(content.querySelector('.session-activity-item-title')));
+    if (structure() !== beforeStructure || outerControl.textContent?.trim() !== expectedOuterText) throw new Error('重复展开改变了消息顺序、分组身份或操作数');
+    if (processPaging && processReadCount.current !== readsBeforeToggle) throw new Error('重复展开触发了已读过程补页');
+    setLinkResult('运行检查通过：重复展开保持消息顺序、分组身份和数量，未隐式补页');
   }
   /** 合成数据仅经过真实渲染链，不连接或调用模型。 */
   const items: NativeSessionItemBuffer[] = [
@@ -951,7 +999,7 @@ function MessageLayoutQa() {
             phase: 'final_answer',
             text: links
               ? '边界已补充到[分析文档](docs/分析文档.md)。\n\n[交互预览](http://127.0.0.1:4529/qa/session-styles.html?model-select) · [访问网站](https://example.com)\n\n[未登记链接](https://unregistered.example/) · [网站](https://different.example/)'
-              : '已检查会话布局，耗时与处理过程合并在正文上方；鼠标放到消息上时显示复制、反馈与时间戳。',
+              : '已检查会话布局，处理过程只显示操作总数；鼠标放到消息上时显示复制、反馈与时间戳。',
             payload: {},
             status: 'completed',
           },
@@ -1012,6 +1060,20 @@ function MessageLayoutQa() {
     },
     terminalTurnIds: active ? {} : { 'qa-layout-turn': status },
   };
+  /** 本场景只提供分页元数据；消息仍由上方生产时间线状态承载。 */
+  if (processPaging)
+    state.snapshot = {
+      id: state.conversationId,
+      turns: Object.values(state.turnsByProviderId),
+      items: [],
+      v2Paging: {
+        history: { nextCursor: null, hasMore: false, loading: false, error: null, loadedThroughSequence: 0, oldestLoadedSequence: null },
+        historyByTurn: {},
+        processByTurn: { 'qa-layout-turn': { direction: 'tail', loaded: true, loading: false, hasMore: !processPageFinished, nextCursor: processPageFinished ? null : 'qa-earlier', error: null } },
+        resources: { nextCursor: null, hasMore: false, loading: false, loaded: true, error: null, items: [] },
+        changeSetsByTurn: {},
+      } satisfies NonNullable<NonNullable<NativeSessionState['snapshot']>['v2Paging']>,
+    } as NativeSessionState['snapshot'];
   if (parameters.has('workspace')) return <ResourceWorkspaceQa state={state} resources={resources} />;
   return (
     <main className={`macos-ai-app zeus-shell session-codex-parity-v1 qa-error-layout theme-${dark ? 'dark' : 'light'}`} data-theme={dark ? 'dark' : 'light'}>
@@ -1044,11 +1106,20 @@ function MessageLayoutQa() {
         </nav>
       </header>
       <div ref={contentRef} style={{ maxWidth: narrow ? 360 : 1000, margin: 'auto' }}>
-        {links ? (
+        {links || processPaging ? (
           <ConversationTranscript
             state={state}
             language={parameters.has('en') ? 'en-US' : 'zh-CN'}
             transcriptHydrated
+            onLoadTurnProcess={
+              processPaging
+                ? async () => {
+                    processReadCount.current += 1;
+                    setProcessPageFinished(true);
+                    setLinkResult(`明确补页 ${processReadCount.current} 次，原消息保持显示`);
+                  }
+                : undefined
+            }
             onOpenResource={openResource}
             onAddResponseAnnotation={(anchor) => {
               /** 同一编号贯穿标记、编辑、保存和删除。 */
