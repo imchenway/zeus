@@ -1286,6 +1286,10 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           />
         </span>
         <div className="task-detail-header-actions" aria-label={props.copy.primaryActionsTitle} onKeyDown={closeMoreActionsOnEscape}>
+          {/* 保留创建进度的读屏播报，视觉反馈由操作按钮承担。 */}
+          <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+            {modelPushCreating ? (zh ? '正在后台创建会话' : 'Creating conversation in the background') : props.modelPushOperation?.status === 'accepted' ? (zh ? '会话已创建' : 'Conversation created') : ''}
+          </span>
           {props.terminalReadOnly ? (
             <span className="task-detail-closed-note">{zh ? '调整任务状态后可继续协作' : 'Change task status to resume collaboration'}</span>
           ) : (
@@ -1311,6 +1315,16 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
                     : props.copy.pushNewConversation}
             </Button>
           )}
+          {/* 创建结果的操作与推送按钮共用标题栏，不为成功状态另占一行。 */}
+          {modelPushFailed && props.modelPushOperation?.canRetry && props.onRetryModelPush ? (
+            <Button variant="secondary" size="regular" onClick={() => props.onRetryModelPush?.(props.task.id)}>
+              {zh ? '重试创建' : 'Retry creation'}
+            </Button>
+          ) : props.modelPushOperation?.status === 'accepted' && props.modelPushOperation.conversationId ? (
+            <Button variant="secondary" size="regular" onClick={() => props.onOpenConversation(props.task.id, props.modelPushOperation?.conversationId ?? '')}>
+              {zh ? '打开会话' : 'Open conversation'}
+            </Button>
+          ) : null}
           <Button variant="secondary" size="regular" className="task-detail-more-trigger" popoverTarget={moreActionsId} aria-label={zh ? '更多任务操作' : 'More task actions'} title={zh ? '更多操作' : 'More actions'}>
             <DotsThreeIcon size={20} weight="bold" aria-hidden="true" />
           </Button>
@@ -1355,42 +1369,20 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         </div>
       </header>
 
-      {props.modelPushEntry?.error || props.modelPushOperation ? (
+      {props.modelPushEntry?.error || modelPushFailed ? (
         <section className="task-detail-feedback-rail" aria-label={zh ? '创建会话进度' : 'Conversation creation status'}>
           {props.modelPushEntry?.error ? (
             <span className="task-detail-model-push-feedback is-failed" role="status">
               <VisibleApplicationError error={props.modelPushEntry.error} language={zh ? 'zh-CN' : 'en'} />
             </span>
           ) : null}
-          {props.modelPushOperation ? (
-            <span className={`task-detail-model-push-feedback is-${props.modelPushOperation.status}`} role={modelPushFailed ? 'alert' : 'status'} aria-live={modelPushFailed ? 'assertive' : 'polite'} aria-atomic="true">
+          {modelPushFailed && props.modelPushOperation ? (
+            <span className="task-detail-model-push-feedback is-failed" role="alert" aria-live="assertive" aria-atomic="true">
               <span>
-                {modelPushCreating ? <TaskSaveSpinner /> : null}
                 <strong>
-                  {modelPushCreating ? (
-                    zh ? (
-                      '正在后台创建会话'
-                    ) : (
-                      'Creating conversation in the background'
-                    )
-                  ) : modelPushFailed ? (
-                    <VisibleApplicationError error={props.modelPushOperation.errorCause ?? props.modelPushOperation.error} language={zh ? 'zh-CN' : 'en'} />
-                  ) : zh ? (
-                    '会话已创建'
-                  ) : (
-                    'Conversation created'
-                  )}
+                  <VisibleApplicationError error={props.modelPushOperation.errorCause ?? props.modelPushOperation.error} language={zh ? 'zh-CN' : 'en'} />
                 </strong>
               </span>
-              {modelPushFailed && props.modelPushOperation.canRetry && props.onRetryModelPush ? (
-                <Button variant="secondary" size="compact" onClick={() => props.onRetryModelPush?.(props.task.id)}>
-                  {zh ? '重试创建' : 'Retry creation'}
-                </Button>
-              ) : props.modelPushOperation.status === 'accepted' && props.modelPushOperation.conversationId ? (
-                <Button variant="secondary" size="compact" onClick={() => props.onOpenConversation(props.task.id, props.modelPushOperation?.conversationId ?? '')}>
-                  {zh ? '打开会话' : 'Open conversation'}
-                </Button>
-              ) : null}
             </span>
           ) : null}
         </section>

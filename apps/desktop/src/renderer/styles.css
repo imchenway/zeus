@@ -14960,16 +14960,11 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   outline-offset: -2px;
 }
 
-/* 模型与 Skill 占较宽的首列，六个控件按真实阅读顺序排成两行。 */
+/* 七个控件固定按阅读顺序排成三行，模型能力加载前后保持相同位置。 */
 .macos-ai-app .task-model-push-config-grid {
   display: grid;
   grid-template-columns: minmax(0, 2fr) repeat(2, minmax(0, 1fr));
   gap: 12px;
-}
-
-/* 没有模型等级时，由模型选择吸收空出的列，下一行仍从 Skill 开始。 */
-.macos-ai-app .task-model-push-config-grid:not(:has(.task-model-push-effort-field)) > .task-model-push-model-field {
-  grid-column: span 2;
 }
 
 /* 标题与次要操作同行，长名称和窄窗口允许自然换行。 */
@@ -19822,10 +19817,11 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   white-space: normal;
 }
 
-/* 主操作集中在标题右侧，低频操作使用已有的原生弹出层定位方式。 */
+/* 会话入口与主操作集中在标题右侧，空间不足时在同一操作区内自然换行。 */
 .macos-ai-app .task-detail-header-actions {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   justify-content: flex-end;
   min-inline-size: 0;
@@ -20294,7 +20290,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   justify-items: end;
 }
 
-/* 只有创建会话有反馈时才占一行，操作入口不再占据底部空间。 */
+/* 只有创建失败才展开错误说明，成功与进度复用标题栏操作。 */
 .macos-ai-app .task-detail-feedback-rail {
   background: var(--zeus-drawer-action-bg, var(--zeus-product-panel));
   border-block-end: 0;
@@ -23310,10 +23306,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   .macos-ai-app .task-model-push-workspace-grid,
   .macos-ai-app .task-model-push-modal .task-model-push-mode-choice {
     grid-template-columns: minmax(0, 1fr);
-  }
-  /* 单列时取消模型跨列，防止缺少模型等级的窗口出现隐式横向列。 */
-  .macos-ai-app .task-model-push-config-grid:not(:has(.task-model-push-effort-field)) > .task-model-push-model-field {
-    grid-column: auto;
   }
   .macos-ai-app .task-model-push-footer {
     flex-wrap: wrap;
