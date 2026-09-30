@@ -4,6 +4,7 @@ import { adaptConversationSnapshotV2, mergeConversationProcessV2, resumeCachedCo
 import { createHydratedSessionState, createInitialSessionState, sessionReducer } from '../apps/desktop/src/renderer/session/sessionReducer.ts';
 import type { NativePlanImplementationRequest, NativeRealtimeEventEnvelope, NativeQueueSnapshot, NativeSessionState, NativeConversationEvent } from '../apps/desktop/src/renderer/session/sessionTypes.ts';
 import { composerQueuedSubmissions, orderTranscriptItemsWithQueue } from '../apps/desktop/src/renderer/session/conversationQueuePresentation.ts';
+import { createConversationQueueStateSelector } from '../apps/desktop/src/renderer/session/sessionStateSlices.ts';
 import { attachTaskModelPushChoice, type TaskModelPushPendingState } from '../apps/desktop/src/renderer/task/TaskModelPushPendingWorkspace.tsx';
 import type { TurnChangeSet } from '../packages/shared/src/conversationResources.ts';
 import type { ConversationTranscriptEnvelope } from '../packages/shared/src/conversationTranscriptWire.ts';
@@ -1543,6 +1544,11 @@ async function verifyActiveTurnQueueProjection() {
   /** 本地卡片是唯一首帧投影，且权威身份到达前不可操作。 */
   const pendingCards = composerQueuedSubmissions(pendingState);
   assert(pendingCards.length === 1 && pendingCards[0]?.clientUserMessageId === 'queued-client-message' && pendingCards[0]?.localOnly, '活跃轮次后的本地消息必须立即进入不可操作的排队卡片。');
+  /** 组件真实使用的独立状态切片也必须保留本地消息，不能等服务端队列回执。 */
+  const pendingQueueSlice = createConversationQueueStateSelector()(pendingState);
+  /** 选择器投影后的首帧仍应立即得到同一张本地排队卡片。 */
+  const pendingSliceCards = composerQueuedSubmissions(pendingQueueSlice);
+  assert(pendingSliceCards.length === 1 && pendingSliceCards[0]?.clientUserMessageId === 'queued-client-message' && pendingSliceCards[0]?.localOnly, '排队区状态切片必须保留首帧本地卡片。');
   /** 时间线过滤使用同一客户端身份，不允许先渲染成会话气泡。 */
   const pendingItem = pendingState.items[pendingState.itemOrder.at(-1)!]!;
   assert(
@@ -1635,7 +1641,7 @@ async function verifyActiveTurnQueueProjection() {
     },
   );
   assert(composerQueuedSubmissions(firstTurnState).length === 0, '空闲会话首条消息不得进入输入框排队区。');
-  return { pendingCardImmediate: true, transcriptIdentityClaimed: true, durableReplacement: true, attachmentOnlyStartingTurnQueued: true, attachmentOnlyRequestTextPreserved: true, firstTurnPreserved: true };
+  return { pendingCardImmediate: true, queueSliceImmediate: true, transcriptIdentityClaimed: true, durableReplacement: true, attachmentOnlyStartingTurnQueued: true, attachmentOnlyRequestTextPreserved: true, firstTurnPreserved: true };
 }
 
 /** 复核首条任务提示词在实时、队列和局部历史之间保持同一位置，旧缺位输入能一次恢复。 */
