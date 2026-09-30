@@ -656,6 +656,12 @@ function MessageLayoutQa() {
   const processGroups = parameters.has('process-groups') || longProcess;
   /** 分页场景保留已读末页，明确点击补页才模拟读完剩余范围。 */
   const processPaging = parameters.has('process-paging');
+  /** 保持轮次运行，通过手动追加正文预览真正的流式展示切换。 */
+  const replyTransition = parameters.has('reply-transition');
+  /** 空正文与首段正文共用消息身份，后续追加不得重置过程入口。 */
+  const [replyText, setReplyText] = useState('');
+  /** 流式预览从当前时间附近开始，避免固定历史时间造成数百小时的活动耗时。 */
+  const [replyStartedAt] = useState(() => new Date(Date.now() - 181_000).toISOString());
   /** 读取次数独立于渲染，用于核对反复展开没有隐式请求。 */
   const processReadCount = useRef(0);
   /** 仅补页按钮能够更新本场景的读取进度。 */
@@ -681,9 +687,9 @@ function MessageLayoutQa() {
   /** 运行态只显示过程，结束后才加入最终答复。 */
   const active = status === 'running';
   /** 固定起止时间用于确认耗时始终为三分一秒。 */
-  const startedAt = '2026-09-09T05:48:00Z';
+  const startedAt = replyTransition ? replyStartedAt : '2026-09-09T05:48:00Z';
   /** 固定完成时间同时作为答复时间戳。 */
-  const completedAt = '2026-09-09T05:51:01Z';
+  const completedAt = replyTransition ? new Date(Date.parse(replyStartedAt) + 181_000).toISOString() : '2026-09-09T05:51:01Z';
   /** 第一项沿用历史资源投影的名称占位，第二项保留实时资源的真实网址。 */
   const resources: ConversationResource[] = [
     { id: 'preview-resource', displayName: '交互预览', url: '交互预览' },
@@ -992,16 +998,19 @@ function MessageLayoutQa() {
             { type: 'reasoning', phase: 'prework', text: 'Inspecting browser snapshot', payload: {}, status: active ? 'in_progress' : 'completed' },
           ]),
     ...(subagent ? [{ type: 'userMessage', phase: 'user', text: '', payload: { subagentInput: { sender: '/root', fromParent: true, contentState: 'unavailable' } }, status: 'completed' }] : []),
-    ...(!active && !parameters.has('no-answer')
+    ...((!active || replyTransition) && !parameters.has('no-answer')
       ? [
           {
             type: 'agentMessage',
             phase: 'final_answer',
-            text: links
-              ? '边界已补充到[分析文档](docs/分析文档.md)。\n\n[交互预览](http://127.0.0.1:4529/qa/session-styles.html?model-select) · [访问网站](https://example.com)\n\n[未登记链接](https://unregistered.example/) · [网站](https://different.example/)'
-              : '已检查会话布局，处理过程只显示操作总数；鼠标放到消息上时显示复制、反馈与时间戳。',
+            text:
+              active && replyTransition
+                ? replyText
+                : links
+                  ? '边界已补充到[分析文档](docs/分析文档.md)。\n\n[交互预览](http://127.0.0.1:4529/qa/session-styles.html?model-select) · [访问网站](https://example.com)\n\n[未登记链接](https://unregistered.example/) · [网站](https://different.example/)'
+                  : '已检查会话布局，处理过程只显示操作总数；鼠标放到消息上时显示复制、反馈与时间戳。',
             payload: {},
-            status: 'completed',
+            status: active ? 'in_progress' : 'completed',
           },
         ]
       : []),
@@ -1100,6 +1109,7 @@ function MessageLayoutQa() {
           <Button onClick={checkLayout}>检查耗时入口</Button>
           {processGroups ? <Button onClick={() => void checkProcessContent().catch((error: unknown) => setLinkResult(String(error)))}>检查过程内容</Button> : null}
           {processGroups ? <Button onClick={() => setExtraOperation((value) => !value)}>{extraOperation ? '移除运行操作' : '新增运行操作'}</Button> : null}
+          {replyTransition ? <Button onClick={() => setReplyText((text) => (text ? `${text}\n\n正文继续输出，过程入口保持原状态。` : '最终正文已经开始输出，轮次仍在运行。'))}>{replyText ? '继续输出正文' : '开始输出正文'}</Button> : null}
           {subagent ? <Button onClick={() => setFollowupCount(followupCount + 1)}>补充指令</Button> : null}
           {links ? <Button onClick={checkLinks}>检查链接</Button> : null}
           {links ? <Button onClick={() => void checkSelectionToolbar().catch((error: unknown) => setLinkResult(String(error)))}>检查评论入口</Button> : null}

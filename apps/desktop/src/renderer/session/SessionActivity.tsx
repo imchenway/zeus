@@ -99,6 +99,8 @@ interface SessionActivityGroupProps {
   items: NativeSessionItemBuffer[];
   language: SessionUiLanguage;
   category: SessionActivityCategory;
+  /** 回看过程时只显示操作数量，用户主动展开后才挂载命令列表。 */
+  collapsible?: boolean;
   /** 只让本轮真实新增的稳定条目播放一次入场，历史回放保持静止。 */
   enteringItemKeys?: ReadonlySet<string>;
   motionActive?: boolean;
@@ -109,7 +111,7 @@ interface SessionActivityGroupProps {
   onLoadContent?: (handle: string) => Promise<void>;
 }
 
-/** 活动组直接显示真实过程；单条无详情的整理记录使用精简实时行。 */
+/** 实时活动直接显示，回看活动按组折叠；单条无详情的整理记录保持精简。 */
 export const SessionActivityGroup = memo(function SessionActivityGroup(props: SessionActivityGroupProps) {
   /** 活动行与展开详情使用同一份名称投影。 */
   const items = useNamedSkillItems(props.items);
@@ -128,33 +130,43 @@ export const SessionActivityGroup = memo(function SessionActivityGroup(props: Se
     );
   }
 
+  /** 命令列表沿用同一渲染入口，折叠时不挂载单条详情和图片预览。 */
+  const body = (
+    <AnimatedSize changeKey={items}>
+      <div className="session-activity-body">
+        {detailItems.length > 0 ? (
+          <ol>
+            {detailItems.map((item) => (
+              <ActivityItemRow
+                key={item.key}
+                item={item}
+                language={props.language}
+                animateEntrance={props.enteringItemKeys?.has(item.key)}
+                motionActive={Boolean(active && props.motionActive && item.key === liveItem?.key)}
+                onOpenResource={props.onOpenResource}
+                onLoadToolResult={props.onLoadToolResult}
+                onLoadContent={props.onLoadContent}
+              />
+            ))}
+          </ol>
+        ) : null}
+        {imageResources.length > 0 ? (
+          <div className="session-activity-images">
+            <ConversationResourceCards resources={imageResources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
+          </div>
+        ) : null}
+      </div>
+    </AnimatedSize>
+  );
   return (
     <section className="session-activity-group" data-active={active || undefined} data-activity-category={props.category} data-item-count={items.length} data-motion-active={props.motionActive || undefined}>
-      <AnimatedSize changeKey={items}>
-        <div className="session-activity-body">
-          {detailItems.length > 0 ? (
-            <ol>
-              {detailItems.map((item) => (
-                <ActivityItemRow
-                  key={item.key}
-                  item={item}
-                  language={props.language}
-                  animateEntrance={props.enteringItemKeys?.has(item.key)}
-                  motionActive={Boolean(active && props.motionActive && item.key === liveItem?.key)}
-                  onOpenResource={props.onOpenResource}
-                  onLoadToolResult={props.onLoadToolResult}
-                  onLoadContent={props.onLoadContent}
-                />
-              ))}
-            </ol>
-          ) : null}
-          {imageResources.length > 0 ? (
-            <div className="session-activity-images">
-              <ConversationResourceCards resources={imageResources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
-            </div>
-          ) : null}
-        </div>
-      </AnimatedSize>
+      {props.collapsible ? (
+        <SessionTurnProcessDisclosure language={props.language} itemCount={items.length}>
+          {body}
+        </SessionTurnProcessDisclosure>
+      ) : (
+        body
+      )}
     </section>
   );
 }, sameActivityGroupProps);
@@ -163,6 +175,7 @@ function sameActivityGroupProps(previous: Readonly<SessionActivityGroupProps>, n
   if (
     previous.language !== next.language ||
     previous.category !== next.category ||
+    previous.collapsible !== next.collapsible ||
     previous.motionActive !== next.motionActive ||
     previous.onOpenResource !== next.onOpenResource ||
     previous.onLoadResourcePreview !== next.onLoadResourcePreview ||
@@ -524,11 +537,13 @@ export function isActiveSessionTurn(turn: NativeTurnSnapshot): boolean {
 }
 
 /** 耗时沿用轮次计时与等待扣除规则，可直接嵌入处理过程按钮。 */
-export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; requests: NativePendingRequest[]; language: SessionUiLanguage; fallback?: string }) {
+export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; requests: NativePendingRequest[]; language: SessionUiLanguage; fallback?: string; /** 正文可见后显示用时，真实轮次结束前继续沿用现有计时。 */ replyVisible?: boolean }) {
   /** 只有活动轮次需要刷新当前时间。 */
   const [now, setNow] = useState(() => Date.now());
   /** 终态停止计时，回看历史时不继续增长。 */
   const active = isActiveSessionTurn(props.turn);
+  /** 过程展示随正文切换，后台轮次的终态和结束时间继续由真实事件决定。 */
+  const processing = active && !props.replyVisible;
   useEffect(() => {
     if (!active) return;
     /** 沿用每秒刷新频率。 */
@@ -545,14 +560,14 @@ export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; requests:
   /** 状态文案随界面语言变化。 */
   const label =
     props.language === 'zh-CN'
-      ? active
+      ? processing
         ? `处理中 ${value}`
         : terminalStatus === 'interrupted'
           ? `处理已中断（${value}）`
           : terminalStatus === 'failed'
             ? `处理失败（${value}）`
             : `用时 ${value}`
-      : active
+      : processing
         ? `Processing for ${value}`
         : terminalStatus === 'interrupted'
           ? `Interrupted after ${value}`
@@ -581,6 +596,8 @@ export function SessionTurnProcessDisclosure(props: {
   requests?: NativePendingRequest[];
   /** 已加载的真实操作数量；只作摘要，不替代分页后的完整记录。 */
   itemCount?: number;
+  /** 最终正文已经显示，过程入口切换为耗时展示。 */
+  replyVisible?: boolean;
   open?: boolean;
   /** 触发元素用于上层在内容增高时保持精确的阅读锚点。 */
   onOpenChange?: (open: boolean, trigger: HTMLButtonElement) => void;
@@ -613,10 +630,10 @@ export function SessionTurnProcessDisclosure(props: {
         : open
           ? 'Hide process'
           : 'View process';
-  /** 无障碍名称同时说明动作和当前已加载数量。 */
-  const accessibleLabel = countLabel ? `${label}，${countLabel}` : label;
-  /** 有真实操作数时只显示数量；没有数量的轮次继续沿用耗时或原动作文案。 */
-  const visibleCountLabel = props.labelKind !== 'details' ? countLabel : null;
+  /** 操作数量入口明确表达展开或收起动作，数量仍来自已加载的真实记录。 */
+  const visibleCountLabel = props.labelKind !== 'details' && countLabel ? `${props.language === 'zh-CN' ? (open ? '收起' : '查看') : open ? 'Hide' : 'View'} ${countLabel}` : null;
+  /** 耗时入口仍说明查看或收起过程，操作分组使用数量动作文案。 */
+  const accessibleLabel = (props.turn ? null : visibleCountLabel) ?? (countLabel ? `${label}，${countLabel}` : label);
   return (
     <section className="session-turn-process" data-label-kind={props.labelKind ?? 'process'} data-open={open || undefined} aria-busy={props.loading || undefined}>
       <div className="session-turn-process-control">
@@ -632,7 +649,7 @@ export function SessionTurnProcessDisclosure(props: {
             props.onOpenChange?.(nextOpen, event.currentTarget);
           }}
         >
-          <span>{visibleCountLabel ?? (props.turn ? <SessionTurnDuration turn={props.turn} requests={props.requests ?? []} language={props.language} fallback={label} /> : label)}</span>
+          <span>{props.turn ? <SessionTurnDuration turn={props.turn} requests={props.requests ?? []} language={props.language} fallback={visibleCountLabel ?? label} replyVisible={props.replyVisible} /> : (visibleCountLabel ?? label)}</span>
           <CaretDown className="session-turn-process-caret" aria-hidden="true" weight="bold" />
         </button>
       </div>
