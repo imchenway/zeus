@@ -1,4 +1,4 @@
-import { memo, useLayoutEffect } from 'react';
+import { memo, useLayoutEffect, useRef } from 'react';
 import type { NativeSessionItemBuffer, NativeSessionState } from './sessionTypes.js';
 import { type SessionUiLanguage, useAdaptiveTranscriptText } from './ThreadItemView.js';
 
@@ -29,10 +29,33 @@ export const SessionReasoningSummary = memo(function SessionReasoningSummary(pro
   );
 });
 
-/** 摘要与运行状态共用固定文字和移动扫光层；视觉副本不参与朗读、选中或布局。 */
+/** 单行摘要与状态保留扫光；多行正文保持静态，视觉副本不参与朗读、选中或布局。 */
 export function SessionSweepText(props: { text: string; className: string; active: boolean }) {
+  /** 原生尺寸观察只更新视觉属性，避免流式文字额外触发 React 渲染。 */
+  const rootRef = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    /** 当前排版容器随内容、窗口宽度和字体尺寸变化重新判断行数。 */
+    const root = rootRef.current;
+    if (!root || !props.active) return;
+    /** 首次绘制前确定扫光范围，后续尺寸变化沿用同一观察器。 */
+    const updateMultiline = () => {
+      if (!root.firstChild) return;
+      /** 直接读取原文行框，兼容 normal 行高，并排除扫光副本。 */
+      const range = document.createRange();
+      range.selectNodeContents(root.firstChild);
+      /** 双向文字在同一行可能产生多个片段，按纵向位置而非片段数量判断换行。 */
+      const rects = Array.from(range.getClientRects());
+      root.dataset.multiline = String(rects.some((rect) => Math.abs(rect.top - rects[0]!.top) > 1));
+    };
+    updateMultiline();
+    /** 只观察正在进行的文字，完成或卸载时释放尺寸订阅。 */
+    const observer = new ResizeObserver(updateMultiline);
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, [props.active]);
+
   return (
-    <span className={`session-sweep-text ${props.className}`}>
+    <span ref={rootRef} className={`session-sweep-text ${props.className}`}>
       {props.text}
       {props.active ? <span className="session-sweep-text-light" data-text={props.text} aria-hidden="true" /> : null}
     </span>

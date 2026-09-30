@@ -2844,11 +2844,10 @@
 
 /* 原文固定参与排版；扫光只移动一层遮罩，不再依赖正反图层同步复位。 */
 .session-codex-parity-v1 .session-sweep-text {
-  /* 一轮移动一个纹理宽度；短状态与长摘要均以每秒 120 像素扫过。 */
+  /* 单行文字以每秒 120 像素扫过；换行后停止扫光，保持正文对比度稳定。 */
   --session-text-sweep-width: 120px;
   display: inline-block;
   max-inline-size: 100%;
-  overflow: hidden;
   position: relative;
 }
 
@@ -2870,9 +2869,35 @@
   content: attr(data-text);
 }
 
+/* 仅已确认的单行文字启用扫光，防止长段落和首次测量前出现重复明暗条纹。 */
+.session-codex-parity-v1 .session-sweep-text:not([data-multiline='false']) > .session-sweep-text-light {
+  display: none;
+}
+
+/* 多行正文保持稳定，段首旁的小点复用工作态呼吸，直接提示这段思考仍在进行。 */
+.session-codex-parity-v1 .session-sweep-text[data-multiline='true']:has(> .session-sweep-text-light)::after {
+  animation: session-working-breathe var(--session-working-cycle) ease-in-out infinite;
+  background: var(--session-working-color);
+  block-size: 6px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--session-working-halo);
+  content: '';
+  display: inline-block;
+  inset-block-start: calc(0.5lh - 3px);
+  inset-inline-start: -12px;
+  inline-size: 6px;
+  position: absolute;
+}
+
 @media (prefers-reduced-motion: reduce), (forced-colors: active) {
   .session-codex-parity-v1 .session-sweep-text-light {
     display: none;
+  }
+
+  /* 减少动态效果或高对比度下保留静态状态点，仍明确表示这段思考尚未结束。 */
+  .session-codex-parity-v1 .session-sweep-text[data-multiline='true']:has(> .session-sweep-text-light)::after {
+    animation: none;
+    box-shadow: none;
   }
 }
 
