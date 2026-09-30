@@ -401,6 +401,7 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
   }
 }
 
+/** 权威快照按持久显示身份接管缓存，轮次编号变化不产生第二份正文。 */
 function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConversationSnapshot, reconcileHistoryCache = true): NativeSessionState {
   const historyReconciliation = reconcileHistoryCache ? reconcileConversationHistoryCache(state.snapshot, incomingSnapshot) : { snapshot: incomingSnapshot, preserveCachedHistory: true };
   /** 正文页不能把较新的队列事实回退到请求发出时。 */
@@ -479,7 +480,11 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
       continue;
     }
     // 同一条用户消息从本地发送态交接为 Provider item 时沿用可见身份，避免气泡被卸载后重建。
-    const key = (itemClientId ? previousUserItemKeys.get(itemClientId) : undefined) ?? durableIdentityEntry?.key ?? nativeSessionItemKey(snapshot.id, threadId, turnId, item.transcript.placement.entryId);
+    const key =
+      (itemClientId ? previousUserItemKeys.get(itemClientId) : undefined) ??
+      durableIdentityEntry?.key ??
+      previousItemsByEntryId.get(item.transcript.placement.entryId)?.key ??
+      nativeSessionItemKey(snapshot.id, threadId, turnId, item.transcript.placement.entryId);
     // 资源分页已经补齐到 Renderer 后，后续轻量权威快照仍可能只携带正文、把 resources
     // 投影为空。资源属于同一持久 item 的展示增量，必须按稳定身份合并，不能在新一轮
     // 对账时倒退为“图片不可用”。
@@ -533,18 +538,22 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
       .map((item) => item.providerItemId)
       .filter((identity): identity is string => Boolean(identity)),
   );
+  /** 来源行和轮次编号可以变化；同一持久正文只能在缓存中占一个位置。 */
+  const projectedEntryIds = new Set(Object.values(items).flatMap((item) => (item.transcript ? [item.transcript.placement.entryId] : [])));
   for (const key of state.itemOrder) {
     const previous = state.items[key];
     if (
       !previous ||
       previous.conversationId !== snapshot.id ||
       key in items ||
+      (previous.transcript ? projectedEntryIds.has(previous.transcript.placement.entryId) : false) ||
       (previous.localItemId ? projectedLocalItemIds.has(previous.localItemId) : false) ||
       (previous.providerItemId ? projectedProviderItemIds.has(previous.providerItemId) : false) ||
       !shouldPreserveBoundedTranscriptItem(previous, activeTurnIdentities, historyReconciliation.preserveCachedHistory)
     )
       continue;
     items[key] = previous;
+    if (previous.transcript) projectedEntryIds.add(previous.transcript.placement.entryId);
     orderedItems.push({
       key,
       order: previous.transcript?.placement.order ?? null,
@@ -1381,6 +1390,7 @@ function planImplementationStatus(value: unknown): NativePlanImplementationReque
   return value === 'pending' || value === 'dismissed' || value === 'implemented' || value === 'refinement_requested' || value === 'superseded' ? value : null;
 }
 
+/** 实时条目与历史正文按同一持久身份接管，保留已有可见键和正文权威。 */
 function reduceItemEvent(state: NativeSessionState, event: Extract<NativeConversationEvent, { type: 'conversation.item.started' | 'conversation.item.delta' | 'conversation.item.completed' }>): NativeSessionState {
   const payload = event.payload;
   const conversationId = stringValue(payload.conversationId) ?? state.conversationId;
@@ -1409,10 +1419,10 @@ function reduceItemEvent(state: NativeSessionState, event: Extract<NativeConvers
   const optimisticEntry = matchedUserEntry?.[1].optimistic ? matchedUserEntry : undefined;
   const matchedUserItem = matchedUserEntry?.[1];
   /**
-   * 落库条目带着持久显示身份到达时直接接管同身份的本地条目。
-   * 本地乐观气泡还没有位置记录，但它的持久身份已经确定，不能因为少了位置就多留一个气泡。
+   * 所有实时条目都接管同持久身份的历史条目；不能只核对用户消息。
+   * 历史分页可能尚未取得 Provider 轮次编号，因此不能用技术缓存键判定它是新条目。
    */
-  const transcriptEntry = !providerItem && incomingTranscript ? Object.entries(state.items).find(([, item]) => durableUserMessageIdentity(item) === incomingTranscript.placement.entryId) : undefined;
+  const transcriptEntry = !providerItem && incomingTranscript ? Object.entries(state.items).find(([, item]) => sessionTranscriptEntryId(item) === incomingTranscript.placement.entryId) : undefined;
   const matchedKey = matchedUserEntry?.[0] ?? transcriptEntry?.[0];
   const key = matchedKey ?? providerKey;
   const previous = state.items[key] ?? providerItem ?? transcriptEntry?.[1];

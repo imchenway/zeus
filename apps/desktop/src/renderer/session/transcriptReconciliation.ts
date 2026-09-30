@@ -64,7 +64,7 @@ export function reconcileTranscriptItems(current: readonly NativeItemSnapshot[],
       const next = byEntryId.get(transcriptEntryId(item))!;
       return next.transcript.placement.order !== item.transcript.placement.order;
     });
-  const items = changedEntryIds.size === 0 ? (current as NativeItemSnapshot[]) : [...byEntryId.values()];
+  const items = changedEntryIds.size === 0 && !structuralChange ? (current as NativeItemSnapshot[]) : [...byEntryId.values()];
   if (structuralChange) {
     /** 排序前记录候选顺序；没有位置的本地条目按该顺序整体留在持久区之后。 */
     const candidateIndex = new Map(items.map((item, index) => [transcriptEntryId(item), index]));
