@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { diffTurnWorkspaceFile, readTurnWorkspaceSnapshot, type TurnWorkspaceFile } from './turnWorkspaceSnapshot.js';
+import { diffTurnWorkspaceFile, isTurnWorkspaceLinkedPath, readTurnWorkspaceSnapshot, type TurnWorkspaceFile } from './turnWorkspaceSnapshot.js';
 import { type TurnChangeConflict, type TurnChangeFile, type TurnChangeFileType, type TurnChangeSet, type TurnChangeSetOperationRequest, type TurnChangeSetOperationResult } from '@zeus/shared';
 import {
   type AuditLogRepository,
@@ -161,6 +161,8 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
       /** 先生成所有差异，再更新已有记录，避免扫描失败留下半套覆盖结果。 */
       const updates: { path: string; pre: TurnWorkspaceFile; post: TurnWorkspaceFile; diff: string; unchanged: boolean }[] = [];
       for (const path of paths) {
+        // 目录改为共享链接后不把跳过的目标误记为本地删除。
+        if (isTurnWorkspaceLinkedPath(path, baseline.root)) continue;
         /** 缺失路径用显式不存在状态表示新增和删除。 */
         const absent: TurnWorkspaceFile = { exists: false, bytes: null, hash: null, mode: null, unavailableReason: null };
         /** 原内容来自启动前，不使用 HEAD 或上轮结果代替。 */
@@ -228,7 +230,7 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
 
   function ensureChangeSet(conversation: ZeusConversationWithMessagesRecord, turn: ZeusConversationTurnRecord, timestamp: string): ZeusTurnChangeSetRecord {
     const existing = options.changeSets.getByTurn(conversation.id, turn.id);
-    if (existing) return existing;
+    if (existing) return normalizeChangeSetScope(existing);
     if (!turn.providerTurnId) throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_PROVIDER_ID_MISSING', 'The provider turn id is required before capturing file changes.');
     return options.changeSets.upsert({
       projectId: conversation.projectId,
@@ -254,6 +256,11 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
     const project = options.projects.getById(input.conversation.projectId);
     if (!project) throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_PROJECT_MISSING', 'The project for this turn change set no longer exists.');
     const executionRoot = conversationExecutionRoot(input.conversation.id, project.localPath);
+    /** 保留 Provider 的原始索引，避免同批共享文件被排除后错用其他文件快照。 */
+    const localChanges = changes
+      .map((change, sourceIndex) => ({ change, sourceIndex }))
+      .filter(({ change }) => ![change.path, ...(change.kind.type === 'update' && change.kind.move_path ? [change.kind.move_path] : [])].some((path) => isTurnWorkspaceLinkedPath(path, executionRoot)));
+    if (localChanges.length === 0) return null;
     const changeSet = ensureChangeSet(input.conversation, input.turn, input.timestamp);
     /** 已拒绝的路径随变更集持久保存，后续合法事件和进程重建不能误恢复整轮撤销。 */
     const previousConflict = parseConflict(changeSet.conflictJson);
@@ -262,7 +269,7 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
     let capturedBytes = existingCaptureBytes(changeSet.id);
     const snapshotCandidates = new Set<string>();
     try {
-      changes.forEach((change, sourceIndex) => {
+      localChanges.forEach(({ change, sourceIndex }) => {
         /** 先通过完整路径校验；拒绝后不读取文件、不保存补丁，也不创建可操作的文件记录。 */
         let paths: ReturnType<typeof changePaths>;
         try {
@@ -431,8 +438,11 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
   /** 封存时保留所有影响整轮恢复的缺口，不把文件列表完整误判为恢复数据完整。 */
   function seal(input: { conversation: ZeusConversationWithMessagesRecord; turn: ZeusConversationTurnRecord; timestamp: string }): TurnChangeSet | null {
     assertMutationAllowed();
-    const changeSet = options.changeSets.getByTurn(input.conversation.id, input.turn.id);
-    if (!changeSet) return null;
+    /** 封存与读取、操作使用相同的代码变更范围。 */
+    const recorded = options.changeSets.getByTurn(input.conversation.id, input.turn.id);
+    if (!recorded) return null;
+    /** 共享链接的旧拒绝记录不再阻断实际代码恢复。 */
+    const changeSet = normalizeChangeSetScope(recorded);
     const files = aggregateChangeFiles(options.files.listByChangeSet(changeSet.id));
     /** 路径拒绝不能在封存时消失；全部文件被拒绝时也保留可查看的局部原因。 */
     const conflict = parseConflict(changeSet.conflictJson);
@@ -468,21 +478,62 @@ export function createTurnChangeSetService(options: CreateTurnChangeSetServiceOp
 
   function getById(changeSetId: string): TurnChangeSet | null {
     const record = options.changeSets.getById(changeSetId);
-    return record ? toPublicChangeSet(record, aggregateChangeFiles(options.files.listByChangeSet(record.id))) : null;
+    return record ? toPublicChangeSet(normalizeChangeSetScope(record), aggregateChangeFiles(options.files.listByChangeSet(record.id))) : null;
   }
 
   function getByTurn(conversationId: string, turnId: string): TurnChangeSet | null {
     const record = options.changeSets.getByTurn(conversationId, turnId);
-    return record ? toPublicChangeSet(record, aggregateChangeFiles(options.files.listByChangeSet(record.id))) : null;
+    return record ? toPublicChangeSet(normalizeChangeSetScope(record), aggregateChangeFiles(options.files.listByChangeSet(record.id))) : null;
   }
 
   function listByConversation(conversationId: string): TurnChangeSet[] {
-    return options.changeSets.listByConversation(conversationId).map((record) => toPublicChangeSet(record, aggregateChangeFiles(options.files.listByChangeSet(record.id))));
+    return options.changeSets.listByConversation(conversationId).map((record) => toPublicChangeSet(normalizeChangeSetScope(record), aggregateChangeFiles(options.files.listByChangeSet(record.id))));
+  }
+
+  /** 已保存的路径拒绝也按当前代码范围判断；不修改历史快照或把共享目标纳入恢复。 */
+  function normalizeChangeSetScope(record: ZeusTurnChangeSetRecord): ZeusTurnChangeSetRecord {
+    /** 只消除共享链接引起的路径误报，其余冲突保留原状态。 */
+    const conflict = parseConflict(record.conflictJson);
+    if (!isRejectedFileChangePathError(conflict) || !conflict) return record;
+    /** 会话目录缺失时保留记录，不回退到另一工作区。 */
+    const project = options.projects.getById(record.projectId);
+    if (!project) return record;
+    /** 复用会话目录解析约定，历史读取也不扩大操作范围。 */
+    const root = options.getConversationRoot?.(record.conversationId) ?? (options.getConversationRoot ? null : project.localPath);
+    if (!root) return record;
+    /** 仅在诊断确实包含共享链接时重新判断，避免猜测已经消失的旧目录结构。 */
+    const unlinkedPaths = conflict.paths.filter((path) => !isTurnWorkspaceLinkedPath(path, root));
+    if (unlinkedPaths.length === conflict.paths.length) return record;
+    /** 旧重命名诊断同时列出两端，合法的另一端只是上下文，不是越界路径。 */
+    const paths = unlinkedPaths.filter((path) => {
+      try {
+        normalizeProjectRelativePath(path, root);
+        return false;
+      } catch (error) {
+        if (isRejectedFileChangePathError(error)) return true;
+        throw error;
+      }
+    });
+    /** 恢复资格仍取决于真实保存的文件快照，不推造缺失数据。 */
+    const incompleteFile = aggregateChangeFiles(options.files.listByChangeSet(record.id)).find((file) => !file.reversible);
+    /** 全部拒绝均来自共享链接时，只保留实际代码文件的数据缺口。 */
+    const unavailableReason = paths.length ? (record.unavailableReason ?? conflict.message) : incompleteFile ? (incompleteFile.unavailableReason ?? 'Turn change recovery data is incomplete.') : null;
+    return {
+      ...record,
+      state: record.state === 'unavailable' && !paths.length && !incompleteFile ? 'applied' : record.state,
+      unavailableReason,
+      conflictJson: paths.length
+        ? JSON.stringify({ ...conflict, paths, message: `部分文件变更未能安全记录，不能撤销或重新应用本轮修改。\n会话工作目录：${root}\n受影响的路径：\n${paths.map((path) => JSON.stringify(path)).join('\n')}` })
+        : null,
+    };
   }
 
   async function operate(input: { projectId: string; conversationId: string; turnId: string; action: 'undo' | 'reapply'; request: TurnChangeSetOperationRequest }): Promise<TurnChangeSetOperationResult> {
     assertMutationAllowed();
-    const changeSet = options.changeSets.getById(input.request.changeSetId);
+    /** 服务端恢复与界面读取共用范围判断，避免界面允许而实际操作仍按共享链接拒绝。 */
+    const recorded = options.changeSets.getById(input.request.changeSetId);
+    /** 只重新判断已有记录的范围，不生成新的恢复文件。 */
+    const changeSet = recorded ? normalizeChangeSetScope(recorded) : null;
     if (!changeSet || changeSet.projectId !== input.projectId || changeSet.conversationId !== input.conversationId || changeSet.turnId !== input.turnId) {
       throw turnChangeSetError('ZEUS_TURN_CHANGE_SET_NOT_FOUND', 'Turn change set not found.');
     }

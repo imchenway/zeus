@@ -242,7 +242,107 @@ async function verifyWorkspaceTurnChanges(): Promise<Record<string, unknown>> {
     const scopedOptions = { ...serviceOptions, getConversationRoot: () => executionRoot };
     /** 实时记录、整轮补齐及封存共用同一实例。 */
     const scopedService = createTurnChangeSetService(scopedOptions);
-    /** 同批拒绝绝对越界、上级目录、符号链接、非法路径与越界重命名。 */
+    /** 共享目录名称不限于文档，目标内容始终留在工作目录外。 */
+    const sharedDirectory = join(root, 'shared-content');
+    await mkdir(sharedDirectory);
+    await symlink(sharedDirectory, join(executionRoot, 'shared-assets'));
+    await symlink(join(root, 'missing-target'), join(executionRoot, 'disconnected'));
+    execFileSync('git', ['-C', executionRoot, 'add', 'linked.txt', 'shared-assets', 'disconnected']);
+    /** 文件链接、目录子路径、失效链接及链接目标重命名均不进入代码撤销。 */
+    const sharedChanges = [
+      { path: join(executionRoot, 'linked.txt'), kind: { type: 'update' }, diff: '@@ -1 +1 @@\n-outside-original\n+shared-edit\n' },
+      { path: 'shared-assets/new/note.txt', kind: { type: 'add' }, diff: 'shared-note\n' },
+      { path: 'disconnected/note.txt', kind: { type: 'add' }, diff: 'unavailable-target\n' },
+      { path: 'shared-assets/old.txt', kind: { type: 'update', move_path: 'local-copy.txt' }, diff: '@@ -1 +1 @@\n-old\n+new\n' },
+      { path: 'local-move.txt', kind: { type: 'update', move_path: 'shared-assets/new.txt' }, diff: '@@ -1 +1 @@\n-old\n+new\n' },
+    ];
+    /** 纯共享变更不创建空卡片，已跟踪链接也不会使自动快照失败。 */
+    const sharedTurn = newTurn('shared-only');
+    await scopedService.beginWorkspace(conversation, 'shared-only');
+    scopedService.bindWorkspace(conversation.id, 'shared-only', sharedTurn.providerTurnId!);
+    assertBehavior(scopedService.capture({ conversation, turn: sharedTurn, providerItemId: 'shared-only', changes: sharedChanges, phase: 'pre', timestamp }) === null, '纯共享链接事件不应创建变更集。');
+    await writeFile(join(executionRoot, 'linked.txt'), 'shared-edit\n');
+    await mkdir(join(sharedDirectory, 'new'));
+    await writeFile(join(executionRoot, 'shared-assets/new/note.txt'), 'shared-note\n');
+    scopedService.capture({ conversation, turn: sharedTurn, providerItemId: 'shared-only', changes: sharedChanges, phase: 'post', timestamp });
+    await scopedService.finishWorkspace({ conversation, turn: sharedTurn, timestamp });
+    assertBehavior(scopedService.seal({ conversation, turn: sharedTurn, timestamp }) === null && scopedService.getByTurn(conversation.id, sharedTurn.id) === null, '共享目标的真实写入不应产生警告或零文件卡片。');
+    /** 共享事件排在代码事件之前，仍须保留代码事件的原始文件索引。 */
+    const sharedCodeTurn = newTurn('shared-with-code');
+    /** 普通代码文件沿用原来的撤销快照。 */
+    const sharedCodeChanges = [...sharedChanges, { path: 'code.txt', kind: { type: 'add' }, diff: 'code\n' }];
+    await scopedService.beginWorkspace(conversation, 'shared-with-code');
+    scopedService.bindWorkspace(conversation.id, 'shared-with-code', sharedCodeTurn.providerTurnId!);
+    scopedService.capture({ conversation, turn: sharedCodeTurn, providerItemId: 'shared-with-code', changes: sharedCodeChanges, phase: 'pre', timestamp });
+    await writeFile(join(executionRoot, 'code.txt'), 'code\n');
+    scopedService.capture({ conversation, turn: sharedCodeTurn, providerItemId: 'shared-with-code', changes: sharedCodeChanges, phase: 'post', timestamp });
+    await scopedService.finishWorkspace({ conversation, turn: sharedCodeTurn, timestamp });
+    /** 链接只影响记录范围，不影响代码的实际恢复资格。 */
+    const sharedCodeSet = scopedService.seal({ conversation, turn: sharedCodeTurn, timestamp });
+    assertBehavior(sharedCodeSet?.state === 'applied' && !sharedCodeSet.conflict && sharedCodeSet.fileCount === 1 && sharedCodeSet.files[0]?.newPath === 'code.txt', '共享链接不能禁用同轮代码撤销。');
+    assertBehavior(serviceOptions.files.listByChangeSet(sharedCodeSet.id).find((file) => file.sourceItemId === 'shared-with-code')?.sourceIndex === sharedChanges.length, '排除共享事件后必须保留原始索引。');
+    /** 使用真实仓储重现已经保存的共享路径误报，读取过程不改写历史数据。 */
+    const sharedRecorded = serviceOptions.changeSets.getById(sharedCodeSet.id)!;
+    /** 旧诊断包含文件及目录链接，以及重命名时被同时列出的合法另一端。 */
+    const sharedConflict = { code: 'ZEUS_TURN_CHANGE_SET_PATH_FORBIDDEN', message: '旧共享链接拒绝', paths: [join(executionRoot, 'linked.txt'), join(executionRoot, 'shared-assets/new/note.txt'), 'local-move.txt'] };
+    serviceOptions.changeSets.upsert({ ...sharedRecorded, state: 'unavailable', conflictJson: JSON.stringify(sharedConflict), unavailableReason: '旧共享链接拒绝' });
+    assertBehavior(
+      scopedService.getById(sharedCodeSet.id)?.state === 'applied' &&
+        !scopedService.getByTurn(conversation.id, sharedCodeTurn.id)?.conflict &&
+        !scopedService.listByConversation(conversation.id).find((set) => set.id === sharedCodeSet.id)?.conflict,
+      '已有共享链接误报在各读取入口都应消除。',
+    );
+    assertBehavior(serviceOptions.changeSets.getById(sharedCodeSet.id)?.state === 'unavailable', '读取范围判断不能改写已保存的历史记录。');
+    await scopedService.operate({
+      projectId: project.id,
+      conversationId: conversation.id,
+      turnId: sharedCodeTurn.id,
+      action: 'undo',
+      request: { changeSetId: sharedCodeSet.id, expectedState: 'applied', idempotencyKey: 'undo-shared-code' },
+    });
+    assertBehavior(
+      await readFile(join(executionRoot, 'code.txt')).then(
+        () => false,
+        () => true,
+      ),
+      '共享链接旧误报不应阻止实际代码撤销。',
+    );
+    await scopedService.operate({
+      projectId: project.id,
+      conversationId: conversation.id,
+      turnId: sharedCodeTurn.id,
+      action: 'reapply',
+      request: { changeSetId: sharedCodeSet.id, expectedState: 'undone', idempotencyKey: 'reapply-shared-code' },
+    });
+    assertBehavior((await readFile(outsidePath, 'utf8')) === 'shared-edit\n' && (await readFile(join(sharedDirectory, 'new/note.txt'), 'utf8')) === 'shared-note\n', '代码撤销和重新应用均不得改动共享目标。');
+    /** 已保存的纯共享误报也不再展示为错误卡片。 */
+    const oldSharedTurn = newTurn('old-shared-only');
+    /** 空记录不生成恢复数据，只消除共享路径拒绝。 */
+    const oldSharedSet = serviceOptions.changeSets.upsert({
+      ...sharedRecorded,
+      id: undefined,
+      turnId: oldSharedTurn.id,
+      providerTurnId: oldSharedTurn.providerTurnId!,
+      state: 'unavailable',
+      unifiedDiff: '',
+      preImageDigest: null,
+      postImageDigest: null,
+      conflictJson: JSON.stringify(sharedConflict),
+      unavailableReason: '旧共享链接拒绝',
+    });
+    assertBehavior(
+      scopedService.getById(oldSharedSet.id)?.fileCount === 0 && scopedService.getById(oldSharedSet.id)?.conflict === null && scopedService.getById(oldSharedSet.id)?.unavailableReason === null,
+      '历史纯共享错误不应继续展示警告。',
+    );
+    serviceOptions.changeSets.upsert({
+      ...serviceOptions.changeSets.getById(sharedCodeSet.id)!,
+      state: 'unavailable',
+      conflictJson: JSON.stringify({ ...sharedConflict, paths: [...sharedConflict.paths, outsidePath] }),
+      unavailableReason: '混合路径拒绝',
+    });
+    assertBehavior(scopedService.getById(sharedCodeSet.id)?.state === 'unavailable' && scopedService.getById(sharedCodeSet.id)?.conflict?.paths.length === 1, '共享旧误报消除后，真正越界的拒绝仍应保留。');
+    await writeFile(outsidePath, 'outside-original\n');
+    /** 同批拒绝绝对越界、上级目录、非法路径与越界重命名；链接单独排除。 */
     const rejectedChanges = [
       ...[outsidePath, '../outside.txt', 'linked.txt', 'invalid\0.txt'].map((path) => ({ path, kind: { type: 'add' }, diff: 'untrusted\n' })),
       { path: 'rename.txt', kind: { type: 'update', move_path: outsidePath }, diff: '@@ -1 +1 @@\n-old\n+new\n' },
@@ -260,7 +360,10 @@ async function verifyWorkspaceTurnChanges(): Promise<Record<string, unknown>> {
     /** 正常快照不能清除路径拒绝原因或生成越界文件恢复记录。 */
     const rejectedSet = scopedService.seal({ conversation, turn: rejectedTurn, timestamp });
     assertBehavior(rejectedSet?.state === 'unavailable' && rejectedSet.fileCount === 1 && rejectedSet.files[0]?.newPath === 'inside.txt', '混合事件应只记录合法文件，并禁止整轮恢复。');
-    assertBehavior(rejectedSet.conflict?.paths.length === 5 && rejectedSet.conflict.message.includes(executionRoot) && rejectedSet.conflict.message.includes(outsidePath), '重复事件的诊断应去重，并保留具体路径和会话目录。');
+    assertBehavior(
+      rejectedSet.conflict?.paths.length === 4 && !rejectedSet.conflict.paths.includes('linked.txt') && rejectedSet.conflict.message.includes(executionRoot) && rejectedSet.conflict.message.includes(outsidePath),
+      '重复事件诊断应排除共享链接，并保留真正越界的具体路径。',
+    );
     /** 摘要只说明对操作的影响，具体目录留在用户主动打开的详情中。 */
     const explanation = describeUserFacingError(rejectedSet.conflict);
     assertBehavior(
@@ -306,7 +409,18 @@ async function verifyWorkspaceTurnChanges(): Promise<Record<string, unknown>> {
         (error) => error.code === 'ZEUS_TURN_CHANGE_SET_PATH_FORBIDDEN',
       );
     assertBehavior(outsideUndo && (await readFile(outsidePath, 'utf8')) === 'outside-original\n', '主动恢复必须拒绝链接越界且不得修改目录外文件。');
-    return { files: changeSet.fileCount, scriptAndPatchMerged: true, dirtyBaselinePreserved: true, undoReapply: true, concurrentUndoBlocked: true, rejectedPathsLocalized: true, executionRootRespected: true, unsafeUndoBlocked: true };
+    return {
+      files: changeSet.fileCount,
+      scriptAndPatchMerged: true,
+      dirtyBaselinePreserved: true,
+      undoReapply: true,
+      concurrentUndoBlocked: true,
+      sharedLinksExcluded: true,
+      previousSharedWarningsRemoved: true,
+      rejectedPathsLocalized: true,
+      executionRootRespected: true,
+      unsafeUndoBlocked: true,
+    };
   } finally {
     await db.close();
     await rm(root, { recursive: true, force: true });

@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { isUtf8 } from 'node:buffer';
+import { lstatSync } from 'node:fs';
 import { lstat, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -32,6 +33,26 @@ function workspaceGitEnvironment(): NodeJS.ProcessEnv {
   return env;
 }
 
+/** 项目内的符号链接及其子路径属于现有目录结构，不参与本轮代码撤销。 */
+export function isTurnWorkspaceLinkedPath(path: string, root: string): boolean {
+  /** 只检查工作目录内的路径，不沿链接读取目标，也不把任意目录外路径视为共享链接。 */
+  const local = relative(resolve(root), resolve(root, path));
+  if (path.includes('\0') || !local || isAbsolute(local) || local === '..' || local.startsWith(`..${sep}`)) return false;
+  /** 从工作目录向下逐级检查，先于子路径访问发现链接，包括失效链接。 */
+  let ancestor = resolve(root);
+  // ponytail: 按目录层级检查链接；超大仓库可在单次扫描内缓存目录结果。
+  for (const segment of local.split(sep)) {
+    ancestor = join(ancestor, segment);
+    try {
+      if (lstatSync(ancestor).isSymbolicLink()) return true;
+    } catch (error) {
+      if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) return false;
+      throw error;
+    }
+  }
+  return false;
+}
+
 /** 读取本执行目录内受 Git 管理及未忽略的新文件；不扫描依赖、产物或目录外内容。 */
 export async function readTurnWorkspaceSnapshot(root: string, limits: TurnWorkspaceLimits): Promise<Map<string, TurnWorkspaceFile>> {
   /** 真实根目录用于拒绝符号链接逃逸。 */
@@ -57,7 +78,9 @@ export async function readTurnWorkspaceSnapshot(root: string, limits: TurnWorksp
     const local = relative(canonicalRoot, absolute);
     if (!local || isAbsolute(local) || local === '..' || local.startsWith(`..${sep}`) || local.split(sep).includes('.git')) throw new Error('文件快照路径超出执行目录。');
     try {
-      /** 拒绝跟随非普通文件及符号链接。 */
+      /** 共享链接既不读取目标内容，也不影响其他代码文件的快照。 */
+      if (isTurnWorkspaceLinkedPath(path, canonicalRoot)) continue;
+      /** 其余非普通文件仍不能生成恢复快照。 */
       const stat = await lstat(absolute);
       if (!stat.isFile()) throw new Error('非普通文件暂不支持本轮快照。');
       /** 已跟踪目录被替换成符号链接时也不能读取目录外内容。 */
