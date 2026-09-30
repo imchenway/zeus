@@ -1,7 +1,8 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
-import { discoverGitRepositories } from '@zeus/git-core';
+import { discoverGitRepositories, getGitRepositoryContext } from '@zeus/git-core';
+import type { ZeusTaskWorkspaceRecord } from '@zeus/storage';
 import { realpath } from 'node:fs/promises';
 import { readSelectedCommitFingerprint, readSelectedGitCommitChanges } from './gitCommitSelectionContext.js';
 import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
@@ -26,6 +27,27 @@ export async function resolveCommitRepository(project: { id: string; localPath: 
   const repository = repositories.find((item) => `project_git_repository_${createHash('sha256').update(`${project.id}\0${item.relativePath}`).digest('hex').slice(0, 24)}` === repositoryId);
   if (!repository) throw new Error('当前仓库已不可用。');
   return repository;
+}
+
+/** 任务提交说明仅读取当前任务已登记且仍检出原分支的 Worktree。 */
+export async function resolveTaskCommitRepository(project: { id: string; localPath: string }, taskId: string, workspace: ZeusTaskWorkspaceRecord | undefined) {
+  /** 身份、回收状态和物理目录失效统一阻止读取，不回退到项目仓库。 */
+  const unavailable = () => Object.assign(new Error('任务工作树不存在、已回收或分支已变化，请刷新代码交付。'), { code: 'ZEUS_TASK_WORKTREE_UNAVAILABLE', statusCode: 409 });
+  if (!workspace || workspace.projectId !== project.id || workspace.taskId !== taskId || workspace.state !== 'ready' || !workspace.worktreePath) throw unavailable();
+  try {
+    /** 目录来自持久化记录；真实路径用于核对 Git 登记，兼容系统路径别名。 */
+    const localPath = await realpath(workspace.worktreePath);
+    /** 原仓库的 Worktree 清单同时验证目录归属和实际检出分支。 */
+    const repository = await getGitRepositoryContext(workspace.repositoryPath || project.localPath);
+    /** 防止 Git 向父目录查找后误读已失去独立 Git 身份的目录。 */
+    const worktree = await getGitRepositoryContext(localPath);
+    /** 忽略已失效登记，防止读取已移走或改为普通目录的工作树。 */
+    const registeredPaths = await Promise.all(repository.worktrees.filter((entry) => !entry.bare && !entry.prunable && entry.branch === workspace.branchName).map((entry) => realpath(entry.path).catch(() => null)));
+    if (!repository.isRepository || !worktree.isRepository || (await realpath(worktree.topLevel)) !== localPath || worktree.branch !== workspace.branchName || !registeredPaths.includes(localPath)) throw unavailable();
+    return { localPath, name: workspace.repositoryName || basename(localPath) };
+  } catch {
+    throw unavailable();
+  }
 }
 
 export async function readCommitFingerprint(cwd: string, paths?: string[]): Promise<string> {

@@ -5028,7 +5028,8 @@ a {
   overflow: hidden;
 }
 .project-git-diff-preview.is-fill {
-  height: 100vh;
+  /* 填满所属面板，避免上下分区后按整窗高度裁掉差异滚动区域。 */
+  height: 100%;
 }
 .project-git-diff-preview > header {
   flex: 0 0 36px;
@@ -5224,12 +5225,14 @@ body[data-surface='project-git-diff'] #root {
 }
 body[data-surface='project-git-diff'] .macos-ai-app.zeus-shell.project-git-diff-window {
   /* 独立差异窗口共用主题，不采用主窗口的侧栏双列结构。 */
-  display: block;
+  display: flex;
+  flex-direction: column;
   /* 独立窗口没有主工作区底层，必须覆盖壳层透明材质。 */
   background: var(--zeus-page-background) !important;
   color: var(--zeus-product-text);
   height: 100vh;
-  padding-top: 42px;
+  /* 原生标题栏位于内容区之外，正文不再预留空白拖动区。 */
+  padding-top: 0;
 }
 .project-git-diff-window-error,
 .project-git-diff-loading {
@@ -5240,7 +5243,7 @@ body[data-surface='project-git-diff'] .macos-ai-app.zeus-shell.project-git-diff-
 .project-git-diff-window-layout {
   display: grid;
   grid-template-columns: minmax(220px, 18vw) minmax(0, 1fr);
-  height: calc(100vh - 42px);
+  height: 100%;
   min-height: 0;
 }
 .project-git-diff-window-files {
@@ -5317,7 +5320,7 @@ body[data-surface='project-git-diff'] .macos-ai-app.zeus-shell.project-git-diff-
   color: var(--zeus-control-danger-text);
 }
 .project-git-diff-window-layout > .project-git-diff-preview {
-  height: calc(100vh - 42px);
+  height: 100%;
 }
 
 @media (max-width: 1180px) {
@@ -16299,35 +16302,6 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   grid-template-rows: auto minmax(0, 1fr);
 }
 
-/* 新增仓库独立占据内容行并限高，保留文件审查区域的可用高度。 */
-.macos-ai-app .task-git-delivery-content.has-pending-repositories {
-  grid-template-rows: auto auto minmax(0, 1fr);
-}
-
-/* 补入是所有仓库共用的正常流程，使用中性提示并允许长路径换行。 */
-.macos-ai-app .task-git-delivery-target-issues.task-git-delivery-pending {
-  max-block-size: 220px;
-  overflow: auto;
-  overflow-wrap: anywhere;
-  margin: 0 20px 12px;
-  color: inherit;
-  background: var(--zeus-product-panel);
-}
-
-/* 仓库身份与补入动作分列，长分支或相对路径仍能换行。 */
-.macos-ai-app .task-git-delivery-pending-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-/* 名称与分支分行显示，避免紧贴按钮或重复路径。 */
-.macos-ai-app .task-git-delivery-pending-row > span {
-  display: grid;
-  min-inline-size: 0;
-}
-
 .macos-ai-app .task-git-delivery-scopebar {
   display: flex;
   align-items: center;
@@ -16397,7 +16371,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 
 /* 交付区上下分栏，差异横跨窗口；各上方面板独立滚动。 */
 .macos-ai-app .task-git-delivery-layout {
-  grid-template-columns: minmax(0, 1fr) clamp(300px, 29vw, 420px);
+  grid-template-columns: minmax(0, 1fr) clamp(272px, 24vw, 340px);
   grid-template-rows: minmax(140px, var(--git-delivery-height, 42%)) 7px minmax(0, 1fr);
   grid-template-areas: 'files actions' 'separator separator' 'diff diff';
   min-block-size: 0;
@@ -16445,7 +16419,12 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-git-delivery-branch > header button {
-  padding: 2px 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 24px;
+  block-size: 24px;
+  padding: 0;
   border: 0;
   border-radius: 5px;
   background: transparent;
@@ -16462,7 +16441,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   display: flex;
   align-items: center;
   gap: 6px;
-  min-block-size: 26px;
+  min-block-size: 24px;
   cursor: pointer;
   list-style: none;
   white-space: nowrap;
@@ -16473,15 +16452,20 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-git-delivery-repository summary::before {
-  content: '›';
-  inline-size: 12px;
-  text-align: center;
+  content: '';
+  flex: 0 0 5px;
+  inline-size: 5px;
+  block-size: 5px;
+  margin-inline: 2px 4px;
+  border-inline-end: 1px solid currentColor;
+  border-block-end: 1px solid currentColor;
+  transform: rotate(-45deg);
   color: var(--zeus-product-muted);
 }
 
 .macos-ai-app .task-git-delivery-repository[open] > summary::before,
 .macos-ai-app .task-git-delivery-directory[open] > summary::before {
-  transform: rotate(90deg);
+  transform: rotate(45deg);
 }
 
 .macos-ai-app .task-git-delivery-repository > summary label,
@@ -16521,8 +16505,8 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-git-delivery-file-row.is-active {
-  background: var(--zeus-control-bg);
-  box-shadow: inset 2px 0 var(--zeus-accent);
+  /* 审阅焦点只使用浅色行背景，避免与提交勾选的紫色重复。 */
+  background: var(--zeus-source-list-hover);
 }
 
 .macos-ai-app .task-git-delivery-file-row button {
@@ -16530,7 +16514,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   display: flex;
   align-items: center;
   gap: 6px;
-  min-block-size: 26px;
+  min-block-size: 24px;
   padding: 3px 0;
   border: 0;
   background: transparent;
@@ -16539,18 +16523,95 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   white-space: nowrap;
 }
 
-.macos-ai-app .task-git-delivery-file-row svg,
-.macos-ai-app .task-git-delivery-directory summary > svg {
+/* 平面目录图标和源码类型标记保持相同尺寸，采用 IDE 常见的类型颜色。 */
+.macos-ai-app .task-git-delivery-entry-icon {
+  display: inline-grid;
+  place-items: center;
   flex-shrink: 0;
-  inline-size: 15px;
-  block-size: 15px;
+  inline-size: 16px;
+  block-size: 16px;
   color: var(--zeus-product-muted);
+}
+
+.macos-ai-app .task-git-delivery-repository > summary .task-git-delivery-entry-icon {
+  color: #638ad8;
+}
+
+.macos-ai-app .task-git-delivery-entry-icon.is-file-type {
+  block-size: 14px;
+  border-radius: 1px;
+  background: #3574cf;
+  color: #fff;
+  font:
+    700 9px/1 Arial,
+    sans-serif;
+}
+
+.macos-ai-app .task-git-delivery-entry-icon[data-kind='javascript'] {
+  background: #f4c344;
+  color: #3e3e3e;
+}
+.macos-ai-app .task-git-delivery-entry-icon[data-kind='markup'] {
+  background: #58985c;
+}
+.macos-ai-app .task-git-delivery-entry-icon[data-kind='stylesheet'] {
+  background: #9864bb;
+}
+.macos-ai-app .task-git-delivery-entry-icon[data-kind='json'] {
+  background: #c58736;
+}
+.macos-ai-app .task-git-delivery-entry-icon[data-kind='markdown'] {
+  background: transparent;
+  color: #3574cf;
+  font-size: 11px;
 }
 
 .macos-ai-app .task-git-delivery-file-tree input {
   flex-shrink: 0;
 }
 
+/* 交付页使用小方形蓝色勾选框，原生勾选和半选状态继续由共用规则绘制。 */
+.macos-ai-app .task-git-delivery-file-tree input[type='checkbox'] {
+  inline-size: 14px;
+  block-size: 14px;
+  min-block-size: 14px;
+  border-radius: 2px;
+}
+
+.macos-ai-app .task-git-delivery-file-tree input[type='checkbox']:checked,
+.macos-ai-app .task-git-delivery-file-tree input[type='checkbox']:indeterminate {
+  background: #3574f0;
+  border-color: #3574f0;
+}
+
+/* 差异工具栏采用小尺寸的灰色平面图标，选中只显示浅色背景。 */
+.macos-ai-app .task-git-delivery-diff-main .file-preview-icon-button,
+.macos-ai-app .task-git-delivery-diff-main .project-git-diff-mode button {
+  flex: 0 0 24px;
+  inline-size: 24px;
+  block-size: 24px;
+  min-inline-size: 24px;
+  min-block-size: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  box-shadow: none;
+  background: transparent;
+  color: var(--zeus-product-muted);
+}
+
+.macos-ai-app .task-git-delivery-diff-main .file-preview-icon-button[aria-pressed='true'],
+.macos-ai-app .task-git-delivery-diff-main .file-preview-icon-button:hover,
+.macos-ai-app .task-git-delivery-diff-main .project-git-diff-mode button.is-active,
+.macos-ai-app .task-git-delivery-diff-main .project-git-diff-mode button:hover {
+  background: var(--zeus-source-list-hover);
+  color: var(--zeus-product-text);
+}
+
+.macos-ai-app .task-git-delivery-diff-main .file-preview-icon-button svg {
+  inline-size: 16px;
+  block-size: 16px;
+}
 .macos-ai-app .task-git-delivery-diff-main {
   grid-area: diff;
   grid-template-rows: auto minmax(0, 1fr);
@@ -16566,6 +16627,40 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 
 .macos-ai-app .task-git-delivery-diff-main > header button {
   flex-shrink: 0;
+}
+
+/* 文本差异把预览操作、文件身份和差异操作收进同一行，避免三层工具栏重复占高。 */
+.macos-ai-app .task-git-delivery-diff-main:has(> .file-preview > .project-git-diff-preview) {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.macos-ai-app .task-git-delivery-diff-main:has(> .file-preview > .project-git-diff-preview) > .task-git-review-pane-title {
+  display: none;
+}
+
+.macos-ai-app .task-git-delivery-diff-main > .file-preview:has(> .project-git-diff-preview) {
+  display: grid;
+  grid-template-rows: 36px minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.macos-ai-app .task-git-delivery-diff-main > .file-preview:has(> .project-git-diff-preview) > .file-preview-toolbar {
+  z-index: 1;
+  grid-area: 1 / 1;
+  align-self: center;
+  justify-self: start;
+  padding: 3px 8px;
+}
+
+.macos-ai-app .task-git-delivery-diff-main > .file-preview:has(> .project-git-diff-preview) > .project-git-diff-preview {
+  display: grid;
+  grid-area: 1 / 1 / 3;
+  grid-template-rows: 36px minmax(0, 1fr);
+}
+
+.macos-ai-app .task-git-delivery-diff-main > .file-preview:has(> .project-git-diff-preview) > .project-git-diff-preview > header {
+  min-inline-size: 0;
+  padding-inline-start: 98px;
 }
 
 /* 文件范围是紧凑的分段切换，字号与布局不继承正文，窄侧栏也不拆行。 */
@@ -16629,44 +16724,60 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   min-block-size: 0;
   align-content: start;
   display: grid;
-  gap: 22px;
-  padding: 20px;
+  gap: 5px;
+  padding: 8px 12px;
   background: var(--zeus-product-panel);
-}
-
-.macos-ai-app .task-git-delivery-actions > span > strong {
-  font-size: 16px;
 }
 
 .macos-ai-app .task-git-delivery-actions small {
   font-size: 12px;
-  line-height: 1.55;
+  line-height: 1.4;
 }
 
-.macos-ai-app .task-git-delivery-action-step {
-  padding-block-end: 22px;
-  border-block-end: 0;
-}
-
-.macos-ai-app .task-git-delivery-action-step:last-child {
+.macos-ai-app .task-git-delivery-actions > .task-git-delivery-action-step {
+  gap: 5px;
   padding-block-end: 0;
   border-block-end: 0;
 }
 
 .macos-ai-app .task-git-delivery-action-step > strong {
-  font-size: 14px;
+  font-size: 13px;
+}
+
+/* 标题与即时操作共用一行，右侧只保留必要控件和异常摘要。 */
+.macos-ai-app .task-git-delivery-step-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
 }
 
 /* 统一目标仅保留一个选择器；异常仓库集中提示，不增加逐仓选择负担。 */
 .macos-ai-app .task-git-delivery-target-issues {
   display: grid;
-  gap: 8px;
-  padding: 10px;
-  border-radius: 7px;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 4px;
   background: color-mix(in srgb, var(--zeus-warning-text, #98620d) 8%, var(--zeus-product-panel));
   color: var(--zeus-warning-text, #98620d);
   font-size: 12px;
   line-height: 1.5;
+}
+
+/* 异常只展示一行摘要，原因与文件清单通过原生 details 按需查看。 */
+.macos-ai-app .task-git-delivery-target-issues summary {
+  cursor: pointer;
+  font-weight: 600;
+  min-block-size: 18px;
+  padding: 0;
+}
+
+.macos-ai-app .task-git-delivery-target-issues details[open] > small,
+.macos-ai-app details.task-git-delivery-target-issues[open] > ul,
+.macos-ai-app .task-git-delivery-target-issues details[open] > ul {
+  display: block;
+  margin-block-start: 6px;
 }
 
 .macos-ai-app .task-git-delivery-target-issues ul {
@@ -16716,8 +16827,8 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 .macos-ai-app .task-git-delivery-action-step textarea {
   box-sizing: border-box;
   inline-size: 100%;
-  min-block-size: 58px;
-  padding: 7px 8px;
+  min-block-size: 48px;
+  padding: 6px 8px;
   border: 1px solid var(--zeus-control-border);
   border-radius: 7px;
   background: var(--zeus-control-bg);
@@ -16815,7 +16926,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 /* 结果紧贴触发按钮；窄操作栏内将详情换到下一行，长列表独立滚动。 */
 .macos-ai-app .task-git-delivery-action-step .task-git-delivery-notice {
   min-inline-size: 0;
-  padding: 10px;
+  padding: 8px;
   border-radius: 8px;
   background: var(--zeus-product-panel-muted);
 }
@@ -17483,7 +17594,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   }
 
   .macos-ai-app .task-git-delivery-actions {
-    padding: 12px;
+    padding: 8px 12px;
   }
 
   .macos-ai-app .task-git-delivery-scopebar {

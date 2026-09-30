@@ -22,10 +22,19 @@ export interface GitApiClient {
   forConversationGit: (conversationId: string) => GitApiClient;
   /** 操作账本属于桌面实例，不能回退到独立执行宿主的其他记录。 */
   loadProjectGitOperations: (projectId: string, cursor?: string) => Promise<ProjectGitOperationPage>;
-  loadGitCommitModels: (projectId: string) => Promise<{ items: Array<{ id: string; label: string }>; warning: string }>;
+  /** 生成入口可以取消模型读取，停止操作不必等待模型发现完成。 */
+  loadGitCommitModels: (projectId: string, signal?: AbortSignal) => Promise<{ items: Array<{ id: string; label: string }>; warning: string }>;
   generateGitCommitMessage: (
     projectId: string,
-    input: { repositoryId: string; relativePath?: string; language: 'zh-CN' | 'en'; modelRef: string; selection?: Array<{ repositoryId: string; relativePath: string; paths: string[] }> },
+    input: {
+      repositoryId: string;
+      relativePath?: string;
+      /** 任务交付按服务端工作区记录解析仓库，不能使用项目根目录的同名文件。 */
+      taskId?: string;
+      language: 'zh-CN' | 'en';
+      modelRef: string;
+      selection?: Array<{ repositoryId: string; relativePath: string; paths: string[] }>;
+    },
     onText?: (text: string) => void,
     signal?: AbortSignal,
   ) => Promise<{ message: string; model: string; truncated?: boolean }>;
@@ -79,7 +88,7 @@ export function createGitApiClient(transport: LocalApiTransport, bridge: () => P
       if (!nativeBridge) throw new Error('桌面 Git 操作历史暂不可用。 / Desktop Git operation history is unavailable.');
       return nativeBridge.loadOperations(projectId, cursor);
     },
-    loadGitCommitModels: (projectId) => transport.request(`${projectGitPath(projectId)}/commit-models`),
+    loadGitCommitModels: (projectId, signal) => transport.request(`${projectGitPath(projectId)}/commit-models`, { signal }),
     generateGitCommitMessage: async (projectId, input, onText, signal) => {
       scopedRepositoryId(input.repositoryId);
       input.selection?.forEach((item) => scopedRepositoryId(item.repositoryId));

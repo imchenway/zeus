@@ -1224,6 +1224,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     refreshingRepositoryId={taskModelPushRefreshingRepositoryId}
                     error={taskModelPushError}
                     skillClient={props.nativeConversationClient ?? null}
+                    environmentClient={props.nativeConversationClient ?? null}
                     onChange={(nextForm) => {
                       setTaskModelPushForm((current) => {
                         const resolved = typeof nextForm === 'function' ? nextForm(current) : nextForm;

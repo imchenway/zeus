@@ -731,8 +731,18 @@ async function openProjectGitDiffWindow(parent: BrowserWindow, input: Extract<Fi
     // 网页首帧前的原生底色与加载页使用同一主题。
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#17191d' : '#f7f8fa',
     show: false,
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 14, y: 16 },
+    // 差异窗口直接使用系统标题栏，提供可发现的拖动、缩放与全屏入口。
+    titleBarStyle: 'default',
+    // 允许从窗口边缘调整大小。
+    resizable: true,
+    // 允许通过系统标题栏移动窗口。
+    movable: true,
+    // 保留系统最小化入口。
+    minimizable: true,
+    // 保留系统最大化入口。
+    maximizable: true,
+    // 保留系统全屏入口。
+    fullscreenable: true,
     webPreferences: {
       preload: join(desktopRoot(), 'dist/preload/index.cjs'),
       contextIsolation: true,

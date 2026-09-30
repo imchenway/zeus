@@ -167,7 +167,7 @@ import { registerProjectGitQueryRoutes } from './projectGitQueryRoutes.js';
 import { ProjectQueryApplication } from './projectQueryApplication.js';
 import { registerProjectQueryRoutes } from './projectQueryRoutes.js';
 import { createCommitCodexPool } from './gitCommitCodexGeneration.js';
-import { readGitCommitContext, readCommitFingerprint, resolveCommitRepository } from './gitCommitContext.js';
+import { readGitCommitContext, readCommitFingerprint, resolveCommitRepository, resolveTaskCommitRepository } from './gitCommitContext.js';
 import { PassThrough } from 'node:stream';
 import { generateGitCommitMessage } from './gitCommitMessageGeneration.js';
 import { generateReleaseNotesWithDeepSeek } from './releaseNotesGeneration.js';
@@ -930,7 +930,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   server.post(
     '/api/projects/:projectId/git/commit-message',
     { bodyLimit: 512_000 },
-    async (request: FastifyRequest<{ Params: { projectId: string }; Body: { repositoryId?: unknown; relativePath?: unknown; language?: unknown; modelRef?: unknown; stream?: boolean; selection?: unknown } }>, reply) => {
+    async (request: FastifyRequest<{ Params: { projectId: string }; Body: { repositoryId?: unknown; relativePath?: unknown; taskId?: unknown; language?: unknown; modelRef?: unknown; stream?: boolean; selection?: unknown } }>, reply) => {
       const project = projects.getById(request.params.projectId);
       if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: '项目不存在。' });
       const body = request.body;
@@ -939,6 +939,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         typeof body?.repositoryId !== 'string' ||
         body.repositoryId.length > 200 ||
         (body.relativePath !== undefined && (typeof body.relativePath !== 'string' || body.relativePath.length > 4096)) ||
+        (body.taskId !== undefined && (typeof body.taskId !== 'string' || !body.taskId.trim() || body.taskId.length > 200 || body.selection === undefined)) ||
         (body.modelRef !== undefined && (typeof body.modelRef !== 'string' || !body.modelRef.trim() || body.modelRef.length > 2000))
       ) {
         return reply.code(400).send({ error: 'ZEUS_GIT_COMMIT_MESSAGE_INPUT_INVALID', message: '已暂存改动内容无效或过大，请缩小提交范围。' });
@@ -972,6 +973,15 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         return reply.code(400).send({ error: 'ZEUS_GIT_COMMIT_MESSAGE_INPUT_INVALID', message: '所选提交范围无效或过大，请重新选择。' });
       }
       const selection = body.selection as CommitSelection[] | undefined;
+      /** 任务身份必须属于请求中的项目；客户端不能跨项目读取任务工作树。 */
+      if (typeof body.taskId === 'string' && tasks.getById(body.taskId)?.projectId !== project.id) return reply.code(404).send({ error: 'ZEUS_TASK_NOT_FOUND', message: '当前项目中没有此任务。' });
+      /** 保留项目与独立会话入口，任务入口仅使用持久化工作区身份。 */
+      const resolveRepository = async (target: { repositoryId: string; relativePath?: string }) =>
+        typeof body.taskId === 'string'
+          ? resolveTaskCommitRepository(project, body.taskId, taskWorkspaces.getById(target.repositoryId))
+          : target.repositoryId.startsWith('conversation:')
+            ? resolveConversationGitWorkspace(project, target.repositoryId.slice('conversation:'.length), conversations, conversationSubmissions)
+            : resolveCommitRepository(project, target.repositoryId, target.relativePath);
       const controller = new AbortController();
       const stream = body.stream === true ? new PassThrough() : null;
       const disconnected = () => {
@@ -989,9 +999,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         ];
         const contexts = await Promise.all(
           targets.map(async (target) => {
-            const repository = target.repositoryId.startsWith('conversation:')
-              ? await resolveConversationGitWorkspace(project, target.repositoryId.slice('conversation:'.length), conversations, conversationSubmissions)
-              : await resolveCommitRepository(project, target.repositoryId, target.relativePath);
+            const repository = await resolveRepository(target);
             return { repository, context: await readGitCommitContext(repository.localPath, target.paths), paths: target.paths };
           }),
         );
@@ -1034,7 +1042,13 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         };
         const result = await run();
         const generated = performance.now();
-        const fingerprints = await Promise.all(contexts.map(({ repository, paths }) => readCommitFingerprint(repository.localPath, paths)));
+        const fingerprints = await Promise.all(
+          contexts.map(async ({ repository, paths }, index) => {
+            // 生成期间回收、换分支或重建工作树后，旧结果不能写回提交框。
+            if (body.taskId !== undefined && (await resolveRepository(targets[index]!)).localPath !== repository.localPath) throw new Error('生成期间任务工作树已变化，请重新生成。');
+            return readCommitFingerprint(repository.localPath, paths);
+          }),
+        );
         if (contexts.some(({ context }, index) => context.fingerprint !== fingerprints[index])) throw new Error(selection ? '生成期间所选内容已变化，请重新生成。' : '生成期间暂存内容已变化，请重新生成。');
         controller.signal.throwIfAborted();
         request.log.info(
