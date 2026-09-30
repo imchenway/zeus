@@ -1,6 +1,5 @@
-import { contextCapacitySelectionOptions, contextCapacitySelectionValue, contextCapacitySelectionFromValue } from './contextCapacitySelection.js';
 import { classifyAssistantMessage } from '@zeus/shared';
-import { type KeyboardEvent, type RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type KeyboardEvent, type RefObject, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
 import { BrowserCommentPreview } from './BrowserCommentPreview.js';
@@ -565,24 +564,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
           </span>
           <span className="session-composer-trailing-actions">
             <span className="session-composer-runtime-settings">
-              <ComposerDropdown
-                className="session-composer-capacity-dropdown"
-                label={props.language === 'zh-CN' ? '上下文容量' : 'Context capacity'}
-                value={contextCapacitySelectionValue(selectedCapacity)}
-                options={contextCapacitySelectionOptions(selectedCapability?.contextCapacity, props.language === 'zh-CN')}
-                disabled={props.readOnly === true || props.inputBlocked === true || !props.onRuntimeSettingsChange}
-                title={props.language === 'zh-CN' ? '下一轮生效；Codex 切换容量可能需约一分钟' : 'Applies next turn; Codex may take about a minute'}
-                onChange={(value) =>
-                  props.onRuntimeSettingsChange?.({
-                    model: effectiveModel,
-                    effort: selectedEffort,
-                    ...serviceTierWireOverride(selectedServiceTier),
-                    permissionMode: props.permissionMode,
-                    collaborationMode: props.collaborationMode,
-                    contextCapacityTokens: contextCapacitySelectionFromValue(value),
-                  })
-                }
-              />
               <ContextUsageIndicator contextCapacityEvidence={props.state.snapshot?.contextCapacityEvidence} contextCapacityTokens={selectedCapacity} unifiedUsage={props.state.unifiedUsage} language={props.language} />
               <ServiceTierToggle
                 language={props.language}
@@ -685,22 +666,49 @@ export function ConversationComposer(props: ConversationComposerProps) {
   );
 }
 
+/** 待发送评论统一计数，悬停或聚焦时展示原文、来源与内容。 */
 function ContextDraftAttachment(props: { draft: ConversationContextDraft; language: SessionUiLanguage; disabled: boolean; onRemove?: () => void }) {
-  const annotations = props.draft.responseAnnotations.length;
-  const comments = props.draft.codeComments.length;
+  /** 回答和代码评论在摘要中合计，详情继续保留各自来源。 */
+  const count = props.draft.responseAnnotations.length + props.draft.codeComments.length;
   const zh = props.language === 'zh-CN';
-  const label = zh
-    ? [comments ? `${comments} 个评论` : '', annotations ? `${annotations} 条注释` : ''].filter(Boolean).join('、')
-    : [comments ? `${comments} ${comments === 1 ? 'comment' : 'comments'}` : '', annotations ? `${annotations} ${annotations === 1 ? 'annotation' : 'annotations'}` : ''].filter(Boolean).join(', ');
+  /** 唯一标识用于把摘要按钮与只读详情浮层关联。 */
+  const previewId = useId();
+  const label = zh ? `${count} 条评论` : `${count} ${count === 1 ? 'comment' : 'comments'}`;
   return (
-    <section className="session-composer-context-draft" aria-label={zh ? '待发送评论与注释' : 'Pending comments and annotations'}>
+    <section className="session-composer-context-draft" aria-label={zh ? '待发送评论' : 'Pending comments'}>
       <span className="session-context-draft-chip">
-        <ChatCircle aria-hidden="true" weight="regular" />
-        <strong>{label}</strong>
-        <button type="button" aria-label={zh ? '移除评论与注释' : 'Remove comments and annotations'} onClick={props.onRemove} disabled={props.disabled || !props.onRemove}>
+        <button type="button" className="session-context-draft-preview-trigger" aria-describedby={previewId}>
+          <ChatCircle aria-hidden="true" weight="regular" />
+          <strong>{label}</strong>
+        </button>
+        <button type="button" aria-label={zh ? '移除评论' : 'Remove comments'} onClick={props.onRemove} disabled={props.disabled || !props.onRemove}>
           <span aria-hidden="true">×</span>
         </button>
       </span>
+      <aside id={previewId} className="session-context-draft-preview" role="tooltip">
+        <header>
+          <strong>{zh ? '待发送详情' : 'Pending details'}</strong>
+          <span>{label}</span>
+        </header>
+        <div className="session-message-response-annotations">
+          {props.draft.codeComments.map((comment, index) => (
+            <article key={comment.id}>
+              <span>
+                {zh ? `代码评论 ${index + 1}` : `Code comment ${index + 1}`} · {comment.position.path}:
+                {comment.position.startLine && comment.position.startLine !== comment.position.line ? `${comment.position.startLine}-${comment.position.line}` : comment.position.line}
+              </span>
+              <p>{comment.body}</p>
+            </article>
+          ))}
+          {props.draft.responseAnnotations.map((annotation, index) => (
+            <article key={annotation.id}>
+              <span>{zh ? `回答评论 ${index + 1}` : `Response comment ${index + 1}`}</span>
+              <blockquote>{annotation.anchor.selectedText}</blockquote>
+              {annotation.note?.trim() ? <p>{annotation.note}</p> : null}
+            </article>
+          ))}
+        </div>
+      </aside>
     </section>
   );
 }

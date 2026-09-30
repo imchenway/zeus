@@ -97,7 +97,7 @@ const copy = {
     delete: 'Delete comment',
     clear: 'Clear page comments',
     clearConfirm: 'Clear all unsent comments on this page?',
-    exit: 'Exit annotation mode',
+    exit: 'Exit comment mode',
     focusNext: 'Focus next comment',
     showComments: 'Show comments',
     hideComments: 'Hide comments',

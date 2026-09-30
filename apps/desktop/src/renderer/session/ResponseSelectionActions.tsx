@@ -6,8 +6,11 @@ import { SlidersHorizontalIcon as SlidersHorizontal } from '@phosphor-icons/reac
 import type { ConversationResponseAnnotation, ConversationResponseTextAnchor } from '@zeus/shared';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 
+/** 评论入口保存松手点与选择终点的相对位置，布局变化后仍跟随原文。 */
 interface SelectionCandidate {
   anchor: ConversationResponseTextAnchor;
+  /** 鼠标松手点相对选择终点的偏移，支持正向与反向跨行选择。 */
+  pointerOffset: { left: number; top: number };
   point: { left: number; top: number; placement: 'above' | 'below' };
 }
 
@@ -63,14 +66,14 @@ export function ResponseSelectionActions(props: {
     const view = article?.ownerDocument.defaultView;
     const selection = view?.getSelection();
     if (!article || !selection?.rangeCount) return;
-    const point = selectionToolbarPoint(selection.getRangeAt(0).getBoundingClientRect(), article, view ?? null, toolbarRef.current);
+    const point = selectionToolbarPoint(selection, candidate.pointerOffset, article, view ?? null, toolbarRef.current);
     if (point && (point.left !== candidate.point.left || point.top !== candidate.point.top || point.placement !== candidate.point.placement)) setCandidate({ ...candidate, point });
   }, [candidate, props.articleRef]);
 
   useEffect(() => {
     const article = props.articleRef.current;
     if (!article || !props.enabled) return;
-    const updateCandidate = () => {
+    const updateCandidate = (event: PointerEvent) => {
       requestAnimationFrame(() => {
         const root = article.querySelector<HTMLElement>('.session-markdown');
         const selection = article.ownerDocument.defaultView?.getSelection();
@@ -95,8 +98,16 @@ export function ResponseSelectionActions(props: {
           setCandidate(null);
           return;
         }
-        const point = selectionToolbarPoint(rect, article, article.ownerDocument.defaultView ?? null, toolbarRef.current);
-        setCandidate(point ? { anchor: { itemId: props.itemId, startOffset, endOffset, selectedText }, point } : null);
+        /** 选择终点由原生 Selection 决定，反向拖选不误用选区末尾。 */
+        const focusPoint = selectionFocusPoint(selection);
+        if (!focusPoint) {
+          setCandidate(null);
+          return;
+        }
+        /** 首次定位使用真实松手坐标，后续刷新保留与原文的距离。 */
+        const pointerOffset = { left: event.clientX - focusPoint.left, top: event.clientY - focusPoint.top };
+        const point = selectionToolbarPoint(selection, pointerOffset, article, article.ownerDocument.defaultView ?? null, toolbarRef.current);
+        setCandidate(point ? { anchor: { itemId: props.itemId, startOffset, endOffset, selectedText }, pointerOffset, point } : null);
       });
     };
     const clearOnPointerDown = (event: PointerEvent) => {
@@ -130,7 +141,7 @@ export function ResponseSelectionActions(props: {
         const selectedRange = selection.getRangeAt(0);
         if (!root.contains(selectedRange.startContainer) || !root.contains(selectedRange.endContainer) || selectedRange.toString() !== current.anchor.selectedText) return null;
         /** 原生选区提供滚动及换行后的实际位置，越界时仍关闭入口。 */
-        const point = selectionToolbarPoint(selectedRange.getBoundingClientRect(), article, view, toolbarRef.current);
+        const point = selectionToolbarPoint(selection, current.pointerOffset, article, view, toolbarRef.current);
         return point ? { ...current, point } : null;
       });
       setRevision((value) => value + 1);
@@ -224,7 +235,7 @@ export function ResponseSelectionActions(props: {
           key={annotation.id}
           className="session-response-annotation-marker"
           style={{ left, top }}
-          aria-label={props.language === 'zh-CN' ? `打开第 ${index + 1} 条注释` : `Open annotation ${index + 1}`}
+          aria-label={props.language === 'zh-CN' ? `打开第 ${index + 1} 条评论` : `Open comment ${index + 1}`}
           aria-expanded={editingId === annotation.id}
           onClick={() => setEditingId(annotation.id)}
         >
@@ -249,7 +260,7 @@ export function ResponseSelectionActions(props: {
   );
 }
 
-/** 回答批注沿用浏览器的胶囊编辑框，次要操作收进调整面板。 */
+/** 回答评论沿用浏览器的胶囊编辑框，次要操作收进调整面板。 */
 function ResponseAnnotationEditor(props: {
   /** 供定位逻辑读取实际浮层高度。 */
   editorRef: RefObject<HTMLDivElement | null>;
@@ -296,10 +307,10 @@ function ResponseAnnotationEditor(props: {
       data-placement={props.point.placement}
       data-expanded={optionsOpen || note.includes('\n') || undefined}
       style={{ left: props.point.left, top: props.point.top, width: props.point.width, maxHeight: props.point.maxHeight }}
-      aria-label={zh ? '回答批注' : 'Response annotation'}
+      aria-label={zh ? '回答评论' : 'Response comment'}
     >
       <form className="session-response-annotation-row" onSubmit={submitAnnotation}>
-        <button type="button" aria-label={zh ? '批注选项' : 'Annotation options'} aria-expanded={optionsOpen} onClick={() => setOptionsOpen((open) => !open)}>
+        <button type="button" aria-label={zh ? '评论选项' : 'Comment options'} aria-expanded={optionsOpen} onClick={() => setOptionsOpen((open) => !open)}>
           <SlidersHorizontal aria-hidden="true" />
         </button>
         <textarea
@@ -307,12 +318,12 @@ function ResponseAnnotationEditor(props: {
           autoFocus
           rows={1}
           value={note}
-          aria-label={zh ? '批注内容' : 'Annotation text'}
+          aria-label={zh ? '评论内容' : 'Comment text'}
           placeholder={zh ? '添加可选评论…' : 'Add an optional comment…'}
           onChange={(event) => setNote(event.currentTarget.value)}
           onKeyDown={handleAnnotationKeyDown}
         />
-        <button type="submit" className="session-response-annotation-save" aria-label={zh ? '完成批注' : 'Save annotation'}>
+        <button type="submit" className="session-response-annotation-save" aria-label={zh ? '完成评论' : 'Save comment'}>
           <Check aria-hidden="true" weight="bold" />
         </button>
       </form>
@@ -347,20 +358,41 @@ function rangeEndRect(range: Range): DOMRect | null {
   );
 }
 
-/** 评论入口右对齐选区，按实际尺寸避开会话边界。 */
-function selectionToolbarPoint(rect: DOMRect, article: HTMLElement, view: Window | null, toolbar: HTMLElement | null): SelectionCandidate['point'] | null {
+/** 原生光标给出拖选终点；整段选择没有光标矩形时使用对应端的文字片段。 */
+function selectionFocusPoint(selection: Selection): SelectionCandidate['pointerOffset'] | null {
+  /** 原生选区按文档顺序保存，focus 才代表用户结束选择的一端。 */
+  const range = selection.getRangeAt(0);
+  /** 反向选择的终点在选区开头。 */
+  const backward = selection.focusNode === range.startContainer && selection.focusOffset === range.startOffset;
+  /** 折叠副本读取光标位置，不改变用户选区。 */
+  const focusRange = range.cloneRange();
+  focusRange.collapse(backward);
+  /** 文字节点优先使用真实光标；元素边界回退到首尾可见文字片段。 */
+  const caret = focusRange.getBoundingClientRect();
+  const rect = caret.height > 0 ? caret : backward ? Array.from(range.getClientRects()).find((fragment) => fragment.width > 0 && fragment.height > 0) : rangeEndRect(range);
+  return rect ? { left: caret.height > 0 || backward ? rect.left : rect.right, top: rect.top } : null;
+}
+
+/** 评论入口放在鼠标松手点右上方，按实际尺寸避开会话边界。 */
+function selectionToolbarPoint(selection: Selection, pointerOffset: SelectionCandidate['pointerOffset'], article: HTMLElement, view: Window | null, toolbar: HTMLElement | null): SelectionCandidate['point'] | null {
   /** 会话可见范围同时约束短选区和窄分栏。 */
   const bounds = visibleOverlayBounds(article, view);
-  if (!rectFitsVisibleBounds(rect, bounds)) return null;
+  /** 布局刷新只重算原文终点，鼠标与终点的相对距离保持不变。 */
+  const focusPoint = selectionFocusPoint(selection);
+  if (!focusPoint) return null;
+  /** 松手位置作为唯一定位基准，不受整段选区宽高影响。 */
+  const left = focusPoint.left + pointerOffset.left;
+  const top = focusPoint.top + pointerOffset.top;
+  if (left < bounds.left || left > bounds.right || top < bounds.top || top > bounds.bottom) return null;
   /** 首次挂载前尺寸为零，布局阶段会在绘制前校正。 */
   const width = toolbar?.offsetWidth ?? 0;
   const height = toolbar?.offsetHeight ?? 0;
   /** 浮层与选区间保留轻量间隔，顶部放不下时移到下方。 */
   const gap = 6;
-  const placement = rect.top - bounds.top >= height + gap ? 'above' : 'below';
+  const placement = top - bounds.top >= height + gap ? 'above' : 'below';
   return {
-    left: Math.min(bounds.right, Math.max(rect.right, bounds.left + width)),
-    top: placement === 'above' ? rect.top - gap : rect.bottom + gap,
+    left: Math.max(bounds.left, Math.min(left + gap, bounds.right - width)),
+    top: placement === 'above' ? top - gap : Math.min(top + gap, bounds.bottom - height),
     placement,
   };
 }
