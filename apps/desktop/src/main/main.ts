@@ -495,11 +495,11 @@ function desktopRoot(): string {
   return process.env.ZEUS_DESKTOP_DIR ?? app.getAppPath();
 }
 
-/** 打包应用使用产品图标，源码宿主优先使用带开发标识的图标。 */
+/** 测试包与源码宿主优先使用开发标识图标，正式包使用产品图标。 */
 function applicationIconPath(): string {
-  /** 开发图标为可选资源，正式包不读取开发标识。 */
+  /** 开发与测试共用图标资源，正式包不读取开发标识。 */
   const developmentIcon = join(desktopRoot(), 'assets', 'icon-dev.png');
-  return !app.isPackaged && existsSync(developmentIcon) ? developmentIcon : join(desktopRoot(), 'assets', 'icon.png');
+  return (!app.isPackaged || isTestDistribution()) && existsSync(developmentIcon) ? developmentIcon : join(desktopRoot(), 'assets', 'icon.png');
 }
 
 /** 所有发行身份在启动时明确设置 Dock 图标，避免正式包只依赖系统保存的图标。 */
