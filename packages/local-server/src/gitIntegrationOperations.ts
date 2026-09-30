@@ -1190,11 +1190,6 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       if (!workspace.worktreePath || workspace.state === 'discarded' || workspace.state === 'reclaimed') {
         return { publicResult: { ...base, status: 'skipped' as const, message: '任务工作区已关闭或不可用。' } };
       }
-      try {
-        assertNestedTaskWorktreesReclaimed(workspace);
-      } catch (error) {
-        return { publicResult: { ...base, status: 'failed' as const, message: error instanceof Error ? error.message : '嵌套仓库尚未回收。' } };
-      }
       const review = await readTaskWorkspaceReview(workspace);
       if (review.clean) return { publicResult: { ...base, status: 'skipped' as const, message: '工作区没有可提交的变化。' } };
       const selectedPaths = [...new Set([...review.stagedFiles, ...review.unstagedFiles, ...review.untrackedFiles].map((file) => file.path))];
@@ -1264,11 +1259,6 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
 
   async function executeSingleTaskWorkspaceCommit(opaque: WorkspaceGitPreparedOpaque, value: Record<string, unknown>): Promise<WorkspaceGitRouteExecution> {
     const { task, workspace } = requirePreparedWorkspace(opaque);
-    try {
-      assertNestedTaskWorktreesReclaimed(workspace);
-    } catch (error) {
-      workspaceGitReject(409, taskGitErrorCode(error), error instanceof Error ? error.message : '嵌套仓库尚未回收。');
-    }
     if (!workspace.worktreePath) workspaceGitReject(409, 'ZEUS_TASK_WORKTREE_UNAVAILABLE', 'Task worktree is not available.');
     if (value.message !== undefined && typeof value.message !== 'string') workspaceGitReject(400, 'ZEUS_GIT_COMMIT_MESSAGE_INVALID', 'message must be a string');
     if (value.selectedPaths !== undefined && (!Array.isArray(value.selectedPaths) || !value.selectedPaths.every((path) => typeof path === 'string'))) {
