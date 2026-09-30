@@ -2,9 +2,9 @@ import type { GitApiClient } from '../features/git/gitApiClient.js';
 
 export type GitCommitModelsClient = Pick<GitApiClient, 'loadGitCommitModels'>;
 
-/** 两个提交入口共用模型偏好，未选择时使用最近一次记住的提交模型。 */
-export async function loadGitCommitModelOptions(client: GitCommitModelsClient, projectId: string) {
-  const models = await client.loadGitCommitModels(projectId);
+/** 提交入口共用模型偏好，未选择时使用最近记住的提交模型，停止时可取消模型读取。 */
+export async function loadGitCommitModelOptions(client: GitCommitModelsClient, projectId: string, signal?: AbortSignal) {
+  const models = await client.loadGitCommitModels(projectId, signal);
   let remembered: string | null = null;
   try {
     remembered = localStorage.getItem(`zeus.git.commit-model.${projectId}`);

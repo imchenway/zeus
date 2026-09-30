@@ -1,4 +1,3 @@
-import { missingTaskRepositories } from './taskRepositoryMembership.js';
 import { buildTaskEnvironmentRootPath, cleanupPreparedTaskWorktree, prepareTaskWorktree } from '@zeus/git-core';
 import {
   ConversationExpertRepository,
@@ -321,9 +320,7 @@ export function createConversationExecutionContextOperations(dependencies: Conve
       }
 
       const registeredRepositories = projectRepositories.listByProject(project.id);
-      if (environment && missingTaskRepositories(registeredRepositories, members).length) {
-        throw nativeApiError('ZEUS_TASK_REPOSITORIES_MISSING', '项目有新增仓库，请在代码交付页补入当前任务后继续，避免继续修改未隔离的项目目录。');
-      }
+      // 继续会话只恢复环境已有成员，新增仓库不自动扩大隔离与写入范围。
       const sharedPaths = projectSharedPaths.listByProject(project.id);
       const needsEnvironmentContainer = members.length > 1 || members.some((member) => member.repositoryRelativePath !== '.') || sharedPaths.length > 0;
       const createdEnvironmentRoot = needsEnvironmentContainer && !existsSync(environmentRoot);

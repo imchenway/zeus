@@ -300,9 +300,8 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       if (environment.state === 'reclaimed') throw nativeApiError('ZEUS_TASK_ENVIRONMENT_CLOSED', 'Reclaimed task environments cannot be selected again.');
       assertTaskEnvironmentWritable(environment);
       const members = taskWorkspaces.listByEnvironment(environment.id);
-      if (missingTaskRepositories(projectRepositories.listByProject(project.id), members).length) {
-        throw nativeApiError('ZEUS_TASK_REPOSITORIES_MISSING', '项目有新增仓库，请在代码交付页补入当前任务后继续。');
-      }
+      // 旧环境按已有成员继续工作；新增仓库由用户在环境配置中按需补入。
+      if (members.length === 0) throw nativeApiError('ZEUS_TASK_ENVIRONMENT_INVALID', '任务环境没有可继续的仓库工作区。');
       const restored: Array<{ workspace: ZeusTaskWorkspaceRecord; prepared: Awaited<ReturnType<typeof prepareTaskWorktree>> }> = [];
       try {
         for (const workspace of members) {

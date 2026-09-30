@@ -23,6 +23,7 @@ import type {
   NativeServiceTierSelection,
   TaskPushSupplementalAttachmentDraft,
   TaskPushSupplementalAttachmentInput,
+  TaskWorkspaceIndexCollection,
 } from '../session/sessionTypes.js';
 import { useConversationInputResources } from '../session/useConversationInputResources.js';
 import { ConversationPendingAttachmentImages } from '../session/ConversationResources.js';
@@ -694,6 +695,8 @@ export function TaskModelPushModal(props: {
   refreshingRepositoryId: string | null;
   error: string | null;
   skillClient: Pick<CodexApiClient, 'loadSkills'> | null;
+  /** 已有环境的仓库配置独立于代码交付，新增成员仅由用户明确补入。 */
+  environmentClient?: Pick<CodexApiClient, 'loadTaskGitWorkspaceIndex' | 'attachTaskRepository'> | null;
   onChange: Dispatch<SetStateAction<TaskModelPushForm>>;
   onServiceTierPreferenceChange: (model: CodexTaskPushModelCapability, selection: NativeServiceTierSelection) => void | Promise<void>;
   onRefreshRepository: (repositoryId: string) => void;
@@ -708,6 +711,34 @@ export function TaskModelPushModal(props: {
 }) {
   /** 退出时立即停用附件输入与焦点恢复。 */
   const interactionOpen = usePresenceOpen() && props.open;
+  /** 已有环境使用权威成员清单，不因项目新增仓库自动扩容。 */
+  const [environmentRepositoryIndex, setEnvironmentRepositoryIndex] = useState<TaskWorkspaceIndexCollection | null>(null);
+  /** 补入结果通过重新读取索引确认，不在前端拼接成员。 */
+  const [environmentRepositoryRevision, setEnvironmentRepositoryRevision] = useState(0);
+  /** 补入期间锁定环境与表单，避免请求中途切换任务。 */
+  const [attachingRepositoryId, setAttachingRepositoryId] = useState<string | null>(null);
+  /** 配置读取失败只影响可选补入，不阻断原有环境继续工作。 */
+  const [environmentRepositoryError, setEnvironmentRepositoryError] = useState<unknown>(null);
+  /** 在 React 更新前阻止同一补入操作重复进入。 */
+  const attachmentPendingRef = useRef(false);
+  useEffect(() => {
+    setEnvironmentRepositoryIndex(null);
+    setEnvironmentRepositoryError(null);
+    if (!interactionOpen || !props.task || !props.environmentClient || props.form.workspaceMode !== 'worktree' || props.form.taskBranchMode !== 'existing' || !props.form.environmentId) return;
+    /** 读取绑定到当前任务和环境；退出或切换后丢弃旧响应。 */
+    let cancelled = false;
+    void props.environmentClient.loadTaskGitWorkspaceIndex(props.task.id).then(
+      (index) => {
+        if (!cancelled) setEnvironmentRepositoryIndex(index);
+      },
+      (reason: unknown) => {
+        if (!cancelled) setEnvironmentRepositoryError(reason);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [interactionOpen, props.task?.id, props.environmentClient, props.form.workspaceMode, props.form.taskBranchMode, props.form.environmentId, environmentRepositoryRevision]);
   const commonSources = useMemo(() => resolveTaskPushCommonSources(props.capabilities?.repositories ?? []), [props.capabilities?.repositories]);
   /** 窄窗口由正文统一滚动，接入模型返回后恢复原位置。 */
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -763,7 +794,7 @@ export function TaskModelPushModal(props: {
   const selectedModel = requestedModel?.available === false ? undefined : requestedModel;
   if (!props.open || !props.task) return null;
   const zh = props.language === 'zh-CN';
-  const busy = props.status === 'submitting' || inputResources.processing;
+  const busy = props.status === 'submitting' || inputResources.processing || attachingRepositoryId !== null;
   const codexLoginRequired = selectedModel?.agentKind !== 'pi' && selectedModel?.sourceId === 'codex' && codexAccount?.requiresOpenaiAuth === true && !codexAccount.signedIn;
   /** 只有已完成的能力查询才能判定需要接入；查询失败保持为失败。 */
   const modelSetupRequired = Boolean(props.capabilities) && (!selectedModel || codexLoginRequired);
@@ -773,6 +804,27 @@ export function TaskModelPushModal(props: {
   const existingEnvironments = props.capabilities?.existingEnvironments ?? [];
   const availableEnvironments = existingEnvironments.filter((environment) => environment.available);
   const selectedEnvironment = existingEnvironments.find((environment) => environment.id === props.form.environmentId);
+  /** 只在当前选中环境展示可补入项，避免重复列出其他历史环境。 */
+  const pendingEnvironmentRepositories = environmentRepositoryIndex?.pendingRepositories?.filter((repository) => repository.environmentId === props.form.environmentId) ?? [];
+  /** 成员优先采用补入后重读的权威索引。 */
+  const environmentRepositories = environmentRepositoryIndex?.items.filter((workspace) => workspace.environmentId === props.form.environmentId) ?? selectedEnvironment?.repositories ?? [];
+  /** 补入复用既有耐久 Git 命令入口；失败保留错误且不自动重试。 */
+  async function attachEnvironmentRepository(repositoryId: string): Promise<void> {
+    if (!props.task || !props.environmentClient || !selectedEnvironment?.available || busy || attachmentPendingRef.current) return;
+    attachmentPendingRef.current = true;
+    setAttachingRepositoryId(repositoryId);
+    setEnvironmentRepositoryError(null);
+    try {
+      await props.environmentClient.attachTaskRepository(props.task.id, { environmentId: selectedEnvironment.id, repositoryId });
+      setEnvironmentRepositoryRevision((revision) => revision + 1);
+      props.onRefreshLocalRepositories();
+    } catch (reason: unknown) {
+      setEnvironmentRepositoryError(reason);
+    } finally {
+      attachmentPendingRef.current = false;
+      setAttachingRepositoryId(null);
+    }
+  }
   const selectedCommonSourceKey = resolveSelectedTaskPushCommonSourceKey(repositories, props.form.repositorySelections, commonSources);
   const selectedCommonSource = commonSources.find((source) => source.key === selectedCommonSourceKey);
   const hasRepositorySourceSelection = repositories.some((repository) => Boolean(props.form.repositorySelections[repository.id]?.sourceRef));
@@ -1217,7 +1269,7 @@ export function TaskModelPushModal(props: {
                 />
                 {selectedEnvironment ? (
                   <ul className="task-model-push-existing-repositories">
-                    {selectedEnvironment.repositories.map((repository) => (
+                    {environmentRepositories.map((repository) => (
                       <li key={`${repository.repositoryId ?? repository.repositoryRelativePath}:${repository.branchName}`}>
                         <span>{repository.repositoryName}</span>
                         <code>{repository.branchName}</code>
@@ -1230,6 +1282,29 @@ export function TaskModelPushModal(props: {
                     {zh ? '请选择一组当前可继续的任务分支。' : 'Choose a task branch environment that is currently available.'}
                   </p>
                 )}
+                {environmentRepositoryError ? <VisibleApplicationError error={environmentRepositoryError} language={zh ? 'zh-CN' : 'en'} /> : null}
+                {pendingEnvironmentRepositories.length > 0 ? (
+                  <details>
+                    <summary>{zh ? `按需补入仓库（${pendingEnvironmentRepositories.length}）` : `Add repositories as needed (${pendingEnvironmentRepositories.length})`}</summary>
+                    <small>{zh ? '只有需要在当前任务中修改时才补入；现有环境可以直接继续。' : 'Add a repository only when this task needs to change it. The existing environment can continue as-is.'}</small>
+                    <ul className="task-model-push-existing-repositories">
+                      {pendingEnvironmentRepositories.map((repository) => (
+                        <li key={repository.repositoryId}>
+                          <span title={repository.relativePath}>{repository.repositoryName}</span>
+                          <Button
+                            variant="secondary"
+                            size="compact"
+                            busy={attachingRepositoryId === repository.repositoryId}
+                            disabled={busy || !selectedEnvironment?.available}
+                            onClick={() => void attachEnvironmentRepository(repository.repositoryId)}
+                          >
+                            {zh ? '补入当前环境' : 'Add to this environment'}
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : null}
               </section>
             ) : !props.capabilities ? (
               <p className={props.status === 'error' ? 'task-model-push-error' : 'task-model-push-message'} role={props.status === 'error' ? 'alert' : undefined}>
@@ -1440,7 +1515,7 @@ export function TaskModelPushModal(props: {
                 : 'Confirm to create a conversation and start this task.'}
           </small>
           <span>
-            <Button variant="secondary" size="regular" onClick={props.onClose} disabled={props.status === 'submitting'}>
+            <Button variant="secondary" size="regular" onClick={props.onClose} disabled={busy}>
               {zh ? '取消' : 'Cancel'}
             </Button>
             <Button
