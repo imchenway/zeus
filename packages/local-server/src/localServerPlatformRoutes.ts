@@ -1192,7 +1192,9 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         /** 只有多世代运行管理器能原子阻止新任务进入维护窗口。 */
         const runMaintenance = codexAppServerManager.runExclusiveMaintenance?.bind(codexAppServerManager);
         if (!runMaintenance) throw nativeApiError('ZEUS_CODEX_UPDATE_NOT_AVAILABLE', '当前 Codex 运行服务不支持安全在线更新。');
-        /** 更新完成前不接纳新的 Codex 写操作；已有查询仍可返回。 */
+        /** 已有轮次、目标和授权自然收口；设置页明确展示等待，不把排队误报成失败。 */
+        reportProgress(null, 'waiting');
+        /** 取得维护窗口后不接纳新的 Codex 写操作；已有查询仍可返回。 */
         const result = await runMaintenance(async (maintenance: CodexRuntimeMaintenanceControl) => {
           reportProgress(null, 'preparing');
           /** 服务端重新读取实际程序和官方版本，不信任界面上一次检测结果。 */

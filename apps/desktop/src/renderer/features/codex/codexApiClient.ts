@@ -40,13 +40,13 @@ export const codexRuntimeUpdateCheckedEvent = 'zeus:codex-runtime-update-checked
 
 /** 只接受服务端定义的更新阶段。 */
 export function isCodexRuntimeUpdateStage(value: unknown): value is CodexRuntimeUpdateProgress['stage'] {
-  return ['checking', 'preparing', 'downloading', 'installing', 'verifying', 'switching', 'completed'].includes(String(value));
+  return ['checking', 'waiting', 'preparing', 'downloading', 'installing', 'verifying', 'switching', 'completed'].includes(String(value));
 }
 
 /** 设置页只接收服务端确认完成的真实更新阶段。 */
 export interface CodexRuntimeUpdateProgress {
   /** 当前更新阶段。 */
-  stage: 'checking' | 'preparing' | 'downloading' | 'installing' | 'verifying' | 'switching' | 'completed';
+  stage: 'checking' | 'waiting' | 'preparing' | 'downloading' | 'installing' | 'verifying' | 'switching' | 'completed';
   /** 当前阶段有真实总量时返回 0 到 1，否则不伪造数值。 */
   progress: number | null;
 }
