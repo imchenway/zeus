@@ -840,10 +840,9 @@ body:has(.menu-bar-usage-root),
   background: var(--zeus-brand-hover);
 }
 
-/* 选择后的焦点环保持中性，避免原生下拉持续显示品牌紫色描边。 */
+/* 原生下拉自身已有边界，选择后不再叠加额外焦点圈。 */
 .menu-bar-usage-source-select select:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--usage-text) 48%, transparent);
-  outline-offset: 1px;
+  outline: 0;
 }
 
 .menu-bar-usage-source-select:focus-within {
@@ -1132,10 +1131,6 @@ body:has(.menu-bar-usage-root),
 .menu-bar-usage-bars figcaption dt,
 .menu-bar-usage-bars-plot small {
   color: var(--usage-muted);
-}
-
-.menu-bar-usage-freshness[data-stale='true'] {
-  color: var(--usage-warning);
 }
 
 .menu-bar-usage-refresh {
