@@ -1637,7 +1637,8 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
   const queuedForActiveTurn =
     !action.taskPushLayout &&
     action.delivery === 'queue' &&
-    (action.previousConversationState === 'active_prework' ||
+    (action.previousConversationState === 'starting_turn' ||
+      action.previousConversationState === 'active_prework' ||
       action.previousConversationState === 'active_final_answer' ||
       action.previousConversationState === 'waiting_approval' ||
       action.previousConversationState === 'waiting_user_input' ||

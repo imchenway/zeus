@@ -1513,7 +1513,7 @@ async function verifyTranscriptInitializationRecovery() {
 }
 
 /** 复核活跃轮次后的普通发送从首帧开始只进入输入框排队区。 */
-function verifyActiveTurnQueueProjection() {
+async function verifyActiveTurnQueueProjection() {
   /** 活跃队列代表当前回复仍在生成，新消息必须等待本轮结束。 */
   const activeQueue: NativeQueueSnapshot = { state: { type: 'active', turnId: 'active-turn', phase: 'prework' }, waitReason: 'current_turn', submissions: [] };
   /** 最小活跃会话只保留本次投影需要的身份和队列事实。 */
@@ -1575,9 +1575,50 @@ function verifyActiveTurnQueueProjection() {
   /** 去重后仍只保留一个权威卡片。 */
   const durableCards = composerQueuedSubmissions(durableState);
   assert(durableCards.length === 1 && durableCards[0]?.id === 'queued-submission' && !durableCards[0]?.localOnly, '权威队列必须无闪烁替换本地卡片。');
+  /** 纯附件发送最容易发生在首轮仍处于 starting_turn 的接纳窗口。 */
+  const attachment = { name: '排队附件.png', mime: 'image/png', size: 2048, kind: 'image' as const, localPath: '/tmp/排队附件.png' };
+  /** 即使正文为空，附件也必须在首帧由排队卡片接管。 */
+  const attachmentOnlyState = sessionReducer(
+    { ...activeState, conversationState: 'starting_turn', queue: { state: { type: 'idle' }, submissions: [] } },
+    {
+      type: 'send_started',
+      clientUserMessageId: 'queued-attachment-only',
+      durableClientUserMessageId: 'queued-attachment-only',
+      draft: '',
+      attachments: [attachment],
+      submittedAttachments: [attachment],
+      browserSubmission: null,
+      contextDraft: { responseAnnotations: [], codeComments: [] },
+      browserComments: [],
+      delivery: 'queue',
+      previousConversationState: 'starting_turn',
+      startedAt: occurredAt,
+    },
+  );
+  /** 排队卡片保留附件且不制造伪正文，避免退化成会话中的引导气泡。 */
+  const attachmentOnlyCards = composerQueuedSubmissions(attachmentOnlyState);
+  assert(
+    attachmentOnlyCards.length === 1 && attachmentOnlyCards[0]?.content === '' && attachmentOnlyCards[0]?.attachments?.[0]?.name === attachment.name && attachmentOnlyCards[0]?.localOnly,
+    'starting_turn 中的纯附件消息必须直接进入排队卡片。',
+  );
+  /** 真实控制器入口同时验证纯附件不会被补成“回答批注”伪正文。 */
+  const attachmentHarness = createHarness(undefined, 0, true);
+  try {
+    await attachmentHarness.controller.start();
+    attachmentHarness.controller.setAttachments([attachment]);
+    await attachmentHarness.controller.send('queue');
+    /** 服务端请求保留空正文和附件，并且不发送虚构 displayText。 */
+    const attachmentRequest = attachmentHarness.sentMessages[0];
+    assert(
+      attachmentHarness.sendCalls() === 1 && attachmentRequest?.content === '' && attachmentRequest.displayText === undefined && Array.isArray(attachmentRequest.attachments) && attachmentRequest.attachments.length === 1,
+      '纯附件请求不得携带伪造的回答批注正文。',
+    );
+  } finally {
+    attachmentHarness.controller.dispose();
+  }
   /** 空闲会话的首条消息仍属于正式时间线，不能被本次规则误收进排队区。 */
   const firstTurnState = sessionReducer(
-    { ...activeState, conversationState: 'ready', queue: { state: { type: 'idle' }, submissions: [] } },
+    { ...activeState, conversationState: 'native_idle', queue: { state: { type: 'idle' }, submissions: [] } },
     {
       type: 'send_started',
       clientUserMessageId: 'first-turn-message',
@@ -1589,12 +1630,12 @@ function verifyActiveTurnQueueProjection() {
       contextDraft: { responseAnnotations: [], codeComments: [] },
       browserComments: [],
       delivery: 'queue',
-      previousConversationState: 'ready',
+      previousConversationState: 'native_idle',
       startedAt: occurredAt,
     },
   );
   assert(composerQueuedSubmissions(firstTurnState).length === 0, '空闲会话首条消息不得进入输入框排队区。');
-  return { pendingCardImmediate: true, transcriptIdentityClaimed: true, durableReplacement: true, firstTurnPreserved: true };
+  return { pendingCardImmediate: true, transcriptIdentityClaimed: true, durableReplacement: true, attachmentOnlyStartingTurnQueued: true, attachmentOnlyRequestTextPreserved: true, firstTurnPreserved: true };
 }
 
 /** 复核首条任务提示词在实时、队列和局部历史之间保持同一位置，旧缺位输入能一次恢复。 */
@@ -1720,7 +1761,7 @@ async function verifyTaskPushPlacement() {
 
 /** 排队首帧专项只运行本地投影与权威接管检查。 */
 if (process.argv.includes('--active-queue-projection-only')) {
-  console.log(JSON.stringify({ activeTurnQueueProjection: verifyActiveTurnQueueProjection() }));
+  console.log(JSON.stringify({ activeTurnQueueProjection: await verifyActiveTurnQueueProjection() }));
   process.exit(0);
 }
 

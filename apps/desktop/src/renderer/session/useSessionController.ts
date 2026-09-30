@@ -3111,7 +3111,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
       }
       const attachments = mergeAttachments(composerAttachments, browserSubmission?.attachments ?? []);
       const appliedSettings = delivery === 'queue' ? settings : undefined;
-      const displayText = appliedSettings?.displayText?.trim() || draft.trim() || (browserSubmission ? `Browser comments (${browserSubmission.commentIds.length})` : '') || (contextDraft.codeComments.length ? '代码评论' : '回答批注');
+      /** 结构化评论才使用说明文字；纯附件消息保持空正文，由附件摘要承担展示。 */
+      const contextDisplayText = contextDraft.codeComments.length ? '代码评论' : contextDraft.responseAnnotations.length ? '回答批注' : '';
+      /** 展示正文只从真实输入来源派生，不能给纯附件消息伪造批注文案。 */
+      const displayText = appliedSettings?.displayText?.trim() || draft.trim() || (browserSubmission ? `Browser comments (${browserSubmission.commentIds.length})` : '') || contextDisplayText;
       const content = [appliedSettings?.promptText?.trim() ?? draft.trim(), browserSubmission?.content.trim(), serializeConversationContext(contextDraft)].filter(Boolean).join('\n\n');
       const fingerprint = sendFingerprint({
         content,
