@@ -1236,7 +1236,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     onServiceTierPreferenceChange={domainActions.saveTaskModelPushServiceTierPreference}
                     onRefreshRepository={(repositoryId) => void refreshTaskModelPushRepository(repositoryId)}
                     onRefreshLocalRepositories={() => void domainActions.refreshTaskModelPushRepositories()}
-                    onConnectModel={taskModelPushEntry === 'confirmation' ? () => modelSetup.open('choose', taskModelSetupContext ?? null) : undefined}
+                    onConnectModel={() => modelSetup.open('choose', taskModelSetupContext ?? null)}
                     onRetryModels={() => void domainActions.refreshTaskModelPushModels().catch(() => undefined)}
                     onClose={closeTaskModelPush}
                     onSubmit={(event) => void submitTaskModelPush(event)}

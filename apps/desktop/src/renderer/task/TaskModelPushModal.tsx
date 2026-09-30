@@ -794,6 +794,8 @@ export function TaskModelPushModal(props: {
   const selectedModel = requestedModel?.available === false ? undefined : requestedModel;
   if (!props.open || !props.task) return null;
   const zh = props.language === 'zh-CN';
+  /** 模型等级始终保留位置，能力加载与模型切换只改变选项和可用状态。 */
+  const supportedReasoningEfforts = selectedModel?.supportedReasoningEfforts ?? [];
   const busy = props.status === 'submitting' || inputResources.processing || attachingRepositoryId !== null;
   const codexLoginRequired = selectedModel?.agentKind !== 'pi' && selectedModel?.sourceId === 'codex' && codexAccount?.requiresOpenaiAuth === true && !codexAccount.signedIn;
   /** 只有已完成的能力查询才能判定需要接入；查询失败保持为失败。 */
@@ -926,8 +928,9 @@ export function TaskModelPushModal(props: {
           >
             <div className="task-model-push-toolbar">
               <strong id="task-model-push-model-heading">{zh ? '模型选择' : 'Model selection'}</strong>
+              {/* 加载时保留接入按钮的布局，只禁用交互，避免工具栏高度变化。 */}
               {props.onConnectModel && !modelSetupRequired ? (
-                <Button className="task-model-connect-link" variant="secondary" size="compact" onClick={props.onConnectModel} disabled={busy}>
+                <Button className="task-model-connect-link" variant="secondary" size="compact" onClick={props.onConnectModel} disabled={busy || props.status === 'loading'}>
                   {zh ? '接入其他模型' : 'Connect another model'}
                 </Button>
               ) : null}
@@ -974,23 +977,22 @@ export function TaskModelPushModal(props: {
                   onChange={(value) => props.onChange((current) => ({ ...current, contextCapacityTokens: contextCapacitySelectionFromValue(value) }))}
                 />
               </label>
-              {selectedModel?.supportedReasoningEfforts.length ? (
-                <label className="task-model-push-effort-field">
-                  <span>{zh ? '模型等级' : 'Reasoning effort'}</span>
-                  <ZeusSelect
-                    size="regular"
-                    ariaLabel={zh ? '模型等级' : 'Reasoning effort'}
-                    value={props.form.effort}
-                    options={selectedModel.supportedReasoningEfforts.map((effort) => ({
-                      value: effort,
-                      label: effort,
-                    }))}
-                    onChange={(effort) => props.onChange({ ...props.form, effort })}
-                    disabled={busy || Boolean(props.form.stageId)}
-                    searchable={false}
-                  />
-                </label>
-              ) : null}
+              <label className="task-model-push-effort-field">
+                <span>{zh ? '模型等级' : 'Reasoning effort'}</span>
+                <ZeusSelect
+                  size="regular"
+                  ariaLabel={zh ? '模型等级' : 'Reasoning effort'}
+                  value={props.form.effort}
+                  options={supportedReasoningEfforts.map((effort) => ({
+                    value: effort,
+                    label: effort,
+                  }))}
+                  triggerLabel={!selectedModel ? (props.status === 'loading' ? (zh ? '加载中…' : 'Loading…') : '—') : supportedReasoningEfforts.length === 0 ? (zh ? '不支持' : 'Not supported') : undefined}
+                  onChange={(effort) => props.onChange({ ...props.form, effort })}
+                  disabled={supportedReasoningEfforts.length === 0 || busy || Boolean(props.form.stageId)}
+                  searchable={false}
+                />
+              </label>
               <label>
                 <span>{zh ? '速度' : 'Speed'}</span>
                 <ZeusSelect
