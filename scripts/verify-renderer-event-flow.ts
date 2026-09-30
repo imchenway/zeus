@@ -258,7 +258,7 @@ function createHarness(
 }
 
 /** 反复收到有界首屏时，已读正文和分页状态不得被反复清空。 */
-function verifyStableHydrationPages() {
+async function verifyStableHydrationPages() {
   /** 首屏省略更早的已读过程项。 */
   const fresh = adaptConversationSnapshotV2({ snapshot: snapshotV2, history: historyV2, queue, requests: [], planImplementationRequests: [], choice, goal });
   /** 模拟已读取的完整过程正文，与既有接口的条目结构一致。 */
@@ -291,7 +291,38 @@ function verifyStableHydrationPages() {
   /** 重连只释放已经失效的请求标记，保留已完成进度。 */
   const resumed = resumeCachedConversationSnapshot({ ...cached, v2Paging: { ...cached.v2Paging, processByTurn: { turn: { ...page, loading: true } } } });
   assert(resumed.v2Paging?.processByTurn.turn?.loading === false && resumed.v2Paging.processByTurn.turn.loaded, '重连不能保留旧请求的忙碌状态。');
-  return { refreshes: 20, stableItemIdentity: true, retainedPages: true };
+  /** 分页元数据走真实 reducer，但不能改动消息对象、顺序、轮次归属和内容修订。 */
+  for (const loading of [true, false]) {
+    /** 记录此次分页状态变化之前的所有结构引用。 */
+    const before = state;
+    state = sessionReducer(state, { type: 'snapshot_v2_page_merged', snapshot: { ...state.snapshot!, v2Paging: { ...state.snapshot!.v2Paging!, processByTurn: { turn: { ...page, loading, error: loading ? null : '读取失败' } } } } });
+    assert(state.items === before.items && state.itemOrder === before.itemOrder && state.turnsByProviderId === before.turnsByProviderId && state.transcriptRevision === before.transcriptRevision, '加载或失败状态不得重新构造已确认消息。');
+  }
+  /** 已加载末页仍有更早内容；完成态从头阅读请求不能覆盖这个连续范围。 */
+  const partial = { ...cached, v2Paging: { ...cached.v2Paging, processByTurn: { turn: { ...page, direction: 'tail' as const, nextCursor: 'earlier-process', hasMore: true } } } };
+  /** 控制器使用隔离状态，不连接真实 Provider 或读取正式用户数据。 */
+  const harness = createHarness(undefined, 0, false, [], null, undefined, undefined, createHydratedSessionState(partial));
+  /** 真实控制器的请求参数决定是否保留方向与游标。 */
+  const requests: Array<{ cursor?: string; direction?: string }> = [];
+  harness.client.loadNativeConversationProcessV2 = async (_project, _conversation, _turn, options) => {
+    requests.push(options ?? {});
+    if (requests.length === 1) throw new Error('隔离探针模拟首次补页失败');
+    return { ...historyV2, kind: 'process', items: [] };
+  };
+  try {
+    /** 失败不丢弃之前可见的过程，再次读取仍使用同一游标。 */
+    await harness.controller.loadTurnProcess('turn', true).catch(() => undefined);
+    assert(
+      harness.controller.getState().snapshot?.items.some((entry) => entry.id === item.id),
+      '补页失败不能删除已加载过程。',
+    );
+    await harness.controller.loadTurnProcess('turn', true);
+    await harness.controller.loadTurnProcess('turn', true);
+    assert(requests.length === 2 && requests.every((request) => request.direction === 'tail' && request.cursor === 'earlier-process'), '完成态展开与重试必须延续末页游标，完成后再次读取不得发请求。');
+  } finally {
+    harness.controller.dispose();
+  }
+  return { refreshes: 20, stableItemIdentity: true, retainedPages: true, metadataPreservesStructure: true, continuedTailRequests: requests.length };
 }
 
 /** 用户重试只在核对未送达后重发，重复点击共用一次操作。 */
@@ -1719,6 +1750,12 @@ async function verifyTaskPushPlacement() {
 }
 
 /** 排队首帧专项只运行本地投影与权威接管检查。 */
+/** 结构专项直接运行分页控制器与 reducer，不受无关队列探针前置条件影响。 */
+if (process.argv.includes('--process-structure-only')) {
+  console.log(JSON.stringify({ processStructure: await verifyStableHydrationPages(), terminalPreservation: verifyProcessPageDoesNotDowngradeLiveTerminalState() }));
+  process.exit(0);
+}
+
 if (process.argv.includes('--active-queue-projection-only')) {
   console.log(JSON.stringify({ activeTurnQueueProjection: verifyActiveTurnQueueProjection() }));
   process.exit(0);
@@ -1749,7 +1786,7 @@ const turnChangeReview = await verifyTurnChangeReviewHydration();
 /** 重试专项可单独核验，不受其他既有投影断言影响。 */
 const queuedRetryReconciliation = await verifyQueuedRetryReconciliation();
 /** 补读与答题刷新共用同一稳定性核验。 */
-const stableHydrationPages = verifyStableHydrationPages();
+const stableHydrationPages = await verifyStableHydrationPages();
 /** 会话恢复专项同时核对已接纳消息与待发队列的边界。 */
 const restoredSubmissionOrder = verifyRestoredSubmissionOrder();
 /** 默认仍执行既有全量入口；专项参数只缩小本地验收范围。 */
@@ -1760,6 +1797,7 @@ const result =
       ? { turnChangeReview }
       : {
           turnChangeReview,
+          stableHydrationPages,
           budget: sessionRealtimeBufferBudget,
           restoredSubmissionOrder,
           truncatedTaskPushIdentity: verifyTruncatedTaskPushIdentityCoalescing(),

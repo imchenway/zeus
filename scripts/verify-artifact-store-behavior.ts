@@ -85,6 +85,9 @@ async function verifyConversationFileResources(): Promise<void> {
       assertProbe(source?.kind === 'file' && source.location?.line === 2, '代码文件链接必须保留行号');
       const preview = readConversationResourcePreview(source, toConversationResourceOpenIntent(resources.getById(source.id)!));
       assertProbe(preview.kind === 'source' && preview.content.includes('value = 7') && preview.location?.line === 2, '代码预览应读取真实文件并定位指定行');
+      /** 后续状态事件省略资源字段时仍须返回原资源，不能让已显示的缩略图变成 404。 */
+      const preserved = syncConversationResources({ ...input, text: '', payload: {} }, resources);
+      assertProbe(JSON.stringify(preserved.map((resource) => resource.id)) === JSON.stringify(projected.map((resource) => resource.id)), '空资源投影不得删除同一条目的持久资源');
       assertProbe(JSON.stringify(syncConversationResources(input, resources).map((resource) => resource.id)) === JSON.stringify(projected.map((resource) => resource.id)), '重复登记不得改变资源身份或叠加卡片');
       if (agentKind === 'pi') resourceIds = projected.map((resource) => resource.id);
     }

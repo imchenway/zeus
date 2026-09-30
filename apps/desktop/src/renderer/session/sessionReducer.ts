@@ -807,6 +807,10 @@ function mergeCompleteContent(state: NativeSessionState, action: Extract<NativeS
  * 若用普通水合处理，较早的分页基准会把刚完成的轮次降回运行中并丢掉实时最终答复。
  */
 function mergeSnapshotV2Page(state: NativeSessionState, snapshot: NativeConversationSnapshot): NativeSessionState {
+  /** 加载、游标或错误变化只更新分页状态，不重新水合消息或改变内容修订。 */
+  if (state.snapshot && Object.keys(snapshot).length === Object.keys(state.snapshot).length && Object.entries(snapshot).every(([key, value]) => key === 'v2Paging' || value === state.snapshot![key as keyof NativeConversationSnapshot])) {
+    return snapshot === state.snapshot ? state : { ...state, snapshot };
+  }
   const hydrated = hydrateSnapshot(state, snapshot, false);
   const items = { ...hydrated.items };
   /** 唯一显示身份已在服务端统一；原生条目编号可以在不同分段重复。 */
@@ -816,6 +820,7 @@ function mergeSnapshotV2Page(state: NativeSessionState, snapshot: NativeConversa
     const canonicalKey = canonicalKeys.get(previous.transcript?.placement.entryId ?? key) ?? key;
     canonicalKeyByAlias.set(key, canonicalKey);
     const projected = items[canonicalKey];
+    /** 同一持久身份的多个旧别名仍逐项归并，不能丢失较新的实时修订。 */
     items[canonicalKey] = projected ? mergeSnapshotPageItem(previous, projected, canonicalKey) : previous;
   }
 
@@ -847,8 +852,18 @@ function mergeSnapshotV2Page(state: NativeSessionState, snapshot: NativeConversa
   const turnsByProviderId = { ...hydrated.turnsByProviderId };
   for (const [turnId, previous] of Object.entries(state.turnsByProviderId)) {
     const projected = turnsByProviderId[turnId];
-    if (!projected || (isTerminalTurnStatus(previous.status) && !isTerminalTurnStatus(projected.status)) || previous.updatedAt.localeCompare(projected.updatedAt) > 0) turnsByProviderId[turnId] = previous;
+    if (!projected || (isTerminalTurnStatus(previous.status) && !isTerminalTurnStatus(projected.status)) || previous.updatedAt.localeCompare(projected.updatedAt) > 0 || sameSerializableValue(previous, projected))
+      turnsByProviderId[turnId] = previous;
   }
+  /** 未变化轮次保留映射身份，分页不改变已确认的轮次归属。 */
+  const stableTurns =
+    Object.keys(turnsByProviderId).length === Object.keys(state.turnsByProviderId).length && Object.entries(turnsByProviderId).every(([key, turn]) => turn === state.turnsByProviderId[key]) ? state.turnsByProviderId : turnsByProviderId;
+  /** 内容相同的分页条目继续复用已经展示的对象。 */
+  const stableItems = reuseEquivalentSessionItems(state.items, items);
+  /** 相同顺序不产生新的结构引用。 */
+  const stableItemOrder = sameStringArray(state.itemOrder, itemOrder) ? state.itemOrder : itemOrder;
+  /** 分页没有新增终态时继续沿用原终态表。 */
+  const terminalTurnIds = { ...hydrated.terminalTurnIds, ...state.terminalTurnIds };
   const turns = [...new Map([...snapshot.turns, ...Object.values(turnsByProviderId)].map((turn) => [turn.providerTurnId ?? turn.id, turn])).values()].sort(
     (left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
   );
@@ -856,10 +871,10 @@ function mergeSnapshotV2Page(state: NativeSessionState, snapshot: NativeConversa
   return {
     ...hydrated,
     snapshot: { ...hydrated.snapshot!, turns },
-    turnsByProviderId,
-    terminalTurnIds: { ...hydrated.terminalTurnIds, ...state.terminalTurnIds },
-    items,
-    itemOrder,
+    turnsByProviderId: stableTurns,
+    terminalTurnIds: sameSerializableValue(state.terminalTurnIds, terminalTurnIds) ? state.terminalTurnIds : terminalTurnIds,
+    items: stableItems,
+    itemOrder: stableItemOrder,
     activeTurnId: state.activeTurnId,
     startedTurnId: state.startedTurnId,
     queue: state.queue,
@@ -872,7 +887,7 @@ function mergeSnapshotV2Page(state: NativeSessionState, snapshot: NativeConversa
     rateLimits: state.rateLimits,
     mcpStartup: state.mcpStartup,
     conversationState: state.conversationState,
-    transcriptRevision: state.transcriptRevision + 1,
+    transcriptRevision: state.transcriptRevision + (stableItems === state.items && stableItemOrder === state.itemOrder ? 0 : 1),
     feedbackEpoch: state.feedbackEpoch,
     visibleFeedbackEpoch: state.visibleFeedbackEpoch,
     error: state.error,

@@ -130,7 +130,6 @@ export const SessionActivityGroup = memo(function SessionActivityGroup(props: Se
 
   return (
     <section className="session-activity-group" data-active={active || undefined} data-activity-category={props.category} data-item-count={items.length} data-motion-active={props.motionActive || undefined}>
-      <p className="session-activity-group-count">{props.language === 'zh-CN' ? `${items.length} 项操作` : `${items.length} ${items.length === 1 ? 'operation' : 'operations'}`}</p>
       <AnimatedSize changeKey={items}>
         <div className="session-activity-body">
           {detailItems.length > 0 ? (
@@ -616,6 +615,8 @@ export function SessionTurnProcessDisclosure(props: {
           : 'View process';
   /** 无障碍名称同时说明动作和当前已加载数量。 */
   const accessibleLabel = countLabel ? `${label}，${countLabel}` : label;
+  /** 有真实操作数时只显示数量；没有数量的轮次继续沿用耗时或原动作文案。 */
+  const visibleCountLabel = props.labelKind !== 'details' ? countLabel : null;
   return (
     <section className="session-turn-process" data-label-kind={props.labelKind ?? 'process'} data-open={open || undefined} aria-busy={props.loading || undefined}>
       <div className="session-turn-process-control">
@@ -631,8 +632,7 @@ export function SessionTurnProcessDisclosure(props: {
             props.onOpenChange?.(nextOpen, event.currentTarget);
           }}
         >
-          <span>{props.turn ? <SessionTurnDuration turn={props.turn} requests={props.requests ?? []} language={props.language} fallback={label} /> : label}</span>
-          {countLabel ? <small aria-hidden="true">· {countLabel}</small> : null}
+          <span>{visibleCountLabel ?? (props.turn ? <SessionTurnDuration turn={props.turn} requests={props.requests ?? []} language={props.language} fallback={label} /> : label)}</span>
           <CaretDown className="session-turn-process-caret" aria-hidden="true" weight="bold" />
         </button>
       </div>

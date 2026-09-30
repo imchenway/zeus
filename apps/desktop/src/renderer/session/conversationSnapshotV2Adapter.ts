@@ -456,25 +456,6 @@ export function mergeConversationTurnHistoryV2(snapshot: NativeConversationSnaps
   };
 }
 
-/** 从末页切到首页时移除不连续旧过程，同时保留主时间线的最终答复、输入和计划。 */
-export function resetConversationTurnDetailRange(snapshot: NativeConversationSnapshot, turnId: string): NativeConversationSnapshot {
-  /** 兼容仍以本地轮次 ID 投影的旧缓存。 */
-  const turn = snapshot.turns.find((candidate) => candidate.id === turnId || candidate.providerTurnId === turnId);
-  /** 新旧身份都属于同一个待重建范围。 */
-  const identities = new Set([turnId, turn?.id, turn?.providerTurnId].filter((identity): identity is string => Boolean(identity)));
-  return {
-    ...snapshot,
-    items: snapshot.items.filter((item) => !identities.has(item.turnId) || (item.payload.v2ContentKind !== 'process_detail' && !isReplaceableTurnHistoryProcessItem(item))),
-  };
-}
-
-/** 判断模型历史条目是否属于可安全重建的折叠过程。 */
-function isReplaceableTurnHistoryProcessItem(item: NativeItemSnapshot): boolean {
-  if (item.payload.v2ContentKind !== 'model_history' || item.type === 'userMessage' || item.type === 'plan') return false;
-  if (item.type === 'reasoning') return true;
-  return classifyAssistantMessage(item.payload, item.phase) !== 'final';
-}
-
 /**
  * V2 正文、过程和实时投影可以用不同本地行 id 描述同一个 Provider item。
  * Provider 身份是跨分页稳定主键；过程详情比模型历史预览完整，冲突时保持过程详情。
