@@ -208,10 +208,12 @@ function turnDetailPaging(snapshot: NativeSessionState['snapshot'], turnId: stri
     error: process?.error ?? history?.error ?? null,
     loaded: Boolean(process?.loaded || history?.loaded),
     hasMore: Boolean(process?.hasMore || history?.hasMore),
+    /** 正文与过程独立推进，任一游标变化都允许读取下一批。 */
+    cursor: JSON.stringify([process?.nextCursor ?? null, history?.nextCursor ?? null]),
   };
 }
 
-/** 展开只准备尚未读取的详情；已读范围和错误重试都由分页入口接管。 */
+/** 展开只准备尚未读取的详情；后续页由可见边界自动补齐。 */
 function turnProcessNeedsLoad(paging: ReturnType<typeof turnDetailPaging>): boolean {
   return !paging?.loaded && !paging?.loading;
 }
@@ -1082,12 +1084,12 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       const processPaging = turnDetailPaging(props.state.snapshot, turn?.providerTurnId ?? row.turnId);
       /** 只有首次读取时，正常完成态优先从头阅读。 */
       const turnCompleted = props.state.terminalTurnIds[row.turnId] === 'completed' || turn?.status === 'completed';
-      /** 倒序读取时，补页入口放在已读过程之前。 */
+      /** 倒序读取时，自动补页边界放在已读过程之前。 */
       const earlierProcess = processPaging?.direction === 'tail';
-      /** 缺页由用户明确补读，折叠内容重新挂载不能自动触发下一页。 */
+      /** 只在展开后滚动到缺页边界时补读，避免一次读完整个长轮次。 */
       const pageSentinel =
-        row.loadMore && processPaging?.loaded && processPaging.hasMore && renderProps.onLoadTurnProcess ? (
-          <TurnProcessPageControl earlier={earlierProcess} loading={processPaging.loading} error={processPaging.error} language={props.language} turnId={row.turnId} onLoad={renderProps.onLoadTurnProcess} />
+        row.loadMore && processPaging && ((processPaging.loaded && processPaging.hasMore) || processPaging.error) && renderProps.onLoadTurnProcess ? (
+          <TurnProcessPageSentinel enabled={expandedRowKeys.has(turnProcessExpansionKey(row.key))} paging={processPaging} language={props.language} turnId={row.turnId} onLoad={renderProps.onLoadTurnProcess} />
         ) : null;
       const expansionKey = turnProcessExpansionKey(row.key);
       const containsCompletionAnchor = row.segments.some(
@@ -1118,7 +1120,17 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
               {rows.map((child) => {
                 const content = renderTranscriptRow(
                   child,
-                  transcriptRowRenderOptions(renderProps, items, showActiveStatus && activeTurnId === row.turnId, motionFocus, lastUserKey, 'inline', enteringItemIds, maintainLatestPosition, responseAnnotationsByItemId),
+                  transcriptRowRenderOptions(
+                    renderProps,
+                    items,
+                    !row.replyVisible && showActiveStatus && activeTurnId === row.turnId,
+                    motionFocus,
+                    lastUserKey,
+                    'inline',
+                    enteringItemIds,
+                    maintainLatestPosition,
+                    responseAnnotationsByItemId,
+                  ),
                 );
                 return active ? (
                   <div className="session-live-turn-row" key={child.key} data-navigation-row-key={child.key}>
@@ -1167,7 +1179,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           {hasProcessDetails ? (
             <SessionTurnProcessDisclosure
               language={props.language}
-              turn={turnActive || projectedTurnWorkKeyByTurn.get(row.turnId) !== row.key ? undefined : turn}
+              turn={(turnActive && !row.replyVisible) || projectedTurnWorkKeyByTurn.get(row.turnId) !== row.key ? undefined : turn}
+              replyVisible={row.replyVisible}
               requests={props.state.pendingRequests}
               itemCount={processActivityCount}
               loading={Boolean(row.loadMore && processPaging?.loading)}
@@ -1195,6 +1208,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     const anchorsTurnArtifacts = completionAnchorKeyByTurn[lastRowItem.turnId] === lastRowItem.key;
     /** 正文之后还有交付资源时，耗时仍显示在正文之前。 */
     const anchorsTurnSummary = turnSummaryAnchorKeyByTurn[lastRowItem.turnId] === lastRowItem.key;
+    /** 未加载过程或没有操作的轮次，也在非空正文出现时显示耗时。 */
+    const replyVisible = isFinalAnswerItem(lastRowItem) && Boolean(transcriptItemText(lastRowItem).trim());
     const v2PagingKey = turn?.providerTurnId ?? turn?.id ?? lastRowItem.turnId;
     const expansionKey = turnProcessExpansionKey(v2PagingKey);
     const v2ProcessPaging = turnDetailPaging(props.state.snapshot, v2PagingKey);
@@ -1208,7 +1223,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     // 入口只能来自可见过程事实。缺少 turn summary 或仅有历史视图会隐藏的 reasoning，
     // 都不能凭最终回答臆造一个展开后为空的“查看处理过程”。
     const historicalProcessAvailable = Boolean(v2Turn?.process.available);
-    const showV2DeferredDetails = Boolean(anchorsTurnSummary && !projectedTurnWorkKeyByTurn.has(lastRowItem.turnId) && historicalProcessAvailable && (!turn || !isActiveSessionTurn(turn)));
+    const showV2DeferredDetails = Boolean(anchorsTurnSummary && !projectedTurnWorkKeyByTurn.has(lastRowItem.turnId) && historicalProcessAvailable && (replyVisible || !turn || !isActiveSessionTurn(turn)));
     /** 只剩用户输入的结束轮次仍先显示输入，随后显示其耗时。 */
     const opensWithUserMessage = itemRole(lastRowItem) === 'user';
     /** 同一消息仅渲染一次，根据消息角色决定它与轮次摘要的先后关系。 */
@@ -1220,6 +1235,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           <SessionTurnProcessDisclosure
             language={props.language}
             turn={turn}
+            replyVisible={replyVisible}
             requests={props.state.pendingRequests}
             labelKind={historicalProcessAvailable ? 'process' : 'details'}
             loading={Boolean(v2ProcessPaging?.loading)}
@@ -1234,10 +1250,10 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             {null}
           </SessionTurnProcessDisclosure>
         ) : null}
-        {/* 没有处理过程的结束轮次只在正文前显示耗时，不生成空的展开按钮。 */}
-        {anchorsTurnSummary && turn && !isActiveSessionTurn(turn) && !projectedTurnWorkKeyByTurn.has(lastRowItem.turnId) && !showV2DeferredDetails ? (
+        {/* 无过程的轮次在可见正文前显示耗时，不生成空的展开按钮。 */}
+        {anchorsTurnSummary && turn && (replyVisible || !isActiveSessionTurn(turn)) && !projectedTurnWorkKeyByTurn.has(lastRowItem.turnId) && !showV2DeferredDetails ? (
           <div className="session-turn-process-control">
-            <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} />
+            <SessionTurnDuration turn={turn} requests={props.state.pendingRequests} language={props.language} replyVisible={replyVisible} />
           </div>
         ) : null}
         {opensWithUserMessage ? null : content}
@@ -1456,34 +1472,40 @@ function V2HistoryPageStatus(props: { state: NativeSessionState; language: Sessi
   );
 }
 
-/** 显式补页保留已读内容，也使重新展开与读取更多成为独立操作。 */
-function TurnProcessPageControl(props: { earlier: boolean; loading: boolean; error: string | null | undefined; language: SessionUiLanguage; turnId: string; onLoad: (turnId: string) => void | Promise<void> }) {
-  /** 加载中继续保留入口位置，失败后从同一游标重试。 */
-  const label = props.loading
-    ? props.language === 'zh-CN'
-      ? '正在加载…'
-      : 'Loading…'
-    : props.error
-      ? props.language === 'zh-CN'
-        ? '重试'
-        : 'Retry'
-      : props.earlier
-        ? props.language === 'zh-CN'
-          ? '加载更早过程'
-          : 'Load earlier steps'
-        : props.language === 'zh-CN'
-          ? '加载更多过程'
-          : 'Load more steps';
+/** 沿用消息历史的可见边界补页方式，只在失败时提供手动重试。 */
+function TurnProcessPageSentinel(props: { enabled: boolean; paging: NonNullable<ReturnType<typeof turnDetailPaging>>; language: SessionUiLanguage; turnId: string; onLoad: (turnId: string) => void | Promise<void> }) {
+  /** 观察当前轮次的缺页位置，收起期间不触发读取。 */
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  /** 同一组游标只自动请求一次，防止无进展或失败时循环读取。 */
+  const requestedCursorRef = useRef<string | null>(null);
+  /** 仅在补页边界进入会话可视区时继续读取。 */
+  const [intersecting, setIntersecting] = useState(false);
+  useEffect(() => {
+    /** 边界随折叠内容挂载，观察器随组件卸载释放。 */
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+    /** 沿用历史消息在缺少观察器时的加载行为。 */
+    if (typeof IntersectionObserver === 'undefined') {
+      setIntersecting(true);
+      return;
+    }
+    /** 根容器使用真实会话滚动区，其他区域滚动不触发补页。 */
+    const observer = new IntersectionObserver((entries) => setIntersecting(entries.some((entry) => entry.isIntersecting)), { root: sentinel.closest('.session-transcript') });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
+    if (!props.enabled || !intersecting || !props.paging.hasMore || props.paging.loading || props.paging.error || requestedCursorRef.current === props.paging.cursor) return;
+    requestedCursorRef.current = props.paging.cursor;
+    void Promise.resolve(props.onLoad(props.turnId)).catch(() => undefined);
+  }, [intersecting, props.enabled, props.onLoad, props.paging.cursor, props.paging.error, props.paging.hasMore, props.paging.loading, props.turnId]);
   return (
-    <div className="session-v2-content" data-process-page aria-busy={props.loading}>
-      {props.error ? (
-        <span role="alert">
-          <VisibleApplicationError error={props.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
-        </span>
+    <div ref={sentinelRef} className="session-v2-content" data-process-page aria-busy={props.paging.loading}>
+      {props.paging.error ? (
+        <button type="button" className="session-v2-page-action" disabled={props.paging.loading} onClick={() => void Promise.resolve(props.onLoad(props.turnId)).catch(() => undefined)}>
+          {props.language === 'zh-CN' ? '重试' : 'Retry'}
+        </button>
       ) : null}
-      <button type="button" className="session-v2-page-action" disabled={props.loading} onClick={() => void Promise.resolve(props.onLoad(props.turnId)).catch(() => undefined)}>
-        {label}
-      </button>
     </div>
   );
 }
@@ -1626,6 +1648,8 @@ export interface TranscriptTurnWorkRow {
   segments: TranscriptTurnProcessSegment[];
   live: boolean;
   loadMore: boolean;
+  /** 最终正文已可见时切换过程展示，Provider 轮次仍可能继续流式输出。 */
+  replyVisible?: boolean;
 }
 
 export interface TranscriptTurnProcessSegment {
@@ -1890,7 +1914,7 @@ function transcriptRowRenderOptions(
   return { props, items, showThinking, motionFocus, lastUserKey, activityPresentation, enteringItemIds, onVisibleContentChange, responseAnnotationsByItemId };
 }
 
-/** 按消息种类复用现有展示组件；轮次过程只有外层入口，展开后直接显示活动明细。 */
+/** 按消息种类复用展示组件；回看先显示过程文字，操作列表单独按组展开。 */
 function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOptions): ReactNode {
   if (row.kind === 'answered_request') return <AnsweredRequestHistory request={row.request} language={options.props.language} />;
   if (row.kind === 'activity') {
@@ -1898,6 +1922,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
       <SessionActivityGroup
         items={row.items}
         category={row.category}
+        collapsible={!options.showThinking}
         language={options.props.language}
         enteringItemKeys={options.enteringItemIds}
         motionActive={row.motionActive || row.items.some(isLiveActivityItem) || row.items.some((item) => item.key === options.motionFocus?.itemKey)}
@@ -2209,7 +2234,7 @@ function renderTurnArtifacts(turnId: string, props: ConversationTranscriptProps,
   );
 }
 
-/** 运行中按沟通边界展示进展；完成后将过程统一收在模型回复正文上方。 */
+/** 运行中按沟通边界展示进展；非空最终正文出现时把过程收在它上方。 */
 export function projectTranscriptTurnRows(
   rows: readonly TranscriptRow[],
   activeTurnId: string | null = null,
@@ -2315,10 +2340,10 @@ export function projectTranscriptTurnRows(
     projected.splice(anchorIndex < 0 ? projected.length : anchorIndex + 1, 0, placeholder);
   }
 
-  /** 只有轮次明确完成且正文已到达才收拢，消息完成或空正文不能代替轮次终态。 */
+  /** 最终正文可见即收拢过程；计划仍需轮次完成，空正文不提前切换。 */
   const completedReplyKeys = new Map<string, string>();
   for (const row of projected) {
-    if (row.kind !== 'item' || terminalTurnIds[row.item.turnId] !== 'completed' || !isTurnCompletionOutputItem(row.item) || !transcriptItemText(row.item).trim()) continue;
+    if (row.kind !== 'item' || !isTurnCompletionOutputItem(row.item) || !transcriptItemText(row.item).trim() || (terminalTurnIds[row.item.turnId] !== 'completed' && !isFinalAnswerItem(row.item))) continue;
     if (!completedReplyKeys.has(row.item.turnId)) completedReplyKeys.set(row.item.turnId, row.key);
   }
   /** 使用现有过程子行，保留操作和中途说明的先后顺序，不再按阶段重新排列。 */
@@ -2337,7 +2362,7 @@ export function projectTranscriptTurnRows(
     completedProcessRows.set(turnId, processRows);
     completedProcessKeys.add(row.key);
   }
-  /** 完成态使用独立且稳定的展开身份，运行中手动展开不会阻止完成时自动收起。 */
+  /** 正文出现时换成独立的折叠身份，后续流式输出与轮次结束不重置用户选择。 */
   const displayRows = projected.flatMap((row): TranscriptTurnRow[] => {
     if (completedProcessKeys.has(row.key)) return [];
     /** 模型正文原有身份不变，过程入口只放在它前面。 */
@@ -2345,14 +2370,14 @@ export function projectTranscriptTurnRows(
     /** 未加载的过程允许为空，但无过程的轮次不新增空入口。 */
     const processRows = turnId ? completedProcessRows.get(turnId) : undefined;
     if (!turnId || completedReplyKeys.get(turnId) !== row.key || !processRows) return [row];
-    /** 单层过程直接展示所有明细，不增加阶段折叠。 */
+    /** 同一轮次在正文出现及结束后沿用稳定入口，命令仍按组独立展开。 */
     const key = `turn-work:${encodeURIComponent(turnId)}:completed`;
-    return [{ kind: 'turn_work', key, turnId, segments: processRows.length ? [{ key: `${key}:content`, summary: null, rows: processRows }] : [], live: false, loadMore: true }, row];
+    return [{ kind: 'turn_work', key, turnId, segments: processRows.length ? [{ key: `${key}:content`, summary: null, rows: processRows }] : [], live: false, loadMore: true, replyVisible: true }, row];
   });
 
   /** 当前状态只有一处：活动轮次最后一个过程组负责显示当前或最近动作。 */
   let liveProcessIndex = -1;
-  if (activeTurnId && !terminalTurnIds[activeTurnId]) {
+  if (activeTurnId && !terminalTurnIds[activeTurnId] && !completedReplyKeys.has(activeTurnId)) {
     for (let index = 0; index < displayRows.length; index += 1) {
       const candidate = displayRows[index]!;
       if (candidate.kind === 'turn_work' && candidate.turnId === activeTurnId) liveProcessIndex = index;
