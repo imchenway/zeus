@@ -48,9 +48,9 @@ export function serializeConversationContext(draft: ConversationContextDraft): s
   if (draft.responseAnnotations.length > 0) {
     sections.push(
       [
-        '# 对会话回答的注释',
+        '# 对会话回答的评论',
         ...draft.responseAnnotations.flatMap((annotation, index) => [
-          `## 注释 ${index + 1}`,
+          `## 评论 ${index + 1}`,
           `回答项：${annotation.anchor.itemId}`,
           `选中文字：${annotation.anchor.selectedText}`,
           ...(annotation.note?.trim() ? [`用户评论：${annotation.note.trim()}`] : []),

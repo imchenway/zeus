@@ -3112,8 +3112,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
       const attachments = mergeAttachments(composerAttachments, browserSubmission?.attachments ?? []);
       const appliedSettings = delivery === 'queue' ? settings : undefined;
       /** 结构化评论才使用说明文字；纯附件消息保持空正文，由附件摘要承担展示。 */
-      const contextDisplayText = contextDraft.codeComments.length ? '代码评论' : contextDraft.responseAnnotations.length ? '回答批注' : '';
-      /** 展示正文只从真实输入来源派生，不能给纯附件消息伪造批注文案。 */
+      const contextDisplayText = contextDraft.codeComments.length ? '代码评论' : contextDraft.responseAnnotations.length ? '回答评论' : '';
+      /** 展示正文只从真实输入来源派生，不能给纯附件消息伪造评论文案。 */
       const displayText = appliedSettings?.displayText?.trim() || draft.trim() || (browserSubmission ? `Browser comments (${browserSubmission.commentIds.length})` : '') || contextDisplayText;
       const content = [appliedSettings?.promptText?.trim() ?? draft.trim(), browserSubmission?.content.trim(), serializeConversationContext(contextDraft)].filter(Boolean).join('\n\n');
       const fingerprint = sendFingerprint({
@@ -3165,7 +3165,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         return rejectSend(new Error('上一条消息尚未确认是否被 Zeus 接收，请先重试或取消该消息。'));
       }
       if (browserSubmissionUsesReservedComments(browserSubmission, exactPending ?? reusableIdentity)) {
-        return rejectSend(new Error('这些浏览器批注已属于待确认或已送达的消息。'));
+        return rejectSend(new Error('这些浏览器评论已属于待确认或已送达的消息。'));
       }
       /** 每次点击发送冻结独立消息；上一条的确认账本继续保留，不能被新草稿覆盖。 */
       const envelope: PendingSendEnvelope = exactPending ?? {

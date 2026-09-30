@@ -1,4 +1,4 @@
-import { contextCapacitySelectionAllowed, contextCapacitySelectionOptions, contextCapacitySelectionFromValue, contextCapacitySelectionValue } from './contextCapacitySelection.js';
+import { contextCapacitySelectionAllowed } from './contextCapacitySelection.js';
 import { ActivitySkillCatalogContext } from './SessionActivity.js';
 import { FilePreviewDialog, FilePreviewOpenContext } from '../code/FilePreview.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
@@ -1467,8 +1467,6 @@ export function isDurableNativeConversationAcceptance(
 }
 
 export interface NewConversationDraft {
-  /** 缺省继承项目，null 明确保留默认；草稿恢复保留选择。 */
-  contextCapacityTokens?: number | null;
   worktreeDrafts?: Record<string, ConversationWorktreeOptions>;
   workspaceMode?: 'direct' | 'worktree';
   content: string;
@@ -3339,8 +3337,8 @@ export function NewConversationComposer(props: {
   const [capabilitiesLoading, setCapabilitiesLoading] = useState(!props.capabilities);
   const [selectedModelId, setSelectedModelId] = useState(() => restoredDraft?.selectedModelId ?? '');
   const [selectedEffort, setSelectedEffort] = useState(() => restoredDraft?.selectedEffort ?? '');
-  /** 本次覆盖只保存在新建草稿中，不写入已有会话下一轮设置。 */
-  const [contextCapacityTokens, setContextCapacityTokens] = useState<number | null | undefined>(() => restoredDraft?.contextCapacityTokens);
+  /** 新会话仅继承项目容量；输入框不再保留会话级覆盖。 */
+  const contextCapacityTokens = capabilities?.projectContextCapacityTokens ?? null;
   const [serviceTierSelection, setServiceTierSelection] = useState<NativeServiceTierSelection>(() => restoredDraft?.serviceTierSelection ?? { type: 'standard' });
   const [isComposing, setIsComposing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -3372,12 +3370,11 @@ export function NewConversationComposer(props: {
       selectedModelId,
       selectedEffort,
       serviceTierSelection,
-      contextCapacityTokens,
       goalInputOpen,
       goalObjective,
       tokenDraft,
     });
-  }, [props.drafts, draftKey, workspaceMode, worktreeDrafts, content, attachments, permissionMode, collaborationMode, selectedModelId, selectedEffort, serviceTierSelection, contextCapacityTokens, goalInputOpen, goalObjective, tokenDraft]);
+  }, [props.drafts, draftKey, workspaceMode, worktreeDrafts, content, attachments, permissionMode, collaborationMode, selectedModelId, selectedEffort, serviceTierSelection, goalInputOpen, goalObjective, tokenDraft]);
   const inputResources = useConversationInputResources({
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
     textareaRef,
@@ -3544,7 +3541,7 @@ export function NewConversationComposer(props: {
           permissionMode,
           collaborationMode,
           serviceTierSelection,
-          contextCapacityTokens: contextCapacityTokens === undefined ? (capabilities?.projectContextCapacityTokens ?? null) : contextCapacityTokens,
+          contextCapacityTokens,
           model: selectedModel?.id,
           effort: selectedEffort || undefined,
           ...(submittedGoal ? { goalObjective: submittedGoal } : {}),
@@ -3565,7 +3562,7 @@ export function NewConversationComposer(props: {
           permissionMode,
           collaborationMode,
           serviceTierSelection,
-          contextCapacityTokens: contextCapacityTokens === undefined ? (capabilities?.projectContextCapacityTokens ?? null) : contextCapacityTokens,
+          contextCapacityTokens,
           model: selectedModel?.id,
           effort: selectedEffort || undefined,
           ...(submittedGoal ? { goalObjective: submittedGoal } : {}),
@@ -3807,16 +3804,7 @@ export function NewConversationComposer(props: {
           <span className="session-composer-trailing-actions">
             {selectedModel ? (
               <span className="session-composer-runtime-settings">
-                <ZeusSelect
-                  size="compact"
-                  ariaLabel={props.language === 'zh-CN' ? '上下文容量' : 'Context capacity'}
-                  value={contextCapacitySelectionValue(contextCapacityTokens, capabilities?.projectContextCapacityTokens)}
-                  disabled={submitting || !props.owner}
-                  options={contextCapacitySelectionOptions(selectedModel.contextCapacity, props.language === 'zh-CN')}
-                  triggerTitle={selectedModel.contextCapacity?.reason}
-                  onChange={(value) => setContextCapacityTokens(contextCapacitySelectionFromValue(value))}
-                />
-                <ContextUsageIndicator contextCapacityTokens={contextCapacityTokens === undefined ? (capabilities?.projectContextCapacityTokens ?? null) : contextCapacityTokens} unifiedUsage={null} language={props.language} />
+                <ContextUsageIndicator contextCapacityTokens={contextCapacityTokens} unifiedUsage={null} language={props.language} />
                 {selectedModel.serviceTiers.length ? (
                   <ServiceTierToggle
                     language={props.language}
