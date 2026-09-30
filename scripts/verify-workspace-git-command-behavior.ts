@@ -337,6 +337,7 @@ async function verifyRepositoryAttachment(db: ZeusDatabase, application: Workspa
     projectSharedPaths: new ProjectSharedPathRepository(db),
     conversations: new ConversationRepository(db),
     conversationSubmissions: new ConversationSubmissionRepository(db),
+    appendAuditLog: () => undefined,
     recordTaskEvent: () => undefined,
   } as GitIntegrationOperationDependencies);
   assertProbe(missingTaskRepositories(registered, workspaces.listByEnvironment(environment.id)).length === 3, '带远端与无远端的新增仓库都必须被发现。');
@@ -439,7 +440,41 @@ async function verifyRepositoryAttachment(db: ZeusDatabase, application: Workspa
     '父仓补入不能覆盖已有子仓或任务文件。',
   );
 
-  return { repositories: names.length, preservedTaskContent: true, sourceUnchanged: true, replayedWithoutWrite: true, reclaimAndRestoreWithoutRemote: true };
+  /** 父仓工作区保留嵌套子仓，提交自身文件时不触发仅供目录回收使用的先子后父门禁。 */
+  const parentWorkspace = workspaces.create({
+    projectId: project.id,
+    taskId: task.id,
+    environmentId: environment.id,
+    repositoryName: 'parent',
+    repositoryRelativePath: '.',
+    repositoryPath: root,
+    ...parent,
+    remoteName: '',
+    remoteBranch: branchName,
+    state: 'ready',
+  });
+  /** 通过正式单仓交付入口提交父仓文件，不绕过命令准备与结果投影。 */
+  const parentCommitValue = { message: '父仓独立提交', selectedPaths: ['root.txt'] };
+  /** 命令身份只服务本次临时探针。 */
+  const parentCommit = await operations.prepareWorkspaceGitCommand({
+    commandType: workspaceGitCommandTypes.taskWorkspaceCommit,
+    operationIdentity: 'nested-parent-commit',
+    taskId: task.id,
+    workspaceId: parentWorkspace.id,
+    value: parentCommitValue,
+  });
+  /** 执行真实 Git 提交，并在成功后应用同一业务投影。 */
+  const parentCommitResult = await operations.executeWorkspaceGitCommand({
+    commandType: workspaceGitCommandTypes.taskWorkspaceCommit,
+    operationIdentity: 'nested-parent-commit',
+    prepared: parentCommit,
+    value: parentCommitValue,
+  });
+  parentCommitResult.commitAccepted();
+  assertProbe(parentCommitResult.response.statusCode === 200 && (await git(environmentRoot, 'show', 'HEAD:root.txt')) === 'parent task', '嵌套子仓存在时，父仓所选文件仍必须可以独立提交。');
+  assertProbe((await git(join(environmentRoot, 'local'), 'branch', '--show-current')) === branchName, '父仓提交不得回收或改写嵌套子仓 Worktree。');
+
+  return { repositories: names.length, preservedTaskContent: true, sourceUnchanged: true, replayedWithoutWrite: true, reclaimAndRestoreWithoutRemote: true, nestedParentCommittedIndependently: true };
 }
 
 async function verifyWorkflowCandidate() {
