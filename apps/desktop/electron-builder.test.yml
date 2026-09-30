@@ -12,6 +12,8 @@ directories:
 # 可执行文件跟随测试应用名称。
 mac:
   executableName: Zeus Test
+  # 测试应用使用带开发标识的图标，与运行时 Dock 图标保持一致。
+  icon: assets/icon-dev.icns
 # 显式请求测试磁盘映像时仍保持测试名称。
 dmg:
   title: Zeus Test
