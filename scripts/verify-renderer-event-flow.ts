@@ -1765,6 +1765,89 @@ async function verifyTaskPushPlacement() {
   }
 }
 
+/** 异步答案从实时消息交接到缺少客户端身份的历史预览时，只保留一条正式输入。 */
+function verifyAnsweredInputHandoff() {
+  /** 复用正式首屏适配器与既有会话样本。 */
+  const snapshot = adaptConversationSnapshotV2({ snapshot: snapshotV2, history: historyV2, queue, requests: [], planImplementationRequests: [], choice, goal });
+  /** 原轮次结束后作为新消息发送的回答，仍携带完整原题。 */
+  const questionAnswer = {
+    providerTurnId: 'question-turn',
+    providerItemId: 'question-provider',
+    asNewMessage: true,
+    questions: [{ id: 'question_1', header: '存储配置', question: '请提供客服媒体存储配置。', isOther: false, isSecret: false, options: null }],
+    answers: { question_1: { answers: ['已提供存储配置'] } },
+  };
+  /** 答案附件与同一条消息一起保留。 */
+  const attachments = [{ name: '配置说明.txt', mime: 'text/plain', size: 4, localPath: '/tmp/answer-config.txt' }];
+  /** 实时开始事件先使用 Provider 显示身份。 */
+  const started = conversationEvent(1, 'conversation.item.started', {
+    turnId: 'turn',
+    itemId: 'answer-provider',
+    itemType: 'userMessage',
+    status: 'in_progress',
+    textContent: '已提供存储配置',
+    itemPayload: { clientId: 'answer-client', questionAnswer, attachments },
+    transcript: transcript('provider-answer-preview', 2048, 'answer-provider'),
+  });
+  /** 实时完成事件切换为用户消息的正式显示身份。 */
+  const completed = conversationEvent(2, 'conversation.item.completed', {
+    ...started.payload,
+    status: 'completed',
+    transcript: transcript('user-message:answer-client', 1024, 'answer-provider'),
+  });
+  /** 历史模型正文保留完整回答与客户端身份。 */
+  const canonical = {
+    id: 'user-message:answer-client',
+    providerItemId: 'answer-provider',
+    turnId: 'turn',
+    type: 'userMessage',
+    status: 'completed',
+    phase: 'prework',
+    text: '已提供存储配置',
+    payload: { clientId: 'answer-client', questionAnswer, attachments },
+    resources: [],
+    updatedAt: occurredAt,
+    transcript: transcript('user-message:answer-client', 1024, 'answer-provider'),
+  };
+  /** 活动预览缺少客户端身份，但保留同一 Provider 消息身份。 */
+  const preview = { ...canonical, id: 'provider-answer-preview', payload: { questionAnswer }, transcript: started.payload.transcript! };
+  for (const items of [
+    [canonical, preview],
+    [preview, canonical],
+  ]) {
+    /** 两种到达顺序都经过实时、水合与分页的正式归约入口。 */
+    let state = sessionReducer(createHydratedSessionState(snapshot), { type: 'event_received', event: started as NativeConversationEvent });
+    state = sessionReducer(state, { type: 'event_received', event: completed as NativeConversationEvent });
+    state = sessionReducer(state, { type: 'snapshot_hydrated', snapshot: { ...snapshot, items } });
+    state = sessionReducer(state, { type: 'snapshot_v2_page_merged', snapshot: { ...snapshot, items } });
+    assert(state.itemOrder.length === 1 && Object.keys(state.items).length === 1, '同一答案的实时消息与历史预览只能占一个正文位置。');
+    assert(state.items[state.itemOrder[0]!]!.payload.questionAnswer === questionAnswer && (state.items[state.itemOrder[0]!]!.payload.attachments as unknown[]).length === 1, '交接必须保留原题、回答及附件。');
+  }
+  /** 相同正文的独立输入拥有不同持久身份，必须继续保留。 */
+  const independent = {
+    ...canonical,
+    id: 'user-message:second-client',
+    providerItemId: 'second-provider',
+    payload: { ...canonical.payload, clientId: 'second-client' },
+    transcript: transcript('user-message:second-client', 3072, 'second-provider'),
+  };
+  /** 冷开读取正式身份，不能按答案文字合并真实的独立输入。 */
+  const cold = createHydratedSessionState({ ...snapshot, items: [canonical, independent] });
+  assert(cold.itemOrder.length === 2, '相同正文的两次独立输入必须保留两个正文位置。');
+  /** Provider 条目编号在别的轮次复用时，不得借用上一轮的客户端身份。 */
+  const otherTurn = { ...preview, id: 'other-turn-input', turnId: 'other-turn', transcript: transcript('other-turn-input', 4096, 'answer-provider', 'other-turn') };
+  /** 当前轮次身份也必须参与正式水合交接。 */
+  const separateTurns = sessionReducer(createHydratedSessionState({ ...snapshot, items: [canonical] }), { type: 'snapshot_hydrated', snapshot: { ...snapshot, items: [canonical, otherTurn] } });
+  assert(separateTurns.itemOrder.length === 2, '不同轮次复用 Provider 编号不能合并两条输入。');
+  return { singleAnswerPosition: true, bothArrivalOrders: true, answerAttachmentsPreserved: true, independentInputsPreserved: true };
+}
+
+/** 答案交接专项复用现有探针，不引入额外运行入口或依赖。 */
+if (process.argv.includes('--answered-input-handoff-only')) {
+  console.log(JSON.stringify({ answeredInputHandoff: verifyAnsweredInputHandoff() }));
+  process.exit(0);
+}
+
 /** 排队首帧专项只运行本地投影与权威接管检查。 */
 if (process.argv.includes('--active-queue-projection-only')) {
   console.log(JSON.stringify({ activeTurnQueueProjection: await verifyActiveTurnQueueProjection() }));
@@ -1809,6 +1892,7 @@ const result =
           turnChangeReview,
           budget: sessionRealtimeBufferBudget,
           restoredSubmissionOrder,
+          answeredInputHandoff: verifyAnsweredInputHandoff(),
           truncatedTaskPushIdentity: verifyTruncatedTaskPushIdentityCoalescing(),
           internalPayloadVisibility: verifyInternalPayloadsStayOutOfTranscript(),
           processPageTerminalPreservation: verifyProcessPageDoesNotDowngradeLiveTerminalState(),
