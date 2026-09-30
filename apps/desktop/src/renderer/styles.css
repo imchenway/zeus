@@ -16837,6 +16837,101 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   line-height: 1.45;
 }
 
+/* 合入结果并入标题栏，使用中性入口，不再单独铺设提示横幅。 */
+.macos-ai-app .task-git-merge-header.has-results > span {
+  flex: 1;
+  min-inline-size: 0;
+}
+
+/* 长标题与分支名在标题栏内省略，保留结果入口与关闭按钮的可用空间。 */
+.macos-ai-app .task-git-merge-header.has-results > span > strong,
+.macos-ai-app .task-git-merge-header.has-results > span > small {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macos-ai-app .task-git-merge-header > .task-git-delivery-notice {
+  flex: none;
+  margin-inline-start: auto;
+}
+
+.macos-ai-app .task-git-delivery-result-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--zeus-product-muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.macos-ai-app .task-git-delivery-result-trigger:hover {
+  background: var(--zeus-interaction-hover);
+  color: var(--zeus-product-text);
+}
+
+.macos-ai-app .task-git-delivery-result-trigger:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+/* 原生浮层进入顶层，不被交付窗口裁切；CSS 锚点与入口保持右对齐。 */
+.macos-ai-app .task-git-delivery-result-popover {
+  position: fixed;
+  inset: auto;
+  top: anchor(bottom);
+  right: anchor(right);
+  position-try-fallbacks: flip-block;
+  box-sizing: border-box;
+  inline-size: min(460px, calc(100vw - 24px));
+  margin: 6px 0 0;
+  padding: 8px;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 8px;
+  background: var(--zeus-product-panel);
+  color: var(--zeus-product-text);
+  box-shadow: var(--zeus-popover-shadow);
+}
+
+/* 明细按仓库就近显示原因，避免三列宽表格的空白与窄窗挤压。 */
+.macos-ai-app .task-git-delivery-result-popover .task-git-delivery-batch-result {
+  max-block-size: min(320px, calc(100vh - 120px));
+  padding: 4px 6px;
+}
+
+.macos-ai-app .task-git-delivery-result-popover .task-git-delivery-batch-result li {
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 3px 10px;
+}
+
+.macos-ai-app .task-git-delivery-result-popover .task-git-delivery-batch-result li > small {
+  grid-column: 2;
+  color: var(--zeus-product-muted);
+}
+
+/* 窄窗口使用窗口边缘限定浮层宽度，仍按入口定位高度。 */
+@media (max-width: 600px) {
+  /* 英文摘要限制宽度，完整内容仍可通过入口提示与明细查看。 */
+  .macos-ai-app .task-git-delivery-result-trigger > span {
+    max-inline-size: 130px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .macos-ai-app .task-git-delivery-result-popover {
+    inset-inline: 12px;
+    inline-size: auto;
+  }
+}
+
 .macos-ai-app .task-git-delivery-feedback {
   align-items: center;
   display: flex;

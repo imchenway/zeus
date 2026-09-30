@@ -1,5 +1,5 @@
 import { usePresenceOpen } from '../ui/MotionPresence.js';
-import { type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
+import { type Dispatch, type SetStateAction, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { buildTaskCommitMessageSuggestion, type TaskWorkspaceConflictRecovery } from '@zeus/shared';
 import { type DashboardClient, type TaskRecord, ZeusApiError } from '../apiClient.js';
 import type {
@@ -24,6 +24,7 @@ import { SideBySideDiff } from '../git/ProjectGitDiffViewer.js';
 import { GitPaneSeparator } from '../git/GitPaneSeparator.js';
 import { loadGitCommitModelOptions } from '../git/gitCommitModels.js';
 import { CopySimpleIcon } from '@phosphor-icons/react/dist/csr/CopySimple';
+import { CaretDownIcon } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { type ConflictDocument, countUnresolvedConflictBlocks, createConflictDocument, serializeConflictForGit } from './taskConflictModel.js';
 
 type DeliveryClient = Pick<
@@ -306,6 +307,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   const activeConflict = integration?.state === 'conflicted' ? integration : null;
   const unresolvedConflict = conflictWorkspaceOpen && activeConflict && activeConflict.conflictFiles.length > 0 ? activeConflict : null;
   const conflictReadyToFinalize = Boolean(conflictWorkspaceOpen && activeConflict && activeConflict.conflictFiles.length === 0);
+  /** 多仓结果并入冲突页标题栏，操作按钮与其他提示仍在原位置可见。 */
+  const headerFeedback = conflictWorkspaceOpen && Boolean(feedback?.results?.length) && !feedback?.onAction;
   const pendingLocalSync = integration?.state === 'pending_local_sync' ? integration : null;
   const busy = busyAction !== null;
   const loading = busyAction === 'loading' && workspaceIndex === null;
@@ -1055,7 +1058,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   return (
     <ModalPortal rootClassName="task-git-merge-portal-root" backdropClassName="task-git-merge-backdrop" dismissDisabled={dismissDisabled} onDismiss={props.onClose} role="dialog" aria-labelledby="task-git-merge-title">
       <section className={`task-git-merge-modal task-git-delivery-modal${conflictWorkspaceOpen && activeConflict ? ' is-conflicted' : ''}`} data-modal-surface="dialog">
-        <header className="task-git-merge-header">
+        <header className={`task-git-merge-header${headerFeedback ? ' has-results' : ''}`}>
           <span>
             <strong id="task-git-merge-title">
               {unresolvedConflict ? (zh ? '解决合入冲突' : 'Resolve Merge Conflicts') : conflictReadyToFinalize ? (zh ? '确认完成合入' : 'Confirm Merge Completion') : zh ? '代码交付' : 'Code Delivery'}
@@ -1066,6 +1069,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                 : `${props.projectName ? `${props.projectName} · ` : ''}${props.task.taskCode ?? props.task.id} · ${props.task.title}`}
             </small>
           </span>
+          {headerFeedback && feedback ? <DeliveryFeedbackNotice feedback={feedback} zh={zh} compactResults /> : null}
           {!standaloneWindow ? (
             <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={dismissDisabled}>
               ×
@@ -1073,7 +1077,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
           ) : null}
         </header>
 
-        <div className={`task-git-merge-status${feedback ? ` is-${feedback.tone}` : ''}`}>{feedback && (!feedback.action || conflictWorkspaceOpen) ? <DeliveryFeedbackNotice feedback={feedback} zh={zh} /> : null}</div>
+        <div className={`task-git-merge-status${feedback ? ` is-${feedback.tone}` : ''}`}>{!headerFeedback && feedback && (!feedback.action || conflictWorkspaceOpen) ? <DeliveryFeedbackNotice feedback={feedback} zh={zh} /> : null}</div>
 
         {workspaceIndex && (error || workspaceError) ? (
           <div className="task-git-merge-status is-error" role="alert">
@@ -1660,19 +1664,57 @@ function DeliveryEntryIcon(props: { path?: string }) {
   );
 }
 
-/** 操作区与冲突处理页共用提示内容，保留逐仓结果和屏幕阅读器播报。 */
-function DeliveryFeedbackNotice(props: { feedback: DeliveryFeedback; zh: boolean }) {
+/** 操作区直接展示逐仓结果，冲突页在标题栏使用原生浮层查看详情。 */
+function DeliveryFeedbackNotice(props: {
+  feedback: DeliveryFeedback;
+  zh: boolean;
+  /** 标题栏入口不占额外一行，浮层由浏览器处理外部点击、Escape 与焦点。 */
+  compactResults?: boolean;
+}) {
+  /** 每个提示使用唯一浮层身份和定位锚点，避免不同窗口或预览相互定位。 */
+  const resultId = useId();
+  /** CSS 锚点名称使用合法标识符，保持浮层贴近当前入口。 */
+  const resultAnchor = `--delivery-results-${resultId.replace(/:/g, '')}`;
+  /** 查询原生浮层状态，让 Escape 优先关闭明细而不是交付窗口。 */
+  const resultPopover = useRef<HTMLDivElement>(null);
   return (
-    <div className={`task-git-delivery-notice is-${props.feedback.tone}`} role="status" aria-live="polite" aria-atomic="true">
-      <div className={`task-git-delivery-feedback is-${props.feedback.tone}`}>
-        <span>{props.feedback.text}</span>
-        {props.feedback.actionLabel && props.feedback.onAction ? (
-          <button type="button" onClick={props.feedback.onAction}>
-            {props.feedback.actionLabel}
+    <div
+      className={`task-git-delivery-notice is-${props.feedback.tone}`}
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      onKeyDown={(event) => {
+        // 原生浮层嵌在 ModalPortal 中，拦住其关闭整个窗口的 Escape 路由。
+        if (event.key === 'Escape' && resultPopover.current?.matches(':popover-open')) {
+          event.preventDefault();
+          event.stopPropagation();
+          resultPopover.current.hidePopover();
+        }
+      }}
+    >
+      {props.compactResults && props.feedback.results?.length && !props.feedback.onAction ? (
+        <>
+          <button type="button" className="task-git-delivery-result-trigger" popoverTarget={resultId} title={props.feedback.text} style={{ anchorName: resultAnchor }}>
+            <span>{props.feedback.text}</span>
+            <CaretDownIcon aria-hidden="true" />
           </button>
-        ) : null}
-      </div>
-      {props.feedback.results?.length ? <BatchDeliveryResults results={props.feedback.results} zh={props.zh} /> : null}
+          <div ref={resultPopover} id={resultId} popover="auto" className="task-git-delivery-result-popover" style={{ positionAnchor: resultAnchor }} aria-label={props.zh ? '逐仓交付结果' : 'Per-repository delivery results'}>
+            <BatchDeliveryResults results={props.feedback.results} zh={props.zh} />
+          </div>
+        </>
+      ) : (
+        <>
+          <div className={`task-git-delivery-feedback is-${props.feedback.tone}`}>
+            <span>{props.feedback.text}</span>
+            {props.feedback.actionLabel && props.feedback.onAction ? (
+              <button type="button" onClick={props.feedback.onAction}>
+                {props.feedback.actionLabel}
+              </button>
+            ) : null}
+          </div>
+          {props.feedback.results?.length ? <BatchDeliveryResults results={props.feedback.results} zh={props.zh} /> : null}
+        </>
+      )}
     </div>
   );
 }
