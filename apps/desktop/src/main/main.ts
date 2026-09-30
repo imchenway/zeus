@@ -502,9 +502,9 @@ function applicationIconPath(): string {
   return (!app.isPackaged || isTestDistribution()) && existsSync(developmentIcon) ? developmentIcon : join(desktopRoot(), 'assets', 'icon.png');
 }
 
-/** 所有发行身份在启动时明确设置 Dock 图标，避免正式包只依赖系统保存的图标。 */
+/** 打包版由 macOS 使用包内 ICNS；源码宿主单独设置开发图标。 */
 function applyApplicationVisualIdentity(): void {
-  if (process.platform !== 'darwin') return;
+  if (process.platform !== 'darwin' || app.isPackaged) return;
   /** 当前发行身份对应的图标资源路径。 */
   const iconPath = applicationIconPath();
   /** 先解码并校验图片，禁止向 Dock 写入空图标。 */
