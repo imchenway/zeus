@@ -147,10 +147,14 @@ function restorePersistedSessionViewCache(value: unknown, now: number): SessionH
   return restored;
 }
 
+/** 显示缓存读写共用校验；重复持久身份由权威加载恢复，不进入首帧渲染。 */
 function sanitizeSessionStateForPersistence(state: NativeSessionState): NativeSessionState | null {
   if (!isRecord(state) || typeof state.conversationId !== 'string' || typeof state.projectId !== 'string' || !isRecord(state.snapshot)) return null;
   try {
     const authoritativeItemOrder = state.itemOrder.filter((key) => state.items[key] && !state.items[key].optimistic);
+    /** 旧窗口留下的重复正文不能随缓存恢复再次触发界面错误。 */
+    const transcriptEntryIds = authoritativeItemOrder.flatMap((key) => (state.items[key]!.transcript ? [state.items[key]!.transcript!.placement.entryId] : []));
+    if (new Set(transcriptEntryIds).size !== transcriptEntryIds.length) return null;
     const authoritativeItems = Object.fromEntries(authoritativeItemOrder.map((key) => [key, state.items[key]]));
     const emptyQueue = { throughEventSeq: 0, state: { type: 'idle' as const }, submissions: [] };
     const resumedSnapshot = resumeCachedConversationSnapshot(state.snapshot);

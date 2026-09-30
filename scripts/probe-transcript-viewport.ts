@@ -24,6 +24,7 @@ import { mergeConversationProcessV2, mergeConversationTurnHistoryV2 } from '../a
 import { createHydratedSessionState, sessionReducer } from '../apps/desktop/src/renderer/session/sessionReducer.js';
 import { createTranscriptProjection, reuseTranscriptRows, reuseTranscriptTurnRows, updateTranscriptProjection } from '../apps/desktop/src/renderer/session/transcriptProjection.js';
 import { reconcileTranscriptItems } from '../apps/desktop/src/renderer/session/transcriptReconciliation.js';
+import { buildPersistedSessionViewCache, initialSessionHotCache, primePersistedSessionViewCache } from '../apps/desktop/src/renderer/session/sessionHotCache.js';
 import { mergeNavigationEntries, navigationRowKey } from '../apps/desktop/src/renderer/session/ConversationNavigation.js';
 import { createThreadScrollController } from '../apps/desktop/src/renderer/session/useThreadScrollController.js';
 import type { ConversationNavigationSnapshot } from '@zeus/shared';
@@ -88,6 +89,13 @@ function probeTranscript(entryId: string, order: number, openingInputId: string 
     placement: { entryId, order, orderEpoch: 1, placementRevision: revision, turnId: 'turn', openingInputId, displayStageId },
     sources: [{ domain: 'probe', scope: 'turn', sourceId: entryId, facet: 'body', revision, contentRevision: revision }],
   };
+}
+
+/** 仅检查同持久身份的来源接管，避免无关历史探针阻断本次运行验收。 */
+if (process.argv.includes('--source-aliases-only')) {
+  verifyTranscriptSourceAliases();
+  console.log('transcript-source-aliases=passed');
+  process.exit(0);
 }
 
 /** 失败记录必须早于后续发言，不能随缺页、排队或重复身份移动到底部。 */
@@ -506,6 +514,84 @@ assertProbe(rebuiltRows.every((row, index) => row === beforeRows[index]) && rebu
 const changedPosition = { ...completeBody, transcript: { ...completeBody.transcript, placement: { ...completeBody.transcript.placement, order: 5, orderEpoch: 2, placementRevision: 20 } } };
 const movedHydrated = sessionReducer(beforeContent, { type: 'snapshot_hydrated', snapshot: { ...probeSnapshot, items: [changedPosition] } });
 assertProbe(movedHydrated.items[beforeContent.itemOrder[0]!]!.transcript?.placement.orderEpoch === 2, '纯位置快照不能被内容对象复用规则丢弃');
+
+/** 同一回复的历史轮次、实时轮次与缓存别名必须收敛到一个持久身份。 */
+function verifyTranscriptSourceAliases(): void {
+  /** 最小正文具有明确持久身份与内容修订，不依赖时间或文字猜测关联。 */
+  const completeBody = {
+    id: 'body',
+    turnId: 'turn',
+    providerItemId: 'body',
+    type: 'agentMessage',
+    status: 'in_progress',
+    phase: 'final_answer',
+    text: '完整的新正文',
+    payload: {},
+    resources: [],
+    startedAt: '2026-01-01T00:00:00Z',
+    completedAt: null,
+    updatedAt: '2026-01-01T00:00:01Z',
+    transcript: probeTranscript('body', 1, 'probe-input', null, 10),
+  };
+  /** 正式归约入口只需本任务的一条正文，不访问正式数据库。 */
+  const probeSnapshot = {
+    id: 'source-aliases',
+    projectId: 'project',
+    providerThreadId: 'thread',
+    items: [completeBody],
+    turns: [],
+    messages: [],
+    requests: [],
+    submissions: [],
+    queue: { state: { type: 'idle' }, submissions: [] },
+    throughEventSeq: 1,
+  } as unknown as NativeConversationSnapshot;
+  /** 完成事件补全 Provider 轮次编号，持久身份与历史来源一致。 */
+  const contentEvent = {
+    id: 'source-alias-change',
+    type: 'conversation.item.completed',
+    createdAt: '2026-09-30T00:00:00Z',
+    payload: {
+      projectId: 'project',
+      conversationId: probeSnapshot.id,
+      threadId: 'thread',
+      turnId: 'provider-history-turn',
+      itemId: 'body',
+      itemType: 'agentMessage',
+      textContent: '完整的新正文追加',
+      transcript: probeTranscript('body', 1, 'probe-input', null, 12),
+    },
+  } as const;
+  /** 历史首屏尚未取得 Provider 身份，但正文已具有持久显示位置。 */
+  const historicalBody = { ...completeBody, id: 'history-row', turnId: 'local-history-turn', providerItemId: null, status: 'completed', payload: { v2ContentKind: 'model_history' } };
+  /** 只使用一条历史正文，便于核对是否意外生成第二个界面条目。 */
+  const history = createHydratedSessionState({ ...probeSnapshot, items: [historicalBody] });
+  /** 实时完成事件使用不同轮次编号，正文身份保持不变。 */
+  const eventState = sessionReducer(history, { type: 'event_received', event: { ...contentEvent, type: 'conversation.item.completed', payload: { ...contentEvent.payload, turnId: 'provider-history-turn' } } });
+  assertProbe(eventState.itemOrder.length === 1 && eventState.itemOrder[0] === history.itemOrder[0] && eventState.items[eventState.itemOrder[0]!]!.text === contentEvent.payload.textContent, '实时回复必须接管同持久身份历史条目并保留可见键');
+  /** 模拟旧窗口按技术键保留的别名；持久身份仍指向同一正文。 */
+  const alias = { ...history.items[history.itemOrder[0]!]!, key: 'old-alias', localItemId: 'old-history-row', turnId: 'old-history-turn' };
+  /** 旧缓存包含两个来源副本，权威刷新和补页都必须消除它。 */
+  const duplicated = { ...history, items: { ...history.items, [alias.key]: alias }, itemOrder: [...history.itemOrder, alias.key] };
+  for (const type of ['snapshot_hydrated', 'snapshot_v2_page_merged'] as const) {
+    /** 完整来源条目与旧页使用不同技术编号。 */
+    const refreshed = sessionReducer(duplicated, { type, snapshot: { ...probeSnapshot, items: [{ ...completeBody, turnId: 'provider-history-turn' }] } });
+    assertProbe(refreshed.itemOrder.length === 1 && Object.keys(refreshed.items).length === 1, '快照刷新和历史补页必须只保留一份持久正文');
+    new TranscriptViewportLayout().syncKeys(
+      projectTranscriptTurnRows(projectTranscriptRows(refreshed.itemOrder.map((key) => refreshed.items[key]!))).map((row) => row.key),
+      new TranscriptRowMeasurementCache(),
+    );
+  }
+  /** 旧副本正文修订更低、位置完全相同，去重仍不能返回原来的重复数组。 */
+  const staleAlias = { ...completeBody, text: '旧正文', transcript: { ...probeTranscript('body', 1, 'probe-input', null, 4), placement: completeBody.transcript.placement } };
+  assertProbe(reconcileTranscriptItems([completeBody, staleAlias], []).items.length === 1, '正文未变化的重复来源也必须完成结构去重');
+  /** 缓存读写边界拒绝重复身份，正常单条缓存仍可恢复。 */
+  const persisted = buildPersistedSessionViewCache(new Map([[history.conversationId!, { state: history, estimatedBytes: 1, cachedAt: Date.now() }]]));
+  assertProbe(persisted.entries.length === 1, '合法显示缓存必须继续可用');
+  primePersistedSessionViewCache({ ...persisted, entries: [{ ...persisted.entries[0]!, state: duplicated }] });
+  assertProbe(initialSessionHotCache().size === 0, '重复身份显示缓存不能进入首次渲染');
+}
+verifyTranscriptSourceAliases();
 
 /** 真实磁盘子进程崩溃、损坏断点和阶段续做的恢复核验。 */
 async function verifyTranscriptDurableRecovery(): Promise<void> {
