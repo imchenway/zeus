@@ -301,8 +301,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 .macos-ai-app :where(button, summary, [role='button'], [role='tab'], [role='option']):where(:active:not(:disabled):not([aria-disabled='true']):not([data-zeus-primitive='backdrop'])) {
   background-color: var(--zeus-interaction-pressed);
 }
-.macos-ai-app :where(button, summary, [role='button'], [role='tab'], a[href]):focus-visible {
-  outline: 2px solid var(--zeus-product-accent);
+.macos-ai-app :focus-visible {
+  /* 原语层最后加载并统一钳制焦点轮廓色，避免页面级规则恢复品牌紫色描边。 */
+  outline-color: var(--zeus-focus-line) !important;
+}
+.macos-ai-app :where(button, summary, [role='button'], [role='tab'], [role='option'], a[href]):focus-visible {
+  outline: 2px solid var(--zeus-focus-line);
   outline-offset: 2px;
 }
 .macos-ai-app :where(input, select, textarea):hover:not(:disabled):not([readonly]) {
@@ -310,13 +314,13 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 }
 /* 页面与 body 下的弹窗共用输入焦点；复合控件继续由自身外框负责。 */
 .macos-ai-app :where(input, select, textarea):focus-visible {
-  border-color: var(--zeus-focus-line);
+  border-color: var(--zeus-focus-line) !important;
   box-shadow: var(--zeus-field-focus);
   outline: 0;
 }
 /* 错误状态保留语义色，不能被普通焦点覆盖。 */
 .macos-ai-app :is(input, select, textarea):is([aria-invalid='true'], :user-invalid):focus-visible {
-  border-color: var(--zeus-control-error-line);
+  border-color: var(--zeus-control-error-line) !important;
   box-shadow: inset 0 0 0 1px var(--zeus-control-error-line);
 }
 /* 强制配色会移除阴影，用内收轮廓保留键盘定位。 */

@@ -595,13 +595,13 @@ body:has(.menu-bar-usage-root),
   line-height: 1;
 }
 
-.menu-bar-usage-cost-detail-trigger:hover,
-.menu-bar-usage-cost-detail-trigger:focus-visible {
+.menu-bar-usage-cost-detail-trigger:hover {
   color: var(--usage-accent-strong);
 }
 
 .menu-bar-usage-cost-detail-trigger:focus-visible {
-  outline: 2px solid var(--usage-accent);
+  color: var(--usage-text);
+  outline: 2px solid color-mix(in srgb, var(--usage-text) 48%, transparent);
   outline-offset: -2px;
   border-radius: 5px;
 }
@@ -840,14 +840,14 @@ body:has(.menu-bar-usage-root),
   background: var(--zeus-brand-hover);
 }
 
-/* 焦点环与浮窗内其他控件一致，深浅色都由品牌色保证可见。 */
+/* 选择后的焦点环保持中性，避免原生下拉持续显示品牌紫色描边。 */
 .menu-bar-usage-source-select select:focus-visible {
-  outline: 2px solid var(--usage-accent);
+  outline: 2px solid color-mix(in srgb, var(--usage-text) 48%, transparent);
   outline-offset: 1px;
 }
 
 .menu-bar-usage-source-select:focus-within {
-  color: var(--usage-accent-strong);
+  color: var(--usage-muted);
 }
 
 .menu-bar-usage-source-info {
@@ -861,7 +861,7 @@ body:has(.menu-bar-usage-root),
 
 /* 原生提示同时提供可聚焦入口和完整读屏文案。 */
 .menu-bar-usage-source-info:focus-visible {
-  outline: 2px solid var(--usage-accent);
+  outline: 2px solid color-mix(in srgb, var(--usage-text) 48%, transparent);
   border-radius: 4px;
 }
 
@@ -974,7 +974,7 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-root button:focus-visible {
-  outline: 2px solid var(--usage-accent);
+  outline: 2px solid color-mix(in srgb, var(--usage-text) 48%, transparent);
   outline-offset: 2px;
 }
 
@@ -1303,8 +1303,8 @@ body:has(.menu-bar-usage-root),
 }
 
 .menu-bar-usage-root button:focus-visible {
-  border-color: color-mix(in srgb, var(--usage-accent) 52%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--usage-accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--usage-text) 36%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--usage-text) 12%, transparent);
   outline: 0;
 }
 
