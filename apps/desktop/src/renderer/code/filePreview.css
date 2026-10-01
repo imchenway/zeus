@@ -12,8 +12,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
+  gap: 4px;
+  padding: 4px 10px;
   flex: 0 0 auto;
 }
 .file-preview button,
@@ -21,7 +21,7 @@
   font: inherit;
   color: inherit;
   background: transparent;
-  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border: 0;
   border-radius: 5px;
   padding: 3px 8px;
   cursor: pointer;
@@ -34,11 +34,11 @@
 .file-preview-toolbar .file-preview-icon-button {
   display: grid;
   place-items: center;
-  flex: 0 0 30px;
-  width: 30px;
-  min-width: 30px;
-  height: 30px;
-  min-height: 30px;
+  flex: 0 0 28px;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
   padding: 0;
 }
 .file-preview-icon-button > svg {
@@ -46,12 +46,12 @@
 }
 .file-preview button[aria-pressed='true'],
 .file-preview-toolbar .file-preview-icon-button[aria-pressed='true'] {
-  color: #7255dc;
-  background: color-mix(in srgb, #7255dc 15%, transparent);
+  color: var(--zeus-control-accent);
+  background: color-mix(in srgb, var(--zeus-control-accent) 10%, transparent);
 }
 .file-preview button:focus-visible,
 .file-preview-toolbar .file-preview-icon-button:focus-visible {
-  outline: 2px solid #7255dc;
+  outline: 2px solid var(--zeus-control-accent);
   outline-offset: 2px;
 }
 .file-preview p {
@@ -79,13 +79,38 @@
 }
 .file-preview-content > header {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px 12px;
-  overflow-wrap: anywhere;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--zeus-product-line);
 }
-.file-preview-content > header small {
-  opacity: 0.65;
+/* 文件名可省略并悬浮查看完整路径，窄栏才允许工具操作换行。 */
+.file-preview-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 180px;
+  min-width: 0;
+}
+.file-preview-identity > strong,
+.file-preview-identity > small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-preview-identity > strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+.file-preview-identity > small {
+  color: var(--zeus-control-muted-text);
+  font-size: 10px;
+}
+.file-preview-content > header > .file-preview-toolbar {
+  margin-inline-start: auto;
+  padding: 0;
 }
 .file-preview-image {
   display: flex;

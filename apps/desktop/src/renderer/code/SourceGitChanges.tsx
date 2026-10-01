@@ -4,7 +4,7 @@ import { ArrowUpIcon as Push } from '@phosphor-icons/react/dist/csr/ArrowUp';
 import { SparkleIcon as Sparkle } from '@phosphor-icons/react/dist/csr/Sparkle';
 import { StopIcon as Stop } from '@phosphor-icons/react/dist/csr/Stop';
 import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
-import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
+import { FileTypeIcon } from './FileTypeIcon.js';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { TreeStructureIcon as TreeStructure } from '@phosphor-icons/react/dist/csr/TreeStructure';
 import { ListBulletsIcon as ListBullets } from '@phosphor-icons/react/dist/csr/ListBullets';
@@ -588,6 +588,7 @@ function SelectionCheckbox(props: { label: string; paths: string[]; selected: st
   );
 }
 
+/** 树形和平铺入口使用同一文件状态、图标与选择行为。 */
 function SourceChangeTree(props: {
   view: 'tree' | 'flat';
   files: GitFileStatusSummary[];
@@ -633,7 +634,7 @@ function SourceChangeTree(props: {
                   }
                 />
               ) : null}
-              <Folder />
+              <Folder weight="duotone" aria-hidden="true" />
               <span>{folder.slice(0, -1)}</span>
               <small>{children.length}</small>
             </summary>
@@ -643,7 +644,7 @@ function SourceChangeTree(props: {
       {files
         .sort((a, b) => a.path.localeCompare(b.path))
         .map((file) => (
-          <div key={file.path} className="source-git-file" data-selected={props.selectedPath === file.path} data-status={file.category}>
+          <div key={file.path} className="source-git-file" data-selected={props.selectedPath === file.path}>
             {props.selectable ? (
               <SelectionCheckbox
                 label={(props.zh ? '选择提交文件 ' : 'Select file for commit ') + file.path}
@@ -654,8 +655,10 @@ function SourceChangeTree(props: {
               />
             ) : null}
             <button type="button" title={file.originalPath ? `${file.originalPath} → ${file.path}` : file.path} onClick={() => props.onOpen(file)} onDoubleClick={() => props.onOpenFile(file)}>
-              <File />
-              <span className="source-git-file-name">{props.view === 'flat' ? file.path.slice(file.path.lastIndexOf('/') + 1) : file.path.slice(prefix.length)}</span>
+              <FileTypeIcon name={file.path} />
+              <span className="source-git-file-name" data-file-status={file.category}>
+                {props.view === 'flat' ? file.path.slice(file.path.lastIndexOf('/') + 1) : file.path.slice(prefix.length)}
+              </span>
               {props.view === 'flat' && file.path.includes('/') ? <span className="source-git-file-directory">{file.path.slice(0, file.path.lastIndexOf('/'))}</span> : null}
               <small>{file.indexStatus.trim() || file.workingTreeStatus.trim()}</small>
             </button>

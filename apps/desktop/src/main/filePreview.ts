@@ -1,15 +1,19 @@
 import { BrowserWindow, dialog, ipcMain, protocol, shell } from 'electron';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants, createReadStream, createWriteStream } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, open, readFile, realpath, rm, stat } from 'node:fs/promises';
 import { basename, join, relative, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { promisify } from 'node:util';
 import { filePreviewKind, filePreviewLimits, filePreviewMime, type FilePreviewIntent, type FilePreviewItem, type FilePreviewRequest, type FilePreviewSource } from '@zeus/shared';
 
 /** 只读媒体协议必须在 Electron 就绪前登记；不允许任意 file URL。 */
 protocol.registerSchemesAsPrivileged([{ scheme: 'zeus-preview', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }]);
+
+/** 系统图片解码异步执行并限制超时，不阻塞主进程或调用 shell。 */
+const execFileAsync = promisify(execFile);
 
 /** 每份授权绑定发起窗口，临时历史文件随授权一起清理。 */
 interface PreviewGrant {
@@ -25,6 +29,8 @@ interface PreviewGrant {
   temporary?: string;
   /** 渲染层可见的有限描述。 */
   item: FilePreviewItem;
+  /** ICNS 的只读 PNG 预览；系统操作和导出继续使用原始文件。 */
+  image?: Buffer;
 }
 
 /** 验证并固定普通文件路径，阻止越界链接和 Git 内部文件泄漏。 */
@@ -138,7 +144,7 @@ export function registerFilePreview(services: {
       /** 本次读取的准确文件路径。 */
       const path = await currentPath(grant);
       /** 当前资源字节数。 */
-      const size = grant.item.byteLength;
+      const size = grant.image?.byteLength ?? grant.item.byteLength;
       /** 媒体播放器请求的字节范围。 */
       const range = request.headers.get('range');
       /** 本次响应起始字节。 */
@@ -155,7 +161,7 @@ export function registerFilePreview(services: {
       }
       /** 仅允许受限内容与不缓存响应。 */
       const headers = {
-        'Content-Type': grant.item.mime,
+        'Content-Type': grant.image ? 'image/png' : grant.item.mime,
         'Content-Length': String(Math.max(0, end - start + 1)),
         'Accept-Ranges': 'bytes',
         'Cache-Control': 'no-store',
@@ -165,6 +171,7 @@ export function registerFilePreview(services: {
         ...(range ? { 'Content-Range': `bytes ${start}-${end}/${size}` } : {}),
       };
       if (request.method === 'HEAD' || !size) return new Response(null, { status: range ? 206 : 200, headers });
+      if (grant.image) return new Response(new Uint8Array(grant.image.subarray(start, end + 1)), { status: range ? 206 : 200, headers });
       /** 本次读取拥有的文件句柄。 */
       const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
       /** 已打开文件的身份信息。 */
@@ -201,6 +208,8 @@ export function registerFilePreview(services: {
         const item: FilePreviewItem = { id: '', name: source.name, label: source.label, kind: 'unavailable', mime: filePreviewMime(source.name), byteLength: 0, review: source.review };
         /** 本次资源专属临时目录。 */
         let temporary: string | undefined;
+        /** 解码内容绑定本次授权，释放时随授权回收。 */
+        let image: Buffer | undefined;
         try {
           if (source.reason) return { ...item, reason: source.reason };
           if (source.blob || source.sha256) {
@@ -224,6 +233,35 @@ export function registerFilePreview(services: {
           const identity = await fileIdentity(previewPath);
           item.byteLength = (await stat(previewPath)).size;
           item.kind = filePreviewKind(item.mime);
+          if (item.mime === 'image/icns' && process.platform === 'darwin' && item.byteLength <= filePreviewLimits.image) {
+            try {
+              /** 只接受头部和声明长度一致的 ICNS 容器，拒绝误标的其他格式。 */
+              const header = Buffer.alloc(8);
+              /** 有界读取后立即释放句柄，不持有原始图标文件。 */
+              const handle = await open(previewPath, 'r');
+              try {
+                await handle.read(header, 0, header.length, 0);
+              } finally {
+                await handle.close();
+              }
+              if (item.byteLength <= header.length || header.toString('ascii', 0, 4) !== 'icns' || header.readUInt32BE(4) !== item.byteLength) throw new Error('无效的 ICNS 文件头。');
+              await mkdir(services.temporaryRoot, { recursive: true, mode: 0o700 });
+              /** 解码临时文件只属于本次转换，读取完成后立即清理。 */
+              const directory = await mkdtemp(join(services.temporaryRoot, 'icon-'));
+              try {
+                /** sips 实际解码图标内容，避免 Quick Look 为损坏文件生成通用图标。 */
+                const pngPath = join(directory, 'preview.png');
+                await execFileAsync('/usr/bin/sips', ['-s', 'format', 'png', '-Z', '1024', previewPath, '--out', pngPath], { timeout: 15_000, maxBuffer: 16 * 1024 });
+                if ((await stat(pngPath)).size > filePreviewLimits.image) throw new Error('解码图片超过预览上限。');
+                image = await readFile(pngPath);
+              } finally {
+                await rm(directory, { recursive: true, force: true });
+              }
+              item.kind = 'image';
+            } catch {
+              item.reason = 'ICNS 图标无法解码，请使用系统预览或打开原文件。';
+            }
+          }
           /** 小内容严格解码；PDF 校验文件头，避免把错误页面当成阅读器。 */
           if (item.byteLength <= filePreviewLimits.text) {
             /** 受大小限制的原始文件内容。 */
@@ -260,11 +298,17 @@ export function registerFilePreview(services: {
             item.kind = 'system';
             item.reason = '图片超过 16 MiB 页内预览上限。';
           }
-          if (item.kind === 'system' && !item.reason) item.reason = item.byteLength > filePreviewLimits.text ? '此文件使用系统预览；文本页内读取上限为 2 MiB。' : '此格式使用系统预览。';
+          if (item.kind === 'system' && !item.reason)
+            item.reason =
+              item.mime === 'application/octet-stream' && item.byteLength > filePreviewLimits.text
+                ? '此文件使用系统预览；文本页内读取上限为 2 MiB。'
+                : item.mime === 'image/icns' && item.byteLength > filePreviewLimits.image
+                  ? '图标超过 16 MiB 页内预览上限，请使用系统预览。'
+                  : '此格式使用系统预览。';
           if ((await fileIdentity(previewPath)) !== identity) throw new Error('读取期间文件发生变化，请刷新。');
           item.id = randomUUID();
           if (['image', 'pdf', 'audio', 'video'].includes(item.kind)) item.url = `zeus-preview://${item.id}/${encodeURIComponent(basename(source.name))}`;
-          grants.set(item.id, { owner: window.id, source, path: previewPath, temporary, identity, item });
+          grants.set(item.id, { owner: window.id, source, path: previewPath, temporary, identity, item, image });
           return item;
         } catch (error) {
           if (temporary) await rm(temporary, { recursive: true, force: true });

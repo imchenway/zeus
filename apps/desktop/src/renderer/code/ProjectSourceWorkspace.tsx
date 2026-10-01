@@ -7,11 +7,14 @@ import { MotionPresence } from '../ui/MotionPresence.js';
 import { Collapsible } from '../ui/Collapsible.js';
 import { Suspense, forwardRef, lazy, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { sourceConflictExtensions } from './sourceConflictExtensions.js';
-import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
+import { FileTypeIcon } from './FileTypeIcon.js';
+import { FilePlusIcon as FilePlus } from '@phosphor-icons/react/dist/csr/FilePlus';
+import { FolderPlusIcon as FolderPlus } from '@phosphor-icons/react/dist/csr/FolderPlus';
+import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
+import { CaretRightIcon as CaretRight } from '@phosphor-icons/react/dist/csr/CaretRight';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
-import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { ProjectCodeWorkspacePreference, ProjectSourceDirectorySnapshot, ProjectSourceDocument, ProjectSourceEntry, ProjectSourceEvent } from '@zeus/shared';
 import type { Text } from '@codemirror/state';
@@ -78,6 +81,8 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(() => new Set(initialPreference.expandedDirectories));
   const [tabs, setTabs] = useState<SourceTab[]>([]);
   const [activePath, setActivePath] = useState<string | null>(initialPreference.activeFile);
+  /** 复用更改面板的真实 Git 快照，文件树和标签不额外扫描仓库。 */
+  const [gitFileStatuses, setGitFileStatuses] = useState<Record<string, string>>({});
   const [changePreview, setChangePreview] = useState<{ projectId: string; path: string; diff: GitDiffSummary; revision: string; request: FilePreviewRequest } | null>(null);
   const [treeWidth, setTreeWidth] = useState(initialPreference.treeWidth);
   const [sourceShare, setSourceShare] = useState(55);
@@ -398,8 +403,10 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
     }
   }
 
+  /** 所有关闭入口共用未保存保护，保存期间不移除标签。 */
   function closeTab(path: string): void {
     const tab = tabsRef.current.find((candidate) => candidate.document.relativePath === path);
+    if (!tab || tab.saving) return;
     if (tab?.dirty) {
       setPendingClosePath(path);
       return;
@@ -407,13 +414,14 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
     removeTab(path);
   }
 
+  /** 先计算相邻标签，再分别更新状态，避免在状态更新函数内触发另一份状态更新。 */
   function removeTab(path: string): void {
-    setTabs((current) => {
-      const index = current.findIndex((candidate) => candidate.document.relativePath === path);
-      const next = current.filter((candidate) => candidate.document.relativePath !== path);
-      if (activePathRef.current === path) setActivePath(next[Math.min(index, next.length - 1)]?.document.relativePath ?? null);
-      return next;
-    });
+    /** 本次关闭之前的标签位置决定随后选择的相邻文件。 */
+    const index = tabsRef.current.findIndex((candidate) => candidate.document.relativePath === path);
+    /** 从当前标签快照移除文件，最后一个关闭后清空选择。 */
+    const next = tabsRef.current.filter((candidate) => candidate.document.relativePath !== path);
+    setTabs(next);
+    if (activePathRef.current === path) setActivePath(next[Math.min(index, next.length - 1)]?.document.relativePath ?? null);
   }
 
   function beginOperation(next: FileOperation): void {
@@ -605,8 +613,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                     beginOperation({ kind: 'create-file', parentRelativePath: activePath ? parentPath(activePath) : '' });
                   }}
                 >
-                  <File aria-hidden="true" />
-                  <Plus aria-hidden="true" />
+                  <FilePlus size={16} aria-hidden="true" />
                 </button>
                 <button
                   type="button"
@@ -618,8 +625,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                     beginOperation({ kind: 'create-directory', parentRelativePath: activePath ? parentPath(activePath) : '' });
                   }}
                 >
-                  <Folder aria-hidden="true" />
-                  <Plus aria-hidden="true" />
+                  <FolderPlus size={16} aria-hidden="true" />
                 </button>
               </span>
             </summary>
@@ -629,7 +635,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
             </label>
             <div className="project-source-tree-scroll" role="tree" aria-busy={loadingTree}>
               {searchQuery.trim() ? (
-                <SearchResults entries={searchResults} truncated={searchTruncated} busyPath={busyPath} onOpen={(path) => void openFile(path)} zh={zh} />
+                <SearchResults entries={searchResults} activePath={activePath} gitFileStatuses={gitFileStatuses} truncated={searchTruncated} busyPath={busyPath} onOpen={(path) => void openFile(path)} zh={zh} />
               ) : loadingTree ? (
                 <p className="project-source-empty">{zh ? '正在读取项目目录…' : 'Loading the project folder…'}</p>
               ) : (
@@ -639,6 +645,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                   directories={directories}
                   expandedDirectories={expandedDirectories}
                   activePath={activePath}
+                  gitFileStatuses={gitFileStatuses}
                   busyPath={busyPath}
                   onToggle={(path) => void toggleDirectory(path)}
                   onOpen={(path) => void openFile(path)}
@@ -693,15 +700,20 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
             onOpen={({ path, diff, repositoryId, repositoryPath, revision }) =>
               setChangePreview({ projectId: props.project.id, path, diff, revision, request: { kind: 'project-git', projectId: props.project.id, repositoryId, path: repositoryPath, stage: 'combined' } })
             }
-            onSnapshot={(snapshot) =>
+            onSnapshot={(snapshot) => {
+              setGitFileStatuses(
+                Object.fromEntries(
+                  snapshot.repositories.flatMap((repository) => repository.snapshot.fileStatuses.map((file) => [[repository.relativePath === '.' ? '' : repository.relativePath, file.path].filter(Boolean).join('/'), file.category])),
+                ),
+              );
               setChangePreview((current) => {
                 if (!current || current.request.kind !== 'project-git') return current;
                 const request = current.request;
                 const repository = snapshot.repositories.find((item) => item.id === request.repositoryId);
                 if (!repository || !repository.snapshot.fileStatuses.some((file) => file.path === request.path)) return null;
                 return { ...current, diff: fileDiff(repository, request.path), revision: snapshot.refreshedAt };
-              })
-            }
+              });
+            }}
           />
         </aside>
         <div
@@ -734,17 +746,27 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
               <FolderOpen aria-hidden="true" />
             </button>
             {tabs.map((tab) => (
-              <div key={tab.document.relativePath} className={`project-source-tab${tab.document.relativePath === activePath ? ' active' : ''}`}>
+              <div
+                key={tab.document.relativePath}
+                className={`project-source-tab${!changePreview && tab.document.relativePath === activePath ? ' active' : ''}`}
+                onAuxClick={(event) => {
+                  if (event.button !== 1) return;
+                  event.preventDefault();
+                  closeTab(tab.document.relativePath);
+                }}
+              >
                 <button
                   type="button"
                   role="tab"
+                  title={tab.document.relativePath}
                   aria-selected={!changePreview && tab.document.relativePath === activePath}
                   onClick={() => {
                     setChangePreview(null);
                     setActivePath(tab.document.relativePath);
                   }}
                 >
-                  <span>{tab.document.name}</span>
+                  <FileTypeIcon name={tab.document.name} />
+                  <span data-file-status={gitFileStatuses[tab.document.relativePath]}>{tab.document.name}</span>
                   {tab.dirty ? (
                     <i aria-label={zh ? '未保存' : 'Unsaved'}>●</i>
                   ) : tab.externalChange ? (
@@ -753,8 +775,15 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                     </i>
                   ) : null}
                 </button>
-                <button type="button" className="project-source-tab-close" aria-label={zh ? `关闭 ${tab.document.name}` : `Close ${tab.document.name}`} onClick={() => closeTab(tab.document.relativePath)}>
-                  ×
+                <button
+                  type="button"
+                  className="project-source-tab-close"
+                  title={zh ? `关闭 ${tab.document.name}` : `Close ${tab.document.name}`}
+                  aria-label={zh ? `关闭 ${tab.document.name}` : `Close ${tab.document.name}`}
+                  disabled={tab.saving}
+                  onClick={() => closeTab(tab.document.relativePath)}
+                >
+                  <X size={14} aria-hidden="true" />
                 </button>
               </div>
             ))}
@@ -763,15 +792,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
             <>
               <div className="project-source-editor-track-placeholder" aria-hidden="true" />
               <section className="project-source-change-preview">
-                <header>
-                  <span>
-                    {changePreview.path} · {zh ? 'HEAD → 工作区' : 'HEAD → Working tree'}
-                  </span>
-                  <button type="button" onClick={() => setChangePreview(null)}>
-                    {zh ? '关闭对比' : 'Close diff'}
-                  </button>
-                </header>
-                <SideBySideDiff key={changePreview.path} revision={changePreview.revision} previewRequest={changePreview.request} diff={changePreview.diff} zh={zh} title={changePreview.path} fill />
+                <SideBySideDiff key={changePreview.path} revision={changePreview.revision} previewRequest={changePreview.request} diff={changePreview.diff} zh={zh} title={changePreview.path} onClose={() => setChangePreview(null)} fill />
               </section>
             </>
           ) : activeTab ? (
@@ -782,7 +803,12 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                 ))}
               </nav>
               {!activeTab.document.editable ? (
-                <FilePreview request={{ kind: 'source', projectId: props.project.id, path: activeTab.document.relativePath }} revision={activeTab.document.revision.sha256} zh={zh} />
+                <FilePreview
+                  request={{ kind: 'source', projectId: props.project.id, path: activeTab.document.relativePath }}
+                  revision={activeTab.document.revision.sha256}
+                  fileStatus={gitFileStatuses[activeTab.document.relativePath]}
+                  zh={zh}
+                />
               ) : (
                 <Suspense fallback={<div className="project-source-code-editor-loading">{zh ? '正在加载代码编辑器…' : 'Loading code editor…'}</div>}>
                   <ProjectSourceEditor
@@ -817,8 +843,8 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
           )}
           <footer className="project-source-statusbar">
             {activeTab ? (
-              activeTab.document.imagePreviewUrl ? (
-                <span>{zh ? '图片 · 只读' : 'Image · Read-only'}</span>
+              !activeTab.document.editable ? (
+                <span>{zh ? '文件预览 · 只读' : 'File preview · Read-only'}</span>
               ) : (
                 <>
                   <span>{activeTab.document.language}</span>
@@ -906,7 +932,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
               <header>
                 <strong>{operationTitle(operation, zh)}</strong>
                 <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={() => setOperation(null)} disabled={Boolean(busyPath)}>
-                  ×
+                  <X size={16} aria-hidden="true" />
                 </button>
               </header>
               <div>
@@ -1012,12 +1038,14 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   }
 });
 
+/** 目录树复用 Git 快照的状态色，目录和展开图标保持独立。 */
 function TreeRows(props: {
   directoryPath: string;
   depth: number;
   directories: Record<string, ProjectSourceDirectorySnapshot>;
   expandedDirectories: Set<string>;
   activePath: string | null;
+  gitFileStatuses: Record<string, string>;
   busyPath: string | null;
   onToggle(path: string): void;
   onOpen(path: string): void;
@@ -1042,10 +1070,10 @@ function TreeRows(props: {
           onContextMenu={(event) => props.onContextMenu(entry, event)}
         >
           <span className="project-source-disclosure" aria-hidden="true">
-            {directoryEntry ? (expanded ? '⌄' : '›') : ''}
+            {directoryEntry ? expanded ? <CaretDown size={12} /> : <CaretRight size={12} /> : null}
           </span>
-          {directoryEntry ? expanded ? <FolderOpen aria-hidden="true" /> : <Folder aria-hidden="true" /> : <File aria-hidden="true" />}
-          <span>{entry.name}</span>
+          {directoryEntry ? expanded ? <FolderOpen weight="duotone" aria-hidden="true" /> : <Folder weight="duotone" aria-hidden="true" /> : <FileTypeIcon name={entry.name} />}
+          <span data-file-status={directoryEntry ? undefined : props.gitFileStatuses[entry.relativePath]}>{entry.name}</span>
           {entry.kind === 'symlink' ? <small>↗</small> : null}
         </button>
         {directoryEntry ? (
@@ -1058,15 +1086,24 @@ function TreeRows(props: {
   });
 }
 
-function SearchResults(props: { entries: ProjectSourceEntry[]; truncated: boolean; busyPath: string | null; onOpen(path: string): void; zh: boolean }) {
+/** 搜索结果沿用目录树的选中态和 Git 状态色。 */
+function SearchResults(props: { entries: ProjectSourceEntry[]; activePath: string | null; gitFileStatuses: Record<string, string>; truncated: boolean; busyPath: string | null; onOpen(path: string): void; zh: boolean }) {
   if (props.entries.length === 0) return <p className="project-source-empty">{props.zh ? '没有匹配的文件。' : 'No matching files.'}</p>;
   return (
     <>
       {props.entries.map((entry) => (
-        <button key={entry.relativePath} type="button" role="treeitem" disabled={!entry.accessible || entry.kind === 'directory' || props.busyPath === entry.relativePath} onClick={() => props.onOpen(entry.relativePath)}>
-          {entry.kind === 'directory' ? <Folder aria-hidden="true" /> : <File aria-hidden="true" />}
+        <button
+          key={entry.relativePath}
+          type="button"
+          role="treeitem"
+          className={entry.relativePath === props.activePath ? 'selected' : ''}
+          aria-selected={entry.relativePath === props.activePath}
+          disabled={!entry.accessible || entry.kind === 'directory' || props.busyPath === entry.relativePath}
+          onClick={() => props.onOpen(entry.relativePath)}
+        >
+          {entry.kind === 'directory' ? <Folder weight="duotone" aria-hidden="true" /> : <FileTypeIcon name={entry.name} />}
           <span>
-            <strong>{entry.name}</strong>
+            <strong data-file-status={props.gitFileStatuses[entry.relativePath]}>{entry.name}</strong>
             <small>{entry.relativePath}</small>
           </span>
         </button>

@@ -1,9 +1,10 @@
-import { FilePreview, fileDiffEmptyMessage } from '../code/FilePreview.js';
+import { FilePreview, PreviewIconButton, fileDiffEmptyMessage } from '../code/FilePreview.js';
 import type { FilePreviewRequest } from '@zeus/shared';
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ColumnsIcon as Columns } from '@phosphor-icons/react/dist/csr/Columns';
-import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
+import { FileTypeIcon } from '../code/FileTypeIcon.js';
 import { RowsIcon as Rows } from '@phosphor-icons/react/dist/csr/Rows';
+import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { DashboardClient, GitDiffHunk, GitDiffSummary, GitFileDiff } from '../apiClient.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 /** 与会话和交付共用按可视区域渲染的差异视图。 */
@@ -30,6 +31,8 @@ interface SideBySideDiffProps {
   hunkActionLabel?: string;
   onHunkDiscard?: (file: GitFileDiff, hunk: GitDiffHunk, index: number) => void;
   hunkDiscardLabel?: string;
+  /** 源码临时对比的关闭操作与文件操作保持在同一行。 */
+  onClose?: () => void;
 }
 
 /** 两种差异入口共用窗口，只从明确的业务来源读取内容。 */
@@ -126,7 +129,7 @@ export function ProjectGitDiffWindow(props: {
               <div>
                 {props.source.path && !diff.fileDiffs.some((file) => file.newPath === props.source.path || file.oldPath === props.source.path) ? (
                   <button type="button" className={props.source.path === selectedPath ? 'is-current' : ''} onClick={() => setSelectedPath(props.source.path)}>
-                    <File aria-hidden="true" />
+                    <FileTypeIcon name={props.source.path} />
                     <span>{props.source.path}</span>
                   </button>
                 ) : null}
@@ -134,8 +137,10 @@ export function ProjectGitDiffWindow(props: {
                   const path = file.newPath || file.oldPath;
                   return (
                     <button key={`${file.oldPath}:${file.newPath}`} type="button" className={path === selectedPath ? 'is-current' : ''} onClick={() => setSelectedPath(path)}>
-                      <File aria-hidden="true" />
-                      <span title={path}>{path}</span>
+                      <FileTypeIcon name={path} />
+                      <span title={path} data-file-status={file.changeType}>
+                        {path}
+                      </span>
                       <em>+{file.addedLines}</em>
                       <i>-{file.deletedLines}</i>
                     </button>
@@ -155,26 +160,39 @@ export function ProjectGitDiffWindow(props: {
   );
 }
 
-function TextSideBySideDiff(props: SideBySideDiffProps) {
+/** 标题、模式切换与布局操作共用一行，空文本差异仍能切换到内容预览。 */
+function TextSideBySideDiff(props: SideBySideDiffProps & { /** 共享文件操作由预览容器提供。 */ toolbar?: ReactNode }) {
   const [mode, setMode] = useState<DiffViewMode>('side-by-side');
   const file = props.diff?.fileDiffs[0] ?? null;
   if (!file) return <p className="project-git-empty-copy">{props.zh ? '选择一个文件查看差异。' : 'Select a file to inspect its diff.'}</p>;
-  if (file.hunks.length === 0) {
-    return <p className="project-git-empty-copy">{fileDiffEmptyMessage(file, props.zh)}</p>;
-  }
   const oldPath = file.changeType === 'added' ? (props.zh ? '变更前（空文件）' : 'Before (empty file)') : file.oldPath;
   const newPath = file.changeType === 'deleted' ? (props.zh ? '变更后（空文件）' : 'After (empty file)') : file.newPath;
   return (
     <section className={`project-git-diff-preview${props.fill ? ' is-fill' : ''}`} aria-label={props.zh ? '文件差异' : 'File diff'}>
       <header>
-        <strong title={props.title ?? (file.newPath || file.oldPath)}>{props.title ?? (file.newPath || file.oldPath)}</strong>
+        <FileTypeIcon name={file.newPath || file.oldPath} />
+        <strong title={props.title ?? (file.newPath || file.oldPath)} data-file-status={file.changeType}>
+          {props.title ?? (file.newPath || file.oldPath)}
+        </strong>
+        {props.toolbar ? (
+          <nav className="file-preview-toolbar" aria-label={props.zh ? '文件操作' : 'File actions'}>
+            {props.toolbar}
+          </nav>
+        ) : null}
         <span>+{file.addedLines}</span>
         <em>-{file.deletedLines}</em>
         <span className="project-git-diff-mode" aria-label={props.zh ? '差异布局' : 'Diff layout'}>
-          <button type="button" className={mode === 'side-by-side' ? 'is-active' : ''} onClick={() => setMode('side-by-side')} title={props.zh ? '左右两栏' : 'Side-by-side'}>
+          <button
+            type="button"
+            className={mode === 'side-by-side' ? 'is-active' : ''}
+            aria-pressed={mode === 'side-by-side'}
+            aria-label={props.zh ? '左右两栏' : 'Side-by-side'}
+            onClick={() => setMode('side-by-side')}
+            title={props.zh ? '左右两栏' : 'Side-by-side'}
+          >
             <Columns aria-hidden="true" />
           </button>
-          <button type="button" className={mode === 'unified' ? 'is-active' : ''} onClick={() => setMode('unified')} title={props.zh ? '统一视图' : 'Unified'}>
+          <button type="button" className={mode === 'unified' ? 'is-active' : ''} aria-pressed={mode === 'unified'} aria-label={props.zh ? '统一视图' : 'Unified'} onClick={() => setMode('unified')} title={props.zh ? '统一视图' : 'Unified'}>
             <Rows aria-hidden="true" />
           </button>
         </span>
@@ -186,29 +204,33 @@ function TextSideBySideDiff(props: SideBySideDiffProps) {
             <span title={newPath}>{newPath}</span>
           </div>
         ) : null}
-        <Suspense fallback={<p role="status">{props.zh ? '正在打开差异…' : 'Opening diff…'}</p>}>
-          {props.partitionHunks ? (
-            <div className="project-git-diff-hunks" aria-label={props.zh ? '差异区块' : 'Diff hunks'}>
-              {file.hunks.map((hunk, index) => (
-                <DiffHunkSection
-                  key={`${hunk.header}:${index}`}
-                  file={file}
-                  hunk={hunk}
-                  index={index}
-                  unified={mode === 'unified'}
-                  zh={props.zh}
-                  disabled={props.hunkActionsDisabled}
-                  actionLabel={props.hunkActionLabel}
-                  discardLabel={props.hunkDiscardLabel}
-                  onAction={props.onHunkAction}
-                  onDiscard={props.onHunkDiscard}
-                />
-              ))}
-            </div>
-          ) : (
-            <CodeDiffView file={file} unified={mode === 'unified'} alignReplacements resizable label={props.zh ? '文件差异' : 'File diff'} />
-          )}
-        </Suspense>
+        {file.hunks.length === 0 ? (
+          <p className="project-git-empty-copy">{fileDiffEmptyMessage(file, props.zh)}</p>
+        ) : (
+          <Suspense fallback={<p role="status">{props.zh ? '正在打开差异…' : 'Opening diff…'}</p>}>
+            {props.partitionHunks ? (
+              <div className="project-git-diff-hunks" aria-label={props.zh ? '差异区块' : 'Diff hunks'}>
+                {file.hunks.map((hunk, index) => (
+                  <DiffHunkSection
+                    key={`${hunk.header}:${index}`}
+                    file={file}
+                    hunk={hunk}
+                    index={index}
+                    unified={mode === 'unified'}
+                    zh={props.zh}
+                    disabled={props.hunkActionsDisabled}
+                    actionLabel={props.hunkActionLabel}
+                    discardLabel={props.hunkDiscardLabel}
+                    onAction={props.onHunkAction}
+                    onDiscard={props.onHunkDiscard}
+                  />
+                ))}
+              </div>
+            ) : (
+              <CodeDiffView file={file} unified={mode === 'unified'} alignReplacements resizable label={props.zh ? '文件差异' : 'File diff'} />
+            )}
+          </Suspense>
+        )}
       </div>
     </section>
   );
@@ -276,8 +298,20 @@ function selectFileDiff(diff: GitDiffSummary, path: string): GitDiffSummary {
 /** 仓库各入口共用媒体预览，文本保留原来的区块操作。 */
 export function SideBySideDiff(props: SideBySideDiffProps) {
   return props.previewRequest ? (
-    <FilePreview request={props.previewRequest} revision={props.revision} zh={props.zh}>
-      {props.diff?.fileDiffs.length ? <TextSideBySideDiff {...props} /> : null}
+    <FilePreview
+      request={props.previewRequest}
+      revision={props.revision}
+      zh={props.zh}
+      fileStatus={props.diff?.fileDiffs[0]?.changeType}
+      actions={
+        props.onClose ? (
+          <PreviewIconButton label={props.zh ? '关闭对比' : 'Close diff'} onClick={props.onClose}>
+            <X size={16} aria-hidden="true" />
+          </PreviewIconButton>
+        ) : null
+      }
+    >
+      {props.diff?.fileDiffs.length ? (toolbar) => <TextSideBySideDiff {...props} toolbar={toolbar} /> : null}
     </FilePreview>
   ) : (
     <TextSideBySideDiff {...props} />

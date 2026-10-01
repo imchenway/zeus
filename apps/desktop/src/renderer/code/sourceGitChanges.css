@@ -93,7 +93,7 @@
 .source-git-body button:focus-visible,
 .source-git-body summary:focus-visible,
 .source-git-body input:focus-visible {
-  outline: 2px solid var(--zeus-control-focus);
+  outline: 2px solid var(--zeus-control-accent);
   outline-offset: -2px;
 }
 .source-git-file-tools {
@@ -259,15 +259,6 @@
   font-size: 10px;
   color: var(--zeus-product-muted);
 }
-.source-git-file[data-status='modified'] > button > .source-git-file-name {
-  color: var(--zeus-info-text, #547fc0);
-}
-.source-git-file[data-status='added'] > button > .source-git-file-name {
-  color: var(--zeus-success-text, #438c65);
-}
-.source-git-file[data-status='deleted'] > button > .source-git-file-name {
-  text-decoration: line-through;
-}
 .source-git-commit {
   flex-shrink: 0;
   padding: 8px;
@@ -304,7 +295,7 @@
   font: inherit;
 }
 .source-git-commit textarea:focus {
-  outline: 1px solid var(--zeus-control-focus);
+  outline: 1px solid var(--zeus-control-accent);
 }
 .source-git-selection-count,
 .source-git-commit > small {

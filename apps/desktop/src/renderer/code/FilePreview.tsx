@@ -15,6 +15,7 @@ import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { detectSourceLanguage, userFacingErrorCause, type FilePreviewItem, type FilePreviewRequest, type FileReview, type ConversationFileLocation, type UserFacingErrorCause } from '@zeus/shared';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { FileTypeIcon } from './FileTypeIcon.js';
 import './filePreview.css';
 
 /** 会话统一选择预览容器：图片可用弹窗，其他文件进入右侧审阅。 */
@@ -28,7 +29,7 @@ const CodeDiffView = lazy(() => import('./CodeDiffView.js').then((module) => ({ 
 const Markdown = lazy(() => import('../session/ConversationMarkdown.js').then((module) => ({ default: module.ConversationMarkdown })));
 
 /** 图标按钮只接受一个功能名称，同时用于悬浮提示和无障碍名称。 */
-function PreviewIconButton({ label, children, ...buttonProps }: { label: string; children: ReactNode } & Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'aria-label' | 'className' | 'title' | 'type'>) {
+export function PreviewIconButton({ label, children, ...buttonProps }: { label: string; children: ReactNode } & Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'aria-label' | 'className' | 'title' | 'type'>) {
   return (
     <button {...buttonProps} className="file-preview-icon-button" type="button" aria-label={label} title={label}>
       {children}
@@ -85,21 +86,33 @@ export function FilePreview(props: {
   /** 中英文文案。 */
   zh: boolean;
   /** 文本继续复用原差异与评论界面。 */
-  children?: ReactNode;
+  children?: ReactNode | ((toolbar: ReactNode) => ReactNode);
+  /** 调用方已有的关闭等操作并入预览工具栏。 */
+  actions?: ReactNode;
+  /** Git 比较已知的变更状态同时用于媒体文件名称。 */
+  fileStatus?: string;
   /** 外部已知的修订用于显式刷新当前文件。 */
   revision?: string | number;
 }) {
   /** 序列化的请求避免父组件重渲染触发重复读取。 */
   const identity = JSON.stringify(props.request);
   return (
-    <FilePreviewBody key={`${identity}:${JSON.stringify(props.location)}:${props.revision ?? ''}`} identity={identity} location={props.location} zh={props.zh}>
+    <FilePreviewBody key={`${identity}:${JSON.stringify(props.location)}:${props.revision ?? ''}`} identity={identity} location={props.location} zh={props.zh} actions={props.actions} fileStatus={props.fileStatus}>
       {props.children}
     </FilePreviewBody>
   );
 }
 
 /** 一个挂载周期只对应一个文件身份。 */
-function FilePreviewBody(props: { location?: ConversationFileLocation; identity: string; zh: boolean; children?: ReactNode; /** 弹窗提供关闭动作，单张图片据此使用纯预览布局。 */ onClose?: () => void }) {
+function FilePreviewBody(props: {
+  location?: ConversationFileLocation;
+  identity: string;
+  zh: boolean;
+  children?: ReactNode | ((toolbar: ReactNode) => ReactNode);
+  /** 嵌入预览的附加操作。 */ actions?: ReactNode;
+  /** 文件的实际 Git 变更状态。 */ fileStatus?: string;
+  /** 弹窗提供关闭动作，单张图片据此使用纯预览布局。 */ onClose?: () => void;
+}) {
   /** 资源读取完成前不复用旧文件的内容。 */
   const [items, setItems] = useState<FilePreviewItem[] | null>(null);
   /** 本次操作的可见错误。 */
@@ -159,6 +172,37 @@ function FilePreviewBody(props: { location?: ConversationFileLocation; identity:
       setError(userFacingErrorCause(cause));
     }
   }
+  /** 单文件的刷新、版本切换与系统操作放在同一行；比较视图保留公共操作栏。 */
+  const toolbar = (
+    <>
+      {props.children ? (
+        <>
+          <PreviewIconButton label={props.zh ? '差异' : 'Diff'} aria-pressed={showDiff} onClick={() => setMode('diff')}>
+            <GitDiff size={16} aria-hidden="true" />
+          </PreviewIconButton>
+          <PreviewIconButton label={props.zh ? '内容预览' : 'Preview'} aria-pressed={!showDiff} onClick={() => setMode('preview')}>
+            <Eye size={16} aria-hidden="true" />
+          </PreviewIconButton>
+        </>
+      ) : null}
+      {!showDiff && !images && items && items.length > 1
+        ? items.map((item, index) => (
+            <PreviewIconButton key={index} label={item.label} aria-pressed={current === item} onClick={() => setSelected(index)}>
+              {index === 0 ? <ArrowCounterClockwise size={16} aria-hidden="true" /> : <ArrowClockwise size={16} aria-hidden="true" />}
+            </PreviewIconButton>
+          ))
+        : null}
+      {attachment.kind === 'attachment' && items?.every((item) => item.kind === 'unavailable') ? (
+        <PreviewIconButton label={props.zh ? '打开附件' : 'Open attachment'} onClick={() => void openAttachment()}>
+          <ArrowSquareOut size={16} aria-hidden="true" />
+        </PreviewIconButton>
+      ) : null}
+      <PreviewIconButton label={error ? (props.zh ? '重试' : 'Retry') : props.zh ? '刷新' : 'Refresh'} onClick={() => setAttempt((value) => value + 1)}>
+        <ArrowClockwise size={16} aria-hidden="true" />
+      </PreviewIconButton>
+      {props.actions}
+    </>
+  );
   return (
     <section className={`file-preview${simpleImage ? ' file-preview-simple-image' : ''}`} aria-label={props.zh ? '文件预览' : 'File preview'}>
       {props.onClose ? (
@@ -170,37 +214,17 @@ function FilePreviewBody(props: { location?: ConversationFileLocation; identity:
           </button>
         </header>
       ) : null}
-      {!simpleImage || error ? (
+      {(!simpleImage || error) && !(showDiff && typeof props.children === 'function') && (showDiff || images || !current || error) ? (
         <nav className="file-preview-toolbar" aria-label={props.zh ? '预览操作' : 'Preview actions'}>
-          {props.children ? (
-            <>
-              <PreviewIconButton label={props.zh ? '差异' : 'Diff'} aria-pressed={showDiff} onClick={() => setMode('diff')}>
-                <GitDiff size={18} aria-hidden="true" />
-              </PreviewIconButton>
-              <PreviewIconButton label={props.zh ? '内容预览' : 'Preview'} aria-pressed={!showDiff} onClick={() => setMode('preview')}>
-                <Eye size={18} aria-hidden="true" />
-              </PreviewIconButton>
-            </>
-          ) : null}
-          {!showDiff && !images && items && items.length > 1
-            ? items.map((item, index) => (
-                <PreviewIconButton key={index} label={item.label} aria-pressed={current === item} onClick={() => setSelected(index)}>
-                  {index === 0 ? <ArrowCounterClockwise size={18} aria-hidden="true" /> : <ArrowClockwise size={18} aria-hidden="true" />}
-                </PreviewIconButton>
-              ))
-            : null}
-          {attachment.kind === 'attachment' && items?.every((item) => item.kind === 'unavailable') ? (
-            <PreviewIconButton label={props.zh ? '打开附件' : 'Open attachment'} onClick={() => void openAttachment()}>
-              <ArrowSquareOut size={18} aria-hidden="true" />
-            </PreviewIconButton>
-          ) : null}
-          <PreviewIconButton label={error ? (props.zh ? '重试' : 'Retry') : props.zh ? '刷新' : 'Refresh'} onClick={() => setAttempt((value) => value + 1)}>
-            <ArrowClockwise size={18} aria-hidden="true" />
-          </PreviewIconButton>
+          {toolbar}
         </nav>
       ) : null}
       {showDiff ? (
-        props.children
+        typeof props.children === 'function' ? (
+          props.children(toolbar)
+        ) : (
+          props.children
+        )
       ) : error ? (
         <p role="alert">{simpleImage && typeof error === 'string' ? error : <VisibleApplicationError error={error} language={props.zh ? 'zh-CN' : 'en'} />}</p>
       ) : !items ? (
@@ -210,7 +234,13 @@ function FilePreviewBody(props: { location?: ConversationFileLocation; identity:
       ) : (
         <div className={images ? 'file-preview-pair' : 'file-preview-single'}>
           {(images ? items : current ? [current] : []).map((item, index) => (
-            <FilePreviewContent key={`${item.id}:${index}:${item.label}`} item={props.location ? { ...item, review: { ...item.review, location: props.location } } : item} zh={props.zh} />
+            <FilePreviewContent
+              key={`${item.id}:${index}:${item.label}`}
+              item={props.location ? { ...item, review: { ...item.review, location: props.location } } : item}
+              zh={props.zh}
+              fileStatus={props.fileStatus}
+              toolbar={images ? undefined : toolbar}
+            />
           ))}
         </div>
       )}
@@ -274,7 +304,7 @@ export function PreviewImage(props: { url: string; name: string; zh: boolean; on
 }
 
 /** 已授权内容和系统操作共用明确的失败状态，绝不自动打开外部应用。 */
-function FilePreviewContent(props: { item: FilePreviewItem; zh: boolean }) {
+function FilePreviewContent(props: { item: FilePreviewItem; zh: boolean; /** 比较视图提供的真实 Git 状态。 */ fileStatus?: string; /** 单文件操作与文件元信息共用一行。 */ toolbar?: ReactNode }) {
   /** 当前已授权的文件描述。 */
   const item = props.item;
   /** 用户选择的源码展示状态。 */
@@ -295,32 +325,42 @@ function FilePreviewContent(props: { item: FilePreviewItem; zh: boolean }) {
   return (
     <article className="file-preview-content">
       <header>
-        <strong title={item.name}>{item.name}</strong>
-        <small>
-          {item.label} · {item.mime} · {item.byteLength.toLocaleString()} B
-        </small>
-      </header>
-      {item.id ? (
-        <div className="file-preview-toolbar">
-          {(markdown || item.mime === 'image/svg+xml') && item.content !== undefined ? (
-            <PreviewIconButton label={source ? (props.zh ? '查看效果' : 'Rendered') : props.zh ? '查看源码' : 'Source'} aria-pressed={source} onClick={() => setSource(!source)}>
-              {source ? <Eye size={18} aria-hidden="true" /> : <FileCode size={18} aria-hidden="true" />}
-            </PreviewIconButton>
-          ) : null}
-          <PreviewIconButton label={props.zh ? '系统预览' : 'Quick Look'} onClick={() => void action('quick-look')}>
-            <Eye size={18} aria-hidden="true" />
-          </PreviewIconButton>
-          <PreviewIconButton label={props.zh ? '打开文件' : 'Open'} onClick={() => void action('open')}>
-            <ArrowSquareOut size={18} aria-hidden="true" />
-          </PreviewIconButton>
-          <PreviewIconButton label={props.zh ? '定位文件' : 'Reveal'} onClick={() => void action('reveal')}>
-            <FolderOpen size={18} aria-hidden="true" />
-          </PreviewIconButton>
-          <PreviewIconButton label={props.zh ? '导出此版本' : 'Export version'} onClick={() => void action('export')}>
-            <DownloadSimple size={18} aria-hidden="true" />
-          </PreviewIconButton>
+        <FileTypeIcon name={item.name} size={20} />
+        <div className="file-preview-identity">
+          <strong title={item.name} data-file-status={props.fileStatus ?? item.review?.diff?.changeType}>
+            {item.name}
+          </strong>
+          <small>
+            {item.label} · {item.mime} · {item.byteLength.toLocaleString()} B
+          </small>
         </div>
-      ) : null}
+        {item.id || props.toolbar ? (
+          <nav className="file-preview-toolbar" aria-label={props.zh ? '文件操作' : 'File actions'}>
+            {props.toolbar}
+            {item.id ? (
+              <>
+                {(markdown || item.mime === 'image/svg+xml') && item.content !== undefined ? (
+                  <PreviewIconButton label={source ? (props.zh ? '查看效果' : 'Rendered') : props.zh ? '查看源码' : 'Source'} aria-pressed={source} onClick={() => setSource(!source)}>
+                    {source ? <Eye size={18} aria-hidden="true" /> : <FileCode size={18} aria-hidden="true" />}
+                  </PreviewIconButton>
+                ) : null}
+                <PreviewIconButton label={props.zh ? '系统预览' : 'Quick Look'} onClick={() => void action('quick-look')}>
+                  <Eye size={18} aria-hidden="true" />
+                </PreviewIconButton>
+                <PreviewIconButton label={props.zh ? '打开文件' : 'Open'} onClick={() => void action('open')}>
+                  <ArrowSquareOut size={18} aria-hidden="true" />
+                </PreviewIconButton>
+                <PreviewIconButton label={props.zh ? '定位文件' : 'Reveal'} onClick={() => void action('reveal')}>
+                  <FolderOpen size={18} aria-hidden="true" />
+                </PreviewIconButton>
+                <PreviewIconButton label={props.zh ? '导出此版本' : 'Export version'} onClick={() => void action('export')}>
+                  <DownloadSimple size={18} aria-hidden="true" />
+                </PreviewIconButton>
+              </>
+            ) : null}
+          </nav>
+        ) : null}
+      </header>
       {error ? (
         <p role="alert">
           <VisibleApplicationError error={error} language={props.zh ? 'zh-CN' : 'en'} />

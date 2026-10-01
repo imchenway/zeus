@@ -8,6 +8,7 @@ import { ModalPortal } from '../ui/ModalPortal.js';
 import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { TaskWorkspaceBranchList } from './TaskWorkspaceBranchList.js';
 import { TaskGitDiffTable } from './TaskGitDiffTable.js';
+import { FileTypeIcon } from '../code/FileTypeIcon.js';
 
 type ReviewMode = 'commit' | 'commit-only' | 'push-only' | 'delivery';
 type ReviewStatus = 'loading' | 'ready' | 'submitting' | 'error';
@@ -371,7 +372,8 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
                         />
                       ) : null}
                       <button type="button" onClick={() => setSelectedFile(file.path)}>
-                        <span>{file.path}</span>
+                        <FileTypeIcon name={file.path} />
+                        <span data-file-status={file.category}>{file.path}</span>
                         <small>{fileStatusLabel(file, zh)}</small>
                       </button>
                     </label>
@@ -383,7 +385,7 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
 
             <section className="task-git-review-diff" aria-label={zh ? '差异对比' : 'Diff'}>
               <span className="task-git-review-pane-title">
-                <strong>{selectedFile || (zh ? '选择文件查看差异' : 'Select a file to view its diff')}</strong>
+                <strong data-file-status={files.find((file) => file.path === selectedFile)?.category}>{selectedFile || (zh ? '选择文件查看差异' : 'Select a file to view its diff')}</strong>
                 {fileDiff?.fileDiffs[0] ? (
                   <small>
                     +{fileDiff.fileDiffs[0].addedLines} −{fileDiff.fileDiffs[0].deletedLines}

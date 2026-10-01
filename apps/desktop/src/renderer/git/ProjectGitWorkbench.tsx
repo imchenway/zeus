@@ -31,6 +31,7 @@ import { useGitOperationHistory } from './useGitOperationHistory.js';
 import { GitContextMenu, GitMenuActionDialog, type GitMenuItem, type GitMenuConfirmation } from './GitContextMenu.js';
 import { GitPaneSeparator } from './GitPaneSeparator.js';
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { FileTypeIcon } from '../code/FileTypeIcon.js';
 import { createPortal } from 'react-dom';
 import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
@@ -45,7 +46,18 @@ import { ListBulletsIcon as ListBullets } from '@phosphor-icons/react/dist/csr/L
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
 import { TreeStructureIcon as TreeStructure } from '@phosphor-icons/react/dist/csr/TreeStructure';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
-import type { DashboardClient, GitDiffHunk, GitFileDiff, ProjectGitAction, ProjectGitCommitDetail, ProjectGitOperationRecord, ProjectGitRepositoryWorkbenchItem, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
+import type {
+  DashboardClient,
+  GitDiffHunk,
+  GitDiffSummary,
+  GitFileDiff,
+  ProjectGitAction,
+  ProjectGitCommitDetail,
+  ProjectGitOperationRecord,
+  ProjectGitRepositoryWorkbenchItem,
+  ProjectGitWorkbenchSnapshot,
+  ProjectRecord,
+} from '../apiClient.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { formatVisibleApplicationError, reportApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
@@ -1513,6 +1525,7 @@ function GitLogSurface(props: {
               </header>
               <CommitFileDirectoryTree
                 files={props.commitDetail.files}
+                diff={props.commitDetail.diff}
                 selectedPath={props.selectedFilePath}
                 onSelect={props.onSelectFile}
                 onOpen={(path) => {
@@ -1545,11 +1558,14 @@ interface CommitFileTreeNode {
   name: string;
   path: string;
   children: Map<string, CommitFileTreeNode>;
-  stats?: { additions: number; deletions: number };
+  /** 提交统计和状态来自同一份差异，禁止从增删行数猜测新增或删除文件。 */
+  stats?: { additions: number; deletions: number; changeType?: string };
 }
 
-function CommitFileDirectoryTree(props: { files: Array<{ path: string; additions: number; deletions: number }>; selectedPath: string; onSelect: (path: string) => void; onOpen: (path: string) => void }) {
-  const tree = useMemo(() => buildCommitFileTree(props.files), [props.files.map((file) => `${file.path}:${file.additions}:${file.deletions}`).join('\0')]);
+/** 提交与贮藏文件列表共用准确的变更类型和文件图标。 */
+function CommitFileDirectoryTree(props: { files: Array<{ path: string; additions: number; deletions: number }>; diff: GitDiffSummary; selectedPath: string; onSelect: (path: string) => void; onOpen: (path: string) => void }) {
+  /** 树节点直接持有状态，避免每个文件重复扫描全部差异。 */
+  const tree = useMemo(() => buildCommitFileTree(props.files, props.diff), [props.files, props.diff]);
   return (
     <div className="project-git-commit-file-tree">
       {Array.from(tree.children.values()).map((node) => (
@@ -1559,13 +1575,14 @@ function CommitFileDirectoryTree(props: { files: Array<{ path: string; additions
   );
 }
 
+/** 目录显示层级，文件显示来自真实提交差异的名称颜色和统计。 */
 function CommitFileTreeEntry(props: Parameters<typeof CommitFileDirectoryTree>[0] & { node: CommitFileTreeNode; depth: number }) {
   if (!props.node.stats) {
     return (
       <details className="project-git-commit-file-folder" open>
         <summary style={{ paddingLeft: `${props.depth * 12 + 5}px` }}>
           <CaretRight aria-hidden="true" />
-          <Folder aria-hidden="true" />
+          <Folder weight="duotone" aria-hidden="true" />
           <span>{props.node.name}</span>
         </summary>
         {Array.from(props.node.children.values()).map((child) => (
@@ -1582,15 +1599,28 @@ function CommitFileTreeEntry(props: Parameters<typeof CommitFileDirectoryTree>[0
       onClick={() => props.onSelect(props.node.path)}
       onDoubleClick={() => props.onOpen(props.node.path)}
     >
-      <File aria-hidden="true" />
-      <span title={props.node.path}>{props.node.name}</span>
+      <FileTypeIcon name={props.node.path} />
+      <span title={props.node.path} data-file-status={props.node.stats.changeType}>
+        {props.node.name}
+      </span>
       <em>+{props.node.stats.additions}</em>
       <i>-{props.node.stats.deletions}</i>
     </button>
   );
 }
 
-function buildCommitFileTree(files: Array<{ path: string; additions: number; deletions: number }>): CommitFileTreeNode {
+/** 一次构造路径索引和目录树，二进制文件也沿用真实变更类型。 */
+function buildCommitFileTree(files: Array<{ path: string; additions: number; deletions: number }>, diff: GitDiffSummary): CommitFileTreeNode {
+  /** 重命名的前后路径均指向同一真实状态。 */
+  const statuses = new Map(
+    diff.fileDiffs.flatMap(
+      (file) =>
+        [
+          [file.oldPath, file.changeType],
+          [file.newPath, file.changeType],
+        ] as const,
+    ),
+  );
   const root: CommitFileTreeNode = { name: '', path: '', children: new Map() };
   for (const file of [...files].sort((left, right) => left.path.localeCompare(right.path))) {
     let current = root;
@@ -1598,7 +1628,7 @@ function buildCommitFileTree(files: Array<{ path: string; additions: number; del
     parts.forEach((part, index) => {
       const path = parts.slice(0, index + 1).join('/');
       const next = current.children.get(part) ?? { name: part, path, children: new Map<string, CommitFileTreeNode>() };
-      if (index === parts.length - 1) next.stats = { additions: file.additions, deletions: file.deletions };
+      if (index === parts.length - 1) next.stats = { additions: file.additions, deletions: file.deletions, changeType: statuses.get(file.path) };
       current.children.set(part, next);
       current = next;
     });
@@ -1842,7 +1872,8 @@ function LocalChangesSurface(props: {
             </header>
             {repository.snapshot.conflictFiles.map((path) => (
               <button key={path} type="button" className={path === props.selectedFilePath ? 'is-current' : ''} onClick={() => props.onSelectFile(path, 'unstaged')} title={path}>
-                <span>{path}</span>
+                <FileTypeIcon name={path} />
+                <span data-file-status="conflict">{path}</span>
               </button>
             ))}
           </section>
@@ -2169,13 +2200,14 @@ function ChangeDirectoryTree(props: {
   );
 }
 
+/** 暂存与未暂存入口沿用同一文件状态展示，选择高亮不覆盖名称颜色。 */
 function ChangeTreeEntry(props: Parameters<typeof ChangeDirectoryTree>[0] & { node: ChangeTreeNode; depth: number }) {
   if (!props.node.file) {
     return (
       <details className="project-git-change-folder" open>
         <summary data-git-context={JSON.stringify({ kind: 'directory', repositoryId: props.repository.id, ref: props.node.path, stage: props.stage })} style={{ paddingLeft: `${props.depth * 13 + 6}px` }}>
           <CaretRight aria-hidden="true" />
-          <Folder aria-hidden="true" />
+          <Folder weight="duotone" aria-hidden="true" />
           <span>{props.node.name}</span>
         </summary>
         {Array.from(props.node.children.values()).map((child) => (
@@ -2212,8 +2244,8 @@ function ChangeTreeEntry(props: Parameters<typeof ChangeDirectoryTree>[0] & { no
         }}
         onDoubleClick={() => props.onOpenDiff(props.repository, props.node.path, { stage: props.stage })}
       >
-        <File aria-hidden="true" />
-        <span>{props.node.name}</span>
+        <FileTypeIcon name={props.node.path} />
+        <span data-file-status={status?.category}>{props.node.name}</span>
         {status ? <small className={`project-git-file-status is-${status.category}`}>{gitFileStatusLabel(status.category, props.zh)}</small> : null}
       </button>
     </div>
@@ -2296,7 +2328,7 @@ function StashSurface(props: {
             <header>
               <strong>{props.zh ? `变更文件 (${props.detail.files.length})` : `Changed files (${props.detail.files.length})`}</strong>
             </header>
-            <CommitFileDirectoryTree files={props.detail.files} selectedPath={props.selectedFilePath} onSelect={props.onSelectFile} onOpen={(path) => props.onOpenDiff(repository, path, { commitHash: stash.ref })} />
+            <CommitFileDirectoryTree files={props.detail.files} diff={props.detail.diff} selectedPath={props.selectedFilePath} onSelect={props.onSelectFile} onOpen={(path) => props.onOpenDiff(repository, path, { commitHash: stash.ref })} />
           </aside>
           <GitPaneSeparator name="stash-files" label={props.zh ? '调整贮藏文件列表宽度' : 'Resize stash file list'} initial={28} min={16} max={55} />
           <SideBySideDiff

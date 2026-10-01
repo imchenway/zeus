@@ -55,7 +55,7 @@ function TaskGitTextDiffTable(props: {
 /** 所有任务差异入口通过共享预览选择媒体或原有文字与评论界面。 */
 export function TaskGitDiffTable(props: Parameters<typeof TaskGitTextDiffTable>[0]) {
   return props.previewRequest ? (
-    <FilePreview request={props.previewRequest} revision={props.revision} zh={props.zh}>
+    <FilePreview request={props.previewRequest} revision={props.revision} zh={props.zh} fileStatus={props.diff?.changeType}>
       {props.diff ? <TaskGitTextDiffTable {...props} /> : null}
     </FilePreview>
   ) : (
