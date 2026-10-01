@@ -656,16 +656,24 @@ function MessageLayoutQa() {
   const processGroups = parameters.has('process-groups') || longProcess;
   /** 单条无详情的上下文整理也必须经过同一段操作折叠入口。 */
   const compactOperation = parameters.has('compaction');
+  /** 文件过程复用真实 Markdown 资源及打开回调，核对文字样式和键盘聚焦。 */
+  const activityFile = parameters.has('activity-file');
   /** 分页场景保留已读范围，缺页边界可见时沿用真实组件自动补齐。 */
   const processPaging = parameters.has('process-paging');
   /** 同一条命令分别核对本地长输出和不可变结果分页。 */
   const outputPaging = parameters.has('output-paging');
+  /** 复现旧活动首屏丢失命令预览、但历史详情句柄仍可读取的场景。 */
+  const deferredCommand = parameters.has('deferred-command');
+  /** 同一条命令读取完成后继续保留展示身份和用户展开状态。 */
+  const [commandDetailLoaded, setCommandDetailLoaded] = useState(false);
+  /** 命令标题未打开前不得触发全文读取。 */
+  const commandDetailReadCount = useRef(0);
   /** 本地完整输出不需要读取，但也应随阅读位置逐段显示。 */
   const longOutput = parameters.has('long-output');
   /** 连接场景沿用生产提示，对照执行文字及原位失败恢复。 */
   const connecting = parameters.has('connecting');
   /** 直接展示时间线的场景使用与应用相同的有限滚动视口。 */
-  const directTranscript = links || processPaging || outputPaging || longOutput || connecting;
+  const directTranscript = links || processPaging || outputPaging || longOutput || connecting || deferredCommand || activityFile;
   /** 首段和末尾标记用于确认没有截断、重复或缺失正文。 */
   const fullOutput = useMemo(
     () => (outputPaging || longOutput ? `${Array.from({ length: 1200 }, (_, index) => `输出第 ${index + 1} 行：${'连续阅读命令输出。'.repeat(10)}`).join('\n')}\n命令输出末尾标记` : '阶段检查通过'),
@@ -1023,18 +1031,24 @@ function MessageLayoutQa() {
         ? [
             { type: 'agentMessage', phase: 'prework', stageId: 'inspect', text: '先核对现有投影与分组边界。', payload: { role: 'commentary' }, status: 'completed' },
             {
-              type: compactOperation ? 'contextCompaction' : 'commandExecution',
+              type: compactOperation ? 'contextCompaction' : activityFile ? 'fileChange' : 'commandExecution',
               phase: 'prework',
               stageId: 'inspect',
               text: '',
-              payload: compactOperation
-                ? {}
-                : {
-                    command: ['rg', '-n', 'SessionTurnProcessDisclosure', 'apps/desktop/src'],
-                    cwd: '/Users/david/hypha/zeus',
-                    aggregatedOutput: outputPaging ? fullOutput.slice(0, 300) : fullOutput,
-                    ...(outputPaging ? { toolResult: { handle: 'qa-command-output', projection: fullOutput.slice(0, 300), projectionTruncated: true } } : {}),
-                  },
+              ...(activityFile ? { resources: [resources[0]!] } : {}),
+              payload: activityFile
+                ? { path: 'docs/分析文档.md' }
+                : compactOperation
+                  ? {}
+                  : deferredCommand && !commandDetailLoaded
+                    ? { v2ContentKind: 'process_detail', processKind: 'command', v2ContentHandle: 'qa-deferred-command', v2ContentTruncated: true }
+                    : {
+                        command: ['rg', '-n', 'SessionTurnProcessDisclosure', 'apps/desktop/src'],
+                        cwd: '/Users/david/hypha/zeus',
+                        aggregatedOutput: outputPaging ? fullOutput.slice(0, 300) : fullOutput,
+                        ...(deferredCommand ? { v2ContentKind: 'process_detail', processKind: 'command', v2ContentHandle: 'qa-deferred-command', v2ContentTruncated: false, v2ContentCompleteHandle: 'qa-deferred-command' } : {}),
+                        ...(outputPaging ? { toolResult: { handle: 'qa-command-output', projection: fullOutput.slice(0, 300), projectionTruncated: true } } : {}),
+                      },
               status: 'completed',
             },
             { type: 'agentMessage', phase: 'prework', stageId: 'verify', text: '再验证失败、图片和长命令。', payload: { role: 'commentary' }, status: 'completed' },
@@ -1247,6 +1261,15 @@ function MessageLayoutQa() {
                     const end = Math.min(fullOutput.length, offset + 16_384);
                     setLinkResult(`输出补页 ${outputReadCount.current} 次，读取范围 ${offset} 至 ${end}`);
                     return { text: fullOutput.slice(offset, end), offset, nextOffset: end < fullOutput.length ? end : null, totalCharacters: fullOutput.length, sha256: 'qa-immutable-output' };
+                  }
+                : undefined
+            }
+            onLoadV2Content={
+              deferredCommand
+                ? async () => {
+                    commandDetailReadCount.current += 1;
+                    setCommandDetailLoaded(true);
+                    setLinkResult(`完整命令读取 ${commandDetailReadCount.current} 次，原命令身份和展开状态保持不变`);
                   }
                 : undefined
             }

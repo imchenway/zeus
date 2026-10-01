@@ -189,6 +189,14 @@ const modelHistoryStageIdSql = `COALESCE(
     ELSE NULL
   END
 )`;
+/** 活动首屏与历史过程共用有界命令身份，数组参数也不读取或转发整段输出。 */
+const commandIdentityPresentationSql = `'command', CASE WHEN json_type(detail_json, '$.payload.command') = 'array' THEN
+  (SELECT substr(group_concat(part.value, ' '), 1, 4000) FROM
+    (SELECT substr(value, 1, 4000) AS value FROM json_each(detail_json, '$.payload.command') WHERE type = 'text' ORDER BY key LIMIT 32) AS part)
+  ELSE substr(json_extract(detail_json, '$.payload.command'), 1, 4000) END,
+  'cwd', substr(json_extract(detail_json, '$.payload.cwd'), 1, 2000),
+  'exitCode', COALESCE(json_extract(detail_json, '$.payload.exitCode'), json_extract(detail_json, '$.payload.result.details.exitCode'))`;
+
 // 过程页同样从冻结执行快照恢复旧记录的协议归属。
 const processProtocolFamilySql = `COALESCE(
   CASE WHEN json_valid(detail_json) THEN json_extract(detail_json, '$.protocolFamily') ELSE NULL END,
@@ -292,6 +300,13 @@ export interface ConversationSnapshotV2TurnSummary {
 }
 
 export interface ConversationSnapshotV2ActiveItem {
+  /** 已完成长命令复用过程的有界身份与不可变全文入口。 */
+  commandDetail?: {
+    /** 命令和目录不依赖截断的活动载荷。 */
+    presentation: Record<string, unknown> | null;
+    /** 点击命令时才读取完整详情。 */
+    content: BoundedContentProjection;
+  };
   /** 用户消息原始创建时间，独立于条目进度更新。 */
   messageCreatedAt?: string;
   id: string;
@@ -1299,13 +1314,14 @@ export class ConversationSnapshotV2Repository {
                    /* 原生工具和 Pi 共用有界身份字段，长结果截断也不能丢失操作来源与终态。 */
                    WHEN kind IN ('tool', 'command') THEN
                      json_object('provider', json_extract(detail_json, '$.provider'), 'itemType', json_extract(detail_json, '$.itemType'), 'payload', json_object(
+                       /* 命令身份独立于长输出预览，全文沿用详情句柄。 */
+                       ${commandIdentityPresentationSql},
                        'toolName', substr(COALESCE(json_extract(detail_json, '$.payload.toolName'), json_extract(detail_json, '$.block.name')), 1, 256),
                        'tool', substr(json_extract(detail_json, '$.payload.tool'), 1, 256),
                        'name', substr(json_extract(detail_json, '$.payload.name'), 1, 256),
                        'namespace', substr(json_extract(detail_json, '$.payload.namespace'), 1, 256),
                        'status', substr(json_extract(detail_json, '$.payload.status'), 1, 64),
                        'success', json(CASE json_extract(detail_json, '$.payload.success') WHEN 1 THEN 'true' WHEN 0 THEN 'false' ELSE 'null' END),
-                       'exitCode', COALESCE(json_extract(detail_json, '$.payload.exitCode'), json_extract(detail_json, '$.payload.result.details.exitCode')),
                        'args', json_object(
                          'app', substr(COALESCE(json_extract(detail_json, '$.payload.arguments.app'), json_extract(detail_json, '$.payload.args.app'), json_extract(detail_json, '$.block.arguments.app')), 1, 1000),
                          'url', substr(COALESCE(json_extract(detail_json, '$.payload.arguments.url'), json_extract(detail_json, '$.payload.args.url'), json_extract(detail_json, '$.block.arguments.url')), 1, 2000),
@@ -1802,6 +1818,45 @@ export class ConversationSnapshotV2Repository {
       [previewCharacterLimit, previewCharacterLimit, conversationId, turnId, activeTurnItemLimit],
     );
     const selected = rows.reverse();
+    /** 只补本次首屏选中的长命令，避免为展开入口读取整轮历史。 */
+    const commandSourceIds = selected
+      .filter((row) => row.item_type === 'commandExecution' && row.status !== 'in_progress' && (row.payload_bytes > Buffer.byteLength(row.payload_preview) || row.projection_truncated === 1))
+      .map((row) => `codex:item:${row.native_item_id ?? row.provider_item_id}`);
+    /** 同一条命令在活动首屏和历史回看中使用相同的详情句柄。 */
+    const commandDetails = new Map<string, NonNullable<ConversationSnapshotV2ActiveItem['commandDetail']>>();
+    if (commandSourceIds.length > 0) {
+      /** SQL 只返回有界身份、预览和大小，完整输出仍留在数据库中。 */
+      const commands = this.db.select<{ source_event_id: string; process_sequence: number; status: string; completed_at: string | null; detail_preview: string; detail_bytes: number; detail_characters: number; presentation_json: string }>(
+        `SELECT source_event_id, process_sequence, status, completed_at,
+                substr(detail_json, 1, ?) AS detail_preview,
+                length(CAST(detail_json AS BLOB)) AS detail_bytes, length(detail_json) AS detail_characters,
+                json_object('provider', json_extract(detail_json, '$.provider'), 'itemType', 'commandExecution',
+                  'payload', json_object(${commandIdentityPresentationSql})) AS presentation_json
+           FROM conversation_process_items
+          WHERE conversation_id = ? AND turn_id = ? AND kind = 'command' AND status <> 'in_progress'
+            AND source_event_id IN (${commandSourceIds.map(() => '?').join(', ')})`,
+        [previewCharacterLimit, conversationId, turnId, ...commandSourceIds],
+      );
+      for (const command of commands) {
+        commandDetails.set(command.source_event_id, {
+          presentation: parseJsonRecordOrNull(redactSensitivePreview(command.presentation_json).text),
+          content: boundedProjection(
+            command.detail_preview,
+            command.detail_bytes,
+            this.contentHandle({
+              kind: 'process_detail',
+              conversationId,
+              identity: String(command.process_sequence),
+              turnId,
+              revision: `${command.status}:${command.completed_at ?? ''}`,
+              totalCharacters: command.detail_characters,
+              totalBytes: command.detail_bytes,
+            }),
+            false,
+          ),
+        });
+      }
+    }
     return {
       items: selected.map((row, order) => ({
         id: row.id,
@@ -1809,6 +1864,7 @@ export class ConversationSnapshotV2Repository {
         turnId,
         providerItemId: row.provider_item_id,
         itemType: row.item_type,
+        ...(commandDetails.has(`codex:item:${row.native_item_id ?? row.provider_item_id}`) ? { commandDetail: commandDetails.get(`codex:item:${row.native_item_id ?? row.provider_item_id}`) } : {}),
         ...(row.message_created_at ? { messageCreatedAt: row.message_created_at } : {}),
         status: row.status,
         phase: row.phase,

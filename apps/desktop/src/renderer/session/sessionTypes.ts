@@ -25,17 +25,7 @@ export type { ConversationResource, ConversationResourcePreview, TurnChangeSet, 
 export type TransportState = 'disconnected' | 'connecting' | 'hydrating' | 'ready' | 'reconnecting' | 'failed';
 
 export type ConversationState =
-  | 'legacy_readonly'
-  | 'native_loading'
-  | 'native_idle'
-  | 'starting_turn'
-  | 'active_prework'
-  | 'active_final_answer'
-  | 'waiting_approval'
-  | 'waiting_user_input'
-  | 'interrupt_confirm'
-  | 'interrupting'
-  | 'turn_failed';
+  'legacy_readonly' | 'native_loading' | 'native_idle' | 'starting_turn' | 'active_prework' | 'active_final_answer' | 'waiting_approval' | 'waiting_user_input' | 'interrupt_confirm' | 'interrupting' | 'turn_failed';
 
 export type ThreadFollowMode = 'static' | 'prework_watch' | 'prework_follow' | 'user_follow';
 export type NativePermissionMode = 'read-only' | 'auto' | 'auto-review' | 'full-access';
@@ -637,6 +627,13 @@ export interface NativeConversationSnapshotV2Turn {
 }
 
 export interface NativeConversationActiveItemV2 {
+  /** 已完成长命令沿用过程预览和不可变详情句柄。 */
+  commandDetail?: {
+    /** 命令身份独立于活动载荷的截断位置。 */
+    presentation: Record<string, unknown> | null;
+    /** 用户点击命令后才读取全文。 */
+    content: NativeBoundedContentProjection;
+  };
   /** 用户原始创建时间，不跟随活动状态更新。 */
   messageCreatedAt?: string;
   id: string;
