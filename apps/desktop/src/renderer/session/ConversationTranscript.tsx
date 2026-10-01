@@ -1126,7 +1126,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                     !row.replyVisible && showActiveStatus && activeTurnId === row.turnId,
                     motionFocus,
                     lastUserKey,
-                    'inline',
+                    /** 整轮回看按段折叠操作；逐段进展已经由各段外层数量入口控制。 */
+                    row.replyVisible ? 'detail' : 'inline',
                     enteringItemIds,
                     maintainLatestPosition,
                     responseAnnotationsByItemId,
@@ -1472,38 +1473,23 @@ function V2HistoryPageStatus(props: { state: NativeSessionState; language: Sessi
   );
 }
 
-/** 沿用消息历史的可见边界补页方式，只在失败时提供手动重试。 */
+/** 复用已读过程，只有用户明确请求才补页，展开与重新挂载不会触发读取。 */
 function TurnProcessPageSentinel(props: { enabled: boolean; paging: NonNullable<ReturnType<typeof turnDetailPaging>>; language: SessionUiLanguage; turnId: string; onLoad: (turnId: string) => void | Promise<void> }) {
-  /** 观察当前轮次的缺页位置，收起期间不触发读取。 */
-  const sentinelRef = useRef<HTMLDivElement | null>(null);
-  /** 同一组游标只自动请求一次，防止无进展或失败时循环读取。 */
-  const requestedCursorRef = useRef<string | null>(null);
-  /** 仅在补页边界进入会话可视区时继续读取。 */
-  const [intersecting, setIntersecting] = useState(false);
-  useEffect(() => {
-    /** 边界随折叠内容挂载，观察器随组件卸载释放。 */
-    const sentinel = sentinelRef.current;
-    if (!sentinel) return;
-    /** 沿用历史消息在缺少观察器时的加载行为。 */
-    if (typeof IntersectionObserver === 'undefined') {
-      setIntersecting(true);
-      return;
-    }
-    /** 根容器使用真实会话滚动区，其他区域滚动不触发补页。 */
-    const observer = new IntersectionObserver((entries) => setIntersecting(entries.some((entry) => entry.isIntersecting)), { root: sentinel.closest('.session-transcript') });
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, []);
-  useEffect(() => {
-    if (!props.enabled || !intersecting || !props.paging.hasMore || props.paging.loading || props.paging.error || requestedCursorRef.current === props.paging.cursor) return;
-    requestedCursorRef.current = props.paging.cursor;
-    void Promise.resolve(props.onLoad(props.turnId)).catch(() => undefined);
-  }, [intersecting, props.enabled, props.onLoad, props.paging.cursor, props.paging.error, props.paging.hasMore, props.paging.loading, props.turnId]);
   return (
-    <div ref={sentinelRef} className="session-v2-content" data-process-page aria-busy={props.paging.loading}>
-      {props.paging.error ? (
-        <button type="button" className="session-v2-page-action" disabled={props.paging.loading} onClick={() => void Promise.resolve(props.onLoad(props.turnId)).catch(() => undefined)}>
-          {props.language === 'zh-CN' ? '重试' : 'Retry'}
+    <div className="session-v2-content" data-process-page aria-busy={props.paging.loading}>
+      {props.paging.hasMore || props.paging.error ? (
+        <button type="button" className="session-v2-page-action" disabled={!props.enabled || props.paging.loading} onClick={() => void Promise.resolve(props.onLoad(props.turnId)).catch(() => undefined)}>
+          {props.paging.loading
+            ? props.language === 'zh-CN'
+              ? '正在加载…'
+              : 'Loading…'
+            : props.paging.error
+              ? props.language === 'zh-CN'
+                ? '重试加载'
+                : 'Retry loading'
+              : props.language === 'zh-CN'
+                ? '加载更多过程'
+                : 'Load more process'}
         </button>
       ) : null}
     </div>
@@ -1662,9 +1648,7 @@ export type TranscriptTurnRow = TranscriptRow | TranscriptTurnWorkRow;
 
 /** 目录补齐尚未读取的发言位置，不伪造一条可编辑或可发送的消息。 */
 type TranscriptViewportRow =
-  | TranscriptTurnRow
-  | { kind: 'navigation_placeholder'; key: string; entry: TranscriptNavigationEntry }
-  | { kind: 'turn_failure'; key: string; turnId: string; occurredAt: string; failure: NativeTurnFailureSnapshot };
+  TranscriptTurnRow | { kind: 'navigation_placeholder'; key: string; entry: TranscriptNavigationEntry } | { kind: 'turn_failure'; key: string; turnId: string; occurredAt: string; failure: NativeTurnFailureSnapshot };
 
 /** 失败属于发生时的会话记录，不依附最后一条消息或整个列表的底部。 */
 export function projectTranscriptFailureRows(rows: readonly TranscriptViewportRow[], turns: NativeSessionState['turnsByProviderId']): TranscriptViewportRow[] {
@@ -1913,7 +1897,7 @@ function transcriptRowRenderOptions(
   return { props, items, showThinking, motionFocus, lastUserKey, activityPresentation, enteringItemIds, onVisibleContentChange, responseAnnotationsByItemId };
 }
 
-/** 按消息种类复用展示组件；回看先显示过程文字，操作列表单独按组展开。 */
+/** 按消息种类复用展示组件；阶段摘要保持原顺序，操作列表与命令详情分别按需展开。 */
 function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOptions): ReactNode {
   if (row.kind === 'answered_request') return <AnsweredRequestHistory request={row.request} language={options.props.language} />;
   if (row.kind === 'activity') {
@@ -1921,7 +1905,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
       <SessionActivityGroup
         items={row.items}
         category={row.category}
-        collapsible={!options.showThinking}
+        collapsible={options.activityPresentation === 'detail'}
         language={options.props.language}
         enteringItemKeys={options.enteringItemIds}
         motionActive={row.motionActive || row.items.some(isLiveActivityItem) || row.items.some((item) => item.key === options.motionFocus?.itemKey)}
@@ -2369,7 +2353,7 @@ export function projectTranscriptTurnRows(
     /** 未加载的过程允许为空，但无过程的轮次不新增空入口。 */
     const processRows = turnId ? completedProcessRows.get(turnId) : undefined;
     if (!turnId || completedReplyKeys.get(turnId) !== row.key || !processRows) return [row];
-    /** 同一轮次在正文出现及结束后沿用稳定入口，命令仍按组独立展开。 */
+    /** 同一轮次在正文出现及结束后沿用稳定入口，单条命令详情默认收起。 */
     const key = `turn-work:${encodeURIComponent(turnId)}:completed`;
     return [{ kind: 'turn_work', key, turnId, segments: processRows.length ? [{ key: `${key}:content`, summary: null, rows: processRows }] : [], live: false, loadMore: true, replyVisible: true }, row];
   });
