@@ -124,11 +124,14 @@ export interface ZeusBrowserSettings {
   externalConnectionDetail?: string;
 }
 
+/** 桌面控制设置与真实系统授权状态。 */
 export interface ZeusComputerSettings {
   enabled: boolean;
   serviceState: 'disabled' | 'idle' | 'starting' | 'ready' | 'stopping' | 'error';
   accessibilityTrusted: boolean;
   screenCaptureAvailable: boolean;
+  /** 未完成权限探针不能显示为待授权，组件错误与权限缺失分别报告。 */
+  permissionCheckState: 'unchecked' | 'checked' | 'error';
   detail?: string;
 }
 
@@ -144,6 +147,24 @@ export interface ZeusComputerControlIdentity {
 export interface ZeusComputerPreview extends ZeusComputerControlIdentity {
   /** 当前受控应用的系统名称。 */
   appName: string;
+  /** 最近一次确认的精确窗口标题。 */
+  windowTitle: string;
+  /** 最近一次目标进程，启动阶段为空。 */
+  pid: number | null;
+  /** 最近一次目标窗口，启动阶段为空。 */
+  windowId: number | null;
+  /** 控制状态独立于是否已有截图，启动期间也能停止。 */
+  state: 'starting' | 'working' | 'observing' | 'paused' | 'error';
+  /** 最近请求的动作名称。 */
+  action: string;
+  /** 暂停或错误的可操作说明。 */
+  detail: string | null;
+  /** 本次预览更新时间，用于选择并行线程中最近活跃的控制。 */
+  updatedAt: string;
+  /** 图片自身的捕获时间；AX 观察不能更新截图时间。 */
+  capturedAt: string | null;
+  /** 图片变化身份，重复读取无需再次传递 base64。 */
+  imageId: string | null;
   /** 动作后需由模型重新观察，旧画面不能证明结果。 */
   needsObservation: boolean;
   /** 有界 CUA 图像；尚未产生首帧时为空。 */

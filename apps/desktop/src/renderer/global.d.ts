@@ -371,7 +371,9 @@ declare global {
       restoreRetiredNativeRuntimes: () => Promise<ZeusRetiredNativeRuntimeState>;
       getComputerSettings: () => Promise<ZeusComputerSettings>;
       /** 仅返回该会话正在进行的控制预览。 */
-      getComputerPreview: (conversationId: string) => Promise<ZeusComputerPreview | null>;
+      getComputerPreview: (conversationId: string, imageId?: string | null) => Promise<ZeusComputerPreview | null>;
+      /** 订阅轻量变化通知，离开会话时取消监听。 */
+      onComputerPreviewChanged: (listener: (conversationId: string) => void) => () => void;
       updateComputerSettings: (input: Pick<ZeusComputerSettings, 'enabled'>) => Promise<ZeusComputerSettings>;
       requestComputerPermissions: () => Promise<ZeusComputerSettings>;
       openComputerPermissionSettings: (input: { permission: 'accessibility' | 'screen_capture' }) => Promise<{ opened: true; permission: 'accessibility' | 'screen_capture' }>;

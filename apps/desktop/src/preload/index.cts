@@ -387,7 +387,16 @@ contextBridge.exposeInMainWorld('zeus', {
   restoreRetiredNativeRuntimes: () => invokeMainCommand('zeus:browser:restore-retired-runtimes', 'desktop.browser.restore_retired_runtimes', 'settings', 'retired-native-runtimes'),
   getComputerSettings: () => ipcRenderer.invoke('zeus:computer:get-settings'),
   /** 只读获取对应会话的控制画面，不启动采集。 */
-  getComputerPreview: (conversationId: string) => ipcRenderer.invoke('zeus:computer:get-preview', conversationId),
+  getComputerPreview: (conversationId: string, imageId?: string | null) => ipcRenderer.invoke('zeus:computer:get-preview', conversationId, imageId),
+  /** 变化通知不带图片，页面按所属会话请求增量画面。 */
+  onComputerPreviewChanged: (listener: (conversationId: string) => void) => {
+    /** 原生 IPC 内容先核对类型。 */
+    const handler = (_event: unknown, conversationId: unknown) => {
+      if (typeof conversationId === 'string') listener(conversationId);
+    };
+    ipcRenderer.on('zeus:computer:preview-changed', handler);
+    return () => ipcRenderer.removeListener('zeus:computer:preview-changed', handler);
+  },
   updateComputerSettings: (input: unknown) => invokeMainCommand('zeus:computer:update-settings', 'desktop.computer.update_settings', 'settings', 'computer-use-settings', input),
   requestComputerPermissions: () => invokeMainCommand('zeus:computer:request-permissions', 'desktop.computer.request_permissions', 'settings', 'computer-use-permissions'),
   openComputerPermissionSettings: (input: unknown) => invokeMainCommand('zeus:computer:open-permission-settings', 'desktop.computer.open_permission_settings', 'settings', 'computer-use-permissions', input),

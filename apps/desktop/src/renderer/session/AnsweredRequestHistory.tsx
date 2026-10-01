@@ -90,7 +90,9 @@ export function AnsweredRequestHistory(props: AnsweredRequestHistoryProps) {
           const customAnswers = entry.question.options.length > 0 ? visibleSelfAuthoredAnswers.filter((answer) => !optionLabels.has(answer)) : [];
           const selfAuthoredAnswers = entry.question.kind === 'freeform' ? visibleSelfAuthoredAnswers : customAnswers;
           const showSelfAuthoredRow = (!entry.question.secret && selfAuthoredAnswers.length > 0) || entry.attachments.length > 0;
-          const showAnswerText = !answerUnavailable && !showSelfAuthoredRow && (entry.question.secret || Boolean(entry.answers?.length) || entry.attachments.length > 0);
+          /** 回答已全部由选项的选中状态表达时，不再在底部重复输出正文。 */
+          const answersShownByOptions = Boolean(entry.answers?.length) && entry.answers!.every((answer) => optionLabels.has(answer));
+          const showAnswerText = !answerUnavailable && !showSelfAuthoredRow && !answersShownByOptions && (entry.question.secret || Boolean(entry.answers?.length) || entry.attachments.length > 0);
           return (
             <section key={entry.question.id}>
               {/* 标题与问题相同时只保留正文，避免异步题目重复显示。 */}

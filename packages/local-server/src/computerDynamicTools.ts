@@ -55,7 +55,7 @@ export function zeusComputerDynamicTools(): CodexDynamicToolSpec[] {
           type: 'function',
           name: 'launch_app',
           description:
-            'Launch an application with CUA background launch semantics. Prefer bundle_id. The app may still refuse background launch; Zeus will not activate it to compensate. Use creates_new_application_instance only when the task needs an isolated second instance.',
+            'Reuse an already running application without activating or reopening it. Prefer bundle_id. Cold launch is supported only for Zeus with an available non-working external display. Other cold launches, new instances and file/URL handoffs are refused because the app may steal focus. Use an existing exact window; never bypass a refusal with shell/open or foreground tools.',
           inputSchema: objectSchema({
             bundle_id: { type: 'string', minLength: 1, description: 'Exact application bundle identifier; preferred over name.' },
             name: { type: 'string', minLength: 1, description: 'Application display name, used only when bundle_id is absent.' },
@@ -76,7 +76,7 @@ export function zeusComputerDynamicTools(): CodexDynamicToolSpec[] {
           type: 'function',
           name: 'get_window_state',
           description:
-            'Observe one exact window before every action. Returns its accessibility elements, snapshot_id, capture_id, metadata, and optional screenshot. Prefer element_token for semantic actions. Pixel coordinates are local to this returned screenshot. A new snapshot invalidates prior element tokens and indices. Use query or bounds before increasing output size.',
+            'Observe one exact window before every action. Returns its accessibility elements, snapshot_id, capture_id, metadata, and optional screenshot. Prefer element_token for semantic actions. Pixel coordinates are local to this returned screenshot. A new snapshot invalidates prior element tokens and indices. Use query or bounds before increasing output size; set include_screenshot=false for semantic-only refreshes and use verify_state for bounded waiting. A zeus_control pause means the user owns this application: stop this round and require a new instruction and observation before further input.',
           inputSchema: objectSchema(
             {
               ...exactWindowProperties,
@@ -95,7 +95,7 @@ export function zeusComputerDynamicTools(): CodexDynamicToolSpec[] {
           type: 'function',
           name: 'click',
           description:
-            'Click one semantic element or one point from the latest window screenshot. Zeus forces delivery_mode=background and an exact window target. Prefer element_token. Modified clicks and foreground/HID fallback are intentionally unavailable.',
+            'Click a semantic element in an exact background window. On macOS, element_token or element_index is required: raw pixel clicks can steal keyboard focus and are refused before dispatch. Other platforms may use a point from the latest screenshot. Modified clicks and foreground/HID fallback are unavailable; do not bypass refusals with shell or another input tool.',
           deferLoading: true,
           inputSchema: objectSchema(
             {
@@ -131,7 +131,7 @@ export function zeusComputerDynamicTools(): CodexDynamicToolSpec[] {
           type: 'function',
           name: 'type_text',
           description:
-            'Insert Unicode text into an exact window. Prefer element_token for an editable control; use x and y only for a custom surface from the latest screenshot. Zeus forces background delivery. If the effect is unverifiable, observe before deciding what to do and never blindly repeat text.',
+            'Insert Unicode text into an exact window. Prefer element_token for an editable control. On macOS, x/y-positioned typing is refused because it may change user focus; do not bypass that refusal. Other platforms may use a custom surface from the latest screenshot. Zeus forces background delivery. If the effect is unverifiable, observe before deciding what to do and never blindly repeat text.',
           deferLoading: true,
           inputSchema: objectSchema({ ...actionTargetProperties, text: { type: 'string' }, delay_ms: { type: 'integer', minimum: 0, maximum: 200 } }, ['pid', 'window_id', 'text']),
         },
@@ -181,7 +181,8 @@ export function zeusComputerDynamicTools(): CodexDynamicToolSpec[] {
         {
           type: 'function',
           name: 'invoke_menu',
-          description: 'Invoke one exact application-menu path through accessibility. Missing, ambiguous, or disabled segments fail closed; there is no pixel fallback.',
+          description:
+            'Invoke one exact application-menu path through accessibility on supported platforms. Unavailable on macOS because CUA activates and raises the target; use observed semantic menu elements or a background hotkey instead. Missing, ambiguous, or disabled segments fail closed.',
           deferLoading: true,
           inputSchema: objectSchema(
             {

@@ -1,7 +1,7 @@
 appId: dev.hypha.zeus
 productName: Zeus
 artifactName: Zeus-${version}-${arch}.${ext}
-electronVersion: 42.4.0
+# Electron 版本由根 package.json 指定，打包入口显式传递，避免产物继续使用旧版本。
 electronLanguages:
   - en
   - en_GB
@@ -30,8 +30,12 @@ files:
   - '!node_modules/node-pty/lib/testUtils.test.js'
 asarUnpack:
   - dist/native/**
-  # CUA 的 N-API 运行时和动态库必须保持为真实文件，不能从 ASAR 内 dlopen。
+  # CUA 原生渲染器直接读取已编译主题，需要真实文件路径。
+  - assets/computer-cursor/*.cua-theme
+  # SDK 与绑定从物理目录解析依赖，原生 dlopen 不能使用 ASAR 虚拟路径。
+  - node_modules/@trycua/cua-driver/**
   - node_modules/@trycua/cua-driver-*/**
+  - node_modules/@ubjs/**
 mac:
   category: public.app-category.developer-tools
   icon: assets/icon.icns

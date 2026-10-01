@@ -43,7 +43,7 @@ import {
   type TaskClipboardAttachmentPayload,
 } from './taskClipboard.js';
 import { type BrowserHost, browserPartition, createBrowserHost } from './browserHost.js';
-import { type ComputerHost, createComputerHost } from './computerHost.js';
+import { type ComputerHost, computerBackgroundLaunchSwitch, computerTargetDisplaySwitch, createComputerHost } from './computerHost.js';
 import { createNativeAutomationHost } from './nativeAutomationHost.js';
 import { type ExternalBrowserHost, createExternalBrowserHost } from './externalBrowserHost.js';
 import { RetiredNativeRuntimeCleanup } from './retiredNativeRuntimeCleanup.js';
@@ -98,8 +98,11 @@ const resourceFileSystem = createRequire(import.meta.url)('original-fs') as type
 /** 启动时固定资源包身份，运行期间禁止混用替换后的网页与旧进程。 */
 const startupResourceIdentity = app.isPackaged ? readPackagedResourceIdentity() : null;
 /** Computer Use 的后台启动意图覆盖完整首次启动周期，初始化后的二次展示也不能抢前台。 */
-let pendingComputerUseBackgroundLaunch = process.env.ZEUS_COMPUTER_BACKGROUND_LAUNCH === '1';
+let pendingComputerUseBackgroundLaunch = process.env.ZEUS_COMPUTER_BACKGROUND_LAUNCH === '1' || app.commandLine.hasSwitch(computerBackgroundLaunchSwitch);
+/** CUA 启动参数在构造首个窗口前生效，不能先在主屏显示再搬走。 */
+const computerUseTargetDisplayId = process.env.ZEUS_COMPUTER_TARGET_DISPLAY_ID ?? app.commandLine.getSwitchValue(computerTargetDisplaySwitch);
 delete process.env.ZEUS_COMPUTER_BACKGROUND_LAUNCH;
+delete process.env.ZEUS_COMPUTER_TARGET_DISPLAY_ID;
 let mainWindow: BrowserWindow | undefined;
 const windows = new Set<BrowserWindow>();
 let tray: Tray | undefined;
@@ -569,8 +572,9 @@ function mainWindowStatePath(): string {
 /** 开发与测试窗口直接按指定外接屏创建，无需在首次启动前写入数据根。 */
 async function resolveMainWindowStateForLaunch(persisted: PersistedMainWindowState | undefined): Promise<ResolvedMainWindowState> {
   const displays = screen.getAllDisplays();
-  const requestedTestDisplayId = process.env.ZEUS_TEST_DISPLAY_ID;
-  if (activeDataRootProfile() !== 'production' && requestedTestDisplayId !== undefined) {
+  const requestedTestDisplayId = pendingComputerUseBackgroundLaunch && computerUseTargetDisplayId ? computerUseTargetDisplayId : activeDataRootProfile() !== 'production' ? process.env.ZEUS_TEST_DISPLAY_ID : undefined;
+  if (pendingComputerUseBackgroundLaunch && requestedTestDisplayId === undefined) throw new Error('Computer Use 后台启动缺少目标外接屏，拒绝在工作屏创建窗口。');
+  if (requestedTestDisplayId !== undefined) {
     const placement = resolveTestDisplayPlacement({
       requestedDisplayId: requestedTestDisplayId,
       displays,
@@ -862,8 +866,11 @@ async function openTaskGitDeliveryWindow(parent: BrowserWindow, taskId: string):
 /** 创建 Zeus 主窗口；preload 会读取 Main 中启动的本地服务配置。 */
 async function createWindow(): Promise<void> {
   traceApplicationStartup('window_creation_started');
+  // 后台自动化窗口预先启用 Electron 原生辅助功能，无需先切前台才能提供网页控件。
+  if (pendingComputerUseBackgroundLaunch) app.setAccessibilitySupportEnabled(true);
   if (!appShellSettings.multiWindowEnabled && mainWindow && !mainWindow.isDestroyed()) {
-    revealMainWindow(mainWindow);
+    if (pendingComputerUseBackgroundLaunch) revealMainWindowInBackground(mainWindow);
+    else revealMainWindow(mainWindow);
     return;
   }
   /** 首个窗口读取但不消费后台意图；启动协调器完成初始化后的二次展示仍需使用它。 */
@@ -3321,6 +3328,7 @@ async function initializeApplication(): Promise<void> {
     await browserHost.initializeExternalBrowsers();
     computerHost = createComputerHost({
       statePath: dataLayout.computerState,
+      hostBundleId: app.isPackaged ? activeDataRootIdentity().bundleId : 'com.github.Electron',
       mainCommandLedger: activeMainCommandLedger,
       readOnlyValidation: Boolean(readOnlyValidationDescriptor),
     });
@@ -3561,7 +3569,9 @@ const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, argv) => {
+    // 自动化的重复启动不能唤起已有窗口；用户主动打开仍沿用原行为。
+    if (argv.includes(`--${computerBackgroundLaunchSwitch}`)) return;
     void requestMainWindow();
   });
   void requestMainWindow();

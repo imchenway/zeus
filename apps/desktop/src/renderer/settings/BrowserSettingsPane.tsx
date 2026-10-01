@@ -52,6 +52,9 @@ const copy = {
     computerScreenCapture: '屏幕与系统音频录制',
     computerGranted: '已授权',
     computerMissing: '待授权',
+    // 未完成探针时不引导用户反复授权。
+    computerUnchecked: '尚未检查',
+    computerUnavailable: '无法检查（组件错误）',
     computerRequestPermissions: '申请或重新检查权限',
     computerOpenAccessibility: '打开辅助功能设置',
     computerOpenScreenCapture: '打开录屏设置',
@@ -116,6 +119,9 @@ const copy = {
     computerScreenCapture: 'Screen & System Audio Recording',
     computerGranted: 'Granted',
     computerMissing: 'Required',
+    // 组件失败与系统权限缺失分别显示。
+    computerUnchecked: 'Not checked',
+    computerUnavailable: 'Unavailable (component error)',
     computerRequestPermissions: 'Request or recheck permissions',
     computerOpenAccessibility: 'Open Accessibility settings',
     computerOpenScreenCapture: 'Open Screen Recording settings',
@@ -436,22 +442,36 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
               </span>
               {computerSettings.enabled ? (
                 <span className="computer-permission-details" role="status" aria-live="polite">
-                  <span className={computerSettings.accessibilityTrusted ? 'granted' : 'missing'}>
-                    {labels.computerAccessibility}：{computerSettings.accessibilityTrusted ? labels.computerGranted : labels.computerMissing}
+                  <span className={computerSettings.permissionCheckState !== 'checked' ? undefined : computerSettings.accessibilityTrusted ? 'granted' : 'missing'}>
+                    {labels.computerAccessibility}：
+                    {computerSettings.permissionCheckState === 'error'
+                      ? labels.computerUnavailable
+                      : computerSettings.permissionCheckState !== 'checked'
+                        ? labels.computerUnchecked
+                        : computerSettings.accessibilityTrusted
+                          ? labels.computerGranted
+                          : labels.computerMissing}
                   </span>
-                  <span className={computerSettings.screenCaptureAvailable ? 'granted' : 'missing'}>
-                    {labels.computerScreenCapture}：{computerSettings.screenCaptureAvailable ? labels.computerGranted : labels.computerMissing}
+                  <span className={computerSettings.permissionCheckState !== 'checked' ? undefined : computerSettings.screenCaptureAvailable ? 'granted' : 'missing'}>
+                    {labels.computerScreenCapture}：
+                    {computerSettings.permissionCheckState === 'error'
+                      ? labels.computerUnavailable
+                      : computerSettings.permissionCheckState !== 'checked'
+                        ? labels.computerUnchecked
+                        : computerSettings.screenCaptureAvailable
+                          ? labels.computerGranted
+                          : labels.computerMissing}
                   </span>
                   <span className="browser-settings-actions">
                     <Button variant="secondary" size="compact" onClick={() => void requestComputerPermissions()} busy={busy}>
                       {labels.computerRequestPermissions}
                     </Button>
-                    {!computerSettings.accessibilityTrusted ? (
+                    {computerSettings.permissionCheckState === 'checked' && !computerSettings.accessibilityTrusted ? (
                       <Button variant="secondary" size="compact" onClick={() => void openComputerPermissionSettings('accessibility')} busy={busy}>
                         {labels.computerOpenAccessibility}
                       </Button>
                     ) : null}
-                    {!computerSettings.screenCaptureAvailable ? (
+                    {computerSettings.permissionCheckState === 'checked' && !computerSettings.screenCaptureAvailable ? (
                       <Button variant="secondary" size="compact" onClick={() => void openComputerPermissionSettings('screen_capture')} busy={busy}>
                         {labels.computerOpenScreenCapture}
                       </Button>
