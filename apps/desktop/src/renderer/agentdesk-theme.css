@@ -2814,11 +2814,18 @@ body:has(.macos-ai-app.zeus-shell) {
   font-size: 11px;
 }
 .macos-ai-app.zeus-shell .project-git-conflict-files > button {
+  /* 文件图标与路径保持同一行，长路径使用剩余宽度省略显示。 */
+  align-items: center;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 6px;
+  inline-size: 100%;
   min-height: 26px;
   padding: 4px 6px;
   border-radius: 4px;
   font-size: 11px;
   color: var(--zeus-control-danger-text, #a52c2c);
+  text-align: start;
 }
 .macos-ai-app.zeus-shell .project-git-conflict-files > button span {
   overflow: hidden;

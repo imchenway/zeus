@@ -46,6 +46,10 @@ export function TurnChangeCard(props: {
   const visibleFiles = expanded ? changeSet.files : changeSet.files.slice(0, 3);
   const hiddenCount = Math.max(0, changeSet.files.length - visibleFiles.length);
   const action = availableAction(changeSet);
+  /** 普通摘要使用稳定标题，正在操作或发生冲突时保留明确的阶段反馈。 */
+  const title = ['applied', 'undone', 'unavailable'].includes(changeSet.state) ? (zh ? '文件更改' : 'File changes') : changeSetTitle(changeSet, props.language);
+  /** 恢复能力作为次级状态说明，不盖过文件列表。 */
+  const availability = changeSet.state === 'unavailable' ? (zh ? '不可撤销' : 'Not reversible') : changeSet.state === 'undone' ? (zh ? '已撤销' : 'Undone') : null;
 
   async function operate(): Promise<void> {
     if (!action || !props.onOperate || busy) return;
@@ -69,16 +73,35 @@ export function TurnChangeCard(props: {
             <Files aria-hidden="true" weight="regular" />
           </span>
           <span>
-            <span className="session-turn-change-title">{changeSetTitle(changeSet, props.language)}</span>
-            <small>
+            <span className="session-turn-change-heading">
+              <span className="session-turn-change-title" title={changeSetTitle(changeSet, props.language)}>
+                {title}
+              </span>
+              {availability ? <span className="session-turn-change-availability">{availability}</span> : null}
+            </span>
+            <small
+              title={zh ? `${changeSet.fileCount} 个文件，新增 ${changeSet.addedLines} 行，删除 ${changeSet.deletedLines} 行` : `${changeSet.fileCount} files, ${changeSet.addedLines} added lines, ${changeSet.deletedLines} deleted lines`}
+            >
+              <span className="session-turn-change-total">{zh ? `${changeSet.fileCount} 个文件` : `${changeSet.fileCount} files`}</span>
               <span className="session-turn-change-stats">
                 <span className="session-change-added">+{changeSet.addedLines}</span> <span className="session-change-deleted">-{changeSet.deletedLines}</span>
               </span>
-              <span className="session-turn-change-view">{zh ? '查看更改' : 'View changes'}</span>
             </small>
           </span>
         </span>
         <nav aria-label={zh ? '文件变更操作' : 'File change actions'}>
+          {hiddenCount > 0 || (expanded && changeSet.files.length > 3) ? (
+            <button
+              type="button"
+              className="session-turn-change-more"
+              aria-expanded={expanded}
+              aria-label={expanded ? (zh ? '收起文件' : 'Show fewer files') : zh ? `再显示 ${hiddenCount} 个文件` : `Show ${hiddenCount} more files`}
+              title={expanded ? (zh ? '收起文件' : 'Show fewer files') : zh ? `再显示 ${hiddenCount} 个文件` : `Show ${hiddenCount} more files`}
+              onClick={() => setExpanded((value) => !value)}
+            >
+              <CaretDown aria-hidden="true" data-expanded={expanded || undefined} />
+            </button>
+          ) : null}
           {action ? (
             <button
               type="button"
@@ -113,7 +136,7 @@ export function TurnChangeCard(props: {
               <li key={file.id}>
                 <button type="button" onClick={() => props.onReview?.(changeSet, file.id)} disabled={!props.onReview}>
                   <FileTypeIcon name={file.newPath ?? file.oldPath ?? ''} />
-                  <span className="session-turn-change-path" title={displayPath(file)} data-file-status={file.changeType === 'binary' ? 'modified' : file.changeType}>
+                  <span className="session-turn-change-path" title={displayPath(file)}>
                     {displayPath(file)}
                   </span>
                   <span className="session-turn-change-file-counts">
@@ -125,12 +148,6 @@ export function TurnChangeCard(props: {
             ))}
           </ul>
         </AnimatedSize>
-      ) : null}
-      {hiddenCount > 0 || (expanded && changeSet.files.length > 3) ? (
-        <button type="button" className="session-turn-change-more" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
-          <span>{expanded ? (zh ? '收起文件' : 'Show fewer files') : zh ? `再显示 ${hiddenCount} 个文件` : `Show ${hiddenCount} more files`}</span>
-          <CaretDown aria-hidden="true" data-expanded={expanded || undefined} />
-        </button>
       ) : null}
     </section>
   );
