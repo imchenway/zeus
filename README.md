@@ -123,6 +123,6 @@ macOS 的成功窗口观察建立真实单窗口 `SCStream`，截图取自该共
 - `pnpm release:notes:draft`：根据实际改动生成发布说明，包含完整 Homebrew 升级命令。
 - `pnpm release:prepare`：使用已审阅的发布说明准备版本文件；默认预览，显式设置 `APPLY_CHANGES=1` 才写入。
 - `pnpm release`：执行受控发布流程；项目内也可通过内置 `/release` 命令调用，仍经过项目权限与高风险确认。
-- `Release` 工作流由维护者手动运行，只构建候选；公开发布需要显式选择 `publish_release`。源码检查和打包并行，通过后才公开发布并同步 Homebrew。
+- `Release` 工作流由维护者手动运行，只构建候选；公开发布需要显式选择 `publish_release`。Linux 执行 `pnpm verify:publish --checks-only` 静态检查，macOS 同时完整构建源码并打包；两者通过后才公开发布并同步 Homebrew。本地 `pnpm verify:publish` 和普通 CI 仍执行完整检查与构建，普通 CI 复用正式发布保存的 CUA 编译成品缓存。
 
 应用、浏览器扩展及安装器直接使用 `apps/desktop/assets/` 下的同一份图标。`apps/desktop/src/renderer/tooling/` 管理自动化、扩展与技能页面，通过宿主适配面调用已有客户端能力。
