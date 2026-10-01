@@ -27,6 +27,33 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: 计算 CUA 编译工具链摘要
+        id: cua_toolchain
+        run: |
+          # 与发布打包作业使用相同输入，复用已验证的原生成品。
+          {
+            sw_vers -productVersion
+            xcrun --show-sdk-build-version
+            xcrun clang --version
+            rustc -vV
+            cargo -V
+          } > "$RUNNER_TEMP/zeus-cua-toolchain.txt"
+          printf 'digest=%s\n' "$(shasum -a 256 "$RUNNER_TEMP/zeus-cua-toolchain.txt" | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+      - name: 恢复 CUA 编译成品
+        id: cua_cache
+        uses: actions/cache/restore@v4
+        # 普通 CI 只读取正式发布保存的缓存；恢复失败仍执行完整构建。
+        continue-on-error: true
+        with:
+          # 成品摘要仍由原生构建脚本验证，不缓存源码或 Cargo 编译目录。
+          path: |
+            .tmp/cua-worker-*/cua-driver
+            .tmp/cua-worker-*/worker.sha256
+          key: zeus-cua-worker-${{ runner.os }}-${{ runner.arch }}-${{ steps.cua_toolchain.outputs.digest }}-${{ hashFiles('apps/desktop/scripts/build-native-helpers.mjs', 'apps/desktop/native/cua-desktop.patch') }}
+      - name: 清理未精确命中的 CUA 成品
+        # 部分匹配或恢复失败时，禁止继续复用留下的成品。
+        if: ${{ steps.cua_cache.outputs.cache-hit != 'true' }}
+        run: rm -f .tmp/cua-worker-*/cua-driver .tmp/cua-worker-*/worker.sha256
       - name: 执行与本地一致的发布前门禁
         env:
           ZEUS_VERIFY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}

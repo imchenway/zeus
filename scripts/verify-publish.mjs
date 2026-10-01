@@ -4,6 +4,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, extname, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
+
+/** 发布静态作业可显式拆分构建；默认入口仍执行完整生产构建，未知参数直接拒绝。 */
+const releaseCheckOptions = parseArgs({ options: { 'checks-only': { type: 'boolean', default: false } } }).values;
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const formatExtensions = new Set(['.ts', '.tsx', '.cts', '.cjs', '.mjs', '.js', '.json', '.yml', '.yaml']);
@@ -181,6 +185,6 @@ if (formattedPaths.length > 0) {
 runStep('ESLint', 'pnpm', ['lint']);
 runStep('架构边界检查', 'pnpm', ['verify:architecture']);
 runStep('TypeScript 类型检查', 'pnpm', ['typecheck']);
-runStep('生产构建', 'pnpm', ['build']);
+if (!releaseCheckOptions['checks-only']) runStep('生产构建', 'pnpm', ['build']);
 
-console.log('\nZeus 发布前门禁通过。');
+console.log(releaseCheckOptions['checks-only'] ? '\nZeus 发布前静态检查通过；完整生产构建仍须由 macOS 打包作业通过。' : '\nZeus 发布前门禁通过。');

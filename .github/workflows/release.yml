@@ -100,7 +100,8 @@ jobs:
 
   verify:
     needs: preflight
-    runs-on: macos-latest
+    # 静态检查不占用 macOS；完整源码构建由打包作业执行，两者通过后才公开发布。
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -114,36 +115,8 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: 计算 CUA 编译工具链摘要
-        id: cua_toolchain
-        run: |
-          # 系统、SDK 和编译器变化时失效，应用版本不参与缓存键。
-          {
-            sw_vers -productVersion
-            xcrun --show-sdk-build-version
-            xcrun clang --version
-            rustc -vV
-            cargo -V
-          } > "$RUNNER_TEMP/zeus-cua-toolchain.txt"
-          printf 'digest=%s\n' "$(shasum -a 256 "$RUNNER_TEMP/zeus-cua-toolchain.txt" | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
-      - name: 恢复 CUA 编译成品
-        id: cua_cache
-        uses: actions/cache/restore@v4
-        # 缓存服务异常时仍执行正常构建，不影响必要发布检查。
-        continue-on-error: true
-        with:
-          # 只保留可执行文件和摘要，不缓存上游源码或 Cargo 编译目录。
-          path: |
-            .tmp/cua-worker-*/cua-driver
-            .tmp/cua-worker-*/worker.sha256
-          # 构建脚本含固定上游提交；补丁和工具链变化均产生新键。
-          key: zeus-cua-worker-${{ runner.os }}-${{ runner.arch }}-${{ steps.cua_toolchain.outputs.digest }}-${{ hashFiles('apps/desktop/scripts/build-native-helpers.mjs', 'apps/desktop/native/cua-desktop.patch') }}
-      - name: 清理未精确命中的 CUA 成品
-        # 禁止把部分匹配恢复的二进制交给现有摘要校验后复用。
-        if: ${{ steps.cua_cache.outputs.cache-hit != 'true' }}
-        run: rm -f .tmp/cua-worker-*/cua-driver .tmp/cua-worker-*/worker.sha256
-      - name: 执行与本地一致的发布前检查
-        run: pnpm verify:publish
+      - name: 执行发布前静态检查
+        run: pnpm verify:publish --checks-only
 
   package-mac:
     needs: preflight
@@ -180,7 +153,7 @@ jobs:
       - name: 计算 CUA 编译工具链摘要
         id: cua_toolchain
         run: |
-          # 与检查作业使用相同输入，两个作业复用同一份精确匹配缓存。
+          # 系统、SDK 和编译器变化时失效，普通 CI 也使用同一组输入。
           {
             sw_vers -productVersion
             xcrun --show-sdk-build-version
@@ -199,7 +172,7 @@ jobs:
           path: |
             .tmp/cua-worker-*/cua-driver
             .tmp/cua-worker-*/worker.sha256
-          # 与检查作业保持相同缓存键，避免重复保存相同成品。
+          # 与普通 CI 保持相同缓存键，应用版本变化不触发重新编译。
           key: zeus-cua-worker-${{ runner.os }}-${{ runner.arch }}-${{ steps.cua_toolchain.outputs.digest }}-${{ hashFiles('apps/desktop/scripts/build-native-helpers.mjs', 'apps/desktop/native/cua-desktop.patch') }}
       - name: 清理未精确命中的 CUA 成品
         # 不允许部分匹配或恢复失败留下的成品被继续复用。
