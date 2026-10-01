@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /* global console, process */
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, rm } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -11,7 +11,6 @@ import { cleanPackageArtifacts } from './clean-package-artifacts.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(scriptDir, '..');
-const desktopDir = join(rootDir, 'apps', 'desktop');
 
 export function electronZipFileName(version, arch) {
   return `electron-v${version}-darwin-${arch}.zip`;
@@ -64,14 +63,16 @@ function buildElectronBuilderSigningArgs(env, variant) {
   return [`--config.mac.notarize=${hasNotarizationConfiguration(env) ? 'true' : 'false'}`, '--config.forceCodeSigning=true'];
 }
 
+/** 开发、依赖审计和实际打包使用根目录同一个精确 Electron 版本。 */
 async function readElectronVersion() {
-  const configPath = join(desktopDir, 'electron-builder.yml');
-  const text = await import('node:fs/promises').then((fs) => fs.readFile(configPath, 'utf8'));
-  const match = text.match(/^electronVersion:\s*([^\s]+)/mu);
-  if (!match) {
-    throw new Error('Zeus package:mac 无法从 apps/desktop/electron-builder.yml 读取 electronVersion。');
+  /** 版本只从工作区主清单读取，禁止配置中另存一份旧版本。 */
+  const manifest = JSON.parse(await readFile(join(rootDir, 'package.json'), 'utf8'));
+  /** 发布需要确定的稳定版本，不把宽泛范围交给在线解析。 */
+  const version = manifest.devDependencies?.electron;
+  if (typeof version !== 'string' || !/^\d+\.\d+\.\d+$/u.test(version)) {
+    throw new Error('Zeus package:mac 要求根 package.json 的 Electron 使用精确稳定版本。');
   }
-  return match[1];
+  return version;
 }
 
 async function findFileByName(startDir, fileName) {
@@ -205,11 +206,11 @@ export async function packageMac({ dmg = false } = {}) {
   const signingArgs = buildElectronBuilderSigningArgs(packageEnv, variant);
   const electronDistArgs = electronDist ? [`--config.electronDist=${electronDist}`] : [];
   const outputArgs = configuredOutputRoot ? [`--config.directories.output=${outputRoot}`] : [];
-  await run('pnpm', ['--filter', '@zeus/desktop', 'exec', 'electron-builder', '--mac', ...(dmg ? ['dmg'] : ['--dir']), '--config', builderConfig, ...electronDistArgs, ...outputArgs, ...signingArgs], {
+  await run('pnpm', ['--filter', '@zeus/desktop', 'exec', 'electron-builder', '--mac', ...(dmg ? ['dmg'] : ['--dir']), '--config', builderConfig, `--config.electronVersion=${version}`, ...electronDistArgs, ...outputArgs, ...signingArgs], {
     cwd: rootDir,
     env: packageEnv,
   });
-  verifyPackagedApp(appPath);
+  verifyPackagedApp(appPath, { expectedElectronVersion: version });
   await verifyCodesignPackagedApp(appPath);
   /** 只在打包和校验成功后回收同一身份、架构的旧安装包，失败时保留原有产物。 */
   const obsolete = await cleanPackageArtifacts(outputRoot, { apply: true, variant, arch });

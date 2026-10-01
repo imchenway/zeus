@@ -1,0 +1,2399 @@
+diff --git a/crates/cua-driver/src/private_worker.rs b/crates/cua-driver/src/private_worker.rs
+index e9188f3..8b4c4d7 100644
+--- a/crates/cua-driver/src/private_worker.rs
++++ b/crates/cua-driver/src/private_worker.rs
+@@ -249,26 +249,90 @@ async fn handle_request(
+             let arguments = request
+                 .arguments
+                 .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+-            let invocation = if let Some(handle) = request.session_handle.as_deref() {
+-                match sessions.get(handle) {
+-                    Some(session) => {
+-                        session
+-                            .call_tool(name.to_owned(), arguments.to_string())
+-                            .await
+-                    }
+-                    None => {
++            #[cfg(target_os = "macos")]
++            platform_macos::input::user_guard::begin_operation();
++            #[cfg(target_os = "macos")]
++            let input_pid = arguments
++                .get("pid")
++                .or_else(|| arguments.get("target").and_then(|target| target.get("pid")))
++                .and_then(Value::as_i64)
++                .and_then(|pid| i32::try_from(pid).ok());
++            #[cfg(target_os = "macos")]
++            let mutating = matches!(
++                name,
++                "click"
++                    | "drag"
++                    | "type_text"
++                    | "press_key"
++                    | "hotkey"
++                    | "set_value"
++                    | "scroll"
++                    | "invoke_menu"
++            );
++            #[cfg(target_os = "macos")]
++            if mutating {
++                if let Some(pid) = input_pid {
++                    if let Err(error) = platform_macos::input::user_guard::check_pid(pid) {
+                         return ChannelResponse::error(
+                             request_id,
+                             generation,
+-                            "session_not_bound",
+-                            "private worker session handle is not live on this channel",
++                            "input_not_started",
++                            error.to_string(),
+                             ActionCompletion::NotStarted,
+                         );
+                     }
+                 }
++            }
++            // 先核对绑定身份，再创建可取消的只读请求，拒绝不明会话。
++            let bound_session = request
++                .session_handle
++                .as_deref()
++                .and_then(|handle| sessions.get(handle));
++            if request.session_handle.is_some() && bound_session.is_none() {
++                return ChannelResponse::error(
++                    request_id,
++                    generation,
++                    "session_not_bound",
++                    "private worker session handle is not live on this channel",
++                    ActionCompletion::NotStarted,
++                );
++            }
++            let invocation = async {
++                if let Some(session) = bound_session {
++                    session
++                        .call_tool(name.to_owned(), arguments.to_string())
++                        .await
++                } else {
++                    driver.call_tool_from_trusted_adapter(name, arguments).await
++                }
++            };
++            #[cfg(target_os = "macos")]
++            let invocation = if name == "verify_state" {
++                tokio::select! {
++                    result = invocation => result,
++                    _ = platform_macos::input::user_guard::wait_for_cancellation() => {
++                        return ChannelResponse::error(request_id, generation, "wait_cancelled", "ZEUS_COMPUTER_STOPPED: 状态等待已取消，请重新观察。", ActionCompletion::Unknown);
++                    }
++                }
+             } else {
+-                driver.call_tool_from_trusted_adapter(name, arguments).await
++                invocation.await
+             };
++            #[cfg(not(target_os = "macos"))]
++            let invocation = invocation.await;
++            #[cfg(target_os = "macos")]
++            if mutating {
++                if let Some(pid) = input_pid {
++                    if let Err(error) = platform_macos::input::user_guard::check_pid(pid) {
++                        return ChannelResponse::error(
++                            request_id,
++                            generation,
++                            "input_interrupted",
++                            error.to_string(),
++                            ActionCompletion::Unknown,
++                        );
++                    }
++                }
++            }
+             invocation
+                 .map_err(|error| error.to_string())
+                 .and_then(|result| {
+diff --git a/crates/cursor-overlay/src/render_map.rs b/crates/cursor-overlay/src/render_map.rs
+index 941edd9..998a258 100644
+--- a/crates/cursor-overlay/src/render_map.rs
++++ b/crates/cursor-overlay/src/render_map.rs
+@@ -303,10 +303,11 @@ impl<S: RenderEntry, P> RenderMap<S, P> {
+             return false;
+         };
+         let core = cursor.core_mut();
+-        if !(core.cfg.enabled && core.pos.0 < -50.0) {
++        if !(core.cfg.enabled && !core.position_initialized) {
+             return false;
+         }
+         core.pos = seed_position(target_x, target_y, frame);
++        core.position_initialized = true;
+         true
+     }
+ 
+@@ -334,7 +335,6 @@ impl<S: RenderEntry, P> RenderMap<S, P> {
+             .min()
+     }
+ }
+-
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+diff --git a/crates/cursor-overlay/src/render_state.rs b/crates/cursor-overlay/src/render_state.rs
+index 264c427..4eda6de 100644
+--- a/crates/cursor-overlay/src/render_state.rs
++++ b/crates/cursor-overlay/src/render_state.rs
+@@ -54,6 +54,8 @@ pub struct RenderStateCore {
+     pub motion: MotionConfig,
+     /// Current rendered position in screen / overlay-window coordinates.
+     pub pos: (f64, f64),
++    /// 是否已经放置光标，负坐标属于合法桌面位置。
++    pub position_initialized: bool,
+     /// Visual heading in radians (tip direction = motion_dir + π).
+     pub heading: f64,
+     /// In-flight planned path; `None` = at rest.
+@@ -132,6 +134,7 @@ impl RenderStateCore {
+             theme,
+             theme_fallback,
+             pos: (-200.0, -200.0),
++            position_initialized: false,
+             heading: std::f64::consts::FRAC_PI_4,
+             path: None,
+             dist: 0.0,
+@@ -155,7 +158,7 @@ impl RenderStateCore {
+     /// Whether the cursor currently paints pixels: user-visible, placed on
+     /// screen (not the `(-200, -200)` sentinel), and not fully idle-faded.
+     pub fn is_revealed(&self) -> bool {
+-        self.visible && self.pos.0 >= -100.0 && self.idle_alpha >= 0.004
++        self.visible && self.position_initialized && self.idle_alpha >= 0.004
+     }
+ 
+     /// Whether a revealed cursor keeps changing pixels while it rests.
+@@ -197,7 +200,7 @@ impl RenderStateCore {
+     pub fn idle_fade_in_progress(&self) -> bool {
+         self.motion.idle_hide_ms > 0.0
+             && self.visible
+-            && self.pos.0 >= -100.0
++            && self.position_initialized
+             && self.idle_secs >= self.motion.idle_hide_ms / 1000.0
+             && self.idle_alpha >= 0.004
+     }
+@@ -225,7 +228,7 @@ impl RenderStateCore {
+     /// the fade has already started.
+     pub fn idle_fade_wait(&self) -> Option<std::time::Duration> {
+         if !self.visible
+-            || self.pos.0 < -100.0
++            || !self.position_initialized
+             || self.motion.idle_hide_ms <= 0.0
+             || self.path.is_some()
+             || self.spring.is_some()
+@@ -652,7 +655,7 @@ impl RenderStateCore {
+ 
+                 // macOS-only: if the cursor is still at the initial off-screen
+                 // sentinel, snap it to the offset target so the path starts on-screen.
+-                if move_to_snap_sentinel && self.pos.0 < -50.0 {
++                if move_to_snap_sentinel && !self.position_initialized {
+                     self.pos = (tx, ty);
+                 }
+                 let (x0, y0) = self.pos;
+@@ -660,6 +663,7 @@ impl RenderStateCore {
+                 let th1 = end_heading_radians + std::f64::consts::PI;
+                 let plan =
+                     PathPlanner::plan(x0, y0, th0, tx, ty, th1, end_heading_radians, turn_radius);
++                self.position_initialized = true;
+                 self.path = Some(plan);
+                 self.dist = 0.0;
+                 self.spring = None;
+@@ -686,6 +690,7 @@ impl RenderStateCore {
+             } => {
+                 let reveal_badge = !self.is_revealed();
+                 self.pos = (x, y);
++                self.position_initialized = true;
+                 if let Some(heading) = heading_radians {
+                     self.heading = heading;
+                 }
+@@ -714,9 +719,10 @@ impl RenderStateCore {
+                 // that the cursor stays where the animation landed. Windows
+                 // and Linux always snap. Both anchor the click point so the
+                 // hotspot stays on it instead of jumping by the anchor offset.
+-                if !click_pulse_sentinel_only || self.pos.0 < -50.0 {
++                if !click_pulse_sentinel_only || !self.position_initialized {
+                     self.pos = crate::anchor_for_pointer(x, y, self.heading);
+                 }
++                self.position_initialized = true;
+                 self.click_t = Some(0.0);
+                 if matches!(
+                     self.visual.resolved_action,
+@@ -889,7 +895,7 @@ pub fn paint_cursor(
+ ) {
+     if !core.visible
+         || core.pinned_target_off_workspace
+-        || core.pos.0 < -100.0
++        || !core.position_initialized
+         || core.idle_alpha < 0.004
+     {
+         return;
+@@ -911,6 +917,8 @@ pub fn paint_cursor(
+     // Cyan glow border + faint fill, matching Swift AgentCursor.showFocusRect.
+     if let Some(fr) = focus_rect {
+         let [fx, fy, fw, fh] = fr.rect;
++        // 焦点框与箭头共享全局坐标，需要扣除当前显示器原点。
++        let (fx, fy) = (fx - origin_x, fy - origin_y);
+         let t = fr.t as f32;
+         let fade = (1.0 - t) * (1.0 - t); // quadratic ease-out
+         let border_a = (230.0 * fade * alpha_scale) as u8;
+@@ -1008,7 +1016,6 @@ pub fn paint_cursor(
+         );
+     }
+ }
+-
+ #[cfg(test)]
+ mod glide_duration_tests {
+     use super::*;
+diff --git a/crates/cursor-overlay/src/theme_artifact.rs b/crates/cursor-overlay/src/theme_artifact.rs
+index 473940e..6cc12ed 100644
+--- a/crates/cursor-overlay/src/theme_artifact.rs
++++ b/crates/cursor-overlay/src/theme_artifact.rs
+@@ -115,6 +115,48 @@ pub struct CompiledTheme {
+ }
+ 
+ impl CompiledTheme {
++    /// 主题只在加载时计算保守绘制半径，覆盖变换、旋转、描边及浮动。
++    pub fn paint_radius(&self) -> f64 {
++        let mut radius = 0.0_f64;
++        for animation in self.actions.values() {
++            for frame in &animation.frames {
++                for command in &frame.commands {
++                    let mut builder = PathBuilder::new();
++                    for geometry in &command.geometries {
++                        append_geometry(&mut builder, geometry);
++                    }
++                    let Some(path) = builder
++                        .finish()
++                        .and_then(|path| path.transform(compiled_transform(command.transform)))
++                    else {
++                        continue;
++                    };
++                    let bounds = path.bounds();
++                    let stroke = command.stroke.map_or(0.0, |stroke| {
++                        f64::from(stroke.width)
++                            * f64::from(
++                                command.transform.scale[0]
++                                    .abs()
++                                    .max(command.transform.scale[1].abs()),
++                            )
++                            * 4.0
++                    });
++                    for x in [bounds.left(), bounds.right()] {
++                        for y in [bounds.top(), bounds.bottom()] {
++                            radius = radius.max(
++                                (f64::from(x) - f64::from(self.hotspot[0]))
++                                    .hypot(f64::from(y) - f64::from(self.hotspot[1]))
++                                    + stroke,
++                            );
++                        }
++                    }
++                }
++            }
++        }
++        (radius * f64::from(crate::theme::DISPLAY_SIZE / crate::theme::CANVAS_SIZE) + 16.0)
++            .max(56.0)
++    }
++
+     pub fn content_hash(&self) -> String {
+         let mut hasher = Sha256::new();
+         if let Ok(bytes) = postcard::to_allocvec(self) {
+diff --git a/crates/platform-macos/src/capture.rs b/crates/platform-macos/src/capture.rs
+index 32e1ca6..3ca9175 100644
+--- a/crates/platform-macos/src/capture.rs
++++ b/crates/platform-macos/src/capture.rs
+@@ -739,11 +739,8 @@ fn screenshot_window_bytes_sck(window_id: u32) -> anyhow::Result<Vec<u8>> {
+ /// Tries ScreenCaptureKit first; falls back to the `screencapture` CLI on
+ /// native error or empty output.
+ pub fn screenshot_window_bytes(window_id: u32) -> anyhow::Result<Vec<u8>> {
+-    capture_window_with_backends(
+-        window_id,
+-        screenshot_window_bytes_sck,
+-        screenshot_window_bytes_shell,
+-    )
++    // Zeus 只从活跃的单窗口系统共享流取图，系统停止后不走单帧或命令回退。
++    crate::window_sharing::screenshot_window_bytes(window_id)
+ }
+ 
+ /// Capture a window by its `window_id` (CGWindowID).
+diff --git a/crates/platform-macos/src/cursor/overlay.rs b/crates/platform-macos/src/cursor/overlay.rs
+index 8a4c547..a64a321 100644
+--- a/crates/platform-macos/src/cursor/overlay.rs
++++ b/crates/platform-macos/src/cursor/overlay.rs
+@@ -32,7 +32,7 @@
+ use std::collections::HashMap;
+ use std::ffi::c_void;
+ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+-use std::sync::{Mutex, OnceLock};
++use std::sync::{Arc, Mutex, OnceLock};
+ use std::time::{Duration, Instant};
+ 
+ use cursor_overlay::{
+@@ -85,8 +85,177 @@ static CMD_RX_CELL: Mutex<Option<std::sync::mpsc::Receiver<OverlayMsg>>> = Mutex
+ static RENDER: Mutex<Option<RenderMap>> = Mutex::new(None);
+ static OVERLAY_WINDOW_ID: AtomicU32 = AtomicU32::new(0);
+ 
++/// 当前屏幕的透明窗口；异步主线程回调通过 Arc 持有，防止热插拔悬空引用。
++struct MacSurface {
++    /// 显示器的系统身份。
++    display_id: u32,
++    /// CG 坐标中的屏幕原点和逻辑尺寸。
++    frame: ScreenFrame,
++    /// AppKit 的屏幕位置，布局变化时用于判断窗口是否需要重建。
++    appkit_y: f64,
++    /// 屏幕自己的物理像素缩放。
++    scale: f64,
++    /// 原生透明窗口的保留引用。
++    win_ptr: usize,
++    /// 窗口所拥有的内容层。
++    layer_ptr: usize,
++    /// 排除自身窗口捕获的真实窗口身份。
++    window_id: u32,
++    /// 上帧是否有像素，跨屏后只补一次透明清除。
++    painted: AtomicBool,
++    /// 每屏只保留最新待显示像素，不积压全屏帧。
++    pending_frame: Mutex<Option<OverlayFrame>>,
++    /// 同一屏幕至多排队一个主线程图层回调。
++    frame_queued: AtomicBool,
++}
++
++/// 只保存实际绘制区域，空像素表示清除上一帧。
++struct OverlayFrame {
++    /// 全局逻辑坐标中的裁剪区域。
++    bounds: ScreenFrame,
++    /// 区域内物理像素，不保存整块显示器的空白像素。
++    pixmap: Option<tiny_skia::Pixmap>,
++}
++
++/// 屏幕列表只在 AppKit 主线程重建，绘制线程持有独立快照。
++static SCREEN_SURFACES: Mutex<Vec<Arc<MacSurface>>> = Mutex::new(Vec::new());
++
++impl Drop for MacSurface {
++    /// 在主队列关闭并释放原生窗口，不触碰用户应用。
++    fn drop(&mut self) {
++        #[link(name = "System", kind = "framework")]
++        extern "C" {
++            static _dispatch_main_q: u8;
++            fn dispatch_async_f(
++                queue: *const c_void,
++                context: *mut c_void,
++                work: unsafe extern "C" fn(*mut c_void),
++            );
++        }
++        /// 等待已排队的图层回调结束后释放最后一份窗口引用。
++        unsafe extern "C" fn close_window(context: *mut c_void) {
++            let pointer = *Box::from_raw(context as *mut usize);
++            let window = pointer as *mut objc2::runtime::AnyObject;
++            let _: () = objc2::msg_send![window, close];
++            let _: () = objc2::msg_send![window, release];
++        }
++        unsafe {
++            dispatch_async_f(
++                &raw const _dispatch_main_q as *const c_void,
++                Box::into_raw(Box::new(self.win_ptr)) as *mut c_void,
++                close_window,
++            );
++        }
++    }
++}
++
++/// 按实际 NSScreen 列表复用或重建屏幕窗口，不激活应用、不移动实体指针。
++unsafe fn rebuild_screen_surfaces() {
++    use objc2::runtime::AnyObject;
++    use objc2::{class, msg_send};
++    use objc2_foundation::NSRect;
++    let screens: *mut AnyObject = msg_send![class!(NSScreen), screens];
++    let count: usize = msg_send![screens, count];
++    let old = SCREEN_SURFACES.lock().unwrap().clone();
++    let mut next: Vec<Arc<MacSurface>> = Vec::new();
++    let key: *mut AnyObject =
++        msg_send![class!(NSString), stringWithUTF8String: c"NSScreenNumber".as_ptr()];
++    for index in 0..count {
++        let screen: *mut AnyObject = msg_send![screens, objectAtIndex: index];
++        let description: *mut AnyObject = msg_send![screen, deviceDescription];
++        let number: *mut AnyObject = msg_send![description, objectForKey: key];
++        let display_id: u32 = msg_send![number, unsignedIntValue];
++        let bounds = core_graphics::display::CGDisplayBounds(display_id);
++        let rect: NSRect = msg_send![screen, frame];
++        let frame = ScreenFrame::new(
++            bounds.origin.x,
++            bounds.origin.y,
++            bounds.size.width,
++            bounds.size.height,
++        );
++        let raw_scale: f64 = msg_send![screen, backingScaleFactor];
++        let scale = if raw_scale.is_finite() && raw_scale > 0.0 {
++            raw_scale
++        } else {
++            1.0
++        };
++        if next.iter().any(|item| item.frame == frame) {
++            continue;
++        }
++        if let Some(surface) = old.iter().find(|item| {
++            item.display_id == display_id
++                && item.frame == frame
++                && item.appkit_y == rect.origin.y
++                && item.scale == scale
++        }) {
++            next.push(surface.clone());
++            continue;
++        }
++        let allocated: *mut AnyObject = msg_send![class!(NSWindow), alloc];
++        let window: *mut AnyObject = msg_send![allocated, initWithContentRect: rect styleMask: 0u64 backing: 2u64 defer: false];
++        if window.is_null() {
++            continue;
++        }
++        let clear: *mut AnyObject = msg_send![class!(NSColor), clearColor];
++        let _: () = msg_send![window, setOpaque: false];
++        let _: () = msg_send![window, setBackgroundColor: clear];
++        let _: () = msg_send![window, setHasShadow: false];
++        let _: () = msg_send![window, setIgnoresMouseEvents: true];
++        let _: () = msg_send![window, setSharingType: 1u64];
++        let _: () = msg_send![window, setLevel: 0i64];
++        let _: () = msg_send![window, setCollectionBehavior: (1u64 | (1<<8) | (1<<4))];
++        let _: () = msg_send![window, setReleasedWhenClosed: false];
++        let _: () = msg_send![window, setHidesOnDeactivate: false];
++        let content: *mut AnyObject = msg_send![window, contentView];
++        let _: () = msg_send![content, setWantsLayer: true];
++        let root_layer: *mut AnyObject = msg_send![content, layer];
++        // 独立子图层可以裁剪，AppKit 对根图层的布局不会拉伸光标图片。
++        let layer: *mut AnyObject = msg_send![class!(CALayer), new];
++        let _: () = msg_send![root_layer, addSublayer: layer];
++        let _: () = msg_send![layer, release];
++        let _: () = msg_send![layer, setContentsScale: scale];
++        let gravity: *mut AnyObject =
++            msg_send![class!(NSString), stringWithUTF8String: c"topLeft".as_ptr()];
++        let _: () = msg_send![layer, setContentsGravity: gravity];
++        let window_number: isize = msg_send![window, windowNumber];
++        let _: () = msg_send![window, orderFrontRegardless];
++        next.push(Arc::new(MacSurface {
++            display_id,
++            frame,
++            appkit_y: rect.origin.y,
++            scale,
++            win_ptr: window as usize,
++            layer_ptr: layer as usize,
++            window_id: u32::try_from(window_number).unwrap_or(0),
++            painted: AtomicBool::new(false),
++            pending_frame: Mutex::new(None),
++            frame_queued: AtomicBool::new(false),
++        }));
++    }
++    let primary = next
++        .iter()
++        .find(|surface| surface.display_id == core_graphics::display::CGMainDisplayID());
++    OVERLAY_WINDOW_ID.store(
++        primary.map_or(0, |surface| surface.window_id),
++        Ordering::Release,
++    );
++    if let (Some(surface), Some(map)) = (primary, RENDER.lock().unwrap().as_mut()) {
++        map.platform = MacScreen {
++            win_w: surface.frame.width,
++            win_h: surface.frame.height,
++            backing_scale: surface.scale,
++        };
++    }
++    *SCREEN_SURFACES.lock().unwrap() = next;
++}
++
+ pub(crate) fn is_overlay_window(window_id: u32) -> bool {
+-    window_id != 0 && OVERLAY_WINDOW_ID.load(Ordering::Acquire) == window_id
++    window_id != 0
++        && SCREEN_SURFACES
++            .lock()
++            .unwrap()
++            .iter()
++            .any(|surface| surface.window_id == window_id)
+ }
+ 
+ /// CGWindowID of the live overlay window, if one is on screen.
+@@ -127,13 +296,13 @@ pub(crate) fn overlay_may_show_pixels() -> bool {
+         .is_some_and(|last| last.elapsed() < OVERLAY_CLEAR_GRACE)
+ }
+ 
++/// 与实际绘制闸门一致，已隐藏光标的残留焦点动画不能分配全屏空白帧。
+ fn cursor_may_paint(state: &RenderState) -> bool {
+-    state.focus_rect.is_some()
+-        || (state.core.cfg.enabled
+-            && state.core.visible
+-            && state.core.idle_alpha > 0.0
+-            && state.core.pos.0 > -50.0
+-            && state.core.pos.1 > -50.0)
++    state.core.cfg.enabled
++        && state.core.visible
++        && !state.core.pinned_target_off_workspace
++        && state.core.position_initialized
++        && state.core.idle_alpha >= 0.004
+ }
+ 
+ /// Screen-global geometry kept beside the shared keyed render map
+@@ -167,6 +336,7 @@ fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
+ pub fn init(cfg: CursorConfig) {
+     static INITIALIZED: OnceLock<()> = OnceLock::new();
+     INITIALIZED.get_or_init(|| {
++        crate::input::user_guard::init();
+         let (tx, rx) = std::sync::mpsc::sync_channel(4096);
+         CMD_TX
+             .set(tx)
+@@ -327,10 +497,17 @@ fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool
+     let Some(map) = guard.as_mut() else {
+         return false;
+     };
+-    // `win_w/h` are 0 until the AppKit window is up; the shared seed then only
+-    // keeps the start point off negative coordinates.
+-    let MacScreen { win_w, win_h, .. } = map.platform;
+-    let frame = (win_w > 0.0 && win_h > 0.0).then(|| ScreenFrame::new(0.0, 0.0, win_w, win_h));
++    let frame = SCREEN_SURFACES
++        .lock()
++        .unwrap()
++        .iter()
++        .find(|surface| {
++            target_x >= surface.frame.x
++                && target_x < surface.frame.x + surface.frame.width
++                && target_y >= surface.frame.y
++                && target_y < surface.frame.y + surface.frame.height
++        })
++        .map(|surface| surface.frame);
+     map.seed_start_if_sentinel(key, target_x, target_y, frame)
+ }
+ 
+@@ -359,7 +536,7 @@ pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
+         let guard = RENDER.lock().unwrap();
+         matches!(
+             guard.as_ref().and_then(|m| m.cursors.get(&key)),
+-            Some(rs) if rs.core.cfg.enabled && rs.core.pos.0 > -50.0
++            Some(rs) if rs.core.cfg.enabled && rs.core.position_initialized
+         )
+     };
+     if !should_animate {
+@@ -449,6 +626,8 @@ pub fn run_on_main_thread() {
+ 
+ struct RenderState {
+     core: RenderStateCore,
++    /// 当前主题的保守绘制半径，动画帧只读取缓存。
++    paint_radius: f64,
+     /// Focus-highlight rectangle `[x, y, w, h]` in screen coords; None = not shown.
+     focus_rect: Option<[f64; 4]>,
+     /// Fade progress for the focus rect: 0.0 = fully visible, 1.0 = gone.
+@@ -457,8 +636,14 @@ struct RenderState {
+ 
+ impl RenderEntry for RenderState {
+     fn from_config(cfg: CursorConfig) -> Self {
++        let core = RenderStateCore::new(cfg);
++        let paint_radius = core
++            .theme
++            .as_ref()
++            .map_or(56.0, |theme| theme.paint_radius());
+         RenderState {
+-            core: RenderStateCore::new(cfg),
++            core,
++            paint_radius,
+             focus_rect: None,
+             focus_rect_t: 1.0,
+         }
+@@ -493,6 +678,15 @@ impl RenderEntry for RenderState {
+     }
+ 
+     fn apply_command(&mut self, cmd: OverlayCommand) -> bool {
++        if matches!(cmd, OverlayCommand::SetTheme { .. }) {
++            let result = self.core.apply_command_base(cmd, true, true);
++            self.paint_radius = self
++                .core
++                .theme
++                .as_ref()
++                .map_or(56.0, |theme| theme.paint_radius());
++            return result;
++        }
+         // macOS uses the sentinel-snap variants of MoveTo / ClickPulse:
+         //   - MoveTo only snaps `self.pos` if the cursor is still at the
+         //     off-screen sentinel `(-200, -200)` (otherwise the path starts
+@@ -529,7 +723,7 @@ impl RenderEntry for RenderState {
+             || self.focus_rect.is_some()
+             || (self.core.motion.idle_hide_ms > 0.0
+                 && self.core.visible
+-                && self.core.pos.0 >= -100.0
++                && self.core.position_initialized
+                 && self.core.idle_alpha >= 0.004)
+     }
+ }
+@@ -539,7 +733,6 @@ impl RenderEntry for RenderState {
+ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMsg>) {
+     use objc2::runtime::AnyObject;
+     use objc2::{class, msg_send};
+-    use objc2_foundation::NSRect;
+ 
+     // ---- NSApplication ----
+     // Verify main thread (MainThreadMarker is a zero-size compile-time token).
+@@ -553,123 +746,28 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
+     // Finish launching without presenting a UI (needed for NSApp.run())
+     let _: () = msg_send![app, finishLaunching];
+ 
+-    // ---- Main screen frame ----
+-    let main_screen: *mut AnyObject = msg_send![class!(NSScreen), mainScreen];
+-    if main_screen.is_null() {
+-        // Headless environment (CI without display) — skip overlay entirely.
+-        // The MCP server continues on the background thread.
+-        return;
+-    }
+-    let screen_frame: NSRect = msg_send![main_screen, frame];
+-    let win_w = screen_frame.size.width;
+-    let win_h = screen_frame.size.height;
+-    // NSScreen.backingScaleFactor is the most direct source of truth — it's
+-    // what AppKit will use for the layer's native backing surface anyway.
+-    // Fall back to the CG estimator (current-mode pixels ÷ points) when
+-    // the AppKit call returns a non-positive value, since downstream paint
+-    // math divides by this and a 0.0 would zero out the cursor.
+-    let mut backing_scale: f64 = msg_send![main_screen, backingScaleFactor];
+-    if backing_scale.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
+-        use core_graphics::display::CGMainDisplayID;
+-        let display_id = CGMainDisplayID();
+-        backing_scale = crate::tools::get_screen_size::get_backing_scale(display_id);
+-        if backing_scale.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
+-            backing_scale = 1.0;
++    // 每块显示器独立建立原生透明窗口，保留 CG 全局坐标和各自缩放。
++    rebuild_screen_surfaces();
++    crate::input::user_guard::install_monitor();
++    let center: *mut AnyObject = msg_send![class!(NSNotificationCenter), defaultCenter];
++    let name: *mut AnyObject = msg_send![class!(NSString), stringWithUTF8String: c"NSApplicationDidChangeScreenParametersNotification".as_ptr()];
++    let callback = block2::RcBlock::new(|_: *mut AnyObject| unsafe {
++        rebuild_screen_surfaces();
++        crate::input::user_guard::display_changed();
++        if let Some(tx) = CMD_TX.get() {
++            let _ = tx.try_send(OverlayMsg::Wake);
+         }
+-    }
+-
+-    // ---- NSWindow: single alloc + initWithContentRect:... ----
+-    let win: *mut AnyObject = {
+-        let allocated: *mut AnyObject = msg_send![class!(NSWindow), alloc];
+-        // NSWindowStyleMaskBorderless = 0
+-        // NSBackingStoreBuffered = 2
+-        let w: *mut AnyObject = msg_send![allocated,
+-            initWithContentRect: screen_frame
+-            styleMask: 0u64
+-            backing: 2u64
+-            defer: false
+-        ];
+-        w
+-    };
+-    if win.is_null() {
+-        return;
+-    }
+-
+-    let _: () = msg_send![win, setOpaque: false];
+-    let clear: *mut AnyObject = msg_send![class!(NSColor), clearColor];
+-    let _: () = msg_send![win, setBackgroundColor: clear];
+-    let _: () = msg_send![win, setHasShadow: false];
+-    let _: () = msg_send![win, setIgnoresMouseEvents: true];
+-    // NSWindowSharingReadOnly = 1. AppKit documents this as the default, but
+-    // set it explicitly for the transparent agent overlay so ScreenCaptureKit
+-    // includes browser-session cursors in Cua Driver recordings. Tahoe can
+-    // otherwise show the overlay live while omitting it from an in-process
+-    // display recording.
+-    let _: () = msg_send![win, setSharingType: 1u64];
+-    // NSNormalWindowLevel = 0.  The overlay lives at the normal window level so
+-    // it appears in CGWindowList layer=0 results (which agents inspect via
+-    // list_windows).  Z-ordering above the target is managed dynamically via
+-    // orderWindow:relativeTo: (see dispatch_pin_above / render_loop repin).
+-    let _: () = msg_send![win, setLevel: 0i64];
+-    // NSWindowCollectionBehaviorCanJoinAllSpaces(1<<0) | FullScreenAuxiliary(1<<8) | Stationary(1<<4)
+-    let _: () = msg_send![win, setCollectionBehavior: (1u64 | (1<<8) | (1<<4))];
+-    let _: () = msg_send![win, setReleasedWhenClosed: false];
+-    let _: () = msg_send![win, setHidesOnDeactivate: false];
+-
+-    // ---- Layer-backed content view ----
+-    let content_view: *mut AnyObject = msg_send![win, contentView];
+-    let _: () = msg_send![content_view, setWantsLayer: true];
+-    let layer: *mut AnyObject = msg_send![content_view, layer];
+-
+-    // Set layer geometry. contentsScale tells Core Animation that the CGImage
+-    // we hand to setContents: is already at retina (`backing_scale`×) pixel
+-    // density — without this, CA would treat our physical-pixel pixmap as a
+-    // 1× asset and bilinear-downsample it back to logical pixels on screen,
+-    // re-introducing the blur this pipeline exists to eliminate.
+-    let _: () = msg_send![layer, setContentsScale: backing_scale];
+-    // kCAGravityTopLeft — the string literal "topLeft"
+-    let gravity_ns: *mut AnyObject = msg_send![class!(NSString),
+-        stringWithUTF8String: c"topLeft".as_ptr().cast::<u8>()
+-    ];
+-    let _: () = msg_send![layer, setContentsGravity: gravity_ns];
+-
+-    // ---- Update RenderMap header with screen size (screen-global) ----
+-    {
+-        let mut guard = RENDER.lock().unwrap();
+-        if let Some(m) = guard.as_mut() {
+-            m.platform = MacScreen {
+-                win_w,
+-                win_h,
+-                backing_scale,
+-            };
+-        }
+-    }
+-
+-    let window_number: isize = msg_send![win, windowNumber];
+-    OVERLAY_WINDOW_ID.store(u32::try_from(window_number).unwrap_or(0), Ordering::Release);
+-
+-    // ---- Show the window ----
+-    let _: () = msg_send![win, orderFrontRegardless];
+-
+-    // ---- Render thread (60 fps) ----
+-    let layer_ptr = layer as usize;
+-    let win_ptr = win as usize;
+-    std::thread::spawn(move || {
+-        render_loop(layer_ptr, win_ptr, rx, win_w, win_h);
+     });
++    let _: *mut AnyObject = msg_send![center, addObserverForName: name object: std::ptr::null::<AnyObject>() queue: std::ptr::null::<AnyObject>() usingBlock: &*callback];
++    std::thread::spawn(move || render_loop(rx));
+ 
+     // ---- NSApplication run loop (blocks until process exits) ----
+     let _: () = msg_send![app, run];
+     OVERLAY_WINDOW_ID.store(0, Ordering::Release);
+ }
+ 
+-fn render_loop(
+-    layer_ptr: usize,
+-    win_ptr: usize,
+-    rx: std::sync::mpsc::Receiver<OverlayMsg>,
+-    _win_w: f64,
+-    _win_h: f64,
+-) {
++/// 共用一次动画推进，将同一全局光标按显示器原点分别绘制。
++fn render_loop(rx: std::sync::mpsc::Receiver<OverlayMsg>) {
+     let target_frame_ms = Duration::from_millis(16); // ~60 fps while pixels can change
+     let hover_poll_ms = Duration::from_millis(80);
+     let mut last_tick = Instant::now();
+@@ -719,8 +817,8 @@ fn render_loop(
+             pinned_wid,
+             raise_unpinned,
+             arrived,
+-            win_w,
+-            win_h,
++            _win_w,
++            _win_h,
+             had_msg,
+             hover_changed,
+             next_frame_tick_needed,
+@@ -813,14 +911,21 @@ fn render_loop(
+             let pin_changed = pinned_wid != last_pinned;
+             last_pinned = pinned_wid;
+             if pinned_wid.is_some() && (pin_changed || repin_frames >= 60) {
+-                MacZOrderEnforcer { win_ptr }.reassert(pinned_wid);
++                for surface in SCREEN_SURFACES.lock().unwrap().iter() {
++                    MacZOrderEnforcer {
++                        surface: surface.clone(),
++                    }
++                    .reassert(pinned_wid);
++                }
+                 repin_frames = 0;
+             } else if raise_unpinned {
+                 // A direct move_cursor has no target window to pin against.
+                 // Raise the normal-level, click-through overlay without
+                 // activating the driver so a later foreground application
+                 // cannot cover a standalone session cursor.
+-                dispatch_order_front(win_ptr);
++                for surface in SCREEN_SURFACES.lock().unwrap().iter() {
++                    dispatch_order_front(surface.clone());
++                }
+                 repin_frames = 0;
+             } else if repin_frames >= 60 {
+                 repin_frames = 0;
+@@ -832,43 +937,62 @@ fn render_loop(
+         // change pixels. A final frame is emitted as animations/fades finish so
+         // the layer is left in the completed/cleared state before blocking.
+         if had_msg || hover_changed || frame_tick_needed || next_frame_tick_needed {
+-            let pixmap = {
+-                let guard = RENDER.lock().unwrap();
+-                if let Some(map) = guard.as_ref() {
+-                    // Allocate the pixmap at the screen's PHYSICAL pixel
+-                    // dimensions so the cursor rasterises at retina resolution.
+-                    // The cursor's logical coordinates are scaled into pixmap
+-                    // pixels inside `paint_cursor` (it multiplies px/py/sizes
+-                    // by `backing_scale`).
+-                    let scale = map.platform.backing_scale.max(1.0);
+-                    let w = (win_w * scale).max(1.0) as u32;
+-                    let h = (win_h * scale).max(1.0) as u32;
+-                    let mut pm = tiny_skia::Pixmap::new(w.max(1), h.max(1))
+-                        .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
+-                    let backing_scale_f32 = scale as f32;
+-                    note_overlay_frame(map.cursors.values().any(cursor_may_paint));
+-                    for (_k, rs) in &map.cursors {
+-                        let focus = rs.focus_rect.map(|rect| FocusRect {
+-                            rect,
+-                            t: rs.focus_rect_t,
+-                        });
+-                        cursor_overlay::paint_cursor(
+-                            &mut pm,
+-                            &rs.core,
+-                            0.0,
+-                            0.0, // macOS uses screen-local coords (no origin offset)
+-                            focus,
+-                            backing_scale_f32,
+-                        );
+-                    }
+-                    pm
+-                } else {
+-                    break;
+-                }
++            let surfaces = SCREEN_SURFACES.lock().unwrap().clone();
++            let guard = RENDER.lock().unwrap();
++            let Some(map) = guard.as_ref() else {
++                break;
+             };
+-
+-            // Convert to CGImage and update layer on the main queue.
+-            dispatch_set_layer_contents(layer_ptr, pixmap);
++            note_overlay_frame(map.cursors.values().any(cursor_may_paint));
++            for surface in surfaces {
++                // 合并真正可见的主题、标签和焦点区域，避免每帧分配全屏像素。
++                let bounds = ScreenFrame::union(
++                    map.cursors
++                        .values()
++                        .filter_map(|state| cursor_paint_bounds(state, &surface)),
++                );
++                let paints = bounds.is_some();
++                if !paints && !surface.painted.swap(false, Ordering::AcqRel) {
++                    continue;
++                }
++                surface.painted.store(paints, Ordering::Release);
++                let Some(bounds) = bounds else {
++                    dispatch_set_layer_contents(
++                        surface.clone(),
++                        OverlayFrame {
++                            bounds: surface.frame,
++                            pixmap: None,
++                        },
++                    );
++                    continue;
++                };
++                let Some(mut pm) = tiny_skia::Pixmap::new(
++                    (bounds.width * surface.scale).round().max(1.0) as u32,
++                    (bounds.height * surface.scale).round().max(1.0) as u32,
++                ) else {
++                    continue;
++                };
++                for rs in map.cursors.values() {
++                    let focus = rs.focus_rect.map(|rect| FocusRect {
++                        rect,
++                        t: rs.focus_rect_t,
++                    });
++                    cursor_overlay::paint_cursor(
++                        &mut pm,
++                        &rs.core,
++                        bounds.x,
++                        bounds.y,
++                        focus,
++                        surface.scale as f32,
++                    );
++                }
++                dispatch_set_layer_contents(
++                    surface,
++                    OverlayFrame {
++                        bounds,
++                        pixmap: Some(pm),
++                    },
++                );
++            }
+         }
+ 
+         frame_tick_needed = next_frame_tick_needed;
+@@ -883,6 +1007,46 @@ fn render_loop(
+     }
+ }
+ 
++/// 在全局坐标计算本屏实际绘制边界，再按物理像素向外对齐。
++fn cursor_paint_bounds(state: &RenderState, surface: &MacSurface) -> Option<ScreenFrame> {
++    if !cursor_may_paint(state) {
++        return None;
++    }
++    let (x, y) = state.core.pos;
++    let mut left = x - state.paint_radius;
++    let mut top = y - state.paint_radius;
++    let mut right = x + state.paint_radius;
++    let mut bottom = y + state.paint_radius;
++    if state.core.session_badge_alpha() > 0.0 || state.core.session_badge_chip_alpha() > 0.0 {
++        let badge = cursor_overlay::session_badge_extents();
++        left = left.min(x - f64::from(badge.horizontal));
++        right = right.max(x + f64::from(badge.horizontal));
++        top = top.min(y - f64::from(badge.above));
++        bottom = bottom.max(y + f64::from(badge.below));
++    }
++    if let Some([fx, fy, width, height]) = state.focus_rect {
++        left = left.min(fx - 4.0);
++        top = top.min(fy - 4.0);
++        right = right.max(fx + width + 4.0);
++        bottom = bottom.max(fy + height + 4.0);
++    }
++    left = ((left - surface.frame.x) * surface.scale).floor() / surface.scale + surface.frame.x;
++    top = ((top - surface.frame.y) * surface.scale).floor() / surface.scale + surface.frame.y;
++    right = ((right - surface.frame.x) * surface.scale).ceil() / surface.scale + surface.frame.x;
++    bottom = ((bottom - surface.frame.y) * surface.scale).ceil() / surface.scale + surface.frame.y;
++    left = left.max(surface.frame.x);
++    top = top.max(surface.frame.y);
++    right = right.min(surface.frame.x + surface.frame.width);
++    bottom = bottom.min(surface.frame.y + surface.frame.height);
++    (left.is_finite()
++        && top.is_finite()
++        && right.is_finite()
++        && bottom.is_finite()
++        && right > left
++        && bottom > top)
++        .then(|| ScreenFrame::new(left, top, right - left, bottom - top))
++}
++
+ fn hardware_cursor_position() -> Option<(f64, f64)> {
+     use core_graphics::{
+         event::CGEvent,
+@@ -898,22 +1062,22 @@ fn hardware_cursor_position() -> Option<(f64, f64)> {
+ fn cursor_is_externally_visible(state: &RenderState) -> bool {
+     state.core.cfg.enabled
+         && state.core.visible
+-        && state.core.pos.0 > -50.0
+-        && state.core.pos.1 > -50.0
++        && state.core.position_initialized
+         && state.core.idle_alpha >= 0.004
+ }
+ 
+-/// Convert a `tiny_skia::Pixmap` to a `CGImage` and set it as the contents
+-/// of the given `CALayer` via `dispatch_async(main_queue, ...)`.
+-fn dispatch_set_layer_contents(layer_ptr: usize, pixmap: tiny_skia::Pixmap) {
+-    // Build the CGImage from the pixmap bytes.
+-    let cg_image_ptr = match pixmap_to_cgimage(&pixmap) {
+-        Some(p) => p,
+-        None => return,
+-    };
+-
+-    // Box the payload for the C callback.
+-    let payload = Box::new((layer_ptr, cg_image_ptr));
++/// 只投递每屏最新一帧，主线程忙碌时替换未显示帧，限制像素积压。
++fn dispatch_set_layer_contents(surface: Arc<MacSurface>, frame: OverlayFrame) {
++    {
++        // 帧替换和排队标记共用锁，避免最后一帧丢失。
++        let mut pending = surface.pending_frame.lock().unwrap();
++        *pending = Some(frame);
++        if surface.frame_queued.swap(true, Ordering::AcqRel) {
++            return;
++        }
++    }
++    // 回调持有窗口引用，热插拔不能释放尚未投递的图层。
++    let payload = Box::new(surface);
+ 
+     // GCD symbols from libdispatch (part of the macOS system library stubs).
+     // `dispatch_get_main_queue()` is an inline C function; the underlying
+@@ -931,15 +1095,41 @@ fn dispatch_set_layer_contents(layer_ptr: usize, pixmap: tiny_skia::Pixmap) {
+         );
+     }
+ 
++    /// 在原生主线程取得最新像素并更新图层。
+     unsafe extern "C" fn set_contents_cb(ctx: *mut c_void) {
+-        let (layer_ptr, cg_image_ptr): (usize, usize) = *Box::from_raw(ctx as *mut _);
+-        let layer = layer_ptr as *mut objc2::runtime::AnyObject;
++        let surface = *Box::from_raw(ctx as *mut Arc<MacSurface>);
++        let frame = {
++            let mut pending = surface.pending_frame.lock().unwrap();
++            let frame = pending.take();
++            surface.frame_queued.store(false, Ordering::Release);
++            frame
++        };
++        let Some(frame) = frame else {
++            return;
++        };
++        let cg_image_ptr = frame.pixmap.and_then(pixmap_to_cgimage);
++        let layer = surface.layer_ptr as *mut objc2::runtime::AnyObject;
+         // setContents: expects an `id` (type '@'), not a raw void pointer.
+         // CGImageRef is toll-free bridged to NSObject, so we cast it to *mut AnyObject.
+-        let cg_id = cg_image_ptr as *mut objc2::runtime::AnyObject;
++        let cg_id = cg_image_ptr.unwrap_or(0) as *mut objc2::runtime::AnyObject;
++        // 光标动画由渲染器完成，禁止图层再交叉淡入并保留多份全屏图像。
++        let _: () = objc2::msg_send![objc2::class!(CATransaction), begin];
++        let _: () = objc2::msg_send![objc2::class!(CATransaction), setDisableActions: true];
++        // 子图层使用 AppKit 自底向上坐标；主题像素仍按 CG 自顶向下绘制。
++        let layer_frame = objc2_foundation::NSRect::new(
++            objc2_foundation::NSPoint::new(
++                frame.bounds.x - surface.frame.x,
++                surface.frame.height - (frame.bounds.y - surface.frame.y) - frame.bounds.height,
++            ),
++            objc2_foundation::NSSize::new(frame.bounds.width, frame.bounds.height),
++        );
++        let _: () = objc2::msg_send![layer, setFrame: layer_frame];
+         let _: () = objc2::msg_send![layer, setContents: cg_id];
++        let _: () = objc2::msg_send![objc2::class!(CATransaction), commit];
+         // Release the CGImage ref we retained in pixmap_to_cgimage.
+-        CGImageRelease(cg_image_ptr as *mut c_void);
++        if let Some(image) = cg_image_ptr {
++            CGImageRelease(image as *mut c_void);
++        }
+     }
+ 
+     extern "C" {
+@@ -962,7 +1152,7 @@ fn dispatch_set_layer_contents(layer_ptr: usize, pixmap: tiny_skia::Pixmap) {
+ /// This is used only for an externally visible cursor with no target window.
+ /// Target-bound actions continue to use [`dispatch_pin_above`] so background
+ /// delivery remains below unrelated foreground applications.
+-fn dispatch_order_front(win_ptr: usize) {
++fn dispatch_order_front(surface: Arc<MacSurface>) {
+     use std::ffi::c_void;
+ 
+     #[link(name = "System", kind = "framework")]
+@@ -976,12 +1166,12 @@ fn dispatch_order_front(win_ptr: usize) {
+     }
+ 
+     unsafe extern "C" fn order_front_cb(ctx: *mut c_void) {
+-        let win_ptr = *Box::from_raw(ctx as *mut usize);
+-        let win = win_ptr as *mut objc2::runtime::AnyObject;
++        let surface = *Box::from_raw(ctx as *mut Arc<MacSurface>);
++        let win = surface.win_ptr as *mut objc2::runtime::AnyObject;
+         let _: () = objc2::msg_send![win, orderFrontRegardless];
+     }
+ 
+-    let payload = Box::new(win_ptr);
++    let payload = Box::new(surface);
+     unsafe {
+         let main_queue = &raw const _dispatch_main_q as *const c_void;
+         dispatch_async_f(
+@@ -1026,7 +1216,7 @@ fn target_is_frontmost_visible_window(
+         .is_some_and(|window| u64::from(window.window_id) == target_wid)
+ }
+ 
+-fn dispatch_pin_above(win_ptr: usize, target_wid: u64) {
++fn dispatch_pin_above(surface: Arc<MacSurface>, target_wid: u64) {
+     use std::ffi::c_void;
+ 
+     #[link(name = "System", kind = "framework")]
+@@ -1040,9 +1230,9 @@ fn dispatch_pin_above(win_ptr: usize, target_wid: u64) {
+     }
+ 
+     unsafe extern "C" fn reorder_cb(ctx: *mut c_void) {
+-        let (win_ptr, target_wid, raise_front): (usize, u64, bool) =
+-            *Box::from_raw(ctx as *mut (usize, u64, bool));
+-        let win = win_ptr as *mut objc2::runtime::AnyObject;
++        let (surface, target_wid, raise_front): (Arc<MacSurface>, u64, bool) =
++            *Box::from_raw(ctx as *mut (Arc<MacSurface>, u64, bool));
++        let win = surface.win_ptr as *mut objc2::runtime::AnyObject;
+         // NSWindowAbove = 1; relativeTo: takes NSInteger (i64 on 64-bit)
+         let _: () = objc2::msg_send![win, orderWindow: 1i64 relativeTo: target_wid as i64];
+ 
+@@ -1060,7 +1250,7 @@ fn dispatch_pin_above(win_ptr: usize, target_wid: u64) {
+     let windows = crate::windows::visible_windows();
+     let raise_front =
+         target_is_frontmost_visible_window(target_wid, crate::apps::frontmost_pid(), &windows);
+-    let payload = Box::new((win_ptr, target_wid, raise_front));
++    let payload = Box::new((surface, target_wid, raise_front));
+     unsafe {
+         let main_queue = &raw const _dispatch_main_q as *const c_void;
+         dispatch_async_f(
+@@ -1083,28 +1273,27 @@ fn dispatch_pin_above(win_ptr: usize, target_wid: u64) {
+ /// raise the overlay once in the render loop, while this enforcer remains
+ /// responsible only for target-relative ordering.
+ struct MacZOrderEnforcer {
+-    win_ptr: usize,
++    /// 保持原生窗口有效，直到主线程完成重排。
++    surface: Arc<MacSurface>,
+ }
+ 
+ impl ZOrderEnforcer for MacZOrderEnforcer {
+     fn reassert(&self, target: Option<u64>) {
+         if let Some(wid) = target {
+-            dispatch_pin_above(self.win_ptr, wid);
++            dispatch_pin_above(self.surface.clone(), wid);
+         }
+         // target = None → no-op; see struct doc comment.
+     }
+ }
+ 
+-/// Create a `CGImage` from a `tiny_skia::Pixmap` (premultiplied RGBA).
+-/// Returns a `+1` retained pointer that the caller must release.
+-fn pixmap_to_cgimage(pixmap: &tiny_skia::Pixmap) -> Option<usize> {
++/// 将像素所有权交给 CGDataProvider，返回由调用方释放的 CGImage 引用。
++fn pixmap_to_cgimage(pixmap: tiny_skia::Pixmap) -> Option<usize> {
+     let w = pixmap.width() as usize;
+     let h = pixmap.height() as usize;
+     if w == 0 || h == 0 {
+         return None;
+     }
+ 
+-    let data = pixmap.data();
+     let bytes_per_row = w * 4;
+ 
+     // tiny-skia produces premultiplied RGBA with bytes in memory order [R, G, B, A].
+@@ -1117,11 +1306,9 @@ fn pixmap_to_cgimage(pixmap: &tiny_skia::Pixmap) -> Option<usize> {
+     // This correctly maps tiny-skia's [R, G, B, A] bytes to the display RGB channels.
+     const BITMAP_INFO: u32 = 0x0001 | 0x4000; // kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big
+ 
+-    // Release callback: CGDataProvider calls this when it is done with the buffer.
+-    // `info` is the Box<Vec<u8>> we passed as the `info` argument below.
++    /// 图像不再引用像素时释放原 Pixmap，无需额外复制全屏缓冲。
+     unsafe extern "C" fn release_pixel_data(info: *mut c_void, _data: *const c_void, _size: usize) {
+-        // Re-box and drop to free the buffer.
+-        drop(Box::from_raw(info as *mut Vec<u8>));
++        drop(Box::from_raw(info as *mut tiny_skia::Pixmap));
+     }
+ 
+     unsafe {
+@@ -1150,21 +1337,26 @@ fn pixmap_to_cgimage(pixmap: &tiny_skia::Pixmap) -> Option<usize> {
+             ) -> *mut c_void;
+         }
+ 
+-        // Copy the pixel data into a heap Vec; the data provider will own it
+-        // and free it via release_pixel_data when the CGImage is released.
+-        let copied: Vec<u8> = data.to_vec();
+-        let len = copied.len();
+-        let ptr = copied.as_ptr();
+-        // Leak the Vec into a raw Box so we can pass it as the `info` opaque pointer.
+-        let copied_box: *mut Vec<u8> = Box::into_raw(Box::new(copied));
+-
++        // Box 保持像素地址稳定；创建成功后由 provider 回调释放。
++        let pixels = Box::new(pixmap);
++        let len = pixels.data().len();
++        let ptr = pixels.data().as_ptr();
+         let cs = CGColorSpaceCreateDeviceRGB();
++        if cs.is_null() {
++            return None;
++        }
++        let pixels_box = Box::into_raw(pixels);
+         let provider = CGDataProviderCreateWithData(
+-            copied_box as *mut c_void,
++            pixels_box as *mut c_void,
+             ptr as *const c_void,
+             len,
+-            Some(release_pixel_data), // frees copied_box when provider is released
++            Some(release_pixel_data),
+         );
++        if provider.is_null() {
++            CGColorSpaceRelease(cs);
++            drop(Box::from_raw(pixels_box));
++            return None;
++        }
+         let img = CGImageCreate(
+             w,
+             h,
+@@ -1181,7 +1373,7 @@ fn pixmap_to_cgimage(pixmap: &tiny_skia::Pixmap) -> Option<usize> {
+ 
+         CGColorSpaceRelease(cs);
+         CGDataProviderRelease(provider);
+-        // Do NOT drop copied_box here — release_pixel_data owns it now.
++        // provider 已接管原像素，失败返回时也通过引用计数释放。
+ 
+         if img.is_null() {
+             None
+@@ -1197,7 +1389,6 @@ fn pixmap_to_cgimage(pixmap: &tiny_skia::Pixmap) -> Option<usize> {
+ // lifecycle, the "default" guard, and per-key arrival isolation WITHOUT any
+ // AppKit / NSWindow. The on-screen rendering (CGImage / CALayer setContents)
+ // still needs a real display and is verified separately on the macOS VM.
+-
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+diff --git a/crates/platform-macos/src/focus_steal.rs b/crates/platform-macos/src/focus_steal.rs
+index 682a6ff..9259b1d 100644
+--- a/crates/platform-macos/src/focus_steal.rs
++++ b/crates/platform-macos/src/focus_steal.rs
+@@ -515,6 +515,10 @@ fn handle_activation(dispatcher: &Arc<Dispatcher>, note: &objc2_foundation::NSNo
+         pid as i32
+     };
+ 
++    // 用户主动接管受控应用后，尊重实体操作的焦点选择。
++    if crate::input::user_guard::user_has_control(activated_pid) {
++        return;
++    }
+     let restore_pids = dispatcher.snapshot_matches(activated_pid);
+     for pid in restore_pids {
+         restore_focus(pid);
+@@ -536,7 +540,6 @@ fn restore_focus(pid: i32) {
+ // These tests exercise the pure-Rust dispatcher half — no Cocoa
+ // observers, no real notifications. They run under `cargo test
+ // -p platform-macos focus_steal::`.
+-
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+diff --git a/crates/platform-macos/src/input/keyboard.rs b/crates/platform-macos/src/input/keyboard.rs
+index dca9973..3eba868 100644
+--- a/crates/platform-macos/src/input/keyboard.rs
++++ b/crates/platform-macos/src/input/keyboard.rs
+@@ -57,6 +57,7 @@ pub fn type_text(pid: i32, text: &str) -> anyhow::Result<()> {
+         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+ 
+     for ch in text.chars() {
++        crate::input::user_guard::check_pid(pid)?;
+         let ch_str = ch.to_string();
+         let down = CGEvent::new_keyboard_event(source.clone(), 0, true)
+             .map_err(|_| anyhow::anyhow!("CGEvent keyboard down failed"))?;
+@@ -85,6 +86,7 @@ pub fn type_text_with_delay(pid: i32, text: &str, inter_char_delay_ms: u64) -> a
+         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+ 
+     for ch in text.chars() {
++        crate::input::user_guard::check_pid(pid)?;
+         let ch_str = ch.to_string();
+         let down = CGEvent::new_keyboard_event(source.clone(), 0, true)
+             .map_err(|_| anyhow::anyhow!("CGEvent keyboard down failed"))?;
+@@ -101,7 +103,7 @@ pub fn type_text_with_delay(pid: i32, text: &str, inter_char_delay_ms: u64) -> a
+ 
+         // Additional inter-character delay on top of the 8 ms internal gap.
+         if inter_char_delay_ms > 0 {
+-            std::thread::sleep(std::time::Duration::from_millis(inter_char_delay_ms));
++            crate::input::user_guard::wait(pid, inter_char_delay_ms)?;
+         } else {
+             std::thread::sleep(std::time::Duration::from_millis(8));
+         }
+@@ -613,8 +615,15 @@ fn physical_key_for_char(ch: char) -> Option<(u16, bool)> {
+ 
+ /// Post a keyboard event to `pid` via SLEventPostToPid (with auth message for
+ /// Chromium/Electron support) or fall back to CGEvent::post_to_pid.
++/// 取消后不再按下按键，但保留抬起，避免虚拟修饰键残留。
+ pub(super) fn post_keyboard_event(pid: i32, event: &CGEvent) {
++    if !matches!(event.get_type(), core_graphics::event::CGEventType::KeyUp)
++        && crate::input::user_guard::check_pid(pid).is_err()
++    {
++        return;
++    }
+     let event_ptr = event.as_ptr() as *mut std::ffi::c_void;
++    crate::input::user_guard::stamp_event(event_ptr);
+     // attachAuthMessage = true: required for Chromium keyboard on macOS 14+.
+     if !crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, true) {
+         event.post_to_pid(pid as libc::pid_t);
+@@ -622,6 +631,9 @@ pub(super) fn post_keyboard_event(pid: i32, event: &CGEvent) {
+ }
+ 
+ fn post_key(pid: i32, key_code: u16, key_down: bool, flags: CGEventFlags) -> anyhow::Result<()> {
++    if key_down {
++        crate::input::user_guard::check_pid(pid)?;
++    }
+     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+     let event = CGEvent::new_keyboard_event(source, key_code, key_down)
+@@ -640,12 +652,16 @@ fn post_key_no_auth(
+     key_down: bool,
+     flags: CGEventFlags,
+ ) -> anyhow::Result<()> {
++    if key_down {
++        crate::input::user_guard::check_pid(pid)?;
++    }
+     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+     let event = CGEvent::new_keyboard_event(source, key_code, key_down)
+         .map_err(|_| anyhow::anyhow!("CGEvent::new_keyboard_event failed"))?;
+     event.set_flags(flags);
+     let event_ptr = event.as_ptr() as *mut std::ffi::c_void;
++    crate::input::user_guard::stamp_event(event_ptr);
+     // attach_auth_message = false → IOHIDPostEvent path → NSMenu fires
+     if !crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false) {
+         event.post_to_pid(pid as libc::pid_t);
+@@ -753,7 +769,6 @@ pub(super) fn key_name_to_code(key: &str) -> anyhow::Result<u16> {
+     };
+     Ok(code)
+ }
+-
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+diff --git a/crates/platform-macos/src/input/mod.rs b/crates/platform-macos/src/input/mod.rs
+index 123289a..c1172b1 100644
+--- a/crates/platform-macos/src/input/mod.rs
++++ b/crates/platform-macos/src/input/mod.rs
+@@ -14,6 +14,8 @@ pub mod keyboard;
+ pub mod mouse;
+ pub mod pointer_toolkit;
+ pub mod skylight;
++/// 私有 worker 的只读用户监听和输入取消。
++pub mod user_guard;
+ 
+ pub use ax_actions::perform_ax_action;
+ pub use interactive::{
+diff --git a/crates/platform-macos/src/input/mouse.rs b/crates/platform-macos/src/input/mouse.rs
+index f79faf9..9d66c5e 100644
+--- a/crates/platform-macos/src/input/mouse.rs
++++ b/crates/platform-macos/src/input/mouse.rs
+@@ -791,8 +791,12 @@ where
+         click_group_id,
+         MousePostMode::Both,
+     );
+-    std::thread::sleep(std::time::Duration::from_millis(12));
++    crate::input::user_guard::wait(pid, 12)?;
+ 
++    // 按下前预先创建抬起事件，后续步骤构造失败也能释放虚拟按钮。
++    let up = CGEvent::new_mouse_event(source.clone(), up_type, from_pt, cg_button)
++        .map_err(|_| anyhow::anyhow!("drag mouseUp failed"))?;
++    let mut step_error = None;
+     // MouseDown at start.
+     let down = CGEvent::new_mouse_event(source.clone(), down_type, from_pt, cg_button)
+         .map_err(|_| anyhow::anyhow!("drag mouseDown failed"))?;
+@@ -812,8 +816,13 @@ where
+     observe(from_x, from_y);
+     std::thread::sleep(std::time::Duration::from_millis(16));
+ 
++    // 取消时在最后实际投递的位置抬起，避免跳到原定终点产生意外放置。
++    let mut last = (from_x, from_y, from_local);
+     // Interpolated drag steps.
+     for i in 1..=steps {
++        if crate::input::user_guard::check_pid(pid).is_err() {
++            break;
++        }
+         let t = i as f64 / steps as f64;
+         let ix = from_x + (to_x - from_x) * t;
+         let iy = from_y + (to_y - from_y) * t;
+@@ -821,36 +830,61 @@ where
+             .zip(to_local)
+             .map(|((fx, fy), (tx, ty))| (fx + (tx - fx) * t, fy + (ty - fy) * t));
+         let drag_pt = CGPoint::new(ix, iy);
+-        let drag = CGEvent::new_mouse_event(source.clone(), dragged_type, drag_pt, cg_button)
+-            .map_err(|_| anyhow::anyhow!("drag mouseDragged failed"))?;
++        let drag = match CGEvent::new_mouse_event(source.clone(), dragged_type, drag_pt, cg_button)
++        {
++            Ok(event) => event,
++            Err(_) => {
++                step_error = Some(anyhow::anyhow!("drag mouseDragged failed"));
++                break;
++            }
++        };
+         if flags != CGEventFlags::CGEventFlagNull {
+             drag.set_flags(flags);
+         }
+-        post_mouse_event(pid, &drag, il, wid, click_group_id, 1, button_number, 0);
++        if !post_mouse_event_with_mode(
++            pid,
++            &drag,
++            il,
++            wid,
++            click_group_id,
++            1,
++            button_number,
++            0,
++            MousePostMode::Both,
++        ) {
++            break;
++        }
++        last = (ix, iy, il);
+         observe(ix, iy);
+         if step_delay_ms > 0 {
+-            std::thread::sleep(std::time::Duration::from_millis(step_delay_ms));
++            if crate::input::user_guard::wait(pid, step_delay_ms).is_err() {
++                break;
++            }
+         }
+     }
+ 
+     // MouseUp at end.
+     // Give Chromium one run-loop turn to process the final dragged event at
+     // the drop point before releasing pointer capture.
+-    std::thread::sleep(std::time::Duration::from_millis(50));
+-    let to_pt = CGPoint::new(to_x, to_y);
+-    let up = CGEvent::new_mouse_event(source.clone(), up_type, to_pt, cg_button)
+-        .map_err(|_| anyhow::anyhow!("drag mouseUp failed"))?;
++    let _ = crate::input::user_guard::wait(pid, 50);
++    let to_pt = CGPoint::new(last.0, last.1);
++    unsafe {
++        CGEventSetLocation(up.as_ptr() as *mut std::ffi::c_void, to_pt.x, to_pt.y);
++    }
+     if flags != CGEventFlags::CGEventFlagNull {
+         up.set_flags(flags);
+     }
+-    post_mouse_event(pid, &up, to_local, wid, click_group_id, 1, button_number, 0);
++    post_mouse_event(pid, &up, last.2, wid, click_group_id, 1, button_number, 0);
+     // Chromium may process the final pointerup on the next run-loop turn. In
+     // the foreground rung the caller restores the previous app immediately
+     // after this function returns, so let the target consume the release and
+     // complete pointer capture before that restore.
+     std::thread::sleep(std::time::Duration::from_millis(100));
+ 
+-    Ok(())
++    if let Some(error) = step_error {
++        return Err(error);
++    }
++    crate::input::user_guard::check_pid(pid)
+ }
+ 
+ #[allow(clippy::too_many_arguments)]
+@@ -1443,8 +1477,17 @@ fn post_mouse_event_with_mode(
+     button_number: i64,
+     subtype: i64,
+     mode: MousePostMode,
+-) {
++) -> bool {
++    // 停止后仅投递抬起事件，确保本任务没有虚拟按钮残留。
++    let release = matches!(
++        event.get_type(),
++        CGEventType::LeftMouseUp | CGEventType::RightMouseUp | CGEventType::OtherMouseUp
++    );
++    if !release && crate::input::user_guard::check_pid(pid).is_err() {
++        return false;
++    }
+     let event_ptr = event.as_ptr() as *mut std::ffi::c_void;
++    crate::input::user_guard::stamp_event(event_ptr);
+ 
+     // Stamp window-local point for backgrounded window targeting.
+     if let Some((wx, wy)) = window_local {
+@@ -1478,6 +1521,7 @@ fn post_mouse_event_with_mode(
+         MousePostMode::PublicOnly => event.post_to_pid(pid as libc::pid_t),
+         MousePostMode::HidOnly => event.post(core_graphics::event::CGEventTapLocation::HID),
+     }
++    true
+ }
+ 
+ /// Post a stamped `mouseMoved` to `pid` at `point` before a down/up pair.
+@@ -1577,6 +1621,7 @@ pub fn scroll_wheel_at_xy(
+     std::thread::sleep(std::time::Duration::from_millis(12));
+ 
+     for _ in 0..ticks.max(1) {
++        crate::input::user_guard::check_pid(pid)?;
+         // Fresh source per event, matching the click primitives.
+         let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+             .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+@@ -1590,6 +1635,7 @@ pub fn scroll_wheel_at_xy(
+                 .map_err(|_| anyhow::anyhow!("CGEvent::new_scroll_event failed"))?;
+ 
+         let event_ptr = event.as_ptr() as *mut std::ffi::c_void;
++        crate::input::user_guard::stamp_event(event_ptr);
+ 
+         // Anchor the event at the target screen point so the renderer's wheel
+         // hit-test routes the scroll to the element under the cursor.
+@@ -1616,7 +1662,7 @@ pub fn scroll_wheel_at_xy(
+         crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false);
+         event.post_to_pid(pid as libc::pid_t);
+ 
+-        std::thread::sleep(std::time::Duration::from_millis(30));
++        crate::input::user_guard::wait(pid, 30)?;
+     }
+     Ok(())
+ }
+@@ -1653,7 +1699,6 @@ fn parse_modifier_flags(modifiers: &[&str]) -> CGEventFlags {
+     }
+     flags
+ }
+-
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+diff --git a/crates/platform-macos/src/lib.rs b/crates/platform-macos/src/lib.rs
+index 84e5a7b..d84306a 100644
+--- a/crates/platform-macos/src/lib.rs
++++ b/crates/platform-macos/src/lib.rs
+@@ -44,6 +44,9 @@ pub mod tools;
+ pub mod video_sckit;
+ #[cfg(target_os = "macos")]
+ pub mod window_change_detector;
++/// 单窗口持续共享及系统停止生命周期。
++#[cfg(target_os = "macos")]
++pub mod window_sharing;
+ #[cfg(target_os = "macos")]
+ pub mod windows;
+ 
+diff --git a/crates/platform-macos/src/tools/get_window_state.rs b/crates/platform-macos/src/tools/get_window_state.rs
+index 84d48c7..63235ac 100644
+--- a/crates/platform-macos/src/tools/get_window_state.rs
++++ b/crates/platform-macos/src/tools/get_window_state.rs
+@@ -346,6 +346,21 @@ impl Tool for GetWindowStateTool {
+             self.state.element_cache.remove(pid, u64::from(window_id));
+         }
+ 
++        // 先核对观察范围并建立真实窗口共享，再交付快照或截图控制资格。
++        let shared_session = args
++            .opt_str("_session_id")
++            .or_else(|| args.opt_str("session"))
++            .unwrap_or_else(|| "default".to_owned());
++        match tokio::task::spawn_blocking(move || {
++            crate::input::user_guard::observe_window(&shared_session, pid, window_id)
++        })
++        .await
++        {
++            Ok(Ok(())) => {}
++            Ok(Err(error)) => return ToolResult::error(format!("{error:#}")),
++            Err(error) => return ToolResult::error(format!("窗口共享初始化失败：{error}")),
++        }
++
+         // Capture the screenshot and deliver it alongside the tree — the
+         // grounding frame the agent cross-checks the (sometimes-lying) tree
+         // against. Skipped only when `include_screenshot:false` (and no
+@@ -736,6 +751,14 @@ impl Tool for GetWindowStateTool {
+                 cua_driver_core::window_inspection::BrowserChromeCaptureCoverage::MayBeIncomplete,
+             ),
+         );
++        structured["zeus_control"] = crate::input::user_guard::state(pid);
++        structured["zeus_control"]["sharing_active"] =
++            serde_json::json!(crate::window_sharing::is_active(pid, window_id));
++        if screenshot.is_some() {
++            // 帧的真实采集时间由共享流产生，不能沿用上一张图片或当前返回时间。
++            structured["screenshot_captured_at_unix_ms"] =
++                serde_json::json!(crate::window_sharing::capture_time(pid, window_id));
++        }
+         ToolResult {
+             content,
+             is_error: None,
+diff --git a/crates/platform-macos/src/tools/mod.rs b/crates/platform-macos/src/tools/mod.rs
+index b6ec2b0..c323cca 100644
+--- a/crates/platform-macos/src/tools/mod.rs
++++ b/crates/platform-macos/src/tools/mod.rs
+@@ -216,6 +216,7 @@ async fn decide_background_window_action(
+     element_ptr: Option<usize>,
+     action: cua_driver_core::background_input::BackgroundAction,
+ ) -> Result<(), cua_driver_core::protocol::ToolResult> {
++    crate::input::user_guard::check_pid(pid).map_err(|error| cua_driver_core::protocol::ToolResult::error(error.to_string()))?;
+     use cua_driver_core::background_input::{
+         decide_background_input, BackgroundInputDecision, ExactWindowTarget,
+     };
+diff --git a/crates/platform-macos/src/input/user_guard.rs b/crates/platform-macos/src/input/user_guard.rs
+new file mode 100644
+index 0000000..4fa4688
+--- /dev/null
++++ b/crates/platform-macos/src/input/user_guard.rs
+@@ -0,0 +1,319 @@
++//! Zeus 私有 worker 的只读用户输入监听及协作取消，不生成全局输入。
++
++use std::collections::{HashMap, HashSet};
++use std::ffi::c_void;
++use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
++use std::sync::{Mutex, OnceLock};
++
++/// 自身合成事件的标记，避免将后台输入误认成用户接管。
++pub const VIRTUAL_EVENT_COOKIE: i64 = 0x5a455553435541;
++/// 用户操作受控应用后的明确暂停原因。
++const USER_CONTROL: &str = "ZEUS_COMPUTER_USER_CONTROL";
++/// 屏幕布局变化后必须重新观察的原因。
++const DISPLAY_CHANGED: &str = "ZEUS_COMPUTER_DISPLAY_CHANGED";
++/// 系统共享入口停止或撤销采集时的暂停原因。
++const SHARING_STOPPED: &str = "ZEUS_COMPUTER_SHARING_STOPPED";
++/// 本轮原生调用的取消信号，仅在下一次私有请求开始时重置。
++static CANCELLED: AtomicBool = AtomicBool::new(false);
++/// 原生输入监听是否实际建立且具有辅助功能授权。
++static MONITOR_READY: AtomicBool = AtomicBool::new(false);
++/// 只统计其他应用的实体键盘事件数量，验收并行输入时不读取任何文本。
++static OTHER_KEYBOARD_EVENTS: AtomicU64 = AtomicU64::new(0);
++/// 生命周期会话与其成功观察的精确窗口。
++static WINDOWS: OnceLock<Mutex<HashMap<String, HashSet<(i32, u32)>>>> = OnceLock::new();
++/// 用户让权和屏幕失效按应用记录，保护同一应用共享的菜单及键盘焦点。
++static PAUSED: OnceLock<Mutex<HashMap<i32, &'static str>>> = OnceLock::new();
++/// 实体拖动的起始应用，穿过其他窗口时不会改认输入归属。
++static USER_DRAG: Mutex<Option<i32>> = Mutex::new(None);
++
++/// 取得进程内的窗口记录，不把用户输入或会话身份落盘。
++fn windows() -> &'static Mutex<HashMap<String, HashSet<(i32, u32)>>> {
++    WINDOWS.get_or_init(|| Mutex::new(HashMap::new()))
++}
++
++/// 取得应用暂停原因。
++fn paused() -> &'static Mutex<HashMap<i32, &'static str>> {
++    PAUSED.get_or_init(|| Mutex::new(HashMap::new()))
++}
++
++/// 一次性密钥仅从宿主提供的私有环境读取，不接受应用文本或模型参数。
++fn event_token() -> Option<&'static str> {
++    /// worker 生命周期内固定，避免事件处理反复读取环境。
++    static TOKEN: OnceLock<Option<String>> = OnceLock::new();
++    TOKEN
++        .get_or_init(|| {
++            std::env::var("ZEUS_CUA_EVENT_TOKEN").ok().filter(|token| {
++                token.len() == 64
++                    && token
++                        .bytes()
++                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
++            })
++        })
++        .as_deref()
++}
++
++/// 信号处理器只写原子状态，不调用 AppKit 或持锁。
++extern "C" fn cancel_signal(_: i32) {
++    CANCELLED.store(true, Ordering::Release);
++}
++
++/// 安装会话清理和私有进程取消入口，重复初始化没有副作用。
++pub fn init() {
++    static INITIALIZED: OnceLock<()> = OnceLock::new();
++    INITIALIZED.get_or_init(|| {
++        crate::window_sharing::init();
++        unsafe {
++            libc::signal(
++                libc::SIGUSR1,
++                cancel_signal as *const () as libc::sighandler_t,
++            );
++        }
++        cua_driver_core::session::register_session_end_hook(|session| {
++            crate::window_sharing::end_session(session);
++            let remaining = {
++                let mut records = windows().lock().unwrap();
++                records.remove(session);
++                records
++                    .values()
++                    .flat_map(|entries| entries.iter().map(|(pid, _)| *pid))
++                    .collect::<HashSet<_>>()
++            };
++            paused()
++                .lock()
++                .unwrap()
++                .retain(|pid, _| remaining.contains(pid));
++        });
++    });
++}
++
++/// 每个串行私有请求开始时建立新的取消边界。
++pub fn begin_operation() {
++    CANCELLED.store(false, Ordering::Release);
++}
++
++/// 成功观察后登记窗口；新观察仅解除显示器失效，不解除用户接管。
++pub fn observe_window(session: &str, pid: i32, window_id: u32) -> anyhow::Result<()> {
++    windows()
++        .lock()
++        .unwrap()
++        .entry(session.to_owned())
++        .or_default()
++        .insert((pid, window_id));
++    let mut reasons = paused().lock().unwrap();
++    if reasons.get(&pid) == Some(&DISPLAY_CHANGED) {
++        reasons.remove(&pid);
++    }
++    drop(reasons);
++    if let Err(error) = crate::window_sharing::observe_window(session, pid, window_id) {
++        if let Some(records) = windows().lock().unwrap().get_mut(session) {
++            records.remove(&(pid, window_id));
++        }
++        return Err(error);
++    }
++    Ok(())
++}
++
++/// 立即撤销整个应用，系统停止和实体用户操作使用同一输入边界。
++fn pause_application(pid: i32, reason: &'static str) {
++    let sessions = windows()
++        .lock()
++        .unwrap()
++        .iter()
++        .filter(|(_, entries)| entries.iter().any(|(target, _)| *target == pid))
++        .map(|(session, _)| session.clone())
++        .collect::<Vec<_>>();
++    if sessions.is_empty() || paused().lock().unwrap().insert(pid, reason) == Some(reason) {
++        return;
++    }
++    for session in sessions {
++        crate::cursor::overlay::send_command(
++            session,
++            cursor_overlay::OverlayCommand::SetEnabled(false),
++        );
++    }
++    crate::window_sharing::stop_application(pid);
++    // 固定前缀只传受控身份与原因，通过私有进程 stderr 即时通知宿主。
++    if let Some(token) = event_token() {
++        eprintln!("_ZEUS_COMPUTER_EVENT_ {{\"token\":\"{}\",\"workerPid\":{},\"pid\":{},\"reason\":\"{}\",\"otherKeyboardEvents\":{}}}", token, std::process::id(), pid, reason, OTHER_KEYBOARD_EVENTS.load(Ordering::Acquire));
++    }
++}
++
++/// 系统窗口共享停止后不能自动重开，必须结束旧会话并接受新指令。
++pub fn sharing_stopped(pid: i32) {
++    pause_application(pid, SHARING_STOPPED);
++}
++
++/// 为窗口观察附加真实监听与让权状态，不改变截图或控件身份。
++pub fn state(pid: i32) -> serde_json::Value {
++    let reason = paused().lock().unwrap().get(&pid).copied();
++    serde_json::json!({ "monitoring": MONITOR_READY.load(Ordering::Acquire), "events_ready": event_token().is_some(), "paused": reason.is_some(), "reason": reason, "other_keyboard_events": OTHER_KEYBOARD_EVENTS.load(Ordering::Acquire) })
++}
++
++/// 输入前检查取消和用户优先；既有按键、按钮的抬起不经过本闸门。
++pub fn check_pid(pid: i32) -> anyhow::Result<()> {
++    if CANCELLED.load(Ordering::Acquire) {
++        anyhow::bail!("ZEUS_COMPUTER_STOPPED: 当前后台动作已取消，结果需要重新观察。");
++    }
++    if let Some(reason) = paused().lock().unwrap().get(&pid).copied() {
++        anyhow::bail!("{reason}: 用户已接管或显示器布局已变化，停止后台输入并重新观察。");
++    }
++    if !MONITOR_READY.load(Ordering::Acquire) {
++        anyhow::bail!("ZEUS_COMPUTER_INPUT_MONITOR_UNAVAILABLE: 用户操作监听不可用，未投递后台输入，请检查辅助功能授权。");
++    }
++    Ok(())
++}
++
++/// 有界等待持续检查取消，让长拖动也能及时抬起按钮。
++pub fn wait(pid: i32, milliseconds: u64) -> anyhow::Result<()> {
++    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(milliseconds);
++    loop {
++        check_pid(pid)?;
++        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
++        if remaining.is_zero() {
++            return Ok(());
++        }
++        std::thread::sleep(remaining.min(std::time::Duration::from_millis(16)));
++    }
++}
++
++/// 热插拔或缩放变化使所有已观察应用失效，不能用旧坐标继续输入。
++pub fn display_changed() {
++    let pids = windows()
++        .lock()
++        .unwrap()
++        .values()
++        .flat_map(|entries| entries.iter().map(|(pid, _)| *pid))
++        .collect::<HashSet<_>>();
++    let mut reasons = paused().lock().unwrap();
++    for pid in pids {
++        reasons.entry(pid).or_insert(DISPLAY_CHANGED);
++    }
++}
++
++/// 给虚拟事件加进程内标记，监听器只处理真实或来源不明的外部输入。
++pub fn stamp_event(event: *mut c_void) {
++    crate::input::skylight::set_integer_field(event, 42, VIRTUAL_EVENT_COOKIE);
++}
++
++/// 判断鼠标事件实际命中的普通窗口，跳过透明光标浮层。
++fn mouse_pid(event: *mut c_void) -> Option<i32> {
++    extern "C" {
++        fn CGEventGetIntegerValueField(event: *mut c_void, field: u32) -> i64;
++        fn CGEventGetLocation(event: *mut c_void) -> core_graphics::geometry::CGPoint;
++    }
++    let window_id = unsafe { CGEventGetIntegerValueField(event, 92) };
++    if let Ok(window_id) = u32::try_from(window_id) {
++        if window_id > 0 && !crate::cursor::overlay::is_overlay_window(window_id) {
++            if let Some(window) = crate::windows::window_info_by_id(window_id) {
++                return Some(window.pid);
++            }
++        }
++    }
++    let point = unsafe { CGEventGetLocation(event) };
++    crate::windows::visible_windows()
++        .iter()
++        .filter(|window| {
++            window.is_on_screen
++                && window.layer == 0
++                && !crate::cursor::overlay::is_overlay_window(window.window_id)
++                && point.x >= window.bounds.x
++                && point.x < window.bounds.x + window.bounds.width
++                && point.y >= window.bounds.y
++                && point.y < window.bounds.y + window.bounds.height
++        })
++        .max_by_key(|window| window.z_index)
++        .map(|window| window.pid)
++}
++
++/// 只记录应用归属，不读取或保存按键、文本和剪贴板内容。
++unsafe fn user_event(event: *mut objc2::runtime::AnyObject) {
++    use objc2::msg_send;
++    if windows().lock().unwrap().is_empty() {
++        return;
++    }
++    let cg_event: *mut c_void = msg_send![event, CGEvent];
++    if cg_event.is_null() {
++        return;
++    }
++    extern "C" {
++        fn CGEventGetIntegerValueField(event: *mut c_void, field: u32) -> i64;
++    }
++    if CGEventGetIntegerValueField(cg_event, 42) == VIRTUAL_EVENT_COOKIE {
++        return;
++    }
++    let kind: u64 = msg_send![event, type];
++    let pid = match kind {
++        10 | 11 | 12 => crate::apps::frontmost_pid(),
++        1 | 3 | 25 => {
++            let pid = mouse_pid(cg_event);
++            *USER_DRAG.lock().unwrap() = pid;
++            pid
++        }
++        6 | 7 | 27 => *USER_DRAG.lock().unwrap(),
++        2 | 4 | 26 => {
++            *USER_DRAG.lock().unwrap() = None;
++            return;
++        }
++        22 => mouse_pid(cg_event),
++        _ => None,
++    };
++    if let Some(pid) = pid {
++        let controlled = windows()
++            .lock()
++            .unwrap()
++            .values()
++            .any(|entries| entries.iter().any(|(target, _)| *target == pid));
++        if controlled {
++            pause_application(pid, USER_CONTROL);
++        } else if matches!(kind, 10 | 11 | 12) {
++            OTHER_KEYBOARD_EVENTS.fetch_add(1, Ordering::AcqRel);
++        }
++    }
++}
++
++/// 在 AppKit 主线程安装只读全局监听；普通鼠标移动不触发暂停。
++pub unsafe fn install_monitor() {
++    use objc2::runtime::AnyObject;
++    use objc2::{class, msg_send};
++    /// 鼠标按下、抬起、拖动、滚动及键盘事件的原生掩码。
++    const MASK: u64 = (1 << 1)
++        | (1 << 2)
++        | (1 << 3)
++        | (1 << 4)
++        | (1 << 6)
++        | (1 << 7)
++        | (1 << 10)
++        | (1 << 11)
++        | (1 << 12)
++        | (1 << 22)
++        | (1 << 25)
++        | (1 << 26)
++        | (1 << 27);
++    let block = block2::RcBlock::new(|event: *mut AnyObject| {
++        user_event(event);
++    });
++    let monitor: *mut AnyObject =
++        msg_send![class!(NSEvent), addGlobalMonitorForEventsMatchingMask: MASK handler: &*block];
++    extern "C" {
++        fn AXIsProcessTrusted() -> bool;
++    }
++    MONITOR_READY.store(
++        !monitor.is_null() && AXIsProcessTrusted(),
++        Ordering::Release,
++    );
++}
++
++/// 用户主动进入应用时，禁止焦点保护把用户切回之前的应用。
++pub fn user_has_control(pid: i32) -> bool {
++    matches!(
++        paused().lock().unwrap().get(&pid),
++        Some(&USER_CONTROL) | Some(&SHARING_STOPPED)
++    )
++}
++
++/// 只读原生等待允许被取消，不等待原谓词窗口超时。
++pub async fn wait_for_cancellation() {
++    while !CANCELLED.load(Ordering::Acquire) {
++        tokio::time::sleep(std::time::Duration::from_millis(16)).await;
++    }
++}
+diff --git a/crates/platform-macos/src/window_sharing.rs b/crates/platform-macos/src/window_sharing.rs
+new file mode 100644
+index 0000000..911600d
+--- /dev/null
++++ b/crates/platform-macos/src/window_sharing.rs
+@@ -0,0 +1,540 @@
++//! Zeus 的真实单窗口共享、有限帧缓存及系统停止生命周期。
++
++use image::ImageEncoder;
++use screencapturekit::cm::{
++    CMClock, CMSampleBuffer, CMSampleBufferExt, CMSampleBufferSCExt, CMTime, SCFrameStatus,
++};
++use screencapturekit::prelude::{
++    SCContentFilter, SCShareableContent, SCStream, SCStreamConfiguration,
++};
++use screencapturekit::stream::{
++    configuration::PixelFormat, delegate_trait::SCStreamDelegateTrait,
++    output_type::SCStreamOutputType,
++};
++use std::collections::{HashMap, HashSet};
++use std::sync::atomic::{AtomicBool, Ordering};
++use std::sync::{mpsc, Arc, Condvar, Mutex, OnceLock};
++use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
++
++/// 活跃共享数量受限，不允许观察不断积累原生流。
++const MAX_SHARED_WINDOWS: usize = 8;
++/// 每张原生图片的像素内存上限，先检查再创建系统流。
++const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
++/// 实际共享以每秒十帧验证窗口变化，静止帧不复制或编码。
++const FRAME_INTERVAL: i64 = 100;
++/// 读取一张新验证帧的等待上限。
++const FRAME_TIMEOUT: Duration = Duration::from_secs(2);
++/// 会话共享的精确窗口及唯一系统流。
++static SHARES: OnceLock<Mutex<HashMap<(i32, u32), Arc<WindowShare>>>> = OnceLock::new();
++/// AppKit 回调只排队清理，禁止同步等待系统流停止。
++static STOP_QUEUE: OnceLock<mpsc::SyncSender<Vec<Arc<WindowShare>>>> = OnceLock::new();
++
++/// 最新像素只有一份系统缓冲；帧状态验证和实际图像分别记录。
++struct SharedFrame {
++    /// 系统拥有的当前完整帧，替换时直接释放上一帧。
++    sample: Option<CMSampleBuffer>,
++    /// 包含完整帧或静止通知的最近真实系统采样时间。
++    verified_at: Option<f64>,
++    /// 当前配置要求的像素尺寸，更新配置前先排除旧帧。
++    expected_size: (usize, usize),
++}
++
++/// 一个固定窗口的共享范围、所有者及可取消帧等待。
++struct WindowShare {
++    /// 系统应用身份，停止时只让权给该应用。
++    pid: i32,
++    /// 系统窗口身份，禁止扩大为显示器或整个应用采集。
++    window_id: u32,
++    /// 共用此窗口的原生命名会话。
++    sessions: Mutex<HashSet<String>>,
++    /// 创建和停止共用一个锁，不能出现停止后才启动的流。
++    stream: Mutex<Option<SCStream>>,
++    /// 主动结束与系统停止都立即使旧帧和输入失效。
++    stopped: AtomicBool,
++    /// 系统流已成功启动，不能把准备阶段当作可用。
++    active: AtomicBool,
++    /// 系统共享的真实时钟，用于转换帧采集时间而非回调到达时间。
++    source_clock: OnceLock<CMClock>,
++    /// 成功配置对应的窗口几何，移动和缩放后重新核对配置。
++    geometry: Mutex<Option<[f64; 4]>>,
++    /// 最后交付图片的真实采集时间，不把编码完成或工具返回当成采集。
++    captured_at: Mutex<Option<u64>>,
++    /// 有界的最新完整帧和验证时间。
++    frame: Mutex<SharedFrame>,
++    /// 截图等待由系统输出唤醒，不轮询或重放旧输入。
++    ready: Condvar,
++}
++
++/// 系统共享停止和窗口关闭回调持有弱引用，避免与流形成引用环。
++struct ShareDelegate(std::sync::Weak<WindowShare>);
++
++impl SCStreamDelegateTrait for ShareDelegate {
++    /// 系统停止、权限撤销或采集错误都撤销该应用的后台输入。
++    fn did_stop_with_error(&self, _error: screencapturekit::error::SCError) {
++        if let Some(share) = self.0.upgrade() {
++            if !share.stopped.swap(true, Ordering::AcqRel) {
++                share.active.store(false, Ordering::Release);
++                share.ready.notify_all();
++                crate::input::user_guard::sharing_stopped(share.pid);
++            }
++        }
++    }
++
++    /// 共享窗口全部关闭时立即撤销，不允许等待下一次模型操作。
++    fn stream_did_become_inactive(&self) {
++        if let Some(share) = self.0.upgrade() {
++            if !share.stopped.swap(true, Ordering::AcqRel) {
++                share.active.store(false, Ordering::Release);
++                share.ready.notify_all();
++                crate::input::user_guard::sharing_stopped(share.pid);
++            }
++        }
++    }
++}
++
++/// 取得本 worker 的共享表，不存储截图文件或用户输入。
++fn shares() -> &'static Mutex<HashMap<(i32, u32), Arc<WindowShare>>> {
++    SHARES.get_or_init(|| Mutex::new(HashMap::new()))
++}
++
++/// 系统宿主时钟与共享帧时钟统一，积压的旧帧不能冒充新截图。
++fn host_clock() -> &'static CMClock {
++    /// 全 worker 复用系统只读时钟，不生成输入或额外线程。
++    static CLOCK: OnceLock<CMClock> = OnceLock::new();
++    CLOCK.get_or_init(CMClock::host_time_clock)
++}
++
++/// 使用 CoreMedia 正式时钟 API，绑定提供的占位 time() 不作为证据。
++fn host_seconds() -> anyhow::Result<f64> {
++    extern "C" {
++        fn CMClockGetTime(clock: *const std::ffi::c_void) -> CMTime;
++    }
++    unsafe { CMClockGetTime(host_clock().as_ptr()) }
++        .as_seconds()
++        .filter(|time| time.is_finite())
++        .ok_or_else(|| anyhow::anyhow!("无法读取窗口采集宿主时钟。"))
++}
++
++/// 将实际帧时间转换到宿主时钟，不使用帧送达时刻替代采集时刻。
++fn sample_seconds(share: &WindowShare, sample: &CMSampleBuffer) -> Option<f64> {
++    extern "C" {
++        fn CMSyncConvertTime(
++            time: CMTime,
++            source: *const std::ffi::c_void,
++            target: *const std::ffi::c_void,
++        ) -> CMTime;
++    }
++    let source = share.source_clock.get()?;
++    unsafe {
++        CMSyncConvertTime(
++            sample.presentation_timestamp(),
++            source.as_ptr(),
++            host_clock().as_ptr(),
++        )
++    }
++    .as_seconds()
++    .filter(|time| time.is_finite())
++}
++
++/// 用 WindowServer 的实际几何判断是否必须刷新尺寸及每屏缩放。
++fn current_geometry(share: &WindowShare) -> anyhow::Result<[f64; 4]> {
++    let info = crate::windows::window_info_by_id(share.window_id)
++        .filter(|window| window.pid == share.pid)
++        .ok_or_else(|| {
++            anyhow::anyhow!("ZEUS_COMPUTER_WINDOW_CHANGED: 共享窗口的应用身份已变化。")
++        })?;
++    Ok([
++        info.bounds.x,
++        info.bounds.y,
++        info.bounds.width,
++        info.bounds.height,
++    ])
++}
++
++/// 建立唯一清理线程，最多容纳全部活跃流的停止请求。
++pub fn init() {
++    STOP_QUEUE.get_or_init(|| {
++        let (sender, receiver) =
++            mpsc::sync_channel::<Vec<Arc<WindowShare>>>(MAX_SHARED_WINDOWS * 2);
++        std::thread::Builder::new()
++            .name("zeus-window-share-stop".to_owned())
++            .spawn(move || {
++                for targets in receiver {
++                    for share in targets {
++                        stop_share(&share);
++                    }
++                }
++            })
++            .expect("Zeus 窗口共享清理线程无法建立");
++        sender
++    });
++}
++
++/// 从只读输入或系统停止回调发出清理，不阻塞 AppKit。
++pub fn stop_application(pid: i32) {
++    let targets = shares()
++        .lock()
++        .unwrap()
++        .values()
++        .filter(|share| share.pid == pid)
++        .cloned()
++        .collect::<Vec<_>>();
++    for share in &targets {
++        share.stopped.store(true, Ordering::Release);
++        share.active.store(false, Ordering::Release);
++        share.ready.notify_all();
++    }
++    if let Some(sender) = STOP_QUEUE.get() {
++        // 每个应用首次暂停才排队；容量覆盖所有活跃窗口。
++        // 清理持有原实例，迟到请求不能结束同 PID 的新共享。
++        let _ = sender.try_send(targets);
++    }
++}
++
++/// 正常结束必须释放流；持锁串行化尚未完成的启动。
++fn stop_share(share: &WindowShare) {
++    share.stopped.store(true, Ordering::Release);
++    share.active.store(false, Ordering::Release);
++    share.ready.notify_all();
++    if let Some(stream) = share.stream.lock().unwrap().take() {
++        let _ = stream.stop_capture();
++    }
++    share.frame.lock().unwrap().sample = None;
++}
++
++/// 命名会话结束只移除自己的引用，最后一个所有者负责停止。
++pub fn end_session(session: &str) {
++    let ended = {
++        let mut records = shares().lock().unwrap();
++        let mut ended = Vec::new();
++        records.retain(|_, share| {
++            let mut sessions = share.sessions.lock().unwrap();
++            sessions.remove(session);
++            if sessions.is_empty() {
++                ended.push(share.clone());
++                false
++            } else {
++                true
++            }
++        });
++        ended
++    };
++    for share in ended {
++        stop_share(&share);
++    }
++}
++
++/// 成功观察的单窗口建立真实 SCStream，复用时仍核对原生停止状态。
++pub fn observe_window(session: &str, pid: i32, window_id: u32) -> anyhow::Result<()> {
++    crate::input::user_guard::check_pid(pid)?;
++    let key = (pid, window_id);
++    let existing = shares().lock().unwrap().get(&key).cloned();
++    if let Some(share) = existing {
++        anyhow::ensure!(
++            share.active.load(Ordering::Acquire) && !share.stopped.load(Ordering::Acquire),
++            "ZEUS_COMPUTER_SHARING_STOPPED: 窗口共享已停止，需要新指令。"
++        );
++        refresh_share(&share)?;
++        share.sessions.lock().unwrap().insert(session.to_owned());
++        return Ok(());
++    }
++    let share = Arc::new(WindowShare {
++        pid,
++        window_id,
++        sessions: Mutex::new(HashSet::from([session.to_owned()])),
++        stream: Mutex::new(None),
++        stopped: AtomicBool::new(false),
++        active: AtomicBool::new(false),
++        source_clock: OnceLock::new(),
++        geometry: Mutex::new(None),
++        captured_at: Mutex::new(None),
++        frame: Mutex::new(SharedFrame {
++            sample: None,
++            verified_at: None,
++            expected_size: (0, 0),
++        }),
++        ready: Condvar::new(),
++    });
++    {
++        let mut records = shares().lock().unwrap();
++        anyhow::ensure!(
++            records.len() < MAX_SHARED_WINDOWS,
++            "ZEUS_COMPUTER_SHARING_LIMIT: 同时共享窗口已达到上限，请先结束已有控制。"
++        );
++        records.insert(key, share.clone());
++    }
++    let result = start_share(&share);
++    if result.is_err() {
++        shares().lock().unwrap().remove(&key);
++        stop_share(&share);
++    }
++    result
++}
++
++/// 采集过滤器从实际 PID 和窗口创建，音频、物理鼠标和其他窗口都不采集。
++fn share_configuration(
++    share: &WindowShare,
++) -> anyhow::Result<(SCContentFilter, SCStreamConfiguration, [f64; 4])> {
++    let geometry = current_geometry(share)?;
++    let content = SCShareableContent::get()?;
++    let window = content
++        .windows()
++        .into_iter()
++        .find(|window| {
++            window.window_id() == share.window_id
++                && window
++                    .owning_application()
++                    .is_some_and(|app| app.process_id() == share.pid)
++        })
++        .ok_or_else(|| {
++            anyhow::anyhow!("ZEUS_COMPUTER_WINDOW_CHANGED: 无法核对共享窗口的应用身份。")
++        })?;
++    let filter = SCContentFilter::create().with_window(&window).build();
++    let scale = f64::from(filter.point_pixel_scale());
++    // 固定窗口的 WindowServer 几何跨系统版本有效，避免依赖较新过滤器的空矩形。
++    let width = (geometry[2] * scale).round();
++    let height = (geometry[3] * scale).round();
++    anyhow::ensure!(
++        width.is_finite()
++            && height.is_finite()
++            && width >= 1.0
++            && height >= 1.0
++            && width <= 16_384.0
++            && height <= 16_384.0
++            && width * height * 4.0 <= MAX_FRAME_BYTES as f64,
++        "ZEUS_COMPUTER_CAPTURE_LIMIT: 窗口像素尺寸超出共享内存上限。"
++    );
++    let config = SCStreamConfiguration::new()
++        .with_width(width as u32)
++        .with_height(height as u32)
++        .with_pixel_format(PixelFormat::BGRA)
++        .with_queue_depth(3)
++        .with_minimum_frame_interval(&CMTime::new(FRAME_INTERVAL, 1_000))
++        .with_shows_cursor(false)
++        .with_captures_audio(false);
++    let mut frame = share.frame.lock().unwrap();
++    frame.sample = None;
++    frame.verified_at = None;
++    frame.expected_size = (width as usize, height as usize);
++    Ok((filter, config, geometry))
++}
++
++/// 尺寸或位置改变时仍只更新同一精确窗口，禁止采集范围扩大。
++fn refresh_share(share: &WindowShare) -> anyhow::Result<()> {
++    if *share.geometry.lock().unwrap() == Some(current_geometry(share)?) {
++        return Ok(());
++    }
++    let owned_stream = share.stream.lock().unwrap();
++    crate::input::user_guard::check_pid(share.pid)?;
++    anyhow::ensure!(
++        !share.stopped.load(Ordering::Acquire),
++        "ZEUS_COMPUTER_SHARING_STOPPED: 窗口共享已停止。"
++    );
++    let stream = owned_stream
++        .as_ref()
++        .ok_or_else(|| anyhow::anyhow!("窗口共享尚未启动。"))?;
++    let (filter, config, geometry) = share_configuration(share)?;
++    stream.update_content_filter(&filter)?;
++    stream.update_configuration(&config)?;
++    anyhow::ensure!(
++        current_geometry(share)? == geometry,
++        "ZEUS_COMPUTER_WINDOW_CHANGED: 配置期间窗口发生变化。"
++    );
++    *share.geometry.lock().unwrap() = Some(geometry);
++    crate::input::user_guard::check_pid(share.pid)
++}
++
++/// 配置、输出和系统时钟全部就绪后才报告共享可用。
++fn start_share(share: &Arc<WindowShare>) -> anyhow::Result<()> {
++    let mut owned_stream = share.stream.lock().unwrap();
++    anyhow::ensure!(
++        !share.stopped.load(Ordering::Acquire),
++        "ZEUS_COMPUTER_SHARING_STOPPED: 窗口共享在启动前已停止。"
++    );
++    let (filter, config, geometry) = share_configuration(share)?;
++    let mut stream =
++        SCStream::new_with_delegate(&filter, &config, ShareDelegate(Arc::downgrade(share)));
++    let weak_share = Arc::downgrade(share);
++    anyhow::ensure!(
++        stream
++            .add_output_handler(
++                move |sample: CMSampleBuffer, kind: SCStreamOutputType| {
++                    if kind != SCStreamOutputType::Screen {
++                        return;
++                    }
++                    let Some(share) = weak_share.upgrade() else {
++                        return;
++                    };
++                    if share.stopped.load(Ordering::Acquire) {
++                        return;
++                    }
++                    let status = sample.frame_status();
++                    let mut frame = share.frame.lock().unwrap();
++                    let timestamp = sample_seconds(&share, &sample);
++                    if status == Some(SCFrameStatus::Complete)
++                        && sample.image_buffer().is_some_and(|buffer| {
++                            (buffer.width(), buffer.height()) == frame.expected_size
++                        })
++                    {
++                        frame.sample = Some(sample);
++                        frame.verified_at = timestamp;
++                    } else if status == Some(SCFrameStatus::Idle) && frame.sample.is_some() {
++                        frame.verified_at = timestamp;
++                    } else {
++                        return;
++                    }
++                    share.ready.notify_all();
++                },
++                SCStreamOutputType::Screen
++            )
++            .is_some(),
++        "ZEUS_COMPUTER_CAPTURE_UNAVAILABLE: 无法建立窗口帧输出。"
++    );
++    stream.start_capture()?;
++    let source_clock = stream.synchronization_clock().ok_or_else(|| {
++        anyhow::anyhow!("ZEUS_COMPUTER_CAPTURE_UNAVAILABLE: 系统共享未提供真实采集时钟。")
++    })?;
++    let _ = share.source_clock.set(source_clock);
++    *owned_stream = Some(stream);
++    crate::input::user_guard::check_pid(share.pid)?;
++    anyhow::ensure!(
++        !share.stopped.load(Ordering::Acquire),
++        "ZEUS_COMPUTER_SHARING_STOPPED: 窗口共享在启动期间已停止。"
++    );
++    anyhow::ensure!(
++        current_geometry(share)? == geometry,
++        "ZEUS_COMPUTER_WINDOW_CHANGED: 启动期间窗口发生变化。"
++    );
++    *share.geometry.lock().unwrap() = Some(geometry);
++    share.active.store(true, Ordering::Release);
++    Ok(())
++}
++
++/// 只返回请求开始后由系统重新验证的画面，停止后不走截图回退。
++pub fn screenshot_window_bytes(window_id: u32) -> anyhow::Result<Vec<u8>> {
++    let started = Instant::now();
++    let requested_at = host_seconds()?;
++    let info = crate::windows::window_info_by_id(window_id)
++        .ok_or_else(|| anyhow::anyhow!("ZEUS_COMPUTER_WINDOW_CHANGED: 共享窗口已关闭。"))?;
++    let share = shares()
++        .lock()
++        .unwrap()
++        .get(&(info.pid, window_id))
++        .cloned()
++        .ok_or_else(|| anyhow::anyhow!("ZEUS_COMPUTER_OBSERVATION_REQUIRED: 窗口尚未建立共享。"))?;
++    let (sample, sampled_at) = {
++        let mut frame = share.frame.lock().unwrap();
++        loop {
++            crate::input::user_guard::check_pid(share.pid)?;
++            anyhow::ensure!(
++                share.active.load(Ordering::Acquire) && !share.stopped.load(Ordering::Acquire),
++                "ZEUS_COMPUTER_SHARING_STOPPED: 窗口共享已停止。"
++            );
++            if frame.verified_at.is_some_and(|time| time >= requested_at) {
++                if let Some(sample) = frame.sample.clone() {
++                    break (sample, frame.verified_at.unwrap());
++                }
++            }
++            let remaining = FRAME_TIMEOUT.saturating_sub(started.elapsed());
++            anyhow::ensure!(
++                !remaining.is_zero(),
++                "ZEUS_COMPUTER_CAPTURE_UNAVAILABLE: 未及时收到新的窗口帧。"
++            );
++            frame = share
++                .ready
++                .wait_timeout(frame, remaining.min(Duration::from_millis(16)))
++                .unwrap()
++                .0;
++        }
++    };
++    // 从系统帧时钟映射到 UTC，排除 PNG 编码和跨进程返回的耗时。
++    let captured_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as f64
++        + (sampled_at - host_seconds()?) * 1_000.0;
++    anyhow::ensure!(
++        captured_at.is_finite() && captured_at >= 0.0 && captured_at <= 8_640_000_000_000_000.0,
++        "窗口帧采集时间无效。"
++    );
++    let buffer = sample
++        .image_buffer()
++        .ok_or_else(|| anyhow::anyhow!("共享帧没有图像缓冲。"))?;
++    let width = buffer.width();
++    let height = buffer.height();
++    let stride = buffer.bytes_per_row();
++    anyhow::ensure!(
++        width > 0
++            && height > 0
++            && width <= 16_384
++            && height <= 16_384
++            && width
++                .checked_mul(height)
++                .and_then(|pixels| pixels.checked_mul(4))
++                .is_some_and(|bytes| bytes <= MAX_FRAME_BYTES)
++            && stride >= width * 4
++            && stride
++                .checked_mul(height)
++                .is_some_and(|bytes| bytes <= MAX_FRAME_BYTES * 2)
++            && buffer.pixel_format() == 0x42475241,
++        "共享帧的尺寸或像素格式无效。"
++    );
++    let locked = buffer
++        .lock_read_only()
++        .map_err(|code| anyhow::anyhow!("共享帧无法锁定：{code}"))?;
++    anyhow::ensure!(!locked.base_address().is_null(), "共享帧没有可读像素。");
++    let mut rgba = vec![0u8; width * height * 4];
++    for row in 0..height {
++        // CoreVideo 的锁保证每行 stride 字节有效，尺寸在分配前已核对。
++        let pixels = unsafe {
++            std::slice::from_raw_parts(locked.base_address().add(row * stride), width * 4)
++        };
++        for (source, target) in pixels
++            .chunks_exact(4)
++            .zip(rgba[row * width * 4..(row + 1) * width * 4].chunks_exact_mut(4))
++        {
++            target.copy_from_slice(&[source[2], source[1], source[0], source[3]]);
++        }
++    }
++    drop(locked);
++    crate::input::user_guard::check_pid(share.pid)?;
++    let current = crate::windows::window_info_by_id(window_id)
++        .ok_or_else(|| anyhow::anyhow!("共享窗口在截图期间已关闭。"))?;
++    anyhow::ensure!(
++        current.pid == info.pid
++            && current.bounds.x == info.bounds.x
++            && current.bounds.y == info.bounds.y
++            && current.bounds.width == info.bounds.width
++            && current.bounds.height == info.bounds.height,
++        "ZEUS_COMPUTER_WINDOW_CHANGED: 窗口在截图期间发生变化，需要重新观察。"
++    );
++    let mut png = Vec::new();
++    image::codecs::png::PngEncoder::new(&mut png).write_image(
++        &rgba,
++        width as u32,
++        height as u32,
++        image::ExtendedColorType::Rgba8,
++    )?;
++    crate::input::user_guard::check_pid(share.pid)?;
++    anyhow::ensure!(
++        !share.stopped.load(Ordering::Acquire),
++        "ZEUS_COMPUTER_SHARING_STOPPED: 窗口共享在编码期间停止。"
++    );
++    *share.captured_at.lock().unwrap() = Some(captured_at.round() as u64);
++    Ok(png)
++}
++
++/// 仅提取已交付图片的采集时间，AX-only 观察不会产生新时间。
++pub fn capture_time(pid: i32, window_id: u32) -> Option<u64> {
++    let share = shares().lock().unwrap().get(&(pid, window_id)).cloned()?;
++    let captured_at = *share.captured_at.lock().unwrap();
++    captured_at
++}
++
++/// 观察结果报告实际系统共享状态，不能由界面推测。
++pub fn is_active(pid: i32, window_id: u32) -> bool {
++    shares()
++        .lock()
++        .unwrap()
++        .get(&(pid, window_id))
++        .is_some_and(|share| {
++            share.active.load(Ordering::Acquire) && !share.stopped.load(Ordering::Acquire)
++        })
++}

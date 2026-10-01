@@ -170,13 +170,13 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@fastify/websocket": "^11.0.1",
-    "@modelcontextprotocol/client": "^2.0.0",
+    "@fastify/websocket": "^11.3.1",
+    "@modelcontextprotocol/client": "^2.2.0",
     "@zeus/ai-runtime": "workspace:*",
     "@zeus/git-core": "workspace:*",
     "@zeus/shared": "workspace:*",
     "@zeus/storage": "workspace:*",
-    "fastify": "^5.4.0",
+    "fastify": "^5.12.5",
     "miniprogram-automator": "0.12.1"
   }
 }
