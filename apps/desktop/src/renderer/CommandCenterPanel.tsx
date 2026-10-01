@@ -1,21 +1,26 @@
 import { MotionPresence } from './ui/MotionPresence.js';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { ClockCounterClockwiseIcon as ClockCounterClockwise } from '@phosphor-icons/react/dist/csr/ClockCounterClockwise';
 import { CheckIcon as CheckGlyph } from '@phosphor-icons/react/dist/csr/Check';
 import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
+import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
+import { DownloadSimpleIcon as DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple';
 import { GlobeIcon as Globe } from '@phosphor-icons/react/dist/csr/Globe';
 import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
 import { PlayIcon as Play } from '@phosphor-icons/react/dist/csr/Play';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { StopIcon as Stop } from '@phosphor-icons/react/dist/csr/Stop';
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
+import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { commandNeedsHighRiskConfirmation, type CommandRiskFlags } from '@zeus/shared';
 import { projectTerminalOutput } from '@zeus/shared';
 import {
   isLikelyLocalServerConnectionError,
   ZeusApiError,
+  type CommandArtifact,
   type CommandDefinition,
   type CommandDefinitionInput,
   type CommandParameterDefinition,
@@ -29,6 +34,7 @@ import {
 } from './apiClient.js';
 import { Button } from './ui/Button.js';
 import { ModalPortal } from './ui/ModalPortal.js';
+import { MenuSurface } from './ui/MenuSurface.js';
 import { VisibleApplicationError } from './ui/ApplicationErrorDialog.js';
 import './commandCenter.css';
 import { ProjectTerminalPanel } from './features/runtime/ProjectTerminalPanel.js';
@@ -82,6 +88,11 @@ const COMMAND_RUN_SYNC_STALE_MS = 3_000;
 const COMMAND_RUN_EVENT_REFRESH_DELAY_MS = 100;
 const UTF8_ENCODER = new TextEncoder();
 
+/** 两份系统归档日志使用导出入口，其他文件使用输出文件入口。 */
+const COMMAND_RUN_LOG_ARTIFACT_PATHS = new Set(['logs/terminal.raw.log', 'logs/terminal.normalized.log']);
+/** 菜单按同一宽度对齐触发按钮，实际窗口边缘由共用菜单组件校正。 */
+const COMMAND_RUN_FILE_MENU_WIDTH_PX = 280;
+
 type CommandRunSyncState = 'syncing' | 'live' | 'stale';
 
 function CommandRunDurationValue(props: { run: CommandRun; zh: boolean }) {
@@ -125,10 +136,146 @@ function beginCommandRunLogSelection(event: ReactPointerEvent<HTMLPreElement>): 
   window.addEventListener('pointercancel', cancel, { capture: true, once: true });
 }
 
-function CommandRunLog(props: { runId: string; content: string; ariaLabel: string; hasLogs: boolean; client: DashboardClient; zh: boolean }) {
+/** 文件操作按需展开，不占用终端正文；复用菜单的关闭、定位和键盘规则。 */
+function CommandRunFileActions(props: { artifacts: CommandArtifact[]; client: DashboardClient; zh: boolean }) {
+  /** 原始输出与整理日志均可独立导出，避免丢失排查所需信息。 */
+  const logArtifacts = props.artifacts.filter((artifact) => COMMAND_RUN_LOG_ARTIFACT_PATHS.has(artifact.relativePath));
+  /** 命令显式生成的文件使用独立入口，数量不包含系统日志。 */
+  const outputArtifacts = props.artifacts.filter((artifact) => !COMMAND_RUN_LOG_ARTIFACT_PATHS.has(artifact.relativePath));
+  /** 菜单定位同时记录所属入口，切换记录时随终端一起重建。 */
+  const [menu, setMenu] = useState<{ kind: 'logs' | 'files'; left: number; top: number } | null>(null);
+  /** 菜单留在当前弹窗的门户根内，避免被终端裁切或被焦点隔离排除。 */
+  const menuHostRef = useRef<HTMLElement | null>(null);
+  /** 同一菜单的触发器与读屏名称共享稳定标识。 */
+  const menuId = useId();
+  /** 读取文件期间禁止重复提交，失败后保留原选项供重试。 */
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  /** 文件读取失败直接在菜单内显示，不改变运行状态或打开新弹窗。 */
+  const [downloadFailed, setDownloadFailed] = useState(false);
+  /** 当前入口只呈现对应文件，不为每次打开重复请求列表。 */
+  const visibleArtifacts = menu?.kind === 'logs' ? logArtifacts : outputArtifacts;
+
+  /** 按按钮位置打开菜单，首次打开才创建浮层。 */
+  function openMenu(kind: 'logs' | 'files', trigger: HTMLButtonElement): void {
+    if (menu?.kind === kind) {
+      setMenu(null);
+      return;
+    }
+    /** 优先复用所属弹窗的门户，确保菜单仍在当前模态操作范围内。 */
+    menuHostRef.current = trigger.closest<HTMLElement>('.zeus-modal-portal-root') ?? document.body;
+    /** 浮层宽度与定位使用同一配置。 */
+    const bounds = trigger.getBoundingClientRect();
+    setDownloadFailed(false);
+    setMenu({ kind, left: bounds.right - COMMAND_RUN_FILE_MENU_WIDTH_PX, top: bounds.bottom + 6 });
+  }
+
+  /** 下载归档的完整文件，不使用当前界面截取的日志内容。 */
+  async function downloadArtifact(artifact: CommandArtifact): Promise<void> {
+    if (downloadingId) return;
+    setDownloadingId(artifact.id);
+    setDownloadFailed(false);
+    try {
+      /** 现有内容接口保留文件授权、类型和原始字节。 */
+      const blob = await props.client.loadCommandArtifact(artifact.id);
+      /** 临时地址只服务本次下载，不在历史记录中累积缓存。 */
+      const url = URL.createObjectURL(blob);
+      try {
+        /** 浏览器和 Electron 使用原生下载流程，文件名保留原始扩展名。 */
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = artifact.relativePath.split('/').at(-1) || artifact.relativePath;
+        anchor.click();
+      } finally {
+        // 下一轮事件循环释放地址，让原生下载有机会接管文件。
+        window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      }
+      setMenu(null);
+    } catch {
+      setDownloadFailed(true);
+    } finally {
+      setDownloadingId(null);
+    }
+  }
+
+  return (
+    <>
+      {logArtifacts.length > 0 ? (
+        <button
+          type="button"
+          className="command-run-log-action"
+          aria-haspopup="menu"
+          aria-expanded={menu?.kind === 'logs'}
+          aria-controls={menu?.kind === 'logs' ? menuId : undefined}
+          disabled={Boolean(downloadingId)}
+          onClick={(event) => openMenu('logs', event.currentTarget)}
+        >
+          <DownloadSimple aria-hidden="true" />
+          <span>{props.zh ? '导出日志' : 'Export logs'}</span>
+          <CaretDown aria-hidden="true" />
+        </button>
+      ) : null}
+      {outputArtifacts.length > 0 ? (
+        <button
+          type="button"
+          className="command-run-log-action"
+          aria-haspopup="menu"
+          aria-expanded={menu?.kind === 'files'}
+          aria-controls={menu?.kind === 'files' ? menuId : undefined}
+          disabled={Boolean(downloadingId)}
+          onClick={(event) => openMenu('files', event.currentTarget)}
+        >
+          <span>
+            {props.zh ? '输出文件' : 'Output files'} ({outputArtifacts.length})
+          </span>
+          <CaretDown aria-hidden="true" />
+        </button>
+      ) : null}
+      <MotionPresence>
+        {menu && menuHostRef.current
+          ? createPortal(
+              <MenuSurface
+                id={menuId}
+                className="command-run-file-menu"
+                aria-label={menu.kind === 'logs' ? (props.zh ? '导出日志' : 'Export logs') : props.zh ? '输出文件' : 'Output files'}
+                style={{ left: menu.left, top: menu.top, width: COMMAND_RUN_FILE_MENU_WIDTH_PX }}
+                onClose={() => setMenu(null)}
+              >
+                {visibleArtifacts.map((artifact) => (
+                  <button
+                    key={artifact.id}
+                    type="button"
+                    role="menuitem"
+                    disabled={Boolean(downloadingId)}
+                    aria-busy={downloadingId === artifact.id || undefined}
+                    title={artifact.relativePath}
+                    onClick={() => void downloadArtifact(artifact)}
+                  >
+                    {downloadingId === artifact.id ? <CircleNotch className="command-run-copy-spinner" aria-hidden="true" /> : <DownloadSimple aria-hidden="true" />}
+                    <span>
+                      <strong>{menu.kind === 'logs' ? (artifact.relativePath === 'logs/terminal.raw.log' ? (props.zh ? '原始日志' : 'Raw logs') : props.zh ? '整理日志' : 'Formatted logs') : artifact.relativePath}</strong>
+                      <small>{downloadingId === artifact.id ? (props.zh ? '正在导出…' : 'Exporting…') : formatBytes(artifact.byteLength)}</small>
+                    </span>
+                  </button>
+                ))}
+                {downloadFailed ? <p role="alert">{props.zh ? '导出失败，请重试。' : 'Export failed. Please try again.'}</p> : null}
+              </MenuSurface>,
+              menuHostRef.current,
+            )
+          : null}
+      </MotionPresence>
+    </>
+  );
+}
+
+/** 运行说明并入终端，正文保留独立滚动、尾部跟随、完整复制与文件导出。 */
+function CommandRunLog(props: { runId: string; content: string; ariaLabel: string; hasLogs: boolean; failureReason: string | null; artifacts: CommandArtifact[]; client: DashboardClient; zh: boolean }) {
+  /** 正文容器只负责日志滚动和选区。 */
   const containerRef = useRef<HTMLPreElement>(null);
+  /** 切换记录时重新定位到日志尾部。 */
   const followedRunIdRef = useRef(props.runId);
+  /** 用户上滚后暂停跟随，回到底部时恢复。 */
   const shouldFollowLatestRef = useRef(true);
+  /** 复制反馈独立于运行状态。 */
   const [copyState, setCopyState] = useState<CommandRunCopyState>('idle');
 
   useEffect(() => {
@@ -147,6 +294,19 @@ function CommandRunLog(props: { runId: string; content: string; ariaLabel: strin
     if (shouldFollowLatestRef.current) container.scrollTo({ top: container.scrollHeight, behavior: 'instant' });
   }, [props.content, props.runId]);
 
+  useEffect(() => {
+    /** 窗口和折叠内容改变终端尺寸时，延续用户当前的尾部跟随选择。 */
+    const container = containerRef.current;
+    if (!container) return;
+    /** 观察实际正文尺寸，覆盖折叠动画和窗口缩放。 */
+    const resizeObserver = new ResizeObserver(() => {
+      if (shouldFollowLatestRef.current) container.scrollTo({ top: container.scrollHeight, behavior: 'instant' });
+    });
+    resizeObserver.observe(container);
+    return () => resizeObserver.disconnect();
+  }, []);
+
+  /** 按复制状态展示可访问名称和明确的恢复提示。 */
   const copyLabel =
     copyState === 'copying'
       ? props.zh
@@ -168,6 +328,7 @@ function CommandRunLog(props: { runId: string; content: string; ariaLabel: strin
               ? '复制全部日志'
               : 'Copy all logs';
 
+  /** 复制服务端完整输出，不把当前展示预算当作完整日志。 */
   async function copyCompleteLog(): Promise<void> {
     if (!props.hasLogs || copyState === 'copying') return;
     setCopyState('copying');
@@ -183,34 +344,55 @@ function CommandRunLog(props: { runId: string; content: string; ariaLabel: strin
   return (
     <section className="command-run-log-shell" aria-label={props.ariaLabel}>
       <header className="command-run-log-toolbar">
-        <strong>{props.ariaLabel}</strong>
-        <button
-          className="command-run-copy-action"
-          type="button"
-          disabled={!props.hasLogs || copyState === 'copying'}
-          aria-busy={copyState === 'copying' || undefined}
-          data-copy-state={copyState}
-          aria-label={copyLabel}
-          title={copyLabel}
-          onClick={() => void copyCompleteLog()}
-        >
-          {copyState === 'copying' ? (
-            <CircleNotch className="command-run-copy-spinner" aria-hidden="true" />
-          ) : copyState === 'copied' ? (
-            <CheckGlyph aria-hidden="true" />
-          ) : copyState === 'too_large' || copyState === 'failed' ? (
-            <WarningCircle aria-hidden="true" />
-          ) : (
-            <Copy aria-hidden="true" />
-          )}
-        </button>
+        <strong>
+          <TerminalWindow aria-hidden="true" />
+          {props.ariaLabel}
+        </strong>
+        <div className="command-run-log-actions">
+          <button
+            className="command-run-log-action"
+            type="button"
+            disabled={!props.hasLogs || copyState === 'copying'}
+            aria-busy={copyState === 'copying' || undefined}
+            data-copy-state={copyState}
+            aria-label={copyLabel}
+            title={copyLabel}
+            onClick={() => void copyCompleteLog()}
+          >
+            {copyState === 'copying' ? (
+              <CircleNotch className="command-run-copy-spinner" aria-hidden="true" />
+            ) : copyState === 'copied' ? (
+              <CheckGlyph aria-hidden="true" />
+            ) : copyState === 'too_large' || copyState === 'failed' ? (
+              <WarningCircle aria-hidden="true" />
+            ) : (
+              <Copy aria-hidden="true" />
+            )}
+            <span>{copyState === 'idle' ? (props.zh ? '复制日志' : 'Copy logs') : copyLabel}</span>
+          </button>
+          <CommandRunFileActions artifacts={props.artifacts} client={props.client} zh={props.zh} />
+        </div>
       </header>
+      {props.failureReason ? (
+        <details className="command-run-failure">
+          <summary>
+            <WarningCircle aria-hidden="true" />
+            <span className="command-run-failure-preview">{props.failureReason}</span>
+            <span className="command-run-disclosure-label">
+              {props.zh ? '详情' : 'Details'}
+              <CaretDown aria-hidden="true" />
+            </span>
+          </summary>
+          <pre tabIndex={0}>{props.failureReason}</pre>
+        </details>
+      ) : null}
       <span className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
         {copyState === 'idle' ? '' : copyLabel}
       </span>
       <pre
         ref={containerRef}
         className="command-run-log"
+        tabIndex={0}
         onPointerDown={beginCommandRunLogSelection}
         onScroll={(event) => {
           const container = event.currentTarget;
@@ -261,8 +443,6 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [runDetail, setRunDetail] = useState<CommandRunDetail | null>(null);
   const [runSyncState, setRunSyncState] = useState<CommandRunSyncState>('syncing');
-  const [artifactPreviewUrls, setArtifactPreviewUrls] = useState<Record<string, string>>({});
-  const artifactPreviewUrlsRef = useRef<Record<string, string>>({});
   const runLogCursorRef = useRef<{ runId: string | null; nextSeq: number }>({ runId: null, nextSeq: 0 });
   const historyCommandIdRef = useRef<string | null>(null);
 
@@ -430,17 +610,6 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
       unsubscribe?.();
     };
   }, [props.client, selectedRunId, selectedRunIsActive, selectedRuntimeSessionId]);
-
-  useEffect(() => {
-    artifactPreviewUrlsRef.current = artifactPreviewUrls;
-  }, [artifactPreviewUrls]);
-
-  useEffect(
-    () => () => {
-      for (const url of Object.values(artifactPreviewUrlsRef.current)) URL.revokeObjectURL(url);
-    },
-    [],
-  );
 
   async function reloadCommands(): Promise<void> {
     const items = props.mode === 'global' ? await props.client.loadGlobalCommands() : props.project ? await props.client.loadProjectCommands(props.project.id) : [];
@@ -648,16 +817,6 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
     }
   }
 
-  async function previewArtifact(artifactId: string): Promise<void> {
-    if (artifactPreviewUrls[artifactId]) return;
-    try {
-      const blob = await props.client.loadCommandArtifact(artifactId);
-      setArtifactPreviewUrls((current) => ({ ...current, [artifactId]: URL.createObjectURL(blob) }));
-    } catch (previewError) {
-      setError(previewError);
-    }
-  }
-
   const heading = props.mode === 'global' ? (zh ? '全局命令' : 'Global commands') : zh ? `${props.project?.name ?? '项目'}命令` : `${props.project?.name ?? 'Project'} commands`;
 
   return (
@@ -807,14 +966,12 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
               runDetail={runDetail}
               syncState={runSyncState}
               projectedRunLogContent={projectedRunLogContent}
-              artifactPreviewUrls={artifactPreviewUrls}
               client={props.client}
               busy={busy}
               language={props.language}
               onClose={closeRunHistory}
               onSelectRun={selectHistoryRun}
               onStopRun={(run) => void stopRun(run)}
-              onPreviewArtifact={(artifactId) => void previewArtifact(artifactId)}
             />
           ) : null}
         </MotionPresence>
@@ -824,6 +981,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
   );
 }
 
+/** 历史列表与终端分别滚动，运行说明随终端展示。 */
 function CommandRunHistoryModal(props: {
   command: CommandDefinition;
   project: ProjectRecord;
@@ -833,18 +991,21 @@ function CommandRunHistoryModal(props: {
   runDetail: CommandRunDetail | null;
   syncState: CommandRunSyncState;
   projectedRunLogContent: string;
-  artifactPreviewUrls: Record<string, string>;
   client: DashboardClient;
   busy: boolean;
   language: 'zh-CN' | 'en-US';
   onClose: () => void;
   onSelectRun: (runId: string) => void;
   onStopRun: (run: CommandRun) => void;
-  onPreviewArtifact: (artifactId: string) => void;
 }) {
+  /** 文案跟随当前界面语言。 */
   const zh = props.language === 'zh-CN';
+  /** 运行中的命令保留真实连接状态。 */
   const activeRunSyncState = props.runDetail?.run.status === 'running' ? props.syncState : 'live';
+  /** 未确认实时状态时禁止停止，避免提交结果不明确的操作。 */
   const stopUnavailable = activeRunSyncState !== 'live';
+  /** 当前记录的状态在详情标题旁展示，避免重复占用统计卡片。 */
+  const selectedStatus = props.runDetail ? commandRunStatusPresentation(props.runDetail.run, props.runDetail.run.id, props.syncState, zh) : null;
   return (
     <ModalPortal rootClassName="command-modal-portal-root" backdropClassName="command-modal-backdrop" dismissDisabled={props.busy} onDismiss={props.onClose} role="dialog" aria-labelledby="command-history-modal-title">
       <div className="command-modal command-history-modal zeus-solid-form-surface" data-modal-surface="dialog">
@@ -865,43 +1026,49 @@ function CommandRunHistoryModal(props: {
             <p className="command-center-empty">{zh ? '此命令在当前项目中尚无执行记录。' : 'This command has no run history in the current project.'}</p>
           ) : (
             <div className="command-run-layout">
-              <ul className="command-run-list" aria-label={zh ? '执行记录' : 'Run records'}>
-                {props.runs.map((run) => {
-                  const status = commandRunStatusPresentation(run, props.selectedRunId, props.syncState, zh);
-                  return (
-                    <li key={run.id}>
-                      <button type="button" aria-pressed={props.selectedRunId === run.id} className={props.selectedRunId === run.id ? 'selected' : ''} onClick={() => props.onSelectRun(run.id)}>
-                        <span>
-                          <strong>{formatRunTime(run.createdAt)}</strong>
-                          <small>
-                            {zh ? '耗时' : 'Duration'} <CommandRunDurationValue run={run} zh={zh} />
-                          </small>
-                        </span>
-                        <span className={`command-run-status ${status.className}`}>{status.label}</span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
+              <aside className="command-run-sidebar">
+                <ul className="command-run-list" aria-label={zh ? '执行记录' : 'Run records'}>
+                  {props.runs.map((run) => {
+                    /** 历史记录同步展示运行状态与连接状态。 */
+                    const status = commandRunStatusPresentation(run, props.selectedRunId, props.syncState, zh);
+                    return (
+                      <li key={run.id}>
+                        <button type="button" aria-pressed={props.selectedRunId === run.id} className={props.selectedRunId === run.id ? 'selected' : ''} onClick={() => props.onSelectRun(run.id)}>
+                          <span>
+                            <strong>{formatRunTime(run.createdAt)}</strong>
+                            <small>
+                              {zh ? '耗时' : 'Duration'} <CommandRunDurationValue run={run} zh={zh} />
+                            </small>
+                          </span>
+                          <span className={`command-run-status ${status.className}`}>{status.label}</span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </aside>
               {props.runDetail ? (
                 <section className="command-run-detail" aria-label={zh ? '执行详情' : 'Run details'}>
                   <header>
                     <span>
-                      <strong>{props.runDetail.run.commandSnapshot.title}</strong>
-                      <small>{props.runDetail.run.cwd}</small>
+                      <strong>{formatRunTime(props.runDetail.run.createdAt)}</strong>
+                      <small title={props.runDetail.run.cwd}>{props.runDetail.run.cwd}</small>
                     </span>
-                    {props.runDetail.run.status === 'running' ? (
-                      <Button
-                        variant="danger"
-                        size="compact"
-                        onClick={() => props.onStopRun(props.runDetail!.run)}
-                        disabled={props.busy || stopUnavailable}
-                        title={stopUnavailable ? (zh ? '连接恢复并确认命令状态后才能停止。' : 'Stop is available after the connection recovers and the run state is confirmed.') : undefined}
-                      >
-                        <Stop aria-hidden="true" />
-                        {zh ? '停止' : 'Stop'}
-                      </Button>
-                    ) : null}
+                    <div className="command-run-detail-actions">
+                      {selectedStatus ? <span className={`command-run-status ${selectedStatus.className}`}>{selectedStatus.label}</span> : null}
+                      {props.runDetail.run.status === 'running' ? (
+                        <Button
+                          variant="danger"
+                          size="compact"
+                          onClick={() => props.onStopRun(props.runDetail!.run)}
+                          disabled={props.busy || stopUnavailable}
+                          title={stopUnavailable ? (zh ? '连接恢复并确认命令状态后才能停止。' : 'Stop is available after the connection recovers and the run state is confirmed.') : undefined}
+                        >
+                          <Stop aria-hidden="true" />
+                          {zh ? '停止' : 'Stop'}
+                        </Button>
+                      ) : null}
+                    </div>
                   </header>
                   {activeRunSyncState === 'stale' ? (
                     <p className="command-run-sync-warning" role="status" aria-live="polite">
@@ -913,10 +1080,6 @@ function CommandRunHistoryModal(props: {
                     </p>
                   ) : null}
                   <dl>
-                    <div>
-                      <dt>{zh ? '状态' : 'Status'}</dt>
-                      <dd>{commandRunStatusPresentation(props.runDetail.run, props.runDetail.run.id, props.syncState, zh).label}</dd>
-                    </div>
                     <div>
                       <dt>{zh ? '实际耗时' : 'Duration'}</dt>
                       <dd>
@@ -932,32 +1095,20 @@ function CommandRunHistoryModal(props: {
                       <dd>{props.runDetail.run.exitCode ?? '—'}</dd>
                     </div>
                   </dl>
-                  {props.runDetail.run.failureReason ? <p className="command-run-failure">{props.runDetail.run.failureReason}</p> : null}
                   <CommandRunLog
                     key={props.runDetail.run.id}
                     runId={props.runDetail.run.id}
                     ariaLabel={zh ? '终端日志' : 'Terminal logs'}
                     content={props.runDetail.logs.length > 0 ? props.projectedRunLogContent : zh ? '暂无日志。' : 'No logs yet.'}
                     hasLogs={props.runDetail.logTotal > 0}
+                    failureReason={props.runDetail.run.failureReason}
+                    artifacts={props.runDetail.artifacts}
                     client={props.client}
                     zh={zh}
                   />
-                  {props.runDetail.artifacts.length > 0 ? (
-                    <section className="command-artifacts" aria-label={zh ? '命令产物' : 'Command artifacts'}>
-                      <strong>{zh ? '产物' : 'Artifacts'}</strong>
-                      {props.runDetail.artifacts.map((artifact) => (
-                        <div key={artifact.id}>
-                          <button type="button" onClick={() => props.onPreviewArtifact(artifact.id)}>
-                            {artifact.relativePath} · {formatBytes(artifact.byteLength)}
-                          </button>
-                          {artifact.mimeType?.startsWith('image/') && props.artifactPreviewUrls[artifact.id] ? <img src={props.artifactPreviewUrls[artifact.id]} alt={artifact.relativePath} /> : null}
-                        </div>
-                      ))}
-                    </section>
-                  ) : null}
                 </section>
               ) : (
-                <p className="command-center-empty">{zh ? '选择一条记录查看终端日志与产物。' : 'Select a run to view logs and artifacts.'}</p>
+                <p className="command-center-empty">{zh ? '选择一条记录查看执行详情。' : 'Select a run to view its details.'}</p>
               )}
             </div>
           )}

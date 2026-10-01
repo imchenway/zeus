@@ -20,8 +20,9 @@
   --agentdesk-accent-highlight: #daa3fa;
   --agentdesk-accent-soft: color-mix(in srgb, var(--agentdesk-accent) 10%, transparent);
   --agentdesk-accent-secondary-soft: color-mix(in srgb, var(--agentdesk-accent-secondary) 10%, transparent);
-  --agentdesk-selection: color-mix(in srgb, var(--agentdesk-accent) 13%, transparent);
-  --agentdesk-selection-strong: color-mix(in srgb, var(--agentdesk-accent) 20%, transparent);
+  /* 选中底色取自中性文字色，所有列表共用同一层级。 */
+  --agentdesk-selection: color-mix(in srgb, var(--agentdesk-text) 7%, transparent);
+  --agentdesk-selection-strong: color-mix(in srgb, var(--agentdesk-text) 14%, transparent);
   /* AgentDesk 几何阶梯：控件 8 / 分段轨 10 / 卡片 12 / 工作面 16 / 玻璃层 18。 */
   --agentdesk-radius-control: 8px;
   --agentdesk-radius-tab: 8px;
@@ -118,8 +119,9 @@
   --agentdesk-text-secondary: #cbd5e1;
   --agentdesk-text-tertiary: #94a3b8;
   --agentdesk-control: rgb(42 46 68 / 0.82);
-  --agentdesk-selection: color-mix(in srgb, var(--agentdesk-accent) 22%, transparent);
-  --agentdesk-selection-strong: color-mix(in srgb, var(--agentdesk-accent) 32%, transparent);
+  /* 深色选中底色保持中性，并提高与背景的区分度。 */
+  --agentdesk-selection: color-mix(in srgb, var(--agentdesk-text) 10%, transparent);
+  --agentdesk-selection-strong: color-mix(in srgb, var(--agentdesk-text) 16%, transparent);
   --agentdesk-shadow: 0 20px 48px -26px rgb(0 0 0 / 0.64);
   --agentdesk-shadow-soft: 0 12px 32px -22px rgb(0 0 0 / 0.56);
   --zeus-code-editor-bg: rgb(24 28 47 / 0.94);
@@ -148,8 +150,9 @@
     --agentdesk-text-secondary: #cbd5e1;
     --agentdesk-text-tertiary: #94a3b8;
     --agentdesk-control: rgb(42 46 68 / 0.82);
-    --agentdesk-selection: color-mix(in srgb, var(--agentdesk-accent) 22%, transparent);
-    --agentdesk-selection-strong: color-mix(in srgb, var(--agentdesk-accent) 32%, transparent);
+    /* 跟随系统深色时沿用手动深色的中性选中底色。 */
+    --agentdesk-selection: color-mix(in srgb, var(--agentdesk-text) 10%, transparent);
+    --agentdesk-selection-strong: color-mix(in srgb, var(--agentdesk-text) 16%, transparent);
     --agentdesk-shadow: 0 20px 48px -26px rgb(0 0 0 / 0.64);
     --agentdesk-shadow-soft: 0 12px 32px -22px rgb(0 0 0 / 0.56);
     --zeus-code-editor-bg: rgb(24 28 47 / 0.94);
@@ -224,7 +227,7 @@
   backdrop-filter: blur(7px) saturate(125%);
 }
 
-/* Source list、项目列表和会话列表统一使用 Zeus 图标的紫色选择语义。 */
+/* Source list、项目列表和会话列表共用中性选中底色与清晰文字。 */
 .macos-ai-app.zeus-shell :where(.project-quick-action, .zeus-source-list-row, .session-conversation-tree-row, .project-sidebar-conversation-row, .settings-section-button) {
   border-color: transparent;
   border-radius: 10px;
@@ -2939,11 +2942,10 @@ body:has(.macos-ai-app.zeus-shell) {
 }
 .macos-ai-app.zeus-shell .project-first-sidebar .is-active-project-root {
   background: var(--zeus-source-list-selected) !important;
-  box-shadow: inset 3px 0 var(--zeus-brand-text);
   border-radius: 6px;
 }
 .macos-ai-app.zeus-shell .project-first-sidebar .is-active-project-root .zeus-source-list-row-label {
-  color: var(--zeus-brand-text);
+  color: var(--zeus-product-text);
 }
 /* 主内容面保留柔和圆角与内容裁剪，移除描边不改变原有轮廓。 */
 .macos-ai-app.zeus-shell .ai-workspace:has(> .project-workspace-mode-toolbar) > .workspace-view {

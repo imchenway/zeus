@@ -100,12 +100,9 @@
 .macos-ai-app .digital-employee-list-row:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-interaction-hover);
 }
+/* 已选员工只使用共用中性底色。 */
 .macos-ai-app .digital-employee-list-row.is-selected {
-  background: color-mix(in oklab, var(--zeus-product-accent) 8%, var(--zeus-product-panel));
-}
-
-.macos-ai-app .digital-employee-list-row.is-selected {
-  box-shadow: inset 3px 0 0 var(--zeus-product-accent);
+  background: var(--zeus-source-list-selected);
 }
 
 .macos-ai-app .digital-employee-list-row.is-disabled {
@@ -494,9 +491,8 @@
 .macos-ai-app .digital-employee-boundary-note {
   margin: 0;
   padding: 8px 10px;
-  border-inline-start: 3px solid color-mix(in oklab, var(--zeus-product-accent) 64%, var(--zeus-control-border));
   color: var(--zeus-control-muted-text);
-  background: color-mix(in oklab, var(--zeus-product-accent) 5%, transparent);
+  background: var(--zeus-product-panel-muted);
   font-size: 11px;
   line-height: 1.5;
 }
