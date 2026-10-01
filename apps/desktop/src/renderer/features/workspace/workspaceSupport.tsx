@@ -74,7 +74,8 @@ import {
   type ZeusRealtimeEvent,
 } from '../../apiClient.js';
 
-export type MainNavTarget = 'projects' | 'conversations' | 'automations' | 'skills' | 'digital-teams' | 'settings';
+/** 全局数字员工与数字团队均从首页独立进入。 */
+export type MainNavTarget = 'projects' | 'conversations' | 'automations' | 'skills' | 'digital-employees' | 'digital-teams' | 'settings';
 export type LegacyMainNavTarget = MainNavTarget | 'dashboard' | 'tasks' | 'runtime' | 'git-diff' | 'telegram' | 'settings-data';
 export type ProjectWorkspaceSection = 'tasks' | 'git' | 'code' | 'sessions' | 'project-settings';
 export type ProjectCodeWorkspaceMode = 'source' | 'commands';
@@ -120,26 +121,10 @@ export type SessionDrawerTarget =
   | Readonly<{ projectId: string; taskId: string; conversationId?: undefined; navigationId?: undefined; status: 'empty' }>
   | undefined;
 export type TaskConversationReopenState = Readonly<{ conversationId: string; status: 'busy' | 'error'; error?: string }> | undefined;
-export type SettingsCategory = 'general' | 'usage' | 'memory' | 'agents' | 'tasks' | 'employees' | 'runtime' | 'network' | 'models' | 'browser' | 'terminal' | 'im' | 'zentao' | 'commands' | 'release' | 'data';
+/** 系统设置仅列出当前设置分区，数字员工由首页管理。 */
+export type SettingsCategory = 'general' | 'usage' | 'memory' | 'agents' | 'tasks' | 'runtime' | 'network' | 'models' | 'browser' | 'terminal' | 'im' | 'zentao' | 'commands' | 'release' | 'data';
 /** 设置哈希只接受真实存在的稳定分区。 */
-export const SETTINGS_CATEGORIES = [
-  'general',
-  'usage',
-  'memory',
-  'agents',
-  'tasks',
-  'employees',
-  'runtime',
-  'network',
-  'models',
-  'browser',
-  'terminal',
-  'im',
-  'zentao',
-  'commands',
-  'release',
-  'data',
-] as const satisfies readonly SettingsCategory[];
+export const SETTINGS_CATEGORIES = ['general', 'usage', 'memory', 'agents', 'tasks', 'runtime', 'network', 'models', 'browser', 'terminal', 'im', 'zentao', 'commands', 'release', 'data'] as const satisfies readonly SettingsCategory[];
 export type DataPortabilityStatusState = { kind: 'idle' } | { kind: 'exported'; target: string } | { kind: 'imported'; target: string; changedSettings: string[] };
 export type TaskBulkActionStatusState = { kind: 'idle' | 'running' | 'done' | 'failed'; message?: string };
 export type RuntimeLogExportStatusState = { kind: 'idle' } | { kind: 'empty' } | { kind: 'cancelled' } | { kind: 'saved'; filePath: string } | { kind: 'failed' };
@@ -1282,6 +1267,7 @@ export function normalizeMainNavTarget(hash: string | undefined): MainNavTarget 
   if (target === 'dashboard' || target === 'tasks' || target === 'runtime' || target === 'conversations') return 'conversations';
   if (target === 'git-diff' || target === 'projects' || target === 'project-commands' || target.startsWith('project-code')) return 'projects';
   if (target === 'skills') return 'skills';
+  if (target === 'digital-employees') return 'digital-employees';
   if (target === 'digital-teams') return 'digital-teams';
   if (target === 'automations') return 'automations';
   if (target === 'telegram' || target === 'settings' || target?.startsWith('settings-')) return 'settings';

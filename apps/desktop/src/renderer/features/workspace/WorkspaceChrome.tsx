@@ -10,6 +10,7 @@ import { FunnelIcon as Funnel } from '@phosphor-icons/react/dist/csr/Funnel';
 import { CaretRightIcon as CaretRight } from '@phosphor-icons/react/dist/csr/CaretRight';
 import { DotsThreeVerticalIcon as DotsThreeVertical } from '@phosphor-icons/react/dist/csr/DotsThreeVertical';
 import { GearSixIcon as GearSix } from '@phosphor-icons/react/dist/csr/GearSix';
+import { RobotIcon } from '@phosphor-icons/react/dist/csr/Robot';
 import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { PushPinIcon as PushPin } from '@phosphor-icons/react/dist/csr/PushPin';
@@ -703,7 +704,8 @@ export function ProjectWorkspaceNavigation(props: {
     commands: <WorkspaceCommandsIcon size={18} weight="regular" aria-hidden="true" />,
   };
   /** 全局工作区激活时不保留上一个项目工作区的伪选中态。 */
-  const projectWorkspaceActive = props.activeNavTarget !== 'settings' && props.activeNavTarget !== 'skills' && props.activeNavTarget !== 'digital-teams' && props.activeNavTarget !== 'automations';
+  const projectWorkspaceActive =
+    props.activeNavTarget !== 'settings' && props.activeNavTarget !== 'skills' && props.activeNavTarget !== 'digital-employees' && props.activeNavTarget !== 'digital-teams' && props.activeNavTarget !== 'automations';
   /** 顶部允许并列打开多个项目槽位；每个槽位保留独立的项目下拉。 */
   const projectSlotSequenceRef = useRef(1);
   const projectStatuses = useMemo(() => summarizeProjectConversationStatuses(props.conversationGroups, props.conversationStates, props.language), [props.conversationGroups, props.conversationStates, props.language]);
@@ -939,6 +941,20 @@ export function ProjectWorkspaceNavigation(props: {
             </svg>
           </span>
           <span className="project-workspace-mode-label">{zh ? '扩展管理' : 'Extensions'}</span>
+        </button>
+        {/* 数字员工在全局导航中紧邻数字团队上方。 */}
+        <button
+          type="button"
+          className={props.activeNavTarget === 'digital-employees' ? 'is-active' : ''}
+          aria-label={zh ? '数字员工' : 'Digital employees'}
+          aria-current={props.activeNavTarget === 'digital-employees' ? 'page' : undefined}
+          data-tooltip={zh ? '数字员工' : 'Digital employees'}
+          onClick={() => props.onNavigate('digital-employees')}
+        >
+          <span className="project-workspace-mode-icon" aria-hidden="true">
+            <RobotIcon size={18} weight="regular" />
+          </span>
+          <span className="project-workspace-mode-label">{zh ? '数字员工' : 'Digital employees'}</span>
         </button>
         <button
           type="button"
@@ -1220,7 +1236,8 @@ export function SidebarNav(props: {
   const copy = getLanguageCopy(props.appLanguage).sidebar;
   const zh = props.appLanguage === 'zh-CN';
   const showConversationNavigation =
-    props.mainLayout === 'upstream' || (props.activeNavTarget !== 'skills' && props.activeNavTarget !== 'digital-teams' && props.activeNavTarget !== 'automations' && props.activeProjectSection === 'sessions');
+    props.mainLayout === 'upstream' ||
+    (props.activeNavTarget !== 'skills' && props.activeNavTarget !== 'digital-employees' && props.activeNavTarget !== 'digital-teams' && props.activeNavTarget !== 'automations' && props.activeProjectSection === 'sessions');
   const scopeToCurrentProject = showConversationNavigation && props.mainLayout !== 'upstream' && props.activeProjectId;
   /** 会话侧栏严格跟随顶部选中的当前项目，其他项目通过顶部入口切换。 */
   const scopedProjects = scopeToCurrentProject ? props.projects.filter((project) => project.id === props.activeProjectId) : props.projects;
@@ -1232,27 +1249,31 @@ export function SidebarNav(props: {
         : 'Automations'
       : props.activeNavTarget === 'skills'
         ? copy.skills
-        : props.activeNavTarget === 'digital-teams'
+        : props.activeNavTarget === 'digital-employees'
           ? zh
-            ? '数字团队'
-            : 'Digital teams'
-          : props.activeProjectSection === 'tasks'
+            ? '数字员工'
+            : 'Digital employees'
+          : props.activeNavTarget === 'digital-teams'
             ? zh
-              ? '任务'
-              : 'Tasks'
-            : props.activeProjectSection === 'git'
-              ? 'Git'
-              : props.activeProjectSection === 'code'
-                ? props.activeProjectCodeMode === 'commands'
-                  ? zh
-                    ? '命令'
-                    : 'Commands'
+              ? '数字团队'
+              : 'Digital teams'
+            : props.activeProjectSection === 'tasks'
+              ? zh
+                ? '任务'
+                : 'Tasks'
+              : props.activeProjectSection === 'git'
+                ? 'Git'
+                : props.activeProjectSection === 'code'
+                  ? props.activeProjectCodeMode === 'commands'
+                    ? zh
+                      ? '命令'
+                      : 'Commands'
+                    : zh
+                      ? '源码'
+                      : 'Source'
                   : zh
-                    ? '源码'
-                    : 'Source'
-                : zh
-                  ? '会话'
-                  : 'Conversations';
+                    ? '会话'
+                    : 'Conversations';
   const openProjectRenameDialog = (project: ProjectRecord) => {
     closeProjectMoreMenuWithMotion(project.id);
     setProjectRenameTarget(project);
@@ -1403,6 +1424,18 @@ export function SidebarNav(props: {
             </span>
             <span className="project-quick-action-label">{copy.skills}</span>
           </button>
+          {/* 上游首页也保持员工在团队上方的相同顺序。 */}
+          <button
+            type="button"
+            className={`project-quick-action${props.activeNavTarget === 'digital-employees' ? ' is-active' : ''}`}
+            aria-current={props.activeNavTarget === 'digital-employees' ? 'page' : undefined}
+            onClick={() => props.onNavigate('digital-employees')}
+          >
+            <span className="project-quick-action-icon" aria-hidden="true">
+              <RobotIcon size={20} weight="regular" />
+            </span>
+            <span className="project-quick-action-label">{zh ? '数字员工' : 'Digital employees'}</span>
+          </button>
           <button
             type="button"
             className={`project-quick-action${props.activeNavTarget === 'digital-teams' ? ' is-active' : ''}`}
@@ -1529,7 +1562,12 @@ export function SidebarNav(props: {
           ) : (
             visibleProjects.map((project) => {
               const isActiveProject =
-                project.id === props.activeProjectId && props.activeNavTarget !== 'settings' && props.activeNavTarget !== 'skills' && props.activeNavTarget !== 'digital-teams' && props.activeNavTarget !== 'automations';
+                project.id === props.activeProjectId &&
+                props.activeNavTarget !== 'settings' &&
+                props.activeNavTarget !== 'skills' &&
+                props.activeNavTarget !== 'digital-employees' &&
+                props.activeNavTarget !== 'digital-teams' &&
+                props.activeNavTarget !== 'automations';
               const pinned = props.pinnedProjectIds.includes(project.id);
               const expanded = !props.collapsedProjectIds.includes(project.id);
               const menuOpen = openProjectMenuIds.has(project.id);
@@ -1741,6 +1779,18 @@ export function SidebarNav(props: {
                 </svg>
               </span>
               {copy.skills}
+            </button>
+            {/* 无项目首页仍可管理全局员工。 */}
+            <button
+              type="button"
+              className={props.activeNavTarget === 'digital-employees' ? 'active' : ''}
+              aria-current={props.activeNavTarget === 'digital-employees' ? 'page' : undefined}
+              onClick={() => props.onNavigate('digital-employees')}
+            >
+              <span aria-hidden="true">
+                <RobotIcon size={20} weight="regular" />
+              </span>
+              {zh ? '数字员工' : 'Digital employees'}
             </button>
             <button type="button" className={props.activeNavTarget === 'digital-teams' ? 'active' : ''} aria-current={props.activeNavTarget === 'digital-teams' ? 'page' : undefined} onClick={() => props.onNavigate('digital-teams')}>
               <span aria-hidden="true">

@@ -16,7 +16,6 @@ import { SlidersHorizontalIcon } from '@phosphor-icons/react/dist/csr/SlidersHor
 import { ChartBarIcon } from '@phosphor-icons/react/dist/csr/ChartBar';
 import { BrainIcon } from '@phosphor-icons/react/dist/csr/Brain';
 import { ListChecksIcon } from '@phosphor-icons/react/dist/csr/ListChecks';
-import { RobotIcon } from '@phosphor-icons/react/dist/csr/Robot';
 import { PlugsConnectedIcon } from '@phosphor-icons/react/dist/csr/PlugsConnected';
 import { CubeIcon } from '@phosphor-icons/react/dist/csr/Cube';
 import { BrowserIcon } from '@phosphor-icons/react/dist/csr/Browser';
@@ -588,7 +587,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
         ['usage', settingsWorkspaceCopy.categories.usage, ChartBarIcon],
         ['memory', settingsWorkspaceCopy.categories.memory, BrainIcon],
         ['tasks', settingsWorkspaceCopy.categories.tasks, ListChecksIcon],
-        ['employees', settingsWorkspaceCopy.categories.employees, RobotIcon],
       ],
     },
     {
@@ -631,9 +629,16 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   const projectWorkspaceNavigationVisible = !upstreamMainLayout && Boolean(selectedProject);
   /** 会话使用项目/会话来源列表；其他模式由各自工作区提供紧邻活动栏的上下文导航。 */
   const projectSessionSourceListVisible =
-    !upstreamMainLayout && Boolean(selectedProject) && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'digital-teams' && activeNavTarget !== 'automations' && activeProjectSection === 'sessions';
+    !upstreamMainLayout &&
+    Boolean(selectedProject) &&
+    activeNavTarget !== 'settings' &&
+    activeNavTarget !== 'skills' &&
+    activeNavTarget !== 'digital-employees' &&
+    activeNavTarget !== 'digital-teams' &&
+    activeNavTarget !== 'automations' &&
+    activeProjectSection === 'sessions';
   const sessionCodexParityVisible = upstreamMainLayout
-    ? activeProjectSection === 'sessions' && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'digital-teams' && activeNavTarget !== 'automations'
+    ? activeProjectSection === 'sessions' && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'digital-employees' && activeNavTarget !== 'digital-teams' && activeNavTarget !== 'automations'
     : projectSessionSourceListVisible;
 
   return (
@@ -906,7 +911,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           pendingProjectDeleteId={pendingProjectDeleteId}
         />
       ) : null}
-      {(upstreamMainLayout && activeNavTarget !== 'settings') || projectSessionSourceListVisible ? (
+      {/* 无项目时沿用首页三列布局，分隔列必须存在，避免内容误占一像素列。 */}
+      {((upstreamMainLayout || !selectedProject) && activeNavTarget !== 'settings') || projectSessionSourceListVisible ? (
         <div
           className="project-sidebar-resizer"
           role="separator"
@@ -927,6 +933,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           <ProjectStartGuide language={appShellSettings.appLanguage} busy={projectDirectoryChoosing || creatingProjectBusy} available={Boolean(props.onCreateCurrentProject)} onChooseFolder={() => void chooseProjectDirectoryForCreate()} />
         ) : null}
         {activeNavTarget === 'skills' ? <toolPages.extensions client={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} projectId={activeProjectId} onChooseDirectory={props.onChooseProjectDirectory} /> : null}
+        {/* 全局员工管理直接复用原页面，项目员工绑定仍由项目设置承载。 */}
+        {activeNavTarget === 'digital-employees' ? <DigitalEmployeeTemplatesSettings client={props.commandClient ?? null} skillClient={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} /> : null}
         {activeNavTarget === 'digital-teams' ? (
           <Suspense
             fallback={
@@ -997,7 +1005,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             }}
           />
         ) : null}
-        {upstreamMainLayout && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'digital-teams' && activeNavTarget !== 'automations' && selectedProject ? (
+        {upstreamMainLayout && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'digital-employees' && activeNavTarget !== 'digital-teams' && activeNavTarget !== 'automations' && selectedProject ? (
           <ProjectWorkspaceModeToolbar
             project={selectedProject}
             projects={orderedProjects}
@@ -1013,7 +1021,13 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             }}
           />
         ) : null}
-        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'digital-teams' && activeNavTarget !== 'automations' && activeProjectSection === 'code' && selectedProject ? (
+        {activeNavTarget !== 'settings' &&
+        activeNavTarget !== 'skills' &&
+        activeNavTarget !== 'digital-employees' &&
+        activeNavTarget !== 'digital-teams' &&
+        activeNavTarget !== 'automations' &&
+        activeProjectSection === 'code' &&
+        selectedProject ? (
           <section className="workspace-view workspace-view-project-code project-code-workspace" aria-label={codeWorkspaceCopy.projectCodeAria}>
             <div className="project-code-mode-host">
               {projectCodeWorkspaceMode === 'source' ? (
@@ -1040,13 +1054,26 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           </section>
         ) : null}
 
-        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'digital-teams' && activeNavTarget !== 'automations' && activeProjectSection === 'git' && selectedProject && props.nativeConversationClient ? (
+        {activeNavTarget !== 'settings' &&
+        activeNavTarget !== 'skills' &&
+        activeNavTarget !== 'digital-employees' &&
+        activeNavTarget !== 'digital-teams' &&
+        activeNavTarget !== 'automations' &&
+        activeProjectSection === 'git' &&
+        selectedProject &&
+        props.nativeConversationClient ? (
           <section className="workspace-view workspace-view-project-git">
             <ProjectGitWorkbench key={selectedProject.id} project={selectedProject} client={props.nativeConversationClient} language={appShellSettings.appLanguage} />
           </section>
         ) : null}
 
-        {activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'digital-teams' && activeNavTarget !== 'automations' && snapshot.projects.length > 0 && activeProjectSection === 'project-settings' ? (
+        {activeNavTarget !== 'settings' &&
+        activeNavTarget !== 'skills' &&
+        activeNavTarget !== 'digital-employees' &&
+        activeNavTarget !== 'digital-teams' &&
+        activeNavTarget !== 'automations' &&
+        snapshot.projects.length > 0 &&
+        activeProjectSection === 'project-settings' ? (
           <section className="workspace-view workspace-view-project-settings" aria-label={codeWorkspaceCopy.projectSettingsAria}>
             <section className="workspace-detail-pane project-detail-pane" aria-label={codeWorkspaceCopy.detailAria}>
               {selectedProject ? (
@@ -1094,6 +1121,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
         ) : null}
         {activeNavTarget !== 'settings' &&
         activeNavTarget !== 'skills' &&
+        activeNavTarget !== 'digital-employees' &&
         activeNavTarget !== 'digital-teams' &&
         activeNavTarget !== 'automations' &&
         snapshot.projects.length > 0 &&
@@ -1863,7 +1891,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     initialProjectId={projectDetail?.id}
                   />
                 ) : null}
-                {settingsCategory === 'employees' ? <DigitalEmployeeTemplatesSettings client={props.commandClient ?? null} skillClient={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} /> : null}
                 {settingsCategory === 'tasks' ? (
                   <section className="settings-product-pane task-list-settings-pane" aria-label={settingsWorkspaceCopy.categories.tasks}>
                     <header className="settings-page-heading">

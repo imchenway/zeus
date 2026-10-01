@@ -96,12 +96,14 @@ function initialSettingsCategory(props: AppProps): SettingsCategory {
   return 'general';
 }
 
+/** 地址导航与首页入口使用同一组全局工作区身份。 */
 function routeFromHash(hash: string | undefined): MainNavTarget {
   const target = hash?.replace(/^#/, '');
   if (!target) return 'conversations';
   if (target === 'dashboard' || target === 'tasks' || target === 'runtime' || target === 'conversations') return 'conversations';
   if (target === 'git-diff' || target === 'projects' || target === 'project-commands' || target.startsWith('project-code')) return 'projects';
   if (target === 'skills') return 'skills';
+  if (target === 'digital-employees') return 'digital-employees';
   if (target === 'digital-teams') return 'digital-teams';
   if (target === 'automations') return 'automations';
   if (target === 'telegram' || target === 'settings' || target.startsWith('settings-')) return 'settings';
