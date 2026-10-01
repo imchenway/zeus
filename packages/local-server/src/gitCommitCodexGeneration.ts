@@ -2,7 +2,7 @@ import { createCodexAppServerManager, type CodexAppServerManager } from '@zeus/a
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildGitCommitPrompt, type GitCommitMessageInput } from './gitCommitMessageGeneration.js';
+import { buildGitCommitPrompt, normalizeGitCommitMessage, type GitCommitMessageInput } from './gitCommitMessageGeneration.js';
 
 function commitManager(codexHome: string) {
   return createCodexAppServerManager({
@@ -198,7 +198,7 @@ export async function generateCodexCommitMessage(
             if (streamed.size === 0) progress('接收生成内容');
             const id = String(params.itemId);
             streamed.set(id, (streamed.get(id) ?? '') + params.delta);
-            options.onText?.([...streamed.values()].join('\n').slice(0, 10_000));
+            options.onText?.(normalizeGitCommitMessage([...streamed.values()].join('\n').slice(0, 10_000)));
           }
           if (event.method === 'error' && params.willRetry !== true) {
             reject(new Error('Codex 模型请求失败，请检查网络、登录状态或额度后重试。'));
@@ -234,8 +234,9 @@ export async function generateCodexCommitMessage(
         completed,
       ]);
       progress('生成完成');
-      const message = text.replace(/^```[^\n]*\n([\s\S]*?)\n```$/u, '$1').trim();
-      if (!message || message.length > 10_000) throw new Error('Codex 未返回有效的提交说明，请重试。');
+      /** 最终结果与流式预览都保持单行且不超过 30 个字符。 */
+      const message = text.length <= 10_000 ? normalizeGitCommitMessage(text) : '';
+      if (!message) throw new Error('Codex 未返回有效的提交说明，请重试。');
       return { message, model: `Codex · ${model.displayName || model.model}` };
     };
     const result = await Promise.race([run(), timeout]);

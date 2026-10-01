@@ -61,6 +61,8 @@ interface DeliveryFeedback {
   action?: 'commit' | 'merge' | 'push';
   /** 汇总与逐仓结果一同更新，避免旧结果混入下一条提示。 */
   results?: BatchDeliveryResult[];
+  /** 非批量合入也保留短摘要，完整目标和待同步原因放入详情。 */
+  summary?: string;
   tone: 'success' | 'warning' | 'info';
   text: string;
   actionLabel?: string;
@@ -522,7 +524,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
       );
       controller.signal.throwIfAborted();
       setMessage(result.message);
-      setCommitGenerationFeedback((zh ? '已生成，请检查。' : 'Generated. Review before committing.') + (result.truncated ? (zh ? ' 部分文件已省略或截断，请核对完整性。' : ' Some files were summarized; check completeness.') : ''));
+      setCommitGenerationFeedback(result.truncated ? (zh ? '已生成；部分改动省略，请核对。' : 'Generated; some changes omitted. Please review.') : zh ? '已生成，请检查。' : 'Generated. Please review.');
     } catch (reason) {
       setCommitGenerationFeedback(controller.signal.aborted ? (zh ? '已停止生成' : 'Generation stopped') : errorMessage(reason, zh));
     } finally {
@@ -1664,7 +1666,7 @@ function DeliveryEntryIcon(props: { path?: string }) {
   );
 }
 
-/** 操作区直接展示逐仓结果，冲突页在标题栏使用原生浮层查看详情。 */
+/** 操作区和冲突页标题栏只显示摘要，复用原生浮层查看逐仓详情。 */
 function DeliveryFeedbackNotice(props: {
   feedback: DeliveryFeedback;
   zh: boolean;
@@ -1692,14 +1694,14 @@ function DeliveryFeedbackNotice(props: {
         }
       }}
     >
-      {props.compactResults && props.feedback.results?.length && !props.feedback.onAction ? (
+      {(props.compactResults || props.feedback.action) && (props.feedback.results?.length || props.feedback.summary) && !props.feedback.onAction ? (
         <>
           <button type="button" className="task-git-delivery-result-trigger" popoverTarget={resultId} title={props.feedback.text} style={{ anchorName: resultAnchor }}>
-            <span>{props.feedback.text}</span>
+            <span>{props.feedback.summary ?? props.feedback.text}</span>
             <CaretDownIcon aria-hidden="true" />
           </button>
           <div ref={resultPopover} id={resultId} popover="auto" className="task-git-delivery-result-popover" style={{ positionAnchor: resultAnchor }} aria-label={props.zh ? '逐仓交付结果' : 'Per-repository delivery results'}>
-            <BatchDeliveryResults results={props.feedback.results} zh={props.zh} />
+            {props.feedback.results?.length ? <BatchDeliveryResults results={props.feedback.results} zh={props.zh} /> : <div className={`task-git-delivery-feedback is-${props.feedback.tone}`}>{props.feedback.text}</div>}
           </div>
         </>
       ) : (
@@ -1976,21 +1978,21 @@ function deliveryFeedback(result: TaskIntegrationResult, zh: boolean): DeliveryF
     ? {
         action: 'merge',
         tone: 'warning',
+        summary: zh ? '合入：待处理' : 'Merge: needs attention',
         text: zh ? '合入结果已保存在隔离工作区；目标分支尚未同步，处理目标目录中的阻碍后请重试。' : 'The integration result is preserved until the target worktree can be synced. Resolve the blocker, then retry sync.',
       }
     : {
         action: 'merge',
         tone: 'success',
+        summary: zh ? '合入：成功' : 'Merge: succeeded',
         text: zh ? `已合入 ${result.targetBranch} · ${shortSha(result.resultHeadSha)}` : `Merged into ${result.targetBranch} · ${shortSha(result.resultHeadSha)}`,
       };
 }
 
-/** 单仓直接呈现结果；多仓只汇总非零状态，并保留逐仓详情。 */
+/** 单仓和多仓统一汇总非零状态，完整结果保留在详情浮层中。 */
 function batchDeliveryFeedback(action: 'commit' | 'merge' | 'push', results: BatchDeliveryResult[], zh: boolean): DeliveryFeedback {
-  /** 状态名称同时用于单仓异常提示与多仓统计。 */
-  const labels = zh ? { succeeded: '成功', skipped: '跳过', attention: '待处理', failed: '失败' } : { succeeded: 'succeeded', skipped: 'skipped', attention: 'need attention', failed: 'failed' };
-  /** 单仓成功消息已包含动作，仅异常结果需要补充状态。 */
-  const single = results.length === 1 ? results[0] : undefined;
+  /** 异常数量排在成功之前，窄窗口省略尾部时仍能发现失败和待处理。 */
+  const labels = zh ? { failed: '失败', attention: '待处理', skipped: '跳过', succeeded: '成功' } : { failed: 'failed', attention: 'need attention', skipped: 'skipped', succeeded: 'succeeded' };
   /** 只列出本次实际出现的状态，避免零值占据提示空间。 */
   const summary = (Object.keys(labels) as BatchDeliveryStatus[])
     .map((status) => {
@@ -2004,15 +2006,9 @@ function batchDeliveryFeedback(action: 'commit' | 'merge' | 'push', results: Bat
   const actionLabel = zh ? { commit: '提交', merge: '合入', push: '推送' }[action] : { commit: 'Commit', merge: 'Merge', push: 'Push' }[action];
   return {
     action,
-    results: single ? undefined : results,
+    results,
     tone: results.some((result) => result.status === 'failed' || result.status === 'attention') ? 'warning' : results.some((result) => result.status === 'succeeded') ? 'success' : 'info',
-    text: single
-      ? `${single.repositoryName} · ${single.status === 'succeeded' ? '' : `${labels[single.status]} · `}${single.message}`
-      : summary
-        ? `${actionLabel}：${summary}`
-        : zh
-          ? `没有可${actionLabel}的仓库`
-          : `No repositories to ${actionLabel.toLowerCase()}`,
+    text: summary ? `${actionLabel}：${summary}` : zh ? `没有可${actionLabel}的仓库` : `No repositories to ${actionLabel.toLowerCase()}`,
   };
 }
 
