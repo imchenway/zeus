@@ -1,2 +1,5 @@
 # pnpm 补丁保留上游文件的原始缩进，补丁载荷不参与仓库空白错误判定。
 patches/*.patch -whitespace
+
+# CUA 补丁保留原始上下文，补丁载荷不参与仓库空白错误判定。
+apps/desktop/native/cua-desktop.patch -whitespace
