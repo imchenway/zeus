@@ -213,9 +213,9 @@ function turnDetailPaging(snapshot: NativeSessionState['snapshot'], turnId: stri
   };
 }
 
-/** 展开只准备尚未读取的详情；后续页由可见边界自动补齐。 */
+/** 展开准备尚未读取的详情或恢复失败页；后续页由可见边界自动补齐。 */
 function turnProcessNeedsLoad(paging: ReturnType<typeof turnDetailPaging>): boolean {
-  return !paging?.loaded && !paging?.loading;
+  return !paging?.loading && (!paging?.loaded || Boolean(paging.error));
 }
 
 function turnProcessAvailable(snapshot: NativeSessionState['snapshot'], turnId: string): boolean {
@@ -1089,7 +1089,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       /** 只在展开后滚动到缺页边界时补读，避免一次读完整个长轮次。 */
       const pageSentinel =
         row.loadMore && processPaging && ((processPaging.loaded && processPaging.hasMore) || processPaging.error) && renderProps.onLoadTurnProcess ? (
-          <TurnProcessPageSentinel enabled={expandedRowKeys.has(turnProcessExpansionKey(row.key))} paging={processPaging} language={props.language} turnId={row.turnId} onLoad={renderProps.onLoadTurnProcess} />
+          <TurnProcessPageSentinel enabled={expandedRowKeys.has(turnProcessExpansionKey(row.key))} paging={processPaging} turnId={row.turnId} onLoad={renderProps.onLoadTurnProcess} />
         ) : null;
       const expansionKey = turnProcessExpansionKey(row.key);
       const containsCompletionAnchor = row.segments.some(
@@ -1100,7 +1100,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       const turnActive = turn ? isActiveSessionTurn(turn) : row.live;
       /** 只有当前输入所属的活动轮次显示外置进展。 */
       const processLive = row.live && turnActive;
-      /** 折叠入口只汇总当前已经加载的真实操作数。 */
+      /** 逐段进展使用真实操作数量；最终正文可见后的整轮入口改用实际用时。 */
       const processActivityCount = turnProcessActivityCount(row.segments);
       /** 过程展开后保留原始顺序；完成轮次的中途说明也在这里回看。 */
       const renderProcessSegments = (active: boolean): ReactNode =>
@@ -1153,7 +1153,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             {hasProcessDetails ? (
               <SessionTurnProcessDisclosure
                 language={props.language}
-                itemCount={processActivityCount}
+                itemCount={row.replyVisible ? undefined : processActivityCount}
                 loading={Boolean(row.loadMore && processPaging?.loading)}
                 error={row.loadMore ? processPaging?.error : null}
                 open={expandedRowKeys.has(expansionKey)}
@@ -1183,7 +1183,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
               turn={(turnActive && !row.replyVisible) || projectedTurnWorkKeyByTurn.get(row.turnId) !== row.key ? undefined : turn}
               replyVisible={row.replyVisible}
               requests={props.state.pendingRequests}
-              itemCount={processActivityCount}
+              itemCount={row.replyVisible ? undefined : processActivityCount}
               loading={Boolean(row.loadMore && processPaging?.loading)}
               error={row.loadMore ? processPaging?.error : null}
               open={expandedRowKeys.has(expansionKey)}
@@ -1473,29 +1473,32 @@ function V2HistoryPageStatus(props: { state: NativeSessionState; language: Sessi
   );
 }
 
-/** 复用已读过程，只有用户明确请求才补页，展开与重新挂载不会触发读取。 */
-function TurnProcessPageSentinel(props: { enabled: boolean; paging: NonNullable<ReturnType<typeof turnDetailPaging>>; language: SessionUiLanguage; turnId: string; onLoad: (turnId: string) => void | Promise<void> }) {
-  return (
-    <div className="session-v2-content" data-process-page aria-busy={props.paging.loading}>
-      {props.paging.hasMore || props.paging.error ? (
-        <button type="button" className="session-v2-page-action" disabled={!props.enabled || props.paging.loading} onClick={() => void Promise.resolve(props.onLoad(props.turnId)).catch(() => undefined)}>
-          {props.paging.loading
-            ? props.language === 'zh-CN'
-              ? '正在加载…'
-              : 'Loading…'
-            : props.paging.error
-              ? props.language === 'zh-CN'
-                ? '重试加载'
-                : 'Retry loading'
-              : props.language === 'zh-CN'
-                ? '加载更多过程'
-                : 'Load more process'}
-        </button>
-      ) : null}
-    </div>
-  );
+/** 只在缺页边界进入会话视口时补读，过程内不增加分页或重试按钮。 */
+function TurnProcessPageSentinel(props: { enabled: boolean; paging: NonNullable<ReturnType<typeof turnDetailPaging>>; turnId: string; onLoad: (turnId: string) => void | Promise<void> }) {
+  /** 观察真实的缺页位置，收起或滚动其他容器不触发读取。 */
+  const sentinelRef = useRef<HTMLSpanElement>(null);
+  /** 同一游标最多请求一次，失败或没有推进时停止自动补页。 */
+  const requestedCursorRef = useRef<string | null>(null);
+  /** 可见性独立于已读数据，重新展开复用控制器保留的分页范围。 */
+  const [intersecting, setIntersecting] = useState(false);
+  useEffect(() => {
+    /** 缺页标记随折叠内容挂载，观察器随内容卸载释放。 */
+    const sentinel = sentinelRef.current;
+    if (!sentinel || typeof IntersectionObserver === 'undefined') return;
+    /** 沿用时间线的滚动容器与边界观察方式。 */
+    const observer = new IntersectionObserver((entries) => setIntersecting(entries.some((entry) => entry.isIntersecting)), { root: sentinel.closest('.session-transcript') });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
+    if (!props.enabled || !intersecting || !props.paging.hasMore || props.paging.loading || props.paging.error || requestedCursorRef.current === props.paging.cursor) return;
+    requestedCursorRef.current = props.paging.cursor;
+    void Promise.resolve(props.onLoad(props.turnId)).catch(() => undefined);
+  }, [intersecting, props.enabled, props.onLoad, props.paging.cursor, props.paging.error, props.paging.hasMore, props.paging.loading, props.turnId]);
+  return <span ref={sentinelRef} className="session-turn-process-page-sentinel" data-process-page aria-hidden="true" />;
 }
 
+/** 创建与重试共用执行状态的文字排版和扫光，失败继续保留原位恢复入口。 */
 function SessionCreationNotice(props: { status: SessionCreationStatus; language: SessionUiLanguage }) {
   if (props.status.state !== 'creating' && props.status.state !== 'retrying') {
     return (
@@ -1511,13 +1514,12 @@ function SessionCreationNotice(props: { status: SessionCreationStatus; language:
       </section>
     );
   }
+  /** 重试计数沿用实际创建状态，普通连接文案由调用方提供。 */
   const retryingMessage = props.status.state === 'retrying' ? `${props.language === 'zh-CN' ? '正在重试' : 'Retrying'}… ${props.status.retryAttempt ?? 1}/${props.status.maxRetries ?? 5}` : props.status.message;
   return (
     <section className={`session-creation-status is-${props.status.state}`} role="status" aria-live="polite">
       {sessionConnectionSymbol}
-      <span className="session-creation-status-copy">
-        <strong>{retryingMessage}</strong>
-      </span>
+      <SessionSweepText className="session-current-status-text" text={retryingMessage} active />
     </section>
   );
 }
