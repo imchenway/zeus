@@ -1,4 +1,3 @@
-
 .macos-ai-app .automations-workspace {
   box-sizing: border-box;
   display: grid;
@@ -196,8 +195,9 @@
   padding: 16px;
 }
 
-.macos-ai-app .automation-inbox-row[data-unread='true'] {
-  box-shadow: inset 3px 0 var(--zeus-product-accent);
+/* 未读结果通过标题字重区分，避免使用侧边色条。 */
+.macos-ai-app .automation-inbox-row[data-unread='true'] strong {
+  font-weight: 700;
 }
 
 .macos-ai-app .automation-run-status {

@@ -217,8 +217,9 @@
   padding: 16px;
 }
 
-.macos-ai-app .automation-inbox-row[data-unread='true'] {
-  box-shadow: inset 3px 0 var(--zeus-product-accent);
+/* 未读结果通过标题字重区分，避免使用侧边色条。 */
+.macos-ai-app .automation-inbox-row[data-unread='true'] strong {
+  font-weight: 700;
 }
 
 .macos-ai-app .automation-run-status {
@@ -567,7 +568,6 @@
 
 .task-workflow-manual-deliverable {
   padding: 10px;
-  border-left: 2px solid var(--zeus-accent-blue);
 }
 
 .task-workflow-manual-deliverable .button {
@@ -2334,7 +2334,8 @@ a {
   inset-inline-start: -6px;
   width: 3px;
   border-radius: 999px;
-  background: var(--zeus-product-accent);
+  /* 拖放位置保留中性指示线，便于辨识插入顺序。 */
+  background: var(--zeus-control-muted-text);
   content: '';
   pointer-events: none;
 }
@@ -2503,7 +2504,6 @@ a {
   gap: 7px;
   padding: 9px 10px;
   border: 1px solid color-mix(in oklab, var(--task-board-card-tone) 28%, var(--zeus-control-border));
-  border-inline-start: 3px solid color-mix(in oklab, var(--task-board-card-tone) 70%, var(--zeus-control-border));
   border-radius: 8px;
   background: var(--zeus-product-panel);
   box-shadow: 0 1px 2px rgb(0 0 0 / 6%);
@@ -2867,8 +2867,7 @@ a {
 
 .macos-ai-app .task-board-filter-group {
   padding: 7px;
-  border-inline-start: 2px solid color-mix(in oklab, var(--zeus-product-accent) 42%, var(--zeus-control-border));
-  background: color-mix(in oklab, var(--zeus-product-accent) 4%, transparent);
+  background: transparent;
 }
 
 .macos-ai-app .task-board-filter-group-heading,
@@ -17298,7 +17297,6 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   gap: 3px;
   padding: 7px 8px;
   border: 0;
-  border-inline-start: 2px solid transparent;
   border-radius: 4px;
   background: transparent;
   color: inherit;
@@ -17322,12 +17320,11 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-git-conflict-files button.is-active {
-  border-inline-start-color: var(--zeus-accent, #3977db);
-  background: color-mix(in oklab, var(--zeus-accent, #3977db) 8%, var(--zeus-product-panel-muted));
+  background: var(--zeus-source-list-selected);
 }
 
 .macos-ai-app .task-git-conflict-files button:focus-visible {
-  outline: 2px solid color-mix(in oklab, var(--zeus-accent, #3977db) 48%, transparent);
+  outline: 2px solid var(--zeus-focus-line);
   outline-offset: -2px;
 }
 
@@ -22197,7 +22194,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   gap: 6px;
   padding: 9px 10px;
   border-color: var(--zeus-product-line-soft, var(--zeus-control-border));
-  border-inline-start-color: color-mix(in oklab, var(--task-board-card-tone) 78%, var(--zeus-control-border));
   border-radius: 8px;
   background: var(--zeus-product-panel);
   box-shadow:
@@ -22207,7 +22203,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 
 .macos-ai-app .task-board-card:hover:not(:disabled):not([aria-disabled='true']) {
   border-color: var(--zeus-control-border-hover);
-  border-inline-start-color: color-mix(in oklab, var(--task-board-card-tone) 86%, var(--zeus-control-border-hover));
   box-shadow: 0 5px 14px rgb(0 0 0 / 8%);
   transform: translateY(-1px);
 }
@@ -22650,8 +22645,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   gap: 7px;
   padding: 10px 11px;
   border-color: var(--zeus-product-line);
-  border-inline-start-width: 2px;
-  border-inline-start-color: color-mix(in oklab, var(--task-board-card-tone) 82%, var(--zeus-product-line));
   border-radius: 6px;
   background: var(--zeus-native-surface, var(--zeus-product-panel));
   box-shadow: 0 1px 1px rgb(0 0 0 / 3%);
@@ -22662,7 +22655,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 
 .macos-ai-app .task-board-card:hover:not(:disabled):not([aria-disabled='true']) {
   border-color: var(--zeus-control-border-hover);
-  border-inline-start-color: color-mix(in oklab, var(--task-board-card-tone) 86%, var(--zeus-control-border-hover));
   background: color-mix(in oklab, var(--zeus-native-row-hover) 42%, var(--zeus-native-surface, var(--zeus-product-panel)));
   box-shadow: 0 1px 1px rgb(0 0 0 / 3%);
   transform: none;
@@ -22923,7 +22915,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 .macos-ai-app .task-board-filter-group {
   gap: 6px;
   padding: 8px 0 8px 10px;
-  border-inline-start-color: var(--zeus-native-row-separator, var(--zeus-product-line));
   background: transparent;
 }
 

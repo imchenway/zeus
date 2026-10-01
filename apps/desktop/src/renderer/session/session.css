@@ -2239,7 +2239,6 @@
 }
 
 .session-codex-parity-v1 .session-message-response-annotations > article {
-  border-inline-start: 2px solid var(--session-accent);
   display: grid;
   gap: 3px;
   min-inline-size: 0;
@@ -4269,9 +4268,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   outline-offset: 1px;
 }
 
+/* 键盘焦点用完整中性描边，保持可见且不出现侧边色条。 */
 .session-codex-parity-v1 .session-runtime-details > summary:focus-visible {
-  box-shadow: inset 3px 0 0 var(--session-focus-outline);
-  outline: 0;
+  outline: 1px solid var(--zeus-focus-line);
+  outline-offset: -1px;
 }
 
 @media (forced-colors: active) {
@@ -8602,9 +8602,9 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   padding-inline: 0 24px;
 }
 
+/* 源码选中行与其他列表共用中性底色。 */
 .session-codex-parity-v1 .session-source-code-preview .cm-line[data-selected='true'] {
-  background: color-mix(in oklab, var(--session-accent) 15%, transparent);
-  box-shadow: inset 2px 0 0 var(--session-accent);
+  background: var(--zeus-source-list-selected);
 }
 
 /* 行号与源码正文同底色，保留文字和选中行的区分。 */

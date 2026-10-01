@@ -446,7 +446,7 @@
   background: var(--zeus-product-accent);
 }
 
-/* 节点用类型标签和文字表达状态，颜色只作辅助。 */
+/* 节点由类型标签和文字表达状态，使用等宽边框。 */
 .digital-team-node {
   display: grid;
   box-sizing: border-box;
@@ -455,29 +455,19 @@
   min-block-size: 94px;
   padding: 12px 13px;
   border: 1px solid var(--zeus-product-line);
-  border-inline-start: 2px solid var(--zeus-product-accent);
   border-radius: 6px;
   color: var(--zeus-product-text);
   background: var(--zeus-product-panel);
   box-shadow: none;
 }
 
-.digital-team-node.is-human_confirmation {
-  border-inline-start-color: color-mix(in srgb, var(--zeus-product-accent) 58%, #eaa72b);
-}
-
-.digital-team-node.is-code_integration {
-  border-inline-start-color: color-mix(in srgb, var(--zeus-product-accent) 58%, #3c9b73);
-}
-
 .digital-team-node.is-selected {
-  border-color: var(--zeus-product-accent);
-  box-shadow: 0 0 0 1px var(--zeus-product-accent);
+  border-color: var(--zeus-control-border-hover);
+  box-shadow: 0 0 0 1px var(--zeus-focus-line);
 }
 
 .digital-team-node.has-error {
-  border-block-color: var(--zeus-control-danger-line);
-  border-inline-end-color: var(--zeus-control-danger-line);
+  border-color: var(--zeus-control-danger-line);
 }
 
 .digital-team-node-kind,

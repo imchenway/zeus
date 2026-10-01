@@ -156,13 +156,8 @@
 }
 
 /* 与 Zeus 工作面共用主题色，边框留白不参与字符尺寸测量。 */
-.command-center-error,
-.command-run-failure {
+.command-center-error {
   color: var(--zeus-control-danger-text);
-}
-
-.command-run-failure {
-  white-space: pre-line;
 }
 
 .command-definition-list {
@@ -218,6 +213,14 @@
   padding: 3px 7px;
 }
 
+/* 执行状态保持紧凑，避免长文案挤压时间和操作按钮。 */
+.command-run-status {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .command-definition-copy > span:not(.command-definition-title),
 .command-definition-copy > small,
 .command-run-detail small,
@@ -236,17 +239,31 @@
 
 .command-run-layout {
   display: grid;
-  grid-template-columns: minmax(220px, 32%) minmax(0, 1fr);
-  min-height: 280px;
+  grid-template-columns: 224px minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+
+/* 历史列表沿用弹窗表面，固定宽度为长日志保留横向空间。 */
+.command-run-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
 }
 
 .command-run-list {
-  border-right: 0;
+  flex: 1;
   list-style: none;
   margin: 0;
-  max-height: 480px;
+  min-height: 0;
   overflow: auto;
-  padding: 0;
+  overscroll-behavior: contain;
+  padding: 8px;
+}
+
+.command-run-list > li + li {
+  margin-top: 4px;
 }
 
 .command-run-list > li > button {
@@ -254,14 +271,15 @@
   appearance: none;
   background: transparent;
   border: 0;
-  border-bottom: 0;
+  border-radius: 8px;
   color: inherit;
   cursor: pointer;
   display: flex;
   font: inherit;
   justify-content: space-between;
-  min-height: 58px;
-  padding: 9px 12px;
+  gap: 8px;
+  min-height: 64px;
+  padding: 10px 12px;
   text-align: left;
   width: 100%;
 }
@@ -270,13 +288,13 @@
   background: var(--zeus-interaction-hover);
 }
 
-/* 交互状态独立于页面底色，统一表面后仍能辨识当前位置。 */
+/* 选中记录使用共用中性底色，避免侧边色条抢占视觉重心。 */
 .command-run-list > li > button.selected {
-  background: var(--zeus-interaction-hover);
+  background: var(--zeus-source-list-selected);
 }
 
 .command-run-list > li > button:focus-visible {
-  outline: 2px solid var(--zeus-control-accent);
+  outline: 2px solid var(--zeus-focus-line);
   outline-offset: -2px;
 }
 
@@ -288,6 +306,13 @@
 
 .command-run-list small {
   color: var(--zeus-control-muted-text);
+  font-size: 11px;
+}
+
+.command-run-list strong {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
 }
 
 .command-run-duration {
@@ -311,12 +336,44 @@
 }
 
 .command-run-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
   min-width: 0;
-  padding: 16px;
+  overflow: hidden;
+  padding: 20px;
 }
 
 .command-run-detail > header {
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 12px;
   justify-content: space-between;
+}
+
+.command-run-detail > header > span {
+  min-width: 0;
+}
+
+.command-run-detail > header strong {
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+.command-run-detail > header small {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-run-detail-actions {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 10px;
 }
 
 .command-run-sync-warning {
@@ -327,7 +384,8 @@
   color: var(--zeus-control-danger-text);
   display: flex;
   gap: 9px;
-  margin: 14px 0 0;
+  flex: 0 0 auto;
+  margin: 0;
   padding: 10px 12px;
 }
 
@@ -351,7 +409,10 @@
 }
 
 .command-run-detail dl {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  flex: 0 0 auto;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+  padding-bottom: 12px;
 }
 
 .command-run-detail dl div,
@@ -373,29 +434,139 @@
   overflow-wrap: anywhere;
 }
 
+/* 元信息使用一行轻量统计，不与日志争夺视觉重心。 */
+.command-run-detail dl div {
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+}
+
+.command-run-detail dt {
+  font-size: 11px;
+}
+
+.command-run-detail dd {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 运行说明在终端内用单行提示，展开后保留完整内容。 */
+.command-run-failure {
+  color: #e7b5ae;
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.command-run-failure > summary {
+  align-items: center;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: flex;
+  font-size: 11px;
+  gap: 7px;
+  padding: 6px 14px;
+  width: 100%;
+}
+
+.command-run-failure > summary > svg {
+  flex: 0 0 auto;
+  height: 14px;
+  width: 14px;
+}
+
+.command-run-failure-preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-run-disclosure-label {
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 11px;
+  gap: 4px;
+}
+
+.command-run-failure > pre {
+  color: #cbd5e1;
+  font:
+    12px/1.6 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  margin: 0;
+  max-height: min(140px, 20dvh);
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding: 8px 14px;
+  white-space: pre-wrap;
+}
+
+.command-run-failure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.command-run-failure[open] .command-run-disclosure-label > svg {
+  transform: rotate(180deg);
+}
+
+.command-run-failure > summary:focus-visible {
+  outline: 2px solid var(--zeus-control-accent);
+  outline-offset: -2px;
+}
+
 .command-run-log-shell {
   background: #111419;
   border-radius: 10px;
   color: #e7ecf3;
-  margin: 14px 0 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 140px;
   overflow: hidden;
 }
 
 .command-run-log-toolbar {
   align-items: center;
-  border-bottom: 0;
+  border-bottom: 1px solid rgb(255 255 255 / 8%);
   display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 4px 12px;
   justify-content: space-between;
-  min-height: 40px;
-  padding: 5px 7px 5px 12px;
+  min-height: 42px;
+  padding: 6px 10px 6px 14px;
 }
 
 .command-run-log-toolbar > strong {
+  align-items: center;
+  display: flex;
   font-size: 12px;
   font-weight: 600;
+  gap: 7px;
 }
 
-.command-run-copy-action {
+.command-run-log-toolbar > strong > svg {
+  color: #9ba9bb;
+  height: 16px;
+  width: 16px;
+}
+
+/* 文件操作和复制共用工具栏，不在日志底部保留文件区。 */
+.command-run-log-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.command-run-log-action {
   align-items: center;
   appearance: none;
   background: transparent;
@@ -405,42 +576,44 @@
   cursor: pointer;
   display: inline-flex;
   flex: 0 0 auto;
-  inline-size: 28px;
+  font: inherit;
+  font-size: 11px;
+  gap: 6px;
   justify-content: center;
   min-block-size: 28px;
-  padding: 0;
+  padding: 4px 7px;
 }
 
-.command-run-copy-action:hover:not(:disabled):not([aria-disabled='true']) {
+.command-run-log-action:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-interaction-hover);
   border-color: var(--zeus-interaction-line);
   color: #f8fafc;
 }
 
-.command-run-copy-action:active:not(:disabled) {
+.command-run-log-action:active:not(:disabled) {
   background: var(--zeus-interaction-pressed);
 }
 
-.command-run-copy-action:focus-visible {
+.command-run-log-action:focus-visible {
   box-shadow: var(--zeus-control-focus);
   outline: 0;
 }
 
-.command-run-copy-action:disabled {
+.command-run-log-action:disabled {
   cursor: default;
   opacity: 0.48;
 }
 
-.command-run-copy-action[data-copy-state='copied'] {
+.command-run-log-action[data-copy-state='copied'] {
   /* 日志工具栏始终为深色，复制成功采用品牌亮色。 */
   color: color-mix(in srgb, var(--zeus-brand-highlight) 80%, white) !important;
 }
 
-.command-run-copy-action:is([data-copy-state='too_large'], [data-copy-state='failed']) {
+.command-run-log-action:is([data-copy-state='too_large'], [data-copy-state='failed']) {
   color: #fecaca !important;
 }
 
-.command-run-copy-action svg {
+.command-run-log-action svg {
   block-size: 15px;
   flex: 0 0 auto;
   inline-size: 15px;
@@ -459,39 +632,96 @@
 .command-run-log {
   background: transparent;
   color: inherit;
+  flex: 1;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
   line-height: 1.55;
   margin: 0;
-  max-height: 280px;
-  min-height: 92px;
+  min-height: 0;
   overflow: auto;
-  padding: 12px;
+  overflow-wrap: anywhere;
+  overscroll-behavior: contain;
+  padding: 12px 14px;
   white-space: pre-wrap;
 }
 
-.command-artifacts {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 16px;
+.command-run-log:focus-visible {
+  outline: 2px solid var(--zeus-control-accent);
+  outline-offset: -2px;
 }
 
-.command-artifacts button {
+/* 文件菜单挂在当前弹窗的门户根上，不受终端裁切或改变正文高度。 */
+.command-run-file-menu {
+  background: var(--zeus-solid-surface-bg);
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 10px;
+  box-sizing: border-box;
+  box-shadow: 0 8px 28px rgb(0 0 0 / 18%);
+  color: var(--zeus-control-text);
+  font-size: 12px;
+  padding: 5px;
+  pointer-events: auto;
+  position: fixed;
+  z-index: 1;
+}
+
+.command-run-file-menu > button {
+  align-items: center;
+  appearance: none;
   background: transparent;
   border: 0;
-  color: var(--zeus-control-link-text, #1769d2);
+  border-radius: 6px;
+  color: inherit;
   cursor: pointer;
-  min-height: 28px;
-  padding: 0;
+  display: flex;
+  font: inherit;
+  gap: 9px;
+  min-height: 46px;
+  padding: 7px 9px;
+  text-align: left;
+  width: 100%;
 }
 
-.command-artifacts img {
-  border-radius: 8px;
-  display: block;
-  margin-top: 8px;
-  max-height: 320px;
-  max-width: 100%;
+.command-run-file-menu > button:is(:hover, :focus-visible):not(:disabled) {
+  background: var(--zeus-source-list-selected);
+  outline: 0;
+}
+
+.command-run-file-menu > button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.command-run-file-menu > button > svg {
+  flex: 0 0 auto;
+  height: 16px;
+  width: 16px;
+}
+
+.command-run-file-menu > button > span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.command-run-file-menu strong {
+  font-size: 12px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-run-file-menu small {
+  color: var(--zeus-control-muted-text);
+  font-size: 11px;
+}
+
+.command-run-file-menu > p {
+  color: var(--zeus-control-danger-text);
+  font-size: 11px;
+  padding: 7px 9px;
 }
 
 .command-modal {
@@ -513,8 +743,9 @@
 
 .command-history-modal {
   grid-template-rows: auto minmax(0, 1fr);
-  max-height: min(960px, calc(100vh - 32px));
-  width: min(1320px, calc(100vw - 32px));
+  height: min(820px, calc(100dvh - 40px));
+  max-height: calc(100dvh - 40px);
+  width: min(1280px, calc(100vw - 40px));
 }
 
 .command-history-modal-body {
@@ -526,19 +757,9 @@
   margin: 16px 18px 0;
 }
 
-.command-history-modal .command-run-layout {
-  height: min(720px, calc(100vh - 144px));
-  min-height: 360px;
-}
-
-.command-history-modal .command-run-list {
-  max-height: none;
-  min-height: 0;
-}
-
-.command-history-modal .command-run-detail {
-  min-height: 0;
-  overflow: auto;
+/* 标题与工作区之间保持清晰分隔。 */
+.command-history-modal > .command-modal-header {
+  border-bottom: 1px solid var(--zeus-control-border);
 }
 
 .command-permission-modal {
@@ -767,11 +988,6 @@
   color: var(--zeus-control-muted-text);
 }
 
-.command-permission-next-step {
-  border-left: 3px solid var(--zeus-control-accent, var(--zeus-brand-primary));
-  padding-left: 10px;
-}
-
 @media (max-width: 820px) {
   .command-center {
     padding-inline: 14px;
@@ -791,34 +1007,38 @@
     grid-column: 1 / -1;
   }
 
-  .command-run-layout,
   .command-editor-grid,
   .command-parameter-row {
     grid-template-columns: 1fr;
   }
 
-  .command-run-list {
-    border-bottom: 0;
-    border-right: 0;
-    max-height: 220px;
+  /* 窄窗口把记录改为横向浏览，保持终端的可用高度。 */
+  .command-run-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
-  .command-run-detail dl,
+  .command-run-list {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+  }
+
+  .command-run-list > li {
+    flex: 0 0 178px;
+  }
+
+  .command-run-list > li + li {
+    margin-top: 0;
+  }
+
   .command-run-form dl {
     grid-template-columns: 1fr;
   }
 
-  .command-history-modal-body {
-    overflow: auto;
-  }
-
-  .command-history-modal .command-run-layout {
-    height: auto;
-    min-height: 0;
-  }
-
-  .command-history-modal .command-run-detail {
-    overflow: visible;
+  .command-run-detail {
+    gap: 10px;
+    padding: 14px;
   }
 
   .command-modal {
