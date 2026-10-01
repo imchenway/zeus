@@ -10830,7 +10830,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 
 /* ZEUS-0212：输入优先，左侧保留权限与计划，右侧承载上下文占用、速度、完整模型名与推理强度。 */
 .session-codex-parity-v1 .session-composer-input-frame {
-  /* 按输入框实际宽度换行，兼顾窗口和浏览器分栏收窄。 */
+  /* 按输入框实际宽度收起模型文字，兼顾窗口和浏览器分栏收窄。 */
   container-name: session-composer;
   container-type: inline-size;
   box-shadow:
@@ -10851,34 +10851,24 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 
 .session-codex-parity-v1 .session-composer-command-row {
   column-gap: 10px;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  /* 两组按钮共同参与弹性收缩，避免网格固定左列后让右列反向重叠。 */
+  min-inline-size: 0;
 }
 
 .session-codex-parity-v1 .session-composer-leading-actions {
-  justify-self: start;
+  min-inline-size: 0;
 }
 
 .session-codex-parity-v1 .session-composer-trailing-actions {
   justify-content: flex-end;
-  justify-self: end;
   min-inline-size: 0;
 }
 
 .session-codex-parity-v1 .session-composer-runtime-settings {
-  flex-wrap: wrap;
+  /* 操作入口始终单行，窄宽度由模型图标释放空间。 */
+  flex-wrap: nowrap;
   justify-content: flex-end;
   min-inline-size: 0;
-}
-
-@container session-composer (max-width: 560px) {
-  .session-codex-parity-v1 .session-composer-command-row {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .session-codex-parity-v1 .session-composer-trailing-actions {
-    inline-size: 100%;
-  }
 }
 
 .session-codex-parity-v1 .session-context-usage-indicator {
@@ -10888,7 +10878,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   display: inline-flex;
   flex: 0 0 auto;
   block-size: 32px;
-  inline-size: 32px;
+  inline-size: var(--session-composer-icon-width, 32px);
   justify-content: center;
   outline: none;
   position: relative;
@@ -11019,7 +11009,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   block-size: 32px;
   border-radius: 999px !important;
   display: inline-flex;
-  inline-size: 32px;
+  inline-size: var(--session-composer-icon-width, 32px);
   justify-content: center;
   padding: 0 !important;
 }
@@ -11066,24 +11056,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   --zeus-select-option-hover-bg: color-mix(in srgb, var(--zeus-danger-text) 10%, transparent);
 }
 
-.session-codex-parity-v1 .session-composer-model-dropdown .session-composer-dropdown-trigger {
-  max-inline-size: min(420px, 46vw);
-}
-
-.session-codex-parity-v1 .session-composer-model-dropdown .session-composer-dropdown-trigger > span {
-  overflow: visible;
-  overflow-wrap: anywhere;
-  text-align: start;
-  text-overflow: clip;
-  white-space: normal;
-}
-
 .session-codex-parity-v1 .session-collaboration-mode {
   background: transparent !important;
   block-size: 32px;
   border-radius: 999px !important;
   gap: 0;
-  inline-size: 32px;
+  inline-size: var(--session-composer-icon-width, 32px);
   justify-content: center;
   padding: 0 !important;
 }
@@ -11107,7 +11085,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   block-size: 32px;
   border-radius: 999px !important;
   display: inline-flex;
-  inline-size: 32px;
+  inline-size: var(--session-composer-icon-width, 32px);
   justify-content: center;
   padding: 0 !important;
 }
@@ -11135,7 +11113,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   border-radius: 999px !important;
   color: var(--session-text-muted);
   display: inline-flex;
-  inline-size: 32px;
+  inline-size: var(--session-composer-icon-width, 32px);
   justify-content: center;
   padding: 0 !important;
 }
@@ -11249,15 +11227,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   opacity: 1;
 }
 
-@media (max-width: 559px) {
-  .session-codex-parity-v1 .session-composer-command-row {
-    align-items: end;
-  }
-
-  .session-codex-parity-v1 .session-composer-model-dropdown .session-composer-dropdown-trigger {
-    max-inline-size: min(260px, 48vw);
-  }
-}
 /* ZEUS-0294：会话页只定义触发器布局，浮层、搜索、选项和滚动统一复用 ZeusSelect。 */
 .session-codex-parity-v1 .session-new-conversation-context-select.zeus-select,
 .session-codex-parity-v1 .session-composer-dropdown.zeus-select {
@@ -11320,7 +11289,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 /* 直接约束共享下拉框的真实触发器，避免通用文字入口规则覆盖权限按钮的宽度和内边距。 */
 .session-codex-parity-v1 .session-composer-dropdown.zeus-select[data-zeus-primitive='select'][data-control-size='compact'][data-icon-only='true'] > .session-composer-dropdown-trigger {
   border-radius: 999px;
-  inline-size: 32px;
+  inline-size: var(--session-composer-icon-width, 32px);
   justify-content: center;
   padding: 0;
 }
@@ -11350,6 +11319,11 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   max-inline-size: 100% !important;
 }
 
+/* 宽输入框显示模型文字，窄输入框才启用同一按钮内的大脑图标。 */
+.session-codex-parity-v1 .session-composer-model-dropdown .zeus-select-trigger-icon {
+  display: none;
+}
+
 .session-codex-parity-v1 .session-composer-dropdown[data-icon-only='true'] > .session-composer-dropdown-trigger .zeus-select-chevron {
   display: none;
 }
@@ -11363,16 +11337,68 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
     inline-size: 100%;
     max-inline-size: none;
   }
+}
 
+/* 模型入口收为固定点击宽度，权限、计划、目标、运行设置和发送保持单行。 */
+@container session-composer (max-width: 560px) {
   .session-codex-parity-v1 .session-composer-model-dropdown.zeus-select {
-    max-inline-size: min(260px, 48vw);
+    flex: 0 0 var(--session-composer-icon-width, 32px);
+    inline-size: var(--session-composer-icon-width, 32px);
+    max-inline-size: var(--session-composer-icon-width, 32px);
+  }
+
+  .session-codex-parity-v1 .session-composer-model-dropdown.zeus-select[data-zeus-primitive='select'][data-control-size='compact'] > .session-composer-dropdown-trigger {
+    inline-size: var(--session-composer-icon-width, 32px);
+    justify-content: center;
+    padding: 0;
+  }
+
+  .session-codex-parity-v1 .session-composer-model-dropdown .zeus-select-value,
+  .session-codex-parity-v1 .session-composer-model-dropdown .zeus-select-chevron {
+    display: none;
+  }
+
+  .session-codex-parity-v1 .session-composer-model-dropdown .zeus-select-trigger-icon {
+    display: inline-flex;
   }
 }
 
-/* 以输入框宽度覆盖模型框通用上限，给推理强度保留同一行的点击空间。 */
-@container session-composer (max-width: 560px) {
-  .session-codex-parity-v1 .session-composer-model-dropdown.zeus-select {
-    max-inline-size: calc(100% - 56px);
+/* 极窄输入框先释放间距和文字按钮内边距，避免右侧设置挤入目标按钮区域。 */
+@container session-composer (max-width: 340px) {
+  .session-codex-parity-v1 .session-composer-command-row {
+    /* 先收紧留白，再按剩余宽度统一收紧图标入口，图形保持原有尺寸。 */
+    --session-composer-icon-width: 28px;
+    column-gap: 0;
+  }
+
+  .session-codex-parity-v1 .session-composer-leading-actions {
+    flex: 0 0 auto;
+  }
+
+  .session-codex-parity-v1 .session-composer-command-row button {
+    min-inline-size: var(--session-composer-icon-width);
+  }
+
+  .session-codex-parity-v1 .session-composer-leading-actions,
+  .session-codex-parity-v1 .session-composer-trailing-actions,
+  .session-codex-parity-v1 .session-composer-runtime-settings {
+    gap: 0;
+  }
+
+  .session-codex-parity-v1 .session-composer-runtime-settings > .session-composer-dropdown.zeus-select[data-zeus-primitive='select'][data-control-size='compact'] > .session-composer-dropdown-trigger {
+    gap: 0;
+    padding: 0;
+  }
+}
+
+/* 更窄时保留至少 24px 点击宽度，主操作维持 28px，所有入口继续在输入框内。 */
+@container session-composer (max-width: 280px) {
+  .session-codex-parity-v1 .session-composer-command-row {
+    --session-composer-icon-width: 24px;
+  }
+
+  .session-codex-parity-v1 .session-primary-command-slot {
+    flex-basis: 28px;
   }
 }
 /* ZEUS-0288：消息从提交到 Provider 接管保持同一视觉身份，流式过程使用持续而非逐增量重启动画。 */

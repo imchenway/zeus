@@ -5,6 +5,7 @@ import { MotionPresence } from '../ui/MotionPresence.js';
 import { temporaryWorkspaceId, isConversationWorktreeOptions, type ConversationWorktreeOptions, type AsyncQuestionAnswer } from '@zeus/shared';
 import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
+import { BrainIcon as Brain } from '@phosphor-icons/react/dist/csr/Brain';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paperclip';
 import { TargetIcon as Target } from '@phosphor-icons/react/dist/csr/Target';
@@ -3821,6 +3822,8 @@ export function NewConversationComposer(props: {
                   label={props.language === 'zh-CN' ? '模型' : 'Model'}
                   triggerLabel={`${props.language === 'zh-CN' ? '模型' : 'Model'}：${selectedModelLabel}`}
                   displayLabel={selectedModelLabel}
+                  // 新建会话与已有会话共用窄输入框的模型图标布局。
+                  triggerIcon={<Brain aria-hidden="true" weight="regular" />}
                   className="session-composer-model-dropdown"
                   value={selectedModel?.id ?? ''}
                   options={modelPresentation.options}
