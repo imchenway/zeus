@@ -16043,7 +16043,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 6px;
   padding: 6px 4px;
   border: 0;
   background: transparent;
@@ -16052,13 +16052,18 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 }
 
 .macos-ai-app .task-git-review-file-tree button span {
+  /* 文件名紧跟图标并占用剩余空间，状态文字保留在行尾。 */
+  flex: 1;
+  min-inline-size: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .macos-ai-app .task-git-review-file-tree button small {
+  flex: 0 0 auto;
   color: var(--zeus-product-muted);
+  white-space: nowrap;
 }
 
 .macos-ai-app .task-git-review-diff-table {
@@ -17205,7 +17210,9 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   inline-size: 100%;
   min-block-size: 44px;
   display: grid;
-  gap: 3px;
+  /* 图标与路径同一行，冲突状态在路径下方，不再为图标增加一行。 */
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 3px 6px;
   padding: 7px 8px;
   border: 0;
   border-inline-start: 2px solid transparent;
@@ -17217,6 +17224,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 
 .macos-ai-app .task-git-conflict-files button > span,
 .macos-ai-app .task-git-conflict-files button > small {
+  grid-column: 2;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -8215,6 +8215,9 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   box-sizing: border-box;
   box-shadow: none;
   flex: 0 0 auto;
+  /* 会话文件摘要使用舒展的正文节奏，状态颜色只用于增删统计。 */
+  font-size: 14px;
+  line-height: 20px;
   inline-size: min(var(--session-thread-max), 100%);
   margin-inline: auto;
   overflow: hidden;
@@ -8222,66 +8225,80 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
 .session-codex-parity-v1 .session-turn-change-card > header {
   align-items: center;
+  box-sizing: border-box;
   display: flex;
-  gap: 16px;
+  gap: 12px;
   justify-content: space-between;
-  min-block-size: 70px;
-  padding: 10px 12px 10px 14px;
+  padding: 16px 16px 12px;
 }
 
 .session-codex-parity-v1 .session-turn-change-summary {
   align-items: center;
   display: flex;
+  flex: 1;
   gap: 12px;
   min-inline-size: 0;
 }
 
 .session-codex-parity-v1 .session-turn-change-icon {
   align-items: center;
-  background: var(--session-control);
-  border-radius: 10px;
+  background: transparent;
   color: var(--session-text-muted);
   display: inline-flex;
-  flex: 0 0 46px;
+  flex: 0 0 28px;
   justify-content: center;
-  block-size: 46px;
+  block-size: 28px;
 }
 
 .session-codex-parity-v1 .session-turn-change-icon svg {
-  block-size: 24px;
-  inline-size: 24px;
+  block-size: 20px;
+  inline-size: 20px;
 }
 
 .session-codex-parity-v1 .session-turn-change-summary > span:last-child {
   display: flex;
+  flex: 1;
   flex-direction: column;
+  gap: 4px;
+  min-inline-size: 0;
+}
+
+/* 状态以次级标签说明能力，标题和文件名保持中性。 */
+.session-codex-parity-v1 .session-turn-change-heading {
+  align-items: center;
+  display: flex;
+  gap: 8px;
   min-inline-size: 0;
 }
 
 .session-codex-parity-v1 .session-turn-change-title {
-  font-size: 15px;
-  font-weight: 400;
-  line-height: 22px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-turn-change-availability {
+  color: var(--session-text-muted);
+  flex: 0 0 auto;
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
 }
 
 .session-codex-parity-v1 .session-turn-change-summary small {
-  font-size: 13px;
-  line-height: 18px;
-}
-
-.session-codex-parity-v1 .session-turn-change-view {
   color: var(--session-text-muted);
-  display: none;
+  font-size: 12px;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.session-codex-parity-v1 .session-turn-change-card:hover:not(:disabled):not([aria-disabled='true']) .session-turn-change-stats,
-.session-codex-parity-v1 .session-turn-change-card:focus-within .session-turn-change-stats {
-  display: none;
-}
-
-.session-codex-parity-v1 .session-turn-change-card:hover:not(:disabled):not([aria-disabled='true']) .session-turn-change-view,
-.session-codex-parity-v1 .session-turn-change-card:focus-within .session-turn-change-view {
-  display: inline;
+.session-codex-parity-v1 .session-turn-change-total {
+  margin-inline-end: 10px;
 }
 
 .session-codex-parity-v1 .session-change-added {
@@ -8295,7 +8312,9 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 .session-codex-parity-v1 .session-turn-change-card nav {
   align-items: center;
   display: flex;
-  gap: 3px;
+  /* 操作始终位于标题右侧，窄容器由标题省略腾出空间。 */
+  flex: 0 0 auto;
+  gap: 4px;
 }
 
 .session-codex-parity-v1 .session-turn-change-card nav > button {
@@ -8304,13 +8323,15 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   background: transparent;
   border: 0;
   border-radius: 7px;
+  box-sizing: border-box;
   cursor: pointer;
   display: inline-flex;
-  font-size: 13px;
-  font-weight: 540;
+  font-size: 12px;
+  font-weight: 500;
   gap: 4px;
-  min-block-size: 28px;
-  padding: 0 8px;
+  line-height: 18px;
+  min-block-size: 32px;
+  padding: 6px 10px;
 }
 
 .session-codex-parity-v1 .session-turn-change-card nav > button:hover:not(:disabled):not([aria-disabled='true']) {
@@ -8327,9 +8348,17 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   inline-size: 15px;
 }
 
-.session-codex-parity-v1 .session-turn-change-review {
-  border: 1px solid var(--session-line) !important;
-  padding-inline: 10px !important;
+.session-codex-parity-v1 .session-turn-change-card nav > .session-turn-change-review {
+  background: var(--session-control);
+  border: 1px solid var(--session-line);
+  padding-inline: 12px;
+}
+
+/* 展开只使用轻量箭头，完整操作说明保留在无障碍名称和悬浮提示中。 */
+.session-codex-parity-v1 .session-turn-change-card nav > .session-turn-change-more {
+  justify-content: center;
+  padding: 0;
+  inline-size: 32px;
 }
 
 .session-codex-parity-v1 :where(.session-turn-change-error, .session-turn-change-notice) {
@@ -8360,13 +8389,13 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
 .session-codex-parity-v1 .session-turn-change-files {
   border-block-start: 0;
-  /* 全列表共享新增、删除两列的自然宽度，数字位数变化不挤偏相邻列。 */
+  /* 图标和路径各占一列，全列表共享新增、删除两列宽度，避免图标挤走路径或计数换行。 */
   display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content max-content;
-  column-gap: 8px;
+  grid-template-columns: max-content minmax(0, 1fr) max-content max-content;
+  column-gap: 12px;
   list-style: none;
   margin: 0;
-  padding: 9px 14px 7px;
+  padding: 0 8px 8px;
 }
 
 .session-codex-parity-v1 .session-turn-change-files > li {
@@ -8386,8 +8415,9 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   grid-column: 1 / -1;
   grid-template-columns: subgrid;
   inline-size: 100%;
-  min-block-size: 34px;
-  padding: 5px 7px;
+  /* 文件行保留适度留白，图标、名称与统计维持同一行。 */
+  min-block-size: 36px;
+  padding: 6px 8px;
   text-align: start;
 }
 
@@ -8396,17 +8426,23 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .session-turn-change-path {
-  color: var(--session-text-muted);
+  color: var(--session-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* 此处是会话摘要，文件图标与名称使用中性色；Git 工作区继续使用状态配色。 */
+.session-codex-parity-v1 .session-turn-change-card .session-turn-change-files svg.file-type-icon {
+  color: var(--session-text-muted);
+}
+
 .session-codex-parity-v1 .session-turn-change-file-counts {
   display: grid;
-  grid-column: 2 / -1;
+  grid-column: 3 / -1;
   grid-template-columns: subgrid;
   font-variant-numeric: tabular-nums;
+  font-size: 13px;
   text-align: end;
 }
 
@@ -8419,24 +8455,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   grid-column: 2;
 }
 
-.session-codex-parity-v1 .session-turn-change-more {
-  align-items: center;
-  appearance: none;
-  background: transparent;
-  border: 0;
-  color: var(--session-text);
-  cursor: pointer;
-  display: inline-flex;
-  font-weight: 550;
-  gap: 8px;
-  margin: 0 14px 10px;
-  min-block-size: 30px;
-  padding: 3px 7px;
-}
-
+/* 展开按钮复用标题操作栏样式，不再保留独占一行的底部按钮布局。 */
 .session-codex-parity-v1 .session-turn-change-more svg {
-  block-size: 14px;
-  inline-size: 14px;
   transition: transform 140ms ease-out;
 }
 
@@ -8861,11 +8881,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
   .session-codex-parity-v1 .session-open-with {
     margin-inline-start: 60px;
-  }
-
-  .session-codex-parity-v1 .session-turn-change-card > header {
-    align-items: flex-start;
-    flex-direction: column;
   }
 
   .session-codex-parity-v1 .session-turn-diff-layout {
