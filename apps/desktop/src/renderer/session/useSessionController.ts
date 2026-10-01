@@ -691,6 +691,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
   const fullChangeSetHydrationRevisions = new Map<string, string>();
   /** 同一 Snapshot 内容句柄只允许一个完整读取任务。 */
   const completeContentLoads = new Map<string, Promise<void>>();
+  /** 当前会话最多复用六十四个不可变输出页，折叠后再次阅读无需重发已读请求。 */
+  const toolResultPageLoads = new Map<string, Promise<NativeConversationToolResultPage>>();
   /** 同轮过程重建时让旧方向的迟到响应失效，避免覆盖新的首屏游标。 */
   const turnDetailLoadRevisions = new Map<string, number>();
   /** 连接换代时立即唤醒完整内容读取的重试等待。 */
@@ -2952,6 +2954,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       syncGapRecoveryPromise = null;
       for (const finish of [...completeContentRetryWaiters]) finish();
       completeContentLoads.clear();
+      toolResultPageLoads.clear();
       cancelPendingRequestRefreshRetry();
       requestsAwaitingDetails.clear();
       cancelReconnectLoop();
@@ -3406,10 +3409,42 @@ export function createSessionController(options: CreateSessionControllerOptions)
     loadConversationResources: loadConversationResourcesV2,
     loadTurnArtifacts: loadTurnArtifactsV2,
     loadV2Content: loadCompleteContentV2,
+    /** 每次只读取一个有界输出页，命令反复折叠共享已读页与在途请求。 */
     loadV2ToolResult(handle, offset) {
       const load = options.client.loadNativeConversationToolResult;
-      if (!load || !state.snapshot?.snapshotV2) return Promise.reject(new Error('当前会话不支持完整工具结果分页。'));
-      return load(options.projectId, options.conversationId, handle, { ...(offset === undefined ? {} : { offset }), limit: 16_384 });
+      if (!load || disposed || !state.snapshot?.snapshotV2) return Promise.reject(new Error('当前会话不支持完整工具结果分页。'));
+      /** 默认首段与显式首段共享同一请求位置。 */
+      const requestedOffset = offset ?? 0;
+      /** 句柄与偏移共同标识不可变页，读取范围不跨会话共享。 */
+      const key = JSON.stringify([handle, requestedOffset]);
+      /** 并发与重复展开共用同一页，最近阅读的结果保留在有界范围内。 */
+      const existing = toolResultPageLoads.get(key);
+      if (existing) {
+        toolResultPageLoads.delete(key);
+        toolResultPageLoads.set(key, existing);
+        return existing;
+      }
+      /** 验证读取位置后才复用，协议无效与读取失败都允许重新打开恢复。 */
+      const request = load(options.projectId, options.conversationId, handle, { offset: requestedOffset, limit: 16_384 })
+        .then((page) => {
+          if (
+            page.offset !== requestedOffset ||
+            !Number.isSafeInteger(page.offset) ||
+            page.offset < 0 ||
+            !Number.isSafeInteger(page.totalCharacters) ||
+            page.totalCharacters < page.offset + page.text.length ||
+            (page.nextOffset !== null && (!Number.isSafeInteger(page.nextOffset) || page.nextOffset <= page.offset || page.nextOffset > page.totalCharacters))
+          )
+            throw new Error('工具输出分页位置无效。');
+          return page;
+        })
+        .catch((error: unknown) => {
+          if (toolResultPageLoads.get(key) === request) toolResultPageLoads.delete(key);
+          throw error;
+        });
+      toolResultPageLoads.set(key, request);
+      if (toolResultPageLoads.size > 64) toolResultPageLoads.delete(toolResultPageLoads.keys().next().value!);
+      return request;
     },
   };
   return controller;

@@ -1,6 +1,6 @@
 import { Collapsible } from '../ui/Collapsible.js';
 import { AnimatedSize } from '../ui/AnimatedSize.js';
-import { type FocusEvent, type KeyboardEvent, createContext, useContext, memo, type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { type FocusEvent, type KeyboardEvent, createContext, useContext, memo, type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { CircleIcon as Circle } from '@phosphor-icons/react/dist/csr/Circle';
@@ -76,6 +76,7 @@ function useNamedSkillItems(items: NativeSessionItemBuffer[]): NativeSessionItem
 }
 
 const operationalTypes = new Set(['commandexecution', 'command', 'mcptoolcall', 'dynamictoolcall', 'websearch', 'imageview', 'toolcall', 'tool', 'filechange', 'file', 'contextcompaction', 'providerevent']);
+/** 单次展示按四万个字符推进，关闭命令时不挂载长输出。 */
 const MAX_ACTIVITY_OUTPUT_CHARACTERS = 40_000;
 
 export function isOperationalActivityItem(item: NativeSessionItemBuffer): boolean {
@@ -271,7 +272,7 @@ const ActivityItemRow = memo(function ActivityItemRow(props: {
               <div className="session-activity-item-detail-body">
                 {detail.command ? <code>{detail.command}</code> : null}
                 {detail.cwd ? <small>{detail.cwd}</small> : null}
-                {detail.output || toolResult ? <ActivityItemOutput output={detail.output} toolResult={toolResult} language={props.language} onLoadToolResult={props.onLoadToolResult} /> : null}
+                {detail.output || toolResult ? <ActivityItemOutput key={toolResult?.handle ?? props.item.key} output={detail.output} toolResult={toolResult} language={props.language} onLoadToolResult={props.onLoadToolResult} /> : null}
               </div>
             ) : null}
           </details>
@@ -283,67 +284,86 @@ const ActivityItemRow = memo(function ActivityItemRow(props: {
   );
 });
 
+/** 打开命令后按输出滚动位置补齐正文，不增加“展开剩余内容”等操作入口。 */
 function ActivityItemOutput(props: { output: string | null; toolResult: ActivityToolResult | null; language: SessionUiLanguage; onLoadToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage> }) {
+  /** 当前已读的不可变页，按真实偏移保留连续顺序。 */
   const [pages, setPages] = useState<NativeConversationToolResultPage[]>([]);
+  /** 长的本地输出与远端输出使用相同的分段展示上限。 */
+  const [visibleCharacters, setVisibleCharacters] = useState(MAX_ACTIVITY_OUTPUT_CHARACTERS);
+  /** 加载状态只播报，不要求用户再点一次展开。 */
   const [loading, setLoading] = useState(false);
+  /** 失败时保留已读输出并停止自动请求。 */
   const [loadError, setLoadError] = useState<unknown>(null);
-  const [showFull, setShowFull] = useState(false);
+  /** 同一命令一次只读取一页。 */
   const loadingRef = useRef(false);
-  const projectedOutput = props.output ?? props.toolResult?.projection ?? null;
-  const loadedOutput = pages.map((page) => page.text).join('');
-  const sourceOutput = normalizeActivityToolText(loadedOutput || projectedOutput || '').text ?? '';
-  const outputPreview = showFull ? { text: sourceOutput, truncated: false } : activityOutputPreview(sourceOutput);
+  /** 命令收起后不把迟到的结果写回已卸载的内容。 */
+  const mountedRef = useRef(true);
+  /** 复用现有输出滚动区，只有读到末尾才继续展示或读取。 */
+  const outputRef = useRef<HTMLPreElement>(null);
+  /** 输出正文只在投影或已读页变化时合并，滚动不重复解析协议。 */
+  const outputText = useMemo(() => {
+    /** 已读正文不足投影长度时继续保留投影，避免首个完整页使内容缩短。 */
+    const projected = normalizeActivityToolText(props.output ?? props.toolResult?.projection ?? '').text ?? '';
+    /** 远端页按偏移连接后再提取工具正文。 */
+    const loaded = normalizeActivityToolText(pages.map((page) => page.text).join('')).text ?? '';
+    return { text: pages.at(-1)?.nextOffset === null || loaded.length >= projected.length ? loaded : projected, loadedCharacters: loaded.length, projectedCharacters: projected.length };
+  }, [pages, props.output, props.toolResult?.projection]);
+  /** 已读完整页优先，首段正文尚未追上投影时保留原有可见内容。 */
+  const sourceOutput = outputText.text;
+  /** 同一滚动区逐段增加已读文本，避免首次挂载巨量输出。 */
+  const outputPreview = activityOutputPreview(sourceOutput, visibleCharacters);
+  /** 后续读取沿真实游标推进，结束页不再发起请求。 */
   const lastPage = pages.at(-1) ?? null;
+  /** 只有确实截断且有读取入口时才读取远端页。 */
   const canLoadMore = Boolean(props.toolResult?.handle && props.onLoadToolResult && (pages.length > 0 ? lastPage?.nextOffset !== null : props.toolResult.projectionTruncated));
-  const canShowFull = !canLoadMore && !showFull && sourceOutput.length > MAX_ACTIVITY_OUTPUT_CHARACTERS;
-
   useEffect(() => {
-    setPages([]);
-    setLoading(false);
-    setLoadError(null);
-    setShowFull(false);
-    loadingRef.current = false;
-  }, [props.toolResult?.handle]);
-
-  async function loadNextPage(): Promise<void> {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  /** 每次打开只准备首个有界页，之后读取由输出末尾的位置决定。 */
+  const loadNextPage = useCallback(async (): Promise<void> => {
     if (!props.toolResult?.handle || !props.onLoadToolResult || loadingRef.current) return;
     loadingRef.current = true;
     setLoading(true);
     setLoadError(null);
     try {
-      const page = await props.onLoadToolResult(props.toolResult.handle, lastPage?.nextOffset ?? undefined);
+      /** 已读页必须来自同一份结果，不能拼接变化后的正文。 */
+      const page = await props.onLoadToolResult(props.toolResult.handle, lastPage?.nextOffset ?? 0);
+      if (!mountedRef.current) return;
+      if (lastPage && (page.sha256 !== lastPage.sha256 || page.totalCharacters !== lastPage.totalCharacters)) throw new Error('工具输出在分页期间发生变化。');
       setPages((current) => [...current.filter((candidate) => candidate.offset !== page.offset), page].sort((left, right) => left.offset - right.offset));
     } catch (error) {
-      setLoadError(error);
+      if (mountedRef.current) setLoadError(error);
     } finally {
       loadingRef.current = false;
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
-  }
+  }, [lastPage, props.onLoadToolResult, props.toolResult?.handle]);
+  useEffect(() => {
+    /** 短的投影先读取正文；内容不足一屏时补齐，长输出等待用户继续滚动。 */
+    const output = outputRef.current;
+    if (!output || loading || loadError || !canLoadMore) return;
+    if (!lastPage || outputText.loadedCharacters < Math.min(visibleCharacters, outputText.projectedCharacters) || (!outputPreview.truncated && output.scrollHeight - output.clientHeight - output.scrollTop <= 24)) void loadNextPage();
+  }, [canLoadMore, lastPage, loadError, loadNextPage, loading, outputPreview.truncated, outputText.loadedCharacters, outputText.projectedCharacters, visibleCharacters]);
 
   return (
     <div className="session-activity-item-output" aria-busy={loading || undefined}>
-      {outputPreview.text ? <pre>{outputPreview.text}</pre> : null}
-      {outputPreview.truncated ? (
-        <small>
-          {props.language === 'zh-CN' ? `输出较大，当前显示前 ${MAX_ACTIVITY_OUTPUT_CHARACTERS.toLocaleString('zh-CN')} 个字符。` : `Large output; showing the first ${MAX_ACTIVITY_OUTPUT_CHARACTERS.toLocaleString('en-US')} characters.`}
-        </small>
-      ) : null}
-      {canLoadMore || canShowFull || loadError ? (
-        <button
-          type="button"
-          disabled={loading}
-          onClick={() => {
-            if (canShowFull) {
-              setShowFull(true);
-              return;
-            }
-            void loadNextPage();
-          }}
-        >
-          {loading ? (props.language === 'zh-CN' ? '正在展开…' : 'Expanding…') : loadError ? (props.language === 'zh-CN' ? '重试展开' : 'Retry expansion') : props.language === 'zh-CN' ? '展开剩余内容' : 'Expand remaining content'}
-        </button>
-      ) : null}
+      <pre
+        ref={outputRef}
+        tabIndex={0}
+        onScroll={(event) => {
+          /** 键盘和鼠标共用原生滚动，末尾每次只推进一个展示段或远端页。 */
+          const output = event.currentTarget;
+          if (output.scrollHeight - output.clientHeight - output.scrollTop > 24) return;
+          if (outputPreview.truncated) setVisibleCharacters((current) => current + MAX_ACTIVITY_OUTPUT_CHARACTERS);
+          else if (canLoadMore && !loadError) void loadNextPage();
+        }}
+      >
+        {outputPreview.text}
+      </pre>
+      {loading ? <small role="status">{props.language === 'zh-CN' ? '正在读取输出…' : 'Loading output…'}</small> : null}
       {loadError ? (
         <small className="session-v2-page-error" role="alert">
           <VisibleApplicationError error={loadError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
@@ -433,9 +453,10 @@ function extractJsonStringField(value: string, field: string): string | null {
   }
 }
 
-function activityOutputPreview(output: string): { text: string; truncated: boolean } {
-  if (output.length <= MAX_ACTIVITY_OUTPUT_CHARACTERS) return { text: output, truncated: false };
-  return { text: output.slice(0, MAX_ACTIVITY_OUTPUT_CHARACTERS), truncated: true };
+/** 已打开的长输出按用户阅读位置逐段显示。 */
+function activityOutputPreview(output: string, visibleCharacters: number): { text: string; truncated: boolean } {
+  if (output.length <= visibleCharacters) return { text: output, truncated: false };
+  return { text: output.slice(0, visibleCharacters), truncated: true };
 }
 
 export function SessionPlanProgress(props: { plan: NativeTurnPlanSnapshot; language: SessionUiLanguage }) {
@@ -587,7 +608,7 @@ export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; requests:
   );
 }
 
-/** 过程入口优先显示真实操作数，无操作数量时沿用轮次耗时与原有文案。 */
+/** 阶段入口显示真实操作数，整轮入口沿用轮次用时，时间缺失时保留原有文案。 */
 export function SessionTurnProcessDisclosure(props: {
   language: SessionUiLanguage;
   children: ReactNode;
@@ -596,28 +617,32 @@ export function SessionTurnProcessDisclosure(props: {
   error?: string | null;
   /** 入口可表达整轮处理过程或补载的轮次详情。 */
   labelKind?: 'process' | 'details';
-  /** 无操作数量时使用真实轮次耗时，缺失时间时显示原文案。 */
+  /** 整轮入口使用真实轮次用时，缺失时间时显示原文案。 */
   turn?: NativeTurnSnapshot;
   /** 计时扣除本轮等待用户回应的时间。 */
   requests?: NativePendingRequest[];
-  /** 已加载的真实操作数量；只作摘要，不替代分页后的完整记录。 */
+  /** 阶段内已加载的真实操作数量；整轮回看不传该值。 */
   itemCount?: number;
-  /** 最终正文已经显示，用于停止活动计时并确定无操作时的耗时展示。 */
+  /** 最终正文已经显示，用于切换用时文案，真实计时仍随轮次终态停止。 */
   replyVisible?: boolean;
   open?: boolean;
   /** 触发元素用于上层在内容增高时保持精确的阅读锚点。 */
   onOpenChange?: (open: boolean, trigger: HTMLButtonElement) => void;
 }) {
+  /** 未受外层控制的阶段列表保留独立开合选择。 */
   const [internalOpen, setInternalOpen] = useState(false);
+  /** 受控整轮入口沿用时间线保存的开合状态。 */
   const open = props.open ?? internalOpen;
+  /** 展开时读取最新回调，不因回调引用变化重复补载。 */
   const onOpenRef = useRef(props.onOpen);
   onOpenRef.current = props.onOpen;
+  /** 固定内容区身份供原生按钮与辅助技术关联。 */
   const bodyId = useId();
   useEffect(() => {
     if (!open || !onOpenRef.current) return;
     void Promise.resolve(onOpenRef.current()).catch(() => undefined);
   }, [open]);
-  /** 数量由当前真实条目生成，作为外层过程入口的固定摘要。 */
+  /** 数量由当前真实条目生成，作为阶段入口的固定摘要。 */
   const countLabel = props.itemCount ? (props.language === 'zh-CN' ? `${props.itemCount} 项操作` : `${props.itemCount} ${props.itemCount === 1 ? 'operation' : 'operations'}`) : null;
   /** 轮次过程和补载详情共用同一个入口组件。 */
   const label =
@@ -636,7 +661,7 @@ export function SessionTurnProcessDisclosure(props: {
         : open
           ? 'Hide process'
           : 'View process';
-  /** 真实操作数量优先于耗时且保持固定文案，展开状态只由箭头表达。 */
+  /** 阶段入口保持固定数量，整轮入口未传数量时显示真实用时。 */
   const visibleCountLabel = props.labelKind !== 'details' ? countLabel : null;
   /** 悬停提示和无障碍名称仍说明查看或收起动作，并保留真实操作数量。 */
   const accessibleLabel = countLabel ? `${label}${props.language === 'zh-CN' ? '，' : ', '}${countLabel}` : label;

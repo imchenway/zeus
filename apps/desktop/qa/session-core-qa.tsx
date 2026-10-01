@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ModelSelectQa } from './model-select-qa.js';
 import { asyncMessageQuestions, conversationQuestionNavigationExcerpt, buildTaskPushLayout, describeUserFacingError, formatAsyncQuestionAnswer, type ConversationNavigationEntry, type UserFacingErrorCause } from '@zeus/shared';
-import { ConversationTranscript, MessageDeliveryOutcomeFeedback } from '../src/renderer/session/ConversationTranscript.js';
+import { ConversationTranscript, MessageDeliveryOutcomeFeedback, type SessionCreationStatus } from '../src/renderer/session/ConversationTranscript.js';
 import { ApplicationErrorDialogHost, VisibleApplicationError } from '../src/renderer/ui/ApplicationErrorDialog.js';
 import { GoalPanel, GoalRail } from '../src/renderer/session/GoalPanel.js';
 import type { NativeGoalSnapshot, NativeConversationReadableSnapshot } from '../src/renderer/session/sessionTypes.js';
@@ -656,8 +656,23 @@ function MessageLayoutQa() {
   const processGroups = parameters.has('process-groups') || longProcess;
   /** 单条无详情的上下文整理也必须经过同一段操作折叠入口。 */
   const compactOperation = parameters.has('compaction');
-  /** 分页场景保留已读末页，明确点击补页才模拟读完剩余范围。 */
+  /** 分页场景保留已读范围，缺页边界可见时沿用真实组件自动补齐。 */
   const processPaging = parameters.has('process-paging');
+  /** 同一条命令分别核对本地长输出和不可变结果分页。 */
+  const outputPaging = parameters.has('output-paging');
+  /** 本地完整输出不需要读取，但也应随阅读位置逐段显示。 */
+  const longOutput = parameters.has('long-output');
+  /** 连接场景沿用生产提示，对照执行文字及原位失败恢复。 */
+  const connecting = parameters.has('connecting');
+  /** 直接展示时间线的场景使用与应用相同的有限滚动视口。 */
+  const directTranscript = links || processPaging || outputPaging || longOutput || connecting;
+  /** 首段和末尾标记用于确认没有截断、重复或缺失正文。 */
+  const fullOutput = useMemo(
+    () => (outputPaging || longOutput ? `${Array.from({ length: 1200 }, (_, index) => `输出第 ${index + 1} 行：${'连续阅读命令输出。'.repeat(10)}`).join('\n')}\n命令输出末尾标记` : '阶段检查通过'),
+    [longOutput, outputPaging],
+  );
+  /** 预览读取次数与显示状态分开，关闭命令不会触发新请求。 */
+  const outputReadCount = useRef(0);
   /** 保持轮次运行，通过手动追加正文预览真正的流式展示切换。 */
   const replyTransition = parameters.has('reply-transition');
   /** 空正文与首段正文共用消息身份，后续追加不得重置过程入口。 */
@@ -666,10 +681,14 @@ function MessageLayoutQa() {
   const [replyStartedAt] = useState(() => new Date(Date.now() - 181_000).toISOString());
   /** 读取次数独立于渲染，用于核对反复展开没有隐式请求。 */
   const processReadCount = useRef(0);
-  /** 仅补页按钮能够更新本场景的读取进度。 */
+  /** 读取回调只推进未读范围，不依赖额外分页按钮。 */
   const [processPageFinished, setProcessPageFinished] = useState(false);
+  /** 失败预览保留原有过程，通过重新打开原有入口恢复未读页。 */
+  const [processPageError, setProcessPageError] = useState<string | null>(null);
   /** 手动切换运行终态，检查每种耗时文案及过程折叠。 */
   const [status, setStatus] = useState<'running' | 'completed' | 'failed' | 'interrupted'>(links || parameters.has('completed') ? 'completed' : 'running');
+  /** 原有运行态入口接管连接，重试继续显示实际次数。 */
+  const [connectionState, setConnectionState] = useState<SessionCreationStatus['state'] | null>(connecting ? (parameters.has('connection-failed') ? 'failed' : parameters.has('connection-retry') ? 'retrying' : 'creating') : null);
   /** 检查真实正文节点与资源打开回调，不连接原生宿主或模型。 */
   const contentRef = useRef<HTMLDivElement>(null);
   /** 保留手动检查和点击的结果，便于在页面核对资源身份。 */
@@ -801,15 +820,21 @@ function MessageLayoutQa() {
     const durations = contentRef.current?.querySelectorAll('time.session-turn-duration') ?? [];
     /** 无过程的答复不能出现展开按钮。 */
     const controls = [...(contentRef.current?.querySelectorAll('.session-turn-process > .session-turn-process-control > button') ?? [])].filter((button) => !button.closest('.session-activity-group'));
-    /** 有操作数的入口按产品要求只显示数量，不再把耗时塞进同一个按钮。 */
+    /** 最终正文明确显示后，整轮入口使用用时；逐段进展继续显示数量。 */
+    const answer = contentRef.current?.querySelector('.session-thread-item-assistant[data-item-phase="final_answer"] .session-markdown');
+    /** 空的流式占位不代表最终正文已经开始。 */
+    const hasVisibleReply = Boolean(answer?.textContent?.trim());
+    /** 数量入口只属于尚未归并到最终正文的逐段进展。 */
     const countOnlyControl = controls.some((control) => /\d+\s*(?:项操作|operations?)/u.test(control.textContent?.trim() ?? ''));
-    /** 运行态按可见阶段保留两个现有入口，完成后仍归并为整轮入口。 */
-    const expectedControlCount = parameters.has('no-process') ? 0 : processGroups ? (active ? 2 : 1) : active ? 0 : 1;
-    const expectedDurationCount = active || parameters.has('no-time') || parameters.has('no-end-time') || countOnlyControl ? 0 : 1;
+    /** 长过程在两个基础阶段之外增加三十段进展。 */
+    const phaseCount = 2 + (longProcess ? 30 : 0);
+    /** 运行态按可见阶段保留入口，最终正文出现后归并为整轮入口。 */
+    const expectedControlCount = parameters.has('no-process') ? 0 : processGroups ? (hasVisibleReply ? 1 : phaseCount) : active && !hasVisibleReply ? 0 : 1;
+    /** 正文出现后沿用真实计时，未结束的轮次仍可以更新用时。 */
+    const expectedDurationCount = (!active || hasVisibleReply) && !parameters.has('no-time') && (active || !parameters.has('no-end-time')) && !countOnlyControl ? 1 : 0;
     if (durations.length !== expectedDurationCount || controls.length !== expectedControlCount) throw new Error('耗时或过程入口数量不正确');
-    if (durations.length && durations[0]?.getAttribute('datetime') !== 'PT181S') throw new Error('耗时未沿用真实轮次的起止时间');
+    if (durations.length && !active && durations[0]?.getAttribute('datetime') !== 'PT181S') throw new Error('耗时未沿用真实轮次的起止时间');
     /** 有后续交付资源时，耗时仍应位于最终正文前面。 */
-    const answer = contentRef.current?.querySelector('.session-thread-item-assistant .session-markdown');
     if (durations[0] && answer && !(durations[0].compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING)) throw new Error('耗时入口没有放在最终正文之前');
     if (parameters.has('long-path')) {
       /** 路径须完整保留在气泡内，技能与员工标签仍能恢复。 */
@@ -835,7 +860,7 @@ function MessageLayoutQa() {
     }
     setLinkResult('运行检查通过：耗时只显示一次，过程入口与轮次状态一致');
   }
-  /** 点击唯一的过程入口后，确认阶段摘要和操作明细直接出现。 */
+  /** 逐层点击现有数量入口，核对摘要、操作列表与命令详情的默认折叠。 */
   async function checkProcessContent(): Promise<void> {
     /** 后台页会限制定时器；消息队列等待 React 提交，不依赖可见帧或计时器。 */
     const settle = () =>
@@ -863,8 +888,6 @@ function MessageLayoutQa() {
     const expectedCounts = [1, extraOperation ? 3 : 2, ...(longProcess ? Array.from({ length: 30 }, () => 3) : [])];
     /** 每段数量文案不随开合动作改变。 */
     const expectedLabels = expectedCounts.map((count) => (parameters.has('en') ? `${count} ${count === 1 ? 'operation' : 'operations'}` : `${count} 项操作`));
-    /** 已读范围在首次展开和重新挂载时都不能隐式补页。 */
-    const readsBeforeOpen = processReadCount.current;
     if ((active && !replyText) || parameters.has('no-answer')) {
       /** 逐段进展已有数量入口，里面不能再套同一段数量。 */
       const phaseControls = [...content.querySelectorAll<HTMLButtonElement>('.session-turn-process-control > button')].filter((control) => !control.closest('.session-activity-group'));
@@ -895,14 +918,27 @@ function MessageLayoutQa() {
       setLinkResult('运行检查通过：操作列表默认收起，重复展开保持消息顺序、分组身份和数量，未隐式补页');
       return;
     }
-    /** 外层只显示整轮已加载操作总数。 */
-    const expectedOuterCount = expectedCounts.reduce((total, count) => total + count, 0);
     /** 外层关闭时，命令标题、输出和图片资源都不能进入 DOM。 */
     const outerControl = content.querySelector<HTMLButtonElement>('.session-turn-process[data-label-kind="process"] > .session-turn-process-control > button');
     if (!outerControl) throw new Error('过程检查缺少外层处理过程入口');
-    /** 可见入口只显示数量，查看或收起动作仅保留给无障碍名称与箭头。 */
-    const expectedOuterText = parameters.has('en') ? `${expectedOuterCount} ${expectedOuterCount === 1 ? 'operation' : 'operations'}` : `${expectedOuterCount} 项操作`;
-    if (outerControl.textContent?.trim() !== expectedOuterText) throw new Error(`处理过程入口仍有多余文案：${outerControl.textContent?.trim()}`);
+    /** 用时来自实际轮次；时间缺失时保留过程入口，不以内部操作数量替代。 */
+    const checkOuterLabel = (): void => {
+      /** 正文可见但仍运行的轮次继续使用当前真实时间。 */
+      const duration = outerControl.querySelector('time.session-turn-duration');
+      if (parameters.has('no-time') || (!active && parameters.has('no-end-time'))) {
+        /** 没有有效耗时才显示原有查看或收起文案。 */
+        const expanded = outerControl.getAttribute('aria-expanded') === 'true';
+        /** 缺时场景仍通过同一个箭头控制真实过程。 */
+        const fallback = parameters.has('en') ? (expanded ? 'Hide process' : 'View process') : expanded ? '收起处理过程' : '查看处理过程';
+        if (duration || outerControl.textContent?.trim() !== fallback) throw new Error('缺少耗时时显示了虚构时间或操作总数');
+        return;
+      }
+      /** 完成、失败和中断保留各自状态文案，不把错误表现为正常完成。 */
+      const prefix = parameters.has('en') ? (status === 'failed' ? 'Failed after ' : status === 'interrupted' ? 'Interrupted after ' : 'Took ') : status === 'failed' ? '处理失败（' : status === 'interrupted' ? '处理已中断（' : '用时 ';
+      if (!duration?.textContent?.startsWith(prefix) || outerControl.textContent?.trim() !== duration.textContent.trim()) throw new Error('整轮入口未独立显示实际用时与轮次状态');
+      if (!active && duration.getAttribute('datetime') !== 'PT181S') throw new Error('整轮用时没有保留真实起止时间');
+    };
+    checkOuterLabel();
     /** 首次检查覆盖外层折叠时的延迟挂载，重复检查沿用用户当前展开状态。 */
     const outerInitiallyClosed = outerControl.getAttribute('aria-expanded') !== 'true';
     if (outerInitiallyClosed) {
@@ -935,8 +971,12 @@ function MessageLayoutQa() {
     if (groups.length !== expectedCounts.length || groups.some((group, index) => Number(group.dataset.itemCount) !== expectedCounts[index])) throw new Error('阶段操作没有按真实数量直接展示');
     /** 数量入口之外不再重复添加静态计数。 */
     if (content.querySelector('.session-activity-group-count')) throw new Error('处理过程内部仍重复显示操作数量');
-    if (outerControl.textContent?.trim() !== expectedOuterText) throw new Error('展开处理过程后入口文案发生变化');
-    if (processPaging && processReadCount.current !== readsBeforeOpen) throw new Error('首次展开触发了已读过程补页');
+    checkOuterLabel();
+    /** 已读范围无须重读；可见的缺页边界自动补齐且没有手动分页入口。 */
+    if (processPaging && !longProcess) {
+      await waitForState(() => processReadCount.current === 1 && !content.querySelector('[data-process-page]'));
+      if (content.querySelector('.session-turn-process-body .session-v2-page-action')) throw new Error('处理过程仍包含额外分页按钮');
+    }
     /** 首次打开外层只显示摘要和数量，命令列表、图片与输出都保持折叠。 */
     if (
       outerInitiallyClosed &&
@@ -958,12 +998,13 @@ function MessageLayoutQa() {
     await waitForState(() => !content.querySelector('.session-activity-group'));
     outerControl.click();
     await waitForState(() => outerControl.getAttribute('aria-expanded') === 'true' && Boolean(content.querySelector('.session-activity-group')));
-    if (structure() !== beforeStructure || outerControl.textContent?.trim() !== expectedOuterText) throw new Error('重复展开改变了消息顺序、分组身份或操作数');
+    if (structure() !== beforeStructure) throw new Error('重复展开改变了消息顺序、分组身份或操作数');
+    checkOuterLabel();
     /** 重新打开过程后，操作列表继续默认收起；检查入口不代替用户展开。 */
     if (content.querySelector('.session-activity-group button[aria-expanded="true"], .session-activity-item-title, .session-activity-live, .session-activity-images, .session-activity-item-detail-body'))
       throw new Error('重新打开处理过程自动展开了操作列表');
     if (processPaging && processReadCount.current !== readsBeforeToggle) throw new Error('重复展开触发了已读过程补页');
-    setLinkResult('运行检查通过：操作列表默认收起，重复展开保持消息顺序、分组身份和数量，未隐式补页');
+    setLinkResult('运行检查通过：操作列表默认收起，重复展开保持消息顺序、分组身份和数量，已读范围没有重复请求');
   }
   /** 合成数据仅经过真实渲染链，不连接或调用模型。 */
   const items: NativeSessionItemBuffer[] = [
@@ -986,7 +1027,14 @@ function MessageLayoutQa() {
               phase: 'prework',
               stageId: 'inspect',
               text: '',
-              payload: compactOperation ? {} : { command: ['rg', '-n', 'SessionTurnProcessDisclosure', 'apps/desktop/src'], cwd: '/Users/david/hypha/zeus', aggregatedOutput: '阶段检查通过' },
+              payload: compactOperation
+                ? {}
+                : {
+                    command: ['rg', '-n', 'SessionTurnProcessDisclosure', 'apps/desktop/src'],
+                    cwd: '/Users/david/hypha/zeus',
+                    aggregatedOutput: outputPaging ? fullOutput.slice(0, 300) : fullOutput,
+                    ...(outputPaging ? { toolResult: { handle: 'qa-command-output', projection: fullOutput.slice(0, 300), projectionTruncated: true } } : {}),
+                  },
               status: 'completed',
             },
             { type: 'agentMessage', phase: 'prework', stageId: 'verify', text: '再验证失败、图片和长命令。', payload: { role: 'commentary' }, status: 'completed' },
@@ -1042,7 +1090,7 @@ function MessageLayoutQa() {
                 ? replyText
                 : links
                   ? '边界已补充到[分析文档](docs/分析文档.md)。\n\n[交互预览](http://127.0.0.1:4529/qa/session-styles.html?model-select) · [访问网站](https://example.com)\n\n[未登记链接](https://unregistered.example/) · [网站](https://different.example/)'
-                  : '已检查会话布局，处理过程只显示操作总数；鼠标放到消息上时显示复制、反馈与时间戳。',
+                  : '已检查会话布局，正文前显示真实用时；展开处理过程后，各段操作仍按需查看。',
             payload: {},
             status: active ? 'in_progress' : 'completed',
           },
@@ -1112,7 +1160,9 @@ function MessageLayoutQa() {
       v2Paging: {
         history: { nextCursor: null, hasMore: false, loading: false, error: null, loadedThroughSequence: 0, oldestLoadedSequence: null },
         historyByTurn: {},
-        processByTurn: { 'qa-layout-turn': { direction: 'tail', loaded: true, loading: false, hasMore: !processPageFinished, nextCursor: processPageFinished ? null : 'qa-earlier', error: null } },
+        processByTurn: {
+          'qa-layout-turn': { direction: parameters.has('process-forward') ? 'forward' : 'tail', loaded: true, loading: false, hasMore: !processPageFinished, nextCursor: processPageFinished ? null : 'qa-next', error: processPageError },
+        },
         resources: { nextCursor: null, hasMore: false, loading: false, loaded: true, error: null, items: [] },
         changeSetsByTurn: {},
       } satisfies NonNullable<NonNullable<NativeSessionState['snapshot']>['v2Paging']>,
@@ -1127,7 +1177,14 @@ function MessageLayoutQa() {
         </div>
         <nav aria-label="消息布局场景">
           {(['running', 'completed', 'failed', 'interrupted'] as const).map((value, index) => (
-            <Button key={value} aria-pressed={status === value} onClick={() => setStatus(value)}>
+            <Button
+              key={value}
+              aria-pressed={status === value}
+              onClick={() => {
+                setConnectionState(null);
+                setStatus(value);
+              }}
+            >
               {['进行中', '已完成', '失败', '中断'][index]}
             </Button>
           ))}
@@ -1149,18 +1206,47 @@ function MessageLayoutQa() {
           {links ? <Button onClick={() => void checkSelectionToolbar().catch((error: unknown) => setLinkResult(String(error)))}>检查评论入口</Button> : null}
         </nav>
       </header>
-      <div ref={contentRef} style={{ maxWidth: narrow ? 360 : 1000, margin: 'auto' }}>
-        {links || processPaging ? (
+      <div ref={contentRef} style={{ maxWidth: narrow ? 360 : 1000, margin: 'auto', ...(directTranscript ? { blockSize: 'min(600px, calc(100vh - 240px))', display: 'flex', flexDirection: 'column' as const } : {}) }}>
+        {directTranscript ? (
           <ConversationTranscript
             state={state}
             language={parameters.has('en') ? 'en-US' : 'zh-CN'}
             transcriptHydrated
+            creationStatus={
+              connectionState
+                ? {
+                    state: connectionState,
+                    message: parameters.has('en') ? 'Connecting' : '正在连接',
+                    retryAttempt: 2,
+                    maxRetries: 5,
+                    error: connectionState === 'failed' ? '连接示例失败' : null,
+                    onRetry: () => setConnectionState('retrying'),
+                  }
+                : undefined
+            }
             onLoadTurnProcess={
               processPaging
                 ? async () => {
                     processReadCount.current += 1;
+                    if (parameters.has('process-error') && processReadCount.current === 1) {
+                      setProcessPageError('过程分页示例失败');
+                      throw new Error('过程分页示例失败');
+                    }
+                    setProcessPageError(null);
                     setProcessPageFinished(true);
-                    setLinkResult(`明确补页 ${processReadCount.current} 次，原消息保持显示`);
+                    setLinkResult(`边界自动补页 ${processReadCount.current} 次，原消息保持显示`);
+                  }
+                : undefined
+            }
+            onLoadV2ToolResult={
+              outputPaging
+                ? async (_handle, offset = 0) => {
+                    outputReadCount.current += 1;
+                    if (parameters.has('output-error') && outputReadCount.current === 1) throw new Error('输出分页示例失败');
+                    /** 每次只返回一个真实大小的字符页，最后一页结束读取。 */
+                    const end = Math.min(fullOutput.length, offset + 16_384);
+                    setLinkResult(`输出补页 ${outputReadCount.current} 次，读取范围 ${offset} 至 ${end}`);
+                    return { text: fullOutput.slice(offset, end), offset, nextOffset: end < fullOutput.length ? end : null, totalCharacters: fullOutput.length, sha256: 'qa-immutable-output' };
                   }
                 : undefined
             }

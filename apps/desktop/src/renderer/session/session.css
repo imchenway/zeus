@@ -1470,31 +1470,9 @@
   min-inline-size: 0;
 }
 
-.session-codex-parity-v1 .session-activity-item-output > button {
-  background: var(--session-control);
-  border: 1px solid var(--session-line-soft);
-  border-radius: 6px;
-  color: var(--session-text-muted);
-  cursor: pointer;
-  font: inherit;
-  font-size: 11px;
-  justify-self: start;
-  padding: 4px 8px;
-}
-
-.session-codex-parity-v1 .session-activity-item-output > button:hover:not(:disabled):not([aria-disabled='true']) {
-  border-color: var(--session-line);
-  color: var(--session-text);
-}
-
-.session-codex-parity-v1 .session-activity-item-output > button:focus-visible {
+.session-codex-parity-v1 .session-activity-item-output > pre:focus-visible {
   outline: 2px solid var(--session-focus-outline);
   outline-offset: 2px;
-}
-
-.session-codex-parity-v1 .session-activity-item-output > button:disabled {
-  cursor: wait;
-  opacity: 0.65;
 }
 
 /* 模型错误和消息状态沿用同一提示外观及正文列宽，留白只由父容器提供。 */
@@ -5011,10 +4989,15 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
 .session-codex-parity-v1 .session-transcript-thinking {
   align-items: center;
-  color: var(--session-text-muted);
   display: flex;
-  font-size: 14px;
   gap: 8px;
+}
+
+/* 连接、重试与执行状态共用字体和字号，文字扫光统一由状态组件承载。 */
+.session-codex-parity-v1 .session-transcript-thinking,
+.session-codex-parity-v1 .session-creation-status:is(.is-creating, .is-retrying) {
+  color: var(--session-text-muted);
+  font-size: 14px;
 }
 
 /* 消息间距由内部时间线保留；底部状态与最后一条过程只留紧凑行距。 */
@@ -9916,10 +9899,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   min-inline-size: 0;
 }
 
-.session-codex-parity-v1 .session-turn-process-stage + .session-turn-process-stage {
-  margin-block-start: 10px;
-}
-
 .session-codex-parity-v1 .session-turn-stage-summary {
   display: grid;
   inline-size: 100%;
@@ -9937,11 +9916,11 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   font-size: var(--session-readable-font-size);
 }
 
-/* 过程容器不重复叠加摘要和消息自身的内边距。 */
+/* 过程间距统一由上层排版容器承担，入口不重复叠加上下留白。 */
 .session-codex-parity-v1 .session-turn-process {
   display: grid;
   inline-size: min(var(--session-thread-max), 100%);
-  margin-block: 2px;
+  margin-block: 0;
   min-inline-size: 0;
 }
 
@@ -9953,7 +9932,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   font-size: 13px;
   justify-content: flex-start;
   min-block-size: 24px;
-  padding-block-end: 6px;
+  padding-block-end: 0;
 }
 
 /* 数量是入口的次要信息，保持正文可读且允许窄栏换行。 */
@@ -10005,7 +9984,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
 .session-codex-parity-v1 .session-turn-process-body {
   display: grid;
-  gap: 6px;
+  /* 阶段之间只保留一处间隔，摘要与对应操作仍沿用阶段内部的六像素间距。 */
+  gap: 8px;
   min-inline-size: 0;
   padding-block: 6px 2px;
 }
@@ -10021,6 +10001,14 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   inset-inline-start: 50%;
   pointer-events: none;
   position: absolute;
+}
+
+/* 缺页标记占据过程内的真实边界，正反向补页分别在内容末尾或开头观察。 */
+.session-codex-parity-v1 .session-turn-process-page-sentinel {
+  block-size: 1px;
+  display: block;
+  inline-size: 1px;
+  pointer-events: none;
 }
 
 .session-codex-parity-v1 .session-v2-history-status {
@@ -10085,10 +10073,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
 .session-codex-parity-v1 .session-v2-page-error {
   color: var(--session-danger);
-}
-
-.session-codex-parity-v1 .session-v2-page-action {
-  justify-self: start;
 }
 
 .session-codex-parity-v1 .session-v2-deferred-artifacts {
@@ -10184,22 +10168,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   padding: 4px 0;
   color: var(--session-text-muted);
   font-size: 12px;
-}
-
-.session-creation-status-copy {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.session-creation-status strong,
-.session-creation-status small {
-  font: inherit;
-}
-
-.session-creation-status small {
-  color: var(--session-text-muted);
-  overflow-wrap: anywhere;
 }
 
 .session-creation-status.is-failed {
