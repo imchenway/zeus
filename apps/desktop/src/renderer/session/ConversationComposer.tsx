@@ -2,6 +2,7 @@ import { classifyAssistantMessage } from '@zeus/shared';
 import { type KeyboardEvent, type RefObject, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
+import { BrainIcon as Brain } from '@phosphor-icons/react/dist/csr/Brain';
 import { BrowserCommentPreview } from './BrowserCommentPreview.js';
 import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paperclip';
 import { SquareIcon as Square } from '@phosphor-icons/react/dist/csr/Square';
@@ -587,6 +588,8 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 label={copy.model}
                 triggerLabel={`${copy.model}：${selectedModelLabel}`}
                 displayLabel={selectedModelLabel}
+                // 窄输入框通过容器查询只显示图标，模型名称继续用于提示和无障碍名称。
+                triggerIcon={<Brain aria-hidden="true" weight="regular" />}
                 className="session-composer-model-dropdown"
                 value={effectiveModel}
                 options={modelOptions}
