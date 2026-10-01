@@ -1668,7 +1668,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
   } as CSSProperties;
   const workspaceDrawerPortalStyle = {
     // 会话抽屉避开活动栏与来源列表；其他模式只避开固定活动栏。
-    '--zeus-drawer-sidebar-inline-size': `${activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'digital-teams' && activeNavTarget !== 'automations' && activeProjectSection === 'sessions' ? projectSidebarWidth + 49 : 49}px`,
+    '--zeus-drawer-sidebar-inline-size': `${activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'digital-employees' && activeNavTarget !== 'digital-teams' && activeNavTarget !== 'automations' && activeProjectSection === 'sessions' ? projectSidebarWidth + 49 : 49}px`,
   } as CSSProperties;
   const projectDrawerVisualProps = projectPanel === 'config' ? ({ presentation: 'floating', backdrop: 'dimmed', size: 'wide' } as const) : ({ presentation: 'sheet', backdrop: 'dimmed', size: 'wide' } as const);
 
