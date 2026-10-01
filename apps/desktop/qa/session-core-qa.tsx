@@ -654,6 +654,8 @@ function MessageLayoutQa() {
   const longProcess = parameters.has('long-process');
   /** 多阶段场景复现摘要、不同数量操作和外层折叠的延迟挂载。 */
   const processGroups = parameters.has('process-groups') || longProcess;
+  /** 单条无详情的上下文整理也必须经过同一段操作折叠入口。 */
+  const compactOperation = parameters.has('compaction');
   /** 分页场景保留已读末页，明确点击补页才模拟读完剩余范围。 */
   const processPaging = parameters.has('process-paging');
   /** 保持轮次运行，通过手动追加正文预览真正的流式展示切换。 */
@@ -859,6 +861,40 @@ function MessageLayoutQa() {
     if (!content) throw new Error('过程检查缺少会话内容');
     /** 每段真实操作数量同时生成外层总数与展开后的分组数据。 */
     const expectedCounts = [1, extraOperation ? 3 : 2, ...(longProcess ? Array.from({ length: 30 }, () => 3) : [])];
+    /** 每段数量文案不随开合动作改变。 */
+    const expectedLabels = expectedCounts.map((count) => (parameters.has('en') ? `${count} ${count === 1 ? 'operation' : 'operations'}` : `${count} 项操作`));
+    /** 已读范围在首次展开和重新挂载时都不能隐式补页。 */
+    const readsBeforeOpen = processReadCount.current;
+    if ((active && !replyText) || parameters.has('no-answer')) {
+      /** 逐段进展已有数量入口，里面不能再套同一段数量。 */
+      const phaseControls = [...content.querySelectorAll<HTMLButtonElement>('.session-turn-process-control > button')].filter((control) => !control.closest('.session-activity-group'));
+      if (phaseControls.length !== expectedLabels.length || phaseControls.some((control, index) => control.textContent?.trim() !== expectedLabels[index])) throw new Error('逐段过程未显示真实数量入口');
+      for (const control of phaseControls) if (control.getAttribute('aria-expanded') === 'true') control.click();
+      await settle();
+      content.querySelectorAll('[data-viewport-reveal]').forEach((node) => node.getAnimations().forEach((animation) => animation.finish()));
+      await waitForState(() => !content.querySelector('.session-activity-group'));
+      if (content.querySelector('.session-activity-item-title, .session-activity-live, .session-activity-images, .session-activity-item-detail-body')) throw new Error('收起操作后仍挂载命令或图片');
+      /** 操作开合不能改变既有会话行的位置与身份。 */
+      const phaseStructure = [...content.querySelectorAll<HTMLElement>('[data-transcript-row-key]')].map((node) => node.dataset.transcriptRowKey).join('|');
+      for (const control of phaseControls) {
+        /** 直接点击该段入口必须得到列表，不能再要求点击一次相同数量。 */
+        const phase = control.closest('.session-turn-process')!;
+        control.click();
+        await waitForState(() => Boolean(phase.querySelector('.session-activity-item-title, .session-activity-live')));
+        if (phase.querySelector('.session-activity-group .session-turn-process-control, .session-activity-item-detail-body')) throw new Error('逐段入口重复嵌套或自动打开了命令输出');
+        control.click();
+        await settle();
+        phase
+          .querySelector('[data-viewport-reveal]')
+          ?.getAnimations()
+          .forEach((animation) => animation.finish());
+        await waitForState(() => !phase.querySelector('.session-activity-group'));
+      }
+      if ([...content.querySelectorAll<HTMLElement>('[data-transcript-row-key]')].map((node) => node.dataset.transcriptRowKey).join('|') !== phaseStructure) throw new Error('逐段开合改变了消息位置或顺序');
+      if (processPaging && processReadCount.current !== readsBeforeOpen) throw new Error('逐段展开触发了已读过程补页');
+      setLinkResult('运行检查通过：操作列表默认收起，重复展开保持消息顺序、分组身份和数量，未隐式补页');
+      return;
+    }
     /** 外层只显示整轮已加载操作总数。 */
     const expectedOuterCount = expectedCounts.reduce((total, count) => total + count, 0);
     /** 外层关闭时，命令标题、输出和图片资源都不能进入 DOM。 */
@@ -870,7 +906,7 @@ function MessageLayoutQa() {
     /** 首次检查覆盖外层折叠时的延迟挂载，重复检查沿用用户当前展开状态。 */
     const outerInitiallyClosed = outerControl.getAttribute('aria-expanded') !== 'true';
     if (outerInitiallyClosed) {
-      if (content.querySelector('.session-activity-item-title, .session-activity-images')) throw new Error('外层折叠时提前挂载了操作详情');
+      if (content.querySelector('.session-activity-item-title, .session-activity-live, .session-activity-images')) throw new Error('外层折叠时提前挂载了操作详情');
       outerControl.click();
       await settle();
       /** 手动检查同时核对真实高度动画：长内容不能在一帧内全部展开。 */
@@ -891,27 +927,22 @@ function MessageLayoutQa() {
         await settle();
       }
     }
-    /** 阶段只负责内容分组，不能再次生成折叠按钮。 */
-    const nestedControls = content.querySelectorAll('.session-activity-group .session-turn-process-control > button');
-    if (nestedControls.length) throw new Error('处理过程内部仍存在第二层操作组入口');
-    /** 两段摘要后的真实操作必须在外层展开时直接挂载。 */
+    /** 每段摘要只保留一个固定数量入口，不提前展示命令标题。 */
+    const nestedControls = [...content.querySelectorAll<HTMLButtonElement>('.session-activity-group .session-turn-process-control > button')];
+    if (nestedControls.length !== expectedCounts.length || nestedControls.some((control, index) => control.textContent?.trim() !== expectedLabels[index])) throw new Error('阶段操作入口未显示固定的真实数量');
+    /** 阶段数量沿真实操作投影，不能把整轮数量套到各段。 */
     const groups = [...content.querySelectorAll<HTMLElement>('.session-activity-group')];
     if (groups.length !== expectedCounts.length || groups.some((group, index) => Number(group.dataset.itemCount) !== expectedCounts[index])) throw new Error('阶段操作没有按真实数量直接展示');
-    /** 操作总数只允许出现在外层入口，阶段分组不能重复显示数量或动作。 */
+    /** 数量入口之外不再重复添加静态计数。 */
     if (content.querySelector('.session-activity-group-count')) throw new Error('处理过程内部仍重复显示操作数量');
     if (outerControl.textContent?.trim() !== expectedOuterText) throw new Error('展开处理过程后入口文案发生变化');
-    if (!content.querySelector('.session-activity-item-title') || !content.querySelector('.session-activity-images')) throw new Error('外层展开后缺少操作标题或图片资源');
-    /** 单条命令默认仍关闭，继续点击后才挂载命令、目录和输出。 */
-    const commandControl = content.querySelector<HTMLElement>('.session-activity-item-summary');
-    if (!commandControl) throw new Error('操作明细缺少单条命令入口');
-    let detail = content.querySelector('.session-activity-item-detail-body');
-    if (outerInitiallyClosed && detail) throw new Error('单条命令详情默认状态错误');
-    if (!detail) {
-      commandControl.click();
-      await settle();
-      detail = content.querySelector('.session-activity-item-detail-body');
-    }
-    if (!detail?.textContent?.includes('/Users/david/hypha/zeus') || !detail.textContent.includes('阶段检查通过')) throw new Error('单条命令详情未完整显示');
+    if (processPaging && processReadCount.current !== readsBeforeOpen) throw new Error('首次展开触发了已读过程补页');
+    /** 首次打开外层只显示摘要和数量，命令列表、图片与输出都保持折叠。 */
+    if (
+      outerInitiallyClosed &&
+      (nestedControls.some((control) => control.getAttribute('aria-expanded') !== 'false') || content.querySelector('.session-activity-item-title, .session-activity-live, .session-activity-images, .session-activity-item-detail-body'))
+    )
+      throw new Error('打开处理过程自动展开了操作列表');
     /** 记录消息身份及顺序，折叠卸载后重新挂载仍必须得到同一结构。 */
     const structure = () => [...content.querySelectorAll<HTMLElement>('.session-turn-process [data-navigation-row-key]')].map((node) => node.dataset.navigationRowKey).join('|');
     /** 此时的结构已经完成操作、思考和资源投影。 */
@@ -924,12 +955,15 @@ function MessageLayoutQa() {
       .querySelector('[data-viewport-reveal]')
       ?.getAnimations()
       .forEach((animation) => animation.finish());
-    await waitForState(() => !content.querySelector('.session-activity-item-title'));
+    await waitForState(() => !content.querySelector('.session-activity-group'));
     outerControl.click();
-    await waitForState(() => outerControl.getAttribute('aria-expanded') === 'true' && Boolean(content.querySelector('.session-activity-item-title')));
+    await waitForState(() => outerControl.getAttribute('aria-expanded') === 'true' && Boolean(content.querySelector('.session-activity-group')));
     if (structure() !== beforeStructure || outerControl.textContent?.trim() !== expectedOuterText) throw new Error('重复展开改变了消息顺序、分组身份或操作数');
+    /** 重新打开过程后，操作列表继续默认收起；检查入口不代替用户展开。 */
+    if (content.querySelector('.session-activity-group button[aria-expanded="true"], .session-activity-item-title, .session-activity-live, .session-activity-images, .session-activity-item-detail-body'))
+      throw new Error('重新打开处理过程自动展开了操作列表');
     if (processPaging && processReadCount.current !== readsBeforeToggle) throw new Error('重复展开触发了已读过程补页');
-    setLinkResult('运行检查通过：重复展开保持消息顺序、分组身份和数量，未隐式补页');
+    setLinkResult('运行检查通过：操作列表默认收起，重复展开保持消息顺序、分组身份和数量，未隐式补页');
   }
   /** 合成数据仅经过真实渲染链，不连接或调用模型。 */
   const items: NativeSessionItemBuffer[] = [
@@ -948,11 +982,11 @@ function MessageLayoutQa() {
         ? [
             { type: 'agentMessage', phase: 'prework', stageId: 'inspect', text: '先核对现有投影与分组边界。', payload: { role: 'commentary' }, status: 'completed' },
             {
-              type: 'commandExecution',
+              type: compactOperation ? 'contextCompaction' : 'commandExecution',
               phase: 'prework',
               stageId: 'inspect',
               text: '',
-              payload: { command: ['rg', '-n', 'SessionTurnProcessDisclosure', 'apps/desktop/src'], cwd: '/Users/david/hypha/zeus', aggregatedOutput: '阶段检查通过' },
+              payload: compactOperation ? {} : { command: ['rg', '-n', 'SessionTurnProcessDisclosure', 'apps/desktop/src'], cwd: '/Users/david/hypha/zeus', aggregatedOutput: '阶段检查通过' },
               status: 'completed',
             },
             { type: 'agentMessage', phase: 'prework', stageId: 'verify', text: '再验证失败、图片和长命令。', payload: { role: 'commentary' }, status: 'completed' },

@@ -5353,15 +5353,17 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   outline-offset: 2px;
 }
 
+/* 命令与外层过程使用一致方向：右箭头表示收起，下箭头表示展开。 */
 .session-codex-parity-v1 .session-activity-item-caret {
   block-size: 12px;
   flex: 0 0 auto;
   inline-size: 12px;
+  transform: rotate(-90deg);
   transition: transform 140ms var(--session-ease-out);
 }
 
 .session-codex-parity-v1 .session-activity-item-detail[open] .session-activity-item-caret {
-  transform: rotate(180deg);
+  transform: rotate(0deg);
 }
 
 .session-codex-parity-v1 .session-activity-body li[data-status='failed'] :where(.session-activity-item-icon, .session-activity-item-title) {

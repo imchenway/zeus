@@ -99,7 +99,7 @@ interface SessionActivityGroupProps {
   items: NativeSessionItemBuffer[];
   language: SessionUiLanguage;
   category: SessionActivityCategory;
-  /** 回看过程时只显示操作数量，用户主动展开后才挂载命令列表。 */
+  /** 外层已按阶段折叠时复用外层入口，整轮摘要内才独立折叠该段操作。 */
   collapsible?: boolean;
   /** 只让本轮真实新增的稳定条目播放一次入场，历史回放保持静止。 */
   enteringItemKeys?: ReadonlySet<string>;
@@ -111,8 +111,27 @@ interface SessionActivityGroupProps {
   onLoadContent?: (handle: string) => Promise<void>;
 }
 
-/** 实时活动直接显示，回看活动按组折叠；单条无详情的整理记录保持精简。 */
+/** 每段操作复用对应范围的数量入口，避免同一段嵌套两个相同入口。 */
 export const SessionActivityGroup = memo(function SessionActivityGroup(props: SessionActivityGroupProps) {
+  /** 关闭列表只读取真实状态与数量，不计算操作明细或请求技能清单。 */
+  const active = props.items.some((item) => activityOutcome(item) === 'running');
+  /** 明细组件只由对应范围的折叠容器按需挂载。 */
+  const body = <SessionActivityGroupContent {...props} />;
+  return (
+    <section className="session-activity-group" data-active={active || undefined} data-activity-category={props.category} data-item-count={props.items.length} data-motion-active={props.motionActive || undefined}>
+      {props.collapsible ? (
+        <SessionTurnProcessDisclosure language={props.language} itemCount={props.items.length}>
+          {body}
+        </SessionTurnProcessDisclosure>
+      ) : (
+        body
+      )}
+    </section>
+  );
+}, sameActivityGroupProps);
+
+/** 用户打开操作列表后才解析标题、图片和技能名称，继续复用客户端冻结清单缓存。 */
+function SessionActivityGroupContent(props: SessionActivityGroupProps) {
   /** 活动行与展开详情使用同一份名称投影。 */
   const items = useNamedSkillItems(props.items);
   const liveItem = [...items].reverse().find((item) => activityOutcome(item) === 'running') ?? null;
@@ -123,15 +142,11 @@ export const SessionActivityGroup = memo(function SessionActivityGroup(props: Se
   // 单条整理只有在没有正文详情、资源或可加载结果时才省去明细行。
   const singleCompaction = items.length === 1 && normalizeType(items[0]!.type) === 'contextcompaction' && items[0]!.status !== 'failed' ? items[0]! : null;
   if (singleCompaction && !activityItemDetail(singleCompaction) && !activityToolResult(singleCompaction) && singleCompaction.resources.length === 0) {
-    return (
-      <section className="session-activity-group" data-active={active || undefined} data-activity-category={props.category} data-item-count={1} data-motion-active={props.motionActive || undefined}>
-        <ActivityLiveRow item={singleCompaction} language={props.language} />
-      </section>
-    );
+    return <ActivityLiveRow item={singleCompaction} language={props.language} />;
   }
 
-  /** 命令列表沿用同一渲染入口，折叠时不挂载单条详情和图片预览。 */
-  const body = (
+  /** 操作列表与图片共用按需展示入口，数量变化不自动展开本段操作。 */
+  return (
     <AnimatedSize changeKey={items}>
       <div className="session-activity-body">
         {detailItems.length > 0 ? (
@@ -158,18 +173,7 @@ export const SessionActivityGroup = memo(function SessionActivityGroup(props: Se
       </div>
     </AnimatedSize>
   );
-  return (
-    <section className="session-activity-group" data-active={active || undefined} data-activity-category={props.category} data-item-count={items.length} data-motion-active={props.motionActive || undefined}>
-      {props.collapsible ? (
-        <SessionTurnProcessDisclosure language={props.language} itemCount={items.length}>
-          {body}
-        </SessionTurnProcessDisclosure>
-      ) : (
-        body
-      )}
-    </section>
-  );
-}, sameActivityGroupProps);
+}
 
 function sameActivityGroupProps(previous: Readonly<SessionActivityGroupProps>, next: Readonly<SessionActivityGroupProps>): boolean {
   if (
@@ -207,6 +211,7 @@ function ActivityLiveRow(props: { item: NativeSessionItemBuffer; language: Sessi
   );
 }
 
+/** 操作标题随外层过程展示，命令详情默认收起且只在用户展开后挂载。 */
 const ActivityItemRow = memo(function ActivityItemRow(props: {
   item: NativeSessionItemBuffer;
   language: SessionUiLanguage;
@@ -223,6 +228,7 @@ const ActivityItemRow = memo(function ActivityItemRow(props: {
   const target = activityItemTarget(props.item, props.language);
   /** 技能链接显示完整名称标题，保留原有文件打开入口。 */
   const skillActivity = activitySkillNames([props.item]).length > 0;
+  /** 打开处理过程不自动打开命令，也不提前读取截断正文。 */
   const [open, setOpen] = useState(false);
   const Icon = activityItemIcon(props.item);
   const toolResult = activityToolResult(props.item);
@@ -581,7 +587,7 @@ export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; requests:
   );
 }
 
-/** 完成轮次将耗时作为展开入口；活动过程继续直接显示。 */
+/** 过程入口优先显示真实操作数，无操作数量时沿用轮次耗时与原有文案。 */
 export function SessionTurnProcessDisclosure(props: {
   language: SessionUiLanguage;
   children: ReactNode;
@@ -590,13 +596,13 @@ export function SessionTurnProcessDisclosure(props: {
   error?: string | null;
   /** 入口可表达整轮处理过程或补载的轮次详情。 */
   labelKind?: 'process' | 'details';
-  /** 已知轮次用真实耗时替代入口文字，缺失时间时显示原文案。 */
+  /** 无操作数量时使用真实轮次耗时，缺失时间时显示原文案。 */
   turn?: NativeTurnSnapshot;
   /** 计时扣除本轮等待用户回应的时间。 */
   requests?: NativePendingRequest[];
   /** 已加载的真实操作数量；只作摘要，不替代分页后的完整记录。 */
   itemCount?: number;
-  /** 最终正文已经显示，过程入口切换为耗时展示。 */
+  /** 最终正文已经显示，用于停止活动计时并确定无操作时的耗时展示。 */
   replyVisible?: boolean;
   open?: boolean;
   /** 触发元素用于上层在内容增高时保持精确的阅读锚点。 */
@@ -611,7 +617,7 @@ export function SessionTurnProcessDisclosure(props: {
     if (!open || !onOpenRef.current) return;
     void Promise.resolve(onOpenRef.current()).catch(() => undefined);
   }, [open]);
-  /** 数量由当前真实条目生成，作为外层过程入口的次要摘要。 */
+  /** 数量由当前真实条目生成，作为外层过程入口的固定摘要。 */
   const countLabel = props.itemCount ? (props.language === 'zh-CN' ? `${props.itemCount} 项操作` : `${props.itemCount} ${props.itemCount === 1 ? 'operation' : 'operations'}`) : null;
   /** 轮次过程和补载详情共用同一个入口组件。 */
   const label =
@@ -630,10 +636,10 @@ export function SessionTurnProcessDisclosure(props: {
         : open
           ? 'Hide process'
           : 'View process';
-  /** 操作数量入口明确表达展开或收起动作，数量仍来自已加载的真实记录。 */
-  const visibleCountLabel = props.labelKind !== 'details' && countLabel ? `${props.language === 'zh-CN' ? (open ? '收起' : '查看') : open ? 'Hide' : 'View'} ${countLabel}` : null;
-  /** 耗时入口仍说明查看或收起过程，操作分组使用数量动作文案。 */
-  const accessibleLabel = (props.turn ? null : visibleCountLabel) ?? (countLabel ? `${label}，${countLabel}` : label);
+  /** 真实操作数量优先于耗时且保持固定文案，展开状态只由箭头表达。 */
+  const visibleCountLabel = props.labelKind !== 'details' ? countLabel : null;
+  /** 悬停提示和无障碍名称仍说明查看或收起动作，并保留真实操作数量。 */
+  const accessibleLabel = countLabel ? `${label}${props.language === 'zh-CN' ? '，' : ', '}${countLabel}` : label;
   return (
     <section className="session-turn-process" data-label-kind={props.labelKind ?? 'process'} data-open={open || undefined} aria-busy={props.loading || undefined}>
       <div className="session-turn-process-control">
@@ -649,7 +655,7 @@ export function SessionTurnProcessDisclosure(props: {
             props.onOpenChange?.(nextOpen, event.currentTarget);
           }}
         >
-          <span>{props.turn ? <SessionTurnDuration turn={props.turn} requests={props.requests ?? []} language={props.language} fallback={visibleCountLabel ?? label} replyVisible={props.replyVisible} /> : (visibleCountLabel ?? label)}</span>
+          <span>{visibleCountLabel ?? (props.turn ? <SessionTurnDuration turn={props.turn} requests={props.requests ?? []} language={props.language} fallback={label} replyVisible={props.replyVisible} /> : label)}</span>
           <CaretDown className="session-turn-process-caret" aria-hidden="true" weight="bold" />
         </button>
       </div>
