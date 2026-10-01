@@ -619,6 +619,13 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   color: var(--zeus-control-disabled-text);
 }
 
+/* 主操作禁用时保留浅品牌色，与可用态的实心品牌色保持明确区分。 */
+.macos-ai-app .zeus-button[data-zeus-primitive='button'][data-button-variant='primary']:disabled {
+  background: color-mix(in srgb, var(--zeus-product-accent) 14%, var(--zeus-control-disabled-bg));
+  border-color: color-mix(in srgb, var(--zeus-product-accent) 24%, var(--zeus-control-disabled-line));
+  color: color-mix(in srgb, var(--zeus-product-accent) 55%, var(--zeus-control-disabled-text));
+}
+
 .macos-ai-app .zeus-button[data-zeus-primitive='button'][data-loading='true'] {
   cursor: progress;
 }

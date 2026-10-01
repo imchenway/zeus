@@ -1,0 +1,125 @@
+/* 文件状态色覆盖主界面和独立门户弹窗；深色主题提高亮度，颜色不取代文字状态。 */
+.macos-ai-app {
+  /* 已修改及重命名使用蓝色。 */
+  --zeus-file-modified: #245fbd;
+  /* 已新增及复制使用绿色。 */
+  --zeus-file-added: #23733b;
+  /* 未跟踪文件使用 IDEA 风格的棕色。 */
+  --zeus-file-untracked: #95612f;
+  /* 已删除文件降低强调，并保留删除线。 */
+  --zeus-file-deleted: #707680;
+  /* 冲突单独使用红色。 */
+  --zeus-file-conflict: #bc3545;
+}
+.macos-ai-app.theme-dark,
+html[data-zeus-theme='dark'] .macos-ai-app {
+  /* 深色背景上的修改状态。 */
+  --zeus-file-modified: #82b1ff;
+  /* 深色背景上的新增状态。 */
+  --zeus-file-added: #8acb91;
+  /* 深色背景上的未跟踪状态。 */
+  --zeus-file-untracked: #d6ac79;
+  /* 深色背景上的删除状态。 */
+  --zeus-file-deleted: #a4aab4;
+  /* 深色背景上的冲突状态。 */
+  --zeus-file-conflict: #ff8a94;
+}
+@media (prefers-color-scheme: dark) {
+  .macos-ai-app.theme-system,
+  html[data-zeus-theme='system'] .macos-ai-app {
+    /* 跟随系统的深色状态色与显式深色主题一致。 */
+    --zeus-file-modified: #82b1ff;
+    /* 跟随系统的新增和复制状态。 */
+    --zeus-file-added: #8acb91;
+    /* 跟随系统的未跟踪状态。 */
+    --zeus-file-untracked: #d6ac79;
+    /* 跟随系统的删除状态。 */
+    --zeus-file-deleted: #a4aab4;
+    /* 跟随系统的冲突状态。 */
+    --zeus-file-conflict: #ff8a94;
+  }
+}
+.macos-ai-app [data-file-status='modified'],
+.macos-ai-app [data-file-status='renamed'] {
+  color: var(--zeus-file-modified);
+}
+.macos-ai-app [data-file-status='added'],
+.macos-ai-app [data-file-status='copied'] {
+  color: var(--zeus-file-added);
+}
+.macos-ai-app [data-file-status='untracked'] {
+  color: var(--zeus-file-untracked);
+}
+.macos-ai-app [data-file-status='deleted'] {
+  color: var(--zeus-file-deleted);
+  text-decoration: line-through;
+}
+.macos-ai-app [data-file-status='conflict'] {
+  color: var(--zeus-file-conflict);
+}
+/* 文件类型用克制的双色图标，避免所有文件看起来相同。 */
+.macos-ai-app svg.file-type-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  color: var(--zeus-control-muted-text);
+  pointer-events: none;
+}
+.macos-ai-app svg.file-type-icon[data-file-kind='code'] {
+  color: var(--zeus-file-modified);
+}
+.macos-ai-app svg.file-type-icon[data-file-kind='image'],
+.macos-ai-app svg.file-type-icon[data-file-kind='audio'],
+.macos-ai-app svg.file-type-icon[data-file-kind='video'] {
+  color: var(--zeus-file-added);
+}
+.macos-ai-app svg.file-type-icon[data-file-kind='pdf'] {
+  color: var(--zeus-file-conflict);
+}
+/* 图标按钮共用紧凑命中区；悬浮和键盘焦点提供明确反馈。 */
+.macos-ai-app :is(.file-preview-icon-button, .project-source-module-actions > button, .source-git-icon, .project-git-diff-mode > button) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 28px;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  color: var(--zeus-control-muted-text);
+  background: transparent;
+  box-shadow: none;
+}
+.macos-ai-app :is(.file-preview-icon-button, .project-source-module-actions > button, .source-git-icon, .project-git-diff-mode > button) > svg {
+  width: 16px;
+  height: 16px;
+  pointer-events: none;
+}
+.macos-ai-app :is(.file-preview-icon-button, .project-source-module-actions > button, .source-git-icon, .project-git-diff-mode > button):hover:not(:disabled) {
+  color: var(--zeus-control-text);
+  background: var(--zeus-interaction-hover);
+}
+.macos-ai-app :is(.file-preview-icon-button, .project-source-module-actions > button, .source-git-icon, .project-git-diff-mode > button):focus-visible {
+  outline: 2px solid var(--zeus-control-accent);
+  outline-offset: -2px;
+}
+.macos-ai-app :is(.file-preview-icon-button[aria-pressed='true'], .project-git-diff-mode > button.is-active) {
+  color: var(--zeus-control-accent);
+  background: color-mix(in srgb, var(--zeus-control-accent) 10%, transparent);
+}
+/* 选中态使用中性底色，不盖住新增、修改等文件名颜色。 */
+.macos-ai-app :is(.project-git-change-file-row.is-current, .project-git-commit-file-tree button.is-current, .project-git-diff-window-files button.is-current, .source-git-file[data-selected='true']) {
+  background: color-mix(in srgb, var(--zeus-control-text) 10%, var(--zeus-code-editor-bg));
+}
+/* 对比标题与操作栏共用空间，长文件名省略显示并通过悬浮保留完整路径。 */
+.macos-ai-app .project-git-diff-preview > header {
+  gap: 6px;
+  min-height: 36px;
+}
+.macos-ai-app .project-git-diff-preview > header > .file-preview-toolbar {
+  padding: 0;
+  flex-wrap: nowrap;
+}

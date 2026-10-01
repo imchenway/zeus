@@ -1,4 +1,5 @@
 import { MotionPresence } from '../ui/MotionPresence.js';
+import { FileTypeIcon } from '../code/FileTypeIcon.js';
 import { ArrowLeftIcon as ArrowLeft } from '@phosphor-icons/react/dist/csr/ArrowLeft';
 import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
 import { MagicWandIcon as MagicWand } from '@phosphor-icons/react/dist/csr/MagicWand';
@@ -194,7 +195,8 @@ export function TaskGitConflictWorkspace(props: {
         </header>
         {props.integration.conflictFiles.map((path) => (
           <button key={path} type="button" className={path === props.conflictPath ? 'is-active' : ''} onClick={() => props.onSelectPath(path)}>
-            <span>{path}</span>
+            <FileTypeIcon name={path} />
+            <span data-file-status="conflict">{path}</span>
             <small>{path === props.conflictPath ? (currentFileResolved ? (props.zh ? '已处理' : 'Processed') : props.zh ? `${unresolvedCount} 个冲突` : `${unresolvedCount} conflicts`) : props.zh ? '待处理' : 'Pending'}</small>
           </button>
         ))}

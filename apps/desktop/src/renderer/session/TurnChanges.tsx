@@ -1,4 +1,5 @@
 import { FilePreview } from '../code/FilePreview.js';
+import { FileTypeIcon } from '../code/FileTypeIcon.js';
 import { AnimatedSize } from '../ui/AnimatedSize.js';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
@@ -111,7 +112,8 @@ export function TurnChangeCard(props: {
             {visibleFiles.map((file) => (
               <li key={file.id}>
                 <button type="button" onClick={() => props.onReview?.(changeSet, file.id)} disabled={!props.onReview}>
-                  <span className="session-turn-change-path" title={displayPath(file)}>
+                  <FileTypeIcon name={file.newPath ?? file.oldPath ?? ''} />
+                  <span className="session-turn-change-path" title={displayPath(file)} data-file-status={file.changeType === 'binary' ? 'modified' : file.changeType}>
                     {displayPath(file)}
                   </span>
                   <span className="session-turn-change-file-counts">
@@ -392,7 +394,9 @@ export function TurnDiffWorkspace(props: {
           {activeFile ? (
             <>
               <header>
-                <strong title={displayPath(activeFile)}>{displayPath(activeFile)}</strong>
+                <strong title={displayPath(activeFile)} data-file-status={activeFile.changeType === 'binary' ? 'modified' : activeFile.changeType}>
+                  {displayPath(activeFile)}
+                </strong>
                 <span>
                   <small>{localizedChangeType(activeFile, props.language)}</small>
                   {props.onOpenFile ? (
@@ -409,6 +413,7 @@ export function TurnDiffWorkspace(props: {
                 <FilePreview
                   request={{ kind: 'turn', projectId: changeSet.projectId, conversationId: changeSet.conversationId, turnId: changeSet.turnId, changeSetId: changeSet.id, fileId: activeFile.id }}
                   revision={changeSet.updatedAt}
+                  fileStatus={activeFile.changeType === 'binary' ? 'modified' : activeFile.changeType}
                   zh={zh}
                 >
                   {changeSet.contentProjection === 'summary' ? (

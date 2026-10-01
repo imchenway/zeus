@@ -168,22 +168,6 @@
   min-height: 0;
   overflow: hidden;
 }
-.project-source-change-preview > header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-  border-bottom: 0;
-}
-.project-source-change-preview > header > span {
-  overflow-wrap: anywhere;
-}
-.project-source-change-preview > .project-git-diff-preview {
-  flex: 1;
-  min-height: 0;
-}
-
 .project-source-module {
   --source-module-header-height: 30px;
   position: relative;
@@ -274,18 +258,12 @@
   background: var(--zeus-interaction-hover);
 }
 .project-source-module-actions button:focus-visible {
-  outline: 2px solid var(--zeus-control-focus);
+  outline: 2px solid var(--zeus-control-accent);
   outline-offset: -1px;
 }
 .project-source-module-actions svg {
   width: 14px;
   height: 14px;
-}
-.project-source-module-actions button svg + svg {
-  width: 8px;
-  height: 8px;
-  margin-top: 8px;
-  margin-left: -5px;
 }
 .project-source-module > summary::after {
   margin-left: 4px;
@@ -592,7 +570,7 @@
   font: inherit;
   font-size: 12px;
 }
-.project-source-tab > [role='tab'] > span:first-child {
+.project-source-tab > [role='tab'] > span {
   min-width: 0;
   flex: 1;
   overflow: hidden;
@@ -623,7 +601,8 @@
   display: inline-grid;
   width: 26px;
   min-width: 26px;
-  height: 100%;
+  height: 26px;
+  flex: 0 0 26px;
   padding: 0;
   place-items: center;
   border: 0;

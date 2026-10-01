@@ -4119,7 +4119,7 @@ body:has(.macos-ai-app.zeus-shell) {
   background: color-mix(in srgb, var(--zeus-control-accent) 7%, transparent) !important;
 }
 .macos-ai-app.zeus-shell .project-source-tree-scroll button.selected {
-  background: color-mix(in srgb, var(--zeus-control-accent) 14%, transparent) !important;
+  background: color-mix(in srgb, var(--zeus-control-text) 10%, var(--zeus-code-editor-bg)) !important;
 }
 .macos-ai-app.zeus-shell .project-source-search {
   margin: 8px 10px;
@@ -4146,23 +4146,18 @@ body:has(.macos-ai-app.zeus-shell) {
   max-width: 220px;
   min-height: 34px;
   box-sizing: border-box;
-  padding: 0 4px 0 0;
-  border: 1px solid transparent;
-  border-radius: 8px !important;
-
   padding: 0 6px 0 0;
   border: 0;
-  border-right: 0;
-  border-top: 2px solid transparent;
+  border-bottom: 2px solid transparent;
   border-radius: 0 !important;
   box-shadow: none !important;
   background: transparent !important;
 }
 .macos-ai-app.zeus-shell .project-source-tab.active {
   background: color-mix(in srgb, var(--zeus-control-text) 8%, var(--zeus-code-editor-bg)) !important;
-  border-color: var(--zeus-control-border) !important;
+  border-color: var(--zeus-control-accent) !important;
   color: var(--zeus-control-text);
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--zeus-control-text) 10%, transparent) !important;
+  box-shadow: none !important;
 }
 .macos-ai-app.zeus-shell .project-source-tab.active > [role='tab'] {
   font-weight: 600;
@@ -4175,6 +4170,8 @@ body:has(.macos-ai-app.zeus-shell) {
   min-width: 0;
   min-height: 30px;
   padding: 0 0 0 10px;
+  /* 标签按钮不使用全局选中按钮色，文件名自身保留真实 Git 状态色。 */
+  color: inherit !important;
   background: transparent !important;
   border: 0 !important;
   box-shadow: none !important;
@@ -4191,9 +4188,6 @@ body:has(.macos-ai-app.zeus-shell) {
   border: 0 !important;
   box-shadow: none !important;
   border-radius: 4px;
-  opacity: 0;
-}
-.macos-ai-app.zeus-shell .project-source-tab:is(.active, :hover:not(:disabled):not([aria-disabled='true']), :focus-within) > .project-source-tab-close {
   opacity: 1;
 }
 .macos-ai-app.zeus-shell .project-source-tab > .project-source-tab-close:hover:not(:disabled):not([aria-disabled='true']) {
