@@ -114,6 +114,34 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: 计算 CUA 编译工具链摘要
+        id: cua_toolchain
+        run: |
+          # 系统、SDK 和编译器变化时失效，应用版本不参与缓存键。
+          {
+            sw_vers -productVersion
+            xcrun --show-sdk-build-version
+            xcrun clang --version
+            rustc -vV
+            cargo -V
+          } > "$RUNNER_TEMP/zeus-cua-toolchain.txt"
+          printf 'digest=%s\n' "$(shasum -a 256 "$RUNNER_TEMP/zeus-cua-toolchain.txt" | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+      - name: 恢复 CUA 编译成品
+        id: cua_cache
+        uses: actions/cache/restore@v4
+        # 缓存服务异常时仍执行正常构建，不影响必要发布检查。
+        continue-on-error: true
+        with:
+          # 只保留可执行文件和摘要，不缓存上游源码或 Cargo 编译目录。
+          path: |
+            .tmp/cua-worker-*/cua-driver
+            .tmp/cua-worker-*/worker.sha256
+          # 构建脚本含固定上游提交；补丁和工具链变化均产生新键。
+          key: zeus-cua-worker-${{ runner.os }}-${{ runner.arch }}-${{ steps.cua_toolchain.outputs.digest }}-${{ hashFiles('apps/desktop/scripts/build-native-helpers.mjs', 'apps/desktop/native/cua-desktop.patch') }}
+      - name: 清理未精确命中的 CUA 成品
+        # 禁止把部分匹配恢复的二进制交给现有摘要校验后复用。
+        if: ${{ steps.cua_cache.outputs.cache-hit != 'true' }}
+        run: rm -f .tmp/cua-worker-*/cua-driver .tmp/cua-worker-*/worker.sha256
       - name: 执行与本地一致的发布前检查
         run: pnpm verify:publish
 
@@ -149,6 +177,34 @@ jobs:
         with:
           path: ~/Library/Caches/electron
           key: zeus-electron-macos-${{ runner.arch }}-${{ hashFiles('apps/desktop/electron-builder.yml', 'pnpm-lock.yaml') }}
+      - name: 计算 CUA 编译工具链摘要
+        id: cua_toolchain
+        run: |
+          # 与检查作业使用相同输入，两个作业复用同一份精确匹配缓存。
+          {
+            sw_vers -productVersion
+            xcrun --show-sdk-build-version
+            xcrun clang --version
+            rustc -vV
+            cargo -V
+          } > "$RUNNER_TEMP/zeus-cua-toolchain.txt"
+          printf 'digest=%s\n' "$(shasum -a 256 "$RUNNER_TEMP/zeus-cua-toolchain.txt" | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+      - name: 恢复 CUA 编译成品
+        id: cua_cache
+        uses: actions/cache/restore@v4
+        # 缓存是可选加速，恢复失败回到正常原生构建。
+        continue-on-error: true
+        with:
+          # 成品摘要仍由原生构建脚本验证，签名与 DMG 每次重新生成。
+          path: |
+            .tmp/cua-worker-*/cua-driver
+            .tmp/cua-worker-*/worker.sha256
+          # 与检查作业保持相同缓存键，避免重复保存相同成品。
+          key: zeus-cua-worker-${{ runner.os }}-${{ runner.arch }}-${{ steps.cua_toolchain.outputs.digest }}-${{ hashFiles('apps/desktop/scripts/build-native-helpers.mjs', 'apps/desktop/native/cua-desktop.patch') }}
+      - name: 清理未精确命中的 CUA 成品
+        # 不允许部分匹配或恢复失败留下的成品被继续复用。
+        if: ${{ steps.cua_cache.outputs.cache-hit != 'true' }}
+        run: rm -f .tmp/cua-worker-*/cua-driver .tmp/cua-worker-*/worker.sha256
       - name: 准备 App Store Connect API Key
         if: ${{ env.APPLE_API_KEY_P8 != '' }}
         run: |
@@ -161,6 +217,19 @@ jobs:
           ZEUS_FAST_RELEASE: '1'
           ZEUS_RELEASE_OUTPUT_DIR: dist
         run: pnpm verify:release
+      - name: 保存已验证的 CUA 编译成品
+        # 只有通过来源预检的 main 正式发布保存缓存；已有精确命中不重复上传。
+        if: ${{ inputs.publish_release && github.ref == 'refs/heads/main' && steps.cua_cache.outputs.cache-hit != 'true' && steps.cua_cache.outputs.cache-primary-key != '' }}
+        uses: actions/cache/save@v4
+        # 缓存保存失败不改变正式产物的校验结果。
+        continue-on-error: true
+        with:
+          # 只保存同一组已编译成品，避免把凭据或源码混入缓存。
+          path: |
+            .tmp/cua-worker-*/cua-driver
+            .tmp/cua-worker-*/worker.sha256
+          # 使用恢复步骤解析的主键，不保存为宽泛备用键。
+          key: ${{ steps.cua_cache.outputs.cache-primary-key }}
       - name: 上传已校验正式产物
         id: upload_release_artifact
         continue-on-error: true
