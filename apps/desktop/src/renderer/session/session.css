@@ -2769,12 +2769,12 @@
   }
 }
 
+/* 过程资源与正文使用同一链接色，不加下划线，保留原有点击和键盘聚焦。 */
 .session-codex-parity-v1 .session-activity-resource-link {
   appearance: none;
   background: transparent;
   border: 0;
-  border-block-end: 1px dotted currentColor;
-  color: var(--session-text);
+  color: var(--zeus-brand-text);
   cursor: pointer;
   font: inherit;
   max-inline-size: min(72ch, 100%);
@@ -2784,10 +2784,6 @@
   text-align: start;
   vertical-align: baseline;
   white-space: normal;
-}
-
-.session-codex-parity-v1 .session-activity-resource-link:hover:not(:disabled):not([aria-disabled='true']) {
-  border-block-end-style: solid;
 }
 
 .session-codex-parity-v1 .session-activity-resource-link:focus-visible {
@@ -5304,6 +5300,13 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   /* 展开后的操作标题与实时描述使用相同的换行规则。 */
   overflow-wrap: anywhere;
   white-space: normal;
+}
+
+/* 收起的命令只占一行，长标题省略显示，展开后保留完整换行。 */
+.session-codex-parity-v1 .session-activity-item-detail:not([open]) .session-activity-item-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .session-codex-parity-v1 .session-activity-item-summary {

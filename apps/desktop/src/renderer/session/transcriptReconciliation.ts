@@ -95,8 +95,10 @@ type TranscriptContent = Pick<NativeItemSnapshot, 'text' | 'payload' | 'status' 
 export function mergeTranscriptItem<T extends TranscriptContent>(previous: T, incoming: T): T {
   const previousRevision = transcriptContentRevision(previous.transcript);
   const incomingRevision = transcriptContentRevision(incoming.transcript);
-  const previousComplete = previous.payload.v2ContentTruncated !== true;
-  const incomingComplete = incoming.payload.v2ContentTruncated !== true;
+  /** 活动首屏的正文和载荷也有截断标记，不能将其当作完整内容挡住过程详情。 */
+  const previousComplete = previous.payload.v2ContentTruncated !== true && previous.payload.v2PayloadTruncated !== true && previous.payload.v2TextTruncated !== true;
+  /** 不同读取来源使用各自的截断字段，完整性判断保持一致。 */
+  const incomingComplete = incoming.payload.v2ContentTruncated !== true && incoming.payload.v2PayloadTruncated !== true && incoming.payload.v2TextTruncated !== true;
   const keepContent =
     incomingRevision < previousRevision || (incomingRevision === previousRevision && ((previousComplete && !incomingComplete) || (previous.payload.v2ContentKind === 'process_detail' && incoming.payload.v2ContentKind !== 'process_detail')));
   const content = keepContent ? previous : incoming;

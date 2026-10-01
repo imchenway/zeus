@@ -270,6 +270,8 @@ const ActivityItemRow = memo(function ActivityItemRow(props: {
             </summary>
             {open ? (
               <div className="session-activity-item-detail-body">
+                {/* 旧缓存可能只有详情句柄，读取完成前保留明确的进度反馈。 */}
+                {!detail.command && !detail.cwd && !detail.output && !toolResult && props.item.payload.v2ContentTruncated === true ? <small role="status">{props.language === 'zh-CN' ? '正在读取命令…' : 'Loading command…'}</small> : null}
                 {detail.command ? <code>{detail.command}</code> : null}
                 {detail.cwd ? <small>{detail.cwd}</small> : null}
                 {detail.output || toolResult ? <ActivityItemOutput key={toolResult?.handle ?? props.item.key} output={detail.output} toolResult={toolResult} language={props.language} onLoadToolResult={props.onLoadToolResult} /> : null}
@@ -872,6 +874,7 @@ function activityItemIcon(item: NativeSessionItemBuffer) {
   return Wrench;
 }
 
+/** 预览字段为空时仍保留不可变详情句柄的展开入口，点击后才读取全文。 */
 function activityItemDetail(item: NativeSessionItemBuffer): {
   command: string | null;
   cwd: string | null;
@@ -890,7 +893,9 @@ function activityItemDetail(item: NativeSessionItemBuffer): {
         .join('\n')
     : null;
   const output = primitive(item.payload.aggregatedOutput ?? item.payload.output ?? item.payload.stdout ?? item.payload.stderr) ?? activityToolResult(item)?.projection ?? nativeOutput ?? presentationLiveText(item);
-  return command || cwd || output ? { command, cwd, output } : null;
+  /** 历史长记录可能在命令字段前截断，缺少预览不代表没有可读取的详情。 */
+  const deferredDetail = item.payload.v2ContentTruncated === true && typeof item.payload.v2ContentHandle === 'string' && Boolean(item.payload.v2ContentHandle);
+  return command || cwd || output || deferredDetail || activityToolResult(item) ? { command, cwd, output } : null;
 }
 
 function commandActionTitle(item: NativeSessionItemBuffer, language: SessionUiLanguage): string | null {
