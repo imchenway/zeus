@@ -355,7 +355,12 @@ export class ManagedConversationToolResultStore {
     return { record, projectionText, projectedImageUrl: image.imageUrl };
   }
 
-  async readPage(input: { conversationId: string; handle: string; offset?: number; limit?: number }): Promise<{ text: string; offset: number; nextOffset: number | null; totalCharacters: number; sha256: string }> {
+  /** 原始分页参数只允许省略或合法整数，显式 null 不能重置到第一页。 */
+  async readPage(input: { conversationId: string; handle: string; offset?: unknown; limit?: unknown }): Promise<{ text: string; offset: number; nextOffset: number | null; totalCharacters: number; sha256: string }> {
+    /** 参数错误在读取数据库及原件前失败，两个 Provider 与 HTTP 入口共用校验。 */
+    const offset = toolResultPageInteger(input.offset, 'offset');
+    /** 页长遵循工具 schema，不把非法值静默截断或改用默认值。 */
+    const limit = toolResultPageInteger(input.limit, 'limit');
     const record = this.execution.getToolResult(input.handle);
     if (!record || record.conversationId !== input.conversationId) throw toolResultError('ZEUS_CONVERSATION_TOOL_RESULT_NOT_FOUND', '工具结果句柄不存在或不属于当前产品会话。');
     if (record.mimeType.startsWith('image/')) throw toolResultError('ZEUS_CONVERSATION_TOOL_RESULT_KIND_MISMATCH', '图片 Artifact 必须使用 read_conversation_tool_image 读取。');
@@ -381,8 +386,7 @@ export class ManagedConversationToolResultStore {
       contentSha256 = createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex');
       if (contentSha256 !== record.sha256) throw toolResultError('ZEUS_CONVERSATION_TOOL_RESULT_HASH_MISMATCH', '旧工具结果完整性校验失败。');
     }
-    const offset = clampInteger(input.offset ?? 0, 0, text.length);
-    const limit = clampInteger(input.limit ?? maximumPageCharacters, 1, maximumPageCharacters);
+    if (offset > text.length) throw toolResultError('ZEUS_CONVERSATION_TOOL_RESULT_OFFSET_INVALID', '分页偏移超过工具结果长度，请使用上页返回的 nextOffset。');
     /** 拒绝从完整字符中间开始，分页返回的 nextOffset 始终可直接继续读取。 */
     if (offset > 0 && /[\uD800-\uDBFF]/u.test(text[offset - 1]!) && /[\uDC00-\uDFFF]/u.test(text[offset] ?? '')) {
       throw toolResultError('ZEUS_CONVERSATION_TOOL_RESULT_OFFSET_INVALID', '分页偏移位于字符中间，请使用上页返回的 nextOffset。');
@@ -446,17 +450,17 @@ export function conversationToolResultDynamicTools(): CodexDynamicToolSpec[] {
         {
           type: 'function',
           name: 'read_conversation_tool_result',
-          description: 'Read a page from a complete tool result already stored by Zeus. This never re-runs the original tool.',
+          description: '按句柄分页读取已有工具结果，不会重新执行。每页最多 16384 个 UTF-8 字节。省略 offset 时从 0 开始；继续读取须使用上一页返回的整数 nextOffset，并确认偏移递增。nextOffset 为 null 时必须停止，不得将 null 作为 offset。',
           inputSchema: {
             type: 'object',
             properties: {
-              handle: { type: 'string', description: 'Opaque handle returned with a projected tool result.' },
-              offset: { type: 'integer', minimum: 0, description: 'Character offset; defaults to 0.' },
+              handle: { type: 'string', description: '工具结果预览返回的完整结果句柄。' },
+              offset: { type: 'integer', minimum: 0, description: '字符偏移，仅省略时默认 0；null 非法，末页不得继续读取。' },
               limit: {
                 type: 'integer',
                 minimum: 1,
                 maximum: 16384,
-                description: 'Maximum characters; defaults to 16384. Each page also stays within 16384 UTF-8 bytes; continue with nextOffset.',
+                description: '最大字符数，仅省略时默认 16384；每页同时限制在 16384 个 UTF-8 字节内。',
               },
             },
             required: ['handle'],
@@ -543,9 +547,18 @@ function portableHistoryContent(value: unknown): unknown {
   return { ...value, payload };
 }
 
-function clampInteger(value: number, minimum: number, maximum: number): number {
-  if (!Number.isFinite(value)) return minimum;
-  return Math.min(maximum, Math.max(minimum, Math.trunc(value)));
+/** 严格区分可省略参数与传错参数，避免分页结束标记被当作默认第一页。 */
+function toolResultPageInteger(value: unknown, field: 'offset' | 'limit'): number {
+  /** 偏移允许零，页长须为正整数并遵循公开上限。 */
+  const isOffset = field === 'offset';
+  if (value === undefined) return isOffset ? 0 : maximumPageCharacters;
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < (isOffset ? 0 : 1) || (!isOffset && value > maximumPageCharacters)) {
+    throw toolResultError(
+      isOffset ? 'ZEUS_CONVERSATION_TOOL_RESULT_OFFSET_INVALID' : 'ZEUS_CONVERSATION_TOOL_RESULT_LIMIT_INVALID',
+      isOffset ? 'offset 必须为非负安全整数；nextOffset 为 null 表示读取结束，不能继续分页。' : `limit 必须为 1 到 ${maximumPageCharacters} 之间的整数。`,
+    );
+  }
+  return value;
 }
 
 function toolResultArtifactRef(value: string): ArtifactRef | null {

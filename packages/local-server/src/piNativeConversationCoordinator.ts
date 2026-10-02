@@ -2253,11 +2253,12 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       return { text: JSON.stringify({ providerItemId: item.providerItemId, status: 'submitted', message: '正式计划已保存。本轮结束后显示实施或继续完善入口；请勿自行开始实施。' }) };
     }
     if (request.toolName === 'read_conversation_tool_result') {
+      /** 保留原始分页参数，由共用读取入口拒绝非法值及结束标记。 */
       const page = await options.toolResults.readPage({
         conversationId: context.conversationId,
         handle: stringArg(request.args.handle, '工具结果句柄'),
-        offset: numberArg(request.args.offset, 0),
-        limit: numberArg(request.args.limit, 16_384),
+        offset: request.args.offset,
+        limit: request.args.limit,
       });
       // Pi 的 details 不进入模型正文；分页水位必须与内容一起回传，才能可靠继续读取。
       return { text: JSON.stringify(page), details: { offset: page.offset, nextOffset: page.nextOffset, totalCharacters: page.totalCharacters, sha256: page.sha256 } };

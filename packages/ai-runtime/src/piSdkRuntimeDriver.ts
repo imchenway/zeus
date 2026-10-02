@@ -1015,7 +1015,7 @@ function createZeusTools(getEntry: () => PiSessionEntry | null, broker: PiZeusTo
     defineTool({
       name: 'read_conversation_tool_result',
       label: '读取完整工具结果',
-      description: '按句柄分页读取已有工具结果，不会重新执行。每页最多 16384 个 UTF-8 字节；使用返回的 nextOffset 继续读取，null 表示结束。',
+      description: '按句柄分页读取已有工具结果，不会重新执行。每页最多 16384 个 UTF-8 字节。省略 offset 时从 0 开始；继续读取须使用上一页返回的整数 nextOffset，并确认偏移递增。nextOffset 为 null 时必须停止，不得将 null 作为 offset。',
       parameters: Type.Object({ handle: Type.String(), offset: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 16384 })) }),
       execute: (id, args, signal) => execute(id, 'read_conversation_tool_result', args, signal),
     }),
