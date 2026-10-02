@@ -741,6 +741,7 @@ function TaskEmployeeRunDialog(props: {
   const modelRevisionRef = useRef(0);
   loadCapabilitiesRef.current = props.onLoadCapabilities;
   const inputResources = useConversationInputResources({
+    attachments: supplementalAttachments,
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
     textareaRef: supplementalTextareaRef,
     text: supplementalInfo,
@@ -932,6 +933,7 @@ function TaskEmployeeRunDialog(props: {
             </label>
             <TaskPushSupplementalAttachmentCards
               attachments={supplementalAttachments}
+              pendingResources={inputResources.pendingResources}
               language={props.language}
               disabled={props.busy || inputResources.processing}
               onRemove={(attachment) => {

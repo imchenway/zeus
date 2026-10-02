@@ -2890,7 +2890,8 @@ async function readTaskClipboardResourcesFromNativeClipboard(): Promise<TaskClip
   if (referencedPaths.length > 0) {
     return { paths: referencedPaths, attachments: [], text: readTaskClipboardResidualText(referencedPaths) };
   }
-  const attachments = await readTaskClipboardAttachmentsFromClipboard(clipboardReader, readOptions);
+  // 文件引用已完整检查，图片回退不再重复启动系统剪贴板读取。
+  const attachments = await readTaskClipboardAttachmentsFromClipboard(clipboardReader);
   if (attachments.length > 0) {
     return { paths: [], attachments, text: '' };
   }

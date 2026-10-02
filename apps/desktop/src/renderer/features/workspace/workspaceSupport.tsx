@@ -16,6 +16,8 @@ import {
   type ThirdPartyTaskExtract,
 } from '@zeus/shared';
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../../ui/pendingResourcePolicy.js';
+import { clipboardNeedsResourceRead, clipboardTextAfterResources, usePendingResourcePreviews } from '../../ui/usePendingResourcePreviews.js';
+import type { PendingResourceCardItem } from '../../ui/PendingResourceCards.js';
 import { TaskAttachmentPreviewList } from '../../task/TaskAttachmentPreviewList.js';
 import { type NativeConversationStartStorage, type SessionWorkspaceTask } from '../../session/SessionWorkspace.js';
 import type { NativeConversationChoice, NativeConversationChoicesSnapshot, NativeProjectConversationChoicesSnapshot } from '../../session/sessionTypes.js';
@@ -1462,6 +1464,8 @@ export function orderProjectsByPinnedIds(projects: ProjectRecord[], pinnedProjec
 
 export function TaskCreateFieldAttachments(props: {
   field: TaskCreateAttachmentField;
+  /** 各字段独立显示导入卡片，成功预览按真实路径共享。 */
+  pendingResources?: PendingResourceCardItem[];
   attachments: TaskCreateAttachment[];
   copy: ReturnType<typeof getLanguageCopy>['taskWorkspace'];
   disabled: boolean;
@@ -1471,11 +1475,14 @@ export function TaskCreateFieldAttachments(props: {
   onOpenAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
 }) {
   const attachments = taskAttachmentsForField(props.attachments, props.field);
-  if (attachments.length === 0) return null;
+  /** 只把当前字段的导入反馈放在对应输入框旁。 */
+  const previews = props.pendingResources?.filter((resource) => !resource.pending || resource.scope === props.field);
+  if (attachments.length === 0 && !previews?.some((resource) => resource.pending)) return null;
   return (
     <div className="task-create-field-attachments">
       <TaskAttachmentPreviewList
         attachments={attachments}
+        pendingResources={previews}
         mode="editable"
         disabled={props.disabled}
         onRemove={props.onRemove}
@@ -1535,6 +1542,15 @@ export function TaskCreateModal(props: {
   const interactionOpen = usePresenceOpen() && props.open;
   const pasteShortcutFallbackTokenRef = useRef(0);
   const [resourceProcessingCount, setResourceProcessingCount] = useState(0);
+  /** 资源读取失败和部分成功保持在当前表单内可见。 */
+  const [resourceError, setResourceError] = useState<string | null>(null);
+  /** 与会话输入共用预览生命周期，创建和复制均按字段归属显示。 */
+  const previews = usePendingResourcePreviews(
+    props.form.attachments.map((attachment) => ({ id: attachment.path, name: attachment.name, kind: attachment.kind })),
+    props.copy.taskCountPrefix === 'Tasks' ? 'en-US' : 'zh-CN',
+    interactionOpen ? 'task-create' : false,
+  );
+
   /** 附加设置由底部操作栏展开，默认不占正文空间。 */
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** 展开后定位附加字段，长表单中也能直接编辑。 */
@@ -1551,6 +1567,8 @@ export function TaskCreateModal(props: {
   const thirdPartyRequestRef = useRef<symbol | null>(null);
   const taskTypeOptions = useMemo(() => [{ value: '' as const, label: props.copy.taskCreateTypePlaceholder, disabled: true }, ...props.copy.taskCreateTypeOptions], [props.copy.taskCreateTypeOptions, props.copy.taskCreateTypePlaceholder]);
   useEffect(() => {
+    setResourceProcessingCount(0);
+    setResourceError(null);
     if (interactionOpen) {
       setSettingsOpen(false);
       setThirdPartyOpen(false);
@@ -1574,7 +1592,9 @@ export function TaskCreateModal(props: {
     if (interactionOpen && !thirdPartyOpen) props.titleInputRef.current?.focus();
   }, [interactionOpen, thirdPartyOpen, props.titleInputRef]);
   if (!props.open) return null;
-  const describedBy = thirdPartyOpen ? 'task-create-third-party-help' : props.error ? 'task-create-error' : undefined;
+  /** 当前资源错误优先显示，保留上层字段校验结果。 */
+  const visibleError = resourceError ?? props.error;
+  const describedBy = thirdPartyOpen ? 'task-create-third-party-help' : visibleError ? 'task-create-error' : undefined;
   const resourcesBusy = resourceProcessingCount > 0;
   /** 附件处理只阻止提交和切换任务结构，不禁用正在输入的文字框。 */
   const textInputDisabled = props.busy || thirdPartyParsing;
@@ -1586,7 +1606,7 @@ export function TaskCreateModal(props: {
 
   function handleTaskCreatePasteShortcutFallback(event: ReactKeyboardEvent<HTMLFormElement>): void {
     const pasteTarget = resolveTaskCreatePasteField(event.target);
-    if (!pasteTarget || interactionBusy || typeof window === 'undefined') return;
+    if (!pasteTarget || textInputDisabled || typeof window === 'undefined') return;
     if (event.key.toLowerCase() !== 'v' || (!event.metaKey && !event.ctrlKey) || event.altKey) return;
     const fallbackToken = pasteShortcutFallbackTokenRef.current + 1;
     pasteShortcutFallbackTokenRef.current = fallbackToken;
@@ -1595,14 +1615,14 @@ export function TaskCreateModal(props: {
     // 这里不阻止默认粘贴，只在短暂等待后发现 paste 事件没有到达时，让 Main 读取统一的文件、目录、图片或长文本资源。
     window.setTimeout(() => {
       if (pasteShortcutFallbackTokenRef.current !== fallbackToken) return;
-      void runTaskResourceOperation(async () => {
+      void runTaskResourceOperation(pasteTarget.field, async (pending) => {
         const result = await props.onReadClipboardResources();
-        if (pasteShortcutFallbackTokenRef.current !== fallbackToken) return;
+        if (!pending.current() || pasteShortcutFallbackTokenRef.current !== fallbackToken) return;
         if (result.resources.length > 0) {
           props.onAddAttachments(withTaskAttachmentRestoreTarget(result.resources, restoreTarget));
         }
         // 兜底路径同样可能只剩正文：附件之外的文字必须回到当前字段。
-        if (result.text) insertTaskCreatePlainTextPaste(pasteTarget.field, pasteTarget.control, result.text);
+        if (result.text) insertTaskCreatePlainTextPaste(pasteTarget.field, pasteTarget.control, result.text, restoreTarget);
         if (pasteShortcutFallbackTokenRef.current === fallbackToken) {
           pasteShortcutFallbackTokenRef.current += 1;
         }
@@ -1611,17 +1631,24 @@ export function TaskCreateModal(props: {
           pasteShortcutFallbackTokenRef.current += 1;
         }
       });
-    }, 120);
+    }, 0);
   }
 
-  async function runTaskResourceOperation(operation: () => Promise<void>): Promise<void> {
-    /** 保留粘贴来源字段的焦点，附件回填不改变用户选区。 */
+  /** 先显示当前字段的卡片，再导入；允许连续粘贴并分别清理。 */
+  async function runTaskResourceOperation(field: TaskCreateAttachmentField, operation: (pending: ReturnType<typeof previews.begin>) => Promise<void>, files: File[] = [], text = ''): Promise<void> {
+    /** 保留输入位置，用户主动转移焦点时不干预。 */
     const restoreFocus = retainInputFocus(document.activeElement instanceof HTMLElement ? document.activeElement : null);
+    /** 临时资源只用于界面，不进入任务草稿附件。 */
+    const pending = previews.begin(files, text, field);
+    setResourceError(null);
     setResourceProcessingCount((current) => current + 1);
     try {
-      await operation();
+      await operation(pending);
+    } catch {
+      if (pending.current()) setResourceError(props.copy.taskCreatePasteAttachmentFailed);
     } finally {
-      setResourceProcessingCount((current) => Math.max(0, current - 1));
+      if (pending.current()) setResourceProcessingCount((current) => Math.max(0, current - 1));
+      pending.finish();
       restoreFocus();
     }
   }
@@ -1697,35 +1724,57 @@ export function TaskCreateModal(props: {
       }
     }
     const pasteTarget = resolveTaskCreatePasteField(event.target);
-    if (!pasteTarget || interactionBusy) return;
+    if (!pasteTarget || textInputDisabled) return;
     pasteShortcutFallbackTokenRef.current += 1;
+    /** 固定长文本恢复位置，保存期间继续输入不会改变原归属。 */
     const restoreTarget = captureTaskAttachmentRestoreTarget(pasteTarget.field, pasteTarget.control);
+    /** 已有浏览器载荷直接导入，普通文字直接走控件的原生粘贴。 */
     const plainText = safelyReadClipboardData(event.clipboardData, 'text/plain');
+    /** 同一批 File 去重后展示，避免浏览器同时暴露 files 和 items 造成重复。 */
     const pastedFiles = taskCreateDataTransferFiles(event.clipboardData);
+    /** 文件引用仍由宿主识别和授权，页面不自行信任路径。 */
+    const readNative = pastedFiles.length === 0 && clipboardNeedsResourceRead(event.clipboardData, plainText);
+    if (pastedFiles.length === 0 && plainText.length < PENDING_RESOURCE_LONG_TEXT_THRESHOLD && !readNative) return;
     event.preventDefault();
-    await runTaskResourceOperation(async () => {
-      const nativeResult = await props.onReadClipboardResources();
-      if (nativeResult.resources.length > 0) {
-        props.onAddAttachments(withTaskAttachmentRestoreTarget(nativeResult.resources, restoreTarget));
-        // 剪贴板里的文件路径已经变成附件，剩下的说明文字仍要写回当前字段。
-        insertTaskCreatePlainTextPaste(pasteTarget.field, pasteTarget.control, nativeResult.text);
-        return;
-      }
-      if (pastedFiles.length > 0) {
-        const result = await props.onAuthorizeFiles(pastedFiles, 'paste');
-        if (result.resources.length > 0) props.onAddAttachments(withTaskAttachmentField(result.resources, pasteTarget.field));
-        return;
-      }
-      const text = nativeResult.text || plainText;
-      if (text.length >= PENDING_RESOURCE_LONG_TEXT_THRESHOLD) {
-        const resources = await props.onMaterializeResources([{ name: 'Pasted text.txt', type: 'text/plain', text, kind: 'pasted_text' }]);
-        if (resources.length > 0) {
-          props.onAddAttachments(withTaskAttachmentRestoreTarget(resources, restoreTarget));
+    await runTaskResourceOperation(
+      pasteTarget.field,
+      async (pending) => {
+        if (pastedFiles.length > 0) {
+          /** 直接使用已有 File，避免先做一次系统读取或图片编码。 */
+          const result = await props.onAuthorizeFiles(pastedFiles, 'paste');
+          if (!pending.current()) return;
+          if (result.resources.length === 0) throw new Error('没有可读取的附件。');
+          pending.complete(
+            result.resources.map((resource) => ({ id: resource.path, name: resource.name, kind: resource.kind })),
+            result.failedCount,
+          );
+          props.onAddAttachments(withTaskAttachmentField(result.resources, pasteTarget.field));
+          insertTaskCreatePlainTextPaste(pasteTarget.field, pasteTarget.control, clipboardTextAfterResources(plainText, result.resources), restoreTarget);
+          if (result.failedCount > 0) setResourceError(props.copy.taskCountPrefix === 'Tasks' ? `${result.failedCount} attachment(s) could not be read.` : `另有 ${result.failedCount} 项附件无法读取。`);
           return;
         }
-      }
-      insertTaskCreatePlainTextPaste(pasteTarget.field, pasteTarget.control, text);
-    });
+        if (readNative) {
+          /** 只对真实文件引用或原生格式使用系统回退。 */
+          const result = await props.onReadClipboardResources();
+          if (!pending.current()) return;
+          if (result.resources.length > 0) props.onAddAttachments(withTaskAttachmentRestoreTarget(result.resources, restoreTarget));
+          insertTaskCreatePlainTextPaste(pasteTarget.field, pasteTarget.control, result.text || (result.resources.length === 0 ? plainText : ''), restoreTarget);
+          return;
+        }
+        try {
+          /** 已知长文本直接保存，不必再从剪贴板读取同一份内容。 */
+          const resources = await props.onMaterializeResources([{ name: 'Pasted text.txt', type: 'text/plain', text: plainText, kind: 'pasted_text' }]);
+          if (!pending.current()) return;
+          if (resources.length === 0) throw new Error('长文本附件未能保存。');
+          props.onAddAttachments(withTaskAttachmentRestoreTarget(resources, restoreTarget));
+        } catch (error) {
+          if (pending.current()) insertTaskCreatePlainTextPaste(pasteTarget.field, pasteTarget.control, plainText, restoreTarget);
+          throw error;
+        }
+      },
+      pastedFiles,
+      plainText,
+    );
   }
 
   function restoreTaskCreateText(attachment: TaskCreateAttachment): void {
@@ -1751,15 +1800,18 @@ export function TaskCreateModal(props: {
     });
   }
 
-  function insertTaskCreatePlainTextPaste(field: TaskCreateTextField, control: HTMLInputElement | HTMLTextAreaElement, text: string): void {
+  /** 异步回填使用粘贴时的选区，保留处理期间继续输入的正文。 */
+  function insertTaskCreatePlainTextPaste(field: TaskCreateTextField, control: HTMLInputElement | HTMLTextAreaElement, text: string, selection?: TaskAttachmentRestoreTarget): void {
     if (!text) return;
-    const selectionStart = control.selectionStart ?? control.value.length;
-    const selectionEnd = control.selectionEnd ?? selectionStart;
+    const selectionStart = Math.min(selection?.start ?? control.selectionStart ?? control.value.length, control.value.length);
+    const selectionEnd = Math.min(selection?.end ?? control.selectionEnd ?? selectionStart, control.value.length);
     const nextValue = `${control.value.slice(0, selectionStart)}${text}${control.value.slice(selectionEnd)}`;
     const nextCaretPosition = selectionStart + text.length;
     props.onFormChange(field, nextValue);
     // 文字粘贴被我们拦截后手动回填；下一帧恢复光标，避免用户继续输入时跳到末尾。
-    window.requestAnimationFrame(() => control.setSelectionRange(nextCaretPosition, nextCaretPosition));
+    window.requestAnimationFrame(() => {
+      if (document.activeElement === control) control.setSelectionRange(nextCaretPosition, nextCaretPosition);
+    });
   }
 
   const modalSurface = (
@@ -1906,8 +1958,8 @@ export function TaskCreateModal(props: {
                     value={props.form.title}
                     placeholder={props.copy.taskCreateTitlePlaceholder}
                     aria-labelledby="task-create-title-label"
-                    aria-invalid={props.error ? true : undefined}
-                    aria-describedby={props.error ? 'task-create-error' : undefined}
+                    aria-invalid={visibleError ? true : undefined}
+                    aria-describedby={visibleError ? 'task-create-error' : undefined}
                     onChange={(event) => props.onFormChange('title', event.currentTarget.value)}
                     disabled={textInputDisabled}
                   />
@@ -1931,6 +1983,7 @@ export function TaskCreateModal(props: {
                   <TaskCreateFieldAttachments
                     field="description"
                     attachments={props.form.attachments}
+                    pendingResources={previews.pendingResources}
                     copy={props.copy}
                     disabled={interactionBusy}
                     onRemove={props.onRemoveAttachment}
@@ -1956,6 +2009,7 @@ export function TaskCreateModal(props: {
                     <TaskCreateFieldAttachments
                       field="defectCurrentState"
                       attachments={props.form.attachments}
+                      pendingResources={previews.pendingResources}
                       copy={props.copy}
                       disabled={interactionBusy}
                       onRemove={props.onRemoveAttachment}
@@ -1978,6 +2032,7 @@ export function TaskCreateModal(props: {
                     <TaskCreateFieldAttachments
                       field="defectExpectedOutcome"
                       attachments={props.form.attachments}
+                      pendingResources={previews.pendingResources}
                       copy={props.copy}
                       disabled={interactionBusy}
                       onRemove={props.onRemoveAttachment}
@@ -2000,6 +2055,7 @@ export function TaskCreateModal(props: {
                     <TaskCreateFieldAttachments
                       field="defectReproductionSteps"
                       attachments={props.form.attachments}
+                      pendingResources={previews.pendingResources}
                       copy={props.copy}
                       disabled={interactionBusy}
                       onRemove={props.onRemoveAttachment}
@@ -2026,6 +2082,7 @@ export function TaskCreateModal(props: {
                     <TaskCreateFieldAttachments
                       field="optimizationCurrentState"
                       attachments={props.form.attachments}
+                      pendingResources={previews.pendingResources}
                       copy={props.copy}
                       disabled={interactionBusy}
                       onRemove={props.onRemoveAttachment}
@@ -2048,6 +2105,7 @@ export function TaskCreateModal(props: {
                     <TaskCreateFieldAttachments
                       field="optimizationExpectedOutcome"
                       attachments={props.form.attachments}
+                      pendingResources={previews.pendingResources}
                       copy={props.copy}
                       disabled={interactionBusy}
                       onRemove={props.onRemoveAttachment}
@@ -2090,6 +2148,7 @@ export function TaskCreateModal(props: {
                     <TaskCreateFieldAttachments
                       field="tags"
                       attachments={props.form.attachments}
+                      pendingResources={previews.pendingResources}
                       copy={props.copy}
                       disabled={interactionBusy}
                       onRemove={props.onRemoveAttachment}
@@ -2109,9 +2168,9 @@ export function TaskCreateModal(props: {
                   </div>
                 </div>
               ) : null}
-              {props.error ? (
+              {visibleError ? (
                 <p className="task-create-error" id="task-create-error" role="alert">
-                  {props.error}
+                  {visibleError}
                 </p>
               ) : null}
             </>

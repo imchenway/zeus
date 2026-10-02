@@ -47,6 +47,7 @@ export function PlanImplementationRequestSurface(props: {
 
   /** 粘贴、原生剪贴板回退、拖入和长文本恢复均走共享资源入口。 */
   const inputResources = useConversationInputResources({
+    attachments: attachments,
     language: zh ? 'zh-CN' : 'en',
     textareaRef: inputRef,
     text: feedback,
@@ -171,6 +172,7 @@ export function PlanImplementationRequestSurface(props: {
             {actions}
             <ConversationComposerAttachments
               attachments={attachments}
+              pendingResources={inputResources.pendingResources}
               language={props.language}
               disabled={responding === true}
               className="session-question-answer-attachments"

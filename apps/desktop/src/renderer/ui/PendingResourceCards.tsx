@@ -27,6 +27,10 @@ export interface PendingResourceCardItem {
   size?: number;
   characterCount?: number;
   previewUrl?: string;
+  /** 临时卡片只提供即时反馈，宿主确认前不能打开、移除或恢复。 */
+  pending?: boolean;
+  /** 任务表单用字段定位临时卡片，不写入附件持久化。 */
+  scope?: string;
   restorable?: boolean;
   title?: string;
 }
@@ -83,7 +87,7 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
     const loadPreview = previewLoaderRef.current;
     setLoadedPreviewUrl(null);
     setPreviewFailed(false);
-    if (resource.kind !== 'image' || resource.previewUrl || !loadPreview) {
+    if (resource.pending || resource.kind !== 'image' || resource.previewUrl || !loadPreview) {
       return () => {
         active = false;
       };
@@ -98,7 +102,7 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
     return () => {
       active = false;
     };
-  }, [previewLoaderAvailable, props.resource.id, props.resource.kind, props.resource.previewUrl]);
+  }, [previewLoaderAvailable, props.resource.id, props.resource.kind, props.resource.previewUrl, props.resource.pending]);
 
   function activate(event: ReactMouseEvent<HTMLButtonElement>): void {
     props.onActivate?.(props.resource, event.currentTarget);
@@ -111,8 +115,14 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
   );
 
   return (
-    <li className="pending-resource-card" data-resource-kind={props.resource.kind} title={props.resource.title ?? props.resource.name}>
-      {props.onActivate ? (
+    <li
+      className="pending-resource-card"
+      data-resource-kind={props.resource.kind}
+      aria-busy={props.resource.pending || undefined}
+      aria-label={props.resource.pending ? `${props.language === 'zh-CN' ? '正在导入' : 'Importing'}: ${props.resource.name}` : undefined}
+      title={props.resource.title ?? props.resource.name}
+    >
+      {props.onActivate && !props.resource.pending ? (
         /* 预览只读取附件；提交中和只读界面只禁用移除、恢复等修改操作。 */
         <button type="button" className="pending-resource-activate" aria-label={`${pendingResourceOpenLabel(props.resource.kind, props.language)}: ${props.resource.name}`} onClick={activate}>
           {visual}
@@ -124,7 +134,7 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
         <span className="pending-resource-copy">
           <strong>{props.resource.name}</strong>
           <span className="pending-resource-meta">
-            <small>{typeLabel}</small>
+            <small>{props.resource.pending ? (props.language === 'zh-CN' ? '正在导入…' : 'Importing…') : typeLabel}</small>
             {props.resource.kind === 'pasted_text' && props.resource.restorable && props.onRestoreText ? (
               <button type="button" className="pending-resource-restore" disabled={props.disabled} onClick={() => props.onRestoreText?.(props.resource)}>
                 {props.language === 'zh-CN' ? '恢复' : 'Restore'}
@@ -133,7 +143,7 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
           </span>
         </span>
       )}
-      {props.onRemove ? (
+      {props.onRemove && !props.resource.pending ? (
         <button
           type="button"
           className="pending-resource-remove"

@@ -131,8 +131,9 @@ export function extractTaskClipboardFileReferences(values: Array<string | undefi
 
 export async function readTaskClipboardAttachmentsFromClipboard(reader: NativeTaskClipboardReader, options: TaskClipboardReadOptions = {}): Promise<TaskClipboardAttachmentPayload[]> {
   const clipboardTexts = readNativeClipboardReferenceTexts(reader);
-  const systemFileReferences = await readSystemClipboardFileReferences(options);
-  const fileReferences = extractTaskClipboardFileReferences([...clipboardTexts, ...systemFileReferences]);
+  /** 标准格式已有文件引用时无需启动系统回退读取，避免每次粘贴都等待外部进程。 */
+  const fileReferences = extractTaskClipboardFileReferences(clipboardTexts);
+  if (fileReferences.length === 0) fileReferences.push(...extractTaskClipboardFileReferences(await readSystemClipboardFileReferences(options)));
   if (isSingleUnsupportedImageReference(fileReferences)) {
     const normalizedImageAttachment = safelyReadTaskClipboardImageAttachment(reader);
     if (normalizedImageAttachment) return [normalizedImageAttachment];
@@ -155,8 +156,9 @@ export async function readTaskClipboardAttachmentsFromClipboard(reader: NativeTa
 /** 返回剪贴板中的真实本地路径，不读取文件内容；会话附件借此保留目录和任意文件类型。 */
 export async function readTaskClipboardFileReferencesFromClipboard(reader: NativeTaskClipboardReader, options: TaskClipboardReadOptions = {}): Promise<string[]> {
   const clipboardTexts = readNativeClipboardReferenceTexts(reader);
-  const systemFileReferences = await readSystemClipboardFileReferences(options);
-  const fileReferences = extractTaskClipboardFileReferences([...clipboardTexts, ...systemFileReferences]);
+  /** Electron 能识别真实路径时直接授权；私有格式才需要系统读取。 */
+  const fileReferences = extractTaskClipboardFileReferences(clipboardTexts);
+  if (fileReferences.length === 0) fileReferences.push(...extractTaskClipboardFileReferences(await readSystemClipboardFileReferences(options)));
   if (isSingleUnsupportedImageReference(fileReferences) && hasReadableClipboardImage(reader)) return [];
   return fileReferences;
 }

@@ -544,6 +544,8 @@ function approvalPathParts(path: string): { directory: string; name: string } {
 }
 
 interface RequestUserInputActionsProps {
+  /** 资源导入期间不切题或关闭表单，正文输入保持可用。 */
+  resourcesProcessing?: boolean;
   language: SessionUiLanguage;
   questionIndex: number;
   questionCount: number;
@@ -565,11 +567,11 @@ function RequestUserInputActions(props: RequestUserInputActionsProps) {
   return (
     <div className="session-rui-inline-actions" role="group" aria-label={zh ? '询问操作' : 'Question actions'} style={props.style}>
       {props.questionIndex > 0 ? (
-        <button type="button" onClick={props.onPrevious}>
+        <button type="button" disabled={props.resourcesProcessing} onClick={props.onPrevious}>
           {zh ? '上一个' : 'Previous'}
         </button>
       ) : null}
-      <button type="button" onClick={props.onSkip}>
+      <button type="button" disabled={props.resourcesProcessing} onClick={props.onSkip}>
         {props.dismissLabel ?? (zh ? '跳过' : 'Skip')}
       </button>
       {props.showSubmit ? (
@@ -628,6 +630,7 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
   const showSubmitAction = currentQuestion.kind !== 'single' || otherSelected;
 
   const inputResources = useConversationInputResources({
+    attachments: currentAttachments,
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
     textareaRef: attachmentTextareaRef,
     text: currentQuestion.kind === 'freeform' ? (selectedValues[0] ?? '') : currentOtherAnswer,
@@ -703,7 +706,7 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
   }
 
   async function finish(nextAnswers = answers, nextOtherAnswers = otherAnswers, nextAttachments = answerAttachments): Promise<void> {
-    if (responding) return;
+    if (responding || inputResources.processing) return;
     setLocallyResponding(true);
     try {
       await (snoozePromiseRef.current ?? Promise.resolve());
@@ -719,6 +722,8 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
   }
 
   function advance(nextAnswers = answers, nextOtherAnswers = otherAnswers, nextAttachments = answerAttachments): void {
+    // 导入期间不能切题，否则完成的附件可能被放到另一题。
+    if (inputResources.processing) return;
     if (questionIndex < props.questions.length - 1) setQuestionIndex((value) => value + 1);
     else if (areRequiredRequestAnswersComplete(props.questions, nextAnswers, nextOtherAnswers, nextAttachments)) void finish(nextAnswers, nextOtherAnswers, nextAttachments);
   }
@@ -833,7 +838,7 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
   }
 
   async function skip(): Promise<void> {
-    if (responding) return;
+    if (responding || inputResources.processing) return;
     if (props.onDismiss) {
       props.onDismiss();
       return;
@@ -858,17 +863,19 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
   function renderActions(style?: CSSProperties) {
     return (
       <RequestUserInputActions
+        resourcesProcessing={inputResources.processing}
         language={props.language}
         questionIndex={questionIndex}
         questionCount={props.questions.length}
         responding={responding}
-        currentComplete={currentComplete}
+        currentComplete={currentComplete && !inputResources.processing}
         allComplete={allComplete}
         showSubmit={showSubmitAction}
         submitLabel={props.submitLabel}
         dismissLabel={props.onDismiss ? (zh ? '稍后回答' : 'Answer later') : undefined}
         style={style}
         onPrevious={() => {
+          if (inputResources.processing) return;
           void snooze();
           setQuestionIndex((value) => Math.max(0, value - 1));
         }}
@@ -1020,6 +1027,7 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
                     />
                     <ConversationComposerAttachments
                       attachments={currentAttachments}
+                      pendingResources={inputResources.pendingResources}
                       language={props.language}
                       disabled={responding || inputResources.processing}
                       className="session-question-answer-attachments"
@@ -1090,6 +1098,7 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
                   />
                   <ConversationComposerAttachments
                     attachments={currentAttachments}
+                    pendingResources={inputResources.pendingResources}
                     language={props.language}
                     disabled={responding || inputResources.processing}
                     className="session-question-answer-attachments"

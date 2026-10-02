@@ -3377,6 +3377,7 @@ export function NewConversationComposer(props: {
     });
   }, [props.drafts, draftKey, workspaceMode, worktreeDrafts, content, attachments, permissionMode, collaborationMode, selectedModelId, selectedEffort, serviceTierSelection, goalInputOpen, goalObjective, tokenDraft]);
   const inputResources = useConversationInputResources({
+    attachments: attachments,
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
     textareaRef,
     text: content,
@@ -3489,6 +3490,8 @@ export function NewConversationComposer(props: {
   }, []);
 
   async function submit(overrides: { content?: string; goalObjective?: string } = {}): Promise<void> {
+    // 键盘提交也需等待导入完成，避免附件落回已发送的草稿。
+    if (inputResources.processing) return;
     const structured = structuredSelectionRef.current;
     const submittedContent = overrides.content ?? structured.promptText;
     const submittedDisplayText = overrides.content === undefined ? structured.displayText : overrides.content;
@@ -3602,6 +3605,7 @@ export function NewConversationComposer(props: {
     >
       <ConversationComposerAttachments
         attachments={attachments}
+        pendingResources={inputResources.pendingResources}
         language={props.language}
         disabled={submitting || inputResources.processing}
         onRemove={(attachment) => setAttachments((current) => current.filter((candidate) => candidate !== attachment))}

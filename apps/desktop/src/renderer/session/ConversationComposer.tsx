@@ -177,6 +177,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const selectedModelLabel = modelPresentation.triggerLabel || copy.unsynced;
   const effortOptions = selectedCapability?.supportedReasoningEfforts.map((effort) => ({ value: effort, label: effort })) ?? [];
   const inputResources = useConversationInputResources({
+    attachments: props.state.attachments,
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
     textareaRef,
     text: props.state.draft,
@@ -244,6 +245,8 @@ export function ConversationComposer(props: ConversationComposerProps) {
   }, [textareaRef]);
 
   function submit(nextDelivery: 'queue' | 'steer_now'): void {
+    // 附件尚在导入时不能提交，避免正文先发出而附件随后落回草稿。
+    if (inputResources.processing) return;
     if (nextDelivery === 'queue' && !selectedCapability) return;
     const structured = structuredSelectionRef.current;
     const settings =
@@ -377,6 +380,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
     <section
       className="session-composer-shell"
       aria-label={inputLabel}
+      aria-busy={busy || inputResources.processing || undefined}
       data-active={active ? 'true' : 'false'}
       data-goal-input={goalInputActive ? 'true' : 'false'}
       data-input-blocked={props.inputBlocked ? 'true' : 'false'}
@@ -411,6 +415,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
         ) : null}
         <ConversationComposerAttachments
           attachments={props.state.attachments}
+          pendingResources={inputResources.pendingResources}
           language={props.language}
           disabled={!inputWritable || busy || inputResources.processing}
           onRemove={(attachment) => props.onRemoveAttachment?.(attachment)}
@@ -644,10 +649,10 @@ export function ConversationComposer(props: ConversationComposerProps) {
                   className="session-send-button"
                   aria-label={goalInputActive ? copy.createGoal : copy.send}
                   onClick={() => (goalInputActive ? void setGoalObjective(goalDraft) : submit('queue'))}
-                  disabled={!inputWritable || !settingsWritable || busy || goalOperationBusy || (goalInputActive ? !goalDraftValid : !hasDraft)}
-                  aria-busy={busy || goalOperationBusy || undefined}
+                  disabled={!inputWritable || !settingsWritable || busy || goalOperationBusy || inputResources.processing || (goalInputActive ? !goalDraftValid : !hasDraft)}
+                  aria-busy={busy || goalOperationBusy || inputResources.processing || undefined}
                 >
-                  {busy || goalOperationBusy ? <span className="session-command-spinner" aria-hidden="true" /> : <ArrowUp aria-hidden="true" weight="bold" />}
+                  {busy || goalOperationBusy || inputResources.processing ? <span className="session-command-spinner" aria-hidden="true" /> : <ArrowUp aria-hidden="true" weight="bold" />}
                 </button>
               ) : (
                 <button

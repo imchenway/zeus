@@ -2360,7 +2360,15 @@ function TaskPasteFocusQa() {
           text: parameters.has('paste-text') ? clipboardNote : '',
         };
       }}
-      onAuthorizeFiles={async () => ({ resources: [], failedCount: 0 })}
+      onAuthorizeFiles={async (files) => {
+        // 浏览器已经给出 File 时模拟授权回执，不再依赖系统剪贴板读取。
+        await nextQaTask();
+        await nextQaTask();
+        return {
+          resources: files.map((file) => ({ path: `qa:${crypto.randomUUID()}`, name: file.name, kind: file.type.startsWith('image/') ? ('image' as const) : ('file' as const), mimeType: file.type, size: file.size })),
+          failedCount: 0,
+        };
+      }}
       onMaterializeResources={async () => []}
       onAddAttachments={(attachments) => setForm((current) => ({ ...current, attachments: [...current.attachments, ...attachments] }))}
       onRemoveAttachment={(path) => setForm((current) => ({ ...current, attachments: current.attachments.filter((attachment) => attachment.path !== path) }))}
