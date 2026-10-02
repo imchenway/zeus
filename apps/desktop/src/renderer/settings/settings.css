@@ -1466,39 +1466,6 @@
     padding: 0;
     gap: 24px;
   }
-  .command-definition-list {
-    border: 0;
-    border-radius: 0;
-    box-shadow: none;
-  }
-  .command-definition-row {
-    grid-template-columns: 28px minmax(0, 1fr) auto;
-    gap: 12px;
-    padding: 18px 0;
-  }
-  .command-definition-leading {
-    inline-size: 28px;
-    block-size: 28px;
-    border-radius: 6px;
-  }
-  .command-definition-title strong {
-    font-size: 14px;
-  }
-  .command-definition-title :where(code, small) {
-    font-size: 11px;
-    border-radius: 4px;
-    padding: 1px 5px;
-  }
-  .command-definition-copy > span:not(.command-definition-title) {
-    font-size: 13px;
-    line-height: 1.6;
-  }
-  .command-definition-copy > small {
-    font-size: 11px;
-  }
-  .command-definition-actions > button {
-    padding: 6px 8px;
-  }
 
   /* 更新主操作与版本优先展示，安装包与签名信息直接列明。 */
   .release-update-workbench {
@@ -1696,15 +1663,6 @@
     .memory-editor,
     .memory-record dl {
       grid-template-columns: 1fr;
-    }
-    .command-definition-row {
-      grid-template-columns: minmax(0, 1fr) auto;
-    }
-    .command-definition-leading {
-      display: none;
-    }
-    .command-definition-title {
-      flex-wrap: wrap;
     }
     .memory-record header {
       flex-wrap: wrap;
