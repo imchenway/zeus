@@ -99,11 +99,12 @@ async function resolveResponse(input: {
   try {
     if (!input.conversation || !input.callId) throw dynamicToolError('ZEUS_BROWSER_TOOL_CONTEXT_INVALID', 'The browser tool call is not attached to a durable Zeus conversation.');
     if ((!input.namespace || input.namespace === 'zeus') && input.tool === 'read_conversation_tool_result') {
+      /** 原始参数交由共用读取入口校验，不将 null 等非法值改成第一页。 */
       const page = await input.options.toolResults.readPage({
         conversationId: input.conversation.id,
         handle: requiredString(input.argumentsValue.handle, 'tool result handle'),
-        offset: nonNegativeInteger(input.argumentsValue.offset, 0),
-        limit: positiveBoundedInteger(input.argumentsValue.limit, 16_384, 16_384),
+        offset: input.argumentsValue.offset,
+        limit: input.argumentsValue.limit,
       });
       return dynamicToolResponse(input.event, [{ type: 'inputText', text: JSON.stringify(page) }], true);
     }
@@ -291,14 +292,6 @@ function stringValue(value: unknown): string {
 function requiredString(value: unknown, label: string): string {
   if (typeof value !== 'string' || !value) throw dynamicToolError('ZEUS_BROWSER_TOOL_ARGUMENT_INVALID', `Missing ${label}.`);
   return value;
-}
-
-function nonNegativeInteger(value: unknown, fallback: number): number {
-  return value === undefined ? fallback : Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : fallback;
-}
-
-function positiveBoundedInteger(value: unknown, fallback: number, maximum: number): number {
-  return value === undefined ? fallback : Number.isSafeInteger(value) && Number(value) > 0 ? Math.min(Number(value), maximum) : fallback;
 }
 
 function dynamicToolError(code: string, message: string): Error & { code: string } {
