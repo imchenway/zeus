@@ -19,6 +19,8 @@ import { compareConversationCreatedAsc } from '../session/conversationOrdering.j
 import { Button } from '../ui/Button.js';
 import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../ui/pendingResourcePolicy.js';
+import { clipboardNeedsResourceRead, clipboardTextAfterResources, usePendingResourcePreviews } from '../ui/usePendingResourcePreviews.js';
+import type { PendingResourceCardItem } from '../ui/PendingResourceCards.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
 import { TaskDigitalEmployeeExecutor, TaskDigitalEmployeePanel, useTaskDigitalEmployeeManagement, type TaskDigitalEmployeeSkillClient } from '../features/digital-employees/TaskDigitalEmployeePanel.js';
@@ -308,6 +310,8 @@ function TaskDetailFieldAttachments(props: {
   zh: boolean;
   field: TaskAttachmentField;
   attachments: TaskAttachmentView[];
+  /** 当前字段的导入卡片与成功缩略图。 */
+  pendingResources?: PendingResourceCardItem[];
   copy: TaskDetailPaneCopy;
   editCopy: TaskEditCopy;
   disabled: boolean;
@@ -316,11 +320,14 @@ function TaskDetailFieldAttachments(props: {
   onOpenAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
 }) {
   const attachments = taskAttachmentsForField(props.attachments, props.field);
-  if (attachments.length === 0) return null;
+  /** 未确认卡片按字段显示，成功预览按真实路径复用。 */
+  const previews = props.pendingResources?.filter((resource) => !resource.pending || resource.scope === props.field);
+  if (attachments.length === 0 && !previews?.some((resource) => resource.pending)) return null;
   return (
     <div className="task-detail-field-attachments">
       <TaskAttachmentPreviewList
         attachments={attachments}
+        pendingResources={previews}
         mode="editable"
         disabled={props.disabled}
         onRemove={props.onRemove}
@@ -356,6 +363,8 @@ function InlineTaskTextField(props: {
   copy: TaskEditCopy;
   className?: string;
   disabled?: boolean;
+  /** 附件保存期间正文可编辑，字段提交等待资源完成。 */
+  resourcesProcessing?: boolean;
   buildPatch: (value: string) => Omit<UpdateTaskRequest, 'expectedUpdatedAt'>;
   valueFromTask: (task: TaskRecord) => string;
   onSave: (input: UpdateTaskRequest) => Promise<TaskEditResult>;
@@ -367,6 +376,11 @@ function InlineTaskTextField(props: {
   const composingRef = useRef(false);
   const suppressBlurRef = useRef(false);
   const pasteShortcutFallbackTokenRef = useRef(0);
+  /** 附件保存期间的失焦保存延后，避免正文使用过期任务版本提交。 */
+  const deferredBlurSave = useRef(false);
+  /** 延迟保存读取当前草稿和回填后的任务版本。 */
+  const commitLatest = useRef(() => undefined);
+
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(props.value);
   const [saveState, setSaveState] = useState<TaskFieldSaveState>({ kind: 'idle' });
@@ -399,6 +413,8 @@ function InlineTaskTextField(props: {
   }
 
   function cancelEditing(): void {
+    if (props.resourcesProcessing) return;
+    deferredBlurSave.current = false;
     suppressBlurRef.current = true;
     setDraft(props.value);
     setSaveState({ kind: 'idle' });
@@ -406,7 +422,8 @@ function InlineTaskTextField(props: {
   }
 
   async function commitDraft(expectedUpdatedAt = baseUpdatedAtRef.current): Promise<void> {
-    if (saveState.kind === 'saving') return;
+    if (saveState.kind === 'saving' || props.resourcesProcessing) return;
+    deferredBlurSave.current = false;
     const nextValue = props.required ? draft.trim() : draft;
     if (props.required && !nextValue) {
       setSaveState({ kind: 'error', message: props.copy.titleRequired });
@@ -437,11 +454,25 @@ function InlineTaskTextField(props: {
     }
   }
 
+  commitLatest.current = () => {
+    void commitDraft();
+  };
+  useEffect(() => {
+    if (props.resourcesProcessing || !deferredBlurSave.current) return;
+    deferredBlurSave.current = false;
+    // 用户已回到原输入框时继续编辑；仍在其他位置才补做失焦保存。
+    if (document.activeElement !== inputRef.current) commitLatest.current();
+  }, [props.resourcesProcessing]);
+
   function handleBlur(event: { relatedTarget: EventTarget | null; currentTarget: HTMLInputElement | HTMLTextAreaElement }): void {
     // 在文本与保存、取消按钮之间移动焦点时，等待用户明确操作。
     if (event.relatedTarget instanceof Node && event.currentTarget.closest('.task-inline-edit')?.contains(event.relatedTarget)) return;
     if (suppressBlurRef.current) {
       suppressBlurRef.current = false;
+      return;
+    }
+    if (props.resourcesProcessing) {
+      deferredBlurSave.current = true;
       return;
     }
     void commitDraft();
@@ -511,7 +542,7 @@ function InlineTaskTextField(props: {
         .finally(() => {
           if (pasteShortcutFallbackTokenRef.current === fallbackToken) pasteShortcutFallbackTokenRef.current += 1;
         });
-    }, 120);
+    }, 0);
   }
 
   function handlePaste(event: ReactClipboardEvent<HTMLInputElement | HTMLTextAreaElement>): void {
@@ -523,8 +554,10 @@ function InlineTaskTextField(props: {
     const request: TaskAttachmentPasteRequest = {
       files: taskClipboardFiles(event.clipboardData),
       plainText: readTaskClipboardText(event.clipboardData),
-      readNativeClipboard: true,
+      readNativeClipboard: false,
     };
+    request.readNativeClipboard = request.files.length === 0 && clipboardNeedsResourceRead(event.clipboardData, request.plainText);
+    if (request.files.length === 0 && request.plainText.length < PENDING_RESOURCE_LONG_TEXT_THRESHOLD && !request.readNativeClipboard) return;
     event.preventDefault();
     void applyPasteRequest(control, request, selectionStart, selectionEnd).catch(() => {
       if (request.files.length === 0) insertPastedText(control, request.plainText, selectionStart, selectionEnd);
@@ -588,10 +621,10 @@ function InlineTaskTextField(props: {
           {saveState.kind === 'saving' ? <TaskSaveSpinner /> : null}
           {props.multiline ? (
             <span className="task-inline-edit-actions">
-              <Button variant="secondary" size="compact" disabled={saveState.kind === 'saving'} onPointerDown={(event) => event.preventDefault()} onClick={cancelEditing}>
+              <Button variant="secondary" size="compact" disabled={saveState.kind === 'saving' || props.resourcesProcessing} onPointerDown={(event) => event.preventDefault()} onClick={cancelEditing}>
                 {props.copy === taskEditCopies['zh-CN'] ? '取消' : 'Cancel'}
               </Button>
-              <Button variant="primary" size="compact" busy={saveState.kind === 'saving'} onPointerDown={(event) => event.preventDefault()} onClick={() => void commitDraft()}>
+              <Button variant="primary" size="compact" busy={saveState.kind === 'saving'} disabled={props.resourcesProcessing} onPointerDown={(event) => event.preventDefault()} onClick={() => void commitDraft()}>
                 {props.copy === taskEditCopies['zh-CN'] ? '保存' : 'Save'}
               </Button>
             </span>
@@ -885,6 +918,18 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
   const managementStatus = resolveTaskManagementStatus(props.task);
   const latestEvent = props.events.at(-1);
   const taskAttachments = parseTaskAttachments(props.task.sourceContextJson);
+  /** 任务详情的所有正文与标签字段共用即时预览和场景清理。 */
+  const previews = usePendingResourcePreviews(
+    taskAttachments.map((attachment) => ({ id: attachment.path, name: attachment.name, kind: attachment.kind })),
+    props.language,
+    props.task.id,
+  );
+  /** 正文继续编辑，但任何字段保存都等待附件回写版本。 */
+  const resourcesProcessing = previews.pendingResources.some((resource) => resource.pending);
+  /** 当前任务身份用于阻止旧任务的排队回执修改新详情。 */
+  const latestTask = useRef(props.task);
+  latestTask.current = props.task;
+
   const modelPushCreating = props.modelPushOperation?.status === 'submitting';
   const modelPushFailed = props.modelPushOperation?.status === 'failed';
   const attachmentStatusId = `${useId()}-status`;
@@ -922,9 +967,9 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
     if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
   }, [props.task.id]);
   useEffect(() => {
-    if (attachmentSaveState.kind === 'saving' || attachmentSaveState.kind === 'error' || attachmentSaveState.kind === 'conflict') return;
+    if (resourcesProcessing || attachmentSaveState.kind === 'saving' || attachmentSaveState.kind === 'error' || attachmentSaveState.kind === 'conflict') return;
     desiredAttachmentsRef.current = parseTaskAttachments(props.task.sourceContextJson).map(toPersistedTaskAttachment);
-  }, [attachmentSaveState.kind, props.task.id, props.task.sourceContextJson]);
+  }, [resourcesProcessing, attachmentSaveState.kind, props.task.id, props.task.updatedAt, props.task.sourceContextJson]);
   useEffect(
     () => () => {
       if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
@@ -1002,15 +1047,21 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
     }
   }
 
+  /** 保存集中在一个队列里，版本校验与冲突处理保持原契约。 */
   async function saveAttachmentReferences(attachments: TaskAttachmentReference[], expectedUpdatedAt: string): Promise<TaskEditResult | null> {
     if (!expectedUpdatedAt) {
       setAttachmentSaveState({ kind: 'error', message: editCopy.saveFailed });
       return null;
     }
+    /** 记录本次目标，后续粘贴基于它合并，避免覆盖先到的附件。 */
     desiredAttachmentsRef.current = attachments;
+    /** 固定此次授权操作的任务，不跟随之后切换的详情。 */
+    const taskId = props.task.id;
     setAttachmentSaveState({ kind: 'saving' });
     try {
-      const result = await props.onUpdateTaskContent(props.task.id, { expectedUpdatedAt, attachments });
+      // 工作区已有按任务串行队列和本地版本接续，详情不再另建一层队列。
+      const result = await props.onUpdateTaskContent(taskId, { expectedUpdatedAt, attachments });
+      if (latestTask.current.id !== taskId) return null;
       if (result.kind === 'conflict') {
         setAttachmentSaveState({ kind: 'conflict', latest: result.latest });
         return result;
@@ -1018,7 +1069,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
       setAttachmentSaveState({ kind: 'saved' });
       return result;
     } catch (error) {
-      setAttachmentSaveState({ kind: 'error', message: taskEditErrorMessage(error, editCopy.saveFailed, zh ? 'zh-CN' : 'en') });
+      if (latestTask.current.id === taskId) setAttachmentSaveState({ kind: 'error', message: taskEditErrorMessage(error, editCopy.saveFailed, zh ? 'zh-CN' : 'en') });
       return null;
     }
   }
@@ -1039,11 +1090,14 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
     let text = request.plainText;
     let nativeReadFailed = false;
 
+    /** 卡片先出现，保持到文件授权和任务记录保存都结束。 */
+    const pending = previews.begin(request.files, request.plainText, field);
     setAttachmentSaveState({ kind: 'saving' });
     try {
-      if (request.readNativeClipboard && props.onReadClipboardResources) {
+      if (request.files.length === 0 && request.readNativeClipboard && props.onReadClipboardResources) {
         try {
           const nativeResult = await props.onReadClipboardResources();
+          if (!pending.current()) return {};
           additions = nativeResult.resources;
           // 剪贴板正文已经被附件消费时，只补回剩余说明文字；没有附件才回填整段粘贴原文。
           text = additions.length > 0 ? nativeResult.text : nativeResult.text || text;
@@ -1055,14 +1109,18 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
       if (additions.length === 0 && request.files.length > 0) {
         if (!props.onAuthorizeFiles) throw new Error('Task attachment authorization is unavailable.');
         const result = await props.onAuthorizeFiles(request.files, 'paste');
+        if (!pending.current()) return {};
         additions = result.resources;
         failedCount = result.failedCount;
+        text = clipboardTextAfterResources(text, additions);
       }
 
       if (additions.length === 0 && text.length >= PENDING_RESOURCE_LONG_TEXT_THRESHOLD) {
         if (!props.onMaterializeResources) throw new Error('Task attachment materialization is unavailable.');
         additions = await props.onMaterializeResources([{ name: 'Pasted text.txt', type: 'text/plain', text, kind: 'pasted_text' }]);
+        if (!pending.current()) return {};
         if (additions.length === 0) throw new Error('Task attachment materialization returned no resource.');
+        text = '';
       }
 
       if (additions.length === 0) {
@@ -1081,6 +1139,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         additions.map((attachment) => ({ ...attachment, field })),
       );
       const result = await saveAttachmentReferences(nextAttachments, props.task.updatedAt ?? '');
+      if (!pending.current()) return {};
       if (!result) {
         attachmentPasteRetryRef.current = null;
         return {};
@@ -1090,6 +1149,10 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         return { updatedAt: result.latest.updatedAt };
       }
 
+      pending.complete(
+        additions.map((attachment) => ({ id: attachment.path, name: attachment.name, kind: attachment.kind })),
+        failedCount,
+      );
       if (failedCount > 0) {
         attachmentPasteRetryRef.current = retryOperation;
         setAttachmentSaveState({ kind: 'error', message: taskPasteErrorMessage(failedCount) });
@@ -1099,6 +1162,13 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
       /** 有待重试的失败项时先不写回正文，重试成功后再插入，避免同一段文字进入两次。 */
       return { updatedAt: result.task.updatedAt, ...(failedCount === 0 && text ? { insertText: text } : {}) };
     } catch {
+      if (!pending.current()) return {};
+      if (request.files.length === 0 && request.plainText.length >= PENDING_RESOURCE_LONG_TEXT_THRESHOLD && additions.length === 0) {
+        // 物化失败时保留原文，不让重试再重复插入同一段文字。
+        attachmentPasteRetryRef.current = null;
+        setAttachmentSaveState({ kind: 'error', message: taskPasteErrorMessage() });
+        return { insertText: request.plainText };
+      }
       const resourceLikePaste = request.files.length > 0 || text.length >= PENDING_RESOURCE_LONG_TEXT_THRESHOLD;
       if (!resourceLikePaste && request.plainText) {
         attachmentPasteRetryRef.current = null;
@@ -1108,6 +1178,8 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
       attachmentPasteRetryRef.current = retryOperation;
       setAttachmentSaveState({ kind: 'error', message: taskPasteErrorMessage() });
       return {};
+    } finally {
+      pending.finish();
     }
   }
 
@@ -1221,14 +1293,16 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             zh={zh}
             field={field.field}
             attachments={taskAttachments}
+            pendingResources={previews.pendingResources}
             copy={props.copy}
             editCopy={editCopy}
-            disabled={props.busy || attachmentSaveState.kind === 'saving'}
+            disabled={props.busy || resourcesProcessing || attachmentSaveState.kind === 'saving'}
             onRemove={(path) => void removeAttachment(path)}
             onLoadPreview={props.onLoadAttachmentPreview}
             onOpenAttachment={props.onOpenAttachment}
           />
           <InlineTaskTextField
+            resourcesProcessing={resourcesProcessing}
             task={props.task}
             label={`${zh ? '编辑' : 'Edit'}${zh ? '' : ' '}${field.label}`}
             value={field.value}
@@ -1273,6 +1347,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
       <header className="task-detail-pane-header task-detail-summary-row">
         <span className="task-detail-pane-title">
           <InlineTaskTextField
+            resourcesProcessing={resourcesProcessing}
             task={props.task}
             label={editCopy.editTitle}
             value={props.task.title}
@@ -1516,14 +1591,16 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
                 zh={zh}
                 field="tags"
                 attachments={taskAttachments}
+                pendingResources={previews.pendingResources}
                 copy={props.copy}
                 editCopy={editCopy}
-                disabled={props.busy || attachmentSaveState.kind === 'saving'}
+                disabled={props.busy || resourcesProcessing || attachmentSaveState.kind === 'saving'}
                 onRemove={(path) => void removeAttachment(path)}
                 onLoadPreview={props.onLoadAttachmentPreview}
                 onOpenAttachment={props.onOpenAttachment}
               />
               <InlineTaskTextField
+                resourcesProcessing={resourcesProcessing}
                 task={props.task}
                 label={editCopy.editTags}
                 value={taskTagsDraft(props.task.tags)}

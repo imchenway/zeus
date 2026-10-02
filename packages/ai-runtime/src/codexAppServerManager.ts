@@ -448,11 +448,7 @@ export function runWithCodexRpcRetryContext<T>(context: CodexRpcRetryContext, op
 }
 
 export type CodexTransportState =
-  | { type: 'idle' }
-  | { type: 'starting'; generationId: string }
-  | { type: 'ready'; generationId: string; capabilities: CodexCapabilitiesSnapshot }
-  | { type: 'restarting'; generationId: string; attempt: number }
-  | { type: 'closed' };
+  { type: 'idle' } | { type: 'starting'; generationId: string } | { type: 'ready'; generationId: string; capabilities: CodexCapabilitiesSnapshot } | { type: 'restarting'; generationId: string; attempt: number } | { type: 'closed' };
 
 export interface CodexRuntimeGenerationSnapshot {
   generationId: string;
@@ -1514,14 +1510,23 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       if (!request) {
         request = (async () => {
           const accountRead = refreshToken ? rpc : retryableReadRpc;
-          const snapshot = parseAccountSnapshot(
-            await accountRead(capabilities.generationId, 'account/read', { refreshToken }, { ...(refreshToken ? {} : { timeoutMs: Math.min(requestTimeoutMs, 8_000) }) }),
-            capabilities.generationId,
-            accountFingerprintSalt,
-          );
-          if (accountRevision !== modelAccountRevision) throw managerError('ZEUS_CODEX_ACCOUNT_CHANGED', '账户状态已变化，请重新检查。');
-          lastAccountSnapshot = { value: snapshot, cachedAt: Date.now() };
-          return snapshot;
+          /** 账户通知可能与首次读取并发；只读请求再确认一次，拒绝持续变化或刷新凭据的旧回包。 */
+          let revision = accountRevision;
+          for (let attempt = 0; attempt < 2; attempt += 1) {
+            /** 每次都读取当前账户，不沿用变化前的缓存或响应。 */
+            const snapshot = parseAccountSnapshot(
+              await accountRead(capabilities.generationId, 'account/read', { refreshToken }, { ...(refreshToken ? {} : { timeoutMs: Math.min(requestTimeoutMs, 8_000) }) }),
+              capabilities.generationId,
+              accountFingerprintSalt,
+            );
+            if (revision === modelAccountRevision) {
+              lastAccountSnapshot = { value: snapshot, cachedAt: Date.now() };
+              return snapshot;
+            }
+            if (refreshToken) break;
+            revision = modelAccountRevision;
+          }
+          throw managerError('ZEUS_CODEX_ACCOUNT_CHANGED', '账户状态已变化，请重新检查。');
         })();
         accountReadInFlight.set(flightKey, request);
         const clearFlight = () => {

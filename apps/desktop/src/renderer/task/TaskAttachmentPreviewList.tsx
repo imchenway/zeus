@@ -2,6 +2,7 @@ import { FilePreviewDialog } from '../code/FilePreview.js';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { TaskAttachmentView } from './taskAttachments.js';
 import { PendingResourceCards, type PendingResourceCardItem } from '../ui/PendingResourceCards.js';
+import { mergePendingResourcePreviews } from '../ui/usePendingResourcePreviews.js';
 
 export type TaskAttachmentPreviewItem = TaskAttachmentView;
 
@@ -22,6 +23,8 @@ export interface TaskAttachmentPreviewListCopy {
 
 export interface TaskAttachmentPreviewListProps {
   attachments: TaskAttachmentPreviewItem[];
+  /** 创建、复制和详情编辑共用即时卡片与本地缩略图。 */
+  pendingResources?: PendingResourceCardItem[];
   copy: TaskAttachmentPreviewListCopy;
   mode: 'editable' | 'readonly';
   onRemove?: (path: string) => void;
@@ -58,8 +61,10 @@ export function TaskAttachmentPreviewList(props: TaskAttachmentPreviewListProps)
   const previewLoading = Boolean(previewAttachment && !previewSrc && !previewFailure && (loadingPreviewPaths.has(previewAttachment.path) || props.onLoadPreview));
   const listClassName = ['task-attachment-preview-list', props.className].filter(Boolean).join(' ');
   const addedStatus = useMemo(() => props.copy.addedStatus?.(props.attachments.length), [props.attachments.length, props.copy]);
+  /** 已有本地缩略图无需再向宿主读取同一文件。 */
+  const localPreviewPaths = new Set(props.pendingResources?.filter((resource) => !resource.pending && resource.previewUrl).map((resource) => resource.id));
   const previewCandidateSignature = props.attachments
-    .filter((attachment) => attachment.kind === 'image' && !attachment.previewUrl)
+    .filter((attachment) => attachment.kind === 'image' && !attachment.previewUrl && !localPreviewPaths.has(attachment.path))
     .map((attachment) => attachment.path)
     .join('\0');
   const previewLoaderAvailable = Boolean(props.onLoadPreview);
@@ -169,7 +174,7 @@ export function TaskAttachmentPreviewList(props: TaskAttachmentPreviewListProps)
         </p>
       ) : null}
       <PendingResourceCards
-        resources={resources}
+        resources={mergePendingResourcePreviews(resources, props.pendingResources)}
         language={language}
         disabled={props.disabled}
         onRemove={props.mode === 'editable' && props.onRemove ? (resource) => props.onRemove?.(resource.id) : undefined}

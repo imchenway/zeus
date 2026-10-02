@@ -4,9 +4,12 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import type { TaskPushSupplementalAttachmentDraft } from '../session/sessionTypes.js';
 import { conversationAttachmentIdentity } from '../session/ConversationComposerAttachments.js';
 import { PendingResourceCards, type PendingResourceCardItem } from '../ui/PendingResourceCards.js';
+import { mergePendingResourcePreviews } from '../ui/usePendingResourcePreviews.js';
 
 export function TaskPushSupplementalAttachmentCards(props: {
   attachments: TaskPushSupplementalAttachmentDraft[];
+  /** 补充输入也即时展示导入中的文件和截图。 */
+  pendingResources?: PendingResourceCardItem[];
   language: 'zh-CN' | 'en-US';
   disabled: boolean;
   onRemove: (attachment: TaskPushSupplementalAttachmentDraft) => void;
@@ -61,7 +64,7 @@ export function TaskPushSupplementalAttachmentCards(props: {
   return (
     <div className="task-model-push-supplemental-resources">
       <PendingResourceCards
-        resources={resources}
+        resources={mergePendingResourcePreviews(resources, props.pendingResources)}
         language={props.language}
         disabled={props.disabled}
         onLoadPreview={loadResourcePreview}

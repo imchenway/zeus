@@ -768,6 +768,7 @@ export function TaskModelPushModal(props: {
   const repositoryRefreshError = props.capabilities?.repositories.find((repository) => repository.remoteRefreshError)?.remoteRefreshError ?? null;
   const resourceInputDisabled = !interactionOpen || props.status === 'submitting';
   const inputResources = useConversationInputResources({
+    attachments: props.form.supplementalAttachments,
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
     textareaRef: supplementalTextareaRef,
     text: props.form.supplementalInfo,
@@ -1078,6 +1079,7 @@ export function TaskModelPushModal(props: {
               </label>
               <TaskPushSupplementalAttachmentCards
                 attachments={props.form.supplementalAttachments}
+                pendingResources={inputResources.pendingResources}
                 language={props.language}
                 disabled={busy}
                 onRemove={(attachment) => {

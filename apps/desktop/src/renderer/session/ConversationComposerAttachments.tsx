@@ -3,9 +3,12 @@ import { PendingResourceCards, type PendingResourceCardItem } from '../ui/Pendin
 import { useContext, useState } from 'react';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { FilePreviewDialog, FilePreviewOpenContext } from '../code/FilePreview.js';
+import { mergePendingResourcePreviews } from '../ui/usePendingResourcePreviews.js';
 
 export interface ConversationComposerAttachmentsProps {
   attachments: NativeConversationAttachment[];
+  /** 尚未授权的本地预览只显示在输入框中。 */
+  pendingResources?: PendingResourceCardItem[];
   language: 'zh-CN' | 'en-US';
   disabled: boolean;
   ariaLabel?: string;
@@ -28,7 +31,8 @@ export function ConversationComposerAttachments(props: ConversationComposerAttac
     setPreviewAttachment(attachment);
   }
 
-  const resources = props.attachments.map(toPendingResource);
+  /** 真实附件沿用即时缩略图，导入中的卡片追加到同一布局。 */
+  const resources = mergePendingResourcePreviews(props.attachments.map(toPendingResource), props.pendingResources);
   const byId = new Map(props.attachments.map((attachment) => [conversationAttachmentIdentity(attachment), attachment]));
   return (
     <>

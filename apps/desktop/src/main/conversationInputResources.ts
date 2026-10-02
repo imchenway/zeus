@@ -132,7 +132,8 @@ export function createConversationInputResourceBroker(options: CreateConversatio
           text: extractTaskClipboardResidualText(safelyReadClipboardText(options.clipboard), referencedPaths),
         };
       }
-      const binaryResources = await readTaskClipboardAttachmentsFromClipboard(options.clipboard, options.clipboardReadOptions);
+      // 上一步已读取系统文件引用；二进制回退只检查 Electron 格式，避免重复启动 osascript。
+      const binaryResources = await readTaskClipboardAttachmentsFromClipboard(options.clipboard);
       if (binaryResources.length > 0) {
         return {
           resources: await this.materialize(
