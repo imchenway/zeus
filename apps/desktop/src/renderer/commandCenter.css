@@ -35,7 +35,6 @@
 
 .command-center-header,
 .command-center-header > span,
-.command-definition-copy,
 .command-run-detail > header,
 .command-run-detail > header > span,
 .command-parameter-editor > header,
@@ -55,7 +54,6 @@
 }
 
 .command-center-header > span,
-.command-definition-copy,
 .command-run-detail > header > span,
 .command-parameter-editor > header > span {
   flex-direction: column;
@@ -73,8 +71,13 @@
   max-width: 760px;
 }
 
-.command-center-live {
-  min-height: 20px;
+/* 空状态区域仍保留播报节点，但不占用列表上方空间。 */
+.command-center-live:empty {
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  width: 1px;
 }
 
 /* 命令页工具栏只保留开关。 */
@@ -160,39 +163,29 @@
   color: var(--zeus-control-danger-text);
 }
 
+/* 列表以紧凑操作行呈现，完整说明留在原生展开区。 */
 .command-definition-list {
-  background: var(--zeus-product-panel);
+  background: transparent;
   border: 0;
-  border-radius: 14px;
   flex-shrink: 0;
-  overflow: hidden;
 }
 
 .command-definition-row {
-  align-items: center;
+  align-items: start;
+  box-sizing: border-box;
   display: grid;
   gap: 14px;
-  grid-template-columns: 34px minmax(0, 1fr) auto;
-  min-height: 76px;
-  padding: 12px 14px;
-}
-
-.command-definition-row + .command-definition-row {
-  border-top: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 60px;
+  padding: 12px 0;
 }
 
 .command-definition-row[data-enabled='false'] {
   opacity: 0.66;
 }
 
-.command-definition-leading {
-  align-items: center;
-  background: var(--zeus-product-panel-muted);
-  border-radius: 9px;
-  display: inline-flex;
-  height: 32px;
-  justify-content: center;
-  width: 32px;
+.command-definition-copy {
+  min-width: 0;
 }
 
 .command-definition-title,
@@ -205,8 +198,6 @@
   gap: 8px;
 }
 
-.command-definition-title code,
-.command-definition-title small,
 .command-run-status {
   background: var(--zeus-product-panel-muted);
   border-radius: 999px;
@@ -221,8 +212,6 @@
   white-space: nowrap;
 }
 
-.command-definition-copy > span:not(.command-definition-title),
-.command-definition-copy > small,
 .command-run-detail small,
 .command-parameter-editor small {
   color: var(--zeus-control-muted-text);
@@ -230,6 +219,140 @@
 
 .command-definition-actions {
   justify-content: flex-end;
+}
+
+.command-definition-copy > summary {
+  cursor: pointer;
+  inline-size: 100%;
+  list-style: none;
+  min-block-size: 32px;
+  padding: 0;
+}
+
+.command-definition-title::-webkit-details-marker,
+.command-run-details > summary::-webkit-details-marker,
+.command-parameter-help > summary::-webkit-details-marker {
+  display: none;
+}
+
+.command-definition-title strong {
+  font-size: 14px;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-definition-title small {
+  color: var(--zeus-control-muted-text);
+  flex: 0 0 auto;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* 展开箭头沿用现有节奏，键盘和指针均由原生 details 处理。 */
+.command-definition-title > svg,
+.command-run-details > summary > svg {
+  color: var(--zeus-control-muted-text);
+  flex: 0 0 auto;
+  height: 12px;
+  transform: rotate(-90deg);
+  transition: transform 120ms ease-out;
+  width: 12px;
+}
+
+.command-definition-copy[open] > summary > svg,
+.command-run-details[open] > summary > svg {
+  transform: rotate(0deg);
+}
+
+.command-definition-title:focus-visible,
+.command-run-details > summary:focus-visible,
+.command-parameter-help > summary:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid var(--zeus-focus-line);
+  outline-offset: 2px;
+}
+
+.command-definition-management {
+  align-items: center;
+  display: flex;
+  gap: 4px;
+  min-width: 68px;
+}
+
+/* 辅助操作使用轻量图标，运行操作保留清晰按钮。 */
+.command-definition-actions .command-definition-icon-action {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--zeus-control-muted-text);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  gap: 4px;
+  justify-content: center;
+  min-height: 32px;
+  min-width: 32px;
+  padding: 6px;
+}
+
+.command-definition-icon-action > svg {
+  height: 16px;
+  width: 16px;
+}
+
+.command-definition-icon-action:hover:not(:disabled) {
+  background: var(--zeus-interaction-hover);
+}
+
+.command-definition-icon-action:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.command-definition-icon-action[data-confirm='true'] {
+  color: var(--zeus-control-danger-text);
+}
+
+/* 说明和配置只在展开后显示，仍可读取完整脚本与别名。 */
+.command-definition-details {
+  color: var(--zeus-control-muted-text);
+  display: grid;
+  font-size: 12px;
+  gap: 10px;
+  line-height: 1.55;
+  min-width: 0;
+  padding: 10px 0 4px 20px;
+}
+
+.command-definition-details > code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.command-definition-details dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  margin: 0;
+}
+
+.command-definition-details dl > div {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.command-definition-details dd {
+  color: var(--zeus-control-text);
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .command-center-empty {
@@ -400,8 +523,7 @@
   gap: 2px;
 }
 
-.command-run-detail dl,
-.command-run-form dl {
+.command-run-detail dl {
   display: grid;
   gap: 8px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -415,21 +537,18 @@
   padding-bottom: 12px;
 }
 
-.command-run-detail dl div,
-.command-run-form dl div {
+.command-run-detail dl div {
   background: var(--zeus-product-panel-muted);
   border-radius: 8px;
   padding: 8px;
 }
 
-.command-run-detail dt,
-.command-run-form dt {
+.command-run-detail dt {
   color: var(--zeus-control-muted-text);
   font-size: 12px;
 }
 
-.command-run-detail dd,
-.command-run-form dd {
+.command-run-detail dd {
   margin: 4px 0 0;
   overflow-wrap: anywhere;
 }
@@ -942,23 +1061,161 @@
   justify-content: flex-end;
 }
 
-.command-high-risk-summary {
-  background: color-mix(in oklch, var(--zeus-control-danger-bg) 55%, transparent);
-  border: 1px solid var(--zeus-control-danger-line);
-  border-radius: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
+/* 运行表单以目录、参数和具体影响组织内容，不再使用统计卡片。 */
+.command-run-modal.command-modal {
+  width: min(520px, calc(100vw - 40px));
 }
 
-.command-high-risk-summary ul,
-.command-high-risk-summary p {
-  margin: 0;
+.command-run-modal h3 {
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.4;
 }
 
-.command-high-risk-summary p {
+.command-run-body {
+  gap: 20px;
+  padding-top: 6px;
+}
+
+.command-run-context {
+  align-items: center;
   color: var(--zeus-control-muted-text);
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.command-run-context > svg {
+  flex: 0 0 auto;
+  height: 16px;
+  width: 16px;
+}
+
+.command-run-context > span {
+  flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-run-context > small {
+  flex: 0 0 auto;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.command-run-parameters {
+  display: grid;
+  gap: 14px;
+}
+
+.command-run-parameters:empty {
+  display: none;
+}
+
+.command-run-parameter {
+  display: grid;
+  gap: 5px;
+}
+
+.command-run-parameter-heading {
+  min-height: 24px;
+  padding-right: 28px;
+  position: relative;
+}
+
+.command-run-parameter-heading > label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  padding-top: 3px;
+}
+
+.command-run-required {
+  color: var(--zeus-control-danger-text);
+}
+
+/* 字段说明在原位展开，输入值保持可见且不使用悬浮卡片。 */
+.command-parameter-help > summary {
+  align-items: center;
+  color: var(--zeus-control-muted-text);
+  cursor: pointer;
+  display: flex;
+  height: 24px;
+  justify-content: center;
+  list-style: none;
+  min-block-size: 24px;
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 24px;
+}
+
+.command-parameter-help > summary > svg {
+  height: 15px;
+  width: 15px;
+}
+
+.command-parameter-help > div {
+  color: var(--zeus-control-muted-text);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  padding-top: 6px;
+}
+
+.command-parameter-help code {
+  font-size: 10px;
+}
+
+.command-parameter-help p {
+  margin-top: 3px;
+}
+
+.command-run-parameter[data-type='boolean'] {
+  align-items: start;
+  grid-template-columns: minmax(0, 1fr) 18px;
+}
+
+.command-run-parameter[data-type='boolean'] > input {
+  margin: 3px 0 0;
+}
+
+.command-run-details > summary {
+  align-items: center;
+  color: var(--zeus-control-muted-text);
+  cursor: pointer;
+  display: flex;
+  font-size: 12px;
+  gap: 7px;
+  list-style: none;
+}
+
+/* 风险范围始终可见，不重复等级卡片和授权说明。 */
+.command-run-risk {
+  align-items: flex-start;
+  color: var(--zeus-control-danger-text);
+  display: flex;
+  font-size: 12px;
+  gap: 7px;
+  line-height: 1.5;
+}
+
+.command-run-risk > svg {
+  flex: 0 0 auto;
+  height: 16px;
+  margin-top: 1px;
+  width: 16px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .command-definition-title > svg,
+  .command-run-details > summary > svg {
+    transition: none;
+  }
 }
 
 .command-permission-body > p {
@@ -993,18 +1250,9 @@
     padding-inline: 14px;
   }
 
-  .command-center-header,
-  .command-definition-actions {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .command-definition-row {
-    grid-template-columns: 32px minmax(0, 1fr);
-  }
-
-  .command-definition-actions {
-    grid-column: 1 / -1;
+  .command-center-header {
+    flex-wrap: wrap;
+    gap: 12px;
   }
 
   .command-editor-grid,
@@ -1030,10 +1278,6 @@
 
   .command-run-list > li + li {
     margin-top: 0;
-  }
-
-  .command-run-form dl {
-    grid-template-columns: 1fr;
   }
 
   .command-run-detail {

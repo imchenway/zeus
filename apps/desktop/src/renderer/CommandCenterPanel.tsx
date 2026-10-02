@@ -7,7 +7,8 @@ import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/C
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import { DownloadSimpleIcon as DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple';
-import { GlobeIcon as Globe } from '@phosphor-icons/react/dist/csr/Globe';
+import { FolderSimpleIcon as FolderSimple } from '@phosphor-icons/react/dist/csr/FolderSimple';
+import { QuestionIcon as Question } from '@phosphor-icons/react/dist/csr/Question';
 import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
 import { PlayIcon as Play } from '@phosphor-icons/react/dist/csr/Play';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
@@ -817,7 +818,8 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
     }
   }
 
-  const heading = props.mode === 'global' ? (zh ? '全局命令' : 'Global commands') : zh ? `${props.project?.name ?? '项目'}命令` : `${props.project?.name ?? 'Project'} commands`;
+  /** 项目已由工作区导航标明，页面标题只说明当前操作。 */
+  const heading = props.mode === 'global' ? (zh ? '全局命令' : 'Global commands') : zh ? '命令' : 'Commands';
 
   return (
     <div className="command-center-workspace">
@@ -825,15 +827,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
         <header className="command-center-header">
           <span>
             <h2 id="command-center-title">{heading}</h2>
-            <p>
-              {props.mode === 'global'
-                ? zh
-                  ? '内置微信上传、预览和真机调试，也可添加自己的脚本。在项目命令中运行。'
-                  : 'Built-in WeChat upload, preview and device debugging. Add your own scripts and run commands from a project.'
-                : zh
-                  ? '全局命令只读展示；项目命令可在这里维护和执行。'
-                  : 'Global commands are read-only here; project commands can be maintained and run.'}
-            </p>
+            {props.mode === 'global' ? <p>{zh ? '在项目中运行' : 'Run from a project'}</p> : null}
           </span>
           <div className="command-center-header-actions">
             {props.mode === 'project' && props.project ? <ProjectTerminalPanel dockHost={terminalHost} key={props.project.id} project={props.project} client={props.client} language={props.language} /> : null}
@@ -860,59 +854,58 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
             <p className="command-center-empty">{zh ? '尚未配置命令。' : 'No commands configured.'}</p>
           ) : (
             commands.map((command) => {
+              /** 项目页只允许维护项目命令，全局页维护全局命令。 */
               const editable = props.mode === 'global' ? command.scope === 'global' : command.scope === 'project';
               return (
                 <article className="command-definition-row" key={command.id} data-enabled={command.enabled ? 'true' : 'false'}>
-                  <span className="command-definition-leading" aria-hidden="true">
-                    {command.scope === 'global' ? <Globe /> : <span>⌘</span>}
-                  </span>
-                  <span className="command-definition-copy">
-                    <span className="command-definition-title">
+                  <details className="command-definition-copy">
+                    <summary className="command-definition-title">
+                      <CaretDown aria-hidden="true" />
                       <strong>{command.title}</strong>
-                      <code>{command.name}</code>
                       <small>{command.scope === 'global' ? (zh ? '全局' : 'Global') : zh ? '项目' : 'Project'}</small>
-                    </span>
-                    <span>{command.description || command.command}</span>
-                    <small>
-                      {command.aliases.length > 0 ? `${zh ? '别名' : 'Aliases'}: ${command.aliases.join(', ')} · ` : ''}
-                      {command.timeoutSeconds}s · {command.telegramEnabled ? 'Telegram on' : 'Telegram off'} · {command.enabled ? (zh ? '已启用' : 'Enabled') : zh ? '已停用' : 'Disabled'}
-                    </small>
-                  </span>
+                      {!command.enabled ? <small>{zh ? '已停用' : 'Disabled'}</small> : null}
+                    </summary>
+                    <CommandDefinitionDetails command={command} zh={zh} />
+                  </details>
                   <span className="command-definition-actions">
                     {props.mode === 'project' ? (
                       <>
-                        <Button
-                          size="compact"
+                        <button
+                          type="button"
+                          className="command-definition-icon-action"
                           onClick={() => void openRunHistory(command)}
                           disabled={!props.project || busy}
                           aria-label={`${zh ? '查看执行历史' : 'View run history'} ${command.title}`}
                           title={zh ? '执行历史' : 'Run history'}
                         >
                           <ClockCounterClockwise aria-hidden="true" />
-                        </Button>
-                        <Button size="compact" onClick={() => void openRun(command)} disabled={!command.enabled || !props.project || busy}>
+                        </button>
+                        <Button size="compact" onClick={() => void openRun(command)} disabled={!command.enabled || !props.project || busy} aria-label={`${zh ? '运行' : 'Run'} ${command.title}`}>
                           <Play aria-hidden="true" />
                           {zh ? '运行' : 'Run'}
                         </Button>
                       </>
                     ) : null}
-                    {editable ? (
-                      <>
-                        <Button size="compact" onClick={() => openEdit(command)} disabled={busy} aria-label={`${zh ? '编辑' : 'Edit'} ${command.title}`}>
-                          <PencilSimple aria-hidden="true" />
-                        </Button>
-                        <Button
-                          size="compact"
-                          variant={pendingDeleteId === command.id ? 'danger' : 'secondary'}
-                          onClick={() => void removeCommand(command)}
-                          disabled={busy}
-                          aria-label={`${pendingDeleteId === command.id ? (zh ? '确认删除' : 'Confirm delete') : zh ? '删除' : 'Delete'} ${command.title}`}
-                        >
-                          <Trash aria-hidden="true" />
-                          {pendingDeleteId === command.id ? (zh ? '确认' : 'Confirm') : null}
-                        </Button>
-                      </>
-                    ) : null}
+                    <span className="command-definition-management">
+                      {editable ? (
+                        <>
+                          <button type="button" className="command-definition-icon-action" onClick={() => openEdit(command)} disabled={busy} aria-label={`${zh ? '编辑' : 'Edit'} ${command.title}`}>
+                            <PencilSimple aria-hidden="true" />
+                          </button>
+                          <button
+                            type="button"
+                            className="command-definition-icon-action"
+                            data-confirm={pendingDeleteId === command.id ? 'true' : undefined}
+                            onClick={() => void removeCommand(command)}
+                            disabled={busy}
+                            aria-label={`${pendingDeleteId === command.id ? (zh ? '确认删除' : 'Confirm delete') : zh ? '删除' : 'Delete'} ${command.title}`}
+                          >
+                            <Trash aria-hidden="true" />
+                            {pendingDeleteId === command.id ? (zh ? '确认' : 'Confirm') : null}
+                          </button>
+                        </>
+                      ) : null}
+                    </span>
                   </span>
                 </article>
               );
@@ -977,6 +970,36 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
         </MotionPresence>
       </section>
       <div className="command-center-terminal-host" ref={setTerminalHost} />
+    </div>
+  );
+}
+
+/** 完整说明与技术配置按需展开，列表和运行确认共用一处展示。 */
+function CommandDefinitionDetails(props: { command: CommandDefinition; zh: boolean }) {
+  return (
+    <div className="command-definition-details">
+      {props.command.description ? <p>{props.command.description}</p> : null}
+      <code>{props.command.command}</code>
+      <dl>
+        <div>
+          <dt>{props.zh ? '名称' : 'Name'}</dt>
+          <dd>{props.command.name}</dd>
+        </div>
+        {props.command.aliases.length > 0 ? (
+          <div>
+            <dt>{props.zh ? '别名' : 'Aliases'}</dt>
+            <dd>{props.command.aliases.join(', ')}</dd>
+          </div>
+        ) : null}
+        <div>
+          <dt>{props.zh ? '超时' : 'Timeout'}</dt>
+          <dd>{props.command.timeoutSeconds}s</dd>
+        </div>
+        <div>
+          <dt>Telegram</dt>
+          <dd>{props.command.telegramEnabled ? (props.zh ? '开启' : 'On') : props.zh ? '关闭' : 'Off'}</dd>
+        </div>
+      </dl>
     </div>
   );
 }
@@ -1313,7 +1336,7 @@ function CommandPermissionModal(props: { request: CommandPermissionRequest; proj
               </li>
             ) : null}
           </ul>
-          <p className="command-permission-next-step">{zh ? '开启后仍会进入本次运行确认；只有再次点击“确认并运行”才会执行。' : 'After enabling, you will still review this run. It executes only after you select “Confirm and run”.'}</p>
+          <p className="command-permission-next-step">{zh ? '开启后还需确认运行。' : 'Confirm the run after enabling.'}</p>
         </div>
         <footer className="command-modal-footer">
           <Button autoFocus onClick={props.onClose} disabled={props.busy}>
@@ -1328,7 +1351,7 @@ function CommandPermissionModal(props: { request: CommandPermissionRequest; proj
   );
 }
 
-/** 运行确认只询问必填参数，可选参数使用命令配置或脚本的默认处理。 */
+/** 运行确认只填写必填参数，技术配置与字段说明按需查看。 */
 function CommandRunModal(props: {
   command: CommandDefinition;
   project: ProjectRecord;
@@ -1339,70 +1362,107 @@ function CommandRunModal(props: {
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  /** 当前界面的显示语言。 */
   const zh = props.language === 'zh-CN';
+  /** 高风险命令保留醒目的运行按钮和具体影响。 */
   const highRisk = commandNeedsHighRiskConfirmation(props.command.riskFlags);
+  /** 仅展示本次命令实际声明的风险范围。 */
   const riskLabels = commandRiskLabels(props.command.riskFlags, zh);
   /** 只渲染必须填写的参数，完整参数值仍沿用既有初始化和提交链路。 */
   const requiredParameters = props.command.parameters.filter((parameter) => parameter.required);
+  /** 控件和说明使用同一弹窗内的唯一标识建立可访问关联。 */
+  const fieldPrefix = useId();
+  /** 整分钟超时使用易读单位，其余仍显示精确秒数。 */
+  const timeoutLabel = props.command.timeoutSeconds % 60 === 0 ? `${props.command.timeoutSeconds / 60}${zh ? ' 分钟' : ' min'}` : `${props.command.timeoutSeconds}${zh ? ' 秒' : ' s'}`;
   return (
-    <ModalPortal rootClassName="command-modal-portal-root" backdropClassName="command-modal-backdrop" dismissDisabled={props.busy} onDismiss={props.onClose} role="dialog" aria-labelledby="command-run-modal-title">
+    <ModalPortal
+      rootClassName="command-modal-portal-root"
+      backdropClassName="command-modal-backdrop"
+      dismissDisabled={props.busy}
+      onDismiss={props.onClose}
+      role="dialog"
+      aria-labelledby="command-run-modal-title"
+      aria-describedby={highRisk ? `${fieldPrefix}-risk` : undefined}
+    >
       <form className="command-modal command-run-modal command-run-form zeus-solid-form-surface" onSubmit={props.onSubmit} data-modal-surface="dialog">
         <header className="command-modal-header">
           <span>
             <h3 id="command-run-modal-title">{props.command.title}</h3>
-            <code>{props.command.command}</code>
           </span>
           <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={props.busy}>
             ×
           </button>
         </header>
-        <div className="command-modal-body" inert={props.busy} aria-busy={props.busy || undefined}>
-          <dl>
-            <div>
-              <dt>{zh ? '项目目录' : 'Project directory'}</dt>
-              <dd>{props.project.localPath}</dd>
-            </div>
-            <div>
-              <dt>{zh ? '超时' : 'Timeout'}</dt>
-              <dd>{props.command.timeoutSeconds}s</dd>
-            </div>
-            <div>
-              <dt>{zh ? '风险' : 'Risk'}</dt>
-              <dd>{highRisk ? (zh ? '高风险' : 'High risk') : zh ? '普通' : 'Normal'}</dd>
-            </div>
-          </dl>
-          {requiredParameters.map((parameter, index) => (
-            <label key={parameter.key}>
-              {parameter.label}
-              <small>
-                {parameter.key}
-                {parameter.required ? (zh ? ' · 必填' : ' · required') : ''}
-              </small>
-              {parameter.type === 'boolean' ? (
-                <input autoFocus={index === 0} type="checkbox" checked={Boolean(props.values[parameter.key])} onChange={(event) => props.onValuesChange({ ...props.values, [parameter.key]: event.currentTarget.checked })} />
-              ) : (
-                <input
-                  autoFocus={index === 0}
-                  required={parameter.required}
-                  type={parameter.sensitive ? 'password' : parameter.type === 'number' ? 'number' : 'text'}
-                  step={parameter.type === 'number' ? 'any' : undefined}
-                  value={String(props.values[parameter.key] ?? '')}
-                  onChange={(event) => props.onValuesChange({ ...props.values, [parameter.key]: parameter.type === 'number' && event.currentTarget.value !== '' ? Number(event.currentTarget.value) : event.currentTarget.value })}
-                />
-              )}
-              {parameter.description ? <small>{parameter.description}</small> : null}
-            </label>
-          ))}
+        <div className="command-modal-body command-run-body" inert={props.busy} aria-busy={props.busy || undefined}>
+          <div className="command-run-context">
+            <FolderSimple aria-hidden="true" />
+            <span title={props.project.localPath} aria-label={`${zh ? '项目目录' : 'Project directory'} ${props.project.localPath}`}>
+              {props.project.localPath}
+            </span>
+            <small title={zh ? '超时上限' : 'Timeout limit'}>{timeoutLabel}</small>
+          </div>
+          <div className="command-run-parameters">
+            {requiredParameters.map((parameter, index) => (
+              <div className="command-run-parameter" data-type={parameter.type} key={parameter.key}>
+                <div className="command-run-parameter-heading">
+                  <label htmlFor={`${fieldPrefix}-${index}`}>
+                    {parameter.label}
+                    {parameter.required ? (
+                      <span className="command-run-required" aria-label={zh ? '必填' : 'Required'}>
+                        {' '}
+                        *
+                      </span>
+                    ) : null}
+                  </label>
+                  <details className="command-parameter-help">
+                    <summary aria-label={`${zh ? '查看说明' : 'View help'} ${parameter.label}`}>
+                      <Question aria-hidden="true" />
+                    </summary>
+                    <div id={`${fieldPrefix}-${index}-help`}>
+                      <code>{parameter.key}</code>
+                      {parameter.description ? <p>{parameter.description}</p> : null}
+                    </div>
+                  </details>
+                </div>
+                {parameter.type === 'boolean' ? (
+                  <input
+                    id={`${fieldPrefix}-${index}`}
+                    aria-describedby={`${fieldPrefix}-${index}-help`}
+                    autoFocus={index === 0}
+                    type="checkbox"
+                    checked={Boolean(props.values[parameter.key])}
+                    onChange={(event) => props.onValuesChange({ ...props.values, [parameter.key]: event.currentTarget.checked })}
+                  />
+                ) : (
+                  <input
+                    id={`${fieldPrefix}-${index}`}
+                    aria-describedby={`${fieldPrefix}-${index}-help`}
+                    autoFocus={index === 0}
+                    required={parameter.required}
+                    type={parameter.sensitive ? 'password' : parameter.type === 'number' ? 'number' : 'text'}
+                    step={parameter.type === 'number' ? 'any' : undefined}
+                    value={String(props.values[parameter.key] ?? '')}
+                    onChange={(event) => props.onValuesChange({ ...props.values, [parameter.key]: parameter.type === 'number' && event.currentTarget.value !== '' ? Number(event.currentTarget.value) : event.currentTarget.value })}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+          <details className="command-run-details">
+            <summary>
+              <CaretDown aria-hidden="true" />
+              {zh ? '命令详情' : 'Command details'}
+            </summary>
+            <CommandDefinitionDetails command={props.command} zh={zh} />
+          </details>
           {highRisk ? (
-            <section className="command-high-risk-summary" aria-label={zh ? '高风险操作说明' : 'High-risk operation details'}>
-              <strong>{zh ? '本次运行包含高风险操作' : 'This run includes high-risk operations'}</strong>
-              <ul>
-                {riskLabels.map((label) => (
-                  <li key={label}>{label}</li>
-                ))}
-              </ul>
-              <p>{zh ? '请核对命令、项目目录和参数；点击确认按钮即授权本次执行。' : 'Review the command, project directory, and parameters. Selecting the confirmation button authorizes this run.'}</p>
-            </section>
+            <p className="command-run-risk" id={`${fieldPrefix}-risk`}>
+              <WarningCircle aria-hidden="true" />
+              <span>
+                {zh ? '涉及：' : 'Includes: '}
+                {riskLabels.join(zh ? '、' : ', ')}
+              </span>
+            </p>
           ) : null}
         </div>
         <footer className="command-modal-footer">
@@ -1411,7 +1471,7 @@ function CommandRunModal(props: {
           </Button>
           <Button autoFocus={requiredParameters.length === 0} type="submit" variant={highRisk ? 'danger' : 'primary'} busy={props.busy}>
             <Play aria-hidden="true" />
-            {zh ? '确认并运行' : 'Confirm and run'}
+            {zh ? '运行' : 'Run'}
           </Button>
         </footer>
       </form>
