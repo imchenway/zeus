@@ -125,4 +125,8 @@ macOS 的成功窗口观察建立真实单窗口 `SCStream`，截图取自该共
 - `pnpm release`：执行受控发布流程；项目内也可通过内置 `/release` 命令调用，仍经过项目权限与高风险确认。
 - `Release` 工作流由维护者手动运行，只构建候选；公开发布需要显式选择 `publish_release`。Linux 执行 `pnpm verify:publish --checks-only` 静态检查，macOS 同时完整构建源码并打包；两者通过后才公开发布并同步 Homebrew。本地 `pnpm verify:publish` 和普通 CI 仍执行完整检查与构建，普通 CI 复用正式发布保存的 CUA 编译成品缓存。
 
+本地等待 Release Workflow 的上限为每次命令 15 分钟，使用单调时钟计时；进入等待时和随后每分钟回验公开标签、Release、安装包清单及 Homebrew，全部一致即可成功收尾。超时只结束本地等待，不取消远端运行；未确认的结果会提示继续回验。恢复旧运行时重新计算本次等待预算。
+
+已结束的发布可执行 `VERIFY_PUBLISHED_ONLY=1 RELEASE_VERSION=<版本> RELEASE_COMMIT=<完整候选提交> pnpm release:publish` 只读回验，并生成独立凭证。此入口不触发 Workflow 或修改旧命令历史；不能同时设置 `APPLY_REMOTE=1`。回验要求当前 Homebrew Cask 仍指向该版本。
+
 应用、浏览器扩展及安装器直接使用 `apps/desktop/assets/` 下的同一份图标。`apps/desktop/src/renderer/tooling/` 管理自动化、扩展与技能页面，通过宿主适配面调用已有客户端能力。
