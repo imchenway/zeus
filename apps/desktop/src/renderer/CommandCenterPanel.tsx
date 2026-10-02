@@ -1328,6 +1328,7 @@ function CommandPermissionModal(props: { request: CommandPermissionRequest; proj
   );
 }
 
+/** 运行确认只询问必填参数，可选参数使用命令配置或脚本的默认处理。 */
 function CommandRunModal(props: {
   command: CommandDefinition;
   project: ProjectRecord;
@@ -1341,6 +1342,8 @@ function CommandRunModal(props: {
   const zh = props.language === 'zh-CN';
   const highRisk = commandNeedsHighRiskConfirmation(props.command.riskFlags);
   const riskLabels = commandRiskLabels(props.command.riskFlags, zh);
+  /** 只渲染必须填写的参数，完整参数值仍沿用既有初始化和提交链路。 */
+  const requiredParameters = props.command.parameters.filter((parameter) => parameter.required);
   return (
     <ModalPortal rootClassName="command-modal-portal-root" backdropClassName="command-modal-backdrop" dismissDisabled={props.busy} onDismiss={props.onClose} role="dialog" aria-labelledby="command-run-modal-title">
       <form className="command-modal command-run-modal command-run-form zeus-solid-form-surface" onSubmit={props.onSubmit} data-modal-surface="dialog">
@@ -1368,7 +1371,7 @@ function CommandRunModal(props: {
               <dd>{highRisk ? (zh ? '高风险' : 'High risk') : zh ? '普通' : 'Normal'}</dd>
             </div>
           </dl>
-          {props.command.parameters.map((parameter, index) => (
+          {requiredParameters.map((parameter, index) => (
             <label key={parameter.key}>
               {parameter.label}
               <small>
@@ -1406,7 +1409,7 @@ function CommandRunModal(props: {
           <Button onClick={props.onClose} disabled={props.busy}>
             {zh ? '取消' : 'Cancel'}
           </Button>
-          <Button autoFocus={props.command.parameters.length === 0} type="submit" variant={highRisk ? 'danger' : 'primary'} busy={props.busy}>
+          <Button autoFocus={requiredParameters.length === 0} type="submit" variant={highRisk ? 'danger' : 'primary'} busy={props.busy}>
             <Play aria-hidden="true" />
             {zh ? '确认并运行' : 'Confirm and run'}
           </Button>
