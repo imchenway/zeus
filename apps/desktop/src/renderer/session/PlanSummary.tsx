@@ -1,9 +1,9 @@
 import { Collapsible } from '../ui/Collapsible.js';
 import { type ReactNode, useId, useState } from 'react';
-import { ArrowsOutIcon as ArrowsOut } from '@phosphor-icons/react/dist/csr/ArrowsOut';
+import { ArrowsOutSimpleIcon as ArrowsOutSimple } from '@phosphor-icons/react/dist/csr/ArrowsOutSimple';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
-import { DownloadSimpleIcon as DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple';
+import { DownloadIcon as Download } from '@phosphor-icons/react/dist/csr/Download';
 import { LightbulbIcon as Lightbulb } from '@phosphor-icons/react/dist/csr/Lightbulb';
 import { SidebarSimpleIcon as SidebarSimple } from '@phosphor-icons/react/dist/csr/SidebarSimple';
 import { ThumbsDownIcon as ThumbsDown } from '@phosphor-icons/react/dist/csr/ThumbsDown';
@@ -85,7 +85,7 @@ export function PlanSummary(props: { item: NativeSessionItemBuffer; language: Se
         </div>
         {!streaming ? (
           <nav aria-label={zh ? '计划操作' : 'Plan actions'}>
-            {iconButton(zh ? '下载 plan.md' : 'Download plan.md', <DownloadSimple aria-hidden="true" />, () => downloadPlan(props.item.text))}
+            {iconButton(zh ? '下载 plan.md' : 'Download plan.md', <Download aria-hidden="true" />, () => downloadPlan(props.item.text))}
             {iconButton(copied ? (zh ? '已复制' : 'Copied') : zh ? '复制 Markdown' : 'Copy Markdown', <Copy aria-hidden="true" />, () => {
               void navigator.clipboard?.writeText(props.item.text).then(() => {
                 setCopied(true);
@@ -94,7 +94,7 @@ export function PlanSummary(props: { item: NativeSessionItemBuffer; language: Se
             })}
             {iconButton(zh ? '喜欢此计划' : 'Like plan', <ThumbsUp aria-hidden="true" weight={feedback === 'good' ? 'fill' : 'regular'} />, () => setFeedback((value) => (value === 'good' ? null : 'good')), feedback === 'good')}
             {iconButton(zh ? '不喜欢此计划' : 'Dislike plan', <ThumbsDown aria-hidden="true" weight={feedback === 'bad' ? 'fill' : 'regular'} />, () => setFeedback((value) => (value === 'bad' ? null : 'bad')), feedback === 'bad')}
-            {props.onOpenPanel ? iconButton(zh ? '展开完整计划' : 'Expand plan', <ArrowsOut aria-hidden="true" />, () => props.onOpenPanel?.(props.item)) : null}
+            {props.onOpenPanel ? iconButton(zh ? '展开完整计划' : 'Expand plan', <ArrowsOutSimple aria-hidden="true" />, () => props.onOpenPanel?.(props.item)) : null}
             {props.onOpenPanel ? iconButton(zh ? '在右侧打开计划' : 'Open plan at right', <SidebarSimple aria-hidden="true" />, () => props.onOpenPanel?.(props.item)) : null}
           </nav>
         ) : null}

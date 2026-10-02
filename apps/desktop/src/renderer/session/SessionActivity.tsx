@@ -5,15 +5,17 @@ import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/Caret
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { CircleIcon as Circle } from '@phosphor-icons/react/dist/csr/Circle';
 import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
-import { BookOpenIcon as BookOpen } from '@phosphor-icons/react/dist/csr/BookOpen';
+import { StackSimpleIcon as StackSimple } from '@phosphor-icons/react/dist/csr/StackSimple';
+import { FileTextIcon as FileText } from '@phosphor-icons/react/dist/csr/FileText';
+import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import { ImageIcon as Image } from '@phosphor-icons/react/dist/csr/Image';
 import { ListChecksIcon as ListChecks } from '@phosphor-icons/react/dist/csr/ListChecks';
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
-import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
+import { NotePencilIcon as NotePencil } from '@phosphor-icons/react/dist/csr/NotePencil';
 import { PlugsIcon as Plugs } from '@phosphor-icons/react/dist/csr/Plugs';
-import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
-import { WrenchIcon as Wrench } from '@phosphor-icons/react/dist/csr/Wrench';
-import { BrowserIcon as Browser } from '@phosphor-icons/react/dist/csr/Browser';
+import { TerminalIcon as Terminal } from '@phosphor-icons/react/dist/csr/Terminal';
+import { ToolboxIcon as Toolbox } from '@phosphor-icons/react/dist/csr/Toolbox';
+import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import { DesktopIcon as Desktop } from '@phosphor-icons/react/dist/csr/Desktop';
 import { CubeIcon as Cube } from '@phosphor-icons/react/dist/csr/Cube';
 import { activityOutcome, activityOutcomeLabel, nativeActivityTitle, nativeActivityTool } from './activityPresentation.js';
@@ -852,26 +854,27 @@ function activityItemTarget(
   };
 }
 
-/** 同一类别的实时行与历史行共用图标，技能与普通文件读取明确区分。 */
+/** 实时行与历史行共用图标，按文件、目录、命令、上下文整理及编辑操作显示对应轮廓。 */
 function activityItemIcon(item: NativeSessionItemBuffer) {
   /** 名称必须命中原生注册命名空间才显示操作环境图标。 */
   const tool = nativeActivityTool(item.payload);
-  if (tool) return tool.kind === 'browser' ? Browser : Desktop;
+  if (tool) return tool.kind === 'browser' ? GlobeSimple : Desktop;
   if (activitySkillNames([item]).length > 0) return Cube;
   const type = normalizeType(item.type);
   if (type === 'commandexecution' || type === 'command') {
     const actionType = primitive(commandActions(item)[0]?.type);
-    if (actionType === 'read' || actionType === 'listFiles') return BookOpen;
+    if (actionType === 'read') return FileText;
+    if (actionType === 'listFiles') return FolderOpen;
     if (actionType === 'search') return MagnifyingGlass;
-    return TerminalWindow;
+    return Terminal;
   }
   if (type === 'websearch') return MagnifyingGlass;
   if (type === 'imageview') return Image;
-  if (type === 'contextcompaction') return BookOpen;
-  if (type === 'filechange' || type === 'file') return PencilSimple;
+  if (type === 'contextcompaction') return StackSimple;
+  if (type === 'filechange' || type === 'file') return NotePencil;
   if (type === 'mcptoolcall') return Plugs;
-  if (type === 'dynamictoolcall' || type === 'toolcall' || type === 'tool') return Wrench;
-  return Wrench;
+  if (type === 'dynamictoolcall' || type === 'toolcall' || type === 'tool') return Toolbox;
+  return Toolbox;
 }
 
 /** 预览字段为空时仍保留不可变详情句柄的展开入口，点击后才读取全文。 */

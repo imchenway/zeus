@@ -1,5 +1,9 @@
 import { ipcRenderer } from 'electron';
 
+/** 评论选项采用 Phosphor SlidersHorizontal 的 regular 原始路径，沙箱预加载无需引入 React。 */
+const commentOptionsIcon =
+  '<svg aria-hidden="true" viewBox="0 0 256 256" fill="currentColor" data-phosphor-icon="SlidersHorizontal"><path d="M40,88H73a32,32,0,0,0,62,0h81a8,8,0,0,0,0-16H135a32,32,0,0,0-62,0H40a8,8,0,0,0,0,16Zm64-24A16,16,0,1,1,88,80,16,16,0,0,1,104,64ZM216,168H199a32,32,0,0,0-62,0H40a8,8,0,0,0,0,16h97a32,32,0,0,0,62,0h17a8,8,0,0,0,0-16Zm-48,24a16,16,0,1,1,16-16A16,16,0,0,1,168,192Z"></path></svg>';
+
 function invokeBrowserPageCommand(commandType: string, body: unknown): Promise<unknown> {
   const commandId = globalThis.crypto.randomUUID();
   const envelope = Object.freeze({
@@ -303,10 +307,7 @@ function openEditor(
   editor.innerHTML = `
     <div class="editor-row">
       <button type="button" data-action="adjust" aria-label="评论选项" title="评论选项" aria-expanded="false">
-        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-          <path d="M4 7h7M15 7h5M4 17h4M12 17h8"></path>
-          <circle cx="13" cy="7" r="2"></circle><circle cx="10" cy="17" r="2"></circle>
-        </svg>
+        ${commentOptionsIcon}
       </button>
       <textarea rows="1" aria-label="评论内容" placeholder="添加评论…" maxlength="20000"></textarea>
       <button type="button" data-action="voice" aria-label="Voice input" title="Voice input">

@@ -25,6 +25,8 @@ import { GitPaneSeparator } from '../git/GitPaneSeparator.js';
 import { loadGitCommitModelOptions } from '../git/gitCommitModels.js';
 import { CopySimpleIcon } from '@phosphor-icons/react/dist/csr/CopySimple';
 import { CaretDownIcon } from '@phosphor-icons/react/dist/csr/CaretDown';
+import { FolderIcon } from '@phosphor-icons/react/dist/csr/Folder';
+import { FileTypeIcon } from '../code/FileTypeIcon.js';
 import { type ConflictDocument, countUnresolvedConflictBlocks, createConflictDocument, serializeConflictForGit } from './taskConflictModel.js';
 
 type DeliveryClient = Pick<
@@ -1629,41 +1631,9 @@ function DeliveryDirectoryFiles(props: {
   );
 }
 
-/** 交付树使用 IDE 风格的平面目录与类型标记，不引入图标包或资源加载。 */
+/** 交付树复用源码及会话的文件图标，目录使用同一 Phosphor 文件夹轮廓。 */
 function DeliveryEntryIcon(props: { path?: string }) {
-  if (!props.path)
-    return (
-      <svg className="task-git-delivery-entry-icon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M1.5 3.5h5l1.5 2h6.5v8h-13Z" fill="currentColor" fillOpacity=".16" stroke="currentColor" />
-      </svg>
-    );
-  /** 扩展名仅决定外观，文件选择和差异身份仍使用完整路径。 */
-  const extension = props.path.split('.').pop()?.toLowerCase() ?? '';
-  /** 常见源码类型沿用 IDE 的蓝、黄、绿、紫标记；其他文件使用通用文档图标。 */
-  const badge = ['ts', 'tsx'].includes(extension)
-    ? { kind: 'typescript', text: 'TS' }
-    : ['js', 'jsx', 'mjs', 'cjs'].includes(extension)
-      ? { kind: 'javascript', text: 'JS' }
-      : ['xml', 'wxml', 'html', 'vue'].includes(extension)
-        ? { kind: 'markup', text: '<>' }
-        : ['css', 'scss', 'less', 'wxss'].includes(extension)
-          ? { kind: 'stylesheet', text: '#' }
-          : extension === 'json'
-            ? { kind: 'json', text: '{}' }
-            : ['md', 'mdx'].includes(extension)
-              ? { kind: 'markdown', text: 'M↓' }
-              : null;
-  if (badge)
-    return (
-      <span className="task-git-delivery-entry-icon is-file-type" data-kind={badge.kind} aria-hidden="true">
-        {badge.text}
-      </span>
-    );
-  return (
-    <svg className="task-git-delivery-entry-icon" viewBox="0 0 16 16" aria-hidden="true">
-      <path d="M3.5 1.5h6l3 3v10h-9Z M9.5 1.5v3h3" fill="none" stroke="currentColor" />
-    </svg>
-  );
+  return props.path ? <FileTypeIcon name={props.path} className="task-git-delivery-entry-icon" /> : <FolderIcon className="task-git-delivery-entry-icon" size={16} weight="regular" aria-hidden="true" />;
 }
 
 /** 操作区和冲突页标题栏只显示摘要，复用原生浮层查看逐仓详情。 */

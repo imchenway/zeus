@@ -4,6 +4,9 @@ import { Collapsible } from '../../ui/Collapsible.js';
 import { handleSourceListKeyboardNavigation } from './workspaceSupport.js';
 import { type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type UIEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { AlarmIcon } from '@phosphor-icons/react/dist/csr/Alarm';
+import { PuzzlePieceIcon } from '@phosphor-icons/react/dist/csr/PuzzlePiece';
+import { FolderIcon } from '@phosphor-icons/react/dist/csr/Folder';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import { FolderPlusIcon as FolderPlus } from '@phosphor-icons/react/dist/csr/FolderPlus';
 import { FunnelIcon as Funnel } from '@phosphor-icons/react/dist/csr/Funnel';
@@ -919,10 +922,7 @@ export function ProjectWorkspaceNavigation(props: {
           onClick={() => props.onNavigate('automations')}
         >
           <span className="project-workspace-mode-icon" aria-hidden="true">
-            <svg className="project-workspace-mode-line-icon" viewBox="0 0 20 20" focusable="false">
-              <circle cx="10" cy="10" r="6.5" />
-              <path d="M10 6.2V10l2.7 1.8M4.2 3.8l1.5 1.5M15.8 3.8l-1.5 1.5" />
-            </svg>
+            <AlarmIcon weight="regular" aria-hidden="true" data-icon-source="phosphor" />
           </span>
           <span className="project-workspace-mode-label">{zh ? '自动化' : 'Automations'}</span>
         </button>
@@ -935,10 +935,7 @@ export function ProjectWorkspaceNavigation(props: {
           onClick={() => props.onNavigate('skills')}
         >
           <span className="project-workspace-mode-icon" aria-hidden="true">
-            <svg className="project-workspace-mode-line-icon" viewBox="0 0 20 20" focusable="false">
-              <path d="M10 2.7 11.5 7l4.5 1.5-4.5 1.6-1.5 4.3-1.5-4.3L4 8.5 8.5 7 10 2.7Z" />
-              <path d="m15.2 13 .7 2 .1.1 2.1.7-2.1.8-.8 2.1-.7-2.1-2.1-.8 2.1-.7.7-2Z" />
-            </svg>
+            <PuzzlePieceIcon weight="regular" aria-hidden="true" data-icon-source="phosphor" />
           </span>
           <span className="project-workspace-mode-label">{zh ? '扩展管理' : 'Extensions'}</span>
         </button>
@@ -1408,19 +1405,13 @@ export function SidebarNav(props: {
             onClick={() => props.onNavigate('automations')}
           >
             <span className="project-quick-action-icon" aria-hidden="true">
-              <svg viewBox="0 0 20 20" focusable="false">
-                <circle cx="10" cy="10" r="6.5" />
-                <path d="M10 6.2V10l2.7 1.8M4.2 3.8l1.5 1.5M15.8 3.8l-1.5 1.5" />
-              </svg>
+              <AlarmIcon weight="regular" aria-hidden="true" data-icon-source="phosphor" />
             </span>
             <span className="project-quick-action-label">{props.appLanguage === 'zh-CN' ? '自动化' : 'Automations'}</span>
           </button>
           <button type="button" className={`project-quick-action${props.activeNavTarget === 'skills' ? ' is-active' : ''}`} aria-current={props.activeNavTarget === 'skills' ? 'page' : undefined} onClick={() => props.onNavigate('skills')}>
             <span className="project-quick-action-icon" aria-hidden="true">
-              <svg viewBox="0 0 20 20" focusable="false">
-                <path d="M10 2.7 11.5 7l4.5 1.5-4.5 1.6-1.5 4.3-1.5-4.3L4 8.5 8.5 7 10 2.7Z" />
-                <path d="m15.2 13 .7 2 .1.1 2.1.7-2.1.8-.8 2.1-.7-2.1-2.1-.8 2.1-.7.7-2Z" />
-              </svg>
+              <PuzzlePieceIcon weight="regular" aria-hidden="true" data-icon-source="phosphor" />
             </span>
             <span className="project-quick-action-label">{copy.skills}</span>
           </button>
@@ -1678,12 +1669,7 @@ export function SidebarNav(props: {
                       ) : undefined
                     }
                     disclosurePlacement={showConversationNavigation ? 'trailing' : undefined}
-                    icon={
-                      <svg className="native-folder-icon zeus-avatar-token" viewBox="0 0 20 20" focusable="false" aria-hidden="true">
-                        <path d="M2.8 6.4h5.1l1.4 1.5h7.9v7.7a1.4 1.4 0 0 1-1.4 1.4H4.2a1.4 1.4 0 0 1-1.4-1.4Z" />
-                        <path d="M2.8 6.4V5.7a1.4 1.4 0 0 1 1.4-1.4h3.4l1.5 2.1" />
-                      </svg>
-                    }
+                    icon={<FolderIcon className="native-folder-icon zeus-avatar-token" weight="regular" aria-hidden="true" />}
                     label={<strong>{project.name}</strong>}
                     buttonProps={{
                       type: 'button',
@@ -1764,19 +1750,13 @@ export function SidebarNav(props: {
           <nav className="project-global-tools" aria-label={copy.quickActionsLabel}>
             <button type="button" className={props.activeNavTarget === 'automations' ? 'active' : ''} aria-current={props.activeNavTarget === 'automations' ? 'page' : undefined} onClick={() => props.onNavigate('automations')}>
               <span aria-hidden="true">
-                <svg viewBox="0 0 20 20" focusable="false">
-                  <circle cx="10" cy="10" r="6.5" />
-                  <path d="M10 6.2V10l2.7 1.8M4.2 3.8l1.5 1.5M15.8 3.8l-1.5 1.5" />
-                </svg>
+                <AlarmIcon weight="regular" aria-hidden="true" data-icon-source="phosphor" />
               </span>
               {zh ? '自动化' : 'Automations'}
             </button>
             <button type="button" className={props.activeNavTarget === 'skills' ? 'active' : ''} aria-current={props.activeNavTarget === 'skills' ? 'page' : undefined} onClick={() => props.onNavigate('skills')}>
               <span aria-hidden="true">
-                <svg viewBox="0 0 20 20" focusable="false">
-                  <path d="M10 2.7 11.5 7l4.5 1.5-4.5 1.6-1.5 4.3-1.5-4.3L4 8.5 8.5 7 10 2.7Z" />
-                  <path d="m15.2 13 .7 2 .1.1 2.1.7-2.1.8-.8 2.1-.7-2.1-2.1-.8 2.1-.7.7-2Z" />
-                </svg>
+                <PuzzlePieceIcon weight="regular" aria-hidden="true" data-icon-source="phosphor" />
               </span>
               {copy.skills}
             </button>

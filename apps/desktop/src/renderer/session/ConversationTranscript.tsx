@@ -7,6 +7,7 @@ import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import { activityCategory, isActiveSessionTurn, isLiveActivityItem, isOperationalActivityItem, type SessionActivityCategory, SessionActivityGroup, SessionTurnDuration, SessionTurnProcessDisclosure } from './SessionActivity.js';
 import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
 import { PlanSummary } from './PlanSummary.js';
+import { WifiHighIcon } from '@phosphor-icons/react/dist/csr/WifiHigh';
 import type {
   ConversationResource,
   ConversationResourcePreview,
@@ -96,11 +97,10 @@ export interface SessionCreationStatus {
   onRetry?: () => void | Promise<void>;
 }
 
+/** 连接与创建重试共用库内无线图标，动效由现有状态容器控制。 */
 const sessionConnectionSymbol = (
   <span className="session-connection-symbol" aria-hidden="true">
-    <svg viewBox="0 0 24 24">
-      <path d="M4.5 9.6a11.5 11.5 0 0 1 15 0M7.8 13a6.7 6.7 0 0 1 8.4 0M11.1 16.4a1.45 1.45 0 0 1 1.8 0" />
-    </svg>
+    <WifiHighIcon weight="regular" />
   </span>
 );
 

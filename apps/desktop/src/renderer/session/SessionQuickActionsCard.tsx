@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom';
 import { ArrowSquareOutIcon as ArrowSquareOut } from '@phosphor-icons/react/dist/csr/ArrowSquareOut';
 import { DesktopIcon as Desktop } from '@phosphor-icons/react/dist/csr/Desktop';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
+import { fileIconForKind, fileIconKindForName } from '../code/FileTypeIcon.js';
 import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
 import { FileImageIcon as FileImage } from '@phosphor-icons/react/dist/csr/FileImage';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
@@ -631,10 +632,15 @@ function SessionQuickActionSourceVisual(props: { source: SourceRow; onLoadResour
 
 function SourceFallbackIcon(props: { source: SourceRow }) {
   if (props.source.resource) return <ResourceIcon resource={props.source.resource} />;
-  if (props.source.attachment && isPendingImageAttachment(props.source.attachment)) return <FileImage weight="duotone" />;
-  if (props.source.attachment?.kind === 'directory') return <Folder weight="duotone" />;
-  if (props.source.attachment?.kind === 'pasted_text') return <FileCode weight="duotone" />;
-  return <File weight="duotone" />;
+  if (props.source.attachment && isPendingImageAttachment(props.source.attachment)) return <FileImage weight="regular" />;
+  if (props.source.attachment?.kind === 'directory') return <Folder weight="regular" />;
+  if (props.source.attachment?.kind === 'pasted_text') return <FileCode weight="regular" />;
+  if (props.source.attachment) {
+    /** 普通附件沿原文件名选择共享图标，不改变图片和目录的预览路径。 */
+    const Icon = fileIconForKind(fileIconKindForName(props.source.attachment.name));
+    return <Icon weight="regular" />;
+  }
+  return <File weight="regular" />;
 }
 
 function isImageSource(source: SourceRow): boolean {

@@ -1582,7 +1582,7 @@ function CommitFileTreeEntry(props: Parameters<typeof CommitFileDirectoryTree>[0
       <details className="project-git-commit-file-folder" open>
         <summary style={{ paddingLeft: `${props.depth * 12 + 5}px` }}>
           <CaretRight aria-hidden="true" />
-          <Folder weight="duotone" aria-hidden="true" />
+          <Folder weight="regular" aria-hidden="true" />
           <span>{props.node.name}</span>
         </summary>
         {Array.from(props.node.children.values()).map((child) => (
@@ -2207,7 +2207,7 @@ function ChangeTreeEntry(props: Parameters<typeof ChangeDirectoryTree>[0] & { no
       <details className="project-git-change-folder" open>
         <summary data-git-context={JSON.stringify({ kind: 'directory', repositoryId: props.repository.id, ref: props.node.path, stage: props.stage })} style={{ paddingLeft: `${props.depth * 13 + 6}px` }}>
           <CaretRight aria-hidden="true" />
-          <Folder weight="duotone" aria-hidden="true" />
+          <Folder weight="regular" aria-hidden="true" />
           <span>{props.node.name}</span>
         </summary>
         {Array.from(props.node.children.values()).map((child) => (

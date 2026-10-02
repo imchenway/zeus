@@ -57,7 +57,7 @@ html[data-zeus-theme='dark'] .macos-ai-app {
 .macos-ai-app [data-file-status='conflict'] {
   color: var(--zeus-file-conflict);
 }
-/* 文件类型用克制的双色图标，避免所有文件看起来相同。 */
+/* 文件类型使用同一套 Phosphor 轮廓，以文字色和类型色区分用途。 */
 .macos-ai-app svg.file-type-icon {
   width: 16px;
   height: 16px;
@@ -65,8 +65,16 @@ html[data-zeus-theme='dark'] .macos-ai-app {
   color: var(--zeus-control-muted-text);
   pointer-events: none;
 }
-.macos-ai-app svg.file-type-icon[data-file-kind='code'] {
+.macos-ai-app
+  svg.file-type-icon:is([data-file-kind='code'], [data-file-kind='java'], [data-file-kind='typescript'], [data-file-kind='c'], [data-file-kind='cpp'], [data-file-kind='python'], [data-file-kind='markdown'], [data-file-kind='sql']) {
   color: var(--zeus-file-modified);
+}
+/* 常用脚本、标记和配置文件保留类型辨识，不再绘制文字徽标或色块。 */
+.macos-ai-app svg.file-type-icon:is([data-file-kind='javascript'], [data-file-kind='jsx'], [data-file-kind='json']) {
+  color: var(--zeus-file-untracked);
+}
+.macos-ai-app svg.file-type-icon:is([data-file-kind='html'], [data-file-kind='vue']) {
+  color: var(--zeus-file-added);
 }
 .macos-ai-app svg.file-type-icon[data-file-kind='image'],
 .macos-ai-app svg.file-type-icon[data-file-kind='audio'],

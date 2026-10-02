@@ -1,29 +1,18 @@
 import { FilePreviewDialog, FilePreviewOpenContext } from '../code/FilePreview.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { useMotionPresence } from '../ui/useMotionPresence.js';
-import { type ComponentType, type CSSProperties, type KeyboardEvent, type ReactNode, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type CSSProperties, type KeyboardEvent, type ReactNode, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
-import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
-import { FileArchiveIcon as FileArchive } from '@phosphor-icons/react/dist/csr/FileArchive';
 import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
-import { FileCssIcon as FileCss } from '@phosphor-icons/react/dist/csr/FileCss';
-import { FileDocIcon as FileDoc } from '@phosphor-icons/react/dist/csr/FileDoc';
-import { FileHtmlIcon as FileHtml } from '@phosphor-icons/react/dist/csr/FileHtml';
 import { FileImageIcon as FileImage } from '@phosphor-icons/react/dist/csr/FileImage';
-import { FileJsIcon as FileJs } from '@phosphor-icons/react/dist/csr/FileJs';
-import { FileMdIcon as FileMd } from '@phosphor-icons/react/dist/csr/FileMd';
-import { FilePdfIcon as FilePdf } from '@phosphor-icons/react/dist/csr/FilePdf';
-import { FilePptIcon as FilePpt } from '@phosphor-icons/react/dist/csr/FilePpt';
-import { FileSqlIcon as FileSql } from '@phosphor-icons/react/dist/csr/FileSql';
-import { FileTsIcon as FileTs } from '@phosphor-icons/react/dist/csr/FileTs';
-import { FileXlsIcon as FileXls } from '@phosphor-icons/react/dist/csr/FileXls';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import { GithubLogoIcon as GithubLogo } from '@phosphor-icons/react/dist/csr/GithubLogo';
 import { AppWindowIcon as AppWindow } from '@phosphor-icons/react/dist/csr/AppWindow';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
-import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
+import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
+import { fileIconForKind } from '../code/FileTypeIcon.js';
 import type { ConversationFileIconKind, ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourceOpenTarget, ConversationResourcePreview } from '@zeus/shared';
 import { listConversationResourceOpenTargetsInMain } from '../appShellBridge.js';
 import type { NativeConversationAttachment } from './sessionTypes.js';
@@ -117,7 +106,7 @@ function ConversationPendingAttachmentImage(props: { attachment: NativeConversat
           <img decoding="async" src={previewUrl} alt={props.attachment.name} onError={() => setFailed(true)} />
         ) : (
           <span className="session-resource-image-placeholder" role="status">
-            <FileImage aria-hidden="true" weight="duotone" />
+            <FileImage aria-hidden="true" weight="regular" />
             <span>{props.language === 'zh-CN' ? '正在显示图片' : 'Showing image'}</span>
           </span>
         )}
@@ -336,7 +325,7 @@ function ConversationImagePreview(
         <img decoding="async" src={preview.dataUrl} alt={props.label} loading="lazy" onError={() => reportPreviewFailure(languageRef.current === 'zh-CN' ? '图片预览加载失败。' : 'The image preview failed to load.')} />
       ) : (
         <span className={props.placeholderClassName} role="status">
-          {!error ? <FileImage aria-hidden="true" weight="duotone" /> : null}
+          {!error ? <FileImage aria-hidden="true" weight="regular" /> : null}
           <span>{status}</span>
         </span>
       )}
@@ -592,7 +581,7 @@ export function OpenWithMenu(props: { label?: string; applicationsOnly?: boolean
                           ) : target.id === 'copy_path' || target.id === 'copy_link' ? (
                             <Copy aria-hidden="true" />
                           ) : target.id === 'file_manager' ? (
-                            <Folder aria-hidden="true" />
+                            <FolderOpen aria-hidden="true" weight="regular" />
                           ) : target.id === 'zeus_browser' ? (
                             <GlobeSimple aria-hidden="true" />
                           ) : target.id === 'zeus_source' ? (
@@ -655,33 +644,14 @@ export function isImageResource(resource: ConversationResource): boolean {
 
 export function ResourceIcon(props: { resource: ConversationResource }) {
   if (props.resource.kind === 'file' && props.resource.presentation === 'card' && props.resource.iconKind === 'html') {
-    return <GlobeSimple aria-hidden="true" weight="duotone" />;
+    return <GlobeSimple aria-hidden="true" weight="regular" />;
   }
   if (props.resource.kind === 'website') {
-    return props.resource.domain.toLocaleLowerCase().replace(/^www\./u, '') === 'github.com' ? <GithubLogo aria-hidden="true" weight="fill" /> : <GlobeSimple aria-hidden="true" weight="duotone" />;
+    return props.resource.domain.toLocaleLowerCase().replace(/^www\./u, '') === 'github.com' ? <GithubLogo aria-hidden="true" weight="regular" /> : <GlobeSimple aria-hidden="true" weight="regular" />;
   }
-  const Icon = fileIcon(props.resource.iconKind);
-  return <Icon aria-hidden="true" weight="duotone" />;
+  const Icon = fileIconForKind(props.resource.iconKind);
+  return <Icon aria-hidden="true" weight="regular" />;
 }
-
-function fileIcon(kind: ConversationFileIconKind): ComponentType<{ weight?: 'duotone'; 'aria-hidden'?: string }> {
-  if (kind === 'javascript') return FileJs;
-  if (kind === 'typescript') return FileTs;
-  if (kind === 'sql') return FileSql;
-  if (kind === 'html') return FileHtml;
-  if (kind === 'css') return FileCss;
-  if (kind === 'markdown') return FileMd;
-  if (kind === 'image') return FileImage;
-  if (kind === 'pdf') return FilePdf;
-  if (kind === 'spreadsheet') return FileXls;
-  if (kind === 'presentation') return FilePpt;
-  if (kind === 'document') return FileDoc;
-  if (kind === 'archive') return FileArchive;
-  if (sourceIconKinds.has(kind)) return FileCode;
-  return File;
-}
-
-const sourceIconKinds = new Set<ConversationFileIconKind>(['code', 'java', 'javascript', 'typescript', 'json', 'markdown', 'sql', 'css']);
 
 /** 行号依照界面语言显示，实际打开仍使用原始位置字段。 */
 function locationLabel(resource: Extract<ConversationResource, { kind: 'file' }>, language: SessionUiLanguage): string | null {
