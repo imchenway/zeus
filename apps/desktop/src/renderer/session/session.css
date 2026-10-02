@@ -5261,11 +5261,22 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .session-activity-body > ol > li {
-  align-items: center;
+  /* 图标与标题从顶部排布，展开详情不改变图标所在的标题行。 */
+  align-items: start;
   display: grid;
   gap: 8px;
   grid-template-columns: 20px minmax(0, 1fr);
   min-block-size: 24px;
+}
+
+/* 图标容器只占标题首行高度，长标题换行后仍与首行对齐。 */
+.session-codex-parity-v1 .session-activity-body > ol > li > .session-activity-item-icon {
+  block-size: calc(var(--session-readable-font-size) * 1.45);
+}
+
+/* 可展开标题保留原有上下内边距，图标同步标题上边距而不跟随详情高度。 */
+.session-codex-parity-v1 .session-activity-body > ol > li:has(.session-activity-item-detail) > .session-activity-item-icon {
+  margin-block-start: 4px;
 }
 
 /* 新操作随容器高度一起形成，历史记录和普通重渲染不重复播放。 */
@@ -10216,13 +10227,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   block-size: 100%;
   inline-size: 100%;
   overflow: visible;
-}
-
-.session-connection-symbol path {
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-width: 1.7;
 }
 
 .session-creation-failure-symbol {

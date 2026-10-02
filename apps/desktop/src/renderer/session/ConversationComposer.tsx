@@ -1,3 +1,4 @@
+import { BrainIcon } from '@phosphor-icons/react/dist/csr/Brain';
 import { classifyAssistantMessage } from '@zeus/shared';
 import { type KeyboardEvent, type RefObject, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
@@ -616,6 +617,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
               {effortOptions.length > 0 ? (
                 <ComposerDropdown
                   label={copy.effort}
+                  triggerIcon={<BrainIcon weight="regular" aria-hidden="true" />}
                   triggerLabel={`${copy.effort}：${selectedEffort}`}
                   value={selectedEffort}
                   options={effortOptions}

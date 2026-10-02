@@ -1,3 +1,4 @@
+import { BrainIcon } from '@phosphor-icons/react/dist/csr/Brain';
 import { contextCapacitySelectionAllowed } from './contextCapacitySelection.js';
 import { ActivitySkillCatalogContext } from './SessionActivity.js';
 import { FilePreviewDialog, FilePreviewOpenContext } from '../code/FilePreview.js';
@@ -3840,6 +3841,7 @@ export function NewConversationComposer(props: {
                 {selectedModel.supportedReasoningEfforts.length ? (
                   <ComposerDropdown
                     label={props.language === 'zh-CN' ? '推理强度' : 'Reasoning effort'}
+                    triggerIcon={<BrainIcon weight="regular" aria-hidden="true" />}
                     triggerLabel={`${props.language === 'zh-CN' ? '推理强度' : 'Reasoning effort'}：${selectedEffort}`}
                     value={selectedEffort}
                     options={(selectedModel?.supportedReasoningEfforts ?? []).map((effort) => ({ value: effort, label: effort }))}

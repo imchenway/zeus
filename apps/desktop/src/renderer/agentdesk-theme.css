@@ -3729,8 +3729,12 @@ body:has(.macos-ai-app.zeus-shell) {
 
 .macos-ai-app.zeus-shell .project-first-sidebar .project-global-tools svg {
   block-size: 16px;
-  fill: none;
   inline-size: 16px;
+}
+
+/* 库内轮廓保持原路径，未迁移的自绘图形沿用原描边。 */
+.macos-ai-app.zeus-shell .project-first-sidebar .project-global-tools svg:not([data-icon-source='phosphor']) {
+  fill: none;
   stroke: currentcolor;
   stroke-linecap: round;
   stroke-linejoin: round;

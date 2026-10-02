@@ -1,4 +1,5 @@
 import type { SVGProps } from 'react';
+import { PencilSimpleLineIcon } from '@phosphor-icons/react/dist/csr/PencilSimpleLine';
 
 /** 消息图标沿用原生矢量属性，绘制内容由组件统一提供。 */
 type MessageIconProps = Omit<SVGProps<SVGSVGElement>, 'children'>;
@@ -65,13 +66,9 @@ export function MessageExpandIcon(props: MessageIconProps & { collapsed?: boolea
   );
 }
 
+/** 编辑消息使用库内铅笔与底线图形，按钮尺寸和点击范围由原样式控制。 */
 export function MessageEditIcon(props: MessageIconProps) {
-  return (
-    <svg {...iconProps(props)}>
-      <path d="m14.5 5.5 4 4M5.25 18.75l3.85-.78 9.02-9.02a1.9 1.9 0 0 0 0-2.69l-.38-.38a1.9 1.9 0 0 0-2.69 0L6.03 14.9Z" />
-      <path d="M4.75 20.25h14.5" />
-    </svg>
-  );
+  return <PencilSimpleLineIcon {...props} weight="regular" aria-hidden="true" focusable="false" />;
 }
 
 export function MessageRemoteDeviceIcon(props: MessageIconProps) {

@@ -10134,8 +10134,12 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 
 .macos-ai-app .project-quick-action-icon svg {
   block-size: 17px;
-  fill: none;
   inline-size: 17px;
+}
+
+/* Phosphor 已包含完整轮廓，只为原有自绘图形保留描边规则。 */
+.macos-ai-app .project-quick-action-icon svg:not([data-icon-source='phosphor']) {
+  fill: none;
   stroke: currentcolor;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -12495,13 +12499,10 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   border-radius: 0;
   color: var(--zeus-project-row-muted);
   display: block;
-  fill: none;
+  fill: currentColor;
   inline-size: 17px;
   min-block-size: 0;
-  stroke: currentcolor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.45;
+  stroke: none;
 }
 
 .macos-ai-app .project-more-popover {
@@ -16530,35 +16531,6 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 
 .macos-ai-app .task-git-delivery-repository > summary .task-git-delivery-entry-icon {
   color: #638ad8;
-}
-
-.macos-ai-app .task-git-delivery-entry-icon.is-file-type {
-  block-size: 14px;
-  border-radius: 1px;
-  background: #3574cf;
-  color: #fff;
-  font:
-    700 9px/1 Arial,
-    sans-serif;
-}
-
-.macos-ai-app .task-git-delivery-entry-icon[data-kind='javascript'] {
-  background: #f4c344;
-  color: #3e3e3e;
-}
-.macos-ai-app .task-git-delivery-entry-icon[data-kind='markup'] {
-  background: #58985c;
-}
-.macos-ai-app .task-git-delivery-entry-icon[data-kind='stylesheet'] {
-  background: #9864bb;
-}
-.macos-ai-app .task-git-delivery-entry-icon[data-kind='json'] {
-  background: #c58736;
-}
-.macos-ai-app .task-git-delivery-entry-icon[data-kind='markdown'] {
-  background: transparent;
-  color: #3574cf;
-  font-size: 11px;
 }
 
 .macos-ai-app .task-git-delivery-file-tree input {

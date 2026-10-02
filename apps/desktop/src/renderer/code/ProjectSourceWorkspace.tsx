@@ -1072,7 +1072,7 @@ function TreeRows(props: {
           <span className="project-source-disclosure" aria-hidden="true">
             {directoryEntry ? expanded ? <CaretDown size={12} /> : <CaretRight size={12} /> : null}
           </span>
-          {directoryEntry ? expanded ? <FolderOpen weight="duotone" aria-hidden="true" /> : <Folder weight="duotone" aria-hidden="true" /> : <FileTypeIcon name={entry.name} />}
+          {directoryEntry ? expanded ? <FolderOpen weight="regular" aria-hidden="true" /> : <Folder weight="regular" aria-hidden="true" /> : <FileTypeIcon name={entry.name} />}
           <span data-file-status={directoryEntry ? undefined : props.gitFileStatuses[entry.relativePath]}>{entry.name}</span>
           {entry.kind === 'symlink' ? <small>↗</small> : null}
         </button>
@@ -1101,7 +1101,7 @@ function SearchResults(props: { entries: ProjectSourceEntry[]; activePath: strin
           disabled={!entry.accessible || entry.kind === 'directory' || props.busyPath === entry.relativePath}
           onClick={() => props.onOpen(entry.relativePath)}
         >
-          {entry.kind === 'directory' ? <Folder weight="duotone" aria-hidden="true" /> : <FileTypeIcon name={entry.name} />}
+          {entry.kind === 'directory' ? <Folder weight="regular" aria-hidden="true" /> : <FileTypeIcon name={entry.name} />}
           <span>
             <strong data-file-status={props.gitFileStatuses[entry.relativePath]}>{entry.name}</strong>
             <small>{entry.relativePath}</small>

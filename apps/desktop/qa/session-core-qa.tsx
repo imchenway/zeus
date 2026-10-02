@@ -658,6 +658,8 @@ function MessageLayoutQa() {
   const compactOperation = parameters.has('compaction');
   /** 文件过程复用真实 Markdown 资源及打开回调，核对文字样式和键盘聚焦。 */
   const activityFile = parameters.has('activity-file');
+  /** 沿用第一条操作，分别预览文件读取和目录浏览的真实图标映射。 */
+  const activityAction = parameters.get('activity-action');
   /** 分页场景保留已读范围，缺页边界可见时沿用真实组件自动补齐。 */
   const processPaging = parameters.has('process-paging');
   /** 同一条命令分别核对本地长输出和不可变结果分页。 */
@@ -1043,7 +1045,15 @@ function MessageLayoutQa() {
                   : deferredCommand && !commandDetailLoaded
                     ? { v2ContentKind: 'process_detail', processKind: 'command', v2ContentHandle: 'qa-deferred-command', v2ContentTruncated: true }
                     : {
-                        command: ['rg', '-n', 'SessionTurnProcessDisclosure', 'apps/desktop/src'],
+                        command:
+                          activityAction === 'read'
+                            ? ['cat', 'apps/desktop/src/renderer/session/SessionActivity.tsx']
+                            : activityAction === 'listFiles'
+                              ? ['ls', 'apps/desktop/src/renderer/session']
+                              : ['rg', '-n', 'SessionTurnProcessDisclosure', 'apps/desktop/src'],
+                        ...(activityAction === 'read' || activityAction === 'listFiles'
+                          ? { commandActions: [{ type: activityAction, path: activityAction === 'read' ? 'apps/desktop/src/renderer/session/SessionActivity.tsx' : 'apps/desktop/src/renderer/session' }] }
+                          : {}),
                         cwd: '/Users/david/hypha/zeus',
                         aggregatedOutput: outputPaging ? fullOutput.slice(0, 300) : fullOutput,
                         ...(deferredCommand ? { v2ContentKind: 'process_detail', processKind: 'command', v2ContentHandle: 'qa-deferred-command', v2ContentTruncated: false, v2ContentCompleteHandle: 'qa-deferred-command' } : {}),
