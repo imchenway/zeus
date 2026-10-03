@@ -120,13 +120,20 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const executionContext = props.state.snapshot?.executionContext?.recentCommand ?? props.state.snapshot?.executionContext;
   const cwd = (directWorkspace ? props.gitContext?.project.localPath : conversationRepository?.localPath) ?? executionContext?.cwd ?? workspace?.review?.cwd ?? workspace?.worktreePath ?? null;
   /** 多仓目录不把首仓分支冒充整个项目的分支，具体选择由交付页呈现。 */
-  const branch = directWorkspace && conversationReviews.length > 1 ? (zh ? '多个仓库' : 'Multiple repositories') : conversationReview?.branch ?? (executionContext?.cwd ? executionContext.branch : (workspace?.review?.branch ?? workspace?.branchName ?? null));
+  const branch =
+    directWorkspace && conversationReviews.length > 1
+      ? zh
+        ? '多个仓库'
+        : 'Multiple repositories'
+      : (conversationReview?.branch ?? (executionContext?.cwd ? executionContext.branch : (workspace?.review?.branch ?? workspace?.branchName ?? null)));
   const changes = conversationReview
-    ? conversationReviews.flatMap((review) => [...review.stagedDiff.fileDiffs, ...review.unstagedDiff.fileDiffs]).reduce((summary, file) => ({ ...summary, additions: summary.additions + file.addedLines, deletions: summary.deletions + file.deletedLines }), {
-        files: conversationReviews.reduce((total, review) => total + review.fileStatuses.length, 0),
-        additions: 0,
-        deletions: 0,
-      })
+    ? conversationReviews
+        .flatMap((review) => [...review.stagedDiff.fileDiffs, ...review.unstagedDiff.fileDiffs])
+        .reduce((summary, file) => ({ ...summary, additions: summary.additions + file.addedLines, deletions: summary.deletions + file.deletedLines }), {
+          files: conversationReviews.reduce((total, review) => total + review.fileStatuses.length, 0),
+          additions: 0,
+          deletions: 0,
+        })
     : summarizeWorkspaceChanges(workspace);
   const sources = useMemo(() => collectSources(props.state), [props.state.attachments, props.state.items]);
   const visibleSources = showAllSources ? sources : sources.slice(0, DEFAULT_VISIBLE_SOURCE_COUNT);
@@ -457,7 +464,13 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                 <ArrowSquareOut aria-hidden="true" weight="regular" />
               </button>
 
-              <button type="button" className="session-quick-actions-row" disabled={!canOpenDelivery} title={!canOpenDelivery ? (zh ? '当前会话没有可用的项目 Git 入口' : 'Project Git is unavailable for this conversation') : undefined} onClick={openDelivery}>
+              <button
+                type="button"
+                className="session-quick-actions-row"
+                disabled={!canOpenDelivery}
+                title={!canOpenDelivery ? (zh ? '当前会话没有可用的项目 Git 入口' : 'Project Git is unavailable for this conversation') : undefined}
+                onClick={openDelivery}
+              >
                 <GithubLogo aria-hidden="true" weight="regular" />
                 <span className="session-quick-actions-copy">
                   <strong>{zh ? '代码交付' : 'Code delivery'}</strong>

@@ -531,14 +531,21 @@ async function verifyRepositoryAttachment(db: ZeusDatabase, application: Workspa
 /** 沿用既有临时仓库，检查普通目录、工作树及持久目录的越界拒绝。 */
 async function verifyConversationGitDirectories(db: ZeusDatabase, project: ZeusProjectRecord, worktreePath: string, foreignPath: string) {
   /** 所有会话和提交凭证仅写入探针数据库。 */
-  const conversations = new ConversationRepository(db), submissions = new ConversationSubmissionRepository(db);
+  const conversations = new ConversationRepository(db),
+    submissions = new ConversationSubmissionRepository(db);
   /** 创建最初提交的服务端目录，避免从客户端或命令目录猜测范围。 */
   function createDirectoryConversation(title: string, cwd: string, mode?: 'direct' | 'worktree') {
     /** 独立会话身份用于验证交付与审查共用的目录解析。 */
     const conversation = conversations.create({ projectId: project.id, title });
     submissions.createOrGet({
-      conversationId: conversation.id, idempotencyKey: title, requestHash: title, clientMessageId: title,
-      kind: 'message', requestedDelivery: 'send_now', status: 'completed', createdAt: new Date(clockMs).toISOString(),
+      conversationId: conversation.id,
+      idempotencyKey: title,
+      requestHash: title,
+      clientMessageId: title,
+      kind: 'message',
+      requestedDelivery: 'send_now',
+      status: 'completed',
+      createdAt: new Date(clockMs).toISOString(),
       input: { context: { projectLocalPath: cwd, ...(mode ? { executionWorkspaceMode: mode } : {}) } },
     });
     return conversation;
@@ -547,13 +554,17 @@ async function verifyConversationGitDirectories(db: ZeusDatabase, project: ZeusP
     /** 缺省模式只在持久目录与项目真实目录相同时接受为普通模式。 */
     const conversation = createDirectoryConversation(`普通目录-${mode ?? '缺省'}`, project.localPath, mode);
     const resolved = await resolveConversationGitWorkspace(project, conversation.id, conversations, submissions);
-    assertProbe(resolved.localPath === await realpath(project.localPath) && resolved.workspaceMode === 'direct', '普通目录必须保留真实项目路径及模式，不能误判为工作树。');
+    assertProbe(resolved.localPath === (await realpath(project.localPath)) && resolved.workspaceMode === 'direct', '普通目录必须保留真实项目路径及模式，不能误判为工作树。');
   }
   /** 既有已登记工作树必须继续通过完整归属检查。 */
   const worktreeConversation = createDirectoryConversation('独立工作树', worktreePath, 'worktree');
   const worktree = await resolveConversationGitWorkspace(project, worktreeConversation.id, conversations, submissions);
-  assertProbe(worktree.localPath === await realpath(worktreePath) && worktree.workspaceMode === 'worktree', '有效工作树必须保留原目录和模式。');
-  for (const [title, cwd, mode] of [['普通目录越界', foreignPath, 'direct'], ['工作树越界', foreignPath, 'worktree'], ['工作树失效', join(probeRoot, 'missing-worktree'), 'worktree']] as const) {
+  assertProbe(worktree.localPath === (await realpath(worktreePath)) && worktree.workspaceMode === 'worktree', '有效工作树必须保留原目录和模式。');
+  for (const [title, cwd, mode] of [
+    ['普通目录越界', foreignPath, 'direct'],
+    ['工作树越界', foreignPath, 'worktree'],
+    ['工作树失效', join(probeRoot, 'missing-worktree'), 'worktree'],
+  ] as const) {
     /** 无效目录不能回退为项目目录，也不能被当作另一个合法仓库。 */
     const conversation = createDirectoryConversation(title, cwd, mode);
     let rejected = false;
