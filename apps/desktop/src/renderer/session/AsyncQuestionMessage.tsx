@@ -5,12 +5,15 @@ import { clearRuiDraft, normalizeRequestQuestions, RequestUserInputPanel } from 
 import { itemRole, ThreadItemView, type SessionUiLanguage } from './ThreadItemView.js';
 import type { NativeConversationAttachment, NativeSessionItemBuffer, NativeSessionState } from './sessionTypes.js';
 
-/** 通过原问题身份寻找答复，不把相同文字或别的轮次当作已回答证据。 */
+/** 按原问题身份查找答复；失败记录保留重试状态，不借用相同正文或别的轮次。 */
 export function asyncQuestionReply(item: NativeSessionItemBuffer, state: NativeSessionState): NativeSessionItemBuffer | undefined {
-  return Object.values(state.items).find((candidate) => {
+  /** 优先采用有效答复，只有失败记录时仍交给状态读取方判断。 */
+  const replies = Object.values(state.items).filter((candidate) => {
+    /** 问答关系只依赖原始 Provider 身份。 */
     const answer = candidate.payload.questionAnswer as AsyncQuestionAnswer | undefined;
-    return itemRole(candidate) === 'user' && answer?.providerItemId === (item.providerItemId ?? item.itemId) && answer.providerTurnId === item.turnId && !['failed', 'cancelled', 'deleted'].includes(candidate.status);
+    return itemRole(candidate) === 'user' && answer?.providerItemId === (item.providerItemId ?? item.itemId) && answer.providerTurnId === item.turnId;
   });
+  return replies.find((candidate) => !['failed', 'cancelled', 'deleted'].includes(candidate.status)) ?? replies.at(-1);
 }
 
 /** 优先使用服务端随答复提供的完整题目，未补齐时按身份查找已加载原题。 */
@@ -38,14 +41,18 @@ export function asyncQuestionIdentity(item: NativeSessionItemBuffer): string {
 function asyncQuestionStatus(item: NativeSessionItemBuffer, state: NativeSessionState) {
   /** 实时答复与分页恢复的答复账本共同提供送达证据。 */
   const reply = asyncQuestionReply(item, state);
+  /** 权威队列接管临时消息后，答案仍属于原题，不能重新显示为待回答。 */
+  const submissions = state.queue?.submissions.filter((candidate) => candidate.questionAnswer?.providerItemId === (item.providerItemId ?? item.itemId) && candidate.questionAnswer.providerTurnId === item.turnId) ?? [];
+  /** 新尝试优先于队列保留的旧失败记录，防止重答后再次被误判为待回答。 */
+  const submission = submissions.find((candidate) => !['failed', 'cancelled', 'deleted'].includes(candidate.status)) ?? submissions.at(-1);
   /** 历史分页不要求同时载入对应的用户答复消息。 */
   const response = item.payload.questionResponse as AsyncQuestionResponse | undefined;
   /** 明确送达后才清理问题草稿。 */
   const confirmed = Boolean((reply && !reply.optimistic && reply.providerItemId && reply.status === 'completed') || response?.status === 'resolved' || response?.status === 'completed');
   /** 已失败或取消的答复不能使原问题永久失去重试入口。 */
-  const deliveryStatus = response?.status ?? reply?.status;
+  const deliveryStatus = submission?.status ?? reply?.status ?? response?.status;
   /** 已接收但未确认的答案不能重复提交。 */
-  const pending = Boolean((reply || response) && !confirmed && !['failed', 'cancelled', 'deleted'].includes(deliveryStatus ?? ''));
+  const pending = Boolean((submission || reply || response) && !confirmed && !['failed', 'cancelled', 'deleted'].includes(deliveryStatus ?? ''));
   /** 正式终态与最终交付决定是否需要明确另发消息。 */
   const closed =
     Boolean(state.terminalTurnIds[item.turnId] || state.turnsByProviderId[item.turnId]?.completedAt) ||

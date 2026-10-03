@@ -2953,17 +2953,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   ) : null}
                   {props.suppressComposer || blockingPendingRequest || blockingPlanImplementationRequest || dockedAsyncQuestion ? null : (
                     <>
-                      {!props.historyOnly && transcriptInteractionsEnabled && asyncQuestionDock.questions.length > 0 ? (
-                        <nav className="session-interaction-dock session-async-question-reminder" aria-label={props.language === 'zh-CN' ? '待回答问题' : 'Unanswered questions'}>
-                          <div className="session-message-delivery-actions">
-                            {asyncQuestionDock.questions.map((item, index) => (
-                              <button key={asyncQuestionIdentity(item)} type="button" onClick={() => asyncQuestionDock.open(item)}>
-                                {props.language === 'zh-CN' ? `回答问题${asyncQuestionDock.questions.length > 1 ? ` ${index + 1}` : ''}` : `Answer question${asyncQuestionDock.questions.length > 1 ? ` ${index + 1}` : ''}`}
-                              </button>
-                            ))}
-                          </div>
-                        </nav>
-                      ) : null}
                       {goal ? <GoalRail goal={goal} language={props.language} onOpen={() => setGoalPanelOpen(true)} /> : null}
                       <div className="session-composer-stack">
                         {renderQueuedConversationMessages()}

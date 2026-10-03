@@ -27,6 +27,8 @@ export interface AsyncQuestionAnswer {
 export interface AsyncQuestionResponse {
   status: string;
   answer: AsyncQuestionAnswer;
+  /** 持久提交身份用于区分明确失败或删除后的新尝试；本地未落库状态没有该身份。 */
+  submissionId?: string;
 }
 
 /** 将异步工具的问题结构转换为已有表单契约，不改变同步询问的校验规则。 */

@@ -2126,19 +2126,18 @@ export class ConversationSnapshotV2Repository {
     return { ...answer, ...(questions.length ? { questions } : {}) };
   }
 
-  /** 仅按问题、轮次和会话身份关联现有提交，不扫描正文或猜测回答。 */
+  /** 按问题、轮次和会话关联最新提交；终态身份保留给重答，不扫描正文猜测关联。 */
   private questionResponse(conversationId: string, providerItemId: string, turnId: string): AsyncQuestionResponse | undefined {
-    const row = this.db.get<{ status: string; answer: string }>(
-      `SELECT submission.status, json_extract(submission.input_json, '$.questionAnswer') AS answer
+    const row = this.db.get<{ submission_id: string; status: string; answer: string }>(
+      `SELECT submission.id AS submission_id, submission.status, json_extract(submission.input_json, '$.questionAnswer') AS answer
          FROM conversation_submissions AS submission
         WHERE submission.conversation_id = ? AND json_valid(submission.input_json)
           AND json_extract(submission.input_json, '$.questionAnswer.providerItemId') = ?
           AND json_extract(submission.input_json, '$.questionAnswer.providerTurnId') = (SELECT provider_turn_id FROM conversation_turns WHERE id = ?)
-          AND submission.status NOT IN ('failed', 'cancelled', 'deleted')
         ORDER BY submission.created_at DESC LIMIT 1`,
       [conversationId, providerItemId, turnId],
     );
-    return row ? { status: row.status, answer: JSON.parse(row.answer) as AsyncQuestionAnswer } : undefined;
+    return row ? { submissionId: row.submission_id, status: row.status, answer: JSON.parse(row.answer) as AsyncQuestionAnswer } : undefined;
   }
 
   private throughEventSeq(conversationId: string): number {

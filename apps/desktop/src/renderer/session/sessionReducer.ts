@@ -1,4 +1,4 @@
-import { classifyAssistantMessage, type AsyncQuestionAnswer, type TurnChangeSet } from '@zeus/shared';
+import { classifyAssistantMessage, type AsyncQuestionAnswer, type AsyncQuestionResponse, type TurnChangeSet } from '@zeus/shared';
 import { userFacingErrorCause } from '@zeus/shared';
 import type {
   ConversationState,
@@ -65,7 +65,8 @@ export type NativeSessionAction =
       collaborationMode?: 'plan' | 'default';
     }
   | { type: 'queue_hydrated'; queue: NativeQueueSnapshot }
-  | { type: 'queued_submission_deleted'; submissionId: string; clientUserMessageId?: string; queue: NativeQueueSnapshot }
+  /** 用户删除答案时携带原题身份，避免迟到的队列回执丢失关联。 */
+  | { type: 'queued_submission_deleted'; submissionId: string; clientUserMessageId?: string; questionAnswer?: AsyncQuestionAnswer; queue: NativeQueueSnapshot }
   | { type: 'steering_submission_hydrated'; submission: NativeQueuedSubmission; queue?: NativeQueueSnapshot }
   | { type: 'steering_submission_failed'; submissionId: string; clientUserMessageId?: string; error: NativeSessionError }
   | { type: 'operation_started'; operation: string }
@@ -265,7 +266,7 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
       return projectQueueSubmissionMessages(state, action.queue);
     }
     case 'queued_submission_deleted':
-      return removeQueuedSubmissionProjection(state, action.submissionId, action.clientUserMessageId, action.queue);
+      return removeQueuedSubmissionProjection(state, action.submissionId, action.clientUserMessageId, action.queue, action.questionAnswer);
     case 'steering_submission_hydrated':
       return projectSteeringSubmission(state, action.submission, action.queue);
     case 'steering_submission_failed':
@@ -1824,26 +1825,37 @@ function markSteeringSubmissionUnconfirmed(state: NativeSessionState, submission
   };
 }
 
-function removeQueuedSubmissionProjection(state: NativeSessionState, submissionId: string, requestedClientUserMessageId: string | undefined, queue: NativeQueueSnapshot): NativeSessionState {
-  if (state.queue && queue.throughEventSeq < state.queue.throughEventSeq) return state;
+/** 删除普通排队投影，并按原题身份释放尚未送达的回答状态。 */
+function removeQueuedSubmissionProjection(state: NativeSessionState, submissionId: string, requestedClientUserMessageId: string | undefined, queue: NativeQueueSnapshot, questionAnswer?: AsyncQuestionAnswer): NativeSessionState {
+  /** 迟到的删除回执只清理原题状态，不能覆盖更新的权威队列。 */
+  const authoritativeQueue = state.queue && queue.throughEventSeq < state.queue.throughEventSeq ? state.queue : queue;
+  if (authoritativeQueue !== queue && !questionAnswer) return state;
   const clientUserMessageId = requestedClientUserMessageId ?? state.queue?.submissions.find((submission) => submission.id === submissionId)?.clientUserMessageId;
   const removedKeys = Object.entries(state.items)
     .filter(
       ([, item]) => isUnacceptedTranscriptMessage(item) && isUserMessageItem(item) && ((clientUserMessageId ? userMessageClientIds(item).includes(clientUserMessageId) : false) || stringValue(item.payload.submissionId) === submissionId),
     )
     .map(([key]) => key);
-  if (removedKeys.length === 0) {
-    return { ...state, queue, conversationState: conversationStateFromQueue(queue, state) };
+  if (removedKeys.length === 0 && !questionAnswer) {
+    return { ...state, queue: authoritativeQueue, conversationState: conversationStateFromQueue(authoritativeQueue, state) };
   }
   const removedKeySet = new Set(removedKeys);
   const items = { ...state.items };
   for (const key of removedKeys) delete items[key];
+  if (questionAnswer && !authoritativeQueue.submissions.some((submission) => submission.questionAnswer?.providerItemId === questionAnswer.providerItemId && submission.questionAnswer.providerTurnId === questionAnswer.providerTurnId)) {
+    for (const [key, item] of Object.entries(items)) {
+      /** 原题保留删除账本以生成重答身份，已确认的回答不能退回待答。 */
+      const response = item.payload.questionResponse as AsyncQuestionResponse | undefined;
+      if ((item.providerItemId ?? item.itemId) !== questionAnswer.providerItemId || item.turnId !== questionAnswer.providerTurnId || (response && ['resolved', 'completed'].includes(response.status))) continue;
+      items[key] = { ...item, payload: { ...item.payload, questionResponse: { status: 'deleted', answer: questionAnswer, submissionId } satisfies AsyncQuestionResponse } };
+    }
+  }
   return {
     ...state,
     items,
     itemOrder: state.itemOrder.filter((key) => !removedKeySet.has(key)),
-    queue,
-    conversationState: conversationStateFromQueue(queue, state),
+    queue: authoritativeQueue,
+    conversationState: conversationStateFromQueue(authoritativeQueue, state),
     transcriptRevision: state.transcriptRevision + 1,
   };
 }

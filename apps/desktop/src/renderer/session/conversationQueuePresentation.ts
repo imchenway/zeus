@@ -113,6 +113,8 @@ export function composerQueuedSubmissions(state: NativeSessionState): ComposerQu
         status: item.status,
         delivery: 'queue',
         ...(attachments?.length ? { attachments } : {}),
+        /** 首帧保留原题关系，权威队列接管前同样可以显示答案摘要。 */
+        ...(item.payload.questionAnswer ? { questionAnswer: item.payload.questionAnswer as NativeQueuedSubmission['questionAnswer'] } : {}),
         clientUserMessageId,
         position: durable.length + index + 1,
         providerTurnId: null,

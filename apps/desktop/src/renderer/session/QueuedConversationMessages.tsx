@@ -12,6 +12,7 @@ import { composerQueuedSubmissions, reorderableQueuedSubmissions } from './conve
 import type { NativeQueuedSubmission, NativeSessionState } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { autosizeTextarea } from './textareaAutosize.js';
+import { formatAsyncQuestionAnswer } from '@zeus/shared';
 
 /** 输入框上方排队卡片所需的权威操作。 */
 export interface QueuedConversationMessagesProps {
@@ -306,9 +307,17 @@ function queuedMessageEditDraft(submission: NativeQueuedSubmission): string {
   return typeof submission.composerDraft === 'string' ? submission.composerDraft : submission.content;
 }
 
-/** 普通状态只渲染正文摘要，附件由独立摘要承担，纯附件消息不伪造正文。 */
+/** 问题回答优先展示答案；已编辑的正文及普通消息保留原稿，附件单独展示。 */
 function queuedMessageTextPreview(submission: NativeQueuedSubmission): string {
-  return submission.composerDraft?.trim() || submission.content.trim();
+  /** 展示摘要不能改变发送给模型的完整原稿。 */
+  const draft = submission.composerDraft?.trim() || submission.content.trim();
+  /** 只读取明确绑定原题的结构化答案。 */
+  const answer = submission.questionAnswer;
+  if (!answer) return draft;
+  /** 复用原格式化入口核对原稿，避免排队编辑后仍展示旧答案。 */
+  const answerAttachments = Object.fromEntries(Object.entries(answer.answerAttachmentIndices ?? {}).map(([id, indices]) => [id, indices.map((index) => submission.attachments?.[index]).filter((attachment) => attachment !== undefined)]));
+  if (answer.questions?.length && draft !== formatAsyncQuestionAnswer(answer.questions, answer.answers, answerAttachments).trim()) return draft;
+  return Object.values(answer.answers).flatMap((entry) => entry.answers).join('；').trim() || draft;
 }
 
 /** 附件摘要优先展示真实文件名，多附件时补充剩余数量。 */

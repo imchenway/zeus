@@ -547,6 +547,8 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
       <MotionPresence>
         {deliveryOpen && conversationGitClient && props.gitContext ? (
           <ModalPortal
+            // 门户挂在 body 下，显式保留 Git 工作台共用的布局与主题作用域。
+            rootClassName="zeus-shell"
             role="dialog"
             aria-label={zh ? '会话代码交付' : 'Conversation code delivery'}
             onDismiss={() => {

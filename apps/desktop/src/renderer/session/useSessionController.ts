@@ -3205,8 +3205,20 @@ export function createSessionController(options: CreateSessionControllerOptions)
           .map(([id, entries]) => [id, entries.map(() => attachmentOffset++)]),
       );
       const questionAnswer: AsyncQuestionAnswer = { providerItemId, providerTurnId, answers, ...(attachments.length ? { answerAttachmentIndices } : {}), ...(asNewMessage ? { asNewMessage: true } : {}) };
-      // 同一问题在重复点击和重启后保持提交身份；明确新消息拥有独立身份。
-      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([options.conversationId, providerTurnId, providerItemId, asNewMessage])));
+      /** 实时队列和历史账本都保存上一份回答；明确终态后才允许创建新尝试。 */
+      const previousSubmissions = state.queue?.submissions.filter((candidate) => candidate.questionAnswer?.providerItemId === providerItemId && candidate.questionAnswer.providerTurnId === providerTurnId && Boolean(candidate.questionAnswer.asNewMessage) === asNewMessage) ?? [];
+      /** 队列可能保留旧失败审计，已有在途尝试不能借用旧失败生成另一份答案。 */
+      const previousSubmission = previousSubmissions.find((candidate) => !['failed', 'cancelled', 'deleted'].includes(candidate.status)) ?? previousSubmissions.at(-1);
+      /** 原题账本在删除回执和重启后仍携带同一个持久身份。 */
+      const previousResponse = item.payload.questionResponse as AsyncQuestionResponse | undefined;
+      /** 同轮次模式互不借用发送身份，未知送达不能通过重答绕过。 */
+      const retryOf = previousSubmission && ['failed', 'cancelled', 'deleted'].includes(previousSubmission.status)
+        ? previousSubmission.id
+        : previousResponse && ['failed', 'cancelled', 'deleted'].includes(previousResponse.status) && Boolean(previousResponse.answer.asNewMessage) === asNewMessage
+          ? previousResponse.submissionId
+          : undefined;
+      /** 同一次尝试跨点击和重启保持身份，上一份明确结束后使用新的稳定身份。 */
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([options.conversationId, providerTurnId, providerItemId, asNewMessage, ...(retryOf ? [retryOf] : [])])));
       const identity = `question:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
       const content = formatAsyncQuestionAnswer(questions, answers, answerAttachments);
       const delivery = asNewMessage ? ('queue' as const) : ('steer_now' as const);
@@ -3286,12 +3298,15 @@ export function createSessionController(options: CreateSessionControllerOptions)
       );
     },
     deleteQueuedSubmission(submissionId) {
-      const clientUserMessageId = state.queue?.submissions.find((submission) => submission.id === submissionId)?.clientUserMessageId;
+      /** 删除回执可能晚于队列事件，提前保存原题身份以清理过期的待送达状态。 */
+      const submission = state.queue?.submissions.find((candidate) => candidate.id === submissionId);
+      /** 普通排队消息仍沿用原客户端身份移除本地投影。 */
+      const clientUserMessageId = submission?.clientUserMessageId;
       return runOperation(
         `queue:delete:${submissionId}`,
         () => options.client.deleteNativeQueuedSubmission(options.projectId, options.conversationId, submissionId),
         (queue) => {
-          dispatch({ type: 'queued_submission_deleted', submissionId, ...(clientUserMessageId ? { clientUserMessageId } : {}), queue });
+          dispatch({ type: 'queued_submission_deleted', submissionId, ...(clientUserMessageId ? { clientUserMessageId } : {}), ...(submission?.questionAnswer ? { questionAnswer: submission.questionAnswer } : {}), queue });
         },
         false,
       );

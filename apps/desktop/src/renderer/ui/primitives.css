@@ -1063,7 +1063,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 
 /* Modal：portal 根层永远透明，只有统一 backdrop 可以绘制遮罩与虚化。 */
 .zeus-modal-portal-root.macos-ai-app[data-zeus-primitive='modal'] {
-  background: transparent;
+  /* 共享工作台壳可提供布局作用域，门户根仍须压过壳层背景，只由 backdrop 绘制遮罩。 */
+  background: transparent !important;
   block-size: auto;
   color: var(--zeus-product-text);
   display: block;
