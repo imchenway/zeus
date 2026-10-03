@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@trycua/cua-driver": "0.30.4",
+    "@xterm/addon-search": "^0.16.0",
     "@xyflow/react": "^12.12.0",
     "@zeus/ai-runtime": "workspace:*",
     "@zeus/git-core": "workspace:*",

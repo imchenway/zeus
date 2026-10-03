@@ -1,4 +1,3 @@
-import { BrainIcon } from '@phosphor-icons/react/dist/csr/Brain';
 import { contextCapacitySelectionAllowed } from './contextCapacitySelection.js';
 import { ActivitySkillCatalogContext } from './SessionActivity.js';
 import { FilePreviewDialog, FilePreviewOpenContext } from '../code/FilePreview.js';
@@ -6,7 +5,7 @@ import { MotionPresence } from '../ui/MotionPresence.js';
 import { temporaryWorkspaceId, isConversationWorktreeOptions, type ConversationWorktreeOptions, type AsyncQuestionAnswer } from '@zeus/shared';
 import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
-import { BrainIcon as Brain } from '@phosphor-icons/react/dist/csr/Brain';
+import { ModelBrainIcon } from './ModelBrainIcon.js';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paperclip';
 import { TargetIcon as Target } from '@phosphor-icons/react/dist/csr/Target';
@@ -2083,6 +2082,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
 
   function handleWorkspaceKeyDownCapture(event: ReactKeyboardEvent<HTMLElement>): void {
     if (event.key !== 'Escape') return;
+    // 终端搜索先消费 Escape，不能触发工作区关闭或会话操作。
+    if (event.target instanceof Element && event.target.closest('[data-terminal-search-open="true"]')) return;
     // 格式预览先退出阅读状态，避免编辑草稿时触发中断确认。
     if (event.target instanceof Element && event.target.closest('.structured-composer-preview')) return;
     if (event.target instanceof Element && event.target.closest('.session-composer-shell[data-goal-input="true"]')) return;
@@ -3828,7 +3829,7 @@ export function NewConversationComposer(props: {
                   triggerLabel={`${props.language === 'zh-CN' ? '模型' : 'Model'}：${selectedModelLabel}`}
                   displayLabel={selectedModelLabel}
                   // 新建会话与已有会话共用窄输入框的模型图标布局。
-                  triggerIcon={<Brain aria-hidden="true" weight="regular" />}
+                  triggerIcon={<ModelBrainIcon />}
                   className="session-composer-model-dropdown"
                   value={selectedModel?.id ?? ''}
                   options={modelPresentation.options}
@@ -3848,7 +3849,6 @@ export function NewConversationComposer(props: {
                 {selectedModel.supportedReasoningEfforts.length ? (
                   <ComposerDropdown
                     label={props.language === 'zh-CN' ? '推理强度' : 'Reasoning effort'}
-                    triggerIcon={<BrainIcon weight="regular" aria-hidden="true" />}
                     triggerLabel={`${props.language === 'zh-CN' ? '推理强度' : 'Reasoning effort'}：${selectedEffort}`}
                     value={selectedEffort}
                     options={(selectedModel?.supportedReasoningEfforts ?? []).map((effort) => ({ value: effort, label: effort }))}

@@ -99,32 +99,41 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const [workspaceError, setWorkspaceError] = useState<unknown>(null);
   const taskId = props.task?.id ?? props.conversation.taskId;
   const gitClient = props.gitContext?.client;
-  const conversationGitClient = useMemo(() => (!taskId && gitClient ? { ...gitClient, ...gitClient.forConversationGit(props.conversation.id) } : null), [gitClient, props.conversation.id, taskId]);
+  /** 普通目录复用项目仓库工作台，独立工作树继续使用服务端绑定的会话范围。 */
+  const directWorkspace = props.conversation.workspaceMode === 'direct';
+  const conversationGitClient = useMemo(
+    () => (!taskId && gitClient ? (directWorkspace ? gitClient : { ...gitClient, ...gitClient.forConversationGit(props.conversation.id) }) : null),
+    [gitClient, props.conversation.id, taskId, directWorkspace],
+  );
   const [conversationGit, setConversationGit] = useState<{ id: string; snapshot: ProjectGitWorkbenchSnapshot } | null>(null);
   const [deliveryOpen, setDeliveryOpen] = useState(false);
   const [deliveryRevision, setDeliveryRevision] = useState(0);
   const conversationRepository = conversationGit?.id === props.conversation.id ? conversationGit.snapshot.repositories[0] : null;
   const conversationReview = conversationRepository?.snapshot;
+  /** 普通项目可能包含多个仓库，环境卡片统计与交付页采用相同范围。 */
+  const conversationReviews = conversationGit?.id === props.conversation.id ? conversationGit.snapshot.repositories.map((repository) => repository.snapshot) : [];
   const conversationReady = !taskId && workspaceState === 'ready' && Boolean(conversationRepository);
 
   const workspace = resolveConversationWorkspace(workspaces, props.conversation, props.state);
   const exactReviewWorkspace = workspace && workspace.id === props.conversation.workspaceId && workspace.environmentId === props.conversation.environmentId ? workspace : null;
   /** 两处环境展示采用相同的最近命令事实，工作区交付身份仍沿用会话绑定。 */
   const executionContext = props.state.snapshot?.executionContext?.recentCommand ?? props.state.snapshot?.executionContext;
-  const cwd = conversationRepository?.localPath ?? executionContext?.cwd ?? workspace?.review?.cwd ?? workspace?.worktreePath ?? null;
-  const branch = conversationReview?.branch ?? (executionContext?.cwd ? executionContext.branch : (workspace?.review?.branch ?? workspace?.branchName ?? null));
+  const cwd = (directWorkspace ? props.gitContext?.project.localPath : conversationRepository?.localPath) ?? executionContext?.cwd ?? workspace?.review?.cwd ?? workspace?.worktreePath ?? null;
+  /** 多仓目录不把首仓分支冒充整个项目的分支，具体选择由交付页呈现。 */
+  const branch = directWorkspace && conversationReviews.length > 1 ? (zh ? '多个仓库' : 'Multiple repositories') : conversationReview?.branch ?? (executionContext?.cwd ? executionContext.branch : (workspace?.review?.branch ?? workspace?.branchName ?? null));
   const changes = conversationReview
-    ? [...conversationReview.stagedDiff.fileDiffs, ...conversationReview.unstagedDiff.fileDiffs].reduce((summary, file) => ({ ...summary, additions: summary.additions + file.addedLines, deletions: summary.deletions + file.deletedLines }), {
-        files: conversationReview.fileStatuses.length,
+    ? conversationReviews.flatMap((review) => [...review.stagedDiff.fileDiffs, ...review.unstagedDiff.fileDiffs]).reduce((summary, file) => ({ ...summary, additions: summary.additions + file.addedLines, deletions: summary.deletions + file.deletedLines }), {
+        files: conversationReviews.reduce((total, review) => total + review.fileStatuses.length, 0),
         additions: 0,
         deletions: 0,
       })
     : summarizeWorkspaceChanges(workspace);
   const sources = useMemo(() => collectSources(props.state), [props.state.attachments, props.state.items]);
   const visibleSources = showAllSources ? sources : sources.slice(0, DEFAULT_VISIBLE_SOURCE_COUNT);
-  const dirty = conversationReview ? !conversationReview.clean : workspace?.review ? !workspace.review.clean : false;
+  const dirty = conversationReview ? conversationReviews.some((review) => !review.clean) : workspace?.review ? !workspace.review.clean : false;
   const canOpenReview = Boolean(conversationReady || (taskId && workspace && props.onOpenGitReview));
-  const canOpenDelivery = Boolean(conversationReady || (taskId && props.onOpenGitDelivery));
+  /** 进入页面不依赖预读成功；加载和目录错误由工作台呈现并提供重试。 */
+  const canOpenDelivery = Boolean(conversationGitClient || (taskId && props.onOpenGitDelivery));
   const codeReviewUnavailableReason = resolveCodeReviewUnavailableReason({
     zh,
     taskId,
@@ -304,7 +313,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
 
   /** 优先携带会话绑定的工作区，避免列表暂缺时误选其他分支。 */
   function openDelivery(): void {
-    if (conversationReady) {
+    if (conversationGitClient) {
       setOpen(false);
       setDeliveryOpen(true);
       return;
@@ -448,7 +457,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                 <ArrowSquareOut aria-hidden="true" weight="regular" />
               </button>
 
-              <button type="button" className="session-quick-actions-row" disabled={!canOpenDelivery} title={!canOpenDelivery ? (zh ? '会话工作树尚未就绪' : 'Conversation worktree is unavailable') : undefined} onClick={openDelivery}>
+              <button type="button" className="session-quick-actions-row" disabled={!canOpenDelivery} title={!canOpenDelivery ? (zh ? '当前会话没有可用的项目 Git 入口' : 'Project Git is unavailable for this conversation') : undefined} onClick={openDelivery}>
                 <GithubLogo aria-hidden="true" weight="regular" />
                 <span className="session-quick-actions-copy">
                   <strong>{zh ? '代码交付' : 'Code delivery'}</strong>
@@ -692,7 +701,7 @@ function resolveCodeReviewUnavailableReason(input: {
   if (!input.startAvailable) return input.zh ? '当前版本没有可用的代码审查入口' : 'Code review is unavailable in this version';
   if (!input.taskId) {
     if (input.conversationReady) return null;
-    return input.zh ? (input.workspaceState === 'error' ? '会话工作树不可用，请检查目录后重试' : '正在检查会话工作树…') : 'The conversation worktree is not ready';
+    return input.zh ? (input.workspaceState === 'error' ? '会话工作目录不可用，请检查目录后重试' : '正在检查会话工作目录…') : 'The conversation working folder is not ready';
   }
   if (!input.conversation.workspaceId || !input.conversation.environmentId) {
     return input.zh ? '此对话没有任务开始时的代码记录。请从拥有独立工作目录的任务对话启动审查' : 'This conversation has no record of the code when the task started. Start the review from a task conversation with its own working folder';

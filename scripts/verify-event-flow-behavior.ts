@@ -574,9 +574,11 @@ function verifyStageSummaryProcessGrouping(): Record<string, unknown> {
     '每段过程入口都能补齐本轮历史。',
   );
   // 活动、结束两种状态均保留三条用户输入；相同正文但不同身份的补充不能合并。
+  /** 运行现场尚无最终正文，不能用已完成记录覆盖活动身份。 */
+  const withoutReply = rows.filter((row) => row.key !== 'final');
   for (const activeTurnId of [turnId, null]) {
     /** 复用实际投影入口，只切换同一轮的活动与终态。 */
-    const projected = projectTranscriptTurnRows(rows, activeTurnId, activeTurnId ? {} : { [turnId]: 'completed' });
+    const projected = projectTranscriptTurnRows(activeTurnId ? withoutReply : rows, activeTurnId, activeTurnId ? {} : { [turnId]: 'completed' });
     assertBehavior(
       projected
         .filter((row) => row.kind === 'item' && row.item.type === 'userMessage')
@@ -589,7 +591,7 @@ function verifyStageSummaryProcessGrouping(): Record<string, unknown> {
         .map((row) => (row.kind === 'turn_work' ? `process:${row.segments.flatMap((segment) => segment.rows.flatMap((detail) => (detail.kind === 'activity' ? detail.items.map((entry) => entry.key) : [])).join(','))}` : row.key))
         .join('|') ===
         (activeTurnId
-          ? 'opening-user|process:bootstrap-command-a|summary-a|process:command-a|mid-user-a|summary-b|process:tool-b|mid-user-b|summary-c|process:file-c|final'
+          ? 'opening-user|process:bootstrap-command-a|summary-a|process:command-a|mid-user-a|summary-b|process:tool-b|mid-user-b|summary-c|process:file-c'
           : 'opening-user|mid-user-a|mid-user-b|process:bootstrap-command-a,command-a,tool-b,file-c|final'),
       '运行时保持沟通顺序，完成后保留用户输入并在最终正文上方统一收起过程。',
     );
@@ -601,21 +603,20 @@ function verifyStageSummaryProcessGrouping(): Record<string, unknown> {
   }
   /** 完成态独立展开身份使运行中手动展开的过程在结束时回到收起状态。 */
   const liveWorkKeys = new Set(
-    projectTranscriptTurnRows(rows, turnId)
+    projectTranscriptTurnRows(withoutReply, turnId)
       .filter((row) => row.kind === 'turn_work')
       .map((row) => row.key),
   );
   assertBehavior(!liveWorkKeys.has(workRows[0]!.key), '完成态不能继承运行中的手动展开身份。');
   assertBehavior(turnRows.at(-1)?.kind === 'item' && turnRows.at(-1)?.key === 'final', '最终正文必须留在过程入口之外并位于入口下方。');
   /** 终态尚无正文时，继续显示已发生的进展，不能只剩耗时。 */
-  const withoutReply = rows.filter((row) => row.key !== 'final');
   assertBehavior(
     projectTranscriptTurnRows(withoutReply, null, { [turnId]: 'completed' }).some((row) => row.key === 'summary-c'),
     '正文缺失时不能收起最后的可读进展。',
   );
   for (const status of ['failed', 'interrupted'] as const) {
     assertBehavior(
-      projectTranscriptTurnRows(rows, null, { [turnId]: status }).some((row) => row.key === 'summary-c'),
+      projectTranscriptTurnRows(withoutReply, null, { [turnId]: status }).some((row) => row.key === 'summary-c'),
       '失败或中断不能采用正常完成的收拢规则。',
     );
   }
@@ -639,6 +640,37 @@ function verifyStageSummaryProcessGrouping(): Record<string, unknown> {
     item('same-command-d', 'commandExecution', ''),
     item('same-final', 'agentMessage', '检查完成', 'final_answer'),
   ].map((entry) => ({ ...entry, stageId: 'same-stage' }));
+  /** 隐藏思考和协调事件即使更换持久阶段，也不能拆开同一输入的可见操作。 */
+  const hiddenBoundaryItems = [
+    item('hidden-user', 'userMessage', '核对隐藏事件分组。'),
+    { ...item('hidden-command-a', 'commandExecution', ''), stageId: 'stage-a' },
+    { ...item('hidden-reasoning', 'reasoning', '临时状态摘要'), stageId: 'stage-b' },
+    { ...item('hidden-command-b', 'commandExecution', ''), stageId: 'stage-b' },
+    { ...item('hidden-coordination', 'dynamicToolCall', ''), payload: { type: 'collabAgentToolCall' }, stageId: 'stage-c' },
+    { ...item('hidden-command-c', 'commandExecution', ''), stageId: 'stage-c' },
+    item('visible-progress', 'agentMessage', '已完成第一阶段。', 'commentary'),
+    item('visible-command', 'commandExecution', ''),
+  ];
+  /** 两个操作组只由可见进度说明分隔，原始操作顺序保持完整。 */
+  const hiddenBoundaryGroups = projectTranscriptRows(hiddenBoundaryItems).filter((row) => row.kind === 'activity');
+  assertBehavior(hiddenBoundaryGroups.length === 2 && hiddenBoundaryGroups[0]!.items.map((entry) => entry.key).join('|') === 'hidden-command-a|hidden-command-b|hidden-command-c', '隐藏事件和持久阶段变化不能产生无说明的操作组。');
+  /** 重读及补入更早的隐藏事件不改变首条真实操作确定的身份。 */
+  const coldHiddenGroups = projectTranscriptRows([item('earlier-hidden', 'reasoning', '更早的临时摘要'), ...structuredClone(hiddenBoundaryItems)]).filter((row) => row.kind === 'activity');
+  assertBehavior(hiddenBoundaryGroups.map((row) => row.key).join('|') === coldHiddenGroups.map((row) => row.key).join('|'), '冷读和补页不能按隐藏阶段重编号操作组。');
+  /** 真实位置字段让开场消息尚未补入时也沿用同一个操作组身份。 */
+  const persistentInputItems = hiddenBoundaryItems.map((entry, index) => ({
+    ...entry,
+    transcript: { placement: { entryId: entry.key, order: index + 1, orderEpoch: 1, placementRevision: 1, turnId, openingInputId: 'persisted-input', displayStageId: entry.stageId ?? null }, sources: [] },
+  }));
+  /** 补入开场消息或继续加载组尾，都不改变已知首条操作确定的身份。 */
+  const persistentGroups = projectTranscriptRows(persistentInputItems).filter((row) => row.kind === 'activity');
+  assertBehavior(
+    projectTranscriptRows(persistentInputItems.slice(1))
+      .filter((row) => row.kind === 'activity')
+      .map((row) => row.key)
+      .join('|') === persistentGroups.map((row) => row.key).join('|') && projectTranscriptRows(persistentInputItems.slice(1, 6)).find((row) => row.kind === 'activity')?.key === persistentGroups[0]!.key,
+    '操作组必须用持久输入和首条操作身份，不能使用页面或片段编号。',
+  );
   /** 使用真实两级投影覆盖阶段内操作合并，而非只检查原始消息编号。 */
   const sameStageChildren = projectTranscriptTurnRows(projectTranscriptRows(sameStageItems), null, { [turnId]: 'completed' }).flatMap((row) => (row.kind === 'turn_work' ? row.segments.flatMap((segment) => segment.rows) : []));
   assertBehavior(sameStageChildren.length > 0 && new Set(sameStageChildren.map((row) => row.key)).size === sameStageChildren.length, '完成态的同阶段操作组不能产生重复子行身份。');
@@ -673,6 +705,7 @@ function verifyStageSummaryProcessGrouping(): Record<string, unknown> {
     '前置事件不能越过开场用户消息，后续操作也不能跨过助手沟通合并。',
   );
   return {
+    hiddenBoundaryGroupSizes: hiddenBoundaryGroups.map((row) => row.items.length),
     mainStreamUserMessages: 3,
     mainStreamAssistantMessages: 1,
     stages: stages.map((stage) => ({

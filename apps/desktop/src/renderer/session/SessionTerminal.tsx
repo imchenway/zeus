@@ -21,6 +21,7 @@ import type {
 
 import { TerminalTabs } from '../features/runtime/TerminalTabs.js';
 import { observeTerminalTheme, terminalDisplayOptions } from '../features/runtime/terminalPresentation.js';
+import { TerminalSearchBar, TerminalSearchButton, useTerminalSearch } from '../features/runtime/TerminalSearch.js';
 
 const integratedTerminalCommand = 'sh';
 const integratedTerminalScript = 'exec "${SHELL:-sh}" -l';
@@ -127,6 +128,8 @@ const terminalCopy = {
 } as const;
 
 export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
+  /** 搜索独立于会话输入队列，只访问当前显示实例的缓冲区。 */
+  const search = useTerminalSearch();
   /** 标签与输出面板共享的唯一标识。 */
   const panelId = useId();
   const copy = terminalCopy[props.language];
@@ -430,6 +433,8 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
       aria-hidden={!props.visible}
       inert={!props.visible}
       data-open={props.visible}
+      data-terminal-search-open={search.open || undefined}
+      onKeyDownCapture={search.onKeyDownCapture}
       data-position={position}
       data-resizing={resizeStateRef.current ? 'true' : undefined}
     >
@@ -500,6 +505,7 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
           onNew={() => void startTerminal()}
           onClose={requestCloseSession}
         />
+        <TerminalSearchButton search={search} language={props.language} />
         <button type="button" className="zeus-terminal-action" aria-label={moveLabel} title={moveLabel} onClick={togglePosition}>
           {right ? <Rows aria-hidden="true" /> : <SidebarSimple aria-hidden="true" style={{ transform: 'scaleX(-1)' }} />}
         </button>
@@ -507,6 +513,7 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
           <X aria-hidden="true" />
         </button>
       </header>
+      <TerminalSearchBar search={search} language={props.language} />
       {error ? (
         <div className="session-terminal-error" role="alert">
           <WarningCircle aria-hidden="true" />
@@ -550,6 +557,7 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
             initialSize={sessionSizesRef.current.get(activeSession.id) ?? interactiveTerminalInitialSize}
             focusRequest={props.focusRequest}
             registerSurface={registerSurface}
+            bindSearch={search.bind}
             onSizeChange={rememberTerminalSize}
             onStatusChange={(status) => updateSessionStatus(activeSession.id, status)}
             onError={setError}
@@ -592,6 +600,8 @@ function TerminalViewport(props: {
   initialSize: { cols: number; rows: number };
   focusRequest: number;
   registerSurface: (surface: TerminalSurfaceHandle | null) => void;
+  /** 搜索插件绑定后由显示实例清理，保持现有终端身份。 */
+  bindSearch: ReturnType<typeof useTerminalSearch>['bind'];
   onSizeChange: (sessionId: string, size: { cols: number; rows: number }) => void;
   onStatusChange: (status: AiRuntimeSessionStatus) => void;
   onError: (message: string | null) => void;
@@ -612,6 +622,8 @@ function TerminalViewport(props: {
     const host = hostRef.current;
     if (!host) return;
     let disposed = false;
+    /** 搜索清理先于终端销毁，标签切换不继承查询。 */
+    let disposeSearch: (() => void) | undefined;
     let resizeFrame: number | null = null;
     let disposeBindings: (() => void) | undefined;
     let refreshRunning = false;
@@ -650,6 +662,7 @@ function TerminalViewport(props: {
         terminal.loadAddon(fitAddon);
         terminalRef.current = terminal;
         terminal.open(hostRef.current);
+        disposeSearch = props.bindSearch(terminal);
         const dataSubscription = terminal.onData((value) => {
           /** 用户输入前先提交最新尺寸，保证输入与 resize 在同一队列中有序执行。 */
           flushPendingResize();
@@ -800,6 +813,7 @@ function TerminalViewport(props: {
     return () => {
       disposed = true;
       props.registerSurface(null);
+      disposeSearch?.();
       disposeBindings?.();
       io.dispose();
       if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
@@ -808,7 +822,7 @@ function TerminalViewport(props: {
       terminalRef.current?.dispose();
       terminalRef.current = null;
     };
-  }, [copy.startupFailed, props.client, props.language, props.onSizeChange, props.registerSurface, props.session.id]);
+  }, [copy.startupFailed, props.client, props.language, props.onSizeChange, props.registerSurface, props.session.id, props.bindSearch]);
 
   useEffect(() => {
     if (terminalRef.current) terminalRef.current.options.disableStdin = !terminalSessionIsLive(props.session.status);

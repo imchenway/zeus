@@ -159,6 +159,76 @@
   height: 100%;
 }
 
+/* 项目终端与会话终端都以面板为搜索浮层的定位范围。 */
+.macos-ai-app .project-terminal {
+  position: relative;
+}
+
+/* 搜索覆盖输出而不挤占字符网格，窄面板保留三个操作按钮。 */
+.zeus-terminal-search-bar {
+  align-items: center;
+  box-sizing: border-box;
+  background: var(--zeus-control-bg);
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 7px;
+  box-shadow: 0 3px 12px rgb(0 0 0 / 12%);
+  color: var(--zeus-control-text);
+  display: flex;
+  gap: 4px;
+  inset-block-start: 48px;
+  inset-inline-end: 8px;
+  max-inline-size: calc(100% - 16px);
+  padding: 5px;
+  position: absolute;
+  z-index: 2;
+}
+
+/* 输入可收缩，未命中反馈和按钮保持单行。 */
+.zeus-terminal-search-bar input {
+  background: var(--zeus-control-bg);
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 4px;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  inline-size: 190px;
+  min-inline-size: 0;
+  padding: 5px 7px;
+}
+
+.zeus-terminal-search-bar > span {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* 搜索按钮沿用工具栏的点击尺寸与键盘焦点边界。 */
+.zeus-terminal-search-bar button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  display: inline-flex;
+  flex: 0 0 26px;
+  justify-content: center;
+  min-block-size: 26px;
+  padding: 0;
+}
+
+.zeus-terminal-search-bar button svg {
+  block-size: 15px;
+  inline-size: 15px;
+}
+
+.zeus-terminal-search-bar :is(input, button):focus-visible {
+  outline: 2px solid var(--zeus-brand-text);
+  outline-offset: 1px;
+}
+
+.zeus-terminal-search-bar button:disabled {
+  opacity: 0.48;
+}
+
 /* 字符网格外的余量仍跟随应用主题。 */
 .zeus-terminal-screen .xterm-viewport {
   background-color: var(--zeus-card-background, var(--zeus-product-panel, #fff));

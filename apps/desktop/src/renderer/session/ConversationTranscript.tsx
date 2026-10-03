@@ -2487,12 +2487,6 @@ function isTurnCompletionOutputItem(item: NativeSessionItemBuffer): boolean {
   return isFinalAnswerItem(item) || normalizeItemType(item.type) === 'plan';
 }
 
-/** 读取条目在投影边界确定的稳定展示阶段。 */
-function itemStageId(item: NativeSessionItemBuffer): string | null {
-  const value = item.transcript?.placement.displayStageId ?? item.stageId ?? item.payload.stageId;
-  return typeof value === 'string' && value.trim() ? value : null;
-}
-
 /** 持久输入身份跨分页保持不变，缺失时不从时间猜测。 */
 function itemOpeningInputId(item: NativeSessionItemBuffer): string | null {
   const value = item.transcript?.placement.openingInputId;
@@ -2502,6 +2496,11 @@ function itemOpeningInputId(item: NativeSessionItemBuffer): string | null {
 /** 新旧记录中的持久思考正文统一作为阶段说明；旧折叠标记不再决定显示样式。 */
 function isReasoningProcessText(item: NativeSessionItemBuffer): boolean {
   return normalizeItemType(item.type) === 'reasoning' && [item.payload.reasoningPresentation, recordValue(item.payload.detail)?.reasoningPresentation].some((value) => value === 'process_text' || value === 'details_collapsed');
+}
+
+/** 隐藏状态和移入侧栏的协调事件既不渲染，也不打断可见操作的连续性。 */
+function isHiddenTranscriptProcessItem(item: NativeSessionItemBuffer): boolean {
+  return isSubagentCoordinationItem(item) || (normalizeItemType(item.type) === 'reasoning' && !isReasoningProcessText(item));
 }
 
 export function projectTranscriptRows(
@@ -2544,48 +2543,38 @@ export function projectTranscriptRows(
     timeline.splice(insertionIndex < 0 ? timeline.length : insertionIndex, 0, { kind: 'answered_request', request });
   }
 
-  // 优先读取持久阶段；缺失阶段的记录使用真实摘要身份，不按已加载片段编号。
-  const currentStageIdentityByTurn = new Map<string, string>();
-  const stageIdentityByTimelineIndex = new Map<number, string>();
-  /** 同一展示阶段也不能跨越普通用户插话合并工具活动。 */
+  /** 分组只读取持久输入归属；隐藏思考产生的阶段变化不代表可见边界。 */
+  const inputIdentityByTimelineIndex = new Map<number, string>();
+  /** 同一轮次也不能跨越普通用户插话合并工具活动。 */
   const inputBoundaryByTurn = new Map<string, string>();
   timeline.forEach((entry, index) => {
+    if (entry.kind === 'item' && isHiddenTranscriptProcessItem(entry.item)) return;
     const turnId = entry.kind === 'item' ? entry.item.turnId : entry.request.turnId;
     if (!turnId) return;
     const persistentOpeningInputId = entry.kind === 'item' ? itemOpeningInputId(entry.item) : null;
     if (persistentOpeningInputId) inputBoundaryByTurn.set(turnId, persistentOpeningInputId);
     if (entry.kind === 'item' && itemRole(entry.item) === 'user' && !questionAnswers.get(entry.item.key)) {
       inputBoundaryByTurn.set(turnId, persistentOpeningInputId ?? `${turnId}\u0000input:${transcriptItemRenderKey(entry.item)}`);
-      currentStageIdentityByTurn.delete(turnId);
     }
-    /** 展示阶段在本次输入范围内有效，不能吸走后续引导后的工具。 */
+    /** 缺少持久输入身份的旧记录仍由真实用户消息形成边界。 */
     const inputBoundary = inputBoundaryByTurn.get(turnId) ?? turnId;
-    const explicitStageId = entry.kind === 'item' ? itemStageId(entry.item) : null;
-    if (explicitStageId) {
-      const identity = `${inputBoundary}\u0000stage:${explicitStageId}`;
-      currentStageIdentityByTurn.set(turnId, identity);
-      stageIdentityByTimelineIndex.set(index, identity);
-      return;
-    }
-    if (entry.kind === 'item' && isTurnStageSummaryItem(entry.item)) {
-      currentStageIdentityByTurn.set(turnId, `${inputBoundary}\u0000summary:${transcriptItemRenderKey(entry.item)}`);
-    }
-    stageIdentityByTimelineIndex.set(index, currentStageIdentityByTurn.get(turnId) ?? `${inputBoundary}\u0000opening`);
+    inputIdentityByTimelineIndex.set(index, inputBoundary);
   });
 
-  /** 操作只在相邻且属于同一展示阶段时合并；任意沟通内容都会切断分组。 */
-  const activityRunByStartIndex = new Map<number, { stageIdentity: string; items: NativeSessionItemBuffer[] }>();
-  /** 当前连续操作组随非操作条目立即清空，不能跨过助手文字再次续接。 */
-  let currentActivityRun: { startIndex: number; stageIdentity: string; items: NativeSessionItemBuffer[] } | null = null;
+  /** 同一输入下连续可见的操作合并；可见沟通和持久思考正文才切断分组。 */
+  const activityRunByStartIndex = new Map<number, { inputIdentity: string; items: NativeSessionItemBuffer[] }>();
+  /** 当前组不跨越可见内容，隐藏条目不改变其边界。 */
+  let currentActivityRun: { startIndex: number; inputIdentity: string; items: NativeSessionItemBuffer[] } | null = null;
   timeline.forEach((entry, index) => {
-    const stageIdentity = stageIdentityByTimelineIndex.get(index);
-    if (entry.kind !== 'item' || isSubagentCoordinationItem(entry.item) || !isOperationalActivityItem(entry.item)) {
+    if (entry.kind === 'item' && isHiddenTranscriptProcessItem(entry.item)) return;
+    if (entry.kind !== 'item' || !isOperationalActivityItem(entry.item)) {
       currentActivityRun = null;
       return;
     }
-    const activityStageIdentity = stageIdentity ?? `${entry.item.turnId}\u00000`;
-    if (!currentActivityRun || currentActivityRun.stageIdentity !== activityStageIdentity) {
-      currentActivityRun = { startIndex: index, stageIdentity: activityStageIdentity, items: [] };
+    /** 首条操作身份负责唯一性，输入身份负责禁止跨输入合并。 */
+    const inputIdentity = inputIdentityByTimelineIndex.get(index) ?? entry.item.turnId;
+    if (!currentActivityRun || currentActivityRun.inputIdentity !== inputIdentity) {
+      currentActivityRun = { startIndex: index, inputIdentity, items: [] };
       activityRunByStartIndex.set(index, currentActivityRun);
     }
     currentActivityRun.items.push(entry.item);
@@ -2599,10 +2588,9 @@ export function projectTranscriptRows(
       // 答案卡片已完整承载原题和选项，不在主会话流重复展示同一个问题。
       if (itemRole(item) === 'assistant' && classifyAssistantMessage(item.payload, item.phase) === 'question' && answeredQuestionIds.has(`${item.turnId}/${item.providerItemId ?? item.itemId}`)) continue;
       // 多智能体协调事件统一进入右侧智能体面板，不在主会话重复暴露协议载荷。
-      if (!isSubagentCoordinationItem(item)) {
-        const stageIdentity = stageIdentityByTimelineIndex.get(index) ?? `${item.turnId}\u00000`;
-        // Codex 状态摘要由底部当前进展统一展示；Pi 持久思考正文继续留在处理过程供回看。
-        if (normalizeItemType(item.type) === 'reasoning' && !isReasoningProcessText(item)) continue;
+      if (!isHiddenTranscriptProcessItem(item)) {
+        /** 分组与渲染使用同一套隐藏规则，不能留下没有说明的空边界。 */
+        const inputIdentity = inputIdentityByTimelineIndex.get(index) ?? item.turnId;
         if (!isOperationalActivityItem(item)) {
           rows.push({ kind: 'item', key: transcriptItemRenderKey(item), item, questionAnswer: questionAnswers.get(item.key) });
         } else {
@@ -2613,7 +2601,7 @@ export function projectTranscriptRows(
           const categories = new Set(groupedItems.map(activityCategory));
           rows.push({
             kind: 'activity',
-            key: `activity:${encodeURIComponent(stageIdentity)}:${encodeURIComponent(transcriptItemRenderKey(groupedItems[0]!))}`,
+            key: `activity:${encodeURIComponent(inputIdentity)}:${encodeURIComponent(transcriptItemRenderKey(groupedItems[0]!))}`,
             items: groupedItems,
             category: categories.size === 1 ? activityCategory(groupedItems[0]!) : 'mixed',
             motionActive: groupedItems.some((candidate) => candidate.key === currentActivityItemKey),
@@ -2629,12 +2617,6 @@ export function projectTranscriptRows(
 function latestActiveReasoningSummaryItem(items: readonly NativeSessionItemBuffer[], activeTurnId: string | null): NativeSessionItemBuffer | null {
   if (!activeTurnId || items.some((item) => item.turnId === activeTurnId && isFinalAnswerItem(item))) return null;
   return [...items].reverse().find((item) => item.turnId === activeTurnId && normalizeItemType(item.type) === 'reasoning' && item.status !== 'failed' && latestReasoningSummaryText(item).length > 0) ?? null;
-}
-
-function isTurnStageSummaryItem(item: NativeSessionItemBuffer): boolean {
-  if (normalizeItemType(item.type) === 'reasoning' || item.type === 'plan' || isFinalAnswerItem(item) || isAssistantDeliverableItem(item)) return false;
-  const role = itemRole(item);
-  return (role === 'assistant' || role === 'commentary') && transcriptItemText(item).trim().length > 0;
 }
 
 function latestCurrentActivityItemKey(items: readonly NativeSessionItemBuffer[], activeTurnId: string | null): string | null {

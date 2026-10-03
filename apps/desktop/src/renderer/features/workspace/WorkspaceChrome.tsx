@@ -13,7 +13,7 @@ import { FunnelIcon as Funnel } from '@phosphor-icons/react/dist/csr/Funnel';
 import { CaretRightIcon as CaretRight } from '@phosphor-icons/react/dist/csr/CaretRight';
 import { DotsThreeVerticalIcon as DotsThreeVertical } from '@phosphor-icons/react/dist/csr/DotsThreeVertical';
 import { GearSixIcon as GearSix } from '@phosphor-icons/react/dist/csr/GearSix';
-import { RobotIcon } from '@phosphor-icons/react/dist/csr/Robot';
+import { UserCircleIcon } from '@phosphor-icons/react/dist/csr/UserCircle';
 import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { PushPinIcon as PushPin } from '@phosphor-icons/react/dist/csr/PushPin';
@@ -939,7 +939,7 @@ export function ProjectWorkspaceNavigation(props: {
           </span>
           <span className="project-workspace-mode-label">{zh ? '扩展管理' : 'Extensions'}</span>
         </button>
-        {/* 数字员工在全局导航中紧邻数字团队上方。 */}
+        {/* 数字员工使用人物头像线框，并在全局导航中紧邻数字团队上方。 */}
         <button
           type="button"
           className={props.activeNavTarget === 'digital-employees' ? 'is-active' : ''}
@@ -949,7 +949,7 @@ export function ProjectWorkspaceNavigation(props: {
           onClick={() => props.onNavigate('digital-employees')}
         >
           <span className="project-workspace-mode-icon" aria-hidden="true">
-            <RobotIcon size={18} weight="regular" />
+            <UserCircleIcon size={18} weight="regular" aria-hidden="true" data-icon-source="phosphor" />
           </span>
           <span className="project-workspace-mode-label">{zh ? '数字员工' : 'Digital employees'}</span>
         </button>
@@ -1423,7 +1423,7 @@ export function SidebarNav(props: {
             onClick={() => props.onNavigate('digital-employees')}
           >
             <span className="project-quick-action-icon" aria-hidden="true">
-              <RobotIcon size={20} weight="regular" />
+              <UserCircleIcon size={20} weight="regular" aria-hidden="true" data-icon-source="phosphor" />
             </span>
             <span className="project-quick-action-label">{zh ? '数字员工' : 'Digital employees'}</span>
           </button>
@@ -1768,7 +1768,7 @@ export function SidebarNav(props: {
               onClick={() => props.onNavigate('digital-employees')}
             >
               <span aria-hidden="true">
-                <RobotIcon size={20} weight="regular" />
+                <UserCircleIcon size={20} weight="regular" aria-hidden="true" data-icon-source="phosphor" />
               </span>
               {zh ? '数字员工' : 'Digital employees'}
             </button>

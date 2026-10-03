@@ -205,14 +205,14 @@ for (const protocolFamily of ['openai_completions', 'openai_responses', 'anthrop
       const reasoningItems = buffered.map((item) =>
         item.key === 'codex-summary' || presentation === 'process_text' ? item : { ...item, payload: { ...item.payload, reasoningPresentation: undefined, detail: { reasoningPresentation: presentation } } },
       );
-      /** 流式摘要换条目后仍使用同一轮次编号，正文编号保持原值。 */
+      /** 流式状态摘要换条目后不进入过程行，持久正文编号保持原值。 */
       const replacementSummary = { ...reasoningItems.find((item) => item.key === 'codex-summary')!, key: 'codex-summary-next', itemId: 'codex-summary-next', text: '继续核对结果', status: 'in_progress' };
       for (const historyOnly of [false, true]) {
-        /** 两段正文和最新摘要共存；历史模式只隐藏状态摘要。 */
+        /** 最新摘要由运行状态单独展示，活动与历史过程均只投影两段持久正文。 */
         const rows = projectTranscriptRows([...reasoningItems, replacementSummary], [], 'turn', historyOnly);
         assertProbe(
-          rows.map((row) => row.key).join('|') === (historyOnly ? 'transcript:thinking|transcript:thinking-next' : 'transcript:thinking|transcript:thinking-next|reasoning-summary:turn'),
-          `思考正文须各自保留，最新状态摘要独立且编号稳定：${protocolFamily}/${presentation}/${historyOnly}/${rows.map((row) => row.key).join('|')}`,
+          rows.map((row) => row.key).join('|') === 'transcript:thinking|transcript:thinking-next',
+          `思考正文须各自保留，状态摘要不能成为过程分组边界：${protocolFamily}/${presentation}/${historyOnly}/${rows.map((row) => row.key).join('|')}`,
         );
         /** 同时核对未分组和已结束轮次，重复编号不能进入布局索引。 */
         for (const terminalTurns of [{}, { turn: 'completed' as const }]) {

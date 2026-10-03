@@ -10,10 +10,8 @@ import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/Caret
 import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
 import { FilesIcon as Files } from '@phosphor-icons/react/dist/csr/Files';
 import { GitDiffIcon as GitDiff } from '@phosphor-icons/react/dist/csr/GitDiff';
-import { InfoIcon as Info } from '@phosphor-icons/react/dist/csr/Info';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import {
-  historicalTurnChangeUnavailableReason,
   type ConversationCodeComment,
   type ConversationCodeCommentPosition,
   type ConversationCodeCommentSide,
@@ -48,8 +46,8 @@ export function TurnChangeCard(props: {
   const action = availableAction(changeSet);
   /** 普通摘要使用稳定标题，正在操作或发生冲突时保留明确的阶段反馈。 */
   const title = ['applied', 'undone', 'unavailable'].includes(changeSet.state) ? (zh ? '文件更改' : 'File changes') : changeSetTitle(changeSet, props.language);
-  /** 恢复能力作为次级状态说明，不盖过文件列表。 */
-  const availability = changeSet.state === 'unavailable' ? (zh ? '不可撤销' : 'Not reversible') : changeSet.state === 'undone' ? (zh ? '已撤销' : 'Undone') : null;
+  /** 只标记已经执行的撤销结果。 */
+  const availability = changeSet.state === 'undone' ? (zh ? '已撤销' : 'Undone') : null;
 
   async function operate(): Promise<void> {
     if (!action || !props.onOperate || busy) return;
@@ -119,8 +117,9 @@ export function TurnChangeCard(props: {
           </button>
         </nav>
       </header>
-      {changeSet.conflict ? (
-        <p className="session-turn-change-error" role={changeSet.state === 'unavailable' ? 'status' : 'alert'}>
+      {/* 不可恢复只影响操作能力；真正的操作冲突才显示错误。 */}
+      {changeSet.conflict && changeSet.state !== 'unavailable' ? (
+        <p className="session-turn-change-error" role="alert">
           <VisibleApplicationError error={changeSet.conflict} language={zh ? 'zh-CN' : 'en'} />
         </p>
       ) : null}
@@ -375,20 +374,15 @@ export function TurnDiffWorkspace(props: {
           </button>
         </nav>
       </header>
-      {changeSet.conflict ? (
-        <p className="session-turn-change-error session-turn-diff-error" role={changeSet.state === 'unavailable' ? 'status' : 'alert'}>
+      {/* 审核不展示撤销资格提示，实际操作冲突继续显示错误。 */}
+      {changeSet.conflict && changeSet.state !== 'unavailable' ? (
+        <p className="session-turn-change-error session-turn-diff-error" role="alert">
           <VisibleApplicationError error={changeSet.conflict} language={zh ? 'zh-CN' : 'en'} />
         </p>
       ) : null}
       {error && error !== changeSet.conflict?.message && error !== changeSet.unavailableReason ? (
         <p className="session-turn-change-error session-turn-diff-error" role="alert">
           <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
-        </p>
-      ) : null}
-      {!changeSet.conflict && changeSet.state === 'unavailable' && changeSet.unavailableReason ? (
-        <p className="session-turn-change-notice session-turn-diff-error" role="status">
-          <Info aria-hidden="true" />
-          <span>{unavailableReason(changeSet.unavailableReason, props.language)}</span>
         </p>
       ) : null}
       <div className="session-turn-diff-layout">
@@ -523,14 +517,6 @@ function availableAction(changeSet: TurnChangeSet): ChangeAction | null {
   return null;
 }
 
-/** 将恢复能力限制与审阅能力区分，并将旧记录中的快照错误转为可理解的提示。 */
-function unavailableReason(reason: string, language: SessionUiLanguage): string {
-  if (reason === 'The captured recovery snapshots do not reproduce the provider patch.')
-    return language === 'zh-CN' ? '无法确认这次修改前后的文件内容，暂不能安全撤销或重新应用；仍可审核已记录的差异。' : 'Recovery snapshots could not be verified, so Undo/Reapply is unavailable. Recorded changes can still be reviewed.';
-  if (reason !== historicalTurnChangeUnavailableReason) return reason;
-  return language === 'zh-CN' ? '缺少这次修改前后的文件内容，无法撤销或重新应用这些修改。' : 'The file contents before and after these changes are unavailable. These changes cannot be undone or reapplied.';
-}
-
 function changeSetTitle(changeSet: TurnChangeSet, language: SessionUiLanguage): string {
   const zh = language === 'zh-CN';
   const subject = changeSet.fileCount === 1 ? displayPath(changeSet.files[0]!) : zh ? `${changeSet.fileCount} 个文件` : `${changeSet.fileCount} files`;
@@ -539,7 +525,7 @@ function changeSetTitle(changeSet: TurnChangeSet, language: SessionUiLanguage): 
   if (changeSet.state === 'reapplying') return zh ? '正在重新应用文件变更' : 'Reapplying file changes';
   if (changeSet.state === 'undone') return zh ? `已撤销 ${subject}` : `Undid ${subject}`;
   if (changeSet.state === 'conflicted') return zh ? `无法安全更新 ${subject}` : `Could not safely update ${subject}`;
-  if (changeSet.state === 'unavailable') return zh ? '文件变更不可撤销' : 'File changes are not reversible';
+  if (changeSet.state === 'unavailable') return zh ? '文件更改' : 'File changes';
   return zh ? `已记录 ${subject}的变更` : `Recorded changes to ${subject}`;
 }
 

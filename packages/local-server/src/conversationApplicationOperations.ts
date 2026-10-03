@@ -2379,9 +2379,9 @@ export function createConversationApplicationOperations(dependencies: Conversati
       reviewWorkspace &&
       (body.permissionMode !== 'read-only' || body.collaborationMode !== 'default' || hasExpertMentions(body) || body.goalObjective || body.worktree || (body.attachments && (!Array.isArray(body.attachments) || body.attachments.length)))
     ) {
-      throw nativeApiError('ZEUS_INVALID_CODE_REVIEW', '代码审查必须以只读模式使用原会话工作树。');
+      throw nativeApiError('ZEUS_INVALID_CODE_REVIEW', '代码审查必须以只读模式使用原会话工作目录。');
     }
-    if (!reviewWorkspace && body.inheritConversationId !== undefined) throw nativeApiError('ZEUS_INVALID_CODE_REVIEW', '继承工作树仅用于代码审查。');
+    if (!reviewWorkspace && body.inheritConversationId !== undefined) throw nativeApiError('ZEUS_INVALID_CODE_REVIEW', '继承工作目录仅用于代码审查。');
     if (hasExpertMentions(body)) {
       return acceptExpertRound({
         project,
@@ -2493,7 +2493,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             projectId: project.id,
             conversationTitle: (displayText || providerContent).slice(0, 120),
             cwd: executionRoot,
-            executionWorkspaceMode: reviewWorkspace || body.workspaceMode === 'worktree' ? 'worktree' : 'direct',
+            executionWorkspaceMode: reviewWorkspace?.workspaceMode ?? (body.workspaceMode === 'worktree' ? 'worktree' : 'direct'),
             ...(goalObjective ? { goalObjective } : {}),
             prompt: providerContent,
             ...(displayText !== providerContent ? { displayText } : {}),
@@ -2521,7 +2521,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             submissionId: reservation.submissionId,
             projectId: project.id,
             projectLocalPath: executionRoot,
-            executionWorkspaceMode: reviewWorkspace || body.workspaceMode === 'worktree' ? 'worktree' : 'direct',
+            executionWorkspaceMode: reviewWorkspace?.workspaceMode ?? (body.workspaceMode === 'worktree' ? 'worktree' : 'direct'),
             prompt: providerContent,
             ...(displayText !== providerContent ? { displayText } : {}),
             attachments,

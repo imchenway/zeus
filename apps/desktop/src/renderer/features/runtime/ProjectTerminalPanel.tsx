@@ -10,6 +10,7 @@ import { StopIcon as Stop } from '@phosphor-icons/react/dist/csr/Stop';
 import { TerminalTabs } from './TerminalTabs.js';
 import { observeTerminalTheme, terminalDisplayOptions } from './terminalPresentation.js';
 import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
+import { TerminalSearchBar, TerminalSearchButton, useTerminalSearch } from './TerminalSearch.js';
 
 /** 终端面板状态持久化存储键前缀。 */
 const TERMINAL_STATE_STORAGE_KEY_PREFIX = 'zeus.terminal-panel-state.';
@@ -42,6 +43,8 @@ function saveTerminalPanelState(projectId: string, state: { open: boolean; heigh
 export function ProjectTerminalPanel(props: { project: ProjectRecord; client: DashboardClient; language: 'zh-CN' | 'en-US'; dockHost: HTMLDivElement | null }) {
   /** 当前界面语言。 */
   const zh = props.language === 'zh-CN';
+  /** 搜索绑定当前标签的现有终端，独立于启停和连接状态。 */
+  const search = useTerminalSearch();
   /** 面板打开状态按项目ID持久化，切换项目时保持各项目独立状态。 */
   const [open, setOpen] = useState(() => readTerminalPanelState(props.project.id).open);
   /** 高度比例按项目ID持久化。 */
@@ -238,7 +241,7 @@ export function ProjectTerminalPanel(props: { project: ProjectRecord; client: Da
       <MotionPresence>
         {open && props.dockHost
           ? createPortal(
-              <TerminalDock heightShare={heightShare} label={zh ? '项目终端' : 'Project terminal'}>
+              <TerminalDock heightShare={heightShare} label={zh ? '项目终端' : 'Project terminal'} search={search}>
                 <div
                   className="project-terminal-resizer"
                   role="separator"
@@ -284,6 +287,7 @@ export function ProjectTerminalPanel(props: { project: ProjectRecord; client: Da
                     onNew={() => void start()}
                     onClose={(session) => void closeTab(session)}
                   />
+                  <TerminalSearchButton search={search} language={props.language} />
                   {selected ? (
                     <>
                       <button className="zeus-terminal-action" type="button" title={zh ? '重新连接' : 'Reconnect'} aria-label={zh ? '重新连接' : 'Reconnect'} onClick={() => setConnection((value) => value + 1)}>
@@ -305,6 +309,7 @@ export function ProjectTerminalPanel(props: { project: ProjectRecord; client: Da
                     <X aria-hidden="true" />
                   </button>
                 </header>
+                <TerminalSearchBar search={search} language={props.language} />
                 <div className="project-terminal-content" role="tabpanel" id={panelId} aria-labelledby={selectedId ? `${panelId}-${selectedId}` : undefined}>
                   {loadFailed ? <p role="status">{zh ? '终端列表连接中断，正在重连…' : 'Terminal list disconnected. Reconnecting…'}</p> : null}
                   {error ? (
@@ -313,7 +318,7 @@ export function ProjectTerminalPanel(props: { project: ProjectRecord; client: Da
                     </p>
                   ) : null}
                   {selected ? (
-                    <InteractiveTerminalPane key={`${selected.id}:${connection}`} client={props.client} session={selected} zh={zh} />
+                    <InteractiveTerminalPane key={`${selected.id}:${connection}`} client={props.client} session={selected} zh={zh} bindSearch={search.bind} />
                   ) : (
                     <p role="status">{busy ? (zh ? '正在开启终端…' : 'Opening terminal…') : zh ? '尚无终端会话' : 'No terminal sessions'}</p>
                   )}
@@ -328,20 +333,30 @@ export function ProjectTerminalPanel(props: { project: ProjectRecord; client: Da
 }
 
 /** 注册真实停靠表面，让共享动效边界等待收起完成后再卸载终端。 */
-function TerminalDock(props: { heightShare: number; label: string; children: ReactNode }) {
+function TerminalDock(props: { heightShare: number; label: string; children: ReactNode; search: ReturnType<typeof useTerminalSearch> }) {
   /** 高度变化直接发生在分屏表面，与浏览器的宽度展开对应。 */
   const ref = useRef<HTMLElement>(null);
   /** 关闭立即停止交互，保留最后一帧完成退出动效。 */
   const open = usePresenceSurface(ref);
   return (
-    <section ref={ref} className="project-terminal" aria-label={props.label} aria-hidden={!open} inert={!open} data-open={open} style={{ height: open ? `${props.heightShare}%` : 0 }}>
+    <section
+      ref={ref}
+      className="project-terminal"
+      aria-label={props.label}
+      aria-hidden={!open}
+      inert={!open}
+      data-open={open}
+      data-terminal-search-open={props.search.open || undefined}
+      onKeyDownCapture={props.search.onKeyDownCapture}
+      style={{ height: open ? `${props.heightShare}%` : 0 }}
+    >
       {props.children}
     </section>
   );
 }
 
 /** xterm 按日志游标增量渲染，键盘输入及尺寸变更通过同一有序队列发送。 */
-function InteractiveTerminalPane(props: { client: DashboardClient; session: AiRuntimeSession; zh: boolean }) {
+function InteractiveTerminalPane(props: { client: DashboardClient; session: AiRuntimeSession; zh: boolean; bindSearch: ReturnType<typeof useTerminalSearch>['bind'] }) {
   /** 终端容器只绑定当前会话。 */
   const containerRef = useRef<HTMLDivElement>(null);
   /** 后台状态变化无需重建终端缓冲区。 */
@@ -358,6 +373,8 @@ function InteractiveTerminalPane(props: { client: DashboardClient; session: AiRu
     let fitAddon: import('@xterm/addon-fit').FitAddon | undefined;
     let observer: ResizeObserver | undefined;
     let disposeTheme: (() => void) | undefined;
+    /** 搜索与当前显示实例一同释放，重连不留下旧缓冲区引用。 */
+    let disposeSearch: (() => void) | undefined;
     let unsubscribe: (() => void) | undefined;
     let pollTimer: number | undefined;
     let refreshTimer: number | undefined;
@@ -445,6 +462,7 @@ function InteractiveTerminalPane(props: { client: DashboardClient; session: AiRu
         terminal.loadAddon(fitAddon);
         disposeTheme = observeTerminalTheme(terminal, containerRef.current);
         terminal.open(containerRef.current);
+        disposeSearch = props.bindSearch(terminal);
         terminal.textarea?.setAttribute('aria-label', props.zh ? '终端输入' : 'Terminal input');
         terminal.onData((input) => {
           if (!terminal!.options.disableStdin) send(() => props.client.sendRuntimeInput(props.session.id, input));
@@ -476,9 +494,10 @@ function InteractiveTerminalPane(props: { client: DashboardClient; session: AiRu
       unsubscribe?.();
       window.clearInterval(pollTimer);
       window.clearTimeout(refreshTimer);
+      disposeSearch?.();
       terminal?.dispose();
     };
-  }, [props.client, props.session.id, props.zh]);
+  }, [props.client, props.session.id, props.zh, props.bindSearch]);
 
   return (
     <>

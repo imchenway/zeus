@@ -8445,11 +8445,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   text-align: end;
 }
 
-/* 单边变化仍占据对应列，缺失的计数不冒充另一列。 */
+/* 同时增删时新增在左；只有新增时使用最右列，避免留下空白删除列。 */
 .session-codex-parity-v1 .session-turn-change-file-counts > .session-change-added {
   grid-column: 1;
 }
 
+.session-codex-parity-v1 .session-turn-change-file-counts > .session-change-added:only-child,
 .session-codex-parity-v1 .session-turn-change-file-counts > .session-change-deleted {
   grid-column: 2;
 }
@@ -11294,7 +11295,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   max-inline-size: 100% !important;
 }
 
-/* 宽输入框显示模型文字，窄输入框才启用同一按钮内的大脑图标。 */
+/* 宽输入框显示模型文字，窄输入框才启用同一按钮内的模型图标。 */
 .session-codex-parity-v1 .session-composer-model-dropdown .zeus-select-trigger-icon {
   display: none;
 }
