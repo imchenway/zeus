@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { formatCodexCredits, hasPositiveCodexCredits, isCodexSubscriptionUsage } from '@zeus/shared';
 import type { CodexOfficialRateWindow, UsageModelCostBreakdown, UsageOverviewRange, UsageOverviewSnapshot, UsageProviderSummary } from '@zeus/shared';
 import type { AppShellSettings, DashboardClient } from '../apiClient.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
@@ -33,8 +34,11 @@ type MetricValue = {
   value: string;
   detailLabel?: string;
   costBreakdown?: UsageModelCostBreakdown[];
+  /** Codex 订阅费用明细保留等价费用口径。 */
+  equivalentCost?: boolean;
 };
 
+/** 菜单栏固定文案按当前语言选择，订阅费用与官方余额分别说明。 */
 const copy = {
   'zh-CN': {
     all: '全部',
@@ -59,6 +63,14 @@ const copy = {
     outputRate: '请求输出速率',
     cacheUnsupported: '供应源未提供',
     cost: '费用',
+    /** 订阅用量按 API 费率换算的金额，不是实际账单。 */
+    equivalentCost: '等价费用',
+    /** 订阅费用明细沿用相同的等价金额口径。 */
+    equivalentCostDetail: '模型等价费用明细',
+    /** 等价费用说明保持本地估算与官方扣款的区别。 */
+    equivalentCostHint: '按已知模型费率估算 Zeus 本地等价费用，非实际扣款。',
+    /** 官方账户剩余点数与订阅额度分别展示。 */
+    remainingCredits: '剩余点数',
     costDetail: '模型费用明细',
     showCostDetail: '查看模型、单价和 Token 明细',
     model: '模型',
@@ -124,6 +136,14 @@ const copy = {
     outputRate: 'Request output rate',
     cacheUnsupported: 'Not provided',
     cost: 'Cost',
+    /** 英文订阅金额沿用等价费用口径。 */
+    equivalentCost: 'Equivalent cost',
+    /** 英文订阅费用明细标题。 */
+    equivalentCostDetail: 'Model equivalent cost details',
+    /** 英文等价费用与实际扣款的边界说明。 */
+    equivalentCostHint: 'Zeus-local equivalent cost estimated at known model rates; not actual charges.',
+    /** 英文官方剩余点数标签。 */
+    remainingCredits: 'Credits remaining',
     costDetail: 'Model cost details',
     showCostDetail: 'Show model, rate, and token details',
     model: 'Model',
@@ -592,15 +612,18 @@ function readMetricValues(provider: UsageProviderSummary, language: Language, ra
   const local = summary.local;
   const complete = summary.complete === true;
   const cacheAvailable = provider.cacheUsageAvailable;
+  /** 等价费用口径只影响 Codex 订阅，不改变 API 供应商文案。 */
+  const equivalentCost = isCodexSubscriptionUsage(provider);
   /** 今日范围无需重复解释单价周期，只隐藏周期，不改变费用聚合结果。 */
   const costBreakdown = range === 'today' ? summary.costBreakdown.map((entry) => ({ ...entry, pricePeriod: null })) : summary.costBreakdown;
   return [
     { label: text.tokens, value: formatIncompleteTokens(local.totalTokens, summary.complete, language) },
     {
-      label: text.cost,
+      label: equivalentCost ? text.equivalentCost : text.cost,
       value: complete ? formatUsd(local.apiEquivalentUsd, local.priceCoverage, language, text.noPrice) : '—',
-      detailLabel: text.costDetail,
+      detailLabel: equivalentCost ? text.equivalentCostDetail : text.costDetail,
       costBreakdown,
+      equivalentCost,
     },
     { label: text.cacheHit, value: !complete ? '—' : cacheAvailable ? formatPercent(local.cacheHitRate, language, '—') : text.cacheUnsupported },
     { label: text.outputRate, value: formatOutputRate(local.outputTokensPerSecond ?? null, language) },
@@ -611,10 +634,14 @@ function readMetricValues(provider: UsageProviderSummary, language: Language, ra
 function ProviderSummaryCard(props: { provider: UsageProviderSummary; language: Language }) {
   /** 保持官方额度与本地用量独立，不为没有额度的供应商制造空态。 */
   const { provider, language } = props;
+  /** 只在 Codex 订阅有正数余额时展示，始终附在额度百分比下方。 */
+  const showCredits = isCodexSubscriptionUsage(provider) && provider.officialState === 'available' && hasPositiveCodexCredits(provider.officialCreditBalance);
   if (provider.rateLimitWindows.length === 0) return null;
   /** 当前语言和供应商名称用于分组及辅助阅读摘要。 */
   const text = copy[language];
   const name = providerDisplayName(provider);
+  /** 同一账户的有限余额只展示一次。 */
+  const creditBalance = formatCodexCredits(provider.officialCreditBalance, language);
   /** 按官方额度池标识分组，避免名称重复，也不合并同名的独立额度池。 */
   const groups = new Map<string, CodexOfficialRateWindow[]>();
   for (const window of provider.rateLimitWindows) {
@@ -631,7 +658,7 @@ function ProviderSummaryCard(props: { provider: UsageProviderSummary; language: 
   if (provider.providerId === 'codex' && codexIndex > 0) orderedGroups.unshift(...orderedGroups.splice(codexIndex, 1));
   return (
     <section className="menu-bar-usage-account-card" aria-label={`${name} · ${text.quota}`}>
-      {orderedGroups.map(([id, windows]) => {
+      {orderedGroups.map(([id, windows], groupIndex) => {
         /** 同一额度池只显示一次名称，各周期仍独立保留余额与重置日期。 */
         const groupName = windows[0].limitName || id || name;
         return (
@@ -648,7 +675,14 @@ function ProviderSummaryCard(props: { provider: UsageProviderSummary; language: 
                     <i style={{ inlineSize: `${Math.max(0, Math.min(100, window.remainingPercent))}%` }} />
                   </span>
                   <strong>{formatPercent(window.remainingPercent / 100, language)}</strong>
-                  <time dateTime={window.resetsAt ? new Date(window.resetsAt * 1_000).toISOString() : undefined}>{window.resetsAt ? formatReset(window.resetsAt, language, text.resets) : '—'}</time>
+                  <div className="menu-bar-usage-quota-meta" data-with-credits={showCredits || undefined}>
+                    <time dateTime={window.resetsAt ? new Date(window.resetsAt * 1_000).toISOString() : undefined}>{window.resetsAt ? formatReset(window.resetsAt, language, text.resets) : '—'}</time>
+                    {showCredits && groupIndex === 0 && index === windows.length - 1 ? (
+                      <span className="menu-bar-usage-account-credits" aria-label={`${text.remainingCredits} ${provider.officialCreditBalance}`}>
+                        {text.remainingCredits} {creditBalance}
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
               );
             })}
@@ -664,6 +698,8 @@ function DailyBars(props: { provider: UsageProviderSummary; language: Language }
   /** Codex 才显示来源选择，首次打开固定使用 Zeus 本地统计。 */
   const text = copy[props.language];
   const sourceSelectable = props.provider.providerId === 'codex';
+  /** Codex 订阅趋势和按钮与概览使用同一等价费用文案。 */
+  const costLabel = isCodexSubscriptionUsage(props.provider) ? text.equivalentCost : text.cost;
   const [source, setSource] = useState<ChartSource>('local');
   /** 本地维度单独保存；切到账户来源时不丢失用户之前选择的费用维度。 */
   const [localDimension, setLocalDimension] = useState<ChartDimension>(readStoredChartDimension);
@@ -672,9 +708,9 @@ function DailyBars(props: { provider: UsageProviderSummary; language: Language }
   const dimension: ChartDimension = accountSource ? 'tokens' : localDimension;
   /** 费用维度只来自本地账本，官方账户历史没有模型维度，无法换算金额。 */
   const costDimension = dimension === 'cost';
-  const label = costDimension ? text.cost : accountSource ? text.accountUsage : sourceSelectable ? text.zeusLocalUsage : text.recentUsage;
+  const label = costDimension ? costLabel : accountSource ? text.accountUsage : sourceSelectable ? text.zeusLocalUsage : text.recentUsage;
   /** 图注口径随维度切换，避免两种数据源被当成同一份统计。 */
-  const sourceHint = accountSource ? text.accountUsageHint : sourceSelectable ? text.zeusLocalUsageHint : costDimension ? text.costEstimateHint : null;
+  const sourceHint = accountSource ? text.accountUsageHint : sourceSelectable ? (isCodexSubscriptionUsage(props.provider) ? text.equivalentCostHint : text.zeusLocalUsageHint) : costDimension ? text.costEstimateHint : null;
   /** 维度偏好写入本地存储，重开浮窗保持一致。 */
   const selectDimension = (next: ChartDimension) => {
     setLocalDimension(next);
@@ -729,7 +765,7 @@ function DailyBars(props: { provider: UsageProviderSummary; language: Language }
               {text.dimensionTokens}
             </button>
             <button type="button" aria-pressed={costDimension} onClick={() => selectDimension('cost')}>
-              {text.dimensionCost}
+              {costLabel}
             </button>
           </span>
         ) : null}
@@ -766,7 +802,7 @@ function Metric(props: MetricValue & { language: Language }) {
     <div>
       <dt>
         <span>{props.label}</span>
-        {props.costBreakdown?.length && props.detailLabel ? <CostBreakdownPopover entries={props.costBreakdown} label={props.detailLabel} language={props.language} /> : null}
+        {props.costBreakdown?.length && props.detailLabel ? <CostBreakdownPopover entries={props.costBreakdown} label={props.detailLabel} language={props.language} equivalentCost={props.equivalentCost} /> : null}
       </dt>
       <dd>{props.value}</dd>
     </div>
@@ -777,7 +813,7 @@ function Metric(props: MetricValue & { language: Language }) {
 type MenuBarUsageCostDetailPayload = Awaited<ReturnType<NonNullable<Window['zeus']>['getMenuBarUsageCostDetail']>>;
 
 /** 费用说明在独立透明窗口中从鼠标左下方展开，不再改变菜单栏原生宽度。 */
-function CostBreakdownPopover(props: { entries: UsageModelCostBreakdown[]; label: string; language: Language }) {
+function CostBreakdownPopover(props: { entries: UsageModelCostBreakdown[]; label: string; language: Language; equivalentCost?: boolean }) {
   const text = copy[props.language];
   /** 每个指标拥有稳定身份，主进程用它保证多个费用指标互斥切换。 */
   const detailId = useId();
@@ -810,12 +846,12 @@ function CostBreakdownPopover(props: { entries: UsageModelCostBreakdown[]; label
       const anchor = pointerAnchorRef.current ?? { x: window.screenX + triggerRect.right, y: window.screenY + triggerRect.bottom };
       pinnedRef.current = pinned;
       setOpen(true);
-      void showWindow({ id: detailId, label: props.label, language: props.language, appearance, entries: props.entries, anchor, pinned }).catch((cause: unknown) => {
+      void showWindow({ id: detailId, label: props.label, language: props.language, appearance, entries: props.entries, anchor, pinned, equivalentCost: props.equivalentCost }).catch((cause: unknown) => {
         setOpen(false);
         console.warn('菜单栏费用明细无法打开。', cause);
       });
     },
-    [detailId, props.entries, props.label, props.language],
+    [detailId, props.entries, props.label, props.language, props.equivalentCost],
   );
 
   useEffect(() => {
@@ -953,15 +989,17 @@ export function MenuBarUsageCostDetailWindow(props: { initialPayload: MenuBarUsa
       onPointerEnter={() => void window.zeus?.cancelHideMenuBarUsageCostDetail?.()}
       onPointerLeave={() => void window.zeus?.scheduleHideMenuBarUsageCostDetail?.()}
     >
-      <CostBreakdownPanel entries={payload.entries} label={payload.label} language={payload.language} />
+      <CostBreakdownPanel entries={payload.entries} label={payload.label} language={payload.language} equivalentCost={payload.equivalentCost} />
     </main>
   );
 }
 
 /** 菜单栏和独立窗口共用同一份费用表结构，避免两套文案与格式漂移。 */
-function CostBreakdownPanel(props: { entries: UsageModelCostBreakdown[]; label: string; language: Language }) {
+function CostBreakdownPanel(props: { entries: UsageModelCostBreakdown[]; label: string; language: Language; equivalentCost?: boolean }) {
   /** 列名和辅助说明始终跟随当前语言。 */
   const text = copy[props.language];
+  /** 独立窗口读取明确的计费口径，不通过标题文字猜测供应商类型。 */
+  const costLabel = props.equivalentCost ? text.equivalentCost : text.estimatedCost;
   return (
     <section className="menu-bar-usage-cost-detail menu-bar-usage-cost-detail-window" role="dialog" aria-label={props.label}>
       <strong>{props.label}</strong>
@@ -971,7 +1009,7 @@ function CostBreakdownPanel(props: { entries: UsageModelCostBreakdown[]; label: 
             <tr>
               <th scope="col">{text.model}</th>
               <th scope="col">{text.unitPrice}</th>
-              <th scope="col">{text.usageAndEstimatedCost}</th>
+              <th scope="col">{props.equivalentCost ? `${text.tokens} / ${costLabel}` : text.usageAndEstimatedCost}</th>
             </tr>
           </thead>
           <tbody>
@@ -988,7 +1026,7 @@ function CostBreakdownPanel(props: { entries: UsageModelCostBreakdown[]; label: 
                     </span>
                   ) : null}
                 </td>
-                <td aria-label={`${text.consumedTokens} ${formatTokens(entry.usage.totalTokens, props.language)}；${text.estimatedCost} ${formatModelEstimatedCost(entry, props.language)}`}>
+                <td aria-label={`${text.consumedTokens} ${formatTokens(entry.usage.totalTokens, props.language)}；${costLabel} ${formatModelEstimatedCost(entry, props.language)}`}>
                   <span>{formatTokens(entry.usage.totalTokens, props.language)}</span>
                   <span className="menu-bar-usage-model-estimated-cost">{formatModelEstimatedCost(entry, props.language)}</span>
                 </td>

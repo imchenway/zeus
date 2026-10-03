@@ -656,6 +656,19 @@ export function useModelSetup(input: {
     }
   }
 
+  /** 官方账户管理经过既有安全链接入口，迟到失败不覆盖其他操作的状态。 */
+  async function openUsageManagement(): Promise<void> {
+    /** 只向发起打开操作的设置状态报告失败。 */
+    const request = requestRef.current;
+    try {
+      /** 点数购买和扣费规则由官方页面管理，Zeus 只提供入口。 */
+      const result = await openExternalHttpsUrlInMain({ zeus: window.zeus, url: 'https://chatgpt.com/codex/settings/usage' });
+      if (requestRef.current === request && !result.opened) setError(zh ? '无法打开官方用量页面，请检查系统浏览器。' : 'Could not open the official usage page. Check your system browser.');
+    } catch (failure) {
+      if (requestRef.current === request) setError(userFacingErrorCause(failure));
+    }
+  }
+
   return {
     input,
     step,
@@ -693,6 +706,7 @@ export function useModelSetup(input: {
     reconnectCodex,
     logoutAccount,
     openInstallGuide,
+    openUsageManagement,
   };
 }
 
@@ -780,7 +794,11 @@ export function CodexAccountSettings({ controller }: { controller: ModelSetupCon
                     : 'Account status not checked'}
         </span>
       </header>
-      <p>{zh ? '通过 ChatGPT 账号登录，仅用于 Zeus。第三方模型服务在下方管理。' : 'Sign in with ChatGPT for Zeus. Manage third-party model services below.'}</p>
+      <p>
+        {zh
+          ? '通过 ChatGPT 账号登录，支持订阅额度和账户点数（Credits），扣费规则由 OpenAI 决定。登录仅用于 Zeus，第三方模型服务在下方管理。'
+          : 'Sign in with ChatGPT for Zeus to use included subscription limits and account credits, billed according to OpenAI rules. Manage third-party model services below.'}
+      </p>
       <div className="model-setup-actions">
         {signedIn ? (
           <Button variant="secondary" disabled={controller.operation !== 'idle'} onClick={() => void controller.logoutAccount()}>
@@ -789,6 +807,11 @@ export function CodexAccountSettings({ controller }: { controller: ModelSetupCon
         ) : controller.accountChecked ? (
           <Button variant="primary" disabled={controller.operation !== 'idle'} onClick={() => controller.open('codex')}>
             {zh ? '登录 Codex' : 'Sign in to Codex'}
+          </Button>
+        ) : null}
+        {signedIn ? (
+          <Button variant="secondary" disabled={controller.operation !== 'idle'} onClick={() => void controller.openUsageManagement()}>
+            {zh ? '管理官方用量' : 'Manage official usage'}
           </Button>
         ) : null}
         {reconnectNeeded ? (

@@ -291,6 +291,8 @@ type MenuBarUsageCostDetailPayload = {
   entries: unknown[];
   anchor: Electron.Point;
   pinned: boolean;
+  /** 明确传递 Codex 订阅的等价费用口径，独立明细窗口不猜测标题语义。 */
+  equivalentCost: boolean;
 };
 
 type MenuBarUsageWindowPlacement = {
@@ -2417,6 +2419,7 @@ function normalizeMenuBarUsageCostDetailPayload(input: unknown): MenuBarUsageCos
   if (!entries?.length || entries.length > 100 || entries.some((entry) => !entry || typeof entry !== 'object' || Array.isArray(entry))) throw new TypeError('菜单栏费用明细条目无效。');
   if (!anchor || typeof anchor.x !== 'number' || !Number.isFinite(anchor.x) || typeof anchor.y !== 'number' || !Number.isFinite(anchor.y)) throw new TypeError('菜单栏费用明细锚点无效。');
   if (typeof candidate.pinned !== 'boolean') throw new TypeError('菜单栏费用明细固定状态无效。');
+  if (candidate.equivalentCost !== undefined && typeof candidate.equivalentCost !== 'boolean') throw new TypeError('菜单栏费用明细计费口径无效。');
   if (Buffer.byteLength(JSON.stringify(entries), 'utf8') > 256 * 1024) throw new TypeError('菜单栏费用明细数据过大。');
   return {
     id,
@@ -2426,6 +2429,7 @@ function normalizeMenuBarUsageCostDetailPayload(input: unknown): MenuBarUsageCos
     entries,
     anchor: { x: anchor.x, y: anchor.y },
     pinned: candidate.pinned,
+    equivalentCost: candidate.equivalentCost === true,
   };
 }
 
