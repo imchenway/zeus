@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CodexUsageLedgerRepository, ConversationRepository, ProjectRepository, SettingRepository, createZeusDatabase } from '../packages/storage/src/index.js';
-import { codexUsageObservationIdentity, emptyTokenUsageBreakdown, estimateCodexUsage } from '../packages/shared/src/codexUsage.js';
+import { codexUsageObservationIdentity, emptyTokenUsageBreakdown, estimateCodexUsage, formatCodexCredits, hasPositiveCodexCredits, isCodexSubscriptionUsage } from '../packages/shared/src/codexUsage.js';
 import { createCodexUsageService } from '../packages/local-server/src/codexUsageService.js';
 import { parseBuiltInModelPrices, readBuiltInPricingPage } from '../packages/local-server/src/builtInModelPricing.js';
 import { readPricingDocument } from '../packages/local-server/src/modelPricingDocument.js';
@@ -12,6 +12,21 @@ import { parseNewApiPricing, parseExtractedPrices, createModelPricingService, bu
 import { estimateModelPrice, aggregateRequestPrices, sumEstimatedCosts } from '../packages/shared/src/modelPricing.js';
 import { estimatePublishedCodexUsage, fetchPublishedCodexPricing, parsePublishedCodexPrices } from '../packages/local-server/src/codexUsagePricing.js';
 import { readCodexUsageHistory } from '../packages/local-server/src/codexUsageHistory.js';
+import type { CodexAccountRateLimitsSnapshot, CodexRateLimitBucketSnapshot } from '../packages/ai-runtime/src/codexAppServerManager.js';
+
+// 菜单栏点数数字和订阅口径检查沿用本专项探针，不创建新的检查体系。
+assert.equal(formatCodexCredits('62500', 'zh-CN'), '6.25万');
+assert.equal(formatCodexCredits('62500', 'en-US'), '62.5K');
+assert.equal(formatCodexCredits('0', 'zh-CN'), '0');
+assert.equal(formatCodexCredits(0.0001, 'zh-CN'), '0.0001');
+for (const value of [null, undefined, '', ' ', '无余额', -1, Infinity]) assert.equal(formatCodexCredits(value, 'zh-CN'), '—');
+// 有余额才显示：零值、未知值和非法值隐藏，极小正数仍保留。
+for (const value of [null, undefined, '', ' ', '无余额', '0', 0, -1, Infinity, NaN]) assert.equal(hasPositiveCodexCredits(value), false);
+for (const value of ['62500', '0.0001', 0.0001]) assert.equal(hasPositiveCodexCredits(value), true);
+assert.equal(isCodexSubscriptionUsage({ providerId: 'codex', kind: 'subscription', officialState: 'available' }), true);
+assert.equal(isCodexSubscriptionUsage({ providerId: 'codex', kind: 'subscription', officialState: 'unsupported' }), false);
+assert.equal(isCodexSubscriptionUsage({ providerId: 'codex', kind: 'api', officialState: null }), false);
+assert.equal(isCodexSubscriptionUsage({ providerId: 'api:custom', kind: 'api', officialState: null }), false);
 
 /** 探针专用模型不会与实际供应商模型或账号关联。 */
 const model = 'codex-price-probe';
@@ -86,9 +101,9 @@ function seed(turn: string, providerId = 'codex', pricedModel = model): void {
 }
 
 /** 只替代账号读取与公网响应，其余均使用真实生产服务。 */
-function createService(automaticPricing = true) {
+function createService(automaticPricing = true, manager = { readAccount: async () => ({ accountScopeId: 'probe' }) } as unknown as Parameters<typeof createCodexUsageService>[0]['manager']) {
   return createCodexUsageService({
-    manager: { readAccount: async () => ({ accountScopeId: 'probe' }) } as unknown as Parameters<typeof createCodexUsageService>[0]['manager'],
+    manager,
     ledger,
     settings,
     conversations: new ConversationRepository(db),
@@ -101,6 +116,94 @@ function createService(automaticPricing = true) {
 }
 
 try {
+  /** 点数检查使用独立账户身份，不影响后续请求定价记录。 */
+  let accountScopeId = 'credits-a';
+  /** 失败开关只影响额度读取，用于确认旧余额保留并标记过期。 */
+  let limitsUnavailable = false;
+  /** 额度已耗尽且仍有点数的官方回包。 */
+  const codexBucket: CodexRateLimitBucketSnapshot = {
+    limitId: 'codex',
+    limitName: null,
+    primary: { usedPercent: 100, windowDurationMins: 300, resetsAt: null },
+    secondary: null,
+    credits: { hasCredits: true, unlimited: false, balance: '12.50' },
+    planType: 'plus',
+  };
+  /** 不同 bucket 的余额与无限标志不能污染 Codex 点数状态。 */
+  const otherBucket: CodexRateLimitBucketSnapshot = { ...codexBucket, limitId: 'other', credits: { hasCredits: true, unlimited: true, balance: '999' } };
+  /** 同时提供单 bucket 与多个 bucket，确认优先读取 Codex 对应结果。 */
+  let limits: CodexAccountRateLimitsSnapshot = { generationId: 'credits-probe', rateLimits: otherBucket, rateLimitsByLimitId: { other: otherBucket, codex: codexBucket } };
+  /** 只替代官方只读回包，缓存、刷新和账户隔离均经过生产服务。 */
+  const accountManager = {
+    /** 返回当前独立账户，不读取真实凭据。 */
+    readAccount: async () => ({ generationId: 'credits-probe', requiresOpenaiAuth: true, signedIn: true, accountType: 'chatgpt', planType: 'plus', accountScopeId }),
+    /** 使用稳定的活动统计，单独观察额度和点数变化。 */
+    readAccountUsage: async () => ({ summary: { lifetimeTokens: 1, peakDailyTokens: 1, longestRunningTurnSec: 1, currentStreakDays: 1, longestStreakDays: 1 }, dailyUsageBuckets: [] }),
+    /** 同账户额度失败时，服务应保留最近成功余额。 */
+    readAccountRateLimits: async () => {
+      if (limitsUnavailable) throw new Error('探针模拟额度读取失败');
+      return limits;
+    },
+  } as unknown as Parameters<typeof createCodexUsageService>[0]['manager'];
+  service = createService(false, accountManager);
+  assert.equal(service.readCachedOfficialUsage().hasCredits, null);
+  /** 多 bucket 的点数取 Codex，订阅窗口耗尽不抹掉可用点数。 */
+  const firstOfficial = await service.refreshOfficialUsage(0);
+  assert.equal(firstOfficial.hasCredits, true);
+  assert.equal(firstOfficial.creditBalance, '12.50');
+  assert.equal(firstOfficial.creditsUnlimited, false);
+  assert.equal(firstOfficial.rateLimitWindows.find((window) => window.limitId === 'codex')?.remainingPercent, 0);
+  /** 可用、无点数、无限及缺失状态都直接遵循官方字段。 */
+  const creditCases: CodexRateLimitBucketSnapshot['credits'][] = [
+    { hasCredits: true, unlimited: false, balance: null },
+    { hasCredits: false, unlimited: false, balance: '0' },
+    { hasCredits: true, unlimited: true, balance: null },
+    null,
+    { hasCredits: true, unlimited: false, balance: '4.25' },
+  ];
+  for (const credits of creditCases) {
+    limits = { ...limits, rateLimits: { ...codexBucket, credits }, rateLimitsByLimitId: { other: otherBucket } };
+    /** 多 bucket 缺少 Codex 时回退单 bucket，不能读取 other 的 999 点。 */
+    const official = await service.refreshOfficialUsage(0);
+    assert.equal(official.hasCredits, credits?.hasCredits ?? null);
+    assert.equal(official.creditBalance, credits?.balance ?? null);
+    assert.equal(official.creditsUnlimited, credits?.unlimited ?? false);
+  }
+  limits = { ...limits, rateLimitsByLimitId: {} };
+  assert.equal((await service.refreshOfficialUsage(0)).creditBalance, '4.25');
+  limits = { ...limits, rateLimitsByLimitId: null };
+  assert.equal((await service.refreshOfficialUsage(0)).creditBalance, '4.25');
+  limitsUnavailable = true;
+  /** 额度读取失败保留同账户点数，但必须标记过期。 */
+  const staleOfficial = await service.refreshOfficialUsage(0);
+  assert.equal(staleOfficial.hasCredits, true);
+  assert.equal(staleOfficial.creditBalance, '4.25');
+  assert.equal(staleOfficial.stale, true);
+  assert.match(staleOfficial.error ?? '', /额度读取失败/);
+  accountScopeId = 'credits-b';
+  service.handleAccountChanged();
+  /** 切换到没有可读点数的新账户，旧账户余额不能泄漏。 */
+  const switchedOfficial = await service.refreshOfficialUsage(0);
+  assert.equal(switchedOfficial.accountScopeId, 'credits-b');
+  assert.equal(switchedOfficial.hasCredits, null);
+  assert.equal(switchedOfficial.creditBalance, null);
+  limitsUnavailable = false;
+  assert.equal((await service.refreshOfficialUsage(0)).creditBalance, '4.25');
+  await service.dispose();
+  service = createService(false, accountManager);
+  assert.equal(service.readCachedOfficialUsage().hasCredits, true);
+  await service.dispose();
+  /** 历史缓存缺少可用标志时显示未知，已有余额仍保留。 */
+  const legacyCache = settings.getJson<{ snapshot: Record<string, unknown>; storedAt: string }>('codex.usage.official.credits-b')!;
+  delete legacyCache.snapshot.hasCredits;
+  settings.setJson('codex.usage.official.credits-b', legacyCache);
+  service = createService(false, accountManager);
+  assert.equal(service.readCachedOfficialUsage().hasCredits, null);
+  assert.equal(service.readCachedOfficialUsage().creditBalance, '4.25');
+  await service.dispose();
+  service = null;
+  console.log('通过：菜单栏订阅口径与点数格式，Codex 点数可用、无点数、无限、未知、余额缺失、多 bucket 隔离与回退、失败保留旧值、账户切换及缓存重载。');
+
   globalThis.fetch = async () => {
     downloads += 1;
     if (unavailable) throw new Error('探针模拟断网');

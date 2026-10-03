@@ -493,14 +493,44 @@ body:has(.menu-bar-usage-root),
   font-variant-numeric: tabular-nums;
 }
 
-/* 日期置于进度条下方并与轨道右端对齐，长日期仍可完整换行。 */
-.menu-bar-usage-account-quota time {
+/* 无点数余额时，重置日期保持与进度条右端对齐。 */
+.menu-bar-usage-quota-meta {
   grid-column: 2;
+  display: flex;
+  justify-content: flex-end;
+  align-items: baseline;
+  min-inline-size: 0;
+}
+
+/* 有余额时共用完整说明行，不挤占百分比列或缩短进度条。 */
+.menu-bar-usage-quota-meta[data-with-credits='true'] {
+  grid-column: 2 / -1;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-block-start: 4px;
+}
+
+/* 重置日期和余额使用同一字号，长日期仍可完整换行。 */
+.menu-bar-usage-account-quota time {
   text-align: end;
   color: var(--usage-muted);
   font-size: 11px;
   line-height: 1.25;
   overflow-wrap: anywhere;
+}
+
+/* 剩余点数在百分比下方以单行淡色文字显示，标签和数字不再分层堆叠。 */
+.menu-bar-usage-account-credits {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+  text-align: end;
+  color: color-mix(in srgb, var(--usage-muted) 80%, var(--usage-text));
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .menu-bar-usage-progress {

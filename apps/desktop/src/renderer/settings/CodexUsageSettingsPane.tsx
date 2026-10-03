@@ -18,6 +18,20 @@ const text = {
     title: '用量详情',
     official: 'Codex 账户总览',
     officialHelp: '全部 Codex 客户端的官方账户数据，不与 Zeus 本地明细相加。',
+    /** 官方余额和可用状态与本地费用估算分别展示。 */
+    creditBalance: '点数余额（Credits）',
+    /** 可用状态直接使用官方回包，不从余额推断。 */
+    creditStatus: '点数状态',
+    /** 官方明确返回有可用点数。 */
+    creditsAvailable: '可用',
+    /** 官方明确返回没有可用点数。 */
+    noCredits: '无点数',
+    /** 官方返回无限点数时不展示有限余额。 */
+    unlimitedCredits: '无限',
+    /** 缺少官方点数字段时保留未知状态。 */
+    unknownCredits: '未知',
+    /** 仅解释官方扣费规则，不保证所有限制都能用点数解除。 */
+    creditsHelp: '订阅额度用完后，可用点数可按 OpenAI 的规则继续使用；实际扣费和使用限制以官方账户为准。',
     local: '供应商本地使用明细',
     localHelp: '按供应商分别展示 Zeus 采集的逐轮数据。Credits 和美元均为估算，不是实际账单。',
     allClients: '全部 Codex 客户端',
@@ -48,6 +62,20 @@ const text = {
     title: 'Usage details',
     official: 'Codex account overview',
     officialHelp: 'Official account data across all Codex clients. It is never added to Zeus-local usage.',
+    /** 英文界面沿用相同的官方点数口径。 */
+    creditBalance: 'Credit balance',
+    /** 英文点数状态标签。 */
+    creditStatus: 'Credit status',
+    /** 英文可用点数状态。 */
+    creditsAvailable: 'Available',
+    /** 英文无点数状态。 */
+    noCredits: 'No credits',
+    /** 英文无限点数状态。 */
+    unlimitedCredits: 'Unlimited',
+    /** 英文未知点数状态。 */
+    unknownCredits: 'Unknown',
+    /** 英文官方点数扣费说明。 */
+    creditsHelp: 'After included limits are reached, available credits can extend usage under OpenAI rules. Official account billing and usage limits apply.',
     local: 'Provider-local usage details',
     localHelp: 'Turn-level data collected by Zeus, shown independently for each provider. Credits and USD are estimates, not an actual bill.',
     allClients: 'All Codex clients',
@@ -329,6 +357,8 @@ function UsageSection(props: { title: string; description: string; badge: string
 /** 官方统计不可用时在原位置说明，不因切换供应商或后台刷新弹出全局错误。 */
 function OfficialOverview(props: { snapshot: CodexOfficialUsageSnapshot; language: Language }) {
   const copy = text[props.language];
+  /** 可用性只采用官方标志；无限点数优先，缺失标志保留未知。 */
+  const creditStatus = props.snapshot.creditsUnlimited ? copy.unlimitedCredits : props.snapshot.hasCredits === true ? copy.creditsAvailable : props.snapshot.hasCredits === false ? copy.noCredits : copy.unknownCredits;
   if (props.snapshot.state === 'signed_out') return <p className="codex-usage-state">{copy.signedOut}</p>;
   if (props.snapshot.state === 'unsupported') return <p className="codex-usage-state">{copy.unsupported}</p>;
   if (props.snapshot.state === 'unavailable' && !props.snapshot.fetchedAt)
@@ -345,6 +375,8 @@ function OfficialOverview(props: { snapshot: CodexOfficialUsageSnapshot; languag
           language={props.language}
           items={[
             [props.language === 'zh-CN' ? '计划' : 'Plan', props.snapshot.planType ?? copy.unavailable],
+            [copy.creditBalance, props.snapshot.creditsUnlimited ? copy.unlimitedCredits : (props.snapshot.creditBalance ?? copy.unknownCredits)],
+            [copy.creditStatus, creditStatus],
             [props.language === 'zh-CN' ? '累计 Token' : 'Lifetime tokens', formatTokens(props.snapshot.lifetimeTokens, props.language)],
             [props.language === 'zh-CN' ? '日峰值' : 'Peak day', formatTokens(props.snapshot.peakDailyTokens, props.language)],
             [props.language === 'zh-CN' ? '最长运行' : 'Longest turn', formatDuration(props.snapshot.longestRunningTurnSec, props.language)],
@@ -381,6 +413,7 @@ function OfficialOverview(props: { snapshot: CodexOfficialUsageSnapshot; languag
           ) : (
             <p className="codex-usage-state">{props.language === 'zh-CN' ? '当前没有可展示的限额窗口。' : 'No usage-limit windows are available.'}</p>
           )}
+          <p className="codex-usage-state">{copy.creditsHelp}</p>
         </section>
       </div>
     </>

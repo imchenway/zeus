@@ -63,6 +63,8 @@ type MenuBarUsageCostDetailBridgePayload = {
   entries: UsageModelCostBreakdown[];
   anchor: { x: number; y: number };
   pinned: boolean;
+  /** Codex 订阅明细使用等价费用文案，不代表实际扣款。 */
+  equivalentCost?: boolean;
 };
 
 declare global {

@@ -90,7 +90,11 @@ export interface CodexOfficialUsageSnapshot {
   longestStreakDays: number | null;
   dailyUsageBuckets: Array<{ startDate: string; tokens: number }> | null;
   rateLimitWindows: CodexOfficialRateWindow[];
+  /** 官方点数可用状态；未返回时为未知，不从余额推断。 */
+  hasCredits: boolean | null;
+  /** Codex 对应额度 bucket 返回的官方点数余额，不累加其他 bucket。 */
   creditBalance: string | null;
+  /** Codex 官方是否返回无限点数。 */
   creditsUnlimited: boolean;
   fetchedAt: string | null;
   stale: boolean;
@@ -160,6 +164,26 @@ export interface UsageProviderSummary {
   updatedAt: string;
   stale: boolean;
   error: string | null;
+}
+
+/** 菜单栏仅对 Codex 订阅使用等价费用口径，API 认证和其他供应商保持原展示。 */
+export function isCodexSubscriptionUsage(provider: Pick<UsageProviderSummary, 'providerId' | 'kind' | 'officialState'>): boolean {
+  return provider.providerId === 'codex' && provider.kind === 'subscription' && provider.officialState !== 'unsupported';
+}
+
+/** 官方点数余额仅展示有限正数，零值、缺失和非法值不占位。 */
+export function hasPositiveCodexCredits(value: string | number | null | undefined): boolean {
+  /** 官方数值字符串统一校验，空白和空值同样不展示。 */
+  const amount = Number(value);
+  return Number.isFinite(amount) && amount > 0;
+}
+
+/** 点数使用本地化短数字；缺失或非法余额显示未知，小数点数不被舍入成零。 */
+export function formatCodexCredits(value: string | number | null | undefined, language: 'zh-CN' | 'en-US'): string {
+  if (value === null || value === undefined || (typeof value === 'string' && !value.trim())) return '—';
+  /** 官方余额保持数值校验，不能把未知字符串误显示成零。 */
+  const amount = Number(value);
+  return Number.isFinite(amount) && amount >= 0 ? new Intl.NumberFormat(language, { notation: 'compact', maximumSignificantDigits: 4 }).format(amount) : '—';
 }
 
 export interface UsageOverviewSnapshot {

@@ -387,7 +387,9 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
   function cachedOfficial(scopeId?: string | null): CodexOfficialUsageSnapshot | null {
     const effectiveScope = scopeId ?? options.settings.getJson<string>(lastAccountScopeSettingKey);
     if (!effectiveScope) return null;
-    return options.settings.getJson<PersistedOfficialUsage>(officialCacheKey(effectiveScope))?.snapshot ?? null;
+    /** 历史缓存未记录官方点数可用状态时，统一在读取边界标记为未知。 */
+    const snapshot = options.settings.getJson<PersistedOfficialUsage>(officialCacheKey(effectiveScope))?.snapshot;
+    return snapshot ? { ...snapshot, hasCredits: snapshot.hasCredits ?? null } : null;
   }
 
   async function persistOfficial(snapshot: CodexOfficialUsageSnapshot): Promise<void> {
@@ -424,6 +426,8 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
         return { ...previous, stale: true, error: [usageResult, limitsResult].map(settledError).filter(Boolean).join('；') || '暂时无法刷新官方用量' };
       }
       const fetchedAt = now();
+      /** 同一次额度回包的点数字段必须来自同一 Codex bucket。 */
+      const credits = limits ? readCodexCredits(limits) : null;
       const snapshot: CodexOfficialUsageSnapshot = {
         state: 'available',
         accountScopeId: account.accountScopeId,
@@ -437,8 +441,9 @@ export function createCodexUsageService(options: CreateCodexUsageServiceOptions)
         /** 官方瞬时缺少每日桶时保留同账户最近成功结果，避免账户趋势被空响应清除。 */
         dailyUsageBuckets: usage?.dailyUsageBuckets ?? previous?.dailyUsageBuckets ?? null,
         rateLimitWindows: limits ? flattenRateLimitWindows(limits) : (previous?.rateLimitWindows ?? []),
-        creditBalance: limits ? readCreditBalance(limits) : (previous?.creditBalance ?? null),
-        creditsUnlimited: limits ? readCreditsUnlimited(limits) : (previous?.creditsUnlimited ?? false),
+        hasCredits: limits ? (credits?.hasCredits ?? null) : (previous?.hasCredits ?? null),
+        creditBalance: limits ? (credits?.balance ?? null) : (previous?.creditBalance ?? null),
+        creditsUnlimited: limits ? (credits?.unlimited ?? false) : (previous?.creditsUnlimited ?? false),
         fetchedAt,
         stale: usageResult.status === 'rejected' || limitsResult.status === 'rejected' || (usage?.dailyUsageBuckets === null && previous?.dailyUsageBuckets != null),
         error: [usageResult, limitsResult].map(settledError).filter(Boolean).join('；') || null,
@@ -680,6 +685,7 @@ function emptyOfficial(state: CodexOfficialUsageSnapshot['state'], accountScopeI
     longestStreakDays: null,
     dailyUsageBuckets: null,
     rateLimitWindows: [],
+    hasCredits: null,
     creditBalance: null,
     creditsUnlimited: false,
     fetchedAt: null,
@@ -688,20 +694,9 @@ function emptyOfficial(state: CodexOfficialUsageSnapshot['state'], accountScopeI
   };
 }
 
-function readCreditBalance(snapshot: CodexAccountRateLimitsSnapshot): string | null {
-  return (
-    rateLimitBuckets(snapshot)
-      .map((bucket) => bucket.credits?.balance ?? null)
-      .find((balance): balance is string => Boolean(balance)) ?? null
-  );
-}
-
-function readCreditsUnlimited(snapshot: CodexAccountRateLimitsSnapshot): boolean {
-  return rateLimitBuckets(snapshot).some((bucket) => bucket.credits?.unlimited === true);
-}
-
-function rateLimitBuckets(snapshot: CodexAccountRateLimitsSnapshot) {
-  return snapshot.rateLimitsByLimitId ? Object.values(snapshot.rateLimitsByLimitId) : [snapshot.rateLimits];
+/** 点数只取 Codex bucket，缺失时使用官方单 bucket 回包，不混合其他额度桶的字段。 */
+function readCodexCredits(snapshot: CodexAccountRateLimitsSnapshot) {
+  return (snapshot.rateLimitsByLimitId?.codex ?? snapshot.rateLimits).credits;
 }
 
 function flattenRateLimitWindows(snapshot: CodexAccountRateLimitsSnapshot): CodexOfficialUsageSnapshot['rateLimitWindows'] {
