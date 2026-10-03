@@ -3206,17 +3206,21 @@ export function createSessionController(options: CreateSessionControllerOptions)
       );
       const questionAnswer: AsyncQuestionAnswer = { providerItemId, providerTurnId, answers, ...(attachments.length ? { answerAttachmentIndices } : {}), ...(asNewMessage ? { asNewMessage: true } : {}) };
       /** 实时队列和历史账本都保存上一份回答；明确终态后才允许创建新尝试。 */
-      const previousSubmissions = state.queue?.submissions.filter((candidate) => candidate.questionAnswer?.providerItemId === providerItemId && candidate.questionAnswer.providerTurnId === providerTurnId && Boolean(candidate.questionAnswer.asNewMessage) === asNewMessage) ?? [];
+      const previousSubmissions =
+        state.queue?.submissions.filter(
+          (candidate) => candidate.questionAnswer?.providerItemId === providerItemId && candidate.questionAnswer.providerTurnId === providerTurnId && Boolean(candidate.questionAnswer.asNewMessage) === asNewMessage,
+        ) ?? [];
       /** 队列可能保留旧失败审计，已有在途尝试不能借用旧失败生成另一份答案。 */
       const previousSubmission = previousSubmissions.find((candidate) => !['failed', 'cancelled', 'deleted'].includes(candidate.status)) ?? previousSubmissions.at(-1);
       /** 原题账本在删除回执和重启后仍携带同一个持久身份。 */
       const previousResponse = item.payload.questionResponse as AsyncQuestionResponse | undefined;
       /** 同轮次模式互不借用发送身份，未知送达不能通过重答绕过。 */
-      const retryOf = previousSubmission && ['failed', 'cancelled', 'deleted'].includes(previousSubmission.status)
-        ? previousSubmission.id
-        : previousResponse && ['failed', 'cancelled', 'deleted'].includes(previousResponse.status) && Boolean(previousResponse.answer.asNewMessage) === asNewMessage
-          ? previousResponse.submissionId
-          : undefined;
+      const retryOf =
+        previousSubmission && ['failed', 'cancelled', 'deleted'].includes(previousSubmission.status)
+          ? previousSubmission.id
+          : previousResponse && ['failed', 'cancelled', 'deleted'].includes(previousResponse.status) && Boolean(previousResponse.answer.asNewMessage) === asNewMessage
+            ? previousResponse.submissionId
+            : undefined;
       /** 同一次尝试跨点击和重启保持身份，上一份明确结束后使用新的稳定身份。 */
       const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([options.conversationId, providerTurnId, providerItemId, asNewMessage, ...(retryOf ? [retryOf] : [])])));
       const identity = `question:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;

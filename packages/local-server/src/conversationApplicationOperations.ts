@@ -1619,7 +1619,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
       const existing = conversationSubmissions.listByConversation(conversation.id).find((submission) => {
         const previous = parseJsonObject(submission.inputJson).questionAnswer;
         return (
-          isNativeApiRecord(previous) && previous.providerItemId === questionAnswer!.providerItemId && previous.providerTurnId === questionAnswer!.providerTurnId && Boolean(previous.asNewMessage) === Boolean(questionAnswer!.asNewMessage) &&
+          isNativeApiRecord(previous) &&
+          previous.providerItemId === questionAnswer!.providerItemId &&
+          previous.providerTurnId === questionAnswer!.providerTurnId &&
+          Boolean(previous.asNewMessage) === Boolean(questionAnswer!.asNewMessage) &&
           // 明确结束且尚未进入 Provider 的旧尝试不阻挡重答；已交接或未知送达仍保护原提交。
           (!['failed', 'cancelled', 'deleted'].includes(submission.status) || Boolean(submission.providerTurnId))
         );

@@ -317,7 +317,12 @@ function queuedMessageTextPreview(submission: NativeQueuedSubmission): string {
   /** 复用原格式化入口核对原稿，避免排队编辑后仍展示旧答案。 */
   const answerAttachments = Object.fromEntries(Object.entries(answer.answerAttachmentIndices ?? {}).map(([id, indices]) => [id, indices.map((index) => submission.attachments?.[index]).filter((attachment) => attachment !== undefined)]));
   if (answer.questions?.length && draft !== formatAsyncQuestionAnswer(answer.questions, answer.answers, answerAttachments).trim()) return draft;
-  return Object.values(answer.answers).flatMap((entry) => entry.answers).join('；').trim() || draft;
+  return (
+    Object.values(answer.answers)
+      .flatMap((entry) => entry.answers)
+      .join('；')
+      .trim() || draft
+  );
 }
 
 /** 附件摘要优先展示真实文件名，多附件时补充剩余数量。 */
