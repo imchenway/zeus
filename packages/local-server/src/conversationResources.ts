@@ -50,6 +50,8 @@ type ResourceCandidate = FileResourceCandidate | WebsiteResourceCandidate | Atta
 export interface NormalizeConversationResourcesInput {
   projectId: string;
   projectRoot: string;
+  /** 所属项目登记目录仅用于最终答复图片归档，普通文件仍受会话执行根约束。 */
+  registeredProjectRoot?: string;
   conversationId: string;
   turnId: string;
   item: ZeusConversationItemRecord;
@@ -97,7 +99,7 @@ export function syncConversationResources(input: NormalizeConversationResourcesI
 export function normalizeConversationResources(input: NormalizeConversationResourcesInput): Array<Omit<ZeusConversationResourceRecord, 'createdAt' | 'updatedAt'>> {
   const candidates: ResourceCandidate[] = [];
   const assistantImageArchiveBudget = { remainingBytes: maximumArchivedAssistantImageBatchBytes };
-  const assistantImageSourceRoots = [input.projectRoot, ...input.trustedAttachmentRoots, input.generatedImageRoot, input.artifactsDirectory, tmpdir(), '/private/tmp']
+  const assistantImageSourceRoots = [input.projectRoot, input.registeredProjectRoot, ...input.trustedAttachmentRoots, input.generatedImageRoot, input.artifactsDirectory, tmpdir(), '/private/tmp']
     .filter((root): root is string => Boolean(root))
     .map(safeRealpath)
     .filter((root): root is string => Boolean(root));

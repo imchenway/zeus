@@ -946,8 +946,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const appShellSettingsKey = 'app.shell.settings';
   const codexAccountFingerprintSaltKey = 'codex.usage.account_fingerprint_salt';
   const conversationResourceBackfillSettingKey = 'conversation.resource_backfill';
-  /** 补齐历史图片查看与 Pi 文件链接，仍保留已登记的资源和图片原件。 */
-  const conversationResourceBackfillRevision = '20260929_image_view_resources';
+  /** 补齐工作树答复引用的主项目图片，仍保留已登记的资源和图片原件。 */
+  const conversationResourceBackfillRevision = '20261003_project_answer_images';
   const localLogDirectory = dataLayout.localLogs;
   const localConfigPath = options.localConfigPath ?? dataLayout.localConfig;
   // 本地日志目录是设计书明确要求的物理落点；服务启动时创建，避免 UI 只展示一个不存在的路径。
@@ -1329,6 +1329,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             {
               projectId: conversations.getById(item.conversationId)!.projectId,
               projectRoot,
+              registeredProjectRoot: projects.getById(conversations.getById(item.conversationId)!.projectId)?.localPath ?? undefined,
               conversationId: item.conversationId,
               turnId: item.turnId,
               item,
@@ -1656,6 +1657,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           const normalized = normalizeConversationResources({
             projectId: conversation.projectId,
             projectRoot: conversationExecutionRoot,
+            registeredProjectRoot: project.localPath ?? undefined,
             conversationId: conversation.id,
             turnId: item.turnId,
             item,
@@ -1687,6 +1689,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         const normalized = normalizeConversationResources({
           projectId: conversation.projectId,
           projectRoot,
+          registeredProjectRoot: project.localPath ?? undefined,
           conversationId: conversation.id,
           turnId: item.turnId,
           item,

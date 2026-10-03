@@ -331,6 +331,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       {
         projectId: conversation.projectId,
         projectRoot,
+        registeredProjectRoot: options.getProjectRoot(conversation.projectId) ?? undefined,
         conversationId: conversation.id,
         turnId: turn.id,
         item,
