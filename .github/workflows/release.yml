@@ -150,36 +150,40 @@ jobs:
         with:
           path: ~/Library/Caches/electron
           key: zeus-electron-macos-${{ runner.arch }}-${{ hashFiles('apps/desktop/electron-builder.yml', 'pnpm-lock.yaml') }}
-      - name: 计算 CUA 编译工具链摘要
-        id: cua_toolchain
-        run: |
-          # 系统、SDK 和编译器变化时失效，普通 CI 也使用同一组输入。
-          {
-            sw_vers -productVersion
-            xcrun --show-sdk-build-version
-            xcrun clang --version
-            rustc -vV
-            cargo -V
-          } > "$RUNNER_TEMP/zeus-cua-toolchain.txt"
-          printf 'digest=%s\n' "$(shasum -a 256 "$RUNNER_TEMP/zeus-cua-toolchain.txt" | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+      - name: 计算 CUA 原生构建缓存身份
+        id: cua_inputs
+        # 与本地构建共用专属模块，外层 Swift 与组装改动不使 Rust 成品失效。
+        run: node apps/desktop/scripts/build-computer-native.mjs --cache-info >> "$GITHUB_OUTPUT"
       - name: 恢复 CUA 编译成品
         id: cua_cache
         uses: actions/cache/restore@v4
         # 缓存是可选加速，恢复失败回到正常原生构建。
         continue-on-error: true
         with:
-          # SDK 与 worker 成套缓存，摘要由构建脚本核对，签名与 DMG 每次重新生成。
-          path: |
-            .tmp/cua-worker-*/cua-driver
-            .tmp/cua-worker-*/worker.sha256
-            .tmp/cua-worker-*/libcua_driver_sdk.dylib
-            .tmp/cua-worker-*/sdk.sha256
-          # 与普通 CI 保持相同缓存键，应用版本变化不触发重新编译。
-          key: zeus-cua-worker-${{ runner.os }}-${{ runner.arch }}-${{ steps.cua_toolchain.outputs.digest }}-${{ hashFiles('apps/desktop/scripts/build-native-helpers.mjs', 'apps/desktop/native/cua-desktop.patch') }}
+          # 成品必须精确匹配当前源码、补丁、构建模块与工具链。
+          path: ${{ steps.cua_inputs.outputs.artifact_path }}
+          key: ${{ steps.cua_inputs.outputs.native_key }}
       - name: 清理未精确命中的 CUA 成品
         # 不允许部分匹配或恢复失败留下的成品被继续复用。
         if: ${{ steps.cua_cache.outputs.cache-hit != 'true' }}
-        run: rm -f .tmp/cua-worker-*/cua-driver .tmp/cua-worker-*/worker.sha256 .tmp/cua-worker-*/libcua_driver_sdk.dylib .tmp/cua-worker-*/sdk.sha256
+        run: node apps/desktop/scripts/build-computer-native.mjs --clear-artifacts
+      - name: 恢复 Cargo 编译缓存
+        id: cua_cargo_cache
+        # 成品已匹配时无需传输较大的编译缓存；失配时仍由 Cargo 重建变化部分。
+        if: ${{ steps.cua_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/restore@v4
+        continue-on-error: true
+        with:
+          # 只保存编译结果和公开依赖，不包含 Cargo 凭据或用户配置。
+          path: |
+            ${{ steps.cua_inputs.outputs.cargo_target_path }}
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/index
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+          key: ${{ steps.cua_inputs.outputs.cargo_key }}
+          # 备用键仍固定系统、架构、SDK、编译器、锁文件和构建参数。
+          restore-keys: ${{ steps.cua_inputs.outputs.cargo_restore_key }}
       - name: 准备 App Store Connect API Key
         if: ${{ env.APPLE_API_KEY_P8 != '' }}
         run: |
@@ -199,14 +203,22 @@ jobs:
         # 缓存保存失败不改变正式产物的校验结果。
         continue-on-error: true
         with:
-          # 只保存同一组已编译成品，避免把凭据或源码混入缓存。
-          path: |
-            .tmp/cua-worker-*/cua-driver
-            .tmp/cua-worker-*/worker.sha256
-            .tmp/cua-worker-*/libcua_driver_sdk.dylib
-            .tmp/cua-worker-*/sdk.sha256
-          # 使用恢复步骤解析的主键，不保存为宽泛备用键。
+          # 只保存当前精确输入的两份成品和构建凭证。
+          path: ${{ steps.cua_inputs.outputs.artifact_path }}
           key: ${{ steps.cua_cache.outputs.cache-primary-key }}
+      - name: 保存已验证的 Cargo 编译缓存
+        # 仅来源预检和正式产物校验成功的 main 发布可以写入共享编译缓存。
+        if: ${{ inputs.publish_release && github.ref == 'refs/heads/main' && steps.cua_cache.outputs.cache-hit != 'true' && steps.cua_cargo_cache.outputs.cache-hit != 'true' && steps.cua_cargo_cache.outputs.cache-primary-key != '' }}
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: |
+            ${{ steps.cua_inputs.outputs.cargo_target_path }}
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/index
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+          key: ${{ steps.cua_cargo_cache.outputs.cache-primary-key }}
       - name: 上传已校验正式产物
         id: upload_release_artifact
         continue-on-error: true

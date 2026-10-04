@@ -1171,10 +1171,11 @@ function commandCenterCommandErrorStatus(error: { code: string }): 400 | 404 | 4
   return error.code === 'ZEUS_COMMAND_CENTER_RESULT_MISSING' ? 500 : 409;
 }
 
+/** 保留发布的阶段化结论，未确认结果不被通用命令错误覆盖。 */
 function extractReadableReleaseFailure(raw: string): string | null {
   const output = projectTerminalOutput(raw);
-  const marker = '\n发布失败\n';
-  const markerIndex = `\n${output}`.lastIndexOf(marker);
+  /** 两类结论均由发布脚本明确输出，选择最后一次完整结论。 */
+  const markerIndex = Math.max(`\n${output}`.lastIndexOf('\n发布失败\n'), `\n${output}`.lastIndexOf('\n发布结果未确认\n'));
   if (markerIndex < 0) return null;
   const block = `\n${output}`
     .slice(markerIndex + 1)

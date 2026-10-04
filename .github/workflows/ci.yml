@@ -27,35 +27,40 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: 计算 CUA 编译工具链摘要
-        id: cua_toolchain
-        run: |
-          # 与发布打包作业使用相同输入，复用已验证的原生成品。
-          {
-            sw_vers -productVersion
-            xcrun --show-sdk-build-version
-            xcrun clang --version
-            rustc -vV
-            cargo -V
-          } > "$RUNNER_TEMP/zeus-cua-toolchain.txt"
-          printf 'digest=%s\n' "$(shasum -a 256 "$RUNNER_TEMP/zeus-cua-toolchain.txt" | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+      - name: 计算 CUA 原生构建缓存身份
+        id: cua_inputs
+        # 与本地构建共用专属模块，外层 Swift 与组装改动不使 Rust 成品失效。
+        run: node apps/desktop/scripts/build-computer-native.mjs --cache-info >> "$GITHUB_OUTPUT"
       - name: 恢复 CUA 编译成品
         id: cua_cache
         uses: actions/cache/restore@v4
         # 普通 CI 只读取正式发布保存的缓存；恢复失败仍执行完整构建。
         continue-on-error: true
         with:
-          # SDK 与 worker 成套缓存，摘要由构建脚本核对，不缓存源码或 Cargo 编译目录。
-          path: |
-            .tmp/cua-worker-*/cua-driver
-            .tmp/cua-worker-*/worker.sha256
-            .tmp/cua-worker-*/libcua_driver_sdk.dylib
-            .tmp/cua-worker-*/sdk.sha256
-          key: zeus-cua-worker-${{ runner.os }}-${{ runner.arch }}-${{ steps.cua_toolchain.outputs.digest }}-${{ hashFiles('apps/desktop/scripts/build-native-helpers.mjs', 'apps/desktop/native/cua-desktop.patch') }}
+          # 成品必须精确匹配当前源码、补丁、构建模块与工具链。
+          path: ${{ steps.cua_inputs.outputs.artifact_path }}
+          key: ${{ steps.cua_inputs.outputs.native_key }}
       - name: 清理未精确命中的 CUA 成品
         # 部分匹配或恢复失败时，禁止继续复用留下的成品。
         if: ${{ steps.cua_cache.outputs.cache-hit != 'true' }}
-        run: rm -f .tmp/cua-worker-*/cua-driver .tmp/cua-worker-*/worker.sha256 .tmp/cua-worker-*/libcua_driver_sdk.dylib .tmp/cua-worker-*/sdk.sha256
+        run: node apps/desktop/scripts/build-computer-native.mjs --clear-artifacts
+      - name: 恢复 Cargo 编译缓存
+        id: cua_cargo_cache
+        # 成品已匹配时无需传输较大的编译缓存；失配时仍由 Cargo 重建变化部分。
+        if: ${{ steps.cua_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/restore@v4
+        continue-on-error: true
+        with:
+          # 只保存编译结果和公开依赖，不包含 Cargo 凭据或用户配置。
+          path: |
+            ${{ steps.cua_inputs.outputs.cargo_target_path }}
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/index
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+          key: ${{ steps.cua_inputs.outputs.cargo_key }}
+          # 备用键仍固定系统、架构、SDK、编译器、锁文件和构建参数。
+          restore-keys: ${{ steps.cua_inputs.outputs.cargo_restore_key }}
       - name: 执行与本地一致的发布前门禁
         env:
           ZEUS_VERIFY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}

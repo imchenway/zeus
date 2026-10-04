@@ -11,10 +11,12 @@ import { commandFailureDetail, commandResultSucceeded, releaseRemoteReadAttempts
 import { parseBoolean, requiredVersion, sha256File, sha256Text, validateReleaseNotes, validateReleaseNotesFile } from './release-script-utils.mjs';
 import {
   formatReleaseWorkflowDuration,
+  observeReleaseWorkflowExecution,
   readReleaseWorkflowWaitState,
+  ReleasePublicationUnconfirmedError,
+  releasePublicationUnconfirmedExitCode,
   releaseWorkflowHeartbeatIntervalMs,
   releaseWorkflowPollIntervalMs,
-  releaseWorkflowWaitLimitMs,
   resolveReleaseWorkflowWaitWindow,
 } from './release-workflow-wait-policy.mjs';
 
@@ -29,7 +31,7 @@ const homebrewRepository = 'imchenway/homebrew-tap';
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
+    process.exitCode = error instanceof ReleasePublicationUnconfirmedError ? releasePublicationUnconfirmedExitCode : 1;
   });
 }
 
@@ -541,7 +543,7 @@ async function readVerifiedPublishedRelease(input) {
 /** 用完整轻量交付证据结束等待，不把滞后的 Workflow 状态当成最终发布结果。 */
 export async function waitForPublishedRelease(workflowRun, input) {
   /** 本次进入等待时建立预算，远端运行年龄不参与本地超时计算。 */
-  const waitWindow = resolveReleaseWorkflowWaitWindow();
+  const waitWindow = resolveReleaseWorkflowWaitWindow(performance.now(), workflowRun);
   /** 等待只回验轻量证据；显式完整 DMG 回下载在等待结束后单独执行。 */
   const verificationInput = { ...input, workflowRun, waitWindow, deepVerifyPublicDmg: false };
   let previousSnapshot = null;
@@ -583,7 +585,7 @@ export async function waitForPublishedRelease(workflowRun, input) {
         } catch (error) {
           lastVerificationFailure = error instanceof Error ? error.message : String(error);
         }
-        throw new Error(`连续 3 次无法读取 Release Workflow 状态，公开发布结果仍未确认：${reason}${lastVerificationFailure ? `\n最近公开回验：${lastVerificationFailure}` : ''}`);
+        throw new ReleasePublicationUnconfirmedError(`连续 3 次无法读取 Release Workflow 状态，公开发布结果仍未确认：${reason}${lastVerificationFailure ? `\n最近公开回验：${lastVerificationFailure}` : ''}`);
       }
       const waitState = readReleaseWorkflowWaitState(waitWindow);
       if (waitState.timedOut) throw releaseWorkflowWaitTimeoutError(workflowRun, previousSnapshot, waitState, lastVerificationFailure);
@@ -596,6 +598,7 @@ export async function waitForPublishedRelease(workflowRun, input) {
     consecutiveReadFailures = 0;
 
     const snapshot = buildWorkflowProgressSnapshot(result.value);
+    observeReleaseWorkflowExecution(waitWindow, snapshot);
     /** 终态变化时立即回验，后续成功终态仍按一分钟间隔等待公开证据。 */
     const completedStateChanged = snapshot.status === 'completed' && (previousSnapshot?.status !== 'completed' || previousSnapshot.conclusion !== snapshot.conclusion);
     printWorkflowProgressChanges(snapshot, previousSnapshot);
@@ -629,17 +632,17 @@ export async function waitForPublishedRelease(workflowRun, input) {
 function printWorkflowWaitHeartbeatIfDue(workflowRun, snapshot, waitState, nextHeartbeatAtMs) {
   if (performance.now() < nextHeartbeatAtMs) return;
   const status = snapshot?.status ?? workflowRun.status ?? 'unknown';
-  console.log(`Release Workflow 仍在等待：${status}，已等待 ${formatReleaseWorkflowDuration(waitState.elapsedMs)} / 上限 ${formatReleaseWorkflowDuration(releaseWorkflowWaitLimitMs)}；${workflowRun.url}`);
+  console.log(`Release Workflow 仍在等待：${status}，已等待 ${formatReleaseWorkflowDuration(waitState.elapsedMs)} / 上限 ${formatReleaseWorkflowDuration(waitState.limitMs)}；${workflowRun.url}`);
 }
 
 /** 本地等待结束只代表结果未确认，保留远端运行和具体缺失证据。 */
 function releaseWorkflowWaitTimeoutError(workflowRun, snapshot, waitState, verificationFailure = '') {
   const status = snapshot?.status ?? workflowRun.status ?? 'unknown';
-  return new Error(
+  return new ReleasePublicationUnconfirmedError(
     [
-      `等待已达到 ${formatReleaseWorkflowDuration(releaseWorkflowWaitLimitMs)} 上限，本地等待结束，公开发布结果仍未确认：status=${status}，elapsed=${formatReleaseWorkflowDuration(waitState.elapsedMs)} ${workflowRun.url}`,
+      `等待已达到 ${formatReleaseWorkflowDuration(waitState.limitMs)} 上限，本地等待结束，公开发布结果仍未确认：status=${status}，elapsed=${formatReleaseWorkflowDuration(waitState.elapsedMs)} ${workflowRun.url}`,
       ...(verificationFailure ? [`最近公开回验：${verificationFailure}`] : []),
-      '远程 Workflow 未被自动取消；GitHub Actions 恢复后重新执行发布命令，将继续识别并回验同一运行。',
+      '远程 Workflow 未被自动取消；可查看该次运行，或重新执行发布命令继续识别并回验同一候选。',
     ].join('\n'),
   );
 }

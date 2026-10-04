@@ -123,9 +123,9 @@ macOS 的成功窗口观察建立真实单窗口 `SCStream`，截图取自该共
 - `pnpm release:notes:draft`：根据实际改动生成发布说明，包含完整 Homebrew 升级命令。
 - `pnpm release:prepare`：使用已审阅的发布说明准备版本文件；默认预览，显式设置 `APPLY_CHANGES=1` 才写入。
 - `pnpm release`：执行受控发布流程；项目内也可通过内置 `/release` 命令调用，仍经过项目权限与高风险确认。
-- `Release` 工作流由维护者手动运行，只构建候选；公开发布需要显式选择 `publish_release`。Linux 执行 `pnpm verify:publish --checks-only` 静态检查，macOS 同时完整构建源码并打包；两者通过后才公开发布并同步 Homebrew。本地 `pnpm verify:publish` 和普通 CI 仍执行完整检查与构建，普通 CI 复用正式发布保存的 CUA 编译成品缓存。
+- `Release` 工作流由维护者手动运行，只构建候选；公开发布需要显式选择 `publish_release`。Linux 执行 `pnpm verify:publish --checks-only` 静态检查，macOS 同时完整构建源码并打包；两者通过后才公开发布并同步 Homebrew。本地 `pnpm verify:publish` 和普通 CI 仍执行完整检查与构建。CUA 的 worker 与 SDK 同轮构建，普通 CI 只读取正式发布保存的缓存：成品精确匹配时直接复用，失配时恢复工具链和依赖兼容的 Cargo 编译缓存并重建变化部分；缓存失败仍按正常构建和校验执行。
 
-本地等待 Release Workflow 的上限为每次命令 15 分钟，使用单调时钟计时；进入等待时和随后每分钟回验公开标签、Release、安装包清单及 Homebrew，全部一致即可成功收尾。超时只结束本地等待，不取消远端运行；未确认的结果会提示继续回验。恢复旧运行时重新计算本次等待预算。
+本地等待 Release Workflow 使用单调时钟计时：尚未开始执行时最多排队 15 分钟，开始执行后本次命令累计最多等待 45 分钟，阶段切换不重置累计时间。进入等待时和随后每分钟回验公开标签、Release、安装包清单及 Homebrew，全部一致即可成功收尾。超时或连续无法读取状态以退出码 2 表示“发布结果未确认”，只结束本地等待，不取消远端运行；已确认的发布失败仍以退出码 1 结束。恢复旧运行时重新计算本次等待预算。
 
 已结束的发布可执行 `VERIFY_PUBLISHED_ONLY=1 RELEASE_VERSION=<版本> RELEASE_COMMIT=<完整候选提交> pnpm release:publish` 只读回验，并生成独立凭证。此入口不触发 Workflow 或修改旧命令历史；不能同时设置 `APPLY_REMOTE=1`。回验要求当前 Homebrew Cask 仍指向该版本。
 

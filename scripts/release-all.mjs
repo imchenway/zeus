@@ -5,7 +5,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameS
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
 import { commandFailureDetail, commandResultSucceeded, releaseRemoteReadAttempts, releaseRemoteReadTimeoutMs, runRemoteReadWithRetrySync } from './release-remote-read.mjs';
-import { releaseWorkflowWaitLimitMs } from './release-workflow-wait-policy.mjs';
+import { ReleasePublicationUnconfirmedError, releasePublicationUnconfirmedExitCode, releaseWorkflowQueueWaitLimitMs } from './release-workflow-wait-policy.mjs';
 import { parseBoolean } from './release-script-utils.mjs';
 
 /** 一键发布唯一允许操作的官方仓库。 */
@@ -23,7 +23,7 @@ let activeReleaseState = null;
 
 main().catch((error) => {
   console.error(formatReleaseFailure(error));
-  process.exitCode = 1;
+  process.exitCode = error instanceof ReleasePublicationUnconfirmedError ? releasePublicationUnconfirmedExitCode : 1;
 });
 
 async function main() {
@@ -172,7 +172,7 @@ async function runIsolatedRelease(input) {
       [isolatedSourceEnvironment]: input.sourceHead,
       ZEUS_COMMAND_RUN_DIR: input.outputDirectory,
     },
-    { cwd: isolatedRepository, preserveArtifactLines: true },
+    { cwd: isolatedRepository, preserveArtifactLines: true, publicationUnconfirmedExitCode: releasePublicationUnconfirmedExitCode },
   );
   const currentOriginalHead = git(['rev-parse', 'HEAD']);
   if (currentOriginalHead === input.sourceHead) console.log(`隔离发布已完成；原工作区和本地 main 仍保持在 ${input.sourceHead.slice(0, 12)}。`);
@@ -522,7 +522,7 @@ function isSupersededUnstartedReleaseRun(run, replacementCommit, remoteMainSha) 
     !remoteMainSha ||
     run.headSha === remoteMainSha ||
     !Number.isFinite(createdAtMs) ||
-    Date.now() - createdAtMs < releaseWorkflowWaitLimitMs ||
+    Date.now() - createdAtMs < releaseWorkflowQueueWaitLimitMs ||
     capture('git', ['merge-base', '--is-ancestor', run.headSha, remoteMainSha], true).status !== 0 ||
     capture('git', ['merge-base', '--is-ancestor', remoteMainSha, replacementCommit], true).status !== 0
   ) {
@@ -815,16 +815,22 @@ async function ensurePublished(state) {
   assertReleaseHead(state);
   const publishDirectory = join(state.stateDirectory, 'publish');
   mkdirSync(publishDirectory, { recursive: true, mode: 0o700 });
-  await runStage('创建并回验公开发布', 'pnpm', ['release:publish'], {
-    ...process.env,
-    RELEASE_VERSION: state.version,
-    LOCAL_GATE_SUMMARY_FILE: state.gateSummaryPath,
-    APPLY_REMOTE: 'true',
-    PUBLISH_CONFIRMATION: `PUBLISH_${state.tag}`,
-    REQUIRE_APPLE_DISTRIBUTION: 'false',
-    WAIT_FOR_COMPLETION: 'true',
-    ZEUS_COMMAND_RUN_DIR: publishDirectory,
-  });
+  await runStage(
+    '创建并回验公开发布',
+    'pnpm',
+    ['release:publish'],
+    {
+      ...process.env,
+      RELEASE_VERSION: state.version,
+      LOCAL_GATE_SUMMARY_FILE: state.gateSummaryPath,
+      APPLY_REMOTE: 'true',
+      PUBLISH_CONFIRMATION: `PUBLISH_${state.tag}`,
+      REQUIRE_APPLE_DISTRIBUTION: 'false',
+      WAIT_FOR_COMPLETION: 'true',
+      ZEUS_COMMAND_RUN_DIR: publishDirectory,
+    },
+    { publicationUnconfirmedExitCode: releasePublicationUnconfirmedExitCode },
+  );
   const publishResultPath = join(publishDirectory, `Zeus-${state.version}-publish-result.md`);
   if (!existsSync(publishResultPath)) throw new Error(`公开发布没有生成预期回验结果：${publishResultPath}`);
   state.publishResultPath = publishResultPath;
@@ -910,6 +916,7 @@ function writeState(state) {
   renameSync(temporary, path);
 }
 
+/** 透传阶段日志和实际退出结果，发布子命令的未确认结果单独传递。 */
 async function runStage(label, command, args, env, options = {}) {
   activeReleaseStage = label;
   console.log(`\n[${label}] ${command} ${args.join(' ')}`);
@@ -930,8 +937,10 @@ async function runStage(label, command, args, env, options = {}) {
     child.once('exit', (code, signal) => {
       if (code === 0) resolveRun();
       else {
-        const reason = `${label}失败${signal ? `，信号 ${signal}` : `，退出码 ${code ?? 'unknown'}`}。`;
-        const error = new Error(reason);
+        /** 只有明确声明的发布子命令退出码可以表示公开结果未确认。 */
+        const publicationUnconfirmed = !signal && options.publicationUnconfirmedExitCode !== undefined && code === options.publicationUnconfirmedExitCode;
+        const reason = publicationUnconfirmed ? '本地等待或状态读取已结束，公开发布结果尚未确认。' : `${label}失败${signal ? `，信号 ${signal}` : `，退出码 ${code ?? 'unknown'}`}。`;
+        const error = publicationUnconfirmed ? new ReleasePublicationUnconfirmedError(reason) : new Error(reason);
         error.command = [command, ...args].join(' ');
         error.technicalDetail = stderrTail.trim() || reason;
         error.userReason = `${reason}请查看本阶段末尾的原始输出。`;
@@ -1096,11 +1105,22 @@ function announceReleaseStage(label) {
   console.log(`\n发布阶段：${label}`);
 }
 
+/** 根据发布阶段和子命令结果区分真实失败与尚未确认的公开交付。 */
 function formatReleaseFailure(error) {
+  /** 未确认结果仍以非零退出，但不得给出远端失败结论。 */
+  const publicationUnconfirmed = error instanceof ReleasePublicationUnconfirmedError;
   const failure = error && typeof error === 'object' ? error : null;
   const reason = typeof failure?.userReason === 'string' ? failure.userReason : error instanceof Error ? error.message : String(error);
   const detail = typeof failure?.command === 'string' ? `${failure.command}${failure.technicalDetail ? ` · ${failure.technicalDetail}` : ''}` : error instanceof Error ? error.message : String(error);
-  return ['', '发布失败', `阶段：${activeReleaseStage}`, `原因：${reason}`, `影响：${describeReleaseFailureImpact(activeReleaseState)}`, `下一步：${describeReleaseRecovery(activeReleaseState)}`, `技术详情：${detail}`].join('\n');
+  return [
+    '',
+    publicationUnconfirmed ? '发布结果未确认' : '发布失败',
+    `阶段：${activeReleaseStage}`,
+    `原因：${reason}`,
+    `影响：${describeReleaseFailureImpact(activeReleaseState)}`,
+    `下一步：${describeReleaseRecovery(activeReleaseState, publicationUnconfirmed)}`,
+    `技术详情：${detail}`,
+  ].join('\n');
 }
 
 function describeReleaseFailureImpact(state) {
@@ -1112,7 +1132,8 @@ function describeReleaseFailureImpact(state) {
   return `已保留 ${state.tag} 的发布恢复状态，未完成阶段不会被冒充为成功。`;
 }
 
-// 按已报告的实际原因引导恢复，避免将本地候选问题误导为网络故障。
-function describeReleaseRecovery(state) {
+/** 按实际结果引导恢复，未确认时优先核对同一候选的外部事实。 */
+function describeReleaseRecovery(state, publicationUnconfirmed = false) {
+  if (publicationUnconfirmed) return '先查看该次 Workflow，或重新运行 pnpm release 回验同一候选；脚本会在继续任何远程写入前复验外部事实。';
   return state ? '排除上述原因后重新运行 pnpm release；脚本会读取本地恢复状态，并在继续任何远程写入前复验外部事实。' : '排除上述原因后重新运行 pnpm release；本次没有需要回滚的远程写入。';
 }

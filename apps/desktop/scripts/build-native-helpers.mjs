@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 /* global process */
-import { access, chmod, copyFile, cp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, cp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { execFile, spawn } from 'node:child_process';
-import { promisify } from 'node:util';
-import { sha256File } from '../../../scripts/release-script-utils.mjs';
+import { spawn } from 'node:child_process';
+import { prepareComputerNativeArtifacts, resolveComputerNativeBuildInputs } from './build-computer-native.mjs';
 
 /** 桌面应用构建根目录。 */
 const desktopRoot = resolve(import.meta.dirname, '..');
@@ -40,79 +39,9 @@ await prepareComputerWorker();
 
 /** SDK 与 worker 使用同一份受控源码，保持官方 ABI 与私有认证配置一致。 */
 async function prepareComputerWorker() {
-  /** 源码来自对应官方发布提交，升级 SDK 时必须同步核对。 */
-  const version = '0.30.4';
-  /** 完整提交防止标签移动或混入上游新协议。 */
-  const revision = 'bf6c76786d938070f4ecf1e44004752f69f518b8';
-  /** 桌面依赖是唯一 SDK 版本来源。 */
-  const manifest = JSON.parse(await readFile(resolve(desktopRoot, 'package.json'), 'utf8'));
-  if (manifest.dependencies['@trycua/cua-driver'] !== version) throw new Error('CUA SDK 已变更，请同步核对私有 worker 源码与补丁。');
-  /** 补丁作为应用源码审查，不依赖用户机器上的临时修改。 */
-  const patch = resolve(desktopRoot, 'native/cua-desktop.patch');
-  /** 补丁和架构变化才需要重新编译原生 worker。 */
-  const fingerprint = `${revision}-${process.arch}-${await sha256File(patch)}`;
-  /** 所有源码和编译缓存都属于当前工作树。 */
-  const cacheRoot = resolve(desktopRoot, '../../.tmp');
-  /** 官方源码缓存保持原始提交，不把补丁覆盖到共享源码。 */
-  const repository = resolve(cacheRoot, `cua-driver-source-${revision}`);
-  /** 每份补丁有独立构建目录，避免误用旧原生程序。 */
-  const buildRoot = resolve(cacheRoot, `cua-worker-${fingerprint}`);
-  /** 完成后才写入的可复用构建凭证。 */
-  const receipt = resolve(buildRoot, 'worker.sha256');
-  /** 原生可执行程序缓存。 */
-  const cachedBinary = resolve(buildRoot, 'cua-driver');
-  /** 宿主 SDK 校验私有启动配置，必须与 worker 同源构建。 */
-  const cachedSdk = resolve(buildRoot, 'libcua_driver_sdk.dylib');
-  /** 两个原生产物均校验摘要，缺少任一个都不能命中缓存。 */
-  const sdkReceipt = resolve(buildRoot, 'sdk.sha256');
-  /** 子命令使用独立参数，不经过 shell。 */
-  const run = promisify(execFile);
-  await mkdir(cacheRoot, { recursive: true });
-  /** 仅使用已完成且摘要匹配的缓存。 */
-  let cached = false;
-  try {
-    cached = (await readFile(receipt, 'utf8')).trim() === (await sha256File(cachedBinary)) && (await readFile(sdkReceipt, 'utf8')).trim() === (await sha256File(cachedSdk));
-  } catch {
-    /* 首次构建或中断缓存重新生成。 */
-  }
-  if (!cached) {
-    try {
-      await access(resolve(repository, '.git'));
-    } catch {
-      await run('git', ['clone', '--depth', '1', '--filter=blob:none', '--no-checkout', '--branch', `cua-driver-rs-v${version}`, 'https://github.com/trycua/cua.git', repository]);
-    }
-    if ((await run('git', ['-C', repository, 'rev-parse', 'HEAD'])).stdout.trim() !== revision) throw new Error('CUA 发布源码提交不匹配。');
-    // 稀疏检出集中获取 Rust 目录，避免 archive 为每个缺失对象单独联网。
-    await run('git', ['-C', repository, 'sparse-checkout', 'set', '--cone', 'libs/cua-driver/rust']);
-    await run('git', ['-C', repository, 'checkout', '--detach', revision]);
-    await rm(buildRoot, { recursive: true, force: true });
-    await mkdir(buildRoot, { recursive: true });
-    /** 稀疏目录必须与固定提交一致，拒绝复用被手工修改的缓存。 */
-    await run('git', ['-C', repository, 'diff', '--quiet', revision, '--', 'libs/cua-driver/rust']);
-    if ((await run('git', ['-C', repository, 'ls-files', '--others', '--', 'libs/cua-driver/rust'])).stdout.trim()) throw new Error('CUA 源码缓存含未跟踪文件，不能用于原生构建。');
-    await cp(resolve(repository, 'libs/cua-driver/rust'), buildRoot, { recursive: true });
-    await run('git', ['apply', '--check', patch], { cwd: buildRoot, env: { ...process.env, GIT_CEILING_DIRECTORIES: cacheRoot } });
-    await run('git', ['apply', patch], { cwd: buildRoot, env: { ...process.env, GIT_CEILING_DIRECTORIES: cacheRoot } });
-    /** 同架构复用 Cargo 依赖编译结果，锁文件禁止依赖漂移。 */
-    const targetDirectory = resolve(cacheRoot, `cua-driver-target-${process.arch}`);
-    /** 明确构建两个生产目标，共享依赖缓存，不运行额外验证目标。 */
-    for (const target of [
-      ['-p', 'cua-driver', '--bin', 'cua-driver'],
-      ['-p', 'cua-driver-sdk', '--lib'],
-    ]) {
-      await new Promise((resolveBuild, rejectBuild) => {
-        /** 原生编译日志由外层正常构建日志接收。 */
-        const child = spawn('cargo', ['build', '--release', '--locked', ...target], { cwd: buildRoot, env: { ...process.env, CARGO_TARGET_DIR: targetDirectory }, stdio: 'inherit' });
-        child.once('error', rejectBuild);
-        child.once('exit', (code) => (code === 0 ? resolveBuild() : rejectBuild(new Error(`CUA 原生源码构建失败：code=${code}`))));
-      });
-    }
-    await copyFile(resolve(targetDirectory, 'release/cua-driver'), cachedBinary);
-    await copyFile(resolve(targetDirectory, 'release/libcua_driver_sdk.dylib'), cachedSdk);
-    await writeFile(receipt, `${await sha256File(cachedBinary)}\n`);
-    await writeFile(sdkReceipt, `${await sha256File(cachedSdk)}\n`);
-  }
-  await copyFile(cachedBinary, resolve(outputDirectory, 'cua-driver'));
+  /** 专属模块负责来源、编译和两层缓存；本脚本只组装桌面产物。 */
+  const native = await prepareComputerNativeArtifacts(await resolveComputerNativeBuildInputs(desktopRoot));
+  await copyFile(native.workerPath, resolve(outputDirectory, 'cua-driver'));
   await chmod(resolve(outputDirectory, 'cua-driver'), 0o755);
   /** 绑定代码沿用固定官方 SDK；私有组件组装到应用产物，不改共享 node_modules。 */
   const sdkRoot = resolve(dirname(await realpath(fileURLToPath(import.meta.resolve('@trycua/cua-driver')))), '..');
@@ -136,7 +65,7 @@ async function prepareComputerWorker() {
   /** 让官方 resolveLibPath 在绑定代码的上级目录找到本应用私有平台包。 */
   const platformOutput = resolve(outputDirectory, 'node_modules', platformPackage);
   await cp(platformRoot, platformOutput, { recursive: true });
-  await copyFile(cachedSdk, resolve(platformOutput, 'libcua_driver_sdk.dylib'));
+  await copyFile(native.sdkPath, resolve(platformOutput, 'libcua_driver_sdk.dylib'));
   // 官方 worker 的环境白名单不含主题目录；固定启动器仅补入本应用只读资源路径。
   await writeFile(
     resolve(outputDirectory, 'ZeusComputerWorker'),
