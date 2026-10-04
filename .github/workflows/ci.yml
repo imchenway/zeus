@@ -45,15 +45,17 @@ jobs:
         # 普通 CI 只读取正式发布保存的缓存；恢复失败仍执行完整构建。
         continue-on-error: true
         with:
-          # 成品摘要仍由原生构建脚本验证，不缓存源码或 Cargo 编译目录。
+          # SDK 与 worker 成套缓存，摘要由构建脚本核对，不缓存源码或 Cargo 编译目录。
           path: |
             .tmp/cua-worker-*/cua-driver
             .tmp/cua-worker-*/worker.sha256
+            .tmp/cua-worker-*/libcua_driver_sdk.dylib
+            .tmp/cua-worker-*/sdk.sha256
           key: zeus-cua-worker-${{ runner.os }}-${{ runner.arch }}-${{ steps.cua_toolchain.outputs.digest }}-${{ hashFiles('apps/desktop/scripts/build-native-helpers.mjs', 'apps/desktop/native/cua-desktop.patch') }}
       - name: 清理未精确命中的 CUA 成品
         # 部分匹配或恢复失败时，禁止继续复用留下的成品。
         if: ${{ steps.cua_cache.outputs.cache-hit != 'true' }}
-        run: rm -f .tmp/cua-worker-*/cua-driver .tmp/cua-worker-*/worker.sha256
+        run: rm -f .tmp/cua-worker-*/cua-driver .tmp/cua-worker-*/worker.sha256 .tmp/cua-worker-*/libcua_driver_sdk.dylib .tmp/cua-worker-*/sdk.sha256
       - name: 执行与本地一致的发布前门禁
         env:
           ZEUS_VERIFY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}

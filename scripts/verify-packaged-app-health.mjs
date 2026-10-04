@@ -181,16 +181,16 @@ function assertPackagedComputerSdk(appRoot) {
   /** 打包时固定解包 SDK 及绑定，避免官方解析器得到 ASAR 虚拟路径。 */
   const unpacked = join(appRoot, 'Contents/Resources/app.asar.unpacked');
   /** 校验当前构建架构的官方原生包与真实 SDK 入口。 */
-  const sdkEntry = join(unpacked, 'node_modules/@trycua/cua-driver/dist/index.js');
+  const sdkEntry = join(unpacked, 'dist/native/cua-sdk/dist/index.js');
   /** 完整打包必须带上主入口、权限入口、绑定依赖及本任务原生 worker。 */
   const required = [
     sdkEntry,
-    join(unpacked, 'node_modules/@trycua/cua-driver/dist/electron.js'),
-    join(unpacked, 'node_modules/@trycua/cua-driver/dist/native/node-runtime.js'),
-    join(unpacked, 'node_modules/@ubjs/core/package.json'),
-    join(unpacked, 'node_modules/@ubjs/node/typescript/dist/resolve-lib.js'),
-    join(unpacked, `node_modules/@trycua/cua-driver-darwin-${process.arch}/libcua_driver_sdk.dylib`),
-    join(unpacked, `node_modules/@trycua/cua-driver-darwin-${process.arch}/cua_driver_node_runtime.node`),
+    join(unpacked, 'dist/native/cua-sdk/dist/electron.js'),
+    join(unpacked, 'dist/native/cua-sdk/dist/native/node-runtime.js'),
+    join(unpacked, 'dist/native/node_modules/@ubjs/core/package.json'),
+    join(unpacked, 'dist/native/node_modules/@ubjs/node/typescript/dist/resolve-lib.js'),
+    join(unpacked, `dist/native/node_modules/@trycua/cua-driver-darwin-${process.arch}/libcua_driver_sdk.dylib`),
+    join(unpacked, `dist/native/node_modules/@trycua/cua-driver-darwin-${process.arch}/cua_driver_node_runtime.node`),
     join(unpacked, 'dist/native/ZeusComputerWorker'),
     join(unpacked, 'dist/native/cua-driver'),
   ];

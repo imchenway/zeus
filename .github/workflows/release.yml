@@ -168,16 +168,18 @@ jobs:
         # 缓存是可选加速，恢复失败回到正常原生构建。
         continue-on-error: true
         with:
-          # 成品摘要仍由原生构建脚本验证，签名与 DMG 每次重新生成。
+          # SDK 与 worker 成套缓存，摘要由构建脚本核对，签名与 DMG 每次重新生成。
           path: |
             .tmp/cua-worker-*/cua-driver
             .tmp/cua-worker-*/worker.sha256
+            .tmp/cua-worker-*/libcua_driver_sdk.dylib
+            .tmp/cua-worker-*/sdk.sha256
           # 与普通 CI 保持相同缓存键，应用版本变化不触发重新编译。
           key: zeus-cua-worker-${{ runner.os }}-${{ runner.arch }}-${{ steps.cua_toolchain.outputs.digest }}-${{ hashFiles('apps/desktop/scripts/build-native-helpers.mjs', 'apps/desktop/native/cua-desktop.patch') }}
       - name: 清理未精确命中的 CUA 成品
         # 不允许部分匹配或恢复失败留下的成品被继续复用。
         if: ${{ steps.cua_cache.outputs.cache-hit != 'true' }}
-        run: rm -f .tmp/cua-worker-*/cua-driver .tmp/cua-worker-*/worker.sha256
+        run: rm -f .tmp/cua-worker-*/cua-driver .tmp/cua-worker-*/worker.sha256 .tmp/cua-worker-*/libcua_driver_sdk.dylib .tmp/cua-worker-*/sdk.sha256
       - name: 准备 App Store Connect API Key
         if: ${{ env.APPLE_API_KEY_P8 != '' }}
         run: |
@@ -201,6 +203,8 @@ jobs:
           path: |
             .tmp/cua-worker-*/cua-driver
             .tmp/cua-worker-*/worker.sha256
+            .tmp/cua-worker-*/libcua_driver_sdk.dylib
+            .tmp/cua-worker-*/sdk.sha256
           # 使用恢复步骤解析的主键，不保存为宽泛备用键。
           key: ${{ steps.cua_cache.outputs.cache-primary-key }}
       - name: 上传已校验正式产物

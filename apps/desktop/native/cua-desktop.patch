@@ -1853,16 +1853,13 @@ index 0000000..4fa4688
 +}
 diff --git a/crates/platform-macos/src/window_sharing.rs b/crates/platform-macos/src/window_sharing.rs
 new file mode 100644
-index 0000000..911600d
 --- /dev/null
 +++ b/crates/platform-macos/src/window_sharing.rs
-@@ -0,0 +1,540 @@
+@@ -0,0 +1,600 @@
 +//! Zeus 的真实单窗口共享、有限帧缓存及系统停止生命周期。
 +
 +use image::ImageEncoder;
-+use screencapturekit::cm::{
-+    CMClock, CMSampleBuffer, CMSampleBufferExt, CMSampleBufferSCExt, CMTime, SCFrameStatus,
-+};
++use screencapturekit::cm::{CMClock, CMSampleBuffer, CMSampleBufferExt, CMTime, SCFrameStatus};
 +use screencapturekit::prelude::{
 +    SCContentFilter, SCShareableContent, SCStream, SCStreamConfiguration,
 +};
@@ -1993,6 +1990,60 @@ index 0000000..911600d
 +    }
 +    .as_seconds()
 +    .filter(|time| time.is_finite())
++}
++
++/// Apple 帧状态附件是 CFNumber，按官方整数契约读取后转换，不能直接转成 Swift 枚举。
++fn frame_status(sample: &CMSampleBuffer) -> Option<SCFrameStatus> {
++    extern "C" {
++        /// 当前系统的状态附件键，由 ScreenCaptureKit 提供。
++        static SCStreamFrameInfoStatus: *const std::ffi::c_void;
++        /// 只读取得样本附件，生命周期由本次 sample 保证。
++        fn CMSampleBufferGetSampleAttachmentsArray(
++            sample: *const std::ffi::c_void,
++            create: bool,
++        ) -> *const std::ffi::c_void;
++        /// 附件数组的实际长度。
++        fn CFArrayGetCount(array: *const std::ffi::c_void) -> isize;
++        /// 只读取第一个帧附件字典。
++        fn CFArrayGetValueAtIndex(
++            array: *const std::ffi::c_void,
++            index: isize,
++        ) -> *const std::ffi::c_void;
++        /// 按系统键取得帧状态数字。
++        fn CFDictionaryGetValue(
++            dictionary: *const std::ffi::c_void,
++            key: *const std::ffi::c_void,
++        ) -> *const std::ffi::c_void;
++        /// 核对附件的实际 CoreFoundation 类型。
++        fn CFGetTypeID(value: *const std::ffi::c_void) -> usize;
++        /// CoreFoundation 数字类型身份。
++        fn CFNumberGetTypeID() -> usize;
++        /// 以有符号整数读取系统状态，不推测未知状态。
++        fn CFNumberGetValue(number: *const std::ffi::c_void, kind: isize, value: *mut i64) -> bool;
++    }
++    // 所有指针只在系统拥有的样本回调期间使用，不保留附件或创建额外缓存。
++    unsafe {
++        let attachments = CMSampleBufferGetSampleAttachmentsArray(sample.as_ptr(), false);
++        if attachments.is_null() || CFArrayGetCount(attachments) == 0 {
++            return None;
++        }
++        let dictionary = CFArrayGetValueAtIndex(attachments, 0);
++        if dictionary.is_null() {
++            return None;
++        }
++        let value = CFDictionaryGetValue(dictionary, SCStreamFrameInfoStatus);
++        if value.is_null() || CFGetTypeID(value) != CFNumberGetTypeID() {
++            return None;
++        }
++        /// kCFNumberSInt64Type 的官方值，用来接收 NSInteger 状态。
++        const SIGNED_64: isize = 4;
++        // 仅保存本次附件中的整数状态。
++        let mut raw = 0i64;
++        if !CFNumberGetValue(value, SIGNED_64, &mut raw) {
++            return None;
++        }
++        i32::try_from(raw).ok().and_then(SCFrameStatus::from_raw)
++    }
 +}
 +
 +/// 用 WindowServer 的实际几何判断是否必须刷新尺寸及每屏缩放。
@@ -2227,7 +2278,7 @@ index 0000000..911600d
 +                    if share.stopped.load(Ordering::Acquire) {
 +                        return;
 +                    }
-+                    let status = sample.frame_status();
++                    let status = frame_status(&sample);
 +                    let mut frame = share.frame.lock().unwrap();
 +                    let timestamp = sample_seconds(&share, &sample);
 +                    if status == Some(SCFrameStatus::Complete)
@@ -2253,6 +2304,14 @@ index 0000000..911600d
 +    let source_clock = stream.synchronization_clock().ok_or_else(|| {
 +        anyhow::anyhow!("ZEUS_COMPUTER_CAPTURE_UNAVAILABLE: 系统共享未提供真实采集时钟。")
 +    })?;
++    // 当前绑定从系统借用时钟但未保留，为共享对象取得一次正式引用。
++    extern "C" {
++        /// 为共享生命周期保留一次系统时钟引用。
++        fn CFRetain(value: *const std::ffi::c_void) -> *const std::ffi::c_void;
++    }
++    unsafe {
++        CFRetain(source_clock.as_ptr());
++    }
 +    let _ = share.source_clock.set(source_clock);
 +    *owned_stream = Some(stream);
 +    crate::input::user_guard::check_pid(share.pid)?;
@@ -2397,3 +2456,98 @@ index 0000000..911600d
 +            share.active.load(Ordering::Acquire) && !share.stopped.load(Ordering::Acquire)
 +        })
 +}
+diff --git a/crates/cua-driver-sdk/src/embedded.rs b/crates/cua-driver-sdk/src/embedded.rs
+--- a/crates/cua-driver-sdk/src/embedded.rs
++++ b/crates/cua-driver-sdk/src/embedded.rs
+@@ -865,6 +865,8 @@
+                 | "CUA_LOG"
+                 | "CUA_DRIVER_RS_TELEMETRY_ENABLED"
+                 | "CUA_TELEMETRY_ENABLED"
++                // Zeus 私有通知仅允许这一项认证密钥，保留其他环境限制。
++                | "ZEUS_CUA_EVENT_TOKEN"
+         )
+ }
+ 
+diff --git a/crates/platform-macos/src/ax/exact_target.rs b/crates/platform-macos/src/ax/exact_target.rs
+--- a/crates/platform-macos/src/ax/exact_target.rs
++++ b/crates/platform-macos/src/ax/exact_target.rs
+@@ -7,14 +7,16 @@
+ //! top-level keyboard destinations, and addressed-element ancestry. All reads are
+ //! bounded and fail closed — an unreadable fact never unlocks a route.
+ 
+-use core_foundation::base::{CFRelease, CFTypeRef};
++use core_foundation::base::{CFRelease, CFTypeRef, TCFType};
++use core_foundation::string::CFString;
+ use cua_driver_core::background_input::{
+     BackgroundTargetFacts, ElementAncestry, WindowServerOwnership,
+ };
+ 
+ use super::bindings::{
+-    ax_get_window_id, copy_ax_windows_including, copy_bool_attr, copy_element_attr,
+-    copy_string_attr, focused_element_of_pid, AXUIElementCreateApplication, AXUIElementRef,
++    ax_get_window_id, copy_ax_windows_including, copy_bool_attr, copy_children, copy_element_attr,
++    copy_string_attr, focused_element_of_pid, kAXErrorSuccess, AXUIElementCreateApplication,
++    AXUIElementIsAttributeSettable, AXUIElementRef,
+ };
+ use crate::windows::{all_windows, resolve_window_owner, WindowOwner};
+ 
+@@ -97,6 +99,40 @@
+     minimized: Option<bool>,
+ }
+ 
++/// 只识别 macOS 单窗口共享的非键盘状态面板，普通对话框与未知属性仍保留互斥。
++unsafe fn is_window_sharing_status_panel(window: AXUIElementRef) -> bool {
++    if copy_string_attr(window, "AXSubrole").as_deref() != Some("AXDialog")
++        || copy_bool_attr(window, "AXModal") != Some(false)
++        || copy_bool_attr(window, "AXMain") != Some(false)
++    {
++        return false;
++    }
++    // 系统状态面板不能成为主窗口，属性不可读时禁止排除。
++    let main_attribute = CFString::new("AXMain");
++    // 原生返回的可写事实，不以窗口标题或尺寸推测输入能力。
++    let mut main_settable = 0u8;
++    if AXUIElementIsAttributeSettable(
++        window,
++        main_attribute.as_concrete_TypeRef(),
++        &mut main_settable,
++    ) != kAXErrorSuccess
++        || main_settable != 0
++    {
++        return false;
++    }
++    // 共享按钮是系统面板的唯一直接子控件，不放宽其他同进程窗口。
++    let children = copy_children(window);
++    // 只有完整匹配真实系统控件身份才排除其键盘目的地。
++    let is_status_panel = children.len() == 1
++        && copy_string_attr(children[0], "AXRole").as_deref() == Some("AXButton")
++        && copy_string_attr(children[0], "AXTitle").as_deref()
++            == Some("WindowSharingSessionButton");
++    for child in children {
++        CFRelease(child as CFTypeRef);
++    }
++    is_status_panel
++}
++
+ /// Map the application's fresh `AXWindows` — plus the requested window when it
+ /// is on another Space — through `_AXUIElementGetWindow`. Windows whose id the
+ /// SPI cannot resolve are omitted: an unmappable window can never satisfy an
+@@ -105,10 +141,14 @@
+     copy_ax_windows_including(app, pid, window_id)
+         .into_iter()
+         .filter_map(|window| {
+-            let record = ax_get_window_id(window).map(|window_id| AxWindowRecord {
+-                window_id,
+-                minimized: copy_bool_attr(window, "AXMinimized"),
+-            });
++            // 系统共享标识与受控窗口同 PID，但不能接收文档键盘输入。
++            let record = (!is_window_sharing_status_panel(window))
++                .then(|| ax_get_window_id(window))
++                .flatten()
++                .map(|window_id| AxWindowRecord {
++                    window_id,
++                    minimized: copy_bool_attr(window, "AXMinimized"),
++                });
+             CFRelease(window as CFTypeRef);
+             record
+         })

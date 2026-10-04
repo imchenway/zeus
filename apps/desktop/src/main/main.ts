@@ -114,9 +114,11 @@ let menuBarUsageCostDetailWindow: BrowserWindow | undefined;
 let menuBarUsageCostDetailPayload: MenuBarUsageCostDetailPayload | undefined;
 /** 指针跨越两个原生窗口时共用延迟关闭计时器。 */
 let menuBarUsageCostDetailHideTimer: ReturnType<typeof setTimeout> | undefined;
+/** 任务与会话交付复用同一种原生窗口，分别按真实范围定位已有实例。 */
 const taskGitDeliveryWindows = new Map<string, BrowserWindow>();
 const projectGitDiffWindows = new Set<BrowserWindow>();
-const taskGitDeliveryTaskByWindowId = new Map<number, string>();
+/** 窗口归属由 Main 创建时固定，Renderer 不能切换到另一项目。 */
+const taskGitDeliveryTargetByWindowId = new Map<number, GitDeliveryWindowTarget>();
 const mainWindowTaskGitContexts = new Map<number, TaskGitDeliveryCurrentContext>();
 type SessionContextKind = 'browser' | 'subagents' | 'plan' | 'source' | 'turn_diff' | 'none';
 /** 终端焦点独立于右侧工作面，离开终端不能清除浏览器或审阅的焦点归属。 */
@@ -309,6 +311,9 @@ interface TaskGitDeliveryCurrentContext {
   taskId: string | null;
   workspaceId: string | null;
 }
+
+/** 原生交付窗口接受真实任务或项目会话，不能用虚构任务套用窗口。 */
+type GitDeliveryWindowTarget = { taskId: string; projectId?: never; conversationId?: never } | { taskId?: never; projectId: string; conversationId: string };
 
 /** macOS 以应用是否活跃为准；其他平台退化为是否存在聚焦窗口。 */
 function isZeusApplicationForeground(): boolean {
@@ -814,15 +819,19 @@ function revealTaskGitDeliveryWindow(window: BrowserWindow): void {
   app.focus({ steal: true });
 }
 
-async function openTaskGitDeliveryWindow(parent: BrowserWindow, taskId: string): Promise<{ opened: true; reused: boolean; taskId: string }> {
-  const existing = taskGitDeliveryWindows.get(taskId);
+/** 所有代码交付按钮共用窗口创建、尺寸记忆、安全配置及实例复用。 */
+async function openTaskGitDeliveryWindow(parent: BrowserWindow, target: GitDeliveryWindowTarget): Promise<GitDeliveryWindowTarget & { opened: true; reused: boolean }> {
+  /** 前缀隔离任务和会话身份，同一范围重复点击唤回原窗口。 */
+  const key = target.taskId ? `task:${target.taskId}` : `conversation:${target.projectId}:${target.conversationId}`;
+  /** 查找已经加载或正在加载的窗口，避免重复创建。 */
+  const existing = taskGitDeliveryWindows.get(key);
   if (existing && !existing.isDestroyed()) {
     revealTaskGitDeliveryWindow(existing);
-    return { opened: true, reused: true, taskId };
+    return { ...target, opened: true, reused: true };
   }
 
   /** 新建窗口前核对资源，已有窗口仍可唤回并保存工作。 */
-  const rendererUrl = rendererEntryUrl('task-git-delivery', { taskId });
+  const rendererUrl = rendererEntryUrl('task-git-delivery', target.taskId !== undefined ? { taskId: target.taskId } : { projectId: target.projectId, conversationId: target.conversationId });
   /** 首次打开时的默认边界，历史偏好由共用入口覆盖。 */
   const defaultBounds = initialTaskGitDeliveryWindowBounds(parent);
   /** 每类窗口分别记忆，任务之间共用交付窗口偏好。 */
@@ -851,12 +860,12 @@ async function openTaskGitDeliveryWindow(parent: BrowserWindow, taskId: string):
       allowRunningInsecureContent: false,
     },
   });
-  taskGitDeliveryWindows.set(taskId, window);
-  taskGitDeliveryTaskByWindowId.set(window.id, taskId);
+  taskGitDeliveryWindows.set(key, window);
+  taskGitDeliveryTargetByWindowId.set(window.id, target);
   window.on('closed', () => {
-    taskGitDeliveryTaskByWindowId.delete(window.id);
+    taskGitDeliveryTargetByWindowId.delete(window.id);
     appCloseLayerActivityByWindow.delete(window.id);
-    if (taskGitDeliveryWindows.get(taskId) === window) taskGitDeliveryWindows.delete(taskId);
+    if (taskGitDeliveryWindows.get(key) === window) taskGitDeliveryWindows.delete(key);
   });
   window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
     if (isMainFrame && errorCode !== -3) console.warn(`Zeus 代码交付窗口加载失败：${validatedUrl} ${errorDescription} (${errorCode})`);
@@ -872,7 +881,7 @@ async function openTaskGitDeliveryWindow(parent: BrowserWindow, taskId: string):
     window.destroy();
     throw error;
   }
-  return { opened: true, reused: false, taskId };
+  return { ...target, opened: true, reused: false };
 }
 
 /** 创建 Zeus 主窗口；preload 会读取 Main 中启动的本地服务配置。 */
@@ -1074,7 +1083,7 @@ function closeFocusedWindowOrContextTab(): void {
 }
 
 function isTrustedZeusRendererWindow(window: BrowserWindow): boolean {
-  return windows.has(window) || taskGitDeliveryTaskByWindowId.has(window.id) || projectGitDiffWindows.has(window) || menuBarUsageWindow === window || menuBarUsageCostDetailWindow === window;
+  return windows.has(window) || taskGitDeliveryTargetByWindowId.has(window.id) || projectGitDiffWindows.has(window) || menuBarUsageWindow === window || menuBarUsageCostDetailWindow === window;
 }
 
 /** Cmd+N 是会话级动作：恢复主窗口并通知 Renderer 打开新会话草稿，不再创建额外窗口。 */
@@ -1249,10 +1258,16 @@ function requireProjectSourceWorkspace(event: Electron.IpcMainInvokeEvent): Proj
 
 const projectGitOperations = new Map<number, Map<string, AbortController>>();
 
-function requireProjectGitWorkbench(event: Electron.IpcMainInvokeEvent, write = false): ProjectGitWorkbenchService {
+/** 主窗口与会话交付窗口使用同一 Git 服务，交付窗口固定在创建时的项目内。 */
+function requireProjectGitWorkbench(event: Electron.IpcMainInvokeEvent, write = false, projectId?: string): ProjectGitWorkbenchService {
   const requestingWindow = BrowserWindow.fromWebContents(event.sender);
-  const trustedWindow = requestingWindow && !requestingWindow.isDestroyed() && (windows.has(requestingWindow) || (!write && projectGitDiffWindows.has(requestingWindow))) && event.senderFrame === event.sender.mainFrame;
+  /** 任务窗口仍走任务工作区接口，不借此获得普通项目 Git 写入权限。 */
+  const target = requestingWindow ? taskGitDeliveryTargetByWindowId.get(requestingWindow.id) : undefined;
+  /** 会话窗口与只读差异窗口只接受主框架请求。 */
+  const trustedWindow =
+    requestingWindow && !requestingWindow.isDestroyed() && (windows.has(requestingWindow) || Boolean(target?.conversationId) || (!write && projectGitDiffWindows.has(requestingWindow))) && event.senderFrame === event.sender.mainFrame;
   if (!trustedWindow || !projectGitWorkbench) throw new Error('项目 Git 请求来自不受信任窗口或 Git 服务尚未就绪。');
+  if (target?.conversationId && projectId !== undefined && target.projectId !== projectId) throw new Error('项目 Git 请求与代码交付窗口归属不符。');
   return projectGitWorkbench;
 }
 
@@ -1430,17 +1445,23 @@ function setupIpc(): void {
   });
   ipcMain.handle('zeus:task-git-delivery:open', async (event, input: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
-    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('代码交付窗口请求来自不受信任的主窗口。');
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || event.senderFrame !== event.sender.mainFrame) throw new Error('代码交付窗口请求来自不受信任的主窗口。');
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('代码交付窗口请求无效。');
-    const candidate = input as { taskId?: unknown; workspaceId?: unknown };
-    if (typeof candidate.taskId !== 'string' || !candidate.taskId.trim()) throw new TypeError('代码交付任务身份无效。');
+    /** 两种来源使用同一入口，身份不能混用。 */
+    const candidate = input as { taskId?: unknown; workspaceId?: unknown; projectId?: unknown; conversationId?: unknown };
+    if (candidate.taskId === undefined) {
+      if (typeof candidate.projectId !== 'string' || !candidate.projectId.trim() || typeof candidate.conversationId !== 'string' || !candidate.conversationId.trim() || candidate.workspaceId !== undefined)
+        throw new TypeError('代码交付会话身份无效。');
+      return openTaskGitDeliveryWindow(requestingWindow, { projectId: candidate.projectId, conversationId: candidate.conversationId });
+    }
+    if (typeof candidate.taskId !== 'string' || !candidate.taskId.trim() || candidate.projectId !== undefined || candidate.conversationId !== undefined) throw new TypeError('代码交付任务身份无效。');
     if (candidate.workspaceId !== undefined && candidate.workspaceId !== null && (typeof candidate.workspaceId !== 'string' || !candidate.workspaceId.trim())) throw new TypeError('代码交付工作区身份无效。');
     if (typeof candidate.workspaceId === 'string') {
       const context = { taskId: candidate.taskId, workspaceId: candidate.workspaceId };
       mainWindowTaskGitContexts.set(requestingWindow.id, context);
       broadcastTaskGitDeliveryCurrentContext(context);
     }
-    return openTaskGitDeliveryWindow(requestingWindow, candidate.taskId);
+    return openTaskGitDeliveryWindow(requestingWindow, { taskId: candidate.taskId });
   });
   /** 仅主窗口或当前任务的交付窗口可以打开任务文件差异。 */
   ipcMain.handle('zeus:task-git-diff:open', async (event, input: unknown) => {
@@ -1454,16 +1475,17 @@ function setupIpc(): void {
       if (typeof candidate[key] !== 'string' || !candidate[key].trim() || candidate[key].includes('\0')) throw new TypeError(`任务差异窗口缺少有效的 ${key}。`);
     }
     if (candidate.kind !== 'task-git' || (candidate.scope !== 'working' && candidate.scope !== 'committed')) throw new TypeError('任务差异比较范围无效。');
-    if (!windows.has(requestingWindow) && taskGitDeliveryTaskByWindowId.get(requestingWindow.id) !== candidate.taskId) throw new Error('任务差异请求与交付窗口任务不符。');
+    if (!windows.has(requestingWindow) && taskGitDeliveryTargetByWindowId.get(requestingWindow.id)?.taskId !== candidate.taskId) throw new Error('任务差异请求与交付窗口任务不符。');
     return openProjectGitDiffWindow(requestingWindow, { kind: 'task-git', taskId: candidate.taskId as string, workspaceId: candidate.workspaceId as string, path: candidate.path as string, scope: candidate.scope });
   });
   ipcMain.handle('zeus:project-git-diff:open', async (event, input: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
-    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('仓库差异窗口请求来自不受信任的主窗口。');
+    if (!requestingWindow || requestingWindow.isDestroyed() || event.senderFrame !== event.sender.mainFrame) throw new Error('仓库差异窗口请求来自不受信任的窗口。');
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('仓库差异窗口请求无效。');
     const candidate = input as Record<string, unknown>;
     const required = ['projectId', 'repositoryId', 'filePath'] as const;
     for (const key of required) if (typeof candidate[key] !== 'string') throw new TypeError(`仓库差异窗口缺少 ${key}。`);
+    requireProjectGitWorkbench(event, false, candidate.projectId as string);
     const stage = candidate.stage === 'staged' || candidate.stage === 'unstaged' ? candidate.stage : 'combined';
     return openProjectGitDiffWindow(requestingWindow, {
       kind: 'project-git',
@@ -1478,31 +1500,29 @@ function setupIpc(): void {
   });
   ipcMain.handle('zeus:project-git:load-workbench', (event, projectId: unknown) => {
     if (typeof projectId !== 'string') throw new TypeError('项目 Git 工作台请求缺少项目身份。');
-    return requireProjectGitWorkbench(event).loadWorkbench(projectId);
+    return requireProjectGitWorkbench(event, false, projectId).loadWorkbench(projectId);
   });
   ipcMain.handle('zeus:project-git:load-history', (event, input: unknown) => {
-    const workbench = requireProjectGitWorkbench(event);
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('历史请求无效。');
     const candidate = input as Record<string, unknown>;
     if (typeof candidate.projectId !== 'string' || typeof candidate.repositoryId !== 'string' || typeof candidate.offset !== 'number' || (candidate.ref !== undefined && typeof candidate.ref !== 'string'))
       throw new TypeError('历史请求参数无效。');
-    return workbench.loadHistory(candidate.projectId, candidate.repositoryId, candidate.offset, candidate.ref as string | undefined);
+    return requireProjectGitWorkbench(event, false, candidate.projectId).loadHistory(candidate.projectId, candidate.repositoryId, candidate.offset, candidate.ref as string | undefined);
   });
   /** 操作历史属于只读入口，仍要求可信主框架和项目身份。 */
   ipcMain.handle('zeus:project-git:load-operations', (event, input: unknown) => {
     /** 与现有工作台读取共用发送者验证。 */
-    const workbench = requireProjectGitWorkbench(event);
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('操作历史请求无效。');
     /** Renderer 只允许指定项目和服务端签发的分页位置。 */
     const candidate = input as Record<string, unknown>;
     if (typeof candidate.projectId !== 'string' || (candidate.cursor !== undefined && typeof candidate.cursor !== 'string')) throw new TypeError('操作历史请求参数无效。');
-    return workbench.loadOperations(candidate.projectId, candidate.cursor as string | undefined, activeMainCommandLedger());
+    return requireProjectGitWorkbench(event, false, candidate.projectId).loadOperations(candidate.projectId, candidate.cursor as string | undefined, activeMainCommandLedger());
   });
   ipcMain.handle('zeus:project-git:load-commit', (event, input: unknown) => {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('项目 Git 提交请求无效。');
     const candidate = input as Record<string, unknown>;
     if (typeof candidate.projectId !== 'string' || typeof candidate.repositoryId !== 'string' || typeof candidate.commitHash !== 'string') throw new TypeError('项目 Git 提交请求身份无效。');
-    return requireProjectGitWorkbench(event).loadCommit(candidate.projectId, candidate.repositoryId, candidate.commitHash);
+    return requireProjectGitWorkbench(event, false, candidate.projectId).loadCommit(candidate.projectId, candidate.repositoryId, candidate.commitHash);
   });
   ipcMain.handle('zeus:project-git:load-comparison', (event, input: unknown) => {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('项目 Git 比较请求无效。');
@@ -1510,7 +1530,7 @@ function setupIpc(): void {
     if (typeof candidate.projectId !== 'string' || typeof candidate.repositoryId !== 'string' || typeof candidate.ref !== 'string' || (candidate.mode !== 'current' && candidate.mode !== 'working-tree')) {
       throw new TypeError('项目 Git 比较请求身份无效。');
     }
-    return requireProjectGitWorkbench(event).loadComparison(candidate.projectId, candidate.repositoryId, candidate.ref, candidate.mode);
+    return requireProjectGitWorkbench(event, false, candidate.projectId).loadComparison(candidate.projectId, candidate.repositoryId, candidate.ref, candidate.mode);
   });
   ipcMain.handle('zeus:project-git:cancel-action', (event, repositoryId: unknown) => {
     requireProjectGitWorkbench(event, true);
@@ -1527,6 +1547,7 @@ function setupIpc(): void {
       if (typeof candidate.projectId !== 'string' || typeof candidate.repositoryId !== 'string' || !candidate.action || typeof candidate.action !== 'object' || Array.isArray(candidate.action)) {
         throw new TypeError('项目 Git 动作请求身份无效。');
       }
+      requireProjectGitWorkbench(event, true, candidate.projectId);
       const ownerOperations = projectGitOperations.get(event.sender.id) ?? new Map<string, AbortController>();
       projectGitOperations.set(event.sender.id, ownerOperations);
       if (ownerOperations.has(candidate.repositoryId)) throw new Error('该仓库已有操作正在执行。');
@@ -1574,7 +1595,7 @@ function setupIpc(): void {
               });
               if (confirmation.response !== 1) throw new Error('已取消 Git 操作，尚未修改仓库。');
             }
-            requireProjectGitWorkbench(event, true);
+            requireProjectGitWorkbench(event, true, candidate.projectId as string);
             controller.signal.throwIfAborted();
             await command.markWriteStarted();
           },
@@ -1590,14 +1611,15 @@ function setupIpc(): void {
   });
   ipcMain.handle('zeus:task-git-delivery:close', (event) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
-    const taskId = requestingWindow ? taskGitDeliveryTaskByWindowId.get(requestingWindow.id) : undefined;
-    if (!requestingWindow || requestingWindow.isDestroyed() || !taskId) throw new Error('当前窗口不是受信任的代码交付窗口。');
+    /** 关闭操作使用创建时范围，两种交付窗口采用同一行为。 */
+    const target = requestingWindow ? taskGitDeliveryTargetByWindowId.get(requestingWindow.id) : undefined;
+    if (!requestingWindow || requestingWindow.isDestroyed() || !target || event.senderFrame !== event.sender.mainFrame) throw new Error('当前窗口不是受信任的代码交付窗口。');
     requestingWindow.close();
-    return { closed: true, taskId };
+    return { ...target, closed: true };
   });
   ipcMain.handle('zeus:task-git-delivery:get-current-context', (event) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
-    if (!requestingWindow || requestingWindow.isDestroyed() || !taskGitDeliveryTaskByWindowId.has(requestingWindow.id)) throw new Error('当前会话上下文请求来自不受信任的代码交付窗口。');
+    if (!requestingWindow || requestingWindow.isDestroyed() || !taskGitDeliveryTargetByWindowId.has(requestingWindow.id) || event.senderFrame !== event.sender.mainFrame) throw new Error('当前会话上下文请求来自不受信任的代码交付窗口。');
     return currentTaskGitDeliveryContext;
   });
   ipcMain.on('zeus:task-git-delivery:current-context-changed', (event, value: unknown) => {
@@ -1609,7 +1631,7 @@ function setupIpc(): void {
   });
   ipcMain.on('zeus:task-git-delivery:changed', (event, taskId: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
-    const ownedTaskId = requestingWindow ? taskGitDeliveryTaskByWindowId.get(requestingWindow.id) : undefined;
+    const ownedTaskId = requestingWindow ? taskGitDeliveryTargetByWindowId.get(requestingWindow.id)?.taskId : undefined;
     if (!ownedTaskId || taskId !== ownedTaskId) return;
     for (const window of windows) {
       if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('zeus:task-git-delivery:changed', ownedTaskId);
@@ -1617,7 +1639,7 @@ function setupIpc(): void {
   });
   ipcMain.handle('zeus:task-git-delivery:open-conversation', async (event, input: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
-    const ownedTaskId = requestingWindow ? taskGitDeliveryTaskByWindowId.get(requestingWindow.id) : undefined;
+    const ownedTaskId = requestingWindow ? taskGitDeliveryTargetByWindowId.get(requestingWindow.id)?.taskId : undefined;
     if (!ownedTaskId || !input || typeof input !== 'object' || Array.isArray(input)) throw new Error('冲突处理会话请求来自不受信任的代码交付窗口。');
     const candidate = input as { taskId?: unknown; conversationId?: unknown };
     if (candidate.taskId !== ownedTaskId || typeof candidate.conversationId !== 'string' || !candidate.conversationId.trim()) throw new TypeError('冲突处理会话身份无效。');

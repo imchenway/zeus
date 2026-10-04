@@ -374,25 +374,40 @@ async function renderMenuBarUsageCostDetail(): Promise<void> {
   );
 }
 
-async function renderTaskGitDeliveryWithClient(client: DashboardClient, taskId: string): Promise<void> {
-  const [{ TaskGitDeliveryWindow }, task, snapshot, appShellSettings, currentContext] = await Promise.all([
+/** 两种代码交付范围都挂载到同一个原生窗口页面。 */
+async function renderTaskGitDeliveryWithClient(client: DashboardClient, parameters: URLSearchParams): Promise<void> {
+  /** URL 只携带真实业务身份，记录和工作目录由已有接口重新读取。 */
+  const taskId = parameters.get('taskId')?.trim();
+  /** 普通会话必须同时指定归属项目与会话。 */
+  const projectId = parameters.get('projectId')?.trim();
+  /** 任务和会话两种范围不能混用。 */
+  const conversationId = parameters.get('conversationId')?.trim();
+  if (taskId ? projectId || conversationId : !projectId || !conversationId) throw new Error('代码交付窗口范围无效。');
+  /** 元数据与设置并行读取，完整交付页只创建一次。 */
+  const [{ TaskGitDeliveryWindow }, task, conversation, snapshot, appShellSettings, currentContext] = await Promise.all([
     import('./task/TaskGitDeliveryWindow.js'),
-    client.tasks.loadTask(taskId),
+    taskId ? client.tasks.loadTask(taskId) : Promise.resolve(null),
+    projectId && conversationId ? client.loadNativeConversationChoice(projectId, conversationId) : Promise.resolve(null),
     client.loadDashboard(),
     client.settings.loadAppShellSettings(),
     window.zeus?.getTaskGitDeliveryCurrentContext?.() ?? Promise.resolve({ taskId: null, workspaceId: null }),
   ]);
+  /** 所有窗口使用同一 React 根及启动错误边界。 */
   const root = document.getElementById('root');
   if (!root) throw new Error('Zeus renderer root element is missing');
-  const projectName = snapshot.projects.find((project) => project.id === task.projectId)?.name;
+  /** 不接受从其他项目借用的会话或缺失记录。 */
+  const project = snapshot.projects.find((item) => item.id === (task?.projectId ?? projectId));
+  if (!task && (!project || !conversation || conversation.projectId !== project.id || conversation.id !== conversationId || conversation.taskId)) throw new Error('代码交付会话归属无效，请从当前会话重新打开。');
+  /** 控制器能力由真实记录选择，原生窗口壳与交付视图保持一致。 */
+  const scope: import('./task/TaskGitDeliveryWindow.js').GitDeliveryWindowScope = task ? { kind: 'task', task, projectName: project?.name } : { kind: 'conversation', project: project!, conversation: conversation! };
   document.body.dataset.surface = 'task-git-delivery';
-  document.title = `${appShellSettings.appLanguage === 'zh-CN' ? '代码交付' : 'Code Delivery'} · ${task.taskCode ?? task.id}`;
+  document.title = `${appShellSettings.appLanguage === 'zh-CN' ? '代码交付' : 'Code Delivery'} · ${task ? (task.taskCode ?? task.id) : conversation!.title}`;
   startupLanguage = appShellSettings.appLanguage;
   const errorLanguage = appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en';
   createRoot(root).render(
     <>
       <RendererErrorBoundary appLanguage={appShellSettings.appLanguage} onFatalError={(error) => reportSurfaceFatalError(error, errorLanguage, 'TaskGitDeliveryWindow')}>
-        <TaskGitDeliveryWindow client={client} task={task} projectName={projectName} language={appShellSettings.appLanguage} appearance={appShellSettings.appearance} initialCurrentContext={currentContext} />
+        <TaskGitDeliveryWindow client={client} scope={scope} language={appShellSettings.appLanguage} appearance={appShellSettings.appearance} initialCurrentContext={currentContext} />
         <RendererBootstrapReady />
       </RendererErrorBoundary>
       <ApplicationErrorDialogHost language={errorLanguage} />
@@ -529,9 +544,7 @@ async function hydrateRenderer(): Promise<void> {
     return;
   }
   if (surface === 'task-git-delivery') {
-    const taskId = parameters.get('taskId')?.trim();
-    if (!taskId) throw new Error('代码交付窗口缺少任务身份。');
-    await renderTaskGitDeliveryWithClient(client, taskId);
+    await renderTaskGitDeliveryWithClient(client, parameters);
     return;
   }
   if (surface === 'project-git-diff') {

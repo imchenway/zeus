@@ -142,11 +142,11 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--zeus-brand-primary) 16%, transparent);
 }
 
-/* 使用命令页的应用卡片底色，避开会话局部面板变量；6px 边框让现有尺寸计算得到真实内容宽高。 */
+/* 两个终端共用卡片底色；容器不加边框，避免 FitAddon 把边框计入字符网格。 */
 .zeus-terminal-screen {
   background: var(--zeus-card-background, var(--zeus-product-panel, #fff));
   color: var(--zeus-control-text, #111827);
-  border: 6px solid var(--zeus-card-background, var(--zeus-product-panel, #fff));
+  border: 0;
   box-sizing: border-box;
   flex: 1;
   min-height: 0;
@@ -156,7 +156,10 @@
 }
 
 .zeus-terminal-screen .xterm {
+  /* FitAddon 会扣除 xterm 自身的 padding，留白与实际可绘制宽高保持一致。 */
+  box-sizing: border-box;
   height: 100%;
+  padding: 6px;
 }
 
 /* 项目终端与会话终端都以面板为搜索浮层的定位范围。 */
