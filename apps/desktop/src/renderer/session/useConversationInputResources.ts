@@ -5,7 +5,7 @@ import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../ui/pendingResourcePolic
 import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
 import { retainInputFocus } from '../ui/retainInputFocus.js';
 import type { PendingResourceCardItem } from '../ui/PendingResourceCards.js';
-import { usePendingResourcePreviews } from '../ui/usePendingResourcePreviews.js';
+import { dataTransferFiles, usePendingResourcePreviews } from '../ui/usePendingResourcePreviews.js';
 
 interface UseConversationInputResourcesOptions {
   /** 附件处理失败跟随当前页面语言。 */
@@ -241,15 +241,6 @@ function insertText(options: UseConversationInputResourcesOptions, inserted: str
     textarea.focus();
     textarea.setSelectionRange(caret, caret);
   });
-}
-
-function dataTransferFiles(dataTransfer: DataTransfer): File[] {
-  const files = Array.from(dataTransfer.files);
-  if (files.length > 0) return files;
-  return Array.from(dataTransfer.items)
-    .filter((item) => item.kind === 'file')
-    .map((item) => item.getAsFile())
-    .filter((file): file is File => Boolean(file));
 }
 
 function hasFiles(dataTransfer: DataTransfer): boolean {

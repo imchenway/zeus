@@ -19,7 +19,7 @@ import { compareConversationCreatedAsc } from '../session/conversationOrdering.j
 import { Button } from '../ui/Button.js';
 import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../ui/pendingResourcePolicy.js';
-import { clipboardNeedsResourceRead, clipboardTextAfterResources, usePendingResourcePreviews } from '../ui/usePendingResourcePreviews.js';
+import { clipboardNeedsResourceRead, clipboardTextAfterResources, dataTransferFiles, usePendingResourcePreviews } from '../ui/usePendingResourcePreviews.js';
 import type { PendingResourceCardItem } from '../ui/PendingResourceCards.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
@@ -251,23 +251,6 @@ function readTaskClipboardText(clipboardData: DataTransfer): string {
   } catch {
     return '';
   }
-}
-
-function taskClipboardFiles(clipboardData: DataTransfer): File[] {
-  const candidates = [
-    ...Array.from(clipboardData.files),
-    ...Array.from(clipboardData.items)
-      .filter((item) => item.kind === 'file')
-      .map((item) => item.getAsFile())
-      .filter((file): file is File => file !== null),
-  ];
-  const seen = new Set<string>();
-  return candidates.filter((file) => {
-    const fingerprint = `${file.name}:${file.type}:${file.size}:${file.lastModified}`;
-    if (seen.has(fingerprint)) return false;
-    seen.add(fingerprint);
-    return true;
-  });
 }
 
 function TaskEditFeedback(props: { state: TaskFieldSaveState; copy: TaskEditCopy; statusId: string; onRetry?: () => void; onLoadLatest?: () => void }) {
@@ -552,7 +535,7 @@ function InlineTaskTextField(props: {
     const selectionStart = control.selectionStart ?? control.value.length;
     const selectionEnd = control.selectionEnd ?? selectionStart;
     const request: TaskAttachmentPasteRequest = {
-      files: taskClipboardFiles(event.clipboardData),
+      files: dataTransferFiles(event.clipboardData),
       plainText: readTaskClipboardText(event.clipboardData),
       readNativeClipboard: false,
     };

@@ -410,7 +410,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                   </div>
                   <div className="automation-inbox-actions">
                     {run.conversationId ? (
-                      <Button disabled={Boolean(busyId)} onClick={() => void props.onOpenConversation(run)}>
+                      <Button disabled={Boolean(busyId)} onClick={() => void props.onOpenConversation(run).catch((cause: unknown) => setError(formatVisibleApplicationError(cause, zh ? 'zh-CN' : 'en')))}>
                         {zh ? '打开会话' : 'Open conversation'}
                       </Button>
                     ) : null}

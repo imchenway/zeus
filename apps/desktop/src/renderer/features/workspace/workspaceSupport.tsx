@@ -16,7 +16,7 @@ import {
   type ThirdPartyTaskExtract,
 } from '@zeus/shared';
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../../ui/pendingResourcePolicy.js';
-import { clipboardNeedsResourceRead, clipboardTextAfterResources, usePendingResourcePreviews } from '../../ui/usePendingResourcePreviews.js';
+import { clipboardNeedsResourceRead, clipboardTextAfterResources, dataTransferFiles, usePendingResourcePreviews } from '../../ui/usePendingResourcePreviews.js';
 import type { PendingResourceCardItem } from '../../ui/PendingResourceCards.js';
 import { TaskAttachmentPreviewList } from '../../task/TaskAttachmentPreviewList.js';
 import { type NativeConversationStartStorage, type SessionWorkspaceTask } from '../../session/SessionWorkspace.js';
@@ -1730,8 +1730,8 @@ export function TaskCreateModal(props: {
     const restoreTarget = captureTaskAttachmentRestoreTarget(pasteTarget.field, pasteTarget.control);
     /** 已有浏览器载荷直接导入，普通文字直接走控件的原生粘贴。 */
     const plainText = safelyReadClipboardData(event.clipboardData, 'text/plain');
-    /** 同一批 File 去重后展示，避免浏览器同时暴露 files 和 items 造成重复。 */
-    const pastedFiles = taskCreateDataTransferFiles(event.clipboardData);
+    /** 两种剪贴板视图只读取其中一种，避免同一图片被重复导入。 */
+    const pastedFiles = dataTransferFiles(event.clipboardData);
     /** 文件引用仍由宿主识别和授权，页面不自行信任路径。 */
     const readNative = pastedFiles.length === 0 && clipboardNeedsResourceRead(event.clipboardData, plainText);
     if (pastedFiles.length === 0 && plainText.length < PENDING_RESOURCE_LONG_TEXT_THRESHOLD && !readNative) return;
@@ -2481,23 +2481,6 @@ export function withTaskAttachmentField(attachments: TaskCreateAttachmentCandida
 
 export function withTaskAttachmentRestoreTarget(attachments: TaskCreateAttachmentCandidate[], restoreTarget: TaskAttachmentRestoreTarget): TaskCreateAttachment[] {
   return attachments.map((attachment) => ({ ...attachment, field: restoreTarget.field, ...(attachment.restorableText ? { restoreTarget } : {}) }));
-}
-
-export function taskCreateDataTransferFiles(dataTransfer: DataTransfer): File[] {
-  const candidates = [
-    ...Array.from(dataTransfer.files),
-    ...Array.from(dataTransfer.items)
-      .filter((item) => item.kind === 'file')
-      .map((item) => item.getAsFile())
-      .filter((file): file is File => file !== null),
-  ];
-  const seen = new Set<string>();
-  return candidates.filter((file) => {
-    const fingerprint = `${file.name}:${file.type}:${file.size}:${file.lastModified}`;
-    if (seen.has(fingerprint)) return false;
-    seen.add(fingerprint);
-    return true;
-  });
 }
 
 export function taskCreateControlId(field: TaskCreateTextField): string {
