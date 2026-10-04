@@ -1571,8 +1571,21 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     const task = conversation.taskId ? snapshot.tasks.find((candidate) => candidate.id === conversation.taskId) : undefined;
     if (task) setTaskDetail(task);
     else setTaskDetail(undefined);
-    /** 任务详情、通知等入口可能只持有真实身份，不能丢掉推送工作面的稳定身份。 */
-    const navigationId = resolveConversationNavigationId(resolveSelectedNativeConversationForProject(state.nativeConversationChoices, conversation.id, conversation.projectId) ?? conversation);
+    /** 自动化等入口可先于列表拿到会话；选择前补齐列表事实，页面才能解析实际会话。 */
+    const listedConversation = resolveSelectedNativeConversationForProject(state.nativeConversationChoices, conversation.id, conversation.projectId);
+    if (!listedConversation && !conversation.archived) {
+      if (conversation.taskId) {
+        // 已读取的持久会话不能被迟到的列表快照移除。
+        nativeConversationChoiceLoadCoordinator.preserveAccepted(conversation);
+        setNativeConversationChoicesByTask((current) => ({ ...current, [conversation.taskId!]: upsertTaskConversationChoiceSnapshot(conversation.taskId!, current[conversation.taskId!], conversation) }));
+      } else {
+        // 项目会话复用已有的快照保护，切换页面后的目录刷新也保留本次选择。
+        nativeProjectConversationChoiceLoadCoordinator.preserveAccepted(conversation);
+        setNativeConversationChoicesByProject((current) => ({ ...current, [conversation.projectId]: upsertProjectConversationChoiceSnapshot(current[conversation.projectId], conversation) }));
+      }
+    }
+    /** 已有推送工作面继续使用稳定导航身份。 */
+    const navigationId = resolveConversationNavigationId(listedConversation ?? conversation);
     const resolvedPresentation =
       presentation ?? resolveNativeConversationSelectionPresentation(conversation, nativeConversationRuntimeStates[navigationId] ?? nativeConversationRuntimeStates[conversation.id] ?? conversation.listRuntimeState);
     selectedNativeConversationIdRef.current = navigationId;

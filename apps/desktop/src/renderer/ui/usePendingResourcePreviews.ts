@@ -130,6 +130,17 @@ export function mergePendingResourcePreviews(resources: PendingResourceCardItem[
   return [...resources.map((resource) => ({ ...resource, previewUrl: byId.get(resource.id) ?? resource.previewUrl })), ...previews.filter((resource) => resource.pending)];
 }
 
+/** files 与 items 是同一批附件的两种视图；优先读取 files，仅在为空时从 items 回退。 */
+export function dataTransferFiles(dataTransfer: DataTransfer): File[] {
+  /** 保留真实批次中的每个文件，不按名称或时间误合并不同附件。 */
+  const files = Array.from(dataTransfer.files);
+  if (files.length > 0) return files;
+  return Array.from(dataTransfer.items)
+    .filter((item) => item.kind === 'file')
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => file !== null);
+}
+
 /** 普通文本不读取系统剪贴板；文件引用或浏览器未给出 File 的原生格式才需要回退。 */
 export function clipboardNeedsResourceRead(data: DataTransfer, text: string): boolean {
   if (data.types.includes('Files') || data.types.includes('text/uri-list') || /^(?:file:\/\/|\/|[a-z]:[\\/])/imu.test(text)) return true;
