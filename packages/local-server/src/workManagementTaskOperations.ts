@@ -148,6 +148,8 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
     if (existing.updatedAt !== input.expectedUpdatedAt) throw editConflict(existing);
     const statusConfig = this.options.resolveManagementStatusConfig(existing.projectId);
     const targetStatus = input.status as TaskManagementStatus;
+    // 使用项目真实完成状态，在任何会话关闭或工作区清理前检查缺陷。
+    if (targetStatus === statusConfig.roles.completedStatusId) this.options.tasks.assertCanComplete(existing.id);
     if (targetStatus === existing.managementStatus) {
       return {
         resourceId: existing.id,

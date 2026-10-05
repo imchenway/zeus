@@ -24,6 +24,29 @@
   gap: 8px;
 }
 
+/* 固定操作文案不拆字，窄窗口按按钮整体换行。 */
+.macos-ai-app :where(.automations-header-actions, .automation-inbox-actions, .automation-editor footer) {
+  min-inline-size: 0;
+  flex-wrap: wrap;
+}
+.macos-ai-app :where(.automations-workspace, .automation-editor) .zeus-button,
+.macos-ai-app .automations-tabs button,
+.macos-ai-app .automation-run-status {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* 正文可折行，下拉只省略显示，不截断实际配置和可访问名称。 */
+.macos-ai-app :where(.automation-editor label, .automation-editor details, .automation-editor .zeus-select, .automation-inbox-actions .zeus-select) {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+.macos-ai-app :where(.automation-editor small, .automation-editor summary, .automation-editor label > span, .automation-inbox-row li) {
+  overflow-wrap: anywhere;
+}
+.macos-ai-app .automation-advanced-settings > .automation-form-section {
+  margin-block-start: 16px;
+}
 .macos-ai-app .automations-header {
   justify-content: space-between;
   gap: 20px;
@@ -356,6 +379,17 @@
 .macos-ai-app .automation-editor summary:focus-visible {
   outline: 2px solid var(--zeus-product-accent);
   outline-offset: -2px;
+}
+
+/* 收件箱结果保留正文空间，较窄页面把操作移到下一行。 */
+@media (max-width: 980px) {
+  .macos-ai-app .automation-inbox-row {
+    grid-template-columns: 80px minmax(0, 1fr);
+  }
+  .macos-ai-app .automation-inbox-actions {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
 }
 
 @media (max-width: 680px) {

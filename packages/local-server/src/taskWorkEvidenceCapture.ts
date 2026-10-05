@@ -4,7 +4,12 @@ import { TaskWorkStoreError, type ConversationProviderItemRepository, type TaskW
 /** 冻结原会话真实产物，不通过模型文字推断代码、验证或部署成功。 */
 export function captureTaskWorkEvidence(input: {
   run: TaskWorkRunRecord;
-  message: { id: string; content: string };
+  /** 团队结果只冻结准确执行轮次，不能带入同会话的其他轮次。 */
+  turnId?: string;
+  /** 存在真实 Agent 正文时保留消息证据；结构化工具终态不伪造 final 消息。 */
+  message?: { id: string; content: string };
+  /** 已由 Core 核对准确轮次的结构化声明，仅作为说明正文。 */
+  statement?: string;
   changes: TurnChangeSetRepository;
   providerItems: ConversationProviderItemRepository;
   deployments?: TaskWorkDeploymentReceipt[];
@@ -15,12 +20,12 @@ export function captureTaskWorkEvidence(input: {
   bundle: TaskWorkDeliverableBundle;
 } {
   /** 来源摘要随正文一起冻结，后续会话改变不会改写这份成果。 */
-  const bundle: TaskWorkDeliverableBundle = { availableKinds: ['document'], sources: [{ kind: 'message', id: input.message.id, sha256: digest(input.message.content), status: 'submitted' }], gaps: [] };
+  const bundle: TaskWorkDeliverableBundle = { availableKinds: ['document'], sources: input.message ? [{ kind: 'message', id: input.message.id, sha256: digest(input.message.content), status: 'submitted' }] : [], gaps: [] };
   /** 说明与机器证据分开排列，避免把运行日志包装成验收结论。 */
-  const sections = ['## 成果说明', input.message.content];
+  const sections = ['## 成果说明', input.message?.content ?? input.statement ?? '本轮没有额外说明正文。'];
   if (input.run.conversationId) {
     /** 读取该工作独占会话的已记录变更，不读取项目其他现场。 */
-    const changes = input.changes.listByConversation(input.run.conversationId);
+    const changes = input.turnId ? [input.changes.getByTurn(input.run.conversationId, input.turnId)].filter((change) => change !== undefined) : input.changes.listByConversation(input.run.conversationId);
     for (const change of changes) {
       if (change.state !== 'applied' || !change.unifiedDiff.trim()) {
         if (change.state !== 'undone') bundle.gaps.push(`变更 ${change.id} 未形成完整可审查差异：${change.unavailableReason ?? change.state}`);
@@ -31,7 +36,7 @@ export function captureTaskWorkEvidence(input: {
       sections.push(`## 代码变更 · ${change.id}`, `提交前摘要：${change.preImageDigest ?? '未提供'}\n\n提交后摘要：${change.postImageDigest ?? '未提供'}`, fenced(change.unifiedDiff, 'diff'));
     }
     /** 命令证据只复制明确的完成记录与输出，不用命令名字猜测验证范围。 */
-    const commands = input.providerItems.listByConversation(input.run.conversationId).filter((item) => item.itemType === 'commandExecution');
+    const commands = input.providerItems.listByConversation(input.run.conversationId).filter((item) => item.itemType === 'commandExecution' && (!input.turnId || item.turnId === input.turnId));
     for (const command of commands) {
       /** Provider 明确字段以外的内容不进入成果元数据。 */
       const payload = readCommandPayload(command.payloadJson);

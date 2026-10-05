@@ -98,7 +98,13 @@ import type { WorkspaceOperations } from './useWorkspaceOperations.js';
 type ProjectSettingsSection = 'employees' | 'capacity';
 
 /** 项目设置页在离开页面或切换项目时重新挂载，因此默认入口始终是数字员工。 */
-function ProjectSettingsWorkspace(props: { project: ProjectRecord; commandClient: DashboardClient | null; conversationClient: NativeConversationAppClient | null; language: 'zh-CN' | 'en-US' }) {
+function ProjectSettingsWorkspace(props: {
+  project: ProjectRecord;
+  commandClient: DashboardClient | null;
+  conversationClient: NativeConversationAppClient | null;
+  language: 'zh-CN' | 'en-US';
+  /** 项目员工的自动化统一进入全局目录。 */ onOpenAutomations(): void;
+}) {
   const zh = props.language === 'zh-CN';
   const [section, setSection] = useState<ProjectSettingsSection>('employees');
   const sectionId = useId();
@@ -143,7 +149,7 @@ function ProjectSettingsWorkspace(props: { project: ProjectRecord; commandClient
       </header>
 
       <section id={employeesPanelId} className="project-settings-panel" role="tabpanel" aria-labelledby={employeesTabId} hidden={section !== 'employees'}>
-        <ProjectDigitalEmployeesPanel projectId={props.project.id} projectName={props.project.name} client={props.commandClient} skillClient={props.conversationClient} language={props.language} />
+        <ProjectDigitalEmployeesPanel projectId={props.project.id} projectName={props.project.name} client={props.commandClient} skillClient={props.conversationClient} language={props.language} onOpenAutomations={props.onOpenAutomations} />
       </section>
       <section id={capacityPanelId} className="project-settings-panel" role="tabpanel" aria-labelledby={capacityTabId} hidden={section !== 'capacity'}>
         <ProjectContextCapacitySettings projectId={props.project.id} client={props.commandClient} language={props.language} />
@@ -154,7 +160,7 @@ function ProjectSettingsWorkspace(props: { project: ProjectRecord; commandClient
 
 export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions: WorkspaceDomainActions; operations: WorkspaceOperations }) {
   const [settingsSearchQuery, setSettingsSearchQuery] = useState('');
-  const [pendingGlobalTask, setPendingGlobalTask] = useState<{ taskId: string; projectId: string } | null>(null);
+  const [pendingGlobalTask, setPendingGlobalTask] = useState<{ taskId: string; projectId: string; presentation?: 'full_page' } | null>(null);
   const [pendingGlobalSource, setPendingGlobalSource] = useState<{ projectId: string; relativePath: string; line: number } | null>(null);
   /** 一次编辑一个字段，新增字段无需继续拉长页面。 */
   const [taskField, setTaskField] = useState<'status' | 'priority' | 'runStatus'>('status');
@@ -475,7 +481,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     if (!pendingGlobalTask || pendingGlobalTask.projectId !== activeProjectId || activeProjectSection !== 'tasks') return;
     const target = pendingGlobalTask;
     setPendingGlobalTask(null);
-    void openTaskDetailPane(target.taskId);
+    void openTaskDetailPane(target.taskId, target.presentation);
   }, [activeProjectId, activeProjectSection, openTaskDetailPane, pendingGlobalTask]);
   useEffect(() => {
     if (!pendingGlobalSource || pendingGlobalSource.projectId !== activeProjectId || activeProjectSection !== 'code' || projectCodeWorkspaceMode !== 'source') return;
@@ -1003,6 +1009,33 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
               const choice = await props.nativeConversationClient.loadNativeConversationChoice(run.projectId, run.conversationId);
               await selectNativeConversation(choice);
             }}
+            onOpenExecution={async (_run, reference, target) => {
+              /** 员工工作和流程都先读取实际任务归属，临时工作不依赖左栏项目目录。 */
+              const client = props.commandClient;
+              if (!client) throw new Error('工作服务尚未连接。');
+              const taskId = reference.taskId ?? (reference.kind === 'workflow' ? (await client.loadDigitalTeamRun(reference.id)).run.taskId : null);
+              if (!taskId) throw new Error('当前执行尚未提供可查看的任务身份。');
+              const task = await client.loadTask(taskId);
+              if (target === 'conversation') {
+                /** TaskWork 会话在真实派发后生成，不能把运行 ID 当作会话 ID。 */
+                const workRun = reference.kind === 'task_work' ? (await client.loadTaskWorkManagement(task.id)).workItems.flatMap((item) => item.runs).find((item) => item.id === reference.id) : null;
+                const conversationId = workRun?.conversationId ?? reference.conversationId;
+                if (!conversationId || !props.nativeConversationClient) throw new Error('工作会话尚未建立，请先查看任务与成果。');
+                await selectNativeConversation(await props.nativeConversationClient.loadNativeConversationChoice(task.projectId, conversationId));
+                return;
+              }
+              if (target === 'workflow') {
+                /** 沿用任务详情进入数字团队的同一页面与准确运行选择。 */
+                closeTaskDetail();
+                state.setDigitalTeamTask(task);
+                state.setDigitalTeamEntrySelection({ kind: 'run', runId: reference.id });
+                state.setActiveNavTarget('digital-teams');
+                return;
+              }
+              const project = snapshot.projects.find((item) => item.id === task.projectId) ?? (await client.loadProject(task.projectId));
+              setPendingGlobalTask({ taskId: task.id, projectId: project.id, presentation: 'full_page' });
+              openProjectSection(project, 'tasks');
+            }}
           />
         ) : null}
         {upstreamMainLayout && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'digital-employees' && activeNavTarget !== 'digital-teams' && activeNavTarget !== 'automations' && selectedProject ? (
@@ -1077,7 +1110,14 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           <section className="workspace-view workspace-view-project-settings" aria-label={codeWorkspaceCopy.projectSettingsAria}>
             <section className="workspace-detail-pane project-detail-pane" aria-label={codeWorkspaceCopy.detailAria}>
               {selectedProject ? (
-                <ProjectSettingsWorkspace key={selectedProject.id} project={selectedProject} commandClient={props.commandClient ?? null} conversationClient={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} />
+                <ProjectSettingsWorkspace
+                  key={selectedProject.id}
+                  project={selectedProject}
+                  commandClient={props.commandClient ?? null}
+                  conversationClient={props.nativeConversationClient ?? null}
+                  language={appShellSettings.appLanguage}
+                  onOpenAutomations={() => handleMainNavigate('automations')}
+                />
               ) : (
                 <>
                   <InlineRecoveryPrompt

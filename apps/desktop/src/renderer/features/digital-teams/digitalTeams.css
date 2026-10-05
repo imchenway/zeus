@@ -860,3 +860,100 @@
     grid-template-columns: 238px minmax(0, 1fr);
   }
 }
+
+/* 长标题允许折行，操作按完整按钮换行，避免挤压固定文案。 */
+.digital-team-header,
+.digital-team-header-actions,
+.digital-team-template-actions,
+.digital-team-save-actions {
+  flex-wrap: wrap;
+  min-inline-size: 0;
+}
+.digital-team-header > div:first-child {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+.digital-team-header-actions {
+  flex: 1 1 540px;
+  justify-content: flex-end;
+}
+.digital-team-header-actions > .zeus-select {
+  flex: 1 1 180px;
+  inline-size: auto;
+  max-inline-size: 250px;
+  min-inline-size: 0;
+}
+.digital-team-save-actions {
+  flex: 1 1 360px;
+}
+.digital-team-workspace .zeus-button,
+.digital-team-copy-dialog .zeus-button,
+.digital-team-validation button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* 必选映射和高级节点字段使用相同的窄窗表单布局。 */
+.macos-ai-app .zeus-form-dialog.digital-team-copy-dialog {
+  inline-size: min(560px, 100%);
+}
+.digital-team-copy-dialog label,
+.digital-team-advanced-settings,
+.digital-team-workspace .zeus-select {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+.digital-team-copy-dialog label {
+  display: grid;
+  gap: 6px;
+  margin-block-start: 10px;
+}
+.digital-team-copy-dialog :where(p, label > span),
+.digital-team-inspector-content :where(p, small, label > span) {
+  overflow-wrap: anywhere;
+}
+.digital-team-advanced-settings > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.digital-team-advanced-settings > label {
+  margin-block-start: 10px;
+}
+.digital-team-field-error {
+  color: var(--zeus-control-danger-text);
+}
+
+/* 校验原因是可折行正文，定位只用短按钮，不再把整段错误作为操作。 */
+.digital-team-validation ul {
+  display: grid;
+  flex: 1;
+  min-inline-size: 0;
+}
+.digital-team-validation li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-inline-size: 0;
+}
+.digital-team-validation li > span {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+.digital-team-validation > strong {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+@media (max-width: 840px) {
+  .digital-team-header-actions {
+    flex-basis: auto;
+    justify-content: flex-start;
+  }
+  .digital-team-save-actions {
+    flex-basis: auto;
+  }
+  .digital-team-validation {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+}

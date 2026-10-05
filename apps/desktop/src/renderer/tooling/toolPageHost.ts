@@ -2,6 +2,9 @@
 export { MotionPresence } from '../ui/MotionPresence.js';
 /** 工具页通过宿主识别内部临时工作区，沿用共享标识而不直接依赖系统包。 */
 export { temporaryWorkspaceId } from '@zeus/shared';
+/** 自动化工具页的动作和员工目录类型统一由宿主暴露。 */
+export { type AutomationActionKind } from '@zeus/shared';
+export { type DigitalEmployeeTemplateRecord } from '../features/digital-employees/digitalEmployeeContracts.js';
 export { formatVisibleApplicationError, VisibleApplicationError, reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 export { type CodexTaskPushModelCapability } from '../session/sessionTypes.js';
 export { type DashboardClient, type ProjectRecord } from '../apiClient.js';
@@ -23,6 +26,8 @@ export { codexCapabilitiesChangedEvent } from '../features/codex/codexApiClient.
 export { SkillSelector, skillCatalogChangedEvent } from '../features/skills/SkillSelector.js';
 export {
   type AutomationBlockStrategy,
+  type AutomationExecutionReference,
+  type AutomationExecutionTarget,
   type AutomationConversationMode,
   type AutomationPermissionMode,
   type AutomationRunRecord,

@@ -111,6 +111,14 @@ export interface DigitalTeamEmployeeNodeData extends Record<string, unknown> {
   verificationCommands?: string[];
   /** 本次工作覆盖员工默认配置，实际动作仍受任务授权约束。 */
   settings?: EmployeeWorkSettings;
+  /** 同一员工承担多份分工时，明确唯一的任务指派入口。 */
+  assignmentEntry?: boolean;
+  /** 可接纳本节点的真实项目任务状态。 */
+  triggerStatusId?: string;
+  /** 本节点开始时推进到的真实项目任务状态。 */
+  startStatusId?: string;
+  /** 本节点完成时推进到的真实项目任务状态。 */
+  completionStatusId?: string;
 }
 
 /** 人工确认节点配置。 */
@@ -171,6 +179,72 @@ export interface DigitalTeamWorkflowDefinition {
   edges: DigitalTeamEdge[];
   /** 保存时的画布视口。 */
   viewport: DigitalTeamViewport;
+  /** 正式缺陷的预先授权修复员工，不由模型临时扩大范围。 */
+  repairEmployeeId?: string;
+  /** 一个父验收闭环最多自动修复轮数，未配置时为三轮。 */
+  maxRepairRounds?: number;
+  /** 用户保存的项目经验生效规则，只授权当前项目的稳定方法和领域知识。 */
+  projectMemoryPolicy?: {
+    /** 有效工作启动时冻结该授权；偏好与跨项目推广仍须审查。 */
+    autoApplyStableExperience: boolean;
+  };
+}
+
+/** 正式验收中发现且需要独立追踪的缺陷。 */
+export interface DigitalTeamDefectSubmission {
+  /** 同一父流程内稳定问题身份，复验失败继续原缺陷。 */
+  key: string;
+  /** 缺陷名称。 */
+  title: string;
+  /** 复现条件、预期与实际行为。 */
+  description: string;
+  /** 当前测试轮次实际产生的复现证据身份。 */
+  reproductionEvidence: string[];
+  /** 被测仓库身份。 */
+  repositoryId: string;
+  /** 被测的准确代码提交。 */
+  headSha: string;
+}
+
+/** 耐久流程控制事实，重启与子任务不能重置自动修复额度。 */
+export interface DigitalTeamRunRuntimeState {
+  /** 本次接纳的最大执行权限，所有后继与自动修复共同继承。 */
+  permissionMode?: 'read-only' | 'auto' | 'full-access';
+  /** 本次任务指派的真实入口；空值表示从全部根员工开始。 */
+  entryNodeId?: string | null;
+  /** 当前任务明确绑定并已验收的上游成果。 */
+  inputDeliverableIds?: string[];
+  /** 人工交接明确绑定的当前任务代码现场，不改写原冻结基线。 */
+  entryCodeRevisions?: DigitalTeamBaseRevision[];
+  /** 父验收闭环已开始的自动修复轮数。 */
+  repairRound?: number;
+  /** 正在等待修复成果的测试节点。 */
+  repairVerificationNodeId?: string | null;
+  /** 当前自动修复子流程身份。 */
+  repairRunIds?: string[];
+  /** 同一准确候选的父验收轮；并行测试和修复关系必须一起恢复。 */
+  verificationRound?: {
+    /** 按候选和全部准确测试尝试生成的幂等身份。 */
+    id: string;
+    /** 本轮准确被测候选摘要。 */
+    candidateSetSha256: string;
+    /** 本轮冻结的准确候选，不能在等待并行结果时切换现场。 */
+    candidates: DigitalTeamCandidateRevision[];
+    /** 本轮全部参与测试的节点和准确尝试。 */
+    tests: { nodeId: string; attemptId: string }[];
+    /** 收齐结果前不启动修复；已接纳修复保留完整子流程关系。 */
+    phase: 'collecting' | 'repairing';
+    /** 本轮正式缺陷，重启不重新登记另一批问题。 */
+    defectIds: string[];
+    /** 本轮全部修复子流程，暂停和改派逐一核对。 */
+    repairRunIds: string[];
+  } | null;
+  /** 形成候选的实际代码结果集合摘要。 */
+  candidateSourceSha256?: string | null;
+  /** 耐久人工改派交接；旧执行结束前不能接纳新入口。 */
+  handoff?: { employeeId: string; entryNodeId: string; operationIdentity: string; reason: string; requestedAt: string; status: 'stopping' | 'ready' | 'completed' } | null;
+  /** 修复子流程所属父验收运行与正式缺陷身份。 */
+  parentRepair?: { runId: string; defectIds: string[]; verificationNodeId: string } | null;
 }
 
 /** 结构化规划中的单节点安排。 */
@@ -241,6 +315,8 @@ export interface DigitalTeamStructuredResult {
   artifactRefs: Record<string, unknown>[];
   /** 尚未解决、不能隐藏的问题。 */
   remainingIssues: string[];
+  /** 正式测试发现的阻塞缺陷，开发自查无需创建子任务。 */
+  defects?: DigitalTeamDefectSubmission[];
 }
 
 /** 一条可复制、删除和重开的团队模板投影。 */
@@ -355,6 +431,8 @@ export interface DigitalTeamWorkflowRunRecord {
   updatedAt: string;
   /** 流程完成时间。 */
   completedAt: string | null;
+  /** 当前流程的耐久入口、修复与人工交接状态。 */
+  runtimeState: DigitalTeamRunRuntimeState;
 }
 
 /** 人工决定中冻结的批准事实。 */
@@ -485,6 +563,8 @@ export interface CreateDigitalTeamWorkflowRunInput {
   taskFacts: Record<string, unknown>;
   /** 逐仓来源提交。 */
   baseRevisions: DigitalTeamBaseRevision[];
+  /** 接纳时冻结的流程入口、上游成果与父修复关系。 */
+  runtimeState?: DigitalTeamRunRuntimeState;
 }
 
 /** 运行通用修改输入。 */
@@ -503,6 +583,8 @@ export interface UpdateDigitalTeamWorkflowRunInput {
   error?: Record<string, unknown> | null;
   /** 完成时间。 */
   completedAt?: string | null;
+  /** 一次替换控制快照，并受运行修订保护。 */
+  runtimeState?: DigitalTeamRunRuntimeState;
 }
 
 /** 新建节点尝试输入。 */
@@ -523,6 +605,10 @@ export interface CreateDigitalTeamNodeAttemptInput {
 
 /** 节点尝试通用修改输入。 */
 export interface UpdateDigitalTeamNodeAttemptInput {
+  /** 使本次结果失效的准确尝试身份。 */
+  invalidatedByAttemptId?: string | null;
+  /** 人工改派或返工的明确原因。 */
+  invalidationReason?: string | null;
   /** 客户端读取到的修订。 */
   expectedRevision: number;
   /** 新尝试状态。 */
@@ -621,6 +707,8 @@ export function validateDigitalTeamWorkflowDefinition(value: unknown): DigitalTe
     return [{ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_SHAPE_INVALID', message: '团队编排使用了不受支持的结构身份。' }];
   }
   const issues: DigitalTeamWorkflowValidationIssue[] = [];
+  if (value.projectMemoryPolicy !== undefined && (!isRecord(value.projectMemoryPolicy) || typeof value.projectMemoryPolicy.autoApplyStableExperience !== 'boolean'))
+    issues.push({ code: 'ZEUS_DIGITAL_TEAM_MEMORY_POLICY_INVALID', message: '项目经验自动生效规则需要明确开启或关闭。' });
   if (value.nodes.length < 1 || value.nodes.length > 128 || value.edges.length > 512) {
     issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_SIZE_INVALID', message: '请配置 1 到 128 份员工分工，依赖关系不能超过 512 条。' });
   }
@@ -631,11 +719,39 @@ export function validateDigitalTeamWorkflowDefinition(value: unknown): DigitalTe
   validateGraphReferences(nodes, edges, issues);
   if (issues.some((issue) => ['ZEUS_DIGITAL_TEAM_WORKFLOW_NODE_INVALID', 'ZEUS_DIGITAL_TEAM_WORKFLOW_EDGE_INVALID', 'ZEUS_DIGITAL_TEAM_WORKFLOW_EDGE_ENDPOINT_INVALID'].includes(issue.code))) return issues;
   if (hasCycle(nodes, adjacency(nodes, edges, 'outgoing'))) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_CYCLE', message: '员工分工的依赖关系不能形成循环。' });
+  if (value.repairEmployeeId !== undefined && !isIdentity(value.repairEmployeeId)) issues.push({ code: 'ZEUS_DIGITAL_TEAM_REPAIR_EMPLOYEE_INVALID', message: '修复员工身份无效。' });
+  if (value.maxRepairRounds !== undefined && (!Number.isSafeInteger(value.maxRepairRounds) || (value.maxRepairRounds as number) < 0 || (value.maxRepairRounds as number) > 20))
+    issues.push({ code: 'ZEUS_DIGITAL_TEAM_REPAIR_LIMIT_INVALID', message: '自动修复额度需要在零到二十轮之间。' });
   for (const node of nodes) {
     if (!node.data.instructions.trim()) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_INSTRUCTIONS_MISSING', message: '请填写这份分工需要完成的工作。', nodeId: node.id });
     if (!node.data.acceptanceCriteria?.length) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_ACCEPTANCE_MISSING', message: '请填写至少一项完成标准。', nodeId: node.id });
     if (!node.data.expectedDeliverables?.length) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_DELIVERABLE_MISSING', message: '请填写至少一项预期交付物。', nodeId: node.id });
     if (node.data.settings?.delegation) issues.push({ code: 'ZEUS_DIGITAL_TEAM_WORKFLOW_DELEGATION_INVALID', message: '团队分工请直接添加员工，不在员工节点中再次委派。', nodeId: node.id });
+    if (node.data.assignmentEntry !== undefined && typeof node.data.assignmentEntry !== 'boolean') issues.push({ code: 'ZEUS_DIGITAL_TEAM_ENTRY_INVALID', message: '指派入口配置无效。', nodeId: node.id });
+    for (const key of ['triggerStatusId', 'startStatusId', 'completionStatusId'])
+      if (node.data[key] !== undefined && !isIdentity(node.data[key])) issues.push({ code: 'ZEUS_DIGITAL_TEAM_STATUS_INVALID', message: '流程状态需要使用项目真实状态身份。', nodeId: node.id });
+    if (node.data.executionMode === 'candidate_read_only' && node.data.purpose !== 'verify') issues.push({ code: 'ZEUS_DIGITAL_TEAM_VERIFY_MODE_INVALID', message: '候选只读现场只能用于测试验收分工。', nodeId: node.id });
+  }
+  /** 并行分支不争抢任务阶段；只有明确汇合后的单一阶段可以推进。 */
+  for (const node of nodes)
+    if (
+      (node.data.startStatusId || node.data.completionStatusId) &&
+      nodes.some((other) => other.id !== node.id && !reachable(node.id, adjacency(nodes, edges, 'outgoing')).has(other.id) && !reachable(other.id, adjacency(nodes, edges, 'outgoing')).has(node.id))
+    )
+      issues.push({ code: 'ZEUS_DIGITAL_TEAM_PARALLEL_STATUS_CONFLICT', message: '并行分工不能分别推进任务状态，请在汇合分工设置状态。', nodeId: node.id });
+  return issues;
+}
+
+/** 保存和执行共用项目真实状态校验，全局模板应用到项目时也必须完成映射。 */
+export function validateDigitalTeamProjectWorkflowStatuses(definition: DigitalTeamWorkflowDefinition, statuses: { hasStatus(statusId: string): boolean; isCompletedStatus(statusId: string): boolean }): DigitalTeamWorkflowValidationIssue[] {
+  const issues: DigitalTeamWorkflowValidationIssue[] = [];
+  for (const node of definition.nodes) {
+    if (node.type !== 'employee') continue;
+    for (const statusId of [node.data.triggerStatusId, node.data.startStatusId, node.data.completionStatusId])
+      if (statusId && !statuses.hasStatus(statusId)) issues.push({ code: 'ZEUS_DIGITAL_TEAM_STATUS_INVALID', message: '流程状态不属于当前项目，请完成状态映射。', nodeId: node.id });
+    if (node.data.startStatusId && statuses.isCompletedStatus(node.data.startStatusId)) issues.push({ code: 'ZEUS_DIGITAL_TEAM_COMPLETION_STATUS_INVALID', message: '开始工作不能把任务推进到完成状态。', nodeId: node.id });
+    if (node.data.completionStatusId && statuses.isCompletedStatus(node.data.completionStatusId) && definition.edges.some((edge) => edge.source === node.id))
+      issues.push({ code: 'ZEUS_DIGITAL_TEAM_COMPLETION_STATUS_INVALID', message: '有后继分工的节点不能提前完成任务，请在汇合终点配置完成状态。', nodeId: node.id });
   }
   return issues;
 }
@@ -732,13 +848,31 @@ export function normalizeDigitalTeamWorkflowDefinition(definition: DigitalTeamWo
     const [source, target] = pair.split('\0');
     return { id: `employee_dependency_${index}_${source}_${target}`, source: source!, target: target! };
   });
-  return { schemaGeneration: digitalTeamWorkflowSchemaGeneration, nodes, edges, viewport: structuredClone(definition.viewport) };
+  return {
+    schemaGeneration: digitalTeamWorkflowSchemaGeneration,
+    nodes,
+    edges,
+    viewport: structuredClone(definition.viewport),
+    ...(definition.projectMemoryPolicy ? { projectMemoryPolicy: structuredClone(definition.projectMemoryPolicy) } : {}),
+  };
 }
 
 /** 在创建运行前强制要求完整合法的流程定义。 */
 export function assertDigitalTeamWorkflowReady(value: unknown): asserts value is DigitalTeamWorkflowDefinition {
   const issues = validateDigitalTeamWorkflowDefinition(value);
   if (issues.length > 0) throw new DigitalTeamWorkflowValidationError(issues);
+}
+
+/** 从真实员工身份解析唯一入口，禁止静默选中重复岗位或降级为独立执行。 */
+export function resolveDigitalTeamAssignmentEntry(definition: DigitalTeamWorkflowDefinition, employeeId: string): DigitalTeamEmployeeNode {
+  const candidates = definition.nodes.filter((node): node is DigitalTeamEmployeeNode => node.type === 'employee' && node.data.employeeId === employeeId);
+  const marked = candidates.filter((node) => node.data.assignmentEntry);
+  const selected = marked.length === 1 ? marked[0] : candidates.length === 1 ? candidates[0] : undefined;
+  if (!selected || marked.length > 1)
+    throw new DigitalTeamWorkflowValidationError([
+      { code: candidates.length ? 'ZEUS_DIGITAL_TEAM_ENTRY_AMBIGUOUS' : 'ZEUS_DIGITAL_TEAM_ENTRY_NOT_FOUND', message: candidates.length ? '该员工在项目流程中承担多份分工，请明确唯一指派入口。' : '该员工没有对应的项目流程入口。' },
+    ]);
+  return selected;
 }
 
 /** 校验负责人覆盖后续工作，并只向授权成员增加有边界的分工。 */
@@ -770,8 +904,14 @@ export function validateDigitalTeamStructuredPlan(definition: DigitalTeamWorkflo
 }
 
 /** 从冻结模板与已登记计划派生执行图；模板本身不被改写，返工历史保留原有身份。 */
-export function digitalTeamExecutionDefinition(run: Pick<DigitalTeamWorkflowRunRecord, 'definitionSnapshot' | 'plan'>): DigitalTeamWorkflowDefinition {
-  if (run.definitionSnapshot.schemaGeneration === digitalTeamWorkflowSchemaGeneration) return run.definitionSnapshot;
+export function digitalTeamExecutionDefinition(run: Pick<DigitalTeamWorkflowRunRecord, 'definitionSnapshot' | 'plan'> & Partial<Pick<DigitalTeamWorkflowRunRecord, 'runtimeState'>>): DigitalTeamWorkflowDefinition {
+  if (run.definitionSnapshot.schemaGeneration === digitalTeamWorkflowSchemaGeneration) {
+    const entryNodeId = run.runtimeState?.entryNodeId;
+    if (!entryNodeId) return run.definitionSnapshot;
+    const included = reachable(entryNodeId, adjacency(run.definitionSnapshot.nodes, run.definitionSnapshot.edges, 'outgoing'));
+    included.add(entryNodeId);
+    return { ...run.definitionSnapshot, nodes: run.definitionSnapshot.nodes.filter((node) => included.has(node.id)), edges: run.definitionSnapshot.edges.filter((edge) => included.has(edge.source) && included.has(edge.target)) };
+  }
   if (!run.plan) return run.definitionSnapshot;
   /** 规划节点及其确认点决定新增工作的入口。 */
   const definition = structuredClone(run.definitionSnapshot);
@@ -855,10 +995,10 @@ function isEmployeeSettings(value: unknown): value is EmployeeWorkSettings {
   return true;
 }
 
-/** 把员工分工收敛为当前可编辑结构，旧职责只保留为普通工作。 */
+/** 保留员工职责与独立权限配置，只补齐缺省的工作协议。 */
 function normalizeEmployeeNode(node: DigitalTeamEmployeeNode): DigitalTeamEmployeeNode {
   /** 执行方式仍属于流程调度元数据，不进入数字员工配置表单。 */
-  const executionMode = node.data.executionMode === 'isolated_write' ? 'isolated_write' : 'read_only';
+  const executionMode = node.data.executionMode;
   /** 兼容字段由系统补齐，用户不再为节点维护第二份工作提示。 */
   const acceptanceCriteria = node.data.acceptanceCriteria?.map((item) => item.trim()).filter(Boolean) ?? [];
   /** 交付物同样只作为运行协议默认值存在。 */
@@ -868,20 +1008,18 @@ function normalizeEmployeeNode(node: DigitalTeamEmployeeNode): DigitalTeamEmploy
     type: 'employee',
     data: {
       ...structuredClone(node.data),
-      purpose: 'work',
+      purpose: node.data.purpose,
       executionMode,
       instructions: node.data.instructions.trim() || '根据当前任务目标和数字员工职责完成工作，并提交可核对结果。',
       acceptanceCriteria: acceptanceCriteria.length ? acceptanceCriteria : [`完成“${node.data.title}”并提交可核对结果`],
       expectedDeliverables: expectedDeliverables.length ? expectedDeliverables : [executionMode === 'isolated_write' ? '代码变更与验证证据' : '可核对的工作成果'],
-      verificationCommands: undefined,
-      settings: undefined,
     },
   };
 }
 
 /** 判断当前画布允许保存的员工分工。 */
 function isCurrentNode(value: unknown): value is DigitalTeamEmployeeNode {
-  if (!isNode(value) || value.type !== 'employee' || value.data.purpose !== 'work' || value.data.executionMode === 'candidate_read_only') return false;
+  if (!isNode(value) || value.type !== 'employee') return false;
   return (value.data.acceptanceCriteria === undefined || isNonEmptyTextArray(value.data.acceptanceCriteria)) && (value.data.expectedDeliverables === undefined || isNonEmptyTextArray(value.data.expectedDeliverables));
 }
 

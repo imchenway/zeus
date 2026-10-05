@@ -978,23 +978,8 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
       }
     }
   }
-  function hierarchyDepth(task: TaskRecord): number {
-    let depth = 1;
-    let parentTaskId = task.parentTaskId ?? null;
-    const visited = new Set<string>();
-    while (parentTaskId && !visited.has(parentTaskId)) {
-      visited.add(parentTaskId);
-      depth += 1;
-      parentTaskId = taskById.get(parentTaskId)?.parentTaskId ?? null;
-    }
-    return depth;
-  }
-  function subtreeHeight(taskId: string): number {
-    const children = props.allTasks.filter((task) => task.parentTaskId === taskId);
-    return children.length === 0 ? 1 : 1 + Math.max(...children.map((task) => subtreeHeight(task.id)));
-  }
-  const currentSubtreeHeight = subtreeHeight(props.task.id);
-  const validParentTasks = props.allTasks.filter((task) => !currentBranchTaskIds.has(task.id) && hierarchyDepth(task) + currentSubtreeHeight <= 3);
+  /** 父任务候选只排除当前子树，循环和同项目约束由服务端统一校验。 */
+  const validParentTasks = props.allTasks.filter((task) => task.projectId === props.task.projectId && !currentBranchTaskIds.has(task.id));
   let currentTaskDepth = 1;
   let currentParentTaskId = props.task.parentTaskId ?? null;
   const visitedParentTaskIds = new Set<string>();
@@ -1017,15 +1002,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
       if (result.kind === 'updated') setRelatedTaskCandidateId('');
     } catch (error) {
       const relationshipMessage =
-        error instanceof ZeusApiError && error.error === 'ZEUS_TASK_HIERARCHY_DEPTH_EXCEEDED'
-          ? zh
-            ? '调整后会超过三级任务层级，无法保存。请先调整当前任务下面的结构，或选择更高层级的父任务。'
-            : 'This change would exceed the three-level task hierarchy and cannot be saved.'
-          : error instanceof ZeusApiError && error.error === 'ZEUS_TASK_PARENT_CYCLE'
-            ? zh
-              ? '不能把当前任务移动到它自己下面。'
-              : 'A task cannot be moved below itself.'
-            : taskEditErrorMessage(error, editCopy.saveFailed, zh ? 'zh-CN' : 'en');
+        error instanceof ZeusApiError && error.error === 'ZEUS_TASK_PARENT_CYCLE' ? (zh ? '不能把当前任务移动到它自己下面。' : 'A task cannot be moved below itself.') : taskEditErrorMessage(error, editCopy.saveFailed, zh ? 'zh-CN' : 'en');
       setRelationshipSaveState({ kind: 'error', message: relationshipMessage });
     }
   }
@@ -1617,18 +1594,12 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
                 <span className="task-detail-section-heading">
                   <span>
                     <strong>{zh ? '父子关系' : 'Hierarchy'}</strong>
-                    <small>{zh ? `当前第 ${currentTaskDepth} 级，最多三级` : `Level ${currentTaskDepth} of 3`}</small>
+                    <small>{zh ? `当前第 ${currentTaskDepth} 级` : `Level ${currentTaskDepth}`}</small>
                   </span>
                   <Button
                     variant="secondary"
                     size="compact"
                     onClick={() => {
-                      // 达到层级上限时解释可行路径，不创建第四级任务。
-                      if (currentTaskDepth >= 3) {
-                        setRelationshipHintTarget('child');
-                        setRelationshipHint(zh ? '任务最多三级。请打开父任务，在父任务下新增同级任务。' : 'Tasks support three levels. Open the parent to add a sibling task.');
-                        return;
-                      }
                       setRelationshipHint('');
                       props.onCreateChild(props.task.id);
                     }}

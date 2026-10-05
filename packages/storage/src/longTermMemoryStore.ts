@@ -47,6 +47,8 @@ export interface LongTermMemorySource {
 }
 
 export interface LongTermMemoryRecord {
+  /** 员工经验的明确项目限制；空值仅用于用户确认的通用经验。 */
+  projectLimitId?: string | null;
   id: string;
   memoryKey: string;
   scope: LongTermMemoryScope;
@@ -67,6 +69,8 @@ export interface LongTermMemoryRecord {
 }
 
 export interface RecordLongTermMemoryCandidateInput {
+  /** 项目经验不能通过员工跨项目复用自动推广。 */
+  projectLimitId?: string | null;
   id?: string;
   memoryKey: string;
   scope: LongTermMemoryScope;
@@ -105,6 +109,8 @@ export interface LongTermMemoryResolution {
 }
 
 interface LongTermMemoryRow {
+  /** 历史经验从原绑定补齐项目限制。 */
+  project_limit_id: string | null;
   id: string;
   memory_key: string;
   scope_kind: LongTermMemoryScopeKind;
@@ -185,6 +191,20 @@ export function migrateLongTermMemorySchema(db: ZeusDatabasePort): void {
       );
     }
   });
+  /** 原记忆结构不重建；历史员工经验按原绑定限定项目，不推广为全局岗位知识。 */
+  const limitsMigration = '20261005_employee_memory_project_limits';
+  if (!db.get('SELECT migration_id FROM schema_migrations WHERE migration_id=?', [limitsMigration]))
+    db.transaction(() => {
+      db.execute('ALTER TABLE long_term_memories ADD COLUMN project_limit_id TEXT REFERENCES projects(id)');
+      if (db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='digital_employees'"))
+        db.execute("UPDATE long_term_memories SET project_limit_id=(SELECT project_id FROM digital_employees WHERE id=scope_id) WHERE scope_kind='employee'");
+      db.execute('INSERT INTO schema_migrations(migration_id,description,checksum,applied_at) VALUES(?,?,?,?)', [
+        limitsMigration,
+        '历史员工经验保留原项目限制',
+        createHash('sha256').update(limitsMigration).digest('hex'),
+        new Date().toISOString(),
+      ]);
+    });
 }
 
 /** 长期记忆写入只接受显式候选；不会从会话、rollout 或任务文档自动抽取。 */
@@ -195,7 +215,16 @@ export class LongTermMemoryRepository {
     const candidateKind = validCandidateKind(input.candidateKind);
     if (!isAcceptedKind(candidateKind)) return { accepted: false, reason: candidateKind };
     const prepared = prepareCandidate(input, candidateKind);
-    if (prepared.scope.kind === 'employee' && !this.db.get('SELECT id FROM digital_employees WHERE id = ? AND deleted_at IS NULL', [prepared.scope.id])) throw invalidArgument('员工记忆必须属于现有员工。', { employeeId: prepared.scope.id });
+    if (prepared.scope.kind !== 'employee' && prepared.projectLimitId) throw invalidArgument('仅员工经验可以声明额外项目限制。', { field: 'projectLimitId' });
+    if (prepared.scope.kind === 'employee') {
+      /** 工作绑定和已确认全局员工均能持有经验，内置模板不能作为员工。 */
+      const binding = this.db.get<{ project_id: string }>('SELECT project_id FROM digital_employees WHERE id = ? AND deleted_at IS NULL', [prepared.scope.id]);
+      const global = this.db.get('SELECT id FROM digital_employee_templates WHERE id=? AND built_in=0 AND deleted_at IS NULL', [prepared.scope.id]);
+      if (!binding && !global) throw invalidArgument('员工记忆必须属于现有员工。', { employeeId: prepared.scope.id });
+      if (input.projectLimitId === undefined && binding) prepared.projectLimitId = binding.project_id;
+      if (prepared.projectLimitId && !this.db.get('SELECT id FROM projects WHERE id=?', [prepared.projectLimitId])) throw invalidArgument('员工经验限制必须指向实际项目。', { projectId: prepared.projectLimitId });
+      if (!prepared.projectLimitId && prepared.confirmationLevel !== 'explicit') throw memoryError('ZEUS_LONG_TERM_MEMORY_CONFIRMATION_REQUIRED', '跨项目通用员工经验必须经过明确确认。');
+    }
     return this.db.transaction(() => {
       const existingId = this.getById(prepared.id);
       if (existingId) {
@@ -203,7 +232,7 @@ export class LongTermMemoryRepository {
         throw memoryError('ZEUS_LONG_TERM_MEMORY_HEAD_CONFLICT', '长期记忆 ID 已绑定到不同内容。', { id: prepared.id });
       }
 
-      const currentHead = this.currentHead(prepared.scope, prepared.memoryKey);
+      const currentHead = this.currentHead(prepared.scope, prepared.memoryKey, prepared.projectLimitId);
       if (currentHead && prepared.supersedesId !== currentHead.id) {
         throw memoryError('ZEUS_LONG_TERM_MEMORY_HEAD_CONFLICT', '同一 scope 与 memory key 已有当前版本，修正时必须显式 supersede 当前 head。', {
           scopeKind: prepared.scope.kind,
@@ -223,7 +252,7 @@ export class LongTermMemoryRepository {
   supersede(previousId: string, input: Omit<RecordLongTermMemoryCandidateInput, 'supersedesId' | 'scope' | 'memoryKey'>): LongTermMemoryRecord {
     const previous = this.getById(requiredIdentity(previousId, 'previousId'));
     if (!previous) throw memoryError('ZEUS_LONG_TERM_MEMORY_NOT_FOUND', '要修正的长期记忆不存在。', { id: previousId });
-    const result = this.recordCandidate({ ...input, scope: previous.scope, memoryKey: previous.memoryKey, supersedesId: previous.id });
+    const result = this.recordCandidate({ ...input, scope: previous.scope, projectLimitId: previous.projectLimitId ?? null, memoryKey: previous.memoryKey, supersedesId: previous.id });
     if (!result.accepted) {
       throw memoryError('ZEUS_LONG_TERM_MEMORY_CANDIDATE_REJECTED', '任务事实、一次性结果和运行证据不能修正为长期记忆。', { candidateKind: result.reason });
     }
@@ -274,19 +303,26 @@ export class LongTermMemoryRepository {
     };
   }
 
-  resolveForContext(input: { projectId?: string | null; employeeId?: string | null; asOf: string; minimumConfidence?: number }): LongTermMemoryResolution {
+  /** 普通查询跟随当前绑定；执行上下文可显式传入冻结全局身份，空值表示当时未绑定。 */
+  resolveForContext(input: { projectId?: string | null; employeeId?: string | null; globalEmployeeId?: string | null; asOf: string; minimumConfidence?: number }): LongTermMemoryResolution {
     const asOf = validTimestamp(input.asOf, 'asOf');
     const minimumConfidence = input.minimumConfidence ?? 0;
     if (!Number.isFinite(minimumConfidence) || minimumConfidence < 0 || minimumConfidence > 1) throw invalidArgument('minimumConfidence 必须位于 0 到 1。', { minimumConfidence });
     const projectId = input.projectId === undefined || input.projectId === null ? null : requiredIdentity(input.projectId, 'projectId');
-    /** 员工经验只能进入该员工所属项目的执行上下文。 */
-    const employeeId = input.employeeId && projectId && this.db.get('SELECT id FROM digital_employees WHERE id = ? AND project_id = ? AND deleted_at IS NULL', [input.employeeId, projectId]) ? input.employeeId : null;
-    const rows = projectId
-      ? this.db.select<LongTermMemoryRow>(
-          `${selectMemoryColumns} WHERE (scope_kind = 'global' AND scope_id = '*') OR (scope_kind = 'project' AND scope_id = ?) OR (scope_kind = 'employee' AND scope_id = ?) ORDER BY updated_at DESC, id DESC`,
-          [projectId, employeeId],
-        )
-      : this.db.select<LongTermMemoryRow>(`${selectMemoryColumns} WHERE scope_kind = 'global' AND scope_id = '*' ORDER BY updated_at DESC, id DESC`);
+    /** undefined 允许普通查询使用当前身份，null 必须保留冻结时未绑定的语义。 */
+    const frozenGlobalId = input.globalEmployeeId === undefined || input.globalEmployeeId === null ? input.globalEmployeeId : requiredIdentity(input.globalEmployeeId, 'globalEmployeeId');
+    /** 绑定身份保持历史关联；通用岗位经验按全局员工身份读取，项目限制逐条核对。 */
+    const binding = input.employeeId
+      ? this.db.get<{ id: string; global_employee_id: string | null; project_id: string }>('SELECT id,global_employee_id,project_id FROM digital_employees WHERE id=? AND deleted_at IS NULL', [input.employeeId])
+      : undefined;
+    /** 冻结身份只在原项目绑定范围内生效，改绑不能把另一员工经验带入在途工作。 */
+    const globalId = binding ? (binding.project_id === projectId ? (frozenGlobalId === undefined ? binding.global_employee_id : frozenGlobalId) : null) : (input.employeeId ?? null);
+    const global = globalId ? this.db.get('SELECT id FROM digital_employee_templates WHERE id=? AND built_in=0 AND deleted_at IS NULL', [globalId]) : undefined;
+    const employeeId = binding?.project_id === projectId ? binding.id : global ? globalId : null;
+    const rows = this.db.select<LongTermMemoryRow>(
+      `${selectMemoryColumns} WHERE (scope_kind='global' AND scope_id='*') OR (scope_kind='project' AND scope_id=?) OR (scope_kind='employee' AND scope_id IN (?,?) AND (project_limit_id IS NULL OR project_limit_id=?)) ORDER BY project_limit_id IS NOT NULL DESC,updated_at DESC,id DESC`,
+      [projectId, employeeId, global ? globalId : null, projectId],
+    );
     const records = rows.map(mapMemory);
     const supersededIds = new Set(records.flatMap((record) => (record.supersedesId ? [record.supersedesId] : [])));
     const excluded: LongTermMemoryResolution['excluded'] = records.filter((record) => supersededIds.has(record.id)).map((record) => ({ record, reason: 'superseded' }));
@@ -304,7 +340,10 @@ export class LongTermMemoryRepository {
     for (const memoryKey of [...byKey.keys()].sort()) {
       const candidates = byKey.get(memoryKey)!;
       /** 员工同名经验优先于项目默认，保留被覆盖的来源供审计。 */
-      const personal = employeeId ? candidates.filter((record) => record.scope.kind === 'employee') : [];
+      const personalCandidates = employeeId ? candidates.filter((record) => record.scope.kind === 'employee') : [];
+      /** 员工在当前项目的明确经验优先于其通用方法，保留通用来源作为被覆盖记录。 */
+      const projectPersonal = personalCandidates.filter((record) => record.projectLimitId === projectId);
+      const personal = projectPersonal.length ? projectPersonal : personalCandidates;
       const scoped = personal.length ? personal : projectId ? candidates.filter((record) => record.scope.kind === 'project') : [];
       const eligibleScope = scoped.length > 0 ? scoped : candidates.filter((record) => record.scope.kind === 'global');
       for (const shadowed of candidates.filter((record) => !eligibleScope.includes(record))) excluded.push({ record: shadowed, reason: 'scope_shadowed' });
@@ -328,14 +367,14 @@ export class LongTermMemoryRepository {
     return { selected, reviewRequired, excluded };
   }
 
-  private currentHead(scope: LongTermMemoryScope, memoryKey: string): LongTermMemoryRecord | undefined {
+  private currentHead(scope: LongTermMemoryScope, memoryKey: string, projectLimitId?: string | null): LongTermMemoryRecord | undefined {
     const rows = this.db.select<LongTermMemoryRow>(
       `${selectMemoryColumns}
-        WHERE scope_kind = ? AND scope_id = ? AND memory_key = ?
+        WHERE scope_kind = ? AND scope_id = ? AND memory_key = ? AND project_limit_id IS ?
           AND id NOT IN (SELECT supersedes_id FROM long_term_memories WHERE supersedes_id IS NOT NULL)
         ORDER BY updated_at DESC, id DESC
         LIMIT 2`,
-      [scope.kind, scope.id, memoryKey],
+      [scope.kind, scope.id, memoryKey, projectLimitId ?? null],
     );
     if (rows.length > 1) {
       throw memoryError('ZEUS_LONG_TERM_MEMORY_HEAD_CONFLICT', '同一 scope 与 memory key 存在多个未被 supersede 的 head，必须先人工修复。', { scopeKind: scope.kind, scopeId: scope.id, memoryKey });
@@ -348,8 +387,8 @@ export class LongTermMemoryRepository {
       `INSERT INTO long_term_memories
          (id, memory_key, scope_kind, scope_id, memory_kind, content, content_sha256, effect,
           source_kind, source_ref, source_observed_at, source_content_sha256, confirmation_level,
-          confidence, review_after, supersedes_id, tombstone, tombstoned_at, tombstone_reason, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, ?, ?)`,
+          confidence, review_after, supersedes_id, tombstone, tombstoned_at, tombstone_reason, created_at, updated_at, project_limit_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, ?, ?, ?)`,
       [
         record.id,
         record.memoryKey,
@@ -369,6 +408,7 @@ export class LongTermMemoryRepository {
         record.supersedesId,
         record.createdAt,
         record.updatedAt,
+        record.projectLimitId ?? null,
       ],
     );
   }
@@ -376,7 +416,7 @@ export class LongTermMemoryRepository {
 
 const selectMemoryColumns = `SELECT id, memory_key, scope_kind, scope_id, memory_kind, content, content_sha256,
   effect, source_kind, source_ref, source_observed_at, source_content_sha256, confirmation_level,
-  confidence, review_after, supersedes_id, tombstone, tombstoned_at, tombstone_reason, created_at, updated_at
+  confidence, review_after, supersedes_id, tombstone, tombstoned_at, tombstone_reason, created_at, updated_at, project_limit_id
   FROM long_term_memories`;
 
 function prepareCandidate(input: RecordLongTermMemoryCandidateInput, kind: LongTermMemoryKind): LongTermMemoryRecord {
@@ -404,6 +444,7 @@ function prepareCandidate(input: RecordLongTermMemoryCandidateInput, kind: LongT
     id: input.id === undefined ? randomUUID() : requiredIdentity(input.id, 'id'),
     memoryKey: validMemoryKey(input.memoryKey),
     scope: normalizeScope(input.scope),
+    projectLimitId: input.projectLimitId == null ? null : requiredIdentity(input.projectLimitId, 'projectLimitId'),
     kind,
     content,
     contentSha256: createHash('sha256').update(content).digest('hex'),
@@ -426,6 +467,7 @@ function mapMemory(row: LongTermMemoryRow): LongTermMemoryRecord {
     id: row.id,
     memoryKey: row.memory_key,
     scope: { kind: row.scope_kind, id: row.scope_id },
+    projectLimitId: row.project_limit_id,
     kind: row.memory_kind,
     content: row.content,
     contentSha256: row.content_sha256,
@@ -453,6 +495,7 @@ function sameRecord(left: LongTermMemoryRecord, right: LongTermMemoryRecord): bo
     left.memoryKey === right.memoryKey &&
     left.scope.kind === right.scope.kind &&
     left.scope.id === right.scope.id &&
+    (left.projectLimitId ?? null) === (right.projectLimitId ?? null) &&
     left.kind === right.kind &&
     left.contentSha256 === right.contentSha256 &&
     left.effect === right.effect &&

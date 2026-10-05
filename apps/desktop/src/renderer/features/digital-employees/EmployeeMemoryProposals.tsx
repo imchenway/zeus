@@ -87,8 +87,10 @@ function ProposalEditor(props: { proposal: EmployeeMemoryProposal; client: Digit
     setBusy(true);
     setError(null);
     try {
-      await props.client.decideEmployeeMemoryProposal(props.proposal, { accept, topic, content, reviewAfter: `${reviewAfter}T23:59:59.000Z` });
-      props.onSaved(accept);
+      const next = await props.client.decideEmployeeMemoryProposal(props.proposal, { accept, topic, content, reviewAfter: `${reviewAfter}T23:59:59.000Z` });
+      /** HTTP 成功不代表经验已生效；冲突保持待处理并刷新实际修订。 */
+      if (next.status === 'pending') setError(next.conflictReason ?? '建议仍待处理，尚未生效。');
+      props.onSaved(next.status === 'accepted');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '处理建议失败。');
     } finally {
@@ -121,7 +123,7 @@ function ProposalEditor(props: { proposal: EmployeeMemoryProposal; client: Digit
           任务 {props.proposal.taskId} · 工作运行 {props.proposal.runId} · {props.proposal.createdAt}
         </small>
       </details>
-      {error ? <p role="alert">{error}</p> : null}
+      {error || props.proposal.conflictReason ? <p role="alert">{error ?? props.proposal.conflictReason}</p> : null}
       <footer>
         <Button size="compact" disabled={busy || !topic.trim() || !content.trim() || !reviewAfter} onClick={() => void decide(true)}>
           接纳为个人经验

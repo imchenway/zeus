@@ -14,6 +14,22 @@ import type {
 export type DigitalEmployeeLanguage = 'zh-CN' | 'en-US';
 
 export interface DigitalEmployeeTemplateDraft {
+  /** 经验读取默认值。 */
+  memoryEnabled?: boolean;
+  /** 默认允许源码修改。 */
+  allowCodeChanges: boolean;
+  /** 默认允许执行已有检查。 */
+  allowTests: boolean;
+  /** 本地提交默认授权。 */
+  allowCommit: boolean;
+  /** 推送默认授权。 */
+  allowPush: boolean;
+  /** 合并默认授权。 */
+  allowMerge: boolean;
+  /** 部署默认授权。 */
+  allowDeploy: boolean;
+  /** 完成任务默认授权。 */
+  allowComplete: boolean;
   name: string;
   description: string;
   role: string;
@@ -31,6 +47,8 @@ export interface DigitalEmployeeTemplateDraft {
 }
 
 export interface DigitalEmployeeDraft extends DigitalEmployeeTemplateDraft {
+  /** 独立保存项目专用要求，避免覆写全局通用提示词。 */
+  projectInstructions: string;
   /** 个人经验读取偏好。 */
   memoryEnabled?: boolean;
   enabled: boolean;
@@ -66,6 +84,14 @@ export interface DigitalEmployeeAutomationDraft {
 }
 
 export const emptyTemplateDraft: DigitalEmployeeTemplateDraft = {
+  memoryEnabled: true,
+  allowCodeChanges: false,
+  allowTests: false,
+  allowCommit: false,
+  allowPush: false,
+  allowMerge: false,
+  allowDeploy: false,
+  allowComplete: false,
   name: '',
   description: '',
   role: '',
@@ -100,6 +126,14 @@ export const emptyAutomationDraft: DigitalEmployeeAutomationDraft = {
 export function templateDraft(record?: DigitalEmployeeTemplateRecord | DigitalEmployeeRecord): DigitalEmployeeTemplateDraft {
   if (!record) return { ...emptyTemplateDraft };
   return {
+    memoryEnabled: record.memoryEnabled !== false,
+    allowCodeChanges: record.allowCodeChanges === true,
+    allowTests: record.allowTests === true,
+    allowCommit: record.deliveryGrants?.allowCommit === true,
+    allowPush: record.deliveryGrants?.allowPush === true,
+    allowMerge: record.deliveryGrants?.allowMerge === true,
+    allowDeploy: record.deliveryGrants?.allowDeploy === true,
+    allowComplete: record.deliveryGrants?.allowComplete === true,
     name: record.name,
     description: record.description,
     role: record.role,
@@ -118,8 +152,12 @@ export function templateDraft(record?: DigitalEmployeeTemplateRecord | DigitalEm
 
 export function employeeDraft(record: DigitalEmployeeRecord): DigitalEmployeeDraft {
   const agentEntrypoint = record.entrypoint?.kind === 'agent' ? record.entrypoint : null;
+  /** 编辑基础提示词时剥离系统追加的项目要求，分别保存两个字段。 */
+  const projectSuffix = record.projectInstructions?.trim() ? `\n\n## 当前项目要求\n${record.projectInstructions.trim()}` : '';
   return {
     ...templateDraft(record),
+    prompt: projectSuffix && record.prompt.endsWith(projectSuffix) ? record.prompt.slice(0, -projectSuffix.length) : record.prompt,
+    projectInstructions: record.projectInstructions ?? '',
     skillIds: [...(agentEntrypoint?.skillPolicy.allowedSkillIds ?? record.skillIds)],
     model: agentEntrypoint?.modelPolicy.defaultModel ?? record.model ?? '',
     enabled: record.enabled,
@@ -142,6 +180,10 @@ export function employeeDraft(record: DigitalEmployeeRecord): DigitalEmployeeDra
 
 export function templateInput(draft: DigitalEmployeeTemplateDraft): DigitalEmployeeTemplateInput {
   return {
+    memoryEnabled: draft.memoryEnabled !== false,
+    allowCodeChanges: draft.allowCodeChanges,
+    allowTests: draft.allowTests,
+    deliveryGrants: { allowCommit: draft.allowCommit, allowPush: draft.allowPush, allowMerge: draft.allowMerge, allowDeploy: draft.allowDeploy, allowComplete: draft.allowComplete },
     name: draft.name.trim(),
     description: draft.description.trim(),
     role: draft.role.trim(),
@@ -171,6 +213,7 @@ export function employeeInput(draft: DigitalEmployeeDraft): DigitalEmployeeInput
   } as const;
   return {
     ...templateInput(draft),
+    projectInstructions: draft.projectInstructions.trim(),
     skillIds: draft.skillIds,
     enabled: draft.enabled,
     autoClaim: draft.autoClaim,

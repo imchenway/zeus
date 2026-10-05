@@ -1,4 +1,5 @@
 import type { AutomationDefinitionSnapshot, AutomationRunRecord, AutomationRunRepository, AutomationTaskRecord, AutomationTaskRepository, ConversationRepository, ConversationSubmissionRepository, ZeusProjectRecord } from '@zeus/storage';
+import { automationEventStatusId, type AutomationDispatchTarget, type AutomationExecutionReference, type AutomationExecutionState } from '@zeus/shared';
 
 export interface AutomationDispatchResult {
   conversationId: string;
@@ -6,6 +7,14 @@ export interface AutomationDispatchResult {
 }
 
 export interface AutomationSchedulerOptions {
+  /** 在旧调度启动前原子移交员工规则及在途关联。 */
+  migrateLegacy?(): void;
+  /** 接纳前解析并冻结任务与项目绑定，任务池为空返回明确跳过。 */
+  prepareAction?(input: { run: AutomationRunRecord; snapshot: AutomationDefinitionSnapshot; project: ZeusProjectRecord; target: AutomationDispatchTarget }): Promise<{ taskId: string; employeeId: string } | null>;
+  /** 每次只接纳一个已冻结目标，准确引用由调度器耐久保存。 */
+  dispatchAction?(input: { run: AutomationRunRecord; snapshot: AutomationDefinitionSnapshot; project: ZeusProjectRecord; target: AutomationDispatchTarget }): Promise<AutomationExecutionReference | null>;
+  /** 读取真实工作或完整流程，暂停不等于终态。 */
+  readExecution?(reference: AutomationExecutionReference): AutomationExecutionState | undefined;
   tasks: AutomationTaskRepository;
   runs: AutomationRunRepository;
   conversations: ConversationRepository;
@@ -32,8 +41,11 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
   let tickPromise: Promise<void> | null = null;
   let closed = false;
   let recovered = false;
+  /** 本次启动之前错过的时间点只推进排程，不补发历史工作。 */
+  const startedAt = options.now();
 
   async function tick(): Promise<void> {
+    options.migrateLegacy?.();
     if (!recovered) {
       recoverInterruptedDispatches();
       await options.save();
@@ -41,13 +53,51 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
     }
     const now = options.now();
     acceptDue(now);
+    acceptEvents();
     reconcileRunning();
-    for (const candidate of options.runs.listDispatchable(8)) await dispatch(candidate);
+    /** 未完成逐目标派发的原运行优先恢复，不能让排队运行越过它。 */
+    for (const candidate of [...options.runs.listInFlight().filter((run) => run.status === 'dispatching'), ...options.runs.listDispatchable(8)]) await dispatch(candidate);
     await options.save();
+  }
+
+  /** 按原事件的前后状态与来源接纳，不从处理时的任务状态重新推断。 */
+  function acceptEvents(): void {
+    for (const task of options.tasks.list().filter((entry) => entry.status === 'active' && entry.triggerKind === 'event')) {
+      for (const target of options.tasks.listTargets(task.id).filter((entry) => entry.enabled)) {
+        const events = task.triggerConfig.eventKinds?.includes('code_changed')
+          ? options.tasks.listCodeTriggerEvents(target.projectId, task.eventCursors[target.projectId] ?? 0)
+          : options.tasks.listTriggerEvents(target.projectId, task.eventCursors[target.projectId] ?? 0);
+        for (const event of events) {
+          options.tasks.consumeEvent(task.id, target.projectId, event.sequence, () => {
+            /** 项目流程自身生成的任务事件不会反向触发新的自动化。 */
+            const source = event.payload.source;
+            if (event.payload.suppressAutomation === true || ['automation', 'digital_employee_automation', 'digital_team_workflow', 'task_push'].includes(String(source))) return;
+            /** 旧规则与界面均允许使用业务触发名称。 */
+            const kinds = task.triggerConfig.eventKinds ?? [];
+            const aliases: Record<string, string[]> = {
+              task_created: ['task.created'],
+              task_updated: ['task.updated', 'task.tags.updated', 'task.relationships.updated'],
+              task_status_changed: ['task.status.changed', 'task.management_status.changed'],
+            };
+            if (kinds.length > 0 && !kinds.some((kind) => kind === event.eventType || aliases[kind]?.includes(event.eventType))) return;
+            const before = automationEventStatusId(event.payload, true);
+            const after = automationEventStatusId(event.payload, false);
+            if (task.triggerConfig.beforeStatusId && before !== task.triggerConfig.beforeStatusId) return;
+            if (task.triggerConfig.afterStatusId && after !== task.triggerConfig.afterStatusId) return;
+            options.runs.enqueue({ automationId: task.id, projectIds: [target.projectId], triggerKind: 'event', triggerIdentity: event.identity, scheduledAt: event.occurredAt, sourceEvent: event });
+          });
+        }
+      }
+    }
   }
 
   function acceptDue(now: string): void {
     for (const task of options.tasks.listDue(now)) {
+      if (task.nextRunAt && task.nextRunAt < startedAt) {
+        options.tasks.setNextRun(task.id, computeNextRun(task, new Date(now)));
+        options.publish('automation.schedule.skipped', { automationId: task.id, scheduledAt: task.nextRunAt, reason: '启动前已错过的时间点不补跑' });
+        continue;
+      }
       /** 定时触发同样把全部启用项目冻结到一条运行。 */
       const projectIds = options.tasks
         .listTargets(task.id)
@@ -68,9 +118,17 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
     }
   }
 
+  /** 启动只对账既有身份，旧部分成功不能静默补派。 */
   function recoverInterruptedDispatches(): void {
+    for (const legacy of options.runs.listUntrackedActionRuns()) {
+      /** 旧引用从真实业务归属重建，无法证明全部目标时暂停核对。 */
+      const run = options.runs.ensureDispatchTargets(legacy.id);
+      if (!run.dispatchCompletedAt) options.runs.recordIncompleteReconciliation(run.id, '旧运行没有全部冻结目标的接纳证据，请核对已执行范围后继续剩余项目。');
+    }
     for (const run of options.runs.listInFlight()) {
       if (run.status !== 'dispatching') continue;
+      /** 员工动作在后续逐目标派发中先对账 accepting，不依赖引用数量。 */
+      if (options.tasks.getRevision(run.automationRevisionId)?.snapshot.action.kind !== 'conversation') continue;
       const accepted = options.runs.findAcceptedSubmission(run);
       if (accepted) options.runs.markRunning(run.id, accepted.conversationId, accepted.submissionId);
       else markOutcomeUnknown(run, '进程在提交期间退出，尚未找到接收回执。请检查会话后再恢复自动化。');
@@ -86,6 +144,30 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
 
   function reconcileRunning(): void {
     for (const run of options.runs.listInFlight()) {
+      if (run.status === 'running' && run.dispatchTargets.length > 0 && !run.dispatchCompletedAt) {
+        options.runs.recordIncompleteReconciliation(run.id, '运行仍有目标没有明确接纳结果，不能结算整体成功。');
+        continue;
+      }
+      if (run.status === 'running' && run.dispatchCompletedAt && run.executionReferences.length === 0) {
+        settle(run, 'blocked', 'ZEUS_AUTOMATION_NO_ELIGIBLE_TASK', '全部目标均无可领取任务，本次没有执行工作。');
+        continue;
+      }
+      if (run.status === 'running' && run.executionReferences.length > 0) {
+        const states = run.executionReferences.map((reference) => options.readExecution?.(reference));
+        if (states.some((state) => !state)) {
+          markOutcomeUnknown(run, '运行关联的工作或流程已不可用，请核对实际交付记录。');
+          continue;
+        }
+        if (states.some((state) => state?.status === 'running')) continue;
+        if (states.some((state) => state?.status === 'outcome_unknown')) {
+          markOutcomeUnknown(run, '关联执行的结果未知，自动化不会重新派发。');
+          continue;
+        }
+        const failed = states.find((state) => state?.status === 'failed' || state?.status === 'cancelled');
+        if (failed) settle(run, 'failed', failed.errorCode ?? 'ZEUS_AUTOMATION_EXECUTION_FAILED', failed.errorMessage ?? '关联工作或流程未完成。');
+        else settle(run, 'succeeded');
+        continue;
+      }
       if (run.status !== 'running' || !run.conversationId) continue;
       const conversation = options.conversations.getById(run.conversationId);
       if (!conversation) {
@@ -111,38 +193,122 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
     options.publish('automation.run.terminal', { automationId: updated.automationId, runId: updated.id, projectId: updated.projectId, status: updated.status, unread: true });
   }
 
-  /** 逐次领取候选；已暂停或取消的运行留待后续明确恢复。 */
+  /** 同一原运行逐目标接纳，首目标的引用不会改变整条派发状态。 */
   async function dispatch(candidate: AutomationRunRecord): Promise<void> {
-    /** 领取入口再次核对任务状态，跳过已经失效的候选。 */
-    const running = options.runs.markDispatching(candidate.id);
-    if (!running) return;
+    /** 新候选正常领取，恢复中的原派发沿用原尝试身份。 */
+    const running = candidate.status === 'dispatching' ? options.runs.getById(candidate.id) : options.runs.markDispatching(candidate.id);
+    if (!running || options.tasks.getById(running.automationId)?.status !== 'active') return;
+    /** 只读取运行冻结修订，当前编辑不会影响剩余目标。 */
     const revision = options.tasks.getRevision(running.automationRevisionId);
-    /** 运行按冻结顺序解析项目；缺少任何一个都整体阻断。 */
+    if (!revision) {
+      options.runs.setTerminal(running.id, 'blocked', 'ZEUS_AUTOMATION_CONFIG_TARGET_UNAVAILABLE', '运行修订已不可用。');
+      return;
+    }
+    if (revision.snapshot.action.kind !== 'conversation') {
+      /** 完整范围先持久化，即使首目标尚未接纳也可以恢复。 */
+      options.runs.ensureDispatchTargets(running.id);
+      await options.save();
+      for (const frozen of options.runs.getById(running.id)!.dispatchTargets) {
+        /** 每个目标重新核对人工控制，等待保存期间取消或暂停后不得继续接纳。 */
+        if (options.runs.getById(running.id)?.status !== 'dispatching' || options.tasks.getById(running.automationId)?.status !== 'active') return;
+        if (frozen.status === 'accepted' || frozen.status === 'skipped') continue;
+        /** 操作中的目标保留准确任务和绑定，异常时据此对账。 */
+        let target = frozen;
+        try {
+          if (target.status === 'accepting') {
+            /** 未收到回执也可能已经接纳，先查现有业务账本。 */
+            const accepted = options.runs.findAcceptedExecution(target);
+            if (accepted === false) {
+              options.runs.updateDispatchTarget(running.id, { ...target, status: 'skipped', reason: '原工作安排没有可领取分工。' });
+              await options.save();
+              continue;
+            }
+            if (accepted) {
+              options.runs.updateDispatchTarget(running.id, { ...target, status: 'accepted', reference: accepted, reason: null });
+              await options.save();
+              continue;
+            }
+          }
+          /** 缺失项目明确阻塞，已有目标引用不被清空。 */
+          const project = options.getProject(target.projectId) ?? (running.projectIds.length === 0 ? options.ensureTemporaryWorkspace(running.id) : undefined);
+          if (!project) throw new Error('ZEUS_AUTOMATION_CONFIG_TARGET_UNAVAILABLE: 目标项目已不可用。');
+          if (!options.prepareAction || !options.dispatchAction) throw new Error('ZEUS_AUTOMATION_ACTION_UNAVAILABLE: 员工工作入口不可用。');
+          if (!target.taskId || !target.employeeId) {
+            /** 尚未接纳的目标只解析一次，跳过也须耐久记账。 */
+            const prepared = await options.prepareAction({ run: options.runs.getById(running.id)!, snapshot: revision.snapshot, project, target });
+            if (!prepared) {
+              options.runs.updateDispatchTarget(running.id, { ...target, status: 'skipped', reason: '没有符合条件且可领取的任务。' });
+              await options.save();
+              continue;
+            }
+            target = { ...target, ...prepared };
+          }
+          target = { ...target, status: 'accepting', reason: null };
+          options.runs.updateDispatchTarget(running.id, target);
+          await options.save();
+          /** 保存可能让出控制权，业务接纳前最后核对暂停或取消。 */
+          if (options.runs.getById(running.id)?.status !== 'dispatching' || options.tasks.getById(running.automationId)?.status !== 'active') return;
+          /** 接纳后保存该目标引用，仍保持 dispatching 直到全部目标完成。 */
+          const reference = await options.dispatchAction({ run: options.runs.getById(running.id)!, snapshot: revision.snapshot, project, target });
+          options.runs.updateDispatchTarget(running.id, { ...target, status: reference ? 'accepted' : 'skipped', reference, reason: reference ? null : '原工作安排没有可领取分工。' });
+          await options.save();
+        } catch (error) {
+          /** 正式账本能证明接纳时保存原引用，不能重派。 */
+          try {
+            const accepted = target.status === 'accepting' ? options.runs.findAcceptedExecution(target) : null;
+            if (accepted === false) {
+              options.runs.updateDispatchTarget(running.id, { ...target, status: 'skipped', reason: '原工作安排没有可领取分工。' });
+              await options.save();
+              continue;
+            }
+            if (accepted) {
+              options.runs.updateDispatchTarget(running.id, { ...target, status: 'accepted', reference: accepted, reason: null });
+              await options.save();
+              continue;
+            }
+            /** 未发生业务接纳的目标保留准确失败原因，人工恢复仍沿冻结范围。 */
+            options.runs.updateDispatchTarget(running.id, { ...target, status: 'pending', reason: error instanceof Error ? error.message : String(error) });
+            /** 部分工作已接纳时保留串行占位，恢复规则只补原运行剩余目标。 */
+            if (options.runs.getById(running.id)?.executionReferences.length) options.tasks.setStatus(running.automationId, 'paused');
+            else options.runs.setTerminal(running.id, 'blocked', errorCode(error), error instanceof Error ? error.message : String(error));
+          } catch (reconciliationError) {
+            /** 接纳事实待核对时同样保留原占位和身份，不能放行后继运行。 */
+            options.tasks.setStatus(running.automationId, 'paused');
+            /** 使用当前目标事实，避免把已记账的引用覆盖为未接纳。 */
+            const currentTarget = options.runs.getById(running.id)?.dispatchTargets.find((entry) => entry.projectId === target.projectId);
+            if (currentTarget) options.runs.updateDispatchTarget(running.id, { ...currentTarget, reason: reconciliationError instanceof Error ? reconciliationError.message : String(reconciliationError) });
+          }
+          await options.save();
+          return;
+        }
+      }
+      /** 所有目标均明确处理后，才能等待全部真实执行终态。 */
+      const updated = options.runs.completeDispatch(running.id);
+      await options.save();
+      options.publish('automation.run.started', { automationId: updated.automationId, runId: updated.id, executionReferences: updated.executionReferences, dispatchTargets: updated.dispatchTargets });
+      return;
+    }
+    /** 会话动作仍一次接纳全部项目，共用既有提交幂等身份。 */
     const projects = running.projectIds.map((projectId) => options.getProject(projectId));
-    if (!revision || projects.some((project) => !project)) {
-      options.runs.setTerminal(running.id, 'blocked', 'ZEUS_AUTOMATION_CONFIG_TARGET_UNAVAILABLE', !revision ? '运行修订已不可用。' : '至少一个目标项目已不可用。');
+    if (projects.some((project) => !project)) {
+      options.runs.setTerminal(running.id, 'blocked', 'ZEUS_AUTOMATION_CONFIG_TARGET_UNAVAILABLE', '至少一个目标项目已不可用。');
       return;
     }
-    let executionProject: ZeusProjectRecord;
     try {
-      /** 无项目运行只在派发前按需建立技术工作区，不把它写回用户目标列表。 */
-      executionProject = (projects[0] as ZeusProjectRecord | undefined) ?? options.getProject(running.projectId) ?? options.ensureTemporaryWorkspace(running.id);
-    } catch (error) {
-      options.runs.setTerminal(running.id, 'blocked', errorCode(error), error instanceof Error ? error.message : String(error));
-      return;
-    }
-    // 在进入外部提交前保存运行身份；退出后可据此对账，不能重新生成运行。
-    await options.save();
-    try {
-      const accepted = await options.dispatch({ run: running, snapshot: revision.snapshot, project: executionProject, projects: projects as ZeusProjectRecord[] });
+      /** 无项目工作只使用技术工作区，不写回用户项目列表。 */
+      const project = (projects[0] as ZeusProjectRecord | undefined) ?? options.getProject(running.projectId) ?? options.ensureTemporaryWorkspace(running.id);
+      await options.save();
+      /** 会话动作也在最后一次保存后核对人工控制，暂停后不接纳新提交。 */
+      if (options.runs.getById(running.id)?.status !== 'dispatching' || options.tasks.getById(running.automationId)?.status !== 'active') return;
+      const accepted = await options.dispatch({ run: running, snapshot: revision.snapshot, project, projects: projects as ZeusProjectRecord[] });
       const updated = options.runs.markRunning(running.id, accepted.conversationId, accepted.submissionId);
       await options.save();
       options.publish('automation.run.started', { automationId: updated.automationId, runId: updated.id, projectId: updated.projectId, conversationId: updated.conversationId });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      /** 会话提交恢复仍核对准确原提交，不用整会话终态替代。 */
       const accepted = options.runs.findAcceptedSubmission(running);
       if (accepted) options.runs.markRunning(running.id, accepted.conversationId, accepted.submissionId);
-      else markOutcomeUnknown(running, `${errorCode(error)}: ${message.slice(0, 2_000)}`);
+      else markOutcomeUnknown(running, `${errorCode(error)}: ${error instanceof Error ? error.message.slice(0, 2_000) : String(error)}`);
     }
   }
 

@@ -108,6 +108,15 @@ const ownershipGroups = [
       'digital_team_workflow_templates_global',
       'digital_team_workflow_runs',
       'digital_team_node_attempts',
+      // 项目流程、正式缺陷与可重建资料目录均由工作管理维护耐久关系。
+      'digital_team_project_workflows',
+      'digital_team_task_repair_budgets',
+      // 同一父验收轮只接纳一次修复预算，重启与重复事件沿用耐久回执。
+      'digital_team_repair_round_receipts',
+      'defect_workflow_records',
+      'work_artifact_submissions',
+      'work_artifact_publications',
+      'work_task_doc_locations',
       'employee_memory_proposals',
       'employee_team_recipes',
       'digital_employee_templates',
@@ -212,24 +221,20 @@ export const storageTableOwnership: readonly StorageTableOwnershipRecord[] = own
 
 /** 可删除重建的独立派生数据库表；不得与 Core 权威表或其备份边界混为一谈。 */
 export const storageAuxiliaryTableOwnership: readonly StorageAuxiliaryTableOwnershipRecord[] = [
-  ...['projection_metadata', 'conversation_search_documents', 'conversation_search_fts', 'conversation_turn_documents', 'conversation_projection_watermarks'].map(
-    (table): StorageAuxiliaryTableOwnershipRecord => ({
-      database: 'projection_index',
-      table,
-      owner: 'projection_indexer',
-      documentationOwnerLabel: '投影索引器',
-      authorityClass: 'D',
-    }),
-  ),
-  ...['cache_metadata', 'cache_entries'].map(
-    (table): StorageAuxiliaryTableOwnershipRecord => ({
-      database: 'projection_cache',
-      table,
-      owner: 'cache_manager',
-      documentationOwnerLabel: '缓存管理器',
-      authorityClass: 'R',
-    }),
-  ),
+  ...['projection_metadata', 'conversation_search_documents', 'conversation_search_fts', 'conversation_turn_documents', 'conversation_projection_watermarks'].map((table): StorageAuxiliaryTableOwnershipRecord => ({
+    database: 'projection_index',
+    table,
+    owner: 'projection_indexer',
+    documentationOwnerLabel: '投影索引器',
+    authorityClass: 'D',
+  })),
+  ...['cache_metadata', 'cache_entries'].map((table): StorageAuxiliaryTableOwnershipRecord => ({
+    database: 'projection_cache',
+    table,
+    owner: 'cache_manager',
+    documentationOwnerLabel: '缓存管理器',
+    authorityClass: 'R',
+  })),
 ];
 
 export function storageTableOwner(table: string): StorageTableOwnershipRecord | undefined {

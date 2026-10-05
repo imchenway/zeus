@@ -1881,55 +1881,6 @@
     border-top: 0;
     background: transparent;
   }
-  .employee-identity-heading {
-    display: flex;
-    align-items: center;
-    gap: 22px;
-    padding-bottom: 20px;
-    border-bottom: 0;
-  }
-  .employee-identity-heading > .digital-employee-avatar {
-    inline-size: 104px;
-    block-size: 116px;
-    background: transparent;
-  }
-  .employee-identity-heading > div {
-    display: grid;
-    gap: 7px;
-  }
-  .employee-identity-heading > div > span {
-    color: var(--zeus-product-muted);
-    font-size: 12px;
-  }
-  .employee-avatar-options {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-  .employee-avatar-option {
-    display: grid;
-    place-items: center;
-    inline-size: 46px;
-    block-size: 50px;
-    padding: 3px;
-    border: 1px solid transparent;
-    border-radius: 6px;
-    background: var(--zeus-product-panel);
-    cursor: pointer;
-  }
-  .employee-avatar-option[aria-pressed='true'] {
-    border-color: var(--zeus-product-accent);
-    background: var(--zeus-product-accent-soft);
-  }
-  .employee-avatar-option img {
-    inline-size: 100%;
-    block-size: 100%;
-    object-fit: contain;
-  }
-  .employee-avatar-option:disabled {
-    cursor: wait;
-    opacity: 0.6;
-  }
   .settings-archive-filters {
     display: grid;
     grid-template-columns: 200px minmax(0, 1fr);

@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { presentModelOptions } from '../../modelOptionPresentation.js';
 import { resolveModelCapability } from '../../session/modelSelection.js';
 import type { CodexTaskPushModelCapability } from '../../session/sessionTypes.js';
@@ -29,7 +29,14 @@ export function AgentExecutionConfigFields(props: {
   readOnly?: boolean;
   allowProjectDefaultModel?: boolean;
   compact?: boolean;
+  /** 项目继承员工提示词时按需展开，避免和项目补充要求重复占位。 */
+  inheritedPrompt?: boolean;
 }) {
+  /** 必填的继承提示词被清空时就地展开，不在用户补全时自动折叠。 */
+  const promptDetails = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    if (props.inheritedPrompt && !props.value.prompt.trim() && promptDetails.current) promptDetails.current.open = true;
+  }, [props.inheritedPrompt, props.value.prompt]);
   const zh = props.language === 'zh-CN';
   const modelPresentation = useMemo(() => presentModelOptions(props.models, props.value.model, props.language, { preserveMissingSelection: true }), [props.language, props.models, props.value.model]);
   const selectedModel = resolveModelCapability(props.models, props.value.model);
@@ -92,45 +99,6 @@ export function AgentExecutionConfigFields(props: {
           />
         </label>
         <label>
-          <span>{zh ? '推理级别' : 'Reasoning effort'}</span>
-          <ZeusSelect
-            size="regular"
-            ariaLabel={zh ? '选择推理级别' : 'Choose reasoning effort'}
-            value={props.value.reasoningEffort}
-            onChange={(reasoningEffort) => props.onChange({ reasoningEffort })}
-            options={capabilityOptions(props.value.reasoningEffort, reasoningValues, zh ? '跟随模型默认' : 'Use model default', zh ? '当前值不可用' : 'Current value unavailable')}
-            disabled={props.readOnly || !selectedModel}
-            searchable={false}
-          />
-        </label>
-        <label>
-          <span>{zh ? '处理速度' : 'Processing speed'}</span>
-          <ZeusSelect
-            size="regular"
-            ariaLabel={zh ? '选择处理速度' : 'Select processing speed'}
-            value={props.value.serviceTier}
-            onChange={(serviceTier) => props.onChange({ serviceTier })}
-            options={capabilityOptions(props.value.serviceTier, serviceValues, zh ? '跟随模型默认' : 'Use model default', zh ? '当前值不可用' : 'Current value unavailable')}
-            disabled={props.readOnly || !selectedModel}
-            searchable={false}
-          />
-        </label>
-        <label>
-          <span>{zh ? '工作模式' : 'Work mode'}</span>
-          <ZeusSelect
-            size="regular"
-            ariaLabel={zh ? '选择工作模式' : 'Choose work mode'}
-            value={props.value.workMode}
-            onChange={(workMode) => props.onChange({ workMode })}
-            options={[
-              { value: 'default', label: zh ? '默认' : 'Default' },
-              { value: 'plan', label: zh ? '规划' : 'Plan' },
-            ]}
-            disabled={props.readOnly}
-            searchable={false}
-          />
-        </label>
-        <label>
           <span>{zh ? '权限模式' : 'Permission mode'}</span>
           <ZeusSelect
             size="regular"
@@ -143,27 +111,92 @@ export function AgentExecutionConfigFields(props: {
           />
         </label>
       </div>
-      <label>
-        <span>Skills</span>
-        <SkillMultiSelector
-          client={props.skillClient}
-          projectId={props.projectId}
-          value={props.value.skillIds}
-          onChange={(skillIds) => props.onChange({ skillIds })}
-          language={props.language}
-          disabled={props.readOnly}
-          ariaLabel={zh ? '添加允许使用的 Skill' : 'Add an allowed skill'}
-        />
-        <small>{zh ? '可搜索并选择多个 Skill；Skill 不会扩大工具或权限范围。' : 'Search and select multiple skills; skills never expand tool or permission boundaries.'}</small>
-      </label>
-      <label>
-        <span>{zh ? '员工提示词' : 'Employee prompt'}</span>
-        <textarea rows={props.compact ? 4 : 7} value={props.value.prompt} onChange={(event) => props.onChange({ prompt: event.currentTarget.value })} disabled={props.readOnly} maxLength={20000} />
-      </label>
+      {props.inheritedPrompt ? (
+        <details className="digital-employee-advanced-settings" ref={promptDetails}>
+          <summary>{zh ? '员工默认提示词' : 'Employee default prompt'}</summary>
+          <label>
+            <span>{zh ? '员工提示词' : 'Employee prompt'}</span>
+            <textarea
+              aria-invalid={!props.value.prompt.trim()}
+              rows={props.compact ? 4 : 7}
+              value={props.value.prompt}
+              onChange={(event) => props.onChange({ prompt: event.currentTarget.value })}
+              disabled={props.readOnly}
+              maxLength={20000}
+            />
+            {!props.value.prompt.trim() ? <small className="is-error">{zh ? '请填写员工提示词。' : 'Enter the employee prompt.'}</small> : null}
+          </label>
+        </details>
+      ) : (
+        <label>
+          <span>{zh ? '员工提示词' : 'Employee prompt'}</span>
+          <textarea rows={props.compact ? 4 : 7} value={props.value.prompt} onChange={(event) => props.onChange({ prompt: event.currentTarget.value })} disabled={props.readOnly} maxLength={20000} />
+        </label>
+      )}
+      <details className="digital-employee-advanced-settings">
+        <summary>
+          {zh ? '高级设置' : 'Advanced settings'}
+          <small>{props.value.workMode === 'plan' ? (zh ? '规划模式' : 'Plan mode') : props.value.skillIds.length ? `${props.value.skillIds.length} Skills` : zh ? '跟随模型默认' : 'Model defaults'}</small>
+        </summary>
+        <div className="digital-employee-form-grid">
+          <label>
+            <span>{zh ? '推理级别' : 'Reasoning effort'}</span>
+            <ZeusSelect
+              size="regular"
+              ariaLabel={zh ? '选择推理级别' : 'Choose reasoning effort'}
+              value={props.value.reasoningEffort}
+              onChange={(reasoningEffort) => props.onChange({ reasoningEffort })}
+              options={capabilityOptions(props.value.reasoningEffort, reasoningValues, zh ? '跟随模型默认' : 'Use model default', zh ? '当前值不可用' : 'Current value unavailable')}
+              disabled={props.readOnly || !selectedModel}
+              searchable={false}
+            />
+          </label>
+          <label>
+            <span>{zh ? '处理速度' : 'Processing speed'}</span>
+            <ZeusSelect
+              size="regular"
+              ariaLabel={zh ? '选择处理速度' : 'Select processing speed'}
+              value={props.value.serviceTier}
+              onChange={(serviceTier) => props.onChange({ serviceTier })}
+              options={capabilityOptions(props.value.serviceTier, serviceValues, zh ? '跟随模型默认' : 'Use model default', zh ? '当前值不可用' : 'Current value unavailable')}
+              disabled={props.readOnly || !selectedModel}
+              searchable={false}
+            />
+          </label>
+          <label>
+            <span>{zh ? '工作模式' : 'Work mode'}</span>
+            <ZeusSelect
+              size="regular"
+              ariaLabel={zh ? '选择工作模式' : 'Choose work mode'}
+              value={props.value.workMode}
+              onChange={(workMode) => props.onChange({ workMode })}
+              options={[
+                { value: 'default', label: zh ? '默认' : 'Default' },
+                { value: 'plan', label: zh ? '规划' : 'Plan' },
+              ]}
+              disabled={props.readOnly}
+              searchable={false}
+            />
+          </label>
+        </div>
+        <label>
+          <span>Skills</span>
+          <SkillMultiSelector
+            client={props.skillClient}
+            projectId={props.projectId}
+            value={props.value.skillIds}
+            onChange={(skillIds) => props.onChange({ skillIds })}
+            language={props.language}
+            disabled={props.readOnly}
+            ariaLabel={zh ? '添加允许使用的 Skill' : 'Add an allowed skill'}
+          />
+        </label>
+      </details>
     </div>
   );
 }
 
+/** 选择模型后沿用其公开默认值，不增加额外确认。 */
 function modelDefaults(model: CodexTaskPushModelCapability): Partial<AgentExecutionConfigValue> {
   return {
     agentKind: model.agentKind ?? 'codex',
@@ -173,6 +206,7 @@ function modelDefaults(model: CodexTaskPushModelCapability): Partial<AgentExecut
   };
 }
 
+/** 下拉保留当前值和模型默认，不可用配置明确标记。 */
 function capabilityOptions(currentValue: string, values: readonly string[] | ReadonlyArray<{ value: string; label: string }>, defaultLabel: string, unavailableLabel: string): Array<{ value: string; label: string; disabled?: boolean }> {
   const normalized = values.map((value) => (typeof value === 'string' ? { value, label: value } : value));
   const options: Array<{ value: string; label: string; disabled?: boolean }> = [{ value: '', label: defaultLabel }, ...normalized];

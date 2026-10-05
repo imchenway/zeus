@@ -86,7 +86,7 @@ export class ContextSourceCatalog {
     this.roots = new Map(normalized.map((root) => [root.id, root]));
   }
 
-  /** 只枚举单个项目的 `/docs` 一级目录；不会跨项目或递归扫描历史目录。 */
+  /** 固定任务 README 优先；旧目录仅有界枚举一级文件，不递归复制成果正文。 */
   async discoverTaskDocuments(input: { rootId: string; projectId: string; taskCode: string; maximumDirectoryEntries?: number }): Promise<ProjectTaskDocumentSelection> {
     const root = this.requireRoot(input.rootId);
     const projectId = boundedText(input.projectId, 'projectId', 1, 512);
@@ -99,6 +99,27 @@ export class ContextSourceCatalog {
     try {
       const docsStatus = await lstat(docsPath);
       if (docsStatus.isSymbolicLink() || !docsStatus.isDirectory()) throw pathError('项目 docs 不是普通目录或是符号链接。', { rootId: root.id });
+      /** Core 主索引为固定入口，不按文件修改时间重新猜测有效任务资料。 */
+      try {
+        const taskDirectory = await lstat(join(docsPath, taskCode));
+        if (taskDirectory.isSymbolicLink() || !taskDirectory.isDirectory()) throw pathError('任务资料目录必须是非符号链接普通目录。', { rootId: root.id, taskCode });
+        const fixed = await resolveOwnedFile(root, `docs/${taskCode}/README.md`);
+        const status = await lstat(fixed.path);
+        const primary: ProjectTaskDocumentCandidate = {
+          rootId: root.id,
+          projectId,
+          taskCode,
+          relativePath: fixed.relativePath,
+          format: 'markdown',
+          role: 'primary',
+          byteLength: status.size,
+          modifiedAt: status.mtime.toISOString(),
+          selectionReasons: ['任务资料固定入口 README.md'],
+        };
+        return { primary, candidates: [primary], truncatedDirectory: false };
+      } catch (error) {
+        if (errorCode(error) !== 'ENOENT' && !(error instanceof ContextSourceCatalogError && error.code === 'ZEUS_CONTEXT_SOURCE_NOT_FOUND')) throw error;
+      }
       const directory = await opendir(docsPath);
       let scannedEntries = 0;
       for await (const entry of directory) {
@@ -387,7 +408,8 @@ function compareDocumentCandidates(left: ProjectTaskDocumentCandidate, right: Pr
   return role || format || right.modifiedAt.localeCompare(left.modifiedAt) || right.byteLength - left.byteLength || left.relativePath.localeCompare(right.relativePath);
 }
 
-function filenameMatchesTaskCode(filename: string, taskCode: string): boolean {
+/** 资料索引与上下文发现共用任务编码边界，支持原有横线、下划线及仅编码命名。 */
+export function filenameMatchesTaskCode(filename: string, taskCode: string): boolean {
   const upper = filename.toUpperCase();
   const code = taskCode.toUpperCase();
   const index = upper.indexOf(code);

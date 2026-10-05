@@ -23,6 +23,18 @@ type EditorTarget = { kind: 'new' } | { kind: 'employee'; record: DigitalEmploye
 /** 新增数字员工支持从内置模板开始，也支持空白创建。 */
 type DigitalEmployeeCreationSource = { kind: 'blank' } | { kind: 'template'; templateId: string } | null;
 
+/** 全局员工默认能力分别授权，绑定到项目后可以明确覆盖。 */
+const employeeDefaultAuthorityFields = [
+  { key: 'memoryEnabled', zh: '读取已确认员工经验', en: 'Read approved employee memory' },
+  { key: 'allowCodeChanges', zh: '允许修改代码', en: 'Allow code changes' },
+  { key: 'allowTests', zh: '允许执行验证', en: 'Allow verification' },
+  { key: 'allowCommit', zh: '允许提交', en: 'Allow commits' },
+  { key: 'allowPush', zh: '允许推送', en: 'Allow pushes' },
+  { key: 'allowMerge', zh: '允许合并', en: 'Allow merges' },
+  { key: 'allowDeploy', zh: '允许部署', en: 'Allow deployment' },
+  { key: 'allowComplete', zh: '允许完成任务', en: 'Allow task completion' },
+] as const;
+
 export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplatesSettingsProps) {
   const zh = props.language === 'zh-CN';
   const [templates, setTemplates] = useState<DigitalEmployeeTemplateRecord[]>([]);
@@ -468,9 +480,39 @@ function DigitalEmployeeProfileEditor(props: {
       <section className="digital-employee-form-section">
         <header>
           <strong>{zh ? 'AI 工作配置' : 'AI work settings'}</strong>
-          <small>{zh ? '与项目数字员工和单次执行使用相同的模型、联动选项、Skill 与提示词字段。' : 'Uses the same model, linked options, skills, and prompt fields as project employees and individual runs.'}</small>
+          <small>{zh ? '选择模型与权限，填写员工职责。' : 'Uses the same model, linked options, skills, and prompt fields as project employees and individual runs.'}</small>
         </header>
         <AgentExecutionConfigFields value={props.draft} models={props.models} skillClient={props.skillClient} language={props.language} readOnly={props.disabled} onChange={patch} />
+      </section>
+      <section className="digital-employee-form-section">
+        <header>
+          <strong>{zh ? '员工默认能力' : 'Employee defaults'}</strong>
+          <small>{zh ? '跨项目复用；项目可以配置差异，实际执行还受任务授权约束。' : 'Shared across projects. Project overrides and task authorization apply to each run.'}</small>
+        </header>
+        <div className="digital-employee-policy-grid">
+          {employeeDefaultAuthorityFields.slice(0, 3).map((field) => (
+            <label key={field.key} className="digital-employee-checkbox-row">
+              <input type="checkbox" checked={props.draft[field.key] === true} disabled={props.disabled} onChange={(event) => patch({ [field.key]: event.currentTarget.checked })} />
+              <span>{zh ? field.zh : field.en}</span>
+            </label>
+          ))}
+        </div>
+        <details className="digital-employee-advanced-settings">
+          <summary>
+            {zh ? '管理动作授权' : 'Management action grants'}
+            <small>
+              {employeeDefaultAuthorityFields.slice(3).filter((field) => props.draft[field.key]).length} {zh ? '项已开启' : 'enabled'}
+            </small>
+          </summary>
+          <div className="digital-employee-policy-grid">
+            {employeeDefaultAuthorityFields.slice(3).map((field) => (
+              <label key={field.key} className="digital-employee-checkbox-row">
+                <input type="checkbox" checked={props.draft[field.key] === true} disabled={props.disabled} onChange={(event) => patch({ [field.key]: event.currentTarget.checked })} />
+                <span>{zh ? field.zh : field.en}</span>
+              </label>
+            ))}
+          </div>
+        </details>
       </section>
     </div>
   );

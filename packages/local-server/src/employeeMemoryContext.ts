@@ -3,9 +3,11 @@ import type { DigitalEmployeeRecord, LongTermMemoryRecord, LongTermMemoryReposit
 /** 工作与讨论共用员工经验检索，预算限制总输入且不截断单条经验。 */
 export function selectEmployeeMemories(repository: LongTermMemoryRepository, employee: DigitalEmployeeRecord, projectId: string, query: string, asOf: string): LongTermMemoryRecord[] {
   if (employee.memoryEnabled === false) return [];
+  /** 新冻结明确区分未绑定；旧冻结只沿自身模板来源解析，禁止回读当前改绑身份。 */
+  const globalEmployeeId = employee.globalEmployeeId === undefined ? employee.templateId : employee.globalEmployeeId;
   /** 只取当前员工范围，普通项目记忆仍由原上下文编译器处理。 */
   const candidates = repository
-    .resolveForContext({ projectId, employeeId: employee.id, asOf, minimumConfidence: 0.7 })
+    .resolveForContext({ projectId, employeeId: employee.id, globalEmployeeId, asOf, minimumConfidence: 0.7 })
     .selected.filter((record) => record.scope.kind === 'employee' && (record.kind !== 'domain_knowledge' || relevantEmployeeKnowledge(record.memoryKey + record.content, query)));
   /** 大条目跳过而非裁断；八条总计不超过一万二千字符。 */
   const selected: LongTermMemoryRecord[] = [];

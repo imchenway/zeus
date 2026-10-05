@@ -837,7 +837,7 @@ export class TaskRepository {
       const timestamp = nowIso();
       const taskSequence = this.nextTaskSequence(input.projectId);
       const parentTaskId = input.parentTaskId ?? null;
-      if (parentTaskId) this.assertValidParent(input.projectId, '__new_task__', parentTaskId, 1);
+      if (parentTaskId) this.assertValidParent(input.projectId, '__new_task__', parentTaskId);
       const record: ZeusTaskRecord = {
         id: input.id ?? `task_${randomId(12)}`,
         projectId: input.projectId,
@@ -962,6 +962,7 @@ export class TaskRepository {
   updateStatus(taskId: string, status: ZeusTaskRecord['status']): ZeusTaskRecord {
     const existing = this.getById(taskId);
     if (!existing) throw new Error(`Zeus task not found: ${taskId}`);
+    if (status === 'completed') this.assertCanComplete(taskId);
     const timestamp = nextIsoTimestamp(existing.updatedAt);
     this.db.execute(`UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [status, timestamp, taskId]);
     const updated = this.getById(taskId);
@@ -975,6 +976,7 @@ export class TaskRepository {
     if (!isTaskManagementStatus(managementStatus)) throw new Error(`Unknown Zeus task management status: ${String(managementStatus)}`);
     const existing = this.getById(taskId);
     if (!existing) throw new Error(`Zeus task not found: ${taskId}`);
+    if (managementStatus === 'completed') this.assertCanComplete(taskId);
     if (expectedUpdatedAt && existing.updatedAt !== expectedUpdatedAt) throwTaskEditConflict(taskId, existing.updatedAt);
     if (existing.managementStatus === managementStatus) return existing;
     const timestamp = nextIsoTimestamp(existing.updatedAt);
@@ -1212,7 +1214,7 @@ export class TaskRepository {
       if (existing.updatedAt !== input.expectedUpdatedAt) throwTaskEditConflict(taskId, existing.updatedAt);
       const parentTaskId = input.parentTaskId === undefined ? existing.parentTaskId : input.parentTaskId;
       const relatedTaskIds = input.relatedTaskIds === undefined ? existing.relatedTaskIds : [...new Set(input.relatedTaskIds)];
-      this.assertValidParent(existing.projectId, taskId, parentTaskId, this.subtreeHeight(taskId));
+      this.assertValidParent(existing.projectId, taskId, parentTaskId);
       this.assertValidRelatedTasks(existing, relatedTaskIds);
       if (parentTaskId === existing.parentTaskId && canonicalJson(relatedTaskIds.slice().sort()) === canonicalJson(existing.relatedTaskIds.slice().sort())) return existing;
       const timestamp = nextIsoTimestamp(existing.updatedAt);
@@ -1236,7 +1238,7 @@ export class TaskRepository {
   validateParentChange(taskId: string, parentTaskId: string | null): void {
     const existing = this.getById(taskId);
     if (!existing) throw Object.assign(new Error('Task not found.'), { code: 'ZEUS_TASK_NOT_FOUND' as const });
-    this.assertValidParent(existing.projectId, taskId, parentTaskId, this.subtreeHeight(taskId));
+    this.assertValidParent(existing.projectId, taskId, parentTaskId);
   }
 
   delete(taskId: string, input: DeleteTaskInput = {}): DeleteTaskResult {
@@ -1262,7 +1264,7 @@ export class TaskRepository {
         if (!replacementParentTaskId) throw Object.assign(new Error('A replacement parent task is required.'), { code: 'ZEUS_TASK_REPLACEMENT_PARENT_REQUIRED' as const });
         const descendantIds = new Set(this.listDescendantIds(taskId));
         if (descendantIds.has(replacementParentTaskId)) throw Object.assign(new Error('The replacement parent cannot be inside the deleted task branch.'), { code: 'ZEUS_TASK_PARENT_CYCLE' as const });
-        for (const child of directChildren) this.assertValidParent(existing.projectId, child.id, replacementParentTaskId, this.subtreeHeight(child.id));
+        for (const child of directChildren) this.assertValidParent(existing.projectId, child.id, replacementParentTaskId);
         for (const child of directChildren) {
           this.db.execute(`UPDATE tasks SET parent_task_id = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [replacementParentTaskId, nextIsoTimestamp(child.updatedAt), child.id]);
         }
@@ -1338,18 +1340,19 @@ export class TaskRepository {
     return descendants;
   }
 
-  private subtreeHeight(taskId: string): number {
-    const children = this.db.select<{ id: string }>(`SELECT id FROM tasks WHERE parent_task_id = ? AND deleted_at IS NULL`, [taskId]);
-    return children.length === 0 ? 1 : 1 + Math.max(...children.map((child) => this.subtreeHeight(child.id)));
+  /** 完成前检查正式登记的阻塞缺陷，自动执行和人工关单共用。 */
+  assertCanComplete(taskId: string): void {
+    // 独立任务仓库也可用于尚未初始化流程模块的资料读取；未登记缺陷时没有额外完成门禁。
+    if (!this.db.get(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'defect_workflow_records'`)) return;
+    /** 父任务及缺陷自身都必须经过复验或明确接受风险后才能完成。 */
+    const blocker = this.db.get<{ id: string }>(`SELECT id FROM defect_workflow_records WHERE (parent_task_id = ? OR defect_task_id = ?) AND status NOT IN ('accepted', 'risk_accepted') LIMIT 1`, [taskId, taskId]);
+    if (blocker) throw Object.assign(new Error('存在尚未通过复验的阻塞缺陷，请完成复验或登记接受风险的理由。'), { code: 'ZEUS_TASK_BLOCKING_DEFECT', statusCode: 409, defectId: blocker.id });
   }
 
-  private assertValidParent(projectId: string, taskId: string, parentTaskId: string | null, subtreeHeight: number): void {
-    if (!parentTaskId) {
-      if (subtreeHeight > 3) throw Object.assign(new Error('Task hierarchy cannot exceed three levels.'), { code: 'ZEUS_TASK_HIERARCHY_DEPTH_EXCEEDED' as const });
-      return;
-    }
+  /** 父子关系只限制同项目与无循环，层数由用户实际组织需要决定。 */
+  private assertValidParent(projectId: string, taskId: string, parentTaskId: string | null): void {
+    if (!parentTaskId) return;
     if (parentTaskId === taskId) throw Object.assign(new Error('A task cannot be its own parent.'), { code: 'ZEUS_TASK_PARENT_CYCLE' as const });
-    let depth = 1;
     let cursor: string | null = parentTaskId;
     const visited = new Set<string>();
     while (cursor) {
@@ -1360,10 +1363,8 @@ export class TaskRepository {
       ]);
       if (!parent) throw Object.assign(new Error('Parent task not found.'), { code: 'ZEUS_TASK_PARENT_NOT_FOUND' as const });
       if (parent.project_id !== projectId) throw Object.assign(new Error('Parent task must belong to the same project.'), { code: 'ZEUS_TASK_RELATION_PROJECT_MISMATCH' as const });
-      depth += 1;
       cursor = parent.parent_task_id;
     }
-    if (depth + subtreeHeight - 1 > 3) throw Object.assign(new Error('Task hierarchy cannot exceed three levels.'), { code: 'ZEUS_TASK_HIERARCHY_DEPTH_EXCEEDED' as const });
   }
 
   private assertValidRelatedTasks(task: ZeusTaskRecord, relatedTaskIds: string[]): void {

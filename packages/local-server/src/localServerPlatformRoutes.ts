@@ -2,8 +2,9 @@ import { resolveContextCapacityPolicy } from './contextCapacitySupport.js';
 import { resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
 import { resolveInteractiveRuntimeShell } from './localServerPlatformSupport.js';
 import { missingTaskRepositories } from './taskRepositoryMembership.js';
-import type { CodexSubscriptionConnectionDiagnostic, FilePreviewIntent, FilePreviewRequest } from '@zeus/shared';
-import { EmployeeMemoryProposalRepository } from '@zeus/storage';
+import type { AutomationExecutionState, CommandActor, CodexSubscriptionConnectionDiagnostic, FilePreviewIntent, FilePreviewRequest } from '@zeus/shared';
+import { DefectWorkflowRepository, EmployeeMemoryProposalRepository, migrateEmployeeAutomationsToUnified, WorkArtifactRepository } from '@zeus/storage';
+import { WorkArtifactDelivery } from './workArtifactDelivery.js';
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
 import { TaskWorkPlanningRepository, TaskWorkReviewRepository, TaskWorkDeploymentRepository } from '@zeus/storage';
 import { hasDatabaseUriPassword } from './projectCore.js';
@@ -3522,6 +3523,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     templates: digitalEmployeeTemplates,
     employees: digitalEmployees,
     automations: digitalEmployeeAutomations,
+    isAutomationMigrated: (automationId) => Boolean(automationTasks.getById(automationId)),
     executions: digitalEmployeeExecutions,
     projectEvents: digitalEmployeeProjectEvents,
     commandDefinitions: digitalEmployeeCommandDefinitions,
@@ -3535,6 +3537,75 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     kick: () => digitalEmployeeOrchestrator?.kick(),
   });
 
+  /** 手动、员工与自动化指派共用耐久命令；项目未配置流程时才返回单员工入口。 */
+  const acceptProjectWorkflowAssignment = async (input: {
+    projectId: string;
+    taskId: string;
+    employeeId: string;
+    executionId?: string | null;
+    source: string;
+    sourceRef?: string;
+    inputDeliverableIds?: string[];
+    reason?: string;
+    context?: Record<string, unknown>;
+  }): Promise<{ workflowRunId: string } | null> => {
+    if (!digitalTeamWorkflowCoordinator) throw nativeApiError('ZEUS_DIGITAL_TEAM_NOT_READY', '项目流程服务尚未就绪。');
+    /** 本次入口权限必须进入运行快照，不能被任务长期授权或员工默认扩大。 */
+    const permissionMode = input.context?.permissionMode;
+    if (permissionMode !== undefined && !['read-only', 'auto', 'full-access'].includes(String(permissionMode))) throw nativeApiError('ZEUS_DIGITAL_TEAM_PERMISSION_INVALID', '本次流程权限无效。');
+    /** 过期任务事实与正式成果选择一起冻结。 */
+    const assignment = {
+      taskId: input.taskId,
+      employeeId: input.employeeId,
+      permissionMode: permissionMode as 'read-only' | 'auto' | 'full-access' | undefined,
+      expectedTaskUpdatedAt: typeof input.context?.expectedTaskUpdatedAt === 'string' ? input.context.expectedTaskUpdatedAt : undefined,
+      inputDeliverableIds: input.inputDeliverableIds,
+      reason: input.reason,
+    };
+    /** 准备只读核验真实代码基线，不重放未知运行。 */
+    const prepared = await digitalTeamWorkflowCoordinator.prepareEmployeeAssignment(input.projectId, assignment);
+    if (!prepared) return null;
+    /** 来自既有执行或会话提交的身份，重复请求关联同一接纳。 */
+    const operationIdentity = `project-workflow:${input.executionId ?? input.sourceRef ?? `${input.taskId}:${input.employeeId}`}`;
+    /** 内部命令沿用统一摘要和幂等账本，人工来源保留真实 actor。 */
+    const request = imInternalCommandRequest({
+      commandType: workManagementCommandTypes.digitalTeamRunCreate,
+      scopeKind: 'project',
+      scopeId: input.projectId,
+      operationIdentity,
+      input: assignment,
+      inputSha256: workManagementInputSha256(assignment),
+    });
+    request.command.actor = input.context?.actor ? (input.context.actor as CommandActor) : { kind: 'system', id: 'project-workflow-admission' };
+    /** 已接纳的同身份返回原回执，改派由协调器登记交接。 */
+    const parsed = workManagementCommands.parse<typeof assignment>({ value: request, commandType: workManagementCommandTypes.digitalTeamRunCreate, scopeKind: 'project', expectedScopeId: () => input.projectId });
+    /** 业务写入和运行冻结在同一事务完成。 */
+    const receipt = workManagementCommands.executeCore({
+      parsed,
+      destinationId: 'project-workflow-admission',
+      resourceId: input.taskId,
+      mutateBusinessState: () =>
+        digitalTeamWorkflowCoordinator!.acceptEmployeeAssignment(input.projectId, assignment, { commandId: parsed.command.commandId, operationIdentity: parsed.operationIdentity, actor: parsed.command.actor }, prepared),
+    });
+    await db.save();
+    /** 使用协调器实际运行身份，而不是第一个员工会话身份。 */
+    const projection = receipt.result as { run: { id: string } };
+    return { workflowRunId: projection.run.id };
+  };
+
+  /** 正式成果存于 ArtifactStore，项目 docs 与无项目受管目录均可从账本重建。 */
+  const workArtifacts = new WorkArtifactDelivery({
+    publications: new WorkArtifactRepository(db),
+    artifacts: artifactStore,
+    deliverables: taskWorkDeliverables,
+    runs: taskWorkRuns,
+    tasks,
+    projects,
+    conversations,
+    workspaces: taskWorkspaces,
+    managedRoot: join(dataLayout.artifactsDirectory, 'task-docs'),
+  });
+
   taskWorkManagement = registerTaskWorkManagement({
     server,
     apiToken: options.apiToken,
@@ -3546,6 +3617,11 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     items: taskWorkItems,
     conversationGoals,
     memoryProposals: new EmployeeMemoryProposalRepository(db, () => now().toISOString()),
+    resolveProjectMemoryPolicy: (projectId) => {
+      /** 只有用户保存的当前项目流程规则可被新工作冻结，未配置时保持人工确认。 */
+      const workflow = digitalTeamWorkflowCoordinator?.getProjectWorkflow(projectId);
+      return workflow ? { workflowTemplateId: workflow.id, workflowTemplateRevision: workflow.revision, autoApplyStableExperience: workflow.definition.projectMemoryPolicy?.autoApplyStableExperience === true } : null;
+    },
     planning: new TaskWorkPlanningRepository(db, () => now().toISOString()),
     reviews: new TaskWorkReviewRepository(db, () => now().toISOString()),
     deployments: new TaskWorkDeploymentRepository(db, () => now().toISOString()),
@@ -3563,6 +3639,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     commandDefinitions: digitalEmployeeCommandDefinitions,
     commandRuns,
     artifacts: artifactStore,
+    workArtifacts,
+    acceptProjectWorkflowAssignment,
     skillSnapshotRoot: join(dataLayout.artifactsDirectory, 'task-work-skill-snapshots'),
     skills: zeusSkillService,
     plugins: zeusPluginService,
@@ -3579,6 +3657,32 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
 
   /** 数字团队复用现有任务、会话、证据与 Git 能力，只新增冻结图和节点尝试账本。 */
   digitalTeamWorkflowCoordinator = new DigitalTeamWorkflowCoordinator({
+    defects: new DefectWorkflowRepository(db),
+    isCompletedTaskStatus: (projectId, statusId) => resolveTaskManagementStatusConfigForProject(projectId).roles.completedStatusId === statusId,
+    validateTaskStatus: (projectId, statusId) => resolveTaskManagementStatusConfigForProject(projectId).statuses.some((status: import('@zeus/shared').TaskManagementStatusDefinition) => status.id === statusId),
+    advanceTaskStatus: (taskId, statusId, source) => {
+      /** 流程产生的状态事件保留发生前后身份并阻止自触发。 */
+      const before = tasks.getById(taskId);
+      if (!before || before.managementStatus === statusId) return;
+      if (statusId === resolveTaskManagementStatusConfigForProject(before.projectId).roles.completedStatusId) tasks.assertCanComplete(taskId);
+      /** 状态与来源事件在当前 Core 事务内统一更新。 */
+      const updated = tasks.updateManagementStatus(taskId, statusId, before.updatedAt);
+      taskEvents.create({
+        taskId,
+        eventType: 'task.management_status.changed',
+        title: '项目流程推进任务状态',
+        payload: { before: before.managementStatus, after: updated.managementStatus, source: 'digital_team_workflow', suppressAutomation: true, digitalTeamRunId: source.runId, nodeId: source.nodeId, phase: source.phase },
+      });
+      publishRealtimeEvent('task.management_status.changed', { taskId, projectId: before.projectId, before: before.managementStatus, after: updated.managementStatus, source: 'digital_team_workflow' });
+    },
+    finishAcceptedDefect: (taskId, runId) => {
+      /** 父流程确已接纳复验后，缺陷任务才允许完成。 */
+      const defectTask = tasks.getById(taskId);
+      if (!defectTask) return;
+      tasks.assertCanComplete(taskId);
+      tasks.updateManagementStatus(taskId, resolveTaskManagementStatusConfigForProject(defectTask.projectId).roles.completedStatusId);
+      taskEvents.create({ taskId, eventType: 'task.defect.accepted', title: '缺陷复验通过', payload: { source: 'digital_team_workflow', suppressAutomation: true, digitalTeamRunId: runId } });
+    },
     isTaskTerminal: taskManagementStatusIsTerminal,
     templates: new DigitalTeamWorkflowTemplateRepository(db, () => now().toISOString()),
     runs: new DigitalTeamWorkflowRunRepository(db, () => now().toISOString()),
@@ -3608,6 +3712,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
 
   if (!readOnlyValidation) {
     automationScheduler = createAutomationScheduler({
+      migrateLegacy: () => migrateEmployeeAutomationsToUnified(db),
       tasks: automationTasks,
       runs: automationRuns,
       conversations,
@@ -3618,8 +3723,143 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       now: automationNow,
       publish: publishRealtimeEvent,
       dispatch: createAutomationConversationDispatch({ conversations, modelConnections, executeConversationDispatchMessage, executeProjectConversationIdempotent, publish: publishNativeConversationEvent }),
+      prepareAction: async ({ run, snapshot, project }) => {
+        if (!digitalEmployeeOrchestrator) throw nativeApiError('ZEUS_AUTOMATION_WORK_UNAVAILABLE', '员工工作服务尚未就绪。');
+        /** 员工绑定与任务在业务接纳前解析并交由调度器冻结。 */
+        const employee = digitalEmployees.ensureProjectEmployee(project.id, snapshot.action.employeeId!);
+        if (!employee.enabled) throw nativeApiError('ZEUS_DIGITAL_EMPLOYEE_DISABLED', '自动化选择的员工未启用。');
+        /** 新配置明确策略；既有新规则仍保留原指定与事件优先语义。 */
+        const selection =
+          snapshot.action.kind === 'employee_work'
+            ? 'create'
+            : (snapshot.action.taskSelection ?? (snapshot.action.taskId ? 'specified' : snapshot.action.useEventTask !== false && run.sourceEvent?.projectId === project.id ? 'event' : 'create'));
+        /** 任务池为空明确跳过，不创建替代任务。 */
+        const pooledTask = selection === 'pool' ? digitalEmployeeOrchestrator.selectEligibleAutomationTask(project.id, employee.id) : null;
+        if (selection === 'pool' && !pooledTask) return null;
+        /** 目标身份在接纳前冻结，重启不能另选一条任务。 */
+        const taskId =
+          selection === 'pool'
+            ? pooledTask!.id
+            : selection === 'specified'
+              ? snapshot.action.taskId
+              : selection === 'event'
+                ? run.sourceEvent?.projectId === project.id
+                  ? run.sourceEvent.taskId
+                  : null
+                : stableIdentity('automation_work_task', `${run.id}:${project.id}`);
+        if (!taskId) throw nativeApiError('ZEUS_AUTOMATION_TASK_REQUIRED', '所选策略没有可用目标任务。');
+        /** 已有目标必须属于当前项目且仍可执行，新建身份也不能覆盖旧任务。 */
+        const task = tasks.getById(taskId);
+        if (selection !== 'create' && (!task || task.projectId !== project.id)) throw nativeApiError('ZEUS_AUTOMATION_TASK_SCOPE', '自动化目标任务不属于已选择项目。');
+        if (task && taskManagementStatusIsTerminal(task)) throw nativeApiError('ZEUS_AUTOMATION_TASK_TERMINAL', '目标任务已经结束，过期事件不重新执行。');
+        if (selection !== 'create' && !digitalEmployeeOrchestrator.selectEligibleAutomationTask(project.id, employee.id, taskId)) return null;
+        return { taskId, employeeId: employee.id };
+      },
+      dispatchAction: async ({ run, snapshot, project, target }) => {
+        if (!digitalEmployeeOrchestrator) throw nativeApiError('ZEUS_AUTOMATION_WORK_UNAVAILABLE', '员工工作服务尚未就绪。');
+        /** 只使用已经耐久冻结的任务与项目绑定，不再读取当前选择。 */
+        const taskId = target.taskId!;
+        /** 历史绑定的有效授权仍需实时核对，但不能换成另一员工。 */
+        const employee = digitalEmployees.getById(target.employeeId!);
+        if (!employee || employee.projectId !== project.id || !employee.enabled) throw nativeApiError('ZEUS_DIGITAL_EMPLOYEE_DISABLED', '已冻结的自动化员工不可用。');
+        /** 创建任务采用原运行与项目的稳定身份，中断恢复只读取原记录。 */
+        let task = tasks.getById(taskId);
+        if (!task) {
+          /** 只有明确新建策略或既有新建语义才有创建权限。 */
+          const selection = snapshot.action.taskSelection ?? (snapshot.action.taskId ? 'specified' : snapshot.action.useEventTask !== false && run.sourceEvent?.projectId === project.id ? 'event' : 'create');
+          if (snapshot.action.kind === 'project_task' && selection !== 'create') throw nativeApiError('ZEUS_AUTOMATION_TASK_REQUIRED', '已冻结的待领取任务已不可用，不能创建替代任务。');
+          task = workManagementCoreOperations.createUserTask(
+            {
+              projectId: project.id,
+              title: snapshot.action.title || snapshot.name,
+              /** 自动化新建普通任务沿用任务域现行类型，不省略 Core 必填字段。 */
+              taskType: 'requirement',
+              description: snapshot.prompt,
+              sourceContext: { type: 'automation', automationId: run.automationId, automationRunId: run.id, suppressAutomation: true },
+              allowCodeChanges: snapshot.action.kind === 'project_task' && snapshot.permissionMode === 'full-access' && employee.allowCodeChanges,
+              allowTests: employee.allowTests && snapshot.permissionMode !== 'read-only',
+              allowGitCommit: snapshot.action.kind === 'project_task' && snapshot.permissionMode === 'full-access' && employee.deliveryGrants.allowCommit,
+            },
+            taskId,
+            { commandId: `automation-work:${run.id}:${project.id}`, operationIdentity: `automation-work:${run.id}:${project.id}`, actor: { kind: 'system', id: 'automation-scheduler' } },
+          );
+          await db.save();
+        }
+        if (task.projectId !== project.id) throw nativeApiError('ZEUS_AUTOMATION_TASK_SCOPE', '已冻结的自动化目标不属于当前项目。');
+        if (taskManagementStatusIsTerminal(task)) throw nativeApiError('ZEUS_AUTOMATION_TASK_TERMINAL', '目标任务已经结束，过期事件不重新执行。');
+        /** 项目任务复用项目流程；员工调研仍保留独立工作。 */
+        const reference = await digitalEmployeeOrchestrator.queueAutomatedAssignment({
+          projectId: project.id,
+          taskId,
+          employeeId: employee.id,
+          sourceRef: target.sourceRef,
+          bypassWorkflow: snapshot.action.kind === 'employee_work',
+          permissionMode: snapshot.permissionMode,
+        });
+        return reference;
+      },
+      readExecution: (reference): AutomationExecutionState | undefined => {
+        if (reference.kind === 'task_plan') {
+          /** 原安排按准确代次等待整体完成，不采用重新安排后的成功状态。 */
+          const plan = reference.taskId ? new TaskWorkPlanningRepository(db).get(reference.taskId) : null;
+          if (!plan || plan.id !== reference.id || plan.generation !== reference.generation) return { status: 'outcome_unknown', errorCode: 'ZEUS_AUTOMATION_PLAN_REPLACED', errorMessage: '自动化关联的原工作安排已变化，请核对原分工交付。' };
+          /** 必要分工结果未知或失败时不能把仍在等待的旧安排显示为成功。 */
+          const required = plan.stages.flatMap((stage) => stage.items).filter((item) => item.arrangement?.required !== false);
+          const unknown = required.some((item) => item.currentRunId && taskWorkRuns.getById(item.currentRunId)?.status === 'outcome_unknown');
+          if (unknown) return { status: 'outcome_unknown', errorCode: 'ZEUS_AUTOMATION_PLAN_OUTCOME_UNKNOWN', errorMessage: '原工作安排存在结果未知的必要分工。' };
+          if (required.some((item) => item.status === 'failed')) return { status: 'failed', errorCode: 'ZEUS_AUTOMATION_PLAN_WORK_FAILED', errorMessage: '原工作安排的必要分工失败。' };
+          return { status: plan.state === 'completed' ? 'completed' : plan.state === 'cancelled' ? 'cancelled' : 'running', paused: plan.state === 'paused' || plan.state === 'draft' };
+        }
+        if (reference.kind === 'workflow') {
+          /** 等待完整流程终结，第一份员工会话结束不能宣布成功。 */
+          const run = (digitalTeamWorkflowCoordinator?.getRunProjection(reference.id) as { run: import('@zeus/shared').DigitalTeamWorkflowRunRecord } | undefined)?.run;
+          if (!run) return undefined;
+          return {
+            status: run.status === 'completed' ? 'completed' : run.status === 'failed' ? 'failed' : run.status === 'cancelled' ? 'cancelled' : run.status === 'outcome_unknown' ? 'outcome_unknown' : 'running',
+            paused: run.controlState === 'paused',
+            errorCode: typeof run.error?.code === 'string' ? run.error.code : null,
+            errorMessage: typeof run.error?.message === 'string' ? run.error.message : null,
+          };
+        }
+        if (reference.kind === 'task_work') {
+          /** Task Work 成功以真实运行成果为准，等待输入仍保持运行。 */
+          const run = taskWorkRuns.getById(reference.id);
+          if (!run) return undefined;
+          return {
+            status: run.status === 'succeeded' ? 'completed' : run.status === 'failed' ? 'failed' : run.status === 'cancelled' ? 'cancelled' : run.status === 'outcome_unknown' ? 'outcome_unknown' : 'running',
+            errorCode: run.errorCode,
+            errorMessage: run.errorMessage,
+          };
+        }
+        if (reference.kind === 'legacy_employee') {
+          /** 迁移中的旧执行继续使用自己的回执，不重建会话。 */
+          const execution = digitalEmployeeExecutions.getById(reference.id);
+          if (!execution) return undefined;
+          return {
+            status: execution.status === 'delivered' ? 'completed' : execution.status === 'failed' ? 'failed' : execution.status === 'cancelled' ? 'cancelled' : 'running',
+            errorCode: execution.errorCode,
+            errorMessage: execution.errorMessage,
+          };
+        }
+        return undefined;
+      },
     });
     digitalEmployeeOrchestrator = createDigitalEmployeeOrchestrator({
+      migrateAutomations: () => migrateEmployeeAutomationsToUnified(db),
+      acceptProjectWorkflowAssignment,
+      isAutomationMigrated: (automationId) => Boolean(automationTasks.getById(automationId)),
+      readProjectWorkflowRun: (runId) => {
+        /** 员工入口同样读取完整流程终态，而非初始会话。 */
+        const run = (digitalTeamWorkflowCoordinator?.getRunProjection(runId) as { run: import('@zeus/shared').DigitalTeamWorkflowRunRecord } | undefined)?.run;
+        return run
+          ? {
+              status: run.status === 'completed' ? 'completed' : run.status === 'failed' ? 'failed' : run.status === 'cancelled' ? 'cancelled' : run.status === 'outcome_unknown' ? 'outcome_unknown' : 'running',
+              paused: run.controlState === 'paused',
+              errorCode: typeof run.error?.code === 'string' ? run.error.code : null,
+              errorMessage: typeof run.error?.message === 'string' ? run.error.message : null,
+            }
+          : undefined;
+      },
       server,
       apiToken: options.apiToken,
       workManagement: workManagementCommands,
@@ -4304,18 +4544,15 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     sendError: sendWorkspaceGitCommandError,
   });
 
-  server.get(
-    '/api/settings/runtime-status',
-    async (): Promise<RuntimeStatusSnapshot> => ({
-      aiCli: toPassiveRuntimeStatus(platformMutableState.runtimeSettings),
-      telegram: getTelegramConfigurationState(await readTelegramToken(), platformMutableState.telegramSecuritySettings.allowedUserIds),
-      terminal: {
-        ...runtimeTerminalStatus,
-        /** 用户显式配置优先，图形界面没有 SHELL 时使用系统账户登记值。 */
-        shell: resolveInteractiveRuntimeShell(platformMutableState.runtimeSettings.shell),
-      },
-    }),
-  );
+  server.get('/api/settings/runtime-status', async (): Promise<RuntimeStatusSnapshot> => ({
+    aiCli: toPassiveRuntimeStatus(platformMutableState.runtimeSettings),
+    telegram: getTelegramConfigurationState(await readTelegramToken(), platformMutableState.telegramSecuritySettings.allowedUserIds),
+    terminal: {
+      ...runtimeTerminalStatus,
+      /** 用户显式配置优先，图形界面没有 SHELL 时使用系统账户登记值。 */
+      shell: resolveInteractiveRuntimeShell(platformMutableState.runtimeSettings.shell),
+    },
+  }));
 
   async function ensureCodexRemoteControlReady(remoteControl = platformMutableState.codexRemoteControlEnabled): Promise<void> {
     await codexAppServerManager.ensureReady({
@@ -4332,13 +4569,10 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     return { enabled: platformMutableState.codexRemoteControlEnabled, status: currentStatus, clients, managedStandalone: readCodexRemoteControlStandalone() };
   }
 
-  server.get(
-    '/api/security/secrets',
-    async (): Promise<SecuritySecretsSnapshot> => ({
-      telegramBotToken: getSecretPresenceLabel(await readTelegramToken()),
-      externalApiKey: getSecretPresenceLabel(await secretStore.getSecret('external.apiKey')),
-    }),
-  );
+  server.get('/api/security/secrets', async (): Promise<SecuritySecretsSnapshot> => ({
+    telegramBotToken: getSecretPresenceLabel(await readTelegramToken()),
+    externalApiKey: getSecretPresenceLabel(await secretStore.getSecret('external.apiKey')),
+  }));
 
   server.get('/api/security/audit-logs', async (): Promise<SecurityAuditLogEntry[]> => auditLogs.listRecent().map(toSecurityAuditLogEntry));
 

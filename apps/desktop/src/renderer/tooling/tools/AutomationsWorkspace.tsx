@@ -17,7 +17,18 @@ import { ZeusSelect } from '../toolPageHost.js';
 import type { SkillCatalog } from '../toolPageHost.js';
 import { codexCapabilitiesChangedEvent } from '../toolPageHost.js';
 import { SkillSelector } from '../toolPageHost.js';
-import type { AutomationBlockStrategy, AutomationConversationMode, AutomationPermissionMode, AutomationRunRecord, AutomationTaskInput, AutomationTaskRecord, AutomationTriggerKind } from '../toolPageHost.js';
+import type {
+  AutomationBlockStrategy,
+  AutomationConversationMode,
+  AutomationExecutionReference,
+  AutomationExecutionTarget,
+  AutomationPermissionMode,
+  AutomationRunRecord,
+  AutomationTaskInput,
+  AutomationTaskRecord,
+  AutomationTriggerKind,
+} from '../toolPageHost.js';
+import type { DigitalEmployeeTemplateRecord, AutomationActionKind } from '../toolPageHost.js';
 
 type Draft = Omit<AutomationTaskInput, 'pluginIds'> & { pluginIds: string[]; maxRunsPerDayText: string; maxTokensPerDayText: string };
 type View = 'tasks' | 'inbox';
@@ -26,14 +37,32 @@ const allProjectsValue = '__all_projects__';
 const noProjectValue = '__no_project__';
 
 /** 自动化目录与收件箱使用全局控件，编辑及删除复用表单弹窗。 */
-export function AutomationsWorkspace(props: { client: DashboardClient | null; projects: ProjectRecord[]; language: 'zh-CN' | 'en-US'; onOpenConversation: (run: AutomationRunRecord) => Promise<void> }) {
+export function AutomationsWorkspace(props: {
+  client: DashboardClient | null;
+  projects: ProjectRecord[];
+  language: 'zh-CN' | 'en-US';
+  onOpenConversation: (run: AutomationRunRecord) => Promise<void>;
+  onOpenExecution: (run: AutomationRunRecord, reference: AutomationExecutionReference, target: AutomationExecutionTarget) => Promise<void>;
+}) {
   const zh = props.language === 'zh-CN';
   /** 临时会话是技术工作区，不得作为用户项目出现在目标列表。 */
   const userProjects = props.projects.filter((project) => project.id !== temporaryWorkspaceId);
   const [view, setView] = useState<View>('tasks');
   const [tasks, setTasks] = useState<AutomationTaskRecord[]>([]);
   const [inbox, setInbox] = useState<AutomationRunRecord[]>([]);
+  /** 多项目运行逐份选择实际引用，保持查看入口数量固定。 */
+  const [selectedExecutions, setSelectedExecutions] = useState<Record<string, string>>({});
   const [models, setModels] = useState<CodexTaskPushModelCapability[]>([]);
+  /** 员工选择只展示已创建的全局身份，内置模板不会成为执行成员。 */
+  const [employees, setEmployees] = useState<DigitalEmployeeTemplateRecord[]>([]);
+  /** 指定已有任务只读取用户明确选择的一个项目。 */
+  const [projectTasks, setProjectTasks] = useState<Array<{ id: string; taskCode?: string; title: string }>>([]);
+  /** 任务目录加载期间不能保存旧项目任务引用。 */
+  const [projectTasksLoading, setProjectTasksLoading] = useState(false);
+  /** 指定任务读取失败时在表单说明原因。 */
+  const [projectTasksError, setProjectTasksError] = useState<string | null>(null);
+  /** 待核对的迁移规则必须实际重选策略，普通名称编辑不能代替确认。 */
+  const [taskSelectionConfirmed, setTaskSelectionConfirmed] = useState(true);
   const [extensionCatalog, setExtensionCatalog] = useState<SkillCatalog | null>(null);
   const [extensionsLoading, setExtensionsLoading] = useState(false);
   const [extensionsError, setExtensionsError] = useState<string | null>(null);
@@ -83,9 +112,10 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
     setError(null);
     try {
       const capabilitiesRequest = modelProjectId ? props.client.loadCodexConversationCapabilities(modelProjectId) : props.client.loadDigitalEmployeeCapabilities();
-      const [nextTasks, nextInbox, capabilities] = await Promise.all([props.client.loadAutomations(), props.client.loadAutomationInbox(), capabilitiesRequest]);
+      const [nextTasks, nextInbox, capabilities, nextEmployees] = await Promise.all([props.client.loadAutomations(), props.client.loadAutomationInbox(), capabilitiesRequest, props.client.loadGlobalDigitalEmployees()]);
       setTasks(nextTasks);
       setInbox(nextInbox);
+      setEmployees(nextEmployees);
       if (modelRevision === modelRevisionRef.current) setModels(capabilities?.models.filter((model) => model.available !== false) ?? []);
       setDraft((current) => {
         if (current.modelId || !capabilities?.models.length) return current;
@@ -106,8 +136,37 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
   }, [props.client]);
 
   const selectedProjectKey = draft.projectIds.join('\u0000');
+  /** 编辑旧规则时沿用保存的领取方式，未选择策略的新规则才使用原有默认。 */
+  const taskSelection = draft.action?.taskSelection ?? (draft.action?.taskId ? 'specified' : draft.action?.useEventTask ? 'event' : 'create');
+  /** 指定同一任务不能跨项目复用其身份。 */
+  const taskProjectId = draft.projectIds.length === 1 ? draft.projectIds[0] : null;
   useEffect(() => {
-    if (!props.client || !editingId) {
+    setProjectTasks([]);
+    setProjectTasksError(null);
+    if (!props.client || !editingId || draft.action?.kind !== 'project_task' || taskSelection !== 'specified' || !taskProjectId) {
+      setProjectTasksLoading(false);
+      return;
+    }
+    /** 切换目标后丢弃旧请求，防止任务目录交叉回写。 */
+    let active = true;
+    setProjectTasksLoading(true);
+    void props.client
+      .loadTasks({ projectId: taskProjectId })
+      .then((items) => {
+        if (active) setProjectTasks(items);
+      })
+      .catch((cause: unknown) => {
+        if (active) setProjectTasksError(formatVisibleApplicationError(cause, zh ? 'zh-CN' : 'en'));
+      })
+      .finally(() => {
+        if (active) setProjectTasksLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [draft.action?.kind, editingId, props.client, taskProjectId, taskSelection, zh]);
+  useEffect(() => {
+    if (!props.client || !editingId || (draft.action?.kind ?? 'conversation') !== 'conversation') {
       setExtensionCatalog(null);
       setExtensionsLoading(false);
       setExtensionsError(null);
@@ -140,7 +199,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
     return () => {
       active = false;
     };
-  }, [editingId, props.client, selectedProjectKey]);
+  }, [editingId, props.client, selectedProjectKey, draft.action?.kind]);
 
   const modelOptions = useMemo(
     () =>
@@ -214,6 +273,15 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
     (!extensionsLoading && !extensionsError && Boolean(extensionCatalog) && (!draft.skillId || extensionCatalog!.skills.some((skill) => skill.id === draft.skillId)) && draft.pluginIds.every((id) => availablePluginIds.has(id)));
   /** 原会话不能被自动化静默扩展到其他项目目录。 */
   const conversationProjectsValid = draft.conversationMode !== 'original' || draft.projectIds.length === 1;
+  /** 员工动作必须有员工，项目任务必须有业务项目。 */
+  const actionValid =
+    (draft.action?.kind ?? 'conversation') === 'conversation' ||
+    (Boolean(draft.action?.employeeId) &&
+      (draft.action?.kind !== 'project_task' ||
+        (draft.projectIds.length > 0 &&
+          taskSelectionConfirmed &&
+          (taskSelection !== 'specified' || (Boolean(taskProjectId) && !projectTasksLoading && projectTasks.some((task) => task.id === draft.action?.taskId))) &&
+          (taskSelection !== 'event' || draft.triggerKind === 'event'))));
 
   /** 创建时重置草稿，弹窗负责初始焦点。 */
   function startCreate(): void {
@@ -221,16 +289,19 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
     setDraft(emptyDraft(props.projects, modelOptions[0]?.model));
     setFullAccessAcknowledged(false);
     setError(null);
+    setTaskSelectionConfirmed(true);
   }
 
   /** 编辑沿用已保存配置，不改变运行状态。 */
   function startEdit(task: AutomationTaskRecord): void {
+    setTaskSelectionConfirmed(!task.migrationIssue);
     setEditingId(task.id);
     setDraft({
       name: task.name,
       description: task.description,
       prompt: task.prompt,
       projectIds: task.projectIds,
+      action: task.action,
       triggerKind: task.triggerKind,
       triggerConfig: task.triggerConfig,
       timezone: task.timezone,
@@ -260,7 +331,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
   /** 保存期间锁定表单，权限确认仍按既有服务流程执行。 */
   async function submit(event: FormEvent): Promise<void> {
     event.preventDefault();
-    if (!props.client || !editingId || busyId) return;
+    if (!props.client || !editingId || busyId || !actionValid) return;
     setBusyId(editingId);
     setError(null);
     try {
@@ -306,7 +377,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
       <header className="automations-header">
         <div>
           <h1 id="automations-title">{zh ? '自动化' : 'Automations'}</h1>
-          <p>{zh ? '按设定时间在一个会话内依次处理所选项目，并查看每次运行结果。' : 'Process selected projects in one conversation on a schedule, and view each run result.'}</p>
+          <p>{zh ? '按设定时间处理所选项目，并查看每次工作的结果。' : 'Process selected projects on a schedule, and view each work result.'}</p>
         </div>
         <div className="automations-header-actions">
           <Button aria-label={zh ? '刷新自动化' : 'Refresh automations'} onClick={() => void refresh()} busy={loading} disabled={loading || Boolean(busyId)}>
@@ -355,6 +426,7 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                       <small>
                         {projectNames(task.projectIds, props.projects, zh)} · {modelName(task, models)}
                       </small>
+                      {task.migrationIssue ? <small className="automation-warning">{task.migrationIssue}</small> : null}
                     </span>
                     <span className="automation-row-schedule">{scheduleLabel(task, zh)}</span>
                   </button>
@@ -393,6 +465,8 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
           ) : inbox.length ? (
             inbox.map((run) => {
               const task = tasks.find((candidate) => candidate.id === run.automationId);
+              /** 冻结引用的身份不会随项目顺序或刷新变化。 */
+              const reference = run.executionReferences.find((item) => executionReferenceKey(item) === selectedExecutions[run.id]) ?? run.executionReferences[0];
               return (
                 <article className="automation-inbox-row" key={run.id} data-unread={run.unread ? 'true' : 'false'}>
                   <span className={`automation-run-status status-${run.status}`}>{runStatusLabel(run.status, zh)}</span>
@@ -401,14 +475,62 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                     <small>
                       {projectNames(run.projectIds, props.projects, zh)} · {formatDate(run.completedAt ?? run.createdAt)}
                     </small>
+                    {run.dispatchTargets.length > 0 ? (
+                      <>
+                        <p>
+                          {zh
+                            ? `已接纳 ${run.dispatchTargets.filter((target) => target.status === 'accepted').length} / ${run.dispatchTargets.length} · 未接纳 ${run.dispatchTargets.filter((target) => target.status === 'pending' || target.status === 'accepting').length} · 跳过 ${run.dispatchTargets.filter((target) => target.status === 'skipped').length}`
+                            : `Accepted ${run.dispatchTargets.filter((target) => target.status === 'accepted').length} / ${run.dispatchTargets.length} · Pending ${run.dispatchTargets.filter((target) => target.status === 'pending' || target.status === 'accepting').length} · Skipped ${run.dispatchTargets.filter((target) => target.status === 'skipped').length}`}
+                        </p>
+                        <ul>
+                          {run.dispatchTargets.map((target) => (
+                            <li key={target.projectId}>
+                              {target.projectId === temporaryWorkspaceId ? (zh ? '无项目工作' : 'Work without a project') : (props.projects.find((project) => project.id === target.projectId)?.name ?? target.projectId)}
+                              {' · '}
+                              {{ pending: zh ? '尚未接纳' : 'Pending', accepting: zh ? '接纳结果待核对' : 'Reconciling acceptance', accepted: zh ? '已接纳' : 'Accepted', skipped: zh ? '未执行工作' : 'No work executed' }[target.status]}
+                              {target.reason ? ` · ${target.reason}` : ''}
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    ) : null}
                     {run.errorMessage ? (
                       <p>
                         <VisibleApplicationError error={{ code: run.errorCode, message: run.errorMessage }} language={zh ? 'zh-CN' : 'en'} />
                       </p>
                     ) : null}
                     {run.mayOverlapPrevious ? <p className="automation-warning">{zh ? '可能与旧运行重叠' : 'May overlap a previous run'}</p> : null}
+                    {run.dispatchReconciliation ? <p className="automation-warning">{run.dispatchReconciliation.reason}</p> : null}
                   </div>
                   <div className="automation-inbox-actions">
+                    {run.executionReferences.length > 1 ? (
+                      <ZeusSelect
+                        size="compact"
+                        ariaLabel={zh ? '选择实际执行工作' : 'Choose execution'}
+                        value={reference ? executionReferenceKey(reference) : ''}
+                        options={run.executionReferences.map((item, index) => ({
+                          value: executionReferenceKey(item),
+                          label:
+                            props.projects.find((project) => project.id === run.dispatchTargets.find((target) => target.reference && executionReferenceKey(target.reference) === executionReferenceKey(item))?.projectId)?.name ??
+                            (zh ? `工作 ${index + 1}` : `Work ${index + 1}`),
+                        }))}
+                        onChange={(value) => setSelectedExecutions((current) => ({ ...current, [run.id]: value }))}
+                        disabled={Boolean(busyId)}
+                      />
+                    ) : null}
+                    {reference?.kind === 'workflow' || reference?.kind === 'task_work' || reference?.conversationId ? (
+                      <Button
+                        disabled={Boolean(busyId)}
+                        onClick={() => void props.onOpenExecution(run, reference, reference.kind === 'workflow' ? 'workflow' : 'conversation').catch((cause: unknown) => setError(formatVisibleApplicationError(cause, zh ? 'zh-CN' : 'en')))}
+                      >
+                        {reference.kind === 'workflow' ? (zh ? '查看流程' : 'Open workflow') : zh ? '打开工作会话' : 'Open work conversation'}
+                      </Button>
+                    ) : null}
+                    {reference?.taskId ? (
+                      <Button disabled={Boolean(busyId)} onClick={() => void props.onOpenExecution(run, reference, 'task').catch((cause: unknown) => setError(formatVisibleApplicationError(cause, zh ? 'zh-CN' : 'en')))}>
+                        {zh ? '查看任务与成果' : 'Open task and deliverables'}
+                      </Button>
+                    ) : null}
                     {run.conversationId ? (
                       <Button disabled={Boolean(busyId)} onClick={() => void props.onOpenConversation(run).catch((cause: unknown) => setError(formatVisibleApplicationError(cause, zh ? 'zh-CN' : 'en')))}>
                         {zh ? '打开会话' : 'Open conversation'}
@@ -417,6 +539,11 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                     {run.unread ? (
                       <Button busy={busyId === `read:${run.id}`} disabled={Boolean(busyId)} onClick={() => void mutate(`read:${run.id}`, () => props.client!.acknowledgeAutomationRun(run.id))}>
                         {zh ? '标为已读' : 'Mark read'}
+                      </Button>
+                    ) : null}
+                    {(run.status === 'blocked' || run.status === 'outcome_unknown') && !run.dispatchCompletedAt && run.dispatchTargets.some((target) => target.status === 'pending' || target.status === 'accepting') ? (
+                      <Button busy={busyId === `resume:${run.id}`} disabled={Boolean(busyId)} onClick={() => void mutate(`resume:${run.id}`, () => props.client!.resumeAutomationRun(run.id))}>
+                        {zh ? '继续剩余项目' : 'Resume remaining projects'}
                       </Button>
                     ) : null}
                   </div>
@@ -436,7 +563,13 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
             zh={zh}
             busy={Boolean(busyId)}
             submitLabel={editingId === 'new' ? (zh ? '创建并启用' : 'Create and enable') : zh ? '保存更改' : 'Save changes'}
-            submitDisabled={!draft.name.trim() || !draft.prompt.trim() || !selectedModel || !extensionsValid || !conversationProjectsValid || (draft.permissionMode === 'full-access' && !fullAccessAcknowledged)}
+            submitDisabled={
+              !draft.name.trim() ||
+              !draft.prompt.trim() ||
+              !actionValid ||
+              (draft.permissionMode === 'full-access' && !fullAccessAcknowledged) ||
+              ((draft.action?.kind ?? 'conversation') === 'conversation' && (!selectedModel || !extensionsValid || !conversationProjectsValid))
+            }
             onClose={() => setEditingId(null)}
             onSubmit={(event) => void submit(event)}
           >
@@ -483,48 +616,135 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
               </div>
             </fieldset>
             <fieldset className="automation-form-section">
+              <legend>{zh ? '执行动作' : 'Action'}</legend>
+              {tasks.find((task) => task.id === editingId)?.migrationIssue ? <p role="status">{tasks.find((task) => task.id === editingId)!.migrationIssue}</p> : null}
+              <SelectField
+                label={zh ? '动作' : 'Action'}
+                value={draft.action?.kind ?? 'conversation'}
+                options={[
+                  ['conversation', zh ? '普通会话' : 'Conversation'],
+                  ['employee_work', zh ? '员工工作' : 'Employee work'],
+                  ['project_task', zh ? '处理项目任务' : 'Process project tasks'],
+                ]}
+                onChange={(value) =>
+                  setDraft({
+                    ...draft,
+                    action: { ...draft.action, kind: value as AutomationActionKind, employeeId: value === 'conversation' ? null : (draft.action?.employeeId ?? null) },
+                    conversationMode: 'independent',
+                    originalConversationId: null,
+                  })
+                }
+              />
+              {draft.action?.kind !== 'conversation' && draft.action?.kind ? (
+                <SelectField
+                  label={zh ? '员工' : 'Employee'}
+                  value={draft.action.employeeId ?? ''}
+                  options={[['', zh ? '选择员工' : 'Select employee'], ...employees.map((employee): [string, string] => [employee.id, employee.name])]}
+                  onChange={(value) => setDraft({ ...draft, action: { ...draft.action!, employeeId: value || null } })}
+                />
+              ) : null}
+              {draft.action?.kind === 'project_task' ? (
+                <>
+                  <SelectField
+                    label={zh ? '任务选择' : 'Task selection'}
+                    value={taskSelectionConfirmed ? taskSelection : ''}
+                    options={[
+                      ...(!taskSelectionConfirmed ? [['', zh ? '请核对并重选任务方式' : 'Confirm the task selection'] as [string, string]] : []),
+                      ['specified', zh ? '指定已有任务' : 'Specified existing task'],
+                      ['event', zh ? '使用事件任务' : 'Event task'],
+                      ['pool', zh ? '领取任务池任务' : 'Claim from task pool'],
+                      ['create', zh ? '创建新任务' : 'Create new task'],
+                    ]}
+                    onChange={(value) => {
+                      if (!value) return;
+                      setTaskSelectionConfirmed(true);
+                      setDraft({
+                        ...draft,
+                        ...(value === 'event' ? { triggerKind: 'event' } : {}),
+                        action: {
+                          ...draft.action!,
+                          taskSelection: value as NonNullable<AutomationTaskInput['action']>['taskSelection'],
+                          taskId: value === 'specified' ? (draft.action?.taskId ?? null) : null,
+                          useEventTask: value === 'event',
+                        },
+                      });
+                    }}
+                  />
+                  {taskSelection === 'specified' ? (
+                    <label>
+                      <span>{zh ? '已有任务' : 'Existing task'}</span>
+                      <ZeusSelect
+                        size="regular"
+                        ariaLabel={zh ? '指定已有任务' : 'Select an existing task'}
+                        value={draft.action.taskId ?? ''}
+                        disabled={!taskProjectId || projectTasksLoading}
+                        options={[
+                          { value: '', label: zh ? '选择任务' : 'Select task' },
+                          ...projectTasks.map((task) => ({ value: task.id, label: `${task.taskCode ?? task.id} · ${task.title}` })),
+                          ...(draft.action.taskId && !projectTasks.some((task) => task.id === draft.action?.taskId)
+                            ? [{ value: draft.action.taskId, label: zh ? '原任务当前不可用，请重新选择' : 'The saved task is unavailable; select again', disabled: true }]
+                            : []),
+                        ]}
+                        onChange={(taskId) => setDraft({ ...draft, action: { ...draft.action!, taskId: taskId || null } })}
+                        searchable
+                      />
+                      {!taskProjectId ? <small>{zh ? '指定已有任务需要只选择一个目标项目。' : 'Choose one target project for a specified task.'}</small> : null}
+                      {projectTasksLoading ? <small role="status">{zh ? '正在读取任务…' : 'Loading tasks…'}</small> : null}
+                      {projectTasksError ? <small role="alert">{projectTasksError}</small> : null}
+                    </label>
+                  ) : null}
+                  {taskSelection === 'pool' ? <small>{zh ? '没有符合员工领取条件的任务时跳过该项目，不创建替代任务。' : 'Skip a project with no eligible tasks; no substitute task is created.'}</small> : null}
+                  {taskSelection === 'event' ? <small>{zh ? '只处理本次事件所属的任务，需要使用事件触发。' : 'Process the task belonging to the source event; requires an event trigger.'}</small> : null}
+                </>
+              ) : null}
+              {!actionValid ? (
+                <small role="status">
+                  {zh
+                    ? !draft.action?.employeeId
+                      ? '请选择员工。'
+                      : !draft.projectIds.length && draft.action?.kind === 'project_task'
+                        ? '请选择目标项目。'
+                        : !taskSelectionConfirmed
+                          ? '请核对并重选任务方式。'
+                          : taskSelection === 'specified'
+                            ? '请选择当前项目的已有任务。'
+                            : '事件任务需要使用事件触发。'
+                    : 'Complete the employee, target project, or task selection above.'}
+                </small>
+              ) : null}
+            </fieldset>
+            <fieldset className="automation-form-section">
               <legend>{zh ? '运行安排' : 'Schedule'}</legend>
               <div className="automation-form-grid">
                 <SelectField label={zh ? '触发方式' : 'Trigger'} value={draft.triggerKind ?? 'manual'} options={triggerOptions(zh)} onChange={(value) => setDraft({ ...draft, triggerKind: value as AutomationTriggerKind })} />
-                <label>
-                  <span>{zh ? '时区（如 Asia/Shanghai）' : 'Time zone (for example, Asia/Shanghai)'}</span>
-                  <input value={draft.timezone ?? ''} onChange={(event) => setDraft({ ...draft, timezone: event.currentTarget.value })} />
-                </label>
               </div>
               <TriggerFields draft={draft} setDraft={setDraft} zh={zh} />
+              <small>{zh ? `按 ${draft.timezone || 'UTC'} 时间运行` : `Runs in ${draft.timezone || 'UTC'}`}</small>
             </fieldset>
             <fieldset className="automation-form-section">
               <legend>{zh ? '模型与权限' : 'Model and permissions'}</legend>
-              <label>
-                <span>{zh ? '使用模型' : 'Model'}</span>
-                <ZeusSelect
-                  size="regular"
-                  ariaLabel={zh ? '选择模型' : 'Select a model'}
-                  value={selectedModelValue}
-                  options={exactModelOptions}
-                  onChange={(value) => {
-                    const option = modelOptions.find((candidate) => candidate.value === value);
-                    if (option) setDraft({ ...draft, modelSourceId: option.model.sourceId ?? 'codex', modelId: option.model.model, reasoningEffort: option.model.defaultReasoningEffort ?? null });
-                  }}
-                  searchPlaceholder={zh ? '搜索供应商或模型' : 'Search providers or models'}
-                  emptyLabel={zh ? '没有可用模型' : 'No available models'}
-                  triggerLabel={!draft.modelId ? (zh ? '暂无可用模型' : 'No available models') : undefined}
-                  disabled={!modelOptions.length}
-                />
-              </label>
-              <div className="automation-form-grid">
+              {(draft.action?.kind ?? 'conversation') === 'conversation' ? (
                 <label>
-                  <span>{zh ? '推理强度' : 'Reasoning effort'}</span>
+                  <span>{zh ? '使用模型' : 'Model'}</span>
                   <ZeusSelect
                     size="regular"
-                    ariaLabel={zh ? '选择推理强度' : 'Choose reasoning effort'}
-                    value={reasoningEffort}
-                    options={reasoningOptions}
-                    onChange={(value) => setDraft({ ...draft, reasoningEffort: value || null })}
-                    disabled={!selectedModel}
-                    searchable={false}
+                    ariaLabel={zh ? '选择模型' : 'Select a model'}
+                    value={selectedModelValue}
+                    options={exactModelOptions}
+                    onChange={(value) => {
+                      const option = modelOptions.find((candidate) => candidate.value === value);
+                      if (option) setDraft({ ...draft, modelSourceId: option.model.sourceId ?? 'codex', modelId: option.model.model, reasoningEffort: option.model.defaultReasoningEffort ?? null });
+                    }}
+                    searchPlaceholder={zh ? '搜索供应商或模型' : 'Search providers or models'}
+                    emptyLabel={zh ? '没有可用模型' : 'No available models'}
+                    triggerLabel={!draft.modelId ? (zh ? '暂无可用模型' : 'No available models') : undefined}
+                    disabled={!modelOptions.length}
                   />
                 </label>
+              ) : (
+                <p>{zh ? '模型和 Skill 使用员工的有效配置；以下权限继续限制本次自动化。' : 'Uses the employee’s model and skills; these permissions further limit this automation.'}</p>
+              )}
+              <div className="automation-form-grid">
                 <SelectField
                   label={zh ? '权限' : 'Permission'}
                   value={draft.permissionMode ?? 'read-only'}
@@ -548,76 +768,103 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                 </label>
               ) : null}
             </fieldset>
-            <fieldset className="automation-form-section">
-              <legend>{zh ? '运行方式' : 'Run behavior'}</legend>
+
+            <details className="automation-advanced-settings" open={draft.conversationMode === 'original' || Boolean(extensionsError) || !extensionsValid}>
+              <summary>{zh ? '高级设置' : 'Advanced settings'}</summary>
               <div className="automation-form-grid">
-                <SelectField
-                  label={zh ? '会话模式' : 'Conversation mode'}
-                  value={draft.conversationMode ?? 'independent'}
-                  options={[
-                    ['independent', zh ? '每次新建一个会话' : 'One new conversation per run'],
-                    ['original', zh ? '追加原会话' : 'Append to original'],
-                  ]}
-                  onChange={(value) => setDraft({ ...draft, conversationMode: value as AutomationConversationMode })}
-                />
-                <SelectField
-                  label={zh ? '上次运行未结束时' : 'When the previous run is unfinished'}
-                  value={draft.blockStrategy ?? 'serial'}
-                  options={[
-                    ['serial', zh ? '排队等待' : 'Wait in line'],
-                    ['discard', zh ? '跳过新运行' : 'Skip the new run'],
-                    ['cover', zh ? '停止旧运行并开始新的运行' : 'Stop the previous run and start the new one'],
-                  ]}
-                  onChange={(value) => setDraft({ ...draft, blockStrategy: value as AutomationBlockStrategy })}
-                />
-              </div>
-              {draft.conversationMode === 'original' ? (
-                <>
+                <label>
+                  <span>{zh ? '时区（如 Asia/Shanghai）' : 'Time zone (for example, Asia/Shanghai)'}</span>
+                  <input value={draft.timezone ?? ''} onChange={(event) => setDraft({ ...draft, timezone: event.currentTarget.value })} />
+                </label>
+                {(draft.action?.kind ?? 'conversation') === 'conversation' ? (
                   <label>
-                    <span>{zh ? '原会话 ID' : 'Original conversation ID'}</span>
-                    <input required value={draft.originalConversationId ?? ''} onChange={(event) => setDraft({ ...draft, originalConversationId: event.currentTarget.value })} />
+                    <span>{zh ? '推理强度' : 'Reasoning effort'}</span>
+                    <ZeusSelect
+                      size="regular"
+                      ariaLabel={zh ? '选择推理强度' : 'Choose reasoning effort'}
+                      value={reasoningEffort}
+                      options={reasoningOptions}
+                      onChange={(value) => setDraft({ ...draft, reasoningEffort: value || null })}
+                      disabled={!selectedModel}
+                      searchable={false}
+                    />
                   </label>
-                  {draft.projectIds.length !== 1 ? (
-                    <small className="automation-capability-error">
-                      {zh
-                        ? '追加原会话必须选择该会话所属的一个项目；无项目或多项目请使用“每次新建一个会话”。'
-                        : 'Appending to an existing conversation requires its one project. Use one new conversation per run without a project or with multiple projects.'}
-                    </small>
+                ) : null}{' '}
+              </div>
+              <fieldset className="automation-form-section">
+                <legend>{zh ? '运行方式' : 'Run behavior'}</legend>
+                <div className="automation-form-grid">
+                  {(draft.action?.kind ?? 'conversation') === 'conversation' ? (
+                    <SelectField
+                      label={zh ? '会话模式' : 'Conversation mode'}
+                      value={draft.conversationMode ?? 'independent'}
+                      options={[
+                        ['independent', zh ? '每次新建一个会话' : 'One new conversation per run'],
+                        ['original', zh ? '追加原会话' : 'Append to original'],
+                      ]}
+                      onChange={(value) => setDraft({ ...draft, conversationMode: value as AutomationConversationMode })}
+                    />
                   ) : null}
-                </>
-              ) : null}
-            </fieldset>
-            <details>
-              <summary>{zh ? '插件、用量限制与记录保留' : 'Plugins, usage limits, and history retention'}</summary>
+                  <SelectField
+                    label={zh ? '上次运行未结束时' : 'When the previous run is unfinished'}
+                    value={draft.blockStrategy ?? 'serial'}
+                    options={[
+                      ['serial', zh ? '排队等待' : 'Wait in line'],
+                      ['discard', zh ? '跳过新运行' : 'Skip the new run'],
+                      ['cover', zh ? '停止旧运行并开始新的运行' : 'Stop the previous run and start the new one'],
+                    ]}
+                    onChange={(value) => setDraft({ ...draft, blockStrategy: value as AutomationBlockStrategy })}
+                  />
+                </div>
+                {draft.conversationMode === 'original' ? (
+                  <>
+                    <label>
+                      <span>{zh ? '原会话 ID' : 'Original conversation ID'}</span>
+                      <input required value={draft.originalConversationId ?? ''} onChange={(event) => setDraft({ ...draft, originalConversationId: event.currentTarget.value })} />
+                    </label>
+                    {draft.projectIds.length !== 1 ? (
+                      <small className="automation-capability-error">
+                        {zh
+                          ? '追加原会话必须选择该会话所属的一个项目；无项目或多项目请使用“每次新建一个会话”。'
+                          : 'Appending to an existing conversation requires its one project. Use one new conversation per run without a project or with multiple projects.'}
+                      </small>
+                    ) : null}
+                  </>
+                ) : null}
+              </fieldset>
               <div className="automation-form-grid">
-                <label>
-                  <span>{zh ? '技能' : 'Skill'}</span>
-                  <SkillSelector
-                    client={props.client}
-                    value={draft.skillId ?? ''}
-                    onChange={(value) => setDraft({ ...draft, skillId: value || null })}
-                    language={props.language}
-                    catalog={extensionCatalog}
-                    disabled={extensionsLoading || Boolean(extensionsError) || !extensionCatalog}
-                    ariaLabel={zh ? '选择自动化 Skill' : 'Choose automation skill'}
-                  />
-                </label>
-                <label>
-                  <span>{zh ? '插件' : 'Plugins'}</span>
-                  <ZeusSelect
-                    size="regular"
-                    ariaLabel={zh ? '选择自动化 Plugin' : 'Choose automation plugins'}
-                    value=""
-                    selectedValues={draft.pluginIds}
-                    options={pluginOptions}
-                    onChange={(value) => setDraft({ ...draft, pluginIds: draft.pluginIds.includes(value) ? draft.pluginIds.filter((id) => id !== value) : [...draft.pluginIds, value] })}
-                    triggerLabel={pluginTriggerLabel}
-                    disabled={extensionsLoading || Boolean(extensionsError) || !extensionCatalog || !pluginOptions.length}
-                    searchable
-                    searchPlaceholder={zh ? '搜索 Plugin' : 'Search plugins'}
-                    emptyLabel={zh ? '没有可用的 Plugin' : 'No available plugins'}
-                  />
-                </label>
+                {(draft.action?.kind ?? 'conversation') === 'conversation' ? (
+                  <label>
+                    <span>{zh ? '技能' : 'Skill'}</span>
+                    <SkillSelector
+                      client={props.client}
+                      value={draft.skillId ?? ''}
+                      onChange={(value) => setDraft({ ...draft, skillId: value || null })}
+                      language={props.language}
+                      catalog={extensionCatalog}
+                      disabled={extensionsLoading || Boolean(extensionsError) || !extensionCatalog}
+                      ariaLabel={zh ? '选择自动化 Skill' : 'Choose automation skill'}
+                    />
+                  </label>
+                ) : null}
+                {(draft.action?.kind ?? 'conversation') === 'conversation' ? (
+                  <label>
+                    <span>{zh ? '插件' : 'Plugins'}</span>
+                    <ZeusSelect
+                      size="regular"
+                      ariaLabel={zh ? '选择自动化 Plugin' : 'Choose automation plugins'}
+                      value=""
+                      selectedValues={draft.pluginIds}
+                      options={pluginOptions}
+                      onChange={(value) => setDraft({ ...draft, pluginIds: draft.pluginIds.includes(value) ? draft.pluginIds.filter((id) => id !== value) : [...draft.pluginIds, value] })}
+                      triggerLabel={pluginTriggerLabel}
+                      disabled={extensionsLoading || Boolean(extensionsError) || !extensionCatalog || !pluginOptions.length}
+                      searchable
+                      searchPlaceholder={zh ? '搜索 Plugin' : 'Search plugins'}
+                      emptyLabel={zh ? '没有可用的 Plugin' : 'No available plugins'}
+                    />
+                  </label>
+                ) : null}
               </div>
               {extensionsError ? (
                 <small className="automation-capability-error" role="alert">
@@ -644,10 +891,12 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
                   <input type="number" min="1" value={draft.maxTokensPerDayText} placeholder={zh ? '不限' : 'Unlimited'} onChange={(event) => setDraft({ ...draft, maxTokensPerDayText: event.currentTarget.value })} />
                 </label>
               </div>
-              <label className="automation-check">
-                <input type="checkbox" checked={draft.fastMode === true} onChange={(event) => setDraft({ ...draft, fastMode: event.currentTarget.checked })} />
-                <span>{zh ? '启用 Fast 服务档位（仅在模型支持时）' : 'Use Fast service tier when supported'}</span>
-              </label>
+              {(draft.action?.kind ?? 'conversation') === 'conversation' ? (
+                <label className="automation-check">
+                  <input type="checkbox" checked={draft.fastMode === true} onChange={(event) => setDraft({ ...draft, fastMode: event.currentTarget.checked })} />
+                  <span>{zh ? '启用 Fast 服务档位（仅在模型支持时）' : 'Use Fast service tier when supported'}</span>
+                </label>
+              ) : null}
             </details>
           </FormDialog>
         ) : null}
@@ -679,6 +928,11 @@ export function AutomationsWorkspace(props: { client: DashboardClient | null; pr
       </MotionPresence>
     </section>
   );
+}
+
+/** 同一运行内不同执行种类与身份共同组成稳定选择值。 */
+function executionReferenceKey(reference: AutomationExecutionReference): string {
+  return `${reference.kind}:${reference.id}`;
 }
 
 function EmptyState(props: { title: string; body: string }) {
@@ -734,27 +988,36 @@ function TriggerFields(props: { draft: Draft; setDraft(value: Draft): void; zh: 
         <input placeholder="FREQ=WEEKLY;BYDAY=MO,WE;BYHOUR=9" value={draft.triggerConfig?.rrule ?? ''} onChange={(event) => props.setDraft({ ...draft, triggerConfig: { ...draft.triggerConfig, rrule: event.currentTarget.value } })} />
       </label>
     );
-  if (draft.triggerKind === 'event')
+  if (draft.triggerKind === 'event') {
+    /** 任务事件和代码事件使用独立流，选择代码时明确替换原流。 */
+    const eventOptions = [
+      { value: 'task_created', label: props.zh ? '任务创建' : 'Task created' },
+      { value: 'task_updated', label: props.zh ? '任务更新' : 'Task updated' },
+      { value: 'task_status_changed', label: props.zh ? '任务状态改变' : 'Task status changed' },
+      { value: 'code_changed', label: props.zh ? '代码变化' : 'Code changed' },
+    ];
+    /** 保存过的精确筛选不能在简化界面时被丢弃。 */
+    const selected = draft.triggerConfig?.eventKinds ?? [];
     return (
       <label>
-        <span>{props.zh ? '事件类型（逗号分隔）' : 'Event kinds (comma separated)'}</span>
-        <input
-          value={draft.triggerConfig?.eventKinds?.join(', ') ?? ''}
-          onChange={(event) =>
-            props.setDraft({
-              ...draft,
-              triggerConfig: {
-                ...draft.triggerConfig,
-                eventKinds: event.currentTarget.value
-                  .split(',')
-                  .map((value) => value.trim())
-                  .filter(Boolean),
-              },
-            })
-          }
+        <span>{props.zh ? '触发事件' : 'Trigger events'}</span>
+        <ZeusSelect
+          size="regular"
+          ariaLabel={props.zh ? '选择触发事件' : 'Choose trigger events'}
+          value=""
+          selectedValues={selected}
+          options={[{ value: '', label: props.zh ? '全部任务事件' : 'All task events' }, ...eventOptions, ...selected.filter((value) => !eventOptions.some((option) => option.value === value)).map((value) => ({ value, label: value }))]}
+          triggerLabel={selected.length ? selected.map((value) => eventOptions.find((option) => option.value === value)?.label ?? value).join('、') : props.zh ? '全部任务事件' : 'All task events'}
+          onChange={(value) => {
+            /** 只改用户明确选择的筛选，不改变任务选择策略。 */
+            const taskEvents = selected.filter((kind) => kind !== 'code_changed');
+            const eventKinds = !value ? [] : value === 'code_changed' ? ['code_changed'] : taskEvents.includes(value) ? taskEvents.filter((kind) => kind !== value) : [...taskEvents, value];
+            props.setDraft({ ...draft, triggerConfig: { ...draft.triggerConfig, eventKinds } });
+          }}
         />
       </label>
     );
+  }
   return null;
 }
 
@@ -762,6 +1025,7 @@ function emptyDraft(projects: ProjectRecord[], model?: CodexTaskPushModelCapabil
   /** 新建时仍沿用首个真实项目；用户可显式切换为无项目。 */
   const firstProject = projects.find((project) => project.id !== temporaryWorkspaceId);
   return {
+    action: { kind: 'conversation', employeeId: null },
     name: '',
     description: '',
     prompt: '',
@@ -793,6 +1057,13 @@ function emptyDraft(projects: ProjectRecord[], model?: CodexTaskPushModelCapabil
 function normalizeDraft(draft: Draft): AutomationTaskInput {
   return {
     ...draft,
+    /** 保存显式策略，不能让领取任务的规则退回新建任务默认。 */
+    ...(draft.action?.kind === 'project_task'
+      ? { action: { ...draft.action, taskSelection: draft.action.taskSelection ?? (draft.action.taskId ? ('specified' as const) : draft.action.useEventTask ? ('event' as const) : ('create' as const)) } }
+      : {}),
+    modelSourceId: draft.modelSourceId || 'codex',
+    modelId: draft.modelId || 'employee-default',
+    ...((draft.action?.kind ?? 'conversation') !== 'conversation' ? { conversationMode: 'independent' as const, originalConversationId: null, skillId: null, pluginIds: [] } : {}),
     maxRunsPerDay: draft.maxRunsPerDayText ? Number(draft.maxRunsPerDayText) : null,
     maxTokensPerDay: draft.maxTokensPerDayText ? Number(draft.maxTokensPerDayText) : null,
   };

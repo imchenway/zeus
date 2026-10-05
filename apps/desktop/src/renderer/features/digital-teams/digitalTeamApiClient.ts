@@ -46,6 +46,10 @@ export interface DigitalTeamRunCreateInput {
 
 /** 数字团队页面使用的真实本地 API。 */
 export interface DigitalTeamApiClient {
+  /** 读取项目独立维护的当前流程，没有配置时返回空。 */
+  loadProjectDigitalTeamWorkflow(projectId: string): Promise<DigitalTeamWorkflowTemplateRecord | null>;
+  /** 将编辑图保存为项目当前流程，复制的全局模板不会继续联动。 */
+  saveProjectDigitalTeamWorkflow(projectId: string, input: Omit<DigitalTeamTemplateSaveInput, 'id'>): Promise<DigitalTeamWorkflowTemplateRecord>;
   /** 读取全局团队模板。 */
   loadDigitalTeamTemplates(projectId?: string): Promise<DigitalTeamWorkflowTemplateRecord[]>;
   /** 新建或按修订保存模板。 */
@@ -96,10 +100,25 @@ export function createDigitalTeamApiClient(transport: LocalApiTransport): Digita
   };
 
   return {
+    loadProjectDigitalTeamWorkflow: (projectId) => transport.request(`/api/projects/${encodeURIComponent(projectId)}/digital-team-workflow`),
+    saveProjectDigitalTeamWorkflow: async (projectId, input) => {
+      /** 项目配置沿用已有流程保存命令和乐观修订。 */
+      const body = await buildWorkManagementCommandRequest({
+        commandType: workManagementClientCommandTypes.digitalTeamTemplateSave,
+        scopeKind: 'project',
+        scopeId: () => projectId,
+        operationPrefix: 'project_workflow_save_',
+        value: input,
+        expectedRevision: input.expectedRevision,
+      });
+      return transport.request(`/api/projects/${encodeURIComponent(projectId)}/digital-team-workflow`, jsonRequest('PUT', body));
+    },
     loadDigitalTeamTemplates: async (projectId) => {
-      const globalTemplates = await transport.request<DigitalTeamWorkflowTemplateRecord[]>('/api/digital-team-templates');
-      if (!projectId) return globalTemplates;
-      const legacyTemplates = await transport.request<DigitalTeamWorkflowTemplateRecord[]>(digitalTeamTemplatesPath(projectId));
+      /** 全局和项目目录互不依赖，并行读取以免复制弹窗串行等待。 */
+      const [globalTemplates, legacyTemplates] = await Promise.all([
+        transport.request<DigitalTeamWorkflowTemplateRecord[]>('/api/digital-team-templates'),
+        projectId ? transport.request<DigitalTeamWorkflowTemplateRecord[]>(digitalTeamTemplatesPath(projectId)) : Promise.resolve([]),
+      ]);
       return [...globalTemplates, ...legacyTemplates.filter((template) => !globalTemplates.some((globalTemplate) => globalTemplate.id === template.id))];
     },
     saveDigitalTeamTemplate: async (input, legacyProjectId) => {
