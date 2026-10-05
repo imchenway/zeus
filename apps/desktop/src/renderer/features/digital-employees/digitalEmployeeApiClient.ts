@@ -51,11 +51,16 @@ export interface DigitalEmployeeApiClient {
   saveEmployeeTeamRecipe(input: EmployeeTeamRecipe): Promise<EmployeeTeamRecipe>;
   loadDigitalEmployeeCapabilities(): Promise<DigitalEmployeeCapabilitiesSnapshot>;
   loadDigitalEmployeeTemplates(): Promise<DigitalEmployeeTemplateRecord[]>;
+  /** 只读取已创建的跨项目员工，不包含内置模板。 */
+  loadGlobalDigitalEmployees(): Promise<DigitalEmployeeTemplateRecord[]>;
   createDigitalEmployeeTemplate(input: DigitalEmployeeTemplateInput): Promise<DigitalEmployeeTemplateRecord>;
   updateDigitalEmployeeTemplate(templateId: string, expectedRevision: number, input: Partial<DigitalEmployeeTemplateInput>): Promise<DigitalEmployeeTemplateRecord>;
   deleteDigitalEmployeeTemplate(templateId: string, expectedRevision: number): Promise<DigitalEmployeeTemplateRecord>;
   loadProjectDigitalEmployees(projectId: string): Promise<DigitalEmployeeRecord[]>;
-  createProjectDigitalEmployee(projectId: string, input: { templateId: string; overrides?: Partial<DigitalEmployeeInput> } | DigitalEmployeeInput): Promise<DigitalEmployeeRecord>;
+  createProjectDigitalEmployee(
+    projectId: string,
+    input: { templateId: string; overrides?: Partial<DigitalEmployeeInput> } | { globalEmployeeId: string; projectOverrides?: DigitalEmployeeInput['projectOverrides']; projectInstructions?: string } | DigitalEmployeeInput,
+  ): Promise<DigitalEmployeeRecord>;
   updateProjectDigitalEmployee(projectId: string, employeeId: string, expectedRevision: number, input: Partial<DigitalEmployeeInput>): Promise<DigitalEmployeeRecord>;
   deleteProjectDigitalEmployee(projectId: string, employeeId: string, expectedRevision: number): Promise<DigitalEmployeeRecord>;
   loadDigitalEmployeeAutomations(projectId: string): Promise<DigitalEmployeeAutomationRecord[]>;
@@ -79,7 +84,8 @@ export interface DigitalEmployeeApiClient {
   loadTaskWorkDeliverableContent(taskId: string, deliverableId: string): Promise<{ deliverableId: string; version: number; contentSha256: string; content: string }>;
   loadTaskWorkCommandEvidence(runId: string): Promise<CommandRunDetail>;
   previewTaskWorkItem(taskId: string, input: TaskWorkPreviewSelection): Promise<TaskWorkPreview>;
-  createTaskWorkItem(taskId: string, preview: TaskWorkPreview): Promise<{ item: TaskWorkItemRecord; run: TaskWorkItemRecord['runs'][number] }>;
+  /** 已配置项目流程时返回真实流程身份，否则返回独立工作运行。 */
+  createTaskWorkItem(taskId: string, preview: TaskWorkPreview): Promise<{ item: TaskWorkItemRecord; run: TaskWorkItemRecord['runs'][number] } | { workflowRunId: string }>;
   acceptTaskWorkDeliverable(taskId: string, deliverable: TaskWorkDeliverableRecord): Promise<unknown>;
   requestTaskWorkDeliverableChanges(taskId: string, deliverable: TaskWorkDeliverableRecord, reason: string): Promise<unknown>;
   retryTaskWorkItem(taskId: string, item: TaskWorkItemRecord): Promise<unknown>;
@@ -106,6 +112,7 @@ export function createDigitalEmployeeApiClient(transport: LocalApiTransport): Di
     },
     loadDigitalEmployeeCapabilities: () => transport.request('/api/digital-employee-capabilities'),
     loadDigitalEmployeeTemplates: () => transport.request('/api/digital-employee-templates'),
+    loadGlobalDigitalEmployees: () => transport.request('/api/digital-employees'),
     createDigitalEmployeeTemplate: async (input) => {
       const body = await command(workManagementClientCommandTypes.digitalEmployeeTemplateCreate, 'settings', () => 'digital-employee-templates', 'digital_employee_template_', input);
       return transport.request('/api/digital-employee-templates', jsonRequest('POST', body));

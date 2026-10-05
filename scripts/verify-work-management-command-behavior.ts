@@ -1,23 +1,54 @@
-import { access, link, lstat, mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile, type FileHandle } from 'node:fs/promises';
+import { access, link, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile, type FileHandle } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { createAiRuntimeSessionManager } from '../packages/ai-runtime/src/index.js';
 import { commandEnvelopeSchemaGeneration, type CommandEnvelope } from '../packages/shared/src/commandEnvelope.js';
 import {
   CommandDeliveryRepository,
+  DigitalEmployeeRepository,
+  DigitalEmployeeTemplateRepository,
+  DigitalEmployeeExecutionRepository,
   createZeusDatabase,
   ProjectRepository,
   RuntimeSessionRepository,
   TaskEventFileProjectionRepository,
   TaskEventRepository,
   TaskRepository,
-  type ZeusDatabase,
+  ZeusDatabase,
   type ZeusTaskRecord,
 } from '../packages/storage/src/index.js';
 import { createGitIntegrationOperations, type GitIntegrationOperationDependencies } from '../packages/local-server/src/gitIntegrationOperations.js';
 import { runtimeSessionIsConfirmedTerminal } from '../packages/local-server/src/runtimeQueryApplication.js';
 import { WorkManagementCommandApplication, workManagementCommandTypes, workManagementInputSha256, type WorkManagementCommandPayload } from '../packages/local-server/src/workManagementCommandApplication.js';
 import { TaskEventFileProjectionService } from '../packages/local-server/src/taskEventFileProjectionService.js';
+import { migrateDigitalEmployeeIdentity } from '../packages/storage/src/digitalEmployeeIdentityMigration.js';
+import {
+  ArtifactStore,
+  ConversationRepository,
+  ConversationGoalRepository,
+  ConversationTurnRepository,
+  DigitalTeamWorkflowRunRepository,
+  DigitalTeamNodeAttemptRepository,
+  DefectWorkflowRepository,
+  EmployeeMemoryProposalRepository,
+  LongTermMemoryRepository,
+  TaskWorkDeliverableRepository,
+  TaskWorkItemRepository,
+  TaskWorkDecisionRepository,
+  TaskWorkReviewRepository,
+  TaskWorkPlanningRepository,
+  TaskWorkRunRepository,
+  TaskWorkspaceRepository,
+  WorkArtifactRepository,
+  taskWorkDeliverableArtifactGeneration,
+  type TaskWorkRunRecord,
+} from '../packages/storage/src/index.js';
+import { WorkArtifactDelivery } from '../packages/local-server/src/workArtifactDelivery.js';
+import { ContextSourceCatalog } from '../packages/local-server/src/contextSourceCatalog.js';
+import { selectEmployeeMemories } from '../packages/local-server/src/employeeMemoryContext.js';
+import { registerTaskWorkManagement } from '../packages/local-server/src/taskWorkManagement.js';
+import { digitalTeamWorkflowSchemaGeneration, type DigitalTeamWorkflowDefinition } from '../packages/shared/src/digitalTeamWorkflow.js';
 
 const probeRoot = await mkdtemp(join(tmpdir(), 'zeus-work-management-command-probe-'));
 const observed: Record<string, unknown> = {};
@@ -65,6 +96,9 @@ try {
       resourceId: parsedProject.operationIdentity,
     });
     observed.coreCreateCalls = createCalls;
+    /** 使用真实存储验证跨项目员工继承、项目覆盖和历史迁移边界。 */
+    await verifyEmployeeIdentity(db, projects, tasks, created.result.id);
+    await verifyWorkArtifactDelivery(db, projects, tasks);
     observed.coreReplay = replay.replayed;
     observed.immutableReplayName = immutableReplay?.result.name ?? null;
     observed.currentProjectName = projects.getById(created.result.id)?.name ?? null;
@@ -815,6 +849,710 @@ async function captureAsyncCode(operation: () => Promise<unknown>): Promise<stri
 function captureCodeValue(error: unknown): string {
   if (error && typeof error === 'object' && typeof (error as { code?: unknown }).code === 'string') return (error as { code: string }).code;
   return error instanceof Error ? error.name : String(error);
+}
+
+/** 员工身份探针沿用现有临时数据库，所有配置变化均走实际 Repository。 */
+async function verifyEmployeeIdentity(db: ZeusDatabase, projects: ProjectRepository, tasks: TaskRepository, firstProjectId: string): Promise<void> {
+  /** 全局目录、项目绑定与冻结执行使用真实存储实现。 */
+  const templates = new DigitalEmployeeTemplateRepository(db);
+  const employees = new DigitalEmployeeRepository(db);
+  const executions = new DigitalEmployeeExecutionRepository(db);
+  /** 第二个项目持有独立要求。 */
+  const secondProject = projects.create({ name: '员工身份第二项目', localPath: join(probeRoot, 'employee-second-project') });
+  /** 名称相同的员工必须仍有不同身份。 */
+  const global = templates.create({ name: '员工身份探针', role: '开发', prompt: '全局通用要求', model: 'identity-model', permissionMode: 'auto', allowCodeChanges: true, allowTests: true });
+  const sameName = templates.create({ name: global.name, role: global.role, prompt: '另一独立员工' });
+  assertProbe(global.id !== sameName.id && global.identityKind === 'employee', '同名员工不能合并，用户创建记录应有全局员工身份。');
+  /** 第一个项目继承通用配置，第二个项目保存显式差异。 */
+  const first = employees.ensureProjectEmployee(firstProjectId, global.id);
+  const second = employees.createFromTemplate({ projectId: secondProject.id, template: global, overrides: { projectOverrides: { prompt: '项目独立要求', allowCodeChanges: false }, projectInstructions: '第二项目必须先审查' } });
+  /** JSON 调用方即使注入身份字段，也不能改变已经授权的项目与员工来源。 */
+  const scoped = employees.createFromTemplate({ projectId: firstProjectId, template: sameName, overrides: { projectId: secondProject.id, globalEmployeeId: global.id } as never });
+  assertProbe(scoped.projectId === firstProjectId && scoped.globalEmployeeId === sameName.id, '项目覆盖不能扩大授权范围或替换全局员工来源。');
+  assertProbe(captureCode(() => employees.update(first.id, { expectedRevision: first.revision, projectOverrides: { id: '不能覆盖身份' } as never })) === 'ZEUS_DIGITAL_EMPLOYEE_INVALID', '显式项目覆盖不能写入身份字段。');
+  assertProbe(employees.ensureProjectEmployee(firstProjectId, global.id).id === first.id && employees.resolveProjectEmployee(firstProjectId, second.id) === undefined, '重复绑定必须复用稳定 ID，其他项目的绑定不能被读取。');
+  /** 已启动执行冻结旧的模型与权限。 */
+  const task = tasks.create({ projectId: firstProjectId, title: '员工身份冻结探针', taskType: 'requirement', description: '', createdFrom: 'probe', sourceContext: {} });
+  const execution = executions.create({ employee: first, taskId: task.id, source: 'manual' });
+  const snapshotBefore = db.get<{ employee_snapshot_json: string }>('SELECT employee_snapshot_json FROM digital_employee_executions WHERE id = ?', [execution.id])!.employee_snapshot_json;
+  templates.update(global.id, { expectedRevision: global.revision, prompt: '更新后的全局要求', model: 'identity-model-updated' });
+  const inherited = employees.getById(first.id)!;
+  const overridden = employees.getById(second.id)!;
+  assertProbe(
+    inherited.model === 'identity-model-updated' && inherited.entrypoint?.modelPolicy.defaultModel === inherited.model && overridden.prompt === '项目独立要求\n\n## 当前项目要求\n第二项目必须先审查' && !overridden.allowCodeChanges,
+    '全局更新和项目覆盖必须独立生效，模型与权限策略应一致。',
+  );
+  assertProbe(executions.getById(execution.id)?.employeeSnapshot.model === 'identity-model', '新配置不能改写已启动的运行快照。');
+  /** 明确清空覆盖后恢复继承，项目补充要求仍保留。 */
+  const restored = employees.update(second.id, { expectedRevision: overridden.revision, projectOverrides: {} });
+  assertProbe(restored.prompt === '更新后的全局要求\n\n## 当前项目要求\n第二项目必须先审查' && restored.allowCodeChanges, '恢复全局配置必须清空差异并保留独立项目要求。');
+  /** 内置模板只有创建用途，不能从工作入口直接绑定。 */
+  const builtIn = templates.list().find((employee) => employee.builtIn)!;
+  assertProbe(captureCode(() => employees.ensureProjectEmployee(secondProject.id, builtIn.id)) === 'ZEUS_DIGITAL_EMPLOYEE_GLOBAL_UNAVAILABLE', '模板不允许成为可指派员工。');
+  /** 构造真实历史项目配置，再运行相同迁移逻辑。 */
+  const legacy = employees.create({ projectId: secondProject.id, templateId: builtIn.id, name: '历史项目员工', role: '开发', prompt: '历史项目要求', memoryEnabled: false, permissionMode: 'auto', allowTests: true });
+  /** 只复制员工与快照数据验证迁移；不引入无关项目表，也不绕过正式库降级保护。 */
+  const migrationDb = new ZeusDatabase(new DatabaseSync(':memory:', { enableForeignKeyConstraints: false }), join(probeRoot, 'employee-legacy-probe.db'));
+  try {
+    migrationDb.execute('CREATE TABLE schema_migrations (migration_id TEXT PRIMARY KEY, description TEXT NOT NULL, checksum TEXT NOT NULL, applied_at TEXT NOT NULL)');
+    for (const table of ['digital_employee_templates', 'digital_employees', 'digital_employee_executions']) {
+      /** 复制真实表结构与旧记录，不复制升级账本和保护触发器。 */
+      const schema = db.get<{ sql: string }>('SELECT sql FROM sqlite_master WHERE type = ? AND name = ?', ['table', table])!;
+      migrationDb.execute(schema.sql);
+      for (const row of db.select<Record<string, string | number | null>>(`SELECT * FROM ${table}`))
+        migrationDb.execute(
+          `INSERT INTO ${table} (${Object.keys(row).join(', ')}) VALUES (${Object.keys(row)
+            .map(() => '?')
+            .join(', ')})`,
+          Object.values(row),
+        );
+    }
+    migrateDigitalEmployeeIdentity(migrationDb);
+    /** 迁移后的记录使用相同有效配置读取器。 */
+    const migrated = new DigitalEmployeeRepository(migrationDb).getById(legacy.id)!;
+    assertProbe(migrated.id === legacy.id && migrated.globalEmployeeId === null && migrated.prompt === legacy.prompt && migrated.memoryEnabled === false && migrated.allowTests, '历史模板副本保留原绑定和有效权限，不自动变成全局员工。');
+    assertProbe(
+      migrationDb.get<{ employee_snapshot_json: string }>('SELECT employee_snapshot_json FROM digital_employee_executions WHERE id = ?', [execution.id])!.employee_snapshot_json === snapshotBefore,
+      '身份迁移不能改变冻结执行快照。',
+    );
+    migrateDigitalEmployeeIdentity(migrationDb);
+  } finally {
+    await migrationDb.close();
+  }
+  observed.employeeIdentity = { distinctSameName: true, projectIsolation: true, repeatBinding: true, inheritedDefaults: true, explicitOverrides: true, templateRejected: true, legacyBindingPreserved: true, executionSnapshotPreserved: true };
+  /** 历史绑定改绑后沿用项目经验，通用经验只跟随准确全局身份。 */
+  const memory = new LongTermMemoryRepository(db);
+  /** 目标项目尚未绑定的独立员工，避免与前面的复用场景混淆。 */
+  const memoryGlobalG = templates.create({ name: '经验身份 G', role: '开发', prompt: 'G 的工作要求。' });
+  const memoryGlobalH = templates.create({ name: '经验身份 H', role: '开发', prompt: 'H 的工作要求。' });
+  const candidate = {
+    candidateKind: 'stable_workflow' as const,
+    effect: 'advisory' as const,
+    source: { kind: 'user_explicit' as const, reference: 'employee-identity-probe', observedAt: '2026-10-05T01:00:00.000Z' },
+    confirmationLevel: 'explicit' as const,
+    confidence: 1,
+    reviewAfter: '2027-10-05T01:00:00.000Z',
+    recordedAt: '2026-10-05T01:00:00.000Z',
+  };
+  memory.recordCandidate({ ...candidate, id: 'identity_global_g_memory', scope: { kind: 'employee', id: memoryGlobalG.id }, memoryKey: 'identity.global.g', content: '全局 G 的通用经验。', projectLimitId: null });
+  memory.recordCandidate({ ...candidate, id: 'identity_global_h_memory', scope: { kind: 'employee', id: memoryGlobalH.id }, memoryKey: 'identity.global.h', content: '全局 H 的通用经验。', projectLimitId: null });
+  memory.recordCandidate({ ...candidate, id: 'identity_legacy_project_memory', scope: { kind: 'employee', id: legacy.id }, memoryKey: 'identity.legacy.project', content: '历史绑定的项目经验。', projectLimitId: secondProject.id });
+  const resolve = (employeeId: string, projectId = secondProject.id) => memory.resolveForContext({ projectId, employeeId, asOf: '2026-10-05T02:00:00.000Z' }).selected.map((record) => record.id);
+  assertProbe(resolve(legacy.id).includes('identity_legacy_project_memory') && !resolve(legacy.id).includes('identity_global_g_memory'), '未绑定历史员工只使用自身项目经验。');
+  const boundG = employees.update(legacy.id, { expectedRevision: legacy.revision, globalEmployeeId: memoryGlobalG.id });
+  assertProbe(resolve(boundG.id).includes('identity_global_g_memory') && resolve(boundG.id).includes('identity_legacy_project_memory'), '首次明确绑定全局员工后必须读取新通用经验并保留历史项目经验。');
+  const repeatedG = employees.update(boundG.id, { expectedRevision: boundG.revision, globalEmployeeId: memoryGlobalG.id });
+  assertProbe(resolve(repeatedG.id).includes('identity_global_g_memory'), '重复绑定相同身份不能丢失通用经验。');
+  /** 模拟运行接纳时已经保存的有效身份，读取开关单独开启以核对检索归属。 */
+  const frozenG = { ...repeatedG, memoryEnabled: true };
+  /** 历史冻结没有全局字段时，只能使用当时保存的模板来源。 */
+  const oldFrozenG = { ...frozenG, globalEmployeeId: undefined, templateId: memoryGlobalG.id };
+  /** 未绑定的冻结配置不能因为后续首次绑定而读到新员工经验。 */
+  const frozenUnbound = { ...legacy, memoryEnabled: true };
+  const boundH = employees.update(repeatedG.id, { expectedRevision: repeatedG.revision, globalEmployeeId: memoryGlobalH.id });
+  assertProbe(
+    resolve(boundH.id).includes('identity_global_h_memory') && !resolve(boundH.id).includes('identity_global_g_memory') && resolve(boundH.id).includes('identity_legacy_project_memory'),
+    '改绑 H 不能保留 G 的通用经验，项目历史仍属于稳定绑定。',
+  );
+  assertProbe(!resolve(boundH.id, firstProjectId).some((id) => id.startsWith('identity_')), '另一个项目不能借绑定身份读取其通用或限定经验。');
+  /** 与真实工作和讨论共用入口核对冻结归属，不只调用仓储替身。 */
+  const resolveFrozen = (employee: typeof frozenG, projectId = secondProject.id) => selectEmployeeMemories(memory, employee, projectId, '员工身份经验', '2026-10-05T02:00:00.000Z').map((record) => record.id);
+  assertProbe(
+    resolveFrozen(frozenG).includes('identity_global_g_memory') && !resolveFrozen(frozenG).includes('identity_global_h_memory') && resolveFrozen(frozenG).includes('identity_legacy_project_memory'),
+    '改绑后的在途冻结 G 必须读取 G 的通用经验，并沿稳定绑定保留项目经验。',
+  );
+  assertProbe(resolveFrozen(oldFrozenG).includes('identity_global_g_memory') && !resolveFrozen(oldFrozenG).includes('identity_global_h_memory'), '旧冻结缺少全局字段时只能使用冻结模板来源，不能回落当前 H。');
+  assertProbe(resolveFrozen(frozenUnbound).includes('identity_legacy_project_memory') && !resolveFrozen(frozenUnbound).some((id) => id.startsWith('identity_global_')), '冻结的明确未绑定状态不能被当前绑定替换。');
+  assertProbe(!resolveFrozen(frozenG, firstProjectId).some((id) => id.startsWith('identity_')), '冻结全局身份不能扩大原项目绑定范围。');
+  /** 固定员工身份不冻结经验正文，同一员工新确认的方法仍可用于后续节点。 */
+  memory.recordCandidate({ ...candidate, id: 'identity_global_g_new_memory', scope: { kind: 'employee', id: memoryGlobalG.id }, memoryKey: 'identity.global.g.new', content: '全局 G 后续确认的通用经验。', projectLimitId: null });
+  assertProbe(resolveFrozen(frozenG).includes('identity_global_g_new_memory'), '冻结身份的后续节点仍应读取同一员工新确认的经验。');
+  observed.employeeMemoryIdentity = {
+    firstBinding: true,
+    repeatedBinding: true,
+    rebindChangesGlobalMemory: true,
+    legacyProjectMemoryPreserved: true,
+    frozenRebindPreserved: true,
+    oldFrozenTemplatePreserved: true,
+    frozenUnboundPreserved: true,
+    newSameEmployeeMemoryVisible: true,
+    wrongProjectDenied: true,
+  };
+}
+
+/** 用真实数据库和文件检查冻结、按需读取、跨目录交接与独立导出恢复。 */
+async function verifyWorkArtifactDelivery(db: ZeusDatabase, projects: ProjectRepository, tasks: TaskRepository): Promise<void> {
+  /** 所有现场都属于本探针，退出时由既有 finally 清理。 */
+  const root = join(probeRoot, 'artifact-project');
+  const receiverRoot = join(probeRoot, 'artifact-receiver');
+  await mkdir(root, { recursive: true });
+  await mkdir(receiverRoot, { recursive: true });
+  const project = projects.create({ name: '成果交接项目', localPath: root });
+  const task = tasks.create({ projectId: project.id, title: '成果交接', taskType: 'requirement', description: '', createdFrom: 'probe', sourceContext: {} });
+  const employees = new DigitalEmployeeRepository(db);
+  const global = new DigitalEmployeeTemplateRepository(db).create({ name: '成果员工', role: '开发', prompt: '交付真实文档。' });
+  const employee = employees.ensureProjectEmployee(project.id, global.id);
+  const items = new TaskWorkItemRepository(db);
+  const runs = new TaskWorkRunRepository(db);
+  const deliverables = new TaskWorkDeliverableRepository(db);
+  const conversations = new ConversationRepository(db);
+  const workspaces = new TaskWorkspaceRepository(db);
+  const publications = new WorkArtifactRepository(db);
+  const artifacts = new ArtifactStore(db, join(probeRoot, 'artifact-objects'));
+  await artifacts.initialize();
+  const service = new WorkArtifactDelivery({ publications, artifacts, deliverables, runs, tasks, projects, conversations, workspaces, managedRoot: join(probeRoot, 'managed-docs') });
+  /** 工作读取权限只能在启动时冻结，当前工具不能自行增补。 */
+  const createRun = (
+    suffix: string,
+    upstreamDeliverableIds: string[] = [],
+    workspaceId?: string,
+    projectMemoryPolicy?: Record<string, unknown>,
+    sourceRef: string | null = null,
+    runTask: ZeusTaskRecord = task,
+    prepared = false,
+  ): TaskWorkRunRecord => {
+    const item = items.create({ id: `artifact_item_${suffix}`, projectId: project.id, taskId: runTask.id, employeeId: employee.id, title: suffix, description: '', source: 'manual', sourceRef, entrypointKind: 'agent', status: 'queued' });
+    const run = runs.create({
+      id: `artifact_run_${suffix}`,
+      projectId: project.id,
+      taskId: runTask.id,
+      workItemId: item.id,
+      employeeId: employee.id,
+      attempt: 1,
+      status: prepared ? 'prepared' : 'active',
+      entrypointKind: 'agent',
+      employeeRevision: employee.revision,
+      employeeSnapshot: structuredClone(employee) as unknown as Record<string, unknown>,
+      entrypointSnapshot: { upstreamDeliverableIds, projectMemoryPolicy: projectMemoryPolicy ?? null },
+      modelSnapshot: null,
+      skillSnapshot: {},
+      authoritySnapshot: {},
+      contextManifest: { version: 1, task: { id: task.id, revision: task.updatedAt, title: task.title, description: '', taskType: task.taskType, tags: [] }, attachments: [], projectRules: [], acceptedDeliverables: [] },
+      workspaceSnapshot: { mode: 'direct' },
+      environmentId: null,
+    });
+    items.update(item.id, { currentRunId: run.id });
+    if (prepared) return run;
+    const conversation = conversations.create({ projectId: project.id, taskId: runTask.id, title: suffix, workspaceId });
+    return runs.update(run.id, { conversationId: conversation.id });
+  };
+  const source = createRun('source');
+  await writeFile(join(root, '交付.md'), '固定原文。');
+  await service.submit(source, '交付.md');
+  assertProbe((await captureAsyncCode(() => service.submit(source, '../外部文档.md'))) === 'ZEUS_WORK_ARTIFACT_SCOPE', '成果提交必须拒绝相对路径越界。');
+  await symlink(join(root, '交付.md'), join(root, '链接.md'));
+  assertProbe((await captureAsyncCode(() => service.submit(source, '链接.md'))) === 'ZEUS_WORK_ARTIFACT_SCOPE', '成果提交必须拒绝符号链接来源。');
+  await writeFile(join(root, '交付.md'), '后续修改。');
+  const artifact = await artifacts.putText({
+    text: '交接摘要与真实失败现场。',
+    mimeType: 'text/markdown',
+    owner: { kind: 'task_work_deliverable', id: 'artifact_deliverable_probe', generationId: taskWorkDeliverableArtifactGeneration, projectId: project.id, conversationId: source.conversationId },
+  });
+  const deliverable = deliverables.create({
+    id: 'artifact_deliverable_probe',
+    projectId: project.id,
+    taskId: task.id,
+    workItemId: source.workItemId,
+    runId: source.id,
+    kind: 'agent_result',
+    title: '固定交接',
+    summary: '摘要引用。',
+    artifactSha256: artifact.sha256,
+    contentSha256: artifact.contentSha256,
+    sourceMessageId: null,
+  });
+  await mkdir(join(root, 'docs'), { recursive: true });
+  await writeFile(join(root, 'docs', `${task.taskCode}_旧任务文档.md`), '原文保留。[原附件](./evidence.txt)');
+  await writeFile(join(root, 'docs', 'evidence.txt'), '原位置附件。');
+  await writeFile(join(root, 'docs', `${task.taskCode}-设计.md`), '横线命名设计。');
+  await writeFile(join(root, 'docs', `${task.taskCode}.md`), '仅编码命名。');
+  await writeFile(join(root, 'docs', `${task.taskCode}.html`), '<a href="./evidence.txt">原位置附件</a>');
+  await writeFile(join(root, 'docs', `${task.taskCode}9_其他任务.md`), '不能借编码前缀混入其他任务。');
+  /** 模拟旧迁移留下并被用户修改的副本；新索引不得覆盖它。 */
+  await mkdir(join(root, 'docs', task.taskCode, '旧资料'), { recursive: true });
+  await writeFile(join(root, 'docs', task.taskCode, '旧资料', `${task.taskCode}_旧任务文档.md`), '用户修改的历史副本。');
+  const oldReference = await artifacts.putJson({
+    value: { document: '既有真实文件引用。' },
+    owner: { kind: 'probe_existing_file', id: source.id, generationId: 'probe_existing_file', projectId: project.id, conversationId: source.conversationId },
+  });
+  service.includeReferencedFile(source, oldReference);
+  const exported = service.publish(deliverable);
+  assertProbe(exported.error === null && !!exported.root, '正式成果必须写出真实目录。');
+  const fixedFile = join(exported.root, '成果', source.workItemId, '1', '文件', '交付.md');
+  assertProbe((await readFile(fixedFile, 'utf8')) === '固定原文。', '提交后的源码文件变动不能影响已冻结成果。');
+  const originalIndex = await readFile(join(exported.root, 'README.md'), 'utf8');
+  assertProbe((await readFile(join(exported.root, '旧资料', `${task.taskCode}_旧任务文档.md`), 'utf8')) === '用户修改的历史副本。', '历史副本和用户修改必须保留，新索引优先原位置。');
+  assertProbe(originalIndex.includes('历史副本与原来源内容不一致'), '旧迁移副本冲突必须明确列出待核对项，不能静默遮蔽用户修改。');
+  assertProbe(
+    [`${task.taskCode}_旧任务文档.md`, `${task.taskCode}-设计.md`, `${task.taskCode}.md`, `${task.taskCode}.html`].every((name) => originalIndex.includes(`../${encodeURIComponent(name)}`)) && !originalIndex.includes(`${task.taskCode}9`),
+    '索引必须沿用原候选规则，覆盖 Markdown、HTML 与任务编码边界，排除另一任务。',
+  );
+  assertProbe(
+    (await readFile(join(root, 'docs', `${task.taskCode}_旧任务文档.md`), 'utf8')).includes('./evidence.txt') &&
+      (await readFile(join(root, 'docs', 'evidence.txt'), 'utf8')) === '原位置附件。' &&
+      Object.keys(publications.location(task.id)?.legacySources ?? {}).length === 4,
+    '旧正文与相对附件必须原位保留，全部来源按稳定任务登记。',
+  );
+  const catalog = new ContextSourceCatalog([{ id: 'artifact-root', path: root }]);
+  const selection = await catalog.discoverTaskDocuments({ rootId: 'artifact-root', projectId: project.id, taskCode: task.taskCode });
+  assertProbe(selection.primary?.relativePath === `docs/${task.taskCode}/README.md`, '上下文读取器必须优先固定 README。');
+  const denied = createRun('denied');
+  assertProbe(captureCode(() => service.read(denied, { deliverableId: deliverable.id, path: '交接.md' })) === 'ZEUS_WORK_ARTIFACT_SCOPE', '同任务未交接成果也必须拒绝读取。');
+  const workspace = workspaces.create({ projectId: project.id, taskId: task.id, branchName: 'artifact-receiver', sourceBranch: 'main', sourceHeadSha: 'a'.repeat(40), worktreePath: receiverRoot });
+  const receiver = createRun('receiver', [deliverable.id], workspace.id);
+  const page = service.read(receiver, { deliverableId: deliverable.id, path: '交接.md', limit: 4 });
+  const referenced = service.read(receiver, { deliverableId: deliverable.id, path: `引用/${oldReference.contentSha256}.json` });
+  assertProbe(typeof referenced.content === 'string' && referenced.content.includes('既有真实文件引用。'), '既有受控文件引用也必须冻结到正式成果目录，不能只留可能失效的临时 owner。');
+  assertProbe(page.content === '交接摘要' && page.nextOffset === 4, '有界正文必须给出准确后续偏移。');
+  const materialized = service.materialize(receiver, { deliverableId: deliverable.id });
+  assertProbe(
+    materialized.root === (await realpath(receiverRoot)) &&
+      (await readFile(
+        join(
+          receiverRoot,
+          materialized.files.find((path) => path.endsWith('/交付.md'))!,
+        ),
+        'utf8',
+      )) === '固定原文。',
+    '接收工作独立目录必须能读取冻结附件。',
+  );
+  /** 经真实普通审查入口创建返工，前次正文和附件只交给准确新轮次。 */
+  const reworkRoutes = new Map<string, (request: unknown, reply: unknown) => Promise<unknown>>();
+  const reworkEvents = new TaskEventRepository(db);
+  const planning = new TaskWorkPlanningRepository(db);
+  const reworkController = registerTaskWorkManagement({
+    server: { get: () => undefined, post: (path: string, handler: (request: unknown, reply: unknown) => Promise<unknown>) => reworkRoutes.set(path, handler) },
+    readOnlyValidation: false,
+    application: new WorkManagementCommandApplication({ db, deliveries: new CommandDeliveryRepository(db), redactSensitiveText: (text) => ({ text }), now: () => new Date('2026-10-05T02:00:00.000Z') }),
+    tasks,
+    employees,
+    items,
+    runs,
+    deliverables,
+    artifacts,
+    workArtifacts: service,
+    memory: new LongTermMemoryRepository(db),
+    taskEvents: reworkEvents,
+    reviews: new TaskWorkReviewRepository(db),
+    decisions: new TaskWorkDecisionRepository(db),
+    planning,
+    isTaskTerminal: () => false,
+    now: () => new Date('2026-10-05T02:00:00.000Z'),
+    save: async () => undefined,
+    publishRealtimeEvent: () => undefined,
+  } as unknown as Parameters<typeof registerTaskWorkManagement>[0]);
+  try {
+    runs.update(source.id, { status: 'runtime_completed' });
+    items.update(source.workItemId, { status: 'active' });
+    items.update(source.workItemId, { status: 'waiting_manager' });
+    let response: unknown;
+    let statusCode = 200;
+    const reply = {
+      code: (code: number) => {
+        statusCode = code;
+        return reply;
+      },
+      send: (value: unknown) => {
+        response = value;
+        return value;
+      },
+    };
+    const input = { expectedRevision: deliverable.revision, reason: '请核对前次正文和冻结附件后修改。' };
+    await reworkRoutes.get('/api/tasks/:taskId/work-deliverables/:deliverableId/request-changes')!(
+      {
+        params: { taskId: task.id, deliverableId: deliverable.id },
+        body: commandRequest({
+          commandId: 'command_artifact_rework_probe',
+          commandType: workManagementCommandTypes.taskWorkDeliverableRequestChanges,
+          scope: { kind: 'task', id: task.id },
+          operationIdentity: 'artifact-rework-probe',
+          input,
+        }),
+      },
+      reply,
+    );
+    assertProbe(statusCode === 202, '真实普通成果审查入口必须成功接纳返工。');
+    const next = (response as { run: TaskWorkRunRecord }).run;
+    assertProbe(next.entrypointSnapshot.reworkDeliverableId === deliverable.id && (next.entrypointSnapshot.upstreamDeliverableIds as string[]).includes(deliverable.id), '返工必须耐久冻结准确被修改成果。');
+    assertProbe(service.list(next).some((entry) => entry.deliverableId === deliverable.id) && service.read(next, { deliverableId: deliverable.id, path: '交接.md', limit: 4 }).nextOffset === 4, '返工必须能列出并分页读取前次正式正文。');
+    /** 旧未执行样本只移除新增授权字段，原审查、运行及成果来源保留。 */
+    const legacySnapshot = { ...next.entrypointSnapshot };
+    delete legacySnapshot.reworkDeliverableId;
+    delete legacySnapshot.upstreamDeliverableIds;
+    db.execute('UPDATE task_work_runs SET entrypoint_snapshot_json=? WHERE id=?', [JSON.stringify(legacySnapshot), next.id]);
+    /** 来源重复时事务不授予任何成果范围，保留原快照等待核对。 */
+    const duplicate = reworkEvents.create({
+      taskId: task.id,
+      eventType: 'task.work_deliverable.changes_requested',
+      title: '重复来源 fixture',
+      payload: { runId: next.id, previousRunId: source.id, workItemId: source.workItemId, deliverableId: deliverable.id },
+    });
+    assertProbe(
+      captureCode(() => publications.restorePreparedReworkHandoff(next.id)) === 'ZEUS_TASK_WORK_REWORK_HANDOFF_UNRESOLVED' && !runs.getById(next.id)!.entrypointSnapshot.reworkDeliverableId,
+      '返工来源不唯一时必须阻塞并保留原冻结范围。',
+    );
+    db.execute('DELETE FROM task_events WHERE id=?', [duplicate.id]);
+    assertProbe(publications.restorePreparedReworkHandoff(next.id) && !publications.restorePreparedReworkHandoff(next.id), '旧未执行返工必须从唯一正式审查来源恢复且重复恢复幂等。');
+    const restored = runs.getById(next.id)!;
+    assertProbe(
+      restored.entrypointSnapshot.reworkDeliverableId === deliverable.id && service.read(restored, { deliverableId: deliverable.id, path: '文件/交付.md' }).content === '固定原文。',
+      '重新读取耐久快照后前次正文和附件范围必须一致。',
+    );
+    const reworkConversation = conversations.create({ projectId: project.id, taskId: task.id, title: '返工附件物化', workspaceId: workspace.id });
+    const materializingRework = runs.update(next.id, { conversationId: reworkConversation.id });
+    assertProbe(
+      service.materialize(materializingRework, { deliverableId: deliverable.id }).files.some((path) => path.endsWith('/交付.md')),
+      '返工必须能在准确当前工作区物化前次附件。',
+    );
+    assertProbe(!publications.restorePreparedReworkHandoff(next.id), '已有会话的返工不能由存量恢复改写上下文。');
+    observed.reworkHandoff = { exactPriorDeliverable: true, pagedBody: true, frozenAttachment: true, materialized: true, durableRestore: true, startedRunUntouched: true };
+    /** 自动领取已有安排保存正式来源回执，重启与换代不能改领另一份分工。 */
+    assertProbe((await reworkController.claimPlannedAutomationWork({ taskId: task.id, employeeId: employee.id, sourceRef: 'automation:no-plan:project' })) === undefined, '没有安排时不能写入跳过回执阻断独立工作。');
+    const planTask = tasks.create({ projectId: project.id, title: '自动化待领取安排', taskType: 'requirement', description: '', createdFrom: 'probe', sourceContext: {} });
+    const stages = [
+      {
+        title: '已有阶段',
+        description: '只领取既有分工。',
+        settings: {},
+        requiredSkillIds: [],
+        advanceMode: 'manual' as const,
+        acceptanceMode: 'manual' as const,
+        assignments: [{ title: '待领开发', description: '核对已有范围后交付。', employeeId: null, role: '开发', settings: {}, required: true, outputKinds: ['document' as const] }],
+      },
+    ];
+    const draft = planning.save(planTask.id, null, stages, {});
+    const runningPlan = planning.control(planTask.id, draft.revision, 'running');
+    const planInput = { taskId: planTask.id, employeeId: employee.id, sourceRef: 'automation:planned:project', permissionMode: 'read-only' as const };
+    const planReference = await reworkController.claimPlannedAutomationWork(planInput);
+    const assignedPlan = planning.get(planTask.id)!;
+    assertProbe(
+      planReference?.kind === 'task_plan' && planReference.id === runningPlan.id && planReference.generation === runningPlan.generation && assignedPlan.stages[0]!.items[0]!.employeeId === employee.id,
+      '自动化必须领取原分工并返回原安排与准确代次。',
+    );
+    const assignedRevision = assignedPlan.stages[0]!.items[0]!.revision;
+    assertProbe(assignedPlan.stages[0]!.items[0]!.arrangement?.settings.permissionMode === 'read-only', '只读自动化领取已有分工时必须冻结收紧权限。');
+    const replayedPlan = await reworkController.claimPlannedAutomationWork(planInput);
+    assertProbe(replayedPlan?.id === planReference?.id && planning.get(planTask.id)!.stages[0]!.items[0]!.revision === assignedRevision, '同一自动化来源重放不能重复领取或增加分工修订。');
+    assertProbe((await reworkController.claimPlannedAutomationWork({ ...planInput, sourceRef: 'automation:planned-empty:project' })) === null, '存在安排但没有待领对象时必须耐久跳过，不创建替代工作。');
+    const cancelledPlan = planning.control(planTask.id, assignedPlan.revision, 'cancelled');
+    items.update(cancelledPlan.stages[0]!.items[0]!.id, { status: 'cancelled' });
+    const laterPlan = planning.save(planTask.id, cancelledPlan.revision, stages, {});
+    const originalReference = await reworkController.claimPlannedAutomationWork(planInput);
+    assertProbe(
+      originalReference?.generation === runningPlan.generation && laterPlan.generation > runningPlan.generation && !planning.get(planTask.id)!.stages[0]!.items[0]!.employeeId,
+      '原来源已接纳回执在安排换代后仍只能返回原代次，不能领取新代分工。',
+    );
+    observed.automationPlannedClaim = { noPlanKeepsStandalonePath: true, exactPlanGeneration: true, duplicateIdempotent: true, emptyDurablySkipped: true, newGenerationUntouched: true };
+    /** 从真实失败工作入口重试，核对改绑前后的冻结员工经验保持一致。 */
+    const retryMemory = new LongTermMemoryRepository(db);
+    /** 两名员工的经验使用独立来源身份，正文交集不能掩盖员工归属变化。 */
+    const retryReplacement = new DigitalEmployeeTemplateRepository(db).create({ name: '返工改绑员工', role: '开发', prompt: '另一员工要求。' });
+    for (const [id, globalId, content] of [
+      ['artifact_retry_frozen_memory', global.id, '原员工的冻结经验。'],
+      ['artifact_retry_rebound_memory', retryReplacement.id, '改绑员工的经验。'],
+    ] as const) {
+      retryMemory.recordCandidate({
+        id,
+        scope: { kind: 'employee', id: globalId },
+        memoryKey: id,
+        content,
+        projectLimitId: null,
+        candidateKind: 'stable_workflow',
+        effect: 'advisory',
+        source: { kind: 'user_explicit', reference: 'frozen-work-retry-probe', observedAt: '2026-10-05T01:00:00.000Z' },
+        confirmationLevel: 'explicit',
+        confidence: 1,
+        reviewAfter: '2027-10-05T01:00:00.000Z',
+        recordedAt: '2026-10-05T01:00:00.000Z',
+      });
+    }
+    /** 初始工作记录保存真实员工配置及当时已确认的经验摘要。 */
+    const frozenRetry = createRun('frozen-memory-retry');
+    db.execute('UPDATE task_work_runs SET entrypoint_snapshot_json=? WHERE id=?', [
+      JSON.stringify({ ...frozenRetry.entrypointSnapshot, memoryPromptBase: employee.prompt, memorySnapshot: [{ id: 'artifact_retry_frozen_memory', contentSha256: retryMemory.getById('artifact_retry_frozen_memory')!.contentSha256 }] }),
+      frozenRetry.id,
+    ]);
+    runs.update(frozenRetry.id, { status: 'failed' });
+    items.update(frozenRetry.workItemId, { status: 'active' });
+    /** 当前失败修订是产品重试请求必须引用的接纳边界。 */
+    const failedRetryItem = items.update(frozenRetry.workItemId, { status: 'failed' });
+    /** 改绑仅改变当前配置，不重写已失败工作保存的员工对象。 */
+    const reboundRetryEmployee = employees.update(employee.id, { expectedRevision: employees.getById(employee.id)!.revision, globalEmployeeId: retryReplacement.id });
+    statusCode = 200;
+    response = null;
+    await reworkRoutes.get('/api/tasks/:taskId/work-items/:workItemId/retry')!(
+      {
+        params: { taskId: task.id, workItemId: failedRetryItem.id },
+        body: commandRequest({
+          commandId: 'command_frozen_employee_memory_retry_probe',
+          commandType: workManagementCommandTypes.taskWorkItemRetry,
+          scope: { kind: 'task', id: task.id },
+          operationIdentity: 'frozen-employee-memory-retry-probe',
+          input: { expectedRevision: failedRetryItem.revision },
+        }),
+      },
+      reply,
+    );
+    assertProbe(statusCode === 202, `真实工作重试入口必须成功接纳：${JSON.stringify(response)}`);
+    /** 产品入口接纳的新轮次保留旧身份与仍有效的旧经验，不引入改绑员工正文。 */
+    const retriedFrozen = (response as { run: TaskWorkRunRecord }).run;
+    assertProbe(
+      retriedFrozen.employeeSnapshot.globalEmployeeId === global.id && String(retriedFrozen.entrypointSnapshot.prompt).includes('原员工的冻结经验。') && !String(retriedFrozen.entrypointSnapshot.prompt).includes('改绑员工的经验。'),
+      '改绑后重试必须沿冻结员工筛选原经验，不能移除仍有效的旧员工经验或引入新员工正文。',
+    );
+    employees.update(employee.id, { expectedRevision: reboundRetryEmployee.revision, globalEmployeeId: global.id });
+    observed.frozenEmployeeMemoryRetry = { productRetryAccepted: true, frozenEmployeePreserved: true, originalMemoryPreserved: true, reboundMemoryExcluded: true };
+  } finally {
+    await reworkController.close();
+  }
+  await writeFile(fixedFile, '不能覆盖的其他来源内容。');
+  assertProbe(service.publish(deliverable).error !== null && (await readFile(fixedFile, 'utf8')) === '不能覆盖的其他来源内容。', '导出失败必须保留冲突内容和错误。');
+  await unlink(fixedFile);
+  const recovered = service.retryPending(new Date(Date.now() + 31_000));
+  assertProbe(recovered.some((entry) => entry.taskId === task.id && entry.error === null) && publications.get(deliverable.id)?.exportError === null, '原调度入口必须从冻结对象重建并清除错误，无需重跑模型。');
+  db.execute('UPDATE tasks SET task_sequence=?,task_code=? WHERE id=?', [9891, 'ZEUS-9891', task.id]);
+  service.retryPending(new Date(Date.now() + 31_000));
+  const moved = publications.location(task.id)!.root;
+  assertProbe(moved.endsWith('/ZEUS-9891') && (await pathExists(join(moved, 'README.md'))) && !(await pathExists(exported.root)), '任务重编号必须按稳定 ID 更新资料位置。');
+  assertProbe((await readFile(join(moved, 'README.md'), 'utf8')).includes(`../${encodeURIComponent(`${task.taskCode}.html`)}`), '任务重编号后仍必须索引旧编码的原位置资料。');
+  await unlink(join(root, 'docs', `${task.taskCode}_旧任务文档.md`));
+  service.rebuildTask(task.id);
+  const missingSourceIndex = await readFile(join(moved, 'README.md'), 'utf8');
+  assertProbe(missingSourceIndex.includes('原来源已缺失') && missingSourceIndex.includes(`${encodeURIComponent('旧资料')}/${encodeURIComponent(`${task.taskCode}_旧任务文档.md`)}`), '原来源缺失时保留历史副本并明确标出附件待核对。');
+  /** 项目经验和已明确确认的通用经验有不同使用边界。 */
+  const memory = new LongTermMemoryRepository(db);
+  const otherProject = projects.create({ name: '另一经验项目', localPath: join(probeRoot, 'artifact-other-project') });
+  const otherEmployee = employees.ensureProjectEmployee(otherProject.id, global.id);
+  const candidate = {
+    scope: { kind: 'employee' as const, id: global.id },
+    candidateKind: 'stable_workflow' as const,
+    effect: 'advisory' as const,
+    source: { kind: 'user_explicit' as const, reference: `task:${task.id}/work-run:${source.id}`, observedAt: '2026-10-05T01:00:00.000Z' },
+    confirmationLevel: 'explicit' as const,
+    confidence: 1,
+    reviewAfter: '2027-10-05T01:00:00.000Z',
+    recordedAt: '2026-10-05T01:00:00.000Z',
+  };
+  memory.recordCandidate({ ...candidate, id: 'artifact_project_memory', memoryKey: 'artifact.project.workflow', content: '仅本项目规则。', projectLimitId: project.id });
+  memory.recordCandidate({ ...candidate, id: 'artifact_general_memory', memoryKey: 'artifact.general.workflow', content: '已确认通用方法。', projectLimitId: null });
+  const firstMemory = memory.resolveForContext({ projectId: project.id, employeeId: employee.id, asOf: '2026-10-05T02:00:00.000Z' }).selected;
+  const otherMemory = memory.resolveForContext({ projectId: otherProject.id, employeeId: otherEmployee.id, asOf: '2026-10-05T02:00:00.000Z' }).selected;
+  assertProbe(
+    firstMemory.some((record) => record.id === 'artifact_project_memory') && !otherMemory.some((record) => record.id === 'artifact_project_memory') && otherMemory.some((record) => record.id === 'artifact_general_memory'),
+    '项目经验不能自动跨项目传播，明确通用经验才能共享。',
+  );
+  const proposals = new EmployeeMemoryProposalRepository(db, () => '2026-10-05T02:00:00.000Z');
+  const proposal = proposals.propose({
+    id: 'artifact_conflicting_memory',
+    projectId: project.id,
+    employeeId: employee.id,
+    taskId: task.id,
+    runId: source.id,
+    topic: 'artifact.project.workflow',
+    kind: 'stable_workflow',
+    content: '与已确认原项目规则相反。',
+    reason: '探针验证保留来源和冲突待处理。',
+  });
+  const pending = proposals.decide(project.id, employee.id, proposal.id, { expectedRevision: proposal.revision, accept: true, topic: proposal.topic, content: proposal.content, reviewAfter: '2027-10-05T01:00:00.000Z' });
+  assertProbe(pending.status === 'pending' && !!pending.conflictReason && memory.getById('artifact_project_memory')?.content === '仅本项目规则。', '冲突经验必须保留待处理建议，不能覆盖已确认经验。');
+  /** 只有启动时冻结的已保存项目规则允许稳定经验自动生效，来源不伪造人工审核。 */
+  const automaticRun = createRun('auto-memory', [], undefined, { projectId: project.id, workflowTemplateId: 'saved_project_workflow', workflowTemplateRevision: 7, autoApplyStableExperience: true });
+  const automaticInput = {
+    projectId: project.id,
+    employeeId: employee.id,
+    taskId: task.id,
+    runId: automaticRun.id,
+    kind: 'stable_workflow' as const,
+    content: '实施前核对准确代码身份。',
+    reason: '真实来源工作中的稳定方法，仅适用于当前项目。',
+  };
+  const automatic = proposals.propose({ ...automaticInput, id: 'artifact_auto_memory', topic: 'artifact.auto.workflow' });
+  const automaticMemory = automatic.memoryId ? memory.getById(automatic.memoryId) : undefined;
+  assertProbe(
+    automatic.status === 'accepted' &&
+      automaticMemory?.projectLimitId === project.id &&
+      automaticMemory.source.kind === 'project_instruction' &&
+      automaticMemory.confirmationLevel === 'confirmed' &&
+      automaticMemory.source.reference.includes('workflow:saved_project_workflow/revision:7/') &&
+      automaticMemory.source.reference.includes(`work-run:${automaticRun.id}`),
+    '预授权项目稳定经验必须自动生效并保留准确规则与工作来源。',
+  );
+  const automaticConflict = proposals.propose({ ...automaticInput, id: 'artifact_auto_memory_conflict', topic: 'artifact.project.workflow', content: '覆盖已确认规则的相反经验。' });
+  const preference = proposals.propose({ ...automaticInput, id: 'artifact_auto_preference', topic: 'artifact.auto.preference', kind: 'preference' });
+  const noGrant = proposals.propose({ ...automaticInput, id: 'artifact_no_grant', topic: 'artifact.no-grant', runId: source.id });
+  const otherSelected = memory.resolveForContext({ projectId: otherProject.id, employeeId: otherEmployee.id, asOf: '2026-10-05T02:00:00.000Z' }).selected;
+  assertProbe(
+    automaticConflict.status === 'pending' && !!automaticConflict.conflictReason && preference.status === 'pending' && noGrant.status === 'pending' && !otherSelected.some((record) => record.id === automatic.memoryId),
+    '冲突、偏好、未授权工作和跨项目经验不能自动生效。',
+  );
+  /** 停止使用真实任务与轮次仓储，受控接口回执不能代替 Provider 终态证据。 */
+  const turns = new ConversationTurnRepository(db);
+  const writeTurn = (run: TaskWorkRunRecord, status: 'running' | 'interrupted', error?: unknown) =>
+    turns.upsert({
+      conversationId: run.conversationId!,
+      providerThreadId: `thread_${run.id}`,
+      providerTurnId: `turn_${run.id}`,
+      clientSubmissionId: null,
+      status,
+      error,
+      startedAt: '2026-10-05T02:00:00.000Z',
+      completedAt: status === 'interrupted' ? '2026-10-05T02:01:00.000Z' : null,
+      createdAt: '2026-10-05T02:00:00.000Z',
+      updatedAt: '2026-10-05T02:01:00.000Z',
+    });
+  /** 此探针只核对产品 Controller，没有真实 Provider 或 HTTP 验收的声明。 */
+  const controller = registerTaskWorkManagement({
+    server: { get: () => undefined, post: () => undefined, inject: async () => ({ statusCode: 202, json: () => ({}) }) },
+    readOnlyValidation: false,
+    items,
+    runs,
+    conversations,
+    conversationTurns: turns,
+    conversationGoals: new ConversationGoalRepository(db),
+    decisions: new TaskWorkDecisionRepository(db),
+    apiToken: 'probe-only',
+    now: () => new Date('2026-10-05T02:02:00.000Z'),
+    save: async () => undefined,
+    publishRealtimeEvent: () => undefined,
+  } as unknown as Parameters<typeof registerTaskWorkManagement>[0]);
+  try {
+    const stopping = createRun('confirmed-stop', [], undefined, undefined, 'digital-team:stop-probe:confirmed');
+    writeTurn(stopping, 'interrupted');
+    await controller.stopWorkflowWorkItem(stopping.workItemId, 'confirmed-stop');
+    const cancelledRevision = runs.getById(stopping.id)!.revision;
+    await controller.stopWorkflowWorkItem(stopping.workItemId, 'confirmed-stop');
+    assertProbe(
+      runs.getById(stopping.id)?.status === 'cancelled' && items.getById(stopping.workItemId)?.status === 'cancelled' && !!items.getById(stopping.workItemId)?.completedAt && runs.getById(stopping.id)?.revision === cancelledRevision,
+      '确认 Provider 停止后团队运行与工作项必须幂等收口。',
+    );
+    const pendingStop = createRun('pending-stop', [], undefined, undefined, 'digital-team:stop-probe:pending');
+    writeTurn(pendingStop, 'interrupted', { code: 'ZEUS_PROVIDER_STOP_PENDING', providerStopPending: true, providerOutcomeUnconfirmed: true });
+    assertProbe(
+      (await captureAsyncCode(() => controller.stopWorkflowWorkItem(pendingStop.workItemId, 'pending-stop'))) === 'ZEUS_TASK_WORK_STOP_OUTCOME_UNKNOWN' && runs.getById(pendingStop.id)?.status === 'active',
+      '待确认停止不能伪装为取消终态。',
+    );
+    const acknowledgedStop = createRun('acknowledged-stop', [], undefined, undefined, 'digital-team:stop-probe:acknowledged');
+    writeTurn(acknowledgedStop, 'running');
+    assertProbe(
+      (await captureAsyncCode(() => controller.stopWorkflowWorkItem(acknowledgedStop.workItemId, 'acknowledged-stop'))) === 'ZEUS_TASK_WORK_STOP_OUTCOME_UNKNOWN' && runs.getById(acknowledgedStop.id)?.status === 'active',
+      '接口接纳停止但未终结真实轮次时不能取消。',
+    );
+    const unknownStop = createRun('unknown-stop', [], undefined, undefined, 'digital-team:stop-probe:unknown');
+    runs.update(unknownStop.id, { status: 'outcome_unknown' });
+    assertProbe(
+      (await captureAsyncCode(() => controller.stopWorkflowWorkItem(unknownStop.workItemId, 'unknown-stop'))) === 'ZEUS_TASK_WORK_STOP_OUTCOME_UNKNOWN' && runs.getById(unknownStop.id)?.status === 'outcome_unknown',
+      '未知外部结果保持未知，不能当作停止完成。',
+    );
+  } finally {
+    await controller.close();
+  }
+
+  /** 父流程只回收正式缺陷关系指向的已完成修复成果，禁止一般跨任务读取。 */
+  const teamRuns = new DigitalTeamWorkflowRunRepository(db);
+  const teamAttempts = new DigitalTeamNodeAttemptRepository(db);
+  const defectRecords = new DefectWorkflowRepository(db);
+  const definition: DigitalTeamWorkflowDefinition = {
+    schemaGeneration: digitalTeamWorkflowSchemaGeneration,
+    nodes: [{ id: 'handoff', type: 'employee', position: { x: 0, y: 0 }, data: { title: '交接', employeeId: employee.id, purpose: 'summary', executionMode: 'read_only', instructions: '只核对正式交接。' } }],
+    edges: [],
+    viewport: { x: 0, y: 0, zoom: 1 },
+  };
+  /** 团队旧未派发返工只恢复同节点紧邻失效尝试的准确正式成果。 */
+  const reworkTeam = teamRuns.create({ id: 'artifact_team_rework', projectId: project.id, taskId: task.id, definition, taskFacts: {}, baseRevisions: [] });
+  const previousTeamAttempt = teamAttempts.create({ runId: reworkTeam.id, nodeId: 'handoff', inputSha256: 'a'.repeat(64), status: 'invalidated' });
+  teamAttempts.update(previousTeamAttempt.id, { expectedRevision: previousTeamAttempt.revision, workItemId: source.workItemId, workRunId: source.id, deliverableId: deliverable.id });
+  const teamPrepared = createRun('team-prepared-rework', [], undefined, undefined, `digital-team:${reworkTeam.id}:handoff`, task, true);
+  db.execute('UPDATE task_work_runs SET entrypoint_snapshot_json=? WHERE id=?', [JSON.stringify({ digitalTeamPurpose: 'summary', upstreamDeliverableIds: [] }), teamPrepared.id]);
+  const currentTeamAttempt = teamAttempts.create({ runId: reworkTeam.id, nodeId: 'handoff', inputSha256: 'b'.repeat(64) });
+  teamAttempts.update(currentTeamAttempt.id, { expectedRevision: currentTeamAttempt.revision, workItemId: teamPrepared.workItemId, workRunId: teamPrepared.id });
+  assertProbe(publications.restorePreparedReworkHandoff(teamPrepared.id) && !publications.restorePreparedReworkHandoff(teamPrepared.id), '团队旧 prepared 返工必须从准确尝试链恢复且保持幂等。');
+  assertProbe(service.read(runs.getById(teamPrepared.id)!, { deliverableId: deliverable.id, path: '文件/交付.md' }).content === '固定原文。', '团队恢复后的冻结范围必须能读取前次正式附件。');
+  observed.teamPreparedReworkHandoff = { exactPreviousAttempt: true, frozenAttachment: true, idempotent: true };
+  teamRuns.update(reworkTeam.id, { expectedRevision: reworkTeam.revision, status: 'cancelled', controlState: 'cancelled' });
+  const parentTeam = teamRuns.create({ id: 'artifact_parent_team', projectId: project.id, taskId: task.id, definition, taskFacts: {}, baseRevisions: [] });
+  const repairTask = tasks.create({ projectId: project.id, title: '准确缺陷子任务', taskType: 'defect', description: '', createdFrom: 'probe', sourceContext: {} });
+  const repairTeam = teamRuns.create({ id: 'artifact_repair_team', projectId: project.id, taskId: repairTask.id, definition, taskFacts: {}, baseRevisions: [] });
+  const repairWork = createRun('repair-delivery', [], undefined, undefined, `digital-team:${repairTeam.id}:handoff`, repairTask);
+  const repairBody = await artifacts.putText({
+    text: '已核验修复的固定正文。',
+    mimeType: 'text/markdown',
+    owner: { kind: 'task_work_deliverable', id: 'artifact_repair_deliverable', generationId: taskWorkDeliverableArtifactGeneration, projectId: project.id, conversationId: repairWork.conversationId },
+  });
+  const submittedRepair = deliverables.create({
+    id: 'artifact_repair_deliverable',
+    projectId: project.id,
+    taskId: repairTask.id,
+    workItemId: repairWork.workItemId,
+    runId: repairWork.id,
+    kind: 'team_result',
+    title: '准确修复交接',
+    summary: '固定修复成果。',
+    artifactSha256: repairBody.sha256,
+    contentSha256: repairBody.contentSha256,
+    sourceMessageId: null,
+  });
+  const acceptedRepair = deliverables.transition(submittedRepair.id, submittedRepair.revision, 'accepted');
+  service.freeze(acceptedRepair);
+  let repairAttempt = teamAttempts.create({ runId: repairTeam.id, nodeId: 'handoff', inputSha256: 'a'.repeat(64) });
+  repairAttempt = teamAttempts.update(repairAttempt.id, { expectedRevision: repairAttempt.revision, status: 'dispatching' });
+  repairAttempt = teamAttempts.update(repairAttempt.id, { expectedRevision: repairAttempt.revision, status: 'active', workItemId: repairWork.workItemId, workRunId: repairWork.id });
+  teamAttempts.submitResult(repairAttempt.id, {
+    expectedRevision: repairAttempt.revision,
+    deliverableId: acceptedRepair.id,
+    deliverableVersion: acceptedRepair.version,
+    result: {
+      outcome: 'succeeded',
+      summary: '修复交接完成。',
+      evidence: [{ kind: 'artifact', id: acceptedRepair.id, sha256: acceptedRepair.contentSha256, status: 'accepted' }],
+      artifactRefs: [{ ...repairBody }],
+      repositoryResults: [],
+      verifiedCandidates: [],
+      verification: 'not_run',
+      remainingIssues: [],
+    },
+  });
+  teamRuns.update(repairTeam.id, { expectedRevision: repairTeam.revision, status: 'completed' });
+  const defect = defectRecords.register({
+    parentTaskId: task.id,
+    defectTaskId: repairTask.id,
+    parentRunId: parentTeam.id,
+    verificationNodeId: 'handoff',
+    sourceAttemptId: 'fixture_failed_attempt',
+    key: 'handoff-scope',
+    title: '资料返回边界',
+    description: '仅准确父闭环可读。',
+    reproductionEvidence: ['fixture-command'],
+    repositoryId: 'fixture-repository',
+    headSha: 'a'.repeat(40),
+  });
+  defectRecords.bindRepair(defect.id, repairTeam.id);
+  const parentReceiver = createRun('repair-return-reader', [acceptedRepair.id], undefined, undefined, `digital-team:${parentTeam.id}:handoff`);
+  assertProbe(captureCode(() => service.read(parentReceiver, { deliverableId: acceptedRepair.id, path: '交接.md' })) === 'ZEUS_WORK_ARTIFACT_SCOPE', '尚未提交正式修复时父流程不能读取子任务成果。');
+  defectRecords.submitRepair(defect.id, repairTeam.id, [{ repositoryId: 'fixture-repository', baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40) }]);
+  assertProbe(
+    service.canPrepareRepairHandoff(task.id, `digital-team:${parentTeam.id}:handoff`, acceptedRepair.id) && service.read(parentReceiver, { deliverableId: acceptedRepair.id, path: '交接.md' }).content === '已核验修复的固定正文。',
+    '正式修复完成后父流程应能按准确关系读取返还成果。',
+  );
+  const unrelatedReceiver = createRun('unrelated-repair-reader', [acceptedRepair.id], undefined, undefined, 'digital-team:other-parent:handoff');
+  assertProbe(
+    captureCode(() => service.read(unrelatedReceiver, { deliverableId: acceptedRepair.id, path: '交接.md' })) === 'ZEUS_WORK_ARTIFACT_SCOPE' && !service.canPrepareRepairHandoff(task.id, 'manual:known-owner', acceptedRepair.id),
+    '知道成果身份的其他流程和普通任务不能读取修复子任务。',
+  );
+  observed.artifactDelivery = {
+    frozenFile: true,
+    controlledRead: true,
+    boundedRead: true,
+    materialized: true,
+    exportRecovered: true,
+    stableTaskOwnership: true,
+    fixedDocsReader: true,
+    projectMemoryLimit: true,
+    memoryConflictPending: true,
+    frozenProjectMemoryPolicy: true,
+    confirmedStopSettled: true,
+    unknownStopPreserved: true,
+    repairReturnedToExactParent: true,
+  };
 }
 
 function assertProbe(condition: boolean, message: string): asserts condition {

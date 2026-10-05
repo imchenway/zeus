@@ -1,8 +1,11 @@
 import {
   digitalTeamExecutionDefinition,
   digitalTeamWorkflowSchemaGeneration,
-  validateDigitalTeamWorkflowDefinition,
+  defaultTaskManagementStatusConfig,
+  normalizeTaskManagementStatusConfig,
   normalizeDigitalTeamWorkflowDefinition,
+  validateDigitalTeamWorkflowDefinition,
+  validateDigitalTeamProjectWorkflowStatuses,
   type DigitalTeamEmployeeNode,
   type DigitalTeamNode,
   type DigitalTeamNodeAttemptRecord,
@@ -11,6 +14,8 @@ import {
   type DigitalTeamWorkflowRunRecord,
   type DigitalTeamWorkflowTemplateRecord,
   type DigitalTeamWorkflowValidationIssue,
+  type TaskManagementStatusDefinition,
+  type TaskManagementStatusRoles,
 } from '@zeus/shared';
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type FormEvent } from 'react';
 import { ArrowClockwiseIcon as Refresh } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
@@ -40,9 +45,9 @@ type DigitalTeamView = 'editor' | 'runs';
 export type DigitalTeamEntrySelection = { kind: 'template'; templateId: string } | { kind: 'run'; runId: string } | { kind: 'manage' };
 
 /** 本地模板草稿只保留服务端允许保存的字段。 */
-type TemplateDraft = Pick<DigitalTeamTemplateSaveInput, 'name' | 'description' | 'definition'> & { id: string | null; revision: number | null };
+type TemplateDraft = Pick<DigitalTeamTemplateSaveInput, 'name' | 'description' | 'definition'> & { id: string | null; revision: number | null; projectId: string | null };
 
-/** 团队节点编辑时可读取全局员工模板或旧项目员工记录的共同字段。 */
+/** 团队节点编辑读取全局已创建员工或旧项目员工记录的共同字段。 */
 type DigitalTeamMemberRecord = DigitalEmployeeTemplateRecord | DigitalEmployeeRecord;
 
 /** 人工决定弹窗统一覆盖批准、退回和返工。 */
@@ -106,9 +111,15 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   const [view, setView] = useState<DigitalTeamView>(() => (props.initialSelection?.kind === 'run' ? 'runs' : 'editor'));
   /** 全局模板与当前项目旧模板的兼容集合。 */
   const [templates, setTemplates] = useState<DigitalTeamWorkflowTemplateRecord[]>([]);
+  /** 当前项目流程独立于可复制的全局模板。 */
+  const [projectWorkflow, setProjectWorkflow] = useState<DigitalTeamWorkflowTemplateRecord | null>(null);
+  /** 状态选择来自项目真实目录，不由节点自行创造状态。 */
+  const [projectStatuses, setProjectStatuses] = useState<TaskManagementStatusDefinition[]>(defaultTaskManagementStatusConfig.statuses);
+  /** 完成状态按项目角色识别，不能假定固定状态名称。 */
+  const [projectStatusRoles, setProjectStatusRoles] = useState(defaultTaskManagementStatusConfig.roles);
   /** 当前运行目标项目的真实员工角色。 */
   const [employees, setEmployees] = useState<DigitalEmployeeRecord[]>([]);
-  /** 全局团队成员从全局数字员工模板中选择。 */
+  /** 全局团队成员只从已创建的数字员工中选择。 */
   const [employeeTemplates, setEmployeeTemplates] = useState<DigitalEmployeeTemplateRecord[]>([]);
   /** 当前项目的运行历史。 */
   const [runs, setRuns] = useState<DigitalTeamWorkflowRunRecord[]>([]);
@@ -134,6 +145,8 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   const [status, setStatus] = useState<string>('');
   /** 删除必须二次确认。 */
   const [pendingDelete, setPendingDelete] = useState<DigitalTeamWorkflowTemplateRecord | null>(null);
+  /** 跨项目复制先完成映射并生成本地草稿，取消不产生写操作。 */
+  const [projectCopyOpen, setProjectCopyOpen] = useState(false);
   /** 代码执行授权仅适用于当前任务和当前流程。 */
   const [confirmCommittedBaseline, setConfirmCommittedBaseline] = useState(false);
   /** 员工选择器按需展开，不长期占用画布列。 */
@@ -151,25 +164,30 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   const usesCode = draft.definition.nodes.some((node) => node.type === 'employee' && node.data.executionMode === 'isolated_write');
   /** 当前选中模板的服务端记录。 */
   const selectedTemplate = templates.find((template) => template.id === draft.id) ?? null;
-  /** 旧项目模板继续使用原项目员工；全局模板只引用全局员工模板。 */
-  const memberCatalog: DigitalTeamMemberRecord[] = selectedTemplate?.projectId ? employees : employeeTemplates;
+  /** 旧项目团队沿用原项目员工；全局团队只引用已创建的全局员工。 */
+  const memberCatalog: DigitalTeamMemberRecord[] = draft.projectId ? [...employees, ...employeeTemplates] : employeeTemplates;
   /** 员工名称索引供画布卡片与检查器复用。 */
   const employeeNames = useMemo(() => new Map(memberCatalog.map((employee) => [employee.id, employee.name])), [memberCatalog]);
-  /** 共享图校验与全局员工模板核对共同决定模板能否保存为可运行定义。 */
+  /** 共享图校验与已创建员工核对共同决定团队能否形成可运行定义。 */
   const validationIssues = useMemo(() => {
     /** 结构问题先由 shared 权威校验器生成。 */
-    const issues: DigitalTeamWorkflowValidationIssue[] = validateDigitalTeamWorkflowDefinition(draft.definition);
-    /** 新团队引用全局模板；旧项目模板仍核对原项目员工实例。 */
+    /** 草稿与保存共用协议默认值，用户只填写实际工作要求和必需验收命令。 */
+    const effectiveDefinition = normalizeDigitalTeamWorkflowDefinition(draft.definition);
+    const issues: DigitalTeamWorkflowValidationIssue[] = [
+      ...validateDigitalTeamWorkflowDefinition(effectiveDefinition),
+      ...(projectId ? validateDigitalTeamProjectWorkflowStatuses(effectiveDefinition, { hasStatus: (id) => projectStatuses.some((status) => status.id === id), isCompletedStatus: (id) => id === projectStatusRoles.completedStatusId }) : []),
+    ];
+    /** 新团队引用全局已创建员工；旧项目团队仍核对原项目员工实例。 */
     const employeeById = new Map(memberCatalog.map((employee) => [employee.id, employee]));
     for (const node of draft.definition.nodes) {
       if (node.type !== 'employee') continue;
-      /** 删除后的员工模板不能继续作为新运行的成员定义。 */
+      /** 未创建或已删除的员工不能继续作为新运行的成员定义。 */
       const employee = employeeById.get(node.data.employeeId);
-      if (!employee) issues.push({ code: 'ZEUS_DIGITAL_TEAM_EMPLOYEE_TEMPLATE_UNAVAILABLE', message: selectedTemplate?.projectId ? '员工节点绑定的项目数字员工不存在。' : '成员节点必须绑定仍然存在的全局数字员工模板。', nodeId: node.id });
+      if (!employee) issues.push({ code: 'ZEUS_DIGITAL_TEAM_EMPLOYEE_TEMPLATE_UNAVAILABLE', message: draft.projectId ? '员工节点绑定的项目数字员工不存在。' : '成员节点必须绑定已创建且仍然存在的全局数字员工。', nodeId: node.id });
       else if ('enabled' in employee && !employee.enabled) issues.push({ code: 'ZEUS_DIGITAL_TEAM_EMPLOYEE_UNAVAILABLE', message: '员工节点绑定的项目数字员工已停用。', nodeId: node.id });
     }
     return issues;
-  }, [draft.definition, memberCatalog, selectedTemplate?.projectId]);
+  }, [draft.definition, draft.projectId, memberCatalog, projectId, projectStatuses, projectStatusRoles]);
   /** 当前选中业务节点。 */
   const selectedNode = draft.definition.nodes.find((node) => node.id === selectedNodeId) ?? null;
   /** 当前运行冻结图兼容 Core 投影的两个稳定字段名。 */
@@ -202,15 +220,22 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
       setLoading(true);
       setError(null);
       try {
-        const [nextTemplates, nextEmployeeTemplates, nextEmployees, nextRuns] = await Promise.all([
+        const [nextTemplates, nextEmployeeTemplates, nextEmployees, nextRuns, nextWorkflow, runtimeSettings] = await Promise.all([
           api.loadDigitalTeamTemplates(projectId || undefined),
           api.loadDigitalEmployeeTemplates(),
           projectId ? api.loadProjectDigitalEmployees(projectId) : Promise.resolve([]),
           projectId ? api.loadDigitalTeamRuns(projectId, props.task?.id) : Promise.resolve([]),
+          projectId ? api.loadProjectDigitalTeamWorkflow(projectId) : Promise.resolve(null),
+          api.loadAppShellSettings(),
         ]);
         if (revision !== loadRevisionRef.current) return;
         setTemplates(nextTemplates);
-        setEmployeeTemplates(nextEmployeeTemplates);
+        setProjectWorkflow(nextWorkflow);
+        /** 状态目录和完成角色同时刷新，防止沿用另一个项目的完成身份。 */
+        const statusConfig = normalizeTaskManagementStatusConfig(runtimeSettings.taskManagementStatusByProject?.[projectId] ?? runtimeSettings.taskManagementStatusTemplate);
+        setProjectStatuses(statusConfig.statuses);
+        setProjectStatusRoles(statusConfig.roles);
+        setEmployeeTemplates(nextEmployeeTemplates.filter((employee) => !employee.builtIn));
         setEmployees(nextEmployees);
         /** 任务入口只展示当前任务运行；团队入口仍展示项目记录。 */
         const visibleRuns = props.task ? nextRuns.filter((run) => run.taskId === props.task!.id) : nextRuns;
@@ -312,7 +337,8 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
 
   /** 所有画布与表单修改共用脏状态。 */
   const changeDefinition = useCallback((definition: DigitalTeamWorkflowDefinition | ((current: DigitalTeamWorkflowDefinition) => DigitalTeamWorkflowDefinition)): void => {
-    setDraft((current) => ({ ...current, definition: normalizeDigitalTeamWorkflowDefinition(typeof definition === 'function' ? definition(current.definition) : definition) }));
+    // 编辑时保留空格和空行，服务端保存边界再归一化，避免输入被打断。
+    setDraft((current) => ({ ...current, definition: typeof definition === 'function' ? definition(current.definition) : definition }));
     setDirty(true);
     setStatus('');
   }, []);
@@ -387,12 +413,34 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
             ),
           },
         },
-        selectedTemplate?.projectId,
+        draft.projectId,
       );
       setTemplates((current) => [saved, ...current.filter((template) => template.id !== saved.id)]);
       setDraft(templateDraft(saved));
       setDirty(false);
+      /** 普通保存也刷新项目流程引用，下一次应用使用服务端当前修订。 */
+      if (projectId) setProjectWorkflow(await api.loadProjectDigitalTeamWorkflow(projectId));
       setStatus(zh ? '流程模板已保存。' : 'Workflow template saved.');
+    } catch (cause) {
+      setError(applicationError(cause, zh));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 项目流程复制当前编辑图并独立保存，不修改来源模板。 */
+  const saveProjectWorkflow = async (): Promise<void> => {
+    if (!api || !projectId || !draft.name.trim() || validationIssues.length > 0) return;
+    setBusy(true);
+    setError(null);
+    try {
+      /** 修订取项目当前流程，复制来源的模板修订不能冒充项目修订。 */
+      const saved = await api.saveProjectDigitalTeamWorkflow(projectId, { name: draft.name.trim(), description: draft.description.trim(), definition: draft.definition, expectedRevision: projectWorkflow?.revision ?? null });
+      setProjectWorkflow(saved);
+      setTemplates((current) => [saved, ...current.filter((template) => template.id !== saved.id)]);
+      setDraft(templateDraft(saved));
+      setDirty(false);
+      setStatus(zh ? '已保存为当前项目流程，指派员工将从对应入口执行。' : 'Saved as the current project workflow.');
     } catch (cause) {
       setError(applicationError(cause, zh));
     } finally {
@@ -562,6 +610,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
         definition={draft.definition}
         employees={memberCatalog}
         employeeNames={employeeNames}
+        statuses={projectStatuses}
         issues={validationIssues.filter((issue) => issue.nodeId === selectedNode?.id)}
         onChange={(node) => replaceNode(draft.definition, node, changeDefinition)}
         onConnect={(source, target) => changeDefinition({ ...draft.definition, edges: [...draft.definition.edges, { id: `edge_${crypto.randomUUID()}`, source, target }] })}
@@ -612,16 +661,23 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
               {zh ? '运行记录' : 'Runs'}
             </button>
           </div>
-          {view === 'runs' ? (
-            <ZeusSelect
-              ariaLabel={zh ? '选择运行项目' : 'Choose run project'}
-              disabled={Boolean(props.task) || props.projects.length === 0}
-              value={projectId || noProjectValue}
-              options={props.projects.map((project) => ({ value: project.id, label: project.name, searchText: project.localPath }))}
-              onChange={setProjectId}
-              size="regular"
-              searchable
-            />
+          <ZeusSelect
+            ariaLabel={zh ? '当前项目' : 'Current project'}
+            disabled={Boolean(props.task) || busy || loading || dirty}
+            value={projectId || noProjectValue}
+            options={[
+              ...(view === 'editor' ? [{ value: noProjectValue, label: zh ? '全局流程模板' : 'Global workflow templates' }] : []),
+              ...props.projects.map((project) => ({ value: project.id, label: project.name, searchText: project.localPath })),
+            ]}
+            onChange={(value) => setProjectId(value === noProjectValue ? '' : value)}
+            size="regular"
+            searchable
+          />
+          {view === 'editor' && projectId ? (
+            <Button size="compact" disabled={!api || loading || busy || dirty || !props.projects.some((project) => project.id !== projectId)} onClick={() => setProjectCopyOpen(true)}>
+              <Copy aria-hidden="true" />
+              {zh ? '从其他项目复制' : 'Copy from another project'}
+            </Button>
           ) : null}
           <Button
             className="digital-team-refresh-button"
@@ -671,9 +727,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                   ...templates.map((template) => ({
                     value: template.id,
                     label: template.name,
-                    description: template.projectId
-                      ? `${zh ? '旧项目模板' : 'Legacy project template'} · ${zh ? '修订' : 'Revision'} ${template.revision}`
-                      : `${zh ? '全局团队' : 'Global team'} · ${zh ? '修订' : 'Revision'} ${template.revision}`,
+                    description: template.projectId ? `${zh ? '项目团队' : 'Project team'} · ${zh ? '修订' : 'Revision'} ${template.revision}` : `${zh ? '全局团队' : 'Global team'} · ${zh ? '修订' : 'Revision'} ${template.revision}`,
                   })),
                 ]}
                 onChange={selectTemplate}
@@ -722,7 +776,49 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                   }}
                 />
               </label>
+              <details>
+                <summary>{zh ? '缺陷修复规则' : 'Defect repair'}</summary>
+                <label>
+                  <span>{zh ? '修复员工' : 'Repair employee'}</span>
+                  <ZeusSelect
+                    size="regular"
+                    ariaLabel="选择缺陷修复员工"
+                    value={draft.definition.repairEmployeeId ?? ''}
+                    options={[{ value: '', label: '未配置，发现正式缺陷时等待安排' }, ...memberCatalog.map((employee) => ({ value: employee.id, label: employee.name }))]}
+                    onChange={(repairEmployeeId) => changeDefinition({ ...draft.definition, repairEmployeeId: repairEmployeeId || undefined })}
+                  />
+                </label>
+                <label>
+                  <span>{zh ? '最多自动修复轮次' : 'Maximum repair rounds'}</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={20}
+                    value={draft.definition.maxRepairRounds ?? 3}
+                    onChange={(event) => {
+                      /** 仅提交整数，空输入保持既有轮数。 */ const maxRepairRounds = Number(event.currentTarget.value);
+                      if (Number.isInteger(maxRepairRounds) && maxRepairRounds >= 0 && maxRepairRounds <= 20) changeDefinition({ ...draft.definition, maxRepairRounds });
+                    }}
+                  />
+                </label>
+              </details>
+              <details>
+                <summary>{zh ? '项目经验规则' : 'Project experience'}</summary>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={draft.definition.projectMemoryPolicy?.autoApplyStableExperience === true}
+                    onChange={(event) => changeDefinition({ ...draft.definition, projectMemoryPolicy: { autoApplyStableExperience: event.currentTarget.checked } })}
+                  />
+                  <span>{zh ? '自动接纳本项目的稳定方法和领域经验；冲突仍待确认' : 'Apply stable project experience automatically; confirm conflicts'}</span>
+                </label>
+              </details>
               <div className="digital-team-save-actions">
+                {projectId && draft.id !== projectWorkflow?.id ? (
+                  <Button size="compact" disabled={busy || loading || !draft.name.trim() || validationIssues.length > 0} onClick={() => void saveProjectWorkflow()}>
+                    {zh ? '设为项目流程' : 'Use for project'}
+                  </Button>
+                ) : null}
                 <div className="digital-team-member-picker-anchor">
                   <Button size="compact" onClick={() => setMemberPickerOpen((open) => !open)} aria-expanded={memberPickerOpen}>
                     <Plus aria-hidden="true" />
@@ -863,6 +959,31 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
       )}
 
       <MotionPresence>
+        {projectCopyOpen && api ? (
+          <ProjectWorkflowCopyDialog
+            api={api}
+            projects={props.projects}
+            projectId={projectId}
+            employees={employees}
+            globalEmployees={employeeTemplates}
+            statuses={projectStatuses}
+            statusRoles={projectStatusRoles}
+            zh={zh}
+            onClose={() => setProjectCopyOpen(false)}
+            onCopy={(copied) => {
+              setDraft(copied);
+              setDraftOpen(true);
+              setDirty(true);
+              setSelectedNodeId(null);
+              setCanvasGeneration((current) => current + 1);
+              setProjectCopyOpen(false);
+              setError(null);
+              setStatus(zh ? '已复制为当前项目草稿，请保存或设为项目流程。' : 'Copied to a draft for this project. Save it or use it as the project workflow.');
+            }}
+          />
+        ) : null}
+      </MotionPresence>
+      <MotionPresence>
         {pendingDelete ? (
           <FormDialog
             title={zh ? '删除流程模板' : 'Delete workflow template'}
@@ -911,10 +1032,10 @@ function RolePalette(props: { employees: DigitalTeamMemberRecord[]; onAdd(payloa
         <h2>数字员工</h2>
         <span>{props.employees.length}</span>
       </div>
-      <p className="digital-team-help">选择成员加入团队。同一数字员工模板可承担多个分工。</p>
+      <p className="digital-team-help">选择已创建的数字员工加入团队。同一数字员工可承担多个分工。</p>
       <div className="digital-team-palette-list">
         {props.employees.length === 0 ? (
-          <p role="status">还没有可用的数字员工模板。</p>
+          <p role="status">还没有可用的数字员工，请先在“数字员工”页面创建。</p>
         ) : (
           props.employees.map((employee) => (
             <article key={employee.id} className="digital-team-palette-card" draggable onDragStart={(event) => writeDragPayload(event, { kind: 'employee', employeeId: employee.id })}>
@@ -938,12 +1059,14 @@ function RolePalette(props: { employees: DigitalTeamMemberRecord[]; onAdd(payloa
 
 /** 节点检查器按判别联合展示且只更新当前节点允许的字段。 */
 function NodeInspector(props: {
-  /** 团队成员只引用全局数字员工模板。 */
+  /** 团队成员只引用已创建的全局数字员工。 */
   node: DigitalTeamNode | null;
   definition: DigitalTeamWorkflowDefinition;
   employees: DigitalTeamMemberRecord[];
   employeeNames: ReadonlyMap<string, string>;
-  issues: Array<{ message: string }>;
+  /** 项目状态目录供员工节点的触发与推进使用。 */
+  statuses: TaskManagementStatusDefinition[];
+  issues: DigitalTeamWorkflowValidationIssue[];
   onChange(node: DigitalTeamNode): void;
   onConnect(source: string, target: string): void;
   onDisconnect(edgeId: string): void;
@@ -967,7 +1090,15 @@ function NodeInspector(props: {
         <span>{nodeTypeLabel(node.type)}</span>
       </div>
       {node.type === 'employee' ? (
-        <EmployeeNodeFields key={`${node.id}:${employee?.id ?? 'missing'}:${employee?.revision ?? 0}`} node={node} employees={props.employees} employee={employee} onChange={props.onChange} />
+        <EmployeeNodeFields
+          key={`${node.id}:${employee?.id ?? 'missing'}:${employee?.revision ?? 0}`}
+          node={node}
+          employees={props.employees}
+          employee={employee}
+          statuses={props.statuses}
+          hasStatusIssue={props.issues.some((issue) => issue.code.includes('STATUS'))}
+          onChange={props.onChange}
+        />
       ) : (
         <label>
           <span>名称</span>
@@ -1053,7 +1184,18 @@ function KeyboardConnectionEditor(props: {
 }
 
 /** 员工节点只在流程里选择一次；运行时由存储边界解析并冻结项目执行实例。 */
-function EmployeeNodeFields(props: { node: DigitalTeamEmployeeNode; employees: DigitalTeamMemberRecord[]; employee: DigitalTeamMemberRecord | undefined; onChange(node: DigitalTeamNode): void }) {
+function EmployeeNodeFields(props: {
+  node: DigitalTeamEmployeeNode;
+  employees: DigitalTeamMemberRecord[];
+  employee: DigitalTeamMemberRecord | undefined;
+  statuses: TaskManagementStatusDefinition[];
+  /** 状态校验失败时直接展开对应设置。 */ hasStatusIssue: boolean;
+  onChange(node: DigitalTeamNode): void;
+}) {
+  /** 节点工作说明属于流程，员工默认职责仍由员工配置统一管理。 */
+  const update = (data: Partial<DigitalTeamEmployeeNode['data']>): void => props.onChange({ ...props.node, data: { ...props.node.data, ...data } });
+  /** 编辑时保留换行，正式保存再剔除空项。 */
+  const lines = (value: string): string[] => value.split('\n');
   return (
     <>
       <label>
@@ -1080,6 +1222,80 @@ function EmployeeNodeFields(props: { node: DigitalTeamEmployeeNode; employees: D
           size="regular"
         />
       </label>
+      <label>
+        <span>工作职责</span>
+        <ZeusSelect
+          size="regular"
+          ariaLabel="工作职责"
+          value={props.node.data.purpose}
+          options={[
+            { value: 'plan', label: '规划' },
+            { value: 'work', label: '执行' },
+            { value: 'verify', label: '验收' },
+            { value: 'summary', label: '交付汇总' },
+          ]}
+          onChange={(value) => {
+            /** 验收读取被测候选，规划与汇总保持只读。 */ const purpose = value as DigitalTeamEmployeeNode['data']['purpose'];
+            update({ purpose, executionMode: purpose === 'verify' ? 'candidate_read_only' : purpose === 'work' ? props.node.data.executionMode : 'read_only' });
+          }}
+        />
+      </label>
+      {props.node.data.purpose === 'work' ? (
+        <label>
+          <span>执行方式</span>
+          <ZeusSelect
+            size="regular"
+            ariaLabel="执行方式"
+            value={props.node.data.executionMode}
+            options={[
+              { value: 'read_only', label: '只读工作' },
+              { value: 'isolated_write', label: '隔离工作区修改' },
+            ]}
+            onChange={(value) => update({ executionMode: value as DigitalTeamEmployeeNode['data']['executionMode'] })}
+          />
+        </label>
+      ) : null}
+      <label>
+        <span>工作要求</span>
+        <textarea placeholder="默认按任务目标与员工职责执行" value={props.node.data.instructions} maxLength={12000} onChange={(event) => update({ instructions: event.currentTarget.value })} />
+      </label>
+
+      {props.node.data.purpose === 'verify' ? (
+        <label>
+          <span>必须通过的验收命令（每行一项）</span>
+          <textarea
+            autoFocus={!props.node.data.verificationCommands?.some((command) => command.trim())}
+            aria-invalid={!props.node.data.verificationCommands?.some((command) => command.trim())}
+            placeholder="例如 pnpm lint、pnpm typecheck（每行一条）"
+            value={(props.node.data.verificationCommands ?? []).join('\n')}
+            onChange={(event) => update({ verificationCommands: lines(event.currentTarget.value) })}
+          />
+          {!props.node.data.verificationCommands?.some((command) => command.trim()) ? <small className="digital-team-field-error">请填写需要实际执行的验收命令。</small> : null}
+        </label>
+      ) : null}
+      <details className="digital-team-advanced-settings" open={props.hasStatusIssue}>
+        <summary>完成标准与状态设置</summary>
+        <label>
+          <span>完成标准（每行一项）</span>
+          <textarea value={(props.node.data.acceptanceCriteria ?? []).join('\n')} onChange={(event) => update({ acceptanceCriteria: lines(event.currentTarget.value) })} />
+        </label>{' '}
+        <label>
+          <input type="checkbox" checked={props.node.data.assignmentEntry ?? false} onChange={(event) => update({ assignmentEntry: event.currentTarget.checked })} />
+          <span>作为该员工的指派入口</span>
+        </label>
+        {(['triggerStatusId', 'startStatusId', 'completionStatusId'] as const).map((key, index) => (
+          <label key={key}>
+            <span>{['状态触发', '开始状态', '完成状态'][index]}</span>
+            <ZeusSelect
+              size="regular"
+              ariaLabel={['状态触发', '开始状态', '完成状态'][index]!}
+              value={props.node.data[key] ?? ''}
+              options={[{ value: '', label: '不配置' }, ...props.statuses.map((status) => ({ value: status.id, label: status.label ?? status.id }))]}
+              onChange={(value) => update({ [key]: value || undefined })}
+            />
+          </label>
+        ))}
+      </details>
       {props.employee ? (
         <p className="digital-employee-boundary-note">{props.employee.description || `${props.employee.role} · ${props.employee.domain}`}</p>
       ) : (
@@ -1091,28 +1307,24 @@ function EmployeeNodeFields(props: { node: DigitalTeamEmployeeNode; employees: D
   );
 }
 
-/** 共享校验问题保留节点定位信息，草稿可保存但不能启动。 */
+/** 有问题时展示简短原因和节点定位入口，不占用正常流程的空间。 */
 function ValidationPanel(props: { issues: Array<{ code: string; message: string; nodeId?: string }>; onSelectNode(nodeId: string): void }) {
+  if (!props.issues.length) return null;
   return (
-    <section className={`digital-team-validation${props.issues.length ? ' has-issues' : ' is-ready'}`} aria-live="polite">
-      <strong>{props.issues.length ? `还需处理 ${props.issues.length} 项` : '流程可以开始协作'}</strong>
-      {props.issues.length ? (
-        <ul>
-          {props.issues.map((issue, index) => (
-            <li key={`${issue.code}_${issue.nodeId ?? ''}_${index}`}>
-              {issue.nodeId ? (
-                <button type="button" onClick={() => props.onSelectNode(issue.nodeId!)}>
-                  {issue.message}
-                </button>
-              ) : (
-                issue.message
-              )}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <span>保存后即可按当前协作关系开始运行。</span>
-      )}
+    <section className="digital-team-validation has-issues" aria-live="polite">
+      <strong>还需处理 {props.issues.length} 项</strong>
+      <ul>
+        {props.issues.map((issue, index) => (
+          <li key={`${issue.code}_${issue.nodeId ?? ''}_${index}`}>
+            <span>{issue.message}</span>
+            {issue.nodeId ? (
+              <button type="button" onClick={() => props.onSelectNode(issue.nodeId!)}>
+                定位
+              </button>
+            ) : null}
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }
@@ -1323,6 +1535,243 @@ function FinalApprovalEvidence(props: { run: DigitalTeamWorkflowRunRecord; nodeI
   );
 }
 
+/** 跨项目复制只读来源目录，明确映射后返回独立草稿。 */
+function ProjectWorkflowCopyDialog(props: {
+  /** 已组合的员工、项目状态和流程客户端。 */
+  api: DashboardClient & DigitalTeamApiClient;
+  /** 可选的来源项目。 */
+  projects: ProjectRecord[];
+  /** 当前复制目标项目。 */
+  projectId: string;
+  /** 目标项目已有员工。 */
+  employees: DigitalEmployeeRecord[];
+  /** 已创建的全局员工身份。 */
+  globalEmployees: DigitalEmployeeTemplateRecord[];
+  /** 目标项目真实状态。 */
+  statuses: TaskManagementStatusDefinition[];
+  /** 目标项目的明确状态角色，用于自动匹配默认状态。 */
+  statusRoles: TaskManagementStatusRoles;
+  /** 当前界面语言。 */
+  zh: boolean;
+  /** 取消时只关闭本地弹窗。 */
+  onClose(): void;
+  /** 映射完成后由原有保存入口接纳草稿。 */
+  onCopy(draft: TemplateDraft): void;
+}) {
+  /** 默认选择第一个其他项目，不改变当前目标。 */
+  const [sourceProjectId, setSourceProjectId] = useState(props.projects.find((project) => project.id !== props.projectId)?.id ?? '');
+  /** 来源项目可复制的流程，包含当前项目流程。 */
+  const [sources, setSources] = useState<DigitalTeamWorkflowTemplateRecord[]>([]);
+  /** 来源员工仅用于确认稳定身份，不按同名推断关系。 */
+  const [sourceEmployees, setSourceEmployees] = useState<DigitalEmployeeRecord[]>([]);
+  /** 来源状态用于给映射项提供原有名称。 */
+  const [sourceStatuses, setSourceStatuses] = useState<TaskManagementStatusDefinition[]>([]);
+  /** 来源状态角色提供稳定语义，不按显示名称猜测。 */
+  const [sourceStatusRoles, setSourceStatusRoles] = useState(defaultTaskManagementStatusConfig.roles);
+  /** 当前选择的来源流程身份。 */
+  const [sourceId, setSourceId] = useState('');
+  /** 显式员工映射按来源身份保存。 */
+  const [employeeMapping, setEmployeeMapping] = useState<Record<string, string>>({});
+  /** 显式状态映射按来源状态身份保存。 */
+  const [statusMapping, setStatusMapping] = useState<Record<string, string>>({});
+  /** 来源加载中不能提交旧选择。 */
+  const [loading, setLoading] = useState(true);
+  /** 读取失败保留在弹窗中。 */
+  const [error, setError] = useState<string | null>(null);
+  /** 当前来源记录只从本次成功加载的目录读取。 */
+  const source = sources.find((template) => template.id === sourceId);
+  /** 同一个员工多节点引用只要求映射一次，修复员工也在范围内。 */
+  const employeeIds = [
+    ...new Set([
+      ...(source?.definition.nodes.flatMap((node) => (node.type === 'employee' ? [node.data.employeeId, ...(node.data.settings?.delegation?.employeeIds ?? [])] : [])) ?? []),
+      ...(source?.definition.repairEmployeeId ? [source.definition.repairEmployeeId] : []),
+    ]),
+  ];
+  /** 状态映射同时覆盖触发、开始和完成。 */
+  const statusIds = [
+    ...new Set(source?.definition.nodes.flatMap((node) => (node.type === 'employee' ? [node.data.triggerStatusId, node.data.startStatusId, node.data.completionStatusId].filter((id): id is string => Boolean(id)) : [])) ?? []),
+  ];
+  /** 全局身份只从已有关系解析，旧项目员工必须手工选目标项目员工。 */
+  const resolveEmployee = (id: string): string | null => {
+    /** 已创建的全局员工可以直接作为流程引用。 */
+    const globalId = props.globalEmployees.some((employee) => employee.id === id) ? id : (sourceEmployees.find((employee) => employee.id === id)?.globalEmployeeId ?? sourceEmployees.find((employee) => employee.id === id)?.templateId);
+    return globalId && props.globalEmployees.some((employee) => employee.id === globalId) ? globalId : null;
+  };
+  /** 新绑定由保存边界建立；已有目标绑定保留其项目补充配置。 */
+  const targetEmployee = (id: string): string => {
+    /** 用户已明确重选的目标优先。 */
+    if (id in employeeMapping) return employeeMapping[id]!;
+    /** 只使用确认的全局身份建立对应关系。 */
+    const globalId = resolveEmployee(id);
+    return globalId ? (props.employees.find((employee) => employee.enabled && employee.globalEmployeeId === globalId)?.id ?? globalId) : '';
+  };
+  /** 同一状态身份存在时可以保留，否则必须明确选择目标状态。 */
+  const targetStatus = (id: string): string => {
+    if (id in statusMapping) return statusMapping[id]!;
+    if (props.statuses.some((status) => status.id === id)) return id;
+    /** 一个来源状态兼任多个角色时，只有目标唯一一致才自动映射。 */
+    const targets = [
+      ...new Set(
+        (Object.keys(sourceStatusRoles) as Array<keyof TaskManagementStatusRoles>)
+          .filter((role) => sourceStatusRoles[role] === id)
+          .map((role) => props.statusRoles[role])
+          .filter((target) => props.statuses.some((status) => status.id === target)),
+      ),
+    ];
+    return targets.length === 1 ? targets[0]! : '';
+  };
+  /** 已经明确匹配的项只作摘要，缺失项保留就地必选控件。 */
+  const missingEmployees = employeeIds.filter((id) => !targetEmployee(id));
+  /** 不按同名猜测项目自定义状态。 */
+  const missingStatuses = statusIds.filter((id) => !targetStatus(id));
+
+  useEffect(() => {
+    /** 项目切换后的迟到响应不能覆盖新来源目录。 */
+    let active = true;
+    setLoading(true);
+    setError(null);
+    setSources([]);
+    setSourceId('');
+    setEmployeeMapping({});
+    setStatusMapping({});
+    void Promise.all([props.api.loadDigitalTeamTemplates(sourceProjectId), props.api.loadProjectDigitalTeamWorkflow(sourceProjectId), props.api.loadProjectDigitalEmployees(sourceProjectId), props.api.loadAppShellSettings()])
+      .then(([templates, workflow, employees, settings]) => {
+        if (!active) return;
+        /** 项目当前流程优先展示，重复模板只保留一个身份。 */
+        const available = [...new Map([...(workflow ? [workflow] : []), ...templates.filter((template) => template.projectId === sourceProjectId)].map((template) => [template.id, template])).values()];
+        setSources(available);
+        setSourceId(available[0]?.id ?? '');
+        setSourceEmployees(employees);
+        /** 状态目录和角色一起归一化，与项目保存边界一致。 */
+        const statusConfig = normalizeTaskManagementStatusConfig(settings.taskManagementStatusByProject?.[sourceProjectId] ?? settings.taskManagementStatusTemplate);
+        setSourceStatuses(statusConfig.statuses);
+        setSourceStatusRoles(statusConfig.roles);
+      })
+      .catch((cause: unknown) => {
+        if (active) setError(applicationError(cause, props.zh));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [props.api, props.zh, sourceProjectId]);
+
+  /** 只复制明确配置，源运行、授权、成果和经验不会进入草稿。 */
+  const copyDraft = (event: FormEvent): void => {
+    event.preventDefault();
+    if (!source || loading || employeeIds.some((id) => !targetEmployee(id)) || statusIds.some((id) => !targetStatus(id))) return;
+    /** 深复制之后修改映射，来源模板对象保持不变。 */
+    const definition = structuredClone(source.definition);
+    for (const node of definition.nodes) {
+      if (node.type !== 'employee') continue;
+      node.data.employeeId = targetEmployee(node.data.employeeId);
+      /** 规划分工授权也使用目标员工身份，避免保留来源项目引用。 */
+      if (node.data.settings?.delegation) node.data.settings.delegation.employeeIds = [...new Set(node.data.settings.delegation.employeeIds.map(targetEmployee))];
+      for (const key of ['triggerStatusId', 'startStatusId', 'completionStatusId'] as const) if (node.data[key]) node.data[key] = targetStatus(node.data[key]!);
+    }
+    if (definition.repairEmployeeId) definition.repairEmployeeId = targetEmployee(definition.repairEmployeeId);
+    props.onCopy({ id: null, revision: null, projectId: props.projectId, name: `${source.name}${props.zh ? ' 副本' : ' copy'}`, description: source.description, definition });
+  };
+
+  /** 员工映射保留全文可访问名称，选项只显示实际员工。 */
+  const renderEmployeeMapping = (id: string) => (
+    <label key={id}>
+      <span>
+        {props.zh ? '员工' : 'Employee'} · {sourceEmployees.find((employee) => employee.id === id)?.name ?? props.globalEmployees.find((employee) => employee.id === id)?.name ?? id}
+      </span>
+      <ZeusSelect
+        size="regular"
+        ariaLabel={`${props.zh ? '映射员工' : 'Map employee'} ${id}`}
+        value={targetEmployee(id)}
+        options={[
+          { value: '', label: props.zh ? '选择目标项目员工' : 'Select target employee' },
+          ...props.employees.filter((employee) => employee.enabled).map((employee) => ({ value: employee.id, label: employee.name })),
+          ...(resolveEmployee(id)
+            ? props.globalEmployees.filter((employee) => employee.id === resolveEmployee(id)).map((employee) => ({ value: employee.id, label: `${employee.name} · ${props.zh ? '保存时绑定当前项目' : 'Bind to this project when saved'}` }))
+            : []),
+        ]}
+        onChange={(value) => setEmployeeMapping((current) => ({ ...current, [id]: value }))}
+      />
+    </label>
+  );
+  /** 缺失状态直接补选；已匹配状态可按需调整。 */
+  const renderStatusMapping = (id: string) => (
+    <label key={id}>
+      <span>
+        {props.zh ? '状态' : 'Status'} · {sourceStatuses.find((status) => status.id === id)?.label ?? id}
+      </span>
+      <ZeusSelect
+        size="regular"
+        ariaLabel={`${props.zh ? '映射状态' : 'Map status'} ${id}`}
+        value={targetStatus(id)}
+        options={[{ value: '', label: props.zh ? '选择目标项目状态' : 'Select target status' }, ...props.statuses.map((status) => ({ value: status.id, label: status.label ?? status.id }))]}
+        onChange={(value) => setStatusMapping((current) => ({ ...current, [id]: value }))}
+      />
+    </label>
+  );
+
+  return (
+    <FormDialog
+      className="digital-team-copy-dialog"
+      title={props.zh ? '从其他项目复制流程' : 'Copy workflow from another project'}
+      description={props.zh ? '复制到当前项目，保存后独立维护。' : 'Map employees and statuses to create a draft for this project.'}
+      zh={props.zh}
+      busy={false}
+      submitLabel={props.zh ? '复制为草稿' : 'Copy to draft'}
+      submitDisabled={loading || !source || employeeIds.some((id) => !targetEmployee(id)) || statusIds.some((id) => !targetStatus(id))}
+      onClose={props.onClose}
+      onSubmit={copyDraft}
+    >
+      <label>
+        <span>{props.zh ? '来源项目' : 'Source project'}</span>
+        <ZeusSelect
+          size="regular"
+          ariaLabel={props.zh ? '来源项目' : 'Source project'}
+          value={sourceProjectId}
+          options={props.projects.filter((project) => project.id !== props.projectId).map((project) => ({ value: project.id, label: project.name }))}
+          onChange={setSourceProjectId}
+        />
+      </label>
+      <label>
+        <span>{props.zh ? '来源流程' : 'Source workflow'}</span>
+        <ZeusSelect
+          size="regular"
+          ariaLabel={props.zh ? '来源流程' : 'Source workflow'}
+          disabled={loading}
+          value={sourceId}
+          options={sources.map((template) => ({ value: template.id, label: template.name }))}
+          onChange={(id) => {
+            setSourceId(id);
+            setEmployeeMapping({});
+            setStatusMapping({});
+          }}
+        />
+      </label>
+      {loading ? <p role="status">{props.zh ? '正在读取来源流程…' : 'Loading source workflows…'}</p> : !sources.length ? <p role="status">{props.zh ? '来源项目没有可复制的流程。' : 'This project has no workflows to copy.'}</p> : null}
+      {error ? <p role="alert">{error}</p> : null}
+      {!loading && source ? (
+        <>
+          <p className="digital-team-copy-summary">
+            {props.zh
+              ? `已匹配 ${employeeIds.length - missingEmployees.length} 位员工、${statusIds.length - missingStatuses.length} 个状态。`
+              : `Matched ${employeeIds.length - missingEmployees.length} employees and ${statusIds.length - missingStatuses.length} statuses.`}
+          </p>
+          {missingEmployees.length + missingStatuses.length > 0 ? <p role="status">{props.zh ? '补齐以下映射即可复制。' : 'Complete these mappings to copy.'}</p> : null}
+          {missingEmployees.map(renderEmployeeMapping)}
+          {missingStatuses.map(renderStatusMapping)}
+          <details className="digital-team-advanced-settings">
+            <summary>{props.zh ? '调整已匹配项' : 'Adjust matched mappings'}</summary>
+            {employeeIds.filter((id) => targetEmployee(id)).map(renderEmployeeMapping)}
+            {statusIds.filter((id) => targetStatus(id)).map(renderStatusMapping)}
+          </details>
+        </>
+      ) : null}
+    </FormDialog>
+  );
+}
+
 /** 确认 DashboardClient 已组合数字团队与员工真实接口。 */
 function hasDigitalTeamApi(client: DashboardClient | null): client is DashboardClient & DigitalTeamApiClient {
   return Boolean(client && 'loadDigitalTeamTemplates' in client && typeof client.loadDigitalTeamTemplates === 'function' && 'createDigitalTeamRun' in client && typeof client.createDigitalTeamRun === 'function');
@@ -1335,12 +1784,12 @@ function validInitialProjectId(projects: ProjectRecord[], initialProjectId?: str
 
 /** 新模板以空画布和稳定视口开始，允许保存不完整草稿。 */
 function emptyTemplateDraft(): TemplateDraft {
-  return { id: null, revision: null, name: '', description: '', definition: { schemaGeneration: digitalTeamWorkflowSchemaGeneration, nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 0.8 } } };
+  return { id: null, revision: null, projectId: null, name: '', description: '', definition: { schemaGeneration: digitalTeamWorkflowSchemaGeneration, nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 0.8 } } };
 }
 
 /** 已保存模板复制为可编辑草稿，不混入运行状态。 */
 function templateDraft(template: DigitalTeamWorkflowTemplateRecord): TemplateDraft {
-  return { id: template.id, revision: template.revision, name: template.name, description: template.description, definition: structuredClone(template.definition) };
+  return { id: template.id, revision: template.revision, projectId: template.projectId, name: template.name, description: template.description, definition: structuredClone(template.definition) };
 }
 
 /** 添加按钮使用可预期的阶梯位置，拖放仍使用准确视口坐标。 */

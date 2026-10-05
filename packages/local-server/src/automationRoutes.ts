@@ -111,6 +111,11 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
     });
   });
 
+  /** 明确恢复沿原冻结目标继续，不创建新的触发身份或重跑已接纳项目。 */
+  server.post('/api/automation-runs/:runId/resume', async (request: FastifyRequest<{ Params: { runId: string } }>, reply) => {
+    return mutate(request, reply, () => ({ statusCode: 202, body: runs.resumeDispatch(request.params.runId) }));
+  });
+
   server.post('/api/automation-runs/:runId/read', async (request: FastifyRequest<{ Params: { runId: string } }>, reply) => {
     return mutate(request, reply, () => {
       const run = runs.acknowledge(request.params.runId);

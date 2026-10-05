@@ -1,7 +1,7 @@
 import type { DigitalTeamEntrySelection } from '../digital-teams/DigitalTeamWorkspace.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GlobalAgentSettingsHandle } from '../../settings/GlobalAgentSettingsPane.js';
-import { projectTerminalOutput } from '@zeus/shared';
+import { projectTerminalOutput, temporaryWorkspaceId } from '@zeus/shared';
 import { cloneTaskManagementStatusConfig, defaultTaskManagementStatusConfig } from '@zeus/shared';
 import { type AutomaticUpdateIndicatorState, loadAutomaticUpdateIndicatorFromMain } from '../../appShellBridge.js';
 import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromConversation, conversationTreeRuntimeStateFromSession, type ProjectConversationGroup } from '../../session/ProjectConversationTree.js';
@@ -349,8 +349,11 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     if (!props.snapshot) return;
     // 同步 Electron hydration 后传入的真实 snapshot，避免首屏 connecting 空状态锁死后续真实项目与任务。
     setSnapshot(props.snapshot);
-    const nextProject = syncRecordFromSnapshot(projectDetail, props.snapshot.projects);
-    const nextTask = syncRecordFromSnapshot(taskDetail, props.snapshot.tasks);
+    /** 无项目工作的技术归属可能不进入公开目录，保留已经明确加载的身份。 */
+    const nextProject = projectDetail?.id === temporaryWorkspaceId ? (props.snapshot.projects.find((item) => item.id === projectDetail.id) ?? projectDetail) : syncRecordFromSnapshot(projectDetail, props.snapshot.projects);
+    /** 正在查看的临时工作成果不能被下一次目录水合替换为其他任务。 */
+    const nextTask =
+      taskDetail?.projectId === temporaryWorkspaceId && taskDetail.id === taskDetailPaneTaskId ? (props.snapshot.tasks.find((item) => item.id === taskDetail.id) ?? taskDetail) : syncRecordFromSnapshot(taskDetail, props.snapshot.tasks);
     setProjectDetail(nextProject);
     setTaskDetail(nextTask);
     setProjectEditForm({

@@ -11,23 +11,8 @@ import { ZeusSelect } from '../../ZeusSelect.js';
 import type { NativeConversationAppClient } from '../workspace/workspaceSupport.js';
 import { codexCapabilitiesChangedEvent } from '../codex/codexApiClient.js';
 import { AgentExecutionConfigFields } from './AgentExecutionConfigFields.js';
-import type { DigitalEmployeeAutomationRecord, DigitalEmployeeExecutionRecord, DigitalEmployeeRecord, DigitalEmployeeTemplateRecord } from './digitalEmployeeContracts.js';
-import {
-  actionLabel,
-  automationActionConfig,
-  automationTriggerConfig,
-  emptyAutomationDraft,
-  employeeDraft,
-  employeeInput,
-  errorMessage,
-  executionIsActive,
-  executionStatusLabel,
-  formatDateTime,
-  triggerLabel,
-  type DigitalEmployeeAutomationDraft,
-  type DigitalEmployeeDraft,
-  type DigitalEmployeeLanguage,
-} from './digitalEmployeeUiSupport.js';
+import type { DigitalEmployeeExecutionRecord, DigitalEmployeeRecord, DigitalEmployeeTemplateRecord } from './digitalEmployeeContracts.js';
+import { employeeDraft, employeeInput, errorMessage, executionIsActive, executionStatusLabel, formatDateTime, type DigitalEmployeeDraft, type DigitalEmployeeLanguage } from './digitalEmployeeUiSupport.js';
 import './digitalEmployees.css';
 
 export interface ProjectDigitalEmployeesPanelProps {
@@ -36,6 +21,8 @@ export interface ProjectDigitalEmployeesPanelProps {
   client: DashboardClient | null;
   skillClient: Pick<NativeConversationAppClient, 'loadSkills' | 'loadCodexConversationCapabilities'> | null;
   language: DigitalEmployeeLanguage;
+  /** 使用全局自动化页面，项目页不维护另一份调度配置。 */
+  onOpenAutomations(): void;
 }
 
 type ProjectPanelSection = 'employees' | 'automations' | 'executions';
@@ -46,7 +33,6 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
   const [memoryRevision, setMemoryRevision] = useState<number | undefined>(undefined);
   const [templates, setTemplates] = useState<DigitalEmployeeTemplateRecord[]>([]);
   const [employees, setEmployees] = useState<DigitalEmployeeRecord[]>([]);
-  const [automations, setAutomations] = useState<DigitalEmployeeAutomationRecord[]>([]);
   const [executions, setExecutions] = useState<DigitalEmployeeExecutionRecord[]>([]);
   const [commands, setCommands] = useState<CommandDefinition[]>([]);
   const [capabilities, setCapabilities] = useState<CodexConversationCapabilities | null>(null);
@@ -54,7 +40,6 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
   const [templateId, setTemplateId] = useState('');
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
   const [employeeDraftState, setEmployeeDraftState] = useState<DigitalEmployeeDraft | null>(null);
-  const [automationDraft, setAutomationDraft] = useState<DigitalEmployeeAutomationDraft>({ ...emptyAutomationDraft });
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -103,10 +88,9 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
     setError(null);
     try {
       const capabilitiesPromise = props.skillClient?.loadCodexConversationCapabilities?.(props.projectId).catch(() => null) ?? Promise.resolve(null);
-      const [nextTemplates, nextEmployees, nextAutomations, nextExecutions, nextCommands, nextCapabilities] = await Promise.all([
+      const [nextTemplates, nextEmployees, nextExecutions, nextCommands, nextCapabilities] = await Promise.all([
         props.client.loadDigitalEmployeeTemplates(),
         props.client.loadProjectDigitalEmployees(props.projectId),
-        props.client.loadDigitalEmployeeAutomations(props.projectId),
         props.client.loadProjectDigitalEmployeeExecutions(props.projectId),
         props.client.loadProjectCommands(props.projectId),
         capabilitiesPromise,
@@ -116,7 +100,6 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
       const nextEmployeeSources = nextTemplates.filter((template) => !template.builtIn);
       setTemplates(nextTemplates);
       setEmployees(nextEmployees);
-      setAutomations(nextAutomations);
       setExecutions(nextExecutions);
       setCommands(nextCommands);
       if (modelRevision === capabilitiesRevision.current) setCapabilities(nextCapabilities);
@@ -126,7 +109,6 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
         setEmployeeDraftState(selected ? (employeeDrafts.current.get(selected.id)?.draft ?? employeeDraft(selected)) : null);
         return selected?.id ?? null;
       });
-      setAutomationDraft((current) => ({ ...current, employeeId: current.employeeId && nextEmployees.some((employee) => employee.id === current.employeeId) ? current.employeeId : (nextEmployees[0]?.id ?? '') }));
       setLoadState('ready');
     } catch (cause) {
       if (revision !== configurationRevision.current) return;
@@ -153,7 +135,6 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
     setBusyAction(null);
     setSelectedEmployeeId(null);
     setEmployeeDraftState(null);
-    setAutomationDraft({ ...emptyAutomationDraft });
     void loadProjectConfiguration();
     return () => {
       configurationRevision.current += 1;
@@ -205,9 +186,9 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
     setError(null);
     const scope = configurationRevision.current;
     try {
-      const record = await props.client.createProjectDigitalEmployee(props.projectId, { templateId });
+      const record = await props.client.createProjectDigitalEmployee(props.projectId, { globalEmployeeId: templateId });
       if (scope !== configurationRevision.current) return;
-      setEmployees((current) => [...current, record].sort((left, right) => left.name.localeCompare(right.name)));
+      setEmployees((current) => [...current.filter((employee) => employee.id !== record.id), record].sort((left, right) => left.name.localeCompare(right.name)));
       selectEmployee(record);
     } catch (cause) {
       if (scope !== configurationRevision.current) return;
@@ -247,6 +228,31 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
     }
   }
 
+  /** 恢复全局默认或将历史项目员工明确绑定到已创建的全局员工。 */
+  async function inheritGlobalEmployee(globalEmployeeId: string): Promise<void> {
+    if (!props.client || !selectedEmployeeId || !globalEmployeeId || busyAction || loadState !== 'ready') return;
+    /** 使用当前绑定版本，避免覆盖其他窗口的项目配置。 */
+    const current = employees.find((employee) => employee.id === selectedEmployeeId);
+    if (!current) return;
+    /** 迟到的写入结果不能进入其他项目。 */
+    const scope = configurationRevision.current;
+    setBusyAction('inherit-employee');
+    setErrorSection('employees');
+    setError(null);
+    try {
+      /** 项目补充要求独立保存，恢复继承只清空通用字段覆盖。 */
+      const record = await props.client.updateProjectDigitalEmployee(props.projectId, current.id, current.revision, { globalEmployeeId, projectOverrides: {} });
+      if (scope !== configurationRevision.current) return;
+      setEmployees((items) => items.map((employee) => (employee.id === record.id ? record : employee)));
+      employeeDrafts.current.delete(record.id);
+      setEmployeeDraftState(employeeDraft(record));
+    } catch (cause) {
+      if (scope === configurationRevision.current) setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
+    } finally {
+      if (scope === configurationRevision.current) setBusyAction(null);
+    }
+  }
+
   async function toggleEmployee(record: DigitalEmployeeRecord): Promise<void> {
     if (!props.client || busyAction || loadState !== 'ready') return;
     setErrorSection('employees');
@@ -274,7 +280,7 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
   async function deleteEmployee(record: DigitalEmployeeRecord): Promise<void> {
     if (!props.client || busyAction || loadState !== 'ready') return;
     setErrorSection('employees');
-    if (!window.confirm(zh ? `从项目移除数字员工“${record.name}”？它的自动化规则也会停用。` : `Remove “${record.name}” from this project? Its automations will also be disabled.`)) return;
+    if (!window.confirm(zh ? `从项目移除数字员工“${record.name}”？` : `Remove “${record.name}” from this project?`)) return;
     setBusyAction(`employee-delete:${record.id}`);
     setError(null);
     const scope = configurationRevision.current;
@@ -283,128 +289,10 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
       if (scope !== configurationRevision.current) return;
       employeeDrafts.current.delete(record.id);
       setEmployees((items) => items.filter((employee) => employee.id !== record.id));
-      setAutomations((items) => items.filter((automation) => automation.employeeId !== record.id));
-      setAutomationDraft((draft) => (draft.employeeId === record.id ? { ...draft, employeeId: '' } : draft));
       if (selectedEmployeeId === record.id) {
         setSelectedEmployeeId(null);
         setEmployeeDraftState(null);
       }
-    } catch (cause) {
-      if (scope !== configurationRevision.current) return;
-      setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
-    } finally {
-      if (scope === configurationRevision.current) setBusyAction(null);
-    }
-  }
-
-  async function createAutomation(): Promise<void> {
-    if (!props.client || !automationDraft.employeeId || busyAction || loadState !== 'ready') return;
-    setErrorSection('automations');
-    if (!automationDraft.name.trim()) {
-      setError(zh ? '自动化名称不能为空。' : 'Automation name is required.');
-      return;
-    }
-    if ((automationDraft.triggerKind === 'daily' || automationDraft.triggerKind === 'weekly') && !/^([01]\d|2[0-3]):[0-5]\d$/.test(automationDraft.time)) {
-      setError(zh ? '请填写有效的本机时间。' : 'Enter a valid local time.');
-      return;
-    }
-    if (automationDraft.triggerKind === 'interval') {
-      const minutes = Number(automationDraft.intervalMinutes);
-      if (!Number.isInteger(minutes) || minutes < 1 || minutes > 43200) {
-        setError(zh ? '间隔分钟必须是 1–43200 的整数。' : 'Interval minutes must be an integer from 1 to 43200.');
-        return;
-      }
-    }
-    if (automationDraft.triggerKind === 'once' && !automationDraft.runAt) {
-      setError(zh ? '请选择一次性自动化的执行时间。' : 'Choose when the one-time automation should run.');
-      return;
-    }
-    if (automationDraft.actionKind === 'create_and_assign_task' && (!automationDraft.taskTitle.trim() || !automationDraft.taskDescription.trim())) {
-      setError(zh ? '创建任务时，任务标题和描述不能为空。' : 'Task title and description are required for task creation.');
-      return;
-    }
-    const employee = employees.find((candidate) => candidate.id === automationDraft.employeeId);
-    if (!employee?.enabled) {
-      setError(zh ? '请选择已启用的项目员工。' : 'Select an enabled project employee.');
-      return;
-    }
-    if (automationDraft.actionKind === 'explore_project' && employee && !employee.autonomousExploration) {
-      setError(zh ? '请先在员工配置中开启“允许只读自主探索”。' : 'Enable read-only autonomous exploration on this employee first.');
-      return;
-    }
-    setBusyAction('create-automation');
-    setError(null);
-    const scope = configurationRevision.current;
-    try {
-      const record = await props.client.createDigitalEmployeeAutomation(props.projectId, {
-        employeeId: automationDraft.employeeId,
-        name: automationDraft.name.trim(),
-        triggerKind: automationDraft.triggerKind,
-        triggerConfig: automationTriggerConfig(automationDraft),
-        actionKind: automationDraft.actionKind,
-        actionConfig: automationActionConfig(automationDraft),
-      });
-      if (scope !== configurationRevision.current) return;
-      setAutomations((current) => [record, ...current]);
-      setAutomationDraft((current) => ({ ...emptyAutomationDraft, employeeId: current.employeeId }));
-    } catch (cause) {
-      if (scope !== configurationRevision.current) return;
-      setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
-    } finally {
-      if (scope === configurationRevision.current) setBusyAction(null);
-    }
-  }
-
-  async function toggleAutomation(record: DigitalEmployeeAutomationRecord): Promise<void> {
-    if (!props.client || busyAction || loadState !== 'ready') return;
-    setErrorSection('automations');
-    setBusyAction(`automation-toggle:${record.id}`);
-    setError(null);
-    const scope = configurationRevision.current;
-    try {
-      const updated = await props.client.updateDigitalEmployeeAutomation(props.projectId, record.id, record.revision, { enabled: !record.enabled });
-      if (scope !== configurationRevision.current) return;
-      setAutomations((items) => items.map((automation) => (automation.id === updated.id ? updated : automation)));
-    } catch (cause) {
-      if (scope !== configurationRevision.current) return;
-      setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
-    } finally {
-      if (scope === configurationRevision.current) setBusyAction(null);
-    }
-  }
-
-  async function runAutomation(record: DigitalEmployeeAutomationRecord): Promise<void> {
-    if (!props.client || busyAction || loadState !== 'ready') return;
-    setErrorSection('automations');
-    setBusyAction(`automation-run:${record.id}`);
-    setError(null);
-    const scope = configurationRevision.current;
-    try {
-      const updated = await props.client.runDigitalEmployeeAutomation(props.projectId, record.id);
-      if (scope !== configurationRevision.current) return;
-      setAutomations((items) => items.map((automation) => (automation.id === updated.id ? updated : automation)));
-      window.setTimeout(() => {
-        if (scope === configurationRevision.current) void refreshExecutions();
-      }, 1_500);
-    } catch (cause) {
-      if (scope !== configurationRevision.current) return;
-      setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
-    } finally {
-      if (scope === configurationRevision.current) setBusyAction(null);
-    }
-  }
-
-  async function deleteAutomation(record: DigitalEmployeeAutomationRecord): Promise<void> {
-    if (!props.client || busyAction || loadState !== 'ready') return;
-    setErrorSection('automations');
-    if (!window.confirm(zh ? `删除自动化规则“${record.name}”？` : `Delete automation “${record.name}”?`)) return;
-    setBusyAction(`automation-delete:${record.id}`);
-    setError(null);
-    const scope = configurationRevision.current;
-    try {
-      await props.client.deleteDigitalEmployeeAutomation(props.projectId, record.id, record.revision);
-      if (scope !== configurationRevision.current) return;
-      setAutomations((items) => items.filter((automation) => automation.id !== record.id));
     } catch (cause) {
       if (scope !== configurationRevision.current) return;
       setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
@@ -439,7 +327,7 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
 
       <nav className="digital-employee-section-tabs" role="tablist" aria-label={zh ? '数字员工配置分段' : 'Digital employee configuration sections'}>
         <SectionTab selected={section === 'employees'} onClick={() => setSection('employees')} label={zh ? `项目员工 ${employees.length}` : `Employees ${employees.length}`} />
-        <SectionTab selected={section === 'automations'} onClick={() => setSection('automations')} label={zh ? `自动化 ${automations.length}` : `Automations ${automations.length}`} />
+        <SectionTab selected={section === 'automations'} onClick={() => setSection('automations')} label={zh ? '自动化' : 'Automations'} />
         <SectionTab selected={section === 'executions'} onClick={() => setSection('executions')} label={zh ? `执行记录 ${executions.length}` : `Executions ${executions.length}`} />
       </nav>
 
@@ -454,8 +342,8 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
                     ? '请先在设置中创建数字员工。'
                     : 'Create a digital employee in Settings first.'
                   : zh
-                    ? '添加后生成项目独立副本，权限默认关闭。'
-                    : 'Creates a project-owned copy with delivery grants off by default.'}
+                    ? '复用全局员工，当前项目只保存明确设置的差异。'
+                    : 'Reuses the global employee and stores only explicit project differences.'}
               </small>
             </span>
             <ZeusSelect
@@ -495,7 +383,47 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
             </section>
             <section className="digital-employee-editor-pane" aria-label={zh ? '项目员工配置' : 'Project employee configuration'}>
               {selectedEmployeeId && employeeDraftState ? (
-                <DigitalEmployeeEditor draft={employeeDraftState} projectId={props.projectId} skillClient={props.skillClient} language={props.language} deployCommands={deployCommands} capabilities={capabilities} onChange={editEmployee} />
+                <>
+                  <section className="digital-employee-form-section">
+                    <header>
+                      <strong>{zh ? '全局员工与项目差异' : 'Global employee and project overrides'}</strong>
+                      <small>{zh ? '未覆盖的配置跟随全局员工更新；项目补充要求独立保留。' : 'Inherited fields follow global updates. Project instructions remain separate.'}</small>
+                    </header>
+                    {employees.find((employee) => employee.id === selectedEmployeeId)?.globalEmployeeId ? (
+                      <Button
+                        variant="secondary"
+                        size="compact"
+                        busy={busyAction === 'inherit-employee'}
+                        disabled={Boolean(busyAction)}
+                        onClick={() => void inheritGlobalEmployee(employees.find((employee) => employee.id === selectedEmployeeId)!.globalEmployeeId!)}
+                      >
+                        {zh ? '恢复全局配置' : 'Restore global defaults'}
+                      </Button>
+                    ) : (
+                      <ZeusSelect
+                        size="regular"
+                        ariaLabel={zh ? '为历史项目员工绑定全局员工' : 'Bind the legacy project employee'}
+                        value=""
+                        onChange={(value) => void inheritGlobalEmployee(value)}
+                        options={[
+                          { value: '', label: zh ? '仅项目员工，选择全局员工绑定' : 'Project employee, choose global identity' },
+                          ...employeeSources.map((employee) => ({ value: employee.id, label: `${employee.name} · ${employee.role}` })),
+                        ]}
+                        disabled={Boolean(busyAction) || employeeSources.length === 0}
+                      />
+                    )}
+                  </section>
+                  <DigitalEmployeeEditor
+                    draft={employeeDraftState}
+                    projectId={props.projectId}
+                    skillClient={props.skillClient}
+                    language={props.language}
+                    deployCommands={deployCommands}
+                    capabilities={capabilities}
+                    onChange={editEmployee}
+                    inheritsGlobal={Boolean(employees.find((employee) => employee.id === selectedEmployeeId)?.globalEmployeeId)}
+                  />
+                </>
               ) : (
                 <div className="digital-employee-empty-state">
                   <strong>{zh ? '选择员工查看项目配置' : 'Select an employee to configure'}</strong>
@@ -548,37 +476,12 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
       ) : null}
 
       {section === 'automations' ? (
-        <div className="digital-employee-project-section digital-employee-automation-layout" inert={busyAction !== null || loadState !== 'ready'} aria-busy={busyAction !== null}>
-          <AutomationEditor draft={automationDraft} employees={employees} language={props.language} onChange={setAutomationDraft} onCreate={() => void createAutomation()} busy={busyAction === 'create-automation'} />
-          <section className="digital-employee-automation-list" aria-label={zh ? '自动化规则' : 'Automation rules'}>
-            {automations.length === 0 ? <p className="digital-employee-empty">{zh ? '尚未创建自动化规则。' : 'No automation rules yet.'}</p> : null}
-            {automations.map((automation) => {
-              const employee = employees.find((candidate) => candidate.id === automation.employeeId);
-              return (
-                <article key={automation.id} className={`digital-employee-automation-row ${automation.enabled ? '' : 'is-disabled'}`}>
-                  <span className="digital-employee-automation-copy">
-                    <strong>{automation.name}</strong>
-                    <small>
-                      {employee?.name ?? automation.employeeId} · {triggerLabel(automation.triggerKind, props.language)} → {actionLabel(automation.actionKind, props.language)}
-                    </small>
-                    <small>{automation.nextRunAt ? `${zh ? '下次' : 'Next'} ${formatDateTime(automation.nextRunAt, props.language)}` : zh ? '等待事件或手动运行' : 'Waiting for an event or manual run'}</small>
-                  </span>
-                  <span className="digital-employee-actions">
-                    <Button variant="secondary" size="compact" busy={busyAction === `automation-run:${automation.id}`} disabled={!automation.enabled} onClick={() => void runAutomation(automation)}>
-                      {zh ? '立即运行' : 'Run now'}
-                    </Button>
-                    <Button variant="secondary" size="compact" busy={busyAction === `automation-toggle:${automation.id}`} onClick={() => void toggleAutomation(automation)}>
-                      {automation.enabled ? (zh ? '停用' : 'Disable') : zh ? '启用' : 'Enable'}
-                    </Button>
-                    <Button variant="danger" size="compact" busy={busyAction === `automation-delete:${automation.id}`} onClick={() => void deleteAutomation(automation)}>
-                      {zh ? '删除' : 'Delete'}
-                    </Button>
-                  </span>
-                </article>
-              );
-            })}
-          </section>
-        </div>
+        <section className="digital-employee-project-section">
+          <p>{zh ? '员工自动化已统一到自动化页面，原规则、执行记录和排程会保留。' : 'Employee automations are managed on the Automations page. Existing rules, runs, and schedules are retained.'}</p>
+          <Button variant="primary" size="compact" onClick={props.onOpenAutomations}>
+            {zh ? '前往自动化' : 'Open automations'}
+          </Button>
+        </section>
       ) : null}
 
       {section === 'executions' ? (
@@ -639,27 +542,33 @@ export function DigitalEmployeeEditor(props: {
   deployCommands: CommandDefinition[];
   capabilities: Pick<CodexConversationCapabilities, 'models'> | null;
   onChange: (draft: DigitalEmployeeDraft) => void;
+  /** 已绑定全局员工时保留默认配置，项目差异按需编辑。 */
+  inheritsGlobal?: boolean;
 }) {
   const zh = props.language === 'zh-CN';
+  /** 必填身份缺失时展开差异区，补全后保留用户当前展开状态。 */
+  const identityDetails = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    if ((!props.draft.name.trim() || !props.draft.role.trim()) && identityDetails.current) identityDetails.current.open = true;
+  }, [props.draft.name, props.draft.role]);
   const patch = (value: Partial<DigitalEmployeeDraft>) => props.onChange({ ...props.draft, ...value });
   const patchGrant = (key: 'allowCommit' | 'allowPush' | 'allowMerge' | 'allowDeploy' | 'allowComplete', checked: boolean) => {
     patch({ [key]: checked });
   };
   return (
     <div className="digital-employee-form digital-employee-project-form">
-      <section className="digital-employee-form-section">
-        <header>
-          <strong>{zh ? '身份说明' : 'Identity'}</strong>
-          <small>{zh ? '说明这个员工是谁、负责什么；项目配置不会回写全局模板。' : 'Describe who this employee is and what it owns. Project settings do not change the global template.'}</small>
-        </header>
+      <details className="digital-employee-advanced-settings" ref={identityDetails} open={!props.inheritsGlobal}>
+        <summary>{zh ? '项目身份差异' : 'Project identity overrides'}</summary>
         <div className="digital-employee-form-grid">
           <label>
             <span>{zh ? '员工名称' : 'Employee name'}</span>
-            <input value={props.draft.name} onChange={(event) => patch({ name: event.currentTarget.value })} maxLength={120} />
+            <input aria-invalid={!props.draft.name.trim()} value={props.draft.name} onChange={(event) => patch({ name: event.currentTarget.value })} maxLength={120} />
+            {!props.draft.name.trim() ? <small className="is-error">{zh ? '请填写员工名称。' : 'Enter the employee name.'}</small> : null}
           </label>
           <label>
             <span>{zh ? '岗位' : 'Role'}</span>
-            <input value={props.draft.role} onChange={(event) => patch({ role: event.currentTarget.value })} maxLength={120} />
+            <input aria-invalid={!props.draft.role.trim()} value={props.draft.role} onChange={(event) => patch({ role: event.currentTarget.value })} maxLength={120} />
+            {!props.draft.role.trim() ? <small className="is-error">{zh ? '请填写岗位。' : 'Enter the role.'}</small> : null}
           </label>
           <label>
             <span>{zh ? '业务领域' : 'Business domain'}</span>
@@ -670,24 +579,39 @@ export function DigitalEmployeeEditor(props: {
           <span>{zh ? '身份说明' : 'Identity description'}</span>
           <textarea rows={3} value={props.draft.description} onChange={(event) => patch({ description: event.currentTarget.value })} maxLength={2000} />
         </label>
-      </section>
+      </details>
 
       <section className="digital-employee-form-section">
         <header>
           <strong>{zh ? '基础配置' : 'Agent configuration'}</strong>
-          <small>{zh ? '员工通过 AI 对话完成工作，执行命令时遵循你设置的权限。' : 'Employees work through AI conversations and follow your permissions when running commands.'}</small>
+          <small>{zh ? '默认继承员工配置，修改只用于当前项目。' : 'Employees work through AI conversations and follow your permissions when running commands.'}</small>
         </header>
-        <AgentExecutionConfigFields value={props.draft} models={props.capabilities?.models ?? []} skillClient={props.skillClient} projectId={props.projectId} language={props.language} allowProjectDefaultModel onChange={patch} />
+        <AgentExecutionConfigFields
+          value={props.draft}
+          models={props.capabilities?.models ?? []}
+          skillClient={props.skillClient}
+          projectId={props.projectId}
+          language={props.language}
+          allowProjectDefaultModel
+          inheritedPrompt={props.inheritsGlobal}
+          onChange={patch}
+        />
+        <label>
+          <span>{zh ? '项目补充要求' : 'Project instructions'}</span>
+          <textarea
+            rows={4}
+            value={props.draft.projectInstructions}
+            onChange={(event) => patch({ projectInstructions: event.currentTarget.value })}
+            maxLength={20000}
+            placeholder={zh ? '当前项目的开发标准、流程或业务要求' : 'Standards, workflow, or domain requirements for this project'}
+          />
+        </label>
       </section>
 
       <section className="digital-employee-form-section digital-employee-grants-section">
         <header>
           <strong>{zh ? '权限工具' : 'Authority and tools'}</strong>
-          <small>
-            {zh
-              ? '这些是员工默认能力；单次运行可另选权限模式，会话完成后也不会自动触发提交、部署或完结。'
-              : 'These are employee defaults. A run may choose another permission mode, and completion never triggers hidden commit, deploy, or completion steps.'}
-          </small>
+          <small>{zh ? '管理动作分别授权，执行仍需遵循本次任务权限。' : 'These are employee defaults. A run may choose another permission mode, and completion never triggers hidden commit, deploy, or completion steps.'}</small>
         </header>
         <div className="digital-employee-policy-grid">
           <CheckboxRow
@@ -703,69 +627,70 @@ export function DigitalEmployeeEditor(props: {
             description={zh ? '允许员工运行项目已有的检查。' : 'Allow the employee to run the project’s existing checks.'}
           />
         </div>
-        <p className="digital-employee-boundary-note">{zh ? '能否执行命令、修改哪些文件，取决于上方权限设置和操作时的授权。' : 'Command execution and file access depend on the permissions above and approvals granted during work.'}</p>
-        <div className="digital-employee-grant-flow" aria-label={zh ? '管理动作授权' : 'Management action grants'}>
-          <CheckboxRow
-            checked={props.draft.allowCommit}
-            onChange={(checked) => patchGrant('allowCommit', checked)}
-            title={zh ? '提交' : 'Commit'}
-            description={zh ? '允许在你发起提交操作时创建 Git 提交。' : 'Allow Git commits when you request a commit action.'}
-          />
-          <CheckboxRow
-            checked={props.draft.allowPush}
-            onChange={(checked) => patchGrant('allowPush', checked)}
-            title={zh ? '推送' : 'Push'}
-            description={zh ? '允许在你发起推送操作时上传已提交代码。' : 'Allow committed code to be uploaded when you request a push action.'}
-          />
-          <CheckboxRow
-            checked={props.draft.allowMerge}
-            onChange={(checked) => patchGrant('allowMerge', checked)}
-            title={zh ? '合入' : 'Merge'}
-            description={zh ? '允许在你发起合入操作时合并代码，遇到冲突会停止。' : 'Allow code merges when you request them. Merging stops if there are conflicts.'}
-          />
-          <CheckboxRow
-            checked={props.draft.allowDeploy}
-            onChange={(checked) => patchGrant('allowDeploy', checked)}
-            title={zh ? '部署' : 'Deploy'}
-            description={zh ? '允许在你发起部署操作时部署项目，员工完成工作不会自动部署。' : 'Allow deployment when you request it. Finishing the employee’s work does not deploy automatically.'}
-          />
-          <CheckboxRow
-            checked={props.draft.allowComplete}
-            onChange={(checked) => patchGrant('allowComplete', checked)}
-            title={zh ? '结束任务' : 'Complete task'}
-            description={zh ? '允许执行结束任务的操作，交付物仍需由你验收。' : 'Allow task completion actions. Deliverables still require your acceptance.'}
-          />
-        </div>
-        {props.draft.allowDeploy ? (
-          <label>
-            <span>{zh ? '部署命令能力' : 'Deployment command capability'}</span>
-            <ZeusSelect
-              size="regular"
-              ariaLabel={zh ? '选择允许调用的部署命令' : 'Choose the allowed deployment command'}
-              value={props.draft.deployCommandId}
-              onChange={(deployCommandId) => patch({ deployCommandId })}
-              options={[
-                { value: '', label: zh ? '未指定固定部署命令' : 'No fixed deployment command' },
-                ...props.deployCommands.map((command) => ({ value: command.id, label: command.title, searchText: `${command.name} ${command.description}` })),
-              ]}
+        <details className="digital-employee-advanced-settings">
+          <summary>
+            {zh ? '管理动作授权' : 'Management action grants'}
+            <small>
+              {[props.draft.allowCommit, props.draft.allowPush, props.draft.allowMerge, props.draft.allowDeploy, props.draft.allowComplete].filter(Boolean).length} {zh ? '项已开启' : 'enabled'}
+            </small>
+          </summary>
+          <div className="digital-employee-grant-flow" aria-label={zh ? '管理动作授权' : 'Management action grants'}>
+            <CheckboxRow
+              checked={props.draft.allowCommit}
+              onChange={(checked) => patchGrant('allowCommit', checked)}
+              title={zh ? '提交' : 'Commit'}
+              description={zh ? '允许在你发起提交操作时创建 Git 提交。' : 'Allow Git commits when you request a commit action.'}
             />
-            <small>{zh ? '此命令可供员工在获得授权后使用，不会因保存配置而执行。' : 'The employee can use this command after approval. Saving these settings does not run it.'}</small>
-          </label>
-        ) : null}
+            <CheckboxRow
+              checked={props.draft.allowPush}
+              onChange={(checked) => patchGrant('allowPush', checked)}
+              title={zh ? '推送' : 'Push'}
+              description={zh ? '允许在你发起推送操作时上传已提交代码。' : 'Allow committed code to be uploaded when you request a push action.'}
+            />
+            <CheckboxRow
+              checked={props.draft.allowMerge}
+              onChange={(checked) => patchGrant('allowMerge', checked)}
+              title={zh ? '合入' : 'Merge'}
+              description={zh ? '允许在你发起合入操作时合并代码，遇到冲突会停止。' : 'Allow code merges when you request them. Merging stops if there are conflicts.'}
+            />
+            <CheckboxRow
+              checked={props.draft.allowDeploy}
+              onChange={(checked) => patchGrant('allowDeploy', checked)}
+              title={zh ? '部署' : 'Deploy'}
+              description={zh ? '允许在你发起部署操作时部署项目，员工完成工作不会自动部署。' : 'Allow deployment when you request it. Finishing the employee’s work does not deploy automatically.'}
+            />
+            <CheckboxRow
+              checked={props.draft.allowComplete}
+              onChange={(checked) => patchGrant('allowComplete', checked)}
+              title={zh ? '结束任务' : 'Complete task'}
+              description={zh ? '允许执行结束任务的操作，交付物仍需由你验收。' : 'Allow task completion actions. Deliverables still require your acceptance.'}
+            />
+          </div>
+          {props.draft.allowDeploy ? (
+            <label>
+              <span>{zh ? '部署命令能力' : 'Deployment command capability'}</span>
+              <ZeusSelect
+                size="regular"
+                ariaLabel={zh ? '选择允许调用的部署命令' : 'Choose the allowed deployment command'}
+                value={props.draft.deployCommandId}
+                onChange={(deployCommandId) => patch({ deployCommandId })}
+                options={[
+                  { value: '', label: zh ? '未指定固定部署命令' : 'No fixed deployment command' },
+                  ...props.deployCommands.map((command) => ({ value: command.id, label: command.title, searchText: `${command.name} ${command.description}` })),
+                ]}
+              />
+              <small>{zh ? '此命令可供员工在获得授权后使用，不会因保存配置而执行。' : 'The employee can use this command after approval. Saving these settings does not run it.'}</small>
+            </label>
+          ) : null}
+        </details>
       </section>
 
-      <section className="digital-employee-form-section">
-        <header>
-          <strong>{zh ? '自动化' : 'Automation'}</strong>
-          <small>{zh ? '自动化按规则为员工安排工作，仍需遵守员工权限和部署授权。' : 'Automations assign work according to rules and still follow the employee’s permissions and deployment approvals.'}</small>
-        </header>
+      <details className="digital-employee-advanced-settings">
+        <summary>
+          {zh ? '自动领取与经验' : 'Auto claim and experience'}
+          <small>{props.draft.autoClaim ? (zh ? '已开启任务池领取' : 'Task pool enabled') : ''}</small>
+        </summary>
         <div className="digital-employee-policy-grid">
-          <CheckboxRow
-            checked={props.draft.enabled}
-            onChange={(enabled) => patch({ enabled })}
-            title={zh ? '启用员工' : 'Enable employee'}
-            description={zh ? '停用后不接收新工作，已有运行不被删除。' : 'Stops new work without deleting existing runs.'}
-          />
           <CheckboxRow
             checked={props.draft.autoClaim}
             onChange={(autoClaim) => patch({ autoClaim })}
@@ -799,150 +724,8 @@ export function DigitalEmployeeEditor(props: {
             <input value={props.draft.requiredTags} onChange={(event) => patch({ requiredTags: event.currentTarget.value })} placeholder={zh ? '逗号分隔' : 'Comma separated'} />
           </label>
         </div>
-      </section>
+      </details>
     </div>
-  );
-}
-
-function AutomationEditor(props: {
-  draft: DigitalEmployeeAutomationDraft;
-  employees: DigitalEmployeeRecord[];
-  language: DigitalEmployeeLanguage;
-  busy: boolean;
-  onChange: (draft: DigitalEmployeeAutomationDraft) => void;
-  onCreate: () => void;
-}) {
-  const zh = props.language === 'zh-CN';
-  const patch = (value: Partial<DigitalEmployeeAutomationDraft>) => props.onChange({ ...props.draft, ...value });
-  const eventTrigger = ['task_created', 'task_updated', 'task_status_changed', 'code_changed'].includes(props.draft.triggerKind);
-  return (
-    <section className="digital-employee-automation-editor" aria-label={zh ? '新建自动化规则' : 'Create automation rule'}>
-      <header>
-        <strong>{zh ? '新建自动化规则' : 'Create automation rule'}</strong>
-        <small>{zh ? '每条规则可单独启用或停用，同一事件不会重复触发工作。' : 'Enable or disable each rule separately. The same event will not trigger duplicate work.'}</small>
-      </header>
-      <div className="digital-employee-form">
-        <label>
-          <span>{zh ? '规则名称' : 'Rule name'}</span>
-          <input value={props.draft.name} onChange={(event) => patch({ name: event.currentTarget.value })} maxLength={120} />
-        </label>
-        <div className="digital-employee-form-grid">
-          <label>
-            <span>{zh ? '数字员工' : 'Digital employee'}</span>
-            <ZeusSelect
-              size="regular"
-              ariaLabel={zh ? '选择数字员工' : 'Choose digital employee'}
-              value={props.employees.some((employee) => employee.id === props.draft.employeeId) ? props.draft.employeeId : ''}
-              triggerLabel={!props.employees.some((employee) => employee.id === props.draft.employeeId) ? (zh ? '请先选择项目员工' : 'Select a project employee') : undefined}
-              onChange={(employeeId) => patch({ employeeId })}
-              options={props.employees.map((employee) => ({ value: employee.id, label: employee.name, disabled: !employee.enabled }))}
-              disabled={props.employees.length === 0}
-            />
-          </label>
-          <label>
-            <span>{zh ? '触发方式' : 'Trigger'}</span>
-            <ZeusSelect
-              size="regular"
-              ariaLabel={zh ? '选择触发方式' : 'Choose trigger'}
-              value={props.draft.triggerKind}
-              onChange={(triggerKind) => patch({ triggerKind })}
-              options={(['immediate', 'once', 'daily', 'weekly', 'interval', 'task_created', 'task_updated', 'task_status_changed', 'code_changed'] as const).map((trigger) => ({
-                value: trigger,
-                label: triggerLabel(trigger, props.language),
-              }))}
-            />
-          </label>
-          <label>
-            <span>{zh ? '执行动作' : 'Action'}</span>
-            <ZeusSelect
-              size="regular"
-              ariaLabel={zh ? '选择执行动作' : 'Choose action'}
-              value={props.draft.actionKind}
-              onChange={(actionKind) => patch({ actionKind })}
-              options={(['assign_task', 'create_and_assign_task', 'explore_project'] as const).map((action) => ({ value: action, label: actionLabel(action, props.language) }))}
-            />
-          </label>
-          {props.draft.triggerKind === 'once' ? (
-            <label>
-              <span>{zh ? '执行时间' : 'Run at'}</span>
-              <input type="datetime-local" value={props.draft.runAt} onChange={(event) => patch({ runAt: event.currentTarget.value })} />
-            </label>
-          ) : null}
-          {props.draft.triggerKind === 'daily' || props.draft.triggerKind === 'weekly' ? (
-            <label>
-              <span>{zh ? '本机时间' : 'Local time'}</span>
-              <input type="time" value={props.draft.time} onChange={(event) => patch({ time: event.currentTarget.value })} />
-            </label>
-          ) : null}
-          {props.draft.triggerKind === 'weekly' ? (
-            <label>
-              <span>{zh ? '星期' : 'Weekday'}</span>
-              <ZeusSelect size="regular" ariaLabel={zh ? '选择星期' : 'Choose weekday'} value={props.draft.weekday} onChange={(weekday) => patch({ weekday })} searchable={false} options={weekdayOptions(props.language)} />
-            </label>
-          ) : null}
-          {props.draft.triggerKind === 'interval' ? (
-            <label>
-              <span>{zh ? '间隔分钟' : 'Interval minutes'}</span>
-              <input type="number" min={1} max={43200} value={props.draft.intervalMinutes} onChange={(event) => patch({ intervalMinutes: event.currentTarget.value })} />
-            </label>
-          ) : null}
-        </div>
-
-        {props.draft.actionKind === 'assign_task' ? (
-          <label>
-            <span>{zh ? '指定任务 ID（可选）' : 'Specific task ID (optional)'}</span>
-            <input
-              value={props.draft.taskId}
-              onChange={(event) => patch({ taskId: event.currentTarget.value })}
-              placeholder={eventTrigger ? (zh ? '空值表示使用触发事件的任务' : 'Empty uses the event task') : zh ? '空值表示从任务池选择' : 'Empty selects from the task pool'}
-            />
-          </label>
-        ) : null}
-
-        {props.draft.actionKind === 'create_and_assign_task' ? (
-          <div className="digital-employee-automation-task-fields">
-            <label>
-              <span>{zh ? '任务标题' : 'Task title'}</span>
-              <input value={props.draft.taskTitle} onChange={(event) => patch({ taskTitle: event.currentTarget.value })} maxLength={200} />
-            </label>
-            <label>
-              <span>{zh ? '任务描述' : 'Task description'}</span>
-              <textarea rows={4} value={props.draft.taskDescription} onChange={(event) => patch({ taskDescription: event.currentTarget.value })} maxLength={20000} />
-            </label>
-            <div className="digital-employee-form-grid">
-              <label>
-                <span>{zh ? '任务类型' : 'Task type'}</span>
-                <ZeusSelect
-                  size="regular"
-                  ariaLabel={zh ? '选择任务类型' : 'Choose task type'}
-                  value={props.draft.taskType}
-                  onChange={(taskType) => patch({ taskType })}
-                  searchable={false}
-                  options={[
-                    { value: 'requirement', label: zh ? '需求' : 'Requirement' },
-                    { value: 'defect', label: zh ? '缺陷' : 'Defect' },
-                    { value: 'optimization', label: zh ? '优化' : 'Optimization' },
-                  ]}
-                />
-              </label>
-              <label>
-                <span>{zh ? '标签' : 'Tags'}</span>
-                <input value={props.draft.tags} onChange={(event) => patch({ tags: event.currentTarget.value })} />
-              </label>
-            </div>
-          </div>
-        ) : null}
-
-        {props.draft.actionKind === 'explore_project' ? (
-          <p className="digital-employee-boundary-note">
-            {zh ? '探索执行固定只读，只检查当前项目的任务、代码和文档，并以任务/会话保存候选发现。' : 'Exploration is always read-only, limited to project tasks, code, and docs, with findings retained in a task conversation.'}
-          </p>
-        ) : null}
-        <Button variant="primary" size="compact" busy={props.busy} disabled={!props.employees.some((employee) => employee.id === props.draft.employeeId && employee.enabled)} onClick={props.onCreate}>
-          {zh ? '创建规则' : 'Create rule'}
-        </Button>
-      </div>
-    </section>
   );
 }
 
@@ -957,9 +740,4 @@ function CheckboxRow(props: { checked: boolean; title: string; description: stri
       </span>
     </label>
   );
-}
-
-function weekdayOptions(language: DigitalEmployeeLanguage) {
-  const labels = language === 'zh-CN' ? ['周日', '周一', '周二', '周三', '周四', '周五', '周六'] : ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  return labels.map((label, index) => ({ value: String(index), label }));
 }

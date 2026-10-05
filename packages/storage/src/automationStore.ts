@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { temporaryWorkspaceId } from '@zeus/shared';
+import { temporaryWorkspaceId, type AutomationActionConfig, type AutomationDispatchTarget, type AutomationExecutionReference, type AutomationSourceEvent } from '@zeus/shared';
 import { randomId } from './randomId.js';
 import type { ZeusDatabasePort } from './databasePort.js';
 
@@ -28,6 +28,10 @@ export interface AutomationTriggerConfig {
   weekdays?: number[];
   rrule?: string;
   eventKinds?: string[];
+  /** 项目状态事件的发生前状态条件。 */
+  beforeStatusId?: string;
+  /** 项目状态事件的发生后状态条件。 */
+  afterStatusId?: string;
 }
 
 export interface AutomationNotificationConfig {
@@ -37,6 +41,8 @@ export interface AutomationNotificationConfig {
 }
 
 export interface AutomationDefinitionSnapshot {
+  /** 业务动作与员工引用随修订冻结。 */
+  action: AutomationActionConfig;
   name: string;
   description: string;
   prompt: string;
@@ -62,6 +68,10 @@ export interface AutomationDefinitionSnapshot {
 }
 
 export interface AutomationTaskRecord extends AutomationDefinitionSnapshot {
+  /** 存量规则目标选择不能确认时给出可见核对原因。 */
+  migrationIssue: string | null;
+  /** 原事件消费游标按项目保存，迁移不回放旧事件。 */
+  eventCursors: Record<string, number>;
   id: string;
   status: AutomationStatus;
   currentRevisionId: string;
@@ -90,6 +100,16 @@ export interface AutomationRevisionRecord {
 }
 
 export interface AutomationRunRecord {
+  /** 每个冻结目标的耐久接纳进度。 */
+  dispatchTargets: AutomationDispatchTarget[];
+  /** 全部目标已处理的事实，与工作完成时间分离。 */
+  dispatchCompletedAt: string | null;
+  /** 存量运行核对保留原结论，不抹掉曾经误报的历史。 */
+  dispatchReconciliation: { previousStatus: AutomationRunStatus; checkedAt: string; reason: string; completedAt?: string | null } | null;
+  /** 本次触发的真实工作或完整流程引用。 */
+  executionReferences: AutomationExecutionReference[];
+  /** 事件原始事实随触发冻结。 */
+  sourceEvent: AutomationSourceEvent | null;
   id: string;
   automationId: string;
   automationRevisionId: string;
@@ -129,6 +149,8 @@ export interface CreateAutomationTaskInput extends Partial<Omit<AutomationDefini
 export type UpdateAutomationTaskInput = Partial<CreateAutomationTaskInput> & { expectedRevision: number };
 
 export interface EnqueueAutomationRunInput {
+  /** 项目事件原始事实。 */
+  sourceEvent?: AutomationSourceEvent | null;
   id?: string;
   automationId: string;
   /** 一次触发的完整用户项目范围；空数组表示无项目运行。 */
@@ -142,6 +164,12 @@ export interface EnqueueAutomationRunInput {
 }
 
 interface DbAutomationTaskRow {
+  /** 旧动作需要人工核对的原因。 */
+  migration_issue: string | null;
+  /** 动作配置持久化。 */
+  action_json: string;
+  /** 按项目持久化的事件游标。 */
+  event_cursors_json: string;
   id: string;
   name: string;
   description: string;
@@ -175,6 +203,16 @@ interface DbAutomationTaskRow {
 }
 
 interface DbAutomationRunRow {
+  /** 逐目标耐久状态。 */
+  dispatch_targets_json: string;
+  /** 完整派发时间。 */
+  dispatch_completed_at: string | null;
+  /** 存量核对记录。 */
+  dispatch_reconciliation_json: string | null;
+  /** 真实执行关联持久化。 */
+  execution_references_json: string;
+  /** 原事件持久化。 */
+  source_event_json: string | null;
   id: string;
   automation_id: string;
   automation_revision_id: string;
@@ -204,11 +242,11 @@ interface DbAutomationRunRow {
 const taskSelect = `id, name, description, prompt, status, current_revision_id, revision, trigger_kind, trigger_config_json, timezone,
   conversation_mode, original_conversation_id, permission_mode, model_source_id, model_id, reasoning_effort, service_tier,
   fast_mode, skill_id, plugin_ids_json, block_strategy, queue_capacity, max_runs_per_day, max_tokens_per_day, retention_days,
-  notification_json, next_run_at, last_triggered_at, created_at, updated_at`;
+  notification_json, next_run_at, last_triggered_at, created_at, updated_at, action_json, event_cursors_json, migration_issue`;
 
 const runSelect = `id, automation_id, automation_revision_id, project_id, trigger_kind, trigger_identity, causal_chain_id, status,
   queue_position, conversation_id, submission_id, attempt, unread, may_overlap_previous, previous_run_id, scheduled_at, accepted_at,
-  started_at, completed_at, error_code, error_message, project_ids_json, created_at, updated_at`;
+  started_at, completed_at, error_code, error_message, project_ids_json, created_at, updated_at, execution_references_json, source_event_json, dispatch_targets_json, dispatch_completed_at, dispatch_reconciliation_json`;
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -259,7 +297,17 @@ function parseJson<T>(value: string, fallback: T): T {
 }
 
 function normalizeSnapshot(input: CreateAutomationTaskInput | (Partial<CreateAutomationTaskInput> & AutomationDefinitionSnapshot)): AutomationDefinitionSnapshot {
+  /** 老修订默认继续普通会话，员工动作必须引用真实员工。 */
+  const action = input.action ?? { kind: 'conversation', employeeId: null };
+  /** 员工身份在 HTTP 信任边界只接受非空字符串。 */
+  const employeeId = typeof action.employeeId === 'string' ? action.employeeId.trim() : null;
+  if (!['conversation', 'employee_work', 'project_task'].includes(action.kind) || (action.kind !== 'conversation' && !employeeId)) throw new Error('ZEUS_AUTOMATION_ACTION_INVALID: 员工动作必须选择员工。');
+  if ((action.taskId != null && typeof action.taskId !== 'string') || (action.title !== undefined && typeof action.title !== 'string') || (action.useEventTask !== undefined && typeof action.useEventTask !== 'boolean'))
+    throw new Error('ZEUS_AUTOMATION_ACTION_INVALID: 任务引用或动作配置无效。');
+  if (action.taskSelection !== undefined && !['specified', 'event', 'pool', 'create'].includes(action.taskSelection)) throw new Error('ZEUS_AUTOMATION_TASK_SELECTION_INVALID: 项目任务目标策略无效。');
+  if (action.kind === 'project_task' && action.taskSelection === 'specified' && !action.taskId?.trim()) throw new Error('ZEUS_AUTOMATION_TASK_REQUIRED: 指定已有任务必须提供任务身份。');
   const triggerKind = enumValue(input.triggerKind ?? 'manual', automationTriggerKinds, '触发方式');
+  if (input.triggerConfig?.eventKinds?.includes('code_changed') && input.triggerConfig.eventKinds.length > 1) throw new Error('ZEUS_AUTOMATION_EVENT_STREAM_INVALID: 代码变化与任务状态使用不同事件流，请分别创建规则。');
   const timezone = requiredText(input.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC', '时区', 128);
   try {
     new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format(new Date());
@@ -270,6 +318,7 @@ function normalizeSnapshot(input: CreateAutomationTaskInput | (Partial<CreateAut
   const originalConversationId = input.originalConversationId?.trim() || null;
   if (conversationMode === 'original' && !originalConversationId) throw new Error('ZEUS_AUTOMATION_CONFIG_ORIGINAL_CONVERSATION_REQUIRED: 原会话模式必须选择会话。');
   return {
+    action: { ...action, employeeId: action.kind === 'conversation' ? null : employeeId },
     name: requiredText(input.name, '名称', 120),
     description: (input.description ?? '').trim().slice(0, 500),
     prompt: requiredText(input.prompt, '指令', 100_000),
@@ -301,6 +350,10 @@ function normalizeSnapshot(input: CreateAutomationTaskInput | (Partial<CreateAut
 
 /** 已有会话沿用原项目权限边界，不能由自动化静默扩成跨项目会话。 */
 function validateConversationProjects(snapshot: AutomationDefinitionSnapshot, projectIds: string[]): void {
+  if (snapshot.action.kind === 'project_task' && snapshot.action.taskSelection === 'specified' && projectIds.length !== 1) throw new Error('ZEUS_AUTOMATION_TASK_SCOPE: 指定已有任务只能选择一个项目。');
+  if (snapshot.action.kind === 'project_task' && snapshot.action.taskSelection === 'event' && snapshot.triggerKind !== 'event') throw new Error('ZEUS_AUTOMATION_EVENT_TASK_REQUIRED: 使用事件任务必须选择事件触发。');
+  if (snapshot.action.kind === 'project_task' && projectIds.length === 0) throw new Error('ZEUS_AUTOMATION_ACTION_PROJECT_REQUIRED: 处理项目任务必须选择项目。');
+  if (snapshot.action.kind !== 'conversation' && snapshot.conversationMode === 'original') throw new Error('ZEUS_AUTOMATION_ACTION_ORIGINAL_CONVERSATION_INVALID: 员工动作使用独立工作会话。');
   if (snapshot.conversationMode === 'original' && projectIds.length !== 1) {
     throw new Error('ZEUS_AUTOMATION_CONFIG_ORIGINAL_CONVERSATION_SINGLE_PROJECT_REQUIRED: 追加原会话必须选择一个项目；无项目或多项目运行请新建独立会话。');
   }
@@ -308,6 +361,9 @@ function validateConversationProjects(snapshot: AutomationDefinitionSnapshot, pr
 
 function mapTask(row: DbAutomationTaskRow): AutomationTaskRecord {
   return {
+    action: parseJson<AutomationActionConfig>(row.action_json, { kind: 'conversation', employeeId: null }),
+    migrationIssue: row.migration_issue,
+    eventCursors: parseJson<Record<string, number>>(row.event_cursors_json, {}),
     id: row.id,
     name: row.name,
     description: row.description,
@@ -343,6 +399,11 @@ function mapTask(row: DbAutomationTaskRow): AutomationTaskRecord {
 
 function mapRun(row: DbAutomationRunRow): AutomationRunRecord {
   return {
+    dispatchTargets: parseJson<AutomationDispatchTarget[]>(row.dispatch_targets_json, []),
+    dispatchCompletedAt: row.dispatch_completed_at,
+    dispatchReconciliation: row.dispatch_reconciliation_json ? parseJson<AutomationRunRecord['dispatchReconciliation']>(row.dispatch_reconciliation_json, null) : null,
+    executionReferences: parseJson<AutomationExecutionReference[]>(row.execution_references_json, []),
+    sourceEvent: row.source_event_json ? parseJson<AutomationSourceEvent | null>(row.source_event_json, null) : null,
     id: row.id,
     automationId: row.automation_id,
     automationRevisionId: row.automation_revision_id,
@@ -476,6 +537,55 @@ export function migrateAutomationSchema(db: ZeusDatabasePort): void {
     ]);
   });
   migrateAutomationRunTargets(db);
+  migrateAutomationActions(db);
+  migrateAutomationDispatchProgress(db);
+}
+
+/** 动作、来源事实和执行引用在同一迁移中补齐，历史修订保持普通会话语义。 */
+function migrateAutomationActions(db: ZeusDatabasePort): void {
+  /** 迁移身份不改写历史账本。 */
+  const migrationId = '20261005_0782_automation_actions';
+  if (db.get('SELECT migration_id FROM schema_migrations WHERE migration_id = ?', [migrationId])) return;
+  db.transaction(() => {
+    for (const [table, name, definition] of [
+      ['automation_tasks', 'action_json', `TEXT NOT NULL DEFAULT '{"kind":"conversation","employeeId":null}'`],
+      ['automation_tasks', 'event_cursors_json', `TEXT NOT NULL DEFAULT '{}'`],
+      ['automation_runs', 'execution_references_json', `TEXT NOT NULL DEFAULT '[]'`],
+      ['automation_runs', 'source_event_json', 'TEXT'],
+    ]) {
+      /** 只在字段确实缺失时修改结构，不忽略迁移错误。 */
+      if (!db.select<{ name: string }>(`PRAGMA table_info(${table})`).some((column) => column.name === name)) db.execute(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+    }
+    db.execute('INSERT INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)', [
+      migrationId,
+      '统一自动化业务动作与真实执行引用',
+      `sha256:${createHash('sha256').update(migrationId).digest('hex')}`,
+      nowIso(),
+    ]);
+  });
+}
+
+/** 新旧运行共用最小逐目标接纳账本，历史结论另存核对记录。 */
+function migrateAutomationDispatchProgress(db: ZeusDatabasePort): void {
+  /** 迁移身份只代表结构，不替换旧运行身份。 */
+  const migrationId = '20261005_0782_automation_dispatch_progress';
+  if (db.get('SELECT migration_id FROM schema_migrations WHERE migration_id = ?', [migrationId])) return;
+  db.transaction(() => {
+    if (!db.select<{ name: string }>('PRAGMA table_info(automation_tasks)').some((column) => column.name === 'migration_issue')) db.execute('ALTER TABLE automation_tasks ADD COLUMN migration_issue TEXT');
+    for (const [name, definition] of [
+      ['dispatch_targets_json', "TEXT NOT NULL DEFAULT '[]'"],
+      ['dispatch_completed_at', 'TEXT'],
+      ['dispatch_reconciliation_json', 'TEXT'],
+    ]) {
+      if (!db.select<{ name: string }>('PRAGMA table_info(automation_runs)').some((column) => column.name === name)) db.execute(`ALTER TABLE automation_runs ADD COLUMN ${name} ${definition}`);
+    }
+    db.execute('INSERT INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)', [
+      migrationId,
+      '自动化逐目标接纳与历史结论核对',
+      `sha256:${createHash('sha256').update(migrationId).digest('hex')}`,
+      nowIso(),
+    ]);
+  });
 }
 
 /** 为旧运行补成单项目范围，新运行由调度入口写入完整项目列表。 */
@@ -511,8 +621,10 @@ export class AutomationTaskRepository {
     const timestamp = nowIso();
     return this.db.transaction(() => {
       this.insertTask(id, revisionId, 0, snapshot, timestamp);
+      this.db.execute('UPDATE automation_tasks SET action_json = ? WHERE id = ?', [JSON.stringify(snapshot.action), id]);
       this.insertRevision(revisionId, id, 0, snapshot, projectIds, timestamp);
       this.replaceTargets(id, projectIds, timestamp);
+      this.initializeEventCursors(id);
       return this.getById(id)!;
     });
   }
@@ -521,7 +633,9 @@ export class AutomationTaskRepository {
     const existing = this.getById(id);
     if (!existing || existing.status === 'deleted') throw new Error('ZEUS_AUTOMATION_CONFIG_NOT_FOUND: 自动化任务不存在。');
     if (existing.revision !== input.expectedRevision) throw new Error('ZEUS_AUTOMATION_CONFIG_REVISION_CONFLICT: 配置已被更新，请刷新后重试。');
-    const projectIds = input.projectIds === undefined ? this.listTargets(id).map((target) => target.projectId) : stringArray(input.projectIds, '项目');
+    /** 原目标范围用于辨别新增项目，普通编辑不推进既有游标。 */
+    const previousProjectIds = this.listTargets(id).map((target) => target.projectId);
+    const projectIds = input.projectIds === undefined ? previousProjectIds : stringArray(input.projectIds, '项目');
     const snapshot = normalizeSnapshot({ ...existing, ...input, projectIds });
     validateConversationProjects(snapshot, projectIds);
     const revision = existing.revision + 1;
@@ -564,11 +678,25 @@ export class AutomationTaskRepository {
         ],
       );
       if ((this.db.get<{ count: number }>(`SELECT changes() AS count`)?.count ?? 0) !== 1) throw new Error('ZEUS_AUTOMATION_CONFIG_REVISION_CONFLICT: 配置已被更新。');
+      this.db.execute('UPDATE automation_tasks SET action_json = ?, migration_issue = ? WHERE id = ?', [
+        JSON.stringify(snapshot.action),
+        input.action && (input.action.kind !== 'project_task' || input.action.taskSelection) ? null : existing.migrationIssue,
+        id,
+      ]);
       this.insertRevision(revisionId, id, revision, snapshot, projectIds, timestamp);
       this.replaceTargets(id, projectIds, timestamp);
+      /** 筛选生效边界变化时以新事件流当前边界替换，不能比较独立流的序号。 */
+      const eventBoundaryChanged = existing.triggerKind !== snapshot.triggerKind || JSON.stringify(existing.triggerConfig) !== JSON.stringify(snapshot.triggerConfig);
+      this.initializeEventCursors(id, eventBoundaryChanged ? projectIds : projectIds.filter((projectId) => !previousProjectIds.includes(projectId)));
       if (snapshot.permissionMode !== 'full-access') this.db.execute(`DELETE FROM automation_full_access_grants WHERE automation_id = ?`, [id]);
       return this.getById(id)!;
     });
+  }
+
+  /** 旧动作无法证明未经编辑时暂停，不覆盖用户配置。 */
+  setMigrationIssue(id: string, reason: string | null): void {
+    this.db.execute('UPDATE automation_tasks SET migration_issue = ?, updated_at = ? WHERE id = ?', [reason, nowIso(), id]);
+    if (reason) this.setStatus(id, 'paused');
   }
 
   getById(id: string): AutomationTaskRecord | undefined {
@@ -606,7 +734,7 @@ export class AutomationTaskRepository {
           id: row.id,
           automationId: row.automation_id,
           revision: row.revision,
-          snapshot: parseJson<AutomationDefinitionSnapshot>(row.snapshot_json, {} as AutomationDefinitionSnapshot),
+          snapshot: normalizeRevisionSnapshot(row.snapshot_json),
           projectIds: parseJson<string[]>(row.project_ids_json, []),
           createdAt: row.created_at,
         }
@@ -614,6 +742,7 @@ export class AutomationTaskRepository {
   }
 
   setStatus(id: string, status: Exclude<AutomationStatus, 'deleted'>): AutomationTaskRecord {
+    if (status === 'active' && this.getById(id)?.migrationIssue) throw new Error('ZEUS_AUTOMATION_MIGRATION_REVIEW_REQUIRED: 请先核对旧规则目标选择并保存。');
     const timestamp = nowIso();
     this.db.execute(`UPDATE automation_tasks SET status = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [status, timestamp, id]);
     const updated = this.getById(id);
@@ -628,6 +757,68 @@ export class AutomationTaskRepository {
 
   setNextRun(id: string, nextRunAt: string | null, triggeredAt?: string): void {
     this.db.execute(`UPDATE automation_tasks SET next_run_at = ?, last_triggered_at = COALESCE(?, last_triggered_at), updated_at = ? WHERE id = ?`, [nextRunAt, triggeredAt ?? null, nowIso(), id]);
+  }
+
+  /** 事件消费单调推进；移交调度时可精确替换原游标，事务避免重启重复消费。 */
+  setEventCursor(id: string, projectId: string, sequence: number, replace = false): void {
+    const current = this.getById(id);
+    if (!current) throw new Error('ZEUS_AUTOMATION_CONFIG_NOT_FOUND: 自动化任务不存在。');
+    this.db.execute('UPDATE automation_tasks SET event_cursors_json = ?, updated_at = ? WHERE id = ?', [
+      JSON.stringify({ ...current.eventCursors, [projectId]: replace ? sequence : Math.max(current.eventCursors[projectId] ?? 0, sequence) }),
+      nowIso(),
+      id,
+    ]);
+  }
+
+  /** 配置事件规则时从当前事件边界开始，不补跑配置前事件。 */
+  initializeEventCursors(id: string, projectIds?: string[]): void {
+    const task = this.getById(id);
+    if (!task || task.triggerKind !== 'event') return;
+    for (const target of this.listTargets(id).filter((target) => projectIds === undefined || projectIds.includes(target.projectId))) {
+      const codeEvents = task.triggerConfig.eventKinds?.includes('code_changed') === true;
+      const sequence = codeEvents
+        ? (this.db.get<{ sequence: number }>('SELECT COALESCE(MAX(rowid), 0) AS sequence FROM git_snapshots WHERE project_id = ?', [target.projectId])?.sequence ?? 0)
+        : (this.db.get<{ sequence: number }>('SELECT COALESCE(MAX(event.rowid), 0) AS sequence FROM task_events event JOIN tasks task ON task.id = event.task_id WHERE task.project_id = ?', [target.projectId])?.sequence ?? 0);
+      /** 保存时替换新流边界，事件消费时才采用单调推进。 */
+      this.db.execute('UPDATE automation_tasks SET event_cursors_json = ?, updated_at = ? WHERE id = ?', [JSON.stringify({ ...this.getById(id)!.eventCursors, [target.projectId]: sequence }), nowIso(), id]);
+    }
+  }
+
+  /** 从耐久事件表读取发生时的事实，游标独立于任务最新状态。 */
+  listTriggerEvents(projectId: string, afterSequence: number, limit = 50): Array<AutomationSourceEvent & { sequence: number; identity: string }> {
+    return this.db
+      .select<{ sequence: number; id: string; task_id: string; event_type: string; payload_json: string; created_at: string }>(
+        "SELECT event.rowid AS sequence, event.id, event.task_id, event.event_type, event.payload_json, event.created_at FROM task_events event JOIN tasks task ON task.id = event.task_id WHERE task.project_id = ? AND event.rowid > ? AND event.event_type IN ('task.created', 'task.updated', 'task.tags.updated', 'task.relationships.updated', 'task.status.changed', 'task.management_status.changed') ORDER BY event.rowid LIMIT ?",
+        [projectId, afterSequence, Math.min(100, Math.max(1, limit))],
+      )
+      .map((row) => ({ projectId, taskId: row.task_id, eventType: row.event_type, occurredAt: row.created_at, payload: parseJson<Record<string, unknown>>(row.payload_json, {}), sequence: row.sequence, identity: `task_event:${row.id}` }));
+  }
+
+  /** 代码规则延续原 git snapshot 游标，不把任务事件序号混入该流。 */
+  listCodeTriggerEvents(projectId: string, afterSequence: number, limit = 50): Array<AutomationSourceEvent & { sequence: number; identity: string }> {
+    return this.db
+      .select<{ sequence: number; id: string; task_id: string; snapshot_type: string; source_context_json: string; created_at: string }>(
+        'SELECT snapshot.rowid AS sequence, snapshot.id, snapshot.task_id, snapshot.snapshot_type, snapshot.created_at, task.source_context_json FROM git_snapshots snapshot JOIN tasks task ON task.id = snapshot.task_id WHERE snapshot.project_id = ? AND snapshot.rowid > ? ORDER BY snapshot.rowid LIMIT ?',
+        [projectId, afterSequence, Math.min(100, Math.max(1, limit))],
+      )
+      .map((row) => ({
+        projectId,
+        taskId: row.task_id,
+        eventType: 'code_changed',
+        occurredAt: row.created_at,
+        payload: { snapshotId: row.id, snapshotType: row.snapshot_type, source: parseJson<Record<string, unknown>>(row.source_context_json, {}).type },
+        sequence: row.sequence,
+        identity: `git_snapshot:${row.id}`,
+      }));
+  }
+
+  /** 写回执与推进游标共用一次事务，忽略的事件也只消费一次。 */
+  consumeEvent<T>(id: string, projectId: string, sequence: number, accept: () => T): T {
+    return this.db.transaction(() => {
+      const result = accept();
+      this.setEventCursor(id, projectId, sequence);
+      return result;
+    });
   }
 
   setFullAccessGrant(id: string, expectedRevision: number, granted: boolean): void {
@@ -699,6 +890,12 @@ export class AutomationTaskRepository {
     this.db.execute(`DELETE FROM automation_task_targets WHERE automation_id = ?`, [automationId]);
     projectIds.forEach((projectId, position) => this.db.execute(`INSERT INTO automation_task_targets (automation_id, project_id, position, enabled, created_at) VALUES (?, ?, ?, 1, ?)`, [automationId, projectId, position, timestamp]));
   }
+}
+
+/** 历史修订只补动作默认值，不重算其冻结的模型或权限。 */
+function normalizeRevisionSnapshot(value: string): AutomationDefinitionSnapshot {
+  const snapshot = parseJson<AutomationDefinitionSnapshot>(value, {} as AutomationDefinitionSnapshot);
+  return { ...snapshot, action: snapshot.action ?? { kind: 'conversation', employeeId: null } };
 }
 
 export class AutomationRunRepository {
@@ -777,6 +974,7 @@ export class AutomationRunRepository {
         input.scheduledAt,
         timestamp,
       ]);
+      if (input.sourceEvent) this.db.execute('UPDATE automation_runs SET source_event_json = ? WHERE id = ?', [JSON.stringify(input.sourceEvent), id]);
       try {
         this.db.execute(`INSERT INTO automation_causal_chain_members (causal_chain_id, automation_id, project_id, run_id, created_at) VALUES (?, ?, ?, ?, ?)`, [causalChainId, task.id, projectId, id, timestamp]);
       } catch {
@@ -874,6 +1072,156 @@ export class AutomationRunRepository {
     return this.getById(id)!;
   }
 
+  /** 冻结完整目标，并由真实任务归属补齐旧引用；缺失关系保持待核对。 */
+  ensureDispatchTargets(id: string): AutomationRunRecord {
+    /** 已经保存的目标不能被当前配置覆盖。 */
+    const run = this.getById(id)!;
+    if (run.dispatchTargets.length > 0) return run;
+    /** 无项目工作使用稳定技术归属。 */
+    const projectIds = run.projectIds.length > 0 ? run.projectIds : [run.projectId];
+    /** 引用必须能证明项目，不能按数量或数组位置猜测。 */
+    const targets: AutomationDispatchTarget[] = projectIds.map((projectId) => ({ projectId, taskId: null, employeeId: null, sourceRef: `automation:${run.id}:${projectId}`, status: 'pending', reference: null, reason: null }));
+    for (const reference of run.executionReferences) {
+      /** 旧引用从准确业务运行反查任务，再读取归属。 */
+      const taskId =
+        reference.taskId ??
+        (reference.kind === 'workflow'
+          ? this.db.get<{ task_id: string }>('SELECT task_id FROM digital_team_workflow_runs WHERE id = ?', [reference.id])?.task_id
+          : reference.kind === 'task_work'
+            ? this.db.get<{ task_id: string }>('SELECT item.task_id FROM task_work_runs run JOIN task_work_items item ON item.id = run.work_item_id WHERE run.id = ?', [reference.id])?.task_id
+            : reference.kind === 'legacy_employee'
+              ? this.db.get<{ task_id: string }>('SELECT task_id FROM digital_employee_executions WHERE id = ?', [reference.id])?.task_id
+              : undefined);
+      /** 单一引用也必须具有可验证的项目归属。 */
+      const projectId = taskId ? this.db.get<{ project_id: string }>('SELECT project_id FROM tasks WHERE id = ?', [taskId])?.project_id : undefined;
+      /** 多份引用落入一个项目仍全部保留在原引用账本，目标只记录接纳代表。 */
+      const target = targets.find((entry) => entry.projectId === projectId);
+      if (target) Object.assign(target, { taskId: taskId ?? null, status: 'accepted', reference });
+    }
+    this.db.execute('UPDATE automation_runs SET dispatch_targets_json = ?, dispatch_completed_at = ? WHERE id = ?', [JSON.stringify(targets), targets.every((target) => target.status === 'accepted') ? nowIso() : null, id]);
+    return this.getById(id)!;
+  }
+
+  /** 核对全部旧员工动作，已误报的部分成功显式保留核对原因。 */
+  listUntrackedActionRuns(): AutomationRunRecord[] {
+    return this.db
+      .select<DbAutomationRunRow>(
+        `SELECT ${runSelect} FROM automation_runs WHERE dispatch_targets_json = '[]' AND status IN ('dispatching', 'running', 'succeeded') AND automation_revision_id IN (SELECT id FROM automation_task_revisions WHERE json_extract(snapshot_json, '$.action.kind') IN ('employee_work', 'project_task'))`,
+      )
+      .map(mapRun);
+  }
+
+  /** 接纳前冻结任务、绑定和来源；接纳结果只能更新原项目。 */
+  updateDispatchTarget(id: string, target: AutomationDispatchTarget): AutomationRunRecord {
+    return this.db.transaction(() => {
+      /** 逐目标状态始终从当前耐久运行读取，不能用旧快照覆盖其他目标。 */
+      const run = this.ensureDispatchTargets(id);
+      /** 目标不允许追加成不同的项目范围。 */
+      const current = run.dispatchTargets.find((entry) => entry.projectId === target.projectId);
+      if (!current || current.sourceRef !== target.sourceRef) throw new Error('ZEUS_AUTOMATION_DISPATCH_TARGET_INVALID: 接纳目标与冻结项目不一致。');
+      if (current.status === 'accepted' || current.status === 'skipped') return run;
+      if (current.taskId && current.taskId !== target.taskId) throw new Error('ZEUS_AUTOMATION_DISPATCH_TARGET_INVALID: 恢复不能更换已冻结任务。');
+      if (current.employeeId && current.employeeId !== target.employeeId) throw new Error('ZEUS_AUTOMATION_DISPATCH_TARGET_INVALID: 恢复不能更换已冻结员工。');
+      if (target.status === 'accepted' && (!target.reference?.id || (target.taskId && target.reference.taskId !== target.taskId))) throw new Error('ZEUS_AUTOMATION_DISPATCH_TARGET_INVALID: 接纳引用缺少准确任务身份。');
+      /** 新引用按身份去重，旧工作引用完整保留。 */
+      const references = [...run.executionReferences];
+      if (target.reference && !references.some((reference) => reference.kind === target.reference!.kind && reference.id === target.reference!.id)) references.push(target.reference);
+      this.db.execute('UPDATE automation_runs SET dispatch_targets_json = ?, execution_references_json = ?, updated_at = ? WHERE id = ?', [
+        JSON.stringify(run.dispatchTargets.map((entry) => (entry.projectId === target.projectId ? target : entry))),
+        JSON.stringify(references),
+        nowIso(),
+        id,
+      ]);
+      return this.getById(id)!;
+    });
+  }
+
+  /** 精确来源身份对账；Core 与 Task Work 接纳均持久化后才返回。 */
+  findAcceptedExecution(target: AutomationDispatchTarget): AutomationExecutionReference | null | false {
+    /** 旧安排领取也以正式来源回执冻结原流程代次。 */
+    const plannedReceipt = this.db.get<{ evidence_json: string }>("SELECT evidence_json FROM command_delivery_receipts WHERE operation_identity = ? AND outcome = 'accepted'", [`automation-planned:${target.sourceRef}`]);
+    if (plannedReceipt) {
+      /** 来源回执记录准确计划身份，当前任务的新安排不能替代。 */
+      const evidence = parseJson<{ result?: AutomationExecutionReference | null }>(plannedReceipt.evidence_json, {});
+      if (evidence.result === null) return false;
+      const reference = evidence.result;
+      if (reference?.kind !== 'task_plan' || !reference.id || reference.taskId !== target.taskId || !Number.isInteger(reference.generation)) throw new Error('ZEUS_AUTOMATION_DISPATCH_OUTCOME_UNKNOWN: 旧安排接纳回执不可核对。');
+      return reference;
+    }
+    /** 工作来源包含冻结绑定，禁止按任务最新执行猜测。 */
+    const work = target.employeeId
+      ? this.db.get<{ run_id: string; task_id: string; conversation_id: string | null }>(
+          'SELECT run.id AS run_id, item.task_id, run.conversation_id FROM task_work_items item JOIN task_work_runs run ON run.work_item_id = item.id WHERE item.source = ? AND item.source_ref = ? ORDER BY run.attempt, run.created_at, run.id LIMIT 1',
+          ['automation', `${target.employeeId}:${target.sourceRef}`],
+        )
+      : undefined;
+    /** 流程接纳与该命令回执在同一 Core 事务中提交。 */
+    const receipt = this.db.get<{ evidence_json: string }>("SELECT evidence_json FROM command_delivery_receipts WHERE operation_identity = ? AND outcome = 'accepted'", [`project-workflow:${target.sourceRef}`]);
+    /** 同一来源被两种业务同时接纳属于冲突，不猜测选择。 */
+    if (work && receipt) throw new Error('ZEUS_AUTOMATION_DISPATCH_OUTCOME_UNKNOWN: 同一目标存在两种接纳记录。');
+    if (work) {
+      if (target.taskId && work.task_id !== target.taskId) throw new Error('ZEUS_AUTOMATION_DISPATCH_OUTCOME_UNKNOWN: 接纳记录的任务不符。');
+      return { kind: 'task_work', id: work.run_id, taskId: work.task_id, ...(work.conversation_id ? { conversationId: work.conversation_id } : {}) };
+    }
+    if (receipt) {
+      /** 只读取正式回执里的已接纳运行身份。 */
+      const evidence = parseJson<{ result?: { run?: { id?: string; taskId?: string } } }>(receipt.evidence_json, {});
+      /** 回执不可读时保持未知，不能从最新流程猜测。 */
+      const workflowId = evidence.result?.run?.id;
+      const workflow = workflowId ? this.db.get<{ task_id: string; project_id: string }>('SELECT task_id, project_id FROM digital_team_workflow_runs WHERE id = ?', [workflowId]) : undefined;
+      if (!workflow || workflow.project_id !== target.projectId || (target.taskId && workflow.task_id !== target.taskId)) throw new Error('ZEUS_AUTOMATION_DISPATCH_OUTCOME_UNKNOWN: 已接纳流程回执不能对应冻结目标。');
+      return { kind: 'workflow', id: workflowId!, taskId: workflow.task_id };
+    }
+    return null;
+  }
+
+  /** 全部目标有明确接纳或跳过结果后才能进入工作终态核对。 */
+  completeDispatch(id: string): AutomationRunRecord {
+    /** 已接纳数量不能代替冻结目标完整性。 */
+    const run = this.ensureDispatchTargets(id);
+    if (run.dispatchTargets.some((target) => target.status !== 'accepted' && target.status !== 'skipped')) throw new Error('ZEUS_AUTOMATION_DISPATCH_INCOMPLETE: 仍有目标没有明确处理结果。');
+    this.db.execute("UPDATE automation_runs SET status = 'running', dispatch_completed_at = COALESCE(dispatch_completed_at, ?), updated_at = ? WHERE id = ? AND status IN ('dispatching', 'running')", [nowIso(), nowIso(), id]);
+    return this.getById(id)!;
+  }
+
+  /** 原运行恢复后只处理缺失目标；终态历史保存在尝试和核对记录。 */
+  resumeDispatch(id: string): AutomationRunRecord {
+    return this.db.transaction(() => {
+      /** 恢复明确限制为存在逐目标范围的部分派发。 */
+      const run = this.getById(id);
+      if (!run || !['blocked', 'outcome_unknown'].includes(run.status) || run.dispatchTargets.length === 0 || run.dispatchCompletedAt) throw new Error('ZEUS_AUTOMATION_RESUME_UNAVAILABLE: 当前运行没有可恢复的剩余目标。');
+      /** 同规则的其他在途工作必须先结束，避免重叠副作用。 */
+      if (this.listActive(run.automationId).some((active) => active.id !== id)) throw new Error('ZEUS_AUTOMATION_RESUME_BUSY: 同一自动化仍有其他运行。');
+      /** 原终态时间与原因旁路保留，当前完成时间等待后续准确结果。 */
+      this.db.execute('UPDATE automation_runs SET dispatch_reconciliation_json = COALESCE(dispatch_reconciliation_json, ?) WHERE id = ?', [
+        JSON.stringify({ previousStatus: run.status, checkedAt: nowIso(), reason: run.errorMessage ?? '用户沿原运行恢复剩余目标。', completedAt: run.completedAt }),
+        id,
+      ]);
+      this.db.execute("UPDATE automation_runs SET status = 'queued', queue_position = 0, completed_at = NULL, error_code = NULL, error_message = NULL, updated_at = ? WHERE id = ?", [nowIso(), id]);
+      new AutomationTaskRepository(this.db).setStatus(run.automationId, 'active');
+      return this.getById(id)!;
+    });
+  }
+
+  /** 存量误报成功保留原状态和完成时间，在当前投影显露实际未完整派发。 */
+  recordIncompleteReconciliation(id: string, reason: string): AutomationRunRecord {
+    /** 原核对只记录一次，后续恢复不覆盖历史。 */
+    const run = this.getById(id)!;
+    this.db.execute('UPDATE automation_runs SET dispatch_reconciliation_json = COALESCE(dispatch_reconciliation_json, ?) WHERE id = ?', [
+      JSON.stringify({ previousStatus: run.status, checkedAt: nowIso(), reason, completedAt: run.completedAt }),
+      id,
+    ]);
+    new AutomationTaskRepository(this.db).setStatus(run.automationId, 'paused');
+    return this.setTerminal(id, 'outcome_unknown', 'ZEUS_AUTOMATION_DISPATCH_INCOMPLETE', reason);
+  }
+
+  /** 先耐久保存真实执行关联，再等待各执行终态；不会把首个会话结束当作流程结束。 */
+  markExecuting(id: string, references: AutomationExecutionReference[]): AutomationRunRecord {
+    if (references.length === 0 || references.some((reference) => !reference.id)) throw new Error('ZEUS_AUTOMATION_EXECUTION_REFERENCE_REQUIRED: 自动化执行必须返回真实运行引用。');
+    this.db.execute(`UPDATE automation_runs SET status = 'running', execution_references_json = ?, updated_at = ? WHERE id = ? AND status IN ('dispatching', 'running')`, [JSON.stringify(references), nowIso(), id]);
+    return this.getById(id)!;
+  }
+
   setTerminal(id: string, status: Extract<AutomationRunStatus, 'succeeded' | 'failed' | 'blocked' | 'cancelled' | 'outcome_unknown'>, errorCode: string | null = null, errorMessage: string | null = null): AutomationRunRecord {
     const timestamp = nowIso();
     this.db.transaction(() => {
@@ -949,6 +1297,7 @@ export class AutomationRunRepository {
       input.scheduledAt,
       timestamp,
     ]);
+    if (input.sourceEvent) this.db.execute('UPDATE automation_runs SET source_event_json = ? WHERE id = ?', [JSON.stringify(input.sourceEvent), id]);
     return this.getById(id)!;
   }
 

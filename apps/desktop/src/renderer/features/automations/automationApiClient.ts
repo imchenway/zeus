@@ -11,6 +11,8 @@ export interface AutomationApiClient {
   deleteAutomation(automationId: string): Promise<void>;
   loadAutomationInbox(input?: { unreadOnly?: boolean; status?: AutomationRunStatus }): Promise<AutomationRunRecord[]>;
   acknowledgeAutomationRun(runId: string): Promise<AutomationRunRecord>;
+  /** 沿原运行身份继续尚未接纳的目标，不重跑已接纳工作。 */
+  resumeAutomationRun(runId: string): Promise<AutomationRunRecord>;
 }
 
 export function createAutomationApiClient(transport: LocalApiTransport): AutomationApiClient {
@@ -28,6 +30,8 @@ export function createAutomationApiClient(transport: LocalApiTransport): Automat
       if (input.status) query.set('status', input.status);
       return (await transport.request<{ items: AutomationRunRecord[] }>(`/api/automations/inbox${query.size ? `?${query.toString()}` : ''}`)).items;
     },
+    /** 服务端以当前冻结进度控制恢复，幂等键防止重复操作。 */
+    resumeAutomationRun: (runId) => transport.request(`/api/automation-runs/${encodeURIComponent(runId)}/resume`, automationRequest('POST', {})),
     acknowledgeAutomationRun: (runId) => transport.request(`/api/automation-runs/${encodeURIComponent(runId)}/read`, automationRequest('POST', {})),
   };
 }

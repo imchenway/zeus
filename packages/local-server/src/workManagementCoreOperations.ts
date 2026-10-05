@@ -17,10 +17,16 @@ import {
 import { type CreateTaskFromTemplateInput, type CreateTaskTemplateInput, type CreateUserTaskInput, type WorkManagementCommandActor, WorkManagementRouteError } from './workManagementCoreCommandRoutes.js';
 import { normalizeWorkManagementTaskAttachments } from './workManagementTaskInput.js';
 
+/** 可信 Core 调用上下文；公开命令路由不接收任务来源字段。 */
 interface CoreOperationContext {
+  /** 已接纳命令的身份。 */
   commandId: string;
+  /** 本次幂等操作身份。 */
   operationIdentity: string;
+  /** 保留真实用户或员工，供审计核对。 */
   actor: WorkManagementCommandActor;
+  /** 仅由内部创建端口指定，禁止从用户任务正文推断员工来源。 */
+  taskOrigin?: 'automation' | 'digital_team_workflow';
 }
 
 interface WorkManagementCoreOperationPorts {
@@ -61,6 +67,8 @@ export class WorkManagementCoreOperations {
       throw routeError(400, 'ZEUS_INVALID_TASK_SOURCE_CONTEXT', 'Task source context must be an object.');
     }
     const sourceContext = { ...(input.sourceContext ?? {}) };
+    /** 内部流程创建保留真实来源；普通用户不能用正文冒充系统来源。 */
+    const internalSource = context.taskOrigin ?? (context.actor.kind === 'system' && ['automation', 'digital_team_workflow'].includes(String(sourceContext.type)) ? String(sourceContext.type) : null);
     if (Object.prototype.hasOwnProperty.call(sourceContext, 'attachments')) {
       const attachments = normalizeWorkManagementTaskAttachments(sourceContext.attachments);
       if (attachments === null) throw routeError(400, 'ZEUS_INVALID_TASK_ATTACHMENTS', 'Task attachments must contain at most 24 valid field-owned attachment references.');
@@ -91,7 +99,7 @@ export class WorkManagementCoreOperations {
       taskId: task.id,
       eventType: 'task.created',
       title: '任务已创建',
-      payload: { status: task.status, managementStatus: task.managementStatus, taskType: task.taskType, priority: task.priority, source: task.createdFrom },
+      payload: { status: task.status, managementStatus: task.managementStatus, taskType: task.taskType, priority: task.priority, source: internalSource ?? task.createdFrom, ...(internalSource ? { suppressAutomation: true } : {}) },
     });
     this.audit(context.actor, 'task.created', 'task', task.id, { taskId: task.id, projectId: task.projectId, title: task.title, taskType: task.taskType, status: task.status, priority: task.priority });
     this.afterTaskCreated(task, 'user');

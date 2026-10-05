@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
 import type { ZeusDatabasePort } from './databasePort.js';
-import { LongTermMemoryRepository, type LongTermMemoryKind } from './longTermMemoryStore.js';
+import { LongTermMemoryRepository, LongTermMemoryStoreError, type LongTermMemoryKind } from './longTermMemoryStore.js';
 import { TaskWorkStoreError } from './taskWorkStore.js';
 
-/** 员工提出的经验先进入候选，审核前不会参与任何上下文。 */
+/** 员工经验保留来源候选；只有用户预先授权的项目稳定经验可以自动接纳。 */
 export interface EmployeeMemoryProposal {
+  /** 与现行经验冲突时仍待处理，不覆盖现行内容。 */
+  conflictReason?: string;
   /** 固定工具调用对应的建议身份。 */
   id: string;
   /** 所属项目与个人范围。 */
@@ -69,52 +71,109 @@ export class EmployeeMemoryProposalRepository {
 
   /** 工具调用身份固定来源，所有文本必须在业务入口完整校验。 */
   propose(input: Omit<EmployeeMemoryProposal, 'status' | 'memoryId' | 'revision' | 'createdAt'>): EmployeeMemoryProposal {
-    /** 重复调用返回原建议，不能用同一身份替换正文。 */
-    const existing = this.list(input.projectId, input.employeeId).find((record) => record.id === input.id);
-    if (existing) return existing;
-    /** 外键只能保证身份存在，这里同时保证员工、任务与运行属于同一项目。 */
-    if (!this.db.get('SELECT id FROM task_work_runs WHERE id = ? AND project_id = ? AND task_id = ? AND employee_id = ?', [input.runId, input.projectId, input.taskId, input.employeeId]))
-      throw new TaskWorkStoreError('ZEUS_EMPLOYEE_MEMORY_PROPOSAL_SCOPE', '经验建议与来源工作不匹配。');
-    const proposal: EmployeeMemoryProposal = { ...input, status: 'pending', memoryId: null, revision: 1, createdAt: this.now() };
-    this.db.execute("INSERT INTO employee_memory_proposals(id, project_id, employee_id, task_id, run_id, proposal_json, status, revision, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', 1, ?)", [
-      proposal.id,
-      input.projectId,
-      input.employeeId,
-      input.taskId,
-      input.runId,
-      JSON.stringify(proposal),
-      proposal.createdAt,
-    ]);
-    return proposal;
+    return this.db.transaction(() => {
+      /** 重复调用返回原建议，不能用同一身份替换正文。 */
+      const existing = this.list(input.projectId, input.employeeId).find((record) => record.id === input.id);
+      if (existing) return existing;
+      /** 外键只能保证身份存在，这里同时保证员工、任务与运行属于同一项目。 */
+      const run = this.db.get<{ entrypoint_snapshot_json: string }>('SELECT entrypoint_snapshot_json FROM task_work_runs WHERE id = ? AND project_id = ? AND task_id = ? AND employee_id = ?', [
+        input.runId,
+        input.projectId,
+        input.taskId,
+        input.employeeId,
+      ]);
+      if (!run) throw new TaskWorkStoreError('ZEUS_EMPLOYEE_MEMORY_PROPOSAL_SCOPE', '经验建议与来源工作不匹配。');
+      const proposal: EmployeeMemoryProposal = { ...input, status: 'pending', memoryId: null, revision: 1, createdAt: this.now() };
+      this.db.execute("INSERT INTO employee_memory_proposals(id, project_id, employee_id, task_id, run_id, proposal_json, status, revision, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', 1, ?)", [
+        proposal.id,
+        input.projectId,
+        input.employeeId,
+        input.taskId,
+        input.runId,
+        JSON.stringify(proposal),
+        proposal.createdAt,
+      ]);
+      /** 自动生效只使用本轮冻结规则，经验半年后须复核，不永久信任模型归纳。 */
+      const policy = JSON.parse(run.entrypoint_snapshot_json).projectMemoryPolicy;
+      if (
+        ['stable_workflow', 'domain_knowledge'].includes(input.kind) &&
+        policy?.autoApplyStableExperience === true &&
+        policy.projectId === input.projectId &&
+        typeof policy.workflowTemplateId === 'string' &&
+        policy.workflowTemplateId.length > 0 &&
+        policy.workflowTemplateId.length <= 256 &&
+        Number.isSafeInteger(policy.workflowTemplateRevision) &&
+        policy.workflowTemplateRevision > 0
+      )
+        return this.applyDecision(
+          input.projectId,
+          input.employeeId,
+          input.id,
+          { expectedRevision: proposal.revision, accept: true, topic: input.topic, content: input.content, reviewAfter: new Date(Date.parse(proposal.createdAt) + 180 * 24 * 60 * 60 * 1_000).toISOString() },
+          policy,
+        );
+      return proposal;
+    });
   }
 
   /** 明确接纳可以修正正文；拒绝只保留审核结果，不生成记忆。 */
   decide(projectId: string, employeeId: string, id: string, input: { expectedRevision: number; accept: boolean; topic: string; content: string; reviewAfter: string }): EmployeeMemoryProposal {
+    return this.applyDecision(projectId, employeeId, id, input);
+  }
+
+  /** 自动与人工接纳共用冲突保护，自动来源不伪造用户逐条审核。 */
+  private applyDecision(
+    projectId: string,
+    employeeId: string,
+    id: string,
+    input: { expectedRevision: number; accept: boolean; topic: string; content: string; reviewAfter: string },
+    policy?: { workflowTemplateId: string; workflowTemplateRevision: number },
+  ): EmployeeMemoryProposal {
     return this.db.transaction(() => {
       const proposal = this.list(projectId, employeeId).find((record) => record.id === id);
       if (!proposal || proposal.status !== 'pending' || proposal.revision !== input.expectedRevision) throw new TaskWorkStoreError('ZEUS_EMPLOYEE_MEMORY_PROPOSAL_CHANGED', '经验建议已处理或发生变化，请重新读取。');
       let memoryId: string | null = null;
       if (input.accept) {
-        const result = new LongTermMemoryRepository(this.db).recordCandidate({
-          id: `employee_memory_${id}`,
-          scope: { kind: 'employee', id: employeeId },
-          memoryKey: input.topic,
-          candidateKind: proposal.kind,
-          content: input.content,
-          effect: 'advisory',
-          source: {
-            kind: 'user_explicit',
-            reference: `task:${proposal.taskId}/work-run:${proposal.runId}/proposal:${proposal.id}`,
-            observedAt: proposal.createdAt,
-            contentSha256: createHash('sha256').update(proposal.content).digest('hex'),
-          },
-          confirmationLevel: 'explicit',
-          confidence: 1,
-          reviewAfter: input.reviewAfter,
-          recordedAt: this.now(),
-        });
-        if (!result.accepted) throw new TaskWorkStoreError('ZEUS_EMPLOYEE_MEMORY_PROPOSAL_INVALID', '该内容不属于可长期使用的经验。');
-        memoryId = result.record.id;
+        /** 同主题的明确项目或全局规则冲突时保留待处理建议，不借员工优先级隐式覆盖。 */
+        const effective = new LongTermMemoryRepository(this.db).resolveForContext({ projectId, employeeId, asOf: this.now() }).selected;
+        const conflict = effective.find((record) => record.memoryKey === input.topic && record.content.trim() !== input.content.trim());
+        if (conflict) {
+          this.db.execute('UPDATE employee_memory_proposals SET proposal_json=?,revision=revision+1 WHERE id=? AND revision=?', [
+            JSON.stringify({ ...proposal, conflictReason: `与现行经验 ${conflict.id} 冲突，请明确修正规则或原经验后再处理。` }),
+            id,
+            input.expectedRevision,
+          ]);
+          return this.list(projectId, employeeId).find((record) => record.id === id)!;
+        }
+        try {
+          const result = new LongTermMemoryRepository(this.db).recordCandidate({
+            id: `employee_memory_${id}`,
+            scope: { kind: 'employee', id: employeeId },
+            /** 用户审查一条项目经验并不等于同意跨项目推广。 */
+            projectLimitId: projectId,
+            memoryKey: input.topic,
+            candidateKind: proposal.kind,
+            content: input.content,
+            effect: 'advisory',
+            source: {
+              kind: policy ? 'project_instruction' : 'user_explicit',
+              reference: `${policy ? `project:${projectId}/workflow:${policy.workflowTemplateId}/revision:${policy.workflowTemplateRevision}/` : ''}task:${proposal.taskId}/work-run:${proposal.runId}/proposal:${proposal.id}`,
+              observedAt: proposal.createdAt,
+              contentSha256: createHash('sha256').update(proposal.content).digest('hex'),
+            },
+            confirmationLevel: policy ? 'confirmed' : 'explicit',
+            confidence: 1,
+            reviewAfter: input.reviewAfter,
+            recordedAt: this.now(),
+          });
+          if (!result.accepted) throw new TaskWorkStoreError('ZEUS_EMPLOYEE_MEMORY_PROPOSAL_INVALID', '该内容不属于可长期使用的经验。');
+          memoryId = result.record.id;
+        } catch (error) {
+          if (!(error instanceof LongTermMemoryStoreError) || error.code !== 'ZEUS_LONG_TERM_MEMORY_HEAD_CONFLICT') throw error;
+          /** 已确认规则发生冲突时保留建议和原经验，交给用户明确修正。 */
+          this.db.execute('UPDATE employee_memory_proposals SET proposal_json=?,revision=revision+1 WHERE id=? AND revision=?', [JSON.stringify({ ...proposal, conflictReason: error.message }), id, input.expectedRevision]);
+          return this.list(projectId, employeeId).find((record) => record.id === id)!;
+        }
       }
       this.db.execute('UPDATE employee_memory_proposals SET status = ?, memory_id = ?, revision = revision + 1 WHERE id = ? AND revision = ?', [input.accept ? 'accepted' : 'rejected', memoryId, id, input.expectedRevision]);
       return this.list(projectId, employeeId).find((record) => record.id === id)!;

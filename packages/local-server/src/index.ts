@@ -3951,6 +3951,7 @@ function mapWorkManagementTaskDomainError(error: unknown): { statusCode: number;
         code.includes('UNAVAILABLE') ||
         code.includes('NOT_AVAILABLE') ||
         code.includes('MISMATCH') ||
+        code.includes('BLOCKING_DEFECT') ||
         code.includes('STALE')
       ? 409
       : code.startsWith('ZEUS_INVALID_') || code.endsWith('_INVALID') || code.endsWith('_REQUIRED') || code.includes('_UNSUPPORTED')

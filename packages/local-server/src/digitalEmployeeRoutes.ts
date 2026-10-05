@@ -40,6 +40,8 @@ interface DigitalEmployeeRouteOptions {
   automations: DigitalEmployeeAutomationRepository;
   executions: DigitalEmployeeExecutionRepository;
   projectEvents: DigitalEmployeeProjectEventRepository;
+  /** 已移交的规则只保留历史读取，写入由统一自动化入口负责。 */
+  isAutomationMigrated(automationId: string): boolean;
   commandDefinitions: CommandDefinitionRepository;
   stages: TaskStageRepository;
   conversations: ConversationRepository;
@@ -76,6 +78,8 @@ type AdoptLegacyExecutionBody = { expectedExecutionRevision: number };
 /** 数字员工的公开读写边界；写操作全部复用工作管理 Command ledger。 */
 export function registerDigitalEmployeeRoutes(options: DigitalEmployeeRouteOptions): void {
   options.server.get('/api/digital-employee-templates', async () => options.templates.list());
+  /** 全局员工目录只返回真实员工，内置创建模板保留在原模板目录。 */
+  options.server.get('/api/digital-employees', async () => options.templates.list().filter((employee) => !employee.builtIn));
   options.server.get('/api/projects/:projectId/digital-employees', async (request: FastifyRequest<{ Params: { projectId: string } }>, reply) => {
     if (!requireProject(options, request.params.projectId, reply)) return;
     return options.employees.listByProject(request.params.projectId);
@@ -256,36 +260,14 @@ export function registerDigitalEmployeeRoutes(options: DigitalEmployeeRouteOptio
   registerExecutionRoutes(options);
 }
 
+/** 旧自动化读取保持可用，新增与已迁移规则写入明确导向统一入口。 */
 function registerAutomationRoutes(options: DigitalEmployeeRouteOptions): void {
-  options.server.post(
-    '/api/projects/:projectId/digital-employee-automations',
-    async (request: FastifyRequest<{ Params: { projectId: string }; Body: WorkManagementMutationRequest<Omit<CreateDigitalEmployeeAutomationInput, 'projectId'>> }>, reply) =>
-      runRoute(reply, async () => {
-        const project = requireProject(options, request.params.projectId, reply);
-        if (!project) return;
-        const parsed = options.application.parse<Omit<CreateDigitalEmployeeAutomationInput, 'projectId'>>({
-          value: request.body,
-          commandType: workManagementCommandTypes.digitalEmployeeAutomationCreate,
-          scopeKind: 'project',
-          expectedScopeId: () => project.id,
-        });
-        const employee = requireEmployee(options, project.id, parsed.input.employeeId);
-        validateAutomationEmployee(employee!, parsed.input.actionKind);
-        const initialCursorSequence = isProjectEventTrigger(parsed.input.triggerKind) ? options.projectEvents.latestSequence(project.id, parsed.input.triggerKind) : 0;
-        const mutation = options.application.executeCore({
-          parsed,
-          destinationId: 'digital-employee-automation-repository',
-          resourceId: `digital_employee_automation:${parsed.operationIdentity}`,
-          mutateBusinessState: () => {
-            const record = options.automations.create({ ...parsed.input, id: parsed.operationIdentity, projectId: project.id }, { initialCursorSequence });
-            audit(options, parsed, 'digital_employee.automation.created', 'digital_employee_automation', record.id, { projectId: project.id, employeeId: record.employeeId, triggerKind: record.triggerKind });
-            return record;
-          },
-        });
-        await finishMutation(options, mutation.replayed, 'digital_employee.automation.changed', { projectId: project.id, automationId: mutation.result.id });
-        options.kick();
-        return reply.code(201).send(mutation.result);
-      }),
+  options.server.post('/api/projects/:projectId/digital-employee-automations', async (request: FastifyRequest<{ Params: { projectId: string } }>, reply) =>
+    runRoute(reply, async () => {
+      const project = requireProject(options, request.params.projectId, reply);
+      if (!project) return;
+      return reply.code(410).send({ error: 'ZEUS_DIGITAL_EMPLOYEE_AUTOMATION_MIGRATED', message: '员工自动化已统一，请通过自动化页面或 /api/automations 创建规则。', automationApi: '/api/automations' });
+    }),
   );
 
   options.server.post(
@@ -553,11 +535,21 @@ function registerExecutionRoutes(options: DigitalEmployeeRouteOptions): void {
 }
 
 function createEmployee(options: DigitalEmployeeRouteOptions, projectId: string, id: string, input: CreateEmployeeBody) {
-  const templateId = typeof input.templateId === 'string' ? input.templateId : undefined;
+  /** 新入口表达全局员工身份，原 templateId 入口保留同一创建语义。 */
+  const templateId = typeof input.globalEmployeeId === 'string' ? input.globalEmployeeId : typeof input.templateId === 'string' ? input.templateId : undefined;
   if (templateId) {
     const template = options.templates.getById(templateId);
     if (!template) throw new DigitalEmployeeStoreError('ZEUS_DIGITAL_EMPLOYEE_TEMPLATE_NOT_FOUND', '数字员工模板不存在。');
-    return options.employees.createFromTemplate({ projectId, template, overrides: { id, ...(input.overrides ?? {}) } });
+    return options.employees.createFromTemplate({
+      projectId,
+      template,
+      overrides: {
+        ...(input.overrides ?? {}),
+        id,
+        ...(input.projectOverrides === undefined ? {} : { projectOverrides: input.projectOverrides }),
+        ...(input.projectInstructions === undefined ? {} : { projectInstructions: input.projectInstructions }),
+      },
+    });
   }
   const value = input.overrides ? { ...input.overrides } : { ...input };
   delete (value as { templateId?: unknown }).templateId;
@@ -919,7 +911,7 @@ function requireTask(options: DigitalEmployeeRouteOptions, taskId: string, reply
 }
 
 function requireEmployee(options: DigitalEmployeeRouteOptions, projectId: string, employeeId: string, reply?: FastifyReply): DigitalEmployeeRecord | undefined {
-  const employee = employeeId ? options.employees.getById(employeeId) : undefined;
+  const employee = employeeId ? options.employees.resolveProjectEmployee(projectId, employeeId) : undefined;
   if (!employee || employee.projectId !== projectId) {
     if (reply) void reply.code(404).send({ error: 'ZEUS_DIGITAL_EMPLOYEE_NOT_FOUND', message: '数字员工不存在。' });
     else throw new DigitalEmployeeStoreError('ZEUS_DIGITAL_EMPLOYEE_NOT_FOUND', '数字员工不存在。', { statusCode: 404 });
@@ -928,11 +920,23 @@ function requireEmployee(options: DigitalEmployeeRouteOptions, projectId: string
   return employee;
 }
 
+/** 所有旧规则写入共用移交门禁，历史目录读取不经过该函数。 */
 function requireAutomation(options: DigitalEmployeeRouteOptions, projectId: string, automationId: string, reply?: FastifyReply) {
   const automation = options.automations.getById(automationId);
   if (!automation || automation.projectId !== projectId) {
     if (reply) void reply.code(404).send({ error: 'ZEUS_DIGITAL_EMPLOYEE_AUTOMATION_NOT_FOUND', message: '数字员工自动化不存在。' });
     else throw new DigitalEmployeeStoreError('ZEUS_DIGITAL_EMPLOYEE_AUTOMATION_NOT_FOUND', '数字员工自动化不存在。', { statusCode: 404 });
+    return undefined;
+  }
+  if (options.isAutomationMigrated(automation.id)) {
+    if (reply)
+      void reply.code(410).send({
+        error: 'ZEUS_DIGITAL_EMPLOYEE_AUTOMATION_MIGRATED',
+        message: '该规则已移交统一自动化，请通过自动化页面或统一 API 修改、删除或运行。',
+        automationId: automation.id,
+        automationApi: `/api/automations/${encodeURIComponent(automation.id)}`,
+      });
+    else throw new DigitalEmployeeStoreError('ZEUS_DIGITAL_EMPLOYEE_AUTOMATION_MIGRATED', '该规则已移交统一自动化，请使用 /api/automations。', { statusCode: 410 });
     return undefined;
   }
   return automation;

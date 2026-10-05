@@ -17,6 +17,35 @@ export function zeusWorkDynamicTools(): CodexDynamicToolSpec[] {
       tools: [
         {
           type: 'function',
+          name: 'publish_artifact',
+          description: '冻结当前工作区内明确提交的文件，返回正式成果可使用的受控引用。只接受相对路径；必须提交实际文档和附件，写入 docs 本身不代表交付。正式交付冻结后不能替换。',
+          inputSchema: { type: 'object', properties: { relativePath: { type: 'string', maxLength: 1024 } }, required: ['relativePath'], additionalProperties: false },
+        },
+        {
+          type: 'function',
+          name: 'list_artifacts',
+          description: '列出当前工作拥有或启动时明确交接的正式成果目录、摘要和固定身份。先读取目录，再按需读取正文；不访问其他任务或未授权成果。',
+          inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+        },
+        {
+          type: 'function',
+          name: 'read_artifact',
+          description: '按正式成果目录的精确文件路径有界读取正文。offset 是字符偏移，nextOffset 为空表示读完；单次最多 16384 字符。不能通过 owner 引用扩大工作权限。',
+          inputSchema: {
+            type: 'object',
+            properties: { deliverableId: { type: 'string', maxLength: 256 }, path: { type: 'string', maxLength: 1024 }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 16384 } },
+            required: ['deliverableId', 'path'],
+            additionalProperties: false,
+          },
+        },
+        {
+          type: 'function',
+          name: 'materialize_artifact',
+          description: '将已交接的固定成果复制到当前工作区 docs/<任务编码>/成果/<工作编号>/<执行轮次>，支持跨 worktree 和二进制附件；已有文件内容不同则停止，不覆盖。省略 path 时复制整份成果。',
+          inputSchema: { type: 'object', properties: { deliverableId: { type: 'string', maxLength: 256 }, path: { type: 'string', maxLength: 1024 } }, required: ['deliverableId'], additionalProperties: false },
+        },
+        {
+          type: 'function',
           name: 'inspect',
           description: '读取当前任务讨论的用户请求身份、实际员工和现有分工；执行会话返回当前工作、允许委派成员、子成果、命令证据和部署凭证。安排工作前先核对这里的来源与状态；遇到暂停或未知外部结果，先核对，不自动重放。',
           inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -63,7 +92,8 @@ export function zeusWorkDynamicTools(): CodexDynamicToolSpec[] {
         {
           type: 'function',
           name: 'propose_memory',
-          description: '提出一条可复用的个人经验，先交给用户审查，审核前不生效。只记录稳定方法、领域知识或明确偏好；不记录一次任务结果、秘密或未经验证的猜测。必须说明依据、适用范围与例外。',
+          description:
+            '提出可复用个人经验并保留真实工作来源。仅当前工作冻结了用户已保存的项目自动生效规则时，稳定方法和领域知识才会在本项目生效；冲突、偏好与跨项目推广仍需审查。以返回 status 为准，不记录一次任务结果、秘密或未经验证的猜测；必须说明依据、适用范围与例外。',
           inputSchema: {
             type: 'object',
             properties: {
@@ -157,7 +187,37 @@ export function zeusWorkDynamicTools(): CodexDynamicToolSpec[] {
                   additionalProperties: false,
                 },
               },
-              artifactRefs: { type: 'array', items: { type: 'object', additionalProperties: true }, maxItems: 64 },
+              defects: {
+                type: 'array',
+                description: '仅当前只读验收节点正式失败时登记缺陷；必须给出准确被测代码和当前轮次真实失败命令身份。复验同一问题保持相同 key，不重复创建子任务。',
+                maxItems: 64,
+                items: {
+                  type: 'object',
+                  properties: {
+                    key: { type: 'string', maxLength: 256 },
+                    title: { type: 'string', maxLength: 240 },
+                    description: { type: 'string', maxLength: 4000 },
+                    reproductionEvidence: { type: 'array', items: { type: 'string', maxLength: 256 }, minItems: 1, maxItems: 64 },
+                    repositoryId: { type: 'string', maxLength: 256 },
+                    headSha: { type: 'string', pattern: '^[0-9a-fA-F]{40,64}$' },
+                  },
+                  required: ['key', 'title', 'description', 'reproductionEvidence', 'repositoryId', 'headSha'],
+                  additionalProperties: false,
+                },
+              },
+              artifactRefs: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    sha256: { type: 'string' },
+                    owner: { type: 'object', properties: { kind: { type: 'string' }, id: { type: 'string' } }, required: ['kind', 'id'], additionalProperties: true },
+                  },
+                  required: ['sha256', 'owner'],
+                  additionalProperties: true,
+                },
+                maxItems: 64,
+              },
               remainingIssues: { type: 'array', items: { type: 'string', maxLength: 1_000 }, maxItems: 64 },
             },
             required: ['outcome', 'summary', 'verification', 'repositoryResults', 'verifiedCandidates', 'artifactRefs', 'remainingIssues'],

@@ -185,6 +185,119 @@
   font-weight: 700;
 }
 
+/* 身份标题与头像选择随员工组件生效，不依赖设置页容器。 */
+.macos-ai-app .employee-identity-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 18px 18px 0;
+}
+
+/* 标题内容允许收缩，窄窗口内头像选项可以自然换行。 */
+.macos-ai-app .employee-identity-heading > div {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+}
+
+/* 员工名称沿用配置区字号，移除浏览器默认标题间距。 */
+.macos-ai-app .employee-identity-heading h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+/* 选择提示使用次要文字，避免抢占配置内容的视觉层级。 */
+.macos-ai-app .employee-identity-heading > div > span {
+  color: var(--zeus-control-muted-text);
+  font-size: 12px;
+}
+
+/* 头像只作紧凑缩略图选择，空间不足时换行。 */
+.macos-ai-app .employee-avatar-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* 默认配置保留原值，高级设置只展开编辑，不新增开关状态。 */
+.macos-ai-app .digital-employee-advanced-settings {
+  min-inline-size: 0;
+}
+.macos-ai-app .digital-employee-advanced-settings > summary {
+  cursor: pointer;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.macos-ai-app .digital-employee-advanced-settings > summary > small {
+  margin-inline-start: 8px;
+  color: var(--zeus-product-muted);
+  font-weight: 400;
+}
+.macos-ai-app .digital-employee-advanced-settings > :not(summary) {
+  margin-block-start: 12px;
+}
+
+/* 只在员工页面收口：按钮按整体换行，表单和长内容允许收缩。 */
+.macos-ai-app :where(.digital-employee-settings-pane, .project-digital-employees, .task-work-run-dialog, .task-digital-employee-panel) .zeus-button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.macos-ai-app :where(.digital-employee-page-heading, .digital-employee-editor-actions, .digital-employee-actions, .digital-employee-binding-summary) {
+  min-inline-size: 0;
+  flex-wrap: wrap;
+}
+.macos-ai-app :where(.digital-employee-form, .digital-employee-agent-config, .digital-employee-form-section, .digital-employee-checkbox-row > span, .digital-employee-form .zeus-select) {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+.macos-ai-app :where(.digital-employee-form small, .digital-employee-form label > span, .digital-employee-editor-actions > small, .digital-employee-binding-summary > span) {
+  overflow-wrap: anywhere;
+}
+.macos-ai-app .digital-employee-form small.is-error {
+  color: var(--zeus-control-danger-text);
+}
+
+/* 固定点击区域，避免原始图片尺寸撑开员工配置表单。 */
+.macos-ai-app .employee-avatar-option {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 auto;
+  place-items: center;
+  box-sizing: border-box;
+  padding: 3px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: var(--zeus-product-panel);
+  cursor: pointer;
+}
+
+/* 选中头像使用主题强调色，不改变选项尺寸。 */
+.macos-ai-app .employee-avatar-option[aria-pressed='true'] {
+  border-color: var(--zeus-product-accent);
+  background: var(--zeus-product-accent-soft);
+}
+
+/* 键盘选择保留清楚的焦点位置。 */
+.macos-ai-app .employee-avatar-option:focus-visible {
+  outline: 2px solid var(--zeus-product-accent);
+  outline-offset: 2px;
+}
+
+/* 图片完整缩放到按钮内部，不使用资源的原始尺寸布局。 */
+.macos-ai-app .employee-avatar-option img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* 保存期间保持既有禁用反馈，防止重复选择。 */
+.macos-ai-app .employee-avatar-option:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
 .macos-ai-app .digital-employee-editor-pane {
   display: flex;
   min-width: 0;

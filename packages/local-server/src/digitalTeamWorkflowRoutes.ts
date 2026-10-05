@@ -8,6 +8,12 @@ export type DigitalTeamTemplateSaveInput = Record<string, unknown> & { id?: stri
 
 /** 数字团队运行创建输入与 Renderer 固定调用保持一致。 */
 export interface DigitalTeamRunCreateInput {
+  /** 整份流程及修复后继共同继承的本次权限。 */
+  permissionMode?: 'read-only' | 'auto' | 'full-access';
+  /** 本次选择的真实员工入口，省略时从流程根开始。 */
+  entryNodeId?: string;
+  /** 当前任务明确绑定的已验收上游成果。 */
+  inputDeliverableIds?: string[];
   /** 指定已有任务时复用其身份，省略则新建任务。 */
   taskId?: string;
   /** 已有任务的读取时间戳，拒绝使用过期任务内容。 */
@@ -68,6 +74,12 @@ export interface DigitalTeamCommandContext {
 
 /** 路由只依赖协调器的业务入口，避免 HTTP 层读取或拼接流程状态。 */
 export interface DigitalTeamWorkflowRouteCoordinator {
+  /** 明确人工接受正式缺陷风险，保留理由但不生成测试通过记录。 */
+  acceptDefectRisk(runId: string, input: { defectId: string; reason: string; expectedRevision: number }, context: DigitalTeamCommandContext): unknown;
+  /** 读取项目唯一当前流程。 */
+  getProjectWorkflow(projectId: string): unknown;
+  /** 保存本项目独立流程并设为当前，仍走统一命令账本。 */
+  saveProjectWorkflow(projectId: string, input: DigitalTeamTemplateSaveInput, operationIdentity: string): unknown;
   /** 列出全局模板或兼容读取旧项目模板。 */
   listTemplates(projectId?: string | null): unknown;
   /** 保存模板。 */
@@ -112,6 +124,12 @@ export function registerDigitalTeamWorkflowRoutes(options: {
   save(): Promise<void>;
 }): void {
   options.server.get('/api/digital-team-templates', async () => options.coordinator.listTemplates());
+  options.server.get('/api/projects/:projectId/digital-team-workflow', async (request: FastifyRequest<{ Params: { projectId: string } }>) => options.coordinator.getProjectWorkflow(request.params.projectId));
+  options.server.put('/api/projects/:projectId/digital-team-workflow', async (request: FastifyRequest<{ Params: { projectId: string }; Body: WorkManagementMutationRequest<DigitalTeamTemplateSaveInput> }>, reply) =>
+    executeCoreRoute<DigitalTeamTemplateSaveInput>(options, reply, request.body, workManagementCommandTypes.digitalTeamTemplateSave, 'project', request.params.projectId, (input, operationIdentity) =>
+      options.coordinator.saveProjectWorkflow(request.params.projectId, input, operationIdentity),
+    ),
+  );
   options.server.get('/api/projects/:projectId/digital-team-templates', async (request: FastifyRequest<{ Params: { projectId: string } }>) => options.coordinator.listTemplates(request.params.projectId));
   options.server.get('/api/projects/:projectId/digital-team-runs', async (request: FastifyRequest<{ Params: { projectId: string }; Querystring: { taskId?: string } }>) =>
     options.coordinator.listRuns(request.params.projectId, request.query.taskId),
@@ -120,6 +138,19 @@ export function registerDigitalTeamWorkflowRoutes(options: {
     const projection = options.coordinator.getRunProjection(request.params.runId);
     return projection ?? reply.code(404).send({ error: 'ZEUS_DIGITAL_TEAM_RUN_NOT_FOUND', message: '数字团队运行不存在。' });
   });
+  options.server.post(
+    '/api/digital-team-runs/:runId/accept-defect-risk',
+    async (request: FastifyRequest<{ Params: { runId: string }; Body: WorkManagementMutationRequest<{ defectId: string; reason: string; expectedRevision: number }> }>, reply) =>
+      executeCoreRoute<{ defectId: string; reason: string; expectedRevision: number }>(
+        options,
+        reply,
+        request.body,
+        workManagementCommandTypes.digitalTeamRunControl,
+        'task',
+        () => requireRunTaskId(options.coordinator, request.params.runId),
+        (input, _operationIdentity, _prepared, context) => options.coordinator.acceptDefectRisk(request.params.runId, input, context),
+      ),
+  );
 
   options.server.post('/api/digital-team-templates', async (request: FastifyRequest<{ Body: WorkManagementMutationRequest<DigitalTeamTemplateSaveInput> }>, reply) =>
     executeCoreRoute<DigitalTeamTemplateSaveInput>(options, reply, request.body, workManagementCommandTypes.digitalTeamTemplateSave, 'settings', 'digital-team-templates', (input, operationIdentity) =>

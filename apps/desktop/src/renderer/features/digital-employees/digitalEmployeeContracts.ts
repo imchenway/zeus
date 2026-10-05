@@ -1,4 +1,4 @@
-import type { EmployeeWorkSettings, EmployeeWorkOutputKind } from '@zeus/shared';
+import type { EmployeeWorkSettings, EmployeeWorkOutputKind, ProjectEmployeeOverrides } from '@zeus/shared';
 import type { DigitalEmployeeAvatarId } from '@zeus/shared';
 import type { TaskPushMessageLayout } from '@zeus/shared';
 import type { CodexTaskPushModelCapability, TaskPushSupplementalAttachmentInput } from '../../session/sessionTypes.js';
@@ -54,6 +54,16 @@ export interface DigitalEmployeeDeliveryGrants {
 }
 
 export interface DigitalEmployeeTemplateRecord {
+  /** 内置创建模板与用户已经创建的跨项目员工严格区分。 */
+  identityKind?: 'template' | 'employee';
+  /** 全局经验读取偏好。 */
+  memoryEnabled?: boolean;
+  /** 员工默认允许源码修改。 */
+  allowCodeChanges?: boolean;
+  /** 员工默认允许运行已有检查。 */
+  allowTests?: boolean;
+  /** 各交付动作独立授权。 */
+  deliveryGrants?: DigitalEmployeeDeliveryGrants;
   id: string;
   name: string;
   description: string;
@@ -83,6 +93,12 @@ export interface DigitalEmployeeTaskFilter {
 }
 
 export interface DigitalEmployeeRecord extends Omit<DigitalEmployeeTemplateRecord, 'builtIn'> {
+  /** 跨项目员工身份，历史仅项目员工保留为空。 */
+  globalEmployeeId?: string | null;
+  /** 当前项目明确设置的配置差异。 */
+  projectOverrides?: ProjectEmployeeOverrides;
+  /** 当前项目追加的工作要求。 */
+  projectInstructions?: string;
   /** 新工作读取个人经验的偏好。 */
   memoryEnabled?: boolean;
   projectId: string;
@@ -164,6 +180,14 @@ export interface DigitalEmployeeStageDecisionInput {
 }
 
 export interface DigitalEmployeeTemplateInput {
+  /** 默认经验读取偏好。 */
+  memoryEnabled?: boolean;
+  /** 默认源码修改能力。 */
+  allowCodeChanges?: boolean;
+  /** 默认执行检查能力。 */
+  allowTests?: boolean;
+  /** 默认独立交付授权。 */
+  deliveryGrants?: Partial<DigitalEmployeeDeliveryGrants>;
   name: string;
   description?: string;
   role: string;
@@ -191,6 +215,12 @@ export interface DigitalEmployeeCapabilitiesSnapshot {
 }
 
 export interface DigitalEmployeeInput extends DigitalEmployeeTemplateInput {
+  /** 绑定已经创建的全局员工。 */
+  globalEmployeeId?: string | null;
+  /** 显式设置或清空当前项目配置差异。 */
+  projectOverrides?: ProjectEmployeeOverrides;
+  /** 当前项目补充要求。 */
+  projectInstructions?: string;
   /** 是否读取个人经验。 */
   memoryEnabled?: boolean;
   enabled?: boolean;
@@ -461,6 +491,8 @@ export interface TaskWorkReviewNote {
 
 /** 经验建议经用户审查后才进入个人经验。 */
 export interface EmployeeMemoryProposal {
+  /** 冲突建议继续待处理，现行经验不会被隐式覆盖。 */
+  conflictReason?: string;
   id: string;
   projectId: string;
   employeeId: string;
