@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { automationEventStatusId, digitalEmployeeAvatarIds, type DigitalEmployeeAvatarId, employeeConfigurationKeys, resolveEmployeeConfiguration, type ProjectEmployeeOverrides } from '@zeus/shared';
+import { automationEventStatusId, digitalEmployeeAvatarIds, type DigitalEmployeeAvatarId, resolveEmployeeConfiguration, type ProjectEmployeeOverrides } from '@zeus/shared';
 import { migrateDigitalEmployeeIdentity } from './digitalEmployeeIdentityMigration.js';
 import { randomId } from './randomId.js';
 import type { ZeusDatabasePort } from './databasePort.js';
@@ -105,8 +105,6 @@ export interface DigitalEmployeeTemplateRecord {
 }
 
 export interface DigitalEmployeeRecord extends Omit<DigitalEmployeeTemplateRecord, 'builtIn'> {
-  /** 待确认的旧项目身份与提示词，仅展示，不参与新工作。 */
-  legacyConfiguration?: Partial<Pick<DigitalEmployeeTemplateRecord, 'name' | 'description' | 'role' | 'domain' | 'avatarId' | 'prompt'>> | null;
   /** 跨项目复用的员工身份；历史仅项目员工保留为空。 */
   globalEmployeeId?: string | null;
   /** 只覆盖当前项目的字段，运行时解析后冻结。 */
@@ -657,6 +655,26 @@ export class DigitalEmployeeRepository {
     return this.getByGlobalEmployee(projectId, employeeId);
   }
 
+  /** 目录和预览可选择尚未绑定的正式员工，不因读取而创建项目记录。 */
+  previewProjectEmployee(projectId: string, employeeId: string): DigitalEmployeeRecord | undefined {
+    /** 精确项目身份先解析；外项目绑定不能转成当前项目员工。 */
+    const binding = this.getById(employeeId);
+    if (binding) return binding.projectId === projectId ? binding : undefined;
+    /** 已有绑定保留项目补充、经验开关与停用状态。 */
+    const existing = this.getByGlobalEmployee(projectId, employeeId);
+    if (existing) return existing;
+    /** 未绑定时只读取正式全局员工，不混入其他项目配置或内置模板。 */
+    const global = new DigitalEmployeeTemplateRepository(this.db).getById(employeeId);
+    if (!global || global.builtIn) return undefined;
+    return {
+      ...normalizeEmployeeInput({ ...global, projectId, templateId: global.id, globalEmployeeId: global.id }),
+      id: global.id,
+      revision: global.revision,
+      createdAt: global.createdAt,
+      updatedAt: global.updatedAt,
+    };
+  }
+
   /** 工作接纳时显式建立项目绑定，重复接纳沿用原绑定身份。 */
   ensureProjectEmployee(projectId: string, employeeId: string): DigitalEmployeeRecord {
     /** 查找已经存在的本项目配置。 */
@@ -677,16 +695,7 @@ export class DigitalEmployeeRepository {
     if (binding.globalEmployeeId && (!global || global.builtIn)) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_GLOBAL_UNAVAILABLE', '关联的全局员工不可用，请重新绑定员工。');
     /** 模型、Skill 和权限从同一份有效配置重建，不保留相互冲突的入口副本。 */
     const effective = resolveEmployeeConfiguration(global, binding);
-    /** 旧差异完整保留，只有明确改用全局配置才可开始新工作。 */
-    const storedOverrides = parseRecord(row.project_overrides_json ?? '{}', 'employee.projectOverrides');
-    /** 独立项目员工也需先选择明确的全局身份。 */
-    const legacyConfiguration = Object.fromEntries(
-      employeeConfigurationKeys
-        .filter((key) => key !== 'memoryEnabled' && (!global || (Object.hasOwn(storedOverrides, key) && JSON.stringify(storedOverrides[key]) !== JSON.stringify(global[key]))))
-        .map((key) => [key, Object.hasOwn(storedOverrides, key) ? storedOverrides[key] : binding[key]]),
-    );
-    effective.legacyConfiguration = Object.keys(legacyConfiguration).length > 0 ? legacyConfiguration : null;
-    effective.entrypointMigrationState = effective.legacyConfiguration ? 'requires_configuration' : 'ready';
+    effective.entrypointMigrationState = 'ready';
     effective.entrypoint = {
       kind: 'agent',
       prompt: effective.prompt,
@@ -794,12 +803,10 @@ export class DigitalEmployeeRepository {
     /** 一个项目不重复维护同一全局员工的多个配置入口。 */
     const duplicate = globalEmployeeId ? this.getByGlobalEmployee(existing.projectId, globalEmployeeId) : undefined;
     if (duplicate && duplicate.id !== existing.id) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_ALREADY_BOUND', '该全局员工已在当前项目中，请使用已有项目配置。');
-    /** 只保留经验偏好；旧身份与提示词必须通过明确恢复动作处理。 */
+    /** 项目只保存经验偏好，员工身份已经在启动时无损迁入全局目录。 */
     const projectOverrides = input.projectOverrides === undefined ? projectOverridesFromInput(input, global, existing.projectOverrides) : normalizeProjectOverrides(input.projectOverrides);
-    /** 修改补充要求或经验偏好不能顺带删除仍待确认的旧身份与提示词。 */
+    /** 原始提示词不含项目追加要求，保存时避免重复追加。 */
     const storedRow = this.db.get<DigitalEmployeeRow>('SELECT * FROM digital_employees WHERE id = ?', [existing.id])!;
-    /** 只有显式恢复全局配置才清除历史差异。 */
-    const persistedOverrides = input.projectOverrides === undefined ? { ...parseRecord(storedRow.project_overrides_json ?? '{}', 'employee.projectOverrides'), ...projectOverrides } : projectOverrides;
     const normalized = normalizeEmployeeInput({
       ...existing,
       ...input,
@@ -833,7 +840,7 @@ export class DigitalEmployeeRepository {
     this.db.execute('UPDATE digital_employees SET memory_enabled = ? WHERE id = ?', [value.memoryEnabled === false ? 0 : 1, existing.id]);
     this.db.execute('UPDATE digital_employees SET global_employee_id = ?, project_overrides_json = ?, project_instructions = ? WHERE id = ?', [
       value.globalEmployeeId ?? null,
-      JSON.stringify(persistedOverrides),
+      JSON.stringify(projectOverrides),
       value.projectInstructions ?? '',
       existing.id,
     ]);

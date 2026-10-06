@@ -298,9 +298,12 @@ function parseJson<T>(value: string, fallback: T): T {
   }
 }
 
-function normalizeSnapshot(input: CreateAutomationTaskInput | (Partial<CreateAutomationTaskInput> & AutomationDefinitionSnapshot)): AutomationDefinitionSnapshot {
+function normalizeSnapshot(input: CreateAutomationTaskInput | (Partial<CreateAutomationTaskInput> & AutomationDefinitionSnapshot), projectEmployeeIds?: Record<string, string>): AutomationDefinitionSnapshot {
   /** 新配置只触发员工工作或项目流程，普通会话只保留历史读取。 */
-  const action = input.action ?? { kind: 'employee_work', employeeId: null };
+  const action = { ...(input.action ?? { kind: 'employee_work', employeeId: null }) };
+  /** 请求正文不得注入项目绑定；已有内部映射只从仓储原记录传入。 */
+  delete action.projectEmployeeIds;
+  if (projectEmployeeIds && Object.keys(projectEmployeeIds).length > 0) action.projectEmployeeIds = projectEmployeeIds;
   /** 员工身份在 HTTP 信任边界只接受非空字符串。 */
   const employeeId = typeof action.employeeId === 'string' ? action.employeeId.trim() : null;
   if (!['employee_work', 'project_task'].includes(action.kind) || !employeeId) throw new Error('ZEUS_AUTOMATION_ACTION_INVALID: 请选择数字员工工作或项目流程及执行员工。');
@@ -690,7 +693,12 @@ export class AutomationTaskRepository {
     /** 原目标范围用于辨别新增项目，普通编辑不推进既有游标。 */
     const previousProjectIds = this.listTargets(id).map((target) => target.projectId);
     const projectIds = input.projectIds === undefined ? previousProjectIds : stringArray(input.projectIds, '项目');
-    const snapshot = normalizeSnapshot({ ...existing, ...input, projectIds });
+    /** 普通编辑沿用原绑定；改选员工或移除项目时不能把旧映射带到新范围。 */
+    const projectEmployeeIds =
+      (input.action?.employeeId ?? existing.action.employeeId) === existing.action.employeeId
+        ? Object.fromEntries(Object.entries(existing.action.projectEmployeeIds ?? {}).filter(([projectId]) => projectIds.includes(projectId)))
+        : undefined;
+    const snapshot = normalizeSnapshot({ ...existing, ...input, projectIds }, projectEmployeeIds);
     validateConversationProjects(snapshot, projectIds);
     const revision = existing.revision + 1;
     const revisionId = `automation_revision_${randomId(12)}`;
@@ -1244,6 +1252,7 @@ export class AutomationRunRepository {
       /** 恢复明确限制为存在逐目标范围的部分派发。 */
       const run = this.getById(id);
       if (!run || !['blocked', 'outcome_unknown'].includes(run.status) || run.dispatchTargets.length === 0 || run.dispatchCompletedAt) throw new Error('ZEUS_AUTOMATION_RESUME_UNAVAILABLE: 当前运行没有可恢复的剩余目标。');
+      if (run.dispatchTargets.some((target) => target.reason?.startsWith('ZEUS_AUTOMATION_EMPLOYEE_IDENTITY_MIGRATED:'))) throw new Error('ZEUS_AUTOMATION_EMPLOYEE_IDENTITY_MIGRATED: 员工身份已迁移，本次未开始部分请重新运行。');
       /** 同规则的其他在途工作必须先结束，避免重叠副作用。 */
       if (this.listActive(run.automationId).some((active) => active.id !== id)) throw new Error('ZEUS_AUTOMATION_RESUME_BUSY: 同一自动化仍有其他运行。');
       /** 原终态时间与原因旁路保留，当前完成时间等待后续准确结果。 */

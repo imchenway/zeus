@@ -22,7 +22,7 @@ import { createGitIntegrationOperations, type GitIntegrationOperationDependencie
 import { runtimeSessionIsConfirmedTerminal } from '../packages/local-server/src/runtimeQueryApplication.js';
 import { WorkManagementCommandApplication, workManagementCommandTypes, workManagementInputSha256, type WorkManagementCommandPayload } from '../packages/local-server/src/workManagementCommandApplication.js';
 import { TaskEventFileProjectionService } from '../packages/local-server/src/taskEventFileProjectionService.js';
-import { migrateDigitalEmployeeIdentity } from '../packages/storage/src/digitalEmployeeIdentityMigration.js';
+import { migrateDigitalEmployeeGlobalIdentity } from '../packages/storage/src/digitalEmployeeIdentityMigration.js';
 import {
   ArtifactStore,
   ConversationRepository,
@@ -47,7 +47,8 @@ import {
 import { WorkArtifactDelivery } from '../packages/local-server/src/workArtifactDelivery.js';
 import { ContextSourceCatalog } from '../packages/local-server/src/contextSourceCatalog.js';
 import { selectEmployeeMemories } from '../packages/local-server/src/employeeMemoryContext.js';
-import { normalizeWorkSettings, registerTaskWorkManagement } from '../packages/local-server/src/taskWorkManagement.js';
+import { normalizeWorkSettings, registerTaskWorkManagement, type TaskWorkPreview } from '../packages/local-server/src/taskWorkManagement.js';
+import { registerDigitalEmployeeRoutes } from '../packages/local-server/src/digitalEmployeeRoutes.js';
 import { digitalTeamWorkflowSchemaGeneration, type DigitalTeamWorkflowDefinition } from '../packages/shared/src/digitalTeamWorkflow.js';
 import { mergeEmployeeWorkSettings } from '../packages/shared/src/employeeWorkPlanning.js';
 
@@ -881,8 +882,6 @@ async function verifyEmployeeIdentity(db: ZeusDatabase, projects: ProjectReposit
     template: global,
     overrides: { projectOverrides: { memoryEnabled: true }, projectInstructions: '第二项目必须先审查' },
   });
-  /** 旧项目差异通过真实历史列构造，新接口已不能再写入这些字段。 */
-  db.execute('UPDATE digital_employees SET project_overrides_json = ? WHERE id = ?', [JSON.stringify({ prompt: '项目独立要求', memoryEnabled: true, permissionMode: 'read-only' }), second.id]);
   assertProbe(!first.allowCodeChanges && !first.allowTests && Object.values(first.deliveryGrants).every((allowed) => !allowed), '当前员工公开配置不能继承全局记录中的历史动作授权。');
   /** 旧动作列保留给历史运行，新配置保存不得覆盖这些存量事实。 */
   db.execute('UPDATE digital_employees SET allow_code_changes = 1, allow_tests = 1, allow_commit = 1, allow_push = 1, allow_merge = 1, allow_deploy = 1, allow_complete = 1, deploy_command_id = ? WHERE id = ?', [
@@ -911,18 +910,18 @@ async function verifyEmployeeIdentity(db: ZeusDatabase, projects: ProjectReposit
       inherited.prompt === '更新后的全局要求' &&
       inherited.memoryEnabled === false &&
       inherited.permissionMode === 'read-only' &&
-      overridden.legacyConfiguration?.prompt === '项目独立要求' &&
-      overridden.entrypointMigrationState === 'requires_configuration' &&
+      overridden.prompt === '更新后的全局要求\n\n## 当前项目要求\n第二项目必须先审查' &&
+      overridden.entrypointMigrationState === 'ready' &&
       overridden.memoryEnabled === true &&
       overridden.permissionMode === 'read-only',
-    '全局身份、提示词和经验正常继承，执行值不再来自员工，旧项目提示词差异必须明确确认。',
+    '全局提示词正常继承，项目要求和经验偏好保持独立。',
   );
   assertProbe(executions.getById(execution.id)?.employeeSnapshot.model === 'identity-model', '新配置不能改写已启动的运行快照。');
-  /** 明确清空覆盖后恢复继承，项目补充要求仍保留。 */
+  /** 清空经验覆盖后恢复默认，项目追加要求仍保持独立。 */
   const restored = employees.update(second.id, { expectedRevision: overridden.revision, projectOverrides: {} });
   assertProbe(
     restored.prompt === '更新后的全局要求\n\n## 当前项目要求\n第二项目必须先审查' && restored.memoryEnabled === false && restored.permissionMode === 'read-only' && restored.entrypointMigrationState === 'ready',
-    '恢复全局配置必须清空差异并保留独立项目要求。',
+    '保存项目配置必须继承全局默认并保留项目要求。',
   );
   /** 按当前公开字段保存旧员工，只允许改变工作配置。 */
   employees.update(first.id, { expectedRevision: inherited.revision, projectInstructions: '保存后的项目要求', memoryEnabled: true });
@@ -937,11 +936,22 @@ async function verifyEmployeeIdentity(db: ZeusDatabase, projects: ProjectReposit
   assertProbe(captureCode(() => employees.ensureProjectEmployee(secondProject.id, builtIn.id)) === 'ZEUS_DIGITAL_EMPLOYEE_GLOBAL_UNAVAILABLE', '模板不允许成为可指派员工。');
   /** 构造真实历史项目配置，再运行相同迁移逻辑。 */
   const legacy = employees.create({ projectId: secondProject.id, templateId: builtIn.id, name: '历史项目员工', role: '开发', prompt: '历史项目要求', memoryEnabled: false });
-  /** 只复制员工与快照数据验证迁移；不引入无关项目表，也不绕过正式库降级保护。 */
+  /** 只复制身份、项目范围与冻结数据验证迁移，不绕过正式库降级保护。 */
   const migrationDb = new ZeusDatabase(new DatabaseSync(':memory:', { enableForeignKeyConstraints: false }), join(probeRoot, 'employee-legacy-probe.db'));
   try {
     migrationDb.execute('CREATE TABLE schema_migrations (migration_id TEXT PRIMARY KEY, description TEXT NOT NULL, checksum TEXT NOT NULL, applied_at TEXT NOT NULL)');
-    for (const table of ['digital_employee_templates', 'digital_employees', 'digital_employee_executions']) {
+    /** 自动化当前定义与历史修订使用同一真实结构，便于身份迁移固定原执行人。 */
+    const migrationTables = [
+      'projects',
+      'digital_employee_templates',
+      'digital_employees',
+      'digital_employee_executions',
+      'digital_employee_automations',
+      'long_term_memories',
+      'digital_team_workflow_templates',
+      ...db.select<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'automation_%'").map((table) => table.name),
+    ];
+    for (const table of migrationTables) {
       /** 复制真实表结构与旧记录，不复制升级账本和保护触发器。 */
       const schema = db.get<{ sql: string }>('SELECT sql FROM sqlite_master WHERE type = ? AND name = ?', ['table', table])!;
       migrationDb.execute(schema.sql);
@@ -953,24 +963,107 @@ async function verifyEmployeeIdentity(db: ZeusDatabase, projects: ProjectReposit
           Object.values(row),
         );
     }
-    migrateDigitalEmployeeIdentity(migrationDb);
+    /** 原始升级差异只写入独立旧结构副本，不删除正式账本或绕过保护触发器。 */
+    migrationDb.execute('UPDATE digital_employees SET project_overrides_json = ? WHERE id = ?', [JSON.stringify({ prompt: '项目独立要求', memoryEnabled: true, permissionMode: 'read-only' }), second.id]);
+    /** 迁移前后都使用真实员工仓储。 */
+    const migratedEmployees = new DigitalEmployeeRepository(migrationDb);
+    const migratedTemplates = new DigitalEmployeeTemplateRepository(migrationDb);
+    /** 无模板来源的独立员工同样自动保留，停用状态不能在升级中变更。 */
+    const standalone = migratedEmployees.create({ projectId: secondProject.id, name: '无模板历史员工', role: '开发', prompt: '独立职责不能丢失。', enabled: false, memoryEnabled: false });
+    /** 软删除的绑定完全跳过，不恢复已被用户移除的员工。 */
+    const removed = migratedEmployees.create({ projectId: secondProject.id, name: '已移除历史员工', role: '开发', prompt: '已移除职责。' });
+    migrationDb.execute('UPDATE digital_employees SET deleted_at=? WHERE id=?', ['2026-10-05T01:00:00.000Z', removed.id]);
+    /** 项目仍有效但旧模板已删除时，保留项目身份而不恢复原模板。 */
+    const removedSource = migratedTemplates.create({ name: '已删除全局来源', role: '开发', prompt: '被删除的全局职责。' });
+    migratedTemplates.delete(removedSource.id, removedSource.revision);
+    const surviving = migratedEmployees.create({ projectId: secondProject.id, templateId: removedSource.id, name: '仍有效的项目员工', role: '开发', prompt: '项目中的有效职责。' });
+    /** 来源经验使用原记录身份，迁移后仍需服从撤销和原项目限制。 */
+    const identityMemory = new LongTermMemoryRepository(migrationDb);
+    /** 已确认经验的来源与生命周期保持原样。 */
+    const migrationMemoryCandidate = {
+      candidateKind: 'stable_workflow' as const,
+      effect: 'advisory' as const,
+      source: { kind: 'user_explicit' as const, reference: 'identity-migration-probe', observedAt: '2026-10-05T01:00:00.000Z' },
+      confirmationLevel: 'explicit' as const,
+      confidence: 1,
+      reviewAfter: '2027-10-05T01:00:00.000Z',
+      recordedAt: '2026-10-05T01:00:00.000Z',
+      scope: { kind: 'employee' as const, id: global.id },
+    };
+    for (const suffix of ['preserved', 'revoked', 'corrected', 'private']) {
+      identityMemory.recordCandidate({
+        ...migrationMemoryCandidate,
+        id: `identity_migration_${suffix}`,
+        memoryKey: `identity.migration.${suffix}`,
+        content: `原员工经验 ${suffix}`,
+        projectLimitId: suffix === 'private' ? firstProjectId : null,
+      });
+    }
+    migrateDigitalEmployeeGlobalIdentity(migrationDb);
+    assertProbe(
+      migratedEmployees.getById(standalone.id)?.enabled === false && migratedEmployees.getById(standalone.id)?.memoryEnabled === false && Boolean(migratedEmployees.getById(standalone.id)?.globalEmployeeId),
+      '独立旧员工自动获得正式身份，且保持原停用和经验关闭状态。',
+    );
+    assertProbe(
+      !migratedEmployees.getById(removed.id) && !migrationDb.get<{ global_employee_id: string | null }>('SELECT global_employee_id FROM digital_employees WHERE id=?', [removed.id])?.global_employee_id,
+      '软删除绑定不能在自动迁移时复活。',
+    );
+    assertProbe(
+      !migratedTemplates.getById(removedSource.id) && migratedEmployees.getById(surviving.id)?.prompt === surviving.prompt && migratedEmployees.getById(surviving.id)?.globalEmployeeId !== removedSource.id,
+      '保留有效项目身份不能复活已删除的来源员工。',
+    );
+    assertProbe(migratedEmployees.getById(first.id)?.globalEmployeeId === global.id, '来源相同且无身份差异的绑定应继续复用原全局员工。');
+    /** 有差异的项目成为独立正式员工，原来源员工继续保留。 */
+    const promoted = migratedEmployees.getById(second.id)!;
+    assertProbe(promoted.globalEmployeeId !== global.id && migratedTemplates.getById(promoted.globalEmployeeId!)?.builtIn === false, '旧项目独立提示词必须自动成为正式员工，不能要求用户重新确认。');
+    /** 准确来源记录读取只作用于迁移时原项目，不形成未来经验订阅。 */
+    const migratedMemories = (projectId = secondProject.id) =>
+      identityMemory.resolveForContext({ employeeId: second.id, globalEmployeeId: promoted.globalEmployeeId, projectId, asOf: '2026-10-05T03:00:00.000Z' }).selected.map((record) => record.id);
+    assertProbe(
+      migratedMemories().includes('identity_migration_preserved') && !migratedMemories().includes('identity_migration_private') && !migratedMemories(firstProjectId).includes('identity_migration_preserved'),
+      '迁移必须保留准确已有经验来源，并拒绝其他项目的私有经验。',
+    );
+    identityMemory.recordCandidate({ ...migrationMemoryCandidate, id: 'identity_migration_future', memoryKey: 'identity.migration.future', content: '迁移后原员工的新经验。' });
+    identityMemory.tombstone('identity_migration_revoked', { at: '2026-10-05T02:00:00.000Z', reason: '原来源经验已撤销' });
+    identityMemory.supersede('identity_migration_corrected', { ...migrationMemoryCandidate, id: 'identity_migration_corrected_new', content: '迁移后对原员工经验的纠正。' });
+    assertProbe(
+      !migratedMemories().some((id) => ['identity_migration_future', 'identity_migration_revoked', 'identity_migration_corrected', 'identity_migration_corrected_new'].includes(id)),
+      '迁移经验仍须撤销或失效，且不能读来源员工后续新增与纠正内容。',
+    );
+    assertProbe(promoted.prompt === '项目独立要求\n\n## 当前项目要求\n第二项目必须先审查' && promoted.memoryEnabled === true && promoted.entrypointMigrationState === 'ready', '自动迁移必须保留原项目有效提示词、项目补充和经验偏好。');
+    /** 已过期的原记录即使在迁移清单内也不能再次生效。 */
+    assertProbe(
+      !identityMemory
+        .resolveForContext({ employeeId: second.id, globalEmployeeId: promoted.globalEmployeeId, projectId: secondProject.id, asOf: '2028-10-05T03:00:00.000Z' })
+        .selected.some((record) => record.id === 'identity_migration_preserved'),
+      '迁移不能延长原经验的复核期限。',
+    );
+    migratedEmployees.update(second.id, { expectedRevision: promoted.revision, globalEmployeeId: sameName.id });
+    assertProbe(
+      migratedMemories().includes('identity_migration_preserved') &&
+        !identityMemory.resolveForContext({ employeeId: second.id, projectId: secondProject.id, asOf: '2026-10-05T03:00:00.000Z' }).selected.some((record) => record.id === 'identity_migration_preserved'),
+      '改绑不能把迁移经验交给另一身份，已经冻结的迁出身份仍保留原来源。',
+    );
     /** 迁移后的记录使用相同有效配置读取器。 */
     const migrated = new DigitalEmployeeRepository(migrationDb).getById(legacy.id)!;
     assertProbe(
       migrated.id === legacy.id &&
-        migrated.globalEmployeeId === null &&
+        Boolean(migrated.globalEmployeeId) &&
+        migrated.templateId === builtIn.id &&
         migrated.prompt === legacy.prompt &&
         migrated.memoryEnabled === false &&
         migrated.permissionMode === 'read-only' &&
-        migrated.entrypointMigrationState === 'requires_configuration' &&
-        migrated.legacyConfiguration?.prompt === '历史项目要求',
-      '历史模板副本保留原绑定、经验偏好和提示词，需明确绑定全局员工后才可执行。',
+        migrated.entrypointMigrationState === 'ready',
+      '历史模板副本自动成为可指派员工，保留原绑定、来源、经验偏好与提示词。',
     );
     assertProbe(
       migrationDb.get<{ employee_snapshot_json: string }>('SELECT employee_snapshot_json FROM digital_employee_executions WHERE id = ?', [execution.id])!.employee_snapshot_json === snapshotBefore,
       '身份迁移不能改变冻结执行快照。',
     );
-    migrateDigitalEmployeeIdentity(migrationDb);
+    /** 重复启动不新建员工或再提升绑定修订。 */
+    const migrationState = JSON.stringify(migrationDb.select('SELECT * FROM digital_employees ORDER BY id'));
+    migrateDigitalEmployeeGlobalIdentity(migrationDb);
+    assertProbe(JSON.stringify(migrationDb.select('SELECT * FROM digital_employees ORDER BY id')) === migrationState, '自动身份迁移必须幂等。');
   } finally {
     await migrationDb.close();
   }
@@ -979,7 +1072,9 @@ async function verifyEmployeeIdentity(db: ZeusDatabase, projects: ProjectReposit
     projectIsolation: true,
     repeatBinding: true,
     inheritedDefaults: true,
-    legacyPromptReviewRequired: true,
+    legacyPromptAutomaticallyPreserved: true,
+    legacyMemorySourcesPreserved: true,
+    futureSourceMemoryExcluded: true,
     legacyActionsNotInherited: true,
     legacyActionColumnsPreserved: true,
     templateRejected: true,
@@ -1321,6 +1416,73 @@ async function verifyWorkArtifactDelivery(db: ZeusDatabase, projects: ProjectRep
         return value;
       },
     };
+    /** 未参与当前项目的正式全局员工可以直接从任务选择。 */
+    const directTemplates = new DigitalEmployeeTemplateRepository(db);
+    const directGlobal = directTemplates.create({ name: '任务直派全局员工', role: '协作', prompt: '仅使用全局工作要求。', memoryEnabled: true });
+    /** 预览使用真实全局身份，未建立绑定时也能读取该员工的确认经验。 */
+    new LongTermMemoryRepository(db).recordCandidate({
+      id: 'direct_global_memory',
+      scope: { kind: 'employee', id: directGlobal.id },
+      memoryKey: 'direct.global.memory',
+      content: '直派员工的全局确认经验。',
+      projectLimitId: null,
+      candidateKind: 'stable_workflow',
+      effect: 'advisory',
+      source: { kind: 'user_explicit', reference: 'direct-assignment-probe', observedAt: '2026-10-05T01:00:00.000Z' },
+      confirmationLevel: 'explicit',
+      confidence: 1,
+      reviewAfter: '2027-10-05T01:00:00.000Z',
+      recordedAt: '2026-10-05T01:00:00.000Z',
+    });
+    /** 注册真实目录读取处理器，未使用的写路由不执行。 */
+    const employeeReadRoutes = new Map<string, (request: unknown, reply: unknown) => Promise<unknown>>();
+    registerDigitalEmployeeRoutes({
+      server: { get: (path: string, handler: (request: unknown, reply: unknown) => Promise<unknown>) => employeeReadRoutes.set(path, handler), post: () => undefined, patch: () => undefined, delete: () => undefined },
+      projects,
+      employees,
+      templates: directTemplates,
+    } as unknown as Parameters<typeof registerDigitalEmployeeRoutes>[0]);
+    /** 读取和预览都不能增加项目成员行。 */
+    const bindingCount = employees.listByProject(project.id).length;
+    const availableEmployees = (await employeeReadRoutes.get('/api/projects/:projectId/digital-employees')!({ params: { projectId: project.id }, query: { available: 'true' } }, reply)) as Array<{ id: string }>;
+    const directPreview = (await reworkRoutes.get('/api/tasks/:taskId/work-item-previews')!({ params: { taskId: task.id }, body: { employeeId: directGlobal.id, workspace: { mode: 'create' } } }, reply)) as TaskWorkPreview;
+    assertProbe(
+      availableEmployees.some((candidate) => candidate.id === directGlobal.id) && employees.listByProject(project.id).length === bindingCount && !employees.getByGlobalEmployee(project.id, directGlobal.id),
+      'GET可指派目录和预览必须显示正式全局员工且不创建绑定。',
+    );
+    assertProbe(directPreview.blockers.length === 0 && String(directPreview.entrypoint?.prompt).includes('直派员工的全局确认经验。'), '未绑定员工预览必须沿真实全局身份读取memory。');
+    /** 同一命令的两次提交必须复用首次绑定和工作，不被身份变化误判预览过期。 */
+    const directRequest = {
+      params: { taskId: task.id },
+      body: commandRequest({
+        commandId: 'command_direct_global_employee_probe',
+        commandType: workManagementCommandTypes.taskWorkItemCreate,
+        scope: { kind: 'task', id: task.id },
+        operationIdentity: 'direct-global-employee-probe',
+        input: { selection: directPreview.selection, previewSha256: directPreview.previewSha256, expectedTaskRevision: directPreview.expectedTaskRevision, expectedEmployeeRevision: directPreview.expectedEmployeeRevision },
+      }),
+    };
+    await reworkRoutes.get('/api/tasks/:taskId/work-items')!(directRequest, reply);
+    const directAccepted = response as { item: { id: string; employeeId: string }; run: TaskWorkRunRecord };
+    assertProbe(
+      statusCode === 202 &&
+        directAccepted.run.employeeId === employees.getByGlobalEmployee(project.id, directGlobal.id)?.id &&
+        directAccepted.run.employeeSnapshot.globalEmployeeId === directGlobal.id &&
+        employees.listByProject(project.id).length === bindingCount + 1,
+      '真实指派应透明建立且仅建立一个项目绑定，并冻结正式全局来源。',
+    );
+    /** 探针只验接纳，立即封存本轮，禁止后台派发模型。 */
+    runs.update(directAccepted.run.id, { status: 'cancelled' });
+    items.update(directAccepted.item.id, { status: 'cancelled' });
+    await reworkRoutes.get('/api/tasks/:taskId/work-items')!(directRequest, reply);
+    assertProbe(
+      statusCode === 202 &&
+        (response as { run: TaskWorkRunRecord; replayed: boolean }).replayed &&
+        (response as { run: TaskWorkRunRecord }).run.id === directAccepted.run.id &&
+        employees.listByProject(project.id).length === bindingCount + 1,
+      '首次绑定后相同指派命令必须返回原工作回执。',
+    );
+    observed.directGlobalEmployeeAssignment = { availableWithoutBinding: true, previewReadOnly: true, globalMemoryPreserved: true, boundOnAcceptance: true, replayStable: true, providerRequests: 0 };
     const input = { expectedRevision: deliverable.revision, reason: '请核对前次正文和冻结附件后修改。' };
     await reworkRoutes.get('/api/tasks/:taskId/work-deliverables/:deliverableId/request-changes')!(
       {

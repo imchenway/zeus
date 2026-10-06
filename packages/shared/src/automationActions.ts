@@ -7,6 +7,8 @@ export interface AutomationActionConfig {
   kind: AutomationActionKind;
   /** 全局员工或历史项目绑定身份；普通会话不需要员工。 */
   employeeId: string | null;
+  /** 旧身份迁移按项目保留原绑定，仅内部迁移写入，普通保存不能指定。 */
+  projectEmployeeIds?: Record<string, string>;
   /** 项目任务的目标策略，领取与新建不能相互替代。 */
   taskSelection?: 'specified' | 'event' | 'pool' | 'create';
   /** 指定已有任务，仅指定策略使用。 */

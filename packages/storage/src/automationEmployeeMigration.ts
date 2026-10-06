@@ -1,8 +1,100 @@
 import { createHash } from 'node:crypto';
 import type { AutomationActionConfig, AutomationExecutionReference } from '@zeus/shared';
 import type { ZeusDatabasePort } from './databasePort.js';
-import { AutomationTaskRepository } from './automationStore.js';
+import { AutomationRunRepository, AutomationTaskRepository } from './automationStore.js';
 import { DigitalEmployeeRepository } from './digitalEmployeeStore.js';
+import { randomId } from './randomId.js';
+
+/** 全局身份分离前按原项目绑定保留规则职责，不拆规则或改写历史修订。 */
+export function migrateAutomationProjectEmployeeReferences(db: ZeusDatabasePort, binding: { projectId: string; globalEmployeeId: string; employeeId: string; isDefaultBinding?: boolean }, timestamp: string): void {
+  if (!db.get("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'automation_tasks'")) return;
+  /** 规则与运行分别读取，当前映射不能冒充旧运行的冻结授权。 */
+  const tasks = new AutomationTaskRepository(db);
+  const runs = new AutomationRunRepository(db);
+  for (const task of tasks.list()) {
+    if (task.action.kind === 'conversation' || task.action.employeeId !== binding.globalEmployeeId || !tasks.listTargets(task.id).some((target) => target.projectId === binding.projectId)) continue;
+    /** 精确来源优先于按全局身份选择的默认绑定，重复项目绑定不能互相接管。 */
+    const source =
+      db.get<{ employee_id: string }>('SELECT employee_id FROM digital_employee_automations WHERE id = ? AND project_id = ? AND deleted_at IS NULL', [task.id, binding.projectId])?.employee_id ??
+      (task.id.startsWith('automation_employee_claim_') ? task.id.slice('automation_employee_claim_'.length) : task.id.startsWith('automation_employee_exploration_') ? task.id.slice('automation_employee_exploration_'.length) : undefined);
+    if (source ? source !== binding.employeeId : binding.isDefaultBinding === false) continue;
+    if (task.action.projectEmployeeIds?.[binding.projectId]) continue;
+    /** 仅新当前修订增加按项目的内部引用，其余计划、游标、预算和启停原样保留。 */
+    const previous = tasks.getRevision(task.currentRevisionId)!;
+    const action = { ...task.action, projectEmployeeIds: { ...task.action.projectEmployeeIds, [binding.projectId]: binding.employeeId } };
+    const revisionId = `automation_revision_${randomId(12)}`;
+    const revision = task.revision + 1;
+    /** 只有这份原修订的有效授权会在本次迁移中失效，不推断其他旧修订曾获授权。 */
+    const movesGrantedRevision = tasks.hasFullAccessGrant(task.id, task.revision);
+    db.execute('INSERT INTO automation_task_revisions (id, automation_id, revision, snapshot_json, project_ids_json, created_at) VALUES (?, ?, ?, ?, ?, ?)', [
+      revisionId,
+      task.id,
+      revision,
+      JSON.stringify({ ...previous.snapshot, action }),
+      JSON.stringify(previous.projectIds),
+      timestamp,
+    ]);
+    db.execute('UPDATE automation_tasks SET action_json = ?, current_revision_id = ?, revision = ?, updated_at = ? WHERE id = ?', [JSON.stringify(action), revisionId, revision, timestamp, task.id]);
+    /** 范围与权限未扩大，只平移原修订的真实授权，保留原确认时间。 */
+    db.execute('UPDATE automation_full_access_grants SET config_revision = ? WHERE automation_id = ? AND config_revision = ?', [revision, task.id, task.revision]);
+    for (const row of db.select<{ id: string }>("SELECT id FROM automation_runs WHERE automation_id = ? AND status IN ('queued', 'dispatching', 'running', 'blocked', 'outcome_unknown')", [task.id])) {
+      /** 已冻结项目绑定和真实接纳引用不改变，单独处理未准备的身份与本次迁移授权的未接纳部分。 */
+      const oldRun = runs.getById(row.id)!;
+      const frozenAction = tasks.getRevision(oldRun.automationRevisionId)?.snapshot.action;
+      const identityAffected = frozenAction?.employeeId === binding.globalEmployeeId && !frozenAction.projectEmployeeIds?.[binding.projectId] && oldRun.projectIds.includes(binding.projectId);
+      const grantMoved = movesGrantedRevision && oldRun.automationRevisionId === task.currentRevisionId;
+      if (!identityAffected && !grantMoved) continue;
+      const run = runs.ensureDispatchTargets(row.id);
+      const reason = 'ZEUS_AUTOMATION_EMPLOYEE_IDENTITY_MIGRATED: 员工身份已迁移，本次未开始部分请重新运行。';
+      let affected = false;
+      let reconciled = false;
+      let outcomeUnknown = false;
+      for (const target of run.dispatchTargets) {
+        if (target.status === 'accepted' || target.status === 'skipped' || (!grantMoved && (target.projectId !== binding.projectId || target.employeeId))) continue;
+        /** 已接纳但回执尚未回写的准确事实优先，禁止把真实工作当成未开始。 */
+        let accepted: AutomationExecutionReference | null | false = null;
+        try {
+          accepted = target.status === 'accepting' ? runs.findAcceptedExecution(target) : null;
+        } catch (error) {
+          /** 业务回执冲突只暂停原规则；结构或 SQL 错误仍使迁移明确失败。 */
+          if (!(error instanceof Error) || !error.message.startsWith('ZEUS_AUTOMATION_DISPATCH_OUTCOME_UNKNOWN:')) throw error;
+          runs.updateDispatchTarget(run.id, { ...target, reason: `${reason}\n${error.message}` });
+          tasks.setStatus(task.id, 'paused');
+          affected = true;
+          outcomeUnknown = true;
+          continue;
+        }
+        if (accepted || accepted === false) {
+          runs.updateDispatchTarget(run.id, { ...target, status: accepted ? 'accepted' : 'skipped', reference: accepted || null, reason: accepted ? null : '原工作安排没有可领取分工。' });
+          reconciled = true;
+          continue;
+        }
+        runs.updateDispatchTarget(run.id, { ...target, reason });
+        affected = true;
+      }
+      if (!affected && !reconciled) continue;
+      /** 对账成功后同样保留原异常结论，已接纳工作必须继续占住队列。 */
+      if (run.status === 'blocked' || run.status === 'outcome_unknown')
+        db.execute('UPDATE automation_runs SET dispatch_reconciliation_json = COALESCE(dispatch_reconciliation_json, ?) WHERE id = ?', [
+          JSON.stringify({ previousStatus: run.status, checkedAt: timestamp, reason: run.errorMessage ?? reason, completedAt: run.completedAt }),
+          run.id,
+        ]);
+      const reconciledRun = runs.getById(run.id)!;
+      if (!affected && reconciledRun.dispatchTargets.every((target) => target.status === 'accepted' || target.status === 'skipped')) {
+        db.execute("UPDATE automation_runs SET status = 'dispatching', updated_at = ? WHERE id = ?", [timestamp, run.id]);
+        runs.completeDispatch(run.id);
+        continue;
+      }
+      if (!affected) continue;
+      /** 部分工作仍保留串行占位，调度器只等原引用终结，不接纳剩余目标。 */
+      if (reconciledRun.executionReferences.length === 0 && !outcomeUnknown) runs.setTerminal(run.id, 'blocked', 'ZEUS_AUTOMATION_EMPLOYEE_IDENTITY_MIGRATED', reason);
+      else {
+        /** 未知接纳即使暂缺引用，也不能释放串行占位。 */
+        db.execute("UPDATE automation_runs SET status = 'dispatching', updated_at = ? WHERE id = ?", [timestamp, run.id]);
+      }
+    }
+  }
+}
 
 /** 将旧员工自动化一次性移交给普通自动化；旧回执、在途执行和游标均不重放。 */
 export function migrateEmployeeAutomationsToUnified(db: ZeusDatabasePort): void {
@@ -57,14 +149,20 @@ export function migrateEmployeeAutomationsToUnified(db: ZeusDatabasePort): void 
       if (!existing.action.taskSelection && !(existing.revision > 0 && existing.action.kind !== 'project_task')) {
         /** 原始迁移修订尚未编辑，且关键来源字段必须完全匹配。 */
         const original = tasks.getRevision(existing.currentRevisionId);
+        /** 内部身份引用迁移不算用户编辑，仍可核对最初的完整配置。 */
+        const initial = db.get<{ id: string }>('SELECT id FROM automation_task_revisions WHERE automation_id = ? AND revision = 0', [existing.id]);
+        const initialSnapshot = initial ? tasks.getRevision(initial.id)?.snapshot : undefined;
+        const currentWithoutIdentityMap = original ? { ...original.snapshot, action: { ...original.snapshot.action } } : undefined;
+        if (currentWithoutIdentityMap) delete currentWithoutIdentityMap.action.projectEmployeeIds;
+        const onlyIdentityMigrated = existing.action.projectEmployeeIds?.[legacy.project_id] === employee.id && JSON.stringify(currentWithoutIdentityMap) === JSON.stringify(initialSnapshot);
         const unchanged =
-          existing.revision === 0 &&
+          (existing.revision === 0 || onlyIdentityMigrated) &&
           original?.projectIds.length === 1 &&
           original.projectIds[0] === legacy.project_id &&
           existing.name === legacy.name &&
           existing.prompt === (typeof action.description === 'string' && action.description.trim() ? action.description : employee.prompt) &&
           existing.action.kind === (legacy.action_kind === 'explore_project' ? 'employee_work' : 'project_task') &&
-          existing.action.employeeId === (employee.globalEmployeeId ?? employee.id) &&
+          (existing.action.projectEmployeeIds?.[legacy.project_id] ?? existing.action.employeeId) === (existing.action.projectEmployeeIds?.[legacy.project_id] ? employee.id : (employee.globalEmployeeId ?? employee.id)) &&
           (existing.action.taskId ?? null) === (typeof action.taskId === 'string' ? action.taskId : null) &&
           existing.action.useEventTask === (action.useEventTask === true);
         if (unchanged) {
@@ -263,7 +361,11 @@ function migrateEmployeeWorkRules(db: ZeusDatabasePort): void {
       /** 同一多项目规则只能接纳一致的旧筛选，差异必须由用户拆分。 */
       const projectIds = tasks.listTargets(task.id).map((target) => target.projectId);
       const filters = employees
-        .filter((employee) => projectIds.includes(employee.project_id) && (employee.id === task.action.employeeId || employee.global_employee_id === task.action.employeeId))
+        .filter(
+          (employee) =>
+            projectIds.includes(employee.project_id) &&
+            (task.action.projectEmployeeIds?.[employee.project_id] ? employee.id === task.action.projectEmployeeIds[employee.project_id] : employee.id === task.action.employeeId || employee.global_employee_id === task.action.employeeId),
+        )
         .map((employee) => JSON.parse(employee.task_filter_json) as NonNullable<AutomationActionConfig['taskFilter']>);
       if (new Set(filters.map((filter) => JSON.stringify(filter))).size > 1) {
         tasks.setMigrationIssue(task.id, '原项目员工使用不同任务筛选，请按项目拆分规则后保存。');
@@ -299,7 +401,12 @@ function migrateEmployeeWorkRules(db: ZeusDatabasePort): void {
         !db.get('SELECT id FROM automation_tasks WHERE id = ?', [explorationId]) &&
         !tasks
           .list()
-          .some((task) => task.action.kind === 'employee_work' && [employee.id, employee.global_employee_id].includes(task.action.employeeId) && tasks.listTargets(task.id).some((target) => target.projectId === employee.project_id))
+          .some(
+            (task) =>
+              task.action.kind === 'employee_work' &&
+              [employee.id, employee.global_employee_id].includes(task.action.projectEmployeeIds?.[employee.project_id] ?? task.action.employeeId) &&
+              tasks.listTargets(task.id).some((target) => target.projectId === employee.project_id),
+          )
       ) {
         const task = tasks.create({
           id: explorationId,

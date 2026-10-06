@@ -3725,7 +3725,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       prepareAction: async ({ run, snapshot, project }) => {
         if (!digitalEmployeeOrchestrator) throw nativeApiError('ZEUS_AUTOMATION_WORK_UNAVAILABLE', '员工工作服务尚未就绪。');
         /** 员工绑定与任务在业务接纳前解析并交由调度器冻结。 */
-        const employee = digitalEmployees.ensureProjectEmployee(project.id, snapshot.action.employeeId!);
+        const employee = digitalEmployees.ensureProjectEmployee(project.id, snapshot.action.projectEmployeeIds?.[project.id] ?? snapshot.action.employeeId!);
         if (!employee.enabled) throw nativeApiError('ZEUS_DIGITAL_EMPLOYEE_DISABLED', '自动化选择的员工未启用。');
         /** 新配置明确策略；既有新规则仍保留原指定与事件优先语义。 */
         const selection =

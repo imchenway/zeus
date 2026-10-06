@@ -313,15 +313,25 @@ export class LongTermMemoryRepository {
     const frozenGlobalId = input.globalEmployeeId === undefined || input.globalEmployeeId === null ? input.globalEmployeeId : requiredIdentity(input.globalEmployeeId, 'globalEmployeeId');
     /** 绑定身份保持历史关联；通用岗位经验按全局员工身份读取，项目限制逐条核对。 */
     const binding = input.employeeId
-      ? this.db.get<{ id: string; global_employee_id: string | null; project_id: string }>('SELECT id,global_employee_id,project_id FROM digital_employees WHERE id=? AND deleted_at IS NULL', [input.employeeId])
+      ? this.db.get<{ id: string; global_employee_id: string | null; project_id: string; migrated_memory_global_id: string | null; migrated_memory_ids_json: string }>(
+          'SELECT id,global_employee_id,project_id,migrated_memory_global_id,migrated_memory_ids_json FROM digital_employees WHERE id=? AND deleted_at IS NULL',
+          [input.employeeId],
+        )
       : undefined;
     /** 冻结身份只在原项目绑定范围内生效，改绑不能把另一员工经验带入在途工作。 */
     const globalId = binding ? (binding.project_id === projectId ? (frozenGlobalId === undefined ? binding.global_employee_id : frozenGlobalId) : null) : (input.employeeId ?? null);
     const global = globalId ? this.db.get('SELECT id FROM digital_employee_templates WHERE id=? AND built_in=0 AND deleted_at IS NULL', [globalId]) : undefined;
     const employeeId = binding?.project_id === projectId ? binding.id : global ? globalId : null;
+    /** 旧独立身份只保留迁移时已有的经验记录，且限定原绑定、原项目和当时迁移出的身份。 */
+    const migratedMemoryIds = binding?.project_id === projectId && global && binding.migrated_memory_global_id === globalId ? binding.migrated_memory_ids_json : '[]';
     const rows = this.db.select<LongTermMemoryRow>(
-      `${selectMemoryColumns} WHERE (scope_kind='global' AND scope_id='*') OR (scope_kind='project' AND scope_id=?) OR (scope_kind='employee' AND scope_id IN (?,?) AND (project_limit_id IS NULL OR project_limit_id=?)) ORDER BY project_limit_id IS NOT NULL DESC,updated_at DESC,id DESC`,
-      [projectId, employeeId, global ? globalId : null, projectId],
+      `${selectMemoryColumns} WHERE (scope_kind='global' AND scope_id='*') OR (scope_kind='project' AND scope_id=?)
+       OR (scope_kind='employee' AND (scope_id IN (?,?) OR
+         (id IN (SELECT value FROM json_each(?))
+          AND EXISTS (SELECT 1 FROM digital_employee_templates source WHERE source.id=long_term_memories.scope_id AND source.built_in=0 AND source.deleted_at IS NULL)
+          AND NOT EXISTS (SELECT 1 FROM long_term_memories successor WHERE successor.supersedes_id=long_term_memories.id)))
+         AND (project_limit_id IS NULL OR project_limit_id=?)) ORDER BY project_limit_id IS NOT NULL DESC,updated_at DESC,id DESC`,
+      [projectId, employeeId, global ? globalId : null, migratedMemoryIds, projectId],
     );
     const records = rows.map(mapMemory);
     const supersededIds = new Set(records.flatMap((record) => (record.supersedesId ? [record.supersedesId] : [])));
