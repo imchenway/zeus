@@ -225,6 +225,21 @@ export function taskModelPushHasRealChoice(pending: TaskModelPushPendingState): 
   return pending.choice.id !== pending.navigationId && Boolean(pending.choice.providerThreadId);
 }
 
+/** 同一次推送只投影一个入口，临时导航身份不能覆盖已接纳的真实会话。 */
+export function projectTaskModelPushConversationChoices(pending: TaskModelPushPendingState | undefined, choices: NativeConversationChoice[]): NativeConversationChoice[] {
+  if (!pending) return choices;
+  /** 仅在同项目、同任务内合并临时入口、真实会话与同一创建操作的目录结果。 */
+  const isPendingChoice = (choice: NativeConversationChoice): boolean =>
+    choice.projectId === pending.task.projectId &&
+    choice.taskId === pending.task.id &&
+    (choice.id === pending.navigationId || choice.id === pending.choice.id || (Boolean(pending.operationIdentity) && choice.creationOperationIdentity === pending.operationIdentity));
+  /** 创建接纳后采用正式目录状态，目录中残留的临时入口始终没有接管资格。 */
+  const authoritativeChoice = pending.status === 'accepted' ? choices.find((choice) => choice.id !== pending.navigationId && isPendingChoice(choice)) : undefined;
+  /** 导航身份保持稳定，内部读写身份由真实会话接管。 */
+  const projectedChoice = authoritativeChoice ? { ...authoritativeChoice, navigationId: pending.navigationId } : pending.choice;
+  return [projectedChoice, ...choices.filter((choice) => !isPendingChoice(choice))];
+}
+
 export function updateTaskModelPushDraft(pending: TaskModelPushPendingState, draft: string): TaskModelPushPendingState {
   return { ...pending, session: sessionReducer(pending.session, { type: 'draft_changed', draft }) };
 }

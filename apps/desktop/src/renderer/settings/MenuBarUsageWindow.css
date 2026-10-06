@@ -761,6 +761,15 @@ body:has(.menu-bar-usage-root),
   font-weight: 600;
 }
 
+/* 计费档位放在模型名下方，与单价和金额保持次级文字层级。 */
+.menu-bar-usage-model-price-tier {
+  display: block;
+  color: var(--usage-muted);
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
 /* 长列表统一最小行高，让滚动阈值稳定对应八条记录，短列表仍按内容收缩。 */
 .menu-bar-usage-cost-table-scroll[data-scrollable='true'] tbody th,
 .menu-bar-usage-cost-table-scroll[data-scrollable='true'] tbody td {

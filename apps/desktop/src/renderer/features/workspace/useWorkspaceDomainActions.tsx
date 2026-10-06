@@ -1560,7 +1560,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     else setTaskDetail(undefined);
     /** 自动化等入口可先于列表拿到会话；选择前补齐列表事实，页面才能解析实际会话。 */
     const listedConversation = resolveSelectedNativeConversationForProject(state.nativeConversationChoices, conversation.id, conversation.projectId);
-    if (!listedConversation && !conversation.archived) {
+    // 创建期入口只属于本地工作面，不能写入正式目录或被当作已接纳会话保留。
+    if (!listedConversation && !conversation.archived && conversation.id !== conversation.navigationId) {
       if (conversation.taskId) {
         // 已读取的持久会话不能被迟到的列表快照移除。
         nativeConversationChoiceLoadCoordinator.preserveAccepted(conversation);

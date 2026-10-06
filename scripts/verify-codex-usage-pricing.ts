@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CodexUsageLedgerRepository, ConversationRepository, ProjectRepository, SettingRepository, createZeusDatabase } from '../packages/storage/src/index.js';
-import { codexUsageObservationIdentity, emptyTokenUsageBreakdown, estimateCodexUsage, formatCodexCredits, hasPositiveCodexCredits, isCodexSubscriptionUsage } from '../packages/shared/src/codexUsage.js';
+import { CodexUsageLedgerRepository, ConversationExecutionRepository, ConversationRepository, ProjectRepository, SettingRepository, createZeusDatabase } from '../packages/storage/src/index.js';
+import { codexUsageObservationIdentity, emptyTokenUsageBreakdown, estimateCodexUsage, estimateCodexUsageWithRateSnapshot, formatCodexCredits, hasPositiveCodexCredits, isCodexSubscriptionUsage } from '../packages/shared/src/codexUsage.js';
 import { createCodexUsageService } from '../packages/local-server/src/codexUsageService.js';
+import { createUsageOverviewService } from '../packages/local-server/src/usageOverviewService.js';
 import { parseBuiltInModelPrices, readBuiltInPricingPage } from '../packages/local-server/src/builtInModelPricing.js';
 import { readPricingDocument } from '../packages/local-server/src/modelPricingDocument.js';
 import { parseNewApiPricing, parseExtractedPrices, createModelPricingService, builtInPricingUrls, validModelPrice } from '../packages/local-server/src/modelPricingService.js';
@@ -395,6 +396,57 @@ try {
   now += 10 * 60_000;
   await service.refreshMissingPricing();
   assert.equal(downloads, 4);
+  /** 同一轮故意保存相同费率的不同请求档位，证明归组读取快照而非总量或整轮设置。 */
+  const tierRequests = ['default', 'standard', 'priority', 'fast', 'default', 'fast'].map((serviceTier, index) => ({
+    id: `tier-${index}`,
+    occurredAt: new Date(now).toISOString(),
+    usage,
+    estimate: estimateCodexUsageWithRateSnapshot(usage, { ...estimatePublishedCodexUsage({ catalog, prices, model, usage })!.rateSnapshot, model: 'codex-tier-probe', serviceTier, longContext: index >= 4 }),
+  }));
+  ledger.upsert({
+    providerId: 'codex',
+    accountScopeId: 'probe',
+    projectId: 'probe',
+    conversationId: 'tier-probe',
+    providerThreadId: 'tier-probe',
+    providerTurnId: 'tier-probe',
+    model: 'codex-tier-probe',
+    serviceTier: 'priority',
+    usage: scaleUsage(tierRequests.length),
+    usageComplete: true,
+    estimate: aggregateRequestPrices(tierRequests),
+    occurredAt: new Date(now).toISOString(),
+  });
+  /** 菜单栏汇总读取真实临时账本与仓库，不建立额外检查体系。 */
+  const overview = await createUsageOverviewService({
+    ledger,
+    codexUsage: service,
+    projects: new ProjectRepository(db),
+    conversations: new ConversationRepository(db),
+    execution: new ConversationExecutionRepository(db),
+    modelConnections: { listMetadata: () => [] } as unknown as Parameters<typeof createUsageOverviewService>[0]['modelConnections'],
+    now: () => new Date(now),
+  }).read();
+  for (const range of ['today', '7d', '30d', 'all'] as const) {
+    /** 四个时间范围都必须保留普通、快速及各自的长上下文组。 */
+    const tierEntries = overview.providers.find((provider) => provider.providerId === 'codex')!.overviewRanges[range].costBreakdown.filter((entry) => entry.model === 'codex-tier-probe');
+    assert.equal(tierEntries.length, 4);
+    assert.deepEqual(
+      tierEntries.map((entry) => [entry.serviceTier, entry.longContext, entry.usage.totalTokens]),
+      [
+        ['standard', false, 2_400],
+        ['fast', false, 2_400],
+        ['standard', true, 1_200],
+        ['fast', true, 1_200],
+      ],
+    );
+    assert.equal(
+      tierEntries.reduce((sum, entry) => sum + entry.estimatedCosts[0]!.amount, 0),
+      aggregateRequestPrices(tierRequests).apiEquivalentUsd,
+    );
+    assert.ok(tierEntries.every((entry) => entry.pricePeriod?.from === catalog.fetchedAt.slice(0, 10) && entry.pricePeriod.to === null));
+  }
+  console.log('通过：费用明细保留请求级 Fast 与 Long context 分组，合并服务档位别名，Token、金额和价格周期完整。');
   console.log('通过：两类事件先后顺序、同用量独立请求、歧义不重计、重启重放、首轮完整性、原生历史身份、请求缺价恢复、补算标记保留，以及既有定价与隔离检查。');
 } finally {
   globalThis.fetch = originalFetch;

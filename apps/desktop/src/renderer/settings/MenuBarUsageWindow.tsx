@@ -1015,7 +1015,10 @@ function CostBreakdownPanel(props: { entries: UsageModelCostBreakdown[]; label: 
           <tbody>
             {props.entries.map((entry, index) => (
               <tr key={`${entry.model}-${index}`}>
-                <th scope="row">{entry.model}</th>
+                <th scope="row">
+                  {entry.model}
+                  {entry.serviceTier || entry.longContext ? <span className="menu-bar-usage-model-price-tier">{formatModelPriceTier(entry)}</span> : null}
+                </th>
                 <td>
                   {formatModelRate(entry, props.language).map((line) => (
                     <span key={line}>{line}</span>
@@ -1037,6 +1040,11 @@ function CostBreakdownPanel(props: { entries: UsageModelCostBreakdown[]; label: 
       </div>
     </section>
   );
+}
+
+/** 服务档位使用通用英文名称，长上下文与速度档位同时存在时并列展示。 */
+function formatModelPriceTier(entry: UsageModelCostBreakdown): string {
+  return [entry.serviceTier ? entry.serviceTier.charAt(0).toUpperCase() + entry.serviceTier.slice(1) : null, entry.longContext ? 'Long context' : null].filter(Boolean).join(' · ');
 }
 
 /** 单价按普通输入输出、缓存读写压成两行，空费率明确显示暂无价格。 */
@@ -1244,7 +1252,14 @@ function readStoredSnapshot(): UsageOverviewSnapshot | null {
     const value = JSON.parse(localStorage.getItem(snapshotStorageKey) ?? 'null') as UsageOverviewSnapshot | null;
     /** 缓存可能来自旧版结构；缺少当前渲染必需字段时等待实时读取，不能让菜单栏整页崩溃。 */
     const compatible = value?.providers.every(
-      (provider) => Array.isArray(provider.dailyLocal) && overviewRangeOrder.every((range) => Boolean(provider.overviewRanges?.[range]?.local) && Array.isArray(provider.overviewRanges[range].costBreakdown)),
+      (provider) =>
+        Array.isArray(provider.dailyLocal) &&
+        overviewRangeOrder.every(
+          (range) =>
+            Boolean(provider.overviewRanges?.[range]?.local) &&
+            Array.isArray(provider.overviewRanges[range].costBreakdown) &&
+            provider.overviewRanges[range].costBreakdown.every((entry) => typeof entry.longContext === 'boolean' && (entry.serviceTier === null || typeof entry.serviceTier === 'string')),
+        ),
     );
     return value && Array.isArray(value.providers) && compatible && typeof value.updatedAt === 'string' ? value : null;
   } catch {
