@@ -84,7 +84,6 @@ try {
       name: '综合员工',
       role: '分析与交付',
       prompt: '完成明确分工。',
-      permissionMode: 'read-only',
     });
     /** 项目中的唯一启用实例由运行边界自动解析，不再由用户二次选择。 */
     const employee = employees.createFromTemplate({ projectId: project.id, template: employeeTemplate, overrides: { id: 'employee_digital_team_probe' } });
@@ -92,6 +91,38 @@ try {
     /** 单员工定义证明团队不需要开始、结束或其他系统节点。 */
     const singleDefinition = definition([employeeNode('single', employee.id, '独立完成任务')], []);
     assert(validateDigitalTeamWorkflowDefinition(singleDefinition).length === 0, '单员工团队必须可执行。');
+    /** 普通表单不填写研发字段，清空可选标准后仍由共享边界补齐通用结果要求。 */
+    const ordinaryDraft = definition(
+      [
+        {
+          ...employeeNode('ordinary', employee.id, '整理任务资料'),
+          data: { ...employeeNode('ordinary', employee.id, '整理任务资料').data, instructions: '', acceptanceCriteria: ['  '], expectedDeliverables: [''], verificationCommands: ['\n'] },
+        },
+      ],
+      [],
+    );
+    /** 与真实模板保存使用同一归一化入口。 */
+    const ordinaryTemplate = templates.create({ projectId: project.id, name: '通用流程', description: '', definition: ordinaryDraft });
+    /** 未配置研发能力的员工仍保持只读，不隐式开启写代码或代码候选验证。 */
+    const ordinaryNode = ordinaryTemplate.definition.nodes[0] as DigitalTeamEmployeeNode;
+    assert(ordinaryTemplate.ready && ordinaryNode.data.purpose === 'work' && ordinaryNode.data.executionMode === 'read_only' && !ordinaryNode.data.verificationCommands?.length, '普通分工不得被研发配置或空白标准阻断。');
+    /** 表单空白清理不能接纳混入非文本的非法配置。 */
+    const malformedDraft = structuredClone(ordinaryDraft);
+    (malformedDraft.nodes[0] as DigitalTeamEmployeeNode).data.acceptanceCriteria = ['有效标准', 7] as never;
+    assert(validateDigitalTeamWorkflowDefinition(normalizeDigitalTeamWorkflowDefinition(malformedDraft)).length > 0, '非字符串标准必须继续被校验拒绝。');
+    /** 历史节点曾保存独立模型偏好，新模板不再复制这些执行默认值。 */
+    const oldNodeSettings = { modelOverride: 'legacy-node-model', reasoningEffort: 'high', serviceTier: 'fast', workMode: 'plan' as const, skillIds: ['legacy-skill'], permissionMode: 'read-only' as const };
+    /** 使用真实保存入口验证界面隐藏后不会继续保存无入口的配置。 */
+    const settingsDefinition = definition([{ ...employeeNode('settings', employee.id, '读取项目默认'), data: { ...employeeNode('settings', employee.id, '读取项目默认').data, settings: oldNodeSettings } }], []);
+    /** 保存结果只保留当前权限约束。 */
+    const settingsTemplate = templates.create({ projectId: project.id, name: '统一运行默认', description: '', definition: settingsDefinition });
+    assert(
+      settingsTemplate.ready && JSON.stringify((settingsTemplate.definition.nodes[0] as DigitalTeamEmployeeNode).data.settings) === JSON.stringify({ permissionMode: 'read-only' }),
+      '新模板不得保留逐节点模型、推理、速度、工作模式或技能覆盖。',
+    );
+    /** 冻结运行原样读取；模板归一化不能倒改已经接纳的工作。 */
+    const frozenSettings = digitalTeamExecutionDefinition({ definitionSnapshot: settingsDefinition, plan: null, runtimeState: {} });
+    assert((frozenSettings.nodes[0] as DigitalTeamEmployeeNode).data.settings?.modelOverride === 'legacy-node-model' && oldNodeSettings.workMode === 'plan', '旧冻结运行必须保留原模型偏好，归一化不能修改输入对象。');
     /** 多根定义证明没有上游的员工可直接并行接收原始任务。 */
     const parallelDefinition = definition(
       [employeeNode('root_one', employee.id, '并行分工一'), employeeNode('root_two', employee.id, '并行分工二'), employeeNode('downstream', employee.id, '汇合分工')],
@@ -250,7 +281,7 @@ try {
     await verifyParallelVerificationRound(database, project.id, employee.id);
     await verifyFinalTaskCompletionGate();
     process.stdout.write(
-      `${JSON.stringify({ ok: true, checks: ['single-employee', 'parallel-roots', 'dependency-gate', 'same-employee-reuse', 'legacy-collapse', 'empty-draft', 'global-template', 'run-node-employee-resolution', 'project-current-workflow', 'assignment-entry-gate', 'entry-descendants-only', 'verification-role-retained', 'defect-completion-gate', 'persistent-repair-budget', 'repair-awaits-parent-retest', 'all-employees-complete', 'active-result-reference-shape', 'development-entry-before-verification', 'unverified-code-task-completion-gate', 'rework-during-final-git-review', 'project-state-shared-save-gate', 'read-only-entry-without-unrelated-baseline', 'frozen-entry-after-template-edit', 'parallel-verification-round-budget', 'parallel-repair-relations-recovery', 'parallel-candidate-environments', 'partial-verification-rework-retains-sibling'] })}\n`,
+      `${JSON.stringify({ ok: true, checks: ['single-employee', 'ordinary-empty-optional-fields', 'nontext-criteria-rejected', 'node-execution-defaults-cleared', 'frozen-node-settings-preserved', 'parallel-roots', 'dependency-gate', 'same-employee-reuse', 'legacy-collapse', 'empty-draft', 'global-template', 'run-node-employee-resolution', 'project-current-workflow', 'assignment-entry-gate', 'entry-descendants-only', 'verification-role-retained', 'defect-completion-gate', 'persistent-repair-budget', 'repair-awaits-parent-retest', 'all-employees-complete', 'active-result-reference-shape', 'development-entry-before-verification', 'unverified-code-task-completion-gate', 'rework-during-final-git-review', 'project-state-shared-save-gate', 'read-only-entry-without-unrelated-baseline', 'frozen-entry-after-template-edit', 'parallel-verification-round-budget', 'parallel-repair-relations-recovery', 'parallel-candidate-environments', 'partial-verification-rework-retains-sibling'] })}\n`,
     );
   } finally {
     await database.close();
@@ -515,17 +546,13 @@ async function verifyAssignmentResultBoundaries(database: ZeusDatabasePort, proj
     assert(rejected, '普通保存和项目保存必须共同拒绝开始即完成。');
   }
   /** 本次只读入口不执行无关的独立代码分支。 */
-  const readerGlobal = new DigitalEmployeeTemplateRepository(database).create({ name: '只读分支员工', role: '汇总', prompt: '只读核对。', permissionMode: 'read-only', allowCodeChanges: false, allowTests: true });
+  const readerGlobal = new DigitalEmployeeTemplateRepository(database).create({ name: '只读分支员工', role: '汇总', prompt: '只读核对。' });
   const reader = new DigitalEmployeeRepository(database).createFromTemplate({ projectId, template: readerGlobal });
-  /** 无关开发分支本身仍选择真实具备代码权限的员工。 */
+  /** 无关开发分支仍由独立员工执行，代码权限只取决于任务与本次运行。 */
   const writerGlobal = new DigitalEmployeeTemplateRepository(database).create({
     name: '独立开发员工',
     role: '开发',
     prompt: '只改授权代码。',
-    permissionMode: 'full-access',
-    allowCodeChanges: true,
-    allowTests: true,
-    deliveryGrants: { allowCommit: true, allowPush: false, allowMerge: false, allowDeploy: false, allowComplete: false },
   });
   const writer = new DigitalEmployeeRepository(database).createFromTemplate({ projectId, template: writerGlobal });
   const independent = definition([{ ...employeeNode('writer', writer.id, '独立开发'), data: { ...employeeNode('writer', writer.id, '独立开发').data, executionMode: 'isolated_write' } }, employeeNode('reader', reader.id, '独立汇总')], []);
@@ -618,7 +645,16 @@ async function verifyTeamInternalTaskOrigins(database: ZeusDatabasePort, project
   /** 保存新任务事件的接纳回执。 */
   const automationRuns = new AutomationRunRepository(database);
   /** 同一项目的新任务事件观察者。 */
-  const rule = automationTasks.create({ name: '内部任务不得回流', prompt: '仅接纳用户新任务', projectIds: [projectId], modelSourceId: 'codex', modelId: 'probe-model', triggerKind: 'event', triggerConfig: { eventKinds: ['task_created'] } });
+  const rule = automationTasks.create({
+    name: '内部任务不得回流',
+    action: { kind: 'employee_work', employeeId },
+    prompt: '仅接纳用户新任务',
+    projectIds: [projectId],
+    modelSourceId: 'codex',
+    modelId: 'probe-model',
+    triggerKind: 'event',
+    triggerConfig: { eventKinds: ['task_created'] },
+  });
   /** 只走实际创建边界，不启动 Provider 调度。 */
   const coordinator = new DigitalTeamWorkflowCoordinator({
     projects: new ProjectRepository(database),
@@ -703,15 +739,11 @@ async function verifyParallelVerificationRound(database: ZeusDatabasePort, proje
   const defects = new DefectWorkflowRepository(database);
   /** 两个测试员工检测同一候选，各自报告不同正式问题。 */
   const tests = ['qa_one', 'qa_two'].map((id) => ({ ...employeeNode(id, employeeId, id), data: { ...employeeNode(id, employeeId, id).data, purpose: 'verify' as const, executionMode: 'candidate_read_only' as const } }));
-  /** 修复身份在父接纳时明确冻结代码权限。 */
+  /** 修复身份在父接纳时明确冻结，代码权限由父任务授权控制。 */
   const repairGlobal = new DigitalEmployeeTemplateRepository(database).create({
     name: '并行修复员工',
     role: '开发',
     prompt: '仅修复准确缺陷。',
-    permissionMode: 'full-access',
-    allowCodeChanges: true,
-    allowTests: true,
-    deliveryGrants: { allowCommit: true, allowPush: false, allowMerge: false, allowDeploy: false, allowComplete: false },
   });
   const repair = new DigitalEmployeeRepository(database).createFromTemplate({ projectId, template: repairGlobal });
   const flow = { ...definition(tests, []), repairEmployeeId: repair.id };
@@ -1015,10 +1047,6 @@ async function verifyFinalTaskCompletionGate(): Promise<void> {
       name: '门禁员工',
       role: '开发',
       prompt: '核对 fixture。',
-      permissionMode: 'full-access',
-      allowCodeChanges: true,
-      allowTests: true,
-      deliveryGrants: { allowCommit: true, allowPush: false, allowMerge: false, allowDeploy: false, allowComplete: false },
     });
     const employee = new DigitalEmployeeRepository(database).createFromTemplate({ projectId: project.id, template });
     /** 真实仓库登记供候选集成读取。 */
@@ -1400,7 +1428,16 @@ async function verifyUnifiedAutomation(database: ZeusDatabasePort, projectId: st
     );
   }
   /** 独立事件流序号不能比较大小，同事务替换新流当前边界。 */
-  const eventRule = automationTasks.create({ name: '事件流切换探针', prompt: '仅处理新事件', projectIds: [projectId], modelSourceId: 'codex', modelId: 'probe-model', triggerKind: 'event', triggerConfig: { eventKinds: ['task_updated'] } });
+  const eventRule = automationTasks.create({
+    name: '事件流切换探针',
+    action: { kind: 'employee_work', employeeId },
+    prompt: '仅处理新事件',
+    projectIds: [projectId],
+    modelSourceId: 'codex',
+    modelId: 'probe-model',
+    triggerKind: 'event',
+    triggerConfig: { eventKinds: ['task_updated'] },
+  });
   automationTasks.setEventCursor(eventRule.id, projectId, 1_000);
   /** 原代码流保留二十号历史边界。 */
   database.execute('INSERT INTO git_snapshots (rowid, id, task_id, project_id, snapshot_type, status_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)', [

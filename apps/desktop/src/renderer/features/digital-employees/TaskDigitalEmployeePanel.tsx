@@ -13,12 +13,10 @@ import { TaskPushSupplementalAttachmentCards } from '../../task/TaskPushSuppleme
 import { Button } from '../../ui/Button.js';
 import { ModalPortal } from '../../ui/ModalPortal.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
-import { AgentExecutionConfigFields, type AgentExecutionConfigValue } from './AgentExecutionConfigFields.js';
 import type { DigitalEmployeeApiClient } from './digitalEmployeeApiClient.js';
 import type { CommandRunDetail } from '../runtime/runtimeContracts.js';
 import type { DigitalEmployeeRecord, TaskWorkConversationRequestRecord, TaskWorkDecisionRecord, TaskWorkDeliverableRecord, TaskWorkItemRecord, TaskWorkManagementProjection, TaskWorkPreview } from './digitalEmployeeContracts.js';
 import { errorMessage, formatDateTime, type DigitalEmployeeLanguage } from './digitalEmployeeUiSupport.js';
-import type { NativeConversationAppClient } from '../workspace/workspaceSupport.js';
 import { codexCapabilitiesChangedEvent } from '../codex/codexApiClient.js';
 import { DigitalEmployeeAvatar } from './DigitalEmployeeAvatar.js';
 import { TaskConversationPane } from './TaskConversationPane.js';
@@ -27,13 +25,9 @@ import { TaskWorkReviewPanel } from './TaskWorkReviewPanel.js';
 import { TaskWorkPlanPanel } from './TaskWorkPlanPanel.js';
 import './digitalEmployees.css';
 
-export type TaskDigitalEmployeeSkillClient = Pick<NativeConversationAppClient, 'loadSkills'>;
-
 export interface TaskDigitalEmployeePanelProps {
   /** 新协作统一进入数字团队，已有安排只保留运行与历史。 */
   onArrangeTeam?(): void;
-  /** 工作安排复用项目技能目录。 */
-  skillClient?: TaskDigitalEmployeeSkillClient | null;
   /** 当前任务会话使用原始身份，不复制消息。 */
   conversations?: NativeConversationChoice[];
   /** 会话列表读取状态。 */
@@ -275,15 +269,7 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
           {pendingConversationRequests.length + pendingDecisions.length > 0 ? (
             <ManagerInbox requests={pendingConversationRequests} decisions={pendingDecisions} language={props.language} onOpenConversation={openConversation} onSelect={setDecisionOpen} />
           ) : null}
-          <TaskWorkPlanPanel
-            onArrangeTeam={props.onArrangeTeam}
-            taskId={props.taskId}
-            projectId={props.projectId}
-            client={props.client}
-            skillClient={props.skillClient ?? null}
-            management={props.management}
-            readOnly={props.terminalReadOnly}
-          />
+          <TaskWorkPlanPanel onArrangeTeam={props.onArrangeTeam} taskId={props.taskId} client={props.client} management={props.management} readOnly={props.terminalReadOnly} />
           {projection.workItems.some((item) => !item.arrangement || item.currentRunId) ? (
             <WorkItemBoard
               items={projection.workItems.filter((item) => !item.arrangement || item.currentRunId)}
@@ -603,7 +589,6 @@ export function TaskDigitalEmployeeExecutor(props: {
   projectId: string;
   terminalReadOnly: boolean;
   client: DigitalEmployeeApiClient | null;
-  skillClient: TaskDigitalEmployeeSkillClient | null;
   language: DigitalEmployeeLanguage;
   management: TaskDigitalEmployeeManagement;
   onLoadCapabilities?: () => Promise<CodexTaskPushCapabilities>;
@@ -681,7 +666,6 @@ export function TaskDigitalEmployeeExecutor(props: {
             employee={selectedEmployee}
             acceptedDeliverables={props.management.projection?.deliverables.filter((deliverable) => deliverable.status === 'accepted') ?? []}
             client={props.client}
-            skillClient={props.skillClient}
             language={props.language}
             busy={props.management.busy === 'start-executor'}
             operationError={props.management.error}
@@ -706,7 +690,6 @@ function TaskEmployeeRunDialog(props: {
   employee: DigitalEmployeeRecord;
   acceptedDeliverables: TaskWorkDeliverableRecord[];
   client: DigitalEmployeeApiClient;
-  skillClient: TaskDigitalEmployeeSkillClient | null;
   language: DigitalEmployeeLanguage;
   busy: boolean;
   operationError: string | null;
@@ -725,7 +708,6 @@ function TaskEmployeeRunDialog(props: {
   const [workspaceMode, setWorkspaceMode] = useState<'create' | 'continue' | null>(null);
   const [workspaceTarget, setWorkspaceTarget] = useState('');
   const [capabilityError, setCapabilityError] = useState<string | null>(null);
-  const [config, setConfig] = useState<AgentExecutionConfigValue>(() => initialRunConfig(props.employee));
   const [supplementalInfo, setSupplementalInfo] = useState('');
   const [supplementalAttachments, setSupplementalAttachments] = useState<TaskPushSupplementalAttachmentDraft[]>([]);
   const [supplementalResourceError, setSupplementalResourceError] = useState<string | null>(null);
@@ -775,20 +757,6 @@ function TaskEmployeeRunDialog(props: {
         setWorkspaceMode(initialWorkspace?.mode === 'create' ? 'create' : initialWorkspace ? 'continue' : null);
         setWorkspaceTarget(initialWorkspace?.mode === 'existing' ? `environment:${initialWorkspace.environmentId}` : initialWorkspace?.mode === 'local' ? `local:${initialWorkspace.branchName}` : '');
         if (modelRevision === modelRevisionRef.current) setModels(nextCapabilities.models);
-        setConfig((current) => {
-          if (current.model) return current;
-          const model =
-            nextCapabilities.models.find((candidate) => candidate.id === ('preferredModel' in nextCapabilities ? nextCapabilities.preferredModel : '')) ?? nextCapabilities.models.find((candidate) => candidate.available !== false);
-          return model
-            ? {
-                ...current,
-                agentKind: model.agentKind ?? 'codex',
-                model: model.id,
-                reasoningEffort: current.reasoningEffort || model.defaultReasoningEffort || model.supportedReasoningEfforts[0] || '',
-                serviceTier: current.serviceTier || model.defaultServiceTier || '',
-              }
-            : current;
-        });
       })
       .catch((cause) => {
         if (active) {
@@ -850,13 +818,6 @@ function TaskEmployeeRunDialog(props: {
           employeeId: props.employee.id,
           supplementalInfo: supplementalInfo.trim() || null,
           ...(supplementalAttachments.length > 0 ? { supplementalAttachments: taskPushSupplementalRequestAttachments(supplementalAttachments) } : {}),
-          modelOverride: config.model || null,
-          reasoningEffort: config.reasoningEffort || null,
-          serviceTier: config.serviceTier || null,
-          workMode: config.workMode,
-          permissionMode: config.permissionMode,
-          promptOverride: config.prompt,
-          skillIds: config.skillIds,
           selectedDeliverableIds,
           ...(workspace ? { workspace } : {}),
         })
@@ -874,7 +835,7 @@ function TaskEmployeeRunDialog(props: {
         });
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [agentEntrypoint, config, props.client, props.employee.id, props.taskId, selectedDeliverableIds, supplementalAttachments, supplementalInfo, workspaceMode, workspaceTarget, zh]);
+  }, [agentEntrypoint, models, props.client, props.employee.id, props.taskId, selectedDeliverableIds, supplementalAttachments, supplementalInfo, workspaceMode, workspaceTarget, zh]);
 
   const existingEnvironments = capabilities?.existingEnvironments ?? [];
   const canContinueEnvironment = (environment: NonNullable<CodexTaskPushCapabilities['existingEnvironments']>[number]): boolean => environment.available;
@@ -889,7 +850,6 @@ function TaskEmployeeRunDialog(props: {
   /** 运行条件缺失时提供设置入口，不堆叠不能使用的配置控件。 */
   const hasRunnableModel = models.some((model) => model.available !== false);
   /** 选择器与摘要使用同一模型身份。 */
-  const selectedModel = models.find((model) => model.id === config.model || model.model === config.model);
 
   async function submit(): Promise<void> {
     if (!preview || preview.blockers.length > 0 || inputResources.processing) return;
@@ -1043,26 +1003,6 @@ function TaskEmployeeRunDialog(props: {
             </fieldset>
           ) : null}
 
-          {agentEntrypoint && hasRunnableModel ? (
-            <details className="task-work-config-details">
-              <summary>
-                <span>{zh ? '本次能力设置' : 'Settings for this work'}</span>
-                <small>
-                  {selectedModel?.displayName ?? config.model} · {config.skillIds.length} Skills
-                </small>
-              </summary>
-              <AgentExecutionConfigFields
-                value={config}
-                models={models}
-                skillClient={props.skillClient}
-                projectId={props.projectId}
-                language={props.language}
-                compact
-                onChange={(patch) => setConfig((current) => ({ ...current, ...patch }))}
-              />
-            </details>
-          ) : null}
-
           {props.acceptedDeliverables.length > 0 ? (
             <details className="task-work-context-details">
               <summary>{zh ? `参考已验收成果 · 已选 ${selectedDeliverableIds.length}` : `Accepted deliverable context (${selectedDeliverableIds.length} selected)`}</summary>
@@ -1133,20 +1073,6 @@ function TaskEmployeeRunDialog(props: {
       </section>
     </ModalPortal>
   );
-}
-
-function initialRunConfig(employee: DigitalEmployeeRecord): AgentExecutionConfigValue {
-  const entrypoint = employee.entrypoint?.kind === 'agent' ? employee.entrypoint : null;
-  return {
-    agentKind: entrypoint?.agentKind ?? employee.agentKind,
-    model: entrypoint?.modelPolicy.defaultModel ?? employee.model ?? '',
-    reasoningEffort: employee.reasoningEffort ?? '',
-    serviceTier: employee.serviceTier ?? '',
-    workMode: employee.workMode,
-    permissionMode: entrypoint?.authorityPolicy.permissionMode ?? employee.permissionMode,
-    skillIds: [...(entrypoint?.skillPolicy.allowedSkillIds ?? employee.skillIds)],
-    prompt: entrypoint?.prompt ?? employee.prompt,
-  };
 }
 
 interface CommonLocalTaskBranch {

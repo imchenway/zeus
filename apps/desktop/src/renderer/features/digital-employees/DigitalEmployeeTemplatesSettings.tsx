@@ -4,10 +4,8 @@ import { SettingsSaveStatus } from '../../settings/useSettingsAutosave.js';
 import { Button } from '../../ui/Button.js';
 import { FormDialog } from '../../ui/FormDialog.js';
 import type { NativeConversationAppClient } from '../workspace/workspaceSupport.js';
-import { codexCapabilitiesChangedEvent } from '../codex/codexApiClient.js';
-import { AgentExecutionConfigFields } from './AgentExecutionConfigFields.js';
 import type { DigitalEmployeeApiClient } from './digitalEmployeeApiClient.js';
-import type { DigitalEmployeeCapabilitiesSnapshot, DigitalEmployeeTemplateRecord } from './digitalEmployeeContracts.js';
+import type { DigitalEmployeeTemplateRecord } from './digitalEmployeeContracts.js';
 import { emptyTemplateDraft, errorMessage, templateDraft, templateInput, type DigitalEmployeeLanguage, type DigitalEmployeeTemplateDraft } from './digitalEmployeeUiSupport.js';
 import './digitalEmployees.css';
 
@@ -23,25 +21,10 @@ type EditorTarget = { kind: 'new' } | { kind: 'employee'; record: DigitalEmploye
 /** 新增数字员工支持从内置模板开始，也支持空白创建。 */
 type DigitalEmployeeCreationSource = { kind: 'blank' } | { kind: 'template'; templateId: string } | null;
 
-/** 全局员工默认能力分别授权，绑定到项目后可以明确覆盖。 */
-const employeeDefaultAuthorityFields = [
-  { key: 'memoryEnabled', zh: '读取已确认员工经验', en: 'Read approved employee memory' },
-  { key: 'allowCodeChanges', zh: '允许修改代码', en: 'Allow code changes' },
-  { key: 'allowTests', zh: '允许执行验证', en: 'Allow verification' },
-  { key: 'allowCommit', zh: '允许提交', en: 'Allow commits' },
-  { key: 'allowPush', zh: '允许推送', en: 'Allow pushes' },
-  { key: 'allowMerge', zh: '允许合并', en: 'Allow merges' },
-  { key: 'allowDeploy', zh: '允许部署', en: 'Allow deployment' },
-  { key: 'allowComplete', zh: '允许完成任务', en: 'Allow task completion' },
-] as const;
-
 export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplatesSettingsProps) {
   const zh = props.language === 'zh-CN';
   const [templates, setTemplates] = useState<DigitalEmployeeTemplateRecord[]>([]);
-  const [capabilities, setCapabilities] = useState<DigitalEmployeeCapabilitiesSnapshot | null>(null);
   const loadRevisionRef = useRef(0);
-  /** 目录与模板分别更新，避免刷新覆盖正在编辑的模板。 */
-  const modelRevisionRef = useRef(0);
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
   const [busy, setBusy] = useState(false);
   /** 同一帧的失焦与选择事件只启动一次写入。 */
@@ -56,44 +39,17 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
   const draftsRef = useRef(new Map<string, { draft: DigitalEmployeeTemplateDraft; target: NonNullable<EditorTarget> }>());
   const [draft, setDraft] = useState<DigitalEmployeeTemplateDraft>({ ...emptyTemplateDraft });
 
-  useEffect(() => {
-    /** 模型发布后只读取新的能力列表。 */
-    const client = props.client;
-    if (!client) return;
-    let disposed = false;
-    const refresh = (): void => {
-      const revision = ++modelRevisionRef.current;
-      void client
-        .loadDigitalEmployeeCapabilities()
-        .then((next) => {
-          if (!disposed && revision === modelRevisionRef.current) setCapabilities(next);
-        })
-        .catch(() => {
-          // 暂时无法读取时保留已有目录，等待下次更新通知。
-        });
-    };
-    window.addEventListener(codexCapabilitiesChangedEvent, refresh);
-    return () => {
-      disposed = true;
-      modelRevisionRef.current += 1;
-      window.removeEventListener(codexCapabilitiesChangedEvent, refresh);
-    };
-  }, [props.client]);
-
   const loadTemplates = useCallback(async () => {
     if (!props.client) return;
     const revision = ++loadRevisionRef.current;
-    /** 模板初始化不得覆盖更新通知启动的较新读取。 */
-    const modelRevision = ++modelRevisionRef.current;
     setLoadState('loading');
     setError(null);
     setSavedName(null);
     try {
-      const [nextTemplates, nextCapabilities] = await Promise.all([props.client.loadDigitalEmployeeTemplates(), props.client.loadDigitalEmployeeCapabilities()]);
+      const nextTemplates = await props.client.loadDigitalEmployeeTemplates();
       if (revision !== loadRevisionRef.current) return;
       setTemplates(nextTemplates);
 
-      if (modelRevision === modelRevisionRef.current) setCapabilities(nextCapabilities);
       setLoadState('ready');
     } catch (cause) {
       if (revision !== loadRevisionRef.current) return;
@@ -396,8 +352,6 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
               </div>
               <DigitalEmployeeProfileEditor
                 draft={draft}
-                models={capabilities?.models ?? []}
-                skillClient={props.skillClient}
                 language={props.language}
                 disabled={busy}
                 onCommit={() => {
@@ -413,7 +367,11 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
           )}
           {editorTarget ? (
             <footer className="digital-employee-editor-actions">
-              <small>{zh ? '数字员工创建后与模板无关；修改也不会影响已经添加到项目的员工配置。' : 'Created employees are independent from templates. Changes also do not affect employees already added to projects.'}</small>
+              <small>
+                {zh
+                  ? '员工独立于创建模板；项目未覆盖的配置随员工更新，已启动的工作保持原配置。'
+                  : 'Employees are independent from their source templates. Projects inherit changes unless overridden; work already started keeps its original settings.'}
+              </small>
               <span className="digital-employee-actions">
                 <Button variant="secondary" size="compact" disabled={busy} onClick={cancelEditing}>
                   {editorTarget.kind === 'new' ? (zh ? '取消' : 'Cancel') : zh ? '完成编辑' : 'Done'}
@@ -440,8 +398,6 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
 /** 数字员工身份与工作配置编辑器。 */
 function DigitalEmployeeProfileEditor(props: {
   draft: DigitalEmployeeTemplateDraft;
-  models: DigitalEmployeeCapabilitiesSnapshot['models'];
-  skillClient: Pick<NativeConversationAppClient, 'loadSkills'> | null;
   language: DigitalEmployeeLanguage;
   disabled: boolean;
   /** 字段结束编辑时提交。 */
@@ -479,40 +435,27 @@ function DigitalEmployeeProfileEditor(props: {
       </label>
       <section className="digital-employee-form-section">
         <header>
-          <strong>{zh ? 'AI 工作配置' : 'AI work settings'}</strong>
-          <small>{zh ? '选择模型与权限，填写员工职责。' : 'Uses the same model, linked options, skills, and prompt fields as project employees and individual runs.'}</small>
+          <strong>{zh ? '工作要求' : 'Instructions'}</strong>
+          <small>{zh ? '提示词定义员工职责，模型与 Skills 使用统一执行默认。' : 'The prompt defines this employee’s responsibilities. Model and skills use the shared execution defaults.'}</small>
         </header>
-        <AgentExecutionConfigFields value={props.draft} models={props.models} skillClient={props.skillClient} language={props.language} readOnly={props.disabled} onChange={patch} />
+        <label>
+          <span>{zh ? '提示词' : 'Prompt'}</span>
+          <textarea value={props.draft.prompt} onChange={(event) => patch({ prompt: event.currentTarget.value })} disabled={props.disabled} rows={8} maxLength={20000} required />
+        </label>
       </section>
       <section className="digital-employee-form-section">
         <header>
-          <strong>{zh ? '员工默认能力' : 'Employee defaults'}</strong>
-          <small>{zh ? '跨项目复用；项目可以配置差异，实际执行还受任务授权约束。' : 'Shared across projects. Project overrides and task authorization apply to each run.'}</small>
+          <strong>{zh ? '经验与记忆' : 'Experience and memory'}</strong>
+          <small>{zh ? '新工作读取已确认且未过期的个人经验，项目可以单独调整。' : 'New work reads approved, current employee experience. Projects can override this preference.'}</small>
         </header>
+        {/* 隐藏的原生输入不占网格，视觉复选框与文案分别占据两列。 */}
         <div className="digital-employee-policy-grid">
-          {employeeDefaultAuthorityFields.slice(0, 3).map((field) => (
-            <label key={field.key} className="digital-employee-checkbox-row">
-              <input type="checkbox" checked={props.draft[field.key] === true} disabled={props.disabled} onChange={(event) => patch({ [field.key]: event.currentTarget.checked })} />
-              <span>{zh ? field.zh : field.en}</span>
-            </label>
-          ))}
+          <label className="digital-employee-checkbox-row">
+            <input type="checkbox" checked={props.draft.memoryEnabled !== false} disabled={props.disabled} onChange={(event) => patch({ memoryEnabled: event.currentTarget.checked })} />
+            <span className="digital-employee-checkbox-visual" aria-hidden="true" />
+            <span>{zh ? '读取已确认员工经验' : 'Read approved employee memory'}</span>
+          </label>
         </div>
-        <details className="digital-employee-advanced-settings">
-          <summary>
-            {zh ? '管理动作授权' : 'Management action grants'}
-            <small>
-              {employeeDefaultAuthorityFields.slice(3).filter((field) => props.draft[field.key]).length} {zh ? '项已开启' : 'enabled'}
-            </small>
-          </summary>
-          <div className="digital-employee-policy-grid">
-            {employeeDefaultAuthorityFields.slice(3).map((field) => (
-              <label key={field.key} className="digital-employee-checkbox-row">
-                <input type="checkbox" checked={props.draft[field.key] === true} disabled={props.disabled} onChange={(event) => patch({ [field.key]: event.currentTarget.checked })} />
-                <span>{zh ? field.zh : field.en}</span>
-              </label>
-            ))}
-          </div>
-        </details>
       </section>
     </div>
   );

@@ -1065,12 +1065,13 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
     for (const attempt of failed) this.registerAttemptDefects(run, requireNode(run, attempt!.nodeId) as DigitalTeamEmployeeNode, attempt!, attempt!.result!);
     const registered = this.options.defects.listByRun(run.id).filter((defect) => round.tests.some((test) => test.attemptId === defect.sourceAttemptId) && defect.status === 'open');
     const parentTask = this.options.tasks.getById(run.taskId)!;
+    /** 修复范围受父运行冻结成员、本次权限及当前任务授权共同约束，不再读取已删除的员工权限开关。 */
     const allowed = Boolean(
       run.definitionSnapshot.repairEmployeeId &&
+      run.roleSnapshots.some((snapshot) => snapshot.employeeId === run.definitionSnapshot.repairEmployeeId) &&
       run.runtimeState.permissionMode !== 'read-only' &&
       parentTask.allowCodeChanges &&
-      parentTask.allowGitCommit &&
-      this.frozenEmployee(run, run.definitionSnapshot.repairEmployeeId).entrypoint?.authorityPolicy.permissionMode !== 'read-only',
+      parentTask.allowGitCommit,
     );
     const nextRound = this.options.defects.getRepairRounds(run.taskId) + 1;
     if (!allowed || nextRound > (run.definitionSnapshot.maxRepairRounds ?? 3)) {

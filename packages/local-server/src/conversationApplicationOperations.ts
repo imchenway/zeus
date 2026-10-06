@@ -9,7 +9,7 @@ import type { ConversationSubagentSummary } from './codexSubagentQueryApplicatio
 import { selectEmployeeMemories } from './employeeMemoryContext.js';
 import { LongTermMemoryRepository } from '@zeus/storage';
 import { normalizeWorkSettings } from './taskWorkManagement.js';
-import { splitZeusSkillIds, mergeEmployeeWorkSettings, type EmployeeWorkSettings } from '@zeus/shared';
+import { mergeEmployeeWorkSettings, type EmployeeWorkSettings } from '@zeus/shared';
 import { TaskWorkPlanningRepository } from '@zeus/storage';
 import { classifyAssistantMessage, asyncMessageQuestions, formatAsyncQuestionAnswer, validateCanonicalRequestUserInputAnswers, type AsyncQuestionAnswer } from '@zeus/shared';
 import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
@@ -441,7 +441,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const displayText = normalizeComposerDisplayText(input.body.displayText, content);
     if (!content) throw nativeApiError('ZEUS_INVALID_CONVERSATION_MESSAGE', '专家群聊需要非空提示正文。');
     if (displayText.length > 100_000) throw nativeApiError('ZEUS_INVALID_CONVERSATION_MESSAGE', 'displayText 不能超过 100000 字符。');
-    const permissionMode = input.body.permissionMode === undefined ? (input.conversation?.permissionMode ?? 'auto') : parseConversationPermissionMode(input.body.permissionMode);
+    const permissionMode =
+      input.body.permissionMode === undefined
+        ? (input.conversation?.permissionMode ?? (input.task && !input.task.allowCodeChanges && !input.task.allowTests && !input.task.allowGitCommit ? 'read-only' : 'auto'))
+        : parseConversationPermissionMode(input.body.permissionMode);
     if (!permissionMode) throw nativeApiError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, auto-review, or full-access.');
     const collaborationMode =
       input.body.collaborationMode === undefined
@@ -489,49 +492,39 @@ export function createConversationApplicationOperations(dependencies: Conversati
       return employee;
     });
 
-    /** 每个成员先解析自己的默认与本轮覆盖，任何一位不可运行时整轮保持未接纳。 */
+    /** 成员共用当前讨论配置，任务与本轮只保留业务要求及更严格的权限。 */
     const taskSettings = input.task ? new TaskWorkPlanningRepository(db).get(input.task.id)?.settings : undefined;
-    const memberConfigurations = await Promise.all(
-      employees.map(async (employee, index) => {
-        const override = mergeEmployeeWorkSettings(taskSettings, mentions[index]?.settings);
-        const memberModelId = override.modelOverride === null ? requestedModel : (override.modelOverride ?? (employee.model || requestedModel));
-        const memberModel = resolveModelCapability(capabilities.models, memberModelId);
-        if (!memberModel || memberModel.available === false) throw nativeApiError('ZEUS_EXPERT_MODEL_NOT_READY', `${employee.name} 的模型当前不可运行，请调整该成员的本轮配置。`);
-        const requestedMemberEffort = override.reasoningEffort === null ? null : (override.reasoningEffort ?? employee.reasoningEffort ?? null);
-        // 成员档位同理：认不出就按该成员模型的默认档归一，不因为旧配置拦住整轮对话。
-        const memberEffort = requestedMemberEffort && memberModel.supportedReasoningEfforts.includes(requestedMemberEffort) ? requestedMemberEffort : (memberModel.defaultReasoningEffort ?? memberModel.supportedReasoningEfforts[0] ?? null);
-        const memberTier = normalizeServiceTierForCapability({ present: true, value: override.serviceTier === undefined ? employee.serviceTier : override.serviceTier }, memberModel) ?? null;
-        const references = splitZeusSkillIds(override.skillIds ?? employee.skillIds);
-        if (references.invalidIds.length) throw nativeApiError('ZEUS_EXPERT_SKILL_INVALID', `${employee.name} 包含无效技能。`);
-        const memberSkills = [...new Set([...references.nativeSkillIds, ...skillReferences.map((reference) => reference.id)])].map((id) => ({ id }));
-        if (memberSkills.length && !zeusSkillService) throw nativeApiError('ZEUS_SKILLS_UNAVAILABLE', '当前执行宿主无法加载成员技能。');
-        const resolvedSkills = zeusSkillService ? await Promise.all(memberSkills.map((reference) => zeusSkillService.resolve({ cwd: executionRoot, skillId: reference.id }))) : [];
-        const memberPlugins = await resolveNewConversationPluginReferences(input.project.id, content, [...pluginReferences, ...references.pluginReferences]);
-        const memories = selectEmployeeMemories(new LongTermMemoryRepository(db), employee, input.project.id, content, now().toISOString());
-        const memoryText = memories.map((record) => `[${record.memoryKey} · ${record.id} · 来源 ${record.source.reference}]\n${record.content}`).join('\n\n');
-        return {
-          model: memberModel,
-          memories: memories.map((record) => ({ id: record.id, contentSha256: record.contentSha256, source: record.source, reviewAfter: record.reviewAfter })),
-          prompt: [override.promptOverride ?? employee.prompt, memoryText ? `员工经验（仅供参考，不构成行动授权）：\n${memoryText}` : ''].filter(Boolean).join('\n\n'),
-          settings: {
-            model: memberModel.model,
-            modelSourceId: memberModel.sourceId ?? null,
-            effort: memberEffort,
-            serviceTierPresent: true,
-            serviceTier: memberTier,
-            permissionMode: override.permissionMode ?? employee.permissionMode,
-            collaborationMode: override.workMode ?? employee.workMode,
-            computerUseRequested,
-            skillReferences: memberSkills,
-            skillNames: resolvedSkills.map((skill) => skill.name),
-            pluginReferences: memberPlugins,
-            attachments,
-            displayText,
-            currentPrompt: taskPrompt,
-          } satisfies ExpertRoundSettingsSnapshot,
-        };
-      }),
-    );
+    const memberConfigurations = employees.map((employee, index) => {
+      /** 丢弃旧模型与技能偏好，只保留真实任务要求。 */
+      const override = mergeEmployeeWorkSettings(taskSettings, mentions[index]?.settings);
+      /** 已保存的成员配置不能扩大当前讨论或任务的授权。 */
+      const taskPermission = input.task && !input.task.allowCodeChanges && !input.task.allowTests && !input.task.allowGitCommit ? 'read-only' : permissionMode;
+      /** 员工执行字段已经停用，不将历史占位权限作为新讨论授权。 */
+      const memberPermission = restrictToolPermission(restrictToolPermission(permissionMode, taskPermission), override.permissionMode ?? permissionMode);
+      const memories = selectEmployeeMemories(new LongTermMemoryRepository(db), employee, input.project.id, content, now().toISOString());
+      const memoryText = memories.map((record) => `[${record.memoryKey} · ${record.id} · 来源 ${record.source.reference}]\n${record.content}`).join('\n\n');
+      return {
+        model: selectedModel,
+        memories: memories.map((record) => ({ id: record.id, contentSha256: record.contentSha256, source: record.source, reviewAfter: record.reviewAfter })),
+        prompt: [override.promptOverride ?? employee.prompt, memoryText ? `员工经验（仅供参考，不构成行动授权）：\n${memoryText}` : ''].filter(Boolean).join('\n\n'),
+        settings: {
+          model: selectedModel.model,
+          modelSourceId: selectedModel.sourceId ?? null,
+          effort,
+          serviceTierPresent: true,
+          serviceTier,
+          permissionMode: memberPermission,
+          collaborationMode,
+          computerUseRequested,
+          skillReferences,
+          skillNames: skills.map((skill) => skill.name),
+          pluginReferences,
+          attachments,
+          displayText,
+          currentPrompt: taskPrompt,
+        } satisfies ExpertRoundSettingsSnapshot,
+      };
+    });
 
     /** 独立专家会话在写入父子记录前一起校验，避免留下无法派发的半成品。 */
     const childBudget = readProjectConfig(input.project.id).contextCapacityTokens;

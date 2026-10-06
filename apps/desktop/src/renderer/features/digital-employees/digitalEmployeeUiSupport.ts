@@ -13,258 +13,54 @@ import type {
 
 export type DigitalEmployeeLanguage = 'zh-CN' | 'en-US';
 
+/** 全局员工只保存身份、提示词和个人经验偏好。 */
 export interface DigitalEmployeeTemplateDraft {
-  /** 经验读取默认值。 */
-  memoryEnabled?: boolean;
-  /** 默认允许源码修改。 */
-  allowCodeChanges: boolean;
-  /** 默认允许执行已有检查。 */
-  allowTests: boolean;
-  /** 本地提交默认授权。 */
-  allowCommit: boolean;
-  /** 推送默认授权。 */
-  allowPush: boolean;
-  /** 合并默认授权。 */
-  allowMerge: boolean;
-  /** 部署默认授权。 */
-  allowDeploy: boolean;
-  /** 完成任务默认授权。 */
-  allowComplete: boolean;
+  /** 员工显示名称。 */
   name: string;
+  /** 员工职责说明。 */
   description: string;
+  /** 员工岗位。 */
   role: string;
+  /** 员工业务领域。 */
   domain: string;
-  /** 草稿保存预置头像身份。 */
+  /** 预置头像身份。 */
   avatarId: DigitalEmployeeAvatarId | null;
-  skillIds: string[];
+  /** 员工通用提示词。 */
   prompt: string;
-  agentKind: 'codex' | 'pi';
-  model: string;
-  reasoningEffort: string;
-  serviceTier: string;
-  permissionMode: 'read-only' | 'auto' | 'full-access';
-  workMode: 'default' | 'plan';
-}
-
-export interface DigitalEmployeeDraft extends DigitalEmployeeTemplateDraft {
-  /** 独立保存项目专用要求，避免覆写全局通用提示词。 */
-  projectInstructions: string;
-  /** 个人经验读取偏好。 */
+  /** 是否读取个人经验。 */
   memoryEnabled?: boolean;
-  enabled: boolean;
-  autoClaim: boolean;
-  autonomousExploration: boolean;
-  managementStatuses: string;
-  taskTypes: string;
-  requiredTags: string;
-  allowCodeChanges: boolean;
-  allowTests: boolean;
-  allowCommit: boolean;
-  allowPush: boolean;
-  allowMerge: boolean;
-  allowDeploy: boolean;
-  allowComplete: boolean;
-  deployCommandId: string;
 }
 
-export interface DigitalEmployeeAutomationDraft {
-  employeeId: string;
-  name: string;
-  triggerKind: DigitalEmployeeAutomationTriggerKind;
-  actionKind: DigitalEmployeeAutomationActionKind;
-  runAt: string;
-  time: string;
-  weekday: string;
-  intervalMinutes: string;
-  taskId: string;
-  taskTitle: string;
-  taskDescription: string;
-  taskType: 'requirement' | 'defect' | 'optimization';
-  tags: string;
+/** 项目只维护工作补充要求与个人经验偏好。 */
+export interface DigitalEmployeeDraft {
+  /** 当前项目追加的工作要求。 */
+  projectInstructions: string;
+  /** 是否在当前项目读取员工经验。 */
+  memoryEnabled: boolean;
 }
 
-export const emptyTemplateDraft: DigitalEmployeeTemplateDraft = {
-  memoryEnabled: true,
-  allowCodeChanges: false,
-  allowTests: false,
-  allowCommit: false,
-  allowPush: false,
-  allowMerge: false,
-  allowDeploy: false,
-  allowComplete: false,
-  name: '',
-  description: '',
-  role: '',
-  domain: '',
-  avatarId: null,
-  skillIds: [],
-  prompt: '',
-  agentKind: 'codex',
-  model: '',
-  reasoningEffort: '',
-  serviceTier: '',
-  permissionMode: 'read-only',
-  workMode: 'default',
-};
+/** 新员工从空白身份与提示词开始，默认读取已确认经验。 */
+export const emptyTemplateDraft: DigitalEmployeeTemplateDraft = { memoryEnabled: true, name: '', description: '', role: '', domain: '', avatarId: null, prompt: '' };
 
-export const emptyAutomationDraft: DigitalEmployeeAutomationDraft = {
-  employeeId: '',
-  name: '',
-  triggerKind: 'daily',
-  actionKind: 'explore_project',
-  runAt: '',
-  time: '09:00',
-  weekday: '1',
-  intervalMinutes: '60',
-  taskId: '',
-  taskTitle: '',
-  taskDescription: '',
-  taskType: 'requirement',
-  tags: '数字员工',
-};
-
+/** 全局编辑仅复制身份与提示词，不带入历史执行配置。 */
 export function templateDraft(record?: DigitalEmployeeTemplateRecord | DigitalEmployeeRecord): DigitalEmployeeTemplateDraft {
   if (!record) return { ...emptyTemplateDraft };
-  return {
-    memoryEnabled: record.memoryEnabled !== false,
-    allowCodeChanges: record.allowCodeChanges === true,
-    allowTests: record.allowTests === true,
-    allowCommit: record.deliveryGrants?.allowCommit === true,
-    allowPush: record.deliveryGrants?.allowPush === true,
-    allowMerge: record.deliveryGrants?.allowMerge === true,
-    allowDeploy: record.deliveryGrants?.allowDeploy === true,
-    allowComplete: record.deliveryGrants?.allowComplete === true,
-    name: record.name,
-    description: record.description,
-    role: record.role,
-    domain: record.domain,
-    avatarId: record.avatarId ?? null,
-    skillIds: [...record.skillIds],
-    prompt: record.prompt,
-    agentKind: record.agentKind,
-    model: record.model ?? '',
-    reasoningEffort: record.reasoningEffort ?? '',
-    serviceTier: record.serviceTier ?? '',
-    permissionMode: record.permissionMode,
-    workMode: record.workMode,
-  };
+  return { memoryEnabled: record.memoryEnabled !== false, name: record.name, description: record.description, role: record.role, domain: record.domain, avatarId: record.avatarId ?? null, prompt: record.prompt };
 }
 
+/** 项目配置不再复制全局员工字段，避免保存时制造第二份配置。 */
 export function employeeDraft(record: DigitalEmployeeRecord): DigitalEmployeeDraft {
-  const agentEntrypoint = record.entrypoint?.kind === 'agent' ? record.entrypoint : null;
-  /** 编辑基础提示词时剥离系统追加的项目要求，分别保存两个字段。 */
-  const projectSuffix = record.projectInstructions?.trim() ? `\n\n## 当前项目要求\n${record.projectInstructions.trim()}` : '';
-  return {
-    ...templateDraft(record),
-    prompt: projectSuffix && record.prompt.endsWith(projectSuffix) ? record.prompt.slice(0, -projectSuffix.length) : record.prompt,
-    projectInstructions: record.projectInstructions ?? '',
-    skillIds: [...(agentEntrypoint?.skillPolicy.allowedSkillIds ?? record.skillIds)],
-    model: agentEntrypoint?.modelPolicy.defaultModel ?? record.model ?? '',
-    enabled: record.enabled,
-    autoClaim: record.autoClaim,
-    autonomousExploration: record.autonomousExploration,
-    memoryEnabled: record.memoryEnabled !== false,
-    managementStatuses: record.taskFilter.managementStatuses.join(', '),
-    taskTypes: record.taskFilter.taskTypes.join(', '),
-    requiredTags: record.taskFilter.requiredTags.join(', '),
-    allowCodeChanges: record.allowCodeChanges,
-    allowTests: record.allowTests,
-    allowCommit: record.deliveryGrants.allowCommit,
-    allowPush: record.deliveryGrants.allowPush,
-    allowMerge: record.deliveryGrants.allowMerge,
-    allowDeploy: record.deliveryGrants.allowDeploy,
-    allowComplete: record.deliveryGrants.allowComplete,
-    deployCommandId: record.deployCommandId ?? '',
-  };
+  return { projectInstructions: record.projectInstructions ?? '', memoryEnabled: record.memoryEnabled !== false };
 }
 
+/** 仅将全局身份、提示词与经验偏好发送给存储层。 */
 export function templateInput(draft: DigitalEmployeeTemplateDraft): DigitalEmployeeTemplateInput {
-  return {
-    memoryEnabled: draft.memoryEnabled !== false,
-    allowCodeChanges: draft.allowCodeChanges,
-    allowTests: draft.allowTests,
-    deliveryGrants: { allowCommit: draft.allowCommit, allowPush: draft.allowPush, allowMerge: draft.allowMerge, allowDeploy: draft.allowDeploy, allowComplete: draft.allowComplete },
-    name: draft.name.trim(),
-    description: draft.description.trim(),
-    role: draft.role.trim(),
-    domain: draft.domain.trim(),
-    avatarId: draft.avatarId,
-    skillIds: draft.skillIds,
-    prompt: draft.prompt.trim(),
-    agentKind: draft.agentKind,
-    model: nullable(draft.model),
-    reasoningEffort: nullable(draft.reasoningEffort),
-    serviceTier: nullable(draft.serviceTier),
-    permissionMode: draft.permissionMode,
-    workMode: draft.workMode,
-  };
+  return { memoryEnabled: draft.memoryEnabled !== false, name: draft.name.trim(), description: draft.description.trim(), role: draft.role.trim(), domain: draft.domain.trim(), avatarId: draft.avatarId, prompt: draft.prompt.trim() };
 }
 
-export function employeeInput(draft: DigitalEmployeeDraft): DigitalEmployeeInput {
-  const authorityPolicy = {
-    permissionMode: draft.permissionMode,
-    allowCodeChanges: draft.allowCodeChanges,
-    allowTests: draft.allowTests,
-    allowCommit: draft.allowCommit,
-    allowPush: draft.allowPush,
-    allowMerge: draft.allowMerge,
-    allowDeploy: draft.allowDeploy,
-    allowComplete: draft.allowComplete,
-  } as const;
-  return {
-    ...templateInput(draft),
-    projectInstructions: draft.projectInstructions.trim(),
-    skillIds: draft.skillIds,
-    enabled: draft.enabled,
-    autoClaim: draft.autoClaim,
-    autonomousExploration: draft.autonomousExploration,
-    memoryEnabled: draft.memoryEnabled !== false,
-    taskFilter: {
-      managementStatuses: splitList(draft.managementStatuses),
-      taskTypes: splitList(draft.taskTypes),
-      requiredTags: splitList(draft.requiredTags),
-    },
-    allowCodeChanges: draft.allowCodeChanges,
-    allowTests: draft.allowTests,
-    deliveryGrants: {
-      allowCommit: draft.allowCommit,
-      allowPush: draft.allowPush,
-      allowMerge: draft.allowMerge,
-      allowDeploy: draft.allowDeploy,
-      allowComplete: draft.allowComplete,
-    },
-    deployCommandId: draft.allowDeploy ? nullable(draft.deployCommandId) : null,
-    entrypoint: {
-      kind: 'agent',
-      prompt: draft.prompt.trim(),
-      agentKind: draft.agentKind,
-      modelPolicy: {
-        defaultMode: draft.model.trim() ? 'explicit' : 'project',
-        defaultModel: nullable(draft.model),
-        allowedModels: [],
-        allowedReasoningEfforts: [],
-        allowedServiceTiers: [],
-      },
-      skillPolicy: { allowedSkillIds: draft.skillIds },
-      authorityPolicy,
-    },
-  };
-}
-
-export function splitList(value: string): string[] {
-  return [
-    ...new Set(
-      value
-        .split(/[\n,，]/u)
-        .map((entry) => entry.trim())
-        .filter(Boolean),
-    ),
-  ];
-}
-
-export function nullable(value: string): string | null {
-  const normalized = value.trim();
-  return normalized ? normalized : null;
+/** 项目保存只更新补充要求与经验偏好。 */
+export function employeeInput(draft: DigitalEmployeeDraft): Partial<DigitalEmployeeInput> {
+  return { projectInstructions: draft.projectInstructions.trim(), memoryEnabled: draft.memoryEnabled };
 }
 
 /** 显示当前语言的原因，并保留可展开的原始详情。 */
@@ -347,45 +143,4 @@ export function actionLabel(action: DigitalEmployeeAutomationActionKind, languag
     explore_project: 'Explore project read-only',
   };
   return (language === 'zh-CN' ? zh : en)[action];
-}
-
-export function localDateTimeToIso(value: string): string {
-  const timestamp = new Date(value);
-  return Number.isNaN(timestamp.getTime()) ? '' : timestamp.toISOString();
-}
-
-export function automationTriggerConfig(draft: DigitalEmployeeAutomationDraft): Record<string, unknown> {
-  if (draft.triggerKind === 'once') return { runAt: localDateTimeToIso(draft.runAt) };
-  if (draft.triggerKind === 'interval') return { intervalMinutes: Number(draft.intervalMinutes) };
-  if (draft.triggerKind === 'daily' || draft.triggerKind === 'weekly') {
-    const [hour = '9', minute = '0'] = draft.time.split(':');
-    return {
-      hour: Number.parseInt(hour, 10),
-      minute: Number.parseInt(minute, 10),
-      ...(draft.triggerKind === 'weekly' ? { weekday: Number.parseInt(draft.weekday, 10) } : {}),
-    };
-  }
-  if (draft.triggerKind === 'task_created' || draft.triggerKind === 'task_updated' || draft.triggerKind === 'task_status_changed') {
-    return { ignoreAutomationCreated: true };
-  }
-  return {};
-}
-
-export function automationActionConfig(draft: DigitalEmployeeAutomationDraft): Record<string, unknown> {
-  if (draft.actionKind === 'assign_task') {
-    const eventTrigger = draft.triggerKind === 'task_created' || draft.triggerKind === 'task_updated' || draft.triggerKind === 'task_status_changed' || draft.triggerKind === 'code_changed';
-    return {
-      useEventTask: eventTrigger,
-      ...(draft.taskId.trim() ? { taskId: draft.taskId.trim() } : {}),
-    };
-  }
-  if (draft.actionKind === 'create_and_assign_task') {
-    return {
-      title: draft.taskTitle.trim(),
-      description: draft.taskDescription.trim(),
-      taskType: draft.taskType,
-      tags: splitList(draft.tags),
-    };
-  }
-  return {};
 }

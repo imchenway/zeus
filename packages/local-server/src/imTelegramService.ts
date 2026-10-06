@@ -15,7 +15,6 @@ import {
   type ImTelegramConnectionCreated,
   type ImTelegramConnectionLogEntry,
   parseCanonicalRequestUserInputQuestions,
-  splitZeusSkillIds,
 } from '@zeus/shared';
 import {
   type DigitalEmployeeRecord,
@@ -287,7 +286,7 @@ export class ImTelegramService {
         { ref: { kind: 'zeus_default', digitalEmployeeId: null }, name: this.text('使用 Zeus 默认配置', 'Use Zeus defaults') },
         ...this.options.digitalEmployees
           .listByProject(project.id)
-          .filter((employee) => employee.enabled && employee.agentKind === 'codex')
+          .filter((employee) => employee.enabled)
           .map((employee) => ({ ref: { kind: 'digital_employee' as const, digitalEmployeeId: employee.id }, name: employee.name })),
       ],
     }));
@@ -1861,30 +1860,29 @@ export class ImTelegramService {
     };
   }
 
+  /** 预设只选择员工的身份与工作要求，执行配置统一沿用 Zeus 默认。 */
   private resolvePreset(projectId: string, ref: ImAgentPresetRef, connectionId?: string): ImTelegramPresetSnapshot {
-    if (ref.kind === 'zeus_default') {
-      return { ref, name: this.text('使用 Zeus 默认配置', 'Use Zeus defaults'), agentKind: 'codex', model: null, reasoningEffort: null, permissionMode: 'auto', workMode: 'default', prompt: '', skillId: null, pluginReferences: [] };
-    }
+    /** 员工历史执行字段不再影响新接入、会话或任务推送。 */
+    const preset: ImTelegramPresetSnapshot = {
+      ref,
+      name: this.text('使用 Zeus 默认配置', 'Use Zeus defaults'),
+      agentKind: 'codex',
+      model: null,
+      reasoningEffort: null,
+      permissionMode: 'auto',
+      workMode: 'default',
+      prompt: '',
+      skillId: null,
+      pluginReferences: [],
+    };
+    if (ref.kind === 'zeus_default') return preset;
+    /** 项目身份和启用状态仍然决定该员工能否接收消息。 */
     const employee = this.options.digitalEmployees.getById(ref.digitalEmployeeId);
     if (!employee || employee.projectId !== projectId || !employee.enabled) {
       if (connectionId) this.options.repository.markPresetUnavailable(connectionId, this.nowIso());
       throw imError('ZEUS_IM_AGENT_PRESET_UNAVAILABLE', '绑定的数字员工已停用、删除或不属于该项目，请在 Zeus 桌面端重新选择。', 409);
     }
-    if (employee.agentKind !== 'codex') throw imError('ZEUS_IM_AGENT_PRESET_UNAVAILABLE', '项目普通会话当前只支持 Codex 数字员工，请重新选择。', 409);
-    const skillSelection = splitZeusSkillIds(employee.skillIds);
-    if (skillSelection.invalidIds.length > 0) throw imError('ZEUS_IM_AGENT_PRESET_UNAVAILABLE', '数字员工包含无效的 Skill 配置，请在 Zeus 桌面端重新保存。', 409);
-    return {
-      ref,
-      name: employee.name,
-      agentKind: employee.agentKind,
-      model: employee.model,
-      reasoningEffort: employee.reasoningEffort,
-      permissionMode: employee.permissionMode,
-      workMode: employee.workMode,
-      prompt: employee.prompt,
-      skillId: skillSelection.nativeSkillIds[0] ?? null,
-      pluginReferences: skillSelection.pluginReferences,
-    };
+    return { ...preset, name: employee.name, prompt: employee.prompt };
   }
 
   private toConnectionSnapshot(record: ImConnectionRecord): ImConnectionSnapshot | null {

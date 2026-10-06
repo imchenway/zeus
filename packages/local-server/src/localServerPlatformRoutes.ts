@@ -3526,7 +3526,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     isAutomationMigrated: (automationId) => Boolean(automationTasks.getById(automationId)),
     executions: digitalEmployeeExecutions,
     projectEvents: digitalEmployeeProjectEvents,
-    commandDefinitions: digitalEmployeeCommandDefinitions,
     stages: taskStages,
     conversations,
     taskStageApplication,
@@ -3734,7 +3733,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
             ? 'create'
             : (snapshot.action.taskSelection ?? (snapshot.action.taskId ? 'specified' : snapshot.action.useEventTask !== false && run.sourceEvent?.projectId === project.id ? 'event' : 'create'));
         /** 任务池为空明确跳过，不创建替代任务。 */
-        const pooledTask = selection === 'pool' ? digitalEmployeeOrchestrator.selectEligibleAutomationTask(project.id, employee.id) : null;
+        const pooledTask = selection === 'pool' ? digitalEmployeeOrchestrator.selectEligibleAutomationTask(project.id, employee.id, undefined, snapshot.action.taskFilter) : null;
         if (selection === 'pool' && !pooledTask) return null;
         /** 目标身份在接纳前冻结，重启不能另选一条任务。 */
         const taskId =
@@ -3752,7 +3751,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         const task = tasks.getById(taskId);
         if (selection !== 'create' && (!task || task.projectId !== project.id)) throw nativeApiError('ZEUS_AUTOMATION_TASK_SCOPE', '自动化目标任务不属于已选择项目。');
         if (task && taskManagementStatusIsTerminal(task)) throw nativeApiError('ZEUS_AUTOMATION_TASK_TERMINAL', '目标任务已经结束，过期事件不重新执行。');
-        if (selection !== 'create' && !digitalEmployeeOrchestrator.selectEligibleAutomationTask(project.id, employee.id, taskId)) return null;
+        if (selection !== 'create' && !digitalEmployeeOrchestrator.selectEligibleAutomationTask(project.id, employee.id, taskId, snapshot.action.taskFilter)) return null;
         return { taskId, employeeId: employee.id };
       },
       dispatchAction: async ({ run, snapshot, project, target }) => {
@@ -3776,9 +3775,11 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
               taskType: 'requirement',
               description: snapshot.prompt,
               sourceContext: { type: 'automation', automationId: run.automationId, automationRunId: run.id, suppressAutomation: true },
-              allowCodeChanges: snapshot.action.kind === 'project_task' && snapshot.permissionMode === 'full-access' && employee.allowCodeChanges,
-              allowTests: employee.allowTests && snapshot.permissionMode !== 'read-only',
-              allowGitCommit: snapshot.action.kind === 'project_task' && snapshot.permissionMode === 'full-access' && employee.deliveryGrants.allowCommit,
+              /** 新建任务沿用本条自动化的明确模式，不再叠加员工动作开关。 */
+              allowCodeChanges: snapshot.action.kind === 'project_task' && snapshot.permissionMode === 'full-access',
+              allowTests: snapshot.permissionMode !== 'read-only',
+              /** 项目任务自动化的持续授权明确包含本地提交，调度器在派发前核对冻结修订的授权。 */
+              allowGitCommit: snapshot.action.kind === 'project_task' && snapshot.permissionMode === 'full-access',
             },
             taskId,
             { commandId: `automation-work:${run.id}:${project.id}`, operationIdentity: `automation-work:${run.id}:${project.id}`, actor: { kind: 'system', id: 'automation-scheduler' } },
@@ -3787,6 +3788,10 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         }
         if (task.projectId !== project.id) throw nativeApiError('ZEUS_AUTOMATION_TASK_SCOPE', '已冻结的自动化目标不属于当前项目。');
         if (taskManagementStatusIsTerminal(task)) throw nativeApiError('ZEUS_AUTOMATION_TASK_TERMINAL', '目标任务已经结束，过期事件不重新执行。');
+        /** 创建任务保存会让出控制权，真正接纳工作前再次核对原修订授权。 */
+        const authorizationRevision = automationTasks.getRevision(run.automationRevisionId);
+        if (snapshot.permissionMode === 'full-access' && (!authorizationRevision || !automationTasks.hasFullAccessGrant(run.automationId, authorizationRevision.revision)))
+          throw nativeApiError('ZEUS_AUTOMATION_PERMISSION_GRANT_REQUIRED', '原运行的完全访问授权已失效，请重新保存授权后运行。');
         /** 项目任务复用项目流程；员工调研仍保留独立工作。 */
         const reference = await digitalEmployeeOrchestrator.queueAutomatedAssignment({
           projectId: project.id,

@@ -1,5 +1,5 @@
 import { formatVisibleApplicationError, modelSetupRequestedEvent } from '../../ui/ApplicationErrorDialog.js';
-import { useCallback, useMemo, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useMemo, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { cloneTaskManagementStatusConfig, type TaskManagementStatusConfig } from '@zeus/shared';
 import { notifyMainAppShellSettingsChanged, recordManualUpdateCheckInMain } from '../../appShellBridge.js';
 import { ConnectedSessionWorkspace, SessionWorkspace, NewConversationComposer, type NewConversationDraftStore } from '../../session/SessionWorkspace.js';
@@ -226,8 +226,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     visibleTasks,
     workspaceScrollRef,
   } = state;
-  /** 讨论成员配置读取同一任务安排，避免展示员工默认却实际使用任务覆盖。 */
-  const loadTaskWorkSettings = useCallback(async (taskId: string) => (await props.commandClient?.loadTaskWorkManagement(taskId))?.plan?.settings ?? {}, [props.commandClient]);
   // 返回新会话只重新聚焦输入框；未发送草稿随工作区保留，由发送成功负责清理。
   const [newConversationDrafts] = useState<NewConversationDraftStore>(() => new Map());
   const sessionTerminalClient = useMemo<SessionTerminalClient | undefined>(() => {
@@ -1830,7 +1828,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           onStartProjectConversation={startProjectConversation}
           onLoadSkills={props.nativeConversationClient.loadSkills}
           onLoadDigitalEmployees={props.commandClient?.loadProjectDigitalEmployees}
-          onLoadTaskWorkSettings={loadTaskWorkSettings}
           onOpenAiSettings={(section) => {
             window.dispatchEvent(new CustomEvent(modelSetupRequestedEvent, { detail: section === 'runtime' ? 'codex' : 'choose' }));
           }}
@@ -1901,7 +1898,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           onStartProjectConversation={startProjectConversation}
           onLoadSkills={props.nativeConversationClient.loadSkills}
           onLoadDigitalEmployees={props.commandClient?.loadProjectDigitalEmployees}
-          onLoadTaskWorkSettings={loadTaskWorkSettings}
           onOpenAiSettings={(section) => {
             window.dispatchEvent(new CustomEvent(modelSetupRequestedEvent, { detail: section === 'runtime' ? 'codex' : 'choose' }));
           }}
@@ -1963,7 +1959,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           onLoadCapabilities: props.nativeConversationClient?.loadCodexConversationCapabilities,
           onLoadSkills: props.nativeConversationClient?.loadSkills,
           onLoadDigitalEmployees: props.commandClient?.loadProjectDigitalEmployees,
-          onLoadTaskWorkSettings: loadTaskWorkSettings,
           onOpenAiSettings: (section) => {
             window.dispatchEvent(new CustomEvent(modelSetupRequestedEvent, { detail: section === 'runtime' ? 'codex' : 'choose' }));
           },
@@ -2020,7 +2015,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
         }}
         digitalTeamClient={props.commandClient ?? null}
         digitalEmployeeClient={props.commandClient ?? null}
-        digitalEmployeeSkillClient={props.nativeConversationClient ?? null}
         conversations={taskDetailPaneConversations}
         conversationsLoading={taskDetailPaneConversationState?.status === 'loading' && !taskDetailPaneConversationState.choicesKnown}
         conversationsError={taskDetailPaneConversationState?.status === 'error' ? taskDetailPaneConversationState.error : null}
@@ -2061,7 +2055,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
               onLoadCapabilities={props.nativeConversationClient.loadCodexConversationCapabilities}
               onLoadSkills={props.nativeConversationClient.loadSkills}
               onLoadDigitalEmployees={props.commandClient?.loadProjectDigitalEmployees}
-              onLoadTaskWorkSettings={loadTaskWorkSettings}
               onChooseAttachments={props.onChooseConversationResources ? chooseNativeConversationAttachments : undefined}
               onOpenComputerSettings={() => {
                 setSettingsCategory('browser');

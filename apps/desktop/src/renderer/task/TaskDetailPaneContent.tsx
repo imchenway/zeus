@@ -23,7 +23,7 @@ import { clipboardNeedsResourceRead, clipboardTextAfterResources, dataTransferFi
 import type { PendingResourceCardItem } from '../ui/PendingResourceCards.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
-import { TaskDigitalEmployeeExecutor, TaskDigitalEmployeePanel, useTaskDigitalEmployeeManagement, type TaskDigitalEmployeeSkillClient } from '../features/digital-employees/TaskDigitalEmployeePanel.js';
+import { TaskDigitalEmployeeExecutor, TaskDigitalEmployeePanel, useTaskDigitalEmployeeManagement } from '../features/digital-employees/TaskDigitalEmployeePanel.js';
 import type { DigitalEmployeeApiClient } from '../features/digital-employees/digitalEmployeeApiClient.js';
 import type { DigitalTeamApiClient } from '../features/digital-teams/digitalTeamApiClient.js';
 import type { DigitalTeamEntrySelection } from '../features/digital-teams/DigitalTeamWorkspace.js';
@@ -96,7 +96,6 @@ export interface TaskDetailPaneContentProps {
   busy: boolean;
   terminalReadOnly: boolean;
   digitalEmployeeClient?: DigitalEmployeeApiClient | null;
-  digitalEmployeeSkillClient?: TaskDigitalEmployeeSkillClient | null;
   conversations?: NativeConversationChoice[];
   conversationsLoading?: boolean;
   conversationsError?: string | null;
@@ -1450,7 +1449,6 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             projectId={props.task.projectId}
             terminalReadOnly={props.terminalReadOnly}
             client={props.digitalEmployeeClient ?? null}
-            skillClient={props.digitalEmployeeSkillClient ?? null}
             language={props.language}
             management={digitalEmployeeManagement}
             onManageEmployees={props.onManageEmployees}
@@ -1469,7 +1467,6 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         <div className="task-detail-main">
           <TaskDigitalEmployeePanel
             onArrangeTeam={props.onUseDigitalTeam ? () => props.onUseDigitalTeam!({ kind: 'manage' }) : undefined}
-            skillClient={props.digitalEmployeeSkillClient ?? null}
             key={props.task.id}
             taskId={props.task.id}
             projectId={props.task.projectId}

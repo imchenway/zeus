@@ -93,6 +93,8 @@ export interface DigitalEmployeeTaskFilter {
 }
 
 export interface DigitalEmployeeRecord extends Omit<DigitalEmployeeTemplateRecord, 'builtIn'> {
+  /** 未确认的旧项目身份与提示词，仅供展示与明确迁移。 */
+  legacyConfiguration?: Partial<Pick<DigitalEmployeeTemplateRecord, 'name' | 'description' | 'role' | 'domain' | 'avatarId' | 'prompt'>> | null;
   /** 跨项目员工身份，历史仅项目员工保留为空。 */
   globalEmployeeId?: string | null;
   /** 当前项目明确设置的配置差异。 */
@@ -182,26 +184,13 @@ export interface DigitalEmployeeStageDecisionInput {
 export interface DigitalEmployeeTemplateInput {
   /** 默认经验读取偏好。 */
   memoryEnabled?: boolean;
-  /** 默认源码修改能力。 */
-  allowCodeChanges?: boolean;
-  /** 默认执行检查能力。 */
-  allowTests?: boolean;
-  /** 默认独立交付授权。 */
-  deliveryGrants?: Partial<DigitalEmployeeDeliveryGrants>;
   name: string;
   description?: string;
   role: string;
   domain?: string;
   /** 预置头像的稳定身份。 */
   avatarId?: DigitalEmployeeAvatarId | null;
-  skillIds?: string[];
   prompt: string;
-  agentKind?: DigitalEmployeeAgentKind;
-  model?: string | null;
-  reasoningEffort?: string | null;
-  serviceTier?: string | null;
-  permissionMode?: DigitalEmployeePermissionMode;
-  workMode?: DigitalEmployeeWorkMode;
 }
 
 export interface DigitalEmployeeCapabilitiesSnapshot {
@@ -224,15 +213,6 @@ export interface DigitalEmployeeInput extends DigitalEmployeeTemplateInput {
   /** 是否读取个人经验。 */
   memoryEnabled?: boolean;
   enabled?: boolean;
-  autoClaim?: boolean;
-  autonomousExploration?: boolean;
-  maxConcurrency?: number;
-  taskFilter?: Partial<DigitalEmployeeTaskFilter>;
-  allowCodeChanges?: boolean;
-  allowTests?: boolean;
-  deliveryGrants?: Partial<DigitalEmployeeDeliveryGrants>;
-  deployCommandId?: string | null;
-  entrypoint?: AgentEntrypointV2 | null;
 }
 
 export type TaskWorkItemStatus = 'queued' | 'active' | 'waiting_manager' | 'completed' | 'blocked' | 'failed' | 'cancelled';

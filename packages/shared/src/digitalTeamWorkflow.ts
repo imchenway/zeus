@@ -819,7 +819,18 @@ function validateLegacyDigitalTeamWorkflowDefinition(value: Record<string, unkno
 
 /** 把旧技术流程折叠为员工分工依赖；当前定义只补齐新字段，不增加隐藏节点。 */
 export function normalizeDigitalTeamWorkflowDefinition(definition: DigitalTeamWorkflowDefinition): DigitalTeamWorkflowDefinition {
-  if (!isRecord(definition) || !Array.isArray(definition.nodes) || !Array.isArray(definition.edges) || definition.nodes.some((node) => !isNode(node)) || definition.edges.some((edge) => !isEdge(edge))) return definition;
+  if (!isRecord(definition) || !Array.isArray(definition.nodes) || !Array.isArray(definition.edges)) return definition;
+  /** 表单允许空白行；只清理受限的纯文本列表，错误类型仍交给正式校验拒绝。 */
+  definition = structuredClone(definition);
+  for (const node of definition.nodes) {
+    if (!isRecord(node) || node.type !== 'employee' || !isRecord(node.data)) continue;
+    for (const key of ['acceptanceCriteria', 'expectedDeliverables', 'verificationCommands'] as const) {
+      /** 在原有长度限制内归一化，不能用空白项绕过列表上限。 */
+      const values = node.data[key];
+      if (Array.isArray(values) && values.length <= (key === 'verificationCommands' ? 16 : 32) && values.every((value) => typeof value === 'string')) node.data[key] = values.map((value) => value.trim()).filter(Boolean);
+    }
+  }
+  if (definition.nodes.some((node) => !isNode(node)) || definition.edges.some((edge) => !isEdge(edge))) return definition;
   const employeeNodes = definition.nodes.filter((node): node is DigitalTeamEmployeeNode => node.type === 'employee');
   if (definition.schemaGeneration === digitalTeamWorkflowSchemaGeneration && employeeNodes.length === definition.nodes.length) {
     return { ...structuredClone(definition), nodes: employeeNodes.map((node) => normalizeEmployeeNode(node)) };
@@ -1003,6 +1014,9 @@ function normalizeEmployeeNode(node: DigitalTeamEmployeeNode): DigitalTeamEmploy
   const acceptanceCriteria = node.data.acceptanceCriteria?.map((item) => item.trim()).filter(Boolean) ?? [];
   /** 交付物同样只作为运行协议默认值存在。 */
   const expectedDeliverables = node.data.expectedDeliverables?.map((item) => item.trim()).filter(Boolean) ?? [];
+  /** 新流程不再保存逐节点的模型与技能副本；历史运行读取原冻结定义，不经过此边界。 */
+  const settings = node.data.settings ? structuredClone(node.data.settings) : undefined;
+  if (settings) for (const key of ['modelOverride', 'reasoningEffort', 'serviceTier', 'workMode', 'skillIds']) delete (settings as Record<string, unknown>)[key];
   return {
     ...structuredClone(node),
     type: 'employee',
@@ -1010,6 +1024,7 @@ function normalizeEmployeeNode(node: DigitalTeamEmployeeNode): DigitalTeamEmploy
       ...structuredClone(node.data),
       purpose: node.data.purpose,
       executionMode,
+      settings: settings && Object.keys(settings).length ? settings : undefined,
       instructions: node.data.instructions.trim() || '根据当前任务目标和数字员工职责完成工作，并提交可核对结果。',
       acceptanceCriteria: acceptanceCriteria.length ? acceptanceCriteria : [`完成“${node.data.title}”并提交可核对结果`],
       expectedDeliverables: expectedDeliverables.length ? expectedDeliverables : [executionMode === 'isolated_write' ? '代码变更与验证证据' : '可核对的工作成果'],

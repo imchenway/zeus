@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { AutomationExecutionReference } from '@zeus/shared';
+import type { AutomationActionConfig, AutomationExecutionReference } from '@zeus/shared';
 import type { ZeusDatabasePort } from './databasePort.js';
 import { AutomationTaskRepository } from './automationStore.js';
 import { DigitalEmployeeRepository } from './digitalEmployeeStore.js';
@@ -40,6 +40,8 @@ export function migrateEmployeeAutomationsToUnified(db: ZeusDatabasePort): void 
     }
     const trigger = JSON.parse(legacy.trigger_config_json) as Record<string, unknown>;
     const action = JSON.parse(legacy.action_config_json) as Record<string, unknown>;
+    /** 旧授权及筛选从原行读取，不能由当前统一默认重写。 */
+    const legacyConfig = db.get<{ permission_mode: 'read-only' | 'auto' | 'full-access'; task_filter_json: string }>('SELECT permission_mode, task_filter_json FROM digital_employees WHERE id = ?', [legacy.employee_id])!;
     /** 领取原任务与新建任务必须保留为不同目标策略。 */
     const taskSelection =
       legacy.action_kind !== 'assign_task'
@@ -69,9 +71,13 @@ export function migrateEmployeeAutomationsToUnified(db: ZeusDatabasePort): void 
           db.transaction(() => {
             /** 保留已有同范围授权，更正策略不扩大执行权限。 */
             const granted = tasks.hasFullAccessGrant(existing.id, existing.revision);
-            const corrected = tasks.update(existing.id, { expectedRevision: existing.revision, action: { ...existing.action, taskSelection } });
+            const corrected = tasks.update(existing.id, {
+              expectedRevision: existing.revision,
+              action: { ...existing.action, taskSelection, taskFilter: existing.action.taskFilter ?? (JSON.parse(legacyConfig.task_filter_json) as NonNullable<AutomationActionConfig['taskFilter']>) },
+            });
             if (granted) tasks.setFullAccessGrant(corrected.id, corrected.revision, true);
-            tasks.setMigrationIssue(existing.id, null);
+            /** 更正任务策略不能抹掉另行要求重新授权的说明。 */
+            if (existing.migrationIssue && existing.migrationIssue !== '旧自动化的目标选择需要核对，请明确选择领取已有任务或创建新任务后保存。') tasks.setMigrationIssue(existing.id, existing.migrationIssue);
           });
         } else tasks.setMigrationIssue(existing.id, '旧自动化的目标选择需要核对，请明确选择领取已有任务或创建新任务后保存。');
       }
@@ -89,11 +95,13 @@ export function migrateEmployeeAutomationsToUnified(db: ZeusDatabasePort): void 
         prompt: typeof action.description === 'string' && action.description.trim() ? action.description : employee.prompt,
         modelSourceId: 'codex',
         modelId: employee.model ?? 'employee-default',
-        permissionMode: employee.permissionMode,
+        permissionMode: legacyConfig.permission_mode,
         action: {
           kind: legacy.action_kind === 'explore_project' ? 'employee_work' : 'project_task',
           taskSelection,
           employeeId: employee.globalEmployeeId ?? employee.id,
+          /** 原任务筛选从历史行冻结，不能依赖已经收敛的员工投影。 */
+          taskFilter: JSON.parse(legacyConfig.task_filter_json) as NonNullable<AutomationActionConfig['taskFilter']>,
           taskId: typeof action.taskId === 'string' ? action.taskId : null,
           title: typeof action.title === 'string' ? action.title : legacy.name,
           useEventTask: action.useEventTask === true,
@@ -111,7 +119,11 @@ export function migrateEmployeeAutomationsToUnified(db: ZeusDatabasePort): void 
       /** 原到期点原样保留，已消费游标不会回到零。 */
       tasks.setNextRun(migrated.id, legacy.next_run_at, legacy.last_triggered_at ?? undefined);
       tasks.setEventCursor(migrated.id, legacy.project_id, legacy.cursor_sequence, true);
-      if (employee.permissionMode === 'full-access') tasks.setFullAccessGrant(migrated.id, migrated.revision, true);
+      if (legacyConfig.permission_mode === 'full-access') {
+        /** 旧员工授权不能替代新增本地提交语义的明确确认。 */
+        if (migrated.action.kind === 'project_task' && taskSelection === 'create') tasks.setMigrationIssue(migrated.id, '旧规则的完全访问确认未包含新建任务的本地提交，请核对任务策略并重新保存授权。');
+        else tasks.setFullAccessGrant(migrated.id, migrated.revision, true);
+      }
       if (!legacy.enabled) tasks.setStatus(migrated.id, 'paused');
       for (const receipt of db.select<{ event_identity: string; execution_id: string | null; created_at: string }>('SELECT event_identity, execution_id, created_at FROM digital_employee_event_receipts WHERE automation_id = ?', [
         legacy.id,
@@ -223,4 +235,89 @@ export function migrateEmployeeAutomationsToUnified(db: ZeusDatabasePort): void 
   for (const task of tasks.list().filter((task) => task.id.startsWith('digital_employee_automation_') && task.action.kind === 'project_task' && !task.action.taskSelection)) {
     if (!db.get('SELECT id FROM digital_employee_automations WHERE id = ? AND deleted_at IS NULL', [task.id])) tasks.setMigrationIssue(task.id, '原员工自动化来源已不可用，请明确核对目标选择后保存。');
   }
+  migrateEmployeeWorkRules(db);
+}
+
+/** 员工后台领取及筛选一次移交为可见规则，后续只由自动化调度。 */
+function migrateEmployeeWorkRules(db: ZeusDatabasePort): void {
+  /** 迁移只消费数据库原字段，现行员工投影不得抹掉旧事实。 */
+  const migrationId = '20261006_0782_employee_work_rules';
+  if (db.get('SELECT migration_id FROM schema_migrations WHERE migration_id = ?', [migrationId])) return;
+  db.transaction(() => {
+    /** 员工原配置只读，旧执行快照不改写。 */
+    const employees = db.select<{
+      id: string;
+      global_employee_id: string | null;
+      project_id: string;
+      name: string;
+      prompt: string;
+      enabled: number;
+      auto_claim: number;
+      autonomous_exploration: number;
+      permission_mode: 'read-only' | 'auto' | 'full-access';
+      task_filter_json: string;
+    }>('SELECT id, global_employee_id, project_id, name, prompt, enabled, auto_claim, autonomous_exploration, permission_mode, task_filter_json FROM digital_employees WHERE deleted_at IS NULL');
+    /** 现有自动化保留运行计划、事件游标与合法运维设置。 */
+    const tasks = new AutomationTaskRepository(db);
+    for (const task of tasks.list().filter((entry) => entry.action.kind === 'project_task' && !entry.action.taskFilter)) {
+      /** 同一多项目规则只能接纳一致的旧筛选，差异必须由用户拆分。 */
+      const projectIds = tasks.listTargets(task.id).map((target) => target.projectId);
+      const filters = employees
+        .filter((employee) => projectIds.includes(employee.project_id) && (employee.id === task.action.employeeId || employee.global_employee_id === task.action.employeeId))
+        .map((employee) => JSON.parse(employee.task_filter_json) as NonNullable<AutomationActionConfig['taskFilter']>);
+      if (new Set(filters.map((filter) => JSON.stringify(filter))).size > 1) {
+        tasks.setMigrationIssue(task.id, '原项目员工使用不同任务筛选，请按项目拆分规则后保存。');
+        continue;
+      }
+      const granted = tasks.hasFullAccessGrant(task.id, task.revision);
+      const updated = tasks.update(task.id, { expectedRevision: task.revision, action: { ...task.action, taskFilter: filters[0] ?? { managementStatuses: [], taskTypes: [], requiredTags: [] } } });
+      if (granted) tasks.setFullAccessGrant(task.id, updated.revision, true);
+      if (task.migrationIssue) tasks.setMigrationIssue(task.id, task.migrationIssue);
+    }
+    for (const employee of employees) {
+      /** ponytail: 沿用最小一分钟间隔并立即首轮领取，确需秒级再扩展触发器。 */
+      const claimId = `automation_employee_claim_${employee.id}`;
+      if (employee.auto_claim === 1 && !db.get('SELECT id FROM automation_tasks WHERE id = ?', [claimId])) {
+        const task = tasks.create({
+          id: claimId,
+          name: `${employee.name} · 领取任务`,
+          prompt: employee.prompt,
+          projectIds: [employee.project_id],
+          permissionMode: employee.permission_mode,
+          action: { kind: 'project_task', employeeId: employee.global_employee_id ?? employee.id, taskSelection: 'pool', taskFilter: JSON.parse(employee.task_filter_json) as NonNullable<AutomationActionConfig['taskFilter']> },
+          triggerKind: 'interval',
+          triggerConfig: { everyMinutes: 1 },
+        });
+        tasks.setNextRun(task.id, new Date().toISOString());
+        if (employee.permission_mode === 'full-access') tasks.setFullAccessGrant(task.id, task.revision, true);
+        if (employee.enabled !== 1) tasks.setStatus(task.id, 'paused');
+      }
+      /** 只有开关没有触发安排的探索保留为暂停规则，不凭空启动新工作。 */
+      const explorationId = `automation_employee_exploration_${employee.id}`;
+      if (
+        employee.autonomous_exploration === 1 &&
+        !db.get('SELECT id FROM automation_tasks WHERE id = ?', [explorationId]) &&
+        !tasks
+          .list()
+          .some((task) => task.action.kind === 'employee_work' && [employee.id, employee.global_employee_id].includes(task.action.employeeId) && tasks.listTargets(task.id).some((target) => target.projectId === employee.project_id))
+      ) {
+        const task = tasks.create({
+          id: explorationId,
+          name: `${employee.name} · 自主探索`,
+          prompt: employee.prompt,
+          projectIds: [employee.project_id],
+          permissionMode: 'read-only',
+          action: { kind: 'employee_work', employeeId: employee.global_employee_id ?? employee.id },
+          triggerKind: 'manual',
+        });
+        tasks.setMigrationIssue(task.id, '原自主探索只有开关，请配置明确的触发安排后启用。');
+      }
+    }
+    db.execute('INSERT INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)', [
+      migrationId,
+      '员工领取与筛选统一交给自动化规则',
+      `sha256:${createHash('sha256').update(migrationId).digest('hex')}`,
+      new Date().toISOString(),
+    ]);
+  });
 }
