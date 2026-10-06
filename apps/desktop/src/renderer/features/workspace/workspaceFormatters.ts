@@ -2,7 +2,7 @@ import { defaultTaskManagementStatusConfig, normalizeTaskManagementStatusConfig 
 import { type AppLanguage } from './workspaceCopy.js';
 import { normalizeTaskTableColumnPreferences, normalizeTaskTableEnumSortOrders } from '../../task/taskWorkspaceModel.js';
 import { type AiRuntimeLogEntry, type AppShellSettings, type ExecuteGitOperationRequest, type GitDiffHunk, type GitDiffSummary, type GitOperationConfirmation } from '../../apiClient.js';
-import { getLanguageCopy, normalizeCodeWorkspaceByProject, normalizeTaskExpandedIdsByProject, normalizeTaskPageViewByProject, normalizeTaskStatusFilterByProject, normalizeTaskViewModeByProject } from './workspaceSupport.js';
+import { getLanguageCopy, normalizeCodeWorkspaceByProject, normalizeTaskExpandedIdsByProject, normalizeTaskPageView, normalizeTaskStatusFilter, normalizeTaskViewMode } from './workspaceSupport.js';
 
 export const GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE = 'ZEUS HIGH RISK';
 
@@ -179,13 +179,11 @@ export function toSafeAppShellImport(
       | 'defaultModel'
       | 'defaultTaskTemplateId'
       | 'taskTableColumns'
-      | 'taskTableColumnsByProject'
       | 'taskTableEnumSortOrders'
       | 'taskManagementStatusTemplate'
-      | 'taskManagementStatusByProject'
-      | 'taskStatusFilterByProject'
-      | 'taskViewModeByProject'
-      | 'taskPageViewByProject'
+      | 'taskStatusFilter'
+      | 'taskViewMode'
+      | 'taskPageView'
       | 'taskExpandedIdsByProject'
       | 'codeWorkspaceByProject'
     >
@@ -208,18 +206,11 @@ export function toSafeAppShellImport(
     defaultModel: typeof raw.defaultModel === 'string' ? raw.defaultModel : null,
     defaultTaskTemplateId: typeof raw.defaultTaskTemplateId === 'string' ? raw.defaultTaskTemplateId : null,
     taskTableColumns: normalizeTaskTableColumnPreferences(raw.taskTableColumns),
-    taskTableColumnsByProject: Object.fromEntries(Object.entries(raw.taskTableColumnsByProject ?? {}).map(([projectId, preferences]) => [projectId, normalizeTaskTableColumnPreferences(preferences)])),
     taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(raw.taskTableEnumSortOrders),
     taskManagementStatusTemplate: normalizeTaskManagementStatusConfig(raw.taskManagementStatusTemplate, defaultTaskManagementStatusConfig),
-    taskManagementStatusByProject: Object.fromEntries(
-      Object.entries(raw.taskManagementStatusByProject ?? {}).map(([projectId, config]) => [
-        projectId,
-        normalizeTaskManagementStatusConfig(config, normalizeTaskManagementStatusConfig(raw.taskManagementStatusTemplate, defaultTaskManagementStatusConfig)),
-      ]),
-    ),
-    taskStatusFilterByProject: normalizeTaskStatusFilterByProject(raw.taskStatusFilterByProject),
-    taskViewModeByProject: normalizeTaskViewModeByProject(raw.taskViewModeByProject),
-    taskPageViewByProject: normalizeTaskPageViewByProject(raw.taskPageViewByProject),
+    taskStatusFilter: normalizeTaskStatusFilter(raw.taskStatusFilter),
+    taskViewMode: normalizeTaskViewMode(raw.taskViewMode),
+    taskPageView: normalizeTaskPageView(raw.taskPageView),
     taskExpandedIdsByProject: normalizeTaskExpandedIdsByProject(raw.taskExpandedIdsByProject),
     codeWorkspaceByProject: normalizeCodeWorkspaceByProject(raw.codeWorkspaceByProject),
   };

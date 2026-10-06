@@ -24,19 +24,17 @@ import { SessionCodeReviewDialog, type SessionCodeReviewSelection } from './Sess
 import { SessionComputerPreview } from './SessionComputerPreview.js';
 import type {
   CodexConversationCapabilities,
-  CodexTaskPushModelCapability,
   ConversationResource,
   ConversationResourcePreview,
   NativeConversationAttachment,
   NativeConversationChoice,
   NativeSessionState,
-  NativeServiceTierSelection,
   TaskWorkspaceSnapshot,
   TaskWorkspacesSnapshot,
 } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { VisibleApplicationError, reportApplicationError } from '../ui/ApplicationErrorDialog.js';
-import type { DashboardClient, ProjectRecord, ProjectGitWorkbenchSnapshot, ProjectModelServiceTierPreference } from '../apiClient.js';
+import type { DashboardClient, ProjectRecord, ProjectGitWorkbenchSnapshot } from '../apiClient.js';
 
 interface SessionQuickActionsCardProps {
   gitContext?: { client: DashboardClient; project: ProjectRecord };
@@ -52,8 +50,6 @@ interface SessionQuickActionsCardProps {
   forceCollapsed?: boolean;
   suppressed?: boolean;
   capabilities?: CodexConversationCapabilities | null;
-  serviceTierPreferences: readonly ProjectModelServiceTierPreference[];
-  onServiceTierPreferenceChange?: (model: CodexTaskPushModelCapability, selection: NativeServiceTierSelection) => void | Promise<void>;
   onLoadCapabilities?: (projectId: string) => Promise<CodexConversationCapabilities>;
   onLoadSkills?: (projectId?: string, forceReload?: boolean) => Promise<import('../features/codex/codexContracts.js').SkillCatalog>;
   onLoadTaskWorkspaces?: (taskId: string) => Promise<TaskWorkspacesSnapshot>;
@@ -553,8 +549,6 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
             workspace={exactReviewWorkspace}
             repositoryName={conversationRepository?.name}
             capabilities={props.capabilities ?? null}
-            serviceTierPreferences={props.serviceTierPreferences}
-            onServiceTierPreferenceChange={props.onServiceTierPreferenceChange}
             onLoadCapabilities={props.onLoadCapabilities}
             onLoadSkills={props.onLoadSkills}
             onClose={() => setReviewDialogOpen(false)}

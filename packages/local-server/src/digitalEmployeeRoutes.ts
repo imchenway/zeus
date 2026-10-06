@@ -12,7 +12,6 @@ import {
   TaskStageStoreError,
   type AppendAuditLogInput,
   type CreateDigitalEmployeeAutomationInput,
-  type CreateDigitalEmployeeInput,
   type CreateDigitalEmployeeTemplateInput,
   type DigitalEmployeeRecord,
   type DigitalEmployeeExecutionRecord,
@@ -52,7 +51,8 @@ interface DigitalEmployeeRouteOptions {
 }
 
 type DeleteInput = { expectedRevision: number };
-type CreateEmployeeBody = { templateId?: string; overrides?: Partial<Omit<CreateDigitalEmployeeInput, 'projectId' | 'templateId'>> } & Partial<Omit<CreateDigitalEmployeeInput, 'projectId'>>;
+/** 项目仅关联已创建员工，不接收身份、职责或经验的独立配置。 */
+type CreateEmployeeBody = { templateId?: string; globalEmployeeId?: string };
 type CreateExecutionBody = { employeeId: string };
 type FinalizeExecutionBody = {
   sourceStageId: string;
@@ -460,6 +460,7 @@ function registerExecutionRoutes(options: DigitalEmployeeRouteOptions): void {
 }
 
 function createEmployee(options: DigitalEmployeeRouteOptions, projectId: string, id: string, input: CreateEmployeeBody) {
+  if (Object.keys(input).some((key) => key !== 'globalEmployeeId' && key !== 'templateId')) throw new DigitalEmployeeStoreError('ZEUS_DIGITAL_EMPLOYEE_INVALID', '项目只保留员工关联，请在数字员工中修改职责和经验。');
   /** 新入口表达全局员工身份，原 templateId 入口保留同一创建语义。 */
   const templateId = typeof input.globalEmployeeId === 'string' ? input.globalEmployeeId : typeof input.templateId === 'string' ? input.templateId : undefined;
   if (templateId) {
@@ -468,18 +469,10 @@ function createEmployee(options: DigitalEmployeeRouteOptions, projectId: string,
     return options.employees.createFromTemplate({
       projectId,
       template,
-      overrides: {
-        ...(input.overrides ?? {}),
-        id,
-        ...(input.projectOverrides === undefined ? {} : { projectOverrides: input.projectOverrides }),
-        ...(input.projectInstructions === undefined ? {} : { projectInstructions: input.projectInstructions }),
-      },
+      id,
     });
   }
-  const value = input.overrides ? { ...input.overrides } : { ...input };
-  delete (value as { templateId?: unknown }).templateId;
-  delete (value as { overrides?: unknown }).overrides;
-  return options.employees.create({ ...(value as Omit<CreateDigitalEmployeeInput, 'projectId'>), id, projectId });
+  throw new DigitalEmployeeStoreError('ZEUS_DIGITAL_EMPLOYEE_GLOBAL_UNAVAILABLE', '请选择已经创建的全局数字员工。');
 }
 
 function validateEmployeeEntrypoint(employee: DigitalEmployeeRecord): void {

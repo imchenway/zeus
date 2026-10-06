@@ -1,4 +1,4 @@
-import type { EmployeeWorkSettings, EmployeeWorkOutputKind, ProjectEmployeeOverrides } from '@zeus/shared';
+import type { EmployeeWorkSettings, EmployeeWorkOutputKind } from '@zeus/shared';
 import type { DigitalEmployeeAvatarId } from '@zeus/shared';
 import type { TaskPushMessageLayout } from '@zeus/shared';
 import type { CodexTaskPushModelCapability, TaskPushSupplementalAttachmentInput } from '../../session/sessionTypes.js';
@@ -95,10 +95,6 @@ export interface DigitalEmployeeTaskFilter {
 export interface DigitalEmployeeRecord extends Omit<DigitalEmployeeTemplateRecord, 'builtIn'> {
   /** 跨项目员工身份，历史仅项目员工保留为空。 */
   globalEmployeeId?: string | null;
-  /** 当前项目明确设置的配置差异。 */
-  projectOverrides?: ProjectEmployeeOverrides;
-  /** 当前项目追加的工作要求。 */
-  projectInstructions?: string;
   /** 新工作读取个人经验的偏好。 */
   memoryEnabled?: boolean;
   projectId: string;
@@ -199,18 +195,6 @@ export interface DigitalEmployeeCapabilitiesSnapshot {
   models: CodexTaskPushModelCapability[];
   available?: false;
   availabilityReason?: string;
-}
-
-export interface DigitalEmployeeInput extends DigitalEmployeeTemplateInput {
-  /** 绑定已经创建的全局员工。 */
-  globalEmployeeId?: string | null;
-  /** 显式设置或清空当前项目配置差异。 */
-  projectOverrides?: ProjectEmployeeOverrides;
-  /** 当前项目补充要求。 */
-  projectInstructions?: string;
-  /** 是否读取个人经验。 */
-  memoryEnabled?: boolean;
-  enabled?: boolean;
 }
 
 export type TaskWorkItemStatus = 'queued' | 'active' | 'waiting_manager' | 'completed' | 'blocked' | 'failed' | 'cancelled';

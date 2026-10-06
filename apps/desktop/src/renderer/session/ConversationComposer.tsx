@@ -9,7 +9,6 @@ import { SquareIcon as Square } from '@phosphor-icons/react/dist/csr/Square';
 import { TargetIcon as Target } from '@phosphor-icons/react/dist/csr/Target';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { ConversationContextDraft, ZeusBrowserPreparedSubmission } from '@zeus/shared';
-import type { ProjectModelServiceTierPreference } from '../apiClient.js';
 import type {
   CodexConversationCapabilities,
   NativeCollaborationMode,
@@ -33,7 +32,6 @@ import { useConversationInputResources } from './useConversationInputResources.j
 import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, serviceTierSelectionValue, serviceTierWireOverride } from './serviceTierSelection.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
-import { findProjectModelServiceTierPreference, projectModelServiceTierSelection } from './projectServiceTierPreferences.js';
 import { StructuredComposerInput, type StructuredComposerSelection } from './StructuredComposerInput.js';
 import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
 
@@ -54,8 +52,6 @@ export interface ConversationComposerProps {
   language: SessionUiLanguage;
   textareaRef?: RefObject<ComposerInputHandle | null>;
   capabilities?: CodexConversationCapabilities | null;
-  serviceTierPreferences?: readonly ProjectModelServiceTierPreference[];
-  onServiceTierPreferenceChange?: (model: NonNullable<CodexConversationCapabilities['models'][number]>, selection: NativeServiceTierSelection) => void | Promise<void>;
   onDraftChange: (draft: string) => void;
   onSubmit: (delivery: 'queue' | 'steer_now', settings?: NativeTurnSettingsSelection) => void | Promise<void>;
   onInterrupt: (turnId: string) => void | Promise<void>;
@@ -134,11 +130,8 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const copy = labels[props.language];
   const initialModel = resolveComposerModel(props.capabilities, props.runtimeSettings?.model ?? props.state.providerSettings?.model);
   const initialEffort = resolveComposerEffort(props.capabilities, initialModel, props.runtimeSettings?.effort ?? props.state.providerSettings?.effort);
-  const initialCapability = resolveModelCapability(props.capabilities?.models, initialModel);
-  const initialPreference = findProjectModelServiceTierPreference(props.serviceTierPreferences, initialCapability);
-  const initialServiceTier = initialPreference
-    ? projectModelServiceTierSelection(props.serviceTierPreferences, initialCapability)
-    : selectionFromEffectiveServiceTier(props.runtimeSettings && Object.prototype.hasOwnProperty.call(props.runtimeSettings, 'serviceTier') ? props.runtimeSettings.serviceTier : null);
+  /** 服务档位只使用当前会话的显式选择。 */
+  const initialServiceTier = selectionFromEffectiveServiceTier(props.runtimeSettings && Object.prototype.hasOwnProperty.call(props.runtimeSettings, 'serviceTier') ? props.runtimeSettings.serviceTier : null);
   const fallbackRef = useRef<ComposerInputHandle | null>(null);
   const textareaRef = props.textareaRef ?? fallbackRef;
   const composingRef = useRef(false);
@@ -191,31 +184,17 @@ export function ConversationComposer(props: ConversationComposerProps) {
   useEffect(() => {
     const nextModel = resolveComposerModel(props.capabilities, props.runtimeSettings?.model ?? props.state.snapshot?.nextTurnSettings?.model ?? props.state.providerSettings?.model);
     const nextEffort = resolveComposerEffort(props.capabilities, nextModel, props.runtimeSettings?.effort ?? props.state.snapshot?.nextTurnSettings?.effort ?? props.state.providerSettings?.effort);
-    const nextCapability = resolveModelCapability(props.capabilities?.models, nextModel);
-    const nextPreference = findProjectModelServiceTierPreference(props.serviceTierPreferences, nextCapability);
-    const nextServiceTier = nextPreference
-      ? projectModelServiceTierSelection(props.serviceTierPreferences, nextCapability)
-      : selectionFromEffectiveServiceTier(
-          props.runtimeSettings && Object.prototype.hasOwnProperty.call(props.runtimeSettings, 'serviceTier')
-            ? props.runtimeSettings.serviceTier
-            : props.state.snapshot?.nextTurnSettings && Object.prototype.hasOwnProperty.call(props.state.snapshot.nextTurnSettings, 'serviceTier')
-              ? props.state.snapshot.nextTurnSettings.serviceTier
-              : null,
-        );
+    const nextServiceTier = selectionFromEffectiveServiceTier(
+      props.runtimeSettings && Object.prototype.hasOwnProperty.call(props.runtimeSettings, 'serviceTier')
+        ? props.runtimeSettings.serviceTier
+        : props.state.snapshot?.nextTurnSettings && Object.prototype.hasOwnProperty.call(props.state.snapshot.nextTurnSettings, 'serviceTier')
+          ? props.state.snapshot.nextTurnSettings.serviceTier
+          : null,
+    );
     if (nextModel !== selectedModel) setSelectedModel(nextModel);
     if (nextEffort !== selectedEffort) setSelectedEffort(nextEffort);
     if (serviceTierSelectionValue(nextServiceTier) !== serviceTierSelectionValue(selectedServiceTier)) setSelectedServiceTier(nextServiceTier);
-  }, [
-    props.capabilities,
-    props.runtimeSettings,
-    props.serviceTierPreferences,
-    props.state.snapshot?.nextTurnSettings,
-    props.state.providerSettings?.effort,
-    props.state.providerSettings?.model,
-    selectedEffort,
-    selectedModel,
-    selectedServiceTier,
-  ]);
+  }, [props.capabilities, props.runtimeSettings, props.state.snapshot?.nextTurnSettings, props.state.providerSettings?.effort, props.state.providerSettings?.model, selectedEffort, selectedModel, selectedServiceTier]);
 
   useLayoutEffect(() => {
     if (textareaRef.current instanceof HTMLTextAreaElement) autosizeTextarea(textareaRef.current);
@@ -581,7 +560,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
                     permissionMode: props.permissionMode,
                     collaborationMode: props.collaborationMode,
                   });
-                  if (selectedCapability) void props.onServiceTierPreferenceChange?.(selectedCapability, selection);
                 }}
               />
               <ComposerDropdown
@@ -601,7 +579,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 onChange={(model) => {
                   const capability = resolveModelCapability(props.capabilities?.models, model);
                   const effort = capability?.defaultReasoningEffort ?? capability?.supportedReasoningEfforts[0] ?? '';
-                  const normalizedTier = normalizeServiceTierSelection(projectModelServiceTierSelection(props.serviceTierPreferences, capability), capability);
+                  const normalizedTier = normalizeServiceTierSelection({ type: 'standard' }, capability);
                   setSelectedModel(model);
                   setSelectedEffort(effort);
                   setSelectedServiceTier(normalizedTier.selection);

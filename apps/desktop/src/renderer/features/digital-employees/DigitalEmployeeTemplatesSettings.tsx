@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { DigitalEmployeeAvatar, EmployeeAvatarPicker } from './DigitalEmployeeAvatar.js';
-import { SettingsSaveStatus } from '../../settings/useSettingsAutosave.js';
 import { Button } from '../../ui/Button.js';
 import { FormDialog } from '../../ui/FormDialog.js';
 import type { NativeConversationAppClient } from '../workspace/workspaceSupport.js';
@@ -38,6 +37,8 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
   const [creationSource, setCreationSource] = useState<DigitalEmployeeCreationSource>(null);
   const draftsRef = useRef(new Map<string, { draft: DigitalEmployeeTemplateDraft; target: NonNullable<EditorTarget> }>());
   const [draft, setDraft] = useState<DigitalEmployeeTemplateDraft>({ ...emptyTemplateDraft });
+  /** 仅筛选当前列表，不改变员工身份或正在编辑的草稿。 */
+  const [employeeSearch, setEmployeeSearch] = useState('');
 
   const loadTemplates = useCallback(async () => {
     if (!props.client) return;
@@ -139,7 +140,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
     if (savingRef.current || busy || loadState === 'loading' || !props.client || !editorTarget) return;
     if (editorTarget.kind === 'employee' && JSON.stringify(nextDraft) === JSON.stringify(templateDraft(editorTarget.record))) return;
     if (!nextDraft.name.trim() || !nextDraft.role.trim() || !nextDraft.prompt.trim()) {
-      setError(zh ? '名称、岗位和提示词不能为空。' : 'Name, role, and prompt are required.');
+      setError(zh ? '名称、岗位和工作要求不能为空。' : 'Name, role, and instructions are required.');
       return;
     }
     savingRef.current = true;
@@ -167,10 +168,10 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
     }
   }
 
-  /** 删除用户创建的数字员工，不影响已经添加到项目的独立副本。 */
+  /** 删除员工身份，已完成工作的记录继续保留。 */
   async function deleteEmployee(record: DigitalEmployeeTemplateRecord): Promise<void> {
     if (busy || loadState === 'loading' || !props.client || record.builtIn) return;
-    const confirmed = window.confirm(zh ? `删除数字员工“${record.name}”？已添加到项目的员工配置不会被删除。` : `Delete digital employee “${record.name}”? Existing project employees will remain.`);
+    const confirmed = window.confirm(zh ? `删除数字员工“${record.name}”？已完成工作的记录会保留。` : `Delete digital employee “${record.name}”? Completed work records will remain.`);
     if (!confirmed) return;
     setBusy(true);
     setError(null);
@@ -201,20 +202,16 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
   const builtInTemplates = templates.filter((template) => template.builtIn);
   /** 非内置记录就是用户已创建且可自由编辑的数字员工。 */
   const employees = templates.filter((template) => !template.builtIn);
+  /** 姓名、岗位和业务领域共用简单文本筛选，同名员工仍分别保留。 */
+  const visibleEmployees = employees.filter((employee) => `${employee.name} ${employee.role} ${employee.domain}`.toLocaleLowerCase().includes(employeeSearch.trim().toLocaleLowerCase()));
   return (
     <section className="settings-product-pane digital-employee-settings-pane" aria-label={zh ? '数字员工' : 'Digital employees'}>
       <header className="digital-employee-page-heading">
         <span>
           <h2 className="settings-page-title">{zh ? '数字员工' : 'Digital employees'}</h2>
-          <p>{zh ? '管理你创建的数字员工。新增时可以从模板开始或自己新建；创建后可以自由编辑。' : 'Manage the digital employees you create. Start from a template or create your own, then edit it freely.'}</p>
+          <p>{zh ? '定义员工职责，在任务或团队中选择使用。' : 'Define employee responsibilities, then select them in tasks or teams.'}</p>
         </span>
         <span className="digital-employee-actions">
-          <SettingsSaveStatus language={props.language} status={busy ? 'saving' : error ? 'failed' : savedName ? 'saved' : 'idle'} />
-          {error && editorTarget?.kind === 'employee' ? (
-            <Button size="compact" disabled={busy} onClick={() => void saveEmployee()}>
-              {zh ? '重试保存' : 'Retry save'}
-            </Button>
-          ) : null}
           <Button variant="secondary" size="compact" busy={loadState === 'loading'} disabled={busy} onClick={() => void loadTemplates()}>
             {zh ? '刷新' : 'Refresh'}
           </Button>
@@ -285,6 +282,14 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
 
       <div className="digital-employee-master-detail">
         <section className="digital-employee-list-pane" aria-label={zh ? '已创建的数字员工' : 'Created digital employees'}>
+          <input
+            className="digital-employee-list-search"
+            type="search"
+            aria-label={zh ? '搜索数字员工' : 'Search digital employees'}
+            placeholder={zh ? '搜索姓名、岗位或领域' : 'Search name, role, or domain'}
+            value={employeeSearch}
+            onChange={(event) => setEmployeeSearch(event.currentTarget.value)}
+          />
           {loadState === 'loading' && employees.length === 0 ? (
             <p className="digital-employee-empty" role="status">
               {zh ? '正在读取数字员工…' : 'Loading digital employees…'}
@@ -296,7 +301,8 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
             </Button>
           ) : null}
           {loadState === 'ready' && employees.length === 0 ? <p className="digital-employee-empty">{zh ? '尚未创建数字员工。' : 'No digital employees yet.'}</p> : null}
-          {employees.map((employee) => (
+          {loadState === 'ready' && employees.length > 0 && visibleEmployees.length === 0 ? <p className="digital-employee-empty">{zh ? '没有匹配的数字员工。' : 'No matching digital employees.'}</p> : null}
+          {visibleEmployees.map((employee) => (
             <button
               key={employee.id}
               type="button"
@@ -326,8 +332,8 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
                     ? '点击右上角“新增”，从模板开始或自己新建。'
                     : 'Click Add to start from a template or create your own.'
                   : zh
-                    ? '创建后的配置可以自由编辑，不会回写模板。'
-                    : 'Created employees are freely editable and never write back to templates.'}
+                    ? '选择员工后，修改名称、岗位和工作要求。'
+                    : 'Select an employee to edit their name, role, and instructions.'}
               </span>
             </div>
           ) : (
@@ -336,18 +342,32 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
                 <DigitalEmployeeAvatar {...draft} />
                 <div>
                   <h3>{draft.name || (zh ? '新建数字员工' : 'New employee')}</h3>
-                  <span>{zh ? '选择预置头像' : 'Choose a portrait'}</span>
-                  <EmployeeAvatarPicker
-                    {...draft}
-                    disabled={busy}
-                    language={props.language}
-                    onChange={(avatarId) => {
-                      const next = { ...draft, avatarId };
-                      setDraft(next);
-                      setSavedName(null);
-                      if (editorTarget.kind === 'employee') void saveEmployee(next);
-                    }}
-                  />
+                  {editorTarget.kind === 'employee' ? (
+                    <div className="digital-employee-save-state">
+                      <small role={error ? 'alert' : 'status'}>
+                        {busy ? (zh ? '正在保存…' : 'Saving…') : error ? (zh ? '未保存，请重试' : 'Not saved. Retry.') : savedName ? (zh ? '已保存' : 'Saved') : zh ? '修改后自动保存' : 'Changes save automatically'}
+                      </small>
+                      {error ? (
+                        <Button size="compact" disabled={busy} onClick={() => void saveEmployee()}>
+                          {zh ? '重试保存' : 'Retry save'}
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  <details className="digital-employee-disclosure">
+                    <summary>{zh ? '更换头像' : 'Change portrait'}</summary>
+                    <EmployeeAvatarPicker
+                      {...draft}
+                      disabled={busy}
+                      language={props.language}
+                      onChange={(avatarId) => {
+                        const next = { ...draft, avatarId };
+                        setDraft(next);
+                        setSavedName(null);
+                        if (editorTarget.kind === 'employee') void saveEmployee(next);
+                      }}
+                    />
+                  </details>
                 </div>
               </div>
               <DigitalEmployeeProfileEditor
@@ -367,24 +387,29 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
           )}
           {editorTarget ? (
             <footer className="digital-employee-editor-actions">
-              <small>
-                {zh
-                  ? '员工独立于创建模板；项目未覆盖的配置随员工更新，已启动的工作保持原配置。'
-                  : 'Employees are independent from their source templates. Projects inherit changes unless overridden; work already started keeps its original settings.'}
-              </small>
               <span className="digital-employee-actions">
-                <Button variant="secondary" size="compact" disabled={busy} onClick={cancelEditing}>
-                  {editorTarget.kind === 'new' ? (zh ? '取消' : 'Cancel') : zh ? '完成编辑' : 'Done'}
-                </Button>
                 {editorTarget.kind === 'employee' ? (
-                  <Button variant="danger" size="compact" busy={busy} disabled={loadState === 'loading'} onClick={() => void deleteEmployee(editorTarget.record)}>
-                    {zh ? '删除' : 'Delete'}
-                  </Button>
+                  <details className="digital-employee-disclosure">
+                    <summary>{zh ? '更多操作' : 'More actions'}</summary>
+                    <span className="digital-employee-actions">
+                      <Button variant="secondary" size="compact" disabled={busy} onClick={cancelEditing}>
+                        {zh ? '完成编辑' : 'Done'}
+                      </Button>
+                      <Button variant="danger" size="compact" busy={busy} disabled={loadState === 'loading'} onClick={() => void deleteEmployee(editorTarget.record)}>
+                        {zh ? '删除员工' : 'Delete employee'}
+                      </Button>
+                    </span>
+                  </details>
                 ) : null}
                 {editorTarget.kind === 'new' ? (
-                  <Button variant="primary" size="compact" busy={busy} disabled={loadState === 'loading'} onClick={() => void saveEmployee()}>
-                    {zh ? '创建数字员工' : 'Create digital employee'}
-                  </Button>
+                  <>
+                    <Button variant="secondary" size="compact" disabled={busy} onClick={cancelEditing}>
+                      {zh ? '取消' : 'Cancel'}
+                    </Button>
+                    <Button variant="primary" size="compact" busy={busy} disabled={loadState === 'loading'} onClick={() => void saveEmployee()}>
+                      {zh ? '创建数字员工' : 'Create digital employee'}
+                    </Button>
+                  </>
                 ) : null}
               </span>
             </footer>
@@ -417,46 +442,38 @@ function DigitalEmployeeProfileEditor(props: {
     >
       <div className="digital-employee-form-grid">
         <label>
-          <span>{zh ? '员工名称' : 'Employee name'}</span>
+          <span>{zh ? '名称' : 'Name'}</span>
           <input value={props.draft.name} onChange={(event) => patch({ name: event.currentTarget.value })} disabled={props.disabled} maxLength={120} />
         </label>
         <label>
           <span>{zh ? '岗位' : 'Role'}</span>
           <input value={props.draft.role} onChange={(event) => patch({ role: event.currentTarget.value })} disabled={props.disabled} maxLength={120} />
         </label>
+      </div>
+      <label>
+        <span>{zh ? '工作要求' : 'Instructions'}</span>
+        <textarea value={props.draft.prompt} onChange={(event) => patch({ prompt: event.currentTarget.value })} disabled={props.disabled} rows={6} maxLength={20000} required />
+      </label>
+      <details className="digital-employee-disclosure">
+        <summary>{zh ? '更多设置' : 'More settings'}</summary>
         <label>
           <span>{zh ? '业务领域' : 'Business domain'}</span>
           <input value={props.draft.domain} onChange={(event) => patch({ domain: event.currentTarget.value })} disabled={props.disabled} maxLength={120} placeholder={zh ? '例如 CSS、PIM' : 'For example CSS or PIM'} />
         </label>
-      </div>
-      <label>
-        <span>{zh ? '说明' : 'Description'}</span>
-        <textarea value={props.draft.description} onChange={(event) => patch({ description: event.currentTarget.value })} disabled={props.disabled} rows={2} maxLength={1000} />
-      </label>
-      <section className="digital-employee-form-section">
-        <header>
-          <strong>{zh ? '工作要求' : 'Instructions'}</strong>
-          <small>{zh ? '提示词定义员工职责，模型与 Skills 使用统一执行默认。' : 'The prompt defines this employee’s responsibilities. Model and skills use the shared execution defaults.'}</small>
-        </header>
         <label>
-          <span>{zh ? '提示词' : 'Prompt'}</span>
-          <textarea value={props.draft.prompt} onChange={(event) => patch({ prompt: event.currentTarget.value })} disabled={props.disabled} rows={8} maxLength={20000} required />
+          <span>{zh ? '说明' : 'Description'}</span>
+          <textarea value={props.draft.description} onChange={(event) => patch({ description: event.currentTarget.value })} disabled={props.disabled} rows={2} maxLength={1000} />
         </label>
-      </section>
-      <section className="digital-employee-form-section">
-        <header>
-          <strong>{zh ? '经验与记忆' : 'Experience and memory'}</strong>
-          <small>{zh ? '新工作读取已确认且未过期的个人经验，项目可以单独调整。' : 'New work reads approved, current employee experience. Projects can override this preference.'}</small>
-        </header>
         {/* 隐藏的原生输入不占网格，视觉复选框与文案分别占据两列。 */}
         <div className="digital-employee-policy-grid">
           <label className="digital-employee-checkbox-row">
             <input type="checkbox" checked={props.draft.memoryEnabled !== false} disabled={props.disabled} onChange={(event) => patch({ memoryEnabled: event.currentTarget.checked })} />
             <span className="digital-employee-checkbox-visual" aria-hidden="true" />
-            <span>{zh ? '读取已确认员工经验' : 'Read approved employee memory'}</span>
+            <span>{zh ? '使用员工经验' : 'Use employee experience'}</span>
           </label>
         </div>
-      </section>
+        <small>{zh ? '只使用已确认且未过期的经验。新工作使用最新员工配置，已开始的工作保留原配置。' : 'Only approved, current experience is used. New work uses the latest settings; work already started keeps its original settings.'}</small>
+      </details>
     </div>
   );
 }

@@ -1,4 +1,3 @@
-import { contextCapacitySelectionAllowed } from './contextCapacitySelection.js';
 import { ActivitySkillCatalogContext } from './SessionActivity.js';
 import { FilePreviewDialog, FilePreviewOpenContext } from '../code/FilePreview.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
@@ -21,7 +20,7 @@ import {
   type ZeusBrowserConversationSnapshot,
   type ZeusBrowserPreparedSubmission,
 } from '@zeus/shared';
-import type { DashboardClient, ProjectConfig, ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectModelServiceTierPreference, ProjectRecord } from '../apiClient.js';
+import type { DashboardClient, ProjectGitAction, ProjectGitActionResponse, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
 import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
 import { codexCapabilitiesChangedEvent } from '../features/codex/codexApiClient.js';
 import { ZeusSelect } from '../ZeusSelect.js';
@@ -45,7 +44,6 @@ import { RuntimeDetails } from './RuntimeDetails.js';
 import { defaultOpenTarget, isImageResource } from './ConversationResources.js';
 import type {
   CodexConversationCapabilities,
-  CodexTaskPushModelCapability,
   ConversationResource,
   ConversationResourcePreview,
   NativeCollaborationMode,
@@ -76,7 +74,7 @@ import type {
   TurnChangeSet,
   TurnChangeSetOperationResult,
 } from './sessionTypes.js';
-import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, serviceTierWireOverride } from './serviceTierSelection.js';
+import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, serviceTierSelectionValue, serviceTierWireOverride } from './serviceTierSelection.js';
 import { type SessionController, type SessionControllerClient, useSessionControllerInstance, useSessionControllerSelector } from './useSessionController.js';
 import { createConversationComposerStateSelector, createConversationQueueStateSelector, createConversationTranscriptStateSelector, createSessionWorkspaceStateSelector } from './sessionStateSlices.js';
 import { createSessionEscapeController, type SessionEscapeController, type SessionEscapeLayer, type SessionEscapeResult } from './useThreadScrollController.js';
@@ -98,7 +96,6 @@ import { presentModelOptions } from '../modelOptionPresentation.js';
 import { NewConversationExecutionContext } from './NewConversationExecutionContext.js';
 import { formatVisibleApplicationError, modelSetupRequestedEvent, reportApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import type { ConversationModelSetupContext } from '../settings/ModelSetup.js';
-import { projectModelServiceTierSelection, toProjectModelServiceTierPreference, upsertProjectModelServiceTierPreference } from './projectServiceTierPreferences.js';
 import { StructuredComposerInput, type StructuredComposerSelection } from './StructuredComposerInput.js';
 import { isSessionTerminalShortcut, SessionTerminalPanel, type SessionTerminalClient } from './SessionTerminal.js';
 import { useSessionTerminalVisibility } from './useSessionTerminalVisibility.js';
@@ -175,8 +172,6 @@ export interface SessionWorkspaceActions {
   ) => void | boolean | NativeConversationStartPreparation | NativeConversationStartFailure | Promise<void | boolean | NativeConversationStartPreparation | NativeConversationStartFailure>;
   onStartProjectConversation?: (input: ProjectSessionWorkspaceStartInput) => void | boolean | NativeConversationStartFailure | Promise<void | boolean | NativeConversationStartFailure>;
   onLoadCapabilities?: (projectId: string) => Promise<CodexConversationCapabilities>;
-  onLoadProjectConfig?: (projectId: string) => Promise<ProjectConfig>;
-  onSaveProjectModelServiceTierPreference?: (projectId: string, input: ProjectModelServiceTierPreference) => Promise<ProjectConfig>;
   onLoadSkills?: import('../features/codex/codexApiClient.js').CodexApiClient['loadSkills'];
   onLoadDigitalEmployees?: (projectId: string) => Promise<import('../features/digital-employees/digitalEmployeeContracts.js').DigitalEmployeeRecord[]>;
   /** 解释失败原因后可直接打开对应的现有设置页。 */
@@ -363,8 +358,6 @@ export interface ConnectedSessionWorkspaceProps {
   onLoadDigitalEmployees?: SessionWorkspaceActions['onLoadDigitalEmployees'];
   onOpenAiSettings?: SessionWorkspaceActions['onOpenAiSettings'];
   onOpenComputerSettings?: SessionWorkspaceActions['onOpenComputerSettings'];
-  onLoadProjectConfig?: SessionWorkspaceActions['onLoadProjectConfig'];
-  onSaveProjectModelServiceTierPreference?: SessionWorkspaceActions['onSaveProjectModelServiceTierPreference'];
   onOpenTaskDetail?: SessionWorkspaceActions['onOpenTaskDetail'];
   onTaskManagementStatusChange?: SessionWorkspaceActions['onTaskManagementStatusChange'];
   taskManagementStatusChangeBusy?: boolean;
@@ -713,8 +706,6 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       onOpenTaskGitDelivery: props.onOpenTaskGitDelivery,
       onOpenProjectCommands: props.onOpenProjectCommands,
       onLoadCapabilities: props.client.loadCodexConversationCapabilities,
-      onLoadProjectConfig: props.onLoadProjectConfig,
-      onSaveProjectModelServiceTierPreference: props.onSaveProjectModelServiceTierPreference,
       onLoadSkills: props.onLoadSkills,
       onLoadDigitalEmployees: props.onLoadDigitalEmployees,
       onOpenAiSettings: props.onOpenAiSettings,
@@ -733,8 +724,6 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     props.localActions,
     props.onChooseAttachments,
     props.onLoadTaskWorkspaces,
-    props.onLoadProjectConfig,
-    props.onSaveProjectModelServiceTierPreference,
     props.onLoadSkills,
     props.onLoadDigitalEmployees,
     props.onOpenAiSettings,
@@ -1765,8 +1754,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const [goalBusy, setGoalBusy] = useState(false);
   const [goalError, setGoalError] = useState<string | null>(null);
   const [localSubmissionRevision, setLocalSubmissionRevision] = useState(0);
-  const [serviceTierPreferences, setServiceTierPreferences] = useState<ProjectModelServiceTierPreference[]>([]);
-  const [serviceTierPreferenceError, setServiceTierPreferenceError] = useState<string | null>(null);
   const browserSplitRef = useRef<HTMLDivElement | null>(null);
   const browserResizeActiveRef = useRef(false);
   const contextOpen = contextWorkspace.kind !== 'none';
@@ -1819,46 +1806,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   // 空闲历史会话只读本地快照，不存在“连接失败”；只有真实轮次、排队或待处理请求需要实时连接时才报告连接错误。
   const transportError = !transcriptPreparationError && realtimeExpected && props.state?.transportState === 'failed' && props.state.error?.retryable === false ? (props.state.error ?? props.loadError ?? copy.failed) : null;
   /** 会话自身可恢复的失败留在会话工作面，不阻断用户操作其他会话。 */
-  const conversationSurfaceError = props.historyOnly ? null : props.loadState === 'error' ? (props.loadError ?? copy.failed) : (transportError ?? serviceTierPreferenceError ?? contextWorkspaceError);
-  const serviceTierPreferenceProjectId = props.conversation?.projectId ?? owner?.projectId ?? null;
-  useEffect(() => {
-    if (!serviceTierPreferenceProjectId || !actions.onLoadProjectConfig) {
-      setServiceTierPreferences([]);
-      return;
-    }
-    let active = true;
-    setServiceTierPreferenceError(null);
-    void actions
-      .onLoadProjectConfig(serviceTierPreferenceProjectId)
-      .then((config) => {
-        if (active) setServiceTierPreferences(config.serviceTierPreferences ?? []);
-      })
-      .catch((error: unknown) => {
-        if (active) setServiceTierPreferenceError(formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
-      });
-    return () => {
-      active = false;
-    };
-  }, [actions.onLoadProjectConfig, serviceTierPreferenceProjectId]);
-
-  async function saveServiceTierPreference(model: CodexTaskPushModelCapability, selection: NativeServiceTierSelection): Promise<void> {
-    if (!serviceTierPreferenceProjectId || !actions.onSaveProjectModelServiceTierPreference) return;
-    const preference = toProjectModelServiceTierPreference(model, selection);
-    setServiceTierPreferences((current) => upsertProjectModelServiceTierPreference(current, preference));
-    setServiceTierPreferenceError(null);
-    try {
-      const saved = await actions.onSaveProjectModelServiceTierPreference(serviceTierPreferenceProjectId, preference);
-      setServiceTierPreferences(saved.serviceTierPreferences ?? []);
-    } catch (error) {
-      setServiceTierPreferenceError(formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
-      try {
-        const refreshed = await actions.onLoadProjectConfig?.(serviceTierPreferenceProjectId);
-        if (refreshed) setServiceTierPreferences(refreshed.serviceTierPreferences ?? []);
-      } catch {
-        // 保留原错误；下一次进入工作面时会重新加载项目配置。
-      }
-    }
-  }
+  const conversationSurfaceError = props.historyOnly ? null : props.loadState === 'error' ? (props.loadError ?? copy.failed) : (transportError ?? contextWorkspaceError);
   const pendingRequests = props.historyOnly ? [] : (props.state?.pendingRequests.filter((request) => request.status === 'pending' && hasPendingRequestDetails(request)) ?? []);
   const pendingPlanImplementationRequests = props.historyOnly ? [] : (props.state?.planImplementationRequests.filter((request) => request.status === 'pending').slice(-1) ?? []);
   const blockingPendingRequest = pendingRequests[0] ?? null;
@@ -2484,8 +2432,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         controller={props.stateController}
         language={props.language}
         capabilities={props.capabilities}
-        serviceTierPreferences={serviceTierPreferences}
-        onServiceTierPreferenceChange={saveServiceTierPreference}
         onDraftChange={(draft) => actions.onDraftChange?.(draft)}
         onSubmit={(delivery, settings) => {
           setLocalSubmissionRevision((revision) => revision + 1);
@@ -2718,8 +2664,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   conversationColumnWidth={conversationColumnWidth}
                   suppressed={props.quickActionsSuppressed}
                   capabilities={props.capabilities}
-                  serviceTierPreferences={serviceTierPreferences}
-                  onServiceTierPreferenceChange={saveServiceTierPreference}
                   onLoadCapabilities={actions.onLoadCapabilities}
                   onLoadSkills={actions.onLoadSkills}
                   onLoadTaskWorkspaces={actions.onLoadTaskWorkspaces}
@@ -3124,8 +3068,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
           loadState={props.loadState}
           loadError={props.loadError}
           capabilities={props.capabilities}
-          serviceTierPreferences={serviceTierPreferences}
-          onServiceTierPreferenceChange={saveServiceTierPreference}
           onStartTask={actions.onStartConversation}
           onStartProject={actions.onStartProjectConversation}
           onLoadCapabilities={actions.onLoadCapabilities}
@@ -3281,8 +3223,6 @@ export function NewConversationComposer(props: {
   loadState?: SessionWorkspaceProps['loadState'];
   loadError?: string | null;
   capabilities?: CodexConversationCapabilities | null;
-  serviceTierPreferences: readonly ProjectModelServiceTierPreference[];
-  onServiceTierPreferenceChange?: (model: CodexTaskPushModelCapability, selection: NativeServiceTierSelection) => void | Promise<void>;
   onStartTask?: SessionWorkspaceActions['onStartConversation'];
   onStartProject?: SessionWorkspaceActions['onStartProjectConversation'];
   onLoadCapabilities?: SessionWorkspaceActions['onLoadCapabilities'];
@@ -3319,8 +3259,8 @@ export function NewConversationComposer(props: {
   const [capabilitiesLoading, setCapabilitiesLoading] = useState(!props.capabilities);
   const [selectedModelId, setSelectedModelId] = useState(() => restoredDraft?.selectedModelId ?? '');
   const [selectedEffort, setSelectedEffort] = useState(() => restoredDraft?.selectedEffort ?? '');
-  /** 新会话仅继承项目容量；输入框不再保留会话级覆盖。 */
-  const contextCapacityTokens = capabilities?.projectContextCapacityTokens ?? null;
+  /** 新会话使用模型默认容量。 */
+  const contextCapacityTokens = null;
   const [serviceTierSelection, setServiceTierSelection] = useState<NativeServiceTierSelection>(() => restoredDraft?.serviceTierSelection ?? { type: 'standard' });
   const [isComposing, setIsComposing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -3437,9 +3377,12 @@ export function NewConversationComposer(props: {
     if (!selectedModel) return;
     if (selectedModelId !== selectedModel.id) setSelectedModelId(selectedModel.id);
     if (!selectedModel.supportedReasoningEfforts.includes(selectedEffort)) setSelectedEffort(selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? '');
-    const preferredTier = projectModelServiceTierSelection(props.serviceTierPreferences, selectedModel);
-    setServiceTierSelection(normalizeServiceTierSelection(preferredTier, selectedModel).selection);
-  }, [props.serviceTierPreferences, selectedEffort, selectedModel, selectedModelId]);
+    /** 模型变化时只校验当前选择，不再读取项目档位。 */
+    setServiceTierSelection((current) => {
+      const normalized = normalizeServiceTierSelection(current, selectedModel).selection;
+      return serviceTierSelectionValue(normalized) === serviceTierSelectionValue(current) ? current : normalized;
+    });
+  }, [selectedEffort, selectedModel, selectedModelId]);
 
   useEffect(() => {
     const projectId = props.owner?.projectId;
@@ -3796,7 +3739,6 @@ export function NewConversationComposer(props: {
                     disabled={submitting || !props.owner}
                     onChange={(selection) => {
                       setServiceTierSelection(selection);
-                      if (selectedModel) void props.onServiceTierPreferenceChange?.(selectedModel, selection);
                     }}
                   />
                 ) : null}
@@ -3818,7 +3760,7 @@ export function NewConversationComposer(props: {
                     const nextModel = resolveModelCapability(modelPresentation.models, value);
                     setSelectedModelId(nextModel?.id ?? value);
                     setSelectedEffort(nextModel?.defaultReasoningEffort ?? nextModel?.supportedReasoningEfforts[0] ?? '');
-                    const normalized = normalizeServiceTierSelection(projectModelServiceTierSelection(props.serviceTierPreferences, nextModel), nextModel);
+                    const normalized = normalizeServiceTierSelection({ type: 'standard' }, nextModel);
                     setServiceTierSelection(normalized.selection);
                   }}
                 />
@@ -3847,7 +3789,6 @@ export function NewConversationComposer(props: {
                   inputResources.processing ||
                   !props.owner ||
                   (!selectedModel && !needsModelSetup) ||
-                  (!needsModelSetup && !contextCapacitySelectionAllowed(contextCapacityTokens, capabilities?.projectContextCapacityTokens, selectedModel?.contextCapacity)) ||
                   (!needsModelSetup && (goalInputActive ? !goalObjectiveValid : !content.trim() && attachments.length === 0))
                 }
                 aria-busy={submitting || undefined}

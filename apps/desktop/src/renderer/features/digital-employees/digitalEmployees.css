@@ -8,8 +8,7 @@
   padding: 24px;
 }
 
-.macos-ai-app .digital-employee-settings-pane,
-.macos-ai-app .project-digital-employees {
+.macos-ai-app .digital-employee-settings-pane {
   min-width: 0;
   color: var(--zeus-control-text);
 }
@@ -69,7 +68,7 @@
 .macos-ai-app .digital-employee-master-detail {
   display: grid;
   min-height: 540px;
-  grid-template-columns: minmax(220px, 0.36fr) minmax(360px, 0.64fr);
+  grid-template-columns: clamp(220px, 24vw, 300px) minmax(0, 1fr);
   margin-top: 18px;
   overflow: hidden;
   border: 0;
@@ -78,7 +77,8 @@
 }
 
 .macos-ai-app .digital-employee-master-detail.is-project {
-  block-size: clamp(420px, calc(100dvh - 300px), 820px);
+  /* 项目要求按实际内容展开，保存入口紧跟输入框。 */
+  block-size: auto;
   min-height: 0;
   margin-top: 0;
 }
@@ -238,7 +238,7 @@
 }
 
 /* 只在员工页面收口：按钮按整体换行，表单和长内容允许收缩。 */
-.macos-ai-app :where(.digital-employee-settings-pane, .project-digital-employees, .task-work-run-dialog, .task-digital-employee-panel) .zeus-button {
+.macos-ai-app :where(.digital-employee-settings-pane, .task-work-run-dialog, .task-digital-employee-panel) .zeus-button {
   flex-shrink: 0;
   white-space: nowrap;
 }
@@ -310,6 +310,54 @@
   flex: 1;
   overflow: auto;
   padding: 18px;
+}
+
+/* 项目表单不分配空白高度，低频管理操作沿用原生折叠区。 */
+.macos-ai-app .is-project .digital-employee-editor-pane > .digital-employee-form {
+  flex: 0 0 auto;
+}
+
+/* 员工列表搜索与现有输入框保持同一尺寸和键盘行为。 */
+.macos-ai-app .digital-employee-list-search {
+  display: block;
+  width: calc(100% - 20px);
+  margin: 10px;
+  min-width: 0;
+  min-height: 34px;
+  box-sizing: border-box;
+  padding: 6px 9px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 7px;
+  background: var(--zeus-control-background, var(--zeus-product-panel));
+  color: var(--zeus-control-text);
+  font: inherit;
+}
+
+/* 原生折叠区仅保留一行入口，展开后沿用表单间距。 */
+.macos-ai-app .digital-employee-disclosure {
+  min-width: 0;
+  margin: 0;
+  padding: 12px 18px;
+}
+.macos-ai-app .digital-employee-disclosure > summary {
+  cursor: pointer;
+  color: var(--zeus-control-muted-text);
+  font-size: 12px;
+  font-weight: 500;
+}
+.macos-ai-app .digital-employee-disclosure[open] > summary {
+  margin-bottom: 12px;
+}
+.macos-ai-app :where(.digital-employee-form, .employee-identity-heading) .digital-employee-disclosure {
+  padding: 0;
+}
+/* 展开的可选字段保持与首屏相同的间距。 */
+.macos-ai-app .digital-employee-form .digital-employee-disclosure > :not(summary) + :not(summary) {
+  margin-top: 12px;
+}
+.macos-ai-app .digital-employee-save-state {
+  color: var(--zeus-control-muted-text);
+  font-size: 11px;
 }
 
 .macos-ai-app .digital-employee-empty,
@@ -408,18 +456,6 @@
   max-width: 560px;
   color: var(--zeus-control-muted-text);
   line-height: 1.45;
-}
-
-.macos-ai-app .project-digital-employees {
-  margin: 0 18px 20px;
-  padding-top: 18px;
-  border-block-start: 0;
-}
-
-.macos-ai-app .workspace-view-project-settings .project-digital-employees {
-  margin: 0;
-  padding: 0;
-  border-block-start: 0;
 }
 
 .macos-ai-app .digital-employee-section-tabs {
@@ -2504,17 +2540,7 @@
   gap: 7px;
 }
 
-/* 员工经验在配置页按需展开，沿用同一记忆管理入口。 */
-.macos-ai-app .employee-memory-section {
-  margin: 18px 0;
-  padding-top: 16px;
-  border-top: 0;
-}
-.macos-ai-app .employee-memory-section > summary {
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
-}
+/* 经验正文沿用记忆管理入口，折叠入口使用共用样式。 */
 .macos-ai-app .employee-memory-section .memory-settings-header h2 {
   font-size: 15px;
 }

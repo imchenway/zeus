@@ -145,11 +145,7 @@ export function ProjectTerminalPanel(props: { project: ProjectRecord; client: Da
         throw new Error(zh ? '当前终端组件不可用，请检查应用安装后重试。' : 'The terminal backend is unavailable. Check the app installation and retry.');
       if (!config.security.allowShell)
         await props.client.saveProjectConfig(props.project.id, {
-          defaultWorkMode: config.defaultWorkMode,
-          language: config.language,
-          dependencies: config.dependencies,
           database: config.database,
-          telegram: config.telegram,
           security: { ...config.security, allowShell: true },
         });
       /** 不拼接路径到 shell 命令；后台从当前项目记录解析默认目录。 */

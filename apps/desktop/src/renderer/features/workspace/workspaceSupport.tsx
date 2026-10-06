@@ -79,7 +79,7 @@ import {
 /** 全局数字员工与数字团队均从首页独立进入。 */
 export type MainNavTarget = 'projects' | 'conversations' | 'automations' | 'skills' | 'digital-employees' | 'digital-teams' | 'settings';
 export type LegacyMainNavTarget = MainNavTarget | 'dashboard' | 'tasks' | 'runtime' | 'git-diff' | 'telegram' | 'settings-data';
-export type ProjectWorkspaceSection = 'tasks' | 'git' | 'code' | 'sessions' | 'project-settings';
+export type ProjectWorkspaceSection = 'tasks' | 'git' | 'code' | 'sessions';
 export type ProjectCodeWorkspaceMode = 'source' | 'commands';
 export type ProjectWorkspaceEntryId = 'tasks' | 'git' | 'source' | 'commands';
 export type ProjectWorkspaceEntry = Readonly<{
@@ -585,7 +585,8 @@ export function shouldRefreshNativeConversationListForRealtimeEvent(event: ZeusR
   return nativeConversationListLifecycleEventTypes.has(event.type) && typeof event.payload.projectId === 'string' && typeof event.payload.conversationId === 'string';
 }
 
-export type WorkMode = ProjectConfig['defaultWorkMode'];
+/** 工作模式属于当前任务或会话，不作为项目偏好。 */
+export type WorkMode = 'plan' | 'develop' | 'review' | 'debug';
 export type DiagramExportFormat = 'mermaid' | 'plantuml';
 export type AppShellSettingsSavePayload = Pick<
   AppShellSettings,
@@ -607,13 +608,11 @@ export type AppShellSettingsSavePayload = Pick<
   | 'defaultModel'
   | 'defaultTaskTemplateId'
   | 'taskTableColumns'
-  | 'taskTableColumnsByProject'
   | 'taskTableEnumSortOrders'
   | 'taskManagementStatusTemplate'
-  | 'taskManagementStatusByProject'
-  | 'taskStatusFilterByProject'
-  | 'taskViewModeByProject'
-  | 'taskPageViewByProject'
+  | 'taskStatusFilter'
+  | 'taskViewMode'
+  | 'taskPageView'
   | 'taskExpandedIdsByProject'
   | 'codeWorkspaceByProject'
 > & { taskManagementStatusReplacements?: Record<string, Record<string, string>> };
@@ -835,9 +834,9 @@ export const taskManagementStatusLabels: Record<AppLanguage, Record<string, stri
   },
 };
 
-export function resolveTaskManagementStatusConfig(settings: AppShellSettings, projectId?: string): TaskManagementStatusConfig {
-  const template = normalizeTaskManagementStatusConfig(settings.taskManagementStatusTemplate, defaultTaskManagementStatusConfig);
-  return projectId ? normalizeTaskManagementStatusConfig(settings.taskManagementStatusByProject?.[projectId], template) : template;
+/** 所有项目使用同一份任务状态配置。 */
+export function resolveTaskManagementStatusConfig(settings: AppShellSettings): TaskManagementStatusConfig {
+  return normalizeTaskManagementStatusConfig(settings.taskManagementStatusTemplate, defaultTaskManagementStatusConfig);
 }
 
 export function formatConfiguredTaskManagementStatus(status: TaskManagementStatusDefinition | string, config: TaskManagementStatusConfig, language: AppLanguage): string {
@@ -854,7 +853,7 @@ export function buildConfiguredTaskManagementStatusLabels(config: TaskManagement
 }
 
 export function createSessionWorkspaceTask(task: TaskRecord, settings: AppShellSettings, language: AppLanguage): SessionWorkspaceTask {
-  const config = resolveTaskManagementStatusConfig(settings, task.projectId);
+  const config = resolveTaskManagementStatusConfig(settings);
   const managementStatusId = resolveTaskManagementStatus(task);
   const definition = config.statuses.find((status) => status.id === managementStatusId);
   return {
@@ -879,29 +878,19 @@ export function controlBusyProps(isBusy: boolean): ControlBusyProps {
   return isBusy ? { 'aria-busy': true, 'data-loading': 'true' } : {};
 }
 
-export function normalizeTaskStatusFilterByProject(value: unknown): Record<string, TaskStatusFilter> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  const normalized: Record<string, TaskStatusFilter> = {};
-  let count = 0;
-  for (const [projectId, filter] of Object.entries(value)) {
-    const normalizedProjectId = projectId.trim();
-    const containsControlCharacter = Array.from(normalizedProjectId).some((character) => character.charCodeAt(0) <= 31 || character.charCodeAt(0) === 127);
-    if (!normalizedProjectId || normalizedProjectId.length > 160 || containsControlCharacter || !isTaskStatusFilter(filter)) continue;
-    normalized[normalizedProjectId] = filter;
-    count += 1;
-    if (count >= 100) break;
-  }
-  return normalized;
+/** 所有项目共用同一任务筛选，损坏或缺失值回到未完成。 */
+export function normalizeTaskStatusFilter(value: unknown): TaskStatusFilter {
+  return isTaskStatusFilter(value) ? value : 'unfinished';
 }
 
-export function normalizeTaskViewModeByProject(value: unknown): Record<string, TaskWorkspaceViewMode> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  return Object.fromEntries(Object.entries(value).filter(([projectId, mode]) => Boolean(projectId.trim()) && (mode === 'hierarchy' || mode === 'flat'))) as Record<string, TaskWorkspaceViewMode>;
+/** 所有项目共用同一任务层级显示偏好。 */
+export function normalizeTaskViewMode(value: unknown): TaskWorkspaceViewMode {
+  return value === 'flat' ? 'flat' : 'hierarchy';
 }
 
-export function normalizeTaskPageViewByProject(value: unknown): Record<string, TaskPageViewMode> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  return Object.fromEntries(Object.entries(value).filter(([projectId, mode]) => Boolean(projectId.trim()) && (mode === 'list' || mode === 'board'))) as Record<string, TaskPageViewMode>;
+/** 所有项目共用同一列表或看板入口。 */
+export function normalizeTaskPageView(value: unknown): TaskPageViewMode {
+  return value === 'board' ? 'board' : 'list';
 }
 
 export function normalizeTaskExpandedIdsByProject(value: unknown): Record<string, string[]> {
@@ -942,30 +931,18 @@ export function normalizeCodeWorkspaceByProject(value: unknown): Record<string, 
 }
 
 export function normalizeRendererAppShellSettings(settings: AppShellSettings): AppShellSettings {
-  const taskTableColumnsByProject = Object.fromEntries(
-    Object.entries(settings.taskTableColumnsByProject ?? {})
-      .filter(([projectId]) => Boolean(projectId.trim()))
-      .map(([projectId, preferences]) => [projectId.trim(), normalizeTaskTableColumnPreferences(preferences)]),
-  );
   const taskManagementStatusTemplate = normalizeTaskManagementStatusConfig(settings.taskManagementStatusTemplate, defaultTaskManagementStatusConfig);
-  const taskManagementStatusByProject = Object.fromEntries(
-    Object.entries(settings.taskManagementStatusByProject ?? {})
-      .filter(([projectId]) => Boolean(projectId.trim()))
-      .map(([projectId, config]) => [projectId.trim(), normalizeTaskManagementStatusConfig(config, taskManagementStatusTemplate)]),
-  );
   return {
     ...settings,
     mainLayout: settings.mainLayout === 'current' ? 'current' : 'upstream',
     taskBranchPrefix: normalizeTaskBranchPrefix(settings.taskBranchPrefix) ?? defaultTaskBranchPrefix,
     collapsedProjectIds: Array.isArray(settings.collapsedProjectIds) ? [...new Set(settings.collapsedProjectIds.filter((id): id is string => typeof id === 'string' && Boolean(id.trim())).map((id) => id.trim()))].slice(0, 100) : [],
     taskTableColumns: normalizeTaskTableColumnPreferences(settings.taskTableColumns),
-    taskTableColumnsByProject,
     taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(settings.taskTableEnumSortOrders),
     taskManagementStatusTemplate,
-    taskManagementStatusByProject,
-    taskStatusFilterByProject: normalizeTaskStatusFilterByProject(settings.taskStatusFilterByProject),
-    taskViewModeByProject: normalizeTaskViewModeByProject(settings.taskViewModeByProject),
-    taskPageViewByProject: normalizeTaskPageViewByProject(settings.taskPageViewByProject),
+    taskStatusFilter: normalizeTaskStatusFilter(settings.taskStatusFilter),
+    taskViewMode: normalizeTaskViewMode(settings.taskViewMode),
+    taskPageView: normalizeTaskPageView(settings.taskPageView),
     taskExpandedIdsByProject: normalizeTaskExpandedIdsByProject(settings.taskExpandedIdsByProject),
     codeWorkspaceByProject: normalizeCodeWorkspaceByProject(settings.codeWorkspaceByProject),
   };
@@ -974,8 +951,6 @@ export function normalizeRendererAppShellSettings(settings: AppShellSettings): A
 export function toAppShellSettingsSavePayload(settings: AppShellSettings, taskManagementStatusReplacements?: Record<string, Record<string, string>>): AppShellSettingsSavePayload {
   // 漏斗由独立局部请求保存，不放入通用整份快照，避免较早收集的设置回写旧筛选。
   const taskTableColumns = normalizeTaskTableColumnPreferences(settings.taskTableColumns);
-  const taskTableColumnsByProject = Object.fromEntries(Object.entries(settings.taskTableColumnsByProject ?? {}).map(([projectId, preferences]) => [projectId, normalizeTaskTableColumnPreferences(preferences)]));
-  const taskStatusFilterByProject = normalizeTaskStatusFilterByProject(settings.taskStatusFilterByProject);
   return {
     // 代理草稿随通用设置保存；其他偏好更新继续携带原值。
     networkProxy: settings.networkProxy,
@@ -1001,34 +976,27 @@ export function toAppShellSettingsSavePayload(settings: AppShellSettings, taskMa
       // 空对象是“恢复默认列宽”的显式协议；省略字段表示局部保存时继续沿用已存列宽。
       columnWidths: taskTableColumns.columnWidths ?? {},
     },
-    taskTableColumnsByProject,
     taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(settings.taskTableEnumSortOrders),
     taskManagementStatusTemplate: normalizeTaskManagementStatusConfig(settings.taskManagementStatusTemplate, defaultTaskManagementStatusConfig),
-    taskManagementStatusByProject: Object.fromEntries(
-      Object.entries(settings.taskManagementStatusByProject ?? {}).map(([projectId, config]) => [projectId, normalizeTaskManagementStatusConfig(config, resolveTaskManagementStatusConfig(settings))]),
-    ),
     ...(taskManagementStatusReplacements && Object.keys(taskManagementStatusReplacements).length > 0 ? { taskManagementStatusReplacements } : {}),
-    taskStatusFilterByProject,
-    taskViewModeByProject: normalizeTaskViewModeByProject(settings.taskViewModeByProject),
-    taskPageViewByProject: normalizeTaskPageViewByProject(settings.taskPageViewByProject),
+    taskStatusFilter: normalizeTaskStatusFilter(settings.taskStatusFilter),
+    taskViewMode: normalizeTaskViewMode(settings.taskViewMode),
+    taskPageView: normalizeTaskPageView(settings.taskPageView),
     taskExpandedIdsByProject: normalizeTaskExpandedIdsByProject(settings.taskExpandedIdsByProject),
     codeWorkspaceByProject: normalizeCodeWorkspaceByProject(settings.codeWorkspaceByProject),
   };
 }
 
-export function resolveTaskTableColumnsForProject(settings: AppShellSettings, projectId: string | undefined): TaskTableColumnPreferences {
-  if (projectId) {
-    const projectPreferences = settings.taskTableColumnsByProject?.[projectId];
-    if (projectPreferences) return normalizeTaskTableColumnPreferences(projectPreferences);
-  }
+/** 任务表格只解析一份全局字段布局。 */
+export function resolveTaskTableColumns(settings: AppShellSettings): TaskTableColumnPreferences {
   return normalizeTaskTableColumnPreferences(settings.taskTableColumns);
 }
 
-export function resolveTaskStatusFilterForProject(settings: AppShellSettings, projectId: string | undefined): TaskStatusFilter {
-  if (!projectId) return 'unfinished';
-  const filter = settings.taskStatusFilterByProject?.[projectId];
+/** 全局状态目录决定筛选值是否仍然有效。 */
+export function resolveTaskStatusFilter(settings: AppShellSettings): TaskStatusFilter {
+  const filter = settings.taskStatusFilter;
   if (filter === '' || filter === 'unfinished') return filter;
-  return isTaskStatusFilter(filter) && resolveTaskManagementStatusConfig(settings, projectId).statuses.some((status) => status.id === filter) ? filter : 'unfinished';
+  return isTaskStatusFilter(filter) && resolveTaskManagementStatusConfig(settings).statuses.some((status) => status.id === filter) ? filter : 'unfinished';
 }
 
 export function taskTableColumnPreferencesEqual(left: TaskTableColumnPreferences, right: TaskTableColumnPreferences): boolean {
@@ -1043,11 +1011,10 @@ export function resolveTaskTableColumnsSaveResponse(input: { currentSettings: Ap
   return {
     ...currentSettings,
     taskTableColumns: savedSettings.taskTableColumns,
-    taskTableColumnsByProject: savedSettings.taskTableColumnsByProject,
     taskTableEnumSortOrders: savedSettings.taskTableEnumSortOrders,
-    taskStatusFilterByProject: currentSettings.taskStatusFilterByProject,
-    taskViewModeByProject: currentSettings.taskViewModeByProject,
-    taskPageViewByProject: currentSettings.taskPageViewByProject,
+    taskStatusFilter: currentSettings.taskStatusFilter,
+    taskViewMode: currentSettings.taskViewMode,
+    taskPageView: currentSettings.taskPageView,
     taskExpandedIdsByProject: currentSettings.taskExpandedIdsByProject,
     codeWorkspaceByProject: currentSettings.codeWorkspaceByProject,
   };
@@ -1063,11 +1030,10 @@ export function mergeAppShellSettingsSaveResponse(input: { currentSettings: AppS
     sidebarConversationFilters: currentSettings.sidebarConversationFilters,
     modelSetupStatus: currentSettings.modelSetupStatus,
     taskTableColumns: currentSettings.taskTableColumns,
-    taskTableColumnsByProject: currentSettings.taskTableColumnsByProject,
     taskTableEnumSortOrders: currentSettings.taskTableEnumSortOrders,
-    taskStatusFilterByProject: currentSettings.taskStatusFilterByProject,
-    taskViewModeByProject: currentSettings.taskViewModeByProject,
-    taskPageViewByProject: currentSettings.taskPageViewByProject,
+    taskStatusFilter: currentSettings.taskStatusFilter,
+    taskViewMode: currentSettings.taskViewMode,
+    taskPageView: currentSettings.taskPageView,
     taskExpandedIdsByProject: currentSettings.taskExpandedIdsByProject,
     codeWorkspaceByProject: currentSettings.codeWorkspaceByProject,
   };
@@ -1390,7 +1356,6 @@ export function inferInitialProjectSection(props: {
 }): ProjectWorkspaceSection {
   if (props.snapshot?.projects[0]?.id === temporaryWorkspaceId) return 'sessions';
   if (typeof window !== 'undefined' && (window.location.hash === '#project-commands' || window.location.hash.startsWith('#project-code'))) return 'code';
-  if (props.initialProjectConfig || props.initialProjectDatabaseSecret) return 'project-settings';
   if (props.initialMainNavTarget === 'tasks') return 'tasks';
   if (props.initialMainNavTarget === 'git-diff' || props.initialMainNavTarget === 'projects') return 'code';
   if (props.initialMainNavTarget === 'conversations' || props.initialMainNavTarget === 'runtime' || props.initialMainNavTarget === 'dashboard') return 'sessions';

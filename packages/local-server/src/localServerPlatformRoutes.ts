@@ -39,9 +39,9 @@ import {
   type GitPatchExport,
   readTaskIntegrationConflict,
 } from '@zeus/git-core';
-import { normalizeProjectConfig, normalizeProjectModelServiceTierPreference, type ProjectConfigSnapshot, type ProjectModelServiceTierPreference, type UpdateProjectConfigBody } from './projectCore.js';
+import { normalizeProjectConfig, type ProjectConfigSnapshot, type UpdateProjectConfigBody } from './projectCore.js';
 import { getSecretPresenceLabel } from './securityCore.js';
-import { cloneTaskManagementStatusConfig, temporaryWorkspaceId, type TaskAttachmentReference, type TaskPushParentAttachmentOption } from '@zeus/shared';
+import { temporaryWorkspaceId, type TaskAttachmentReference, type TaskPushParentAttachmentOption } from '@zeus/shared';
 import {
   AutomationRunRepository,
   AutomationTaskRepository,
@@ -1340,7 +1340,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   registerCodexSubagentQueryRoutes({ server, application: codexSubagentQueries });
 
   const conversationCapabilityQueries = new ConversationCapabilityQueryApplication({
-    readProjectContextCapacity: (projectId) => readProjectConfig(projectId).contextCapacityTokens,
     readContextCapacitySupport: (model) => {
       const state = codexAppServerManager.getState();
       return resolveContextCapacityPolicy(
@@ -1772,7 +1771,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     },
     archiveNativeConversation,
     restoreNativeConversation,
-    rememberContextCapacity: (projectId, capacity) => settings.setJson(projectConfigSettingsPrefix + projectId, { ...readProjectConfig(projectId), contextCapacityTokens: capacity }),
     validateContextCapacity: async (conversation, model) => {
       if (conversation.contextCapacityTokens === null) return;
       /** 复用界面的同一能力来源，换模型不能把旧预算静默丢掉。 */
@@ -2462,63 +2460,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     },
   );
 
-  server.put(
-    '/api/projects/:projectId/model-service-tier-preference',
-    async (
-      request: FastifyRequest<{
-        Params: { projectId: string };
-        Body: SettingsCommandRequest<ProjectModelServiceTierPreference>;
-      }>,
-      reply,
-    ): Promise<ProjectConfigSnapshot | unknown> => {
-      try {
-        const parsed = settingsCommands.parse<ProjectModelServiceTierPreference>({
-          value: request.body,
-          commandType: settingsCommandTypes.projectModelServiceTierPreferencePut,
-          scopeKind: 'project',
-          expectedScopeId: () => request.params.projectId,
-        });
-        const project = projects.getById(request.params.projectId);
-        if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
-        const preference = normalizeProjectModelServiceTierPreference(parsed.input);
-        if (!preference) {
-          return reply.code(400).send({
-            error: 'ZEUS_INVALID_PROJECT_SERVICE_TIER_PREFERENCE',
-            message: 'Project model service tier preference must identify one model and use standard or priority',
-          });
-        }
-        const current = readProjectConfig(project.id);
-        const replacesExisting = current.serviceTierPreferences.some((entry: ProjectModelServiceTierPreference) => entry.modelSourceId === preference.modelSourceId && entry.modelId === preference.modelId);
-        if (!replacesExisting && current.serviceTierPreferences.length >= 100) {
-          return reply.code(409).send({ error: 'ZEUS_PROJECT_SERVICE_TIER_PREFERENCE_LIMIT', message: 'Project model service tier preference limit reached' });
-        }
-        const nextConfig: ProjectConfigSnapshot = {
-          ...current,
-          serviceTierPreferences: [...current.serviceTierPreferences.filter((entry: ProjectModelServiceTierPreference) => entry.modelSourceId !== preference.modelSourceId || entry.modelId !== preference.modelId), preference],
-        };
-        const mutation = settingsCommands.executeCore({
-          parsed,
-          destinationId: 'project_model_service_tier_preference',
-          resourceId: project.id,
-          mutateBusinessState: () => {
-            settings.setJson(projectConfigSettingsPrefix + project.id, nextConfig);
-            appendAuditLog({
-              actorType: 'local_api',
-              action: 'project.service_tier_preference.updated',
-              resourceType: 'project',
-              resourceId: project.id,
-              payload: { ...preference },
-            });
-            return nextConfig;
-          },
-        });
-        return mutation.result;
-      } catch (error) {
-        const mapped = settingsCommandHttpError(error, redactSensitiveText);
-        return reply.code(mapped.statusCode).send(mapped.body);
-      }
-    },
-  );
+  /** 项目模型偏好已退役，旧调用不能继续写入隐藏覆盖。 */
+  server.put('/api/projects/:projectId/model-service-tier-preference', async (_request, reply) => reply.code(410).send({ error: 'ZEUS_PROJECT_PREFERENCES_REMOVED', message: '项目独立设置已移除，请在当前任务或会话中选择模型档位。' }));
 
   server.put(
     '/api/projects/:projectId/config',
@@ -2538,11 +2481,11 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         });
         const project = projects.getById(request.params.projectId);
         if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: 'Project not found' });
-        // 普通项目设置保存不拥有模型速度偏好，避免旧界面快照覆盖专用接口写入的显式选择。
-        const ordinaryConfigBody: UpdateProjectConfigBody = { ...parsed.input };
-        delete ordinaryConfigBody.serviceTierPreferences;
-        // 预算与其他项目字段统一严格校验，让非法输入沿用下方 400 回执，避免被通用异常映射为 500。
-        const nextConfig = normalizeProjectConfig(project.id, ordinaryConfigBody, readProjectConfig(project.id));
+        /** 资源接口拒绝已退役字段，不接受隐藏的项目偏好。 */
+        if (Object.keys(parsed.input).some((key) => !['vcs', 'database', 'security'].includes(key))) {
+          return reply.code(400).send({ error: 'ZEUS_PROJECT_PREFERENCES_REMOVED', message: '项目独立设置已移除，仅可保存连接资源与授权。' });
+        }
+        const nextConfig = normalizeProjectConfig(project.id, parsed.input, readProjectConfig(project.id));
         if (!nextConfig) return reply.code(400).send({ error: 'ZEUS_INVALID_PROJECT_CONFIG', message: 'Project config must use safe single-line values and supported options' });
         if (hasDatabaseUriPassword(nextConfig.database.connectionName)) {
           return reply.code(400).send({ error: 'ZEUS_DATABASE_CONNECTION_SECRET_IN_URI', message: 'Database connection URI must not include a password; save the password in the project Keychain field.' });
@@ -2558,7 +2501,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
               action: 'project.config.updated',
               resourceType: 'project',
               resourceId: project.id,
-              payload: { defaultWorkMode: nextConfig.defaultWorkMode, language: nextConfig.language.primary },
+              payload: { connectionName: nextConfig.database.connectionName, security: nextConfig.security },
             });
             return nextConfig;
           },
@@ -2761,26 +2704,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     repositoryDiscovery,
     projects,
     sharedPaths: projectSharedPaths,
-    templates: taskTemplates,
     saveProjectConfig: (projectId, config) => settings.setJson(projectConfigSettingsPrefix + projectId, config),
-    stageProjectManagementStatus: (projectId) => {
-      settings.setJson(appShellSettingsKey, {
-        ...platformMutableState.appShellSettings,
-        taskManagementStatusByProject: {
-          ...platformMutableState.appShellSettings.taskManagementStatusByProject,
-          [projectId]: cloneTaskManagementStatusConfig(platformMutableState.appShellSettings.taskManagementStatusTemplate),
-        },
-      });
-    },
-    activateProjectManagementStatus: (projectId) => {
-      platformMutableState.appShellSettings = {
-        ...platformMutableState.appShellSettings,
-        taskManagementStatusByProject: {
-          ...platformMutableState.appShellSettings.taskManagementStatusByProject,
-          [projectId]: cloneTaskManagementStatusConfig(platformMutableState.appShellSettings.taskManagementStatusTemplate),
-        },
-      };
-    },
     appendAuditLog,
     afterCommit: (callback) => db.afterCommit(callback),
     publishRealtimeEvent,
@@ -2796,7 +2720,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     archiveConfirmation: (projectId) => workManagementProjectOperations.archiveConfirmation(projectId),
     archive: (projectId) => workManagementProjectOperations.archive(projectId),
     restore: (projectId) => workManagementProjectOperations.restore(projectId),
-    setDefaultTemplate: (projectId, input) => workManagementProjectOperations.setDefaultTemplate(projectId, input),
     mapDomainError: mapWorkManagementTaskDomainError,
   });
 
@@ -3616,11 +3539,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     items: taskWorkItems,
     conversationGoals,
     memoryProposals: new EmployeeMemoryProposalRepository(db, () => now().toISOString()),
-    resolveProjectMemoryPolicy: (projectId) => {
-      /** 只有用户保存的当前项目流程规则可被新工作冻结，未配置时保持人工确认。 */
-      const workflow = digitalTeamWorkflowCoordinator?.getProjectWorkflow(projectId);
-      return workflow ? { workflowTemplateId: workflow.id, workflowTemplateRevision: workflow.revision, autoApplyStableExperience: workflow.definition.projectMemoryPolicy?.autoApplyStableExperience === true } : null;
-    },
     planning: new TaskWorkPlanningRepository(db, () => now().toISOString()),
     reviews: new TaskWorkReviewRepository(db, () => now().toISOString()),
     deployments: new TaskWorkDeploymentRepository(db, () => now().toISOString()),
@@ -3654,11 +3572,28 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     readOnlyValidation: Boolean(readOnlyValidation),
   });
 
+  /** 只有迁移归档中的准确旧来源可解释项目状态，新修订与新事件统一使用全局状态。 */
+  const resolveArchivedTaskStatus = (projectId: string, statusId: string, source: { revisionId: string } | { eventSequence: number } | { runId: string }): string => {
+    /** 来源身份与事件边界独立归档，不改历史运行或修订快照。 */
+    const archive = settings.getJson<{ replacements?: Record<string, Record<string, string>>; automationRevisionIds?: string[]; taskEventSequenceByProject?: Record<string, number>; digitalTeamRunIds?: string[] }>(
+      'archive.project-task-status-settings',
+    );
+    /** 每个目标只读取自己原项目的映射，不能合并多个项目扩大触发条件。 */
+    const legacySource =
+      'revisionId' in source
+        ? archive?.automationRevisionIds?.includes(source.revisionId)
+        : 'eventSequence' in source
+          ? archive?.taskEventSequenceByProject?.[projectId] !== undefined && source.eventSequence <= archive.taskEventSequenceByProject[projectId]!
+          : archive?.digitalTeamRunIds?.includes(source.runId);
+    return legacySource ? (archive?.replacements?.[projectId]?.[statusId] ?? statusId) : statusId;
+  };
+
   /** 数字团队复用现有任务、会话、证据与 Git 能力，只新增冻结图和节点尝试账本。 */
   digitalTeamWorkflowCoordinator = new DigitalTeamWorkflowCoordinator({
     defects: new DefectWorkflowRepository(db),
     isCompletedTaskStatus: (projectId, statusId) => resolveTaskManagementStatusConfigForProject(projectId).roles.completedStatusId === statusId,
     validateTaskStatus: (projectId, statusId) => resolveTaskManagementStatusConfigForProject(projectId).statuses.some((status: import('@zeus/shared').TaskManagementStatusDefinition) => status.id === statusId),
+    resolveLegacyTaskStatus: (projectId, statusId, runId) => resolveArchivedTaskStatus(projectId, statusId, { runId }),
     advanceTaskStatus: (taskId, statusId, source) => {
       /** 流程产生的状态事件保留发生前后身份并阻止自触发。 */
       const before = tasks.getById(taskId);
@@ -3712,6 +3647,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   if (!readOnlyValidation) {
     automationScheduler = createAutomationScheduler({
       migrateLegacy: () => migrateEmployeeAutomationsToUnified(db),
+      resolveLegacyTaskStatus: resolveArchivedTaskStatus,
       tasks: automationTasks,
       runs: automationRuns,
       conversations,
@@ -4248,18 +4184,22 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         scopeKind: 'settings',
         expectedScopeId: () => 'app-shell',
       });
+      /** 拒绝旧界面提交项目独立设置，不能重新写入已退役覆盖。 */
+      if (['taskManagementStatusByProject', 'taskTableColumnsByProject', 'taskStatusFilterByProject', 'taskViewModeByProject', 'taskPageViewByProject'].some((key) => Object.prototype.hasOwnProperty.call(parsed.input, key))) {
+        return reply.code(400).send({ error: 'ZEUS_PROJECT_PREFERENCES_REMOVED', message: '项目独立设置已移除，请保存全局设置。' });
+      }
       const previousSettings = platformMutableState.appShellSettings;
       const nextSettings = patchAppShellSettings(previousSettings, parsed.input, settingsIdentityCatalog);
       const migrationOperations: Array<{ projectId: string; fromStatus: TaskManagementStatus; toStatus: TaskManagementStatus }> = [];
-      if (Object.prototype.hasOwnProperty.call(parsed.input, 'taskManagementStatusByProject')) {
-        for (const project of projects.list()) {
-          const previousConfig = previousSettings.taskManagementStatusByProject[project.id] ?? previousSettings.taskManagementStatusTemplate;
-          const nextConfig = nextSettings.taskManagementStatusByProject[project.id] ?? nextSettings.taskManagementStatusTemplate;
+      if (Object.prototype.hasOwnProperty.call(parsed.input, 'taskManagementStatusTemplate')) {
+        for (const project of [...projects.list(), ...projects.listArchived()]) {
+          const previousConfig = previousSettings.taskManagementStatusTemplate;
+          const nextConfig = nextSettings.taskManagementStatusTemplate;
           const nextStatusIds = new Set(nextConfig.statuses.map((status) => status.id));
           const removedStatusIds = previousConfig.statuses.map((status) => status.id).filter((statusId) => !nextStatusIds.has(statusId));
           for (const removedStatusId of removedStatusIds) {
-            if (nextSettings.taskStatusFilterByProject[project.id] === removedStatusId) nextSettings.taskStatusFilterByProject[project.id] = 'unfinished';
-            const replacementStatusId = parsed.input.taskManagementStatusReplacements?.[project.id]?.[removedStatusId];
+            if (nextSettings.taskStatusFilter === removedStatusId) nextSettings.taskStatusFilter = 'unfinished';
+            const replacementStatusId = parsed.input.taskManagementStatusReplacements?.__global__?.[removedStatusId] ?? parsed.input.taskManagementStatusReplacements?.[project.id]?.[removedStatusId];
             const taskCount = tasks.listByProject(project.id, { managementStatus: removedStatusId }).length + tasks.listArchivedByProject(project.id, { managementStatus: removedStatusId }).length;
             const carriesSystemBehavior = Object.values(previousConfig.roles).includes(removedStatusId);
             if ((taskCount > 0 || carriesSystemBehavior) && (!replacementStatusId || !nextStatusIds.has(replacementStatusId))) {
@@ -4313,14 +4253,13 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
               defaultModel: nextSettings.defaultModel,
               defaultTaskTemplateId: nextSettings.defaultTaskTemplateId,
               taskTableColumns: nextSettings.taskTableColumns,
-              taskTableColumnsByProject: nextSettings.taskTableColumnsByProject,
               taskTableEnumSortOrders: nextSettings.taskTableEnumSortOrders,
               taskManagementStatusTemplate: nextSettings.taskManagementStatusTemplate,
-              taskManagementStatusProjectCount: Object.keys(nextSettings.taskManagementStatusByProject).length,
+              taskManagementStatusCount: nextSettings.taskManagementStatusTemplate.statuses.length,
               migratedTaskManagementStatusCount: migratedTasks.length,
-              taskStatusFilterByProject: nextSettings.taskStatusFilterByProject,
-              taskViewModeByProject: nextSettings.taskViewModeByProject,
-              taskPageViewByProject: nextSettings.taskPageViewByProject,
+              taskStatusFilter: nextSettings.taskStatusFilter,
+              taskViewMode: nextSettings.taskViewMode,
+              taskPageView: nextSettings.taskPageView,
               taskExpandedIdsByProject: nextSettings.taskExpandedIdsByProject,
               codeWorkspaceByProject: nextSettings.codeWorkspaceByProject,
             },
@@ -4364,16 +4303,24 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
 
       // 全部字段先完成 parse/normalize/关联约束计划，之后才允许写 Artifact、SQLite 或文件。
       const plannedAppShell = parsed.input.settings.appShell ? patchAppShellSettings(platformMutableState.appShellSettings, parsed.input.settings.appShell, settingsIdentityCatalog) : null;
+      /** 导入不重新恢复项目偏好，历史数据由启动迁移旁路保存。 */
+      if (
+        ['taskManagementStatusByProject', 'taskTableColumnsByProject', 'taskStatusFilterByProject', 'taskViewModeByProject', 'taskPageViewByProject'].some((key) =>
+          Object.prototype.hasOwnProperty.call(parsed.input.settings?.appShell ?? {}, key),
+        )
+      ) {
+        return reply.code(400).send({ error: 'ZEUS_PROJECT_PREFERENCES_REMOVED', message: '导入内容包含已移除的项目独立设置，请使用全局设置。' });
+      }
       const plannedRuntime = parsed.input.settings.runtime ? normalizeImportedRuntimeSettings(parsed.input.settings.runtime) : null;
       const plannedTelegramNotification = parsed.input.settings.telegramNotification ? normalizeImportedTelegramNotificationSettings(parsed.input.settings.telegramNotification) : null;
       const plannedTelegramSecurity = parsed.input.settings.telegramSecurity ? normalizeImportedTelegramSecuritySettings(parsed.input.settings.telegramSecurity) : null;
       if (parsed.input.settings.runtime && !plannedRuntime) return reply.code(400).send({ error: 'ZEUS_INVALID_SETTINGS_IMPORT', message: 'runtime settings are invalid or unsafe' });
       if (parsed.input.settings.telegramNotification && !plannedTelegramNotification) return reply.code(400).send({ error: 'ZEUS_INVALID_SETTINGS_IMPORT', message: 'telegram notification settings are invalid' });
       if (parsed.input.settings.telegramSecurity && !plannedTelegramSecurity) return reply.code(400).send({ error: 'ZEUS_INVALID_SETTINGS_IMPORT', message: 'telegram security settings are invalid' });
-      if (plannedAppShell && Object.prototype.hasOwnProperty.call(parsed.input.settings.appShell, 'taskManagementStatusByProject')) {
-        for (const project of projects.list()) {
-          const previousConfig = platformMutableState.appShellSettings.taskManagementStatusByProject[project.id] ?? platformMutableState.appShellSettings.taskManagementStatusTemplate;
-          const nextConfig = plannedAppShell.taskManagementStatusByProject[project.id] ?? plannedAppShell.taskManagementStatusTemplate;
+      if (plannedAppShell && Object.prototype.hasOwnProperty.call(parsed.input.settings.appShell, 'taskManagementStatusTemplate')) {
+        for (const project of [...projects.list(), ...projects.listArchived()]) {
+          const previousConfig = platformMutableState.appShellSettings.taskManagementStatusTemplate;
+          const nextConfig = plannedAppShell.taskManagementStatusTemplate;
           const nextStatusIds = new Set(nextConfig.statuses.map((status) => status.id));
           for (const removedStatusId of previousConfig.statuses.map((status) => status.id).filter((statusId) => !nextStatusIds.has(statusId))) {
             const taskCount = tasks.listByProject(project.id, { managementStatus: removedStatusId }).length + tasks.listArchivedByProject(project.id, { managementStatus: removedStatusId }).length;

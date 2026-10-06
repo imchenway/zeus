@@ -4,10 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { prepareWorkflowCandidate } from '../packages/git-core/src/index.js';
 import { DigitalTeamWorkflowCoordinator, type DigitalTeamWorkflowCoordinatorOptions } from '../packages/local-server/src/digitalTeamWorkflowCoordinator.js';
-import { createAutomationScheduler } from '../packages/local-server/src/automationScheduler.js';
+import { createAutomationScheduler, type AutomationSchedulerOptions } from '../packages/local-server/src/automationScheduler.js';
 import { WorkManagementCoreOperations } from '../packages/local-server/src/workManagementCoreOperations.js';
 import { migrateEmployeeAutomationsToUnified } from '../packages/storage/src/automationEmployeeMigration.js';
-import { migrateDigitalTeamProjectEmployeeReferences } from '../packages/storage/src/digitalTeamWorkflowStore.js';
+import { migrateDigitalTeamProjectEmployeeReferences, migrateUnifiedDigitalTeamTemplates } from '../packages/storage/src/digitalTeamWorkflowStore.js';
 import type { ZeusDatabasePort } from '../packages/storage/src/databasePort.js';
 import {
   digitalTeamWorkflowSchemaGeneration,
@@ -87,7 +87,7 @@ try {
       prompt: '完成明确分工。',
     });
     /** 项目中的唯一启用实例由运行边界自动解析，不再由用户二次选择。 */
-    const employee = employees.createFromTemplate({ projectId: project.id, template: employeeTemplate, overrides: { id: 'employee_digital_team_probe' } });
+    const employee = employees.createFromTemplate({ projectId: project.id, template: employeeTemplate, id: 'employee_digital_team_probe' });
     await verifyUnifiedAutomation(database, project.id, employee.id);
     /** 单员工定义证明团队不需要开始、结束或其他系统节点。 */
     const singleDefinition = definition([employeeNode('single', employee.id, '独立完成任务')], []);
@@ -103,7 +103,7 @@ try {
       [],
     );
     /** 与真实模板保存使用同一归一化入口。 */
-    const ordinaryTemplate = templates.create({ projectId: project.id, name: '通用流程', description: '', definition: ordinaryDraft });
+    const ordinaryTemplate = templates.create({ name: '通用流程', description: '', definition: ordinaryDraft });
     /** 未配置研发能力的员工仍保持只读，不隐式开启写代码或代码候选验证。 */
     const ordinaryNode = ordinaryTemplate.definition.nodes[0] as DigitalTeamEmployeeNode;
     assert(ordinaryTemplate.ready && ordinaryNode.data.purpose === 'work' && ordinaryNode.data.executionMode === 'read_only' && !ordinaryNode.data.verificationCommands?.length, '普通分工不得被研发配置或空白标准阻断。');
@@ -116,7 +116,7 @@ try {
     /** 使用真实保存入口验证界面隐藏后不会继续保存无入口的配置。 */
     const settingsDefinition = definition([{ ...employeeNode('settings', employee.id, '读取项目默认'), data: { ...employeeNode('settings', employee.id, '读取项目默认').data, settings: oldNodeSettings } }], []);
     /** 保存结果只保留当前权限约束。 */
-    const settingsTemplate = templates.create({ projectId: project.id, name: '统一运行默认', description: '', definition: settingsDefinition });
+    const settingsTemplate = templates.create({ name: '统一运行默认', description: '', definition: settingsDefinition });
     assert(
       settingsTemplate.ready && JSON.stringify((settingsTemplate.definition.nodes[0] as DigitalTeamEmployeeNode).data.settings) === JSON.stringify({ permissionMode: 'read-only' }),
       '新模板不得保留逐节点模型、推理、速度、工作模式或技能覆盖。',
@@ -150,15 +150,15 @@ try {
     );
     assert(upgraded.edges.some((edge) => edge.source === 'planner' && edge.target === 'worker') && upgraded.edges.some((edge) => edge.source === 'worker' && edge.target === 'reviewer'), '旧技术节点必须保留最近员工之间的依赖。');
     /** 空草稿允许保存，但不能标记为可执行。 */
-    const emptyTemplate = templates.create({ projectId: project.id, name: '空草稿', description: '', definition: definition([], []) });
+    const emptyTemplate = templates.create({ name: '空草稿', description: '', definition: definition([], []) });
     assert(!emptyTemplate.ready, '空草稿只能保存，不能启动。');
     /** 可运行模板冻结纯员工定义。 */
-    const template = templates.create({ projectId: project.id, name: '并行团队', description: '', definition: parallelDefinition });
+    const template = templates.create({ name: '并行团队', description: '', definition: parallelDefinition });
     assert(template.ready && template.definition.nodes.length === 3, '纯员工模板必须可运行。');
     /** 全局模板成员直接引用节点中配置的员工模板身份。 */
     const globalDefinition = definition([employeeNode('global_member', employeeTemplate.id, '全局成员')], []);
     /** 全局模板不写入项目身份。 */
-    const globalTemplate = templates.create({ projectId: null, name: '全局团队', description: '', definition: globalDefinition });
+    const globalTemplate = templates.create({ name: '全局团队', description: '', definition: globalDefinition });
     assert(globalTemplate.projectId === null && templates.listGlobal().some((candidate) => candidate.id === globalTemplate.id), '全局团队模板必须独立于项目读取。');
     /** 全局团队运行仍属于明确项目和任务。 */
     const globalTask = tasks.create({ projectId: project.id, title: '验证全局团队绑定', taskType: 'requirement', description: '', createdFrom: 'digital-team-probe', sourceContext: {} });
@@ -173,9 +173,8 @@ try {
       baseRevisions: [],
     });
     assert(globalRun.definitionSnapshot.nodes[0]?.type === 'employee' && globalRun.definitionSnapshot.nodes[0].data.employeeId === employee.id, '全局团队运行必须按节点配置自动冻结项目执行员工。');
-    /** 项目当前流程由独立项目副本维护，来源全局模板修改不会联动。 */
-    templates.setCurrentByProject(project.id, template.id);
-    assert(templates.getCurrentByProject(project.id)?.id === template.id, '项目必须只有明确绑定的当前流程。');
+    /** 所有团队共享同一目录，不能再次保存项目独立副本。 */
+    assert(template.projectId === null && templates.listGlobal().some((item) => item.id === template.id), '团队定义必须统一管理。');
     /** 同一员工重复出现必须明确指派入口，不能按数组顺序猜测。 */
     let ambiguousEntryRejected = false;
     try {
@@ -326,23 +325,26 @@ function verifyMigratedProjectEmployeeReferences(database: ZeusDatabasePort, pro
   /** 原项目流程含员工节点和修复员工两处相同全局引用。 */
   const original = { ...definition([employeeNode('identity', globalEmployeeId, '保持项目职责')], []), repairEmployeeId: globalEmployeeId };
   /** 原项目已有独立流程副本。 */
-  const local = templates.create({ projectId, name: '身份迁移项目流程', description: '', definition: original });
-  templates.setCurrentByProject(projectId, local.id);
+  const local = templates.create({ name: '身份迁移项目流程', description: '', definition: original });
+  database.execute('UPDATE digital_team_workflow_templates SET project_id=? WHERE id=?', [projectId, local.id]);
   /** 共享模板继续供其他项目使用原全局员工。 */
-  const shared = templates.create({ projectId: null, name: '身份迁移共享流程', description: '', definition: original });
+  const shared = templates.create({ name: '身份迁移共享流程', description: '', definition: original });
   /** 其他项目的独立副本不能被本项目员工差异改变。 */
   const otherProject = new ProjectRepository(database).create({ name: '其他项目职责', localPath: join(probeRoot, 'other-project') });
   /** 相同旧全局引用在另一项目保持原样。 */
-  const other = templates.create({ projectId: otherProject.id, name: '其他项目流程', description: '', definition: original });
+  const otherCreated = templates.create({ name: '其他项目流程', description: '', definition: original });
+  database.execute('UPDATE digital_team_workflow_templates SET project_id=? WHERE id=?', [otherProject.id, otherCreated.id]);
+  const other = templates.getById(otherCreated.id)!;
   /** 已删除模板保留原定义，迁移不能复活或修改。 */
-  const deleted = templates.create({ projectId, name: '已删除旧流程', description: '', definition: original });
+  const deleted = templates.create({ name: '已删除旧流程', description: '', definition: original });
+  database.execute('UPDATE digital_team_workflow_templates SET project_id=? WHERE id=?', [projectId, deleted.id]);
   templates.delete(deleted.id, deleted.revision);
   /** 旧节点配置按数据库原文保存，专门验证迁移不会顺带归一化删除。 */
-  const historical = templates.create({ projectId, name: '旧委派配置', description: '', definition: original });
+  const historical = templates.create({ name: '旧委派配置', description: '', definition: original });
   /** 历史委派只有准确旧全局引用需要改为原项目员工。 */
   const historicalDefinition = structuredClone(original);
   (historicalDefinition.nodes[0] as DigitalTeamEmployeeNode).data.settings = { modelOverride: 'historical-model', delegation: { employeeIds: [globalEmployeeId, employeeId], maxDepth: 1, maxWorkItems: 2 } };
-  database.execute('UPDATE digital_team_workflow_templates SET definition_json=? WHERE id=?', [JSON.stringify(historicalDefinition), historical.id]);
+  database.execute('UPDATE digital_team_workflow_templates SET definition_json=?,project_id=? WHERE id=?', [JSON.stringify(historicalDefinition), projectId, historical.id]);
   /** 迁移前已接纳的运行冻结原员工与模板修订。 */
   const oldTask = tasks.create({ projectId, title: '迁移前任务', taskType: 'requirement', description: '', createdFrom: 'digital-team-probe', sourceContext: {} });
   /** 员工解析应在升级前已经落到原项目员工。 */
@@ -353,7 +355,7 @@ function verifyMigratedProjectEmployeeReferences(database: ZeusDatabasePort, pro
   const timestamp = new Date().toISOString();
   migrateDigitalTeamProjectEmployeeReferences(database, { projectId, globalEmployeeId, employeeId }, timestamp);
   /** 原当前流程引用保持不变，模板只增加一次修订。 */
-  const migrated = templates.getCurrentByProject(projectId)!;
+  const migrated = templates.getById(local.id)!;
   assert(
     migrated.id === local.id && migrated.revision === local.revision + 1 && (migrated.definition.nodes[0] as DigitalTeamEmployeeNode).data.employeeId === employeeId && migrated.definition.repairEmployeeId === employeeId,
     '项目流程必须继续使用原员工并失效旧修订。',
@@ -374,10 +376,38 @@ function verifyMigratedProjectEmployeeReferences(database: ZeusDatabasePort, pro
   /** 更新来源后再接纳，证明流程不会重新创建原全局员工。 */
   const employees = new DigitalEmployeeRepository(database);
   employees.update(employeeId, { expectedRevision: employees.getById(employeeId)!.revision, globalEmployeeId: promoted.id });
+  /** 原项目状态只按归档身份迁移，不能根据显示名称猜测。 */
+  const legacyStatusDefinition = structuredClone(migrated.definition);
+  Object.assign((legacyStatusDefinition.nodes[0] as DigitalTeamEmployeeNode).data, { triggerStatusId: 'legacy_trigger', startStatusId: 'legacy_started', completionStatusId: 'legacy_completed' });
+  database.execute('UPDATE digital_team_workflow_templates SET definition_json=? WHERE id=?', [JSON.stringify(legacyStatusDefinition), local.id]);
+  /** 真实旧草稿可能结构不完整，统一配置不能强造节点或阻止启动。 */
+  const invalidDraft = templates.create({ name: '保留非法旧草稿', description: '', definition: definition([], []) });
+  const invalidDefinition = JSON.stringify({ schemaGeneration: digitalTeamWorkflowSchemaGeneration, nodes: null, edges: [], viewport: { x: 0, y: 0, zoom: 1 } });
+  database.execute('UPDATE digital_team_workflow_templates SET project_id=?,definition_json=? WHERE id=?', [projectId, invalidDefinition, invalidDraft.id]);
+  /** 员工身份迁移比统一目录更早启动，同样必须保留非法草稿原文。 */
+  migrateDigitalTeamProjectEmployeeReferences(database, { projectId, globalEmployeeId, employeeId }, new Date().toISOString());
+  /** 对独立旧数据副本执行真实启动收口，运行历史保持原样。 */
+  migrateUnifiedDigitalTeamTemplates(database, { [projectId]: { legacy_trigger: 'todo', legacy_started: 'in_progress', legacy_completed: 'completed' } });
+  const unified = templates.getById(local.id)!;
+  assert(unified.projectId === null && (unified.definition.nodes[0] as DigitalTeamEmployeeNode).data.employeeId === promoted.id && unified.definition.repairEmployeeId === promoted.id, '旧项目团队必须保留身份并统一引用真实全局员工。');
+  assert(
+    (unified.definition.nodes[0] as DigitalTeamEmployeeNode).data.triggerStatusId === 'todo' &&
+      (unified.definition.nodes[0] as DigitalTeamEmployeeNode).data.startStatusId === 'in_progress' &&
+      (unified.definition.nodes[0] as DigitalTeamEmployeeNode).data.completionStatusId === 'completed',
+    '团队三种状态引用必须按原项目的准确归档映射迁移。',
+  );
+  assert(JSON.stringify(runs.getById(oldRun.id)) === frozen, '统一团队目录不能改写已经接纳的历史运行。');
+  assert(
+    templates.getById(invalidDraft.id)?.ready === false &&
+      database.get<{ definition_json: string; project_id: string | null }>('SELECT definition_json,project_id FROM digital_team_workflow_templates WHERE id=?', [invalidDraft.id])?.definition_json === invalidDefinition,
+    '非法旧草稿必须保留原定义并保持不可执行，不得阻塞统一启动。',
+  );
+  migrateUnifiedDigitalTeamTemplates(database);
+  assert(templates.getById(local.id)?.revision === unified.revision, '统一团队迁移重跑不能再次增加修订。');
   /** 新任务继续冻结原项目员工的有效职责。 */
   const newTask = tasks.create({ projectId, title: '迁移后任务', taskType: 'requirement', description: '', createdFrom: 'digital-team-probe', sourceContext: {} });
   /** 保存后的流程从原绑定读取，不再按旧全局身份另建员工。 */
-  const newRun = runs.create({ projectId, taskId: newTask.id, templateId: migrated.id, templateRevision: migrated.revision, definition: migrated.definition, taskFacts: {}, baseRevisions: [] });
+  const newRun = runs.create({ projectId, taskId: newTask.id, templateId: unified.id, templateRevision: unified.revision, definition: unified.definition, taskFacts: {}, baseRevisions: [] });
   assert(
     newRun.roleSnapshots[0]?.employeeId === employeeId && newRun.roleSnapshots[0]?.configuration.prompt === promoted.prompt && !employees.getByGlobalEmployee(projectId, globalEmployeeId),
     '新运行必须沿原绑定执行项目职责，不能按旧全局身份另建员工。',
@@ -528,7 +558,7 @@ async function verifyAssignmentResultBoundaries(database: ZeusDatabasePort, proj
     ],
   );
   /** 接纳预检使用已保存模板修订。 */
-  const template = new DigitalTeamWorkflowTemplateRepository(database).create({ projectId, name: '入口前后继探针', description: '', definition: flow });
+  const template = new DigitalTeamWorkflowTemplateRepository(database).create({ name: '入口前后继探针', description: '', definition: flow });
   repositories.replaceForProject(projectId, [{ id: 'probe-read-only-repository', name: '当前源码基线', relativePath: '.', localPath: process.cwd() }]);
   /** 准确轮次工具调用的只读节点运行。 */
   const activeTask = tasks.create({ projectId, title: '活跃结果提交探针', taskType: 'requirement', description: '', createdFrom: 'digital-team-probe', sourceContext: {} });
@@ -594,28 +624,19 @@ async function verifyAssignmentResultBoundaries(database: ZeusDatabasePort, proj
       isTaskTerminal: () => false,
       validateTaskStatus: (_projectId: string, statusId: string) => ['todo', 'done'].includes(statusId),
       isCompletedTaskStatus: (_projectId: string, statusId: string) => statusId === 'done',
+      resolveLegacyTaskStatus: (_projectId: string, statusId: string) => (statusId === 'legacy_trigger' ? 'todo' : statusId),
     } as unknown as DigitalTeamWorkflowCoordinatorOptions),
   });
   /** 保存入口不能允许开始即完成，即使只是普通模板。 */
   const invalidState = definition([employeeNode('state', employeeId, '状态门禁')], []);
   (invalidState.nodes[0] as DigitalTeamEmployeeNode).data.startStatusId = 'done';
-  for (const save of [
-    () => stateCoordinator.saveTemplate(projectId, { name: '非法状态', description: '', definition: invalidState }, 'probe-invalid-state'),
-    () =>
-      stateCoordinator.saveProjectWorkflow(
-        projectId,
-        { name: '非法状态', description: '', definition: invalidState, expectedRevision: new DigitalTeamWorkflowTemplateRepository(database).getCurrentByProject(projectId)?.revision },
-        'probe-invalid-current-state',
-      ),
-  ]) {
-    let rejected = false;
-    try {
-      save();
-    } catch (error) {
-      rejected = (error as { code?: string }).code === 'ZEUS_DIGITAL_TEAM_COMPLETION_STATUS_INVALID';
-    }
-    assert(rejected, '普通保存和项目保存必须共同拒绝开始即完成。');
+  let rejected = false;
+  try {
+    stateCoordinator.saveTemplate({ name: '非法状态', description: '', definition: invalidState }, 'probe-invalid-state');
+  } catch (error) {
+    rejected = (error as { code?: string }).code === 'ZEUS_DIGITAL_TEAM_COMPLETION_STATUS_INVALID';
   }
+  assert(rejected, '统一团队保存必须拒绝开始即完成。');
   /** 本次只读入口不执行无关的独立代码分支。 */
   const readerGlobal = new DigitalEmployeeTemplateRepository(database).create({ name: '只读分支员工', role: '汇总', prompt: '只读核对。' });
   const reader = new DigitalEmployeeRepository(database).createFromTemplate({ projectId, template: readerGlobal });
@@ -627,24 +648,27 @@ async function verifyAssignmentResultBoundaries(database: ZeusDatabasePort, proj
   });
   const writer = new DigitalEmployeeRepository(database).createFromTemplate({ projectId, template: writerGlobal });
   const independent = definition([{ ...employeeNode('writer', writer.id, '独立开发'), data: { ...employeeNode('writer', writer.id, '独立开发').data, executionMode: 'isolated_write' } }, employeeNode('reader', reader.id, '独立汇总')], []);
+  /** 旧冻结触发状态只由精确映射读取，不能更改节点原文。 */
+  (independent.nodes[1] as DigitalTeamEmployeeNode).data.triggerStatusId = 'legacy_trigger';
   const independentTask = tasks.create({ projectId, title: '只读独立入口', taskType: 'requirement', description: '', createdFrom: 'digital-team-probe', sourceContext: {} });
-  const independentTemplate = new DigitalTeamWorkflowTemplateRepository(database).create({ projectId, name: '冻结入口', description: '', definition: independent });
+  const independentTemplate = new DigitalTeamWorkflowTemplateRepository(database).create({ name: '冻结入口', description: '', definition: independent });
   const independentRun = runs.create({
     projectId,
     taskId: independentTask.id,
     templateId: independentTemplate.id,
     templateRevision: independentTemplate.revision,
-    definition: independent,
+    definition: independentTemplate.definition,
     taskFacts: {},
     baseRevisions: [],
     runtimeState: { entryNodeId: 'reader', permissionMode: 'read-only' },
   });
   assert(independentRun.baseRevisions.length === 0, '存储必须按实际只读入口判断基线，未执行的开发不能要求仓库。');
   /** 当前模板变为草稿，已经接纳的冻结入口仍可读取。 */
-  new DigitalTeamWorkflowTemplateRepository(database).setCurrentByProject(projectId, independentTemplate.id);
   new DigitalTeamWorkflowTemplateRepository(database).update(independentTemplate.id, { expectedRevision: independentTemplate.revision, definition: definition([], []) });
-  const frozen = await coordinator.prepareEmployeeAssignment(projectId, { taskId: independentTask.id, employeeId: reader.id, permissionMode: 'full-access' });
+  const frozenBefore = JSON.stringify(runs.getById(independentRun.id));
+  const frozen = await stateCoordinator.prepareEmployeeAssignment(projectId, { taskId: independentTask.id, employeeId: reader.id, permissionMode: 'full-access' });
   assert(frozen?.existingRunId === independentRun.id && frozen.runtimeState?.permissionMode === 'read-only', '当前模板改为草稿不能阻止旧冻结入口，也不能扩大原只读权限。');
+  assert(JSON.stringify(runs.getById(independentRun.id)) === frozenBefore, '历史状态投影不得写回冻结运行或任务事实。');
   await stateCoordinator.close();
   /** 真实只读 Git 预检明确确认当前已提交基线；不把本工作树未提交改动纳入成果。 */
   const prepared = await coordinator.prepareRun(projectId, {
@@ -710,7 +734,7 @@ async function verifyTeamInternalTaskOrigins(database: ZeusDatabasePort, project
   /** 单员工流程仅核对创建入口。 */
   const flow = definition([employeeNode('internal', employeeId, '来源探针')], []);
   /** 来源探针使用的已保存模板。 */
-  const template = templates.create({ projectId, name: '团队内部来源探针', description: '', definition: flow });
+  const template = templates.create({ name: '团队内部来源探针', description: '', definition: flow });
   /** 事件规则从当前边界开始，只观察本段新增任务。 */
   const automationTasks = new AutomationTaskRepository(database);
   /** 保存新任务事件的接纳回执。 */
@@ -745,7 +769,7 @@ async function verifyTeamInternalTaskOrigins(database: ZeusDatabasePort, project
     projectId,
     { templateId: template.id, templateRevision: template.revision, title: '团队直接创建', description: '', taskFacts: {} },
     { commandId: 'probe-team-source', operationIdentity: 'probe-team-source', actor: { kind: 'user', id: 'probe-user' } },
-    { templateId: template.id, templateRevision: template.revision, definition: flow, baseRevisions: [], repositories: [] },
+    { templateId: template.id, templateRevision: template.revision, definition: template.definition, baseRevisions: [], repositories: [] },
   ) as { run: DigitalTeamWorkflowRunRecord };
   /** 新建任务的冻结运行。 */
   const run = projection.run;
@@ -1654,4 +1678,103 @@ async function verifyUnifiedAutomation(database: ZeusDatabasePort, projectId: st
     resumedDispatches === 1 && automationRuns.getById(incorrectRun.id)?.executionReferences[0]?.id === acceptedWork.id && automationRuns.getById(incorrectRun.id)?.dispatchReconciliation?.previousStatus === 'succeeded',
     '恢复沿原运行补齐且保留误报历史。',
   );
+  await verifyLegacyAutomationStatusScopes(database, projectId, secondProject.id, employeeId, schedulerOptions);
+}
+
+/** 旧规则按准确修订和事件边界解析，多项目同名状态不能扩大触发与领取范围。 */
+async function verifyLegacyAutomationStatusScopes(database: ZeusDatabasePort, projectId: string, secondProjectId: string, employeeId: string, schedulerOptions: AutomationSchedulerOptions): Promise<void> {
+  /** 复用真实规则、运行、任务及事件存储。 */
+  const rules = new AutomationTaskRepository(database);
+  /** 真实运行账本。 */
+  const runs = new AutomationRunRepository(database);
+  /** 两个项目的真实任务账本。 */
+  const tasks = new TaskRepository(database);
+  /** 原事件流与原序号。 */
+  const events = new TaskEventRepository(database);
+  /** 两个项目原来复用同一状态 ID，迁移后对应不同全局状态。 */
+  const projectIds = [projectId, secondProjectId];
+  /** 原项目各自独立的准确状态替换。 */
+  const replacements = { [projectId]: { old_before: 'a_before', todo: 'a_after' }, [secondProjectId]: { old_before: 'b_before', todo: 'b_after' } };
+  /** 事件所属的真实任务。 */
+  const eventTasks = projectIds.map((id) => tasks.create({ projectId: id, title: '历史状态来源探针', taskType: 'requirement', description: '', createdFrom: 'automation-probe', sourceContext: {} }));
+  /** 旧作者保存的多项目状态条件。 */
+  const eventRule = rules.create({
+    name: '旧多项目状态条件',
+    prompt: '按原状态领取',
+    projectIds,
+    modelSourceId: 'codex',
+    modelId: 'probe-model',
+    action: { kind: 'employee_work', employeeId },
+    triggerKind: 'event',
+    triggerConfig: { eventKinds: [], beforeStatusId: 'old_before', afterStatusId: 'todo' },
+  });
+  /** 旧作者保存的多项目领取条件。 */
+  const poolRule = rules.create({
+    name: '旧多项目任务池',
+    prompt: '按原条件领取',
+    projectIds,
+    modelSourceId: 'codex',
+    modelId: 'probe-model',
+    action: { kind: 'project_task', employeeId, taskSelection: 'pool', taskFilter: { managementStatuses: ['todo'], taskTypes: [], requiredTags: [] } },
+  });
+  /** 归档固定旧作者修订，后来保存相同字面 ID 仍属于新全局语义。 */
+  const archivedRevisions = new Set([eventRule.currentRevisionId, poolRule.currentRevisionId]);
+  /** 用于确认运行视图没有改写原修订。 */
+  const frozenSnapshot = rules.getRevision(poolRule.currentRevisionId)!.snapshot;
+  for (const task of eventTasks) events.create({ taskId: task.id, eventType: 'task.management_status.changed', title: '旧来源事件', payload: { before: 'old_before', after: 'todo' } });
+  /** 原事件边界按实际序号固定，独立于发生时间或时钟回拨。 */
+  const eventBoundaries = Object.fromEntries(
+    projectIds.map((id) => [id, database.get<{ sequence: number }>('SELECT MAX(event.rowid) AS sequence FROM task_events event JOIN tasks task ON task.id=event.task_id WHERE task.project_id=?', [id])!.sequence]),
+  );
+  /** 编辑前已冻结的旧运行。 */
+  const frozenRun = runs.enqueue({ automationId: poolRule.id, projectIds, triggerKind: 'manual', triggerIdentity: 'probe-old-state-pool', scheduledAt: new Date().toISOString() });
+  /** 编辑后生成的新作者修订。 */
+  const editedRule = rules.update(poolRule.id, { expectedRevision: poolRule.revision, name: '已保存的新全局任务池' });
+  events.create({ taskId: eventTasks[0]!.id, eventType: 'task.management_status.changed', title: '新项目甲事件', payload: { before: 'a_before', after: 'a_after' } });
+  events.create({ taskId: eventTasks[1]!.id, eventType: 'task.management_status.changed', title: '不能跨项目匹配', payload: { before: 'b_before', after: 'a_after' } });
+  events.create({ taskId: eventTasks[1]!.id, eventType: 'task.management_status.changed', title: '新项目乙事件', payload: { before: 'b_before', after: 'b_after' } });
+  events.create({ taskId: eventTasks[0]!.id, eventType: 'task.management_status.migrated', title: '迁移不触发', payload: { before: 'old_before', after: 'todo' } });
+  /** 记录实际派给每个项目的筛选，不用合并列表模拟领取成功。 */
+  const preparedFilters: Array<{ runId: string; projectId: string; statuses: string[] }> = [];
+  /** 真实调度器读取精确来源，不派发 Provider 工作。 */
+  const options: AutomationSchedulerOptions = {
+    ...schedulerOptions,
+    resolveLegacyTaskStatus: (id, statusId, source) => {
+      /** 仅原修订或原事件按该项目映射，新来源保持全局 ID。 */
+      const archived = 'revisionId' in source ? archivedRevisions.has(source.revisionId) : source.eventSequence <= eventBoundaries[id]!;
+      return archived ? ((replacements[id] as Record<string, string> | undefined)?.[statusId] ?? statusId) : statusId;
+    },
+    prepareAction: async ({ run, project, snapshot }) => {
+      if (run.automationId === poolRule.id) preparedFilters.push({ runId: run.id, projectId: project.id, statuses: snapshot.action.taskFilter!.managementStatuses });
+      return null;
+    },
+    dispatchAction: async () => {
+      throw new Error('空任务池不得派发。');
+    },
+  };
+  /** 首轮执行旧冻结运行和原事件。 */
+  const oldScheduler = createAutomationScheduler(options);
+  await oldScheduler.close();
+  assert(runs.listByAutomation(eventRule.id).length === 4, '两个旧来源和两个本项目新事件可以触发，跨项目状态与迁移事件不得触发。');
+  assert(
+    preparedFilters.some((entry) => entry.runId === frozenRun.id && entry.projectId === projectId && entry.statuses.join() === 'a_after') &&
+      preparedFilters.some((entry) => entry.runId === frozenRun.id && entry.projectId === secondProjectId && entry.statuses.join() === 'b_after'),
+    '旧冻结任务池必须按各自项目投影，不能 union。',
+  );
+  assert(JSON.stringify(rules.getRevision(poolRule.currentRevisionId)!.snapshot) === JSON.stringify(frozenSnapshot), '目标项目投影不能改写原修订快照。');
+  /** 当前事件条件重新保存后属于全局语义，即使字面状态 ID 没有改变。 */
+  const globalEventRule = rules.update(eventRule.id, { expectedRevision: eventRule.revision, name: '已保存的全局事件条件' });
+  for (const task of eventTasks) events.create({ taskId: task.id, eventType: 'task.management_status.changed', title: '新全局规则事件', payload: { before: 'old_before', after: 'todo' } });
+  /** 后续运行冻结新作者修订。 */
+  const globalRun = runs.enqueue({ automationId: editedRule.id, projectIds, triggerKind: 'manual', triggerIdentity: 'probe-new-global-state-pool', scheduledAt: new Date().toISOString() });
+  /** 第二轮核对新条件不会套入旧来源。 */
+  const globalScheduler = createAutomationScheduler(options);
+  await globalScheduler.close();
+  assert(
+    preparedFilters.filter((entry) => entry.runId === globalRun.id).length === 2 && preparedFilters.filter((entry) => entry.runId === globalRun.id).every((entry) => entry.statuses.join() === 'todo'),
+    '新保存的规则使用原全局 ID，不能重新套入旧项目映射。',
+  );
+  assert(runs.listByAutomation(globalEventRule.id).length === 6, '新保存的事件条件按全局状态匹配，不能套旧作者修订。');
+  rules.setStatus(globalEventRule.id, 'paused');
+  rules.setStatus(editedRule.id, 'paused');
 }

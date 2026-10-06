@@ -21,17 +21,18 @@ export function conversationRuntimePreferenceKind(owner: SessionConversationOwne
   return 'task_development';
 }
 
-export function readConversationRuntimePreferences(storage: Pick<Storage, 'getItem'> | undefined, projectId: string, kind: ConversationRuntimePreferenceKind): ConversationRuntimePreferences | null {
-  if (!storage || !projectId) return null;
+/** 跨项目读取同一类会话的全局偏好，不读取旧项目覆盖。 */
+export function readConversationRuntimePreferences(storage: Pick<Storage, 'getItem'> | undefined, _projectId: string, kind: ConversationRuntimePreferenceKind): ConversationRuntimePreferences | null {
+  if (!storage) return null;
   try {
-    const parsed = JSON.parse(storage.getItem(preferenceKey(projectId, kind)) ?? 'null') as Partial<ConversationRuntimePreferences> | null;
+    const parsed = JSON.parse(storage.getItem(preferenceKey(kind)) ?? 'null') as Partial<ConversationRuntimePreferences> | null;
     if (!parsed || (parsed.model !== undefined && typeof parsed.model !== 'string')) return null;
     if (parsed.effort !== undefined && typeof parsed.effort !== 'string') return null;
     if (!isPermissionMode(parsed.permissionMode) || !isCollaborationMode(parsed.collaborationMode)) return null;
     return {
       ...(parsed.model ? { model: parsed.model } : {}),
       ...(parsed.effort ? { effort: parsed.effort } : {}),
-      // 旧记录无法证明速度是否由用户显式选择，因此不把它迁移为项目模型偏好。
+      // 历史记录不含显式速度选择，新会话统一使用标准档位。
       serviceTier: { type: 'standard' },
       permissionMode: parsed.permissionMode,
       collaborationMode: parsed.collaborationMode,
@@ -42,10 +43,11 @@ export function readConversationRuntimePreferences(storage: Pick<Storage, 'getIt
   }
 }
 
-export function writeConversationRuntimePreferences(storage: Pick<Storage, 'setItem'> | undefined, projectId: string, kind: ConversationRuntimePreferenceKind, preferences: ConversationRuntimePreferences): void {
-  if (!storage || !projectId) return;
+/** 保存全局偏好，当前任务的授权仍需独立确认。 */
+export function writeConversationRuntimePreferences(storage: Pick<Storage, 'setItem'> | undefined, _projectId: string, kind: ConversationRuntimePreferenceKind, preferences: ConversationRuntimePreferences): void {
+  if (!storage) return;
   storage.setItem(
-    preferenceKey(projectId, kind),
+    preferenceKey(kind),
     JSON.stringify({
       ...(preferences.model ? { model: preferences.model } : {}),
       ...(preferences.effort ? { effort: preferences.effort } : {}),
@@ -56,8 +58,9 @@ export function writeConversationRuntimePreferences(storage: Pick<Storage, 'setI
   );
 }
 
-function preferenceKey(projectId: string, kind: ConversationRuntimePreferenceKind): string {
-  return `${preferenceKeyPrefix}${encodeURIComponent(projectId)}:${kind}`;
+/** 偏好仅按操作类型区分，不再按项目分组。 */
+function preferenceKey(kind: ConversationRuntimePreferenceKind): string {
+  return `${preferenceKeyPrefix}global:${kind}`;
 }
 
 function isPermissionMode(value: unknown): value is NativePermissionMode {

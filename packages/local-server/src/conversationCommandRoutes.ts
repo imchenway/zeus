@@ -107,8 +107,6 @@ export function registerConversationCommandRoutes(options: {
   restoreNativeConversation(conversation: ZeusConversationRecord, beforeExternalWrite?: () => void): Promise<void>;
   /** 模型变更前校验会话已冻结预算，不修改任何持久状态。 */
   validateContextCapacity(conversation: ZeusConversationRecord, model: string | null): Promise<void>;
-  /** 项目只记住最后一次明确选择。 */
-  rememberContextCapacity(projectId: string, capacity: number | null): void;
   isConversationIdle(conversation: ZeusConversationRecord): boolean;
   isTaskTerminal(task: ZeusTaskRecord): boolean;
   goalCapability(conversation: ZeusConversationRecord): unknown;
@@ -144,7 +142,6 @@ export function registerConversationCommandRoutes(options: {
           const previousPermissionMode = options.conversations.getNextTurnSettings(conversation.id)?.permissionMode ?? conversation.permissionMode;
           if (previousPermissionMode !== settings.permissionMode) options.conversations.setSessionFileEditGrant(conversation.id, conversation.projectId, false);
           options.conversations.updateNextTurnSettings(conversation.id, settings);
-          if (settings.contextCapacityTokens !== undefined) options.rememberContextCapacity(conversation.projectId, settings.contextCapacityTokens);
           return settings;
         },
       });

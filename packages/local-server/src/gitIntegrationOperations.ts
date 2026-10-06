@@ -144,7 +144,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     readGitDiff,
     recordTaskEvent,
     resolveConversationCapabilities,
-    resolveProjectModelServiceTierPlan,
+    resolveDefaultModelServiceTierPlan,
     resolveTaskEnvironmentWritableRoots,
     runtimeSessions,
     stopPersistedOrphanRuntimeSession,
@@ -2010,7 +2010,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
           : settings?.model
             ? { sourceId: null, modelId: settings.model, displayName: null }
             : input.model;
-      const serviceTierPlan = input.agentKind === 'codex' ? await resolveProjectModelServiceTierPlan(project, selectedModel) : null;
+      const serviceTierPlan = input.agentKind === 'codex' ? await resolveDefaultModelServiceTierPlan() : null;
       const prompt = buildTaskConflictAiPrompt({
         sourceBranch: integration.targetBranch,
         taskBranch: workspace.branchName,

@@ -15,17 +15,14 @@ import {
 } from '../../session/SessionWorkspace.js';
 import type {
   CodexTaskPushCapabilities,
-  CodexTaskPushModelCapability,
   NativeConversationAttachment,
   NativeConversationChoice,
   NativeConversationChoicesSnapshot,
   NativeProjectConversationChoicesSnapshot,
-  NativeServiceTierSelection,
   NativeTurnSettingsSelection,
   StartTaskModelPushRequest,
 } from '../../session/sessionTypes.js';
 import { serviceTierWireOverride } from '../../session/serviceTierSelection.js';
-import { toProjectModelServiceTierPreference, upsertProjectModelServiceTierPreference } from '../../session/projectServiceTierPreferences.js';
 import { resolveModelCapability } from '../../session/modelSelection.js';
 import { type TaskEditResult } from '../../task/TaskDetailPaneContent.js';
 import {
@@ -82,7 +79,7 @@ import {
   type ZeusRealtimeConnectionState,
   type ZeusRealtimeEvent,
 } from '../../apiClient.js';
-import { errorToLocalUiMessage, normalizeProjectConfig, parseProjectConfigList, redactLocalUiErrorMessage, toProjectConfigForm } from './WorkspaceChrome.js';
+import { errorToLocalUiMessage, normalizeProjectConfig, redactLocalUiErrorMessage, toProjectConfigForm } from './WorkspaceChrome.js';
 import {
   isTaskModelPushOriginCurrent,
   appendRuntimeOutputEventsToConversation,
@@ -152,7 +149,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     loadArchivedConversations,
     codeWorkspacePreferenceTimerRef,
     conversationNotificationRef,
-    createProjectConfigForm,
     creatingProjectBusy,
     gitDiff,
     loadTaskBoard,
@@ -237,6 +233,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setTaskCreateError,
     setTaskCreateForm,
     setTaskCreateModalOpen,
+    setTaskBoardSnapshots,
     setTaskDetail,
     setTaskDetailPaneTaskId,
     setTaskDetailPresentation,
@@ -251,7 +248,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setTaskModelPushForm,
     setTaskModelPushRefreshingRepositoryId,
     setTaskModelPushRuntimeCapabilities,
-    setTaskModelPushServiceTierPreferences,
     setTaskModelPushStatus,
     setTaskModelPushTaskId,
     setTaskSearchQuery,
@@ -285,7 +281,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     taskModelPushStatus,
     taskModelPushTaskId,
     taskMutationQueuesRef,
-    taskStatusSettingsTargetId,
     taskTerminalCleanupConfirmation,
     taskWorkspaceCopy,
     uiCopy,
@@ -323,10 +318,10 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
               sidebarConversationFilters: latest.sidebarConversationFilters,
               codeWorkspaceByProject: latest.codeWorkspaceByProject,
               taskTableColumns: latest.taskTableColumns,
-              taskTableColumnsByProject: latest.taskTableColumnsByProject,
               taskTableEnumSortOrders: latest.taskTableEnumSortOrders,
-              taskStatusFilterByProject: latest.taskStatusFilterByProject,
-              taskViewModeByProject: latest.taskViewModeByProject,
+              taskStatusFilter: latest.taskStatusFilter,
+              taskViewMode: latest.taskViewMode,
+              taskPageView: latest.taskPageView,
               taskExpandedIdsByProject: latest.taskExpandedIdsByProject,
             }));
           })
@@ -575,7 +570,9 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
           taskGitDeliveryChangedRef.current(event.payload.taskId);
         }
         if (event.type === 'task.board.updated' && typeof event.payload.projectId === 'string') {
-          void loadTaskBoard(event.payload.projectId);
+          // 全局显示修改使所有缓存失效，当前看板沿用既有加载流程刷新。
+          if (event.payload.scope === 'global') setTaskBoardSnapshots({});
+          else void loadTaskBoard(event.payload.projectId);
         }
         if (event.type === 'task.updated' && typeof event.payload.taskId === 'string' && props.onLoadTask) {
           const taskId = event.payload.taskId;
@@ -638,6 +635,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     };
   }, [
     loadTaskBoard,
+    setTaskBoardSnapshots,
     mergeTaskRecord,
     nativeConversationChoiceLoadCoordinator,
     nativeProjectConversationChoiceLoadCoordinator,
@@ -694,19 +692,14 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   const currentRuntimeAdapterDisplayName = formatRuntimeAdapterDisplayName(runtimeSettings.defaultAdapterId, runtimeAdapters, settingsWorkspaceCopy.runtime);
   const taskTableEnumSortOrders = normalizeTaskTableEnumSortOrders({ ...appShellSettings.taskTableEnumSortOrders, managementStatus: activeTaskManagementStatusIds }, activeTaskManagementStatusIds);
   const taskPriorityLabels = Object.fromEntries(taskWorkspaceCopy.taskCreatePriorityOptions.map((option) => [option.value, option.label])) as Record<TaskPriority, string>;
-  const taskStatusSettingsProject = snapshot.projects.find((project) => project.id === taskStatusSettingsTargetId);
-  const effectiveTaskStatusSettingsTargetId = taskStatusSettingsProject ? taskStatusSettingsProject.id : '__template__';
-  const taskStatusSettingsConfig = effectiveTaskStatusSettingsTargetId === '__template__' ? resolveTaskManagementStatusConfig(appShellSettings) : resolveTaskManagementStatusConfig(appShellSettings, effectiveTaskStatusSettingsTargetId);
-  const taskStatusSettingsUsageCounts =
-    effectiveTaskStatusSettingsTargetId === '__template__'
-      ? {}
-      : snapshot.tasks
-          .filter((task) => task.projectId === effectiveTaskStatusSettingsTargetId)
-          .reduce<Record<string, number>>((counts, task) => {
-            const managementStatus = resolveTaskManagementStatus(task);
-            counts[managementStatus] = (counts[managementStatus] ?? 0) + 1;
-            return counts;
-          }, {});
+  /** 状态配置与使用统计统一覆盖当前已载入的全部任务。 */
+  const taskStatusSettingsConfig = resolveTaskManagementStatusConfig(appShellSettings);
+  /** 服务端仍会校验未载入及归档任务，避免删除正在使用的状态。 */
+  const taskStatusSettingsUsageCounts = snapshot.tasks.reduce<Record<string, number>>((counts, task) => {
+    const managementStatus = resolveTaskManagementStatus(task);
+    counts[managementStatus] = (counts[managementStatus] ?? 0) + 1;
+    return counts;
+  }, {});
   const changedFiles = gitDiff?.files ?? snapshot.git.changedFiles;
 
   useEffect(() => {
@@ -944,7 +937,14 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setProjectWorkspaceConfigError(null);
     try {
       const saved = await client.saveProjectWorkspaceConfig(projectId, {
-        sharedWritablePaths: parseProjectConfigList(projectSharedWritablePaths).map((localPath) => ({ localPath })),
+        sharedWritablePaths: [
+          ...new Set(
+            projectSharedWritablePaths
+              .split(/\r?\n|,/u)
+              .map((path) => path.trim())
+              .filter(Boolean),
+          ),
+        ].map((localPath) => ({ localPath })),
       });
       setProjectSharedWritablePaths(saved.sharedWritablePaths.map((entry) => entry.localPath).join('\n'));
       setProjectWorkspaceConfigStatus('idle');
@@ -958,20 +958,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     event?.preventDefault();
     if (!props.onSaveProjectConfig) return;
     const input: SaveProjectConfigRequest = {
-      defaultWorkMode: projectConfigForm.defaultWorkMode,
-      language: {
-        primary: projectConfigForm.languagePrimary.trim() || 'typescript',
-        additional: parseProjectConfigList(projectConfigForm.languageAdditional),
-      },
-      dependencies: {
-        packageManagers: parseProjectConfigList(projectConfigForm.packageManagers),
-        manifestPaths: parseProjectConfigList(projectConfigForm.manifestPaths),
-      },
       database: {
         connectionName: projectConfigForm.databaseConnectionName.trim() || null,
-      },
-      telegram: {
-        alias: projectConfigForm.telegramAlias.trim() || null,
       },
       security: {
         allowShell: projectConfigForm.allowShell,
@@ -980,7 +968,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     };
     setActionState('creating-project');
     try {
-      // 项目配置只保存本机偏好，不验证或伪造外部 CLI、数据库、Telegram 的可用性。
+      // 只保存资源连接与授权，不把保存成功当成数据库连接可用。
       const savedConfig = normalizeProjectConfig(await props.onSaveProjectConfig(projectId, input), projectId);
       setProjectConfig(savedConfig);
       setProjectConfigForm(toProjectConfigForm(savedConfig));
@@ -1159,7 +1147,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         name,
         localPath,
         description: uiCopy.sidebar.selectedRepositoryDescription,
-        defaultWorkMode: createProjectConfigForm.defaultWorkMode,
       });
       const selectedCreatedProject = nextSnapshot.projects.find((project) => normalizeProjectLocalPath(project.localPath) === localPath);
       setSnapshot(nextSnapshot);
@@ -2082,7 +2069,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     const pending = { status };
     setPendingTaskStatuses((current) => ({ ...current, [taskId]: pending }));
     const updateManagementStatus = props.onUpdateTaskManagementStatus;
-    const projectStatusConfig = resolveTaskManagementStatusConfig(appShellSettings, currentTask.projectId);
+    const projectStatusConfig = resolveTaskManagementStatusConfig(appShellSettings);
     const statusLabel = formatConfiguredTaskManagementStatus(status, projectStatusConfig, appShellSettings.appLanguage);
     const terminalStatus = status === projectStatusConfig.roles.completedStatusId || status === projectStatusConfig.roles.cancelledStatusId;
     const clearOptimisticTerminalStatus = (): void =>
@@ -2148,7 +2135,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   async function reopenTaskFromConversation(taskId: string, conversationId: string): Promise<void> {
     const task = (taskDetail?.id === taskId ? taskDetail : undefined) ?? snapshot.tasks.find((candidate) => candidate.id === taskId);
     if (!task) return;
-    const statusConfig = resolveTaskManagementStatusConfig(appShellSettings, task.projectId);
+    const statusConfig = resolveTaskManagementStatusConfig(appShellSettings);
     setTaskConversationReopenState({ conversationId, status: 'busy' });
     try {
       const result = await updateTaskManagementStatus(taskId, statusConfig.roles.defaultStatusId, {
@@ -2185,7 +2172,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     const remembered = readTaskModelPushPreferences(browserNativeConversationStartStorage(), task.projectId);
     setTaskModelPushTaskId(task.id);
     setTaskModelPushCapabilities(null);
-    setTaskModelPushServiceTierPreferences([]);
     setTaskModelPushRuntimeCapabilities(null);
     setTaskModelPushForm({
       ...(stage ? { stageId: stage.id } : {}),
@@ -2238,10 +2224,10 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
 
   /** 完整资料共用一条加载路径，接入返回时保留原表单与附件。 */
   async function loadTaskModelPushCapabilities(task: TaskRecord, request: number, origin: TaskModelPushNavigationTarget, reference?: string | null): Promise<void> {
-    /** 任务能力与项目偏好互不依赖，并行读取且不会准备工作区或创建会话。 */
+    /** 能力读取不再加载项目偏好，不会准备工作区或创建会话。 */
     const client = props.nativeConversationClient;
     if (!client) throw new Error('ZEUS_MODEL_UNAVAILABLE');
-    const [rawCapabilities, loadedProjectConfig] = await Promise.all([client.loadCodexTaskPushCapabilities(task.projectId, task.id), props.onLoadProjectConfig?.(task.projectId) ?? Promise.resolve(undefined)]);
+    const rawCapabilities = await client.loadCodexTaskPushCapabilities(task.projectId, task.id);
     if (!isTaskModelPushRequestCurrent(request, origin)) return;
     const capabilities = normalizeTaskModelPushCapabilities(rawCapabilities);
     setTaskModelPushRuntimeCapabilities(capabilities);
@@ -2263,9 +2249,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
             ? previousModel
             : capabilities.models.find((model) => model.sourceId === 'codex' && model.available !== false);
     if (reference !== undefined && (!selected || selected.available === false)) throw new Error('ZEUS_MODEL_UNAVAILABLE');
-    const serviceTierPreferences = normalizeProjectConfig(loadedProjectConfig, task.projectId)?.serviceTierPreferences ?? [];
     setTaskModelPushCapabilities(capabilities);
-    setTaskModelPushServiceTierPreferences(serviceTierPreferences);
     setTaskModelPushForm((current) => {
       const normalized = resolveTaskModelPushInitialForm(
         capabilities,
@@ -2277,7 +2261,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
           permissionMode: current.permissionMode,
           ...(current.workspaceModeSelected ? { workspaceMode: current.workspaceMode } : {}),
         },
-        serviceTierPreferences,
         current.skillId,
       );
       return reconcileTaskPushRepositories(
@@ -2327,29 +2310,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       setTaskModelPushStatus('error');
       setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage)));
       throw error;
-    }
-  }
-
-  async function saveTaskModelPushServiceTierPreference(model: CodexTaskPushModelCapability, selection: NativeServiceTierSelection): Promise<void> {
-    const task = snapshot.tasks.find((candidate) => candidate.id === taskModelPushTaskId);
-    if (!task || !props.onSaveProjectModelServiceTierPreference) {
-      setTaskModelPushError(appShellSettings.appLanguage === 'zh-CN' ? '项目模型速度偏好保存入口不可用。' : 'Project model speed preference saving is unavailable.');
-      return;
-    }
-    const preference = toProjectModelServiceTierPreference(model, selection);
-    setTaskModelPushServiceTierPreferences((current) => upsertProjectModelServiceTierPreference(current, preference));
-    try {
-      const saved = normalizeProjectConfig(await props.onSaveProjectModelServiceTierPreference(task.projectId, preference), task.projectId);
-      if (!saved) throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '项目模型速度偏好保存结果无效。' : 'The saved project model speed preference is invalid.');
-      setTaskModelPushServiceTierPreferences(saved.serviceTierPreferences);
-    } catch (error) {
-      setTaskModelPushError(redactLocalUiErrorMessage(errorToLocalUiMessage(error, appShellSettings.appLanguage)));
-      try {
-        const config = normalizeProjectConfig(await props.onLoadProjectConfig?.(task.projectId), task.projectId);
-        if (config) setTaskModelPushServiceTierPreferences(config.serviceTierPreferences);
-      } catch {
-        // 保存失败后的读取只用于回滚乐观状态；原始错误已经展示。
-      }
     }
   }
 
@@ -2470,7 +2430,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
               agentKind: selectedModel.agentKind ?? 'codex',
               mode: 'create',
               source: 'task_push',
-              contextCapacityTokens: normalizedForm.contextCapacityTokens === undefined ? (capabilities.projectContextCapacityTokens ?? null) : normalizedForm.contextCapacityTokens,
+              contextCapacityTokens: normalizedForm.contextCapacityTokens === undefined ? null : normalizedForm.contextCapacityTokens,
               ...(normalizedForm.stageId ? { stageId: normalizedForm.stageId } : {}),
               model: selectedModel.id,
               ...(normalizedForm.effort ? { effort: normalizedForm.effort } : {}),
@@ -3048,7 +3008,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     createCurrentProject,
     currentRuntimeAdapterDisplayName,
     deleteProject,
-    effectiveTaskStatusSettingsTargetId,
     executeNewConversationProjectGit,
     loadProjectConfig,
     loadProjectWorkspaceConfig,
@@ -3092,7 +3051,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     revealProjectInFinder,
     saveProjectConfig,
     saveProjectWorkspaceConfig,
-    saveTaskModelPushServiceTierPreference,
     selectNativeConversation,
     selectNewConversationProject,
     selectProjectCodeWorkspaceMode,

@@ -31,13 +31,14 @@ export interface AppShellSettings {
   defaultModel: string | null;
   defaultTaskTemplateId: string | null;
   taskTableColumns?: TaskTableColumnPreferences;
-  taskTableColumnsByProject?: Record<string, TaskTableColumnPreferences>;
   taskTableEnumSortOrders?: TaskTableEnumSortOrders;
   taskManagementStatusTemplate?: TaskManagementStatusConfig;
-  taskManagementStatusByProject?: Record<string, TaskManagementStatusConfig>;
-  taskStatusFilterByProject?: Record<string, TaskStatusFilter>;
-  taskViewModeByProject?: Record<string, 'hierarchy' | 'flat'>;
-  taskPageViewByProject?: Record<string, TaskPageViewMode>;
+  /** 所有项目共用的任务状态筛选。 */
+  taskStatusFilter?: TaskStatusFilter;
+  /** 所有项目共用的任务层级偏好。 */
+  taskViewMode?: 'hierarchy' | 'flat';
+  /** 所有项目共用的列表或看板入口。 */
+  taskPageView?: TaskPageViewMode;
   taskExpandedIdsByProject?: Record<string, string[]>;
   codeWorkspaceByProject?: Record<string, ProjectCodeWorkspacePreference>;
   localLogDirectory: string;
@@ -78,14 +79,15 @@ export type UpdateAppShellSettingsRequest = Partial<
   defaultModel?: string | null;
   defaultTaskTemplateId?: string | null;
   taskTableColumns?: Partial<TaskTableColumnPreferences>;
-  taskTableColumnsByProject?: Record<string, TaskTableColumnPreferences>;
   taskTableEnumSortOrders?: TaskTableEnumSortOrders;
   taskManagementStatusTemplate?: TaskManagementStatusConfig;
-  taskManagementStatusByProject?: Record<string, TaskManagementStatusConfig>;
   taskManagementStatusReplacements?: Record<string, Record<string, string>>;
-  taskStatusFilterByProject?: Record<string, TaskStatusFilter>;
-  taskViewModeByProject?: Record<string, 'hierarchy' | 'flat'>;
-  taskPageViewByProject?: Record<string, TaskPageViewMode>;
+  /** 所有项目共用的任务状态筛选。 */
+  taskStatusFilter?: TaskStatusFilter;
+  /** 所有项目共用的任务层级偏好。 */
+  taskViewMode?: 'hierarchy' | 'flat';
+  /** 所有项目共用的列表或看板入口。 */
+  taskPageView?: TaskPageViewMode;
   taskExpandedIdsByProject?: Record<string, string[]>;
   codeWorkspaceByProject?: Record<string, ProjectCodeWorkspacePreference>;
 };
@@ -132,6 +134,7 @@ export interface LocalBusinessDataSnapshot {
     projects: Array<
       ProjectRecord & {
         slug?: string;
+        /** 仅备份旧项目默认模板引用，不参与新任务配置。 */
         defaultTemplateId?: string | null;
         createdAt?: string;
         updatedAt?: string;

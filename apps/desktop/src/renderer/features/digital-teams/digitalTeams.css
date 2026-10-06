@@ -354,11 +354,51 @@
 }
 
 .digital-team-template-toolbar > label > span,
+.digital-team-settings-content > label > span,
 .digital-team-inspector-content label > span,
 .digital-team-readonly-field > span {
   color: var(--zeus-product-muted);
   font-size: 11px;
   font-weight: 600;
+}
+
+/* 低频团队设置默认折叠，展开后独占一行，主操作保持在原位置。 */
+.digital-team-settings {
+  min-inline-size: 0;
+}
+
+.digital-team-settings > summary {
+  box-sizing: border-box;
+  min-block-size: 34px;
+  padding: 7px 10px;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: var(--zeus-control-radius);
+  cursor: pointer;
+}
+
+.digital-team-settings[open] {
+  flex: 1 1 100%;
+  order: 2;
+}
+
+.digital-team-settings-content {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  max-block-size: 32vh;
+  overflow: auto;
+  padding-block-start: 12px;
+}
+
+.digital-team-settings-content > label {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 4px;
+}
+
+.digital-team-settings-content > .digital-team-template-actions {
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
 }
 
 .digital-team-workspace input,
@@ -490,6 +530,11 @@
 }
 
 .digital-team-node small {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
   color: var(--zeus-product-muted);
 }
 
@@ -549,6 +594,29 @@
 .digital-team-inspector-content label {
   display: grid;
   gap: 6px;
+}
+
+/* 原生复选框与说明并排，避免继承文本输入的整行宽度和高度。 */
+.digital-team-workspace label.digital-team-checkbox {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+}
+
+.digital-team-workspace .digital-team-checkbox input {
+  inline-size: 16px;
+  block-size: 16px;
+  min-block-size: 16px;
+  margin: 2px 0 0;
+  padding: 0;
+}
+
+/* 实际执行权限始终可见，设置折叠不会掩盖代码修改范围。 */
+.digital-team-work-permission {
+  margin: 0;
+  color: var(--zeus-product-muted);
+  font-size: 12px;
 }
 
 /* 节点直接复用完整数字员工表单，窄检查器统一改为单列。 */
@@ -755,6 +823,11 @@
     flex-direction: column;
   }
 
+  /* 纵向工具条不沿用宽屏的字段宽度，避免 180px 被当成表单高度。 */
+  .digital-team-template-toolbar > label {
+    flex: 0 0 auto;
+  }
+
   .digital-team-header-actions,
   .digital-team-save-actions {
     flex-wrap: wrap;
@@ -887,28 +960,17 @@
   flex: 1 1 360px;
 }
 .digital-team-workspace .zeus-button,
-.digital-team-copy-dialog .zeus-button,
 .digital-team-validation button {
   flex-shrink: 0;
   white-space: nowrap;
 }
 
-/* 必选映射和高级节点字段使用相同的窄窗表单布局。 */
-.macos-ai-app .zeus-form-dialog.digital-team-copy-dialog {
-  inline-size: min(560px, 100%);
-}
-.digital-team-copy-dialog label,
+/* 高级节点字段保留完整的窄窗表单布局。 */
 .digital-team-advanced-settings,
 .digital-team-workspace .zeus-select {
   min-inline-size: 0;
   max-inline-size: 100%;
 }
-.digital-team-copy-dialog label {
-  display: grid;
-  gap: 6px;
-  margin-block-start: 10px;
-}
-.digital-team-copy-dialog :where(p, label > span),
 .digital-team-inspector-content :where(p, small, label > span) {
   overflow-wrap: anywhere;
 }
@@ -917,6 +979,14 @@
   font-weight: 600;
 }
 .digital-team-advanced-settings > label {
+  margin-block-start: 10px;
+}
+.digital-team-advanced-settings > summary > small {
+  margin-inline-start: 8px;
+  color: var(--zeus-product-muted);
+  font-weight: 400;
+}
+.digital-team-advanced-settings > .zeus-button {
   margin-block-start: 10px;
 }
 .digital-team-field-error {
@@ -944,6 +1014,9 @@
   white-space: nowrap;
 }
 @media (max-width: 840px) {
+  .digital-team-settings-content {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .digital-team-header-actions {
     flex-basis: auto;
     justify-content: flex-start;

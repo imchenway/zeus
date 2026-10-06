@@ -178,8 +178,6 @@ interface TaskWorkDecisionResolveRequest extends WorkManagementMutationRequest<T
 interface TaskWorkManagementOptions {
   /** 正式文件读取、冻结与资料目录发布共享同一 Core 权限边界。 */
   workArtifacts: WorkArtifactDelivery;
-  /** 只读取用户已经保存的项目流程规则，不接受模型提供经验生效授权。 */
-  resolveProjectMemoryPolicy?(projectId: string): { workflowTemplateId: string; workflowTemplateRevision: number; autoApplyStableExperience: boolean } | null;
   /** 已配置项目流程时统一接纳；只有返回空值才允许独立执行。 */
   acceptProjectWorkflowAssignment?(input: {
     projectId: string;
@@ -1416,14 +1414,8 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
       autonomyObjective: effective.autonomyObjective ?? null,
       delegationPolicy: planned?.arrangement?.delegation ?? effective.delegation ?? null,
       memorySnapshot: memories.map((record) => ({ id: record.id, contentSha256: record.contentSha256, source: record.source, reviewAfter: record.reviewAfter })),
-      /** 工作启动时冻结规则及其准确来源，后续配置变化不反向改变本轮授权。 */
-      projectMemoryPolicy: (() => {
-        const policy = options.resolveProjectMemoryPolicy?.(task.projectId);
-        if (!policy) return null;
-        if (typeof policy.autoApplyStableExperience !== 'boolean' || !Number.isSafeInteger(policy.workflowTemplateRevision) || policy.workflowTemplateRevision < 1)
-          throw new TaskWorkStoreError('ZEUS_EMPLOYEE_MEMORY_POLICY_INVALID', '项目经验生效规则没有有效保存身份。');
-        return { ...policy, workflowTemplateId: requiredText(policy.workflowTemplateId, '项目经验规则缺少流程来源。', 256), projectId: task.projectId };
-      })(),
+      /** 新工作不接受项目经验自动生效规则，历史冻结授权仍按原快照恢复。 */
+      projectMemoryPolicy: null,
       workMode,
       supplementalInfo: selection.supplementalInfo,
       ...(selection.supplementalAttachments ? { supplementalAttachments: selection.supplementalAttachments } : {}),

@@ -1,7 +1,7 @@
 /** 上下文容量的常用候选值；1K 表示 1,000 Token，最终按模型能力筛选。 */
 export const contextCapacityChoices = [64_000, 128_000, 256_000, 512_000, 1_000_000] as const;
 
-/** 选择来源只作记录；已有会话不会重新读取项目偏好。 */
+/** 选择来源只作记录；project 仅保留旧冻结记录，新会话使用显式选择或引擎默认。 */
 export type ContextCapacitySource = 'project' | 'explicit' | 'engine_default';
 
 /** 引擎可配置且当前模型资料允许的窗口容量。 */

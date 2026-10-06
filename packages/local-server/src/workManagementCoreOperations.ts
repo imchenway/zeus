@@ -118,7 +118,7 @@ export class WorkManagementCoreOperations {
         groupBy: updated.settings.groupBy,
         subgroupBy: updated.settings.subgroupBy,
       });
-      this.ports.afterCommit(() => this.ports.publishRealtimeEvent('task.board.updated', { projectId: project.id, revision: updated.revision, reason: 'settings' }));
+      this.ports.afterCommit(() => this.ports.publishRealtimeEvent('task.board.updated', { projectId: project.id, revision: updated.revision, reason: 'settings', scope: 'global' }));
       return updated;
     } catch (error) {
       const details = error as { code?: string; currentRevision?: number };

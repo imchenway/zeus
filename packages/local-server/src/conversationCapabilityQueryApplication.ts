@@ -45,7 +45,6 @@ export interface TaskPushGitReadPort {
 interface ConversationCapabilityQueryPorts {
   /** 已存在的目录与运行验收证据只读投影，不为查询启动引擎。 */
   readContextCapacitySupport?: (model: ConversationCapabilityModel) => import('@zeus/shared').ContextCapacityCapability;
-  readProjectContextCapacity?: (projectId: string) => number | null;
   /** 只读取本地仓库发现的持久状态，不启动扫描。 */
   settings: Pick<SettingRepository, 'getJson'>;
   projects: Pick<ProjectRepository, 'getById'>;
@@ -103,8 +102,6 @@ export interface ConversationCapabilityModel {
 }
 
 export interface ConversationCapabilitiesSnapshot {
-  /** 仅用于展示，实际继承在服务端接纳时冻结。 */
-  projectContextCapacityTokens?: number | null;
   generationId: string;
   initializedAt: string;
   projectId: string;
@@ -257,7 +254,6 @@ export class ConversationCapabilityQueryApplication {
     // 新项目沿用 Zeus 全局默认模型；会话/推送模型由各入口的“记住上次选择”覆盖。
     const preferredModel = defaultModel ? (resolveModelCapability(models, defaultModel)?.id ?? defaultModel) : (models.find((candidate) => candidate.available !== false)?.id ?? null);
     return {
-      projectContextCapacityTokens: this.ports.readProjectContextCapacity?.(project.id) ?? null,
       goals: codexCapabilities?.goals ?? { supported: false, enabled: false, stage: null },
       generationId: codexCapabilities?.generationId ?? 'pi-sdk',
       initializedAt: codexCapabilities?.initializedAt ?? this.ports.now().toISOString(),

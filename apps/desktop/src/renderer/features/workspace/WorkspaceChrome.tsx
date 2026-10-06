@@ -1684,9 +1684,6 @@ export function SidebarNav(props: {
                     actions={
                       project.id === temporaryWorkspaceId ? undefined : (
                         <>
-                          <button type="button" className="project-settings-button" aria-label={`${copy.projectSettingsPrefix}${copy.labelSeparator}${project.name}`} onClick={() => props.onOpenProjectSection(project, 'project-settings')}>
-                            <GearSix aria-hidden="true" weight="regular" />
-                          </button>
                           <div className={`project-row-actions ${menuOpen ? 'open' : ''} ${menuClosing ? 'closing' : ''}`.trim()} onKeyDown={(event) => handleProjectMoreMenuKeyDown(event, project.id)}>
                             <button
                               type="button"
@@ -1957,85 +1954,32 @@ export function formatRuntimeTerminalEnv(env: RuntimeSettings['terminalEnv']): s
     .join('\n');
 }
 
+/** 连接资源和授权仍独立于工作偏好保存。 */
 export interface ProjectConfigFormState {
-  defaultWorkMode: ProjectConfig['defaultWorkMode'];
-  languagePrimary: string;
-  languageAdditional: string;
-  packageManagers: string;
-  manifestPaths: string;
   databaseConnectionName: string;
-  telegramAlias: string;
   allowShell: boolean;
   allowGitWrite: boolean;
 }
 
+/** 只读取项目资源，忽略历史独立偏好。 */
 export function normalizeProjectConfig(config?: Partial<ProjectConfig>, projectId?: string): ProjectConfig | undefined {
   const resolvedProjectId = config?.projectId ?? projectId;
   if (!resolvedProjectId) return undefined;
   return {
     projectId: resolvedProjectId,
-    serviceTierPreferences: config?.serviceTierPreferences ?? [],
-    defaultWorkMode: config?.defaultWorkMode ?? 'plan',
-    language: {
-      primary: config?.language?.primary ?? 'typescript',
-      additional: config?.language?.additional ?? [],
-    },
-    dependencies: {
-      packageManagers: config?.dependencies?.packageManagers ?? [],
-      manifestPaths: config?.dependencies?.manifestPaths ?? [],
-    },
-    vcs: {
-      isGitRepository: config?.vcs?.isGitRepository ?? false,
-      gitRoot: config?.vcs?.gitRoot ?? null,
-    },
-    database: {
-      connectionName: config?.database?.connectionName ?? null,
-    },
-    telegram: {
-      alias: config?.telegram?.alias ?? null,
-    },
-    security: {
-      allowShell: config?.security?.allowShell ?? false,
-      allowGitWrite: config?.security?.allowGitWrite ?? false,
-    },
+    vcs: { isGitRepository: config?.vcs?.isGitRepository ?? false, gitRoot: config?.vcs?.gitRoot ?? null },
+    database: { connectionName: config?.database?.connectionName ?? null },
+    security: { allowShell: config?.security?.allowShell ?? false, allowGitWrite: config?.security?.allowGitWrite ?? false },
   };
 }
 
+/** 将连接资源与授权转为现有操作表单。 */
 export function toProjectConfigForm(config?: ProjectConfig): ProjectConfigFormState {
-  const normalized = normalizeProjectConfig(config, config?.projectId) ?? {
-    projectId: '',
-    defaultWorkMode: 'plan',
-    language: { primary: 'typescript', additional: [] },
-    dependencies: { packageManagers: [], manifestPaths: [] },
-    vcs: { isGitRepository: false, gitRoot: null },
-    database: { connectionName: null },
-    telegram: { alias: null },
-    security: { allowShell: false, allowGitWrite: false },
-  };
   return {
-    defaultWorkMode: normalized.defaultWorkMode,
-    languagePrimary: normalized.language.primary,
-    languageAdditional: normalized.language.additional.join(', '),
-    packageManagers: normalized.dependencies.packageManagers.join(', '),
-    manifestPaths: normalized.dependencies.manifestPaths.join(', '),
-    databaseConnectionName: redactDatabaseConnectionName(normalized.database.connectionName),
-    telegramAlias: normalized.telegram.alias ?? '',
-    allowShell: normalized.security.allowShell,
-    allowGitWrite: normalized.security.allowGitWrite,
+    databaseConnectionName: redactDatabaseConnectionName(config?.database.connectionName),
+    allowShell: config?.security.allowShell ?? false,
+    allowGitWrite: config?.security.allowGitWrite ?? false,
   };
-}
-
-export function parseProjectConfigList(text: string): string[] {
-  const seen = new Set<string>();
-  return text
-    .split(',')
-    .map((item) => item.trim())
-    .filter((item) => item && !item.includes('..'))
-    .filter((item) => {
-      if (seen.has(item)) return false;
-      seen.add(item);
-      return true;
-    });
 }
 
 export function parseNumericList(text: string): number[] {
@@ -2049,22 +1993,6 @@ export function parseNumericList(text: string): number[] {
       seen.add(item);
       return true;
     });
-}
-
-export function formatProjectLanguage(form: ProjectConfigFormState): string {
-  const additional = parseProjectConfigList(form.languageAdditional);
-  return [form.languagePrimary.trim() || 'typescript', ...additional].join(' + ');
-}
-
-export function formatProjectDependencies(form: ProjectConfigFormState, copy: ReturnType<typeof getLanguageCopy>['codeWorkspace']['projectConfig']): string {
-  const managers = parseProjectConfigList(form.packageManagers).join(', ') || copy.unsetPackageManagers;
-  const manifests = parseProjectConfigList(form.manifestPaths).join(', ') || copy.unsetManifestPaths;
-  return `${managers} · ${manifests}`;
-}
-
-export function formatProjectDatabase(form: ProjectConfigFormState, copy: ReturnType<typeof getLanguageCopy>['codeWorkspace']['projectConfig']): string {
-  const connectionName = redactDatabaseConnectionName(form.databaseConnectionName) || copy.unsetConnectionName;
-  return connectionName;
 }
 
 export function isExternalDatabaseUri(value: string | null | undefined): boolean {

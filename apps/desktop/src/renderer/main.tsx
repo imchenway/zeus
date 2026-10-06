@@ -107,7 +107,6 @@ async function renderWithClient(
             onLoadProject={(projectId) => client.projects.loadProject(projectId)}
             onLoadProjectConfig={(projectId) => client.projects.loadProjectConfig(projectId)}
             onSaveProjectConfig={(projectId, input) => client.projects.saveProjectConfig(projectId, input)}
-            onSaveProjectModelServiceTierPreference={(projectId, input) => client.projects.saveProjectModelServiceTierPreference(projectId, input)}
             onLoadProjectDatabaseSecret={(projectId) => client.projects.loadProjectDatabaseSecret(projectId)}
             onSaveProjectDatabasePassword={(projectId, password) => client.projects.saveProjectDatabasePassword(projectId, password)}
             onClearProjectDatabasePassword={(projectId) => client.projects.clearProjectDatabasePassword(projectId)}
@@ -127,10 +126,6 @@ async function renderWithClient(
             }}
             onLoadArchivedProjects={() => client.projects.loadArchivedProjects()}
             onLoadArchivedTasks={(projectId) => client.tasks.loadArchivedTasks(projectId)}
-            onSetProjectDefaultTemplate={async (projectId, templateId) => {
-              await client.projects.setProjectDefaultTemplate(projectId, templateId);
-              return client.loadDashboard();
-            }}
             onAuthorizeTaskFiles={(files, source) => window.zeus?.authorizeTaskFiles?.(files, source) ?? Promise.resolve({ resources: [], failedCount: files.length })}
             onMaterializeTaskResources={(resources) => window.zeus?.materializeTaskResources?.(resources) ?? Promise.resolve([])}
             onReadTaskClipboardResources={() => window.zeus?.readTaskClipboardResources?.() ?? Promise.resolve({ resources: [], text: '' })}

@@ -183,7 +183,7 @@ export interface DigitalTeamWorkflowDefinition {
   repairEmployeeId?: string;
   /** 一个父验收闭环最多自动修复轮数，未配置时为三轮。 */
   maxRepairRounds?: number;
-  /** 用户保存的项目经验生效规则，只授权当前项目的稳定方法和领域知识。 */
+  /** 仅供历史冻结运行读取的旧项目经验规则，新团队定义不再保存。 */
   projectMemoryPolicy?: {
     /** 有效工作启动时冻结该授权；偏好与跨项目推广仍须审查。 */
     autoApplyStableExperience: boolean;
@@ -523,8 +523,6 @@ export interface DigitalTeamNodeAttemptRecord {
 export interface CreateDigitalTeamWorkflowTemplateInput {
   /** 可选稳定身份。 */
   id?: string;
-  /** 旧模板可保留所属项目；新团队使用 null。 */
-  projectId: string | null;
   /** 模板名称。 */
   name: string;
   /** 模板用途说明。 */
@@ -822,6 +820,8 @@ export function normalizeDigitalTeamWorkflowDefinition(definition: DigitalTeamWo
   if (!isRecord(definition) || !Array.isArray(definition.nodes) || !Array.isArray(definition.edges)) return definition;
   /** 表单允许空白行；只清理受限的纯文本列表，错误类型仍交给正式校验拒绝。 */
   definition = structuredClone(definition);
+  /** 项目经验规则已经退役，只在历史运行快照中保留原值。 */
+  delete definition.projectMemoryPolicy;
   for (const node of definition.nodes) {
     if (!isRecord(node) || node.type !== 'employee' || !isRecord(node.data)) continue;
     for (const key of ['acceptanceCriteria', 'expectedDeliverables', 'verificationCommands'] as const) {
@@ -864,7 +864,6 @@ export function normalizeDigitalTeamWorkflowDefinition(definition: DigitalTeamWo
     nodes,
     edges,
     viewport: structuredClone(definition.viewport),
-    ...(definition.projectMemoryPolicy ? { projectMemoryPolicy: structuredClone(definition.projectMemoryPolicy) } : {}),
   };
 }
 
@@ -1026,7 +1025,7 @@ function normalizeEmployeeNode(node: DigitalTeamEmployeeNode): DigitalTeamEmploy
       executionMode,
       settings: settings && Object.keys(settings).length ? settings : undefined,
       instructions: node.data.instructions.trim() || '根据当前任务目标和数字员工职责完成工作，并提交可核对结果。',
-      acceptanceCriteria: acceptanceCriteria.length ? acceptanceCriteria : [`完成“${node.data.title}”并提交可核对结果`],
+      acceptanceCriteria: acceptanceCriteria.length ? acceptanceCriteria : ['按工作要求完成并提交可核对结果'],
       expectedDeliverables: expectedDeliverables.length ? expectedDeliverables : [executionMode === 'isolated_write' ? '代码变更与验证证据' : '可核对的工作成果'],
     },
   };

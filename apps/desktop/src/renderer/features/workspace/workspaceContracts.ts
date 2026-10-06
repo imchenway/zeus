@@ -32,7 +32,6 @@ import {
   type LocalSettingsExportSnapshot,
   type ProjectArchiveConfirmation,
   type ProjectConfig,
-  type ProjectModelServiceTierPreference,
   type ProjectDatabaseSecretSnapshot,
   type ProjectRecord,
   type ReleaseStatusSnapshot,
@@ -89,7 +88,6 @@ export type WorkspacePageProps = {
   onLoadProject?: (projectId: string) => Promise<ProjectRecord>;
   onLoadProjectConfig?: (projectId: string) => Promise<ProjectConfig>;
   onSaveProjectConfig?: (projectId: string, input: SaveProjectConfigRequest) => Promise<ProjectConfig>;
-  onSaveProjectModelServiceTierPreference?: (projectId: string, input: ProjectModelServiceTierPreference) => Promise<ProjectConfig>;
   onLoadProjectDatabaseSecret?: (projectId: string) => Promise<ProjectDatabaseSecretSnapshot>;
   onSaveProjectDatabasePassword?: (projectId: string, password: string) => Promise<ProjectDatabaseSecretSnapshot>;
   onClearProjectDatabasePassword?: (projectId: string) => Promise<ProjectDatabaseSecretSnapshot>;
@@ -109,7 +107,6 @@ export type WorkspacePageProps = {
   onRestoreProject?: (projectId: string) => Promise<DashboardSnapshot>;
   onLoadArchivedProjects?: () => Promise<ProjectRecord[]>;
   onLoadArchivedTasks?: (projectId: string) => Promise<TaskRecord[]>;
-  onSetProjectDefaultTemplate?: (projectId: string, templateId: string | null) => Promise<DashboardSnapshot>;
   onChooseTaskAttachments?: () => Promise<TaskCreateAttachmentCandidate[]>;
   onChooseConversationResources?: () => Promise<NativeConversationAttachment[]>;
   onAuthorizeTaskFiles?: (files: File[], source: 'paste' | 'drop') => Promise<TaskResourceAuthorizationResult>;

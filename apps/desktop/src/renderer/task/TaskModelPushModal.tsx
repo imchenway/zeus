@@ -13,11 +13,10 @@ import {
   type TaskPushRelatedContextOption,
   type TaskPushSupplementalAttachment,
 } from '@zeus/shared';
-import type { ProjectModelServiceTierPreference, TaskRecord } from '../apiClient.js';
+import type { TaskRecord } from '../apiClient.js';
 import type {
   CodexConversationCapabilities,
   CodexTaskPushCapabilities,
-  CodexTaskPushModelCapability,
   NativeConversationAttachment,
   NativePermissionMode,
   NativeServiceTierSelection,
@@ -35,13 +34,12 @@ import { ModalPortal } from '../ui/ModalPortal.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
-import { projectModelServiceTierSelection } from '../session/projectServiceTierPreferences.js';
 import { TaskPushSupplementalAttachmentCards } from './TaskPushSupplementalAttachmentCards.js';
 import { SkillSelector } from '../features/skills/SkillSelector.js';
 import type { CodexApiClient } from '../features/codex/codexApiClient.js';
 
 export interface TaskModelPushForm {
-  /** 缺省跟随项目，null 显式默认。 */
+  /** 缺省使用模型默认，具体数值仅用于本次工作。 */
   contextCapacityTokens?: number | null;
   stageId?: string;
   model: string;
@@ -533,7 +531,7 @@ export function readTaskModelPushPreferences(storage: Pick<Storage, 'getItem'> |
   if (!storage) return null;
   try {
     /** 推送专属记录不受打开会话或修改会话参数影响。 */
-    const value = JSON.parse(storage.getItem(`${preferencesKeyPrefix}${encodeURIComponent(projectId)}`) ?? 'null') as Partial<TaskModelPushPreferences> | null;
+    const value = JSON.parse(storage.getItem(`${preferencesKeyPrefix}global`) ?? 'null') as Partial<TaskModelPushPreferences> | null;
     if (
       value?.model &&
       typeof value.model === 'string' &&
@@ -553,7 +551,7 @@ export function readTaskModelPushPreferences(storage: Pick<Storage, 'getItem'> |
   } catch {
     // 损坏的推送记录不阻断已有会话偏好的恢复。
   }
-  /** 旧项目继续沿用已有默认值，速度仍由项目中的模型速度偏好决定。 */
+  /** 当前任务优先复用全局操作偏好，速度保持标准档位。 */
   const current = readConversationRuntimePreferences(storage, projectId, 'task_development');
   if (current?.model) {
     return {
@@ -579,7 +577,7 @@ export function writeTaskModelPushPreferences(storage: Pick<Storage, 'getItem' |
     ...(form.workspaceModeSelected ? { workspaceMode: form.workspaceMode } : {}),
   });
   storage.setItem(
-    `${preferencesKeyPrefix}${encodeURIComponent(projectId)}`,
+    `${preferencesKeyPrefix}global`,
     JSON.stringify({
       model: form.model,
       effort: form.effort,
@@ -590,12 +588,7 @@ export function writeTaskModelPushPreferences(storage: Pick<Storage, 'getItem' |
   );
 }
 
-export function resolveTaskModelPushInitialForm(
-  capabilities: CodexTaskPushCapabilities,
-  remembered: TaskModelPushPreferences | null,
-  serviceTierPreferences: readonly ProjectModelServiceTierPreference[] = [],
-  skillId = '',
-): TaskModelPushForm {
+export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapabilities, remembered: TaskModelPushPreferences | null, skillId = ''): TaskModelPushForm {
   const availableModels = capabilities.models.filter((model) => model.available !== false);
   const rememberedModel = resolveModelCapability(availableModels, remembered?.model);
   // 已记住或已配置的模型失效时等待用户明确选择。
@@ -603,9 +596,7 @@ export function resolveTaskModelPushInitialForm(
   const selectedModel = requestedModel ? resolveModelCapability(availableModels, requestedModel) : availableModels[0];
   const effort = rememberedModel && remembered && selectedModel?.supportedReasoningEfforts.includes(remembered.effort) ? remembered.effort : (selectedModel?.defaultReasoningEffort ?? selectedModel?.supportedReasoningEfforts[0] ?? '');
   // 模型目录未就绪不能阻断本地仓库表单，模型到达后由既有选择器补齐模型能力。
-  const normalizedServiceTier = selectedModel
-    ? normalizeServiceTierSelection(projectModelServiceTierSelection(serviceTierPreferences, selectedModel), selectedModel)
-    : { selection: remembered?.serviceTier ?? { type: 'standard' as const }, downgraded: false };
+  const normalizedServiceTier = selectedModel ? normalizeServiceTierSelection(remembered?.serviceTier ?? { type: 'standard' }, selectedModel) : { selection: remembered?.serviceTier ?? { type: 'standard' as const }, downgraded: false };
   const firstAvailableEnvironment = capabilities.existingEnvironments?.find((environment) => environment.available);
   return {
     model: selectedModel?.id ?? requestedModel ?? '',
@@ -689,7 +680,6 @@ export function TaskModelPushModal(props: {
   projectName?: string;
   capabilities: CodexTaskPushCapabilities | null;
   runtimeCapabilities: CodexConversationCapabilities | null;
-  serviceTierPreferences: readonly ProjectModelServiceTierPreference[];
   form: TaskModelPushForm;
   status: TaskModelPushModalStatus;
   refreshingRepositoryId: string | null;
@@ -698,7 +688,6 @@ export function TaskModelPushModal(props: {
   /** 已有环境的仓库配置独立于代码交付，新增成员仅由用户明确补入。 */
   environmentClient?: Pick<CodexApiClient, 'loadTaskGitWorkspaceIndex' | 'attachTaskRepository'> | null;
   onChange: Dispatch<SetStateAction<TaskModelPushForm>>;
-  onServiceTierPreferenceChange: (model: CodexTaskPushModelCapability, selection: NativeServiceTierSelection) => void | Promise<void>;
   onRefreshRepository: (repositoryId: string) => void;
   /** 本地发现与各仓远端拉取分别操作。 */
   onRefreshLocalRepositories: () => void;
@@ -852,7 +841,7 @@ export function TaskModelPushModal(props: {
 
   function onModelChange(model: string): void {
     const capability = resolveModelCapability(runtimeCapabilities?.models, model);
-    const normalizedTier = normalizeServiceTierSelection(projectModelServiceTierSelection(props.serviceTierPreferences, capability), capability);
+    const normalizedTier = normalizeServiceTierSelection({ type: 'standard' }, capability);
     props.onChange({
       ...props.form,
       model: capability?.id ?? model,
@@ -972,7 +961,7 @@ export function TaskModelPushModal(props: {
                 <ZeusSelect
                   size="regular"
                   ariaLabel={zh ? '上下文容量' : 'Context capacity'}
-                  value={contextCapacitySelectionValue(props.form.contextCapacityTokens, props.capabilities?.projectContextCapacityTokens)}
+                  value={contextCapacitySelectionValue(props.form.contextCapacityTokens)}
                   options={contextCapacitySelectionOptions(selectedModel?.contextCapacity, zh)}
                   disabled={busy}
                   onChange={(value) => props.onChange((current) => ({ ...current, contextCapacityTokens: contextCapacitySelectionFromValue(value) }))}
@@ -1009,7 +998,6 @@ export function TaskModelPushModal(props: {
                       serviceTier: selection,
                       serviceTierDowngraded: !selectedModel.serviceTiers.some((tier) => tier.id === 'priority') && selection.type === 'catalog',
                     });
-                    void props.onServiceTierPreferenceChange(selectedModel, selection);
                   }}
                   disabled={!selectedModel || busy || Boolean(props.form.stageId)}
                   searchable={false}
@@ -1534,7 +1522,7 @@ export function TaskModelPushModal(props: {
                 !props.capabilities ||
                 props.status === 'loading' ||
                 (!modelSetupRequired && (!props.form.model || !selectedModel)) ||
-                (!modelSetupRequired && !contextCapacitySelectionAllowed(props.form.contextCapacityTokens, props.capabilities?.projectContextCapacityTokens, selectedModel?.contextCapacity)) ||
+                (!modelSetupRequired && !contextCapacitySelectionAllowed(props.form.contextCapacityTokens, selectedModel?.contextCapacity)) ||
                 (!modelSetupRequired &&
                   (props.form.workspaceMode === 'direct'
                     ? directWorkspaceNeedsConfirmation && !props.form.directConcurrencyConfirmed
