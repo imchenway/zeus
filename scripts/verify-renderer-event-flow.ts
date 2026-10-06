@@ -5,7 +5,7 @@ import { createHydratedSessionState, createInitialSessionState, sessionReducer }
 import type { NativePlanImplementationRequest, NativeRealtimeEventEnvelope, NativeQueueSnapshot, NativeSessionState, NativeConversationEvent } from '../apps/desktop/src/renderer/session/sessionTypes.ts';
 import { composerQueuedSubmissions, orderTranscriptItemsWithQueue } from '../apps/desktop/src/renderer/session/conversationQueuePresentation.ts';
 import { createConversationQueueStateSelector } from '../apps/desktop/src/renderer/session/sessionStateSlices.ts';
-import { attachTaskModelPushChoice, type TaskModelPushPendingState } from '../apps/desktop/src/renderer/task/TaskModelPushPendingWorkspace.tsx';
+import { attachTaskModelPushChoice, projectTaskModelPushConversationChoices, type TaskModelPushPendingState } from '../apps/desktop/src/renderer/task/TaskModelPushPendingWorkspace.tsx';
 import type { TurnChangeSet } from '../packages/shared/src/conversationResources.ts';
 import type { ConversationTranscriptEnvelope } from '../packages/shared/src/conversationTranscriptWire.ts';
 
@@ -1871,6 +1871,52 @@ function verifyAnsweredInputHandoff() {
   const separateTurns = sessionReducer(createHydratedSessionState({ ...snapshot, items: [canonical] }), { type: 'snapshot_hydrated', snapshot: { ...snapshot, items: [canonical, otherTurn] } });
   assert(separateTurns.itemOrder.length === 2, '不同轮次复用 Provider 编号不能合并两条输入。');
   return { singleAnswerPosition: true, bothArrivalOrders: true, answerAttachmentsPreserved: true, independentInputsPreserved: true };
+}
+
+/** 重放临时入口进入目录后，真实会话接管同一导航身份的场景。 */
+function verifyTaskPushChoiceHandoff() {
+  /** 同一次创建的正式会话元数据。 */
+  const canonical = { ...choice, taskId: 'choice-handoff-task', creationOperationIdentity: 'choice-handoff-operation' };
+  /** 创建期入口只有导航身份，不能作为正式读取目标。 */
+  const temporary = { ...canonical, id: 'task-push:choice-handoff', navigationId: 'task-push:choice-handoff', providerThreadId: null, creationOperationIdentity: null };
+  /** 创建已接纳，目录可能仍夹带早先选中时写入的临时入口。 */
+  const pending = {
+    task: { id: canonical.taskId, projectId },
+    navigationId: temporary.id,
+    choice: { ...canonical, navigationId: temporary.id },
+    operationIdentity: canonical.creationOperationIdentity,
+    status: 'accepted',
+  } as unknown as TaskModelPushPendingState;
+  /** 同名但不同创建操作的历史必须保留。 */
+  const sibling = { ...canonical, id: 'choice-handoff-sibling', creationOperationIdentity: 'another-operation' };
+  for (const directory of [
+    [temporary, canonical, sibling],
+    [canonical, temporary, sibling],
+    [temporary, sibling],
+  ]) {
+    /** 正式工作区使用的共享投影结果。 */
+    const projected = projectTaskModelPushConversationChoices(pending, directory);
+    /** 复现工作区按稳定导航身份构建目录的实际合并边界。 */
+    const navigation = new Map(projected.map((item) => [item.navigationId ?? item.id, item]));
+    assert(projected.length === 2 && navigation.get(temporary.id)?.id === canonical.id, '真实会话必须接管导航入口，临时目录项不得把读取目标改回不存在的编号。');
+    assert(
+      projected.some((item) => item.id === sibling.id),
+      '同名历史会话不能被本次创建吞并。',
+    );
+  }
+  /** 接纳前，即使目录先返回正式会话，也继续显示原创建工作面。 */
+  const creating = projectTaskModelPushConversationChoices({ ...pending, choice: temporary, status: 'submitting' }, [canonical, temporary, sibling]);
+  assert(creating.length === 2 && creating[0]?.id === temporary.id, '目录先到不能绕过创建接纳流程。');
+  /** 相同身份在其他项目或任务内不能被本次推送合并。 */
+  const foreign = { ...temporary, projectId: 'another-project', taskId: 'another-task' };
+  assert(projectTaskModelPushConversationChoices(pending, [canonical, foreign]).includes(foreign), '推送入口合并必须遵守项目和任务边界。');
+  return { arrivalOrders: 3, canonicalConversationId: canonical.id, retainedHistory: sibling.id };
+}
+
+/** 创建身份专项复用现有探针，不引入新的验证体系。 */
+if (process.argv.includes('--task-push-choice-handoff-only')) {
+  console.log(JSON.stringify({ taskPushChoiceHandoff: verifyTaskPushChoiceHandoff() }));
+  process.exit(0);
 }
 
 /** 答案交接专项复用现有探针，不引入额外运行入口或依赖。 */

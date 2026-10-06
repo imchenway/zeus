@@ -280,9 +280,9 @@ function aggregateRows(rows: readonly CodexUsageLedgerRecord[], outputRateByTurn
   };
 }
 
-/** 按真实请求的模型和价格快照归组；相同模型同价只保留一行。 */
+/** 按真实请求的模型、计费档位和价格快照归组；同档同价只保留一行。 */
 function aggregateCostBreakdown(rows: readonly CodexUsageLedgerRecord[], pricePeriods: ReadonlyMap<string, UsageModelPricePeriod>): UsageModelCostBreakdown[] {
-  /** JSON 键只用于同一次聚合内识别完全相同的模型和费率。 */
+  /** JSON 键只用于同一次聚合内识别完全相同的模型、档位和费率。 */
   const groups = new Map<string, UsageModelCostBreakdown>();
   for (const row of rows) {
     /** 新账本优先使用请求级快照；旧账本仍以整轮快照展示真实已知信息。 */
@@ -290,11 +290,25 @@ function aggregateCostBreakdown(rows: readonly CodexUsageLedgerRecord[], pricePe
       ? row.estimate.requests.map((request) => ({ model: request.estimate.rateSnapshot.model || row.model, usage: request.usage, estimate: request.estimate }))
       : [{ model: row.estimate.rateSnapshot.model || row.model, usage: row.usage, estimate: row.estimate }];
     for (const request of requests) {
+      /** 档位与费率必须来自同一次请求的不可变快照。 */
+      const snapshot = request.estimate.rateSnapshot;
       /** 标准价格与历史 Codex 美元费率统一成前端只读结构。 */
-      const rate = usageModelRate(request.estimate.rateSnapshot);
-      const catalogDate = validCatalogDate(request.estimate.rateSnapshot.catalogDate);
-      /** 同模型同价跨目录日期继续归为一行，目录日期只用于合并可见周期。 */
-      const key = JSON.stringify([request.model, rate]);
+      const rate = usageModelRate(snapshot);
+      /** 缺省档位沿用计价器的普通档语义，未知档位保持原值。 */
+      const serviceTier =
+        row.providerId === 'codex'
+          ? snapshot.serviceTier === 'fast' || snapshot.serviceTier === 'priority'
+            ? 'fast'
+            : snapshot.serviceTier == null || snapshot.serviceTier === 'default' || snapshot.serviceTier === 'standard'
+              ? 'standard'
+              : snapshot.serviceTier
+          : null;
+      /** 只展示 Codex 已记录的上下文计价档位。 */
+      const longContext = row.providerId === 'codex' && snapshot.longContext;
+      /** 目录日期只用于合并可见周期，不参与同档同价身份。 */
+      const catalogDate = validCatalogDate(snapshot.catalogDate);
+      /** 相同价格的不同档位保持独立，快速档位别名仍合并。 */
+      const key = JSON.stringify([request.model, rate, serviceTier, longContext]);
       const pricePeriod = rate && catalogDate ? (pricePeriods.get(pricePeriodKey(request.model, catalogDate)) ?? null) : null;
       const existing = groups.get(key);
       if (existing) {
@@ -305,6 +319,8 @@ function aggregateCostBreakdown(rows: readonly CodexUsageLedgerRecord[], pricePe
         groups.set(key, {
           model: request.model,
           rate,
+          serviceTier,
+          longContext,
           pricePeriod,
           usage: { ...request.usage },
           estimatedCosts: sumEstimatedCosts([request.estimate]),

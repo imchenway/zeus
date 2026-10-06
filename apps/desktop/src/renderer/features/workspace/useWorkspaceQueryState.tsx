@@ -11,6 +11,7 @@ import type { CodexConversationCapabilities, CodexTaskPushCapabilities, NativeCo
 import { compareConversationStageUpdatedDesc } from '../../session/conversationOrdering.js';
 import { buildPersistedSessionViewCache, initialSessionHotCache, rememberSessionHotState, type SessionHotCache } from '../../session/sessionHotCache.js';
 import { type TaskModelPushForm, type TaskModelPushModalStatus } from '../../task/TaskModelPushModal.js';
+import { projectTaskModelPushConversationChoices } from '../../task/TaskModelPushPendingWorkspace.js';
 import { useConversationFeatureController } from '../conversations/useConversationFeatureController.js';
 import { useGitFeatureController } from '../git/useGitFeatureController.js';
 import { useProjectFeatureController } from '../projects/useProjectFeatureController.js';
@@ -905,15 +906,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
           const pending = taskModelPushPendingByTask[task.id];
           /** 服务端返回的任务历史，包含可能先于推送回执到达的真实会话。 */
           const choices = nativeConversationChoicesByTask[task.id]?.choices ?? [];
-          if (!pending) return [task.id, choices];
-          /** 创建身份只能在同一项目和任务内关联，防止误合并同名会话及其他推送。 */
-          const isPendingChoice = (choice: NativeConversationChoice): boolean =>
-            choice.id === pending.choice.id || (Boolean(pending.operationIdentity) && choice.projectId === pending.task.projectId && choice.taskId === pending.task.id && choice.creationOperationIdentity === pending.operationIdentity);
-          /** 身份匹配不代表创建成功；只有原流程确认接受后才采用服务端展示状态。 */
-          const authoritativeChoice = pending.status === 'accepted' ? choices.find(isPendingChoice) : undefined;
-          /** 接管后继续保留稳定导航身份，创建中或失败时保持原工作面。 */
-          const projectedChoice = authoritativeChoice ? { ...authoritativeChoice, navigationId: pending.navigationId } : pending.choice;
-          return [task.id, [projectedChoice, ...choices.filter((choice) => !isPendingChoice(choice))]];
+          return [task.id, projectTaskModelPushConversationChoices(pending, choices)];
         }),
       ) as Record<string, NativeConversationChoice[]>,
     [nativeConversationChoicesByTask, snapshot.tasks, taskModelPushPendingByTask],

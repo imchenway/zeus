@@ -118,10 +118,14 @@ export interface UsageModelPricePeriod {
   to: string | null;
 }
 
-/** 同一模型和同一价格快照归为一行，调价后的记录保持分开。 */
+/** 同一模型、计费档位和价格快照归为一行，调价后的记录保持分开。 */
 export interface UsageModelCostBreakdown {
   model: string;
   rate: UsageModelRate | null;
+  /** Codex 请求快照的服务档位，统一普通和快速档位别名；其他供应源为空。 */
+  serviceTier: string | null;
+  /** Codex 请求快照是否采用长上下文价格，不根据累计 Token 推断。 */
+  longContext: boolean;
   /** 只展示账本能够证明的价格目录周期，缺少有效目录日期时不猜测。 */
   pricePeriod: UsageModelPricePeriod | null;
   usage: TokenUsageBreakdown;
