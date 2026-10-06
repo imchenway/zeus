@@ -47,19 +47,31 @@ export interface DashboardClient
 
 /** Renderer API client：只组合 bounded-context client 与统一本机 transport。 */
 export function createDashboardClient(options: DashboardClientOptions): DashboardClient {
+  /** HTTP 与事件流共用最近一次由 Main 确认的连接。 */
   let currentOptions = options;
+  /** 同一客户端只保留一个连接刷新，避免并发交接和迟到配置相互覆盖。 */
+  let refreshingConnection: Promise<DashboardClientOptions> | null = null;
+  /** 所有恢复入口合流到 Main 的真实宿主恢复，不在业务客户端创建重试循环。 */
   const refreshConnection = options.refreshLocalServerConfig
-    ? async () => {
-        const refreshLocalServerConfig = currentOptions.refreshLocalServerConfig;
-        if (!refreshLocalServerConfig) return currentOptions;
-        const refreshed = await refreshLocalServerConfig();
-        currentOptions = {
-          ...refreshed,
-          refreshLocalServerConfig,
-          projectGitWorkbench: currentOptions.projectGitWorkbench,
-          onPerformanceSpan: currentOptions.onPerformanceSpan,
-        };
-        return currentOptions;
+    ? () => {
+        if (refreshingConnection) return refreshingConnection;
+        refreshingConnection = (async () => {
+          /** 刷新期间保留 Renderer 专用端口与观察器。 */
+          const refreshLocalServerConfig = currentOptions.refreshLocalServerConfig;
+          if (!refreshLocalServerConfig) return currentOptions;
+          /** Main 会等待真实交接并确认心跳，不能提前用旧端口重试。 */
+          const refreshed = await refreshLocalServerConfig();
+          currentOptions = {
+            ...refreshed,
+            refreshLocalServerConfig,
+            projectGitWorkbench: currentOptions.projectGitWorkbench,
+            onPerformanceSpan: currentOptions.onPerformanceSpan,
+          };
+          return currentOptions;
+        })().finally(() => {
+          refreshingConnection = null;
+        });
+        return refreshingConnection;
       }
     : undefined;
   const transport = createLocalApiTransport({

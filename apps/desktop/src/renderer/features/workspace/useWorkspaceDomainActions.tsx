@@ -1,5 +1,5 @@
 import type { ProjectRecord } from '../../apiClient.js';
-import { type FormEvent, useCallback, useEffect, useRef } from 'react';
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { temporaryWorkspaceId, describeUserFacingError, isTaskPriority, type ProjectCodeWorkspacePreference, renderTaskPushLayoutText, type ThirdPartyTaskExtract } from '@zeus/shared';
 import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromConversation } from '../../session/ProjectConversationTree.js';
 import {
@@ -75,6 +75,7 @@ import {
   type TaskType,
   type UpdateTaskRelationshipsRequest,
   type UpdateTaskRequest,
+  isLikelyLocalServerConnectionError,
   ZeusApiError,
   type ZeusRealtimeConnectionState,
   type ZeusRealtimeEvent,
@@ -121,6 +122,7 @@ import {
 } from './workspaceSupport.js';
 import type { WorkspaceQueryState } from './useWorkspaceQueryState.js';
 import { useProjectRepositoryDiscovery } from './useProjectRepositoryDiscovery.js';
+import { createConversationAttentionAcknowledgementCoordinator, recordConversationBackgroundSynchronizationError } from './conversationAttentionAcknowledgement.js';
 import { codexCapabilitiesChangedEvent, codexRuntimeUpdateCheckedEvent, codexRuntimeUpdateProgressEvent, isCodexRuntimeUpdateStage } from '../codex/codexApiClient.js';
 
 /** 旧偏好只保存裸模型名时，只有项目默认来源能解除同名歧义；其他情况一律要求用户重选。 */
@@ -288,6 +290,40 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     visibleTasks,
     workspaceScrollRef,
   } = state;
+  /** 每个客户端共用去重状态，失败确认等待实际快照校准成功。 */
+  const attentionAcknowledgementCoordinator = useMemo(() => createConversationAttentionAcknowledgementCoordinator(), [props.nativeConversationClient]);
+  /** 客户端替换或工作区卸载后，不再接纳旧后台确认回执。 */
+  const attentionAcknowledgementCoordinatorRef = useRef<typeof attentionAcknowledgementCoordinator | null>(attentionAcknowledgementCoordinator);
+  /** 只用于唤醒生命周期重读当前可见提醒，不缓存另一份提醒事实。 */
+  const [nativeConversationAttentionRetryRevision, setNativeConversationAttentionRetryRevision] = useState(0);
+  /** 在途期间切换或到达新提醒时，回调只读取当前选择而不复用旧版本。 */
+  const visibleAttentionConversationRef = useRef(state.selectedNativeConversation);
+  visibleAttentionConversationRef.current = state.selectedNativeConversation;
+  useEffect(() => {
+    attentionAcknowledgementCoordinatorRef.current = attentionAcknowledgementCoordinator;
+    return () => {
+      if (attentionAcknowledgementCoordinatorRef.current === attentionAcknowledgementCoordinator) attentionAcknowledgementCoordinatorRef.current = null;
+    };
+  }, [attentionAcknowledgementCoordinator]);
+  /** 真正读取到最新状态后才恢复失败确认，不由失败回调立即循环提交。 */
+  const resumeNativeConversationAttentionAcknowledgements = useCallback((): void => {
+    if (attentionAcknowledgementCoordinatorRef.current !== attentionAcknowledgementCoordinator) return;
+    if (attentionAcknowledgementCoordinator.reconciled()) setNativeConversationAttentionRetryRevision((current) => current + 1);
+  }, [attentionAcknowledgementCoordinator]);
+  /** 后台错误沿用既有说明与脱敏规则，不把原始错误或凭据写入控制台。 */
+  function recordBackgroundSynchronizationError(action: string, error: unknown, context: Record<string, string | number> = {}): void {
+    /** 后台自动操作不改变明确用户操作的失败状态。 */
+    const explanation = describeUserFacingError(error, appShellSettingsRef.current.appLanguage === 'zh-CN' ? 'zh-CN' : 'en');
+    recordConversationBackgroundSynchronizationError(action, redactLocalUiErrorMessage(explanation.details || explanation.message), error instanceof ZeusApiError ? error.error : undefined, context);
+  }
+  /** 自动读取遇到断连只保留诊断，业务或存储异常仍走原有明确错误出口。 */
+  function recordRealtimeSynchronizationError(action: string, error: unknown): void {
+    if (isLikelyLocalServerConnectionError(error)) {
+      recordBackgroundSynchronizationError(action, error);
+      return;
+    }
+    recordLocalError(action, error);
+  }
   /** 模型目录晚于本地仓库就绪时，各提交入口使用与界面一致的真实模型来源。 */
   const taskModelPushCapabilities =
     loadedTaskModelPushCapabilities && loadedTaskModelPushCapabilities.models.length === 0 && taskModelPushRuntimeCapabilities?.projectId === loadedTaskModelPushCapabilities.projectId
@@ -334,25 +370,69 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     (projectId: string, conversationId: string, expectedRevision: number): void => {
       const client = props.nativeConversationClient;
       if (!client) return;
+      /** 固定此次已看见的版本，同一会话不得同时提交多个确认。 */
+      const attempt = attentionAcknowledgementCoordinator.begin(projectId, conversationId, expectedRevision);
+      if (!attempt) return;
+      /** 只有暂时断连或服务不可用才在下一次成功校准后自动重试。 */
+      let outcome: 'succeeded' | 'failed' | 'rejected' = 'succeeded';
       void client
         .acknowledgeNativeConversationAttention(projectId, conversationId, expectedRevision)
         .then(({ conversation }) => {
-          if (conversation.projectId !== projectId || conversation.id !== conversationId) return;
+          if (attentionAcknowledgementCoordinatorRef.current !== attentionAcknowledgementCoordinator) return;
+          if (conversation.projectId !== projectId || conversation.id !== conversationId) throw new Error('会话提醒确认返回了不匹配的会话身份。');
+          /** 确认回执只修改提醒字段，避免迟到回执倒退运行状态或清除较新提醒。 */
+          const mergeAttention = (current: NativeConversationChoice): NativeConversationChoice =>
+            current.attentionRevision > conversation.attentionRevision
+              ? current
+              : {
+                  ...current,
+                  hasUnreadAttention: conversation.hasUnreadAttention,
+                  attentionKind: conversation.attentionKind,
+                  attentionRevision: conversation.attentionRevision,
+                  attentionTurnId: conversation.attentionTurnId,
+                  attentionUpdatedAt: conversation.attentionUpdatedAt,
+                };
           if (conversation.taskId) {
-            setNativeConversationChoicesByTask((current) => ({
-              ...current,
-              [conversation.taskId!]: upsertTaskConversationChoiceSnapshot(conversation.taskId!, current[conversation.taskId!], conversation),
-            }));
+            setNativeConversationChoicesByTask((current) => {
+              /** 已从缓存移除的会话不因后台回执重新出现。 */
+              const prior = current[conversation.taskId!];
+              /** 保留当前选择与运行元数据，只更新仍在列表中的提醒。 */
+              const choice = prior?.choices.find((candidate) => candidate.id === conversationId);
+              if (!choice) return current;
+              return { ...current, [conversation.taskId!]: upsertTaskConversationChoiceSnapshot(conversation.taskId!, prior, mergeAttention(choice)) };
+            });
           } else {
-            setNativeConversationChoicesByProject((current) => ({
-              ...current,
-              [projectId]: upsertProjectConversationChoiceSnapshot(current[projectId], conversation),
-            }));
+            setNativeConversationChoicesByProject((current) => {
+              /** 项目列表也使用当前缓存，拒绝迟到的旧提醒覆盖。 */
+              const prior = current[projectId];
+              /** 会话已移除时，不由后台确认重新插入。 */
+              const choice = prior?.choices.find((candidate) => candidate.id === conversationId);
+              if (!choice) return current;
+              return { ...current, [projectId]: upsertProjectConversationChoiceSnapshot(prior, mergeAttention(choice)) };
+            });
           }
         })
-        .catch((error: unknown) => recordLocalError('conversation-attention-acknowledgement', error));
+        .catch((error: unknown) => {
+          outcome = isLikelyLocalServerConnectionError(error) || (error instanceof ZeusApiError && (error.status >= 500 || error.status === 408 || error.status === 429)) ? 'failed' : 'rejected';
+          if (attentionAcknowledgementCoordinatorRef.current !== attentionAcknowledgementCoordinator) return;
+          recordBackgroundSynchronizationError('conversation-attention-acknowledgement', error, {
+            projectId,
+            conversationId,
+            expectedRevision,
+          });
+        })
+        .finally(() => {
+          /** 失败也释放在途请求；较早成功校准或新提醒可唤醒当前版本一次。 */
+          const retryAfterReconciliation = attentionAcknowledgementCoordinator.settle(attempt, outcome);
+          if (attentionAcknowledgementCoordinatorRef.current !== attentionAcknowledgementCoordinator) return;
+          /** 新版本仍须由前台可见条件决定是否确认。 */
+          const current = visibleAttentionConversationRef.current;
+          if (retryAfterReconciliation || (current?.projectId === projectId && current.id === conversationId && current.attentionRevision > expectedRevision)) {
+            setNativeConversationAttentionRetryRevision((revision) => revision + 1);
+          }
+        });
     },
-    [props.nativeConversationClient],
+    [attentionAcknowledgementCoordinator, props.nativeConversationClient],
   );
 
   useEffect(() => {
@@ -413,7 +493,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
           // 轻量元数据是全部列表投影的权威收口；当前打开会话也必须覆盖旧缓存，避免控制器与任务表长期分裂。
           reconcileNativeConversationProjectionStates([metadata]);
         })
-        .catch((error: unknown) => recordLocalError('conversation-list-realtime-refresh', error))
+        .catch((error: unknown) => recordRealtimeSynchronizationError('conversation-list-realtime-refresh', error))
         .finally(() => {
           pendingRealtimeNativeConversationRefreshIdsRef.current.delete(conversationId);
           if (!repeatRealtimeNativeConversationRefreshIdsRef.current.delete(conversationId)) return;
@@ -438,9 +518,14 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       if (connectionState !== 'connected' || statusSnapshotRunning) return;
       const projectId = activeProjectIdRef.current;
       if (!projectId) return;
+      /** 断线或订阅替换后的迟到读取，不放行新的后台确认。 */
+      const generation = statusSyncGeneration;
       statusSnapshotRunning = true;
       void reconcileNativeConversationProjectSnapshot(projectId)
-        .catch((error: unknown) => recordLocalError('conversation-status-periodic-reconciliation', error))
+        .then(() => {
+          if (connectionState === 'connected' && generation === statusSyncGeneration) resumeNativeConversationAttentionAcknowledgements();
+        })
+        .catch((error: unknown) => recordRealtimeSynchronizationError('conversation-status-periodic-reconciliation', error))
         .finally(() => {
           statusSnapshotRunning = false;
         });
@@ -460,10 +545,11 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
           if (connectionState !== 'connected' || generation !== statusSyncGeneration) return;
           statusSyncAttempt = 0;
           setNativeConversationStatusSyncState('connected');
+          resumeNativeConversationAttentionAcknowledgements();
         },
         (error: unknown) => {
           if (connectionState !== 'connected' || generation !== statusSyncGeneration) return;
-          console.warn('暂时无法读取最新会话状态，正在重新连接。', error);
+          recordBackgroundSynchronizationError('conversation-status-reconnect-reconciliation', error);
           setNativeConversationStatusSyncState('stale');
           const delay = Math.min(1_000 * 2 ** Math.min(statusSyncAttempt, 3), 8_000);
           statusSyncAttempt += 1;
@@ -585,14 +671,14 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
               tasks: current.tasks.map((task) => (task.id === taskId ? { ...task, managementStatus: incomingManagementStatus, ...(updatedAt ? { updatedAt } : {}) } : task)),
             }));
             setTaskDetail((current) => (current?.id === taskId ? { ...current, managementStatus: incomingManagementStatus, ...(updatedAt ? { updatedAt } : {}) } : current));
-            void refreshNativeConversationChoices(taskId).catch((error: unknown) => recordLocalError('task-conversation-realtime-refresh', error));
+            void refreshNativeConversationChoices(taskId).catch((error: unknown) => recordRealtimeSynchronizationError('task-conversation-realtime-refresh', error));
           }
           if (!pendingRealtimeTaskRefreshIdsRef.current.has(taskId)) {
             pendingRealtimeTaskRefreshIdsRef.current.add(taskId);
             void props
               .onLoadTask(taskId)
               .then(mergeTaskRecord)
-              .catch((error: unknown) => recordLocalError('task-realtime-refresh', error))
+              .catch((error: unknown) => recordRealtimeSynchronizationError('task-realtime-refresh', error))
               .finally(() => {
                 pendingRealtimeTaskRefreshIdsRef.current.delete(taskId);
               });
@@ -644,6 +730,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     props.onSubscribeRealtimeEvents,
     reconcileNativeConversationProjectSnapshot,
     reconcileNativeConversationProjectionStates,
+    resumeNativeConversationAttentionAcknowledgements,
     updateTaskModelPushPendingByTask,
   ]);
 
@@ -2995,6 +3082,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   }
   return {
     acknowledgeNativeConversationAttention,
+    nativeConversationAttentionRetryRevision,
     addTaskCreateAttachments,
     applyThirdPartyTaskExtract,
     archiveConversation,

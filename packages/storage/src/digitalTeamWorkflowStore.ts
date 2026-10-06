@@ -204,6 +204,15 @@ export function migrateDigitalTeamWorkflowSchema(db: ZeusDatabasePort): void {
         new Date().toISOString(),
       ]);
     });
+  migrateGlobalDigitalTeamTemplates(db);
+  /** 既有冻结运行只补空控制快照，保留原员工与工作事实。 */
+  if (!db.select<{ name: string }>('PRAGMA table_info(digital_team_workflow_runs)').some((column) => column.name === 'runtime_state_json'))
+    db.execute("ALTER TABLE digital_team_workflow_runs ADD COLUMN runtime_state_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(runtime_state_json))");
+  db.execute('CREATE TABLE IF NOT EXISTS digital_team_project_workflows (project_id TEXT PRIMARY KEY REFERENCES projects(id), template_id TEXT NOT NULL REFERENCES digital_team_workflow_templates(id), updated_at TEXT NOT NULL)');
+}
+
+/** 员工全局身份完成后再导入旧配方与未执行草稿，准确绑定无需再次推断。 */
+export function migrateLegacyEmployeeTeamTemplates(db: ZeusDatabasePort): void {
   /** 一次性将旧配方和未执行草稿复制为统一模板，活动安排及所有历史记录保持原身份。 */
   const recipesMigration = '20260926_employee_arrangements_to_team_templates';
   if (!db.get('SELECT migration_id FROM schema_migrations WHERE migration_id = ?', [recipesMigration]))
@@ -247,11 +256,6 @@ export function migrateDigitalTeamWorkflowSchema(db: ZeusDatabasePort): void {
         new Date().toISOString(),
       ]);
     });
-  migrateGlobalDigitalTeamTemplates(db);
-  /** 既有冻结运行只补空控制快照，保留原员工与工作事实。 */
-  if (!db.select<{ name: string }>('PRAGMA table_info(digital_team_workflow_runs)').some((column) => column.name === 'runtime_state_json'))
-    db.execute("ALTER TABLE digital_team_workflow_runs ADD COLUMN runtime_state_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(runtime_state_json))");
-  db.execute('CREATE TABLE IF NOT EXISTS digital_team_project_workflows (project_id TEXT PRIMARY KEY REFERENCES projects(id), template_id TEXT NOT NULL REFERENCES digital_team_workflow_templates(id), updated_at TEXT NOT NULL)');
 }
 
 /** 员工身份升格前固定原项目的实际执行人，不改变共享模板或已冻结运行。 */
@@ -441,13 +445,15 @@ export class DigitalTeamWorkflowTemplateRepository {
 
   /** 读取全局团队模板。 */
   listGlobal(): DigitalTeamWorkflowTemplateRecord[] {
-    return this.db.select<DigitalTeamWorkflowTemplateRow>('SELECT * FROM digital_team_workflow_templates WHERE project_id IS NULL AND deleted_at IS NULL ORDER BY updated_at DESC, id').map(mapTemplate);
+    /** 全目录共用一次身份索引，员工删除后立即反映团队可运行状态。 */
+    const employeeIds = this.createdEmployeeIds();
+    return this.db.select<DigitalTeamWorkflowTemplateRow>('SELECT * FROM digital_team_workflow_templates WHERE project_id IS NULL AND deleted_at IS NULL ORDER BY updated_at DESC, id').map((row) => mapTemplate(row, employeeIds));
   }
 
   /** 按身份读取未删除模板。 */
   getById(id: string): DigitalTeamWorkflowTemplateRecord | undefined {
     const row = this.db.get<DigitalTeamWorkflowTemplateRow>('SELECT * FROM digital_team_workflow_templates WHERE id = ? AND deleted_at IS NULL', [identity(id, 'templateId')]);
-    return row ? mapTemplate(row) : undefined;
+    return row ? mapTemplate(row, this.createdEmployeeIds()) : undefined;
   }
 
   /** 保存新画布；校验问题随草稿一起保存，不阻断继续编辑。 */
@@ -512,6 +518,16 @@ export class DigitalTeamWorkflowTemplateRepository {
     const record = this.getById(id);
     if (!record) throw storeError('ZEUS_DIGITAL_TEAM_TEMPLATE_NOT_FOUND', '数字团队流程模板不存在。', 404);
     return record;
+  }
+
+  /** 复用当前员工目录，只接纳真实创建的员工，内部迁移身份继续只供历史读取。 */
+  private createdEmployeeIds(): ReadonlySet<string> {
+    return new Set(
+      new DigitalEmployeeTemplateRepository(this.db)
+        .list()
+        .filter((employee) => !employee.builtIn)
+        .map((employee) => employee.id),
+    );
   }
 }
 
@@ -984,7 +1000,7 @@ interface DigitalTeamNodeAttemptRow {
 }
 
 /** 把模板行映射为领域记录。 */
-function mapTemplate(row: DigitalTeamWorkflowTemplateRow): DigitalTeamWorkflowTemplateRecord {
+function mapTemplate(row: DigitalTeamWorkflowTemplateRow, employeeIds: ReadonlySet<string>): DigitalTeamWorkflowTemplateRecord {
   const definition = normalizeDigitalTeamWorkflowDefinition(parseJson<DigitalTeamWorkflowDefinition>(row.definition_json, 'template.definition'));
   const validationIssues = validateDigitalTeamWorkflowDefinition(definition);
   return {
@@ -993,7 +1009,8 @@ function mapTemplate(row: DigitalTeamWorkflowTemplateRow): DigitalTeamWorkflowTe
     name: row.name,
     description: row.description,
     definition,
-    ready: validationIssues.length === 0,
+    /** 图结构合法仍需准确可用员工，未分配草稿可以保存但不能作为运行入口。 */
+    ready: validationIssues.length === 0 && definition.nodes.every((node) => node.type !== 'employee' || employeeIds.has(node.data.employeeId)) && (!definition.repairEmployeeId || employeeIds.has(definition.repairEmployeeId)),
     validationIssues,
     revision: row.revision,
     createdAt: row.created_at,

@@ -1047,6 +1047,15 @@ async function verifyEmployeeIdentity(db: ZeusDatabase, projects: ProjectReposit
     /** 有差异的项目成为独立正式员工，原来源员工继续保留。 */
     const promoted = migratedEmployees.getById(second.id)!;
     assertProbe(promoted.globalEmployeeId !== global.id && migratedTemplates.getById(promoted.globalEmployeeId!)?.builtIn === false, '旧项目独立提示词必须自动成为正式员工，不能要求用户重新确认。');
+    /** 旧项目迁出的身份保留精确读取，但不能冒充用户主动创建的目录成员。 */
+    const catalogIds = migratedTemplates
+      .list()
+      .filter((record) => !record.builtIn)
+      .map((record) => record.id);
+    assertProbe(
+      catalogIds.includes(global.id) && catalogIds.includes(sameName.id) && !catalogIds.includes(promoted.globalEmployeeId!) && !catalogIds.includes(migratedEmployees.getById(standalone.id)!.globalEmployeeId!),
+      '目录应保留用户创建的同名独立员工，排除旧项目自动迁出的身份。',
+    );
     /** 准确来源记录读取只作用于迁移时原项目，不形成未来经验订阅。 */
     const migratedMemories = (projectId = secondProject.id) =>
       identityMemory.resolveForContext({ employeeId: second.id, globalEmployeeId: promoted.globalEmployeeId, projectId, asOf: '2026-10-05T03:00:00.000Z' }).selected.map((record) => record.id);
@@ -1170,6 +1179,35 @@ async function verifyEmployeeIdentity(db: ZeusDatabase, projects: ProjectReposit
     newSameEmployeeMemoryVisible: true,
     wrongProjectDenied: true,
   };
+  /** 多个闲置项目关联不能阻止目录删除，活动工作则必须使整项删除回滚。 */
+  const deletable = templates.create({ name: global.name, role: '开发', prompt: '目录删除检查。' });
+  /** 最后一个关联占用工作，确保前一个关联的删除也能原子回滚。 */
+  const deleteBindings = [employees.ensureProjectEmployee(firstProjectId, deletable.id), employees.ensureProjectEmployee(secondProject.id, deletable.id)].sort((left, right) => left.id.localeCompare(right.id));
+  /** 队列场景只创建当前探针数据，不启动 Provider。 */
+  const deleteTask = tasks.create({ projectId: deleteBindings[1]!.projectId, title: '员工删除保护', taskType: 'requirement', description: '', createdFrom: 'probe', sourceContext: {} });
+  /** 未起跑的工作也必须保护员工身份。 */
+  const deleteExecution = executions.create({ employee: deleteBindings[1]!, taskId: deleteTask.id, source: 'manual' });
+  /** 记录两个关联的全部原值，不能只检查是否仍能读取。 */
+  const bindingsBeforeDelete = JSON.stringify(db.select('SELECT * FROM digital_employees WHERE global_employee_id = ? ORDER BY id', [deletable.id]));
+  assertProbe(
+    captureCode(() => templates.delete(deletable.id, deletable.revision)) === 'ZEUS_DIGITAL_EMPLOYEE_ACTIVE' &&
+      JSON.stringify(db.select('SELECT * FROM digital_employees WHERE global_employee_id = ? ORDER BY id', [deletable.id])) === bindingsBeforeDelete &&
+      Boolean(templates.getById(deletable.id)),
+    '活动工作阻止删除时，两个项目关联和全局身份必须全部保留。',
+  );
+  executions.cancel(deleteExecution.id);
+  /** 正常取消后的历史快照仍应逐字保留。 */
+  const cancelledSnapshot = db.get<{ employee_snapshot_json: string }>('SELECT employee_snapshot_json FROM digital_employee_executions WHERE id = ?', [deleteExecution.id])!.employee_snapshot_json;
+  templates.delete(deletable.id, deletable.revision);
+  assertProbe(
+    !templates.getById(deletable.id) &&
+      deleteBindings.every((binding) => !employees.getById(binding.id)) &&
+      db.get<{ employee_snapshot_json: string }>('SELECT employee_snapshot_json FROM digital_employee_executions WHERE id = ?', [deleteExecution.id])!.employee_snapshot_json === cancelledSnapshot &&
+      templates.list().some((record) => record.id === global.id) &&
+      templates.list().some((record) => record.id === sameName.id),
+    '闲置关联可随员工删除，历史快照和其他主动创建的同名员工不受影响。',
+  );
+  observed.employeeCatalog = { legacyMigrationsExcluded: true, sameNameCreatedEmployeesKept: true, activeDeletionRolledBack: true, idleBindingsDeleted: true, frozenHistoryKept: true };
 }
 
 /** 用真实数据库和文件检查冻结、按需读取、跨目录交接与独立导出恢复。 */

@@ -834,12 +834,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
   }
 
   function requestWorkspaceLeave(leave: () => void, cancel?: () => void, kind: 'navigation' | 'close' = 'navigation'): void {
-    // 数字团队草稿自行提供保存和重开；导航只负责阻止静默卸载，窗口关闭仍由 beforeunload 保护。
-    if (kind === 'navigation' && document.querySelector('[data-digital-team-dirty="true"]')) {
-      window.dispatchEvent(new Event('zeus:digital-team-unsaved-leave'));
-      cancel?.();
-      return;
-    }
+    // 数字团队草稿由编辑页同步暂存；导航不再依赖流程完整或服务端保存成功。
     const pendingKind = pendingWorkspaceLeaveKindRef.current;
     if (pendingKind) {
       // 只保留第一次离开意图；后到的操作收到取消，重复关闭请求则等待第一次关闭响应，不能向 Main 重复回传。

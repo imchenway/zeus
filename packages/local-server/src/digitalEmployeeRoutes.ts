@@ -65,6 +65,12 @@ type AdoptLegacyExecutionBody = { expectedExecutionRevision: number };
 
 /** 数字员工的公开读写边界；写操作全部复用工作管理 Command ledger。 */
 export function registerDigitalEmployeeRoutes(options: DigitalEmployeeRouteOptions): void {
+  /** 全局员工与项目关联共用同一活动任务判断，终态及已删除任务不会继续占用员工。 */
+  const taskBlocksDeletion = (taskId: string): boolean => {
+    /** 只以当前任务生命周期决定是否保护关联中的活动工作。 */
+    const task = options.tasks.getById(taskId);
+    return Boolean(task && !options.isTaskTerminal(task));
+  };
   options.server.get('/api/digital-employee-templates', async () => options.templates.list());
   /** 全局员工目录只返回真实员工，内置创建模板保留在原模板目录。 */
   options.server.get('/api/digital-employees', async () => options.templates.list().filter((employee) => !employee.builtIn));
@@ -155,7 +161,7 @@ export function registerDigitalEmployeeRoutes(options: DigitalEmployeeRouteOptio
         destinationId: 'digital-employee-template-repository',
         resourceId: `digital_employee_template:${request.params.templateId}`,
         mutateBusinessState: () => {
-          const record = options.templates.delete(request.params.templateId, parsed.input.expectedRevision);
+          const record = options.templates.delete(request.params.templateId, parsed.input.expectedRevision, taskBlocksDeletion);
           audit(options, parsed, 'digital_employee.template.deleted', 'digital_employee_template', record.id, {});
           return record;
         },
@@ -231,11 +237,6 @@ export function registerDigitalEmployeeRoutes(options: DigitalEmployeeRouteOptio
         destinationId: 'digital-employee-repository',
         resourceId: `digital_employee:${current.id}`,
         mutateBusinessState: () => {
-          /** 已结束或已删除任务中的历史工作不会继续占用员工。 */
-          const taskBlocksDeletion = (taskId: string): boolean => {
-            const task = options.tasks.getById(taskId);
-            return Boolean(task && !options.isTaskTerminal(task));
-          };
           const record = options.employees.delete(current.id, parsed.input.expectedRevision, taskBlocksDeletion);
           audit(options, parsed, 'digital_employee.deleted', 'digital_employee', record.id, { projectId: record.projectId });
           return record;

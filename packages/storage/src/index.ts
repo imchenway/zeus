@@ -36,7 +36,7 @@ import { migrateTaskWorkReviewSchema } from './taskWorkReviewStore.js';
 import { migrateTaskWorkDeploymentSchema } from './taskWorkDeploymentStore.js';
 import { migrateTaskWorkPlanningSchema } from './taskWorkPlanningStore.js';
 import { migrateTaskWorkSchema, migrateTaskWorkWorkspaceBindingSchema } from './taskWorkStore.js';
-import { migrateDigitalTeamWorkflowSchema } from './digitalTeamWorkflowStore.js';
+import { migrateDigitalTeamWorkflowSchema, migrateLegacyEmployeeTeamTemplates } from './digitalTeamWorkflowStore.js';
 import { migrateDefectWorkflowSchema } from './defectWorkflowStore.js';
 import { migrateWorkArtifactSchema } from './workArtifactStore.js';
 import { migrateEmployeeAutomationsToUnified } from './automationEmployeeMigration.js';
@@ -1056,6 +1056,8 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateLongTermMemorySchema(zeusDb);
     migrateEmployeeMemorySchema(zeusDb);
     migrateDigitalEmployeeGlobalIdentity(zeusDb);
+    /** 导入依赖准确的全局员工目录，必须等待身份列和迁移来源完整建立。 */
+    migrateLegacyEmployeeTeamTemplates(zeusDb);
     migrateEmployeeAutomationsToUnified(zeusDb);
     migrateEmployeeMemoryProposalSchema(zeusDb);
     migratePluginStoreSchema(zeusDb);

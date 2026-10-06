@@ -17,6 +17,7 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
     codexConfigImportPreview,
     latestConversationContentVisible,
     nativeConversationChoiceLoadCoordinator,
+    nativeConversationStatusSyncState,
     nativeConversationStartEnvelopeManager,
     props,
     recoveringConflictAiStartsRef,
@@ -41,7 +42,7 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
     taskTableLayoutDirty,
     zeusWindowForeground,
   } = state;
-  const { acknowledgeNativeConversationAttention, openTaskConflictAiConversation, recordLocalError, refreshArchivedConversations } = domainActions;
+  const { acknowledgeNativeConversationAttention, nativeConversationAttentionRetryRevision, openTaskConflictAiConversation, recordLocalError, refreshArchivedConversations } = domainActions;
   const { openProjectSection, refreshCodexConfigImport, requestWorkspaceLeave } = operations;
   useEffect(() => {
     if (activeNavTarget !== 'settings' || settingsCategory !== 'runtime' || codexConfigImportPreview || codexConfigImportLoading || !props.onInspectCodexConfigImport) return;
@@ -208,10 +209,12 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
         dispose();
       };
     }
+    /** 浏览器入口沿用真实可见性与焦点事实，不依赖挂载前已经发生的窗口事件。 */
     const synchronizeForeground = () => setZeusWindowForeground(document.visibilityState === 'visible' && document.hasFocus());
     window.addEventListener('focus', synchronizeForeground);
     window.addEventListener('blur', synchronizeForeground);
     document.addEventListener('visibilitychange', synchronizeForeground);
+    synchronizeForeground();
     return () => {
       window.removeEventListener('focus', synchronizeForeground);
       window.removeEventListener('blur', synchronizeForeground);
@@ -220,7 +223,8 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
   }, []);
 
   useEffect(() => {
-    if (!selectedNativeConversation?.hasUnreadAttention || selectedNativeConversation.taskPushCreating || !zeusWindowForeground || !latestConversationContentVisible) return;
+    // 断线或校准期间保留提醒，恢复后只确认当前前台实际可见的最新修订。
+    if (nativeConversationStatusSyncState !== 'connected' || !selectedNativeConversation?.hasUnreadAttention || selectedNativeConversation.taskPushCreating || !zeusWindowForeground || !latestConversationContentVisible) return;
     acknowledgeNativeConversationAttention(selectedNativeConversation.projectId, selectedNativeConversation.id, selectedNativeConversation.attentionRevision);
-  }, [acknowledgeNativeConversationAttention, latestConversationContentVisible, selectedNativeConversation, zeusWindowForeground]);
+  }, [acknowledgeNativeConversationAttention, latestConversationContentVisible, nativeConversationAttentionRetryRevision, nativeConversationStatusSyncState, selectedNativeConversation, zeusWindowForeground]);
 }
