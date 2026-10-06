@@ -37,6 +37,7 @@ export interface PortableProjectRecord {
   localPath: string;
   description: string | null;
   note: string | null;
+  /** 仅保留历史备份中的项目默认模板引用，不作为当前项目配置投影。 */
   defaultTemplateId: string | null;
   createdAt: string;
   updatedAt: string;

@@ -273,8 +273,6 @@ export function createConversationApplicationOperations(dependencies: Conversati
     prepareTaskIntegrationAiAttempt,
     projects,
     publishNativeConversationEvent,
-    readProjectConfig,
-    settings,
     readServiceTierOverride,
     readTaskWorkspaceReview,
     reconnectNonCodexLegacyConversationRuntime,
@@ -526,11 +524,9 @@ export function createConversationApplicationOperations(dependencies: Conversati
       };
     });
 
-    /** 独立专家会话在写入父子记录前一起校验，避免留下无法派发的半成品。 */
-    const childBudget = readProjectConfig(input.project.id).contextCapacityTokens;
     /** 预校验保留各成员的运行身份，创建参与者时直接复用。 */
     const memberFingerprints = memberConfigurations.map((member, index) => {
-      /** 复用的专家子会话仍读旧值，新通道才继承今天的项目设置。 */
+      /** 复用的专家子会话保留冻结容量，新通道使用模型和引擎默认。 */
       const employee = employees[index]!;
       const existing = input.conversation ? conversationExperts.getParticipant(input.conversation.id, employee.id) : undefined;
       const fingerprint = conversationExperts.runtimeFingerprint({
@@ -541,7 +537,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         skillReferences: member.settings.skillReferences,
       });
       const child = existing?.runtimeFingerprint === fingerprint ? conversations.getRecordById(existing.childConversationId) : undefined;
-      const budget = child ? child.contextCapacityTokens : childBudget;
+      const budget = child?.contextCapacityTokens ?? null;
       if (budget !== null && !member.model.contextCapacity?.choices.includes(budget)) throw nativeApiError('ZEUS_CONTEXT_CAPACITY_UNSUPPORTED', contextCapacityUnavailableReason(member.model.contextCapacity));
       return fingerprint;
     });
@@ -549,7 +545,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     if (!conversation) {
       conversation = conversations.create({
         id: input.reservedConversationId,
-        contextCapacityTokens: Object.prototype.hasOwnProperty.call(input.body, 'contextCapacityTokens') ? (input.body.contextCapacityTokens as number | null) : readProjectConfig(input.project.id).contextCapacityTokens,
+        contextCapacityTokens: Object.prototype.hasOwnProperty.call(input.body, 'contextCapacityTokens') ? (input.body.contextCapacityTokens as number | null) : null,
         projectId: input.project.id,
         ...(input.task ? { taskId: input.task.id } : {}),
         title: input.task ? input.task.title : displayText.slice(0, 60) || '专家群聊',
@@ -601,7 +597,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       if (!child) {
         child = conversations.create({
           id: childConversationId,
-          contextCapacityTokens: childBudget,
+          contextCapacityTokens: null,
           projectId: parentConversation.projectId,
           ...(parentConversation.taskId ? { taskId: parentConversation.taskId } : {}),
           ...(parentConversation.workspaceId ? { workspaceId: parentConversation.workspaceId } : {}),
@@ -824,9 +820,6 @@ export function createConversationApplicationOperations(dependencies: Conversati
       const capabilities = await resolveConversationCapabilities(project);
       const selected = resolveModelCapability(capabilities.models, model);
       if (!selected || selected.available === false) throw new Error('指定的子模型不可用。');
-      /** 独立子会话的项目默认在建档之前冻结并校验。 */
-      const childBudget = readProjectConfig(parent.projectId).contextCapacityTokens;
-      if (childBudget !== null && !selected.contextCapacity?.choices.includes(childBudget)) throw nativeApiError('ZEUS_CONTEXT_CAPACITY_UNSUPPORTED', contextCapacityUnavailableReason(selected.contextCapacity));
       const ancestor = conversationRuntime.getSubagent(parent.id);
       const rootId = ancestor?.rootId ?? parent.id;
       const depth = (ancestor?.depth ?? 0) + 1;
@@ -848,7 +841,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         if (listConversationSubagents(rootId).filter((item) => ['unknown', 'running', 'waiting', 'pending'].includes(item.status)).length >= 4) throw new Error('整棵会话树最多同时运行四个子代理，请先等待现有任务结束。');
         conversations.create({
           id: childId,
-          contextCapacityTokens: childBudget,
+          contextCapacityTokens: null,
           projectId: parent.projectId,
           ...(parent.taskId ? { taskId: parent.taskId } : {}),
           ...(parent.workspaceId ? { workspaceId: parent.workspaceId } : {}),
@@ -1780,7 +1773,6 @@ export function createConversationApplicationOperations(dependencies: Conversati
     if (body.contextCapacityTokens !== undefined && delivery === 'queue') {
       conversations.updateContextCapacity(conversation.id, body.contextCapacityTokens);
       conversation = { ...conversation, contextCapacityTokens: body.contextCapacityTokens };
-      settings.setJson('project.config.' + conversation.projectId, { ...readProjectConfig(conversation.projectId), contextCapacityTokens: body.contextCapacityTokens });
     }
     const selectedConfiguredModel = resolvedExecutionRoute.configuredModel;
     const segmentLifecycle =
@@ -2607,26 +2599,22 @@ export function createConversationApplicationOperations(dependencies: Conversati
   /** 在工作目录创建前校验模型支持的窗口容量，旧命令回执不经过此步骤。 */
   async function validateNewConversationCapacity(project: ZeusProjectRecord, body: unknown, budget: number | null): Promise<void> {
     assertContextCapacity(budget);
-    if (budget === null) {
-      settings.setJson('project.config.' + project.id, { ...readProjectConfig(project.id), contextCapacityTokens: null });
-      return;
-    }
+    if (budget === null) return;
     const capabilities = await resolveConversationCapabilities(project);
     const requested = isNativeApiRecord(body) && typeof body.model === 'string' ? body.model : capabilities.preferredModel;
     const model = requested ? resolveModelCapability(capabilities.models, requested) : capabilities.models[0];
     if (!model?.contextCapacity?.choices.includes(budget)) throw nativeApiError('ZEUS_CONTEXT_CAPACITY_UNSUPPORTED', contextCapacityUnavailableReason(model?.contextCapacity));
-    settings.setJson('project.config.' + project.id, { ...readProjectConfig(project.id), contextCapacityTokens: budget });
   }
 
   function createTaskConversationAcceptanceReservation(scope: string, requestHash: string, operationId: string, body: unknown, projectId: string, idempotencyKey: string): TaskConversationAcceptanceReservation {
-    /** 恢复接纳必须读取持久预留，而不是今天的项目设置。 */
+    /** 恢复接纳读取原持久预留，保留已冻结的历史容量。 */
     const previous = db.get<{ request_hash: string; resource_id: string | null }>('SELECT request_hash, resource_id FROM idempotency_requests WHERE scope = ? AND idempotency_key = ?', [scope, idempotencyKey]);
     if (previous && previous.request_hash !== requestHash) throw nativeApiError('ZEUS_IDEMPOTENCY_CONFLICT', '同一命令身份不能提交不同内容。');
     const marker = previous ? parseNativeIdempotencyMarker(previous.resource_id) : null;
     const frozen = marker ? (decodeProjectConversationAcceptanceReservation(marker.resourceId) ?? decodeTaskConversationAcceptanceReservation(marker.resourceId)) : null;
     if (frozen) return { ...frozen, contextCapacityTokens: frozen.contextCapacityTokens ?? null, contextCapacitySource: frozen.contextCapacitySource ?? 'engine_default' };
     const selectedConversationId = isNativeApiRecord(body) && body.mode === 'resume' && typeof body.conversationId === 'string' && body.conversationId ? body.conversationId : null;
-    /** 显式空值表示默认；项目预选只在接纳时计算一次。 */
+    /** 显式空值和新会话缺省值均使用模型和引擎默认。 */
     const explicit = isNativeApiRecord(body) && Object.prototype.hasOwnProperty.call(body, 'contextCapacityTokens');
     /** 清理失败预留后仍存在会话时，稳定身份上的持久值优先。 */
     const conversationId = selectedConversationId ?? `conversation_${createHash('sha256').update(`${operationId}\0conversation`).digest('hex').slice(0, 24)}`;
@@ -2637,11 +2625,11 @@ export function createConversationApplicationOperations(dependencies: Conversati
         ? persistedConversation.contextCapacityTokens
         : selectedConversationId
           ? (conversations.getById(selectedConversationId)?.contextCapacityTokens ?? null)
-          : (readProjectConfig(projectId).contextCapacityTokens ?? null);
+          : null;
     assertContextCapacity(contextCapacityTokens);
     return {
       contextCapacityTokens,
-      contextCapacitySource: explicit ? (contextCapacityTokens === null ? 'engine_default' : 'explicit') : 'project',
+      contextCapacitySource: contextCapacityTokens === null ? 'engine_default' : 'explicit',
       scope,
       requestHash,
       operationId,
@@ -2749,7 +2737,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
   async function startNativeTaskConversationFromPlan(plan: NativeTaskConversationStartPlan) {
     /** 内部新建也冻结项目默认；已有会话绝不重新继承。 */
     const existing = conversations.getById(plan.conversationId);
-    const contextCapacityTokens = plan.contextCapacityTokens === undefined ? (existing ? existing.contextCapacityTokens : readProjectConfig(plan.projectId).contextCapacityTokens) : plan.contextCapacityTokens;
+    const contextCapacityTokens = plan.contextCapacityTokens === undefined ? (existing?.contextCapacityTokens ?? null) : plan.contextCapacityTokens;
     const resolvedRoute = await resolveConversationExecutionRoute({
       contextCapacityTokens,
       agentKind: plan.agentKind,
@@ -2767,7 +2755,6 @@ export function createConversationApplicationOperations(dependencies: Conversati
     });
     /** 已有会话的本次推送也更新后续容量，其他会话保持各自选择。 */
     if (existing && plan.contextCapacityTokens !== undefined) conversations.updateContextCapacity(existing.id, contextCapacityTokens);
-    if (plan.contextCapacityTokens !== undefined) settings.setJson('project.config.' + plan.projectId, { ...readProjectConfig(plan.projectId), contextCapacityTokens });
     const segmentLifecycle = conversationExecutionCoordinator.createLifecycle({
       conversationId: plan.conversationId,
       route: resolvedRoute.route,
@@ -3447,7 +3434,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           commitMessage: conflictCommitMessage,
         });
         const selectedAgentKind = modelConversation.agentKind;
-        const serviceTierPlan = selectedAgentKind === 'codex' ? await resolveProjectModelServiceTierPlan(project, { sourceId: modelConversation.modelSourceId, modelId }) : null;
+        const serviceTierPlan = selectedAgentKind === 'codex' ? await resolveDefaultModelServiceTierPlan() : null;
         const skill = await resolveWorkflowSkill(body.skillId, project.localPath);
         if (selectedAgentKind === 'codex') await assertCodexAccountReady();
         nativeOperation = await startNativeTaskConversationFromPlan({
@@ -4142,21 +4129,9 @@ export function createConversationApplicationOperations(dependencies: Conversati
     return firstSupported;
   }
 
-  async function resolveProjectModelServiceTierPlan(project: ZeusProjectRecord, model: { sourceId: string | null; modelId: string }): Promise<{ serviceTier: string | null; serviceTierPresent: true; requestedServiceTier: string | null }> {
-    const capabilities = await resolveConversationCapabilities(project);
-    const capability =
-      capabilities.models.find((candidate) => (candidate.sourceId ?? null) === model.sourceId && (candidate.id === model.modelId || candidate.model === model.modelId)) ??
-      (model.sourceId === null ? capabilities.models.find((candidate) => candidate.agentKind === 'codex' && (candidate.id === model.modelId || candidate.model === model.modelId)) : undefined);
-    if (!capability) return { serviceTier: null, serviceTierPresent: true, requestedServiceTier: null };
-    const preference = readProjectConfig(project.id).serviceTierPreferences.find(
-      (entry: { modelSourceId: string | null; modelId: string; serviceTier: string }) => entry.modelSourceId === (capability.sourceId ?? null) && entry.modelId === capability.model,
-    );
-    const requestedServiceTier = preference?.serviceTier === 'priority' ? 'priority' : null;
-    return {
-      serviceTier: requestedServiceTier === 'priority' && capability.serviceTiers.some((tier) => tier.id === 'priority') ? 'priority' : null,
-      serviceTierPresent: true,
-      requestedServiceTier,
-    };
+  /** 新会话统一使用模型默认档位，任务显式选择仍由任务提交保存。 */
+  function resolveDefaultModelServiceTierPlan(): { serviceTier: string | null; serviceTierPresent: true; requestedServiceTier: string | null } {
+    return { serviceTier: null, serviceTierPresent: true, requestedServiceTier: null };
   }
 
   return {
@@ -4221,6 +4196,6 @@ export function createConversationApplicationOperations(dependencies: Conversati
     nativeIdempotencyRequestHash,
     nativeStableOperationId,
     resolveCodexModel,
-    resolveProjectModelServiceTierPlan,
+    resolveDefaultModelServiceTierPlan,
   };
 }

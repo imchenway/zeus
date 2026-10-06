@@ -1,9 +1,8 @@
 import type { ContextCapacityCapability } from '@zeus/shared';
 
-/** 将项目记住的值作为初始选择，界面只显示具体容量或默认。 */
-export function contextCapacitySelectionValue(value: number | null | undefined, projectCapacity?: number | null): string {
-  const capacity = value === undefined ? projectCapacity : value;
-  return capacity == null ? 'default' : String(capacity);
+/** 界面只显示当次选择的具体容量或模型默认。 */
+export function contextCapacitySelectionValue(value: number | null | undefined): string {
+  return value == null ? 'default' : String(value);
 }
 
 /** 下拉选择始终产生明确值，默认用空值表示。 */
@@ -17,7 +16,6 @@ export function contextCapacitySelectionOptions(capability: ContextCapacityCapab
 }
 
 /** 切换模型后不能静默保留不支持的容量。 */
-export function contextCapacitySelectionAllowed(value: number | null | undefined, projectCapacity: number | null | undefined, capability: ContextCapacityCapability | undefined): boolean {
-  const capacity = value === undefined ? projectCapacity : value;
-  return capacity == null || capability?.choices.includes(capacity) === true;
+export function contextCapacitySelectionAllowed(value: number | null | undefined, capability: ContextCapacityCapability | undefined): boolean {
+  return value == null || capability?.choices.includes(value) === true;
 }

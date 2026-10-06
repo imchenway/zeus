@@ -915,8 +915,7 @@ export function createLocalServerSupportOperations(dependencies: LocalServerSupp
   function resolveTelegramProject(identifier: string): ZeusProjectRecord | undefined {
     const normalized = identifier.trim().toLocaleLowerCase();
     return projects.list().find((project) => {
-      const alias = readProjectConfig(project.id).telegram.alias?.trim().toLocaleLowerCase();
-      return project.id.toLocaleLowerCase() === normalized || project.name.trim().toLocaleLowerCase() === normalized || alias === normalized;
+      return project.id.toLocaleLowerCase() === normalized || project.name.trim().toLocaleLowerCase() === normalized;
     });
   }
 

@@ -9,7 +9,7 @@ import {
   workManagementCommandTypes,
 } from './workManagementCommandApplication.js';
 import { WorkManagementRouteError } from './workManagementCoreCommandRoutes.js';
-import type { CreateProjectCommandInput, SetProjectDefaultTemplateCommandInput, UpdateProjectCommandInput, UpdateProjectWorkspaceCommandInput } from './workManagementProjectOperations.js';
+import type { CreateProjectCommandInput, UpdateProjectCommandInput, UpdateProjectWorkspaceCommandInput } from './workManagementProjectOperations.js';
 import type { WorkManagementTaskCommandContext } from './workManagementTaskCommandRoutes.js';
 
 type ErrorMapping = { statusCode: number; payload: Record<string, unknown> };
@@ -27,7 +27,6 @@ export function registerWorkManagementProjectCommandRoutes(options: {
   archiveConfirmation(projectId: string): unknown;
   archive(projectId: string): unknown;
   restore(projectId: string): unknown;
-  setDefaultTemplate(projectId: string, input: SetProjectDefaultTemplateCommandInput): unknown;
   mapDomainError?(error: unknown): ErrorMapping | null;
 }): void {
   options.server.post('/api/projects', async (request: FastifyRequest<{ Body: WorkManagementMutationRequest<CreateProjectCommandInput> }>, reply) => {
@@ -63,9 +62,8 @@ export function registerWorkManagementProjectCommandRoutes(options: {
   registerProjectMutation(options, 'delete', '/api/projects/:projectId', workManagementCommandTypes.projectDelete, (projectId, _input, context) => options.remove(projectId, context));
   registerProjectMutation(options, 'post', '/api/projects/:projectId/archive', workManagementCommandTypes.projectArchive, (projectId) => options.archive(projectId));
   registerProjectMutation(options, 'post', '/api/projects/:projectId/restore', workManagementCommandTypes.projectRestore, (projectId) => options.restore(projectId));
-  registerProjectMutation(options, 'put', '/api/projects/:projectId/default-template', workManagementCommandTypes.projectDefaultTemplateSet, (projectId, input) =>
-    options.setDefaultTemplate(projectId, input as SetProjectDefaultTemplateCommandInput),
-  );
+  // 旧客户端收到明确退役结果，不能再创建项目默认模板命令。
+  options.server.put('/api/projects/:projectId/default-template', async (_request, reply) => reply.code(410).send({ error: 'ZEUS_PROJECT_SETTING_RETIRED', message: 'Project default task template is no longer supported.' }));
 
   options.server.post('/api/projects/:projectId/archive-confirmation', async (request: FastifyRequest<{ Params: { projectId: string } }>, reply) => {
     try {

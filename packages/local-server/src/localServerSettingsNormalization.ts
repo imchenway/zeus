@@ -54,22 +54,7 @@ export interface UpdateRuntimeSettingsBody {
 export type AppAppearance = 'system' | 'light' | 'dark';
 export type AppLanguage = 'zh-CN' | 'en-US';
 export type TaskTableColumnKey =
-  | 'code'
-  | 'intent'
-  | 'taskType'
-  | 'managementStatus'
-  | 'branchStatus'
-  | 'runStatus'
-  | 'source'
-  | 'updatedAt'
-  | 'createdAt'
-  | 'template'
-  | 'project'
-  | 'priority'
-  | 'description'
-  | 'runtimeSession'
-  | 'rawId'
-  | 'createdFrom';
+  'code' | 'intent' | 'taskType' | 'managementStatus' | 'branchStatus' | 'runStatus' | 'source' | 'updatedAt' | 'createdAt' | 'template' | 'project' | 'priority' | 'description' | 'runtimeSession' | 'rawId' | 'createdFrom';
 export type TaskTableColumnWidth = number;
 export type TaskTableSortDirection = 'asc' | 'desc';
 export type TaskAgentRunStatus = 'not_started' | 'connecting' | 'reconnecting' | 'running' | 'waiting_user' | 'waiting_approval' | 'paused' | 'idle' | 'failed' | 'legacy_readonly';
@@ -244,51 +229,19 @@ export function normalizeTaskTableSortState(value: unknown): TaskTableSortState 
   return columnKey && direction ? { columnKey, direction } : { columnKey: null, direction: null };
 }
 
-export function normalizeTaskTableColumnsByProject(value: unknown): Record<string, TaskTableColumnPreferences> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  const normalized: Record<string, TaskTableColumnPreferences> = {};
-  for (const [projectId, preferences] of Object.entries(value)) {
-    const normalizedProjectId = projectId.trim();
-    const containsControlCharacter = Array.from(normalizedProjectId).some((character) => {
-      const code = character.charCodeAt(0);
-      return code <= 31 || code === 127;
-    });
-    if (!normalizedProjectId || normalizedProjectId.length > 160 || containsControlCharacter) continue;
-    normalized[normalizedProjectId] = normalizeTaskTableColumnPreferences(preferences);
-  }
-  return normalized;
+/** 所有项目统一使用有效任务筛选值。 */
+export function normalizeTaskStatusFilter(value: unknown): TaskStatusFilter {
+  return isTaskStatusFilter(value) ? value : 'unfinished';
 }
 
-export function normalizeTaskStatusFilterByProject(value: unknown): Record<string, TaskStatusFilter> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  const normalized: Record<string, TaskStatusFilter> = {};
-  let count = 0;
-  for (const [projectId, filter] of Object.entries(value)) {
-    const normalizedProjectId = projectId.trim();
-    const containsControlCharacter = Array.from(normalizedProjectId).some((character) => {
-      const code = character.charCodeAt(0);
-      return code <= 31 || code === 127;
-    });
-    if (!normalizedProjectId || normalizedProjectId.length > 160 || containsControlCharacter || !isTaskStatusFilter(filter)) continue;
-    normalized[normalizedProjectId] = filter;
-    count += 1;
-    if (count >= 100) break;
-  }
-  return normalized;
+/** 所有项目统一使用任务层级偏好。 */
+export function normalizeTaskViewMode(value: unknown): 'hierarchy' | 'flat' {
+  return value === 'flat' ? 'flat' : 'hierarchy';
 }
 
-export function normalizeTaskViewModeByProject(value: unknown): Record<string, 'hierarchy' | 'flat'> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  return Object.fromEntries(
-    Object.entries(value)
-      .filter(([projectId, mode]) => Boolean(projectId.trim()) && projectId.length <= 160 && (mode === 'hierarchy' || mode === 'flat'))
-      .slice(0, 100),
-  ) as Record<string, 'hierarchy' | 'flat'>;
-}
-
-export function normalizeTaskPageViewByProject(value: unknown): Record<string, TaskPageViewMode> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, TaskPageViewMode] => Boolean(entry[0]) && (entry[1] === 'list' || entry[1] === 'board')));
+/** 所有项目统一使用列表或看板入口。 */
+export function normalizeTaskPageView(value: unknown): TaskPageViewMode {
+  return value === 'board' ? 'board' : 'list';
 }
 
 export function normalizeTaskExpandedIdsByProject(value: unknown): Record<string, string[]> {
@@ -386,13 +339,14 @@ export interface AppShellSettingsSnapshot {
   defaultModel: string | null;
   defaultTaskTemplateId: string | null;
   taskTableColumns: TaskTableColumnPreferences;
-  taskTableColumnsByProject: Record<string, TaskTableColumnPreferences>;
   taskTableEnumSortOrders: TaskTableEnumSortOrders;
   taskManagementStatusTemplate: TaskManagementStatusConfig;
-  taskManagementStatusByProject: Record<string, TaskManagementStatusConfig>;
-  taskStatusFilterByProject: Record<string, TaskStatusFilter>;
-  taskViewModeByProject: Record<string, 'hierarchy' | 'flat'>;
-  taskPageViewByProject: Record<string, TaskPageViewMode>;
+  /** 所有项目共用的任务筛选值。 */
+  taskStatusFilter: TaskStatusFilter;
+  /** 所有项目共用的任务层级偏好。 */
+  taskViewMode: 'hierarchy' | 'flat';
+  /** 所有项目共用的列表或看板入口。 */
+  taskPageView: TaskPageViewMode;
   taskExpandedIdsByProject: Record<string, string[]>;
   codeWorkspaceByProject: Record<string, ProjectCodeWorkspacePreference>;
   localLogDirectory: string;
@@ -429,15 +383,16 @@ export interface UpdateAppShellSettingsBody {
   defaultModel?: string | null;
   defaultTaskTemplateId?: string | null;
   taskTableColumns?: Partial<TaskTableColumnPreferences>;
-  taskTableColumnsByProject?: Record<string, TaskTableColumnPreferences>;
   taskTableEnumSortOrders?: TaskTableEnumSortOrders;
   taskManagementStatusTemplate?: TaskManagementStatusConfig;
-  taskManagementStatusByProject?: Record<string, TaskManagementStatusConfig>;
   /** 删除状态时只作为本次保存的迁移指令，不进入持久设置。 */
   taskManagementStatusReplacements?: Record<string, Record<string, string>>;
-  taskStatusFilterByProject?: Record<string, TaskStatusFilter>;
-  taskViewModeByProject?: Record<string, 'hierarchy' | 'flat'>;
-  taskPageViewByProject?: Record<string, TaskPageViewMode>;
+  /** 所有项目共用的任务筛选值。 */
+  taskStatusFilter?: TaskStatusFilter;
+  /** 所有项目共用的任务层级偏好。 */
+  taskViewMode?: 'hierarchy' | 'flat';
+  /** 所有项目共用的列表或看板入口。 */
+  taskPageView?: TaskPageViewMode;
   taskExpandedIdsByProject?: Record<string, string[]>;
   codeWorkspaceByProject?: Record<string, ProjectCodeWorkspacePreference>;
 }
@@ -565,13 +520,11 @@ export function normalizeAppShellSettings(value: AppShellSettingsSnapshot | unde
     modelSetupStatus: value?.modelSetupStatus === 'pending' || value?.modelSetupStatus === 'skipped' || value?.modelSetupStatus === 'completed' ? value.modelSetupStatus : null,
     defaultTaskTemplateId: normalizeDefaultTaskTemplateId(value?.defaultTaskTemplateId, identities),
     taskTableColumns: normalizeTaskTableColumnPreferences(value?.taskTableColumns),
-    taskTableColumnsByProject: normalizeTaskTableColumnsByProject(value?.taskTableColumnsByProject),
     taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders(value?.taskTableEnumSortOrders),
     taskManagementStatusTemplate,
-    taskManagementStatusByProject: normalizeTaskManagementStatusByProject(value?.taskManagementStatusByProject, taskManagementStatusTemplate),
-    taskStatusFilterByProject: normalizeTaskStatusFilterByProject(value?.taskStatusFilterByProject),
-    taskViewModeByProject: normalizeTaskViewModeByProject(value?.taskViewModeByProject),
-    taskPageViewByProject: normalizeTaskPageViewByProject(value?.taskPageViewByProject),
+    taskStatusFilter: normalizeTaskStatusFilter(value?.taskStatusFilter),
+    taskViewMode: normalizeTaskViewMode(value?.taskViewMode),
+    taskPageView: normalizeTaskPageView(value?.taskPageView),
     taskExpandedIdsByProject: normalizeTaskExpandedIdsByProject(value?.taskExpandedIdsByProject),
     codeWorkspaceByProject: normalizeCodeWorkspaceByProject(value?.codeWorkspaceByProject),
     localLogDirectory: fallbackLogDirectory,
@@ -623,20 +576,13 @@ export function patchAppShellSettings(current: AppShellSettingsSnapshot, input: 
             columnWidths: Object.prototype.hasOwnProperty.call(input.taskTableColumns, 'columnWidths') ? input.taskTableColumns.columnWidths : current.taskTableColumns.columnWidths,
           })
         : current.taskTableColumns,
-      taskTableColumnsByProject: Object.prototype.hasOwnProperty.call(input, 'taskTableColumnsByProject') ? normalizeTaskTableColumnsByProject(input.taskTableColumnsByProject) : current.taskTableColumnsByProject,
       taskTableEnumSortOrders: Object.prototype.hasOwnProperty.call(input, 'taskTableEnumSortOrders') ? normalizeTaskTableEnumSortOrders(input.taskTableEnumSortOrders) : current.taskTableEnumSortOrders,
       taskManagementStatusTemplate: Object.prototype.hasOwnProperty.call(input, 'taskManagementStatusTemplate')
         ? normalizeTaskManagementStatusConfig(input.taskManagementStatusTemplate, current.taskManagementStatusTemplate)
         : current.taskManagementStatusTemplate,
-      taskManagementStatusByProject: Object.prototype.hasOwnProperty.call(input, 'taskManagementStatusByProject')
-        ? normalizeTaskManagementStatusByProject(
-            input.taskManagementStatusByProject,
-            Object.prototype.hasOwnProperty.call(input, 'taskManagementStatusTemplate') ? normalizeTaskManagementStatusConfig(input.taskManagementStatusTemplate, current.taskManagementStatusTemplate) : current.taskManagementStatusTemplate,
-          )
-        : current.taskManagementStatusByProject,
-      taskStatusFilterByProject: Object.prototype.hasOwnProperty.call(input, 'taskStatusFilterByProject') ? normalizeTaskStatusFilterByProject(input.taskStatusFilterByProject) : current.taskStatusFilterByProject,
-      taskViewModeByProject: Object.prototype.hasOwnProperty.call(input, 'taskViewModeByProject') ? normalizeTaskViewModeByProject(input.taskViewModeByProject) : current.taskViewModeByProject,
-      taskPageViewByProject: Object.prototype.hasOwnProperty.call(input, 'taskPageViewByProject') ? normalizeTaskPageViewByProject(input.taskPageViewByProject) : current.taskPageViewByProject,
+      taskStatusFilter: Object.prototype.hasOwnProperty.call(input, 'taskStatusFilter') ? normalizeTaskStatusFilter(input.taskStatusFilter) : current.taskStatusFilter,
+      taskViewMode: Object.prototype.hasOwnProperty.call(input, 'taskViewMode') ? normalizeTaskViewMode(input.taskViewMode) : current.taskViewMode,
+      taskPageView: Object.prototype.hasOwnProperty.call(input, 'taskPageView') ? normalizeTaskPageView(input.taskPageView) : current.taskPageView,
       taskExpandedIdsByProject: Object.prototype.hasOwnProperty.call(input, 'taskExpandedIdsByProject') ? normalizeTaskExpandedIdsByProject(input.taskExpandedIdsByProject) : current.taskExpandedIdsByProject,
       codeWorkspaceByProject: Object.prototype.hasOwnProperty.call(input, 'codeWorkspaceByProject') ? normalizeCodeWorkspaceByProject(input.codeWorkspaceByProject) : current.codeWorkspaceByProject,
     },

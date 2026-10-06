@@ -5,7 +5,6 @@ import type {
   DigitalEmployeeAutomationTriggerKind,
   DigitalEmployeeExecutionRecord,
   DigitalEmployeeExecutionStatus,
-  DigitalEmployeeInput,
   DigitalEmployeeRecord,
   DigitalEmployeeTemplateInput,
   DigitalEmployeeTemplateRecord,
@@ -31,14 +30,6 @@ export interface DigitalEmployeeTemplateDraft {
   memoryEnabled?: boolean;
 }
 
-/** 项目只维护工作补充要求与个人经验偏好。 */
-export interface DigitalEmployeeDraft {
-  /** 当前项目追加的工作要求。 */
-  projectInstructions: string;
-  /** 是否在当前项目读取员工经验。 */
-  memoryEnabled: boolean;
-}
-
 /** 新员工从空白身份与提示词开始，默认读取已确认经验。 */
 export const emptyTemplateDraft: DigitalEmployeeTemplateDraft = { memoryEnabled: true, name: '', description: '', role: '', domain: '', avatarId: null, prompt: '' };
 
@@ -48,19 +39,9 @@ export function templateDraft(record?: DigitalEmployeeTemplateRecord | DigitalEm
   return { memoryEnabled: record.memoryEnabled !== false, name: record.name, description: record.description, role: record.role, domain: record.domain, avatarId: record.avatarId ?? null, prompt: record.prompt };
 }
 
-/** 项目配置不再复制全局员工字段，避免保存时制造第二份配置。 */
-export function employeeDraft(record: DigitalEmployeeRecord): DigitalEmployeeDraft {
-  return { projectInstructions: record.projectInstructions ?? '', memoryEnabled: record.memoryEnabled !== false };
-}
-
 /** 仅将全局身份、提示词与经验偏好发送给存储层。 */
 export function templateInput(draft: DigitalEmployeeTemplateDraft): DigitalEmployeeTemplateInput {
   return { memoryEnabled: draft.memoryEnabled !== false, name: draft.name.trim(), description: draft.description.trim(), role: draft.role.trim(), domain: draft.domain.trim(), avatarId: draft.avatarId, prompt: draft.prompt.trim() };
-}
-
-/** 项目保存只更新补充要求与经验偏好。 */
-export function employeeInput(draft: DigitalEmployeeDraft): Partial<DigitalEmployeeInput> {
-  return { projectInstructions: draft.projectInstructions.trim(), memoryEnabled: draft.memoryEnabled };
 }
 
 /** 显示当前语言的原因，并保留可展开的原始详情。 */

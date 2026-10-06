@@ -741,7 +741,7 @@ function TaskDigitalTeamSelector(props: {
     if (!props.client) return;
     let active = true;
     setLoadState('loading');
-    void Promise.all([props.client.loadDigitalTeamTemplates(props.task.projectId), props.client.loadDigitalTeamRuns(props.task.projectId, props.task.id)])
+    void Promise.all([props.client.loadDigitalTeamTemplates(), props.client.loadDigitalTeamRuns(props.task.projectId, props.task.id)])
       .then(([nextTemplates, nextRuns]) => {
         if (!active) return;
         setTemplates(nextTemplates);
@@ -851,7 +851,7 @@ function TaskProjectActions(props: Pick<TaskDetailPaneContentProps, 'task' | 'pr
   return (
     <details className="task-detail-block task-detail-project-settings">
       <summary>
-        <span>{zh ? '项目设置' : 'Project settings'}</span>
+        <span>{zh ? '移动与复制' : 'Move and copy'}</span>
         <small title={currentProjectName}>{currentProjectName}</small>
       </summary>
       <div className="task-detail-project-settings-content">

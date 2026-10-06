@@ -1115,8 +1115,6 @@ export interface CodexChatGptLoginStatus {
 }
 
 export interface CodexTaskPushCapabilities {
-  /** 项目记住的上次容量选择。 */
-  projectContextCapacityTokens?: number | null;
   /** 本地仓库发现与模型加载分别表达；完成后的空清单才表示没有仓库。 */
   repositoryDiscovery: import('@zeus/shared').ProjectRepositoryDiscovery;
   generationId: string;
@@ -1422,8 +1420,6 @@ export interface TaskIntegrationConflictAiSession {
 export type TaskIntegrationConflictPermissionMode = Exclude<NativePermissionMode, 'read-only'>;
 
 export interface CodexConversationCapabilities {
-  /** 项目记住的上次容量选择。 */
-  projectContextCapacityTokens?: number | null;
   generationId: string;
   initializedAt: string;
   projectId: string;

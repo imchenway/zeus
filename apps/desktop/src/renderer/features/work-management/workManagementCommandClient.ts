@@ -10,7 +10,6 @@ export const workManagementClientCommandTypes = {
   projectDelete: 'work_management.project.delete',
   projectArchive: 'work_management.project.archive',
   projectRestore: 'work_management.project.restore',
-  projectDefaultTemplateSet: 'work_management.project.default_template.set',
   taskCreate: 'work_management.task.create',
   taskStatusUpdate: 'work_management.task.status.update',
   taskManagementStatusUpdate: 'work_management.task.management_status.update',

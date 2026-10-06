@@ -108,7 +108,7 @@ export interface TaskWorkspaceConflictRecovery {
   unavailableReason: string | null;
 }
 
-/** 项目管理阶段与 Coding Agent 执行状态严格分离；状态标识由项目配置持有，不再限制为固定联合类型。 */
+/** 任务管理阶段与 Coding Agent 执行状态严格分离；状态标识由全局配置持有，不再限制为固定联合类型。 */
 export type TaskManagementStatus = string;
 
 /** 旧项目与新项目默认模板继续沿用现有七个状态，保存行为兼容且不改变用户已有任务。 */
@@ -144,7 +144,7 @@ const defaultTaskManagementStatusColors: Record<(typeof taskManagementStatusOrde
   cancelled: '#6b7280',
 };
 
-/** 全局模板的初始值只负责兼容现有行为；复制到项目后，每个状态都可以平等增删改。 */
+/** 全局状态初始值沿用默认行为，所有项目共用同一份可编辑定义。 */
 export const defaultTaskManagementStatusConfig: TaskManagementStatusConfig = {
   statuses: taskManagementStatusOrder.map((id) => ({ id, label: null, color: defaultTaskManagementStatusColors[id] })),
   roles: {
@@ -227,7 +227,8 @@ export function normalizeTaskManagementStatusConfig(value: unknown, fallback: Ta
     const color = typeof definition.color === 'string' && taskManagementStatusColorPattern.test(definition.color) ? definition.color.toLowerCase() : '#6b7280';
     statuses.push({ id: definition.id, label, color });
     seen.add(definition.id);
-    if (statuses.length >= 32) break;
+    // 全局集合需容纳旧项目各自最多 32 项的状态，避免统一时丢失已有自定义状态。
+    if (statuses.length >= 3232) break;
   }
   if (statuses.length === 0) return normalizedFallback;
   const firstStatusId = statuses[0].id;

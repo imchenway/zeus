@@ -13,6 +13,7 @@ export const workManagementCommandTypes = {
   projectDelete: 'work_management.project.delete',
   projectArchive: 'work_management.project.archive',
   projectRestore: 'work_management.project.restore',
+  /** 仅识别历史命令记录；项目默认模板已没有接纳入口。 */
   projectDefaultTemplateSet: 'work_management.project.default_template.set',
   taskCreate: 'work_management.task.create',
   taskStatusUpdate: 'work_management.task.status.update',

@@ -1,8 +1,8 @@
 import { accessSync, constants as fsConstants, existsSync, mkdirSync, realpathSync, statSync } from 'node:fs';
 import { temporaryWorkspaceId } from '@zeus/shared';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { createDefaultProjectConfig, normalizeProjectConfig, type ProjectConfigSnapshot } from './projectCore.js';
-import type { AppendAuditLogInput, ProjectRepository, ProjectSharedPathRepository, TaskTemplateRepository, ZeusProjectRecord, ZeusProjectSharedPathRecord } from '@zeus/storage';
+import { createDefaultProjectConfig, type ProjectConfigSnapshot } from './projectCore.js';
+import type { AppendAuditLogInput, ProjectRepository, ProjectSharedPathRepository, ZeusProjectRecord, ZeusProjectSharedPathRecord } from '@zeus/storage';
 import type { WorkManagementTaskCommandContext } from './workManagementTaskCommandRoutes.js';
 import { WorkManagementRouteError } from './workManagementCoreCommandRoutes.js';
 import type { ProjectRepositoryDiscoveryService } from './projectRepositoryDiscovery.js';
@@ -13,7 +13,6 @@ export interface CreateProjectCommandInput {
   localPath: string;
   description?: string;
   note?: string;
-  defaultWorkMode?: unknown;
 }
 
 export interface UpdateProjectCommandInput {
@@ -27,20 +26,13 @@ export interface UpdateProjectWorkspaceCommandInput {
   sharedWritablePaths?: Array<{ localPath?: unknown }>;
 }
 
-export interface SetProjectDefaultTemplateCommandInput {
-  templateId: string | null;
-}
-
 interface ProjectOperationPorts {
   temporaryWorkspaceDirectory?: string;
   /** 项目命令提交后异步发现本地仓库。 */
   repositoryDiscovery: Pick<ProjectRepositoryDiscoveryService, 'request'>;
-  projects: Pick<ProjectRepository, 'archive' | 'create' | 'delete' | 'getById' | 'prepareArchive' | 'restore' | 'setDefaultTemplate' | 'update'>;
+  projects: Pick<ProjectRepository, 'archive' | 'create' | 'delete' | 'getById' | 'prepareArchive' | 'restore' | 'update'>;
   sharedPaths: Pick<ProjectSharedPathRepository, 'replaceForProject'>;
-  templates: Pick<TaskTemplateRepository, 'getById'>;
   saveProjectConfig(projectId: string, config: ProjectConfigSnapshot): void;
-  stageProjectManagementStatus(projectId: string): void;
-  activateProjectManagementStatus(projectId: string): void;
   appendAuditLog(input: Omit<AppendAuditLogInput, 'createdAt'> & { createdAt?: string }): void;
   afterCommit(callback: () => void): void;
   publishRealtimeEvent(type: string, payload: Record<string, unknown>): void;
@@ -51,6 +43,8 @@ export class WorkManagementProjectOperations {
   constructor(private readonly ports: ProjectOperationPorts) {}
 
   create(input: CreateProjectCommandInput, projectId: string, context: WorkManagementTaskCommandContext): ZeusProjectRecord {
+    // 旧项目默认模板已退役，拒绝新写入，历史引用只保留在数据导出中。
+    if (input && Object.prototype.hasOwnProperty.call(input, 'defaultTemplateId')) throw routeError(400, 'ZEUS_PROJECT_SETTING_RETIRED', 'Project default task template is no longer supported.');
     if (input?.temporary === true) {
       const directory = this.ports.temporaryWorkspaceDirectory;
       if (!directory) throw routeError(503, 'ZEUS_TEMPORARY_WORKSPACE_UNAVAILABLE', 'Temporary workspace is unavailable');
@@ -62,30 +56,22 @@ export class WorkManagementProjectOperations {
     }
     if (!input?.name || !input.localPath) throw routeError(400, 'ZEUS_INVALID_PROJECT', 'Project name and localPath are required');
     const localPath = requireReadableProjectDirectory(input.localPath);
-    const initialDefaults = normalizeProjectConfig('pending-project', { defaultWorkMode: input.defaultWorkMode }, createDefaultProjectConfig('pending-project'));
-    if (!initialDefaults) throw routeError(400, 'ZEUS_INVALID_PROJECT_CONFIG', 'Project defaults must use safe single-line values and supported work modes');
-    const projectConfig = normalizeProjectConfig(projectId, { defaultWorkMode: input.defaultWorkMode }, detectProjectConfigFromLocalFiles(projectId, localPath));
-    if (!projectConfig) throw routeError(400, 'ZEUS_INVALID_PROJECT_CONFIG', 'Project defaults must use safe single-line values and supported work modes');
+    /** 仓库信息来自目录检测，项目不再保存独立工作偏好。 */
+    const projectConfig = detectProjectConfigFromLocalFiles(projectId, localPath);
     const project = this.ports.projects.create({ id: projectId, name: input.name, localPath, description: input.description, note: input.note });
     this.ports.saveProjectConfig(project.id, { ...projectConfig, projectId: project.id });
     this.ports.repositoryDiscovery.request(project, context.commandId);
-    this.ports.stageProjectManagementStatus(project.id);
-    this.audit(context, 'project.config.detected', project, {
-      language: projectConfig.language.primary,
-      packageManagers: projectConfig.dependencies.packageManagers,
-      manifestPaths: projectConfig.dependencies.manifestPaths,
-      gitRoot: projectConfig.vcs.gitRoot,
-      defaultWorkMode: projectConfig.defaultWorkMode,
-    });
+    this.audit(context, 'project.config.detected', project, { gitRoot: projectConfig.vcs.gitRoot });
     this.audit(context, 'project.created', project, { name: project.name, localPath: project.localPath });
     this.ports.afterCommit(() => {
-      this.ports.activateProjectManagementStatus(project.id);
       this.ports.publishRealtimeEvent('project.created', { projectId: project.id, name: project.name, localPath: project.localPath });
     });
     return project;
   }
 
   update(projectId: string, input: UpdateProjectCommandInput, context: WorkManagementTaskCommandContext): ZeusProjectRecord {
+    // 普通项目更新不能绕过已退役的默认模板入口。
+    if (input && Object.prototype.hasOwnProperty.call(input, 'defaultTemplateId')) throw routeError(400, 'ZEUS_PROJECT_SETTING_RETIRED', 'Project default task template is no longer supported.');
     const existing = this.requireMutableProject(projectId);
     const localPath = typeof input.localPath === 'string' && input.localPath !== existing.localPath ? requireReadableProjectDirectory(input.localPath) : undefined;
     const updated = this.ports.projects.update(existing.id, { ...input, localPath });
@@ -134,16 +120,6 @@ export class WorkManagementProjectOperations {
     const restored = this.ports.projects.restore(this.requireMutableProject(projectId).id);
     this.ports.afterCommit(() => this.ports.publishRealtimeEvent('project.restored', { projectId: restored.id }));
     return restored;
-  }
-
-  setDefaultTemplate(projectId: string, input: SetProjectDefaultTemplateCommandInput): ZeusProjectRecord {
-    const project = this.requireMutableProject(projectId);
-    const templateId = input.templateId ?? null;
-    if (templateId) {
-      const template = this.ports.templates.getById(templateId);
-      if (!template || (template.projectId && template.projectId !== project.id)) throw routeError(404, 'ZEUS_TEMPLATE_NOT_FOUND', 'Task template not found for this project');
-    }
-    return this.ports.projects.setDefaultTemplate(project.id, templateId);
   }
 
   /** 默认工作区只禁止用户修改容器，仓库发现等正常初始化仍可读取。 */
@@ -226,23 +202,9 @@ function normalizeProjectDirectoryPath(localPath: string): string {
 
 function detectProjectConfigFromLocalFiles(projectId: string, projectLocalPath: string): ProjectConfigSnapshot {
   const config = createDefaultProjectConfig(projectId);
-  const has = (path: string): boolean => existsSync(join(projectLocalPath, path));
-  const manifestPaths = ['package.json', 'pnpm-workspace.yaml', 'pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'tsconfig.json', 'pom.xml', 'build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts'].filter(has);
-  const packageManagers = [
-    has('pnpm-workspace.yaml') || has('pnpm-lock.yaml') ? 'pnpm' : null,
-    has('package-lock.json') ? 'npm' : null,
-    has('yarn.lock') ? 'yarn' : null,
-    has('pom.xml') ? 'maven' : null,
-    has('build.gradle') || has('build.gradle.kts') || has('settings.gradle') || has('settings.gradle.kts') ? 'gradle' : null,
-  ].filter((value): value is string => Boolean(value));
-  const hasNodeManifest = has('package.json') || has('tsconfig.json');
-  const hasJavaManifest = has('pom.xml') || has('build.gradle') || has('build.gradle.kts');
-  const primary = hasJavaManifest && !hasNodeManifest ? 'java' : 'typescript';
   const gitRoot = detectGitRoot(projectLocalPath);
   return {
     ...config,
-    language: { primary, additional: [...(hasNodeManifest ? ['javascript'] : []), ...(hasJavaManifest && primary !== 'java' ? ['java'] : [])] },
-    dependencies: { packageManagers, manifestPaths },
     vcs: { isGitRepository: gitRoot !== null, gitRoot },
   };
 }

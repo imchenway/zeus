@@ -76,16 +76,12 @@ export interface DigitalTeamCommandContext {
 export interface DigitalTeamWorkflowRouteCoordinator {
   /** 明确人工接受正式缺陷风险，保留理由但不生成测试通过记录。 */
   acceptDefectRisk(runId: string, input: { defectId: string; reason: string; expectedRevision: number }, context: DigitalTeamCommandContext): unknown;
-  /** 读取项目唯一当前流程。 */
-  getProjectWorkflow(projectId: string): unknown;
-  /** 保存本项目独立流程并设为当前，仍走统一命令账本。 */
-  saveProjectWorkflow(projectId: string, input: DigitalTeamTemplateSaveInput, operationIdentity: string): unknown;
   /** 列出全局模板或兼容读取旧项目模板。 */
-  listTemplates(projectId?: string | null): unknown;
+  listTemplates(): unknown;
   /** 保存模板。 */
-  saveTemplate(projectId: string | null, input: DigitalTeamTemplateSaveInput, operationIdentity: string): unknown;
+  saveTemplate(input: DigitalTeamTemplateSaveInput, operationIdentity: string): unknown;
   /** 删除模板。 */
-  deleteTemplate(projectId: string | null, templateId: string, expectedRevision: number): unknown;
+  deleteTemplate(templateId: string, expectedRevision: number): unknown;
   /** 列出项目运行。 */
   listRuns(projectId: string, taskId?: string): unknown;
   /** 读取含节点尝试的运行投影。 */
@@ -124,13 +120,6 @@ export function registerDigitalTeamWorkflowRoutes(options: {
   save(): Promise<void>;
 }): void {
   options.server.get('/api/digital-team-templates', async () => options.coordinator.listTemplates());
-  options.server.get('/api/projects/:projectId/digital-team-workflow', async (request: FastifyRequest<{ Params: { projectId: string } }>) => options.coordinator.getProjectWorkflow(request.params.projectId));
-  options.server.put('/api/projects/:projectId/digital-team-workflow', async (request: FastifyRequest<{ Params: { projectId: string }; Body: WorkManagementMutationRequest<DigitalTeamTemplateSaveInput> }>, reply) =>
-    executeCoreRoute<DigitalTeamTemplateSaveInput>(options, reply, request.body, workManagementCommandTypes.digitalTeamTemplateSave, 'project', request.params.projectId, (input, operationIdentity) =>
-      options.coordinator.saveProjectWorkflow(request.params.projectId, input, operationIdentity),
-    ),
-  );
-  options.server.get('/api/projects/:projectId/digital-team-templates', async (request: FastifyRequest<{ Params: { projectId: string } }>) => options.coordinator.listTemplates(request.params.projectId));
   options.server.get('/api/projects/:projectId/digital-team-runs', async (request: FastifyRequest<{ Params: { projectId: string }; Querystring: { taskId?: string } }>) =>
     options.coordinator.listRuns(request.params.projectId, request.query.taskId),
   );
@@ -154,42 +143,20 @@ export function registerDigitalTeamWorkflowRoutes(options: {
 
   options.server.post('/api/digital-team-templates', async (request: FastifyRequest<{ Body: WorkManagementMutationRequest<DigitalTeamTemplateSaveInput> }>, reply) =>
     executeCoreRoute<DigitalTeamTemplateSaveInput>(options, reply, request.body, workManagementCommandTypes.digitalTeamTemplateSave, 'settings', 'digital-team-templates', (input, operationIdentity) =>
-      options.coordinator.saveTemplate(null, input, operationIdentity),
+      options.coordinator.saveTemplate(input, operationIdentity),
     ),
   );
 
   options.server.put('/api/digital-team-templates/:templateId', async (request: FastifyRequest<{ Params: { templateId: string }; Body: WorkManagementMutationRequest<DigitalTeamTemplateSaveInput> }>, reply) =>
     executeCoreRoute<DigitalTeamTemplateSaveInput>(options, reply, request.body, workManagementCommandTypes.digitalTeamTemplateSave, 'settings', 'digital-team-templates', (input, operationIdentity) =>
-      options.coordinator.saveTemplate(null, { ...input, id: request.params.templateId }, operationIdentity),
+      options.coordinator.saveTemplate({ ...input, id: request.params.templateId }, operationIdentity),
     ),
   );
 
   options.server.delete('/api/digital-team-templates/:templateId', async (request: FastifyRequest<{ Params: { templateId: string }; Body: WorkManagementMutationRequest<{ expectedRevision: number }> }>, reply) =>
     executeCoreRoute<{ expectedRevision: number }>(options, reply, request.body, workManagementCommandTypes.digitalTeamTemplateDelete, 'settings', 'digital-team-templates', (input) =>
-      options.coordinator.deleteTemplate(null, request.params.templateId, input.expectedRevision),
+      options.coordinator.deleteTemplate(request.params.templateId, input.expectedRevision),
     ),
-  );
-
-  options.server.post('/api/projects/:projectId/digital-team-templates', async (request: FastifyRequest<{ Params: { projectId: string }; Body: WorkManagementMutationRequest<DigitalTeamTemplateSaveInput> }>, reply) =>
-    executeCoreRoute<DigitalTeamTemplateSaveInput>(options, reply, request.body, workManagementCommandTypes.digitalTeamTemplateSave, 'project', request.params.projectId, (input, operationIdentity) =>
-      options.coordinator.saveTemplate(request.params.projectId, input, operationIdentity),
-    ),
-  );
-
-  options.server.put(
-    '/api/projects/:projectId/digital-team-templates/:templateId',
-    async (request: FastifyRequest<{ Params: { projectId: string; templateId: string }; Body: WorkManagementMutationRequest<DigitalTeamTemplateSaveInput> }>, reply) =>
-      executeCoreRoute<DigitalTeamTemplateSaveInput>(options, reply, request.body, workManagementCommandTypes.digitalTeamTemplateSave, 'project', request.params.projectId, (input, operationIdentity) =>
-        options.coordinator.saveTemplate(request.params.projectId, { ...input, id: request.params.templateId }, operationIdentity),
-      ),
-  );
-
-  options.server.delete(
-    '/api/projects/:projectId/digital-team-templates/:templateId',
-    async (request: FastifyRequest<{ Params: { projectId: string; templateId: string }; Body: WorkManagementMutationRequest<{ expectedRevision: number }> }>, reply) =>
-      executeCoreRoute<{ expectedRevision: number }>(options, reply, request.body, workManagementCommandTypes.digitalTeamTemplateDelete, 'project', request.params.projectId, (input) =>
-        options.coordinator.deleteTemplate(request.params.projectId, request.params.templateId, input.expectedRevision),
-      ),
   );
 
   options.server.post('/api/projects/:projectId/digital-team-runs', async (request: FastifyRequest<{ Params: { projectId: string }; Body: WorkManagementMutationRequest<DigitalTeamRunCreateInput> }>, reply) =>

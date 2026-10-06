@@ -230,12 +230,10 @@ function WorkflowNodeCard(props: NodeProps<CanvasNode>) {
   const node = props.data.workflowNode;
   /** 员工节点始终显示权威数字员工名称，不显示历史节点标题副本。 */
   const displayTitle = node.type === 'employee' ? (props.data.employeeName ?? node.data.title) : node.data.title;
-  /** 员工节点只展示团队执行方式，避免重复展示权威员工名称。 */
+  /** 员工节点直接展示实际工作要求，用户能从连线读出协作分工。 */
   const detail =
     node.type === 'employee'
-      ? node.data.executionMode === 'isolated_write'
-        ? '隔离修改代码'
-        : '分析资料与已有成果'
+      ? node.data.instructions.trim() || '按任务目标与员工职责执行'
       : node.type === 'human_confirmation'
         ? approvalPurposeLabels[node.data.purpose]
         : node.type === 'code_integration'
@@ -250,7 +248,7 @@ function WorkflowNodeCard(props: NodeProps<CanvasNode>) {
       {node.type !== 'start' ? <Handle type="target" position={Position.Left} isConnectable={props.isConnectable} aria-label="输入：连接上游节点" title="输入：从上游节点右侧拖到这里" /> : null}
       <span className="digital-team-node-kind">{nodeTypeLabel(node.type)}</span>
       <strong>{displayTitle}</strong>
-      <small>{detail}</small>
+      <small title={detail}>{detail}</small>
       {runtimeLabel ? <span className="digital-team-node-status">{runtimeLabel}</span> : null}
       {props.data.issues[0] ? <span className="digital-team-node-error">{props.data.issues[0]}</span> : null}
       {node.type !== 'end' ? <Handle type="source" position={Position.Right} isConnectable={props.isConnectable} aria-label="输出：连接下游节点" title="输出：拖到下游节点左侧" /> : null}

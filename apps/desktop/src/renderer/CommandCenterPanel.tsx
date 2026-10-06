@@ -1512,11 +1512,7 @@ function draftToInput(draft: CommandDraft): CommandDefinitionInput {
 
 function projectConfigWithCommandPermissions(config: ProjectConfig, command: CommandDefinition): SaveProjectConfigRequest {
   return {
-    defaultWorkMode: config.defaultWorkMode,
-    language: config.language,
-    dependencies: config.dependencies,
     database: config.database,
-    telegram: config.telegram,
     security: {
       allowShell: true,
       allowGitWrite: config.security.allowGitWrite || command.riskFlags.gitWrite,

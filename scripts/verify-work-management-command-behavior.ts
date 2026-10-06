@@ -866,7 +866,7 @@ async function verifyEmployeeIdentity(db: ZeusDatabase, projects: ProjectReposit
   const templates = new DigitalEmployeeTemplateRepository(db);
   const employees = new DigitalEmployeeRepository(db);
   const executions = new DigitalEmployeeExecutionRepository(db);
-  /** 第二个项目持有独立要求。 */
+  /** 第二个项目只持有稳定员工关联。 */
   const secondProject = projects.create({ name: '员工身份第二项目', localPath: join(probeRoot, 'employee-second-project') });
   /** 名称相同的员工必须仍有不同身份。 */
   const global = templates.create({ name: '员工身份探针', role: '开发', prompt: '全局通用要求', memoryEnabled: true });
@@ -875,13 +875,16 @@ async function verifyEmployeeIdentity(db: ZeusDatabase, projects: ProjectReposit
   /** 直接构造旧基础配置，验证历史动作不会再进入当前员工继承。 */
   const historicalGrants = { allowCommit: true, allowPush: true, allowMerge: true, allowDeploy: true, allowComplete: true };
   db.execute('UPDATE digital_employee_templates SET base_configuration_json = ? WHERE id = ?', [JSON.stringify({ memoryEnabled: true, allowCodeChanges: true, allowTests: true, deliveryGrants: historicalGrants }), global.id]);
-  /** 第一个项目继承通用配置，第二个项目保存显式差异。 */
+  /** 两个项目关联同一全局员工，旧项目差异只保留原始证据。 */
   const first = employees.ensureProjectEmployee(firstProjectId, global.id);
   const second = employees.createFromTemplate({
     projectId: secondProject.id,
     template: global,
-    overrides: { projectOverrides: { memoryEnabled: true }, projectInstructions: '第二项目必须先审查' },
   });
+  db.execute('UPDATE digital_employees SET project_overrides_json = ?, project_instructions = ?, enabled = 0 WHERE id = ?', [JSON.stringify({ memoryEnabled: true }), '第二项目必须先审查', second.id]);
+  /** 原项目差异与停启列不能被新的身份关联写入覆盖。 */
+  const historicalProjectConfiguration = () => db.get('SELECT project_overrides_json, project_instructions, memory_enabled, enabled FROM digital_employees WHERE id = ?', [second.id]);
+  const historicalProjectBefore = JSON.stringify(historicalProjectConfiguration());
   assertProbe(!first.allowCodeChanges && !first.allowTests && Object.values(first.deliveryGrants).every((allowed) => !allowed), '当前员工公开配置不能继承全局记录中的历史动作授权。');
   /** 旧动作列保留给历史运行，新配置保存不得覆盖这些存量事实。 */
   db.execute('UPDATE digital_employees SET allow_code_changes = 1, allow_tests = 1, allow_commit = 1, allow_push = 1, allow_merge = 1, allow_deploy = 1, allow_complete = 1, deploy_command_id = ? WHERE id = ?', [
@@ -894,9 +897,9 @@ async function verifyEmployeeIdentity(db: ZeusDatabase, projects: ProjectReposit
   /** 记录历史字段原文。 */
   const historicalActionsBefore = JSON.stringify(readHistoricalActions());
   /** JSON 调用方即使注入身份字段，也不能改变已经授权的项目与员工来源。 */
-  const scoped = employees.createFromTemplate({ projectId: firstProjectId, template: sameName, overrides: { projectId: secondProject.id, globalEmployeeId: global.id } as never });
+  const scoped = employees.createFromTemplate({ projectId: firstProjectId, template: sameName, globalEmployeeId: global.id } as never);
   assertProbe(scoped.projectId === firstProjectId && scoped.globalEmployeeId === sameName.id, '项目覆盖不能扩大授权范围或替换全局员工来源。');
-  assertProbe(captureCode(() => employees.update(first.id, { expectedRevision: first.revision, projectOverrides: { id: '不能覆盖身份' } as never })) === 'ZEUS_DIGITAL_EMPLOYEE_INVALID', '显式项目覆盖不能写入身份字段。');
+  assertProbe(captureCode(() => employees.update(first.id, { expectedRevision: first.revision, projectOverrides: { memoryEnabled: true } } as never)) === 'ZEUS_DIGITAL_EMPLOYEE_INVALID', '已经退役的项目覆盖不能继续写入。');
   assertProbe(employees.ensureProjectEmployee(firstProjectId, global.id).id === first.id && employees.resolveProjectEmployee(firstProjectId, second.id) === undefined, '重复绑定必须复用稳定 ID，其他项目的绑定不能被读取。');
   /** 已启动执行冻结旧的模型与权限。 */
   const task = tasks.create({ projectId: firstProjectId, title: '员工身份冻结探针', taskType: 'requirement', description: '', createdFrom: 'probe', sourceContext: {} });
@@ -910,21 +913,28 @@ async function verifyEmployeeIdentity(db: ZeusDatabase, projects: ProjectReposit
       inherited.prompt === '更新后的全局要求' &&
       inherited.memoryEnabled === false &&
       inherited.permissionMode === 'read-only' &&
-      overridden.prompt === '更新后的全局要求\n\n## 当前项目要求\n第二项目必须先审查' &&
+      overridden.prompt === '更新后的全局要求' &&
       overridden.entrypointMigrationState === 'ready' &&
-      overridden.memoryEnabled === true &&
+      overridden.memoryEnabled === false &&
+      overridden.enabled &&
       overridden.permissionMode === 'read-only',
-    '全局提示词正常继承，项目要求和经验偏好保持独立。',
+    '所有新工作统一读取全局职责和经验，旧项目要求、经验覆盖及停启不再生效。',
   );
   assertProbe(executions.getById(execution.id)?.employeeSnapshot.model === 'identity-model', '新配置不能改写已启动的运行快照。');
-  /** 清空经验覆盖后恢复默认，项目追加要求仍保持独立。 */
-  const restored = employees.update(second.id, { expectedRevision: overridden.revision, projectOverrides: {} });
+  /** 更新相同身份只更新关联修订，不清理或覆写历史项目列。 */
+  const restored = employees.update(second.id, { expectedRevision: overridden.revision, globalEmployeeId: global.id });
   assertProbe(
-    restored.prompt === '更新后的全局要求\n\n## 当前项目要求\n第二项目必须先审查' && restored.memoryEnabled === false && restored.permissionMode === 'read-only' && restored.entrypointMigrationState === 'ready',
-    '保存项目配置必须继承全局默认并保留项目要求。',
+    restored.prompt === '更新后的全局要求' &&
+      restored.memoryEnabled === false &&
+      restored.permissionMode === 'read-only' &&
+      restored.entrypointMigrationState === 'ready' &&
+      JSON.stringify(historicalProjectConfiguration()) === historicalProjectBefore,
+    '更新员工关联后仍读取全局默认，并逐字保留原项目列。',
   );
-  /** 按当前公开字段保存旧员工，只允许改变工作配置。 */
-  employees.update(first.id, { expectedRevision: inherited.revision, projectInstructions: '保存后的项目要求', memoryEnabled: true });
+  /** 项目关联不允许再次维护职责、经验或停启。 */
+  for (const input of [{ projectInstructions: '保存后的项目要求' }, { memoryEnabled: true }, { enabled: false }]) {
+    assertProbe(captureCode(() => employees.update(first.id, { expectedRevision: inherited.revision, ...input } as never)) === 'ZEUS_DIGITAL_EMPLOYEE_INVALID', '项目独立配置写入必须明确拒绝。');
+  }
   assertProbe(JSON.stringify(readHistoricalActions()) === historicalActionsBefore, '当前配置保存不能改写历史员工动作授权或部署命令。');
   assertProbe(
     db.get<{ employee_snapshot_json: string }>('SELECT employee_snapshot_json FROM digital_employee_executions WHERE id = ?', [execution.id])!.employee_snapshot_json === snapshotBefore &&
@@ -969,7 +979,8 @@ async function verifyEmployeeIdentity(db: ZeusDatabase, projects: ProjectReposit
     const migratedEmployees = new DigitalEmployeeRepository(migrationDb);
     const migratedTemplates = new DigitalEmployeeTemplateRepository(migrationDb);
     /** 无模板来源的独立员工同样自动保留，停用状态不能在升级中变更。 */
-    const standalone = migratedEmployees.create({ projectId: secondProject.id, name: '无模板历史员工', role: '开发', prompt: '独立职责不能丢失。', enabled: false, memoryEnabled: false });
+    const standalone = migratedEmployees.create({ projectId: secondProject.id, name: '无模板历史员工', role: '开发', prompt: '独立职责不能丢失。', memoryEnabled: false });
+    migrationDb.execute('UPDATE digital_employees SET enabled=0 WHERE id=?', [standalone.id]);
     /** 软删除的绑定完全跳过，不恢复已被用户移除的员工。 */
     const removed = migratedEmployees.create({ projectId: secondProject.id, name: '已移除历史员工', role: '开发', prompt: '已移除职责。' });
     migrationDb.execute('UPDATE digital_employees SET deleted_at=? WHERE id=?', ['2026-10-05T01:00:00.000Z', removed.id]);
@@ -999,10 +1010,30 @@ async function verifyEmployeeIdentity(db: ZeusDatabase, projects: ProjectReposit
         projectLimitId: suffix === 'private' ? firstProjectId : null,
       });
     }
+    /** 结构非法但可解析的旧团队草稿不能阻断启动时员工身份迁移。 */
+    const invalidTeamDefinitionJson = JSON.stringify({ nodes: null, edges: [], repairEmployeeId: global.id, note: '旧草稿原文必须保留。' });
+    migrationDb.execute('INSERT INTO digital_team_workflow_templates(id,project_id,name,description,definition_json,ready,validation_issues_json,revision,created_at,updated_at,deleted_at) VALUES(?,?,?,?,?,0,?,7,?,?,NULL)', [
+      'identity_migration_invalid_team',
+      firstProjectId,
+      '非法历史团队草稿',
+      '',
+      invalidTeamDefinitionJson,
+      '["nodes-invalid"]',
+      '2026-10-05T01:00:00.000Z',
+      '2026-10-05T01:00:00.000Z',
+    ]);
     migrateDigitalEmployeeGlobalIdentity(migrationDb);
+    /** 读取原始存储行，确认早期引用迁移没有清洗或误启用坏草稿。 */
+    const invalidTeamAfterMigration = migrationDb.get<{ definition_json: string; ready: number; revision: number }>('SELECT definition_json,ready,revision FROM digital_team_workflow_templates WHERE id=?', [
+      'identity_migration_invalid_team',
+    ]);
+    assertProbe(invalidTeamAfterMigration?.definition_json === invalidTeamDefinitionJson && invalidTeamAfterMigration.ready === 0 && invalidTeamAfterMigration.revision === 7, '非法旧团队草稿原文、未就绪状态及修订保持，员工迁移继续完成。');
     assertProbe(
-      migratedEmployees.getById(standalone.id)?.enabled === false && migratedEmployees.getById(standalone.id)?.memoryEnabled === false && Boolean(migratedEmployees.getById(standalone.id)?.globalEmployeeId),
-      '独立旧员工自动获得正式身份，且保持原停用和经验关闭状态。',
+      migratedEmployees.getById(standalone.id)?.enabled === true &&
+        migratedEmployees.getById(standalone.id)?.memoryEnabled === false &&
+        Boolean(migratedEmployees.getById(standalone.id)?.globalEmployeeId) &&
+        migrationDb.get<{ enabled: number }>('SELECT enabled FROM digital_employees WHERE id=?', [standalone.id])?.enabled === 0,
+      '独立旧员工自动获得正式身份，原停用列保留但不再阻断新工作，员工本身的经验关闭保持。',
     );
     assertProbe(
       !migratedEmployees.getById(removed.id) && !migrationDb.get<{ global_employee_id: string | null }>('SELECT global_employee_id FROM digital_employees WHERE id=?', [removed.id])?.global_employee_id,
@@ -1030,7 +1061,7 @@ async function verifyEmployeeIdentity(db: ZeusDatabase, projects: ProjectReposit
       !migratedMemories().some((id) => ['identity_migration_future', 'identity_migration_revoked', 'identity_migration_corrected', 'identity_migration_corrected_new'].includes(id)),
       '迁移经验仍须撤销或失效，且不能读来源员工后续新增与纠正内容。',
     );
-    assertProbe(promoted.prompt === '项目独立要求\n\n## 当前项目要求\n第二项目必须先审查' && promoted.memoryEnabled === true && promoted.entrypointMigrationState === 'ready', '自动迁移必须保留原项目有效提示词、项目补充和经验偏好。');
+    assertProbe(promoted.prompt === '项目独立要求' && promoted.memoryEnabled === true && promoted.entrypointMigrationState === 'ready', '自动迁移保留真实员工职责，旧项目补充不再进入新工作。');
     /** 已过期的原记录即使在迁移清单内也不能再次生效。 */
     assertProbe(
       !identityMemory

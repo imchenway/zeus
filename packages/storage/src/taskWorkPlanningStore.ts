@@ -268,8 +268,9 @@ export class TaskWorkPlanningRepository {
       const items = new TaskWorkItemRepository(this.db, this.now);
       const item = items.getById(workItemId);
       if (!item || item.revision !== expectedRevision || item.currentRunId || item.status !== 'queued') throw new TaskWorkStoreError('ZEUS_TASK_WORK_ASSIGNMENT_CONFLICT', '该分工已更新或开始执行，请重新读取。');
-      if (!this.db.get('SELECT id FROM digital_employees WHERE id = ? AND project_id = ? AND enabled = 1 AND deleted_at IS NULL', [employeeId, item.projectId]))
-        throw new TaskWorkStoreError('ZEUS_DIGITAL_EMPLOYEE_NOT_FOUND', '员工不属于当前项目或已停用。');
+      // 项目停启已经退役，领取只核对稳定关联及未删除身份。
+      if (!this.db.get('SELECT id FROM digital_employees WHERE id = ? AND project_id = ? AND deleted_at IS NULL', [employeeId, item.projectId]))
+        throw new TaskWorkStoreError('ZEUS_DIGITAL_EMPLOYEE_NOT_FOUND', '员工不属于当前项目或已移除。');
       this.db.execute('UPDATE task_work_items SET employee_id = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ?', [employeeId, this.now(), item.id, expectedRevision]);
       return items.getById(item.id)!;
     });
@@ -314,7 +315,8 @@ export class TaskWorkPlanningRepository {
       throw new TaskWorkStoreError('ZEUS_TASK_WORK_DELEGATION_CLOSED', '当前工作不能新增委派。');
     const plan = this.get(parent.taskId);
     if (plan?.state !== 'running') throw new TaskWorkStoreError('ZEUS_TASK_WORK_PLAN_PAUSED', '当前安排尚未运行或已暂停。');
-    if (!policy.employeeIds.includes(input.employeeId) || !this.db.get('SELECT id FROM digital_employees WHERE id = ? AND project_id = ? AND enabled = 1 AND deleted_at IS NULL', [input.employeeId, parent.projectId]))
+    // 委派仍受本轮成员授权约束，不再读取旧项目停启配置。
+    if (!policy.employeeIds.includes(input.employeeId) || !this.db.get('SELECT id FROM digital_employees WHERE id = ? AND project_id = ? AND deleted_at IS NULL', [input.employeeId, parent.projectId]))
       throw new TaskWorkStoreError('ZEUS_TASK_WORK_DELEGATION_NOT_ALLOWED', '该员工不在本次允许委派的成员范围内。');
     /** 沿父关系定位本轮拆分边界。 */
     let root = parent;

@@ -19,6 +19,8 @@ export interface AutomationDispatchResult {
 export interface AutomationSchedulerOptions {
   /** 在旧调度启动前原子移交员工规则及在途关联。 */
   migrateLegacy?(): void;
+  /** 按原规则修订或原事件序号解释退役项目状态，不扩大多项目筛选范围。 */
+  resolveLegacyTaskStatus?(projectId: string, statusId: string, source: { revisionId: string } | { eventSequence: number }): string;
   /** 接纳前解析并冻结任务与项目绑定，任务池为空返回明确跳过。 */
   prepareAction?(input: { run: AutomationRunRecord; snapshot: AutomationDefinitionSnapshot; project: ZeusProjectRecord; target: AutomationDispatchTarget }): Promise<{ taskId: string; employeeId: string } | null>;
   /** 每次只接纳一个已冻结目标，准确引用由调度器耐久保存。 */
@@ -73,6 +75,9 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
   /** 按原事件的前后状态与来源接纳，不从处理时的任务状态重新推断。 */
   function acceptEvents(): void {
     for (const task of options.tasks.list().filter((entry) => entry.status === 'active' && entry.triggerKind === 'event')) {
+      /** 条件来源固定到实际作者修订，状态、游标等后续更新时间不能替代。 */
+      const revision = options.tasks.getRevision(task.currentRevisionId);
+      if (!revision) continue;
       for (const target of options.tasks.listTargets(task.id).filter((entry) => entry.enabled)) {
         const events = task.triggerConfig.eventKinds?.includes('code_changed')
           ? options.tasks.listCodeTriggerEvents(target.projectId, task.eventCursors[target.projectId] ?? 0)
@@ -81,7 +86,7 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
           options.tasks.consumeEvent(task.id, target.projectId, event.sequence, () => {
             /** 项目流程自身生成的任务事件不会反向触发新的自动化。 */
             const source = event.payload.source;
-            if (event.payload.suppressAutomation === true || ['automation', 'digital_employee_automation', 'digital_team_workflow', 'task_push'].includes(String(source))) return;
+            if (event.eventType === 'task.management_status.migrated' || event.payload.suppressAutomation === true || ['automation', 'digital_employee_automation', 'digital_team_workflow', 'task_push'].includes(String(source))) return;
             /** 旧规则与界面均允许使用业务触发名称。 */
             const kinds = task.triggerConfig.eventKinds ?? [];
             const aliases: Record<string, string[]> = {
@@ -90,15 +95,35 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
               task_status_changed: ['task.status.changed', 'task.management_status.changed'],
             };
             if (kinds.length > 0 && !kinds.some((kind) => kind === event.eventType || aliases[kind]?.includes(event.eventType))) return;
-            const before = automationEventStatusId(event.payload, true);
-            const after = automationEventStatusId(event.payload, false);
-            if (task.triggerConfig.beforeStatusId && before !== task.triggerConfig.beforeStatusId) return;
-            if (task.triggerConfig.afterStatusId && after !== task.triggerConfig.afterStatusId) return;
+            /** 原事件与原规则分别投影；新全局事件、后来保存的规则不再套旧映射。 */
+            const resolveEventStatus = (statusId: string | null): string | null => (statusId ? (options.resolveLegacyTaskStatus?.(target.projectId, statusId, { eventSequence: event.sequence }) ?? statusId) : null);
+            const before = resolveEventStatus(automationEventStatusId(event.payload, true));
+            const after = resolveEventStatus(automationEventStatusId(event.payload, false));
+            /** 原作者修订在本项目要求的发生前状态。 */
+            const expectedBefore = resolveRevisionTaskStatus(revision, target.projectId, task.triggerConfig.beforeStatusId);
+            /** 原作者修订在本项目要求的发生后状态。 */
+            const expectedAfter = resolveRevisionTaskStatus(revision, target.projectId, task.triggerConfig.afterStatusId);
+            if (expectedBefore && before !== expectedBefore) return;
+            if (expectedAfter && after !== expectedAfter) return;
             options.runs.enqueue({ automationId: task.id, projectIds: [target.projectId], triggerKind: 'event', triggerIdentity: event.identity, scheduledAt: event.occurredAt, sourceEvent: event });
           });
         }
       }
     }
+  }
+
+  /** 同名旧状态按规则修订和当前目标项目解析，不能合并其他项目映射。 */
+  function resolveRevisionTaskStatus(revision: AutomationRevisionRecord, projectId: string, statusId: string | undefined): string | undefined {
+    return statusId ? (options.resolveLegacyTaskStatus?.(projectId, statusId, { revisionId: revision.id }) ?? statusId) : undefined;
+  }
+
+  /** 历史运行只生成目标项目的执行视图，冻结修订保持原文。 */
+  function snapshotForProject(revision: AutomationRevisionRecord, projectId: string): AutomationDefinitionSnapshot {
+    if (!options.resolveLegacyTaskStatus || !revision.snapshot.action.taskFilter?.managementStatuses?.length) return revision.snapshot;
+    /** 仅修改本次交给任务领取边界的状态条件。 */
+    const snapshot = structuredClone(revision.snapshot);
+    snapshot.action.taskFilter!.managementStatuses = snapshot.action.taskFilter!.managementStatuses.map((statusId) => resolveRevisionTaskStatus(revision, projectId, statusId)!);
+    return snapshot;
   }
 
   function acceptDue(now: string): void {
@@ -277,10 +302,12 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
           /** 缺失项目明确阻塞，已有目标引用不被清空。 */
           const project = options.getProject(target.projectId) ?? (running.projectIds.length === 0 ? options.ensureTemporaryWorkspace(running.id) : undefined);
           if (!project) throw new Error('ZEUS_AUTOMATION_CONFIG_TARGET_UNAVAILABLE: 目标项目已不可用。');
+          /** 多项目领取按各自原状态语义核对，不能共享合并后的筛选列表。 */
+          const snapshot = snapshotForProject(revision, project.id);
           if (!options.prepareAction || !options.dispatchAction) throw new Error('ZEUS_AUTOMATION_ACTION_UNAVAILABLE: 员工工作入口不可用。');
           if (!target.taskId || !target.employeeId) {
             /** 尚未接纳的目标只解析一次，跳过也须耐久记账。 */
-            const prepared = await options.prepareAction({ run: options.runs.getById(running.id)!, snapshot: revision.snapshot, project, target });
+            const prepared = await options.prepareAction({ run: options.runs.getById(running.id)!, snapshot, project, target });
             if (!prepared) {
               options.runs.updateDispatchTarget(running.id, { ...target, status: 'skipped', reason: '没有符合条件且可领取的任务。' });
               await options.save();
@@ -295,7 +322,7 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
           if (options.runs.getById(running.id)?.status !== 'dispatching' || options.tasks.getById(running.automationId)?.status !== 'active') return;
           assertFullAccessGrant(running, revision);
           /** 接纳后保存该目标引用，仍保持 dispatching 直到全部目标完成。 */
-          const reference = await options.dispatchAction({ run: options.runs.getById(running.id)!, snapshot: revision.snapshot, project, target });
+          const reference = await options.dispatchAction({ run: options.runs.getById(running.id)!, snapshot, project, target });
           options.runs.updateDispatchTarget(running.id, { ...target, status: reference ? 'accepted' : 'skipped', reference, reason: reference ? null : '原工作安排没有可领取分工。' });
           await options.save();
         } catch (error) {

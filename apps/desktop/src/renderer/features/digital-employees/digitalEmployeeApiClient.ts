@@ -11,7 +11,6 @@ import type {
   DigitalEmployeeAutomationRecord,
   DigitalEmployeeCollaborationProjection,
   DigitalEmployeeExecutionRecord,
-  DigitalEmployeeInput,
   DigitalEmployeeRecord,
   DigitalEmployeeStageDecisionInput,
   DigitalEmployeeTemplateInput,
@@ -57,12 +56,6 @@ export interface DigitalEmployeeApiClient {
   updateDigitalEmployeeTemplate(templateId: string, expectedRevision: number, input: Partial<DigitalEmployeeTemplateInput>): Promise<DigitalEmployeeTemplateRecord>;
   deleteDigitalEmployeeTemplate(templateId: string, expectedRevision: number): Promise<DigitalEmployeeTemplateRecord>;
   loadProjectDigitalEmployees(projectId: string, available?: boolean): Promise<DigitalEmployeeRecord[]>;
-  createProjectDigitalEmployee(
-    projectId: string,
-    input: { templateId: string; overrides?: Partial<DigitalEmployeeInput> } | { globalEmployeeId: string; projectOverrides?: DigitalEmployeeInput['projectOverrides']; projectInstructions?: string } | DigitalEmployeeInput,
-  ): Promise<DigitalEmployeeRecord>;
-  updateProjectDigitalEmployee(projectId: string, employeeId: string, expectedRevision: number, input: Partial<DigitalEmployeeInput>): Promise<DigitalEmployeeRecord>;
-  deleteProjectDigitalEmployee(projectId: string, employeeId: string, expectedRevision: number): Promise<DigitalEmployeeRecord>;
   loadDigitalEmployeeAutomations(projectId: string): Promise<DigitalEmployeeAutomationRecord[]>;
   createDigitalEmployeeAutomation(projectId: string, input: DigitalEmployeeAutomationInput): Promise<DigitalEmployeeAutomationRecord>;
   updateDigitalEmployeeAutomation(projectId: string, automationId: string, expectedRevision: number, input: Partial<Omit<DigitalEmployeeAutomationInput, 'employeeId'>>): Promise<DigitalEmployeeAutomationRecord>;
@@ -125,20 +118,6 @@ export function createDigitalEmployeeApiClient(transport: LocalApiTransport): Di
       return transport.request(`/api/digital-employee-templates/${encodeURIComponent(templateId)}`, jsonRequest('DELETE', body));
     },
     loadProjectDigitalEmployees: (projectId, available) => transport.request(`${projectPath(projectId)}/digital-employees${available ? '?available=true' : ''}`),
-    createProjectDigitalEmployee: async (projectId, input) => {
-      const body = await command(workManagementClientCommandTypes.digitalEmployeeCreate, 'project', () => projectId, 'digital_employee_', input);
-      return transport.request(`${projectPath(projectId)}/digital-employees`, jsonRequest('POST', body));
-    },
-    updateProjectDigitalEmployee: async (projectId, employeeId, expectedRevision, input) => {
-      const value = { ...input, expectedRevision };
-      const body = await command(workManagementClientCommandTypes.digitalEmployeeUpdate, 'project', () => projectId, 'digital_employee_update_', value, expectedRevision);
-      return transport.request(`${projectPath(projectId)}/digital-employees/${encodeURIComponent(employeeId)}`, jsonRequest('PATCH', body));
-    },
-    deleteProjectDigitalEmployee: async (projectId, employeeId, expectedRevision) => {
-      const value = { expectedRevision };
-      const body = await command(workManagementClientCommandTypes.digitalEmployeeDelete, 'project', () => projectId, 'digital_employee_delete_', value, expectedRevision);
-      return transport.request(`${projectPath(projectId)}/digital-employees/${encodeURIComponent(employeeId)}`, jsonRequest('DELETE', body));
-    },
     loadDigitalEmployeeAutomations: (projectId) => transport.request(`${projectPath(projectId)}/digital-employee-automations`),
     createDigitalEmployeeAutomation: async (projectId, input) => {
       const body = await command(workManagementClientCommandTypes.digitalEmployeeAutomationCreate, 'project', () => projectId, 'digital_employee_automation_', input);

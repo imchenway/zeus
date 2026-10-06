@@ -1,119 +1,40 @@
-import { assertContextCapacity } from '@zeus/shared';
-
-/** Local Server 的项目配置领域规则。 */
-export type ProjectWorkMode = 'plan' | 'develop' | 'review' | 'debug';
-export type ProjectServiceTierPreference = 'standard' | 'priority';
-
-export interface ProjectModelServiceTierPreference {
-  modelSourceId: string | null;
-  modelId: string;
-  serviceTier: ProjectServiceTierPreference;
-}
-
+/** 项目仅保留仓库事实、连接资源和授权边界，不保存工作偏好。 */
 export interface ProjectConfigSnapshot {
   projectId: string;
-  /** 仅影响后续新建会话；空值保留默认。 */
-  contextCapacityTokens: number | null;
-  serviceTierPreferences: ProjectModelServiceTierPreference[];
-  defaultWorkMode: ProjectWorkMode;
-  language: {
-    primary: string;
-    additional: string[];
-  };
-  dependencies: {
-    packageManagers: string[];
-    manifestPaths: string[];
-  };
-  vcs: {
-    isGitRepository: boolean;
-    gitRoot: string | null;
-  };
-  database: {
-    connectionName: string | null;
-  };
-  telegram: {
-    alias: string | null;
-  };
-  security: {
-    allowShell: boolean;
-    allowGitWrite: boolean;
-  };
+  vcs: { isGitRepository: boolean; gitRoot: string | null };
+  database: { connectionName: string | null };
+  security: { allowShell: boolean; allowGitWrite: boolean };
 }
 
+/** 项目资源接口只接受资源信息与显式授权。 */
 export interface UpdateProjectConfigBody {
-  /** 外部输入需严格校验，不进行数字字符串转换。 */
-  contextCapacityTokens?: unknown;
-  serviceTierPreferences?: unknown;
-  defaultWorkMode?: unknown;
-  language?: { primary?: unknown; additional?: unknown };
-  dependencies?: { packageManagers?: unknown; manifestPaths?: unknown };
   vcs?: { isGitRepository?: unknown; gitRoot?: unknown };
   database?: { connectionName?: unknown };
-  telegram?: { alias?: unknown };
   security?: { allowShell?: unknown; allowGitWrite?: unknown };
 }
 
-/**
- * 生成设计书约定的项目默认配置；默认值只表达用户偏好，不声明任何外部工具已经可用。
- */
+/** 新项目的授权默认关闭，避免精简设置时扩大权限。 */
 export function createDefaultProjectConfig(projectId: string): ProjectConfigSnapshot {
   return {
     projectId,
-    contextCapacityTokens: null,
-    serviceTierPreferences: [],
-    defaultWorkMode: 'plan',
-    language: { primary: 'typescript', additional: [] },
-    dependencies: { packageManagers: [], manifestPaths: [] },
     vcs: { isGitRepository: false, gitRoot: null },
     database: { connectionName: null },
-    telegram: { alias: null },
     security: { allowShell: false, allowGitWrite: false },
   };
 }
 
-/**
- * 归一化项目偏好配置，并在发现越权路径或控制字符时整体拒绝，避免污染本地事实库。
- */
+/** 读取旧数据时只提取项目资源，退役的独立偏好不再生效。 */
 export function normalizeProjectConfig(projectId: string, value: unknown, fallback: ProjectConfigSnapshot): ProjectConfigSnapshot | null {
   if (value === undefined) return fallback;
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const raw = value as UpdateProjectConfigBody;
-  /** 缺省保留原设置，旧项目归一化为默认。 */
-  const contextCapacityTokens = raw.contextCapacityTokens === undefined ? (fallback.contextCapacityTokens ?? null) : raw.contextCapacityTokens;
-  try {
-    assertContextCapacity(contextCapacityTokens);
-  } catch {
-    return null;
-  }
-  const serviceTierPreferences = normalizeProjectModelServiceTierPreferences(raw.serviceTierPreferences, fallback.serviceTierPreferences);
-  const languagePrimary = normalizeIdentifierText(raw.language?.primary, fallback.language.primary);
-  const languageAdditional = normalizeIdentifierList(raw.language?.additional, fallback.language.additional);
-  const packageManagers = normalizeIdentifierList(raw.dependencies?.packageManagers, fallback.dependencies.packageManagers);
-  const manifestPaths = normalizeSafeRelativePathList(raw.dependencies?.manifestPaths, fallback.dependencies.manifestPaths);
   const vcs = normalizeVcsConfig(raw.vcs, fallback.vcs);
   const connectionName = normalizeOptionalSingleLine(raw.database?.connectionName, 80, fallback.database.connectionName);
-  const telegramAlias = normalizeOptionalSingleLine(raw.telegram?.alias, 80, fallback.telegram.alias);
-  if (
-    serviceTierPreferences === null ||
-    languagePrimary === null ||
-    languageAdditional === null ||
-    packageManagers === null ||
-    manifestPaths === null ||
-    vcs === null ||
-    (connectionName === null && raw.database?.connectionName !== undefined && raw.database.connectionName !== null) ||
-    (telegramAlias === null && raw.telegram?.alias !== undefined && raw.telegram.alias !== null)
-  )
-    return null;
+  if (vcs === null || (connectionName === null && raw.database?.connectionName !== undefined && raw.database.connectionName !== null)) return null;
   return {
     projectId,
-    contextCapacityTokens: contextCapacityTokens as number | null,
-    serviceTierPreferences,
-    defaultWorkMode: isProjectWorkMode(raw.defaultWorkMode) ? raw.defaultWorkMode : fallback.defaultWorkMode,
-    language: { primary: languagePrimary, additional: languageAdditional },
-    dependencies: { packageManagers, manifestPaths },
     vcs,
     database: { connectionName },
-    telegram: { alias: telegramAlias },
     security: {
       allowShell: typeof raw.security?.allowShell === 'boolean' ? raw.security.allowShell : fallback.security.allowShell,
       allowGitWrite: typeof raw.security?.allowGitWrite === 'boolean' ? raw.security.allowGitWrite : fallback.security.allowGitWrite,
@@ -121,35 +42,7 @@ export function normalizeProjectConfig(projectId: string, value: unknown, fallba
   };
 }
 
-/**
- * 校验一条用户显式保存的项目模型服务档位偏好。
- */
-export function normalizeProjectModelServiceTierPreference(value: unknown): ProjectModelServiceTierPreference | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const raw = value as { modelSourceId?: unknown; modelId?: unknown; serviceTier?: unknown };
-  const modelSourceId = raw.modelSourceId === undefined || raw.modelSourceId === null ? null : normalizeOptionalSingleLine(raw.modelSourceId, 120, null);
-  const modelId = normalizeOptionalSingleLine(raw.modelId, 160, null);
-  if ((raw.modelSourceId !== undefined && raw.modelSourceId !== null && modelSourceId === null) || modelId === null) return null;
-  if (raw.serviceTier !== 'standard' && raw.serviceTier !== 'priority') return null;
-  return { modelSourceId, modelId, serviceTier: raw.serviceTier };
-}
-
-function normalizeProjectModelServiceTierPreferences(value: unknown, fallback: ProjectModelServiceTierPreference[]): ProjectModelServiceTierPreference[] | null {
-  if (value === undefined) return fallback;
-  if (!Array.isArray(value) || value.length > 100) return null;
-  const identities = new Set<string>();
-  const preferences: ProjectModelServiceTierPreference[] = [];
-  for (const item of value) {
-    const preference = normalizeProjectModelServiceTierPreference(item);
-    if (!preference) return null;
-    const identity = `${preference.modelSourceId ?? ''}\0${preference.modelId}`;
-    if (identities.has(identity)) return null;
-    identities.add(identity);
-    preferences.push(preference);
-  }
-  return preferences;
-}
-
+/** 校验仓库资源信息，保持非仓库项目没有 Git 根目录。 */
 function normalizeVcsConfig(value: unknown, fallback: ProjectConfigSnapshot['vcs']): ProjectConfigSnapshot['vcs'] | null {
   if (value === undefined) return fallback;
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -161,6 +54,7 @@ function normalizeVcsConfig(value: unknown, fallback: ProjectConfigSnapshot['vcs
   return { isGitRepository, gitRoot: isGitRepository ? gitRoot : null };
 }
 
+/** 校验可为空的单行资源标识。 */
 function normalizeOptionalSingleLine(value: unknown, maxLength: number, fallback: string | null): string | null {
   if (value === undefined) return fallback;
   if (value === null) return null;
@@ -171,51 +65,7 @@ function normalizeOptionalSingleLine(value: unknown, maxLength: number, fallback
   return text;
 }
 
-function normalizeIdentifierText(value: unknown, fallback: string): string | null {
-  if (value === undefined) return fallback;
-  if (typeof value !== 'string') return null;
-  const text = value.trim().toLowerCase();
-  return /^[a-z][a-z0-9_-]{0,31}$/.test(text) ? text : null;
-}
-
-function normalizeIdentifierList(value: unknown, fallback: string[]): string[] | null {
-  if (value === undefined) return fallback;
-  if (!Array.isArray(value) || value.length > 20) return null;
-  const seen = new Set<string>();
-  const items: string[] = [];
-  for (const item of value) {
-    const normalized = normalizeIdentifierText(item, '');
-    if (!normalized) return null;
-    if (!seen.has(normalized)) {
-      seen.add(normalized);
-      items.push(normalized);
-    }
-  }
-  return items;
-}
-
-function normalizeSafeRelativePathList(value: unknown, fallback: string[]): string[] | null {
-  if (value === undefined) return fallback;
-  if (!Array.isArray(value) || value.length > 50) return null;
-  const seen = new Set<string>();
-  const items: string[] = [];
-  for (const item of value) {
-    if (typeof item !== 'string') return null;
-    const path = item.trim();
-    if (!path || path.startsWith('/') || path.includes('..') || hasControlCharacter(path) || path.length > 180) return null;
-    if (!/^[A-Za-z0-9._/@-]+$/.test(path)) return null;
-    if (!seen.has(path)) {
-      seen.add(path);
-      items.push(path);
-    }
-  }
-  return items;
-}
-
-function isProjectWorkMode(value: unknown): value is ProjectWorkMode {
-  return value === 'plan' || value === 'develop' || value === 'review' || value === 'debug';
-}
-
+/** 检测资源标识中的控制字符。 */
 function hasControlCharacter(value: string): boolean {
   return Array.from(value).some((character) => {
     const code = character.charCodeAt(0);

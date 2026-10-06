@@ -79,7 +79,6 @@ export interface TaskWorkspaceCopy {
   taskListErrorTitle: string;
   taskListErrorHelp: string;
   taskListErrorRetry: string;
-  taskListErrorProjectSettings: string;
   noResultsTitle: string;
   noResultsHelp: string;
   noProjectSelected: string;
@@ -168,6 +167,8 @@ export interface TaskWorkspaceProps {
   taskTableColumns?: Partial<TaskTableColumnPreferences>;
   taskTableEnumSortOrders?: TaskTableEnumSortOrders;
   taskTableLayoutDirty?: boolean;
+  /** 保存期间锁定布局提交，避免重复写入。 */
+  taskTableLayoutSaveBusy?: boolean;
   creatingTaskBusy: boolean;
   bulkActionBusy?: boolean;
   /** 状态保存按任务显示最后一次选择，不把其他行置灰或阻止连续选择。 */
@@ -206,7 +207,6 @@ export interface TaskWorkspaceProps {
   onBulkTaskStatusChange?: (targetStatus: TaskManagementStatus, taskIds: string[]) => void;
   onBulkTaskDelete?: (taskIds: string[]) => void;
   onRetryTaskList?: () => void;
-  onOpenProjectSettings?: () => void;
   onOpenProjectCode?: () => void;
   controlBusyProps: (busy: boolean) => { 'aria-busy'?: true; 'data-loading'?: 'true' };
 }
@@ -466,8 +466,14 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                   </section>
                 </div>
                 {props.taskTableLayoutDirty ? (
-                  <button className="task-table-view-pill task-table-view-save-pill" type="button" onClick={props.onSaveTaskTableLayout} disabled={!props.onSaveTaskTableLayout}>
-                    {saveViewActionLabel}
+                  <button
+                    className="task-table-view-pill task-table-view-save-pill"
+                    type="button"
+                    onClick={props.onSaveTaskTableLayout}
+                    aria-busy={props.taskTableLayoutSaveBusy}
+                    disabled={!props.onSaveTaskTableLayout || props.taskTableLayoutSaveBusy}
+                  >
+                    {props.taskTableLayoutSaveBusy ? (isEnglishCopy ? 'Saving…' : '正在保存…') : saveViewActionLabel}
                   </button>
                 ) : (
                   <div className="task-table-more-settings">
@@ -644,9 +650,6 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                   <span className="task-list-state-action-rail">
                     <button type="button" className="task-list-state-primary-action" onClick={props.onRetryTaskList} disabled={!props.onRetryTaskList}>
                       {props.copy.taskListErrorRetry}
-                    </button>
-                    <button type="button" className="task-list-state-secondary-action" onClick={props.onOpenProjectSettings} disabled={!props.onOpenProjectSettings}>
-                      {props.copy.taskListErrorProjectSettings}
                     </button>
                   </span>
                 </section>

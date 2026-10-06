@@ -8,7 +8,6 @@ export interface ProjectRecord {
   localPath: string;
   description?: string | null;
   note?: string | null;
-  defaultTemplateId?: string | null;
 }
 
 export interface ProjectWorkspaceSharedPath {
@@ -26,45 +25,16 @@ export interface ProjectWorkspaceConfigSnapshot {
   sharedWritablePaths: ProjectWorkspaceSharedPath[];
 }
 
-export type ProjectWorkMode = 'plan' | 'develop' | 'review' | 'debug';
-
-export interface ProjectModelServiceTierPreference {
-  modelSourceId: string | null;
-  modelId: string;
-  serviceTier: 'standard' | 'priority';
-}
-
+/** 项目仅保留仓库资源、连接和授权，不包含独立工作偏好。 */
 export interface ProjectConfig {
-  /** 后续新建会话的上下文容量，旧配置保持默认。 */
-  contextCapacityTokens?: number | null;
   projectId: string;
-  serviceTierPreferences: ProjectModelServiceTierPreference[];
-  defaultWorkMode: ProjectWorkMode;
-  language: {
-    primary: string;
-    additional: string[];
-  };
-  dependencies: {
-    packageManagers: string[];
-    manifestPaths: string[];
-  };
-  vcs: {
-    isGitRepository: boolean;
-    gitRoot: string | null;
-  };
-  database: {
-    connectionName: string | null;
-  };
-  telegram: {
-    alias: string | null;
-  };
-  security: {
-    allowShell: boolean;
-    allowGitWrite: boolean;
-  };
+  vcs: { isGitRepository: boolean; gitRoot: string | null };
+  database: { connectionName: string | null };
+  security: { allowShell: boolean; allowGitWrite: boolean };
 }
 
-export type SaveProjectConfigRequest = Partial<Omit<ProjectConfig, 'projectId' | 'vcs' | 'serviceTierPreferences'>> & { vcs?: ProjectConfig['vcs'] };
+/** 更新项目资源与授权。 */
+export type SaveProjectConfigRequest = Partial<Omit<ProjectConfig, 'projectId'>>;
 
 export interface ProjectDatabaseSecretSnapshot {
   connectionName: string | null;
@@ -87,7 +57,6 @@ export interface CreateProjectRequest {
   localPath: string;
   description?: string;
   note?: string;
-  defaultWorkMode?: ProjectWorkMode;
 }
 
 export interface UpdateProjectRequest {
