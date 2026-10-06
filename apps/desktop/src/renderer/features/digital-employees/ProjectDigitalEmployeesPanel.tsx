@@ -2,15 +2,11 @@ import { EmployeeMemoryProposals } from './EmployeeMemoryProposals.js';
 import { MemorySettingsPane } from '../memory/MemorySettingsPane.js';
 import { DigitalEmployeeAvatar } from './DigitalEmployeeAvatar.js';
 import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
-import type { CommandDefinition } from '@zeus/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DashboardClient } from '../../dashboardClient.js';
-import type { CodexConversationCapabilities } from '../../session/sessionTypes.js';
 import { Button } from '../../ui/Button.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
 import type { NativeConversationAppClient } from '../workspace/workspaceSupport.js';
-import { codexCapabilitiesChangedEvent } from '../codex/codexApiClient.js';
-import { AgentExecutionConfigFields } from './AgentExecutionConfigFields.js';
 import type { DigitalEmployeeExecutionRecord, DigitalEmployeeRecord, DigitalEmployeeTemplateRecord } from './digitalEmployeeContracts.js';
 import { employeeDraft, employeeInput, errorMessage, executionIsActive, executionStatusLabel, formatDateTime, type DigitalEmployeeDraft, type DigitalEmployeeLanguage } from './digitalEmployeeUiSupport.js';
 import './digitalEmployees.css';
@@ -27,6 +23,16 @@ export interface ProjectDigitalEmployeesPanelProps {
 
 type ProjectPanelSection = 'employees' | 'automations' | 'executions';
 
+/** 旧员工配置只读展示使用面向用户的身份字段名称。 */
+const legacyEmployeeFieldLabels: Record<string, [string, string]> = {
+  name: ['员工名称', 'Employee name'],
+  description: ['说明', 'Description'],
+  role: ['岗位', 'Role'],
+  domain: ['业务领域', 'Business domain'],
+  avatarId: ['头像', 'Avatar'],
+  prompt: ['提示词', 'Prompt'],
+};
+
 export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanelProps) {
   const zh = props.language === 'zh-CN';
   /** 候选接纳后刷新当前员工经验，不覆盖配置草稿。 */
@@ -34,8 +40,6 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
   const [templates, setTemplates] = useState<DigitalEmployeeTemplateRecord[]>([]);
   const [employees, setEmployees] = useState<DigitalEmployeeRecord[]>([]);
   const [executions, setExecutions] = useState<DigitalEmployeeExecutionRecord[]>([]);
-  const [commands, setCommands] = useState<CommandDefinition[]>([]);
-  const [capabilities, setCapabilities] = useState<CodexConversationCapabilities | null>(null);
   const [section, setSection] = useState<ProjectPanelSection>('employees');
   const [templateId, setTemplateId] = useState('');
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
@@ -48,36 +52,8 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
   const employeeDrafts = useRef(new Map<string, { draft: DigitalEmployeeDraft; revision: number }>());
   const configurationRevision = useRef(0);
   const executionRevision = useRef(0);
-  /** 模型目录独立更新，迟到的页面初始化不能覆盖它。 */
-  const capabilitiesRevision = useRef(0);
-
-  useEffect(() => {
-    /** 只刷新模型能力，保留员工及自动化编辑草稿。 */
-    const load = props.skillClient?.loadCodexConversationCapabilities;
-    if (!load) return;
-    let disposed = false;
-    const refresh = (): void => {
-      const revision = ++capabilitiesRevision.current;
-      void load(props.projectId)
-        .then((nextCapabilities) => {
-          if (!disposed && revision === capabilitiesRevision.current) setCapabilities(nextCapabilities);
-        })
-        .catch(() => {
-          // 暂时断网时保留最近的模型，后续目录通知会再次读取。
-        });
-    };
-    window.addEventListener(codexCapabilitiesChangedEvent, refresh);
-    return () => {
-      disposed = true;
-      capabilitiesRevision.current += 1;
-      window.removeEventListener(codexCapabilitiesChangedEvent, refresh);
-    };
-  }, [props.projectId, props.skillClient]);
-
   const loadProjectConfiguration = useCallback(async () => {
     const revision = ++configurationRevision.current;
-    /** 与目录独立刷新共用递增标识，避免旧结果回写。 */
-    const modelRevision = ++capabilitiesRevision.current;
     executionRevision.current += 1;
     if (!props.client) {
       setLoadState('failed');
@@ -87,13 +63,10 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
     setErrorSection(null);
     setError(null);
     try {
-      const capabilitiesPromise = props.skillClient?.loadCodexConversationCapabilities?.(props.projectId).catch(() => null) ?? Promise.resolve(null);
-      const [nextTemplates, nextEmployees, nextExecutions, nextCommands, nextCapabilities] = await Promise.all([
+      const [nextTemplates, nextEmployees, nextExecutions] = await Promise.all([
         props.client.loadDigitalEmployeeTemplates(),
         props.client.loadProjectDigitalEmployees(props.projectId),
         props.client.loadProjectDigitalEmployeeExecutions(props.projectId),
-        props.client.loadProjectCommands(props.projectId),
-        capabilitiesPromise,
       ]);
       if (revision !== configurationRevision.current) return;
       /** 项目员工只能从用户已经创建的数字员工开始，内置模板不能绕过全局新增流程。 */
@@ -101,8 +74,6 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
       setTemplates(nextTemplates);
       setEmployees(nextEmployees);
       setExecutions(nextExecutions);
-      setCommands(nextCommands);
-      if (modelRevision === capabilitiesRevision.current) setCapabilities(nextCapabilities);
       setTemplateId((current) => (current && nextEmployeeSources.some((template) => template.id === current) ? current : (nextEmployeeSources[0]?.id ?? '')));
       setSelectedEmployeeId((current) => {
         const selected = current ? nextEmployees.find((employee) => employee.id === current) : undefined;
@@ -115,7 +86,7 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
       setLoadState('failed');
       setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     }
-  }, [props.client, props.projectId, props.skillClient, zh]);
+  }, [props.client, props.projectId, zh]);
 
   const refreshExecutions = useCallback(async () => {
     if (!props.client) return;
@@ -151,7 +122,6 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
     };
   }, [hasActiveExecutions, loadState, refreshExecutions]);
 
-  const deployCommands = useMemo(() => commands.filter((command) => command.enabled), [commands]);
   /** 项目只能添加用户创建的数字员工，内置模板仅在全局新增弹窗中出现。 */
   const employeeSources = useMemo(() => templates.filter((template) => !template.builtIn), [templates]);
 
@@ -203,14 +173,6 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
     setErrorSection('employees');
     const current = employees.find((employee) => employee.id === selectedEmployeeId);
     if (!current) return;
-    if (!employeeDraftState.name.trim() || !employeeDraftState.role.trim()) {
-      setError(zh ? '员工名称和岗位不能为空。' : 'Employee name and role are required.');
-      return;
-    }
-    if (!employeeDraftState.prompt.trim()) {
-      setError(zh ? '员工提示词不能为空。' : 'The employee prompt is required.');
-      return;
-    }
     setBusyAction('save-employee');
     setError(null);
     const scope = configurationRevision.current;
@@ -236,12 +198,21 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
     if (!current) return;
     /** 迟到的写入结果不能进入其他项目。 */
     const scope = configurationRevision.current;
+    if (
+      current.legacyConfiguration &&
+      !window.confirm(
+        zh
+          ? '确认使用所选全局员工的身份和提示词？旧项目差异将被替代；项目补充要求和经验记录保持不变。'
+          : 'Use the selected global employee’s identity and prompt? This replaces legacy project overrides while preserving project instructions and experience.',
+      )
+    )
+      return;
     setBusyAction('inherit-employee');
     setErrorSection('employees');
     setError(null);
     try {
       /** 项目补充要求独立保存，恢复继承只清空通用字段覆盖。 */
-      const record = await props.client.updateProjectDigitalEmployee(props.projectId, current.id, current.revision, { globalEmployeeId, projectOverrides: {} });
+      const record = await props.client.updateProjectDigitalEmployee(props.projectId, current.id, current.revision, { globalEmployeeId, projectOverrides: { memoryEnabled: current.memoryEnabled !== false } });
       if (scope !== configurationRevision.current) return;
       setEmployees((items) => items.map((employee) => (employee.id === record.id ? record : employee)));
       employeeDrafts.current.delete(record.id);
@@ -265,7 +236,6 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
       setEmployees((items) => items.map((employee) => (employee.id === updated.id ? updated : employee)));
       const draft = employeeDrafts.current.get(updated.id);
       if (draft) {
-        draft.draft = { ...draft.draft, enabled: updated.enabled };
         draft.revision = updated.revision;
       }
       if (selectedEmployeeId === updated.id) setEmployeeDraftState(draft?.draft ?? employeeDraft(updated));
@@ -386,48 +356,49 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
                 <>
                   <section className="digital-employee-form-section">
                     <header>
-                      <strong>{zh ? '全局员工与项目差异' : 'Global employee and project overrides'}</strong>
-                      <small>{zh ? '未覆盖的配置跟随全局员工更新；项目补充要求独立保留。' : 'Inherited fields follow global updates. Project instructions remain separate.'}</small>
+                      <strong>{zh ? '项目成员' : 'Project member'}</strong>
+                      <small>{zh ? '身份与提示词统一使用全局员工，当前项目只补充工作要求。' : 'Identity and prompt come from the global employee. This project only adds instructions.'}</small>
                     </header>
-                    {employees.find((employee) => employee.id === selectedEmployeeId)?.globalEmployeeId ? (
-                      <Button
-                        variant="secondary"
-                        size="compact"
-                        busy={busyAction === 'inherit-employee'}
-                        disabled={Boolean(busyAction)}
-                        onClick={() => void inheritGlobalEmployee(employees.find((employee) => employee.id === selectedEmployeeId)!.globalEmployeeId!)}
-                      >
-                        {zh ? '恢复全局配置' : 'Restore global defaults'}
-                      </Button>
-                    ) : (
+                    {employees.find((employee) => employee.id === selectedEmployeeId)?.legacyConfiguration ? (
                       <ZeusSelect
                         size="regular"
-                        ariaLabel={zh ? '为历史项目员工绑定全局员工' : 'Bind the legacy project employee'}
+                        ariaLabel={zh ? '选择全局员工并确认替代旧配置' : 'Choose a global employee to replace legacy settings'}
                         value=""
-                        onChange={(value) => void inheritGlobalEmployee(value)}
+                        onChange={(value) => {
+                          if (value) void inheritGlobalEmployee(value);
+                        }}
                         options={[
-                          { value: '', label: zh ? '仅项目员工，选择全局员工绑定' : 'Project employee, choose global identity' },
+                          { value: '', label: zh ? '选择要使用的全局员工配置' : 'Choose the global employee settings to use' },
                           ...employeeSources.map((employee) => ({ value: employee.id, label: `${employee.name} · ${employee.role}` })),
                         ]}
                         disabled={Boolean(busyAction) || employeeSources.length === 0}
                       />
-                    )}
+                    ) : null}
                   </section>
-                  <DigitalEmployeeEditor
-                    draft={employeeDraftState}
-                    projectId={props.projectId}
-                    skillClient={props.skillClient}
-                    language={props.language}
-                    deployCommands={deployCommands}
-                    capabilities={capabilities}
-                    onChange={editEmployee}
-                    inheritsGlobal={Boolean(employees.find((employee) => employee.id === selectedEmployeeId)?.globalEmployeeId)}
-                  />
+                  {employees.find((employee) => employee.id === selectedEmployeeId)?.legacyConfiguration ? (
+                    <section className="digital-employee-form-section" role="status">
+                      <strong>{zh ? '旧项目配置需要确认，确认前暂停新工作' : 'Review legacy project settings before starting new work'}</strong>
+                      <p>
+                        {zh
+                          ? '旧身份和提示词保留在下方。需要保留独立职责时，请先据此创建全局员工；确认改用全局配置会替代这些旧差异，项目补充要求和经验记录继续保留。'
+                          : 'The previous identity and prompt are preserved below. Create a separate global employee if these responsibilities must remain distinct. Confirming global settings replaces these overrides while keeping project instructions and experience.'}
+                      </p>
+                      <dl>
+                        {Object.entries(employees.find((employee) => employee.id === selectedEmployeeId)!.legacyConfiguration!).map(([key, value]) => (
+                          <div key={key}>
+                            <dt>{legacyEmployeeFieldLabels[key]?.[zh ? 0 : 1] ?? key}</dt>
+                            <dd style={{ whiteSpace: 'pre-wrap' }}>{value ?? (zh ? '未设置' : 'Not set')}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </section>
+                  ) : null}
+                  <DigitalEmployeeEditor draft={employeeDraftState} language={props.language} onChange={editEmployee} />
                 </>
               ) : (
                 <div className="digital-employee-empty-state">
                   <strong>{zh ? '选择员工查看项目配置' : 'Select an employee to configure'}</strong>
-                  <span>{zh ? '在此设置员工的岗位、技能、工作要求、任务选择方式和交付权限。设置只用于当前项目。' : 'Set the employee’s role, skills, instructions, task selection, and delivery permissions for this project.'}</span>
+                  <span>{zh ? '在此补充项目工作要求、设置经验偏好，或管理项目成员。' : 'Add project instructions, set memory preferences, or manage project members.'}</span>
                 </div>
               )}
               {selectedEmployeeId && props.client && employees.some((employee) => employee.id === selectedEmployeeId) ? (
@@ -447,7 +418,6 @@ export function ProjectDigitalEmployeesPanel(props: ProjectDigitalEmployeesPanel
               ) : null}
               {selectedEmployeeId && employeeDraftState ? (
                 <footer className="digital-employee-editor-actions">
-                  <small>{zh ? '提交、推送、合入、部署、结束任务是五项独立授权。' : 'Commit, push, merge, deploy, and task completion are five independent grants.'}</small>
                   <span className="digital-employee-actions">
                     {employees.find((employee) => employee.id === selectedEmployeeId) ? (
                       <>
@@ -533,198 +503,35 @@ function SectionTab(props: { selected: boolean; label: string; onClick: () => vo
   );
 }
 
-/** 数字员工所有入口共用同一份项目级配置表单，避免节点维护覆盖副本。 */
+/** 项目成员只编辑补充要求与个人经验，不复制全局员工配置。 */
 export function DigitalEmployeeEditor(props: {
+  /** 当前项目配置草稿。 */
   draft: DigitalEmployeeDraft;
-  projectId: string;
-  skillClient: Pick<NativeConversationAppClient, 'loadSkills'> | null;
+  /** 当前界面语言。 */
   language: DigitalEmployeeLanguage;
-  deployCommands: CommandDefinition[];
-  capabilities: Pick<CodexConversationCapabilities, 'models'> | null;
+  /** 保存当前项目草稿。 */
   onChange: (draft: DigitalEmployeeDraft) => void;
-  /** 已绑定全局员工时保留默认配置，项目差异按需编辑。 */
-  inheritsGlobal?: boolean;
 }) {
+  /** 当前界面是否使用简体中文。 */
   const zh = props.language === 'zh-CN';
-  /** 必填身份缺失时展开差异区，补全后保留用户当前展开状态。 */
-  const identityDetails = useRef<HTMLDetailsElement>(null);
-  useEffect(() => {
-    if ((!props.draft.name.trim() || !props.draft.role.trim()) && identityDetails.current) identityDetails.current.open = true;
-  }, [props.draft.name, props.draft.role]);
-  const patch = (value: Partial<DigitalEmployeeDraft>) => props.onChange({ ...props.draft, ...value });
-  const patchGrant = (key: 'allowCommit' | 'allowPush' | 'allowMerge' | 'allowDeploy' | 'allowComplete', checked: boolean) => {
-    patch({ [key]: checked });
-  };
   return (
     <div className="digital-employee-form digital-employee-project-form">
-      <details className="digital-employee-advanced-settings" ref={identityDetails} open={!props.inheritsGlobal}>
-        <summary>{zh ? '项目身份差异' : 'Project identity overrides'}</summary>
-        <div className="digital-employee-form-grid">
-          <label>
-            <span>{zh ? '员工名称' : 'Employee name'}</span>
-            <input aria-invalid={!props.draft.name.trim()} value={props.draft.name} onChange={(event) => patch({ name: event.currentTarget.value })} maxLength={120} />
-            {!props.draft.name.trim() ? <small className="is-error">{zh ? '请填写员工名称。' : 'Enter the employee name.'}</small> : null}
-          </label>
-          <label>
-            <span>{zh ? '岗位' : 'Role'}</span>
-            <input aria-invalid={!props.draft.role.trim()} value={props.draft.role} onChange={(event) => patch({ role: event.currentTarget.value })} maxLength={120} />
-            {!props.draft.role.trim() ? <small className="is-error">{zh ? '请填写岗位。' : 'Enter the role.'}</small> : null}
-          </label>
-          <label>
-            <span>{zh ? '业务领域' : 'Business domain'}</span>
-            <input value={props.draft.domain} onChange={(event) => patch({ domain: event.currentTarget.value })} maxLength={120} />
-          </label>
-        </div>
-        <label>
-          <span>{zh ? '身份说明' : 'Identity description'}</span>
-          <textarea rows={3} value={props.draft.description} onChange={(event) => patch({ description: event.currentTarget.value })} maxLength={2000} />
-        </label>
-      </details>
-
-      <section className="digital-employee-form-section">
-        <header>
-          <strong>{zh ? '基础配置' : 'Agent configuration'}</strong>
-          <small>{zh ? '默认继承员工配置，修改只用于当前项目。' : 'Employees work through AI conversations and follow your permissions when running commands.'}</small>
-        </header>
-        <AgentExecutionConfigFields
-          value={props.draft}
-          models={props.capabilities?.models ?? []}
-          skillClient={props.skillClient}
-          projectId={props.projectId}
-          language={props.language}
-          allowProjectDefaultModel
-          inheritedPrompt={props.inheritsGlobal}
-          onChange={patch}
+      <label>
+        <span>{zh ? '项目补充要求' : 'Project instructions'}</span>
+        <textarea
+          rows={6}
+          value={props.draft.projectInstructions}
+          onChange={(event) => props.onChange({ ...props.draft, projectInstructions: event.currentTarget.value })}
+          maxLength={20000}
+          placeholder={zh ? '当前项目的开发标准、流程或业务要求' : 'Standards, workflow, or domain requirements for this project'}
         />
-        <label>
-          <span>{zh ? '项目补充要求' : 'Project instructions'}</span>
-          <textarea
-            rows={4}
-            value={props.draft.projectInstructions}
-            onChange={(event) => patch({ projectInstructions: event.currentTarget.value })}
-            maxLength={20000}
-            placeholder={zh ? '当前项目的开发标准、流程或业务要求' : 'Standards, workflow, or domain requirements for this project'}
-          />
-        </label>
-      </section>
-
-      <section className="digital-employee-form-section digital-employee-grants-section">
-        <header>
-          <strong>{zh ? '权限工具' : 'Authority and tools'}</strong>
-          <small>{zh ? '管理动作分别授权，执行仍需遵循本次任务权限。' : 'These are employee defaults. A run may choose another permission mode, and completion never triggers hidden commit, deploy, or completion steps.'}</small>
-        </header>
-        <div className="digital-employee-policy-grid">
-          <CheckboxRow
-            checked={props.draft.allowCodeChanges}
-            onChange={(allowCodeChanges) => patch({ allowCodeChanges })}
-            title={zh ? '允许修改代码' : 'Allow code changes'}
-            description={zh ? '只影响任务执行；不等于允许提交或推送。' : 'Applies to task execution and does not imply commit or push.'}
-          />
-          <CheckboxRow
-            checked={props.draft.allowTests}
-            onChange={(allowTests) => patch({ allowTests })}
-            title={zh ? '允许执行验证' : 'Allow verification'}
-            description={zh ? '允许员工运行项目已有的检查。' : 'Allow the employee to run the project’s existing checks.'}
-          />
-        </div>
-        <details className="digital-employee-advanced-settings">
-          <summary>
-            {zh ? '管理动作授权' : 'Management action grants'}
-            <small>
-              {[props.draft.allowCommit, props.draft.allowPush, props.draft.allowMerge, props.draft.allowDeploy, props.draft.allowComplete].filter(Boolean).length} {zh ? '项已开启' : 'enabled'}
-            </small>
-          </summary>
-          <div className="digital-employee-grant-flow" aria-label={zh ? '管理动作授权' : 'Management action grants'}>
-            <CheckboxRow
-              checked={props.draft.allowCommit}
-              onChange={(checked) => patchGrant('allowCommit', checked)}
-              title={zh ? '提交' : 'Commit'}
-              description={zh ? '允许在你发起提交操作时创建 Git 提交。' : 'Allow Git commits when you request a commit action.'}
-            />
-            <CheckboxRow
-              checked={props.draft.allowPush}
-              onChange={(checked) => patchGrant('allowPush', checked)}
-              title={zh ? '推送' : 'Push'}
-              description={zh ? '允许在你发起推送操作时上传已提交代码。' : 'Allow committed code to be uploaded when you request a push action.'}
-            />
-            <CheckboxRow
-              checked={props.draft.allowMerge}
-              onChange={(checked) => patchGrant('allowMerge', checked)}
-              title={zh ? '合入' : 'Merge'}
-              description={zh ? '允许在你发起合入操作时合并代码，遇到冲突会停止。' : 'Allow code merges when you request them. Merging stops if there are conflicts.'}
-            />
-            <CheckboxRow
-              checked={props.draft.allowDeploy}
-              onChange={(checked) => patchGrant('allowDeploy', checked)}
-              title={zh ? '部署' : 'Deploy'}
-              description={zh ? '允许在你发起部署操作时部署项目，员工完成工作不会自动部署。' : 'Allow deployment when you request it. Finishing the employee’s work does not deploy automatically.'}
-            />
-            <CheckboxRow
-              checked={props.draft.allowComplete}
-              onChange={(checked) => patchGrant('allowComplete', checked)}
-              title={zh ? '结束任务' : 'Complete task'}
-              description={zh ? '允许执行结束任务的操作，交付物仍需由你验收。' : 'Allow task completion actions. Deliverables still require your acceptance.'}
-            />
-          </div>
-          {props.draft.allowDeploy ? (
-            <label>
-              <span>{zh ? '部署命令能力' : 'Deployment command capability'}</span>
-              <ZeusSelect
-                size="regular"
-                ariaLabel={zh ? '选择允许调用的部署命令' : 'Choose the allowed deployment command'}
-                value={props.draft.deployCommandId}
-                onChange={(deployCommandId) => patch({ deployCommandId })}
-                options={[
-                  { value: '', label: zh ? '未指定固定部署命令' : 'No fixed deployment command' },
-                  ...props.deployCommands.map((command) => ({ value: command.id, label: command.title, searchText: `${command.name} ${command.description}` })),
-                ]}
-              />
-              <small>{zh ? '此命令可供员工在获得授权后使用，不会因保存配置而执行。' : 'The employee can use this command after approval. Saving these settings does not run it.'}</small>
-            </label>
-          ) : null}
-        </details>
-      </section>
-
-      <details className="digital-employee-advanced-settings">
-        <summary>
-          {zh ? '自动领取与经验' : 'Auto claim and experience'}
-          <small>{props.draft.autoClaim ? (zh ? '已开启任务池领取' : 'Task pool enabled') : ''}</small>
-        </summary>
-        <div className="digital-employee-policy-grid">
-          <CheckboxRow
-            checked={props.draft.autoClaim}
-            onChange={(autoClaim) => patch({ autoClaim })}
-            title={zh ? '自动从任务池创建工作项' : 'Create work items from task pool'}
-            description={zh ? '只处理符合筛选条件的未完成任务。' : 'Only handles unfinished tasks matching these filters.'}
-          />
-          <CheckboxRow
-            checked={props.draft.memoryEnabled !== false}
-            onChange={(memoryEnabled) => patch({ memoryEnabled })}
-            title={zh ? '使用个人经验' : 'Use employee experience'}
-            description={zh ? '新工作读取经过确认且未过期的个人经验。关闭后经验记录仍保留。' : 'New work reads confirmed, current experience. Turning this off preserves the records.'}
-          />
-          <CheckboxRow
-            checked={props.draft.autonomousExploration}
-            onChange={(autonomousExploration) => patch({ autonomousExploration })}
-            title={zh ? '允许只读自主探索' : 'Allow read-only exploration'}
-            description={zh ? '仍需自动化规则触发，不会无限循环。' : 'Still requires an automation trigger and never loops indefinitely.'}
-          />
-        </div>
-        <div className="digital-employee-form-grid">
-          <label>
-            <span>{zh ? '管理状态筛选' : 'Management status filter'}</span>
-            <input value={props.draft.managementStatuses} onChange={(event) => patch({ managementStatuses: event.currentTarget.value })} placeholder={zh ? '空值表示不限' : 'Empty means any'} />
-          </label>
-          <label>
-            <span>{zh ? '任务类型筛选' : 'Task type filter'}</span>
-            <input value={props.draft.taskTypes} onChange={(event) => patch({ taskTypes: event.currentTarget.value })} placeholder="requirement, defect" />
-          </label>
-          <label>
-            <span>{zh ? '必须包含的标签' : 'Required tags'}</span>
-            <input value={props.draft.requiredTags} onChange={(event) => patch({ requiredTags: event.currentTarget.value })} placeholder={zh ? '逗号分隔' : 'Comma separated'} />
-          </label>
-        </div>
-      </details>
+      </label>
+      <CheckboxRow
+        checked={props.draft.memoryEnabled}
+        onChange={(memoryEnabled) => props.onChange({ ...props.draft, memoryEnabled })}
+        title={zh ? '使用个人经验' : 'Use employee experience'}
+        description={zh ? '新工作读取已确认且未过期的员工经验。关闭后保留经验记录。' : 'New work reads approved, current employee experience. Turning this off keeps existing records.'}
+      />
     </div>
   );
 }

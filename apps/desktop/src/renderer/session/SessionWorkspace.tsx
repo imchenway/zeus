@@ -179,8 +179,6 @@ export interface SessionWorkspaceActions {
   onSaveProjectModelServiceTierPreference?: (projectId: string, input: ProjectModelServiceTierPreference) => Promise<ProjectConfig>;
   onLoadSkills?: import('../features/codex/codexApiClient.js').CodexApiClient['loadSkills'];
   onLoadDigitalEmployees?: (projectId: string) => Promise<import('../features/digital-employees/digitalEmployeeContracts.js').DigitalEmployeeRecord[]>;
-  /** 任务讨论沿用当前任务的有效配置。 */
-  onLoadTaskWorkSettings?: (taskId: string) => Promise<import('@zeus/shared').EmployeeWorkSettings>;
   /** 解释失败原因后可直接打开对应的现有设置页。 */
   onOpenAiSettings?: (section: 'runtime' | 'models') => void;
   onOpenComputerSettings?: () => void;
@@ -363,8 +361,6 @@ export interface ConnectedSessionWorkspaceProps {
   onStartProjectConversation?: SessionWorkspaceActions['onStartProjectConversation'];
   onLoadSkills?: SessionWorkspaceActions['onLoadSkills'];
   onLoadDigitalEmployees?: SessionWorkspaceActions['onLoadDigitalEmployees'];
-  /** 当前任务覆盖在展开成员配置时读取。 */
-  onLoadTaskWorkSettings?: SessionWorkspaceActions['onLoadTaskWorkSettings'];
   onOpenAiSettings?: SessionWorkspaceActions['onOpenAiSettings'];
   onOpenComputerSettings?: SessionWorkspaceActions['onOpenComputerSettings'];
   onLoadProjectConfig?: SessionWorkspaceActions['onLoadProjectConfig'];
@@ -721,7 +717,6 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       onSaveProjectModelServiceTierPreference: props.onSaveProjectModelServiceTierPreference,
       onLoadSkills: props.onLoadSkills,
       onLoadDigitalEmployees: props.onLoadDigitalEmployees,
-      onLoadTaskWorkSettings: props.onLoadTaskWorkSettings,
       onOpenAiSettings: props.onOpenAiSettings,
       onOpenComputerSettings: props.onOpenComputerSettings,
       onChooseStartAttachments: props.onChooseAttachments,
@@ -742,7 +737,6 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     props.onSaveProjectModelServiceTierPreference,
     props.onLoadSkills,
     props.onLoadDigitalEmployees,
-    props.onLoadTaskWorkSettings,
     props.onOpenAiSettings,
     props.onOpenComputerSettings,
     props.onOpenProjectCommands,
@@ -2507,7 +2501,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         onLoadExtensions={actions.onLoadSkills}
         onLoadEmployees={actions.onLoadDigitalEmployees}
         taskId={props.conversation?.taskId ?? undefined}
-        onLoadTaskWorkSettings={actions.onLoadTaskWorkSettings}
         onOpenComputerSettings={actions.onOpenComputerSettings}
         readOnly={composerReadOnly || interactionAuthorityMissing || props.state.queue?.submissions.some((submission) => submission.pausedReason === 'recovered_unsent')}
         inputBlocked={recoveredInputBlocked}
@@ -3138,7 +3131,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
           onLoadCapabilities={actions.onLoadCapabilities}
           onLoadSkills={actions.onLoadSkills}
           onLoadDigitalEmployees={actions.onLoadDigitalEmployees}
-          onLoadTaskWorkSettings={actions.onLoadTaskWorkSettings}
           onOpenComputerSettings={actions.onOpenComputerSettings}
           onSelectProject={actions.onSelectNewConversationProject}
           onLoadProjectGit={actions.onLoadNewConversationProjectGit}
@@ -3296,8 +3288,6 @@ export function NewConversationComposer(props: {
   onLoadCapabilities?: SessionWorkspaceActions['onLoadCapabilities'];
   onLoadSkills?: SessionWorkspaceActions['onLoadSkills'];
   onLoadDigitalEmployees?: SessionWorkspaceActions['onLoadDigitalEmployees'];
-  /** 当前任务覆盖在展开成员配置时读取。 */
-  onLoadTaskWorkSettings?: SessionWorkspaceActions['onLoadTaskWorkSettings'];
   onOpenComputerSettings?: SessionWorkspaceActions['onOpenComputerSettings'];
   onSelectProject?: SessionWorkspaceActions['onSelectNewConversationProject'];
   onLoadProjectGit?: SessionWorkspaceActions['onLoadNewConversationProjectGit'];
@@ -3672,7 +3662,6 @@ export function NewConversationComposer(props: {
           />
         ) : (
           <StructuredComposerInput
-            models={capabilities?.models}
             tokenDraft={tokenDraft}
             value={content}
             onValueChange={setContent}
@@ -3689,8 +3678,6 @@ export function NewConversationComposer(props: {
             placeholder={copy.newPlaceholder}
             loadCatalog={props.onLoadSkills}
             loadEmployees={props.onLoadDigitalEmployees}
-            taskId={props.owner?.kind === 'task' ? props.owner.taskId : undefined}
-            loadTaskSettings={props.onLoadTaskWorkSettings}
             goalAvailable={goalAvailable}
             onPlanMode={() => setCollaborationMode((current) => (current === 'plan' ? 'default' : 'plan'))}
             onGoalMode={() => {

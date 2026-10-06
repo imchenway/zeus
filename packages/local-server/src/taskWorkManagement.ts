@@ -762,9 +762,10 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
           if (!pending.length) return null;
           for (const item of pending) {
             const assigned = options.planning.assign(item.id, item.revision, employee.id);
-            /** 领取只收紧原安排及员工能力，自动化只读授权不能继承已有计划的写权限。 */
-            const configured = mergeEmployeeWorkSettings(plan.settings, stage?.settings, assigned.arrangement!.settings).permissionMode ?? employee.permissionMode;
-            const boundedPermission = [configured, employee.permissionMode, permissionMode].includes('read-only') ? 'read-only' : [configured, employee.permissionMode, permissionMode].includes('auto') ? 'auto' : 'full-access';
+            /** 领取只收紧原安排及任务授权，自动化只读授权不能继承已有计划的写权限。 */
+            const configured = mergeEmployeeWorkSettings(plan.settings, stage?.settings, assigned.arrangement!.settings).permissionMode ?? (task.allowCodeChanges || task.allowTests || task.allowGitCommit ? 'auto' : 'read-only');
+            /** 自动化与原安排取更严格的权限，员工身份不再携带权限副本。 */
+            const boundedPermission = [configured, permissionMode].includes('read-only') ? 'read-only' : [configured, permissionMode].includes('auto') ? 'auto' : 'full-access';
             options.planning.updateArrangement(assigned, { ...assigned.arrangement!, settings: { ...assigned.arrangement!.settings, permissionMode: boundedPermission } });
           }
           return { kind: 'task_plan', id: plan.id, taskId, generation: plan.generation };
@@ -805,7 +806,8 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       const task = requireTaskOrThrow(options, taskId);
       if (employeeSnapshot.id !== employeeId || employeeSnapshot.projectId !== task.projectId) throw new TaskWorkStoreError('ZEUS_DIGITAL_TEAM_EMPLOYEE_SNAPSHOT_INVALID', '冻结员工配置与当前节点不一致。');
       const employee = structuredClone(employeeSnapshot);
-      const preview = await resolvePreview(options, task, { ...normalizeWorkSettings(settings), employeeId, supplementalInfo, workspace }, employee);
+      /** 已接纳团队节点沿用原冻结偏好；新模板不会保存这些退役字段。 */
+      const preview = await resolvePreview(options, task, { ...settings, ...normalizeWorkSettings(settings), employeeId, supplementalInfo, workspace }, employee);
       if (preview.blockers.length > 0) throw new TaskWorkStoreError(preview.blockers[0]!.code, preview.blockers[0]!.message);
       /** 节点职责随真实工作运行冻结；负责人用团队计划分工，不进入旧安排委派通道。 */
       /** 授权文件必须来自本任务的真实正式成果，不允许跨任务引用改变执行归属。 */
@@ -1321,7 +1323,6 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
   selection = {
     ...selection,
     ...effective,
-    ...(requiredSkills.length ? { skillIds: Array.from(new Set([...(effective.skillIds ?? employeeSnapshot?.skillIds ?? options.employees.getById(selection.employeeId)?.skillIds ?? []), ...requiredSkills])) } : {}),
   };
   if (planned) {
     /** 执行输入同步实际成果约束，员工可以知道部署凭证等必要交付内容。 */
@@ -1384,7 +1385,8 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
 
   if (employee.entrypoint?.kind === 'agent') {
     const agentEntrypoint = employee.entrypoint;
-    const workMode = selection.workMode ?? employee.workMode;
+    /** 只有已接纳团队的冻结节点可延续旧工作模式，新工作统一使用默认。 */
+    const workMode = employeeSnapshot ? (selection.workMode ?? employeeSnapshot.workMode) : 'default';
     /** 个人经验只由当前员工的独立范围读取，项目默认仍由上下文编译器负责。 */
     const memories = selectEmployeeMemories(options.memory, employee, task.projectId, task.title + task.description, options.now().toISOString());
     /** 冻结来源与内容；到期或停用经验不会进入新工作。 */
@@ -1409,16 +1411,17 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
       supplementalInfo: selection.supplementalInfo,
       ...(selection.supplementalAttachments ? { supplementalAttachments: selection.supplementalAttachments } : {}),
     };
-    authority = resolveRunAuthority(agentEntrypoint, selection.permissionMode, task);
+    authority = resolveRunAuthority(selection.permissionMode, task);
     const capability = await options.conversationCapabilities.readTaskPush(task.projectId, task.id);
-    model = resolveAgentModel(employee, agentEntrypoint, selection, capability, blockers);
+    model = resolveAgentModel(capability, blockers, employeeSnapshot, employeeSnapshot ? selection : undefined);
     /** 与会话共用真实功能目录，切换到 Pi 后不按品牌关闭已经接入的目标。 */
     const selectedCapability = (Array.isArray(capability.models) ? capability.models.filter(isCapabilityModel) : []).find((candidate) => candidate.id === model?.id);
     if (effective.autonomyObjective && !(selectedCapability?.features ? ['available', 'unknown'].includes(selectedCapability.features.goals.state) : isRecord(capability.goals) && capability.goals.enabled === true))
       blockers.push({ code: 'ZEUS_TASK_WORK_GOAL_UNAVAILABLE', message: '该模型尚不支持自主目标，请切换支持的模型或清空此目标后执行。' });
     workspace = resolveTaskWorkWorkspaceSnapshot(selection.workspace, capability, blockers);
     if (model && typeof model.agentKind === 'string') entrypoint = { ...entrypoint, agentKind: model.agentKind };
-    const selectedSkillIds = normalizeIdentities(selection.skillIds ?? agentEntrypoint.skillPolicy.allowedSkillIds);
+    /** 冻结节点保留原技能选择和显式清空，新工作只带流程必需技能。 */
+    const selectedSkillIds = normalizeIdentities([...requiredSkills, ...(employeeSnapshot ? (selection.skillIds ?? agentEntrypoint.skillPolicy.allowedSkillIds) : [])]);
     const selectionBySource = splitZeusSkillIds(selectedSkillIds);
     if (selectionBySource.invalidIds.length > 0) blockers.push({ code: 'ZEUS_TASK_WORK_SKILL_INVALID', message: '指派包含无效的 Skill 身份。' });
     if (selectionBySource.nativeSkillIds.length > 0 && !options.skills) blockers.push({ code: 'ZEUS_TASK_WORK_SKILL_CATALOG_UNAVAILABLE', message: 'Zeus Skill 目录当前不可用。' });
@@ -2517,24 +2520,27 @@ function resolveContextManifest(options: TaskWorkManagementOptions, task: ZeusTa
   return { version: 1, task: { id: task.id, revision: task.updatedAt, title: task.title, description: task.description, taskType: task.taskType, tags: [...task.tags] }, attachments, projectRules: rules, acceptedDeliverables: deliverables };
 }
 
-function resolveAgentModel(employee: DigitalEmployeeRecord, entrypoint: AgentEntrypointV2, selection: TaskWorkPreviewSelection, capability: Record<string, unknown>, blockers: TaskWorkPreview['blockers']): Record<string, unknown> | null {
+/** 新工作使用统一默认，已接纳团队只在可信冻结快照中延续原模型与档位。 */
+function resolveAgentModel(capability: Record<string, unknown>, blockers: TaskWorkPreview['blockers'], employeeSnapshot?: DigitalEmployeeRecord, frozenSettings?: TaskWorkPreviewSelection): Record<string, unknown> | null {
+  /** 统一能力目录已经包含当前配置的首选模型。 */
   const models = Array.isArray(capability.models) ? capability.models.filter(isCapabilityModel) : [];
-  const requested =
-    selection.modelOverride?.trim() ||
-    (selection.modelOverride !== null && entrypoint.modelPolicy.defaultMode === 'explicit' ? entrypoint.modelPolicy.defaultModel : null) ||
-    (typeof capability.preferredModel === 'string' ? capability.preferredModel : null);
+  /** 节点显式空值回到统一默认，缺省才沿用已冻结员工的选择。 */
+  const frozenModel = frozenSettings?.modelOverride?.trim() || (frozenSettings?.modelOverride !== null && employeeSnapshot?.entrypoint?.modelPolicy.defaultMode === 'explicit' ? employeeSnapshot.entrypoint.modelPolicy.defaultModel : null);
+  /** 原模型或显式全局首选不可用时报告阻塞，避免暗中替换。 */
+  const requested = frozenModel || (typeof capability.preferredModel === 'string' ? capability.preferredModel : null);
+  /** 没有全局首选时使用首个可用模型。 */
   const model = requested ? models.find((candidate) => candidate.id === requested || candidate.model === requested) : models.find((candidate) => candidate.available);
   if (!model || !model.available) {
     blockers.push({ code: 'ZEUS_TASK_WORK_MODEL_UNAVAILABLE', message: requested ? `模型 ${requested} 当前不可用。` : '项目当前没有可用模型。' });
     return null;
   }
-  /** 显式调整优先，其次沿用员工默认，最后采用模型推荐值。 */
-  const requestedReasoningEffort = selection.reasoningEffort === null ? null : selection.reasoningEffort?.trim() || employee.reasoningEffort || null;
-  // 档位不在清单里（旧配置、旧版本遗留值）按默认档归一，不拦任务：界面显示什么，任务就用什么。
-  const reasoningEffort = requestedReasoningEffort && model.supportedReasoningEfforts.includes(requestedReasoningEffort) ? requestedReasoningEffort : (model.defaultReasoningEffort ?? model.supportedReasoningEfforts[0] ?? null);
-  /** 显式选择标准档保持清除语义；未设置时继承员工默认。 */
-  const serviceTier = selection.serviceTier === null ? model.defaultServiceTier : selection.serviceTier?.trim() || employee.serviceTier || model.defaultServiceTier;
-  if (serviceTier && !model.serviceTiers.some((tier) => tier.id === serviceTier)) blockers.push({ code: 'ZEUS_TASK_WORK_SERVICE_TIER_NOT_ALLOWED', message: '所选服务速率不受当前模型支持。' });
+  /** 空值按原冻结语义使用模型推荐档，缺省才读取历史员工偏好。 */
+  const requestedEffort = frozenSettings?.reasoningEffort === null ? null : frozenSettings?.reasoningEffort?.trim() || employeeSnapshot?.reasoningEffort || null;
+  /** 能力目录变化后仍按既有规则回落支持的推理档位。 */
+  const reasoningEffort = requestedEffort && model.supportedReasoningEfforts.includes(requestedEffort) ? requestedEffort : (model.defaultReasoningEffort ?? model.supportedReasoningEfforts[0] ?? null);
+  /** 已冻结节点显式标准档不重新继承员工速率。 */
+  const serviceTier = frozenSettings?.serviceTier === null ? model.defaultServiceTier : frozenSettings?.serviceTier?.trim() || employeeSnapshot?.serviceTier || model.defaultServiceTier;
+  if (serviceTier && !model.serviceTiers.some((tier) => tier.id === serviceTier)) blockers.push({ code: 'ZEUS_TASK_WORK_SERVICE_TIER_NOT_ALLOWED', message: '冻结节点的服务速率不受当前模型支持。' });
   return {
     id: model.id,
     model: model.model,
@@ -2542,27 +2548,28 @@ function resolveAgentModel(employee: DigitalEmployeeRecord, entrypoint: AgentEnt
     agentKind: model.agentKind,
     sourceId: model.sourceId,
     sourceName: model.sourceName,
-    reasoningEffort: reasoningEffort ?? null,
+    reasoningEffort,
     serviceTier: serviceTier ?? null,
     contextWindow: model.contextWindow,
   };
 }
 
-/** 所有员工入口按本轮模式、员工授权和当前任务权限取交集，再冻结到运行。 */
-function resolveRunAuthority(entrypoint: AgentEntrypointV2, requestedPermission: TaskWorkPreviewSelection['permissionMode'], task: ZeusTaskRecord): Record<string, unknown> {
-  const permissionMode = requestedPermission ?? entrypoint.authorityPolicy.permissionMode;
+/** 默认权限来自任务实际授权，自动化与流程节点可以进一步收紧。 */
+function resolveRunAuthority(requestedPermission: TaskWorkPreviewSelection['permissionMode'], task: ZeusTaskRecord): Record<string, unknown> {
+  /** 不再读取员工权限占位，新工作不会默认获得完全访问。 */
+  const permissionMode = requestedPermission ?? (task.allowCodeChanges || task.allowTests || task.allowGitCommit ? 'auto' : 'read-only');
+  /** 只读模式不能获得任务已授予的写入与交付能力。 */
   const active = permissionMode !== 'read-only';
-  const policy = entrypoint.authorityPolicy;
   return {
-    ...policy,
     permissionMode,
-    allowCodeChanges: active && policy.allowCodeChanges && task.allowCodeChanges,
-    allowTests: active && policy.allowTests && task.allowTests,
-    allowCommit: active && policy.allowCommit && task.allowGitCommit,
-    allowPush: active && policy.allowPush,
-    allowMerge: active && policy.allowMerge,
-    allowDeploy: active && policy.allowDeploy,
-    allowComplete: active && policy.allowComplete,
+    allowCodeChanges: active && task.allowCodeChanges,
+    allowTests: active && task.allowTests,
+    allowCommit: active && task.allowGitCommit,
+    /** 员工身份与完全访问均不构成自动推送、合并、部署或关闭任务的授权。 */
+    allowPush: false,
+    allowMerge: false,
+    allowDeploy: false,
+    allowComplete: false,
   };
 }
 
@@ -2870,13 +2877,8 @@ function normalizeSelection(value: unknown): TaskWorkPreviewSelection {
     plannedWorkItemId: optionalText(value.plannedWorkItemId, 256) ?? undefined,
     supplementalInfo: optionalText(value.supplementalInfo, 20_000),
     supplementalAttachments: optionalSupplementalAttachments(value.supplementalAttachments),
-    modelOverride: optionalText(value.modelOverride, 256),
-    reasoningEffort: optionalText(value.reasoningEffort, 64),
-    serviceTier: value.serviceTier === null ? null : optionalText(value.serviceTier, 64),
-    workMode: optionalMember(value.workMode, ['default', 'plan'] as const, '工作模式无效。'),
     permissionMode: optionalMember(value.permissionMode, ['read-only', 'auto', 'full-access'] as const, '权限模式无效。'),
     promptOverride: optionalText(value.promptOverride, 20_000),
-    skillIds: Array.isArray(value.skillIds) ? normalizeIdentities(value.skillIds) : undefined,
     selectedDeliverableIds: Array.isArray(value.selectedDeliverableIds) ? normalizeIdentities(value.selectedDeliverableIds) : undefined,
     workspace: normalizeTaskWorkWorkspaceChoice(value.workspace),
   };
@@ -3080,13 +3082,8 @@ export function normalizeWorkSettings(value: unknown): EmployeeWorkSettings {
       throw new TaskWorkStoreError('ZEUS_TASK_WORK_SETTINGS_INVALID', '委派需要明确成员、1 到 4 层拆分和 1 到 48 份分工预算。', 400);
     result.delegation = { employeeIds: normalizeIdentities(policy.employeeIds), maxDepth: Number(policy.maxDepth), maxWorkItems: Number(policy.maxWorkItems) };
   }
-  for (const key of ['autonomyObjective', 'modelOverride', 'reasoningEffort', 'serviceTier', 'promptOverride'] as const)
-    if (key in value) result[key] = value[key] === null ? null : requiredText(value[key], '配置文本无效。', key === 'promptOverride' ? 20_000 : key === 'autonomyObjective' ? 4_000 : 256);
-  if (value.workMode !== undefined) result.workMode = optionalMember(value.workMode, ['default', 'plan'] as const, '工作模式无效。') ?? undefined;
+  /** 历史执行偏好可被读取，但新配置只保存业务要求。 */
+  for (const key of ['autonomyObjective', 'promptOverride'] as const) if (key in value) result[key] = value[key] === null ? null : requiredText(value[key], '配置文本无效。', key === 'promptOverride' ? 20_000 : 4_000);
   if (value.permissionMode !== undefined) result.permissionMode = optionalMember(value.permissionMode, ['read-only', 'auto', 'full-access'] as const, '权限模式无效。') ?? undefined;
-  if (value.skillIds !== undefined) {
-    if (!Array.isArray(value.skillIds)) throw new TaskWorkStoreError('ZEUS_TASK_WORK_SETTINGS_INVALID', '技能必须为身份列表。', 400);
-    result.skillIds = normalizeIdentities(value.skillIds);
-  }
   return result;
 }

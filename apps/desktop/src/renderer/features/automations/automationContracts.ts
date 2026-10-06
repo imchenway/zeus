@@ -122,8 +122,10 @@ export interface AutomationTaskInput {
   conversationMode?: AutomationConversationMode;
   originalConversationId?: string | null;
   permissionMode?: AutomationPermissionMode;
-  modelSourceId: string;
-  modelId: string;
+  /** 历史字段，新规则执行继承统一默认。 */
+  modelSourceId?: string;
+  /** 历史字段，新规则执行继承统一默认。 */
+  modelId?: string;
   reasoningEffort?: string | null;
   serviceTier?: string | null;
   fastMode?: boolean;

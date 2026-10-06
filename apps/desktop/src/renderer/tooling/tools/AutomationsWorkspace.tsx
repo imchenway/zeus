@@ -1,7 +1,7 @@
 import { MotionPresence } from '../toolPageHost.js';
 import { formatVisibleApplicationError, VisibleApplicationError } from '../toolPageHost.js';
 import { temporaryWorkspaceId } from '../toolPageHost.js';
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { ArrowClockwiseIcon as Refresh } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { ClockCountdownIcon as Clock } from '@phosphor-icons/react/dist/csr/ClockCountdown';
 import { TrayIcon as Inbox } from '@phosphor-icons/react/dist/csr/Tray';
@@ -9,28 +9,14 @@ import { PauseIcon as Pause } from '@phosphor-icons/react/dist/csr/Pause';
 import { PlayIcon as Play } from '@phosphor-icons/react/dist/csr/Play';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
-import type { CodexTaskPushModelCapability } from '../toolPageHost.js';
 import type { DashboardClient, ProjectRecord } from '../toolPageHost.js';
 import { Button } from '../toolPageHost.js';
 import { FormDialog } from '../toolPageHost.js';
 import { ZeusSelect } from '../toolPageHost.js';
-import type { SkillCatalog } from '../toolPageHost.js';
-import { codexCapabilitiesChangedEvent } from '../toolPageHost.js';
-import { SkillSelector } from '../toolPageHost.js';
-import type {
-  AutomationBlockStrategy,
-  AutomationConversationMode,
-  AutomationExecutionReference,
-  AutomationExecutionTarget,
-  AutomationPermissionMode,
-  AutomationRunRecord,
-  AutomationTaskInput,
-  AutomationTaskRecord,
-  AutomationTriggerKind,
-} from '../toolPageHost.js';
+import type { AutomationBlockStrategy, AutomationExecutionReference, AutomationExecutionTarget, AutomationPermissionMode, AutomationRunRecord, AutomationTaskInput, AutomationTaskRecord, AutomationTriggerKind } from '../toolPageHost.js';
 import type { DigitalEmployeeTemplateRecord, AutomationActionKind } from '../toolPageHost.js';
 
-type Draft = Omit<AutomationTaskInput, 'pluginIds'> & { pluginIds: string[]; maxRunsPerDayText: string; maxTokensPerDayText: string };
+type Draft = Omit<AutomationTaskInput, 'pluginIds'> & { pluginIds: string[]; maxRunsPerDayText: string; maxTokensPerDayText: string; taskStatusesText: string; taskTypesText: string; requiredTagsText: string };
 type View = 'tasks' | 'inbox';
 const allProjectsValue = '__all_projects__';
 /** 无项目选项只改变用户目标范围，运行时目录由服务端托管。 */
@@ -52,7 +38,6 @@ export function AutomationsWorkspace(props: {
   const [inbox, setInbox] = useState<AutomationRunRecord[]>([]);
   /** 多项目运行逐份选择实际引用，保持查看入口数量固定。 */
   const [selectedExecutions, setSelectedExecutions] = useState<Record<string, string>>({});
-  const [models, setModels] = useState<CodexTaskPushModelCapability[]>([]);
   /** 员工选择只展示已创建的全局身份，内置模板不会成为执行成员。 */
   const [employees, setEmployees] = useState<DigitalEmployeeTemplateRecord[]>([]);
   /** 指定已有任务只读取用户明确选择的一个项目。 */
@@ -63,9 +48,6 @@ export function AutomationsWorkspace(props: {
   const [projectTasksError, setProjectTasksError] = useState<string | null>(null);
   /** 待核对的迁移规则必须实际重选策略，普通名称编辑不能代替确认。 */
   const [taskSelectionConfirmed, setTaskSelectionConfirmed] = useState(true);
-  const [extensionCatalog, setExtensionCatalog] = useState<SkillCatalog | null>(null);
-  const [extensionsLoading, setExtensionsLoading] = useState(false);
-  const [extensionsError, setExtensionsError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -74,55 +56,15 @@ export function AutomationsWorkspace(props: {
   const [fullAccessAcknowledged, setFullAccessAcknowledged] = useState(false);
   /** 删除前保留任务，只有确认成功才关闭弹窗。 */
   const [pendingDelete, setPendingDelete] = useState<AutomationTaskRecord | null>(null);
-  /** 模型刷新独立于自动化表单与运行记录。 */
-  const modelRevisionRef = useRef(0);
-  /** 有项目时保留项目默认模型；完全无项目时读取全局模型目录。 */
-  const modelProjectId = draft.projectIds[0] ?? userProjects[0]?.id;
-
-  useEffect(() => {
-    const client = props.client;
-    if (!client) return;
-    /** 自动化模型属于全局配置，不要求先选择项目。 */
-    let disposed = false;
-    const refreshModels = (): void => {
-      const revision = ++modelRevisionRef.current;
-      const request = modelProjectId ? client.loadCodexConversationCapabilities(modelProjectId) : client.loadDigitalEmployeeCapabilities();
-      void request
-        .then((next) => {
-          if (!disposed && revision === modelRevisionRef.current) setModels(next.models.filter((model) => model.available !== false));
-        })
-        .catch(() => {
-          // 网络恢复后的目录通知会重试，不打断自动化草稿编辑。
-        });
-    };
-    refreshModels();
-    window.addEventListener(codexCapabilitiesChangedEvent, refreshModels);
-    return () => {
-      disposed = true;
-      modelRevisionRef.current += 1;
-      window.removeEventListener(codexCapabilitiesChangedEvent, refreshModels);
-    };
-  }, [modelProjectId, props.client]);
-
   async function refresh(): Promise<void> {
     if (!props.client) return;
-    /** 页面读取与目录通知共用代次，避免迟到结果回写。 */
-    const modelRevision = ++modelRevisionRef.current;
     setLoading(true);
     setError(null);
     try {
-      const capabilitiesRequest = modelProjectId ? props.client.loadCodexConversationCapabilities(modelProjectId) : props.client.loadDigitalEmployeeCapabilities();
-      const [nextTasks, nextInbox, capabilities, nextEmployees] = await Promise.all([props.client.loadAutomations(), props.client.loadAutomationInbox(), capabilitiesRequest, props.client.loadGlobalDigitalEmployees()]);
+      const [nextTasks, nextInbox, nextEmployees] = await Promise.all([props.client.loadAutomations(), props.client.loadAutomationInbox(), props.client.loadGlobalDigitalEmployees()]);
       setTasks(nextTasks);
       setInbox(nextInbox);
       setEmployees(nextEmployees);
-      if (modelRevision === modelRevisionRef.current) setModels(capabilities?.models.filter((model) => model.available !== false) ?? []);
-      setDraft((current) => {
-        if (current.modelId || !capabilities?.models.length) return current;
-        const preferredModel = 'preferredModel' in capabilities ? capabilities.preferredModel : null;
-        const preferred = capabilities.models.find((model) => model.model === preferredModel) ?? capabilities.models[0]!;
-        return { ...current, modelSourceId: preferred.sourceId ?? 'codex', modelId: preferred.model, reasoningEffort: preferred.defaultReasoningEffort ?? null };
-      });
     } catch (cause) {
       setError(formatVisibleApplicationError(cause, zh ? 'zh-CN' : 'en'));
     } finally {
@@ -132,10 +74,9 @@ export function AutomationsWorkspace(props: {
 
   useEffect(() => {
     void refresh();
-    // 首次进入并行读取定义、收件箱和能力；后续由用户显式刷新，避免定时水合打断编辑。
+    // 首次进入并行读取规则、收件箱和员工；后续由用户显式刷新，避免打断编辑。
   }, [props.client]);
 
-  const selectedProjectKey = draft.projectIds.join('\u0000');
   /** 编辑旧规则时沿用保存的领取方式，未选择策略的新规则才使用原有默认。 */
   const taskSelection = draft.action?.taskSelection ?? (draft.action?.taskId ? 'specified' : draft.action?.useEventTask ? 'event' : 'create');
   /** 指定同一任务不能跨项目复用其身份。 */
@@ -165,62 +106,6 @@ export function AutomationsWorkspace(props: {
       active = false;
     };
   }, [draft.action?.kind, editingId, props.client, taskProjectId, taskSelection, zh]);
-  useEffect(() => {
-    if (!props.client || !editingId || (draft.action?.kind ?? 'conversation') !== 'conversation') {
-      setExtensionCatalog(null);
-      setExtensionsLoading(false);
-      setExtensionsError(null);
-      return;
-    }
-    let active = true;
-    setExtensionCatalog(null);
-    setExtensionsLoading(true);
-    setExtensionsError(null);
-    const projectIds = selectedProjectKey ? selectedProjectKey.split('\u0000') : [];
-    /** 无项目时读取个人 Skill 与 Plugin；有项目时保留交集语义。 */
-    void Promise.all(projectIds.length > 0 ? projectIds.map((projectId) => props.client!.loadSkills(projectId)) : [props.client.loadSkills()])
-      .then((catalogs) => {
-        if (!active) return;
-        const first = catalogs[0]!;
-        const rest = catalogs.slice(1);
-        setExtensionCatalog({
-          ...first,
-          skills: first.skills.filter((skill) => skill.source !== 'plugin' && rest.every((catalog) => catalog.skills.some((candidate) => candidate.source !== 'plugin' && candidate.id === skill.id))),
-          plugins: (first.plugins ?? []).filter((plugin) => rest.every((catalog) => catalog.plugins?.some((candidate) => candidate.id === plugin.id))),
-          errors: catalogs.flatMap((catalog) => catalog.errors),
-        });
-      })
-      .catch((cause: unknown) => {
-        if (active) setExtensionsError(formatVisibleApplicationError(cause, zh ? 'zh-CN' : 'en'));
-      })
-      .finally(() => {
-        if (active) setExtensionsLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [editingId, props.client, selectedProjectKey, draft.action?.kind]);
-
-  const modelOptions = useMemo(
-    () =>
-      models.map((model) => ({
-        value: `${model.sourceId ?? 'codex'}\u0000${model.model}`,
-        label: `${model.sourceName ? `${model.sourceName} · ` : ''}${model.displayName ?? model.model}${model.speedLabel === 'flash' ? ' · Flash' : ''}${model.supports1MContext ? ' · 1M' : ''}`,
-        model,
-      })),
-    [models],
-  );
-  const selectedModelValue = `${draft.modelSourceId}\u0000${draft.modelId}`;
-  const selectedModelOption = modelOptions.find((option) => option.value === selectedModelValue);
-  const selectedModel = selectedModelOption?.model;
-  const exactModelOptions =
-    selectedModelOption || !draft.modelId ? modelOptions : [{ value: selectedModelValue, label: `${draft.modelSourceId} · ${draft.modelId} · ${zh ? '当前不可用' : 'Currently unavailable'}`, disabled: true }, ...modelOptions];
-  const reasoningEffort = draft.reasoningEffort ?? '';
-  const reasoningOptions = [
-    { value: '', label: zh ? '模型默认' : 'Model default' },
-    ...(selectedModel?.supportedReasoningEfforts ?? []).map((effort) => ({ value: effort, label: effort })),
-    ...(reasoningEffort && !selectedModel?.supportedReasoningEfforts.includes(reasoningEffort) ? [{ value: reasoningEffort, label: `${reasoningEffort} · ${zh ? '当前不可用' : 'Currently unavailable'}`, disabled: true }] : []),
-  ];
   const unreadCount = inbox.filter((run) => run.unread).length;
   const allProjectsSelected = userProjects.length > 0 && userProjects.every((project) => draft.projectIds.includes(project.id));
   const projectOptions = [
@@ -243,50 +128,20 @@ export function AutomationsWorkspace(props: {
         : zh
           ? `已选择 ${selectedProjectNames.length} 个项目`
           : `${selectedProjectNames.length} projects selected`;
-  const availablePluginIds = new Set((extensionCatalog?.plugins ?? []).map((plugin) => plugin.id));
-  const pluginOptions = [
-    ...(extensionCatalog?.plugins ?? []).map((plugin) => ({
-      value: plugin.id,
-      label: plugin.displayName || plugin.name,
-      group: plugin.scope === 'project' ? (zh ? '项目 Plugin' : 'Project plugins') : zh ? '个人 Plugin' : 'Personal plugins',
-      searchText: `${plugin.name} ${plugin.description} ${plugin.sourceLocator} ${plugin.id}`,
-    })),
-    ...draft.pluginIds.filter((id) => !availablePluginIds.has(id)).map((id) => ({ value: id, label: `${id} · ${zh ? '当前不可用' : 'Currently unavailable'}`, group: zh ? '需要重选' : 'Reselect' })),
-  ];
-  const selectedPluginNames = draft.pluginIds.map((id) => pluginOptions.find((option) => option.value === id)?.label ?? id);
-  const pluginTriggerLabel =
-    selectedPluginNames.length === 0
-      ? extensionsLoading
-        ? zh
-          ? '正在读取 Plugin…'
-          : 'Loading plugins…'
-        : zh
-          ? '不使用 Plugin'
-          : 'No plugins'
-      : selectedPluginNames.length === 1
-        ? selectedPluginNames[0]
-        : zh
-          ? `已选择 ${selectedPluginNames.length} 个 Plugin`
-          : `${selectedPluginNames.length} plugins selected`;
-  const extensionsValid =
-    (!draft.skillId && draft.pluginIds.length === 0) ||
-    (!extensionsLoading && !extensionsError && Boolean(extensionCatalog) && (!draft.skillId || extensionCatalog!.skills.some((skill) => skill.id === draft.skillId)) && draft.pluginIds.every((id) => availablePluginIds.has(id)));
-  /** 原会话不能被自动化静默扩展到其他项目目录。 */
-  const conversationProjectsValid = draft.conversationMode !== 'original' || draft.projectIds.length === 1;
   /** 员工动作必须有员工，项目任务必须有业务项目。 */
   const actionValid =
-    (draft.action?.kind ?? 'conversation') === 'conversation' ||
-    (Boolean(draft.action?.employeeId) &&
-      (draft.action?.kind !== 'project_task' ||
-        (draft.projectIds.length > 0 &&
-          taskSelectionConfirmed &&
-          (taskSelection !== 'specified' || (Boolean(taskProjectId) && !projectTasksLoading && projectTasks.some((task) => task.id === draft.action?.taskId))) &&
-          (taskSelection !== 'event' || draft.triggerKind === 'event'))));
+    draft.action?.kind !== 'conversation' &&
+    Boolean(draft.action?.employeeId) &&
+    (draft.action?.kind !== 'project_task' ||
+      (draft.projectIds.length > 0 &&
+        taskSelectionConfirmed &&
+        (taskSelection !== 'specified' || (Boolean(taskProjectId) && !projectTasksLoading && projectTasks.some((task) => task.id === draft.action?.taskId))) &&
+        (taskSelection !== 'event' || draft.triggerKind === 'event')));
 
   /** 创建时重置草稿，弹窗负责初始焦点。 */
   function startCreate(): void {
     setEditingId('new');
-    setDraft(emptyDraft(props.projects, modelOptions[0]?.model));
+    setDraft(emptyDraft(props.projects));
     setFullAccessAcknowledged(false);
     setError(null);
     setTaskSelectionConfirmed(true);
@@ -297,11 +152,14 @@ export function AutomationsWorkspace(props: {
     setTaskSelectionConfirmed(!task.migrationIssue);
     setEditingId(task.id);
     setDraft({
+      taskStatusesText: (task.action.taskFilter?.managementStatuses ?? []).join(', '),
+      taskTypesText: (task.action.taskFilter?.taskTypes ?? []).join(', '),
+      requiredTagsText: (task.action.taskFilter?.requiredTags ?? []).join(', '),
       name: task.name,
       description: task.description,
       prompt: task.prompt,
       projectIds: task.projectIds,
-      action: task.action,
+      action: task.action.kind === 'conversation' ? { kind: 'employee_work', employeeId: null } : task.action,
       triggerKind: task.triggerKind,
       triggerConfig: task.triggerConfig,
       timezone: task.timezone,
@@ -424,7 +282,7 @@ export function AutomationsWorkspace(props: {
                     <span>
                       <strong>{task.name}</strong>
                       <small>
-                        {projectNames(task.projectIds, props.projects, zh)} · {modelName(task, models)}
+                        {projectNames(task.projectIds, props.projects, zh)} · {zh ? '统一执行默认' : 'Shared execution defaults'}
                       </small>
                       {task.migrationIssue ? <small className="automation-warning">{task.migrationIssue}</small> : null}
                     </span>
@@ -563,13 +421,7 @@ export function AutomationsWorkspace(props: {
             zh={zh}
             busy={Boolean(busyId)}
             submitLabel={editingId === 'new' ? (zh ? '创建并启用' : 'Create and enable') : zh ? '保存更改' : 'Save changes'}
-            submitDisabled={
-              !draft.name.trim() ||
-              !draft.prompt.trim() ||
-              !actionValid ||
-              (draft.permissionMode === 'full-access' && !fullAccessAcknowledged) ||
-              ((draft.action?.kind ?? 'conversation') === 'conversation' && (!selectedModel || !extensionsValid || !conversationProjectsValid))
-            }
+            submitDisabled={!draft.name.trim() || !draft.prompt.trim() || !actionValid || (draft.permissionMode === 'full-access' && !fullAccessAcknowledged)}
             onClose={() => setEditingId(null)}
             onSubmit={(event) => void submit(event)}
           >
@@ -620,20 +472,20 @@ export function AutomationsWorkspace(props: {
               {tasks.find((task) => task.id === editingId)?.migrationIssue ? <p role="status">{tasks.find((task) => task.id === editingId)!.migrationIssue}</p> : null}
               <SelectField
                 label={zh ? '动作' : 'Action'}
-                value={draft.action?.kind ?? 'conversation'}
+                value={draft.action?.kind ?? 'employee_work'}
                 options={[
-                  ['conversation', zh ? '普通会话' : 'Conversation'],
                   ['employee_work', zh ? '员工工作' : 'Employee work'],
                   ['project_task', zh ? '处理项目任务' : 'Process project tasks'],
                 ]}
-                onChange={(value) =>
+                onChange={(value) => {
                   setDraft({
                     ...draft,
-                    action: { ...draft.action, kind: value as AutomationActionKind, employeeId: value === 'conversation' ? null : (draft.action?.employeeId ?? null) },
+                    action: { ...draft.action, kind: value as AutomationActionKind, employeeId: draft.action?.employeeId ?? null },
                     conversationMode: 'independent',
                     originalConversationId: null,
-                  })
-                }
+                  });
+                  setFullAccessAcknowledged(false);
+                }}
               />
               {draft.action?.kind !== 'conversation' && draft.action?.kind ? (
                 <SelectField
@@ -693,7 +545,23 @@ export function AutomationsWorkspace(props: {
                       {projectTasksError ? <small role="alert">{projectTasksError}</small> : null}
                     </label>
                   ) : null}
-                  {taskSelection === 'pool' ? <small>{zh ? '没有符合员工领取条件的任务时跳过该项目，不创建替代任务。' : 'Skip a project with no eligible tasks; no substitute task is created.'}</small> : null}
+                  {taskSelection !== 'create' ? (
+                    <div className="automation-form-grid">
+                      {(
+                        [
+                          ['taskStatusesText', zh ? '任务状态（逗号分隔，空为不限）' : 'Task statuses (comma separated)'],
+                          ['taskTypesText', zh ? '任务类型（逗号分隔，空为不限）' : 'Task types (comma separated)'],
+                          ['requiredTagsText', zh ? '必须包含的标签（逗号分隔）' : 'Required tags (comma separated)'],
+                        ] as const
+                      ).map(([key, label]) => (
+                        <label key={key}>
+                          <span>{label}</span>
+                          <input value={draft[key]} onChange={(event) => setDraft({ ...draft, [key]: event.currentTarget.value })} />
+                        </label>
+                      ))}
+                    </div>
+                  ) : null}
+                  {taskSelection === 'pool' ? <small>{zh ? '没有符合规则筛选的任务时跳过该项目，不创建替代任务。' : 'Skip a project with no eligible tasks; no substitute task is created.'}</small> : null}
                   {taskSelection === 'event' ? <small>{zh ? '只处理本次事件所属的任务，需要使用事件触发。' : 'Process the task belonging to the source event; requires an event trigger.'}</small> : null}
                 </>
               ) : null}
@@ -717,33 +585,23 @@ export function AutomationsWorkspace(props: {
               <legend>{zh ? '运行安排' : 'Schedule'}</legend>
               <div className="automation-form-grid">
                 <SelectField label={zh ? '触发方式' : 'Trigger'} value={draft.triggerKind ?? 'manual'} options={triggerOptions(zh)} onChange={(value) => setDraft({ ...draft, triggerKind: value as AutomationTriggerKind })} />
+                <SelectField
+                  label={zh ? '重复触发时' : 'Overlapping triggers'}
+                  value={draft.blockStrategy ?? 'serial'}
+                  options={[
+                    ['serial', zh ? '依次执行' : 'Queue'],
+                    ['discard', zh ? '跳过新触发' : 'Discard new'],
+                    ['cover', zh ? '替换待执行项' : 'Replace queued'],
+                  ]}
+                  onChange={(value) => setDraft({ ...draft, blockStrategy: value as AutomationBlockStrategy })}
+                />
               </div>
               <TriggerFields draft={draft} setDraft={setDraft} zh={zh} />
               <small>{zh ? `按 ${draft.timezone || 'UTC'} 时间运行` : `Runs in ${draft.timezone || 'UTC'}`}</small>
             </fieldset>
             <fieldset className="automation-form-section">
-              <legend>{zh ? '模型与权限' : 'Model and permissions'}</legend>
-              {(draft.action?.kind ?? 'conversation') === 'conversation' ? (
-                <label>
-                  <span>{zh ? '使用模型' : 'Model'}</span>
-                  <ZeusSelect
-                    size="regular"
-                    ariaLabel={zh ? '选择模型' : 'Select a model'}
-                    value={selectedModelValue}
-                    options={exactModelOptions}
-                    onChange={(value) => {
-                      const option = modelOptions.find((candidate) => candidate.value === value);
-                      if (option) setDraft({ ...draft, modelSourceId: option.model.sourceId ?? 'codex', modelId: option.model.model, reasoningEffort: option.model.defaultReasoningEffort ?? null });
-                    }}
-                    searchPlaceholder={zh ? '搜索供应商或模型' : 'Search providers or models'}
-                    emptyLabel={zh ? '没有可用模型' : 'No available models'}
-                    triggerLabel={!draft.modelId ? (zh ? '暂无可用模型' : 'No available models') : undefined}
-                    disabled={!modelOptions.length}
-                  />
-                </label>
-              ) : (
-                <p>{zh ? '模型和 Skill 使用员工的有效配置；以下权限继续限制本次自动化。' : 'Uses the employee’s model and skills; these permissions further limit this automation.'}</p>
-              )}
+              <legend>{zh ? '执行权限' : 'Permissions'}</legend>
+              <p>{zh ? '使用统一执行默认；以下权限限制本次自动化。' : 'Uses shared execution defaults; these permissions limit this automation.'}</p>
               <div className="automation-form-grid">
                 <SelectField
                   label={zh ? '权限' : 'Permission'}
@@ -763,124 +621,24 @@ export function AutomationsWorkspace(props: {
                 <label className="automation-risk-ack">
                   <input type="checkbox" checked={fullAccessAcknowledged} onChange={(event) => setFullAccessAcknowledged(event.currentTarget.checked)} />
                   <span>
-                    {zh ? '我允许此自动化持续使用以上权限，直到我修改或撤销授权；执行的操作可能无法撤销。' : 'I allow this automation to keep using these permissions until I change or revoke them. Its actions may be irreversible.'}
+                    {draft.action?.kind === 'project_task'
+                      ? zh
+                        ? '我允许此自动化持续修改代码、执行验证和创建本地 Git 提交，直到我修改或撤销授权；推送、合并和部署需另行授权。'
+                        : 'I allow this automation to change code, run verification, and create local Git commits until I change or revoke this grant. Pushing, merging, and deployment require separate authorization.'
+                      : zh
+                        ? '我允许此自动化持续使用以上权限，直到我修改或撤销授权；执行的操作可能无法撤销。'
+                        : 'I allow this automation to keep using these permissions until I change or revoke them. Its actions may be irreversible.'}
                   </span>
                 </label>
               ) : null}
             </fieldset>
 
-            <details className="automation-advanced-settings" open={draft.conversationMode === 'original' || Boolean(extensionsError) || !extensionsValid}>
+            <details className="automation-advanced-settings">
               <summary>{zh ? '高级设置' : 'Advanced settings'}</summary>
-              <div className="automation-form-grid">
-                <label>
-                  <span>{zh ? '时区（如 Asia/Shanghai）' : 'Time zone (for example, Asia/Shanghai)'}</span>
-                  <input value={draft.timezone ?? ''} onChange={(event) => setDraft({ ...draft, timezone: event.currentTarget.value })} />
-                </label>
-                {(draft.action?.kind ?? 'conversation') === 'conversation' ? (
-                  <label>
-                    <span>{zh ? '推理强度' : 'Reasoning effort'}</span>
-                    <ZeusSelect
-                      size="regular"
-                      ariaLabel={zh ? '选择推理强度' : 'Choose reasoning effort'}
-                      value={reasoningEffort}
-                      options={reasoningOptions}
-                      onChange={(value) => setDraft({ ...draft, reasoningEffort: value || null })}
-                      disabled={!selectedModel}
-                      searchable={false}
-                    />
-                  </label>
-                ) : null}{' '}
-              </div>
-              <fieldset className="automation-form-section">
-                <legend>{zh ? '运行方式' : 'Run behavior'}</legend>
-                <div className="automation-form-grid">
-                  {(draft.action?.kind ?? 'conversation') === 'conversation' ? (
-                    <SelectField
-                      label={zh ? '会话模式' : 'Conversation mode'}
-                      value={draft.conversationMode ?? 'independent'}
-                      options={[
-                        ['independent', zh ? '每次新建一个会话' : 'One new conversation per run'],
-                        ['original', zh ? '追加原会话' : 'Append to original'],
-                      ]}
-                      onChange={(value) => setDraft({ ...draft, conversationMode: value as AutomationConversationMode })}
-                    />
-                  ) : null}
-                  <SelectField
-                    label={zh ? '上次运行未结束时' : 'When the previous run is unfinished'}
-                    value={draft.blockStrategy ?? 'serial'}
-                    options={[
-                      ['serial', zh ? '排队等待' : 'Wait in line'],
-                      ['discard', zh ? '跳过新运行' : 'Skip the new run'],
-                      ['cover', zh ? '停止旧运行并开始新的运行' : 'Stop the previous run and start the new one'],
-                    ]}
-                    onChange={(value) => setDraft({ ...draft, blockStrategy: value as AutomationBlockStrategy })}
-                  />
-                </div>
-                {draft.conversationMode === 'original' ? (
-                  <>
-                    <label>
-                      <span>{zh ? '原会话 ID' : 'Original conversation ID'}</span>
-                      <input required value={draft.originalConversationId ?? ''} onChange={(event) => setDraft({ ...draft, originalConversationId: event.currentTarget.value })} />
-                    </label>
-                    {draft.projectIds.length !== 1 ? (
-                      <small className="automation-capability-error">
-                        {zh
-                          ? '追加原会话必须选择该会话所属的一个项目；无项目或多项目请使用“每次新建一个会话”。'
-                          : 'Appending to an existing conversation requires its one project. Use one new conversation per run without a project or with multiple projects.'}
-                      </small>
-                    ) : null}
-                  </>
-                ) : null}
-              </fieldset>
-              <div className="automation-form-grid">
-                {(draft.action?.kind ?? 'conversation') === 'conversation' ? (
-                  <label>
-                    <span>{zh ? '技能' : 'Skill'}</span>
-                    <SkillSelector
-                      client={props.client}
-                      value={draft.skillId ?? ''}
-                      onChange={(value) => setDraft({ ...draft, skillId: value || null })}
-                      language={props.language}
-                      catalog={extensionCatalog}
-                      disabled={extensionsLoading || Boolean(extensionsError) || !extensionCatalog}
-                      ariaLabel={zh ? '选择自动化 Skill' : 'Choose automation skill'}
-                    />
-                  </label>
-                ) : null}
-                {(draft.action?.kind ?? 'conversation') === 'conversation' ? (
-                  <label>
-                    <span>{zh ? '插件' : 'Plugins'}</span>
-                    <ZeusSelect
-                      size="regular"
-                      ariaLabel={zh ? '选择自动化 Plugin' : 'Choose automation plugins'}
-                      value=""
-                      selectedValues={draft.pluginIds}
-                      options={pluginOptions}
-                      onChange={(value) => setDraft({ ...draft, pluginIds: draft.pluginIds.includes(value) ? draft.pluginIds.filter((id) => id !== value) : [...draft.pluginIds, value] })}
-                      triggerLabel={pluginTriggerLabel}
-                      disabled={extensionsLoading || Boolean(extensionsError) || !extensionCatalog || !pluginOptions.length}
-                      searchable
-                      searchPlaceholder={zh ? '搜索 Plugin' : 'Search plugins'}
-                      emptyLabel={zh ? '没有可用的 Plugin' : 'No available plugins'}
-                    />
-                  </label>
-                ) : null}
-              </div>
-              {extensionsError ? (
-                <small className="automation-capability-error" role="alert">
-                  {extensionsError}
-                </small>
-              ) : null}
-              <div className="automation-form-grid">
-                <label>
-                  <span>{zh ? '最多等待运行数' : 'Maximum waiting runs'}</span>
-                  <input type="number" min="1" max="10000" value={draft.queueCapacity ?? 10} onChange={(event) => setDraft({ ...draft, queueCapacity: event.currentTarget.valueAsNumber })} />
-                </label>
-                <label>
-                  <span>{zh ? '保留天数' : 'Retention days'}</span>
-                  <input type="number" min="1" max="3650" value={draft.retentionDays ?? 30} onChange={(event) => setDraft({ ...draft, retentionDays: event.currentTarget.valueAsNumber })} />
-                </label>
-              </div>
+              <label>
+                <span>{zh ? '时区（如 Asia/Shanghai）' : 'Time zone (for example, Asia/Shanghai)'}</span>
+                <input value={draft.timezone ?? ''} onChange={(event) => setDraft({ ...draft, timezone: event.currentTarget.value })} />
+              </label>
               <div className="automation-form-grid">
                 <label>
                   <span>{zh ? '每日运行上限' : 'Runs per day'}</span>
@@ -891,12 +649,6 @@ export function AutomationsWorkspace(props: {
                   <input type="number" min="1" value={draft.maxTokensPerDayText} placeholder={zh ? '不限' : 'Unlimited'} onChange={(event) => setDraft({ ...draft, maxTokensPerDayText: event.currentTarget.value })} />
                 </label>
               </div>
-              {(draft.action?.kind ?? 'conversation') === 'conversation' ? (
-                <label className="automation-check">
-                  <input type="checkbox" checked={draft.fastMode === true} onChange={(event) => setDraft({ ...draft, fastMode: event.currentTarget.checked })} />
-                  <span>{zh ? '启用 Fast 服务档位（仅在模型支持时）' : 'Use Fast service tier when supported'}</span>
-                </label>
-              ) : null}
             </details>
           </FormDialog>
         ) : null}
@@ -1021,11 +773,15 @@ function TriggerFields(props: { draft: Draft; setDraft(value: Draft): void; zh: 
   return null;
 }
 
-function emptyDraft(projects: ProjectRecord[], model?: CodexTaskPushModelCapability): Draft {
+/** 新建规则只选择员工动作，执行配置由统一默认提供。 */
+function emptyDraft(projects: ProjectRecord[]): Draft {
   /** 新建时仍沿用首个真实项目；用户可显式切换为无项目。 */
   const firstProject = projects.find((project) => project.id !== temporaryWorkspaceId);
   return {
-    action: { kind: 'conversation', employeeId: null },
+    action: { kind: 'employee_work', employeeId: null },
+    taskStatusesText: '',
+    taskTypesText: '',
+    requiredTagsText: '',
     name: '',
     description: '',
     prompt: '',
@@ -1036,9 +792,9 @@ function emptyDraft(projects: ProjectRecord[], model?: CodexTaskPushModelCapabil
     conversationMode: 'independent',
     originalConversationId: null,
     permissionMode: 'read-only',
-    modelSourceId: model?.sourceId ?? 'codex',
-    modelId: model?.model ?? '',
-    reasoningEffort: model?.defaultReasoningEffort ?? null,
+    modelSourceId: 'inherit',
+    modelId: 'inherit',
+    reasoningEffort: null,
     serviceTier: null,
     fastMode: false,
     skillId: null,
@@ -1054,19 +810,42 @@ function emptyDraft(projects: ProjectRecord[], model?: CodexTaskPushModelCapabil
   };
 }
 
+/** 只提交业务触发配置，执行参数由统一默认决定。 */
 function normalizeDraft(draft: Draft): AutomationTaskInput {
   return {
-    ...draft,
-    /** 保存显式策略，不能让领取任务的规则退回新建任务默认。 */
-    ...(draft.action?.kind === 'project_task'
-      ? { action: { ...draft.action, taskSelection: draft.action.taskSelection ?? (draft.action.taskId ? ('specified' as const) : draft.action.useEventTask ? ('event' as const) : ('create' as const)) } }
-      : {}),
-    modelSourceId: draft.modelSourceId || 'codex',
-    modelId: draft.modelId || 'employee-default',
-    ...((draft.action?.kind ?? 'conversation') !== 'conversation' ? { conversationMode: 'independent' as const, originalConversationId: null, skillId: null, pluginIds: [] } : {}),
+    name: draft.name,
+    description: draft.description,
+    prompt: draft.prompt,
+    projectIds: draft.projectIds,
+    action:
+      draft.action?.kind === 'project_task'
+        ? {
+            ...draft.action,
+            taskSelection: draft.action.taskSelection ?? (draft.action.taskId ? 'specified' : draft.action.useEventTask ? 'event' : 'create'),
+            taskFilter: { managementStatuses: splitFilterValues(draft.taskStatusesText), taskTypes: splitFilterValues(draft.taskTypesText), requiredTags: splitFilterValues(draft.requiredTagsText) },
+          }
+        : draft.action,
+    triggerKind: draft.triggerKind,
+    triggerConfig: draft.triggerConfig,
+    timezone: draft.timezone,
+    permissionMode: draft.permissionMode,
+    blockStrategy: draft.blockStrategy,
+    notifications: draft.notifications,
     maxRunsPerDay: draft.maxRunsPerDayText ? Number(draft.maxRunsPerDayText) : null,
     maxTokensPerDay: draft.maxTokensPerDayText ? Number(draft.maxTokensPerDayText) : null,
   };
+}
+
+/** 保存时解析筛选，输入过程中保留分隔符。 */
+function splitFilterValues(value: string): string[] {
+  return [
+    ...new Set(
+      value
+        .split(/[\n,，]/u)
+        .map((entry) => entry.trim())
+        .filter(Boolean),
+    ),
+  ];
 }
 
 function triggerOptions(zh: boolean): Array<[string, string]> {
@@ -1085,9 +864,7 @@ function triggerOptions(zh: boolean): Array<[string, string]> {
 function projectNames(ids: string[], projects: ProjectRecord[], zh: boolean): string {
   return ids.length === 0 ? (zh ? '无项目' : 'No project') : ids.map((id) => projects.find((project) => project.id === id)?.name ?? id).join(', ');
 }
-function modelName(task: AutomationTaskRecord, models: CodexTaskPushModelCapability[]): string {
-  return models.find((model) => (model.sourceId ?? 'codex') === task.modelSourceId && model.model === task.modelId)?.displayName ?? task.modelId;
-}
+
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 }

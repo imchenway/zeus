@@ -47,11 +47,19 @@ import {
 import { WorkArtifactDelivery } from '../packages/local-server/src/workArtifactDelivery.js';
 import { ContextSourceCatalog } from '../packages/local-server/src/contextSourceCatalog.js';
 import { selectEmployeeMemories } from '../packages/local-server/src/employeeMemoryContext.js';
-import { registerTaskWorkManagement } from '../packages/local-server/src/taskWorkManagement.js';
+import { normalizeWorkSettings, registerTaskWorkManagement } from '../packages/local-server/src/taskWorkManagement.js';
 import { digitalTeamWorkflowSchemaGeneration, type DigitalTeamWorkflowDefinition } from '../packages/shared/src/digitalTeamWorkflow.js';
+import { mergeEmployeeWorkSettings } from '../packages/shared/src/employeeWorkPlanning.js';
 
 const probeRoot = await mkdtemp(join(tmpdir(), 'zeus-work-management-command-probe-'));
 const observed: Record<string, unknown> = {};
+
+/** 新工作丢弃历史执行偏好，保留业务要求，并且下层不能放宽权限。 */
+const simplifiedSettings = normalizeWorkSettings({ modelOverride: 'retired-model', reasoningEffort: 'high', serviceTier: 'priority', workMode: 'plan', skillIds: ['retired-skill'], promptOverride: '本次工作要求', permissionMode: 'auto' });
+assertProbe(JSON.stringify(simplifiedSettings) === JSON.stringify({ promptOverride: '本次工作要求', permissionMode: 'auto' }), '工作配置不应继续保存历史执行偏好');
+/** 同时覆盖全局、阶段、单份工作的历史字段，避免旧配置重新进入执行快照。 */
+const mergedSettings = mergeEmployeeWorkSettings({ modelOverride: 'retired-model', permissionMode: 'read-only' }, { permissionMode: 'full-access', promptOverride: '实际要求', skillIds: ['retired-skill'] });
+assertProbe(JSON.stringify(mergedSettings) === JSON.stringify({ permissionMode: 'read-only', promptOverride: '实际要求' }), '统一执行默认必须去除重复配置并保持只读约束');
 
 try {
   const db = await createZeusDatabase(join(probeRoot, 'probe.db'));
@@ -860,12 +868,32 @@ async function verifyEmployeeIdentity(db: ZeusDatabase, projects: ProjectReposit
   /** 第二个项目持有独立要求。 */
   const secondProject = projects.create({ name: '员工身份第二项目', localPath: join(probeRoot, 'employee-second-project') });
   /** 名称相同的员工必须仍有不同身份。 */
-  const global = templates.create({ name: '员工身份探针', role: '开发', prompt: '全局通用要求', model: 'identity-model', permissionMode: 'auto', allowCodeChanges: true, allowTests: true });
+  const global = templates.create({ name: '员工身份探针', role: '开发', prompt: '全局通用要求', memoryEnabled: true });
   const sameName = templates.create({ name: global.name, role: global.role, prompt: '另一独立员工' });
   assertProbe(global.id !== sameName.id && global.identityKind === 'employee', '同名员工不能合并，用户创建记录应有全局员工身份。');
+  /** 直接构造旧基础配置，验证历史动作不会再进入当前员工继承。 */
+  const historicalGrants = { allowCommit: true, allowPush: true, allowMerge: true, allowDeploy: true, allowComplete: true };
+  db.execute('UPDATE digital_employee_templates SET base_configuration_json = ? WHERE id = ?', [JSON.stringify({ memoryEnabled: true, allowCodeChanges: true, allowTests: true, deliveryGrants: historicalGrants }), global.id]);
   /** 第一个项目继承通用配置，第二个项目保存显式差异。 */
   const first = employees.ensureProjectEmployee(firstProjectId, global.id);
-  const second = employees.createFromTemplate({ projectId: secondProject.id, template: global, overrides: { projectOverrides: { prompt: '项目独立要求', allowCodeChanges: false }, projectInstructions: '第二项目必须先审查' } });
+  const second = employees.createFromTemplate({
+    projectId: secondProject.id,
+    template: global,
+    overrides: { projectOverrides: { memoryEnabled: true }, projectInstructions: '第二项目必须先审查' },
+  });
+  /** 旧项目差异通过真实历史列构造，新接口已不能再写入这些字段。 */
+  db.execute('UPDATE digital_employees SET project_overrides_json = ? WHERE id = ?', [JSON.stringify({ prompt: '项目独立要求', memoryEnabled: true, permissionMode: 'read-only' }), second.id]);
+  assertProbe(!first.allowCodeChanges && !first.allowTests && Object.values(first.deliveryGrants).every((allowed) => !allowed), '当前员工公开配置不能继承全局记录中的历史动作授权。');
+  /** 旧动作列保留给历史运行，新配置保存不得覆盖这些存量事实。 */
+  db.execute('UPDATE digital_employees SET allow_code_changes = 1, allow_tests = 1, allow_commit = 1, allow_push = 1, allow_merge = 1, allow_deploy = 1, allow_complete = 1, deploy_command_id = ? WHERE id = ?', [
+    'legacy_employee_deploy_command',
+    first.id,
+  ]);
+  /** 使用真实旧列比对保存前后值，避免只检查当前有效配置投影。 */
+  const readHistoricalActions = () =>
+    db.get<Record<string, string | number | null>>('SELECT allow_code_changes, allow_tests, allow_commit, allow_push, allow_merge, allow_deploy, allow_complete, deploy_command_id FROM digital_employees WHERE id = ?', [first.id]);
+  /** 记录历史字段原文。 */
+  const historicalActionsBefore = JSON.stringify(readHistoricalActions());
   /** JSON 调用方即使注入身份字段，也不能改变已经授权的项目与员工来源。 */
   const scoped = employees.createFromTemplate({ projectId: firstProjectId, template: sameName, overrides: { projectId: secondProject.id, globalEmployeeId: global.id } as never });
   assertProbe(scoped.projectId === firstProjectId && scoped.globalEmployeeId === sameName.id, '项目覆盖不能扩大授权范围或替换全局员工来源。');
@@ -873,24 +901,42 @@ async function verifyEmployeeIdentity(db: ZeusDatabase, projects: ProjectReposit
   assertProbe(employees.ensureProjectEmployee(firstProjectId, global.id).id === first.id && employees.resolveProjectEmployee(firstProjectId, second.id) === undefined, '重复绑定必须复用稳定 ID，其他项目的绑定不能被读取。');
   /** 已启动执行冻结旧的模型与权限。 */
   const task = tasks.create({ projectId: firstProjectId, title: '员工身份冻结探针', taskType: 'requirement', description: '', createdFrom: 'probe', sourceContext: {} });
-  const execution = executions.create({ employee: first, taskId: task.id, source: 'manual' });
+  const execution = executions.create({ employee: { ...employees.getById(first.id)!, model: 'identity-model', permissionMode: 'full-access' }, taskId: task.id, source: 'manual' });
   const snapshotBefore = db.get<{ employee_snapshot_json: string }>('SELECT employee_snapshot_json FROM digital_employee_executions WHERE id = ?', [execution.id])!.employee_snapshot_json;
-  templates.update(global.id, { expectedRevision: global.revision, prompt: '更新后的全局要求', model: 'identity-model-updated' });
+  templates.update(global.id, { expectedRevision: global.revision, prompt: '更新后的全局要求', memoryEnabled: false });
   const inherited = employees.getById(first.id)!;
   const overridden = employees.getById(second.id)!;
   assertProbe(
-    inherited.model === 'identity-model-updated' && inherited.entrypoint?.modelPolicy.defaultModel === inherited.model && overridden.prompt === '项目独立要求\n\n## 当前项目要求\n第二项目必须先审查' && !overridden.allowCodeChanges,
-    '全局更新和项目覆盖必须独立生效，模型与权限策略应一致。',
+    inherited.model === null &&
+      inherited.prompt === '更新后的全局要求' &&
+      inherited.memoryEnabled === false &&
+      inherited.permissionMode === 'read-only' &&
+      overridden.legacyConfiguration?.prompt === '项目独立要求' &&
+      overridden.entrypointMigrationState === 'requires_configuration' &&
+      overridden.memoryEnabled === true &&
+      overridden.permissionMode === 'read-only',
+    '全局身份、提示词和经验正常继承，执行值不再来自员工，旧项目提示词差异必须明确确认。',
   );
   assertProbe(executions.getById(execution.id)?.employeeSnapshot.model === 'identity-model', '新配置不能改写已启动的运行快照。');
   /** 明确清空覆盖后恢复继承，项目补充要求仍保留。 */
   const restored = employees.update(second.id, { expectedRevision: overridden.revision, projectOverrides: {} });
-  assertProbe(restored.prompt === '更新后的全局要求\n\n## 当前项目要求\n第二项目必须先审查' && restored.allowCodeChanges, '恢复全局配置必须清空差异并保留独立项目要求。');
+  assertProbe(
+    restored.prompt === '更新后的全局要求\n\n## 当前项目要求\n第二项目必须先审查' && restored.memoryEnabled === false && restored.permissionMode === 'read-only' && restored.entrypointMigrationState === 'ready',
+    '恢复全局配置必须清空差异并保留独立项目要求。',
+  );
+  /** 按当前公开字段保存旧员工，只允许改变工作配置。 */
+  employees.update(first.id, { expectedRevision: inherited.revision, projectInstructions: '保存后的项目要求', memoryEnabled: true });
+  assertProbe(JSON.stringify(readHistoricalActions()) === historicalActionsBefore, '当前配置保存不能改写历史员工动作授权或部署命令。');
+  assertProbe(
+    db.get<{ employee_snapshot_json: string }>('SELECT employee_snapshot_json FROM digital_employee_executions WHERE id = ?', [execution.id])!.employee_snapshot_json === snapshotBefore &&
+      executions.getById(execution.id)!.deliveryGrantsSnapshot.allowDeploy,
+    '当前配置保存不能改写已有冻结员工或交付授权。',
+  );
   /** 内置模板只有创建用途，不能从工作入口直接绑定。 */
   const builtIn = templates.list().find((employee) => employee.builtIn)!;
   assertProbe(captureCode(() => employees.ensureProjectEmployee(secondProject.id, builtIn.id)) === 'ZEUS_DIGITAL_EMPLOYEE_GLOBAL_UNAVAILABLE', '模板不允许成为可指派员工。');
   /** 构造真实历史项目配置，再运行相同迁移逻辑。 */
-  const legacy = employees.create({ projectId: secondProject.id, templateId: builtIn.id, name: '历史项目员工', role: '开发', prompt: '历史项目要求', memoryEnabled: false, permissionMode: 'auto', allowTests: true });
+  const legacy = employees.create({ projectId: secondProject.id, templateId: builtIn.id, name: '历史项目员工', role: '开发', prompt: '历史项目要求', memoryEnabled: false });
   /** 只复制员工与快照数据验证迁移；不引入无关项目表，也不绕过正式库降级保护。 */
   const migrationDb = new ZeusDatabase(new DatabaseSync(':memory:', { enableForeignKeyConstraints: false }), join(probeRoot, 'employee-legacy-probe.db'));
   try {
@@ -910,7 +956,16 @@ async function verifyEmployeeIdentity(db: ZeusDatabase, projects: ProjectReposit
     migrateDigitalEmployeeIdentity(migrationDb);
     /** 迁移后的记录使用相同有效配置读取器。 */
     const migrated = new DigitalEmployeeRepository(migrationDb).getById(legacy.id)!;
-    assertProbe(migrated.id === legacy.id && migrated.globalEmployeeId === null && migrated.prompt === legacy.prompt && migrated.memoryEnabled === false && migrated.allowTests, '历史模板副本保留原绑定和有效权限，不自动变成全局员工。');
+    assertProbe(
+      migrated.id === legacy.id &&
+        migrated.globalEmployeeId === null &&
+        migrated.prompt === legacy.prompt &&
+        migrated.memoryEnabled === false &&
+        migrated.permissionMode === 'read-only' &&
+        migrated.entrypointMigrationState === 'requires_configuration' &&
+        migrated.legacyConfiguration?.prompt === '历史项目要求',
+      '历史模板副本保留原绑定、经验偏好和提示词，需明确绑定全局员工后才可执行。',
+    );
     assertProbe(
       migrationDb.get<{ employee_snapshot_json: string }>('SELECT employee_snapshot_json FROM digital_employee_executions WHERE id = ?', [execution.id])!.employee_snapshot_json === snapshotBefore,
       '身份迁移不能改变冻结执行快照。',
@@ -919,7 +974,18 @@ async function verifyEmployeeIdentity(db: ZeusDatabase, projects: ProjectReposit
   } finally {
     await migrationDb.close();
   }
-  observed.employeeIdentity = { distinctSameName: true, projectIsolation: true, repeatBinding: true, inheritedDefaults: true, explicitOverrides: true, templateRejected: true, legacyBindingPreserved: true, executionSnapshotPreserved: true };
+  observed.employeeIdentity = {
+    distinctSameName: true,
+    projectIsolation: true,
+    repeatBinding: true,
+    inheritedDefaults: true,
+    legacyPromptReviewRequired: true,
+    legacyActionsNotInherited: true,
+    legacyActionColumnsPreserved: true,
+    templateRejected: true,
+    legacyBindingPreserved: true,
+    executionSnapshotPreserved: true,
+  };
   /** 历史绑定改绑后沿用项目经验，通用经验只跟随准确全局身份。 */
   const memory = new LongTermMemoryRepository(db);
   /** 目标项目尚未绑定的独立员工，避免与前面的复用场景混淆。 */
@@ -1120,11 +1186,28 @@ async function verifyWorkArtifactDelivery(db: ZeusDatabase, projects: ProjectRep
   const reworkRoutes = new Map<string, (request: unknown, reply: unknown) => Promise<unknown>>();
   const reworkEvents = new TaskEventRepository(db);
   const planning = new TaskWorkPlanningRepository(db);
+  /** 固定能力目录只用于预检和耐久接纳，不派发模型请求。 */
+  const workflowModels = ['workflow-default', 'workflow-frozen', 'workflow-node'].map((id) => ({
+    id,
+    model: id,
+    agentKind: 'codex',
+    sourceId: 'codex',
+    sourceName: 'Codex',
+    available: true,
+    supportedReasoningEfforts: ['medium', 'high'],
+    defaultReasoningEffort: 'medium',
+    serviceTiers: [{ id: 'priority' }],
+    defaultServiceTier: null,
+    contextWindow: null,
+  }));
+  /** 插件技能通过固定目录验证冻结身份，不读取外部插件目录。 */
+  const frozenWorkflowSkill = 'plugin:workflow-probe:skill:frozen';
   const reworkController = registerTaskWorkManagement({
     server: { get: () => undefined, post: (path: string, handler: (request: unknown, reply: unknown) => Promise<unknown>) => reworkRoutes.set(path, handler) },
     readOnlyValidation: false,
     application: new WorkManagementCommandApplication({ db, deliveries: new CommandDeliveryRepository(db), redactSensitiveText: (text) => ({ text }), now: () => new Date('2026-10-05T02:00:00.000Z') }),
     tasks,
+    projects,
     employees,
     items,
     runs,
@@ -1136,12 +1219,93 @@ async function verifyWorkArtifactDelivery(db: ZeusDatabase, projects: ProjectRep
     reviews: new TaskWorkReviewRepository(db),
     decisions: new TaskWorkDecisionRepository(db),
     planning,
+    conversationCapabilities: { readTaskPush: async () => ({ preferredModel: 'workflow-default', models: workflowModels, repositories: [], goals: { enabled: true } }) },
+    plugins: { listSkills: async () => [{ id: frozenWorkflowSkill, namespace: 'workflow-probe:frozen', description: '冻结技能', pluginId: 'workflow-probe', pluginRevisionId: 'frozen-revision' }] },
+    normalizeTaskPushSupplementalAttachments: () => ({ promptAttachments: [] }),
     isTaskTerminal: () => false,
     now: () => new Date('2026-10-05T02:00:00.000Z'),
     save: async () => undefined,
     publishRealtimeEvent: () => undefined,
   } as unknown as Parameters<typeof registerTaskWorkManagement>[0]);
   try {
+    /** 真实冻结员工保留接纳时的模型、档位和技能，当前员工已统一为默认。 */
+    const frozenWorkflowEmployee = {
+      ...employee,
+      model: 'workflow-frozen',
+      reasoningEffort: 'high',
+      serviceTier: 'priority',
+      workMode: 'plan' as const,
+      skillIds: [frozenWorkflowSkill],
+      entrypoint: {
+        ...employee.entrypoint!,
+        modelPolicy: { ...employee.entrypoint!.modelPolicy, defaultMode: 'explicit' as const, defaultModel: 'workflow-frozen' },
+        skillPolicy: { ...employee.entrypoint!.skillPolicy, allowedSkillIds: [frozenWorkflowSkill] },
+      },
+    };
+    /** 保存调用前内容，接纳不得反写原团队快照。 */
+    const originalFrozenWorkflow = JSON.stringify(frozenWorkflowEmployee);
+    /** 来源身份分别代表后续节点，全部只接纳、不派发。 */
+    const workflowCases = [
+      { suffix: 'employee', employeeSnapshot: frozenWorkflowEmployee, settings: undefined, model: 'workflow-frozen', effort: 'high', tier: 'priority', mode: 'plan', skills: 1 },
+      {
+        suffix: 'node',
+        employeeSnapshot: frozenWorkflowEmployee,
+        settings: { modelOverride: 'workflow-node', reasoningEffort: 'medium', serviceTier: null, workMode: 'default' as const, skillIds: [] },
+        model: 'workflow-node',
+        effort: 'medium',
+        tier: null,
+        mode: 'default',
+        skills: 0,
+      },
+      {
+        suffix: 'cleared',
+        employeeSnapshot: frozenWorkflowEmployee,
+        settings: { modelOverride: null, reasoningEffort: null, serviceTier: null, workMode: 'default' as const, skillIds: [] },
+        model: 'workflow-default',
+        effort: 'medium',
+        tier: null,
+        mode: 'default',
+        skills: 0,
+      },
+      { suffix: 'current', employeeSnapshot: employee, settings: {}, model: 'workflow-default', effort: 'medium', tier: null, mode: 'default', skills: 0 },
+      { suffix: 'mode-only', employeeSnapshot: { ...employee, reasoningEffort: 'high', workMode: 'plan' as const }, settings: {}, model: 'workflow-default', effort: 'high', tier: null, mode: 'plan', skills: 0 },
+    ];
+    for (const scenario of workflowCases) {
+      /** 使用正式团队节点接纳入口，读取真实持久化工作快照。 */
+      const accepted = await reworkController.createWorkflowWorkItem({
+        taskId: task.id,
+        employeeId: employee.id,
+        employeeSnapshot: scenario.employeeSnapshot,
+        sourceRef: `digital-team:frozen-defaults:${scenario.suffix}`,
+        title: '冻结执行配置检查',
+        description: '',
+        supplementalInfo: '',
+        workspace: { mode: 'direct' },
+        purpose: 'work',
+        executionMode: 'read_only',
+        settings: { ...scenario.settings, autonomyObjective: '完成冻结工作目标', promptOverride: '本节点明确工作要求' },
+      });
+      assertProbe(
+        accepted.run.modelSnapshot?.id === scenario.model &&
+          accepted.run.modelSnapshot?.reasoningEffort === scenario.effort &&
+          accepted.run.modelSnapshot?.serviceTier === scenario.tier &&
+          accepted.run.entrypointSnapshot.workMode === scenario.mode &&
+          (accepted.run.skillSnapshot?.pluginSkills as unknown[])?.length === scenario.skills,
+        `团队冻结配置必须保留缺省、节点覆盖及显式清空语义：${scenario.suffix}`,
+      );
+      assertProbe(accepted.run.entrypointSnapshot.autonomyObjective === '完成冻结工作目标' && accepted.run.entrypointSnapshot.memoryPromptBase === '本节点明确工作要求', '统一执行默认不能删除节点真实目标和提示词要求。');
+    }
+    assertProbe(JSON.stringify(frozenWorkflowEmployee) === originalFrozenWorkflow, '接纳后续节点不得改写原冻结员工对象。');
+    observed.frozenWorkflowDefaults = {
+      historicalEmployee: true,
+      nodeOverride: true,
+      explicitClear: true,
+      currentDefaults: true,
+      frozenModeWithoutModelOverride: true,
+      businessRequirementsPreserved: true,
+      originalSnapshotUnchanged: true,
+      providerRequests: 0,
+    };
     runs.update(source.id, { status: 'runtime_completed' });
     items.update(source.workItemId, { status: 'active' });
     items.update(source.workItemId, { status: 'waiting_manager' });

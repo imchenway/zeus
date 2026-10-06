@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Fastify from 'fastify';
 import { type CommandEnvelope, commandEnvelopeSchemaGeneration } from '../packages/shared/src/commandEnvelope.js';
-import { CommandDeliveryRepository, createZeusDatabase } from '../packages/storage/src/index.js';
+import { CommandDeliveryRepository, DigitalEmployeeRepository, DigitalEmployeeTemplateRepository, ImRepository, ProjectRepository, createZeusDatabase, type ZeusDatabase } from '../packages/storage/src/index.js';
+import { ImTelegramService } from '../packages/local-server/src/imTelegramService.js';
 import type { TelegramPollingService } from '../packages/local-server/src/telegramAdapter.js';
 import {
   telegramChildOperation,
@@ -29,6 +30,7 @@ try {
   const server = Fastify({ logger: false });
   let pollingTimer: ReturnType<typeof setInterval> | undefined;
   try {
+    verifyEmployeePresetDefaults(db);
     db.execute(`CREATE TABLE telegram_probe_settings (id TEXT PRIMARY KEY, value_json TEXT NOT NULL)`);
 
     let coreWrites = 0;
@@ -304,6 +306,54 @@ function commandRequest<TInput extends object>(label: string, commandType: Teleg
     payload,
   };
   return { commandId, input, body: { command, input } };
+}
+
+/** 员工预设使用真实项目与员工存储，预检不会连接 Telegram 或模型。 */
+function verifyEmployeePresetDefaults(db: ZeusDatabase): void {
+  /** 本轮临时库中的隔离项目。 */
+  const projects = new ProjectRepository(db);
+  /** 预设只读取项目身份，不访问该目录。 */
+  const project = projects.create({ name: 'Telegram 员工默认探针', localPath: join(probeRoot, 'employee-project') });
+  /** 通用提示词由全局员工维护。 */
+  const templates = new DigitalEmployeeTemplateRepository(db);
+  /** 项目只持有成员绑定。 */
+  const employees = new DigitalEmployeeRepository(db);
+  /** 姓名和工作要求必须保留。 */
+  const template = templates.create({ name: 'Telegram 员工', role: '协作', prompt: '保留本员工工作要求' });
+  /** 显式构造退役字段，防止读取层投影掩盖入口错误。 */
+  const employee = {
+    ...employees.ensureProjectEmployee(project.id, template.id),
+    agentKind: 'pi' as const,
+    model: 'retired-model',
+    reasoningEffort: 'retired-effort',
+    workMode: 'plan' as const,
+    skillIds: ['invalid-old-skill'],
+    permissionMode: 'read-only' as const,
+  };
+  /** 只使用选择和接纳预检所需依赖，绝不启动消息收发。 */
+  const service = new ImTelegramService({ repository: new ImRepository(db), projects, digitalEmployees: { getById: (id: string) => (id === employee.id ? employee : undefined), listByProject: () => [employee] } } as ConstructorParameters<
+    typeof ImTelegramService
+  >[0]);
+  /** 普通默认与员工默认必须拥有相同执行设置。 */
+  const defaults = service.createInputAllowed({ projectId: project.id, agentPreset: { kind: 'zeus_default', digitalEmployeeId: null } }).preset;
+  /** 历史模型、技能及只读占位不能改变本次接纳。 */
+  const selected = service.createInputAllowed({ projectId: project.id, agentPreset: { kind: 'digital_employee', digitalEmployeeId: employee.id } }).preset;
+  assertProbe(selected.name === employee.name && selected.prompt === employee.prompt, 'Telegram 员工预设必须保留当前姓名和提示词。');
+  assertProbe(
+    selected.agentKind === defaults.agentKind &&
+      selected.model === null &&
+      selected.reasoningEffort === null &&
+      selected.permissionMode === defaults.permissionMode &&
+      selected.workMode === defaults.workMode &&
+      selected.skillId === null &&
+      selected.pluginReferences.length === 0,
+    '员工退役执行字段不能覆盖 Zeus 默认或阻断新接入。',
+  );
+  assertProbe(
+    service.selectionOptions()[0]?.presets.some((preset) => preset.ref.digitalEmployeeId === employee.id),
+    '历史模型来源不能隐藏已启用的员工。',
+  );
+  observed.employeePresetDefaults = { ignoredHistoricalExecutionFields: true, promptPreserved: true, externalServicesStarted: false };
 }
 
 function requiredLatestAttempt(deliveries: CommandDeliveryRepository, commandId: string) {

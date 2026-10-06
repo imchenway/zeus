@@ -68,7 +68,7 @@ export interface AutomationDefinitionSnapshot {
 }
 
 export interface AutomationTaskRecord extends AutomationDefinitionSnapshot {
-  /** 存量规则目标选择不能确认时给出可见核对原因。 */
+  /** 存量规则的目标或授权需要重新确认时给出核对原因。 */
   migrationIssue: string | null;
   /** 原事件消费游标按项目保存，迁移不回放旧事件。 */
   eventCursors: Record<string, number>;
@@ -141,8 +141,10 @@ export interface CreateAutomationTaskInput extends Partial<Omit<AutomationDefini
   id?: string;
   name: string;
   prompt: string;
-  modelSourceId: string;
-  modelId: string;
+  /** 历史客户端字段不再参与新规则执行。 */
+  modelSourceId?: string;
+  /** 历史客户端字段不再参与新规则执行。 */
+  modelId?: string;
   projectIds: string[];
 }
 
@@ -297,14 +299,15 @@ function parseJson<T>(value: string, fallback: T): T {
 }
 
 function normalizeSnapshot(input: CreateAutomationTaskInput | (Partial<CreateAutomationTaskInput> & AutomationDefinitionSnapshot)): AutomationDefinitionSnapshot {
-  /** 老修订默认继续普通会话，员工动作必须引用真实员工。 */
-  const action = input.action ?? { kind: 'conversation', employeeId: null };
+  /** 新配置只触发员工工作或项目流程，普通会话只保留历史读取。 */
+  const action = input.action ?? { kind: 'employee_work', employeeId: null };
   /** 员工身份在 HTTP 信任边界只接受非空字符串。 */
   const employeeId = typeof action.employeeId === 'string' ? action.employeeId.trim() : null;
-  if (!['conversation', 'employee_work', 'project_task'].includes(action.kind) || (action.kind !== 'conversation' && !employeeId)) throw new Error('ZEUS_AUTOMATION_ACTION_INVALID: 员工动作必须选择员工。');
+  if (!['employee_work', 'project_task'].includes(action.kind) || !employeeId) throw new Error('ZEUS_AUTOMATION_ACTION_INVALID: 请选择数字员工工作或项目流程及执行员工。');
   if ((action.taskId != null && typeof action.taskId !== 'string') || (action.title !== undefined && typeof action.title !== 'string') || (action.useEventTask !== undefined && typeof action.useEventTask !== 'boolean'))
     throw new Error('ZEUS_AUTOMATION_ACTION_INVALID: 任务引用或动作配置无效。');
   if (action.taskSelection !== undefined && !['specified', 'event', 'pool', 'create'].includes(action.taskSelection)) throw new Error('ZEUS_AUTOMATION_TASK_SELECTION_INVALID: 项目任务目标策略无效。');
+  if (action.taskFilter !== undefined && (!action.taskFilter || typeof action.taskFilter !== 'object' || Array.isArray(action.taskFilter))) throw new Error('ZEUS_AUTOMATION_TASK_FILTER_INVALID: 任务筛选必须是对象。');
   if (action.kind === 'project_task' && action.taskSelection === 'specified' && !action.taskId?.trim()) throw new Error('ZEUS_AUTOMATION_TASK_REQUIRED: 指定已有任务必须提供任务身份。');
   const triggerKind = enumValue(input.triggerKind ?? 'manual', automationTriggerKinds, '触发方式');
   if (input.triggerConfig?.eventKinds?.includes('code_changed') && input.triggerConfig.eventKinds.length > 1) throw new Error('ZEUS_AUTOMATION_EVENT_STREAM_INVALID: 代码变化与任务状态使用不同事件流，请分别创建规则。');
@@ -314,27 +317,36 @@ function normalizeSnapshot(input: CreateAutomationTaskInput | (Partial<CreateAut
   } catch {
     throw new Error('ZEUS_AUTOMATION_CONFIG_TIMEZONE_INVALID: 必须使用有效 IANA 时区。');
   }
-  const conversationMode = enumValue(input.conversationMode ?? 'independent', automationConversationModes, '会话模式');
-  const originalConversationId = input.originalConversationId?.trim() || null;
-  if (conversationMode === 'original' && !originalConversationId) throw new Error('ZEUS_AUTOMATION_CONFIG_ORIGINAL_CONVERSATION_REQUIRED: 原会话模式必须选择会话。');
   return {
-    action: { ...action, employeeId: action.kind === 'conversation' ? null : employeeId },
+    action: {
+      ...action,
+      employeeId,
+      ...(action.kind === 'project_task'
+        ? {
+            taskFilter: {
+              managementStatuses: stringArray(action.taskFilter?.managementStatuses ?? [], '任务状态'),
+              taskTypes: stringArray(action.taskFilter?.taskTypes ?? [], '任务类型'),
+              requiredTags: stringArray(action.taskFilter?.requiredTags ?? [], '任务标签'),
+            },
+          }
+        : {}),
+    },
     name: requiredText(input.name, '名称', 120),
     description: (input.description ?? '').trim().slice(0, 500),
     prompt: requiredText(input.prompt, '指令', 100_000),
     triggerKind,
     triggerConfig: input.triggerConfig ?? {},
     timezone,
-    conversationMode,
-    originalConversationId,
+    conversationMode: 'independent',
+    originalConversationId: null,
     permissionMode: enumValue(input.permissionMode ?? 'read-only', automationPermissionModes, '权限模式'),
-    modelSourceId: requiredText(input.modelSourceId, '模型来源', 200),
-    modelId: requiredText(input.modelId, '模型', 200),
-    reasoningEffort: input.reasoningEffort?.trim() || null,
-    serviceTier: input.serviceTier?.trim() || null,
-    fastMode: input.fastMode === true,
-    skillId: input.skillId?.trim() || null,
-    pluginIds: stringArray(input.pluginIds ?? [], 'Plugin'),
+    modelSourceId: 'inherit',
+    modelId: 'inherit',
+    reasoningEffort: null,
+    serviceTier: null,
+    fastMode: false,
+    skillId: null,
+    pluginIds: [],
     blockStrategy: enumValue(input.blockStrategy ?? 'serial', automationBlockStrategies, '阻塞策略'),
     queueCapacity: boundedInteger(input.queueCapacity, 10, 1, 10_000, '队列容量'),
     maxRunsPerDay: nullableBudget(input.maxRunsPerDay, '每日运行上限'),
@@ -539,6 +551,48 @@ export function migrateAutomationSchema(db: ZeusDatabasePort): void {
   migrateAutomationRunTargets(db);
   migrateAutomationActions(db);
   migrateAutomationDispatchProgress(db);
+  migrateAutomationTaskCreationGrants(db);
+  migrateAutomationConversationRules(db);
+}
+
+/** 旧普通会话只保留历史，规则需显式改选员工动作才可再次启用。 */
+function migrateAutomationConversationRules(db: ZeusDatabasePort): void {
+  /** 一次登记不反复暂停已经完成改配的规则。 */
+  const migrationId = '20261006_0782_automation_employee_actions';
+  if (db.get('SELECT migration_id FROM schema_migrations WHERE migration_id = ?', [migrationId])) return;
+  db.transaction(() => {
+    /** 暂停不改写旧修订和已经接纳的会话。 */
+    const tasks = new AutomationTaskRepository(db);
+    for (const task of tasks.list().filter((entry) => entry.action.kind === 'conversation')) tasks.setMigrationIssue(task.id, '普通会话自动化已停止，请选择数字员工或项目流程后保存。');
+    db.execute('INSERT INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)', [
+      migrationId,
+      '自动化统一为员工或项目流程触发',
+      `sha256:${createHash('sha256').update(migrationId).digest('hex')}`,
+      nowIso(),
+    ]);
+  });
+}
+
+/** 旧完全访问确认未包含新建任务的本地提交，必须重新保存授权。 */
+function migrateAutomationTaskCreationGrants(db: ZeusDatabasePort): void {
+  /** 一次迁移只收紧已经存在的规则，不影响之后新建的显式授权。 */
+  const migrationId = '20261006_0782_automation_task_creation_grants';
+  if (db.get('SELECT migration_id FROM schema_migrations WHERE migration_id = ?', [migrationId])) return;
+  db.transaction(() => {
+    /** 复用现有授权与迁移暂停机制，不改写冻结修订和目标引用。 */
+    const tasks = new AutomationTaskRepository(db);
+    for (const task of tasks.list()) {
+      if (task.permissionMode !== 'full-access' || task.action.kind !== 'project_task' || (task.action.taskSelection ? task.action.taskSelection !== 'create' : Boolean(task.action.taskId))) continue;
+      tasks.setFullAccessGrant(task.id, task.revision, false);
+      tasks.setMigrationIssue(task.id, [task.migrationIssue, '旧规则的完全访问确认未包含新建任务的本地提交，请核对任务策略并重新保存授权；原运行不会自动获得新权限。'].filter(Boolean).join('\n'));
+    }
+    db.execute('INSERT INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)', [
+      migrationId,
+      '新建项目任务的完全访问授权重新确认',
+      `sha256:${createHash('sha256').update(migrationId).digest('hex')}`,
+      nowIso(),
+    ]);
+  });
 }
 
 /** 动作、来源事实和执行引用在同一迁移中补齐，历史修订保持普通会话语义。 */
@@ -693,7 +747,7 @@ export class AutomationTaskRepository {
     });
   }
 
-  /** 旧动作无法证明未经编辑时暂停，不覆盖用户配置。 */
+  /** 旧规则需要核对目标或重新授权时暂停，不覆盖用户配置。 */
   setMigrationIssue(id: string, reason: string | null): void {
     this.db.execute('UPDATE automation_tasks SET migration_issue = ?, updated_at = ? WHERE id = ?', [reason, nowIso(), id]);
     if (reason) this.setStatus(id, 'paused');

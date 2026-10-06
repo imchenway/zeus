@@ -552,14 +552,7 @@ export class DigitalTeamWorkflowRunRepository {
     const roleSnapshots = employeeIds.map((employeeId) => {
       const inherited = parentRun?.roleSnapshots.find((snapshot) => snapshot.employeeId === employeeId);
       if (parentRun && !inherited) throw storeError('ZEUS_DIGITAL_TEAM_REPAIR_EMPLOYEE_MISSING', '父验收没有冻结该修复员工。');
-      return inherited
-        ? structuredClone(inherited)
-        : freezeEmployee(
-            this.db,
-            input.projectId,
-            employeeId,
-            employeeNodes.filter((node) => node.data.employeeId === employeeId),
-          );
+      return inherited ? structuredClone(inherited) : freezeEmployee(this.db, input.projectId, employeeId);
     });
     const baseRevisions = normalizeBaseRevisions(input.baseRevisions);
     /** 先校验入口，避免非事务调用留下不可用运行。 */
@@ -1088,17 +1081,13 @@ function resolveGlobalTeamEmployees(db: ZeusDatabasePort, projectId: string, def
 }
 
 /** 从权威员工记录冻结不含凭据的完整角色配置。 */
-function freezeEmployee(db: ZeusDatabasePort, projectId: string, employeeId: string, nodes: DigitalTeamEmployeeNode[]): DigitalTeamRoleSnapshot {
+function freezeEmployee(db: ZeusDatabasePort, projectId: string, employeeId: string): DigitalTeamRoleSnapshot {
   const employee = new DigitalEmployeeRepository(db).getById(identity(employeeId, 'employeeId'));
   if (!employee?.enabled || employee.projectId !== identity(projectId, 'projectId')) throw storeError('ZEUS_DIGITAL_TEAM_EMPLOYEE_UNAVAILABLE', '流程中的数字员工不存在、已停用或不属于当前项目。', 409);
   if (employee.entrypoint?.kind !== 'agent' || employee.entrypointMigrationState !== 'ready') {
     throw storeError('ZEUS_DIGITAL_TEAM_EMPLOYEE_NOT_READY', `数字员工“${employee.name}”尚未完成 Agent 配置。`, 409);
   }
-  /** 数字员工是唯一配置来源；实际动作授权仍由任务接纳层收口。 */
-  for (const node of nodes) {
-    if (node.data.executionMode === 'isolated_write' && employee.entrypoint.authorityPolicy.permissionMode === 'read-only')
-      throw storeError('ZEUS_DIGITAL_TEAM_EMPLOYEE_AUTHORITY_INCOMPATIBLE', `请在数字员工“${employee.name}”的配置中允许执行代码工作。`, 409);
-  }
+  /** 员工只提供身份与工作要求；节点和本次任务权限由运行接纳边界统一约束。 */
   return { employeeId: employee.id, employeeRevision: employee.revision, configuration: structuredClone(employee) as unknown as Record<string, unknown> };
 }
 

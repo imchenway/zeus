@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { automationEventStatusId, digitalEmployeeAvatarIds, type DigitalEmployeeAvatarId, isZeusSkillId, employeeConfigurationKeys, resolveEmployeeConfiguration, type ProjectEmployeeOverrides } from '@zeus/shared';
+import { automationEventStatusId, digitalEmployeeAvatarIds, type DigitalEmployeeAvatarId, employeeConfigurationKeys, resolveEmployeeConfiguration, type ProjectEmployeeOverrides } from '@zeus/shared';
 import { migrateDigitalEmployeeIdentity } from './digitalEmployeeIdentityMigration.js';
 import { randomId } from './randomId.js';
 import type { ZeusDatabasePort } from './databasePort.js';
@@ -76,11 +76,11 @@ export interface DigitalEmployeeTemplateRecord {
   identityKind?: 'template' | 'employee';
   /** 员工默认的个人经验读取偏好。 */
   memoryEnabled?: boolean;
-  /** 默认源码修改能力，仍受当前任务授权约束。 */
+  /** 历史默认值仅供旧记录读取，新工作由任务授权决定。 */
   allowCodeChanges?: boolean;
-  /** 默认运行验证能力。 */
+  /** 历史验证默认值，不再参与员工配置继承。 */
   allowTests?: boolean;
-  /** 分别控制员工的交付动作。 */
+  /** 历史交付默认值，新工作不从员工获得交付授权。 */
   deliveryGrants?: DigitalEmployeeDeliveryGrants;
   id: string;
   name: string;
@@ -105,6 +105,8 @@ export interface DigitalEmployeeTemplateRecord {
 }
 
 export interface DigitalEmployeeRecord extends Omit<DigitalEmployeeTemplateRecord, 'builtIn'> {
+  /** 待确认的旧项目身份与提示词，仅展示，不参与新工作。 */
+  legacyConfiguration?: Partial<Pick<DigitalEmployeeTemplateRecord, 'name' | 'description' | 'role' | 'domain' | 'avatarId' | 'prompt'>> | null;
   /** 跨项目复用的员工身份；历史仅项目员工保留为空。 */
   globalEmployeeId?: string | null;
   /** 只覆盖当前项目的字段，运行时解析后冻结。 */
@@ -120,9 +122,13 @@ export interface DigitalEmployeeRecord extends Omit<DigitalEmployeeTemplateRecor
   autonomousExploration: boolean;
   maxConcurrency: number;
   taskFilter: DigitalEmployeeTaskFilter;
+  /** 历史员工与执行快照中的源码授权，不作为新工作权限上限。 */
   allowCodeChanges: boolean;
+  /** 历史员工与执行快照中的验证授权。 */
   allowTests: boolean;
+  /** 仅为历史交付记录保留，当前员工配置不再写入。 */
   deliveryGrants: DigitalEmployeeDeliveryGrants;
+  /** 历史执行使用的部署命令，新员工不可配置。 */
   deployCommandId: string | null;
   /** 当前数字员工始终使用 Agent；null 仅供读取损坏或未完成的旧快照时防御。 */
   entrypoint: AgentEntrypointV2 | null;
@@ -188,12 +194,6 @@ export interface DigitalEmployeeExecutionRecord {
 export interface CreateDigitalEmployeeTemplateInput {
   /** 默认是否读取已确认经验。 */
   memoryEnabled?: boolean;
-  /** 默认是否允许源码修改。 */
-  allowCodeChanges?: boolean;
-  /** 默认是否允许执行已有检查。 */
-  allowTests?: boolean;
-  /** 员工交付动作的默认授权。 */
-  deliveryGrants?: Partial<DigitalEmployeeDeliveryGrants>;
   id?: string;
   name: string;
   description?: string;
@@ -201,14 +201,7 @@ export interface CreateDigitalEmployeeTemplateInput {
   domain?: string;
   /** 预置头像的稳定身份。 */
   avatarId?: DigitalEmployeeAvatarId | null;
-  skillIds?: string[];
   prompt: string;
-  agentKind?: DigitalEmployeeAgentKind;
-  model?: string | null;
-  reasoningEffort?: string | null;
-  serviceTier?: string | null;
-  permissionMode?: DigitalEmployeePermissionMode;
-  workMode?: DigitalEmployeeWorkMode;
 }
 
 export type UpdateDigitalEmployeeTemplateInput = Partial<Omit<CreateDigitalEmployeeTemplateInput, 'id'>> & { expectedRevision: number };
@@ -226,15 +219,6 @@ export interface CreateDigitalEmployeeInput extends Omit<CreateDigitalEmployeeTe
   projectId: string;
   templateId?: string | null;
   enabled?: boolean;
-  autoClaim?: boolean;
-  autonomousExploration?: boolean;
-  maxConcurrency?: number;
-  taskFilter?: Partial<DigitalEmployeeTaskFilter>;
-  allowCodeChanges?: boolean;
-  allowTests?: boolean;
-  deliveryGrants?: Partial<DigitalEmployeeDeliveryGrants>;
-  deployCommandId?: string | null;
-  entrypoint?: AgentEntrypointV2 | null;
 }
 
 export type UpdateDigitalEmployeeInput = Partial<Omit<CreateDigitalEmployeeInput, 'id' | 'projectId'>> & { expectedRevision: number };
@@ -273,9 +257,7 @@ const builtInDigitalEmployeeTemplates: ReadonlyArray<CreateDigitalEmployeeTempla
     description: '负责研发计划、权限边界、集成取舍与最终汇总。',
     role: 'CTO',
     domain: '研发管理',
-    skillIds: [],
     prompt: '你是 CTO 数字员工。先核对任务事实、代码基线与授权边界，再提交按流程节点绑定的结构化计划；执行结束后只基于已核验成果和命令证据做汇总。',
-    permissionMode: 'read-only',
   },
   {
     id: 'digital_employee_template_product',
@@ -283,9 +265,7 @@ const builtInDigitalEmployeeTemplates: ReadonlyArray<CreateDigitalEmployeeTempla
     description: '分析需求、业务规则、取舍与验收标准。',
     role: '产品',
     domain: '通用',
-    skillIds: [],
     prompt: '你是产品数字员工。先核对需求来源和真实产品语义，再给出边界、取舍、验收标准与可执行任务。所有建议必须说明优缺点。',
-    permissionMode: 'read-only',
   },
   {
     id: 'digital_employee_template_frontend',
@@ -293,9 +273,7 @@ const builtInDigitalEmployeeTemplates: ReadonlyArray<CreateDigitalEmployeeTempla
     description: '负责前端交互、实现与真实界面验收。',
     role: '前端',
     domain: '通用',
-    skillIds: [],
     prompt: '你是前端数字员工。基于现有设计系统完成最小范围实现，并以真实渲染、交互与可访问性证据验收。',
-    permissionMode: 'auto',
   },
   {
     id: 'digital_employee_template_developer',
@@ -303,9 +281,7 @@ const builtInDigitalEmployeeTemplates: ReadonlyArray<CreateDigitalEmployeeTempla
     description: '负责代码调查、实现、静态验证与交付说明。',
     role: '开发',
     domain: '通用',
-    skillIds: [],
     prompt: '你是开发数字员工。先确认代码现场与边界，再实施最小且完整的修改；保留可审计证据，不把构建成功夸大为运行验收。',
-    permissionMode: 'auto',
   },
   {
     id: 'digital_employee_template_test',
@@ -313,9 +289,7 @@ const builtInDigitalEmployeeTemplates: ReadonlyArray<CreateDigitalEmployeeTempla
     description: '负责风险分析、验证执行与缺口报告。',
     role: '测试',
     domain: '通用',
-    skillIds: [],
     prompt: '你是测试数字员工。从用户路径、边界条件与失败恢复出发执行允许的验证，清楚区分已证实、未验证和理论风险。',
-    permissionMode: 'auto',
   },
   {
     id: 'digital_employee_template_deployment',
@@ -323,9 +297,7 @@ const builtInDigitalEmployeeTemplates: ReadonlyArray<CreateDigitalEmployeeTempla
     description: '负责发布前检查与已授权部署命令的执行跟踪。',
     role: '部署',
     domain: '通用',
-    skillIds: [],
     prompt: '你是部署数字员工。只使用项目已配置且明确授权的发布或部署命令；逐项核对产物、目标、版本、结果与回滚条件。',
-    permissionMode: 'read-only',
   },
 ];
 
@@ -616,25 +588,8 @@ export class DigitalEmployeeTemplateRepository {
     const value = normalizeTemplateInput({ ...existing, ...input });
     const timestamp = nextTimestamp(existing.updatedAt);
     this.db.execute(
-      `UPDATE digital_employee_templates SET name = ?, description = ?, role = ?, domain = ?, avatar_id = ?, skill_ids_json = ?, prompt = ?, agent_kind = ?, model = ?, reasoning_effort = ?, service_tier = ?, permission_mode = ?, work_mode = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? AND built_in = 0 AND deleted_at IS NULL`,
-      [
-        value.name,
-        value.description,
-        value.role,
-        value.domain,
-        value.avatarId ?? null,
-        JSON.stringify(value.skillIds),
-        value.prompt,
-        value.agentKind,
-        value.model,
-        value.reasoningEffort,
-        value.serviceTier,
-        value.permissionMode,
-        value.workMode,
-        timestamp,
-        existing.id,
-        existing.revision,
-      ],
+      `UPDATE digital_employee_templates SET name = ?, description = ?, role = ?, domain = ?, avatar_id = ?, prompt = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? AND built_in = 0 AND deleted_at IS NULL`,
+      [value.name, value.description, value.role, value.domain, value.avatarId ?? null, value.prompt, timestamp, existing.id, existing.revision],
     );
     assertChanged(this.db, '数字员工模板已被其他操作更新。');
     this.db.execute('UPDATE digital_employee_templates SET base_configuration_json = ? WHERE id = ?', [JSON.stringify(globalEmployeeDefaults(value)), existing.id]);
@@ -722,6 +677,16 @@ export class DigitalEmployeeRepository {
     if (binding.globalEmployeeId && (!global || global.builtIn)) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_GLOBAL_UNAVAILABLE', '关联的全局员工不可用，请重新绑定员工。');
     /** 模型、Skill 和权限从同一份有效配置重建，不保留相互冲突的入口副本。 */
     const effective = resolveEmployeeConfiguration(global, binding);
+    /** 旧差异完整保留，只有明确改用全局配置才可开始新工作。 */
+    const storedOverrides = parseRecord(row.project_overrides_json ?? '{}', 'employee.projectOverrides');
+    /** 独立项目员工也需先选择明确的全局身份。 */
+    const legacyConfiguration = Object.fromEntries(
+      employeeConfigurationKeys
+        .filter((key) => key !== 'memoryEnabled' && (!global || (Object.hasOwn(storedOverrides, key) && JSON.stringify(storedOverrides[key]) !== JSON.stringify(global[key]))))
+        .map((key) => [key, Object.hasOwn(storedOverrides, key) ? storedOverrides[key] : binding[key]]),
+    );
+    effective.legacyConfiguration = Object.keys(legacyConfiguration).length > 0 ? legacyConfiguration : null;
+    effective.entrypointMigrationState = effective.legacyConfiguration ? 'requires_configuration' : 'ready';
     effective.entrypoint = {
       kind: 'agent',
       prompt: effective.prompt,
@@ -804,22 +769,12 @@ export class DigitalEmployeeRepository {
     if (existing) return existing;
     return this.create({
       memoryEnabled: input.template.memoryEnabled,
-      allowCodeChanges: input.template.allowCodeChanges,
-      allowTests: input.template.allowTests,
-      deliveryGrants: input.template.deliveryGrants,
       name: input.template.name,
       description: input.template.description,
       role: input.template.role,
       domain: input.template.domain,
       avatarId: input.template.avatarId,
-      skillIds: input.template.skillIds,
       prompt: input.template.prompt,
-      agentKind: input.template.agentKind,
-      model: input.template.model,
-      reasoningEffort: input.template.reasoningEffort,
-      serviceTier: input.template.serviceTier,
-      permissionMode: input.template.permissionMode,
-      workMode: input.template.workMode,
       ...input.overrides,
       projectId: input.projectId,
       templateId: input.template.id,
@@ -839,26 +794,24 @@ export class DigitalEmployeeRepository {
     /** 一个项目不重复维护同一全局员工的多个配置入口。 */
     const duplicate = globalEmployeeId ? this.getByGlobalEmployee(existing.projectId, globalEmployeeId) : undefined;
     if (duplicate && duplicate.id !== existing.id) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_ALREADY_BOUND', '该全局员工已在当前项目中，请使用已有项目配置。');
-    /** 显式覆盖优先；旧接口传入的通用字段也保存为项目差异。 */
-    const projectOverrides = input.projectOverrides === undefined ? projectOverridesFromInput(input, global, existing.projectOverrides) : input.projectOverrides;
+    /** 只保留经验偏好；旧身份与提示词必须通过明确恢复动作处理。 */
+    const projectOverrides = input.projectOverrides === undefined ? projectOverridesFromInput(input, global, existing.projectOverrides) : normalizeProjectOverrides(input.projectOverrides);
+    /** 修改补充要求或经验偏好不能顺带删除仍待确认的旧身份与提示词。 */
+    const storedRow = this.db.get<DigitalEmployeeRow>('SELECT * FROM digital_employees WHERE id = ?', [existing.id])!;
+    /** 只有显式恢复全局配置才清除历史差异。 */
+    const persistedOverrides = input.projectOverrides === undefined ? { ...parseRecord(storedRow.project_overrides_json ?? '{}', 'employee.projectOverrides'), ...projectOverrides } : projectOverrides;
     const normalized = normalizeEmployeeInput({
       ...existing,
       ...input,
       globalEmployeeId,
       projectOverrides,
-      prompt: projectOverrides.prompt ?? global?.prompt ?? existing.prompt,
+      prompt: global?.prompt ?? storedRow.prompt,
       projectId: existing.projectId,
-      deliveryGrants: { ...existing.deliveryGrants, ...input.deliveryGrants },
-      taskFilter: { ...existing.taskFilter, ...input.taskFilter },
-      entrypoint: null,
     });
     const value = normalized;
     const timestamp = nextTimestamp(existing.updatedAt);
     this.db.execute(
-      `UPDATE digital_employees SET template_id = ?, name = ?, description = ?, role = ?, domain = ?, avatar_id = ?, skill_ids_json = ?, prompt = ?, agent_kind = ?, model = ?, reasoning_effort = ?, service_tier = ?, permission_mode = ?, work_mode = ?,
-       enabled = ?, auto_claim = ?, autonomous_exploration = ?, max_concurrency = ?, task_filter_json = ?, allow_code_changes = ?, allow_tests = ?,
-       allow_commit = ?, allow_push = ?, allow_merge = ?, allow_deploy = ?, allow_complete = ?, deploy_command_id = ?, entrypoint_kind = ?, entrypoint_migration_state = ?,
-       model_policy_json = ?, skill_policy_json = ?, authority_policy_json = ?, command_id = ?, revision = revision + 1, updated_at = ?
+      `UPDATE digital_employees SET template_id = ?, name = ?, description = ?, role = ?, domain = ?, avatar_id = ?, prompt = ?, enabled = ?, entrypoint_kind = ?, entrypoint_migration_state = ?, revision = revision + 1, updated_at = ?
        WHERE id = ? AND revision = ? AND deleted_at IS NULL`,
       [
         value.templateId,
@@ -867,33 +820,10 @@ export class DigitalEmployeeRepository {
         value.role,
         value.domain,
         value.avatarId ?? null,
-        JSON.stringify(value.skillIds),
         value.prompt,
-        value.agentKind,
-        value.model,
-        value.reasoningEffort,
-        value.serviceTier,
-        value.permissionMode,
-        value.workMode,
         bool(value.enabled),
-        bool(value.autoClaim),
-        bool(value.autonomousExploration),
-        value.maxConcurrency,
-        JSON.stringify(value.taskFilter),
-        bool(value.allowCodeChanges),
-        bool(value.allowTests),
-        bool(value.deliveryGrants.allowCommit),
-        bool(value.deliveryGrants.allowPush),
-        bool(value.deliveryGrants.allowMerge),
-        bool(value.deliveryGrants.allowDeploy),
-        bool(value.deliveryGrants.allowComplete),
-        value.deployCommandId,
         value.entrypoint?.kind ?? null,
         value.entrypointMigrationState,
-        JSON.stringify(value.entrypoint?.kind === 'agent' ? value.entrypoint.modelPolicy : defaultModelPolicy(value)),
-        JSON.stringify(value.entrypoint?.kind === 'agent' ? value.entrypoint.skillPolicy : { allowedSkillIds: value.skillIds }),
-        JSON.stringify(value.entrypoint?.kind === 'agent' ? value.entrypoint.authorityPolicy : defaultAuthorityPolicy(value)),
-        null,
         timestamp,
         existing.id,
         existing.revision,
@@ -903,7 +833,7 @@ export class DigitalEmployeeRepository {
     this.db.execute('UPDATE digital_employees SET memory_enabled = ? WHERE id = ?', [value.memoryEnabled === false ? 0 : 1, existing.id]);
     this.db.execute('UPDATE digital_employees SET global_employee_id = ?, project_overrides_json = ?, project_instructions = ? WHERE id = ?', [
       value.globalEmployeeId ?? null,
-      JSON.stringify(value.projectOverrides ?? {}),
+      JSON.stringify(persistedOverrides),
       value.projectInstructions ?? '',
       existing.id,
     ]);
@@ -1545,14 +1475,14 @@ function mapTemplateRow(row: DigitalEmployeeTemplateRow): DigitalEmployeeTemplat
     role: row.role,
     domain: row.domain,
     avatarId: row.avatar_id,
-    skillIds: parseStringList(row.skill_ids_json, 'template.skillIds'),
+    skillIds: [],
     prompt: row.prompt,
-    agentKind: oneOf(row.agent_kind, digitalEmployeeAgentKinds, 'template.agentKind'),
-    model: row.model,
-    reasoningEffort: row.reasoning_effort,
-    serviceTier: row.service_tier,
-    permissionMode: oneOf(row.permission_mode, digitalEmployeePermissionModes, 'template.permissionMode'),
-    workMode: oneOf(row.work_mode, digitalEmployeeWorkModes, 'template.workMode'),
+    agentKind: 'codex',
+    model: null,
+    reasoningEffort: null,
+    serviceTier: null,
+    permissionMode: 'read-only',
+    workMode: 'default',
     builtIn: row.built_in === 1,
     revision: nonNegativeInteger(row.revision, 'template.revision'),
     createdAt: row.created_at,
@@ -1560,12 +1490,14 @@ function mapTemplateRow(row: DigitalEmployeeTemplateRow): DigitalEmployeeTemplat
   };
 }
 
+/** 读取员工身份，历史动作列保留原值但不恢复为公开配置。 */
 function mapEmployeeRow(row: DigitalEmployeeRow): DigitalEmployeeRecord {
   oneOf(row.entrypoint_migration_state, ['ready', 'requires_selection', 'requires_configuration'] as const, 'employee.entrypointMigrationState');
-  const entrypoint = mapEmployeeEntrypoint(row);
+  /** 旧覆盖只读取现行公开字段，保留数据库原文与已冻结运行。 */
+  const storedOverrides = parseRecord(row.project_overrides_json ?? '{}', 'employee.projectOverrides');
   return {
     globalEmployeeId: row.global_employee_id ?? null,
-    projectOverrides: normalizeProjectOverrides(parseRecord(row.project_overrides_json ?? '{}', 'employee.projectOverrides')),
+    projectOverrides: normalizeProjectOverrides(Object.hasOwn(storedOverrides, 'memoryEnabled') ? { memoryEnabled: storedOverrides.memoryEnabled } : {}),
     projectInstructions: row.project_instructions ?? '',
     memoryEnabled: row.memory_enabled !== 0,
     id: row.id,
@@ -1576,19 +1508,19 @@ function mapEmployeeRow(row: DigitalEmployeeRow): DigitalEmployeeRecord {
     role: row.role,
     domain: row.domain,
     avatarId: row.avatar_id,
-    skillIds: parseStringList(row.skill_ids_json, 'employee.skillIds'),
+    skillIds: [],
     prompt: row.prompt,
-    agentKind: oneOf(row.agent_kind, digitalEmployeeAgentKinds, 'employee.agentKind'),
-    model: row.model,
-    reasoningEffort: row.reasoning_effort,
-    serviceTier: row.service_tier,
-    permissionMode: oneOf(row.permission_mode, digitalEmployeePermissionModes, 'employee.permissionMode'),
-    workMode: oneOf(row.work_mode, digitalEmployeeWorkModes, 'employee.workMode'),
+    agentKind: 'codex',
+    model: null,
+    reasoningEffort: null,
+    serviceTier: null,
+    permissionMode: 'read-only',
+    workMode: 'default',
     enabled: row.enabled === 1,
-    autoClaim: row.auto_claim === 1,
-    autonomousExploration: row.autonomous_exploration === 1,
+    autoClaim: false,
+    autonomousExploration: false,
     maxConcurrency: positiveInteger(row.max_concurrency, 'employee.maxConcurrency', 20),
-    taskFilter: parseTaskFilter(row.task_filter_json),
+    taskFilter: { managementStatuses: [], taskTypes: [], requiredTags: [] },
     allowCodeChanges: row.allow_code_changes === 1,
     allowTests: row.allow_tests === 1,
     deliveryGrants: {
@@ -1599,7 +1531,7 @@ function mapEmployeeRow(row: DigitalEmployeeRow): DigitalEmployeeRecord {
       allowComplete: row.allow_complete === 1,
     },
     deployCommandId: row.deploy_command_id,
-    entrypoint,
+    entrypoint: null,
     entrypointMigrationState: 'ready',
     revision: nonNegativeInteger(row.revision, 'employee.revision'),
     createdAt: row.created_at,
@@ -1663,33 +1595,30 @@ function mapExecutionRow(row: DigitalEmployeeExecutionRow): DigitalEmployeeExecu
   };
 }
 
-function normalizeTemplateInput(input: CreateDigitalEmployeeTemplateInput): Required<Omit<CreateDigitalEmployeeTemplateInput, 'id'>> {
+/** 只校验身份与提示词；执行参数统一投影为空默认，不再接受员工专用值。 */
+function normalizeTemplateInput(input: CreateDigitalEmployeeTemplateInput): Omit<DigitalEmployeeTemplateRecord, 'id' | 'identityKind' | 'builtIn' | 'revision' | 'createdAt' | 'updatedAt'> {
   return {
     memoryEnabled: input.memoryEnabled !== false,
-    allowCodeChanges: input.allowCodeChanges === true,
-    allowTests: input.allowTests === true,
-    deliveryGrants: normalizeDeliveryGrants(input.deliveryGrants ?? {}),
     name: boundedText(input.name, 'template.name', 1, 120),
     description: boundedText(input.description ?? '', 'template.description', 0, 1_000),
     role: boundedText(input.role, 'template.role', 1, 120),
     domain: boundedText(input.domain ?? '', 'template.domain', 0, 120),
     avatarId: input.avatarId == null ? null : oneOf(input.avatarId, digitalEmployeeAvatarIds, 'template.avatarId'),
-    skillIds: normalizeDigitalEmployeeSkillIds(input.skillIds ?? []),
+    skillIds: [],
     prompt: boundedText(input.prompt, 'template.prompt', 1, 20_000),
-    agentKind: oneOf(input.agentKind ?? 'codex', digitalEmployeeAgentKinds, 'template.agentKind'),
-    model: nullableText(input.model, 256),
-    reasoningEffort: nullableText(input.reasoningEffort, 64),
-    serviceTier: nullableText(input.serviceTier, 64),
-    permissionMode: oneOf(input.permissionMode ?? 'read-only', digitalEmployeePermissionModes, 'template.permissionMode'),
-    workMode: oneOf(input.workMode ?? 'default', digitalEmployeeWorkModes, 'template.workMode'),
+    agentKind: 'codex',
+    model: null,
+    reasoningEffort: null,
+    serviceTier: null,
+    permissionMode: 'read-only',
+    workMode: 'default',
   };
 }
 
+/** 只从公开员工字段生成项目绑定与 Agent 入口。 */
 function normalizeEmployeeInput(input: CreateDigitalEmployeeInput): Omit<DigitalEmployeeRecord, 'id' | 'revision' | 'createdAt' | 'updatedAt'> {
   const template = normalizeTemplateInput(input);
-  const taskFilter = normalizeTaskFilter(input.taskFilter ?? {});
-  const deliveryGrants = normalizeDeliveryGrants(input.deliveryGrants ?? {});
-  const deployCommandId = nullableIdentity(input.deployCommandId, 'deployCommandId');
+
   const base = {
     globalEmployeeId: nullableIdentity(input.globalEmployeeId, 'globalEmployeeId'),
     projectOverrides: normalizeProjectOverrides(input.projectOverrides ?? {}),
@@ -1698,70 +1627,44 @@ function normalizeEmployeeInput(input: CreateDigitalEmployeeInput): Omit<Digital
     templateId: nullableIdentity(input.templateId, 'templateId'),
     ...template,
     enabled: input.enabled !== false,
-    autoClaim: input.autoClaim === true,
-    autonomousExploration: input.autonomousExploration === true,
+    autoClaim: false,
+    autonomousExploration: false,
     // 历史列只作存储兼容；数字员工不再设置或执行并发上限。
     maxConcurrency: 1,
-    taskFilter,
-    allowCodeChanges: input.allowCodeChanges === true,
-    allowTests: input.allowTests === true,
-    deliveryGrants,
-    deployCommandId,
+    taskFilter: { managementStatuses: [], taskTypes: [], requiredTags: [] },
+    // 新员工的历史列保持关闭，任务运行另行计算权限。
+    allowCodeChanges: false,
+    allowTests: false,
+    deliveryGrants: normalizeDeliveryGrants({}),
+    deployCommandId: null,
   };
-  const rawEntrypoint = input.entrypoint as { kind?: unknown } | null | undefined;
-  const rawEntrypointKind = (input as CreateDigitalEmployeeInput & { entrypointKind?: unknown }).entrypointKind;
-  if (rawEntrypoint?.kind === 'command' || rawEntrypointKind === 'command') {
-    throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_COMMAND_ENTRYPOINT_UNSUPPORTED', '数字员工没有 Command 类型；执行命令是 Agent 受权限约束的运行能力。');
-  }
-  const provided = input.entrypoint?.kind === 'agent' ? input.entrypoint : null;
+  /** 入口从同一份员工配置派生，不接收第二份提示词或权限配置。 */
   const entrypoint: AgentEntrypointV2 = {
     kind: 'agent',
-    prompt: boundedText(provided?.prompt ?? template.prompt, 'entrypoint.prompt', 1, 20_000),
-    agentKind: oneOf(provided?.agentKind ?? template.agentKind, digitalEmployeeAgentKinds, 'entrypoint.agentKind'),
-    modelPolicy: normalizeModelPolicy(provided?.modelPolicy ?? defaultModelPolicy(base)),
-    skillPolicy: normalizeSkillPolicy(provided?.skillPolicy ?? { allowedSkillIds: template.skillIds }),
-    authorityPolicy: normalizeAuthorityPolicy(provided?.authorityPolicy ?? defaultAuthorityPolicy(base)),
+    prompt: template.prompt,
+    agentKind: template.agentKind,
+    modelPolicy: defaultModelPolicy(base),
+    skillPolicy: { allowedSkillIds: template.skillIds },
+    authorityPolicy: defaultAuthorityPolicy(base),
   };
   return { ...base, entrypoint, entrypointMigrationState: 'ready' };
 }
 
-/** 从全局员工中保存经验与权限默认值，不重复序列化已有基础字段。 */
-function globalEmployeeDefaults(input: CreateDigitalEmployeeTemplateInput): Pick<DigitalEmployeeTemplateRecord, 'memoryEnabled' | 'allowCodeChanges' | 'allowTests' | 'deliveryGrants'> {
-  return { memoryEnabled: input.memoryEnabled !== false, allowCodeChanges: input.allowCodeChanges === true, allowTests: input.allowTests === true, deliveryGrants: normalizeDeliveryGrants(input.deliveryGrants ?? {}) };
+/** 只保存员工经验偏好，执行与交付权限属于具体任务。 */
+function globalEmployeeDefaults(input: CreateDigitalEmployeeTemplateInput): Pick<DigitalEmployeeTemplateRecord, 'memoryEnabled'> {
+  return { memoryEnabled: input.memoryEnabled !== false };
 }
 
-/** 项目写入仅接受公开配置字段，防止覆盖身份、版本或任务授权。 */
+/** 项目只允许保存经验偏好，身份与提示词统一来自全局员工。 */
 function normalizeProjectOverrides(input: unknown): ProjectEmployeeOverrides {
-  if (!isPlainRecord(input) || Object.keys(input).some((key) => !employeeConfigurationKeys.includes(key as (typeof employeeConfigurationKeys)[number])))
-    throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_INVALID', '项目覆盖包含不支持的配置字段。');
-  for (const key of ['memoryEnabled', 'allowCodeChanges', 'allowTests']) if (key in input && typeof input[key] !== 'boolean') throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_INVALID', '项目权限和经验偏好必须使用布尔值。');
-  /** 复用正常配置校验，缺少的字段仅用于校验默认值，不写进覆盖。 */
-  const normalized = normalizeTemplateInput({ name: '项目配置', role: '项目配置', prompt: '项目配置', ...input } as CreateDigitalEmployeeTemplateInput);
-  return Object.fromEntries(Object.keys(input).map((key) => [key, normalized[key as keyof typeof normalized]]));
+  if (!isPlainRecord(input) || Object.keys(input).some((key) => key !== 'memoryEnabled') || ('memoryEnabled' in input && typeof input.memoryEnabled !== 'boolean'))
+    throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_INVALID', '项目只允许调整员工经验偏好。');
+  return Object.hasOwn(input, 'memoryEnabled') ? { memoryEnabled: input.memoryEnabled as boolean } : {};
 }
 
-/** 既有更新接口的基础字段也表达项目覆盖，相同全局值恢复继承。 */
-function projectOverridesFromInput(input: Partial<CreateDigitalEmployeeInput>, global?: DigitalEmployeeTemplateRecord, previous: ProjectEmployeeOverrides = {}): ProjectEmployeeOverrides {
-  /** 保留没有被本次写入修改的差异。 */
-  const overrides = { ...previous };
-  for (const key of employeeConfigurationKeys) {
-    if (!Object.hasOwn(input, key) || input[key] === undefined) continue;
-    if (global && JSON.stringify(input[key]) === JSON.stringify(global[key])) delete overrides[key];
-    else Object.assign(overrides, { [key]: input[key] });
-  }
-  return normalizeProjectOverrides(overrides);
-}
-
-function mapEmployeeEntrypoint(row: DigitalEmployeeRow): AgentEntrypointV2 {
-  // 旧 command/待选择记录保留 deploy_command_id 作为部署能力；员工身份按已有 Agent 配置投影。
-  return {
-    kind: 'agent',
-    prompt: row.prompt,
-    agentKind: oneOf(row.agent_kind, digitalEmployeeAgentKinds, 'employee.entrypoint.agentKind'),
-    modelPolicy: normalizeModelPolicy(parseRecord(row.model_policy_json, 'employee.modelPolicy')),
-    skillPolicy: normalizeSkillPolicy(parseRecord(row.skill_policy_json, 'employee.skillPolicy')),
-    authorityPolicy: normalizeAuthorityPolicy(parseRecord(row.authority_policy_json, 'employee.authorityPolicy')),
-  };
+/** 项目保存不再复制全局字段，仅记录明确设置的经验偏好。 */
+function projectOverridesFromInput(input: Partial<CreateDigitalEmployeeInput>, _global?: DigitalEmployeeTemplateRecord, previous: ProjectEmployeeOverrides = {}): ProjectEmployeeOverrides {
+  return input.memoryEnabled === undefined ? { ...previous } : { memoryEnabled: input.memoryEnabled };
 }
 
 function defaultModelPolicy(input: Pick<DigitalEmployeeTemplateRecord, 'model' | 'reasoningEffort' | 'serviceTier'>): ModelPolicyV1 {
@@ -1774,47 +1677,17 @@ function defaultModelPolicy(input: Pick<DigitalEmployeeTemplateRecord, 'model' |
   };
 }
 
-function defaultAuthorityPolicy(input: { permissionMode: DigitalEmployeePermissionMode; allowCodeChanges: boolean; allowTests: boolean; deliveryGrants: DigitalEmployeeDeliveryGrants }): AuthorityPolicyV1 {
+/** 旧入口形状保持保守默认，动作授权在运行接纳时由任务与节点计算。 */
+function defaultAuthorityPolicy(input: { permissionMode: DigitalEmployeePermissionMode }): AuthorityPolicyV1 {
   return {
     permissionMode: input.permissionMode,
-    allowCodeChanges: input.allowCodeChanges,
-    allowTests: input.allowTests,
-    allowCommit: input.deliveryGrants.allowCommit,
-    allowPush: input.deliveryGrants.allowPush,
-    allowMerge: input.deliveryGrants.allowMerge,
-    allowDeploy: input.deliveryGrants.allowDeploy,
-    allowComplete: input.deliveryGrants.allowComplete,
-  };
-}
-
-function normalizeModelPolicy(value: unknown): ModelPolicyV1 {
-  if (!isPlainRecord(value)) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_INVALID', 'modelPolicy 必须是对象。');
-  const defaultMode = oneOf(value.defaultMode ?? 'project', ['project', 'explicit'] as const, 'modelPolicy.defaultMode');
-  const defaultModel = nullableText(value.defaultModel, 256);
-  const allowedModels = normalizeStringList(Array.isArray(value.allowedModels) ? value.allowedModels : [], 'modelPolicy.allowedModels', 50, 256);
-  const allowedReasoningEfforts = normalizeStringList(Array.isArray(value.allowedReasoningEfforts) ? value.allowedReasoningEfforts : [], 'modelPolicy.allowedReasoningEfforts', 20, 64);
-  const allowedServiceTiers = normalizeStringList(Array.isArray(value.allowedServiceTiers) ? value.allowedServiceTiers : [], 'modelPolicy.allowedServiceTiers', 20, 64);
-  if (defaultMode === 'explicit' && !defaultModel) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_MODEL_POLICY_INVALID', '显式默认模型不能为空。');
-  if (defaultModel && allowedModels.length > 0 && !allowedModels.includes(defaultModel)) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_MODEL_POLICY_INVALID', '默认模型必须在允许范围内。');
-  return { defaultMode, defaultModel, allowedModels, allowedReasoningEfforts, allowedServiceTiers };
-}
-
-function normalizeSkillPolicy(value: unknown): SkillPolicyV1 {
-  if (!isPlainRecord(value)) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_INVALID', 'skillPolicy 必须是对象。');
-  return { allowedSkillIds: normalizeDigitalEmployeeSkillIds(Array.isArray(value.allowedSkillIds) ? value.allowedSkillIds : []) };
-}
-
-function normalizeAuthorityPolicy(value: unknown): AuthorityPolicyV1 {
-  if (!isPlainRecord(value)) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_INVALID', 'authorityPolicy 必须是对象。');
-  return {
-    permissionMode: oneOf(value.permissionMode ?? 'read-only', digitalEmployeePermissionModes, 'authorityPolicy.permissionMode'),
-    allowCodeChanges: value.allowCodeChanges === true,
-    allowTests: value.allowTests === true,
-    allowCommit: value.allowCommit === true,
-    allowPush: value.allowPush === true,
-    allowMerge: value.allowMerge === true,
-    allowDeploy: value.allowDeploy === true,
-    allowComplete: value.allowComplete === true,
+    allowCodeChanges: false,
+    allowTests: false,
+    allowCommit: false,
+    allowPush: false,
+    allowMerge: false,
+    allowDeploy: false,
+    allowComplete: false,
   };
 }
 
@@ -1898,14 +1771,6 @@ function taskEventTriggerClause(triggerKind: Extract<DigitalEmployeeAutomationTr
   return `event.event_type IN ('task.status.changed', 'task.management_status.changed')`;
 }
 
-function normalizeTaskFilter(input: Partial<DigitalEmployeeTaskFilter>): DigitalEmployeeTaskFilter {
-  return {
-    managementStatuses: normalizeStringList(input.managementStatuses ?? [], 'taskFilter.managementStatuses', 50, 80),
-    taskTypes: normalizeStringList(input.taskTypes ?? [], 'taskFilter.taskTypes', 50, 80),
-    requiredTags: normalizeStringList(input.requiredTags ?? [], 'taskFilter.requiredTags', 50, 120),
-  };
-}
-
 function normalizeDeliveryGrants(input: Partial<DigitalEmployeeDeliveryGrants> | Record<string, unknown>): DigitalEmployeeDeliveryGrants {
   return {
     allowCommit: input.allowCommit === true,
@@ -1914,10 +1779,6 @@ function normalizeDeliveryGrants(input: Partial<DigitalEmployeeDeliveryGrants> |
     allowDeploy: input.allowDeploy === true,
     allowComplete: input.allowComplete === true,
   };
-}
-
-function parseTaskFilter(value: string): DigitalEmployeeTaskFilter {
-  return normalizeTaskFilter(parseRecord(value, 'employee.taskFilter'));
 }
 
 function normalizeJsonRecord(value: Record<string, unknown>, field: string, maximumBytes: number): Record<string, unknown> {
@@ -1940,30 +1801,6 @@ function parseRecord(value: string, field: string): Record<string, unknown> {
   } catch (error) {
     throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_CORRUPT', `${field} 的持久化 JSON 无法解析。`, error);
   }
-}
-
-function parseStringList(value: string, field: string): string[] {
-  try {
-    const parsed: unknown = JSON.parse(value);
-    if (!Array.isArray(parsed)) throw new Error('not array');
-    return normalizeStringList(parsed, field, 100, 256);
-  } catch (error) {
-    throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_CORRUPT', `${field} 的持久化 JSON 无法解析。`, error);
-  }
-}
-
-function normalizeStringList(value: unknown[], field: string, maximumItems: number, maximumLength: number): string[] {
-  if (value.length > maximumItems) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_INVALID', `${field} 项目过多。`);
-  const normalized = value.map((entry) => boundedText(entry, field, 1, maximumLength));
-  return [...new Set(normalized)];
-}
-
-function normalizeDigitalEmployeeSkillIds(value: unknown[]): string[] {
-  const skillIds = normalizeStringList(value, 'template.skillIds', 20, 512);
-  if (skillIds.some((skillId) => !isZeusSkillId(skillId))) {
-    throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_SKILL_INVALID', '数字员工必须从 Zeus Skill 目录选择默认 Skill。');
-  }
-  return skillIds;
 }
 
 const executionTransitions: Record<DigitalEmployeeExecutionStatus, readonly DigitalEmployeeExecutionStatus[]> = {

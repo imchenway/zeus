@@ -1,4 +1,4 @@
-/** 员工默认与任务安排共用的可选配置；省略表示继承，空技能集合表示明确清空。 */
+/** 任务安排只补充目标、分工、提示词和权限限制；旧 AI 字段仅供历史快照读取。 */
 export interface EmployeeWorkSettings {
   /** 有原生目标能力时持续推进到该目标完成；空值关闭本层目标。 */
   autonomyObjective?: string | null;
@@ -75,14 +75,18 @@ export interface EmployeeTeamRecipe {
   revision: number;
 }
 
-/** 按层叠加显式值；不会把模板或权限批准混入运行默认。 */
+/** 新工作仅叠加业务要求并收紧权限，不继承历史 AI 偏好。 */
 export function mergeEmployeeWorkSettings(...layers: Array<EmployeeWorkSettings | null | undefined>): EmployeeWorkSettings {
   /** 每层只覆盖实际提供的字段，数组生成独立副本。 */
   const result: EmployeeWorkSettings = {};
   for (const layer of layers) {
     if (!layer) continue;
-    for (const key of ['autonomyObjective', 'delegation', 'modelOverride', 'reasoningEffort', 'serviceTier', 'workMode', 'permissionMode', 'skillIds', 'promptOverride'] as const) {
+    for (const key of ['autonomyObjective', 'delegation', 'promptOverride'] as const) {
       if (layer[key] !== undefined) Object.assign(result, { [key]: structuredClone(layer[key]) });
+    }
+    if (layer.permissionMode === 'read-only' || layer.permissionMode === 'auto' || layer.permissionMode === 'full-access') {
+      /** 任一层只读都不能被更下层的偏好放宽。 */
+      result.permissionMode = result.permissionMode === 'read-only' || layer.permissionMode === 'read-only' ? 'read-only' : result.permissionMode === 'auto' || layer.permissionMode === 'auto' ? 'auto' : 'full-access';
     }
   }
   return result;

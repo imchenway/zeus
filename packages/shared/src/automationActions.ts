@@ -1,4 +1,4 @@
-/** 自动化只提供会话、员工工作和项目任务三种业务动作。 */
+/** 新规则只触发员工或项目流程；普通会话仅供历史记录读取。 */
 export type AutomationActionKind = 'conversation' | 'employee_work' | 'project_task';
 
 /** 冻结到自动化修订中的动作配置。 */
@@ -15,6 +15,15 @@ export interface AutomationActionConfig {
   title?: string;
   /** 是否优先领取来源事件的任务。 */
   useEventTask?: boolean;
+  /** 领取既有任务时使用规则自己的筛选，不读取隐藏员工配置。 */
+  taskFilter?: {
+    /** 可领取的任务状态。 */
+    managementStatuses: string[];
+    /** 可领取的任务类型。 */
+    taskTypes: string[];
+    /** 任务必须同时包含的标签。 */
+    requiredTags: string[];
+  };
 }
 
 /** 一次自动化触发可对应多份真实工作，所有引用终结后才能结算。 */

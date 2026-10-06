@@ -73,10 +73,7 @@ export interface DigitalEmployeeApiClient {
   loadTaskDigitalEmployeeCollaboration(taskId: string): Promise<DigitalEmployeeCollaborationProjection>;
   assignTaskToDigitalEmployee(taskId: string, employeeId: string): Promise<DigitalEmployeeExecutionRecord>;
   retryDigitalEmployeeExecution(executionId: string, taskId: string): Promise<DigitalEmployeeExecutionRecord>;
-  retryStagedDigitalEmployeeExecution(executionId: string, taskId: string, input: { targetEmployeeId: string; expectedExecutionRevision: number }): Promise<DigitalEmployeeExecutionRecord>;
   cancelDigitalEmployeeExecution(executionId: string, taskId: string): Promise<DigitalEmployeeExecutionRecord>;
-  handoffDigitalEmployeeExecution(executionId: string, taskId: string, input: DigitalEmployeeStageDecisionInput & { targetEmployeeId: string }): Promise<DigitalEmployeeExecutionRecord>;
-  reworkDigitalEmployeeExecution(executionId: string, taskId: string, input: DigitalEmployeeStageDecisionInput & { targetEmployeeId: string; reason: string }): Promise<DigitalEmployeeExecutionRecord>;
   finalizeDigitalEmployeeExecution(executionId: string, taskId: string, input: DigitalEmployeeStageDecisionInput): Promise<DigitalEmployeeExecutionRecord>;
   adoptLegacyDigitalEmployeeExecution(executionId: string, taskId: string, expectedExecutionRevision: number): Promise<DigitalEmployeeExecutionRecord>;
   loadDigitalEmployeeDeliverableContent(taskId: string, deliverableId: string): Promise<{ content: string }>;
@@ -172,21 +169,9 @@ export function createDigitalEmployeeApiClient(transport: LocalApiTransport): Di
       const body = await command(workManagementClientCommandTypes.digitalEmployeeExecutionRetry, 'task', () => taskId, 'digital_employee_execution_retry_', {});
       return transport.request(`/api/digital-employee-executions/${encodeURIComponent(executionId)}/retry`, jsonRequest('POST', body));
     },
-    retryStagedDigitalEmployeeExecution: async (executionId, taskId, input) => {
-      const body = await command(workManagementClientCommandTypes.digitalEmployeeExecutionRetry, 'task', () => taskId, 'digital_employee_stage_retry_', input, input.expectedExecutionRevision);
-      return transport.request(`${taskPath(taskId)}/digital-employee-executions/${encodeURIComponent(executionId)}/retries`, jsonRequest('POST', body));
-    },
     cancelDigitalEmployeeExecution: async (executionId, taskId) => {
       const body = await command(workManagementClientCommandTypes.digitalEmployeeExecutionCancel, 'task', () => taskId, 'digital_employee_execution_cancel_', {});
       return transport.request(`/api/digital-employee-executions/${encodeURIComponent(executionId)}/cancel`, jsonRequest('POST', body));
-    },
-    handoffDigitalEmployeeExecution: async (executionId, taskId, input) => {
-      const body = await command(workManagementClientCommandTypes.digitalEmployeeExecutionHandoff, 'task', () => taskId, 'digital_employee_handoff_', input, input.expectedExecutionRevision);
-      return transport.request(`${taskPath(taskId)}/digital-employee-executions/${encodeURIComponent(executionId)}/handoffs`, jsonRequest('POST', body));
-    },
-    reworkDigitalEmployeeExecution: async (executionId, taskId, input) => {
-      const body = await command(workManagementClientCommandTypes.digitalEmployeeExecutionRework, 'task', () => taskId, 'digital_employee_rework_', input, input.expectedExecutionRevision);
-      return transport.request(`${taskPath(taskId)}/digital-employee-executions/${encodeURIComponent(executionId)}/reworks`, jsonRequest('POST', body));
     },
     finalizeDigitalEmployeeExecution: async (executionId, taskId, input) => {
       const body = await command(workManagementClientCommandTypes.digitalEmployeeExecutionFinalize, 'task', () => taskId, 'digital_employee_finalize_', input, input.expectedExecutionRevision);

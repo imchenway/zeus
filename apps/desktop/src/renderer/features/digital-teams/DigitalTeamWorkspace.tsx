@@ -171,7 +171,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   /** 共享图校验与已创建员工核对共同决定团队能否形成可运行定义。 */
   const validationIssues = useMemo(() => {
     /** 结构问题先由 shared 权威校验器生成。 */
-    /** 草稿与保存共用协议默认值，用户只填写实际工作要求和必需验收命令。 */
+    /** 草稿与保存共用协议默认值，通用分工只需工作要求，研发验收按需配置。 */
     const effectiveDefinition = normalizeDigitalTeamWorkflowDefinition(draft.definition);
     const issues: DigitalTeamWorkflowValidationIssue[] = [
       ...validateDigitalTeamWorkflowDefinition(effectiveDefinition),
@@ -776,10 +776,10 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                   }}
                 />
               </label>
-              <details>
-                <summary>{zh ? '缺陷修复规则' : 'Defect repair'}</summary>
+              <details open={Boolean(draft.definition.repairEmployeeId)}>
+                <summary>{zh ? '研发流程设置（可选）' : 'Development workflow (optional)'}</summary>
                 <label>
-                  <span>{zh ? '修复员工' : 'Repair employee'}</span>
+                  <span>{zh ? '缺陷修复员工' : 'Defect repair employee'}</span>
                   <ZeusSelect
                     size="regular"
                     ariaLabel="选择缺陷修复员工"
@@ -1042,9 +1042,7 @@ function RolePalette(props: { employees: DigitalTeamMemberRecord[]; onAdd(payloa
               <DigitalEmployeeAvatar avatarId={employee.avatarId} role={employee.role} />
               <span>
                 <strong>{employee.name}</strong>
-                <small>
-                  {employee.role} · {employee.model ?? '运行时选择模型'}
-                </small>
+                <small>{employee.role}</small>
               </span>
               <Button size="compact" aria-label={`添加员工节点 ${employee.name}`} onClick={() => props.onAdd({ kind: 'employee', employeeId: employee.id })}>
                 添加
@@ -1196,6 +1194,8 @@ function EmployeeNodeFields(props: {
   const update = (data: Partial<DigitalTeamEmployeeNode['data']>): void => props.onChange({ ...props.node, data: { ...props.node.data, ...data } });
   /** 编辑时保留换行，正式保存再剔除空项。 */
   const lines = (value: string): string[] => value.split('\n');
+  /** 已有研发配置明确展示，普通分工默认保持只读且不需要配置技术职责。 */
+  const developmentConfigured = props.node.data.purpose !== 'work' || props.node.data.executionMode !== 'read_only' || Boolean(props.node.data.verificationCommands?.length);
   return (
     <>
       <label>
@@ -1213,7 +1213,6 @@ function EmployeeNodeFields(props: {
                 ...props.node.data,
                 title: employee.name,
                 employeeId,
-                executionMode: employee.permissionMode === 'read-only' ? 'read_only' : props.node.data.executionMode,
                 settings: undefined,
               },
             });
@@ -1223,62 +1222,11 @@ function EmployeeNodeFields(props: {
         />
       </label>
       <label>
-        <span>工作职责</span>
-        <ZeusSelect
-          size="regular"
-          ariaLabel="工作职责"
-          value={props.node.data.purpose}
-          options={[
-            { value: 'plan', label: '规划' },
-            { value: 'work', label: '执行' },
-            { value: 'verify', label: '验收' },
-            { value: 'summary', label: '交付汇总' },
-          ]}
-          onChange={(value) => {
-            /** 验收读取被测候选，规划与汇总保持只读。 */ const purpose = value as DigitalTeamEmployeeNode['data']['purpose'];
-            update({ purpose, executionMode: purpose === 'verify' ? 'candidate_read_only' : purpose === 'work' ? props.node.data.executionMode : 'read_only' });
-          }}
-        />
-      </label>
-      {props.node.data.purpose === 'work' ? (
-        <label>
-          <span>执行方式</span>
-          <ZeusSelect
-            size="regular"
-            ariaLabel="执行方式"
-            value={props.node.data.executionMode}
-            options={[
-              { value: 'read_only', label: '只读工作' },
-              { value: 'isolated_write', label: '隔离工作区修改' },
-            ]}
-            onChange={(value) => update({ executionMode: value as DigitalTeamEmployeeNode['data']['executionMode'] })}
-          />
-        </label>
-      ) : null}
-      <label>
         <span>工作要求</span>
         <textarea placeholder="默认按任务目标与员工职责执行" value={props.node.data.instructions} maxLength={12000} onChange={(event) => update({ instructions: event.currentTarget.value })} />
       </label>
-
-      {props.node.data.purpose === 'verify' ? (
-        <label>
-          <span>必须通过的验收命令（每行一项）</span>
-          <textarea
-            autoFocus={!props.node.data.verificationCommands?.some((command) => command.trim())}
-            aria-invalid={!props.node.data.verificationCommands?.some((command) => command.trim())}
-            placeholder="例如 pnpm lint、pnpm typecheck（每行一条）"
-            value={(props.node.data.verificationCommands ?? []).join('\n')}
-            onChange={(event) => update({ verificationCommands: lines(event.currentTarget.value) })}
-          />
-          {!props.node.data.verificationCommands?.some((command) => command.trim()) ? <small className="digital-team-field-error">请填写需要实际执行的验收命令。</small> : null}
-        </label>
-      ) : null}
       <details className="digital-team-advanced-settings" open={props.hasStatusIssue}>
-        <summary>完成标准与状态设置</summary>
-        <label>
-          <span>完成标准（每行一项）</span>
-          <textarea value={(props.node.data.acceptanceCriteria ?? []).join('\n')} onChange={(event) => update({ acceptanceCriteria: lines(event.currentTarget.value) })} />
-        </label>{' '}
+        <summary>任务状态与指派入口</summary>
         <label>
           <input type="checkbox" checked={props.node.data.assignmentEntry ?? false} onChange={(event) => update({ assignmentEntry: event.currentTarget.checked })} />
           <span>作为该员工的指派入口</span>
@@ -1295,6 +1243,65 @@ function EmployeeNodeFields(props: {
             />
           </label>
         ))}
+      </details>
+      <details className="digital-team-advanced-settings">
+        <summary>完成标准（可选）</summary>
+        <label>
+          <span>完成标准（每行一项）</span>
+          <textarea placeholder="默认按工作要求完成并提供可核对结果" value={(props.node.data.acceptanceCriteria ?? []).join('\n')} onChange={(event) => update({ acceptanceCriteria: lines(event.currentTarget.value) })} />
+        </label>
+      </details>
+      <details className="digital-team-advanced-settings" open={developmentConfigured}>
+        <summary>研发流程设置（可选）{developmentConfigured ? <small>已配置</small> : null}</summary>
+        <label>
+          <span>研发职责</span>
+          <ZeusSelect
+            size="regular"
+            ariaLabel="研发职责"
+            value={props.node.data.purpose}
+            options={[
+              { value: 'plan', label: '规划' },
+              { value: 'work', label: '执行' },
+              { value: 'verify', label: '代码验收' },
+              { value: 'summary', label: '交付汇总' },
+            ]}
+            onChange={(value) => {
+              /** 候选只读只属于代码验收，切回普通分工不会自动授权代码修改。 */
+              const purpose = value as DigitalTeamEmployeeNode['data']['purpose'];
+              update({ purpose, executionMode: purpose === 'verify' ? 'candidate_read_only' : purpose === 'work' && props.node.data.executionMode === 'isolated_write' ? 'isolated_write' : 'read_only' });
+            }}
+          />
+        </label>
+        {props.node.data.purpose === 'work' ? (
+          <label>
+            <span>执行方式</span>
+            <ZeusSelect
+              size="regular"
+              ariaLabel="执行方式"
+              value={props.node.data.executionMode}
+              options={[
+                { value: 'read_only', label: '只读工作' },
+                { value: 'isolated_write', label: '隔离工作区修改代码' },
+              ]}
+              onChange={(value) => update({ executionMode: value as DigitalTeamEmployeeNode['data']['executionMode'] })}
+            />
+            <small>修改代码仍需本次任务授权。</small>
+          </label>
+        ) : null}
+        {props.node.data.purpose === 'verify' ? (
+          <label>
+            <span>必须通过的验收命令（每行一项）</span>
+            <small>只读核对上游代码候选，并执行这些验收命令。</small>
+            <textarea
+              autoFocus={!props.node.data.verificationCommands?.some((command) => command.trim())}
+              aria-invalid={!props.node.data.verificationCommands?.some((command) => command.trim())}
+              placeholder="例如 pnpm lint、pnpm typecheck（每行一条）"
+              value={(props.node.data.verificationCommands ?? []).join('\n')}
+              onChange={(event) => update({ verificationCommands: lines(event.currentTarget.value) })}
+            />
+            {!props.node.data.verificationCommands?.some((command) => command.trim()) ? <small className="digital-team-field-error">请填写需要实际执行的验收命令。</small> : null}
+          </label>
+        ) : null}
       </details>
       {props.employee ? (
         <p className="digital-employee-boundary-note">{props.employee.description || `${props.employee.role} · ${props.employee.domain}`}</p>

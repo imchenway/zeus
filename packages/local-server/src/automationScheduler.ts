@@ -1,4 +1,14 @@
-import type { AutomationDefinitionSnapshot, AutomationRunRecord, AutomationRunRepository, AutomationTaskRecord, AutomationTaskRepository, ConversationRepository, ConversationSubmissionRepository, ZeusProjectRecord } from '@zeus/storage';
+import type {
+  AutomationDefinitionSnapshot,
+  AutomationRevisionRecord,
+  AutomationRunRecord,
+  AutomationRunRepository,
+  AutomationTaskRecord,
+  AutomationTaskRepository,
+  ConversationRepository,
+  ConversationSubmissionRepository,
+  ZeusProjectRecord,
+} from '@zeus/storage';
 import { automationEventStatusId, type AutomationDispatchTarget, type AutomationExecutionReference, type AutomationExecutionState } from '@zeus/shared';
 
 export interface AutomationDispatchResult {
@@ -229,6 +239,8 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
               continue;
             }
           }
+          if (revision.snapshot.action.kind === 'project_task' && !revision.snapshot.action.taskFilter) throw new Error('ZEUS_AUTOMATION_MIGRATION_REVIEW_REQUIRED: 原运行未冻结任务筛选，请核对规则后重新运行。');
+          assertFullAccessGrant(running, revision);
           /** 缺失项目明确阻塞，已有目标引用不被清空。 */
           const project = options.getProject(target.projectId) ?? (running.projectIds.length === 0 ? options.ensureTemporaryWorkspace(running.id) : undefined);
           if (!project) throw new Error('ZEUS_AUTOMATION_CONFIG_TARGET_UNAVAILABLE: 目标项目已不可用。');
@@ -248,6 +260,7 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
           await options.save();
           /** 保存可能让出控制权，业务接纳前最后核对暂停或取消。 */
           if (options.runs.getById(running.id)?.status !== 'dispatching' || options.tasks.getById(running.automationId)?.status !== 'active') return;
+          assertFullAccessGrant(running, revision);
           /** 接纳后保存该目标引用，仍保持 dispatching 直到全部目标完成。 */
           const reference = await options.dispatchAction({ run: options.runs.getById(running.id)!, snapshot: revision.snapshot, project, target });
           options.runs.updateDispatchTarget(running.id, { ...target, status: reference ? 'accepted' : 'skipped', reference, reason: reference ? null : '原工作安排没有可领取分工。' });
@@ -288,27 +301,16 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
       options.publish('automation.run.started', { automationId: updated.automationId, runId: updated.id, executionReferences: updated.executionReferences, dispatchTargets: updated.dispatchTargets });
       return;
     }
-    /** 会话动作仍一次接纳全部项目，共用既有提交幂等身份。 */
-    const projects = running.projectIds.map((projectId) => options.getProject(projectId));
-    if (projects.some((project) => !project)) {
-      options.runs.setTerminal(running.id, 'blocked', 'ZEUS_AUTOMATION_CONFIG_TARGET_UNAVAILABLE', '至少一个目标项目已不可用。');
-      return;
-    }
-    try {
-      /** 无项目工作只使用技术工作区，不写回用户项目列表。 */
-      const project = (projects[0] as ZeusProjectRecord | undefined) ?? options.getProject(running.projectId) ?? options.ensureTemporaryWorkspace(running.id);
-      await options.save();
-      /** 会话动作也在最后一次保存后核对人工控制，暂停后不接纳新提交。 */
-      if (options.runs.getById(running.id)?.status !== 'dispatching' || options.tasks.getById(running.automationId)?.status !== 'active') return;
-      const accepted = await options.dispatch({ run: running, snapshot: revision.snapshot, project, projects: projects as ZeusProjectRecord[] });
-      const updated = options.runs.markRunning(running.id, accepted.conversationId, accepted.submissionId);
-      await options.save();
-      options.publish('automation.run.started', { automationId: updated.automationId, runId: updated.id, projectId: updated.projectId, conversationId: updated.conversationId });
-    } catch (error) {
-      /** 会话提交恢复仍核对准确原提交，不用整会话终态替代。 */
-      const accepted = options.runs.findAcceptedSubmission(running);
-      if (accepted) options.runs.markRunning(running.id, accepted.conversationId, accepted.submissionId);
-      else markOutcomeUnknown(running, `${errorCode(error)}: ${error instanceof Error ? error.message.slice(0, 2_000) : String(error)}`);
+    /** 普通会话仅恢复已有接纳回执，不再触发新会话。 */
+    const accepted = options.runs.findAcceptedSubmission(running);
+    if (accepted) options.runs.markRunning(running.id, accepted.conversationId, accepted.submissionId);
+    else options.runs.setTerminal(running.id, 'blocked', 'ZEUS_AUTOMATION_MIGRATION_REVIEW_REQUIRED', '普通会话自动化已停止，请选择数字员工或项目流程并重新运行。');
+  }
+
+  /** 逐次接纳核对冻结修订授权，撤销与配置变化立即阻止尚未派发的目标。 */
+  function assertFullAccessGrant(run: AutomationRunRecord, revision: AutomationRevisionRecord): void {
+    if (revision.snapshot.permissionMode === 'full-access' && !options.tasks.hasFullAccessGrant(run.automationId, revision.revision)) {
+      throw new Error('ZEUS_AUTOMATION_PERMISSION_GRANT_REQUIRED: 原运行修订的完全访问授权已失效，请保存并授权新修订后重新运行。');
     }
   }
 

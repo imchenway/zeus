@@ -67,8 +67,6 @@ export interface ConversationComposerProps {
   projectId?: string;
   /** 讨论归属任务，用于读取成员实际继承配置。 */
   taskId?: string;
-  /** 复用正式工作安排读取入口。 */
-  onLoadTaskWorkSettings?: (taskId: string) => Promise<import('@zeus/shared').EmployeeWorkSettings>;
   onLoadExtensions?: (projectId?: string, forceReload?: boolean) => Promise<import('../features/codex/codexContracts.js').SkillCatalog>;
   onLoadEmployees?: (projectId: string) => Promise<import('../features/digital-employees/digitalEmployeeContracts.js').DigitalEmployeeRecord[]>;
   onOpenComputerSettings?: () => void;
@@ -441,7 +439,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
           />
         ) : (
           <StructuredComposerInput
-            models={props.capabilities?.models}
             value={editorValue}
             onValueChange={(nextValue) => {
               setEditorValue(nextValue);
@@ -459,8 +456,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
             placeholder={props.inputBlocked ? copy.recoveredInputBlocked : copy.placeholder}
             loadCatalog={props.onLoadExtensions}
             loadEmployees={props.onLoadEmployees}
-            taskId={props.taskId}
-            loadTaskSettings={props.onLoadTaskWorkSettings}
             goalAvailable={props.goalAvailable}
             onPlanMode={() =>
               props.onRuntimeSettingsChange?.({
