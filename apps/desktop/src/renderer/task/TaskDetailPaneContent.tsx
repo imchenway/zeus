@@ -27,6 +27,8 @@ import { TaskDigitalEmployeeExecutor, TaskDigitalEmployeePanel, useTaskDigitalEm
 import type { DigitalEmployeeApiClient } from '../features/digital-employees/digitalEmployeeApiClient.js';
 import type { DigitalTeamApiClient } from '../features/digital-teams/digitalTeamApiClient.js';
 import type { DigitalTeamEntrySelection } from '../features/digital-teams/DigitalTeamWorkspace.js';
+import { TaskDigitalTeamProgress, type DigitalTeamProgressSubscription } from '../features/digital-teams/TaskDigitalTeamProgress.js';
+import { digitalTeamRunStatusLabel } from '../features/digital-teams/digitalTeamRunPresentation.js';
 import type { TaskWorkflowClient } from './TaskWorkflowSection.js';
 import type { TaskStageRecord } from '../features/tasks/taskContracts.js';
 import {
@@ -114,7 +116,9 @@ export interface TaskDetailPaneContentProps {
   /** 从任务详情选择已保存流程、既有运行或管理入口。 */
   onUseDigitalTeam?(selection: DigitalTeamEntrySelection): void;
   /** 任务详情只读取数字团队模板和当前任务运行。 */
-  digitalTeamClient?: Pick<DigitalTeamApiClient, 'loadDigitalTeamTemplates' | 'loadDigitalTeamRuns'> | null;
+  digitalTeamClient?: Pick<DigitalTeamApiClient, 'loadDigitalTeamTemplates' | 'loadDigitalTeamRuns' | 'loadDigitalTeamRun'> | null;
+  /** 当前任务进展复用真实事件，断线恢复后重新对账。 */
+  onSubscribeDigitalTeamEvents?: DigitalTeamProgressSubscription;
   /** 打开当前项目员工管理，补齐可指派员工。 */
   onManageEmployees?(): void;
   onPushNewConversation: (taskId: string) => void;
@@ -177,21 +181,6 @@ type TaskAttachmentPasteRequest = {
 type TaskAttachmentPasteResult = {
   insertText?: string;
   updatedAt?: string;
-};
-
-/** 任务详情下拉使用简短运行状态，不暴露内部枚举。 */
-const taskDigitalTeamRunStatusLabels: Partial<Record<DigitalTeamWorkflowRunRecord['status'], string>> = {
-  planning: 'CTO 规划中',
-  awaiting_plan_approval: '等待规划批准',
-  executing: '员工执行中',
-  integrating: '正在集成候选',
-  verifying: '正在验证候选',
-  summarizing: 'CTO 汇总中',
-  awaiting_final_approval: '等待最终验收',
-  completed: '已完成',
-  failed: '失败',
-  outcome_unknown: '结果待核对',
-  cancelled: '已取消',
 };
 
 const taskEditCopies: Record<'zh-CN' | 'en-US', TaskEditCopy> = {
@@ -783,7 +772,7 @@ function TaskDigitalTeamSelector(props: {
       value: `run:${run.id}`,
       label: `${zh ? '运行' : 'Run'} · ${new Date(run.createdAt).toLocaleString(props.language, { dateStyle: 'short', timeStyle: 'short' })}`,
       group: zh ? '查看运行' : 'View runs',
-      description: zh ? (taskDigitalTeamRunStatusLabels[run.status] ?? run.status) : run.status.replaceAll('_', ' '),
+      description: digitalTeamRunStatusLabel(run, zh),
     })),
     { value: 'manage', label: zh ? '管理工作流' : 'Manage workflows', group: zh ? '管理' : 'Manage', description: zh ? '创建或修改数字团队流程' : 'Create or edit digital team workflows' },
   ];
@@ -1462,6 +1451,16 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           </span>
         ) : null}
       </div>
+      {props.digitalTeamClient && props.onUseDigitalTeam ? (
+        <TaskDigitalTeamProgress
+          key={props.task.id}
+          task={props.task}
+          language={props.language}
+          client={props.digitalTeamClient}
+          subscribe={props.onSubscribeDigitalTeamEvents}
+          onOpenRun={(runId) => props.onUseDigitalTeam!({ kind: 'run', runId })}
+        />
+      ) : null}
       <div className="task-detail-workspace">
         {/* 沟通是任务详情的主工作区，DOM 与视觉顺序保持一致，键盘阅读不会绕到右侧属性后再返回。 */}
         <div className="task-detail-main">

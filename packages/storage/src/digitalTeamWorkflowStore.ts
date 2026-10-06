@@ -657,16 +657,58 @@ export class DigitalTeamWorkflowRunRepository {
 
   /** 修改运行阶段、控制、主会话或集成候选。 */
   update(id: string, input: UpdateDigitalTeamWorkflowRunInput): DigitalTeamWorkflowRunRecord {
+    return this.updateRun(id, input, false);
+  }
+
+  /** 只有显式返工可以原子恢复确定失败，不能复活已完成、已取消或与新运行冲突的流程。 */
+  reopenFailedRun(
+    id: string,
+    input: UpdateDigitalTeamWorkflowRunInput & {
+      /** 返工只恢复到目标节点对应的执行阶段。 */
+      status: Extract<DigitalTeamRunStatus, 'planning' | 'executing' | 'verifying' | 'summarizing'>;
+    },
+  ): DigitalTeamWorkflowRunRecord {
+    return this.db.transaction(() => {
+      /** 精确失败状态、修订及任务占用在同一事务内复核。 */
+      const current = this.require(id);
+      assertRevision(current.revision, input.expectedRevision, '流程运行');
+      if (current.status !== 'failed' || !['planning', 'executing', 'verifying', 'summarizing'].includes(input.status)) throw storeError('ZEUS_DIGITAL_TEAM_RUN_STATE_INVALID', '仅确定失败的流程可以明确返工恢复。', 409);
+      if (this.listByTask(current.taskId).some((run) => run.id !== current.id && !['completed', 'failed', 'cancelled'].includes(run.status)))
+        throw storeError('ZEUS_DIGITAL_TEAM_TASK_ALREADY_RUNNING', '当前任务已有有效流程，不能同时恢复旧流程。', 409);
+      /** 失败记录仍有实际在途或未知尝试时，拒绝恢复，避免二次执行。 */
+      const pending = this.db.get<{ id: string }>(
+        `SELECT current.id FROM digital_team_node_attempts AS current
+         WHERE current.run_id = ? AND current.status IN ('prepared','dispatching','active','outcome_unknown')
+           AND current.attempt = (SELECT MAX(latest.attempt) FROM digital_team_node_attempts AS latest WHERE latest.run_id = current.run_id AND latest.node_id = current.node_id)
+         LIMIT 1`,
+        [current.id],
+      );
+      if (pending) throw storeError('ZEUS_DIGITAL_TEAM_REWORK_IN_FLIGHT', '失败流程仍有在途或未知结果，不能恢复执行。', 409);
+      return this.updateRun(id, { ...input, completedAt: null }, true);
+    });
+  }
+
+  /** 全部运行字段与修订一次落地，普通更新始终保留终态限制。 */
+  private updateRun(id: string, input: UpdateDigitalTeamWorkflowRunInput, explicitFailedRework: boolean): DigitalTeamWorkflowRunRecord {
+    /** 当前修订决定本次原子更新可以接纳的字段。 */
     const current = this.require(id);
     assertRevision(current.revision, input.expectedRevision, '流程运行');
     if (['completed', 'cancelled'].includes(current.status)) throw storeError('ZEUS_DIGITAL_TEAM_RUN_STATE_INVALID', '已经结束的流程运行不能再修改。', 409);
+    /** 新阶段只有明确返工可以从失败终态恢复。 */
     const status = input.status ?? current.status;
+    /** 控制状态保留真实暂停事实，不随返工自动扩大执行权限。 */
     const controlState = input.controlState ?? current.controlState;
-    assertRunTransition(current.status, status);
+    if (explicitFailedRework) {
+      if (current.status !== 'failed' || !['planning', 'executing', 'verifying', 'summarizing'].includes(status)) throw storeError('ZEUS_DIGITAL_TEAM_RUN_STATE_INVALID', '仅确定失败的流程可以明确返工恢复。', 409);
+    } else assertRunTransition(current.status, status);
     member(controlState, digitalTeamRunControlStates, 'controlState');
+    /** 候选变更仍沿用原失效边界，不能绕开旧验证结果的取消。 */
     const candidates = input.candidateRevisions === undefined ? current.candidateRevisions : normalizeCandidateRevisions(input.candidateRevisions);
+    /** 精确候选摘要用于既有验收批准和下游输入。 */
     const candidateSetSha256 = candidates.length > 0 ? digest(candidates) : null;
+    /** 候选真正变化才失效依赖的历史尝试。 */
     const candidateChanged = input.candidateRevisions !== undefined && candidateSetSha256 !== current.candidateSetSha256;
+    /** 父状态和字段共享一次更新时间与修订。 */
     const timestamp = nextTimestamp(current.updatedAt, this.now());
     this.db.transaction(() => {
       if (candidateChanged) invalidateCandidateConsumersInCurrentTransaction(this.db, current, timestamp);

@@ -6,6 +6,7 @@ import { ConnectedSessionWorkspace, SessionWorkspace, NewConversationComposer, t
 import type { SessionTerminalClient } from '../../session/SessionTerminal.js';
 import { selectHasConfirmedUserMessage } from '../../session/sessionSelectors.js';
 import { TaskDetailPaneContent } from '../../task/TaskDetailPaneContent.js';
+import { TaskDigitalTeamProgress } from '../digital-teams/TaskDigitalTeamProgress.js';
 import { writeTaskModelPushPreferences } from '../../task/TaskModelPushModal.js';
 import { taskModelPushHasRealChoice } from '../../task/TaskModelPushPendingWorkspace.js';
 import { normalizeTaskTableColumnPreferences, normalizeTaskTableEnumSortOrders, resolveTaskManagementStatus } from '../../task/taskWorkspaceModel.js';
@@ -1720,7 +1721,43 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     target.addEventListener('lostpointercapture', cancelProjectSidebarResize);
   }
 
+  /** 当前会话直接显示团队事实；内嵌任务会话沿用任务详情已有进展。 */
   function renderNativeConversationWorkspace(onOpenTaskDetail: (taskId: string) => void, embeddedInTask = false): ReactNode {
+    /** 原会话阅读与输入保持同一控制器，不因后台团队状态重读重新创建。 */
+    const workspace = renderNativeConversationWorkspaceContent(onOpenTaskDetail, embeddedInTask);
+    if (embeddedInTask || !nativeSessionTask || !props.commandClient) return workspace;
+    return (
+      <div className="task-conversation-with-team-progress">
+        <TaskDigitalTeamProgress
+          key={nativeSessionTask.id}
+          task={nativeSessionTask}
+          language={appShellSettings.appLanguage}
+          client={props.commandClient}
+          subscribe={props.onSubscribeRealtimeEvents}
+          onOpenRun={async (runId) => {
+            try {
+              /** 完整任务可能尚未进入列表，缺少时读取真实任务，不能让可见入口静默失效。 */
+              const task = snapshot.tasks.find((candidate) => candidate.id === nativeSessionTask.id) ?? (await props.commandClient!.loadTask(nativeSessionTask.id));
+              /** 任务入口保留准确运行选择；全局导航会清除该选择，不能复用。 */
+              requestWorkspaceLeave(() => {
+                setDigitalTeamTask(task);
+                setDigitalTeamEntrySelection({ kind: 'run', runId });
+                setActiveNavTarget('digital-teams');
+                window.history.replaceState(null, '', '#digital-teams');
+                workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+              });
+            } catch (cause) {
+              recordLocalError('open-task-digital-team-run', cause);
+            }
+          }}
+        />
+        {workspace}
+      </div>
+    );
+  }
+
+  /** 保留既有会话控制器与新建、重试、归档阅读的实际入口。 */
+  function renderNativeConversationWorkspaceContent(onOpenTaskDetail: (taskId: string) => void, embeddedInTask = false): ReactNode {
     const taskReadOnlyGate =
       nativeSessionTaskReadOnly && nativeSessionTask && selectedNativeConversation
         ? {
@@ -1958,6 +1995,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           setActiveNavTarget('digital-teams');
         }}
         digitalTeamClient={props.commandClient ?? null}
+        onSubscribeDigitalTeamEvents={props.onSubscribeRealtimeEvents}
         digitalEmployeeClient={props.commandClient ?? null}
         conversations={taskDetailPaneConversations}
         conversationsLoading={taskDetailPaneConversationState?.status === 'loading' && !taskDetailPaneConversationState.choicesKnown}

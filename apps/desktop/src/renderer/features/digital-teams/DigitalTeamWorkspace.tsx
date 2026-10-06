@@ -2,6 +2,7 @@ import {
   digitalTeamExecutionDefinition,
   digitalTeamWorkflowSchemaGeneration,
   defaultTaskManagementStatusConfig,
+  defaultTaskManagementStatusLabels,
   normalizeTaskManagementStatusConfig,
   normalizeDigitalTeamWorkflowDefinition,
   validateDigitalTeamWorkflowDefinition,
@@ -35,7 +36,9 @@ import type { DigitalEmployeeTemplateRecord } from '../digital-employees/digital
 import type { ProjectRecord } from '../projects/projectContracts.js';
 import { type DigitalTeamApiClient, type DigitalTeamRunProjection } from './digitalTeamApiClient.js';
 import { forgetDigitalTeamDraft, readDigitalTeamDraft, readDigitalTeamDraftSelection, rememberDigitalTeamDraft, rememberDigitalTeamDraftSelection, type DigitalTeamTemplateDraft } from './digitalTeamDraftStorage.js';
-import { digitalTeamDragMime, isConnectionAllowed, WorkflowCanvas, type DigitalTeamCanvasRuntimeState, type DigitalTeamDragPayload } from './WorkflowCanvas.js';
+import { buildDigitalTeamDevelopmentDraft, digitalTeamMemberDefaults, withDigitalTeamDefaultRepairEmployee } from './digitalTeamMemberDefaults.js';
+import { digitalTeamRunReadOnlyDescription, digitalTeamRunStatusLabel, getDigitalTeamRunBlocker } from './digitalTeamRunPresentation.js';
+import { digitalTeamDragMime, digitalTeamWorkModeLabels, isConnectionAllowed, WorkflowCanvas, type DigitalTeamCanvasRuntimeState, type DigitalTeamDragPayload } from './WorkflowCanvas.js';
 import './digitalTeams.css';
 
 /** 数字团队页面支持的两个真实数据视图。 */
@@ -76,23 +79,11 @@ interface DraftSavedDetail {
 /** 窄窗口统一把节点检查器切换为覆盖抽屉。 */
 const compactInspectorQuery = '(max-width: 1180px)';
 
-/** 运行状态的人话标签。 */
-const runStatusLabels: Record<string, string> = {
-  planning: '负责人规划中',
-  awaiting_plan_approval: '等待规划批准',
-  executing: '员工执行中',
-  integrating: '正在集成候选',
-  verifying: '正在核对成果',
-  summarizing: '成果汇总中',
-  awaiting_final_approval: '等待最终验收',
-  completed: '已完成',
-  failed: '失败',
-  outcome_unknown: '结果待核对',
-  cancelled: '已取消',
-};
-
 /** 终态运行只允许读取，不再显示派发控制或返工入口。 */
 const terminalRunStatuses = new Set<DigitalTeamWorkflowRunRecord['status']>(['completed', 'failed', 'cancelled']);
+
+/** 活动运行定期核对真实投影，补齐断线期间未送达的状态事件。 */
+const runReconciliationIntervalMs = 10_000;
 
 /** 数字团队页面属性只依赖统一客户端与项目事实。 */
 export interface DigitalTeamWorkspaceProps {
@@ -136,6 +127,9 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   const [employeeTemplates, setEmployeeTemplates] = useState<DigitalEmployeeTemplateRecord[]>([]);
   /** 当前项目的运行历史。 */
   const [runs, setRuns] = useState<DigitalTeamWorkflowRunRecord[]>([]);
+  /** 周期对账读取当前列表，不因每次状态变化重建订阅。 */
+  const runsRef = useRef(runs);
+  runsRef.current = runs;
   /** 本地恢复只读取一次，不在每次输入时重复解析草稿。 */
   const [initialDraft] = useState(() => readDigitalTeamDraft(props.initialSelection?.kind === 'template' ? props.initialSelection.templateId : (readDigitalTeamDraftSelection() ?? null)));
   /** 当前显式编辑的模板草稿。 */
@@ -155,12 +149,17 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   const [canvasGeneration, setCanvasGeneration] = useState(0);
   /** 当前运行图。 */
   const [selectedRun, setSelectedRun] = useState<DigitalTeamRunProjection | null>(null);
+  /** 异步读取不能覆盖人工操作刚接纳的更新修订。 */
+  const selectedRunRef = useRef(selectedRun);
+  selectedRunRef.current = selectedRun;
   /** 页面读取状态。 */
   const [loading, setLoading] = useState(Boolean(api));
   /** 单个写操作期间禁止重复提交。 */
   const [busy, setBusy] = useState(false);
   /** 可见错误不以控制台或模拟成功替代。 */
   const [error, setError] = useState<string | null>(api ? null : zh ? '当前本地服务尚未提供数字团队接口。' : 'The local service does not provide the digital team API.');
+  /** 后台读取错误独立于业务拒绝，恢复成功只能清掉读取错误。 */
+  const [reconciliationError, setReconciliationError] = useState<string | null>(null);
   /** 页面级成功与等待状态通过 live region 告知用户。 */
   const [status, setStatus] = useState<string>('');
   /** 删除必须二次确认。 */
@@ -177,15 +176,21 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   const compactInspector = useCompactInspector();
   /** 项目切换代次防止迟到读取覆盖当前页面。 */
   const loadRevisionRef = useRef(0);
+  /** 当前操作改变运行时使此前后台读取失效，不让旧列表覆盖新接纳。 */
+  const runReadEpochRef = useRef(0);
   /** 卸载后的旧写入回执不再改当前页面状态。 */
   const mountedRef = useRef(false);
 
   /** 代码动作才需要用户确认现场和本地修改范围。 */
   const usesCode = draft.definition.nodes.some((node) => node.type === 'employee' && node.data.executionMode === 'isolated_write');
+  /** 只有全部员工都实际只读时，才提示当前团队仅做分析。 */
+  const analysisOnly = draft.definition.nodes.some((node) => node.type === 'employee') && draft.definition.nodes.every((node) => node.type !== 'employee' || node.data.executionMode === 'read_only');
   /** 当前选中模板的服务端记录。 */
   const selectedTemplate = templates.find((template) => template.id === draft.id) ?? null;
   /** 团队统一引用已创建的全局员工，项目只决定任务运行位置。 */
   const memberCatalog: DigitalTeamMemberRecord[] = employeeTemplates;
+  /** 完整旧通用研发图仅提供显式转换入口，不自动覆盖用户已配置的职责。 */
+  const developmentDraft = useMemo(() => buildDigitalTeamDevelopmentDraft(draft.definition, memberCatalog, projectStatusRoles.completedStatusId), [draft.definition, memberCatalog, projectStatusRoles.completedStatusId]);
   /** 员工名称索引供画布卡片与检查器复用。 */
   const employeeNames = useMemo(() => new Map(memberCatalog.map((employee) => [employee.id, employee.name])), [memberCatalog]);
   /** 共享图校验与已创建员工核对共同决定团队能否形成可运行定义。 */
@@ -219,8 +224,12 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   const selectedNode = draft.definition.nodes.find((node) => node.id === selectedNodeId) ?? null;
   /** 当前运行冻结图兼容 Core 投影的两个稳定字段名。 */
   const selectedRunRecord = selectedRun?.run ?? null;
+  /** 受阻原因只来自准确运行的当前尝试，不使用历史失败推测现状。 */
+  const runBlocker = selectedRun ? getDigitalTeamRunBlocker(selectedRun, zh) : null;
   /** 运行失败直接显示原因，避免成功创建提示掩盖后续派发失败。 */
-  const runError = view === 'runs' && typeof selectedRunRecord?.error?.message === 'string' ? selectedRunRecord.error.message : null;
+  const runError = view === 'runs' && !runBlocker && typeof selectedRunRecord?.error?.message === 'string' ? selectedRunRecord.error.message : null;
+  /** 运行提示使用创建时冻结的实际员工工作方式。 */
+  const runReadOnlyDescription = selectedRunRecord ? digitalTeamRunReadOnlyDescription(selectedRunRecord, zh) : null;
   /** 运行图严格使用创建时冻结的定义。 */
   const runDefinition = selectedRunRecord ? digitalTeamExecutionDefinition(selectedRunRecord) : null;
   /** 当前运行尝试按节点建立展示索引。 */
@@ -235,10 +244,15 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   /** 当前运行节点最新尝试。 */
   const selectedAttempt = selectedRunNode ? latestAttempt(selectedRun?.currentAttempts ?? [], selectedRunNode.id) : null;
 
+  useEffect(() => {
+    if (view === 'runs' && runBlocker) setSelectedNodeId((current) => current ?? runBlocker.nodeId);
+  }, [runBlocker?.nodeId, view]);
+
   /** 并行读取全局模板和可选运行项目数据，编辑团队不依赖项目存在。 */
   const refreshProject = useCallback(
     async (preferredTemplateId?: string | null, preferredRunId?: string | null, entrySelection?: DigitalTeamEntrySelection): Promise<void> => {
       if (!api) return;
+      runReadEpochRef.current += 1;
       /** 读取目录和切换项目不覆盖正在编辑的全局草稿。 */
       const currentDraft = draftStateRef.current;
       if (currentDraft.dirty) rememberDigitalTeamDraft(currentDraft.draft);
@@ -281,7 +295,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
         /** 刷新选中运行时重新读取尝试历史，不能只替换运行标题行。 */
         const nextProjection = nextRun ? await api.loadDigitalTeamRun(nextRun.id) : null;
         if (!mountedRef.current || revision !== loadRevisionRef.current) return;
-        setSelectedRun(nextProjection);
+        setSelectedRun((current) => (nextProjection && current?.run.id === nextProjection.run.id && current.run.revision > nextProjection.run.revision ? current : nextProjection));
         setSelectedNodeId(null);
       } catch (cause) {
         if (revision === loadRevisionRef.current) setError(applicationError(cause, zh));
@@ -355,39 +369,97 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   }, [dirty, draftPersisted]);
 
   useEffect(() => {
-    if (!api || view !== 'runs' || !selectedRun) return;
-    /** 多个数字团队事件在一个短窗口内只刷新一次当前运行。 */
+    setReconciliationError(null);
+    if (!api || !projectId) return;
+    /** 当前项目与任务共同限定只读对账范围，旧项目运行不参与新项目刷新。 */
+    const taskId = props.task?.id;
+    /** 当前选中运行必须属于本轮项目与任务。 */
+    const runId = selectedRun?.run.projectId === projectId && (!taskId || selectedRun.run.taskId === taskId) ? selectedRun.run.id : null;
+    /** 多个状态事件在一个短窗口内共用一次读取。 */
     let refreshTimer: number | null = null;
-    /** 异步读取完成时页面可能已离开运行视图。 */
+    /** 切换项目、运行或卸载后，旧回执不再进入页面。 */
     let active = true;
-    /** 订阅建立后立即拉取一次，补齐页面隐藏期间已经结束且不再发事件的运行。 */
-    const refreshSelectedRun = (): void => {
-      void api
-        .loadDigitalTeamRun(selectedRun.run.id)
-        .then((projection) => {
-          if (!active) return;
-          setSelectedRun(projection);
-          setRuns((current) => current.map((item) => (item.id === projection.run.id ? projection.run : item)));
-        })
-        .catch((cause) => {
-          if (active) setError(applicationError(cause, zh));
+    /** 对账去重，慢读取期间的新事件只补排一次后续读取。 */
+    let reading = false;
+    /** 标记读取期间发生的真实状态通知，不能把旧读取当作该通知后的结果。 */
+    let refreshAgain = false;
+    /** 当前项目列表与准确运行并行只读核对，不触发保存或派发。 */
+    const refreshCurrentRun = async (): Promise<void> => {
+      if (!active) return;
+      if (reading) {
+        refreshAgain = true;
+        return;
+      }
+      reading = true;
+      /** 本轮读取以开始时的用户操作代次为准，保存与切换之后的旧结果会被忽略。 */
+      const readEpoch = runReadEpochRef.current;
+      try {
+        /** 两个读取互不依赖，避免列表延迟阻塞选中运行的获取。 */
+        const [nextRuns, nextProjection] = await Promise.all([api.loadDigitalTeamRuns(projectId, taskId), runId ? api.loadDigitalTeamRun(runId) : Promise.resolve(null)]);
+        if (!active || readEpoch !== runReadEpochRef.current) return;
+        setReconciliationError(null);
+        setRuns((current) => {
+          /** 当前列表以修订号保护已接纳的更新，旧网络回执不能将状态倒退。 */
+          const currentById = new Map(current.map((run) => [run.id, run]));
+          return nextRuns
+            .filter((run) => run.projectId === projectId && (!taskId || run.taskId === taskId))
+            .map((run) => {
+              /** 并行详情可能先读到更新修订，列表行同时采用同一准确运行事实。 */
+              const latestRead = nextProjection?.run.id === run.id && nextProjection.run.projectId === projectId && nextProjection.run.revision > run.revision ? nextProjection.run : run;
+              /** 同一运行只接纳不早于页面当前事实的投影。 */
+              const previous = currentById.get(run.id);
+              return previous && previous.revision > latestRead.revision ? previous : latestRead;
+            });
         });
+        if (nextProjection && nextProjection.run.id === runId && nextProjection.run.projectId === projectId && (!taskId || nextProjection.run.taskId === taskId)) {
+          setSelectedRun((current) => (current?.run.id === runId && current.run.revision <= nextProjection.run.revision ? nextProjection : current));
+        }
+      } catch (cause) {
+        if (active && readEpoch === runReadEpochRef.current) setReconciliationError(applicationError(cause, zh));
+      } finally {
+        reading = false;
+        if (active && refreshAgain) {
+          refreshAgain = false;
+          scheduleRefresh(0);
+        }
+      }
     };
+    /** 事件与连接恢复共用延迟队列，页面切换时统一清理。 */
+    const scheduleRefresh = (delayMs = 180): void => {
+      if (!active) return;
+      if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = null;
+        void refreshCurrentRun();
+      }, delayMs);
+    };
+    /** 同一订阅同时接收真实团队事件和连接恢复通知。 */
     const unsubscribe = api.subscribeEvents(
       (event) => {
         if (!event.type.includes('digital_team')) return;
-        if (refreshTimer !== null) window.clearTimeout(refreshTimer);
-        refreshTimer = window.setTimeout(refreshSelectedRun, 180);
+        if (typeof event.payload.projectId === 'string' && event.payload.projectId !== projectId) return;
+        scheduleRefresh();
       },
-      () => undefined,
+      (connectionState) => {
+        if (connectionState === 'connected') scheduleRefresh(0);
+      },
     );
-    refreshSelectedRun();
+    /** 活动运行无需依赖事件完整送达；已结束运行停止周期请求。 */
+    const reconciliationTimer = window.setInterval(() => {
+      /** 当前活动运行必须仍属于本轮项目和任务。 */
+      const hasActiveRun = runsRef.current.some((run) => run.projectId === projectId && (!taskId || run.taskId === taskId) && !terminalRunStatuses.has(run.status));
+      /** 精确选中运行可能先于列表接纳，仍按它的真实状态对账。 */
+      const currentRun = selectedRunRef.current?.run;
+      if (hasActiveRun || (currentRun?.id === runId && !terminalRunStatuses.has(currentRun.status))) void refreshCurrentRun();
+    }, runReconciliationIntervalMs);
+    void refreshCurrentRun();
     return () => {
       active = false;
       if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+      window.clearInterval(reconciliationTimer);
       unsubscribe();
     };
-  }, [api, selectedRun?.run.id, view, zh]);
+  }, [api, projectId, props.task?.id, selectedRun?.run.id, view, zh]);
 
   useEffect(() => {
     // 流程、项目或任务事实改变后必须重新确认代码执行范围。
@@ -416,11 +488,15 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
     (payload: DigitalTeamDragPayload, position?: { x: number; y: number }): void => {
       const resolvedPosition = position ?? nextNodePosition(draft.definition.nodes.length);
       const employee = memberCatalog.find((candidate) => candidate.id === payload.employeeId);
-      const node = buildNode(payload, resolvedPosition, employee);
-      changeDefinition({ ...draft.definition, nodes: [...draft.definition.nodes, node] });
+      const node = buildNode(payload, resolvedPosition, employee, projectStatusRoles.completedStatusId);
+      changeDefinition((definition) => {
+        /** 新增标准开发是明确编辑动作，只在修复配置完全缺省时预选唯一实际开发身份。 */
+        const nextDefinition = { ...definition, nodes: [...definition.nodes, node] };
+        return employee?.role.trim() === '开发' && definition.repairEmployeeId === undefined && definition.maxRepairRounds === undefined ? withDigitalTeamDefaultRepairEmployee(nextDefinition, memberCatalog) : nextDefinition;
+      });
       setSelectedNodeId(node.id);
     },
-    [changeDefinition, draft.definition, memberCatalog],
+    [changeDefinition, draft.definition, memberCatalog, projectStatusRoles.completedStatusId],
   );
 
   /** 切换团队同步暂存当前修改，回到该团队时继续原草稿。 */
@@ -553,6 +629,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   const createRun = async (): Promise<void> => {
     if (!api || !props.task || !projectId || !selectedTemplate || dirty || loading || busy || validationIssues.length > 0 || (usesCode && !confirmCommittedBaseline) || runs.some((run) => !terminalRunStatuses.has(run.status))) return;
     setBusy(true);
+    runReadEpochRef.current += 1;
     setError(null);
     try {
       const projection = await api.createDigitalTeamRun(projectId, {
@@ -562,12 +639,15 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
         templateRevision: selectedTemplate.revision,
         title: props.task.title,
         description: props.task.description ?? '',
+        /** 明确勾选才提交顶层任务授权，岗位默认值与任务事实均不能代替确认。 */
+        ...(usesCode && confirmCommittedBaseline ? { grantTaskCodeAuthority: true } : {}),
         taskFacts: {
           title: props.task.title,
           description: props.task.description ?? '',
           source: 'digital_team',
           confirmCommittedBaseline: confirmCommittedBaseline,
           allowCodeChanges: usesCode && confirmCommittedBaseline,
+          allowTests: usesCode && confirmCommittedBaseline,
           allowGitCommit: usesCode && confirmCommittedBaseline,
         },
       });
@@ -580,6 +660,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
     } catch (cause) {
       setError(applicationError(cause, zh));
     } finally {
+      runReadEpochRef.current += 1;
       setBusy(false);
     }
   };
@@ -587,15 +668,21 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   /** 加载运行完整投影，运行图始终保持只读。 */
   const selectRun = async (runId: string): Promise<void> => {
     if (!api) return;
+    /** 后一次运行选择与项目刷新使先前读取回执失效。 */
+    const revision = ++loadRevisionRef.current;
+    runReadEpochRef.current += 1;
     setLoading(true);
     setError(null);
     try {
-      setSelectedRun(await api.loadDigitalTeamRun(runId));
-      setSelectedNodeId(null);
+      /** 只打开当前项目和任务真实所属的准确运行。 */
+      const projection = await api.loadDigitalTeamRun(runId);
+      if (!mountedRef.current || revision !== loadRevisionRef.current || projection.run.projectId !== projectId || (props.task && projection.run.taskId !== props.task.id)) return;
+      setSelectedRun((current) => (current?.run.id === projection.run.id && current.run.revision > projection.run.revision ? current : projection));
+      setSelectedNodeId(getDigitalTeamRunBlocker(projection, zh)?.nodeId ?? null);
     } catch (cause) {
-      setError(applicationError(cause, zh));
+      if (mountedRef.current && revision === loadRevisionRef.current) setError(applicationError(cause, zh));
     } finally {
-      setLoading(false);
+      if (mountedRef.current && revision === loadRevisionRef.current) setLoading(false);
     }
   };
 
@@ -603,6 +690,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   const controlRun = async (): Promise<void> => {
     if (!api || !selectedRunRecord) return;
     setBusy(true);
+    runReadEpochRef.current += 1;
     setError(null);
     try {
       const state = selectedRunRecord.controlState === 'paused' ? 'running' : 'paused';
@@ -613,6 +701,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
     } catch (cause) {
       setError(applicationError(cause, zh));
     } finally {
+      runReadEpochRef.current += 1;
       setBusy(false);
     }
   };
@@ -622,6 +711,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
     event.preventDefault();
     if (!api || !selectedRunRecord || !runDecision) return;
     setBusy(true);
+    runReadEpochRef.current += 1;
     setError(null);
     try {
       const projection =
@@ -640,6 +730,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
     } catch (cause) {
       setError(applicationError(cause, zh));
     } finally {
+      runReadEpochRef.current += 1;
       setBusy(false);
     }
   };
@@ -654,6 +745,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
         employees={memberCatalog}
         employeeNames={employeeNames}
         statuses={projectStatuses}
+        language={props.language}
         issues={validationIssues.filter((issue) => issue.nodeId === selectedNode?.id)}
         onChange={(node) => replaceNode(draft.definition, node, changeDefinition)}
         onConnect={(source, target) => changeDefinition({ ...draft.definition, edges: [...draft.definition.edges, { id: `edge_${crypto.randomUUID()}`, source, target }] })}
@@ -718,9 +810,24 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
       </header>
 
       <div className="digital-team-messages">
-        {error || runError ? (
+        {error || reconciliationError || runError ? (
           <p className="digital-team-message is-error" role="alert">
-            {error || runError}
+            {error || reconciliationError || runError}
+          </p>
+        ) : null}
+        {view === 'runs' && runBlocker ? (
+          <div className="digital-team-message is-error" role="alert">
+            <strong>{runBlocker.nodeName}</strong>
+            <span> · {runBlocker.reason} </span>
+            <Button size="compact" onClick={() => setSelectedNodeId(runBlocker.nodeId)}>
+              {zh ? '查看受阻分工' : 'View blocked step'}
+            </Button>
+          </div>
+        ) : null}
+        {view === 'runs' && runReadOnlyDescription ? <p className="digital-team-message">{runReadOnlyDescription}</p> : null}
+        {view === 'editor' && props.task && draftOpen && !loading && analysisOnly ? (
+          <p className="digital-team-message">
+            {zh ? '当前团队只做只读分析，不会修改代码。需要开发时，请明确调整开发分工的工作方式。' : 'This team only analyzes and does not modify code. To develop, explicitly change the development step’s work mode.'}
           </p>
         ) : null}
         <p className="digital-team-message" role="status" aria-live="polite">
@@ -728,7 +835,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
             ? zh
               ? '正在读取团队与执行记录…'
               : 'Loading teams and runs…'
-            : runError
+            : runError || (view === 'runs' && runBlocker)
               ? ''
               : status ||
                 (dirty
@@ -864,6 +971,29 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                   </div>
                 </div>
               </details>
+              {developmentDraft ? (
+                <Button
+                  size="compact"
+                  disabled={busy || loading || Boolean(draft.sourceIssues?.length)}
+                  title={zh ? '按当前 CTO、开发、测试岗位配置研发分工，保存后用于新运行。' : 'Configure the current CTO, developer, and tester roles for new runs after saving.'}
+                  onClick={() => {
+                    changeDefinition(developmentDraft);
+                    /** 只有实际开发负责人且修复未停用时，才能说明开发会负责缺陷闭环。 */
+                    const repairDeveloper = memberCatalog.find((employee) => employee.id === developmentDraft.repairEmployeeId && employee.role.trim() === '开发');
+                    setStatus(
+                      repairDeveloper && developmentDraft.maxRepairRounds !== 0
+                        ? zh
+                          ? '已配置研发分工，开发负责缺陷修复与复验；团队设置可调整，保存后用于新运行。'
+                          : 'Development roles configured. The developer handles defect repairs and repeat verification; adjust in team settings and save for new runs.'
+                        : zh
+                          ? '已配置研发分工；团队设置可调整缺陷修复负责人和轮数，保存后用于新运行。'
+                          : 'Development roles configured. Adjust the defect repair owner and rounds in team settings and save for new runs.',
+                    );
+                  }}
+                >
+                  {zh ? '配置研发分工' : 'Configure development roles'}
+                </Button>
+              ) : null}
               <div className="digital-team-save-actions">
                 <div className="digital-team-member-picker-anchor">
                   <Button size="compact" onClick={() => setMemberPickerOpen((open) => !open)} aria-expanded={memberPickerOpen} disabled={Boolean(draft.sourceIssues?.length)}>
@@ -915,9 +1045,13 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
               <label className="digital-team-baseline-confirmation">
                 <input type="checkbox" checked={confirmCommittedBaseline} disabled={busy || loading} onChange={(event) => setConfirmCommittedBaseline(event.currentTarget.checked)} />
                 <span>
-                  {zh
-                    ? '使用当前已提交版本作为基线（不包含未提交修改），允许团队在隔离工作区修改代码并本地提交，不包含推送或发布。'
-                    : 'Use the current committed revision (excluding uncommitted changes) and allow code changes and local commits in isolated workspaces, without pushing or publishing.'}
+                  <strong>{zh ? '允许此任务开发、检查并本地提交' : 'Allow development, checks, and local commits for this task'}</strong>
+                  <br />
+                  <small>
+                    {zh
+                      ? '授权保存到本任务；隔离工作区从当前已提交版本开始，不带未提交修改，不授权推送、合入目标分支或发布。'
+                      : 'Save this authorization to the task. Isolated workspaces start from the committed revision, excluding uncommitted edits; push, target-branch merge, and release are not authorized.'}
+                  </small>
                 </span>
               </label>
             ) : null}
@@ -958,7 +1092,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
               runs.map((run) => (
                 <button key={run.id} type="button" className={run.id === selectedRunRecord?.id ? 'is-active' : ''} aria-current={run.id === selectedRunRecord?.id ? 'true' : undefined} onClick={() => void selectRun(run.id)}>
                   <strong>{runTitle(run)}</strong>
-                  <small>{runStatusLabel(run)}</small>
+                  <small>{digitalTeamRunStatusLabel(run, zh)}</small>
                 </button>
               ))
             )}
@@ -969,7 +1103,8 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                 <strong>{selectedRunRecord ? runTitle(selectedRunRecord) : zh ? '选择一个运行' : 'Choose a run'}</strong>
                 {selectedRunRecord ? (
                   <span>
-                    {runStatusLabel(selectedRunRecord)} · {selectedRunRecord.controlState === 'paused' ? (zh ? '已暂停派发' : 'Dispatch paused') : zh ? '允许派发' : 'Dispatch enabled'}
+                    {digitalTeamRunStatusLabel(selectedRunRecord, zh)}
+                    {!terminalRunStatuses.has(selectedRunRecord.status) ? ` · ${selectedRunRecord.controlState === 'paused' ? (zh ? '已暂停派发' : 'Dispatch paused') : zh ? '允许派发' : 'Dispatch enabled'}` : ''}
                   </span>
                 ) : null}
               </div>
@@ -1093,6 +1228,8 @@ function NodeInspector(props: {
   employeeNames: ReadonlyMap<string, string>;
   /** 项目状态目录供员工节点的触发与推进使用。 */
   statuses: TaskManagementStatusDefinition[];
+  /** 内置状态空文案按当前应用语言显示，不修改保存的状态身份。 */
+  language: 'zh-CN' | 'en-US';
   issues: DigitalTeamWorkflowValidationIssue[];
   onChange(node: DigitalTeamNode): void;
   onConnect(source: string, target: string): void;
@@ -1123,6 +1260,7 @@ function NodeInspector(props: {
           employees={props.employees}
           employee={employee}
           statuses={props.statuses}
+          language={props.language}
           hasStatusIssue={props.issues.some((issue) => issue.code.includes('STATUS'))}
           hasDevelopmentIssue={props.issues.some((issue) => issue.code.includes('VERIFY') || issue.code.includes('EXECUTION'))}
           onChange={props.onChange}
@@ -1220,6 +1358,8 @@ function EmployeeNodeFields(props: {
   employees: DigitalTeamMemberRecord[];
   employee: DigitalTeamMemberRecord | undefined;
   statuses: TaskManagementStatusDefinition[];
+  /** 用户自定义状态文案优先，内置缺省文案使用当前语言。 */
+  language: 'zh-CN' | 'en-US';
   /** 状态校验失败时直接展开对应设置。 */ hasStatusIssue: boolean;
   /** 执行模式校验失败时直接展开研发设置。 */ hasDevelopmentIssue: boolean;
   onChange(node: DigitalTeamNode): void;
@@ -1232,22 +1372,18 @@ function EmployeeNodeFields(props: {
   const developmentPurpose = { plan: '规划', work: '执行', verify: '代码验收', summary: '交付汇总' }[props.node.data.purpose];
   /** 任务联动已有值只作摘要，不强迫用户展开空配置。 */
   const statusConfigured = props.node.data.assignmentEntry || props.node.data.triggerStatusId || props.node.data.startStatusId || props.node.data.completionStatusId;
-  /** 代码验收缺少必需命令时立即显示可编辑字段。 */
-  const missingVerification = props.node.data.purpose === 'verify' && !props.node.data.verificationCommands?.some((command) => command.trim());
-  /** 研发错误合并成一个展开信号，修正其中一项不会打断当前编辑。 */
-  const developmentIssue = props.hasDevelopmentIssue || missingVerification;
   /** 展开状态只属于当前节点和员工，沿用检查器现有 key 在切换时重置。 */
   const [statusSettingsOpen, setStatusSettingsOpen] = useState(props.hasStatusIssue);
   /** 必需配置错误出现时展开，错误消失后仍允许用户继续填写。 */
-  const [developmentSettingsOpen, setDevelopmentSettingsOpen] = useState(developmentIssue);
+  const [developmentSettingsOpen, setDevelopmentSettingsOpen] = useState(props.hasDevelopmentIssue);
   useEffect(() => {
     /** 只响应新出现的状态错误，不随修正结果自动关闭。 */
     if (props.hasStatusIssue) setStatusSettingsOpen(true);
   }, [props.hasStatusIssue]);
   useEffect(() => {
     /** 只响应新出现的研发错误，保留用户手动收起或展开的选择。 */
-    if (developmentIssue) setDevelopmentSettingsOpen(true);
-  }, [developmentIssue]);
+    if (props.hasDevelopmentIssue) setDevelopmentSettingsOpen(true);
+  }, [props.hasDevelopmentIssue]);
   return (
     <>
       <label>
@@ -1272,6 +1408,25 @@ function EmployeeNodeFields(props: {
           searchable
           size="regular"
         />
+      </label>
+      <label>
+        <span>工作方式</span>
+        <ZeusSelect
+          size="regular"
+          ariaLabel="工作方式"
+          value={props.node.data.executionMode}
+          disabled={props.node.data.purpose !== 'work'}
+          options={
+            props.node.data.purpose === 'work'
+              ? [
+                  { value: 'read_only', label: digitalTeamWorkModeLabels.read_only },
+                  { value: 'isolated_write', label: digitalTeamWorkModeLabels.isolated_write },
+                ]
+              : [{ value: props.node.data.executionMode, label: digitalTeamWorkModeLabels[props.node.data.executionMode] }]
+          }
+          onChange={(value) => update({ executionMode: value as DigitalTeamEmployeeNode['data']['executionMode'] })}
+        />
+        <small>{props.node.data.purpose === 'work' ? '修改代码在隔离工作区进行，仍需本次任务授权。' : props.node.data.purpose === 'verify' ? '代码验收只核对候选，不修改源码。' : '规划与汇总只做分析；需要开发时，请使用执行职责。'}</small>
       </label>
       <label>
         <span>工作要求</span>
@@ -1304,7 +1459,7 @@ function EmployeeNodeFields(props: {
               size="regular"
               ariaLabel={['状态触发', '开始状态', '完成状态'][index]!}
               value={props.node.data[key] ?? ''}
-              options={[{ value: '', label: '不配置' }, ...props.statuses.map((status) => ({ value: status.id, label: status.label ?? status.id }))]}
+              options={[{ value: '', label: '不配置' }, ...props.statuses.map((status) => ({ value: status.id, label: status.label ?? defaultTaskManagementStatusLabels[props.language][status.id] ?? status.id }))]}
               onChange={(value) => update({ [key]: value || undefined })}
             />
           </label>
@@ -1340,34 +1495,11 @@ function EmployeeNodeFields(props: {
             }}
           />
         </label>
-        {props.node.data.purpose === 'work' ? (
-          <label>
-            <span>执行方式</span>
-            <ZeusSelect
-              size="regular"
-              ariaLabel="执行方式"
-              value={props.node.data.executionMode}
-              options={[
-                { value: 'read_only', label: '只读工作' },
-                { value: 'isolated_write', label: '隔离工作区修改代码' },
-              ]}
-              onChange={(value) => update({ executionMode: value as DigitalTeamEmployeeNode['data']['executionMode'] })}
-            />
-            <small>修改代码仍需本次任务授权。</small>
-          </label>
-        ) : null}
         {props.node.data.purpose === 'verify' ? (
           <label>
-            <span>必须通过的验收命令（每行一项）</span>
-            <small>只读核对上游代码候选，并执行这些验收命令。</small>
-            <textarea
-              autoFocus={!props.node.data.verificationCommands?.some((command) => command.trim())}
-              aria-invalid={!props.node.data.verificationCommands?.some((command) => command.trim())}
-              placeholder="例如 pnpm lint、pnpm typecheck（每行一条）"
-              value={(props.node.data.verificationCommands ?? []).join('\n')}
-              onChange={(event) => update({ verificationCommands: lines(event.currentTarget.value) })}
-            />
-            {!props.node.data.verificationCommands?.some((command) => command.trim()) ? <small className="digital-team-field-error">请填写需要实际执行的验收命令。</small> : null}
+            <span>固定验收命令（可选，每行一项）</span>
+            <small>留空时按当前任务与仓库既有检查验收，结果仍须提供真实成功命令证据。</small>
+            <textarea placeholder="填写当前仓库实际使用的检查命令" value={(props.node.data.verificationCommands ?? []).join('\n')} onChange={(event) => update({ verificationCommands: lines(event.currentTarget.value) })} />
           </label>
         ) : null}
       </details>
@@ -1444,9 +1576,9 @@ function RunInspector(props: {
   const approvalAvailable = props.node.type === 'human_confirmation' && props.attempt?.status === 'awaiting_approval';
   /** 返工影响范围只按冻结图计算一次。 */
   const reworkNodeIds = relatedNodeIds(props.run, props.node.id, 'downstream');
-  /** 在途工作阻止返工；未知结果通过明确确认弃用，保留历史后创建新尝试。 */
+  /** 失败运行允许显式返工；完成、取消或影响范围内在途工作阻止返工，其他活动运行由 Core 再核对。 */
   const reworkAvailable =
-    !terminalRunStatuses.has(props.run.status) &&
+    !['completed', 'cancelled'].includes(props.run.status) &&
     (props.node.type === 'employee' || props.node.type === 'code_integration') &&
     Boolean(props.attempt) &&
     !props.attempts.some((attempt) => reworkNodeIds.has(attempt.nodeId) && ['dispatching', 'active'].includes(attempt.status));
@@ -1459,7 +1591,7 @@ function RunInspector(props: {
       <dl>
         <div>
           <dt>运行状态</dt>
-          <dd>{runStatusLabel(props.run)}</dd>
+          <dd>{digitalTeamRunStatusLabel(props.run)}</dd>
         </div>
         <div>
           <dt>节点尝试</dt>
@@ -1651,7 +1783,8 @@ function nextNodePosition(index: number): { x: number; y: number } {
 }
 
 /** 构造新的员工分工节点，不自动猜测依赖关系。 */
-function buildNode(payload: DigitalTeamDragPayload, position: { x: number; y: number }, employee: DigitalTeamMemberRecord | undefined): DigitalTeamNode {
+function buildNode(payload: DigitalTeamDragPayload, position: { x: number; y: number }, employee: DigitalTeamMemberRecord | undefined, completedStatusId?: string): DigitalTeamNode {
+  /** 节点身份只用于当前草稿，岗位默认值不授予任务执行权限。 */
   const id = `node_${crypto.randomUUID()}`;
   return {
     id,
@@ -1660,11 +1793,7 @@ function buildNode(payload: DigitalTeamDragPayload, position: { x: number; y: nu
     data: {
       title: employee?.name ?? '员工分工',
       employeeId: payload.employeeId,
-      purpose: 'work',
-      executionMode: 'read_only',
-      instructions: '',
-      acceptanceCriteria: [],
-      expectedDeliverables: [],
+      ...digitalTeamMemberDefaults(employee?.role, completedStatusId),
     },
   };
 }
@@ -1699,12 +1828,6 @@ function nodeTypeLabel(type: DigitalTeamNodeType): string {
   if (type === 'human_confirmation') return '人工确认';
   if (type === 'code_integration') return '代码集成';
   return '结束';
-}
-
-/** 节点确定失败时优先展示人工下一步，避免仍显示原执行阶段。 */
-function runStatusLabel(run: DigitalTeamWorkflowRunRecord): string {
-  if (run.error?.code === 'ZEUS_DIGITAL_TEAM_NODE_FAILED') return '等待返工';
-  return runStatusLabels[run.status] ?? run.status;
 }
 
 /** 运行标题来自创建时冻结的任务事实，不从可变模板反推。 */

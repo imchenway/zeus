@@ -154,6 +154,55 @@
   background: var(--zeus-control-danger-bg);
 }
 
+/* 会话与任务共用紧凑进展，错误原因自然换行且不覆盖正文或输入框。 */
+.task-digital-team-progress {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 14px;
+  border-block-end: 1px solid var(--zeus-product-border);
+  color: var(--zeus-product-text);
+  background: var(--zeus-product-panel);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* 提示文字使用剩余宽度，长错误不能把操作按钮推出当前工作区。 */
+.task-digital-team-progress > div {
+  flex: 1;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+/* 状态与工作方式可以并排阅读，窄窗口允许自然换行。 */
+.task-digital-team-progress strong,
+.task-digital-team-progress span {
+  display: inline;
+  margin-inline-end: 10px;
+}
+
+/* 仅真实受阻投影使用错误背景，不以最终消息的语气判断成功或失败。 */
+.task-digital-team-progress.is-blocked {
+  color: var(--zeus-control-danger-text);
+  background: var(--zeus-control-danger-bg);
+}
+
+/* 原诊断保留完整内容，页面高度由实际原因决定。 */
+.task-digital-team-progress p {
+  margin: 4px 0 0;
+}
+
+/* 进展和原会话共享列布局，正文仍使用原有独立滚动容器。 */
+.task-conversation-with-team-progress {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-block-size: 0;
+  min-inline-size: 0;
+  block-size: 100%;
+}
+
 /* 编辑器把完整宽度留给画布；运行记录继续使用左侧历史列表。 */
 .digital-team-editor-layout,
 .digital-team-run-layout {

@@ -59,6 +59,17 @@ const probeRoot = await mkdtemp(join(tmpdir(), 'zeus-digital-team-workflow-probe
 /** 探针数据库路径。 */
 const databasePath = join(probeRoot, 'workflow.db');
 
+/** 定向运行真实 SQLite 失败收口边界，不调用本专项其余 Git 或 Provider 入口。 */
+if (process.argv.includes('--failure-state-only')) {
+  try {
+    await verifyDefiniteRunFailureSettlement();
+    process.stdout.write(`${JSON.stringify({ ok: true, checks: ['definite-failure-settlement', 'failed-run-replacement', 'failed-run-explicit-rework', 'active-and-unknown-retained', 'repair-cycle-retained'] })}\n`);
+  } finally {
+    await rm(probeRoot, { recursive: true, force: true });
+  }
+  process.exit(0);
+}
+
 try {
   /** 探针使用真实 SQLite 持久化入口。 */
   const database = await createZeusDatabase(databasePath);
@@ -276,6 +287,7 @@ try {
     await coordinator.processRuns();
     assert(runs.getById(singleRun.id)?.status === 'completed', '全部真实员工成功后团队必须完成。');
     await coordinator.close();
+    await verifyDefiniteRunFailureSettlement();
     await verifyAssignmentResultBoundaries(database, project.id, employee.id);
     await verifyTeamInternalTaskOrigins(database, project.id, employee.id);
     await verifyParallelVerificationRound(database, project.id, employee.id);
@@ -289,6 +301,238 @@ try {
   }
 } finally {
   await rm(probeRoot, { recursive: true, force: true });
+}
+
+/** 确定失败仅在没有在途、未知和自动修复工作时终结，历史及明确返工能力均保留。 */
+async function verifyDefiniteRunFailureSettlement(): Promise<void> {
+  /** 独立 SQLite 避免其他探针的未派发 fixture 进入扫描。 */
+  const database = await createZeusDatabase(join(probeRoot, 'failure-settlement.db'));
+  try {
+    /** 项目、任务、运行及节点均采用当前真实仓储。 */
+    const projects = new ProjectRepository(database);
+    /** 任务运行占用仍由权威任务身份约束。 */
+    const tasks = new TaskRepository(database);
+    /** 父子运行终态保存在真实 SQLite 中。 */
+    const runs = new DigitalTeamWorkflowRunRepository(database);
+    /** 完整节点历史和当前尝试共用真实账本。 */
+    const attempts = new DigitalTeamNodeAttemptRepository(database);
+    /** 正式修复关系仍由当前存储读取。 */
+    const defects = new DefectWorkflowRepository(database);
+    /** 纯分析项目不读取或写入任何 Git 仓库。 */
+    const project = projects.create({ name: '失败收口边界', localPath: join(probeRoot, 'failure-analysis') });
+    /** 冻结员工配置沿用正常模板和项目绑定。 */
+    const template = new DigitalEmployeeTemplateRepository(database).create({ name: '失败边界员工', role: '分析', prompt: '完成明确分析分工。' });
+    /** 运行中的真实项目员工身份。 */
+    const employee = new DigitalEmployeeRepository(database).createFromTemplate({ projectId: project.id, template });
+    /** 全部员工为普通只读分工，后继始终等待首节点成功。 */
+    const workflow = definition(
+      [employeeNode('first', employee.id, '首节点'), employeeNode('parallel', employee.id, '并行节点'), employeeNode('downstream', employee.id, '后继')],
+      [
+        { id: 'first_downstream', source: 'first', target: 'downstream' },
+        { id: 'parallel_downstream', source: 'parallel', target: 'downstream' },
+      ],
+    );
+    /** 本段禁止实际工作派发，调用次数必须保持为零。 */
+    let dispatchCount = 0;
+    /** 真实协调器仅在未授权的 Provider 派发端口明确拒绝。 */
+    const coordinator = new DigitalTeamWorkflowCoordinator({
+      projects,
+      tasks,
+      runs,
+      attempts,
+      defects,
+      isTaskTerminal: () => false,
+      now: () => new Date(),
+      save: () => database.save(),
+      publish: () => undefined,
+      taskWork: {
+        createWorkflowWorkItem: async () => {
+          dispatchCount += 1;
+          throw new Error('失败收口边界不得派发 Provider。');
+        },
+      },
+    } as unknown as DigitalTeamWorkflowCoordinatorOptions);
+    /** 精确调用目标运行，其他已恢复的 fixture 不进入自动扫描。 */
+    const boundary = coordinator as unknown as { processRun(runId: string): Promise<void>; settleDefiniteRunFailure(run: DigitalTeamWorkflowRunRecord): boolean };
+    /** 每个边界有独立真实任务和当前节点状态，不创建模型轮次。 */
+    const createFixture = (title: string, parallelStatus?: DigitalTeamNodeAttemptRecord['status'], frozenWorkflow = workflow): DigitalTeamWorkflowRunRecord => {
+      /** 独占任务使各边界互不影响。 */
+      const task = tasks.create({ projectId: project.id, title, taskType: 'requirement', description: '', createdFrom: 'digital-team-probe', sourceContext: {} });
+      /** 没有代码能力的冻结事实。 */
+      const run = runs.create({
+        projectId: project.id,
+        taskId: task.id,
+        definition: frozenWorkflow,
+        taskFacts: { title },
+        baseRevisions: frozenWorkflow.nodes.some((node) => node.type === 'employee' && node.data.executionMode !== 'read_only') ? [{ repositoryId: 'failure-fixture-repository', sourceRef: 'HEAD', baseSha: 'a'.repeat(40) }] : [],
+      });
+      /** 首节点的明确结果和错误来自已登记尝试。 */
+      const first = attempts.create({ runId: run.id, nodeId: 'first', inputSha256: evidenceSha });
+      attempts.update(first.id, {
+        expectedRevision: first.revision,
+        status: 'failed',
+        result: { ...readOnlyResult(), outcome: 'blocked', remainingIssues: ['仍有明确阻塞问题'] },
+        error: { code: 'ZEUS_DIGITAL_TEAM_RESULT_FAILED', message: '明确阻塞' },
+        completedAt: new Date().toISOString(),
+      });
+      if (parallelStatus === 'succeeded') completeEmployeeAttempt(attempts, run.id, 'parallel');
+      else if (parallelStatus) {
+        /** 通过仓储允许的状态转移形成并行执行或未知结果。 */
+        let parallel = attempts.create({ runId: run.id, nodeId: 'parallel', inputSha256: evidenceSha });
+        if (parallelStatus === 'outcome_unknown') parallel = attempts.update(parallel.id, { expectedRevision: parallel.revision, status: 'dispatching' });
+        if (parallelStatus !== 'prepared') attempts.update(parallel.id, { expectedRevision: parallel.revision, status: parallelStatus });
+      }
+      return runs.update(run.id, { expectedRevision: run.revision, error: { code: 'ZEUS_DIGITAL_TEAM_NODE_FAILED', message: '明确阻塞' } });
+    };
+    /** 明确失败只改变父终态，不能丢失失败结果或暂停控制。 */
+    const failed = createFixture('确定失败可以重新配置');
+    /** 完整尝试历史必须逐字段保持。 */
+    const failedHistory = JSON.stringify(attempts.listByRun(failed.id));
+    await boundary.processRun(failed.id);
+    /** 真正经过流程结算的父状态。 */
+    const settled = runs.getById(failed.id)!;
+    assert(settled.status === 'failed' && settled.controlState === 'running' && Boolean(settled.completedAt) && settled.error?.code === 'ZEUS_DIGITAL_TEAM_NODE_FAILED', '确定失败必须终结并保留原因和控制事实。');
+    assert(JSON.stringify(attempts.listByRun(failed.id)) === failedHistory && JSON.stringify(settled.definitionSnapshot) === JSON.stringify(failed.definitionSnapshot), '终结不得修改旧失败节点、冻结图或结果。');
+    assert(!runs.listRecoverable().some((run) => run.id === failed.id) && !boundary.settleDefiniteRunFailure(settled), '失败终态必须退出扫描，重复结算不得增加修订。');
+    /** 同任务实际接纳新运行，证明旧失败不再永久占用入口。 */
+    const replacement = runs.create({ projectId: project.id, taskId: settled.taskId, definition: workflow, taskFacts: settled.taskFacts, baseRevisions: [] });
+    assert(replacement.id !== settled.id && replacement.status === 'executing', '旧失败终结后必须能创建修正流程。');
+    /** 冲突前的父记录和全部失败历史必须原样保留。 */
+    const conflictBefore = JSON.stringify({ run: runs.getById(settled.id), attempts: attempts.listByRun(settled.id) });
+    /** 已有新运行时不能同时复活旧失败流程。 */
+    let duplicateReworkRejected = false;
+    try {
+      coordinator.requestRework(settled.id, { nodeId: 'first', expectedRevision: settled.revision, reason: '明确返工' }, { commandId: 'failed-rework-conflict', operationIdentity: 'failed-rework-conflict', actor: { kind: 'user' } });
+    } catch (error) {
+      duplicateReworkRejected = error instanceof Error && (error as Error & { code?: string }).code === 'ZEUS_DIGITAL_TEAM_TASK_RUNNING';
+    }
+    assert(duplicateReworkRejected && JSON.stringify({ run: runs.getById(settled.id), attempts: attempts.listByRun(settled.id) }) === conflictBefore, '新运行存在时必须拒绝重开旧失败流程，不能半失效历史。');
+    /** 直接存储调用也不能绕过同任务独占约束。 */
+    let storageConflictRejected = false;
+    try {
+      runs.reopenFailedRun(settled.id, { expectedRevision: settled.revision, status: 'executing', error: null, candidateRevisions: [], runtimeState: { repairRound: 1 } });
+    } catch (error) {
+      storageConflictRejected = error instanceof Error && (error as Error & { code?: string }).code === 'ZEUS_DIGITAL_TEAM_TASK_ALREADY_RUNNING';
+    }
+    assert(storageConflictRejected && JSON.stringify({ run: runs.getById(settled.id), attempts: attempts.listByRun(settled.id) }) === conflictBefore, '存储冲突必须原子拒绝所有字段变化。');
+    /** 没有新运行时，明确返工仍可恢复原流程。 */
+    const recoverable = createFixture('失败流程可以明确返工');
+    await boundary.processRun(recoverable.id);
+    /** 返工引用结算后的准确修订。 */
+    const recoverableSettled = runs.getById(recoverable.id)!;
+    /** 通用更新不能借失败收口自动恢复执行。 */
+    let genericFailureRejected = false;
+    try {
+      runs.update(recoverable.id, { expectedRevision: recoverableSettled.revision, status: 'executing', completedAt: null, error: null });
+    } catch (error) {
+      genericFailureRejected = error instanceof Error && (error as Error & { code?: string }).code === 'ZEUS_DIGITAL_TEAM_RUN_STATE_INVALID';
+    }
+    assert(genericFailureRejected && runs.getById(recoverable.id)?.revision === recoverableSettled.revision, '普通更新必须保留 failed 终态限制。');
+    /** 拒绝过期修订与非法快照不能产生先恢复阶段、后失败写字段的中间结果。 */
+    const atomicBefore = JSON.stringify({ run: runs.getById(recoverable.id), attempts: attempts.listByRun(recoverable.id) });
+    for (const expectedRevision of [recoverableSettled.revision - 1, recoverableSettled.revision]) {
+      /** 每次都提供字段清理，使不完整恢复能被准确发现。 */
+      let rejected = false;
+      try {
+        runs.reopenFailedRun(recoverable.id, { expectedRevision, status: 'executing', completedAt: null, error: null, candidateRevisions: [], runtimeState: { repairRound: -1 } });
+      } catch (error) {
+        rejected = error instanceof Error && ['ZEUS_DIGITAL_TEAM_REVISION_CONFLICT', 'ZEUS_DIGITAL_TEAM_REPAIR_LIMIT_INVALID'].includes((error as Error & { code?: string }).code ?? '');
+      }
+      assert(rejected && JSON.stringify({ run: runs.getById(recoverable.id), attempts: attempts.listByRun(recoverable.id) }) === atomicBefore, '拒绝恢复时状态、候选、控制、错误及历史必须一并保持。');
+    }
+    /** 明确返工只让原尝试失效，保留结果、错误和完成事实。 */
+    const originalFailedAttempt = attempts.getCurrentByNode(recoverable.id, 'first')!;
+    coordinator.requestRework(recoverable.id, { nodeId: 'first', expectedRevision: recoverableSettled.revision, reason: '修正明确问题后继续' }, { commandId: 'failed-rework', operationIdentity: 'failed-rework', actor: { kind: 'user' } });
+    /** 返工后的历史失败内容不能被清空或写成新成功。 */
+    const invalidatedAttempt = attempts.getById(originalFailedAttempt.id)!;
+    assert(
+      runs.getById(recoverable.id)?.status === 'executing' && runs.getById(recoverable.id)?.controlState === 'running' && runs.getById(recoverable.id)?.completedAt === null && runs.listRecoverable().some((run) => run.id === recoverable.id),
+      '明确返工必须恢复扫描资格并清空旧终态时间。',
+    );
+    assert(
+      runs.getById(recoverable.id)?.revision === recoverableSettled.revision + 1 &&
+        runs.getById(recoverable.id)?.error === null &&
+        invalidatedAttempt.status === 'invalidated' &&
+        JSON.stringify(invalidatedAttempt.result) === JSON.stringify(originalFailedAttempt.result) &&
+        JSON.stringify(invalidatedAttempt.error) === JSON.stringify(originalFailedAttempt.error) &&
+        invalidatedAttempt.completedAt === originalFailedAttempt.completedAt,
+      '显式返工一次修订恢复父状态，旧失败结果和错误保持完整。',
+    );
+    for (const status of ['completed', 'cancelled'] as const) {
+      /** 其他终态必须在任何尝试失效前拒绝恢复。 */
+      const terminal = createFixture(`保留 ${status} 终态`);
+      /** 真实终态记录用于复核普通和显式入口。 */
+      const terminalRun = runs.update(terminal.id, { expectedRevision: terminal.revision, status, completedAt: new Date().toISOString() });
+      /** 三种调用的拒绝都不能改写运行或尝试历史。 */
+      const terminalBefore = JSON.stringify({ run: terminalRun, attempts: attempts.listByRun(terminal.id) });
+      for (const operation of [
+        () => runs.update(terminal.id, { expectedRevision: terminalRun.revision, status: 'executing', error: null }),
+        () => runs.reopenFailedRun(terminal.id, { expectedRevision: terminalRun.revision, status: 'executing', error: null }),
+        () => coordinator.requestRework(terminal.id, { nodeId: 'first', expectedRevision: terminalRun.revision, reason: '不可恢复的终态' }, { commandId: 'terminal-rework', operationIdentity: 'terminal-rework', actor: { kind: 'user' } }),
+      ]) {
+        /** 三种入口均使用既有终态错误代码。 */
+        let rejected = false;
+        try {
+          operation();
+        } catch (error) {
+          rejected = error instanceof Error && (error as Error & { code?: string }).code === 'ZEUS_DIGITAL_TEAM_RUN_STATE_INVALID';
+        }
+        assert(rejected && JSON.stringify({ run: runs.getById(terminal.id), attempts: attempts.listByRun(terminal.id) }) === terminalBefore, 'completed 和 cancelled 必须拒绝普通更新及显式返工且历史不变。');
+      }
+    }
+    for (const status of ['prepared', 'dispatching', 'active', 'outcome_unknown'] as const) {
+      /** 在途或未知并行节点不能因另一节点失败而被隐式终结。 */
+      const pending = createFixture(`保留并行 ${status}`, status);
+      /** 原始账本证明未被隐式改写。 */
+      const pendingBefore = JSON.stringify(runs.getById(pending.id));
+      assert(!boundary.settleDefiniteRunFailure(pending) && JSON.stringify(runs.getById(pending.id)) === pendingBefore, 'prepared、dispatching、active 和 outcome_unknown 必须保留原运行。');
+    }
+    /** 未知父状态也是明确的重放保护。 */
+    const unknown = createFixture('父结果未知');
+    /** 真实未知父运行不因其他节点失败而释放。 */
+    const unknownRun = runs.update(unknown.id, { expectedRevision: unknown.revision, status: 'outcome_unknown' });
+    assert(!boundary.settleDefiniteRunFailure(unknownRun), '未知父运行不能自动终结或重放。');
+    /** 正式验收收齐前不能先结束父流程，修复额度尚未接纳。 */
+    const verifying = createFixture(
+      '保留自动修复闭环',
+      undefined,
+      definition(
+        [employeeNode('first', employee.id, '首节点'), { ...employeeNode('qa', employee.id, '验收节点'), data: { ...employeeNode('qa', employee.id, '验收节点').data, purpose: 'verify', executionMode: 'candidate_read_only' } }],
+        [],
+      ),
+    );
+    /** 检查实际已登记验收轮，不伪造成功结果。 */
+    const verifyingRun = runs.update(verifying.id, {
+      expectedRevision: verifying.revision,
+      runtimeState: {
+        verificationRound: { id: 'failure-probe-verification', candidateSetSha256: evidenceSha, candidates: [], tests: [{ nodeId: 'qa', attemptId: 'failure-probe-qa-attempt' }], phase: 'collecting', defectIds: [], repairRunIds: [] },
+      },
+    });
+    assert(!boundary.settleDefiniteRunFailure(verifyingRun), 'collecting 验收轮必须由原自动修复闭环处理。');
+    /** 修复子运行未结束时也不能释放父任务占用。 */
+    const parent = createFixture('保留在途修复', 'succeeded');
+    /** 独立子任务拥有真实当前活动尝试。 */
+    const child = createFixture('真实修复子运行', 'active');
+    /** 子关系由正常耐久字段保存。 */
+    const parentWithRepair = runs.update(parent.id, { expectedRevision: parent.revision, runtimeState: { repairRunIds: [child.id] } });
+    assert(!boundary.settleDefiniteRunFailure(parentWithRepair), '关联修复仍在执行时父流程不能终结。');
+    /** 子记录已结束但仍有未知尝试，也不能假定代码停止。 */
+    const unknownChild = createFixture('修复未知结果', 'outcome_unknown');
+    runs.update(unknownChild.id, { expectedRevision: unknownChild.revision, status: 'failed' });
+    /** 用准确修订替换当前关联子关系。 */
+    const parentWithUnknown = runs.update(parent.id, { expectedRevision: parentWithRepair.revision, runtimeState: { repairRunIds: [unknownChild.id] } });
+    assert(!boundary.settleDefiniteRunFailure(parentWithUnknown), '终态子记录含未知尝试时不能释放父流程。');
+    /** 全部子工作有确定终态后才可结算父失败。 */
+    const finishedChild = createFixture('修复明确结束');
+    runs.update(finishedChild.id, { expectedRevision: finishedChild.revision, status: 'failed' });
+    /** 真实终结的修复关系继续保留在父历史中。 */
+    const parentWithFinished = runs.update(parent.id, { expectedRevision: parentWithUnknown.revision, runtimeState: { repairRunIds: [finishedChild.id] } });
+    assert(boundary.settleDefiniteRunFailure(parentWithFinished) && runs.getById(parent.id)?.runtimeState.repairRunIds?.[0] === finishedChild.id, '已确定终结的子工作不能永久阻挡父失败，关系应保留。');
+    assert(dispatchCount === 0 && database.get<{ count: number }>('SELECT COUNT(*) AS count FROM conversation_turns')?.count === 0, '失败边界不得派发 Provider 或创建模型轮次。');
+    await coordinator.close();
+  } finally {
+    await database.close();
+  }
 }
 
 /** 构造当前员工分工。 */

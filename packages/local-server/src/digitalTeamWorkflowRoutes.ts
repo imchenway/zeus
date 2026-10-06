@@ -18,6 +18,8 @@ export interface DigitalTeamRunCreateInput {
   taskId?: string;
   /** 已有任务的读取时间戳，拒绝使用过期任务内容。 */
   expectedTaskUpdatedAt?: string;
+  /** 用户明确允许此任务开发、检查与本地提交，授权与新运行在同一命令内接纳。 */
+  grantTaskCodeAuthority?: boolean;
   /** 已保存模板身份。 */
   templateId: string;
   /** 用户打开模板时看到的修订，避免静默使用较新定义。 */
