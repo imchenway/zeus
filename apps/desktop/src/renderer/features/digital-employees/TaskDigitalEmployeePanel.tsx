@@ -1,5 +1,5 @@
 import { MotionPresence } from '../../ui/MotionPresence.js';
-import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError, modelSetupRequestedEvent } from '../../ui/ApplicationErrorDialog.js';
 import { CaretRightIcon } from '@phosphor-icons/react/dist/csr/CaretRight';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
@@ -55,7 +55,7 @@ export interface TaskDigitalEmployeePanelProps {
 
 export interface TaskDigitalEmployeeManagement {
   employees: DigitalEmployeeRecord[];
-  /** 新任务只能选择用户明确配置的项目员工；内置模板生成的旧副本只保留历史展示。 */
+  /** 正式全局员工可直接指派，项目绑定由实际接纳透明建立。 */
   assignableEmployees: DigitalEmployeeRecord[];
   projection: TaskWorkManagementProjection | null;
   loadState: 'loading' | 'ready' | 'failed';
@@ -70,7 +70,7 @@ export interface TaskDigitalEmployeeManagement {
 export function useTaskDigitalEmployeeManagement(props: Pick<TaskDigitalEmployeePanelProps, 'taskId' | 'projectId' | 'client' | 'language'>): TaskDigitalEmployeeManagement {
   const zh = props.language === 'zh-CN';
   const [employees, setEmployees] = useState<DigitalEmployeeRecord[]>([]);
-  /** 新指派候选排除直接由内置模板生成的旧项目副本。 */
+  /** 目录包含已有正式全局员工，内置模板本身不是执行人。 */
   const [assignableEmployees, setAssignableEmployees] = useState<DigitalEmployeeRecord[]>([]);
   const [projection, setProjection] = useState<TaskWorkManagementProjection | null>(null);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'failed'>('loading');
@@ -91,13 +91,15 @@ export function useTaskDigitalEmployeeManagement(props: Pick<TaskDigitalEmployee
     const generation = ++readGeneration.current;
     if (!hasLoaded.current) setLoadState('loading');
     try {
-      const [nextEmployees, nextTemplates, nextProjection] = await Promise.all([props.client.loadProjectDigitalEmployees(props.projectId), props.client.loadDigitalEmployeeTemplates(), props.client.loadTaskWorkManagement(props.taskId)]);
+      const [nextEmployees, nextAssignableEmployees, nextProjection] = await Promise.all([
+        props.client.loadProjectDigitalEmployees(props.projectId),
+        props.client.loadProjectDigitalEmployees(props.projectId, true),
+        props.client.loadTaskWorkManagement(props.taskId),
+      ]);
       if (generation !== readGeneration.current) return;
-      /** 只排除明确来自内置模板的项目副本；手工创建或来源已删除的独立员工仍然可用。 */
-      const builtInTemplateIds = new Set(nextTemplates.filter((template) => template.builtIn).map((template) => template.id));
       hasLoaded.current = true;
       setEmployees(nextEmployees);
-      setAssignableEmployees(nextEmployees.filter((employee) => !employee.templateId || !builtInTemplateIds.has(employee.templateId)));
+      setAssignableEmployees(nextAssignableEmployees);
       setProjection(nextProjection);
       errorOperation.current = null;
       setError(null);
@@ -592,7 +594,7 @@ export function TaskDigitalEmployeeExecutor(props: {
   language: DigitalEmployeeLanguage;
   management: TaskDigitalEmployeeManagement;
   onLoadCapabilities?: () => Promise<CodexTaskPushCapabilities>;
-  /** 缺少员工时直接进入该项目员工管理。 */
+  /** 缺少员工时进入统一的数字员工管理。 */
   onManageEmployees?(): void;
 }) {
   const zh = props.language === 'zh-CN';
@@ -651,10 +653,10 @@ export function TaskDigitalEmployeeExecutor(props: {
         </Button>
       ) : props.onManageEmployees ? (
         <Button variant="secondary" size="compact" onClick={props.onManageEmployees}>
-          {zh ? '配置项目员工' : 'Set up project employees'}
+          {zh ? '添加数字员工' : 'Add digital employees'}
         </Button>
       ) : (
-        <span>{zh ? '项目尚无可指派员工' : 'No employees available'}</span>
+        <span>{zh ? '尚无可指派员工' : 'No employees available'}</span>
       )}
       {activeCount > 0 ? <small className="task-digital-employee-executor-status">{zh ? `${activeCount} 项工作进行中` : `${activeCount} active ${activeCount === 1 ? 'work item' : 'work items'}`}</small> : null}
       <MotionPresence>
@@ -669,7 +671,6 @@ export function TaskDigitalEmployeeExecutor(props: {
             language={props.language}
             busy={props.management.busy === 'start-executor'}
             operationError={props.management.error}
-            onOpenProjectSettings={props.onManageEmployees}
             onLoadCapabilities={props.onLoadCapabilities}
             onDismiss={() => setSelectedEmployee(null)}
             onSubmit={async (preview) => {
@@ -694,8 +695,7 @@ function TaskEmployeeRunDialog(props: {
   busy: boolean;
   operationError: string | null;
   onLoadCapabilities?: () => Promise<CodexTaskPushCapabilities>;
-  /** 没有可运行模型时提供真实项目设置入口。 */
-  onOpenProjectSettings?(): void;
+  /** 关闭预览时清理当前指派选择。 */
   onDismiss(): void;
   onSubmit(preview: TaskWorkPreview): Promise<boolean>;
 }) {
@@ -1047,16 +1047,16 @@ function TaskEmployeeRunDialog(props: {
         </div>
         <footer>
           <small>{zh ? '指派后开始工作，进展和成果会回到当前任务。' : 'Work starts after assignment. Progress and deliverables return to this task.'}</small>
-          {capabilitiesLoaded && !hasRunnableModel && props.onOpenProjectSettings ? (
+          {capabilitiesLoaded && !hasRunnableModel ? (
             <Button
               variant="primary"
               size="regular"
               onClick={() => {
                 props.onDismiss();
-                props.onOpenProjectSettings?.();
+                window.dispatchEvent(new CustomEvent(modelSetupRequestedEvent, { detail: 'choose' }));
               }}
             >
-              {zh ? '打开项目设置' : 'Open project settings'}
+              {zh ? '配置模型' : 'Configure models'}
             </Button>
           ) : (
             <Button

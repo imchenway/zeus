@@ -7,6 +7,7 @@ import { DigitalTeamWorkflowCoordinator, type DigitalTeamWorkflowCoordinatorOpti
 import { createAutomationScheduler } from '../packages/local-server/src/automationScheduler.js';
 import { WorkManagementCoreOperations } from '../packages/local-server/src/workManagementCoreOperations.js';
 import { migrateEmployeeAutomationsToUnified } from '../packages/storage/src/automationEmployeeMigration.js';
+import { migrateDigitalTeamProjectEmployeeReferences } from '../packages/storage/src/digitalTeamWorkflowStore.js';
 import type { ZeusDatabasePort } from '../packages/storage/src/databasePort.js';
 import {
   digitalTeamWorkflowSchemaGeneration,
@@ -280,8 +281,9 @@ try {
     await verifyTeamInternalTaskOrigins(database, project.id, employee.id);
     await verifyParallelVerificationRound(database, project.id, employee.id);
     await verifyFinalTaskCompletionGate();
+    verifyMigratedProjectEmployeeReferences(database, project.id, employee.id, employeeTemplate.id);
     process.stdout.write(
-      `${JSON.stringify({ ok: true, checks: ['single-employee', 'ordinary-empty-optional-fields', 'nontext-criteria-rejected', 'node-execution-defaults-cleared', 'frozen-node-settings-preserved', 'parallel-roots', 'dependency-gate', 'same-employee-reuse', 'legacy-collapse', 'empty-draft', 'global-template', 'run-node-employee-resolution', 'project-current-workflow', 'assignment-entry-gate', 'entry-descendants-only', 'verification-role-retained', 'defect-completion-gate', 'persistent-repair-budget', 'repair-awaits-parent-retest', 'all-employees-complete', 'active-result-reference-shape', 'development-entry-before-verification', 'unverified-code-task-completion-gate', 'rework-during-final-git-review', 'project-state-shared-save-gate', 'read-only-entry-without-unrelated-baseline', 'frozen-entry-after-template-edit', 'parallel-verification-round-budget', 'parallel-repair-relations-recovery', 'parallel-candidate-environments', 'partial-verification-rework-retains-sibling'] })}\n`,
+      `${JSON.stringify({ ok: true, checks: ['single-employee', 'ordinary-empty-optional-fields', 'nontext-criteria-rejected', 'node-execution-defaults-cleared', 'frozen-node-settings-preserved', 'parallel-roots', 'dependency-gate', 'same-employee-reuse', 'legacy-collapse', 'empty-draft', 'global-template', 'run-node-employee-resolution', 'project-current-workflow', 'assignment-entry-gate', 'entry-descendants-only', 'verification-role-retained', 'defect-completion-gate', 'persistent-repair-budget', 'repair-awaits-parent-retest', 'all-employees-complete', 'active-result-reference-shape', 'development-entry-before-verification', 'unverified-code-task-completion-gate', 'rework-during-final-git-review', 'project-state-shared-save-gate', 'read-only-entry-without-unrelated-baseline', 'frozen-entry-after-template-edit', 'parallel-verification-round-budget', 'parallel-repair-relations-recovery', 'parallel-candidate-environments', 'partial-verification-rework-retains-sibling', 'migrated-project-employee-references'] })}\n`,
     );
   } finally {
     await database.close();
@@ -311,6 +313,75 @@ function employeeNode(id: string, employeeId: string, title: string): DigitalTea
 /** 构造当前纯员工编排定义。 */
 function definition(nodes: DigitalTeamEmployeeNode[], edges: DigitalTeamWorkflowDefinition['edges']): DigitalTeamWorkflowDefinition {
   return { schemaGeneration: digitalTeamWorkflowSchemaGeneration, nodes, edges, viewport: { x: 0, y: 0, zoom: 1 } };
+}
+
+/** 旧全局身份分离后，项目流程继续指向原员工，其他项目及历史运行不变。 */
+function verifyMigratedProjectEmployeeReferences(database: ZeusDatabasePort, projectId: string, employeeId: string, globalEmployeeId: string): void {
+  /** 真实模板与运行仓储复用正式保存和员工解析入口。 */
+  const templates = new DigitalTeamWorkflowTemplateRepository(database);
+  /** 冻结运行只读核对，不用当前模板替代历史事实。 */
+  const runs = new DigitalTeamWorkflowRunRepository(database);
+  /** 新旧任务分别接纳到自己的运行。 */
+  const tasks = new TaskRepository(database);
+  /** 原项目流程含员工节点和修复员工两处相同全局引用。 */
+  const original = { ...definition([employeeNode('identity', globalEmployeeId, '保持项目职责')], []), repairEmployeeId: globalEmployeeId };
+  /** 原项目已有独立流程副本。 */
+  const local = templates.create({ projectId, name: '身份迁移项目流程', description: '', definition: original });
+  templates.setCurrentByProject(projectId, local.id);
+  /** 共享模板继续供其他项目使用原全局员工。 */
+  const shared = templates.create({ projectId: null, name: '身份迁移共享流程', description: '', definition: original });
+  /** 其他项目的独立副本不能被本项目员工差异改变。 */
+  const otherProject = new ProjectRepository(database).create({ name: '其他项目职责', localPath: join(probeRoot, 'other-project') });
+  /** 相同旧全局引用在另一项目保持原样。 */
+  const other = templates.create({ projectId: otherProject.id, name: '其他项目流程', description: '', definition: original });
+  /** 已删除模板保留原定义，迁移不能复活或修改。 */
+  const deleted = templates.create({ projectId, name: '已删除旧流程', description: '', definition: original });
+  templates.delete(deleted.id, deleted.revision);
+  /** 旧节点配置按数据库原文保存，专门验证迁移不会顺带归一化删除。 */
+  const historical = templates.create({ projectId, name: '旧委派配置', description: '', definition: original });
+  /** 历史委派只有准确旧全局引用需要改为原项目员工。 */
+  const historicalDefinition = structuredClone(original);
+  (historicalDefinition.nodes[0] as DigitalTeamEmployeeNode).data.settings = { modelOverride: 'historical-model', delegation: { employeeIds: [globalEmployeeId, employeeId], maxDepth: 1, maxWorkItems: 2 } };
+  database.execute('UPDATE digital_team_workflow_templates SET definition_json=? WHERE id=?', [JSON.stringify(historicalDefinition), historical.id]);
+  /** 迁移前已接纳的运行冻结原员工与模板修订。 */
+  const oldTask = tasks.create({ projectId, title: '迁移前任务', taskType: 'requirement', description: '', createdFrom: 'digital-team-probe', sourceContext: {} });
+  /** 员工解析应在升级前已经落到原项目员工。 */
+  const oldRun = runs.create({ projectId, taskId: oldTask.id, templateId: local.id, templateRevision: local.revision, definition: local.definition, taskFacts: {}, baseRevisions: [] });
+  /** 整份运行快照用于核对迁移没有修改历史事实。 */
+  const frozen = JSON.stringify(oldRun);
+  /** 同一迁移事务使用统一时间，不改变共享来源。 */
+  const timestamp = new Date().toISOString();
+  migrateDigitalTeamProjectEmployeeReferences(database, { projectId, globalEmployeeId, employeeId }, timestamp);
+  /** 原当前流程引用保持不变，模板只增加一次修订。 */
+  const migrated = templates.getCurrentByProject(projectId)!;
+  assert(
+    migrated.id === local.id && migrated.revision === local.revision + 1 && (migrated.definition.nodes[0] as DigitalTeamEmployeeNode).data.employeeId === employeeId && migrated.definition.repairEmployeeId === employeeId,
+    '项目流程必须继续使用原员工并失效旧修订。',
+  );
+  /** 原文读取验证委派引用变化之外的设置完全保留。 */
+  const historicalAfter = JSON.parse(database.get<{ definition_json: string }>('SELECT definition_json FROM digital_team_workflow_templates WHERE id=?', [historical.id])!.definition_json) as DigitalTeamWorkflowDefinition;
+  assert(
+    (historicalAfter.nodes[0] as DigitalTeamEmployeeNode).data.settings?.modelOverride === 'historical-model' && (historicalAfter.nodes[0] as DigitalTeamEmployeeNode).data.settings?.delegation?.employeeIds.every((id) => id === employeeId),
+    '旧委派准确引用须迁移，其他历史设置不得丢失。',
+  );
+  assert(JSON.stringify(templates.getById(shared.id)) === JSON.stringify(shared) && JSON.stringify(templates.getById(other.id)) === JSON.stringify(other), '共享模板和其他项目不得改变。');
+  assert(database.get<{ revision: number }>('SELECT revision FROM digital_team_workflow_templates WHERE id=?', [deleted.id])?.revision === deleted.revision + 1, '已删除模板不得被再次改写。');
+  assert(JSON.stringify(runs.getById(oldRun.id)) === frozen, '历史运行与角色快照必须原样保留。');
+  migrateDigitalTeamProjectEmployeeReferences(database, { projectId, globalEmployeeId, employeeId }, timestamp);
+  assert(templates.getById(local.id)?.revision === migrated.revision, '重复身份迁移不得重复增加模板修订。');
+  /** 模拟旧有效身份已经成为独立全局员工，原绑定身份不变。 */
+  const promoted = new DigitalEmployeeTemplateRepository(database).create({ name: '原项目职责', role: '项目专属', prompt: '保留原项目提示词。' });
+  /** 更新来源后再接纳，证明流程不会重新创建原全局员工。 */
+  const employees = new DigitalEmployeeRepository(database);
+  employees.update(employeeId, { expectedRevision: employees.getById(employeeId)!.revision, globalEmployeeId: promoted.id });
+  /** 新任务继续冻结原项目员工的有效职责。 */
+  const newTask = tasks.create({ projectId, title: '迁移后任务', taskType: 'requirement', description: '', createdFrom: 'digital-team-probe', sourceContext: {} });
+  /** 保存后的流程从原绑定读取，不再按旧全局身份另建员工。 */
+  const newRun = runs.create({ projectId, taskId: newTask.id, templateId: migrated.id, templateRevision: migrated.revision, definition: migrated.definition, taskFacts: {}, baseRevisions: [] });
+  assert(
+    newRun.roleSnapshots[0]?.employeeId === employeeId && newRun.roleSnapshots[0]?.configuration.prompt === promoted.prompt && !employees.getByGlobalEmployee(projectId, globalEmployeeId),
+    '新运行必须沿原绑定执行项目职责，不能按旧全局身份另建员工。',
+  );
 }
 
 /** 构造包含技术节点的旧模板定义。 */

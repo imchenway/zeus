@@ -106,7 +106,8 @@ export interface TaskWorkPreview {
   expectedTaskRevision: string;
   expectedEmployeeRevision: number;
   selection: TaskWorkPreviewSelection;
-  employee: { id: string; name: string; role: string; domain: string; revision: number };
+  /** 有效配置摘要同时覆盖全局更新，不只比较项目绑定修订。 */
+  employee: { id: string; name: string; role: string; domain: string; revision: number; configurationSha256: string };
   entrypoint: Record<string, unknown> | null;
   model: Record<string, unknown> | null;
   skills: Array<TaskWorkNativeSkillPreview | TaskWorkPluginSkillPreview>;
@@ -393,7 +394,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
             parsed,
             destinationId: 'task-work-planning-repository',
             resourceId: `task_work_item:${item.id}`,
-            mutateBusinessState: () => options.planning.assign(item.id, input.expectedRevision, requiredText(input.employeeId, '请选择执行人。', 256)),
+            mutateBusinessState: () => options.planning.assign(item.id, input.expectedRevision, options.employees.ensureProjectEmployee(task.projectId, requiredText(input.employeeId, '请选择执行人。', 256)).id),
           });
           await options.save();
           kick();
@@ -573,21 +574,30 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
           scopeKind: 'task',
           expectedScopeId: () => task.id,
         });
+        /** 首次接纳可能建立项目绑定；重复确认必须先返回原回执，不重算身份摘要。 */
+        const replay = options.application.replayAcceptedCore<TaskWorkCreateInput, { item: TaskWorkItemRecord; run: TaskWorkRunRecord } | { workflowRunId: string }>({
+          parsed,
+          destinationId: 'task-work-item-repository',
+          resourceId: `task_work_item:${parsed.operationIdentity}`,
+        });
+        if (replay) return reply.code(202).send({ ...replay.result, replayed: true });
         if (parsed.input.selection.plannedWorkItemId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_PLAN_START_REQUIRED', '请从工作安排启动或继续执行，已有分工不会重复创建。');
         const preview = await resolvePreview(options, task, normalizeSelection(parsed.input.selection));
         assertPreviewFresh(preview, parsed.input);
-        const employee = requireEmployeeOrThrow(options, task.projectId, preview.employee.id);
         /** 同一接纳入口负责重复指派及入口缺失，不能静默创建独立工作。 */
         const workflow = await options.acceptProjectWorkflowAssignment?.({
           projectId: task.projectId,
           taskId: task.id,
-          employeeId: employee.id,
+          employeeId: preview.employee.id,
           executionId: `manual:${parsed.operationIdentity}`,
           source: 'manual',
           inputDeliverableIds: preview.selection.selectedDeliverableIds,
           context: { expectedTaskUpdatedAt: parsed.input.expectedTaskRevision, permissionMode: preview.authority.permissionMode, actor: parsed.command.actor, commandId: parsed.command.commandId },
         });
         if (workflow) {
+          /** 项目流程已经接纳，原任务指派命令也保存同一结果以支持安全重发。 */
+          options.application.executeCore({ parsed, destinationId: 'task-work-item-repository', resourceId: `task_work_item:${parsed.operationIdentity}`, mutateBusinessState: () => workflow });
+          await options.save();
           kick();
           return reply.code(202).send(workflow);
         }
@@ -596,7 +606,14 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
           parsed,
           destinationId: 'task-work-item-repository',
           resourceId: `task_work_item:${parsed.operationIdentity}`,
-          mutateBusinessState: () => createWorkItemFromPreview(options, task, employee, preview, parsed.operationIdentity, { source: 'manual', sourceRef: `manual:${parsed.operationIdentity}` }, skillResources),
+          mutateBusinessState: () => {
+            /** 能力读取期间身份若已变化，保留用户原预览并要求重读。 */
+            const current = options.employees.previewProjectEmployee(task.projectId, preview.employee.id);
+            if (!current || sha256(canonicalJson(current)) !== preview.employee.configurationSha256) throw new TaskWorkStoreError('ZEUS_TASK_WORK_PREVIEW_STALE', '数字员工已变化，请重新预览后指派。');
+            /** 只有实际接纳建立绑定，工作与员工关系在同一事务保存。 */
+            const employee = options.employees.ensureProjectEmployee(task.projectId, preview.employee.id);
+            return createWorkItemFromPreview(options, task, employee, preview, parsed.operationIdentity, { source: 'manual', sourceRef: `manual:${parsed.operationIdentity}` }, skillResources);
+          },
         });
         await options.save();
         const currentItem = options.items.getById(created.result.item.id) ?? created.result.item;
@@ -1364,7 +1381,7 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
     );
   }
   const blockers: TaskWorkPreview['blockers'] = [];
-  const employee = employeeSnapshot ?? options.employees.getById(selection.employeeId);
+  const employee = employeeSnapshot ?? options.employees.previewProjectEmployee(task.projectId, selection.employeeId);
   if (!employee || employee.projectId !== task.projectId) throw new TaskWorkStoreError('ZEUS_DIGITAL_EMPLOYEE_NOT_FOUND', '数字员工不存在。', 404);
   if (options.isTaskTerminal(task) || task.status === 'completed' || task.status === 'cancelled') blockers.push({ code: 'ZEUS_TASK_WORK_TASK_TERMINAL', message: '终态任务不能创建新工作项。' });
   if (!employee.enabled) blockers.push({ code: 'ZEUS_DIGITAL_EMPLOYEE_DISABLED', message: '数字员工已停用。' });
@@ -1463,7 +1480,7 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
     expectedTaskRevision: task.updatedAt,
     expectedEmployeeRevision: employee.revision,
     selection: requestedSelection,
-    employee: { id: employee.id, name: employee.name, role: employee.role, domain: employee.domain, revision: employee.revision },
+    employee: { id: employee.id, name: employee.name, role: employee.role, domain: employee.domain, revision: employee.revision, configurationSha256: sha256(canonicalJson(employee)) },
     entrypoint,
     model,
     skills,

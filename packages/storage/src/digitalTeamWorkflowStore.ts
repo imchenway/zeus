@@ -256,6 +256,31 @@ export function migrateDigitalTeamWorkflowSchema(db: ZeusDatabasePort): void {
   db.execute('CREATE TABLE IF NOT EXISTS digital_team_project_workflows (project_id TEXT PRIMARY KEY REFERENCES projects(id), template_id TEXT NOT NULL REFERENCES digital_team_workflow_templates(id), updated_at TEXT NOT NULL)');
 }
 
+/** 员工身份升格前固定原项目的实际执行人，不改变共享模板或已冻结运行。 */
+export function migrateDigitalTeamProjectEmployeeReferences(db: ZeusDatabasePort, input: { projectId: string; globalEmployeeId: string; employeeId: string }, timestamp: string): void {
+  /** 只处理原项目自己的可用模板，项目流程已经使用独立副本。 */
+  const templates = db.select<Pick<DigitalTeamWorkflowTemplateRow, 'id' | 'definition_json'>>('SELECT id,definition_json FROM digital_team_workflow_templates WHERE project_id=? AND deleted_at IS NULL', [input.projectId]);
+  for (const template of templates) {
+    /** 原始定义仅替换准确员工引用，避免归一化顺带清理历史节点设置。 */
+    const definition = parseJson<DigitalTeamWorkflowDefinition>(template.definition_json, 'template.definition');
+    /** 同一模板包含多处引用时只递增一次修订。 */
+    let changed = false;
+    /** 只按已核对的旧全局身份替换，不按姓名或岗位猜测。 */
+    const resolve = (employeeId: string): string => {
+      if (employeeId !== input.globalEmployeeId) return employeeId;
+      changed = true;
+      return input.employeeId;
+    };
+    if (definition.repairEmployeeId) definition.repairEmployeeId = resolve(definition.repairEmployeeId);
+    for (const node of definition.nodes) {
+      if (node.type !== 'employee') continue;
+      node.data.employeeId = resolve(node.data.employeeId);
+      if (node.data.settings?.delegation) node.data.settings.delegation.employeeIds = [...new Set(node.data.settings.delegation.employeeIds.map(resolve))];
+    }
+    if (changed) db.execute('UPDATE digital_team_workflow_templates SET definition_json=?,revision=revision+1,updated_at=? WHERE id=?', [JSON.stringify(definition), timestamp, template.id]);
+  }
+}
+
 /** 允许新团队模板不绑定项目，同时原样保留旧项目模板和历史运行引用。 */
 function migrateGlobalDigitalTeamTemplates(db: ZeusDatabasePort): void {
   if (db.get('SELECT migration_id FROM schema_migrations WHERE migration_id = ?', [globalDigitalTeamTemplateMigrationId])) return;

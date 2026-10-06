@@ -68,8 +68,14 @@ export function registerDigitalEmployeeRoutes(options: DigitalEmployeeRouteOptio
   options.server.get('/api/digital-employee-templates', async () => options.templates.list());
   /** 全局员工目录只返回真实员工，内置创建模板保留在原模板目录。 */
   options.server.get('/api/digital-employees', async () => options.templates.list().filter((employee) => !employee.builtIn));
-  options.server.get('/api/projects/:projectId/digital-employees', async (request: FastifyRequest<{ Params: { projectId: string } }>, reply) => {
+  options.server.get('/api/projects/:projectId/digital-employees', async (request: FastifyRequest<{ Params: { projectId: string }; Querystring: { available?: string } }>, reply) => {
     if (!requireProject(options, request.params.projectId, reply)) return;
+    /** 可指派目录只投影真实全局身份，读取时不创建项目绑定。 */
+    if (request.query.available === 'true')
+      return options.templates
+        .list()
+        .filter((employee) => !employee.builtIn)
+        .flatMap((employee) => options.employees.previewProjectEmployee(request.params.projectId, employee.id) ?? []);
     return options.employees.listByProject(request.params.projectId);
   });
   options.server.get('/api/projects/:projectId/digital-employee-automations', async (request: FastifyRequest<{ Params: { projectId: string } }>, reply) => {

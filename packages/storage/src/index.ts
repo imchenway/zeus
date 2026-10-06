@@ -18,6 +18,7 @@ import { DatabasePerformanceCollector, type DatabasePerformanceSnapshot } from '
 import { migrateExecutionHostHandoffSchema } from './executionHostHandoffStore.js';
 import { migrateExecutionHostWorkSchema } from './executionHostWorkStore.js';
 import { migrateDigitalEmployeeSchema } from './digitalEmployeeStore.js';
+import { migrateDigitalEmployeeGlobalIdentity } from './digitalEmployeeIdentityMigration.js';
 import { migrateAutomationSchema } from './automationStore.js';
 import { migrateDigitalEmployeeCapabilitySchema } from './digitalEmployeeCapabilityMigration.js';
 import { migrateImSchema } from './imStore.js';
@@ -1039,7 +1040,6 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateDigitalEmployeeLegacyRetirement(zeusDb);
     migrateDefectWorkflowSchema(zeusDb);
     migrateWorkArtifactSchema(zeusDb);
-    migrateEmployeeAutomationsToUnified(zeusDb);
     migrateProviderEventReceipts(zeusDb);
     migrateUnifiedConversationStoreSchema(zeusDb);
     migrateConversationExpertSchema(zeusDb);
@@ -1055,6 +1055,8 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateConversationSyncProtocolV2(zeusDb);
     migrateLongTermMemorySchema(zeusDb);
     migrateEmployeeMemorySchema(zeusDb);
+    migrateDigitalEmployeeGlobalIdentity(zeusDb);
+    migrateEmployeeAutomationsToUnified(zeusDb);
     migrateEmployeeMemoryProposalSchema(zeusDb);
     migratePluginStoreSchema(zeusDb);
     migrateExecutionHostWorkSchema(zeusDb);

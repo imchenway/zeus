@@ -93,8 +93,6 @@ export interface DigitalEmployeeTaskFilter {
 }
 
 export interface DigitalEmployeeRecord extends Omit<DigitalEmployeeTemplateRecord, 'builtIn'> {
-  /** 未确认的旧项目身份与提示词，仅供展示与明确迁移。 */
-  legacyConfiguration?: Partial<Pick<DigitalEmployeeTemplateRecord, 'name' | 'description' | 'role' | 'domain' | 'avatarId' | 'prompt'>> | null;
   /** 跨项目员工身份，历史仅项目员工保留为空。 */
   globalEmployeeId?: string | null;
   /** 当前项目明确设置的配置差异。 */
@@ -411,7 +409,8 @@ export interface TaskWorkPreview {
   expectedTaskRevision: string;
   expectedEmployeeRevision: number;
   selection: TaskWorkPreviewSelection;
-  employee: { id: string; name: string; role: string; domain: string; revision: number };
+  /** 服务端用于核对全局与项目合成配置，界面不维护另一份员工配置。 */
+  employee: { id: string; name: string; role: string; domain: string; revision: number; configurationSha256: string };
   entrypoint: Record<string, unknown> | null;
   model: Record<string, unknown> | null;
   skills: Array<

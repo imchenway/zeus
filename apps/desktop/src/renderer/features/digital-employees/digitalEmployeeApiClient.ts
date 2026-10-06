@@ -56,7 +56,7 @@ export interface DigitalEmployeeApiClient {
   createDigitalEmployeeTemplate(input: DigitalEmployeeTemplateInput): Promise<DigitalEmployeeTemplateRecord>;
   updateDigitalEmployeeTemplate(templateId: string, expectedRevision: number, input: Partial<DigitalEmployeeTemplateInput>): Promise<DigitalEmployeeTemplateRecord>;
   deleteDigitalEmployeeTemplate(templateId: string, expectedRevision: number): Promise<DigitalEmployeeTemplateRecord>;
-  loadProjectDigitalEmployees(projectId: string): Promise<DigitalEmployeeRecord[]>;
+  loadProjectDigitalEmployees(projectId: string, available?: boolean): Promise<DigitalEmployeeRecord[]>;
   createProjectDigitalEmployee(
     projectId: string,
     input: { templateId: string; overrides?: Partial<DigitalEmployeeInput> } | { globalEmployeeId: string; projectOverrides?: DigitalEmployeeInput['projectOverrides']; projectInstructions?: string } | DigitalEmployeeInput,
@@ -124,7 +124,7 @@ export function createDigitalEmployeeApiClient(transport: LocalApiTransport): Di
       const body = await command(workManagementClientCommandTypes.digitalEmployeeTemplateDelete, 'settings', () => `digital-employee-template:${templateId}`, 'digital_employee_template_delete_', value, expectedRevision);
       return transport.request(`/api/digital-employee-templates/${encodeURIComponent(templateId)}`, jsonRequest('DELETE', body));
     },
-    loadProjectDigitalEmployees: (projectId) => transport.request(`${projectPath(projectId)}/digital-employees`),
+    loadProjectDigitalEmployees: (projectId, available) => transport.request(`${projectPath(projectId)}/digital-employees${available ? '?available=true' : ''}`),
     createProjectDigitalEmployee: async (projectId, input) => {
       const body = await command(workManagementClientCommandTypes.digitalEmployeeCreate, 'project', () => projectId, 'digital_employee_', input);
       return transport.request(`${projectPath(projectId)}/digital-employees`, jsonRequest('POST', body));

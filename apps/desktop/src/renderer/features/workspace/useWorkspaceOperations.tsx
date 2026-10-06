@@ -2026,11 +2026,9 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
         }
         onOpenConversation={(taskId, conversationId) => void openTaskConversation(taskId, conversationId)}
         onManageEmployees={() => {
-          /** 任务所属项目是员工管理的唯一目标。 */
-          const project = snapshot.projects.find((candidate) => candidate.id === taskDetailPaneTask.projectId);
-          if (!project) return;
+          /** 员工统一维护，任务指派自动建立项目参与关系。 */
           closeTaskDetail();
-          openProjectSection(project, 'project-settings');
+          handleMainNavigate('digital-employees');
         }}
         onSelectConversation={openTaskConversationInline}
         activeConversationId={selectedNativeConversation?.taskId === taskDetailPaneTask.id ? selectedNativeConversation.id : null}

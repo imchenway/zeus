@@ -149,7 +149,7 @@ function ProjectSettingsWorkspace(props: {
       </header>
 
       <section id={employeesPanelId} className="project-settings-panel" role="tabpanel" aria-labelledby={employeesTabId} hidden={section !== 'employees'}>
-        <ProjectDigitalEmployeesPanel projectId={props.project.id} projectName={props.project.name} client={props.commandClient} skillClient={props.conversationClient} language={props.language} onOpenAutomations={props.onOpenAutomations} />
+        <ProjectDigitalEmployeesPanel projectId={props.project.id} projectName={props.project.name} client={props.commandClient} language={props.language} onOpenAutomations={props.onOpenAutomations} />
       </section>
       <section id={capacityPanelId} className="project-settings-panel" role="tabpanel" aria-labelledby={capacityTabId} hidden={section !== 'capacity'}>
         <ProjectContextCapacitySettings projectId={props.project.id} client={props.commandClient} language={props.language} />

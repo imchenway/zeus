@@ -214,6 +214,39 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
       options.runs.setTerminal(running.id, 'blocked', 'ZEUS_AUTOMATION_CONFIG_TARGET_UNAVAILABLE', '运行修订已不可用。');
       return;
     }
+    /** 身份迁移后旧运行不借用当前规则映射；原接纳工作终结后才释放串行占位。 */
+    const migratedTarget = running.dispatchTargets.find((target) => target.reason?.startsWith('ZEUS_AUTOMATION_EMPLOYEE_IDENTITY_MIGRATED:'));
+    if (migratedTarget) {
+      for (const target of running.dispatchTargets.filter((entry) => entry.status === 'accepting')) {
+        /** 迁移时未知的外部接纳必须先核对，不能因暂缺运行引用就结束占位。 */
+        try {
+          const accepted = options.runs.findAcceptedExecution(target);
+          options.runs.updateDispatchTarget(running.id, { ...target, status: accepted ? 'accepted' : accepted === false ? 'skipped' : 'pending', reference: accepted || null, reason: accepted ? null : target.reason });
+        } catch (error) {
+          if (!(error instanceof Error) || !error.message.startsWith('ZEUS_AUTOMATION_DISPATCH_OUTCOME_UNKNOWN:')) throw error;
+          options.tasks.setStatus(running.automationId, 'paused');
+          await options.save();
+          return;
+        }
+      }
+      /** 全部目标已有真实结果时回到正常执行结算，不把已完成接纳误报为迁移阻塞。 */
+      const reconciled = options.runs.getById(running.id)!;
+      if (reconciled.dispatchTargets.every((target) => target.status === 'accepted' || target.status === 'skipped')) {
+        options.runs.completeDispatch(running.id);
+        await options.save();
+        return;
+      }
+      if (
+        reconciled.executionReferences.some((reference) => {
+          const state = options.readExecution?.(reference);
+          return !state || state.status === 'running' || state.status === 'outcome_unknown';
+        })
+      )
+        return;
+      options.runs.setTerminal(running.id, 'blocked', 'ZEUS_AUTOMATION_EMPLOYEE_IDENTITY_MIGRATED', migratedTarget.reason);
+      await options.save();
+      return;
+    }
     if (revision.snapshot.action.kind !== 'conversation') {
       /** 完整范围先持久化，即使首目标尚未接纳也可以恢复。 */
       options.runs.ensureDispatchTargets(running.id);
