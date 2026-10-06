@@ -1,4 +1,5 @@
 import { resolveContextCapacityPolicy } from './contextCapacitySupport.js';
+import { resolveArchivedTaskManagementStatus, type ArchivedProjectTaskStatuses } from './taskManagementStatusMigration.js';
 import { resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
 import { resolveInteractiveRuntimeShell } from './localServerPlatformSupport.js';
 import { missingTaskRepositories } from './taskRepositoryMembership.js';
@@ -3575,17 +3576,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   /** 只有迁移归档中的准确旧来源可解释项目状态，新修订与新事件统一使用全局状态。 */
   const resolveArchivedTaskStatus = (projectId: string, statusId: string, source: { revisionId: string } | { eventSequence: number } | { runId: string }): string => {
     /** 来源身份与事件边界独立归档，不改历史运行或修订快照。 */
-    const archive = settings.getJson<{ replacements?: Record<string, Record<string, string>>; automationRevisionIds?: string[]; taskEventSequenceByProject?: Record<string, number>; digitalTeamRunIds?: string[] }>(
-      'archive.project-task-status-settings',
-    );
-    /** 每个目标只读取自己原项目的映射，不能合并多个项目扩大触发条件。 */
-    const legacySource =
-      'revisionId' in source
-        ? archive?.automationRevisionIds?.includes(source.revisionId)
-        : 'eventSequence' in source
-          ? archive?.taskEventSequenceByProject?.[projectId] !== undefined && source.eventSequence <= archive.taskEventSequenceByProject[projectId]!
-          : archive?.digitalTeamRunIds?.includes(source.runId);
-    return legacySource ? (archive?.replacements?.[projectId]?.[statusId] ?? statusId) : statusId;
+    const archive = settings.getJson<ArchivedProjectTaskStatuses>('archive.project-task-status-settings');
+    return resolveArchivedTaskManagementStatus(archive, projectId, statusId, source);
   };
 
   /** 数字团队复用现有任务、会话、证据与 Git 能力，只新增冻结图和节点尝试账本。 */

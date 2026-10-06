@@ -33,7 +33,8 @@ import type { TaskRecord } from '../tasks/taskContracts.js';
 import { DigitalEmployeeAvatar } from '../digital-employees/DigitalEmployeeAvatar.js';
 import type { DigitalEmployeeTemplateRecord } from '../digital-employees/digitalEmployeeContracts.js';
 import type { ProjectRecord } from '../projects/projectContracts.js';
-import { type DigitalTeamApiClient, type DigitalTeamRunProjection, type DigitalTeamTemplateSaveInput } from './digitalTeamApiClient.js';
+import { type DigitalTeamApiClient, type DigitalTeamRunProjection } from './digitalTeamApiClient.js';
+import { forgetDigitalTeamDraft, readDigitalTeamDraft, readDigitalTeamDraftSelection, rememberDigitalTeamDraft, rememberDigitalTeamDraftSelection, type DigitalTeamTemplateDraft } from './digitalTeamDraftStorage.js';
 import { digitalTeamDragMime, isConnectionAllowed, WorkflowCanvas, type DigitalTeamCanvasRuntimeState, type DigitalTeamDragPayload } from './WorkflowCanvas.js';
 import './digitalTeams.css';
 
@@ -43,15 +44,8 @@ type DigitalTeamView = 'editor' | 'runs';
 /** 任务详情下拉进入数字团队时携带的明确目标。 */
 export type DigitalTeamEntrySelection = { kind: 'template'; templateId: string } | { kind: 'run'; runId: string } | { kind: 'manage' };
 
-/** 本地模板草稿只保留服务端允许保存的字段。 */
-type TemplateDraft = Pick<DigitalTeamTemplateSaveInput, 'name' | 'description' | 'definition'> & {
-  /** 当前已保存团队身份，新草稿为空。 */
-  id: string | null;
-  /** 当前读取修订，用于保存时并发保护。 */
-  revision: number | null;
-  /** 非法旧定义只用安全视图展示，用户明确重新配置前不覆盖原文。 */
-  sourceIssues?: DigitalTeamWorkflowValidationIssue[];
-};
+/** 页面编辑与本地恢复共用准确的草稿协议。 */
+type TemplateDraft = DigitalTeamTemplateDraft;
 
 /** 团队节点编辑只读取已创建的全局员工。 */
 type DigitalTeamMemberRecord = DigitalEmployeeTemplateRecord;
@@ -61,6 +55,23 @@ type RunDecision = { kind: 'approve' | 'reject' | 'rework'; nodeId: string; atte
 
 /** 无项目时使用的选择值。 */
 const noProjectValue = '__no_digital_team_project__';
+
+/** 历史流程明确未分配员工的占位身份，不作为真实员工显示。 */
+const unassignedEmployeeId = '__unassigned_digital_team_employee__';
+
+/** 待分配属于正常草稿配置，仍阻止创建运行但不展示红色错误。 */
+const unassignedEmployeeIssueCode = 'ZEUS_DIGITAL_TEAM_EMPLOYEE_UNASSIGNED';
+
+/** 保存回执只在本窗口传递，让离开后返回的编辑器安全接纳准确新基线。 */
+const draftSavedEvent = 'zeus:digital-team-draft-saved';
+
+/** 提交原值与真实保存结果必须一起传递，不能仅凭团队身份覆盖新输入。 */
+interface DraftSavedDetail {
+  /** 用户点击保存时的完整草稿。 */
+  submittedDraft: TemplateDraft;
+  /** 正常 API 返回的已保存团队。 */
+  savedTemplate: DigitalTeamWorkflowTemplateRecord;
+}
 
 /** 窄窗口统一把节点检查器切换为覆盖抽屉。 */
 const compactInspectorQuery = '(max-width: 1180px)';
@@ -125,12 +136,19 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   const [employeeTemplates, setEmployeeTemplates] = useState<DigitalEmployeeTemplateRecord[]>([]);
   /** 当前项目的运行历史。 */
   const [runs, setRuns] = useState<DigitalTeamWorkflowRunRecord[]>([]);
+  /** 本地恢复只读取一次，不在每次输入时重复解析草稿。 */
+  const [initialDraft] = useState(() => readDigitalTeamDraft(props.initialSelection?.kind === 'template' ? props.initialSelection.templateId : (readDigitalTeamDraftSelection() ?? null)));
   /** 当前显式编辑的模板草稿。 */
-  const [draft, setDraft] = useState<TemplateDraft>(() => emptyTemplateDraft());
+  const [draft, setDraft] = useState<TemplateDraft>(() => initialDraft ?? emptyTemplateDraft());
   /** 无已保存模板时保持创建入口，只有用户明确开始后才展示配置界面。 */
-  const [draftOpen, setDraftOpen] = useState(false);
-  /** 草稿与最近保存版本不同才阻止内部切换。 */
-  const [dirty, setDirty] = useState(false);
+  const [draftOpen, setDraftOpen] = useState(Boolean(initialDraft));
+  /** 未保存修改只影响使用团队，不再阻止页面切换。 */
+  const [dirty, setDirty] = useState(Boolean(initialDraft));
+  /** 成功暂存后关闭窗口无需系统弹窗；失败时明确保留关闭保护。 */
+  const [draftPersisted, setDraftPersisted] = useState(!initialDraft);
+  /** 离开或异步刷新时读取最新草稿，避免闭包把新输入覆盖成旧版本。 */
+  const draftStateRef = useRef({ draft, dirty });
+  draftStateRef.current = { draft, dirty };
   /** 检查器选中的节点。 */
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   /** 已保存模板、项目或重开变化时重建画布以恢复持久视口。 */
@@ -159,6 +177,8 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   const compactInspector = useCompactInspector();
   /** 项目切换代次防止迟到读取覆盖当前页面。 */
   const loadRevisionRef = useRef(0);
+  /** 卸载后的旧写入回执不再改当前页面状态。 */
+  const mountedRef = useRef(false);
 
   /** 代码动作才需要用户确认现场和本地修改范围。 */
   const usesCode = draft.definition.nodes.some((node) => node.type === 'employee' && node.data.executionMode === 'isolated_write');
@@ -185,7 +205,12 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
       if (node.type !== 'employee') continue;
       /** 未创建或已删除的员工不能继续作为新运行的成员定义。 */
       const employee = employeeById.get(node.data.employeeId);
-      if (!employee) issues.push({ code: 'ZEUS_DIGITAL_TEAM_EMPLOYEE_TEMPLATE_UNAVAILABLE', message: '成员节点必须绑定已创建且仍然存在的全局数字员工。', nodeId: node.id });
+      if (!employee)
+        issues.push({
+          code: node.data.employeeId === unassignedEmployeeId ? unassignedEmployeeIssueCode : 'ZEUS_DIGITAL_TEAM_EMPLOYEE_TEMPLATE_UNAVAILABLE',
+          message: node.data.employeeId === unassignedEmployeeId ? '分工尚未选择执行员工。' : '执行员工已不可用，请重新选择。',
+          nodeId: node.id,
+        });
       else if ('enabled' in employee && !employee.enabled) issues.push({ code: 'ZEUS_DIGITAL_TEAM_EMPLOYEE_UNAVAILABLE', message: '员工节点绑定的项目数字员工已停用。', nodeId: node.id });
     }
     return issues;
@@ -214,10 +239,9 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   const refreshProject = useCallback(
     async (preferredTemplateId?: string | null, preferredRunId?: string | null, entrySelection?: DigitalTeamEntrySelection): Promise<void> => {
       if (!api) return;
-      if (dirty) {
-        setError(zh ? '当前流程尚未保存，请先保存，或在“团队设置”中放弃修改。' : 'Save the workflow or discard changes in Team settings before refreshing.');
-        return;
-      }
+      /** 读取目录和切换项目不覆盖正在编辑的全局草稿。 */
+      const currentDraft = draftStateRef.current;
+      if (currentDraft.dirty) rememberDigitalTeamDraft(currentDraft.draft);
       const revision = ++loadRevisionRef.current;
       setLoading(true);
       setError(null);
@@ -228,7 +252,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
           projectId ? api.loadDigitalTeamRuns(projectId, props.task?.id) : Promise.resolve([]),
           api.loadAppShellSettings(),
         ]);
-        if (revision !== loadRevisionRef.current) return;
+        if (!mountedRef.current || revision !== loadRevisionRef.current) return;
         setTemplates(nextTemplates);
         /** 状态目录和完成角色同时刷新，防止沿用另一个项目的完成身份。 */
         const statusConfig = normalizeTaskManagementStatusConfig(runtimeSettings.taskManagementStatusTemplate);
@@ -238,11 +262,16 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
         /** 任务入口只展示当前任务运行；团队入口仍展示项目记录。 */
         const visibleRuns = props.task ? nextRuns.filter((run) => run.taskId === props.task!.id) : nextRuns;
         setRuns(visibleRuns);
-        const nextTemplate = preferredTemplateId ? nextTemplates.find((template) => template.id === preferredTemplateId) : (nextTemplates.find((template) => template.id === draft.id) ?? nextTemplates[0]);
-        setDraft(nextTemplate ? templateDraft(nextTemplate) : emptyTemplateDraft());
-        setDraftOpen(Boolean(nextTemplate));
+        /** 明确入口优先；普通返回恢复最近编辑的团队。 */
+        const desiredTemplateId = preferredTemplateId ?? currentDraft.draft.id ?? readDigitalTeamDraftSelection();
+        const nextTemplate = nextTemplates.find((template) => template.id === desiredTemplateId) ?? nextTemplates[0];
+        /** 保留开始编辑时的修订，服务端有并发修改时仍由保存门禁核对。 */
+        const restoredDraft = currentDraft.dirty && (!preferredTemplateId || preferredTemplateId === currentDraft.draft.id) ? currentDraft.draft : readDigitalTeamDraft(nextTemplate?.id ?? null);
+        setDraft(restoredDraft ?? (nextTemplate ? templateDraft(nextTemplate) : emptyTemplateDraft()));
+        setDraftOpen(Boolean(restoredDraft || nextTemplate));
+        rememberDigitalTeamDraftSelection(restoredDraft?.id ?? nextTemplate?.id ?? null);
         setCanvasGeneration((current) => current + 1);
-        setDirty(false);
+        setDirty(Boolean(restoredDraft));
         const nextRun = visibleRuns.find((run) => run.id === preferredRunId) ?? visibleRuns.find((run) => run.id === selectedRun?.run.id) ?? (props.task ? visibleRuns[0] : null);
         if (entrySelection?.kind === 'template' && nextTemplate?.id === entrySelection.templateId && nextTemplate.ready && !visibleRuns.some((run) => !terminalRunStatuses.has(run.status))) {
           setView('editor');
@@ -251,7 +280,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
         else if (props.task && nextRun) setView('runs');
         /** 刷新选中运行时重新读取尝试历史，不能只替换运行标题行。 */
         const nextProjection = nextRun ? await api.loadDigitalTeamRun(nextRun.id) : null;
-        if (revision !== loadRevisionRef.current) return;
+        if (!mountedRef.current || revision !== loadRevisionRef.current) return;
         setSelectedRun(nextProjection);
         setSelectedNodeId(null);
       } catch (cause) {
@@ -260,7 +289,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
         if (revision === loadRevisionRef.current) setLoading(false);
       }
     },
-    [api, dirty, draft.id, projectId, selectedRun?.run.id, zh],
+    [api, projectId, selectedRun?.run.id, zh],
   );
 
   useEffect(() => {
@@ -272,26 +301,58 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
 
   useEffect(() => {
     if (!dirty) return;
-    /** 原生窗口关闭至少触发浏览器标准保护；工作区内部切换另由页面主动阻止。 */
+    setDraftPersisted(rememberDigitalTeamDraft(draft));
+  }, [draft, dirty]);
+
+  useEffect(() => {
+    /** 只有输入仍与此次提交完全一致的编辑器才接纳保存回执。 */
+    const receiveSavedDraft = (event: Event): void => {
+      /** 回执由实际 API 成功后发出，不从模板变更通知猜测提交内容。 */
+      const detail = (event as CustomEvent<DraftSavedDetail>).detail;
+      if (!detail) return;
+      /** 最新引用覆盖快速离开并返回期间的输入。 */
+      const current = draftStateRef.current;
+      if (!current.dirty || JSON.stringify(current.draft) !== JSON.stringify(detail.submittedDraft)) return;
+      /** 先同步基线，再刷新目录，使此前读取代次失效。 */
+      const savedDraft = templateDraft(detail.savedTemplate);
+      draftStateRef.current = { draft: savedDraft, dirty: false };
+      setDraft(savedDraft);
+      setDirty(false);
+      setError(null);
+      setStatus(zh ? '团队已保存。' : 'Team saved.');
+      rememberDigitalTeamDraftSelection(detail.savedTemplate.id);
+      void refreshProject(detail.savedTemplate.id);
+    };
+    window.addEventListener(draftSavedEvent, receiveSavedDraft);
+    return () => window.removeEventListener(draftSavedEvent, receiveSavedDraft);
+  }, [refreshProject, zh]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      /** 卸载前同步暂存，导航不依赖异步保存或 effect 执行时机。 */
+      const current = draftStateRef.current;
+      if (current.dirty) rememberDigitalTeamDraft(current.draft);
+    };
+  }, []);
+
+  useEffect(() => {
+    /** 窗口真正卸载前写入最新输入，存储失败时才使用标准关闭保护。 */
     const preventUnload = (event: BeforeUnloadEvent): void => {
-      event.preventDefault();
+      /** 关闭保护只判断尚未持久暂存的真实编辑。 */
+      const current = draftStateRef.current;
+      if (current.dirty && !rememberDigitalTeamDraft(current.draft)) event.preventDefault();
     };
     window.addEventListener('beforeunload', preventUnload);
     return () => window.removeEventListener('beforeunload', preventUnload);
-  }, [dirty]);
+  }, []);
 
   useEffect(() => {
-    /** Main 进程关闭窗口时与页面导航使用同一未保存事实。 */
-    window.zeus?.setUnsavedChangeState?.('digital-team-template', dirty);
+    /** 草稿已经持久暂存时不再让窗口关闭依赖服务端流程保存。 */
+    window.zeus?.setUnsavedChangeState?.('digital-team-template', dirty && !draftPersisted);
     return () => window.zeus?.setUnsavedChangeState?.('digital-team-template', false);
-  }, [dirty]);
-
-  useEffect(() => {
-    /** 工作区导航被未保存草稿拦下时，把原因留在当前页面。 */
-    const reportBlockedLeave = (): void => setError(zh ? '当前流程尚未保存，请先保存，或在“团队设置”中放弃修改。' : 'Save the workflow or discard changes in Team settings before leaving.');
-    window.addEventListener('zeus:digital-team-unsaved-leave', reportBlockedLeave);
-    return () => window.removeEventListener('zeus:digital-team-unsaved-leave', reportBlockedLeave);
-  }, [zh]);
+  }, [dirty, draftPersisted]);
 
   useEffect(() => {
     if (!api || view !== 'runs' || !selectedRun) return;
@@ -335,9 +396,18 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
 
   /** 所有画布与表单修改共用脏状态。 */
   const changeDefinition = useCallback((definition: DigitalTeamWorkflowDefinition | ((current: DigitalTeamWorkflowDefinition) => DigitalTeamWorkflowDefinition)): void => {
-    // 编辑时保留空格和空行，服务端保存边界再归一化，避免输入被打断。
-    setDraft((current) => ({ ...current, definition: typeof definition === 'function' ? definition(current.definition) : definition }));
-    setDirty(true);
+    /** 同一手势中的节点和视口回调都基于最新草稿合并。 */
+    const current = draftStateRef.current;
+    /** 编辑保留输入原值，保存边界再做归一化。 */
+    const nextDefinition = typeof definition === 'function' ? definition(current.draft.definition) : definition;
+    if (JSON.stringify(nextDefinition) === JSON.stringify(current.draft.definition)) return;
+    /** 浏览视口和初始化测量不代表用户修改了分工或依赖。 */
+    const nextDirty = current.dirty || JSON.stringify({ ...current.draft.definition, viewport: nextDefinition.viewport }) !== JSON.stringify(nextDefinition);
+    /** 更新引用后再提交状态，避免连续画布事件读取上一次坐标。 */
+    const nextDraft = { ...current.draft, definition: nextDefinition };
+    draftStateRef.current = { draft: nextDraft, dirty: nextDirty };
+    setDraft(nextDraft);
+    setDirty(nextDirty);
     setStatus('');
   }, []);
 
@@ -353,15 +423,16 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
     [changeDefinition, draft.definition, memberCatalog],
   );
 
-  /** 模板切换只允许在当前草稿已处理后进行。 */
+  /** 切换团队同步暂存当前修改，回到该团队时继续原草稿。 */
   const selectTemplate = (templateId: string): void => {
-    if (dirty) {
-      setError(zh ? '当前流程尚未保存，请先保存，或在“团队设置”中放弃修改。' : 'Save the workflow or discard changes in Team settings.');
-      return;
-    }
+    if (dirty) rememberDigitalTeamDraft(draft);
     const template = templates.find((candidate) => candidate.id === templateId);
     if (!template) return;
-    setDraft(templateDraft(template));
+    /** 每个团队恢复各自的编辑内容。 */
+    const cached = readDigitalTeamDraft(template.id);
+    setDraft(cached ?? templateDraft(template));
+    setDirty(Boolean(cached));
+    rememberDigitalTeamDraftSelection(template.id);
     setDraftOpen(true);
     setCanvasGeneration((current) => current + 1);
     setSelectedNodeId(null);
@@ -370,21 +441,23 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
 
   /** 新团队从空白草稿开始，员工、分工和依赖均由用户明确配置。 */
   const startNewTemplate = (): void => {
-    if (dirty) {
-      setError(zh ? '请先处理当前未保存修改。' : 'Resolve the current unsaved changes first.');
-      return;
-    }
-    setDraft(emptyTemplateDraft());
+    if (dirty) rememberDigitalTeamDraft(draft);
+    /** 新团队的旧草稿也能继续填写，不丢弃前一次创建内容。 */
+    const cached = readDigitalTeamDraft(null);
+    setDraft(cached ?? emptyTemplateDraft());
     setDraftOpen(true);
     setCanvasGeneration((current) => current + 1);
     setSelectedNodeId(null);
-    setDirty(false);
+    setDirty(Boolean(cached));
+    rememberDigitalTeamDraftSelection(null);
     setError(null);
   };
 
   /** 显式保存模板并以服务端回执作为新基线。 */
   const saveTemplate = async (): Promise<void> => {
     if (!api || !draft.name.trim() || draft.sourceIssues?.length) return;
+    /** 提交快照独立于返回页面后可能继续输入的草稿。 */
+    const submittedDraft = structuredClone(draft);
     setBusy(true);
     setError(null);
     try {
@@ -410,14 +483,12 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
           ),
         },
       });
-      setTemplates((current) => [saved, ...current.filter((template) => template.id !== saved.id)]);
-      setDraft(templateDraft(saved));
-      setDirty(false);
-      setStatus(zh ? '团队已保存。' : 'Team saved.');
+      forgetDigitalTeamDraft(submittedDraft.id, submittedDraft);
+      window.dispatchEvent(new CustomEvent<DraftSavedDetail>(draftSavedEvent, { detail: { submittedDraft, savedTemplate: saved } }));
     } catch (cause) {
-      setError(applicationError(cause, zh));
+      if (mountedRef.current) setError(applicationError(cause, zh));
     } finally {
-      setBusy(false);
+      if (mountedRef.current) setBusy(false);
     }
   };
 
@@ -450,6 +521,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
     setError(null);
     try {
       await api.deleteDigitalTeamTemplate(pendingDelete.id, pendingDelete.revision);
+      forgetDigitalTeamDraft(pendingDelete.id);
       setPendingDelete(null);
       await refreshProject();
       setStatus(zh ? '团队已删除。' : 'Team deleted.');
@@ -462,6 +534,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
 
   /** 重开恢复最近一次服务端保存的完整画布与视口。 */
   const reopenTemplate = (): void => {
+    forgetDigitalTeamDraft(draft.id);
     if (!selectedTemplate) {
       setDraft(emptyTemplateDraft());
       setDraftOpen(false);
@@ -601,13 +674,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
     );
 
   return (
-    <section
-      className="digital-team-workspace"
-      aria-labelledby="digital-team-title"
-      data-digital-team-dirty={dirty ? 'true' : undefined}
-      data-compact-inspector={compactInspector ? 'true' : undefined}
-      data-inspector-open={selectedNodeId ? 'true' : undefined}
-    >
+    <section className="digital-team-workspace" aria-labelledby="digital-team-title" data-compact-inspector={compactInspector ? 'true' : undefined} data-inspector-open={selectedNodeId ? 'true' : undefined}>
       <header className="digital-team-header">
         <div>
           {props.task ? (
@@ -620,7 +687,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
         </div>
         <div className="digital-team-header-actions">
           {props.onBackToTask ? (
-            <Button size="compact" disabled={dirty || busy} onClick={props.onBackToTask}>
+            <Button size="compact" disabled={busy} onClick={props.onBackToTask}>
               返回任务
             </Button>
           ) : null}
@@ -634,7 +701,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
           </div>
           <ZeusSelect
             ariaLabel={zh ? '任务运行项目' : 'Task project'}
-            disabled={Boolean(props.task) || busy || loading || dirty}
+            disabled={Boolean(props.task) || busy || loading}
             value={projectId || noProjectValue}
             options={[
               ...(view === 'editor' ? [{ value: noProjectValue, label: zh ? '选择任务运行项目' : 'Choose a task project' }] : []),
@@ -644,14 +711,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
             size="regular"
             searchable
           />
-          <Button
-            className="digital-team-refresh-button"
-            size="compact"
-            aria-label={zh ? '刷新数字团队数据' : 'Refresh digital team data'}
-            title={zh ? '刷新' : 'Refresh'}
-            disabled={loading || busy || dirty}
-            onClick={() => void refreshProject()}
-          >
+          <Button className="digital-team-refresh-button" size="compact" aria-label={zh ? '刷新数字团队数据' : 'Refresh digital team data'} title={zh ? '刷新' : 'Refresh'} disabled={loading || busy} onClick={() => void refreshProject()}>
             <Refresh aria-hidden="true" />
           </Button>
         </div>
@@ -664,7 +724,22 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
           </p>
         ) : null}
         <p className="digital-team-message" role="status" aria-live="polite">
-          {loading ? (zh ? '正在读取团队与执行记录…' : 'Loading teams and runs…') : runError ? '' : status}
+          {loading
+            ? zh
+              ? '正在读取团队与执行记录…'
+              : 'Loading teams and runs…'
+            : runError
+              ? ''
+              : status ||
+                (dirty
+                  ? draftPersisted
+                    ? zh
+                      ? '修改已暂存，可随时切换页面。保存后用于任务。'
+                      : 'Draft kept locally. Save it to use it in tasks.'
+                    : zh
+                      ? '无法持久暂存，请保存流程；当前窗口仍保留修改。'
+                      : 'The draft could not be persisted. Save the workflow; this window still retains your changes.'
+                  : '')}
         </p>
       </div>
       {view === 'editor' && loading ? (
@@ -782,9 +857,6 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                       <Copy aria-hidden="true" />
                       {zh ? '复制团队' : 'Copy team'}
                     </Button>
-                    <Button size="compact" onClick={reopenTemplate} disabled={!dirty || busy}>
-                      {zh ? '放弃修改' : 'Discard changes'}
-                    </Button>
                     <Button variant="danger" size="compact" onClick={() => selectedTemplate && setPendingDelete(selectedTemplate)} disabled={!selectedTemplate || dirty || busy}>
                       <Trash aria-hidden="true" />
                       {zh ? '删除团队' : 'Delete team'}
@@ -813,6 +885,11 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                 <Button size="compact" variant="primary" busy={busy} disabled={!draft.name.trim() || Boolean(draft.sourceIssues?.length) || (!dirty && Boolean(selectedTemplate))} onClick={() => void saveTemplate()}>
                   {zh ? '保存' : 'Save'}
                 </Button>
+                {dirty ? (
+                  <Button size="compact" onClick={reopenTemplate} disabled={busy}>
+                    {zh ? '放弃修改' : 'Discard changes'}
+                  </Button>
+                ) : null}
                 <Button
                   size="compact"
                   variant="primary"
@@ -850,7 +927,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
               readOnly={Boolean(draft.sourceIssues?.length)}
               employeeNames={employeeNames}
               selectedNodeId={selectedNodeId}
-              issues={validationIssues}
+              issues={validationIssues.filter((issue) => issue.code !== unassignedEmployeeIssueCode)}
               onChange={changeDefinition}
               onSelectNode={setSelectedNodeId}
               onAdd={addNode}
@@ -1306,16 +1383,29 @@ function EmployeeNodeFields(props: {
 /** 有问题时展示简短原因和节点定位入口，不占用正常流程的空间。 */
 function ValidationPanel(props: { issues: Array<{ code: string; message: string; nodeId?: string }>; onSelectNode(nodeId: string): void }) {
   if (!props.issues.length) return null;
+  /** 相同配置问题合并计数，避免每个分工重复一段技术错误。 */
+  const groups = new Map<string, { code: string; message: string; nodeIds: string[]; count: number }>();
+  for (const issue of props.issues) {
+    /** 同类问题保留第一个可配置节点作为直接入口。 */
+    const key = `${issue.code}:${issue.message}`;
+    /** 当前分组同时保留准确节点身份。 */
+    const group = groups.get(key) ?? { code: issue.code, message: issue.message, nodeIds: [], count: 0 };
+    group.count += 1;
+    if (issue.nodeId) group.nodeIds.push(issue.nodeId);
+    groups.set(key, group);
+  }
+  /** 未分配员工是正常草稿状态，不作为页面错误告警。 */
+  const onlyAssignments = props.issues.every((issue) => issue.code === unassignedEmployeeIssueCode);
   return (
-    <section className="digital-team-validation has-issues" aria-live="polite">
-      <strong>还需处理 {props.issues.length} 项</strong>
+    <section className={`digital-team-validation${onlyAssignments ? '' : ' has-issues'}`} aria-live="polite">
+      <strong>{onlyAssignments ? `还有 ${props.issues.length} 个分工待分配员工` : `还需处理 ${groups.size} 类问题`}</strong>
       <ul>
-        {props.issues.map((issue, index) => (
-          <li key={`${issue.code}_${issue.nodeId ?? ''}_${index}`}>
-            <span>{issue.message}</span>
-            {issue.nodeId ? (
-              <button type="button" onClick={() => props.onSelectNode(issue.nodeId!)}>
-                定位
+        {[...groups.entries()].map(([key, issue]) => (
+          <li key={key}>
+            <span>{issue.code === unassignedEmployeeIssueCode ? '选择执行员工后即可使用团队。' : `${issue.message}${issue.count > 1 ? `（${issue.count} 处）` : ''}`}</span>
+            {issue.nodeIds.length ? (
+              <button type="button" onClick={() => props.onSelectNode(issue.nodeIds[0])}>
+                {issue.code === unassignedEmployeeIssueCode ? '配置员工' : '定位'}
               </button>
             ) : null}
           </li>

@@ -1,4 +1,4 @@
-import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
+import { commandEnvelopeSchemaGeneration, parseCommandEnvelope, userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { currentConversationNavigationTraceId, markConversationNavigationSnapshotSettled } from '../performanceTraceContext.js';
 
 /**
@@ -180,8 +180,18 @@ export function createLocalApiTransport(options: { getConnection(): LocalApiConn
   return { protocol: 'zeus-local-api-v1', request, requestBlob, requestStream, connectEvents };
 }
 
+/** 将受耐久回执保护的命令身份传给公共传输层；普通写请求不获得自动重放资格。 */
 export function jsonRequest(method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', body: unknown): RequestInit {
-  return { method, body: JSON.stringify(body) };
+  /** 序列化原请求一次，重连重发保持正文和所有命令身份完全相同。 */
+  const serializedBody = JSON.stringify(body);
+  /** 只识别产品现有信封，不把普通业务字段误当成幂等回执。 */
+  const command = typeof body === 'object' && body !== null && 'command' in body ? body.command : null;
+  if (typeof command === 'object' && command !== null && 'schemaGeneration' in command && command.schemaGeneration === commandEnvelopeSchemaGeneration) {
+    /** 完整校验后复用原键，不为重试创建新操作。 */
+    const envelope = parseCommandEnvelope(command);
+    return { method, body: serializedBody, headers: { 'idempotency-key': envelope.idempotencyKey } };
+  }
+  return { method, body: serializedBody };
 }
 
 async function requestOnce<T>(connection: LocalApiConnection, path: string, init: RequestInit | undefined, traceId: string, attempt: number, observer: ((span: ZeusClientPerformanceSpan) => void) | undefined): Promise<T> {

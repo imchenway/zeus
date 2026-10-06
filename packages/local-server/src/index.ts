@@ -34,6 +34,8 @@ import { applyNetworkProxyAtStartup } from './networkProxyRuntime.js';
 export { applyNetworkProxyAtStartup, networkProxyRuntimeEnvironment } from './networkProxyRuntime.js';
 import {
   cloneTaskManagementStatusConfig,
+  defaultTaskManagementStatusLabels,
+  taskManagementStatusDefinitionsEquivalent,
   type ReadOnlyValidationDescriptor,
   taskBoardEmptyGroupId,
   type TaskBoardGroupProperty,
@@ -41,6 +43,7 @@ import {
   type TaskPushParentContextSelection,
   type TaskPushRelatedContextSelection,
 } from '@zeus/shared';
+import { repairGeneratedTaskManagementStatuses, type ArchivedProjectTaskStatuses } from './taskManagementStatusMigration.js';
 import {
   migrateTaskBoardStatusPositions,
   migrateUnifiedDigitalTeamTemplates,
@@ -1038,12 +1041,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         if (!existing) {
           unified.statuses.push({ ...status });
           replacements[status.id] = status.id;
-        } else if (existing.label === status.label && existing.color === status.color && !Object.values(unified.roles).includes(status.id)) {
+        } else if (taskManagementStatusDefinitionsEquivalent(existing, status) && !Object.values(unified.roles).includes(status.id)) {
           replacements[status.id] = status.id;
         } else {
           /** 标识冲突按原项目身份生成稳定ID，不按显示名称合并。 */
           const id = `legacy_${createHash('sha256').update(`${projectId}\0${status.id}`).digest('hex').slice(0, 32)}`;
-          unified.statuses.push({ ...status, id, label: status.label ?? status.id });
+          unified.statuses.push({ ...status, id, label: status.label ?? defaultTaskManagementStatusLabels[appShellSettings.appLanguage][status.id] ?? status.id });
           replacements[status.id] = id;
         }
       }
@@ -1090,6 +1093,28 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     });
     await db.save();
   }
+  if (!readOnlyValidation) {
+    /** 已经完成旧迁移的资料也按准确归档纠正，重复启动不再次写入。 */
+    const repaired = repairGeneratedTaskManagementStatuses({
+      db,
+      appShellSettings,
+      timestamp: now().toISOString(),
+      recordMigration: (task, targetStatus) => {
+        /** 记录真实更正，保留原事件并禁止迁移触发自动化工作。 */
+        const event = taskEvents.create({
+          taskId: task.id,
+          eventType: 'task.management_status.migrated',
+          title: '纠正内置任务状态迁移副本',
+          payload: { from: task.management_status, to: targetStatus, suppressAutomation: true, source: 'task_status_migration' },
+        });
+        taskEventFileProjectionOutbox.enqueue(event.taskId, event.id, event.createdAt);
+      },
+    });
+    if (repaired) {
+      appShellSettings = repaired;
+      await db.save();
+    }
+  }
   if (
     !readOnlyValidation &&
     (hasLegacyProjectTaskStatuses ||
@@ -1110,8 +1135,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   }
   /** 团队模板仍持有原项目身份，状态映射完成后再统一为全局模板。 */
   if (!readOnlyValidation) {
-    const archived = settings.getJson<{ replacements: Record<string, Record<string, string>> }>('archive.project-task-status-settings');
-    if (migrateUnifiedDigitalTeamTemplates(db, archived?.replacements ?? {})) await db.save();
+    const archived = settings.getJson<ArchivedProjectTaskStatuses>('archive.project-task-status-settings');
+    /** 首次统一后的模板使用已纠正身份，不重新引入已经退役的副本。 */
+    const replacements = Object.fromEntries(
+      Object.entries(archived?.replacements ?? {}).map(([projectId, mapping]) => [projectId, Object.fromEntries(Object.entries(mapping).map(([from, to]) => [from, archived?.canonicalReplacements?.[to] ?? to]))]),
+    );
+    if (migrateUnifiedDigitalTeamTemplates(db, replacements)) await db.save();
   }
   traceStartup('settings_ready');
   /** 正常实例统一全局状态；只读验收保留旧冻结历史的状态含义。 */

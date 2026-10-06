@@ -26,6 +26,10 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
   const loadRevisionRef = useRef(0);
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
   const [busy, setBusy] = useState(false);
+  /** 保存和删除共用忙状态，但失败提示与重试必须指向原操作。 */
+  const [lastAction, setLastAction] = useState<'save' | 'delete'>('save');
+  /** 删除使用产品已有页面确认框，避免系统弹窗阻塞应用及后台交互。 */
+  const [pendingDelete, setPendingDelete] = useState<DigitalEmployeeTemplateRecord | null>(null);
   /** 同一帧的失焦与选择事件只启动一次写入。 */
   const savingRef = useRef(false);
   const [savedName, setSavedName] = useState<string | null>(null);
@@ -144,6 +148,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
       return;
     }
     savingRef.current = true;
+    setLastAction('save');
     setBusy(true);
     setError(null);
     setSavedName(null);
@@ -171,8 +176,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
   /** 删除员工身份，已完成工作的记录继续保留。 */
   async function deleteEmployee(record: DigitalEmployeeTemplateRecord): Promise<void> {
     if (busy || loadState === 'loading' || !props.client || record.builtIn) return;
-    const confirmed = window.confirm(zh ? `删除数字员工“${record.name}”？已完成工作的记录会保留。` : `Delete digital employee “${record.name}”? Completed work records will remain.`);
-    if (!confirmed) return;
+    setLastAction('delete');
     setBusy(true);
     setError(null);
     setSavedName(null);
@@ -200,7 +204,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
 
   /** 内置记录只作为新增模板，不进入用户的数字员工列表。 */
   const builtInTemplates = templates.filter((template) => template.builtIn);
-  /** 非内置记录就是用户已创建且可自由编辑的数字员工。 */
+  /** 共享目录已排除旧项目迁出身份，此处仅保留用户创建的可编辑员工。 */
   const employees = templates.filter((template) => !template.builtIn);
   /** 姓名、岗位和业务领域共用简单文本筛选，同名员工仍分别保留。 */
   const visibleEmployees = employees.filter((employee) => `${employee.name} ${employee.role} ${employee.domain}`.toLocaleLowerCase().includes(employeeSearch.trim().toLocaleLowerCase()));
@@ -220,6 +224,24 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
           </Button>
         </span>
       </header>
+
+      {pendingDelete ? (
+        <FormDialog
+          title={zh ? `删除数字员工“${pendingDelete.name}”？` : `Delete digital employee “${pendingDelete.name}”?`}
+          description={zh ? '已完成工作的记录会保留。有运行中或待交付的工作时不能删除。' : 'Completed work records will remain. Employees with active or pending work cannot be deleted.'}
+          zh={zh}
+          busy={busy}
+          danger
+          submitLabel={zh ? '删除员工' : 'Delete employee'}
+          onClose={() => setPendingDelete(null)}
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (busy) return;
+            setPendingDelete(null);
+            void deleteEmployee(pendingDelete);
+          }}
+        />
+      ) : null}
 
       {templateSelectionOpen ? (
         <FormDialog
@@ -345,11 +367,29 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
                   {editorTarget.kind === 'employee' ? (
                     <div className="digital-employee-save-state">
                       <small role={error ? 'alert' : 'status'}>
-                        {busy ? (zh ? '正在保存…' : 'Saving…') : error ? (zh ? '未保存，请重试' : 'Not saved. Retry.') : savedName ? (zh ? '已保存' : 'Saved') : zh ? '修改后自动保存' : 'Changes save automatically'}
+                        {busy
+                          ? lastAction === 'delete'
+                            ? zh
+                              ? '正在删除…'
+                              : 'Deleting…'
+                            : zh
+                              ? '正在保存…'
+                              : 'Saving…'
+                          : error
+                            ? zh
+                              ? '操作未完成，请重试'
+                              : 'Action failed. Retry.'
+                            : savedName
+                              ? zh
+                                ? '已保存'
+                                : 'Saved'
+                              : zh
+                                ? '修改后自动保存'
+                                : 'Changes save automatically'}
                       </small>
                       {error ? (
-                        <Button size="compact" disabled={busy} onClick={() => void saveEmployee()}>
-                          {zh ? '重试保存' : 'Retry save'}
+                        <Button size="compact" disabled={busy} onClick={() => (lastAction === 'delete' ? setPendingDelete(editorTarget.record) : void saveEmployee())}>
+                          {lastAction === 'delete' ? (zh ? '重试删除' : 'Retry delete') : zh ? '重试保存' : 'Retry save'}
                         </Button>
                       ) : null}
                     </div>
@@ -369,6 +409,11 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
                     />
                   </details>
                 </div>
+                {editorTarget.kind === 'employee' ? (
+                  <Button variant="danger" size="compact" busy={busy} disabled={loadState === 'loading'} style={{ marginLeft: 'auto' }} onClick={() => setPendingDelete(editorTarget.record)}>
+                    {zh ? '删除员工' : 'Delete employee'}
+                  </Button>
+                ) : null}
               </div>
               <DigitalEmployeeProfileEditor
                 draft={draft}
@@ -385,32 +430,15 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
               />
             </>
           )}
-          {editorTarget ? (
+          {editorTarget?.kind === 'new' ? (
             <footer className="digital-employee-editor-actions">
               <span className="digital-employee-actions">
-                {editorTarget.kind === 'employee' ? (
-                  <details className="digital-employee-disclosure">
-                    <summary>{zh ? '更多操作' : 'More actions'}</summary>
-                    <span className="digital-employee-actions">
-                      <Button variant="secondary" size="compact" disabled={busy} onClick={cancelEditing}>
-                        {zh ? '完成编辑' : 'Done'}
-                      </Button>
-                      <Button variant="danger" size="compact" busy={busy} disabled={loadState === 'loading'} onClick={() => void deleteEmployee(editorTarget.record)}>
-                        {zh ? '删除员工' : 'Delete employee'}
-                      </Button>
-                    </span>
-                  </details>
-                ) : null}
-                {editorTarget.kind === 'new' ? (
-                  <>
-                    <Button variant="secondary" size="compact" disabled={busy} onClick={cancelEditing}>
-                      {zh ? '取消' : 'Cancel'}
-                    </Button>
-                    <Button variant="primary" size="compact" busy={busy} disabled={loadState === 'loading'} onClick={() => void saveEmployee()}>
-                      {zh ? '创建数字员工' : 'Create digital employee'}
-                    </Button>
-                  </>
-                ) : null}
+                <Button variant="secondary" size="compact" disabled={busy} onClick={cancelEditing}>
+                  {zh ? '取消' : 'Cancel'}
+                </Button>
+                <Button variant="primary" size="compact" busy={busy} disabled={loadState === 'loading'} onClick={() => void saveEmployee()}>
+                  {zh ? '创建数字员工' : 'Create digital employee'}
+                </Button>
               </span>
             </footer>
           ) : null}

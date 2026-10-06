@@ -518,8 +518,16 @@ export function migrateDigitalEmployeeSchema(db: ZeusDatabasePort): void {
 export class DigitalEmployeeTemplateRepository {
   constructor(private readonly db: ZeusDatabasePort) {}
 
+  /** 目录只展示创建模板与用户创建的员工；迁出的旧项目身份仅供历史引用读取。 */
   list(): DigitalEmployeeTemplateRecord[] {
-    return this.db.select<DigitalEmployeeTemplateRow>(`SELECT * FROM digital_employee_templates WHERE deleted_at IS NULL ORDER BY built_in DESC, name COLLATE NOCASE ASC, created_at ASC`).map(mapTemplateRow);
+    return this.db
+      .select<DigitalEmployeeTemplateRow>(
+        `SELECT template.* FROM digital_employee_templates template
+         WHERE template.deleted_at IS NULL
+           AND template.id NOT IN (SELECT migrated_memory_global_id FROM digital_employees WHERE migrated_memory_global_id IS NOT NULL)
+         ORDER BY template.built_in DESC, template.name COLLATE NOCASE ASC, template.created_at ASC`,
+      )
+      .map(mapTemplateRow);
   }
 
   getById(id: string): DigitalEmployeeTemplateRecord | undefined {
@@ -587,19 +595,25 @@ export class DigitalEmployeeTemplateRepository {
     return this.getById(existing.id)!;
   }
 
-  delete(id: string, expectedRevision: number): DigitalEmployeeTemplateRecord {
+  /** 删除员工并停用闲置项目关联；默认保守保护活动工作，历史快照继续保留。 */
+  delete(id: string, expectedRevision: number, taskBlocksDeletion: DigitalEmployeeTaskBlocksDeletion = () => true): DigitalEmployeeTemplateRecord {
     const existing = this.requireMutable(id);
     assertRevision(existing.revision, expectedRevision, '数字员工模板');
-    if (this.db.get<{ count: number }>('SELECT COUNT(*) AS count FROM digital_employees WHERE global_employee_id = ? AND deleted_at IS NULL', [id])?.count)
-      throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_GLOBAL_BOUND', '员工仍被项目使用，请先移除项目绑定。');
     const timestamp = nextTimestamp(existing.updatedAt);
-    this.db.execute(`UPDATE digital_employee_templates SET deleted_at = ?, updated_at = ?, revision = revision + 1 WHERE id = ? AND revision = ? AND built_in = 0 AND deleted_at IS NULL`, [
-      timestamp,
-      timestamp,
-      existing.id,
-      existing.revision,
-    ]);
-    assertChanged(this.db, '数字员工模板已被其他操作更新。');
+    this.db.transaction(() => {
+      /** 复用项目关联的活动工作保护与自动化停用逻辑，任何失败均回滚整个删除。 */
+      const employees = new DigitalEmployeeRepository(this.db);
+      /** 只处理该准确身份的有效关联，不按姓名清理其他员工。 */
+      const bindings = this.db.select<{ id: string; revision: number }>('SELECT id, revision FROM digital_employees WHERE global_employee_id = ? AND deleted_at IS NULL ORDER BY id', [existing.id]);
+      for (const binding of bindings) employees.delete(binding.id, binding.revision, taskBlocksDeletion);
+      this.db.execute(`UPDATE digital_employee_templates SET deleted_at = ?, updated_at = ?, revision = revision + 1 WHERE id = ? AND revision = ? AND built_in = 0 AND deleted_at IS NULL`, [
+        timestamp,
+        timestamp,
+        existing.id,
+        existing.revision,
+      ]);
+      assertChanged(this.db, '数字员工模板已被其他操作更新。');
+    });
     return existing;
   }
 

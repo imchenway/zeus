@@ -144,6 +144,21 @@ const defaultTaskManagementStatusColors: Record<(typeof taskManagementStatusOrde
   cancelled: '#6b7280',
 };
 
+/** 内置状态的默认文案；空文案与这两种已保存的默认文案表达同一状态。 */
+export const defaultTaskManagementStatusLabels: Record<'zh-CN' | 'en-US', Record<string, string>> = {
+  'zh-CN': { todo: '待开始', in_development: '开发中', in_testing: '测试中', awaiting_acceptance: '待验收', blocked: '已阻塞', completed: '已完成', cancelled: '已取消' },
+  'en-US': { todo: 'To do', in_development: 'In development', in_testing: 'In testing', awaiting_acceptance: 'Awaiting acceptance', blocked: 'Blocked', completed: 'Completed', cancelled: 'Cancelled' },
+};
+
+/** 仅相同标识和颜色可以等价，用户自定义文案与不同颜色仍保留独立含义。 */
+export function taskManagementStatusDefinitionsEquivalent(left: TaskManagementStatusDefinition, right: TaskManagementStatusDefinition): boolean {
+  if (left.id !== right.id || left.color !== right.color) return false;
+  if (left.label === right.label) return true;
+  /** 只识别内置状态的准确默认文案，不能按同名显示内容合并自定义状态。 */
+  const defaults = [null, defaultTaskManagementStatusLabels['zh-CN'][left.id], defaultTaskManagementStatusLabels['en-US'][left.id]];
+  return taskManagementStatusOrder.includes(left.id as (typeof taskManagementStatusOrder)[number]) && defaults.includes(left.label) && defaults.includes(right.label);
+}
+
 /** 全局状态初始值沿用默认行为，所有项目共用同一份可编辑定义。 */
 export const defaultTaskManagementStatusConfig: TaskManagementStatusConfig = {
   statuses: taskManagementStatusOrder.map((id) => ({ id, label: null, color: defaultTaskManagementStatusColors[id] })),
