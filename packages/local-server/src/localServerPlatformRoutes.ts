@@ -3625,7 +3625,12 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     turnChanges: turnChangeSets,
     artifacts: artifactStore,
     taskWork: taskWorkManagement,
-    taskCreation: { create: (input, taskId, context) => workManagementCoreOperations.createUserTask(input, taskId, context) },
+    taskCreation: {
+      /** 团队任务仍复用任务创建的既有审计与来源处理。 */
+      create: (input, taskId, context) => workManagementCoreOperations.createUserTask(input, taskId, context),
+      /** 本次明确代码授权与运行创建共用 Core 事务，权限审计和实时投影沿用任务更新入口。 */
+      grantCodeAuthority: (taskId, expectedUpdatedAt, context) => workManagementTaskOperations.updateTask(taskId, { expectedUpdatedAt, allowCodeChanges: true, allowTests: true, allowGitCommit: true }, context),
+    },
     save: () => db.save(),
     publish: publishRealtimeEvent,
     now,

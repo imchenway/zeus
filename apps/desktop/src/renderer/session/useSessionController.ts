@@ -509,6 +509,16 @@ interface SocketLifecycle {
   markInactive(): void;
 }
 
+/** 历史读取只需要准确轮次身份和状态，不补造首屏之外的完整轮次记录。 */
+interface SessionTurnReadIdentity {
+  /** 服务端本地轮次身份，正文与过程接口共用。 */
+  id: string;
+  /** 真实目录或已加载轮次提供的 Provider 身份。 */
+  providerTurnId: string | null;
+  /** 准确轮次状态仅用于选择首次读取方向。 */
+  status: string;
+}
+
 class SocketDisconnectedDuringHydrationError extends Error {
   constructor() {
     super('Zeus event socket disconnected during authoritative conversation hydration.');
@@ -2422,23 +2432,92 @@ export function createSessionController(options: CreateSessionControllerOptions)
   /** 同一连接和轮次的并发导航读取共用请求，不重复翻页。 */
   const navigationTurnLoads = new Map<string, Promise<void>>();
 
+  /** 导航与过程展开共用正文单页请求，避免相同轮次的迟到页面覆盖游标。 */
+  const turnHistoryPageLoads = new Map<string, Promise<void>>();
+
+  /** 完整目录补齐深历史的身份映射，不扩大首屏轮次和运行状态。 */
+  const navigationTurnIdentities = new Map<string, SessionTurnReadIdentity>();
+
+  /** 同一连接的目录读取共用请求，显式刷新仍从服务端获取最新结果。 */
+  let navigationLoad: { generation: number; request: Promise<ConversationNavigationSnapshot> } | null = null;
+
   /** 读取独立目录；请求失效后不能把另一连接的结果发布到工作面。 */
-  async function loadNavigation(): Promise<ConversationNavigationSnapshot> {
+  function loadNavigation(): Promise<ConversationNavigationSnapshot> {
     /** 记录连接代次，不把目录进度写回同步控制器。 */
     const generation = connectionToken;
-    if (!options.client.loadConversationNavigation) throw new Error('当前会话暂时无法读取历史目录。');
-    /** 返回完整目录，错误交给目录自己的重试入口。 */
-    const result = await options.client.loadConversationNavigation(options.projectId, options.conversationId);
-    if (disposed || generation !== connectionToken) throw new Error('会话连接已变化，请重新读取目录。');
-    return result;
+    if (!options.client.loadConversationNavigation) return Promise.reject(new Error('当前会话暂时无法读取历史目录。'));
+    if (navigationLoad?.generation === generation) return navigationLoad.request;
+    /** 返回完整真实目录，同时记录当前首屏之外的准确轮次别名。 */
+    const request = (async () => {
+      /** 目录和正文独立读取，不把目录进度写回实时同步水位。 */
+      const result = await options.client.loadConversationNavigation!(options.projectId, options.conversationId);
+      if (disposed || generation !== connectionToken) throw new Error('会话连接已变化，请重新读取目录。');
+      for (const entry of result.entries) {
+        /** 多次发言属于同一真实轮次，别名复用同一份轻量身份。 */
+        const identity = { id: entry.turnId, providerTurnId: entry.providerTurnId, status: entry.status };
+        navigationTurnIdentities.set(identity.id, identity);
+        if (identity.providerTurnId) navigationTurnIdentities.set(identity.providerTurnId, identity);
+      }
+      return result;
+    })();
+    navigationLoad = { generation, request };
+    /** 请求结束释放占位，下一次目录刷新不复用陈旧响应。 */
+    const clear = () => {
+      if (navigationLoad?.request === request) navigationLoad = null;
+    };
+    void request.then(clear, clear);
+    return request;
+  }
+
+  /** 先使用已确认轮次，再用真实目录解析首屏范围之外的历史别名。 */
+  async function loadTurnReadIdentity(turnIdentity: string, generation: number): Promise<SessionTurnReadIdentity> {
+    /** 已加载轮次有准确完整状态，优先于目录摘要。 */
+    const current = state.snapshot?.turns.find((turn) => turn.id === turnIdentity || turn.providerTurnId === turnIdentity) ?? navigationTurnIdentities.get(turnIdentity);
+    if (current) return { id: current.id, providerTurnId: current.providerTurnId ?? null, status: current.status };
+    if (options.client.loadConversationNavigation) await loadNavigation();
+    if (disposed || generation !== connectionToken) throw new Error('会话连接已变化，请重新定位。');
+    // 老客户端没有目录时仍保留服务端允许的原身份读取，不猜测 Provider 关系。
+    return navigationTurnIdentities.get(turnIdentity) ?? { id: turnIdentity, providerTurnId: null, status: 'unknown' };
+  }
+
+  /** 深历史正文仍按本地身份展示，只有已有完整轮次时才沿其 Provider 分页键。 */
+  function turnReadPagingKey(snapshot: NativeConversationSnapshot | null | undefined, turn: SessionTurnReadIdentity): string {
+    return snapshot?.turns.find((candidate) => candidate.id === turn.id || candidate.providerTurnId === turn.providerTurnId)?.providerTurnId ?? turn.id;
+  }
+
+  /** 复用已缓存的连续正文范围，补齐目录映射不能使旧游标倒退到第一页。 */
+  function turnReadPaging(snapshot: NativeConversationSnapshot | null | undefined, turn: SessionTurnReadIdentity, kind: 'historyByTurn' | 'processByTurn') {
+    return snapshot?.v2Paging?.[kind]?.[turnReadPagingKey(snapshot, turn)] ?? snapshot?.v2Paging?.[kind]?.[turn.id] ?? (turn.providerTurnId ? snapshot?.v2Paging?.[kind]?.[turn.providerTurnId] : undefined);
+  }
+
+  /** 准确别名统一后仅保留当前分页键，旧缓存不能在后续水合时重新接管过期游标。 */
+  function canonicalizeTurnReadPaging(snapshot: NativeConversationSnapshot, turn: SessionTurnReadIdentity): NativeConversationSnapshot {
+    /** 正文和过程各自保留连续范围，只统一其准确所属轮次。 */
+    let next = snapshot;
+    /** 当前展示轮次决定唯一分页键，不改消息或位置身份。 */
+    const pagingKey = turnReadPagingKey(snapshot, turn);
+    for (const kind of ['historyByTurn', 'processByTurn'] as const) {
+      /** 当前已有范围沿原方向继续，未读取的集合不补造进度。 */
+      const page = turnReadPaging(next, turn, kind);
+      if (!page) continue;
+      /** 同一轮次的旧别名全部收回准确分页键。 */
+      const pages: NonNullable<NativeConversationSnapshot['v2Paging']>['processByTurn'] = { ...next.v2Paging?.[kind] };
+      delete pages[turn.id];
+      if (turn.providerTurnId) delete pages[turn.providerTurnId];
+      pages[pagingKey] = page;
+      next = updateConversationV2Paging(next, (paging) => ({ ...paging, [kind]: pages }));
+    }
+    return next;
   }
 
   /** 只补齐被浏览的轮次，不展开或读取过程表中的工具正文。 */
-  function loadNavigationTurn(turnId: string): Promise<void> {
+  async function loadNavigationTurn(turnId: string): Promise<void> {
     /** 连接重建后旧请求不再复用。 */
     const generation = connectionToken;
+    /** 本地和 Provider 轮次别名共用同一份分页请求。 */
+    const turn = await loadTurnReadIdentity(turnId, generation);
     /** 轮次身份与代次共同隔离按需读取。 */
-    const key = `${generation}:${turnId}`;
+    const key = `${generation}:${turn.id}`;
     /** 点击与进入视口可能同时请求同一轮。 */
     const existing = navigationTurnLoads.get(key);
     if (existing) return existing;
@@ -2447,27 +2526,21 @@ export function createSessionController(options: CreateSessionControllerOptions)
       /** 沿用已有按轮次模型历史接口。 */
       const load = options.client.loadNativeConversationTurnModelHistoryV2;
       if (!load || !state.snapshot?.snapshotV2) throw new Error('会话正文尚未就绪，请重试。');
-      /** 本地与模型轮次身份映射复用现有快照。 */
-      const turn = state.snapshot.turns.find((candidate) => candidate.id === turnId || candidate.providerTurnId === turnId);
-      /** 分页状态使用正文既有的轮次身份。 */
-      const pagingKey = turn?.providerTurnId ?? turnId;
       /** 冻结游标必须严格前进，失败不能无界重试。 */
       const seenCursors = new Set<string>();
       while (true) {
-        if (disposed || generation !== connectionToken) throw new Error('会话连接已变化，请重新定位。');
-        /** 每页合并后再读取最新分页状态。 */
-        const paging = state.snapshot?.v2Paging?.historyByTurn?.[pagingKey];
+        // 页面与游标可能仍在等待位置接管；只有实际归约完成后才能决定下一页。
+        await waitForTranscriptPlacementRecovery(generation);
+        /** 导航沿已有连续范围和读取方向补齐，不重新从第一页覆盖进度。 */
+        const paging = turnReadPaging(state.snapshot, turn, 'historyByTurn');
         if (paging?.loaded && !paging.hasMore) return;
         /** 空游标代表该轮第一页。 */
         const cursor = paging?.nextCursor ?? '';
         if (seenCursors.has(cursor)) throw new Error('历史正文分页没有推进。');
         seenCursors.add(cursor);
-        /** 正文保持已有单页体积上限。 */
-        const page = await load(options.projectId, options.conversationId, turn?.id ?? turnId, { ...(cursor ? { cursor } : {}), limit: 128, byteLimit: 256 * 1024 });
-        if (disposed || generation !== connectionToken) throw new Error('会话连接已变化，请重新定位。');
-        if (!state.snapshot) throw new Error('会话已关闭。');
-        dispatchV2Snapshot(mergeConversationTurnHistoryV2(state.snapshot, pagingKey, page));
-        if (!page.hasMore) return;
+        /** 展开过程时已选择的方向继续使用，首个导航请求按正序开始。 */
+        const direction = paging?.direction ?? turnReadPaging(state.snapshot, turn, 'processByTurn')?.direction ?? 'forward';
+        await loadTurnHistoryPageV2(turn, direction);
       }
     })();
     navigationTurnLoads.set(key, request);
@@ -2483,6 +2556,101 @@ export function createSessionController(options: CreateSessionControllerOptions)
     if (disposed || state.snapshot?.id !== snapshot.id || snapshot.id !== options.conversationId) return;
     // 按需页不拥有 durable event 水位，只合并展示投影；不得重置 gap-recovery 游标。
     dispatch({ type: 'snapshot_v2_page_merged', snapshot });
+  }
+
+  /** 分页等待消息位置实际接管，读取失败或连接换代不能被误认成游标未推进。 */
+  async function waitForTranscriptPlacementRecovery(generation: number): Promise<void> {
+    while (placementRecovery) {
+      /** 等待当前真实核对；期间新到的位置代次仍由同一接管链处理。 */
+      const recovery = placementRecovery;
+      await recovery;
+      if (disposed || generation !== connectionToken) throw new Error('会话连接已变化，请重新定位。');
+    }
+    if (disposed || generation !== connectionToken || state.snapshot?.id !== options.conversationId) throw new Error('会话连接已变化，请重新定位。');
+    if (syncProjectionSuspended) throw new Error(state.error?.message ?? '会话位置尚未完成同步，请重试。');
+  }
+
+  /** 正文页和分页进度作为同一动作接管，调用方不会先于真实状态继续读取。 */
+  async function commitV2Snapshot(snapshot: NativeConversationSnapshot, generation: number): Promise<void> {
+    dispatchV2Snapshot(snapshot);
+    await waitForTranscriptPlacementRecovery(generation);
+  }
+
+  /** 按轮次串行补载一页正文，导航和过程展开复用同一游标、方向及错误状态。 */
+  function loadTurnHistoryPageV2(turn: SessionTurnReadIdentity, preferredDirection: 'forward' | 'tail'): Promise<void> {
+    /** 请求只属于当前连接，旧连接返回不能推进新页面。 */
+    const generation = connectionToken;
+    /** API 接受本地轮次，分页缓存沿用 Provider 身份。 */
+    const localTurnId = turn.id;
+    /** 同一轮次的所有正文读取使用相同去重键。 */
+    const pagingKey = turnReadPagingKey(state.snapshot, turn);
+    /** 连接代次隔离重新接管后的读请求。 */
+    const key = `${generation}:${localTurnId}`;
+    /** 并发导航与展开只等待现有正文请求，不从旧游标发起第二页。 */
+    const existing = turnHistoryPageLoads.get(key);
+    if (existing) return existing;
+    /** 每次仅补充一页，正文大小仍使用过程展开的既有预算。 */
+    const request = (async () => {
+      await waitForTranscriptPlacementRecovery(generation);
+      /** 先前读取可能刚完成，只从最新状态取得当前游标。 */
+      const current = state.snapshot;
+      /** 正文接口不依赖读取工具过程。 */
+      const load = options.client.loadNativeConversationTurnModelHistoryV2;
+      if (!load || !current?.snapshotV2 || !current.v2Paging) return;
+      /** 已读完整轮次无需再次访问接口。 */
+      const paging = turnReadPaging(current, turn, 'historyByTurn');
+      if (paging?.loaded && !paging.hasMore) return;
+      /** 首次确定方向后持续使用同一连续范围，不更换游标签发方向。 */
+      const direction = paging?.direction ?? preferredDirection;
+      await commitV2Snapshot(
+        canonicalizeTurnReadPaging(
+          updateConversationV2Paging(current, (value) => ({
+            ...value,
+            historyByTurn: {
+              ...value.historyByTurn,
+              [pagingKey]: { direction, nextCursor: paging?.nextCursor ?? null, hasMore: paging?.hasMore ?? true, loading: true, loaded: paging?.loaded ?? false, error: null },
+            },
+          })),
+          turn,
+        ),
+        generation,
+      );
+      try {
+        /** 首次与后续请求共用相同单页预算，不因导航加载大量工具正文。 */
+        const page = await load(options.projectId, options.conversationId, localTurnId, { ...(paging?.nextCursor ? { cursor: paging.nextCursor } : {}), direction, limit: 48, byteLimit: 96 * 1024 });
+        if (disposed || generation !== connectionToken) throw new Error('会话连接已变化，请重新定位。');
+        /** 按响应到达时的最新快照合并，保留同期实时消息。 */
+        const latest = state.snapshot;
+        if (!latest) throw new Error('会话已关闭。');
+        await commitV2Snapshot(canonicalizeTurnReadPaging(mergeConversationTurnHistoryV2(latest, pagingKey, page), turn), generation);
+      } catch (error) {
+        /** 真实失败保留已读范围；位置接管失败由共用同步恢复处理。 */
+        const latest = state.snapshot;
+        if (!disposed && generation === connectionToken && !syncProjectionSuspended && latest?.v2Paging) {
+          await commitV2Snapshot(
+            canonicalizeTurnReadPaging(
+              updateConversationV2Paging(latest, (value) => ({
+                ...value,
+                historyByTurn: {
+                  ...value.historyByTurn,
+                  [pagingKey]: { ...value.historyByTurn?.[pagingKey], direction, nextCursor: paging?.nextCursor ?? null, hasMore: paging?.hasMore ?? true, loading: false, loaded: paging?.loaded ?? false, error: errorMessage(error) },
+                },
+              })),
+              turn,
+            ),
+            generation,
+          );
+        }
+        throw error;
+      }
+    })();
+    turnHistoryPageLoads.set(key, request);
+    /** 无论成功或失败均释放请求占位，下一次明确重试继续原游标。 */
+    const clear = () => {
+      if (turnHistoryPageLoads.get(key) === request) turnHistoryPageLoads.delete(key);
+    };
+    void request.then(clear, clear);
+    return request;
   }
 
   /** 按不可变句柄完整读取模型正文或用户展开的过程详情。 */
@@ -2630,21 +2798,22 @@ export function createSessionController(options: CreateSessionControllerOptions)
   async function loadTurnProcessV2(turnIdentity: string, startAtBeginning = false): Promise<void> {
     const loadProcess = options.client.loadNativeConversationProcessV2;
     const loadHistory = options.client.loadNativeConversationTurnModelHistoryV2;
-    const current = state.snapshot;
     const generation = connectionToken;
+    /** 完整目录为深历史提供准确身份，导航与展开不能按别名各自读取。 */
+    const turn = await loadTurnReadIdentity(turnIdentity, generation);
+    const current = state.snapshot;
     if ((!loadProcess && !loadHistory) || !current?.snapshotV2 || !current.v2Paging) return;
-    const turn = current.turns.find((candidate) => candidate.id === turnIdentity || candidate.providerTurnId === turnIdentity);
     // Snapshot V2 的固定首屏只携带最近闭合轮次；更早模型历史仍保留本地 turn id，
     // 服务端过程入口同时接受本地和 Provider 身份，因此旧轮次可以直接按历史身份读取。
-    const localTurnId = turn?.id ?? turnIdentity;
-    const pagingKey = turn?.providerTurnId ?? turnIdentity;
-    const currentProcessPage = current.v2Paging.processByTurn[pagingKey];
-    const currentHistoryPage = current.v2Paging.historyByTurn?.[pagingKey];
+    const localTurnId = turn.id;
+    const pagingKey = turnReadPagingKey(current, turn);
+    const currentProcessPage = turnReadPaging(current, turn, 'processByTurn');
+    const currentHistoryPage = turnReadPaging(current, turn, 'historyByTurn');
     /** 失败和中断需要优先看到末尾错误上下文；只有正常完成态切换为从头阅读。 */
     const preferredDirection = startAtBeginning || turn?.status === 'completed' ? 'forward' : 'tail';
     /** 已存在的连续范围沿原方向续读；首次完成态直接从最早一页开始。 */
     const direction = currentProcessPage?.direction ?? currentHistoryPage?.direction ?? preferredDirection;
-    if (currentProcessPage?.loading || currentHistoryPage?.loading) return;
+    if (currentProcessPage?.loading) return;
     const shouldLoadProcess = Boolean(loadProcess && !(currentProcessPage?.loaded && !currentProcessPage.hasMore));
     const shouldLoadHistory = Boolean(loadHistory && !(currentHistoryPage?.loaded && !currentHistoryPage.hasMore));
     if (!shouldLoadProcess && !shouldLoadHistory) return;
@@ -2654,19 +2823,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
     dispatchV2Snapshot(
       updateConversationV2Paging(current, (paging) => ({
         ...paging,
-        historyByTurn: shouldLoadHistory
-          ? {
-              ...paging.historyByTurn,
-              [pagingKey]: {
-                direction,
-                nextCursor: currentHistoryPage?.nextCursor ?? null,
-                hasMore: currentHistoryPage?.hasMore ?? true,
-                loading: true,
-                loaded: currentHistoryPage?.loaded ?? false,
-                error: null,
-              },
-            }
-          : paging.historyByTurn,
         processByTurn: {
           ...paging.processByTurn,
           ...(shouldLoadProcess
@@ -2697,40 +2853,21 @@ export function createSessionController(options: CreateSessionControllerOptions)
         )
       : Promise.resolve({ page: null, error: null as unknown });
     const historyResult = shouldLoadHistory
-      ? loadHistory!(options.projectId, options.conversationId, localTurnId, {
-          ...(currentHistoryPage?.nextCursor ? { cursor: currentHistoryPage.nextCursor } : {}),
-          direction,
-          limit: 48,
-          byteLimit: 96 * 1024,
-        }).then(
-          (page) => ({ page, error: null as unknown }),
-          (error: unknown) => ({ page: null, error }),
+      ? loadTurnHistoryPageV2(turn, direction).then(
+          () => ({ error: null as unknown }),
+          (error: unknown) => ({ error }),
         )
-      : Promise.resolve({ page: null, error: null as unknown });
+      : Promise.resolve({ error: null as unknown });
     const [settledProcess, settledHistory] = await Promise.all([processResult, historyResult]);
     if (disposed || generation !== connectionToken || turnDetailLoadRevisions.get(pagingKey) !== loadRevision) return;
     const latest = state.snapshot;
     if (!latest?.snapshotV2 || !latest.v2Paging) return;
     let next = latest;
-    // 先合并模型正文，再用更完整的过程投影覆盖相同 Provider item，避免重复行。
-    if (settledHistory.page) next = mergeConversationTurnHistoryV2(next, pagingKey, settledHistory.page);
+    // 正文由共享入口实际接管后，再用更完整的过程投影补充同一 Provider item。
     if (settledProcess.page) next = mergeConversationProcessV2(next, pagingKey, settledProcess.page);
-    if (settledProcess.error || settledHistory.error) {
+    if (settledProcess.error) {
       next = updateConversationV2Paging(next, (paging) => ({
         ...paging,
-        historyByTurn: settledHistory.error
-          ? {
-              ...paging.historyByTurn,
-              [pagingKey]: {
-                direction,
-                nextCursor: currentHistoryPage?.nextCursor ?? null,
-                hasMore: currentHistoryPage?.hasMore ?? true,
-                loading: false,
-                loaded: currentHistoryPage?.loaded ?? false,
-                error: errorMessage(settledHistory.error),
-              },
-            }
-          : paging.historyByTurn,
         processByTurn: settledProcess.error
           ? {
               ...paging.processByTurn,
@@ -2746,7 +2883,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
           : paging.processByTurn,
       }));
     }
-    dispatchV2Snapshot(next);
+    await commitV2Snapshot(canonicalizeTurnReadPaging(next, turn), generation);
     if (settledProcess.error) throw settledProcess.error;
     if (settledHistory.error) throw settledHistory.error;
   }
@@ -2955,6 +3092,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
       for (const finish of [...completeContentRetryWaiters]) finish();
       completeContentLoads.clear();
       toolResultPageLoads.clear();
+      navigationTurnLoads.clear();
+      turnHistoryPageLoads.clear();
+      navigationTurnIdentities.clear();
+      navigationLoad = null;
       cancelPendingRequestRefreshRetry();
       requestsAwaitingDetails.clear();
       cancelReconnectLoop();

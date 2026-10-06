@@ -18,7 +18,7 @@ import {
   type Viewport,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import type { DigitalTeamEdge, DigitalTeamNode, DigitalTeamNodeType, DigitalTeamWorkflowDefinition, DigitalTeamWorkflowValidationIssue } from '@zeus/shared';
+import type { DigitalTeamEdge, DigitalTeamExecutionMode, DigitalTeamNode, DigitalTeamNodeType, DigitalTeamWorkflowDefinition, DigitalTeamWorkflowValidationIssue } from '@zeus/shared';
 import { digitalTeamNodeTypes } from '@zeus/shared';
 import { useEffect, type DragEvent as ReactDragEvent } from 'react';
 
@@ -77,6 +77,13 @@ const approvalPurposeLabels = {
   plan_approval: '规划批准',
   final_acceptance: '最终验收',
 } as const;
+
+/** 画布与常用配置共用实际执行方式，不根据员工名称推断权限。 */
+export const digitalTeamWorkModeLabels: Record<DigitalTeamExecutionMode, string> = {
+  read_only: '只读分析',
+  isolated_write: '修改代码',
+  candidate_read_only: '验收代码',
+};
 
 /** 提供 React Flow 上下文，并让内部组件使用准确的屏幕到画布坐标换算。 */
 export function WorkflowCanvas(props: WorkflowCanvasProps) {
@@ -232,6 +239,8 @@ function WorkflowNodeCard(props: NodeProps<CanvasNode>) {
   const displayTitle = node.type === 'employee' ? (props.data.employeeName ?? node.data.title) : node.data.title;
   /** 未分配角色使用原分工标题，内部身份不进入产品界面。 */
   const assignmentLabel = node.type === 'employee' && !props.data.employeeName ? (props.data.issues.length ? '员工不可用' : '待分配员工') : null;
+  /** 工作方式来自当前模板或冻结运行中的真实配置，始终在卡片可见。 */
+  const workModeLabel = node.type === 'employee' ? digitalTeamWorkModeLabels[node.data.executionMode] : null;
   /** 员工节点直接展示实际工作要求，用户能从连线读出协作分工。 */
   const detail =
     node.type === 'employee'
@@ -246,10 +255,11 @@ function WorkflowNodeCard(props: NodeProps<CanvasNode>) {
   /** 当前状态同时提供文字与视觉标记，不依赖颜色表达。 */
   const runtimeLabel = props.data.runtimeState ? `${props.data.runtimeState.status}${props.data.runtimeState.attempt ? ` · 第 ${props.data.runtimeState.attempt} 次` : ''}` : null;
   return (
-    <article className={`digital-team-node is-${node.type}${props.selected ? ' is-selected' : ''}${props.data.issues.length ? ' has-error' : ''}`} aria-label={`${displayTitle}，${detail}`}>
+    <article className={`digital-team-node is-${node.type}${props.selected ? ' is-selected' : ''}${props.data.issues.length ? ' has-error' : ''}`} aria-label={`${displayTitle}，${workModeLabel ? `${workModeLabel}，` : ''}${detail}`}>
       {node.type !== 'start' ? <Handle type="target" position={Position.Left} isConnectable={props.isConnectable} aria-label="输入：连接上游节点" title="输入：从上游节点右侧拖到这里" /> : null}
       <span className="digital-team-node-kind">{nodeTypeLabel(node.type)}</span>
       <strong>{displayTitle}</strong>
+      {workModeLabel ? <span className="digital-team-node-status">{workModeLabel}</span> : null}
       <small title={detail}>{detail}</small>
       {assignmentLabel ? <span className="digital-team-node-status">{assignmentLabel}</span> : null}
       {runtimeLabel ? <span className="digital-team-node-status">{runtimeLabel}</span> : null}

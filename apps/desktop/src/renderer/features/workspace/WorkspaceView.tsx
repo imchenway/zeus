@@ -415,6 +415,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   }, [activeProjectId, activeProjectSection, pendingGlobalSource, projectCodeWorkspaceMode, projectSourceWorkspaceRef]);
   /** 任务详情也可从会话页打开；接入上下文仍由原工作面身份约束，关闭或切换后旧回执失效。 */
   const modelSetupTask = snapshot.tasks.find((task) => task.id === taskModelPushTaskId);
+  /** 团队执行读取最新任务授权与修订，避免授权保存后继续携带旧任务进入下一次操作。 */
+  const currentDigitalTeamTask = digitalTeamTask ? (snapshot.tasks.find((task) => task.id === digitalTeamTask.id) ?? digitalTeamTask) : undefined;
   const taskModelSetupContext: TaskModelSetupContext | undefined =
     modelSetupTask &&
     (activeNavTarget === 'projects' || activeNavTarget === 'conversations') &&
@@ -837,10 +839,10 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           >
             <toolPages.digitalTeams
               key={`${digitalTeamTask?.id ?? 'team'}:${digitalTeamEntrySelection?.kind ?? 'manage'}:${digitalTeamEntrySelection?.kind === 'template' ? digitalTeamEntrySelection.templateId : digitalTeamEntrySelection?.kind === 'run' ? digitalTeamEntrySelection.runId : ''}`}
-              task={digitalTeamTask}
+              task={currentDigitalTeamTask}
               onCreateTask={openTaskCreateForTeam}
               initialSelection={digitalTeamEntrySelection}
-              onBackToTask={digitalTeamTask ? returnFromDigitalTeam : undefined}
+              onBackToTask={currentDigitalTeamTask ? returnFromDigitalTeam : undefined}
               client={props.commandClient ?? null}
               projects={snapshot.projects}
               initialProjectId={activeProjectId}
