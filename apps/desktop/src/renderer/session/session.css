@@ -5851,31 +5851,9 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   text-align: start;
 }
 
-.session-codex-parity-v1 .session-approval-grant-menu button:hover:not(:disabled):not([aria-disabled='true']),
-.session-codex-parity-v1 .session-approval-grant-menu button:focus-visible {
-  background: var(--zeus-interaction-hover);
-}
-
-/* 完全访问沿用权限选择器的警示语义，说明仍保持正文可读。 */
+/* 完全访问沿用权限选择器的警示语义，说明由标题旁图标展开。 */
 .session-codex-parity-v1 .session-approval-grant-menu button[data-danger] {
   color: var(--zeus-danger-text);
-}
-
-.session-codex-parity-v1 .session-approval-grant-menu small {
-  align-items: start;
-  color: var(--session-text-muted);
-  display: grid;
-  font-size: 10px;
-  gap: 4px;
-  grid-template-columns: 12px minmax(0, 1fr);
-  min-inline-size: 0;
-  overflow-wrap: anywhere;
-}
-
-.session-codex-parity-v1 .session-approval-grant-menu small svg {
-  block-size: 12px;
-  flex: 0 0 auto;
-  inline-size: 12px;
 }
 
 .session-codex-parity-v1 .session-rui-question {
@@ -9807,21 +9785,67 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 .session-codex-parity-v1 .session-approval-grant-menu-label {
   align-items: center;
   display: flex;
-  gap: 16px;
-  inline-size: 100%;
-  justify-content: space-between;
+  justify-content: flex-start;
 }
 
-.session-codex-parity-v1 .session-approval-grant-info {
+.session-codex-parity-v1 .session-approval-grant-menu-row {
+  align-items: center;
+  border-radius: 8px;
+  display: flex;
+  inline-size: 100%;
+}
+
+/* 高亮属于整个选项行，说明图标与标题共用同一底色。 */
+.session-codex-parity-v1 .session-approval-grant-menu-row:is(:hover, :focus-within) {
+  background: var(--zeus-interaction-hover);
+}
+
+.session-codex-parity-v1 .session-approval-grant-menu-row:has(> button[data-danger]):is(:hover, :focus-within) {
+  background: var(--zeus-control-danger-bg-hover);
+}
+
+/* 覆盖通用菜单按钮高亮，避免整行底色之上再叠一块文字底色。 */
+.macos-ai-app .session-codex-parity-v1 .session-approval-grant-menu-row button:is(:hover, :focus-visible, :active):not(:disabled):not([aria-disabled='true']) {
+  background: transparent;
+}
+
+.session-codex-parity-v1 .session-approval-grant-menu-row:has(.session-approval-grant-info) > button {
+  padding-inline-end: 0;
+}
+
+/* 说明按钮紧跟标题最后一个字，不对齐到菜单最右侧。 */
+.session-codex-parity-v1 .session-approval-grant-menu button.session-approval-grant-info {
   align-items: center;
   color: var(--session-text-muted);
   display: inline-flex;
   flex: 0 0 auto;
+  margin-inline-start: 2px;
+  min-block-size: 26px;
+  padding: 4px;
 }
 
 .session-codex-parity-v1 .session-approval-grant-info svg {
   block-size: 14px;
   inline-size: 14px;
+}
+
+/* 原生浮层跟随图标，并在窄窗口自动翻转，长命令只在说明中换行。 */
+.session-codex-parity-v1 .session-approval-grant-help {
+  background: var(--session-sidebar);
+  border: 1px solid var(--session-line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px var(--session-shadow-soft);
+  color: var(--session-text-muted);
+  font-size: 12px;
+  inline-size: max-content;
+  line-height: 1.5;
+  margin: 8px 0;
+  max-inline-size: min(320px, calc(100vw - 32px));
+  overflow-wrap: anywhere;
+  padding: 10px 12px;
+  position-area: top span-left;
+  position-try-fallbacks: flip-block, flip-inline;
+  white-space: normal;
 }
 
 @media (max-width: 559px) {

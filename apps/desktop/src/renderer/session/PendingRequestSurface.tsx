@@ -1,8 +1,8 @@
-import { type CSSProperties, type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type KeyboardEvent, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
 import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
-import { InfoIcon as Info } from '@phosphor-icons/react/dist/csr/Info';
+import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
 import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paperclip';
 import { QuestionIcon as Question } from '@phosphor-icons/react/dist/csr/Question';
@@ -100,7 +100,7 @@ const labels = {
     moreFiles: (count: number) => `另有 ${count} 个文件`,
     grantOptions: '授权选项',
     similarCommandRule: '适用规则',
-    fullAccess: '允许所有（完全访问）',
+    fullAccess: '完全访问权限',
     fullAccessScope: '允许本次，完全访问从下一轮生效',
     allEditScope: '本次对话中，后续只会自动允许已确认属于当前项目的文件访问；项目外文件仍会被拒绝。',
   },
@@ -145,7 +145,7 @@ const labels = {
     moreFiles: (count: number) => `${count} more file${count === 1 ? '' : 's'}`,
     grantOptions: 'Grant options',
     similarCommandRule: 'Applies to',
-    fullAccess: 'Allow all (full access)',
+    fullAccess: 'Full access',
     fullAccessScope: 'Allow this request; full access starts next turn',
     allEditScope: 'During this conversation, only verified file access within the current project will be allowed automatically. Access outside the project will still be denied.',
   },
@@ -298,7 +298,6 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const failClosedRef = useRef<HTMLButtonElement | null>(null);
-  const menuItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const grantDecisions = props.decisions.filter((decision) => !isFailClosedDecision(decision));
   const hasAllowOnce = grantDecisions.includes('accept');
   const amendment = advertisedExecpolicyAmendmentDecision(props.request);
@@ -306,7 +305,7 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
   /** 只在本次确实可批准且提供持久化入口时展示完全访问。 */
   const menuDecisions: Array<SupportedRequestDecision | 'full-access'> = [
     ...grantDecisions,
-    ...(hasAllowOnce && !props.approvalIssue && props.permissionMode !== 'full-access' && props.onAllowFullAccess ? (['full-access'] as const) : []),
+    ...(hasAllowOnce && !props.approvalIssue && props.onAllowFullAccess ? (['full-access'] as const) : []),
     ...(props.kind === 'command' && props.decisions.includes('cancel') && failClosedDecision !== 'cancel' ? (['cancel'] as const) : []),
   ];
   const extraFailClosedDecision = grantDecisions.length === 0 && failClosedDecision === 'decline' && props.decisions.includes('cancel') ? 'cancel' : null;
@@ -327,7 +326,7 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
 
   function openMenu(): void {
     setMenuOpen(true);
-    window.requestAnimationFrame(() => menuItemRefs.current[0]?.focus());
+    window.requestAnimationFrame(() => rootRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus());
   }
 
   function choose(decision: SupportedRequestDecision): void {
@@ -343,7 +342,8 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
       return;
     }
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
-    const items = menuItemRefs.current.filter((item): item is HTMLButtonElement => Boolean(item));
+    /** 说明按钮与授权按钮共用键盘导航，避免焦点进入说明后跳错选项。 */
+    const items = Array.from(rootRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []);
     if (items.length === 0) return;
     event.preventDefault();
     const current = items.indexOf(document.activeElement as HTMLButtonElement);
@@ -419,44 +419,37 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
               ) : null}
               {menuDecisions.length > (hasAllowOnce ? 1 : 0) ? (
                 <div className="session-approval-grant-menu" role="menu" inert={!menuOpen} aria-hidden={!menuOpen} hidden={!menuOpen} onKeyDown={handleMenuKeyDown}>
-                  {menuDecisions.map((decision, index) => (
-                    <button
-                      key={decision}
-                      ref={(element) => {
-                        menuItemRefs.current[index] = element;
-                      }}
-                      type="button"
-                      role="menuitem"
-                      data-danger={decision === 'full-access' || undefined}
-                      onClick={() => {
-                        if (decision === 'full-access') {
-                          setMenuOpen(false);
-                          setConfirmingFullAccess(true);
-                        } else choose(decision);
-                      }}
-                    >
-                      <span className="session-approval-grant-menu-label">
-                        <span>{decision === 'full-access' ? copy.fullAccess : copy[decision]}</span>
-                        {props.kind === 'file' && decision === 'acceptForSession' ? (
-                          <span className="session-approval-grant-info" role="img" aria-label={copy.allEditScope} title={copy.allEditScope}>
-                            <Info aria-hidden="true" />
-                          </span>
-                        ) : null}
-                      </span>
-                      {decision === 'acceptWithExecpolicyAmendment' && amendment ? (
-                        <small>
-                          <Info aria-hidden="true" />
-                          {copy.similarCommandRule}: {amendment.acceptWithExecpolicyAmendment.execpolicy_amendment.join(' ')}
-                        </small>
-                      ) : null}
-                      {decision === 'full-access' ? (
-                        <small>
-                          <Info aria-hidden="true" />
-                          {copy.fullAccessScope}
-                        </small>
-                      ) : null}
-                    </button>
-                  ))}
+                  {menuDecisions.map((decision) => {
+                    /** 选项说明只在标题旁的图标中展开，不占菜单正文。 */
+                    const help =
+                      decision === 'full-access'
+                        ? copy.fullAccessScope
+                        : decision === 'acceptWithExecpolicyAmendment' && amendment
+                          ? `${copy.similarCommandRule}: ${amendment.acceptWithExecpolicyAmendment.execpolicy_amendment.join(' ')}`
+                          : props.kind === 'file' && decision === 'acceptForSession'
+                            ? copy.allEditScope
+                            : null;
+                    /** 说明按钮使用准确的选项名称，不参与审批提交。 */
+                    const title = decision === 'full-access' ? copy.fullAccess : copy[decision];
+                    return (
+                      <div key={decision} className="session-approval-grant-menu-row" role="none">
+                        <button
+                          type="button"
+                          role="menuitem"
+                          data-danger={decision === 'full-access' || undefined}
+                          onClick={() => {
+                            if (decision === 'full-access') {
+                              setMenuOpen(false);
+                              setConfirmingFullAccess(true);
+                            } else choose(decision);
+                          }}
+                        >
+                          <span className="session-approval-grant-menu-label">{title}</span>
+                        </button>
+                        {help && menuOpen ? <ApprovalDecisionHelp title={title} description={help} /> : null}
+                      </div>
+                    );
+                  })}
                 </div>
               ) : null}
               <MotionPresence>
@@ -484,6 +477,45 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
         </div>
       </fieldset>
     </section>
+  );
+}
+
+/** 标题旁的说明使用原生浮层，鼠标、键盘和点击均可查看，不触发授权。 */
+function ApprovalDecisionHelp(props: { title: string; description: string }) {
+  /** 每个说明独立关联其原生浮层。 */
+  const id = useId();
+  /** 锚点身份只供 CSS 定位，不包含命令正文。 */
+  const anchor = `--approval-help-${id.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+  /** 原生浮层从菜单裁剪区域进入顶层。 */
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  /** 焦点进入说明时保留内容，离开后自动收起。 */
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  return (
+    <span
+      onPointerEnter={() => popoverRef.current?.showPopover()}
+      onPointerLeave={() => {
+        if (document.activeElement !== buttonRef.current) popoverRef.current?.hidePopover();
+      }}
+    >
+      <button
+        ref={buttonRef}
+        type="button"
+        role="menuitem"
+        className="session-approval-grant-info"
+        aria-label={`${props.title} · ${props.description}`}
+        aria-describedby={id}
+        popoverTarget={id}
+        popoverTargetAction="show"
+        style={{ anchorName: anchor }}
+        onFocus={() => popoverRef.current?.showPopover()}
+        onBlur={() => popoverRef.current?.hidePopover()}
+      >
+        <WarningCircle aria-hidden="true" />
+      </button>
+      <div ref={popoverRef} id={id} popover="auto" role="tooltip" className="session-approval-grant-help" style={{ positionAnchor: anchor }}>
+        {props.description}
+      </div>
+    </span>
   );
 }
 
