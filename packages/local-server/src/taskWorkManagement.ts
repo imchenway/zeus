@@ -821,7 +821,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       const task = requireTaskOrThrow(options, taskId);
       if (employeeSnapshot.id !== employeeId || employeeSnapshot.projectId !== task.projectId) throw new TaskWorkStoreError('ZEUS_DIGITAL_TEAM_EMPLOYEE_SNAPSHOT_INVALID', '冻结员工配置与当前节点不一致。');
       const employee = structuredClone(employeeSnapshot);
-      /** 已接纳团队节点沿用原冻结偏好；新模板不会保存这些退役字段。 */
+      /** 团队节点覆盖启动时冻结的员工默认，后续员工修改不影响本次运行。 */
       const preview = await resolvePreview(options, task, { ...settings, ...normalizeWorkSettings(settings), employeeId, supplementalInfo, workspace }, employee);
       if (preview.blockers.length > 0) throw new TaskWorkStoreError(preview.blockers[0]!.code, preview.blockers[0]!.message);
       /** 节点职责随真实工作运行冻结；负责人用团队计划分工，不进入旧安排委派通道。 */
@@ -1422,7 +1422,7 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
     };
     authority = resolveRunAuthority(selection.permissionMode, task);
     const capability = await options.conversationCapabilities.readTaskPush(task.projectId, task.id);
-    model = resolveAgentModel(capability, blockers, employeeSnapshot, employeeSnapshot ? selection : undefined);
+    model = resolveAgentModel(capability, blockers, employee, selection);
     /** 与会话共用真实功能目录，切换到 Pi 后不按品牌关闭已经接入的目标。 */
     const selectedCapability = (Array.isArray(capability.models) ? capability.models.filter(isCapabilityModel) : []).find((candidate) => candidate.id === model?.id);
     if (effective.autonomyObjective && !(selectedCapability?.features ? ['available', 'unknown'].includes(selectedCapability.features.goals.state) : isRecord(capability.goals) && capability.goals.enabled === true))
@@ -2529,7 +2529,7 @@ function resolveContextManifest(options: TaskWorkManagementOptions, task: ZeusTa
   return { version: 1, task: { id: task.id, revision: task.updatedAt, title: task.title, description: task.description, taskType: task.taskType, tags: [...task.tags] }, attachments, projectRules: rules, acceptedDeliverables: deliverables };
 }
 
-/** 新工作使用统一默认，已接纳团队只在可信冻结快照中延续原模型与档位。 */
+/** 新工作解析员工默认与分层覆盖，已接纳工作继续使用冻结配置。 */
 function resolveAgentModel(capability: Record<string, unknown>, blockers: TaskWorkPreview['blockers'], employeeSnapshot?: DigitalEmployeeRecord, frozenSettings?: TaskWorkPreviewSelection): Record<string, unknown> | null {
   /** 统一能力目录已经包含当前配置的首选模型。 */
   const models = Array.isArray(capability.models) ? capability.models.filter(isCapabilityModel) : [];
@@ -2537,15 +2537,27 @@ function resolveAgentModel(capability: Record<string, unknown>, blockers: TaskWo
   const frozenModel = frozenSettings?.modelOverride?.trim() || (frozenSettings?.modelOverride !== null && employeeSnapshot?.entrypoint?.modelPolicy.defaultMode === 'explicit' ? employeeSnapshot.entrypoint.modelPolicy.defaultModel : null);
   /** 原模型或显式全局首选不可用时报告阻塞，避免暗中替换。 */
   const requested = frozenModel || (typeof capability.preferredModel === 'string' ? capability.preferredModel : null);
-  /** 没有全局首选时使用首个可用模型。 */
-  const model = requested ? models.find((candidate) => candidate.id === requested || candidate.model === requested) : models.find((candidate) => candidate.available);
+  /** 稳定身份优先；历史名称只能唯一匹配。 */
+  const exactModel = requested ? models.find((candidate) => candidate.id === requested) : undefined;
+  /** 同名连接不能按目录顺序猜测。 */
+  const namedModels = requested && !exactModel ? models.filter((candidate) => candidate.model === requested) : [];
+  if (namedModels.length > 1) {
+    blockers.push({ code: 'ZEUS_TASK_WORK_MODEL_AMBIGUOUS', message: `模型 ${requested} 对应多个连接，请重新选择具体模型。` });
+    return null;
+  }
+  const model = requested ? exactModel ?? namedModels[0] : models.find((candidate) => candidate.available);
   if (!model || !model.available) {
     blockers.push({ code: 'ZEUS_TASK_WORK_MODEL_UNAVAILABLE', message: requested ? `模型 ${requested} 当前不可用。` : '项目当前没有可用模型。' });
     return null;
   }
   /** 空值按原冻结语义使用模型推荐档，缺省才读取历史员工偏好。 */
   const requestedEffort = frozenSettings?.reasoningEffort === null ? null : frozenSettings?.reasoningEffort?.trim() || employeeSnapshot?.reasoningEffort || null;
-  /** 能力目录变化后仍按既有规则回落支持的推理档位。 */
+  /** 显式档位失效时阻止派发，避免静默替换用户选择。 */
+  if (requestedEffort && !model.supportedReasoningEfforts.includes(requestedEffort)) {
+    blockers.push({ code: 'ZEUS_TASK_WORK_REASONING_EFFORT_UNAVAILABLE', message: `模型 ${model.displayName ?? model.model} 不支持推理级别 ${requestedEffort}，请重新选择。` });
+    return null;
+  }
+  /** 未指定时使用能力目录的默认推理档位。 */
   const reasoningEffort = requestedEffort && model.supportedReasoningEfforts.includes(requestedEffort) ? requestedEffort : (model.defaultReasoningEffort ?? model.supportedReasoningEfforts[0] ?? null);
   /** 已冻结节点显式标准档不重新继承员工速率。 */
   const serviceTier = frozenSettings?.serviceTier === null ? model.defaultServiceTier : frozenSettings?.serviceTier?.trim() || employeeSnapshot?.serviceTier || model.defaultServiceTier;
@@ -2881,7 +2893,10 @@ function projectRuleMetadata(projectPath: string): Array<{ identity: string; sha
 
 function normalizeSelection(value: unknown): TaskWorkPreviewSelection {
   if (!isRecord(value)) throw new TaskWorkStoreError('ZEUS_TASK_WORK_PREVIEW_INVALID', '指派预览参数必须是对象。', 400);
+  /** 手动指派与任务安排共用覆盖参数校验，并保留显式清空。 */
+  const modelSettings = normalizeWorkSettings(Object.fromEntries(['modelOverride', 'reasoningEffort'].filter((key) => key in value).map((key) => [key, value[key]])));
   return {
+    ...modelSettings,
     employeeId: requiredText(value.employeeId, '请选择数字员工。', 256),
     plannedWorkItemId: optionalText(value.plannedWorkItemId, 256) ?? undefined,
     supplementalInfo: optionalText(value.supplementalInfo, 20_000),
@@ -3091,7 +3106,9 @@ export function normalizeWorkSettings(value: unknown): EmployeeWorkSettings {
       throw new TaskWorkStoreError('ZEUS_TASK_WORK_SETTINGS_INVALID', '委派需要明确成员、1 到 4 层拆分和 1 到 48 份分工预算。', 400);
     result.delegation = { employeeIds: normalizeIdentities(policy.employeeIds), maxDepth: Number(policy.maxDepth), maxWorkItems: Number(policy.maxWorkItems) };
   }
-  /** 历史执行偏好可被读取，但新配置只保存业务要求。 */
+  /** 保存默认执行参数的显式覆盖，空值保留清空继承的语义。 */
+  for (const key of ['modelOverride', 'reasoningEffort'] as const) if (key in value) result[key] = value[key] === null ? null : requiredText(value[key], '模型或推理级别无效。', key === 'modelOverride' ? 512 : 120);
+  /** 业务要求继续使用独立的文本长度约束。 */
   for (const key of ['autonomyObjective', 'promptOverride'] as const) if (key in value) result[key] = value[key] === null ? null : requiredText(value[key], '配置文本无效。', key === 'promptOverride' ? 20_000 : 4_000);
   if (value.permissionMode !== undefined) result.permissionMode = optionalMember(value.permissionMode, ['read-only', 'auto', 'full-access'] as const, '权限模式无效。') ?? undefined;
   return result;

@@ -187,6 +187,12 @@ export interface DigitalEmployeeExecutionRecord {
 }
 
 export interface CreateDigitalEmployeeTemplateInput {
+  /** 默认执行后端；未指定时使用 Codex。 */
+  agentKind?: DigitalEmployeeAgentKind;
+  /** 稳定模型身份；空值继承项目默认。 */
+  model?: string | null;
+  /** 默认推理级别；空值使用模型默认。 */
+  reasoningEffort?: string | null;
   /** 默认是否读取已确认经验。 */
   memoryEnabled?: boolean;
   id?: string;
@@ -587,8 +593,8 @@ export class DigitalEmployeeTemplateRepository {
     const value = normalizeTemplateInput({ ...existing, ...input });
     const timestamp = nextTimestamp(existing.updatedAt);
     this.db.execute(
-      `UPDATE digital_employee_templates SET name = ?, description = ?, role = ?, domain = ?, avatar_id = ?, prompt = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? AND built_in = 0 AND deleted_at IS NULL`,
-      [value.name, value.description, value.role, value.domain, value.avatarId ?? null, value.prompt, timestamp, existing.id, existing.revision],
+      `UPDATE digital_employee_templates SET name = ?, description = ?, role = ?, domain = ?, avatar_id = ?, prompt = ?, agent_kind = ?, model = ?, reasoning_effort = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ? AND built_in = 0 AND deleted_at IS NULL`,
+      [value.name, value.description, value.role, value.domain, value.avatarId ?? null, value.prompt, value.agentKind, value.model, value.reasoningEffort, timestamp, existing.id, existing.revision],
     );
     assertChanged(this.db, '数字员工模板已被其他操作更新。');
     this.db.execute('UPDATE digital_employee_templates SET base_configuration_json = ? WHERE id = ?', [JSON.stringify(globalEmployeeDefaults(value)), existing.id]);
@@ -787,6 +793,9 @@ export class DigitalEmployeeRepository {
       domain: input.template.domain,
       avatarId: input.template.avatarId,
       prompt: input.template.prompt,
+      agentKind: input.template.agentKind,
+      model: input.template.model,
+      reasoningEffort: input.template.reasoningEffort,
       id: input.id,
       projectId: input.projectId,
       templateId: input.template.id,
@@ -1449,9 +1458,9 @@ function mapTemplateRow(row: DigitalEmployeeTemplateRow): DigitalEmployeeTemplat
     avatarId: row.avatar_id,
     skillIds: [],
     prompt: row.prompt,
-    agentKind: 'codex',
-    model: null,
-    reasoningEffort: null,
+    agentKind: oneOf(row.agent_kind, digitalEmployeeAgentKinds, 'template.agentKind'),
+    model: nullableText(row.model, 512),
+    reasoningEffort: nullableText(row.reasoning_effort, 120),
     serviceTier: null,
     permissionMode: 'read-only',
     workMode: 'default',
@@ -1478,9 +1487,9 @@ function mapEmployeeRow(row: DigitalEmployeeRow): DigitalEmployeeRecord {
     avatarId: row.avatar_id,
     skillIds: [],
     prompt: row.prompt,
-    agentKind: 'codex',
-    model: null,
-    reasoningEffort: null,
+    agentKind: oneOf(row.agent_kind, digitalEmployeeAgentKinds, 'employee.agentKind'),
+    model: nullableText(row.model, 512),
+    reasoningEffort: nullableText(row.reasoning_effort, 120),
     serviceTier: null,
     permissionMode: 'read-only',
     workMode: 'default',
@@ -1564,7 +1573,7 @@ function mapExecutionRow(row: DigitalEmployeeExecutionRow): DigitalEmployeeExecu
   };
 }
 
-/** 只校验身份与提示词；执行参数统一投影为空默认，不再接受员工专用值。 */
+/** 校验身份、提示词与默认执行参数；实际模型能力由派发预检核对。 */
 function normalizeTemplateInput(input: CreateDigitalEmployeeTemplateInput): Omit<DigitalEmployeeTemplateRecord, 'id' | 'identityKind' | 'builtIn' | 'revision' | 'createdAt' | 'updatedAt'> {
   return {
     memoryEnabled: input.memoryEnabled !== false,
@@ -1575,9 +1584,9 @@ function normalizeTemplateInput(input: CreateDigitalEmployeeTemplateInput): Omit
     avatarId: input.avatarId == null ? null : oneOf(input.avatarId, digitalEmployeeAvatarIds, 'template.avatarId'),
     skillIds: [],
     prompt: boundedText(input.prompt, 'template.prompt', 1, 20_000),
-    agentKind: 'codex',
-    model: null,
-    reasoningEffort: null,
+    agentKind: oneOf(input.agentKind ?? 'codex', digitalEmployeeAgentKinds, 'template.agentKind'),
+    model: nullableText(input.model, 512),
+    reasoningEffort: nullableText(input.reasoningEffort, 120),
     serviceTier: null,
     permissionMode: 'read-only',
     workMode: 'default',

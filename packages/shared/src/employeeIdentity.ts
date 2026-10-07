@@ -1,6 +1,6 @@
 import type { DigitalEmployeeAvatarId } from './index.js';
 
-/** 全局员工统一维护身份、提示词和经验偏好；执行配置不属于员工身份。 */
+/** 全局员工统一维护身份、提示词、经验偏好及默认执行参数。 */
 export interface EmployeeConfiguration {
   /** 员工显示名称。 */
   name: string;
@@ -16,10 +16,16 @@ export interface EmployeeConfiguration {
   prompt: string;
   /** 是否读取经过治理的员工经验。 */
   memoryEnabled?: boolean;
+  /** 默认执行后端。 */
+  agentKind?: 'codex' | 'pi';
+  /** 稳定模型身份；空值继承项目默认。 */
+  model?: string | null;
+  /** 默认推理级别；空值使用模型默认。 */
+  reasoningEffort?: string | null;
 }
 
 /** 固定可继承字段，防止全局记录的 ID、版本和项目身份覆盖项目绑定。 */
-export const employeeConfigurationKeys = ['name', 'description', 'role', 'domain', 'avatarId', 'prompt', 'memoryEnabled'] as const;
+export const employeeConfigurationKeys = ['name', 'description', 'role', 'domain', 'avatarId', 'prompt', 'memoryEnabled', 'agentKind', 'model', 'reasoningEffort'] as const;
 
 /** 员工配置只来自全局身份，项目绑定仅保留工作关联。 */
 export function resolveEmployeeConfiguration<T extends EmployeeConfiguration>(global: EmployeeConfiguration | undefined, binding: T): T {

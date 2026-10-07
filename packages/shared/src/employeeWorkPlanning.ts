@@ -1,4 +1,4 @@
-/** 任务安排只补充目标、分工、提示词和权限限制；旧 AI 字段仅供历史快照读取。 */
+/** 任务安排补充目标、分工、提示词和权限限制，并覆盖默认模型与推理级别。 */
 export interface EmployeeWorkSettings {
   /** 有原生目标能力时持续推进到该目标完成；空值关闭本层目标。 */
   autonomyObjective?: string | null;
@@ -75,13 +75,13 @@ export interface EmployeeTeamRecipe {
   revision: number;
 }
 
-/** 新工作仅叠加业务要求并收紧权限，不继承历史 AI 偏好。 */
+/** 新工作按层叠加业务要求和模型偏好，并收紧权限。 */
 export function mergeEmployeeWorkSettings(...layers: Array<EmployeeWorkSettings | null | undefined>): EmployeeWorkSettings {
   /** 每层只覆盖实际提供的字段，数组生成独立副本。 */
   const result: EmployeeWorkSettings = {};
   for (const layer of layers) {
     if (!layer) continue;
-    for (const key of ['autonomyObjective', 'delegation', 'promptOverride'] as const) {
+    for (const key of ['autonomyObjective', 'delegation', 'promptOverride', 'modelOverride', 'reasoningEffort'] as const) {
       if (layer[key] !== undefined) Object.assign(result, { [key]: structuredClone(layer[key]) });
     }
     if (layer.permissionMode === 'read-only' || layer.permissionMode === 'auto' || layer.permissionMode === 'full-access') {
