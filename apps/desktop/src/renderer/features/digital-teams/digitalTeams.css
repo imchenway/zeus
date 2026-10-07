@@ -379,8 +379,8 @@
   grid-template-rows: auto auto minmax(0, 1fr) auto;
 }
 
-/* 代码授权占独立内容行，画布继续使用剩余高度。 */
-.digital-team-editor-layout .digital-team-canvas-column:has(> .digital-team-baseline-confirmation) {
+/* 开始研发的本地执行范围占紧凑说明行，画布继续使用剩余高度。 */
+.digital-team-editor-layout .digital-team-canvas-column:has(> .digital-team-start-description) {
   grid-template-rows: auto auto auto minmax(0, 1fr) auto;
 }
 
@@ -464,22 +464,13 @@
   resize: vertical;
 }
 
-/* 基线确认保留原生复选框语义和紧凑点击目标。 */
-.digital-team-workspace .digital-team-baseline-confirmation {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: start;
-  gap: 9px;
-  padding: 10px 14px;
+/* 授权随明确的开始研发动作提交，不再增加独立确认控件。 */
+.digital-team-workspace .digital-team-start-description {
+  margin: 0;
+  padding: 8px 14px;
   border-block-end: 1px solid var(--zeus-product-line);
+  color: var(--zeus-product-muted);
   font-size: 12px;
-}
-
-.digital-team-workspace .digital-team-baseline-confirmation input {
-  inline-size: 16px;
-  min-block-size: 16px;
-  margin-block-start: 2px;
-  padding: 0;
 }
 
 .digital-team-save-actions {

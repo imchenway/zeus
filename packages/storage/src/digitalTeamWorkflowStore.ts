@@ -545,8 +545,21 @@ export class DigitalTeamWorkflowRunRepository {
     return row ? mapRun(row) : undefined;
   }
 
-  /** 按任务读取全部历史运行。 */
-  listByTask(taskId: string): DigitalTeamWorkflowRunRecord[] {
+  /** 任务详情读取全部运行，会话入口只读取实际绑定该会话的运行。 */
+  listByTask(taskId: string, conversationId?: string): DigitalTeamWorkflowRunRecord[] {
+    if (conversationId !== undefined) {
+      /** 关联包含原会话与历史尝试，返工后仍能从原会话查看准确流程。 */
+      const scopedConversationId = identity(conversationId, 'conversationId');
+      return this.db
+        .select<DigitalTeamWorkflowRunRow>(
+          `SELECT run.* FROM digital_team_workflow_runs AS run
+           WHERE run.task_id = ? AND (run.main_conversation_id = ? OR EXISTS (
+             SELECT 1 FROM digital_team_node_attempts AS attempt WHERE attempt.run_id = run.id AND attempt.conversation_id = ?
+           )) ORDER BY run.created_at DESC, run.id`,
+          [identity(taskId, 'taskId'), scopedConversationId, scopedConversationId],
+        )
+        .map(mapRun);
+    }
     return this.db.select<DigitalTeamWorkflowRunRow>('SELECT * FROM digital_team_workflow_runs WHERE task_id = ? ORDER BY created_at DESC, id', [identity(taskId, 'taskId')]).map(mapRun);
   }
 

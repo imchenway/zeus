@@ -13,6 +13,8 @@ export type DigitalTeamProgressSubscription = (onEvent: (event: ZeusRealtimeEven
 export interface TaskDigitalTeamProgressProps {
   /** 当前真实任务，不按标题猜测流程身份。 */
   task: Pick<TaskRecord, 'id' | 'projectId'>;
+  /** 独立会话只显示实际绑定它的团队；任务详情省略此项查看最新运行。 */
+  conversationId?: string;
   /** 状态提示与操作文字使用当前界面语言。 */
   language: 'zh-CN' | 'en-US';
   /** 只接收读取端口，组件不能启动、批准或返工。 */
@@ -25,7 +27,7 @@ export interface TaskDigitalTeamProgressProps {
 
 /** 读取状态绑定任务身份，切换任务时不短暂显示另一任务的错误。 */
 interface TeamProgressState {
-  /** 项目与任务组成的稳定身份。 */
+  /** 项目、任务与会话共同限定读取身份。 */
   identity: string;
   /** 最近一次成功读取的准确运行和当前尝试。 */
   projection: DigitalTeamRunProjection | null;
@@ -36,7 +38,7 @@ interface TeamProgressState {
 /** 直接显示当前任务团队的受阻原因，最终聊天文字不能代替运行状态。 */
 export function TaskDigitalTeamProgress(props: TaskDigitalTeamProgressProps) {
   /** 不同任务的状态不得相互复用。 */
-  const identity = JSON.stringify([props.task.projectId, props.task.id]);
+  const identity = JSON.stringify([props.task.projectId, props.task.id, props.conversationId ?? null]);
   /** 当前语言仅影响展示，不改变已保存的诊断原文。 */
   const zh = props.language === 'zh-CN';
   /** 已读取投影保留至下一次实际校准，失败不会弹出阻断窗口。 */
@@ -66,13 +68,15 @@ export function TaskDigitalTeamProgress(props: TaskDigitalTeamProgressProps) {
       reading = true;
       try {
         /** 接口返回的任务身份必须与当前页面一致。 */
-        const runs = (await props.client.loadDigitalTeamRuns(props.task.projectId, props.task.id)).filter((run) => run.taskId === props.task.id && run.projectId === props.task.projectId);
+        const runs = (await props.client.loadDigitalTeamRuns(props.task.projectId, props.task.id, props.conversationId)).filter((run) => run.taskId === props.task.id && run.projectId === props.task.projectId);
         /** 创建时间与稳定身份决定最新运行，避免依赖响应数组偶然顺序。 */
         const latest = runs.sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id))[0];
         /** 当前尝试由服务端给出，不用旧失败消息推断后继是否运行。 */
         const projection = latest ? await props.client.loadDigitalTeamRun(latest.id) : null;
         if (!active) return;
         if (projection && (projection.run.taskId !== props.task.id || projection.run.projectId !== props.task.projectId)) throw new Error('团队运行返回了不匹配的任务身份。');
+        if (projection && props.conversationId && projection.run.mainConversationId !== props.conversationId && !projection.nodeAttempts.some((attempt) => attempt.conversationId === props.conversationId))
+          throw new Error('团队运行未绑定当前会话。');
         currentRunId = projection?.run.id ?? null;
         shouldPoll = Boolean(projection && !['completed', 'failed', 'cancelled'].includes(projection.run.status));
         setState({ identity, projection, stale: false });
@@ -107,7 +111,7 @@ export function TaskDigitalTeamProgress(props: TaskDigitalTeamProgressProps) {
       window.clearInterval(timer);
       if (typeof dispose === 'function') dispose();
     };
-  }, [identity, props.client, props.subscribe, props.task.id, props.task.projectId, reloadRevision]);
+  }, [identity, props.client, props.subscribe, props.task.id, props.task.projectId, props.conversationId, reloadRevision]);
 
   /** 只展示当前任务的事实；初始化时不插入空进度条。 */
   const current = state.identity === identity ? state : null;
