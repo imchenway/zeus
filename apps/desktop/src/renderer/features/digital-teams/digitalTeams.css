@@ -150,15 +150,14 @@
 }
 
 .digital-team-message.is-error {
-  color: var(--zeus-control-danger-text);
-  background: var(--zeus-control-danger-bg);
+  padding-block: 8px;
 }
 
-/* 会话与任务共用紧凑进展，错误原因自然换行且不覆盖正文或输入框。 */
+/* 会话与任务共用一行进展，原始长诊断按需查看。 */
 .task-digital-team-progress {
   display: flex;
   flex: 0 0 auto;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
   padding: 10px 14px;
   border-block-end: 1px solid var(--zeus-product-border);
@@ -176,21 +175,21 @@
 }
 
 /* 状态与工作方式可以并排阅读，窄窗口允许自然换行。 */
-.task-digital-team-progress strong,
-.task-digital-team-progress span {
+.task-digital-team-progress > div > strong,
+.task-digital-team-progress > div > span {
   display: inline;
   margin-inline-end: 10px;
 }
 
-/* 仅真实受阻投影使用错误背景，不以最终消息的语气判断成功或失败。 */
-.task-digital-team-progress.is-blocked {
-  color: var(--zeus-control-danger-text);
-  background: var(--zeus-control-danger-bg);
+/* 状态摘要使用剩余宽度，处理入口始终留在可见范围。 */
+.task-digital-team-progress > .application-error-inline,
+.digital-team-message > .application-error-inline {
+  inline-size: 100%;
 }
 
-/* 原诊断保留完整内容，页面高度由实际原因决定。 */
-.task-digital-team-progress p {
-  margin: 4px 0 0;
+.task-digital-team-progress .application-error-inline-action,
+.digital-team-message .application-error-inline-action {
+  margin-inline-start: auto;
 }
 
 /* 进展和原会话共享列布局，正文仍使用原有独立滚动容器。 */

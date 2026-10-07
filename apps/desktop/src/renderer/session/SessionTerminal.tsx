@@ -20,6 +20,7 @@ import type {
 } from '../apiClient.js';
 
 import { TerminalTabs } from '../features/runtime/TerminalTabs.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { observeTerminalTheme, terminalDisplayOptions } from '../features/runtime/terminalPresentation.js';
 import { TerminalSearchBar, TerminalSearchButton, useTerminalSearch } from '../features/runtime/TerminalSearch.js';
 
@@ -516,8 +517,7 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
       <TerminalSearchBar search={search} language={props.language} />
       {error ? (
         <div className="session-terminal-error" role="alert">
-          <WarningCircle aria-hidden="true" />
-          <span>{error}</span>
+          <VisibleApplicationError error={error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
           <button type="button" onClick={() => setError(null)} aria-label={copy.cancel}>
             <X aria-hidden="true" />
           </button>

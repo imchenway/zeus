@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { TaskRecord } from '../../apiClient.js';
 import type { ZeusRealtimeConnectionState, ZeusRealtimeEvent } from '../../transport/dashboardClientContracts.js';
 import { Button } from '../../ui/Button.js';
+import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import type { DigitalTeamApiClient, DigitalTeamRunProjection } from './digitalTeamApiClient.js';
 import { digitalTeamRunReadOnlyDescription, digitalTeamRunStatusLabel, getDigitalTeamRunBlocker } from './digitalTeamRunPresentation.js';
 import './digitalTeams.css';
@@ -35,7 +36,7 @@ interface TeamProgressState {
   stale: boolean;
 }
 
-/** 直接显示当前任务团队的受阻原因，最终聊天文字不能代替运行状态。 */
+/** 当前任务只显示紧凑状态，受阻详情与准确运行仍可主动打开。 */
 export function TaskDigitalTeamProgress(props: TaskDigitalTeamProgressProps) {
   /** 不同任务的状态不得相互复用。 */
   const identity = JSON.stringify([props.task.projectId, props.task.id, props.conversationId ?? null]);
@@ -120,19 +121,28 @@ export function TaskDigitalTeamProgress(props: TaskDigitalTeamProgressProps) {
   const blocker = current.projection ? getDigitalTeamRunBlocker(current.projection, zh) : null;
   /** 只读分析流程不会被称为已经完成代码开发。 */
   const readOnlyDescription = current.projection ? digitalTeamRunReadOnlyDescription(current.projection.run, zh) : null;
+  if (blocker && current.projection)
+    return (
+      <section className="task-digital-team-progress" aria-label={zh ? '团队进展' : 'Team progress'} role="status">
+        <VisibleApplicationError
+          error={readOnlyDescription ? `${readOnlyDescription}\n${blocker.reason}` : blocker.reason}
+          summary={`${blocker.nodeName} · ${blocker.summary}${current.stale ? (zh ? '（状态待更新）' : ' (status pending refresh)') : ''}`}
+          title={zh ? '团队需要处理' : 'Team needs attention'}
+          language={zh ? 'zh-CN' : 'en'}
+          action={{ label: zh ? '查看分工' : 'View assignment', onClick: () => props.onOpenRun(current.projection!.run.id) }}
+        />
+      </section>
+    );
   return (
-    <section className={`task-digital-team-progress${blocker ? ' is-blocked' : ''}`} aria-label={zh ? '团队进展' : 'Team progress'} role="status">
+    <section className="task-digital-team-progress" aria-label={zh ? '团队进展' : 'Team progress'} role="status">
       <div>
-        <strong>
-          {blocker ? `${zh ? '团队受阻' : 'Team blocked'} · ${blocker.nodeName}` : current.projection ? digitalTeamRunStatusLabel(current.projection.run, zh) : zh ? '团队状态暂时无法读取' : 'Team status is temporarily unavailable'}
-        </strong>
+        <strong>{current.projection ? digitalTeamRunStatusLabel(current.projection.run, zh) : zh ? '团队状态暂时无法读取' : 'Team status is temporarily unavailable'}</strong>
         {readOnlyDescription ? <span>{readOnlyDescription}</span> : null}
-        {blocker ? <p>{blocker.reason}</p> : null}
         {current.stale && current.projection ? <span>{zh ? '连接恢复后会更新进展。' : 'Progress will update after reconnecting.'}</span> : null}
       </div>
       {current.projection ? (
         <Button size="compact" onClick={() => props.onOpenRun(current.projection!.run.id)}>
-          {blocker ? (zh ? '查看原因' : 'Review blocker') : zh ? '查看流程' : 'View workflow'}
+          {zh ? '查看流程' : 'View workflow'}
         </Button>
       ) : (
         <Button size="compact" onClick={() => setReloadRevision((revision) => revision + 1)}>

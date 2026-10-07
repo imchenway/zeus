@@ -1,6 +1,7 @@
 import { temporaryWorkspaceId } from '@zeus/shared';
 import { usePresenceOpen } from '../../ui/MotionPresence.js';
 import { retainInputFocus } from '../../ui/retainInputFocus.js';
+import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { type ClipboardEvent as ReactClipboardEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import {
@@ -2135,7 +2136,7 @@ export function TaskCreateModal(props: {
               ) : null}
               {visibleError ? (
                 <p className="task-create-error" id="task-create-error" role="alert">
-                  {visibleError}
+                  <VisibleApplicationError error={visibleError} language={props.copy.taskCountPrefix === 'Tasks' ? 'en' : 'zh-CN'} />
                 </p>
               ) : null}
             </>

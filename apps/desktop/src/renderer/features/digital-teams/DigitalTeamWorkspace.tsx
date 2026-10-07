@@ -7,6 +7,8 @@ import {
   normalizeDigitalTeamWorkflowDefinition,
   validateDigitalTeamWorkflowDefinition,
   validateDigitalTeamProjectWorkflowStatuses,
+  userFacingErrorCause,
+  type UserFacingErrorCause,
   type DigitalTeamEmployeeNode,
   type DigitalTeamNode,
   type DigitalTeamNodeAttemptRecord,
@@ -26,7 +28,7 @@ import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import type { DashboardClient } from '../../dashboardClient.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
-import { formatVisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { Button } from '../../ui/Button.js';
 import { FormDialog } from '../../ui/FormDialog.js';
 import { MotionPresence } from '../../ui/MotionPresence.js';
@@ -157,9 +159,9 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   /** 单个写操作期间禁止重复提交。 */
   const [busy, setBusy] = useState(false);
   /** 可见错误不以控制台或模拟成功替代。 */
-  const [error, setError] = useState<string | null>(api ? null : zh ? '当前本地服务尚未提供数字团队接口。' : 'The local service does not provide the digital team API.');
+  const [error, setError] = useState<UserFacingErrorCause | string | null>(api ? null : zh ? '当前本地服务尚未提供数字团队接口。' : 'The local service does not provide the digital team API.');
   /** 后台读取错误独立于业务拒绝，恢复成功只能清掉读取错误。 */
-  const [reconciliationError, setReconciliationError] = useState<string | null>(null);
+  const [reconciliationError, setReconciliationError] = useState<UserFacingErrorCause | null>(null);
   /** 页面级成功与等待状态通过 live region 告知用户。 */
   const [status, setStatus] = useState<string>('');
   /** 删除必须二次确认。 */
@@ -308,7 +310,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
         setSelectedRun((current) => (nextProjection && current?.run.id === nextProjection.run.id && current.run.revision > nextProjection.run.revision ? current : nextProjection));
         setSelectedNodeId(null);
       } catch (cause) {
-        if (revision === loadRevisionRef.current) setError(applicationError(cause, zh));
+        if (revision === loadRevisionRef.current) setError(userFacingErrorCause(cause));
       } finally {
         if (revision === loadRevisionRef.current) setLoading(false);
       }
@@ -426,7 +428,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
           setSelectedRun((current) => (current?.run.id === runId && current.run.revision <= nextProjection.run.revision ? nextProjection : current));
         }
       } catch (cause) {
-        if (active && readEpoch === runReadEpochRef.current) setReconciliationError(applicationError(cause, zh));
+        if (active && readEpoch === runReadEpochRef.current) setReconciliationError(userFacingErrorCause(cause));
       } finally {
         reading = false;
         if (active && refreshAgain) {
@@ -582,7 +584,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
     try {
       await persistTemplateDraft(submittedDraft);
     } catch (cause) {
-      if (mountedRef.current) setError(applicationError(cause, zh));
+      if (mountedRef.current) setError(userFacingErrorCause(cause));
     } finally {
       if (mountedRef.current) setBusy(false);
     }
@@ -603,7 +605,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
       await refreshProject(copy.id);
       setStatus(zh ? '模板副本已创建。' : 'Template copy created.');
     } catch (cause) {
-      setError(applicationError(cause, zh));
+      setError(userFacingErrorCause(cause));
     } finally {
       setBusy(false);
     }
@@ -622,7 +624,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
       await refreshProject();
       setStatus(zh ? '团队已删除。' : 'Team deleted.');
     } catch (cause) {
-      setError(applicationError(cause, zh));
+      setError(userFacingErrorCause(cause));
     } finally {
       setBusy(false);
     }
@@ -687,7 +689,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
       setView('runs');
       setStatus(zh ? '团队已开始协作，本次分工与任务范围已保存。' : 'Team work started with the current assignments and task scope saved.');
     } catch (cause) {
-      if (mountedRef.current) setError(applicationError(cause, zh));
+      if (mountedRef.current) setError(userFacingErrorCause(cause));
     } finally {
       runReadEpochRef.current += 1;
       if (mountedRef.current) setBusy(false);
@@ -706,7 +708,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
       const saved = templateNeedsSave ? await persistTemplateDraft(submittedDraft) : selectedTemplate!;
       props.onCreateTask(saved.id, projectId);
     } catch (cause) {
-      if (mountedRef.current) setError(applicationError(cause, zh));
+      if (mountedRef.current) setError(userFacingErrorCause(cause));
     } finally {
       if (mountedRef.current) setBusy(false);
     }
@@ -727,7 +729,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
       setSelectedRun((current) => (current?.run.id === projection.run.id && current.run.revision > projection.run.revision ? current : projection));
       setSelectedNodeId(getDigitalTeamRunBlocker(projection, zh)?.nodeId ?? null);
     } catch (cause) {
-      if (mountedRef.current && revision === loadRevisionRef.current) setError(applicationError(cause, zh));
+      if (mountedRef.current && revision === loadRevisionRef.current) setError(userFacingErrorCause(cause));
     } finally {
       if (mountedRef.current && revision === loadRevisionRef.current) setLoading(false);
     }
@@ -746,7 +748,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
       setRuns((current) => current.map((item) => (item.id === projection.run.id ? projection.run : item)));
       setStatus(state === 'paused' ? (zh ? '已停止新节点派发，正在核对在途工作。' : 'New dispatch is paused while in-flight work is checked.') : zh ? '已继续后续派发。' : 'Dispatch resumed.');
     } catch (cause) {
-      setError(applicationError(cause, zh));
+      setError(userFacingErrorCause(cause));
     } finally {
       runReadEpochRef.current += 1;
       setBusy(false);
@@ -775,7 +777,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
       setDecisionReason('');
       setStatus(zh ? '人工决定已记录，后续推进以 Core 回执为准。' : 'Decision recorded; subsequent progress follows the Core projection.');
     } catch (cause) {
-      setError(applicationError(cause, zh));
+      setError(userFacingErrorCause(cause));
     } finally {
       runReadEpochRef.current += 1;
       setBusy(false);
@@ -859,16 +861,18 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
       <div className="digital-team-messages">
         {error || reconciliationError || runError ? (
           <p className="digital-team-message is-error" role="alert">
-            {error || reconciliationError || runError}
+            <VisibleApplicationError error={error || reconciliationError || runError} language={zh ? 'zh-CN' : 'en'} />
           </p>
         ) : null}
         {view === 'runs' && runBlocker ? (
           <div className="digital-team-message is-error" role="alert">
-            <strong>{runBlocker.nodeName}</strong>
-            <span> · {runBlocker.reason} </span>
-            <Button size="compact" onClick={() => setSelectedNodeId(runBlocker.nodeId)}>
-              {zh ? '查看受阻分工' : 'View blocked step'}
-            </Button>
+            <VisibleApplicationError
+              error={runBlocker.reason}
+              summary={`${runBlocker.nodeName} · ${runBlocker.summary}`}
+              title={zh ? '团队需要处理' : 'Team needs attention'}
+              language={zh ? 'zh-CN' : 'en'}
+              action={{ label: zh ? '查看分工' : 'View assignment', onClick: () => setSelectedNodeId(runBlocker.nodeId) }}
+            />
           </div>
         ) : null}
         {view === 'runs' && runReadOnlyDescription ? (
@@ -956,7 +960,11 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
             </div>
             {draft.sourceIssues?.length ? (
               <div className="digital-team-message is-error" role="alert">
-                <span>{zh ? '这份旧草稿的结构不完整，原内容已保留。重新配置成员后可以保存。' : 'This draft has an incomplete structure. Its original content is preserved until you rebuild and save it.'}</span>
+                <VisibleApplicationError
+                  error={draft.sourceIssues.map((issue) => issue.message).join('\n')}
+                  summary={zh ? '草稿结构不完整，请重新配置成员。' : 'The draft is incomplete. Rebuild its members.'}
+                  language={zh ? 'zh-CN' : 'en'}
+                />
                 <Button
                   size="compact"
                   disabled={busy || loading}
@@ -1535,7 +1543,7 @@ function EmployeeNodeFields(props: {
       </details>
       {!props.employee ? (
         <p className="digital-team-message is-error" role="alert">
-          当前节点绑定的数字员工模板不存在。
+          <VisibleApplicationError error="当前分工绑定的数字员工不存在，请重新选择员工。" />
         </p>
       ) : null}
     </>
@@ -1646,7 +1654,7 @@ function RunInspector(props: {
       </dl>
       {attemptErrorMessage(props.attempt) ? (
         <p className="digital-team-message is-error" role="alert">
-          {attemptErrorMessage(props.attempt)}
+          <VisibleApplicationError error={props.attempt?.error} />
         </p>
       ) : null}
       {props.node.type === 'human_confirmation' && props.node.data.purpose === 'plan_approval' ? <PlanApprovalEvidence run={props.run} /> : null}
@@ -1945,9 +1953,4 @@ function useCompactInspector(): boolean {
     return () => query.removeEventListener('change', sync);
   }, []);
   return compact;
-}
-
-/** 将未知错误交给统一产品错误映射。 */
-function applicationError(cause: unknown, zh: boolean): string {
-  return formatVisibleApplicationError(cause, zh ? 'zh-CN' : 'en');
 }

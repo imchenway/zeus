@@ -890,7 +890,11 @@ export function CodexAccountSettings({ controller }: { controller: ModelSetupCon
           </ul>
         )}
       </section>
-      {!controller.step && controller.error ? <p role="status">{typeof controller.error === 'string' ? controller.error : <VisibleApplicationError error={controller.error} language={zh ? 'zh-CN' : 'en'} />}</p> : null}
+      {!controller.step && controller.error ? (
+        <p role="status">
+          <VisibleApplicationError error={controller.error} language={zh ? 'zh-CN' : 'en'} />
+        </p>
+      ) : null}
     </section>
   );
 }
@@ -1073,7 +1077,7 @@ export function ModelSetupDialog({ controller: c }: { controller: ModelSetupCont
           ) : null}
           {c.error ? (
             <p className="model-setup-error" role="alert">
-              {typeof c.error === 'string' ? c.error : <VisibleApplicationError error={c.error} language={zh ? 'zh-CN' : 'en'} />}
+              <VisibleApplicationError error={c.error} language={zh ? 'zh-CN' : 'en'} />
             </p>
           ) : null}
         </div>

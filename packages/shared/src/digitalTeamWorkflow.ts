@@ -1013,9 +1013,9 @@ function normalizeEmployeeNode(node: DigitalTeamEmployeeNode): DigitalTeamEmploy
   const acceptanceCriteria = node.data.acceptanceCriteria?.map((item) => item.trim()).filter(Boolean) ?? [];
   /** 交付物同样只作为运行协议默认值存在。 */
   const expectedDeliverables = node.data.expectedDeliverables?.map((item) => item.trim()).filter(Boolean) ?? [];
-  /** 新流程不再保存逐节点的模型与技能副本；历史运行读取原冻结定义，不经过此边界。 */
+  /** 保留模型与推理覆盖；历史运行读取原冻结定义，不经过此边界。 */
   const settings = node.data.settings ? structuredClone(node.data.settings) : undefined;
-  if (settings) for (const key of ['modelOverride', 'reasoningEffort', 'serviceTier', 'workMode', 'skillIds']) delete (settings as Record<string, unknown>)[key];
+  if (settings) for (const key of ['serviceTier', 'workMode', 'skillIds']) delete (settings as Record<string, unknown>)[key];
   return {
     ...structuredClone(node),
     type: 'employee',

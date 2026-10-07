@@ -13,6 +13,8 @@ export type ApplicationErrorLanguage = 'zh-CN' | 'en';
 
 export interface ApplicationErrorOptions {
   language?: ApplicationErrorLanguage;
+  /** 业务已确认的简短状态，完整原文仍保留在诊断详情中。 */
+  summary?: string;
   /** 用户主动查看详情时直接展开，避免再次寻找入口。 */
   showDetails?: boolean;
   /** 显示本次失败的操作与对象，避免用户混淆会话。 */
@@ -121,17 +123,53 @@ export function formatVisibleApplicationError(error: unknown, language: Applicat
   return describeUserFacingError(error, language).message;
 }
 
-/** 行内提示直接说明原因，用户可主动打开已有详情窗口。 */
-export function VisibleApplicationError(props: { error: unknown; language?: ApplicationErrorLanguage; className?: string }) {
+/** 各页面共用紧凑摘要；完整说明按需打开，处理动作只使用业务提供的入口。 */
+export function VisibleApplicationError(props: {
+  /** 原始错误或受阻说明，不因折叠而丢失诊断。 */
+  error: unknown;
+  /** 展示文字沿用界面语言。 */
+  language?: ApplicationErrorLanguage;
+  /** 保留调用方布局钩子。 */
+  className?: string;
+  /** 已确认的业务摘要，避免把内部节点与长日志铺到页面上。 */
+  summary?: string;
+  /** 详情窗口标明发生问题的对象。 */
+  title?: string;
+  /** 显式处理入口，不自动重试或重发。 */
+  action?: ApplicationErrorOptions['action'];
+}) {
+  /** 原始说明与当前语言一并交给已有错误解释器。 */
   const language = props.language ?? 'zh-CN';
+  /** 摘要仅影响首屏，详情窗口始终保留原始错误。 */
   const explanation = describeUserFacingError(props.error, language);
+  /** 说明按钮使用可读名称，图标不代替键盘与读屏入口。 */
+  const detailsLabel = language === 'zh-CN' ? '查看完整说明' : 'View full explanation';
   return (
-    <span className={props.className}>
-      <span data-zeus-selectable="text">{explanation.message}</span>
-      {explanation.details ? (
-        <button type="button" className="application-error-details-link" onClick={() => reportApplicationError(props.error, { language, showDetails: true })}>
-          {language === 'zh-CN' ? '错误详情' : 'Error details'}
-        </button>
+    <span className={`application-error-inline${props.className ? ` ${props.className}` : ''}`}>
+      <span className="application-error-inline-summary" data-zeus-selectable="text">
+        {props.summary ?? explanation.message}
+      </span>
+      <button
+        type="button"
+        className="application-error-details-link"
+        aria-label={detailsLabel}
+        title={detailsLabel}
+        onClick={() => reportApplicationError(props.error, { language, summary: props.summary, title: props.title, action: props.action, showDetails: true })}
+      >
+        <WarningCircle aria-hidden="true" />
+      </button>
+      {props.action ? (
+        <Button
+          size="compact"
+          className="application-error-inline-action"
+          onClick={() => {
+            void Promise.resolve()
+              .then(() => props.action?.onClick())
+              .catch((error: unknown) => reportApplicationError(error, { language, title: props.title }));
+          }}
+        >
+          {props.action.label}
+        </Button>
       ) : null}
     </span>
   );
@@ -150,7 +188,7 @@ export function reportApplicationError(error: unknown, options: ApplicationError
   const diagnosticContext = explanation.details || original;
   const detailsBody = [
     `${copy.severity}: ERROR`,
-    `${copy.visibleMessage}: ${explanation.message}`,
+    diagnosticContext.trim() !== (options.summary ?? explanation.message).trim() ? `${copy.visibleMessage}: ${options.summary ?? explanation.message}` : '',
     code ? `${copy.errorCode}: ${code}` : '',
     type ? `${copy.errorType}: ${type}` : '',
     operation ? `${copy.operation}: ${operation}` : '',
@@ -163,10 +201,10 @@ export function reportApplicationError(error: unknown, options: ApplicationError
     id: nextErrorId++,
     language,
     title: options.title ?? copy.title,
-    summary: explanation.message,
+    summary: options.summary ?? explanation.message,
     showDetails: options.showDetails === true,
     details,
-    dedupeKey: `${options.title ?? copy.title}\n${detailsBody}`,
+    dedupeKey: `${options.title ?? copy.title}\n${options.summary ?? explanation.message}\n${detailsBody}`,
     code,
     action: options.action,
   };
@@ -282,7 +320,7 @@ export function ApplicationErrorDialogHost(props: { language: ApplicationErrorLa
                   {current.action.label}
                 </Button>
               ) : null}
-              <Button variant="primary" size="regular" onClick={dismissCurrentError} autoFocus>
+              <Button variant={current.action ? 'secondary' : 'primary'} size="regular" onClick={dismissCurrentError} autoFocus>
                 {copy.close}
               </Button>
             </footer>

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { DigitalEmployeeAvatar, EmployeeAvatarPicker } from './DigitalEmployeeAvatar.js';
 import { Button } from '../../ui/Button.js';
 import { FormDialog } from '../../ui/FormDialog.js';
+import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import type { NativeConversationAppClient } from '../workspace/workspaceSupport.js';
 import type { DigitalEmployeeApiClient } from './digitalEmployeeApiClient.js';
 import type { DigitalEmployeeTemplateRecord } from './digitalEmployeeContracts.js';
@@ -298,7 +299,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
 
       {error ? (
         <p className="digital-employee-feedback is-error" role="alert">
-          {error}
+          <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
         </p>
       ) : null}
 
