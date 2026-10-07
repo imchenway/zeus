@@ -1721,11 +1721,12 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     target.addEventListener('lostpointercapture', cancelProjectSidebarResize);
   }
 
-  /** 当前会话直接显示团队事实；内嵌任务会话沿用任务详情已有进展。 */
+  /** 完整页与内嵌页共用当前会话的团队进展，任务历史由原选择入口保留。 */
   function renderNativeConversationWorkspace(onOpenTaskDetail: (taskId: string) => void, embeddedInTask = false): ReactNode {
     /** 原会话阅读与输入保持同一控制器，不因后台团队状态重读重新创建。 */
     const workspace = renderNativeConversationWorkspaceContent(onOpenTaskDetail, embeddedInTask);
-    if (embeddedInTask || !nativeSessionTask || !selectedNativeConversation || !props.commandClient) return workspace;
+    /** 完整页和任务内嵌页共用准确会话关联，不能由外层任务另取一份旧运行。 */
+    if (!nativeSessionTask || !selectedNativeConversation || !props.commandClient) return workspace;
     return (
       <div className="task-conversation-with-team-progress">
         <TaskDigitalTeamProgress
@@ -1741,6 +1742,8 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
               const task = snapshot.tasks.find((candidate) => candidate.id === nativeSessionTask.id) ?? (await props.commandClient!.loadTask(nativeSessionTask.id));
               /** 任务入口保留准确运行选择；全局导航会清除该选择，不能复用。 */
               requestWorkspaceLeave(() => {
+                /** 内嵌入口先关闭任务详情，不能让原弹层覆盖已打开的运行记录。 */
+                if (embeddedInTask) closeTaskDetail();
                 setDigitalTeamTask(task);
                 setDigitalTeamEntrySelection({ kind: 'run', runId });
                 setActiveNavTarget('digital-teams');
@@ -1996,7 +1999,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           setActiveNavTarget('digital-teams');
         }}
         digitalTeamClient={props.commandClient ?? null}
-        onSubscribeDigitalTeamEvents={props.onSubscribeRealtimeEvents}
         digitalEmployeeClient={props.commandClient ?? null}
         conversations={taskDetailPaneConversations}
         conversationsLoading={taskDetailPaneConversationState?.status === 'loading' && !taskDetailPaneConversationState.choicesKnown}

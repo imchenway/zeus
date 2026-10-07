@@ -88,12 +88,12 @@ export function getDigitalTeamRunBlocker(projection: DigitalTeamRunProjection, z
   return null;
 }
 
-/** 只有实际执行图的全部员工均为普通只读分析时，才说明流程不会修改代码。 */
+/** 只读说明仅描述这次冻结运行，不把历史分工当成当前可编辑流程的能力。 */
 export function digitalTeamRunReadOnlyDescription(run: DigitalTeamWorkflowRunRecord, zh = true): string | null {
   /** 人工入口可能只执行冻结图中的后续节点，必须核对实际执行范围。 */
   const employees = digitalTeamExecutionDefinition(run).nodes.filter((node) => node.type === 'employee');
   if (!employees.length || employees.some((node) => node.data.executionMode !== 'read_only')) return null;
-  return zh ? '本流程只做分析，不会修改代码' : 'This workflow only analyzes and does not modify code';
+  return zh ? '本次运行仅执行只读工作，未安排代码修改' : 'This run uses read-only work and does not include code changes';
 }
 
 /** 失败、未知结果、人工退回和当前已报告的阻塞都需要可见入口；失效历史不再阻挡新尝试。 */
