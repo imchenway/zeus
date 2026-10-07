@@ -11,7 +11,8 @@
 .code-diff-view.is-resizable {
   grid-template-columns: minmax(0, var(--git-diff, 50%)) 6px minmax(0, 1fr);
 }
-.code-diff-view.is-unified {
+.code-diff-view.is-unified,
+.code-diff-view.is-single-side {
   grid-template-columns: minmax(0, 1fr);
 }
 .code-diff-view > .project-source-code-editor {

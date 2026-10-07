@@ -7,7 +7,7 @@ import type { DiffAnnotationLine } from '../code/CodeDiffView.js';
 /** 重型代码视图仅在选中差异文件后加载。 */
 const CodeDiffView = lazy(() => import('../code/CodeDiffView.js').then((module) => ({ default: module.CodeDiffView })));
 
-/** 交付与会话审核共用左右差异；审核可在原始行号处补充操作及评论。 */
+/** 交付与会话审核共用差异；新增、删除只显示有效侧，评论沿用原始行号。 */
 function TaskGitTextDiffTable(props: {
   /** 文件预览使用业务身份，而非补丁文本推断文件内容。 */
   previewRequest?: FilePreviewRequest;
@@ -41,7 +41,10 @@ function TaskGitTextDiffTable(props: {
       <Suspense fallback={<p role="status">{props.zh ? '正在打开差异…' : 'Opening diff…'}</p>}>
         <CodeDiffView
           file={props.diff}
-          label={props.zh ? '左右代码差异' : 'Side-by-side code diff'}
+          singleSide={props.diff.changeType === 'added' ? 'right' : props.diff.changeType === 'deleted' ? 'left' : undefined}
+          label={
+            props.diff.changeType === 'added' ? (props.zh ? '新增文件代码' : 'Added file code') : props.diff.changeType === 'deleted' ? (props.zh ? '删除文件代码' : 'Deleted file code') : props.zh ? '左右代码差异' : 'Side-by-side code diff'
+          }
           annotationLines={props.annotationLines}
           focusAnnotation={props.focusAnnotation}
           renderLineNumber={props.renderLineNumber}

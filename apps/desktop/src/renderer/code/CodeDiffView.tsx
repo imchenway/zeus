@@ -42,6 +42,8 @@ interface CodeDiffViewProps {
   file: TaskGitFileDiff;
   /** 统一视图保留补丁的增删前缀和双行号。 */
   unified?: boolean;
+  /** 新增或删除文件只挂载实际存在的一侧，保留原始行号和评论身份。 */
+  singleSide?: 'left' | 'right';
   /** Git 原有左右视图会配对相邻增删行。 */
   alignReplacements?: boolean;
   /** Git 工作台保留可拖动的左右分隔条。 */
@@ -245,20 +247,22 @@ export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps)
   }, [focusBody]);
 
   return (
-    <div className={`code-diff-view${props.unified ? ' is-unified' : ''}${props.resizable ? ' is-resizable' : ''}`} aria-label={props.label}>
-      <CodeEditor
-        path={`${props.file.oldPath || props.file.newPath}:left:${Boolean(props.unified)}`}
-        language={detectSourceLanguage(props.unified ? props.file.newPath || props.file.oldPath : props.file.oldPath) ?? null}
-        content={documents.left}
-        readOnly
-        label={props.label}
-        extensions={extensions.left}
-        onView={(view) => {
-          views.current.left = view;
-        }}
-      />
-      {!props.unified && props.resizable ? <GitPaneSeparator name="diff" label={props.label} initial={50} min={20} max={80} target=".project-git-diff-side-by-side" /> : null}
-      {!props.unified ? (
+    <div className={`code-diff-view${props.unified ? ' is-unified' : ''}${props.resizable ? ' is-resizable' : ''}${props.singleSide ? ' is-single-side' : ''}`} aria-label={props.label}>
+      {props.singleSide !== 'right' ? (
+        <CodeEditor
+          path={`${props.file.oldPath || props.file.newPath}:left:${Boolean(props.unified)}`}
+          language={detectSourceLanguage(props.unified ? props.file.newPath || props.file.oldPath : props.file.oldPath) ?? null}
+          content={documents.left}
+          readOnly
+          label={props.label}
+          extensions={extensions.left}
+          onView={(view) => {
+            views.current.left = view;
+          }}
+        />
+      ) : null}
+      {!props.unified && !props.singleSide && props.resizable ? <GitPaneSeparator name="diff" label={props.label} initial={50} min={20} max={80} target=".project-git-diff-side-by-side" /> : null}
+      {!props.unified && props.singleSide !== 'left' ? (
         <CodeEditor
           path={`${props.file.newPath || props.file.oldPath}:right`}
           language={detectSourceLanguage(props.file.newPath) ?? null}
