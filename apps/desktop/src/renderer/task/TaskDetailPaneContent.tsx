@@ -27,7 +27,6 @@ import { TaskDigitalEmployeeExecutor, TaskDigitalEmployeePanel, useTaskDigitalEm
 import type { DigitalEmployeeApiClient } from '../features/digital-employees/digitalEmployeeApiClient.js';
 import type { DigitalTeamApiClient } from '../features/digital-teams/digitalTeamApiClient.js';
 import type { DigitalTeamEntrySelection } from '../features/digital-teams/DigitalTeamWorkspace.js';
-import { TaskDigitalTeamProgress, type DigitalTeamProgressSubscription } from '../features/digital-teams/TaskDigitalTeamProgress.js';
 import { digitalTeamRunStatusLabel } from '../features/digital-teams/digitalTeamRunPresentation.js';
 import type { TaskWorkflowClient } from './TaskWorkflowSection.js';
 import type { TaskStageRecord } from '../features/tasks/taskContracts.js';
@@ -116,9 +115,7 @@ export interface TaskDetailPaneContentProps {
   /** 从任务详情选择已保存流程、既有运行或管理入口。 */
   onUseDigitalTeam?(selection: DigitalTeamEntrySelection): void;
   /** 任务详情只读取数字团队模板和当前任务运行。 */
-  digitalTeamClient?: Pick<DigitalTeamApiClient, 'loadDigitalTeamTemplates' | 'loadDigitalTeamRuns' | 'loadDigitalTeamRun'> | null;
-  /** 当前任务进展复用真实事件，断线恢复后重新对账。 */
-  onSubscribeDigitalTeamEvents?: DigitalTeamProgressSubscription;
+  digitalTeamClient?: Pick<DigitalTeamApiClient, 'loadDigitalTeamTemplates' | 'loadDigitalTeamRuns'> | null;
   /** 打开当前项目员工管理，补齐可指派员工。 */
   onManageEmployees?(): void;
   onPushNewConversation: (taskId: string) => void;
@@ -1451,16 +1448,6 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           </span>
         ) : null}
       </div>
-      {props.digitalTeamClient && props.onUseDigitalTeam ? (
-        <TaskDigitalTeamProgress
-          key={props.task.id}
-          task={props.task}
-          language={props.language}
-          client={props.digitalTeamClient}
-          subscribe={props.onSubscribeDigitalTeamEvents}
-          onOpenRun={(runId) => props.onUseDigitalTeam!({ kind: 'run', runId })}
-        />
-      ) : null}
       <div className="task-detail-workspace">
         {/* 沟通是任务详情的主工作区，DOM 与视觉顺序保持一致，键盘阅读不会绕到右侧属性后再返回。 */}
         <div className="task-detail-main">
