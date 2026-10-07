@@ -1527,17 +1527,55 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   }
 }
 
-/* 错误摘要保持连续阅读，详情入口可换行并保留键盘焦点。 */
+/* 全局错误首屏只占一行；摘要可缩短，完整原文由紧邻标题的说明入口承载。 */
+.macos-ai-app .application-error-inline {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  vertical-align: middle;
+  color: var(--zeus-product-text);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.macos-ai-app .application-error-inline-summary {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 长报错不再绘制整块红色底，危险操作与表单字段仍使用原来的警示状态。 */
+.macos-ai-app :is([role='alert'], [role='status'], .is-error):has(> span.application-error-inline) {
+  background: transparent;
+  color: var(--zeus-product-text);
+  min-inline-size: 0;
+}
+
+.macos-ai-app .is-error:has(> span.application-error-inline) {
+  border-color: transparent;
+}
+
 .macos-ai-app .application-error-details-link {
+  align-items: center;
   border: 0;
   background: none;
-  color: inherit;
+  color: var(--zeus-control-danger-text);
   cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
   font: inherit;
-  padding: 2px 4px;
+  padding: 4px;
+}
+.macos-ai-app .application-error-details-link svg {
+  block-size: 16px;
+  inline-size: 16px;
+}
+.macos-ai-app .application-error-inline-action {
+  flex: 0 0 auto;
   margin-inline-start: 6px;
-  text-decoration: underline;
-  text-underline-offset: 3px;
 }
 .macos-ai-app .application-error-details-link:focus-visible {
   outline: 2px solid currentColor;

@@ -5,6 +5,7 @@ import { SparkleIcon as Sparkle } from '@phosphor-icons/react/dist/csr/Sparkle';
 import { StopIcon as Stop } from '@phosphor-icons/react/dist/csr/Stop';
 import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
 import { FileTypeIcon } from './FileTypeIcon.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { TreeStructureIcon as TreeStructure } from '@phosphor-icons/react/dist/csr/TreeStructure';
 import { ListBulletsIcon as ListBullets } from '@phosphor-icons/react/dist/csr/ListBullets';
@@ -343,7 +344,7 @@ export function SourceGitChanges(props: {
         ) : null}
         {error || loadError ? (
           <p className="source-git-error" role="alert">
-            {error || loadError}
+            <VisibleApplicationError error={error || loadError} language={zh ? 'zh-CN' : 'en'} />
           </p>
         ) : null}
         {!client ? <p className="source-git-empty">{zh ? 'Git 服务尚未连接。' : 'Git is not connected.'}</p> : !snapshot && loading ? <p className="source-git-empty">{zh ? '正在读取更改…' : 'Loading changes…'}</p> : null}

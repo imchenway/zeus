@@ -3,6 +3,7 @@ import { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { Button } from '../ui/Button.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 export interface GitMenuItem {
   label: string;
@@ -74,7 +75,11 @@ export function GitMenuActionDialog(props: { value: GitMenuConfirmation; zh: boo
             <textarea value={message} disabled={busy} onChange={(event) => setMessage(event.currentTarget.value)} />
           </label>
         ) : null}
-        {error ? <p role="alert">{error}</p> : null}
+        {error ? (
+          <p role="alert">
+            <VisibleApplicationError error={error} />
+          </p>
+        ) : null}
         <footer>
           <Button variant="secondary" disabled={busy} onClick={props.onClose}>
             {props.zh ? '取消' : 'Cancel'}

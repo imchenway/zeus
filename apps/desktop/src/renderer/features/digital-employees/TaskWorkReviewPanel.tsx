@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '../../ui/Button.js';
+import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import type { DigitalEmployeeApiClient } from './digitalEmployeeApiClient.js';
 import type { TaskWorkDeliverableRecord, TaskWorkReviewNote } from './digitalEmployeeContracts.js';
 
@@ -102,10 +103,7 @@ export function TaskWorkReviewPanel(props: {
       ) : null}
       {error || operationError ? (
         <p role="alert" className="digital-employee-feedback is-error">
-          {error || operationError}{' '}
-          <Button variant="secondary" size="compact" onClick={() => setRevision((value) => value + 1)}>
-            重新读取
-          </Button>
+          <VisibleApplicationError error={error || operationError} action={{ label: '重新读取', onClick: () => setRevision((value) => value + 1) }} />
         </p>
       ) : null}
       {!loaded && !error ? <p role="status">正在读取审查意见…</p> : null}

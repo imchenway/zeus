@@ -45,6 +45,8 @@ export interface DigitalTeamRunBlocker {
   attempt: DigitalTeamNodeAttemptRecord;
   /** 可直接展示的原因，优先使用员工明确列出的剩余问题。 */
   reason: string;
+  /** 首屏只描述当前业务状态，原始长原因留在详情中。 */
+  summary: string;
   /** 原始剩余问题列表，不覆盖错误说明或删除诊断资料。 */
   remainingIssues: readonly string[];
 }
@@ -82,6 +84,7 @@ export function getDigitalTeamRunBlocker(projection: DigitalTeamRunProjection, z
       node,
       attempt,
       reason,
+      summary: blockingAttemptFallback(attempt, zh),
       remainingIssues,
     };
   }
@@ -105,8 +108,9 @@ function isBlockingAttempt(attempt: DigitalTeamNodeAttemptRecord): boolean {
 function blockingAttemptFallback(attempt: DigitalTeamNodeAttemptRecord, zh: boolean): string {
   if (attempt.status === 'outcome_unknown') return zh ? '本次执行结果尚未确认，需要核对原会话。' : 'The outcome is unconfirmed. Review the original conversation.';
   if (attempt.status === 'changes_requested') return zh ? '上游成果已被退回，需要修改后继续。' : 'The upstream result needs changes before continuing.';
-  if (attempt.status === 'active') return zh ? '当前节点已报告阻塞，等待本轮结束后核对。' : 'This step reported a blocker; verification follows when the turn ends.';
-  return zh ? '当前节点未通过，需要核对原因后返工。' : 'This step did not pass. Review the cause before rework.';
+  if (attempt.status === 'active') return zh ? '员工报告了阻塞，请查看分工。' : 'The employee reported a blocker. Review the assignment.';
+  if (attempt.result?.outcome === 'blocked') return zh ? '分工受阻，请查看原因后处理。' : 'The assignment is blocked. Review the cause to continue.';
+  return zh ? '分工未通过，请查看原因后返工。' : 'The assignment did not pass. Review the cause before rework.';
 }
 
 /** 只检查文字是否可读，不修改错误原因或冻结名称的原文。 */

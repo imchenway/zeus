@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ZeusComputerPreview } from '@zeus/shared';
 import type { SessionUiLanguage } from './ThreadItemView.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 /** 会话环境信息下展示最近一次观察，更新不触发整个会话重新渲染。 */
 export function SessionComputerPreview(props: { conversationId: string; language: SessionUiLanguage; active: boolean }) {
@@ -148,7 +149,11 @@ export function SessionComputerPreview(props: { conversationId: string; language
           </div>
         </>
       ) : null}
-      {errorMessage ? <p role="alert">{errorMessage}</p> : null}
+      {errorMessage ? (
+        <p role="alert">
+          <VisibleApplicationError error={errorMessage} language={zh ? 'zh-CN' : 'en'} />
+        </p>
+      ) : null}
       {readFailed ? <p role="status">{zh ? '屏幕控制状态暂时不可用。' : 'Screen control status is unavailable.'}</p> : null}
     </section>
   );

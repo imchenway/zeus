@@ -3,6 +3,7 @@ import type { GlobalAgentSettingsSnapshot } from '@zeus/shared';
 import type { SettingsApiClient } from '../features/settings/settingsApiClient.js';
 import { CodeEditor } from '../code/CodeEditor.js';
 import { Button } from '../ui/Button.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 /** 工作区离开确认调用当前编辑器的保存或放弃。 */
 export interface GlobalAgentSettingsHandle {
@@ -175,7 +176,11 @@ export function GlobalAgentSettingsPane(props: {
                         : 'Loaded'
                       : null}
         </span>
-        {error ? <p role="alert">{error}</p> : null}
+        {error ? (
+          <p role="alert">
+            <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
+          </p>
+        ) : null}
       </div>
       {snapshot ? (
         <div className="global-agent-settings-editor">

@@ -4,6 +4,7 @@ import type { DashboardClient } from '../dashboardClient.js';
 import type { CreateTaskRequest, TaskRecord, UpdateTaskRequest } from '../apiClient.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import type { ZentaoRemoteExecutionSummary, ZentaoRemoteProductSummary, ZentaoRemoteProjectSummary, ZentaoTaskSyncResult } from '../features/integrations/integrationContracts.js';
 
 const pageSize = 24;
@@ -234,7 +235,7 @@ export function ZentaoImportModal(props: ZentaoImportModalProps) {
               ) : null}
               {error ? (
                 <p className="zentao-sync-error" role="alert">
-                  {error}
+                  <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
                 </p>
               ) : null}
               {!instances.length && !loading ? <p className="zentao-sync-empty">{zh ? '请先在设置 → 禅道中配置实例。' : 'Configure a ZenTao instance in Settings → ZenTao first.'}</p> : null}
@@ -466,7 +467,7 @@ export function ZentaoPushModal(props: ZentaoPushModalProps) {
             <p className="zentao-sync-warning">{zh ? '这一步会真实修改禅道数据，只在你确认后执行。' : 'This action changes data in ZenTao and runs only after confirmation.'}</p>
             {error ? (
               <p className="zentao-sync-error" role="alert">
-                {error}
+                <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
               </p>
             ) : null}
             {result ? (
@@ -547,7 +548,7 @@ export function ZentaoPushModal(props: ZentaoPushModalProps) {
               ) : null}
               {error ? (
                 <p className="zentao-sync-error" role="alert">
-                  {error}
+                  <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
                 </p>
               ) : null}
               {result ? (

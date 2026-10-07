@@ -8,6 +8,7 @@ import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { canSteerActiveTurn } from './ConversationComposer.js';
 import { ConversationComposerAttachments } from './ConversationComposerAttachments.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { composerQueuedSubmissions, reorderableQueuedSubmissions } from './conversationQueuePresentation.js';
 import type { NativeQueuedSubmission, NativeSessionState } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
@@ -290,7 +291,7 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                 )}
                 {rowError ? (
                   <small className="session-queued-message-error" role="alert">
-                    {rowError}
+                    <VisibleApplicationError error={rowError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
                   </small>
                 ) : null}
               </article>

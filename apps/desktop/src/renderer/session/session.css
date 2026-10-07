@@ -9809,6 +9809,24 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   background: transparent;
 }
 
+/* 主操作的键盘焦点与整行高亮共用边界，说明按钮保留独立焦点。 */
+.macos-ai-app .session-codex-parity-v1 .session-approval-grant-menu-row:has(> button:focus-visible) {
+  outline: 2px solid var(--zeus-focus-line);
+  outline-offset: -2px;
+}
+
+.macos-ai-app .session-codex-parity-v1 .session-approval-grant-menu-row > button:focus-visible {
+  box-shadow: none;
+  outline: none;
+}
+
+/* 说明入口是独立操作，使用自身的中性焦点边界。 */
+.macos-ai-app .session-codex-parity-v1 .session-approval-grant-info:focus-visible {
+  box-shadow: none;
+  outline: 2px solid var(--zeus-focus-line);
+  outline-offset: 0;
+}
+
 .session-codex-parity-v1 .session-approval-grant-menu-row:has(.session-approval-grant-info) > button {
   padding-inline-end: 0;
 }

@@ -212,7 +212,7 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
     <section className="task-work-cockpit" aria-label={zh ? '任务内容与协作' : 'Task content and collaboration'}>
       {error ? (
         <p className="digital-employee-feedback is-error" role="alert">
-          {error}
+          <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
         </p>
       ) : null}
 
@@ -1034,13 +1034,12 @@ function TaskEmployeeRunDialog(props: {
           ) : null}
           {capabilityError || previewError || supplementalResourceError || props.operationError || submitError ? (
             <p className="digital-employee-feedback is-error" role="alert">
-              {capabilityError ?? previewError ?? supplementalResourceError ?? props.operationError ?? submitError}
+              <VisibleApplicationError error={capabilityError ?? previewError ?? supplementalResourceError ?? props.operationError ?? submitError} language={zh ? 'zh-CN' : 'en'} />
             </p>
           ) : null}
           {hasRunnableModel &&
             preview?.blockers.map((blocker) => (
               <p key={blocker.code} className="digital-employee-feedback is-error">
-                <WarningCircle size={17} aria-hidden="true" />
                 <VisibleApplicationError error={blocker} language={zh ? 'zh-CN' : 'en'} />
               </p>
             ))}
