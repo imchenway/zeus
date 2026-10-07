@@ -228,6 +228,8 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   const runError = view === 'runs' && !runBlocker && typeof selectedRunRecord?.error?.message === 'string' ? selectedRunRecord.error.message : null;
   /** 运行提示使用创建时冻结的实际员工工作方式。 */
   const runReadOnlyDescription = selectedRunRecord ? digitalTeamRunReadOnlyDescription(selectedRunRecord, zh) : null;
+  /** 只读失败需要调整原流程再启动；返工沿用冻结权限，未知结果不能引导重复运行。 */
+  const readOnlyRunTemplate = props.task?.id === selectedRunRecord?.taskId && selectedRunRecord?.status === 'failed' && runReadOnlyDescription ? templates.find((template) => template.id === selectedRunRecord.templateId) : undefined;
   /** 运行图严格使用创建时冻结的定义。 */
   const runDefinition = selectedRunRecord ? digitalTeamExecutionDefinition(selectedRunRecord) : null;
   /** 当前运行尝试按节点建立展示索引。 */
@@ -869,7 +871,27 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
             </Button>
           </div>
         ) : null}
-        {view === 'runs' && runReadOnlyDescription ? <p className="digital-team-message">{runReadOnlyDescription}</p> : null}
+        {view === 'runs' && runReadOnlyDescription ? (
+          <p className="digital-team-message">
+            <span>{runReadOnlyDescription}</span>
+            {readOnlyRunTemplate ? (
+              <>
+                <span>{zh ? '。需要修改代码时，请调整流程并重新开始；返工会沿用原来的只读设置。' : '. To edit code, adjust the workflow and start again; rework keeps the original read-only settings.'}</span>
+                <Button
+                  size="compact"
+                  disabled={loading || busy}
+                  onClick={() => {
+                    /** 打开准确原流程草稿，不授予任务权限或重放旧运行。 */
+                    selectTemplate(readOnlyRunTemplate.id);
+                    setView('editor');
+                  }}
+                >
+                  {zh ? '调整分工' : 'Adjust workflow'}
+                </Button>
+              </>
+            ) : null}
+          </p>
+        ) : null}
         {view === 'editor' && props.task && draftOpen && !loading && analysisOnly ? (
           <p className="digital-team-message">
             {zh ? '当前团队只做只读分析，不会修改代码。需要开发时，请明确调整开发分工的工作方式。' : 'This team only analyzes and does not modify code. To develop, explicitly change the development step’s work mode.'}
