@@ -335,7 +335,7 @@ class DiffGutterMarker extends GutterMarker {
 function diffLineDecorations(view: EditorView, rows: DiffRow[], side: 'left' | 'right', unified: boolean) {
   const decorations = [];
   for (const range of view.visibleRanges) {
-    for (let position = range.from; position <= range.to; ) {
+    for (let position = range.from; position <= range.to;) {
       const line = view.state.doc.lineAt(position);
       const row = rows[line.number - 1];
       const kind = row?.kind === 'header' || unified ? row?.kind : row?.[side === 'left' ? 'leftNumber' : 'rightNumber'] === null ? 'empty' : row?.kind === (side === 'left' ? 'addition' : 'deletion') ? 'context' : row?.kind;
@@ -351,7 +351,7 @@ function diffRows(file: TaskGitFileDiff, align: boolean, omitHunkHeaders: boolea
   const rows: DiffRow[] = [];
   for (const hunk of file.hunks) {
     if (!omitHunkHeaders) rows.push({ left: hunk.header, right: hunk.header, leftNumber: null, rightNumber: null, kind: 'header' });
-    for (let index = 0; index < hunk.lines.length; ) {
+    for (let index = 0; index < hunk.lines.length;) {
       const line = hunk.lines[index]!;
       if (align && (line.type === 'deletion' || line.type === 'addition')) {
         const deleted: typeof hunk.lines = [];

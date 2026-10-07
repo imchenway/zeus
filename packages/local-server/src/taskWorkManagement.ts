@@ -2545,7 +2545,7 @@ function resolveAgentModel(capability: Record<string, unknown>, blockers: TaskWo
     blockers.push({ code: 'ZEUS_TASK_WORK_MODEL_AMBIGUOUS', message: `模型 ${requested} 对应多个连接，请重新选择具体模型。` });
     return null;
   }
-  const model = requested ? exactModel ?? namedModels[0] : models.find((candidate) => candidate.available);
+  const model = requested ? (exactModel ?? namedModels[0]) : models.find((candidate) => candidate.available);
   if (!model || !model.available) {
     blockers.push({ code: 'ZEUS_TASK_WORK_MODEL_UNAVAILABLE', message: requested ? `模型 ${requested} 当前不可用。` : '项目当前没有可用模型。' });
     return null;
