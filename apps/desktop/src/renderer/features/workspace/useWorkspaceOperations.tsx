@@ -1725,12 +1725,13 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
   function renderNativeConversationWorkspace(onOpenTaskDetail: (taskId: string) => void, embeddedInTask = false): ReactNode {
     /** 原会话阅读与输入保持同一控制器，不因后台团队状态重读重新创建。 */
     const workspace = renderNativeConversationWorkspaceContent(onOpenTaskDetail, embeddedInTask);
-    if (embeddedInTask || !nativeSessionTask || !props.commandClient) return workspace;
+    if (embeddedInTask || !nativeSessionTask || !selectedNativeConversation || !props.commandClient) return workspace;
     return (
       <div className="task-conversation-with-team-progress">
         <TaskDigitalTeamProgress
-          key={nativeSessionTask.id}
+          key={`${nativeSessionTask.id}:${selectedNativeConversation.id}`}
           task={nativeSessionTask}
+          conversationId={selectedNativeConversation.id}
           language={appShellSettings.appLanguage}
           client={props.commandClient}
           subscribe={props.onSubscribeRealtimeEvents}

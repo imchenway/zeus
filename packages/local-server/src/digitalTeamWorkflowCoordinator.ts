@@ -361,14 +361,15 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
     return this.options.templates.delete(template.id, expectedRevision);
   }
 
-  /** 列出项目运行。 */
-  listRuns(projectId: string, taskId?: string): unknown {
+  /** 按真实项目、任务与可选会话关联读取运行，不把旧流程挂到新的独立员工会话。 */
+  listRuns(projectId: string, taskId?: string, conversationId?: string): unknown {
     this.requireProject(projectId);
+    if (conversationId !== undefined && taskId === undefined) throw routeError('ZEUS_DIGITAL_TEAM_TASK_REQUIRED', '会话团队进展必须指定所属任务。', 400);
     if (taskId === undefined) return this.options.runs.listByProject(projectId);
     /** 当前任务单独读取全部运行，避免被项目最近一百条记录挤出入口。 */
     const task = this.options.tasks.getById(requiredText(taskId, '任务身份无效。', 512));
     if (!task || task.projectId !== projectId) throw routeError('ZEUS_DIGITAL_TEAM_TASK_NOT_FOUND', '任务不存在或不属于当前项目。', 404);
-    return this.options.runs.listByTask(task.id);
+    return this.options.runs.listByTask(task.id, conversationId);
   }
 
   /** 返回运行、完整历史和每节点当前尝试。 */
@@ -490,7 +491,7 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
     /** 任务事实必须来自服务端现存记录，客户端只能确认基线。 */
     const taskFacts = existingTask ? { ...structuredClone(existingTask), confirmCommittedBaseline: input.taskFacts.confirmCommittedBaseline === true } : structuredClone(input.taskFacts);
     if (grantTaskCodeAuthority && !existingTask) {
-      /** 新任务同样只从用户明确勾选取得这三项能力，不从岗位或流程名称推断。 */
+      /** 新任务同样只从用户明确开始研发取得这三项能力，不从岗位或流程名称推断。 */
       taskFacts.allowCodeChanges = true;
       taskFacts.allowTests = true;
       taskFacts.allowGitCommit = true;

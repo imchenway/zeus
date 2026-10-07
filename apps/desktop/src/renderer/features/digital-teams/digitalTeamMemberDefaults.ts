@@ -71,9 +71,11 @@ export function withDigitalTeamDefaultRepairEmployee(definition: DigitalTeamWork
   return assignedDeveloperIds.length === 1 ? { ...definition, repairEmployeeId: assignedDeveloperIds[0] } : definition;
 }
 
-/** 完整标准研发岗位的旧通用图只生成候选草稿，必须由用户显式选择后才应用。 */
+/** 未编辑的旧默认研发图按真实岗位补齐分工；只改变草稿，保存和启动仍由用户操作。 */
 export function buildDigitalTeamDevelopmentDraft(definition: DigitalTeamWorkflowDefinition, employees: readonly DigitalTeamMemberRole[], completedStatusId?: string): DigitalTeamWorkflowDefinition | null {
-  if (!definition.nodes.length || definition.nodes.some((node) => node.type !== 'employee' || node.data.purpose !== 'work' || node.data.executionMode !== 'read_only')) return null;
+  if (definition.nodes.length !== 3 || definition.nodes.some((node) => node.type !== 'employee' || node.data.purpose !== 'work' || node.data.executionMode !== 'read_only')) return null;
+  /** 只有历史生成的通用要求可补默认值；明确配置的只读流程保持原意。 */
+  if (definition.nodes.some((node) => node.type !== 'employee' || !isDefaultDevelopmentMember(node))) return null;
   /** 岗位来源绑定当前真实员工身份，不用节点历史标题反推。 */
   const rolesByEmployeeId = new Map(employees.map((employee) => [employee.id, employee.role.trim()]));
   /** 每个节点必须对应明确标准岗位，额外自定义岗位不参与批量转换。 */
@@ -94,18 +96,25 @@ export function buildDigitalTeamDevelopmentDraft(definition: DigitalTeamWorkflow
             executionMode: defaults.executionMode,
             ...(node.data.completionStatusId === undefined && defaults.completionStatusId ? { completionStatusId: defaults.completionStatusId } : {}),
             instructions: !node.data.instructions.trim() || node.data.instructions === genericMemberDefaults.instructions ? defaults.instructions : node.data.instructions,
-            acceptanceCriteria:
-              !node.data.acceptanceCriteria?.length || (node.data.acceptanceCriteria.length === 1 && node.data.acceptanceCriteria[0] === genericMemberDefaults.acceptanceCriteria?.[0])
-                ? defaults.acceptanceCriteria
-                : node.data.acceptanceCriteria,
-            expectedDeliverables:
-              !node.data.expectedDeliverables?.length || (node.data.expectedDeliverables.length === 1 && node.data.expectedDeliverables[0] === genericMemberDefaults.expectedDeliverables?.[0])
-                ? defaults.expectedDeliverables
-                : node.data.expectedDeliverables,
+            acceptanceCriteria: defaults.acceptanceCriteria,
+            expectedDeliverables: defaults.expectedDeliverables,
           },
         };
       }),
     },
     employees,
+  );
+}
+
+/** 精确识别早期界面生成的通用职责，不按用户的员工名称推断执行授权。 */
+function isDefaultDevelopmentMember(node: DigitalTeamEmployeeNode): boolean {
+  /** 两种历史默认完成标准均由旧界面生成，自定义内容不参与补齐。 */
+  const criteria = node.data.acceptanceCriteria ?? [];
+  /** 空值与通用产物描述都是旧默认状态。 */
+  const deliverables = node.data.expectedDeliverables ?? [];
+  return (
+    (!node.data.instructions.trim() || node.data.instructions === genericMemberDefaults.instructions) &&
+    (criteria.length === 0 || (criteria.length === 1 && (criteria[0] === genericMemberDefaults.acceptanceCriteria?.[0] || criteria[0] === `完成“${node.data.title}”并提交可核对结果`))) &&
+    (deliverables.length === 0 || (deliverables.length === 1 && deliverables[0] === genericMemberDefaults.expectedDeliverables?.[0]))
   );
 }

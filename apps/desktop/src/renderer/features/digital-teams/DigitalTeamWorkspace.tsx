@@ -164,8 +164,6 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   const [status, setStatus] = useState<string>('');
   /** 删除必须二次确认。 */
   const [pendingDelete, setPendingDelete] = useState<DigitalTeamWorkflowTemplateRecord | null>(null);
-  /** 代码执行授权仅适用于当前任务和当前流程。 */
-  const [confirmCommittedBaseline, setConfirmCommittedBaseline] = useState(false);
   /** 员工选择器按需展开，不长期占用画布列。 */
   const [memberPickerOpen, setMemberPickerOpen] = useState(false);
   /** 当前人工操作弹窗。 */
@@ -187,10 +185,10 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   const analysisOnly = draft.definition.nodes.some((node) => node.type === 'employee') && draft.definition.nodes.every((node) => node.type !== 'employee' || node.data.executionMode === 'read_only');
   /** 当前选中模板的服务端记录。 */
   const selectedTemplate = templates.find((template) => template.id === draft.id) ?? null;
+  /** 用户编辑与默认职责补齐都需保存；浏览视口变化不触发保存，也不伪装成用户编辑。 */
+  const templateNeedsSave = dirty || !selectedTemplate || JSON.stringify({ ...draft.definition, viewport: selectedTemplate.definition.viewport }) !== JSON.stringify(selectedTemplate.definition);
   /** 团队统一引用已创建的全局员工，项目只决定任务运行位置。 */
   const memberCatalog: DigitalTeamMemberRecord[] = employeeTemplates;
-  /** 完整旧通用研发图仅提供显式转换入口，不自动覆盖用户已配置的职责。 */
-  const developmentDraft = useMemo(() => buildDigitalTeamDevelopmentDraft(draft.definition, memberCatalog, projectStatusRoles.completedStatusId), [draft.definition, memberCatalog, projectStatusRoles.completedStatusId]);
   /** 员工名称索引供画布卡片与检查器复用。 */
   const employeeNames = useMemo(() => new Map(memberCatalog.map((employee) => [employee.id, employee.name])), [memberCatalog]);
   /** 共享图校验与已创建员工核对共同决定团队能否形成可运行定义。 */
@@ -281,17 +279,27 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
         const nextTemplate = nextTemplates.find((template) => template.id === desiredTemplateId) ?? nextTemplates[0];
         /** 保留开始编辑时的修订，服务端有并发修改时仍由保存门禁核对。 */
         const restoredDraft = currentDraft.dirty && (!preferredTemplateId || preferredTemplateId === currentDraft.draft.id) ? currentDraft.draft : readDigitalTeamDraft(nextTemplate?.id ?? null);
-        setDraft(restoredDraft ?? (nextTemplate ? templateDraft(nextTemplate) : emptyTemplateDraft()));
+        /** 旧默认三人研发图直接补齐草稿职责，避免要求用户手动修正系统生成的只读配置。 */
+        const loadedDraft = restoredDraft ?? (nextTemplate ? templateDraft(nextTemplate) : emptyTemplateDraft());
+        /** 员工与完成角色都来自本次实际读取，不能沿用上一次刷新目录。 */
+        const preparedDraft = prepareDevelopmentTemplateDraft(
+          loadedDraft,
+          nextEmployeeTemplates.filter((employee) => !employee.builtIn),
+          statusConfig.roles.completedStatusId,
+        );
+        /** 默认补齐不冒充用户修改，也不把旧修订暂存成需要手动恢复的草稿。 */
+        const nextDirty = Boolean(restoredDraft);
+        draftStateRef.current = { draft: preparedDraft, dirty: nextDirty };
+        setDraft(preparedDraft);
         setDraftOpen(Boolean(restoredDraft || nextTemplate));
         rememberDigitalTeamDraftSelection(restoredDraft?.id ?? nextTemplate?.id ?? null);
         setCanvasGeneration((current) => current + 1);
-        setDirty(Boolean(restoredDraft));
+        setDirty(nextDirty);
         const nextRun = visibleRuns.find((run) => run.id === preferredRunId) ?? visibleRuns.find((run) => run.id === selectedRun?.run.id) ?? (props.task ? visibleRuns[0] : null);
         if (entrySelection?.kind === 'template' && nextTemplate?.id === entrySelection.templateId && nextTemplate.ready && !visibleRuns.some((run) => !terminalRunStatuses.has(run.status))) {
           setView('editor');
         } else if (entrySelection?.kind === 'run' && nextRun?.id === entrySelection.runId) setView('runs');
         else if (entrySelection?.kind === 'manage') setView('editor');
-        else if (props.task && nextRun) setView('runs');
         /** 刷新选中运行时重新读取尝试历史，不能只替换运行标题行。 */
         const nextProjection = nextRun ? await api.loadDigitalTeamRun(nextRun.id) : null;
         if (!mountedRef.current || revision !== loadRevisionRef.current) return;
@@ -326,7 +334,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
       if (!detail) return;
       /** 最新引用覆盖快速离开并返回期间的输入。 */
       const current = draftStateRef.current;
-      if (!current.dirty || JSON.stringify(current.draft) !== JSON.stringify(detail.submittedDraft)) return;
+      if (JSON.stringify(current.draft) !== JSON.stringify(detail.submittedDraft)) return;
       /** 先同步基线，再刷新目录，使此前读取代次失效。 */
       const savedDraft = templateDraft(detail.savedTemplate);
       draftStateRef.current = { draft: savedDraft, dirty: false };
@@ -334,12 +342,13 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
       setDirty(false);
       setError(null);
       setStatus(zh ? '团队已保存。' : 'Team saved.');
+      /** 保存回执已包含准确记录，无需再读取旧列表覆盖随后的新运行。 */
+      setTemplates((currentTemplates) => [detail.savedTemplate, ...currentTemplates.filter((template) => template.id !== detail.savedTemplate.id)]);
       rememberDigitalTeamDraftSelection(detail.savedTemplate.id);
-      void refreshProject(detail.savedTemplate.id);
     };
     window.addEventListener(draftSavedEvent, receiveSavedDraft);
     return () => window.removeEventListener(draftSavedEvent, receiveSavedDraft);
-  }, [refreshProject, zh]);
+  }, [zh]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -461,11 +470,6 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
     };
   }, [api, projectId, props.task?.id, selectedRun?.run.id, view, zh]);
 
-  useEffect(() => {
-    // 流程、项目或任务事实改变后必须重新确认代码执行范围。
-    setConfirmCommittedBaseline(false);
-  }, [draft, projectId, props.task?.id, props.task?.updatedAt]);
-
   /** 所有画布与表单修改共用脏状态。 */
   const changeDefinition = useCallback((definition: DigitalTeamWorkflowDefinition | ((current: DigitalTeamWorkflowDefinition) => DigitalTeamWorkflowDefinition)): void => {
     /** 同一手势中的节点和视口回调都基于最新草稿合并。 */
@@ -506,8 +510,15 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
     if (!template) return;
     /** 每个团队恢复各自的编辑内容。 */
     const cached = readDigitalTeamDraft(template.id);
-    setDraft(cached ?? templateDraft(template));
-    setDirty(Boolean(cached));
+    /** 只补齐旧默认值，显式只读要求及本地编辑不被覆盖。 */
+    const loadedDraft = cached ?? templateDraft(template);
+    /** 岗位与任务完成角色来自当前已读取目录。 */
+    const preparedDraft = prepareDevelopmentTemplateDraft(loadedDraft, memberCatalog, projectStatusRoles.completedStatusId);
+    /** 切换后同步引用，后续画布回调不能重新带回旧团队。 */
+    const nextDirty = Boolean(cached);
+    draftStateRef.current = { draft: preparedDraft, dirty: nextDirty };
+    setDraft(preparedDraft);
+    setDirty(nextDirty);
     rememberDigitalTeamDraftSelection(template.id);
     setDraftOpen(true);
     setCanvasGeneration((current) => current + 1);
@@ -529,6 +540,36 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
     setError(null);
   };
 
+  /** 保存和开始协作共用同一提交边界，以实际保存修订创建运行。 */
+  const persistTemplateDraft = async (submittedDraft: TemplateDraft): Promise<DigitalTeamWorkflowTemplateRecord> => {
+    if (!api) throw new Error(zh ? '数字团队接口尚未就绪。' : 'The digital team API is not ready.');
+    /** 编辑期间保留原输入，正式提交只清除完成标准和产物列表中的空行。 */
+    const saved = await api.saveDigitalTeamTemplate({
+      ...(submittedDraft.id ? { id: submittedDraft.id } : {}),
+      expectedRevision: submittedDraft.revision,
+      name: submittedDraft.name.trim(),
+      description: submittedDraft.description.trim(),
+      definition: {
+        ...submittedDraft.definition,
+        nodes: submittedDraft.definition.nodes.map((node) =>
+          node.type === 'employee'
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  acceptanceCriteria: (node.data.acceptanceCriteria ?? []).map((item) => item.trim()).filter(Boolean),
+                  expectedDeliverables: (node.data.expectedDeliverables ?? []).map((item) => item.trim()).filter(Boolean),
+                },
+              }
+            : node,
+        ),
+      },
+    });
+    forgetDigitalTeamDraft(submittedDraft.id, submittedDraft);
+    window.dispatchEvent(new CustomEvent<DraftSavedDetail>(draftSavedEvent, { detail: { submittedDraft, savedTemplate: saved } }));
+    return saved;
+  };
+
   /** 显式保存模板并以服务端回执作为新基线。 */
   const saveTemplate = async (): Promise<void> => {
     if (!api || !draft.name.trim() || draft.sourceIssues?.length) return;
@@ -537,30 +578,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
     setBusy(true);
     setError(null);
     try {
-      const saved = await api.saveDigitalTeamTemplate({
-        ...(draft.id ? { id: draft.id } : {}),
-        expectedRevision: draft.revision,
-        name: draft.name.trim(),
-        description: draft.description.trim(),
-        definition: {
-          ...draft.definition,
-          // 编辑时保留换行；保存边界统一去除空行，避免点击保存与失焦先后影响结果。
-          nodes: draft.definition.nodes.map((node) =>
-            node.type === 'employee'
-              ? {
-                  ...node,
-                  data: {
-                    ...node.data,
-                    acceptanceCriteria: (node.data.acceptanceCriteria ?? []).map((item) => item.trim()).filter(Boolean),
-                    expectedDeliverables: (node.data.expectedDeliverables ?? []).map((item) => item.trim()).filter(Boolean),
-                  },
-                }
-              : node,
-          ),
-        },
-      });
-      forgetDigitalTeamDraft(submittedDraft.id, submittedDraft);
-      window.dispatchEvent(new CustomEvent<DraftSavedDetail>(draftSavedEvent, { detail: { submittedDraft, savedTemplate: saved } }));
+      await persistTemplateDraft(submittedDraft);
     } catch (cause) {
       if (mountedRef.current) setError(applicationError(cause, zh));
     } finally {
@@ -616,7 +634,12 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
       setDraftOpen(false);
       setDirty(false);
     } else {
-      setDraft(templateDraft(selectedTemplate));
+      /** 恢复服务端输入后仍补旧系统默认值，自定义改动可以正常放弃。 */
+      const savedDraft = templateDraft(selectedTemplate);
+      /** 补齐默认研发职责不会形成自动运行。 */
+      const preparedDraft = prepareDevelopmentTemplateDraft(savedDraft, memberCatalog, projectStatusRoles.completedStatusId);
+      draftStateRef.current = { draft: preparedDraft, dirty: false };
+      setDraft(preparedDraft);
       setDirty(false);
     }
     setSelectedNodeId(null);
@@ -625,43 +648,65 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
     setStatus(zh ? '已恢复最近保存版本。' : 'The last saved version was restored.');
   };
 
-  /** 运行必须基于已保存且共享校验通过的精确模板修订。 */
+  /** 开始研发就是本任务的明确开发动作；先保存草稿，再冻结真实回执修订。 */
   const createRun = async (): Promise<void> => {
-    if (!api || !props.task || !projectId || !selectedTemplate || dirty || loading || busy || validationIssues.length > 0 || (usesCode && !confirmCommittedBaseline) || runs.some((run) => !terminalRunStatuses.has(run.status))) return;
+    if (!api || !props.task || !projectId || !draft.name.trim() || loading || busy || validationIssues.length > 0 || runs.some((run) => !terminalRunStatuses.has(run.status))) return;
+    /** 用户点击时的分工和执行范围固定，不受保存期间继续输入的影响。 */
+    const submittedDraft = structuredClone(draft);
     setBusy(true);
     runReadEpochRef.current += 1;
     setError(null);
     try {
+      /** 保存失败或修订冲突直接停止，不能使用旧只读模板启动另一轮。 */
+      const savedTemplate = templateNeedsSave ? await persistTemplateDraft(submittedDraft) : selectedTemplate!;
       const projection = await api.createDigitalTeamRun(projectId, {
         taskId: props.task.id,
         expectedTaskUpdatedAt: props.task.updatedAt,
-        templateId: selectedTemplate.id,
-        templateRevision: selectedTemplate.revision,
+        templateId: savedTemplate.id,
+        templateRevision: savedTemplate.revision,
         title: props.task.title,
         description: props.task.description ?? '',
-        /** 明确勾选才提交顶层任务授权，岗位默认值与任务事实均不能代替确认。 */
-        ...(usesCode && confirmCommittedBaseline ? { grantTaskCodeAuthority: true } : {}),
+        /** 只有实际点击开始研发才授权三项本地动作；读取目录和补默认值不能授权。 */
+        ...(usesCode ? { grantTaskCodeAuthority: true } : {}),
         taskFacts: {
           title: props.task.title,
           description: props.task.description ?? '',
           source: 'digital_team',
-          confirmCommittedBaseline: confirmCommittedBaseline,
-          allowCodeChanges: usesCode && confirmCommittedBaseline,
-          allowTests: usesCode && confirmCommittedBaseline,
-          allowGitCommit: usesCode && confirmCommittedBaseline,
+          confirmCommittedBaseline: usesCode,
+          allowCodeChanges: usesCode,
+          allowTests: usesCode,
+          allowGitCommit: usesCode,
         },
       });
-      setConfirmCommittedBaseline(false);
+      if (!mountedRef.current) return;
       setRuns((current) => [projection.run, ...current.filter((item) => item.id !== projection.run.id)]);
       setSelectedRun(projection);
       setSelectedNodeId(null);
       setView('runs');
       setStatus(zh ? '团队已开始协作，本次分工与任务范围已保存。' : 'Team work started with the current assignments and task scope saved.');
     } catch (cause) {
-      setError(applicationError(cause, zh));
+      if (mountedRef.current) setError(applicationError(cause, zh));
     } finally {
       runReadEpochRef.current += 1;
-      setBusy(false);
+      if (mountedRef.current) setBusy(false);
+    }
+  };
+
+  /** 全局创建任务同样先保存当前分工，实际运行由任务创建入口的明确提交发起。 */
+  const createTaskWithTeam = async (): Promise<void> => {
+    if (!api || !props.onCreateTask || !projectId || !draft.name.trim() || loading || busy || validationIssues.length > 0) return;
+    /** 创建入口使用点击时的准确草稿，不要求先做另一次保存。 */
+    const submittedDraft = structuredClone(draft);
+    setBusy(true);
+    setError(null);
+    try {
+      /** 只有真实保存成功的修订才能进入后续任务创建。 */
+      const saved = templateNeedsSave ? await persistTemplateDraft(submittedDraft) : selectedTemplate!;
+      props.onCreateTask(saved.id, projectId);
+    } catch (cause) {
+      if (mountedRef.current) setError(applicationError(cause, zh));
+    } finally {
+      if (mountedRef.current) setBusy(false);
     }
   };
 
@@ -971,29 +1016,6 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                   </div>
                 </div>
               </details>
-              {developmentDraft ? (
-                <Button
-                  size="compact"
-                  disabled={busy || loading || Boolean(draft.sourceIssues?.length)}
-                  title={zh ? '按当前 CTO、开发、测试岗位配置研发分工，保存后用于新运行。' : 'Configure the current CTO, developer, and tester roles for new runs after saving.'}
-                  onClick={() => {
-                    changeDefinition(developmentDraft);
-                    /** 只有实际开发负责人且修复未停用时，才能说明开发会负责缺陷闭环。 */
-                    const repairDeveloper = memberCatalog.find((employee) => employee.id === developmentDraft.repairEmployeeId && employee.role.trim() === '开发');
-                    setStatus(
-                      repairDeveloper && developmentDraft.maxRepairRounds !== 0
-                        ? zh
-                          ? '已配置研发分工，开发负责缺陷修复与复验；团队设置可调整，保存后用于新运行。'
-                          : 'Development roles configured. The developer handles defect repairs and repeat verification; adjust in team settings and save for new runs.'
-                        : zh
-                          ? '已配置研发分工；团队设置可调整缺陷修复负责人和轮数，保存后用于新运行。'
-                          : 'Development roles configured. Adjust the defect repair owner and rounds in team settings and save for new runs.',
-                    );
-                  }}
-                >
-                  {zh ? '配置研发分工' : 'Configure development roles'}
-                </Button>
-              ) : null}
               <div className="digital-team-save-actions">
                 <div className="digital-team-member-picker-anchor">
                   <Button size="compact" onClick={() => setMemberPickerOpen((open) => !open)} aria-expanded={memberPickerOpen} disabled={Boolean(draft.sourceIssues?.length)}>
@@ -1012,7 +1034,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                     </div>
                   ) : null}
                 </div>
-                <Button size="compact" variant="primary" busy={busy} disabled={!draft.name.trim() || Boolean(draft.sourceIssues?.length) || (!dirty && Boolean(selectedTemplate))} onClick={() => void saveTemplate()}>
+                <Button size="compact" variant="primary" busy={busy} disabled={!draft.name.trim() || Boolean(draft.sourceIssues?.length) || !templateNeedsSave} onClick={() => void saveTemplate()}>
                   {zh ? '保存' : 'Save'}
                 </Button>
                 {dirty ? (
@@ -1023,37 +1045,23 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                 <Button
                   size="compact"
                   variant="primary"
-                  disabled={
-                    !selectedTemplate ||
-                    dirty ||
-                    validationIssues.length > 0 ||
-                    loading ||
-                    busy ||
-                    (props.task ? (usesCode && !confirmCommittedBaseline) || runs.some((run) => !terminalRunStatuses.has(run.status)) : !props.onCreateTask || !projectId)
-                  }
+                  disabled={!draft.name.trim() || validationIssues.length > 0 || loading || busy || (props.task ? runs.some((run) => !terminalRunStatuses.has(run.status)) : !props.onCreateTask || !projectId)}
                   onClick={() => {
                     if (props.task) void createRun();
-                    else if (selectedTemplate) props.onCreateTask?.(selectedTemplate.id, projectId);
+                    else void createTaskWithTeam();
                   }}
                 >
                   <Play aria-hidden="true" />
-                  {props.task ? (zh ? '开始协作' : 'Start work') : zh ? '用此团队创建任务' : 'Create task with this team'}
+                  {props.task ? (usesCode ? (zh ? '开始研发' : 'Start development') : zh ? '开始协作' : 'Start work') : zh ? '用此团队创建任务' : 'Create task with this team'}
                 </Button>
               </div>
             </div>
             {props.task && usesCode ? (
-              <label className="digital-team-baseline-confirmation">
-                <input type="checkbox" checked={confirmCommittedBaseline} disabled={busy || loading} onChange={(event) => setConfirmCommittedBaseline(event.currentTarget.checked)} />
-                <span>
-                  <strong>{zh ? '允许此任务开发、检查并本地提交' : 'Allow development, checks, and local commits for this task'}</strong>
-                  <br />
-                  <small>
-                    {zh
-                      ? '授权保存到本任务；隔离工作区从当前已提交版本开始，不带未提交修改，不授权推送、合入目标分支或发布。'
-                      : 'Save this authorization to the task. Isolated workspaces start from the committed revision, excluding uncommitted edits; push, target-branch merge, and release are not authorized.'}
-                  </small>
-                </span>
-              </label>
+              <p className="digital-team-start-description">
+                {zh
+                  ? '点击开始研发，将按流程自动接续，在隔离工作区修改代码、运行检查并本地提交。从当前已提交版本开始，未提交修改不带入。'
+                  : 'Start development to follow the workflow automatically, edit code, run checks, and commit locally in isolated workspaces. Start from the committed revision, excluding uncommitted changes.'}
+              </p>
             ) : null}
             <WorkflowCanvas
               key={`editor-${canvasGeneration}`}
@@ -1775,6 +1783,14 @@ function templateDraft(template: DigitalTeamWorkflowTemplateRecord): TemplateDra
   /** 非法节点和边不能交给画布 map，也不能把安全空视图直接写回原定义。 */
   const sourceIssues = issues.some((issue) => ['ZEUS_DIGITAL_TEAM_WORKFLOW_SHAPE_INVALID', 'ZEUS_DIGITAL_TEAM_WORKFLOW_NODE_INVALID', 'ZEUS_DIGITAL_TEAM_WORKFLOW_EDGE_INVALID'].includes(issue.code)) ? issues : undefined;
   return { id: template.id, revision: template.revision, name: template.name, description: template.description, definition: sourceIssues ? emptyTemplateDraft().definition : structuredClone(template.definition), sourceIssues };
+}
+
+/** 旧系统默认三人流程直接呈现研发分工，正式保存仍沿用原模板身份和修订校验。 */
+function prepareDevelopmentTemplateDraft(draft: TemplateDraft, employees: readonly DigitalTeamMemberRecord[], completedStatusId?: string): TemplateDraft {
+  if (draft.sourceIssues?.length) return draft;
+  /** 自定义要求与其他只读流程不会匹配默认补齐条件。 */
+  const definition = buildDigitalTeamDevelopmentDraft(draft.definition, employees, completedStatusId);
+  return definition ? { ...draft, definition } : draft;
 }
 
 /** 添加按钮使用可预期的阶梯位置，拖放仍使用准确视口坐标。 */

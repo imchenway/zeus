@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
-import { commandFailureDetail, commandResultSucceeded, releaseRemoteReadAttempts, releaseRemoteReadTimeoutMs, runRemoteReadWithRetrySync } from './release-remote-read.mjs';
+import { commandFailureDetail, commandResultSucceeded, isTransientRemoteReadFailure, releaseRemoteReadAttempts, releaseRemoteReadTimeoutMs, runRemoteReadWithRetrySync } from './release-remote-read.mjs';
 import { parseBoolean, requiredVersion, sha256File, sha256Text, validateReleaseNotes, validateReleaseNotesFile } from './release-script-utils.mjs';
 import {
   formatReleaseWorkflowDuration,
@@ -547,6 +547,7 @@ export async function waitForPublishedRelease(workflowRun, input) {
   /** 等待只回验轻量证据；显式完整 DMG 回下载在等待结束后单独执行。 */
   const verificationInput = { ...input, workflowRun, waitWindow, deepVerifyPublicDmg: false };
   let previousSnapshot = null;
+  /** 连续故障次数只用于进度说明，瞬时故障不会另设提前退出次数。 */
   let consecutiveReadFailures = 0;
   /** 最近的缺失证据只作为未确认原因，不把未确认改成远端发布失败。 */
   let lastVerificationFailure = '';
@@ -577,19 +578,21 @@ export async function waitForPublishedRelease(workflowRun, input) {
     if (!result.ok || !result.value || typeof result.value.status !== 'string') {
       consecutiveReadFailures += 1;
       const reason = result.error || 'GitHub CLI 返回了无效响应';
-      if (consecutiveReadFailures >= 3) {
+      // 网络故障由同一等待预算约束，不能在三次瞬时失败后提前放弃已派发的发布。
+      // 确定的权限、命令或响应错误仍先回验实际交付，再结束本地等待。
+      if (!result.transient) {
         try {
-          /** 状态服务连续读取失败时，仍先按真实交付做一次有界收尾回验。 */
+          /** 状态读取确定不可继续时，完整公开证据仍能证明真实发布结果。 */
           const verification = await readVerifiedPublishedRelease(verificationInput);
           if (verification) return verification;
         } catch (error) {
           lastVerificationFailure = error instanceof Error ? error.message : String(error);
         }
-        throw new ReleasePublicationUnconfirmedError(`连续 3 次无法读取 Release Workflow 状态，公开发布结果仍未确认：${reason}${lastVerificationFailure ? `\n最近公开回验：${lastVerificationFailure}` : ''}`);
+        throw new ReleasePublicationUnconfirmedError(`无法继续读取 Release Workflow 状态，公开发布结果仍未确认：${reason}${lastVerificationFailure ? `\n最近公开回验：${lastVerificationFailure}` : ''}`);
       }
       const waitState = readReleaseWorkflowWaitState(waitWindow);
       if (waitState.timedOut) throw releaseWorkflowWaitTimeoutError(workflowRun, previousSnapshot, waitState, lastVerificationFailure);
-      console.warn(`暂时无法读取 Release Workflow 状态，稍后重试（${consecutiveReadFailures}/3）：${reason}`);
+      console.warn(`暂时无法读取 Release Workflow 状态，仍在本轮等待时限内继续查询（连续 ${consecutiveReadFailures} 次）：${reason}`);
       printWorkflowWaitHeartbeatIfDue(workflowRun, previousSnapshot, waitState, nextHeartbeatAtMs);
       if (performance.now() >= nextHeartbeatAtMs) nextHeartbeatAtMs = performance.now() + releaseWorkflowHeartbeatIntervalMs;
       await delay(Math.min(releaseWorkflowPollIntervalMs, waitState.remainingMs));
@@ -724,13 +727,14 @@ function gh(args, options = {}) {
   return result.stdout;
 }
 
+/** 保留远程读取的真实故障类型，等待循环只对瞬时故障继续查询。 */
 function ghJson(args, allowFailure = false, options = {}) {
   const result = captureRemoteRead('读取 GitHub 公开事实', 'gh', args, { ...options, allowFailure });
-  if (result.status !== 0) return { ok: false, error: [result.stdout, result.stderr].filter(Boolean).join('\n') || commandFailureDetail(result) };
+  if (!commandResultSucceeded(result)) return { ok: false, error: [result.stdout, result.stderr].filter(Boolean).join('\n') || commandFailureDetail(result), transient: isTransientRemoteReadFailure(result) };
   try {
     return { ok: true, value: JSON.parse(result.stdout) };
   } catch (error) {
-    return { ok: false, error: `gh JSON 响应无效：${error instanceof Error ? error.message : String(error)}` };
+    return { ok: false, error: `gh JSON 响应无效：${error instanceof Error ? error.message : String(error)}`, transient: false };
   }
 }
 

@@ -84,8 +84,8 @@ export interface DigitalTeamWorkflowRouteCoordinator {
   saveTemplate(input: DigitalTeamTemplateSaveInput, operationIdentity: string): unknown;
   /** 删除模板。 */
   deleteTemplate(templateId: string, expectedRevision: number): unknown;
-  /** 列出项目运行。 */
-  listRuns(projectId: string, taskId?: string): unknown;
+  /** 列出项目或任务运行；会话进展按实际关联过滤。 */
+  listRuns(projectId: string, taskId?: string, conversationId?: string): unknown;
   /** 读取含节点尝试的运行投影。 */
   getRunProjection(runId: string): unknown;
   /** 读取运行所属真实任务，用于校验 Command Envelope 作用域。 */
@@ -122,8 +122,8 @@ export function registerDigitalTeamWorkflowRoutes(options: {
   save(): Promise<void>;
 }): void {
   options.server.get('/api/digital-team-templates', async () => options.coordinator.listTemplates());
-  options.server.get('/api/projects/:projectId/digital-team-runs', async (request: FastifyRequest<{ Params: { projectId: string }; Querystring: { taskId?: string } }>) =>
-    options.coordinator.listRuns(request.params.projectId, request.query.taskId),
+  options.server.get('/api/projects/:projectId/digital-team-runs', async (request: FastifyRequest<{ Params: { projectId: string }; Querystring: { taskId?: string; conversationId?: string } }>) =>
+    options.coordinator.listRuns(request.params.projectId, request.query.taskId, request.query.conversationId),
   );
   options.server.get('/api/digital-team-runs/:runId', async (request: FastifyRequest<{ Params: { runId: string } }>, reply) => {
     const projection = options.coordinator.getRunProjection(request.params.runId);
