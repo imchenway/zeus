@@ -1,3 +1,4 @@
+import { taskTypeOrder } from '@zeus/shared';
 import type {
   AiRuntimeSession,
   AiRuntimeSessionStatus,
@@ -24,7 +25,8 @@ export type TaskSourceLabels = Partial<Record<string, string>>;
 export type { TaskAgentRunStatus } from '../apiClient.js';
 
 export const taskManagementStatuses: TaskManagementStatus[] = ['todo', 'in_development', 'in_testing', 'awaiting_acceptance', 'blocked', 'completed', 'cancelled'];
-export const taskTypes: TaskType[] = ['requirement', 'defect', 'optimization'];
+/** 表格与详情沿用共享分类，避免快捷创建出现无法筛选的类型。 */
+export const taskTypes: TaskType[] = [...taskTypeOrder];
 export const defaultTaskTableColumnOrder: TaskTableColumnKey[] = [
   'code',
   'intent',
@@ -636,8 +638,11 @@ function buildTaskTableCells(
   };
 }
 
+/** 任务分类在表格、看板和详情中使用相同名称。 */
 export function formatTaskType(taskType: TaskType, language: 'zh-CN' | 'en-US' = 'zh-CN'): string {
+  /** 分类名称分别提供简体中文和英文。 */
   const labels: Record<TaskType, [string, string]> = {
+    task: ['任务', 'Task'],
     requirement: ['需求', 'Requirement'],
     defect: ['缺陷', 'Defect'],
     optimization: ['优化', 'Optimization'],

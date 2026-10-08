@@ -68,7 +68,7 @@ export function isTaskPriority(value: unknown): value is TaskPriority {
 }
 
 /** 任务类型只表达工作目标；不会改变任务状态、优先级或执行方式。 */
-export const taskTypeOrder = ['requirement', 'defect', 'optimization'] as const;
+export const taskTypeOrder = ['task', 'requirement', 'defect', 'optimization'] as const;
 
 export type TaskType = (typeof taskTypeOrder)[number];
 
@@ -77,7 +77,9 @@ export function isTaskType(value: unknown): value is TaskType {
   return typeof value === 'string' && taskTypeOrder.includes(value as TaskType);
 }
 
-const taskCommitPrefixByType: Record<TaskType, 'feat' | 'fix' | 'perf'> = {
+/** 通用任务使用中性的提交建议；具体分类沿用已有前缀。 */
+const taskCommitPrefixByType: Record<TaskType, 'chore' | 'feat' | 'fix' | 'perf'> = {
+  task: 'chore',
   requirement: 'feat',
   defect: 'fix',
   optimization: 'perf',

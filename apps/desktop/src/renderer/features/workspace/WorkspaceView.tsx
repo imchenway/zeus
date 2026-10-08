@@ -883,7 +883,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
               onOpenAttachment={props.onOpenTaskAttachment}
               onRemoveAttachment={removeTaskCreateAttachment}
               onClose={closeTaskCreateModal}
-              onSubmit={(event) => void submitTaskCreateModal(event)}
+              onSubmit={(event, pushAfterCreate) => void submitTaskCreateModal(event, pushAfterCreate)}
             />
           ) : null}
         </MotionPresence>

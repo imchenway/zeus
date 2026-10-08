@@ -129,7 +129,9 @@ export interface TaskPushMessageLayout {
 
 export type TaskPushInputPart = { type: 'text'; text: string } | { type: 'attachment'; attachmentKey: string };
 
+/** 首发内容采用用户实际选择的任务分类名称。 */
 const taskTypeLabels: Record<TaskType, string> = {
+  task: '任务',
   requirement: '需求',
   defect: '缺陷',
   optimization: '优化',
@@ -147,7 +149,7 @@ function taskContentFields(input: TaskPushPromptTaskContent): Array<{ field: Tas
           { field: 'optimizationCurrentState', label: '现状', text: input.optimizationCurrentState?.trim() ?? '' },
           { field: 'optimizationExpectedOutcome', label: '预期', text: input.optimizationExpectedOutcome?.trim() ?? '' },
         ]
-      : [{ field: 'description', label: '需求描述', text: input.taskDescription?.trim() ?? '' }];
+      : [{ field: 'description', label: input.taskType === 'task' ? '任务描述' : '需求描述', text: input.taskDescription?.trim() ?? '' }];
 }
 
 function activeTaskFields(input: TaskPushPromptTaskContent, attachmentKeysByField: Map<TaskAttachmentField, string[]>): Array<{ field: TaskAttachmentField; label: string; text: string }> {

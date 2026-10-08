@@ -1219,7 +1219,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             {
               key: 'requirement-description',
               field: 'description',
-              label: zh ? '需求描述' : 'Requirement description',
+              label: props.task.taskType === 'task' ? (zh ? '任务描述' : 'Task description') : zh ? '需求描述' : 'Requirement description',
               value: props.task.description ?? '',
               buildPatch: (description) => ({ description }),
               valueFromTask: (task) => task.description ?? '',
