@@ -7,6 +7,8 @@ import type { NativeConversationAppClient } from '../workspace/workspaceSupport.
 import type { DigitalEmployeeApiClient } from './digitalEmployeeApiClient.js';
 import type { DigitalEmployeeTemplateRecord } from './digitalEmployeeContracts.js';
 import { emptyTemplateDraft, errorMessage, templateDraft, templateInput, type DigitalEmployeeLanguage, type DigitalEmployeeTemplateDraft } from './digitalEmployeeUiSupport.js';
+import { EmployeeMemoryPanel } from './EmployeeMemoryPanel.js';
+import { EmployeeExecutionSettings } from './EmployeeExecutionSettings.js';
 import './digitalEmployees.css';
 
 export interface DigitalEmployeeTemplatesSettingsProps {
@@ -145,7 +147,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
     if (savingRef.current || busy || loadState === 'loading' || !props.client || !editorTarget) return;
     if (editorTarget.kind === 'employee' && JSON.stringify(nextDraft) === JSON.stringify(templateDraft(editorTarget.record))) return;
     if (!nextDraft.name.trim() || !nextDraft.role.trim() || !nextDraft.prompt.trim()) {
-      setError(zh ? '名称、岗位和工作要求不能为空。' : 'Name, role, and instructions are required.');
+      setError(zh ? '名称、岗位和提示词不能为空。' : 'Name, role, and instructions are required.');
       return;
     }
     savingRef.current = true;
@@ -207,8 +209,8 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
   const builtInTemplates = templates.filter((template) => template.builtIn);
   /** 共享目录已排除旧项目迁出身份，此处仅保留用户创建的可编辑员工。 */
   const employees = templates.filter((template) => !template.builtIn);
-  /** 姓名、岗位和业务领域共用简单文本筛选，同名员工仍分别保留。 */
-  const visibleEmployees = employees.filter((employee) => `${employee.name} ${employee.role} ${employee.domain}`.toLocaleLowerCase().includes(employeeSearch.trim().toLocaleLowerCase()));
+  /** 姓名和岗位共用简单文本筛选，同名员工仍分别保留。 */
+  const visibleEmployees = employees.filter((employee) => `${employee.name} ${employee.role}`.toLocaleLowerCase().includes(employeeSearch.trim().toLocaleLowerCase()));
   return (
     <section className="settings-product-pane digital-employee-settings-pane" aria-label={zh ? '数字员工' : 'Digital employees'}>
       <header className="digital-employee-page-heading">
@@ -309,7 +311,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
             className="digital-employee-list-search"
             type="search"
             aria-label={zh ? '搜索数字员工' : 'Search digital employees'}
-            placeholder={zh ? '搜索姓名、岗位或领域' : 'Search name, role, or domain'}
+            placeholder={zh ? '搜索姓名或岗位' : 'Search name, role, or domain'}
             value={employeeSearch}
             onChange={(event) => setEmployeeSearch(event.currentTarget.value)}
           />
@@ -337,9 +339,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
               <DigitalEmployeeAvatar {...employee} />
               <span>
                 <strong>{employee.name}</strong>
-                <small>
-                  {employee.role} · {employee.domain || (zh ? '通用' : 'General')}
-                </small>
+                <small>{employee.role}</small>
               </span>
             </button>
           ))}
@@ -355,7 +355,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
                     ? '点击右上角“新增”，从模板开始或自己新建。'
                     : 'Click Add to start from a template or create your own.'
                   : zh
-                    ? '选择员工后，修改名称、岗位和工作要求。'
+                    ? '选择员工后，修改名称、岗位和提示词。'
                     : 'Select an employee to edit their name, role, and instructions.'}
               </span>
             </div>
@@ -417,6 +417,8 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
                 ) : null}
               </div>
               <DigitalEmployeeProfileEditor
+                client={props.client}
+                skillClient={props.skillClient}
                 draft={draft}
                 language={props.language}
                 disabled={busy}
@@ -429,6 +431,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
                   if (commit && editorTarget.kind === 'employee') void saveEmployee(next);
                 }}
               />
+              {editorTarget.kind === 'employee' && props.client ? <EmployeeMemoryPanel key={editorTarget.record.id} client={props.client} employeeId={editorTarget.record.id} language={props.language} /> : null}
             </>
           )}
           {editorTarget?.kind === 'new' ? (
@@ -451,6 +454,10 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
 
 /** 数字员工身份与工作配置编辑器。 */
 function DigitalEmployeeProfileEditor(props: {
+  /** 共享能力目录客户端。 */
+  client: DigitalEmployeeApiClient | null;
+  /** 会话 Skill 目录。 */
+  skillClient: Pick<NativeConversationAppClient, 'loadSkills'> | null;
   draft: DigitalEmployeeTemplateDraft;
   language: DigitalEmployeeLanguage;
   disabled: boolean;
@@ -480,29 +487,24 @@ function DigitalEmployeeProfileEditor(props: {
         </label>
       </div>
       <label>
-        <span>{zh ? '工作要求' : 'Instructions'}</span>
+        <span>{zh ? '提示词' : 'Prompt'}</span>
         <textarea value={props.draft.prompt} onChange={(event) => patch({ prompt: event.currentTarget.value })} disabled={props.disabled} rows={6} maxLength={20000} required />
       </label>
-      <details className="digital-employee-disclosure">
-        <summary>{zh ? '更多设置' : 'More settings'}</summary>
-        <label>
-          <span>{zh ? '业务领域' : 'Business domain'}</span>
-          <input value={props.draft.domain} onChange={(event) => patch({ domain: event.currentTarget.value })} disabled={props.disabled} maxLength={120} placeholder={zh ? '例如 CSS、PIM' : 'For example CSS or PIM'} />
-        </label>
-        <label>
-          <span>{zh ? '说明' : 'Description'}</span>
-          <textarea value={props.draft.description} onChange={(event) => patch({ description: event.currentTarget.value })} disabled={props.disabled} rows={2} maxLength={1000} />
-        </label>
+      <section aria-label={zh ? '默认执行配置' : 'Execution defaults'}>
+        <h3>{zh ? '默认执行配置' : 'Execution defaults'}</h3>
+        <EmployeeExecutionSettings value={props.draft.settings} client={props.client} skillClient={props.skillClient} language={props.language} disabled={props.disabled} onChange={(settings) => patch({ settings })} />
+      </section>
+      <section aria-label={zh ? '员工记忆' : 'Employee memory'}>
         {/* 隐藏的原生输入不占网格，视觉复选框与文案分别占据两列。 */}
         <div className="digital-employee-policy-grid">
           <label className="digital-employee-checkbox-row">
             <input type="checkbox" checked={props.draft.memoryEnabled !== false} disabled={props.disabled} onChange={(event) => patch({ memoryEnabled: event.currentTarget.checked })} />
             <span className="digital-employee-checkbox-visual" aria-hidden="true" />
-            <span>{zh ? '使用员工经验' : 'Use employee experience'}</span>
+            <span>{zh ? '读取员工记忆' : 'Read employee memory'}</span>
           </label>
         </div>
         <small>{zh ? '只使用已确认且未过期的经验。新工作使用最新员工配置，已开始的工作保留原配置。' : 'Only approved, current experience is used. New work uses the latest settings; work already started keeps its original settings.'}</small>
-      </details>
+      </section>
     </div>
   );
 }

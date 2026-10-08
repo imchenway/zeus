@@ -17,6 +17,8 @@ export interface MemorySource {
 }
 
 export interface MemoryRecord {
+  /** 员工记忆保留来源项目限制，空值表示明确确认的通用记录。 */
+  projectLimitId?: string | null;
   id: string;
   memoryKey: string;
   scope: MemoryScope;

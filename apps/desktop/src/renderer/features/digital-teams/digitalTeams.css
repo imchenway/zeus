@@ -913,7 +913,7 @@
 .digital-team-flow-surface :where(.react-flow__node, .react-flow__viewport, .react-flow__handle) {
   transition: none;
 }
-.digital-team-flow-surface .react-flow__handle-left {
+.digital-team-flow-surface .react-flow__handle.target {
   background: var(--zeus-product-panel);
   border-color: var(--zeus-product-accent);
 }
@@ -1068,4 +1068,15 @@
     flex-direction: column;
     gap: 6px;
   }
+}
+
+/* 连接点始终可定位，交互时加强对比；不隐藏键盘或拖线目标。 */
+.digital-team-node .react-flow__handle {
+  opacity: 0.55;
+}
+.digital-team-node:hover .react-flow__handle,
+.digital-team-node:focus-within .react-flow__handle,
+.digital-team-node.is-selected .react-flow__handle,
+.digital-team-node .react-flow__handle.connecting {
+  opacity: 1;
 }

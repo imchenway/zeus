@@ -18,16 +18,23 @@ import type {
   TaskWorkDecisionRecord,
   TaskWorkDeliverableRecord,
   TaskWorkItemRecord,
+  TaskWorkRunRecord,
   TaskWorkManagementProjection,
   TaskWorkPreview,
   TaskWorkPreviewSelection,
 } from './digitalEmployeeContracts.js';
 
 export interface DigitalEmployeeApiClient {
+  /** 节点预览使用与正式派发相同的解析和职责限制。 */
+  previewEmployeeWorkflowNode(taskId: string, input: { employeeId: string; settings: EmployeeWorkSettings; instructions: string; executionMode: 'read_only' | 'isolated_write' | 'candidate_read_only' }): Promise<TaskWorkPreview>;
   /** 员工经验复用既有记忆命令和生命周期。 */
   employeeMemory: MemoryApiClient;
   /** 读取员工主动提出的经验建议。 */
   loadEmployeeMemoryProposals(projectId: string, employeeId: string): Promise<EmployeeMemoryProposal[]>;
+  /** 按全局员工冻结身份读取各项目建议。 */
+  loadGlobalEmployeeMemoryProposals(employeeId: string): Promise<EmployeeMemoryProposal[]>;
+  /** 读取正式派发快照中的记忆使用事实。 */
+  loadEmployeeMemoryUses(employeeId: string): Promise<TaskWorkRunRecord[]>;
   /** 审查前可以修改经验，原建议保留。 */
   decideEmployeeMemoryProposal(proposal: EmployeeMemoryProposal, input: { accept: boolean; topic: string; content: string; reviewAfter: string }): Promise<EmployeeMemoryProposal>;
   /** 读取固定成果的审查意见。 */
@@ -85,7 +92,10 @@ export interface DigitalEmployeeApiClient {
 
 export function createDigitalEmployeeApiClient(transport: LocalApiTransport): DigitalEmployeeApiClient {
   return {
+    previewEmployeeWorkflowNode: (taskId, input) => transport.request(`/api/tasks/${encodeURIComponent(taskId)}/workflow-node-preview`, jsonRequest('POST', input)),
     employeeMemory: createMemoryApiClient(transport),
+    loadGlobalEmployeeMemoryProposals: (employeeId) => transport.request(`/api/digital-employees/${encodeURIComponent(employeeId)}/memory-proposals`),
+    loadEmployeeMemoryUses: (employeeId) => transport.request(`/api/digital-employees/${encodeURIComponent(employeeId)}/memory-uses`),
     loadEmployeeMemoryProposals: (projectId, employeeId) => transport.request(`/api/projects/${encodeURIComponent(projectId)}/digital-employees/${encodeURIComponent(employeeId)}/memory-proposals`),
     decideEmployeeMemoryProposal: async (proposal, input) => {
       const body = await command(workManagementClientCommandTypes.employeeMemoryDecide, 'project', () => proposal.projectId, 'employee_memory_decide_', { ...input, expectedRevision: proposal.revision }, proposal.revision);

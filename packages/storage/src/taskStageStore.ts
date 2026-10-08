@@ -13,7 +13,7 @@ export type TaskStageAttemptStatus = 'starting' | 'active' | 'completed' | 'fail
 export type TaskStageDeliverableStatus = 'submitted' | 'accepted' | 'changes_requested' | 'superseded';
 export type TaskStageAdvanceMode = 'manual' | 'auto';
 export type TaskStageAgentKind = 'codex' | 'pi';
-export type TaskStagePermissionMode = 'read-only' | 'auto' | 'full-access';
+export type TaskStagePermissionMode = 'read-only' | 'auto' | 'auto-review' | 'full-access';
 export type TaskStageWorkMode = 'default' | 'plan';
 export type TaskStageEmployeeMode = 'none' | 'inherit' | 'explicit';
 
@@ -984,7 +984,7 @@ function normalizeCreateStage(stage: CreateTaskStageInput): CreateTaskStageInput
     effort: nullableString(stage.effort, 'effort', 80),
     serviceTier: nullableString(stage.serviceTier, 'serviceTier', 120),
     workMode: enumValue(stage.workMode, ['default', 'plan'] as const, 'workMode'),
-    permissionMode: enumValue(stage.permissionMode, ['read-only', 'auto', 'full-access'] as const, 'permissionMode'),
+    permissionMode: enumValue(stage.permissionMode, ['read-only', 'auto', 'auto-review', 'full-access'] as const, 'permissionMode'),
     advanceMode: enumValue(stage.advanceMode, ['manual', 'auto'] as const, 'advanceMode'),
     prompt: boundedString(stage.prompt, 'prompt', 20_000, true),
     outputContract: plainRecord(stage.outputContract, 'outputContract'),
@@ -1003,7 +1003,7 @@ function normalizeStageUpdate(stage: ZeusTaskStageRecord, input: UpdateTaskStage
     effort: input.effort === undefined ? stage.effort : nullableString(input.effort, 'effort', 80),
     serviceTier: input.serviceTier === undefined ? stage.serviceTier : nullableString(input.serviceTier, 'serviceTier', 120),
     workMode: input.workMode === undefined ? stage.workMode : enumValue(input.workMode, ['default', 'plan'] as const, 'workMode'),
-    permissionMode: input.permissionMode === undefined ? stage.permissionMode : enumValue(input.permissionMode, ['read-only', 'auto', 'full-access'] as const, 'permissionMode'),
+    permissionMode: input.permissionMode === undefined ? stage.permissionMode : enumValue(input.permissionMode, ['read-only', 'auto', 'auto-review', 'full-access'] as const, 'permissionMode'),
     advanceMode: input.advanceMode === undefined ? stage.advanceMode : enumValue(input.advanceMode, ['manual', 'auto'] as const, 'advanceMode'),
     prompt: input.prompt === undefined ? stage.prompt : boundedString(input.prompt, 'prompt', 20_000, true),
     outputContractJson: input.outputContract === undefined ? stage.outputContractJson : JSON.stringify(plainRecord(input.outputContract, 'outputContract')),

@@ -161,6 +161,10 @@ export type DigitalTeamNode = DigitalTeamStartNode | DigitalTeamEmployeeNode | D
 
 /** 节点之间的有向依赖边。 */
 export interface DigitalTeamEdge {
+  /** 输出连接点；缺省保持历史右侧输出。 */
+  sourceHandle?: 'out-right' | 'out-bottom';
+  /** 输入连接点；缺省保持历史左侧输入。 */
+  targetHandle?: 'in-left' | 'in-top';
   /** 模板内稳定边身份。 */
   id: string;
   /** 上游节点身份。 */
@@ -208,8 +212,10 @@ export interface DigitalTeamDefectSubmission {
 
 /** 耐久流程控制事实，重启与子任务不能重置自动修复额度。 */
 export interface DigitalTeamRunRuntimeState {
+  /** 正式接纳时解析的节点执行配置，后续模型默认变化不改写此快照。 */
+  executionSettings?: Record<string, EmployeeWorkSettings>;
   /** 本次接纳的最大执行权限，所有后继与自动修复共同继承。 */
-  permissionMode?: 'read-only' | 'auto' | 'full-access';
+  permissionMode?: 'read-only' | 'auto' | 'auto-review' | 'full-access';
   /** 本次任务指派的真实入口；空值表示从全部根员工开始。 */
   entryNodeId?: string | null;
   /** 当前任务明确绑定并已验收的上游成果。 */
@@ -980,11 +986,16 @@ function isViewport(value: unknown): value is DigitalTeamViewport {
 
 /** 节点覆盖只使用现有员工配置字段，数据库和前端共用同一结构边界。 */
 function isEmployeeSettings(value: unknown): value is EmployeeWorkSettings {
-  if (!isRecord(value) || Object.keys(value).some((key) => !['autonomyObjective', 'delegation', 'modelOverride', 'reasoningEffort', 'serviceTier', 'workMode', 'permissionMode', 'skillIds', 'promptOverride'].includes(key))) return false;
+  if (
+    !isRecord(value) ||
+    Object.keys(value).some((key) => !['autonomyObjective', 'delegation', 'modelOverride', 'reasoningEffort', 'serviceTier', 'contextCapacityTokens', 'workMode', 'permissionMode', 'skillIds', 'promptOverride'].includes(key))
+  )
+    return false;
   for (const key of ['autonomyObjective', 'modelOverride', 'reasoningEffort', 'serviceTier', 'promptOverride'])
     if (value[key] !== undefined && value[key] !== null && (typeof value[key] !== 'string' || !(value[key] as string).trim())) return false;
+  if (value.contextCapacityTokens !== undefined && value.contextCapacityTokens !== null && (!Number.isSafeInteger(value.contextCapacityTokens) || Number(value.contextCapacityTokens) <= 0)) return false;
   if (value.workMode !== undefined && !['default', 'plan'].includes(String(value.workMode))) return false;
-  if (value.permissionMode !== undefined && !['read-only', 'auto', 'full-access'].includes(String(value.permissionMode))) return false;
+  if (value.permissionMode !== undefined && !['read-only', 'auto', 'auto-review', 'full-access'].includes(String(value.permissionMode))) return false;
   if (value.skillIds !== undefined && (!Array.isArray(value.skillIds) || !value.skillIds.every(isIdentity))) return false;
   if (value.delegation !== undefined) {
     const policy = value.delegation;
@@ -1015,7 +1026,6 @@ function normalizeEmployeeNode(node: DigitalTeamEmployeeNode): DigitalTeamEmploy
   const expectedDeliverables = node.data.expectedDeliverables?.map((item) => item.trim()).filter(Boolean) ?? [];
   /** 保留模型与推理覆盖；历史运行读取原冻结定义，不经过此边界。 */
   const settings = node.data.settings ? structuredClone(node.data.settings) : undefined;
-  if (settings) for (const key of ['serviceTier', 'workMode', 'skillIds']) delete (settings as Record<string, unknown>)[key];
   return {
     ...structuredClone(node),
     type: 'employee',
@@ -1082,7 +1092,14 @@ export function missingDigitalTeamVerificationCommands(required: readonly string
 
 /** 判断画布连线结构。 */
 function isEdge(value: unknown): value is DigitalTeamEdge {
-  return isRecord(value) && isIdentity(value.id) && isIdentity(value.source) && isIdentity(value.target);
+  return (
+    isRecord(value) &&
+    isIdentity(value.id) &&
+    isIdentity(value.source) &&
+    isIdentity(value.target) &&
+    (value.sourceHandle === undefined || ['out-right', 'out-bottom'].includes(String(value.sourceHandle))) &&
+    (value.targetHandle === undefined || ['in-left', 'in-top'].includes(String(value.targetHandle)))
+  );
 }
 
 /** 判断结构化规划安排。 */

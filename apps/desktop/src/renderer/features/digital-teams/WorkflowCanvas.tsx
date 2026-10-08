@@ -125,7 +125,7 @@ function WorkflowCanvasSurface(props: WorkflowCanvasProps) {
   /** 交互状态留在画布，测量与选择不能在上层重新投影时丢失。 */
   const [nodes, setNodes, applyNodesChange] = useNodesState<CanvasNode>(projectedNodes);
   /** 边的选择与删除复用 React Flow 原生状态更新。 */
-  const [edges, setEdges, applyEdgesChange] = useEdgesState<DigitalTeamEdge>(props.definition.edges);
+  const [edges, setEdges, applyEdgesChange] = useEdgesState<DigitalTeamEdge>(props.definition.edges.map((edge) => ({ ...edge, sourceHandle: edge.sourceHandle ?? 'out-right', targetHandle: edge.targetHandle ?? 'in-left' })));
 
   useEffect(() => {
     setNodes((current) => {
@@ -143,7 +143,7 @@ function WorkflowCanvasSurface(props: WorkflowCanvasProps) {
     setEdges((current) => {
       /** 边的选中状态仅留在画布，不进入模板。 */
       const byId = new Map(current.map((edge) => [edge.id, edge]));
-      return props.definition.edges.map((edge) => ({ ...byId.get(edge.id), ...edge }));
+      return props.definition.edges.map((edge) => ({ ...byId.get(edge.id), ...edge, sourceHandle: edge.sourceHandle ?? 'out-right', targetHandle: edge.targetHandle ?? 'in-left' }));
     });
   }, [props.definition.edges]);
 
@@ -178,7 +178,14 @@ function WorkflowCanvasSurface(props: WorkflowCanvasProps) {
   const handleConnect = (connection: Connection): void => {
     if (props.readOnly || !connection.source || !connection.target || !isConnectionAllowed(props.definition, connection.source, connection.target)) return;
     /** 同一手势中的视口或节点变化不能覆盖新连线。 */
-    const edge = { id: `edge_${crypto.randomUUID()}`, source: connection.source, target: connection.target };
+    if (!['out-right', 'out-bottom'].includes(connection.sourceHandle ?? '') || !['in-left', 'in-top'].includes(connection.targetHandle ?? '')) return;
+    const edge: DigitalTeamEdge = {
+      id: `edge_${crypto.randomUUID()}`,
+      source: connection.source,
+      target: connection.target,
+      sourceHandle: connection.sourceHandle as DigitalTeamEdge['sourceHandle'],
+      targetHandle: connection.targetHandle as DigitalTeamEdge['targetHandle'],
+    };
     props.onChange((current) => (isConnectionAllowed(current, edge.source, edge.target) ? { ...current, edges: [...current.edges, edge] } : current));
   };
 
@@ -256,7 +263,11 @@ function WorkflowNodeCard(props: NodeProps<CanvasNode>) {
   const runtimeLabel = props.data.runtimeState ? `${props.data.runtimeState.status}${props.data.runtimeState.attempt ? ` · 第 ${props.data.runtimeState.attempt} 次` : ''}` : null;
   return (
     <article className={`digital-team-node is-${node.type}${props.selected ? ' is-selected' : ''}${props.data.issues.length ? ' has-error' : ''}`} aria-label={`${displayTitle}，${workModeLabel ? `${workModeLabel}，` : ''}${detail}`}>
-      {node.type !== 'start' ? <Handle type="target" position={Position.Left} isConnectable={props.isConnectable} aria-label="输入：连接上游节点" title="输入：从上游节点右侧拖到这里" /> : null}
+      {node.type !== 'start' ? (
+        <Handle tabIndex={props.isConnectable ? 0 : -1} id="in-left" type="target" position={Position.Left} isConnectable={props.isConnectable} aria-label="输入：连接上游节点" title="输入：从上游节点右侧拖到这里" />
+      ) : null}
+      {node.type === 'employee' ? <Handle tabIndex={props.isConnectable ? 0 : -1} id="in-top" type="target" position={Position.Top} isConnectable={props.isConnectable} aria-label="上侧输入：连接上游节点" title="上侧输入" /> : null}
+      {node.type === 'employee' ? <Handle tabIndex={props.isConnectable ? 0 : -1} id="out-bottom" type="source" position={Position.Bottom} isConnectable={props.isConnectable} aria-label="下侧输出：连接下游节点" title="下侧输出" /> : null}
       <span className="digital-team-node-kind">{nodeTypeLabel(node.type)}</span>
       <strong>{displayTitle}</strong>
       {workModeLabel ? <span className="digital-team-node-status">{workModeLabel}</span> : null}
@@ -264,7 +275,9 @@ function WorkflowNodeCard(props: NodeProps<CanvasNode>) {
       {assignmentLabel ? <span className="digital-team-node-status">{assignmentLabel}</span> : null}
       {runtimeLabel ? <span className="digital-team-node-status">{runtimeLabel}</span> : null}
       {props.data.issues[0] ? <span className="digital-team-node-error">{props.data.issues[0]}</span> : null}
-      {node.type !== 'end' ? <Handle type="source" position={Position.Right} isConnectable={props.isConnectable} aria-label="输出：连接下游节点" title="输出：拖到下游节点左侧" /> : null}
+      {node.type !== 'end' ? (
+        <Handle tabIndex={props.isConnectable ? 0 : -1} id="out-right" type="source" position={Position.Right} isConnectable={props.isConnectable} aria-label="输出：连接下游节点" title="输出：拖到下游节点左侧" />
+      ) : null}
     </article>
   );
 }

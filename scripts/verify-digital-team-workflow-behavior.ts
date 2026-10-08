@@ -145,10 +145,7 @@ try {
     const settingsDefinition = definition([{ ...employeeNode('settings', employee.id, '读取项目默认'), data: { ...employeeNode('settings', employee.id, '读取项目默认').data, settings: oldNodeSettings } }], []);
     /** 保存结果只保留当前权限约束。 */
     const settingsTemplate = templates.create({ name: '统一运行默认', description: '', definition: settingsDefinition });
-    assert(
-      settingsTemplate.ready && JSON.stringify((settingsTemplate.definition.nodes[0] as DigitalTeamEmployeeNode).data.settings) === JSON.stringify({ permissionMode: 'read-only' }),
-      '新模板不得保留逐节点模型、推理、速度、工作模式或技能覆盖。',
-    );
+    assert(settingsTemplate.ready && JSON.stringify((settingsTemplate.definition.nodes[0] as DigitalTeamEmployeeNode).data.settings) === JSON.stringify(oldNodeSettings), '节点保存必须完整保留执行覆盖。');
     /** 冻结运行原样读取；模板归一化不能倒改已经接纳的工作。 */
     const frozenSettings = digitalTeamExecutionDefinition({ definitionSnapshot: settingsDefinition, plan: null, runtimeState: {} });
     assert((frozenSettings.nodes[0] as DigitalTeamEmployeeNode).data.settings?.modelOverride === 'legacy-node-model' && oldNodeSettings.workMode === 'plan', '旧冻结运行必须保留原模型偏好，归一化不能修改输入对象。');
@@ -162,6 +159,18 @@ try {
     );
     assert(validateDigitalTeamWorkflowDefinition(parallelDefinition).length === 0, '多个根员工和汇合依赖必须可执行。');
     assert(new Set(parallelDefinition.nodes.map((node) => node.data.employeeId)).size === 1, '同一员工必须允许承担多份分工。');
+    /** 横、竖、混合连接点通过真实保存读取，边位置不影响执行依赖。 */
+    const handleDefinition = structuredClone(parallelDefinition);
+    handleDefinition.edges[0] = { ...handleDefinition.edges[0]!, sourceHandle: 'out-bottom', targetHandle: 'in-top' };
+    handleDefinition.edges[1] = { ...handleDefinition.edges[1]!, sourceHandle: 'out-right', targetHandle: 'in-top' };
+    const handleTemplate = templates.create({ name: '混合连接点', description: '', definition: handleDefinition });
+    assert(JSON.stringify(templates.getById(handleTemplate.id)!.definition.edges) === JSON.stringify(handleDefinition.edges), '连接点必须保存并原样读取');
+    const copiedHandles = templates.create({ name: '连接点复制', description: '', definition: structuredClone(handleTemplate.definition) });
+    assert(JSON.stringify(copiedHandles.definition.edges) === JSON.stringify(handleDefinition.edges), '复制流程不得重置连接点');
+    const duplicateHandles = { ...handleDefinition, edges: [...handleDefinition.edges, { ...handleDefinition.edges[0]!, id: 'duplicate_handle', sourceHandle: 'out-right' as const }] };
+    assert(validateDigitalTeamWorkflowDefinition(duplicateHandles).length > 0, '更换连接点不能绕过重复依赖校验');
+    assert(validateDigitalTeamWorkflowDefinition({ ...handleDefinition, edges: [{ id: 'self_handle', source: 'root_one', target: 'root_one', sourceHandle: 'out-bottom', targetHandle: 'in-top' }] }).length > 0, '上下连接点不能绕过自环校验');
+    assert(validateDigitalTeamWorkflowDefinition({ ...handleDefinition, edges: [{ ...handleDefinition.edges[0], sourceHandle: 'invalid' }] }).length > 0, '未知连接点必须被拒绝');
     /** 循环定义验证依赖线只表达可完成的前置关系。 */
     const cyclicDefinition = structuredClone(parallelDefinition);
     cyclicDefinition.edges.push({ id: 'downstream_root_one', source: 'downstream', target: 'root_one' });
@@ -274,6 +283,7 @@ try {
     const dispatchedRoots: string[] = [];
     /** 调度器只需走到外部派发边界，探针不启动真实 Provider。 */
     const coordinator = new DigitalTeamWorkflowCoordinator({
+      employees: new DigitalEmployeeRepository(database),
       templates,
       runs,
       attempts,
@@ -311,7 +321,7 @@ try {
     await verifyFinalTaskCompletionGate();
     verifyMigratedProjectEmployeeReferences(database, project.id, employee.id, employeeTemplate.id);
     process.stdout.write(
-      `${JSON.stringify({ ok: true, checks: ['single-employee', 'ordinary-empty-optional-fields', 'nontext-criteria-rejected', 'node-execution-defaults-cleared', 'frozen-node-settings-preserved', 'parallel-roots', 'dependency-gate', 'same-employee-reuse', 'legacy-collapse', 'empty-draft', 'global-template', 'run-node-employee-resolution', 'project-current-workflow', 'assignment-entry-gate', 'entry-descendants-only', 'verification-role-retained', 'defect-completion-gate', 'persistent-repair-budget', 'repair-awaits-parent-retest', 'all-employees-complete', 'active-result-reference-shape', 'development-entry-before-verification', 'unverified-code-task-completion-gate', 'rework-during-final-git-review', 'project-state-shared-save-gate', 'read-only-entry-without-unrelated-baseline', 'frozen-entry-after-template-edit', 'parallel-verification-round-budget', 'parallel-repair-relations-recovery', 'parallel-candidate-environments', 'partial-verification-rework-retains-sibling', 'migrated-project-employee-references'] })}\n`,
+      `${JSON.stringify({ ok: true, checks: ['single-employee', 'ordinary-empty-optional-fields', 'nontext-criteria-rejected', 'node-execution-defaults-preserved', 'vertical-mixed-handles-persisted', 'handle-dependency-validation', 'frozen-node-settings-preserved', 'parallel-roots', 'dependency-gate', 'same-employee-reuse', 'legacy-collapse', 'empty-draft', 'global-template', 'run-node-employee-resolution', 'project-current-workflow', 'assignment-entry-gate', 'entry-descendants-only', 'verification-role-retained', 'defect-completion-gate', 'persistent-repair-budget', 'repair-awaits-parent-retest', 'all-employees-complete', 'active-result-reference-shape', 'development-entry-before-verification', 'unverified-code-task-completion-gate', 'rework-during-final-git-review', 'project-state-shared-save-gate', 'read-only-entry-without-unrelated-baseline', 'frozen-entry-after-template-edit', 'parallel-verification-round-budget', 'parallel-repair-relations-recovery', 'parallel-candidate-environments', 'partial-verification-rework-retains-sibling', 'migrated-project-employee-references'] })}\n`,
     );
   } finally {
     await database.close();
@@ -353,6 +363,7 @@ async function verifyDefiniteRunFailureSettlement(): Promise<void> {
     let dispatchCount = 0;
     /** 真实协调器仅在未授权的 Provider 派发端口明确拒绝。 */
     const coordinator = new DigitalTeamWorkflowCoordinator({
+      employees: new DigitalEmployeeRepository(database),
       projects,
       tasks,
       runs,
@@ -1055,6 +1066,7 @@ async function verifyAssignmentResultBoundaries(database: ZeusDatabasePort, proj
   attempts.bindExecution(attempt.id, { expectedRevision: attempt.revision, conversationId: conversation.id, submissionId: submission.id, turnId: turn.id, segmentId: turn.id });
   /** 不派发模型；工具接收成功也只代表待终态核验。 */
   const coordinator = new DigitalTeamWorkflowCoordinator({
+    employees: new DigitalEmployeeRepository(database),
     projects: new ProjectRepository(database),
     tasks,
     templates: new DigitalTeamWorkflowTemplateRepository(database),
@@ -1068,10 +1080,11 @@ async function verifyAssignmentResultBoundaries(database: ZeusDatabasePort, proj
     now: () => new Date(),
     save: () => database.save(),
     publish: () => undefined,
-    taskWork: { kick: () => undefined },
+    taskWork: { kick: () => undefined, freezeWorkflowConfiguration: async (_projectId: string, _employeeId: string, settings: object) => settings },
   } as unknown as DigitalTeamWorkflowCoordinatorOptions);
   /** 项目状态同时约束普通保存和当前流程保存。 */
   const stateCoordinator = new DigitalTeamWorkflowCoordinator({
+    employees: new DigitalEmployeeRepository(database),
     ...({
       projects: new ProjectRepository(database),
       tasks,
@@ -1209,6 +1222,7 @@ async function verifyTeamInternalTaskOrigins(database: ZeusDatabasePort, project
   });
   /** 只走实际创建边界，不启动 Provider 调度。 */
   const coordinator = new DigitalTeamWorkflowCoordinator({
+    employees: new DigitalEmployeeRepository(database),
     projects: new ProjectRepository(database),
     tasks,
     templates,
@@ -1345,6 +1359,7 @@ async function verifyParallelVerificationRound(database: ZeusDatabasePort, proje
   const stoppedWorkItemIds: string[] = [];
   /** 子任务创建走正常仓储，探针不创建模型轮次。 */
   const coordinator = new DigitalTeamWorkflowCoordinator({
+    employees: new DigitalEmployeeRepository(database),
     projects: new ProjectRepository(database),
     tasks,
     templates: new DigitalTeamWorkflowTemplateRepository(database),
@@ -1719,6 +1734,7 @@ async function verifyFinalTaskCompletionGate(): Promise<void> {
     attempts.update(active.id, { expectedRevision: active.revision, result: { ...readOnlyResult(), evidence: [], repositoryResults: [{ repositoryId: repository.id, baseSha: headSha, headSha }] } });
     /** 仅替代成果冻结边界，正文与接纳记录仍用真实 ArtifactStore/SQLite；不派发模型。 */
     const coordinator = new DigitalTeamWorkflowCoordinator({
+      employees: new DigitalEmployeeRepository(database),
       projects,
       tasks,
       runs,

@@ -8,12 +8,14 @@ export interface EmployeeWorkSettings {
   modelOverride?: string | null;
   /** 推理强度；空值使用模型默认。 */
   reasoningEffort?: string | null;
+  /** 空值使用模型默认容量，缺省继承上一层。 */
+  contextCapacityTokens?: number | null;
   /** 服务速率；空值使用标准档。 */
   serviceTier?: string | null;
   /** 本次推理工作方式。 */
   workMode?: 'default' | 'plan';
   /** 偏好权限，实际动作仍受当前授权约束。 */
-  permissionMode?: 'read-only' | 'auto' | 'full-access';
+  permissionMode?: 'read-only' | 'auto' | 'auto-review' | 'full-access';
   /** 明确启用的技能身份，不携带凭据。 */
   skillIds?: string[];
   /** 针对本层的工作方法补充。 */
@@ -75,19 +77,19 @@ export interface EmployeeTeamRecipe {
   revision: number;
 }
 
-/** 新工作按层叠加业务要求和模型偏好，并收紧权限。 */
+/** 新工作按层叠加业务要求，就近覆盖执行默认值。 */
 export function mergeEmployeeWorkSettings(...layers: Array<EmployeeWorkSettings | null | undefined>): EmployeeWorkSettings {
   /** 每层只覆盖实际提供的字段，数组生成独立副本。 */
   const result: EmployeeWorkSettings = {};
   for (const layer of layers) {
     if (!layer) continue;
-    for (const key of ['autonomyObjective', 'delegation', 'promptOverride', 'modelOverride', 'reasoningEffort'] as const) {
+    for (const key of ['autonomyObjective', 'delegation', 'modelOverride', 'reasoningEffort', 'contextCapacityTokens', 'serviceTier', 'workMode', 'skillIds'] as const) {
       if (layer[key] !== undefined) Object.assign(result, { [key]: structuredClone(layer[key]) });
     }
-    if (layer.permissionMode === 'read-only' || layer.permissionMode === 'auto' || layer.permissionMode === 'full-access') {
-      /** 任一层只读都不能被更下层的偏好放宽。 */
-      result.permissionMode = result.permissionMode === 'read-only' || layer.permissionMode === 'read-only' ? 'read-only' : result.permissionMode === 'auto' || layer.permissionMode === 'auto' ? 'auto' : 'full-access';
-    }
+    /** 补充要求按来源累积，不覆盖员工或上层已提供的任务要求。 */
+    if (layer.promptOverride) result.promptOverride = [...new Set([result.promptOverride, layer.promptOverride].filter(Boolean))].join('\n\n');
+    /** 配置遵循就近覆盖；实际行动仍由任务和节点执行约束检查。 */
+    if (layer.permissionMode !== undefined) result.permissionMode = layer.permissionMode;
   }
   return result;
 }

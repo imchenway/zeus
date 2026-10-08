@@ -5,7 +5,7 @@ import type { CodexTaskPushModelCapability, TaskPushSupplementalAttachmentInput 
 import type { TaskWorkflowSnapshot } from '../tasks/taskContracts.js';
 
 export type DigitalEmployeeAgentKind = 'codex' | 'pi';
-export type DigitalEmployeePermissionMode = 'read-only' | 'auto' | 'full-access';
+export type DigitalEmployeePermissionMode = 'read-only' | 'auto' | 'auto-review' | 'full-access';
 export type DigitalEmployeeWorkMode = 'default' | 'plan';
 export type DigitalEmployeeAutomationTriggerKind = 'immediate' | 'once' | 'daily' | 'weekly' | 'interval' | 'task_created' | 'task_updated' | 'task_status_changed' | 'code_changed';
 export type DigitalEmployeeAutomationActionKind = 'assign_task' | 'create_and_assign_task' | 'explore_project';
@@ -54,6 +54,8 @@ export interface DigitalEmployeeDeliveryGrants {
 }
 
 export interface DigitalEmployeeTemplateRecord {
+  /** 员工默认上下文容量。 */
+  contextCapacityTokens?: number | null;
   /** 内置创建模板与用户已经创建的跨项目员工严格区分。 */
   identityKind?: 'template' | 'employee';
   /** 全局经验读取偏好。 */
@@ -176,6 +178,22 @@ export interface DigitalEmployeeStageDecisionInput {
 }
 
 export interface DigitalEmployeeTemplateInput {
+  /** 默认执行后端。 */
+  agentKind?: DigitalEmployeeAgentKind;
+  /** 模型稳定身份。 */
+  model?: string | null;
+  /** 模型推理档位。 */
+  reasoningEffort?: string | null;
+  /** 默认上下文容量。 */
+  contextCapacityTokens?: number | null;
+  /** 默认服务速率。 */
+  serviceTier?: string | null;
+  /** 工作模式。 */
+  workMode?: DigitalEmployeeWorkMode;
+  /** 会话权限模式。 */
+  permissionMode?: DigitalEmployeePermissionMode;
+  /** 明确启用的技能身份。 */
+  skillIds?: string[];
   /** 默认经验读取偏好。 */
   memoryEnabled?: boolean;
   name: string;
@@ -188,6 +206,8 @@ export interface DigitalEmployeeTemplateInput {
 }
 
 export interface DigitalEmployeeCapabilitiesSnapshot {
+  /** 用于展示跟随默认后的模型能力。 */
+  preferredModel?: string | null;
   /** 原生目标能力，只在当前宿主明确支持时提供入口。 */
   goals?: { supported: boolean; enabled: boolean; stage: string | null };
   generationId: string;
@@ -378,6 +398,8 @@ export interface TaskWorkPreviewSelection {
   employeeId: string;
   supplementalInfo?: string | null;
   supplementalAttachments?: TaskPushSupplementalAttachmentInput[];
+  /** 显式容量选择，空值使用模型默认。 */
+  contextCapacityTokens?: number | null;
   modelOverride?: string | null;
   reasoningEffort?: string | null;
   serviceTier?: string | null;

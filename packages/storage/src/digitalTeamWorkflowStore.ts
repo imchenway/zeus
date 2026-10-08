@@ -1213,7 +1213,18 @@ function freezeEmployee(db: ZeusDatabasePort, projectId: string, employeeId: str
 /** 控制快照中的入口和成果必须属于本任务，不伪造中间节点的上游成功。 */
 function normalizeRuntimeState(db: ZeusDatabasePort, taskId: string, definition: DigitalTeamWorkflowDefinition, state: DigitalTeamRunRuntimeState): DigitalTeamRunRuntimeState {
   if (!state || typeof state !== 'object' || Array.isArray(state)) throw storeError('ZEUS_DIGITAL_TEAM_RUNTIME_INVALID', '流程控制快照无效。');
-  if (state.permissionMode !== undefined && !['read-only', 'auto', 'full-access'].includes(state.permissionMode)) throw storeError('ZEUS_DIGITAL_TEAM_PERMISSION_INVALID', '本次流程权限无效。');
+  if (
+    state.executionSettings &&
+    (typeof state.executionSettings !== 'object' ||
+      Array.isArray(state.executionSettings) ||
+      Object.entries(state.executionSettings).some(
+        ([nodeId, settings]) =>
+          !definition.nodes.some((node) => node.id === nodeId && node.type === 'employee') ||
+          validateDigitalTeamWorkflowDefinition({ ...definition, nodes: definition.nodes.map((node) => (node.id === nodeId && node.type === 'employee' ? { ...node, data: { ...node.data, settings } } : node)) }).length > 0,
+      ))
+  )
+    throw storeError('ZEUS_DIGITAL_TEAM_RUNTIME_INVALID', '冻结节点执行配置无效。');
+  if (state.permissionMode !== undefined && !['read-only', 'auto', 'auto-review', 'full-access'].includes(state.permissionMode)) throw storeError('ZEUS_DIGITAL_TEAM_PERMISSION_INVALID', '本次流程权限无效。');
   if (state.entryCodeRevisions) normalizeBaseRevisions(state.entryCodeRevisions);
   /** 默认额度从零累计，创建子任务和重启均不另计。 */
   if (state.repairRound !== undefined && (!Number.isSafeInteger(state.repairRound) || state.repairRound < 0 || state.repairRound > 20)) throw storeError('ZEUS_DIGITAL_TEAM_REPAIR_LIMIT_INVALID', '已使用修复轮数无效。');

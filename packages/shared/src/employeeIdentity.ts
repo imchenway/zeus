@@ -22,10 +22,36 @@ export interface EmployeeConfiguration {
   model?: string | null;
   /** 默认推理级别；空值使用模型默认。 */
   reasoningEffort?: string | null;
+  /** 默认上下文容量；空值使用模型默认。 */
+  contextCapacityTokens?: number | null;
+  /** 默认服务速率。 */
+  serviceTier?: string | null;
+  /** 默认工作模式。 */
+  workMode?: 'default' | 'plan';
+  /** 复用会话权限选择，不代表额外交付授权。 */
+  permissionMode?: 'read-only' | 'auto' | 'auto-review' | 'full-access';
+  /** 默认技能身份，空数组表示不使用。 */
+  skillIds?: string[];
 }
 
 /** 固定可继承字段，防止全局记录的 ID、版本和项目身份覆盖项目绑定。 */
-export const employeeConfigurationKeys = ['name', 'description', 'role', 'domain', 'avatarId', 'prompt', 'memoryEnabled', 'agentKind', 'model', 'reasoningEffort'] as const;
+export const employeeConfigurationKeys = [
+  'name',
+  'description',
+  'role',
+  'domain',
+  'avatarId',
+  'prompt',
+  'memoryEnabled',
+  'agentKind',
+  'model',
+  'reasoningEffort',
+  'contextCapacityTokens',
+  'serviceTier',
+  'workMode',
+  'permissionMode',
+  'skillIds',
+] as const;
 
 /** 员工配置只来自全局身份，项目绑定仅保留工作关联。 */
 export function resolveEmployeeConfiguration<T extends EmployeeConfiguration>(global: EmployeeConfiguration | undefined, binding: T): T {

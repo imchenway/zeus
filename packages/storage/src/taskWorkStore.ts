@@ -431,6 +431,19 @@ export class TaskWorkRunRepository {
     return this.db.select<TaskWorkRunRow>(`SELECT * FROM task_work_runs WHERE task_id = ? ORDER BY created_at ASC, id ASC`, [identity(taskId, 'taskId')]).map(mapWorkRun);
   }
 
+  /** 仅返回已建立真实会话或命令的运行，预览及待派发记录不算使用。 */
+  listDispatchedByEmployee(employeeId: string): TaskWorkRunRecord[] {
+    return this.db
+      .select<TaskWorkRunRow>(
+        `SELECT * FROM task_work_runs WHERE (conversation_id IS NOT NULL OR command_run_id IS NOT NULL)
+       AND (json_extract(employee_snapshot_json, '$.globalEmployeeId')=?
+       OR (json_type(employee_snapshot_json, '$.globalEmployeeId') IS NULL AND json_extract(employee_snapshot_json, '$.templateId')=?)
+       OR employee_id=?) ORDER BY created_at DESC, id DESC LIMIT 100`,
+        [identity(employeeId, 'employeeId'), employeeId, employeeId],
+      )
+      .map(mapWorkRun);
+  }
+
   listRecoverable(limit = 100): TaskWorkRunRecord[] {
     return this.db.select<TaskWorkRunRow>(`SELECT * FROM task_work_runs WHERE status IN ('prepared','dispatching','active','waiting_input','runtime_completed') ORDER BY created_at ASC LIMIT ?`, [boundedLimit(limit)]).map(mapWorkRun);
   }
