@@ -398,6 +398,7 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
           </Button>
         ) : null}
         <TaskConversationPane
+          readOnly={props.terminalReadOnly}
           conversations={props.conversations ?? []}
           loading={props.conversationsLoading || props.management.loadState === 'loading'}
           error={props.conversationsError}
@@ -416,6 +417,23 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
           onSelect={props.onSelectConversation}
           onOpen={props.onOpenConversation}
           onReload={props.onReloadConversations}
+          renderResults={(entry, team) => {
+            /** 主会话复用时仍按原尝试和工作运行限定结果。 */
+            const attempts = team?.nodeAttempts.filter((attempt) => entry.attemptIds?.includes(attempt.id)) ?? [];
+            /** 摘要来自已保存的结构化结果，不从会话末尾推断。 */
+            const summaries = [...new Set(attempts.map((attempt) => attempt.result?.summary).filter((summary): summary is string => Boolean(summary?.trim())))];
+            /** 老记录可通过准确成果身份关联，不按员工名字猜测归属。 */
+            const deliverables = (projection?.deliverables ?? []).filter((deliverable) => entry.workRunIds?.includes(deliverable.runId) || attempts.some((attempt) => attempt.deliverableId === deliverable.id));
+            return (
+              <>
+                <h3>{zh ? '工作结果' : 'Work results'}</h3>
+                {summaries.map((summary) => (
+                  <p key={summary}>{summary}</p>
+                ))}
+                <DeliverablesView deliverables={deliverables} language={props.language} onOpen={setReadingDeliverable} />
+              </>
+            );
+          }}
         />
       </div>
       {tab === 'work' && projection ? (
@@ -761,7 +779,7 @@ export function TaskDigitalEmployeeExecutor(props: {
     conversations: [],
     language: props.language,
   });
-  /** 并行工作只显示一个身份及人数，完整名单留在下拉中。 */
+  /** 当前身份只用于指派预检，查看会话统一使用协作侧栏。 */
   const assignedEmployees = [
     ...new Map(navigation.flatMap((group) => group.employees.filter((member) => member.employee && member.entries.some((entry) => entry.current)).map((member) => [member.employee!.id, member.employee!] as const))).values(),
   ];
@@ -795,7 +813,7 @@ export function TaskDigitalEmployeeExecutor(props: {
       ) : runnableEmployees.length > 0 ? (
         <ZeusSelect
           size="regular"
-          ariaLabel={zh ? '选择任务执行者' : 'Choose task executor'}
+          ariaLabel={zh ? '指派任务工作' : 'Assign task work'}
           value={assignedEmployees.length === 1 ? (runnableEmployees.find(isAssigned)?.id ?? assignedEmployees[0].id) : ''}
           options={options}
           searchable
@@ -817,7 +835,6 @@ export function TaskDigitalEmployeeExecutor(props: {
               props.management.followAssignment(employeeId, result);
             });
           }}
-          triggerIcon={assignedEmployees[0] ? <DigitalEmployeeAvatar {...assignedEmployees[0]} /> : undefined}
           triggerLabel={
             props.management.pendingAssignment?.reason
               ? zh
@@ -827,8 +844,10 @@ export function TaskDigitalEmployeeExecutor(props: {
                 ? zh
                   ? '正在交接…'
                   : 'Handing over…'
-                : assignedEmployees.length
-                  ? assignedEmployees[0].name + (assignedEmployees.length > 1 ? ` +${assignedEmployees.length - 1}` : '')
+                : props.management.teams.length || props.management.projection?.workItems.length
+                  ? zh
+                    ? '指派工作'
+                    : 'Assign work'
                   : zh
                     ? '选择执行人'
                     : 'Choose an employee'

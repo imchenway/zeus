@@ -816,6 +816,8 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
   /** 提示归属对应操作，避免长列表把反馈推离按钮。 */
   const [relationshipHintTarget, setRelationshipHintTarget] = useState<'child' | 'relation'>('child');
   const [relatedTaskCandidateId, setRelatedTaskCandidateId] = useState('');
+  /** 未手动操作时随任务进度折叠说明，编辑和手动展开后保持原位置。 */
+  const [overviewExpanded, setOverviewExpanded] = useState<boolean | null>(null);
   const digitalEmployeeManagement = useTaskDigitalEmployeeManagement({
     taskId: props.task.id,
     projectId: props.task.projectId,
@@ -837,6 +839,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
     setRelationshipSaveState({ kind: 'idle' });
     setRelationshipHint('');
     setRelatedTaskCandidateId('');
+    setOverviewExpanded(null);
     moreActionsRef.current?.hidePopover();
     attachmentPasteRetryRef.current = null;
     if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
@@ -852,6 +855,12 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
     [],
   );
   const conversations = [...(props.conversations ?? [])].sort(compareConversationCreatedAsc);
+  /** 真实工作接纳后才展开协作布局，读取失败不会被猜成任务结束。 */
+  const hasTaskWork = Boolean(digitalEmployeeManagement.teams.length || digitalEmployeeManagement.projection?.workItems.length || digitalEmployeeManagement.pendingAssignment);
+  /** 普通讨论同样收起默认说明，但不产生空员工栏。 */
+  const hasTaskActivity = hasTaskWork || conversations.length > 0;
+  /** 手动展开优先于后台进度，说明编辑不会被轮询打断。 */
+  const showOverview = overviewExpanded ?? !hasTaskActivity;
   const taskById = new Map(props.allTasks.map((task) => [task.id, task]));
   const directChildren = props.allTasks.filter((task) => task.parentTaskId === props.task.id).sort((left, right) => (right.updatedAt ?? '').localeCompare(left.updatedAt ?? ''));
   const relatedTasks = (props.task.relatedTaskIds ?? [])
@@ -1335,46 +1344,48 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             onSave={(status, expectedUpdatedAt) => props.onManagementStatusChange(props.task.id, status, expectedUpdatedAt)}
           />
         </span>
-        <span className="task-detail-summary-row task-detail-executor-row">
-          <small>{zh ? '执行人' : 'Assigned to'}</small>
-          <TaskDigitalEmployeeExecutor
-            taskId={props.task.id}
-            projectId={props.task.projectId}
-            terminalReadOnly={props.terminalReadOnly}
-            client={props.digitalEmployeeClient ?? null}
-            language={props.language}
-            management={digitalEmployeeManagement}
-            onManageEmployees={props.onManageEmployees}
-            onLoadCapabilities={props.onLoadWorkflowCapabilities}
-          />
-        </span>
+        {!props.terminalReadOnly ? (
+          <span className="task-detail-summary-row task-detail-executor-row">
+            {!hasTaskWork && props.onUseDigitalTeam ? (
+              <Button variant="secondary" size="compact" onClick={() => props.onUseDigitalTeam!({ kind: 'manage' })}>
+                {zh ? '使用数字团队' : 'Use a digital team'}
+              </Button>
+            ) : null}
+            <TaskDigitalEmployeeExecutor
+              taskId={props.task.id}
+              projectId={props.task.projectId}
+              terminalReadOnly={props.terminalReadOnly}
+              client={props.digitalEmployeeClient ?? null}
+              language={props.language}
+              management={digitalEmployeeManagement}
+              onManageEmployees={props.onManageEmployees}
+              onLoadCapabilities={props.onLoadWorkflowCapabilities}
+            />
+          </span>
+        ) : null}
       </div>
-      <div className="task-detail-workspace">
-        {/* 沟通是任务详情的主工作区，DOM 与视觉顺序保持一致，键盘阅读不会绕到右侧属性后再返回。 */}
-        <div className="task-detail-main">
-          <TaskDigitalEmployeePanel
-            onArrangeTeam={props.onUseDigitalTeam ? () => props.onUseDigitalTeam!({ kind: 'manage' }) : undefined}
-            onOpenTeamRun={props.onUseDigitalTeam ? (runId) => props.onUseDigitalTeam!({ kind: 'run', runId }) : undefined}
-            key={props.task.id}
-            taskId={props.task.id}
-            projectId={props.task.projectId}
-            terminalReadOnly={props.terminalReadOnly}
-            client={props.digitalEmployeeClient ?? null}
-            management={digitalEmployeeManagement}
-            language={props.language}
-            conversations={conversations}
-            conversationsLoading={props.conversationsLoading}
-            conversationsError={props.conversationsError}
-            activeConversationId={props.activeConversationId}
-            conversationWorkspace={props.conversationWorkspace}
-            newConversationWorkspace={props.terminalReadOnly ? null : props.newConversationWorkspace}
-            onSelectConversation={props.onSelectConversation ? (conversationId) => props.onSelectConversation!(props.task.id, conversationId) : undefined}
-            onReloadConversations={props.onReloadConversations ? () => props.onReloadConversations!(props.task.id) : undefined}
-            onOpenConversation={(conversationId) => props.onOpenConversation(props.task.id, conversationId)}
-          />
-        </div>
-        <aside className="task-detail-sidebar" aria-label={zh ? '任务说明与属性' : 'Requirements and properties'}>
-          {taskOverview}
+      <div className="task-detail-workspace" data-has-activity={hasTaskActivity}>
+        {/* 说明、属性与原编辑控件保持同一棵树，进度变化只调整折叠状态。 */}
+        <div className="task-detail-context" aria-label={zh ? '任务说明与属性' : 'Requirements and properties'}>
+          <details className="task-detail-requirements" open={showOverview}>
+            <summary
+              onClick={(event) => {
+                event.preventDefault();
+                setOverviewExpanded(!showOverview);
+              }}
+            >
+              <strong>{zh ? '任务说明' : 'Requirements'}</strong>
+              {!showOverview ? (
+                <span>
+                  {typedContentFields
+                    .map((field) => field.value)
+                    .filter(Boolean)
+                    .join(' ')}
+                </span>
+              ) : null}
+            </summary>
+            <div onFocusCapture={() => setOverviewExpanded(true)}>{taskOverview}</div>
+          </details>
           <details className="task-detail-properties">
             <summary>{zh ? '任务属性' : 'Task properties'}</summary>
             <section className="task-detail-summary-grid task-detail-task-facts" aria-label={props.copy.metadataTitle}>
@@ -1596,7 +1607,29 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
               onCopyTask={props.onCopyTask}
             />
           </details>
-        </aside>
+        </div>
+        <div className="task-detail-main">
+          <TaskDigitalEmployeePanel
+            onArrangeTeam={props.onUseDigitalTeam ? () => props.onUseDigitalTeam!({ kind: 'manage' }) : undefined}
+            onOpenTeamRun={props.onUseDigitalTeam ? (runId) => props.onUseDigitalTeam!({ kind: 'run', runId }) : undefined}
+            key={props.task.id}
+            taskId={props.task.id}
+            projectId={props.task.projectId}
+            terminalReadOnly={props.terminalReadOnly}
+            client={props.digitalEmployeeClient ?? null}
+            management={digitalEmployeeManagement}
+            language={props.language}
+            conversations={conversations}
+            conversationsLoading={props.conversationsLoading}
+            conversationsError={props.conversationsError}
+            activeConversationId={props.activeConversationId}
+            conversationWorkspace={props.conversationWorkspace}
+            newConversationWorkspace={props.terminalReadOnly ? null : props.newConversationWorkspace}
+            onSelectConversation={props.onSelectConversation ? (conversationId) => props.onSelectConversation!(props.task.id, conversationId) : undefined}
+            onReloadConversations={props.onReloadConversations ? () => props.onReloadConversations!(props.task.id) : undefined}
+            onOpenConversation={(conversationId) => props.onOpenConversation(props.task.id, conversationId)}
+          />
+        </div>
       </div>
       {undoAttachment || attachmentSaveState.kind === 'saving' || attachmentSaveState.kind === 'error' || attachmentSaveState.kind === 'conflict' ? (
         <section className="task-detail-attachment-feedback" aria-live="polite" aria-busy={attachmentSaveState.kind === 'saving' || undefined}>
