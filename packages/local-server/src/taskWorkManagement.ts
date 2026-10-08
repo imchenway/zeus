@@ -72,6 +72,8 @@ const maximumSkillSnapshotBytes = 32 * 1024 * 1024;
 const taskWorkSkillArtifactGeneration = '2026-08-29-task-work-skill-snapshot-v1';
 
 export interface TaskWorkPreviewSelection {
+  /** 人工换人必须停止旧独立工作，普通新增分工不受影响。 */
+  replaceActiveWork?: boolean;
   /** 已安排分工只启动原工作，不重复创建。 */
   plannedWorkItemId?: string;
   employeeId: string;
@@ -600,6 +602,28 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
           return reply.code(202).send(workflow);
         }
         const skillResources = await prepareSkillResourceSnapshots(options, task, preview);
+        if (preview.selection.replaceActiveWork) {
+          if (!['user', 'local_api', 'remote_control'].includes(parsed.command.actor.kind)) throw new TaskWorkStoreError('ZEUS_TASK_WORK_HANDOFF_ACTOR_REQUIRED', '更换任务执行人需要用户操作。', 400);
+          if (options.planning.get(task.id)?.state === 'running') throw new TaskWorkStoreError('ZEUS_TASK_WORK_HANDOFF_PLAN_ACTIVE', '请先暂停当前工作安排，再更换独立执行人。');
+          /** 未确认结果也必须参与停止校验，不能被活动数量过滤掉。 */
+          const previousItems = options.items.listByTask(task.id).filter((item) => {
+            const run = item.currentRunId ? options.runs.getById(item.currentRunId) : undefined;
+            return run && ['prepared', 'dispatching', 'active', 'waiting_input', 'outcome_unknown'].includes(run.status);
+          });
+          for (const previous of previousItems) {
+            if (isDigitalTeamWorkItem(previous)) throw new TaskWorkStoreError('ZEUS_TASK_WORK_HANDOFF_TEAM_REQUIRED', '原团队工作尚未收口，请从原团队处理。');
+            await stopWorkItemRuntime(options, previous, `handoff:${parsed.operationIdentity}:${previous.id}`);
+            /** 停止期间若换代或仍有未知结果，不得取消新工作或接纳新执行。 */
+            const stopped = options.items.getById(previous.id)!;
+            const run = stopped.currentRunId ? options.runs.getById(stopped.currentRunId) : undefined;
+            if (stopped.currentRunId !== previous.currentRunId || run?.status === 'outcome_unknown') throw new TaskWorkStoreError('ZEUS_TASK_WORK_STOP_STATE_CHANGED', '原工作的停止结果尚未确认，请核对原会话。');
+            if (!['completed', 'failed', 'cancelled'].includes(stopped.status)) cancelWorkItem(options, stopped, stopped.revision);
+            await options.save();
+            publishChanged(options, task.id, stopped.id, 'cancelled');
+          }
+          /** 并发接纳的新工作不能被本次换人覆盖；此检查到创建之间不再等待。 */
+          if (activeTaskWorkItems(options, task.id).length) throw new TaskWorkStoreError('ZEUS_TASK_WORK_HANDOFF_CONFLICT', '任务已有新的执行，请刷新后再选择执行人。');
+        }
         const created = options.application.executeCore({
           parsed,
           destinationId: 'task-work-item-repository',
@@ -2893,10 +2917,12 @@ function projectRuleMetadata(projectPath: string): Array<{ identity: string; sha
 
 function normalizeSelection(value: unknown): TaskWorkPreviewSelection {
   if (!isRecord(value)) throw new TaskWorkStoreError('ZEUS_TASK_WORK_PREVIEW_INVALID', '指派预览参数必须是对象。', 400);
+  if (value.replaceActiveWork !== undefined && typeof value.replaceActiveWork !== 'boolean') throw new TaskWorkStoreError('ZEUS_TASK_WORK_PREVIEW_INVALID', '换人标记必须为布尔值。', 400);
   /** 手动指派与任务安排共用覆盖参数校验，并保留显式清空。 */
   const modelSettings = normalizeWorkSettings(Object.fromEntries(['modelOverride', 'reasoningEffort'].filter((key) => key in value).map((key) => [key, value[key]])));
   return {
     ...modelSettings,
+    ...(value.replaceActiveWork === true ? { replaceActiveWork: true } : {}),
     employeeId: requiredText(value.employeeId, '请选择数字员工。', 256),
     plannedWorkItemId: optionalText(value.plannedWorkItemId, 256) ?? undefined,
     supplementalInfo: optionalText(value.supplementalInfo, 20_000),

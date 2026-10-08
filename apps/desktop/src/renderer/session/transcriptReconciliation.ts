@@ -1,4 +1,4 @@
-import type { ConversationTranscriptEnvelope } from '@zeus/shared';
+import type { ConversationResource, ConversationTranscriptEnvelope } from '@zeus/shared';
 import type { NativeItemSnapshot } from './sessionTypes.js';
 
 /** 一次统一合并的可观察结果，供快照接管决定最小刷新范围。 */
@@ -89,7 +89,19 @@ export function transcriptEntryId(item: Pick<NativeItemSnapshot, 'transcript'>):
 }
 
 /** 统一合并器只依赖内容、状态和来源证据，供快照与实时缓冲共同使用。 */
-type TranscriptContent = Pick<NativeItemSnapshot, 'text' | 'payload' | 'status' | 'messageCreatedAt'> & { transcript?: ConversationTranscriptEnvelope };
+type TranscriptContent = Pick<NativeItemSnapshot, 'text' | 'payload' | 'status' | 'messageCreatedAt'> & { transcript?: ConversationTranscriptEnvelope; resources?: ConversationResource[] };
+
+/** 同一消息的资源可迟于正文抵达，空页和旧正文都不能撤销已登记资源。 */
+export function mergeDurableItemResources(previous: ConversationResource[] | undefined, incoming: ConversationResource[] | undefined): ConversationResource[] {
+  if (!incoming?.length) return previous ?? incoming ?? [];
+  if (!previous?.length) return incoming;
+  /** 同一资源身份只更新元数据，保持原插入顺序。 */
+  const resources = new Map(previous.map((resource) => [resource.id, resource]));
+  for (const resource of incoming) resources.set(resource.id, resource);
+  /** 无变化继续复用原引用，避免整段消息重新分组。 */
+  const merged = [...resources.values()];
+  return merged.length === previous.length && merged.every((resource, index) => resource === previous[index]) ? previous : merged;
+}
 
 /** 来源修订用于去重；正文权威只由实际载荷的内容修订决定。 */
 export function mergeTranscriptItem<T extends TranscriptContent>(previous: T, incoming: T): T {
@@ -104,12 +116,21 @@ export function mergeTranscriptItem<T extends TranscriptContent>(previous: T, in
   const content = keepContent ? previous : incoming;
   const placement = newestTranscriptPlacement(previous.transcript, incoming.transcript);
   const transcript = content.transcript && placement ? { ...content.transcript, placement } : (content.transcript ?? incoming.transcript);
-  if (content === previous && transcript?.placement === previous.transcript?.placement && (!incoming.messageCreatedAt || incoming.messageCreatedAt === previous.messageCreatedAt)) return previous;
+  /** 图片归档独立于正文修订，不因采用较新的正文而丢掉迟到资源。 */
+  const resources = mergeDurableItemResources(previous.resources, incoming.resources);
+  if (
+    content === previous &&
+    (resources === previous.resources || (!previous.resources && !incoming.resources)) &&
+    transcript?.placement === previous.transcript?.placement &&
+    (!incoming.messageCreatedAt || incoming.messageCreatedAt === previous.messageCreatedAt)
+  )
+    return previous;
   return {
     ...incoming,
     text: content.text,
     messageCreatedAt: incoming.messageCreatedAt ?? previous.messageCreatedAt,
     payload: content.payload,
+    ...(previous.resources || incoming.resources ? { resources } : {}),
     status: terminalStatus(previous.status, content.status),
     ...(transcript ? { transcript } : {}),
   };

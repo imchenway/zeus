@@ -32,7 +32,7 @@ import type { ZeusBrowserComment, ZeusBrowserPreparedSubmission } from '@zeus/sh
 import { type ConversationContextDraft, emptyConversationContextDraft, type TaskPushMessageLayout } from '@zeus/shared';
 import { mergeConversationContentV2, reconcileConversationHistoryCache } from './conversationSnapshotV2Adapter.js';
 import { isTranscriptContentUpdate } from './transcriptProjection.js';
-import { compareTranscriptTimelineOrder, mergeTranscriptItem, newestTranscriptPlacement, reconcileTranscriptItems, transcriptContentRevision } from './transcriptReconciliation.js';
+import { compareTranscriptTimelineOrder, mergeDurableItemResources, mergeTranscriptItem, newestTranscriptPlacement, reconcileTranscriptItems, transcriptContentRevision } from './transcriptReconciliation.js';
 import { isUnacceptedTranscriptMessage } from './conversationQueuePresentation.js';
 
 export type NativeSessionAction =
@@ -965,15 +965,6 @@ function sameStringArray(left: readonly string[], right: readonly string[]): boo
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-/** 同一持久消息的资源是渐进补齐数据；空快照不能撤销已经取得的图片与交付物。 */
-function mergeDurableItemResources(previous: NativeSessionItemBuffer['resources'] | undefined, incoming: NativeSessionItemBuffer['resources'] | undefined): NativeSessionItemBuffer['resources'] {
-  if (!previous?.length) return incoming ?? [];
-  if (!incoming?.length) return previous;
-  const resourcesById = new Map(previous.map((resource) => [resource.id, resource]));
-  for (const resource of incoming) resourcesById.set(resource.id, resource);
-  return [...resourcesById.values()];
-}
-
 function reduceNativeEvent(state: NativeSessionState, event: NativeConversationEvent, suppressRequestAuthority = false): NativeSessionState {
   if (state.seenEventIds[event.id]) return state;
   const payload = event.payload;
@@ -1479,7 +1470,8 @@ function reduceItemEvent(state: NativeSessionState, event: Extract<NativeConvers
           ? { ...previous?.payload, ...incomingPayload }
           : (incomingPayload ?? previous?.payload ?? matchedUserItem?.payload ?? {})
       : liveProgressPayload(previous?.payload ?? matchedUserItem?.payload, incomingPayload),
-    resources: completed ? (incomingResources ?? previous?.resources ?? matchedUserItem?.resources ?? []) : (previous?.resources ?? matchedUserItem?.resources ?? incomingResources ?? []),
+    // 图片可在流式正文之后登记；任何事件的空资源列表都不能撤销原资源。
+    resources: mergeDurableItemResources(previous?.resources ?? matchedUserItem?.resources, incomingResources ?? undefined),
     ...(resolvedClientId ? { clientUserMessageId: resolvedClientId, durableClientUserMessageId: resolvedClientId, optimistic: false } : {}),
     // 首次事件确定条目的时间线位置；delta/completed 只更新内容，不能让历史位置漂移。
     timelineAt: previous?.timelineAt ?? matchedUserItem?.timelineAt ?? event.createdAt,

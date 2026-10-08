@@ -1913,6 +1913,97 @@ function verifyTaskPushChoiceHandoff() {
   return { arrivalOrders: 3, canonicalConversationId: canonical.id, retainedHistory: sibling.id };
 }
 
+/** 图片资源页读完后仍可补齐迟到图片，重开会话继续使用同一显示身份。 */
+async function verifyImageResourceRecovery() {
+  /** 首屏没有图片元数据，正文已经带有受控图片引用。 */
+  const fresh = adaptConversationSnapshotV2({ snapshot: snapshotV2, history: historyV2, queue, requests: [], planImplementationRequests: [], choice, goal });
+  /** 已确认消息的身份、顺序和分组由原显示凭证固定。 */
+  const item = {
+    id: 'image-message',
+    providerItemId: null,
+    turnId: 'turn',
+    type: 'agentMessage',
+    status: 'completed',
+    text: '![设计稿](design.png)',
+    phase: 'final_answer',
+    payload: {},
+    resources: [],
+    startedAt: occurredAt,
+    updatedAt: occurredAt,
+    transcript: transcript('image-message', 1),
+  };
+  /** 消息已持久化，但资源页首次确实为空。 */
+  const cached = { ...fresh, items: [item] };
+  /** 资源登记之后出现的正式元数据。 */
+  const resource = {
+    id: 'late-image',
+    turnId: 'turn',
+    itemId: item.id,
+    sourceIndex: 0,
+    kind: 'file',
+    presentation: 'inline',
+    displayName: 'design.png',
+    mimeType: 'image/png',
+    previewKind: 'image',
+    iconKind: 'image',
+    createdAt: occurredAt,
+    updatedAt: occurredAt,
+    accessPolicy: 'authorized_open_intent_or_preview' as const,
+    transcript: item.transcript,
+  };
+  /** 当前与重开的控制器各自拥有原会话状态。 */
+  const harness = createHarness(undefined, 0, false, [], null, undefined, undefined, createHydratedSessionState(cached));
+  /** 服务端资源是否已登记，与正文终态相互独立。 */
+  let available = false;
+  /** 模拟一次读取失败，随后仍允许原位重试。 */
+  let fail = false;
+  /** 所有读取记录首页游标，避免读完资源后只复用旧缓存。 */
+  const reads: Array<string | undefined> = [];
+  harness.client.loadNativeConversationResourcesV2 = async (_project, _conversation, options) => {
+    reads.push(options?.cursor);
+    if (fail) {
+      fail = false;
+      throw new Error('受控资源读取失败');
+    }
+    return { ...historyV2, kind: 'resources', items: available ? [resource] : [] };
+  };
+  /** 初始显示结构需要逐字段保持。 */
+  const initialOrder = harness.controller.getState().itemOrder.join(',');
+  try {
+    await harness.controller.loadConversationResources();
+    assert(harness.controller.getState().snapshot?.v2Paging?.resources.loaded && reads.length === 1, '首次空资源页必须如实完成读取。');
+    available = true;
+    await harness.controller.loadConversationResources();
+    /** 资源迟到之后仍附着原消息，不能新增重复消息。 */
+    const restored = harness.controller.getState();
+    assert(Number(reads.length) === 2 && restored.snapshot?.items[0]?.resources?.[0]?.id === resource.id, '读完旧资源页后必须能重新取得迟到图片。');
+    assert(restored.itemOrder.join(',') === initialOrder && JSON.stringify(restored.snapshot?.items[0]?.transcript.placement) === JSON.stringify(item.transcript.placement), '资源补齐不能改变消息顺序或分组。');
+    fail = true;
+    await harness.controller.loadConversationResources().catch(() => undefined);
+    assert(Boolean(harness.controller.getState().snapshot?.v2Paging?.resources.error) && harness.controller.getState().snapshot?.items[0]?.resources?.[0]?.id === resource.id, '读取失败保留原消息与已登记图片。');
+    await harness.controller.loadConversationResources();
+    assert(!harness.controller.getState().snapshot?.v2Paging?.resources.error && Number(reads.length) === 4 && reads.every((cursor) => cursor === undefined), '重试必须从首页读取并清除真实错误。');
+    /** 重开时只恢复持久正文，再通过同一资源接口完成图片恢复。 */
+    const reopened = createHarness(undefined, 0, false, [], null, undefined, undefined, createHydratedSessionState(cached));
+    reopened.client.loadNativeConversationResourcesV2 = harness.client.loadNativeConversationResourcesV2;
+    try {
+      await reopened.controller.loadConversationResources();
+      assert(reopened.controller.getState().snapshot?.items[0]?.resources?.[0]?.id === resource.id && reopened.controller.getState().itemOrder.join(',') === initialOrder, '冷恢复必须补齐同一消息中的图片。');
+    } finally {
+      reopened.controller.dispose();
+    }
+  } finally {
+    harness.controller.dispose();
+  }
+  return { lateResource: true, emptyPageRefetched: true, retry: true, coldRecovery: true, stablePlacement: true, resourceReads: reads.length };
+}
+
+/** 定向使用既有真实控制器探针，不引入额外框架。 */
+if (process.argv.includes('--image-resource-recovery-only')) {
+  console.log(JSON.stringify({ imageResourceRecovery: await verifyImageResourceRecovery() }));
+  process.exit(0);
+}
+
 /** 创建身份专项复用现有探针，不引入新的验证体系。 */
 if (process.argv.includes('--task-push-choice-handoff-only')) {
   console.log(JSON.stringify({ taskPushChoiceHandoff: verifyTaskPushChoiceHandoff() }));

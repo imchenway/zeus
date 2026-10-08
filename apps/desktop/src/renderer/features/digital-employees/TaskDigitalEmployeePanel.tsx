@@ -23,11 +23,18 @@ import { TaskConversationPane } from './TaskConversationPane.js';
 import { TaskDeliverableReader, TaskDeliverableContent, readTaskDeliverableContent } from './TaskDeliverableReader.js';
 import { TaskWorkReviewPanel } from './TaskWorkReviewPanel.js';
 import { TaskWorkPlanPanel } from './TaskWorkPlanPanel.js';
+import { digitalTeamExecutionDefinition, type DigitalTeamWorkflowTemplateRecord } from '@zeus/shared';
+import type { DigitalTeamApiClient, DigitalTeamRunProjection } from '../digital-teams/digitalTeamApiClient.js';
+import type { DigitalTeamProgressSubscription } from '../digital-teams/TaskDigitalTeamProgress.js';
+import { buildTaskConversationNavigation, isCurrentTaskTeam } from './taskConversationNavigation.js';
+import { getDigitalTeamRunBlocker } from '../digital-teams/digitalTeamRunPresentation.js';
 import './digitalEmployees.css';
 
 export interface TaskDigitalEmployeePanelProps {
   /** 新协作统一进入数字团队，已有安排只保留运行与历史。 */
   onArrangeTeam?(): void;
+  /** 所选团队的状态处理仍进入原流程页面。 */
+  onOpenTeamRun?(runId: string): void;
   /** 当前任务会话使用原始身份，不复制消息。 */
   conversations?: NativeConversationChoice[];
   /** 会话列表读取状态。 */
@@ -54,6 +61,16 @@ export interface TaskDigitalEmployeePanelProps {
 }
 
 export interface TaskDigitalEmployeeManagement {
+  /** 按原始执行身份读取的团队历史。 */
+  teams: DigitalTeamRunProjection[];
+  /** 团队名称目录。 */
+  teamTemplates: DigitalTeamWorkflowTemplateRecord[];
+  /** 接纳后等待真实会话，不能把接纳回执当成启动完成。 */
+  pendingAssignment: { employeeId: string; workflowRunId?: string; workRunId?: string; previousAttempts: string[]; reason?: string } | null;
+  /** 交接成功后要求打开的原会话。 */
+  conversationRequest: { conversationId: string } | null;
+  /** 跟随本次接纳的准确运行，不使用最近会话猜测结果。 */
+  followAssignment(employeeId: string, result: { workflowRunId: string } | { run: { id: string } }): void;
   employees: DigitalEmployeeRecord[];
   /** 正式全局员工可直接指派，项目绑定由实际接纳透明建立。 */
   assignableEmployees: DigitalEmployeeRecord[];
@@ -67,8 +84,25 @@ export interface TaskDigitalEmployeeManagement {
   act(identity: string, operation: () => Promise<unknown>): Promise<boolean>;
 }
 
-export function useTaskDigitalEmployeeManagement(props: Pick<TaskDigitalEmployeePanelProps, 'taskId' | 'projectId' | 'client' | 'language'>): TaskDigitalEmployeeManagement {
+export function useTaskDigitalEmployeeManagement(
+  props: Pick<TaskDigitalEmployeePanelProps, 'taskId' | 'projectId' | 'client' | 'language'> & {
+    /** 任务详情读取一次团队历史，执行人和导航共用。 */
+    teamClient?: Pick<DigitalTeamApiClient, 'loadDigitalTeamRuns' | 'loadDigitalTeamRun' | 'loadDigitalTeamTemplates'> | null;
+    /** 团队与工作事件触发对账，历史阅读目标仍由导航保存。 */
+    subscribe?: DigitalTeamProgressSubscription;
+  },
+): TaskDigitalEmployeeManagement {
   const zh = props.language === 'zh-CN';
+  /** 历史终态缓存按修订复用，活动运行每次读取当前节点。 */
+  const teamCache = useRef(new Map<string, DigitalTeamRunProjection>());
+  /** 运行列表与员工工作一起刷新，避免两套状态相互覆盖。 */
+  const [teams, setTeams] = useState<DigitalTeamRunProjection[]>([]);
+  /** 模板名称只补充显示，不参与历史身份关联。 */
+  const [teamTemplates, setTeamTemplates] = useState<DigitalTeamWorkflowTemplateRecord[]>([]);
+  /** 接纳回执仅用于等待对应真实会话。 */
+  const [pendingAssignment, setPendingAssignment] = useState<TaskDigitalEmployeeManagement['pendingAssignment']>(null);
+  /** 每次成功交接有新的定位请求，即使目标复用了主会话。 */
+  const [conversationRequest, setConversationRequest] = useState<TaskDigitalEmployeeManagement['conversationRequest']>(null);
   const [employees, setEmployees] = useState<DigitalEmployeeRecord[]>([]);
   /** 目录包含已有正式全局员工，内置模板本身不是执行人。 */
   const [assignableEmployees, setAssignableEmployees] = useState<DigitalEmployeeRecord[]>([]);
@@ -91,18 +125,42 @@ export function useTaskDigitalEmployeeManagement(props: Pick<TaskDigitalEmployee
     const generation = ++readGeneration.current;
     if (!hasLoaded.current) setLoadState('loading');
     try {
-      const [nextEmployees, nextAssignableEmployees, nextProjection] = await Promise.all([
+      const [nextEmployees, nextAssignableEmployees, nextProjection, teamRecords, templates] = await Promise.all([
         props.client.loadProjectDigitalEmployees(props.projectId),
         props.client.loadProjectDigitalEmployees(props.projectId, true),
         props.client.loadTaskWorkManagement(props.taskId),
+        props.teamClient?.loadDigitalTeamRuns(props.projectId, props.taskId) ?? [],
+        props.teamClient?.loadDigitalTeamTemplates() ?? [],
       ]);
+      /** 旧读取不继续派生额外请求。 */
       if (generation !== readGeneration.current) return;
+      /** 每批至多四个历史读取，避免长任务一次占满本地连接。 */
+      const nextTeams: DigitalTeamRunProjection[] = [];
+      for (let offset = 0; offset < teamRecords.length; offset += 4) {
+        const batch = await Promise.all(
+          teamRecords.slice(offset, offset + 4).map(async (record) => {
+            if (record.taskId !== props.taskId || record.projectId !== props.projectId) throw new Error(zh ? '团队记录不属于当前任务。' : 'Team record belongs to another task.');
+            /** 已终结且修订一致的历史不会每三秒重读。 */
+            const cached = teamCache.current.get(record.id);
+            const team = cached && !isCurrentTaskTeam(cached) && cached.run.revision === record.revision ? cached : await props.teamClient!.loadDigitalTeamRun(record.id);
+            if (team.run.id !== record.id || team.run.taskId !== props.taskId || team.run.projectId !== props.projectId) throw new Error(zh ? '团队详情身份不匹配。' : 'Team identity mismatch.');
+            return team;
+          }),
+        );
+        if (generation !== readGeneration.current) return;
+        nextTeams.push(...batch);
+      }
+      if (generation !== readGeneration.current) return;
+      nextTeams.sort((a, b) => b.run.createdAt.localeCompare(a.run.createdAt) || b.run.id.localeCompare(a.run.id));
+      teamCache.current = new Map(nextTeams.map((team) => [team.run.id, team]));
+      setTeams(nextTeams);
+      setTeamTemplates(templates);
       hasLoaded.current = true;
       setEmployees(nextEmployees);
       setAssignableEmployees(nextAssignableEmployees);
       setProjection(nextProjection);
-      errorOperation.current = null;
-      setError(null);
+      /** 普通轮询不能把刚发生的交接失败提示清掉。 */
+      if (errorOperation.current === null) setError(null);
       setLoadState('ready');
     } catch (cause) {
       if (generation !== readGeneration.current) return;
@@ -110,21 +168,47 @@ export function useTaskDigitalEmployeeManagement(props: Pick<TaskDigitalEmployee
       errorOperation.current = null;
       setError(errorMessage(cause, zh ? 'zh-CN' : 'en'));
     }
-  }, [props.client, props.projectId, props.taskId, zh]);
+  }, [props.client, props.teamClient, props.projectId, props.taskId, zh]);
 
   useEffect(() => {
     hasLoaded.current = false;
     setProjection(null);
     setEmployees([]);
     setAssignableEmployees([]);
+    teamCache.current.clear();
+    setTeams([]);
+    setTeamTemplates([]);
+    setPendingAssignment(null);
+    setConversationRequest(null);
+    errorOperation.current = null;
     setError(null);
     void load();
     return () => {
       readGeneration.current += 1;
     };
   }, [load]);
+  /** 新团队可以在详情保持打开时由其他入口接纳，不能只依靠已有活动工作的轮询。 */
+  useEffect(() => {
+    const dispose = props.subscribe?.(
+      (event) => {
+        if ((event.type.startsWith('digital_team.') || event.type === 'task.work_management.changed') && event.payload.taskId === props.taskId) void load();
+      },
+      (state) => {
+        if (state === 'connected') void load();
+      },
+    );
+    return () => {
+      if (typeof dispose === 'function') dispose();
+    };
+  }, [props.subscribe, props.taskId, load]);
   const shouldPoll = Boolean(
-    projection?.summary.activeWorkItems || projection?.summary.pendingActions || projection?.plan?.state === 'running' || projection?.workItems.some((item) => item.arrangement?.cancellationRequested && item.status !== 'cancelled'),
+    pendingAssignment ||
+    teams.some(isCurrentTaskTeam) ||
+    loadState === 'failed' ||
+    projection?.summary.activeWorkItems ||
+    projection?.summary.pendingActions ||
+    projection?.plan?.state === 'running' ||
+    projection?.workItems.some((item) => item.arrangement?.cancellationRequested && item.status !== 'cancelled'),
   );
   useEffect(() => {
     if (!shouldPoll) return;
@@ -143,6 +227,58 @@ export function useTaskDigitalEmployeeManagement(props: Pick<TaskDigitalEmployee
       window.clearTimeout(timer);
     };
   }, [load, shouldPoll]);
+
+  /** 窗口重开也能从服务端耐久交接恢复等待，不重复提交命令。 */
+  useEffect(() => {
+    if (pendingAssignment) return;
+    const team = teams.find((entry) => isCurrentTaskTeam(entry) && entry.run.runtimeState.handoff && entry.run.runtimeState.handoff.status !== 'completed');
+    if (team?.run.runtimeState.handoff) setPendingAssignment({ employeeId: team.run.runtimeState.handoff.employeeId, workflowRunId: team.run.id, previousAttempts: team.nodeAttempts.map((attempt) => attempt.id) });
+  }, [teams, pendingAssignment]);
+
+  /** 只有停止旧工作并产生新目标会话后才切换视图。 */
+  useEffect(() => {
+    if (!pendingAssignment) return;
+    const team = teams.find((entry) => entry.run.id === pendingAssignment.workflowRunId);
+    const handoff = team?.run.runtimeState.handoff;
+    if (handoff && handoff.status !== 'completed' && team && isCurrentTaskTeam(team)) {
+      /** 停止未确认时保持交接锁，同时提供可读原因，不能显示成无限加载。 */
+      const reason =
+        team.run.status === 'outcome_unknown'
+          ? (getDigitalTeamRunBlocker(team, zh)?.reason ?? (zh ? '旧执行的停止结果尚未确认，请在团队流程中核对。' : 'The previous execution has not confirmed stopping. Review the team workflow.'))
+          : undefined;
+      if (pendingAssignment.reason !== reason) setPendingAssignment({ ...pendingAssignment, reason });
+      return;
+    }
+    /** 全局目录与项目绑定使用冻结身份对齐，不把历史入口当作当前员工。 */
+    const requestedRoles = team?.run.roleSnapshots.filter((role) => [role.employeeId, role.configuration.id, role.configuration.globalEmployeeId].includes(pendingAssignment.employeeId)) ?? [];
+    /** 同员工可能有多个节点，以当前有效尝试定位实际会话。 */
+    const targetNodeIds = new Set(
+      team
+        ? digitalTeamExecutionDefinition(team.run)
+            .nodes.filter((node) => node.type === 'employee' && requestedRoles.some((role) => role.employeeId === node.data.employeeId))
+            .map((node) => node.id)
+        : [],
+    );
+    const attempt = team?.currentAttempts.find((entry) => targetNodeIds.has(entry.nodeId) && (!pendingAssignment.previousAttempts.includes(entry.id) || ['prepared', 'dispatching', 'active'].includes(entry.status)));
+    const work = projection?.workItems.flatMap((item) => item.runs).find((run) => run.id === pendingAssignment.workRunId);
+    const conversationId = attempt?.conversationId ?? work?.conversationId;
+    if (conversationId) {
+      setConversationRequest({ conversationId });
+      setPendingAssignment(null);
+    } else if (['failed', 'cancelled', 'outcome_unknown'].includes(attempt?.status ?? work?.status ?? team?.run.status ?? '')) {
+      errorOperation.current = 'start-executor';
+      setError(work?.errorMessage ?? (typeof attempt?.error?.message === 'string' ? attempt.error.message : zh ? '新执行尚未产生会话，请查看受阻原因。' : 'The new execution has no conversation. Review its status.'));
+      setPendingAssignment(null);
+    }
+  }, [pendingAssignment, teams, projection, zh]);
+
+  /** 同步记录接纳身份，后续轮询只跟随这次真实交接。 */
+  const followAssignment = useCallback(
+    (employeeId: string, result: { workflowRunId: string } | { run: { id: string } }) => {
+      setPendingAssignment({ employeeId, ...('workflowRunId' in result ? { workflowRunId: result.workflowRunId } : { workRunId: result.run.id }), previousAttempts: teams.flatMap((team) => team.nodeAttempts.map((attempt) => attempt.id)) });
+    },
+    [teams],
+  );
 
   const act = useCallback(
     async (identity: string, operation: () => Promise<unknown>): Promise<boolean> => {
@@ -174,7 +310,7 @@ export function useTaskDigitalEmployeeManagement(props: Pick<TaskDigitalEmployee
     setError(null);
   }, []);
 
-  return { employees, assignableEmployees, projection, loadState, busy, error, load, act, dismissOperationError };
+  return { employees, assignableEmployees, projection, teams, teamTemplates, pendingAssignment, conversationRequest, followAssignment, loadState, busy, error, load, act, dismissOperationError };
 }
 
 type ManagementTab = 'collaboration' | 'work' | 'deliverables' | 'evidence';
@@ -193,6 +329,12 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
   const [decisionOpen, setDecisionOpen] = useState<TaskWorkDecisionRecord | null>(null);
   /** 证据预览只读取用户选中的命令。 */
   const [commandEvidenceRunId, setCommandEvidenceRunId] = useState<string | null>(null);
+  /** 实际换人完成后回到原会话区域，历史导航自身不触发交接。 */
+  useEffect(() => {
+    if (!props.management.conversationRequest) return;
+    setConversationRequest(props.management.conversationRequest);
+    setTab('collaboration');
+  }, [props.management.conversationRequest]);
 
   if (!props.client) return <p className="task-conversation-feedback">{zh ? '工作服务未连接，任务说明仍可编辑。' : 'The work service is disconnected. Task requirements remain editable.'}</p>;
   const { projection, loadState, busy, error, act } = props.management;
@@ -252,10 +394,15 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
         ) : null}
         <TaskConversationPane
           conversations={props.conversations ?? []}
-          loading={props.conversationsLoading}
+          loading={props.conversationsLoading || props.management.loadState === 'loading'}
           error={props.conversationsError}
           employees={props.management.employees}
           items={projection?.workItems ?? []}
+          teams={props.management.teams}
+          teamTemplates={props.management.teamTemplates}
+          pendingAssignment={props.management.pendingAssignment}
+          onArrangeTeam={props.onArrangeTeam}
+          onOpenTeamRun={props.onOpenTeamRun}
           activeConversationId={props.activeConversationId}
           workspace={props.conversationWorkspace}
           newWorkspace={props.terminalReadOnly ? null : props.newConversationWorkspace}
@@ -600,50 +747,86 @@ export function TaskDigitalEmployeeExecutor(props: {
   const zh = props.language === 'zh-CN';
   const [selectedEmployee, setSelectedEmployee] = useState<DigitalEmployeeRecord | null>(null);
   if (!props.client) return <span>{zh ? '未连接工作服务' : 'Work service is disconnected'}</span>;
-  /** 进行中数量沿用服务端权威投影，草稿和等待前序的分工不冒充已启动。 */
-  const activeCount = props.management.projection?.summary.activeWorkItems ?? 0;
-  /** 一个员工的多次运行只显示一次身份，不把工作数量写成员工数量。 */
-  const assignedEmployees = props.management.employees.filter(
-    (employee) =>
-      props.management.projection?.workItems.some((item) => item.runs.some((run) => run.employeeId === employee.id)) ||
-      props.management.projection?.plan?.stages.some((stage) => stage.items.some((item) => item.employeeId === employee.id && item.status !== 'cancelled')),
-  );
+  /** 顶部与左栏使用同一权威身份，只提取当前有效工作。 */
+  const navigation = buildTaskConversationNavigation({
+    teams: props.management.teams,
+    templates: props.management.teamTemplates,
+    employees: props.management.employees,
+    items: props.management.projection?.workItems ?? [],
+    conversations: [],
+    language: props.language,
+  });
+  /** 并行工作只显示一个身份及人数，完整名单留在下拉中。 */
+  const assignedEmployees = [
+    ...new Map(navigation.flatMap((group) => group.employees.filter((member) => member.employee && member.entries.some((entry) => entry.current)).map((member) => [member.employee!.id, member.employee!] as const))).values(),
+  ];
+  /** 人工交接必须依据当前冻结团队，不使用正在查看的历史团队。 */
+  const activeTeam = props.management.teams.find(isCurrentTaskTeam);
+  /** 冻结项目身份与全局来源共同定位可交接员工。 */
+  const teamEmployeeIds = new Set(activeTeam?.run.roleSnapshots.flatMap((role) => [role.employeeId, role.configuration.id, role.configuration.globalEmployeeId]).filter((id): id is string => typeof id === 'string') ?? []);
   /** 停用员工保留历史身份，但不能成为新指派候选。 */
   const runnableEmployees = props.management.assignableEmployees.filter((employee) => employee.enabled && employee.entrypointMigrationState === 'ready' && employee.entrypoint?.kind === 'agent');
+  /** 目录中的全局员工与已执行的项目绑定是同一人。 */
+  function isAssigned(employee: DigitalEmployeeRecord): boolean {
+    return assignedEmployees.some(
+      (current) => current.id === employee.id || current.id === employee.globalEmployeeId || current.globalEmployeeId === employee.id || Boolean(current.globalEmployeeId && current.globalEmployeeId === employee.globalEmployeeId),
+    );
+  }
   const options = [
-    ...runnableEmployees.map((employee) => ({ value: employee.id, label: `${employee.name} · ${employee.role}`, icon: <DigitalEmployeeAvatar {...employee} />, searchText: `${employee.name} ${employee.role} ${employee.domain}` })),
+    ...runnableEmployees.map((employee) => ({
+      value: employee.id,
+      label: employee.name,
+      icon: <DigitalEmployeeAvatar {...employee} />,
+      searchText: `${employee.name} ${employee.role} ${employee.domain}`,
+      description: activeTeam && !teamEmployeeIds.has(employee.id) && !teamEmployeeIds.has(employee.globalEmployeeId ?? '') ? (zh ? '不在本次团队的冻结分工中' : 'Not assigned to this team execution') : employee.role,
+      disabled: Boolean(activeTeam && !teamEmployeeIds.has(employee.id) && !teamEmployeeIds.has(employee.globalEmployeeId ?? '')),
+    })),
   ];
   return (
     <span className="task-digital-employee-executor">
-      {assignedEmployees.length ? (
-        <span className="task-assigned-employees" aria-label={zh ? '参与员工' : 'Assigned employees'}>
-          {assignedEmployees.map((employee) => (
-            <span key={employee.id} title={employee.role}>
-              <DigitalEmployeeAvatar {...employee} />
-              <span>{employee.name}</span>
-            </span>
-          ))}
-        </span>
-      ) : null}
       {props.terminalReadOnly ? (
-        assignedEmployees.length === 0 ? (
-          <span>{zh ? '尚无员工记录' : 'No employee history'}</span>
-        ) : null
+        <span>{assignedEmployees.map((employee) => employee.name).join('、') || (zh ? '暂无执行人' : 'No current employee')}</span>
       ) : runnableEmployees.length > 0 ? (
         <ZeusSelect
           size="regular"
           ariaLabel={zh ? '选择任务执行者' : 'Choose task executor'}
-          value=""
+          value={assignedEmployees.length === 1 ? (runnableEmployees.find(isAssigned)?.id ?? assignedEmployees[0].id) : ''}
           options={options}
           searchable
           searchPlaceholder={zh ? '搜索员工、岗位或领域' : 'Search employee, role, or domain'}
           emptyLabel={zh ? '没有匹配的数字员工' : 'No matching digital employees'}
-          disabled={props.terminalReadOnly || props.management.loadState === 'loading' || props.management.busy !== null || runnableEmployees.length === 0}
+          disabled={props.terminalReadOnly || props.management.loadState === 'loading' || props.management.busy !== null || Boolean(props.management.pendingAssignment) || runnableEmployees.length === 0}
           onChange={(employeeId) => {
             const employee = props.management.assignableEmployees.find((candidate) => candidate.id === employeeId);
-            if (employee) setSelectedEmployee(employee);
+            if (!employee || isAssigned(employee)) return;
+            if (!activeTeam && assignedEmployees.length === 0) {
+              setSelectedEmployee(employee);
+              return;
+            }
+            void props.management.act('start-executor', async () => {
+              /** 同一接纳入口先预检，配置或输入缺失时不停止旧工作。 */
+              const preview = await props.client!.previewTaskWorkItem(props.taskId, { employeeId, workspace: { mode: 'create' }, replaceActiveWork: true });
+              if (preview.blockers.length) throw new Error(preview.blockers.map((blocker) => blocker.message).join('\n'));
+              const result = await props.client!.createTaskWorkItem(props.taskId, preview);
+              props.management.followAssignment(employeeId, result);
+            });
           }}
-          triggerLabel={assignedEmployees.length ? (zh ? '指派工作' : 'Assign work') : zh ? '选择执行人' : 'Choose an employee'}
+          triggerIcon={assignedEmployees[0] ? <DigitalEmployeeAvatar {...assignedEmployees[0]} /> : undefined}
+          triggerLabel={
+            props.management.pendingAssignment?.reason
+              ? zh
+                ? '交接受阻'
+                : 'Handover blocked'
+              : props.management.pendingAssignment || props.management.busy === 'start-executor'
+                ? zh
+                  ? '正在交接…'
+                  : 'Handing over…'
+                : assignedEmployees.length
+                  ? assignedEmployees[0].name + (assignedEmployees.length > 1 ? ` +${assignedEmployees.length - 1}` : '')
+                  : zh
+                    ? '选择执行人'
+                    : 'Choose an employee'
+          }
         />
       ) : props.management.loadState === 'loading' ? (
         <span role="status">{zh ? '正在读取员工…' : 'Loading employees…'}</span>
@@ -658,7 +841,6 @@ export function TaskDigitalEmployeeExecutor(props: {
       ) : (
         <span>{zh ? '尚无可指派员工' : 'No employees available'}</span>
       )}
-      {activeCount > 0 ? <small className="task-digital-employee-executor-status">{zh ? `${activeCount} 项工作进行中` : `${activeCount} active ${activeCount === 1 ? 'work item' : 'work items'}`}</small> : null}
       <MotionPresence>
         {selectedEmployee ? (
           <TaskEmployeeRunDialog
@@ -674,7 +856,10 @@ export function TaskDigitalEmployeeExecutor(props: {
             onLoadCapabilities={props.onLoadCapabilities}
             onDismiss={() => setSelectedEmployee(null)}
             onSubmit={async (preview) => {
-              const success = await props.management.act('start-executor', () => props.client!.createTaskWorkItem(props.taskId, preview));
+              const success = await props.management.act('start-executor', async () => {
+                const result = await props.client!.createTaskWorkItem(props.taskId, preview);
+                props.management.followAssignment(selectedEmployee.id, result);
+              });
               if (success) setSelectedEmployee(null);
               return success;
             }}

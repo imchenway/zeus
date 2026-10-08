@@ -6,6 +6,10 @@ import { prepareWorkflowCandidate } from '../packages/git-core/src/index.js';
 import { DigitalTeamWorkflowCoordinator, type DigitalTeamWorkflowCoordinatorOptions } from '../packages/local-server/src/digitalTeamWorkflowCoordinator.js';
 import { createAutomationScheduler, type AutomationSchedulerOptions } from '../packages/local-server/src/automationScheduler.js';
 import { WorkManagementCoreOperations } from '../packages/local-server/src/workManagementCoreOperations.js';
+import { buildTaskConversationNavigation } from '../apps/desktop/src/renderer/features/digital-employees/taskConversationNavigation.js';
+import type { DigitalTeamRunProjection } from '../apps/desktop/src/renderer/features/digital-teams/digitalTeamApiClient.js';
+import { mergeTranscriptItem } from '../apps/desktop/src/renderer/session/transcriptReconciliation.js';
+import type { ConversationResource } from '../packages/shared/src/conversationResources.js';
 import { migrateEmployeeAutomationsToUnified } from '../packages/storage/src/automationEmployeeMigration.js';
 import { migrateDigitalTeamProjectEmployeeReferences, migrateUnifiedDigitalTeamTemplates } from '../packages/storage/src/digitalTeamWorkflowStore.js';
 import type { ZeusDatabasePort } from '../packages/storage/src/databasePort.js';
@@ -58,6 +62,19 @@ const evidenceSha = 'e'.repeat(64);
 const probeRoot = await mkdtemp(join(tmpdir(), 'zeus-digital-team-workflow-probe-'));
 /** 探针数据库路径。 */
 const databasePath = join(probeRoot, 'workflow.db');
+
+/** 定向检查任务导航、真实交接账本及迟到图片，不派发模型。 */
+if (process.argv.includes('--task-detail-only')) {
+  try {
+    await verifyTaskDetailNavigationAndHandoff();
+    process.stdout.write(
+      `${JSON.stringify({ ok: true, checks: ['execution-history-grouping', 'employee-retry-history', 'ordinary-conversations', 'handoff-previous-entry', 'handoff-double-submit', 'stop-failure-blocks-start', 'handoff-success', 'late-image-keeps-placement'] })}\n`,
+    );
+  } finally {
+    await rm(probeRoot, { recursive: true, force: true });
+  }
+  process.exit(0);
+}
 
 /** 定向运行真实 SQLite 失败收口边界，不调用本专项其余 Git 或 Provider 入口。 */
 if (process.argv.includes('--failure-state-only')) {
@@ -532,6 +549,202 @@ async function verifyDefiniteRunFailureSettlement(): Promise<void> {
     await coordinator.close();
   } finally {
     await database.close();
+  }
+}
+
+/** 使用真实仓储和协调器核对导航身份与交接停止边界。 */
+async function verifyTaskDetailNavigationAndHandoff(): Promise<void> {
+  /** 每次检查使用独立 SQLite，不影响任何开发或正式任务。 */
+  const database = await createZeusDatabase(databasePath);
+  try {
+    /** 复用生产仓储写入真实身份与修订。 */
+    const projects = new ProjectRepository(database);
+    /** 任务、员工、团队及尝试保持原外键关系。 */
+    const tasks = new TaskRepository(database);
+    /** 冻结角色配置由正式员工仓储提供。 */
+    const employees = new DigitalEmployeeRepository(database);
+    /** 全局员工模板用于正常创建项目员工。 */
+    const employeeTemplates = new DigitalEmployeeTemplateRepository(database);
+    /** 团队运行账本保留重复执行。 */
+    const runs = new DigitalTeamWorkflowRunRepository(database);
+    /** 分工尝试账本保留重试历史。 */
+    const attempts = new DigitalTeamNodeAttemptRepository(database);
+    /** 缺陷关系沿用真实空仓储。 */
+    const defects = new DefectWorkflowRepository(database);
+    /** 原会话身份不由前端合成。 */
+    const conversations = new ConversationRepository(database);
+    /** 无代码执行的独立验收项目。 */
+    const project = projects.create({ name: '任务导航检查', localPath: join(probeRoot, 'navigation') });
+    /** 历史和当前执行属于同一任务。 */
+    const task = tasks.create({ projectId: project.id, title: '团队重复执行', taskType: 'requirement', description: '', createdFrom: 'digital-team-probe', sourceContext: {} });
+    /** 规划角色的真实项目身份。 */
+    const planner = employees.createFromTemplate({ projectId: project.id, template: employeeTemplates.create({ name: '规划员工', role: '规划', prompt: '确认需求。' }) });
+    /** 开发角色的真实项目身份。 */
+    const developer = employees.createFromTemplate({ projectId: project.id, template: employeeTemplates.create({ name: '开发员工', role: '开发', prompt: '实施需求。' }) });
+    /** 两个可独立进入的只读节点便于隔离交接检查。 */
+    const workflow = definition([employeeNode('plan', planner.id, '需求规划'), employeeNode('work', developer.id, '界面实施')], [{ id: 'plan-work', source: 'plan', target: 'work' }]);
+    /** 注入受控停止结果，唯一模型派发端口禁止调用。 */
+    let failStop = true;
+    /** 记录停止真实分工的调用次数。 */
+    let stopCount = 0;
+    /** 记录任何不应发生的模型派发。 */
+    let dispatchCount = 0;
+    /** 除执行器端口外复用完整生产协调器。 */
+    const coordinator = new DigitalTeamWorkflowCoordinator({
+      projects,
+      tasks,
+      runs,
+      attempts,
+      defects,
+      isTaskTerminal: () => false,
+      validateTaskStatus: () => true,
+      isCompletedTaskStatus: () => false,
+      now: () => new Date(),
+      save: () => database.save(),
+      publish: () => undefined,
+      taskWork: {
+        stopWorkflowWorkItem: async () => {
+          stopCount += 1;
+          if (failStop) throw new Error('停止回执未知');
+        },
+        createWorkflowWorkItem: async () => {
+          dispatchCount += 1;
+          throw new Error('本检查禁止派发模型');
+        },
+      },
+    } as unknown as DigitalTeamWorkflowCoordinatorOptions);
+    /** 保留旧执行中的两条同员工会话。 */
+    const history = runs.create({ projectId: project.id, taskId: task.id, definition: workflow, taskFacts: {}, baseRevisions: [] });
+    /** 创建带真实会话关联的在途尝试。 */
+    const activate = (runId: string, nodeId: string): DigitalTeamNodeAttemptRecord => {
+      /** 分工会话和工作项必须绑定所属运行的任务。 */
+      const taskId = runs.getById(runId)!.taskId;
+      /** 会话在持久层先存在，前端只引用该身份。 */
+      const conversation = conversations.create({ projectId: project.id, taskId, title: nodeId });
+      /** 当前分工使用仓储分配的稳定身份。 */
+      const attempt = attempts.create({ runId, nodeId, inputSha256: evidenceSha });
+      /** 停止目标也使用真实工作项，不能伪造外键。 */
+      const work = new TaskWorkItemRepository(database).create({
+        id: `work-${attempt.id}`,
+        projectId: project.id,
+        taskId,
+        employeeId: nodeId === 'plan' ? planner.id : developer.id,
+        source: 'manual',
+        sourceRef: attempt.id,
+        title: nodeId,
+        description: '',
+        entrypointKind: 'agent',
+        status: 'active',
+      });
+      return attempts.update(attempt.id, { expectedRevision: attempt.revision, status: 'active', workItemId: work.id, conversationId: conversation.id });
+    };
+    /** 首条失败会话仍可查看。 */
+    const failed = activate(history.id, 'work');
+    attempts.update(failed.id, { expectedRevision: failed.revision, status: 'failed', error: { message: '首次实施受阻' } });
+    /** 同员工重试仍属于原运行。 */
+    const retry = activate(history.id, 'work');
+    attempts.submitResult(retry.id, { expectedRevision: retry.revision, result: readOnlyResult() });
+    runs.update(history.id, { expectedRevision: history.revision, status: 'completed' });
+    /** 整队重开必须产生另一真实运行身份。 */
+    const current = runs.create({ projectId: project.id, taskId: task.id, definition: workflow, taskFacts: {}, baseRevisions: [], runtimeState: { entryNodeId: 'plan' } });
+    completeEmployeeAttempt(attempts, current.id, 'plan');
+    /** 当前实际执行人已从规划转到开发。 */
+    const working = activate(current.id, 'work');
+    /** 普通任务讨论不能因团队存在而消失。 */
+    const ordinary = conversations.create({ projectId: project.id, taskId: task.id, title: '任务讨论' });
+    /** 原运行投影直接用于真实前端分组函数。 */
+    const groups = buildTaskConversationNavigation({
+      teams: [coordinator.getRunProjection(current.id), coordinator.getRunProjection(history.id)] as DigitalTeamRunProjection[],
+      templates: [],
+      employees: [],
+      items: [],
+      conversations: [{ id: ordinary.id, title: ordinary.title, createdAt: ordinary.createdAt }] as Parameters<typeof buildTaskConversationNavigation>[0]['conversations'],
+      language: 'zh-CN',
+    });
+    assert(groups[0].id === current.id && groups[1].id === history.id && groups[1].employees.find((member) => member.id === developer.id)?.entries.length === 2, '整队重开必须分组，员工重试必须保留在原组。');
+    assert(groups[2].employees[0]?.entries[0]?.conversationId === ordinary.id && groups[0].employees.find((member) => member.id === developer.id)?.entries.some((entry) => entry.current), '普通会话必须保留，当前执行人必须来自当前尝试。');
+    /** 返回旧入口不能被误判为正在执行同一员工。 */
+    const prepared = await coordinator.prepareEmployeeAssignment(project.id, { taskId: task.id, employeeId: planner.id });
+    assert(prepared, '已有团队必须得到原执行的交接预检。');
+    /** 同一次人工操作复用命令身份。 */
+    const context = { commandId: 'navigation-handoff', operationIdentity: 'navigation-handoff', actor: { kind: 'user' as const } };
+    coordinator.acceptEmployeeAssignment(project.id, { taskId: task.id, employeeId: planner.id }, context, prepared);
+    assert(runs.getById(current.id)?.runtimeState.handoff?.status === 'stopping', '选择已完成的旧入口必须先登记交接。');
+    /** 相同目标重复提交不得产生第二次交接修订。 */
+    const handoffRevision = runs.getById(current.id)!.revision;
+    coordinator.acceptEmployeeAssignment(project.id, { taskId: task.id, employeeId: planner.id }, context, prepared);
+    assert(runs.getById(current.id)!.revision === handoffRevision, '相同交接重复提交必须复用。');
+    /** 正在交接时拒绝另一目标，防止连续选择覆盖停止目标。 */
+    let rejected = false;
+    try {
+      coordinator.acceptEmployeeAssignment(project.id, { taskId: task.id, employeeId: developer.id }, context, { ...prepared, runtimeState: { ...prepared.runtimeState, entryNodeId: 'work' } });
+    } catch {
+      rejected = true;
+    }
+    assert(rejected, '交接未完成时必须拒绝另一目标。');
+    /** 调用现有停止阶段，模型端口保持未调用。 */
+    const boundary = coordinator as unknown as { processHandoff(run: DigitalTeamWorkflowRunRecord): Promise<void> };
+    await boundary.processHandoff(runs.getById(current.id)!);
+    assert(runs.getById(current.id)?.status === 'outcome_unknown' && runs.getById(current.id)?.runtimeState.handoff?.status === 'stopping' && dispatchCount === 0, '停止未知不能完成交接或启动新员工。');
+    /** 模拟执行器后来提供准确停止事实，再恢复原耐久交接。 */
+    const unknown = attempts.getById(working.id)!;
+    attempts.update(unknown.id, { expectedRevision: unknown.revision, status: 'failed', error: { message: '已核对原执行终止' } });
+    failStop = false;
+    await boundary.processHandoff(runs.getById(current.id)!);
+    assert(runs.getById(current.id)?.runtimeState.handoff?.status === 'completed' && stopCount === 1 && attempts.listByRun(history.id).length === 2 && dispatchCount === 0, '停止确认后才能完成交接，历史不可删除。');
+    /** 当前入口已经执行时，即使有完成的交接记录也必须复用。 */
+    activate(current.id, 'plan');
+    /** 再次选择当前执行人不重启。 */
+    const runningRevision = runs.getById(current.id)!.revision;
+    coordinator.acceptEmployeeAssignment(project.id, { taskId: task.id, employeeId: planner.id }, context, prepared);
+    assert(runs.getById(current.id)!.revision === runningRevision, '当前执行人与已完成的交接历史不能触发再次重启。');
+    /** 独立任务验证正常停止，不绕过中间节点的正式成果要求。 */
+    const successTask = tasks.create({ projectId: project.id, title: '停止成功交接', taskType: 'requirement', description: '', createdFrom: 'digital-team-probe', sourceContext: {} });
+    /** 该图的两个入口均无上游成果依赖。 */
+    const successRun = runs.create({ projectId: project.id, taskId: successTask.id, definition: { ...workflow, edges: [] }, taskFacts: {}, baseRevisions: [] });
+    activate(successRun.id, 'work');
+    /** 仍通过完整预检选择新员工。 */
+    const successPrepared = await coordinator.prepareEmployeeAssignment(project.id, { taskId: successTask.id, employeeId: planner.id });
+    assert(successPrepared, '正常交接必须完成预检。');
+    coordinator.acceptEmployeeAssignment(project.id, { taskId: successTask.id, employeeId: planner.id }, context, successPrepared);
+    await boundary.processHandoff(runs.getById(successRun.id)!);
+    assert(runs.getById(successRun.id)?.runtimeState.handoff?.status === 'completed' && Number(stopCount) === 2 && dispatchCount === 0, '真实在途分工停止成功后才能完成下一次交接。');
+    /** 资源迟到时旧正文不能覆盖当前正文，位置和分组身份继续复用。 */
+    const previous = {
+      text: '已经确认的正文',
+      status: 'completed',
+      messageCreatedAt: '2026-10-08T00:00:00Z',
+      payload: {},
+      resources: [],
+      transcript: {
+        placement: { entryId: 'stable-message', order: 4, orderEpoch: 1, placementRevision: 1, turnId: 'turn', openingInputId: 'input', displayStageId: 'stage' },
+        sources: [{ domain: 'item', scope: 'turn', sourceId: 'message', facet: 'text', revision: 3, contentRevision: 3 }],
+      },
+    };
+    /** 图片元数据属于同一个消息来源的迟到补齐。 */
+    const resource: ConversationResource = {
+      id: 'late-image',
+      projectId: project.id,
+      conversationId: ordinary.id,
+      turnId: 'turn',
+      itemId: 'message',
+      kind: 'file',
+      presentation: 'inline',
+      displayName: '设计稿.png',
+      projectRelativePath: 'design.png',
+      mimeType: 'image/png',
+      iconKind: 'image',
+      createdAt: previous.messageCreatedAt,
+      updatedAt: previous.messageCreatedAt,
+    };
+    /** 资源版本比正文旧，仍应合并资源。 */
+    const merged = mergeTranscriptItem(
+      { ...previous, resources: [resource].slice(0, 0) },
+      { ...previous, text: '旧正文', resources: [resource], transcript: { ...previous.transcript, sources: previous.transcript.sources.map((source) => ({ ...source, revision: 2, contentRevision: 2 })) } },
+    );
+    assert(merged.text === previous.text && merged.resources[0] === resource && JSON.stringify(merged.transcript.placement) === JSON.stringify(previous.transcript.placement), '迟到图片必须原位补齐，不能回退正文或移动消息。');
+  } finally {
+    database.close();
   }
 }
 

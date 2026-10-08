@@ -32,6 +32,7 @@ import { newItemMotionDurationMs, useNewItemMotionIds } from '../ui/useNewItemMo
 import { captureTranscriptViewportAnchor, compensateTranscriptViewportAnchor, type TranscriptViewportAnchor, useTranscriptViewportVirtualizer } from './transcriptViewportVirtualizer.js';
 import { reportApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { isImageResource } from './ConversationResources.js';
+import { ConversationImageResourcesContext, hasMissingMarkdownImages } from './ConversationMarkdown.js';
 import { composerQueuedSubmissions, isUnacceptedTranscriptMessage, orderTranscriptItemsWithQueue, visibleQueuedSubmissions } from './conversationQueuePresentation.js';
 import type { McpAppToolCall, McpAppToolResult } from './McpAppFrame.js';
 import { ConversationNavigation, mergeNavigationEntries, navigationRowKey, useConversationNavigation, type TranscriptNavigationEntry } from './ConversationNavigation.js';
@@ -120,10 +121,6 @@ const userScrollIntentIdleMs = 180;
 const latestPositionFallbackMs = 80;
 const transcriptVerticalScrollKeys = new Set(['ArrowDown', 'ArrowUp', 'End', 'Home', 'PageDown', 'PageUp', ' ', 'Spacebar']);
 
-function containsMarkdownImage(item: NativeSessionItemBuffer): boolean {
-  return /!\[[^\]]*\]\([^)]+\)/u.test(transcriptItemText(item));
-}
-
 function imageAttachmentDescriptors(item: NativeSessionItemBuffer): Array<{ name: string; taskPushAttachmentKey: string | null }> {
   const content = typeof item.payload.content === 'object' && item.payload.content !== null && !Array.isArray(item.payload.content) ? (item.payload.content as Record<string, unknown>) : null;
   const sources = [item.payload.attachments, content?.attachments].filter(Array.isArray);
@@ -147,7 +144,7 @@ function imageAttachmentDescriptors(item: NativeSessionItemBuffer): Array<{ name
 }
 
 function itemNeedsImageResources(item: NativeSessionItemBuffer): boolean {
-  if (containsMarkdownImage(item) && !item.resources.some((resource) => resource.presentation === 'inline' && isImageResource(resource))) return true;
+  if (hasMissingMarkdownImages(transcriptItemText(item), item.resources)) return true;
   if (item.optimistic) return false;
   return imageAttachmentDescriptors(item).some(
     (attachment) =>
@@ -638,6 +635,18 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   };
   const itemNeedingImageResources = useMemo(() => items.find(itemNeedsImageResources) ?? null, [items]);
   const resourcePaging = props.state.snapshot?.v2Paging?.resources;
+  /** 仅资源状态变化才通知图片节点，不随正文流式渲染重新创建上下文。 */
+  const imageResourceContext = useMemo(
+    () => ({
+      state: resourcePaging?.error
+        ? ('failed' as const)
+        : (resourcePaging && (!resourcePaging.loaded || resourcePaging.loading || resourcePaging.hasMore)) || props.state.transportState !== 'ready'
+          ? ('loading' as const)
+          : ('ready' as const),
+      reload: renderProps.onLoadConversationResources,
+    }),
+    [resourcePaging?.error, resourcePaging?.loaded, resourcePaging?.loading, resourcePaging?.hasMore, props.state.transportState, renderProps.onLoadConversationResources],
+  );
   const assistantDeliverablesAvailable = Boolean(props.state.snapshot?.snapshotV2?.collections.resources.assistantDeliverablesAvailable);
   useEffect(() => {
     const loadTurnArtifacts = renderProps.onLoadTurnArtifacts;
@@ -659,7 +668,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     if (props.state.transportState !== 'ready' || !loadConversationResources || !resourcePaging || resourcePaging.loading) return;
     // 首次调用可能先取得资源页、后取得带 providerItemId 的正文。把资源页代次和
     // Provider item 身份都纳入尝试键，允许第二次只执行内存合并，但仍禁止无界重试。
-    const attemptKey = `${props.state.conversationId}:${assistantDeliverablesAvailable ? 'assistant-deliverables' : 'ordinary-resources'}:${itemNeedingImageResources?.turnId ?? 'conversation'}:${itemNeedingImageResources?.providerItemId ?? itemNeedingImageResources?.key ?? 'none'}:${resourcePaging.loaded}:${resourcePaging.hasMore}:${resourcePaging.nextCursor ?? 'end'}:${resourcePaging.items.length}`;
+    const attemptKey = `${props.state.conversationId}:${assistantDeliverablesAvailable ? 'assistant-deliverables' : 'ordinary-resources'}:${itemNeedingImageResources?.turnId ?? 'conversation'}:${itemNeedingImageResources?.providerItemId ?? itemNeedingImageResources?.key ?? 'none'}:${itemNeedingImageResources?.status ?? ''}:${resourcePaging.loaded}:${resourcePaging.hasMore}:${resourcePaging.nextCursor ?? 'end'}:${resourcePaging.items.length}`;
     if (automaticResourceLoadAttemptRef.current === attemptKey) return;
     automaticResourceLoadAttemptRef.current = attemptKey;
     // Markdown 图片和已持久用户附件都属于正文，不应要求用户先展开“处理过程”
@@ -1264,7 +1273,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   };
 
   return (
-    <>
+    <ConversationImageResourcesContext.Provider value={imageResourceContext}>
       <output className="session-sr-only session-transcript-announcement" aria-live="polite" aria-atomic="true">
         {completedAnnouncement ? <span key={completedAnnouncement.key}>{completedAnnouncement.text}</span> : null}
       </output>
@@ -1414,7 +1423,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
         </button>
         <TranscriptHistoryLoading visible={Boolean(props.historyLoading)} initializing={Boolean(props.state?.transcriptInitializing)} language={props.language} />
       </div>
-    </>
+    </ConversationImageResourcesContext.Provider>
   );
 }
 
