@@ -482,14 +482,14 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     setCommitGenerationFeedback(zh ? '正在生成…' : 'Generating…');
     setError(null);
     try {
-      /** 与源码提交入口共用最近选用的模型，不额外增加模型设置。 */
+      /** 与其他提交入口共用已保存的模型、推理和速率设置。 */
       const models = await loadGitCommitModelOptions(props.client, props.task.projectId, controller.signal);
       controller.signal.throwIfAborted();
       if (!models.modelRef) throw new Error(models.warning || (zh ? '暂无可用模型，请在设置中配置模型连接后重试。' : 'No models available. Configure a model connection in Settings, then retry.'));
       /** 请求包含明确任务身份；服务端根据记录定位每个 Worktree。 */
       const result = await props.client.generateGitCommitMessage(
         props.task.projectId,
-        { repositoryId: commitGenerationSelection[0]!.repositoryId, taskId: props.task.id, selection: commitGenerationSelection, language: zh ? 'zh-CN' : 'en', modelRef: models.modelRef },
+        { repositoryId: commitGenerationSelection[0]!.repositoryId, taskId: props.task.id, selection: commitGenerationSelection, language: zh ? 'zh-CN' : 'en', ...models.settings },
         (text) => {
           if (!controller.signal.aborted) setGeneratedMessage(text);
         },
@@ -1115,7 +1115,8 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                 <GitDeliveryActions
                   zh={zh}
                   busyAction={busyAction}
-                  clientAvailable={Boolean(props.client)}
+                  generationClient={props.client}
+                  projectId={props.task.projectId}
                   canGenerate={Boolean(commitGenerationSelection.length)}
                   onGenerate={() => {
                     if (busyAction === 'commit-message') commitGenerationController.current?.abort();

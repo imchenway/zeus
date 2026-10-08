@@ -906,16 +906,35 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
 
   server.get('/api/projects/:projectId/git/commit-models', async (request: FastifyRequest<{ Params: { projectId: string } }>, reply) => {
     if (!projects.getById(request.params.projectId)) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: '项目不存在。' });
-    const items = (await modelConnections.listSelectableModels())
+    /** 设置入口和生成服务使用同一份模型能力，不能猜测可用档位。 */
+    const items: Array<Pick<CodexModelCapability, 'id' | 'model' | 'supportedReasoningEfforts' | 'defaultReasoningEffort' | 'serviceTiers'> & { label: string }> = (await modelConnections.listSelectableModels())
       .filter((model: SelectableConnectionModel) => model.available && model.enabled)
-      .map((model: SelectableConnectionModel) => ({ id: model.id, label: `${model.sourceName} · ${model.displayName}` }));
+      .map((model: SelectableConnectionModel) => ({
+        id: model.id,
+        model: model.model,
+        label: `${model.sourceName} · ${model.displayName}`,
+        supportedReasoningEfforts: model.supportedReasoningEfforts,
+        defaultReasoningEffort: model.defaultReasoningEffort ?? undefined,
+        serviceTiers: model.serviceTiers,
+      }));
     let warning = '';
     try {
       if (!codexNativeEnabled) throw new Error('Codex 尚未启用。');
       const capabilities = await codexAppServerManager.ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) });
       const account = await codexAppServerManager.readAccount();
       if (!account.signedIn && account.requiresOpenaiAuth) throw new Error('请先在 Zeus 中登录 Codex，再刷新模型列表。');
-      items.push(...capabilities.models.filter((model: CodexModelCapability) => model.raw.hidden !== true).map((model: CodexModelCapability) => ({ id: `codex:${model.model}`, label: `Codex · ${model.displayName || model.model}` })));
+      items.push(
+        ...capabilities.models
+          .filter((model: CodexModelCapability) => model.raw.hidden !== true)
+          .map((model: CodexModelCapability) => ({
+            id: `codex:${model.model}`,
+            model: model.model,
+            label: `Codex · ${model.displayName || model.model}`,
+            supportedReasoningEfforts: model.supportedReasoningEfforts,
+            defaultReasoningEffort: model.defaultReasoningEffort,
+            serviceTiers: model.serviceTiers,
+          })),
+      );
     } catch (error) {
       warning = redactSensitiveText(error instanceof Error ? error.message : 'Codex 模型加载失败。').text;
     }
@@ -932,7 +951,13 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   server.post(
     '/api/projects/:projectId/git/commit-message',
     { bodyLimit: 512_000 },
-    async (request: FastifyRequest<{ Params: { projectId: string }; Body: { repositoryId?: unknown; relativePath?: unknown; taskId?: unknown; language?: unknown; modelRef?: unknown; stream?: boolean; selection?: unknown } }>, reply) => {
+    async (
+      request: FastifyRequest<{
+        Params: { projectId: string };
+        Body: { repositoryId?: unknown; relativePath?: unknown; taskId?: unknown; language?: unknown; modelRef?: unknown; effort?: unknown; serviceTier?: unknown; stream?: boolean; selection?: unknown };
+      }>,
+      reply,
+    ) => {
       const project = projects.getById(request.params.projectId);
       if (!project) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: '项目不存在。' });
       const body = request.body;
@@ -942,7 +967,9 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         body.repositoryId.length > 200 ||
         (body.relativePath !== undefined && (typeof body.relativePath !== 'string' || body.relativePath.length > 4096)) ||
         (body.taskId !== undefined && (typeof body.taskId !== 'string' || !body.taskId.trim() || body.taskId.length > 200 || body.selection === undefined)) ||
-        (body.modelRef !== undefined && (typeof body.modelRef !== 'string' || !body.modelRef.trim() || body.modelRef.length > 2000))
+        (body.modelRef !== undefined && (typeof body.modelRef !== 'string' || !body.modelRef.trim() || body.modelRef.length > 2000)) ||
+        (body.effort !== undefined && (typeof body.effort !== 'string' || body.effort.length > 100)) ||
+        (body.serviceTier !== undefined && body.serviceTier !== null && body.serviceTier !== 'priority')
       ) {
         return reply.code(400).send({ error: 'ZEUS_GIT_COMMIT_MESSAGE_INPUT_INVALID', message: '已暂存改动内容无效或过大，请缩小提交范围。' });
       }
@@ -1027,6 +1054,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           language: body.language === 'en' ? ('en' as const) : ('zh-CN' as const),
           ...(selection ? { scope: 'selection' as const } : {}),
           ...(typeof body.modelRef === 'string' ? { modelRef: body.modelRef } : {}),
+          ...(typeof body.effort === 'string' ? { effort: body.effort } : {}),
+          ...(body.serviceTier === null || body.serviceTier === 'priority' ? { serviceTier: body.serviceTier === 'priority' ? ('priority' as const) : null } : {}),
         };
         const run = async () => {
           if (input.modelRef?.startsWith('codex:')) {

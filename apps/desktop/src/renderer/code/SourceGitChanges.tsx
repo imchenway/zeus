@@ -224,13 +224,13 @@ export function SourceGitChanges(props: {
     try {
       if (!(await latest.current.onBeforeCommit())) throw new Error(zh ? '文件未能保存，生成已取消。' : 'Save the files before generating.');
       controller.signal.throwIfAborted();
-      const models = await loadGitCommitModelOptions(client, projectId);
+      const models = await loadGitCommitModelOptions(client, projectId, controller.signal);
       controller.signal.throwIfAborted();
       if (!models.modelRef) throw new Error(models.warning || (zh ? '暂无可用模型，请在设置中配置模型连接后重试。' : 'No models available. Configure a model connection in Settings, then retry.'));
       const first = selected[0]!;
       const result = await client.generateGitCommitMessage(
         projectId,
-        { repositoryId: first.repositoryId, relativePath: first.relativePath, selection: selected, language: zh ? 'zh-CN' : 'en', modelRef: models.modelRef },
+        { repositoryId: first.repositoryId, relativePath: first.relativePath, selection: selected, language: zh ? 'zh-CN' : 'en', ...models.settings },
         (text) => {
           if (!controller.signal.aborted) setGeneratedText(text);
         },

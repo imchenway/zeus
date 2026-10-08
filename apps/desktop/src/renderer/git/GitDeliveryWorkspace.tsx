@@ -1,4 +1,4 @@
-import { useId, useMemo, useRef, type ReactNode, type ComponentProps } from 'react';
+import { useEffect, useId, useMemo, useRef, type ReactNode, type ComponentProps } from 'react';
 import type { TaskGitFileStatus, TaskWorkspaceIndexSnapshot, TaskWorkspaceSnapshot, TaskGitDiffSummary } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
@@ -6,9 +6,11 @@ import { ZeusSelect } from '../ZeusSelect.js';
 import { SideBySideDiff } from './ProjectGitDiffViewer.js';
 import { GitPaneSeparator } from './GitPaneSeparator.js';
 import { CopySimpleIcon } from '@phosphor-icons/react/dist/csr/CopySimple';
-import { CaretDownIcon } from '@phosphor-icons/react/dist/csr/CaretDown';
+import { WarningCircleIcon } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { FolderIcon } from '@phosphor-icons/react/dist/csr/Folder';
 import { FileTypeIcon } from '../code/FileTypeIcon.js';
+import { GitCommitGenerationSettingsButton } from './GitCommitGenerationSettings.js';
+import type { GitCommitModelsClient } from './gitCommitModels.js';
 
 /** 两种交付入口共用文件范围。 */
 export type DiffScope = 'committed' | 'working';
@@ -361,6 +363,23 @@ export function DeliveryFeedbackNotice(props: {
   const resultAnchor = `--delivery-results-${resultId.replace(/:/g, '')}`;
   /** 查询原生浮层状态，让 Escape 优先关闭明细而不是交付窗口。 */
   const resultPopover = useRef<HTMLDivElement>(null);
+  /** 鼠标和键盘均可查看同一份明细。 */
+  const resultTrigger = useRef<HTMLButtonElement>(null);
+  /** 短暂跨过入口与浮层间隙时，不立即关闭正在查看的内容。 */
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(closeTimer.current), []);
+  /** 原生浮层负责定位、外部点击和 Escape，悬停只控制显示。 */
+  function showResults(): void {
+    clearTimeout(closeTimer.current);
+    if (!resultPopover.current?.matches(':popover-open')) resultPopover.current?.showPopover();
+  }
+  /** 鼠标与焦点离开入口和明细后才关闭，便于阅读或复制长内容。 */
+  function closeResultsLater(): void {
+    clearTimeout(closeTimer.current);
+    closeTimer.current = setTimeout(() => {
+      if (!resultTrigger.current?.matches(':hover, :focus') && !resultPopover.current?.matches(':hover, :focus-within')) resultPopover.current?.hidePopover();
+    }, 120);
+  }
   return (
     <div
       className={`task-git-delivery-notice is-${props.feedback.tone}`}
@@ -378,11 +397,35 @@ export function DeliveryFeedbackNotice(props: {
     >
       {(props.compactResults || props.feedback.action) && (props.feedback.results?.length || props.feedback.summary) && !props.feedback.onAction ? (
         <>
-          <button type="button" className="task-git-delivery-result-trigger" popoverTarget={resultId} title={props.feedback.text} style={{ anchorName: resultAnchor }}>
+          <button
+            ref={resultTrigger}
+            type="button"
+            className="task-git-delivery-result-trigger"
+            popoverTarget={resultId}
+            popoverTargetAction="show"
+            aria-describedby={resultId}
+            style={{ anchorName: resultAnchor }}
+            onPointerEnter={showResults}
+            onPointerLeave={closeResultsLater}
+            onFocus={showResults}
+            onBlur={closeResultsLater}
+          >
             <span>{props.feedback.summary ?? props.feedback.text}</span>
-            <CaretDownIcon aria-hidden="true" />
+            <WarningCircleIcon size={16} aria-hidden="true" />
           </button>
-          <div ref={resultPopover} id={resultId} popover="auto" className="task-git-delivery-result-popover" style={{ positionAnchor: resultAnchor }} aria-label={props.zh ? '逐仓交付结果' : 'Per-repository delivery results'}>
+          <div
+            ref={resultPopover}
+            id={resultId}
+            popover="auto"
+            role="tooltip"
+            className="task-git-delivery-result-popover"
+            style={{ positionAnchor: resultAnchor }}
+            aria-label={props.zh ? '逐仓交付结果' : 'Per-repository delivery results'}
+            onPointerEnter={showResults}
+            onPointerLeave={closeResultsLater}
+            onFocus={showResults}
+            onBlur={closeResultsLater}
+          >
             {props.feedback.results?.length ? <BatchDeliveryResults results={props.feedback.results} zh={props.zh} /> : <div className={`task-git-delivery-feedback is-${props.feedback.tone}`}>{props.feedback.text}</div>}
           </div>
         </>
@@ -492,7 +535,10 @@ export function GitDeliveryWorkspace(props: {
 export function GitDeliveryActions(props: {
   zh: boolean;
   busyAction: BusyAction;
-  clientAvailable: boolean;
+  /** 设置与生成读取同一项目的真实模型目录。 */
+  generationClient: GitCommitModelsClient | null;
+  /** 当前项目身份用于读取独立设置或继承全局默认。 */
+  projectId: string;
   canGenerate: boolean;
   onGenerate: () => void;
   message: string;
@@ -525,16 +571,19 @@ export function GitDeliveryActions(props: {
       <section className="task-git-delivery-action-step">
         <div className="task-git-delivery-step-heading">
           <strong>{props.zh ? '1. 提交文件' : '1. Commit files'}</strong>
-          <Button
-            variant="secondary"
-            size="compact"
-            aria-label={props.busyAction === 'commit-message' ? (props.zh ? '停止生成提交说明' : 'Stop generating commit message') : props.zh ? 'AI 生成提交说明' : 'Generate commit message with AI'}
-            title={props.zh ? '根据勾选文件生成提交说明' : 'Generate a commit message from selected files'}
-            disabled={props.busyAction !== 'commit-message' && (busy || !props.clientAvailable || !props.canGenerate)}
-            onClick={props.onGenerate}
-          >
-            {props.busyAction === 'commit-message' ? (props.zh ? '停止生成' : 'Stop generating') : props.zh ? 'AI 生成' : 'AI Generate'}
-          </Button>
+          <span className="task-git-generation-controls">
+            <Button
+              variant="secondary"
+              size="compact"
+              aria-label={props.busyAction === 'commit-message' ? (props.zh ? '停止生成提交说明' : 'Stop generating commit message') : props.zh ? 'AI 生成提交说明' : 'Generate commit message with AI'}
+              title={props.zh ? '根据勾选文件生成提交说明' : 'Generate a commit message from selected files'}
+              disabled={props.busyAction !== 'commit-message' && (busy || !props.generationClient || !props.canGenerate)}
+              onClick={props.onGenerate}
+            >
+              {props.busyAction === 'commit-message' ? (props.zh ? '停止生成' : 'Stop generating') : props.zh ? 'AI 生成' : 'AI Generate'}
+            </Button>
+            <GitCommitGenerationSettingsButton client={props.generationClient} projectId={props.projectId} zh={props.zh} disabled={busy} />
+          </span>
         </div>
         {props.beforeCommit}
         {props.commitCount > 0 ? (
