@@ -76,14 +76,19 @@ export function zeusComputerDynamicTools(): CodexDynamicToolSpec[] {
           type: 'function',
           name: 'get_window_state',
           description:
-            'Observe one exact window before every action. Returns its accessibility elements, snapshot_id, capture_id, metadata, and optional screenshot. Prefer element_token for semantic actions. Pixel coordinates are local to this returned screenshot. A new snapshot invalidates prior element tokens and indices. Use query or bounds before increasing output size; set include_screenshot=false for semantic-only refreshes and use verify_state for bounded waiting. A zeus_control pause means the user owns this application: stop this round and require a new instruction and observation before further input.',
+            'Observe one exact window before every action. Returns structured elements, snapshot_id, capture_id, metadata, and an optional screenshot. Prefer element_token; pixel coordinates are local to the screenshot. A new snapshot invalidates prior tokens and indices. query filters the collected tree, not the walk: if truncated, increase the budget named by truncation_reason instead of repeating the same partial observation. Use include_screenshot=false for semantic refreshes and verify_state for bounded waiting. A zeus_control pause means the user owns this application: stop and require a new instruction and observation.',
           inputSchema: objectSchema(
             {
               ...exactWindowProperties,
-              query: { type: 'string', minLength: 1, maxLength: 1000, description: 'Optional case-insensitive accessibility-tree filter.' },
+              query: { type: 'string', minLength: 1, maxLength: 1000, description: 'Case-insensitive filter of collected elements; does not search beyond the walk budget. Ancestors may be included.' },
               include_accessibility_tree: { type: 'boolean', description: 'Default true. Set false only for a screenshot-only preview.' },
               include_screenshot: { type: 'boolean', description: 'Default true. Set false for a cheap semantic re-index.' },
-              max_elements: { type: 'integer', minimum: 1, maximum: 2000, description: 'Maximum accessibility nodes returned.' },
+              max_elements: {
+                type: 'integer',
+                minimum: 1,
+                maximum: 2000,
+                description: 'Maximum nodes visited, not matching elements returned. For node_budget truncation, increase this value while keeping query; a longer timeout alone will not help.',
+              },
               max_depth: { type: 'integer', minimum: 1, maximum: 50, description: 'Maximum accessibility-tree depth.' },
               max_image_dimension: { type: 'integer', minimum: 0, maximum: 4096, description: 'Maximum screenshot long edge; 0 requests native size.' },
               timeout_ms: { type: 'integer', minimum: 100, maximum: 10000, description: 'Bounded accessibility walk timeout.' },
@@ -95,8 +100,7 @@ export function zeusComputerDynamicTools(): CodexDynamicToolSpec[] {
           type: 'function',
           name: 'click',
           description:
-            'Click a semantic element in an exact background window. On macOS, element_token or element_index is required: raw pixel clicks can steal keyboard focus and are refused before dispatch. Other platforms may use a point from the latest screenshot. Modified clicks and foreground/HID fallback are unavailable; do not bypass refusals with shell or another input tool.',
-          deferLoading: true,
+            'Click a semantic element in an exact background window. On macOS, element_token or element_index is required: raw pixel clicks can steal keyboard focus and are refused before dispatch. Other platforms may use a point from the latest screenshot. A suspected_noop result is unverified, not proof of failure: observe the expected change once before deciding; never replay blindly. Modified clicks and foreground/HID fallback are unavailable.',
           inputSchema: objectSchema(
             {
               ...actionTargetProperties,
@@ -131,8 +135,7 @@ export function zeusComputerDynamicTools(): CodexDynamicToolSpec[] {
           type: 'function',
           name: 'type_text',
           description:
-            'Insert Unicode text into an exact window. Prefer element_token for an editable control. On macOS, x/y-positioned typing is refused because it may change user focus; do not bypass that refusal. Other platforms may use a custom surface from the latest screenshot. Zeus forces background delivery. If the effect is unverifiable, observe before deciding what to do and never blindly repeat text.',
-          deferLoading: true,
+            'Insert Unicode text into an exact background window. Prefer element_token for an editable control. On macOS, x/y-positioned typing is refused because it may change user focus. Some Electron web controls also lack a safe background text route: after background_unavailable, stop this route rather than trying set_value, pixels or foreground input. Use an already authorized application API if available. If the effect is unverifiable, observe once and never blindly repeat text.',
           inputSchema: objectSchema({ ...actionTargetProperties, text: { type: 'string' }, delay_ms: { type: 'integer', minimum: 0, maximum: 200 } }, ['pid', 'window_id', 'text']),
         },
         {
@@ -196,7 +199,6 @@ export function zeusComputerDynamicTools(): CodexDynamicToolSpec[] {
           type: 'function',
           name: 'verify_state',
           description: 'Wait for bounded structured predicates on one exact window. Unknown never means success. Use a fresh get_window_state when visual interpretation is required.',
-          deferLoading: true,
           inputSchema: objectSchema(
             {
               ...exactWindowProperties,

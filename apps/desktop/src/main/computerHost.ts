@@ -11,6 +11,7 @@ import type { ZeusComputerPreview, ZeusComputerSettings } from '@zeus/shared';
 import type { MainCommandLedger, MainCommandRequest } from './mainCommandLedger.js';
 import { ComputerDriverProxy, type ComputerDriver } from './computerDriverProxy.js';
 import { computerSdkUrl } from './computerSdk.js';
+import { projectComputerToolResult } from './computerToolResult.js';
 
 /** CUA SDK 根模块的动态导入类型。 */
 type CuaModule = typeof import('@trycua/cua-driver');
@@ -328,7 +329,7 @@ export class ComputerHost implements BrowserAutomationPort {
         this.assertControlAllowed(input, generation);
         if (reused) {
           this.updatePreview(owner, input, reused);
-          return projectToolResult(reused);
+          return projectComputerToolResult(reused);
         }
       }
       this.assertControlAllowed(input, generation);
@@ -368,7 +369,7 @@ export class ComputerHost implements BrowserAutomationPort {
         owner.windows.clear();
         this.patchPreview(owner, { state: owner.paused ? 'paused' : 'error', needsObservation: true, detail: owner.paused ? (owner.preview?.detail ?? null) : (result.structuredJson ?? result.rawJson).slice(0, 1000) });
       }
-      return projectToolResult(result);
+      return projectComputerToolResult(result);
     } catch (error) {
       if (owner) {
         const detail = computerErrorMessage(error);
@@ -1013,17 +1014,6 @@ export class ComputerHost implements BrowserAutomationPort {
 /** 创建 Electron Computer Host。 */
 export function createComputerHost(options: CreateComputerHostOptions): ComputerHost {
   return new ComputerHost(options);
-}
-
-/** 将官方 ToolResult 投影为现有动态工具内容协议。 */
-function projectToolResult(result: ToolResult): { contentItems: BrowserAutomationContentItem[]; success: boolean } {
-  /** 官方已提供完整 JSON 字符串，直接转发，避免维护第二套结果协议。 */
-  const text = result.structuredJson ?? result.rawJson;
-  /** CUA 已把图片与 JSON 分离，按原始 MIME 交给模型。 */
-  const images: BrowserAutomationContentItem[] = result.images
-    .filter((image) => image.mimeType.startsWith('image/') && image.dataBase64.length > 0)
-    .map((image) => ({ type: 'inputImage', imageUrl: `data:${image.mimeType};base64,${image.dataBase64}` }));
-  return { contentItems: [{ type: 'inputText', text }, ...images], success: !result.isError };
 }
 
 /** 生成纯文本动态工具结果。 */
