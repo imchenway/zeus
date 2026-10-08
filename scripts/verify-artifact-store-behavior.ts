@@ -1,7 +1,7 @@
 import { readSessionViewCache, writeSessionViewCache } from '../apps/desktop/src/main/sessionViewCache.js';
 import { repairTaskAttachmentReferences } from '../packages/local-server/src/taskAttachmentLifecycle.js';
 import { spawnSync } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -20,7 +20,7 @@ import {
 import { ManagedConversationToolResultStore, PortableConversationContextBuilder, planPortableContextCompaction } from '../packages/local-server/src/conversationPortableContext.js';
 import { searchPiWorkspace } from '../packages/local-server/src/piWorkspaceSearch.js';
 import { completedItemProjection, liveProgressProjection } from '../packages/local-server/src/codexNativeConversationPolicy.js';
-import { syncConversationResources, toConversationResourceOpenIntent } from '../packages/local-server/src/conversationResources.js';
+import { normalizeConversationResources, syncConversationResources, toConversationResourceOpenIntent } from '../packages/local-server/src/conversationResources.js';
 import { readConversationResourcePreview } from '../packages/local-server/src/conversationResourcePreview.js';
 
 const probeRoot = await mkdtemp(join(tmpdir(), 'zeus-artifact-store-probe-'));
@@ -115,10 +115,20 @@ async function verifyConversationFileResources(): Promise<void> {
   await mkdir(root);
   await writeFile(join(root, '页面.html'), '<title>文件预览</title><p>预览内容</p>');
   await writeFile(join(root, 'source.ts'), '// 示例源码\nexport const value = 7;\n');
+  /** 任务目录共享主项目文档，同时保留一个未获授权的目录作为边界检查。 */
+  const registeredProjectRoot = join(probeRoot, 'registered-project');
+  await mkdir(join(registeredProjectRoot, 'docs'), { recursive: true });
+  await writeFile(join(registeredProjectRoot, 'docs', '共享.html'), '<title>共享文档</title><p>真实共享内容</p>');
+  await writeFile(join(registeredProjectRoot, 'docs', '说明.md'), '# 共享说明');
+  await symlink(join(registeredProjectRoot, 'docs'), join(root, 'docs'), 'dir');
+  await mkdir(join(probeRoot, 'unauthorized'));
+  await writeFile(join(probeRoot, 'unauthorized', 'secret.md'), '未授权内容');
+  await symlink(join(probeRoot, 'unauthorized'), join(root, 'external'), 'dir');
   /** 两种 Provider 使用同一正文，同时覆盖行号、HTML、越界路径与危险协议。 */
-  const text = '[网页](页面.html) [代码](source.ts:2) [官方提示词指南](https://platform.openai.com/docs/guides/prompt-engineering) [越界](../outside.ts) [危险](javascript:alert)';
+  const text =
+    '[网页](页面.html) [代码](source.ts:2) [官方提示词指南](https://platform.openai.com/docs/guides/prompt-engineering) [共享](docs/共享.html) [说明](docs/说明.md) [越界](../outside.ts) [外部](external/secret.md) [危险](javascript:alert)';
   /** 重复登记及重新打开前后用于核对的稳定资源身份。 */
-  let resourceIds: string[] = [];
+  const resourceIds: string[] = [];
   /** 独立账本不接触任何用户会话。 */
   const databasePath = join(root, 'resources.db');
   const database = await createZeusDatabase(databasePath);
@@ -146,9 +156,9 @@ async function verifyConversationFileResources(): Promise<void> {
         agentKind,
       });
       /** 公共登记同时形成 HTML 正文链接、网页卡片和源码链接。 */
-      const input = { projectId: 'resource-project', projectRoot: root, conversationId: item.conversationId, turnId: item.turnId, item, payload: {}, text, trustedAttachmentRoots: [], now: timestamp };
+      const input = { projectId: 'resource-project', projectRoot: root, registeredProjectRoot, conversationId: item.conversationId, turnId: item.turnId, item, payload: {}, text, trustedAttachmentRoots: [], now: timestamp };
       const projected = syncConversationResources(input, resources);
-      assertProbe(projected.length === 4, '两条执行链都应生成四个合法资源，不能接受越界路径或危险协议');
+      assertProbe(projected.length === 7, '两条执行链都应登记任务文件、普通网址与已授权共享文档，不能接受越界路径、外部符号链接或危险协议');
       assertProbe(
         projected.some((resource) => resource.kind === 'website' && resource.presentation === 'inline' && resource.url === 'https://platform.openai.com/docs/guides/prompt-engineering'),
         '普通 Markdown 链接必须登记为受信正文资源',
@@ -162,13 +172,28 @@ async function verifyConversationFileResources(): Promise<void> {
       assertProbe(source?.kind === 'file' && source.location?.line === 2, '代码文件链接必须保留行号');
       const preview = readConversationResourcePreview(source, toConversationResourceOpenIntent(resources.getById(source.id)!));
       assertProbe(preview.kind === 'source' && preview.content.includes('value = 7') && preview.location?.line === 2, '代码预览应读取真实文件并定位指定行');
+      /** 共享目录保存真实授权目标，预览和绝对路径引用必须指向同一份文件。 */
+      const shared = projected.find((resource) => resource.presentation === 'inline' && resource.displayName === '共享');
+      assertProbe(shared?.kind === 'file', '共享链接必须登记为正文文件资源');
+      const sharedIntent = toConversationResourceOpenIntent(resources.getById(shared.id)!);
+      assertProbe(sharedIntent.target.absolutePath === (await realpath(join(root, 'docs', '共享.html'))), '共享链接必须登记文件的真实路径');
+      const sharedPreview = readConversationResourcePreview(shared, sharedIntent);
+      assertProbe(sharedIntent.authority.allowedRoot === (await realpath(registeredProjectRoot)) && sharedPreview.kind === 'source' && sharedPreview.content.includes('真实共享内容'), '共享文档必须在已登记项目根内实际读取');
+      const absolute = normalizeConversationResources({ ...input, text: `[共享](${join(root, 'docs', '共享.html')})` });
+      assertProbe(absolute[0]?.canonicalTargetDigest === resources.getById(shared.id)?.canonicalTargetDigest, '绝对路径和相对路径必须登记同一授权目标');
+      assertProbe(normalizeConversationResources({ ...input, registeredProjectRoot: undefined, text: '[共享](docs/共享.html)' }).length === 0, '未登记主项目时不得授权共享目录');
+      assertProbe(normalizeConversationResources({ ...input, text: `[直接越界](${join(registeredProjectRoot, 'docs', '共享.html')}) [缺失](docs/missing.md)` }).length === 0, '共享授权不得允许正文直接越出任务根，也不得登记不存在的共享文件');
+      /** 文件改动与结构化交付共用正文链接的同一授权边界。 */
+      for (const payload of [{ changes: [{ path: 'docs/说明.md' }, { path: 'external/secret.md' }] }, { deliverables: [{ path: 'docs/说明.md' }, { path: 'external/secret.md' }] }]) {
+        assertProbe(normalizeConversationResources({ ...input, text: '', payload }).length === 1, '文件改动和结构化交付必须接受已授权共享文档并拒绝外部符号链接');
+      }
       /** 后续状态事件省略资源字段时仍须返回原资源，不能让已显示的缩略图变成 404。 */
       const preserved = syncConversationResources({ ...input, text: '', payload: {} }, resources);
       assertProbe(JSON.stringify(preserved.map((resource) => resource.id)) === JSON.stringify(projected.map((resource) => resource.id)), '空资源投影不得删除同一条目的持久资源');
       assertProbe(JSON.stringify(syncConversationResources(input, resources).map((resource) => resource.id)) === JSON.stringify(projected.map((resource) => resource.id)), '重复登记不得改变资源身份或叠加卡片');
-      if (agentKind === 'pi') resourceIds = projected.map((resource) => resource.id);
+      resourceIds.push(...projected.map((resource) => resource.id));
     }
-    assertProbe(items.listCompletedItemsForResourceBackfill().length === 1, '普通文件历史回填只应选中 Pi 消息');
+    assertProbe(items.listCompletedItemsForResourceBackfill().length === 2, '普通文件历史回填必须同时选中 Codex 与 Pi 的已完成正文');
     await database.save();
   } finally {
     await database.close();
@@ -179,15 +204,15 @@ async function verifyConversationFileResources(): Promise<void> {
     const resources = new ConversationResourceRepository(reopened);
     assertProbe(
       resourceIds.every((id) => resources.getById(id)),
-      '重新打开后 Pi 文件资源必须仍然可解析',
+      '重新打开后两条执行链的文件资源必须仍然可解析',
     );
     /** 界面资源分页须返回同一批稳定身份，不能只在底层仓库中存在。 */
     const page = new ConversationSnapshotV2Repository(reopened).listResourcePage({ conversationId: 'resource-conversation' });
     assertProbe(
       resourceIds.every((id) => page.items.some((resource) => resource.id === id)),
-      '重新打开后界面资源分页必须返回 Pi 的文件链接和卡片',
+      '重新打开后界面资源分页必须返回两条执行链的文件链接和卡片',
     );
-    observed.conversationFileResources = { codexAndPi: true, htmlCard: true, sourceLinePreview: true, unauthorizedPathsRejected: true, stableAfterReopen: true };
+    observed.conversationFileResources = { codexAndPi: true, htmlCard: true, sourceLinePreview: true, authorizedSharedDirectory: true, relativeAndAbsoluteLinks: true, unauthorizedPathsRejected: true, stableAfterReopen: true };
   } finally {
     await reopened.close();
   }

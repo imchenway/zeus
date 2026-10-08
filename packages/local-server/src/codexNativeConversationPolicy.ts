@@ -449,6 +449,23 @@ export function liveProgressProjection(existing: { payloadJson: string } | undef
   };
 }
 
+/** 实时与历史都保留无退出码命令的明确中断原因；后续真实终态会撤销该展示标记。 */
+export function commandTerminationProjection(payload: Record<string, unknown>, itemType: ConversationItemType, turnStatus?: string): Record<string, unknown> {
+  if (itemType !== 'commandExecution') return payload;
+  /** 原始 Provider 状态与退出码不改写，原因只进入既有展示元信息。 */
+  const presentation = isRecord(payload.presentation) ? payload.presentation : {};
+  /** 已确认的失败或退出码优先于轮次中断，不能掩盖命令错误。 */
+  const unfinished = (payload.status === 'inProgress' || payload.status === undefined) && payload.exitCode == null && payload.success !== false && payload.isError !== true && payload.error == null;
+  if (turnStatus === undefined && unfinished) return payload;
+  if (!(turnStatus === 'interrupted' && unfinished) && presentation.terminationReason !== 'turn_interrupted') return payload;
+  /** 副本避免改变持久原件或其他调用者持有的同一对象。 */
+  const updated = { ...presentation };
+  if (turnStatus === 'interrupted' && unfinished) updated.terminationReason = 'turn_interrupted';
+  else delete updated.terminationReason;
+  return { ...payload, presentation: updated };
+}
+
+/** 完成消息合并已保存内容，并清除已被真实命令终态取代的中断标记。 */
 export function completedItemProjection(
   existing: { payloadJson: string; textContent: string } | undefined,
   completedPayload: Record<string, unknown>,
@@ -463,7 +480,7 @@ export function completedItemProjection(
     ...(existingPresentation || completedPresentation ? { presentation: { ...(existingPresentation ?? {}), ...(completedPresentation ?? {}) } } : {}),
   };
 
-  if (itemType !== 'reasoning') return { payload: sanitizeConversationItemPayload(payload), textContent: itemText(completedPayload) };
+  if (itemType !== 'reasoning') return { payload: sanitizeConversationItemPayload(commandTerminationProjection(payload, itemType)), textContent: itemText(completedPayload) };
 
   const completedSummary = readableReasoningSummary(completedPayload);
   const presentation = isRecord(payload.presentation) ? payload.presentation : {};

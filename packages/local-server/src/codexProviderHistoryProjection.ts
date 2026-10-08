@@ -16,6 +16,7 @@ import type { CreateCodexNativeConversationCoordinatorOptions, NativeConversatio
 import {
   classifySnapshotTurn,
   completedItemProjection,
+  commandTerminationProjection,
   coordinatorError,
   findSnapshotTurn,
   isRecord,
@@ -636,6 +637,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     const completedProjection = userMessageProjection
       ? { ...completedItemProjection(existing, presentedItemPayload, itemType), textContent: userMessageProjection.content }
       : completedItemProjection(existing, presentedItemPayload, itemType);
+    completedProjection.payload = commandTerminationProjection(completedProjection.payload, itemType, turnClassification);
     /** 中断轮次中的未完成命令没有成功证据；正常回合结束也不能结束后台进程。 */
     const unfinishedCommand = itemType === 'commandExecution' && itemPayload.status === 'inProgress';
     const itemFailed = itemPayload.status === 'failed' || (unfinishedCommand && (turnClassification === 'interrupted' || turnClassification === 'failed'));

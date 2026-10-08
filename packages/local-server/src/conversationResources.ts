@@ -51,7 +51,7 @@ type ResourceCandidate = FileResourceCandidate | WebsiteResourceCandidate | Atta
 export interface NormalizeConversationResourcesInput {
   projectId: string;
   projectRoot: string;
-  /** 所属项目登记目录仅用于最终答复图片归档，普通文件仍受会话执行根约束。 */
+  /** 注册项目根用于图片归档和任务根内共享目录的真实目标授权，不允许正文直接越出任务根。 */
   registeredProjectRoot?: string;
   conversationId: string;
   turnId: string;
@@ -151,6 +151,7 @@ export function normalizeConversationResources(input: NormalizeConversationResou
         href: link.href,
         presentation: 'inline',
         projectRoot: input.projectRoot,
+        registeredProjectRoot: input.registeredProjectRoot,
       });
     if (candidate) {
       candidates.push(candidate);
@@ -170,6 +171,7 @@ export function normalizeConversationResources(input: NormalizeConversationResou
           sourceIndex: sourceIndex++,
           path,
           projectRoot: input.projectRoot,
+          registeredProjectRoot: input.registeredProjectRoot,
         });
         if (candidate) candidates.push(candidate);
         if (candidates.length >= maximumResourcesPerItem) break;
@@ -198,6 +200,7 @@ export function normalizeConversationResources(input: NormalizeConversationResou
         sourceIndex: sourceIndex++,
         value: resource,
         projectRoot: input.projectRoot,
+        registeredProjectRoot: input.registeredProjectRoot,
         trustedAttachmentRoots: input.trustedAttachmentRoots,
         assistantDelivery: true,
       });
@@ -212,6 +215,7 @@ export function normalizeConversationResources(input: NormalizeConversationResou
         sourceIndex: sourceIndex++,
         value: resource,
         projectRoot: input.projectRoot,
+        registeredProjectRoot: input.registeredProjectRoot,
         trustedAttachmentRoots: input.trustedAttachmentRoots,
         assistantDelivery: resource.delivery === 'assistant' || resource.presentation === 'deliverable',
       });
@@ -522,8 +526,9 @@ function generatedImageMimeType(path: string): string | null {
   }
 }
 
-function normalizeFileChangeResource(input: { sourceIndex: number; path: string; projectRoot: string }): FileResourceCandidate | null {
-  const parsedFile = parseFileReference(input.path, input.projectRoot);
+/** 文件变化与正文链接共用执行根及已登记共享目录的授权入口。 */
+function normalizeFileChangeResource(input: { sourceIndex: number; path: string; projectRoot: string; registeredProjectRoot?: string }): FileResourceCandidate | null {
+  const parsedFile = parseFileReference(input.path, input.projectRoot, input.registeredProjectRoot);
   if (!parsedFile) return null;
   return {
     kind: 'file',
@@ -668,7 +673,8 @@ export function createConversationFileOpenGrant(input: {
   };
 }
 
-function normalizeLinkedResource(input: { sourceIndex: number; label: string; href: string; presentation: ConversationResourcePresentation; projectRoot: string }): ResourceCandidate | null {
+/** 正文文件链接沿用已登记项目的共享目录授权，网址仍使用原有协议校验。 */
+function normalizeLinkedResource(input: { sourceIndex: number; label: string; href: string; presentation: ConversationResourcePresentation; projectRoot: string; registeredProjectRoot?: string }): ResourceCandidate | null {
   const website = normalizeWebsiteUrl(input.href);
   if (website) {
     return {
@@ -680,7 +686,7 @@ function normalizeLinkedResource(input: { sourceIndex: number; label: string; hr
       ...website,
     };
   }
-  const parsedFile = parseFileReference(input.href, input.projectRoot);
+  const parsedFile = parseFileReference(input.href, input.projectRoot, input.registeredProjectRoot);
   if (!parsedFile) return null;
   return {
     kind: 'file',
@@ -787,7 +793,15 @@ function resolveExactAttachmentGrant(rawPath: string, authorizedPath: string | n
   return { absolutePath: absoluteRealPath, allowedRoot: dirname(absoluteRealPath) };
 }
 
-function normalizeStructuredResource(input: { sourceIndex: number; value: Record<string, unknown>; projectRoot: string; trustedAttachmentRoots: readonly string[]; assistantDelivery?: boolean }): ResourceCandidate | null {
+/** 结构化文件交付与正文链接使用相同的真实路径和授权根。 */
+function normalizeStructuredResource(input: {
+  sourceIndex: number;
+  value: Record<string, unknown>;
+  projectRoot: string;
+  registeredProjectRoot?: string;
+  trustedAttachmentRoots: readonly string[];
+  assistantDelivery?: boolean;
+}): ResourceCandidate | null {
   const url = stringValue(input.value.url ?? input.value.href);
   if (url) {
     const website = normalizeWebsiteUrl(url);
@@ -823,7 +837,7 @@ function normalizeStructuredResource(input: { sourceIndex: number; value: Record
       iconKind: iconKindForPath(resolvedAttachment.absolutePath, mimeType),
     };
   }
-  const parsedFile = parseFileReference(path, input.projectRoot);
+  const parsedFile = parseFileReference(path, input.projectRoot, input.registeredProjectRoot);
   if (!parsedFile) return null;
   return {
     kind: 'file',
@@ -841,7 +855,8 @@ function normalizeStructuredResource(input: { sourceIndex: number; value: Record
   };
 }
 
-function parseFileReference(rawReference: string, projectRoot: string): { absolutePath: string; projectRelativePath: string; projectRoot: string; location?: ConversationFileLocation } | null {
+/** 文件引用先限定任务根，再核对真实目标；共享目录仅能落入已登记项目根。 */
+function parseFileReference(rawReference: string, projectRoot: string, registeredProjectRoot?: string): { absolutePath: string; projectRelativePath: string; projectRoot: string; location?: ConversationFileLocation } | null {
   let reference = rawReference.trim();
   if (!reference || reference.includes('\0')) return null;
   let location: ConversationFileLocation | undefined;
@@ -860,8 +875,7 @@ function parseFileReference(rawReference: string, projectRoot: string): { absolu
     if (location) reference = reference.replace(/(?:#L|:L)\d+(?:-L?\d+)?$|:\d+(?::\d+)?$/iu, '');
   }
   if (/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(reference) && !/^[A-Za-z]:[\\/]/u.test(reference)) {
-    // Markdown URL schemes that are not explicitly authorized websites/files must
-    // never be reinterpreted as project-relative paths.
+    // 未授权的 URL 协议不能重新解释为项目相对路径。
     return null;
   }
   try {
@@ -872,14 +886,22 @@ function parseFileReference(rawReference: string, projectRoot: string): { absolu
   const root = resolve(projectRoot);
   const absolutePath = resolve(isAbsolute(reference) ? reference : resolve(root, reference));
   if (!isInsideRoot(absolutePath, root) || absolutePath === root) return null;
-  const authorized = resolveAuthorizedPath(absolutePath, [root]);
+  /** 已授权的任务内目标保持原身份；共享目录登记真实路径，后续预览与打开复用同一授权根。 */
+  let authorized = resolveAuthorizedPath(absolutePath, [root]);
+  if (!authorized && registeredProjectRoot) {
+    /** 共享目录必须已有真实文件，不能借用缺失路径的上级目录扩大授权。 */
+    const realPath = safeRealpath(absolutePath);
+    /** 主项目授权以实际目录为界，避免符号链接绕过边界。 */
+    const registeredRoot = safeRealpath(registeredProjectRoot);
+    if (realPath && registeredRoot) authorized = resolveAuthorizedPath(realPath, [registeredRoot]);
+  }
   if (!authorized) return null;
-  const projectRelativePath = relative(root, absolutePath).split(sep).join('/');
+  const projectRelativePath = relative(authorized.allowedRoot, authorized.absolutePath).split(sep).join('/');
   if (!projectRelativePath || projectRelativePath.startsWith('../')) return null;
   return {
-    absolutePath,
+    absolutePath: authorized.absolutePath,
     projectRelativePath,
-    projectRoot: root,
+    projectRoot: authorized.allowedRoot,
     ...(location ? { location } : {}),
   };
 }
