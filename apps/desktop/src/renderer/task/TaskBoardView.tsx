@@ -28,6 +28,7 @@ import { EyeSlashIcon as EyeSlash } from '@phosphor-icons/react/dist/csr/EyeSlas
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import {
   createDefaultTaskBoardViewSettings,
+  isTaskType,
   taskBoardCardProperties,
   taskBoardEmptyGroupId,
   taskBoardGroupProperties,
@@ -1032,7 +1033,7 @@ function optimisticTaskForMove(task: TaskRecord, property: TaskBoardGroupPropert
   if (sourceId === targetId) return task;
   if (property === 'managementStatus') return { ...task, managementStatus: targetId };
   if (property === 'priority') return { ...task, priority: targetId };
-  if (property === 'taskType' && (targetId === 'requirement' || targetId === 'defect' || targetId === 'optimization')) return { ...task, taskType: targetId };
+  if (property === 'taskType' && isTaskType(targetId)) return { ...task, taskType: targetId };
   if (property === 'parentTask') return { ...task, parentTaskId: targetId === taskBoardEmptyGroupId ? null : targetId };
   if (property === 'tags') {
     const tags = (task.tags ?? []).filter((tag) => sourceId === taskBoardEmptyGroupId || tag !== sourceId);

@@ -464,7 +464,7 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
     const targetManagementStatus = input.projectId && input.projectId !== existing.projectId ? this.options.resolveManagementStatusConfig(this.requireProject(input.projectId).id).roles.defaultStatusId : undefined;
     if (input.title !== undefined && typeof input.title !== 'string') throw routeError(400, 'ZEUS_INVALID_TASK_TITLE', 'Task title must be a string.');
     if (typeof input.title === 'string' && !input.title.trim()) throw routeError(400, 'ZEUS_TASK_TITLE_REQUIRED', 'Task title is required.');
-    if (input.taskType !== undefined && !isTaskType(input.taskType)) throw routeError(400, 'ZEUS_INVALID_TASK_TYPE', 'Task type must be requirement, defect or optimization.');
+    if (input.taskType !== undefined && !isTaskType(input.taskType)) throw routeError(400, 'ZEUS_INVALID_TASK_TYPE', '任务类型必须是任务、需求、缺陷或优化。');
     if (input.description !== undefined && typeof input.description !== 'string') throw routeError(400, 'ZEUS_INVALID_TASK_DESCRIPTION', 'Task description must be a string.');
     if ([input.defectCurrentState, input.defectExpectedOutcome, input.defectReproductionSteps, input.optimizationCurrentState, input.optimizationExpectedOutcome].some((value) => value !== undefined && typeof value !== 'string')) {
       throw routeError(400, 'ZEUS_INVALID_TASK_CONTENT', 'Task type content fields must be strings when provided.');

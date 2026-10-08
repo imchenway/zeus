@@ -256,11 +256,17 @@ export const languageCopy = {
       taskCreateTypeLabel: '任务类型',
       taskCreateTypePlaceholder: '请选择类型',
       taskCreateTypeOptions: [
+        /** 通用任务作为无需额外选择的默认分类。 */
+        { value: 'task', label: '任务' },
         { value: 'requirement', label: '需求' },
         { value: 'defect', label: '缺陷' },
         { value: 'optimization', label: '优化' },
       ],
       taskCreateDescriptionLabel: '需求描述',
+      /** 通用任务沿用正文输入能力，明确支持直接输入资源。 */
+      taskCreateTaskDescriptionLabel: '任务描述',
+      /** 快捷入口同时接受文字与资源。 */
+      taskCreateTaskDescriptionPlaceholder: '输入任务内容，可粘贴或拖入附件',
       taskCreateDescriptionPlaceholder: '描述需求内容、验收标准和必要上下文',
       taskCreateCurrentStateLabel: '现状',
       taskCreateCurrentStatePlaceholder: '描述当前实际表现',
@@ -299,6 +305,8 @@ export const languageCopy = {
       taskCreatePasteAttachmentFailed: '无法添加粘贴的图片或附件。',
       taskCreateCancel: '取消',
       taskCreateSubmit: '创建任务',
+      /** 保存成功后进入已有推送配置，不直接绕过执行确认。 */
+      taskCreateSubmitAndPush: '创建并推送任务',
       taskCreateSubmitting: '创建中',
       taskCreateClose: '关闭创建任务弹窗',
       taskCreateTitleRequired: '请输入任务标题',
@@ -1469,11 +1477,17 @@ export const languageCopy = {
       taskCreateTypeLabel: 'Task type',
       taskCreateTypePlaceholder: 'Choose a type',
       taskCreateTypeOptions: [
+        /** 通用任务作为无需额外选择的默认分类。 */
+        { value: 'task', label: 'Task' },
         { value: 'requirement', label: 'Requirement' },
         { value: 'defect', label: 'Defect' },
         { value: 'optimization', label: 'Optimization' },
       ],
       taskCreateDescriptionLabel: 'Requirement description',
+      /** 通用任务沿用正文输入能力，明确支持直接输入资源。 */
+      taskCreateTaskDescriptionLabel: 'Task description',
+      /** 快捷入口同时接受文字与资源。 */
+      taskCreateTaskDescriptionPlaceholder: 'Enter task content, paste or drop attachments',
       taskCreateDescriptionPlaceholder: 'Describe the requirement, acceptance criteria, and required context',
       taskCreateCurrentStateLabel: 'Current state',
       taskCreateCurrentStatePlaceholder: 'Describe the current behavior',
@@ -1512,6 +1526,8 @@ export const languageCopy = {
       taskCreatePasteAttachmentFailed: 'The pasted image or attachment could not be added.',
       taskCreateCancel: 'Cancel',
       taskCreateSubmit: 'Create task',
+      /** 保存成功后进入已有推送配置，不直接绕过执行确认。 */
+      taskCreateSubmitAndPush: 'Create and push task',
       taskCreateSubmitting: 'Creating',
       taskCreateClose: 'Close create task dialog',
       taskCreateTitleRequired: 'Enter a task title',

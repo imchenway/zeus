@@ -134,6 +134,10 @@ function resolveTaskModelPushCapability(capabilities: CodexTaskPushCapabilities,
 }
 
 export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
+  /** 创建后等真实任务详情完成渲染，再复用推送入口，避免旧快照与导航身份竞争。 */
+  const taskCreatePushTaskIdRef = useRef<string | null>(null);
+  /** 同一草稿保存期间只接纳一次提交意图。 */
+  const taskCreateSubmittingRef = useRef(false);
   /** 后台发现与当前推送弹窗的仓库更新共用独立生命周期。 */
   const refreshTaskModelPushRepositories = useProjectRepositoryDiscovery(state);
   const {
@@ -1275,7 +1279,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   }
 
   /** 新建与复制共用提交身份，目标项目参与去重以免重试落入错误项目。 */
-  async function createProjectTaskFromDraft(draft: TaskCreateDraft, projectId = activeProjectId): Promise<boolean> {
+  async function createProjectTaskFromDraft(draft: TaskCreateDraft, projectId = activeProjectId, pushAfterCreate = false): Promise<boolean> {
     if (!props.onCreateTaskDraft || !projectId) return false;
     const previousTaskIds = new Set(snapshot.tasks.map((task) => task.id));
     setActionState('creating-task');
@@ -1288,6 +1292,10 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       const createdTask = selectCreatedProjectTask(nextSnapshot, previousTaskIds, projectId);
       setSnapshot(nextSnapshot);
       if (createdTask) {
+        if (pushAfterCreate) {
+          taskCreatePushTaskIdRef.current = createdTask.id;
+          setActiveNavTarget('projects');
+        }
         setProjectDetail(nextSnapshot.projects.find((project) => project.id === projectId));
         activeProjectIdRef.current = projectId;
         // 弹窗提交成功后才落真实任务；只清搜索和标签并打开详情，不覆盖用户按项目记住的状态筛选。
@@ -1297,7 +1305,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         setTaskDetail(createdTask);
         setActiveProjectSection('tasks');
         setTaskDetailPaneTaskId(createdTask.id);
-        if (taskCreateTeamId) {
+        if (taskCreateTeamId && !pushAfterCreate) {
           setDigitalTeamTask(createdTask);
           setDigitalTeamEntrySelection({ kind: 'template', templateId: taskCreateTeamId });
           setActiveNavTarget('digital-teams');
@@ -1473,8 +1481,11 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     }));
   }
 
-  async function submitTaskCreateModal(event: FormEvent<HTMLFormElement>): Promise<void> {
+  /** 两种创建意图共用校验、幂等保存与失败草稿，保存后才允许进入推送。 */
+  async function submitTaskCreateModal(event: FormEvent<HTMLFormElement>, pushAfterCreate = false): Promise<void> {
     event.preventDefault();
+    if (taskCreateSubmittingRef.current) return;
+    /** 提交前完成标题与类型校验，失败时保留当前草稿和焦点。 */
     const normalized = normalizeTaskCreateDraft(taskCreateForm, taskWorkspaceCopy.taskCreateTitleRequired, taskWorkspaceCopy.taskCreateTypeRequired);
     if ('error' in normalized) {
       setTaskCreateError(normalized.error);
@@ -1485,9 +1496,24 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       }
       return;
     }
-    const created = await createProjectTaskFromDraft(normalized.draft, taskCreateForm.projectId);
-    if (created) closeTaskCreateModal();
+    taskCreateSubmittingRef.current = true;
+    try {
+      /** 创建成功与推送检查成功是独立事实，推送失败不重复创建。 */
+      const created = await createProjectTaskFromDraft(normalized.draft, taskCreateForm.projectId, pushAfterCreate);
+      if (created) closeTaskCreateModal();
+    } finally {
+      taskCreateSubmittingRef.current = false;
+    }
   }
+
+  /** 页面已持有新任务和稳定导航身份时，消费一次快捷推送意图。 */
+  useEffect(() => {
+    /** 推送只能指向本次保存产生的真实任务。 */
+    const taskId = taskCreatePushTaskIdRef.current;
+    if (!taskId || taskDetailPaneTaskId !== taskId || !snapshot.tasks.some((task) => task.id === taskId)) return;
+    taskCreatePushTaskIdRef.current = null;
+    void openTaskModelPush(taskId);
+  }, [snapshot, taskDetailPaneTaskId, openTaskModelPush]);
 
   async function refreshNativeConversationChoices(taskId: string): Promise<NativeConversationChoicesSnapshot | null> {
     const client = props.nativeConversationClient;

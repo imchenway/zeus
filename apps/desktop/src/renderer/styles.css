@@ -17594,6 +17594,18 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   border-block-start: 0;
   border-block-end: 0;
   padding-block: 8px 18px;
+  /* 四个动作在窄窗口换行，保留按钮文字和键盘操作空间。 */
+  flex-wrap: wrap;
+}
+
+/* 创建相关动作靠右成组，设置入口保留在左侧。 */
+.macos-ai-app .task-create-submit-button {
+  margin-inline-start: auto;
+}
+
+/* 长按钮文字保留完整宽度，由底栏换行容纳。 */
+.macos-ai-app .task-create-push-button {
+  min-inline-size: max-content;
 }
 
 .macos-ai-app .task-create-modal-heading {
@@ -18459,7 +18471,8 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   }
 
   .macos-ai-app .task-create-cancel-button,
-  .macos-ai-app .task-create-submit-button {
+  .macos-ai-app .task-create-submit-button,
+  .macos-ai-app .task-create-push-button {
     flex: 1;
   }
 }

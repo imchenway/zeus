@@ -24,8 +24,9 @@ export function taskPriorityTone(priority: string | number | null): TaskSemantic
   return 'neutral';
 }
 
-/** 任务类型的语义色调：需求紫、缺陷红、优化绿。 */
+/** 任务类型的语义色调：通用任务中性、需求紫、缺陷红、优化绿。 */
 export function taskTypeTone(taskType: TaskType): TaskSemanticTone {
+  if (taskType === 'task') return 'neutral';
   if (taskType === 'requirement') return 'violet';
   if (taskType === 'defect') return 'red';
   return 'green';

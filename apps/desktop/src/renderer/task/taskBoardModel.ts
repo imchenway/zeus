@@ -1,4 +1,5 @@
 import {
+  taskTypeOrder,
   taskBoardEmptyGroupId,
   taskBoardLayoutKey,
   type TaskBoardCalculation,
@@ -81,7 +82,7 @@ export function taskBoardGroupOptions(context: TaskBoardProjectionContext, prope
   const zh = context.language === 'zh-CN';
   if (property === 'managementStatus') return context.statusDefinitions.map((status) => ({ id: status.id, label: status.label?.trim() || defaultManagementStatusLabels[context.language][status.id] || status.id, color: status.color }));
   if (property === 'priority') return priorityOptions;
-  if (property === 'taskType') return (['requirement', 'defect', 'optimization'] as const).map((taskType) => ({ id: taskType, label: formatTaskType(taskType, context.language) }));
+  if (property === 'taskType') return taskTypeOrder.map((taskType) => ({ id: taskType, label: formatTaskType(taskType, context.language) }));
   if (property === 'tags')
     return [
       { id: taskBoardEmptyGroupId, label: zh ? '无标签' : 'No tags' },
