@@ -22,6 +22,14 @@ export interface TaskConversationEmployee {
 export interface TaskConversationEntry {
   /** 原始会话身份，未启动分工为空。 */
   conversationId: string | null;
+  /** 尚未创建运行的分工沿原工作项等待，不能跳到同员工的旧工作。 */
+  workItemIds?: string[];
+  /** 原工作运行用于关联正式成果，复用会话时保留全部来源。 */
+  workRunIds?: string[];
+  /** 原节点身份用于等待尚未开始的分工，不按名称猜测会话。 */
+  nodeIds?: string[];
+  /** 原节点尝试用于读取准确的结构化结果。 */
+  attemptIds?: string[];
   /** 分工或会话标题。 */
   title: string;
   /** 原创建时间，不使用轮询到达时间。 */
@@ -102,6 +110,8 @@ export function buildTaskConversationNavigation(input: {
   const works = new Map(input.items.flatMap((item) => item.runs.map((run) => [run.id, { item, run }] as const)));
   /** 已归属团队的工作不重复出现在独立会话中。 */
   const teamWorkIds = new Set<string>();
+  /** 团队已接纳但尚未创建运行的工作也不重复列到独立工作。 */
+  const teamWorkItemIds = new Set<string>();
   /** 会话可由多个节点复用，但不再重复放入普通讨论。 */
   const teamConversationIds = new Set<string>();
   /** 向员工列表加入原会话，复用会话时合并分工标题。 */
@@ -117,8 +127,18 @@ export function buildTaskConversationNavigation(input: {
     /** 主会话可能同时承担规划与汇总。 */
     const previous = entry.conversationId ? member.entries.find((candidate) => candidate.conversationId === entry.conversationId) : null;
     if (previous) {
+      /** 工作项身份在运行启动前后保持不变。 */
+      const workItemIds = [...new Set([...(previous.workItemIds ?? []), ...(entry.workItemIds ?? [])])];
+      /** 同一主会话可能包含多份分工，结果来源不能被最后一条记录覆盖。 */
+      const workRunIds = [...new Set([...(previous.workRunIds ?? []), ...(entry.workRunIds ?? [])])];
+      /** 等待与结果都使用原始节点和尝试身份。 */
+      const nodeIds = [...new Set([...(previous.nodeIds ?? []), ...(entry.nodeIds ?? [])])];
+      /** 共享会话保留每次尝试的正式成果关联。 */
+      const attemptIds = [...new Set([...(previous.attemptIds ?? []), ...(entry.attemptIds ?? [])])];
       if (!previous.title.split(' / ').includes(entry.title)) previous.title += ` / ${entry.title}`;
-      if (entry.current || entry.createdAt > previous.createdAt) Object.assign(previous, { ...entry, title: previous.title });
+      /** 共享会话优先保留当前执行；同等状态才比较原创建时间。 */
+      if (entry.current !== previous.current ? entry.current : entry.createdAt > previous.createdAt) Object.assign(previous, { ...entry, title: previous.title });
+      Object.assign(previous, { workItemIds, workRunIds, nodeIds, attemptIds });
     } else member.entries.push(entry);
   }
   /** 列表排序只依据原时间与身份，后台刷新不会改变同值顺序。 */
@@ -145,10 +165,15 @@ export function buildTaskConversationNavigation(input: {
       /** 非员工流程节点不伪造员工身份。 */
       const employee = role ? employeeIdentity(role.employeeId, role.configuration, input.employees) : work ? employeeIdentity(work.run.employeeId, work.run.employeeSnapshot, input.employees) : null;
       if (attempt.workRunId) teamWorkIds.add(attempt.workRunId);
+      if (attempt.workItemId) teamWorkItemIds.add(attempt.workItemId);
       if (attempt.conversationId) teamConversationIds.add(attempt.conversationId);
       if (!employee && !attempt.conversationId) continue;
       append(group, employee, {
         conversationId: attempt.conversationId,
+        workItemIds: attempt.workItemId ? [attempt.workItemId] : [],
+        workRunIds: attempt.workRunId ? [attempt.workRunId] : [],
+        nodeIds: [attempt.nodeId],
+        attemptIds: [attempt.id],
         title: work?.item.title ?? node?.data.title ?? (zh ? '团队会话' : 'Team conversation'),
         createdAt: attempt.createdAt,
         status: attempt.status,
@@ -160,7 +185,7 @@ export function buildTaskConversationNavigation(input: {
       if (node.type !== 'employee' || team.nodeAttempts.some((attempt) => attempt.nodeId === node.id)) continue;
       /** 尚未启动的冻结员工仍可看到其分工，不创建占位会话。 */
       const role = team.run.roleSnapshots.find((entry) => entry.employeeId === node.data.employeeId);
-      append(group, employeeIdentity(node.data.employeeId, role?.configuration, input.employees), { conversationId: null, title: node.data.title, createdAt: team.run.createdAt, status: 'pending', current: false });
+      append(group, employeeIdentity(node.data.employeeId, role?.configuration, input.employees), { conversationId: null, nodeIds: [node.id], title: node.data.title, createdAt: team.run.createdAt, status: 'pending', current: false });
     }
     if (team.run.mainConversationId && !group.employees.some((member) => member.entries.some((entry) => entry.conversationId === team.run.mainConversationId))) {
       teamConversationIds.add(team.run.mainConversationId);
@@ -171,19 +196,31 @@ export function buildTaskConversationNavigation(input: {
   /** 独立指派与普通讨论始终保留真实访问入口。 */
   const independent: TaskConversationExecutionGroup = {
     id: independentConversationGroupId,
-    name: zh ? '其他会话' : 'Other conversations',
+    name: zh ? '独立工作与任务讨论' : 'Individual work and discussions',
     description: zh ? '独立指派与任务讨论' : 'Individual work and task discussions',
     team: null,
     employees: [],
   };
   /** 工作会话不会再次作为普通讨论列出。 */
   const workConversationIds = new Set<string>();
-  for (const item of input.items)
+  for (const item of input.items) {
+    if (!item.runs.length && item.employeeId && !teamWorkItemIds.has(item.id))
+      append(independent, employeeIdentity(item.employeeId, undefined, input.employees), {
+        conversationId: null,
+        workItemIds: [item.id],
+        title: item.title,
+        createdAt: item.createdAt,
+        status: item.status,
+        current: false,
+        reason: item.arrangement?.blockedReason,
+      });
     for (const run of item.runs) {
       if (run.conversationId) workConversationIds.add(run.conversationId);
       if (teamWorkIds.has(run.id) || (run.conversationId && teamConversationIds.has(run.conversationId))) continue;
       append(independent, employeeIdentity(run.employeeId, run.employeeSnapshot, input.employees), {
         conversationId: run.conversationId,
+        workItemIds: [item.id],
+        workRunIds: [run.id],
         title: item.title,
         createdAt: run.createdAt,
         status: run.status,
@@ -191,6 +228,7 @@ export function buildTaskConversationNavigation(input: {
         reason: run.errorMessage ?? item.arrangement?.blockedReason,
       });
     }
+  }
   for (const conversation of input.conversations) {
     if (teamConversationIds.has(conversation.id) || workConversationIds.has(conversation.id)) continue;
     append(independent, null, { conversationId: conversation.id, title: conversation.title, createdAt: conversation.createdAt, status: '', current: false });
@@ -206,6 +244,10 @@ export function taskConversationStatus(status: string, zh: boolean): string {
   /** 当前任务中会出现的流程与独立工作状态。 */
   const labels: Record<string, [string, string]> = {
     pending: ['未开始', 'Not started'],
+    queued: ['等待开始', 'Queued'],
+    waiting_manager: ['等待处理', 'Needs attention'],
+    completed: ['已完成', 'Completed'],
+    blocked: ['受阻', 'Blocked'],
     prepared: ['等待开始', 'Queued'],
     dispatching: ['正在启动', 'Starting'],
     active: ['执行中', 'Running'],

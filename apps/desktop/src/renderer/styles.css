@@ -19612,29 +19612,72 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   padding-block-end: 0;
 }
 
-/* 沟通作为左侧主工作区，任务说明使用连续的右侧信息栏，不再把两侧包装成悬浮卡片。 */
+/* 说明与属性归入上方折叠区，协作侧栏只占用会话工作区。 */
 .macos-ai-app .task-detail-workspace {
   background: var(--zeus-product-panel);
-  display: grid;
+  display: flex;
   flex: 1;
-  gap: 0;
-  grid-template-columns: minmax(0, 1fr) 300px;
+  flex-direction: column;
   min-block-size: 0;
+  overflow: hidden;
   padding: 0;
 }
 
+/* 空任务按内容自然排列，输入框紧接说明，不制造占满屏幕的空会话。 */
+.macos-ai-app .task-detail-workspace[data-has-activity='false'] {
+  overflow-y: auto;
+}
+.macos-ai-app .task-detail-workspace[data-has-activity='false'] .task-detail-context {
+  max-block-size: none;
+  overflow: visible;
+}
+.macos-ai-app .task-detail-workspace[data-has-activity='false'] .task-detail-main {
+  flex: 0 0 auto;
+  min-block-size: 240px;
+}
+
 .macos-ai-app .task-detail-main,
-.macos-ai-app .task-detail-sidebar {
+.macos-ai-app .task-detail-context {
   min-block-size: 0;
   min-inline-size: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 
-.macos-ai-app .task-detail-sidebar {
-  background: color-mix(in srgb, var(--zeus-product-panel) 76%, var(--zeus-product-panel-muted));
-  border-inline-start: 1px solid var(--zeus-product-line-soft);
-  padding: 6px 18px 20px;
+.macos-ai-app .task-detail-context {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: 24px;
+  flex: 0 0 auto;
+  max-block-size: 45%;
+  border-block-end: 1px solid var(--zeus-product-line-soft);
+  padding: 4px 24px;
+}
+/* 展开的说明与属性使用整行，既有编辑控件始终保留在原位置。 */
+.macos-ai-app .task-detail-context > details[open] {
+  grid-column: 1 / -1;
+}
+.macos-ai-app .task-detail-requirements {
+  min-inline-size: 0;
+}
+.macos-ai-app .task-detail-requirements > summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-block-size: 42px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.macos-ai-app .task-detail-requirements > summary strong {
+  flex-shrink: 0;
+}
+.macos-ai-app .task-detail-requirements > summary > span {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--zeus-product-muted);
 }
 
 /* 概览用连续正文与分组间距组织内容，不再在空协作区下重复堆叠。 */
@@ -19644,7 +19687,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-detail-overview > .task-detail-block,
-.macos-ai-app .task-detail-sidebar > .task-detail-block {
+.macos-ai-app .task-detail-context > .task-detail-block {
   padding-block: 14px;
 }
 
@@ -19652,7 +19695,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   border-block-start: 0;
 }
 
-.macos-ai-app .task-detail-sidebar > .task-detail-block {
+.macos-ai-app .task-detail-context > .task-detail-block {
   margin-block-start: 14px;
   padding-block-end: 0;
 }
@@ -19664,34 +19707,34 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   padding-block-start: 12px;
 }
 
-.macos-ai-app .task-detail-sidebar .task-detail-related-add {
+.macos-ai-app .task-detail-context .task-detail-related-add {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
 }
 
 /* 关系展开后也适配属性栏，长任务名可以换行，操作按钮不被挤出边界。 */
-.macos-ai-app .task-detail-sidebar .task-detail-section-heading {
+.macos-ai-app .task-detail-context .task-detail-section-heading {
   flex-wrap: wrap;
   gap: 8px;
 }
 
-.macos-ai-app .task-detail-sidebar .task-detail-section-heading > span {
+.macos-ai-app .task-detail-context .task-detail-section-heading > span {
   align-items: start;
   display: grid;
   gap: 3px;
 }
 
-.macos-ai-app .task-detail-sidebar .task-detail-related-add > .zeus-button {
+.macos-ai-app .task-detail-context .task-detail-related-add > .zeus-button {
   justify-self: start;
 }
 
-.macos-ai-app .task-detail-sidebar .task-detail-relationship-row strong,
-.macos-ai-app .task-detail-sidebar .task-detail-tag-list > span {
+.macos-ai-app .task-detail-context .task-detail-relationship-row strong,
+.macos-ai-app .task-detail-context .task-detail-tag-list > span {
   overflow-wrap: anywhere;
   min-inline-size: 0;
 }
 
-.macos-ai-app .task-detail-sidebar .task-detail-relationship-row > .zeus-button {
+.macos-ai-app .task-detail-context .task-detail-relationship-row > .zeus-button {
   flex-shrink: 0;
 }
 
@@ -20316,8 +20359,8 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   flex-shrink: 0;
 }
 .macos-ai-app .task-detail-properties {
-  border-block-start: 1px solid var(--zeus-product-line-soft);
-  padding-block: 12px 0;
+  min-inline-size: 0;
+  padding-block: 6px;
 }
 .macos-ai-app .task-detail-properties > summary {
   align-items: center;
@@ -20373,6 +20416,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   gap: 6px;
 }
 .macos-ai-app .task-detail-main {
+  flex: 1;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -20381,26 +20425,8 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   cursor: pointer;
 }
 
-/* 按详情自身宽度收为单列，避免宽屏中的窄抽屉误用双栏；只保留一个正文滚动区。 */
+/* 属性按详情自身宽度重排，成员侧栏由实际会话容器控制。 */
 @container task-detail (max-width: 860px) {
-  .macos-ai-app .task-detail-workspace {
-    display: block;
-    overflow-y: auto;
-    padding: 0;
-  }
-
-  .macos-ai-app .task-detail-main,
-  .macos-ai-app .task-detail-sidebar {
-    overflow: visible;
-  }
-
-  .macos-ai-app .task-detail-sidebar {
-    border-block-start: 1px solid var(--zeus-product-line-soft);
-    border-inline-start: 0;
-    margin-block-start: 0;
-    padding: 20px 24px;
-  }
-
   .macos-ai-app .task-detail-summary-grid.task-detail-task-facts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -20416,7 +20442,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   }
 
   .macos-ai-app .task-detail-pane-header.task-detail-summary-row,
-  .macos-ai-app .task-detail-sidebar,
+  .macos-ai-app .task-detail-context,
   .macos-ai-app .task-detail-feedback-rail {
     padding-inline: 16px;
   }
@@ -23289,10 +23315,11 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 
 /* 员工身份与指派在可用宽度内同行，成员增多时再自然换行。 */
 .macos-ai-app .task-detail-arrangement > .task-detail-executor-row {
-  flex: 1;
+  margin-inline-start: auto;
+  flex-wrap: wrap;
 }
 .macos-ai-app .task-detail-arrangement .task-digital-employee-executor {
-  flex: 1;
+  flex: 0 0 auto;
 }
 .macos-ai-app .task-detail-arrangement .task-digital-employee-executor > .zeus-select {
   flex: 0 0 auto;

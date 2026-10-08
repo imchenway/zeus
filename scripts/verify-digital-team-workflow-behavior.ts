@@ -674,6 +674,56 @@ async function verifyTaskDetailNavigationAndHandoff(): Promise<void> {
     });
     assert(groups[0].id === current.id && groups[1].id === history.id && groups[1].employees.find((member) => member.id === developer.id)?.entries.length === 2, '整队重开必须分组，员工重试必须保留在原组。');
     assert(groups[2].employees[0]?.entries[0]?.conversationId === ordinary.id && groups[0].employees.find((member) => member.id === developer.id)?.entries.some((entry) => entry.current), '普通会话必须保留，当前执行人必须来自当前尝试。');
+    /** 等待和结果导航必须保留原节点与尝试身份，普通讨论不带工作来源。 */
+    assert(
+      groups[0].employees.find((member) => member.id === developer.id)?.entries.some((entry) => entry.nodeIds?.includes('work') && entry.attemptIds?.includes(working.id)) && !groups[2].employees[0].entries[0].workRunIds?.length,
+      '员工结果必须精确关联原尝试，不能把普通讨论当成员工成果。',
+    );
+    /** 复用真实投影验证同会话的多次工作来源不会被后写入的条目覆盖。 */
+    const sharedConversation = coordinator.getRunProjection(current.id)!;
+    /** 派生检查不写入仓储，也不触发执行。 */
+    const reusedSources = buildTaskConversationNavigation({
+      teams: [
+        {
+          ...sharedConversation,
+          nodeAttempts: [
+            { ...working, workRunId: 'first-work-source' },
+            { ...working, id: 'later-attempt-source', workRunId: 'later-work-source', createdAt: new Date(Date.parse(working.createdAt) + 1_000).toISOString() },
+          ],
+        },
+      ] as DigitalTeamRunProjection[],
+      templates: [],
+      employees: [],
+      items: [],
+      conversations: [],
+      language: 'zh-CN',
+    })[0].employees.find((member) => member.id === developer.id)!.entries[0];
+    assert(
+      reusedSources.conversationId === working.conversationId &&
+        reusedSources.current &&
+        reusedSources.workRunIds?.join(',') === 'first-work-source,later-work-source' &&
+        reusedSources.attemptIds?.includes(working.id) &&
+        reusedSources.attemptIds.includes('later-attempt-source'),
+      '同一会话复用时必须保留全部准确成果来源。',
+    );
+    /** 已指派但尚未创建运行的工作仍须展示真实等待原因，不创建会话。 */
+    const waitingInput = {
+      teams: [],
+      templates: [],
+      employees: [],
+      conversations: [],
+      language: 'zh-CN',
+      items: [{ id: 'waiting-work', employeeId: developer.id, title: '等待依赖的分工', createdAt: working.createdAt, status: 'queued', runs: [], arrangement: { dependencyIds: [], blockedReason: '等待前置分工' } }],
+    } as unknown as Parameters<typeof buildTaskConversationNavigation>[0];
+    /** 工作项身份在真正运行出现之前就保持可追溯。 */
+    const waitingEntry = buildTaskConversationNavigation(waitingInput)[0].employees[0].entries[0];
+    assert(waitingEntry.conversationId === null && waitingEntry.workItemIds?.[0] === 'waiting-work' && waitingEntry.reason === '等待前置分工', '等待分工必须可见，并保留真实原因。');
+    /** 会话到达后沿同一工作项关联，不按员工最近一条旧会话猜测。 */
+    const startedEntry = buildTaskConversationNavigation({
+      ...waitingInput,
+      items: [{ ...waitingInput.items[0], currentRunId: 'started-work', runs: [{ id: 'started-work', employeeId: developer.id, conversationId: working.conversationId, status: 'active', createdAt: working.createdAt }] }],
+    } as unknown as Parameters<typeof buildTaskConversationNavigation>[0])[0].employees[0].entries[0];
+    assert(startedEntry.workItemIds?.[0] === waitingEntry.workItemIds?.[0] && startedEntry.workRunIds?.[0] === 'started-work' && startedEntry.conversationId === working.conversationId, '等待与启动后的会话必须共享原工作身份。');
     /** 返回旧入口不能被误判为正在执行同一员工。 */
     const prepared = await coordinator.prepareEmployeeAssignment(project.id, { taskId: task.id, employeeId: planner.id });
     assert(prepared, '已有团队必须得到原执行的交接预检。');
