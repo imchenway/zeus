@@ -130,10 +130,9 @@ index 941edd9..998a258 100644
  mod tests {
      use super::*;
 diff --git a/crates/cursor-overlay/src/render_state.rs b/crates/cursor-overlay/src/render_state.rs
-index 264c427..4eda6de 100644
 --- a/crates/cursor-overlay/src/render_state.rs
 +++ b/crates/cursor-overlay/src/render_state.rs
-@@ -54,6 +54,8 @@ pub struct RenderStateCore {
+@@ -54,6 +54,8 @@
      pub motion: MotionConfig,
      /// Current rendered position in screen / overlay-window coordinates.
      pub pos: (f64, f64),
@@ -142,7 +141,7 @@ index 264c427..4eda6de 100644
      /// Visual heading in radians (tip direction = motion_dir + π).
      pub heading: f64,
      /// In-flight planned path; `None` = at rest.
-@@ -132,6 +134,7 @@ impl RenderStateCore {
+@@ -132,6 +134,7 @@
              theme,
              theme_fallback,
              pos: (-200.0, -200.0),
@@ -150,7 +149,7 @@ index 264c427..4eda6de 100644
              heading: std::f64::consts::FRAC_PI_4,
              path: None,
              dist: 0.0,
-@@ -155,7 +158,7 @@ impl RenderStateCore {
+@@ -155,7 +158,7 @@
      /// Whether the cursor currently paints pixels: user-visible, placed on
      /// screen (not the `(-200, -200)` sentinel), and not fully idle-faded.
      pub fn is_revealed(&self) -> bool {
@@ -159,7 +158,7 @@ index 264c427..4eda6de 100644
      }
  
      /// Whether a revealed cursor keeps changing pixels while it rests.
-@@ -197,7 +200,7 @@ impl RenderStateCore {
+@@ -197,7 +200,7 @@
      pub fn idle_fade_in_progress(&self) -> bool {
          self.motion.idle_hide_ms > 0.0
              && self.visible
@@ -168,7 +167,7 @@ index 264c427..4eda6de 100644
              && self.idle_secs >= self.motion.idle_hide_ms / 1000.0
              && self.idle_alpha >= 0.004
      }
-@@ -225,7 +228,7 @@ impl RenderStateCore {
+@@ -225,7 +228,7 @@
      /// the fade has already started.
      pub fn idle_fade_wait(&self) -> Option<std::time::Duration> {
          if !self.visible
@@ -177,7 +176,47 @@ index 264c427..4eda6de 100644
              || self.motion.idle_hide_ms <= 0.0
              || self.path.is_some()
              || self.spring.is_some()
-@@ -652,7 +655,7 @@ impl RenderStateCore {
+@@ -384,7 +387,8 @@
+             let speed = if self.motion.glide_duration_ms > 0.0 {
+                 path_len / (self.motion.glide_duration_ms / 1000.0)
+             } else {
+-                speed_based
++                // Zeus 软件光标最多滑行 160 毫秒；短距离仍沿用原速度，不阻塞输入等待装饰动画。
++                speed_based.max(path_len / 0.16)
+             };
+             self.dist += speed * dt;
+ 
+@@ -399,7 +403,8 @@
+                 let impulse = if self.motion.glide_duration_ms > 0.0 {
+                     self.motion.min_end_speed
+                 } else {
+-                    speed
++                    // 加速滑行不放大落点弹簧，保留原有末端速度上限。
++                    speed.min(self.motion.min_end_speed)
+                 };
+                 self.spring = Some(Spring {
+                     ox: 0.0,
+@@ -495,7 +500,8 @@
+             let current_speed = if self.motion.glide_duration_ms > 0.0 {
+                 path_len / (self.motion.glide_duration_ms / 1000.0)
+             } else {
+-                speed_based
++                // Zeus 软件光标最多滑行 160 毫秒；短距离仍沿用原速度，不阻塞输入等待装饰动画。
++                speed_based.max(path_len / 0.16)
+             };
+             self.dist += current_speed * dt;
+ 
+@@ -511,7 +517,8 @@
+                 let impulse = if self.motion.glide_duration_ms > 0.0 {
+                     MIN_END_SPEED
+                 } else {
+-                    current_speed
++                    // 加速滑行不放大落点弹簧，保留原有末端速度上限。
++                    current_speed.min(MIN_END_SPEED)
+                 };
+                 self.spring = Some(Spring {
+                     ox: 0.0,
+@@ -652,7 +659,7 @@
  
                  // macOS-only: if the cursor is still at the initial off-screen
                  // sentinel, snap it to the offset target so the path starts on-screen.
@@ -186,7 +225,7 @@ index 264c427..4eda6de 100644
                      self.pos = (tx, ty);
                  }
                  let (x0, y0) = self.pos;
-@@ -660,6 +663,7 @@ impl RenderStateCore {
+@@ -660,6 +667,7 @@
                  let th1 = end_heading_radians + std::f64::consts::PI;
                  let plan =
                      PathPlanner::plan(x0, y0, th0, tx, ty, th1, end_heading_radians, turn_radius);
@@ -194,7 +233,7 @@ index 264c427..4eda6de 100644
                  self.path = Some(plan);
                  self.dist = 0.0;
                  self.spring = None;
-@@ -686,6 +690,7 @@ impl RenderStateCore {
+@@ -686,6 +694,7 @@
              } => {
                  let reveal_badge = !self.is_revealed();
                  self.pos = (x, y);
@@ -202,7 +241,7 @@ index 264c427..4eda6de 100644
                  if let Some(heading) = heading_radians {
                      self.heading = heading;
                  }
-@@ -714,9 +719,10 @@ impl RenderStateCore {
+@@ -714,9 +723,10 @@
                  // that the cursor stays where the animation landed. Windows
                  // and Linux always snap. Both anchor the click point so the
                  // hotspot stays on it instead of jumping by the anchor offset.
@@ -214,7 +253,7 @@ index 264c427..4eda6de 100644
                  self.click_t = Some(0.0);
                  if matches!(
                      self.visual.resolved_action,
-@@ -889,7 +895,7 @@ pub fn paint_cursor(
+@@ -889,7 +899,7 @@
  ) {
      if !core.visible
          || core.pinned_target_off_workspace
@@ -223,7 +262,7 @@ index 264c427..4eda6de 100644
          || core.idle_alpha < 0.004
      {
          return;
-@@ -911,6 +917,8 @@ pub fn paint_cursor(
+@@ -911,6 +921,8 @@
      // Cyan glow border + faint fill, matching Swift AgentCursor.showFocusRect.
      if let Some(fr) = focus_rect {
          let [fx, fy, fw, fh] = fr.rect;
@@ -232,7 +271,7 @@ index 264c427..4eda6de 100644
          let t = fr.t as f32;
          let fade = (1.0 - t) * (1.0 - t); // quadratic ease-out
          let border_a = (230.0 * fade * alpha_scale) as u8;
-@@ -1008,7 +1016,6 @@ pub fn paint_cursor(
+@@ -1008,7 +1020,6 @@
          );
      }
  }
@@ -2551,3 +2590,31 @@ diff --git a/crates/platform-macos/src/ax/exact_target.rs b/crates/platform-maco
              CFRelease(window as CFTypeRef);
              record
          })
+diff --git a/crates/platform-macos/src/tools/click.rs b/crates/platform-macos/src/tools/click.rs
+--- a/crates/platform-macos/src/tools/click.rs
++++ b/crates/platform-macos/src/tools/click.rs
+@@ -746,6 +746,8 @@
+             )
+             .await;
+ 
++            // 焦点稳定和窗口变化观察共用动作完成时刻，保留两者期限，避免串行重复等待。
++            let action_finished_at = tokio::time::Instant::now();
+             // Drop the wildcard lease + detect window/foreground side-effects.
+             let changes = super::finish_window_observation(snapshot).await;
+ 
+@@ -760,10 +762,12 @@
+                     ),
+                     fronted,
+                 ))) => {
+-                    // For text inputs, wait 800ms for WebKit DOM focus to settle
+-                    // before returning — matches the Swift reference behaviour.
++                    // 窗口观察期间焦点已同时稳定；仅补足动作完成后尚未经过的 800 毫秒。
+                     if needs_webkit_delay {
+-                        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
++                        tokio::time::sleep_until(
++                            action_finished_at + std::time::Duration::from_millis(800),
++                        )
++                        .await;
+                     }
+                     msg.push_str(&changes.result_suffix());
+                     // AX dispatch went through, but AXPerformAction returning
