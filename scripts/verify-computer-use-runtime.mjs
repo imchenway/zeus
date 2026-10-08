@@ -16,6 +16,8 @@ const { values } = parseArgs({
     performance: { type: 'boolean' },
     'system-stop': { type: 'boolean' },
     'single-display': { type: 'boolean' },
+    /** 等待真实五分钟回收，并核对恢复和取消边界。 */
+    'session-expiry': { type: 'boolean' },
   },
 });
 /** 所有路径及进程身份必须来自本工作树。 */
@@ -32,6 +34,8 @@ const expected = {
   systemStop: values['system-stop'] === true,
   /** 仅在用户明确变更副屏验收约束后，由本次编排显式传入。 */
   singleDisplay: values['single-display'] === true,
+  /** 专项检查不修改驱动的真实空闲期限。 */
+  sessionExpiry: values['session-expiry'] === true,
 };
 if (!Number.isSafeInteger(expected.pid) || expected.pid <= 0 || !Number.isSafeInteger(expected.port) || expected.port <= 0 || !Number.isSafeInteger(expected.displayId) || !expected.dataRoot.startsWith(`${resolve('.tmp')}/`))
   throw new Error('必须指定本任务 --pid、--port、--display-id 和 .tmp 下的 --data-root。');
@@ -181,6 +185,126 @@ async function verifyInElectron(expected) {
     assert(semantic.success, textOf(semantic));
     assert(host.getPreview('computer-runtime-probe')?.capturedAt === preview.capturedAt, 'AX-only 伪造新截图时间');
     checks.push('preview_incremental_image_and_capture_timestamp');
+    if (expected.sessionExpiry) {
+      /** 固定当前真实驱动，恢复不能影响其他命名会话或更换 worker。 */
+      const driver = host.driver;
+      /** 初次观察的控制者在原生过期后仍保留宿主缓存，复现实际故障。 */
+      const owner = [...host.owners.values()].find((candidate) => candidate.input.turnId === 'runtime-owner');
+      /** 真实调用只记录方法名和结果，不替换原生响应或记录窗口内容。 */
+      const nativeCalls = [];
+      /** 保留原始方法，探针包装仅用于计数。 */
+      const callTool = driver.callTool.bind(driver);
+      driver.callTool = async (...args) => {
+        /** 响应完全来自本任务原生 worker。 */
+        const result = await callTool(...args);
+        if (args[0] === 'get_window_state' || args[0] === 'press_key') nativeCalls.push({ tool: args[0], isError: result.isError });
+        return result;
+      };
+      /** 查询实际命名会话，不触碰待过期会话的活动时间。 */
+      const sessionsNow = async () => {
+        /** 官方发现接口返回原生当前活动会话。 */
+        const result = await driver.callTool('list_sessions', JSON.stringify({ limit: 100 }));
+        assert(!result.isError, result.structuredJson ?? result.rawJson);
+        return JSON.parse(result.structuredJson).sessions;
+      };
+      /** 等待真实回收，不调整系统时钟、TTL 或替换原生状态。 */
+      const idleStarted = Date.now();
+      await fs.writeFile(`${expected.dataRoot}/../computer-session-expiry-progress.json`, JSON.stringify({ phase: 'waiting_for_native_idle_expiry', pid: process.pid, workerPid: host.workerPid }));
+      while ((await sessionsNow()).some((session) => session.session === owner.id)) {
+        assert(Date.now() - idleStarted < 360_000, '真实空闲期限后会话仍未回收');
+        await new Promise((resolveIdle) => setTimeout(resolveIdle, 1000));
+      }
+      performanceResults.sessionIdleElapsedMs = Date.now() - idleStarted;
+      assert(owner.sessionStarted && owner.windows.size > 0, '未复现原生已回收而宿主仍持有旧观察');
+      /** 另一轮次在恢复前建立真实会话，核对恢复没有全局清空驱动。 */
+      const independent = host.ensureOwner({ conversationId: 'computer-runtime-probe', threadId: 'native', turnId: 'expiry-independent', tool: 'get_window_state' });
+      await host.ensureOwnerSession(driver, independent, independent.input);
+      nativeCalls.length = 0;
+      /** 失效后的首次真实观察应内部恢复，只向调用者返回新观察。 */
+      const recovered = await call('get_window_state', { ...target, include_screenshot: false, max_elements: 40 });
+      assert(recovered.success, textOf(recovered));
+      assert(nativeCalls.length === 2 && nativeCalls[0].isError && !nativeCalls[1].isError, '首次观察没有且仅有一次原生拒绝后的恢复');
+      assert(host.driver === driver && independent.sessionStarted && (await sessionsNow()).some((session) => session.session === independent.id), '恢复影响了其他轮次');
+      assert(owner.windows.has(`${target.pid}:${target.window_id}`) && !owner.preview.needsObservation, '新观察没有恢复准确窗口所有权');
+      checks.push('real_idle_expiry_recovers_observation_once_and_preserves_other_session');
+      /** 显式结束真实会话，随后输入必须被拒绝，不能恢复并重放。 */
+      await driver.endSession({ session: owner.id });
+      nativeCalls.length = 0;
+      const refusedInput = await call('press_key', { ...target, key: 'F24' });
+      assert(!refusedInput.success && textOf(refusedInput).includes('ZEUS_COMPUTER_OBSERVATION_REQUIRED') && nativeCalls.length === 1, '会话结束后的输入被自动重放');
+      assert(!owner.sessionStarted && owner.windows.size === 0 && ![...host.windowOwners.values()].includes(owner.id), '失效会话仍持有旧观察或窗口占用');
+      const staleInput = await call('press_key', { ...target, key: 'F24' });
+      assert(!staleInput.success && textOf(staleInput).includes('ZEUS_COMPUTER_OBSERVATION_REQUIRED') && nativeCalls.length === 1, '旧观察仍可派发输入');
+      checks.push('ended_session_input_is_not_replayed_and_old_observation_is_revoked');
+      await host.endComputerUse({ conversationId: 'computer-runtime-probe', turnId: 'runtime-owner' });
+      /** 实际建会话已完成后再交错暂停或结束，验证迟到回复不会复活控制。 */
+      for (const reason of ['ZEUS_COMPUTER_USER_CONTROL', 'ZEUS_COMPUTER_SHARING_STOPPED', 'turn_end']) {
+        /** 每种竞争使用新的真实产品轮次。 */
+        const turnId = `expiry-${reason}`;
+        const observed = await call('get_window_state', { ...target, include_screenshot: false, max_elements: 20 }, turnId);
+        assert(observed.success, textOf(observed));
+        /** 只操作当前探针轮次的原生会话。 */
+        const active = [...host.owners.values()].find((candidate) => candidate.input.turnId === turnId);
+        await driver.endSession({ session: active.id });
+        /** 包装真实开始调用，仅在原生回复与宿主接收之间插入控制事件。 */
+        const startSession = driver.startSession.bind(driver);
+        driver.startSession = async (...args) => {
+          /** 保留实际成功或失败结果，不伪造原生回复。 */
+          const result = await startSession(...args);
+          if (reason === 'turn_end') await host.endComputerUse({ conversationId: 'computer-runtime-probe', turnId });
+          else host.pauseApplication(target.pid, reason);
+          return result;
+        };
+        nativeCalls.length = 0;
+        try {
+          /** 本次观察已收到原生会话失效，但恢复期间被用户侧控制终止。 */
+          const interrupted = await call('get_window_state', { ...target, include_screenshot: false }, turnId);
+          assert(!interrupted.success && !active.sessionStarted && active.windows.size === 0 && nativeCalls.length === 1, `${reason} 后恢复继续派发观察`);
+          assert(host.driver === driver && independent.sessionStarted, `${reason} 影响其他轮次`);
+        } finally {
+          driver.startSession = startSession;
+          await host.endComputerUse({ conversationId: 'computer-runtime-probe', turnId });
+        }
+        checks.push(`recovery_native_start_reply_respects_${reason}`);
+      }
+      /** 期限检查同样使用真实结束与建会话，只延迟交付真实开始回复。 */
+      const deadlineTurn = 'expiry-deadline';
+      assert((await call('get_window_state', { ...target, include_screenshot: false }, deadlineTurn)).success, '期限检查初始观察失败');
+      const deadlineOwner = [...host.owners.values()].find((candidate) => candidate.input.turnId === deadlineTurn);
+      await driver.endSession({ session: deadlineOwner.id });
+      /** 同一请求的截止时间不能在恢复后重新计算。 */
+      const deadlineUnixMs = Date.now() + 2000;
+      const startSession = driver.startSession.bind(driver);
+      driver.startSession = async (...args) => {
+        /** 等待原生真实响应，再把交付延迟至原期限之后。 */
+        const result = await startSession(...args);
+        await new Promise((resolveDeadline) => setTimeout(resolveDeadline, Math.max(0, deadlineUnixMs - Date.now()) + 50));
+        return result;
+      };
+      nativeCalls.length = 0;
+      try {
+        /** 通过正常动态工具入口传入原始截止时间。 */
+        const expired = await host.invoke({
+          namespace: 'zeus_computer',
+          tool: 'get_window_state',
+          arguments: { ...target, include_screenshot: false },
+          conversationId: 'computer-runtime-probe',
+          threadId: 'native',
+          turnId: deadlineTurn,
+          deadlineUnixMs,
+        });
+        assert(!expired.success && textOf(expired).includes('ZEUS_COMPUTER_DEADLINE_EXCEEDED') && nativeCalls.length === 1, '恢复延长原期限或在超时后派发观察');
+      } finally {
+        driver.startSession = startSession;
+        await host.endComputerUse({ conversationId: 'computer-runtime-probe', turnId: deadlineTurn });
+      }
+      checks.push('session_recovery_keeps_original_deadline');
+      await host.endComputerUse({ conversationId: 'computer-runtime-probe', turnId: 'expiry-independent' });
+      await host.endComputerUse({ conversationId: 'computer-runtime-probe', turnId: 'competing-owner' });
+      assert(host.windowOwners.size === 0 && (await sessionsNow()).length === 0, '专项检查结束后原生会话或窗口占用残留');
+      checks.push('expiry_probe_releases_all_native_sessions');
+      return { pid: process.pid, displayId: expected.displayId, workerPids, checks, remainingChecks, performanceResults };
+    }
     if (expected.performance) {
       /** 多次真实调用取分位数，不把一次缓存命中当成整条链路性能。 */
       const summarize = (samples) => {
@@ -366,7 +490,7 @@ await new Promise((resolveOpen, reject) => {
 /** 单次调试请求有界等待，迟到响应不重新触发动作。 */
 const result = await new Promise((resolveResult, reject) => {
   /** 超时只结束探针，宿主本身仍按调用期限回收。 */
-  const timer = setTimeout(() => reject(new Error('Computer Use 真实运行检查超时')), expected.userPriority || expected.systemStop ? 240000 : expected.performance ? 120000 : 60000);
+  const timer = setTimeout(() => reject(new Error('Computer Use 真实运行检查超时')), expected.sessionExpiry ? 420000 : expected.userPriority || expected.systemStop ? 240000 : expected.performance ? 120000 : 60000);
   socket.addEventListener('message', (event) => {
     /** 只处理本探针的唯一响应。 */
     const message = JSON.parse(event.data);
