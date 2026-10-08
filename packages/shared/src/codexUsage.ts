@@ -110,11 +110,11 @@ export interface UsageModelRate {
   perRequest: number | null;
 }
 
-/** 账本已知价格目录的适用周期；结束日期为空表示当前最新目录。 */
+/** 同一计费条件下本地已记录的价格周期；日期不代表官方生效日。 */
 export interface UsageModelPricePeriod {
-  /** 价格目录开始日期，格式固定为 YYYY-MM-DD。 */
+  /** 该价格第一次出现的目录日期，格式固定为 YYYY-MM-DD。 */
   from: string;
-  /** 下一份目录生效前一天；当前最新目录为空。 */
+  /** 同条件下一次记录不同单价的前一天；尚未记录调价时为空。 */
   to: string | null;
 }
 

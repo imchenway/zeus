@@ -4,13 +4,22 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CodexUsageLedgerRepository, ConversationExecutionRepository, ConversationRepository, ProjectRepository, SettingRepository, createZeusDatabase } from '../packages/storage/src/index.js';
-import { codexUsageObservationIdentity, emptyTokenUsageBreakdown, estimateCodexUsage, estimateCodexUsageWithRateSnapshot, formatCodexCredits, hasPositiveCodexCredits, isCodexSubscriptionUsage } from '../packages/shared/src/codexUsage.js';
+import {
+  codexUsageObservationIdentity,
+  emptyTokenUsageBreakdown,
+  estimateCodexUsage,
+  estimateCodexUsageWithRateSnapshot,
+  formatCodexCredits,
+  hasPositiveCodexCredits,
+  isCodexSubscriptionUsage,
+  type CodexUsageRateSnapshot,
+} from '../packages/shared/src/codexUsage.js';
 import { createCodexUsageService } from '../packages/local-server/src/codexUsageService.js';
 import { createUsageOverviewService } from '../packages/local-server/src/usageOverviewService.js';
 import { parseBuiltInModelPrices, readBuiltInPricingPage } from '../packages/local-server/src/builtInModelPricing.js';
 import { readPricingDocument } from '../packages/local-server/src/modelPricingDocument.js';
 import { parseNewApiPricing, parseExtractedPrices, createModelPricingService, builtInPricingUrls, validModelPrice } from '../packages/local-server/src/modelPricingService.js';
-import { estimateModelPrice, aggregateRequestPrices, sumEstimatedCosts } from '../packages/shared/src/modelPricing.js';
+import { estimateModelPrice, estimateModelUsageWithSnapshot, aggregateRequestPrices, sumEstimatedCosts } from '../packages/shared/src/modelPricing.js';
 import { estimatePublishedCodexUsage, fetchPublishedCodexPricing, parsePublishedCodexPrices } from '../packages/local-server/src/codexUsagePricing.js';
 import { readCodexUsageHistory } from '../packages/local-server/src/codexUsageHistory.js';
 import type { CodexAccountRateLimitsSnapshot, CodexRateLimitBucketSnapshot } from '../packages/ai-runtime/src/codexAppServerManager.js';
@@ -447,6 +456,177 @@ try {
     assert.ok(tierEntries.every((entry) => entry.pricePeriod?.from === catalog.fetchedAt.slice(0, 10) && entry.pricePeriod.to === null));
   }
   console.log('通过：费用明细保留请求级 Fast 与 Long context 分组，合并服务档位别名，Token、金额和价格周期完整。');
+  /** 固定验收日使所有快捷范围都包含当前请求，历史目录则跨出三十日窗口。 */
+  const periodNow = '2026-10-08T12:00:00.000Z';
+  /** 用写入前的记录复核读取汇总没有改写原单价、Token 或金额。 */
+  const periodRows: Array<Parameters<typeof ledger.upsert>[0]> = [];
+  /** 统一使用真实估算器与请求快照写入，整轮档位故意不同于请求档位。 */
+  function recordPeriodPrice(model: string, catalogDate: string, changes: Partial<CodexUsageRateSnapshot> = {}, providerId = 'codex', occurredAt = periodNow): void {
+    /** 每条请求身份独立，避免账本幂等更新掩盖周期样例。 */
+    const id = `period-${periodRows.length}`;
+    /** 条件价样例的真实输入量落在快照声明的范围内。 */
+    const inputTokens = Math.max(usage.inputTokens, (changes.price?.inputRange?.minExclusive ?? 0) + 1);
+    /** 总 Token 随输入变化，缓存读写和输出量保持原样。 */
+    const requestUsage = { ...usage, inputTokens, totalTokens: inputTokens + usage.outputTokens };
+    /** 基础费率为输入 2、输出 8，完整覆盖缓存读写。 */
+    const estimate = estimateModelUsageWithSnapshot(requestUsage, { ...tierRequests[0]!.estimate.rateSnapshot, model, catalogDate, ...changes, ...(changes.price ? { price: { ...changes.price, model } } : {}) });
+    /** 每个真实快照通过现有请求聚合器入账，不重算历史账单。 */
+    const row = {
+      providerId,
+      accountScopeId: 'probe',
+      projectId: 'probe',
+      conversationId: 'period',
+      providerThreadId: 'period',
+      providerTurnId: id,
+      model,
+      serviceTier: 'priority',
+      usage: requestUsage,
+      usageComplete: true,
+      estimate: aggregateRequestPrices([{ id, occurredAt, usage: requestUsage, estimate }]),
+      occurredAt,
+    };
+    periodRows.push(row);
+    ledger.upsert(row);
+  }
+  /** 只修改输入单价，其他项目保持一致以识别真实调价。 */
+  const changedRates = { ...tierRequests[0]!.estimate.rateSnapshot.usdPerMillion!, input: 6 };
+  recordPeriodPrice('period-tiers', '2026-10-04', { serviceTier: 'fast' });
+  recordPeriodPrice('period-tiers', '2026-10-07', { serviceTier: 'standard' });
+  recordPeriodPrice('period-tiers', '2026-09-23', { serviceTier: 'priority', longContext: true });
+  recordPeriodPrice('period-tiers', '2026-09-30', { serviceTier: 'default', longContext: true });
+  recordPeriodPrice('period-refresh', '2026-09-01', {}, 'codex', '2026-09-01T12:00:00.000Z');
+  recordPeriodPrice('period-refresh', '2026-10-07');
+  recordPeriodPrice('period-change', '2026-09-01', {}, 'codex', '2026-09-01T12:00:00.000Z');
+  recordPeriodPrice('period-change', '2026-10-02');
+  recordPeriodPrice('period-change', '2026-10-05', { usdPerMillion: changedRates });
+  recordPeriodPrice('period-return', '2026-10-01');
+  recordPeriodPrice('period-return', '2026-10-02', { usdPerMillion: changedRates });
+  recordPeriodPrice('period-return', '2026-10-07');
+  recordPeriodPrice('period-cache', '2026-10-01');
+  recordPeriodPrice('period-cache', '2026-10-07', { usdPerMillion: { ...tierRequests[0]!.estimate.rateSnapshot.usdPerMillion!, cacheWrite: 9 } });
+  recordPeriodPrice('period-missing', 'unavailable');
+  recordPeriodPrice('period-missing', '2026-10-07');
+  recordPeriodPrice('period-invalid', '2026-02-30');
+  recordPeriodPrice('period-conflict', '2026-10-06');
+  recordPeriodPrice('period-conflict', '2026-10-06', { usdPerMillion: changedRates });
+  recordPeriodPrice('period-conflict', '2026-10-04', { serviceTier: 'fast' });
+  /** API 条件只来自已有快照；同档同价的多个适用条件仍合并展示。 */
+  const apiPrice = { model: 'period-api', currency: 'USD', perMillion: { input: 2, output: 8, cachedInput: 0.5, cacheWrite: 2.5 }, perRequest: null, basis: '公开价', evidence: '专项探针' };
+  recordPeriodPrice('period-api', '2026-10-01', { price: { ...apiPrice, inputRange: { minExclusive: 0, maxInclusive: 1_000 } } }, 'api:period');
+  recordPeriodPrice('period-api', '2026-10-07', { price: { ...apiPrice, perMillion: { ...apiPrice.perMillion, input: 6 }, inputRange: { minExclusive: 1_000, maxInclusive: 10_000 } } }, 'api:period');
+  recordPeriodPrice('period-api', '2026-10-08', { price: { ...apiPrice, perMillion: { cacheWrite: 2.5, cachedInput: 0.5, output: 8, input: 6 }, inputRange: { maxInclusive: 10_000, minExclusive: 1_000 } } }, 'pi:period');
+  recordPeriodPrice('period-api', '2026-10-08', { price: apiPrice }, 'api:other-period');
+  recordPeriodPrice(
+    'period-window',
+    '2026-10-01',
+    {
+      price: {
+        ...apiPrice,
+        excludedUtcWindows: [
+          { weekdays: [1, 2], startMinute: 0, endMinute: 60 },
+          { weekdays: [5], startMinute: 120, endMinute: 180 },
+        ],
+      },
+    },
+    'api:period',
+  );
+  recordPeriodPrice(
+    'period-window',
+    '2026-10-03',
+    {
+      price: {
+        ...apiPrice,
+        perMillion: { ...apiPrice.perMillion, input: 6 },
+        excludedUtcWindows: [
+          { weekdays: [5], startMinute: 120, endMinute: 180 },
+          { weekdays: [2, 1, 1], startMinute: 0, endMinute: 60 },
+        ],
+      },
+    },
+    'api:period',
+  );
+  recordPeriodPrice('period-window', '2026-10-07', { price: apiPrice }, 'api:period');
+  recordPeriodPrice('period-request', '2026-10-01', { price: { ...apiPrice, perMillion: null, perRequest: 1 } }, 'api:period');
+  recordPeriodPrice('period-request', '2026-10-07', { price: { ...apiPrice, perMillion: null, perRequest: 2 } }, 'api:period');
+  recordPeriodPrice('period-currency', '2026-10-01', { price: apiPrice }, 'api:period');
+  recordPeriodPrice('period-currency', '2026-10-07', { price: { ...apiPrice, currency: 'CNY' } }, 'api:period');
+  recordPeriodPrice('period-uncertain-merge', '2026-10-01', { price: apiPrice }, 'api:period');
+  recordPeriodPrice('period-uncertain-merge', 'unavailable', { price: { ...apiPrice, inputRange: { minExclusive: 0, maxInclusive: 1_000 } } }, 'api:period');
+  /** 汇总前保存实际仓库内容，结束后确认只读汇总未改写任何记录。 */
+  const beforePeriodRead = ledger.list();
+  /** 完整账本同时供应所有快捷范围，不为每个范围建立局部价格时间线。 */
+  const periodOverview = await createUsageOverviewService({
+    ledger,
+    codexUsage: service,
+    projects: new ProjectRepository(db),
+    conversations: new ConversationRepository(db),
+    execution: new ConversationExecutionRepository(db),
+    modelConnections: { listMetadata: () => [] } as unknown as Parameters<typeof createUsageOverviewService>[0]['modelConnections'],
+    now: () => new Date(periodNow),
+  }).read();
+  for (const range of ['today', '7d', '30d', 'all'] as const) {
+    /** 找到真实响应中的费用行，比较本地价格周期；不依赖响应行排序。 */
+    function checkPeriod(model: string, input: number, from: string | null, to: string | null = null, tier: string | null = 'standard', longContext = false, providerId = 'codex'): void {
+      /** 模型与计费档位共同确定当前检查行。 */
+      const entry = periodOverview.providers
+        .find((provider) => provider.providerId === providerId)!
+        .overviewRanges[range].costBreakdown.find((entry) => entry.model === model && entry.rate?.perMillion?.input === input && entry.serviceTier === tier && entry.longContext === longContext);
+      assert.ok(entry, `${range}: ${model}/${tier}/${longContext}/${input}`);
+      assert.deepEqual(entry.pricePeriod, from ? { from, to } : null, `${range}: ${model}/${tier}/${longContext}/${input}`);
+    }
+    checkPeriod('period-tiers', 2, '2026-10-04', null, 'fast');
+    checkPeriod('period-tiers', 2, '2026-10-07');
+    checkPeriod('period-tiers', 2, '2026-09-23', null, 'fast', true);
+    checkPeriod('period-tiers', 2, '2026-09-30', null, 'standard', true);
+    checkPeriod('period-refresh', 2, '2026-09-01');
+    checkPeriod('period-change', 2, '2026-09-01', '2026-10-04');
+    checkPeriod('period-change', 6, '2026-10-05');
+    checkPeriod('period-return', 2, '2026-10-01');
+    checkPeriod('period-return', 6, '2026-10-02', '2026-10-06');
+    checkPeriod('period-missing', 2, null);
+    checkPeriod('period-invalid', 2, null);
+    checkPeriod('period-conflict', 2, null);
+    checkPeriod('period-conflict', 6, null);
+    checkPeriod('period-conflict', 2, '2026-10-04', null, 'fast');
+    checkPeriod('period-api', 2, '2026-10-01', null, null, false, 'api:period');
+    checkPeriod('period-api', 6, '2026-10-07', null, null, false, 'api:period');
+    checkPeriod('period-api', 2, '2026-10-08', null, null, false, 'api:other-period');
+    checkPeriod('period-window', 2, '2026-10-01', null, null, false, 'api:period');
+    checkPeriod('period-window', 6, '2026-10-03', null, null, false, 'api:period');
+    checkPeriod('period-uncertain-merge', 2, null, null, null, false, 'api:period');
+    for (const provider of periodOverview.providers) {
+      /** 只核对新增周期样例，其他既有场景继续由原探针验证。 */
+      const entries = provider.overviewRanges[range].costBreakdown.filter((entry) => entry.model.startsWith('period-'));
+      /** 当前样例只包含验收日和三十日前记录，便于独立判断范围。 */
+      const rows = periodRows.filter((row) => row.providerId.replace(/^pi:/u, 'api:') === provider.providerId && (range === 'all' || row.occurredAt === periodNow));
+      assert.equal(
+        entries.reduce((total, entry) => total + entry.usage.totalTokens, 0),
+        rows.reduce((total, row) => total + row.usage.totalTokens, 0),
+      );
+      for (const cost of sumEstimatedCosts(rows.map((row) => row.estimate))) {
+        assert.ok(
+          Math.abs(
+            entries
+              .flatMap((entry) => entry.estimatedCosts)
+              .filter((entry) => entry.currency === cost.currency)
+              .reduce((total, entry) => total + entry.amount, 0) - cost.amount,
+          ) < 1e-9,
+        );
+      }
+      /** 缓存写入、按次价格或币种变化也必须关闭旧价，不能只比较输入价格。 */
+      for (const model of ['period-cache', 'period-request', 'period-currency']) {
+        /** 新旧完整单价各自保存周期。 */
+        const periods = entries.filter((entry) => entry.model === model).map((entry) => entry.pricePeriod);
+        if (periods.length)
+          assert.deepEqual(periods, [
+            { from: '2026-10-07', to: null },
+            { from: '2026-10-01', to: '2026-10-06' },
+          ]);
+      }
+    }
+  }
+  assert.deepEqual(ledger.list(), beforePeriodRead);
+  console.log('通过：价格周期按档位和 API 条件隔离，同价刷新连续、真实调价截断、旧价重启合并、未知日期隐藏；全部时间范围一致，账本与 Token、金额保持不变。');
   console.log('通过：两类事件先后顺序、同用量独立请求、歧义不重计、重启重放、首轮完整性、原生历史身份、请求缺价恢复、补算标记保留，以及既有定价与隔离检查。');
 } finally {
   globalThis.fetch = originalFetch;
