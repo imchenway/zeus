@@ -334,10 +334,33 @@ export class ComputerHost implements BrowserAutomationPort {
       this.assertControlAllowed(input, generation);
       /** CUA 的 target 与顶层 pid/window_id 互斥；原参数保留给宿主核对窗口所有权。 */
       const nativeArguments = backgroundTargetTools.has(input.tool) ? { ...argumentsValue, pid: undefined, window_id: undefined } : argumentsValue;
-      /** 所有官方调用都继承同一个不可延长的取消信号。 */
-      dispatched = true;
-      const result = await this.callWithDeadline(input, owner, (signal) => driver.callTool(input.tool, JSON.stringify(nativeArguments), { signal }));
-      this.assertControlAllowed(input, generation);
+      /** 只在原生明确拒绝已结束会话时补做一次观察，恢复不得延长原调用期限。 */
+      let result: ToolResult;
+      for (let attempt = 0; ; attempt += 1) {
+        this.assertControlAllowed(input, generation);
+        if (owner) this.assertCurrentOwner(driver, owner);
+        dispatched = true;
+        result = await this.callWithDeadline(input, owner, (signal) => driver.callTool(input.tool, JSON.stringify(nativeArguments), { signal }));
+        this.assertControlAllowed(input, generation);
+        if (owner) this.assertCurrentOwner(driver, owner);
+        /** SDK 已从结构化拒绝提取错误码，不从页面内容或错误文案猜测。 */
+        if (!owner || !result.isError || result.errorCode !== 'session_ended') break;
+        /** 原生回收会话后，旧快照和该会话的全部窗口占用同时失效。 */
+        owner.sessionStarted = false;
+        owner.sessionDriver = null;
+        owner.windows.clear();
+        for (const [key, identity] of this.windowOwners) if (identity === owner.id) this.windowOwners.delete(key);
+        /** 操作拒绝与恢复失败均给出可执行的下一步，不要求模型调用隐藏的会话工具。 */
+        const detail = 'ZEUS_COMPUTER_OBSERVATION_REQUIRED: 桌面会话已结束，请先调用 get_window_state 重新观察目标窗口；本次操作不会自动重放。';
+        this.patchPreview(owner, { needsObservation: true, state: 'error', detail });
+        if (input.tool !== 'get_window_state' || attempt > 0) return computerText(detail, false);
+        /** 恢复仍保留本次观察的窗口预留，异常收尾必须能够释放它。 */
+        if (reservation) {
+          reservation.fresh = true;
+          this.windowOwners.set(reservation.key, owner.id);
+        }
+        await this.ensureOwnerSession(driver, owner, input);
+      }
       if (!result.isError && input.tool === 'get_window_state' && owner) this.claimObservedWindow(argumentsValue, owner);
       /** 动作后旧画面不再代表真实状态。 */
       this.updatePreview(owner, input, result);
@@ -414,14 +437,21 @@ export class ComputerHost implements BrowserAutomationPort {
 
   /** 为有状态轮次显式建立官方命名会话。 */
   private async ensureOwnerSession(driver: DestroyableCuaDriver, owner: ComputerControlOwner, input: BrowserAutomationToolCall): Promise<void> {
+    this.assertCurrentOwner(driver, owner);
     if (owner.sessionStarted) return;
     /** 创建会话即选中主题，避免第一帧仍显示普通小光标。 */
     const cua = await this.loadCuaModule();
-    if (owner.paused || this.driver !== driver || this.owners.get(computerTurnKey(owner.input)) !== owner) throw computerError('ZEUS_COMPUTER_STOPPED', owner.preview?.detail ?? '当前控制已停止。');
+    this.assertCurrentOwner(driver, owner);
     owner.sessionDriver = driver;
     await this.callWithDeadline(input, owner, (signal) => driver.startSession({ session: owner.id, cursorTheme: { themeId: computerCursorThemeId, reducedMotion: cua.CursorReducedMotion.Auto } }, { signal }));
-    if (owner.paused || this.driver !== driver || this.owners.get(computerTurnKey(owner.input)) !== owner) throw computerError('ZEUS_COMPUTER_STOPPED', owner.preview?.detail ?? '当前控制已停止。');
+    this.assertCurrentOwner(driver, owner);
     owner.sessionStarted = true;
+  }
+
+  /** 每次派发及接收结果都核对控制者，迟到回复不能恢复已暂停或已更换的会话。 */
+  private assertCurrentOwner(driver: DestroyableCuaDriver, owner: ComputerControlOwner): void {
+    if (owner.paused) throw computerError(owner.pauseReason ?? 'ZEUS_COMPUTER_STOPPED', owner.preview?.detail ?? '当前控制已暂停。');
+    if (this.driver !== driver || this.owners.get(computerTurnKey(owner.input)) !== owner) throw computerError('ZEUS_COMPUTER_STOPPED', '当前控制已停止或驱动已更换。');
   }
 
   /** 启动不是只读发现；复用已有窗口，拒绝无法在首帧保护桌面的第三方启动。 */
