@@ -1955,6 +1955,187 @@
   min-block-size: 0;
   min-inline-size: 0;
 }
+/* 任务导航独立滚动，正文和输入框继续使用原会话布局。 */
+.macos-ai-app .task-conversation-layout {
+  flex-direction: row;
+  position: relative;
+  overflow: hidden;
+}
+.macos-ai-app .task-conversation-navigation {
+  box-sizing: border-box;
+  flex: 0 0 220px;
+  inline-size: 220px;
+  min-inline-size: 0;
+  min-block-size: 0;
+  overflow-y: auto;
+  padding: 14px 10px;
+  border-inline-end: 1px solid var(--zeus-product-line-soft);
+  background: var(--zeus-product-panel-muted);
+}
+.macos-ai-app .task-conversation-navigation[hidden] {
+  display: none;
+}
+.macos-ai-app .task-conversation-navigation > .zeus-select {
+  inline-size: 100%;
+}
+.macos-ai-app .task-conversation-execution-caption {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+  padding: 8px 5px 14px;
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.macos-ai-app .task-conversation-navigation h3 {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--zeus-product-muted);
+  padding: 4px 8px;
+}
+.macos-ai-app .task-conversation-members,
+.macos-ai-app .task-conversation-member-records {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.macos-ai-app .task-conversation-member {
+  margin-block: 4px;
+  border-radius: 8px;
+  padding: 4px;
+}
+.macos-ai-app .task-conversation-member[data-selected='true'] {
+  background: var(--zeus-product-selection, rgb(55 125 255 / 10%));
+}
+.macos-ai-app .task-conversation-member-button {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  inline-size: 100%;
+  border: 0;
+  background: transparent;
+  text-align: start;
+  color: inherit;
+  padding: 8px 4px 3px;
+  cursor: pointer;
+}
+.macos-ai-app .task-conversation-member-button > span:first-of-type {
+  display: grid;
+  gap: 4px;
+  min-inline-size: 0;
+  flex: 1;
+}
+.macos-ai-app .task-conversation-member-button strong {
+  font-size: 13px;
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+.macos-ai-app .task-conversation-member-button small {
+  font-size: 11px;
+  color: var(--zeus-product-muted);
+  overflow-wrap: anywhere;
+}
+.macos-ai-app .task-conversation-member .digital-employee-avatar {
+  inline-size: 30px;
+  block-size: 30px;
+  flex-shrink: 0;
+}
+.macos-ai-app .task-conversation-member-status {
+  padding: 0 4px 6px 42px;
+  font-size: 11px;
+  color: var(--zeus-product-muted);
+}
+.macos-ai-app .task-conversation-member-status [data-status='succeeded'] {
+  color: var(--zeus-product-success, #25804c);
+}
+.macos-ai-app .task-conversation-member-status [data-status='active'] {
+  color: var(--zeus-product-accent, #3478f6);
+}
+.macos-ai-app .task-conversation-member-records {
+  margin-inline-start: 18px;
+  border-inline-start: 1px solid var(--zeus-product-line-soft);
+}
+.macos-ai-app .task-conversation-member-records > li {
+  padding: 4px 6px;
+  font-size: 11px;
+}
+.macos-ai-app .task-conversation-member-records button {
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  inline-size: 100%;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  text-align: start;
+  color: inherit;
+  cursor: pointer;
+}
+.macos-ai-app .task-conversation-member-records button[aria-current='true'] {
+  background: var(--zeus-product-selection, rgb(55 125 255 / 10%));
+}
+.macos-ai-app .task-conversation-member-records small {
+  color: var(--zeus-product-muted);
+}
+.macos-ai-app .task-conversation-member-records button:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+.macos-ai-app .task-conversation-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-inline-size: 0;
+  min-block-size: 0;
+  overflow: hidden;
+}
+.macos-ai-app .task-conversation-current {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-inline-size: 0;
+  font-size: 13px;
+}
+.macos-ai-app .task-conversation-current > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--zeus-product-muted);
+}
+.macos-ai-app .task-conversation-current strong {
+  flex-shrink: 0;
+  font-weight: 550;
+}
+.macos-ai-app .task-conversation-current small {
+  color: var(--zeus-product-muted);
+  flex-shrink: 0;
+}
+.macos-ai-app .task-conversation-current .digital-employee-avatar {
+  inline-size: 28px;
+  block-size: 28px;
+}
+.macos-ai-app .task-conversation-navigation-empty {
+  padding: 12px 8px;
+  font-size: 12px;
+  color: var(--zeus-product-muted);
+}
+/* 窄面板按需覆盖显示员工栏，不持续压缩原输入区。 */
+.macos-ai-app .task-conversation-layout[data-narrow='true'] > .task-conversation-navigation:not([hidden]) {
+  position: absolute;
+  inset-block: 54px 0;
+  inset-inline-start: 0;
+  z-index: 20;
+  box-shadow: 6px 0 16px rgb(0 0 0 / 8%);
+}
+.macos-ai-app .task-conversation-layout[data-narrow='true'] .task-conversation-current > span {
+  display: none;
+}
+.macos-ai-app .task-conversation-layout[data-narrow='true'] .task-conversation-selector {
+  gap: 6px;
+  padding: 10px 8px;
+  flex-wrap: wrap;
+}
 .macos-ai-app .task-conversation-selector {
   background: transparent;
   border-block-end: 1px solid var(--zeus-product-line-soft);

@@ -218,6 +218,8 @@ function ConversationImagePreview(
   const [preview, setPreview] = useState<Extract<ConversationResourcePreview, { kind: 'image' }> | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  /** 重试只重新读取相同受控资源，不打开另一个窗口或改变消息位置。 */
+  const [retry, setRetry] = useState(0);
   const resourceRef = useRef(props.resource);
   const languageRef = useRef(props.language);
   const loadPreviewRef = useRef(props.onLoadResourcePreview);
@@ -261,6 +263,7 @@ function ConversationImagePreview(
     if (!visible || !loadPreview) return;
     let active = true;
     setLoading(true);
+    setError(null);
     void loadPreview(resourceRef.current)
       .then((result) => {
         if (!active) return;
@@ -279,7 +282,7 @@ function ConversationImagePreview(
     return () => {
       active = false;
     };
-  }, [props.resource.id, Boolean(props.onLoadResourcePreview), visible]);
+  }, [props.resource.id, Boolean(props.onLoadResourcePreview), visible, retry]);
 
   /** 图片缩略图也沿用会话资源入口，不自行创建弹窗。 */
   async function open(): Promise<void> {
@@ -312,21 +315,27 @@ function ConversationImagePreview(
       ref={rootRef}
       type="button"
       className={props.className}
-      aria-label={`${props.language === 'zh-CN' ? '在 Zeus 中预览' : 'Preview in Zeus'}：${props.label}`}
+      aria-label={`${error ? (props.language === 'zh-CN' ? '重新加载图片' : 'Retry image') : props.language === 'zh-CN' ? '在 Zeus 中预览' : 'Preview in Zeus'}：${props.label}`}
       aria-busy={loading || undefined}
       data-error={Boolean(error) || undefined}
       title={props.resource.displayName}
       onClick={() => {
         setVisible(true);
+        if (error) {
+          setPreview(null);
+          setRetry((value) => value + 1);
+          return;
+        }
         void open();
       }}
     >
-      {preview ? (
+      {preview && !error ? (
         <img decoding="async" src={preview.dataUrl} alt={props.label} loading="lazy" onError={() => reportPreviewFailure(languageRef.current === 'zh-CN' ? '图片预览加载失败。' : 'The image preview failed to load.')} />
       ) : (
         <span className={props.placeholderClassName} role="status">
           {!error ? <FileImage aria-hidden="true" weight="regular" /> : null}
           <span>{status}</span>
+          {error ? <span>{props.language === 'zh-CN' ? '点击重试' : 'Click to retry'}</span> : null}
         </span>
       )}
       {preview ? <span className="session-sr-only">{status}</span> : null}

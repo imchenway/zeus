@@ -2888,7 +2888,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     if (settledHistory.error) throw settledHistory.error;
   }
 
-  async function loadTurnArtifactsV2(turnIdentity: string): Promise<void> {
+  async function loadTurnArtifactsV2(turnIdentity: string, refreshResources = false): Promise<void> {
     const current = state.snapshot;
     if (!current?.snapshotV2 || !current.v2Paging) return;
     const generation = connectionToken;
@@ -2901,7 +2901,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const resources = current.v2Paging.resources;
     if (currentChange?.loading) return;
     const v2Turn = turn ? [...current.snapshotV2.recentClosedTurns, ...(current.snapshotV2.activeTurn ? [current.snapshotV2.activeTurn] : [])].find((candidate) => candidate.id === turn.id) : undefined;
-    const shouldLoadResources = Boolean(!resources.loading && options.client.loadNativeConversationResourcesV2 && (!resources.loaded || resources.hasMore));
+    const shouldLoadResources = Boolean(!resources.loading && options.client.loadNativeConversationResourcesV2 && (refreshResources || !resources.loaded || resources.hasMore));
     // 摘要只说明有变更，不能被当作已经加载全文；点击审阅时也允许按实时轮次重试。
     const knownChangeSet = state.changeSetsByProviderId[pagingKey];
     const shouldLoadChange = Boolean((v2Turn?.changeSetAvailable || knownChangeSet) && options.client.loadTurnChangeSet && (!knownChangeSet || knownChangeSet.contentProjection === 'summary'));
@@ -2940,8 +2940,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
         (async () => {
           try {
             let items = resources.items;
-            let cursor = resources.nextCursor;
-            let hasMore = !resources.loaded || resources.hasMore;
+            /** 资源页读完之后仍可能新增图片，明确补读必须从首页核对。 */
+            let cursor = refreshResources ? null : resources.nextCursor;
+            let hasMore = refreshResources || !resources.loaded || resources.hasMore;
             const seenCursors = new Set<string>();
             while (hasMore) {
               if (cursor && seenCursors.has(cursor)) throw new Error('会话资源分页游标没有推进。');
@@ -2977,6 +2978,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
               })),
             );
           } catch (error) {
+            if (disposed || generation !== connectionToken) return;
             const latest = state.snapshot;
             if (latest?.v2Paging) {
               dispatchV2Snapshot(
@@ -3049,7 +3051,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
   async function loadConversationResourcesV2(): Promise<void> {
     // 资源页属于整个会话。传入不存在的轮次身份可复用同一套分页、并发保护和
     // 资源挂接逻辑，同时不会触发任何轮次 change set 读取。
-    await loadTurnArtifactsV2('__conversation_resources__');
+    await loadTurnArtifactsV2('__conversation_resources__', true);
   }
 
   const controller: SessionController = {

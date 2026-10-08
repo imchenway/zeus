@@ -125,6 +125,24 @@ interface MarkstreamNode {
 
 const MarkdownRuntimeContext = createContext<MarkdownRuntimeContextValue | null>(null);
 
+/** 同一会话中的图片共用资源水合状态和显式重读入口，不触及正文身份。 */
+export const ConversationImageResourcesContext = createContext<{
+  /** 资源页未读取或正在恢复时不能声称图片不可用。 */
+  state: 'loading' | 'ready' | 'failed';
+  /** 只读取当前会话已授权的资源。 */
+  reload?: () => void | Promise<void>;
+} | null>(null);
+
+/** 每张 Markdown 图片分别核对，已有一张图片不能掩盖其余缺失资源。 */
+export function hasMissingMarkdownImages(text: string, resources: ConversationResource[]): boolean {
+  for (const match of text.matchAll(/!\[([^\]]*)\]\(([^)]+)\)/gu)) {
+    /** 解析仅用于发现缺失，真正加载仍走已授权资源编号。 */
+    const resource = matchingInlineResource(resources, match[1].trim(), match[2]);
+    if (!resource || !isImageResource(resource)) return true;
+  }
+  return false;
+}
+
 export const ConversationMarkdown = memo(function ConversationMarkdown(props: ConversationMarkdownProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const onVisibleContentChangeRef = useRef(props.onVisibleContentChange);
@@ -268,15 +286,40 @@ function SecureLinkNode(props: NodeComponentProps<MarkstreamNode>) {
 
 function SecureImageNode(props: NodeComponentProps<MarkstreamNode>) {
   const runtime = useContext(MarkdownRuntimeContext);
+  /** 流式节点和资源归档各自就绪，不能由节点缓存的 loading 标记阻挡已授权图片。 */
+  const imageResources = useContext(ConversationImageResourcesContext);
   const src = typeof props.node.src === 'string' ? props.node.src : '';
   const fallbackLabel = runtime?.language === 'zh-CN' ? labels['zh-CN'].image : labels['en-US'].image;
   const label = (typeof props.node.alt === 'string' && props.node.alt.trim()) || (typeof props.node.title === 'string' && props.node.title.trim()) || fallbackLabel;
-  const resource = runtime && !props.node.loading ? matchingInlineResource(runtime.resources, label, src) : null;
+  const resource = runtime ? matchingInlineResource(runtime.resources, label, src) : null;
   if (!runtime || !resource || !isImageResource(resource)) {
-    const unavailableLabel = runtime?.language === 'zh-CN' ? labels['zh-CN'].imageUnavailable : labels['en-US'].imageUnavailable;
+    /** 正文生成与资源水合均未结束时保持真实的准备状态。 */
+    const preparing = runtime?.phase === 'streaming' || imageResources?.state === 'loading';
+    /** 已结束但元数据缺失与实际读取失败使用不同提示。 */
+    const status = preparing
+      ? runtime?.language === 'zh-CN'
+        ? '正在准备图片'
+        : 'Preparing image'
+      : imageResources?.state === 'failed'
+        ? runtime?.language === 'zh-CN'
+          ? '图片加载失败'
+          : 'Image loading failed'
+        : runtime?.language === 'zh-CN'
+          ? '图片暂未就绪'
+          : 'Image not ready';
     return (
-      <span className="session-markdown-image-unavailable" role="img" aria-label={label}>
-        {`${unavailableLabel}：${label}`}
+      <span className="session-markdown-image-unavailable" role="status" aria-busy={preparing || undefined}>
+        <span>{`${status}：${label}`}</span>
+        {!preparing && imageResources?.reload ? (
+          <button
+            type="button"
+            onClick={() => {
+              void Promise.resolve(imageResources.reload?.()).catch(() => undefined);
+            }}
+          >
+            {runtime?.language === 'zh-CN' ? '重新加载' : 'Retry'}
+          </button>
+        ) : null}
       </span>
     );
   }

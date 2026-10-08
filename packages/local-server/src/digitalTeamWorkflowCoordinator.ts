@@ -259,7 +259,15 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
     if (prepared.existingRunId) {
       const run = this.requireRun(prepared.existingRunId);
       const entryNodeId = prepared.runtimeState?.entryNodeId;
-      if (!entryNodeId || run.runtimeState.entryNodeId === entryNodeId || run.runtimeState.handoff?.entryNodeId === entryNodeId) return this.getRunProjection(run.id);
+      if (!entryNodeId) return this.getRunProjection(run.id);
+      /** 正在执行同一入口时重复指派沿用原记录，已结束的历史入口不算当前执行。 */
+      if (this.currentAttempts(run).some((attempt) => attempt.nodeId === entryNodeId && ['prepared', 'dispatching', 'active'].includes(attempt.status)) && (!run.runtimeState.handoff || run.runtimeState.handoff.status === 'completed'))
+        return this.getRunProjection(run.id);
+      /** 只有仍在交接的同一目标可复用，历史入口不能冒充当前执行人。 */
+      if (run.runtimeState.handoff && run.runtimeState.handoff.status !== 'completed') {
+        if (run.runtimeState.handoff.entryNodeId === entryNodeId) return this.getRunProjection(run.id);
+        throw routeError('ZEUS_DIGITAL_TEAM_HANDOFF_IN_PROGRESS', '当前交接尚未完成，请等待停止结果后再更换执行人。');
+      }
       requireHumanActor(context);
       const reason = requiredText(input.reason ?? '人工重新指派任务', '改派原因不能为空。', 2_000);
       this.options.runs.update(run.id, {

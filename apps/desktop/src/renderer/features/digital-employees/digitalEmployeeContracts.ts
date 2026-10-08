@@ -371,6 +371,8 @@ export interface TaskWorkManagementProjection {
 }
 
 export interface TaskWorkPreviewSelection {
+  /** 执行人入口先停止当前独立工作，再接纳新的执行人。 */
+  replaceActiveWork?: boolean;
   /** 启动原分工，不额外复制工作。 */
   plannedWorkItemId?: string;
   employeeId: string;

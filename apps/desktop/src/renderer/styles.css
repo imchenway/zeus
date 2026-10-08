@@ -2887,7 +2887,7 @@ a {
 
 .macos-ai-app .task-detail-center-dialog {
   /* 详情保持充足会话宽度，任务信息收敛为辅助栏。 */
-  width: min(1220px, calc(100vw - 40px));
+  width: min(1440px, calc(100vw - 40px));
   height: min(860px, calc(100dvh - 40px));
 }
 
@@ -19626,7 +19626,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 
 /* 任务详情沿用抽屉原语，加宽后由正文与属性共同使用新增空间。 */
 .workspace-drawer-portal-root.macos-ai-app[data-zeus-primitive='drawer'][data-drawer-presentation='floating'][data-drawer-size='wide'] .workspace-drawer.task-detail-floating-drawer {
-  inline-size: min(1220px, calc(var(--zeus-drawer-workspace-inline-size) - 24px));
+  inline-size: min(1440px, calc(var(--zeus-drawer-workspace-inline-size) - 24px));
 }
 
 @media (max-width: 760px) {
@@ -19665,7 +19665,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   display: grid;
   flex: 1;
   gap: 0;
-  grid-template-columns: minmax(0, 7fr) minmax(300px, 3fr);
+  grid-template-columns: minmax(0, 1fr) 300px;
   min-block-size: 0;
   padding: 0;
 }

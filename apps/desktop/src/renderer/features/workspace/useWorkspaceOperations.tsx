@@ -1721,12 +1721,12 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     target.addEventListener('lostpointercapture', cancelProjectSidebarResize);
   }
 
-  /** 完整页与内嵌页共用当前会话的团队进展，任务历史由原选择入口保留。 */
+  /** 任务详情由左栏显示团队状态，独立会话页保留原进展入口。 */
   function renderNativeConversationWorkspace(onOpenTaskDetail: (taskId: string) => void, embeddedInTask = false): ReactNode {
     /** 原会话阅读与输入保持同一控制器，不因后台团队状态重读重新创建。 */
     const workspace = renderNativeConversationWorkspaceContent(onOpenTaskDetail, embeddedInTask);
     /** 完整页和任务内嵌页共用准确会话关联，不能由外层任务另取一份旧运行。 */
-    if (!nativeSessionTask || !selectedNativeConversation || !props.commandClient) return workspace;
+    if (embeddedInTask || !nativeSessionTask || !selectedNativeConversation || !props.commandClient) return workspace;
     return (
       <div className="task-conversation-with-team-progress">
         <TaskDigitalTeamProgress
@@ -1999,6 +1999,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           setActiveNavTarget('digital-teams');
         }}
         digitalTeamClient={props.commandClient ?? null}
+        onSubscribeRealtimeEvents={props.onSubscribeRealtimeEvents}
         digitalEmployeeClient={props.commandClient ?? null}
         conversations={taskDetailPaneConversations}
         conversationsLoading={taskDetailPaneConversationState?.status === 'loading' && !taskDetailPaneConversationState.choicesKnown}
