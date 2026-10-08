@@ -1848,6 +1848,24 @@ export class ConversationGoalRepository {
 export class ConversationTurnRepository {
   constructor(private readonly db: ZeusDatabasePort) {}
 
+  /** 启动时按已接受提交的冻结运行段校正线程归属，保留轮次状态与诊断记录。 */
+  restoreAcceptedThreadBindings(): void {
+    this.db.execute(
+      `UPDATE conversation_turns AS turn
+          SET provider_thread_id = segment.native_session_id
+         FROM conversation_submissions AS submission
+         JOIN conversation_runtime_segments AS segment ON segment.id = submission.segment_id
+        WHERE turn.client_submission_id = submission.id
+          AND turn.conversation_id = submission.conversation_id
+          AND turn.conversation_id = segment.conversation_id
+          AND turn.provider_turn_id = submission.provider_turn_id
+          AND submission.accepted_at IS NOT NULL
+          AND segment.runtime_kind = 'codex'
+          AND segment.native_session_id IS NOT NULL
+          AND turn.provider_thread_id <> segment.native_session_id`,
+    );
+  }
+
   upsert(
     input: Omit<ZeusConversationTurnRecord, 'id' | 'errorJson' | 'planJson' | 'agentKind' | 'nativeRunId'> & {
       id?: string;
