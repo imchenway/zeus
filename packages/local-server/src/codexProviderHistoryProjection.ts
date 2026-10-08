@@ -790,7 +790,8 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     return {
       ...metadata,
       turns: options.turns.listByConversation(conversationId).flatMap((turn) => {
-        if (!turn.providerTurnId) return [];
+        // 会话历史可以跨运行段，当前线程的运行快照只包含其所属轮次。
+        if (!turn.providerTurnId || turn.providerThreadId !== metadata.id) return [];
         const submission = turn.clientSubmissionId ? submissionsById.get(turn.clientSubmissionId) : undefined;
         return [
           {
@@ -815,7 +816,12 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     }
     // 线程状态通知也会核对历史；空闲历史没有正在准备的消息是正常现象，不能暂停它。
     // 前面的旧轮次投影可能已把会话设为空闲，这里按仍有效的发送占用恢复准备状态。
-    const submissions = options.submissions.listByConversation(conversation.id);
+    /** 已接受运行段固定提交所属线程，旧线程的活动提交不能污染当前线程。 */
+    const segmentThreadIds = new Map(options.execution.listSegments(conversation.id).map((segment) => [segment.id, segment.nativeSessionId]));
+    /** 未绑定线程的准备中提交仍保留原来的安全核对。 */
+    const submissions = options.submissions.listByConversation(conversation.id).filter((submission) => !submission.segmentId || !segmentThreadIds.get(submission.segmentId) || segmentThreadIds.get(submission.segmentId) === snapshot.id);
+    /** 历史轮次保留在正文中，运行门禁只消费当前线程。 */
+    const currentTurns = options.turns.listByConversation(conversation.id).filter((turn) => turn.providerThreadId === snapshot.id);
     /** 必须匹配实际发送占用，不能保护重启残留或另一条消息。 */
     const preparing = submissions.find((submission) => dependencies.isPreparingDispatch(conversation.id, submission.id));
     if (preparing && snapshotConfirmsIdleProviderThread(snapshot)) {
@@ -841,7 +847,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       }
     }
     if (inFlight.length === 0) {
-      const protectedProviderStopTurn = options.turns.listByConversation(conversation.id).find((turn) => shouldPreserveProviderStopTerminalTurn({ turn, submissions }) && snapshot.status?.type === 'active');
+      const protectedProviderStopTurn = currentTurns.find((turn) => shouldPreserveProviderStopTerminalTurn({ turn, submissions }) && snapshot.status?.type === 'active');
       if (protectedProviderStopTurn) {
         options.conversations.bindProvider(conversation.id, {
           providerId: 'codex',
@@ -854,7 +860,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       }
       const activeProviderTurn = (Array.isArray(snapshot.turns) ? snapshot.turns.filter(isRecord) : []).find((candidate) => classifySnapshotTurn(candidate) === 'active');
       const activeProviderTurnId = activeProviderTurn && typeof activeProviderTurn.id === 'string' ? activeProviderTurn.id : null;
-      const projectedRemoteTurn = activeProviderTurnId ? options.turns.listByConversation(conversation.id).find((turn) => turn.providerTurnId === activeProviderTurnId && !turn.clientSubmissionId) : undefined;
+      const projectedRemoteTurn = activeProviderTurnId ? currentTurns.find((turn) => turn.providerTurnId === activeProviderTurnId && !turn.clientSubmissionId) : undefined;
       if (activeProviderTurnId && projectedRemoteTurn) {
         options.turns.upsert({ ...projectedRemoteTurn, status: 'running', completedAt: null, updatedAt: now() });
         options.conversations.bindProvider(conversation.id, {
@@ -892,7 +898,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       }
       // 单轮失败不终止 thread；只有 Provider 快照能对上本地终态轮次时才恢复下一轮派发。
       if (conversation.providerState === 'paused' || conversation.providerState === 'failed') {
-        if (!snapshotConfirmsSafeResumeBoundary(snapshot, options.turns.listByConversation(conversation.id))) {
+        if (!snapshotConfirmsSafeResumeBoundary(snapshot, currentTurns)) {
           markConversationRecoveryRequired(conversation.id, coordinatorError('ZEUS_NATIVE_PROVIDER_STATE_UNCONFIRMED', 'Provider thread state cannot confirm that the previous turn is terminal.'));
           return;
         }
@@ -926,7 +932,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
         continue;
       }
       const timestamp = now();
-      const existingTurn = options.turns.listByConversation(conversation.id).find((turn) => turn.providerTurnId === providerTurnId || turn.clientSubmissionId === submission.id);
+      const existingTurn = currentTurns.find((turn) => turn.providerTurnId === providerTurnId || turn.clientSubmissionId === submission.id);
       if (classification === 'active' && isInteractionAuthorityMissingTurn(existingTurn)) {
         options.conversations.bindProvider(conversation.id, {
           providerId: 'codex',

@@ -1389,7 +1389,7 @@
 
 /* 错误摘要与详情保持同一行；完整长文继续通过已有详情入口读取。 */
 .session-codex-parity-v1 .session-message-delivery-error {
-  align-items: baseline;
+  align-items: center;
   display: flex;
   min-inline-size: 0;
 }

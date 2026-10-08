@@ -2665,6 +2665,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   async function recover(): Promise<void> {
     assertOpen();
+    // 先恢复冻结的线程归属，再核对旧停止目标；不得用新线程查询旧轮次。
+    options.turns.restoreAcceptedThreadBindings();
+    await persist();
     await reconcilePersistedTerminalSubmissions();
     await providerStopRecovery.recoverPersisted();
     const automaticRecoveryConversationIds = new Set(
@@ -3143,6 +3146,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     requests: options.requests,
     runStates,
     ensureProviderReady: () => options.manager.ensureReady({ commandPath: commandPath(), ...(options.externalAgentHome ? { externalAgentHome: options.externalAgentHome } : {}) }),
+    // 旧线程完成停止后，复用当前线程的权威检查，保留正在执行的新轮次。
+    reconcileCurrentThread: async (conversationId) => {
+      await providerThreadAuthority.inspect(requireConversation(conversationId), null);
+    },
     persist,
     broadcast: options.broadcast,
     requestQueueDrain,

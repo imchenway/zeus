@@ -43,6 +43,8 @@ interface CodexProviderStopRecoveryOptions {
   requests: ConversationServerRequestRepository;
   runStates: Map<string, NativeConversationRunState>;
   ensureProviderReady(): Promise<unknown>;
+  /** 旧线程停止后，重新核对当前线程，保留切换后正在运行的轮次。 */
+  reconcileCurrentThread(conversationId: string): Promise<void>;
   persist(): Promise<void>;
   broadcast(type: string, payload: Record<string, unknown>): void;
   requestQueueDrain(): void;
@@ -94,7 +96,7 @@ export function createCodexProviderStopRecoveryApplication(options: CodexProvide
     const turns = options.turns.listByConversation(conversationId);
     const submissions = options.submissions.listByConversation(conversationId);
     const explicit = [...turns].reverse().find((turn) => isTerminalTurn(turn) && isProviderStopPendingError(parseError(turn.errorJson)));
-    if (explicit?.providerTurnId && explicit.providerThreadId === conversation.providerThreadId) {
+    if (explicit?.providerTurnId) {
       const error = parseError(explicit.errorJson);
       return {
         turn: explicit,
@@ -189,7 +191,8 @@ export function createCodexProviderStopRecoveryApplication(options: CodexProvide
       stopRetry(conversationId);
       return 'not_applicable';
     }
-    const providerThreadId = conversation.providerThreadId;
+    // 已接受运行段固定了停止目标的原线程，模型切换不能改变该身份。
+    const providerThreadId = candidate.turn.providerThreadId;
     const providerTurnId = candidate.turn.providerTurnId;
     try {
       await options.ensureProviderReady();
@@ -296,7 +299,7 @@ export function createCodexProviderStopRecoveryApplication(options: CodexProvide
   }
 
   async function markPending(conversation: ZeusConversationWithMessagesRecord, candidate: ProviderStopCandidate, cause?: unknown): Promise<void> {
-    const providerThreadId = conversation.providerThreadId!;
+    const providerThreadId = candidate.turn.providerThreadId;
     const providerTurnId = candidate.turn.providerTurnId!;
     const timestamp = options.now();
     const error = providerStopPendingError({
@@ -312,13 +315,16 @@ export function createCodexProviderStopRecoveryApplication(options: CodexProvide
         options.submissions.updateStatus(submission.id, 'paused', { pausedReason: 'provider_stop_pending', error, updatedAt: timestamp });
       }
     }
-    options.conversations.bindProvider(conversation.id, {
-      providerId: 'codex',
-      providerThreadId,
-      providerModel: conversation.providerModel,
-      providerState: 'paused',
-    });
-    options.runStates.set(conversation.id, { type: 'paused', reason: 'provider_stop_pending' });
+    // 旧线程的恢复状态只暂停相关消息，不覆盖当前线程的活动状态。
+    if (conversation.providerThreadId === providerThreadId) {
+      options.conversations.bindProvider(conversation.id, {
+        providerId: 'codex',
+        providerThreadId,
+        providerModel: conversation.providerModel,
+        providerState: 'paused',
+      });
+      options.runStates.set(conversation.id, { type: 'paused', reason: 'provider_stop_pending' });
+    }
     await options.persist();
     options.broadcast('conversation.queue.changed', { conversationId: conversation.id, providerThreadId, providerTurnId, waitReason: 'provider_stop_pending' });
   }
@@ -326,7 +332,7 @@ export function createCodexProviderStopRecoveryApplication(options: CodexProvide
   async function completeRecovery(conversation: ZeusConversationWithMessagesRecord, candidate: ProviderStopCandidate, providerStatus: 'completed' | 'interrupted' | 'failed'): Promise<void> {
     stopRetry(conversation.id);
     const timestamp = options.now();
-    const providerThreadId = conversation.providerThreadId!;
+    const providerThreadId = candidate.turn.providerThreadId;
     const providerTurnId = candidate.turn.providerTurnId!;
     options.turns.upsert({
       ...candidate.turn,
@@ -358,7 +364,7 @@ export function createCodexProviderStopRecoveryApplication(options: CodexProvide
         options.submissions.updateStatus(submission.id, 'queued', { pausedReason: null, updatedAt: timestamp });
       }
     }
-    if (candidate.orphanedUserInputRequest) {
+    if (candidate.orphanedUserInputRequest && conversation.providerThreadId === providerThreadId) {
       options.requests.restorePendingAfterTransportRecovery(candidate.orphanedUserInputRequest.id, {
         recoveryReason: 'app_server_generation_changed',
         sourceGenerationId: candidate.orphanedUserInputRequest.transportGenerationId,
@@ -396,20 +402,28 @@ export function createCodexProviderStopRecoveryApplication(options: CodexProvide
       });
       return;
     }
-    options.conversations.bindProvider(conversation.id, {
-      providerId: 'codex',
-      providerThreadId,
-      providerModel: conversation.providerModel,
-      providerState: 'ready',
-    });
-    options.runStates.set(conversation.id, requiresIndividualConfirmation ? { type: 'paused', reason: 'recovered_unsent' } : { type: 'idle' });
+    if (conversation.providerThreadId === providerThreadId) {
+      options.conversations.bindProvider(conversation.id, {
+        providerId: 'codex',
+        providerThreadId,
+        providerModel: conversation.providerModel,
+        providerState: 'ready',
+      });
+      options.runStates.set(conversation.id, requiresIndividualConfirmation ? { type: 'paused', reason: 'recovered_unsent' } : { type: 'idle' });
+    } else {
+      // 已停止的是旧线程；当前线程是否空闲必须由当前线程的真实状态确认。
+      await options.reconcileCurrentThread(conversation.id);
+      if (requiresIndividualConfirmation && options.runStates.get(conversation.id)?.type === 'idle') options.runStates.set(conversation.id, { type: 'paused', reason: 'recovered_unsent' });
+    }
+    /** 事件展示当前绑定，停止核对事件仍保留原线程身份。 */
+    const current = options.conversations.getById(conversation.id) ?? conversation;
     await options.persist();
     options.broadcast('conversation.native.provider_stop_recovered', { conversationId: conversation.id, providerThreadId, providerTurnId, providerTerminalStatus: providerStatus });
-    options.broadcast('conversation.thread.changed', { conversationId: conversation.id, providerThreadId, providerState: 'ready' });
+    options.broadcast('conversation.thread.changed', { conversationId: conversation.id, providerThreadId: current.providerThreadId, providerState: current.providerState });
     options.broadcast('conversation.queue.changed', {
       conversationId: conversation.id,
-      providerThreadId,
-      providerState: 'ready',
+      providerThreadId: current.providerThreadId,
+      providerState: current.providerState,
       ...(requiresIndividualConfirmation ? { waitReason: 'recovered_unsent', recoveredUnsentCount: resumable.length } : {}),
     });
     if (!requiresIndividualConfirmation && resumable.length === 1) options.requestQueueDrain();
@@ -418,7 +432,7 @@ export function createCodexProviderStopRecoveryApplication(options: CodexProvide
   async function failRecovery(conversation: ZeusConversationWithMessagesRecord, candidate: ProviderStopCandidate, cause: unknown, unknownProviderTurnIds: string[] = []): Promise<void> {
     stopRetry(conversation.id);
     const timestamp = options.now();
-    const providerThreadId = conversation.providerThreadId!;
+    const providerThreadId = candidate.turn.providerThreadId;
     const providerTurnId = candidate.turn.providerTurnId!;
     const error = {
       code: providerStopRecoveryRequiredCode,
@@ -437,13 +451,16 @@ export function createCodexProviderStopRecoveryApplication(options: CodexProvide
         options.submissions.updateStatus(submission.id, 'paused', { pausedReason: 'recovery_required', error, updatedAt: timestamp });
       }
     }
-    options.conversations.bindProvider(conversation.id, {
-      providerId: 'codex',
-      providerThreadId,
-      providerModel: conversation.providerModel,
-      providerState: 'paused',
-    });
-    options.runStates.set(conversation.id, { type: 'paused', reason: 'recovery_required' });
+    // 不把旧线程故障写成新线程故障；相关队列继续保留恢复门禁。
+    if (conversation.providerThreadId === providerThreadId) {
+      options.conversations.bindProvider(conversation.id, {
+        providerId: 'codex',
+        providerThreadId,
+        providerModel: conversation.providerModel,
+        providerState: 'paused',
+      });
+      options.runStates.set(conversation.id, { type: 'paused', reason: 'recovery_required' });
+    }
     await options.persist();
     options.broadcast('conversation.native.recovery_failed', { conversationId: conversation.id, providerThreadId, providerTurnId, error });
     options.broadcast('conversation.queue.changed', { conversationId: conversation.id, providerThreadId, waitReason: 'recovery_required' });

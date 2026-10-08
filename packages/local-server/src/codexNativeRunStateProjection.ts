@@ -24,7 +24,8 @@ export function inferNativeConversationRunState(
 ): NativeConversationRunState {
   const submissions = repositories.submissions.listByConversation(conversation.id);
   if (conversation.providerState === 'archived') return { type: 'paused', reason: 'provider_archived' };
-  if (conversation.providerState === 'paused' && repositories.turns.listByConversation(conversation.id).some(isProviderStopPendingTurn)) {
+  // 旧运行段的停止记录不能替代当前线程的运行状态。
+  if (conversation.providerState === 'paused' && repositories.turns.listByConversation(conversation.id).some((turn) => turn.providerThreadId === conversation.providerThreadId && isProviderStopPendingTurn(turn))) {
     return { type: 'paused', reason: 'provider_stop_pending' };
   }
   if (interruptedQueueSubmissions(submissions).some((submission) => submission.status === 'paused')) {
