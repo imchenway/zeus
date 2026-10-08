@@ -430,209 +430,213 @@ export function AutomationsWorkspace(props: {
                 {error}
               </p>
             ) : null}
-            <fieldset className="automation-form-section">
-              <legend>{zh ? '执行内容' : 'Instructions and projects'}</legend>
-              <label>
-                <span>{zh ? '名称' : 'Name'}</span>
-                <input required maxLength={120} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.currentTarget.value })} />
-              </label>
-              <label>
-                <span>{zh ? '指令' : 'Instruction'}</span>
-                <textarea required rows={7} value={draft.prompt} onChange={(event) => setDraft({ ...draft, prompt: event.currentTarget.value })} />
-              </label>
-              <div className="automation-form-field">
-                <span>{zh ? '目标项目' : 'Target projects'}</span>
-                <ZeusSelect
-                  size="regular"
-                  ariaLabel={zh ? '选择目标项目' : 'Choose target projects'}
-                  value=""
-                  selectedValues={projectSelectionValues}
-                  options={projectOptions}
-                  onChange={(value) => {
-                    if (value === noProjectValue) {
-                      setDraft({ ...draft, projectIds: [] });
-                      return;
-                    }
-                    if (value === allProjectsValue) {
-                      setDraft({ ...draft, projectIds: allProjectsSelected ? [] : userProjects.map((project) => project.id) });
-                      return;
-                    }
-                    setDraft({ ...draft, projectIds: draft.projectIds.includes(value) ? draft.projectIds.filter((id) => id !== value) : [...draft.projectIds, value] });
-                  }}
-                  triggerLabel={projectTriggerLabel}
-                  searchable={userProjects.length > 8}
-                  searchPlaceholder={zh ? '搜索项目' : 'Search projects'}
-                  emptyLabel={zh ? '没有匹配的项目' : 'No matching projects'}
-                />
-                {draft.projectIds.length === 0 ? <small>{zh ? '本次运行不会读取或修改任何用户项目，仅使用 Zeus 临时工作区。' : 'This run cannot read or modify user projects and only uses the Zeus temporary workspace.'}</small> : null}
-              </div>
-            </fieldset>
-            <fieldset className="automation-form-section">
-              <legend>{zh ? '执行动作' : 'Action'}</legend>
-              {tasks.find((task) => task.id === editingId)?.migrationIssue ? <p role="status">{tasks.find((task) => task.id === editingId)!.migrationIssue}</p> : null}
-              <SelectField
-                label={zh ? '动作' : 'Action'}
-                value={draft.action?.kind ?? 'employee_work'}
-                options={[
-                  ['employee_work', zh ? '员工工作' : 'Employee work'],
-                  ['project_task', zh ? '处理项目任务' : 'Process project tasks'],
-                ]}
-                onChange={(value) => {
-                  setDraft({
-                    ...draft,
-                    action: { ...draft.action, kind: value as AutomationActionKind, employeeId: draft.action?.employeeId ?? null },
-                    conversationMode: 'independent',
-                    originalConversationId: null,
-                  });
-                  setFullAccessAcknowledged(false);
-                }}
-              />
-              {draft.action?.kind !== 'conversation' && draft.action?.kind ? (
-                <SelectField
-                  label={zh ? '员工' : 'Employee'}
-                  value={draft.action.employeeId ?? ''}
-                  options={[['', zh ? '选择员工' : 'Select employee'], ...employees.map((employee): [string, string] => [employee.id, employee.name])]}
-                  onChange={(value) => setDraft({ ...draft, action: { ...draft.action!, employeeId: value || null } })}
-                />
-              ) : null}
-              {draft.action?.kind === 'project_task' ? (
-                <>
+            {/* 内容与设置共用滚动区域，窄窗口按原顺序排列。 */}
+            <div className="automation-editor-layout">
+              <fieldset className="automation-form-section automation-editor-content">
+                <legend>{zh ? '执行内容' : 'Instructions and projects'}</legend>
+                <label>
+                  <span>{zh ? '名称' : 'Name'}</span>
+                  <input required maxLength={120} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.currentTarget.value })} />
+                </label>
+                <label>
+                  <span>{zh ? '指令' : 'Instruction'}</span>
+                  <textarea required rows={7} value={draft.prompt} onChange={(event) => setDraft({ ...draft, prompt: event.currentTarget.value })} />
+                </label>
+                <div className="automation-form-field">
+                  <span>{zh ? '目标项目' : 'Target projects'}</span>
+                  <ZeusSelect
+                    size="regular"
+                    ariaLabel={zh ? '选择目标项目' : 'Choose target projects'}
+                    value=""
+                    selectedValues={projectSelectionValues}
+                    options={projectOptions}
+                    onChange={(value) => {
+                      if (value === noProjectValue) {
+                        setDraft({ ...draft, projectIds: [] });
+                        return;
+                      }
+                      if (value === allProjectsValue) {
+                        setDraft({ ...draft, projectIds: allProjectsSelected ? [] : userProjects.map((project) => project.id) });
+                        return;
+                      }
+                      setDraft({ ...draft, projectIds: draft.projectIds.includes(value) ? draft.projectIds.filter((id) => id !== value) : [...draft.projectIds, value] });
+                    }}
+                    triggerLabel={projectTriggerLabel}
+                    searchable={userProjects.length > 8}
+                    searchPlaceholder={zh ? '搜索项目' : 'Search projects'}
+                    emptyLabel={zh ? '没有匹配的项目' : 'No matching projects'}
+                  />
+                  {draft.projectIds.length === 0 ? <small>{zh ? '本次运行不会读取或修改任何用户项目，仅使用 Zeus 临时工作区。' : 'This run cannot read or modify user projects and only uses the Zeus temporary workspace.'}</small> : null}
+                </div>
+              </fieldset>
+              <div className="automation-editor-settings">
+                <fieldset className="automation-form-section">
+                  <legend>{zh ? '执行动作' : 'Action'}</legend>
+                  {tasks.find((task) => task.id === editingId)?.migrationIssue ? <p role="status">{tasks.find((task) => task.id === editingId)!.migrationIssue}</p> : null}
                   <SelectField
-                    label={zh ? '任务选择' : 'Task selection'}
-                    value={taskSelectionConfirmed ? taskSelection : ''}
+                    label={zh ? '动作' : 'Action'}
+                    value={draft.action?.kind ?? 'employee_work'}
                     options={[
-                      ...(!taskSelectionConfirmed ? [['', zh ? '请核对并重选任务方式' : 'Confirm the task selection'] as [string, string]] : []),
-                      ['specified', zh ? '指定已有任务' : 'Specified existing task'],
-                      ['event', zh ? '使用事件任务' : 'Event task'],
-                      ['pool', zh ? '领取任务池任务' : 'Claim from task pool'],
-                      ['create', zh ? '创建新任务' : 'Create new task'],
+                      ['employee_work', zh ? '员工工作' : 'Employee work'],
+                      ['project_task', zh ? '处理项目任务' : 'Process project tasks'],
                     ]}
                     onChange={(value) => {
-                      if (!value) return;
-                      setTaskSelectionConfirmed(true);
                       setDraft({
                         ...draft,
-                        ...(value === 'event' ? { triggerKind: 'event' } : {}),
-                        action: {
-                          ...draft.action!,
-                          taskSelection: value as NonNullable<AutomationTaskInput['action']>['taskSelection'],
-                          taskId: value === 'specified' ? (draft.action?.taskId ?? null) : null,
-                          useEventTask: value === 'event',
-                        },
+                        action: { ...draft.action, kind: value as AutomationActionKind, employeeId: draft.action?.employeeId ?? null },
+                        conversationMode: 'independent',
+                        originalConversationId: null,
                       });
+                      setFullAccessAcknowledged(false);
                     }}
                   />
-                  {taskSelection === 'specified' ? (
-                    <label>
-                      <span>{zh ? '已有任务' : 'Existing task'}</span>
-                      <ZeusSelect
-                        size="regular"
-                        ariaLabel={zh ? '指定已有任务' : 'Select an existing task'}
-                        value={draft.action.taskId ?? ''}
-                        disabled={!taskProjectId || projectTasksLoading}
+                  {draft.action?.kind !== 'conversation' && draft.action?.kind ? (
+                    <SelectField
+                      label={zh ? '员工' : 'Employee'}
+                      value={draft.action.employeeId ?? ''}
+                      options={[['', zh ? '选择员工' : 'Select employee'], ...employees.map((employee): [string, string] => [employee.id, employee.name])]}
+                      onChange={(value) => setDraft({ ...draft, action: { ...draft.action!, employeeId: value || null } })}
+                    />
+                  ) : null}
+                  {draft.action?.kind === 'project_task' ? (
+                    <>
+                      <SelectField
+                        label={zh ? '任务选择' : 'Task selection'}
+                        value={taskSelectionConfirmed ? taskSelection : ''}
                         options={[
-                          { value: '', label: zh ? '选择任务' : 'Select task' },
-                          ...projectTasks.map((task) => ({ value: task.id, label: `${task.taskCode ?? task.id} · ${task.title}` })),
-                          ...(draft.action.taskId && !projectTasks.some((task) => task.id === draft.action?.taskId)
-                            ? [{ value: draft.action.taskId, label: zh ? '原任务当前不可用，请重新选择' : 'The saved task is unavailable; select again', disabled: true }]
-                            : []),
+                          ...(!taskSelectionConfirmed ? [['', zh ? '请核对并重选任务方式' : 'Confirm the task selection'] as [string, string]] : []),
+                          ['specified', zh ? '指定已有任务' : 'Specified existing task'],
+                          ['event', zh ? '使用事件任务' : 'Event task'],
+                          ['pool', zh ? '领取任务池任务' : 'Claim from task pool'],
+                          ['create', zh ? '创建新任务' : 'Create new task'],
                         ]}
-                        onChange={(taskId) => setDraft({ ...draft, action: { ...draft.action!, taskId: taskId || null } })}
-                        searchable
+                        onChange={(value) => {
+                          if (!value) return;
+                          setTaskSelectionConfirmed(true);
+                          setDraft({
+                            ...draft,
+                            ...(value === 'event' ? { triggerKind: 'event' } : {}),
+                            action: {
+                              ...draft.action!,
+                              taskSelection: value as NonNullable<AutomationTaskInput['action']>['taskSelection'],
+                              taskId: value === 'specified' ? (draft.action?.taskId ?? null) : null,
+                              useEventTask: value === 'event',
+                            },
+                          });
+                        }}
                       />
-                      {!taskProjectId ? <small>{zh ? '指定已有任务需要只选择一个目标项目。' : 'Choose one target project for a specified task.'}</small> : null}
-                      {projectTasksLoading ? <small role="status">{zh ? '正在读取任务…' : 'Loading tasks…'}</small> : null}
-                      {projectTasksError ? <small role="alert">{projectTasksError}</small> : null}
+                      {taskSelection === 'specified' ? (
+                        <label>
+                          <span>{zh ? '已有任务' : 'Existing task'}</span>
+                          <ZeusSelect
+                            size="regular"
+                            ariaLabel={zh ? '指定已有任务' : 'Select an existing task'}
+                            value={draft.action.taskId ?? ''}
+                            disabled={!taskProjectId || projectTasksLoading}
+                            options={[
+                              { value: '', label: zh ? '选择任务' : 'Select task' },
+                              ...projectTasks.map((task) => ({ value: task.id, label: `${task.taskCode ?? task.id} · ${task.title}` })),
+                              ...(draft.action.taskId && !projectTasks.some((task) => task.id === draft.action?.taskId)
+                                ? [{ value: draft.action.taskId, label: zh ? '原任务当前不可用，请重新选择' : 'The saved task is unavailable; select again', disabled: true }]
+                                : []),
+                            ]}
+                            onChange={(taskId) => setDraft({ ...draft, action: { ...draft.action!, taskId: taskId || null } })}
+                            searchable
+                          />
+                          {!taskProjectId ? <small>{zh ? '指定已有任务需要只选择一个目标项目。' : 'Choose one target project for a specified task.'}</small> : null}
+                          {projectTasksLoading ? <small role="status">{zh ? '正在读取任务…' : 'Loading tasks…'}</small> : null}
+                          {projectTasksError ? <small role="alert">{projectTasksError}</small> : null}
+                        </label>
+                      ) : null}
+                      {taskSelection !== 'create' ? (
+                        <div className="automation-form-grid">
+                          {(
+                            [
+                              ['taskStatusesText', zh ? '任务状态（逗号分隔，空为不限）' : 'Task statuses (comma separated)'],
+                              ['taskTypesText', zh ? '任务类型（逗号分隔，空为不限）' : 'Task types (comma separated)'],
+                              ['requiredTagsText', zh ? '必须包含的标签（逗号分隔）' : 'Required tags (comma separated)'],
+                            ] as const
+                          ).map(([key, label]) => (
+                            <label key={key}>
+                              <span>{label}</span>
+                              <input value={draft[key]} onChange={(event) => setDraft({ ...draft, [key]: event.currentTarget.value })} />
+                            </label>
+                          ))}
+                        </div>
+                      ) : null}
+                      {taskSelection === 'pool' ? <small>{zh ? '没有符合规则筛选的任务时跳过该项目，不创建替代任务。' : 'Skip a project with no eligible tasks; no substitute task is created.'}</small> : null}
+                      {taskSelection === 'event' ? <small>{zh ? '只处理本次事件所属的任务，需要使用事件触发。' : 'Process the task belonging to the source event; requires an event trigger.'}</small> : null}
+                    </>
+                  ) : null}
+                  {!actionValid ? (
+                    <small role="status">
+                      {zh
+                        ? !draft.action?.employeeId
+                          ? '请选择员工。'
+                          : !draft.projectIds.length && draft.action?.kind === 'project_task'
+                            ? '请选择目标项目。'
+                            : !taskSelectionConfirmed
+                              ? '请核对并重选任务方式。'
+                              : taskSelection === 'specified'
+                                ? '请选择当前项目的已有任务。'
+                                : '事件任务需要使用事件触发。'
+                        : 'Complete the employee, target project, or task selection above.'}
+                    </small>
+                  ) : null}
+                </fieldset>
+                <fieldset className="automation-form-section">
+                  <legend>{zh ? '运行安排' : 'Schedule'}</legend>
+                  <div className="automation-form-grid">
+                    <SelectField label={zh ? '触发方式' : 'Trigger'} value={draft.triggerKind ?? 'manual'} options={triggerOptions(zh)} onChange={(value) => setDraft({ ...draft, triggerKind: value as AutomationTriggerKind })} />
+                    <SelectField
+                      label={zh ? '重复触发时' : 'Overlapping triggers'}
+                      value={draft.blockStrategy ?? 'serial'}
+                      options={[
+                        ['serial', zh ? '依次执行' : 'Queue'],
+                        ['discard', zh ? '跳过新触发' : 'Discard new'],
+                        ['cover', zh ? '替换待执行项' : 'Replace queued'],
+                      ]}
+                      onChange={(value) => setDraft({ ...draft, blockStrategy: value as AutomationBlockStrategy })}
+                    />
+                  </div>
+                  <TriggerFields draft={draft} setDraft={setDraft} zh={zh} />
+                  <small>{zh ? `按 ${draft.timezone || 'UTC'} 时间运行` : `Runs in ${draft.timezone || 'UTC'}`}</small>
+                </fieldset>
+                <fieldset className="automation-form-section">
+                  <legend>{zh ? '执行权限' : 'Permissions'}</legend>
+                  <p>{zh ? '使用统一执行默认；以下权限限制本次自动化。' : 'Uses shared execution defaults; these permissions limit this automation.'}</p>
+                  <div className="automation-form-grid">
+                    <SelectField
+                      label={zh ? '权限' : 'Permission'}
+                      value={draft.permissionMode ?? 'read-only'}
+                      options={[
+                        ['read-only', zh ? '只读' : 'Read only'],
+                        ['auto', zh ? '需审批写入' : 'Approve writes'],
+                        ['full-access', zh ? '完全访问' : 'Full access'],
+                      ]}
+                      onChange={(value) => {
+                        setDraft({ ...draft, permissionMode: value as AutomationPermissionMode });
+                        setFullAccessAcknowledged(false);
+                      }}
+                    />
+                  </div>
+                  {draft.permissionMode === 'full-access' ? (
+                    <label className="automation-risk-ack">
+                      <input type="checkbox" checked={fullAccessAcknowledged} onChange={(event) => setFullAccessAcknowledged(event.currentTarget.checked)} />
+                      <span>
+                        {draft.action?.kind === 'project_task'
+                          ? zh
+                            ? '我允许此自动化持续修改代码、执行验证和创建本地 Git 提交，直到我修改或撤销授权；推送、合并和部署需另行授权。'
+                            : 'I allow this automation to change code, run verification, and create local Git commits until I change or revoke this grant. Pushing, merging, and deployment require separate authorization.'
+                          : zh
+                            ? '允许此自动化使用完全访问权限'
+                            : 'Allow full access for this automation.'}
+                      </span>
                     </label>
                   ) : null}
-                  {taskSelection !== 'create' ? (
-                    <div className="automation-form-grid">
-                      {(
-                        [
-                          ['taskStatusesText', zh ? '任务状态（逗号分隔，空为不限）' : 'Task statuses (comma separated)'],
-                          ['taskTypesText', zh ? '任务类型（逗号分隔，空为不限）' : 'Task types (comma separated)'],
-                          ['requiredTagsText', zh ? '必须包含的标签（逗号分隔）' : 'Required tags (comma separated)'],
-                        ] as const
-                      ).map(([key, label]) => (
-                        <label key={key}>
-                          <span>{label}</span>
-                          <input value={draft[key]} onChange={(event) => setDraft({ ...draft, [key]: event.currentTarget.value })} />
-                        </label>
-                      ))}
-                    </div>
-                  ) : null}
-                  {taskSelection === 'pool' ? <small>{zh ? '没有符合规则筛选的任务时跳过该项目，不创建替代任务。' : 'Skip a project with no eligible tasks; no substitute task is created.'}</small> : null}
-                  {taskSelection === 'event' ? <small>{zh ? '只处理本次事件所属的任务，需要使用事件触发。' : 'Process the task belonging to the source event; requires an event trigger.'}</small> : null}
-                </>
-              ) : null}
-              {!actionValid ? (
-                <small role="status">
-                  {zh
-                    ? !draft.action?.employeeId
-                      ? '请选择员工。'
-                      : !draft.projectIds.length && draft.action?.kind === 'project_task'
-                        ? '请选择目标项目。'
-                        : !taskSelectionConfirmed
-                          ? '请核对并重选任务方式。'
-                          : taskSelection === 'specified'
-                            ? '请选择当前项目的已有任务。'
-                            : '事件任务需要使用事件触发。'
-                    : 'Complete the employee, target project, or task selection above.'}
-                </small>
-              ) : null}
-            </fieldset>
-            <fieldset className="automation-form-section">
-              <legend>{zh ? '运行安排' : 'Schedule'}</legend>
-              <div className="automation-form-grid">
-                <SelectField label={zh ? '触发方式' : 'Trigger'} value={draft.triggerKind ?? 'manual'} options={triggerOptions(zh)} onChange={(value) => setDraft({ ...draft, triggerKind: value as AutomationTriggerKind })} />
-                <SelectField
-                  label={zh ? '重复触发时' : 'Overlapping triggers'}
-                  value={draft.blockStrategy ?? 'serial'}
-                  options={[
-                    ['serial', zh ? '依次执行' : 'Queue'],
-                    ['discard', zh ? '跳过新触发' : 'Discard new'],
-                    ['cover', zh ? '替换待执行项' : 'Replace queued'],
-                  ]}
-                  onChange={(value) => setDraft({ ...draft, blockStrategy: value as AutomationBlockStrategy })}
-                />
+                </fieldset>
               </div>
-              <TriggerFields draft={draft} setDraft={setDraft} zh={zh} />
-              <small>{zh ? `按 ${draft.timezone || 'UTC'} 时间运行` : `Runs in ${draft.timezone || 'UTC'}`}</small>
-            </fieldset>
-            <fieldset className="automation-form-section">
-              <legend>{zh ? '执行权限' : 'Permissions'}</legend>
-              <p>{zh ? '使用统一执行默认；以下权限限制本次自动化。' : 'Uses shared execution defaults; these permissions limit this automation.'}</p>
-              <div className="automation-form-grid">
-                <SelectField
-                  label={zh ? '权限' : 'Permission'}
-                  value={draft.permissionMode ?? 'read-only'}
-                  options={[
-                    ['read-only', zh ? '只读' : 'Read only'],
-                    ['auto', zh ? '需审批写入' : 'Approve writes'],
-                    ['full-access', zh ? '完全访问' : 'Full access'],
-                  ]}
-                  onChange={(value) => {
-                    setDraft({ ...draft, permissionMode: value as AutomationPermissionMode });
-                    setFullAccessAcknowledged(false);
-                  }}
-                />
-              </div>
-              {draft.permissionMode === 'full-access' ? (
-                <label className="automation-risk-ack">
-                  <input type="checkbox" checked={fullAccessAcknowledged} onChange={(event) => setFullAccessAcknowledged(event.currentTarget.checked)} />
-                  <span>
-                    {draft.action?.kind === 'project_task'
-                      ? zh
-                        ? '我允许此自动化持续修改代码、执行验证和创建本地 Git 提交，直到我修改或撤销授权；推送、合并和部署需另行授权。'
-                        : 'I allow this automation to change code, run verification, and create local Git commits until I change or revoke this grant. Pushing, merging, and deployment require separate authorization.'
-                      : zh
-                        ? '我允许此自动化持续使用以上权限，直到我修改或撤销授权；执行的操作可能无法撤销。'
-                        : 'I allow this automation to keep using these permissions until I change or revoke them. Its actions may be irreversible.'}
-                  </span>
-                </label>
-              ) : null}
-            </fieldset>
-
+            </div>
             <details className="automation-advanced-settings">
               <summary>{zh ? '高级设置' : 'Advanced settings'}</summary>
               <label>
