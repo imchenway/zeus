@@ -257,21 +257,32 @@ function streamApiFor(piModel: Model<Api>): ProviderStreams {
 }
 
 /** 复用已配置连接生成受限文本，不提供工具、不继承会话内容。 */
-export async function generateConfiguredModelText(input: ProbeConfiguredModelInput & { system: string; text: string; signal?: AbortSignal }): Promise<string> {
+export async function generateConfiguredModelText(input: ProbeConfiguredModelInput & { system: string; text: string; signal?: AbortSignal; effort?: string; maxTokens?: number }): Promise<string> {
   /** 沿用真实运行的协议与鉴权适配。 */
-  const model = toPiModel(input.model, `zeus-pricing-${input.connection.id}`, input.connection.baseUrl);
-  /** 页面识别限制时间与输出，避免后台无限消耗。 */
-  const options: SimpleStreamOptions = { apiKey: input.apiKey, maxTokens: 8192, signal: input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(80_000)]) : AbortSignal.timeout(80_000) };
-  /** 用户的密钥只发往原模型连接，不发往价格页面。 */
+  const model = toPiModel(input.model, `zeus-text-${input.connection.id}`, input.connection.baseUrl);
+  if (input.effort && !input.model.capability.reasoning.options.some((option) => option.id === input.effort)) throw new Error('所选模型不支持此推理深度。');
+  /** 厂商档位经既有映射发送，不能把界面名称直接写入供应商请求。 */
+  const level = input.effort ? resolvePiThinkingLevel(input.model.capability.reasoning, input.effort) : null;
+  /** 关闭推理沿用运行内核的空档位口径。 */
+  const reasoning = level && level !== 'off' ? level : null;
+  /** 独立文本生成限制时间与输出，避免后台无限消耗。 */
+  const options: SimpleStreamOptions = {
+    apiKey: input.apiKey,
+    maxTokens: input.maxTokens ?? 8192,
+    signal: input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(input.timeoutMs ?? 80_000)]) : AbortSignal.timeout(input.timeoutMs ?? 80_000),
+    ...(input.fetch ? { fetch: input.fetch } : {}),
+    ...(reasoning ? { reasoning } : {}),
+  };
+  /** 用户的密钥只发往原模型连接，不发往输入文本中的网址。 */
   const authenticated = (applyModelAuthentication(options, input.model.authenticationScheme) ?? options) as SimpleStreamOptions;
   for await (const event of streamApiFor(model).streamSimple(model, normalizeContext({ systemPrompt: input.system, messages: [{ role: 'user', content: input.text, timestamp: Date.now() }] }), authenticated)) {
-    if (event.type === 'error') throw new Error('价格识别模型请求失败。');
+    if (event.type === 'error') throw new Error('模型文本生成请求失败。');
     if (event.type === 'done') {
-      if (event.message.stopReason !== 'stop') throw new Error('价格识别结果不完整。');
+      if (event.message.stopReason !== 'stop') throw new Error('模型文本生成结果不完整。');
       return event.message.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n');
     }
   }
-  throw new Error('价格识别模型未返回结果。');
+  throw new Error('模型文本生成未返回结果。');
 }
 
 /** 执行一次真实请求并把观测结果收敛成纯数据；失败只返回原因，不抛出。 */

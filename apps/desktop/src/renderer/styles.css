@@ -16599,6 +16599,19 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   font-size: 13px;
 }
 
+/* 生成与设置共用标题右侧，不额外增加交付步骤高度。 */
+.macos-ai-app .task-git-generation-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 图标入口保留与生成按钮相同的操作高度。 */
+.macos-ai-app .task-git-generation-settings-button {
+  inline-size: 28px;
+  padding-inline: 0;
+}
+
 /* 统一目标仅保留一个选择器；异常仓库集中提示，不增加逐仓选择负担。 */
 .macos-ai-app .task-git-delivery-target-issues {
   display: grid;

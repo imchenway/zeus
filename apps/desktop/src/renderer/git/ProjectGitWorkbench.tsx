@@ -26,7 +26,8 @@ import { MenuSurface } from '../ui/MenuSurface.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { useGitCommitDrafts } from './useGitCommitDrafts.js';
 import { repositoryColor } from './repositoryColor.js';
-import { loadGitCommitModelOptions } from './gitCommitModels.js';
+import { loadGitCommitModelOptions, readGitCommitGenerationSettings, saveGitCommitGenerationSettings } from './gitCommitModels.js';
+import type { GitCommitModelOption } from '../features/git/gitApiClient.js';
 import { useGitOperationHistory } from './useGitOperationHistory.js';
 import { GitContextMenu, GitMenuActionDialog, type GitMenuItem, type GitMenuConfirmation } from './GitContextMenu.js';
 import { GitPaneSeparator } from './GitPaneSeparator.js';
@@ -116,7 +117,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; title: string; items: GitMenuItem[] } | null>(null);
   const [menuConfirmation, setMenuConfirmation] = useState<GitMenuConfirmation | null>(null);
   const [commitDrafts, setCommitDrafts] = useGitCommitDrafts(props.project.id);
-  const [commitModels, setCommitModels] = useState<Array<{ id: string; label: string }>>([]);
+  const [commitModels, setCommitModels] = useState<GitCommitModelOption[]>([]);
   const [commitModelRef, setCommitModelRef] = useState('');
   const [commitModelsLoading, setCommitModelsLoading] = useState(true);
   const [commitModelsError, setCommitModelsError] = useState('');
@@ -147,11 +148,9 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   }, [props.client, props.project.id, zh, commitModelsRefresh]);
   function selectCommitModel(modelRef: string): void {
     setCommitModelRef(modelRef);
-    try {
-      localStorage.setItem(`zeus.git.commit-model.${props.project.id}`, modelRef);
-    } catch {
-      /* 本次选择仍然有效。 */
-    }
+    /** 工作台切换模型时仍沿用同一个模型的推理与速率偏好。 */
+    const model = commitModels.find((item) => item.id === modelRef);
+    if (model) saveGitCommitGenerationSettings(props.project.id, readGitCommitGenerationSettings(props.project.id, model, 'project'));
   }
   const [generatingCommitFor, setGeneratingCommitFor] = useState<string | null>(null);
   const generatingCommitRef = useRef(false);
@@ -401,9 +400,15 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       setCommitDrafts((current) => ((current[repository.id] ?? '') === expected ? { ...current, [repository.id]: message } : current));
     };
     try {
+      /** 提交说明生成不能丢弃交付面板保存的档位。 */
+      const models = await loadGitCommitModelOptions(props.client, props.project.id, controller.signal);
+      controller.signal.throwIfAborted();
+      if (!models.modelRef) throw new Error(models.warning || (zh ? '所选模型不可用，请刷新模型列表。' : 'The selected model is unavailable. Refresh the model list.'));
+      setCommitModels(models.items);
+      setCommitModelRef(models.modelRef);
       const result = await props.client.generateGitCommitMessage(
         props.project.id,
-        { repositoryId: repository.id, relativePath: repository.relativePath, language: zh ? 'zh-CN' : 'en', modelRef: commitModelRef },
+        { repositoryId: repository.id, relativePath: repository.relativePath, language: zh ? 'zh-CN' : 'en', ...models.settings },
         (text) => {
           if (!controller.signal.aborted) updateGenerated(text);
         },

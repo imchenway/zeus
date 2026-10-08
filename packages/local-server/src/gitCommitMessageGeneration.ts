@@ -1,4 +1,4 @@
-import { modelConnectionRequestEndpoint, modelRef } from '@zeus/ai-runtime';
+import { generateConfiguredModelText, modelRef } from '@zeus/ai-runtime';
 import type { ModelConnectionService } from './modelConnectionService.js';
 
 /** AI 提交说明的总字符上限，包含提交前缀、标点和空格。 */
@@ -25,6 +25,10 @@ export interface GitCommitMessageInput {
   language: 'zh-CN' | 'en';
   scope?: 'selection';
   modelRef?: string;
+  /** 模型目录中的推理档位，生成前再次核对支持范围。 */
+  effort?: string;
+  /** 标准速率为 null，Fast 只适用于支持该档位的 Codex 模型。 */
+  serviceTier?: 'priority' | null;
   recentCommits?: string[];
   diffStat?: string;
   truncated?: boolean;
@@ -42,43 +46,23 @@ export async function generateGitCommitMessage(service: ModelConnectionService, 
   const selected = requestedModelRef ? available.find((entry) => entry.ref === requestedModelRef) : available[0];
   if (!selected) throw failure('所选模型不可用，请选择已启用且配置 API Key 的模型连接。', 409);
   const { connection, model } = selected;
+  if (input.serviceTier) throw failure('所选模型不支持 Fast，请使用标准速率。', 400);
+  if (input.effort && !model.capability.reasoning.options.some((option) => option.id === input.effort)) throw failure('所选模型不支持此推理深度，请重新选择。', 400);
   const { system, prompt } = buildGitCommitPrompt(input);
-  const protocol = model.protocolFamily;
-  const messages = [
-    { role: 'system', content: system },
-    { role: 'user', content: prompt },
-  ];
-  const body =
-    protocol === 'anthropic_messages'
-      ? { model: model.id, system, messages: messages.slice(1), max_tokens: 2048, stream: false }
-      : protocol === 'openai_responses'
-        ? { model: model.id, instructions: system, input: prompt, max_output_tokens: 4096, stream: false, store: false }
-        : { model: model.id, messages, max_completion_tokens: 4096, stream: false };
-  const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'application/json' };
-  const useApiKey = model.authenticationScheme === 'x_api_key' || (model.authenticationScheme === 'protocol_default' && protocol === 'anthropic_messages');
-  headers[useApiKey ? 'x-api-key' : 'Authorization'] = useApiKey ? connection.apiKey! : `Bearer ${connection.apiKey!}`;
-  if (protocol === 'anthropic_messages') headers['anthropic-version'] = '2023-06-01';
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 80_000);
   try {
-    const response = await fetch(modelConnectionRequestEndpoint(connection.baseUrl, protocol), { method: 'POST', headers, body: JSON.stringify(body), signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal });
-    if (!response.ok) throw failure(`AI 生成失败（HTTP ${response.status}），请检查模型连接后重试。`, 502);
-    const payload: unknown = await response.json();
-    const value = record(payload);
-    const choice = record(Array.isArray(value.choices) ? value.choices[0] : null);
-    const content =
-      protocol === 'openai_completions'
-        ? record(choice.message).content
-        : protocol === 'anthropic_messages'
-          ? readTextBlocks(value.content)
-          : Array.isArray(value.output)
-            ? value.output
-                .filter((item) => record(item).type === 'message')
-                .map((item) => readTextBlocks(record(item).content))
-                .join('\n')
-            : '';
-    const incomplete = protocol === 'openai_completions' ? choice.finish_reason === 'length' : protocol === 'anthropic_messages' ? value.stop_reason === 'max_tokens' : value.status === 'incomplete';
-    if (incomplete) throw failure('模型输出被截断，请重试或更换模型。', 502);
+    /** 复用模型连接的协议、鉴权与推理映射，不另建供应商参数适配。 */
+    const content = await generateConfiguredModelText({
+      connection,
+      model,
+      apiKey: connection.apiKey!,
+      system,
+      text: prompt,
+      effort: input.effort,
+      maxTokens: 4096,
+      signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
+    });
     /** API 与 Codex 的最终草稿遵循同一个单行、长度约束。 */
     const message = typeof content === 'string' && content.length <= 10_000 ? normalizeGitCommitMessage(content) : '';
     if (!message) throw failure('模型未返回有效的提交说明，请重试。', 502);
@@ -93,18 +77,7 @@ export async function generateGitCommitMessage(service: ModelConnectionService, 
   }
 }
 
-function record(value: unknown): Record<string, unknown> {
-  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
-}
-function readTextBlocks(value: unknown): string {
-  return Array.isArray(value)
-    ? value
-        .filter((item) => ['text', 'output_text'].includes(String(record(item).type)))
-        .map((item) => record(item).text)
-        .filter((text) => typeof text === 'string')
-        .join('\n')
-    : '';
-}
+/** 生成失败只返回可公开的说明与状态，不附带供应商凭据。 */
 function failure(message: string, statusCode: number): Error & { statusCode: number; code: string } {
   return Object.assign(new Error(message), { statusCode, code: 'ZEUS_GIT_COMMIT_MESSAGE_FAILED' });
 }

@@ -162,8 +162,9 @@ export async function generateCodexCommitMessage(
       if (cancelled) throw new Error('提交说明生成已取消。');
       const model = capabilities.models.find((item) => item.model === modelId && item.raw.hidden !== true);
       if (!model) throw new Error('所选 Codex 模型已不可用，请刷新模型列表。');
-      const effort = (['low', 'minimal', 'none'] as const).find((value) => model.supportedReasoningEfforts.includes(value));
-      if (model.supportedReasoningEfforts.length && !effort) throw new Error('所选模型不支持低思考深度，请选择支持 low 的模型生成提交说明。');
+      /** 显式设置优先；旧入口未选档位时保持低档位并尊重模型目录默认值。 */
+      const effort = input.effort || (['low', 'minimal', 'none'] as const).find((value) => model.supportedReasoningEfforts.includes(value)) || model.defaultReasoningEffort || model.supportedReasoningEfforts[0];
+      if (effort && !model.supportedReasoningEfforts.includes(effort)) throw new Error('所选模型不支持此推理深度，请重新选择。');
       progress('读取账户');
       const account = await manager.readAccount();
       if (cancelled) throw new Error('提交说明生成已取消。');
@@ -172,6 +173,7 @@ export async function generateCodexCommitMessage(
       progress('创建临时会话');
       const thread = await manager.startThread({
         model: model.model,
+        serviceTier: input.serviceTier ?? null,
         cwd,
         ephemeral: true,
         approvalPolicy: 'never',
@@ -227,7 +229,7 @@ export async function generateCodexCommitMessage(
       progress('等待模型响应');
       armTimeout(options.timeoutMs ?? 80_000);
       const [, text] = await Promise.all([
-        manager.startTurn({ threadId, model: model.model, input: [{ type: 'text', text: prompt, text_elements: [] }], ...(effort ? { effort } : {}) }).then((turn) => {
+        manager.startTurn({ threadId, model: model.model, serviceTier: input.serviceTier ?? null, input: [{ type: 'text', text: prompt, text_elements: [] }], ...(effort ? { effort } : {}) }).then((turn) => {
           if (stage === '等待模型响应') progress('请求已接受，等待生成');
           return turn;
         }),

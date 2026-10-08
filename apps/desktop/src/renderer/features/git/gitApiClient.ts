@@ -17,13 +17,17 @@ import type { ProjectGitWorkbenchBridge } from '../../transport/dashboardClientC
 import { jsonRequest, type LocalApiTransport } from '../../transport/localApiTransport.js';
 import { buildGitCommandRequest, gitClientCommandTypes } from './gitCommandClient.js';
 import { buildWorkspaceGitCommandRequest, workspaceGitClientCommandTypes } from './workspaceGitCommandClient.js';
+import type { CodexTaskPushModelCapability } from '../../session/sessionTypes.js';
+
+/** 提交说明使用真实模型目录中的推理与速率能力。 */
+export type GitCommitModelOption = CodexTaskPushModelCapability & { label: string };
 
 export interface GitApiClient {
   forConversationGit: (conversationId: string) => GitApiClient;
   /** 操作账本属于桌面实例，不能回退到独立执行宿主的其他记录。 */
   loadProjectGitOperations: (projectId: string, cursor?: string) => Promise<ProjectGitOperationPage>;
   /** 生成入口可以取消模型读取，停止操作不必等待模型发现完成。 */
-  loadGitCommitModels: (projectId: string, signal?: AbortSignal) => Promise<{ items: Array<{ id: string; label: string }>; warning: string }>;
+  loadGitCommitModels: (projectId: string, signal?: AbortSignal) => Promise<{ items: GitCommitModelOption[]; warning: string }>;
   generateGitCommitMessage: (
     projectId: string,
     input: {
@@ -33,6 +37,10 @@ export interface GitApiClient {
       taskId?: string;
       language: 'zh-CN' | 'en';
       modelRef: string;
+      /** 推理档位使用所选模型目录中的原始身份。 */
+      effort?: string;
+      /** 标准速率显式清除 Provider 的默认加速档位。 */
+      serviceTier?: 'priority' | null;
       selection?: Array<{ repositoryId: string; relativePath: string; paths: string[] }>;
     },
     onText?: (text: string) => void,
