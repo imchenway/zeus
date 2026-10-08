@@ -1,11 +1,17 @@
 import { assertContextCapacity } from '@zeus/shared';
 import { createHash } from 'node:crypto';
+import { resolve } from 'node:path';
 import type { SQLInputValue } from 'node:sqlite';
 import { randomId } from './randomId.js';
 import { type CodexUsageEstimate, type ConversationResourceKind, type ConversationResourcePresentation, type TokenUsageBreakdown } from '@zeus/shared';
 import type { ZeusDatabasePort } from './databasePort.js';
 import type { ConversationAgentKind } from './conversationItemTypes.js';
 import { ConversationTranscriptRepository, hashConversationTranscriptContent } from './conversationTranscriptStore.js';
+
+/** 助手图片复用原始绝对路径的稳定附件身份，归档副本与工具输出共用该身份。 */
+export function conversationImageAttachmentRef(absolutePath: string): string {
+  return `assistant_image_${createHash('sha256').update(resolve(absolutePath)).digest('hex')}`;
+}
 
 function nowIso(): string {
   return new Date().toISOString();

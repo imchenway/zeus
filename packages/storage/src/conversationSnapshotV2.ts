@@ -25,6 +25,10 @@ import type { ZeusDatabasePort } from './databasePort.js';
 import { type ArtifactRef, type ArtifactStore, artifactStoreGeneration } from './artifactStore.js';
 import { conversationSchemaGeneration, type ConversationSessionMetricsSnapshot, readConversationSessionMetrics } from './conversationExecutionStore.js';
 import { ConversationTranscriptRepository, providerFacet } from './conversationTranscriptStore.js';
+import { createHash } from 'node:crypto';
+import { isAbsolute } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { conversationImageAttachmentRef } from './conversationStore.js';
 
 export { conversationSnapshotV2StructureGeneration };
 
@@ -1420,6 +1424,10 @@ export class ConversationSnapshotV2Repository {
       preview_kind: string | null;
       icon_kind: string | null;
       attachment_ref: string | null;
+      /** 仅用于恢复图片身份，不进入资源页响应。 */
+      target_json: string | null;
+      /** 旧归档的原始引用由对应 Provider 正文确认，不按文件名猜测。 */
+      provider_text: string | null;
       task_push_attachment_key: string | null;
       origin: string | null;
       delivery: string | null;
@@ -1435,6 +1443,10 @@ export class ConversationSnapshotV2Repository {
               CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.taskPushAttachmentKey') AS TEXT), 1, 512) ELSE NULL END AS task_push_attachment_key,
               CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.origin') AS TEXT), 1, 128) ELSE NULL END AS origin,
               CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.delivery') AS TEXT), 1, 32) ELSE NULL END AS delivery,
+              CASE WHEN kind = 'attachment' THEN target_json ELSE NULL END AS target_json,
+              CASE WHEN json_valid(display_json) AND json_extract(display_json, '$.origin') = 'assistant_markdown_image'
+                THEN (SELECT text_projection FROM conversation_provider_item_states AS item WHERE item.id = conversation_resources.item_id AND item.conversation_id = conversation_resources.conversation_id)
+                ELSE NULL END AS provider_text,
               created_at, updated_at
          FROM conversation_resources
         WHERE conversation_id = ?
@@ -1455,7 +1467,7 @@ export class ConversationSnapshotV2Repository {
       mimeType: row.mime_type,
       previewKind: row.preview_kind,
       iconKind: row.icon_kind,
-      attachmentRef: row.attachment_ref,
+      attachmentRef: restoredAssistantImageAttachmentRef(row),
       taskPushAttachmentKey: row.task_push_attachment_key,
       origin: row.origin,
       delivery: row.delivery === 'assistant' ? ('assistant' as const) : null,
@@ -3093,6 +3105,44 @@ function boundedPresentationString(value: unknown, maximumLength: number): strin
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** 新旧图片资源都恢复原图身份，原有资源编号、归档文件和访问授权保持不变。 */
+function restoredAssistantImageAttachmentRef(row: {
+  item_id: string;
+  kind: string;
+  preview_kind: string | null;
+  attachment_ref: string | null;
+  delivery: string | null;
+  origin: string | null;
+  target_json: string | null;
+  provider_text: string | null;
+}): string | null {
+  if (row.kind !== 'attachment' || row.preview_kind !== 'image' || /^assistant_image_[a-f0-9]{64}$/u.test(row.attachment_ref ?? '')) return row.attachment_ref;
+  if (row.delivery === 'assistant') {
+    /** 工具图片的目标已经由资源登记入口完成授权。 */
+    const path = parseJsonRecordOrNull(row.target_json)?.absolutePath;
+    return typeof path === 'string' && isAbsolute(path) ? conversationImageAttachmentRef(path) : row.attachment_ref;
+  }
+  if (row.origin !== 'assistant_markdown_image') return row.attachment_ref;
+  /** 旧归档名称包含条目与原始引用的摘要，必须精确核对后才能恢复身份。 */
+  for (const match of (row.provider_text ?? '').matchAll(/!?\[([^\]\n]+)\]\(([^)\n]+)\)/gu)) {
+    /** 归档时使用的引用保留原始写法，不能先解码再核对。 */
+    const href = match[2]!.trim().replace(/^<|>$/gu, '');
+    /** 同名或同标签图片不能绕过这项原始引用核对。 */
+    const archivedIdentity = createHash('sha256').update(`${row.item_id}\0${href}`).digest('hex');
+    if (!row.attachment_ref?.startsWith(`${archivedIdentity}.`)) continue;
+    try {
+      /** 核对成功后按归档入口的本地路径规则还原原图。 */
+      const reference = href.trim().replace(/^<|>$/gu, '');
+      /** 文件 URL 与编码路径仅用于身份计算，不授予新的读取权限。 */
+      const path = /^file:/iu.test(reference) ? fileURLToPath(reference) : decodeURIComponent(reference);
+      if (isAbsolute(path) && !path.includes('\0')) return conversationImageAttachmentRef(path);
+    } catch {
+      // 无法恢复的引用保留原记录，不能误隐藏图片。
+    }
+  }
+  return row.attachment_ref;
 }
 
 function parseJsonRecordOrNull(value: string | null): Record<string, unknown> | null {

@@ -2425,25 +2425,67 @@ function transcriptRowOpeningInputId(row: TranscriptRow): string | null {
   return items.map(itemOpeningInputId).find((openingInputId): openingInputId is string => Boolean(openingInputId)) ?? null;
 }
 
-/** 明确交付给用户的资源属于最终产物，统一放到该轮最终正文之后，不能夹在处理过程与正文之间。 */
+/** 正文图片接管同源交付，其余产物统一放在该轮最终正文之后。 */
 function projectDeliverablesAfterFinalAnswer(rows: readonly TranscriptRow[]): readonly TranscriptRow[] {
+  /** 只在同一轮次中接管图片，用户再次引用图片仍保留正文原位。 */
   const finalAnswerKeyByTurn = new Map<string, string>();
+  /** 只有已登记且能实际渲染的正文图片才接管工具交付。 */
+  const inlineImageRefsByTurn = new Map<string, Set<string>>();
   for (const row of rows) {
-    if (row.kind === 'item' && isFinalAnswerItem(row.item)) finalAnswerKeyByTurn.set(row.item.turnId, row.key);
+    if (row.kind !== 'item' || !isFinalAnswerItem(row.item)) continue;
+    finalAnswerKeyByTurn.set(row.item.turnId, row.key);
+    if (row.item.status !== 'completed') continue;
+    /** 同轮多个正文段落共用资源身份，不合并正文内容。 */
+    const refs = inlineImageRefsByTurn.get(row.item.turnId) ?? new Set<string>();
+    /** 与 Markdown 图片节点使用同一套受信资源匹配规则。 */
+    for (const match of transcriptItemText(row.item).matchAll(/!\[([^\]]*)\]\(([^)]+)\)/gu)) {
+      /** 标签与地址共同选择当前真正显示的图片。 */
+      const resource = matchingInlineResource(row.item.resources, match[1]!.trim(), match[2]!);
+      if (resource?.kind === 'attachment' && isImageResource(resource) && /^assistant_image_[a-f0-9]{64}$/u.test(resource.attachmentRef)) refs.add(resource.attachmentRef);
+    }
+    inlineImageRefsByTurn.set(row.item.turnId, refs);
   }
-  if (finalAnswerKeyByTurn.size === 0) return rows;
 
+  /** 同一图片的多个工具身份只保留一个独立交付。 */
+  const deliveredImageRefsByTurn = new Map<string, Set<string>>();
+  /** 仅调整展示资源，持久条目和工具过程保留原始身份。 */
+  const distinctRows = rows.flatMap((row): TranscriptRow[] => {
+    if (row.kind !== 'item' || row.item.status !== 'completed' || isFinalAnswerItem(row.item) || !isAssistantDeliverableItem(row.item)) return [row];
+    /** 已展示的同轮图片身份不影响其他轮次。 */
+    const deliveredRefs = deliveredImageRefsByTurn.get(row.item.turnId) ?? new Set<string>();
+    /** 只有重复交付需要替换展示对象。 */
+    let changed = false;
+    /** 混合交付逐张核对，未被正文引用的图片继续展示。 */
+    const resources = row.item.resources.map((resource) => {
+      if (resource.delivery !== 'assistant' || resource.kind !== 'attachment' || !isImageResource(resource) || !/^assistant_image_[a-f0-9]{64}$/u.test(resource.attachmentRef)) return resource;
+      if (!inlineImageRefsByTurn.get(row.item.turnId)?.has(resource.attachmentRef) && !deliveredRefs.has(resource.attachmentRef)) {
+        deliveredRefs.add(resource.attachmentRef);
+        return resource;
+      }
+      changed = true;
+      /** 已被正文接管的工具图片仍可在处理过程中查看。 */
+      return { ...resource, delivery: undefined };
+    });
+    deliveredImageRefsByTurn.set(row.item.turnId, deliveredRefs);
+    if (!changed) return [row];
+    if (typeof row.item.payload.v2SyntheticAssistantDeliverableItemId === 'string' && !resources.some((resource) => resource.delivery === 'assistant')) return [];
+    return [{ ...row, item: { ...row.item, resources } }];
+  });
+  if (finalAnswerKeyByTurn.size === 0) return distinctRows;
+
+  /** 未被正文接管的交付仍沿用最终回答后的摆放规则。 */
   const deliverablesByTurn = new Map<string, TranscriptRow[]>();
-  for (const row of rows) {
+  for (const row of distinctRows) {
     if (row.kind !== 'item' || isFinalAnswerItem(row.item) || !isAssistantDeliverableItem(row.item) || !finalAnswerKeyByTurn.has(row.item.turnId)) continue;
     const deliverables = deliverablesByTurn.get(row.item.turnId) ?? [];
     deliverables.push(row);
     deliverablesByTurn.set(row.item.turnId, deliverables);
   }
-  if (deliverablesByTurn.size === 0) return rows;
+  if (deliverablesByTurn.size === 0) return distinctRows;
 
+  /** 保留原有正文顺序和资源交付位置。 */
   const projected: TranscriptRow[] = [];
-  for (const row of rows) {
+  for (const row of distinctRows) {
     const turnId = transcriptRowTurnId(row);
     if (turnId && deliverablesByTurn.get(turnId)?.some((deliverable) => deliverable.key === row.key)) continue;
     projected.push(row);
