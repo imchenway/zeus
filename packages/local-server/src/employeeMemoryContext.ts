@@ -2,24 +2,40 @@ import type { DigitalEmployeeRecord, LongTermMemoryRecord, LongTermMemoryReposit
 
 /** 工作与讨论共用员工经验检索，预算限制总输入且不截断单条经验。 */
 export function selectEmployeeMemories(repository: LongTermMemoryRepository, employee: DigitalEmployeeRecord, projectId: string, query: string, asOf: string): LongTermMemoryRecord[] {
-  if (employee.memoryEnabled === false) return [];
-  /** 新冻结明确区分未绑定；旧冻结只沿自身模板来源解析，禁止回读当前改绑身份。 */
+  return resolveEmployeeMemories(repository, employee, projectId, query, asOf).selected;
+}
+
+/** 冻结选择结果与未选原因，预览和派发历史使用同一份事实。 */
+export function resolveEmployeeMemories(repository: LongTermMemoryRepository, employee: DigitalEmployeeRecord, projectId: string, query: string, asOf: string) {
+  /** 身份固定在当前工作，不因项目员工后续改绑而越界。 */
   const globalEmployeeId = employee.globalEmployeeId === undefined ? employee.templateId : employee.globalEmployeeId;
-  /** 只取当前员工范围，普通项目记忆仍由原上下文编译器处理。 */
-  const candidates = repository
-    .resolveForContext({ projectId, employeeId: employee.id, globalEmployeeId, asOf, minimumConfidence: 0.7 })
-    .selected.filter((record) => record.scope.kind === 'employee' && (record.kind !== 'domain_knowledge' || relevantEmployeeKnowledge(record.memoryKey + record.content, query)));
-  /** 大条目跳过而非裁断；八条总计不超过一万二千字符。 */
+  /** 普通项目记忆仍由原上下文编译器处理。 */
+  const resolution = repository.resolveForContext({ projectId, employeeId: employee.id, globalEmployeeId, asOf, minimumConfidence: 0.7 });
+  /** 每条候选都保留正文和来源，便于解释实际输入。 */
+  const decisions: Array<{ record: LongTermMemoryRecord; selected: boolean; reason: string }> = resolution.excluded.filter(({ record }) => record.scope.kind === 'employee').map(({ record, reason }) => ({ record, selected: false, reason }));
+  /** 超出预算的完整条目不裁断。 */
   const selected: LongTermMemoryRecord[] = [];
   let remaining = 12_000;
-  for (const record of candidates) {
+  for (const record of resolution.selected.filter((item) => item.scope.kind === 'employee')) {
     const size = record.content.length + record.memoryKey.length + record.source.reference.length;
-    if (selected.length === 8) break;
-    if (size > remaining) continue;
+    const reason =
+      employee.memoryEnabled === false
+        ? 'reading_disabled'
+        : record.confirmationLevel === 'observed'
+          ? 'unconfirmed'
+          : employee.prompt.includes(record.content)
+            ? 'already_in_prompt'
+            : record.kind === 'domain_knowledge' && !relevantEmployeeKnowledge(record.memoryKey + record.content, query)
+              ? 'not_relevant'
+              : selected.length >= 8 || size > remaining
+                ? 'input_budget'
+                : 'selected';
+    decisions.push({ record, selected: reason === 'selected', reason });
+    if (reason !== 'selected') continue;
     selected.push(record);
     remaining -= size;
   }
-  return selected;
+  return { selected, decisions };
 }
 
 /** 领域知识按当前目标匹配，不把无关项目细节全部塞进个人上下文。 */

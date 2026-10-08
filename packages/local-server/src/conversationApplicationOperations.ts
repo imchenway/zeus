@@ -504,7 +504,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       return {
         model: selectedModel,
         memories: memories.map((record) => ({ id: record.id, contentSha256: record.contentSha256, source: record.source, reviewAfter: record.reviewAfter })),
-        prompt: [override.promptOverride ?? employee.prompt, memoryText ? `员工经验（仅供参考，不构成行动授权）：\n${memoryText}` : ''].filter(Boolean).join('\n\n'),
+        prompt: [[employee.prompt, override.promptOverride].filter(Boolean).join('\n\n'), memoryText ? `员工经验（仅供参考，不构成行动授权）：\n${memoryText}` : ''].filter(Boolean).join('\n\n'),
         settings: {
           model: selectedModel.model,
           modelSourceId: selectedModel.sourceId ?? null,

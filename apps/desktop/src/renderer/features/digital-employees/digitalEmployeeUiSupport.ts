@@ -1,4 +1,4 @@
-import type { DigitalEmployeeAvatarId } from '@zeus/shared';
+import type { DigitalEmployeeAvatarId, EmployeeWorkSettings } from '@zeus/shared';
 import { formatVisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import type {
   DigitalEmployeeAutomationActionKind,
@@ -12,8 +12,10 @@ import type {
 
 export type DigitalEmployeeLanguage = 'zh-CN' | 'en-US';
 
-/** 全局员工只保存身份、提示词和个人经验偏好。 */
+/** 全局员工保存身份、提示词、执行默认值和记忆读取偏好。 */
 export interface DigitalEmployeeTemplateDraft {
+  /** 新工作继承的默认执行配置。 */
+  settings: EmployeeWorkSettings;
   /** 员工显示名称。 */
   name: string;
   /** 员工职责说明。 */
@@ -31,17 +33,49 @@ export interface DigitalEmployeeTemplateDraft {
 }
 
 /** 新员工从空白身份与提示词开始，默认读取已确认经验。 */
-export const emptyTemplateDraft: DigitalEmployeeTemplateDraft = { memoryEnabled: true, name: '', description: '', role: '', domain: '', avatarId: null, prompt: '' };
+export const emptyTemplateDraft: DigitalEmployeeTemplateDraft = { settings: {}, memoryEnabled: true, name: '', description: '', role: '', domain: '', avatarId: null, prompt: '' };
 
-/** 全局编辑仅复制身份与提示词，不带入历史执行配置。 */
+/** 编辑草稿保留历史描述，不恢复已退役的行动授权。 */
 export function templateDraft(record?: DigitalEmployeeTemplateRecord | DigitalEmployeeRecord): DigitalEmployeeTemplateDraft {
   if (!record) return { ...emptyTemplateDraft };
-  return { memoryEnabled: record.memoryEnabled !== false, name: record.name, description: record.description, role: record.role, domain: record.domain, avatarId: record.avatarId ?? null, prompt: record.prompt };
+  return {
+    settings: {
+      modelOverride: record.model,
+      reasoningEffort: record.reasoningEffort,
+      contextCapacityTokens: record.contextCapacityTokens ?? null,
+      serviceTier: record.serviceTier,
+      workMode: record.workMode,
+      permissionMode: record.permissionMode,
+      skillIds: record.skillIds,
+    },
+    memoryEnabled: record.memoryEnabled !== false,
+    name: record.name,
+    description: record.description,
+    role: record.role,
+    domain: record.domain,
+    avatarId: record.avatarId ?? null,
+    prompt: record.prompt,
+  };
 }
 
-/** 仅将全局身份、提示词与经验偏好发送给存储层。 */
+/** 将默认执行配置写入现有员工存储。 */
 export function templateInput(draft: DigitalEmployeeTemplateDraft): DigitalEmployeeTemplateInput {
-  return { memoryEnabled: draft.memoryEnabled !== false, name: draft.name.trim(), description: draft.description.trim(), role: draft.role.trim(), domain: draft.domain.trim(), avatarId: draft.avatarId, prompt: draft.prompt.trim() };
+  return {
+    model: draft.settings.modelOverride ?? null,
+    reasoningEffort: draft.settings.reasoningEffort ?? null,
+    contextCapacityTokens: draft.settings.contextCapacityTokens ?? null,
+    serviceTier: draft.settings.serviceTier ?? null,
+    workMode: draft.settings.workMode ?? 'default',
+    permissionMode: draft.settings.permissionMode ?? 'read-only',
+    skillIds: draft.settings.skillIds ?? [],
+    memoryEnabled: draft.memoryEnabled !== false,
+    name: draft.name.trim(),
+    description: draft.description.trim(),
+    role: draft.role.trim(),
+    domain: draft.domain.trim(),
+    avatarId: draft.avatarId,
+    prompt: draft.prompt.trim(),
+  };
 }
 
 /** 显示当前语言的原因，并保留可展开的原始详情。 */

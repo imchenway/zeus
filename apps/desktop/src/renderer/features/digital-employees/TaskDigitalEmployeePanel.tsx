@@ -8,7 +8,7 @@ import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/c
 import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { NativeConversationChoice, CodexTaskPushCapabilities, TaskPushSupplementalAttachmentDraft } from '../../session/sessionTypes.js';
 import { useConversationInputResources } from '../../session/useConversationInputResources.js';
-import { mergeTaskPushSupplementalAttachments, taskPushEnvironmentLabel, taskPushSupplementalAttachmentIdentity, taskPushSupplementalRequestAttachments, TaskPushLayoutPreview } from '../../task/TaskModelPushModal.js';
+import { mergeTaskPushSupplementalAttachments, taskPushEnvironmentLabel, taskPushSupplementalAttachmentIdentity, taskPushSupplementalRequestAttachments } from '../../task/TaskModelPushModal.js';
 import { TaskPushSupplementalAttachmentCards } from '../../task/TaskPushSupplementalAttachmentCards.js';
 import { Button } from '../../ui/Button.js';
 import { ModalPortal } from '../../ui/ModalPortal.js';
@@ -23,6 +23,11 @@ import { TaskConversationPane } from './TaskConversationPane.js';
 import { TaskDeliverableReader, TaskDeliverableContent, readTaskDeliverableContent } from './TaskDeliverableReader.js';
 import { TaskWorkReviewPanel } from './TaskWorkReviewPanel.js';
 import { TaskWorkPlanPanel } from './TaskWorkPlanPanel.js';
+import { EmployeeExecutionSettings } from './EmployeeExecutionSettings.js';
+import { EmployeeExecutionPreview } from './EmployeeExecutionPreview.js';
+import { templateDraft } from './digitalEmployeeUiSupport.js';
+import type { EmployeeWorkSettings } from '@zeus/shared';
+import type { NativeConversationAppClient } from '../workspace/workspaceSupport.js';
 import './digitalEmployees.css';
 
 export interface TaskDigitalEmployeePanelProps {
@@ -610,9 +615,7 @@ export function TaskDigitalEmployeeExecutor(props: {
   );
   /** 停用员工保留历史身份，但不能成为新指派候选。 */
   const runnableEmployees = props.management.assignableEmployees.filter((employee) => employee.enabled && employee.entrypointMigrationState === 'ready' && employee.entrypoint?.kind === 'agent');
-  const options = [
-    ...runnableEmployees.map((employee) => ({ value: employee.id, label: `${employee.name} · ${employee.role}`, icon: <DigitalEmployeeAvatar {...employee} />, searchText: `${employee.name} ${employee.role} ${employee.domain}` })),
-  ];
+  const options = [...runnableEmployees.map((employee) => ({ value: employee.id, label: `${employee.name} · ${employee.role}`, icon: <DigitalEmployeeAvatar {...employee} />, searchText: `${employee.name} ${employee.role}` }))];
   return (
     <span className="task-digital-employee-executor">
       {assignedEmployees.length ? (
@@ -712,6 +715,8 @@ function TaskEmployeeRunDialog(props: {
   const [supplementalAttachments, setSupplementalAttachments] = useState<TaskPushSupplementalAttachmentDraft[]>([]);
   const [supplementalResourceError, setSupplementalResourceError] = useState<string | null>(null);
   const [selectedDeliverableIds, setSelectedDeliverableIds] = useState<string[]>([]);
+  /** 本次选择独立保存，未提供字段继续跟随员工默认。 */
+  const [executionSettings, setExecutionSettings] = useState<EmployeeWorkSettings>({});
   const [preview, setPreview] = useState<TaskWorkPreview | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -815,6 +820,7 @@ function TaskEmployeeRunDialog(props: {
     const timer = window.setTimeout(() => {
       void props.client
         .previewTaskWorkItem(props.taskId, {
+          ...executionSettings,
           employeeId: props.employee.id,
           supplementalInfo: supplementalInfo.trim() || null,
           ...(supplementalAttachments.length > 0 ? { supplementalAttachments: taskPushSupplementalRequestAttachments(supplementalAttachments) } : {}),
@@ -835,7 +841,7 @@ function TaskEmployeeRunDialog(props: {
         });
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [agentEntrypoint, models, props.client, props.employee.id, props.taskId, selectedDeliverableIds, supplementalAttachments, supplementalInfo, workspaceMode, workspaceTarget, zh]);
+  }, [executionSettings, agentEntrypoint, models, props.client, props.employee.id, props.taskId, selectedDeliverableIds, supplementalAttachments, supplementalInfo, workspaceMode, workspaceTarget, zh]);
 
   const existingEnvironments = capabilities?.existingEnvironments ?? [];
   const canContinueEnvironment = (environment: NonNullable<CodexTaskPushCapabilities['existingEnvironments']>[number]): boolean => environment.available;
@@ -875,10 +881,7 @@ function TaskEmployeeRunDialog(props: {
             <DigitalEmployeeAvatar {...props.employee} />
             <span>
               <strong>{props.employee.name}</strong>
-              <small>
-                {props.employee.role}
-                {props.employee.domain ? ` · ${props.employee.domain}` : ''}
-              </small>
+              <small>{props.employee.role}</small>
             </span>
           </section>
           {capabilitiesLoaded && !hasRunnableModel && !capabilityError ? (
@@ -1021,10 +1024,24 @@ function TaskEmployeeRunDialog(props: {
             </details>
           ) : null}
 
-          {preview?.promptPreview && hasRunnableModel ? (
-            <details className="task-work-context-details">
-              <summary>{zh ? '核对将提供给员工的完整内容' : 'Review the full employee context'}</summary>
-              <TaskPushLayoutPreview layout={preview.promptPreview} language={props.language} previewAttachments={supplementalAttachments} />
+          <details>
+            <summary>本次执行配置</summary>
+            <EmployeeExecutionSettings
+              client={props.client}
+              skillClient={'loadSkills' in props.client ? (props.client as DigitalEmployeeApiClient & Pick<NativeConversationAppClient, 'loadSkills'>) : null}
+              projectId={props.projectId}
+              language={props.language}
+              overrides
+              value={executionSettings}
+              inherited={templateDraft(props.employee).settings}
+              disabled={props.busy}
+              onChange={setExecutionSettings}
+            />
+          </details>
+          {preview && hasRunnableModel ? (
+            <details>
+              <summary>执行预览</summary>
+              <EmployeeExecutionPreview preview={preview} language={props.language} />
             </details>
           ) : null}
           {!capabilitiesLoaded || (previewBusy && hasRunnableModel) ? (

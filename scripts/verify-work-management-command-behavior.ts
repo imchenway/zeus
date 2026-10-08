@@ -55,12 +55,28 @@ import { mergeEmployeeWorkSettings } from '../packages/shared/src/employeeWorkPl
 const probeRoot = await mkdtemp(join(tmpdir(), 'zeus-work-management-command-probe-'));
 const observed: Record<string, unknown> = {};
 
-/** 新工作丢弃历史执行偏好，保留业务要求，并且下层不能放宽权限。 */
-const simplifiedSettings = normalizeWorkSettings({ modelOverride: 'retired-model', reasoningEffort: 'high', serviceTier: 'priority', workMode: 'plan', skillIds: ['retired-skill'], promptOverride: '本次工作要求', permissionMode: 'auto' });
-assertProbe(JSON.stringify(simplifiedSettings) === JSON.stringify({ promptOverride: '本次工作要求', permissionMode: 'auto' }), '工作配置不应继续保存历史执行偏好');
-/** 同时覆盖全局、阶段、单份工作的历史字段，避免旧配置重新进入执行快照。 */
-const mergedSettings = mergeEmployeeWorkSettings({ modelOverride: 'retired-model', permissionMode: 'read-only' }, { permissionMode: 'full-access', promptOverride: '实际要求', skillIds: ['retired-skill'] });
-assertProbe(JSON.stringify(mergedSettings) === JSON.stringify({ permissionMode: 'read-only', promptOverride: '实际要求' }), '统一执行默认必须去除重复配置并保持只读约束');
+/** 新工作保留完整配置；权限选择和实际动作授权分别核对。 */
+const savedSettings = normalizeWorkSettings({
+  modelOverride: 'chosen-model',
+  contextCapacityTokens: 256000,
+  reasoningEffort: 'high',
+  serviceTier: 'priority',
+  workMode: 'plan',
+  skillIds: ['plugin:probe:skill:work'],
+  promptOverride: '本次工作要求',
+  permissionMode: 'auto-review',
+});
+assertProbe(savedSettings.modelOverride === 'chosen-model' && savedSettings.contextCapacityTokens === 256000 && savedSettings.skillIds?.length === 1 && savedSettings.permissionMode === 'auto-review', '执行配置必须完整保留');
+/** 各层就近覆盖，显式清空与未提供有不同语义，提示词补充共同保留。 */
+const mergedSettings = mergeEmployeeWorkSettings(
+  { modelOverride: 'employee-model', permissionMode: 'read-only', skillIds: ['plugin:probe:skill:work'], promptOverride: '任务默认要求' },
+  { permissionMode: 'full-access', promptOverride: '实际要求', skillIds: [] },
+);
+assertProbe(
+  mergedSettings.modelOverride === 'employee-model' && mergedSettings.permissionMode === 'full-access' && mergedSettings.skillIds?.length === 0 && mergedSettings.promptOverride === '任务默认要求\n\n实际要求',
+  '执行默认值就近覆盖，显式清空不能重新继承',
+);
+assertProbe(mergeEmployeeWorkSettings(savedSettings, {}).serviceTier === 'priority' && mergeEmployeeWorkSettings(savedSettings, { contextCapacityTokens: null }).contextCapacityTokens === null, '缺省跟随和模型默认容量必须区分');
 
 try {
   const db = await createZeusDatabase(join(probeRoot, 'probe.db'));
@@ -870,6 +886,23 @@ async function verifyEmployeeIdentity(db: ZeusDatabase, projects: ProjectReposit
   const secondProject = projects.create({ name: '员工身份第二项目', localPath: join(probeRoot, 'employee-second-project') });
   /** 名称相同的员工必须仍有不同身份。 */
   const global = templates.create({ name: '员工身份探针', role: '开发', prompt: '全局通用要求', memoryEnabled: true });
+  /** 新默认写入原存储并可通过新的仓储实例读回。 */
+  const configured = templates.create({
+    name: '配置持久化探针',
+    role: '开发',
+    prompt: '员工原始提示词',
+    model: 'saved-model',
+    reasoningEffort: 'high',
+    contextCapacityTokens: 256000,
+    serviceTier: 'priority',
+    workMode: 'plan',
+    permissionMode: 'auto-review',
+    skillIds: ['plugin:probe:skill:work'],
+  });
+  const reread = new DigitalEmployeeTemplateRepository(db).getById(configured.id)!;
+  assertProbe(reread.contextCapacityTokens === 256000 && reread.serviceTier === 'priority' && reread.workMode === 'plan' && reread.permissionMode === 'auto-review' && reread.skillIds.length === 1, '所有员工默认配置必须读回');
+  const configuredBinding = employees.ensureProjectEmployee(firstProjectId, configured.id);
+  assertProbe(configuredBinding.model === 'saved-model' && configuredBinding.skillIds.length === 1 && configuredBinding.contextCapacityTokens === 256000, '项目绑定应继承全局新配置');
   const sameName = templates.create({ name: global.name, role: global.role, prompt: '另一独立员工' });
   assertProbe(global.id !== sameName.id && global.identityKind === 'employee', '同名员工不能合并，用户创建记录应有全局员工身份。');
   /** 直接构造旧基础配置，验证历史动作不会再进入当前员工继承。 */
@@ -1362,6 +1395,7 @@ async function verifyWorkArtifactDelivery(db: ZeusDatabase, projects: ProjectRep
     defaultReasoningEffort: 'medium',
     serviceTiers: [{ id: 'priority' }],
     defaultServiceTier: null,
+    contextCapacity: { choices: [128000, 256000], reason: null },
     contextWindow: null,
   }));
   /** 插件技能通过固定目录验证冻结身份，不读取外部插件目录。 */
@@ -1457,7 +1491,46 @@ async function verifyWorkArtifactDelivery(db: ZeusDatabase, projects: ProjectRep
           (accepted.run.skillSnapshot?.pluginSkills as unknown[])?.length === scenario.skills,
         `团队冻结配置必须保留缺省、节点覆盖及显式清空语义：${scenario.suffix}`,
       );
-      assertProbe(accepted.run.entrypointSnapshot.autonomyObjective === '完成冻结工作目标' && accepted.run.entrypointSnapshot.memoryPromptBase === '本节点明确工作要求', '统一执行默认不能删除节点真实目标和提示词要求。');
+      assertProbe(
+        accepted.run.entrypointSnapshot.autonomyObjective === '完成冻结工作目标' && accepted.run.entrypointSnapshot.memoryPromptBase === [scenario.employeeSnapshot.entrypoint?.prompt, '本节点明确工作要求'].filter(Boolean).join('\n\n'),
+        '统一执行默认不能删除节点真实目标和提示词要求。',
+      );
+    }
+    /** 节点预览走公开 HTTP 处理器，普通指派不能自行传入内部直连现场。 */
+    const nodePreview = (await reworkRoutes.get('/api/tasks/:taskId/workflow-node-preview')!(
+      { params: { taskId: task.id }, body: { employeeId: employee.id, settings: { skillIds: [] }, instructions: '节点预览补充要求', executionMode: 'read_only' } },
+      {
+        code() {
+          return this;
+        },
+        send(value: unknown) {
+          return value;
+        },
+      },
+    )) as { authority?: { permissionMode: string }; entrypoint?: { supplementalInfo: string; configurationSources: Record<string, string> }; blockers?: unknown[] };
+    assertProbe(nodePreview.authority?.permissionMode === 'read-only' && nodePreview.entrypoint?.supplementalInfo === '节点预览补充要求' && nodePreview.blockers?.length === 0, '只读节点预览应成功解析并保留节点要求');
+    assertProbe(nodePreview.entrypoint?.configurationSources.skillIds === '团队节点覆盖', '节点预览必须标明当前覆盖来源。');
+    /** 无效能力在正式接纳前阻断，不能偷偷改成模型默认。 */
+    for (const invalid of [{ modelOverride: 'missing-model' }, { reasoningEffort: 'impossible' }, { contextCapacityTokens: 1000000 }, { skillIds: ['plugin:missing:skill:missing'] }]) {
+      let rejected = false;
+      try {
+        await reworkController.createWorkflowWorkItem({
+          taskId: task.id,
+          employeeId: employee.id,
+          employeeSnapshot: frozenWorkflowEmployee,
+          sourceRef: `digital-team:invalid:${JSON.stringify(invalid)}`,
+          title: '无效配置',
+          description: '',
+          supplementalInfo: '',
+          workspace: { mode: 'direct' },
+          purpose: 'work',
+          executionMode: 'read_only',
+          settings: invalid,
+        });
+      } catch {
+        rejected = true;
+      }
+      assertProbe(rejected, `不可用配置必须在派发前阻断：${JSON.stringify(invalid)}`);
     }
     assertProbe(JSON.stringify(frozenWorkflowEmployee) === originalFrozenWorkflow, '接纳后续节点不得改写原冻结员工对象。');
     observed.frozenWorkflowDefaults = {

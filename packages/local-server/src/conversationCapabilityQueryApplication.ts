@@ -114,6 +114,8 @@ export interface ConversationCapabilitiesSnapshot {
 }
 
 export interface DigitalEmployeeCapabilitiesSnapshot {
+  /** 与任务推送共用当前默认模型。 */
+  preferredModel?: string | null;
   /** 只公布宿主已就绪的原生目标能力。 */
   goals?: CodexCapabilitiesSnapshot['goals'];
   generationId: string;
@@ -144,7 +146,9 @@ export class ConversationCapabilityQueryApplication {
     const transport = this.ports.provider.getState();
     const codexCapabilities = this.ports.codexNativeEnabled() && transport.type === 'ready' ? transport.capabilities : null;
     const models = mapConversationCapabilityModels(codexCapabilities, await this.ports.modelCatalog.listSelectableModels()).map((model) => ({ ...model, contextCapacity: this.ports.readContextCapacitySupport?.(model) }));
+    const preferred = this.ports.readDefaultModel();
     const snapshot = {
+      preferredModel: preferred ? (resolveModelCapability(models, preferred)?.id ?? preferred) : (models.find((model) => model.available !== false)?.id ?? null),
       goals: codexCapabilities?.goals ?? { supported: false, enabled: false, stage: null },
       generationId: codexCapabilities?.generationId ?? 'pi-sdk',
       initializedAt: codexCapabilities?.initializedAt ?? this.ports.now().toISOString(),

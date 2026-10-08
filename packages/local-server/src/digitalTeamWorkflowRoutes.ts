@@ -9,7 +9,7 @@ export type DigitalTeamTemplateSaveInput = Record<string, unknown> & { id?: stri
 /** 数字团队运行创建输入与 Renderer 固定调用保持一致。 */
 export interface DigitalTeamRunCreateInput {
   /** 整份流程及修复后继共同继承的本次权限。 */
-  permissionMode?: 'read-only' | 'auto' | 'full-access';
+  permissionMode?: 'read-only' | 'auto' | 'auto-review' | 'full-access';
   /** 本次选择的真实员工入口，省略时从流程根开始。 */
   entryNodeId?: string;
   /** 当前任务明确绑定的已验收上游成果。 */

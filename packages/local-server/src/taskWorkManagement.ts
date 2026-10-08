@@ -3,7 +3,7 @@ import { restrictToolPermission } from './conversationToolPolicy.js';
 import { conversationCommandTypes, conversationInputSha256 } from './conversationCommandApplication.js';
 import { EmployeeMemoryProposalRepository } from '@zeus/storage';
 import { isProviderStopPendingTurn } from './codexProviderStopRecoveryApplication.js';
-import { selectEmployeeMemories } from './employeeMemoryContext.js';
+import { resolveEmployeeMemories } from './employeeMemoryContext.js';
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
 import { captureTaskWorkEvidence, captureDeploymentCommands } from './taskWorkEvidenceCapture.js';
 import type { WorkArtifactDelivery } from './workArtifactDelivery.js';
@@ -17,6 +17,7 @@ import { lstat, readdir, readFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import {
   buildTaskPushLayout,
+  assertContextCapacity,
   type CommandDefinition,
   type CommandEnvelope,
   commandEnvelopeSchemaGeneration,
@@ -77,11 +78,13 @@ export interface TaskWorkPreviewSelection {
   employeeId: string;
   supplementalInfo?: string | null;
   supplementalAttachments?: TaskWorkSupplementalAttachmentInput[];
+  /** 显式上下文容量覆盖，空值使用模型默认。 */
+  contextCapacityTokens?: number | null;
   modelOverride?: string | null;
   reasoningEffort?: string | null;
   serviceTier?: string | null;
   workMode?: 'default' | 'plan' | null;
-  permissionMode?: 'read-only' | 'auto' | 'full-access' | null;
+  permissionMode?: 'read-only' | 'auto' | 'auto-review' | 'full-access' | null;
   promptOverride?: string | null;
   skillIds?: string[];
   selectedDeliverableIds?: string[];
@@ -246,8 +249,10 @@ export interface TaskWorkManagementController {
   /** 自动领取只绑定现行安排中的待领分工。 */
   claimPlannedWork(taskId: string, employeeId: string): boolean;
   /** 自动化沿用原安排领取分工，回执固定到准确安排代次，不另建独立工作。 */
-  claimPlannedAutomationWork(input: { taskId: string; employeeId: string; sourceRef: string; permissionMode?: 'read-only' | 'auto' | 'full-access' }): Promise<AutomationExecutionReference | null | undefined>;
-  createAutomatedWorkItem(input: { taskId: string; employeeId: string; sourceRef: string; permissionMode?: 'read-only' | 'auto' | 'full-access' }): Promise<{ item: TaskWorkItemRecord; run: TaskWorkRunRecord }>;
+  claimPlannedAutomationWork(input: { taskId: string; employeeId: string; sourceRef: string; permissionMode?: 'read-only' | 'auto' | 'auto-review' | 'full-access' }): Promise<AutomationExecutionReference | null | undefined>;
+  createAutomatedWorkItem(input: { taskId: string; employeeId: string; sourceRef: string; permissionMode?: 'read-only' | 'auto' | 'auto-review' | 'full-access' }): Promise<{ item: TaskWorkItemRecord; run: TaskWorkRunRecord }>;
+  /** 接纳整个流程时固定最终模型配置，并检查全部节点 Skill。 */
+  freezeWorkflowConfiguration(projectId: string, employeeId: string, settings: EmployeeWorkSettings, taskId?: string): Promise<EmployeeWorkSettings>;
   /** 数字团队按冻结节点创建工作项，旧自动调度器不会接管此来源。 */
   createWorkflowWorkItem(input: {
     taskId: string;
@@ -436,6 +441,12 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
           return result.result;
         }),
     );
+  options.server.get('/api/digital-employees/:employeeId/memory-proposals', async (request: FastifyRequest<{ Params: { employeeId: string } }>, reply) =>
+    route(reply, async () => options.memoryProposals.listByEmployee(request.params.employeeId)),
+  );
+  options.server.get('/api/digital-employees/:employeeId/memory-uses', async (request: FastifyRequest<{ Params: { employeeId: string } }>, reply) =>
+    route(reply, async () => options.runs.listDispatchedByEmployee(request.params.employeeId)),
+  );
   options.server.get('/api/projects/:projectId/digital-employees/:employeeId/memory-proposals', async (request: FastifyRequest<{ Params: { projectId: string; employeeId: string } }>, reply) =>
     route(reply, async () => {
       requireEmployeeOrThrow(options, request.params.projectId, request.params.employeeId);
@@ -551,6 +562,27 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       if (sha256(content) !== deliverable.contentSha256) throw new TaskWorkStoreError('ZEUS_TASK_WORK_DELIVERABLE_CORRUPT', '交付物正文完整性校验失败。');
       return { deliverableId: deliverable.id, version: deliverable.version, contentSha256: deliverable.contentSha256, content };
     }),
+  );
+
+  options.server.post(
+    '/api/tasks/:taskId/workflow-node-preview',
+    async (request: FastifyRequest<{ Params: { taskId: string }; Body: { employeeId: string; settings: EmployeeWorkSettings; instructions: string; executionMode: 'read_only' | 'isolated_write' | 'candidate_read_only' } }>, reply) =>
+      route(reply, async () => {
+        const task = requireTaskOrThrow(options, request.params.taskId);
+        const input = request.body;
+        if (!isRecord(input)) throw new TaskWorkStoreError('ZEUS_TASK_WORK_SELECTION_INVALID', '节点配置格式无效。', 400);
+        const executionMode = optionalMember(input.executionMode, ['read_only', 'isolated_write', 'candidate_read_only'] as const, 'executionMode') ?? 'read_only';
+        const selection = normalizeSelection({
+          ...normalizeWorkSettings(input.settings ?? {}),
+          employeeId: input.employeeId,
+          supplementalInfo: optionalText(input.instructions, 12000),
+        });
+        // 节点只读现场由服务端确定，不扩大普通指派的公开现场选择。
+        selection.workspace = { mode: executionMode === 'isolated_write' ? 'create' : 'direct' };
+        const employee = options.employees.previewProjectEmployee(task.projectId, selection.employeeId);
+        if (!employee) throw new TaskWorkStoreError('ZEUS_DIGITAL_EMPLOYEE_NOT_FOUND', '数字员工不存在。', 404);
+        return resolvePreview(options, task, selection, undefined, executionMode);
+      }),
   );
 
   if (!options.readOnlyValidation)
@@ -739,7 +771,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       if (!employee?.enabled || employee.projectId !== options.tasks.getById(taskId)?.projectId) return true;
       const stage = plan.stages.find((candidate) => !['accepted', 'skipped'].includes(candidate.status));
       for (const item of stage?.items ?? [])
-        if (!item.employeeId && !item.currentRunId && item.status === 'queued' && (!item.arrangement?.role || employee.role.includes(item.arrangement.role) || employee.domain.includes(item.arrangement.role)))
+        if (!item.employeeId && !item.currentRunId && item.status === 'queued' && (!item.arrangement?.role || employee.role.includes(item.arrangement.role) || employee.name.includes(item.arrangement.role)))
           options.planning.assign(item.id, item.revision, employee.id);
       kick();
       return true;
@@ -771,9 +803,8 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
           if (!plan || plan.state !== 'running' || options.isTaskTerminal(task) || !employee.enabled) return null;
           const stage = plan.stages.find((candidate) => !['accepted', 'skipped'].includes(candidate.status));
           const pending =
-            stage?.items.filter(
-              (item) => !item.employeeId && !item.currentRunId && item.status === 'queued' && (!item.arrangement?.role || employee.role.includes(item.arrangement.role) || employee.domain.includes(item.arrangement.role)),
-            ) ?? [];
+            stage?.items.filter((item) => !item.employeeId && !item.currentRunId && item.status === 'queued' && (!item.arrangement?.role || employee.role.includes(item.arrangement.role) || employee.name.includes(item.arrangement.role))) ??
+            [];
           if (!pending.length) return null;
           for (const item of pending) {
             const assigned = options.planning.assign(item.id, item.revision, employee.id);
@@ -812,6 +843,34 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       kick();
       return created;
     },
+    freezeWorkflowConfiguration: async (projectId, employeeId, settings, taskId) => {
+      settings = mergeEmployeeWorkSettings(taskId ? options.planning.get(taskId)?.settings : undefined, settings);
+      const employee = options.employees.previewProjectEmployee(projectId, employeeId);
+      if (!employee) throw new TaskWorkStoreError('ZEUS_DIGITAL_EMPLOYEE_NOT_FOUND', '数字员工不存在。', 404);
+      const capability = await options.conversationCapabilities.readTaskPush(projectId, undefined);
+      const blockers: TaskWorkPreview['blockers'] = [];
+      const selection = { ...normalizeWorkSettings(settings), employeeId };
+      const model = resolveAgentModel(capability, blockers, employee, selection);
+      const skillIds = selection.skillIds ?? employee.skillIds;
+      await resolveEmployeeSkills(options, projectId, skillIds, blockers);
+      const permissionMode = selection.permissionMode ?? employee.permissionMode;
+      const selected = (Array.isArray(capability.models) ? capability.models.filter(isCapabilityModel) : []).find((item) => item.id === model?.id);
+      if (permissionMode === 'auto-review' && (!selected || ['unsupported', 'needs_configuration'].includes(selected.features?.autoReview?.state ?? '')))
+        blockers.push({ code: 'ZEUS_TASK_WORK_AUTO_REVIEW_UNAVAILABLE', message: '当前模型不支持替我批准。' });
+      if ((selection.workMode ?? employee.workMode) === 'plan' && selected?.features && !['available', 'unknown'].includes(selected.features.plan.state))
+        blockers.push({ code: 'ZEUS_TASK_WORK_PLAN_UNAVAILABLE', message: '当前模型不支持计划模式。' });
+      if (blockers.length || !model) throw new TaskWorkStoreError(blockers[0]?.code ?? 'ZEUS_TASK_WORK_MODEL_UNAVAILABLE', blockers[0]?.message ?? '模型不可用。');
+      return {
+        ...normalizeWorkSettings(settings),
+        modelOverride: String(model.id),
+        reasoningEffort: model.reasoningEffort as string | null,
+        contextCapacityTokens: model.contextCapacityTokens as number | null,
+        serviceTier: model.serviceTier as string | null,
+        workMode: selection.workMode ?? employee.workMode,
+        permissionMode,
+        skillIds,
+      };
+    },
     createWorkflowWorkItem: async ({ taskId, employeeId, employeeSnapshot, sourceRef, title, description, supplementalInfo, workspace, purpose, executionMode, settings, upstreamDeliverableIds, projectMemoryPolicy }) => {
       const replay = options.items.getBySource('manual', sourceRef);
       if (replay?.currentRunId) {
@@ -822,7 +881,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       if (employeeSnapshot.id !== employeeId || employeeSnapshot.projectId !== task.projectId) throw new TaskWorkStoreError('ZEUS_DIGITAL_TEAM_EMPLOYEE_SNAPSHOT_INVALID', '冻结员工配置与当前节点不一致。');
       const employee = structuredClone(employeeSnapshot);
       /** 团队节点覆盖启动时冻结的员工默认，后续员工修改不影响本次运行。 */
-      const preview = await resolvePreview(options, task, { ...settings, ...normalizeWorkSettings(settings), employeeId, supplementalInfo, workspace }, employee);
+      const preview = await resolvePreview(options, task, { ...settings, ...normalizeWorkSettings(settings), employeeId, supplementalInfo, workspace }, employee, executionMode);
       if (preview.blockers.length > 0) throw new TaskWorkStoreError(preview.blockers[0]!.code, preview.blockers[0]!.message);
       /** 节点职责随真实工作运行冻结；负责人用团队计划分工，不进入旧安排委派通道。 */
       /** 授权文件必须来自本任务的真实正式成果，不允许跨任务引用改变执行归属。 */
@@ -1087,7 +1146,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
         members: options.employees
           .listByProject(task.projectId)
           .filter((employee) => employee.enabled)
-          .map((employee) => ({ id: employee.id, name: employee.name, role: employee.role, domain: employee.domain })),
+          .map((employee) => ({ id: employee.id, name: employee.name, role: employee.role })),
         plan: plan
           ? {
               state: plan.state,
@@ -1325,7 +1384,45 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
   }
 }
 
-async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTaskRecord, selection: TaskWorkPreviewSelection, employeeSnapshot?: DigitalEmployeeRecord): Promise<TaskWorkPreview> {
+/** 能力目录在预览、团队接纳和实际派发前使用同一校验。 */
+async function resolveEmployeeSkills(options: TaskWorkManagementOptions, projectId: string, selectedSkillIds: string[], blockers: TaskWorkPreview['blockers']): Promise<TaskWorkPreview['skills']> {
+  const skills: TaskWorkPreview['skills'] = [];
+  const selectionBySource = splitZeusSkillIds(selectedSkillIds);
+  if (selectionBySource.invalidIds.length > 0) blockers.push({ code: 'ZEUS_TASK_WORK_SKILL_INVALID', message: '指派包含无效的 Skill 身份。' });
+  if (selectionBySource.nativeSkillIds.length > 0 && !options.skills) blockers.push({ code: 'ZEUS_TASK_WORK_SKILL_CATALOG_UNAVAILABLE', message: 'Zeus Skill 目录当前不可用。' });
+  if (selectionBySource.pluginReferences.length > 0 && !options.plugins) blockers.push({ code: 'ZEUS_TASK_WORK_PLUGIN_SKILL_CATALOG_UNAVAILABLE', message: 'Zeus Plugin Skill 目录当前不可用。' });
+  if (options.skills) {
+    for (const skillId of selectionBySource.nativeSkillIds) {
+      try {
+        const resolvedSkill = await options.skills.resolve({ cwd: options.projects.getById(projectId)!.localPath, skillId });
+        skills.push(await snapshotSkill(resolvedSkill));
+      } catch (error) {
+        blockers.push({ code: 'ZEUS_TASK_WORK_SKILL_UNAVAILABLE', message: serializeError(error).message });
+      }
+    }
+  }
+  if (options.plugins && selectionBySource.pluginReferences.length > 0) {
+    try {
+      const available = await options.plugins.listSkills({ projectId: projectId });
+      for (const reference of selectionBySource.pluginReferences) {
+        const skill = available.find((candidate) => candidate.id === reference.id);
+        if (!skill) blockers.push({ code: 'ZEUS_TASK_WORK_SKILL_UNAVAILABLE', message: `Plugin Skill ${reference.id} 在当前项目不可用。` });
+        else skills.push({ source: 'plugin', id: skill.id, name: skill.namespace, description: skill.description, pluginId: skill.pluginId, pluginRevisionId: skill.pluginRevisionId });
+      }
+    } catch (error) {
+      blockers.push({ code: 'ZEUS_TASK_WORK_SKILL_UNAVAILABLE', message: serializeError(error).message });
+    }
+  }
+  return skills;
+}
+
+async function resolvePreview(
+  options: TaskWorkManagementOptions,
+  task: ZeusTaskRecord,
+  selection: TaskWorkPreviewSelection,
+  employeeSnapshot?: DigitalEmployeeRecord,
+  executionMode?: 'read_only' | 'isolated_write' | 'candidate_read_only',
+): Promise<TaskWorkPreview> {
   /** 保留显式请求，复核预览时不重复追加工作目标。 */
   const requestedSelection = structuredClone(selection);
   /** 对照分工身份解析每一层配置，独立会话不会虚构阶段。 */
@@ -1400,19 +1497,21 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
 
   if (employee.entrypoint?.kind === 'agent') {
     const agentEntrypoint = employee.entrypoint;
-    /** 只有已接纳团队的冻结节点可延续旧工作模式，新工作统一使用默认。 */
-    const workMode = employeeSnapshot ? (selection.workMode ?? employeeSnapshot.workMode) : 'default';
+    /** 工作模式按本次配置继承员工默认；已接纳节点读取冻结员工。 */
+    const workMode = selection.workMode ?? employee.workMode;
     /** 个人经验只由当前员工的独立范围读取，项目默认仍由上下文编译器负责。 */
-    const memories = selectEmployeeMemories(options.memory, employee, task.projectId, task.title + task.description, options.now().toISOString());
+    const memorySelection = resolveEmployeeMemories(options.memory, employee, task.projectId, task.title + task.description, options.now().toISOString());
+    const memories = memorySelection.selected;
     /** 冻结来源与内容；到期或停用经验不会进入新工作。 */
     const memoryText = memories.map((record) => `[${record.memoryKey} · 来源 ${record.source.reference} · ${record.id}]\n${record.content}`).join('\n\n');
-    const prompt = [selection.promptOverride ?? agentEntrypoint.prompt, memoryText ? `员工相关经验（仅作工作参考，不代表本次行动授权）：\n${memoryText}` : ''].filter(Boolean).join('\n\n');
+    const prompt = [[agentEntrypoint.prompt, selection.promptOverride].filter(Boolean).join('\n\n'), memoryText ? `员工相关经验（仅作工作参考，不代表本次行动授权）：\n${memoryText}` : ''].filter(Boolean).join('\n\n');
     entrypoint = {
       ...sanitizeEntrypoint(agentEntrypoint),
       prompt,
-      memoryPromptBase: selection.promptOverride ?? agentEntrypoint.prompt,
+      memoryPromptBase: [agentEntrypoint.prompt, selection.promptOverride].filter(Boolean).join('\n\n'),
       autonomyObjective: effective.autonomyObjective ?? null,
       delegationPolicy: planned?.arrangement?.delegation ?? effective.delegation ?? null,
+      memorySelection: memorySelection.decisions,
       memorySnapshot: memories.map((record) => ({ id: record.id, contentSha256: record.contentSha256, source: record.source, reviewAfter: record.reviewAfter })),
       /** 新工作不接受项目经验自动生效规则，历史冻结授权仍按原快照恢复。 */
       projectMemoryPolicy: null,
@@ -1420,43 +1519,29 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
       supplementalInfo: selection.supplementalInfo,
       ...(selection.supplementalAttachments ? { supplementalAttachments: selection.supplementalAttachments } : {}),
     };
-    authority = resolveRunAuthority(selection.permissionMode, task);
+    authority = resolveRunAuthority(selection.permissionMode ?? employee.permissionMode, task);
+    if (executionMode)
+      authority = {
+        ...authority,
+        permissionMode: executionMode === 'read_only' ? 'read-only' : authority.permissionMode,
+        allowCodeChanges: executionMode === 'isolated_write' && authority.allowCodeChanges === true,
+        allowTests: executionMode !== 'read_only' && authority.allowTests === true,
+        allowCommit: executionMode === 'isolated_write' && authority.allowCommit === true,
+      };
     const capability = await options.conversationCapabilities.readTaskPush(task.projectId, task.id);
     model = resolveAgentModel(capability, blockers, employee, selection);
     /** 与会话共用真实功能目录，切换到 Pi 后不按品牌关闭已经接入的目标。 */
     const selectedCapability = (Array.isArray(capability.models) ? capability.models.filter(isCapabilityModel) : []).find((candidate) => candidate.id === model?.id);
+    if (authority.permissionMode === 'auto-review' && (!selectedCapability || ['unsupported', 'needs_configuration'].includes(selectedCapability.features?.autoReview?.state ?? '')))
+      blockers.push({ code: 'ZEUS_TASK_WORK_AUTO_REVIEW_UNAVAILABLE', message: '当前模型不支持替我批准，请选择其他权限模式。' });
+    if (workMode === 'plan' && selectedCapability?.features && !['available', 'unknown'].includes(selectedCapability.features.plan.state)) blockers.push({ code: 'ZEUS_TASK_WORK_PLAN_UNAVAILABLE', message: '当前模型不支持计划模式。' });
     if (effective.autonomyObjective && !(selectedCapability?.features ? ['available', 'unknown'].includes(selectedCapability.features.goals.state) : isRecord(capability.goals) && capability.goals.enabled === true))
       blockers.push({ code: 'ZEUS_TASK_WORK_GOAL_UNAVAILABLE', message: '该模型尚不支持自主目标，请切换支持的模型或清空此目标后执行。' });
     workspace = resolveTaskWorkWorkspaceSnapshot(selection.workspace, capability, blockers);
     if (model && typeof model.agentKind === 'string') entrypoint = { ...entrypoint, agentKind: model.agentKind };
-    /** 冻结节点保留原技能选择和显式清空，新工作只带流程必需技能。 */
-    const selectedSkillIds = normalizeIdentities([...requiredSkills, ...(employeeSnapshot ? (selection.skillIds ?? agentEntrypoint.skillPolicy.allowedSkillIds) : [])]);
-    const selectionBySource = splitZeusSkillIds(selectedSkillIds);
-    if (selectionBySource.invalidIds.length > 0) blockers.push({ code: 'ZEUS_TASK_WORK_SKILL_INVALID', message: '指派包含无效的 Skill 身份。' });
-    if (selectionBySource.nativeSkillIds.length > 0 && !options.skills) blockers.push({ code: 'ZEUS_TASK_WORK_SKILL_CATALOG_UNAVAILABLE', message: 'Zeus Skill 目录当前不可用。' });
-    if (selectionBySource.pluginReferences.length > 0 && !options.plugins) blockers.push({ code: 'ZEUS_TASK_WORK_PLUGIN_SKILL_CATALOG_UNAVAILABLE', message: 'Zeus Plugin Skill 目录当前不可用。' });
-    if (options.skills) {
-      for (const skillId of selectionBySource.nativeSkillIds) {
-        try {
-          const resolvedSkill = await options.skills.resolve({ cwd: options.projects.getById(task.projectId)!.localPath, skillId });
-          skills.push(await snapshotSkill(resolvedSkill));
-        } catch (error) {
-          blockers.push({ code: 'ZEUS_TASK_WORK_SKILL_UNAVAILABLE', message: serializeError(error).message });
-        }
-      }
-    }
-    if (options.plugins && selectionBySource.pluginReferences.length > 0) {
-      try {
-        const available = await options.plugins.listSkills({ projectId: task.projectId });
-        for (const reference of selectionBySource.pluginReferences) {
-          const skill = available.find((candidate) => candidate.id === reference.id);
-          if (!skill) blockers.push({ code: 'ZEUS_TASK_WORK_SKILL_UNAVAILABLE', message: `Plugin Skill ${reference.id} 在当前项目不可用。` });
-          else skills.push({ source: 'plugin', id: skill.id, name: skill.namespace, description: skill.description, pluginId: skill.pluginId, pluginRevisionId: skill.pluginRevisionId });
-        }
-      } catch (error) {
-        blockers.push({ code: 'ZEUS_TASK_WORK_SKILL_UNAVAILABLE', message: serializeError(error).message });
-      }
-    }
+    /** Skill 显式空集合不继承员工选择，阶段必需 Skill 仍是执行约束。 */
+    const selectedSkillIds = normalizeIdentities([...requiredSkills, ...(selection.skillIds ?? employee.skillIds)]);
+    skills.push(...(await resolveEmployeeSkills(options, task.projectId, selectedSkillIds, blockers)));
     const supplementalInfo = await buildAgentSupplementalInfoSnapshot(options, {
       employee,
       entrypoint,
@@ -1466,6 +1551,28 @@ async function resolvePreview(options: TaskWorkManagementOptions, task: ZeusTask
     promptPreview = buildTaskWorkPromptPreview(task, supplementalInfo, supplementalAttachments);
   }
 
+  /** 来源与最终值一起冻结，不由前端猜测配置继承。 */
+  const configurationSources: Record<string, string> = {};
+  for (const key of ['modelOverride', 'reasoningEffort', 'contextCapacityTokens', 'serviceTier', 'workMode', 'permissionMode', 'skillIds'] as const) {
+    configurationSources[key] =
+      requestedSelection[key] !== undefined
+        ? employeeSnapshot
+          ? '团队接纳时固定'
+          : executionMode
+            ? '团队节点覆盖'
+            : '本次选择'
+        : planned?.arrangement?.settings[key] !== undefined
+          ? '分工覆盖'
+          : stage?.settings[key] !== undefined
+            ? '阶段覆盖'
+            : plan?.settings[key] !== undefined
+              ? '任务默认'
+              : (key === 'modelOverride' ? employee.model : employee[key]) == null
+                ? '项目或模型默认'
+                : '员工默认';
+  }
+  if (executionMode === 'read_only') configurationSources.permissionMode = '节点只读约束';
+  if (entrypoint) entrypoint.configurationSources = configurationSources;
   const digestSource = {
     arrangementRevision: planned?.revision ?? null,
     planRevision: planned ? (plan?.revision ?? null) : null,
@@ -1761,7 +1868,8 @@ async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRu
     model: model.id,
     agentKind: model.agentKind,
     ...(typeof model.reasoningEffort === 'string' ? { effort: model.reasoningEffort } : {}),
-    ...(typeof model.serviceTier === 'string' ? { serviceTier: model.serviceTier } : {}),
+    serviceTier: model.serviceTier ?? null,
+    contextCapacityTokens: model.contextCapacityTokens ?? null,
     permissionMode: typeof authority.permissionMode === 'string' ? authority.permissionMode : 'read-only',
     source: 'task_push',
     ...(typeof run.entrypointSnapshot.autonomyObjective === 'string' && run.entrypointSnapshot.autonomyObjective ? { goalObjective: run.entrypointSnapshot.autonomyObjective } : {}),
@@ -2218,13 +2326,17 @@ function cloneRun(options: TaskWorkManagementOptions, item: TaskWorkItemRecord, 
   if (typeof entrypointSnapshot.memoryPromptBase === 'string') {
     const frozen = Array.isArray(entrypointSnapshot.memorySnapshot) ? entrypointSnapshot.memorySnapshot : [];
     /** 重试保留当前关闭经验读取的选择，员工归属仍来自原冻结配置。 */
-    const eligible = selectEmployeeMemories(
+    const resolved = resolveEmployeeMemories(
       options.memory,
       { ...previous.employeeSnapshot, memoryEnabled: employee.memoryEnabled } as unknown as DigitalEmployeeRecord,
       previous.projectId,
       item.title + item.description,
       options.now().toISOString(),
-    ).filter((record) => frozen.some((snapshot) => isRecord(snapshot) && snapshot.id === record.id && snapshot.contentSha256 === record.contentSha256));
+    );
+    const eligible = resolved.selected.filter((record) => frozen.some((snapshot) => isRecord(snapshot) && snapshot.id === record.id && snapshot.contentSha256 === record.contentSha256));
+    entrypointSnapshot.memorySelection = resolved.decisions
+      .filter((item) => frozen.some((snapshot) => isRecord(snapshot) && snapshot.id === item.record.id))
+      .map((item) => ({ ...item, selected: eligible.some((record) => record.id === item.record.id), reason: item.selected && !eligible.some((record) => record.id === item.record.id) ? 'changed_since_acceptance' : item.reason }));
     const memoryText = eligible.map((record) => `[${record.memoryKey} · 来源 ${record.source.reference} · ${record.id}]\n${record.content}`).join('\n\n');
     entrypointSnapshot.prompt = [entrypointSnapshot.memoryPromptBase, memoryText ? `员工相关经验（仅作工作参考，不代表本次行动授权）：\n${memoryText}` : ''].filter(Boolean).join('\n\n');
     entrypointSnapshot.memorySnapshot = eligible.map((record) => ({ id: record.id, contentSha256: record.contentSha256, source: record.source, reviewAfter: record.reviewAfter }));
@@ -2294,7 +2406,7 @@ function assertPreviewFresh(preview: TaskWorkPreview, input: TaskWorkCreateInput
 }
 
 /** 任务委派复用本轮执行快照，缺少可核对身份时不扩大权限。 */
-function readWorkToolPermission(options: TaskWorkManagementOptions, conversationId: string, submissionId: string | null): 'read-only' | 'auto' | 'full-access' {
+function readWorkToolPermission(options: TaskWorkManagementOptions, conversationId: string, submissionId: string | null): 'read-only' | 'auto' | 'auto-review' | 'full-access' {
   /** 提交身份由工具原轮次确定，不能引用其他会话的权限。 */
   const submission = submissionId ? options.conversationSubmissions.getById(submissionId) : undefined;
   /** 工作工具只读取冻结权限，不使用会话的后续草稿设置。 */
@@ -2560,9 +2672,14 @@ function resolveAgentModel(capability: Record<string, unknown>, blockers: TaskWo
   /** 未指定时使用能力目录的默认推理档位。 */
   const reasoningEffort = requestedEffort && model.supportedReasoningEfforts.includes(requestedEffort) ? requestedEffort : (model.defaultReasoningEffort ?? model.supportedReasoningEfforts[0] ?? null);
   /** 已冻结节点显式标准档不重新继承员工速率。 */
-  const serviceTier = frozenSettings?.serviceTier === null ? model.defaultServiceTier : frozenSettings?.serviceTier?.trim() || employeeSnapshot?.serviceTier || model.defaultServiceTier;
+  const selectedTier = frozenSettings?.serviceTier !== undefined ? frozenSettings.serviceTier : employeeSnapshot?.serviceTier;
+  const serviceTier = selectedTier === undefined ? model.defaultServiceTier : selectedTier;
   if (serviceTier && !model.serviceTiers.some((tier) => tier.id === serviceTier)) blockers.push({ code: 'ZEUS_TASK_WORK_SERVICE_TIER_NOT_ALLOWED', message: '冻结节点的服务速率不受当前模型支持。' });
+  /** 容量选择复用会话能力目录，拒绝不可用的显式值。 */
+  const contextCapacityTokens = frozenSettings?.contextCapacityTokens !== undefined ? frozenSettings.contextCapacityTokens : (employeeSnapshot?.contextCapacityTokens ?? null);
+  if (contextCapacityTokens !== null && !model.contextCapacity?.choices.includes(contextCapacityTokens)) blockers.push({ code: 'ZEUS_CONTEXT_CAPACITY_UNSUPPORTED', message: '当前模型不支持所选上下文容量，请重新选择。' });
   return {
+    contextCapacityTokens,
     id: model.id,
     model: model.model,
     displayName: model.displayName ?? model.model,
@@ -2577,7 +2694,7 @@ function resolveAgentModel(capability: Record<string, unknown>, blockers: TaskWo
 
 /** 默认权限来自任务实际授权，自动化与流程节点可以进一步收紧。 */
 function resolveRunAuthority(requestedPermission: TaskWorkPreviewSelection['permissionMode'], task: ZeusTaskRecord): Record<string, unknown> {
-  /** 不再读取员工权限占位，新工作不会默认获得完全访问。 */
+  /** 权限偏好不授予独立动作权限，仍需核对真实任务授权。 */
   const permissionMode = requestedPermission ?? (task.allowCodeChanges || task.allowTests || task.allowGitCommit ? 'auto' : 'read-only');
   /** 只读模式不能获得任务已授予的写入与交付能力。 */
   const active = permissionMode !== 'read-only';
@@ -2894,14 +3011,14 @@ function projectRuleMetadata(projectPath: string): Array<{ identity: string; sha
 function normalizeSelection(value: unknown): TaskWorkPreviewSelection {
   if (!isRecord(value)) throw new TaskWorkStoreError('ZEUS_TASK_WORK_PREVIEW_INVALID', '指派预览参数必须是对象。', 400);
   /** 手动指派与任务安排共用覆盖参数校验，并保留显式清空。 */
-  const modelSettings = normalizeWorkSettings(Object.fromEntries(['modelOverride', 'reasoningEffort'].filter((key) => key in value).map((key) => [key, value[key]])));
+  const modelSettings = normalizeWorkSettings(Object.fromEntries(['modelOverride', 'reasoningEffort', 'contextCapacityTokens', 'serviceTier', 'workMode', 'skillIds'].filter((key) => key in value).map((key) => [key, value[key]])));
   return {
     ...modelSettings,
     employeeId: requiredText(value.employeeId, '请选择数字员工。', 256),
     plannedWorkItemId: optionalText(value.plannedWorkItemId, 256) ?? undefined,
     supplementalInfo: optionalText(value.supplementalInfo, 20_000),
     supplementalAttachments: optionalSupplementalAttachments(value.supplementalAttachments),
-    permissionMode: optionalMember(value.permissionMode, ['read-only', 'auto', 'full-access'] as const, '权限模式无效。'),
+    permissionMode: optionalMember(value.permissionMode, ['read-only', 'auto', 'auto-review', 'full-access'] as const, '权限模式无效。'),
     promptOverride: optionalText(value.promptOverride, 20_000),
     selectedDeliverableIds: Array.isArray(value.selectedDeliverableIds) ? normalizeIdentities(value.selectedDeliverableIds) : undefined,
     workspace: normalizeTaskWorkWorkspaceChoice(value.workspace),
@@ -3086,7 +3203,7 @@ function safeHttpMessage(response: { body: string; statusCode: number }): string
 export function normalizeWorkSettings(value: unknown): EmployeeWorkSettings {
   if (value === undefined || value === null) return {};
   if (!isRecord(value)) throw new TaskWorkStoreError('ZEUS_TASK_WORK_SETTINGS_INVALID', '工作配置必须是有效对象。', 400);
-  const allowed = ['autonomyObjective', 'delegation', 'modelOverride', 'reasoningEffort', 'serviceTier', 'workMode', 'permissionMode', 'skillIds', 'promptOverride'];
+  const allowed = ['autonomyObjective', 'delegation', 'modelOverride', 'reasoningEffort', 'contextCapacityTokens', 'serviceTier', 'workMode', 'permissionMode', 'skillIds', 'promptOverride'];
   if (Object.keys(value).some((key) => !allowed.includes(key))) throw new TaskWorkStoreError('ZEUS_TASK_WORK_SETTINGS_INVALID', '工作配置包含不支持的选项。', 400);
   const result: EmployeeWorkSettings = {};
   if (value.delegation !== undefined) {
@@ -3107,9 +3224,19 @@ export function normalizeWorkSettings(value: unknown): EmployeeWorkSettings {
     result.delegation = { employeeIds: normalizeIdentities(policy.employeeIds), maxDepth: Number(policy.maxDepth), maxWorkItems: Number(policy.maxWorkItems) };
   }
   /** 保存默认执行参数的显式覆盖，空值保留清空继承的语义。 */
-  for (const key of ['modelOverride', 'reasoningEffort'] as const) if (key in value) result[key] = value[key] === null ? null : requiredText(value[key], '模型或推理级别无效。', key === 'modelOverride' ? 512 : 120);
+  for (const key of ['modelOverride', 'reasoningEffort', 'serviceTier'] as const) if (key in value) result[key] = value[key] === null ? null : requiredText(value[key], '模型或推理级别无效。', key === 'modelOverride' ? 512 : 120);
+  if (value.contextCapacityTokens !== undefined) {
+    assertContextCapacity(value.contextCapacityTokens);
+    result.contextCapacityTokens = value.contextCapacityTokens;
+  }
+  if (value.workMode !== undefined) result.workMode = optionalMember(value.workMode, ['default', 'plan'] as const, '工作模式无效。') ?? undefined;
+  if (value.skillIds !== undefined) {
+    if (!Array.isArray(value.skillIds) || value.skillIds.length > 64) throw new TaskWorkStoreError('ZEUS_TASK_WORK_SKILL_INVALID', 'Skill 必须是最多 64 项的身份列表。', 400);
+    result.skillIds = normalizeIdentities(value.skillIds);
+    if (splitZeusSkillIds(result.skillIds).invalidIds.length) throw new TaskWorkStoreError('ZEUS_TASK_WORK_SKILL_INVALID', 'Skill 身份无效。', 400);
+  }
   /** 业务要求继续使用独立的文本长度约束。 */
   for (const key of ['autonomyObjective', 'promptOverride'] as const) if (key in value) result[key] = value[key] === null ? null : requiredText(value[key], '配置文本无效。', key === 'promptOverride' ? 20_000 : 4_000);
-  if (value.permissionMode !== undefined) result.permissionMode = optionalMember(value.permissionMode, ['read-only', 'auto', 'full-access'] as const, '权限模式无效。') ?? undefined;
+  if (value.permissionMode !== undefined) result.permissionMode = optionalMember(value.permissionMode, ['read-only', 'auto', 'auto-review', 'full-access'] as const, '权限模式无效。') ?? undefined;
   return result;
 }

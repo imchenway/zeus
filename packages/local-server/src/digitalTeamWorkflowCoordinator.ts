@@ -22,6 +22,7 @@ import {
   type ConversationSubmissionRepository,
   type ConversationTurnRepository,
   type DigitalEmployeeRecord,
+  type DigitalEmployeeRepository,
   type DefectWorkflowRepository,
   type DefectWorkflowRecord,
   type DigitalTeamBaseRevision,
@@ -63,6 +64,8 @@ const terminalTurnStatuses = new Set(['completed', 'interrupted', 'failed']);
 
 /** 创建运行前只读冻结的仓库事实。 */
 interface PreparedDigitalTeamRun {
+  /** 预检期间的员工配置摘要，用于接纳前再次核对。 */
+  employeeConfigurations?: Record<string, string>;
   /** 预检所见的准确任务事实，关闭异步仓库检查后的改派竞态。 */
   expectedTaskUpdatedAt?: string;
   /** 指派接纳的耐久入口与成果绑定。 */
@@ -84,7 +87,7 @@ interface PreparedDigitalTeamRun {
 /** 手动、状态与自动化统一使用的项目流程指派输入。 */
 export interface DigitalTeamEmployeeAssignmentInput {
   /** 本次用户或自动化来源冻结的最大权限。 */
-  permissionMode?: 'read-only' | 'auto' | 'full-access';
+  permissionMode?: 'read-only' | 'auto' | 'auto-review' | 'full-access';
   /** 当前任务身份。 */
   taskId: string;
   /** 全局员工或明确项目绑定身份。 */
@@ -119,6 +122,8 @@ export interface DigitalTeamWorkflowCoordinatorOptions {
   advanceTaskStatus?(taskId: string, statusId: string, source: { runId: string; nodeId: string; phase: 'started' | 'completed' }): void;
   /** 父流程复验通过后关闭已验收的 defect 子任务。 */
   finishAcceptedDefect?(taskId: string, runId: string): void;
+  /** 预检及接纳读取同一员工身份和默认配置。 */
+  employees: DigitalEmployeeRepository;
   /** 模板仓储。 */
   templates: DigitalTeamWorkflowTemplateRepository;
   /** 运行仓储。 */
@@ -425,12 +430,28 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
       throw routeError('ZEUS_DIGITAL_TEAM_RUN_INVALID', '任务名称、说明和任务事实无效。', 400);
     }
     const existingTask = this.requireExistingTask(projectId, input);
+    /** 异步预检后再核对员工，避免预检期间修改默认值产生混合快照。 */
+    const employeeConfigurations = Object.fromEntries(
+      execution.nodes.filter((node) => node.type === 'employee').map((node) => [node.data.employeeId, stableJson(this.options.employees.previewProjectEmployee(projectId, node.data.employeeId))]),
+    );
+    const executionSettings = Object.fromEntries(
+      await Promise.all(
+        execution.nodes
+          .filter((node) => node.type === 'employee')
+          .map(async (node) => [
+            node.id,
+            await this.options.taskWork.freezeWorkflowConfiguration(projectId, node.data.employeeId, { ...node.data.settings, ...(node.data.executionMode === 'read_only' ? { permissionMode: 'read-only' as const } : {}) }, existingTask?.id),
+          ]),
+      ),
+    );
+    const runtimeState = { executionSettings };
+
     /** 预检只核对本次明确授权；任务权限仅在随后 Core 事务内更新。 */
     this.requireRunCodeAuthority(input, definition, existingTask);
     /** 只有实际使用代码现场的步骤才冻结 Git 基线，普通协作不依赖仓库。 */
     const needsRepository = execution.nodes.some((node) => node.type === 'employee' && node.data.executionMode !== 'read_only');
     const repositories = needsRepository ? this.options.projectRepositories.listByProject(project.id) : [];
-    if (!needsRepository) return { templateId: template.id, templateRevision: template.revision, definition, baseRevisions: [], repositories };
+    if (!needsRepository) return { templateId: template.id, templateRevision: template.revision, definition, baseRevisions: [], repositories, runtimeState, employeeConfigurations };
     if (repositories.length === 0) throw routeError('ZEUS_DIGITAL_TEAM_REPOSITORY_REQUIRED', '项目尚未登记可冻结的 Git 仓库。');
     if (repositories.length !== 1) throw routeError('ZEUS_DIGITAL_TEAM_MULTI_REPOSITORY_UNSUPPORTED', '代码集成目前需要选择单一仓库；普通协作不受仓库数量限制。');
     const baseRevisions = await Promise.all(
@@ -462,7 +483,7 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
         return { repositoryId: repository.id, sourceRef: context.detached || !context.branch ? 'HEAD' : context.branch, baseSha: heads[0] ?? context.headSha };
       }),
     );
-    return { templateId: template.id, templateRevision: template.revision, definition, baseRevisions, repositories };
+    return { templateId: template.id, templateRevision: template.revision, definition, baseRevisions, repositories, runtimeState, employeeConfigurations };
   }
 
   /** 在统一 Core 事务中创建任务并冻结运行；当前员工根节点由依赖调度直接启动。 */
@@ -513,6 +534,9 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
         taskId,
         { ...context, taskOrigin: 'digital_team_workflow' },
       );
+    for (const [employeeId, configuration] of Object.entries(prepared.employeeConfigurations ?? {})) {
+      if (stableJson(this.options.employees.previewProjectEmployee(projectId, employeeId)) !== configuration) throw routeError('ZEUS_DIGITAL_TEAM_EMPLOYEE_CHANGED', '员工配置已变化，请重新预览后启动。');
+    }
     const run = this.options.runs.create({
       id: runId,
       projectId,
@@ -522,7 +546,8 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
       definition: structuredClone(prepared.definition),
       taskFacts,
       baseRevisions: prepared.baseRevisions,
-      runtimeState: prepared.runtimeState ?? {
+      runtimeState: {
+        ...prepared.runtimeState,
         entryNodeId: input.entryNodeId ?? null,
         inputDeliverableIds: input.inputDeliverableIds ?? [],
         repairRound: this.options.defects?.getRepairRounds(taskId) ?? 0,
@@ -1380,13 +1405,13 @@ export class DigitalTeamWorkflowCoordinator implements DigitalTeamWorkflowRouteC
           purpose: node.data.purpose,
           executionMode: node.data.executionMode,
           settings: {
-            ...node.data.settings,
+            ...(run.runtimeState.executionSettings?.[node.id] ?? node.data.settings),
             permissionMode:
               run.runtimeState.permissionMode === 'read-only' || node.data.settings?.permissionMode === 'read-only'
                 ? 'read-only'
                 : run.runtimeState.permissionMode === 'auto' || node.data.settings?.permissionMode === 'auto'
                   ? 'auto'
-                  : (run.runtimeState.permissionMode ?? node.data.settings?.permissionMode),
+                  : (run.runtimeState.permissionMode ?? run.runtimeState.executionSettings?.[node.id]?.permissionMode ?? node.data.settings?.permissionMode),
           },
         });
         const boundWork = this.options.attempts.getById(attempt.id)!;
@@ -2235,5 +2260,6 @@ function serializeError(error: unknown): { code: string; message: string } {
 function restrictPermission(current: DigitalTeamRunRuntimeState['permissionMode'], requested: DigitalTeamRunRuntimeState['permissionMode']): DigitalTeamRunRuntimeState['permissionMode'] {
   if (current === 'read-only' || requested === 'read-only') return 'read-only';
   if (current === 'auto' || requested === 'auto') return 'auto';
+  if (current === 'auto-review' || requested === 'auto-review') return 'auto-review';
   return current ?? requested;
 }

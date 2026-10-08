@@ -69,6 +69,19 @@ export class EmployeeMemoryProposalRepository {
       .map((row) => ({ ...JSON.parse(row.proposal_json), status: row.status, memoryId: row.memory_id, revision: row.revision }));
   }
 
+  /** 按实际来源运行的冻结身份读取建议，项目改绑不改变原建议归属。 */
+  listByEmployee(employeeId: string): EmployeeMemoryProposal[] {
+    return this.db
+      .select<{ proposal_json: string; status: EmployeeMemoryProposal['status']; memory_id: string | null; revision: number }>(
+        `SELECT p.* FROM employee_memory_proposals p JOIN task_work_runs r ON r.id=p.run_id
+       WHERE json_extract(r.employee_snapshot_json, '$.globalEmployeeId')=?
+       OR (json_type(r.employee_snapshot_json, '$.globalEmployeeId') IS NULL AND json_extract(r.employee_snapshot_json, '$.templateId')=?)
+       OR r.employee_id=? ORDER BY p.created_at DESC, p.id LIMIT 100`,
+        [employeeId, employeeId, employeeId],
+      )
+      .map((row) => ({ ...JSON.parse(row.proposal_json), status: row.status, memoryId: row.memory_id, revision: row.revision }));
+  }
+
   /** 工具调用身份固定来源，所有文本必须在业务入口完整校验。 */
   propose(input: Omit<EmployeeMemoryProposal, 'status' | 'memoryId' | 'revision' | 'createdAt'>): EmployeeMemoryProposal {
     return this.db.transaction(() => {
@@ -134,8 +147,15 @@ export class EmployeeMemoryProposalRepository {
       if (!proposal || proposal.status !== 'pending' || proposal.revision !== input.expectedRevision) throw new TaskWorkStoreError('ZEUS_EMPLOYEE_MEMORY_PROPOSAL_CHANGED', '经验建议已处理或发生变化，请重新读取。');
       let memoryId: string | null = null;
       if (input.accept) {
+        /** 建议属于提出时的员工，项目改绑不能转移个人经验。 */
+        const source = this.db.get<{ employee_snapshot_json: string }>('SELECT employee_snapshot_json FROM task_work_runs WHERE id=? AND employee_id=? AND project_id=?', [proposal.runId, employeeId, projectId]);
+        if (!source) throw new TaskWorkStoreError('ZEUS_EMPLOYEE_MEMORY_PROPOSAL_SOURCE_MISSING', '经验建议的来源运行不存在。');
+        const frozenEmployee = JSON.parse(source.employee_snapshot_json) as { globalEmployeeId?: string | null; templateId?: string | null };
+        const globalEmployeeId = frozenEmployee.globalEmployeeId === undefined ? frozenEmployee.templateId : frozenEmployee.globalEmployeeId;
+        const current = this.db.get<{ global_employee_id: string | null }>('SELECT global_employee_id FROM digital_employees WHERE id=?', [employeeId]);
+        if (!globalEmployeeId && current?.global_employee_id) throw new TaskWorkStoreError('ZEUS_EMPLOYEE_MEMORY_PROPOSAL_IDENTITY_CHANGED', '原独立员工已改绑，请核对建议归属后再处理。');
         /** 同主题的明确项目或全局规则冲突时保留待处理建议，不借员工优先级隐式覆盖。 */
-        const effective = new LongTermMemoryRepository(this.db).resolveForContext({ projectId, employeeId, asOf: this.now() }).selected;
+        const effective = new LongTermMemoryRepository(this.db).resolveForContext({ projectId, employeeId, globalEmployeeId, asOf: this.now() }).selected;
         const conflict = effective.find((record) => record.memoryKey === input.topic && record.content.trim() !== input.content.trim());
         if (conflict) {
           this.db.execute('UPDATE employee_memory_proposals SET proposal_json=?,revision=revision+1 WHERE id=? AND revision=?', [
@@ -148,7 +168,7 @@ export class EmployeeMemoryProposalRepository {
         try {
           const result = new LongTermMemoryRepository(this.db).recordCandidate({
             id: `employee_memory_${id}`,
-            scope: { kind: 'employee', id: employeeId },
+            scope: { kind: 'employee', id: globalEmployeeId ?? employeeId },
             /** 用户审查一条项目经验并不等于同意跨项目推广。 */
             projectLimitId: projectId,
             memoryKey: input.topic,

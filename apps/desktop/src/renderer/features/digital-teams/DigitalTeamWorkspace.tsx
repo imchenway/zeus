@@ -41,6 +41,9 @@ import { forgetDigitalTeamDraft, readDigitalTeamDraft, readDigitalTeamDraftSelec
 import { buildDigitalTeamDevelopmentDraft, digitalTeamMemberDefaults, withDigitalTeamDefaultRepairEmployee } from './digitalTeamMemberDefaults.js';
 import { digitalTeamRunReadOnlyDescription, digitalTeamRunStatusLabel, getDigitalTeamRunBlocker } from './digitalTeamRunPresentation.js';
 import { digitalTeamDragMime, digitalTeamWorkModeLabels, isConnectionAllowed, WorkflowCanvas, type DigitalTeamCanvasRuntimeState, type DigitalTeamDragPayload } from './WorkflowCanvas.js';
+import { EmployeeExecutionSettings } from '../digital-employees/EmployeeExecutionSettings.js';
+import { TeamNodeExecutionPreview } from './TeamNodeExecutionPreview.js';
+import { templateDraft as employeeTemplateDraft } from '../digital-employees/digitalEmployeeUiSupport.js';
 import './digitalTeams.css';
 
 /** 数字团队页面支持的两个真实数据视图。 */
@@ -788,6 +791,9 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
   const inspector =
     view === 'editor' ? (
       <NodeInspector
+        client={props.client}
+        projectId={projectId}
+        task={props.task}
         key={selectedNodeId}
         node={selectedNode}
         definition={draft.definition}
@@ -1259,6 +1265,10 @@ function RolePalette(props: { employees: DigitalTeamMemberRecord[]; onAdd(payloa
 
 /** 节点检查器按判别联合展示且只更新当前节点允许的字段。 */
 function NodeInspector(props: {
+  /** 预览和配置共用当前任务客户端。 */
+  client: DashboardClient | null;
+  projectId: string;
+  task?: TaskRecord;
   /** 团队成员只引用已创建的全局数字员工。 */
   node: DigitalTeamNode | null;
   definition: DigitalTeamWorkflowDefinition;
@@ -1293,6 +1303,9 @@ function NodeInspector(props: {
       </div>
       {node.type === 'employee' ? (
         <EmployeeNodeFields
+          client={props.client}
+          projectId={props.projectId}
+          task={props.task}
           key={`${node.id}:${employee?.id ?? 'missing'}:${employee?.revision ?? 0}`}
           node={node}
           employees={props.employees}
@@ -1392,6 +1405,10 @@ function KeyboardConnectionEditor(props: {
 
 /** 员工节点只在流程里选择一次；运行时由存储边界解析并冻结项目执行实例。 */
 function EmployeeNodeFields(props: {
+  /** 节点覆盖只修改当前定义，派发预览读取真实任务。 */
+  client: DashboardClient | null;
+  projectId: string;
+  task?: TaskRecord;
   node: DigitalTeamEmployeeNode;
   employees: DigitalTeamMemberRecord[];
   employee: DigitalTeamMemberRecord | undefined;
@@ -1474,6 +1491,20 @@ function EmployeeNodeFields(props: {
         <span>完成标准</span>
         <textarea rows={3} placeholder="默认按工作要求完成并提交可核对结果，每行一项" value={(props.node.data.acceptanceCriteria ?? []).join('\n')} onChange={(event) => update({ acceptanceCriteria: lines(event.currentTarget.value) })} />
       </label>
+      <details className="digital-team-advanced-settings">
+        <summary>覆盖员工默认配置</summary>
+        <EmployeeExecutionSettings
+          client={props.client}
+          skillClient={props.client}
+          projectId={props.projectId}
+          language={props.language}
+          overrides
+          value={props.node.data.settings ?? {}}
+          inherited={employeeTemplateDraft(props.employee).settings}
+          onChange={(settings) => update({ settings })}
+        />
+      </details>
+      {props.client ? <TeamNodeExecutionPreview client={props.client} projectId={props.projectId} task={props.task} node={props.node} language={props.language} /> : null}
       <p className="digital-team-work-permission">
         {props.node.data.executionMode === 'isolated_write' ? '工作权限：隔离工作区修改代码，仍需本次任务授权。' : props.node.data.executionMode === 'candidate_read_only' ? '工作权限：只读验收代码候选。' : '工作权限：只读。'}
       </p>
