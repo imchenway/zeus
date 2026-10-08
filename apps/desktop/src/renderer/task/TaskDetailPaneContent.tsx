@@ -789,11 +789,10 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
   /** 任务详情的所有正文与标签字段共用即时预览和场景清理。 */
   const previews = usePendingResourcePreviews(
     taskAttachments.map((attachment) => ({ id: attachment.path, name: attachment.name, kind: attachment.kind })),
-    props.language,
     props.task.id,
   );
   /** 正文继续编辑，但任何字段保存都等待附件回写版本。 */
-  const resourcesProcessing = previews.pendingResources.some((resource) => resource.pending);
+  const resourcesProcessing = previews.processing;
   /** 当前任务身份用于阻止旧任务的排队回执修改新详情。 */
   const latestTask = useRef(props.task);
   latestTask.current = props.task;

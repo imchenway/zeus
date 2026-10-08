@@ -37,11 +37,7 @@ export interface ConversationInputResourceHandlers {
 
 export function useConversationInputResources(options: UseConversationInputResourcesOptions): ConversationInputResourceHandlers {
   /** 会话与任务输入共用即时预览，不改变真实附件授权契约。 */
-  const previews = usePendingResourcePreviews(
-    options.attachments.map((attachment) => ({ id: attachment.localPath ?? attachment.uploadRef, name: attachment.name, kind: attachment.kind ?? 'file' })),
-    options.language === 'zh-CN' ? 'zh-CN' : 'en-US',
-  );
-  const [processingCount, setProcessingCount] = useState(0);
+  const previews = usePendingResourcePreviews(options.attachments.map((attachment) => ({ id: attachment.localPath ?? attachment.uploadRef, name: attachment.name, kind: attachment.kind ?? 'file' })));
   const [dragDepth, setDragDepth] = useState(0);
   const pasteGeneration = useRef(0);
   const mounted = useRef(true);
@@ -64,14 +60,12 @@ export function useConversationInputResources(options: UseConversationInputResou
       const restoreFocus = retainInputFocus(latest.current.textareaRef.current);
       /** 普通文件、图片和长文本立即显示对应卡片。 */
       const pending = previews.begin(files, text);
-      setProcessingCount((current) => current + 1);
       try {
         await operation(pending);
       } catch (error) {
         if (pending.current()) latest.current.onError(formatVisibleApplicationError(error, latest.current.language));
       } finally {
         pending.finish();
-        if (mounted.current) setProcessingCount((current) => Math.max(0, current - 1));
         restoreFocus();
       }
     },
@@ -204,7 +198,7 @@ export function useConversationInputResources(options: UseConversationInputResou
 
   return {
     pendingResources: previews.pendingResources,
-    processing: processingCount > 0,
+    processing: previews.processing,
     dragging: dragDepth > 0,
     handlePaste,
     handlePasteShortcut,
