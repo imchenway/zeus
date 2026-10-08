@@ -292,29 +292,17 @@ function aggregateCostBreakdown(rows: readonly CodexUsageLedgerRecord[], pricePe
     for (const request of requests) {
       /** 档位与费率必须来自同一次请求的不可变快照。 */
       const snapshot = request.estimate.rateSnapshot;
-      /** 标准价格与历史 Codex 美元费率统一成前端只读结构。 */
-      const rate = usageModelRate(snapshot);
-      /** 缺省档位沿用计价器的普通档语义，未知档位保持原值。 */
-      const serviceTier =
-        row.providerId === 'codex'
-          ? snapshot.serviceTier === 'fast' || snapshot.serviceTier === 'priority'
-            ? 'fast'
-            : snapshot.serviceTier == null || snapshot.serviceTier === 'default' || snapshot.serviceTier === 'standard'
-              ? 'standard'
-              : snapshot.serviceTier
-          : null;
-      /** 只展示 Codex 已记录的上下文计价档位。 */
-      const longContext = row.providerId === 'codex' && snapshot.longContext;
-      /** 目录日期只用于合并可见周期，不参与同档同价身份。 */
-      const catalogDate = validCatalogDate(snapshot.catalogDate);
-      /** 相同价格的不同档位保持独立，快速档位别名仍合并。 */
-      const key = JSON.stringify([request.model, rate, serviceTier, longContext]);
-      const pricePeriod = rate && catalogDate ? (pricePeriods.get(pricePeriodKey(request.model, catalogDate)) ?? null) : null;
+      /** 费用归组与完整账本周期使用同一份档位、条件和单价身份。 */
+      const { rate, serviceTier, longContext, groupKey: key, priceKey } = usagePriceIdentity(row.providerId, request.model, snapshot);
+      /** 周期来自完整账本，不受当前时间范围是否包含最新目录影响。 */
+      const pricePeriod = pricePeriods.get(priceKey) ?? null;
+      /** 同档同价维持原有一行展示。 */
       const existing = groups.get(key);
       if (existing) {
         existing.usage = sumBreakdowns([existing.usage, request.usage]);
         existing.estimatedCosts = sumEstimatedCosts([{ costs: existing.estimatedCosts, apiEquivalentUsd: null }, request.estimate]);
-        existing.pricePeriod = mergeUsagePricePeriods(existing.pricePeriod, pricePeriod);
+        /** 合并行包含无法确定周期的条件时，不用其他条件的日期掩盖未知。 */
+        existing.pricePeriod = existing.pricePeriod && pricePeriod ? mergeUsagePricePeriods(existing.pricePeriod, pricePeriod) : null;
       } else {
         groups.set(key, {
           model: request.model,
@@ -342,31 +330,80 @@ function mergeUsagePricePeriods(current: UsageModelPricePeriod | null, next: Usa
   };
 }
 
-/** 从供应源完整账本建立相邻价格目录周期，最新目录延续到至今。 */
+/** 为费用归组与价格周期统一模型、档位、适用条件和完整单价身份。 */
+function usagePriceIdentity(providerId: string, model: string, snapshot: CodexUsageRateSnapshot) {
+  /** 历史连接别名仍属于同一供应源。 */
+  const provider = canonicalUsageProviderId(providerId);
+  /** 缺省档位沿用计价器的普通档语义，未知档位保持原值。 */
+  const serviceTier =
+    provider === 'codex'
+      ? snapshot.serviceTier === 'fast' || snapshot.serviceTier === 'priority'
+        ? 'fast'
+        : snapshot.serviceTier == null || snapshot.serviceTier === 'default' || snapshot.serviceTier === 'standard'
+          ? 'standard'
+          : snapshot.serviceTier
+      : null;
+  /** 上下文档位只读取 Codex 请求事实，不从累计 Token 推断。 */
+  const longContext = provider === 'codex' && snapshot.longContext;
+  /** 单价投影固定字段顺序，目录时间和说明文字不参与价格比较。 */
+  const rate = usageModelRate(snapshot);
+  /** 输入范围与时段决定 API 价格是否并行适用，不能当作前后调价。 */
+  const conditions = snapshot.price;
+  /** 时段与星期的顺序不改变价格适用条件。 */
+  const windows = conditions?.excludedUtcWindows?.map((window) => JSON.stringify([[...new Set(window.weekdays)].sort((left, right) => left - right), window.startMinute, window.endMinute])).sort() ?? [];
+  /** 一条周期链只比较完全相同的计费条件。 */
+  const seriesKey = JSON.stringify([provider, model, serviceTier, longContext, conditions?.inputRange ? [conditions.inputRange.minExclusive, conditions.inputRange.maxInclusive] : null, [...new Set(windows)]]);
+  return {
+    rate,
+    serviceTier,
+    longContext,
+    /** 同档同价保留既有合并展示，不按抓取目录拆行。 */
+    groupKey: JSON.stringify([provider, model, rate, serviceTier, longContext]),
+    seriesKey,
+    /** 价格周期由计费条件和完整单价共同定位。 */
+    priceKey: JSON.stringify([seriesKey, rate]),
+  };
+}
+
+/** 从完整账本识别同条件下的真实单价变化，未记录调价时延续到至今。 */
 function buildUsagePricePeriods(rows: readonly CodexUsageLedgerRecord[]): Map<string, UsageModelPricePeriod> {
-  /** 同一模型可能在一个目录内包含多个档位，它们共享目录周期。 */
-  const datesByModel = new Map<string, Set<string>>();
+  /** 每个条件独立保存目录日对应的价格，同价刷新不会形成新的价格周期。 */
+  const pricesBySeries = new Map<string, Map<string, string>>();
+  /** 日期缺失或同日冲突会使该条件链无法完整排序，不推断其起止日期。 */
+  const uncertainSeries = new Set<string>();
   for (const row of rows) {
     /** 新账本逐请求读取真实快照，旧账本继续读取整轮快照。 */
     const snapshots = row.estimate.requests?.length ? row.estimate.requests.map((request) => request.estimate.rateSnapshot) : [row.estimate.rateSnapshot];
     for (const snapshot of snapshots) {
-      /** 缺价和非法日期不参与周期推断。 */
-      if (!usageModelRate(snapshot)) continue;
+      /** 与可见费用行共用身份，避免不同档位或 API 条件互相截断。 */
+      const { rate, seriesKey, priceKey } = usagePriceIdentity(row.providerId, snapshot.model || row.model, snapshot);
+      if (!rate) continue;
+      /** 抓取日期只作为本地目录顺序，不冒充官方生效时间。 */
       const catalogDate = validCatalogDate(snapshot.catalogDate);
-      if (!catalogDate) continue;
-      const model = snapshot.model || row.model;
-      const dates = datesByModel.get(model);
-      if (dates) dates.add(catalogDate);
-      else datesByModel.set(model, new Set([catalogDate]));
+      if (!catalogDate) {
+        uncertainSeries.add(seriesKey);
+        continue;
+      }
+      /** 同条件同日最多允许一种完整单价；冲突不按请求到达顺序裁决。 */
+      const dates = pricesBySeries.get(seriesKey) ?? new Map<string, string>();
+      if (dates.has(catalogDate) && dates.get(catalogDate) !== priceKey) uncertainSeries.add(seriesKey);
+      dates.set(catalogDate, priceKey);
+      pricesBySeries.set(seriesKey, dates);
     }
   }
-  /** 返回值直接以模型和目录日期索引，费用聚合无需重复搜索。 */
+  /** 同价跨目录或重新启用时仍归为一行，因此索引保留其完整首尾跨度。 */
   const periods = new Map<string, UsageModelPricePeriod>();
-  for (const [model, dateSet] of datesByModel) {
-    const dates = [...dateSet].sort();
-    for (const [index, from] of dates.entries()) {
-      const next = dates[index + 1];
-      periods.set(pricePeriodKey(model, from), { from, to: next ? previousIsoDate(next) : null });
+  for (const [seriesKey, dates] of pricesBySeries) {
+    if (uncertainSeries.has(seriesKey)) continue;
+    /** 只保留真实变价节点，连续相同价格沿用第一次记录日期。 */
+    const changes: Array<[string, string]> = [];
+    for (const entry of [...dates].sort(([left], [right]) => left.localeCompare(right))) {
+      if (changes.at(-1)?.[1] !== entry[1]) changes.push(entry);
+    }
+    for (const [index, [from, priceKey]] of changes.entries()) {
+      /** 闭区间结束于同条件下一次变价的前一天，最后一种价格持续至今。 */
+      const next = changes[index + 1]?.[0];
+      periods.set(priceKey, { from: periods.get(priceKey)?.from ?? from, to: next ? previousIsoDate(next) : null });
     }
   }
   return periods;
@@ -379,11 +416,6 @@ function validCatalogDate(value: string): string | null {
   return Number.isFinite(instant) && new Date(instant).toISOString().slice(0, 10) === value ? value : null;
 }
 
-/** 目录周期索引不使用费率内容，多个并行档位共享同一个时间边界。 */
-function pricePeriodKey(model: string, catalogDate: string): string {
-  return `${model}\u0000${catalogDate}`;
-}
-
 /** 相邻目录采用闭区间显示，因此结束日是下一目录开始日的前一天。 */
 function previousIsoDate(value: string): string {
   return new Date(Date.parse(`${value}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
@@ -391,7 +423,11 @@ function previousIsoDate(value: string): string {
 
 /** 把各供应商费率投影为同一展示口径，缺价继续保持未知。 */
 function usageModelRate(snapshot: CodexUsageRateSnapshot): UsageModelRate | null {
-  if (snapshot.price) return { currency: snapshot.price.currency, perMillion: snapshot.price.perMillion, perRequest: snapshot.price.perRequest };
+  if (snapshot.price) {
+    /** 条件价格的对象字段顺序可能不同，先投影为固定顺序再比较完整单价。 */
+    const { currency, perMillion, perRequest } = snapshot.price;
+    return { currency, perMillion: perMillion ? { input: perMillion.input, output: perMillion.output, cachedInput: perMillion.cachedInput, cacheWrite: perMillion.cacheWrite } : null, perRequest };
+  }
   if (snapshot.usdPerMillion) {
     return {
       currency: 'USD',
