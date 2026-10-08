@@ -54,7 +54,14 @@ export async function attachV2ResourcesToSnapshot(snapshot: NativeConversationSn
     if (!resources?.length) return [item];
     const merged = dedupeById([...(item.resources ?? []), ...resources]);
     const currentResources = new Map((item.resources ?? []).map((resource) => [resource.id, resource]));
-    const resourcesChanged = merged.length !== currentResources.size || merged.some((resource) => currentResources.get(resource.id)?.delivery !== resource.delivery);
+    /** 历史资源恢复图片身份后也必须接管旧附件引用，不能只比较交付状态。 */
+    const resourcesChanged =
+      merged.length !== currentResources.size ||
+      merged.some((resource) => {
+        /** 同一资源编号仍可能补齐稳定的图片身份。 */
+        const current = currentResources.get(resource.id);
+        return current?.delivery !== resource.delivery || (resource.kind === 'attachment' && current?.kind === 'attachment' && current.attachmentRef !== resource.attachmentRef);
+      });
     if (!resourcesChanged) return [item];
     changed = true;
     return [{ ...item, resources: merged }];

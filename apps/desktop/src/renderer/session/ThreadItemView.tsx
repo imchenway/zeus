@@ -188,6 +188,7 @@ function resourceTaskPushAttachmentKey(resource: ConversationResource): string |
   return 'taskPushAttachmentKey' in resource && typeof resource.taskPushAttachmentKey === 'string' ? resource.taskPushAttachmentKey : null;
 }
 
+/** 任务正文按字段左对齐，附件紧跟对应正文并复用统一资源操作。 */
 function TaskPushMessageContent(
   props: Pick<ThreadItemViewProps, 'language' | 'onOpenResource' | 'onLoadResourcePreview' | 'onVisibleContentChange'> & {
     layout: TaskPushMessageLayout;
@@ -234,13 +235,6 @@ function TaskPushMessageContent(
             return (
               <section key={field.field} className="session-task-push-field">
                 <strong>{field.label}：</strong>
-                <ConversationResourceCards resources={resources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
-                <ConversationPendingAttachmentImages attachments={pendingImages} language={props.language} onVisibleContentChange={props.onVisibleContentChange} />
-                {missingAttachmentKeys.map((key) => (
-                  <span key={key} className="session-task-push-resource-placeholder">
-                    {props.language === 'zh-CN' ? '附件' : 'Attachments'} · {attachmentNames.get(key) ?? key}
-                  </span>
-                ))}
                 {field.text ? (
                   <ConversationMarkdown
                     text={field.text}
@@ -253,6 +247,13 @@ function TaskPushMessageContent(
                     onVisibleContentChange={props.onVisibleContentChange}
                   />
                 ) : null}
+                <ConversationResourceCards resources={resources} language={props.language} compact onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
+                <ConversationPendingAttachmentImages attachments={pendingImages} language={props.language} compact onVisibleContentChange={props.onVisibleContentChange} />
+                {missingAttachmentKeys.map((key) => (
+                  <span key={key} className="session-task-push-resource-placeholder">
+                    {props.language === 'zh-CN' ? '附件' : 'Attachments'} · {attachmentNames.get(key) ?? key}
+                  </span>
+                ))}
               </section>
             );
           })}
@@ -269,31 +270,6 @@ function TaskPushMessageContent(
       {props.layout.supplementalInfo || supplementalAttachments.length > 0 ? (
         <section className="session-task-push-field">
           <strong>{props.language === 'zh-CN' ? '补充信息：' : 'Additional information:'}</strong>
-          <ConversationResourceCards
-            resources={supplementalAttachments.flatMap((attachment) => {
-              const resource = resourcesByKey.get(attachment.key);
-              return resource ? [resource] : [];
-            })}
-            language={props.language}
-            onOpenResource={props.onOpenResource}
-            onLoadResourcePreview={props.onLoadResourcePreview}
-          />
-          <ConversationPendingAttachmentImages
-            attachments={supplementalAttachments.flatMap((attachment) => {
-              if (resourcesByKey.has(attachment.key)) return [];
-              const pending = pendingImagesByKey.get(attachment.key);
-              return pending ? [pending] : [];
-            })}
-            language={props.language}
-            onVisibleContentChange={props.onVisibleContentChange}
-          />
-          {supplementalAttachments
-            .filter((attachment) => !resourcesByKey.has(attachment.key) && !pendingImagesByKey.has(attachment.key))
-            .map((attachment) => (
-              <span key={attachment.key} className="session-task-push-resource-placeholder">
-                {props.language === 'zh-CN' ? '附件' : 'Attachments'} · {attachment.name}
-              </span>
-            ))}
           {props.layout.supplementalInfo ? (
             <ConversationMarkdown
               text={props.layout.supplementalInfo}
@@ -309,6 +285,33 @@ function TaskPushMessageContent(
               onVisibleContentChange={props.onVisibleContentChange}
             />
           ) : null}
+          <ConversationResourceCards
+            resources={supplementalAttachments.flatMap((attachment) => {
+              const resource = resourcesByKey.get(attachment.key);
+              return resource ? [resource] : [];
+            })}
+            language={props.language}
+            compact
+            onOpenResource={props.onOpenResource}
+            onLoadResourcePreview={props.onLoadResourcePreview}
+          />
+          <ConversationPendingAttachmentImages
+            attachments={supplementalAttachments.flatMap((attachment) => {
+              if (resourcesByKey.has(attachment.key)) return [];
+              const pending = pendingImagesByKey.get(attachment.key);
+              return pending ? [pending] : [];
+            })}
+            language={props.language}
+            compact
+            onVisibleContentChange={props.onVisibleContentChange}
+          />
+          {supplementalAttachments
+            .filter((attachment) => !resourcesByKey.has(attachment.key) && !pendingImagesByKey.has(attachment.key))
+            .map((attachment) => (
+              <span key={attachment.key} className="session-task-push-resource-placeholder">
+                {props.language === 'zh-CN' ? '附件' : 'Attachments'} · {attachment.name}
+              </span>
+            ))}
         </section>
       ) : null}
     </div>

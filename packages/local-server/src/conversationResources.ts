@@ -6,6 +6,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } 
 import { fileURLToPath } from 'node:url';
 import type { ConversationAttachmentResource, ConversationFileIconKind, ConversationFileLocation, ConversationFileResource, ConversationResource, ConversationResourcePresentation, ConversationWebsiteResource } from '@zeus/shared';
 import type { ConversationResourceRepository, ZeusConversationItemRecord, ZeusConversationResourceRecord } from '@zeus/storage';
+import { conversationImageAttachmentRef } from '@zeus/storage';
 
 interface ResourceCandidateBase {
   sourceIndex: number;
@@ -288,7 +289,7 @@ function normalizeArchivedAssistantMarkdownImage(input: {
 
     const existingMimeType = archivedImageMimeType(destination);
     if (existingMimeType) {
-      return archivedAssistantImageCandidate({ ...input, absolutePath: destination, allowedRoot: canonicalArchiveRoot, mimeType: existingMimeType });
+      return archivedAssistantImageCandidate({ ...input, sourcePath, absolutePath: destination, allowedRoot: canonicalArchiveRoot, mimeType: existingMimeType });
     }
 
     const canonicalSource = safeRealpath(sourcePath);
@@ -320,14 +321,15 @@ function normalizeArchivedAssistantMarkdownImage(input: {
     }
     syncPath(conversationDirectory);
     const archivedMimeType = archivedImageMimeType(destination);
-    return archivedMimeType ? archivedAssistantImageCandidate({ ...input, absolutePath: destination, allowedRoot: canonicalArchiveRoot, mimeType: archivedMimeType }) : null;
+    return archivedMimeType ? archivedAssistantImageCandidate({ ...input, sourcePath, absolutePath: destination, allowedRoot: canonicalArchiveRoot, mimeType: archivedMimeType }) : null;
   } catch {
     // 单张图片归档失败不能阻断会话正文或其他资源投影。
     return null;
   }
 }
 
-function archivedAssistantImageCandidate(input: { sourceIndex: number; label: string; absolutePath: string; allowedRoot: string; mimeType: string }): AttachmentResourceCandidate {
+/** 图片的存储目标可以变化，附件身份始终指向正文引用的原始图片。 */
+function archivedAssistantImageCandidate(input: { sourceIndex: number; label: string; sourcePath: string; absolutePath: string; allowedRoot: string; mimeType: string }): AttachmentResourceCandidate {
   return {
     kind: 'attachment',
     sourceIndex: input.sourceIndex,
@@ -336,7 +338,7 @@ function archivedAssistantImageCandidate(input: { sourceIndex: number; label: st
     displayName: input.label,
     absolutePath: input.absolutePath,
     allowedRoot: input.allowedRoot,
-    attachmentRef: basename(input.absolutePath),
+    attachmentRef: conversationImageAttachmentRef(input.sourcePath),
     mimeType: input.mimeType,
     previewKind: 'image',
     iconKind: 'image',
@@ -493,7 +495,7 @@ function normalizeGeneratedImagePath(input: { sourceIndex: number; item: ZeusCon
     displayName,
     absolutePath: resolved.absolutePath,
     allowedRoot: resolved.allowedRoot,
-    attachmentRef: displayName,
+    attachmentRef: conversationImageAttachmentRef(input.savedPath),
     mimeType,
     previewKind: 'image',
     iconKind: 'image',
@@ -585,7 +587,12 @@ export function toConversationResource(record: ZeusConversationResourceRecord): 
       ...(stringValue(display.title) ? { title: stringValue(display.title)! } : {}),
     } satisfies ConversationWebsiteResource;
   }
-  const attachmentRef = stringValue(display.attachmentRef);
+  /** 历史工具图片直接从已授权的目标恢复稳定身份；普通用户附件沿用原有引用。 */
+  const attachmentPath = stringValue(target.absolutePath);
+  const attachmentRef =
+    display.delivery === 'assistant' && display.previewKind === 'image' && attachmentPath && isAbsolute(attachmentPath) && !/^assistant_image_[a-f0-9]{64}$/u.test(stringValue(display.attachmentRef) ?? '')
+      ? conversationImageAttachmentRef(attachmentPath)
+      : stringValue(display.attachmentRef);
   const previewKind = display.previewKind === 'image' || display.previewKind === 'document' ? display.previewKind : 'none';
   const iconKind = fileIconKindValue(display.iconKind);
   if (!attachmentRef || !iconKind) return null;

@@ -30,6 +30,8 @@ type ErrorExplanation = readonly [zh: string, en: string, action?: UserFacingErr
 
 /** 跨页面、原生窗口和通知共用的原因目录。每组只合并具有相同产品含义的错误。 */
 const explanations: ReadonlyArray<readonly [codes: readonly string[], explanation: ErrorExplanation]> = [
+  // 附件缩略图超出内置上限时引导打开原文件，不反复重试同一限制。
+  [['ZEUS_CONVERSATION_RESOURCE_TOO_LARGE'], ['文件较大，无法在此预览。请打开文件或选择其他打开方式。', 'The file is too large to preview here. Open the file or choose another application.']],
   // 启动目录的诊断路径与维护命令留在详情，主提示只说明阻止启动的原因。
   [['ZEUS_DATA_ROOT_OFFLINE_ADOPTION_REQUIRED'], ['无法确认本地数据目录的归属，启动已停止。', 'Startup stopped because the local data folder could not be identified.']],
   // 工作安排表单复用后端明确的校验原因，用户可按提示修正草稿。
