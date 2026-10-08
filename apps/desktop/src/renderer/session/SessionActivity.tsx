@@ -273,9 +273,13 @@ const ActivityItemRow = memo(function ActivityItemRow(props: {
             {open ? (
               <div className="session-activity-item-detail-body">
                 {/* 旧缓存可能只有详情句柄，读取完成前保留明确的进度反馈。 */}
-                {!detail.command && !detail.cwd && !detail.output && !toolResult && props.item.payload.v2ContentTruncated === true ? <small role="status">{props.language === 'zh-CN' ? '正在读取命令…' : 'Loading command…'}</small> : null}
+                {!detail.command && !detail.cwd && !detail.output && detail.exitCode === null && !toolResult && props.item.payload.v2ContentTruncated === true ? (
+                  <small role="status">{props.language === 'zh-CN' ? '正在读取命令…' : 'Loading command…'}</small>
+                ) : null}
                 {detail.command ? <code>{detail.command}</code> : null}
                 {detail.cwd ? <small>{detail.cwd}</small> : null}
+                {/* 终止只描述进程结束，原始非零退出码仍供用户核对。 */}
+                {detail.exitCode !== null ? <small>{props.language === 'zh-CN' ? `退出码：${detail.exitCode}` : `Exit code: ${detail.exitCode}`}</small> : null}
                 {detail.output || toolResult ? <ActivityItemOutput key={toolResult?.handle ?? props.item.key} output={detail.output} toolResult={toolResult} language={props.language} onLoadToolResult={props.onLoadToolResult} /> : null}
               </div>
             ) : null}
@@ -882,6 +886,8 @@ function activityItemDetail(item: NativeSessionItemBuffer): {
   command: string | null;
   cwd: string | null;
   output: string | null;
+  /** 非零退出码保留在详情，避免把终止误解为运行成功。 */
+  exitCode: number | null;
 } | null {
   /** 原始工具身份保留在展开详情，摘要不暴露内部命名。 */
   const nativeTool = nativeActivityTool(item.payload);
@@ -896,9 +902,11 @@ function activityItemDetail(item: NativeSessionItemBuffer): {
         .join('\n')
     : null;
   const output = primitive(item.payload.aggregatedOutput ?? item.payload.output ?? item.payload.stdout ?? item.payload.stderr) ?? activityToolResult(item)?.projection ?? nativeOutput ?? presentationLiveText(item);
+  /** 正常完成不增加冗余字段，异常退出保留准确整数。 */
+  const exitCode = Number.isInteger(item.payload.exitCode) && item.payload.exitCode !== 0 ? (item.payload.exitCode as number) : null;
   /** 历史长记录可能在命令字段前截断，缺少预览不代表没有可读取的详情。 */
   const deferredDetail = item.payload.v2ContentTruncated === true && typeof item.payload.v2ContentHandle === 'string' && Boolean(item.payload.v2ContentHandle);
-  return command || cwd || output || deferredDetail || activityToolResult(item) ? { command, cwd, output } : null;
+  return command || cwd || output || exitCode !== null || deferredDetail || activityToolResult(item) ? { command, cwd, output, exitCode } : null;
 }
 
 function commandActionTitle(item: NativeSessionItemBuffer, language: SessionUiLanguage): string | null {

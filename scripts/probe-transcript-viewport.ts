@@ -260,10 +260,10 @@ for (const [name, kind] of [
   assertProbe(nativeActivityTool({ toolName: name })?.kind === kind, '两个 Provider 的原生工具命名必须映射到同一展示类别。');
 }
 assertProbe(nativeActivityTool({ toolName: 'plugin_zeus_browser_open' }) === null, '插件名称包含原生工具字样也不能冒充原生操作。');
-/** 使用原生观察的应用名称，禁止从内部标识猜测产品。 */
+/** 使用当前原生观察结构中的应用名称，禁止从内部标识猜测产品。 */
 const desktopPresentation = conversationProcessPresentation('tool', {
   itemType: 'dynamicToolCall',
-  payload: { namespace: 'zeus_computer', tool: 'get_window_state', arguments: { pid: 42, window_id: 7 }, contentItems: [{ type: 'inputText', text: JSON.stringify({ app_name: 'Zeus Test' }) }], success: true },
+  payload: { namespace: 'zeus_computer', tool: 'get_window_state', arguments: { pid: 42, window_id: 7 }, contentItems: [{ type: 'inputText', text: JSON.stringify({ application: { name: 'Zeus Test' } }) }], success: true },
 });
 assertProbe(nativeActivityTitle({ status: 'completed', payload: desktopPresentation.payload }, true)?.includes('Zeus Test') === true, '历史投影必须保留工具身份和真实应用元信息。');
 assertProbe(!nativeActivityTitle({ status: 'completed', payload: { namespace: 'zeus_computer', tool: 'get_window_state', arguments: { pid: 42, window_id: 7 } } }, true)?.includes('window_id'), '缺少真实名称时不得在摘要暴露内部标识。');
@@ -274,6 +274,17 @@ assertProbe(
 );
 assertProbe(activityOutcome({ status: 'completed', payload: { success: false } }) === 'failed' && activityOutcome({ status: 'completed', payload: { status: 'cancelled' } }) === 'cancelled', '结束记录仍保留失败与取消的真实状态。');
 assertProbe(activityOutcome({ status: 'completed', payload: failedCommand.payload }) === 'failed', '非零退出码不能显示已完成。');
+/** 信号类终止只改变展示语义，不改写 Provider 的失败记录。 */
+for (const exitCode of [130, 143]) {
+  /** 实时和历史命令均包含明确活动类型，工具失败标志仍保留在原始结果。 */
+  const command = { type: 'commandExecution', status: 'failed', payload: { status: 'failed', exitCode, isError: true } };
+  assertProbe(activityOutcome(command) === 'terminated' && command.status === 'failed' && command.payload.exitCode === exitCode, '信号类终止不能显示运行失败或修改原始结果。');
+  assertProbe(activityOutcome({ ...command, status: 'completed' }) === 'terminated', '调用已返回不能覆盖命令的终止结果。');
+  assertProbe(activityOutcome({ ...command, type: 'mcpToolCall' }) === 'failed', '普通工具的同名退出码不能冒充命令终止。');
+  assertProbe(activityOutcome({ ...command, payload: { ...command.payload, status: 'cancelled' } }) === 'cancelled', '明确取消不能被非零退出码覆盖。');
+}
+/** 运行错误、强制退出和崩溃仍保留失败提示。 */
+for (const exitCode of [1, 127, 137, 139]) assertProbe(activityOutcome({ type: 'commandExecution', status: 'failed', payload: { exitCode } }) === 'failed', '真实命令错误不能被归为正常终止。');
 assertProbe(activityOutcome({ status: 'completed', payload: { namespace: 'zeus_computer', tool: 'click', v2ContentTruncated: true } }) === 'unknown', 'CUA 结果截断时不能丢失动作状态并误报完成。');
 /** 工具展示可单独检查，不依赖后续长历史游标与数据库场景。 */
 if (process.argv.includes('--activity-presentation')) {
