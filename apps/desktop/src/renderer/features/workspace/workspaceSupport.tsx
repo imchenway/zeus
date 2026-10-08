@@ -80,20 +80,23 @@ import {
 /** 全局数字员工与数字团队均从首页独立进入。 */
 export type MainNavTarget = 'projects' | 'conversations' | 'automations' | 'skills' | 'digital-employees' | 'digital-teams' | 'settings';
 export type LegacyMainNavTarget = MainNavTarget | 'dashboard' | 'tasks' | 'runtime' | 'git-diff' | 'telegram' | 'settings-data';
-export type ProjectWorkspaceSection = 'tasks' | 'git' | 'code' | 'sessions';
-export type ProjectCodeWorkspaceMode = 'source' | 'commands';
-export type ProjectWorkspaceEntryId = 'tasks' | 'git' | 'source' | 'commands';
+/** 项目工作区仅保留任务、源码和会话，Git 归属源码内部。 */
+export type ProjectWorkspaceSection = 'tasks' | 'code' | 'sessions';
+/** 源码编辑与完整 Git 工作台共用同一工作区。 */
+export type ProjectCodeWorkspaceMode = 'source' | 'git';
+/** 可见导航不再为 Git 和命令提供独立页面。 */
+export type ProjectWorkspaceEntryId = 'tasks' | 'source';
+/** 项目导航文案与快捷键提示共用入口定义。 */
 export type ProjectWorkspaceEntry = Readonly<{
   id: ProjectWorkspaceEntryId;
   shortcutKey: '1' | '2' | '3' | '4' | '5';
   section: ProjectWorkspaceSection;
   codeMode: ProjectCodeWorkspaceMode | undefined;
 }>;
+/** 侧栏只展示任务与源码，命令和 Git 从源码内部进入。 */
 export const PROJECT_WORKSPACE_ENTRIES = [
   { id: 'tasks', shortcutKey: '1', section: 'tasks', codeMode: undefined },
-  { id: 'git', shortcutKey: '2', section: 'git', codeMode: undefined },
   { id: 'source', shortcutKey: '3', section: 'code', codeMode: 'source' },
-  { id: 'commands', shortcutKey: '4', section: 'code', codeMode: 'commands' },
 ] as const satisfies readonly ProjectWorkspaceEntry[];
 export type ProjectDetailPanel = 'diff' | 'edit' | 'config' | 'archive' | undefined;
 export type ConversationDrawer = 'runtime' | 'context' | 'changes' | 'templates' | undefined;
@@ -1361,7 +1364,7 @@ export function inferInitialProjectSection(props: {
   snapshot?: WorkspaceSnapshot;
 }): ProjectWorkspaceSection {
   if (props.snapshot?.projects[0]?.id === temporaryWorkspaceId) return 'sessions';
-  if (typeof window !== 'undefined' && (window.location.hash === '#project-commands' || window.location.hash.startsWith('#project-code'))) return 'code';
+  if (typeof window !== 'undefined' && (window.location.hash === '#project-git' || window.location.hash === '#project-commands' || window.location.hash.startsWith('#project-code'))) return 'code';
   if (props.initialMainNavTarget === 'tasks') return 'tasks';
   if (props.initialMainNavTarget === 'git-diff' || props.initialMainNavTarget === 'projects') return 'code';
   if (props.initialMainNavTarget === 'conversations' || props.initialMainNavTarget === 'runtime' || props.initialMainNavTarget === 'dashboard') return 'sessions';

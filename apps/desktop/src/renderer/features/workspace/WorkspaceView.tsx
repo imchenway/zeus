@@ -21,6 +21,8 @@ import { BrowserIcon } from '@phosphor-icons/react/dist/csr/Browser';
 import { GlobeIcon } from '@phosphor-icons/react/dist/csr/Globe';
 import { ChatCircleDotsIcon } from '@phosphor-icons/react/dist/csr/ChatCircleDots';
 import { PuzzlePieceIcon } from '@phosphor-icons/react/dist/csr/PuzzlePiece';
+import { GitBranchIcon } from '@phosphor-icons/react/dist/csr/GitBranch';
+import { ArrowLeftIcon } from '@phosphor-icons/react/dist/csr/ArrowLeft';
 import { TerminalIcon } from '@phosphor-icons/react/dist/csr/Terminal';
 import { ArrowCircleUpIcon } from '@phosphor-icons/react/dist/csr/ArrowCircleUp';
 import { DatabaseIcon } from '@phosphor-icons/react/dist/csr/Database';
@@ -41,7 +43,7 @@ import { Button } from '../../ui/Button.js';
 import { ModalPortal } from '../../ui/ModalPortal.js';
 import { taskAgentRunStatusLabels } from '../../task/TaskRunStatusChip.js';
 import { WorkspaceDrawer } from '../../ui/WorkspaceDrawer.js';
-import { formatRuntimeAdapterDetectionFacts, InlineRecoveryPrompt, ProjectCreateDialog, ProjectStartGuide, ProjectWorkspaceModeToolbar, ProjectWorkspaceNavigation, SidebarNav } from './WorkspaceChrome.js';
+import { formatRuntimeAdapterDetectionFacts, InlineRecoveryPrompt, ProjectCreateDialog, ProjectStartGuide, ProjectWorkspaceNavigation, SidebarNav } from './WorkspaceChrome.js';
 import { GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE } from './workspaceFormatters.js';
 import {
   browserNativeConversationStartStorage,
@@ -140,7 +142,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     codexConfigImportResult,
     codexUsageRevision,
     conversationDrawer,
-    conversationDraftOpen,
     creatingProjectBusy,
     creatingTaskBusy,
     currentProjectTasks,
@@ -284,7 +285,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     uiCopy,
     updatingTaskBusy,
     visibleTasks,
-    visitedCodeWorkspaceModes,
+    projectCommandsProjectId,
+    setProjectCommandsProjectId,
     workspaceScrollRef,
   } = state;
   const {
@@ -304,7 +306,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     openProjectCreateDialog,
     openTaskConflictAiConversation,
     openTaskConversationDrawer,
-    openNativeConversationDrawer,
     openNativeConversationPage,
     openTaskCreateModal,
     openTaskCreateForTeam,
@@ -374,6 +375,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     loadTaskTemplates,
     moveTaskBoardTask,
     openProjectSection,
+    openProjectCommands,
     projectSidebarMaximumWidth,
     projectSidebarShellStyle,
     projectSidebarWidth,
@@ -593,6 +595,34 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   const sessionCodexParityVisible = upstreamMainLayout
     ? activeProjectSection === 'sessions' && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'digital-employees' && activeNavTarget !== 'digital-teams' && activeNavTarget !== 'automations'
     : projectSessionSourceListVisible;
+
+  /** 源码与 Git 的工具入口跟随应用语言，复用内容区顶行。 */
+  const codeWorkspaceZh = appShellSettings.appLanguage === 'zh-CN';
+  /** Git 与源码共用项目身份，命令从任一视图打开均不离开工作区。 */
+  const projectCodeToolbarActions = selectedProject ? (
+    <div className="project-code-actions" role="group" aria-label={codeWorkspaceZh ? '源码工具' : 'Source tools'}>
+      <button
+        type="button"
+        disabled={!props.commandClient}
+        onClick={() => openProjectCommands(selectedProject.id)}
+        aria-label={codeWorkspaceZh ? '命令（⌘4）' : 'Commands (⌘4)'}
+        title={codeWorkspaceZh ? '命令（⌘4）' : 'Commands (⌘4)'}
+        aria-haspopup="dialog"
+      >
+        <TerminalIcon aria-hidden="true" />
+      </button>
+      {projectCodeWorkspaceMode === 'git' ? (
+        <button type="button" onClick={() => openProjectSection(selectedProject, 'code', 'source')} title={codeWorkspaceZh ? '返回源码（⌘3）' : 'Back to source (⌘3)'}>
+          <ArrowLeftIcon aria-hidden="true" />
+          <span>{codeWorkspaceZh ? '返回源码' : 'Back to source'}</span>
+        </button>
+      ) : (
+        <button type="button" onClick={() => openProjectSection(selectedProject, 'code', 'git')} aria-label="Git（⌘2）" title="Git（⌘2）">
+          <GitBranchIcon aria-hidden="true" />
+        </button>
+      )}
+    </div>
+  ) : null;
 
   return (
     <main
@@ -858,7 +888,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           onPointerDown={handleProjectSidebarResizePointerDown}
         />
       ) : null}
-      <section className="workspace ai-workspace" ref={workspaceScrollRef}>
+      <section className={`workspace ai-workspace${upstreamMainLayout && selectedProject && (activeNavTarget === 'projects' || activeNavTarget === 'conversations') ? ' classic-project-workspace' : ''}`} ref={workspaceScrollRef}>
         {activeNavTarget === 'projects' && Object.values(homeSectionStates).some((entry) => entry.state === 'error') ? (
           <div className="workspace-query-status" role="status">
             {Object.entries(homeSectionStates)
@@ -980,22 +1010,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
               }}
             />
           ) : null}
-          {upstreamMainLayout && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'digital-employees' && activeNavTarget !== 'digital-teams' && activeNavTarget !== 'automations' && selectedProject ? (
-            <ProjectWorkspaceModeToolbar
-              project={selectedProject}
-              projects={orderedProjects}
-              onSelectProject={(project) => openProjectSection(project, activeProjectSection, projectCodeWorkspaceMode)}
-              section={activeProjectSection}
-              codeMode={projectCodeWorkspaceMode}
-              language={appShellSettings.appLanguage}
-              onOpen={(section, codeMode) => openProjectSection(selectedProject, section, codeMode)}
-              currentConversationAvailable={Boolean(selectedNativeConversation) && !conversationDraftOpen}
-              currentConversationOpen={Boolean(sessionDrawerTarget)}
-              onOpenCurrentConversation={() => {
-                if (selectedNativeConversation) void openNativeConversationDrawer(selectedNativeConversation);
-              }}
-            />
-          ) : null}
+
           {activeNavTarget !== 'settings' &&
           activeNavTarget !== 'skills' &&
           activeNavTarget !== 'digital-employees' &&
@@ -1003,42 +1018,55 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           activeNavTarget !== 'automations' &&
           activeProjectSection === 'code' &&
           selectedProject ? (
-            <section className="workspace-view workspace-view-project-code project-code-workspace" aria-label={codeWorkspaceCopy.projectCodeAria}>
+            <section className={`workspace-view workspace-view-project-code project-code-workspace${projectCodeWorkspaceMode === 'git' ? ' workspace-view-project-git' : ''}`} aria-label={codeWorkspaceCopy.projectCodeAria}>
               <div className="project-code-mode-host">
-                {projectCodeWorkspaceMode === 'source' ? (
-                  <div className="project-code-mode-pane">
-                    <ProjectSourceWorkspace
-                      key={selectedProject.id}
-                      ref={projectSourceWorkspaceRef}
-                      gitClient={props.nativeConversationClient ?? undefined}
-                      project={selectedProject}
-                      language={appShellSettings.appLanguage}
-                      preference={appShellSettings.codeWorkspaceByProject?.[selectedProject.id]}
-                      onPreferenceChange={(preference) => persistCodeWorkspacePreference(selectedProject.id, preference)}
-                      onDirtyChange={setSourceWorkspaceDirty}
-                      onOpenExternal={(relativePath, line) => void props.onOpenSource?.({ sourceRef: relativePath, lineStart: line, projectRoot: selectedProject.localPath })}
-                    />
-                  </div>
-                ) : null}
-                {visitedCodeWorkspaceModes.has('commands') ? (
-                  <div className="project-code-mode-pane project-code-command-pane" hidden={projectCodeWorkspaceMode !== 'commands'}>
-                    {props.commandClient ? <CommandCenterPanel mode="project" project={selectedProject} client={props.commandClient} language={appShellSettings.appLanguage} /> : null}
+                <div className="project-code-mode-pane" hidden={projectCodeWorkspaceMode !== 'source'} inert={projectCodeWorkspaceMode !== 'source'}>
+                  <ProjectSourceWorkspace
+                    key={selectedProject.id}
+                    ref={projectSourceWorkspaceRef}
+                    toolbarActions={projectCodeToolbarActions}
+                    gitClient={props.nativeConversationClient ?? undefined}
+                    project={selectedProject}
+                    language={appShellSettings.appLanguage}
+                    preference={appShellSettings.codeWorkspaceByProject?.[selectedProject.id]}
+                    onPreferenceChange={(preference) => persistCodeWorkspacePreference(selectedProject.id, preference)}
+                    onDirtyChange={setSourceWorkspaceDirty}
+                    onOpenExternal={(relativePath, line) => void props.onOpenSource?.({ sourceRef: relativePath, lineStart: line, projectRoot: selectedProject.localPath })}
+                  />
+                </div>
+                {projectCodeWorkspaceMode === 'git' ? (
+                  <div className="project-code-mode-pane project-code-git-pane">
+                    <Suspense
+                      fallback={
+                        <div className="project-git-workbench-state">
+                          {projectCodeToolbarActions}
+                          <span role="status">{codeWorkspaceZh ? '正在加载 Git…' : 'Loading Git…'}</span>
+                        </div>
+                      }
+                    >
+                      {props.nativeConversationClient ? (
+                        <ProjectGitWorkbench key={selectedProject.id} toolbarActions={projectCodeToolbarActions} project={selectedProject} client={props.nativeConversationClient} language={appShellSettings.appLanguage} />
+                      ) : (
+                        <div className="project-git-workbench-state">
+                          {projectCodeToolbarActions}
+                          <span role="alert">{codeWorkspaceZh ? 'Git 服务尚未连接。' : 'The Git service is not connected.'}</span>
+                        </div>
+                      )}
+                    </Suspense>
                   </div>
                 ) : null}
               </div>
-            </section>
-          ) : null}
-
-          {activeNavTarget !== 'settings' &&
-          activeNavTarget !== 'skills' &&
-          activeNavTarget !== 'digital-employees' &&
-          activeNavTarget !== 'digital-teams' &&
-          activeNavTarget !== 'automations' &&
-          activeProjectSection === 'git' &&
-          selectedProject &&
-          props.nativeConversationClient ? (
-            <section className="workspace-view workspace-view-project-git">
-              <ProjectGitWorkbench key={selectedProject.id} project={selectedProject} client={props.nativeConversationClient} language={appShellSettings.appLanguage} />
+              <MotionPresence>
+                {projectCommandsProjectId === selectedProject.id && props.commandClient ? (
+                  <ModalPortal role="dialog" aria-label={`${selectedProject.name} · ${codeWorkspaceZh ? '命令' : 'Commands'}`} rootClassName="project-command-portal" onDismiss={() => setProjectCommandsProjectId(null)}>
+                    <section className="project-command-dialog zeus-solid-form-surface" data-modal-surface="dialog">
+                      <Suspense fallback={<div role="status">{codeWorkspaceZh ? '正在加载命令…' : 'Loading commands…'}</div>}>
+                        <CommandCenterPanel key={selectedProject.id} mode="project" project={selectedProject} client={props.commandClient} language={appShellSettings.appLanguage} onClose={() => setProjectCommandsProjectId(null)} />
+                      </Suspense>
+                    </section>
+                  </ModalPortal>
+                ) : null}
+              </MotionPresence>
             </section>
           ) : null}
 

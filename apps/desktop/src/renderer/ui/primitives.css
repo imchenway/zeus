@@ -1513,7 +1513,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   .macos-ai-app .zeus-source-list-row,
   .macos-ai-app .zeus-source-list-row-main,
   .macos-ai-app .project-source-tree,
-  .macos-ai-app :where(.project-workspace-mode-toolbar button, .settings-section-button, .task-table-status-segment) {
+  .macos-ai-app :where(.settings-section-button, .task-table-status-segment) {
     transition: none;
     will-change: auto;
   }

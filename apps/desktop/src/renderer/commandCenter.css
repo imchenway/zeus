@@ -1,3 +1,54 @@
+/* 项目命令复用完整工作区，弹窗随可用视口收缩并在内部滚动。 */
+.project-command-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(1100px, calc(100vw - 32px));
+  height: min(800px, calc(100dvh - 64px));
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 12px;
+}
+
+.project-command-dialog .command-center {
+  padding: 20px;
+  gap: 14px;
+}
+
+.project-command-dialog .command-center-header {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.command-center-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--zeus-control-muted-text);
+}
+
+.command-center-close svg {
+  width: 16px;
+  height: 16px;
+}
+
+.command-center-close:hover:not(:disabled) {
+  background: var(--zeus-interaction-hover);
+  color: var(--zeus-control-text);
+}
+
+.command-center-close:focus-visible {
+  outline: 2px solid var(--zeus-control-accent);
+  outline-offset: -2px;
+}
+
 /* 命令正文和终端占用各自空间，停靠面板不遮挡页面与导航。 */
 .command-center-workspace {
   display: flex;

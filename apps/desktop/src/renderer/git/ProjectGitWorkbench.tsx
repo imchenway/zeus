@@ -31,7 +31,7 @@ import type { GitCommitModelOption } from '../features/git/gitApiClient.js';
 import { useGitOperationHistory } from './useGitOperationHistory.js';
 import { GitContextMenu, GitMenuActionDialog, type GitMenuItem, type GitMenuConfirmation } from './GitContextMenu.js';
 import { GitPaneSeparator } from './GitPaneSeparator.js';
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type MouseEvent as ReactMouseEvent } from 'react';
 import { FileTypeIcon } from '../code/FileTypeIcon.js';
 import { createPortal } from 'react-dom';
 import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
@@ -74,6 +74,8 @@ interface GitContextTarget {
 }
 
 export interface ProjectGitWorkbenchProps {
+  /** 源码工作区提供命令与返回入口，会话内嵌 Git 不传入。 */
+  toolbarActions?: ReactNode;
   conversationScope?: boolean;
   project: ProjectRecord;
   client: Pick<
@@ -674,6 +676,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   if (loadState === 'loading' && !snapshot) {
     return (
       <section className="project-git-workbench-state" aria-live="polite">
+        {props.toolbarActions ? <div className="project-git-state-actions">{props.toolbarActions}</div> : null}
         <CircleNotch aria-hidden="true" className="project-git-spinner" />
         <strong>{zh ? '正在读取项目的 Git 状态' : 'Loading the project’s Git status'}</strong>
         <span>{zh ? '正在查找项目中的 Git 仓库。' : 'Finding Git repositories in this project.'}</span>
@@ -684,6 +687,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   if (loadState === 'error' && !snapshot) {
     return (
       <section className="project-git-workbench-state" role="alert">
+        {props.toolbarActions ? <div className="project-git-state-actions">{props.toolbarActions}</div> : null}
         <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
         <Button variant="secondary" onClick={() => void loadWorkbench()}>
           {zh ? '重新读取' : 'Reload'}
@@ -695,6 +699,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   if (repositories.length === 0) {
     return (
       <section className="project-git-workbench-state">
+        {props.toolbarActions ? <div className="project-git-state-actions">{props.toolbarActions}</div> : null}
         <GitBranch aria-hidden="true" />
         <strong>{zh ? '这个项目中没有发现 Git 仓库' : 'No Git repository was found'}</strong>
         <span>{zh ? '请检查项目目录是否包含 Git 仓库，然后重新扫描。' : 'Check that the project folder contains a Git repository, then scan again.'}</span>
@@ -1060,6 +1065,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
               <ArrowsClockwise />
               <span>{zh ? '刷新' : 'Refresh'}</span>
             </button>
+            {props.toolbarActions}
           </header>
           <div className="git-content-toolbar">
             <strong>{tab === 'changes' ? (zh ? '文件状态' : 'File Status') : tab === 'log' ? (zh ? '提交历史' : 'Commit history') : tab === 'stash' ? (zh ? '贮藏' : 'Stashes') : zh ? '操作记录' : 'Operation history'}</strong>

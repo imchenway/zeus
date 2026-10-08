@@ -105,7 +105,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     pendingTaskTableLayoutLeaveRef,
     pendingWorkspaceLeaveKindRef,
     persistedTaskTableColumns,
-    projectCodeWorkspaceMode,
     projectPanel,
     projectSidebarCommittedWidthRef,
     projectSidebarDragCleanupRef,
@@ -201,7 +200,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     setTelegramSecuritySettings,
     setTelegramTestStatus,
     setTelegramTokenInput,
-    setVisitedCodeWorkspaceModes,
+    setProjectCommandsProjectId,
     settingsWorkspaceCopy,
     snapshot,
     taskModelPushEntry,
@@ -1478,49 +1477,52 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     requestWorkspaceLeave(navigate);
   }
 
-  function openProjectSection(project: ProjectRecord, section: ProjectWorkspaceSection, codeMode: ProjectCodeWorkspaceMode = projectCodeWorkspaceMode): void {
+  /** 源码和 Git 内部切换保留编辑器，只有真正离开才确认未保存内容。 */
+  function openProjectSection(project: ProjectRecord, section: ProjectWorkspaceSection, codeMode: ProjectCodeWorkspaceMode = 'source'): void {
+    /** 统一导航状态和地址，不把命令弹窗作为页面模式。 */
     const navigate = () => {
       activeProjectIdRef.current = project.id;
       setProjectDetail(project);
       setConversationDraftOpen(false);
       setActiveNavTarget(section === 'sessions' ? 'conversations' : 'projects');
       setActiveProjectSection(section);
-      if (section === 'code') {
-        setProjectCodeWorkspaceMode(codeMode);
-        setVisitedCodeWorkspaceModes((current) => new Set(current).add(codeMode));
-      }
+      if (section === 'code') setProjectCodeWorkspaceMode(codeMode);
+      setProjectCommandsProjectId(null);
       // 项目设置直接进入数字员工，不再自动打开旧项目配置抽屉。
       setProjectPanel(undefined);
-      if (typeof window !== 'undefined') window.history.replaceState(null, '', section === 'code' ? (codeMode === 'commands' ? '#project-commands' : `#project-code-${codeMode}`) : `#project-${section}`);
+      if (typeof window !== 'undefined') window.history.replaceState(null, '', section === 'code' ? `#project-code-${codeMode}` : `#project-${section}`);
       workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
     };
-    if (project.id === activeProjectId && section === activeProjectSection && (section !== 'code' || codeMode === projectCodeWorkspaceMode)) {
+    if (project.id === activeProjectId && activeNavTarget === (section === 'sessions' ? 'conversations' : 'projects') && section === activeProjectSection) {
       navigate();
       return;
     }
     requestWorkspaceLeave(navigate);
   }
 
+  /** 命令始终绑定请求项目；在当前源码或 Git 中打开时不触发离开检查。 */
   function openProjectCommands(projectId: string): void {
+    /** 项目必须仍存在，避免旧会话误用当前项目执行命令。 */
     const project = snapshot.projects.find((candidate) => candidate.id === projectId);
     if (!project) {
       recordLocalError('project-commands-open', new Error('The conversation project is no longer available.'));
       return;
     }
+    /** 从其他页面进入源码后打开命令，同项目 Git 视图保持原位。 */
     const navigate = () => {
       activeProjectIdRef.current = project.id;
       setProjectDetail(project);
       setConversationDraftOpen(false);
       setActiveNavTarget('projects');
       setActiveProjectSection('code');
-      setProjectCodeWorkspaceMode('commands');
-      setVisitedCodeWorkspaceModes((current) => new Set(current).add('commands'));
+      setProjectCodeWorkspaceMode('source');
+      setProjectCommandsProjectId(project.id);
       setProjectPanel(undefined);
-      if (typeof window !== 'undefined') window.history.replaceState(null, '', '#project-commands');
+      if (typeof window !== 'undefined') window.history.replaceState(null, '', '#project-code-source');
       workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
     };
-    if (project.id === activeProjectId && activeProjectSection === 'code' && projectCodeWorkspaceMode === 'commands') {
-      navigate();
+    if (project.id === activeProjectId && activeNavTarget === 'projects' && activeProjectSection === 'code') {
+      setProjectCommandsProjectId(project.id);
       return;
     }
     requestWorkspaceLeave(navigate);
@@ -2150,6 +2152,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     loadTaskTemplates,
     moveTaskBoardTask,
     openProjectSection,
+    openProjectCommands,
     projectDrawerVisualProps,
     projectSidebarMaximumWidth,
     projectSidebarShellStyle,

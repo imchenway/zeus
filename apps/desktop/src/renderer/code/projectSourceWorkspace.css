@@ -524,8 +524,17 @@
   min-height: 0;
 }
 
+/* 标签和工具按钮共用一行，长文件列表单独滚动，入口始终可见。 */
+.project-source-editor-header {
+  display: flex;
+  min-width: 0;
+  align-items: stretch;
+  background: var(--zeus-product-panel-muted);
+}
+
 .project-source-tabs {
   display: flex;
+  flex: 1;
   min-width: 0;
   min-height: 38px;
   overflow-x: auto;

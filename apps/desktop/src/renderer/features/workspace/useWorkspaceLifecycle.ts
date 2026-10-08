@@ -3,7 +3,7 @@ import { isDurableNativeConversationAcceptance } from '../../session/SessionWork
 import { clearPendingConflictAiStart, listPendingConflictAiStarts } from '../../task/TaskGitMergeModal.js';
 import { ZeusApiError } from '../../apiClient.js';
 import { errorToLocalUiMessage, redactLocalUiErrorMessage } from './WorkspaceChrome.js';
-import { completeNativeConversationChoiceTaskLoad, executionHostSupportsConversationSource, failNativeConversationChoiceTaskLoad, isDefinitiveNativeConversationStartRejection, PROJECT_WORKSPACE_ENTRIES } from './workspaceSupport.js';
+import { completeNativeConversationChoiceTaskLoad, executionHostSupportsConversationSource, failNativeConversationChoiceTaskLoad, isDefinitiveNativeConversationStartRejection } from './workspaceSupport.js';
 import type { WorkspaceQueryState } from './useWorkspaceQueryState.js';
 import type { WorkspaceDomainActions } from './useWorkspaceDomainActions.js';
 import type { WorkspaceOperations } from './useWorkspaceOperations.js';
@@ -43,7 +43,7 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
     zeusWindowForeground,
   } = state;
   const { acknowledgeNativeConversationAttention, nativeConversationAttentionRetryRevision, openTaskConflictAiConversation, recordLocalError, refreshArchivedConversations } = domainActions;
-  const { openProjectSection, refreshCodexConfigImport, requestWorkspaceLeave } = operations;
+  const { openProjectSection, openProjectCommands, refreshCodexConfigImport, requestWorkspaceLeave } = operations;
   useEffect(() => {
     if (activeNavTarget !== 'settings' || settingsCategory !== 'runtime' || codexConfigImportPreview || codexConfigImportLoading || !props.onInspectCodexConfigImport) return;
     void refreshCodexConfigImport();
@@ -181,16 +181,18 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
     return () => window.cancelAnimationFrame(frame);
   }, [sessionDrawerReady, sessionDrawerTarget]);
   useEffect(() => {
+    /** 保留原有快捷键，Git 和命令统一进入源码工作区。 */
     function onProjectWorkspaceShortcut(event: globalThis.KeyboardEvent): void {
       if (!event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || event.repeat) return;
-      const entry = PROJECT_WORKSPACE_ENTRIES.find((candidate) => candidate.shortcutKey === event.key);
-      if (!entry || activeNavTarget === 'settings' || !selectedProject || document.querySelector('[aria-modal="true"]')) return;
+      // 已关闭但仍在退出动画中的弹层不继续屏蔽工作区快捷键。
+      if (!['1', '2', '3', '4'].includes(event.key) || activeNavTarget === 'settings' || !selectedProject || document.querySelector('[aria-modal="true"]:not([aria-hidden="true"])')) return;
       event.preventDefault();
-      openProjectSection(selectedProject, entry.section, entry.codeMode);
+      if (event.key === '4') openProjectCommands(selectedProject.id);
+      else openProjectSection(selectedProject, event.key === '1' ? 'tasks' : 'code', event.key === '2' ? 'git' : 'source');
     }
     window.addEventListener('keydown', onProjectWorkspaceShortcut);
     return () => window.removeEventListener('keydown', onProjectWorkspaceShortcut);
-  }, [activeNavTarget, selectedProject, sourceWorkspaceDirty, taskTableLayoutDirty]);
+  }, [activeNavTarget, selectedProject, sourceWorkspaceDirty, taskTableLayoutDirty, openProjectSection, openProjectCommands]);
   useEffect(() => {
     const bridge = window.zeus;
     if (bridge?.getRequestingWindowForeground && bridge.onRequestingWindowForegroundChanged) {

@@ -23,9 +23,7 @@ import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/C
 import { DownloadSimpleIcon as DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple';
 import { SpinnerGapIcon as SpinnerGap } from '@phosphor-icons/react/dist/csr/SpinnerGap';
 import { ListChecksIcon as WorkspaceTasksIcon } from '@phosphor-icons/react/dist/csr/ListChecks';
-import { GitBranchIcon as WorkspaceGitIcon } from '@phosphor-icons/react/dist/csr/GitBranch';
 import { CodeSimpleIcon as WorkspaceSourceIcon } from '@phosphor-icons/react/dist/csr/CodeSimple';
-import { TerminalIcon as WorkspaceCommandsIcon } from '@phosphor-icons/react/dist/csr/Terminal';
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
 import { ChatCircleDotsIcon as ChatCircleDots } from '@phosphor-icons/react/dist/csr/ChatCircleDots';
 import { type AutomaticUpdateIndicatorState } from '../../appShellBridge.js';
@@ -309,106 +307,6 @@ export function ProjectRenameDialog(props: {
   return surface;
 }
 
-/** 上游主界面布局的项目工具栏；布局切换只改变外壳，不影响项目和会话状态。 */
-export function ProjectWorkspaceModeToolbar(props: {
-  project: ProjectRecord;
-  projects: ProjectRecord[];
-  onSelectProject: (project: ProjectRecord) => void;
-  section: ProjectWorkspaceSection;
-  codeMode: ProjectCodeWorkspaceMode;
-  language: AppLanguage;
-  onOpen: (section: ProjectWorkspaceSection, codeMode?: ProjectCodeWorkspaceMode) => void;
-  /** 当前项目有已选中的会话时才提供抽屉入口。 */
-  currentConversationAvailable: boolean;
-  /** 展开状态同步给辅助技术。 */
-  currentConversationOpen: boolean;
-  /** 只打开当前会话，不切换项目工作区。 */
-  onOpenCurrentConversation: () => void;
-}) {
-  /** 导航文案跟随当前应用语言。 */
-  const zh = props.language === 'zh-CN';
-  /** 当前会话入口的固定名称不再随 Option 键切换。 */
-  const conversationLabel = zh ? '当前会话' : 'Current conversation';
-  /** 未选中会话时解释入口不可用的原因。 */
-  const conversationTitle = props.currentConversationAvailable ? conversationLabel : zh ? '先从侧栏选择一段会话' : 'Select a conversation in the sidebar first';
-  /** 各工作区的可见名称。 */
-  const labels: Record<ProjectWorkspaceEntryId, string> = {
-    tasks: zh ? '任务' : 'Tasks',
-    git: 'Git',
-    source: zh ? '源码' : 'Source',
-    commands: zh ? '命令' : 'Commands',
-  };
-  /** 同一套线性图标保持一致的视觉重量。 */
-  const icons: Record<ProjectWorkspaceEntryId, ReactNode> = {
-    tasks: <WorkspaceTasksIcon size={18} weight="regular" aria-hidden="true" />,
-    git: <WorkspaceGitIcon size={18} weight="regular" aria-hidden="true" />,
-    source: <WorkspaceSourceIcon size={18} weight="regular" aria-hidden="true" />,
-    commands: <WorkspaceCommandsIcon size={18} weight="regular" aria-hidden="true" />,
-  };
-  return (
-    <header className="project-workspace-mode-toolbar" aria-label={props.project.name}>
-      <div className="project-workspace-identity" title={props.project.localPath}>
-        <ZeusSelect
-          ariaLabel={zh ? '当前项目，切换项目' : 'Current project, switch project'}
-          value={props.project.id}
-          options={props.projects.map((project) => ({ value: project.id, label: project.name }))}
-          onChange={(id) => {
-            const project = props.projects.find((item) => item.id === id);
-            if (project && project.id !== props.project.id) props.onSelectProject(project);
-          }}
-          triggerIcon={<FolderOpen size={18} aria-hidden="true" />}
-          triggerClassName="project-workspace-identity-trigger"
-          triggerTitle={props.project.name}
-          searchable
-          searchPlaceholder={zh ? '搜索项目' : 'Search projects'}
-          emptyLabel={zh ? '没有匹配项目' : 'No matching projects'}
-          popoverMinWidth={260}
-          size="compact"
-        />
-      </div>
-      <span className="project-workspace-separator" aria-hidden="true" />
-      <nav aria-label={zh ? '项目工作区' : 'Project workspace'}>
-        {PROJECT_WORKSPACE_ENTRIES.map((item) => {
-          /** 当前工作区与源码子模式共同决定选中态。 */
-          const active = props.section === item.section && (item.section !== 'code' || props.codeMode === item.codeMode);
-          /** 当前入口文案。 */
-          const label = labels[item.id];
-          /** 读屏和提示保留快捷键说明。 */
-          const shortcutLabel = zh ? `${label}（⌘${item.shortcutKey}）` : `${label} (⌘${item.shortcutKey})`;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              className={active ? 'is-active' : ''}
-              aria-label={shortcutLabel}
-              aria-current={active ? 'page' : undefined}
-              aria-keyshortcuts={`Meta+${item.shortcutKey}`}
-              title={shortcutLabel}
-              onClick={() => props.onOpen(item.section, item.codeMode)}
-            >
-              <span aria-hidden="true">{icons[item.id]}</span>
-              <span className="project-workspace-mode-label">{label}</span>
-            </button>
-          );
-        })}
-      </nav>
-      <button
-        type="button"
-        className="project-workspace-current-conversation"
-        aria-label={conversationLabel}
-        aria-haspopup="dialog"
-        aria-expanded={props.currentConversationOpen}
-        title={conversationTitle}
-        disabled={!props.currentConversationAvailable}
-        onClick={props.onOpenCurrentConversation}
-      >
-        <ChatCircleDots size={18} weight="regular" aria-hidden="true" />
-        <span>{conversationLabel}</span>
-      </button>
-    </header>
-  );
-}
-
 type GlobalSearchSourceResult = ProjectSourceContentMatch & { project: ProjectRecord };
 type GlobalSearchSelection = { kind: 'task'; task: TaskRecord } | { kind: 'conversation'; conversation: NativeConversationChoice; projectName: string } | { kind: 'source'; result: GlobalSearchSourceResult };
 type GlobalSearchScope = 'all' | 'task' | 'conversation' | 'source';
@@ -665,7 +563,7 @@ function GlobalSearchGroup(props: { title: string; icon: ReactNode; children: Re
   );
 }
 
-/** 项目切换器固定在左上角，五个项目工作区入口独立为最左侧活动栏。 */
+/** 项目切换器固定在左上角，活动栏保留会话、任务与源码入口。 */
 export function ProjectWorkspaceNavigation(props: {
   project: ProjectRecord;
   projects: ProjectRecord[];
@@ -695,16 +593,12 @@ export function ProjectWorkspaceNavigation(props: {
   /** 各工作区的可见名称。 */
   const labels: Record<ProjectWorkspaceEntryId, string> = {
     tasks: zh ? '任务' : 'Tasks',
-    git: 'Git',
     source: zh ? '源码' : 'Source',
-    commands: zh ? '命令' : 'Commands',
   };
   /** 同一套线性图标保持一致的视觉重量。 */
   const icons: Record<ProjectWorkspaceEntryId, ReactNode> = {
     tasks: <WorkspaceTasksIcon size={18} weight="regular" aria-hidden="true" />,
-    git: <WorkspaceGitIcon size={18} weight="regular" aria-hidden="true" />,
     source: <WorkspaceSourceIcon size={18} weight="regular" aria-hidden="true" />,
-    commands: <WorkspaceCommandsIcon size={18} weight="regular" aria-hidden="true" />,
   };
   /** 全局工作区激活时不保留上一个项目工作区的伪选中态。 */
   const projectWorkspaceActive =
@@ -886,8 +780,8 @@ export function ProjectWorkspaceNavigation(props: {
           <span className="project-workspace-mode-label">{conversationLabel}</span>
         </button>
         {PROJECT_WORKSPACE_ENTRIES.map((item) => {
-          /** 当前工作区与源码子模式共同决定选中态。 */
-          const active = projectWorkspaceActive && props.section === item.section && (item.section !== 'code' || props.codeMode === item.codeMode);
+          /** Git 属于源码工作区，内部切换仍保持源码入口选中。 */
+          const active = projectWorkspaceActive && props.section === item.section;
           /** 当前入口文案。 */
           const label = labels[item.id];
           /** 读屏和提示保留快捷键说明。 */
@@ -1011,7 +905,7 @@ export function SidebarNav(props: {
   onArchiveConversation: (conversation: NativeConversationChoice) => Promise<void>;
   onNavigate: (target: WorkspaceViewId) => void;
   onOpenAutomaticUpdate: () => void;
-  onOpenProjectSection: (project: ProjectRecord, section: ProjectWorkspaceSection) => void;
+  onOpenProjectSection: (project: ProjectRecord, section: ProjectWorkspaceSection, codeMode?: ProjectCodeWorkspaceMode) => void;
   onTogglePinnedProject: (projectId: string) => void;
   onToggleProjectCollapsed: (projectId: string) => void;
   onRevealProjectInFinder: (projectPath: string) => Promise<void>;
@@ -1258,19 +1152,15 @@ export function SidebarNav(props: {
               ? zh
                 ? '任务'
                 : 'Tasks'
-              : props.activeProjectSection === 'git'
-                ? 'Git'
-                : props.activeProjectSection === 'code'
-                  ? props.activeProjectCodeMode === 'commands'
-                    ? zh
-                      ? '命令'
-                      : 'Commands'
-                    : zh
-                      ? '源码'
-                      : 'Source'
+              : props.activeProjectSection === 'code'
+                ? props.activeProjectCodeMode === 'git'
+                  ? 'Git'
                   : zh
-                    ? '会话'
-                    : 'Conversations';
+                    ? '源码'
+                    : 'Source'
+                : zh
+                  ? '会话'
+                  : 'Conversations';
   const openProjectRenameDialog = (project: ProjectRecord) => {
     closeProjectMoreMenuWithMotion(project.id);
     setProjectRenameTarget(project);
@@ -1684,6 +1574,16 @@ export function SidebarNav(props: {
                     actions={
                       project.id === temporaryWorkspaceId ? undefined : (
                         <>
+                          <button
+                            type="button"
+                            className="project-source-button"
+                            aria-label={`${props.appLanguage === 'zh-CN' ? '打开源码' : 'Open source'}：${project.name}`}
+                            title={props.appLanguage === 'zh-CN' ? '源码（⌘3）' : 'Source (⌘3)'}
+                            aria-current={isActiveProject && props.activeProjectSection === 'code' ? 'page' : undefined}
+                            onClick={() => props.onOpenProjectSection(project, 'code', 'source')}
+                          >
+                            <WorkspaceSourceIcon weight="regular" aria-hidden="true" />
+                          </button>
                           <div className={`project-row-actions ${menuOpen ? 'open' : ''} ${menuClosing ? 'closing' : ''}`.trim()} onKeyDown={(event) => handleProjectMoreMenuKeyDown(event, project.id)}>
                             <button
                               type="button"

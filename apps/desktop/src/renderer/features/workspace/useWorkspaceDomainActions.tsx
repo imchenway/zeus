@@ -102,7 +102,6 @@ import {
   normalizeProjectLocalPath,
   normalizeRendererAppShellSettings,
   normalizeTaskCreateDraft,
-  type ProjectCodeWorkspaceMode,
   resolveConversationNavigationId,
   resolveSelectedNativeConversationForProject,
   resolveNativeConversationSelectionPresentation,
@@ -216,7 +215,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setOptimisticTerminalTaskStatuses,
     setPendingTaskStatuses,
     setPendingProjectDeleteId,
-    setProjectCodeWorkspaceMode,
     setProjectConfig,
     setProjectConfigForm,
     setProjectCreateDialogOpen,
@@ -259,7 +257,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     setTaskSearchQuery,
     setTaskTagFilter,
     setTaskTerminalCleanupConfirmation,
-    setVisitedCodeWorkspaceModes,
     settingsWorkspaceCopy,
     snapshot,
     taskCreateForm,
@@ -1154,12 +1151,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       recordLocalError('renderer-action', error);
       setActionState('failed');
     }
-  }
-
-  async function selectProjectCodeWorkspaceMode(mode: ProjectCodeWorkspaceMode): Promise<void> {
-    setProjectCodeWorkspaceMode(mode);
-    setVisitedCodeWorkspaceModes((current) => new Set(current).add(mode));
-    if (typeof window !== 'undefined') window.history.replaceState(null, '', mode === 'commands' ? '#project-commands' : `#project-code-${mode}`);
   }
 
   function resetProjectCreateDialog(): void {
@@ -3174,7 +3165,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     saveProjectWorkspaceConfig,
     selectNativeConversation,
     selectNewConversationProject,
-    selectProjectCodeWorkspaceMode,
     startNativeConversation,
     startProjectConversation,
     submitTaskCreateModal,
