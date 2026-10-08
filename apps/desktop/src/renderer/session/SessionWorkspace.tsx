@@ -95,7 +95,7 @@ import { GoalPanel, GoalRail } from './GoalPanel.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
 import { NewConversationExecutionContext } from './NewConversationExecutionContext.js';
 import { formatVisibleApplicationError, modelSetupRequestedEvent, reportApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
-import type { ConversationModelSetupContext } from '../settings/ModelSetup.js';
+import type { ConversationModelSetupContext } from '../settings/useModelSetup.js';
 import { StructuredComposerInput, type StructuredComposerSelection } from './StructuredComposerInput.js';
 import { isSessionTerminalShortcut, SessionTerminalPanel, type SessionTerminalClient } from './SessionTerminal.js';
 import { useSessionTerminalVisibility } from './useSessionTerminalVisibility.js';

@@ -197,6 +197,8 @@ export function plannedLocalBusinessDataImportCounts(snapshot: LocalDataExportSn
 }
 
 export function importLocalBusinessData(db: ZeusDatabase, snapshot: LocalDataExportSnapshot): ImportLocalDataResult['importedCounts'] {
+  // 导入内容进入同一事务后使历史核验失效，下一次核验按当前资料根重新登记。
+  db.execute("DELETE FROM settings WHERE key = 'maintenance.task_attachment_references'");
   const projects = Array.isArray(snapshot.data.projects) ? snapshot.data.projects.filter(isPortableProjectRecord) : [];
   const projectIds = new Set(projects.map((project) => project.id));
   const taskTemplates = Array.isArray(snapshot.data.taskTemplates)

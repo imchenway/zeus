@@ -2,6 +2,8 @@ import type { AiRuntimeSession } from '../runtime/runtimeContracts.js';
 import type { NativeProjectConversationChoicesSnapshot, NativeConversationChoicesSnapshot } from '../../session/sessionTypes.js';
 
 export interface NativeProjectConversationChoiceGroupsSnapshot {
+  /** 带会话的任务入口不受任务列表分页限制。 */
+  tasks: import('../tasks/taskContracts.js').TaskSummary[];
   projectId: string;
   projectChoices: NativeProjectConversationChoicesSnapshot;
   taskChoicesByTaskId: Record<string, NativeConversationChoicesSnapshot>;

@@ -225,7 +225,37 @@ try {
     // 线程实时状态已空闲，但历史日志在进程退出前没有写下结束标记。
     initialTurns: [...staleHistoricalTurnIds.map((id) => ({ id, threadId: providerThreadId, status: 'inProgress', items: [] })), completedFirstTurn],
   });
-  runningServer = await startProbeServer(restartedProvider.manager, 'after-restart');
+  /** 让恢复连接保持待定，覆盖断网或外部服务长期无回包的启动窗口。 */
+  let releaseStartupRecovery: () => void = () => undefined;
+  /** 防止旧实现卡住探针；超时放行只用于失败后清理。 */
+  let startupRecoveryReleased = false;
+  /** 连接等待沿用现有可控 Provider，HTTP 与数据库仍是真实运行。 */
+  const startupRecoveryWait = new Promise<void>((resolveRecovery) => {
+    releaseStartupRecovery = () => {
+      startupRecoveryReleased = true;
+      resolveRecovery();
+    };
+  });
+  /** 放行后继续原来的恢复行为，不改线程回包。 */
+  const ensureRestartedProviderReady = restartedProvider.manager.ensureReady.bind(restartedProvider.manager);
+  restartedProvider.manager.ensureReady = async (input) => {
+    await startupRecoveryWait;
+    return ensureRestartedProviderReady(input);
+  };
+  /** 超时只能判失败，不能作为正常启动通过的依据。 */
+  const startupRecoveryTimeout = setTimeout(releaseStartupRecovery, 5_000);
+  try {
+    runningServer = await startProbeServer(restartedProvider.manager, 'after-restart');
+    /** Provider 仍未就绪时，首页必须能读取已有本地项目。 */
+    const offlineDashboard = await requestJson(runningServer, '/api/dashboard');
+    assertBehavior(!startupRecoveryReleased && offlineDashboard.status === 200, '首页仍在等待外部 Provider 恢复。');
+    assertBehavior(Array.isArray(offlineDashboard.body.projects) && offlineDashboard.body.projects.some((project) => isRecord(project) && project.id === projectId), '离线首页未返回已有项目。');
+    assertBehavior(restartedProvider.startTurnInputs.length === 0, '恢复核对完成前派发了模型轮次。');
+  } finally {
+    clearTimeout(startupRecoveryTimeout);
+    releaseStartupRecovery();
+  }
+  await waitFor(() => restartedProvider.readThreadCalls > 0, '放行连接后没有继续恢复历史线程。');
   /** 路由真正进入 Pi 校验后，原始队首错误和写前回执必须保留。 */
   const piRequest = commandRequest({ commandType: 'conversation.queue.send_now', scopeKind: 'submission', scopeId: piSubmissionIds[1]!, operationIdentity: randomUUID(), input: {}, inputSha256: conversationDispatchInputSha256({}) });
   /** Pi 不需要启动模型就能验证本地写前拒绝。 */
@@ -449,6 +479,7 @@ try {
         secondClientMessageIdPreserved: true,
         manualRetryRequired: false,
         lostReceiptEchoOrders: ['before', 'after'],
+        offlineDashboardBeforeProviderReady: true,
         queuedFollowupsSentOnce: true,
         preparingDispatchSurvivesHistoryCheck: true,
         preparingDispatchSurvivesThreadStatusNotification: true,

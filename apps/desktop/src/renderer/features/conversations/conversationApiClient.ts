@@ -86,7 +86,11 @@ export interface ConversationApiClient {
     turnId: string,
     options?: { cursor?: string; direction?: 'forward' | 'tail'; limit?: number; byteLimit?: number; kind?: NativeConversationProcessV2Item['kind'] },
   ) => Promise<NativeConversationSnapshotV2Page<NativeConversationProcessV2Item>>;
-  loadNativeConversationResourcesV2: (projectId: string, conversationId: string, options?: { cursor?: string; limit?: number; byteLimit?: number }) => Promise<NativeConversationSnapshotV2Page<NativeConversationResourceV2Item>>;
+  loadNativeConversationResourcesV2: (
+    projectId: string,
+    conversationId: string,
+    options?: { cursor?: string; limit?: number; byteLimit?: number; signal?: AbortSignal },
+  ) => Promise<NativeConversationSnapshotV2Page<NativeConversationResourceV2Item>>;
   loadNativeConversationChangeSetV2: (projectId: string, conversationId: string, turnId: string) => Promise<NativeConversationChangeSetV2Summary>;
   loadNativeConversationChangeFilesV2: (
     projectId: string,
@@ -216,7 +220,7 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
     loadNativeConversationProcessV2: (projectId, conversationId, turnId, options) =>
       transport.request<NativeConversationSnapshotV2Page<NativeConversationProcessV2Item>>(`${conversationPath(projectId, conversationId)}/turns/${encodeURIComponent(turnId)}/process${pageQuery(options)}`),
     loadNativeConversationResourcesV2: (projectId, conversationId, options) =>
-      transport.request<NativeConversationSnapshotV2Page<NativeConversationResourceV2Item>>(`${conversationPath(projectId, conversationId)}/resources/page${pageQuery(options)}`),
+      transport.request<NativeConversationSnapshotV2Page<NativeConversationResourceV2Item>>(`${conversationPath(projectId, conversationId)}/resources/page${pageQuery(options)}`, { signal: options?.signal }),
     loadNativeConversationChangeSetV2: (projectId, conversationId, turnId) => transport.request<NativeConversationChangeSetV2Summary>(`${conversationPath(projectId, conversationId)}/turns/${encodeURIComponent(turnId)}/change-set/summary`),
     loadNativeConversationChangeFilesV2: (projectId, conversationId, turnId, changeSetId, options) =>
       transport.request<NativeConversationSnapshotV2Page<NativeConversationChangeFileV2Item>>(

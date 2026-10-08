@@ -22,6 +22,14 @@ export function registerWorkManagementQueryRoutes(options: { server: FastifyInst
 
   options.server.get('/api/tasks/:taskId/events', async (request: FastifyRequest<{ Params: { taskId: string } }>) => options.application.listTaskEvents(request.params.taskId));
 
+  options.server.get('/api/task-summaries', async (request: FastifyRequest<{ Querystring: { projectId?: string; cursor?: string; limit?: string; query?: string } }>, reply) => {
+    try {
+      return options.application.listTaskSummaries(request.query);
+    } catch (error) {
+      return sendNativeQueryRouteError(reply, error);
+    }
+  });
+
   options.server.get('/api/tasks', async (request: FastifyRequest<{ Querystring: ListWorkManagementTasksQuery }>, reply) => {
     try {
       return options.application.listTasks(request.query);

@@ -594,6 +594,19 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       await replaceMismatchedHost();
     };
 
+    // 冷启动发现旧版本时必须先完整替换旧 Core，再把业务配置交给 Renderer。
+    // 替换失败会进入唯一启动失败页，不能让新版界面继续使用旧版宿主。
+    if (connection.appVersion !== currentAppVersion) {
+      try {
+        await probeHostHandoff();
+      } catch (error) {
+        // 冷启动失败没有可返回的 runtime，必须撤销租约且不能留下恢复定时器。
+        closing = true;
+        await client.detach(leaseId).catch(() => undefined);
+        throw error;
+      }
+    }
+
     heartbeatTimer = setInterval(() => {
       if (heartbeatCyclePromise || closing) return;
       const cycle = maintainLease().finally(() => {
@@ -603,12 +616,6 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       void cycle.catch(() => undefined);
     }, 1_000);
     heartbeatTimer.unref();
-
-    // 冷启动发现旧版本时必须先完整替换旧 Core，再把业务配置交给 Renderer。
-    // 替换失败会进入唯一启动失败页，不能让新版界面继续使用旧版宿主。
-    if (connection.appVersion !== currentAppVersion) {
-      await probeHostHandoff();
-    }
 
     handoffTimer = setInterval(() => {
       if (handoffProbePromise || handoffPromise || closing) return;

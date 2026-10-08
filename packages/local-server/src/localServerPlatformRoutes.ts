@@ -1,3 +1,4 @@
+import { repairTaskAttachmentReferences } from './taskAttachmentLifecycle.js';
 import { resolveContextCapacityPolicy } from './contextCapacitySupport.js';
 import { resolveArchivedTaskManagementStatus, type ArchivedProjectTaskStatuses } from './taskManagementStatusMigration.js';
 import { resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
@@ -1649,6 +1650,16 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     publishPrepared: (prepared) => publishRealtimeEvent('execution_host.handoff.prepared', prepared),
     now,
   });
+
+  // 首页附属状态独立读取，不把密钥或仓库扫描放入项目查询。
+  server.get('/api/dashboard/attention', async () => {
+    const projectIds = projects.list().map((project) => project.id);
+    return { conversationAttentionByProject: conversationChoiceQueries.attentionByProject(projectIds), conversationUnreadCountByProject: conversationChoiceQueries.unreadCountByProject(projectIds) };
+  });
+  server.get('/api/dashboard/runtime', async () => ({
+    aiCli: toPassiveRuntimeStatus(platformMutableState.runtimeSettings),
+    telegram: readOnlyValidation ? getTelegramConfigurationState(undefined, []) : getTelegramConfigurationState(await readTelegramToken(), platformMutableState.telegramSecuritySettings.allowedUserIds),
+  }));
 
   server.get('/api/dashboard', async (): Promise<DashboardSnapshot> => {
     const currentProjects = projects.list();
@@ -4445,6 +4456,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         }),
         mutateAcceptedBusinessState: (result) => {
           const appliedCounts = importLocalBusinessData(db, parsed.input);
+          repairTaskAttachmentReferences(db, taskAttachmentRoot);
           if (JSON.stringify(appliedCounts) !== JSON.stringify(result.publicResult.importedCounts)) throw new Error('Business data import plan changed after validation.');
           appendAuditLog({
             actorType: 'local_api',

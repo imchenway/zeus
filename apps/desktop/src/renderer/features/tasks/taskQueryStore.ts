@@ -4,7 +4,18 @@ import type { TaskRecord } from '../../apiClient.js';
 import type { TaskApiClient } from './taskApiClient.js';
 import { errorMessage, ExternalStore } from '../../externalStore.js';
 
+/** 项目分页分别记录未加载、加载中、已就绪与失败，旧页不冒充空列表。 */
+export interface TaskPageState {
+  query: string;
+  itemIds: string[];
+  state: 'loading' | 'ready' | 'error';
+  nextCursor: string | null;
+  hasMore: boolean;
+  error: string | null;
+  loaded: boolean;
+}
 export interface TaskQuerySnapshot {
+  pages: Readonly<Record<string, TaskPageState>>;
   items: readonly TaskRecord[];
   boards: Readonly<Record<string, TaskBoardViewSnapshot>>;
   loading: boolean;
@@ -15,15 +26,20 @@ export interface TaskQuerySnapshot {
 }
 
 export class TaskQueryStore extends ExternalStore<TaskQuerySnapshot> {
+  /** 删除后的迟到分页不得复活记录；恢复回执会清除此标记。 */
+  private readonly removedIds = new Set<string>();
   constructor(
     private readonly client: TaskApiClient | null,
     initialItems: readonly TaskRecord[],
   ) {
-    super({ items: initialItems, boards: {}, loading: false, error: null, errorCause: null, revision: 0 });
+    super({ items: initialItems, pages: {}, boards: {}, loading: false, error: null, errorCause: null, revision: 0 });
   }
 
   replace(items: readonly TaskRecord[]): void {
     if (items === this.snapshot.items) return;
+    const present = new Set(items.map((item) => item.id));
+    for (const item of this.snapshot.items) if (!present.has(item.id)) this.removedIds.add(item.id);
+    for (const item of items) this.removedIds.delete(item.id);
     this.publish({ ...this.snapshot, items, error: null, errorCause: null, revision: this.snapshot.revision + 1 });
   }
 
@@ -38,6 +54,51 @@ export class TaskQueryStore extends ExternalStore<TaskQuerySnapshot> {
     } catch (error) {
       this.publish({ ...this.snapshot, loading: false, error: errorMessage(error), errorCause: userFacingErrorCause(error) });
       throw error;
+    }
+  }
+
+  /** 摘要只合并当前页，其他项目、已打开详情与较新的事件结果保持不变。 */
+  mergeSummaries(items: readonly TaskRecord[]): void {
+    const merged = new Map(this.snapshot.items.map((item) => [item.id, item]));
+    for (const item of items) {
+      if (this.removedIds.has(item.id)) continue;
+      const current = merged.get(item.id);
+      if (current?.updatedAt && item.updatedAt && current.updatedAt > item.updatedAt) continue;
+      merged.set(item.id, { ...current, ...item });
+    }
+    this.publish({ ...this.snapshot, items: [...merged.values()], revision: this.snapshot.revision + 1 });
+  }
+
+  /** 同项目只发一个请求，结果按项目身份归档，切换后不会覆盖新项目。 */
+  async loadPage(projectId: string, reset = false, query = ''): Promise<void> {
+    const previous = this.snapshot.pages[projectId];
+    if (previous?.query === query && (previous.state === 'loading' || (!reset && previous.loaded && !previous.hasMore))) return;
+    reset ||= previous?.query !== query;
+    const page: TaskPageState = {
+      query,
+      itemIds: reset ? [] : (previous?.itemIds ?? []),
+      state: 'loading',
+      loaded: reset ? false : (previous?.loaded ?? false),
+      nextCursor: reset ? null : (previous?.nextCursor ?? null),
+      hasMore: true,
+      error: null,
+    };
+    this.publish({ ...this.snapshot, pages: { ...this.snapshot.pages, [projectId]: page } });
+    try {
+      const result = await this.requireClient().loadTaskSummaries({ projectId, query, ...(page.nextCursor ? { cursor: page.nextCursor } : {}) });
+      if (this.snapshot.pages[projectId] !== page) return;
+      if (result.items.some((item) => item.projectId !== projectId) || (result.hasMore && (!result.nextCursor || result.nextCursor === page.nextCursor))) throw new Error('任务分页返回了无效身份或重复游标。');
+      this.mergeSummaries(result.items);
+      this.publish({
+        ...this.snapshot,
+        pages: {
+          ...this.snapshot.pages,
+          [projectId]: { query, itemIds: [...new Set([...page.itemIds, ...result.items.map((item) => item.id)])], state: 'ready', loaded: true, nextCursor: result.nextCursor, hasMore: result.hasMore, error: null },
+        },
+      });
+    } catch (error) {
+      if (this.snapshot.pages[projectId] !== page) return;
+      this.publish({ ...this.snapshot, pages: { ...this.snapshot.pages, [projectId]: { ...page, state: 'error', error: errorMessage(error) } } });
     }
   }
 
