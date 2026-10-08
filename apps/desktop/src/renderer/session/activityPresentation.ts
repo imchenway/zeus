@@ -1,10 +1,10 @@
 import type { NativeSessionItemBuffer } from './sessionTypes.js';
 
 /** 展示只读取真实调用与结果，不改变执行状态或历史身份。 */
-type ActivityItem = Pick<NativeSessionItemBuffer, 'payload' | 'status'>;
+type ActivityItem = Pick<NativeSessionItemBuffer, 'payload' | 'status'> & Partial<Pick<NativeSessionItemBuffer, 'type'>>;
 
 /** 已结束的工具也可能等待用户操作，不能统一写成成功。 */
-export type ActivityOutcome = 'running' | 'completed' | 'failed' | 'cancelled' | 'waiting' | 'observe' | 'unknown';
+export type ActivityOutcome = 'running' | 'completed' | 'failed' | 'cancelled' | 'terminated' | 'waiting' | 'observe' | 'unknown';
 
 /** 两种 Provider 使用同一原生工具注册表，仅名称分隔方式不同。 */
 export function nativeActivityTool(payload: Record<string, unknown>): { kind: 'browser' | 'computer'; method: string } | null {
@@ -45,14 +45,18 @@ function activityResult(payload: Record<string, unknown>): Record<string, unknow
   return result;
 }
 
-/** 失败、取消与未确认结果优先于调用完成；不从自然语言推断成功。 */
+/** 失败、取消、终止与未确认结果优先于调用完成；不从自然语言推断成功。 */
 export function activityOutcome(item: ActivityItem): ActivityOutcome {
   /** 字符串状态来自记录与原生返回，普通页面内容不能改变执行状态。 */
   const status = String(item.payload.status ?? item.status).toLowerCase();
   /** 仅原生工具的协议结果允许提供动作确认状态。 */
   const result = nativeActivityTool(item.payload) ? activityResult(item.payload) : {};
-  if (item.status === 'failed' || status === 'failed' || item.payload.success === false || item.payload.isError === true || (typeof item.payload.exitCode === 'number' && item.payload.exitCode !== 0)) return 'failed';
+  /** 明确的取消状态优先于取消时产生的非零退出码。 */
   if (['cancelled', 'canceled', 'interrupted'].includes(item.status) || ['cancelled', 'canceled', 'interrupted'].includes(status)) return 'cancelled';
+  /** 只解释命令的标准 SIGINT/SIGTERM 退出码，不推断正常清理或运行成功。 */
+  const commandType = item.type?.toLowerCase();
+  if ((commandType === 'commandexecution' || commandType === 'command') && (item.payload.exitCode === 130 || item.payload.exitCode === 143)) return 'terminated';
+  if (item.status === 'failed' || status === 'failed' || item.payload.success === false || item.payload.isError === true || (typeof item.payload.exitCode === 'number' && item.payload.exitCode !== 0)) return 'failed';
   if (result.outcome === 'unknown' || record(result.action).outcome === 'unknown' || ['timed_out', 'observation_failed'].includes(String(record(result.confirmation).status)) || status === 'unknown') return 'unknown';
   // CUA 结果被截断且未读到结构化状态时不能宣称操作完成。
   if (item.status === 'completed' && nativeActivityTool(item.payload)?.kind === 'computer' && item.payload.v2ContentTruncated === true && Object.keys(result).length === 0) return 'unknown';
@@ -103,6 +107,7 @@ export function activityOutcomeLabel(outcome: ActivityOutcome, zh: boolean): str
     completed: ['已完成', 'Completed'],
     failed: ['失败', 'Failed'],
     cancelled: ['已取消', 'Cancelled'],
+    terminated: ['已终止', 'Terminated'],
     waiting: ['等待用户操作结束', 'Waiting for user'],
     observe: ['需重新观察', 'Observation required'],
     unknown: ['结果待确认', 'Result unconfirmed'],
