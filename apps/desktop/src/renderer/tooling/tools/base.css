@@ -263,7 +263,47 @@
 }
 
 .macos-ai-app .zeus-form-dialog.automation-editor {
-  inline-size: min(680px, 100%);
+  inline-size: min(1160px, 100%);
+}
+
+/* 只扩展自动化表单的内容布局，头尾和滚动仍由公共弹窗管理。 */
+.macos-ai-app .automation-editor-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 8fr) minmax(0, 5fr);
+  align-items: start;
+  gap: 24px;
+  min-inline-size: 0;
+}
+
+/* 指令与项目保持独立分组，右栏按现有顺序呈现全部条件字段。 */
+.macos-ai-app .automation-editor-settings {
+  display: grid;
+  position: relative;
+  align-content: start;
+  gap: 16px;
+  min-inline-size: 0;
+}
+
+/* 分隔线居于两栏间距中央，不额外挤占右栏宽度。 */
+.macos-ai-app .automation-editor-settings::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: -12px;
+  border-inline-start: 1px solid var(--zeus-product-line-soft);
+  pointer-events: none;
+}
+
+/* 权限等独占一行的字段使用完整栏宽，避免空出半栏。 */
+.macos-ai-app .automation-editor-settings .automation-form-grid > :only-child {
+  grid-column: 1 / -1;
+}
+
+/* 双栏分隔由右栏承担，内容区不再重复绘制底部分隔线。 */
+.macos-ai-app .automation-form-section.automation-editor-content {
+  align-content: start;
+  padding-block-end: 0;
+  border-block-end: 0;
 }
 
 .macos-ai-app .automation-form-section {
@@ -289,6 +329,7 @@
 }
 
 .macos-ai-app .automation-editor textarea {
+  block-size: 320px;
   min-block-size: 120px;
 }
 
@@ -389,6 +430,21 @@
   .macos-ai-app .automation-inbox-actions {
     grid-column: 2;
     justify-content: flex-start;
+  }
+}
+
+/* 窄窗口恢复原有阅读顺序，避免双栏挤压长文本和下拉控件。 */
+@media (width < 980px) {
+  .macos-ai-app .automation-editor-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+  .macos-ai-app .automation-editor-settings::before {
+    display: none;
+  }
+  .macos-ai-app .automation-form-section.automation-editor-content {
+    padding-block-end: 16px;
+    border-block-end: 1px solid var(--zeus-product-line-soft);
   }
 }
 
