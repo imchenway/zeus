@@ -582,6 +582,12 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
     });
     this.auditTask(context, 'task.relationships.updated', updated, { parentTaskId: updated.parentTaskId, relatedTaskIds: updated.relatedTaskIds });
     this.publishTaskUpdated(updated, ['relationships']);
+    /** 双向关系的增删会改动另一端，按受影响身份通知所有已打开窗口。 */
+    for (const relatedId of new Set([...existing.relatedTaskIds, ...updated.relatedTaskIds])) {
+      if (existing.relatedTaskIds.includes(relatedId) === updated.relatedTaskIds.includes(relatedId)) continue;
+      const related = this.options.tasks.getById(relatedId);
+      if (related) this.publishTaskUpdated(related, ['relationships']);
+    }
     return updated;
   }
 

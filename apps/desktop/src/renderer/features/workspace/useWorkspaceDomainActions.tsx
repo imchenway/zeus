@@ -62,7 +62,7 @@ import { reportStorageReadOnlyFault } from '../../storageRecoveryError.js';
 import { readSkillWorkflowDefault, workflowSkillSelectionRequest } from '../skills/skillWorkflowPreferences.js';
 import { createSessionOperationId } from '../../sessionOperationIdentity.js';
 import {
-  type DashboardSnapshot,
+  type WorkspaceSnapshot,
   type ConversationHistoryItem,
   type ProjectGitAction,
   type ProjectGitActionResponse,
@@ -791,7 +791,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     counts[managementStatus] = (counts[managementStatus] ?? 0) + 1;
     return counts;
   }, {});
-  const changedFiles = gitDiff?.files ?? snapshot.git.changedFiles;
+  const changedFiles = gitDiff?.files ?? snapshot.git?.changedFiles ?? [];
 
   useEffect(() => {
     const visibleTaskIdSet = new Set(visibleTasks.map((task) => task.id));
@@ -864,7 +864,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     taskLocalVersionTransitionsRef.current.set(taskId, transitions);
   }
 
-  function applyTaskMutationSnapshot(nextSnapshot: DashboardSnapshot, taskId: string): TaskRecord {
+  function applyTaskMutationSnapshot(nextSnapshot: WorkspaceSnapshot, taskId: string): TaskRecord {
     const updatedTask = nextSnapshot.tasks.find((task) => task.id === taskId);
     if (!updatedTask) throw new Error(`Updated task ${taskId} was not present in the dashboard snapshot.`);
     mergeTaskRecord(updatedTask);
@@ -899,7 +899,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         if (input.projectId && updatedTask.projectId === input.projectId) {
           // 移动成功后打开目标项目，并一次刷新解除关系的其他任务。
           setSnapshot(nextSnapshot);
-          setProjectDetail(nextSnapshot.projects.find((project) => project.id === updatedTask.projectId));
+          setProjectDetail(nextSnapshot.projects.find((project) => project.id === updatedTask.projectId) ?? snapshot.projects.find((project) => project.id === updatedTask.projectId));
           activeProjectIdRef.current = updatedTask.projectId;
         }
         recordTaskMutationVersion(taskId, expectedUpdatedAt, updatedTask.updatedAt);
@@ -1147,7 +1147,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     try {
       const nextSnapshot = await props.onDeleteProject(projectId);
       setSnapshot(nextSnapshot);
-      setProjectDetail(nextSnapshot.projects[0]);
+      setProjectDetail(snapshot.projects.find((project) => project.id !== projectId));
       setPendingProjectDeleteId(undefined);
       setActionState('idle');
     } catch (error) {
@@ -1296,7 +1296,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
           taskCreatePushTaskIdRef.current = createdTask.id;
           setActiveNavTarget('projects');
         }
-        setProjectDetail(nextSnapshot.projects.find((project) => project.id === projectId));
+        setProjectDetail(nextSnapshot.projects.find((project) => project.id === projectId) ?? snapshot.projects.find((project) => project.id === projectId));
         activeProjectIdRef.current = projectId;
         // 弹窗提交成功后才落真实任务；只清搜索和标签并打开详情，不覆盖用户按项目记住的状态筛选。
         setConversationDraftOpen(false);
@@ -1346,7 +1346,13 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   }
 
   /** 复制仅预填可编辑内容，目标选择和保存沿用新建任务流程。 */
-  function openTaskCopyModal(task: TaskRecord): void {
+  async function openTaskCopyModal(task: TaskRecord): Promise<void> {
+    try {
+      if (props.onLoadTask) task = await props.onLoadTask(task.id);
+    } catch (error) {
+      recordLocalError('task-copy-load', error);
+      return;
+    }
     openTaskCreateModal();
     setActiveProjectSection('tasks');
     setTaskCreateForm({
@@ -2198,7 +2204,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       const expectedUpdatedAt = resolveTaskMutationVersion(taskId, options.expectedUpdatedAt ?? currentTask.updatedAt ?? '');
       setActionState('updating-task');
       try {
-        let nextSnapshot: DashboardSnapshot;
+        let nextSnapshot: WorkspaceSnapshot;
         try {
           nextSnapshot = await updateManagementStatus(taskId, status, expectedUpdatedAt, undefined, options.reopenConversationId);
         } catch (error) {

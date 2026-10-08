@@ -14,5 +14,8 @@ export function useTaskFeatureController(input: { client: TaskApiClient | null; 
   const setBoard = useCallback((projectId: string, board: TaskBoardViewSnapshot) => store.setBoard(projectId, board), [store]);
   const upsert = useCallback((task: TaskRecord) => store.upsert(task), [store]);
   const remove = useCallback((taskId: string) => store.remove(taskId), [store]);
-  return { snapshot, replace, load, loadOne, loadBoard, setBoard, upsert, remove };
+  /** 分页与补充会话入口共用同一任务集合。 */
+  const loadPage = useCallback((projectId: string, reset = false, query = '') => store.loadPage(projectId, reset, query), [store]);
+  const mergeSummaries = useCallback((items: readonly TaskRecord[]) => store.mergeSummaries(items), [store]);
+  return { loadPage, mergeSummaries, snapshot, replace, load, loadOne, loadBoard, setBoard, upsert, remove };
 }

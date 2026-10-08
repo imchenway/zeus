@@ -656,7 +656,8 @@ function isMarkstreamNode(value: unknown): value is MarkstreamNode {
   return typeof value === 'object' && value !== null && !Array.isArray(value) && typeof (value as { type?: unknown }).type === 'string';
 }
 
-function matchingInlineResource(resources: ConversationResource[], label: string, href: string): ConversationResource | null {
+/** 正文渲染与缺失资源检测共用匹配规则，打开仍使用登记身份。 */
+export function matchingInlineResource(resources: ConversationResource[], label: string, href: string): ConversationResource | null {
   /** 标题完全一致的资源优先，避免同文件不同位置命中第一条记录。 */
   const resource =
     resources.find((candidate) => candidate.presentation === 'inline' && candidate.displayName === label && inlineResourceMatches(candidate, label, href)) ??

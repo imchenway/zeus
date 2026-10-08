@@ -150,8 +150,18 @@ contextBridge.exposeInMainWorld('zeus', {
   exitExecutionHostMaintenance: () => ipcRenderer.invoke('zeus:execution-host-maintenance:exit'),
   restartAfterStartupFailure: () => ipcRenderer.invoke('zeus:startup-failure:restart'),
   exitAfterStartupFailure: () => ipcRenderer.invoke('zeus:startup-failure:exit'),
+  reportStartupSpan: (input: { stage: string; durationMs: number }) => ipcRenderer.send('zeus:renderer-startup-span', input),
+  reportHomeInteractive: () => ipcRenderer.send('zeus:renderer-home-interactive'),
+  getStartupStage: () => ipcRenderer.invoke('zeus:startup-stage:get'),
+  getStartupSettings: () => ipcRenderer.invoke('zeus:startup-settings:get'),
+  onStartupStageChanged: (listener: (stage: unknown) => void) => {
+    /** 订阅先建立，再读快照，避免晚窗口漏掉阶段。 */
+    const handler = (_event: Electron.IpcRendererEvent, stage: unknown) => listener(stage);
+    ipcRenderer.on('zeus:startup-stage:changed', handler);
+    return () => ipcRenderer.removeListener('zeus:startup-stage:changed', handler);
+  },
   getLocalServerConfig: () => ipcRenderer.invoke('zeus:get-local-server-config'),
-  loadSessionViewCache: () => ipcRenderer.invoke('zeus:session-view-cache:load'),
+  loadSessionViewCache: (identity: { projectId: string; conversationId: string }) => ipcRenderer.invoke('zeus:session-view-cache:load', identity),
   persistSessionViewCache: (value: unknown) => ipcRenderer.send('zeus:session-view-cache:persist', value),
   runStorageRecoveryPreflightAndRestart: () => invokeMainCommand('zeus:storage-recovery:preflight-and-restart', 'desktop.storage_recovery.preflight_restart', 'execution_host', 'storage-recovery'),
   openTaskGitDeliveryWindow: (input: unknown) => ipcRenderer.invoke('zeus:task-git-delivery:open', input),

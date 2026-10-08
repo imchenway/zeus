@@ -5,7 +5,7 @@
  * DashboardClient 的运行时组合位于 dashboardClient.ts。
  */
 export { createDashboardClient, type DashboardClient } from './dashboardClient.js';
-export { createEmptyDashboardSnapshot, normalizeDashboardSnapshot } from './features/dashboard/dashboardApiClient.js';
+export { createEmptyWorkspaceSnapshot, createEmptyDashboardSnapshot, normalizeDashboardSnapshot } from './features/dashboard/dashboardApiClient.js';
 export { isLikelyLocalServerConnectionError, ZeusApiError, type ZeusClientPerformanceSpan } from './transport/localApiTransport.js';
 
 export type {

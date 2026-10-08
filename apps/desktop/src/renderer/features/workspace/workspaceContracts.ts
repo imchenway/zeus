@@ -14,7 +14,7 @@ import {
   type CodexConfigImportResult,
   type CreateProjectRequest,
   type DashboardClient,
-  type DashboardSnapshot,
+  type WorkspaceSnapshot,
   type DeleteTaskRequest,
   type ExecutedGitOperationResult,
   type ExecuteGitOperationRequest,
@@ -73,7 +73,7 @@ import {
 export type WorkspacePageProps = {
   /** 读取已有会话正文，供历史会话展示使用。 */
   onLoadLegacyConversation?: (projectId: string, conversationId: string) => Promise<ConversationHistoryItem>;
-  snapshot?: DashboardSnapshot;
+  snapshot?: WorkspaceSnapshot;
   executionHostTransition?: ExecutionHostTransition;
   onSendConversationMessage?: (projectId: string, conversationId: string, content: string) => Promise<SendConversationMessageResult>;
   nativeConversationClient?: NativeConversationAppClient;
@@ -83,7 +83,7 @@ export type WorkspacePageProps = {
   initialSelectedNativeConversationId?: string;
   onSubscribeRealtimeEvents?: (onEvent: (event: ZeusRealtimeEvent) => void, onConnectionState: (state: ZeusRealtimeConnectionState) => void) => (() => void) | void;
   onChooseProjectDirectory?: () => Promise<string | null>;
-  onCreateCurrentProject?: (request: CreateProjectRequest) => Promise<DashboardSnapshot>;
+  onCreateCurrentProject?: (request: CreateProjectRequest) => Promise<WorkspaceSnapshot>;
   onLoadProjects?: (query?: string) => Promise<ProjectRecord[]>;
   onLoadProject?: (projectId: string) => Promise<ProjectRecord>;
   onLoadProjectConfig?: (projectId: string) => Promise<ProjectConfig>;
@@ -99,12 +99,12 @@ export type WorkspacePageProps = {
       description?: string | null;
       note?: string | null;
     },
-  ) => Promise<DashboardSnapshot>;
+  ) => Promise<WorkspaceSnapshot>;
   onRevealProjectInFinder?: (projectPath: string) => Promise<{ revealed: boolean; path?: string; error?: string }>;
-  onDeleteProject?: (projectId: string) => Promise<DashboardSnapshot>;
+  onDeleteProject?: (projectId: string) => Promise<WorkspaceSnapshot>;
   onCreateProjectArchiveConfirmation?: (projectId: string) => Promise<ProjectArchiveConfirmation>;
-  onArchiveProject?: (projectId: string) => Promise<DashboardSnapshot>;
-  onRestoreProject?: (projectId: string) => Promise<DashboardSnapshot>;
+  onArchiveProject?: (projectId: string) => Promise<WorkspaceSnapshot>;
+  onRestoreProject?: (projectId: string) => Promise<WorkspaceSnapshot>;
   onLoadArchivedProjects?: () => Promise<ProjectRecord[]>;
   onLoadArchivedTasks?: (projectId: string) => Promise<TaskRecord[]>;
   onChooseTaskAttachments?: () => Promise<TaskCreateAttachmentCandidate[]>;
@@ -115,24 +115,24 @@ export type WorkspacePageProps = {
   onParseThirdPartyTaskLink?: (url: string) => Promise<ThirdPartyTaskExtract>;
   onLoadTaskAttachmentPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
   onOpenTaskAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
-  onCreateTaskDraft?: (projectId: string, draft: TaskCreateDraft, idempotencyKey: string) => Promise<DashboardSnapshot>;
+  onCreateTaskDraft?: (projectId: string, draft: TaskCreateDraft, idempotencyKey: string) => Promise<WorkspaceSnapshot>;
   onLoadTasks?: (projectId: string, query?: string, managementStatus?: TaskManagementStatus, tag?: string, sortBy?: 'createdAt' | 'updatedAt' | 'title' | 'managementStatus') => Promise<TaskRecord[]>;
   onLoadTask?: (taskId: string) => Promise<TaskRecord>;
-  onUpdateTask?: (taskId: string, input: UpdateTaskRequest) => Promise<DashboardSnapshot>;
-  onUpdateTaskRelationships?: (taskId: string, input: UpdateTaskRelationshipsRequest) => Promise<DashboardSnapshot>;
-  onUpdateTaskTags?: (taskId: string, tags: string[], expectedUpdatedAt: string) => Promise<DashboardSnapshot>;
-  onDeleteTask?: (taskId: string, input?: DeleteTaskRequest) => Promise<DashboardSnapshot>;
+  onUpdateTask?: (taskId: string, input: UpdateTaskRequest) => Promise<WorkspaceSnapshot>;
+  onUpdateTaskRelationships?: (taskId: string, input: UpdateTaskRelationshipsRequest) => Promise<WorkspaceSnapshot>;
+  onUpdateTaskTags?: (taskId: string, tags: string[], expectedUpdatedAt: string) => Promise<WorkspaceSnapshot>;
+  onDeleteTask?: (taskId: string, input?: DeleteTaskRequest) => Promise<WorkspaceSnapshot>;
   onRunTask?: (taskId: string) => Promise<TaskRuntimeControlHandlerResult>;
-  onPauseTask?: (taskId: string) => Promise<DashboardSnapshot>;
+  onPauseTask?: (taskId: string) => Promise<WorkspaceSnapshot>;
   onContinueTask?: (taskId: string) => Promise<TaskRuntimeControlHandlerResult>;
-  onCancelTask?: (taskId: string) => Promise<DashboardSnapshot>;
-  onRetryTask?: (taskId: string) => Promise<DashboardSnapshot>;
+  onCancelTask?: (taskId: string) => Promise<WorkspaceSnapshot>;
+  onRetryTask?: (taskId: string) => Promise<WorkspaceSnapshot>;
   onOpenSource?: (source: { projectRoot?: string; sourceRef: string; lineStart?: number }) => Promise<{
     opened: boolean;
     filePath: string | null;
     lineStart?: number | null;
   }>;
-  onCreateTaskFromTemplate?: (templateId: string, projectId: string, idempotencyKey: string) => Promise<DashboardSnapshot>;
+  onCreateTaskFromTemplate?: (templateId: string, projectId: string, idempotencyKey: string) => Promise<WorkspaceSnapshot>;
   onLoadGitDiff?: () => Promise<GitDiffSummary>;
   onExportGitPatch?: () => Promise<GitPatchExport>;
   onExportPatchFile?: (patch: GitPatchExport) => Promise<{ saved: boolean; filePath: string | null }>;
@@ -189,7 +189,7 @@ export type WorkspacePageProps = {
   onArchiveRuntimeSession?: (sessionId: string) => Promise<AiRuntimeSession>;
   onRestoreRuntimeSession?: (sessionId: string) => Promise<AiRuntimeSession>;
   onDeleteRuntimeSession?: (sessionId: string) => Promise<AiRuntimeSession>;
-  onCreateTaskFromRuntimeSession?: (sessionId: string, input: { title?: string; instruction?: string }, idempotencyKey: string) => Promise<DashboardSnapshot>;
+  onCreateTaskFromRuntimeSession?: (sessionId: string, input: { title?: string; instruction?: string }, idempotencyKey: string) => Promise<WorkspaceSnapshot>;
   onLoadSecuritySecrets?: () => Promise<SecuritySecretsSnapshot>;
   onLoadSecurityAuditLogs?: () => Promise<SecurityAuditLogEntry[]>;
   onLoadReleaseStatus?: () => Promise<ReleaseStatusSnapshot>;
@@ -212,10 +212,10 @@ export type WorkspacePageProps = {
   onSaveTelegramSecuritySettings?: (input: TelegramSecuritySettings) => Promise<TelegramSecuritySettings>;
   onLoadTaskTemplates?: (projectId?: string) => Promise<TaskTemplateRecord[]>;
   onLoadTaskEvents?: (taskId: string) => Promise<TaskEventRecord[]>;
-  onUpdateTaskStatus?: (taskId: string, status: TaskStatus) => Promise<DashboardSnapshot>;
-  onUpdateTaskManagementStatus?: (taskId: string, status: TaskManagementStatus, expectedUpdatedAt: string, confirmWorktreeCleanup?: boolean, reopenConversationId?: string) => Promise<DashboardSnapshot>;
-  onArchiveTask?: (taskId: string) => Promise<DashboardSnapshot>;
-  onRestoreTask?: (taskId: string) => Promise<DashboardSnapshot>;
+  onUpdateTaskStatus?: (taskId: string, status: TaskStatus) => Promise<WorkspaceSnapshot>;
+  onUpdateTaskManagementStatus?: (taskId: string, status: TaskManagementStatus, expectedUpdatedAt: string, confirmWorktreeCleanup?: boolean, reopenConversationId?: string) => Promise<WorkspaceSnapshot>;
+  onArchiveTask?: (taskId: string) => Promise<WorkspaceSnapshot>;
+  onRestoreTask?: (taskId: string) => Promise<WorkspaceSnapshot>;
   onCreateGitConfirmation?: (operation: HighRiskGitOperation, message?: string) => Promise<GitOperationConfirmation>;
   onConfirmGitOperation?: (confirmationId: string) => Promise<GitOperationConfirmation>;
   onRejectGitOperation?: (confirmationId: string, reason?: string) => Promise<GitOperationConfirmation>;

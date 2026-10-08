@@ -27,7 +27,7 @@ export interface NativeConversationChoiceProjectionContext {
 
 interface ConversationChoiceQueryPorts {
   projects: Pick<ProjectRepository, 'list' | 'listArchived' | 'getById'>;
-  tasks: Pick<TaskRepository, 'getById' | 'listByProject'>;
+  tasks: Pick<TaskRepository, 'getById' | 'listByProject' | 'summariesByIds'>;
   conversations: Pick<ConversationRepository, 'getById' | 'listRecordsByProject' | 'listRecordsByTask' | 'listUnarchivedRecords' | 'meaningfulActivityAt'>;
   requests: Pick<ConversationServerRequestRepository, 'listPending' | 'listPendingByConversation'>;
   submissions: Pick<ConversationSubmissionRepository, 'listRecoverable' | 'getEarliestCreatedByConversation' | 'getEarliestOperationIdentityByConversation'>;
@@ -98,7 +98,7 @@ export class ConversationChoiceQueryApplication {
     const records = [...this.ports.conversations.listRecordsByProject(projectId), ...this.ports.conversations.listRecordsByProject(projectId, { archived: true })];
     const context = this.buildContext(projectId);
     const projectChoices: ReturnType<ConversationChoiceQueryApplication['toChoice']>[] = [];
-    const taskChoices = new Map<string, ReturnType<ConversationChoiceQueryApplication['toChoice']>[]>(this.ports.tasks.listByProject(projectId).map((task) => [task.id, []]));
+    const taskChoices = new Map<string, ReturnType<ConversationChoiceQueryApplication['toChoice']>[]>();
     for (const conversation of records) {
       if (conversation.taskId === null) {
         if (this.isVisibleProjectConversation(conversation)) projectChoices.push(this.toChoice(conversation, context));
@@ -113,6 +113,7 @@ export class ConversationChoiceQueryApplication {
     return {
       projectId,
       projectChoices: { projectId, choices: sortedProjectChoices, items: sortedProjectChoices },
+      tasks: this.ports.tasks.summariesByIds(projectId, [...taskChoices.keys()]),
       taskChoicesByTaskId: Object.fromEntries([...taskChoices].map(([taskId, choices]) => [taskId, this.toTaskSnapshot(taskId, projectId, choices)])),
     };
   }

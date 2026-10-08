@@ -162,7 +162,26 @@ let projectSourceWorkspace: ProjectSourceWorkspaceService | undefined;
 let projectGitWorkbench: ProjectGitWorkbenchService | undefined;
 let mainCommandLedger: MainCommandLedger | undefined;
 let fatalStartup = false;
+/** 外部浏览器独立就绪，首页不等待连接扩展。 */
+let externalBrowserReady: Promise<void> = Promise.resolve();
+/** 更新初始化与退出清理共用同一完成信号。 */
+let auxiliaryServicesReady: Promise<void> = Promise.resolve();
+/** Main 只校验自己使用的字段，其余设置原样交给 Renderer 的既有边界。 */
+type StartupSettingsSnapshot = Partial<MainAppShellSettings> & { appearance?: unknown; [key: string]: unknown };
+/** 完整设置由 Main 与各窗口共用，变更通知使下次读取失效。 */
+let startupSettings: Promise<StartupSettingsSnapshot | null> | undefined;
+/** 晚创建的窗口通过快照取得当前真实阶段。 */
+let startupStage = { stage: 'preparing_local_data', elapsedMs: 0 };
+/** 主进程启动计时起点。 */
 const applicationStartupStartedAt = performance.now();
+/** 只广播真实阶段，不以超时或百分比推断启动成功。 */
+function setStartupStage(stage: string): void {
+  startupStage = { stage, elapsedMs: Math.round(performance.now() - applicationStartupStartedAt) };
+  for (const window of windows) {
+    if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('zeus:startup-stage:changed', startupStage);
+  }
+}
+/** 所有启动打点沿用同一时钟。 */
 function traceApplicationStartup(stage: string): void {
   if (process.env.ZEUS_STARTUP_TIMING !== '1') return;
   console.info(`[Zeus app startup] ${stage} ${Math.round(performance.now() - applicationStartupStartedAt)}ms`);
@@ -1114,6 +1133,7 @@ async function checkForUpdatesFromMenu(): Promise<void> {
   await activeMainCommandLedger().execute({ envelope, body: null }, 'desktop.automatic_update.menu_check', async (_body, command) => {
     await requestMainWindow();
     if (fatalStartup) throw new Error('Zeus 启动失败，无法检查更新。');
+    await auxiliaryServicesReady;
     if (!homebrewUpdateController) throw new Error('Zeus 更新控制器尚未就绪。');
     await command.markWriteStarted();
     await homebrewUpdateController.showOrCheck();
@@ -1348,21 +1368,28 @@ function setupIpc(): void {
     }
     app.quit();
   });
+  ipcMain.handle('zeus:startup-stage:get', () => startupStage);
+  ipcMain.handle('zeus:startup-settings:get', async () => {
+    const runtime = localServerRuntime ?? (await rendererRuntimeReady);
+    return loadStartupSettings(runtime.config);
+  });
   ipcMain.handle('zeus:get-local-server-config', async () => {
     const runtime = localServerRuntime ?? (await rendererRuntimeReady);
     return runtime.refreshConfig();
   });
-  ipcMain.handle('zeus:session-view-cache:load', (event) => {
+  ipcMain.handle('zeus:session-view-cache:load', async (event, identity: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !isTrustedZeusRendererWindow(requestingWindow) || readOnlyValidationDescriptor || dataRootPreparationError !== undefined) return null;
-    const cache = readSessionViewCache(join(activeZeusDataLayout().electronUserData, 'session-view-cache-v1.json'));
+    const startedAt = performance.now();
+    const cache = await readSessionViewCache(join(activeZeusDataLayout().electronUserData, 'session-view-cache'), identity);
     traceApplicationStartup(cache ? 'session_view_cache_loaded' : 'session_view_cache_missed');
+    if (process.env.ZEUS_STARTUP_TIMING === '1') console.info(`[Zeus startup span] session_cache ${Math.round(performance.now() - startedAt)}ms`);
     return cache;
   });
   ipcMain.on('zeus:session-view-cache:persist', (event, value: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !isTrustedZeusRendererWindow(requestingWindow) || readOnlyValidationDescriptor || dataRootPreparationError !== undefined) return;
-    writeSessionViewCache(join(activeZeusDataLayout().electronUserData, 'session-view-cache-v1.json'), value);
+    void writeSessionViewCache(join(activeZeusDataLayout().electronUserData, 'session-view-cache'), value);
   });
   ipcMain.handle('zeus:storage-recovery:preflight-and-restart', async (event, request: MainCommandRequest) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
@@ -1841,6 +1868,25 @@ function setupIpc(): void {
     const detail = typeof message === 'string' && message.trim() ? message.trim().slice(0, 500) : 'Renderer bootstrap failed without detail';
     rendererBootstrapMonitor.fail(requestingWindow, new Error(`Renderer bootstrap failed: ${detail}`));
   });
+  ipcMain.on('zeus:renderer-startup-span', (event, input: { stage?: unknown; durationMs?: unknown }) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (
+      !window ||
+      !windows.has(window) ||
+      process.env.ZEUS_STARTUP_TIMING !== '1' ||
+      !input ||
+      !['app_module', 'home_query', 'task_page', 'session_cache'].includes(String(input.stage)) ||
+      typeof input.durationMs !== 'number' ||
+      !Number.isFinite(input.durationMs) ||
+      input.durationMs < 0
+    )
+      return;
+    console.info(`[Zeus startup span] ${input.stage} ${Math.round(input.durationMs)}ms`);
+  });
+  ipcMain.on('zeus:renderer-home-interactive', (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (window && windows.has(window)) traceApplicationStartup('renderer_home_interactive');
+  });
   ipcMain.on('zeus:renderer-bootstrap-ready', (event) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) return;
@@ -1999,9 +2045,10 @@ function setupIpc(): void {
     revealMainWindow(requestingWindow);
     return { activated: true };
   });
-  ipcMain.handle('zeus:release:download-update', (event, request: MainCommandRequest) => {
+  ipcMain.handle('zeus:release:download-update', async (event, request: MainCommandRequest) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('Release update request came from an untrusted window.');
+    await auxiliaryServicesReady;
     if (!releaseUpdateService) throw new Error('Zeus release update service is not ready.');
     const service = releaseUpdateService;
     return activeMainCommandLedger().execute(request, 'desktop.release.download_update', async (_body, command) => {
@@ -2012,6 +2059,7 @@ function setupIpc(): void {
   ipcMain.handle('zeus:release:install-update', async (event, request: MainCommandRequest) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('Release update request came from an untrusted window.');
+    await auxiliaryServicesReady;
     if (!releaseUpdateService) throw new Error('Zeus release update service is not ready.');
     assertUpdateCanInstall();
     const service = releaseUpdateService;
@@ -2021,14 +2069,16 @@ function setupIpc(): void {
     });
     return result;
   });
-  ipcMain.handle('zeus:automatic-update-indicator:get', (event) => {
+  ipcMain.handle('zeus:automatic-update-indicator:get', async (event) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('Automatic update status request came from an untrusted window.');
+    await auxiliaryServicesReady;
     return automaticUpdateIndicatorState ?? homebrewUpdateController?.getIndicatorState() ?? null;
   });
   ipcMain.handle('zeus:automatic-update-indicator:open', async (event, request: MainCommandRequest) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('Automatic update open request came from an untrusted window.');
+    await auxiliaryServicesReady;
     const controller = homebrewUpdateController;
     const result = await activeMainCommandLedger().execute(request, 'desktop.automatic_update.open', async (_body, command) => {
       if (!controller) throw new Error('Automatic update controller is unavailable.');
@@ -2038,9 +2088,10 @@ function setupIpc(): void {
     });
     return result;
   });
-  ipcMain.handle('zeus:automatic-update-indicator:record-manual-check', (event, request: MainCommandRequest) => {
+  ipcMain.handle('zeus:automatic-update-indicator:record-manual-check', async (event, request: MainCommandRequest) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('Automatic update scheduling request came from an untrusted window.');
+    await auxiliaryServicesReady;
     const scheduler = automaticUpdateScheduler;
     return activeMainCommandLedger().execute(request, 'desktop.automatic_update.record_manual_check', async (_body, command) => {
       if (!scheduler) throw new Error('Automatic update scheduler is unavailable.');
@@ -2374,6 +2425,7 @@ function setupIpc(): void {
     }),
   );
   ipcMain.handle('zeus:app-shell-settings-changed', (_event, settings: Partial<MainAppShellSettings> & { appearance?: unknown }) => {
+    startupSettings = undefined;
     appShellSettings = {
       appLanguage: settings.appLanguage === 'en-US' ? 'en-US' : 'zh-CN',
       webviewDebugEnabled: settings.webviewDebugEnabled === true,
@@ -3362,7 +3414,6 @@ async function initializeApplication(): Promise<void> {
     });
     for (const window of windows) browserHost.registerWindow(window);
     browserHost.registerIpc();
-    await browserHost.initializeExternalBrowsers();
     computerHost = createComputerHost({
       statePath: dataLayout.computerState,
       hostBundleId: app.isPackaged ? activeDataRootIdentity().bundleId : 'com.github.Electron',
@@ -3370,7 +3421,15 @@ async function initializeApplication(): Promise<void> {
       readOnlyValidation: Boolean(readOnlyValidationDescriptor),
     });
     computerHost.registerIpc();
-    const nativeAutomationHost = createNativeAutomationHost({ browser: browserHost, computer: computerHost, externalBrowser: externalBrowserHost });
+    const nativeAutomationHost = createNativeAutomationHost({
+      browser: browserHost,
+      computer: computerHost,
+      externalBrowser: externalBrowserHost,
+      beforeNetwork: async () => {
+        await rendererRuntimeReady;
+      },
+      beforeExternalBrowser: () => externalBrowserReady,
+    });
     traceApplicationStartup('local_resources_ready');
     const mainProjectRoot = readOnlyValidationDescriptor?.validationRoot ?? resolveMainProjectRoot();
     const codexNativeEnabled = !readOnlyValidationDescriptor && process.env.ZEUS_CODEX_NATIVE_ENABLED !== '0';
@@ -3379,6 +3438,7 @@ async function initializeApplication(): Promise<void> {
     // Main 只持有窗口、BrowserHost 与短期连接凭据；独立 Zeus Core 是唯一业务 SQLite 写入者。
     const { startDesktopLocalServer } = await import('./localServerRuntime.js');
     traceApplicationStartup('local_server_module_ready');
+    setStartupStage('connecting_local_service');
     localServerRuntime = await startDesktopLocalServer({
       userDataPath,
       dataLayout,
@@ -3414,6 +3474,9 @@ async function initializeApplication(): Promise<void> {
     traceApplicationStartup('local_server_ready');
     // 读取宿主实际生效值；后台宿主仍在工作时，保存的新设置留待完整退出后统一启用。
     await initializeNetworkProxy(localServerRuntime.config);
+    // 代理已生效后才启用外部浏览器；失败留给该功能自己的调用者。
+    externalBrowserReady = browserHost.initializeExternalBrowsers();
+    void externalBrowserReady.catch((error) => console.warn('外部浏览器初始化失败。', error));
     if (!readOnlyValidationDescriptor) {
       projectSourceWorkspace = new ProjectSourceWorkspaceService({
         loadProjectRoot: loadProjectRootForSourceWorkspace,
@@ -3421,94 +3484,9 @@ async function initializeApplication(): Promise<void> {
       });
       projectGitWorkbench = new ProjectGitWorkbenchService(loadProjectIdentity);
     }
-    // 更新服务属于附属功能，初始化失败只停用更新入口。
-    try {
-      if (app.isPackaged && !readOnlyValidationDescriptor) {
-        releaseUpdateService = createReleaseUpdateService({
-          userDataPath,
-          currentAppPath: currentAppBundlePath(),
-          currentExecutablePath: process.execPath,
-          currentAppVersion: app.getVersion(),
-          localServerConfig: () => {
-            if (!localServerRuntime) throw new Error('Zeus local server is not ready.');
-            return localServerRuntime.config;
-          },
-          isPackaged: true,
-          testMode: isTestDistribution(),
-          allowUntrustedTestUpdate: allowUntrustedReleaseUpdateTest,
-          /** 保留 macOS 下载安全检查；打开磁盘映像交给系统，不执行自动替换。 */
-          openDownloadedArtifact: async (path) => {
-            await execFile(nativeUpdateProgressHelperPath(), ['--quarantine-download', path], { timeout: 10_000 });
-            /** 系统返回空字符串才表示已接受打开请求。 */
-            const error = await shell.openPath(path);
-            if (error) throw new Error('无法打开已下载的安装包，请稍后重试。', { cause: error });
-          },
-          onInstallReady: (activate) => requestUpgradeHandoffQuit(executionHostProtocolVersion, activate),
-        });
-        homebrewUpdateController = createHomebrewUpdateController({
-          helperPath: nativeUpdateProgressHelperPath(),
-          language: () => appShellSettings.appLanguage,
-          loadUpdateStatus: () => {
-            if (!releaseUpdateService) throw new Error('Zeus 发布更新服务尚未就绪。');
-            return releaseUpdateService.check();
-          },
-          direct: releaseUpdateService,
-          /** 发布清单中的链接也必须属于 Zeus 官方发布目录。 */
-          openDownloadPage: async (value) => {
-            const url = new URL(value);
-            if (url.protocol !== 'https:' || url.hostname !== 'github.com' || Boolean(url.port || url.username || url.password) || !url.pathname.startsWith('/imchenway/zeus/releases/'))
-              throw new Error('更新下载页面不是 Zeus 官方发布地址。');
-            const result = await openExternalHttpsUrl({ url: value, openExternal: (target) => shell.openExternal(target) });
-            if (!result.opened) throw new Error('无法打开更新下载页面，请稍后重试。');
-          },
-          homebrew: createHomebrewUpdateService({
-            currentAppPath: currentAppBundlePath(),
-            currentAppVersion: app.getVersion(),
-            bundleId: isTestDistribution() ? 'dev.hypha.zeus.test' : 'dev.hypha.zeus',
-            testMode: isTestDistribution(),
-          }),
-          currentVersion: app.getVersion(),
-          canInstall: assertUpdateCanInstall,
-          onInstallReady: requestUpgradeHandoffQuit,
-        });
-      }
-    } catch (error) {
-      releaseUpdateService = undefined;
-      homebrewUpdateController = undefined;
-      console.warn('Zeus 更新服务初始化失败，继续启动。', error);
-    }
     appShellSettings = await loadMainAppShellSettings(localServerRuntime.config);
     traceApplicationStartup('app_shell_settings_ready');
-    // 自动检查启动失败不能影响本地服务与主界面就绪。
-    try {
-      if (homebrewUpdateController && (!isTestDistribution() || allowUntrustedReleaseUpdateTest)) {
-        automaticUpdateScheduler = createAutomaticUpdateScheduler({
-          statePath: join(dataLayout.releaseUpdates, 'automatic-update-state.json'),
-          intervalMs: automaticUpdateTiming(automaticUpdateIntervalMs, 'ZEUS_AUTO_UPDATE_INTERVAL_MS', allowUntrustedReleaseUpdateTest),
-          initialDelayMs: automaticUpdateTiming(automaticUpdateInitialDelayMs, 'ZEUS_AUTO_UPDATE_INITIAL_DELAY_MS', allowUntrustedReleaseUpdateTest),
-          controller: homebrewUpdateController,
-          checkCompanionUpdate: checkCodexUpdateAutomatically,
-          onIndicatorChange: broadcastAutomaticUpdateIndicator,
-          notifyReady: (latestVersion, showProgress) => {
-            if (isZeusApplicationForeground() || !appShellSettings.desktopNotificationsEnabled || !Notification.isSupported()) return false;
-            const notification = new Notification({
-              title: appShellSettings.appLanguage === 'zh-CN' ? 'Zeus 更新已下载' : 'Zeus Update Downloaded',
-              body: appShellSettings.appLanguage === 'zh-CN' ? `Zeus ${latestVersion} 已下载。重启后可安装更新。` : `Zeus ${latestVersion} is downloaded. Restart to install the update.`,
-            });
-            notification.on('click', showProgress);
-            notification.show();
-            return true;
-          },
-        });
-        await automaticUpdateScheduler.start();
-        powerMonitor.on('resume', handleAutomaticUpdateResume);
-      }
-    } catch (error) {
-      automaticUpdateScheduler?.stop();
-      automaticUpdateScheduler = undefined;
-      console.warn('Zeus 自动更新调度初始化失败，继续启动。', error);
-    }
-    traceApplicationStartup('update_scheduler_ready');
+
     if (!readOnlyValidationDescriptor) applyLoginItemSettings();
     if (readOnlyValidationDescriptor) {
       Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'Zeus Test · 只读验证', submenu: [{ role: 'quit' }] }]));
@@ -3517,8 +3495,99 @@ async function initializeApplication(): Promise<void> {
       setupTraySafely();
       applySystemNotificationBridge();
     }
+    setStartupStage('reading_home');
     resolveRendererRuntimeReady(localServerRuntime);
     resolveRendererStartupDisposition();
+    // 首屏就绪信号先送达，更新状态只在自己的入口等待。
+    auxiliaryServicesReady = new Promise<void>((resolve) => setImmediate(resolve)).then(async () => {
+      // 更新服务属于附属功能，初始化失败只停用更新入口。
+      try {
+        if (app.isPackaged && !readOnlyValidationDescriptor) {
+          releaseUpdateService = createReleaseUpdateService({
+            userDataPath,
+            currentAppPath: currentAppBundlePath(),
+            currentExecutablePath: process.execPath,
+            currentAppVersion: app.getVersion(),
+            localServerConfig: () => {
+              if (!localServerRuntime) throw new Error('Zeus local server is not ready.');
+              return localServerRuntime.config;
+            },
+            isPackaged: true,
+            testMode: isTestDistribution(),
+            allowUntrustedTestUpdate: allowUntrustedReleaseUpdateTest,
+            /** 保留 macOS 下载安全检查；打开磁盘映像交给系统，不执行自动替换。 */
+            openDownloadedArtifact: async (path) => {
+              await execFile(nativeUpdateProgressHelperPath(), ['--quarantine-download', path], { timeout: 10_000 });
+              /** 系统返回空字符串才表示已接受打开请求。 */
+              const error = await shell.openPath(path);
+              if (error) throw new Error('无法打开已下载的安装包，请稍后重试。', { cause: error });
+            },
+            onInstallReady: (activate) => requestUpgradeHandoffQuit(executionHostProtocolVersion, activate),
+          });
+          homebrewUpdateController = createHomebrewUpdateController({
+            helperPath: nativeUpdateProgressHelperPath(),
+            language: () => appShellSettings.appLanguage,
+            loadUpdateStatus: () => {
+              if (!releaseUpdateService) throw new Error('Zeus 发布更新服务尚未就绪。');
+              return releaseUpdateService.check();
+            },
+            direct: releaseUpdateService,
+            /** 发布清单中的链接也必须属于 Zeus 官方发布目录。 */
+            openDownloadPage: async (value) => {
+              const url = new URL(value);
+              if (url.protocol !== 'https:' || url.hostname !== 'github.com' || Boolean(url.port || url.username || url.password) || !url.pathname.startsWith('/imchenway/zeus/releases/'))
+                throw new Error('更新下载页面不是 Zeus 官方发布地址。');
+              const result = await openExternalHttpsUrl({ url: value, openExternal: (target) => shell.openExternal(target) });
+              if (!result.opened) throw new Error('无法打开更新下载页面，请稍后重试。');
+            },
+            homebrew: createHomebrewUpdateService({
+              currentAppPath: currentAppBundlePath(),
+              currentAppVersion: app.getVersion(),
+              bundleId: isTestDistribution() ? 'dev.hypha.zeus.test' : 'dev.hypha.zeus',
+              testMode: isTestDistribution(),
+            }),
+            currentVersion: app.getVersion(),
+            canInstall: assertUpdateCanInstall,
+            onInstallReady: requestUpgradeHandoffQuit,
+          });
+        }
+      } catch (error) {
+        releaseUpdateService = undefined;
+        homebrewUpdateController = undefined;
+        console.warn('Zeus 更新服务初始化失败，继续启动。', error);
+      }
+      // 自动检查启动失败不能影响本地服务与主界面就绪。
+      try {
+        if (homebrewUpdateController && (!isTestDistribution() || allowUntrustedReleaseUpdateTest)) {
+          automaticUpdateScheduler = createAutomaticUpdateScheduler({
+            statePath: join(dataLayout.releaseUpdates, 'automatic-update-state.json'),
+            intervalMs: automaticUpdateTiming(automaticUpdateIntervalMs, 'ZEUS_AUTO_UPDATE_INTERVAL_MS', allowUntrustedReleaseUpdateTest),
+            initialDelayMs: automaticUpdateTiming(automaticUpdateInitialDelayMs, 'ZEUS_AUTO_UPDATE_INITIAL_DELAY_MS', allowUntrustedReleaseUpdateTest),
+            controller: homebrewUpdateController,
+            checkCompanionUpdate: checkCodexUpdateAutomatically,
+            onIndicatorChange: broadcastAutomaticUpdateIndicator,
+            notifyReady: (latestVersion, showProgress) => {
+              if (isZeusApplicationForeground() || !appShellSettings.desktopNotificationsEnabled || !Notification.isSupported()) return false;
+              const notification = new Notification({
+                title: appShellSettings.appLanguage === 'zh-CN' ? 'Zeus 更新已下载' : 'Zeus Update Downloaded',
+                body: appShellSettings.appLanguage === 'zh-CN' ? `Zeus ${latestVersion} 已下载。重启后可安装更新。` : `Zeus ${latestVersion} is downloaded. Restart to install the update.`,
+              });
+              notification.on('click', showProgress);
+              notification.show();
+              return true;
+            },
+          });
+          await automaticUpdateScheduler.start();
+          powerMonitor.on('resume', handleAutomaticUpdateResume);
+        }
+      } catch (error) {
+        automaticUpdateScheduler?.stop();
+        automaticUpdateScheduler = undefined;
+        console.warn('Zeus 自动更新调度初始化失败，继续启动。', error);
+      }
+      traceApplicationStartup('update_scheduler_ready');
+    });
+    void auxiliaryServicesReady.catch((error) => console.warn('附属服务初始化失败。', error));
     await initialWindowPromise;
     traceApplicationStartup('initialization_finished');
   } catch (error) {
@@ -3808,6 +3877,8 @@ app.on(
           cleanupErrors.push(Object.assign(new Error(`Zeus 退出清理失败：${label}`), { cause: error }));
         }
       };
+      await attemptCleanup('附属服务初始化', () => auxiliaryServicesReady);
+      await attemptCleanup('外部浏览器初始化', () => externalBrowserReady.catch(() => undefined));
       await attemptCleanup('自动更新调度器', () => {
         automaticUpdateScheduler?.stop();
         automaticUpdateScheduler = undefined;
@@ -3905,13 +3976,19 @@ async function initializeNetworkProxy(config: { baseUrl: string; apiToken: strin
   await Promise.all([app.setProxy(proxy), session.defaultSession.setProxy(proxy), session.fromPartition(browserPartition).setProxy(proxy)]);
 }
 
+/** 单次读取完整设置，避免 Main 与 Renderer 在启动时重复查询。 */
+function loadStartupSettings(config: { baseUrl: string; apiToken: string }): Promise<StartupSettingsSnapshot | null> {
+  startupSettings ??= fetch(`${config.baseUrl}/api/settings/app-shell`, { headers: { authorization: `Bearer ${config.apiToken}` } })
+    .then(async (response) => (response.ok ? ((await response.json()) as StartupSettingsSnapshot) : null))
+    .catch(() => null);
+  return startupSettings;
+}
+
+/** 原生菜单与主题只提取自己使用的设置。 */
 async function loadMainAppShellSettings(config: { baseUrl: string; apiToken: string }): Promise<MainAppShellSettings> {
   try {
-    const response = await fetch(`${config.baseUrl}/api/settings/app-shell`, {
-      headers: { authorization: `Bearer ${config.apiToken}` },
-    });
-    if (!response.ok) return appShellSettings;
-    const body = (await response.json()) as Partial<MainAppShellSettings> & { appearance?: unknown };
+    const body = await loadStartupSettings(config);
+    if (!body) return appShellSettings;
     // 设置就绪后同步原生主题，后续窗口的首屏 CSS 无需再等待页面设置请求。
     nativeTheme.themeSource = body.appearance === 'light' || body.appearance === 'dark' ? body.appearance : 'system';
     return {

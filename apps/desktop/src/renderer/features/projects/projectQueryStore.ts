@@ -29,7 +29,8 @@ export class ProjectQueryStore extends ExternalStore<ProjectQuerySnapshot> {
   }
 
   replace(items: readonly ProjectRecord[]): void {
-    if (items === this.snapshot.items) return;
+    // 任务分页和局部写回不改变项目记录时，不重复发布项目集合。
+    if (items === this.snapshot.items || (items.length === this.snapshot.items.length && items.every((item, index) => item === this.snapshot.items[index]))) return;
     const selectedProjectId = this.snapshot.selectedProjectId && items.some((item) => item.id === this.snapshot.selectedProjectId) ? this.snapshot.selectedProjectId : (items[0]?.id ?? null);
     this.publish({ ...this.snapshot, items, selectedProjectId, error: null, errorCause: null, revision: this.snapshot.revision + 1 });
   }

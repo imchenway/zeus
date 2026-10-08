@@ -7,22 +7,7 @@ export type TaskStatus = 'draft' | 'ready' | 'running' | 'paused' | 'waiting_con
 export type TaskAgentRunStatus = 'not_started' | 'connecting' | 'reconnecting' | 'running' | 'waiting_user' | 'waiting_approval' | 'paused' | 'idle' | 'failed' | 'legacy_readonly';
 
 export type TaskTableColumnKey =
-  | 'code'
-  | 'intent'
-  | 'taskType'
-  | 'managementStatus'
-  | 'branchStatus'
-  | 'runStatus'
-  | 'source'
-  | 'updatedAt'
-  | 'createdAt'
-  | 'template'
-  | 'project'
-  | 'priority'
-  | 'description'
-  | 'runtimeSession'
-  | 'rawId'
-  | 'createdFrom';
+  'code' | 'intent' | 'taskType' | 'managementStatus' | 'branchStatus' | 'runStatus' | 'source' | 'updatedAt' | 'createdAt' | 'template' | 'project' | 'priority' | 'description' | 'runtimeSession' | 'rawId' | 'createdFrom';
 
 export type TaskTableColumnWidth = number;
 
@@ -47,6 +32,10 @@ export interface TaskTableEnumSortOrders {
 }
 
 export interface TaskRecord {
+  /** 正文在详情读取，列表预览只供显示。 */
+  contentPreview?: string;
+  /** 服务端完整内容搜索命中的查询，不能当作正文使用。 */
+  matchedQuery?: string;
   id: string;
   projectId: string;
   taskCode?: string;
@@ -323,4 +312,33 @@ export interface TaskRuntimeControlResult {
   };
   queued?: true;
   reason?: string;
+}
+
+/** 主页摘要不携带任务正文，打开详情时再取得完整记录。 */
+export type TaskSummary = Pick<
+  TaskRecord,
+  | 'id'
+  | 'projectId'
+  | 'taskCode'
+  | 'taskSequence'
+  | 'parentTaskId'
+  | 'relatedTaskIds'
+  | 'title'
+  | 'taskType'
+  | 'managementStatus'
+  | 'status'
+  | 'priority'
+  | 'tags'
+  | 'createdAt'
+  | 'updatedAt'
+  | 'createdFrom'
+  | 'templateId'
+  | 'contentPreview'
+  | 'matchedQuery'
+>;
+/** 每个项目的独立列表页。 */
+export interface TaskSummaryPage {
+  items: TaskSummary[];
+  nextCursor: string | null;
+  hasMore: boolean;
 }

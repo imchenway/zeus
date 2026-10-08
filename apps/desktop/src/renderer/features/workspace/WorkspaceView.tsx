@@ -2,14 +2,13 @@ import { toolPages } from '../../tooling/index.js';
 import { temporaryWorkspaceId } from '@zeus/shared';
 import { MotionPresence } from '../../ui/MotionPresence.js';
 import { SettingsSaveStatus, useSettingsAutosave, type SettingsSaveState } from '../../settings/useSettingsAutosave.js';
-import { GlobalAgentSettingsPane } from '../../settings/GlobalAgentSettingsPane.js';
 import { FileTextIcon } from '@phosphor-icons/react/dist/csr/FileText';
 import type { UpdateAppShellSettingsRequest } from '../settings/settingsContracts.js';
 import type { ProjectSourceContentMatch, SidebarConversationFilters } from '@zeus/shared';
 import { reportApplicationError, VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { RuntimeXtermPane } from '../runtime/RuntimeXtermPane.js';
 import { handleInlineRailKeyboardNavigation } from './workspaceSupport.js';
-import { useModelSetup, ModelSetupDialog, CodexAccountSettings, type TaskModelSetupContext } from '../../settings/ModelSetup.js';
+import { useModelSetup, type TaskModelSetupContext } from '../../settings/useModelSetup.js';
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
 import type { Icon } from '@phosphor-icons/react';
 import { SlidersHorizontalIcon } from '@phosphor-icons/react/dist/csr/SlidersHorizontal';
@@ -25,10 +24,9 @@ import { PuzzlePieceIcon } from '@phosphor-icons/react/dist/csr/PuzzlePiece';
 import { TerminalIcon } from '@phosphor-icons/react/dist/csr/Terminal';
 import { ArrowCircleUpIcon } from '@phosphor-icons/react/dist/csr/ArrowCircleUp';
 import { DatabaseIcon } from '@phosphor-icons/react/dist/csr/Database';
-import { Suspense, useEffect, useId, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useId, useMemo, useState } from 'react';
 import type { ProjectRecord } from '../../apiClient.js';
 import { openAutomaticUpdateIndicatorInMain } from '../../appShellBridge.js';
-import { ProjectGitWorkbench } from '../../git/ProjectGitWorkbench.js';
 import { conversationDisplayTitle } from '../../session/conversationDisplayTitle.js';
 import type { NativeConversationChoice } from '../../session/sessionTypes.js';
 import { TaskGitReviewModal } from '../../task/TaskGitReviewModal.js';
@@ -36,28 +34,13 @@ import { persistPendingConflictAiStart, TaskGitMergeModal } from '../../task/Tas
 import { TaskModelPushModal, writeTaskModelPushPreferences } from '../../task/TaskModelPushModal.js';
 import { TaskWorkspace } from '../../task/TaskWorkspace.js';
 import { ZentaoImportModal } from '../../task/ZentaoSyncModal.js';
-import { CodexConfigImportSettings } from '../../settings/CodexConfigImportSettings.js';
-import { TerminalSettingsPane } from '../../settings/TerminalSettingsPane.js';
-import { BrowserSettingsPane } from '../../settings/BrowserSettingsPane.js';
-import { GeneralSettingsPane } from '../../settings/GeneralSettingsPane.js';
-import { NetworkSettingsPane } from '../../settings/NetworkSettingsPane.js';
 import { SettingsPagination, settingsPage, settingsPageSize } from '../../settings/SettingsPagination.js';
-import { CodexRemoteControlSettings } from '../../settings/CodexRemoteControlSettings.js';
-import { ModelConnectionsSettingsPane } from '../../settings/ModelConnectionsSettingsPane.js';
-import { ZentaoSettingsPane } from '../../settings/ZentaoSettingsPane.js';
-import { TaskManagementStatusEditor } from '../../settings/TaskManagementStatusEditor.js';
-import { CodexUsageSettingsPane } from '../../settings/CodexUsageSettingsPane.js';
-import { MemorySettingsPane } from '../memory/MemorySettingsPane.js';
-import { DigitalEmployeeTemplatesSettings } from '../digital-employees/DigitalEmployeeTemplatesSettings.js';
-import { ImRobotSettingsPane } from '../telegram/ImRobotSettingsPane.js';
 import { defaultTaskTableEnumSortOrders, normalizeTaskTableEnumSortOrders } from '../../task/taskWorkspaceModel.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
 import { Button } from '../../ui/Button.js';
 import { ModalPortal } from '../../ui/ModalPortal.js';
 import { taskAgentRunStatusLabels } from '../../task/TaskRunStatusChip.js';
 import { WorkspaceDrawer } from '../../ui/WorkspaceDrawer.js';
-import { CommandCenterPanel } from '../../CommandCenterPanel.js';
-import { ProjectSourceWorkspace } from '../../code/ProjectSourceWorkspace.js';
 import { formatRuntimeAdapterDetectionFacts, InlineRecoveryPrompt, ProjectCreateDialog, ProjectStartGuide, ProjectWorkspaceModeToolbar, ProjectWorkspaceNavigation, SidebarNav } from './WorkspaceChrome.js';
 import { GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE } from './workspaceFormatters.js';
 import {
@@ -89,6 +72,45 @@ import {
 import type { WorkspaceQueryState } from './useWorkspaceQueryState.js';
 import type { WorkspaceDomainActions } from './useWorkspaceDomainActions.js';
 import type { WorkspaceOperations } from './useWorkspaceOperations.js';
+
+/** 模型接入状态留在首页，设置和对话框只在打开时加载。 */
+const ModelSetupDialog = lazy(() => import('../../settings/ModelSetup.js').then((module) => ({ default: module.ModelSetupDialog })));
+/** 账户设置与接入对话框复用同一按需模块。 */
+const CodexAccountSettings = lazy(() => import('../../settings/ModelSetup.js').then((module) => ({ default: module.CodexAccountSettings })));
+/** GlobalAgentSettingsPane 仅在对应页面打开时加载。 */
+const GlobalAgentSettingsPane = lazy(() => import('../../settings/GlobalAgentSettingsPane.js').then((module) => ({ default: module.GlobalAgentSettingsPane })));
+/** ProjectGitWorkbench 仅在对应页面打开时加载。 */
+const ProjectGitWorkbench = lazy(() => import('../../git/ProjectGitWorkbench.js').then((module) => ({ default: module.ProjectGitWorkbench })));
+/** TerminalSettingsPane 仅在对应页面打开时加载。 */
+const TerminalSettingsPane = lazy(() => import('../../settings/TerminalSettingsPane.js').then((module) => ({ default: module.TerminalSettingsPane })));
+/** BrowserSettingsPane 仅在对应页面打开时加载。 */
+const BrowserSettingsPane = lazy(() => import('../../settings/BrowserSettingsPane.js').then((module) => ({ default: module.BrowserSettingsPane })));
+/** GeneralSettingsPane 仅在对应页面打开时加载。 */
+const GeneralSettingsPane = lazy(() => import('../../settings/GeneralSettingsPane.js').then((module) => ({ default: module.GeneralSettingsPane })));
+/** NetworkSettingsPane 仅在对应页面打开时加载。 */
+const NetworkSettingsPane = lazy(() => import('../../settings/NetworkSettingsPane.js').then((module) => ({ default: module.NetworkSettingsPane })));
+/** ModelConnectionsSettingsPane 仅在对应页面打开时加载。 */
+const ModelConnectionsSettingsPane = lazy(() => import('../../settings/ModelConnectionsSettingsPane.js').then((module) => ({ default: module.ModelConnectionsSettingsPane })));
+/** ZentaoSettingsPane 仅在对应页面打开时加载。 */
+const ZentaoSettingsPane = lazy(() => import('../../settings/ZentaoSettingsPane.js').then((module) => ({ default: module.ZentaoSettingsPane })));
+/** CodexUsageSettingsPane 仅在对应页面打开时加载。 */
+const CodexUsageSettingsPane = lazy(() => import('../../settings/CodexUsageSettingsPane.js').then((module) => ({ default: module.CodexUsageSettingsPane })));
+/** MemorySettingsPane 仅在对应页面打开时加载。 */
+const MemorySettingsPane = lazy(() => import('../memory/MemorySettingsPane.js').then((module) => ({ default: module.MemorySettingsPane })));
+/** ImRobotSettingsPane 仅在对应页面打开时加载。 */
+const ImRobotSettingsPane = lazy(() => import('../telegram/ImRobotSettingsPane.js').then((module) => ({ default: module.ImRobotSettingsPane })));
+/** CommandCenterPanel 仅在对应页面打开时加载。 */
+const CommandCenterPanel = lazy(() => import('../../CommandCenterPanel.js').then((module) => ({ default: module.CommandCenterPanel })));
+/** ProjectSourceWorkspace 仅在对应页面打开时加载。 */
+const ProjectSourceWorkspace = lazy(() => import('../../code/ProjectSourceWorkspace.js').then((module) => ({ default: module.ProjectSourceWorkspace })));
+/** DigitalEmployeeTemplatesSettings 仅在对应页面打开时加载。 */
+const DigitalEmployeeTemplatesSettings = lazy(() => import('../digital-employees/DigitalEmployeeTemplatesSettings.js').then((module) => ({ default: module.DigitalEmployeeTemplatesSettings })));
+/** CodexConfigImportSettings 仅在对应页面打开时加载。 */
+const CodexConfigImportSettings = lazy(() => import('../../settings/CodexConfigImportSettings.js').then((module) => ({ default: module.CodexConfigImportSettings })));
+/** CodexRemoteControlSettings 仅在对应页面打开时加载。 */
+const CodexRemoteControlSettings = lazy(() => import('../../settings/CodexRemoteControlSettings.js').then((module) => ({ default: module.CodexRemoteControlSettings })));
+/** TaskManagementStatusEditor 仅在对应页面打开时加载。 */
+const TaskManagementStatusEditor = lazy(() => import('../../settings/TaskManagementStatusEditor.js').then((module) => ({ default: module.TaskManagementStatusEditor })));
 
 export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions: WorkspaceDomainActions; operations: WorkspaceOperations }) {
   const [settingsSearchQuery, setSettingsSearchQuery] = useState('');
@@ -127,6 +149,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     genericShellCriticalConfirmed,
     genericShellRisk,
     gitDiffCopy,
+    homeSectionStates,
+    setHomeRefreshRevision,
     loadTaskBoard,
     loadingDiffBusy,
     loadingRuntimeBusy,
@@ -215,6 +239,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     settingsCategory,
     settingsWorkspaceCopy,
     snapshot,
+    taskQuery,
+    loadTaskPage,
     sourceWorkspaceLeaveDialogOpen,
     sourceWorkspaceSaveBusy,
     storageRecoveryFault,
@@ -579,7 +605,17 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       lang={uiCopy.documentLang}
       aria-label={uiCopy.shellAriaLabel}
     >
-      <MotionPresence>{modelSetup.step ? <ModelSetupDialog controller={modelSetup} /> : null}</MotionPresence>
+      <Suspense
+        fallback={
+          <ModalPortal rootClassName="model-setup-portal" role="dialog" aria-label={appShellSettings.appLanguage === 'zh-CN' ? '模型接入' : 'Model setup'} onDismiss={modelSetup.close}>
+            <section className="model-setup-dialog zeus-solid-form-surface" data-modal-surface="dialog">
+              <p role="status">{appShellSettings.appLanguage === 'zh-CN' ? '正在加载模型设置…' : 'Loading model settings…'}</p>
+            </section>
+          </ModalPortal>
+        }
+      >
+        <MotionPresence>{modelSetup.step ? <ModelSetupDialog controller={modelSetup} /> : null}</MotionPresence>
+      </Suspense>
       {/* 删除确认属于工作台公共操作，会话中的任务详情也必须能立即显示。 */}
       <MotionPresence>
         {currentProjectTasks.find((task) => task.id === taskDeleteDialogTaskId) ? (
@@ -823,1333 +859,1358 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
         />
       ) : null}
       <section className="workspace ai-workspace" ref={workspaceScrollRef}>
-        {activeNavTarget === 'projects' && snapshot.projects.length === 0 ? (
-          <ProjectStartGuide language={appShellSettings.appLanguage} busy={projectDirectoryChoosing || creatingProjectBusy} available={Boolean(props.onCreateCurrentProject)} onChooseFolder={() => void chooseProjectDirectoryForCreate()} />
+        {activeNavTarget === 'projects' && Object.values(homeSectionStates).some((entry) => entry.state === 'error') ? (
+          <div className="workspace-query-status" role="status">
+            {Object.entries(homeSectionStates)
+              .filter(([, entry]) => entry.state === 'error')
+              .map(([section, entry]) => (
+                <div key={section}>
+                  <span>{section === 'attention' ? '会话摘要' : section === 'runtime' ? '集成状态' : 'Git 状态'}读取失败。</span>
+                  <VisibleApplicationError error={entry.error} language={appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en'} />
+                </div>
+              ))}
+            <button type="button" onClick={() => setHomeRefreshRevision((revision) => revision + 1)}>
+              重试
+            </button>
+          </div>
         ) : null}
-        {activeNavTarget === 'skills' ? <toolPages.extensions client={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} projectId={activeProjectId} onChooseDirectory={props.onChooseProjectDirectory} /> : null}
-        {/* 全局员工管理直接复用原页面，项目员工绑定仍由项目设置承载。 */}
-        {activeNavTarget === 'digital-employees' ? <DigitalEmployeeTemplatesSettings client={props.commandClient ?? null} skillClient={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} /> : null}
-        {activeNavTarget === 'digital-teams' ? (
-          <Suspense
-            fallback={
-              <p className="digital-team-page-loading" role="status">
-                {appShellSettings.appLanguage === 'zh-CN' ? '正在打开数字团队…' : 'Opening digital teams…'}
-              </p>
-            }
-          >
-            <toolPages.digitalTeams
-              key={`${digitalTeamTask?.id ?? 'team'}:${digitalTeamEntrySelection?.kind ?? 'manage'}:${digitalTeamEntrySelection?.kind === 'template' ? digitalTeamEntrySelection.templateId : digitalTeamEntrySelection?.kind === 'run' ? digitalTeamEntrySelection.runId : ''}`}
-              task={currentDigitalTeamTask}
-              onCreateTask={openTaskCreateForTeam}
-              initialSelection={digitalTeamEntrySelection}
-              onBackToTask={currentDigitalTeamTask ? returnFromDigitalTeam : undefined}
+        <Suspense fallback={<div role="status">正在加载页面…</div>}>
+          {activeNavTarget === 'projects' && snapshot.projects.length === 0 ? (
+            <ProjectStartGuide language={appShellSettings.appLanguage} busy={projectDirectoryChoosing || creatingProjectBusy} available={Boolean(props.onCreateCurrentProject)} onChooseFolder={() => void chooseProjectDirectoryForCreate()} />
+          ) : null}
+          {activeNavTarget === 'skills' ? (
+            <toolPages.extensions client={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} projectId={activeProjectId} onChooseDirectory={props.onChooseProjectDirectory} />
+          ) : null}
+          {/* 全局员工管理直接复用原页面，项目员工绑定仍由项目设置承载。 */}
+          {activeNavTarget === 'digital-employees' ? <DigitalEmployeeTemplatesSettings client={props.commandClient ?? null} skillClient={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} /> : null}
+          {activeNavTarget === 'digital-teams' ? (
+            <Suspense
+              fallback={
+                <p className="digital-team-page-loading" role="status">
+                  {appShellSettings.appLanguage === 'zh-CN' ? '正在打开数字团队…' : 'Opening digital teams…'}
+                </p>
+              }
+            >
+              <toolPages.digitalTeams
+                key={`${digitalTeamTask?.id ?? 'team'}:${digitalTeamEntrySelection?.kind ?? 'manage'}:${digitalTeamEntrySelection?.kind === 'template' ? digitalTeamEntrySelection.templateId : digitalTeamEntrySelection?.kind === 'run' ? digitalTeamEntrySelection.runId : ''}`}
+                task={currentDigitalTeamTask}
+                onCreateTask={openTaskCreateForTeam}
+                initialSelection={digitalTeamEntrySelection}
+                onBackToTask={currentDigitalTeamTask ? returnFromDigitalTeam : undefined}
+                client={props.commandClient ?? null}
+                projects={snapshot.projects}
+                initialProjectId={activeProjectId}
+                language={appShellSettings.appLanguage}
+                onOpenConversation={async (projectId, conversationId) => {
+                  if (!props.nativeConversationClient) return;
+                  const choice = await props.nativeConversationClient.loadNativeConversationChoice(projectId, conversationId);
+                  await selectNativeConversation(choice);
+                }}
+              />
+            </Suspense>
+          ) : null}
+          {/* 任务、会话和全局团队共用同一个任务创建入口。 */}
+          <MotionPresence>
+            {taskCreateModalOpen ? (
+              <TaskCreateModal
+                projects={snapshot.projects}
+                onProjectChange={(projectId) => setTaskCreateForm((current) => ({ ...current, projectId, parentTaskId: null }))}
+                open={taskCreateModalOpen}
+                copy={taskWorkspaceCopy}
+                form={taskCreateForm}
+                parentTasks={snapshot.tasks.filter((task) => task.projectId === taskCreateForm.projectId && taskHierarchyDepth(task, snapshot.tasks) < 3)}
+                error={taskCreateError}
+                busy={creatingTaskBusy}
+                titleInputRef={taskCreateTitleInputRef}
+                onFormChange={updateTaskCreateForm}
+                onTaskTypeChange={updateTaskCreateType}
+                onPriorityChange={updateTaskCreatePriority}
+                onParentChange={(parentTaskId) => setTaskCreateForm((current) => ({ ...current, parentTaskId }))}
+                onAuthorizeFiles={authorizeTaskCreateFiles}
+                onMaterializeResources={materializeTaskCreateResources}
+                onReadClipboardResources={readTaskCreateClipboardResources}
+                onParseThirdPartyLink={(url) => props.onParseThirdPartyTaskLink?.(url) ?? Promise.resolve({ kind: 'unsupported', sourceUrl: url })}
+                onApplyThirdPartyTaskInfo={applyThirdPartyTaskExtract}
+                onOpenThirdPartyLink={openThirdPartyLinkInBrowser}
+                onAddAttachments={addTaskCreateAttachments}
+                onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
+                onOpenAttachment={props.onOpenTaskAttachment}
+                onRemoveAttachment={removeTaskCreateAttachment}
+                onClose={closeTaskCreateModal}
+                onSubmit={(event, pushAfterCreate) => void submitTaskCreateModal(event, pushAfterCreate)}
+              />
+            ) : null}
+          </MotionPresence>
+          {activeNavTarget === 'automations' ? (
+            <toolPages.automations
               client={props.commandClient ?? null}
               projects={snapshot.projects}
-              initialProjectId={activeProjectId}
               language={appShellSettings.appLanguage}
-              onOpenConversation={async (projectId, conversationId) => {
-                if (!props.nativeConversationClient) return;
-                const choice = await props.nativeConversationClient.loadNativeConversationChoice(projectId, conversationId);
+              onOpenConversation={async (run) => {
+                if (!run.conversationId || !props.nativeConversationClient) return;
+                const choice = await props.nativeConversationClient.loadNativeConversationChoice(run.projectId, run.conversationId);
                 await selectNativeConversation(choice);
               }}
-            />
-          </Suspense>
-        ) : null}
-        {/* 任务、会话和全局团队共用同一个任务创建入口。 */}
-        <MotionPresence>
-          {taskCreateModalOpen ? (
-            <TaskCreateModal
-              projects={snapshot.projects}
-              onProjectChange={(projectId) => setTaskCreateForm((current) => ({ ...current, projectId, parentTaskId: null }))}
-              open={taskCreateModalOpen}
-              copy={taskWorkspaceCopy}
-              form={taskCreateForm}
-              parentTasks={snapshot.tasks.filter((task) => task.projectId === taskCreateForm.projectId && taskHierarchyDepth(task, snapshot.tasks) < 3)}
-              error={taskCreateError}
-              busy={creatingTaskBusy}
-              titleInputRef={taskCreateTitleInputRef}
-              onFormChange={updateTaskCreateForm}
-              onTaskTypeChange={updateTaskCreateType}
-              onPriorityChange={updateTaskCreatePriority}
-              onParentChange={(parentTaskId) => setTaskCreateForm((current) => ({ ...current, parentTaskId }))}
-              onAuthorizeFiles={authorizeTaskCreateFiles}
-              onMaterializeResources={materializeTaskCreateResources}
-              onReadClipboardResources={readTaskCreateClipboardResources}
-              onParseThirdPartyLink={(url) => props.onParseThirdPartyTaskLink?.(url) ?? Promise.resolve({ kind: 'unsupported', sourceUrl: url })}
-              onApplyThirdPartyTaskInfo={applyThirdPartyTaskExtract}
-              onOpenThirdPartyLink={openThirdPartyLinkInBrowser}
-              onAddAttachments={addTaskCreateAttachments}
-              onLoadAttachmentPreview={props.onLoadTaskAttachmentPreview}
-              onOpenAttachment={props.onOpenTaskAttachment}
-              onRemoveAttachment={removeTaskCreateAttachment}
-              onClose={closeTaskCreateModal}
-              onSubmit={(event, pushAfterCreate) => void submitTaskCreateModal(event, pushAfterCreate)}
+              onOpenExecution={async (_run, reference, target) => {
+                /** 员工工作和流程都先读取实际任务归属，临时工作不依赖左栏项目目录。 */
+                const client = props.commandClient;
+                if (!client) throw new Error('工作服务尚未连接。');
+                const taskId = reference.taskId ?? (reference.kind === 'workflow' ? (await client.loadDigitalTeamRun(reference.id)).run.taskId : null);
+                if (!taskId) throw new Error('当前执行尚未提供可查看的任务身份。');
+                const task = await client.loadTask(taskId);
+                if (target === 'conversation') {
+                  /** TaskWork 会话在真实派发后生成，不能把运行 ID 当作会话 ID。 */
+                  const workRun = reference.kind === 'task_work' ? (await client.loadTaskWorkManagement(task.id)).workItems.flatMap((item) => item.runs).find((item) => item.id === reference.id) : null;
+                  const conversationId = workRun?.conversationId ?? reference.conversationId;
+                  if (!conversationId || !props.nativeConversationClient) throw new Error('工作会话尚未建立，请先查看任务与成果。');
+                  await selectNativeConversation(await props.nativeConversationClient.loadNativeConversationChoice(task.projectId, conversationId));
+                  return;
+                }
+                if (target === 'workflow') {
+                  /** 沿用任务详情进入数字团队的同一页面与准确运行选择。 */
+                  closeTaskDetail();
+                  state.setDigitalTeamTask(task);
+                  state.setDigitalTeamEntrySelection({ kind: 'run', runId: reference.id });
+                  state.setActiveNavTarget('digital-teams');
+                  return;
+                }
+                const project = snapshot.projects.find((item) => item.id === task.projectId) ?? (await client.loadProject(task.projectId));
+                setPendingGlobalTask({ taskId: task.id, projectId: project.id, presentation: 'full_page' });
+                openProjectSection(project, 'tasks');
+              }}
             />
           ) : null}
-        </MotionPresence>
-        {activeNavTarget === 'automations' ? (
-          <toolPages.automations
-            client={props.commandClient ?? null}
-            projects={snapshot.projects}
-            language={appShellSettings.appLanguage}
-            onOpenConversation={async (run) => {
-              if (!run.conversationId || !props.nativeConversationClient) return;
-              const choice = await props.nativeConversationClient.loadNativeConversationChoice(run.projectId, run.conversationId);
-              await selectNativeConversation(choice);
-            }}
-            onOpenExecution={async (_run, reference, target) => {
-              /** 员工工作和流程都先读取实际任务归属，临时工作不依赖左栏项目目录。 */
-              const client = props.commandClient;
-              if (!client) throw new Error('工作服务尚未连接。');
-              const taskId = reference.taskId ?? (reference.kind === 'workflow' ? (await client.loadDigitalTeamRun(reference.id)).run.taskId : null);
-              if (!taskId) throw new Error('当前执行尚未提供可查看的任务身份。');
-              const task = await client.loadTask(taskId);
-              if (target === 'conversation') {
-                /** TaskWork 会话在真实派发后生成，不能把运行 ID 当作会话 ID。 */
-                const workRun = reference.kind === 'task_work' ? (await client.loadTaskWorkManagement(task.id)).workItems.flatMap((item) => item.runs).find((item) => item.id === reference.id) : null;
-                const conversationId = workRun?.conversationId ?? reference.conversationId;
-                if (!conversationId || !props.nativeConversationClient) throw new Error('工作会话尚未建立，请先查看任务与成果。');
-                await selectNativeConversation(await props.nativeConversationClient.loadNativeConversationChoice(task.projectId, conversationId));
-                return;
-              }
-              if (target === 'workflow') {
-                /** 沿用任务详情进入数字团队的同一页面与准确运行选择。 */
-                closeTaskDetail();
-                state.setDigitalTeamTask(task);
-                state.setDigitalTeamEntrySelection({ kind: 'run', runId: reference.id });
-                state.setActiveNavTarget('digital-teams');
-                return;
-              }
-              const project = snapshot.projects.find((item) => item.id === task.projectId) ?? (await client.loadProject(task.projectId));
-              setPendingGlobalTask({ taskId: task.id, projectId: project.id, presentation: 'full_page' });
-              openProjectSection(project, 'tasks');
-            }}
-          />
-        ) : null}
-        {upstreamMainLayout && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'digital-employees' && activeNavTarget !== 'digital-teams' && activeNavTarget !== 'automations' && selectedProject ? (
-          <ProjectWorkspaceModeToolbar
-            project={selectedProject}
-            projects={orderedProjects}
-            onSelectProject={(project) => openProjectSection(project, activeProjectSection, projectCodeWorkspaceMode)}
-            section={activeProjectSection}
-            codeMode={projectCodeWorkspaceMode}
-            language={appShellSettings.appLanguage}
-            onOpen={(section, codeMode) => openProjectSection(selectedProject, section, codeMode)}
-            currentConversationAvailable={Boolean(selectedNativeConversation) && !conversationDraftOpen}
-            currentConversationOpen={Boolean(sessionDrawerTarget)}
-            onOpenCurrentConversation={() => {
-              if (selectedNativeConversation) void openNativeConversationDrawer(selectedNativeConversation);
-            }}
-          />
-        ) : null}
-        {activeNavTarget !== 'settings' &&
-        activeNavTarget !== 'skills' &&
-        activeNavTarget !== 'digital-employees' &&
-        activeNavTarget !== 'digital-teams' &&
-        activeNavTarget !== 'automations' &&
-        activeProjectSection === 'code' &&
-        selectedProject ? (
-          <section className="workspace-view workspace-view-project-code project-code-workspace" aria-label={codeWorkspaceCopy.projectCodeAria}>
-            <div className="project-code-mode-host">
-              {projectCodeWorkspaceMode === 'source' ? (
-                <div className="project-code-mode-pane">
-                  <ProjectSourceWorkspace
-                    key={selectedProject.id}
-                    ref={projectSourceWorkspaceRef}
-                    gitClient={props.nativeConversationClient ?? undefined}
-                    project={selectedProject}
-                    language={appShellSettings.appLanguage}
-                    preference={appShellSettings.codeWorkspaceByProject?.[selectedProject.id]}
-                    onPreferenceChange={(preference) => persistCodeWorkspacePreference(selectedProject.id, preference)}
-                    onDirtyChange={setSourceWorkspaceDirty}
-                    onOpenExternal={(relativePath, line) => void props.onOpenSource?.({ sourceRef: relativePath, lineStart: line, projectRoot: selectedProject.localPath })}
-                  />
-                </div>
-              ) : null}
-              {visitedCodeWorkspaceModes.has('commands') ? (
-                <div className="project-code-mode-pane project-code-command-pane" hidden={projectCodeWorkspaceMode !== 'commands'}>
-                  {props.commandClient ? <CommandCenterPanel mode="project" project={selectedProject} client={props.commandClient} language={appShellSettings.appLanguage} /> : null}
-                </div>
-              ) : null}
-            </div>
-          </section>
-        ) : null}
-
-        {activeNavTarget !== 'settings' &&
-        activeNavTarget !== 'skills' &&
-        activeNavTarget !== 'digital-employees' &&
-        activeNavTarget !== 'digital-teams' &&
-        activeNavTarget !== 'automations' &&
-        activeProjectSection === 'git' &&
-        selectedProject &&
-        props.nativeConversationClient ? (
-          <section className="workspace-view workspace-view-project-git">
-            <ProjectGitWorkbench key={selectedProject.id} project={selectedProject} client={props.nativeConversationClient} language={appShellSettings.appLanguage} />
-          </section>
-        ) : null}
-
-        {activeNavTarget !== 'settings' &&
-        activeNavTarget !== 'skills' &&
-        activeNavTarget !== 'digital-employees' &&
-        activeNavTarget !== 'digital-teams' &&
-        activeNavTarget !== 'automations' &&
-        snapshot.projects.length > 0 &&
-        (activeProjectSection === 'tasks' || activeProjectSection === 'sessions') ? (
-          <section
-            className={`workspace-view ${activeProjectSection === 'tasks' ? 'workspace-view-project-tasks' : 'workspace-view-project-sessions'}`}
-            aria-label={activeProjectSection === 'tasks' ? taskWorkspaceCopy.viewAria : sessionWorkspaceCopy.viewAria}
-          >
-            <section
-              className={`workspace-detail-pane ${activeProjectSection === 'tasks' ? 'task-management-detail-pane' : 'conversation-detail-pane'}`}
-              aria-label={activeProjectSection === 'tasks' ? taskWorkspaceCopy.detailAria : sessionWorkspaceCopy.detailAria}
-            >
-              {activeProjectSection === 'tasks' ? (
-                <>
-                  {/* 默认仍是完整宽度的任务列表；看板可按项目切换，只有全页详情会临时替换任务工作区。 */}
-                  {taskDetailPaneTask && taskDetailPresentation === 'full_page' ? (
-                    <section className="task-detail-full-page" aria-label={taskDetailPresentationLabel}>
-                      <header className="task-detail-presentation-header">
-                        <Button variant="secondary" size="compact" onClick={closeTaskDetail}>
-                          {appShellSettings.appLanguage === 'zh-CN' ? '返回任务' : 'Back to tasks'}
-                        </Button>
-                        <strong>{taskDetailPresentationLabel}</strong>
-                      </header>
-                      {renderTaskDetailPaneContent()}
-                    </section>
-                  ) : (
-                    <TaskWorkspace
-                      projectName={selectedProject?.name}
-                      tasks={currentProjectTasks}
-                      boardTasks={visibleTasks}
-                      selectedTaskId={taskDetailPaneTaskId}
-                      selectedTaskIds={selectedTaskIds}
-                      searchQuery={taskSearchQuery}
-                      statusFilter={taskStatusFilter}
-                      tagFilter={taskTagFilter}
-                      statusOptions={taskStatusFilterValues}
-                      statusLabels={activeTaskManagementStatusLabels}
-                      statusDefinitions={activeTaskManagementStatusConfig.statuses}
-                      completedStatusId={activeTaskManagementStatusConfig.roles.completedStatusId}
-                      cancelledStatusId={activeTaskManagementStatusConfig.roles.cancelledStatusId}
-                      runStatusLabels={taskAgentRunStatusLabels[appShellSettings.appLanguage]}
-                      priorityOptions={taskWorkspaceCopy.taskCreatePriorityOptions}
-                      copy={taskWorkspaceCopy}
-                      appLanguage={appShellSettings.appLanguage}
-                      runtime={runtime}
-                      runtimeSessions={runtimeSessions}
-                      taskConversations={currentTaskConversationChoices}
-                      conversationRunStatuses={nativeConversationTaskRunStatuses}
-                      taskTableColumns={activeTaskTableColumns}
-                      taskTableEnumSortOrders={taskTableEnumSortOrders}
-                      taskTableLayoutDirty={taskTableLayoutDirty}
-                      taskTableLayoutSaveBusy={taskTableLayoutSaveBusy}
-                      creatingTaskBusy={creatingTaskBusy}
-                      pendingTaskStatuses={pendingTaskStatuses}
-                      bulkActionBusy={updatingTaskBusy}
-                      bulkActionStatus={taskBulkActionStatus}
-                      modelPushEntry={
-                        taskModelPushTaskId && (taskModelPushEntry === 'checking' || taskModelPushEntry === 'error')
-                          ? { taskId: taskModelPushTaskId, status: taskModelPushEntry, error: taskModelPushEntry === 'error' ? taskModelPushError : null }
-                          : undefined
-                      }
-                      taskActionBusy={updatingTaskBusy}
-                      listState={!props.snapshot ? 'loading' : 'ready'}
-                      activeProjectId={activeProjectId}
-                      pageViewMode={taskPageViewMode}
-                      taskBoardSnapshot={activeProjectId ? (taskBoardSnapshots[activeProjectId] ?? null) : null}
-                      taskBoardLoading={activeProjectId ? Boolean(taskBoardLoadState[activeProjectId]?.loading) : false}
-                      taskBoardError={activeProjectId ? (taskBoardLoadState[activeProjectId]?.error ?? null) : null}
-                      onSearchChange={setTaskSearchQuery}
-                      onStatusFilterChange={(filter) => void saveTaskStatusFilter(filter)}
-                      onTagFilterChange={setTaskTagFilter}
-                      onTaskTableColumnsChange={(preferences) => setTaskTableLayoutDraft({ preferences })}
-                      onSaveTaskTableLayout={() => void saveTaskTableLayout()}
-                      onCreateTask={() => openTaskCreateModal()}
-                      onOpenZentaoImport={() => setZentaoImportOpen(true)}
-                      onOpenTaskDetail={(taskId, mode) => void openTaskDetailPane(taskId, mode)}
-                      onPushTaskToNewConversation={(taskId) => void openTaskModelPush(taskId)}
-                      onOpenTaskCodeDelivery={(taskId) => openTaskGitDelivery(taskId)}
-                      onDeleteTask={(taskId) => setTaskDeleteDialogTaskId(taskId)}
-                      onOpenTaskConversation={(taskId, conversationId) => void openTaskConversationDrawer(taskId, conversationId)}
-                      onPageViewModeChange={(viewMode) => void saveTaskPageViewMode(viewMode)}
-                      onReloadTaskBoard={activeProjectId ? () => void loadTaskBoard(activeProjectId) : undefined}
-                      onUpdateTaskBoard={updateTaskBoardSettings}
-                      onMoveTaskBoardTask={moveTaskBoardTask}
-                      onLoadTaskAttachmentPreview={props.onLoadTaskAttachmentPreview}
-                      onToggleTaskSelection={toggleTaskSelection}
-                      onToggleAllVisibleTaskSelection={toggleAllVisibleTaskSelection}
-                      onClearTaskSelection={clearTaskSelection}
-                      onTaskStatusChange={(taskId, targetStatus) => void updateTaskManagementStatus(taskId, targetStatus).catch(() => undefined)}
-                      onTaskPriorityChange={updateTaskContent}
-                      onBulkTaskStatusChange={(targetStatus, taskIds) => void runBulkTaskStatusChange(targetStatus, taskIds)}
-                      onBulkTaskDelete={(taskIds) => void runBulkTaskDelete(taskIds)}
-                      onRetryTaskList={
-                        props.onLoadTasks && activeProjectId ? () => void props.onLoadTasks?.(activeProjectId, taskSearchQuery, taskStatusFilter && taskStatusFilter !== 'unfinished' ? taskStatusFilter : undefined, taskTagFilter) : undefined
-                      }
-                      onOpenProjectCode={selectedProject ? () => openProjectSection(selectedProject, 'code') : undefined}
-                      controlBusyProps={controlBusyProps}
-                    />
-                  )}
-
-                  <ZentaoImportModal
-                    open={zentaoImportOpen}
-                    language={appShellSettings.appLanguage}
-                    client={props.commandClient}
-                    projectId={activeProjectId}
-                    projectName={selectedProject?.name}
-                    existingTasks={snapshot.tasks}
-                    onImported={mergeTaskRecord}
-                    onClose={() => setZentaoImportOpen(false)}
-                  />
-                </>
-              ) : taskDetailPaneTask || sessionDrawerTarget ? null : (
-                renderNativeConversationWorkspace((taskId) => void openTaskDetailPane(taskId))
-              )}
-
-              <MotionPresence>
-                {taskModelPushModalOpen && modelSetupTask ? (
-                  <TaskModelPushModal
-                    open={taskModelPushModalOpen}
-                    language={appShellSettings.appLanguage}
-                    task={modelSetupTask}
-                    projectName={snapshot.projects.find((project) => project.id === modelSetupTask.projectId)?.name}
-                    capabilities={taskModelPushCapabilities}
-                    runtimeCapabilities={taskModelPushRuntimeCapabilities}
-                    form={taskModelPushForm}
-                    status={taskModelPushStatus}
-                    refreshingRepositoryId={taskModelPushRefreshingRepositoryId}
-                    error={taskModelPushError}
-                    skillClient={props.nativeConversationClient ?? null}
-                    environmentClient={props.nativeConversationClient ?? null}
-                    onChange={(nextForm) => {
-                      setTaskModelPushForm((current) => {
-                        const resolved = typeof nextForm === 'function' ? nextForm(current) : nextForm;
-                        const task = snapshot.tasks.find((candidate) => candidate.id === taskModelPushTaskId);
-                        if (task) writeTaskModelPushPreferences(browserNativeConversationStartStorage(), task.projectId, resolved);
-                        return resolved;
-                      });
-                    }}
-                    onRefreshRepository={(repositoryId) => void refreshTaskModelPushRepository(repositoryId)}
-                    onRefreshLocalRepositories={() => void domainActions.refreshTaskModelPushRepositories()}
-                    onConnectModel={() => modelSetup.open('choose', taskModelSetupContext ?? null)}
-                    onRetryModels={() => void domainActions.refreshTaskModelPushModels().catch(() => undefined)}
-                    onClose={closeTaskModelPush}
-                    onSubmit={(event) => void submitTaskModelPush(event)}
-                  />
-                ) : null}
-              </MotionPresence>
-              <MotionPresence>
-                {Boolean(taskGitMergeTaskId) && (snapshot.tasks.find((task) => task.id === taskGitMergeTaskId) ?? null) ? (
-                  <TaskGitMergeModal
-                    open={Boolean(taskGitMergeTaskId)}
-                    language={appShellSettings.appLanguage}
-                    task={snapshot.tasks.find((task) => task.id === taskGitMergeTaskId) ?? null}
-                    projectName={snapshot.projects.find((project) => project.id === snapshot.tasks.find((task) => task.id === taskGitMergeTaskId)?.projectId)?.name}
-                    currentConversationWorkspaceId={selectedNativeConversation?.taskId === taskGitMergeTaskId ? selectedNativeConversation.workspaceId : null}
-                    refreshRevision={taskGitDeliveryRevision}
-                    client={props.nativeConversationClient ?? null}
-                    executionReady={executionHostSupportsConversationSource(props.executionHostTransition, 'conflict_resolution')}
-                    onQueueConflictAiStart={persistPendingConflictAiStart}
-                    onChanged={() =>
-                      taskGitMergeTaskId
-                        ? Promise.all([
-                            refreshNativeConversationChoices(taskGitMergeTaskId),
-                            props.onLoadTaskEvents && taskDetailPaneTaskId === taskGitMergeTaskId ? props.onLoadTaskEvents(taskGitMergeTaskId).then(setTaskEvents) : Promise.resolve(),
-                          ]).then(() => undefined)
-                        : Promise.resolve()
-                    }
-                    onOpenConversation={(taskId, conversationId) => openTaskConflictAiConversation(taskId, conversationId)}
-                    onClose={() => {
-                      // 关闭后再刷新共享快照，避免提交过程中重置交付弹窗的文件选择。
-                      if (taskGitMergeTaskId) taskGitDeliveryChangedRef.current(taskGitMergeTaskId);
-                      setTaskGitMergeTaskId(null);
-                    }}
-                  />
-                ) : null}
-              </MotionPresence>
-              <MotionPresence>
-                {taskDetailPaneTask && taskDetailPresentation === 'side_peek' ? (
-                  <WorkspaceDrawer
-                    presentation="floating"
-                    backdrop="dimmed"
-                    size="wide"
-                    label={taskDetailPresentationLabel}
-                    backdropLabel={taskWorkspaceCopy.detailPaneBackdrop}
-                    closeLabel={taskWorkspaceCopy.detailPaneClose}
-                    className="task-detail-floating-drawer"
-                    portalStyle={workspaceDrawerPortalStyle}
-                    onClose={closeTaskDetail}
-                  >
-                    {renderTaskDetailPaneContent()}
-                  </WorkspaceDrawer>
-                ) : null}
-              </MotionPresence>
-              <MotionPresence>
-                {taskDetailPaneTask && taskDetailPresentation === 'center_peek' ? (
-                  <ModalPortal rootClassName="task-detail-center-portal" backdropClassName="task-detail-center-backdrop" onDismiss={closeTaskDetail} role="dialog" aria-label={taskDetailPresentationLabel}>
-                    <section className="task-detail-center-dialog" data-modal-surface="dialog">
-                      <header className="task-detail-presentation-header">
-                        <strong>{taskDetailPresentationLabel}</strong>
-                        <Button variant="secondary" size="compact" onClick={closeTaskDetail} aria-label={taskWorkspaceCopy.detailPaneClose}>
-                          {appShellSettings.appLanguage === 'zh-CN' ? '关闭' : 'Close'}
-                        </Button>
-                      </header>
-                      {renderTaskDetailPaneContent()}
-                    </section>
-                  </ModalPortal>
-                ) : null}
-              </MotionPresence>
-
-              <MotionPresence>
-                {conversationDrawer ? (
-                  <WorkspaceDrawer
-                    presentation="sheet"
-                    backdrop="dimmed"
-                    size="wide"
-                    label={sessionWorkspaceCopy.secondaryDrawerLabel}
-                    backdropLabel={sessionWorkspaceCopy.secondaryDrawerBackdrop}
-                    closeLabel={sessionWorkspaceCopy.secondaryDrawerClose}
-                    className={`conversation-drawer conversation-drawer-shell conversation-drawer-sheet-${conversationDrawer}`}
-                    portalStyle={workspaceDrawerPortalStyle}
-                    onClose={() => setConversationDrawer(undefined)}
-                  >
-                    {conversationDrawer === 'runtime' ? (
-                      <section className="product-drawer-pane conversation-drawer-sheet conversation-drawer-sheet-runtime runtime-workbench" aria-label={sessionWorkspaceCopy.runtimeDrawer.runtimeEnvironment}>
-                        {/* Runtime 抽屉只表达真实运行能力和确认状态，按“状态、适配器、高风险、会话、日志”连续行组织。 */}
-                        <div className="drawer-header-row">
-                          <strong>{sessionWorkspaceCopy.runtimeDrawer.runtimeEnvironment}</strong>
-                          <button type="button" onClick={loadRuntimeStatus} disabled={!props.onLoadRuntimeStatus || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
-                            {sessionWorkspaceCopy.runtimeDrawer.refresh}
-                          </button>
-                        </div>
-                        <section className="runtime-status-row-list" aria-label={sessionWorkspaceCopy.runtimeDrawer.runtimeStatus}>
-                          <div className="runtime-capability-state-row">
-                            <strong>{runtime.aiCli.name}</strong>
-                            <span>{runtime.aiCli.available ? sessionWorkspaceCopy.runtimeDrawer.detectedCommand(runtime.aiCli.command) : sessionWorkspaceCopy.runtimeDrawer.waitingForCommand(runtime.aiCli.command)}</span>
-                          </div>
-                          <div className="runtime-capability-state-row">
-                            <strong>{sessionWorkspaceCopy.runtimeDrawer.terminalBackend}</strong>
-                            <span>{runtime.terminal?.pty.available ? (appShellSettings.appLanguage === 'zh-CN' ? '交互式终端' : 'Interactive terminal') : appShellSettings.appLanguage === 'zh-CN' ? '命令输出' : 'Command output'}</span>
-                            <em>
-                              {runtime.terminal
-                                ? runtime.terminal.pty.available
-                                  ? appShellSettings.appLanguage === 'zh-CN'
-                                    ? '可以输入命令并查看输出。'
-                                    : 'Enter commands and view their output.'
-                                  : appShellSettings.appLanguage === 'zh-CN'
-                                    ? '可以查看命令输出，暂不支持交互式输入。'
-                                    : 'Command output is available; interactive input is not supported.'
-                                : sessionWorkspaceCopy.runtimeDrawer.terminalPending}
-                            </em>
-                          </div>
-                        </section>
-                        {runtimeAdapters.length > 0 ? (
-                          <section className="runtime-adapter-list runtime-adapter-row-list" aria-label={sessionWorkspaceCopy.runtimeDrawer.runtimeAdaptersAria}>
-                            <strong>{sessionWorkspaceCopy.runtimeDrawer.runtimeAdaptersTitle}</strong>
-                            {runtimeAdapters.map((adapter) => {
-                              const checked = runtimeAdapterChecks[adapter.id];
-                              return (
-                                <div className="runtime-adapter-row" key={adapter.id}>
-                                  <span className="runtime-row-copy">
-                                    <strong>{formatRuntimeAdapterDisplayName(adapter.id, runtimeAdapters, sessionWorkspaceCopy.runtimeDrawer)}</strong>
-                                    <span>
-                                      {adapter.command} ·{' '}
-                                      {checked ? (checked.available ? sessionWorkspaceCopy.runtimeDrawer.adapterAvailable : sessionWorkspaceCopy.runtimeDrawer.adapterUnavailable) : sessionWorkspaceCopy.runtimeDrawer.adapterUnchecked}
-                                    </span>
-                                    <small>{formatRuntimeAdapterDetectionFacts(adapter, checked, appShellSettings.appLanguage)}</small>
-                                  </span>
-                                  <span className="runtime-row-command-rail">
-                                    <button type="button" onClick={() => checkRuntimeAdapter(adapter.id)} disabled={loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
-                                      {sessionWorkspaceCopy.runtimeDrawer.checkAdapter}
-                                    </button>
-                                  </span>
-                                </div>
-                              );
-                            })}
-                          </section>
-                        ) : null}
-                        {runtimeAdapters.some((adapter) => adapter.id === 'generic') ? (
-                          <section className="runtime-generic-shell-risk-list runtime-generic-shell-row-list" aria-label={sessionWorkspaceCopy.runtimeDrawer.genericShellRiskAria}>
-                            <strong>{sessionWorkspaceCopy.runtimeDrawer.genericShellRiskTitle}</strong>
-                            {/* Generic shell 会启动真实本机命令，输入、预览、确认状态必须拆开，避免被误解为普通表单。 */}
-                            <section className="runtime-generic-shell-input-row" aria-label={sessionWorkspaceCopy.runtimeDrawer.genericShellCommandAria}>
-                              <span className="runtime-generic-shell-copy">
-                                <strong>{sessionWorkspaceCopy.runtimeDrawer.genericShellCommandTitle}</strong>
-                                <small>{sessionWorkspaceCopy.runtimeDrawer.genericShellCommandHelp}</small>
-                              </span>
-                              <span className="runtime-generic-shell-field">
-                                <input
-                                  aria-label={sessionWorkspaceCopy.runtimeDrawer.genericShellCommandAria}
-                                  placeholder={sessionWorkspaceCopy.runtimeDrawer.genericShellCommandPlaceholder}
-                                  value={runtimeGenericShellCommand}
-                                  onChange={(event) => {
-                                    setRuntimeGenericShellCommand(event.currentTarget.value);
-                                    setRuntimeGenericShellCriticalConfirmation('');
-                                    setRuntimeConfirmation(undefined);
-                                    setRuntimeConfirmationCommand('');
-                                    setRuntimeConfirmationStatus({ kind: 'changed' });
-                                  }}
-                                />
-                              </span>
-                            </section>
-                            <section className="runtime-shell-preview-row" aria-label={sessionWorkspaceCopy.runtimeDrawer.commandPreviewAria}>
-                              <span className="runtime-generic-shell-copy">
-                                <strong>{sessionWorkspaceCopy.runtimeDrawer.commandPreviewTitle}</strong>
-                                <small>{sessionWorkspaceCopy.runtimeDrawer.commandPreviewHelp}</small>
-                              </span>
-                              <span>{runtimeGenericShellCommand.trim() ? `sh -lc ${runtimeGenericShellCommand.trim()}` : sessionWorkspaceCopy.runtimeDrawer.emptyShellCommand}</span>
-                              <em>{sessionWorkspaceCopy.runtimeDrawer.genericShellRiskSummary(localizedGenericShellRisk.label, localizedGenericShellRisk.reason)}</em>
-                            </section>
-                            {genericShellRisk.level === 'critical' ? (
-                              <section className="runtime-generic-shell-input-row" aria-label={sessionWorkspaceCopy.runtimeDrawer.criticalPhraseAria}>
-                                <span className="runtime-generic-shell-copy">
-                                  <strong>{sessionWorkspaceCopy.runtimeDrawer.criticalPhraseTitle}</strong>
-                                  <small>{sessionWorkspaceCopy.runtimeDrawer.criticalPhraseHelp(GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE)}</small>
-                                </span>
-                                <span className="runtime-generic-shell-field">
-                                  <input
-                                    aria-label={sessionWorkspaceCopy.runtimeDrawer.criticalPhraseAria}
-                                    placeholder={GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE}
-                                    value={runtimeGenericShellCriticalConfirmation}
-                                    onChange={(event) => setRuntimeGenericShellCriticalConfirmation(event.currentTarget.value)}
-                                  />
-                                </span>
-                              </section>
-                            ) : null}
-                            <section className="runtime-generic-shell-state-row" aria-label={sessionWorkspaceCopy.runtimeDrawer.confirmationStateAria}>
-                              <span className="runtime-generic-shell-copy">
-                                <strong>{sessionWorkspaceCopy.runtimeDrawer.confirmationStateTitle}</strong>
-                                <small>{sessionWorkspaceCopy.runtimeDrawer.confirmationStateHelp}</small>
-                              </span>
-                              <span>{runtimeConfirmationStatusCopy}</span>
-                            </section>
-                            {runtimeConfirmation?.status === 'rejected' ? (
-                              <section className="runtime-generic-shell-rejected-row" aria-label={sessionWorkspaceCopy.runtimeDrawer.rejectedAria}>
-                                <span className="runtime-generic-shell-copy">
-                                  <strong>{sessionWorkspaceCopy.runtimeDrawer.rejectedTitle}</strong>
-                                  <small>{sessionWorkspaceCopy.runtimeDrawer.rejectedHelp}</small>
-                                </span>
-                                <span>{runtimeConfirmation.rejectedReason ?? sessionWorkspaceCopy.runtimeDrawer.rejectedReasonFallback}</span>
-                              </section>
-                            ) : null}
-                            <div className="runtime-generic-shell-command-rail">
-                              <button
-                                type="button"
-                                onClick={createGenericRuntimeConfirmation}
-                                disabled={!props.onCreateRuntimeConfirmation || !activeProjectId || !runtimeGenericShellCommand.trim() || loadingRuntimeBusy}
-                                {...controlBusyProps(loadingRuntimeBusy)}
-                              >
-                                {sessionWorkspaceCopy.runtimeDrawer.createGenericShellConfirmation}
-                              </button>
-                              {runtimeConfirmation?.status === 'pending' ? (
-                                <button type="button" onClick={rejectGenericRuntimeConfirmation} disabled={!props.onRejectRuntimeOperation || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
-                                  {sessionWorkspaceCopy.runtimeDrawer.rejectGenericShellConfirmation}
-                                </button>
-                              ) : null}
-                              {runtimeConfirmation?.status !== 'rejected' ? (
-                                <button
-                                  type="button"
-                                  onClick={confirmAndStartGenericRuntime}
-                                  disabled={!props.onConfirmRuntimeOperation || !runtimeConfirmation || runtimeConfirmation.status !== 'pending' || !genericShellCriticalConfirmed || loadingRuntimeBusy}
-                                  {...controlBusyProps(loadingRuntimeBusy)}
-                                >
-                                  {sessionWorkspaceCopy.runtimeDrawer.confirmAndStartGenericShell}
-                                </button>
-                              ) : null}
-                            </div>
-                            {runtimeConfirmation?.status === 'pending' ? (
-                              <section className="runtime-generic-shell-state-row" aria-label={sessionWorkspaceCopy.runtimeDrawer.rejectImpactAria}>
-                                <span className="runtime-generic-shell-copy">
-                                  <strong>{sessionWorkspaceCopy.runtimeDrawer.rejectImpactTitle}</strong>
-                                  <small>{sessionWorkspaceCopy.runtimeDrawer.rejectImpactHelp}</small>
-                                </span>
-                                <span>{sessionWorkspaceCopy.runtimeDrawer.rejectImpactBody}</span>
-                              </section>
-                            ) : null}
-                          </section>
-                        ) : null}
-                        <section className="runtime-session-list runtime-session-row-list" aria-label={sessionWorkspaceCopy.runtimeDrawer.runtimeSessions}>
-                          <div className="drawer-header-row">
-                            <strong>{sessionWorkspaceCopy.runtimeDrawer.runtimeSessions}</strong>
-                            <button type="button" onClick={startRuntimeSession} disabled={!activeProjectId || !runtime.aiCli.available || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
-                              {sessionWorkspaceCopy.runtimeDrawer.startRuntimeSession}
-                            </button>
-                          </div>
-                          <div className="runtime-session-filter-grid runtime-session-filter-row" aria-label={sessionWorkspaceCopy.runtimeDrawer.runtimeSessionSearch}>
-                            {/* 会话筛选拆成显式搜索行和开关行，避免 label 把输入、复选框和布局语义混在一起。 */}
-                            <section className="runtime-session-filter-control-row" aria-label={sessionWorkspaceCopy.runtimeDrawer.searchSessions}>
-                              <span className="runtime-session-filter-copy">
-                                <strong>{sessionWorkspaceCopy.runtimeDrawer.searchSessions}</strong>
-                                <small>{sessionWorkspaceCopy.runtimeDrawer.searchSessionsHelp}</small>
-                              </span>
-                              <span className="runtime-session-filter-field">
-                                <input type="search" aria-label={sessionWorkspaceCopy.runtimeDrawer.searchSessions} value={runtimeSearchQuery} onChange={(event) => setRuntimeSearchQuery(event.currentTarget.value)} />
-                              </span>
-                            </section>
-                            <span className="runtime-session-filter-toggle-row">
-                              <input aria-label={sessionWorkspaceCopy.runtimeDrawer.favoritesOnly} type="checkbox" checked={runtimeFavoriteOnly} onChange={(event) => setRuntimeFavoriteOnly(event.currentTarget.checked)} />
-                              <span>{sessionWorkspaceCopy.runtimeDrawer.favoritesOnly}</span>
-                            </span>
-                            <span className="runtime-session-filter-toggle-row">
-                              <input aria-label={sessionWorkspaceCopy.runtimeDrawer.showArchived} type="checkbox" checked={runtimeShowArchived} onChange={(event) => setRuntimeShowArchived(event.currentTarget.checked)} />
-                              <span>{sessionWorkspaceCopy.runtimeDrawer.showArchived}</span>
-                            </span>
-                            <button type="button" onClick={refreshRuntimeSessions} disabled={!props.onLoadRuntimeSessions || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
-                              {sessionWorkspaceCopy.runtimeDrawer.applyFilters}
-                            </button>
-                          </div>
-                          {runtimeSessions.length === 0 ? (
-                            <span className="runtime-session-empty-row">{sessionWorkspaceCopy.runtimeDrawer.emptyRuntimeSessions}</span>
-                          ) : (
-                            runtimeSessions.slice(0, 5).map((session) => (
-                              <div className="runtime-session-row" key={session.id}>
-                                <span className="runtime-row-copy">
-                                  <strong>{[session.command, ...session.args].join(' ')}</strong>
-                                  <span>
-                                    {formatRuntimeSessionStatus(session.status, sessionWorkspaceCopy.runtimeDrawer)} · {session.cwd}
-                                  </span>
-                                  <small>{session.summary ?? sessionWorkspaceCopy.runtimeDrawer.sessionSummaryFallback}</small>
-                                </span>
-                                <div className="runtime-session-action-rail" aria-label={sessionWorkspaceCopy.runtimeDrawer.runtimeSessionActionsAria}>
-                                  {/* 会话行先暴露高频主操作，低频整理/导出/删除收进第二行动作，避免继续复用任务按钮堆。 */}
-                                  <span className="runtime-session-primary-command-rail">
-                                    <button type="button" onClick={() => generateRuntimeSessionSummary(session.id)}>
-                                      {sessionWorkspaceCopy.runtimeDrawer.generateSummary}
-                                    </button>
-                                    <button type="button" onClick={() => createTaskFromRuntimeSession(session)}>
-                                      {sessionWorkspaceCopy.runtimeDrawer.createTaskFromSession}
-                                    </button>
-                                  </span>
-                                  <span className="runtime-session-secondary-command-rail">
-                                    <button type="button" onClick={() => setRuntimeSessionFavorite(session)}>
-                                      {session.favorite ? sessionWorkspaceCopy.runtimeDrawer.unfavoriteSession : sessionWorkspaceCopy.runtimeDrawer.favoriteSession}
-                                    </button>
-                                    {session.archived ? (
-                                      <button type="button" onClick={() => restoreRuntimeSession(session.id)}>
-                                        {sessionWorkspaceCopy.runtimeDrawer.restoreSession}
-                                      </button>
-                                    ) : (
-                                      <button type="button" onClick={() => archiveRuntimeSession(session.id)}>
-                                        {sessionWorkspaceCopy.runtimeDrawer.archiveSession}
-                                      </button>
-                                    )}
-                                    <button type="button" onClick={() => exportRuntimeLogs(session.id)}>
-                                      {sessionWorkspaceCopy.runtimeDrawer.exportCurrentLog}
-                                    </button>
-                                    <button type="button" className="runtime-session-danger-action" onClick={() => deleteRuntimeSession(session.id)}>
-                                      {sessionWorkspaceCopy.runtimeDrawer.deleteSession}
-                                    </button>
-                                  </span>
-                                </div>
-                                {session.status === 'running' ? (
-                                  <section className="runtime-session-live-controls" aria-label={sessionWorkspaceCopy.runtimeDrawer.runtimeInputAria}>
-                                    {/* 运行中输入拆成说明列和控件列，避免 label 包住按钮造成抽屉内部继续像临时表单。 */}
-                                    <section className="runtime-session-compose-row" aria-label={sessionWorkspaceCopy.runtimeDrawer.runtimeInputSendAria}>
-                                      <span className="runtime-session-compose-copy">
-                                        <strong>{sessionWorkspaceCopy.runtimeDrawer.runtimeInputTitle}</strong>
-                                        <small>{sessionWorkspaceCopy.runtimeDrawer.runtimeInputHelp}</small>
-                                      </span>
-                                      <span className="runtime-session-compose-field">
-                                        <input aria-label={sessionWorkspaceCopy.runtimeDrawer.runtimeInputAria} value={runtimeInput} onChange={(event) => setRuntimeInput(event.currentTarget.value)} />
-                                        <button type="button" onClick={() => sendRuntimeInput(session.id)} disabled={!runtimeInput.trim() || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
-                                          {sessionWorkspaceCopy.runtimeDrawer.sendRuntimeInput}
-                                        </button>
-                                      </span>
-                                    </section>
-                                    <span className="runtime-session-terminal-command-rail" aria-label={sessionWorkspaceCopy.runtimeDrawer.terminalControlsAria}>
-                                      <button type="button" onClick={() => interruptRuntimeSession(session.id)}>
-                                        {sessionWorkspaceCopy.runtimeDrawer.interrupt}
-                                      </button>
-                                      <button type="button" onClick={() => resizeRuntimeSession(session.id)}>
-                                        {sessionWorkspaceCopy.runtimeDrawer.resizeTerminal}
-                                      </button>
-                                      <button type="button" onClick={() => loadRuntimeTerminalSnapshot(session.id)}>
-                                        {sessionWorkspaceCopy.runtimeDrawer.loadTerminalSnapshot}
-                                      </button>
-                                      <button type="button" className="runtime-session-stop-action" onClick={() => stopRuntimeSession(session.id)}>
-                                        {sessionWorkspaceCopy.runtimeDrawer.stopSession}
-                                      </button>
-                                    </span>
-                                  </section>
-                                ) : null}
-                                {session.status === 'orphan_detected' ? (
-                                  <section className="runtime-session-orphan-controls" aria-label={sessionWorkspaceCopy.runtimeDrawer.orphanControlsAria}>
-                                    {/* 孤儿会话只保留风险说明和终止入口，避免伪装成可继续输入的运行中表单。 */}
-                                    <span className="runtime-session-orphan-copy">
-                                      <strong>{sessionWorkspaceCopy.runtimeDrawer.orphanTitle(session.pid ?? sessionWorkspaceCopy.runtimeDrawer.unknownPid)}</strong>
-                                      <small>{sessionWorkspaceCopy.runtimeDrawer.orphanHelp}</small>
-                                    </span>
-                                    <span className="runtime-session-orphan-command-rail">
-                                      <button type="button" className="runtime-session-orphan-stop-action" onClick={() => stopRuntimeSession(session.id)}>
-                                        {sessionWorkspaceCopy.runtimeDrawer.orphanStop}
-                                      </button>
-                                    </span>
-                                  </section>
-                                ) : null}
-                              </div>
-                            ))
-                          )}
-                        </section>
-                        {runtimeLogs.length > 0 ? (
-                          <section className="runtime-log-workbench" aria-label={sessionWorkspaceCopy.runtimeDrawer.logsAria}>
-                            <div className="runtime-log-toolbar">
-                              <span className="runtime-log-title">
-                                <strong>{sessionWorkspaceCopy.runtimeDrawer.logsTitle}</strong>
-                                <small>{sessionWorkspaceCopy.runtimeDrawer.logsHelp}</small>
-                              </span>
-                              <span className="runtime-log-command-rail" aria-label={sessionWorkspaceCopy.runtimeDrawer.logActionsAria}>
-                                {/* Runtime 日志抽屉只保留一条工具栏：搜索、复制、折叠和导出聚合到同一组，避免表单和按钮继续散落。 */}
-                                <button type="button" onClick={copyRuntimeLogs}>
-                                  {sessionWorkspaceCopy.runtimeDrawer.copyLogs}
-                                </button>
-                                <button type="button" onClick={() => setRuntimeLogsCollapsed((current) => !current)}>
-                                  {runtimeLogsCollapsed ? sessionWorkspaceCopy.runtimeDrawer.expandLogs : sessionWorkspaceCopy.runtimeDrawer.collapseLogs}
-                                </button>
-                                <span className="sr-only">{sessionWorkspaceCopy.runtimeDrawer.expandLogs}</span>
-                                <button type="button" onClick={() => exportRuntimeLogs(runtimeLogs[0]?.sessionId ?? '')}>
-                                  {sessionWorkspaceCopy.runtimeDrawer.exportCurrentLog}
-                                </button>
-                              </span>
-                            </div>
-                            <section className="runtime-log-search-control-row" aria-label={sessionWorkspaceCopy.runtimeDrawer.logSearchAria}>
-                              <span className="runtime-log-search-copy">
-                                <strong>{sessionWorkspaceCopy.runtimeDrawer.logSearchTitle}</strong>
-                                <small>{sessionWorkspaceCopy.runtimeDrawer.logSearchHelp}</small>
-                              </span>
-                              <span className="runtime-log-search-field">
-                                <input type="search" aria-label={sessionWorkspaceCopy.runtimeDrawer.logSearchTitle} value={runtimeLogSearchQuery} onChange={(event) => setRuntimeLogSearchQuery(event.currentTarget.value)} />
-                              </span>
-                            </section>
-                            <div className="runtime-log-state-row">
-                              <small>{sessionWorkspaceCopy.runtimeDrawer.logExportState(runtimeLogExportStatusCopy, runtimeLogCopyStatusCopy)}</small>
-                              <span className="log-legend">{sessionWorkspaceCopy.runtimeDrawer.logLegend}</span>
-                            </div>
-                            <div className="runtime-log-stream" aria-label={sessionWorkspaceCopy.runtimeDrawer.rawOutputAria}>
-                              <RuntimeXtermPane logs={runtimeLogs} enabled={runtimeStatus?.terminal?.provider === 'node-pty' && runtimeStatus.terminal.pty.available === true} ariaLabel={sessionWorkspaceCopy.runtimeDrawer.terminalAria} />
-                              {!runtimeLogsCollapsed ? <code className="runtime-log-line output">{projectedRuntimeLogOutput}</code> : <span>{sessionWorkspaceCopy.runtimeDrawer.collapsedLogs}</span>}
-                            </div>
-                          </section>
-                        ) : null}
-                      </section>
-                    ) : null}
-
-                    {conversationDrawer === 'changes' ? (
-                      <section className="product-drawer-pane conversation-drawer-sheet conversation-drawer-sheet-changes conversation-change-workbench" aria-label={secondaryDrawerCopy.changesLabel}>
-                        <div className="drawer-header-row">
-                          <strong>{gitDiffCopy.title}</strong>
-                          <button type="button" onClick={loadGitDiff} disabled={!props.onLoadGitDiff || loadingDiffBusy} {...controlBusyProps(loadingDiffBusy)}>
-                            {loadingDiffBusy ? secondaryDrawerCopy.loadingDiff : secondaryDrawerCopy.loadDiff}
-                          </button>
-                        </div>
-                        {changedFiles.length === 0 ? (
-                          <section className="conversation-change-empty-row" aria-label={secondaryDrawerCopy.noLoadedChangesAria}>
-                            <span className="conversation-change-file-copy">
-                              <strong>{secondaryDrawerCopy.noLoadedChangesTitle}</strong>
-                              <small>{secondaryDrawerCopy.noLoadedChangesHelp}</small>
-                            </span>
-                          </section>
-                        ) : (
-                          <div className="conversation-change-file-list" aria-label={secondaryDrawerCopy.changedFilesAria}>
-                            {changedFiles.slice(0, 12).map((file) => (
-                              <article className="conversation-change-file-row" key={file}>
-                                <span className="conversation-change-file-copy">
-                                  <strong>{file}</strong>
-                                  <small>{secondaryDrawerCopy.realGitDiffFile}</small>
-                                </span>
-                                <span className="conversation-change-file-meta">{secondaryDrawerCopy.loaded}</span>
-                              </article>
-                            ))}
-                          </div>
-                        )}
-                      </section>
-                    ) : null}
-
-                    {conversationDrawer === 'templates' ? (
-                      <section className="product-drawer-pane conversation-drawer-sheet conversation-drawer-sheet-templates task-template-workbench" aria-label={secondaryDrawerCopy.templatesLabel}>
-                        {/* 任务模板抽屉只负责选择真实模板并创建任务，模板说明和套用动作必须在同一行内可扫描。 */}
-                        <div className="drawer-header-row">
-                          <strong>{secondaryDrawerCopy.templatesLabel}</strong>
-                          <button type="button" onClick={loadTaskTemplates} disabled={!props.onLoadTaskTemplates || loadingTemplatesBusy} {...controlBusyProps(loadingTemplatesBusy)}>
-                            {actionState === 'loading-templates' ? secondaryDrawerCopy.loadingTemplates : secondaryDrawerCopy.loadTemplates}
-                          </button>
-                        </div>
-                        <section className="task-template-list" aria-label={secondaryDrawerCopy.templateListAria}>
-                          {taskTemplates.length === 0 ? (
-                            <div className="task-template-empty-row" aria-label={secondaryDrawerCopy.emptyTemplatesAria}>
-                              <span className="task-template-copy">
-                                <strong>{secondaryDrawerCopy.emptyTemplatesTitle}</strong>
-                                <span>{secondaryDrawerCopy.emptyTemplatesHelp}</span>
-                              </span>
-                              <span className="task-template-command-rail">
-                                <button type="button" onClick={loadTaskTemplates} disabled={!props.onLoadTaskTemplates || loadingTemplatesBusy} {...controlBusyProps(loadingTemplatesBusy)}>
-                                  {actionState === 'loading-templates' ? secondaryDrawerCopy.loadingTemplates : secondaryDrawerCopy.loadTemplates}
-                                </button>
-                              </span>
-                            </div>
-                          ) : (
-                            taskTemplates.map((template) => (
-                              <div className="task-template-row" key={template.id}>
-                                <span className="task-template-copy">
-                                  <strong>{template.name}</strong>
-                                  <span>{template.description || (template.builtIn ? secondaryDrawerCopy.builtInTaskTemplate : secondaryDrawerCopy.projectTaskTemplate)}</span>
-                                  <small>{template.builtIn ? secondaryDrawerCopy.builtInTemplate : secondaryDrawerCopy.projectTemplate}</small>
-                                </span>
-                                <span className="task-template-command-rail">
-                                  <button type="button" onClick={() => createTaskFromTemplate(template.id)}>
-                                    {secondaryDrawerCopy.applyTemplate}
-                                  </button>
-                                </span>
-                              </div>
-                            ))
-                          )}
-                        </section>
-                      </section>
-                    ) : null}
-                  </WorkspaceDrawer>
-                ) : null}
-              </MotionPresence>
-            </section>
-          </section>
-        ) : null}
-
-        <MotionPresence>
-          {sessionDrawerTarget ? (
-            <WorkspaceDrawer
-              presentation="floating"
-              backdrop="dimmed"
-              size="wide"
-              label={appShellSettings.appLanguage === 'zh-CN' ? '当前会话' : 'Current conversation'}
-              backdropLabel={taskWorkspaceCopy.taskConversationDrawerBackdrop}
-              closeLabel={taskWorkspaceCopy.taskConversationDrawerClose}
-              headerAction={
-                <Button
-                  variant="secondary"
-                  size="compact"
-                  disabled={!sessionDrawerReady}
-                  onClick={() => {
-                    if (sessionDrawerReady && selectedNativeConversation) void openNativeConversationPage(selectedNativeConversation);
-                  }}
-                >
-                  {appShellSettings.appLanguage === 'zh-CN' ? '进入会话页' : 'Open conversation page'}
-                </Button>
-              }
-              className={`task-conversation-drawer session-codex-parity-v1 theme-${appShellSettings.appearance}`}
-              portalStyle={workspaceDrawerPortalStyle}
-              onClose={() => setSessionDrawerTarget(undefined)}
-            >
-              {sessionDrawerReady ? (
-                renderNativeConversationWorkspace((taskId) => {
-                  setSessionDrawerTarget(undefined);
-                  void openTaskDetailPane(taskId);
-                })
-              ) : sessionDrawerTarget.status === 'empty' ? (
-                <section className="task-conversation-drawer-loading" role="status">
-                  <p>{appShellSettings.appLanguage === 'zh-CN' ? '此任务尚未创建会话。' : 'This task has no conversation yet.'}</p>
-                </section>
-              ) : sessionDrawerTarget.status === 'error' ? (
-                <section className="task-conversation-drawer-loading task-conversation-drawer-error" role="status">
-                  <p>{taskWorkspaceCopy.taskConversationDrawerUnavailable}</p>
-                  {sessionDrawerTarget.taskId ? (
-                    <Button variant="secondary" size="compact" onClick={() => void openTaskConversationDrawer(sessionDrawerTarget.taskId!, sessionDrawerTarget.conversationId)}>
-                      {taskWorkspaceCopy.taskConversationDrawerRetry}
-                    </Button>
-                  ) : null}
-                </section>
-              ) : (
-                <section className="task-conversation-drawer-loading" role="status" aria-live="polite">
-                  {taskWorkspaceCopy.taskConversationDrawerLoading}
-                </section>
-              )}
-            </WorkspaceDrawer>
-          ) : null}
-        </MotionPresence>
-
-        <MotionPresence>
-          {Boolean(taskGitReviewState) && (snapshot.tasks.find((task) => task.id === taskGitReviewState?.taskId) ?? null) ? (
-            <TaskGitReviewModal
-              open={Boolean(taskGitReviewState)}
+          {upstreamMainLayout && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'digital-employees' && activeNavTarget !== 'digital-teams' && activeNavTarget !== 'automations' && selectedProject ? (
+            <ProjectWorkspaceModeToolbar
+              project={selectedProject}
+              projects={orderedProjects}
+              onSelectProject={(project) => openProjectSection(project, activeProjectSection, projectCodeWorkspaceMode)}
+              section={activeProjectSection}
+              codeMode={projectCodeWorkspaceMode}
               language={appShellSettings.appLanguage}
-              task={snapshot.tasks.find((task) => task.id === taskGitReviewState?.taskId) ?? null}
-              projectName={snapshot.projects.find((project) => project.id === snapshot.tasks.find((task) => task.id === taskGitReviewState?.taskId)?.projectId)?.name}
-              client={props.nativeConversationClient ?? null}
-              mode={taskGitReviewState?.mode ?? 'commit'}
-              preferredWorkspaceId={taskGitReviewState?.workspaceId}
-              onClose={closeTaskGitReview}
+              onOpen={(section, codeMode) => openProjectSection(selectedProject, section, codeMode)}
+              currentConversationAvailable={Boolean(selectedNativeConversation) && !conversationDraftOpen}
+              currentConversationOpen={Boolean(sessionDrawerTarget)}
+              onOpenCurrentConversation={() => {
+                if (selectedNativeConversation) void openNativeConversationDrawer(selectedNativeConversation);
+              }}
             />
           ) : null}
-        </MotionPresence>
-
-        {activeNavTarget === 'settings' ? (
-          <section className="workspace-view workspace-view-settings settings-reference-shell" aria-label={settingsWorkspaceCopy.viewAria}>
-            <aside className="settings-sidebar-shell" aria-label={settingsWorkspaceCopy.categoryListAria}>
-              <button type="button" className="settings-return-button" onClick={() => handleMainNavigate('projects')}>
-                <span aria-hidden="true">←</span>
-                <span>{settingsWorkspaceCopy.returnToApp}</span>
-              </button>
-              <span className="settings-query-field">
-                <MagnifyingGlass aria-hidden="true" weight="regular" />
-                <input
-                  className="settings-query-control"
-                  aria-label={settingsWorkspaceCopy.searchAria}
-                  placeholder={settingsWorkspaceCopy.searchPlaceholder}
-                  value={settingsSearchQuery}
-                  onChange={(event) => setSettingsSearchQuery(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Escape') {
-                      event.preventDefault();
-                      setSettingsSearchQuery('');
-                    }
-                  }}
-                />
-              </span>
-              <nav
-                className="settings-section-nav settings-sidebar-nav"
-                aria-label={settingsWorkspaceCopy.categoryListAria}
-                role="tablist"
-                aria-orientation="vertical"
-                data-inline-rail-keyboard="vertical"
-                onKeyDown={handleInlineRailKeyboardNavigation}
-              >
-                {visibleSettingsGroups.map((group) => (
-                  <div className="settings-sidebar-group" role="presentation" key={group.group}>
-                    <span className="settings-sidebar-group-title" role="presentation">
-                      {group.group}
-                    </span>
-                    {group.items.map(([id, label, SectionIcon]) => (
-                      <button
-                        key={id}
-                        id={`${settingsPanelId}-${id}`}
-                        type="button"
-                        className={`settings-section-button ${settingsCategory === id ? 'selected' : ''}`}
-                        role="tab"
-                        aria-controls={settingsPanelId}
-                        aria-selected={settingsCategory === id}
-                        tabIndex={settingsNavigationTabStop === id ? 0 : -1}
-                        data-inline-rail-item="true"
-                        onClick={() => setSettingsCategory(id)}
-                      >
-                        <SectionIcon className="settings-section-icon" weight="regular" aria-hidden="true" />
-                        <span className="settings-section-label">{label}</span>
-                      </button>
-                    ))}
-                  </div>
-                ))}
-              </nav>
-              {visibleSettingsItems.length === 0 ? <p role="status">{appShellSettings.appLanguage === 'zh-CN' ? '没有匹配的设置分段' : 'No matching settings sections'}</p> : null}
-            </aside>
-            <section key={settingsCategory} id={settingsPanelId} role="tabpanel" tabIndex={0} className="settings-detail-pane" aria-labelledby={`${settingsPanelId}-${settingsCategory}`}>
-              <div className="settings-content-column">
-                {settingsCategory === 'general' ? <GeneralSettingsPane value={appShellSettings} client={props.nativeConversationClient?.settings ?? null} onChange={setAppShellSettings} /> : null}
-                {settingsCategory === 'agents' ? (
-                  <GlobalAgentSettingsPane
-                    ref={globalAgentSettingsRef}
-                    language={appShellSettings.appLanguage}
-                    client={props.nativeConversationClient?.settings ?? null}
-                    onDirtyChange={setGlobalAgentSettingsDirty}
-                    onRequestLeave={(leave) => requestWorkspaceLeaveRef.current(leave)}
-                  />
-                ) : null}
-                {settingsCategory === 'usage' ? <CodexUsageSettingsPane client={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} refreshRevision={codexUsageRevision} /> : null}
-                {settingsCategory === 'memory' && props.nativeConversationClient ? (
-                  <MemorySettingsPane
-                    client={props.nativeConversationClient.memory}
-                    language={appShellSettings.appLanguage}
-                    projects={snapshot.projects.map((project) => ({ id: project.id, name: project.name }))}
-                    initialProjectId={projectDetail?.id}
-                  />
-                ) : null}
-                {settingsCategory === 'tasks' ? (
-                  <section className="settings-product-pane task-list-settings-pane" aria-label={settingsWorkspaceCopy.categories.tasks}>
-                    <header className="settings-page-heading">
-                      <span>
-                        <h2 className="settings-page-title">{settingsWorkspaceCopy.categories.tasks}</h2>
-                        <p>{appShellSettings.appLanguage === 'zh-CN' ? '选择字段，调整选项与排序。修改后自动保存。' : 'Choose a field to edit options and order. Changes save automatically.'}</p>
-                      </span>
-                      <SettingsSaveStatus status={taskAutosave.status} language={appShellSettings.appLanguage} />
-                    </header>
-                    <div className="task-fields-workspace">
-                      <nav className="task-field-nav" aria-label={appShellSettings.appLanguage === 'zh-CN' ? '任务字段' : 'Task fields'}>
-                        {(['status', 'priority', 'runStatus'] as const).map((field) => (
-                          <button className="task-field-tab" key={field} type="button" aria-current={taskField === field ? 'page' : undefined} onClick={() => setTaskField(field)}>
-                            {
-                              {
-                                status: appShellSettings.appLanguage === 'zh-CN' ? '任务状态' : 'Task status',
-                                priority: appShellSettings.appLanguage === 'zh-CN' ? '优先级' : 'Priority',
-                                runStatus: appShellSettings.appLanguage === 'zh-CN' ? '运行状态' : 'Run status',
-                              }[field]
-                            }
-                          </button>
-                        ))}
-                      </nav>
-                      <fieldset className="task-field-detail" onInput={() => taskAutosave.reset()} disabled={taskAutosave.status === 'saving'}>
-                        {taskField === 'status' ? (
-                          <>
-                            <section className="settings-product-section" aria-labelledby="task-status-config-title">
-                              <header className="settings-section-heading">
-                                <strong id="task-status-config-title">{appShellSettings.appLanguage === 'zh-CN' ? '任务状态' : 'Task statuses'}</strong>
-                                <span>{appShellSettings.appLanguage === 'zh-CN' ? '所有项目统一使用这些状态。删除使用中的状态时，先迁移任务再删除。' : 'All projects use these statuses. In-use statuses migrate before deletion.'}</span>
-                              </header>
-                              <TaskManagementStatusEditor
-                                language={appShellSettings.appLanguage}
-                                config={taskStatusSettingsConfig}
-                                usageCounts={taskStatusSettingsUsageCounts}
-                                labelForStatus={(status) => formatConfiguredTaskManagementStatus(status, taskStatusSettingsConfig, appShellSettings.appLanguage)}
-                                onChange={(config, deletion) => {
-                                  /** 迁移关系与状态配置在同一笔本地事务提交。 */
-                                  const replacements = deletion?.replacementStatusId
-                                    ? { ...state.taskManagementStatusReplacements, __global__: { ...state.taskManagementStatusReplacements.__global__, [deletion.removedStatusId]: deletion.replacementStatusId } }
-                                    : state.taskManagementStatusReplacements;
-                                  state.setTaskManagementStatusReplacements(replacements);
-                                  saveTaskFields({
-                                    taskManagementStatusTemplate: config,
-                                    taskManagementStatusReplacements: replacements,
-                                  });
-                                }}
-                              />
-                            </section>
-                          </>
-                        ) : (
-                          <section className="settings-product-section" aria-labelledby="task-list-sort-settings-title">
-                            <header className="settings-section-heading">
-                              <strong id="task-list-sort-settings-title">{appShellSettings.appLanguage === 'zh-CN' ? '其他字段的排序规则' : 'Sort order for other fields'}</strong>
-                              <span>
-                                {appShellSettings.appLanguage === 'zh-CN'
-                                  ? '优先级和运行状态仍为系统固定值；拖动定义升序，降序会反转该顺序。此设置对所有项目生效。'
-                                  : 'Priority and run status remain fixed system values. Drag to define ascending order; descending reverses it. This applies to every project.'}
-                              </span>
-                            </header>
-                            <div className="task-enum-order-grid task-enum-order-grid-secondary">
-                              {taskField === 'priority' ? (
-                                <TaskEnumOrderEditor
-                                  language={appShellSettings.appLanguage}
-                                  title={appShellSettings.appLanguage === 'zh-CN' ? '优先级' : 'Priority'}
-                                  description={appShellSettings.appLanguage === 'zh-CN' ? 'P0 至 P4 的业务顺序' : 'Business order for P0 through P4'}
-                                  items={taskTableEnumSortOrders.priority.map((value) => ({ value, label: taskPriorityLabels[value] }))}
-                                  onChange={(priority) => saveTaskFields({ taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders({ ...appShellSettings.taskTableEnumSortOrders, priority }) })}
-                                />
-                              ) : (
-                                <TaskEnumOrderEditor
-                                  language={appShellSettings.appLanguage}
-                                  title={appShellSettings.appLanguage === 'zh-CN' ? '运行状态' : 'Run status'}
-                                  description={appShellSettings.appLanguage === 'zh-CN' ? 'AI 工作状态的排序' : 'AI work status order'}
-                                  items={taskTableEnumSortOrders.runStatus.map((value) => ({ value, label: taskAgentRunStatusLabels[appShellSettings.appLanguage][value] }))}
-                                  onChange={(runStatus) => saveTaskFields({ taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders({ ...appShellSettings.taskTableEnumSortOrders, runStatus }) })}
-                                />
-                              )}
-                            </div>
-                            <div className="task-list-settings-actions">
-                              <Button
-                                variant="secondary"
-                                size="compact"
-                                onClick={() => saveTaskFields({ taskTableEnumSortOrders: { ...taskTableEnumSortOrders, [taskField]: defaultTaskTableEnumSortOrders[taskField as 'priority' | 'runStatus'] } })}
-                              >
-                                {appShellSettings.appLanguage === 'zh-CN' ? '恢复默认顺序' : 'Restore default order'}
-                              </Button>
-                            </div>
-                          </section>
-                        )}
-                      </fieldset>
-                    </div>
-                  </section>
-                ) : null}
-                {settingsCategory === 'runtime' ? (
-                  <section className="settings-product-pane" aria-label={settingsWorkspaceCopy.categories.runtime}>
-                    <header className="settings-page-heading">
-                      <span>
-                        <h2 className="settings-page-title">{settingsWorkspaceCopy.categories.runtime}</h2>
-                        <p>{appShellSettings.appLanguage === 'zh-CN' ? '管理远程接管与 Codex 配置导入。' : 'Manage remote control and Codex configuration import.'}</p>
-                      </span>
-                    </header>
-                    <CodexRemoteControlSettings language={appShellSettings.appLanguage} client={props.nativeConversationClient?.remoteControl ?? null} />
-                    <CodexConfigImportSettings
+          {activeNavTarget !== 'settings' &&
+          activeNavTarget !== 'skills' &&
+          activeNavTarget !== 'digital-employees' &&
+          activeNavTarget !== 'digital-teams' &&
+          activeNavTarget !== 'automations' &&
+          activeProjectSection === 'code' &&
+          selectedProject ? (
+            <section className="workspace-view workspace-view-project-code project-code-workspace" aria-label={codeWorkspaceCopy.projectCodeAria}>
+              <div className="project-code-mode-host">
+                {projectCodeWorkspaceMode === 'source' ? (
+                  <div className="project-code-mode-pane">
+                    <ProjectSourceWorkspace
+                      key={selectedProject.id}
+                      ref={projectSourceWorkspaceRef}
+                      gitClient={props.nativeConversationClient ?? undefined}
+                      project={selectedProject}
                       language={appShellSettings.appLanguage}
-                      preview={codexConfigImportPreview}
-                      result={codexConfigImportResult}
-                      loading={codexConfigImportLoading}
-                      error={codexConfigImportError}
-                      onRefresh={refreshCodexConfigImport}
-                      onImport={importCodexConfig}
-                      onActivate={activateCodexConfig}
+                      preference={appShellSettings.codeWorkspaceByProject?.[selectedProject.id]}
+                      onPreferenceChange={(preference) => persistCodeWorkspacePreference(selectedProject.id, preference)}
+                      onDirtyChange={setSourceWorkspaceDirty}
+                      onOpenExternal={(relativePath, line) => void props.onOpenSource?.({ sourceRef: relativePath, lineStart: line, projectRoot: selectedProject.localPath })}
                     />
-                  </section>
+                  </div>
                 ) : null}
-                {settingsCategory === 'terminal' ? <TerminalSettingsPane client={props.commandClient ?? null} language={appShellSettings.appLanguage} /> : null}
-                {settingsCategory === 'browser' ? <BrowserSettingsPane language={appShellSettings.appLanguage} /> : null}
-                {settingsCategory === 'network' ? <NetworkSettingsPane value={appShellSettings} client={props.nativeConversationClient ?? null} onChange={setAppShellSettings} /> : null}
-                {settingsCategory === 'models' ? (
-                  <>
-                    <header className="settings-page-heading">
-                      <span>
-                        <h2 className="settings-page-title">{settingsWorkspaceCopy.categories.models}</h2>
-                        <p>{appShellSettings.appLanguage === 'zh-CN' ? '管理模型服务与可用模型。' : 'Manage model providers and available models.'}</p>
-                      </span>
-                      <SettingsSaveStatus status={modelSaveState} language={appShellSettings.appLanguage} />
-                    </header>
-                    <CodexAccountSettings controller={modelSetup} />
-                    <ModelConnectionsSettingsPane language={appShellSettings.appLanguage} client={props.nativeConversationClient ?? null} onSaveStateChange={setModelSaveState} />
-                  </>
-                ) : null}
-                {settingsCategory === 'zentao' ? <ZentaoSettingsPane language={appShellSettings.appLanguage} client={props.nativeConversationClient ?? null} /> : null}
-                {settingsCategory === 'im' ? <ImRobotSettingsPane client={props.commandClient ?? null} language={appShellSettings.appLanguage} /> : null}
-                {settingsCategory === 'commands' && props.commandClient ? <CommandCenterPanel mode="global" client={props.commandClient} language={appShellSettings.appLanguage} /> : null}
-                {settingsCategory === 'release' ? (
-                  <section className="settings-product-pane" aria-label={settingsWorkspaceCopy.categories.release}>
-                    <h2 className="settings-page-title">{settingsWorkspaceCopy.categories.release}</h2>
-                    {releaseLoadState !== 'ready' ? (
-                      <section className="settings-product-section" aria-busy={releaseLoadState === 'loading'}>
-                        <p role="status">
-                          {appShellSettings.appLanguage === 'zh-CN'
-                            ? releaseLoadState === 'loading'
-                              ? '正在读取发布与更新状态…'
-                              : '无法读取发布与更新状态，请重试。'
-                            : releaseLoadState === 'loading'
-                              ? 'Loading release and update status…'
-                              : 'Unable to load release and update status. Please retry.'}
-                        </p>
-                        {releaseLoadState === 'failed' ? (
-                          <button type="button" onClick={() => setReleaseLoadRevision((value) => value + 1)}>
-                            {appShellSettings.appLanguage === 'zh-CN' ? '重试' : 'Retry'}
-                          </button>
-                        ) : null}
-                      </section>
-                    ) : (
-                      <NativeSettingsPane label={settingsWorkspaceCopy.release.paneTitle} className="deep-settings-pane release-settings-pane">
-                        <section className="release-update-workbench" aria-label={settingsWorkspaceCopy.release.updateAria}>
-                          <section className="release-update-command-row" aria-label={settingsWorkspaceCopy.release.updateActionAria}>
-                            <span className="release-update-copy">
-                              <strong>{settingsWorkspaceCopy.release.updateTitle}</strong>
-                              <small>{formatReleaseUpdateReason(releaseUpdateStatus, settingsWorkspaceCopy.release)}</small>
-                            </span>
-                            <span className="release-update-field">
-                              {/* 设置页保留发布清单证据；用户升级操作统一由 macOS 原生 Homebrew 窗口承载。 */}
-                              <span>{formatReleaseUpdateLabel(releaseUpdateStatus, settingsWorkspaceCopy.release)}</span>
-                              <small>{settingsWorkspaceCopy.release.installHelp()}</small>
-                            </span>
-                            <span className="release-update-command-rail">
-                              <button type="button" onClick={() => void checkReleaseUpdate()} disabled={!props.onCheckReleaseUpdate || releaseUpdateBusy} {...controlBusyProps(releaseUpdateBusy)}>
-                                {releaseUpdateCheckState === 'loading' ? settingsWorkspaceCopy.release.checking : settingsWorkspaceCopy.release.checkUpdates}
-                              </button>
-                            </span>
-                          </section>
-                          <section className="release-update-version-row" aria-label={settingsWorkspaceCopy.release.versionAria}>
-                            <span className="release-update-copy">
-                              <strong>{settingsWorkspaceCopy.release.versionTitle}</strong>
-                              <small>
-                                {releaseUpdateStatus.checkedAt
-                                  ? settingsWorkspaceCopy.release.checkedAt(formatArchivedConversationDate(releaseUpdateStatus.checkedAt, appShellSettings.appLanguage))
-                                  : settingsWorkspaceCopy.release.notChecked}
-                              </small>
-                            </span>
-                            <span className="release-update-field">
-                              <span>{settingsWorkspaceCopy.release.currentVersion(releaseUpdateStatus.currentVersion)}</span>
-                              <span>{settingsWorkspaceCopy.release.latestVersion(releaseUpdateStatus.latestVersion)}</span>
-                              <small>{formatReleaseUpdateChannel(releaseUpdateStatus.channel, settingsWorkspaceCopy.release)}</small>
-                            </span>
-                            <span className="release-update-command-rail">
-                              <a href={releaseUpdateStatus.releasePageUrl}>GitHub Release</a>
-                            </span>
-                          </section>
-                        </section>
-                        <section className="release-technical-details">
-                          <h3>{appShellSettings.appLanguage === 'zh-CN' ? '安装包与发布详情' : 'Package and release details'}</h3>
-                          <section className="release-update-artifact-row" aria-label={settingsWorkspaceCopy.release.artifactAria}>
-                            <span className="release-update-copy">
-                              <strong>{settingsWorkspaceCopy.release.artifactTitle}</strong>
-                              <small>
-                                {releaseUpdateStatus.artifact
-                                  ? `${releaseUpdateStatus.artifact.arch} · ${formatReleaseArtifactKind(releaseUpdateStatus.artifact.kind, settingsWorkspaceCopy.release)}`
-                                  : settingsWorkspaceCopy.release.waitingArtifact}
-                              </small>
-                            </span>
-                            <span className="release-update-field">
-                              {releaseUpdateStatus.artifact ? (
-                                <>
-                                  <span>{releaseUpdateStatus.artifact.fileName}</span>
-                                  <small>{releaseUpdateStatus.artifact.sha256}</small>
-                                </>
-                              ) : (
-                                <span>{settingsWorkspaceCopy.release.noArtifact}</span>
-                              )}
-                            </span>
-                            <span className="release-update-command-rail">
-                              {releaseUpdateCheckState === 'failed' ? (
-                                <span role="status">{settingsWorkspaceCopy.release.updateFailed}</span>
-                              ) : (
-                                <span className="settings-action-meta">{settingsWorkspaceCopy.release.recommendedActions[releaseUpdateStatus.recommendedAction]}</span>
-                              )}
-                            </span>
-                          </section>
-                          <section className="settings-state-row settings-release-signing-state-row" aria-label={settingsWorkspaceCopy.release.signingAria}>
-                            <span className="settings-row-copy">
-                              <strong>{settingsWorkspaceCopy.release.signingTitle}</strong>
-                            </span>
-                            <span className="settings-row-field">
-                              <span>{formatReleasePresenceStatus('signing', releaseStatus.signing, settingsWorkspaceCopy.release)}</span>
-                              <small>{settingsWorkspaceCopy.release.signingEnvironmentOnly}</small>
-                            </span>
-                          </section>
-                          <section className="settings-state-row settings-release-notarization-state-row" aria-label={settingsWorkspaceCopy.release.notarizationAria}>
-                            <span className="settings-row-copy">
-                              <strong>{settingsWorkspaceCopy.release.notarizationTitle}</strong>
-                            </span>
-                            <span className="settings-row-field">
-                              <span>{formatReleasePresenceStatus('notarization', releaseStatus.notarization, settingsWorkspaceCopy.release)}</span>
-                              <small>{settingsWorkspaceCopy.release.notarizationDescription}</small>
-                            </span>
-                          </section>
-                          <section className="settings-state-row settings-release-cask-state-row" aria-label={settingsWorkspaceCopy.release.caskAria}>
-                            <span className="settings-row-copy">
-                              <strong>{settingsWorkspaceCopy.release.caskTitle}</strong>
-                            </span>
-                            <span className="settings-row-field">
-                              <span>{formatReleasePresenceStatus('homebrewCask', releaseStatus.homebrewCask, settingsWorkspaceCopy.release)}</span>
-                              <small>{releaseStatus.readiness.canBuildUnsignedArtifacts ? settingsWorkspaceCopy.release.unsignedBuildAvailable : settingsWorkspaceCopy.release.unsignedBuildUnavailable}</small>
-                            </span>
-                          </section>
-                          <section className="settings-log-row release-detail-row" aria-label={settingsWorkspaceCopy.release.detailAria}>
-                            <span className="settings-row-copy">
-                              <strong>{settingsWorkspaceCopy.release.detailTitle}</strong>
-                              <small>{settingsWorkspaceCopy.release.detailDescription}</small>
-                            </span>
-                            <span className="settings-row-field settings-evidence-list">
-                              <span>
-                                {settingsWorkspaceCopy.release.autoUpdateReserved} · {formatReleaseAutoUpdateLabel(releaseStatus.autoUpdate, settingsWorkspaceCopy.release)}
-                              </span>
-                              {releaseStatus.autoUpdate.changelogPath ? <small>{releaseStatus.autoUpdate.changelogPath}</small> : null}
-                              <small>{formatReleaseWaitingForItems(releaseStatus.readiness.waitingFor, settingsWorkspaceCopy.release)}</small>
-                              <small>{formatReleaseWaitingForItems(releaseStatus.autoUpdate.waitingFor, settingsWorkspaceCopy.release)}</small>
-                            </span>
-                            <span className="settings-row-action-rail">
-                              <span className="settings-action-meta">{settingsWorkspaceCopy.release.realReleaseStatus}</span>
-                            </span>
-                          </section>
-                        </section>
-                      </NativeSettingsPane>
-                    )}
-                  </section>
-                ) : null}
-                {settingsCategory === 'data' ? (
-                  <section className="settings-product-pane" aria-label={settingsWorkspaceCopy.categories.data}>
-                    <h2 className="settings-page-title">{settingsWorkspaceCopy.categories.data}</h2>
-                    <NativeSettingsPane label={settingsWorkspaceCopy.data.paneTitle} className="deep-settings-pane data-settings-pane">
-                      <section className="settings-data-portability-row" aria-label={settingsWorkspaceCopy.data.portabilityAria}>
-                        <span className="settings-row-copy">
-                          <strong>{settingsWorkspaceCopy.data.localLogDirectoryTitle}</strong>
-                          <small>{settingsWorkspaceCopy.data.localLogDirectoryDescription}</small>
-                        </span>
-                        <span className="settings-row-field">
-                          <span>{appShellSettings.localLogDirectory}</span>
-                          <small>{dataPortabilityStatusCopy}</small>
-                        </span>
-                        <span className="settings-row-action-rail">
-                          <button type="button" onClick={exportLocalSettings} disabled={!props.onExportLocalSettings || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
-                            {settingsWorkspaceCopy.data.exportSettings}
-                          </button>
-                          <button type="button" onClick={importLocalSettings} disabled={!props.onImportLocalSettings || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
-                            {settingsWorkspaceCopy.data.importSettings}
-                          </button>
-                        </span>
-                      </section>
-                      <section className="settings-data-portability-row" aria-label={settingsWorkspaceCopy.data.cacheAria}>
-                        <span className="settings-row-copy">
-                          <strong>{settingsWorkspaceCopy.data.cacheTitle}</strong>
-                          <small>{settingsWorkspaceCopy.data.cacheDescription}</small>
-                        </span>
-                        <span className="settings-row-field" />
-                        <span className="settings-row-action-rail">
-                          <button type="button" onClick={clearNetworkCache} disabled={!window.zeus?.clearNetworkCache || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
-                            {settingsWorkspaceCopy.data.clearNetworkCache}
-                          </button>
-                        </span>
-                      </section>
-                      <section className="settings-archived-conversations-row" aria-label={settingsWorkspaceCopy.data.archivedConversationsAria}>
-                        <span className="settings-row-copy">
-                          <strong>{settingsWorkspaceCopy.data.archivedConversationsTitle}</strong>
-                          <small>{settingsWorkspaceCopy.data.archivedConversationsDescription}</small>
-                        </span>
-                        <div className="settings-archive-filters">
-                          <ZeusSelect
-                            size="regular"
-                            ariaLabel={appShellSettings.appLanguage === 'zh-CN' ? '筛选归档项目' : 'Filter archived projects'}
-                            value={archiveProjectId}
-                            onChange={(id) => {
-                              setArchiveProjectId(id);
-                              setArchiveRequestedPage(1);
-                            }}
-                            options={[
-                              { value: '', label: appShellSettings.appLanguage === 'zh-CN' ? '全部项目' : 'All projects' },
-                              ...Array.from(new Map(archiveItems.map(({ conversation, project }) => [conversation.projectId, { value: conversation.projectId, label: project?.name ?? conversation.projectId }])).values()),
-                            ]}
-                          />
-                          <input
-                            type="search"
-                            className="settings-list-search"
-                            aria-label={appShellSettings.appLanguage === 'zh-CN' ? '搜索归档会话' : 'Search archived conversations'}
-                            placeholder={appShellSettings.appLanguage === 'zh-CN' ? '搜索标题、项目或任务编号' : 'Search title, project or task'}
-                            value={archiveQuery}
-                            onChange={(event) => {
-                              setArchiveQuery(event.currentTarget.value);
-                              setArchiveRequestedPage(1);
-                            }}
-                          />
-                        </div>
-                        <span className="settings-archived-conversation-list" aria-live="polite">
-                          {archivedConversationLoadState === 'loading' ? <small>{settingsWorkspaceCopy.data.loadingArchivedConversations}</small> : null}
-                          {archivedConversationLoadState === 'error' ? (
-                            <span className="settings-archived-conversation-state" role="alert">
-                              <VisibleApplicationError error={archivedConversationError ?? settingsWorkspaceCopy.data.archivedConversationsError} language={appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en'} />
-                              <button type="button" onClick={() => void refreshArchivedConversations()}>
-                                {settingsWorkspaceCopy.data.retryArchivedConversations}
-                              </button>
-                            </span>
-                          ) : null}
-                          {archiveActionError ? (
-                            <small role="alert">
-                              <VisibleApplicationError error={archiveActionError} language={appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en'} />
-                            </small>
-                          ) : null}
-                          {archivedConversationLoadState === 'ready' && filteredArchives.length === 0 ? (
-                            <small>
-                              {normalizedArchiveQuery || archiveProjectId ? (appShellSettings.appLanguage === 'zh-CN' ? '没有匹配的归档会话。' : 'No matching archived conversations.') : settingsWorkspaceCopy.data.emptyArchivedConversations}
-                            </small>
-                          ) : null}
-                          {filteredArchives.slice((archivePage - 1) * settingsPageSize, archivePage * settingsPageSize).map(({ conversation, task, project }) => {
-                            return (
-                              <span className="settings-archived-conversation-item" key={conversation.id}>
-                                <span className="settings-archived-conversation-copy">
-                                  <strong>{conversationDisplayTitle(conversation.title, task?.title, appShellSettings.appLanguage)}</strong>
-                                  <small>
-                                    {task
-                                      ? settingsWorkspaceCopy.data.archivedConversationContext(project?.name ?? conversation.projectId, task.taskCode ?? task.id)
-                                      : settingsWorkspaceCopy.data.archivedProjectConversationContext(project?.name ?? conversation.projectId)}
-                                  </small>
-                                  <time className="settings-archive-date" dateTime={conversation.updatedAt}>
-                                    {formatArchivedConversationDate(conversation.updatedAt, appShellSettings.appLanguage)}
-                                  </time>
-                                </span>
-                                <button type="button" disabled={restoringArchivedConversationId !== null} onClick={() => void restoreArchivedConversation(conversation)}>
-                                  {restoringArchivedConversationId === conversation.id ? settingsWorkspaceCopy.data.restoringArchivedConversation : settingsWorkspaceCopy.data.restoreArchivedConversation}
-                                </button>
-                              </span>
-                            );
-                          })}
-                        </span>
-                        <SettingsPagination
-                          label={settingsWorkspaceCopy.data.archivedConversationsTitle}
-                          language={appShellSettings.appLanguage}
-                          total={filteredArchives.length}
-                          page={archivePage}
-                          onChange={setArchiveRequestedPage}
-                          disabled={archivedConversationLoadState === 'loading'}
-                        />
-                      </section>
-                    </NativeSettingsPane>
-                  </section>
+                {visitedCodeWorkspaceModes.has('commands') ? (
+                  <div className="project-code-mode-pane project-code-command-pane" hidden={projectCodeWorkspaceMode !== 'commands'}>
+                    {props.commandClient ? <CommandCenterPanel mode="project" project={selectedProject} client={props.commandClient} language={appShellSettings.appLanguage} /> : null}
+                  </div>
                 ) : null}
               </div>
             </section>
-          </section>
-        ) : null}
+          ) : null}
+
+          {activeNavTarget !== 'settings' &&
+          activeNavTarget !== 'skills' &&
+          activeNavTarget !== 'digital-employees' &&
+          activeNavTarget !== 'digital-teams' &&
+          activeNavTarget !== 'automations' &&
+          activeProjectSection === 'git' &&
+          selectedProject &&
+          props.nativeConversationClient ? (
+            <section className="workspace-view workspace-view-project-git">
+              <ProjectGitWorkbench key={selectedProject.id} project={selectedProject} client={props.nativeConversationClient} language={appShellSettings.appLanguage} />
+            </section>
+          ) : null}
+
+          {activeNavTarget !== 'settings' &&
+          activeNavTarget !== 'skills' &&
+          activeNavTarget !== 'digital-employees' &&
+          activeNavTarget !== 'digital-teams' &&
+          activeNavTarget !== 'automations' &&
+          snapshot.projects.length > 0 &&
+          (activeProjectSection === 'tasks' || activeProjectSection === 'sessions') ? (
+            <section
+              className={`workspace-view ${activeProjectSection === 'tasks' ? 'workspace-view-project-tasks' : 'workspace-view-project-sessions'}`}
+              aria-label={activeProjectSection === 'tasks' ? taskWorkspaceCopy.viewAria : sessionWorkspaceCopy.viewAria}
+            >
+              <section
+                className={`workspace-detail-pane ${activeProjectSection === 'tasks' ? 'task-management-detail-pane' : 'conversation-detail-pane'}`}
+                aria-label={activeProjectSection === 'tasks' ? taskWorkspaceCopy.detailAria : sessionWorkspaceCopy.detailAria}
+              >
+                {activeProjectSection === 'tasks' ? (
+                  <>
+                    {/* 默认仍是完整宽度的任务列表；看板可按项目切换，只有全页详情会临时替换任务工作区。 */}
+                    {taskDetailPaneTask && taskDetailPresentation === 'full_page' ? (
+                      <section className="task-detail-full-page" aria-label={taskDetailPresentationLabel}>
+                        <header className="task-detail-presentation-header">
+                          <Button variant="secondary" size="compact" onClick={closeTaskDetail}>
+                            {appShellSettings.appLanguage === 'zh-CN' ? '返回任务' : 'Back to tasks'}
+                          </Button>
+                          <strong>{taskDetailPresentationLabel}</strong>
+                        </header>
+                        {renderTaskDetailPaneContent()}
+                      </section>
+                    ) : (
+                      <TaskWorkspace
+                        projectName={selectedProject?.name}
+                        tasks={currentProjectTasks}
+                        boardTasks={visibleTasks}
+                        selectedTaskId={taskDetailPaneTaskId}
+                        selectedTaskIds={selectedTaskIds}
+                        searchQuery={taskSearchQuery}
+                        statusFilter={taskStatusFilter}
+                        tagFilter={taskTagFilter}
+                        statusOptions={taskStatusFilterValues}
+                        statusLabels={activeTaskManagementStatusLabels}
+                        statusDefinitions={activeTaskManagementStatusConfig.statuses}
+                        completedStatusId={activeTaskManagementStatusConfig.roles.completedStatusId}
+                        cancelledStatusId={activeTaskManagementStatusConfig.roles.cancelledStatusId}
+                        runStatusLabels={taskAgentRunStatusLabels[appShellSettings.appLanguage]}
+                        priorityOptions={taskWorkspaceCopy.taskCreatePriorityOptions}
+                        copy={taskWorkspaceCopy}
+                        appLanguage={appShellSettings.appLanguage}
+                        runtime={runtime}
+                        runtimeSessions={runtimeSessions}
+                        taskConversations={currentTaskConversationChoices}
+                        conversationRunStatuses={nativeConversationTaskRunStatuses}
+                        taskTableColumns={activeTaskTableColumns}
+                        taskTableEnumSortOrders={taskTableEnumSortOrders}
+                        taskTableLayoutDirty={taskTableLayoutDirty}
+                        taskTableLayoutSaveBusy={taskTableLayoutSaveBusy}
+                        creatingTaskBusy={creatingTaskBusy}
+                        pendingTaskStatuses={pendingTaskStatuses}
+                        bulkActionBusy={updatingTaskBusy}
+                        bulkActionStatus={taskBulkActionStatus}
+                        modelPushEntry={
+                          taskModelPushTaskId && (taskModelPushEntry === 'checking' || taskModelPushEntry === 'error')
+                            ? { taskId: taskModelPushTaskId, status: taskModelPushEntry, error: taskModelPushEntry === 'error' ? taskModelPushError : null }
+                            : undefined
+                        }
+                        taskActionBusy={updatingTaskBusy}
+                        listState={activeProjectId && !taskQuery.pages[activeProjectId]?.loaded ? (taskQuery.pages[activeProjectId]?.state === 'error' ? 'error' : 'loading') : 'ready'}
+                        hasMoreTasks={activeProjectId ? taskQuery.pages[activeProjectId]?.hasMore : false}
+                        loadingMoreTasks={activeProjectId ? taskQuery.pages[activeProjectId]?.state === 'loading' : false}
+                        taskPageError={activeProjectId ? taskQuery.pages[activeProjectId]?.error : null}
+                        onLoadMoreTasks={activeProjectId ? () => void loadTaskPage(activeProjectId, false, taskSearchQuery.trim().toLowerCase()) : undefined}
+                        activeProjectId={activeProjectId}
+                        pageViewMode={taskPageViewMode}
+                        taskBoardSnapshot={activeProjectId ? (taskBoardSnapshots[activeProjectId] ?? null) : null}
+                        taskBoardLoading={activeProjectId ? Boolean(taskBoardLoadState[activeProjectId]?.loading) : false}
+                        taskBoardError={activeProjectId ? (taskBoardLoadState[activeProjectId]?.error ?? null) : null}
+                        onSearchChange={setTaskSearchQuery}
+                        onStatusFilterChange={(filter) => void saveTaskStatusFilter(filter)}
+                        onTagFilterChange={setTaskTagFilter}
+                        onTaskTableColumnsChange={(preferences) => setTaskTableLayoutDraft({ preferences })}
+                        onSaveTaskTableLayout={() => void saveTaskTableLayout()}
+                        onCreateTask={() => openTaskCreateModal()}
+                        onOpenZentaoImport={() => setZentaoImportOpen(true)}
+                        onOpenTaskDetail={(taskId, mode) => void openTaskDetailPane(taskId, mode)}
+                        onPushTaskToNewConversation={(taskId) => void openTaskModelPush(taskId)}
+                        onOpenTaskCodeDelivery={(taskId) => openTaskGitDelivery(taskId)}
+                        onDeleteTask={(taskId) => setTaskDeleteDialogTaskId(taskId)}
+                        onOpenTaskConversation={(taskId, conversationId) => void openTaskConversationDrawer(taskId, conversationId)}
+                        onPageViewModeChange={(viewMode) => void saveTaskPageViewMode(viewMode)}
+                        onReloadTaskBoard={activeProjectId ? () => void loadTaskBoard(activeProjectId) : undefined}
+                        onUpdateTaskBoard={updateTaskBoardSettings}
+                        onMoveTaskBoardTask={moveTaskBoardTask}
+                        onLoadTaskAttachmentPreview={props.onLoadTaskAttachmentPreview}
+                        onToggleTaskSelection={toggleTaskSelection}
+                        onToggleAllVisibleTaskSelection={toggleAllVisibleTaskSelection}
+                        onClearTaskSelection={clearTaskSelection}
+                        onTaskStatusChange={(taskId, targetStatus) => void updateTaskManagementStatus(taskId, targetStatus).catch(() => undefined)}
+                        onTaskPriorityChange={updateTaskContent}
+                        onBulkTaskStatusChange={(targetStatus, taskIds) => void runBulkTaskStatusChange(targetStatus, taskIds)}
+                        onBulkTaskDelete={(taskIds) => void runBulkTaskDelete(taskIds)}
+                        onRetryTaskList={activeProjectId ? () => void loadTaskPage(activeProjectId, true, taskSearchQuery.trim().toLowerCase()) : undefined}
+                        onOpenProjectCode={selectedProject ? () => openProjectSection(selectedProject, 'code') : undefined}
+                        controlBusyProps={controlBusyProps}
+                      />
+                    )}
+
+                    <ZentaoImportModal
+                      open={zentaoImportOpen}
+                      language={appShellSettings.appLanguage}
+                      client={props.commandClient}
+                      projectId={activeProjectId}
+                      projectName={selectedProject?.name}
+                      existingTasks={snapshot.tasks}
+                      onImported={mergeTaskRecord}
+                      onClose={() => setZentaoImportOpen(false)}
+                    />
+                  </>
+                ) : taskDetailPaneTask || sessionDrawerTarget ? null : (
+                  renderNativeConversationWorkspace((taskId) => void openTaskDetailPane(taskId))
+                )}
+
+                <MotionPresence>
+                  {taskModelPushModalOpen && modelSetupTask ? (
+                    <TaskModelPushModal
+                      open={taskModelPushModalOpen}
+                      language={appShellSettings.appLanguage}
+                      task={modelSetupTask}
+                      projectName={snapshot.projects.find((project) => project.id === modelSetupTask.projectId)?.name}
+                      capabilities={taskModelPushCapabilities}
+                      runtimeCapabilities={taskModelPushRuntimeCapabilities}
+                      form={taskModelPushForm}
+                      status={taskModelPushStatus}
+                      refreshingRepositoryId={taskModelPushRefreshingRepositoryId}
+                      error={taskModelPushError}
+                      skillClient={props.nativeConversationClient ?? null}
+                      environmentClient={props.nativeConversationClient ?? null}
+                      onChange={(nextForm) => {
+                        setTaskModelPushForm((current) => {
+                          const resolved = typeof nextForm === 'function' ? nextForm(current) : nextForm;
+                          const task = snapshot.tasks.find((candidate) => candidate.id === taskModelPushTaskId);
+                          if (task) writeTaskModelPushPreferences(browserNativeConversationStartStorage(), task.projectId, resolved);
+                          return resolved;
+                        });
+                      }}
+                      onRefreshRepository={(repositoryId) => void refreshTaskModelPushRepository(repositoryId)}
+                      onRefreshLocalRepositories={() => void domainActions.refreshTaskModelPushRepositories()}
+                      onConnectModel={() => modelSetup.open('choose', taskModelSetupContext ?? null)}
+                      onRetryModels={() => void domainActions.refreshTaskModelPushModels().catch(() => undefined)}
+                      onClose={closeTaskModelPush}
+                      onSubmit={(event) => void submitTaskModelPush(event)}
+                    />
+                  ) : null}
+                </MotionPresence>
+                <MotionPresence>
+                  {Boolean(taskGitMergeTaskId) && (snapshot.tasks.find((task) => task.id === taskGitMergeTaskId) ?? null) ? (
+                    <TaskGitMergeModal
+                      open={Boolean(taskGitMergeTaskId)}
+                      language={appShellSettings.appLanguage}
+                      task={snapshot.tasks.find((task) => task.id === taskGitMergeTaskId) ?? null}
+                      projectName={snapshot.projects.find((project) => project.id === snapshot.tasks.find((task) => task.id === taskGitMergeTaskId)?.projectId)?.name}
+                      currentConversationWorkspaceId={selectedNativeConversation?.taskId === taskGitMergeTaskId ? selectedNativeConversation.workspaceId : null}
+                      refreshRevision={taskGitDeliveryRevision}
+                      client={props.nativeConversationClient ?? null}
+                      executionReady={executionHostSupportsConversationSource(props.executionHostTransition, 'conflict_resolution')}
+                      onQueueConflictAiStart={persistPendingConflictAiStart}
+                      onChanged={() =>
+                        taskGitMergeTaskId
+                          ? Promise.all([
+                              refreshNativeConversationChoices(taskGitMergeTaskId),
+                              props.onLoadTaskEvents && taskDetailPaneTaskId === taskGitMergeTaskId ? props.onLoadTaskEvents(taskGitMergeTaskId).then(setTaskEvents) : Promise.resolve(),
+                            ]).then(() => undefined)
+                          : Promise.resolve()
+                      }
+                      onOpenConversation={(taskId, conversationId) => openTaskConflictAiConversation(taskId, conversationId)}
+                      onClose={() => {
+                        // 关闭后再刷新共享快照，避免提交过程中重置交付弹窗的文件选择。
+                        if (taskGitMergeTaskId) taskGitDeliveryChangedRef.current(taskGitMergeTaskId);
+                        setTaskGitMergeTaskId(null);
+                      }}
+                    />
+                  ) : null}
+                </MotionPresence>
+                <MotionPresence>
+                  {taskDetailPaneTask && taskDetailPresentation === 'side_peek' ? (
+                    <WorkspaceDrawer
+                      presentation="floating"
+                      backdrop="dimmed"
+                      size="wide"
+                      label={taskDetailPresentationLabel}
+                      backdropLabel={taskWorkspaceCopy.detailPaneBackdrop}
+                      closeLabel={taskWorkspaceCopy.detailPaneClose}
+                      className="task-detail-floating-drawer"
+                      portalStyle={workspaceDrawerPortalStyle}
+                      onClose={closeTaskDetail}
+                    >
+                      {renderTaskDetailPaneContent()}
+                    </WorkspaceDrawer>
+                  ) : null}
+                </MotionPresence>
+                <MotionPresence>
+                  {taskDetailPaneTask && taskDetailPresentation === 'center_peek' ? (
+                    <ModalPortal rootClassName="task-detail-center-portal" backdropClassName="task-detail-center-backdrop" onDismiss={closeTaskDetail} role="dialog" aria-label={taskDetailPresentationLabel}>
+                      <section className="task-detail-center-dialog" data-modal-surface="dialog">
+                        <header className="task-detail-presentation-header">
+                          <strong>{taskDetailPresentationLabel}</strong>
+                          <Button variant="secondary" size="compact" onClick={closeTaskDetail} aria-label={taskWorkspaceCopy.detailPaneClose}>
+                            {appShellSettings.appLanguage === 'zh-CN' ? '关闭' : 'Close'}
+                          </Button>
+                        </header>
+                        {renderTaskDetailPaneContent()}
+                      </section>
+                    </ModalPortal>
+                  ) : null}
+                </MotionPresence>
+
+                <MotionPresence>
+                  {conversationDrawer ? (
+                    <WorkspaceDrawer
+                      presentation="sheet"
+                      backdrop="dimmed"
+                      size="wide"
+                      label={sessionWorkspaceCopy.secondaryDrawerLabel}
+                      backdropLabel={sessionWorkspaceCopy.secondaryDrawerBackdrop}
+                      closeLabel={sessionWorkspaceCopy.secondaryDrawerClose}
+                      className={`conversation-drawer conversation-drawer-shell conversation-drawer-sheet-${conversationDrawer}`}
+                      portalStyle={workspaceDrawerPortalStyle}
+                      onClose={() => setConversationDrawer(undefined)}
+                    >
+                      {conversationDrawer === 'runtime' ? (
+                        <section className="product-drawer-pane conversation-drawer-sheet conversation-drawer-sheet-runtime runtime-workbench" aria-label={sessionWorkspaceCopy.runtimeDrawer.runtimeEnvironment}>
+                          {/* Runtime 抽屉只表达真实运行能力和确认状态，按“状态、适配器、高风险、会话、日志”连续行组织。 */}
+                          <div className="drawer-header-row">
+                            <strong>{sessionWorkspaceCopy.runtimeDrawer.runtimeEnvironment}</strong>
+                            <button type="button" onClick={loadRuntimeStatus} disabled={!props.onLoadRuntimeStatus || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
+                              {sessionWorkspaceCopy.runtimeDrawer.refresh}
+                            </button>
+                          </div>
+                          <section className="runtime-status-row-list" aria-label={sessionWorkspaceCopy.runtimeDrawer.runtimeStatus}>
+                            <div className="runtime-capability-state-row">
+                              <strong>{runtime.aiCli.name}</strong>
+                              <span>{runtime.aiCli.available ? sessionWorkspaceCopy.runtimeDrawer.detectedCommand(runtime.aiCli.command) : sessionWorkspaceCopy.runtimeDrawer.waitingForCommand(runtime.aiCli.command)}</span>
+                            </div>
+                            <div className="runtime-capability-state-row">
+                              <strong>{sessionWorkspaceCopy.runtimeDrawer.terminalBackend}</strong>
+                              <span>{runtime.terminal?.pty.available ? (appShellSettings.appLanguage === 'zh-CN' ? '交互式终端' : 'Interactive terminal') : appShellSettings.appLanguage === 'zh-CN' ? '命令输出' : 'Command output'}</span>
+                              <em>
+                                {runtime.terminal
+                                  ? runtime.terminal.pty.available
+                                    ? appShellSettings.appLanguage === 'zh-CN'
+                                      ? '可以输入命令并查看输出。'
+                                      : 'Enter commands and view their output.'
+                                    : appShellSettings.appLanguage === 'zh-CN'
+                                      ? '可以查看命令输出，暂不支持交互式输入。'
+                                      : 'Command output is available; interactive input is not supported.'
+                                  : sessionWorkspaceCopy.runtimeDrawer.terminalPending}
+                              </em>
+                            </div>
+                          </section>
+                          {runtimeAdapters.length > 0 ? (
+                            <section className="runtime-adapter-list runtime-adapter-row-list" aria-label={sessionWorkspaceCopy.runtimeDrawer.runtimeAdaptersAria}>
+                              <strong>{sessionWorkspaceCopy.runtimeDrawer.runtimeAdaptersTitle}</strong>
+                              {runtimeAdapters.map((adapter) => {
+                                const checked = runtimeAdapterChecks[adapter.id];
+                                return (
+                                  <div className="runtime-adapter-row" key={adapter.id}>
+                                    <span className="runtime-row-copy">
+                                      <strong>{formatRuntimeAdapterDisplayName(adapter.id, runtimeAdapters, sessionWorkspaceCopy.runtimeDrawer)}</strong>
+                                      <span>
+                                        {adapter.command} ·{' '}
+                                        {checked ? (checked.available ? sessionWorkspaceCopy.runtimeDrawer.adapterAvailable : sessionWorkspaceCopy.runtimeDrawer.adapterUnavailable) : sessionWorkspaceCopy.runtimeDrawer.adapterUnchecked}
+                                      </span>
+                                      <small>{formatRuntimeAdapterDetectionFacts(adapter, checked, appShellSettings.appLanguage)}</small>
+                                    </span>
+                                    <span className="runtime-row-command-rail">
+                                      <button type="button" onClick={() => checkRuntimeAdapter(adapter.id)} disabled={loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
+                                        {sessionWorkspaceCopy.runtimeDrawer.checkAdapter}
+                                      </button>
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </section>
+                          ) : null}
+                          {runtimeAdapters.some((adapter) => adapter.id === 'generic') ? (
+                            <section className="runtime-generic-shell-risk-list runtime-generic-shell-row-list" aria-label={sessionWorkspaceCopy.runtimeDrawer.genericShellRiskAria}>
+                              <strong>{sessionWorkspaceCopy.runtimeDrawer.genericShellRiskTitle}</strong>
+                              {/* Generic shell 会启动真实本机命令，输入、预览、确认状态必须拆开，避免被误解为普通表单。 */}
+                              <section className="runtime-generic-shell-input-row" aria-label={sessionWorkspaceCopy.runtimeDrawer.genericShellCommandAria}>
+                                <span className="runtime-generic-shell-copy">
+                                  <strong>{sessionWorkspaceCopy.runtimeDrawer.genericShellCommandTitle}</strong>
+                                  <small>{sessionWorkspaceCopy.runtimeDrawer.genericShellCommandHelp}</small>
+                                </span>
+                                <span className="runtime-generic-shell-field">
+                                  <input
+                                    aria-label={sessionWorkspaceCopy.runtimeDrawer.genericShellCommandAria}
+                                    placeholder={sessionWorkspaceCopy.runtimeDrawer.genericShellCommandPlaceholder}
+                                    value={runtimeGenericShellCommand}
+                                    onChange={(event) => {
+                                      setRuntimeGenericShellCommand(event.currentTarget.value);
+                                      setRuntimeGenericShellCriticalConfirmation('');
+                                      setRuntimeConfirmation(undefined);
+                                      setRuntimeConfirmationCommand('');
+                                      setRuntimeConfirmationStatus({ kind: 'changed' });
+                                    }}
+                                  />
+                                </span>
+                              </section>
+                              <section className="runtime-shell-preview-row" aria-label={sessionWorkspaceCopy.runtimeDrawer.commandPreviewAria}>
+                                <span className="runtime-generic-shell-copy">
+                                  <strong>{sessionWorkspaceCopy.runtimeDrawer.commandPreviewTitle}</strong>
+                                  <small>{sessionWorkspaceCopy.runtimeDrawer.commandPreviewHelp}</small>
+                                </span>
+                                <span>{runtimeGenericShellCommand.trim() ? `sh -lc ${runtimeGenericShellCommand.trim()}` : sessionWorkspaceCopy.runtimeDrawer.emptyShellCommand}</span>
+                                <em>{sessionWorkspaceCopy.runtimeDrawer.genericShellRiskSummary(localizedGenericShellRisk.label, localizedGenericShellRisk.reason)}</em>
+                              </section>
+                              {genericShellRisk.level === 'critical' ? (
+                                <section className="runtime-generic-shell-input-row" aria-label={sessionWorkspaceCopy.runtimeDrawer.criticalPhraseAria}>
+                                  <span className="runtime-generic-shell-copy">
+                                    <strong>{sessionWorkspaceCopy.runtimeDrawer.criticalPhraseTitle}</strong>
+                                    <small>{sessionWorkspaceCopy.runtimeDrawer.criticalPhraseHelp(GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE)}</small>
+                                  </span>
+                                  <span className="runtime-generic-shell-field">
+                                    <input
+                                      aria-label={sessionWorkspaceCopy.runtimeDrawer.criticalPhraseAria}
+                                      placeholder={GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE}
+                                      value={runtimeGenericShellCriticalConfirmation}
+                                      onChange={(event) => setRuntimeGenericShellCriticalConfirmation(event.currentTarget.value)}
+                                    />
+                                  </span>
+                                </section>
+                              ) : null}
+                              <section className="runtime-generic-shell-state-row" aria-label={sessionWorkspaceCopy.runtimeDrawer.confirmationStateAria}>
+                                <span className="runtime-generic-shell-copy">
+                                  <strong>{sessionWorkspaceCopy.runtimeDrawer.confirmationStateTitle}</strong>
+                                  <small>{sessionWorkspaceCopy.runtimeDrawer.confirmationStateHelp}</small>
+                                </span>
+                                <span>{runtimeConfirmationStatusCopy}</span>
+                              </section>
+                              {runtimeConfirmation?.status === 'rejected' ? (
+                                <section className="runtime-generic-shell-rejected-row" aria-label={sessionWorkspaceCopy.runtimeDrawer.rejectedAria}>
+                                  <span className="runtime-generic-shell-copy">
+                                    <strong>{sessionWorkspaceCopy.runtimeDrawer.rejectedTitle}</strong>
+                                    <small>{sessionWorkspaceCopy.runtimeDrawer.rejectedHelp}</small>
+                                  </span>
+                                  <span>{runtimeConfirmation.rejectedReason ?? sessionWorkspaceCopy.runtimeDrawer.rejectedReasonFallback}</span>
+                                </section>
+                              ) : null}
+                              <div className="runtime-generic-shell-command-rail">
+                                <button
+                                  type="button"
+                                  onClick={createGenericRuntimeConfirmation}
+                                  disabled={!props.onCreateRuntimeConfirmation || !activeProjectId || !runtimeGenericShellCommand.trim() || loadingRuntimeBusy}
+                                  {...controlBusyProps(loadingRuntimeBusy)}
+                                >
+                                  {sessionWorkspaceCopy.runtimeDrawer.createGenericShellConfirmation}
+                                </button>
+                                {runtimeConfirmation?.status === 'pending' ? (
+                                  <button type="button" onClick={rejectGenericRuntimeConfirmation} disabled={!props.onRejectRuntimeOperation || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
+                                    {sessionWorkspaceCopy.runtimeDrawer.rejectGenericShellConfirmation}
+                                  </button>
+                                ) : null}
+                                {runtimeConfirmation?.status !== 'rejected' ? (
+                                  <button
+                                    type="button"
+                                    onClick={confirmAndStartGenericRuntime}
+                                    disabled={!props.onConfirmRuntimeOperation || !runtimeConfirmation || runtimeConfirmation.status !== 'pending' || !genericShellCriticalConfirmed || loadingRuntimeBusy}
+                                    {...controlBusyProps(loadingRuntimeBusy)}
+                                  >
+                                    {sessionWorkspaceCopy.runtimeDrawer.confirmAndStartGenericShell}
+                                  </button>
+                                ) : null}
+                              </div>
+                              {runtimeConfirmation?.status === 'pending' ? (
+                                <section className="runtime-generic-shell-state-row" aria-label={sessionWorkspaceCopy.runtimeDrawer.rejectImpactAria}>
+                                  <span className="runtime-generic-shell-copy">
+                                    <strong>{sessionWorkspaceCopy.runtimeDrawer.rejectImpactTitle}</strong>
+                                    <small>{sessionWorkspaceCopy.runtimeDrawer.rejectImpactHelp}</small>
+                                  </span>
+                                  <span>{sessionWorkspaceCopy.runtimeDrawer.rejectImpactBody}</span>
+                                </section>
+                              ) : null}
+                            </section>
+                          ) : null}
+                          <section className="runtime-session-list runtime-session-row-list" aria-label={sessionWorkspaceCopy.runtimeDrawer.runtimeSessions}>
+                            <div className="drawer-header-row">
+                              <strong>{sessionWorkspaceCopy.runtimeDrawer.runtimeSessions}</strong>
+                              <button type="button" onClick={startRuntimeSession} disabled={!activeProjectId || !runtime.aiCli.available || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
+                                {sessionWorkspaceCopy.runtimeDrawer.startRuntimeSession}
+                              </button>
+                            </div>
+                            <div className="runtime-session-filter-grid runtime-session-filter-row" aria-label={sessionWorkspaceCopy.runtimeDrawer.runtimeSessionSearch}>
+                              {/* 会话筛选拆成显式搜索行和开关行，避免 label 把输入、复选框和布局语义混在一起。 */}
+                              <section className="runtime-session-filter-control-row" aria-label={sessionWorkspaceCopy.runtimeDrawer.searchSessions}>
+                                <span className="runtime-session-filter-copy">
+                                  <strong>{sessionWorkspaceCopy.runtimeDrawer.searchSessions}</strong>
+                                  <small>{sessionWorkspaceCopy.runtimeDrawer.searchSessionsHelp}</small>
+                                </span>
+                                <span className="runtime-session-filter-field">
+                                  <input type="search" aria-label={sessionWorkspaceCopy.runtimeDrawer.searchSessions} value={runtimeSearchQuery} onChange={(event) => setRuntimeSearchQuery(event.currentTarget.value)} />
+                                </span>
+                              </section>
+                              <span className="runtime-session-filter-toggle-row">
+                                <input aria-label={sessionWorkspaceCopy.runtimeDrawer.favoritesOnly} type="checkbox" checked={runtimeFavoriteOnly} onChange={(event) => setRuntimeFavoriteOnly(event.currentTarget.checked)} />
+                                <span>{sessionWorkspaceCopy.runtimeDrawer.favoritesOnly}</span>
+                              </span>
+                              <span className="runtime-session-filter-toggle-row">
+                                <input aria-label={sessionWorkspaceCopy.runtimeDrawer.showArchived} type="checkbox" checked={runtimeShowArchived} onChange={(event) => setRuntimeShowArchived(event.currentTarget.checked)} />
+                                <span>{sessionWorkspaceCopy.runtimeDrawer.showArchived}</span>
+                              </span>
+                              <button type="button" onClick={refreshRuntimeSessions} disabled={!props.onLoadRuntimeSessions || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
+                                {sessionWorkspaceCopy.runtimeDrawer.applyFilters}
+                              </button>
+                            </div>
+                            {runtimeSessions.length === 0 ? (
+                              <span className="runtime-session-empty-row">{sessionWorkspaceCopy.runtimeDrawer.emptyRuntimeSessions}</span>
+                            ) : (
+                              runtimeSessions.slice(0, 5).map((session) => (
+                                <div className="runtime-session-row" key={session.id}>
+                                  <span className="runtime-row-copy">
+                                    <strong>{[session.command, ...session.args].join(' ')}</strong>
+                                    <span>
+                                      {formatRuntimeSessionStatus(session.status, sessionWorkspaceCopy.runtimeDrawer)} · {session.cwd}
+                                    </span>
+                                    <small>{session.summary ?? sessionWorkspaceCopy.runtimeDrawer.sessionSummaryFallback}</small>
+                                  </span>
+                                  <div className="runtime-session-action-rail" aria-label={sessionWorkspaceCopy.runtimeDrawer.runtimeSessionActionsAria}>
+                                    {/* 会话行先暴露高频主操作，低频整理/导出/删除收进第二行动作，避免继续复用任务按钮堆。 */}
+                                    <span className="runtime-session-primary-command-rail">
+                                      <button type="button" onClick={() => generateRuntimeSessionSummary(session.id)}>
+                                        {sessionWorkspaceCopy.runtimeDrawer.generateSummary}
+                                      </button>
+                                      <button type="button" onClick={() => createTaskFromRuntimeSession(session)}>
+                                        {sessionWorkspaceCopy.runtimeDrawer.createTaskFromSession}
+                                      </button>
+                                    </span>
+                                    <span className="runtime-session-secondary-command-rail">
+                                      <button type="button" onClick={() => setRuntimeSessionFavorite(session)}>
+                                        {session.favorite ? sessionWorkspaceCopy.runtimeDrawer.unfavoriteSession : sessionWorkspaceCopy.runtimeDrawer.favoriteSession}
+                                      </button>
+                                      {session.archived ? (
+                                        <button type="button" onClick={() => restoreRuntimeSession(session.id)}>
+                                          {sessionWorkspaceCopy.runtimeDrawer.restoreSession}
+                                        </button>
+                                      ) : (
+                                        <button type="button" onClick={() => archiveRuntimeSession(session.id)}>
+                                          {sessionWorkspaceCopy.runtimeDrawer.archiveSession}
+                                        </button>
+                                      )}
+                                      <button type="button" onClick={() => exportRuntimeLogs(session.id)}>
+                                        {sessionWorkspaceCopy.runtimeDrawer.exportCurrentLog}
+                                      </button>
+                                      <button type="button" className="runtime-session-danger-action" onClick={() => deleteRuntimeSession(session.id)}>
+                                        {sessionWorkspaceCopy.runtimeDrawer.deleteSession}
+                                      </button>
+                                    </span>
+                                  </div>
+                                  {session.status === 'running' ? (
+                                    <section className="runtime-session-live-controls" aria-label={sessionWorkspaceCopy.runtimeDrawer.runtimeInputAria}>
+                                      {/* 运行中输入拆成说明列和控件列，避免 label 包住按钮造成抽屉内部继续像临时表单。 */}
+                                      <section className="runtime-session-compose-row" aria-label={sessionWorkspaceCopy.runtimeDrawer.runtimeInputSendAria}>
+                                        <span className="runtime-session-compose-copy">
+                                          <strong>{sessionWorkspaceCopy.runtimeDrawer.runtimeInputTitle}</strong>
+                                          <small>{sessionWorkspaceCopy.runtimeDrawer.runtimeInputHelp}</small>
+                                        </span>
+                                        <span className="runtime-session-compose-field">
+                                          <input aria-label={sessionWorkspaceCopy.runtimeDrawer.runtimeInputAria} value={runtimeInput} onChange={(event) => setRuntimeInput(event.currentTarget.value)} />
+                                          <button type="button" onClick={() => sendRuntimeInput(session.id)} disabled={!runtimeInput.trim() || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
+                                            {sessionWorkspaceCopy.runtimeDrawer.sendRuntimeInput}
+                                          </button>
+                                        </span>
+                                      </section>
+                                      <span className="runtime-session-terminal-command-rail" aria-label={sessionWorkspaceCopy.runtimeDrawer.terminalControlsAria}>
+                                        <button type="button" onClick={() => interruptRuntimeSession(session.id)}>
+                                          {sessionWorkspaceCopy.runtimeDrawer.interrupt}
+                                        </button>
+                                        <button type="button" onClick={() => resizeRuntimeSession(session.id)}>
+                                          {sessionWorkspaceCopy.runtimeDrawer.resizeTerminal}
+                                        </button>
+                                        <button type="button" onClick={() => loadRuntimeTerminalSnapshot(session.id)}>
+                                          {sessionWorkspaceCopy.runtimeDrawer.loadTerminalSnapshot}
+                                        </button>
+                                        <button type="button" className="runtime-session-stop-action" onClick={() => stopRuntimeSession(session.id)}>
+                                          {sessionWorkspaceCopy.runtimeDrawer.stopSession}
+                                        </button>
+                                      </span>
+                                    </section>
+                                  ) : null}
+                                  {session.status === 'orphan_detected' ? (
+                                    <section className="runtime-session-orphan-controls" aria-label={sessionWorkspaceCopy.runtimeDrawer.orphanControlsAria}>
+                                      {/* 孤儿会话只保留风险说明和终止入口，避免伪装成可继续输入的运行中表单。 */}
+                                      <span className="runtime-session-orphan-copy">
+                                        <strong>{sessionWorkspaceCopy.runtimeDrawer.orphanTitle(session.pid ?? sessionWorkspaceCopy.runtimeDrawer.unknownPid)}</strong>
+                                        <small>{sessionWorkspaceCopy.runtimeDrawer.orphanHelp}</small>
+                                      </span>
+                                      <span className="runtime-session-orphan-command-rail">
+                                        <button type="button" className="runtime-session-orphan-stop-action" onClick={() => stopRuntimeSession(session.id)}>
+                                          {sessionWorkspaceCopy.runtimeDrawer.orphanStop}
+                                        </button>
+                                      </span>
+                                    </section>
+                                  ) : null}
+                                </div>
+                              ))
+                            )}
+                          </section>
+                          {runtimeLogs.length > 0 ? (
+                            <section className="runtime-log-workbench" aria-label={sessionWorkspaceCopy.runtimeDrawer.logsAria}>
+                              <div className="runtime-log-toolbar">
+                                <span className="runtime-log-title">
+                                  <strong>{sessionWorkspaceCopy.runtimeDrawer.logsTitle}</strong>
+                                  <small>{sessionWorkspaceCopy.runtimeDrawer.logsHelp}</small>
+                                </span>
+                                <span className="runtime-log-command-rail" aria-label={sessionWorkspaceCopy.runtimeDrawer.logActionsAria}>
+                                  {/* Runtime 日志抽屉只保留一条工具栏：搜索、复制、折叠和导出聚合到同一组，避免表单和按钮继续散落。 */}
+                                  <button type="button" onClick={copyRuntimeLogs}>
+                                    {sessionWorkspaceCopy.runtimeDrawer.copyLogs}
+                                  </button>
+                                  <button type="button" onClick={() => setRuntimeLogsCollapsed((current) => !current)}>
+                                    {runtimeLogsCollapsed ? sessionWorkspaceCopy.runtimeDrawer.expandLogs : sessionWorkspaceCopy.runtimeDrawer.collapseLogs}
+                                  </button>
+                                  <span className="sr-only">{sessionWorkspaceCopy.runtimeDrawer.expandLogs}</span>
+                                  <button type="button" onClick={() => exportRuntimeLogs(runtimeLogs[0]?.sessionId ?? '')}>
+                                    {sessionWorkspaceCopy.runtimeDrawer.exportCurrentLog}
+                                  </button>
+                                </span>
+                              </div>
+                              <section className="runtime-log-search-control-row" aria-label={sessionWorkspaceCopy.runtimeDrawer.logSearchAria}>
+                                <span className="runtime-log-search-copy">
+                                  <strong>{sessionWorkspaceCopy.runtimeDrawer.logSearchTitle}</strong>
+                                  <small>{sessionWorkspaceCopy.runtimeDrawer.logSearchHelp}</small>
+                                </span>
+                                <span className="runtime-log-search-field">
+                                  <input type="search" aria-label={sessionWorkspaceCopy.runtimeDrawer.logSearchTitle} value={runtimeLogSearchQuery} onChange={(event) => setRuntimeLogSearchQuery(event.currentTarget.value)} />
+                                </span>
+                              </section>
+                              <div className="runtime-log-state-row">
+                                <small>{sessionWorkspaceCopy.runtimeDrawer.logExportState(runtimeLogExportStatusCopy, runtimeLogCopyStatusCopy)}</small>
+                                <span className="log-legend">{sessionWorkspaceCopy.runtimeDrawer.logLegend}</span>
+                              </div>
+                              <div className="runtime-log-stream" aria-label={sessionWorkspaceCopy.runtimeDrawer.rawOutputAria}>
+                                <RuntimeXtermPane logs={runtimeLogs} enabled={runtimeStatus?.terminal?.provider === 'node-pty' && runtimeStatus.terminal.pty.available === true} ariaLabel={sessionWorkspaceCopy.runtimeDrawer.terminalAria} />
+                                {!runtimeLogsCollapsed ? <code className="runtime-log-line output">{projectedRuntimeLogOutput}</code> : <span>{sessionWorkspaceCopy.runtimeDrawer.collapsedLogs}</span>}
+                              </div>
+                            </section>
+                          ) : null}
+                        </section>
+                      ) : null}
+
+                      {conversationDrawer === 'changes' ? (
+                        <section className="product-drawer-pane conversation-drawer-sheet conversation-drawer-sheet-changes conversation-change-workbench" aria-label={secondaryDrawerCopy.changesLabel}>
+                          <div className="drawer-header-row">
+                            <strong>{gitDiffCopy.title}</strong>
+                            <button type="button" onClick={loadGitDiff} disabled={!props.onLoadGitDiff || loadingDiffBusy} {...controlBusyProps(loadingDiffBusy)}>
+                              {loadingDiffBusy ? secondaryDrawerCopy.loadingDiff : secondaryDrawerCopy.loadDiff}
+                            </button>
+                          </div>
+                          {changedFiles.length === 0 ? (
+                            <section className="conversation-change-empty-row" aria-label={secondaryDrawerCopy.noLoadedChangesAria}>
+                              <span className="conversation-change-file-copy">
+                                <strong>{secondaryDrawerCopy.noLoadedChangesTitle}</strong>
+                                <small>{secondaryDrawerCopy.noLoadedChangesHelp}</small>
+                              </span>
+                            </section>
+                          ) : (
+                            <div className="conversation-change-file-list" aria-label={secondaryDrawerCopy.changedFilesAria}>
+                              {changedFiles.slice(0, 12).map((file) => (
+                                <article className="conversation-change-file-row" key={file}>
+                                  <span className="conversation-change-file-copy">
+                                    <strong>{file}</strong>
+                                    <small>{secondaryDrawerCopy.realGitDiffFile}</small>
+                                  </span>
+                                  <span className="conversation-change-file-meta">{secondaryDrawerCopy.loaded}</span>
+                                </article>
+                              ))}
+                            </div>
+                          )}
+                        </section>
+                      ) : null}
+
+                      {conversationDrawer === 'templates' ? (
+                        <section className="product-drawer-pane conversation-drawer-sheet conversation-drawer-sheet-templates task-template-workbench" aria-label={secondaryDrawerCopy.templatesLabel}>
+                          {/* 任务模板抽屉只负责选择真实模板并创建任务，模板说明和套用动作必须在同一行内可扫描。 */}
+                          <div className="drawer-header-row">
+                            <strong>{secondaryDrawerCopy.templatesLabel}</strong>
+                            <button type="button" onClick={loadTaskTemplates} disabled={!props.onLoadTaskTemplates || loadingTemplatesBusy} {...controlBusyProps(loadingTemplatesBusy)}>
+                              {actionState === 'loading-templates' ? secondaryDrawerCopy.loadingTemplates : secondaryDrawerCopy.loadTemplates}
+                            </button>
+                          </div>
+                          <section className="task-template-list" aria-label={secondaryDrawerCopy.templateListAria}>
+                            {taskTemplates.length === 0 ? (
+                              <div className="task-template-empty-row" aria-label={secondaryDrawerCopy.emptyTemplatesAria}>
+                                <span className="task-template-copy">
+                                  <strong>{secondaryDrawerCopy.emptyTemplatesTitle}</strong>
+                                  <span>{secondaryDrawerCopy.emptyTemplatesHelp}</span>
+                                </span>
+                                <span className="task-template-command-rail">
+                                  <button type="button" onClick={loadTaskTemplates} disabled={!props.onLoadTaskTemplates || loadingTemplatesBusy} {...controlBusyProps(loadingTemplatesBusy)}>
+                                    {actionState === 'loading-templates' ? secondaryDrawerCopy.loadingTemplates : secondaryDrawerCopy.loadTemplates}
+                                  </button>
+                                </span>
+                              </div>
+                            ) : (
+                              taskTemplates.map((template) => (
+                                <div className="task-template-row" key={template.id}>
+                                  <span className="task-template-copy">
+                                    <strong>{template.name}</strong>
+                                    <span>{template.description || (template.builtIn ? secondaryDrawerCopy.builtInTaskTemplate : secondaryDrawerCopy.projectTaskTemplate)}</span>
+                                    <small>{template.builtIn ? secondaryDrawerCopy.builtInTemplate : secondaryDrawerCopy.projectTemplate}</small>
+                                  </span>
+                                  <span className="task-template-command-rail">
+                                    <button type="button" onClick={() => createTaskFromTemplate(template.id)}>
+                                      {secondaryDrawerCopy.applyTemplate}
+                                    </button>
+                                  </span>
+                                </div>
+                              ))
+                            )}
+                          </section>
+                        </section>
+                      ) : null}
+                    </WorkspaceDrawer>
+                  ) : null}
+                </MotionPresence>
+              </section>
+            </section>
+          ) : null}
+
+          <MotionPresence>
+            {sessionDrawerTarget ? (
+              <WorkspaceDrawer
+                presentation="floating"
+                backdrop="dimmed"
+                size="wide"
+                label={appShellSettings.appLanguage === 'zh-CN' ? '当前会话' : 'Current conversation'}
+                backdropLabel={taskWorkspaceCopy.taskConversationDrawerBackdrop}
+                closeLabel={taskWorkspaceCopy.taskConversationDrawerClose}
+                headerAction={
+                  <Button
+                    variant="secondary"
+                    size="compact"
+                    disabled={!sessionDrawerReady}
+                    onClick={() => {
+                      if (sessionDrawerReady && selectedNativeConversation) void openNativeConversationPage(selectedNativeConversation);
+                    }}
+                  >
+                    {appShellSettings.appLanguage === 'zh-CN' ? '进入会话页' : 'Open conversation page'}
+                  </Button>
+                }
+                className={`task-conversation-drawer session-codex-parity-v1 theme-${appShellSettings.appearance}`}
+                portalStyle={workspaceDrawerPortalStyle}
+                onClose={() => setSessionDrawerTarget(undefined)}
+              >
+                {sessionDrawerReady ? (
+                  renderNativeConversationWorkspace((taskId) => {
+                    setSessionDrawerTarget(undefined);
+                    void openTaskDetailPane(taskId);
+                  })
+                ) : sessionDrawerTarget.status === 'empty' ? (
+                  <section className="task-conversation-drawer-loading" role="status">
+                    <p>{appShellSettings.appLanguage === 'zh-CN' ? '此任务尚未创建会话。' : 'This task has no conversation yet.'}</p>
+                  </section>
+                ) : sessionDrawerTarget.status === 'error' ? (
+                  <section className="task-conversation-drawer-loading task-conversation-drawer-error" role="status">
+                    <p>{taskWorkspaceCopy.taskConversationDrawerUnavailable}</p>
+                    {sessionDrawerTarget.taskId ? (
+                      <Button variant="secondary" size="compact" onClick={() => void openTaskConversationDrawer(sessionDrawerTarget.taskId!, sessionDrawerTarget.conversationId)}>
+                        {taskWorkspaceCopy.taskConversationDrawerRetry}
+                      </Button>
+                    ) : null}
+                  </section>
+                ) : (
+                  <section className="task-conversation-drawer-loading" role="status" aria-live="polite">
+                    {taskWorkspaceCopy.taskConversationDrawerLoading}
+                  </section>
+                )}
+              </WorkspaceDrawer>
+            ) : null}
+          </MotionPresence>
+
+          <MotionPresence>
+            {Boolean(taskGitReviewState) && (snapshot.tasks.find((task) => task.id === taskGitReviewState?.taskId) ?? null) ? (
+              <TaskGitReviewModal
+                open={Boolean(taskGitReviewState)}
+                language={appShellSettings.appLanguage}
+                task={snapshot.tasks.find((task) => task.id === taskGitReviewState?.taskId) ?? null}
+                projectName={snapshot.projects.find((project) => project.id === snapshot.tasks.find((task) => task.id === taskGitReviewState?.taskId)?.projectId)?.name}
+                client={props.nativeConversationClient ?? null}
+                mode={taskGitReviewState?.mode ?? 'commit'}
+                preferredWorkspaceId={taskGitReviewState?.workspaceId}
+                onClose={closeTaskGitReview}
+              />
+            ) : null}
+          </MotionPresence>
+
+          {activeNavTarget === 'settings' ? (
+            <section className="workspace-view workspace-view-settings settings-reference-shell" aria-label={settingsWorkspaceCopy.viewAria}>
+              <aside className="settings-sidebar-shell" aria-label={settingsWorkspaceCopy.categoryListAria}>
+                <button type="button" className="settings-return-button" onClick={() => handleMainNavigate('projects')}>
+                  <span aria-hidden="true">←</span>
+                  <span>{settingsWorkspaceCopy.returnToApp}</span>
+                </button>
+                <span className="settings-query-field">
+                  <MagnifyingGlass aria-hidden="true" weight="regular" />
+                  <input
+                    className="settings-query-control"
+                    aria-label={settingsWorkspaceCopy.searchAria}
+                    placeholder={settingsWorkspaceCopy.searchPlaceholder}
+                    value={settingsSearchQuery}
+                    onChange={(event) => setSettingsSearchQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape') {
+                        event.preventDefault();
+                        setSettingsSearchQuery('');
+                      }
+                    }}
+                  />
+                </span>
+                <nav
+                  className="settings-section-nav settings-sidebar-nav"
+                  aria-label={settingsWorkspaceCopy.categoryListAria}
+                  role="tablist"
+                  aria-orientation="vertical"
+                  data-inline-rail-keyboard="vertical"
+                  onKeyDown={handleInlineRailKeyboardNavigation}
+                >
+                  {visibleSettingsGroups.map((group) => (
+                    <div className="settings-sidebar-group" role="presentation" key={group.group}>
+                      <span className="settings-sidebar-group-title" role="presentation">
+                        {group.group}
+                      </span>
+                      {group.items.map(([id, label, SectionIcon]) => (
+                        <button
+                          key={id}
+                          id={`${settingsPanelId}-${id}`}
+                          type="button"
+                          className={`settings-section-button ${settingsCategory === id ? 'selected' : ''}`}
+                          role="tab"
+                          aria-controls={settingsPanelId}
+                          aria-selected={settingsCategory === id}
+                          tabIndex={settingsNavigationTabStop === id ? 0 : -1}
+                          data-inline-rail-item="true"
+                          onClick={() => setSettingsCategory(id)}
+                        >
+                          <SectionIcon className="settings-section-icon" weight="regular" aria-hidden="true" />
+                          <span className="settings-section-label">{label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ))}
+                </nav>
+                {visibleSettingsItems.length === 0 ? <p role="status">{appShellSettings.appLanguage === 'zh-CN' ? '没有匹配的设置分段' : 'No matching settings sections'}</p> : null}
+              </aside>
+              <section key={settingsCategory} id={settingsPanelId} role="tabpanel" tabIndex={0} className="settings-detail-pane" aria-labelledby={`${settingsPanelId}-${settingsCategory}`}>
+                <div className="settings-content-column">
+                  {settingsCategory === 'general' ? <GeneralSettingsPane value={appShellSettings} client={props.nativeConversationClient?.settings ?? null} onChange={setAppShellSettings} /> : null}
+                  {settingsCategory === 'agents' ? (
+                    <GlobalAgentSettingsPane
+                      ref={globalAgentSettingsRef}
+                      language={appShellSettings.appLanguage}
+                      client={props.nativeConversationClient?.settings ?? null}
+                      onDirtyChange={setGlobalAgentSettingsDirty}
+                      onRequestLeave={(leave) => requestWorkspaceLeaveRef.current(leave)}
+                    />
+                  ) : null}
+                  {settingsCategory === 'usage' ? <CodexUsageSettingsPane client={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} refreshRevision={codexUsageRevision} /> : null}
+                  {settingsCategory === 'memory' && props.nativeConversationClient ? (
+                    <MemorySettingsPane
+                      client={props.nativeConversationClient.memory}
+                      language={appShellSettings.appLanguage}
+                      projects={snapshot.projects.map((project) => ({ id: project.id, name: project.name }))}
+                      initialProjectId={projectDetail?.id}
+                    />
+                  ) : null}
+                  {settingsCategory === 'tasks' ? (
+                    <section className="settings-product-pane task-list-settings-pane" aria-label={settingsWorkspaceCopy.categories.tasks}>
+                      <header className="settings-page-heading">
+                        <span>
+                          <h2 className="settings-page-title">{settingsWorkspaceCopy.categories.tasks}</h2>
+                          <p>{appShellSettings.appLanguage === 'zh-CN' ? '选择字段，调整选项与排序。修改后自动保存。' : 'Choose a field to edit options and order. Changes save automatically.'}</p>
+                        </span>
+                        <SettingsSaveStatus status={taskAutosave.status} language={appShellSettings.appLanguage} />
+                      </header>
+                      <div className="task-fields-workspace">
+                        <nav className="task-field-nav" aria-label={appShellSettings.appLanguage === 'zh-CN' ? '任务字段' : 'Task fields'}>
+                          {(['status', 'priority', 'runStatus'] as const).map((field) => (
+                            <button className="task-field-tab" key={field} type="button" aria-current={taskField === field ? 'page' : undefined} onClick={() => setTaskField(field)}>
+                              {
+                                {
+                                  status: appShellSettings.appLanguage === 'zh-CN' ? '任务状态' : 'Task status',
+                                  priority: appShellSettings.appLanguage === 'zh-CN' ? '优先级' : 'Priority',
+                                  runStatus: appShellSettings.appLanguage === 'zh-CN' ? '运行状态' : 'Run status',
+                                }[field]
+                              }
+                            </button>
+                          ))}
+                        </nav>
+                        <fieldset className="task-field-detail" onInput={() => taskAutosave.reset()} disabled={taskAutosave.status === 'saving'}>
+                          {taskField === 'status' ? (
+                            <>
+                              <section className="settings-product-section" aria-labelledby="task-status-config-title">
+                                <header className="settings-section-heading">
+                                  <strong id="task-status-config-title">{appShellSettings.appLanguage === 'zh-CN' ? '任务状态' : 'Task statuses'}</strong>
+                                  <span>{appShellSettings.appLanguage === 'zh-CN' ? '所有项目统一使用这些状态。删除使用中的状态时，先迁移任务再删除。' : 'All projects use these statuses. In-use statuses migrate before deletion.'}</span>
+                                </header>
+                                <TaskManagementStatusEditor
+                                  language={appShellSettings.appLanguage}
+                                  config={taskStatusSettingsConfig}
+                                  usageCounts={taskStatusSettingsUsageCounts}
+                                  labelForStatus={(status) => formatConfiguredTaskManagementStatus(status, taskStatusSettingsConfig, appShellSettings.appLanguage)}
+                                  onChange={(config, deletion) => {
+                                    /** 迁移关系与状态配置在同一笔本地事务提交。 */
+                                    const replacements = deletion?.replacementStatusId
+                                      ? { ...state.taskManagementStatusReplacements, __global__: { ...state.taskManagementStatusReplacements.__global__, [deletion.removedStatusId]: deletion.replacementStatusId } }
+                                      : state.taskManagementStatusReplacements;
+                                    state.setTaskManagementStatusReplacements(replacements);
+                                    saveTaskFields({
+                                      taskManagementStatusTemplate: config,
+                                      taskManagementStatusReplacements: replacements,
+                                    });
+                                  }}
+                                />
+                              </section>
+                            </>
+                          ) : (
+                            <section className="settings-product-section" aria-labelledby="task-list-sort-settings-title">
+                              <header className="settings-section-heading">
+                                <strong id="task-list-sort-settings-title">{appShellSettings.appLanguage === 'zh-CN' ? '其他字段的排序规则' : 'Sort order for other fields'}</strong>
+                                <span>
+                                  {appShellSettings.appLanguage === 'zh-CN'
+                                    ? '优先级和运行状态仍为系统固定值；拖动定义升序，降序会反转该顺序。此设置对所有项目生效。'
+                                    : 'Priority and run status remain fixed system values. Drag to define ascending order; descending reverses it. This applies to every project.'}
+                                </span>
+                              </header>
+                              <div className="task-enum-order-grid task-enum-order-grid-secondary">
+                                {taskField === 'priority' ? (
+                                  <TaskEnumOrderEditor
+                                    language={appShellSettings.appLanguage}
+                                    title={appShellSettings.appLanguage === 'zh-CN' ? '优先级' : 'Priority'}
+                                    description={appShellSettings.appLanguage === 'zh-CN' ? 'P0 至 P4 的业务顺序' : 'Business order for P0 through P4'}
+                                    items={taskTableEnumSortOrders.priority.map((value) => ({ value, label: taskPriorityLabels[value] }))}
+                                    onChange={(priority) => saveTaskFields({ taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders({ ...appShellSettings.taskTableEnumSortOrders, priority }) })}
+                                  />
+                                ) : (
+                                  <TaskEnumOrderEditor
+                                    language={appShellSettings.appLanguage}
+                                    title={appShellSettings.appLanguage === 'zh-CN' ? '运行状态' : 'Run status'}
+                                    description={appShellSettings.appLanguage === 'zh-CN' ? 'AI 工作状态的排序' : 'AI work status order'}
+                                    items={taskTableEnumSortOrders.runStatus.map((value) => ({ value, label: taskAgentRunStatusLabels[appShellSettings.appLanguage][value] }))}
+                                    onChange={(runStatus) => saveTaskFields({ taskTableEnumSortOrders: normalizeTaskTableEnumSortOrders({ ...appShellSettings.taskTableEnumSortOrders, runStatus }) })}
+                                  />
+                                )}
+                              </div>
+                              <div className="task-list-settings-actions">
+                                <Button
+                                  variant="secondary"
+                                  size="compact"
+                                  onClick={() => saveTaskFields({ taskTableEnumSortOrders: { ...taskTableEnumSortOrders, [taskField]: defaultTaskTableEnumSortOrders[taskField as 'priority' | 'runStatus'] } })}
+                                >
+                                  {appShellSettings.appLanguage === 'zh-CN' ? '恢复默认顺序' : 'Restore default order'}
+                                </Button>
+                              </div>
+                            </section>
+                          )}
+                        </fieldset>
+                      </div>
+                    </section>
+                  ) : null}
+                  {settingsCategory === 'runtime' ? (
+                    <section className="settings-product-pane" aria-label={settingsWorkspaceCopy.categories.runtime}>
+                      <header className="settings-page-heading">
+                        <span>
+                          <h2 className="settings-page-title">{settingsWorkspaceCopy.categories.runtime}</h2>
+                          <p>{appShellSettings.appLanguage === 'zh-CN' ? '管理远程接管与 Codex 配置导入。' : 'Manage remote control and Codex configuration import.'}</p>
+                        </span>
+                      </header>
+                      <CodexRemoteControlSettings language={appShellSettings.appLanguage} client={props.nativeConversationClient?.remoteControl ?? null} />
+                      <CodexConfigImportSettings
+                        language={appShellSettings.appLanguage}
+                        preview={codexConfigImportPreview}
+                        result={codexConfigImportResult}
+                        loading={codexConfigImportLoading}
+                        error={codexConfigImportError}
+                        onRefresh={refreshCodexConfigImport}
+                        onImport={importCodexConfig}
+                        onActivate={activateCodexConfig}
+                      />
+                    </section>
+                  ) : null}
+                  {settingsCategory === 'terminal' ? <TerminalSettingsPane client={props.commandClient ?? null} language={appShellSettings.appLanguage} /> : null}
+                  {settingsCategory === 'browser' ? <BrowserSettingsPane language={appShellSettings.appLanguage} /> : null}
+                  {settingsCategory === 'network' ? <NetworkSettingsPane value={appShellSettings} client={props.nativeConversationClient ?? null} onChange={setAppShellSettings} /> : null}
+                  {settingsCategory === 'models' ? (
+                    <>
+                      <header className="settings-page-heading">
+                        <span>
+                          <h2 className="settings-page-title">{settingsWorkspaceCopy.categories.models}</h2>
+                          <p>{appShellSettings.appLanguage === 'zh-CN' ? '管理模型服务与可用模型。' : 'Manage model providers and available models.'}</p>
+                        </span>
+                        <SettingsSaveStatus status={modelSaveState} language={appShellSettings.appLanguage} />
+                      </header>
+                      <CodexAccountSettings controller={modelSetup} />
+                      <ModelConnectionsSettingsPane language={appShellSettings.appLanguage} client={props.nativeConversationClient ?? null} onSaveStateChange={setModelSaveState} />
+                    </>
+                  ) : null}
+                  {settingsCategory === 'zentao' ? <ZentaoSettingsPane language={appShellSettings.appLanguage} client={props.nativeConversationClient ?? null} /> : null}
+                  {settingsCategory === 'im' ? <ImRobotSettingsPane client={props.commandClient ?? null} language={appShellSettings.appLanguage} /> : null}
+                  {settingsCategory === 'commands' && props.commandClient ? <CommandCenterPanel mode="global" client={props.commandClient} language={appShellSettings.appLanguage} /> : null}
+                  {settingsCategory === 'release' ? (
+                    <section className="settings-product-pane" aria-label={settingsWorkspaceCopy.categories.release}>
+                      <h2 className="settings-page-title">{settingsWorkspaceCopy.categories.release}</h2>
+                      {releaseLoadState !== 'ready' ? (
+                        <section className="settings-product-section" aria-busy={releaseLoadState === 'loading'}>
+                          <p role="status">
+                            {appShellSettings.appLanguage === 'zh-CN'
+                              ? releaseLoadState === 'loading'
+                                ? '正在读取发布与更新状态…'
+                                : '无法读取发布与更新状态，请重试。'
+                              : releaseLoadState === 'loading'
+                                ? 'Loading release and update status…'
+                                : 'Unable to load release and update status. Please retry.'}
+                          </p>
+                          {releaseLoadState === 'failed' ? (
+                            <button type="button" onClick={() => setReleaseLoadRevision((value) => value + 1)}>
+                              {appShellSettings.appLanguage === 'zh-CN' ? '重试' : 'Retry'}
+                            </button>
+                          ) : null}
+                        </section>
+                      ) : (
+                        <NativeSettingsPane label={settingsWorkspaceCopy.release.paneTitle} className="deep-settings-pane release-settings-pane">
+                          <section className="release-update-workbench" aria-label={settingsWorkspaceCopy.release.updateAria}>
+                            <section className="release-update-command-row" aria-label={settingsWorkspaceCopy.release.updateActionAria}>
+                              <span className="release-update-copy">
+                                <strong>{settingsWorkspaceCopy.release.updateTitle}</strong>
+                                <small>{formatReleaseUpdateReason(releaseUpdateStatus, settingsWorkspaceCopy.release)}</small>
+                              </span>
+                              <span className="release-update-field">
+                                {/* 设置页保留发布清单证据；用户升级操作统一由 macOS 原生 Homebrew 窗口承载。 */}
+                                <span>{formatReleaseUpdateLabel(releaseUpdateStatus, settingsWorkspaceCopy.release)}</span>
+                                <small>{settingsWorkspaceCopy.release.installHelp()}</small>
+                              </span>
+                              <span className="release-update-command-rail">
+                                <button type="button" onClick={() => void checkReleaseUpdate()} disabled={!props.onCheckReleaseUpdate || releaseUpdateBusy} {...controlBusyProps(releaseUpdateBusy)}>
+                                  {releaseUpdateCheckState === 'loading' ? settingsWorkspaceCopy.release.checking : settingsWorkspaceCopy.release.checkUpdates}
+                                </button>
+                              </span>
+                            </section>
+                            <section className="release-update-version-row" aria-label={settingsWorkspaceCopy.release.versionAria}>
+                              <span className="release-update-copy">
+                                <strong>{settingsWorkspaceCopy.release.versionTitle}</strong>
+                                <small>
+                                  {releaseUpdateStatus.checkedAt
+                                    ? settingsWorkspaceCopy.release.checkedAt(formatArchivedConversationDate(releaseUpdateStatus.checkedAt, appShellSettings.appLanguage))
+                                    : settingsWorkspaceCopy.release.notChecked}
+                                </small>
+                              </span>
+                              <span className="release-update-field">
+                                <span>{settingsWorkspaceCopy.release.currentVersion(releaseUpdateStatus.currentVersion)}</span>
+                                <span>{settingsWorkspaceCopy.release.latestVersion(releaseUpdateStatus.latestVersion)}</span>
+                                <small>{formatReleaseUpdateChannel(releaseUpdateStatus.channel, settingsWorkspaceCopy.release)}</small>
+                              </span>
+                              <span className="release-update-command-rail">
+                                <a href={releaseUpdateStatus.releasePageUrl}>GitHub Release</a>
+                              </span>
+                            </section>
+                          </section>
+                          <section className="release-technical-details">
+                            <h3>{appShellSettings.appLanguage === 'zh-CN' ? '安装包与发布详情' : 'Package and release details'}</h3>
+                            <section className="release-update-artifact-row" aria-label={settingsWorkspaceCopy.release.artifactAria}>
+                              <span className="release-update-copy">
+                                <strong>{settingsWorkspaceCopy.release.artifactTitle}</strong>
+                                <small>
+                                  {releaseUpdateStatus.artifact
+                                    ? `${releaseUpdateStatus.artifact.arch} · ${formatReleaseArtifactKind(releaseUpdateStatus.artifact.kind, settingsWorkspaceCopy.release)}`
+                                    : settingsWorkspaceCopy.release.waitingArtifact}
+                                </small>
+                              </span>
+                              <span className="release-update-field">
+                                {releaseUpdateStatus.artifact ? (
+                                  <>
+                                    <span>{releaseUpdateStatus.artifact.fileName}</span>
+                                    <small>{releaseUpdateStatus.artifact.sha256}</small>
+                                  </>
+                                ) : (
+                                  <span>{settingsWorkspaceCopy.release.noArtifact}</span>
+                                )}
+                              </span>
+                              <span className="release-update-command-rail">
+                                {releaseUpdateCheckState === 'failed' ? (
+                                  <span role="status">{settingsWorkspaceCopy.release.updateFailed}</span>
+                                ) : (
+                                  <span className="settings-action-meta">{settingsWorkspaceCopy.release.recommendedActions[releaseUpdateStatus.recommendedAction]}</span>
+                                )}
+                              </span>
+                            </section>
+                            <section className="settings-state-row settings-release-signing-state-row" aria-label={settingsWorkspaceCopy.release.signingAria}>
+                              <span className="settings-row-copy">
+                                <strong>{settingsWorkspaceCopy.release.signingTitle}</strong>
+                              </span>
+                              <span className="settings-row-field">
+                                <span>{formatReleasePresenceStatus('signing', releaseStatus.signing, settingsWorkspaceCopy.release)}</span>
+                                <small>{settingsWorkspaceCopy.release.signingEnvironmentOnly}</small>
+                              </span>
+                            </section>
+                            <section className="settings-state-row settings-release-notarization-state-row" aria-label={settingsWorkspaceCopy.release.notarizationAria}>
+                              <span className="settings-row-copy">
+                                <strong>{settingsWorkspaceCopy.release.notarizationTitle}</strong>
+                              </span>
+                              <span className="settings-row-field">
+                                <span>{formatReleasePresenceStatus('notarization', releaseStatus.notarization, settingsWorkspaceCopy.release)}</span>
+                                <small>{settingsWorkspaceCopy.release.notarizationDescription}</small>
+                              </span>
+                            </section>
+                            <section className="settings-state-row settings-release-cask-state-row" aria-label={settingsWorkspaceCopy.release.caskAria}>
+                              <span className="settings-row-copy">
+                                <strong>{settingsWorkspaceCopy.release.caskTitle}</strong>
+                              </span>
+                              <span className="settings-row-field">
+                                <span>{formatReleasePresenceStatus('homebrewCask', releaseStatus.homebrewCask, settingsWorkspaceCopy.release)}</span>
+                                <small>{releaseStatus.readiness.canBuildUnsignedArtifacts ? settingsWorkspaceCopy.release.unsignedBuildAvailable : settingsWorkspaceCopy.release.unsignedBuildUnavailable}</small>
+                              </span>
+                            </section>
+                            <section className="settings-log-row release-detail-row" aria-label={settingsWorkspaceCopy.release.detailAria}>
+                              <span className="settings-row-copy">
+                                <strong>{settingsWorkspaceCopy.release.detailTitle}</strong>
+                                <small>{settingsWorkspaceCopy.release.detailDescription}</small>
+                              </span>
+                              <span className="settings-row-field settings-evidence-list">
+                                <span>
+                                  {settingsWorkspaceCopy.release.autoUpdateReserved} · {formatReleaseAutoUpdateLabel(releaseStatus.autoUpdate, settingsWorkspaceCopy.release)}
+                                </span>
+                                {releaseStatus.autoUpdate.changelogPath ? <small>{releaseStatus.autoUpdate.changelogPath}</small> : null}
+                                <small>{formatReleaseWaitingForItems(releaseStatus.readiness.waitingFor, settingsWorkspaceCopy.release)}</small>
+                                <small>{formatReleaseWaitingForItems(releaseStatus.autoUpdate.waitingFor, settingsWorkspaceCopy.release)}</small>
+                              </span>
+                              <span className="settings-row-action-rail">
+                                <span className="settings-action-meta">{settingsWorkspaceCopy.release.realReleaseStatus}</span>
+                              </span>
+                            </section>
+                          </section>
+                        </NativeSettingsPane>
+                      )}
+                    </section>
+                  ) : null}
+                  {settingsCategory === 'data' ? (
+                    <section className="settings-product-pane" aria-label={settingsWorkspaceCopy.categories.data}>
+                      <h2 className="settings-page-title">{settingsWorkspaceCopy.categories.data}</h2>
+                      <NativeSettingsPane label={settingsWorkspaceCopy.data.paneTitle} className="deep-settings-pane data-settings-pane">
+                        <section className="settings-data-portability-row" aria-label={settingsWorkspaceCopy.data.portabilityAria}>
+                          <span className="settings-row-copy">
+                            <strong>{settingsWorkspaceCopy.data.localLogDirectoryTitle}</strong>
+                            <small>{settingsWorkspaceCopy.data.localLogDirectoryDescription}</small>
+                          </span>
+                          <span className="settings-row-field">
+                            <span>{appShellSettings.localLogDirectory}</span>
+                            <small>{dataPortabilityStatusCopy}</small>
+                          </span>
+                          <span className="settings-row-action-rail">
+                            <button type="button" onClick={exportLocalSettings} disabled={!props.onExportLocalSettings || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
+                              {settingsWorkspaceCopy.data.exportSettings}
+                            </button>
+                            <button type="button" onClick={importLocalSettings} disabled={!props.onImportLocalSettings || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
+                              {settingsWorkspaceCopy.data.importSettings}
+                            </button>
+                          </span>
+                        </section>
+                        <section className="settings-data-portability-row" aria-label={settingsWorkspaceCopy.data.cacheAria}>
+                          <span className="settings-row-copy">
+                            <strong>{settingsWorkspaceCopy.data.cacheTitle}</strong>
+                            <small>{settingsWorkspaceCopy.data.cacheDescription}</small>
+                          </span>
+                          <span className="settings-row-field" />
+                          <span className="settings-row-action-rail">
+                            <button type="button" onClick={clearNetworkCache} disabled={!window.zeus?.clearNetworkCache || loadingRuntimeBusy} {...controlBusyProps(loadingRuntimeBusy)}>
+                              {settingsWorkspaceCopy.data.clearNetworkCache}
+                            </button>
+                          </span>
+                        </section>
+                        <section className="settings-archived-conversations-row" aria-label={settingsWorkspaceCopy.data.archivedConversationsAria}>
+                          <span className="settings-row-copy">
+                            <strong>{settingsWorkspaceCopy.data.archivedConversationsTitle}</strong>
+                            <small>{settingsWorkspaceCopy.data.archivedConversationsDescription}</small>
+                          </span>
+                          <div className="settings-archive-filters">
+                            <ZeusSelect
+                              size="regular"
+                              ariaLabel={appShellSettings.appLanguage === 'zh-CN' ? '筛选归档项目' : 'Filter archived projects'}
+                              value={archiveProjectId}
+                              onChange={(id) => {
+                                setArchiveProjectId(id);
+                                setArchiveRequestedPage(1);
+                              }}
+                              options={[
+                                { value: '', label: appShellSettings.appLanguage === 'zh-CN' ? '全部项目' : 'All projects' },
+                                ...Array.from(new Map(archiveItems.map(({ conversation, project }) => [conversation.projectId, { value: conversation.projectId, label: project?.name ?? conversation.projectId }])).values()),
+                              ]}
+                            />
+                            <input
+                              type="search"
+                              className="settings-list-search"
+                              aria-label={appShellSettings.appLanguage === 'zh-CN' ? '搜索归档会话' : 'Search archived conversations'}
+                              placeholder={appShellSettings.appLanguage === 'zh-CN' ? '搜索标题、项目或任务编号' : 'Search title, project or task'}
+                              value={archiveQuery}
+                              onChange={(event) => {
+                                setArchiveQuery(event.currentTarget.value);
+                                setArchiveRequestedPage(1);
+                              }}
+                            />
+                          </div>
+                          <span className="settings-archived-conversation-list" aria-live="polite">
+                            {archivedConversationLoadState === 'loading' ? <small>{settingsWorkspaceCopy.data.loadingArchivedConversations}</small> : null}
+                            {archivedConversationLoadState === 'error' ? (
+                              <span className="settings-archived-conversation-state" role="alert">
+                                <VisibleApplicationError error={archivedConversationError ?? settingsWorkspaceCopy.data.archivedConversationsError} language={appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en'} />
+                                <button type="button" onClick={() => void refreshArchivedConversations()}>
+                                  {settingsWorkspaceCopy.data.retryArchivedConversations}
+                                </button>
+                              </span>
+                            ) : null}
+                            {archiveActionError ? (
+                              <small role="alert">
+                                <VisibleApplicationError error={archiveActionError} language={appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en'} />
+                              </small>
+                            ) : null}
+                            {archivedConversationLoadState === 'ready' && filteredArchives.length === 0 ? (
+                              <small>
+                                {normalizedArchiveQuery || archiveProjectId
+                                  ? appShellSettings.appLanguage === 'zh-CN'
+                                    ? '没有匹配的归档会话。'
+                                    : 'No matching archived conversations.'
+                                  : settingsWorkspaceCopy.data.emptyArchivedConversations}
+                              </small>
+                            ) : null}
+                            {filteredArchives.slice((archivePage - 1) * settingsPageSize, archivePage * settingsPageSize).map(({ conversation, task, project }) => {
+                              return (
+                                <span className="settings-archived-conversation-item" key={conversation.id}>
+                                  <span className="settings-archived-conversation-copy">
+                                    <strong>{conversationDisplayTitle(conversation.title, task?.title, appShellSettings.appLanguage)}</strong>
+                                    <small>
+                                      {task
+                                        ? settingsWorkspaceCopy.data.archivedConversationContext(project?.name ?? conversation.projectId, task.taskCode ?? task.id)
+                                        : settingsWorkspaceCopy.data.archivedProjectConversationContext(project?.name ?? conversation.projectId)}
+                                    </small>
+                                    <time className="settings-archive-date" dateTime={conversation.updatedAt}>
+                                      {formatArchivedConversationDate(conversation.updatedAt, appShellSettings.appLanguage)}
+                                    </time>
+                                  </span>
+                                  <button type="button" disabled={restoringArchivedConversationId !== null} onClick={() => void restoreArchivedConversation(conversation)}>
+                                    {restoringArchivedConversationId === conversation.id ? settingsWorkspaceCopy.data.restoringArchivedConversation : settingsWorkspaceCopy.data.restoreArchivedConversation}
+                                  </button>
+                                </span>
+                              );
+                            })}
+                          </span>
+                          <SettingsPagination
+                            label={settingsWorkspaceCopy.data.archivedConversationsTitle}
+                            language={appShellSettings.appLanguage}
+                            total={filteredArchives.length}
+                            page={archivePage}
+                            onChange={setArchiveRequestedPage}
+                            disabled={archivedConversationLoadState === 'loading'}
+                          />
+                        </section>
+                      </NativeSettingsPane>
+                    </section>
+                  ) : null}
+                </div>
+              </section>
+            </section>
+          ) : null}
+        </Suspense>
       </section>
     </main>
   );

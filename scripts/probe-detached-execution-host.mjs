@@ -124,41 +124,54 @@ try {
   await effectfulHost.close('continue_in_background');
   activeRuntime = null;
   const previousEffectfulHost = { ...expectedHost };
-  const blockedUpgrade = await startDesktopLocalServer(buildOptions('0.3.28'));
-  activeRuntime = blockedUpgrade;
-  const blockedTransition = await blockedUpgrade.refreshConfig();
-  await delay(2_500);
-  const stillEffectful = await blockedUpgrade.getStatus();
-  observed.effectfulUpgradeBlocked = {
-    transition: blockedTransition.executionHostTransition.state,
-    host: { ...blockedUpgrade.executionHost },
-    status: compactStatus(stillEffectful),
-    previousPidAlive: processExists(previousEffectfulHost.pid),
+  // 只在 Main 的控制传输边界注入停止失败，真实旧 Core、锁与持久工作保持原状。
+  const originalFetch = globalThis.fetch;
+  let failedStopCalls = 0;
+  globalThis.fetch = async (input, init) => {
+    if (String(input).endsWith('/work/stop')) {
+      failedStopCalls += 1;
+      throw new Error('探针注入：停止命令传输失败。');
+    }
+    return originalFetch(input, init);
   };
-  assertProbe(blockedTransition.executionHostTransition.state === 'draining_previous', '跨版本 Main 连接活动旧宿主时必须显示 draining_previous');
-  assertProbe(blockedUpgrade.executionHost.instanceId === previousEffectfulHost.instanceId && blockedUpgrade.executionHost.pid === previousEffectfulHost.pid, '真实执行未结束时不得交接到第二宿主');
-  assertProbe(processExists(previousEffectfulHost.pid), '真实执行未结束时旧宿主 PID 必须继续存活');
+  let stopFailureRejected = false;
+  try {
+    await startDesktopLocalServer(buildOptions('0.3.28'));
+  } catch (error) {
+    stopFailureRejected = String(error).includes('停止命令传输失败');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  await delay(1_500);
+  assertProbe(stopFailureRejected && failedStopCalls === 1, '停止失败必须拒绝冷启动且不留后台重放');
+  assertProbe(processExists(previousEffectfulHost.pid), '停止失败必须保留原宿主');
+  await assertCurrentHostIdentity(previousEffectfulHost, '停止失败后');
+  observed.stopFailure = { rejected: stopFailureRejected, calls: failedStopCalls, oldPidAlive: true, singleWriter: true, injectedAt: 'Main control transport' };
 
+  // 冷启动已有明确授权的完整停止策略：停止账本落盘、旧 PID 退出后才连接新宿主。
   const effectfulHandoffStartedAt = performance.now();
-  await blockedUpgrade.stopActiveWork();
-  await waitFor(
-    async () => {
-      const status = await blockedUpgrade.getStatus();
-      return (status.effectfulTurnCount ?? 0) === 0;
-    },
-    5_000,
-    '活动轮次停止持久化',
-  );
-  await waitFor(() => blockedUpgrade.executionHost.instanceId !== previousEffectfulHost.instanceId && blockedUpgrade.executionHost.pid !== previousEffectfulHost.pid, 12_000, '活动轮次停止后的跨版本宿主交接');
-  observed.effectfulHandoffAfterExplicitStopMs = roundMetric(performance.now() - effectfulHandoffStartedAt);
+  const upgraded = await startDesktopLocalServer(buildOptions('0.3.28'));
+  activeRuntime = upgraded;
+  const transition = await upgraded.refreshConfig();
+  const stoppedDb = new DatabaseSync(databasePath, { readOnly: true });
+  try {
+    const turn = stoppedDb.prepare('SELECT status, completed_at FROM conversation_turns WHERE id = ?').get(activeSeed.turnId);
+    const submission = stoppedDb.prepare('SELECT status, resolved_at FROM conversation_submissions WHERE id = ?').get(activeSeed.submissionId);
+    assertProbe(turn?.status === 'interrupted' && turn.completed_at && submission?.status === 'cancelled' && submission.resolved_at, '旧宿主必须在退出前持久化轮次和提交的停止状态');
+    observed.effectfulStopped = { turnStatus: turn.status, submissionStatus: submission.status, durable: true };
+  } finally {
+    stoppedDb.close();
+  }
+  observed.effectfulHandoffMs = roundMetric(performance.now() - effectfulHandoffStartedAt);
   observed.effectfulPreviousHostExited = !processExists(previousEffectfulHost.pid);
-  assertProbe(observed.effectfulPreviousHostExited, '显式停止并交接后旧 PID 必须退出');
-  expectedHost = currentHost(blockedUpgrade);
+  assertProbe(observed.effectfulPreviousHostExited, '冷启动替换后旧 PID 必须确实退出');
+  assertProbe(upgraded.executionHost.instanceId !== previousEffectfulHost.instanceId && upgraded.executionHost.pid !== previousEffectfulHost.pid, '跨版本冷启动必须连接新的唯一宿主');
+  assertProbe(transition.executionHostTransition.state !== 'draining_previous', '新界面不能继续连接不同版本旧 Core');
+  expectedHost = currentHost(upgraded);
   await assertCurrentHostIdentity(expectedHost, '活动轮次交接后');
-
-  await blockedUpgrade.close('final_quit');
+  await upgraded.close('final_quit');
   activeRuntime = null;
-  assertProbe(!processExists(expectedHost.pid), '等待用户现场写入前活动轮次新宿主必须退出');
+  assertProbe(!processExists(expectedHost.pid), '等待用户现场写入前新宿主必须退出');
 
   // Pi waiting 依赖旧进程内运行内核，不能伪装成 Codex pending；prepare 必须在旧宿主内失败关闭。
   const piWaitingSeed = await seedWaitingRequest(databasePath, { agentKind: 'pi', suffix: 'pi_waiting', requestCount: 1 });

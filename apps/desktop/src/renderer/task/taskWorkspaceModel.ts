@@ -371,6 +371,7 @@ export function filterVisibleTasks(tasks: TaskRecord[], query: string, status: T
   return tasks.filter((task) => {
     const matchesQuery =
       !normalizedQuery ||
+      task.matchedQuery === normalizedQuery ||
       [
         task.taskCode ?? '',
         task.title,
@@ -625,7 +626,10 @@ function buildTaskTableCells(
     template: { primary: task.templateId ?? (zh ? '未绑定模板' : 'No template'), sortValue: task.templateId ?? null },
     project: { primary: displayProjectName, sortValue: displayProjectName },
     priority: { primary: task.priority ?? (zh ? '未设置' : 'Not set'), sortValue: task.priority ?? null },
-    description: { primary: activeContent?.trim() || (language === 'zh-CN' ? '无内容' : 'No content'), sortValue: activeContent?.trim() || null },
+    description: {
+      primary: activeContent?.trim() || (task.contentPreview ? `${task.contentPreview}${task.contentPreview.length === 160 ? '…' : ''}` : language === 'zh-CN' ? '无内容' : 'No content'),
+      sortValue: activeContent?.trim() || null,
+    },
     runtimeSession: {
       primary: taskRuntimeSession?.id ?? (zh ? '无运行会话' : 'No run'),
       secondary: taskRuntimeSession
