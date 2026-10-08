@@ -139,6 +139,12 @@ async function verifyInElectron(expected) {
     /** 首次真实截图与辅助功能读取。 */
     const observed = await call('get_window_state', { ...target, max_elements: 80, max_image_dimension: 256 });
     assert(observed.success, textOf(observed));
+    /** 实际宿主只返回一份结构化控件树，继续保留原生快照和完整性字段。 */
+    const observation = JSON.parse(textOf(observed));
+    assert(Array.isArray(observation.elements) && observation.snapshot_id && typeof observation.elements_complete === 'boolean', '控件树投影丢失原生身份或完整性');
+    assert(!('tree_markdown' in observation) && !('_note' in observation), '控件树仍重复发送');
+    if (observation.elements_complete === false) assert(observation.zeus_next_step?.includes('max_elements'), '部分控件树缺少正确预算提示');
+    checks.push('compact_observation_preserves_native_identity_and_completeness');
     assert(JSON.parse(textOf(observed)).zeus_control?.monitoring === true, '原生用户输入监听尚未就绪');
     assert(JSON.parse(textOf(observed)).zeus_control?.events_ready === true && JSON.parse(textOf(observed)).zeus_control?.sharing_active === true, '真实窗口共享或已认证事件通道尚未就绪');
     workerPids.push(host.workerPid);
@@ -148,18 +154,23 @@ async function verifyInElectron(expected) {
     assert(Number.isSafeInteger(observedAt) && Math.abs(Date.now() - observedAt) < 10_000 && host.getPreview('computer-runtime-probe')?.capturedAt === new Date(observedAt).toISOString(), '预览没有使用真实系统帧采集时间');
     checks.push('native_frame_capture_timestamp_used_in_preview');
     /** 在真实会话创建请求已派发、回复未返回时停止，确认原生会话也被释放。 */
-    const sessionOwner = host.ensureOwner({ conversationId: 'computer-runtime-probe', threadId: 'native', turnId: 'session-start-owner', tool: 'get_window_state' });
-    const sessionStartup = host.ensureOwnerSession(host.driver, sessionOwner, sessionOwner.input).then(
-      () => true,
-      () => false,
-    );
-    /** 微任务只等待真实派发，不替换 Driver 或原生返回值。 */
-    for (let attempt = 0; !sessionOwner.sessionDriver && attempt < 20; attempt += 1) await Promise.resolve();
-    assert(sessionOwner.sessionDriver && !sessionOwner.sessionStarted, '没有捕获会话创建回复前的真实派发');
-    await host.stopOwner(sessionOwner);
-    assert(!(await sessionStartup) && !sessionOwner.sessionStarted, '迟到会话创建复活已停止控制');
-    const sessions = await host.driver.callTool('list_sessions', JSON.stringify({ limit: 100 }));
-    assert(!sessions.isError && !JSON.parse(sessions.structuredJson).sessions.some((session) => session.session === sessionOwner.id), '创建期间停止后原生会话残留');
+    const sessionDriver = host.driver;
+    /** 重复覆盖 SDK 排队和取消交错，不能靠单次幸运时序通过。 */
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const sessionOwner = host.ensureOwner({ conversationId: 'computer-runtime-probe', threadId: 'native', turnId: `session-start-owner-${attempt}`, tool: 'get_window_state' });
+      const sessionStartup = host.ensureOwnerSession(host.driver, sessionOwner, sessionOwner.input).then(
+        () => true,
+        () => false,
+      );
+      /** 微任务只等待真实派发，不替换 Driver 或原生返回值。 */
+      for (let attempt = 0; !sessionOwner.sessionDriver && attempt < 20; attempt += 1) await Promise.resolve();
+      assert(sessionOwner.sessionDriver && !sessionOwner.sessionStarted, '没有捕获会话创建回复前的真实派发');
+      await host.stopOwner(sessionOwner);
+      assert(!(await sessionStartup) && !sessionOwner.sessionStarted, '迟到会话创建复活已停止控制');
+      assert(host.driver === sessionDriver, '停止会话创建误回收共享驱动');
+      const sessions = await host.driver.callTool('list_sessions', JSON.stringify({ limit: 100 }));
+      assert(!sessions.isError && !JSON.parse(sessions.structuredJson).sessions.some((session) => session.session === sessionOwner.id), '创建期间停止后原生会话残留');
+    }
     checks.push('stop_during_dispatched_session_start_releases_native_session');
     /** 未改变的图片读取只返回元数据。 */
     const preview = host.getPreview('computer-runtime-probe');
