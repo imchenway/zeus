@@ -30,6 +30,7 @@ import type { NativeUserMessageProjection } from './codexNativeUserMessageProjec
 import type { CodexRolloutRequestUserInputRecovery } from './codexRolloutRequestUserInput.js';
 import {
   completedItemProjection,
+  commandTerminationProjection,
   coordinatorError,
   hasAuditableFileApprovalTarget,
   hasSecretQuestion,
@@ -609,7 +610,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
                 candidate.textContent.trim().startsWith(streamedText),
             )
           : undefined;
-      const streamedPayload = parseJsonRecord(streamedItem.payloadJson);
+      const streamedPayload = commandTerminationProjection(parseJsonRecord(streamedItem.payloadJson), streamedItem.itemType, terminalStatus);
       const streamedPresentation = isRecord(streamedPayload.presentation) ? streamedPayload.presentation : {};
       const reconciledItem = options.providerItems.upsertCompleted({
         conversationId: conversation.id,

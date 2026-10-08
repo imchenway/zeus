@@ -1,5 +1,6 @@
 import { conversationProcessPresentation } from '../packages/shared/src/conversationProcessPresentation.js';
 import { activityOutcome, nativeActivityTitle, nativeActivityTool } from '../apps/desktop/src/renderer/session/activityPresentation.js';
+import { commandTerminationProjection, completedItemProjection } from '../packages/local-server/src/codexNativeConversationPolicy.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { registerHooks } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -286,10 +287,152 @@ for (const exitCode of [130, 143]) {
 /** 运行错误、强制退出和崩溃仍保留失败提示。 */
 for (const exitCode of [1, 127, 137, 139]) assertProbe(activityOutcome({ type: 'commandExecution', status: 'failed', payload: { exitCode } }) === 'failed', '真实命令错误不能被归为正常终止。');
 assertProbe(activityOutcome({ status: 'completed', payload: { namespace: 'zeus_computer', tool: 'click', v2ContentTruncated: true } }) === 'unknown', 'CUA 结果截断时不能丢失动作状态并误报完成。');
+/** 两条投影入口共用中断元信息，原始状态、命令和退出码保持原样。 */
+const unfinishedCommandPayload = { status: 'inProgress', command: 'python3 -m http.server 0', aggregatedOutput: '' };
+const interruptedCommandPayload = commandTerminationProjection(unfinishedCommandPayload, 'commandExecution', 'interrupted');
+assertProbe(activityOutcome({ type: 'commandExecution', status: 'failed', payload: interruptedCommandPayload }) === 'terminated', '没有退出码的中断命令不能显示运行失败');
+assertProbe(JSON.stringify(unfinishedCommandPayload) === JSON.stringify({ status: 'inProgress', command: 'python3 -m http.server 0', aggregatedOutput: '' }), '中断展示不能改变 Provider 原件');
+assertProbe(activityOutcome({ type: 'commandExecution', status: 'failed', payload: commandTerminationProjection(interruptedCommandPayload, 'commandExecution', 'failed') }) === 'failed', '真实失败轮次必须撤销旧中断标记');
+assertProbe(
+  activityOutcome({ type: 'commandExecution', status: 'failed', payload: commandTerminationProjection({ ...unfinishedCommandPayload, exitCode: 7 }, 'commandExecution', 'interrupted') }) === 'failed',
+  '轮次中断不能掩盖已经取得的错误退出码',
+);
+assertProbe(
+  activityOutcome({ type: 'commandExecution', status: 'failed', payload: commandTerminationProjection({ ...unfinishedCommandPayload, error: { message: '执行错误' } }, 'commandExecution', 'interrupted') }) === 'failed',
+  '无退出码的明确执行错误不能归为终止',
+);
+assertProbe(
+  activityOutcome({
+    type: 'commandExecution',
+    status: 'completed',
+    payload: completedItemProjection({ payloadJson: JSON.stringify(interruptedCommandPayload), textContent: '' }, { status: 'completed', exitCode: 0 }, 'commandExecution').payload,
+  }) === 'completed',
+  '迟到的真实完成结果必须取代中断展示',
+);
+assertProbe(
+  activityOutcome({ type: 'commandExecution', status: 'failed', payload: conversationProcessPresentation('command', { provider: 'codex', payload: interruptedCommandPayload }).payload }) === 'terminated',
+  '过程展示必须保留共享中断元信息',
+);
+/** 只接受可以确认的独立搜索，组合命令、错误输出、缺失或不完整输出仍保留失败。 */
+for (const command of ['rg missing src', "rg -n '中文 关键词' src", 'rg -n "中文 关键词" src', "/bin/zsh -lc 'rg -n missing src'", ['rg', 'missing', 'src'], ['/bin/bash', '-lc', 'rg missing src']]) {
+  assertProbe(activityOutcome({ type: 'commandExecution', status: 'failed', payload: { command, exitCode: 1, aggregatedOutput: '' } }) === 'no_matches', '独立 rg 的空输出退出 1 应显示未找到匹配');
+}
+for (const command of [
+  'false',
+  'rg missing src; false',
+  'rg missing src && false',
+  'rg missing src | cat',
+  'rg missing src > /dev/null',
+  'rg $(false) src',
+  'rg "$VALUE" src',
+  'rg missing src\nfalse',
+  "/bin/zsh -lc 'rg missing src; false'",
+  '/bin/zsh -lc "rg \'$(false)\' src"',
+  '/tmp/*/rg missing src',
+  "/bin/*/zsh -lc 'rg missing src'",
+]) {
+  assertProbe(activityOutcome({ type: 'commandExecution', status: 'failed', payload: { command, exitCode: 1, aggregatedOutput: '' } }) === 'failed', '组合命令或展开不能借用搜索无匹配状态');
+}
+for (const extra of [{ stderr: 'rg: read error' }, { stdout: '存在输出' }, { v2ContentTruncated: true }, { aggregatedOutput: undefined }]) {
+  assertProbe(activityOutcome({ type: 'commandExecution', status: 'failed', payload: { command: 'rg missing src', exitCode: 1, aggregatedOutput: '', ...extra } }) === 'failed', '输出异常、截断或缺失不能作为无匹配证据');
+}
+/** Pi 受管 bash 的进程输出与外层 JSON 元信息必须分开判断。 */
+const piNoMatches = conversationProcessPresentation('tool', {
+  provider: 'pi',
+  block: { name: 'bash', arguments: { command: 'rg missing src' } },
+  payload: { toolName: 'bash', result: { isError: true, details: { exitCode: 1 }, content: [{ type: 'text', text: JSON.stringify({ processId: 'managed-search', status: 'failed', exitCode: 1, hasMore: false, output: '' }) }] } },
+});
+assertProbe(activityOutcome({ type: piNoMatches.type, status: 'completed', payload: piNoMatches.payload }) === 'no_matches', 'Pi 的同一次无匹配搜索不能被通用工具错误标记覆盖');
+assertProbe(activityOutcome({ type: 'dynamicToolCall', status: 'failed', payload: { command: 'rg missing src', exitCode: 1, output: '' } }) === 'failed', '其他工具不得使用命令搜索语义');
+/** 使用当前 SDK 的原生验证字段，调用成功与验证通过分开判断。 */
+for (const [result, expected] of [
+  [{ status: 'unknown', stable: false }, 'unknown'],
+  [{ status: 'unsatisfied', stable: false }, 'failed'],
+  [{ status: 'satisfied', stable: true }, 'completed'],
+  [{ status: 'satisfied', stable: false }, 'unknown'],
+  [{}, 'unknown'],
+] as const) {
+  assertProbe(
+    activityOutcome({ status: 'completed', payload: { namespace: 'zeus_computer', tool: 'verify_state', success: true, contentItems: [{ type: 'inputText', text: JSON.stringify(result) }] } }) === expected,
+    '桌面验证必须展示真实条件结果，不能只看调用成功',
+  );
+}
+assertProbe(activityOutcome({ status: 'in_progress', payload: { namespace: 'zeus_computer', tool: 'verify_state' } }) === 'running', '尚未返回的验证应保持进行中');
+assertProbe(
+  activityOutcome({ status: 'completed', payload: { namespace: 'zeus_computer', tool: 'verify_state', status: 'unknown', output: JSON.stringify({ status: 'satisfied', stable: true }) } }) === 'unknown',
+  '未确认的调用状态不能被单个条件结果覆盖',
+);
+/** 当前动作契约的 effect 与原生控制暂停同时保留，未知状态不得被当成成功。 */
+for (const [effect, expected] of [
+  ['confirmed', 'completed'],
+  ['partial', 'observe'],
+  ['unverifiable', 'observe'],
+  ['suspected_noop', 'observe'],
+  ['refused', 'failed'],
+  ['unrecognized', 'unknown'],
+] as const) {
+  assertProbe(activityOutcome({ status: 'completed', payload: { namespace: 'zeus_computer', tool: 'click', output: JSON.stringify({ action: { effect } }) } }) === expected, '桌面动作必须保留拒绝和未确认效果');
+}
+assertProbe(activityOutcome({ status: 'completed', payload: { namespace: 'zeus_computer', tool: 'get_window_state', output: JSON.stringify({ zeus_control: { paused: true } }) } }) === 'waiting', '用户控制暂停不能显示操作已完成');
+assertProbe(
+  activityOutcome({ status: 'completed', payload: { namespace: 'zeus_computer', tool: 'click', output: JSON.stringify({ effect: 'unverifiable', route: 'accessibility' }) } }) === 'observe',
+  'SDK 的直接动作结果也必须保留不可确认效果',
+);
 /** 工具展示可单独检查，不依赖后续长历史游标与数据库场景。 */
 if (process.argv.includes('--activity-presentation')) {
+  /** 命令、Provider 原件及展示元信息均在独立临时目录内验证。 */
+  const root = await mkdtemp(join(tmpdir(), 'zeus-activity-outcomes-'));
+  try {
+    writeFileSync(join(root, 'source.txt'), '已有内容\n');
+    /** 真实无匹配、CLI 参数错误和组合命令分别保留各自退出语义。 */
+    for (const [command, argv, expected] of [
+      ['rg missing source.txt', ['rg', 'missing', 'source.txt'], 'no_matches'],
+      ["rg '[' source.txt", ['rg', '[', 'source.txt'], 'failed'],
+      ['rg missing source.txt; false', ['/bin/sh', '-c', 'rg missing source.txt; false'], 'failed'],
+    ] as const) {
+      const run = spawnSync(argv[0], [...argv.slice(1)], { cwd: root, encoding: 'utf8' });
+      assertProbe(!run.error && typeof run.status === 'number', '真实命令必须取得实际退出码');
+      assertProbe(activityOutcome({ type: 'commandExecution', status: 'failed', payload: { command, exitCode: run.status, stdout: run.stdout, stderr: run.stderr } }) === expected, '真实 rg 结果和组合命令必须使用不同状态');
+    }
+    /** 使用产品仓储落盘中断原因，不能只依赖内存中的展示对象。 */
+    const databasePath = join(root, 'items.db');
+    const database = await createZeusDatabase(databasePath);
+    let storedId = '';
+    try {
+      const repository = new ConversationProviderItemRepository(database);
+      const item = repository.upsertCompleted({
+        conversationId: 'outcome-conversation',
+        turnId: 'outcome-turn',
+        providerThreadId: 'outcome-thread',
+        providerTurnId: 'outcome-native-turn',
+        providerItemId: 'unfinished-command',
+        itemType: 'commandExecution',
+        phase: 'prework',
+        payload: interruptedCommandPayload,
+        textContent: '',
+        status: 'failed',
+        completedAt: '2026-10-08T12:00:00.000Z',
+        updatedAt: '2026-10-08T12:00:00.000Z',
+      });
+      storedId = item.id;
+      await database.save();
+    } finally {
+      await database.close();
+    }
+    /** 重新打开真实 SQLite，确认原状态、原身份和中断展示均可恢复。 */
+    const reopened = await createZeusDatabase(databasePath);
+    try {
+      const item = new ConversationProviderItemRepository(reopened).getById(storedId);
+      assertProbe(item?.status === 'failed' && item.providerItemId === 'unfinished-command', '持久恢复不能改写原 Provider 状态或身份');
+      assertProbe(activityOutcome({ type: item.itemType, status: item.status, payload: JSON.parse(item.payloadJson) }) === 'terminated', '重新打开后没有退出码的中断命令必须保持已终止');
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
   await probeNavigation();
-  console.log('工具展示探针通过：原生身份、应用名称、失败、取消与 CUA 未确认结果。');
+  console.log('工具展示探针通过：原生身份、应用名称、中断原因、单次搜索无匹配与桌面验证结果。');
   process.exit(0);
 }
 assertProbe(
