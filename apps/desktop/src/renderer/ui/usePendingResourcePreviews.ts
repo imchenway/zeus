@@ -3,9 +3,11 @@ import type { PendingResourceCardItem } from './PendingResourceCards.js';
 import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from './pendingResourcePolicy.js';
 
 /** 三类附件输入共用即时卡片与 Blob 生命周期，临时引用始终只存在于界面。 */
-export function usePendingResourcePreviews(resources: readonly PendingResourceCardItem[], language: 'zh-CN' | 'en-US', contextKey: string | false = 'input') {
+export function usePendingResourcePreviews(resources: readonly PendingResourceCardItem[], contextKey: string | false = 'input') {
   /** 导入中的卡片与已确认图片的本地缩略图。 */
   const [pendingResources, setPendingResources] = useState<PendingResourceCardItem[]>([]);
+  /** 导入状态独立于可见卡片，未知剪贴板内容不生成占位附件。 */
+  const [processingCount, setProcessingCount] = useState(0);
   /** 对象 URL 的当前归属，可从临时身份接续到真实资源身份。 */
   const previewUrls = useRef(new Map<string, string>());
   /** 异步回执只允许操作仍然存在的输入场景。 */
@@ -36,6 +38,7 @@ export function usePendingResourcePreviews(resources: readonly PendingResourceCa
     for (const url of previewUrls.current.keys()) URL.revokeObjectURL(url);
     previewUrls.current.clear();
     setPendingResources([]);
+    setProcessingCount(0);
   }, [contextKey]);
 
   useEffect(() => {
@@ -56,71 +59,76 @@ export function usePendingResourcePreviews(resources: readonly PendingResourceCa
   }, [resources, pendingResources]);
 
   /** 创建独立的一批预览；调用者继续负责授权、保存、失败提示与提交校验。 */
-  const begin = useCallback(
-    (files: readonly File[] = [], text = '', scope?: string) => {
-      /** 固定当前场景，防止任务切换后把旧结果带入新表单。 */
-      const operationContext = context.current;
-      /** 记录当前输入生命周期，回执不能跨场景重新生效。 */
-      const operationGeneration = generation.current;
-      /** 对未保存资源只分配界面身份，不能用作可发送附件引用。 */
-      const pending: PendingResourceCardItem[] =
-        files.length > 0
-          ? files.map((file) => {
-              /** 浏览器直接显示已有 Blob，不额外读取和序列化完整图片。 */
-              const previewUrl = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(file.type) ? URL.createObjectURL(file) : undefined;
-              /** 每次导入独立定位，连续粘贴不覆盖之前的反馈。 */
-              const id = crypto.randomUUID();
-              if (previewUrl) previewUrls.current.set(previewUrl, id);
-              return { id, name: file.name, kind: file.type.startsWith('image/') ? 'image' : 'file', mimeType: file.type, size: file.size, previewUrl, pending: true, scope };
-            })
-          : [
+  const begin = useCallback((files: readonly File[] = [], text = '', scope?: string) => {
+    /** 固定当前场景，防止任务切换后把旧结果带入新表单。 */
+    const operationContext = context.current;
+    /** 记录当前输入生命周期，回执不能跨场景重新生效。 */
+    const operationGeneration = generation.current;
+    /** 对未保存资源只分配界面身份，不能用作可发送附件引用。 */
+    const pending: PendingResourceCardItem[] =
+      files.length > 0
+        ? files.map((file) => {
+            /** 浏览器直接显示已有 Blob，不额外读取和序列化完整图片。 */
+            const previewUrl = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(file.type) ? URL.createObjectURL(file) : undefined;
+            /** 每次导入独立定位，连续粘贴不覆盖之前的反馈。 */
+            const id = crypto.randomUUID();
+            if (previewUrl) previewUrls.current.set(previewUrl, id);
+            return { id, name: file.name, kind: file.type.startsWith('image/') ? 'image' : 'file', mimeType: file.type, size: file.size, previewUrl, pending: true, scope };
+          })
+        : text.length >= PENDING_RESOURCE_LONG_TEXT_THRESHOLD
+          ? [
               {
                 id: crypto.randomUUID(),
-                name: text.length >= PENDING_RESOURCE_LONG_TEXT_THRESHOLD ? 'Pasted text.txt' : language === 'zh-CN' ? '剪贴板内容' : 'Clipboard content',
-                kind: text.length >= PENDING_RESOURCE_LONG_TEXT_THRESHOLD ? 'pasted_text' : 'file',
-                characterCount: text.length || undefined,
+                name: 'Pasted text.txt',
+                kind: 'pasted_text',
+                characterCount: text.length,
                 pending: true,
                 scope,
               },
-            ];
-      setPendingResources((current) => [...current, ...pending]);
+            ]
+          : [];
+    if (pending.length > 0) setPendingResources((current) => [...current, ...pending]);
+    setProcessingCount((count) => count + 1);
+    /** 各批次只结束一次，避免重复清理提前解除其他导入的提交校验。 */
+    let finished = false;
 
-      /** 授权回执、字段回填和错误提示都须确认原输入场景仍然有效。 */
-      const current = () => mounted.current && operationContext !== false && generation.current === operationGeneration && context.current === operationContext;
-      return {
-        current,
-        /** 成功图片沿用同一 Blob；同名或部分失败时继续由宿主读取受信预览。 */
-        complete(confirmed: readonly PendingResourceCardItem[], failedCount = 0): void {
-          if (!current() || failedCount > 0) return;
-          for (const resource of confirmed) {
-            /** 只接续能唯一匹配的图片，避免把不同文件的缩略图混用。 */
-            const matching = pending.filter((preview) => preview.name === resource.name && preview.previewUrl);
-            if (resource.kind !== 'image' || matching.length !== 1 || [...previewUrls.current.values()].includes(resource.id)) continue;
-            /** 本地预览改为真实身份，但不进入资源持久化载荷。 */
-            const preview = matching[0]!;
-            previewUrls.current.set(preview.previewUrl!, resource.id);
-            setPendingResources((values) => [...values.filter((value) => value.id !== preview.id), { ...preview, id: resource.id, pending: false }]);
-          }
-        },
-        /** 仅清理本次操作，成功接续的图片继续保留，其余 Blob 立即释放。 */
-        finish(): void {
-          if (current()) {
-            /** 不影响其他仍在导入的附件。 */
-            const ids = new Set(pending.map((resource) => resource.id));
-            setPendingResources((values) => values.filter((resource) => !ids.has(resource.id)));
-          }
-          for (const resource of pending) {
-            if (!resource.previewUrl || previewUrls.current.get(resource.previewUrl) !== resource.id) continue;
-            URL.revokeObjectURL(resource.previewUrl);
-            previewUrls.current.delete(resource.previewUrl);
-          }
-        },
-      };
-    },
-    [language],
-  );
+    /** 授权回执、字段回填和错误提示都须确认原输入场景仍然有效。 */
+    const current = () => mounted.current && operationContext !== false && generation.current === operationGeneration && context.current === operationContext;
+    return {
+      current,
+      /** 成功图片沿用同一 Blob；同名或部分失败时继续由宿主读取受信预览。 */
+      complete(confirmed: readonly PendingResourceCardItem[], failedCount = 0): void {
+        if (!current() || failedCount > 0) return;
+        for (const resource of confirmed) {
+          /** 只接续能唯一匹配的图片，避免把不同文件的缩略图混用。 */
+          const matching = pending.filter((preview) => preview.name === resource.name && preview.previewUrl);
+          if (resource.kind !== 'image' || matching.length !== 1 || [...previewUrls.current.values()].includes(resource.id)) continue;
+          /** 本地预览改为真实身份，但不进入资源持久化载荷。 */
+          const preview = matching[0]!;
+          previewUrls.current.set(preview.previewUrl!, resource.id);
+          setPendingResources((values) => [...values.filter((value) => value.id !== preview.id), { ...preview, id: resource.id, pending: false }]);
+        }
+      },
+      /** 仅清理本次操作，成功接续的图片继续保留，其余 Blob 立即释放。 */
+      finish(): void {
+        if (finished) return;
+        finished = true;
+        if (current()) {
+          setProcessingCount((count) => Math.max(0, count - 1));
+          /** 不影响其他仍在导入的附件。 */
+          const ids = new Set(pending.map((resource) => resource.id));
+          setPendingResources((values) => values.filter((resource) => !ids.has(resource.id)));
+        }
+        for (const resource of pending) {
+          if (!resource.previewUrl || previewUrls.current.get(resource.previewUrl) !== resource.id) continue;
+          URL.revokeObjectURL(resource.previewUrl);
+          previewUrls.current.delete(resource.previewUrl);
+        }
+      },
+    };
+  }, []);
 
-  return { pendingResources, begin };
+  return { pendingResources, processing: processingCount > 0, begin };
 }
 
 /** 各附件列表共用相同接续方式，真实卡片使用本地预览，未确认卡片只追加显示。 */

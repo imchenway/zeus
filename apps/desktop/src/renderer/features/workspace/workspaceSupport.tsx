@@ -1513,13 +1513,11 @@ export function TaskCreateModal(props: {
   /** 视觉退出期间立即注销旧附件和外部资料回执。 */
   const interactionOpen = usePresenceOpen() && props.open;
   const pasteShortcutFallbackTokenRef = useRef(0);
-  const [resourceProcessingCount, setResourceProcessingCount] = useState(0);
   /** 资源读取失败和部分成功保持在当前表单内可见。 */
   const [resourceError, setResourceError] = useState<string | null>(null);
   /** 与会话输入共用预览生命周期，创建和复制均按字段归属显示。 */
   const previews = usePendingResourcePreviews(
     props.form.attachments.map((attachment) => ({ id: attachment.path, name: attachment.name, kind: attachment.kind })),
-    props.copy.taskCountPrefix === 'Tasks' ? 'en-US' : 'zh-CN',
     interactionOpen ? 'task-create' : false,
   );
 
@@ -1539,7 +1537,6 @@ export function TaskCreateModal(props: {
   const thirdPartyRequestRef = useRef<symbol | null>(null);
   const taskTypeOptions = useMemo(() => [{ value: '' as const, label: props.copy.taskCreateTypePlaceholder, disabled: true }, ...props.copy.taskCreateTypeOptions], [props.copy.taskCreateTypeOptions, props.copy.taskCreateTypePlaceholder]);
   useEffect(() => {
-    setResourceProcessingCount(0);
     setResourceError(null);
     if (interactionOpen) {
       setSettingsOpen(false);
@@ -1567,7 +1564,7 @@ export function TaskCreateModal(props: {
   /** 当前资源错误优先显示，保留上层字段校验结果。 */
   const visibleError = resourceError ?? props.error;
   const describedBy = thirdPartyOpen ? 'task-create-third-party-help' : visibleError ? 'task-create-error' : undefined;
-  const resourcesBusy = resourceProcessingCount > 0;
+  const resourcesBusy = previews.processing;
   /** 附件处理只阻止提交和切换任务结构，不禁用正在输入的文字框。 */
   const textInputDisabled = props.busy || thirdPartyParsing;
   const interactionBusy = textInputDisabled || resourcesBusy;
@@ -1625,13 +1622,11 @@ export function TaskCreateModal(props: {
     /** 临时资源只用于界面，不进入任务草稿附件。 */
     const pending = previews.begin(files, text, field);
     setResourceError(null);
-    setResourceProcessingCount((current) => current + 1);
     try {
       await operation(pending);
     } catch {
       if (pending.current()) setResourceError(props.copy.taskCreatePasteAttachmentFailed);
     } finally {
-      if (pending.current()) setResourceProcessingCount((current) => Math.max(0, current - 1));
       pending.finish();
       restoreFocus();
     }
