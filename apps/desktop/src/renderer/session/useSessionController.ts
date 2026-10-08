@@ -1,3 +1,4 @@
+import { restoreSessionViewCache } from './sessionHotCache.js';
 import { attachV2ResourcesToSnapshot } from './conversationResourceProjection.js';
 import { asyncMessageQuestions, formatAsyncQuestionAnswer, validateCanonicalRequestUserInputAnswers, type AsyncQuestionAnswer, type AsyncQuestionResponse } from '@zeus/shared';
 import { userFacingErrorCause } from '@zeus/shared';
@@ -281,7 +282,11 @@ export interface SessionControllerClient {
     turnId: string,
     options?: { cursor?: string; direction?: 'forward' | 'tail'; limit?: number; byteLimit?: number; kind?: NativeConversationProcessV2Item['kind'] },
   ): Promise<NativeConversationSnapshotV2Page<NativeConversationProcessV2Item>>;
-  loadNativeConversationResourcesV2?(projectId: string, conversationId: string, options?: { cursor?: string; limit?: number; byteLimit?: number }): Promise<NativeConversationSnapshotV2Page<NativeConversationResourceV2Item>>;
+  loadNativeConversationResourcesV2?(
+    projectId: string,
+    conversationId: string,
+    options?: { cursor?: string; limit?: number; byteLimit?: number; signal?: AbortSignal },
+  ): Promise<NativeConversationSnapshotV2Page<NativeConversationResourceV2Item>>;
   loadNativeConversationChangeSetV2?(projectId: string, conversationId: string, turnId: string): Promise<NativeConversationChangeSetV2Summary>;
   loadNativeConversationChangeFilesV2?(
     projectId: string,
@@ -714,6 +719,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
   let nextTurnSettingsWrite: Promise<NativeNextTurnSettings> | null = null;
   let nextTurnSettingsRevision = 0;
   const listeners = new Set<() => void>();
+  /** 资源请求属于当前会话控制器，退出或重连时终止旧网络读取。 */
+  const resourceRequests = new Set<AbortController>();
   const createId = options.createId ?? defaultCreateId;
   const realtimeBufferWatermarks = new Map<RealtimeBufferKind, { entries: number; bytes: number; entryBucket: number; byteBucket: number }>();
 
@@ -2888,7 +2895,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     if (settledHistory.error) throw settledHistory.error;
   }
 
-  async function loadTurnArtifactsV2(turnIdentity: string): Promise<void> {
+  async function loadTurnArtifactsV2(turnIdentity: string, refreshResources = false): Promise<void> {
     const current = state.snapshot;
     if (!current?.snapshotV2 || !current.v2Paging) return;
     const generation = connectionToken;
@@ -2901,7 +2908,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const resources = current.v2Paging.resources;
     if (currentChange?.loading) return;
     const v2Turn = turn ? [...current.snapshotV2.recentClosedTurns, ...(current.snapshotV2.activeTurn ? [current.snapshotV2.activeTurn] : [])].find((candidate) => candidate.id === turn.id) : undefined;
-    const shouldLoadResources = Boolean(!resources.loading && options.client.loadNativeConversationResourcesV2 && (!resources.loaded || resources.hasMore));
+    const shouldLoadResources = Boolean(!resources.loading && options.client.loadNativeConversationResourcesV2 && (refreshResources || !resources.loaded || resources.hasMore));
     // 摘要只说明有变更，不能被当作已经加载全文；点击审阅时也允许按实时轮次重试。
     const knownChangeSet = state.changeSetsByProviderId[pagingKey];
     const shouldLoadChange = Boolean((v2Turn?.changeSetAvailable || knownChangeSet) && options.client.loadTurnChangeSet && (!knownChangeSet || knownChangeSet.contentProjection === 'summary'));
@@ -2938,18 +2945,22 @@ export function createSessionController(options: CreateSessionControllerOptions)
     if (shouldLoadResources) {
       loads.push(
         (async () => {
+          const request = new AbortController();
+          resourceRequests.add(request);
           try {
             let items = resources.items;
-            let cursor = resources.nextCursor;
-            let hasMore = !resources.loaded || resources.hasMore;
+            let cursor = refreshResources ? null : resources.nextCursor;
+            let hasMore = refreshResources || !resources.loaded || resources.hasMore;
             const seenCursors = new Set<string>();
             while (hasMore) {
               if (cursor && seenCursors.has(cursor)) throw new Error('会话资源分页游标没有推进。');
               if (cursor) seenCursors.add(cursor);
+              if (disposed || generation !== connectionToken) return;
               const page = await options.client.loadNativeConversationResourcesV2!(options.projectId, options.conversationId, {
                 ...(cursor ? { cursor } : {}),
                 limit: 32,
                 byteLimit: 64 * 1024,
+                signal: request.signal,
               });
               if (page.conversationId !== options.conversationId || page.schemaVersion !== 2 || page.structureGeneration !== current.snapshotV2!.structureGeneration || page.kind !== 'resources')
                 throw new Error('会话资源分页响应的身份或结构代次无效。');
@@ -2977,6 +2988,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
               })),
             );
           } catch (error) {
+            if (disposed || generation !== connectionToken || request.signal.aborted) return;
             const latest = state.snapshot;
             if (latest?.v2Paging) {
               dispatchV2Snapshot(
@@ -2987,6 +2999,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
               );
             }
             throw error;
+          } finally {
+            resourceRequests.delete(request);
           }
         })(),
       );
@@ -3049,7 +3063,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
   async function loadConversationResourcesV2(): Promise<void> {
     // 资源页属于整个会话。传入不存在的轮次身份可复用同一套分页、并发保护和
     // 资源挂接逻辑，同时不会触发任何轮次 change set 读取。
-    await loadTurnArtifactsV2('__conversation_resources__');
+    await loadTurnArtifactsV2('__conversation_resources__', true);
   }
 
   const controller: SessionController = {
@@ -3057,6 +3071,19 @@ export function createSessionController(options: CreateSessionControllerOptions)
       if (state.transportState === 'ready') return Promise.resolve();
       if (!startPromise) {
         cancelReconnectLoop();
+        // 与真实读取并行；任何权威内容或本地消息先到达，都禁止缓存再占位。
+        if (!state.snapshot && state.itemOrder.length === 0 && typeof window !== 'undefined') {
+          void window.zeus
+            ?.loadSessionViewCache?.({ projectId: options.projectId, conversationId: options.conversationId })
+            .then((value) => {
+              if (disposed || state.snapshot || state.itemOrder.length > 0 || state.transportState === 'ready') return;
+              const cached = restoreSessionViewCache(value, options);
+              if (!cached?.snapshot) return;
+              state = { ...state, snapshot: cached.snapshot, items: cached.items, itemOrder: cached.itemOrder, transcriptRevision: state.transcriptRevision + 1 };
+              for (const listener of listeners) listener();
+            })
+            .catch(() => undefined);
+        }
         const attempt = hydrate(false);
         const tracked = attempt.finally(() => {
           if (startPromise === tracked) startPromise = null;
@@ -3066,6 +3093,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return startPromise;
     },
     reconnect() {
+      for (const request of resourceRequests) request.abort();
       cancelReconnectLoop();
       dispatch({ type: 'transport_changed', transportState: 'reconnecting', reconnectAttempt: 1 });
       return hydrate(true, state.snapshot ? 'required' : 'auto');
@@ -3073,6 +3101,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     dispose() {
       if (disposed) return;
       disposed = true;
+      for (const request of resourceRequests) request.abort();
       finishPendingSendReconcileWait?.();
       for (const context of transcriptHydrations) context.controller.abort(new DOMException('会话已关闭。', 'AbortError'));
       placementActions.length = 0;

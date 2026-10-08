@@ -177,6 +177,11 @@ export interface TaskWorkspaceProps {
   modelPushEntry?: { taskId: string; status: 'checking' | 'error'; error?: string | null };
   taskActionBusy?: boolean;
   listState?: TaskWorkspaceListState;
+  /** 两种主布局共用列表分页，滚动到接近底部时读取下一页。 */
+  hasMoreTasks?: boolean;
+  loadingMoreTasks?: boolean;
+  taskPageError?: string | null;
+  onLoadMoreTasks?: () => void;
   activeProjectId?: string;
   pageViewMode: TaskPageViewMode;
   taskBoardSnapshot?: TaskBoardViewSnapshot | null;
@@ -354,7 +359,14 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
   }, [bulkStatusOptions, bulkTargetStatus]);
 
   return (
-    <section className="task-management-codex-layout task-table-only-layout task-table-layout" aria-label={props.copy.workbenchAria}>
+    <section
+      onScrollCapture={(event) => {
+        const target = event.target as HTMLElement;
+        if (props.hasMoreTasks && !props.loadingMoreTasks && !props.taskPageError && target.scrollHeight - target.scrollTop - target.clientHeight < 160) props.onLoadMoreTasks?.();
+      }}
+      className="task-management-codex-layout task-table-only-layout task-table-layout"
+      aria-label={props.copy.workbenchAria}
+    >
       <section className="task-management-navigation task-table-workbench" aria-label={props.copy.filterAria}>
         <section className="task-filter-workbench task-filter-toolbar task-table-toolbar task-table-primary-toolbar" aria-label={props.copy.filterAria}>
           <label className="task-filter-control-row task-filter-search task-toolbar-search" aria-label={props.copy.searchAria}>
@@ -678,6 +690,21 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                 </section>
               ) : null}
             </TaskDataTable>
+            {props.hasMoreTasks ? (
+              <div role="status" className="task-table-pagination">
+                {props.loadingMoreTasks ? (
+                  '正在读取更多任务…'
+                ) : props.taskPageError ? (
+                  <button type="button" onClick={props.onLoadMoreTasks}>
+                    读取失败，重试
+                  </button>
+                ) : (
+                  <button type="button" onClick={props.onLoadMoreTasks}>
+                    继续加载任务
+                  </button>
+                )}
+              </div>
+            ) : null}
           </>
         )}
       </section>

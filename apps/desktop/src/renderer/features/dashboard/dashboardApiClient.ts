@@ -1,4 +1,4 @@
-import type { DashboardSnapshot } from './dashboardContracts.js';
+import type { DashboardSnapshot, WorkspaceSnapshot } from './dashboardContracts.js';
 import type { SecurityAuditLogEntry } from '../integrations/integrationContracts.js';
 import type { ReleaseStatusSnapshot, ReleaseUpdateOperationSnapshot, ReleaseUpdateStatusSnapshot } from '../release/releaseContracts.js';
 import type { ImportLocalBusinessDataResult, LocalBusinessDataSnapshot } from '../settings/settingsContracts.js';
@@ -7,6 +7,10 @@ import type { LocalApiTransport } from '../../transport/localApiTransport.js';
 
 export interface DashboardApiClient {
   loadDashboard: () => Promise<DashboardSnapshot>;
+  /** 项目查询不等待 Git、集成服务或历史任务正文。 */
+  loadHome: () => Promise<WorkspaceSnapshot>;
+  loadHomeAttention: () => Promise<Pick<DashboardSnapshot, 'conversationAttentionByProject' | 'conversationUnreadCountByProject'>>;
+  loadHomeRuntime: () => Promise<DashboardSnapshot['runtime']>;
   exportLocalBusinessData: () => Promise<LocalBusinessDataSnapshot>;
   importLocalBusinessData: (input: LocalBusinessDataSnapshot) => Promise<ImportLocalBusinessDataResult>;
   loadSecurityAuditLogs: () => Promise<SecurityAuditLogEntry[]>;
@@ -19,6 +23,9 @@ export interface DashboardApiClient {
 
 export function createDashboardApiClient(transport: LocalApiTransport): DashboardApiClient {
   return {
+    loadHome: async () => ({ ...createEmptyWorkspaceSnapshot(), projects: await transport.request('/api/projects') }),
+    loadHomeAttention: () => transport.request('/api/dashboard/attention'),
+    loadHomeRuntime: () => transport.request('/api/dashboard/runtime'),
     loadDashboard: async () => normalizeDashboardSnapshot(await transport.request<DashboardSnapshot>('/api/dashboard')),
     exportLocalBusinessData: () => transport.request<LocalBusinessDataSnapshot>('/api/data/export'),
     importLocalBusinessData: async (input) => {
@@ -85,4 +92,9 @@ export function createEmptyDashboardSnapshot(): DashboardSnapshot {
       recentCommits: [],
     },
   };
+}
+
+/** 未加载数据使用 null，不能显示为“未配置”或“没有仓库”。 */
+export function createEmptyWorkspaceSnapshot(): WorkspaceSnapshot {
+  return { app: 'Zeus', kind: 'home', localServer: { host: '127.0.0.1', port: null }, projects: [], tasks: [], conversationAttentionByProject: {}, conversationUnreadCountByProject: {}, runtime: null, git: null };
 }

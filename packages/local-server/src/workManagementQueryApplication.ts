@@ -13,7 +13,7 @@ export interface ListWorkManagementTasksQuery {
 
 interface WorkManagementQueryPorts {
   projects: Pick<ProjectRepository, 'getById'>;
-  tasks: Pick<TaskRepository, 'getById' | 'listByProject' | 'listArchivedByProject'>;
+  tasks: Pick<TaskRepository, 'getById' | 'listByProject' | 'listArchivedByProject' | 'listSummaryPage'>;
   taskBoards: Pick<TaskBoardRepository, 'getSnapshot'>;
   taskEvents: Pick<TaskEventRepository, 'listByTask'>;
   taskTemplates: Pick<TaskTemplateRepository, 'listForProject' | 'listAll'>;
@@ -50,6 +50,20 @@ export class WorkManagementQueryApplication {
       sortBy: query.sortBy,
       sortDirection: query.sortDirection,
     });
+  }
+
+  /** 分页参数在 HTTP 边界显式校验，完整任务查询不被摘要替代。 */
+  listTaskSummaries(query: { projectId?: string; cursor?: string; limit?: string; query?: string }) {
+    if (
+      typeof query.projectId !== 'string' ||
+      !query.projectId ||
+      query.projectId.length > 512 ||
+      (query.cursor !== undefined && typeof query.cursor !== 'string') ||
+      (query.query !== undefined && (typeof query.query !== 'string' || query.query.length > 2000))
+    )
+      throw queryError('ZEUS_TASK_SUMMARY_QUERY_INVALID', '任务摘要查询无效。', 400);
+    if (!this.ports.projects.getById(query.projectId)) throw queryError('ZEUS_PROJECT_NOT_FOUND', 'Project not found', 404);
+    return this.ports.tasks.listSummaryPage(query.projectId, { cursor: query.cursor, query: query.query, limit: query.limit === undefined ? 50 : Number(query.limit) });
   }
 
   listArchivedTasks(projectId?: string): ZeusTaskRecord[] {

@@ -7878,6 +7878,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   border: 0;
   border-radius: 5px;
   color: var(--zeus-brand-text);
+  /* 常态链接保留下划线，让颜色识别困难的用户也能发现入口。 */
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
   cursor: pointer;
   display: inline-flex;
   font: inherit;

@@ -6,7 +6,7 @@ export const ordinarySessionHotCacheLimit = 6;
 export const sessionHotCacheByteLimit = 32 * 1024 * 1024;
 export const sessionHotCacheEntryByteLimit = 8 * 1024 * 1024;
 export const sessionViewCacheMaximumEntries = 32;
-export const sessionViewCacheSchemaGeneration = 'zeus-session-view-cache-v1';
+export const sessionViewCacheSchemaGeneration = 'zeus-session-display-cache';
 export const sessionViewCacheMaximumAgeMs = 14 * 24 * 60 * 60 * 1000;
 
 export interface SessionHotCacheEntry {
@@ -27,8 +27,6 @@ export interface PersistedSessionViewCache {
     state: NativeSessionState;
   }>;
 }
-
-let primedSessionHotCache: SessionHotCache = new Map();
 
 /** 关键会话不参与普通最近使用数量淘汰，确保活动现场可立即恢复。 */
 export function isCriticalSessionState(state: NativeSessionState): boolean {
@@ -118,16 +116,18 @@ function estimatePersistedSessionStateBytes(state: NativeSessionState): number {
   }
 }
 
-/** Main 在 React 首次渲染前调用；损坏、过期或越界内容只会被忽略。 */
-export function primePersistedSessionViewCache(value: unknown, now = Date.now()): void {
-  primedSessionHotCache = restorePersistedSessionViewCache(value, now);
-}
-
-/** 每个 Workspace 取得独立 Map，避免模块级启动副本被运行期淘汰逻辑直接修改。 */
+/** 窗口只持有已访问会话的热缓存，磁盘按选择身份异步读取。 */
 export function initialSessionHotCache(): SessionHotCache {
-  return new Map(primedSessionHotCache);
+  return new Map();
 }
 
+/** 复用显示态清洗与有效期检查，拒绝跨项目缓存。 */
+export function restoreSessionViewCache(value: unknown, identity: { projectId: string; conversationId: string }): NativeSessionState | undefined {
+  const state = restorePersistedSessionViewCache(value, Date.now()).get(identity.conversationId)?.state;
+  return state?.projectId === identity.projectId ? state : undefined;
+}
+
+/** 信封校验与显示态恢复共用内存缓存的体积边界。 */
 function restorePersistedSessionViewCache(value: unknown, now: number): SessionHotCache {
   const restored: SessionHotCache = new Map();
   if (!isRecord(value) || value.schemaGeneration !== sessionViewCacheSchemaGeneration || !Array.isArray(value.entries)) return restored;

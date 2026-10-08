@@ -101,8 +101,14 @@ declare global {
       exitExecutionHostMaintenance: () => Promise<void>;
       restartAfterStartupFailure: () => Promise<void>;
       exitAfterStartupFailure: () => Promise<void>;
+      /** 启动阶段只读快照与订阅。 */
+      reportStartupSpan: (input: { stage: string; durationMs: number }) => void;
+      reportHomeInteractive: () => void;
+      getStartupStage: () => Promise<{ stage: string; elapsedMs: number }>;
+      onStartupStageChanged: (listener: (stage: { stage: string; elapsedMs: number }) => void) => () => void;
+      getStartupSettings: () => Promise<import('./features/settings/settingsContracts.js').AppShellSettings | null>;
       getLocalServerConfig: () => Promise<DashboardClientOptions>;
-      loadSessionViewCache: () => Promise<unknown | null>;
+      loadSessionViewCache: (identity: { projectId: string; conversationId: string }) => Promise<unknown | null>;
       persistSessionViewCache: (value: import('./session/sessionHotCache.js').PersistedSessionViewCache) => void;
       runStorageRecoveryPreflightAndRestart: () => Promise<{
         faultId: string;

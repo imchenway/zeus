@@ -1,3 +1,5 @@
+import { matchingInlineResource } from './ConversationMarkdown.js';
+import { inlineResourceRequestSignature } from './conversationResourceProjection.js';
 import { createTranscriptProjection, reuseTranscriptRows, reuseTranscriptTurnRows, updateTranscriptProjection, type TranscriptProjection } from './transcriptProjection.js';
 import { asyncQuestionAnswerHistory, AsyncQuestionMessage } from './AsyncQuestionMessage.js';
 import { classifyAssistantMessage, conversationNavigationExcerpt, conversationQuestionNavigationExcerpt, type ConversationNavigationSnapshot, type AsyncQuestionAnswer } from '@zeus/shared';
@@ -146,7 +148,18 @@ function imageAttachmentDescriptors(item: NativeSessionItemBuffer): Array<{ name
   return [...new Map(descriptors.map((descriptor) => [`${descriptor.taskPushAttachmentKey ?? ''}\u0000${descriptor.name}`, descriptor])).values()];
 }
 
-function itemNeedsImageResources(item: NativeSessionItemBuffer): boolean {
+/** 正文中的受信链接与图片都需要资源登记，不能等待用户展开处理过程。 */
+function itemNeedsInlineResources(item: NativeSessionItemBuffer): boolean {
+  /** 仅完整的 Markdown 链接触发补载；实际打开仍由已登记资源授权。 */
+  const links = [...transcriptItemText(item).matchAll(/(?<!!)\[([^\]\n]+)\]\(([^)\n]+)\)/gu)];
+  if (
+    links.some((match) => {
+      const href = match[2]!.trim().replace(/^<|>$/gu, '');
+      if (href.startsWith('#')) return false;
+      return !matchingInlineResource(item.resources, match[1]!, href);
+    })
+  )
+    return true;
   if (containsMarkdownImage(item) && !item.resources.some((resource) => resource.presentation === 'inline' && isImageResource(resource))) return true;
   if (item.optimistic) return false;
   return imageAttachmentDescriptors(item).some(
@@ -636,8 +649,13 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     onReconnectCodex: useStableOptionalCallback(props.onReconnectCodex),
     onRetryQueuedSubmission: useStableOptionalCallback(props.onRetryQueuedSubmission),
   };
-  const itemNeedingImageResources = useMemo(() => items.find(itemNeedsImageResources) ?? null, [items]);
+  const itemsNeedingInlineResources = useMemo(() => items.filter(itemNeedsInlineResources), [items]);
   const resourcePaging = props.state.snapshot?.v2Paging?.resources;
+  /** 请求键只跟随完整链接变化，正文逐字变化不会触发循环请求。 */
+  const inlineResourceSignature = useMemo(
+    () => inlineResourceRequestSignature(itemsNeedingInlineResources.map((item) => ({ key: item.key, turnId: item.turnId, providerItemId: item.providerItemId, text: transcriptItemText(item) }))),
+    [itemsNeedingInlineResources],
+  );
   const assistantDeliverablesAvailable = Boolean(props.state.snapshot?.snapshotV2?.collections.resources.assistantDeliverablesAvailable);
   useEffect(() => {
     const loadTurnArtifacts = renderProps.onLoadTurnArtifacts;
@@ -646,11 +664,13 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     void Promise.allSettled(closedTurnChangeSetIds.map(loadTurnArtifacts));
   }, [closedTurnChangeSetIds, props.state.conversationId, props.state.transportState, renderProps.onLoadTurnArtifacts]);
   useEffect(() => {
-    const loadConversationResources = renderProps.onLoadConversationResources ?? (itemNeedingImageResources && renderProps.onLoadTurnArtifacts ? () => renderProps.onLoadTurnArtifacts?.(itemNeedingImageResources.turnId) : undefined);
+    const loadTurnArtifacts = renderProps.onLoadTurnArtifacts;
+    const loadConversationResources =
+      renderProps.onLoadConversationResources ?? (itemsNeedingInlineResources.length && loadTurnArtifacts ? () => Promise.all([...new Set(itemsNeedingInlineResources.map((item) => item.turnId))].map(loadTurnArtifacts)) : undefined);
     const assistantDeliverablesNeedLoading = Boolean(assistantDeliverablesAvailable && resourcePaging && (!resourcePaging.loaded || resourcePaging.hasMore));
     // 资源补齐后解除本次尝试锁。若后续权威快照异常丢失展示资源，可再次自愈；
     // 真正失败且状态未变化时仍保留尝试键，避免无界重试。
-    if (!itemNeedingImageResources && !assistantDeliverablesNeedLoading) {
+    if (!itemsNeedingInlineResources.length && !assistantDeliverablesNeedLoading) {
       automaticResourceLoadAttemptRef.current = null;
       return;
     }
@@ -659,14 +679,14 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     if (props.state.transportState !== 'ready' || !loadConversationResources || !resourcePaging || resourcePaging.loading) return;
     // 首次调用可能先取得资源页、后取得带 providerItemId 的正文。把资源页代次和
     // Provider item 身份都纳入尝试键，允许第二次只执行内存合并，但仍禁止无界重试。
-    const attemptKey = `${props.state.conversationId}:${assistantDeliverablesAvailable ? 'assistant-deliverables' : 'ordinary-resources'}:${itemNeedingImageResources?.turnId ?? 'conversation'}:${itemNeedingImageResources?.providerItemId ?? itemNeedingImageResources?.key ?? 'none'}:${resourcePaging.loaded}:${resourcePaging.hasMore}:${resourcePaging.nextCursor ?? 'end'}:${resourcePaging.items.length}`;
+    const attemptKey = `${props.state.conversationId}:${assistantDeliverablesAvailable ? 'assistant-deliverables' : 'ordinary-resources'}:${inlineResourceSignature}`;
     if (automaticResourceLoadAttemptRef.current === attemptKey) return;
     automaticResourceLoadAttemptRef.current = attemptKey;
-    // Markdown 图片和已持久用户附件都属于正文，不应要求用户先展开“处理过程”
+    // Markdown 链接、图片和已持久用户附件都属于正文，不应要求用户先展开“处理过程”
     // 才能取得资源元数据。
     // 失败保留现有占位与手动重试入口，避免 React 重渲染形成无界请求循环。
     void Promise.resolve(loadConversationResources()).catch(() => undefined);
-  }, [assistantDeliverablesAvailable, itemNeedingImageResources, props.state.conversationId, props.state.transportState, renderProps.onLoadConversationResources, resourcePaging]);
+  }, [assistantDeliverablesAvailable, inlineResourceSignature, itemsNeedingInlineResources, props.state.conversationId, props.state.transportState, renderProps.onLoadConversationResources, renderProps.onLoadTurnArtifacts, resourcePaging]);
   const loadEarlierHistoryWithAnchor = useCallback(async (): Promise<void> => {
     const loadEarlier = renderProps.onLoadEarlierHistory;
     const container = containerRef.current;
@@ -1268,6 +1288,20 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       <output className="session-sr-only session-transcript-announcement" aria-live="polite" aria-atomic="true">
         {completedAnnouncement ? <span key={completedAnnouncement.key}>{completedAnnouncement.text}</span> : null}
       </output>
+      {resourcePaging?.error ? (
+        <div role="alert" className="session-resource-load-error">
+          <span>{props.language === 'zh-CN' ? '链接与附件信息读取失败。' : 'Unable to load links and attachments.'}</span>
+          <button
+            type="button"
+            disabled={resourcePaging.loading}
+            onClick={() => {
+              void Promise.resolve(renderProps.onLoadConversationResources?.()).catch(() => undefined);
+            }}
+          >
+            {props.language === 'zh-CN' ? '重试' : 'Retry'}
+          </button>
+        </div>
+      ) : null}
       <div ref={shellRef} className="session-transcript-shell" data-navigation-ready={(showNavigation && !navigation.error) || undefined}>
         <section
           ref={containerRef}

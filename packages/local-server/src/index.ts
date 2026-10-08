@@ -718,7 +718,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     throw Object.assign(new Error('只读验证描述符与 Local Server 数据路径不一致。'), { code: 'ZEUS_READ_ONLY_VALIDATION_PATH_MISMATCH', statusCode: 503 });
   }
   const taskAttachmentRoot = readOnlyValidation ? undefined : prepareTaskAttachmentRoot(options.taskAttachmentRoot ?? dataLayout.taskAttachments);
-  const attachmentRepair = readOnlyValidation ? { repairedAttachmentCount: 0, repairedTaskCount: 0, repairedPathCount: 0, repairedFieldCount: 0 } : repairTaskAttachmentReferences(db, taskAttachmentRoot);
+  const attachmentRepair = readOnlyValidation ? { repairedAttachmentCount: 0, repairedTaskCount: 0, repairedPathCount: 0, repairedFieldCount: 0 } : repairTaskAttachmentReferences(db, taskAttachmentRoot, options.dbPath);
   if (attachmentRepair.repairedAttachmentCount > 0) {
     await db.save();
     console.info(
@@ -1854,6 +1854,22 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     readOnlyValidation: Boolean(readOnlyValidation),
   });
   let settleCodexPendingOnClose = ownsCodexAppServerManager;
+  /** 后台恢复与关闭共用生命周期，避免数据库关闭后仍接纳恢复结果。 */
+  let startupRecoveryStopping = false;
+  /** 关闭流程等待本次恢复收口，启动流程不等待远端响应。 */
+  let startupRecovery: Promise<void> = Promise.resolve();
+
+  /** 先停止接纳和结束 Provider 等待，再确认后台恢复不会继续访问数据库。 */
+  async function stopStartupProviders(): Promise<void> {
+    startupRecoveryStopping = true;
+    /** 任一步失败都继续关闭其余资源，保留全部失败原因。 */
+    const results = await Promise.allSettled([codexNativeCoordinator.close({ mode: settleCodexPendingOnClose ? 'final' : 'handoff' })]);
+    if (ownsCodexAppServerManager) results.push(...(await Promise.allSettled([codexAppServerManager.close()])));
+    results.push(...(await Promise.allSettled([startupRecovery])));
+    /** 恢复和关闭均已结束后才向调用方报告失败。 */
+    const errors = results.flatMap((result) => (result.status === 'rejected' ? [result.reason] : []));
+    if (errors.length > 0) throw new AggregateError(errors, 'Zeus 后台恢复关闭失败。');
+  }
   let codexAccountFingerprintSalt = settings.getJson<string>(codexAccountFingerprintSaltKey)?.trim();
   if (!codexAccountFingerprintSalt) {
     codexAccountFingerprintSalt = readOnlyValidation ? readOnlyValidation.manifestHash : randomUUID();
@@ -2440,65 +2456,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (repaired) await db.save();
   };
   traceStartup('codex_coordinator_ready');
-  if (executionHostDispatchMayResume && codexNativeEnabled && codexRemoteControlEnabled) {
-    void codexAppServerManager
-      .ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}), remoteControl: true })
-      .then(() => codexAppServerManager.enableRemoteControl())
-      .catch(async (error) => {
-        auditLogs.append({
-          actorType: 'system',
-          action: 'codex.remote_control.restore_failed',
-          resourceType: 'settings',
-          payload: { error: error instanceof Error ? { name: error.name, message: error.message } : { message: String(error) } },
-          createdAt: now().toISOString(),
-        });
-        await db.save();
-      });
-  }
-  if (executionHostDispatchMayResume && codexNativeEnabled) {
-    try {
-      const migration = await migrateLegacyCodexThreads({
-        db,
-        projects,
-        tasks,
-        taskEvents,
-        runtimeSessions,
-        conversations,
-        turns: conversationTurns,
-        providerItems: conversationProviderItems,
-        submissions: conversationSubmissions,
-        manager: codexAppServerManager,
-        commandPath: currentCodexRuntimeCommandPath(),
-        externalAgentHome: codexExternalAgentHome,
-      });
-      if (migration.imported.length > 0 || migration.existing.length > 0 || migration.archivedSourceConversationIds.length > 0) {
-        auditLogs.append({
-          actorType: 'system',
-          action: 'conversation.legacy_codex_threads.migrate',
-          resourceType: 'conversation',
-          payload: {
-            importedCount: migration.imported.length,
-            existingCount: migration.existing.length,
-            skippedCount: migration.skipped.length,
-            archivedSourceCount: migration.archivedSourceConversationIds.length,
-            skippedReasons: migration.skipped.map((entry) => entry.reason),
-          },
-          createdAt: now().toISOString(),
-        });
-        await db.save();
-      }
-    } catch (migrationError) {
-      auditLogs.append({
-        actorType: 'system',
-        action: 'conversation.legacy_codex_threads.migrate_failed',
-        resourceType: 'conversation',
-        payload: { errorType: migrationError instanceof Error ? migrationError.name : typeof migrationError },
-        createdAt: now().toISOString(),
-      });
-      await db.save();
-    }
-  }
-  traceStartup('legacy_threads_ready');
+  /** 先创建本地导入入口，联网核对随后台恢复执行。 */
   let codexLegacyImportService: CodexLegacyImportService | undefined;
   if (executionHostDispatchMayResume && codexNativeEnabled && options.codexLegacyImportRoot) {
     codexLegacyImportService = createCodexLegacyImportService({
@@ -2512,26 +2470,14 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       providerBinaryVersion: 'user-installed',
       onUpdated: (snapshot) => publishNativeConversationEvent('codex.legacy_import.updated', snapshot),
     });
-    try {
-      await codexLegacyImportService.recover();
-    } catch (recoveryError) {
-      auditLogs.append({
-        actorType: 'system',
-        action: 'conversation.codex_legacy_import.recover_failed',
-        resourceType: 'conversation',
-        payload: { errorType: recoveryError instanceof Error ? recoveryError.name : typeof recoveryError },
-        createdAt: now().toISOString(),
-      });
-      await db.save();
-    }
   }
-  traceStartup('legacy_imports_ready');
   (server as ZeusFastifyLifecycle).prepareZeusShutdown = async () => {
     if (readOnlyValidation) return;
     settleCodexPendingOnClose = true;
+    startupRecoveryStopping = true;
     await codexLegacyImportService?.close();
     await zeusConversationPluginRuntime?.close();
-    await codexNativeCoordinator.close({ mode: 'final' });
+    await stopStartupProviders();
   };
   if (executionHostDispatchMayResume) await turnChangeSetService.recoverInterruptedOperations();
   traceStartup('turn_changes_ready');
@@ -3357,7 +3303,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     parseConversationPermissionMode,
     providerTurnClientMessageId,
   } = conversationOperations;
-  if (executionHostDispatchMayResume) await recoverExpertRounds();
   submitPluginHookContinuation = conversationOperations.submitPluginHookContinuation;
   const gitIntegrationOperations = createGitIntegrationOperations({
     settings,
@@ -3903,56 +3848,17 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   closeLocalServerResources = async () => {
     unsubscribeCodexRpcRetries();
     unsubscribeCodexModels();
-    await Promise.all([platformRoutes.close(), zeusConversationPluginRuntime?.close()]);
+    try {
+      await stopStartupProviders();
+    } finally {
+      await Promise.all([platformRoutes.close(), zeusConversationPluginRuntime?.close()]);
+    }
   };
   taskWorkTools = platformRoutes.workTools;
   projectGitQueries = platformRoutes.projectGitQueries;
   conversationCapabilityQueries = platformRoutes.conversationCapabilityQueries;
   const { commandCenter } = platformRoutes;
 
-  // 恢复过程可能立即发布 queue.changed。事件投影依赖 platformRoutes 提供的队列序列化器，
-  // 必须在组合根完成初始化后再恢复；否则启动期派发失败会触发 TDZ 并让整个 Core 退出。
-  if (
-    executionHostDispatchMayResume &&
-    codexNativeEnabled &&
-    (conversations.listNativeBoundRecords('codex').length > 0 ||
-      conversationSubmissions.listRecoverable().some((submission) => conversations.getRecordById(submission.conversationId)?.agentKind === 'codex' && (submission.status === 'dispatching' || submission.status === 'active')))
-  ) {
-    try {
-      await codexNativeCoordinator.recover();
-    } catch (recoveryError) {
-      const claimedRecoveryError = claimCodexFinalizationOwnership(recoveryError);
-      const cleanupErrors: unknown[] = [];
-      try {
-        await codexNativeCoordinator.close({ mode: 'final' });
-      } catch (error) {
-        cleanupErrors.push(error);
-      }
-      try {
-        await server.close();
-      } catch (error) {
-        cleanupErrors.push(error);
-      }
-      if (ownsCodexAppServerManager) {
-        try {
-          await codexAppServerManager.prepareForShutdown();
-        } catch (error) {
-          cleanupErrors.push(error);
-        }
-        try {
-          await codexAppServerManager.close();
-        } catch (error) {
-          cleanupErrors.push(error);
-        }
-      }
-      if (cleanupErrors.length > 0) throw claimCodexFinalizationOwnership(new AggregateError([claimedRecoveryError, ...cleanupErrors], 'Zeus native recovery and cleanup failed.'));
-      throw claimedRecoveryError;
-    }
-  }
-  traceStartup('codex_recovery_ready');
-
-  // 先核对“请求已写出但 turn/start 回执丢失”的候选 thread；只有原生 turn 与
-  // clientUserMessageId 同时吻合时才补交提升事务，其他情况保持结果未知和队列锁。
   // Pi 运行内核随 Zeus 进程结束，重启时必须把已接纳但未终结的轮次显式收敛为中断。
   if (executionHostDispatchMayResume) {
     for (const attempt of taskIntegrationAttempts.listByState('preparing')) {
@@ -3965,27 +3871,139 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     }
     await recoverAcceptedPiTurnsAfterRestart();
     await reconcilePausedTurnsAfterRestart();
-    await recoverUnifiedOutcomeUnknownSwitches();
   }
-  if (!readOnlyValidation) conversationExecution.setDispatchEnabled(executionHostDispatchMayResume);
   if (!readOnlyValidation) await db.save();
-  if (!readOnlyValidation && executionHostDispatchMayResume) {
-    await piNativeCoordinator.recoverGoals();
-    const queuedConversationIds = new Set(
-      conversationSubmissions
-        .listRecoverable()
-        .filter((submission) => submission.status === 'queued')
-        .map((submission) => submission.conversationId),
-    );
-    for (const conversationId of queuedConversationIds) {
-      queueMicrotask(() => void dispatchUnifiedConversationQueueHead?.(conversationId).catch(() => undefined));
-    }
-  }
   // 所有组合根初始化完成后再启动后台投影；启动失败时不能让异步扫描访问已回滚关闭的数据库，
   // 更不能用次生 “SQLite 已关闭” 覆盖真正的启动错误。
   if (!readOnlyValidation) {
-    platformRoutes.recover();
+    if (!executionHostDispatchMayResume) platformRoutes.recover();
     taskEventFileProjection.recover();
+  }
+  /** 本地首页先就绪，联网恢复在后台完成；恢复核对前保持原有调度限制。 */
+  async function recoverStartupProviders(): Promise<void> {
+    if (executionHostDispatchMayResume && codexNativeEnabled && codexRemoteControlEnabled) {
+      await codexAppServerManager
+        .ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}), remoteControl: true })
+        .then(() => codexAppServerManager.enableRemoteControl())
+        .catch(async (error) => {
+          auditLogs.append({
+            actorType: 'system',
+            action: 'codex.remote_control.restore_failed',
+            resourceType: 'settings',
+            payload: { error: error instanceof Error ? { name: error.name, message: error.message } : { message: String(error) } },
+            createdAt: now().toISOString(),
+          });
+          await db.save();
+        });
+    }
+    if (startupRecoveryStopping) return;
+    if (executionHostDispatchMayResume && codexNativeEnabled) {
+      try {
+        const migration = await migrateLegacyCodexThreads({
+          db,
+          projects,
+          tasks,
+          taskEvents,
+          runtimeSessions,
+          conversations,
+          turns: conversationTurns,
+          providerItems: conversationProviderItems,
+          submissions: conversationSubmissions,
+          manager: codexAppServerManager,
+          commandPath: currentCodexRuntimeCommandPath(),
+          externalAgentHome: codexExternalAgentHome,
+        });
+        if (migration.imported.length > 0 || migration.existing.length > 0 || migration.archivedSourceConversationIds.length > 0) {
+          auditLogs.append({
+            actorType: 'system',
+            action: 'conversation.legacy_codex_threads.migrate',
+            resourceType: 'conversation',
+            payload: {
+              importedCount: migration.imported.length,
+              existingCount: migration.existing.length,
+              skippedCount: migration.skipped.length,
+              archivedSourceCount: migration.archivedSourceConversationIds.length,
+              skippedReasons: migration.skipped.map((entry) => entry.reason),
+            },
+            createdAt: now().toISOString(),
+          });
+          await db.save();
+        }
+      } catch (migrationError) {
+        auditLogs.append({
+          actorType: 'system',
+          action: 'conversation.legacy_codex_threads.migrate_failed',
+          resourceType: 'conversation',
+          payload: { errorType: migrationError instanceof Error ? migrationError.name : typeof migrationError },
+          createdAt: now().toISOString(),
+        });
+        await db.save();
+      }
+    }
+    traceStartup('legacy_threads_ready');
+    if (startupRecoveryStopping) return;
+    if (executionHostDispatchMayResume && codexNativeEnabled && options.codexLegacyImportRoot) {
+      try {
+        await codexLegacyImportService!.recover();
+      } catch (recoveryError) {
+        auditLogs.append({
+          actorType: 'system',
+          action: 'conversation.codex_legacy_import.recover_failed',
+          resourceType: 'conversation',
+          payload: { errorType: recoveryError instanceof Error ? recoveryError.name : typeof recoveryError },
+          createdAt: now().toISOString(),
+        });
+        await db.save();
+      }
+    }
+    traceStartup('legacy_imports_ready');
+    if (startupRecoveryStopping) return;
+    // 恢复过程可能立即发布 queue.changed。事件投影依赖 platformRoutes 提供的队列序列化器，
+    // 必须在组合根完成初始化后再恢复；否则启动期派发失败会触发 TDZ 并让整个 Core 退出。
+    if (
+      executionHostDispatchMayResume &&
+      codexNativeEnabled &&
+      (conversations.listNativeBoundRecords('codex').length > 0 ||
+        conversationSubmissions.listRecoverable().some((submission) => conversations.getRecordById(submission.conversationId)?.agentKind === 'codex' && (submission.status === 'dispatching' || submission.status === 'active')))
+    ) {
+      await codexNativeCoordinator.recover();
+    }
+    traceStartup('codex_recovery_ready');
+    // 写出结果未知的候选线程仍需核对原消息身份，不能在首页开放后直接重发。
+    await recoverUnifiedOutcomeUnknownSwitches();
+    if (startupRecoveryStopping) return;
+    conversationExecution.setDispatchEnabled(executionHostDispatchMayResume);
+    if (!readOnlyValidation) await db.save();
+    if (!readOnlyValidation && executionHostDispatchMayResume) {
+      await piNativeCoordinator.recoverGoals();
+      if (startupRecoveryStopping) return;
+      await recoverExpertRounds();
+      const queuedConversationIds = new Set(
+        conversationSubmissions
+          .listRecoverable()
+          .filter((submission) => submission.status === 'queued')
+          .map((submission) => submission.conversationId),
+      );
+      for (const conversationId of queuedConversationIds) {
+        queueMicrotask(() => void dispatchUnifiedConversationQueueHead?.(conversationId).catch(() => undefined));
+      }
+    }
+    if (!startupRecoveryStopping) platformRoutes.recover();
+  }
+
+  if (!readOnlyValidation && executionHostDispatchMayResume) {
+    startupRecovery = recoverStartupProviders().catch(async (error: unknown) => {
+      if (startupRecoveryStopping) return;
+      // 远端恢复失败只阻止调度，主页和已有本地记录仍可读取。
+      auditLogs.append({
+        actorType: 'system',
+        action: 'conversation.startup_recovery.failed',
+        resourceType: 'conversation',
+        payload: { errorType: error instanceof Error ? error.name : typeof error },
+        createdAt: now().toISOString(),
+      });
+      await db.save();
+    });
   }
   traceStartup('routes_ready');
   return server;

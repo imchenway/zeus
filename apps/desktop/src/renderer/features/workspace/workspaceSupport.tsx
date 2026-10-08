@@ -47,7 +47,7 @@ import {
   type AiRuntimeSessionStatus,
   type AppShellSettings,
   type DashboardClient,
-  type DashboardSnapshot,
+  type WorkspaceSnapshot,
   type DeleteTaskRequest,
   type ExecutionHostTransition,
   type GitDiffSummary,
@@ -206,6 +206,8 @@ export type TrackedTaskModelPushState = TaskModelPushPendingState & { origin: Ta
 export type NativeConversationAppClient = SessionControllerClient &
   Pick<
     DashboardClient,
+    | 'loadHomeAttention'
+    | 'loadHomeRuntime'
     | 'loadConversationGitHistory'
     | 'loadProjectGitComparisonDiff'
     | 'memory'
@@ -439,15 +441,15 @@ export function createNativeProjectConversationChoiceLoadCoordinator(): NativePr
 }
 
 export type TaskRuntimeControlHandlerResult =
-  | DashboardSnapshot
+  | WorkspaceSnapshot
   | {
-      snapshot: DashboardSnapshot;
+      snapshot: WorkspaceSnapshot;
       task?: TaskRecord;
       conversation?: ConversationHistoryItem;
       runtimeError?: { message: string };
     };
 export type NormalizedTaskRuntimeControlHandlerResult = {
-  snapshot: DashboardSnapshot;
+  snapshot: WorkspaceSnapshot;
   task?: TaskRecord;
   conversation?: ConversationHistoryItem;
   runtimeError?: { message: string };
@@ -1312,7 +1314,7 @@ export function inferInitialMainNavTarget(props: {
   initialArchivedProjects?: ProjectRecord[];
   initialArchivedTasks?: TaskRecord[];
   initialTaskTemplates?: TaskTemplateRecord[];
-  snapshot?: DashboardSnapshot;
+  snapshot?: WorkspaceSnapshot;
 }): MainNavTarget {
   if (props.initialMainNavTarget) return normalizeMainNavTarget(`#${props.initialMainNavTarget}`);
   if (typeof window !== 'undefined' && window.location.hash) return readCurrentMainNavTarget();
@@ -1353,7 +1355,7 @@ export function inferInitialProjectSection(props: {
   initialProjectConfig?: ProjectConfig;
   initialProjectDatabaseSecret?: ProjectDatabaseSecretSnapshot;
   initialArchivedProjects?: ProjectRecord[];
-  snapshot?: DashboardSnapshot;
+  snapshot?: WorkspaceSnapshot;
 }): ProjectWorkspaceSection {
   if (props.snapshot?.projects[0]?.id === temporaryWorkspaceId) return 'sessions';
   if (typeof window !== 'undefined' && (window.location.hash === '#project-commands' || window.location.hash.startsWith('#project-code'))) return 'code';
@@ -1380,7 +1382,7 @@ export function syncRecordFromSnapshot<T extends { id: string }>(current: T | un
   return current ? (records.find((record) => record.id === current.id) ?? records[0]) : records[0];
 }
 
-export function selectCreatedProjectTask(snapshot: DashboardSnapshot, previousTaskIds: Set<string>, projectId: string): TaskRecord | undefined {
+export function selectCreatedProjectTask(snapshot: WorkspaceSnapshot, previousTaskIds: Set<string>, projectId: string): TaskRecord | undefined {
   return snapshot.tasks.find((task) => task.projectId === projectId && !previousTaskIds.has(task.id)) ?? snapshot.tasks.find((task) => task.projectId === projectId);
 }
 

@@ -38,7 +38,9 @@
         position: fixed;
         inset: 0;
         display: grid;
-        place-items: center;
+        place-content: center;
+        justify-items: center;
+        gap: 16px;
         pointer-events: none;
         user-select: none;
       }
@@ -71,9 +73,10 @@
   </head>
   <body>
     <div id="root">
-      <div class="zeus-startup-loader" aria-hidden="true">
+      <div class="zeus-startup-loader" role="status" aria-live="polite">
         <!-- 与启动失败页共用透明底图标，保留原有圆角底板。 -->
         <img class="zeus-startup-icon" src="./assets/startup-mark.png" alt="" tabindex="-1" draggable="false" />
+        <span id="zeus-startup-stage">准备本地数据</span>
       </div>
     </div>
     <script type="module" src="/src/renderer/main.tsx"></script>

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, parse, relative } from 'node:path';
 import { isTaskAttachmentField, type TaskAttachmentField } from '@zeus/shared';
-import type { ZeusDatabase } from '@zeus/storage';
+import { SettingRepository, type ZeusDatabase } from '@zeus/storage';
 
 export function migrateRuntimeDirectory(legacyPath: string, targetPath: string): string {
   if (!existsSync(targetPath) && existsSync(legacyPath)) {
@@ -223,7 +223,15 @@ export function resolveCurrentManagedTaskAttachmentPath(attachment: Record<strin
   }
 }
 
-export function repairTaskAttachmentReferences(db: ZeusDatabase, taskAttachmentRoot: string | undefined): ManagedTaskAttachmentRepairResult {
+/** 成功记录绑定真实资料根和数据库文件；恢复备份或更换根目录都会重新核验。 */
+export function repairTaskAttachmentReferences(db: ZeusDatabase, taskAttachmentRoot: string | undefined, databasePath?: string): ManagedTaskAttachmentRepairResult {
+  const settings = new SettingRepository(db);
+  const markerKey = 'maintenance.task_attachment_references';
+  const root = taskAttachmentRoot ? realpathSync(taskAttachmentRoot) : '';
+  const identity = databasePath ? statSync(databasePath) : null;
+  const rootIdentity = root ? statSync(root) : null;
+  const binding = identity && rootIdentity ? `${root}:${rootIdentity.dev}:${rootIdentity.ino}:${identity.dev}:${identity.ino}:field-owned-attachments` : null;
+  if (binding && settings.getJson<{ binding: string }>(markerKey)?.binding === binding) return { repairedAttachmentCount: 0, repairedTaskCount: 0, repairedPathCount: 0, repairedFieldCount: 0 };
   let repairedAttachmentCount = 0;
   let repairedTaskCount = 0;
   let repairedPathCount = 0;
@@ -276,6 +284,8 @@ export function repairTaskAttachmentReferences(db: ZeusDatabase, taskAttachmentR
     );
     repairedTaskCount += 1;
   }
+  // 未解决路径继续在附件使用入口校验；一次完整核验成功后不重复扫描所有历史任务。
+  if (binding) settings.setJson(markerKey, { binding, completedAt: new Date().toISOString() });
   return { repairedAttachmentCount, repairedTaskCount, repairedPathCount, repairedFieldCount };
 }
 

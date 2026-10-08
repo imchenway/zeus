@@ -1,6 +1,11 @@
 import type { ConversationFileIconKind, ConversationResource } from '@zeus/shared';
 import type { NativeConversationSnapshot, NativeConversationResourceV2Item, NativeItemSnapshot } from './sessionTypes.js';
 
+/** 汇总所有待补载正文的链接身份，旧消息失败不能挡住后续回复；普通文字增量不重试。 */
+export function inlineResourceRequestSignature(items: readonly { key: string; turnId: string; providerItemId?: string | null; text: string }[]): string {
+  return JSON.stringify(items.map((item) => [item.turnId, item.providerItemId ?? item.key, [...item.text.matchAll(/!?\[([^\]\n]+)\]\(([^)\n]+)\)/gu)].map((match) => match[0])]));
+}
+
 /** 资源元数据到会话项的投影，不持有订阅、重连或发送状态。 */
 const conversationFileIconKinds = new Set<ConversationFileIconKind>(['code', 'java', 'javascript', 'typescript', 'json', 'markdown', 'sql', 'html', 'css', 'image', 'pdf', 'spreadsheet', 'presentation', 'document', 'archive', 'file']);
 

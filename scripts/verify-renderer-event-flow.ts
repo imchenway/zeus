@@ -1,3 +1,5 @@
+import { buildPersistedSessionViewCache } from '../apps/desktop/src/renderer/session/sessionHotCache.ts';
+import { inlineResourceRequestSignature } from '../apps/desktop/src/renderer/session/conversationResourceProjection.ts';
 import { ZeusApiError } from '../apps/desktop/src/renderer/transport/localApiTransport.ts';
 import { createSessionController, type SessionControllerClient, sessionRealtimeBufferBudget } from '../apps/desktop/src/renderer/session/useSessionController.ts';
 import { adaptConversationSnapshotV2, mergeConversationProcessV2, resumeCachedConversationSnapshot } from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.ts';
@@ -351,12 +353,12 @@ async function verifyQueuedRetryReconciliation() {
     assert(harness.connectedAfterSequences.length === 1, '空闲会话重试后必须恢复实时连接，接收正文和后续进展。');
     assert(!Object.values(harness.controller.getState().items).some((item) => item.payload.submissionId === submission.id), '替换成功后不得遗留旧失败气泡。');
     recovered = { ...queue, submissions: [{ ...submission, status: 'paused', pausedReason: 'outcome_unknown' }] };
-    /** 仍未知必须保留错误，不得调用重试接口。 */
+    /** 仍未知时保留核对状态，不重复抛错，也不得调用重试接口。 */
     const unknown = await harness.controller.retryQueuedSubmission(submission.id).then(
       () => null,
       (error: Error) => error,
     );
-    assert(unknown?.message.includes('ZEUS_NATIVE_SUBMISSION_OUTCOME_UNKNOWN') === true && retries === 1, '未知结果不得再次发送。');
+    assert(unknown === null && retries === 1 && checks === 2 && harness.controller.getState().queue?.submissions.find((entry) => entry.id === submission.id)?.pausedReason === 'outcome_unknown', '未知结果不得再次发送。');
     recovered = { ...queue, submissions: [{ ...submission, providerTurnId: 'accepted-turn' }] };
     /** 已送达分支仍须独立补齐权威正文。 */
     const readsBeforeAccepted = harness.snapshotReads();
@@ -684,9 +686,20 @@ function verifyRestoredSubmissionOrder() {
         steered.itemOrder.map((key) => steered.items[key]!),
         steered.queue,
       )
+        .filter((item) => item.type === 'agentMessage')
+        .map((item) => item.text)
+        .join('|') === '回复 1|回复 3|回复 5',
+      '缺少持久位置的接纳通知不得重排已确认正文',
+    );
+    const positioned = sessionReducer(steered, { type: 'snapshot_hydrated', snapshot: { ...base, items: [...replies, acceptedInputs[1]!], submissions: [], queue } });
+    assert(
+      orderTranscriptItemsWithQueue(
+        positioned.itemOrder.map((key) => positioned.items[key]!),
+        positioned.queue,
+      )
         .map((item) => item.text)
         .join('|') === '回复 1|第一次引导|回复 3|回复 5',
-      '迟到的引导接纳必须插回对应回复之前。',
+      '取得持久位置后，引导必须插回对应回复之前',
     );
     for (const action of [
       { type: 'queue_hydrated' as const, queue: lateQueue },
@@ -698,7 +711,13 @@ function verifyRestoredSubmissionOrder() {
         live.itemOrder.map((key) => live.items[key]!),
         live.queue,
       );
-      assert(ordered.map((item) => item.text).join('|') === '任务推送提示词|回复 1|第一次引导|回复 3|第二次引导|回复 5|待发消息', '实时补回的首发和引导必须立即归位，不能等待切换会话。');
+      assert(
+        ordered
+          .filter((item) => item.type === 'agentMessage')
+          .map((item) => item.text)
+          .join('|') === '回复 1|回复 3|回复 5',
+        '队列水位不能在持久正文补齐前改变已确认回复顺序。',
+      );
       /** 内容增量更新不能用更新时间把回复挪到后续输入之后。 */
       const updated = ordered.map((item) => (item.text === '回复 1' ? { ...item, updatedAt: at(30) } : item));
       assert(
@@ -720,7 +739,10 @@ function verifyRestoredSubmissionOrder() {
       state.itemOrder.map((key) => state.items[key]!),
       state.queue,
     );
-    assert(ordered.map((item) => item.text).join('|') === '任务推送提示词|回复 1|第一次引导|回复 3|第二次引导|回复 5|待发消息', '切回会话后，任务首发和多次引导必须留在对应回复之前。');
+    assert(
+      ordered.map((item) => item.text).join('|') === '任务推送提示词|回复 1|第一次引导|回复 3|第二次引导|回复 5' && composerQueuedSubmissions(state).some((submission) => submission.content === '待发消息'),
+      '切回会话后持久正文顺序保持不变，未发送内容仍在队列区域。',
+    );
     for (const status of ['completed', 'resolved']) {
       /** 终态已确认但原生身份仍未补齐的分页合并结果也不能进入队尾。 */
       const terminal = ordered.map((item) => (item.clientUserMessageId === submissions[0]!.clientUserMessageId ? { ...item, status } : item));
@@ -1911,6 +1933,83 @@ function verifyTaskPushChoiceHandoff() {
   const foreign = { ...temporary, projectId: 'another-project', taskId: 'another-task' };
   assert(projectTaskModelPushConversationChoices(pending, [canonical, foreign]).includes(foreign), '推送入口合并必须遵守项目和任务边界。');
   return { arrivalOrders: 3, canonicalConversationId: canonical.id, retainedHistory: sibling.id };
+}
+
+/** 缓存与权威读取竞争时，真实控制器只允许缓存填充尚未取得的显示内容。 */
+async function verifyAsyncSessionCache(): Promise<void> {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  const first = createHarness(undefined, 0, false);
+  let resolveCache!: (value: unknown) => void;
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+      zeus: {
+        loadSessionViewCache: () =>
+          new Promise((resolve) => {
+            resolveCache = resolve;
+          }),
+      },
+    },
+  });
+  try {
+    await first.controller.start();
+    const authoritative = first.controller.getState();
+    const cached = { ...authoritative, snapshot: { ...authoritative.snapshot!, title: '旧显示缓存' } };
+    const envelope = buildPersistedSessionViewCache(new Map([[conversationId, { state: cached, cachedAt: Date.now(), estimatedBytes: 0 }]]));
+    assert(envelope.entries.length === 1, '探针缓存必须通过正式清洗');
+    resolveCache(envelope);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert(first.controller.getState() === authoritative, '晚到缓存不能覆盖已取得的权威快照、顺序或滚动所用修订');
+    first.controller.dispose();
+    const second = createHarness(undefined, 0, false);
+    const read = second.client.loadNativeConversationReadableSnapshot!.bind(second.client);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    second.client.loadNativeConversationReadableSnapshot = async (...args) => {
+      await gate;
+      return read(...args);
+    };
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: { zeus: { loadSessionViewCache: async () => envelope } } });
+    second.controller.setDraft('尚未发送的新草稿');
+    const pending = second.controller.start();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert(second.controller.getState().snapshot?.title === '旧显示缓存' && second.controller.getState().draft === '尚未发送的新草稿', '先到缓存只能补显示，不能覆盖输入');
+    release();
+    await pending;
+    assert(second.controller.getState().snapshot?.title !== '旧显示缓存' && second.controller.getState().draft === '尚未发送的新草稿', '权威快照必须接管显示并保留草稿');
+    second.controller.dispose();
+  } finally {
+    first.controller.dispose();
+    if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
+    else Reflect.deleteProperty(globalThis, 'window');
+  }
+}
+
+/** 旧链接不能登记时，新回复仍补载；没有新完整链接时不循环请求。 */
+function verifyInlineResourceRequests(): void {
+  /** 模拟始终无法登记的历史链接。 */
+  const history = { key: 'history', turnId: 'old-turn', providerItemId: 'old-item', text: '[旧链接](missing-file.md)' };
+  /** 后续回复仍需登记新的链接。 */
+  const reply = { key: 'reply', turnId: 'new-turn', providerItemId: 'new-item', text: '[文档](https://example.com/docs)' };
+  /** 历史失败项单独存在时的请求身份。 */
+  const previous = inlineResourceRequestSignature([history]);
+  /** 新回复加入后的请求身份必须变化。 */
+  const current = inlineResourceRequestSignature([history, reply]);
+  assert(current !== previous, '旧消息资源缺失不能遮住后续回复的新链接');
+  assert(current === inlineResourceRequestSignature([history, { ...reply, text: `${reply.text} 后续普通文字` }]), '正文逐字增长不能重复请求相同资源');
+  assert(current !== inlineResourceRequestSignature([history, { ...reply, text: `${reply.text} [下一页](https://example.com/next)` }]), '同一条回复新增完整链接后必须允许补载');
+  assert(current !== inlineResourceRequestSignature([history, { ...reply, providerItemId: 'confirmed-item' }]), '正文取得权威身份后必须允许资源重新挂接');
+}
+
+verifyInlineResourceRequests();
+
+/** 本轮启动与缓存专项仍复用现有脚本，不引入新框架或文件。 */
+if (process.argv.includes('--startup-cache-only')) {
+  await verifyAsyncSessionCache();
+  console.log(JSON.stringify({ asyncSessionCache: 'passed', queuedRetry: await verifyQueuedRetryReconciliation(), processStructure: await verifyStableHydrationPages(), placementTakeover: await verifyPlacementEpochTakeover() }));
+  process.exit(0);
 }
 
 /** 创建身份专项复用现有探针，不引入新的验证体系。 */

@@ -378,6 +378,25 @@ export interface CreateTaskFromTemplateInput {
   variables?: Record<string, string>;
 }
 
+/** 列表只携带排序、筛选与入口字段；正文和来源上下文仍由详情查询返回。 */
+export type ZeusTaskSummary = Pick<
+  ZeusTaskRecord,
+  'id' | 'projectId' | 'taskCode' | 'taskSequence' | 'parentTaskId' | 'relatedTaskIds' | 'title' | 'taskType' | 'managementStatus' | 'status' | 'priority' | 'tags' | 'createdAt' | 'updatedAt' | 'createdFrom' | 'templateId'
+> & { contentPreview: string; matchedQuery?: string };
+/** 游标绑定项目和排序条件，不能跨查询使用。 */
+export interface TaskSummaryPage {
+  items: ZeusTaskSummary[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+/** 摘要分页每页默认 50 条，详情查询含义保持不变。 */
+export interface TaskSummaryQuery {
+  /** 搜索复用完整任务匹配规则，仅返回摘要字段。 */
+  query?: string;
+  cursor?: string;
+  limit?: number;
+}
+
 export interface TaskListOptions {
   query?: string;
   status?: ZeusTaskRecord['status'];
@@ -586,7 +605,7 @@ function filterAndSortTasks(records: ZeusTaskRecord[], options: TaskListOptions)
   return [...filtered].sort((left, right) => {
     const leftValue = String(left[sortBy]);
     const rightValue = String(right[sortBy]);
-    return leftValue.localeCompare(rightValue) * direction;
+    return (leftValue.localeCompare(rightValue) || left.id.localeCompare(right.id)) * direction;
   });
 }
 
@@ -1296,6 +1315,77 @@ export class TaskRepository {
     return filterAndSortTasks(records, options);
   }
 
+  /** 默认创建时间升序，身份作为稳定的第二排序键，删除游标行不影响继续读取。 */
+  listSummaryPage(projectId: string, options: TaskSummaryQuery = {}): TaskSummaryPage {
+    const limit = options.limit ?? 50;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw Object.assign(new Error('任务摘要每页数量必须为 1 到 200。'), { statusCode: 400 });
+    let after: { projectId: string; createdAt: string; id: string; query?: string } | undefined;
+    if (options.cursor) {
+      try {
+        if (options.cursor.length > 2048) throw new Error();
+        after = JSON.parse(Buffer.from(options.cursor, 'base64url').toString('utf8')) as typeof after;
+        if (
+          !after ||
+          after.projectId !== projectId ||
+          (after.query ?? '') !== (options.query?.trim().toLowerCase() ?? '') ||
+          typeof after.createdAt !== 'string' ||
+          typeof after.id !== 'string' ||
+          !after.id ||
+          !Number.isFinite(Date.parse(after.createdAt))
+        )
+          throw new Error();
+      } catch {
+        throw Object.assign(new Error('任务摘要游标无效。'), { statusCode: 400 });
+      }
+    }
+    const query = options.query?.trim().toLowerCase() ?? '';
+    if (query) {
+      // ponytail: 按需搜索沿用原有 Unicode 匹配；超大项目搜索慢时由存储层引入全文索引。
+      const matches = this.listByProject(projectId, { query }).filter((task) => !after || task.createdAt > after.createdAt || (task.createdAt === after.createdAt && task.id > after.id));
+      const selected = matches.slice(0, limit);
+      const order = new Map(selected.map((task, index) => [task.id, index]));
+      const items = this.summariesByIds(
+        projectId,
+        selected.map((task) => task.id),
+      )
+        .map((task) => ({ ...task, matchedQuery: query }))
+        .sort((left, right) => order.get(left.id)! - order.get(right.id)!);
+      const last = items.at(-1);
+      const hasMore = matches.length > limit;
+      return { items, hasMore, nextCursor: hasMore && last ? Buffer.from(JSON.stringify({ projectId, createdAt: last.createdAt, id: last.id, query })).toString('base64url') : null };
+    }
+    const rows = this.readSummaries(`project_id = ? AND archived = 0 AND deleted_at IS NULL${after ? ' AND (created_at > ? OR (created_at = ? AND id > ?))' : ''} ORDER BY created_at ASC, id ASC LIMIT ?`, [
+      projectId,
+      ...(after ? [after.createdAt, after.createdAt, after.id] : []),
+      limit + 1,
+    ]);
+    const hasMore = rows.length > limit;
+    const items = rows.slice(0, limit);
+    const last = items.at(-1);
+    return { items, hasMore, nextCursor: hasMore && last ? Buffer.from(JSON.stringify({ projectId, createdAt: last.createdAt, id: last.id })).toString('base64url') : null };
+  }
+
+  /** 会话入口补齐分页之外的任务，不读取正文或丢失活动与未读入口。 */
+  summariesByIds(projectId: string, taskIds: readonly string[]): ZeusTaskSummary[] {
+    const result: ZeusTaskSummary[] = [];
+    for (let offset = 0; offset < taskIds.length; offset += 200) {
+      const batch = taskIds.slice(offset, offset + 200);
+      result.push(...this.readSummaries(`project_id = ? AND deleted_at IS NULL AND id IN (${batch.map(() => '?').join(',')})`, [projectId, ...batch]));
+    }
+    return result;
+  }
+
+  /** 所有摘要入口共用字段映射与任务关系读取。 */
+  private readSummaries(where: string, values: Array<string | number>): ZeusTaskSummary[] {
+    const rows = this.db.select<Omit<ZeusTaskSummary, 'tags' | 'relatedTaskIds'> & { tagsJson: string }>(
+      `SELECT id, project_id AS projectId, task_code AS taskCode, task_sequence AS taskSequence, parent_task_id AS parentTaskId, title, task_type AS taskType, management_status AS managementStatus, status, priority, tags_json AS tagsJson, created_from AS createdFrom, template_id AS templateId, substr(CASE task_type WHEN 'defect' THEN defect_current_state WHEN 'optimization' THEN optimization_current_state ELSE description END, 1, 160) AS contentPreview, created_at AS createdAt, updated_at AS updatedAt FROM tasks WHERE ${where}`,
+      values,
+    );
+    const summaries = rows.map(({ tagsJson, ...row }) => ({ ...row, tags: JSON.parse(tagsJson) as string[], relatedTaskIds: [] as string[] }));
+    this.attachRelatedTaskIds(summaries);
+    return summaries;
+  }
+
   listArchivedByProject(projectId: string, options: TaskListOptions = {}): ZeusTaskRecord[] {
     const records = this.db
       .select<DbTaskRow>(
@@ -1371,7 +1461,7 @@ export class TaskRepository {
     return task;
   }
 
-  private attachRelatedTaskIds(tasks: ZeusTaskRecord[]): void {
+  private attachRelatedTaskIds(tasks: Array<Pick<ZeusTaskRecord, 'id' | 'relatedTaskIds'>>): void {
     if (tasks.length === 0) return;
     const taskById = new Map(tasks.map((task) => [task.id, task]));
     const placeholders = tasks.map(() => '?').join(', ');

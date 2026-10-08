@@ -23932,3 +23932,26 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   background: color-mix(in oklch, var(--zeus-control-danger-bg, #3d1d1d) 90%, transparent);
   color: var(--zeus-control-danger-text, #ff6b6b);
 }
+
+/* 分页反馈位于列表底部，沿用文字色和键盘焦点，不挤占主工具条。 */
+.task-table-pagination {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  min-height: 24px;
+  font-size: 12px;
+  padding: 2px 12px;
+}
+.task-table-pagination button {
+  border: 0;
+  background: transparent;
+  color: var(--brand);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.task-table-pagination button:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
