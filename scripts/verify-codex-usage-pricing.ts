@@ -3,7 +3,16 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CodexUsageLedgerRepository, ConversationExecutionRepository, ConversationRepository, ProjectRepository, SettingRepository, createZeusDatabase } from '../packages/storage/src/index.js';
+import {
+  CodexUsageLedgerRepository,
+  ConversationExecutionRepository,
+  ConversationRepository,
+  ConversationServerRequestRepository,
+  ConversationTurnRepository,
+  ProjectRepository,
+  SettingRepository,
+  createZeusDatabase,
+} from '../packages/storage/src/index.js';
 import {
   codexUsageObservationIdentity,
   emptyTokenUsageBreakdown,
@@ -626,6 +635,116 @@ try {
     }
   }
   assert.deepEqual(ledger.list(), beforePeriodRead);
+  /** 速率沿用真实存储与汇总入口，重放旧版本误收录的交互等待样本。 */
+  const rateExecution = new ConversationExecutionRepository(db);
+  /** 产品轮次提供菜单栏与请求计时之间的原生身份映射。 */
+  const rateTurns = new ConversationTurnRepository(db);
+  /** 持久化交互记录也覆盖已经回答或拒绝的历史请求。 */
+  const rateInteractions = new ConversationServerRequestRepository(db);
+  /** 固定同一天的时钟，避免快捷范围与计时断言随运行时间漂移。 */
+  const rateAt = (seconds: number): string => new Date(Date.parse(periodNow) - 3_600_000 + seconds * 1_000).toISOString();
+  /** 每条样本经生产仓库写入原始计时与费用，测量是否完整可独立设置。 */
+  function recordRateRequest(id: string, visibleTokens: number, seconds: number, changes: Partial<Parameters<typeof rateExecution.observeModelRequest>[0]> = {}) {
+    /** 默认共用会话，另一个会话用于确认无有效样本时返回未知。 */
+    const conversationId = changes.conversationId ?? 'output-rate';
+    /** 所有样本使用明确的本地与 Provider 轮次身份。 */
+    const turn = rateTurns.upsert({
+      id,
+      conversationId,
+      providerThreadId: conversationId,
+      providerTurnId: id,
+      clientSubmissionId: null,
+      status: 'completed',
+      startedAt: rateAt(0),
+      completedAt: rateAt(seconds + 2),
+      createdAt: rateAt(0),
+      updatedAt: rateAt(seconds + 2),
+    });
+    /** 推理 Token 计入账本，但不计入可见文本速率。 */
+    const sampleUsage = { ...usage, outputTokens: visibleTokens + 10, reasoningOutputTokens: 10, totalTokens: usage.inputTokens + visibleTokens + 10 };
+    rateExecution.observeModelRequest({
+      conversationId,
+      turnId: turn.id,
+      segmentId: 'rate-segment',
+      requestKind: 'inference',
+      modelId: model,
+      contextWindow: null,
+      ...sampleUsage,
+      estimatedUsd: null,
+      usageComplete: true,
+      providerRequestId: null,
+      firstVisibleOutputAt: rateAt(0),
+      firstTextOutputAt: rateAt(2),
+      completedAt: rateAt(seconds + 2),
+      measurementComplete: true,
+      occurredAt: rateAt(seconds + 2),
+      ...changes,
+    });
+    ledger.upsert({
+      providerId: 'codex',
+      accountScopeId: 'probe',
+      projectId: 'probe',
+      conversationId,
+      providerThreadId: conversationId,
+      providerTurnId: turn.id,
+      model,
+      serviceTier: 'default',
+      usage: sampleUsage,
+      usageComplete: true,
+      estimate: estimatePublishedCodexUsage({ catalog, prices, model, usage: sampleUsage })!,
+      occurredAt: rateAt(seconds + 2),
+    });
+    return turn;
+  }
+  /** 使用原始交互时间定位受影响请求，不依赖当前处理状态。 */
+  function recordRateInteraction(id: string, turnId: string, requestKind: Parameters<typeof rateInteractions.upsert>[0]['requestKind'], seconds: number, conversationId = 'output-rate') {
+    rateInteractions.upsert({ conversationId, turnId, transportGenerationId: 'rate-generation', providerRequestId: id, requestKind, payload: {}, status: 'resolved', createdAt: rateAt(seconds), resolvedAt: rateAt(seconds + 600) });
+  }
+  recordRateRequest('rate-pure-first', 120, 4);
+  recordRateRequest('rate-pure-latest', 80, 2);
+  // 计时区间之前、之后，以及其他会话或轮次的交互都不能误伤纯文本样本。
+  recordRateInteraction('before', 'rate-pure-latest', 'mcp', -1);
+  recordRateInteraction('after', 'rate-pure-latest', 'mcp', 5);
+  recordRateInteraction('other-turn', 'unrelated-turn', 'mcp', 3);
+  recordRateInteraction('other-conversation', 'rate-pure-latest', 'mcp', 3, 'unrelated-conversation');
+  /** 五类原生交互均不能把等待时间计入生成速度。 */
+  for (const kind of ['request_user_input', 'command', 'file', 'permissions', 'mcp'] as const) {
+    recordRateRequest(`rate-wait-${kind}`, 229, 694.382);
+    recordRateInteraction(kind, `rate-wait-${kind}`, kind, kind === 'mcp' ? 1 : 3);
+  }
+  recordRateRequest('rate-incomplete', 10, 2, { measurementComplete: false });
+  recordRateRequest('rate-unknown-reasoning', 10, 2, { reasoningOutputTokens: null });
+  recordRateRequest('rate-zero-duration', 10, 0);
+  recordRateRequest('rate-compaction', 10, 2, { requestKind: 'context_compaction' });
+  recordRateRequest('rate-only-wait', 229, 694.382, { conversationId: 'rate-only-wait' });
+  recordRateInteraction('only-wait', 'rate-only-wait', 'request_user_input', 3, 'rate-only-wait');
+  /** 读取前冻结账本和原始请求，确认修正展示不重写消费与原始测量。 */
+  const beforeRateLedger = ledger.list();
+  /** 保留旧测量标记，用读取规则排除历史污染。 */
+  const beforeRateRequests = db.select('SELECT * FROM conversation_model_requests ORDER BY id');
+  assert.deepEqual(
+    rateExecution.listOutputRateMeasurements().map((row) => row.providerTurnId),
+    ['rate-pure-first', 'rate-pure-latest'],
+  );
+  assert.equal(rateExecution.sessionMetrics('output-rate').performance.latestOutputTokensPerSecond, 40);
+  assert.equal(rateExecution.sessionMetrics('rate-only-wait').performance.latestOutputTokensPerSecond, null);
+  /** 菜单栏必须按 Token 与时长总和加权，不能直接平均两条请求的速率。 */
+  const rateOverview = await createUsageOverviewService({
+    ledger,
+    codexUsage: service,
+    projects: new ProjectRepository(db),
+    conversations: new ConversationRepository(db),
+    execution: rateExecution,
+    modelConnections: { listMetadata: () => [] } as unknown as Parameters<typeof createUsageOverviewService>[0]['modelConnections'],
+    now: () => new Date(periodNow),
+  }).read();
+  /** 各范围包含相同两条有效样本，应显示相同速率。 */
+  for (const range of ['today', '7d', '30d', 'all'] as const) {
+    assert.equal(rateOverview.providers.find((provider) => provider.providerId === 'codex')!.overviewRanges[range].local.outputTokensPerSecond, 200 / 6);
+  }
+  assert.deepEqual(ledger.list(), beforeRateLedger);
+  assert.deepEqual(db.select('SELECT * FROM conversation_model_requests ORDER BY id'), beforeRateRequests);
+  console.log('通过：用户输入、审批与 MCP 等待不计入历史速率；会话与菜单栏一致，范围及轮次隔离、加权计算、无样本与不完整计时正确，原始请求和费用账本不变。');
   console.log('通过：价格周期按档位和 API 条件隔离，同价刷新连续、真实调价截断、旧价重启合并、未知日期隐藏；全部时间范围一致，账本与 Token、金额保持不变。');
   console.log('通过：两类事件先后顺序、同用量独立请求、歧义不重计、重启重放、首轮完整性、原生历史身份、请求缺价恢复、补算标记保留，以及既有定价与隔离检查。');
 } finally {

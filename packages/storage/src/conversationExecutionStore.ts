@@ -6,6 +6,18 @@ import type { ZeusDatabasePort } from './databasePort.js';
 import { conversationProcessProviderItemId } from '@zeus/shared';
 import { ConversationTranscriptRepository, hashConversationTranscriptContent, providerEntryId } from './conversationTranscriptStore.js';
 
+/** 菜单栏与会话共用测速条件；历史记录中混入用户回答、审批或 MCP 交互的请求也必须排除。 */
+const outputRateMeasurementCondition = `r.measurement_complete = 1
+  AND r.request_kind <> 'context_compaction'
+  AND r.output_tokens IS NOT NULL AND r.reasoning_output_tokens IS NOT NULL
+  AND r.first_text_output_at IS NOT NULL AND r.completed_at IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM conversation_server_requests s
+     WHERE s.conversation_id = r.conversation_id AND s.turn_id = r.turn_id
+       AND s.created_at >= COALESCE(r.first_visible_output_at, r.first_text_output_at)
+       AND s.created_at <= r.completed_at
+  )`;
+
 export const conversationSchemaGeneration = '2026-08-16-unified-conversation-segments';
 
 export type ConversationRuntimeKind = 'codex' | 'pi';
@@ -1622,7 +1634,7 @@ export class ConversationExecutionRepository {
     return readConversationSessionMetrics(this.db, conversationId, turnId);
   }
 
-  /** 读取具备完整文本计时的请求；非文本请求不会冲淡或覆盖真实输出速率。 */
+  /** 读取具备完整文本计时且未混入交互等待的请求，保留原始 Token 与费用记录。 */
   listOutputRateMeasurements(): ConversationOutputRateMeasurement[] {
     const rows = this.db.select<{
       conversation_id: string;
@@ -1637,9 +1649,7 @@ export class ConversationExecutionRepository {
               r.output_tokens, r.reasoning_output_tokens, r.first_text_output_at, r.completed_at
          FROM conversation_model_requests r
          JOIN conversation_turns t ON t.id = r.turn_id
-        WHERE r.measurement_complete = 1
-          AND r.output_tokens IS NOT NULL AND r.reasoning_output_tokens IS NOT NULL
-          AND r.first_text_output_at IS NOT NULL AND r.completed_at IS NOT NULL
+        WHERE ${outputRateMeasurementCondition}
           AND t.provider_thread_id IS NOT NULL AND t.provider_turn_id IS NOT NULL
         ORDER BY r.request_sequence`,
     );
@@ -2579,13 +2589,13 @@ function stringOrNull(value: unknown): string | null {
 export function readConversationSessionMetrics(db: ZeusDatabasePort, conversationId: string, turnId?: string | null): ConversationSessionMetricsSnapshot {
   const usage = readConversationUsageSnapshot(db, conversationId, turnId);
   const providerUsage = readProviderUsageMetrics(db, conversationId);
-  /** 工具调用等不可测速请求不能覆盖最近一次已经完整测得的文本输出速率。 */
+  /** 工具调用或交互等待等不可测速请求不能覆盖最近一次完整的文本输出速率。 */
   const latestOutputTokensPerSecond =
     db
       .select<ModelRequestRow>(
-        `SELECT * FROM conversation_model_requests
-        WHERE conversation_id = ? AND request_kind <> 'context_compaction' AND measurement_complete = 1
-        ORDER BY request_sequence DESC`,
+        `SELECT r.* FROM conversation_model_requests r
+        WHERE r.conversation_id = ? AND ${outputRateMeasurementCondition}
+        ORDER BY r.request_sequence DESC`,
         [conversationId],
       )
       .map((row) => outputRate(mapModelRequest(row)))

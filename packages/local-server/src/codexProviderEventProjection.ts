@@ -1496,6 +1496,8 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     if (requestKind) {
       const providerTurnId = providerTurnIdFrom(params);
       const turn = providerTurnId ? options.turns.listByConversation(conversation.id).find((candidate) => candidate.providerTurnId === providerTurnId) : undefined;
+      // 用量通知可能在用户回答、审批或 MCP 交互结束后才到达，整段请求不能作为纯文本测速样本。
+      if (turn) modelRequestTiming.observe(conversation.id, turn.id, event.receivedAt, 'non_text');
       const request = options.requests.upsert({
         conversationId: conversation.id,
         turnId: turn?.id,

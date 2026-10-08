@@ -15,6 +15,7 @@ import { describeUserFacingError } from '../packages/shared/src/userFacingError.
 import { isProviderBlockingTurnFailure, projectConversationTurnFailure } from '../packages/storage/src/conversationSnapshotV2.js';
 import { createCodexProviderEventFlow } from '../packages/local-server/src/codexProviderEventFlow.js';
 import { projectCodexProviderEvent, type CodexProviderEventProjectionDependencies } from '../packages/local-server/src/codexProviderEventProjection.js';
+import { createCodexModelRequestTimingTracker } from '../packages/local-server/src/codexModelRequestTiming.js';
 import { isProviderResponseStreamDisconnected } from '../packages/local-server/src/codexNativeConversationPolicy.js';
 import { filterCompatibilitySnapshotItemAliases } from '../packages/local-server/src/codexProviderHistoryProjection.js';
 import { conversationWorkExecutionState } from '../packages/local-server/src/conversationWorkExecutionState.js';
@@ -1177,6 +1178,43 @@ async function verifySealedSegmentTerminalProjection(): Promise<Record<string, u
   return { status: sealedTurn.status, currentTurnId: runStates.get('conversation-sealed')?.turnId ?? null, effects };
 }
 
+/** 原生交互事件经过真实投影入口后，必须使当前请求失去纯文本测速资格。 */
+async function verifyInteractionOutputTiming(): Promise<string[]> {
+  /** 使用生产计时器检查当前请求隔离和完成后的状态清理。 */
+  const timing = createCodexModelRequestTimingTracker();
+  /** 已处理的交互重放只核对计时，不执行审批、问答或 Provider 调用。 */
+  const dependencies = {
+    options: {
+      execution: { segmentByNativeSession: () => undefined },
+      conversations: { getByProviderThreadId: () => ({ id: 'rate-conversation' }) },
+      turns: { listByConversation: () => [{ id: 'rate-turn', providerTurnId: 'turn-1' }] },
+      requests: { upsert: () => ({ id: 'rate-interaction', status: 'declined' }) },
+      manager: { getState: () => ({ type: 'ready', generationId: 'generation-probe' }), hasGeneration: () => true },
+      receipts: { record: () => undefined },
+    },
+    closed: false,
+    modelRequestTiming: timing,
+    hasProcessedProviderEvent: () => false,
+    maintainProviderReceiptGenerations: () => undefined,
+    rememberProcessedProviderEvent: () => undefined,
+    markScheduledPersistDirty: () => undefined,
+    flushScheduledPersist: async () => undefined,
+  } as unknown as CodexProviderEventProjectionDependencies;
+  /** 所有共用原生交互分支的事件都必须排除，不能只修用户回答这一种。 */
+  const methods = ['item/tool/requestUserInput', 'item/commandExecution/requestApproval', 'item/fileChange/requestApproval', 'item/permissions/requestApproval', 'mcpServer/elicitation/request'];
+  /** 每轮都重建文本计时，并保留一个并发轮次检查身份隔离。 */
+  for (const method of methods) {
+    timing.observe('rate-conversation', 'rate-turn', '2026-08-21T11:59:00.000Z', 'visible_text');
+    timing.observe('rate-conversation', 'other-turn', '2026-08-21T11:59:00.000Z', 'visible_text');
+    await projectCodexProviderEvent(dependencies, { ...providerEvent(1, method, { questions: [{ id: 'answer', question: '确认继续', isSecret: false, options: null }] }), requestId: method });
+    assertBehavior(timing.complete('rate-conversation', 'rate-turn').hasNonTextOutput, `${method} 未排除交互等待计时。`);
+    assertBehavior(!timing.complete('rate-conversation', 'other-turn').hasNonTextOutput, '交互事件污染了其他轮次的文本计时。');
+    timing.observe('rate-conversation', 'rate-turn', '2026-08-21T12:01:00.000Z', 'visible_text');
+    assertBehavior(!timing.complete('rate-conversation', 'rate-turn').hasNonTextOutput, '交互完成后仍污染后续纯文本请求。');
+  }
+  return methods;
+}
+
 /** 验证权威快照不再声明活动轮次时，深分页缓存不会复活旧分段的 running turn。 */
 function verifyAuthoritativeTurnCacheReconciliation(): Record<string, unknown> {
   /** 两份快照使用连续的历史范围，确保探针进入缓存复用分支。 */
@@ -1215,6 +1253,8 @@ function verifyAuthoritativeTurnCacheReconciliation(): Record<string, unknown> {
 const provider = await verifyCodexProviderEventFlow();
 /** 真实投影入口核对 sealed 分段终态与迟到活动的不同处理。 */
 const sealedSegmentTerminal = await verifySealedSegmentTerminalProjection();
+/** 交互等待不能进入当前请求的纯文本测速，也不能影响其他轮次和后续请求。 */
+const interactionOutputTiming = await verifyInteractionOutputTiming();
 /** Renderer 缓存核对旧非终态不会在权威空闲快照后复活。 */
 const authoritativeTurnCache = verifyAuthoritativeTurnCacheReconciliation();
 const sync = await verifyConversationSyncFlow();
@@ -1234,6 +1274,7 @@ console.log(
       status: 'passed',
       provider,
       sealedSegmentTerminal,
+      interactionOutputTiming,
       authoritativeTurnCache,
       sync,
       compatibilityItems,
