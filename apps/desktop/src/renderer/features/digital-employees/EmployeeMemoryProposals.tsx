@@ -5,7 +5,7 @@ import type { DigitalEmployeeApiClient } from './digitalEmployeeApiClient.js';
 import type { EmployeeMemoryProposal } from './digitalEmployeeContracts.js';
 
 /** 候选经验在此审查，读取列表不会让它自动生效。 */
-export function EmployeeMemoryProposals(props: { client: DigitalEmployeeApiClient; projectId: string; employeeId: string; onAccepted(): void }) {
+export function EmployeeMemoryProposals(props: { client: DigitalEmployeeApiClient; projectId?: string; employeeId: string; onAccepted(): void }) {
   /** 当前员工的权威建议与读取状态。 */
   const [items, setItems] = useState<EmployeeMemoryProposal[] | null>(null);
   /** 失败保留原列表与重试入口。 */
@@ -16,8 +16,7 @@ export function EmployeeMemoryProposals(props: { client: DigitalEmployeeApiClien
     /** 防止切换员工后迟到响应串入当前范围。 */
     let active = true;
     setError(null);
-    void props.client
-      .loadEmployeeMemoryProposals(props.projectId, props.employeeId)
+    void (props.projectId ? props.client.loadEmployeeMemoryProposals(props.projectId, props.employeeId) : props.client.loadGlobalEmployeeMemoryProposals(props.employeeId))
       .then((next) => {
         if (active) setItems(next);
       })

@@ -152,6 +152,7 @@ export function MemorySettingsPane(props: {
                   </span>
                 </header>
                 <MemoryEditor
+                  employeeScope={scope.kind === 'employee'}
                   draft={draft}
                   mode={editor.mode}
                   lockedKey={editor.mode === 'supersede' ? editor.record.memoryKey : null}
@@ -220,13 +221,21 @@ export function MemorySettingsPane(props: {
               </header>
               <p>{record.content}</p>
               <dl>
+                {record.scope.kind === 'employee' ? (
+                  <div>
+                    <dt>{zh ? '适用条件' : 'Applies to'}</dt>
+                    <dd>
+                      {record.projectLimitId ? `仅项目 ${record.projectLimitId}` : '该员工的通用记忆'} · {record.kind === 'domain_knowledge' ? '与任务目标相关时加入' : '已确认且在复核日期内'}
+                    </dd>
+                  </div>
+                ) : null}
                 <div>
                   <dt>{zh ? '范围' : 'Scope'}</dt>
                   <dd>{record.scope.kind === 'global' ? (zh ? '全局' : 'Global') : record.scope.id}</dd>
                 </div>
                 <div>
                   <dt>{zh ? '类型' : 'Kind'}</dt>
-                  <dd>{memoryValueLabel(record.kind, zh)}</dd>
+                  <dd>{memoryValueLabel(record.kind, zh, record.scope.kind === 'employee')}</dd>
                 </div>
                 <div>
                   <dt>{zh ? '来源' : 'Source'}</dt>
@@ -288,11 +297,26 @@ const memoryValueLabels: Record<string, [string, string]> = {
   explicit: ['明确确认', 'Explicitly confirmed'],
 };
 
-function memoryValueLabel(value: string, zh: boolean): string {
+/** 员工分类使用岗位文案，不改变项目与全局记忆术语。 */
+function memoryValueLabel(value: string, zh: boolean, employeeScope = false): string {
+  if (zh && employeeScope) {
+    const employeeLabels: Record<string, string> = { stable_workflow: '工作方法', domain_knowledge: '岗位知识与纠错经验', preference: '岗位相关偏好' };
+    if (employeeLabels[value]) return employeeLabels[value];
+  }
   return memoryValueLabels[value]?.[zh ? 0 : 1] ?? value;
 }
 
-function MemoryEditor(props: { draft: MemoryDraft; mode: 'create' | 'supersede'; lockedKey: string | null; language: MemoryLanguage; busy: boolean; onChange: (draft: MemoryDraft) => void; onCancel: () => void; onSubmit: () => void }) {
+function MemoryEditor(props: {
+  employeeScope?: boolean;
+  draft: MemoryDraft;
+  mode: 'create' | 'supersede';
+  lockedKey: string | null;
+  language: MemoryLanguage;
+  busy: boolean;
+  onChange: (draft: MemoryDraft) => void;
+  onCancel: () => void;
+  onSubmit: () => void;
+}) {
   const zh = props.language === 'zh-CN';
   const patch = (next: Partial<MemoryDraft>): void => props.onChange({ ...props.draft, ...next });
   return (
@@ -308,7 +332,10 @@ function MemoryEditor(props: { draft: MemoryDraft; mode: 'create' | 'supersede';
           ariaLabel={zh ? '记忆类型' : 'Memory kind'}
           value={props.draft.candidateKind}
           onChange={(candidateKind) => patch({ candidateKind: candidateKind as MemoryKind })}
-          options={['preference', 'safety_boundary', 'stable_workflow', 'domain_knowledge'].map((value) => ({ value, label: memoryValueLabel(value, zh) }))}
+          options={(props.employeeScope ? ['stable_workflow', 'domain_knowledge', 'preference'] : ['preference', 'safety_boundary', 'stable_workflow', 'domain_knowledge']).map((value) => ({
+            value,
+            label: memoryValueLabel(value, zh, props.employeeScope),
+          }))}
         />
       </label>
       <label className="memory-editor-content">
@@ -322,7 +349,7 @@ function MemoryEditor(props: { draft: MemoryDraft; mode: 'create' | 'supersede';
           ariaLabel={zh ? '记忆影响' : 'Memory effect'}
           value={props.draft.effect}
           onChange={(effect) => patch({ effect: effect as MemoryEffect, externalStateConfirmed: false })}
-          options={['advisory', 'external_state'].map((value) => ({ value, label: memoryValueLabel(value, zh) }))}
+          options={['advisory', 'external_state'].map((value) => ({ value, label: memoryValueLabel(value, zh, props.employeeScope) }))}
         />
       </label>
       <label>

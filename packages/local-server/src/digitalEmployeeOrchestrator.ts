@@ -60,7 +60,7 @@ interface DigitalEmployeeOrchestratorOptions {
     executionId: string | null;
     source: string;
     sourceRef: string;
-    context?: { permissionMode: 'read-only' | 'auto' | 'full-access' };
+    context?: { permissionMode: 'read-only' | 'auto' | 'auto-review' | 'full-access' };
   }): Promise<{ workflowRunId: string } | null>;
   /** 历史排队执行接入流程后读取完整流程终态。 */
   readProjectWorkflowRun?(runId: string): AutomationExecutionState | undefined;
@@ -102,7 +102,14 @@ export interface DigitalEmployeeOrchestrator {
   /** 统一自动化按规则筛选领取已有任务，不创建替代任务。 */
   selectEligibleAutomationTask(projectId: string, employeeId: string, taskId?: string, filter?: AutomationActionConfig['taskFilter']): ZeusTaskRecord | null;
   /** 普通自动化复用员工工作接纳，返回真实执行关联。 */
-  queueAutomatedAssignment(input: { projectId: string; taskId: string; employeeId: string; sourceRef: string; bypassWorkflow?: boolean; permissionMode?: 'read-only' | 'auto' | 'full-access' }): Promise<AutomationExecutionReference | null>;
+  queueAutomatedAssignment(input: {
+    projectId: string;
+    taskId: string;
+    employeeId: string;
+    sourceRef: string;
+    bypassWorkflow?: boolean;
+    permissionMode?: 'read-only' | 'auto' | 'auto-review' | 'full-access';
+  }): Promise<AutomationExecutionReference | null>;
   kick(): void;
   close(): Promise<void>;
 }
@@ -181,7 +188,7 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
     /** 调研工作不进入项目研发流程。 */
     bypassWorkflow?: boolean;
     /** 自动化权限只能收紧员工和任务的既有授权。 */
-    permissionMode?: 'read-only' | 'auto' | 'full-access';
+    permissionMode?: 'read-only' | 'auto' | 'auto-review' | 'full-access';
   }): Promise<AutomationExecutionReference | null> {
     if (input.employee.entrypoint?.kind !== 'agent' || input.employee.entrypointMigrationState !== 'ready') {
       throw orchestratorError('ZEUS_DIGITAL_EMPLOYEE_AGENT_ENTRYPOINT_REQUIRED', '数字员工必须通过 Agent 会话执行；自动化不会运行旧版入口配置。', false);

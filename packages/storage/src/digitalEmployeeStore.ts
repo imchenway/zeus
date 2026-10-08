@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { automationEventStatusId, digitalEmployeeAvatarIds, type DigitalEmployeeAvatarId, resolveEmployeeConfiguration } from '@zeus/shared';
+import { automationEventStatusId, digitalEmployeeAvatarIds, type DigitalEmployeeAvatarId, resolveEmployeeConfiguration, assertContextCapacity } from '@zeus/shared';
 import { migrateDigitalEmployeeIdentity } from './digitalEmployeeIdentityMigration.js';
 import { randomId } from './randomId.js';
 import type { ZeusDatabasePort } from './databasePort.js';
@@ -7,7 +7,7 @@ import type { ZeusDatabasePort } from './databasePort.js';
 export const digitalEmployeeSchemaMigrationId = '20260825_0001_digital_employees_v1';
 
 export const digitalEmployeeAgentKinds = ['codex', 'pi'] as const;
-export const digitalEmployeePermissionModes = ['read-only', 'auto', 'full-access'] as const;
+export const digitalEmployeePermissionModes = ['read-only', 'auto', 'auto-review', 'full-access'] as const;
 export const digitalEmployeeWorkModes = ['default', 'plan'] as const;
 export const digitalEmployeeAutomationTriggerKinds = ['immediate', 'once', 'daily', 'weekly', 'interval', 'task_created', 'task_updated', 'task_status_changed', 'code_changed'] as const;
 export const digitalEmployeeAutomationActionKinds = ['assign_task', 'create_and_assign_task', 'explore_project'] as const;
@@ -72,6 +72,8 @@ export interface DigitalEmployeeDeliveryGrants {
 }
 
 export interface DigitalEmployeeTemplateRecord {
+  /** 默认上下文容量。 */
+  contextCapacityTokens?: number | null;
   /** 内置记录是创建模板；用户创建记录是可跨项目复用的员工身份。 */
   identityKind?: 'template' | 'employee';
   /** 员工默认的个人经验读取偏好。 */
@@ -187,6 +189,17 @@ export interface DigitalEmployeeExecutionRecord {
 }
 
 export interface CreateDigitalEmployeeTemplateInput {
+  /** 默认上下文容量，空值使用模型默认。 */
+  contextCapacityTokens?: number | null;
+  /** 默认服务速率。 */
+  serviceTier?: string | null;
+  /** 默认工作模式。 */
+  workMode?: DigitalEmployeeWorkMode;
+  /** 复用会话权限模式。 */
+  permissionMode?: DigitalEmployeePermissionMode;
+  /** 默认技能稳定身份。 */
+  skillIds?: string[];
+
   /** 默认执行后端；未指定时使用 Codex。 */
   agentKind?: DigitalEmployeeAgentKind;
   /** 稳定模型身份；空值继承项目默认。 */
@@ -796,6 +809,11 @@ export class DigitalEmployeeRepository {
       agentKind: input.template.agentKind,
       model: input.template.model,
       reasoningEffort: input.template.reasoningEffort,
+      contextCapacityTokens: input.template.contextCapacityTokens,
+      serviceTier: input.template.serviceTier,
+      workMode: input.template.workMode,
+      permissionMode: input.template.permissionMode,
+      skillIds: input.template.skillIds,
       id: input.id,
       projectId: input.projectId,
       templateId: input.template.id,
@@ -1444,6 +1462,9 @@ interface DigitalEmployeeExecutionRow {
 function mapTemplateRow(row: DigitalEmployeeTemplateRow): DigitalEmployeeTemplateRecord {
   /** 全局权限默认不因为旧目录升级而扩大。 */
   const defaults = parseRecord(row.base_configuration_json ?? '{}', 'globalEmployee.defaults');
+  /** 历史占位列不重新生效，只读取本入口明确保存的执行配置。 */
+  const execution = isPlainRecord(defaults.executionSettings) ? defaults.executionSettings : {};
+  assertContextCapacity(execution.contextCapacityTokens ?? null);
   return {
     identityKind: row.built_in === 1 ? 'template' : 'employee',
     memoryEnabled: defaults.memoryEnabled !== false,
@@ -1456,14 +1477,15 @@ function mapTemplateRow(row: DigitalEmployeeTemplateRow): DigitalEmployeeTemplat
     role: row.role,
     domain: row.domain,
     avatarId: row.avatar_id,
-    skillIds: [],
+    skillIds: normalizeEmployeeSkillIds(execution.skillIds ?? []),
+    contextCapacityTokens: (execution.contextCapacityTokens as number | null) ?? null,
     prompt: row.prompt,
     agentKind: oneOf(row.agent_kind, digitalEmployeeAgentKinds, 'template.agentKind'),
     model: nullableText(row.model, 512),
     reasoningEffort: nullableText(row.reasoning_effort, 120),
-    serviceTier: null,
-    permissionMode: 'read-only',
-    workMode: 'default',
+    serviceTier: nullableText(execution.serviceTier, 120),
+    permissionMode: oneOf(execution.permissionMode ?? 'read-only', digitalEmployeePermissionModes, 'template.permissionMode'),
+    workMode: oneOf(execution.workMode ?? 'default', digitalEmployeeWorkModes, 'template.workMode'),
     builtIn: row.built_in === 1,
     revision: nonNegativeInteger(row.revision, 'template.revision'),
     createdAt: row.created_at,
@@ -1575,6 +1597,7 @@ function mapExecutionRow(row: DigitalEmployeeExecutionRow): DigitalEmployeeExecu
 
 /** 校验身份、提示词与默认执行参数；实际模型能力由派发预检核对。 */
 function normalizeTemplateInput(input: CreateDigitalEmployeeTemplateInput): Omit<DigitalEmployeeTemplateRecord, 'id' | 'identityKind' | 'builtIn' | 'revision' | 'createdAt' | 'updatedAt'> {
+  assertContextCapacity(input.contextCapacityTokens ?? null);
   return {
     memoryEnabled: input.memoryEnabled !== false,
     name: boundedText(input.name, 'template.name', 1, 120),
@@ -1582,14 +1605,15 @@ function normalizeTemplateInput(input: CreateDigitalEmployeeTemplateInput): Omit
     role: boundedText(input.role, 'template.role', 1, 120),
     domain: boundedText(input.domain ?? '', 'template.domain', 0, 120),
     avatarId: input.avatarId == null ? null : oneOf(input.avatarId, digitalEmployeeAvatarIds, 'template.avatarId'),
-    skillIds: [],
+    skillIds: normalizeEmployeeSkillIds(input.skillIds ?? []),
+    contextCapacityTokens: input.contextCapacityTokens ?? null,
     prompt: boundedText(input.prompt, 'template.prompt', 1, 20_000),
     agentKind: oneOf(input.agentKind ?? 'codex', digitalEmployeeAgentKinds, 'template.agentKind'),
     model: nullableText(input.model, 512),
     reasoningEffort: nullableText(input.reasoningEffort, 120),
-    serviceTier: null,
-    permissionMode: 'read-only',
-    workMode: 'default',
+    serviceTier: nullableText(input.serviceTier, 120),
+    permissionMode: oneOf(input.permissionMode ?? 'read-only', digitalEmployeePermissionModes, 'template.permissionMode'),
+    workMode: oneOf(input.workMode ?? 'default', digitalEmployeeWorkModes, 'template.workMode'),
   };
 }
 
@@ -1627,8 +1651,23 @@ function normalizeEmployeeInput(input: CreateDigitalEmployeeInput): Omit<Digital
 }
 
 /** 只保存员工经验偏好，执行与交付权限属于具体任务。 */
-function globalEmployeeDefaults(input: CreateDigitalEmployeeTemplateInput): Pick<DigitalEmployeeTemplateRecord, 'memoryEnabled'> {
-  return { memoryEnabled: input.memoryEnabled !== false };
+function globalEmployeeDefaults(input: CreateDigitalEmployeeTemplateInput) {
+  return {
+    memoryEnabled: input.memoryEnabled !== false,
+    executionSettings: {
+      contextCapacityTokens: input.contextCapacityTokens ?? null,
+      serviceTier: input.serviceTier ?? null,
+      workMode: input.workMode ?? 'default',
+      permissionMode: input.permissionMode ?? 'read-only',
+      skillIds: input.skillIds ?? [],
+    },
+  };
+}
+
+/** 仅接受有界的稳定技能身份，不接受路径或任意对象。 */
+function normalizeEmployeeSkillIds(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length > 64) throw employeeStoreError('ZEUS_DIGITAL_EMPLOYEE_INVALID', 'Skill 必须是最多 64 项的身份列表。');
+  return [...new Set(value.map((item) => requiredIdentity(item, 'skillId')))];
 }
 
 function defaultModelPolicy(input: Pick<DigitalEmployeeTemplateRecord, 'model' | 'reasoningEffort' | 'serviceTier'>): ModelPolicyV1 {
