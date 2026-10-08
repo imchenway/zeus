@@ -134,8 +134,10 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const activeNavTarget = props.shellNavigation?.activeNavTarget ?? localActiveNavTarget;
   const setActiveNavTarget = props.shellNavigation?.onNavigate ?? setLocalActiveNavTarget;
   const [activeProjectSection, setActiveProjectSection] = useState<ProjectWorkspaceSection>(() => inferInitialProjectSection(props));
-  const [projectCodeWorkspaceMode, setProjectCodeWorkspaceMode] = useState<ProjectCodeWorkspaceMode>(() => (typeof window !== 'undefined' && window.location.hash === '#project-commands' ? 'commands' : 'source'));
-  const [visitedCodeWorkspaceModes, setVisitedCodeWorkspaceModes] = useState<Set<ProjectCodeWorkspaceMode>>(() => new Set(typeof window !== 'undefined' && window.location.hash === '#project-commands' ? ['source', 'commands'] : ['source']));
+  /** 旧 Git 链接与源码内的新地址统一打开完整 Git 工作台。 */
+  const [projectCodeWorkspaceMode, setProjectCodeWorkspaceMode] = useState<ProjectCodeWorkspaceMode>(() => (typeof window !== 'undefined' && ['#project-git', '#project-code-git'].includes(window.location.hash) ? 'git' : 'source'));
+  /** 弹窗绑定准确项目，后台命令生命周期不依赖弹窗挂载。 */
+  const [projectCommandsProjectId, setProjectCommandsProjectId] = useState<string | null>(null);
   const projectSourceWorkspaceRef = useRef<ProjectSourceWorkspaceHandle | null>(null);
   const [sourceWorkspaceDirty, setSourceWorkspaceDirty] = useState(false);
   /** 全局规则草稿复用工作区离开确认。 */
@@ -780,6 +782,16 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const [codexUsageRevision, setCodexUsageRevision] = useState(0);
   const selectedProject = projectDetail ?? firstProject;
   const activeProjectId = selectedProject?.id ?? firstProjectId;
+  useEffect(() => {
+    // 初始项目就绪后消化旧页面链接，后续导航只写源码工作区地址。
+    if (!activeProjectId || typeof window === 'undefined') return;
+    if (window.location.hash === '#project-commands') {
+      setProjectCommandsProjectId(activeProjectId);
+      window.history.replaceState(null, '', '#project-code-source');
+    } else if (window.location.hash === '#project-git') {
+      window.history.replaceState(null, '', '#project-code-git');
+    }
+  }, [activeProjectId]);
   useEffect(() => {
     // 切换项目或页面时收起旧抽屉，避免显示其他项目的会话。
     setSessionDrawerTarget(undefined);
@@ -1727,7 +1739,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     setTelegramSecuritySettings,
     setTelegramTestStatus,
     setTelegramTokenInput,
-    setVisitedCodeWorkspaceModes,
+    setProjectCommandsProjectId,
     setZeusWindowForeground,
     settingsCategory,
     settingsWorkspaceCopy,
@@ -1808,7 +1820,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     updateTaskModelPushPendingByTask,
     updatingTaskBusy,
     visibleTasks,
-    visitedCodeWorkspaceModes,
+    projectCommandsProjectId,
     workspaceScrollRef,
     zeusWindowForeground,
   };

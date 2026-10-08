@@ -20,9 +20,11 @@ function syncModalBackground(): void {
     if (!backgroundStates.has(element)) backgroundStates.set(element, { inert: element.inert, ariaHidden: element.getAttribute('aria-hidden') });
     const original = backgroundStates.get(element)!;
     const blocked = element.dataset.motionState === 'closing' || Boolean(active && element !== active && !element.contains(active));
-    element.inert = blocked || original.inert;
+    /** 重开时可能复用退出中的节点，活动层不能继承上一次关闭的隔离状态。 */
+    const isActive = Boolean(active && (element === active || element.contains(active)));
+    element.inert = blocked || (!isActive && original.inert);
     if (blocked) element.setAttribute('aria-hidden', 'true');
-    else if (original.ariaHidden === null) element.removeAttribute('aria-hidden');
+    else if (isActive || original.ariaHidden === null) element.removeAttribute('aria-hidden');
     else element.setAttribute('aria-hidden', original.ariaHidden);
   }
   if (!active) backgroundStates.clear();
@@ -35,6 +37,8 @@ export function useModalFocus(ref: RefObject<HTMLElement | null>, open: boolean)
     if (!open || !root) return;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     layers.push(root);
+    /** 门户绘制顺序决定顶层，嵌套层同时重开时不受父子副作用的注册顺序影响。 */
+    layers.sort((left, right) => (left.compareDocumentPosition(right) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
     syncModalBackground();
     /** 首选显式自动聚焦的控件；无控件时落在模态根层。 */
     const focusFirst = () => {
@@ -72,7 +76,12 @@ export function useModalFocus(ref: RefObject<HTMLElement | null>, open: boolean)
       const index = layers.indexOf(root);
       if (index >= 0) layers.splice(index, 1);
       syncModalBackground();
-      if (wasTop && previous?.isConnected && !previous.closest('[inert]')) previous.focus({ preventScroll: true });
+      if (wasTop) {
+        /** 原触发控件可能随子弹窗退出，改为回到仍活动的父层。 */
+        const active = layers.at(-1);
+        const target = previous?.isConnected && previous.checkVisibility() && !previous.closest('[inert], [aria-hidden="true"]') ? previous : active && (focusableElements(active)[0] ?? active);
+        target?.focus({ preventScroll: true });
+      }
     };
   }, [open, ref]);
 }

@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import { MenuSurface } from '../ui/MenuSurface.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { Collapsible } from '../ui/Collapsible.js';
-import { Suspense, forwardRef, lazy, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { Suspense, forwardRef, lazy, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type ReactNode, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { sourceConflictExtensions } from './sourceConflictExtensions.js';
 import { FileTypeIcon } from './FileTypeIcon.js';
 import { FilePlusIcon as FilePlus } from '@phosphor-icons/react/dist/csr/FilePlus';
@@ -62,6 +62,8 @@ export interface ProjectSourceWorkspaceHandle {
 }
 
 export interface ProjectSourceWorkspaceProps {
+  /** 文件标签右侧的工作区入口，不增加另一排导航。 */
+  toolbarActions?: ReactNode;
   gitClient?: SourceGitClient;
   project: { id: string; name: string; localPath: string };
   language: AppLanguage;
@@ -741,52 +743,55 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         />
 
         <main className="project-source-editor-pane">
-          <div className="project-source-tabs" role="tablist" aria-label={zh ? '已打开文件' : 'Open files'}>
-            <button type="button" className="project-source-tree-toggle" onClick={() => setTreeDrawerOpen((open) => !open)} aria-label={zh ? '显示代码目录' : 'Show source tree'} aria-expanded={treeDrawerOpen}>
-              <FolderOpen aria-hidden="true" />
-            </button>
-            {tabs.map((tab) => (
-              <div
-                key={tab.document.relativePath}
-                className={`project-source-tab${!changePreview && tab.document.relativePath === activePath ? ' active' : ''}`}
-                onAuxClick={(event) => {
-                  if (event.button !== 1) return;
-                  event.preventDefault();
-                  closeTab(tab.document.relativePath);
-                }}
-              >
-                <button
-                  type="button"
-                  role="tab"
-                  title={tab.document.relativePath}
-                  aria-selected={!changePreview && tab.document.relativePath === activePath}
-                  onClick={() => {
-                    setChangePreview(null);
-                    setActivePath(tab.document.relativePath);
+          <div className="project-source-editor-header">
+            <div className="project-source-tabs" role="tablist" aria-label={zh ? '已打开文件' : 'Open files'}>
+              <button type="button" className="project-source-tree-toggle" onClick={() => setTreeDrawerOpen((open) => !open)} aria-label={zh ? '显示代码目录' : 'Show source tree'} aria-expanded={treeDrawerOpen}>
+                <FolderOpen aria-hidden="true" />
+              </button>
+              {tabs.map((tab) => (
+                <div
+                  key={tab.document.relativePath}
+                  className={`project-source-tab${!changePreview && tab.document.relativePath === activePath ? ' active' : ''}`}
+                  onAuxClick={(event) => {
+                    if (event.button !== 1) return;
+                    event.preventDefault();
+                    closeTab(tab.document.relativePath);
                   }}
                 >
-                  <FileTypeIcon name={tab.document.name} />
-                  <span data-file-status={gitFileStatuses[tab.document.relativePath]}>{tab.document.name}</span>
-                  {tab.dirty ? (
-                    <i aria-label={zh ? '未保存' : 'Unsaved'}>●</i>
-                  ) : tab.externalChange ? (
-                    <i className="external" aria-label={zh ? '外部已更改' : 'Changed externally'}>
-                      !
-                    </i>
-                  ) : null}
-                </button>
-                <button
-                  type="button"
-                  className="project-source-tab-close"
-                  title={zh ? `关闭 ${tab.document.name}` : `Close ${tab.document.name}`}
-                  aria-label={zh ? `关闭 ${tab.document.name}` : `Close ${tab.document.name}`}
-                  disabled={tab.saving}
-                  onClick={() => closeTab(tab.document.relativePath)}
-                >
-                  <X size={14} aria-hidden="true" />
-                </button>
-              </div>
-            ))}
+                  <button
+                    type="button"
+                    role="tab"
+                    title={tab.document.relativePath}
+                    aria-selected={!changePreview && tab.document.relativePath === activePath}
+                    onClick={() => {
+                      setChangePreview(null);
+                      setActivePath(tab.document.relativePath);
+                    }}
+                  >
+                    <FileTypeIcon name={tab.document.name} />
+                    <span data-file-status={gitFileStatuses[tab.document.relativePath]}>{tab.document.name}</span>
+                    {tab.dirty ? (
+                      <i aria-label={zh ? '未保存' : 'Unsaved'}>●</i>
+                    ) : tab.externalChange ? (
+                      <i className="external" aria-label={zh ? '外部已更改' : 'Changed externally'}>
+                        !
+                      </i>
+                    ) : null}
+                  </button>
+                  <button
+                    type="button"
+                    className="project-source-tab-close"
+                    title={zh ? `关闭 ${tab.document.name}` : `Close ${tab.document.name}`}
+                    aria-label={zh ? `关闭 ${tab.document.name}` : `Close ${tab.document.name}`}
+                    disabled={tab.saving}
+                    onClick={() => closeTab(tab.document.relativePath)}
+                  >
+                    <X size={14} aria-hidden="true" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            {props.toolbarActions}
           </div>
           {changePreview?.projectId === props.project.id ? (
             <>

@@ -1,3 +1,4 @@
+import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { MotionPresence } from './ui/MotionPresence.js';
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
@@ -41,6 +42,8 @@ import './commandCenter.css';
 import { ProjectTerminalPanel } from './features/runtime/ProjectTerminalPanel.js';
 
 export interface CommandCenterPanelProps {
+  /** 项目弹窗的关闭入口；关闭显示层不终止后台运行。 */
+  onClose?: () => void;
   mode: 'global' | 'project';
   project?: ProjectRecord;
   client: DashboardClient;
@@ -826,7 +829,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
       <section className="command-center" aria-labelledby="command-center-title">
         <header className="command-center-header">
           <span>
-            <h2 id="command-center-title">{heading}</h2>
+            <h2 id="command-center-title">{props.onClose && props.project ? `${props.project.name} · ${heading}` : heading}</h2>
             {props.mode === 'global' ? <p>{zh ? '在项目中运行' : 'Run from a project'}</p> : null}
           </span>
           <div className="command-center-header-actions">
@@ -835,6 +838,11 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
               <Plus aria-hidden="true" />
               {zh ? '新建命令' : 'New command'}
             </Button>
+            {props.onClose ? (
+              <button type="button" className="command-center-close" disabled={busy} onClick={props.onClose} aria-label={zh ? '关闭命令' : 'Close commands'} title={zh ? '关闭命令' : 'Close commands'}>
+                <X aria-hidden="true" />
+              </button>
+            ) : null}
           </div>
         </header>
 
