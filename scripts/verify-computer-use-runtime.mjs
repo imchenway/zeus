@@ -11,6 +11,8 @@ const { values } = parseArgs({
     'data-root': { type: 'string' },
     'display-id': { type: 'string' },
     'show-cursor': { type: 'boolean' },
+    /** 在同一真实窗口验证原生选文件、取消和返回主窗口。 */
+    'file-picker': { type: 'boolean' },
     'user-priority': { type: 'boolean' },
     'packaged-app': { type: 'string' },
     performance: { type: 'boolean' },
@@ -29,6 +31,8 @@ const expected = {
   hostBundleId: values['packaged-app'] ? 'dev.hypha.zeus.test' : 'com.github.Electron',
   displayId: Number(values['display-id']),
   showCursor: values['show-cursor'] === true,
+  /** 文件选择使用实际 preload、Main IPC 和后台原生控件。 */
+  filePicker: values['file-picker'] === true,
   userPriority: values['user-priority'] === true,
   performance: values.performance === true,
   systemStop: values['system-stop'] === true,
@@ -96,6 +100,179 @@ async function verifyInElectron(expected) {
   const remainingChecks = [];
   /** 实际延迟、传图字节和原生进程资源单独记录，不能用静态检查替代。 */
   const performanceResults = {};
+
+  /** 文件选择的所有依赖步骤在同一入口串行检查，禁止读取空状态或重放动作。 */
+  async function verifyFilePicker(target) {
+    /** 专项使用独立轮次，不恢复前面已经停止的控制者。 */
+    const pickerCall = (tool, args) => call(tool, args, 'file-picker-owner');
+    /** 只在工具成功后解析数据，错误原文保留在失败原因中。 */
+    const checkedResult = (result, description) => {
+      assert(result.success, `${description}失败：${textOf(result)}`);
+      return JSON.parse(textOf(result));
+    };
+    /** 每次动作之前确认有效树和精确窗口，不把空树当成可操作状态。 */
+    const observe = async (nativeTarget, description) => {
+      /** 取得本次真实快照，禁止复用上一次窗口状态。 */
+      const result = await pickerCall('get_window_state', { ...nativeTarget, max_elements: 1400, max_depth: 24, max_image_dimension: 512, timeout_ms: 2500 });
+      /** 原生错误必须先终止流程，再读取元素。 */
+      const state = checkedResult(result, description);
+      await fs.writeFile(`${expected.dataRoot}/../computer-file-picker-last-state.json`, JSON.stringify({ description, nativeTarget, state }));
+      /** 原生实际图像保留为证据，不拿页面 DOM 代替系统控件或截图。 */
+      const screenshot = result.contentItems.find((item) => item.type === 'inputImage');
+      if (screenshot) await fs.writeFile(`${expected.dataRoot}/../computer-file-picker-last.png`, Buffer.from(screenshot.imageUrl.split(',')[1], 'base64'));
+      assert(
+        Array.isArray(state?.elements) &&
+          state.background_input?.exact_window?.status === 'matched' &&
+          state.background_input.exact_window.pid === nativeTarget.pid &&
+          state.background_input.exact_window.window_id === nativeTarget.window_id,
+        `${description}未匹配有效窗口，尚未派发输入`,
+      );
+      return state;
+    };
+    /** 只能使用本次观察取得的语义身份，操作前再次核对后台条件。 */
+    const click = async (nativeTarget, element, description) => {
+      assert(element && typeof element.element_token === 'string' && element.enabled !== false, `${description}缺少有效控件或控件禁用，尚未派发输入`);
+      assert(!window.isFocused(), '应用已被用户切到前台，停止专项输入');
+      if (!expected.singleDisplay) assert(electron.screen.getDisplayNearestPoint(electron.screen.getCursorScreenPoint()).id !== expected.displayId, '用户正在验收屏工作，停止专项输入');
+      return checkedResult(await pickerCall('click', { ...nativeTarget, element_token: element.element_token }), description);
+    };
+    /** 界面和绘制策略必须在专项结束后恢复。 */
+    const originalUrl = window.webContents.getURL();
+    /** 保留当前真实窗口的后台绘制设置。 */
+    const originalThrottling = window.webContents.getBackgroundThrottling();
+    /** 原生接口仅设置本任务默认目录，不模拟选择结果。 */
+    const originalShowOpenDialog = electron.dialog.showOpenDialog;
+    /** 本次新建目录只包含本任务文件，不改动已有诊断记录。 */
+    const fixtureRoot = `${expected.dataRoot}/computer-file-picker-${Date.now()}`;
+    /** 选择结果必须严格对应此文件。 */
+    const fileName = 'computer-use-fixture.txt';
+    /** 实际磁盘内容和返回大小互相核对。 */
+    const fileContent = 'Computer Use 原生文件选择检查\n';
+    /** 主窗口和两次弹窗的真实身份作为专项证据返回。 */
+    const panelIds = [];
+    await fs.mkdir(fixtureRoot);
+    try {
+      await fs.writeFile(`${fixtureRoot}/${fileName}`, fileContent);
+      await fs.writeFile(
+        `${fixtureRoot}/picker.html`,
+        '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>原生文件选择检查</title><main style="padding:50px;font:20px sans-serif"><h1>原生文件选择检查</h1><button id="native-picker" style="font-size:24px">选择验收文件</button></main></html>',
+      );
+      // 只为本任务窗口改变初始目录，其他调用原样转交。
+      electron.dialog.showOpenDialog = function (parent, options) {
+        return parent === window && options?.properties?.includes('openFile') ? originalShowOpenDialog.call(this, parent, { ...options, defaultPath: fixtureRoot }) : originalShowOpenDialog.apply(this, arguments);
+      };
+      window.webContents.setBackgroundThrottling(false);
+      await window.loadFile(`${fixtureRoot}/picker.html`);
+      // 导航可以创建新的渲染进程，绘制策略在新页面就绪后再次明确设置。
+      window.webContents.setBackgroundThrottling(false);
+      // 最后返回 undefined，不把事件处理函数跨进程传回，实际选择仍走正常 IPC。
+      await window.webContents.executeJavaScript("document.getElementById('native-picker').addEventListener('click',()=>{globalThis.__zeusPickerResult=window.zeus.chooseConversationResources();});void 0;");
+      /** 实际页面帧必须推进，DOM 已加载不能替代后台绘制就绪。 */
+      const painted = await window.webContents.executeJavaScript('new Promise(resolve=>{const deadline=setTimeout(()=>resolve(false),5000);requestAnimationFrame(()=>requestAnimationFrame(()=>{clearTimeout(deadline);resolve(true)}));})');
+      assert(painted === true, '文件选择页面没有推进实际绘制帧，尚未派发输入');
+      await observe(target, '文件选择页面初次观察');
+      /** 原生窗口存在性可以稳定核对，网页按钮则使用随后取得的实际 AX 控件。 */
+      const ready = await pickerCall('verify_state', { ...target, expect: [{ window: { exists: true } }], timeout_ms: 5000 });
+      /** verify_state 调用完成和实际条件满足分别核对，不能只看工具成功标志。 */
+      const readyState = checkedResult(ready, '文件选择页面的窗口就绪检查');
+      if (readyState.status !== 'satisfied' || readyState.stable !== true) {
+        await observe(target, '页面就绪失败后的原生状态');
+        await fs.writeFile(
+          `${expected.dataRoot}/../computer-file-picker-page-state.json`,
+          JSON.stringify(await window.webContents.executeJavaScript('({url:location.href,title:document.title,text:document.body.innerText,button:!!document.getElementById("native-picker")})')),
+        );
+      }
+      assert(readyState.status === 'satisfied' && readyState.stable === true, `文件选择页面的原生窗口没有实际就绪：${JSON.stringify(readyState)}`);
+      /** 新弹窗身份来自打开前后的系统窗口清单，不使用旧窗口代替。 */
+      const openPanel = async () => {
+        /** 打开之前的实际系统窗口集合。 */
+        const before = checkedResult(await pickerCall('list_windows', { pid: expected.pid, on_screen_only: true }), '打开前窗口发现');
+        assert(Array.isArray(before?.windows), '打开前窗口清单无效');
+        /** 实际主窗口按钮来自当前快照。 */
+        const state = await observe(target, '主窗口观察');
+        await click(
+          target,
+          state.elements.find((element) => element.role === 'AXButton' && element.label === '选择验收文件'),
+          '打开文件选择框',
+        );
+        /** 投递后只观察，不因出现新窗口而重复点击。 */
+        const after = checkedResult(await pickerCall('list_windows', { pid: expected.pid, on_screen_only: true }), '弹窗发现');
+        assert(Array.isArray(after?.windows), '打开后窗口清单无效');
+        /** 新窗口身份必须唯一，否则无法安全派发输入。 */
+        const newWindows = after.windows.filter((candidate) => !before.windows.some((previous) => previous.window_id === candidate.window_id));
+        assert(newWindows.length === 1, `实际新弹窗数量为 ${newWindows.length}，停止输入`);
+        /** 同一实际应用中新发现的系统窗口身份。 */
+        const panelTarget = { pid: expected.pid, window_id: newWindows[0].window_id };
+        panelIds.push(panelTarget.window_id);
+        return { panelTarget, state: await observe(panelTarget, '文件选择框观察') };
+      };
+      /** 结果读取有界等待实际 IPC，不因迟到结果重复点击原生按钮。 */
+      const readSelection = async () => {
+        /** 期限计时器在实际结果返回后立即释放。 */
+        let timer;
+        try {
+          return await Promise.race([
+            window.webContents.executeJavaScript('globalThis.__zeusPickerResult'),
+            new Promise((_resolve, reject) => {
+              timer = setTimeout(() => reject(new Error('文件选择结果未在期限内返回；禁止重放动作')), 5000);
+            }),
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
+      };
+      /** 关闭之后重新观察主窗口和系统清单，不能只凭动作派发判断完成。 */
+      const confirmClosed = async (panelTarget) => {
+        /** 系统清单确认实际弹窗已经消失。 */
+        const windows = checkedResult(await pickerCall('list_windows', { pid: expected.pid, on_screen_only: true }), '关闭后窗口发现');
+        assert(Array.isArray(windows?.windows) && !windows.windows.some((candidate) => candidate.window_id === panelTarget.window_id), '文件选择框没有实际关闭');
+        /** 同轮次主窗口必须重新可用，不能只验证弹窗消失。 */
+        const state = await observe(target, '关闭后主窗口观察');
+        assert(state.zeus_control?.paused === false && state.zeus_control?.sharing_active === true && !window.isFocused(), '关闭弹窗后主窗口暂停、共享失效或焦点被改变');
+      };
+      /** 默认语义点击选中真实文件行，再使用新观察的打开按钮。 */
+      const opened = await openPanel();
+      /** 默认语义选择必须得到原生选中值回读。 */
+      const selection = await click(
+        opened.panelTarget,
+        opened.state.elements.find((element) => element.label === fileName && element.role === 'AXTextField'),
+        '选择实际文件',
+      );
+      assert(selection.effect === 'confirmed', '真实文件行没有确认选中');
+      /** 打开按钮使用选中文件后的新快照。 */
+      const selectedState = await observe(opened.panelTarget, '选中文件后的观察');
+      await click(
+        opened.panelTarget,
+        selectedState.elements.find((element) => element.role === 'AXButton' && element.label === '打开'),
+        '确认打开',
+      );
+      /** 返回值只包含实际 IPC 的可序列化资源数据。 */
+      const selected = await readSelection();
+      assert(Array.isArray(selected) && selected.length === 1 && selected[0].name === fileName && selected[0].kind === 'file' && selected[0].size === Buffer.byteLength(fileContent), '实际选择结果不是本任务文件');
+      await confirmClosed(opened.panelTarget);
+      /** 同轮次再次打开并取消，确认空结果和主窗口继续控制。 */
+      const cancelled = await openPanel();
+      await click(
+        cancelled.panelTarget,
+        cancelled.state.elements.find((element) => element.role === 'AXButton' && element.label === '取消'),
+        '取消文件选择',
+      );
+      /** 取消必须由正常 IPC 返回真实空数组。 */
+      const cancelledResult = await readSelection();
+      assert(Array.isArray(cancelledResult) && cancelledResult.length === 0, '取消没有返回实际空结果');
+      await confirmClosed(cancelled.panelTarget);
+      return { fileName, size: selected[0].size, panelIds, selectedFile: true, cancelled: true, parentContinued: true, focused: window.isFocused() };
+    } finally {
+      electron.dialog.showOpenDialog = originalShowOpenDialog;
+      try {
+        await host.endComputerUse({ conversationId: 'computer-runtime-probe', turnId: 'file-picker-owner' });
+        await window.loadURL(originalUrl);
+      } finally {
+        window.webContents.setBackgroundThrottling(originalThrottling);
+        await fs.rm(fixtureRoot, { recursive: true, force: true });
+      }
+    }
+  }
   try {
     /** 模块异步加载期间全局停止，不能在停止之后初始化无所属轮次的 SDK。 */
     const discoveryStartup = host.ensureDriver().then(
@@ -136,6 +313,12 @@ async function verifyInElectron(expected) {
     assert(nativeWindow, '未找到本任务原生主窗口');
     /** 精确窗口身份始终来自真实发现。 */
     const target = { pid: expected.pid, window_id: Number(nativeWindow.window_id ?? nativeWindow.windowId) };
+    if (expected.filePicker) {
+      // 实际业务流程先于进程失联等故障注入，结束共享后再恢复正常页面。
+      performanceResults.filePicker = await verifyFilePicker(target);
+      assert(host.windowOwners.size === 0, '文件选择专项结束后窗口占用残留');
+      checks.push('native_file_picker_open_cancel_and_parent_continue_without_focus');
+    }
     /** 首次真实截图与辅助功能读取。 */
     const observed = await call('get_window_state', { ...target, max_elements: 80, max_image_dimension: 256 });
     assert(observed.success, textOf(observed));

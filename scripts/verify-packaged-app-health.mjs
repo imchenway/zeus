@@ -263,7 +263,9 @@ function developmentRuntimeIdentity(appPath) {
   const require = createRequire(import.meta.url);
   /** Electron 官方依赖导出当前实际可执行文件路径。 */
   const executablePath = require('electron');
-  if (resolve(appPath) !== dirname(dirname(dirname(executablePath)))) throw new Error('开发验收只接受当前项目安装的 Electron。');
+  if (appPath !== undefined && resolve(appPath) !== dirname(dirname(dirname(executablePath)))) {
+    throw new Error('开发验收只接受当前项目安装的 Electron。可省略应用路径，使用 --development --runtime-root <独立开发数据目录> --runtime-pid <界面进程号>；不要传入 apps/desktop 源码目录。');
+  }
   /** 固定工作树入口与版本，不能由调用方任意声明。 */
   const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../apps/desktop');
   /** 版本来自正常开发构建使用的应用清单。 */
@@ -365,13 +367,16 @@ async function main() {
       development: { type: 'boolean', default: false },
     },
   });
-  /** 保留原有单个应用包位置参数。 */
+  /** 开发模式从本项目依赖解析应用，其他模式仍明确指定完整包。 */
   const [appPath] = positionals;
   /** 显式传入空运行参数也必须失败，不能被当成仅检查结构。 */
   if (values.development && (!values['runtime-root'] || !values['runtime-pid'])) throw new Error('开发验收必须同时提供 runtime-root 和 runtime-pid。');
-  const runtimeRequested = values['runtime-root'] !== undefined || values['runtime-pid'] !== undefined;
-  if (!appPath || positionals.length !== 1 || (runtimeRequested && (!values['runtime-root']?.trim() || !values['runtime-pid']?.trim()))) {
-    throw new Error('用法：node scripts/verify-packaged-app-health.mjs <App绝对路径> [--runtime-root <独立测试数据目录> --runtime-pid <测试界面进程号>]');
+  /** 开发模式必须执行真实运行检查，不能退回包结构检查。 */
+  const runtimeRequested = values.development || values['runtime-root'] !== undefined || values['runtime-pid'] !== undefined;
+  if ((values.development ? positionals.length > 1 : !appPath || positionals.length !== 1) || (runtimeRequested && (!values['runtime-root']?.trim() || !values['runtime-pid']?.trim()))) {
+    throw new Error(
+      '用法：开发实例使用 node scripts/verify-packaged-app-health.mjs --development --runtime-root <独立开发数据目录> --runtime-pid <界面进程号>；应用包使用 node scripts/verify-packaged-app-health.mjs <App绝对路径> [--runtime-root <独立测试数据目录> --runtime-pid <测试界面进程号>]。',
+    );
   }
   if (runtimeRequested) {
     /** 只有真实进程、宿主身份、端口与推进的心跳均通过才输出运行成功。 */
