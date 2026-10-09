@@ -1567,10 +1567,9 @@ index b6ec2b0..c323cca 100644
      };
 diff --git a/crates/platform-macos/src/input/user_guard.rs b/crates/platform-macos/src/input/user_guard.rs
 new file mode 100644
-index 0000000..4fa4688
 --- /dev/null
 +++ b/crates/platform-macos/src/input/user_guard.rs
-@@ -0,0 +1,319 @@
+@@ -0,0 +1,327 @@
 +//! Zeus 私有 worker 的只读用户输入监听及协作取消，不生成全局输入。
 +
 +use std::collections::{HashMap, HashSet};
@@ -1708,6 +1707,14 @@ index 0000000..4fa4688
 +    // 固定前缀只传受控身份与原因，通过私有进程 stderr 即时通知宿主。
 +    if let Some(token) = event_token() {
 +        eprintln!("_ZEUS_COMPUTER_EVENT_ {{\"token\":\"{}\",\"workerPid\":{},\"pid\":{},\"reason\":\"{}\",\"otherKeyboardEvents\":{}}}", token, std::process::id(), pid, reason, OTHER_KEYBOARD_EVENTS.load(Ordering::Acquire));
++    }
++}
++
++/// 正常关闭只移除该窗口，不解除已有用户接管或系统停止状态。
++pub fn forget_closed_window(pid: i32, window_id: u32) {
++    let mut records = windows().lock().unwrap();
++    for entries in records.values_mut() {
++        entries.remove(&(pid, window_id));
 +    }
 +}
 +
@@ -1894,7 +1901,7 @@ diff --git a/crates/platform-macos/src/window_sharing.rs b/crates/platform-macos
 new file mode 100644
 --- /dev/null
 +++ b/crates/platform-macos/src/window_sharing.rs
-@@ -0,0 +1,600 @@
+@@ -0,0 +1,630 @@
 +//! Zeus 的真实单窗口共享、有限帧缓存及系统停止生命周期。
 +
 +use image::ImageEncoder;
@@ -1964,24 +1971,36 @@ new file mode 100644
 +struct ShareDelegate(std::sync::Weak<WindowShare>);
 +
 +impl SCStreamDelegateTrait for ShareDelegate {
-+    /// 系统停止、权限撤销或采集错误都撤销该应用的后台输入。
-+    fn did_stop_with_error(&self, _error: screencapturekit::error::SCError) {
++    /// 已关闭目标的来源丢失只结束该窗口，用户停止和权限错误仍撤销应用输入。
++    fn did_stop_with_error(&self, error: screencapturekit::error::SCError) {
 +        if let Some(share) = self.0.upgrade() {
 +            if !share.stopped.swap(true, Ordering::AcqRel) {
 +                share.active.store(false, Ordering::Release);
 +                share.ready.notify_all();
-+                crate::input::user_guard::sharing_stopped(share.pid);
++                // 只按正式错误码和成功的精确窗口查询区分正常关闭，不按错误文案猜测。
++                let closed_source = error.stream_error_code()
++                    == Some(screencapturekit::error::SCStreamErrorCode::NoCaptureSource)
++                    && crate::windows::is_window_confirmed_closed(share.window_id);
++                if closed_source {
++                    retire_closed_window(&share);
++                } else {
++                    crate::input::user_guard::sharing_stopped(share.pid);
++                }
 +            }
 +        }
 +    }
 +
-+    /// 共享窗口全部关闭时立即撤销，不允许等待下一次模型操作。
++    /// 已关闭的窗口单独收尾；窗口仍存在或身份未知时继续停止整个应用。
 +    fn stream_did_become_inactive(&self) {
 +        if let Some(share) = self.0.upgrade() {
 +            if !share.stopped.swap(true, Ordering::AcqRel) {
 +                share.active.store(false, Ordering::Release);
 +                share.ready.notify_all();
-+                crate::input::user_guard::sharing_stopped(share.pid);
++                if crate::windows::is_window_confirmed_closed(share.window_id) {
++                    retire_closed_window(&share);
++                } else {
++                    crate::input::user_guard::sharing_stopped(share.pid);
++                }
 +            }
 +        }
 +    }
@@ -1990,6 +2009,24 @@ new file mode 100644
 +/// 取得本 worker 的共享表，不存储截图文件或用户输入。
 +fn shares() -> &'static Mutex<HashMap<(i32, u32), Arc<WindowShare>>> {
 +    SHARES.get_or_init(|| Mutex::new(HashMap::new()))
++}
++
++/// 按精确共享身份移除已关闭窗口，释放流的工作交给既有清理线程。
++fn retire_closed_window(share: &Arc<WindowShare>) {
++    crate::input::user_guard::forget_closed_window(share.pid, share.window_id);
++    let mut records = shares().lock().unwrap();
++    let key = (share.pid, share.window_id);
++    // 旧回调不能移除同一窗口键后来建立的新共享。
++    if records
++        .get(&key)
++        .is_some_and(|current| Arc::ptr_eq(current, share))
++    {
++        records.remove(&key);
++    }
++    drop(records);
++    if let Some(sender) = STOP_QUEUE.get() {
++        let _ = sender.try_send(vec![share.clone()]);
++    }
 +}
 +
 +/// 系统宿主时钟与共享帧时钟统一，积压的旧帧不能冒充新截图。
@@ -2618,3 +2655,147 @@ diff --git a/crates/platform-macos/src/tools/click.rs b/crates/platform-macos/sr
                      }
                      msg.push_str(&changes.result_suffix());
                      // AX dispatch went through, but AXPerformAction returning
+diff --git a/crates/platform-macos/src/ax/bindings.rs b/crates/platform-macos/src/ax/bindings.rs
+--- a/crates/platform-macos/src/ax/bindings.rs
++++ b/crates/platform-macos/src/ax/bindings.rs
+@@ -831,23 +831,60 @@
+     !listed_in_ax_windows && on_current_space() == Some(false)
+ }
+ 
+-/// `AXWindows` of `pid`'s application element, plus the requested window when
+-/// `AXWindows` does not list it because it is on another Space. Returns
+-/// retained elements the caller must release.
+-///
+-/// # Safety
+-///
+-/// `app` must be the valid application element of `pid`, and the caller must
+-/// release every returned element.
++/// 附属弹窗的查找次数有界，属性缺失时仍拒绝推测窗口身份。
++const MAX_ATTACHED_SHEET_READS: usize = 32;
++
++/// 从已确认的应用窗口查找附属弹窗，只接受系统返回的真实窗口 ID。
++///
++/// # Safety
++///
++/// `windows` 中的元素必须有效；新增元素保留所有权，由调用者释放。
++unsafe fn include_attached_sheets(windows: &mut Vec<AXUIElementRef>, requested: u32) {
++    // 附属弹窗可能继续包含弹窗，沿已确认的窗口关系有界查找。
++    let mut cursor = 0;
++    while cursor < windows.len() && cursor < MAX_ATTACHED_SHEET_READS {
++        for child in copy_children(windows[cursor]) {
++            let is_sheet = copy_string_attr(child, "AXRole").as_deref() == Some("AXSheet")
++                && ax_get_window_id(child).is_some();
++            let duplicate = windows.iter().any(|&window| {
++                core_foundation::base::CFEqual(window as CFTypeRef, child as CFTypeRef) != 0
++            });
++            if is_sheet && !duplicate {
++                windows.push(child);
++            } else {
++                CFRelease(child as CFTypeRef);
++            }
++        }
++        if windows
++            .iter()
++            .any(|&window| ax_get_window_id(window) == Some(requested))
++        {
++            break;
++        }
++        cursor += 1;
++    }
++}
++
++/// 应用顶层窗口、精确附属弹窗与跨 Space 窗口共用同一身份查找入口。
++///
++/// # Safety
++///
++/// `app` 必须有效，调用者必须释放所有返回的保留元素。
+ pub unsafe fn copy_ax_windows_including(
+     app: AXUIElementRef,
+     pid: i32,
+     window_id: u32,
+ ) -> Vec<AXUIElementRef> {
+     let mut windows = copy_ax_windows(app);
+-    let listed = windows
++    let mut listed = windows
+         .iter()
+         .any(|&window| ax_get_window_id(window) == Some(window_id));
++    if !listed {
++        include_attached_sheets(&mut windows, window_id);
++        listed = windows
++            .iter()
++            .any(|&window| ax_get_window_id(window) == Some(window_id));
++    }
+     if should_probe_off_space_window(listed, || {
+         crate::windows::window_on_current_space_by_id(window_id)
+     }) {
+diff --git a/crates/platform-macos/src/ax/tree.rs b/crates/platform-macos/src/ax/tree.rs
+--- a/crates/platform-macos/src/ax/tree.rs
++++ b/crates/platform-macos/src/ax/tree.rs
+@@ -284,7 +284,8 @@
+                     let identifier = copy_string_attr(child, "AXIdentifier");
+                     // Match AX window element → CGWindowID via private SPI.
+                     // Only windows carry one, so skip the round-trip elsewhere.
+-                    let ax_window_id = if role == "AXWindow" {
++                    // 附属文件选择框同样具有独立 CGWindowID，必须按真实身份匹配。
++                    let ax_window_id = if matches!(role.as_str(), "AXWindow" | "AXSheet") {
+                         ax_get_window_id(child)
+                     } else {
+                         None
+diff --git a/crates/platform-macos/src/ax/window_scope.rs b/crates/platform-macos/src/ax/window_scope.rs
+--- a/crates/platform-macos/src/ax/window_scope.rs
++++ b/crates/platform-macos/src/ax/window_scope.rs
+@@ -59,6 +59,11 @@
+ }
+ 
+ impl TopLevelCandidate {
++    /// 原生窗口与附属弹窗都必须遵守精确窗口范围，不能混入兄弟弹窗。
++    fn is_window_surface(&self) -> bool {
++        matches!(self.role.as_str(), "AXWindow" | "AXSheet")
++    }
++
+     pub fn new(role: impl Into<String>, ax_window_id: Option<u32>) -> Self {
+         Self {
+             role: role.into(),
+@@ -133,7 +138,7 @@
+     let matched: Vec<usize> = candidates
+         .iter()
+         .enumerate()
+-        .filter(|(_, c)| c.role == "AXWindow" && c.ax_window_id == Some(requested))
++        .filter(|(_, c)| c.is_window_surface() && c.ax_window_id == Some(requested))
+         .map(|(i, _)| i)
+         .collect();
+ 
+@@ -165,7 +170,7 @@
+         .iter()
+         .enumerate()
+         .filter(|(i, c)| {
+-            (c.role != "AXWindow" || matched.contains(i))
++            (!c.is_window_surface() || matched.contains(i))
+                 && !(dialog_scope && c.role == "AXMenuBar")
+         })
+         .map(|(i, _)| i)
+diff --git a/crates/platform-macos/src/windows.rs b/crates/platform-macos/src/windows.rs
+--- a/crates/platform-macos/src/windows.rs
++++ b/crates/platform-macos/src/windows.rs
+@@ -62,6 +62,21 @@
+         option: u32,
+         relativeToWindow: u32,
+     ) -> core_foundation::array::CFArrayRef;
++}
++
++/// 只有系统查询成功且没有该窗口记录时，才确认窗口已经关闭。
++pub fn is_window_confirmed_closed(window_id: u32) -> bool {
++    use core_foundation::{array::CFArray, base::TCFType};
++
++    /// CoreGraphics 的精确窗口查询选项，不按标题或可见性推测关闭。
++    const INCLUDE_WINDOW: u32 = 1 << 3;
++    let raw = unsafe { CGWindowListCopyWindowInfo(INCLUDE_WINDOW, window_id) };
++    if raw.is_null() {
++        // 查询失败仍按未知处理，不能据此恢复后台控制。
++        return false;
++    }
++    let windows = unsafe { CFArray::<core_foundation::base::CFTypeRef>::wrap_under_create_rule(raw) };
++    windows.len() == 0
+ }
+ 
+ /// Enumerate all windows (including off-screen).

@@ -13,7 +13,13 @@ export function projectComputerToolResult(result: ToolResult): { contentItems: B
         /** elements 已保留身份、层级、动作与几何信息，无需再发送同一棵 Markdown 树。 */
         delete state.tree_markdown;
         delete state._note;
-        if (state.elements_complete === false || state.truncated === true) {
+        /** 窗口无法匹配不是遍历预算不足，新弹窗必须先确认真实窗口身份。 */
+        const backgroundInput = state.background_input as { exact_window?: { status?: unknown } } | null | undefined;
+        if (backgroundInput?.exact_window?.status === 'ax_unresolved') {
+          delete state.escalation;
+          state.zeus_next_step =
+            'The requested window exists, but its accessibility surface is unresolved. Use list_windows to identify a newly opened dialog, then get_window_state with its actual pid and window_id. Increasing tree budgets cannot resolve a different window. Do not send input while unresolved or switch to foreground or system input.';
+        } else if (state.elements_complete === false || state.truncated === true) {
           state.zeus_next_step =
             'Partial tree: absence is inconclusive. Keep query and increase the exhausted budget: max_elements for node_budget, max_depth for depth, timeout_ms for timeout. query only filters collected nodes; repeating the same budget cannot find omitted elements.';
         }
