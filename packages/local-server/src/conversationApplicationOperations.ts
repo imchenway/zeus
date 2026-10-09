@@ -2023,6 +2023,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     );
   }
 
+  /** 验证附件来源，并将服务端确认的单个真实路径授权传给运行时。 */
   function normalizeNativeConversationAttachments(value: unknown, projectLocalPath: string): NativeConversationAttachment[] {
     if (value === undefined) return [];
     if (!Array.isArray(value)) throw nativeApiError('ZEUS_INVALID_CONVERSATION_ATTACHMENT', 'attachments must be an array.');
@@ -2072,6 +2073,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
           if (!allowedRoots.some((root) => isPathInsideProjectRoot(canonicalLocalPath!, root)) || (!pathStat.isFile() && !pathStat.isDirectory())) {
             throw new Error('Attachment path is outside trusted roots or is not a file/directory.');
           }
+          // Pi 再次校验时保留已确认的资源授权，不能扩大到附件父目录。
+          authorizedPath = canonicalLocalPath;
         } catch {
           throw nativeApiError('ZEUS_INVALID_CONVERSATION_ATTACHMENT', `Attachment ${index} localPath must resolve inside a trusted Zeus attachment root.`);
         }

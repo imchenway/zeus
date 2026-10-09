@@ -263,7 +263,7 @@ export interface NativeConversationAttachmentInput {
   size: number;
   localPath?: string;
   uploadRef?: string;
-  /** Local Server 验签后写入的精确路径授权；API 调用方不能自行声明。 */
+  /** Local Server 验签或校验可信目录后确认的真实路径授权；API 调用方不能自行声明。 */
   authorizedPath?: string;
   /** 任务首发服务端快照中的附件位置身份；普通会话附件不填写。 */
   taskPushAttachmentKey?: string;
