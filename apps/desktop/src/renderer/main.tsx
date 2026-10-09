@@ -13,18 +13,6 @@ import './styles.css';
 /** 启动阶段尚未加载设置时采用中文；设置就绪后沿用用户选择。 */
 let startupLanguage: 'zh-CN' | 'en-US' = 'zh-CN';
 
-/** 占位页只反映真实阶段；React 挂载后对应节点自然移除。 */
-function showStartupStage(snapshot: { stage: string }): void {
-  /** 主页读取阶段只显示启动图标。 */
-  const labels: Record<string, string> = { preparing_local_data: '准备本地数据', connecting_local_service: '连接本地服务' };
-  /** 隐藏空文案节点，避免保留上一阶段的描述或空白间距。 */
-  const target = document.getElementById('zeus-startup-stage');
-  if (!target) return;
-  target.textContent = labels[snapshot.stage] ?? '';
-  target.hidden = !target.textContent;
-}
-window.zeus?.onStartupStageChanged?.(showStartupStage);
-void window.zeus?.getStartupStage?.().then(showStartupStage);
 initializeNativeCloseLayerRouting();
 const rendererPerformance = new RendererPerformanceCollector();
 const rendererHydrationStartedAt = performance.now();
