@@ -137,8 +137,9 @@ export interface UnavailableCodexAccount {
 export class ConversationCapabilityQueryApplication {
   constructor(private readonly ports: ConversationCapabilityQueryPorts) {}
 
-  async readConversation(projectId: string): Promise<ConversationCapabilitiesSnapshot> {
-    return this.readExisting(this.requireProject(projectId));
+  /** 项目能力读取共用既有目录；内部模型预检可以跳过账号查询。 */
+  async readConversation(projectId: string, options: { readProviderAccount?: boolean } = {}): Promise<ConversationCapabilitiesSnapshot> {
+    return this.readExisting(this.requireProject(projectId), options);
   }
 
   /** 全局模板只读取既有能力目录；不得为了展示配置而启动 Provider。 */

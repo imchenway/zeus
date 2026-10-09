@@ -871,7 +871,8 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       settings = mergeEmployeeWorkSettings(taskId ? options.planning.get(taskId)?.settings : undefined, settings);
       const employee = options.employees.previewProjectEmployee(projectId, employeeId);
       if (!employee) throw new TaskWorkStoreError('ZEUS_DIGITAL_EMPLOYEE_NOT_FOUND', '数字员工不存在。', 404);
-      const capability = await options.conversationCapabilities.readTaskPush(projectId, undefined);
+      /** 节点冻结只读取项目模型能力，已有任务与新建任务共用同一路径。 */
+      const capability = await options.conversationCapabilities.readConversation(projectId, { readProviderAccount: false });
       const blockers: TaskWorkPreview['blockers'] = [];
       const selection = { ...normalizeWorkSettings(settings), employeeId };
       const model = resolveAgentModel(capability, blockers, employee, selection);
@@ -2666,7 +2667,12 @@ function resolveContextManifest(options: TaskWorkManagementOptions, task: ZeusTa
 }
 
 /** 新工作解析员工默认与分层覆盖，已接纳工作继续使用冻结配置。 */
-function resolveAgentModel(capability: Record<string, unknown>, blockers: TaskWorkPreview['blockers'], employeeSnapshot?: DigitalEmployeeRecord, frozenSettings?: TaskWorkPreviewSelection): Record<string, unknown> | null {
+function resolveAgentModel(
+  capability: { models?: unknown; preferredModel?: unknown },
+  blockers: TaskWorkPreview['blockers'],
+  employeeSnapshot?: DigitalEmployeeRecord,
+  frozenSettings?: TaskWorkPreviewSelection,
+): Record<string, unknown> | null {
   /** 统一能力目录已经包含当前配置的首选模型。 */
   const models = Array.isArray(capability.models) ? capability.models.filter(isCapabilityModel) : [];
   /** 节点显式空值回到统一默认，缺省才沿用已冻结员工的选择。 */
