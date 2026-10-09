@@ -743,6 +743,37 @@ export class ConversationSnapshotV2Repository {
     this.transcript = new ConversationTranscriptRepository(db);
   }
 
+  /** 只返回可见会话的正文命中身份；大历史保留元数据检索，不拖慢运行宿主。 */
+  searchContent(conversationIds: readonly string[], query: string): { conversationIds: string[]; skipped: boolean } {
+    /** 搜索范围由上游目录确定，用 JSON 参数避免大量会话超过 SQL 参数上限。 */
+    const scope = JSON.stringify(conversationIds);
+    /** 字面子串匹配，不把百分号、下划线和引号解释为查询语法。 */
+    const needle = query.trim().toLowerCase();
+    if (!needle || conversationIds.length === 0) return { conversationIds: [], skipped: false };
+    /** ponytail: 32MiB 内直接检索正文，更大历史回退元数据；需要扩大范围时接入全文索引。 */
+    const byteLimit = 32 * 1024 * 1024;
+    /** octet_length 读取持久字段大小，不把正文传到客户端。 */
+    const size = this.db.get<{ bytes: number }>(
+      `WITH scope AS (SELECT value AS id FROM json_each(?))
+       SELECT COALESCE((SELECT SUM(octet_length(content_json)) FROM conversation_model_history WHERE conversation_id IN (SELECT id FROM scope)), 0)
+            + COALESCE((SELECT SUM(octet_length(content)) FROM conversation_messages WHERE conversation_id IN (SELECT id FROM scope)), 0) AS bytes`,
+      [scope],
+    );
+    if ((size?.bytes ?? 0) > byteLimit) return { conversationIds: [], skipped: true };
+    /** 正文在服务端匹配，结果不携带完整历史、工具输出或执行配置。 */
+    const matches = this.db.select<{ conversation_id: string }>(
+      `WITH scope AS (SELECT value AS id FROM json_each(?))
+       SELECT DISTINCT conversation_id FROM conversation_model_history
+        WHERE conversation_id IN (SELECT id FROM scope) AND role NOT IN ('system', 'developer')
+          AND instr(lower(CASE WHEN json_valid(content_json) THEN COALESCE(json_extract(content_json, '$.text'), content_json) ELSE content_json END), ?) > 0
+       UNION
+       SELECT DISTINCT conversation_id FROM conversation_messages
+        WHERE conversation_id IN (SELECT id FROM scope) AND role IN ('user', 'assistant') AND instr(lower(content), ?) > 0`,
+      [scope, needle, needle],
+    );
+    return { conversationIds: matches.map((row) => row.conversation_id), skipped: false };
+  }
+
   /** 只从当前运行分段的命令事实读取目录，不解析命令文本、模型回复或其他会话。 */
   readRecentCommandCwd(conversationIdValue: string): string | null {
     /** 限定会话身份，查询仅返回单个短路径，不读取完整工具输出。 */

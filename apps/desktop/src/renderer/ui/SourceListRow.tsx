@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import type { ButtonHTMLAttributes, ComponentPropsWithRef, ReactNode } from 'react';
 
 export type SourceListRowButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'> & {
   [attribute: `data-${string}`]: string | undefined;
@@ -14,6 +14,8 @@ interface SourceListRowCommonProps {
   actions?: ReactNode;
   expanded?: boolean;
   className?: string;
+  /** 整行共用右键与键盘入口，包含展开和操作图标区域。 */
+  rowProps?: ComponentPropsWithRef<'div'>;
   buttonProps: SourceListRowButtonProps;
 }
 
@@ -36,6 +38,7 @@ export function SourceListRow(props: SourceListRowProps) {
 
   return (
     <div
+      {...props.rowProps}
       className={className}
       data-zeus-primitive="source-list-row"
       data-source-list-level={props.level}

@@ -151,6 +151,7 @@ export function BranchSwitcher(props: {
           <MagnifyingGlass aria-hidden="true" />
           <input
             ref={searchRef}
+            type="search"
             value={query}
             onChange={(event) => {
               setReferenceMenu(null);

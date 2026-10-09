@@ -833,8 +833,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   justify-content: end;
 }
 
-.macos-ai-app .project-first-sidebar .zeus-source-list-row-actions > .project-settings-button,
-.macos-ai-app .project-first-sidebar .zeus-source-list-row-actions > .project-row-actions > .project-more-button {
+.macos-ai-app .project-first-sidebar .zeus-source-list-row-actions > .project-settings-button {
   background: transparent;
   border-color: transparent;
   border-radius: 999px;
@@ -850,46 +849,32 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
     border-color var(--zeus-source-list-row-motion),
     color var(--zeus-source-list-row-motion),
     transform 120ms var(--zeus-motion-ease-out);
-}
-
-.macos-ai-app .project-first-sidebar .zeus-source-list-row-actions > .project-settings-button {
   font-size: 16px;
   line-height: 1;
 }
 
-.macos-ai-app .project-first-sidebar .zeus-source-list-row-actions > .project-row-actions > .project-more-button {
-  font-size: 15px;
-  letter-spacing: -1px;
-  line-height: 1;
-}
-
-.macos-ai-app .project-first-sidebar .zeus-source-list-row:where(:hover:not(:disabled):not([aria-disabled='true']), :focus-within) .zeus-source-list-row-actions > .project-settings-button,
-.macos-ai-app .project-first-sidebar .zeus-source-list-row:where(:hover:not(:disabled):not([aria-disabled='true']), :focus-within) .zeus-source-list-row-actions > .project-row-actions > .project-more-button,
-.macos-ai-app .project-first-sidebar .zeus-source-list-row-actions > .project-row-actions.open > .project-more-button {
+/* 源码与设置入口仍只在整行悬停或键盘聚焦时显示。 */
+.macos-ai-app .project-first-sidebar .zeus-source-list-row:where(:hover:not(:disabled):not([aria-disabled='true']), :focus-within) .zeus-source-list-row-actions > .project-source-button,
+.macos-ai-app .project-first-sidebar .zeus-source-list-row:where(:hover:not(:disabled):not([aria-disabled='true']), :focus-within) .zeus-source-list-row-actions > .project-settings-button {
   opacity: 1;
   pointer-events: auto;
 }
 
-.macos-ai-app .project-first-sidebar .zeus-source-list-row-actions > .project-settings-button:is(:hover:not(:disabled):not([aria-disabled='true']), :active:not(:disabled), :focus-visible):not(:disabled),
-.macos-ai-app .project-first-sidebar .zeus-source-list-row-actions > .project-row-actions > .project-more-button:is(:hover:not(:disabled):not([aria-disabled='true']), :active:not(:disabled), :focus-visible):not(:disabled),
-.macos-ai-app .project-first-sidebar .zeus-source-list-row-actions > .project-row-actions.open > .project-more-button {
+.macos-ai-app .project-first-sidebar .zeus-source-list-row-actions > .project-settings-button:is(:hover:not(:disabled):not([aria-disabled='true']), :active:not(:disabled), :focus-visible):not(:disabled) {
   background: transparent;
   border-color: transparent;
   color: var(--zeus-product-text);
 }
 
-.macos-ai-app .project-first-sidebar .zeus-source-list-row-actions > .project-settings-button:hover:not(:disabled):not([aria-disabled='true']),
-.macos-ai-app .project-first-sidebar .zeus-source-list-row-actions > .project-row-actions > .project-more-button:hover:not(:disabled):not([aria-disabled='true']) {
+.macos-ai-app .project-first-sidebar .zeus-source-list-row-actions > .project-settings-button:hover:not(:disabled):not([aria-disabled='true']) {
   background-color: var(--zeus-interaction-hover);
 }
 
-.macos-ai-app .project-first-sidebar .zeus-source-list-row-actions > .project-settings-button:active:not(:disabled),
-.macos-ai-app .project-first-sidebar .zeus-source-list-row-actions > .project-row-actions > .project-more-button:active:not(:disabled) {
+.macos-ai-app .project-first-sidebar .zeus-source-list-row-actions > .project-settings-button:active:not(:disabled) {
   background-color: var(--zeus-interaction-pressed);
 }
 
-.macos-ai-app .project-first-sidebar .zeus-source-list-row-actions > .project-settings-button:focus-visible,
-.macos-ai-app .project-first-sidebar .zeus-source-list-row-actions > .project-row-actions > .project-more-button:focus-visible {
+.macos-ai-app .project-first-sidebar .zeus-source-list-row-actions > .project-settings-button:focus-visible {
   box-shadow: var(--zeus-control-focus);
   outline: 0;
 }

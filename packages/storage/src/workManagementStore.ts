@@ -591,6 +591,9 @@ function filterAndSortTasks(records: ZeusTaskRecord[], options: TaskListOptions)
         record.createdFrom,
         record.sourceContextJson,
         record.priority,
+        record.managementStatus,
+        record.tags.join(' '),
+        record.relatedTaskIds?.join(' '),
       ]
         .join('\n')
         .toLowerCase()

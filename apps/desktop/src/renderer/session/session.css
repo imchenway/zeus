@@ -12185,54 +12185,29 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   flex: 0 0 auto;
 }
 
-/* 会话右键菜单 */
+/* 会话右键菜单的通用外观与项目菜单共用，这里只定义会话尾列和分组。 */
 .conversation-context-menu {
-  background: var(--session-sidebar);
-  border: 1px solid var(--session-line);
-  border-radius: 12px;
-  box-shadow: 0 8px 24px var(--session-shadow-soft);
   display: grid;
-  gap: 2px;
-  inline-size: max-content;
-  max-inline-size: min(320px, calc(100vw - 32px));
-  min-inline-size: 190px;
+  max-inline-size: calc(100vw - 16px);
   overflow: hidden;
-  padding: 5px;
   z-index: 100;
 }
 
 .conversation-context-menu button {
-  align-items: center;
   appearance: none;
-  background: transparent;
-  border: 0;
-  border-radius: 8px;
-  color: var(--session-text);
   cursor: pointer;
-  display: grid;
-  font: inherit;
-  gap: 8px;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
-  min-block-size: 32px;
-  padding: 6px 10px;
   text-align: start;
 }
 
-.conversation-context-menu button:hover:not(:disabled):not([aria-disabled='true']),
-.conversation-context-menu button:focus-visible {
-  background: var(--zeus-interaction-hover);
-}
-
 .conversation-context-menu button:disabled {
-  color: var(--session-text-muted);
   cursor: default;
   opacity: 0.6;
 }
 
 .conversation-context-menu button svg {
-  block-size: 16px;
-  color: var(--session-text-muted);
-  inline-size: 16px;
+  block-size: 18px;
+  color: var(--zeus-product-muted);
+  inline-size: 18px;
 }
 
 .conversation-context-menu button span {
@@ -12242,29 +12217,25 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 }
 
 .conversation-context-menu button kbd {
-  color: var(--session-text-muted);
+  color: var(--zeus-product-muted);
   font-family: inherit;
   font-size: 11px;
-  margin-inline-start: auto;
-  padding-inline: 4px;
+  font-weight: 400;
+  justify-self: end;
+  padding: 0;
 }
 
 .conversation-context-menu-arrow {
-  color: var(--session-text-muted);
-  font-size: 14px;
-  margin-inline-start: auto;
+  justify-self: end;
 }
 
 .conversation-context-menu-separator {
   block-size: 1px;
-  background: var(--session-line);
+  background: var(--zeus-popover-line, var(--session-line));
   margin: 4px 8px;
 }
 
-.conversation-context-menu-danger {
-  color: var(--session-danger) !important;
-}
-
+.conversation-context-menu-danger,
 .conversation-context-menu-danger svg {
   color: var(--session-danger) !important;
 }

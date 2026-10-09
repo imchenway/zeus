@@ -624,6 +624,15 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     </div>
   ) : null;
 
+  /** 搜索结果先进入所属项目，再复用现有任务详情导航和草稿保护。 */
+  function openSearchedTask(taskId: string, projectId: string): void {
+    /** 项目以现有排序目录为准，已删除的结果不再打开。 */
+    const project = orderedProjects.find((candidate) => candidate.id === projectId);
+    if (!project) return;
+    setPendingGlobalTask({ taskId, projectId });
+    openProjectSection(project, 'tasks');
+  }
+
   return (
     <main
       className={`zeus-shell ai-native-shell macos-ai-app codex-thread-workbench workspace-product-shell theme-${appShellSettings.appearance}${upstreamMainLayout ? ' main-layout-upstream' : ' main-layout-current'}${activeNavTarget === 'settings' ? ' settings-dedicated-shell' : ''}${activeNavTarget === 'skills' ? ' skills-dedicated-shell' : ''}${activeNavTarget === 'digital-teams' ? ' digital-teams-dedicated-shell' : ''}${activeNavTarget === 'automations' ? ' automations-dedicated-shell' : ''}${sessionCodexParityVisible ? ' session-codex-parity-v1' : ''}${projectSessionSourceListVisible ? ' project-session-source-list-shell' : ''}${projectWorkspaceNavigationVisible ? ' project-navigation-rail-shell' : ''}`}
@@ -818,10 +827,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           conversationGroups={nativeConversationGroups}
           conversationStates={nativeConversationRuntimeStates}
           onOpenTask={(task) => {
-            const project = orderedProjects.find((candidate) => candidate.id === task.projectId);
-            if (!project) return;
-            setPendingGlobalTask({ taskId: task.id, projectId: task.projectId });
-            openProjectSection(project, 'tasks');
+            openSearchedTask(task.id, task.projectId);
           }}
           onOpenConversation={(conversation) => void selectNativeConversation(conversation)}
           onOpenSourceMatch={(project: ProjectRecord, match: ProjectSourceContentMatch) => {
@@ -850,6 +856,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           conversationFilters={appShellSettings.sidebarConversationFilters}
           onConversationFiltersChange={saveSidebarConversationFilters}
           conversationGroups={nativeConversationGroups}
+          loadTaskSearchPage={props.nativeConversationClient?.tasks.loadTaskSummaries}
+          searchConversationContent={props.nativeConversationClient?.conversations.searchConversationContent}
+          onOpenTaskDetail={openSearchedTask}
           selectedConversationId={selectedNativeConversationId}
           conversationStates={nativeConversationRuntimeStates}
           automaticUpdateIndicator={automaticUpdateIndicator}
@@ -1775,6 +1784,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                   <MagnifyingGlass aria-hidden="true" weight="regular" />
                   <input
                     className="settings-query-control"
+                    type="search"
                     aria-label={settingsWorkspaceCopy.searchAria}
                     placeholder={settingsWorkspaceCopy.searchPlaceholder}
                     value={settingsSearchQuery}

@@ -1,6 +1,5 @@
 import { GitBranchIcon as GitBranch } from '@phosphor-icons/react/dist/csr/GitBranch';
 import { type KeyboardEvent, type MouseEvent as ReactMouseEvent, useEffect, useRef, useState } from 'react';
-import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
@@ -176,12 +175,16 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
   }
 
   /** 右键菜单处理 */
-  function handleContextMenu(event: ReactMouseEvent, conversation: NativeConversationChoice): void {
+  function handleContextMenu(event: ReactMouseEvent<HTMLButtonElement>, conversation: NativeConversationChoice): void {
     event.preventDefault();
     event.stopPropagation();
+    if (conversation.taskPushCreating) return;
+    event.currentTarget.focus({ preventScroll: true });
+    /** 菜单放在当前行右侧，和项目菜单保持相同间隙。 */
+    const rect = event.currentTarget.getBoundingClientRect();
     setContextMenuState({
       conversation,
-      position: { x: event.clientX, y: event.clientY },
+      position: { x: rect.right + 6, y: rect.top },
     });
   }
 
@@ -214,15 +217,15 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
       const workspaceLabel = worktree ? (props.language === 'zh-CN' ? '工作树' : 'Worktree') : props.language === 'zh-CN' ? '项目目录' : 'Project folder';
       /** 与运行状态筛选和数量限制共用实时状态，缺失时回退到目录快照。 */
       const runtimeState = resolveConversationTreeRuntimeState(conversation, props.conversationStates);
-      const archiving = archivingConversationId === conversation.id;
-      // 可否归档由服务端按当前状态判断；仅旧会话在入口禁用。
-      const archiveLabel = archiving ? copy.archiving : runtimeState === 'legacy_readonly' ? copy.archiveLegacyUnavailable : copy.archive;
       return (
         <li className="session-conversation-tree-item" key={navigationId} data-motion-surface="list-item" data-motion-state={enteringConversationIds.has(navigationId) ? 'entering' : undefined}>
           <button
             type="button"
             className={`session-conversation-tree-row${current ? ' is-current' : ''}`}
             aria-current={current ? 'page' : undefined}
+            aria-haspopup={conversation.taskPushCreating ? undefined : 'menu'}
+            aria-expanded={contextMenuState?.conversation.id === conversation.id}
+            aria-busy={archivingConversationId === conversation.id}
             tabIndex={current || navigationId === fallbackTabStopId ? 0 : -1}
             data-conversation-tree-item="true"
             data-conversation-runtime-state={runtimeState}
@@ -233,6 +236,16 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
               props.onSelectConversation(conversation);
             }}
             onContextMenu={(event) => handleContextMenu(event, conversation)}
+            onKeyDown={(event) => {
+              // 菜单键与 Shift+F10 提供右键操作的键盘入口。
+              if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+              if (conversation.taskPushCreating) return;
+              event.preventDefault();
+              event.stopPropagation();
+              /** 键盘与右键在同一位置打开，窗口边界由共用菜单处理。 */
+              const rect = event.currentTarget.getBoundingClientRect();
+              setContextMenuState({ conversation, position: { x: rect.right + 6, y: rect.top } });
+            }}
           >
             <span
               className="session-conversation-workspace-icon"
@@ -248,20 +261,6 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
             </span>
             <ConversationRowState conversation={conversation} runtimeState={runtimeState} language={props.language} />
           </button>
-          {props.onArchiveConversation && !conversation.taskPushCreating ? (
-            <button
-              type="button"
-              className="session-conversation-archive-button"
-              disabled={archiving || runtimeState === 'legacy_readonly'}
-              aria-label={`${archiveLabel}: ${displayTitle}`}
-              title={archiveLabel}
-              onClick={() => {
-                if (!archiving) void archiveConversation(conversation);
-              }}
-            >
-              {archiving ? <CircleNotch className="session-conversation-archive-spinner" aria-hidden="true" /> : <Archive aria-hidden="true" />}
-            </button>
-          ) : null}
           {archiveError?.conversationId === conversation.id ? (
             <span className="session-conversation-row-error" role="alert">
               <VisibleApplicationError error={archiveError.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
@@ -295,7 +294,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
         position={contextMenuState?.position ?? { x: 0, y: 0 }}
         onClose={handleCloseContextMenu}
         language={props.language as ConversationContextMenuLanguage}
-        onArchive={props.onArchiveConversation}
+        onArchive={props.onArchiveConversation && contextMenuState && resolveConversationTreeRuntimeState(contextMenuState.conversation, props.conversationStates) !== 'legacy_readonly' ? archiveConversation : undefined}
         onMarkAsUnread={handleMarkAsUnread}
         onMarkAsRead={handleMarkAsRead}
         onRename={handleRename}

@@ -20,7 +20,7 @@ import { buildWorkManagementCommandRequest, workManagementClientCommandTypes } f
 
 export interface TaskApiClient {
   /** 首页独立分页，不能充当完整任务快照。 */
-  loadTaskSummaries: (input: { projectId: string; cursor?: string; query?: string }) => Promise<TaskSummaryPage>;
+  loadTaskSummaries: (input: { projectId: string; cursor?: string; query?: string; signal?: AbortSignal }) => Promise<TaskSummaryPage>;
   loadTaskTemplates: (projectId?: string) => Promise<TaskTemplateRecord[]>;
   createTaskTemplate: (input: CreateTaskTemplateRequest) => Promise<TaskTemplateRecord>;
   createTaskFromTemplate: (templateId: string, input: CreateTaskFromTemplateRequest) => Promise<TaskRecord>;
@@ -59,7 +59,7 @@ export interface TaskApiClient {
 
 export function createTaskApiClient(transport: LocalApiTransport): TaskApiClient {
   return {
-    loadTaskSummaries: ({ projectId, cursor, query }) => transport.request<TaskSummaryPage>(`/api/task-summaries?${new URLSearchParams({ projectId, ...(cursor ? { cursor } : {}), ...(query ? { query } : {}) })}`),
+    loadTaskSummaries: ({ projectId, cursor, query, signal }) => transport.request<TaskSummaryPage>(`/api/task-summaries?${new URLSearchParams({ projectId, ...(cursor ? { cursor } : {}), ...(query ? { query } : {}) })}`, { signal }),
     loadTaskTemplates: (projectId) => transport.request<TaskTemplateRecord[]>(`/api/task-templates${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`),
     createTaskTemplate: async (input) => {
       const body = await buildWorkManagementCommandRequest({

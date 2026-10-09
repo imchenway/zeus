@@ -1326,6 +1326,11 @@ export class ConversationRepository {
     return this.getById(conversationId)!;
   }
 
+  /** 目录只判断消息是否存在，避免为可见性检查加载整段会话正文。 */
+  hasMessages(conversationId: string): boolean {
+    return Boolean(this.db.get<{ present: number }>('SELECT 1 AS present FROM conversation_messages WHERE conversation_id = ? LIMIT 1', [conversationId]));
+  }
+
   listMessages(conversationId: string): ZeusConversationMessageRecord[] {
     return this.db
       .select<DbConversationMessageRow>(

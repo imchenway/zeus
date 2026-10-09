@@ -69,6 +69,9 @@ export function MenuSurface({ onClose, ref: forwardedRef, submenuAnchor, ...prop
           const current = previous ? candidates.indexOf(previous) : -1;
           const next = (current + (event.shiftKey ? -1 : 1) + candidates.length) % candidates.length;
           candidates[next]?.focus({ preventScroll: true });
+        } else if (previous?.isConnected && !previous.closest('[inert]')) {
+          // 关闭表面会先设置 inert；提前返回触发行，避免焦点被浏览器移到 body。
+          previous.focus({ preventScroll: true });
         }
         closeRef.current();
       } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {

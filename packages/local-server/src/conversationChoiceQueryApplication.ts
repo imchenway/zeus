@@ -3,6 +3,7 @@ import {
   isInFlightSubmission,
   type ConversationAttentionKind,
   type ConversationRepository,
+  type ConversationSnapshotV2Repository,
   type ConversationServerRequestRepository,
   type ConversationSubmissionRepository,
   type ConversationTurnRepository,
@@ -26,9 +27,11 @@ export interface NativeConversationChoiceProjectionContext {
 }
 
 interface ConversationChoiceQueryPorts {
+  /** 正文查询复用持久历史 Repository，目录层只确定可搜索会话。 */
+  snapshots: Pick<ConversationSnapshotV2Repository, 'searchContent'>;
   projects: Pick<ProjectRepository, 'list' | 'listArchived' | 'getById'>;
   tasks: Pick<TaskRepository, 'getById' | 'listByProject' | 'summariesByIds'>;
-  conversations: Pick<ConversationRepository, 'getById' | 'listRecordsByProject' | 'listRecordsByTask' | 'listUnarchivedRecords' | 'meaningfulActivityAt'>;
+  conversations: Pick<ConversationRepository, 'getById' | 'hasMessages' | 'listRecordsByProject' | 'listRecordsByTask' | 'listUnarchivedRecords' | 'meaningfulActivityAt'>;
   requests: Pick<ConversationServerRequestRepository, 'listPending' | 'listPendingByConversation'>;
   submissions: Pick<ConversationSubmissionRepository, 'listRecoverable' | 'getEarliestCreatedByConversation' | 'getEarliestOperationIdentityByConversation'>;
   turns: Pick<ConversationTurnRepository, 'listInProgress'>;
@@ -195,6 +198,16 @@ export class ConversationChoiceQueryApplication {
       .sort(compareConversationStageUpdatedDesc);
   }
 
+  /** 正文搜索沿用目录的可见性与归档边界，不暴露内部协作会话。 */
+  searchContent(projectId: string, query: string): { conversationIds: string[]; skipped: boolean } {
+    /** 所有命中身份都来自当前项目可见且未归档的会话。 */
+    const ids = this.ports.conversations
+      .listRecordsByProject(projectId)
+      .filter((conversation) => (conversation.taskId === null ? this.isVisibleProjectConversation(conversation) : this.isMeaningfulTaskHistoryItem(conversation)))
+      .map((conversation) => conversation.id);
+    return this.ports.snapshots.searchContent(ids, query);
+  }
+
   private isVisibleProjectConversation(conversation: ZeusConversationRecord): boolean {
     return !conversation.archived && this.isProjectHistoryItem(conversation);
   }
@@ -211,7 +224,7 @@ export class ConversationChoiceQueryApplication {
     if (conversation.archived) return true;
     if (conversation.transportKind !== 'codex_native' || conversation.providerThreadId?.trim()) return true;
     const firstSubmission = this.ports.submissions.getEarliestCreatedByConversation(conversation.id);
-    const hasMessages = (this.ports.conversations.getById(conversation.id)?.messages.length ?? 0) > 0;
+    const hasMessages = this.ports.conversations.hasMessages(conversation.id);
     return hasMessages || Boolean(firstSubmission && firstSubmission.status !== 'cancelled' && firstSubmission.status !== 'deleted');
   }
 
