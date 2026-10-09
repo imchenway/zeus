@@ -1,7 +1,7 @@
 import { BrowserCommentPreview } from './BrowserCommentPreview.js';
 import type { ZeusBrowserComment } from '@zeus/shared';
 import { AnimatedSize } from '../ui/AnimatedSize.js';
-import { type FormEvent, type KeyboardEvent, memo, type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type FormEvent, type KeyboardEvent, memo, type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowBendUpRightIcon as ArrowBendUpRight } from '@phosphor-icons/react/dist/csr/ArrowBendUpRight';
 import { ClockIcon as Clock } from '@phosphor-icons/react/dist/csr/Clock';
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
@@ -23,9 +23,12 @@ import {
 import { ConversationGeneratedImage, ConversationPendingAttachmentImages, ConversationResourceCards, isImageResource, isPendingImageAttachment } from './ConversationResources.js';
 import { ResponseSelectionActions } from './ResponseSelectionActions.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
-import { ConversationMarkdown, conversationMarkdownPhaseForStatus, type StructuredMessageToken } from './ConversationMarkdown.js';
+import { ConversationMarkdown, ConversationImageResourcesContext, conversationMarkdownPhaseForStatus, type StructuredMessageToken } from './ConversationMarkdown.js';
+import { ResourceLoading } from '../ui/ResourceLoading.js';
+import { pendingResourceDisplayName } from '../ui/pendingResourcePolicy.js';
 import { McpAppFrame, type McpAppToolCall, type McpAppToolResult } from './McpAppFrame.js';
 import { AnsweredRequestHistory, type AnsweredRequestHistoryProps } from './AnsweredRequestHistory.js';
+import { ConversationComposerAttachments } from './ConversationComposerAttachments.js';
 
 export type SessionUiLanguage = 'zh-CN' | 'en-US';
 export type ThreadItemRole = 'user' | 'assistant' | 'commentary' | 'notice' | 'tool' | 'file' | 'image' | 'request' | 'error' | 'unknown';
@@ -203,7 +206,8 @@ function TaskPushMessageContent(
       return key ? [[key, resource] as const] : [];
     }),
   );
-  const pendingImagesByKey = new Map(props.pendingAttachments.flatMap((attachment) => (attachment.taskPushAttachmentKey && isPendingImageAttachment(attachment) ? [[attachment.taskPushAttachmentKey, attachment] as const] : [])));
+  /** 原始文件与图片都保留打开入口，权威资源返回后按字段身份接管。 */
+  const pendingAttachmentsByKey = new Map(props.pendingAttachments.flatMap((attachment) => (attachment.taskPushAttachmentKey ? [[attachment.taskPushAttachmentKey, attachment] as const] : [])));
   const supplementalAttachments = props.layout.supplementalAttachments ?? [];
   return (
     <div className="session-task-push-layout">
@@ -226,12 +230,13 @@ function TaskPushMessageContent(
             // 后不再受信，不能反过来遮住已经可用的耐久资源。
             const authoritativeImageKeys = new Set(field.attachmentKeys.filter((key) => resourcesByKey.has(key)));
             const resources = markdownResources;
-            const attachmentNames = new Map(block.attachments.map((attachment) => [attachment.key, attachment.name]));
-            const pendingImages = field.attachmentKeys.flatMap((key) => {
-              const attachment = pendingImagesByKey.get(key);
+            /** 缺少预览来源时仍按附件类型展示，图片不暴露自动文件名。 */
+            const attachmentsByKey = new Map(block.attachments.map((attachment) => [attachment.key, attachment]));
+            const pendingAttachments = field.attachmentKeys.flatMap((key) => {
+              const attachment = pendingAttachmentsByKey.get(key);
               return attachment && !authoritativeImageKeys.has(key) ? [attachment] : [];
             });
-            const missingAttachmentKeys = field.attachmentKeys.filter((key) => !resourcesByKey.has(key) && !pendingImagesByKey.has(key));
+            const missingAttachmentKeys = field.attachmentKeys.filter((key) => !resourcesByKey.has(key) && !pendingAttachmentsByKey.has(key));
             return (
               <section key={field.field} className="session-task-push-field">
                 <strong>{field.label}：</strong>
@@ -248,10 +253,15 @@ function TaskPushMessageContent(
                   />
                 ) : null}
                 <ConversationResourceCards resources={resources} language={props.language} compact onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
-                <ConversationPendingAttachmentImages attachments={pendingImages} language={props.language} compact onVisibleContentChange={props.onVisibleContentChange} />
+                <ConversationPendingAttachmentImages attachments={pendingAttachments} language={props.language} compact onVisibleContentChange={props.onVisibleContentChange} />
+                <ConversationComposerAttachments attachments={pendingAttachments.filter((attachment) => !isPendingImageAttachment(attachment))} language={props.language} disabled={false} />
                 {missingAttachmentKeys.map((key) => (
                   <span key={key} className="session-task-push-resource-placeholder">
-                    {props.language === 'zh-CN' ? '附件' : 'Attachments'} · {attachmentNames.get(key) ?? key}
+                    {attachmentsByKey.get(key)?.kind === 'image'
+                      ? props.language === 'zh-CN'
+                        ? '图片预览不可用'
+                        : 'Image preview unavailable'
+                      : `${props.language === 'zh-CN' ? '附件' : 'Attachments'} · ${pendingResourceDisplayName(attachmentsByKey.get(key)?.name ?? key, props.language)}`}
                   </span>
                 ))}
               </section>
@@ -298,18 +308,31 @@ function TaskPushMessageContent(
           <ConversationPendingAttachmentImages
             attachments={supplementalAttachments.flatMap((attachment) => {
               if (resourcesByKey.has(attachment.key)) return [];
-              const pending = pendingImagesByKey.get(attachment.key);
+              const pending = pendingAttachmentsByKey.get(attachment.key);
               return pending ? [pending] : [];
             })}
             language={props.language}
             compact
             onVisibleContentChange={props.onVisibleContentChange}
           />
+          <ConversationComposerAttachments
+            attachments={supplementalAttachments.flatMap((attachment) => {
+              if (resourcesByKey.has(attachment.key)) return [];
+              const pending = pendingAttachmentsByKey.get(attachment.key);
+              return pending && !isPendingImageAttachment(pending) ? [pending] : [];
+            })}
+            language={props.language}
+            disabled={false}
+          />
           {supplementalAttachments
-            .filter((attachment) => !resourcesByKey.has(attachment.key) && !pendingImagesByKey.has(attachment.key))
+            .filter((attachment) => !resourcesByKey.has(attachment.key) && !pendingAttachmentsByKey.has(attachment.key))
             .map((attachment) => (
               <span key={attachment.key} className="session-task-push-resource-placeholder">
-                {props.language === 'zh-CN' ? '附件' : 'Attachments'} · {attachment.name}
+                {attachment.kind === 'image'
+                  ? props.language === 'zh-CN'
+                    ? '图片预览不可用'
+                    : 'Image preview unavailable'
+                  : `${props.language === 'zh-CN' ? '附件' : 'Attachments'} · ${pendingResourceDisplayName(attachment.name, props.language)}`}
               </span>
             ))}
         </section>
@@ -453,16 +476,31 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const browserScreenshotNames = new Set(browserComments.flatMap((comment) => (comment.screenshotPath ? [comment.screenshotPath.split('/').pop()] : [])));
   const pendingAttachments = role === 'user' ? nativeConversationAttachments(props.item.payload.attachments).filter((attachment) => !browserScreenshotNames.has(attachment.name)) : [];
   const conversationContext = role === 'user' ? conversationContextDraft(props.item.payload.conversationContext) : null;
-  const hasAuthoritativeAttachmentResources = props.item.resources.some((resource) => resource.kind === 'attachment' && resource.presentation === 'card');
-  const pendingImageAttachments = !taskPushLayout && !hasAuthoritativeAttachmentResources ? pendingAttachments.filter(isPendingImageAttachment) : [];
+  /** 权威资源按附件接管，不能因一份附件已返回而隐藏其他图片。 */
+  const pendingImageAttachments = !taskPushLayout
+    ? pendingAttachments.filter(
+        (attachment) =>
+          isPendingImageAttachment(attachment) &&
+          !props.item.resources.some(
+            (resource) =>
+              resource.kind === 'attachment' &&
+              resource.presentation === 'card' &&
+              ((attachment.taskPushAttachmentKey && resource.taskPushAttachmentKey === attachment.taskPushAttachmentKey) || resource.attachmentRef === attachment.uploadRef || resource.displayName === attachment.name),
+          ),
+      )
+    : [];
+  /** 文本与普通文件也需要补载权威资源，不能只为图片恢复可点击入口。 */
   const needsAuthoritativeAttachmentResources =
     role === 'user' &&
     !props.item.optimistic &&
-    pendingAttachments.some(
+    (Array.isArray(props.item.payload.attachments) ? props.item.payload.attachments : []).some(
       (attachment) =>
-        isPendingImageAttachment(attachment) &&
+        isRecord(attachment) &&
+        !browserScreenshotNames.has(primitiveText(attachment.name) ?? undefined) &&
         !props.item.resources.some(
-          (resource) => resource.kind === 'attachment' && isImageResource(resource) && ((attachment.taskPushAttachmentKey && resource.taskPushAttachmentKey === attachment.taskPushAttachmentKey) || resource.displayName === attachment.name),
+          (resource) =>
+            resource.kind === 'attachment' &&
+            ((attachment.taskPushAttachmentKey && resource.taskPushAttachmentKey === attachment.taskPushAttachmentKey) || resource.attachmentRef === attachment.uploadRef || resource.displayName === attachment.name),
         ),
     );
   const showUserMessageAttachmentGroup = role === 'user' && !taskPushLayout;
@@ -602,7 +640,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       {/* 结构化问答已按题展示附件，提交中也不重复绘制普通消息附件区。 */}
       {showUserMessageAttachmentGroup && !props.questionAnswer ? (
         <div className="session-user-message-attachments">
-          <ItemAttachments item={props.item} label={labels.attachments} hideImages={pendingImageAttachments.length > 0} excludedNames={browserScreenshotNames} />
+          <ItemAttachments item={props.item} language={props.language} hideImages={pendingImageAttachments.length > 0} excludedNames={browserScreenshotNames} onLoadResources={props.onLoadResources} />
           <ConversationPendingAttachmentImages attachments={pendingImageAttachments} language={props.language} onVisibleContentChange={props.onVisibleContentChange} />
           <ConversationResourceCards resources={unplacedResources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
           <ItemImages item={props.item} label={labels.conversationImage} />
@@ -726,7 +764,9 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       ) : null}
       {!command && !mcpApp && !recoveredRequestUserInput ? <TypedItemFacts item={props.item} role={role} language={props.language} /> : null}
       {role !== 'error' && conversationContext ? <UserConversationContextSummary draft={conversationContext} language={props.language} /> : null}
-      {role !== 'error' && !showUserMessageAttachmentGroup && !taskPushLayout ? <ItemAttachments item={props.item} label={labels.attachments} hideImages={pendingImageAttachments.length > 0} excludedNames={browserScreenshotNames} /> : null}
+      {role !== 'error' && !showUserMessageAttachmentGroup && !taskPushLayout ? (
+        <ItemAttachments item={props.item} language={props.language} hideImages={pendingImageAttachments.length > 0} excludedNames={browserScreenshotNames} onLoadResources={props.onLoadResources} />
+      ) : null}
       {role !== 'error' && !showUserMessageAttachmentGroup ? <ConversationPendingAttachmentImages attachments={pendingImageAttachments} language={props.language} onVisibleContentChange={props.onVisibleContentChange} /> : null}
       {role !== 'error' && !showUserMessageAttachmentGroup && role !== 'image' ? (
         <ConversationResourceCards resources={unplacedResources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
@@ -1350,32 +1390,54 @@ function itemFacts(item: NativeSessionItemBuffer, role: ThreadItemRole): Array<[
   return pairs.flatMap(([label, value]) => (primitiveText(value) ? [[label, primitiveText(value)!]] : []));
 }
 
-function ItemAttachments(props: { item: NativeSessionItemBuffer; label: string; hideImages?: boolean; excludedNames?: Set<string | undefined> }) {
-  if (props.item.resources.some((resource) => resource.kind === 'attachment' && resource.presentation === 'card')) return null;
-  const raw = Array.isArray(props.item.payload.attachments) ? props.item.payload.attachments : [];
-  const attachments = raw.flatMap((entry) => {
-    if (!isRecord(entry) || props.excludedNames?.has(primitiveText(entry.name) ?? undefined)) return [];
-    const mime = primitiveText(entry.mime ?? entry.mimeType);
-    const kind = primitiveText(entry.kind);
-    if (props.hideImages && (kind === 'image' || mime?.startsWith('image/'))) return [];
-    const name = primitiveText(entry.name ?? entry.path ?? entry.filePath);
-    if (!name) return [];
-    return [{ name, meta: [mime, primitiveText(entry.status)].filter(Boolean).join(' · ') }];
-  });
-  return attachments.length ? (
-    <section className="session-item-attachments" aria-label={props.label}>
-      <ul>
-        {attachments.map((entry, index) => (
-          <li key={`${entry.name}-${index}`}>
-            <span>{entry.name}</span>
-            {entry.meta ? <small>{entry.meta}</small> : null}
-          </li>
-        ))}
-      </ul>
-    </section>
-  ) : null;
+/** 未入库附件也复用可点击卡片，打开只使用已校验的受信引用。 */
+function ItemAttachments(props: { item: NativeSessionItemBuffer; language: SessionUiLanguage; hideImages?: boolean; excludedNames?: Set<string | undefined>; onLoadResources?: (turnId: string) => void | Promise<void> }) {
+  /** 历史元数据没有读取权限时等待权威资源，不能拼出一个可打开路径。 */
+  const resourceContext = useContext(ConversationImageResourcesContext);
+  /** 已补齐的资源按原身份接管，其他附件继续展示，避免整组消失。 */
+  const attachments = nativeConversationAttachments(props.item.payload.attachments).filter(
+    (attachment) =>
+      !props.excludedNames?.has(attachment.name) &&
+      !(props.hideImages && isPendingImageAttachment(attachment)) &&
+      !props.item.resources.some(
+        (resource) =>
+          resource.kind === 'attachment' &&
+          resource.presentation === 'card' &&
+          ((attachment.taskPushAttachmentKey && resource.taskPushAttachmentKey === attachment.taskPushAttachmentKey) || resource.attachmentRef === attachment.uploadRef || resource.displayName === attachment.name),
+      ),
+  );
+  /** 未解析的元数据仍显示恢复状态，避免附件在等待期间无声消失。 */
+  const unresolved = (Array.isArray(props.item.payload.attachments) ? props.item.payload.attachments : []).filter(
+    (entry) =>
+      isRecord(entry) &&
+      Boolean(primitiveText(entry.name)) &&
+      !props.excludedNames?.has(primitiveText(entry.name) ?? undefined) &&
+      !nativeConversationAttachments([entry]).length &&
+      !props.item.resources.some((resource) => resource.kind === 'attachment' && resource.presentation === 'card' && resource.displayName === entry.name),
+  );
+  /** 加载失败和最终缺失均提供显式恢复入口，既有资源不受影响。 */
+  const restoring = resourceContext?.state === 'loading';
+  return (
+    <>
+      <ConversationComposerAttachments attachments={attachments} language={props.language} disabled={false} />
+      {unresolved.length > 0 ? (
+        <div className="session-resource-card" role="status" aria-busy={restoring || undefined}>
+          <span className="session-resource-card-copy">
+            <small>{props.language === 'zh-CN' ? (restoring ? '正在恢复附件' : '附件暂不可用') : restoring ? 'Restoring attachments' : 'Attachments unavailable'}</small>
+          </span>
+          {!restoring && props.onLoadResources ? (
+            <button type="button" className="session-open-with-trigger" onClick={() => void props.onLoadResources?.(props.item.turnId)}>
+              {props.language === 'zh-CN' ? '重试' : 'Retry'}
+            </button>
+          ) : null}
+          {restoring ? <ResourceLoading label={props.language === 'zh-CN' ? '正在恢复附件' : 'Restoring attachments'} overlay /> : null}
+        </div>
+      ) : null}
+    </>
+  );
 }
 
+/** 消息附件必须有唯一的授权引用，元数据本身不能作为可打开路径。 */
 function nativeConversationAttachments(value: unknown): NativeConversationAttachment[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((entry) => {
@@ -1388,11 +1450,14 @@ function nativeConversationAttachments(value: unknown): NativeConversationAttach
     if (!name || !mime || !Number.isSafeInteger(size) || size < 0 || (localPath ? 1 : 0) + (uploadRef ? 1 : 0) !== 1) return [];
     const kind = entry.kind === 'image' || entry.kind === 'file' || entry.kind === 'directory' || entry.kind === 'pasted_text' ? entry.kind : undefined;
     const taskPushAttachmentKey = typeof entry.taskPushAttachmentKey === 'string' && entry.taskPushAttachmentKey ? entry.taskPushAttachmentKey : undefined;
+    /** 粘贴文本保留字符数，卡片无需暴露自动生成的文件名。 */
+    const characterCount = typeof entry.characterCount === 'number' && Number.isSafeInteger(entry.characterCount) && entry.characterCount >= 0 ? entry.characterCount : undefined;
     return [
       {
         name,
         mime,
         size,
+        ...(characterCount !== undefined ? { characterCount } : {}),
         ...(kind ? { kind } : {}),
         ...(taskPushAttachmentKey ? { taskPushAttachmentKey } : {}),
         ...(localPath ? { localPath } : { uploadRef: uploadRef! }),

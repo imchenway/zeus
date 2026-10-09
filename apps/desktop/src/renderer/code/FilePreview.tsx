@@ -207,8 +207,7 @@ function FilePreviewBody(props: {
     <section className={`file-preview${simpleImage ? ' file-preview-simple-image' : ''}`} aria-label={props.zh ? '文件预览' : 'File preview'}>
       {props.onClose ? (
         <header className="file-preview-dialog-header">
-          <strong title={simpleImage ? current?.name : undefined}>{simpleImage ? current?.name : props.zh ? '文件预览' : 'File preview'}</strong>
-          {simpleImage ? <span>{props.zh ? '图片预览' : 'Image preview'}</span> : null}
+          <strong>{simpleImage ? (props.zh ? '图片预览' : 'Image preview') : props.zh ? '文件预览' : 'File preview'}</strong>
           <button type="button" className="file-preview-close" aria-label={props.zh ? '关闭' : 'Close'} title={props.zh ? '关闭' : 'Close'} onClick={props.onClose}>
             <X size={18} aria-hidden="true" />
           </button>
@@ -327,8 +326,8 @@ function FilePreviewContent(props: { item: FilePreviewItem; zh: boolean; /** 比
       <header>
         <FileTypeIcon name={item.name} size={20} />
         <div className="file-preview-identity">
-          <strong title={item.name} data-file-status={props.fileStatus ?? item.review?.diff?.changeType}>
-            {item.name}
+          <strong title={item.kind === 'image' ? undefined : item.name} data-file-status={props.fileStatus ?? item.review?.diff?.changeType}>
+            {item.kind === 'image' ? (props.zh ? '图片预览' : 'Image preview') : item.name}
           </strong>
           <small>
             {item.label} · {item.mime} · {item.byteLength.toLocaleString()} B

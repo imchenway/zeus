@@ -16,6 +16,10 @@ import { FileTsIcon as FileTs } from '@phosphor-icons/react/dist/csr/FileTs';
 import { FileXlsIcon as FileXls } from '@phosphor-icons/react/dist/csr/FileXls';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
+import { ResourceLoading } from './ResourceLoading.js';
+import { isPendingResourceText, pendingResourceDisplayName } from './pendingResourcePolicy.js';
+import { ResourceTextPreview } from './ResourceTextPreview.js';
+import type { FilePreviewRequest } from '@zeus/shared';
 
 export type PendingResourceKind = 'image' | 'file' | 'directory' | 'pasted_text';
 
@@ -26,7 +30,15 @@ export interface PendingResourceCardItem {
   mimeType?: string;
   size?: number;
   characterCount?: number;
+  /** 已有正文只取开头供界面显示，不重复保存完整文本。 */
+  textExcerpt?: string;
+  /** 旧文本附件通过业务身份读取；名称不能成为读取权限。 */
+  textPreviewRequest?: FilePreviewRequest;
   previewUrl?: string;
+  /** 外部读取缩略图时也使用统一加载占位。 */
+  previewLoading?: boolean;
+  /** 读取失败后停止动画，保留文件打开入口。 */
+  previewFailed?: boolean;
   /** 临时卡片只提供即时反馈，宿主确认前不能打开、移除或恢复。 */
   pending?: boolean;
   /** 任务表单用字段定位临时卡片，不写入附件持久化。 */
@@ -47,6 +59,7 @@ export interface PendingResourceCardsProps {
   onLoadPreview?: (resource: PendingResourceCardItem) => Promise<{ previewUrl: string; mimeType: string } | null>;
 }
 
+/** 所有输入和原始附件共用资源卡片，不改变附件身份。 */
 export function PendingResourceCards(props: PendingResourceCardsProps) {
   if (props.resources.length === 0) return null;
   const className = ['pending-resource-strip', props.className].filter(Boolean).join(' ');
@@ -68,9 +81,12 @@ export function PendingResourceCards(props: PendingResourceCardsProps) {
   );
 }
 
+/** 图片加载和导入分别完成，现有预览不被导入提示遮住。 */
 function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' | 'className'> & { resource: PendingResourceCardItem }) {
   const [loadedPreviewUrl, setLoadedPreviewUrl] = useState<string | null>(null);
   const [previewFailed, setPreviewFailed] = useState(false);
+  /** URL 返回后仍等待图片解码完成，避免显示空白缩略图。 */
+  const [decodedPreviewUrl, setDecodedPreviewUrl] = useState<string | null>(null);
   const resourceRef = useRef(props.resource);
   const previewLoaderRef = useRef(props.onLoadPreview);
   resourceRef.current = props.resource;
@@ -79,7 +95,16 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
   const previewLoaderAvailable = Boolean(props.onLoadPreview);
   const extension = pendingResourceExtension(props.resource.name);
   const typeLabel = pendingResourceTypeLabel(props.resource, props.language);
-  const resourceColor = pendingResourceColorFamily(props.resource, extension);
+  /** 自动文本附件直接展示内容摘要，普通文件保留文件名。 */
+  const textResource = isPendingResourceText(props.resource.name, props.resource.kind);
+  /** 外部读取与内部读取共用失败状态，失败不能一直显示加载动画。 */
+  const failed = previewFailed || props.resource.previewFailed;
+  /** 已有图片继续展示；没有预览能力时保留普通文件图标。 */
+  const previewLoading = props.resource.kind === 'image' && !failed && (previewUrl ? decodedPreviewUrl !== previewUrl : Boolean(props.onLoadPreview || props.resource.previewLoading));
+  /** 导入状态继续阻止提交；缩略图加载只影响展示。 */
+  const busy = props.resource.pending || previewLoading;
+  /** 状态说明保留给辅助技术与悬停提示。 */
+  const loadingLabel = props.resource.pending ? (props.language === 'zh-CN' ? '正在导入附件' : 'Importing attachment') : props.language === 'zh-CN' ? '正在加载图片' : 'Loading image';
 
   useEffect(() => {
     let active = true;
@@ -94,7 +119,9 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
     }
     void loadPreview(resource)
       .then((preview) => {
-        if (active) setLoadedPreviewUrl(preview?.previewUrl ?? null);
+        if (!active) return;
+        setLoadedPreviewUrl(preview?.previewUrl ?? null);
+        setPreviewFailed(!preview?.previewUrl);
       })
       .catch(() => {
         if (active) setPreviewFailed(true);
@@ -104,13 +131,20 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
     };
   }, [previewLoaderAvailable, props.resource.id, props.resource.kind, props.resource.previewUrl, props.resource.pending]);
 
+  /** 激活始终使用原始受信资源，展示名称不参与打开定位。 */
   function activate(event: ReactMouseEvent<HTMLButtonElement>): void {
     props.onActivate?.(props.resource, event.currentTarget);
   }
 
+  /** 图片等待解码时显示骨架，导入中的已有缩略图仅附加进度条。 */
   const visual = (
-    <span className="pending-resource-visual" data-color-family={resourceColor} aria-hidden="true">
-      {props.resource.kind === 'image' && previewUrl && !previewFailed ? <img src={previewUrl} alt="" onError={() => setPreviewFailed(true)} /> : <PendingResourceIcon resource={props.resource} extension={extension} />}
+    <span className="pending-resource-visual" aria-hidden="true">
+      {props.resource.kind === 'image' && previewUrl && !failed ? (
+        <img src={previewUrl} alt="" style={decodedPreviewUrl === previewUrl ? undefined : { visibility: 'hidden' }} onLoad={() => setDecodedPreviewUrl(previewUrl)} onError={() => setPreviewFailed(true)} />
+      ) : previewLoading ? null : (
+        <PendingResourceIcon resource={props.resource} extension={extension} />
+      )}
+      {previewLoading ? <ResourceLoading label={loadingLabel} /> : null}
     </span>
   );
 
@@ -118,9 +152,10 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
     <li
       className="pending-resource-card"
       data-resource-kind={props.resource.kind}
-      aria-busy={props.resource.pending || undefined}
-      aria-label={props.resource.pending ? `${props.language === 'zh-CN' ? '正在导入' : 'Importing'}: ${props.resource.name}` : undefined}
-      title={props.resource.title ?? props.resource.name}
+      data-text-preview={textResource || undefined}
+      aria-busy={busy || undefined}
+      aria-label={busy ? `${loadingLabel}: ${props.resource.name}` : undefined}
+      title={props.resource.kind === 'image' ? pendingResourceOpenLabel(props.resource.kind, props.language) : (props.resource.title ?? props.resource.name)}
     >
       {props.onActivate && !props.resource.pending ? (
         /* 预览只读取附件；提交中和只读界面只禁用移除、恢复等修改操作。 */
@@ -132,9 +167,13 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
       )}
       {props.resource.kind === 'image' ? null : (
         <span className="pending-resource-copy">
-          <strong>{props.resource.name}</strong>
+          {textResource ? (
+            <ResourceTextPreview text={props.resource.textExcerpt} request={props.resource.textPreviewRequest} characterCount={props.resource.characterCount} pending={props.resource.pending} language={props.language} />
+          ) : (
+            <strong>{pendingResourceDisplayName(props.resource.name, props.language, props.resource.kind)}</strong>
+          )}
           <span className="pending-resource-meta">
-            <small>{props.resource.pending ? (props.language === 'zh-CN' ? '正在导入…' : 'Importing…') : typeLabel}</small>
+            {textResource ? null : <small>{props.resource.pending ? (props.language === 'zh-CN' ? '正在导入…' : 'Importing…') : typeLabel}</small>}
             {props.resource.kind === 'pasted_text' && props.resource.restorable && props.onRestoreText ? (
               <button type="button" className="pending-resource-restore" disabled={props.disabled} onClick={() => props.onRestoreText?.(props.resource)}>
                 {props.language === 'zh-CN' ? '恢复' : 'Restore'}
@@ -143,6 +182,7 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
           </span>
         </span>
       )}
+      {props.resource.pending ? <ResourceLoading label={loadingLabel} overlay /> : null}
       {props.onRemove && !props.resource.pending ? (
         <button
           type="button"
@@ -161,7 +201,7 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
 }
 
 function PendingResourceIcon(props: { resource: PendingResourceCardItem; extension: string }): ReactNode {
-  const iconProps = { size: 25, weight: 'fill' as const, 'aria-hidden': true };
+  const iconProps = { size: 22, weight: 'regular' as const, 'aria-hidden': true };
   if (props.resource.kind === 'image') return <FileImage {...iconProps} />;
   if (props.resource.kind === 'directory') return <Folder {...iconProps} />;
   if (props.resource.kind === 'pasted_text') return <FileText {...iconProps} />;
@@ -206,17 +246,4 @@ function pendingResourceTypeLabel(resource: PendingResourceCardItem, language: '
 function pendingResourceOpenLabel(kind: PendingResourceKind, language: 'zh-CN' | 'en-US'): string {
   if (language === 'en-US') return kind === 'image' ? 'Preview image' : 'Open resource';
   return kind === 'image' ? '预览图片' : '打开资源';
-}
-
-function pendingResourceColorFamily(resource: PendingResourceCardItem, extension: string): string {
-  if (resource.kind === 'directory') return 'folder';
-  if (resource.kind === 'pasted_text') return 'text';
-  if (resource.kind === 'image') return 'image';
-  if (['xls', 'xlsx', 'numbers', 'csv'].includes(extension)) return 'sheet';
-  if (['doc', 'docx', 'pages', 'rtf'].includes(extension)) return 'document';
-  if (['ppt', 'pptx', 'key'].includes(extension)) return 'presentation';
-  if (extension === 'pdf') return 'pdf';
-  if (['zip', 'gz', 'tgz', 'rar', '7z', 'tar'].includes(extension)) return 'archive';
-  if (['js', 'jsx', 'mjs', 'ts', 'tsx', 'css', 'scss', 'less', 'html', 'htm', 'sql', 'json', 'yaml', 'yml', 'toml', 'xml', 'sh', 'py', 'java', 'go', 'rs'].includes(extension)) return 'code';
-  return 'file';
 }

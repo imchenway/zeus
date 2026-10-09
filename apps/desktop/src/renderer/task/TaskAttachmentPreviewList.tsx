@@ -158,9 +158,13 @@ export function TaskAttachmentPreviewList(props: TaskAttachmentPreviewListProps)
       name: attachment.name,
       kind: attachment.kind,
       mimeType: attachment.mimeType,
+      textExcerpt: attachment.restorableText?.slice(0, 400),
+      textPreviewRequest: { kind: 'attachment', localPath: attachment.path },
       ...(attachment.size !== undefined ? { size: attachment.size } : {}),
       ...(attachment.characterCount !== undefined ? { characterCount: attachment.characterCount } : {}),
       ...(previewUrl ? { previewUrl } : {}),
+      previewLoading: attachment.kind === 'image' && previewLoaderAvailable && !previewUrl && !previewFailures.has(attachment.path),
+      previewFailed: previewFailures.has(attachment.path),
       ...(attachment.restorableText ? { restorable: true } : {}),
       title: attachment.path,
     };

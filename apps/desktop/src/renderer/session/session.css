@@ -1023,13 +1023,13 @@
   color: var(--session-text-muted);
 }
 
-/* 编辑附件沿用输入框的真实预览组件，但收紧高度，避免重新变成一张大卡片。 */
+/* 编辑区的普通文件保持紧凑，图片和文本摘要沿用统一预览尺寸。 */
 .session-codex-parity-v1 .session-queued-message-attachments {
   gap: 6px;
   padding: 0;
 }
 
-.session-codex-parity-v1 .session-queued-message-attachments .pending-resource-card {
+.session-codex-parity-v1 .session-queued-message-attachments .pending-resource-card:not([data-text-preview='true'], [data-resource-kind='image']) {
   block-size: 40px;
   border-radius: 8px;
   flex-basis: min(200px, calc(100vw - 80px));
@@ -1040,18 +1040,6 @@
 .session-codex-parity-v1 .session-queued-message-attachments .pending-resource-visual {
   block-size: 22px;
   inline-size: 22px;
-}
-
-.session-codex-parity-v1 .session-queued-message-attachments .pending-resource-card[data-resource-kind='image'] {
-  block-size: 40px;
-  flex-basis: 40px;
-  inline-size: 40px;
-}
-
-.session-codex-parity-v1 .session-queued-message-attachments .pending-resource-card[data-resource-kind='image'] .pending-resource-visual {
-  block-size: 40px;
-  border-radius: 8px;
-  inline-size: 40px;
 }
 
 .session-codex-parity-v1 .session-queued-message-editor > footer {
@@ -3130,12 +3118,51 @@
   margin-block: 0;
 }
 
-/* 任务附件使用单列紧凑行，长文件名和窄窗口不挤压打开方式。 */
+/* 任务文件保留紧凑行；图片另用缩略图网格，避免显示自动生成的长文件名。 */
 .session-codex-parity-v1 .session-task-push-field > .session-resource-card-list[data-compact='true'] {
   gap: 6px;
   grid-template-columns: minmax(0, 1fr);
   margin-block: 4px 0;
   max-inline-size: 100%;
+}
+
+/* 图片入口保留悬停名称和键盘访问，紧凑状态只显示图片本身。 */
+.session-codex-parity-v1 .session-resource-card-list[data-compact='true'][data-layout='images'] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.session-codex-parity-v1 .session-resource-card-list[data-compact='true'] .session-resource-image {
+  inline-size: fit-content;
+  min-inline-size: 72px;
+  max-inline-size: min(208px, 100%);
+  block-size: 104px;
+  min-block-size: 0;
+  max-block-size: 104px;
+  border-radius: 6px;
+  background: transparent;
+}
+
+.session-codex-parity-v1 .session-resource-card-list[data-compact='true'] .session-resource-image > img {
+  inline-size: auto;
+  block-size: auto;
+  max-inline-size: 208px;
+  max-block-size: 104px;
+  object-fit: contain;
+}
+
+/* 图片解码后不再维持占位高度，完整边界由图片比例决定。 */
+.session-codex-parity-v1 .session-resource-card-list[data-compact='true'] .session-resource-image:has(> img) {
+  block-size: fit-content;
+}
+
+/* 小图失败时保留可点击的短提示，完整错误通过悬停和预览呈现。 */
+.session-codex-parity-v1 .session-resource-card-list[data-compact='true'] .session-resource-image-placeholder {
+  min-block-size: 0;
+  padding: 8px;
+  font-size: 11px;
+  line-height: 16px;
 }
 
 .session-codex-parity-v1 .session-resource-card[data-compact='true'] {
@@ -8034,6 +8061,13 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   object-fit: contain;
 }
 
+/* 已有图片按内容确定高度，加载占位继续保留原有的稳定空间。 */
+.session-codex-parity-v1 .session-resource-image:has(> img) {
+  min-block-size: 0;
+  border-radius: 6px;
+  background: transparent;
+}
+
 .session-codex-parity-v1 .session-resource-image-placeholder {
   align-items: center;
   display: flex;
@@ -8087,6 +8121,32 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   min-inline-size: 0;
   padding: 2px;
   text-align: start;
+}
+
+/* 权威文本资源与草稿摘要使用同一尺寸，右侧仍保留打开方式菜单。 */
+.session-codex-parity-v1 .session-resource-card[data-text-preview='true'] {
+  inline-size: 256px;
+  min-block-size: 108px;
+  padding: 10px 12px;
+  align-items: flex-start;
+  border: 1px solid var(--session-line-soft);
+  border-radius: 8px;
+  background: transparent;
+}
+
+.session-codex-parity-v1 .session-resource-card[data-text-preview='true'] .session-resource-card-icon {
+  display: none;
+}
+
+.session-codex-parity-v1 .session-resource-card[data-text-preview='true'] .session-resource-card-copy .resource-text-preview > strong {
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 18px;
+}
+
+.session-codex-parity-v1 .session-resource-card[data-text-preview='true'] .session-resource-card-copy .resource-text-preview > small {
+  font-size: 10px;
+  line-height: 16px;
 }
 
 .session-codex-parity-v1 .session-resource-card-main:hover:not(:disabled):not([aria-disabled='true']) .session-resource-card-copy strong {

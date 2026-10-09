@@ -89,6 +89,8 @@ function toPendingResource(attachment: NativeConversationAttachment): PendingRes
     kind: attachmentKind(attachment),
     mimeType: attachment.mime,
     size: attachment.size,
+    textExcerpt: attachment.restorableText?.slice(0, 400),
+    textPreviewRequest: { kind: 'attachment', ...attachmentResource(attachment) },
     ...(attachment.characterCount !== undefined ? { characterCount: attachment.characterCount } : {}),
     ...(attachment.restorableText ? { restorable: true } : {}),
   };
