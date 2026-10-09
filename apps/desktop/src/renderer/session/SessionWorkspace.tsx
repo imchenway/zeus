@@ -460,6 +460,24 @@ export function readCachedCodexConversationCapabilities(client: SessionControlle
   return conversationCapabilitiesEntry(client, projectId).value;
 }
 
+/** 任务完整查询同步更新共享模型目录，并阻止较早的预读回执覆盖新快照。 */
+export function cacheCodexConversationCapabilities(client: SessionControllerClient, capabilities: CodexConversationCapabilities): void {
+  /** 缓存仍按客户端和项目隔离，不保存任务仓库或上下文的独立副本。 */
+  const entry = conversationCapabilitiesEntry(client, capabilities.projectId);
+  entry.value = {
+    generationId: capabilities.generationId,
+    initializedAt: capabilities.initializedAt,
+    projectId: capabilities.projectId,
+    preferredModel: capabilities.preferredModel,
+    models: capabilities.models,
+    codexAccount: capabilities.codexAccount,
+    goals: capabilities.goals,
+    available: capabilities.available,
+    availabilityReason: capabilities.availabilityReason,
+  };
+  entry.promise = null;
+}
+
 export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps) {
   /** 订阅登录完成后刷新已打开的模型选择器。 */
   const capabilitiesRevision = useCodexCapabilitiesRevision();

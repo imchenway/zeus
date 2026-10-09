@@ -591,7 +591,14 @@ export function writeTaskModelPushPreferences(storage: Pick<Storage, 'getItem' |
   );
 }
 
-export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapabilities, remembered: TaskModelPushPreferences | null, skillId = ''): TaskModelPushForm {
+/** 模型目录可先初始化配置；仓库和上下文仍由完整任务查询补齐。 */
+export function resolveTaskModelPushInitialForm(
+  capabilities: Pick<CodexConversationCapabilities, 'models' | 'preferredModel'> & Partial<Pick<CodexTaskPushCapabilities, 'repositories' | 'existingEnvironments'>>,
+  remembered: TaskModelPushPreferences | null,
+  skillId = '',
+): TaskModelPushForm {
+  /** 未读取仓库时不猜测工作区方式，完整查询会继续执行原有协调。 */
+  const repositories = capabilities.repositories ?? [];
   const availableModels = capabilities.models.filter((model) => model.available !== false);
   const rememberedModel = resolveModelCapability(availableModels, remembered?.model);
   // 已记住或已配置的模型失效时等待用户明确选择。
@@ -610,14 +617,14 @@ export function resolveTaskModelPushInitialForm(capabilities: CodexTaskPushCapab
     // 用户已确认：项目没有成功记忆时，权限必须回退为只读。
     permissionMode: remembered?.permissionMode ?? 'read-only',
     skillId,
-    workspaceMode: remembered?.workspaceMode ?? (capabilities.repositories.length > 0 ? 'worktree' : 'direct'),
+    workspaceMode: remembered?.workspaceMode ?? (repositories.length > 0 ? 'worktree' : 'direct'),
     workspaceModeSelected: Boolean(remembered?.workspaceMode),
-    workspaceModeResolved: capabilities.repositories.length > 0,
+    workspaceModeResolved: repositories.length > 0,
     taskBranchMode: 'create',
     environmentId: firstAvailableEnvironment?.id ?? '',
     directConcurrencyConfirmed: false,
     repositorySelections: Object.fromEntries(
-      capabilities.repositories.map((repository) => {
+      repositories.map((repository) => {
         const currentSourceRef = repository.sourceRefs.find((source) => source.current)?.ref ?? '';
         return [
           repository.id,
@@ -921,9 +928,9 @@ export function TaskModelPushModal(props: {
           >
             <div className="task-model-push-toolbar">
               <strong id="task-model-push-model-heading">{zh ? '模型选择' : 'Model selection'}</strong>
-              {/* 加载时保留接入按钮的布局，只禁用交互，避免工具栏高度变化。 */}
+              {/* 等待模型目录时保留按钮位置；已有目录不受仓库读取阻塞。 */}
               {props.onConnectModel && !modelSetupRequired ? (
-                <Button className="task-model-connect-link" variant="secondary" size="compact" onClick={props.onConnectModel} disabled={busy || props.status === 'loading'}>
+                <Button className="task-model-connect-link" variant="secondary" size="compact" onClick={props.onConnectModel} disabled={busy || (props.status === 'loading' && !runtimeCapabilities)}>
                   {zh ? '接入其他模型' : 'Connect another model'}
                 </Button>
               ) : null}
