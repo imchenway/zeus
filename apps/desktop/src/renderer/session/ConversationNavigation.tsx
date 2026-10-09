@@ -11,6 +11,8 @@ export interface TranscriptNavigationEntry extends ConversationNavigationEntry {
   parentRowKey?: string;
   /** 真实用户消息是否已经进入正文投影。 */
   loaded: boolean;
+  /** 用户消息已显示，但持久目录中的回复还没有进入正文投影。 */
+  needsTurnContent?: boolean;
 }
 
 /** 从发送到历史恢复沿用客户端身份，缺失时才使用模型或持久身份。 */
@@ -36,6 +38,8 @@ export function mergeNavigationEntries(history: readonly ConversationNavigationE
       ...entry,
       rowKey: navigationRowKey(entry),
       loaded: Boolean(current),
+      // 用户气泡先到达不能结束整轮加载；已答题卡使用自身正文，不补读普通回复。
+      needsTurnContent: Boolean(current && !entry.requestId && entry.response && !current.response),
       ...(current ? { prompt: current.prompt || entry.prompt, response: current.response || entry.response, status: current.status, parentRowKey: current.parentRowKey } : {}),
     };
   });

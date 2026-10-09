@@ -1862,6 +1862,8 @@ function projectNavigationRows(rows: readonly TranscriptTurnRow[], entries: read
         (row.item.providerItemId ? byIdentity.get(`provider:${row.item.providerItemId}`) : undefined) ??
         byIdentity.get(`history:${row.item.localItemId ?? row.item.itemId}`);
       result.push(entry ? { ...row, key: entry.rowKey } : row);
+      // 用户消息已经接管占位时，仍为后续分页中的回复保留独立的可见补读入口。
+      if (entry?.needsTurnContent) result.push({ kind: 'navigation_placeholder', key: `content:${entry.rowKey}`, entry });
     } else result.push(row);
   }
   for (; cursor < pending.length; cursor += 1) {
