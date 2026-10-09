@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import type { EmployeeWorkSettings } from '@zeus/shared';
 import { ZeusSelect, type ZeusSelectOption } from '../../ZeusSelect.js';
+import { Button } from '../../ui/Button.js';
+import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { PermissionModeControl } from '../../session/PermissionModeControl.js';
 import type { CodexTaskPushModelCapability } from '../../session/sessionTypes.js';
 import type { SkillCatalog } from '../codex/codexContracts.js';
@@ -83,9 +85,9 @@ export function EmployeeExecutionSettings(props: {
           props.value[key] === undefined ? (
             <small>{zh ? '跟随默认' : 'Inherited'}</small>
           ) : (
-            <button type="button" disabled={props.disabled} onClick={() => reset(key)}>
+            <Button size="compact" variant="secondary" disabled={props.disabled} onClick={() => reset(key)}>
               {zh ? '恢复跟随' : 'Inherit'}
-            </button>
+            </Button>
           )
         ) : null}
       </div>
@@ -105,7 +107,11 @@ export function EmployeeExecutionSettings(props: {
   );
   return (
     <div className="employee-execution-settings">
-      {error ? <p role="alert">{error}</p> : null}
+      {error ? (
+        <p role="alert">
+          <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
+        </p>
+      ) : null}
       <div className="digital-employee-form-grid">
         {field(
           'modelOverride',
@@ -162,6 +168,7 @@ export function EmployeeExecutionSettings(props: {
             language={props.language}
             value={effective.permissionMode ?? 'read-only'}
             supportsAutoReview={Boolean(model) && !['unsupported', 'needs_configuration'].includes(model?.features?.autoReview.state ?? '')}
+            showLabel
             disabled={props.disabled}
             onChange={(permissionMode) => patch({ permissionMode })}
           />,
@@ -171,16 +178,25 @@ export function EmployeeExecutionSettings(props: {
         'skillIds',
         'Skill',
         <>
-          <div className="digital-employee-actions">
-            {(effective.skillIds ?? []).map((id) => (
-              <button type="button" key={id} disabled={props.disabled} onClick={() => patch({ skillIds: (effective.skillIds ?? []).filter((item) => item !== id) })}>
-                {skillNames[id] ?? id} ×
-              </button>
-            ))}
-            <button type="button" disabled={props.disabled} onClick={() => patch({ skillIds: [] })}>
-              {zh ? '不使用 Skill' : 'No skills'}
-            </button>
-          </div>
+          {(effective.skillIds ?? []).length > 0 ? (
+            <div className="employee-skill-list">
+              {(effective.skillIds ?? []).map((id) => (
+                <Button
+                  size="compact"
+                  variant="secondary"
+                  key={id}
+                  aria-label={`${zh ? '移除 Skill' : 'Remove skill'} ${skillNames[id] ?? id}`}
+                  disabled={props.disabled}
+                  onClick={() => patch({ skillIds: (effective.skillIds ?? []).filter((item) => item !== id) })}
+                >
+                  {skillNames[id] ?? id} ×
+                </Button>
+              ))}
+              <Button size="compact" variant="secondary" disabled={props.disabled} onClick={() => patch({ skillIds: [] })}>
+                {zh ? '清空选择' : 'Clear selection'}
+              </Button>
+            </div>
+          ) : null}
           <SkillSelector
             client={props.skillClient}
             projectId={props.projectId}

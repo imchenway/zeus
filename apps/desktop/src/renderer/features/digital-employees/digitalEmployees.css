@@ -402,6 +402,8 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+  /* 带说明的字段不拉伸相邻输入框，名称与岗位保持顶部对齐。 */
+  align-items: start;
 }
 
 .macos-ai-app .digital-employee-form label,
@@ -3067,7 +3069,7 @@
 /* 执行字段复用会话控件，窄面板自动退为单列。 */
 .employee-execution-settings {
   display: grid;
-  gap: 16px;
+  gap: 12px;
 }
 .employee-execution-field {
   display: grid;
@@ -3079,13 +3081,104 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  font-size: 12px;
+  color: var(--zeus-control-muted-text);
 }
 .employee-execution-label small {
-  color: var(--text-muted);
+  color: var(--zeus-control-muted-text);
 }
-.employee-execution-label button {
-  font: inherit;
+
+/* 工作、记忆与记录使用同级入口，键盘可按普通按钮顺序进入。 */
+.macos-ai-app .employee-settings-navigation {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 18px 12px;
+  border-bottom: 1px solid var(--zeus-control-border);
+}
+.macos-ai-app .employee-settings-navigation button[aria-pressed='true'] {
+  background: var(--zeus-product-accent-soft);
+  color: var(--zeus-product-accent);
+}
+
+/* 自动保存表单按内容排列，记忆列表不被多余弹性高度推到页底。 */
+.macos-ai-app .digital-employee-settings-pane .digital-employee-editor-pane > .digital-employee-form {
+  flex: 0 0 auto;
+}
+
+/* 字段说明与记录正文沿用产品字体，长文本在当前面板内换行。 */
+.macos-ai-app :is(.digital-employee-form, .employee-execution-settings, .employee-memory-section) .employee-settings-help {
+  margin: 0;
+  color: var(--zeus-control-muted-text);
   font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+/* 执行配置标题沿用表单层级，避免浏览器默认标题放大字段区。 */
+.macos-ai-app .digital-employee-form > section > h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+.macos-ai-app .employee-skill-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 已保存记忆与待确认建议直接显示，派发记录使用独立入口。 */
+.macos-ai-app .employee-memory-section {
+  display: grid;
+  gap: 16px;
+  padding: 0 18px 18px;
+  min-width: 0;
+}
+.macos-ai-app .employee-memory-section :where(p, h4, small) {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.macos-ai-app .employee-memory-history-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-block: 0 12px;
+}
+.macos-ai-app .employee-memory-history-heading h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+/* 记录摘要突出本地时间和实际输入条数，内部身份仅在运行信息中显示。 */
+.macos-ai-app .employee-memory-use {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--zeus-control-border);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.macos-ai-app .employee-memory-use > summary {
+  cursor: pointer;
+  line-height: 1.6;
+}
+.macos-ai-app .employee-memory-use > summary span {
+  margin-inline-start: 12px;
+  color: var(--zeus-control-muted-text);
+}
+.macos-ai-app .employee-memory-use article {
+  padding-top: 12px;
+}
+.macos-ai-app .employee-memory-use article small {
+  color: var(--zeus-control-muted-text);
+}
+.macos-ai-app .employee-memory-run-info {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 12px;
+  margin-top: 12px;
+  color: var(--zeus-control-muted-text);
+}
+.macos-ai-app .employee-memory-run-info dd {
+  margin: 0;
 }
 
 /* 预览表在独立弹窗和分工面板中保持相同间距，长模型名称可换行。 */

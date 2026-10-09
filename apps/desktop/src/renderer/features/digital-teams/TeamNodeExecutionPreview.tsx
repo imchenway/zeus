@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { DigitalTeamEmployeeNode } from '@zeus/shared';
 import type { DashboardClient } from '../../dashboardClient.js';
 import { FormDialog } from '../../ui/FormDialog.js';
+import { Button } from '../../ui/Button.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
 import type { TaskRecord } from '../tasks/taskContracts.js';
 import type { TaskWorkPreview } from '../digital-employees/digitalEmployeeContracts.js';
@@ -59,9 +60,9 @@ export function TeamNodeExecutionPreview(props: { client: DashboardClient; proje
   }, [open, taskId, props.client, props.node]);
   return (
     <>
-      <button type="button" disabled={!props.node.data.employeeId} onClick={() => setOpen(true)}>
+      <Button size="compact" variant="secondary" disabled={!props.node.data.employeeId} onClick={() => setOpen(true)}>
         执行预览
-      </button>
+      </Button>
       {open ? (
         <FormDialog
           title="执行预览"

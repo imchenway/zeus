@@ -403,6 +403,7 @@
 
 .digital-team-template-toolbar > label > span,
 .digital-team-settings-content > label > span,
+.digital-team-repair-settings > label > span,
 .digital-team-inspector-content label > span,
 .digital-team-readonly-field > span {
   color: var(--zeus-product-muted);
@@ -410,43 +411,33 @@
   font-weight: 600;
 }
 
-/* 低频团队设置默认折叠，展开后独占一行，主操作保持在原位置。 */
-.digital-team-settings {
-  min-inline-size: 0;
-}
-
-.digital-team-settings > summary {
-  box-sizing: border-box;
-  min-block-size: 34px;
-  padding: 7px 10px;
-  border: 1px solid var(--zeus-product-line);
-  border-radius: var(--zeus-control-radius);
-  cursor: pointer;
-}
-
-.digital-team-settings[open] {
-  flex: 1 1 100%;
-  order: 2;
-}
-
+/* 团队资料和操作直接进入工具条，不再嵌套设置弹层。 */
 .digital-team-settings-content {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  max-block-size: 32vh;
-  overflow: auto;
-  padding-block-start: 12px;
+  display: contents;
 }
 
 .digital-team-settings-content > label {
   display: grid;
-  grid-column: 1 / -1;
+  flex: 1 1 180px;
+  min-inline-size: 120px;
   gap: 4px;
 }
 
 .digital-team-settings-content > .digital-team-template-actions {
-  grid-column: 1 / -1;
   flex-wrap: wrap;
+}
+
+/* 只有验收流程或已有修复配置需要展示自动修复参数。 */
+.digital-team-repair-settings {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(100px, 160px);
+  flex: 1 1 100%;
+  order: 2;
+  gap: 12px;
+}
+.digital-team-repair-settings > label {
+  display: grid;
+  gap: 4px;
 }
 
 .digital-team-workspace input,
@@ -649,13 +640,6 @@
   min-block-size: 16px;
   margin: 2px 0 0;
   padding: 0;
-}
-
-/* 实际执行权限始终可见，设置折叠不会掩盖代码修改范围。 */
-.digital-team-work-permission {
-  margin: 0;
-  color: var(--zeus-product-muted);
-  font-size: 12px;
 }
 
 /* 节点直接复用完整数字员工表单，窄检查器统一改为单列。 */
@@ -1004,8 +988,7 @@
   white-space: nowrap;
 }
 
-/* 高级节点字段保留完整的窄窗表单布局。 */
-.digital-team-advanced-settings,
+/* 节点字段保留完整的窄窗表单布局。 */
 .digital-team-workspace .zeus-select {
   min-inline-size: 0;
   max-inline-size: 100%;
@@ -1013,20 +996,38 @@
 .digital-team-inspector-content :where(p, small, label > span) {
   overflow-wrap: anywhere;
 }
-.digital-team-advanced-settings > summary {
-  cursor: pointer;
-  font-weight: 600;
+/* 常用配置直接显示，状态联动通过同级按钮进入。 */
+.digital-team-node-navigation {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
-.digital-team-advanced-settings > label {
-  margin-block-start: 10px;
+.digital-team-node-navigation button[aria-pressed='true'] {
+  color: var(--zeus-product-accent);
+  background: var(--zeus-product-accent-soft);
 }
-.digital-team-advanced-settings > summary > small {
-  margin-inline-start: 8px;
-  color: var(--zeus-product-muted);
-  font-weight: 400;
+.digital-team-node-field-grid,
+.digital-team-inspector .employee-execution-settings .digital-employee-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 10px;
 }
-.digital-team-advanced-settings > .zeus-button {
-  margin-block-start: 10px;
+.digital-team-inspector .employee-execution-field:where(:first-child, :last-child) {
+  grid-column: 1 / -1;
+}
+.digital-team-inspector .employee-execution-label {
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.digital-team-execution-settings,
+.digital-team-status-settings {
+  display: grid;
+  gap: 12px;
+}
+.digital-team-execution-settings h3 {
+  margin: 0;
+  font-size: 12px;
 }
 .digital-team-field-error {
   color: var(--zeus-control-danger-text);
@@ -1053,8 +1054,12 @@
   white-space: nowrap;
 }
 @media (max-width: 840px) {
-  .digital-team-settings-content {
-    grid-template-columns: minmax(0, 1fr);
+  .digital-team-settings-content > label {
+    flex: 0 0 auto;
+  }
+  .digital-team-repair-settings {
+    flex: 0 0 auto;
+    order: 0;
   }
   .digital-team-header-actions {
     flex-basis: auto;

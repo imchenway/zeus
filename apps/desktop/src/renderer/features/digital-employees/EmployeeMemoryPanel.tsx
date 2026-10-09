@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Button } from '../../ui/Button.js';
+import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { MemorySettingsPane } from '../memory/MemorySettingsPane.js';
 import { EmployeeMemoryProposals } from './EmployeeMemoryProposals.js';
 import type { DigitalEmployeeApiClient } from './digitalEmployeeApiClient.js';
@@ -21,7 +23,13 @@ const reasonLabels: Record<string, string> = {
 };
 
 /** 员工记忆复用治理页面、建议命令与真实运行快照。 */
-export function EmployeeMemoryPanel(props: { client: DigitalEmployeeApiClient; employeeId: string; language: 'zh-CN' | 'en-US' }) {
+export function EmployeeMemoryPanel(props: {
+  client: DigitalEmployeeApiClient;
+  employeeId: string;
+  language: 'zh-CN' | 'en-US';
+  /** 记忆和历史使用同级入口，不再嵌套折叠。 */
+  view: 'memory' | 'history';
+}) {
   /** 员工身份保持稳定，避免普通界面刷新重载记忆。 */
   const scope = useMemo(() => ({ kind: 'employee' as const, id: props.employeeId }), [props.employeeId]);
   /** 接纳建议后刷新既有记录。 */
@@ -30,8 +38,18 @@ export function EmployeeMemoryPanel(props: { client: DigitalEmployeeApiClient; e
   const [runs, setRuns] = useState<TaskWorkRunRecord[]>([]);
   /** 加载失败保持可见。 */
   const [error, setError] = useState<string | null>(null);
+  /** 每次显示十条，接口仍保留最近一百次派发供追溯。 */
+  const [visibleRunCount, setVisibleRunCount] = useState(10);
+  /** 查询期间禁用刷新，失败保留已读取的记录。 */
+  const [loading, setLoading] = useState(false);
+  /** 日期与页面文案使用用户选择的语言。 */
+  const zh = props.language === 'zh-CN';
   useEffect(() => {
+    if (props.view !== 'history') return;
+    /** 切换员工或离开记录后忽略旧请求，避免跨员工显示。 */
     let active = true;
+    setLoading(true);
+    setError(null);
     void props.client
       .loadEmployeeMemoryUses(props.employeeId)
       .then((next) => {
@@ -42,46 +60,90 @@ export function EmployeeMemoryPanel(props: { client: DigitalEmployeeApiClient; e
       })
       .catch((cause: unknown) => {
         if (active) setError(cause instanceof Error ? cause.message : String(cause));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
       });
     return () => {
       active = false;
     };
-  }, [props.client, props.employeeId, revision]);
+  }, [props.client, props.employeeId, revision, props.view]);
   return (
-    <details className="digital-employee-disclosure">
-      <summary>管理员工记忆</summary>
-      <p>只保存可复用的工作方法、岗位知识与纠错经验、岗位相关偏好。不要重复提示词、项目记忆或 Skill；任务总结不会自动保存为个人经验。</p>
-      <MemorySettingsPane client={props.client.employeeMemory} language={props.language} projects={[]} fixedScope={scope} scopeLabel="员工记忆" refreshRevision={revision} />
-      <EmployeeMemoryProposals client={props.client} employeeId={props.employeeId} onAccepted={() => setRevision((value) => value + 1)} />
-      <details>
-        <summary>使用记录（最近 100 次派发）</summary>
-        <button type="button" onClick={() => setRevision((value) => value + 1)}>
-          刷新
-        </button>
-        {error ? <p role="alert">{error}</p> : !runs.length ? <p>暂无派发记录。</p> : null}
-        {runs.map((run) => (
-          <details key={run.id}>
-            <summary>
-              {run.createdAt} · {run.taskId} · {run.projectId}
-            </summary>
-            {Array.isArray(run.entrypointSnapshot.memorySelection) ? (
-              run.entrypointSnapshot.memorySelection.map((item: { record: { id: string; memoryKey: string; content: string; source: { reference: string }; reviewAfter: string }; reason: string; selected: boolean }) => (
-                <article key={item.record.id}>
-                  <strong>
-                    {item.record.memoryKey} · {reasonLabels[item.reason] ?? item.reason}
-                  </strong>
-                  <p>{item.record.content}</p>
-                  <small>
-                    来源：{item.record.source.reference} · 复核：{item.record.reviewAfter}
-                  </small>
-                </article>
-              ))
-            ) : (
-              <p>历史运行未记录未选原因；已加入输入的记忆：{JSON.stringify(run.entrypointSnapshot.memorySnapshot ?? [])}</p>
-            )}
-          </details>
-        ))}
-      </details>
-    </details>
+    <div className="employee-memory-section">
+      {props.view === 'memory' ? (
+        <>
+          <MemorySettingsPane client={props.client.employeeMemory} language={props.language} projects={[]} fixedScope={scope} scopeLabel={zh ? '已保存的记忆' : 'Saved memories'} refreshRevision={revision} />
+          <EmployeeMemoryProposals client={props.client} employeeId={props.employeeId} onAccepted={() => setRevision((value) => value + 1)} />
+        </>
+      ) : (
+        <>
+          <div className="employee-memory-history-heading">
+            <h3>{zh ? '最近 100 次派发' : 'Last 100 dispatches'}</h3>
+            <Button size="compact" variant="secondary" busy={loading} onClick={() => setRevision((value) => value + 1)}>
+              {zh ? '刷新记录' : 'Refresh history'}
+            </Button>
+          </div>
+          {error ? (
+            <p role="alert">
+              <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
+            </p>
+          ) : loading ? (
+            <p role="status">{zh ? '正在读取记录…' : 'Loading history…'}</p>
+          ) : !runs.length ? (
+            <p className="employee-settings-help">{zh ? '暂无派发记录。' : 'No dispatch history yet.'}</p>
+          ) : null}
+          {runs.slice(0, visibleRunCount).map((run) => {
+            /** 历史快照只展示保存过的事实，不推断模型是否遵循。 */
+            const selection = Array.isArray(run.entrypointSnapshot.memorySelection) ? run.entrypointSnapshot.memorySelection : null;
+            /** 较早记录仅保留实际加入输入的记忆摘要。 */
+            const snapshots = Array.isArray(run.entrypointSnapshot.memorySnapshot) ? run.entrypointSnapshot.memorySnapshot : [];
+            /** 计数来自正式派发快照，不由当前记忆列表推算。 */
+            const selectedCount = selection ? selection.filter((item) => item.selected).length : snapshots.length;
+            return (
+              <details className="employee-memory-use" key={run.id}>
+                <summary>
+                  <time dateTime={run.createdAt}>{new Date(run.createdAt).toLocaleString(props.language)}</time>
+                  <span>{zh ? `加入 ${selectedCount} 条记忆` : `${selectedCount} memories included`}</span>
+                </summary>
+                {selection ? (
+                  selection.length ? (
+                    selection.map((item: { record: { id: string; memoryKey: string; content: string; source: { reference: string }; reviewAfter: string }; reason: string; selected: boolean }) => (
+                      <article key={item.record.id}>
+                        <strong>
+                          {item.record.memoryKey} · {reasonLabels[item.reason] ?? item.reason}
+                        </strong>
+                        <p>{item.record.content}</p>
+                        <small>
+                          {zh ? '来源' : 'Source'}：{item.record.source.reference} · {zh ? '复核' : 'Review'}：{new Date(item.record.reviewAfter).toLocaleDateString(props.language)}
+                        </small>
+                      </article>
+                    ))
+                  ) : (
+                    <p className="employee-settings-help">{zh ? '本次没有可选的员工记忆。' : 'No employee memories were available for this dispatch.'}</p>
+                  )
+                ) : (
+                  <p className="employee-settings-help">
+                    {zh ? `本次加入 ${snapshots.length} 条记忆。历史记录仅保存摘要，未记录未选原因。` : `${snapshots.length} memories included. This older record kept summaries without exclusion reasons.`}
+                  </p>
+                )}
+                <dl className="employee-memory-run-info">
+                  <dt>{zh ? '任务' : 'Task'}</dt>
+                  <dd>{run.taskId}</dd>
+                  <dt>{zh ? '项目' : 'Project'}</dt>
+                  <dd>{run.projectId}</dd>
+                  <dt>{zh ? '运行' : 'Run'}</dt>
+                  <dd>{run.id}</dd>
+                </dl>
+              </details>
+            );
+          })}
+          {runs.length > visibleRunCount ? (
+            <Button size="compact" variant="secondary" onClick={() => setVisibleRunCount((value) => value + 10)}>
+              {zh ? '显示更多记录' : 'Show more history'}
+            </Button>
+          ) : null}
+        </>
+      )}
+    </div>
   );
 }

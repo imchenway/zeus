@@ -830,7 +830,6 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
             </p>
           ) : null}
           <h1 id="digital-team-title">{zh ? '数字团队' : 'Digital teams'}</h1>
-          {!props.task ? <p>{zh ? '安排员工分工和先后顺序，用团队流程创建任务。' : 'Arrange responsibilities and work order, then create a task with the team.'}</p> : null}
         </div>
         <div className="digital-team-header-actions">
           {props.onBackToTask ? (
@@ -902,11 +901,7 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
             ) : null}
           </p>
         ) : null}
-        {view === 'editor' && props.task && draftOpen && !loading && analysisOnly ? (
-          <p className="digital-team-message">
-            {zh ? '当前团队只做只读分析，不会修改代码。需要开发时，请明确调整开发分工的工作方式。' : 'This team only analyzes and does not modify code. To develop, explicitly change the development step’s work mode.'}
-          </p>
-        ) : null}
+        {view === 'editor' && props.task && draftOpen && !loading && analysisOnly ? <p className="digital-team-message">{zh ? '当前团队只做只读分析。' : 'This team performs read-only analysis.'}</p> : null}
         <p className="digital-team-message" role="status" aria-live="polite">
           {loading
             ? zh
@@ -918,8 +913,8 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                 (dirty
                   ? draftPersisted
                     ? zh
-                      ? '修改已暂存，可随时切换页面。保存后用于任务。'
-                      : 'Draft kept locally. Save it to use it in tasks.'
+                      ? '未保存 · 已暂存'
+                      : 'Unsaved · Draft kept locally'
                     : zh
                       ? '无法持久暂存，请保存流程；当前窗口仍保留修改。'
                       : 'The draft could not be persisted. Save the workflow; this window still retains your changes.'
@@ -933,7 +928,6 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
       ) : view === 'editor' && !draftOpen ? (
         <div className="digital-team-empty">
           <h2>{zh ? '还没有数字团队' : 'No digital teams yet'}</h2>
-          <p>{zh ? '创建团队后，再添加数字员工并配置分工与依赖关系。' : 'Create a team, then add digital employees and configure responsibilities and dependencies.'}</p>
           <Button variant="primary" size="regular" disabled={!api || busy} onClick={startNewTemplate}>
             <Plus aria-hidden="true" />
             {zh ? '创建团队' : 'Create team'}
@@ -998,31 +992,29 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                   }}
                 />
               </label>
-              <details className="digital-team-settings">
-                <summary>{zh ? '团队设置' : 'Team settings'}</summary>
-                <div className="digital-team-settings-content">
-                  <label>
-                    <span>{zh ? '团队说明' : 'Description'}</span>
-                    <input
-                      value={draft.description}
-                      maxLength={500}
-                      onChange={(event) => {
-                        /** 说明与名称共用安全的值更新方式。 */
-                        const description = event.currentTarget.value;
-                        setDraft((current) => ({ ...current, description }));
-                        setDirty(true);
-                      }}
-                    />
-                  </label>
-                  <details className="digital-team-advanced-settings">
-                    <summary>{zh ? '研发流程设置（可选）' : 'Development workflow (optional)'}</summary>
+              <div className="digital-team-settings-content">
+                <label>
+                  <span>{zh ? '团队说明' : 'Description'}</span>
+                  <input
+                    value={draft.description}
+                    maxLength={500}
+                    onChange={(event) => {
+                      /** 说明与名称共用安全的值更新方式。 */
+                      const description = event.currentTarget.value;
+                      setDraft((current) => ({ ...current, description }));
+                      setDirty(true);
+                    }}
+                  />
+                </label>
+                {draft.definition.nodes.some((node) => node.type === 'employee' && node.data.purpose === 'verify') || draft.definition.repairEmployeeId || draft.definition.maxRepairRounds !== undefined ? (
+                  <div className="digital-team-repair-settings">
                     <label>
                       <span>{zh ? '缺陷修复员工' : 'Defect repair employee'}</span>
                       <ZeusSelect
                         size="regular"
                         ariaLabel="选择缺陷修复员工"
                         value={draft.definition.repairEmployeeId ?? ''}
-                        options={[{ value: '', label: '未配置，发现正式缺陷时等待安排' }, ...memberCatalog.map((employee) => ({ value: employee.id, label: employee.name }))]}
+                        options={[{ value: '', label: '未配置' }, ...memberCatalog.map((employee) => ({ value: employee.id, label: employee.name }))]}
                         onChange={(repairEmployeeId) => changeDefinition({ ...draft.definition, repairEmployeeId: repairEmployeeId || undefined })}
                       />
                     </label>
@@ -1039,19 +1031,19 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
                         }}
                       />
                     </label>
-                  </details>
-                  <div className="digital-team-template-actions">
-                    <Button size="compact" onClick={() => void copyTemplate()} disabled={!selectedTemplate || dirty || busy}>
-                      <Copy aria-hidden="true" />
-                      {zh ? '复制团队' : 'Copy team'}
-                    </Button>
-                    <Button variant="danger" size="compact" onClick={() => selectedTemplate && setPendingDelete(selectedTemplate)} disabled={!selectedTemplate || dirty || busy}>
-                      <Trash aria-hidden="true" />
-                      {zh ? '删除团队' : 'Delete team'}
-                    </Button>
                   </div>
+                ) : null}
+                <div className="digital-team-template-actions">
+                  <Button size="compact" onClick={() => void copyTemplate()} disabled={!selectedTemplate || dirty || busy}>
+                    <Copy aria-hidden="true" />
+                    {zh ? '复制团队' : 'Copy team'}
+                  </Button>
+                  <Button variant="danger" size="compact" onClick={() => selectedTemplate && setPendingDelete(selectedTemplate)} disabled={!selectedTemplate || dirty || busy}>
+                    <Trash aria-hidden="true" />
+                    {zh ? '删除团队' : 'Delete team'}
+                  </Button>
                 </div>
-              </details>
+              </div>
               <div className="digital-team-save-actions">
                 <div className="digital-team-member-picker-anchor">
                   <Button size="compact" onClick={() => setMemberPickerOpen((open) => !open)} aria-expanded={memberPickerOpen} disabled={Boolean(draft.sourceIssues?.length)}>
@@ -1240,7 +1232,6 @@ function RolePalette(props: { employees: DigitalTeamMemberRecord[]; onAdd(payloa
         <h2>数字员工</h2>
         <span>{props.employees.length}</span>
       </div>
-      <p className="digital-team-help">选择已创建的数字员工加入团队。同一数字员工可承担多个分工。</p>
       <div className="digital-team-palette-list">
         {props.employees.length === 0 ? (
           <p role="status">还没有可用的数字员工，请先在“数字员工”页面创建。</p>
@@ -1288,7 +1279,7 @@ function NodeInspector(props: {
     return (
       <div className="digital-team-inspector-empty">
         <h2>节点配置</h2>
-        <p>选择一个节点以查看和修改配置。</p>
+        <p>请选择分工。</p>
       </div>
     );
   /** 当前节点供各分支使用。 */
@@ -1313,7 +1304,6 @@ function NodeInspector(props: {
           statuses={props.statuses}
           language={props.language}
           hasStatusIssue={props.issues.some((issue) => issue.code.includes('STATUS'))}
-          hasDevelopmentIssue={props.issues.some((issue) => issue.code.includes('VERIFY') || issue.code.includes('EXECUTION'))}
           onChange={props.onChange}
         />
       ) : (
@@ -1330,13 +1320,10 @@ function NodeInspector(props: {
           ))}
         </ul>
       ) : null}
-      <details className="digital-team-advanced-settings">
-        <summary>移除分工</summary>
-        <Button variant="danger" onClick={() => props.onDelete(node.id)}>
-          <Trash aria-hidden="true" />
-          移除这份分工
-        </Button>
-      </details>
+      <Button size="compact" variant="danger" onClick={() => props.onDelete(node.id)}>
+        <Trash aria-hidden="true" />
+        移除分工
+      </Button>
     </div>
   );
 }
@@ -1416,162 +1403,141 @@ function EmployeeNodeFields(props: {
   /** 用户自定义状态文案优先，内置缺省文案使用当前语言。 */
   language: 'zh-CN' | 'en-US';
   /** 状态校验失败时直接展开对应设置。 */ hasStatusIssue: boolean;
-  /** 执行模式校验失败时直接展开研发设置。 */ hasDevelopmentIssue: boolean;
   onChange(node: DigitalTeamNode): void;
 }) {
   /** 节点工作说明属于流程，员工默认职责仍由员工配置统一管理。 */
   const update = (data: Partial<DigitalTeamEmployeeNode['data']>): void => props.onChange({ ...props.node, data: { ...props.node.data, ...data } });
   /** 编辑时保留换行，正式保存再剔除空项。 */
   const lines = (value: string): string[] => value.split('\n');
-  /** 折叠状态仍明确展示研发职责和实际执行范围。 */
-  const developmentPurpose = { plan: '规划', work: '执行', verify: '代码验收', summary: '交付汇总' }[props.node.data.purpose];
-  /** 任务联动已有值只作摘要，不强迫用户展开空配置。 */
-  const statusConfigured = props.node.data.assignmentEntry || props.node.data.triggerStatusId || props.node.data.startStatusId || props.node.data.completionStatusId;
-  /** 展开状态只属于当前节点和员工，沿用检查器现有 key 在切换时重置。 */
-  const [statusSettingsOpen, setStatusSettingsOpen] = useState(props.hasStatusIssue);
-  /** 必需配置错误出现时展开，错误消失后仍允许用户继续填写。 */
-  const [developmentSettingsOpen, setDevelopmentSettingsOpen] = useState(props.hasDevelopmentIssue);
+  /** 状态联动使用独立入口，常用工作配置直接可见。 */
+  const [section, setSection] = useState<'work' | 'status'>(props.hasStatusIssue ? 'status' : 'work');
   useEffect(() => {
-    /** 只响应新出现的状态错误，不随修正结果自动关闭。 */
-    if (props.hasStatusIssue) setStatusSettingsOpen(true);
+    /** 新状态错误自动定位对应入口，修正后保留用户当前选择。 */
+    if (props.hasStatusIssue) setSection('status');
   }, [props.hasStatusIssue]);
-  useEffect(() => {
-    /** 只响应新出现的研发错误，保留用户手动收起或展开的选择。 */
-    if (props.hasDevelopmentIssue) setDevelopmentSettingsOpen(true);
-  }, [props.hasDevelopmentIssue]);
   return (
     <>
-      <label>
-        <span>执行员工</span>
-        <ZeusSelect
-          ariaLabel="选择执行员工"
-          value={props.node.data.employeeId}
-          options={props.employees.map((employee) => ({ value: employee.id, label: employee.name, description: employee.role }))}
-          onChange={(employeeId) => {
-            const employee = props.employees.find((candidate) => candidate.id === employeeId);
-            if (!employee) return;
-            props.onChange({
-              ...props.node,
-              data: {
-                ...props.node.data,
-                title: employee.name,
-                employeeId,
-                settings: undefined,
-              },
-            });
-          }}
-          searchable
-          size="regular"
-        />
-      </label>
-      <label>
-        <span>工作方式</span>
-        <ZeusSelect
-          size="regular"
-          ariaLabel="工作方式"
-          value={props.node.data.executionMode}
-          disabled={props.node.data.purpose !== 'work'}
-          options={
-            props.node.data.purpose === 'work'
-              ? [
-                  { value: 'read_only', label: digitalTeamWorkModeLabels.read_only },
-                  { value: 'isolated_write', label: digitalTeamWorkModeLabels.isolated_write },
-                ]
-              : [{ value: props.node.data.executionMode, label: digitalTeamWorkModeLabels[props.node.data.executionMode] }]
-          }
-          onChange={(value) => update({ executionMode: value as DigitalTeamEmployeeNode['data']['executionMode'] })}
-        />
-        <small>{props.node.data.purpose === 'work' ? '修改代码在隔离工作区进行，仍需本次任务授权。' : props.node.data.purpose === 'verify' ? '代码验收只核对候选，不修改源码。' : '规划与汇总只做分析；需要开发时，请使用执行职责。'}</small>
-      </label>
-      <label>
-        <span>工作要求</span>
-        <textarea placeholder="默认按任务目标与员工职责执行" value={props.node.data.instructions} maxLength={12000} onChange={(event) => update({ instructions: event.currentTarget.value })} />
-      </label>
-      <label>
-        <span>完成标准</span>
-        <textarea rows={3} placeholder="默认按工作要求完成并提交可核对结果，每行一项" value={(props.node.data.acceptanceCriteria ?? []).join('\n')} onChange={(event) => update({ acceptanceCriteria: lines(event.currentTarget.value) })} />
-      </label>
-      <details className="digital-team-advanced-settings">
-        <summary>覆盖员工默认配置</summary>
-        <EmployeeExecutionSettings
-          client={props.client}
-          skillClient={props.client}
-          projectId={props.projectId}
-          language={props.language}
-          overrides
-          value={props.node.data.settings ?? {}}
-          inherited={employeeTemplateDraft(props.employee).settings}
-          onChange={(settings) => update({ settings })}
-        />
-      </details>
-      {props.client ? <TeamNodeExecutionPreview client={props.client} projectId={props.projectId} task={props.task} node={props.node} language={props.language} /> : null}
-      <p className="digital-team-work-permission">
-        {props.node.data.executionMode === 'isolated_write' ? '工作权限：隔离工作区修改代码，仍需本次任务授权。' : props.node.data.executionMode === 'candidate_read_only' ? '工作权限：只读验收代码候选。' : '工作权限：只读。'}
-      </p>
-      <details
-        className="digital-team-advanced-settings"
-        open={statusSettingsOpen}
-        onToggle={(event) => {
-          /** 原生展开操作同步到节点本地状态。 */
-          setStatusSettingsOpen(event.currentTarget.open);
-        }}
-      >
-        <summary>任务状态联动{statusConfigured ? <small>已配置</small> : null}</summary>
-        <label className="digital-team-checkbox">
-          <input type="checkbox" checked={props.node.data.assignmentEntry ?? false} onChange={(event) => update({ assignmentEntry: event.currentTarget.checked })} />
-          <span>指派该员工时，从这份分工开始</span>
-        </label>
-        {(['triggerStatusId', 'startStatusId', 'completionStatusId'] as const).map((key, index) => (
-          <label key={key}>
-            <span>{['状态触发', '开始状态', '完成状态'][index]}</span>
+      <nav className="digital-team-node-navigation" aria-label="分工设置">
+        <Button size="compact" variant="secondary" aria-pressed={section === 'work'} onClick={() => setSection('work')}>
+          工作设置
+        </Button>
+        <Button size="compact" variant="secondary" aria-pressed={section === 'status'} onClick={() => setSection('status')}>
+          状态联动
+        </Button>
+        {props.client ? <TeamNodeExecutionPreview client={props.client} projectId={props.projectId} task={props.task} node={props.node} language={props.language} /> : null}
+      </nav>
+      {section === 'work' ? (
+        <>
+          <label>
+            <span>执行员工</span>
             <ZeusSelect
+              ariaLabel="选择执行员工"
+              value={props.node.data.employeeId}
+              options={props.employees.map((employee) => ({ value: employee.id, label: employee.name, description: employee.role }))}
+              onChange={(employeeId) => {
+                const employee = props.employees.find((candidate) => candidate.id === employeeId);
+                if (!employee) return;
+                props.onChange({
+                  ...props.node,
+                  data: {
+                    ...props.node.data,
+                    title: employee.name,
+                    employeeId,
+                    settings: undefined,
+                  },
+                });
+              }}
+              searchable
               size="regular"
-              ariaLabel={['状态触发', '开始状态', '完成状态'][index]!}
-              value={props.node.data[key] ?? ''}
-              options={[{ value: '', label: '不配置' }, ...props.statuses.map((status) => ({ value: status.id, label: status.label ?? defaultTaskManagementStatusLabels[props.language][status.id] ?? status.id }))]}
-              onChange={(value) => update({ [key]: value || undefined })}
             />
           </label>
-        ))}
-      </details>
-      <details
-        className="digital-team-advanced-settings"
-        open={developmentSettingsOpen}
-        onToggle={(event) => {
-          /** 编辑和校验刷新不会覆盖用户保留的展开状态。 */
-          setDevelopmentSettingsOpen(event.currentTarget.open);
-        }}
-      >
-        <summary>
-          研发设置<small>{developmentPurpose}</small>
-        </summary>
-        <label>
-          <span>研发职责</span>
-          <ZeusSelect
-            size="regular"
-            ariaLabel="研发职责"
-            value={props.node.data.purpose}
-            options={[
-              { value: 'plan', label: '规划' },
-              { value: 'work', label: '执行' },
-              { value: 'verify', label: '代码验收' },
-              { value: 'summary', label: '交付汇总' },
-            ]}
-            onChange={(value) => {
-              /** 候选只读只属于代码验收，切回普通分工不会自动授权代码修改。 */
-              const purpose = value as DigitalTeamEmployeeNode['data']['purpose'];
-              update({ purpose, executionMode: purpose === 'verify' ? 'candidate_read_only' : purpose === 'work' && props.node.data.executionMode === 'isolated_write' ? 'isolated_write' : 'read_only' });
-            }}
-          />
-        </label>
-        {props.node.data.purpose === 'verify' ? (
+          <div className="digital-team-node-field-grid">
+            <label>
+              <span>职责</span>
+              <ZeusSelect
+                size="regular"
+                ariaLabel="研发职责"
+                value={props.node.data.purpose}
+                options={[
+                  { value: 'plan', label: '规划' },
+                  { value: 'work', label: '执行' },
+                  { value: 'verify', label: '代码验收' },
+                  { value: 'summary', label: '交付汇总' },
+                ]}
+                onChange={(value) => {
+                  /** 切换职责不自动授权写入；代码验收固定为候选只读。 */
+                  const purpose = value as DigitalTeamEmployeeNode['data']['purpose'];
+                  update({ purpose, executionMode: purpose === 'verify' ? 'candidate_read_only' : purpose === 'work' && props.node.data.executionMode === 'isolated_write' ? 'isolated_write' : 'read_only' });
+                }}
+              />
+            </label>
+            <label>
+              <span>工作方式</span>
+              <ZeusSelect
+                size="regular"
+                ariaLabel="工作方式"
+                value={props.node.data.executionMode}
+                disabled={props.node.data.purpose !== 'work'}
+                options={
+                  props.node.data.purpose === 'work'
+                    ? [
+                        { value: 'read_only', label: digitalTeamWorkModeLabels.read_only },
+                        { value: 'isolated_write', label: digitalTeamWorkModeLabels.isolated_write },
+                      ]
+                    : [{ value: props.node.data.executionMode, label: digitalTeamWorkModeLabels[props.node.data.executionMode] }]
+                }
+                onChange={(value) => update({ executionMode: value as DigitalTeamEmployeeNode['data']['executionMode'] })}
+              />
+            </label>
+          </div>
           <label>
-            <span>固定验收命令（可选，每行一项）</span>
-            <small>留空时按当前任务与仓库既有检查验收，结果仍须提供真实成功命令证据。</small>
-            <textarea placeholder="填写当前仓库实际使用的检查命令" value={(props.node.data.verificationCommands ?? []).join('\n')} onChange={(event) => update({ verificationCommands: lines(event.currentTarget.value) })} />
+            <span>工作要求</span>
+            <textarea rows={3} placeholder="补充本分工的要求" value={props.node.data.instructions} maxLength={12000} onChange={(event) => update({ instructions: event.currentTarget.value })} />
           </label>
-        ) : null}
-      </details>
+          <label>
+            <span>完成标准</span>
+            <textarea rows={2} placeholder="每行一项" value={(props.node.data.acceptanceCriteria ?? []).join('\n')} onChange={(event) => update({ acceptanceCriteria: lines(event.currentTarget.value) })} />
+          </label>
+          <section className="digital-team-execution-settings" aria-label="执行配置">
+            <h3>执行配置</h3>
+            <EmployeeExecutionSettings
+              client={props.client}
+              skillClient={props.client}
+              projectId={props.projectId}
+              language={props.language}
+              overrides
+              value={props.node.data.settings ?? {}}
+              inherited={employeeTemplateDraft(props.employee).settings}
+              onChange={(settings) => update({ settings })}
+            />
+          </section>
+          {props.node.data.purpose === 'verify' ? (
+            <label>
+              <span>验收命令</span>
+              <textarea rows={2} placeholder="可选，每行一项" value={(props.node.data.verificationCommands ?? []).join('\n')} onChange={(event) => update({ verificationCommands: lines(event.currentTarget.value) })} />
+            </label>
+          ) : null}
+        </>
+      ) : (
+        <section className="digital-team-status-settings" aria-label="状态联动">
+          <label className="digital-team-checkbox">
+            <input type="checkbox" checked={props.node.data.assignmentEntry ?? false} onChange={(event) => update({ assignmentEntry: event.currentTarget.checked })} />
+            <span>作为该员工的指派入口</span>
+          </label>
+          {(['triggerStatusId', 'startStatusId', 'completionStatusId'] as const).map((key, index) => (
+            <label key={key}>
+              <span>{['状态触发', '开始状态', '完成状态'][index]}</span>
+              <ZeusSelect
+                size="regular"
+                ariaLabel={['状态触发', '开始状态', '完成状态'][index]!}
+                value={props.node.data[key] ?? ''}
+                options={[{ value: '', label: '不配置' }, ...props.statuses.map((status) => ({ value: status.id, label: status.label ?? defaultTaskManagementStatusLabels[props.language][status.id] ?? status.id }))]}
+                onChange={(value) => update({ [key]: value || undefined })}
+              />
+            </label>
+          ))}
+        </section>
+      )}
       {!props.employee ? (
         <p className="digital-team-message is-error" role="alert">
           <VisibleApplicationError error="当前分工绑定的数字员工不存在，请重新选择员工。" />
