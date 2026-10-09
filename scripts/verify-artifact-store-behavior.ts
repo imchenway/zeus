@@ -20,7 +20,7 @@ import {
 import { ManagedConversationToolResultStore, PortableConversationContextBuilder, planPortableContextCompaction } from '../packages/local-server/src/conversationPortableContext.js';
 import { searchPiWorkspace } from '../packages/local-server/src/piWorkspaceSearch.js';
 import { completedItemProjection, liveProgressProjection } from '../packages/local-server/src/codexNativeConversationPolicy.js';
-import { normalizeConversationResources, syncConversationResources, toConversationResourceOpenIntent } from '../packages/local-server/src/conversationResources.js';
+import { normalizeConversationResources, syncConversationResources, toConversationResource, toConversationResourceOpenIntent } from '../packages/local-server/src/conversationResources.js';
 import { readConversationResourcePreview } from '../packages/local-server/src/conversationResourcePreview.js';
 
 const probeRoot = await mkdtemp(join(tmpdir(), 'zeus-artifact-store-probe-'));
@@ -120,6 +120,10 @@ async function verifyConversationFileResources(): Promise<void> {
   await mkdir(join(registeredProjectRoot, 'docs'), { recursive: true });
   await writeFile(join(registeredProjectRoot, 'docs', '共享.html'), '<title>共享文档</title><p>真实共享内容</p>');
   await writeFile(join(registeredProjectRoot, 'docs', '说明.md'), '# 共享说明');
+  /** 图片与 HTML 共用共享目录，普通工作树副本仍保持隔离。 */
+  await writeFile(join(registeredProjectRoot, 'docs', '图片.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZXsAAAAASUVORK5CYII=', 'base64'));
+  await writeFile(join(registeredProjectRoot, 'private.md'), '主项目文件');
+  await writeFile(join(root, 'private.md'), '任务工作树副本');
   await symlink(join(registeredProjectRoot, 'docs'), join(root, 'docs'), 'dir');
   await mkdir(join(probeRoot, 'unauthorized'));
   await writeFile(join(probeRoot, 'unauthorized', 'secret.md'), '未授权内容');
@@ -182,9 +186,21 @@ async function verifyConversationFileResources(): Promise<void> {
       const absolute = normalizeConversationResources({ ...input, text: `[共享](${join(root, 'docs', '共享.html')})` });
       assertProbe(absolute[0]?.canonicalTargetDigest === resources.getById(shared.id)?.canonicalTargetDigest, '绝对路径和相对路径必须登记同一授权目标');
       assertProbe(normalizeConversationResources({ ...input, registeredProjectRoot: undefined, text: '[共享](docs/共享.html)' }).length === 0, '未登记主项目时不得授权共享目录');
-      assertProbe(normalizeConversationResources({ ...input, text: `[直接越界](${join(registeredProjectRoot, 'docs', '共享.html')}) [缺失](docs/missing.md)` }).length === 0, '共享授权不得允许正文直接越出任务根，也不得登记不存在的共享文件');
+      /** 真实共享路径和任务入口必须登记同一目标，不能让标准文件链接退化为文字。 */
+      const canonicalShared = normalizeConversationResources({ ...input, text: `[共享](${join(registeredProjectRoot, 'docs', '共享.html')})` });
+      assertProbe(canonicalShared.length === 2 && canonicalShared[0]?.canonicalTargetDigest === resources.getById(shared.id)?.canonicalTargetDigest, '共享真实路径必须恢复 HTML 正文链接和网页卡片，并沿用同一授权身份');
+      /** 普通图片文件链接也使用相同的共享授权入口。 */
+      const canonicalImage = normalizeConversationResources({ ...input, text: `[图片](${join(registeredProjectRoot, 'docs', '图片.png')})` });
+      assertProbe(canonicalImage.length === 1 && toConversationResource({ ...canonicalImage[0]!, createdAt: timestamp, updatedAt: timestamp })?.kind === 'file', '共享图片真实路径必须登记为可打开的正文文件资源');
+      assertProbe(
+        normalizeConversationResources({ ...input, text: `[未共享](${join(registeredProjectRoot, 'private.md')}) [外部](${join(probeRoot, 'unauthorized', 'secret.md')}) [缺失](docs/missing.md)` }).length === 0,
+        '普通工作树副本、外部真实路径和缺失共享文件不得扩大任务授权',
+      );
       /** 文件改动与结构化交付共用正文链接的同一授权边界。 */
-      for (const payload of [{ changes: [{ path: 'docs/说明.md' }, { path: 'external/secret.md' }] }, { deliverables: [{ path: 'docs/说明.md' }, { path: 'external/secret.md' }] }]) {
+      for (const payload of [
+        { changes: [{ path: join(registeredProjectRoot, 'docs', '说明.md') }, { path: 'external/secret.md' }] },
+        { deliverables: [{ path: join(registeredProjectRoot, 'docs', '说明.md') }, { path: 'external/secret.md' }] },
+      ]) {
         assertProbe(normalizeConversationResources({ ...input, text: '', payload }).length === 1, '文件改动和结构化交付必须接受已授权共享文档并拒绝外部符号链接');
       }
       /** 后续状态事件省略资源字段时仍须返回原资源，不能让已显示的缩略图变成 404。 */

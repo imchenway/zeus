@@ -855,7 +855,7 @@ function normalizeStructuredResource(input: {
   };
 }
 
-/** 文件引用先限定任务根，再核对真实目标；共享目录仅能落入已登记项目根。 */
+/** 文件引用沿用任务入口授权；共享目录的真实路径必须能映射回同一文件。 */
 function parseFileReference(rawReference: string, projectRoot: string, registeredProjectRoot?: string): { absolutePath: string; projectRelativePath: string; projectRoot: string; location?: ConversationFileLocation } | null {
   let reference = rawReference.trim();
   if (!reference || reference.includes('\0')) return null;
@@ -884,7 +884,19 @@ function parseFileReference(rawReference: string, projectRoot: string, registere
     return null;
   }
   const root = resolve(projectRoot);
-  const absolutePath = resolve(isAbsolute(reference) ? reference : resolve(root, reference));
+  /** 外部共享引用先转换为任务已有入口，再使用原有授权规则。 */
+  let absolutePath = resolve(isAbsolute(reference) ? reference : resolve(root, reference));
+  if (!isInsideRoot(absolutePath, root) && registeredProjectRoot) {
+    /** 主项目真实路径只作为映射依据，不能直接扩大任务文件权限。 */
+    const registeredRoot = safeRealpath(registeredProjectRoot);
+    /** 任务外的引用必须指向真实存在且位于注册项目内的文件。 */
+    const realPath = safeRealpath(absolutePath);
+    if (!registeredRoot || !realPath || !isInsideRoot(realPath, registeredRoot)) return null;
+    /** 按项目相对位置找到任务已有入口，普通工作树副本不能冒充共享文件。 */
+    const taskPath = resolve(root, relative(registeredRoot, realPath));
+    if (safeRealpath(taskPath) !== realPath) return null;
+    absolutePath = taskPath;
+  }
   if (!isInsideRoot(absolutePath, root) || absolutePath === root) return null;
   /** 已授权的任务内目标保持原身份；共享目录登记真实路径，后续预览与打开复用同一授权根。 */
   let authorized = resolveAuthorizedPath(absolutePath, [root]);
