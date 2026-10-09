@@ -1573,7 +1573,17 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     return uiCopy.sidebar.selectRepository;
   }
 
-  function handleWindowDragPointerDown(event: ReactPointerEvent<HTMLDivElement>): void {
+  /** 顶部空白区继续手动拖窗；真实控件、正文和门户弹层不进入拖拽流程。 */
+  function handleWindowDragPointerDown(event: ReactPointerEvent<HTMLElement>): void {
+    if (
+      !(event.target instanceof Element) ||
+      !event.currentTarget.contains(event.target) ||
+      event.target.closest('button, a, input, select, textarea, label, summary, [tabindex], [role="button"], [role="combobox"], [role="menuitem"], [contenteditable="true"]')
+    )
+      return;
+    /** 沿用布局定义的拖拽高度，避免导航变化后再次覆盖工作区按钮。 */
+    const dragBounds = event.currentTarget.querySelector('.window-drag-strip')?.getBoundingClientRect();
+    if (!dragBounds || event.clientY < dragBounds.top || event.clientY >= dragBounds.bottom) return;
     const bridge = window.zeus;
     if (event.button !== 0 || !bridge?.beginWindowDrag || !bridge.moveWindowDrag || !bridge.endWindowDrag) return;
     event.preventDefault();

@@ -6135,13 +6135,13 @@ body[data-surface='project-git-diff'] .macos-ai-app.zeus-shell.project-git-diff-
 
 /* Codex macOS 隐藏标题栏避让：标题栏由 BrowserWindow 隐藏，侧栏内容为红黄绿窗口按钮留出空间。 */
 
-/* Codex macOS 隐藏标题栏手动拖拽区：用显式顶部命中层接收 pointer 事件，再由 Main 进程移动窗口。 */
+/* 顶部拖拽范围只提供几何边界，指针交给真实控件及工作台空白区。 */
 .macos-ai-app .window-drag-strip {
   position: fixed;
   inset: 0 0 auto 0;
   height: 56px;
   z-index: 30;
-  pointer-events: auto;
+  pointer-events: none;
   user-select: none;
 }
 
@@ -6159,13 +6159,13 @@ body[data-surface='project-git-diff'] .macos-ai-app.zeus-shell.project-git-diff-
   font: inherit;
 }
 
-/* 只有真实交互控件退出窗口拖拽，避免整列 no-drag 抵消顶部透明拖拽层。 */
+/* 真实交互控件退出原生窗口拖拽；共享手动拖拽入口也排除这些控件。 */
 .macos-ai-app :where(button, a, input, select, textarea, label) {
   app-region: no-drag;
   -webkit-app-region: no-drag;
 }
 
-/* 顶部交互控件升到透明拖拽层之上；数字员工只保护页头操作，保留其余区域的窗口拖拽。 */
+/* 顶部工具栏保持可操作；数字员工只保护页头操作，保留空白区的窗口拖拽。 */
 .macos-ai-app :where(.zeus-object-toolbar, .project-code-mode-toolbar, .session-toolbar, .session-source-search-row, .settings-section-nav, .task-table-primary-toolbar, .digital-employee-page-heading > .digital-employee-actions) {
   app-region: no-drag;
   -webkit-app-region: no-drag;
@@ -12683,7 +12683,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
     min-block-size: 32px;
     padding-inline: 9px;
     position: absolute;
-    /* 必须高于 z-index:30 的 window-drag-strip，否则可见按钮会被透明拖拽命中层吞掉点击。 */
+    /* 浮动来源入口位于页头上层，保持窄窗口可操作。 */
     z-index: 31;
   }
 
@@ -21760,7 +21760,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 .project-code-mode-pane[hidden] {
   display: none;
 }
-/* 源码入口常驻项目行，不继承更多菜单的悬停隐藏规则。 */
+/* 源码入口常驻项目行，恢复父操作区为穿透空白而关闭的指针响应。 */
 .macos-ai-app .project-source-button {
   display: inline-flex;
   align-items: center;
@@ -21772,6 +21772,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   border-radius: 6px;
   background: transparent;
   color: var(--zeus-control-muted-text);
+  pointer-events: auto;
 }
 
 /* 工具按钮只占现有顶行的尾部空间，窄窗口不挤掉文件标签。 */
