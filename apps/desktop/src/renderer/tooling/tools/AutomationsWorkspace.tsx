@@ -333,6 +333,7 @@ export function AutomationsWorkspace(props: {
                     <small>
                       {projectNames(run.projectIds, props.projects, zh)} · {formatDate(run.completedAt ?? run.createdAt)}
                     </small>
+                    {run.status === 'awaiting_review' ? <p>{zh ? '工作已产出结果，请查看任务并验收成果。下一次定时工作会照常执行。' : 'Results are ready for review in the task. The next scheduled work will run as usual.'}</p> : null}
                     {run.dispatchTargets.length > 0 ? (
                       <>
                         <p>
@@ -637,8 +638,8 @@ export function AutomationsWorkspace(props: {
                 </fieldset>
               </div>
             </div>
-            <details className="automation-advanced-settings">
-              <summary>{zh ? '高级设置' : 'Advanced settings'}</summary>
+            {/* 时区与执行上限直接展示，避免隐藏影响定时执行的设置。 */}
+            <div className="automation-form-section">
               <label>
                 <span>{zh ? '时区（如 Asia/Shanghai）' : 'Time zone (for example, Asia/Shanghai)'}</span>
                 <input value={draft.timezone ?? ''} onChange={(event) => setDraft({ ...draft, timezone: event.currentTarget.value })} />
@@ -653,7 +654,7 @@ export function AutomationsWorkspace(props: {
                   <input type="number" min="1" value={draft.maxTokensPerDayText} placeholder={zh ? '不限' : 'Unlimited'} onChange={(event) => setDraft({ ...draft, maxTokensPerDayText: event.currentTarget.value })} />
                 </label>
               </div>
-            </details>
+            </div>
           </FormDialog>
         ) : null}
       </MotionPresence>
@@ -877,9 +878,11 @@ function scheduleLabel(task: AutomationTaskRecord, zh: boolean): string {
   if (task.triggerKind === 'manual') return zh ? '手动触发' : 'Manual';
   return task.nextRunAt ? formatDate(task.nextRunAt) : zh ? '等待计算' : 'Awaiting schedule';
 }
+/** 运行状态区分执行与成果验收，不能把待验收显示为运行中。 */
 function runStatusLabel(status: AutomationRunRecord['status'], zh: boolean): string {
+  /** 两种界面语言共用同一组运行状态。 */
   const labels = zh
-    ? { queued: '排队', dispatching: '正在启动', running: '运行中', succeeded: '成功', failed: '失败', blocked: '等待处理', cancelled: '已取消', outcome_unknown: '结果未知' }
-    : { queued: 'Queued', dispatching: 'Starting', running: 'Running', succeeded: 'Succeeded', failed: 'Failed', blocked: 'Needs attention', cancelled: 'Cancelled', outcome_unknown: 'Unknown' };
+    ? { queued: '排队', dispatching: '正在启动', running: '运行中', awaiting_review: '待验收', succeeded: '成功', failed: '失败', blocked: '等待处理', cancelled: '已取消', outcome_unknown: '结果未知' }
+    : { queued: 'Queued', dispatching: 'Starting', running: 'Running', awaiting_review: 'Awaiting review', succeeded: 'Succeeded', failed: 'Failed', blocked: 'Needs attention', cancelled: 'Cancelled', outcome_unknown: 'Unknown' };
   return labels[status];
 }

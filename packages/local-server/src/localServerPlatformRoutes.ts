@@ -3812,11 +3812,22 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           };
         }
         if (reference.kind === 'task_work') {
-          /** Task Work 成功以真实运行成果为准，等待输入仍保持运行。 */
+          /** 已产出成果与验收成功分开读取，等待输入仍占用执行队列。 */
           const run = taskWorkRuns.getById(reference.id);
           if (!run) return undefined;
           return {
-            status: run.status === 'succeeded' ? 'completed' : run.status === 'failed' ? 'failed' : run.status === 'cancelled' ? 'cancelled' : run.status === 'outcome_unknown' ? 'outcome_unknown' : 'running',
+            status:
+              run.status === 'succeeded'
+                ? 'completed'
+                : run.status === 'runtime_completed'
+                  ? 'awaiting_review'
+                  : run.status === 'failed'
+                    ? 'failed'
+                    : run.status === 'cancelled'
+                      ? 'cancelled'
+                      : run.status === 'outcome_unknown'
+                        ? 'outcome_unknown'
+                        : 'running',
             errorCode: run.errorCode,
             errorMessage: run.errorMessage,
           };

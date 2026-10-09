@@ -9,7 +9,8 @@ export type AutomationTriggerKind = 'manual' | 'once' | 'interval' | 'daily' | '
 export type AutomationConversationMode = 'independent' | 'original';
 export type AutomationBlockStrategy = 'serial' | 'discard' | 'cover';
 export type AutomationPermissionMode = 'read-only' | 'auto' | 'full-access';
-export type AutomationRunStatus = 'queued' | 'dispatching' | 'running' | 'succeeded' | 'failed' | 'blocked' | 'cancelled' | 'outcome_unknown';
+/** 待验收不代表成功，也不会挡住下一次独立员工工作。 */
+export type AutomationRunStatus = 'queued' | 'dispatching' | 'running' | 'awaiting_review' | 'succeeded' | 'failed' | 'blocked' | 'cancelled' | 'outcome_unknown';
 
 export interface AutomationTriggerConfig {
   /** 事件发生前的真实项目状态条件。 */

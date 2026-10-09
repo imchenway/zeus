@@ -64,8 +64,8 @@ export interface AutomationDispatchTarget {
 
 /** 运行读取保留暂停和未知状态，不把等待审批判为成功。 */
 export interface AutomationExecutionState {
-  /** 真实运行当前状态。 */
-  status: 'running' | 'completed' | 'failed' | 'cancelled' | 'outcome_unknown';
+  /** 真实运行当前状态，已产出但未验收的成果单独保留。 */
+  status: 'running' | 'awaiting_review' | 'completed' | 'failed' | 'cancelled' | 'outcome_unknown';
   /** 暂停仍是未结束的工作，不释放自动化串行队列。 */
   paused?: boolean;
   /** 原执行失败码。 */
