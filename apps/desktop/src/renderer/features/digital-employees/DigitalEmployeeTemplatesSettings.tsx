@@ -23,6 +23,7 @@ type EditorTarget = { kind: 'new' } | { kind: 'employee'; record: DigitalEmploye
 /** 新增数字员工支持从内置模板开始，也支持空白创建。 */
 type DigitalEmployeeCreationSource = { kind: 'blank' } | { kind: 'template'; templateId: string } | null;
 
+/** 员工工作配置与记忆管理使用独立入口，修改沿用自动保存。 */
 export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplatesSettingsProps) {
   const zh = props.language === 'zh-CN';
   const [templates, setTemplates] = useState<DigitalEmployeeTemplateRecord[]>([]);
@@ -46,6 +47,8 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
   const [draft, setDraft] = useState<DigitalEmployeeTemplateDraft>({ ...emptyTemplateDraft });
   /** 仅筛选当前列表，不改变员工身份或正在编辑的草稿。 */
   const [employeeSearch, setEmployeeSearch] = useState('');
+  /** 工作配置与记忆管理分别显示，避免历史记录挤占配置表单。 */
+  const [editorSection, setEditorSection] = useState<'work' | 'memory' | 'history'>('work');
 
   const loadTemplates = useCallback(async () => {
     if (!props.client) return;
@@ -124,6 +127,7 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
       nextDraft = templateDraft(source);
     }
     setEditorTarget({ kind: 'new' });
+    setEditorSection('work');
     setDraft(nextDraft);
     setTemplateSelectionOpen(false);
     setCreationSource(null);
@@ -216,7 +220,6 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
       <header className="digital-employee-page-heading">
         <span>
           <h2 className="settings-page-title">{zh ? '数字员工' : 'Digital employees'}</h2>
-          <p>{zh ? '定义员工职责，在任务或团队中选择使用。' : 'Define employee responsibilities, then select them in tasks or teams.'}</p>
         </span>
         <span className="digital-employee-actions">
           <Button variant="secondary" size="compact" busy={loadState === 'loading'} disabled={busy} onClick={() => void loadTemplates()}>
@@ -349,15 +352,6 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
           {!editorTarget ? (
             <div className="digital-employee-empty-state">
               <strong>{employees.length === 0 ? (zh ? '还没有数字员工' : 'No digital employees yet') : zh ? '选择数字员工查看配置' : 'Select a digital employee to inspect'}</strong>
-              <span>
-                {employees.length === 0
-                  ? zh
-                    ? '点击右上角“新增”，从模板开始或自己新建。'
-                    : 'Click Add to start from a template or create your own.'
-                  : zh
-                    ? '选择员工后，修改名称、岗位和提示词。'
-                    : 'Select an employee to edit their name, role, and instructions.'}
-              </span>
             </div>
           ) : (
             <>
@@ -416,22 +410,41 @@ export function DigitalEmployeeTemplatesSettings(props: DigitalEmployeeTemplates
                   </Button>
                 ) : null}
               </div>
-              <DigitalEmployeeProfileEditor
-                client={props.client}
-                skillClient={props.skillClient}
-                draft={draft}
-                language={props.language}
-                disabled={busy}
-                onCommit={() => {
-                  if (editorTarget.kind === 'employee') void saveEmployee();
-                }}
-                onChange={(next, commit) => {
-                  setDraft(next);
-                  setSavedName(null);
-                  if (commit && editorTarget.kind === 'employee') void saveEmployee(next);
-                }}
-              />
-              {editorTarget.kind === 'employee' && props.client ? <EmployeeMemoryPanel key={editorTarget.record.id} client={props.client} employeeId={editorTarget.record.id} language={props.language} /> : null}
+              <nav className="employee-settings-navigation" aria-label={zh ? '员工设置内容' : 'Employee settings sections'}>
+                {(['work', 'memory', 'history'] as const).map((section) => (
+                  <Button
+                    key={section}
+                    size="compact"
+                    variant="secondary"
+                    aria-pressed={editorSection === section}
+                    disabled={section !== 'work' && editorTarget.kind === 'new'}
+                    title={section !== 'work' && editorTarget.kind === 'new' ? (zh ? '请先创建员工' : 'Create the employee first') : undefined}
+                    onClick={() => setEditorSection(section)}
+                  >
+                    {{ work: zh ? '工作设置' : 'Work settings', memory: zh ? '员工记忆' : 'Employee memory', history: zh ? '使用记录' : 'Usage history' }[section]}
+                  </Button>
+                ))}
+              </nav>
+              {editorSection === 'work' ? (
+                <DigitalEmployeeProfileEditor
+                  client={props.client}
+                  skillClient={props.skillClient}
+                  draft={draft}
+                  language={props.language}
+                  disabled={busy}
+                  onCommit={() => {
+                    if (editorTarget.kind === 'employee') void saveEmployee();
+                  }}
+                  onChange={(next, commit) => {
+                    setDraft(next);
+                    setSavedName(null);
+                    if (commit && editorTarget.kind === 'employee') void saveEmployee(next);
+                  }}
+                />
+              ) : null}
+              {editorSection !== 'work' && editorTarget.kind === 'employee' && props.client ? (
+                <EmployeeMemoryPanel key={editorTarget.record.id} client={props.client} employeeId={editorTarget.record.id} language={props.language} view={editorSection} />
+              ) : null}
             </>
           )}
           {editorTarget?.kind === 'new' ? (
@@ -488,7 +501,7 @@ function DigitalEmployeeProfileEditor(props: {
       </div>
       <label>
         <span>{zh ? '提示词' : 'Prompt'}</span>
-        <textarea value={props.draft.prompt} onChange={(event) => patch({ prompt: event.currentTarget.value })} disabled={props.disabled} rows={6} maxLength={20000} required />
+        <textarea value={props.draft.prompt} onChange={(event) => patch({ prompt: event.currentTarget.value })} disabled={props.disabled} rows={4} maxLength={20000} required />
       </label>
       <section aria-label={zh ? '默认执行配置' : 'Execution defaults'}>
         <h3>{zh ? '默认执行配置' : 'Execution defaults'}</h3>
@@ -503,8 +516,17 @@ function DigitalEmployeeProfileEditor(props: {
             <span>{zh ? '读取员工记忆' : 'Read employee memory'}</span>
           </label>
         </div>
-        <small>{zh ? '只使用已确认且未过期的经验。新工作使用最新员工配置，已开始的工作保留原配置。' : 'Only approved, current experience is used. New work uses the latest settings; work already started keeps its original settings.'}</small>
       </section>
+      <div className="digital-employee-form-grid">
+        <label title={zh ? '员工资料，不作为提示词发送' : 'Profile information, not sent as a prompt'}>
+          <span>{zh ? '业务领域' : 'Domain'}</span>
+          <input value={props.draft.domain} onChange={(event) => patch({ domain: event.currentTarget.value })} disabled={props.disabled} maxLength={120} />
+        </label>
+        <label title={zh ? '员工资料，不作为提示词发送' : 'Profile information, not sent as a prompt'}>
+          <span>{zh ? '说明' : 'Description'}</span>
+          <textarea value={props.draft.description} onChange={(event) => patch({ description: event.currentTarget.value })} disabled={props.disabled} rows={2} maxLength={1000} />
+        </label>
+      </div>
     </div>
   );
 }

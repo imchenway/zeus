@@ -28,6 +28,7 @@ interface MemoryDraft {
   externalStateConfirmed: boolean;
 }
 
+/** 全局、项目和员工共用记忆治理，员工页使用简洁的列表标题。 */
 export function MemorySettingsPane(props: {
   client: MemoryApiClient;
   language: MemoryLanguage;
@@ -106,7 +107,11 @@ export function MemorySettingsPane(props: {
       <header className="memory-settings-header">
         <span>
           <h2>{props.scopeLabel ?? (zh ? '长期记忆' : 'Long-term memory')}</h2>
-          <p>{zh ? '保存可复用的知识、偏好和工作方法。每条经验保留来源与复核时间，可修正或停用；不会把整个会话当作记忆。' : 'Keep reusable knowledge, preferences, and workflows with sources, review dates, correction and deactivation.'}</p>
+          {scope.kind !== 'employee' ? (
+            <p>
+              {zh ? '保存可复用的知识、偏好和工作方法。每条经验保留来源与复核时间，可修正或停用；不会把整个会话当作记忆。' : 'Keep reusable knowledge, preferences, and workflows with sources, review dates, correction and deactivation.'}
+            </p>
+          ) : null}
         </span>
         <div className="settings-heading-actions">
           <SettingsSaveStatus status={busy ? 'saving' : formError ? 'failed' : saved ? 'saved' : 'idle'} language={props.language} />
@@ -199,7 +204,9 @@ export function MemorySettingsPane(props: {
       ) : null}
 
       {controller.snapshot.phase === 'loading' ? <p role="status">{zh ? '正在读取记忆…' : 'Loading memories…'}</p> : null}
-      {controller.snapshot.phase === 'ready' && controller.snapshot.items.length === 0 ? <p>{zh ? '当前范围还没有长期记忆。' : 'There are no long-term memories in this scope.'}</p> : null}
+      {controller.snapshot.phase === 'ready' && controller.snapshot.items.length === 0 ? (
+        <p>{scope.kind === 'employee' ? (zh ? '暂无记忆。' : 'No memories yet.') : zh ? '当前范围还没有长期记忆。' : 'There are no long-term memories in this scope.'}</p>
+      ) : null}
       <div className="memory-record-list">
         {controller.snapshot.items.map((record) => {
           const status = memoryDisplayStatus(record, controller.snapshot.items);
