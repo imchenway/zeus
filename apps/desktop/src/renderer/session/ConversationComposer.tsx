@@ -473,11 +473,13 @@ export function ConversationComposer(props: ConversationComposerProps) {
         )}
         <div className="session-composer-command-row">
           <span className="session-composer-leading-actions">
+            {/* 附件入口使用原生悬停提示，与无障碍名称共用文案。 */}
             {props.onChooseAttachments ? (
               <button
                 type="button"
                 className="session-attachment-button"
                 aria-label={copy.attach}
+                title={copy.attach}
                 onClick={() => {
                   setInputResourceError(null);
                   void Promise.resolve(props.onChooseAttachments?.()).catch((error: unknown) => {
@@ -528,7 +530,8 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 aria-pressed={!props.goal ? goalInputActive : undefined}
                 data-active={goalInputActive || props.goal ? 'true' : 'false'}
                 data-status={props.goal?.status}
-                title={props.goal ? copy.goal : copy.createGoal}
+                // 悬停名称与当前目标操作保持一致。
+                title={props.goal ? copy.goal : goalInputActive ? copy.exitGoal : copy.createGoal}
                 onClick={() => {
                   if (props.goal) props.onOpenGoal?.();
                   else if (goalInputActive) exitGoalInput();

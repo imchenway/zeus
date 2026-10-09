@@ -3677,11 +3677,13 @@ export function NewConversationComposer(props: {
         )}
         <div className="session-composer-command-row">
           <span className="session-composer-leading-actions">
+            {/* 新建会话的附件入口也显示与无障碍名称一致的原生悬停提示。 */}
             {props.onChooseAttachments ? (
               <button
                 type="button"
                 className="session-attachment-button"
                 aria-label={copy.attach}
+                title={copy.attach}
                 disabled={submitting || inputResources.processing || !props.owner}
                 onClick={async () => {
                   try {
@@ -3712,7 +3714,8 @@ export function NewConversationComposer(props: {
                 aria-label={goalInputActive ? copy.exitGoal : copy.createGoal}
                 aria-pressed={goalInputActive}
                 data-active={goalInputActive ? 'true' : 'false'}
-                title={copy.createGoal}
+                // 开启目标输入后，悬停提示说明退出操作。
+                title={goalInputActive ? copy.exitGoal : copy.createGoal}
                 disabled={submitting || !props.owner}
                 onClick={() => {
                   if (!goalInputActive && structuredSelectionRef.current.expertMentions.length > 0) {
