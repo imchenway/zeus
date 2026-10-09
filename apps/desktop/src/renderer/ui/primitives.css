@@ -202,8 +202,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   animation: zeus-workspace-focus-enter var(--zeus-motion-duration-workspace) var(--zeus-motion-ease-out) both;
 }
 
+/* 设置内容切换保持不透明，避免每次挂载重播淡入造成白闪。 */
 .macos-ai-app .project-code-mode-pane:not([hidden]),
-.macos-ai-app .settings-content-column > .settings-product-pane,
 .macos-ai-app .workspace-view-settings > .settings-sidebar-shell {
   animation: zeus-panel-focus-enter var(--zeus-motion-duration-workspace) var(--zeus-motion-ease-out) both;
 }

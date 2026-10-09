@@ -1,4 +1,4 @@
-import { type ComponentProps, useCallback, useEffect, useRef, useState } from 'react';
+import { type ComponentProps, startTransition, useCallback, useEffect, useRef, useState } from 'react';
 import { RendererErrorBoundary } from './ErrorBoundary.js';
 import { reportApplicationError } from './ui/ApplicationErrorDialog.js';
 import { type MainNavTarget, type SettingsCategory, SETTINGS_CATEGORIES, WorkspacePage } from './WorkspacePage.js';
@@ -30,9 +30,9 @@ export function App(props: AppProps) {
       const applyRoute = (): void => {
         window.history.replaceState(null, '', event.newURL);
         setActiveNavTarget(routeFromHash(targetHash));
-        /** 同一次导航同时恢复设置子页面。 */
+        /** 地址栏切换也保留当前设置内容，直到目标模块加载完成。 */
         const category = settingsCategoryFromHash(targetHash);
-        if (category) setSettingsCategory(category);
+        if (category) startTransition(() => setSettingsCategory(category));
       };
       if (leaveGuardRef.current) leaveGuardRef.current(applyRoute);
       else applyRoute();

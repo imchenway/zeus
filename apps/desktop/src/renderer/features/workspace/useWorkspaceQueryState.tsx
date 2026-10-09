@@ -1,5 +1,5 @@
 import type { DigitalTeamEntrySelection } from '../digital-teams/DigitalTeamWorkspace.js';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GlobalAgentSettingsHandle } from '../../settings/GlobalAgentSettingsPane.js';
 import { projectTerminalOutput, temporaryWorkspaceId } from '@zeus/shared';
 import { cloneTaskManagementStatusConfig, defaultTaskManagementStatusConfig } from '@zeus/shared';
@@ -774,10 +774,14 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
       cancelled = true;
     };
   }, [activeNavTarget, settingsCategory, props.onLoadReleaseStatus, props.onLoadReleaseUpdateStatus, props.initialReleaseStatus, props.initialReleaseUpdateStatus, releaseLoadRevision]);
-  /** 所有设置页切换先处理未保存草稿。 */
+  /** 设置页先处理未保存草稿，再等待目标模块就绪后替换当前页面。 */
   const setSettingsCategory = (category: SettingsCategory): void => {
-    if (category === settingsCategory) return;
-    requestWorkspaceLeaveRef.current(() => (props.shellNavigation?.onSettingsCategoryChange ?? setLocalSettingsCategory)(category));
+    /** 重选当前分类也更新目标，覆盖尚未完成的切换，但不触发离开确认。 */
+    const applyCategory = (): void => {
+      startTransition(() => (props.shellNavigation?.onSettingsCategoryChange ?? setLocalSettingsCategory)(category));
+    };
+    if (category === settingsCategory) applyCategory();
+    else requestWorkspaceLeaveRef.current(applyCategory);
   };
   const [codexUsageRevision, setCodexUsageRevision] = useState(0);
   const selectedProject = projectDetail ?? firstProject;
