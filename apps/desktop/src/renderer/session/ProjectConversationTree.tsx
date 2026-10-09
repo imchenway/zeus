@@ -1,5 +1,5 @@
 import { GitBranchIcon as GitBranch } from '@phosphor-icons/react/dist/csr/GitBranch';
-import { type KeyboardEvent, type MouseEvent as ReactMouseEvent, useEffect, useRef, useState } from 'react';
+import { type AnimationEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent, useEffect, useRef, useState } from 'react';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { CheckCircleIcon as CheckCircle } from '@phosphor-icons/react/dist/csr/CheckCircle';
 import { CircleNotchIcon as CircleNotch } from '@phosphor-icons/react/dist/csr/CircleNotch';
@@ -424,10 +424,22 @@ export function summarizeProjectConversationStatuses(
   return result;
 }
 
+/** 将旋转起点固定到文档时钟，使晚挂载、重新显示的图标保持同一角度。 */
+function synchronizeConversationSpinner(element: SVGSVGElement | null): void {
+  // 只对齐浏览器已有的动画；减少动态效果时没有动画，不额外启动计时器。
+  for (const animation of element?.getAnimations() ?? []) {
+    animation.startTime = 0;
+  }
+}
+
+/** 会话行与项目汇总共用状态图标，旋转状态统一使用文档时钟。 */
 export function ConversationStatusIcon(props: { status: ConversationStatusIconKind; label: string }) {
+  /** 按运行状态选择图标，并保留统一的无障碍说明。 */
   let icon = null;
   if (props.status === 'connecting' || props.status === 'reconnecting' || props.status === 'running') {
-    icon = <CircleNotch className="session-conversation-state-spinner" aria-hidden="true" />;
+    icon = (
+      <CircleNotch ref={synchronizeConversationSpinner} onAnimationStart={(event: AnimationEvent<SVGSVGElement>) => synchronizeConversationSpinner(event.currentTarget)} className="session-conversation-state-spinner" aria-hidden="true" />
+    );
   } else if (props.status === 'waiting_user') {
     icon = <ChatCircle aria-hidden="true" />;
   } else if (props.status === 'waiting_approval') {
