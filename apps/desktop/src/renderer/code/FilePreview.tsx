@@ -48,14 +48,28 @@ export function FileReviewContent(props: { review?: FileReview; zh: boolean; chi
   return (
     <>
       {props.review?.diff ? (
-        <nav className="file-preview-toolbar" aria-label={props.zh ? 'Git 差异与源码' : 'Git diff and source'}>
-          <PreviewIconButton label={props.zh ? 'Git 差异' : 'Git diff'} aria-pressed={showDiff} onClick={() => setShowDiff(true)}>
-            <GitDiff size={18} aria-hidden="true" />
-          </PreviewIconButton>
-          <PreviewIconButton label={props.zh ? '源码' : 'Source'} aria-pressed={!showDiff} onClick={() => setShowDiff(false)}>
-            <FileCode size={18} aria-hidden="true" />
-          </PreviewIconButton>
-          <span>{props.zh ? 'HEAD → 当前文件（含暂存与未暂存）' : 'HEAD → Current file (staged and unstaged)'}</span>
+        <nav className="file-preview-toolbar file-review-toolbar" aria-label={props.zh ? 'Git 差异与源码' : 'Git diff and source'}>
+          <div className="file-review-modes" role="group" aria-label={props.zh ? '显示模式' : 'View mode'}>
+            <button type="button" aria-pressed={showDiff} onClick={() => setShowDiff(true)}>
+              <GitDiff size={14} aria-hidden="true" />
+              {props.zh ? '差异' : 'Diff'}
+            </button>
+            <button type="button" aria-pressed={!showDiff} onClick={() => setShowDiff(false)}>
+              <FileCode size={14} aria-hidden="true" />
+              {props.zh ? '内容' : 'Content'}
+            </button>
+          </div>
+          <span className="file-review-range" title={props.zh ? 'HEAD → 当前文件（含暂存与未暂存）' : 'HEAD → Current file (staged and unstaged)'}>
+            HEAD → {props.zh ? '当前文件' : 'Current file'}
+          </span>
+          <span className="file-review-stats">
+            <span className="is-addition" aria-label={`${props.zh ? '新增行数' : 'Added lines'}: ${props.review.diff.addedLines}`}>
+              +{props.review.diff.addedLines}
+            </span>
+            <span className="is-deletion" aria-label={`${props.zh ? '删除行数' : 'Deleted lines'}: ${props.review.diff.deletedLines}`}>
+              −{props.review.diff.deletedLines}
+            </span>
+          </span>
         </nav>
       ) : props.review?.diff === null ? (
         <p role="status">{props.zh ? '与 HEAD 相同，无 Git 差异。' : 'No Git diff from HEAD.'}</p>

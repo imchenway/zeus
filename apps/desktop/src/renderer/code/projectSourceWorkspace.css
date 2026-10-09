@@ -204,21 +204,18 @@
 .project-source-changes-body summary::-webkit-details-marker {
   display: none;
 }
-.project-source-module > summary::after,
-.project-source-changes-body summary::after {
-  content: '';
-  width: 6px;
-  height: 6px;
-  border-right: 1.5px solid currentColor;
-  border-bottom: 1.5px solid currentColor;
-  transform: rotate(-45deg);
-  margin-right: 3px;
-  margin-left: auto;
-  flex-shrink: 0;
+/* 折叠指示直接使用 Phosphor 图标，原生 details 决定方向。 */
+svg.project-source-disclosure {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  color: var(--zeus-control-muted-text);
 }
-.project-source-module[open] > summary::after,
-.project-source-changes-body details[open] > summary::after {
-  transform: rotate(45deg);
+details[open] > summary > .project-source-disclosure {
+  transform: rotate(90deg);
+}
+.project-source-module > summary > .project-source-disclosure {
+  margin-inline-start: 4px;
 }
 .project-source-module > summary::marker,
 .project-source-changes-body summary::marker {
@@ -264,9 +261,6 @@
 .project-source-module-actions svg {
   width: 14px;
   height: 14px;
-}
-.project-source-module > summary::after {
-  margin-left: 4px;
 }
 .project-source-changes-body summary > small {
   margin-inline-end: 10px;
@@ -533,68 +527,8 @@
 }
 
 .project-source-tabs {
-  display: flex;
   flex: 1;
-  min-width: 0;
-  min-height: 38px;
-  overflow-x: auto;
-  align-items: stretch;
-  gap: 4px;
-  padding: 4px 8px 0;
-  border-bottom: 1px solid var(--zeus-control-border);
-  background: var(--zeus-code-editor-bg);
-
-  border-bottom: 0;
-  background: var(--zeus-product-panel-muted);
-}
-
-.project-source-tab {
-  display: inline-flex;
-  min-width: 116px;
-  max-width: 220px;
-  min-height: 34px;
-  align-items: center;
-  box-sizing: border-box;
-  padding: 0 4px 0 0;
-  border: 1px solid transparent;
-  border-radius: 8px;
-
-  border-right: 0;
-  border-bottom: 2px solid transparent;
-  color: var(--zeus-control-muted-text);
-  background: transparent;
-}
-
-.project-source-tab > [role='tab'] {
-  display: inline-flex;
-  min-width: 0;
-  flex: 1;
-  align-items: center;
-  gap: 7px;
-  align-self: stretch;
-  padding: 0 0 0 9px;
-  border: 0;
-  color: inherit;
-  background: transparent;
-  font: inherit;
-  font-size: 12px;
-}
-.project-source-tab > [role='tab'] > span {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: left;
-}
-.project-source-tab.active {
-  color: var(--zeus-control-text);
-  border-color: var(--zeus-control-border);
-  background: color-mix(in srgb, var(--zeus-control-text) 8%, var(--zeus-code-editor-bg));
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--zeus-control-text) 10%, transparent);
-}
-.project-source-tab.active > [role='tab'] {
-  font-weight: 600;
+  padding: 4px 8px;
 }
 .project-source-tabs i {
   color: var(--zeus-brand-text);
@@ -606,25 +540,6 @@
   font-size: 12px;
   font-weight: 700;
 }
-.project-source-tab-close {
-  display: inline-grid;
-  width: 26px;
-  min-width: 26px;
-  height: 26px;
-  flex: 0 0 26px;
-  padding: 0;
-  place-items: center;
-  border: 0;
-  border-radius: 4px;
-  color: var(--zeus-control-muted-text);
-  background: transparent;
-  font: inherit;
-}
-.project-source-tab-close:hover:not(:disabled):not([aria-disabled='true']) {
-  background: var(--zeus-interaction-hover);
-  color: var(--zeus-control-text);
-}
-
 .project-source-breadcrumbs {
   display: flex;
   min-height: 30px;

@@ -81,10 +81,11 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
+  gap: 10px;
+  padding: 10px 12px;
   flex: 0 0 auto;
-  border-bottom: 1px solid var(--zeus-product-line);
+  border-bottom: 1px solid var(--zeus-control-border);
+  background: var(--zeus-product-panel);
 }
 /* 文件名可省略并悬浮查看完整路径，窄栏才允许工具操作换行。 */
 .file-preview-identity {
@@ -100,17 +101,61 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.file-preview-identity > strong {
-  font-size: 12px;
+.macos-ai-app .file-preview-identity > strong {
+  font-size: 13px;
   font-weight: 600;
+  color: var(--zeus-control-text);
 }
 .file-preview-identity > small {
   color: var(--zeus-control-muted-text);
-  font-size: 10px;
+  font-size: 11px;
 }
 .file-preview-content > header > .file-preview-toolbar {
   margin-inline-start: auto;
   padding: 0;
+}
+/* 审阅模式、比较范围和增删统计各自保持清楚的阅读顺序。 */
+.file-review-toolbar {
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--zeus-control-border);
+  background: var(--zeus-product-panel-muted);
+  font-size: 11px;
+}
+.file-review-modes {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 6px;
+}
+.file-review-modes > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 26px;
+  padding: 3px 8px;
+  color: var(--zeus-control-muted-text);
+  font-size: 12px;
+}
+.file-review-modes > button[aria-pressed='true'] {
+  color: var(--zeus-control-text);
+  background: var(--zeus-product-panel);
+}
+.file-review-range {
+  color: var(--zeus-control-muted-text);
+}
+.file-review-stats {
+  display: inline-flex;
+  gap: 8px;
+  margin-inline-start: auto;
+  font-variant-numeric: tabular-nums;
+}
+.file-review-stats > .is-addition {
+  color: var(--zeus-code-addition-text);
+}
+.file-review-stats > .is-deletion {
+  color: var(--zeus-control-danger-text);
 }
 .file-preview-image {
   display: flex;

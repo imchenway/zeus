@@ -308,7 +308,7 @@
   border-radius: var(--agentdesk-radius-tab);
 }
 
-.macos-ai-app.zeus-shell [role='tab'][aria-selected='true']:where(:not(.browser-tab)) {
+.macos-ai-app.zeus-shell [role='tab'][aria-selected='true']:where(:not(.zeus-workspace-tab)) {
   color: var(--agentdesk-accent-strong);
 }
 
@@ -330,13 +330,6 @@
   border-color: color-mix(in srgb, var(--agentdesk-accent) 32%, var(--agentdesk-border));
   color: var(--agentdesk-accent-strong);
   box-shadow: none;
-}
-
-/* 下划线式 Tab 保持原有信息结构，只统一命中区圆角和品牌色。 */
-
-.macos-ai-app.zeus-shell .project-source-tab.active {
-  background: color-mix(in srgb, var(--agentdesk-accent) 7%, var(--agentdesk-surface-strong));
-  border-color: color-mix(in srgb, var(--agentdesk-accent) 25%, var(--agentdesk-border));
 }
 
 /*
@@ -569,7 +562,7 @@ body:has(.macos-ai-app.zeus-shell) {
   background: rgb(213 230 246 / 62%);
 }
 
-.macos-ai-app.zeus-shell :where(.project-source-tabs, .project-git-tabs, .settings-section-nav, .project-settings-section-tabs, .digital-employee-section-tabs, .automations-tabs) {
+.macos-ai-app.zeus-shell :where(.project-git-tabs, .settings-section-nav, .project-settings-section-tabs, .digital-employee-section-tabs, .automations-tabs) {
   border-color: var(--agentdesk-border);
   border-radius: 12px;
   background: rgb(218 233 247 / 44%);
@@ -709,7 +702,7 @@ body:has(.macos-ai-app.zeus-shell) {
   color: #b4232d;
 }
 
-.macos-ai-app.zeus-shell :is(.settings-section-button, .project-git-tabs > button, .project-source-tab, .task-table-view-pill, .task-table-status-segment) {
+.macos-ai-app.zeus-shell :is(.settings-section-button, .project-git-tabs > button, .task-table-view-pill, .task-table-status-segment) {
   min-block-size: 30px;
   padding-inline: 10px;
   border-radius: var(--agentdesk-radius-tab);
@@ -1102,7 +1095,7 @@ body:has(.macos-ai-app.zeus-shell) {
 }
 
 /* 分段导航使用扁平轨道，选中项依靠底色区分，不增加投影或高光。 */
-.macos-ai-app.zeus-shell :where(.project-source-tabs, .project-git-tabs, .project-settings-section-tabs, .digital-employee-section-tabs, .menu-bar-usage-tabs, .task-table-status-segments, .task-table-page-view-segments) {
+.macos-ai-app.zeus-shell :where(.project-git-tabs, .project-settings-section-tabs, .digital-employee-section-tabs, .menu-bar-usage-tabs, .task-table-status-segments, .task-table-page-view-segments) {
   background: var(--zeus-card-background) !important;
   background-image: none !important;
   border: 0 !important;
@@ -3946,70 +3939,6 @@ body:has(.macos-ai-app.zeus-shell) {
   height: 30px;
   box-shadow: none;
 }
-.macos-ai-app.zeus-shell .project-source-tabs {
-  gap: 4px;
-  padding: 4px 8px 0;
-  align-items: stretch;
-  min-height: 38px;
-  background: var(--zeus-code-editor-bg);
-  border-radius: 0 !important;
-  box-shadow: none !important;
-}
-.macos-ai-app.zeus-shell .project-source-tab {
-  flex: 0 0 auto;
-  display: flex;
-  min-width: 100px;
-  max-width: 220px;
-  min-height: 34px;
-  box-sizing: border-box;
-  padding: 0 6px 0 0;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-  background: transparent !important;
-}
-.macos-ai-app.zeus-shell .project-source-tab.active {
-  background: color-mix(in srgb, var(--zeus-control-text) 8%, var(--zeus-code-editor-bg)) !important;
-  border-color: var(--zeus-control-accent) !important;
-  color: var(--zeus-control-text);
-  box-shadow: none !important;
-}
-.macos-ai-app.zeus-shell .project-source-tab.active > [role='tab'] {
-  font-weight: 600;
-}
-.macos-ai-app.zeus-shell .project-source-tab:not(.active):hover:not(:disabled):not([aria-disabled='true']) {
-  background: color-mix(in srgb, var(--zeus-control-text) 4%, transparent) !important;
-  border-color: transparent !important;
-}
-.macos-ai-app.zeus-shell .project-source-tab > [role='tab'] {
-  min-width: 0;
-  min-height: 30px;
-  padding: 0 0 0 10px;
-  /* 标签按钮不使用全局选中按钮色，文件名自身保留真实 Git 状态色。 */
-  color: inherit !important;
-  background: transparent !important;
-  border: 0 !important;
-  box-shadow: none !important;
-  border-radius: 0;
-}
-.macos-ai-app.zeus-shell .project-source-tab > .project-source-tab-close {
-  flex: 0 0 22px;
-  width: 22px;
-  min-width: 22px;
-  height: 22px;
-  min-height: 22px;
-  padding: 0;
-  background: transparent !important;
-  border: 0 !important;
-  box-shadow: none !important;
-  border-radius: 4px;
-  opacity: 1;
-}
-.macos-ai-app.zeus-shell .project-source-tab > .project-source-tab-close:hover:not(:disabled):not([aria-disabled='true']) {
-  background: color-mix(in srgb, var(--zeus-control-accent) 12%, transparent) !important;
-}
-
 /* 全选与文件复选框共用左侧基线，树缩进仅作用于文件内容。 */
 .macos-ai-app.zeus-shell .project-git-stage-panel {
   --git-checkbox-inset: 8px;

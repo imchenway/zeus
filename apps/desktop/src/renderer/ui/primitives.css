@@ -513,6 +513,108 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   background-clip: padding-box;
 }
 
+/* 文件和浏览器标签共用尺寸与状态；列表溢出时保留低对比度细滚动条。 */
+.macos-ai-app .zeus-workspace-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-inline-size: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* Chromium 的标准 thin 会覆盖自定义高度，标签使用原生伪元素固定细轨道。 */
+  scrollbar-width: auto;
+  scrollbar-color: auto;
+}
+.macos-ai-app .zeus-workspace-tabs::-webkit-scrollbar {
+  height: 4px;
+}
+.macos-ai-app.zeus-shell .zeus-workspace-tabs::-webkit-scrollbar-thumb {
+  border: 0;
+  background: transparent;
+}
+.macos-ai-app .zeus-workspace-tabs:is(:hover, :focus-within)::-webkit-scrollbar-thumb {
+  background: var(--zeus-scrollbar-thumb);
+}
+
+/* 关闭按钮预留空间，选中前后不改变标签宽度。 */
+.macos-ai-app .zeus-workspace-tab-shell {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  box-sizing: border-box;
+  min-inline-size: 96px;
+  max-inline-size: 200px;
+  block-size: 32px;
+  padding-inline-end: 3px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--zeus-control-muted-text);
+  background: transparent;
+  /* 浏览器通用按钮继承父级字体，密度在共享标签容器中统一。 */
+  font-size: 12px;
+  font-weight: 500;
+}
+.macos-ai-app .zeus-workspace-tab-shell:hover {
+  background: var(--zeus-interaction-hover);
+}
+.macos-ai-app .zeus-workspace-tab-shell[data-active] {
+  border-color: var(--zeus-control-border);
+  color: var(--zeus-control-text);
+  background: var(--zeus-product-panel);
+}
+.macos-ai-app .zeus-workspace-tab {
+  display: flex;
+  flex: 1 1 auto;
+  align-self: stretch;
+  align-items: center;
+  gap: 6px;
+  min-inline-size: 0;
+  padding: 0 6px 0 8px;
+  border: 0;
+  border-radius: 5px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+}
+.macos-ai-app .zeus-workspace-tab > svg {
+  flex: 0 0 auto;
+  inline-size: 14px;
+  block-size: 14px;
+}
+.macos-ai-app .zeus-workspace-tab > span:not(.browser-tab-loading) {
+  flex: 1;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: start;
+}
+
+/* 关闭入口始终可见，鼠标与键盘共用现有焦点反馈。 */
+.macos-ai-app .zeus-workspace-tab-close {
+  display: inline-grid;
+  flex: 0 0 24px;
+  place-items: center;
+  inline-size: 24px;
+  min-inline-size: 24px;
+  block-size: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: var(--zeus-control-muted-text);
+  background: transparent;
+}
+.macos-ai-app .zeus-workspace-tab-close:hover:not(:disabled) {
+  color: var(--zeus-control-text);
+  background: var(--zeus-interaction-hover);
+}
+.macos-ai-app .zeus-workspace-tab-close > svg {
+  inline-size: 14px;
+  block-size: 14px;
+}
+
 /* 只对视觉隐藏的说明保持读屏可访问。 */
 .visually-hidden {
   block-size: 1px;
