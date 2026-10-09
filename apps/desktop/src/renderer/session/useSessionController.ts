@@ -3662,8 +3662,9 @@ export function useSessionControllerInstance(options: CreateSessionControllerOpt
   }, [controller, options.enabled]);
   useEffect(() => {
     if (options.enabled === false) return;
+    // 浏览器订阅属于可选宿主能力；桥接对象存在时也可能没有此接口。
     // 控制器持有最新草稿，连续确认无需等待 React 重绘，也不关闭浏览器。
-    return window.zeus?.onBrowserEvent((event) => {
+    return window.zeus?.onBrowserEvent?.((event) => {
       if ((event.type !== 'comments_saved' && event.type !== 'comments_removed') || event.conversationId !== options.conversationId) return;
       if (event.type === 'comments_saved') controller.stageBrowserComments(event.prepared);
       else controller.removeBrowserComments(event.commentIds);
