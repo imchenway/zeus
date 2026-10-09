@@ -1,11 +1,35 @@
-import { serializeConversationContext, type ConversationContextDraft } from '@zeus/shared';
+import { classifyAssistantMessage, serializeConversationContext, type ConversationContextDraft } from '@zeus/shared';
 import type { AsyncQuestionAnswer } from '@zeus/shared';
 import type { TaskPushMessageLayout } from '@zeus/shared';
-import type { ZeusConversationSubmissionRecord } from '@zeus/storage';
+import type { ConversationPlanActionRepository, ConversationProviderItemRepository, ConversationTurnRepository, ZeusConversationSubmissionRecord } from '@zeus/storage';
 import { realpathSync, statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import type { ConversationDispatchContext, NativeConversationAttachmentInput, NativeConversationSkillInput, NativeSubmissionRecoveryKind } from './codexNativeConversationContracts.js';
 import { coordinatorError, isRecord, parseJsonRecord } from './codexNativeConversationPolicy.js';
+
+/** 所有引导入口共用正式交付判断，后台收尾不能重新开放已经交付的轮次。 */
+export function conversationTurnHasCompletedOutput(
+  conversationId: string,
+  providerTurnId: string,
+  repositories: { turns: ConversationTurnRepository; providerItems: ConversationProviderItemRepository; planActions: ConversationPlanActionRepository },
+): boolean {
+  /** 恢复入口可能携带本地轮次身份，必须同时核对 Provider 身份。 */
+  const turn = repositories.turns.listByConversation(conversationId).find((candidate) => candidate.providerTurnId === providerTurnId || candidate.id === providerTurnId);
+  /** 实施请求保留历史计划的正式归属，过程计划仍不关闭引导窗口。 */
+  const formalPlanItemIds = new Set(repositories.planActions.listByConversation(conversationId).map((request) => request.planItemId));
+  return repositories.providerItems.listByConversation(conversationId).some((item) => {
+    /** 同会话的其他历史输出不能关闭当前引导窗口。 */
+    const belongsToTurn = item.providerTurnId === providerTurnId || (turn ? item.turnId === turn.id : false);
+    /** 正式计划工具已完成时，不能等待稍后建立实施请求才关闭引导。 */
+    const payload = parseJsonRecord(item.payloadJson);
+    return (
+      belongsToTurn &&
+      item.status === 'completed' &&
+      item.textContent.trim().length > 0 &&
+      ((item.itemType === 'agentMessage' && classifyAssistantMessage(payload, item.phase) === 'final') || (item.itemType === 'plan' && payload.formalPlan === true) || formalPlanItemIds.has(item.id))
+    );
+  });
+}
 
 export interface PersistedSubmissionInput {
   /** 绑定原始异步问题，沿用现有提交及确认链路。 */

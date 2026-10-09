@@ -11,7 +11,7 @@ import { LongTermMemoryRepository } from '@zeus/storage';
 import { normalizeWorkSettings } from './taskWorkManagement.js';
 import { mergeEmployeeWorkSettings, type EmployeeWorkSettings } from '@zeus/shared';
 import { TaskWorkPlanningRepository } from '@zeus/storage';
-import { classifyAssistantMessage, asyncMessageQuestions, formatAsyncQuestionAnswer, validateCanonicalRequestUserInputAnswers, type AsyncQuestionAnswer } from '@zeus/shared';
+import { asyncMessageQuestions, formatAsyncQuestionAnswer, validateCanonicalRequestUserInputAnswers, type AsyncQuestionAnswer } from '@zeus/shared';
 import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { type AiRuntimeSession, createAiRuntimeSessionManager, modelConnectionCredentialSlotId, modelRef, parseModelRef, piRuntimeWorkerProtocolVersion, runWithCodexRpcRetryContext } from '@zeus/ai-runtime';
 import { getGitBranchHead, getGitRepositoryContext, readTaskIntegrationConflictPaths, type ProjectGitAction } from '@zeus/git-core';
@@ -75,7 +75,7 @@ import { type ConversationCapabilitiesSnapshot, ConversationCapabilityQueryAppli
 import { ConversationChoiceQueryApplication } from './conversationChoiceQueryApplication.js';
 import { ConversationExecutionCoordinator, type ConversationExecutionRoute } from './conversationExecutionCoordinator.js';
 import type { NativeConversationSkillInput } from './codexNativeConversationContracts.js';
-import { readNativeConversationSkills, readNativeSubmissionSkills } from './nativeConversationSubmissionInputs.js';
+import { conversationTurnHasCompletedOutput, readNativeConversationSkills, readNativeSubmissionSkills } from './nativeConversationSubmissionInputs.js';
 import type { CreateConversationMessageBody, NativeConversationAttachment, ProjectConversationAcceptanceReservation, StartProjectConversationBody, StartTaskConversationBody, TaskConversationAcceptanceReservation } from './index.js';
 import { createModelConnectionService } from './modelConnectionService.js';
 import { resolveWritableNonCodexLegacyConversation, type WritableNonCodexLegacyConversationContext } from './nonCodexLegacyRuntime.js';
@@ -1125,6 +1125,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       ...(isNativeApiRecord(input.questionAnswer) ? { questionAnswer: input.questionAnswer } : {}),
       expectedTurnId: submission.targetProviderTurnId ?? (typeof input.expectedTurnId === 'string' ? input.expectedTurnId : null),
       clientUserMessageId: submission.clientMessageId,
+      ...(submission.replacementOfSubmissionId ? { replacementOfSubmissionId: submission.replacementOfSubmissionId } : {}),
       /** 历史遗留的空位置按当前队列名次补齐，客户端永远拿到可比较的整数位置。 */
       position: submission.queuePosition ?? options.fallbackPosition ?? 1,
       providerTurnId: submission.providerTurnId,
@@ -1704,18 +1705,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
         );
       }
       // UI 可能仍停留在旧活动态；只要正式正文或计划已经完成，本次输入就无损降级为普通下一轮。
-      // 正式计划由已经落账的实施请求指向，普通过程计划不关闭引导窗口。
-      const formalPlanItemIds = new Set(conversationPlanActions.listByConversation(conversation.id).map((request) => request.planItemId));
       // 共用入口同时覆盖 Codex、Pi 和远程调用，避免只依赖界面状态。
-      const completedOutput = conversationProviderItems
-        .listByConversation(conversation.id)
-        .some(
-          (item) =>
-            (item.providerTurnId === expectedTurnId || item.turnId === activeTurn.id) &&
-            item.status === 'completed' &&
-            item.textContent.trim().length > 0 &&
-            ((item.itemType === 'agentMessage' && classifyAssistantMessage(parseJsonObject(item.payloadJson), item.phase) === 'final') || formalPlanItemIds.has(item.id)),
-        );
+      const completedOutput = conversationTurnHasCompletedOutput(conversation.id, expectedTurnId, { turns: conversationTurns, providerItems: conversationProviderItems, planActions: conversationPlanActions });
       if (completedOutput && questionAnswer) throw nativeApiError('ZEUS_ASYNC_QUESTION_TURN_ENDED', '原轮次已交付，回答草稿已保留，请选择作为新消息发送。');
       if (completedOutput) delivery = 'queue';
     }

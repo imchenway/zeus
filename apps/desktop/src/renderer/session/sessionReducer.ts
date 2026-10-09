@@ -1724,11 +1724,18 @@ function projectQueueSubmissionMessages(state: NativeSessionState, queue: Native
   const submissionIds = new Set(queue.submissions.map((submission) => submission.id));
   /** HTTP 回执到达前也能用客户端身份确认归属。 */
   const clientIds = new Set(queue.submissions.map((submission) => submission.clientUserMessageId));
+  /** 明确拒绝后由替代提交接管原气泡，不能把原引导留在已结束轮次中。 */
+  const replacedSubmissionIds = new Set(queue.submissions.map((submission) => submission.replacementOfSubmissionId).filter((id): id is string => Boolean(id)));
   /** 只移交未接纳的本地输入，持久正文及已进入轮次的插话保留。 */
   const removedKeys = new Set(
     state.itemOrder.filter((key) => {
       const item = state.items[key];
-      return item && isUserMessageItem(item) && isUnacceptedTranscriptMessage(item) && (submissionIds.has(stringValue(item.payload.submissionId) ?? '') || userMessageClientIds(item).some((id) => clientIds.has(id)));
+      return (
+        item &&
+        isUserMessageItem(item) &&
+        ((isUnacceptedTranscriptMessage(item) && (submissionIds.has(stringValue(item.payload.submissionId) ?? '') || userMessageClientIds(item).some((id) => clientIds.has(id)))) ||
+          (!item.providerItemId && replacedSubmissionIds.has(stringValue(item.payload.submissionId) ?? '')))
+      );
     }),
   );
   return {
@@ -1742,6 +1749,26 @@ function projectQueueSubmissionMessages(state: NativeSessionState, queue: Native
 }
 
 function projectSteeringSubmission(state: NativeSessionState, submission: NativeQueuedSubmission, authoritativeQueue?: NativeQueueSnapshot): NativeSessionState {
+  // 明确取消的原题回答不能被旧轮次结束事件误确认；实际 Provider 用户条目继续保留。
+  if (submission.status === 'cancelled') {
+    /** 只清理明确匹配原提交的临时消息，不按正文匹配其他答案。 */
+    const removedKeys = new Set(
+      Object.entries(state.items)
+        .filter(
+          ([, item]) =>
+            isUserMessageItem(item) && !item.providerItemId && (stringValue(item.payload.submissionId) === submission.id || (submission.clientUserMessageId && userMessageClientIds(item).includes(submission.clientUserMessageId))),
+        )
+        .map(([key]) => key),
+    );
+    /** 队列状态仍由同一权威事件接管，草稿与原问题记录不受影响。 */
+    const next = {
+      ...state,
+      items: Object.fromEntries(Object.entries(state.items).filter(([key]) => !removedKeys.has(key))),
+      itemOrder: state.itemOrder.filter((key) => !removedKeys.has(key)),
+      transcriptRevision: state.transcriptRevision + (removedKeys.size ? 1 : 0),
+    };
+    return authoritativeQueue ? projectQueueSubmissionMessages(next, authoritativeQueue) : next;
+  }
   // 队列水位只约束队列；迟到的明确接纳证据仍须交给正文。
   if (authoritativeQueue && state.queue && authoritativeQueue.throughEventSeq < state.queue.throughEventSeq) {
     if (submission.status === 'paused') return state;

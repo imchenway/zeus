@@ -1,4 +1,4 @@
-import { classifyAssistantMessage, type AsyncQuestionAnswer } from '@zeus/shared';
+import { type AsyncQuestionAnswer } from '@zeus/shared';
 import { type CodexAppServerEvent, type CodexServerRequestResponse, type CodexThreadGoal, modelRef, parseModelRef } from '@zeus/ai-runtime';
 import { buildTaskPushInputParts, type CodexAdditionalContextEntry, parseCanonicalRequestUserInputQuestions, type TaskPushMessageLayout, validateCanonicalRequestUserInputAnswers } from '@zeus/shared';
 import {
@@ -96,7 +96,14 @@ import { mergeCodexAdditionalContext } from './codexNativeContextProtocol.js';
 import { contextFromPersistedConversation, contextFromPersistedSubmission, prepareRecoveredCodexPlugins } from './codexConversationDispatchContext.js';
 import { createCodexNativeConversationAccess } from './codexNativeConversationAccess.js';
 import { createCodexNativeDispatchPipeline } from './codexNativeDispatchPipeline.js';
-import { appendConversationResourceContext, type PersistedSubmissionInput, readNativeSubmissionRecoveryKind, readNativeSubmissionSkills, readNativeSubmissionTaskPushLayout } from './nativeConversationSubmissionInputs.js';
+import {
+  appendConversationResourceContext,
+  conversationTurnHasCompletedOutput,
+  type PersistedSubmissionInput,
+  readNativeSubmissionRecoveryKind,
+  readNativeSubmissionSkills,
+  readNativeSubmissionTaskPushLayout,
+} from './nativeConversationSubmissionInputs.js';
 import { inferNativeConversationRunState } from './codexNativeRunStateProjection.js';
 import { chooseNativeUserMessageContent, type NativeUserMessageProjection, reconcileNativeUserMessageAcceptance, resolveNativeUserMessageSubmission } from './codexNativeUserMessageProjection.js';
 import { CodexProviderCommandApplicationService } from './codexProviderCommandApplication.js';
@@ -606,6 +613,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           ...(isRecord(input.questionAnswer) ? { questionAnswer: input.questionAnswer as unknown as AsyncQuestionAnswer } : {}),
           expectedTurnId: submission.targetProviderTurnId ?? (typeof input.expectedTurnId === 'string' ? input.expectedTurnId : null),
           clientUserMessageId: submission.clientMessageId,
+          ...(submission.replacementOfSubmissionId ? { replacementOfSubmissionId: submission.replacementOfSubmissionId } : {}),
           ...(input.origin === 'implement_plan' || input.origin === 'refine_plan' ? { controlAction: input.origin } : {}),
           ...(recoveryKind ? { recoveryKind } : {}),
           position: submission.queuePosition ?? index + 1,
@@ -1386,20 +1394,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
   /** 正式正文或计划完成后关闭同一 Provider turn 的引导窗口。 */
   function turnHasCompletedOutput(conversationId: string, providerTurnId: string): boolean {
-    // Provider turn id 与 Zeus 本地 turn id 均可能出现在恢复后的调用参数中。
-    const turn = options.turns.listByConversation(conversationId).find((candidate) => candidate.providerTurnId === providerTurnId || candidate.id === providerTurnId);
-    // 只有已经建立实施请求的计划才属于正式交付。
-    const formalPlanItemIds = new Set(planActions.listByConversation(conversationId).map((request) => request.planItemId));
-    return options.providerItems.listByConversation(conversationId).some((item) => {
-      // 项目必须明确属于目标 turn，不能被同会话其他已完成正文误伤。
-      const belongsToTurn = item.providerTurnId === providerTurnId || (turn ? item.turnId === turn.id : false);
-      return (
-        belongsToTurn &&
-        item.status === 'completed' &&
-        item.textContent.trim().length > 0 &&
-        ((item.itemType === 'agentMessage' && classifyAssistantMessage(parseJsonRecord(item.payloadJson), item.phase) === 'final') || formalPlanItemIds.has(item.id))
-      );
-    });
+    return conversationTurnHasCompletedOutput(conversationId, providerTurnId, { turns: options.turns, providerItems: options.providerItems, planActions });
   }
 
   async function recoverPausedConversation(conversationId: string, mode: 'submit' | 'dispatch' | 'recover_queue' | 'restore'): Promise<ZeusConversationWithMessagesRecord> {
