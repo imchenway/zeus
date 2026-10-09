@@ -37,15 +37,12 @@
 }
 
 /* 正文可折行，下拉只省略显示，不截断实际配置和可访问名称。 */
-.macos-ai-app :where(.automation-editor label, .automation-editor details, .automation-editor .zeus-select, .automation-inbox-actions .zeus-select) {
+.macos-ai-app :where(.automation-editor label, .automation-editor .zeus-select, .automation-inbox-actions .zeus-select) {
   min-inline-size: 0;
   max-inline-size: 100%;
 }
-.macos-ai-app :where(.automation-editor small, .automation-editor summary, .automation-editor label > span, .automation-inbox-row li) {
+.macos-ai-app :where(.automation-editor small, .automation-editor label > span, .automation-inbox-row li) {
   overflow-wrap: anywhere;
-}
-.macos-ai-app .automation-advanced-settings > .automation-form-section {
-  margin-block-start: 16px;
 }
 .macos-ai-app .automations-header {
   justify-content: space-between;
@@ -244,6 +241,7 @@
 }
 
 .macos-ai-app .automation-run-status.status-blocked,
+.macos-ai-app .automation-run-status.status-awaiting_review,
 .macos-ai-app .automation-inbox-row .automation-warning {
   background: var(--zeus-warning-bg);
   color: var(--zeus-product-text);

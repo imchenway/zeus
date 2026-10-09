@@ -321,7 +321,7 @@ try {
     await verifyFinalTaskCompletionGate();
     verifyMigratedProjectEmployeeReferences(database, project.id, employee.id, employeeTemplate.id);
     process.stdout.write(
-      `${JSON.stringify({ ok: true, checks: ['single-employee', 'ordinary-empty-optional-fields', 'nontext-criteria-rejected', 'node-execution-defaults-preserved', 'vertical-mixed-handles-persisted', 'handle-dependency-validation', 'frozen-node-settings-preserved', 'parallel-roots', 'dependency-gate', 'same-employee-reuse', 'legacy-collapse', 'empty-draft', 'global-template', 'run-node-employee-resolution', 'project-current-workflow', 'assignment-entry-gate', 'entry-descendants-only', 'verification-role-retained', 'defect-completion-gate', 'persistent-repair-budget', 'repair-awaits-parent-retest', 'all-employees-complete', 'active-result-reference-shape', 'development-entry-before-verification', 'unverified-code-task-completion-gate', 'rework-during-final-git-review', 'project-state-shared-save-gate', 'read-only-entry-without-unrelated-baseline', 'frozen-entry-after-template-edit', 'parallel-verification-round-budget', 'parallel-repair-relations-recovery', 'parallel-candidate-environments', 'partial-verification-rework-retains-sibling', 'migrated-project-employee-references'] })}\n`,
+      `${JSON.stringify({ ok: true, checks: ['automation-review-queue', 'automation-inflight-inbox', 'single-employee', 'ordinary-empty-optional-fields', 'nontext-criteria-rejected', 'node-execution-defaults-preserved', 'vertical-mixed-handles-persisted', 'handle-dependency-validation', 'frozen-node-settings-preserved', 'parallel-roots', 'dependency-gate', 'same-employee-reuse', 'legacy-collapse', 'empty-draft', 'global-template', 'run-node-employee-resolution', 'project-current-workflow', 'assignment-entry-gate', 'entry-descendants-only', 'verification-role-retained', 'defect-completion-gate', 'persistent-repair-budget', 'repair-awaits-parent-retest', 'all-employees-complete', 'active-result-reference-shape', 'development-entry-before-verification', 'unverified-code-task-completion-gate', 'rework-during-final-git-review', 'project-state-shared-save-gate', 'read-only-entry-without-unrelated-baseline', 'frozen-entry-after-template-edit', 'parallel-verification-round-budget', 'parallel-repair-relations-recovery', 'parallel-candidate-environments', 'partial-verification-rework-retains-sibling', 'migrated-project-employee-references'] })}\n`,
     );
   } finally {
     await database.close();
@@ -1995,6 +1995,67 @@ async function verifyUnifiedAutomation(database: ZeusDatabasePort, projectId: st
   const completed = createAutomationScheduler({ ...schedulerOptions, readExecution: () => ({ status: 'completed' }) });
   await completed.close();
   assert(automationRuns.getById(run.id)?.status === 'succeeded', '全部流程完成应结算。');
+  /** 独立工作待验收只释放执行占位，项目任务仍等待原成果验收。 */
+  for (const kind of ['employee_work', 'project_task'] as const) {
+    /** 使用当前配置创建独立规则，不修改历史修订。 */
+    const rule = automationTasks.create({
+      name: `待验收排程探针 ${kind}`,
+      prompt: '产出成果后等待验收',
+      projectIds: [projectId],
+      action: { kind, employeeId, taskSelection: 'create', taskFilter: { managementStatuses: [], taskTypes: [], requiredTags: [] } },
+    });
+    /** 三次触发保持各自身份，第一份成果尚未验收。 */
+    const first = automationRuns.enqueue({ automationId: rule.id, projectIds: [projectId], triggerKind: 'manual', triggerIdentity: `review-first:${kind}`, scheduledAt: new Date().toISOString() });
+    automationRuns.markDispatching(first.id);
+    /** 真实派发账本的冻结目标由已有持久化入口保存。 */
+    const target = automationRuns.ensureDispatchTargets(first.id).dispatchTargets[0]!;
+    automationRuns.updateDispatchTarget(first.id, { ...target, status: 'accepted', taskId: coreTask.id, employeeId, reference: { kind: 'task_work', id: `review-work:${kind}`, taskId: coreTask.id } });
+    automationRuns.completeDispatch(first.id);
+    /** 后两次触发原本都等待第一份工作，不直接改写队列位置。 */
+    const second = automationRuns.enqueue({ automationId: rule.id, projectIds: [projectId], triggerKind: 'manual', triggerIdentity: `review-second:${kind}`, scheduledAt: new Date().toISOString() });
+    const third = automationRuns.enqueue({ automationId: rule.id, projectIds: [projectId], triggerKind: 'manual', triggerIdentity: `review-third:${kind}`, scheduledAt: new Date().toISOString() });
+    /** 不发起 Provider，只记录调度器交出的真实接纳次数。 */
+    let dispatches = 0;
+    /** 成果验收状态独立于后续执行状态推进。 */
+    let reviewed = false;
+    /** 复用完整调度器和 SQLite，仅执行端采用明确的隔离回执。 */
+    const reviewOptions: AutomationSchedulerOptions = {
+      ...schedulerOptions,
+      prepareAction: async () => ({ taskId: coreTask.id, employeeId }),
+      dispatchAction: async ({ run: next }) => {
+        dispatches += 1;
+        return { kind: 'task_work', id: `active:${next.id}`, taskId: coreTask.id };
+      },
+      readExecution: (reference) => ({ status: reference.id === `review-work:${kind}` ? (reviewed ? 'completed' : 'awaiting_review') : 'running' }),
+    };
+    /** 首次对账只允许一份后续独立工作接纳。 */
+    const reviewScheduler = createAutomationScheduler(reviewOptions);
+    await reviewScheduler.close();
+    assert(automationRuns.getById(first.id)?.status === (kind === 'employee_work' ? 'awaiting_review' : 'running'), '独立工作与项目任务必须保留不同验收边界。');
+    assert(automationRuns.getById(first.id)?.completedAt === null && automationRuns.listInFlight().some((entry) => entry.id === first.id), '待验收仍继续对账，不能写成成功终态。');
+    assert(
+      automationRuns.listInbox().some((entry) => entry.id === third.id),
+      '排队运行必须出现在收件箱。',
+    );
+    assert(
+      dispatches === (kind === 'employee_work' ? 1 : 0) && automationRuns.getById(third.id)?.status === 'queued',
+      `只能释放下一份独立工作：${kind} 接纳 ${dispatches} 次，第二份 ${automationRuns.getById(second.id)?.status} ${automationRuns.getById(second.id)?.errorMessage}，第三份 ${automationRuns.getById(third.id)?.status}。`,
+    );
+    if (kind === 'employee_work') {
+      automationRuns.acknowledge(first.id);
+      /** 重启不会重复派发、重复标未读或误报成功。 */
+      const restarted = createAutomationScheduler(reviewOptions);
+      await restarted.close();
+      assert(dispatches === 1 && !automationRuns.getById(first.id)?.unread && automationRuns.getById(second.id)?.status === 'running', '待验收重启必须保留已读状态和实际执行占位。');
+      reviewed = true;
+      /** 人工验收后才完成原运行，不越过正在执行的第二份工作。 */
+      const acceptedReview = createAutomationScheduler(reviewOptions);
+      await acceptedReview.close();
+      assert(automationRuns.getById(first.id)?.status === 'succeeded' && automationRuns.getById(third.id)?.queuePosition === 1 && dispatches === 1, '验收旧成果不能提前推进正在执行工作之后的队列。');
+    }
+    /** 结束本轮隔离记录，后续探针不继承执行占位。 */
+    for (const entry of [first, second, third]) automationRuns.setTerminal(entry.id, 'cancelled');
+  }
   /** 任务后续变化不能替换原事件事实。 */
   const task = new TaskRepository(database).create({ projectId, title: '事件事实探针', taskType: 'requirement', description: '', createdFrom: 'digital-team-probe', sourceContext: {} });
   new TaskEventRepository(database).create({ taskId: task.id, eventType: 'task.management_status.changed', title: '状态事实', payload: { from: 'planned', to: 'review', source: 'manual' } });

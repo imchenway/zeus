@@ -187,7 +187,7 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
         settle(run, 'blocked', 'ZEUS_AUTOMATION_NO_ELIGIBLE_TASK', '全部目标均无可领取任务，本次没有执行工作。');
         continue;
       }
-      if (run.status === 'running' && run.executionReferences.length > 0) {
+      if ((run.status === 'running' || run.status === 'awaiting_review') && run.executionReferences.length > 0) {
         const states = run.executionReferences.map((reference) => options.readExecution?.(reference));
         if (states.some((state) => !state)) {
           markOutcomeUnknown(run, '运行关联的工作或流程已不可用，请核对实际交付记录。');
@@ -200,7 +200,11 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
         }
         const failed = states.find((state) => state?.status === 'failed' || state?.status === 'cancelled');
         if (failed) settle(run, 'failed', failed.errorCode ?? 'ZEUS_AUTOMATION_EXECUTION_FAILED', failed.errorMessage ?? '关联工作或流程未完成。');
-        else settle(run, 'succeeded');
+        else if (states.some((state) => state?.status === 'awaiting_review')) {
+          /** 全部工作停止执行后，独立员工工作可排下一轮；项目流程继续等待验收。 */
+          const updated = options.runs.markAwaitingReview(run.id);
+          if (updated.status !== run.status) options.publish('automation.run.awaiting_review', { automationId: run.automationId, runId: run.id, unread: true });
+        } else settle(run, 'succeeded');
         continue;
       }
       if (run.status !== 'running' || !run.conversationId) continue;
