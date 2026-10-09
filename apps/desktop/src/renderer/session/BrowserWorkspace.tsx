@@ -237,9 +237,23 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
     if (!bridge?.setBrowserLayout || !viewport || !tabId) return;
     // 只保留最新一帧的显示请求，弹窗出现时立即取消。
     let frame = 0;
+    // 复用公共浮层标记，同时识别门户和应用内部挂载的菜单。
+    const overlaySelector = '[data-motion-surface="popover"], [data-zeus-primitive="modal"], [data-zeus-primitive="drawer"]';
+    // 只订阅存活浮层的尺寸，移除后解除观察，避免长期保留菜单节点。
+    const popovers = new Set<HTMLElement>();
     // 只为前台或退场中的浮层让位；承载当前浏览器的会话抽屉、已被更上层隔离的背景浮层都不遮挡它。
-    const isSuspended = (): boolean =>
-      [...document.body.querySelectorAll(':scope > :is([data-zeus-primitive="modal"], [data-zeus-primitive="drawer"]):is(:not([inert]), [data-motion-state="closing"])')].some((surface) => !surface.contains(viewport));
+    const isSuspended = (): boolean => {
+      if ([...document.body.querySelectorAll(':scope > :is([data-zeus-primitive="modal"], [data-zeus-primitive="drawer"]):is(:not([inert]), [data-motion-state="closing"])')].some((surface) => !surface.contains(viewport))) return true;
+      // 菜单只在实际覆盖网页时让原生视图隐藏，左侧不重叠的下拉保持网页可见。
+      const viewportRect = viewport.getBoundingClientRect();
+      return [...popovers].some((surface) => {
+        // 退场动画仍需要让位；被其他弹窗隔离的背景菜单不参与遮挡判断。
+        if (surface.closest('[inert]') && surface.dataset.motionState !== 'closing') return false;
+        // 使用实际绘制表面，不能用无尺寸的选择器门户包装节点判断重叠。
+        const rect = surface.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && rect.left < viewportRect.right && rect.right > viewportRect.left && rect.top < viewportRect.bottom && rect.bottom > viewportRect.top;
+      });
+    };
     // 每次提交都重新读取弹窗状态和尺寸，避免延迟回调把网页重新盖到弹窗上。
     const syncLayout = (): void => {
       if (closedTabIdsRef.current.has(tabId)) return;
@@ -262,15 +276,39 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
     // 占位区尺寸变化继续复用同一布局入口。
     const observer = new ResizeObserver(apply);
     observer.observe(viewport);
-    // 只观察弹窗与抽屉的门户增删；叠加层全部卸载后才恢复，不订阅正文或浮层内部内容变化。
-    const modalObserver = new MutationObserver(apply);
-    modalObserver.observe(document.body, { childList: true });
+    // 同步菜单的尺寸订阅，搜索结果变化后重新判断是否覆盖网页。
+    const observePopovers = (): void => {
+      for (const surface of popovers) {
+        if (surface.isConnected) continue;
+        observer.unobserve(surface);
+        popovers.delete(surface);
+      }
+      for (const surface of document.querySelectorAll<HTMLElement>('[data-motion-surface="popover"]')) {
+        if (popovers.has(surface)) continue;
+        popovers.add(surface);
+        observer.observe(surface);
+      }
+    };
+    // 下拉可挂在应用内部；只处理浮层增删和自身状态变化，不随正文更新提交原生布局。
+    const overlayObserver = new MutationObserver((records) => {
+      // 普通文本、图标和输入内容的变化不影响原生视图的覆盖关系。
+      const overlayChanged = records.some((record) =>
+        record.type === 'attributes'
+          ? record.target instanceof Element && record.target.matches(overlaySelector)
+          : [...record.addedNodes, ...record.removedNodes].some((node) => node instanceof Element && (node.matches(overlaySelector) || node.querySelector(overlaySelector))),
+      );
+      if (!overlayChanged) return;
+      observePopovers();
+      apply();
+    });
+    overlayObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'inert', 'data-motion-state'] });
+    observePopovers();
     window.addEventListener('resize', apply);
     apply();
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
-      modalObserver.disconnect();
+      overlayObserver.disconnect();
       window.removeEventListener('resize', apply);
       if (closedTabIdsRef.current.has(tabId)) return;
       const rect = viewport.getBoundingClientRect();
