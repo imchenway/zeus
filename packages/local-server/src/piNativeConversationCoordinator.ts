@@ -3235,7 +3235,8 @@ async function resolvePiAttachmentInput(attachments: NativeConversationAttachmen
     try {
       canonicalPath = realpathSync(attachment.localPath);
       pathStat = statSync(canonicalPath);
-      const exactlyAuthorized = Boolean(attachment.authorizedPath) && realpathSync(attachment.authorizedPath!) === canonicalPath;
+      // 授权只绑定服务端已确认的真实路径，不能随后续符号链接变化转移。
+      const exactlyAuthorized = attachment.authorizedPath === canonicalPath;
       if ((!exactlyAuthorized && !allowedRoots.some((root) => isInsideRoot(canonicalPath, root))) || (!pathStat.isFile() && !pathStat.isDirectory())) {
         throw new Error('附件不在可信目录内或不是可读取资源。');
       }
