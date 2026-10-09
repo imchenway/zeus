@@ -959,8 +959,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const appShellSettingsKey = 'app.shell.settings';
   const codexAccountFingerprintSaltKey = 'codex.usage.account_fingerprint_salt';
   const conversationResourceBackfillSettingKey = 'conversation.resource_backfill';
-  /** 补齐共享目录的正文链接和答复图片，仍保留已登记的资源与原件。 */
-  const conversationResourceBackfillRevision = 'authorized_shared_directory_file_links';
+  /** 升级时补回共享真实路径的历史链接，保留已登记资源与原件。 */
+  const conversationResourceBackfillRevision = 'authorized_shared_directory_real_path_links';
   const localLogDirectory = dataLayout.localLogs;
   const localConfigPath = options.localConfigPath ?? dataLayout.localConfig;
   // 本地日志目录是设计书明确要求的物理落点；服务启动时创建，避免 UI 只展示一个不存在的路径。
@@ -1791,41 +1791,40 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           conversationResourceBackfillCount += Math.max(normalized.length, existing.length);
         }
       }
-    } else {
-      /** 数据库先筛选有资源引用的历史消息，避免扫描全部正文。 */
-      const resourceItems = conversationProviderItems.listCompletedItemsForResourceBackfill();
-      for (const item of resourceItems) {
-        const conversation = conversations.getById(item.conversationId);
-        if (!conversation) continue;
-        const project = projects.getById(conversation.projectId);
-        if (!project) continue;
-        const projectRoot = resolveNativeConversationExecutionRoot(conversation);
-        // 执行根丢失时不借用项目主目录，否则同名代码文件会指向错误工作树。
-        if (!projectRoot) continue;
-        const normalized = normalizeConversationResources({
-          projectId: conversation.projectId,
-          projectRoot,
-          registeredProjectRoot: project.localPath ?? undefined,
-          conversationId: conversation.id,
-          turnId: item.turnId,
-          item,
-          payload: parseJsonObject(item.payloadJson),
-          text: item.textContent,
-          trustedAttachmentRoots: trustedConversationAttachmentRoots,
-          generatedImageRoot,
-          assistantImageArchiveRoot: conversationAttachmentRoot,
-          artifactsDirectory: dataLayout.artifactsDirectory,
-          now: item.updatedAt,
-        });
-        if (normalized.length === 0) continue;
-        const existing = conversationResources.listByItem(item.id);
-        // 同一 HTML 的正文链接和卡片共用目标，但属于两种展示，必须分别补齐。
-        const existingDigests = new Set(existing.map((resource) => `${resource.presentation}:${resource.canonicalTargetDigest}`));
-        const merged = [...existing, ...normalized.filter((resource) => !existingDigests.has(`${resource.presentation}:${resource.canonicalTargetDigest}`))];
-        if (merged.length === existing.length) continue;
-        conversationResources.replaceForItem(item.id, merged, item.updatedAt);
-        conversationResourceBackfillCount += merged.length - existing.length;
-      }
+    }
+    /** 空资源表也补已关闭会话；数据库只筛选有资源引用的已完成消息。 */
+    const resourceItems = conversationProviderItems.listCompletedItemsForResourceBackfill();
+    for (const item of resourceItems) {
+      const conversation = conversations.getById(item.conversationId);
+      if (!conversation) continue;
+      const project = projects.getById(conversation.projectId);
+      if (!project) continue;
+      const projectRoot = resolveNativeConversationExecutionRoot(conversation);
+      // 执行根丢失时不借用项目主目录，否则同名代码文件会指向错误工作树。
+      if (!projectRoot) continue;
+      const normalized = normalizeConversationResources({
+        projectId: conversation.projectId,
+        projectRoot,
+        registeredProjectRoot: project.localPath ?? undefined,
+        conversationId: conversation.id,
+        turnId: item.turnId,
+        item,
+        payload: parseJsonObject(item.payloadJson),
+        text: item.textContent,
+        trustedAttachmentRoots: trustedConversationAttachmentRoots,
+        generatedImageRoot,
+        assistantImageArchiveRoot: conversationAttachmentRoot,
+        artifactsDirectory: dataLayout.artifactsDirectory,
+        now: item.updatedAt,
+      });
+      if (normalized.length === 0) continue;
+      const existing = conversationResources.listByItem(item.id);
+      // 同一 HTML 的正文链接和卡片共用目标，但属于两种展示，必须分别补齐。
+      const existingDigests = new Set(existing.map((resource) => `${resource.presentation}:${resource.canonicalTargetDigest}`));
+      const merged = [...existing, ...normalized.filter((resource) => !existingDigests.has(`${resource.presentation}:${resource.canonicalTargetDigest}`))];
+      if (merged.length === existing.length) continue;
+      conversationResources.replaceForItem(item.id, merged, item.updatedAt);
+      conversationResourceBackfillCount += merged.length - existing.length;
     }
     const projectedResourceCount = db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM conversation_resources`)?.count ?? 0;
     settings.setJson(conversationResourceBackfillSettingKey, {
