@@ -14,6 +14,8 @@ import {
   type TaskPushSupplementalAttachment,
 } from '@zeus/shared';
 import type { TaskRecord } from '../apiClient.js';
+import { ConversationComposerAttachments } from '../session/ConversationComposerAttachments.js';
+import { pendingResourceDisplayName } from '../ui/pendingResourcePolicy.js';
 import type {
   CodexConversationCapabilities,
   CodexTaskPushCapabilities,
@@ -434,7 +436,7 @@ function TaskPushContextPicker(props: {
                   <div>
                     <strong>{attachmentTitle}</strong>
                     {option.attachments.length > 0 ? (
-                      option.attachments.map((attachment) => (
+                      option.attachments.map((attachment, index) => (
                         <label key={attachment.key} className={!attachment.available ? 'is-unavailable' : undefined}>
                           <input
                             type="checkbox"
@@ -443,7 +445,7 @@ function TaskPushContextPicker(props: {
                             disabled={props.busy || !attachment.available}
                           />
                           <span>
-                            <strong>{attachment.name}</strong>
+                            <strong>{attachment.kind === 'image' ? `${props.zh ? '图片' : 'Image'} ${index + 1}` : pendingResourceDisplayName(attachment.name, props.zh ? 'zh-CN' : 'en-US')}</strong>
                             <small>
                               {attachment.available ? `${taskPushAttachmentFieldLabel(attachment.field, props.zh)} · ${attachment.kind}${attachment.size !== undefined ? ` · ${attachment.size} B` : ''}` : attachment.unavailableReason}
                             </small>
@@ -471,18 +473,19 @@ export function TaskPushLayoutPreview(props: { layout: TaskPushMessageLayout; la
   // 不按文件名匹配，也不将本机预览路径写回布局。
   const previewAttachmentsByKey = new Map(props.previewAttachments.map((attachment) => [attachment.taskPushAttachmentKey, attachment]));
 
-  /** 当前字段和补充附件共用同一图片匹配入口。 */
+  /** 当前字段和补充附件共用可点击预览，文本附件不再退回名称文案。 */
   function renderAttachment(key: string) {
     // 元数据决定是否为图片，来源只负责提供受控预览输入。
     const attachment = attachmentsByKey.get(key);
     const previewAttachment = previewAttachmentsByKey.get(key);
     if (!attachment) return null;
     if (attachment.kind === 'image' && previewAttachment) {
-      return <ConversationPendingAttachmentImages key={key} attachments={[{ ...previewAttachment, kind: 'image' }]} language={props.language} />;
+      return <ConversationPendingAttachmentImages key={key} attachments={[{ ...previewAttachment, kind: 'image' }]} language={props.language} compact />;
     }
+    if (previewAttachment) return <ConversationComposerAttachments key={key} attachments={[previewAttachment]} language={props.language} disabled={false} />;
     return (
       <span key={key} className="task-push-layout-attachment">
-        {attachment.kind === 'image' ? (props.language === 'zh-CN' ? '图片预览不可用' : 'Image preview unavailable') : props.language === 'zh-CN' ? '附件' : 'Attachment'} · {attachment.name}
+        {attachment.kind === 'image' ? (props.language === 'zh-CN' ? '图片预览不可用' : 'Image preview unavailable') : `${props.language === 'zh-CN' ? '附件' : 'Attachment'} · ${pendingResourceDisplayName(attachment.name, props.language)}`}
       </span>
     );
   }

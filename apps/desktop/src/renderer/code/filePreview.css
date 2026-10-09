@@ -222,13 +222,6 @@
   font-size: 13px;
   font-weight: 600;
 }
-/* 类型标签只补充当前内容身份，不与文件名争夺视觉层级。 */
-.file-preview-dialog-header > span {
-  flex: 0 0 auto;
-  white-space: nowrap;
-  color: var(--zeus-product-muted);
-  font-size: 11px;
-}
 .file-preview-dialog-header .file-preview-close {
   display: grid;
   place-items: center;
@@ -245,11 +238,31 @@
   min-height: 0;
   overflow: hidden;
 }
+
+/* 单图窗口随内容收紧高度，宽截图无需占满整屏空白。 */
+.file-preview-dialog:has(.file-preview-simple-image) {
+  height: auto;
+  max-height: 90vh;
+  border-radius: 10px;
+}
+
+.file-preview-dialog:has(.file-preview-simple-image) .file-preview-dialog-header {
+  box-sizing: border-box;
+  min-height: 48px;
+  padding: 6px 12px;
+}
+
+.file-preview-dialog:has(.file-preview-simple-image) .file-preview-close {
+  flex-basis: 32px;
+  height: 32px;
+}
+
 .file-preview-image-compact > .file-preview-toolbar {
+  box-sizing: border-box;
   order: 1;
   justify-content: flex-end;
-  min-height: 52px;
-  padding: 8px 12px 8px 18px;
+  min-height: 44px;
+  padding: 6px 12px;
   border-top: 1px solid var(--zeus-product-line-soft, var(--zeus-product-line));
   background: var(--zeus-product-panel, #fff);
   font-size: 12px;
@@ -260,8 +273,9 @@
   font-variant-numeric: tabular-nums;
 }
 .file-preview-image-compact button {
-  min-width: 36px;
-  min-height: 36px;
+  box-sizing: border-box;
+  min-width: 32px;
+  min-height: 32px;
   border-color: transparent;
   border-radius: 8px;
 }
@@ -270,13 +284,19 @@
   min-height: 0;
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
+  padding: 24px;
+  background: color-mix(in srgb, var(--zeus-product-text) 2%, var(--zeus-product-panel));
   color: inherit;
 }
 .file-preview-image-compact img:not(.is-actual-size) {
   width: auto;
   height: auto;
   max-width: 100%;
-  max-height: 100%;
+  /* 标题栏、缩放栏与画布留白共占 140px，图片始终适配剩余视口。 */
+  max-height: calc(90vh - 140px);
+  border-radius: 0;
+  outline: none;
+  box-shadow: none;
 }
 /* 放大后从左上角开始滚动，避免居中裁掉超出画布的图片边缘。 */
 .file-preview-image-compact .is-actual-size {

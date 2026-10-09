@@ -6713,8 +6713,8 @@ body[data-surface='project-git-diff'] .macos-ai-app.zeus-shell.project-git-diff-
   color: var(--zeus-control-error-text);
 }
 
-/* 2026-06-18 全动作入口加载状态最终覆盖：提交、扫描和检查中的按钮只表达忙碌状态，阻止重复点击，不新增页面噪音。 */
-.macos-ai-app :where(button, a):where([aria-busy='true'], [data-loading='true']) {
+/* 提交动作阻止重复点击；只读取缩略图的资源入口继续允许打开附件。 */
+.macos-ai-app :where(button, a):where([aria-busy='true'], [data-loading='true']):where(:not(:has(.resource-loading))) {
   background: var(--zeus-control-loading-bg);
   border-color: var(--zeus-control-loading-line);
   color: var(--zeus-control-loading-text);
@@ -6723,8 +6723,8 @@ body[data-surface='project-git-diff'] .macos-ai-app.zeus-shell.project-git-diff-
   pointer-events: none;
 }
 
-/* 已有命令等待圆环的按钮不再追加圆点，避免双重动画挤偏主图形。 */
-.macos-ai-app :where(button, a):where([aria-busy='true'], [data-loading='true']):where(:not(:has(> .session-command-spinner)))::after {
+/* 已有命令圆环或附件骨架的按钮不再追加圆点，避免双重动画挤偏主图形。 */
+.macos-ai-app :where(button, a):where([aria-busy='true'], [data-loading='true']):where(:not(:has(> .session-command-spinner, .resource-loading)))::after {
   animation: zeus-control-loading-pulse 900ms ease-out infinite;
   background: var(--zeus-control-loading-dot);
   block-size: 5px;
@@ -15442,21 +15442,32 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 .macos-ai-app .task-push-layout .session-resource-image {
   display: grid;
   place-items: center;
-  inline-size: 144px;
-  max-inline-size: 100%;
-  block-size: 108px;
-  padding: 4px;
-  border: 1px solid var(--zeus-product-line-soft);
-  border-radius: 8px;
-  background: var(--zeus-product-panel);
+  position: relative;
+  overflow: hidden;
+  inline-size: fit-content;
+  min-inline-size: 72px;
+  max-inline-size: min(208px, 100%);
+  block-size: 104px;
+  min-block-size: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   cursor: pointer;
 }
 
 .macos-ai-app .task-push-layout .session-resource-image > img {
-  inline-size: 100%;
-  block-size: 100%;
+  inline-size: auto;
+  block-size: auto;
+  max-inline-size: 208px;
+  max-block-size: 104px;
   min-block-size: 0;
   object-fit: contain;
+}
+
+/* 读取完成后缩略图边界跟随图片比例，减少宽截图上下的空白。 */
+.macos-ai-app .task-push-layout .session-resource-image:has(> img) {
+  block-size: fit-content;
 }
 
 .macos-ai-app .task-push-layout .session-resource-image-placeholder > svg,
@@ -17718,9 +17729,68 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   padding: 0 12px;
 }
 
+/* 附件统一使用低对比骨架；颜色跟随主题，不伪造百分比进度。 */
+.resource-loading {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--zeus-product-text, currentColor) 5%, var(--zeus-product-panel, transparent));
+  pointer-events: none;
+}
+
+/* 光扫覆盖占位区域，不增加图标、文字或伪造百分比。 */
+.resource-loading-progress {
+  position: absolute;
+  inset: 0;
+}
+
+.resource-loading-progress::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 20%, color-mix(in srgb, var(--zeus-product-panel, white) 70%, transparent) 50%, transparent 80%);
+  transform: translateX(-100%);
+  animation: resource-loading-progress 1.8s ease-in-out infinite;
+}
+
+/* 已有缩略图继续显示，光扫只提供轻量的导入反馈。 */
+.resource-loading[data-overlay='true'] {
+  background: transparent;
+}
+
+.resource-loading[data-overlay='true'] .resource-loading-progress {
+  opacity: 0.45;
+}
+
+/* 加载文字提供可访问说明，不再用大字占据正文。 */
+.resource-loading-label {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* 减少动态效果时仅保留静态底色，避免光扫。 */
+@keyframes resource-loading-progress {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .resource-loading-progress::after {
+    animation: none;
+    transform: none;
+    opacity: 0;
+  }
+}
+
 .macos-ai-app .pending-resource-strip {
-  /* 附件使用极浅平面底色，避免输入区内再叠加描边和投影。 */
-  --pending-resource-card-bg: color-mix(in srgb, var(--zeus-product-text) 3%, var(--zeus-product-panel));
+  /* 附件保持透明底色，用细边界区分点击区域。 */
+  --pending-resource-card-bg: transparent;
   --pending-resource-visual-bg: transparent;
   --pending-resource-remove-bg: transparent;
   --pending-resource-remove-fg: var(--zeus-product-muted);
@@ -17741,20 +17811,28 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   display: none;
 }
 
+/* 静态消息和任务正文完整显示所有附件；输入框仍沿用横向滚动。 */
+.macos-ai-app .session-user-message-attachments .pending-resource-strip,
+.macos-ai-app .session-task-push-field > .session-composer-attachments,
+.macos-ai-app .task-push-layout-field > .session-composer-attachments {
+  flex-wrap: wrap;
+  overflow: visible;
+}
+
 .macos-ai-app .pending-resource-card {
   box-sizing: border-box;
   max-inline-size: 100%;
   position: relative;
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-columns: 24px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   flex: 0 0 224px;
-  block-size: 52px;
+  block-size: 48px;
   min-inline-size: 0;
   padding: 8px 32px 8px 10px;
-  border: 0;
-  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--zeus-product-text) 10%, transparent);
+  border-radius: 8px;
   background: var(--pending-resource-card-bg);
   color: var(--zeus-product-text);
   box-shadow: none;
@@ -17763,11 +17841,16 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 
 .macos-ai-app .pending-resource-card[data-resource-kind='image'] {
   grid-template-columns: 1fr;
-  flex-basis: 64px;
-  inline-size: 64px;
-  block-size: 64px;
+  flex-basis: auto;
+  inline-size: fit-content;
+  min-inline-size: 64px;
+  max-inline-size: min(176px, 100%);
+  block-size: 88px;
   padding: 0;
+  border: 0;
+  border-radius: 6px;
   overflow: hidden;
+  outline: 1px solid color-mix(in srgb, var(--zeus-product-text) 8%, transparent);
 }
 
 .macos-ai-app .pending-resource-activate {
@@ -17788,7 +17871,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   content: '';
   position: absolute;
   inset: 0;
-  border-radius: 12px;
+  border-radius: inherit;
 }
 .macos-ai-app .pending-resource-card:has(.pending-resource-activate:hover) {
   background: var(--zeus-interaction-hover);
@@ -17801,51 +17884,16 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   z-index: 1;
 }
 .macos-ai-app .pending-resource-visual {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  inline-size: 28px;
-  block-size: 28px;
+  inline-size: 24px;
+  block-size: 24px;
   border-radius: 9px;
   background: var(--pending-resource-visual-bg);
   color: var(--zeus-product-muted);
   overflow: hidden;
-}
-
-.macos-ai-app .pending-resource-visual[data-color-family='sheet'] {
-  color: oklch(48% 0.14 145);
-}
-
-.macos-ai-app .pending-resource-visual[data-color-family='document'] {
-  color: oklch(51% 0.13 252);
-}
-
-.macos-ai-app .pending-resource-visual[data-color-family='presentation'] {
-  color: oklch(57% 0.14 53);
-}
-
-.macos-ai-app .pending-resource-visual[data-color-family='pdf'] {
-  color: oklch(52% 0.15 27);
-}
-
-.macos-ai-app .pending-resource-visual[data-color-family='archive'] {
-  color: oklch(57% 0.1 80);
-}
-
-.macos-ai-app .pending-resource-visual[data-color-family='folder'] {
-  color: oklch(61% 0.11 79);
-}
-
-.macos-ai-app .pending-resource-visual[data-color-family='code'] {
-  color: oklch(52% 0.11 298);
-}
-
-.macos-ai-app .pending-resource-visual[data-color-family='image'] {
-  color: oklch(54% 0.1 242);
-}
-
-.macos-ai-app .pending-resource-visual[data-color-family='text'] {
-  color: oklch(49% 0.04 255);
 }
 
 .macos-ai-app .pending-resource-visual img {
@@ -17871,6 +17919,94 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 文本附件像一段可打开的内容，标题和摘要不再被文件图标挤占。 */
+.macos-ai-app .pending-resource-card[data-text-preview='true'] {
+  grid-template-columns: minmax(0, 1fr);
+  flex-basis: 256px;
+  block-size: 108px;
+  padding: 10px 12px;
+}
+
+.macos-ai-app .pending-resource-card[data-text-preview='true'] .pending-resource-activate {
+  position: absolute;
+  inset: 0;
+}
+
+.macos-ai-app .pending-resource-card[data-text-preview='true'] .pending-resource-visual {
+  display: none;
+}
+
+.macos-ai-app .pending-resource-card[data-text-preview='true'] .pending-resource-meta:empty {
+  display: none;
+}
+
+.macos-ai-app .pending-resource-card[data-text-preview='true'] .pending-resource-meta:not(:empty) {
+  position: absolute;
+  inset-block-end: 10px;
+  inset-inline-end: 80px;
+}
+
+.macos-ai-app .pending-resource-card[data-text-preview='true'] .pending-resource-remove {
+  inset-block-start: 2px;
+}
+
+/* 会话、任务和输入框复用相同内容排版，全文仍从原附件打开。 */
+.resource-text-preview {
+  display: grid;
+  gap: 5px;
+  min-inline-size: 0;
+  text-align: start;
+}
+
+.resource-text-preview > strong {
+  padding-inline-end: 12px;
+  overflow: hidden;
+  color: var(--zeus-product-text);
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resource-text-preview .resource-text-excerpt {
+  display: -webkit-box;
+  min-block-size: 34px;
+  overflow: hidden;
+  color: var(--zeus-product-muted);
+  font-size: 12px;
+  line-height: 17px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.resource-text-preview > small {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--zeus-product-muted);
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.resource-text-preview > small > span {
+  display: inline-flex;
+  gap: 4px;
+  color: var(--zeus-product-text);
+}
+
+/* 摘要读取时仅保留两条静态灰线，不增加另一套动画。 */
+.resource-text-preview[data-loading='true'] > strong,
+.resource-text-preview[data-loading='true'] .resource-text-excerpt {
+  inline-size: 70%;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--zeus-product-text) 5%, transparent);
 }
 
 .macos-ai-app .pending-resource-meta {
@@ -17951,11 +18087,35 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   outline-offset: 2px;
 }
 
-/* 图片直接显示缩略图；移除入口留在图内，使用浅色底保证任意图片上的辨识度。 */
+/* 图片按原比例展示，宽截图不裁边；移除入口继续独立于图片打开。 */
 .macos-ai-app .pending-resource-card[data-resource-kind='image'] .pending-resource-visual {
-  inline-size: 64px;
-  block-size: 64px;
-  border-radius: 12px;
+  inline-size: auto;
+  block-size: 88px;
+  max-inline-size: 176px;
+  border-radius: 6px;
+}
+
+.macos-ai-app .pending-resource-card[data-resource-kind='image'] .pending-resource-visual img {
+  inline-size: auto;
+  block-size: auto;
+  max-inline-size: 176px;
+  max-block-size: 88px;
+  object-fit: contain;
+}
+
+/* 图片自身决定已加载缩略图的高度，占位仍保留稳定的点击区域。 */
+.macos-ai-app .pending-resource-card[data-resource-kind='image']:has(img) {
+  block-size: fit-content;
+}
+
+.macos-ai-app .pending-resource-card[data-resource-kind='image'] .pending-resource-visual:has(img) {
+  block-size: auto;
+}
+
+/* 打开图片使用轻微的明暗反馈，键盘焦点仍保留独立轮廓。 */
+.macos-ai-app .pending-resource-card[data-resource-kind='image']:has(.pending-resource-activate:hover) {
+  background: transparent;
+  filter: brightness(0.97);
 }
 
 .macos-ai-app .pending-resource-card[data-resource-kind='image'] .pending-resource-remove {

@@ -1752,6 +1752,8 @@ export function TaskCreateModal(props: {
           const resources = await props.onMaterializeResources([{ name: 'Pasted text.txt', type: 'text/plain', text: plainText, kind: 'pasted_text' }]);
           if (!pending.current()) return;
           if (resources.length === 0) throw new Error('长文本附件未能保存。');
+          // 保存后继续使用输入时的摘要，避免卡片内容闪回通用名称。
+          pending.complete(resources.map((resource) => ({ id: resource.path, name: resource.name, kind: resource.kind })));
           props.onAddAttachments(withTaskAttachmentRestoreTarget(resources, restoreTarget));
         } catch (error) {
           if (pending.current()) insertTaskCreatePlainTextPaste(pasteTarget.field, pasteTarget.control, plainText, textSelection);

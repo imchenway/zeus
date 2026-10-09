@@ -82,6 +82,7 @@ export function usePendingResourcePreviews(resources: readonly PendingResourceCa
                 name: 'Pasted text.txt',
                 kind: 'pasted_text',
                 characterCount: text.length,
+                textExcerpt: text.slice(0, 400),
                 pending: true,
                 scope,
               },
@@ -96,16 +97,16 @@ export function usePendingResourcePreviews(resources: readonly PendingResourceCa
     const current = () => mounted.current && operationContext !== false && generation.current === operationGeneration && context.current === operationContext;
     return {
       current,
-      /** 成功图片沿用同一 Blob；同名或部分失败时继续由宿主读取受信预览。 */
+      /** 成功图片沿用 Blob，文本保留已有摘要；部分失败时由宿主读取预览。 */
       complete(confirmed: readonly PendingResourceCardItem[], failedCount = 0): void {
         if (!current() || failedCount > 0) return;
         for (const resource of confirmed) {
-          /** 只接续能唯一匹配的图片，避免把不同文件的缩略图混用。 */
-          const matching = pending.filter((preview) => preview.name === resource.name && preview.previewUrl);
-          if (resource.kind !== 'image' || matching.length !== 1 || [...previewUrls.current.values()].includes(resource.id)) continue;
+          /** 只接续本批次唯一匹配的内容，避免同名附件之间混用。 */
+          const matching = pending.filter((preview) => preview.name === resource.name && preview.kind === resource.kind && (preview.previewUrl || preview.textExcerpt));
+          if (matching.length !== 1 || [...previewUrls.current.values()].includes(resource.id)) continue;
           /** 本地预览改为真实身份，但不进入资源持久化载荷。 */
           const preview = matching[0]!;
-          previewUrls.current.set(preview.previewUrl!, resource.id);
+          if (preview.previewUrl) previewUrls.current.set(preview.previewUrl, resource.id);
           setPendingResources((values) => [...values.filter((value) => value.id !== preview.id), { ...preview, id: resource.id, pending: false }]);
         }
       },
@@ -134,8 +135,11 @@ export function usePendingResourcePreviews(resources: readonly PendingResourceCa
 /** 各附件列表共用相同接续方式，真实卡片使用本地预览，未确认卡片只追加显示。 */
 export function mergePendingResourcePreviews(resources: PendingResourceCardItem[], previews: readonly PendingResourceCardItem[] = []): PendingResourceCardItem[] {
   /** 用真实身份匹配缩略图，保留调用者已有的预览。 */
-  const byId = new Map(previews.map((resource) => [resource.id, resource.previewUrl]));
-  return [...resources.map((resource) => ({ ...resource, previewUrl: byId.get(resource.id) ?? resource.previewUrl })), ...previews.filter((resource) => resource.pending)];
+  const byId = new Map(previews.map((resource) => [resource.id, resource]));
+  return [
+    ...resources.map((resource) => ({ ...resource, previewUrl: byId.get(resource.id)?.previewUrl ?? resource.previewUrl, textExcerpt: byId.get(resource.id)?.textExcerpt ?? resource.textExcerpt })),
+    ...previews.filter((resource) => resource.pending),
+  ];
 }
 
 /** files 与 items 是同一批附件的两种视图；优先读取 files，仅在为空时从 items 回退。 */
