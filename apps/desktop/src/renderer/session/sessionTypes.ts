@@ -266,6 +266,8 @@ export interface NativeSubagentPromptFact {
 export type NativeSubmissionReceipt = Pick<NativeQueuedSubmission, 'id' | 'conversationId' | 'clientUserMessageId' | 'status' | 'pausedReason' | 'providerTurnId'>;
 
 export interface NativeQueuedSubmission {
+  /** 明确关联被取消的原提交，实时与重新加载均可清理其临时气泡。 */
+  replacementOfSubmissionId?: string;
   /** 绑定原始异步问题，沿用现有提交及确认链路。 */
   questionAnswer?: AsyncQuestionAnswer;
   id: string;

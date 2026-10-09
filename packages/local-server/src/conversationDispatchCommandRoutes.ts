@@ -469,6 +469,12 @@ function routeError(code: string, message: string, statusCode: number): Error & 
   return Object.assign(new Error(message), { code, statusCode });
 }
 
+/** 原题回答只在写入前结束或 Provider 明确拒绝后取消，外层回执不能把已知未送达改为结果未知。 */
 function isExplicitRouteRejection(error: unknown): boolean {
-  return Boolean(error) && typeof error === 'object' && typeof (error as { statusCode?: unknown }).statusCode === 'number' && (error as { statusCode: number }).statusCode >= 400 && (error as { statusCode: number }).statusCode < 500;
+  return (
+    Boolean(error) &&
+    typeof error === 'object' &&
+    ((error as { code?: unknown }).code === 'ZEUS_ASYNC_QUESTION_TURN_ENDED' ||
+      (typeof (error as { statusCode?: unknown }).statusCode === 'number' && (error as { statusCode: number }).statusCode >= 400 && (error as { statusCode: number }).statusCode < 500))
+  );
 }
