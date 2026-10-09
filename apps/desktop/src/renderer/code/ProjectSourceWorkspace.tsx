@@ -107,6 +107,8 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   const directoriesRef = useRef(directories);
   const tabsRef = useRef(tabs);
   const activePathRef = useRef(activePath);
+  /** 切换或恢复文件后显示完整标签，包括独立关闭入口。 */
+  const activeTabElementRef = useRef<HTMLDivElement | null>(null);
   const dirtyRef = useRef(false);
   const fileOpenRequestedRef = useRef(false);
   directoriesRef.current = directories;
@@ -115,6 +117,11 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   const activeTab = tabs.find((tab) => tab.document.relativePath === activePath) ?? null;
   const dirty = tabs.some((tab) => tab.dirty);
   dirtyRef.current = dirty;
+
+  /** 标签恢复、切换和退出差异预览后，只滚动标签列表的必要范围。 */
+  useEffect(() => {
+    activeTabElementRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [activePath, tabs.length, changePreview]);
 
   const loadDirectory = useCallback(
     async (relativePath: string, force = false) => {
@@ -630,6 +637,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                   <FolderPlus size={16} aria-hidden="true" />
                 </button>
               </span>
+              <CaretRight className="project-source-disclosure" size={14} aria-hidden="true" />
             </summary>
             <label className="project-source-search">
               <MagnifyingGlass aria-hidden="true" />
@@ -744,14 +752,16 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
 
         <main className="project-source-editor-pane">
           <div className="project-source-editor-header">
-            <div className="project-source-tabs" role="tablist" aria-label={zh ? '已打开文件' : 'Open files'}>
+            <div className="project-source-tabs zeus-workspace-tabs" role="tablist" aria-label={zh ? '已打开文件' : 'Open files'}>
               <button type="button" className="project-source-tree-toggle" onClick={() => setTreeDrawerOpen((open) => !open)} aria-label={zh ? '显示代码目录' : 'Show source tree'} aria-expanded={treeDrawerOpen}>
                 <FolderOpen aria-hidden="true" />
               </button>
-              {tabs.map((tab) => (
+              {tabs.map((tab, index) => (
                 <div
                   key={tab.document.relativePath}
-                  className={`project-source-tab${!changePreview && tab.document.relativePath === activePath ? ' active' : ''}`}
+                  ref={!changePreview && tab.document.relativePath === activePath ? activeTabElementRef : undefined}
+                  className="zeus-workspace-tab-shell"
+                  data-active={(!changePreview && tab.document.relativePath === activePath) || undefined}
                   onAuxClick={(event) => {
                     if (event.button !== 1) return;
                     event.preventDefault();
@@ -763,9 +773,20 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                     role="tab"
                     title={tab.document.relativePath}
                     aria-selected={!changePreview && tab.document.relativePath === activePath}
+                    tabIndex={tab.document.relativePath === activePath ? 0 : -1}
+                    className="zeus-workspace-tab"
                     onClick={() => {
                       setChangePreview(null);
                       setActivePath(tab.document.relativePath);
+                    }}
+                    onKeyDown={(event) => {
+                      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+                      event.preventDefault();
+                      /** 复用终端标签的循环选择方式，首尾键直接定位边界。 */
+                      const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+                      setChangePreview(null);
+                      setActivePath(tabs[nextIndex]!.document.relativePath);
+                      event.currentTarget.closest('[role="tablist"]')?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus();
                     }}
                   >
                     <FileTypeIcon name={tab.document.name} />
@@ -780,7 +801,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                   </button>
                   <button
                     type="button"
-                    className="project-source-tab-close"
+                    className="zeus-workspace-tab-close"
                     title={zh ? `关闭 ${tab.document.name}` : `Close ${tab.document.name}`}
                     aria-label={zh ? `关闭 ${tab.document.name}` : `Close ${tab.document.name}`}
                     disabled={tab.saving}

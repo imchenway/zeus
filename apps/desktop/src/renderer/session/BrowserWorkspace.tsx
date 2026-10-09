@@ -124,7 +124,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   const labels = copy[props.language];
   const viewportRef = useRef<HTMLDivElement | null>(null);
   /** 标签横向溢出时始终将当前标签带回可见区域。 */
-  const activeTabButtonRef = useRef<HTMLButtonElement | null>(null);
+  const activeTabElementRef = useRef<HTMLDivElement | null>(null);
   const focusCursorRef = useRef(0);
   const closedTabIdsRef = useRef(new Set<string>());
   const stageRef = useRef(props.onStageComments);
@@ -153,7 +153,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   }, [findOpen, activeTab?.id]);
 
   useEffect(() => {
-    activeTabButtonRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    activeTabElementRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [activeTab?.id, props.toolbarHost]);
 
   useEffect(() => {
@@ -472,26 +472,32 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
   /** 标签由浏览器自身管理，移到顶栏后仍复用原有切换和关闭动作。 */
   const tabStrip = (
     <div className="browser-tab-strip">
-      <div className="browser-tabs" role="tablist" aria-label={labels.title}>
-        {snapshot.tabs.map((tab) => (
-          <div key={tab.id} className={`browser-tab-shell ${tab.id === snapshot.activeTabId ? 'selected' : ''}`}>
+      <div className="browser-tabs zeus-workspace-tabs" role="tablist" aria-label={labels.title}>
+        {snapshot.tabs.map((tab, index) => (
+          <div key={tab.id} ref={tab.id === snapshot.activeTabId ? activeTabElementRef : undefined} className="zeus-workspace-tab-shell" data-active={tab.id === snapshot.activeTabId || undefined}>
             <button
-              ref={tab.id === snapshot.activeTabId ? activeTabButtonRef : undefined}
               type="button"
               role="tab"
               title={tab.url}
               aria-selected={tab.id === snapshot.activeTabId}
-              className="browser-tab"
+              tabIndex={tab.id === snapshot.activeTabId ? 0 : -1}
+              className="zeus-workspace-tab"
               onClick={() => void activateTab(tab.id)}
+              onKeyDown={(event) => {
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+                event.preventDefault();
+                /** 与文件和终端标签保持相同的键盘切换方式。 */
+                const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? snapshot.tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + snapshot.tabs.length) % snapshot.tabs.length;
+                void activateTab(snapshot.tabs[nextIndex]!.id);
+                event.currentTarget.closest('[role="tablist"]')?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus();
+              }}
             >
               <GlobeSimple aria-hidden="true" weight="regular" />
               <span>{tab.url === 'about:blank' ? labels.newTab : tab.title || tab.url}</span>
               {tab.loading ? <span className="browser-tab-loading" aria-hidden="true" /> : null}
             </button>
-            <button type="button" className="browser-tab-close" aria-label={labels.closeTab} title={labels.closeTab} onClick={() => void closeTab(tab.id)}>
-              <span className="browser-tab-close-surface" aria-hidden="true">
-                <X weight="bold" />
-              </span>
+            <button type="button" className="zeus-workspace-tab-close" aria-label={`${labels.closeTab}: ${tab.title || tab.url}`} title={labels.closeTab} onClick={() => void closeTab(tab.id)}>
+              <X size={14} aria-hidden="true" weight="regular" />
             </button>
           </div>
         ))}

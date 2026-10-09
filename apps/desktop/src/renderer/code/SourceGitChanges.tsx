@@ -10,6 +10,7 @@ import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { TreeStructureIcon as TreeStructure } from '@phosphor-icons/react/dist/csr/TreeStructure';
 import { ListBulletsIcon as ListBullets } from '@phosphor-icons/react/dist/csr/ListBullets';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
+import { CaretRightIcon as CaretRight } from '@phosphor-icons/react/dist/csr/CaretRight';
 import { MagnifyingGlassIcon as Search } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
 import type { GitApiClient } from '../features/git/gitApiClient.js';
 import type { GitDiffSummary, GitFileStatusSummary, ProjectGitAction, ProjectGitRepositoryWorkbenchItem, ProjectGitWorkbenchSnapshot } from '../features/git/gitContracts.js';
@@ -275,6 +276,7 @@ export function SourceGitChanges(props: {
       <summary>
         {zh ? '更改' : 'Changes'}
         <span className="source-git-total">{fileCount}</span>
+        <CaretRight className="project-source-disclosure" size={14} aria-hidden="true" />
       </summary>
       <div className="source-git-body">
         <div className="source-git-tabs" role="tablist" aria-label={zh ? '更改工具窗口' : 'Changes tool window'}>
@@ -393,12 +395,14 @@ export function SourceGitChanges(props: {
                 return (
                   <details key={group} className="source-git-group" open>
                     <summary>
+                      <CaretRight className="project-source-disclosure" aria-hidden="true" />
                       <strong>{groupLabels[group]}</strong>
                       <small>{groups.reduce((count, item) => count + item.files.length, 0)}</small>
                     </summary>
                     {groups.map(({ repository: item, files }) => (
                       <details key={item.id} className="source-git-repository" open>
                         <summary onClick={() => setActiveRepositoryId(item.id)}>
+                          <CaretRight className="project-source-disclosure" aria-hidden="true" />
                           {group !== 'conflicts' ? (
                             <SelectionCheckbox
                               label={(zh ? '选择仓库文件 ' : 'Select files in ') + item.name}
@@ -500,6 +504,7 @@ export function SourceGitChanges(props: {
               .map((item) => (
                 <details key={item.id} open>
                   <summary>
+                    <CaretRight className="project-source-disclosure" aria-hidden="true" />
                     {item.name}
                     <small>{item.snapshot.stashes.length}</small>
                   </summary>
@@ -621,6 +626,7 @@ function SourceChangeTree(props: {
         .map(([folder, children]) => (
           <details key={folder} open>
             <summary>
+              <CaretRight className="project-source-disclosure" aria-hidden="true" />
               {props.selectable ? (
                 <SelectionCheckbox
                   label={(props.zh ? '选择目录 ' : 'Select directory ') + prefix + folder}

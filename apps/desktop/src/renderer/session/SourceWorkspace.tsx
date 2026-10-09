@@ -10,7 +10,7 @@ import { createPortal } from 'react-dom';
 import { ArrowsInIcon as ArrowsIn } from '@phosphor-icons/react/dist/csr/ArrowsIn';
 import { ArrowsOutIcon as ArrowsOut } from '@phosphor-icons/react/dist/csr/ArrowsOut';
 import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
-import { FileImageIcon as FileImage } from '@phosphor-icons/react/dist/csr/FileImage';
+import { FileTypeIcon } from '../code/FileTypeIcon.js';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { ConversationResourcePreview } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
@@ -133,6 +133,7 @@ function SourceWorkspaceView(props: {
 
   useEffect(() => {
     titleRef.current?.focus();
+    titleRef.current?.parentElement?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [props.preview.resource.id]);
 
   useEffect(() => {
@@ -189,7 +190,7 @@ function SourceWorkspaceView(props: {
   const header = (
     <header className="session-context-workspace-header session-source-header">
       <div
-        className="session-source-tabs"
+        className="session-source-tabs zeus-workspace-tabs"
         role="tablist"
         aria-label={zh ? '已打开文件' : 'Open files'}
         onKeyDown={(event) => {
@@ -203,20 +204,27 @@ function SourceWorkspaceView(props: {
         }}
       >
         {(props.tabs ?? [props.preview]).map((preview) => (
-          <div className={`session-context-workspace-title${preview.resource.id === props.preview.resource.id ? ' active' : ''}`} key={preview.resource.id}>
+          <div className="zeus-workspace-tab-shell" data-active={preview.resource.id === props.preview.resource.id || undefined} key={preview.resource.id}>
             <button
               type="button"
               ref={preview.resource.id === props.preview.resource.id ? titleRef : undefined}
               role="tab"
+              className="zeus-workspace-tab"
               tabIndex={preview.resource.id === props.preview.resource.id ? 0 : -1}
               aria-selected={preview.resource.id === props.preview.resource.id}
               title={preview.resource.displayName}
               onClick={() => props.onSelectTab?.(preview)}
             >
-              {preview.kind === 'image' ? <FileImage aria-hidden="true" /> : <FileCode aria-hidden="true" />}
+              <FileTypeIcon name={preview.resource.kind === 'file' ? preview.resource.projectRelativePath : preview.resource.displayName} />
               <span>{basename(preview.resource.kind === 'file' ? preview.resource.projectRelativePath : preview.resource.displayName)}</span>
             </button>
-            <button type="button" className="session-source-tab-close" aria-label={`${zh ? '关闭' : 'Close'} ${preview.resource.displayName}`} onClick={() => (props.onCloseTab ? props.onCloseTab(preview) : props.onClose())}>
+            <button
+              type="button"
+              className="zeus-workspace-tab-close"
+              aria-label={`${zh ? '关闭' : 'Close'} ${preview.resource.displayName}`}
+              title={`${zh ? '关闭' : 'Close'} ${preview.resource.displayName}`}
+              onClick={() => (props.onCloseTab ? props.onCloseTab(preview) : props.onClose())}
+            >
               <X aria-hidden="true" />
             </button>
           </div>

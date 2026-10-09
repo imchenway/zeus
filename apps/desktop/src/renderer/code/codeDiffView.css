@@ -26,7 +26,15 @@
   display: none !important;
 }
 .code-diff-view .cm-content {
-  padding-block: 0 32px;
+  padding-block: 8px 24px;
+}
+/* 行号区与正文分层；细轨道避免长文档出现醒目的滚动边框。 */
+.code-diff-view .cm-gutters {
+  border-inline-end: 1px solid var(--zeus-control-border);
+}
+.code-diff-view .cm-scroller::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
 }
 .code-diff-view .cm-gutterElement {
   line-height: 20px;
@@ -46,17 +54,24 @@
 }
 .code-diff-line.is-addition,
 .code-diff-view > :last-of-type .code-diff-line.is-replacement {
-  background: color-mix(in srgb, var(--zeus-code-addition-text) 14%, transparent);
+  background: color-mix(in srgb, var(--zeus-code-addition-text) 6%, transparent);
+  box-shadow: inset 2px 0 var(--zeus-code-addition-text);
 }
 .code-diff-line.is-deletion,
 .code-diff-view > :first-of-type .code-diff-line.is-replacement {
-  background: color-mix(in srgb, #d14b4b 14%, transparent);
+  background: color-mix(in srgb, var(--zeus-control-danger-text) 6%, transparent);
+  box-shadow: inset 2px 0 var(--zeus-control-danger-text);
 }
 .code-diff-line.is-header,
 .code-diff-line.is-metadata,
 .code-diff-line.is-empty {
   background: var(--zeus-product-panel-muted);
   color: var(--zeus-product-muted);
+}
+/* 区块范围是辅助信息，正文继续保持固定行高与完整补丁文本。 */
+.code-diff-line.is-header {
+  font-size: 11px;
+  font-weight: 500;
 }
 .code-diff-annotation {
   overflow: hidden;

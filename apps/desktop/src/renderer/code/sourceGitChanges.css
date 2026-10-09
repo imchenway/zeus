@@ -150,19 +150,6 @@
 .source-git-files summary::-webkit-details-marker {
   display: none;
 }
-.source-git-files summary::before {
-  content: '›';
-  display: inline-flex;
-  justify-content: center;
-  align-items: center;
-  width: 10px;
-  flex-shrink: 0;
-  font-size: 16px;
-  color: var(--zeus-product-muted);
-}
-.source-git-files details[open] > summary::before {
-  transform: rotate(90deg);
-}
 .source-git-files summary > span,
 .source-git-files summary > strong {
   min-width: 0;

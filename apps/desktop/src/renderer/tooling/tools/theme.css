@@ -1,4 +1,3 @@
-
 .macos-ai-app.zeus-shell :is(.project-git-tabs > button.is-active, .extension-tabs button.is-active) {
   color: var(--agentdesk-accent-strong);
 }
@@ -8,7 +7,7 @@
   color: var(--agentdesk-text);
 }
 
-.macos-ai-app.zeus-shell :where(.project-source-tabs, .project-git-tabs, .settings-section-nav, .project-settings-section-tabs, .digital-employee-section-tabs, .automations-tabs) {
+.macos-ai-app.zeus-shell :where(.project-git-tabs, .settings-section-nav, .project-settings-section-tabs, .digital-employee-section-tabs, .automations-tabs) {
   border-color: rgb(255 255 255 / 56%);
   border-radius: 12px;
   background: rgb(218 233 247 / 44%);
