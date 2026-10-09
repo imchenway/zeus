@@ -634,6 +634,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       style={projectSidebarShellStyle}
       lang={uiCopy.documentLang}
       aria-label={uiCopy.shellAriaLabel}
+      onPointerDown={handleWindowDragPointerDown}
     >
       <Suspense
         fallback={
@@ -661,7 +662,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           />
         ) : null}
       </MotionPresence>
-      <div className="window-drag-strip" aria-hidden="true" onPointerDown={handleWindowDragPointerDown} />
+      <div className="window-drag-strip" aria-hidden="true" />
       <output className="sr-only" aria-live="polite" aria-atomic="true">
         {taskModelPushAnnouncement}
       </output>
