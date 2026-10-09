@@ -162,6 +162,11 @@
   padding: 6px;
 }
 
+/* 外层滚动区域不使用 xterm 的默认黑底，留白与网格余量显示容器的主题背景。 */
+.zeus-terminal-screen .xterm .xterm-viewport {
+  background-color: transparent;
+}
+
 /* 项目终端与会话终端都以面板为搜索浮层的定位范围。 */
 .macos-ai-app .project-terminal {
   position: relative;
