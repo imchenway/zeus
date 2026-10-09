@@ -52,14 +52,8 @@ export interface ProjectConversationTreeProps {
   onSelectConversation: (conversation: NativeConversationChoice) => void;
   onStartConversation?: (taskId: string) => void;
   onArchiveConversation?: (conversation: NativeConversationChoice) => Promise<void> | void;
-  /** 标记为未读 */
-  onMarkAsUnread?: (conversation: NativeConversationChoice) => Promise<void> | void;
-  /** 标记为已读 */
-  onMarkAsRead?: (conversation: NativeConversationChoice) => Promise<void> | void;
   /** 重命名会话 */
   onRenameConversation?: (conversation: NativeConversationChoice, newTitle: string) => Promise<void> | void;
-  /** 在新窗口打开 */
-  onOpenInNewWindow?: (conversation: NativeConversationChoice) => Promise<void> | void;
   language: SessionUiLanguage;
   compactProjectLabel?: boolean;
   query?: string;
@@ -192,22 +186,6 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
     setContextMenuState(null);
   }
 
-  async function handleMarkAsUnread(conversation: NativeConversationChoice): Promise<void> {
-    await props.onMarkAsUnread?.(conversation);
-  }
-
-  async function handleMarkAsRead(conversation: NativeConversationChoice): Promise<void> {
-    await props.onMarkAsRead?.(conversation);
-  }
-
-  async function handleRename(conversation: NativeConversationChoice, newTitle: string): Promise<void> {
-    await props.onRenameConversation?.(conversation, newTitle);
-  }
-
-  async function handleOpenInNewWindow(conversation: NativeConversationChoice): Promise<void> {
-    await props.onOpenInNewWindow?.(conversation);
-  }
-
   /** 渲染平铺会话及其运行状态和归档入口。 */
   function renderConversationItems(conversations: FlattenedConversation[]) {
     return conversations.map(({ conversation, displayTitle }) => {
@@ -295,10 +273,7 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
         onClose={handleCloseContextMenu}
         language={props.language as ConversationContextMenuLanguage}
         onArchive={props.onArchiveConversation && contextMenuState && resolveConversationTreeRuntimeState(contextMenuState.conversation, props.conversationStates) !== 'legacy_readonly' ? archiveConversation : undefined}
-        onMarkAsUnread={handleMarkAsUnread}
-        onMarkAsRead={handleMarkAsRead}
-        onRename={handleRename}
-        onOpenInNewWindow={handleOpenInNewWindow}
+        onRename={props.onRenameConversation}
       />
     </>
   );
