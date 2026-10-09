@@ -4,6 +4,9 @@ import { temporaryWorkspaceId, describeUserFacingError, isTaskPriority, type Pro
 import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromConversation } from '../../session/ProjectConversationTree.js';
 import {
   loadLegacyConversationDetail,
+  cacheCodexConversationCapabilities,
+  preloadCodexConversationCapabilities,
+  readCachedCodexConversationCapabilities,
   nativeConversationChoiceFromAcceptance,
   type NativeConversationStartFailure,
   type NativeConversationStartPreparation,
@@ -2289,29 +2292,22 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     const request = ++taskModelPushCapabilityRequestRef.current;
     setTaskModelPushEntry('checking');
     const remembered = readTaskModelPushPreferences(browserNativeConversationStartStorage(), task.projectId);
+    /** 复用项目已预读的模型目录，首帧不等待账号、附件和 Git 检查。 */
+    const runtimeCapabilities = client ? readCachedCodexConversationCapabilities(client, task.projectId) : null;
+    /** 初始化沿用同一套偏好与能力规则，不建立第二份默认模型逻辑。 */
+    const initialForm = resolveTaskModelPushInitialForm(runtimeCapabilities ?? { models: [], preferredModel: null }, remembered, readSkillWorkflowDefault('task_push'));
     setTaskModelPushTaskId(task.id);
     setTaskModelPushCapabilities(null);
-    setTaskModelPushRuntimeCapabilities(null);
+    setTaskModelPushRuntimeCapabilities(runtimeCapabilities);
     setTaskModelPushForm({
+      ...initialForm,
       ...(stage ? { stageId: stage.id } : {}),
-      model: stage?.modelRef ?? remembered?.model ?? '',
-      effort: stage?.effort ?? remembered?.effort ?? '',
-      serviceTier: stage?.serviceTier ? { type: 'catalog', id: stage.serviceTier } : (remembered?.serviceTier ?? { type: 'standard' }),
-      serviceTierDowngraded: false,
+      model: stage?.modelRef ?? initialForm.model,
+      effort: stage?.effort ?? initialForm.effort,
+      serviceTier: stage?.serviceTier ? { type: 'catalog', id: stage.serviceTier } : initialForm.serviceTier,
+      serviceTierDowngraded: stage?.serviceTier ? false : initialForm.serviceTierDowngraded,
       workMode: stage?.workMode ?? remembered?.workMode ?? 'default',
       permissionMode: stage?.permissionMode ?? remembered?.permissionMode ?? 'read-only',
-      skillId: readSkillWorkflowDefault('task_push'),
-      workspaceMode: remembered?.workspaceMode ?? 'direct',
-      workspaceModeSelected: Boolean(remembered?.workspaceMode),
-      taskBranchMode: 'create',
-      environmentId: '',
-      directConcurrencyConfirmed: false,
-      repositorySelections: {},
-      currentConversationIds: [],
-      parentContextSelections: {},
-      relatedContextSelections: {},
-      supplementalInfo: '',
-      supplementalAttachments: [],
     });
     setTaskModelPushStatus('loading');
     setTaskModelPushRefreshingRepositoryId(null);
@@ -2346,9 +2342,27 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     /** 能力读取不再加载项目偏好，不会准备工作区或创建会话。 */
     const client = props.nativeConversationClient;
     if (!client) throw new Error('ZEUS_MODEL_UNAVAILABLE');
+    /** 首次预读尚未完成时，模型与完整任务资料并行到达；后者始终拥有最终快照。 */
+    let taskCapabilitiesResolved = false;
+    void preloadCodexConversationCapabilities(client, task.projectId)
+      .then((runtimeCapabilities) => {
+        if (!runtimeCapabilities || taskCapabilitiesResolved || !isTaskModelPushRequestCurrent(request, origin)) return;
+        setTaskModelPushRuntimeCapabilities(runtimeCapabilities);
+        setTaskModelPushForm((current) => {
+          if (current.stageId) return current;
+          /** 只补齐模型配置，不覆盖用户正在填写的补充内容、附件或仓库选择。 */
+          const normalized = resolveTaskModelPushInitialForm(runtimeCapabilities, current, current.skillId);
+          return { ...current, model: normalized.model, effort: normalized.effort, serviceTier: normalized.serviceTier, serviceTierDowngraded: normalized.serviceTierDowngraded };
+        });
+      })
+      .catch((error: unknown) => {
+        if (!taskCapabilitiesResolved && isTaskModelPushRequestCurrent(request, origin)) recordBackgroundSynchronizationError('task-push-model-preload', error);
+      });
     const rawCapabilities = await client.loadCodexTaskPushCapabilities(task.projectId, task.id);
+    taskCapabilitiesResolved = true;
     if (!isTaskModelPushRequestCurrent(request, origin)) return;
     const capabilities = normalizeTaskModelPushCapabilities(rawCapabilities);
+    cacheCodexConversationCapabilities(client, capabilities);
     setTaskModelPushRuntimeCapabilities(capabilities);
     /** 首次加载只根据同一份完整快照选择下一工作面，不再发起独立模型预检。 */
     const destination = resolveTaskModelPushEntry(capabilities, capabilities.hasConfiguredProvider);
