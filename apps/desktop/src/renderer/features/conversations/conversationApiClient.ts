@@ -58,6 +58,8 @@ export interface ConversationApiClient {
   loadArchivedConversations: () => Promise<ArchivedConversationChoicesSnapshot>;
   loadProjectConversationChoices: (projectId: string) => Promise<NativeProjectConversationChoicesSnapshot>;
   loadProjectConversationChoiceGroups: (projectId: string) => Promise<NativeProjectConversationChoiceGroupsSnapshot>;
+  /** 搜索持久正文，只返回会话身份；较大历史明确告知回退。 */
+  searchConversationContent: (projectId: string, query: string, options?: { signal?: AbortSignal }) => Promise<{ conversationIds: string[]; skipped: boolean }>;
   startProjectConversation: (projectId: string, input: StartProjectConversationRequest) => Promise<NativeConversationStartDispatchResult>;
   loadTaskConversationChoices: (taskId: string) => Promise<NativeConversationChoicesSnapshot>;
   loadCodexConversationCapabilities: (projectId: string) => Promise<CodexConversationCapabilities>;
@@ -168,6 +170,7 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
     loadArchivedConversations: () => transport.request<ArchivedConversationChoicesSnapshot>('/api/conversations/archived'),
     loadProjectConversationChoices: (projectId) => transport.request(`/api/projects/${encodeURIComponent(projectId)}/conversation-choices`),
     loadProjectConversationChoiceGroups: (projectId) => transport.request(`/api/projects/${encodeURIComponent(projectId)}/conversation-choice-groups`),
+    searchConversationContent: (projectId, query, options) => transport.request(`/api/projects/${encodeURIComponent(projectId)}/conversation-content-search?${new URLSearchParams({ query })}`, { signal: options?.signal }),
     startProjectConversation: async (projectId, input) => {
       const { idempotencyKey, ...body } = input;
       const commandBody = await buildConversationStartCommandRequest({

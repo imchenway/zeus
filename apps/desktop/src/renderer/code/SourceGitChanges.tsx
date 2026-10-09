@@ -353,7 +353,7 @@ export function SourceGitChanges(props: {
             <div className="source-git-file-tools">
               <label className="source-git-search">
                 <Search />
-                <input aria-label={zh ? '筛选更改文件' : 'Filter changed files'} placeholder={zh ? '筛选文件…' : 'Filter files…'} value={query} onChange={(event) => setQuery(event.currentTarget.value)} />
+                <input type="search" aria-label={zh ? '筛选更改文件' : 'Filter changed files'} placeholder={zh ? '筛选文件…' : 'Filter files…'} value={query} onChange={(event) => setQuery(event.currentTarget.value)} />
               </label>
               <span className="project-git-file-view-control" title={fileView === 'flat' ? (zh ? '平铺结构' : 'Flat view') : zh ? '树状结构' : 'Tree view'}>
                 {fileView === 'flat' ? <ListBullets aria-hidden="true" /> : <TreeStructure aria-hidden="true" />}

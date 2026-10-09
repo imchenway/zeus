@@ -1093,6 +1093,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                 <MagnifyingGlass />
                 <input
                   aria-label={tab === 'changes' ? (zh ? '筛选更改文件' : 'Filter changed files') : zh ? '搜索提交' : 'Search commits'}
+                  type="search"
                   value={tab === 'changes' ? fileQuery : searchQuery}
                   onChange={(event) => (tab === 'changes' ? setFileQuery(event.currentTarget.value) : setSearchQuery(event.currentTarget.value))}
                   placeholder={tab === 'changes' ? (zh ? '筛选文件…' : 'Filter files…') : zh ? '搜索提交、作者或哈希…' : 'Search commits, authors or hashes…'}

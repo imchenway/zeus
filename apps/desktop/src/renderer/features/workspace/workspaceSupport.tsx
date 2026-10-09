@@ -624,7 +624,8 @@ export type AppShellSettingsSavePayload = Pick<
 > & { taskManagementStatusReplacements?: Record<string, Record<string, string>> };
 
 export const PROJECT_SIDEBAR_DEFAULT_WIDTH = 248;
-export const PROJECT_SIDEBAR_MIN_WIDTH = 200;
+/** 右侧操作共用一列后，最窄侧栏减少一个 26px 按钮槽位。 */
+export const PROJECT_SIDEBAR_MIN_WIDTH = 174;
 export const PROJECT_SIDEBAR_MAX_WIDTH = 420;
 export const PROJECT_SIDEBAR_MIN_WORKSPACE_WIDTH = 520;
 export const PROJECT_SIDEBAR_SEPARATOR_WIDTH = 1;

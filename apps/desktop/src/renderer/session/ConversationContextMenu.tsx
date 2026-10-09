@@ -4,6 +4,8 @@
  * 提供会话列表项的上下文菜单，支持归档、标记未读、重命名等操作。
  */
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { createPortal } from 'react-dom';
+import { CaretRightIcon as CaretRight } from '@phosphor-icons/react/dist/csr/CaretRight';
 import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
 import { ArrowSquareOutIcon as ArrowSquareOut } from '@phosphor-icons/react/dist/csr/ArrowSquareOut';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
@@ -230,110 +232,115 @@ export function ConversationContextMenu(props: ConversationContextMenuProps) {
 
   if (!open) return null;
 
+  /** 和项目菜单一样挂到应用壳层，避免会话列表的折叠和滚动容器裁剪浮层。 */
+  const menuPortalHost = document.querySelector<HTMLElement>('.macos-ai-app.zeus-shell') ?? document.body;
   return (
     <>
-      <MenuSurface onClose={onClose} style={{ left: position.x, top: position.y }} className="conversation-context-menu">
-        {/* 重命名 */}
-        <button type="button" role="menuitem" onClick={handleRename}>
-          <PencilSimple aria-hidden="true" />
-          <span>{copy.rename}</span>
-          <kbd>{copy.renameShortcut}</kbd>
-        </button>
-
-        {/* 置顶 - 暂未实现 */}
-        <button type="button" role="menuitem" disabled>
-          <PushPin aria-hidden="true" />
-          <span>{copy.pin}</span>
-          <kbd>{copy.pinShortcut}</kbd>
-        </button>
-
-        {/* 标记为未读/已读 */}
-        {(onMarkAsUnread || onMarkAsRead) && (
-          <button type="button" role="menuitem" onClick={handleMarkAsUnread}>
-            {conversation.hasUnreadAttention ? <Eye aria-hidden="true" /> : <EyeSlash aria-hidden="true" />}
-            <span>{conversation.hasUnreadAttention ? copy.markAsRead : copy.markAsUnread}</span>
-            <kbd>{copy.markAsUnreadShortcut}</kbd>
+      {createPortal(
+        <MenuSurface onClose={onClose} style={{ left: position.x, top: position.y }} className="conversation-context-menu zeus-quiet-more-menu">
+          {/* 重命名 */}
+          <button type="button" role="menuitem" onClick={handleRename}>
+            <PencilSimple aria-hidden="true" />
+            <span>{copy.rename}</span>
+            <kbd>{copy.renameShortcut}</kbd>
           </button>
-        )}
 
-        {/* 归档/取消归档 */}
-        {(onArchive || onRestore) && (
-          <button type="button" role="menuitem" onClick={handleArchive}>
-            <Archive aria-hidden="true" />
-            <span>{conversation.archived ? copy.archive.replace('归档', '取消归档').replace('Archive', 'Restore') : copy.archive}</span>
-            <kbd>{copy.archiveShortcut}</kbd>
+          {/* 置顶 - 暂未实现 */}
+          <button type="button" role="menuitem" disabled>
+            <PushPin aria-hidden="true" />
+            <span>{copy.pin}</span>
+            <kbd>{copy.pinShortcut}</kbd>
           </button>
-        )}
 
-        {/* 永久删除 */}
-        {onDelete && (
-          <button type="button" role="menuitem" className="conversation-context-menu-danger" onClick={handleDelete}>
-            <Trash aria-hidden="true" />
-            <span>{copy.delete}</span>
+          {/* 标记为未读/已读 */}
+          {(onMarkAsUnread || onMarkAsRead) && (
+            <button type="button" role="menuitem" onClick={handleMarkAsUnread}>
+              {conversation.hasUnreadAttention ? <Eye aria-hidden="true" /> : <EyeSlash aria-hidden="true" />}
+              <span>{conversation.hasUnreadAttention ? copy.markAsRead : copy.markAsUnread}</span>
+              <kbd>{copy.markAsUnreadShortcut}</kbd>
+            </button>
+          )}
+
+          {/* 归档/取消归档 */}
+          {(onArchive || onRestore) && (
+            <button type="button" role="menuitem" onClick={handleArchive}>
+              <Archive aria-hidden="true" />
+              <span>{conversation.archived ? copy.archive.replace('归档', '取消归档').replace('Archive', 'Restore') : copy.archive}</span>
+              <kbd>{copy.archiveShortcut}</kbd>
+            </button>
+          )}
+
+          {/* 永久删除 */}
+          {onDelete && (
+            <button type="button" role="menuitem" className="conversation-context-menu-danger" onClick={handleDelete}>
+              <Trash aria-hidden="true" />
+              <span>{copy.delete}</span>
+            </button>
+          )}
+
+          {/* 分隔线 */}
+          <div className="conversation-context-menu-separator" role="separator" />
+
+          {/* 项目 - 暂未实现 */}
+          <button type="button" role="menuitem" disabled onClick={handleMoveToProject}>
+            <Folder aria-hidden="true" />
+            <span>{copy.project}</span>
+            <CaretRight className="conversation-context-menu-arrow" aria-hidden="true" />
           </button>
-        )}
 
-        {/* 分隔线 */}
-        <div className="conversation-context-menu-separator" role="separator" />
-
-        {/* 项目 - 暂未实现 */}
-        <button type="button" role="menuitem" disabled onClick={handleMoveToProject}>
-          <Folder aria-hidden="true" />
-          <span>{copy.project}</span>
-          <span className="conversation-context-menu-arrow">›</span>
-        </button>
-
-        {/* 分区 - 暂未实现 */}
-        <button type="button" role="menuitem" disabled onClick={handleMoveToSection}>
-          <List aria-hidden="true" />
-          <span>{copy.section}</span>
-          <span className="conversation-context-menu-arrow">›</span>
-        </button>
-
-        {/* 分隔线 */}
-        <div className="conversation-context-menu-separator" role="separator" />
-
-        {/* 分享 */}
-        {onShare && (
-          <button type="button" role="menuitem" onClick={handleShare}>
-            <Share aria-hidden="true" />
-            <span>{copy.share}</span>
+          {/* 分区 - 暂未实现 */}
+          <button type="button" role="menuitem" disabled onClick={handleMoveToSection}>
+            <List aria-hidden="true" />
+            <span>{copy.section}</span>
+            <CaretRight className="conversation-context-menu-arrow" aria-hidden="true" />
           </button>
-        )}
 
-        {/* 复制 */}
-        {onCopy && (
-          <button type="button" role="menuitem" onClick={handleCopy}>
-            <Copy aria-hidden="true" />
-            <span>{copy.copy}</span>
-            <span className="conversation-context-menu-arrow">›</span>
-          </button>
-        )}
+          {/* 分隔线 */}
+          <div className="conversation-context-menu-separator" role="separator" />
 
-        {/* 分叉 */}
-        {onFork && (
-          <button type="button" role="menuitem" onClick={handleFork}>
-            <Fork aria-hidden="true" />
-            <span>{copy.fork}</span>
-            <span className="conversation-context-menu-arrow">›</span>
-          </button>
-        )}
+          {/* 分享 */}
+          {onShare && (
+            <button type="button" role="menuitem" onClick={handleShare}>
+              <Share aria-hidden="true" />
+              <span>{copy.share}</span>
+            </button>
+          )}
 
-        {/* 打开方式 - 暂未实现 */}
-        <button type="button" role="menuitem" disabled>
-          <ArrowSquareOut aria-hidden="true" />
-          <span>{copy.openWith}</span>
-          <span className="conversation-context-menu-arrow">›</span>
-        </button>
+          {/* 复制 */}
+          {onCopy && (
+            <button type="button" role="menuitem" onClick={handleCopy}>
+              <Copy aria-hidden="true" />
+              <span>{copy.copy}</span>
+              <CaretRight className="conversation-context-menu-arrow" aria-hidden="true" />
+            </button>
+          )}
 
-        {/* 在新窗口中打开 */}
-        {onOpenInNewWindow && (
-          <button type="button" role="menuitem" onClick={handleOpenInNewWindow}>
+          {/* 分叉 */}
+          {onFork && (
+            <button type="button" role="menuitem" onClick={handleFork}>
+              <Fork aria-hidden="true" />
+              <span>{copy.fork}</span>
+              <CaretRight className="conversation-context-menu-arrow" aria-hidden="true" />
+            </button>
+          )}
+
+          {/* 打开方式 - 暂未实现 */}
+          <button type="button" role="menuitem" disabled>
             <ArrowSquareOut aria-hidden="true" />
-            <span>{copy.openInNewWindow}</span>
+            <span>{copy.openWith}</span>
+            <CaretRight className="conversation-context-menu-arrow" aria-hidden="true" />
           </button>
-        )}
-      </MenuSurface>
+
+          {/* 在新窗口中打开 */}
+          {onOpenInNewWindow && (
+            <button type="button" role="menuitem" onClick={handleOpenInNewWindow}>
+              <ArrowSquareOut aria-hidden="true" />
+              <span>{copy.openInNewWindow}</span>
+            </button>
+          )}
+        </MenuSurface>,
+        menuPortalHost,
+      )}
 
       {/* 重命名对话框 */}
       {renameDialogOpen && (

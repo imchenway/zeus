@@ -1599,6 +1599,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const ownsCodexAppServerManager = options.codexAppServerManager === undefined;
   const codexNativeEnabled = !readOnlyValidation && options.codexNativeEnabled !== false;
   const conversationChoiceQueries = new ConversationChoiceQueryApplication({
+    snapshots: conversationSnapshotV2,
     projects,
     tasks,
     conversations,
