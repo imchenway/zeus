@@ -170,17 +170,8 @@ let auxiliaryServicesReady: Promise<void> = Promise.resolve();
 type StartupSettingsSnapshot = Partial<MainAppShellSettings> & { appearance?: unknown; [key: string]: unknown };
 /** 完整设置由 Main 与各窗口共用，变更通知使下次读取失效。 */
 let startupSettings: Promise<StartupSettingsSnapshot | null> | undefined;
-/** 晚创建的窗口通过快照取得当前真实阶段。 */
-let startupStage = { stage: 'preparing_local_data', elapsedMs: 0 };
 /** 主进程启动计时起点。 */
 const applicationStartupStartedAt = performance.now();
-/** 只广播真实阶段，不以超时或百分比推断启动成功。 */
-function setStartupStage(stage: string): void {
-  startupStage = { stage, elapsedMs: Math.round(performance.now() - applicationStartupStartedAt) };
-  for (const window of windows) {
-    if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('zeus:startup-stage:changed', startupStage);
-  }
-}
 /** 所有启动打点沿用同一时钟。 */
 function traceApplicationStartup(stage: string): void {
   if (process.env.ZEUS_STARTUP_TIMING !== '1') return;
@@ -1368,7 +1359,6 @@ function setupIpc(): void {
     }
     app.quit();
   });
-  ipcMain.handle('zeus:startup-stage:get', () => startupStage);
   ipcMain.handle('zeus:startup-settings:get', async () => {
     const runtime = localServerRuntime ?? (await rendererRuntimeReady);
     return loadStartupSettings(runtime.config);
@@ -3438,7 +3428,6 @@ async function initializeApplication(): Promise<void> {
     // Main 只持有窗口、BrowserHost 与短期连接凭据；独立 Zeus Core 是唯一业务 SQLite 写入者。
     const { startDesktopLocalServer } = await import('./localServerRuntime.js');
     traceApplicationStartup('local_server_module_ready');
-    setStartupStage('connecting_local_service');
     localServerRuntime = await startDesktopLocalServer({
       userDataPath,
       dataLayout,
@@ -3495,7 +3484,6 @@ async function initializeApplication(): Promise<void> {
       setupTraySafely();
       applySystemNotificationBridge();
     }
-    setStartupStage('reading_home');
     resolveRendererRuntimeReady(localServerRuntime);
     resolveRendererStartupDisposition();
     // 首屏就绪信号先送达，更新状态只在自己的入口等待。
