@@ -1399,6 +1399,11 @@ async function probeNavigation() {
       ['optimistic-id', 'confirmed-id'].map((id) => ({ ...tail, id, rowKey: navigationRowKey(tail), loaded: true })),
     );
     assertProbe(merged.length === count && merged.filter((entry) => entry.loaded).length === 1, '实时确认必须按客户端身份去重，保留未加载占位');
+    /** 用户先进入历史页时保留回复补读，完整回复到达后撤销入口。 */
+    const partial = mergeNavigationEntries([tail], [{ ...tail, response: '', rowKey: navigationRowKey(tail), loaded: true }])[0]!;
+    assertProbe(partial.loaded && partial.needsTurnContent === true && partial.rowKey === navigationRowKey(tail), '用户气泡已显示不能让尚未加载的历史回复失去补读入口。');
+    assertProbe(merged.at(-1)?.needsTurnContent === false, '最终回复已进入正文后不能继续补读同一轮。');
+    assertProbe(mergeNavigationEntries([{ ...tail, response: '' }], [{ ...tail, response: '', rowKey: navigationRowKey(tail), loaded: true }])[0]?.needsTurnContent === false, '确实没有文字回复的轮次不能生成空的补读入口。');
     assertProbe(
       mergeNavigationEntries(
         [],
