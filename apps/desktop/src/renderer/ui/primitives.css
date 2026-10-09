@@ -162,6 +162,17 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   }
 }
 
+/* 设置页只移动内容，整个切换过程保持不透明，避免重新出现白闪。 */
+@keyframes zeus-settings-content-enter {
+  from {
+    transform: translate3d(0, 6px, 0);
+  }
+
+  to {
+    transform: none;
+  }
+}
+
 @keyframes zeus-object-enter {
   from {
     opacity: 0;
@@ -202,7 +213,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   animation: zeus-workspace-focus-enter var(--zeus-motion-duration-workspace) var(--zeus-motion-ease-out) both;
 }
 
-/* 设置内容切换保持不透明，避免每次挂载重播淡入造成白闪。 */
+/* 设置内容在目标模块就绪后播放切换动画，旧页面等待期间保持可见。 */
+.macos-ai-app .settings-detail-pane > .settings-content-column {
+  animation: zeus-settings-content-enter var(--zeus-motion-duration-workspace) var(--zeus-motion-ease-out) both;
+}
+
+/* 项目工作面和设置侧栏保留首次进入动画。 */
 .macos-ai-app .project-code-mode-pane:not([hidden]),
 .macos-ai-app .workspace-view-settings > .settings-sidebar-shell {
   animation: zeus-panel-focus-enter var(--zeus-motion-duration-workspace) var(--zeus-motion-ease-out) both;
@@ -1477,7 +1493,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   .macos-ai-app :where(.workspace-view-project-tasks, .workspace-view-project-git, .workspace-view-project-settings),
   .session-codex-parity-v1 .session-workspace-root,
   .macos-ai-app .project-code-mode-pane:not([hidden]),
-  .macos-ai-app .settings-content-column > .settings-product-pane,
+  .macos-ai-app .settings-detail-pane > .settings-content-column,
   .macos-ai-app .workspace-view-settings > .settings-sidebar-shell,
   .macos-ai-app [data-motion-surface='list-item'][data-motion-state='entering'],
   .macos-ai-app :where(.inline-status, .project-inline-recovery-row, .task-list-state-row),

@@ -293,6 +293,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     addTaskCreateAttachments,
     applyThirdPartyTaskExtract,
     archiveConversation,
+    renameConversation,
     authorizeTaskCreateFiles,
     changedFiles,
     chooseProjectDirectoryForCreate,
@@ -869,6 +870,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           onCreateConversation={() => prepareNewConversationDraft()}
           onSelectConversation={(conversation) => void selectNativeConversation(conversation)}
           onArchiveConversation={archiveConversation}
+          onRenameConversation={props.nativeConversationClient ? renameConversation : undefined}
           onNavigate={handleMainNavigate}
           onOpenAutomaticUpdate={() => void openAutomaticUpdateIndicatorInMain({ zeus: globalThis.window.zeus })}
           onOpenProjectSection={openProjectSection}

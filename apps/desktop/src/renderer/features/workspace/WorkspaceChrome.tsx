@@ -910,6 +910,8 @@ export function SidebarNav(props: {
   onCreateConversation: () => void;
   onSelectConversation: (conversation: NativeConversationChoice) => void;
   onArchiveConversation: (conversation: NativeConversationChoice) => Promise<void>;
+  /** 只在真实会话客户端就绪时提供重命名能力。 */
+  onRenameConversation?: (conversation: NativeConversationChoice, title: string) => Promise<void>;
   onNavigate: (target: WorkspaceViewId) => void;
   onOpenAutomaticUpdate: () => void;
   onOpenProjectSection: (project: ProjectRecord, section: ProjectWorkspaceSection, codeMode?: ProjectCodeWorkspaceMode) => void;
@@ -925,7 +927,7 @@ export function SidebarNav(props: {
   const [projectContextMenu, setProjectContextMenu] = useState<{ projectId: string; position: { left: number; top: number } } | null>(null);
   const [projectSearchQuery, setProjectSearchQuery] = useState('');
   /** 结果绑定查询文字，较早的异步响应不能覆盖当前搜索。 */
-  const [contentSearch, setContentSearch] = useState<{ query: string; tasks: TaskSummary[]; conversationIds: string[]; skipped: boolean; failed: boolean }>({ query: '', tasks: [], conversationIds: [], skipped: false, failed: false });
+  const [contentSearch, setContentSearch] = useState<{ query: string; tasks: TaskSummary[]; conversationIds: string[]; failed: boolean }>({ query: '', tasks: [], conversationIds: [], failed: false });
   /** 只重试当前搜索，不重载整个工作区。 */
   const [contentSearchRevision, setContentSearchRevision] = useState(0);
   /** 已保存的数据库设置优先；旧缓存只作为首次接收来源。 */
@@ -1015,7 +1017,7 @@ export function SidebarNav(props: {
     const controller = new AbortController();
     let active = true;
     if (!normalizedProjectSearch) {
-      setContentSearch({ query: '', tasks: [], conversationIds: [], skipped: false, failed: false });
+      setContentSearch({ query: '', tasks: [], conversationIds: [], failed: false });
       return;
     }
     /** 复用本地查询接口，输入停顿后才读取正文命中。 */
@@ -1037,10 +1039,10 @@ export function SidebarNav(props: {
           /** 大历史由服务端预算决定是否回退，任务全文仍继续匹配。 */
           try {
             const content = await props.searchConversationContent?.(projectId, normalizedProjectSearch, { signal: controller.signal });
-            return { tasks, conversationIds: content?.conversationIds ?? [], skipped: content?.skipped ?? false, failed: false };
+            return { tasks, conversationIds: content?.conversationIds ?? [], failed: false };
           } catch {
             // 会话正文读取失败时仍保留本项目已找到的任务，并允许用户重试。
-            return { tasks, conversationIds: [], skipped: false, failed: true };
+            return { tasks, conversationIds: [], failed: true };
           }
         }),
       ).then((settled) => {
@@ -1051,7 +1053,6 @@ export function SidebarNav(props: {
           query: normalizedProjectSearch,
           tasks: results.flatMap((item) => item.tasks),
           conversationIds: results.flatMap((item) => item.conversationIds),
-          skipped: results.some((item) => item.skipped),
           failed: results.some((item) => item.failed) || settled.some((item) => item.status === 'rejected'),
         });
       });
@@ -1291,7 +1292,15 @@ export function SidebarNav(props: {
       )}
       {/* 尚未添加项目时不渲染搜索与列表；筛选无匹配仍保留搜索入口。 */}
       {props.projects.length > 0 ? (
-        <section className="project-sidebar-list zeus-source-list" role="navigation" data-source-list-keyboard="vertical" aria-label={copy.projectListLabel} onKeyDown={handleSourceListKeyboardNavigation} onScroll={handleSidebarScroll}>
+        <section
+          className="project-sidebar-list zeus-source-list"
+          role="navigation"
+          data-source-list-keyboard="vertical"
+          aria-busy={contentSearchPending}
+          aria-label={copy.projectListLabel}
+          onKeyDown={handleSourceListKeyboardNavigation}
+          onScroll={handleSidebarScroll}
+        >
           <div className="project-sidebar-heading">
             <label className="project-sidebar-search-field" onKeyDown={handleProjectSearchKeyDown}>
               <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
@@ -1379,16 +1388,6 @@ export function SidebarNav(props: {
               ) : null}
             </span>
           </div>
-          {contentSearchPending ? (
-            <p className="project-search-empty-row" role="status">
-              {zh ? '正在搜索内容…' : 'Searching content…'}
-            </p>
-          ) : null}
-          {currentContentSearch?.skipped ? (
-            <p className="project-search-empty-row" role="status">
-              {zh ? '部分会话历史较大，已搜索任务内容、会话标题和摘要。' : 'Some histories are large; searching task content, conversation titles and summaries.'}
-            </p>
-          ) : null}
           {currentContentSearch?.failed ? (
             <p className="project-search-empty-row" role="status">
               {zh ? '部分内容搜索失败，结果可能不完整。' : 'Some content searches failed; results may be incomplete.'}{' '}
@@ -1581,6 +1580,7 @@ export function SidebarNav(props: {
                             conversationStates={props.conversationStates}
                             onSelectConversation={props.onSelectConversation}
                             onArchiveConversation={props.onArchiveConversation}
+                            onRenameConversation={props.onRenameConversation}
                             language={props.appLanguage}
                             compactProjectLabel
                             showEmptyState={false}

@@ -1630,6 +1630,14 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     void refreshArchivedConversations();
   }
 
+  /** 保存会话标题后刷新所属目录，避免菜单弹窗成功但列表标题未更新。 */
+  async function renameConversation(conversation: NativeConversationChoice, title: string): Promise<void> {
+    const client = props.nativeConversationClient;
+    if (!client) return;
+    await client.conversations.renameConversation(conversation.projectId, conversation.id, title);
+    await (conversation.taskId ? refreshNativeConversationChoices(conversation.taskId) : refreshNativeProjectConversationChoices(conversation.projectId));
+  }
+
   async function restoreTaskConversation(conversation: NativeConversationChoice): Promise<void> {
     const client = props.nativeConversationClient;
     if (!client || restoringArchivedConversationId) return;
@@ -3109,6 +3117,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     addTaskCreateAttachments,
     applyThirdPartyTaskExtract,
     archiveConversation,
+    renameConversation,
     authorizeTaskCreateFiles,
     changedFiles,
     chooseNativeConversationAttachments,
