@@ -192,7 +192,7 @@ export interface SessionWorkspaceActions {
   onChooseStartAttachments?: () => Promise<NativeConversationAttachment[]>;
   onAddAttachments?: (attachments: NativeConversationAttachment[]) => void;
   onRemoveAttachment?: (attachment: NativeConversationAttachment) => void;
-  onEditQueuedSubmission?: (submissionId: string, content: string) => void | Promise<void>;
+  onEditQueuedSubmission?: (submissionId: string, content: string, attachments: NativeConversationAttachment[]) => void | Promise<void>;
   onRetryQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   onRetryPendingSend?: (clientUserMessageId: string, intent: 'check' | 'continue') => void | Promise<void>;
   onCancelPendingSend?: (clientUserMessageId: string) => void | Promise<void>;
@@ -828,8 +828,8 @@ export function createConnectedSessionActions(input: { controller: SessionContro
       input.controller.setAttachments(input.controller.getState().attachments.filter((candidate) => candidate !== attachment));
     },
     // 编辑器只有在服务端确认后才退出；失败必须向组件传播以保留用户草稿。
-    onEditQueuedSubmission: async (submissionId, content) => {
-      await input.controller.editQueuedSubmission(submissionId, content);
+    onEditQueuedSubmission: async (submissionId, content, attachments) => {
+      await input.controller.editQueuedSubmission(submissionId, content, attachments);
     },
     // 重试失败必须回到原消息旁，不能吞掉拒绝原因或重复弹出全局错误。
     onRetryQueuedSubmission: async (submissionId) => {

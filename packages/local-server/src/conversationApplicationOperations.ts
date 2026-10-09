@@ -2015,7 +2015,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
   }
 
   /** 验证附件来源，并将服务端确认的单个真实路径授权传给运行时。 */
-  function normalizeNativeConversationAttachments(value: unknown, projectLocalPath: string): NativeConversationAttachment[] {
+  function normalizeNativeConversationAttachments(value: unknown, projectLocalPath: string, existingAttachments: readonly NativeConversationAttachment[] = []): NativeConversationAttachment[] {
     if (value === undefined) return [];
     if (!Array.isArray(value)) throw nativeApiError('ZEUS_INVALID_CONVERSATION_ATTACHMENT', 'attachments must be an array.');
     return value.map((attachment, index) => {
@@ -2035,6 +2035,18 @@ export function createConversationApplicationOperations(dependencies: Conversati
       const uploadRef = typeof attachment.uploadRef === 'string' && attachment.uploadRef.trim() ? attachment.uploadRef.trim() : undefined;
       if ((localPath ? 1 : 0) + (uploadRef ? 1 : 0) !== 1) {
         throw nativeApiError('ZEUS_INVALID_CONVERSATION_ATTACHMENT', `Attachment ${index} requires exactly one of localPath or uploadRef.`);
+      }
+      /** 原消息已有的外部文件只能复用持久化授权，客户端不能扩展目录或改写授权。 */
+      const existing = localPath ? existingAttachments.find((candidate) => candidate.localPath === localPath && candidate.authorizedPath === localPath) : undefined;
+      if (existing) {
+        try {
+          /** 再次核对真实路径，防止原文件被替换为指向其他位置的链接。 */
+          const pathStat = statSync(localPath!);
+          if (realpathSync(localPath!) !== localPath || (!pathStat.isFile() && !pathStat.isDirectory())) throw new Error('Existing attachment path changed.');
+        } catch {
+          throw nativeApiError('ZEUS_INVALID_CONVERSATION_ATTACHMENT_GRANT', `Attachment ${index} granted path is no longer available.`);
+        }
+        return { ...existing };
       }
       let canonicalLocalPath: string | undefined;
       let authorizedPath: string | undefined;

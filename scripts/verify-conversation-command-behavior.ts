@@ -17,6 +17,7 @@ import {
 } from '../packages/storage/src/index.js';
 import { archiveUnboundConversationLocally, restoreUnboundConversationLocally } from '../packages/local-server/src/unboundConversationArchiveApplication.js';
 import { boundLiveProcessPayload } from '../packages/local-server/src/livePayloadBudget.js';
+import { ConversationQueueCoreMutationApplication } from '../packages/local-server/src/conversationQueueCoreMutationApplication.js';
 import { describeUserFacingError } from '../packages/shared/src/userFacingError.js';
 import {
   ConversationCommandApplication,
@@ -372,6 +373,60 @@ try {
         !isCancellableSubmission({ status: 'active', providerTurnId: 'turn-1' }),
       '未完成写入与可取消两个集合不得互相替代：暂停项可取消但不在途，已绑定轮次的活动项不可取消',
     );
+    /** 复用真实仓储验证正文与附件 replacement，隔离于其他队列场景。 */
+    const editConversation = conversations.create({ projectId: project.id, providerId: 'codex', title: '排队附件编辑探针', providerState: 'unbound' });
+    /** 两个同名附件仍按受信路径区分。 */
+    const editAttachments = [
+      { name: '同名.png', mime: 'image/png', size: 12, localPath: join(probeRoot, 'first.png') },
+      { name: '同名.png', mime: 'image/png', size: 24, localPath: join(probeRoot, 'second.png') },
+    ];
+    /** 检查入口使用生产业务应用，不替换或模拟数据库写入。 */
+    const queueEdits = new ConversationQueueCoreMutationApplication({
+      submissions,
+      execution: archivePorts.execution,
+      requests: archivePorts.requests,
+      commandDeliveries: deliveries,
+      now: () => new Date().toISOString(),
+      snapshot: (conversationId) => submissions.listReorderableByConversation(conversationId),
+    });
+    /** 每次编辑读取新的 replacement 身份，与实际客户端回执一致。 */
+    let editable = submissions.createOrGet({
+      id: 'attachment-edit-probe',
+      conversationId: editConversation.id,
+      idempotencyKey: 'attachment-edit-probe',
+      clientMessageId: 'attachment-edit-probe',
+      requestHash: 'd'.repeat(64),
+      kind: 'message',
+      requestedDelivery: 'queue',
+      status: 'queued',
+      input: { text: '原说明', composerDraft: '原说明', attachments: editAttachments, questionAnswer: { answerAttachmentIndices: { question: [0, 1] } } },
+      createdAt: new Date().toISOString(),
+    });
+    queueEdits.update({ conversationId: editConversation.id, submissionId: editable.id, content: '新说明', attachments: [editAttachments[1]!] });
+    assertProbe(submissions.getById(editable.id)?.status === 'cancelled', '编辑必须取消旧发送信封，不能留下重复待发项');
+    editable = submissions.listReorderableByConversation(editConversation.id)[0]!;
+    assertProbe(JSON.parse(editable.inputJson).attachments[0].localPath === editAttachments[1]!.localPath && JSON.parse(editable.inputJson).text === '新说明', '正文与移除后的附件必须一起持久化');
+    assertProbe(JSON.parse(editable.inputJson).questionAnswer.answerAttachmentIndices.question.join(',') === '0', '移除附件后原题索引必须指向保留资源的新位置');
+    queueEdits.update({ conversationId: editConversation.id, submissionId: editable.id, content: '', attachments: [editAttachments[0]!] });
+    editable = submissions.listReorderableByConversation(editConversation.id)[0]!;
+    assertProbe(JSON.parse(editable.inputJson).text === '' && JSON.parse(editable.inputJson).attachments[0].localPath === editAttachments[0]!.localPath, '纯附件替换必须保留真实资源并允许空正文');
+    assertProbe(JSON.parse(editable.inputJson).questionAnswer.answerAttachmentIndices.question.length === 0, '替换后的新附件不能冒充原题附件');
+    queueEdits.update({ conversationId: editConversation.id, submissionId: editable.id, content: '保留附件' });
+    editable = submissions.listReorderableByConversation(editConversation.id)[0]!;
+    assertProbe(JSON.parse(editable.inputJson).attachments.length === 1, '省略附件字段必须保留已有附件');
+    observed.emptyQueueEdit = captureCode(() => queueEdits.update({ conversationId: editConversation.id, submissionId: editable.id, content: '', attachments: [] }));
+    assertProbe(observed.emptyQueueEdit === 'ZEUS_INVALID_CONVERSATION_MESSAGE' && submissions.getById(editable.id)?.status === 'queued', '空消息拒绝必须保留原排队消息');
+    queueEdits.update({ conversationId: editConversation.id, submissionId: editable.id, content: '只有正文', attachments: [] });
+    editable = submissions.listReorderableByConversation(editConversation.id)[0]!;
+    assertProbe(JSON.parse(editable.inputJson).attachments.length === 0, '显式空数组必须删除全部附件');
+    submissions.updateStatus(editable.id, 'queued', { providerTurnId: 'attachment-edit-provider-turn' });
+    assertProbe(
+      captureCode(() => queueEdits.update({ conversationId: editConversation.id, submissionId: editable.id, content: '迟到编辑', attachments: [] })) === 'ZEUS_NATIVE_SUBMISSION_NOT_EDITABLE',
+      '已经绑定 Provider 轮次的消息必须拒绝编辑',
+    );
+    observed.queueAttachmentEdit = '正文、附件删除、替换、纯附件、保留与空消息拒绝通过';
+    console.log(JSON.stringify({ queueAttachmentEdit: observed.queueAttachmentEdit, answerAttachmentIndices: 'passed', dispatchedEditRejected: true }));
+
     /** 巨大的工具输出必须在推送前被裁剪，绝不能把耐久事件顶到 1 MiB 协议预算。 */
     const fatLivePayload = boundLiveProcessPayload({ title: '命令输出', detail: { payload: { output: 'x'.repeat(2 * 1024 * 1024), exitCode: 0 } } });
     assertProbe(

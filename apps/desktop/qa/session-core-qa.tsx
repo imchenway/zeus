@@ -413,6 +413,8 @@ function QueueActionsQa() {
   const [outcomes, setOutcomes] = useState<Record<string, 'accepted' | 'deleted'>>({});
   /** 编辑结果继续绑定原提交身份，便于核对单行摘要即时更新。 */
   const [editedContent, setEditedContent] = useState<Record<string, string>>({});
+  /** 保存后的附件投影独立于原场景，重新编辑时读取同一份草稿。 */
+  const [editedAttachments, setEditedAttachments] = useState<Record<string, NativeConversationAttachment[]>>({});
   /** 人工重排结果按服务端完整身份列表模拟回写。 */
   const [queueOrder, setQueueOrder] = useState<string[]>([]);
   /** 输入框草稿只服务当前预览，不触碰正式会话。 */
@@ -421,6 +423,25 @@ function QueueActionsQa() {
   const surface = useRef<HTMLDivElement>(null);
   /** 显示操作回调与人工运行检查结果。 */
   const [result, setResult] = useState('等待检查');
+  useEffect(() => {
+    /** 浏览器场景只模拟宿主资源桥；Electron 保留真实选择、授权和预览能力。 */
+    if (window.zeus) return;
+    window.zeus = {
+      chooseConversationResources: async () => [{ name: '新增附件.txt', mime: 'text/plain', size: 12, kind: 'file', uploadRef: 'qa:queue-picked' }],
+      authorizeConversationFiles: async (files, source) => {
+        await nextQaTask();
+        return {
+          resources: files.map((file) => ({ name: file.name, mime: file.type || 'application/octet-stream', size: file.size, kind: file.type.startsWith('image/') ? 'image' : 'file', source, uploadRef: `qa:queue:${file.name}` })),
+          failedCount: 0,
+        };
+      },
+      materializeConversationResources: async (resources) =>
+        resources.map((resource) => ({ name: resource.name ?? 'Pasted text.txt', mime: 'text/plain', size: new Blob([resource.text ?? '']).size, kind: 'pasted_text', restorableText: resource.text, uploadRef: 'qa:queue:text' })),
+    } as NonNullable<Window['zeus']>;
+    return () => {
+      delete window.zeus;
+    };
+  }, []);
   /** 定稿对照文本与英文文本具有同一含义。 */
   const reference = language === 'zh-CN' ? '而且主智能体发送给子智能体的提示词为什么没显示?' : 'Why are the prompts sent from the main agent to subagents not displayed?';
   /** 长文本保留 Markdown 结构，并触发原有展开全文入口。 */
@@ -446,12 +467,13 @@ function QueueActionsQa() {
       providerTurnId: scenario === 'accepted' || outcomes[`qa-submission-${index + 1}`] === 'accepted' ? 'qa-turn' : null,
       createdAt: '2026-09-10T02:00:00Z',
       attachments:
-        sample === 'attachment' || sample === 'attachment-only'
+        editedAttachments[`qa-submission-${index + 1}`] ??
+        (sample === 'attachment' || sample === 'attachment-only'
           ? [
               { name: '排队消息说明.md', mime: 'text/markdown', size: 128, kind: 'file' as const, localPath: '/qa/排队消息说明.md' },
               { name: '界面参考图.png', mime: 'image/png', size: 2048, kind: 'image' as const, localPath: '/qa/界面参考图.png' },
             ]
-          : [],
+          : []),
       error:
         scenario === 'outcome_unknown'
           ? { code: 'ZEUS_CODEX_RPC_PROTOCOL_ERROR', message: 'Codex 响应无法读取，已发出的操作需要核对结果。', recoveryRequired: true }
@@ -617,8 +639,10 @@ function QueueActionsQa() {
           <QueuedConversationMessages
             state={state}
             language={language}
-            onEdit={(id, nextContent) => {
+            onEdit={async (id, nextContent, attachments) => {
+              if (failAction) throw new Error('保存失败，编辑内容已保留。');
               setEditedContent((current) => ({ ...current, [id]: nextContent }));
+              setEditedAttachments((current) => ({ ...current, [id]: attachments }));
               setResult(`编辑回调已触发：${id}`);
             }}
             onDelete={(id) => runAction(id, 'deleted')}
@@ -3018,6 +3042,8 @@ function MarkdownReviewQa() {
 function NavigationQa() {
   /** 地址允许独立核对超过七条、长历史和窄窗口。 */
   const parameters = useMemo(() => new URLSearchParams(window.location.search), []);
+  /** 缓存会话保留正文，按地址分别检查普通订阅和真实重连提示。 */
+  const sessionTransport = parameters.get('session-transport');
   /** 模拟先取得历史目录、随后模型确认编号的任务推送恢复。 */
   const taskHistory = parameters.has('task-history');
   /** 同一目录混合普通发言、同步答题卡和异步答题卡。 */
@@ -3109,9 +3135,10 @@ function NavigationQa() {
   );
   /** 目录首次读取与正文独立。 */
   const loadNavigation = useCallback(async () => {
+    if (parameters.has('directory-delay')) await new Promise<void>((resolve) => window.setTimeout(resolve, 15_000));
     if (directoryFailure.current) throw new Error('验收注入：目录读取失败');
     return { conversationId, throughEventSeq: 1, entries };
-  }, [conversationId, entries]);
+  }, [conversationId, entries, parameters]);
   /** 延迟补齐目标轮次，让锚点补偿经历真实组件尺寸变化。 */
   const loadTurn = useCallback(async (turnId: string) => {
     await new Promise((resolve) => setTimeout(resolve, 120));
@@ -3209,8 +3236,11 @@ function NavigationQa() {
     return {
       ...createInitialSessionState(),
       conversationId,
-      transportState: 'ready',
-      conversationState: 'idle',
+      activeTurnId: sessionTransport ? entries[count - 1]!.turnId : null,
+      transportState: ['disconnected', 'connecting', 'hydrating', 'ready', 'reconnecting', 'failed'].includes(sessionTransport ?? '') ? (sessionTransport as NativeSessionState['transportState']) : 'ready',
+      providerReconnectAttempt: parameters.has('provider-retry') ? 2 : 0,
+      providerReconnectAttempts: parameters.has('provider-retry') ? 5 : 0,
+      conversationState: sessionTransport ? 'active_prework' : 'idle',
       transcriptRevision: 0,
       pendingRequests: entries.flatMap((entry, index) =>
         entry.requestId && loaded.has(index)
@@ -3238,12 +3268,21 @@ function NavigationQa() {
       turnsByProviderId: Object.fromEntries(
         entries.map((entry) => [
           entry.turnId,
-          { id: entry.turnId, providerTurnId: entry.turnId, submissionId: null, status: 'completed', startedAt: entry.occurredAt, completedAt: entry.occurredAt, createdAt: entry.occurredAt, updatedAt: entry.occurredAt },
+          {
+            id: entry.turnId,
+            providerTurnId: entry.turnId,
+            submissionId: null,
+            status: sessionTransport && entry === entries[count - 1] ? 'running' : 'completed',
+            startedAt: entry.occurredAt,
+            completedAt: sessionTransport && entry === entries[count - 1] ? null : entry.occurredAt,
+            createdAt: entry.occurredAt,
+            updatedAt: entry.occurredAt,
+          },
         ]),
       ),
-      terminalTurnIds: Object.fromEntries(entries.map((entry) => [entry.turnId, 'completed'])),
+      terminalTurnIds: Object.fromEntries(entries.filter((entry) => !sessionTransport || entry !== entries[count - 1]).map((entry) => [entry.turnId, 'completed'])),
     };
-  }, [loaded, entries, count, taskHistory, taskLayout, questionHistory, questionDelivery, questionPayload, questionResponse, oldQuestionResponse, conversationId]);
+  }, [loaded, entries, count, taskHistory, taskLayout, questionHistory, questionDelivery, questionPayload, questionResponse, oldQuestionResponse, conversationId, sessionTransport, parameters]);
 
   /** 持续生成经过正式归约器，使浏览器回归覆盖内容修订和增量投影。 */
   const projectedState = useRef<{ base: NativeSessionState; state: NativeSessionState } | null>(null);

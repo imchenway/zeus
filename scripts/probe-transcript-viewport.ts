@@ -55,7 +55,7 @@ registerHooks({
 /** tsx 探针不经过 Vite 的 JSX 自动运行时，显式提供组件模块需要的 React 命名空间。 */
 (globalThis as typeof globalThis & { React: typeof import('react') }).React = await import('react');
 /** 将历史过程分页串联到正式行编号和轮次分组，覆盖同轮多段思考。 */
-const { projectTranscriptRows, projectTranscriptTurnRows, projectTranscriptFailureRows, projectQueuedSubmissionItems } = await import('../apps/desktop/src/renderer/session/ConversationTranscript.js');
+const { projectTranscriptRows, projectTranscriptTurnRows, projectTranscriptFailureRows, projectQueuedSubmissionItems, transcriptRunStatus } = await import('../apps/desktop/src/renderer/session/ConversationTranscript.js');
 /** 工作面入口也引用组件样式，必须在样式加载钩子安装后导入。 */
 const { resolveConversationNavigationId, resolveSelectedNativeConversationForProject } = await import('../apps/desktop/src/renderer/features/workspace/workspaceSupport.js');
 
@@ -103,6 +103,29 @@ if (process.argv.includes('--source-aliases-only')) {
 if (process.argv.includes('--async-question-recovery')) {
   verifyAsyncQuestionRecovery();
   console.log('async-question-recovery=passed');
+  process.exit(0);
+}
+
+/** 切回缓存会话的普通读取不能误报断线，真实恢复及已确认运行态继续显示。 */
+function verifyTranscriptRunStatus(): void {
+  /** 缓存保留活动轮次，连接由当前订阅重新确认。 */
+  const state: NativeSessionState = { ...createInitialSessionState(), activeTurnId: 'status-turn', conversationState: 'active_prework' };
+  for (const transportState of ['disconnected', 'connecting', 'hydrating', 'failed', 'reconnecting', 'ready'] as const) {
+    assertProbe(
+      transcriptRunStatus({ ...state, transportState }) === (transportState === 'reconnecting' ? 'reconnecting' : transportState === 'ready' ? 'executing' : null),
+      `${transportState} 必须按真实连接状态显示，不能从缓存活动轮次推断重连。`,
+    );
+  }
+  assertProbe(transcriptRunStatus({ ...state, transportState: 'hydrating', providerReconnectAttempt: 2, providerReconnectAttempts: 5 }) === 'reconnecting', 'Provider 明确恢复连接时仍须显示。');
+  assertProbe(transcriptRunStatus({ ...state, transportState: 'ready', conversationState: 'waiting_user_input' }) === 'waiting_input', '正常连接时保留等待回答状态。');
+  assertProbe(transcriptRunStatus({ ...state, transportState: 'ready', conversationState: 'waiting_approval' }) === 'waiting_approval', '正常连接时保留等待审批状态。');
+  assertProbe(transcriptRunStatus({ ...state, transportState: 'connecting', conversationState: 'starting_turn' }) === 'starting', '已提交轮次保留启动处理状态。');
+  assertProbe(transcriptRunStatus({ ...state, transportState: 'reconnecting', terminalTurnIds: { 'status-turn': 'completed' } }) === null, '结束轮次不能显示活动重连提示。');
+}
+verifyTranscriptRunStatus();
+/** 单独检查连接提示，不受无关的历史存储场景影响。 */
+if (process.argv.includes('--run-status-only')) {
+  console.log('transcript-run-status=passed');
   process.exit(0);
 }
 
