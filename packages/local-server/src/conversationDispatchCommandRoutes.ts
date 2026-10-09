@@ -17,6 +17,8 @@ interface ChangeSetInput {
 
 interface QueueUpdateInput {
   content?: unknown;
+  /** 明确传空数组表示删除全部附件，省略字段保留原附件。 */
+  attachments?: unknown;
 }
 
 interface QueueRerouteInput {
@@ -53,7 +55,7 @@ export interface ConversationDispatchCommandRouteOperations {
     operationIdentity: string;
     providerWriteLifecycle: { markPrepared(resourceId: string): Promise<void>; markRpcStarted(resourceId: string): void };
   }): Promise<RouteResponse>;
-  queueUpdate(input: { params: SubmissionParams; content: string }): unknown;
+  queueUpdate(input: { params: SubmissionParams; content: string; attachments?: unknown }): unknown;
   queueRetry(input: { params: SubmissionParams }): unknown;
   prepareQueueReroute(input: { params: SubmissionParams; settings: QueueRerouteInput }): Promise<unknown>;
   queueReroute(input: { params: SubmissionParams; prepared: unknown }): unknown;
@@ -144,14 +146,15 @@ export function registerConversationDispatchCommandRoutes(options: {
   server.patch('/api/projects/:projectId/conversations/:conversationId/queue/:submissionId', async (request: FastifyRequest<{ Params: SubmissionParams; Body: ConversationDispatchMutationRequest<QueueUpdateInput> }>, reply) => {
     try {
       const parsed = parseSubmissionCommand(request, conversationDispatchCommandTypes.queueUpdate);
-      assertExactInputKeys(parsed.input, ['content'], parsed.command.commandType);
-      const content = requiredString(parsed.input.content, 'content').trim();
-      if (!content) throw routeError('ZEUS_INVALID_CONVERSATION_MESSAGE', 'Queued message content is required.', 400);
+      assertOnlyInputKeys(parsed.input, ['content', 'attachments'], parsed.command.commandType);
+      if (typeof parsed.input.content !== 'string') throw routeError('ZEUS_INVALID_CONVERSATION_MESSAGE', 'Queued message content must be a string.', 400);
+      /** 空正文是否有效由业务层结合原附件、替换附件和结构化内容判断。 */
+      const content = parsed.input.content.trim();
       const executed = application.executeCore({
         parsed,
         destinationId: 'conversation-queue-application',
         resourceId: request.params.submissionId,
-        mutateBusinessState: () => operations.queueUpdate({ params: request.params, content }),
+        mutateBusinessState: () => operations.queueUpdate({ params: request.params, content, attachments: parsed.input.attachments }),
       });
       afterCore(executed.replayed, 'queue_update', request.params, executed.result);
       return operations.readQueueState(request.params);

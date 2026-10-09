@@ -136,7 +136,7 @@ export interface ConversationApiClient {
   updateNativeNextTurnSettings: (projectId: string, conversationId: string, settings: NativeNextTurnSettings) => Promise<NativeNextTurnSettings>;
   sendNativeMessage: (projectId: string, conversationId: string, input: SendNativeMessageRequest) => Promise<NativeOperationAcceptance>;
   forgetNativeMessageCommand: (projectId: string, conversationId: string, idempotencyKey: string) => void;
-  editNativeQueuedSubmission: (projectId: string, conversationId: string, submissionId: string, content: string) => Promise<NativeQueueSnapshot>;
+  editNativeQueuedSubmission: (projectId: string, conversationId: string, submissionId: string, content: string, attachments?: NativeConversationAttachment[]) => Promise<NativeQueueSnapshot>;
   retryNativeQueuedSubmission: (projectId: string, conversationId: string, submissionId: string) => Promise<NativeQueueSnapshot>;
   rerouteNativeQueuedSubmission: (projectId: string, conversationId: string, submissionId: string, settings: NativeNextTurnSettings) => Promise<NativeQueueSnapshot>;
   deleteNativeQueuedSubmission: (projectId: string, conversationId: string, submissionId: string) => Promise<NativeQueueSnapshot>;
@@ -333,8 +333,13 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
         scopeId: conversationId,
         reconnectIdentity: idempotencyKey,
       }),
-    editNativeQueuedSubmission: async (projectId, conversationId, submissionId, content) => {
-      const body = await buildConversationDispatchCommandRequest({ commandType: conversationDispatchClientCommandTypes.queueUpdate, scopeKind: 'submission', scopeId: submissionId, value: { content } });
+    editNativeQueuedSubmission: async (projectId, conversationId, submissionId, content, attachments) => {
+      const body = await buildConversationDispatchCommandRequest({
+        commandType: conversationDispatchClientCommandTypes.queueUpdate,
+        scopeKind: 'submission',
+        scopeId: submissionId,
+        value: { content, ...(attachments !== undefined ? { attachments } : {}) },
+      });
       return transport.request<NativeQueueSnapshot>(queueSubmissionPath(projectId, conversationId, submissionId), jsonRequest('PATCH', body));
     },
     retryNativeQueuedSubmission: async (projectId, conversationId, submissionId) => {

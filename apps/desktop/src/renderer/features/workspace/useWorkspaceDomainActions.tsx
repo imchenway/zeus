@@ -3065,8 +3065,9 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     });
   }
 
-  function editTaskModelPushPendingMessage(taskId: string, messageId: string, content: string): void {
-    mutateTaskModelPushPending(taskId, (pending) => updateTaskModelPushDeferredMessages(pending, (messages) => messages.map((message) => (message.id === messageId ? { ...message, content } : message))));
+  /** 待建会话消息的正文与附件一起替换，取消编辑不触碰原草稿。 */
+  function editTaskModelPushPendingMessage(taskId: string, messageId: string, content: string, attachments: NativeConversationAttachment[]): void {
+    mutateTaskModelPushPending(taskId, (pending) => updateTaskModelPushDeferredMessages(pending, (messages) => messages.map((message) => (message.id === messageId ? { ...message, content, attachments } : message))));
   }
 
   function deleteTaskModelPushPendingMessage(taskId: string, messageId: string): void {
@@ -3117,7 +3118,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         if (!current) return;
         updateAttachments(current.session.attachments.filter((candidate) => !(candidate.name === attachment.name && candidate.localPath === attachment.localPath && candidate.uploadRef === attachment.uploadRef)));
       },
-      onEditQueuedSubmission: (messageId, content) => editTaskModelPushPendingMessage(pending.task.id, messageId, content),
+      onEditQueuedSubmission: (messageId, content, attachments) => editTaskModelPushPendingMessage(pending.task.id, messageId, content, attachments),
       onDeleteQueuedSubmission: (messageId) => deleteTaskModelPushPendingMessage(pending.task.id, messageId),
       onSendQueuedNow: (messageId) => steerTaskModelPushPendingMessage(pending.task.id, messageId),
       onReorderQueue: (orderedIds) => reorderTaskModelPushPendingMessages(pending.task.id, orderedIds),

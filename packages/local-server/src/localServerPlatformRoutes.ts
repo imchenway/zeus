@@ -484,7 +484,7 @@ export type LocalServerPlatformRouteDependencies = Record<string, any> & {
   conversationDispatchCommands: ConversationDispatchCommandApplication;
   conversationAttachmentRoot?: string;
   /** 普通消息与计划修改共享同一个受信资源校验入口。 */
-  normalizeNativeConversationAttachments(value: unknown, projectLocalPath: string): NativeConversationAttachmentInput[];
+  normalizeNativeConversationAttachments(value: unknown, projectLocalPath: string, existingAttachments?: readonly NativeConversationAttachmentInput[]): NativeConversationAttachmentInput[];
   taskAttachmentRoot?: string;
   conversationProviderItems: ConversationProviderItemRepository;
   conversationRequests: ConversationServerRequestRepository;
@@ -1845,9 +1845,20 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           request: { changeSetId, expectedState, idempotencyKey: operationIdentity },
         }),
       message: executeConversationDispatchMessage,
-      queueUpdate: ({ params, content }) => {
-        requireNativeQueueConversation(params);
-        return conversationQueueCoreMutations.update({ conversationId: params.conversationId, submissionId: params.submissionId, content });
+      queueUpdate: ({ params, content, attachments }) => {
+        /** 附件授权只来自当前项目与当前提交，不复用其他会话的文件权限。 */
+        const conversation = requireNativeQueueConversation(params);
+        /** 只复用当前会话拥有的提交授权。 */
+        const submission = conversationSubmissions.getById(params.submissionId);
+        if (!submission || submission.conversationId !== conversation.id) throw nativeApiError('ZEUS_NATIVE_SUBMISSION_NOT_FOUND', 'Native submission was not found.', 404);
+        /** 新附件按原会话项目校验可信目录。 */
+        const project = projects.getById(conversation.projectId);
+        if (!project) throw nativeApiError('ZEUS_PROJECT_NOT_FOUND', 'Conversation project was not found.', 404);
+        /** 这里只读取服务端自己的持久化输入，忽略客户端声明的 authorizedPath。 */
+        const persisted = JSON.parse(submission.inputJson) as { attachments?: NativeConversationAttachmentInput[] };
+        /** 省略字段保留旧附件，明确传列表时复验每个资源。 */
+        const normalized = attachments === undefined ? undefined : normalizeNativeConversationAttachments(attachments, project.localPath, persisted.attachments ?? []);
+        return conversationQueueCoreMutations.update({ conversationId: params.conversationId, submissionId: params.submissionId, content, ...(normalized !== undefined ? { attachments: normalized } : {}) });
       },
       queueRetry: ({ params }) => {
         const conversation = requireNativeQueueConversation(params);

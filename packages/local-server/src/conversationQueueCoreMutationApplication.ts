@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { ConversationExecutionRepository, ConversationServerRequestRepository, ConversationSubmissionRepository, isQueueMemberStatus, type CommandDeliveryRepository, type ZeusConversationSubmissionRecord } from '@zeus/storage';
 import { hasUnwrittenSubmissionEvidence } from './unboundConversationArchiveApplication.js';
+import type { NativeConversationAttachmentInput } from './codexNativeConversationContracts.js';
 
 /**
  * 自动排空只选择仍处于 queued 的最早提交。paused/failed 是需要人工处理或保留审计的
@@ -28,10 +29,11 @@ export class ConversationQueueCoreMutationApplication {
     },
   ) {}
 
-  update(input: { conversationId: string; submissionId: string; content: string }): unknown {
+  /** 原子替换正文和已授权附件，省略附件字段时沿用原列表。 */
+  update(input: { conversationId: string; submissionId: string; content: string; attachments?: NativeConversationAttachmentInput[] }): unknown {
     const submission = this.requireOwnedSubmission(input.conversationId, input.submissionId);
     if (planControlModeForSubmission(submission)) throw mutationError('ZEUS_PLAN_CONTROL_SUBMISSION_IMMUTABLE', 'Plan control submissions cannot be edited.');
-    if (!isQueueMemberStatus(submission.status)) {
+    if (!isQueueMemberStatus(submission.status) || submission.providerTurnId) {
       throw mutationError('ZEUS_NATIVE_SUBMISSION_NOT_EDITABLE', 'Only queued, paused, or failed submissions can be edited.');
     }
     const persisted = parseJsonRecord(submission.inputJson);
@@ -67,7 +69,31 @@ export class ConversationQueueCoreMutationApplication {
     }
     const nextComposerDraft = input.content.trim();
     const nextProviderText = [nextComposerDraft, preservedSuffix].filter(Boolean).join('\n\n');
-    const next = { ...persisted, text: nextProviderText, composerDraft: nextComposerDraft, displayText: nextComposerDraft };
+    /** 空数组清空附件；旧调用省略字段时不丢失原附件。 */
+    const attachments = input.attachments ?? (Array.isArray(persisted.attachments) ? persisted.attachments : []);
+    if (!nextProviderText && attachments.length === 0) throw mutationError('ZEUS_INVALID_CONVERSATION_MESSAGE', '消息需要包含正文或附件。', 400);
+    /** 结构化答案保留原题归属，移除或换位后只重映射仍存在的附件。 */
+    const questionAnswer = isRecord(persisted.questionAnswer) ? { ...persisted.questionAnswer } : null;
+    if (questionAnswer && isRecord(questionAnswer.answerAttachmentIndices) && input.attachments !== undefined) {
+      /** 历史索引对应原列表，新增附件作为消息补充，不擅自分配到题目。 */
+      const previousAttachments = Array.isArray(persisted.attachments) ? persisted.attachments : [];
+      questionAnswer.answerAttachmentIndices = Object.fromEntries(
+        Object.entries(questionAnswer.answerAttachmentIndices).map(([id, indices]) => [
+          id,
+          Array.isArray(indices)
+            ? indices.flatMap((index) => {
+                /** 只保留具有同一受信引用的附件，不按文件名猜测身份。 */
+                const previous = previousAttachments[index];
+                /** 原索引只能指向新列表中的同一资源。 */
+                const position = isRecord(previous) ? attachments.findIndex((attachment) => attachment.localPath === previous.localPath && attachment.uploadRef === previous.uploadRef) : -1;
+                return position >= 0 ? [position] : [];
+              })
+            : [],
+        ]),
+      );
+    }
+    /** 摘要、实际发送内容和附件在同一 replacement 中持久化。 */
+    const next = { ...persisted, text: nextProviderText, composerDraft: nextComposerDraft, displayText: nextComposerDraft, attachments, ...(questionAnswer ? { questionAnswer } : {}) };
     this.options.submissions.createReplacement(submission.id, { requestHash: requestHash(next), input: next, reason: 'edit', updatedAt: this.options.now() });
     return this.options.snapshot(input.conversationId);
   }

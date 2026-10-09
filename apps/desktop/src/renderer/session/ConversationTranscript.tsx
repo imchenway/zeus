@@ -1417,20 +1417,19 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           <span ref={latestContentMarkerRef} className="session-latest-content-marker" aria-hidden="true" />
         </section>
         {showNavigation ? <ConversationNavigation key={props.state.conversationId} entries={navigationEntries} activeRowKey={activeNavigationKey} language={props.language} shellRef={shellRef} onNavigate={navigateToEntry} /> : null}
-        {props.onLoadNavigation && (navigation.error || navigationReadError || (!navigation.snapshot && navigation.loading)) ? (
+        {/* 目录在后台补齐，不把已有正文的正常读取显示成会话加载；失败仍可原位重试。 */}
+        {props.onLoadNavigation && (navigation.error || navigationReadError) ? (
           <div className="session-navigation-status" role="status">
-            <span>{navigationReadError?.message ?? navigation.error ?? (props.language === 'zh-CN' ? '正在读取完整历史目录…' : 'Loading all messages…')}</span>
-            {navigation.error || navigationReadError ? (
-              <button
-                type="button"
-                onClick={() => {
-                  if (navigationReadError) navigateToEntry(navigationReadError.entry);
-                  else navigation.retry();
-                }}
-              >
-                {props.language === 'zh-CN' ? '重试' : 'Retry'}
-              </button>
-            ) : null}
+            <span>{navigationReadError?.message ?? navigation.error}</span>
+            <button
+              type="button"
+              onClick={() => {
+                if (navigationReadError) navigateToEntry(navigationReadError.entry);
+                else navigation.retry();
+              }}
+            >
+              {props.language === 'zh-CN' ? '重试' : 'Retry'}
+            </button>
           </div>
         ) : null}
         <V2HistoryPageStatus state={props.state} language={props.language} enabled={historyPagingArmed && historyPagingRequested} intersecting={historySentinelIntersecting} />
@@ -2067,7 +2066,9 @@ export function transcriptRunStatus(state: NativeSessionState): 'starting' | 'ex
   if (state.providerReconnectAttempt > 0) return 'reconnecting';
   if (state.conversationState === 'starting_turn') return 'starting';
   if (!state.activeTurnId || state.terminalTurnIds[state.activeTurnId]) return null;
-  if (state.transportState !== 'ready') return 'reconnecting';
+  // 切回会话需要重新订阅和读取权威状态，只有明确的重连状态才说明连接中断。
+  if (state.transportState === 'reconnecting') return 'reconnecting';
+  if (state.transportState !== 'ready') return null;
   if (state.conversationState === 'waiting_user_input') return 'waiting_input';
   if (state.conversationState === 'waiting_approval') return 'waiting_approval';
   if (state.conversationState !== 'active_prework' && state.conversationState !== 'active_final_answer') return null;

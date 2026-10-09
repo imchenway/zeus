@@ -1,4 +1,4 @@
-import { type FormEvent, type KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowBendUpRightIcon as ArrowBendUpRight } from '@phosphor-icons/react/dist/csr/ArrowBendUpRight';
 import { ArrowDownIcon as ArrowDown } from '@phosphor-icons/react/dist/csr/ArrowDown';
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
@@ -7,11 +7,12 @@ import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paper
 import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { canSteerActiveTurn } from './ConversationComposer.js';
-import { ConversationComposerAttachments } from './ConversationComposerAttachments.js';
+import { ConversationComposerAttachments, conversationAttachmentIdentity } from './ConversationComposerAttachments.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { composerQueuedSubmissions, reorderableQueuedSubmissions } from './conversationQueuePresentation.js';
-import type { NativeQueuedSubmission, NativeSessionState } from './sessionTypes.js';
+import type { NativeConversationAttachment, NativeQueuedSubmission, NativeSessionState } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
+import { useConversationInputResources } from './useConversationInputResources.js';
 import { autosizeTextarea } from './textareaAutosize.js';
 import { formatAsyncQuestionAnswer } from '@zeus/shared';
 
@@ -19,7 +20,8 @@ import { formatAsyncQuestionAnswer } from '@zeus/shared';
 export interface QueuedConversationMessagesProps {
   state: NativeSessionState;
   language: SessionUiLanguage;
-  onEdit?: (submissionId: string, content: string) => void | Promise<void>;
+  /** 编辑正文和附件使用同一次权威替换。 */
+  onEdit?: (submissionId: string, content: string, attachments: NativeConversationAttachment[]) => void | Promise<void>;
   onDelete?: (submissionId: string) => void | Promise<void>;
   onSendNow?: (submissionId: string) => void | Promise<void>;
   onReorder?: (orderedSubmissionIds: string[]) => void | Promise<void>;
@@ -37,7 +39,8 @@ const labels = {
     editPlaceholder: '输入消息内容',
     editAttachmentPlaceholder: '添加说明（可选）',
     editShortcut: '⌘ Enter 保存',
-    attachments: (count: number) => `${count} 个附件 · 附件保持不变`,
+    attachments: (count: number) => `${count} 个附件`,
+    addAttachments: '添加附件',
     save: '保存',
     cancel: '取消',
     steer: '引导到当前回复',
@@ -61,7 +64,8 @@ const labels = {
     editPlaceholder: 'Enter message content',
     editAttachmentPlaceholder: 'Add a note (optional)',
     editShortcut: '⌘ Enter to save',
-    attachments: (count: number) => `${count} attachment${count === 1 ? '' : 's'} · Unchanged`,
+    attachments: (count: number) => `${count} attachment${count === 1 ? '' : 's'}`,
+    addAttachments: 'Add attachments',
     save: 'Save',
     cancel: 'Cancel',
     steer: 'Steer into the current response',
@@ -87,16 +91,12 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
   const reorderableQueue = useMemo(() => reorderableQueuedSubmissions(props.state.queue), [props.state.queue]);
   /** 当前展开编辑器的提交身份。 */
   const [editingId, setEditingId] = useState<string | null>(null);
-  /** 编辑器保留原始多行正文，普通卡片仍只显示一行摘要。 */
-  const [editDraft, setEditDraft] = useState('');
   /** 当前进行中的操作用于阻止重复点击。 */
   const [actionId, setActionId] = useState<string | null>(null);
   /** 操作失败紧邻原消息展示，不污染整段会话。 */
   const [actionError, setActionError] = useState<{ submissionId: string; message: string } | null>(null);
   /** 排序结果通过礼貌播报提供给辅助技术。 */
   const [announcement, setAnnouncement] = useState('');
-  /** 编辑器挂载后恢复键盘焦点。 */
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   /** 只有真实可写连接允许修改权威队列。 */
   const writable = props.state.transportState === 'ready' && props.state.conversationState !== 'legacy_readonly';
   /** 控制器操作和组件本地操作共同锁定按钮。 */
@@ -105,55 +105,30 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
   useEffect(() => {
     if (!editingId || queue.some((submission) => submission.id === editingId)) return;
     setEditingId(null);
-    setEditDraft('');
   }, [editingId, queue]);
-
-  useLayoutEffect(() => {
-    if (!editingId || !textareaRef.current) return;
-    textareaRef.current.focus();
-    autosizeTextarea(textareaRef.current, 42, 0.34);
-  }, [editDraft, editingId]);
 
   if (queue.length === 0 || props.state.snapshot?.providerState === 'failed' || props.state.snapshot?.providerState === 'closed') return null;
 
   /** 进入编辑态时优先恢复用户在 Composer 中实际输入的草稿。 */
   function startEdit(submission: NativeQueuedSubmission): void {
     setEditingId(submission.id);
-    setEditDraft(queuedMessageEditDraft(submission));
     setActionError(null);
   }
 
   /** 退出编辑态但不触碰权威排队内容。 */
   function cancelEdit(): void {
     setEditingId(null);
-    setEditDraft('');
     setActionError(null);
-  }
-
-  /** Escape 关闭编辑器；Command 或 Control 加 Enter 保存多行内容。 */
-  function handleEditKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      event.stopPropagation();
-      cancelEdit();
-      return;
-    }
-    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-      event.preventDefault();
-      event.currentTarget.form?.requestSubmit();
-    }
   }
 
   /** 保存仍使用原提交身份，服务端负责原子替换排队内容。 */
-  async function saveEdit(event: FormEvent<HTMLFormElement>, submission: NativeQueuedSubmission): Promise<void> {
-    event.preventDefault();
-    if (!props.onEdit || !editDraft.trim() || busy) return;
+  async function saveEdit(submission: NativeQueuedSubmission, content: string, attachments: NativeConversationAttachment[]): Promise<void> {
+    if (!props.onEdit || (!content.trim() && attachments.length === 0) || busy) return;
     setActionId(`edit:${submission.id}`);
     setActionError(null);
     try {
-      await props.onEdit(submission.id, editDraft.trim());
+      await props.onEdit(submission.id, content.trim(), attachments);
       setEditingId(null);
-      setEditDraft('');
     } catch (error) {
       setActionError({ submissionId: submission.id, message: actionErrorMessage(error, copy.editFailed) });
     } finally {
@@ -213,33 +188,14 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
             <li key={submission.id}>
               <article className="session-queued-message" data-queue-status={submission.status} data-editing={editingId === submission.id || undefined} aria-busy={actionId?.endsWith(submission.id) || undefined}>
                 {editingId === submission.id ? (
-                  <form className="session-queued-message-editor" onSubmit={(event) => void saveEdit(event, submission)}>
-                    {attachments.length > 0 ? (
-                      <ConversationComposerAttachments attachments={attachments} language={props.language} disabled={busy} ariaLabel={copy.attachments(attachments.length)} className="session-queued-message-attachments" />
-                    ) : null}
-                    <label className="session-sr-only" htmlFor={`queued-message-${submission.id}`}>
-                      {copy.editLabel}
-                    </label>
-                    <textarea
-                      id={`queued-message-${submission.id}`}
-                      ref={textareaRef}
-                      value={editDraft}
-                      disabled={busy}
-                      placeholder={attachments.length > 0 ? copy.editAttachmentPlaceholder : copy.editPlaceholder}
-                      aria-keyshortcuts="Meta+Enter Control+Enter Escape"
-                      onChange={(event) => setEditDraft(event.currentTarget.value)}
-                      onKeyDown={handleEditKeyDown}
-                    />
-                    <footer>
-                      <small aria-hidden="true">{copy.editShortcut}</small>
-                      <button type="button" className="session-queued-message-editor-cancel" onClick={cancelEdit} disabled={busy}>
-                        {copy.cancel}
-                      </button>
-                      <button type="submit" className="session-queued-message-editor-save" disabled={!editDraft.trim() || busy}>
-                        {copy.save}
-                      </button>
-                    </footer>
-                  </form>
+                  <QueuedMessageEditor
+                    submission={submission}
+                    language={props.language}
+                    busy={busy || !submissionWritable}
+                    onSave={(content, attachments) => saveEdit(submission, content, attachments)}
+                    onCancel={cancelEdit}
+                    onError={(message) => setActionError({ submissionId: submission.id, message })}
+                  />
                 ) : (
                   <div className="session-queued-message-content" title={queuedMessageAccessiblePreview(submission, copy.attachmentOnly, props.language)}>
                     <Clock aria-hidden="true" weight="regular" />
@@ -300,6 +256,130 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
         })}
       </ol>
     </section>
+  );
+}
+
+/** 编辑器随当前行挂载，取消、切换消息或发送后不接收旧附件导入回执。 */
+function QueuedMessageEditor(props: {
+  /** 编辑沿用原提交身份，原附件只在保存成功后被替换。 */
+  submission: NativeQueuedSubmission;
+  /** 文案沿用会话语言。 */
+  language: SessionUiLanguage;
+  /** 权威操作期间锁定编辑与重复提交。 */
+  busy: boolean;
+  /** 正文与附件通过同一次队列操作保存。 */
+  onSave(content: string, attachments: NativeConversationAttachment[]): Promise<void>;
+  /** 取消只卸载当前草稿。 */
+  onCancel(): void;
+  /** 导入和保存错误都留在当前消息旁。 */
+  onError(message: string): void;
+}) {
+  /** 恢复完整原稿，避免把单行摘要写回正文。 */
+  const [draft, setDraft] = useState(() => queuedMessageEditDraft(props.submission));
+  /** 独立草稿列表防止移除附件立即影响原排队消息。 */
+  const [attachments, setAttachments] = useState(() => [...(props.submission.attachments ?? [])]);
+  /** 普通 textarea 直接复用现有附件输入与选区接口。 */
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  /** 当前语言的编辑文案。 */
+  const copy = labels[props.language];
+  /** 按真实资源身份移除，保留其他同名附件。 */
+  function removeAttachment(attachment: NativeConversationAttachment): void {
+    setAttachments((current) => current.filter((candidate) => conversationAttachmentIdentity(candidate) !== conversationAttachmentIdentity(attachment)));
+  }
+  /** 选择、粘贴和拖放共用授权、即时预览与异步生命周期。 */
+  const inputResources = useConversationInputResources({
+    attachments,
+    language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+    textareaRef,
+    text: draft,
+    disabled: props.busy,
+    onTextChange: setDraft,
+    onAddAttachments: (added) => {
+      setAttachments((current) => {
+        /** 同一资源重复导入只保留一份，名称相同的不同资源仍可并存。 */
+        const byIdentity = new Map(current.map((attachment) => [conversationAttachmentIdentity(attachment), attachment]));
+        added.forEach((attachment) => byIdentity.set(conversationAttachmentIdentity(attachment), attachment));
+        return [...byIdentity.values()];
+      });
+    },
+    onRemoveAttachment: removeAttachment,
+    onError: props.onError,
+  });
+  /** 导入尚未完成时不能保存一份缺少附件的消息。 */
+  const saveDisabled = props.busy || inputResources.processing || (!draft.trim() && attachments.length === 0);
+
+  useLayoutEffect(() => {
+    textareaRef.current?.focus();
+  }, []);
+  useLayoutEffect(() => {
+    if (textareaRef.current) autosizeTextarea(textareaRef.current, 42, 0.34);
+  }, [draft]);
+
+  /** 表单和快捷键使用同一保存门禁。 */
+  function submit(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    if (!saveDisabled) void props.onSave(draft, attachments);
+  }
+
+  return (
+    <form
+      className="session-queued-message-editor"
+      onSubmit={submit}
+      aria-busy={props.busy || inputResources.processing || undefined}
+      data-resource-dragging={inputResources.dragging || undefined}
+      onDragEnter={inputResources.handleDragEnter}
+      onDragOver={inputResources.handleDragOver}
+      onDragLeave={inputResources.handleDragLeave}
+      onDrop={inputResources.handleDrop}
+    >
+      <ConversationComposerAttachments
+        attachments={attachments}
+        pendingResources={inputResources.pendingResources}
+        language={props.language}
+        disabled={props.busy}
+        ariaLabel={copy.attachments(attachments.length)}
+        className="session-queued-message-attachments"
+        onRemove={removeAttachment}
+        onRestorePastedText={inputResources.restorePastedText}
+      />
+      <label className="session-sr-only" htmlFor={`queued-message-${props.submission.id}`}>
+        {copy.editLabel}
+      </label>
+      <textarea
+        id={`queued-message-${props.submission.id}`}
+        ref={textareaRef}
+        value={draft}
+        disabled={props.busy}
+        placeholder={attachments.length > 0 ? copy.editAttachmentPlaceholder : copy.editPlaceholder}
+        aria-keyshortcuts="Meta+Enter Control+Enter Escape"
+        onChange={(event) => setDraft(event.currentTarget.value)}
+        onPaste={inputResources.handlePaste}
+        onKeyDown={(event) => {
+          inputResources.handlePasteShortcut(event);
+          if (props.busy) return;
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            props.onCancel();
+          } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+            event.preventDefault();
+            if (!saveDisabled) event.currentTarget.form?.requestSubmit();
+          }
+        }}
+      />
+      <footer>
+        <small aria-hidden="true">{copy.editShortcut}</small>
+        <button type="button" title={copy.addAttachments} aria-label={copy.addAttachments} onClick={inputResources.chooseAttachments} disabled={props.busy || inputResources.processing}>
+          <Paperclip aria-hidden="true" />
+        </button>
+        <button type="button" className="session-queued-message-editor-cancel" onClick={props.onCancel} disabled={props.busy}>
+          {copy.cancel}
+        </button>
+        <button type="submit" className="session-queued-message-editor-save" disabled={saveDisabled}>
+          {copy.save}
+        </button>
+      </footer>
+    </form>
   );
 }
 

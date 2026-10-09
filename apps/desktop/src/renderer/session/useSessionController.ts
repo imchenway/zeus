@@ -328,7 +328,8 @@ export interface SessionControllerClient {
   sendNativeMessage(projectId: string, conversationId: string, input: SendNativeMessageRequest): Promise<NativeOperationAcceptance>;
 
   forgetNativeMessageCommand?(projectId: string, conversationId: string, idempotencyKey: string): void;
-  editNativeQueuedSubmission(projectId: string, conversationId: string, submissionId: string, content: string): Promise<NativeQueueSnapshot>;
+  /** 附件列表参与命令摘要，省略时保留服务端原附件。 */
+  editNativeQueuedSubmission(projectId: string, conversationId: string, submissionId: string, content: string, attachments?: NativeConversationAttachment[]): Promise<NativeQueueSnapshot>;
   retryNativeQueuedSubmission(projectId: string, conversationId: string, submissionId: string): Promise<NativeQueueSnapshot>;
   rerouteNativeQueuedSubmission(projectId: string, conversationId: string, submissionId: string, settings: NativeNextTurnSettings): Promise<NativeQueueSnapshot>;
   deleteNativeQueuedSubmission(projectId: string, conversationId: string, submissionId: string): Promise<NativeQueueSnapshot>;
@@ -399,7 +400,7 @@ export interface SessionController {
   answerAsyncQuestion(item: NativeSessionItemBuffer, answers: AsyncQuestionAnswer['answers'], asNewMessage?: boolean, answerAttachments?: Record<string, NativeConversationAttachment[]>): Promise<NativeOperationAcceptance | void>;
   retryPendingSend(clientUserMessageId: string, intent: 'check' | 'continue'): Promise<NativeOperationAcceptance | void>;
   cancelPendingSend(clientUserMessageId: string): Promise<void>;
-  editQueuedSubmission(submissionId: string, content: string): Promise<NativeQueueSnapshot>;
+  editQueuedSubmission(submissionId: string, content: string, attachments?: NativeConversationAttachment[]): Promise<NativeQueueSnapshot>;
   retryQueuedSubmission(submissionId: string): Promise<NativeQueueSnapshot>;
   rerouteQueuedSubmission(submissionId: string, settings: NativeNextTurnSettings): Promise<NativeQueueSnapshot>;
   deleteQueuedSubmission(submissionId: string): Promise<NativeQueueSnapshot>;
@@ -3434,10 +3435,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
     },
     retryPendingSend,
     cancelPendingSend,
-    editQueuedSubmission(submissionId, content) {
+    editQueuedSubmission(submissionId, content, attachments) {
       return runOperation(
-        `queue:edit:${submissionId}:${JSON.stringify(content)}`,
-        () => options.client.editNativeQueuedSubmission(options.projectId, options.conversationId, submissionId, content),
+        `queue:edit:${submissionId}:${JSON.stringify({ content, attachments })}`,
+        () => options.client.editNativeQueuedSubmission(options.projectId, options.conversationId, submissionId, content, attachments),
         (queue) => applyAuthoritativeQueue(queue, submissionId),
       );
     },

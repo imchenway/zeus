@@ -26,6 +26,8 @@ export interface ConversationInputResourceHandlers {
   pendingResources: PendingResourceCardItem[];
   processing: boolean;
   dragging: boolean;
+  /** 文件选择与粘贴、拖放共用异步生命周期，关闭编辑器后忽略迟到回执。 */
+  chooseAttachments(): void;
   handlePaste(event: ClipboardEvent<HTMLTextAreaElement | HTMLDivElement>): void;
   handlePasteShortcut(event: KeyboardEvent<HTMLTextAreaElement | HTMLDivElement>): void;
   handleDragEnter(event: DragEvent<HTMLElement>): void;
@@ -93,6 +95,19 @@ export function useConversationInputResources(options: UseConversationInputResou
     },
     [runResourceOperation],
   );
+
+  /** 选择文件只写入当前草稿，不触碰主输入框或已排队消息。 */
+  const chooseAttachments = useCallback(() => {
+    void runResourceOperation(async (pending) => {
+      /** 选择器返回宿主已经授权的资源，保存消息时服务端仍会复验。 */
+      const bridge = window.zeus?.chooseConversationResources;
+      if (!bridge) throw new Error('当前应用版本未提供会话附件选择能力。');
+      /** 取消选择返回空列表，不视为导入失败。 */
+      const attachments = await bridge();
+      if (!pending.current() || attachments.length === 0) return;
+      latest.current.onAddAttachments(attachments);
+    });
+  }, [runResourceOperation]);
 
   const materializeLongText = useCallback(
     (text: string, selection: TextSelection) => {
@@ -202,6 +217,7 @@ export function useConversationInputResources(options: UseConversationInputResou
     pendingResources: previews.pendingResources,
     processing: previews.processing,
     dragging: dragDepth > 0,
+    chooseAttachments,
     handlePaste,
     handlePasteShortcut,
     handleDragEnter,

@@ -1756,7 +1756,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     snapshot: toQueueSnapshot,
   });
 
-  async function editQueuedSubmission(input: { conversationId: string; submissionId: string; content: string }): Promise<NativeQueueSnapshot> {
+  /** 同一提交的正文和受信附件在同一事务中替换。 */
+  async function editQueuedSubmission(input: { conversationId: string; submissionId: string; content: string; attachments?: NativeConversationAttachmentInput[] }): Promise<NativeQueueSnapshot> {
     const snapshot = options.db.transaction(() => queueCoreMutations.update(input)) as NativeQueueSnapshot;
     await persist();
     return snapshot;

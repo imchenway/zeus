@@ -458,6 +458,8 @@ export interface EditQueuedSubmissionInput {
   conversationId: string;
   submissionId: string;
   content: string;
+  /** 正文与附件一起替换；省略字段保留原附件。 */
+  attachments?: NativeConversationAttachmentInput[];
 }
 
 export interface DeleteQueuedSubmissionInput {
