@@ -335,7 +335,7 @@ function TaskActionCell({ task }: { task: TaskRecord }) {
           size="compact"
           className="task-table-row-action task-table-row-action-push"
           aria-label={label(pushLabel)}
-          title={terminal ? label(workspace.copy.taskActionTerminalHelp) : label(pushLabel)}
+          data-icon-tooltip={terminal ? label(workspace.copy.taskActionTerminalHelp) : label(pushLabel)}
           busy={entry?.status === 'checking'}
           disabled={Boolean(workspace.taskActionBusy) || terminal}
           onClick={() => workspace.onPushTaskToNewConversation?.(task.id)}
@@ -349,7 +349,7 @@ function TaskActionCell({ task }: { task: TaskRecord }) {
           size="compact"
           className="task-table-row-action"
           aria-label={label(workspace.copy.taskActionCodeDelivery)}
-          title={label(workspace.copy.taskActionCodeDelivery)}
+          data-icon-tooltip={label(workspace.copy.taskActionCodeDelivery)}
           disabled={Boolean(workspace.taskActionBusy)}
           onClick={() => workspace.onOpenTaskCodeDelivery?.(task.id)}
         >
@@ -362,7 +362,7 @@ function TaskActionCell({ task }: { task: TaskRecord }) {
           size="compact"
           className="task-table-row-action"
           aria-label={label(workspace.copy.taskActionDelete)}
-          title={label(workspace.copy.taskActionDelete)}
+          data-icon-tooltip={label(workspace.copy.taskActionDelete)}
           disabled={Boolean(workspace.taskActionBusy)}
           onClick={() => workspace.onDeleteTask?.(task.id)}
         >
@@ -416,17 +416,15 @@ export function TaskDataTable({ workspace, model, labels, children }: { workspac
   const columns = useMemo<ColDef<TaskRowViewModel>[]>(
     () => [
       { colId: 'selection', width: 40, minWidth: 40, maxWidth: 40, resizable: false, suppressMovable: true, lockPosition: 'left', headerComponent: TaskSelectionHeader, cellRenderer: TaskCell },
-      ...defaultTaskTableColumnOrder.map(
-        (key): ColDef<TaskRowViewModel> => ({
-          colId: key,
-          headerName: labels[key],
-          initialWidth: defaultTaskTableColumnWidths[key],
-          minWidth: getTaskTableColumnWidthBounds(key).min,
-          maxWidth: getTaskTableColumnWidthBounds(key).max,
-          headerComponent: TaskColumnHeader,
-          cellRenderer: TaskCell,
-        }),
-      ),
+      ...defaultTaskTableColumnOrder.map((key): ColDef<TaskRowViewModel> => ({
+        colId: key,
+        headerName: labels[key],
+        initialWidth: defaultTaskTableColumnWidths[key],
+        minWidth: getTaskTableColumnWidthBounds(key).min,
+        maxWidth: getTaskTableColumnWidthBounds(key).max,
+        headerComponent: TaskColumnHeader,
+        cellRenderer: TaskCell,
+      })),
       ...(workspace.onPushTaskToNewConversation || workspace.onOpenTaskCodeDelivery || workspace.onDeleteTask
         ? [{ colId: 'actions', headerName: workspace.copy.actionsColumnTitle, initialWidth: 150, minWidth: 120, maxWidth: 220, cellRenderer: TaskCell }]
         : []),

@@ -242,6 +242,7 @@ const TaskBoardCard = memo(function TaskBoardCard(props: {
           {props.card.task.title}
         </button>
         <button
+          data-icon-tooltip={props.context.language === 'zh-CN' ? '拖动任务' : 'Drag task'}
           ref={sortable.setActivatorNodeRef}
           type="button"
           className="task-board-drag-handle"
@@ -270,7 +271,7 @@ const TaskBoardCard = memo(function TaskBoardCard(props: {
           );
         })}
       </div>
-      <label className="task-board-move-menu">
+      <label className="task-board-move-menu" data-icon-tooltip={props.context.language === 'zh-CN' ? '移动到分组' : 'Move to group'}>
         <span className="sr-only">{props.context.language === 'zh-CN' ? '移动到分组' : 'Move to group'}</span>
         <ArrowRight aria-hidden="true" weight="bold" />
         <select
@@ -324,7 +325,12 @@ function TaskBoardLane(props: {
           </button>
           <span className="task-board-subgroup-actions">
             <span>{props.context.language === 'zh-CN' ? `${props.cards.length} 项` : `${props.cards.length} ${props.cards.length === 1 ? 'item' : 'items'}`}</span>
-            <button type="button" aria-label={`${props.context.language === 'zh-CN' ? '隐藏子分组' : 'Hide subgroup'} ${props.label}`} onClick={props.onHide}>
+            <button
+              data-icon-tooltip={props.context.language === 'zh-CN' ? '隐藏子分组' : 'Hide subgroup'}
+              type="button"
+              aria-label={`${props.context.language === 'zh-CN' ? '隐藏子分组' : 'Hide subgroup'} ${props.label}`}
+              onClick={props.onHide}
+            >
               <EyeSlash aria-hidden="true" />
             </button>
           </span>
@@ -410,6 +416,7 @@ function TaskBoardColumn(props: {
           {collapsed ? <CaretRight className="task-board-column-caret" aria-hidden="true" /> : <CaretDown className="task-board-column-caret" aria-hidden="true" />}
         </button>
         <button
+          data-icon-tooltip={props.settings.groupSort !== 'manual' ? (props.context.language === 'zh-CN' ? '使用手动排序后可拖动分组' : 'Use manual sorting to drag groups') : props.context.language === 'zh-CN' ? '拖动分组' : 'Drag group'}
           ref={sortable.setActivatorNodeRef}
           type="button"
           className="task-board-column-drag-handle"
@@ -420,7 +427,13 @@ function TaskBoardColumn(props: {
         >
           <DotsSixVertical aria-hidden="true" weight="bold" />
         </button>
-        <button type="button" className="task-board-column-hide" aria-label={`${props.context.language === 'zh-CN' ? '隐藏分组' : 'Hide group'} ${props.group.label}`} onClick={props.onHideGroup}>
+        <button
+          data-icon-tooltip={props.context.language === 'zh-CN' ? '隐藏分组' : 'Hide group'}
+          type="button"
+          className="task-board-column-hide"
+          aria-label={`${props.context.language === 'zh-CN' ? '隐藏分组' : 'Hide group'} ${props.group.label}`}
+          onClick={props.onHideGroup}
+        >
           <EyeSlash aria-hidden="true" />
         </button>
       </header>
@@ -796,6 +809,7 @@ function TaskBoardSettingsDialog(props: {
                     {translate(cardPropertyLabels[property], props.language)}
                   </label>
                   <button
+                    data-icon-tooltip={zh ? '向上移动字段' : 'Move property up'}
                     type="button"
                     aria-label={zh ? '向上移动字段' : 'Move property up'}
                     disabled={index === 0}
@@ -810,6 +824,7 @@ function TaskBoardSettingsDialog(props: {
                     <ArrowUp aria-hidden="true" />
                   </button>
                   <button
+                    data-icon-tooltip={zh ? '向下移动字段' : 'Move property down'}
                     type="button"
                     aria-label={zh ? '向下移动字段' : 'Move property down'}
                     disabled={index === draft.propertyOrder.length - 1}

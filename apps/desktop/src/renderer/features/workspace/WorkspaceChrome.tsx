@@ -765,11 +765,11 @@ export function ProjectWorkspaceNavigation(props: {
       </header>
       <nav className="project-workspace-mode-rail" aria-label={zh ? '项目工作区' : 'Project workspace'}>
         <button
+          data-icon-tooltip={conversationLabel}
           type="button"
           className={projectWorkspaceActive && props.section === 'sessions' ? 'is-active' : ''}
           aria-label={conversationTitle}
           aria-current={projectWorkspaceActive && props.section === 'sessions' ? 'page' : undefined}
-          data-tooltip={conversationLabel}
           onClick={(event) => {
             if (event.altKey) props.onCreateConversation();
             else props.onOpen('sessions');
@@ -788,16 +788,16 @@ export function ProjectWorkspaceNavigation(props: {
           /** 读屏和提示保留快捷键说明。 */
           const shortcutLabel = zh ? `${label}（⌘${item.shortcutKey}）` : `${label} (⌘${item.shortcutKey})`;
           /** 浮层使用更接近桌面应用菜单的紧凑排版。 */
-          const tooltipLabel = `${label}  ⌘${item.shortcutKey}`;
+          const tooltipLabel = `${label}（⌘${item.shortcutKey}）`;
           return (
             <button
+              data-icon-tooltip={tooltipLabel}
               key={item.id}
               type="button"
               className={active ? 'is-active' : ''}
               aria-label={shortcutLabel}
               aria-current={active ? 'page' : undefined}
               aria-keyshortcuts={`Meta+${item.shortcutKey}`}
-              data-tooltip={tooltipLabel}
               onClick={() => props.onOpen(item.section, item.codeMode)}
             >
               <span className="project-workspace-mode-icon" aria-hidden="true">
@@ -809,11 +809,11 @@ export function ProjectWorkspaceNavigation(props: {
         })}
         <span className="project-workspace-mode-rail-spacer" aria-hidden="true" />
         <button
+          data-icon-tooltip={zh ? '自动化' : 'Automations'}
           type="button"
           className={props.activeNavTarget === 'automations' ? 'is-active' : ''}
           aria-label={zh ? '自动化' : 'Automations'}
           aria-current={props.activeNavTarget === 'automations' ? 'page' : undefined}
-          data-tooltip={zh ? '自动化' : 'Automations'}
           onClick={() => props.onNavigate('automations')}
         >
           <span className="project-workspace-mode-icon" aria-hidden="true">
@@ -822,11 +822,11 @@ export function ProjectWorkspaceNavigation(props: {
           <span className="project-workspace-mode-label">{zh ? '自动化' : 'Automations'}</span>
         </button>
         <button
+          data-icon-tooltip={zh ? '扩展管理' : 'Extensions'}
           type="button"
           className={props.activeNavTarget === 'skills' ? 'is-active' : ''}
           aria-label={zh ? '扩展管理' : 'Extensions'}
           aria-current={props.activeNavTarget === 'skills' ? 'page' : undefined}
-          data-tooltip={zh ? '扩展管理' : 'Extensions'}
           onClick={() => props.onNavigate('skills')}
         >
           <span className="project-workspace-mode-icon" aria-hidden="true">
@@ -836,11 +836,11 @@ export function ProjectWorkspaceNavigation(props: {
         </button>
         {/* 数字员工使用人物头像线框，并在全局导航中紧邻数字团队上方。 */}
         <button
+          data-icon-tooltip={zh ? '数字员工' : 'Digital employees'}
           type="button"
           className={props.activeNavTarget === 'digital-employees' ? 'is-active' : ''}
           aria-label={zh ? '数字员工' : 'Digital employees'}
           aria-current={props.activeNavTarget === 'digital-employees' ? 'page' : undefined}
-          data-tooltip={zh ? '数字员工' : 'Digital employees'}
           onClick={() => props.onNavigate('digital-employees')}
         >
           <span className="project-workspace-mode-icon" aria-hidden="true">
@@ -849,11 +849,11 @@ export function ProjectWorkspaceNavigation(props: {
           <span className="project-workspace-mode-label">{zh ? '数字员工' : 'Digital employees'}</span>
         </button>
         <button
+          data-icon-tooltip={zh ? '数字团队' : 'Digital teams'}
           type="button"
           className={props.activeNavTarget === 'digital-teams' ? 'is-active' : ''}
           aria-label={zh ? '数字团队' : 'Digital teams'}
           aria-current={props.activeNavTarget === 'digital-teams' ? 'page' : undefined}
-          data-tooltip={zh ? '数字团队' : 'Digital teams'}
           onClick={() => props.onNavigate('digital-teams')}
         >
           <span className="project-workspace-mode-icon" aria-hidden="true">
@@ -862,11 +862,11 @@ export function ProjectWorkspaceNavigation(props: {
           <span className="project-workspace-mode-label">{zh ? '数字团队' : 'Digital teams'}</span>
         </button>
         <button
+          data-icon-tooltip={zh ? '设置' : 'Settings'}
           type="button"
           className={props.activeNavTarget === 'settings' ? 'is-active' : ''}
           aria-label={zh ? '设置' : 'Settings'}
           aria-current={props.activeNavTarget === 'settings' ? 'page' : undefined}
-          data-tooltip={zh ? '设置' : 'Settings'}
           onClick={() => props.onNavigate('settings')}
         >
           <span className="project-workspace-mode-icon" aria-hidden="true">
@@ -1322,6 +1322,7 @@ export function SidebarNav(props: {
                   }}
                   triggerIcon={<Funnel aria-hidden="true" weight={hasConversationFilter ? 'fill' : 'regular'} />}
                   triggerClassName={`project-conversation-filter-button${hasConversationFilter ? ' is-filtered' : ''}`}
+                  triggerTooltip={props.appLanguage === 'zh-CN' ? '筛选会话' : 'Filter conversations'}
                   triggerTitle={`${copy.filterConversationsByTaskStatus}: ${statusFilterLabel}${latestConversationOnly ? ` · ${copy.latestConversationOnly}` : ''}`}
                   searchable={false}
                   hideSelectedLabel
@@ -1525,6 +1526,7 @@ export function SidebarNav(props: {
                     disclosure={
                       showConversationNavigation ? (
                         <button
+                          data-icon-tooltip={`${expanded ? copy.collapseProjectPrefix : copy.expandProjectPrefix}${copy.labelSeparator}${project.name}`}
                           type="button"
                           className="project-disclosure-button"
                           aria-label={`${expanded ? copy.collapseProjectPrefix : copy.expandProjectPrefix}${copy.labelSeparator}${project.name}`}
@@ -1559,7 +1561,7 @@ export function SidebarNav(props: {
                             type="button"
                             className="project-source-button"
                             aria-label={`${props.appLanguage === 'zh-CN' ? '打开源码' : 'Open source'}：${project.name}`}
-                            title={props.appLanguage === 'zh-CN' ? '源码（⌘3）' : 'Source (⌘3)'}
+                            data-icon-tooltip={props.appLanguage === 'zh-CN' ? '打开源码（⌘3）' : 'Open source (⌘3)'}
                             aria-current={isActiveProject && props.activeProjectSection === 'code' ? 'page' : undefined}
                             onClick={() => props.onOpenProjectSection(project, 'code', 'source')}
                           >

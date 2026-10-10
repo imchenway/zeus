@@ -614,7 +614,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
               <span className="project-source-module-actions" aria-label={zh ? '源码操作' : 'Source actions'}>
                 <button
                   type="button"
-                  title={zh ? '新建文件' : 'New file'}
+                  data-icon-tooltip={zh ? '新建文件' : 'New file'}
                   aria-label={zh ? '新建文件' : 'New file'}
                   onClick={(event) => {
                     event.preventDefault();
@@ -626,7 +626,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                 </button>
                 <button
                   type="button"
-                  title={zh ? '新建目录' : 'New folder'}
+                  data-icon-tooltip={zh ? '新建目录' : 'New folder'}
                   aria-label={zh ? '新建目录' : 'New folder'}
                   onClick={(event) => {
                     event.preventDefault();
@@ -753,7 +753,14 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         <main className="project-source-editor-pane">
           <div className="project-source-editor-header">
             <div className="project-source-tabs zeus-workspace-tabs" role="tablist" aria-label={zh ? '已打开文件' : 'Open files'}>
-              <button type="button" className="project-source-tree-toggle" onClick={() => setTreeDrawerOpen((open) => !open)} aria-label={zh ? '显示代码目录' : 'Show source tree'} aria-expanded={treeDrawerOpen}>
+              <button
+                data-icon-tooltip={zh ? '显示代码目录' : 'Show source tree'}
+                type="button"
+                className="project-source-tree-toggle"
+                onClick={() => setTreeDrawerOpen((open) => !open)}
+                aria-label={zh ? '显示代码目录' : 'Show source tree'}
+                aria-expanded={treeDrawerOpen}
+              >
                 <FolderOpen aria-hidden="true" />
               </button>
               {tabs.map((tab, index) => (

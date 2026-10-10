@@ -39,7 +39,13 @@ export function SettingsPagination(props: {
         {(page - 1) * settingsPageSize + 1}–{Math.min(page * settingsPageSize, props.total)} / {props.total} {zh ? '条' : 'items'}
       </span>
       <div>
-        <Button size="compact" aria-label={`${props.label} ${zh ? '上一页' : 'previous page'}`} disabled={props.disabled || page === 1} onClick={() => props.onChange(page - 1)}>
+        <Button
+          data-icon-tooltip={`${props.label} ${zh ? '上一页' : 'previous page'}`}
+          size="compact"
+          aria-label={`${props.label} ${zh ? '上一页' : 'previous page'}`}
+          disabled={props.disabled || page === 1}
+          onClick={() => props.onChange(page - 1)}
+        >
           <CaretLeftIcon aria-hidden="true" />
         </Button>
         <ZeusSelect
@@ -51,7 +57,13 @@ export function SettingsPagination(props: {
           onChange={(value) => props.onChange(Number(value))}
           options={Array.from({ length: pages }, (_, index) => ({ value: String(index + 1), label: zh ? `第 ${index + 1} / ${pages} 页` : `${index + 1} / ${pages}` }))}
         />
-        <Button size="compact" aria-label={`${props.label} ${zh ? '下一页' : 'next page'}`} disabled={props.disabled || page === pages} onClick={() => props.onChange(page + 1)}>
+        <Button
+          data-icon-tooltip={`${props.label} ${zh ? '下一页' : 'next page'}`}
+          size="compact"
+          aria-label={`${props.label} ${zh ? '下一页' : 'next page'}`}
+          disabled={props.disabled || page === pages}
+          onClick={() => props.onChange(page + 1)}
+        >
           <CaretRightIcon aria-hidden="true" />
         </Button>
       </div>

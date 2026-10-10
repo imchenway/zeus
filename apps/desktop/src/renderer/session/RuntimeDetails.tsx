@@ -118,7 +118,7 @@ export function RuntimeDetails(props: RuntimeDetailsProps) {
           type="button"
           className="session-runtime-collapse-button"
           aria-label={zh ? '收起详情' : 'Collapse details'}
-          title={zh ? '收起详情' : 'Collapse details'}
+          data-icon-tooltip={zh ? '收起详情' : 'Collapse details'}
           onClick={(event) => {
             // 原生折叠后将焦点交回摘要，避免键盘焦点留在已隐藏的按钮上。
             const details = event.currentTarget.closest('details');
@@ -203,7 +203,7 @@ function RuntimeCopyButton(props: { text: string; label: string; copiedLabel: st
       type="button"
       className="session-runtime-copy-button"
       aria-label={copied ? props.copiedLabel : props.label}
-      title={copied ? props.copiedLabel : props.label}
+      data-icon-tooltip={copied ? props.copiedLabel : props.label}
       data-copied={copied || undefined}
       onClick={async () => setCopied(await copyText(props.text))}
     >

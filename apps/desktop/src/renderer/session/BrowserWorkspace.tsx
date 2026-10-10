@@ -511,7 +511,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
           type="button"
           disabled={props.canSplit === false}
           aria-label={props.expanded ? labels.collapse : labels.expand}
-          title={props.canSplit === false ? labels.splitUnavailable : props.expanded ? labels.collapse : labels.expand}
+          data-icon-tooltip={props.canSplit === false ? labels.splitUnavailable : props.expanded ? labels.collapse : labels.expand}
           onClick={props.onToggleExpanded}
         >
           {props.expanded ? <ArrowsInSimple aria-hidden="true" weight="regular" /> : <ArrowsOutSimple aria-hidden="true" weight="regular" />}
@@ -546,13 +546,13 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
             {labels.annotating(activeTab.url)}
           </span>
           <span className="browser-annotation-actions browser-annotation-actions-trailing">
-            <button type="button" aria-label={labels.focusNext} title={labels.focusNext} disabled={draftComments.length === 0} onClick={() => void focusNextComment()}>
+            <button type="button" aria-label={labels.focusNext} data-icon-tooltip={labels.focusNext} disabled={draftComments.length === 0} onClick={() => void focusNextComment()}>
               <CrosshairSimple aria-hidden="true" weight="regular" />
             </button>
             <button
               type="button"
               aria-label={commentsOpen ? labels.hideComments : labels.showComments}
-              title={commentsOpen ? labels.hideComments : labels.showComments}
+              data-icon-tooltip={commentsOpen ? labels.hideComments : labels.showComments}
               aria-pressed={commentsOpen}
               className={commentsOpen ? 'selected' : ''}
               onClick={() => setCommentsOpen((open) => !open)}
@@ -570,16 +570,17 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
       ) : (
         <div className="browser-toolbar browser-navigation-toolbar">
           <span className="browser-navigation-actions">
-            <button type="button" aria-label={labels.back} title={labels.back} disabled={!activeTab.canGoBack} onClick={() => void command({ action: 'back' })}>
+            <button type="button" aria-label={labels.back} data-icon-tooltip={labels.back} disabled={!activeTab.canGoBack} onClick={() => void command({ action: 'back' })}>
               <ArrowLeft aria-hidden="true" weight="regular" />
             </button>
-            <button type="button" aria-label={labels.forward} title={labels.forward} disabled={!activeTab.canGoForward} onClick={() => void command({ action: 'forward' })}>
+            <button type="button" aria-label={labels.forward} data-icon-tooltip={labels.forward} disabled={!activeTab.canGoForward} onClick={() => void command({ action: 'forward' })}>
               <ArrowRight aria-hidden="true" weight="regular" />
             </button>
             <button
               type="button"
               aria-label={activeTab.loading ? labels.stop : labels.reload}
-              title={activeTab.loading ? labels.stop : labels.reload}
+              data-icon-tooltip={activeTab.loading ? undefined : labels.reload}
+              title={activeTab.loading ? labels.stop : undefined}
               onClick={() => void command(activeTab.loading ? { action: 'stop' } : { action: 'reload' })}
             >
               {activeTab.loading ? <X aria-hidden="true" weight="regular" /> : <ArrowsClockwise aria-hidden="true" weight="regular" />}
@@ -616,7 +617,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
               <span className="browser-annotate-label">{activeTab.annotationMode ? labels.annotatingMode : labels.annotate}</span>
               <kbd>⌘.</kbd>
             </button>
-            <button type="button" className="browser-more-trigger" aria-label={labels.more} title={labels.more} aria-haspopup="menu" aria-expanded={moreOpen} onClick={(event) => void openMoreMenu(event.currentTarget)}>
+            <button type="button" className="browser-more-trigger" aria-label={labels.more} data-icon-tooltip={labels.more} aria-haspopup="menu" aria-expanded={moreOpen} onClick={(event) => void openMoreMenu(event.currentTarget)}>
               <DotsThreeVertical aria-hidden="true" weight="bold" />
             </button>
           </span>
@@ -639,10 +640,10 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
           }}
         >
           <input ref={findInputRef} aria-label={labels.find} placeholder={labels.find} value={findText} maxLength={1000} onChange={(event) => setFindText(event.currentTarget.value)} />
-          <button type="button" aria-label={labels.findPrevious} title={labels.findPrevious} disabled={!findText.trim()} onClick={() => void command({ action: 'find', text: findText, forward: false })}>
+          <button type="button" aria-label={labels.findPrevious} data-icon-tooltip={labels.findPrevious} disabled={!findText.trim()} onClick={() => void command({ action: 'find', text: findText, forward: false })}>
             <ArrowUp aria-hidden="true" />
           </button>
-          <button type="submit" aria-label={labels.findNext} title={labels.findNext} disabled={!findText.trim()}>
+          <button type="submit" aria-label={labels.findNext} data-icon-tooltip={labels.findNext} disabled={!findText.trim()}>
             <ArrowDown aria-hidden="true" />
           </button>
           <button type="button" aria-label={labels.closeFind} title={labels.closeFind} onClick={() => void closeFind()}>
@@ -683,7 +684,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
                       <strong>{comment.body}</strong>
                       <small>{comment.anchor.accessibleName || comment.anchor.immediateText || comment.anchor.kind}</small>
                     </button>
-                    <button type="button" className="browser-comment-delete" aria-label={labels.delete} title={labels.delete} onClick={() => void command({ action: 'delete_comment', commentId: comment.id })}>
+                    <button type="button" className="browser-comment-delete" aria-label={labels.delete} data-icon-tooltip={labels.delete} onClick={() => void command({ action: 'delete_comment', commentId: comment.id })}>
                       <Trash aria-hidden="true" weight="regular" />
                     </button>
                   </li>

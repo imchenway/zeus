@@ -2636,7 +2636,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   className={`session-browser-toggle ${browserOpen ? 'selected' : ''}`}
                   aria-pressed={browserOpen}
                   aria-label={props.language === 'zh-CN' ? '内置浏览器' : 'Built-in browser'}
-                  title={props.language === 'zh-CN' ? '内置浏览器（⌘⇧B）' : 'Built-in browser (⌘⇧B)'}
+                  data-icon-tooltip={props.language === 'zh-CN' ? '内置浏览器（⌘⇧B）' : 'Built-in browser (⌘⇧B)'}
                   onClick={(event) => {
                     contextReturnFocusRef.current = event.currentTarget;
                     if (browserOpen) {
@@ -2656,7 +2656,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   className={`session-browser-toggle session-terminal-toggle ${terminalOpen ? 'selected' : ''}`}
                   aria-pressed={terminalOpen}
                   aria-label={props.language === 'zh-CN' ? '会话终端' : 'Conversation terminal'}
-                  title={props.language === 'zh-CN' ? '会话终端（⌃`）' : 'Conversation terminal (Ctrl+`)'}
+                  data-icon-tooltip={props.language === 'zh-CN' ? '会话终端（⌃`）' : 'Conversation terminal (Ctrl+`)'}
                   onClick={(event) => {
                     if (terminalOpen) {
                       closeSessionTerminal();

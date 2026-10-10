@@ -2092,7 +2092,7 @@ function LocalChangesSurface(props: {
                     variant="secondary"
                     disabled={props.commitModelsLoading || props.generatingCommitFor !== null}
                     onClick={props.onRefreshCommitModels}
-                    title={props.zh ? '刷新模型列表' : 'Refresh models'}
+                    data-icon-tooltip={props.zh ? '刷新模型列表' : 'Refresh models'}
                     aria-label={props.zh ? '刷新模型列表' : 'Refresh models'}
                   >
                     <ArrowsClockwise aria-hidden="true" />

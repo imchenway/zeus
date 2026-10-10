@@ -32,7 +32,7 @@ export function PlanSummary(props: { item: NativeSessionItemBuffer; language: Se
   const title = streaming ? (zh ? '正在编写计划' : 'Writing plan') : zh ? '计划' : 'Plan';
   /** 卡片操作使用原生按钮，父级点击不会接管其动作。 */
   const iconButton = (label: string, child: ReactNode, onClick: () => void, pressed?: boolean) => (
-    <button type="button" aria-label={label} title={label} aria-pressed={pressed} onClick={onClick}>
+    <button type="button" aria-label={label} data-icon-tooltip={label} aria-pressed={pressed} onClick={onClick}>
       {child}
     </button>
   );
@@ -73,6 +73,7 @@ export function PlanSummary(props: { item: NativeSessionItemBuffer; language: Se
             <strong>{title}</strong>
           </button>
           <button
+            data-icon-tooltip={collapsed ? (zh ? '展开计划内容' : 'Expand plan content') : zh ? '收起计划内容' : 'Collapse plan content'}
             type="button"
             className="session-plan-summary-collapse"
             onClick={() => setCollapsed((value) => !value)}
@@ -85,16 +86,26 @@ export function PlanSummary(props: { item: NativeSessionItemBuffer; language: Se
         </div>
         {!streaming ? (
           <nav aria-label={zh ? '计划操作' : 'Plan actions'}>
-            {iconButton(zh ? '下载 plan.md' : 'Download plan.md', <Download aria-hidden="true" />, () => downloadPlan(props.item.text))}
-            {iconButton(copied ? (zh ? '已复制' : 'Copied') : zh ? '复制 Markdown' : 'Copy Markdown', <Copy aria-hidden="true" />, () => {
+            {iconButton(zh ? '下载计划 Markdown' : 'Download plan Markdown', <Download aria-hidden="true" />, () => downloadPlan(props.item.text))}
+            {iconButton(copied ? (zh ? '已复制' : 'Copied') : zh ? '复制计划 Markdown' : 'Copy plan Markdown', <Copy aria-hidden="true" />, () => {
               void navigator.clipboard?.writeText(props.item.text).then(() => {
                 setCopied(true);
                 window.setTimeout(() => setCopied(false), 1_400);
               });
             })}
-            {iconButton(zh ? '喜欢此计划' : 'Like plan', <ThumbsUp aria-hidden="true" weight={feedback === 'good' ? 'fill' : 'regular'} />, () => setFeedback((value) => (value === 'good' ? null : 'good')), feedback === 'good')}
-            {iconButton(zh ? '不喜欢此计划' : 'Dislike plan', <ThumbsDown aria-hidden="true" weight={feedback === 'bad' ? 'fill' : 'regular'} />, () => setFeedback((value) => (value === 'bad' ? null : 'bad')), feedback === 'bad')}
-            {props.onOpenPanel ? iconButton(zh ? '展开完整计划' : 'Expand plan', <ArrowsOutSimple aria-hidden="true" />, () => props.onOpenPanel?.(props.item)) : null}
+            {iconButton(
+              feedback === 'good' ? (zh ? '取消喜欢' : 'Remove like') : zh ? '喜欢此计划' : 'Like plan',
+              <ThumbsUp aria-hidden="true" weight={feedback === 'good' ? 'fill' : 'regular'} />,
+              () => setFeedback((value) => (value === 'good' ? null : 'good')),
+              feedback === 'good',
+            )}
+            {iconButton(
+              feedback === 'bad' ? (zh ? '取消不喜欢' : 'Remove dislike') : zh ? '不喜欢此计划' : 'Dislike plan',
+              <ThumbsDown aria-hidden="true" weight={feedback === 'bad' ? 'fill' : 'regular'} />,
+              () => setFeedback((value) => (value === 'bad' ? null : 'bad')),
+              feedback === 'bad',
+            )}
+            {props.onOpenPanel ? iconButton(zh ? '在右侧打开计划' : 'Open plan at right', <ArrowsOutSimple aria-hidden="true" />, () => props.onOpenPanel?.(props.item)) : null}
             {props.onOpenPanel ? iconButton(zh ? '在右侧打开计划' : 'Open plan at right', <SidebarSimple aria-hidden="true" />, () => props.onOpenPanel?.(props.item)) : null}
           </nav>
         ) : null}

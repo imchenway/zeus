@@ -7,6 +7,7 @@ import { openSourceInMain, revealProjectInFinderInMain } from './appShellBridge.
 import { initializeNativeCloseLayerRouting } from './ui/nativeCloseLayer.js';
 import { ApplicationErrorDialogHost, reportApplicationError } from './ui/ApplicationErrorDialog.js';
 import { RendererPerformanceCollector } from './rendererPerformanceObservability.js';
+import { installIconTooltips } from '../preload/iconTooltip.js';
 // 启动失败可能早于工作台模块加载，恢复页样式必须随入口就绪。
 import './styles.css';
 
@@ -14,6 +15,9 @@ import './styles.css';
 let startupLanguage: 'zh-CN' | 'en-US' = 'zh-CN';
 
 initializeNativeCloseLayerRouting();
+/** 所有独立窗口共享提示机制；页面退出时移除监听。 */
+const disposeIconTooltips = installIconTooltips(document);
+window.addEventListener('pagehide', disposeIconTooltips, { once: true });
 const rendererPerformance = new RendererPerformanceCollector();
 const rendererHydrationStartedAt = performance.now();
 rendererPerformance.install();

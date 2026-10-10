@@ -295,6 +295,7 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
           </button>
           {multiple ? (
             <button
+              data-icon-tooltip={expanded === memberKey ? (zh ? '收起分工记录' : 'Collapse assignments') : zh ? '展开分工记录' : 'Expand assignments'}
               type="button"
               className="task-conversation-member-expand"
               aria-label={zh ? `${member.employee?.name ?? first.title}的分工记录` : `Assignments for ${member.employee?.name ?? first.title}`}

@@ -188,11 +188,18 @@ function TextSideBySideDiff(props: SideBySideDiffProps & { /** 共享文件操�
             aria-pressed={mode === 'side-by-side'}
             aria-label={props.zh ? '左右两栏' : 'Side-by-side'}
             onClick={() => setMode('side-by-side')}
-            title={props.zh ? '左右两栏' : 'Side-by-side'}
+            data-icon-tooltip={props.zh ? '左右两栏' : 'Side-by-side'}
           >
             <Columns aria-hidden="true" />
           </button>
-          <button type="button" className={mode === 'unified' ? 'is-active' : ''} aria-pressed={mode === 'unified'} aria-label={props.zh ? '统一视图' : 'Unified'} onClick={() => setMode('unified')} title={props.zh ? '统一视图' : 'Unified'}>
+          <button
+            type="button"
+            className={mode === 'unified' ? 'is-active' : ''}
+            aria-pressed={mode === 'unified'}
+            aria-label={props.zh ? '统一视图' : 'Unified'}
+            onClick={() => setMode('unified')}
+            data-icon-tooltip={props.zh ? '统一视图' : 'Unified'}
+          >
             <Rows aria-hidden="true" />
           </button>
         </span>
@@ -305,7 +312,7 @@ export function SideBySideDiff(props: SideBySideDiffProps) {
       fileStatus={props.diff?.fileDiffs[0]?.changeType}
       actions={
         props.onClose ? (
-          <PreviewIconButton label={props.zh ? '关闭对比' : 'Close diff'} onClick={props.onClose}>
+          <PreviewIconButton tooltip={false} label={props.zh ? '关闭对比' : 'Close diff'} onClick={props.onClose}>
             <X size={16} aria-hidden="true" />
           </PreviewIconButton>
         ) : null

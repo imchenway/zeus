@@ -612,7 +612,14 @@ function MarketplaceCatalog(props: {
               >
                 <ArrowClockwise aria-hidden="true" /> {props.zh ? '刷新' : 'Refresh'}
               </Button>
-              <Button variant="danger" size="compact" disabled={Boolean(props.busyKey)} aria-label={props.zh ? `移除来源 ${catalog.displayName}` : `Remove source ${catalog.displayName}`} onClick={() => setPendingRemoval(catalog)}>
+              <Button
+                data-icon-tooltip={props.zh ? `移除来源 ${catalog.displayName}` : `Remove source ${catalog.displayName}`}
+                variant="danger"
+                size="compact"
+                disabled={Boolean(props.busyKey)}
+                aria-label={props.zh ? `移除来源 ${catalog.displayName}` : `Remove source ${catalog.displayName}`}
+                onClick={() => setPendingRemoval(catalog)}
+              >
                 <Trash aria-hidden="true" />
               </Button>
             </span>

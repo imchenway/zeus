@@ -287,7 +287,7 @@ export function SourceGitChanges(props: {
             {zh ? '贮藏' : 'Stash'}
             <small>{repositories.reduce((count, item) => count + item.snapshot.stashes.length, 0)}</small>
           </button>
-          <button type="button" className="source-git-icon" aria-label={zh ? '刷新更改' : 'Refresh changes'} title={zh ? '刷新更改' : 'Refresh changes'} disabled={locked || loading} onClick={() => void refresh()}>
+          <button type="button" className="source-git-icon" aria-label={zh ? '刷新更改' : 'Refresh changes'} data-icon-tooltip={zh ? '刷新更改' : 'Refresh changes'} disabled={locked || loading} onClick={() => void refresh()}>
             <Refresh className={loading ? 'is-spinning' : ''} />
           </button>
         </div>
@@ -324,7 +324,7 @@ export function SourceGitChanges(props: {
               className="source-git-icon"
               disabled={locked || repository.snapshot.clean || repository.snapshot.conflictFiles.length > 0}
               aria-label={zh ? '贮藏当前仓库更改' : 'Stash repository changes'}
-              title={zh ? '贮藏当前仓库更改' : 'Stash repository changes'}
+              data-icon-tooltip={zh ? '贮藏当前仓库更改' : 'Stash repository changes'}
               onClick={() => setDialog('stash')}
             >
               <Archive />
@@ -334,7 +334,7 @@ export function SourceGitChanges(props: {
               className="source-git-icon"
               disabled={locked || !repository.snapshot.remotes.length}
               aria-label={zh ? '推送…' : 'Push…'}
-              title={zh ? '推送…' : 'Push…'}
+              data-icon-tooltip={zh ? '推送…' : 'Push…'}
               onClick={() => {
                 setPushResults([]);
                 setDialog('push');
@@ -464,9 +464,8 @@ export function SourceGitChanges(props: {
                   type="button"
                   className="source-git-icon source-git-generate"
                   aria-label={generating ? (zh ? '停止生成提交说明' : 'Stop generating commit message') : zh ? 'AI 生成提交说明' : 'Generate commit message with AI'}
-                  title={
-                    generating ? (zh ? '停止生成' : 'Stop generating') : !selectedCount ? (zh ? '请先勾选要提交的文件' : 'Select files to commit first') : zh ? '根据勾选文件生成提交说明' : 'Generate a commit message from selected files'
-                  }
+                  data-icon-tooltip={generating ? undefined : !selectedCount ? (zh ? '请先勾选要提交的文件' : 'Select files to commit first') : zh ? 'AI 生成提交说明' : 'Generate commit message with AI'}
+                  title={generating ? (zh ? '停止生成' : 'Stop generating') : undefined}
                   disabled={!generating && (!client || locked || !selectedCount)}
                   data-generating={generating}
                   onClick={() => {

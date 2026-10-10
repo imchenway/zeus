@@ -59,7 +59,7 @@ export function GitCommitGenerationSettingsButton(props: { client: GitCommitMode
         size="compact"
         className="task-git-generation-settings-button"
         aria-label={props.zh ? 'AI 生成设置' : 'AI generation settings'}
-        title={props.zh ? 'AI 生成设置' : 'AI generation settings'}
+        data-icon-tooltip={props.zh ? 'AI 生成设置' : 'AI generation settings'}
         disabled={props.disabled || !props.client}
         onClick={() => setOpen(true)}
       >

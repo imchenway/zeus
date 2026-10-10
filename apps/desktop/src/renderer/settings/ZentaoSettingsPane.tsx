@@ -297,6 +297,7 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
                   }}
                 />
                 <Button
+                  data-icon-tooltip={passwordVisible ? (zh ? '隐藏密码' : 'Hide password') : zh ? '查看密码' : 'Show password'}
                   size="compact"
                   aria-label={passwordVisible ? (zh ? '隐藏密码' : 'Hide password') : zh ? '查看密码' : 'Show password'}
                   aria-pressed={passwordVisible}

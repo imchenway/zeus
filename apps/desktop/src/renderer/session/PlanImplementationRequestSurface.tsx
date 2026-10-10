@@ -103,7 +103,14 @@ export function PlanImplementationRequestSurface(props: {
   const actions = (
     <div className="session-rui-inline-actions" role="group" aria-label={zh ? '计划操作' : 'Plan actions'}>
       {feedbackOpen && props.onChooseAttachments ? (
-        <button type="button" className="session-question-attachment-button" aria-label={zh ? '添加附件' : 'Add attachment'} disabled={responding} onClick={() => void chooseAttachments()}>
+        <button
+          data-icon-tooltip={zh ? '添加附件' : 'Add attachment'}
+          type="button"
+          className="session-question-attachment-button"
+          aria-label={zh ? '添加附件' : 'Add attachment'}
+          disabled={responding}
+          onClick={() => void chooseAttachments()}
+        >
           <Paperclip aria-hidden="true" />
         </button>
       ) : null}

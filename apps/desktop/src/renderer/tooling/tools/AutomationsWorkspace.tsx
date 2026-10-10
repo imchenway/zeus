@@ -292,7 +292,7 @@ export function AutomationsWorkspace(props: {
                     {task.status === 'active' ? (
                       <Button
                         className="automation-icon-action"
-                        title={zh ? '立即运行' : 'Run now'}
+                        data-icon-tooltip={zh ? '立即运行' : 'Run now'}
                         aria-label={`${zh ? '立即运行' : 'Run'} ${task.name}`}
                         busy={busyId === `run:${task.id}`}
                         disabled={Boolean(busyId)}
@@ -303,7 +303,7 @@ export function AutomationsWorkspace(props: {
                     ) : null}
                     <Button
                       className="automation-icon-action"
-                      title={task.status === 'active' ? (zh ? '暂停' : 'Pause') : zh ? '继续' : 'Resume'}
+                      data-icon-tooltip={task.status === 'active' ? (zh ? '暂停' : 'Pause') : zh ? '继续' : 'Resume'}
                       aria-label={`${task.status === 'active' ? (zh ? '暂停' : 'Pause') : zh ? '继续' : 'Resume'} ${task.name}`}
                       busy={busyId === `status:${task.id}`}
                       disabled={Boolean(busyId)}
@@ -311,7 +311,14 @@ export function AutomationsWorkspace(props: {
                     >
                       {task.status === 'active' ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
                     </Button>
-                    <Button className="automation-icon-action" variant="danger" title={zh ? '删除' : 'Delete'} aria-label={`${zh ? '删除' : 'Delete'} ${task.name}`} disabled={Boolean(busyId)} onClick={() => setPendingDelete(task)}>
+                    <Button
+                      className="automation-icon-action"
+                      variant="danger"
+                      data-icon-tooltip={zh ? '删除' : 'Delete'}
+                      aria-label={`${zh ? '删除' : 'Delete'} ${task.name}`}
+                      disabled={Boolean(busyId)}
+                      onClick={() => setPendingDelete(task)}
+                    >
                       <Trash aria-hidden="true" />
                     </Button>
                   </div>

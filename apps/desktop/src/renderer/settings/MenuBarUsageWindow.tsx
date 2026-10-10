@@ -373,7 +373,15 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
             <small className="menu-bar-usage-freshness" aria-live="polite" title={freshness}>
               {freshness}
             </small>
-            <button className="menu-bar-usage-refresh" type="button" aria-label={loading ? text.loading : text.retry} title={loading ? text.loading : text.retry} aria-busy={loading} disabled={loading} onClick={() => void load('force')}>
+            <button
+              className="menu-bar-usage-refresh"
+              type="button"
+              aria-label={loading ? text.loading : text.retry}
+              data-icon-tooltip={loading ? (props.language === 'zh-CN' ? '正在刷新' : 'Refreshing') : props.language === 'zh-CN' ? '刷新用量' : 'Refresh usage'}
+              aria-busy={loading}
+              disabled={loading}
+              onClick={() => void load('force')}
+            >
               {loading ? <RefreshPendingIcon /> : <RefreshIcon />}
             </button>
           </span>
@@ -519,7 +527,7 @@ function AllProviders(props: { providers: UsageProviderSummary[]; language: Lang
                 draggable
                 aria-label={`${text.reorder} ${fullName}`}
                 aria-describedby="menu-bar-usage-reorder-help"
-                title={text.reorderHelp}
+                data-icon-tooltip={props.language === 'zh-CN' ? '拖动调整顺序' : 'Drag to reorder'}
                 onDragStart={(event) => {
                   event.dataTransfer.effectAllowed = 'move';
                   event.dataTransfer.setData('text/plain', provider.providerId);

@@ -2440,7 +2440,7 @@ export function TaskEnumOrderEditor<T extends string>(props: { title: string; de
               className="task-enum-order-drag-handle"
               draggable
               aria-label={props.language === 'zh-CN' ? `拖动 ${item.label}` : `Drag ${item.label}`}
-              title={props.language === 'zh-CN' ? '拖动调整顺序' : 'Drag to reorder'}
+              data-icon-tooltip={props.language === 'zh-CN' ? '拖动调整顺序' : 'Drag to reorder'}
               onDragStart={(event) => {
                 setDraggedValue(item.value);
                 event.dataTransfer.effectAllowed = 'move';
@@ -2453,10 +2453,22 @@ export function TaskEnumOrderEditor<T extends string>(props: { title: string; de
             <span className="task-enum-order-rank">{index + 1}</span>
             <span className="task-enum-order-label">{item.label}</span>
             <span className="task-enum-order-actions">
-              <button type="button" aria-label={props.language === 'zh-CN' ? `上移 ${item.label}` : `Move ${item.label} up`} disabled={index === 0} onClick={() => moveItem(item.value, index - 1)}>
+              <button
+                data-icon-tooltip={props.language === 'zh-CN' ? `上移 ${item.label}` : `Move ${item.label} up`}
+                type="button"
+                aria-label={props.language === 'zh-CN' ? `上移 ${item.label}` : `Move ${item.label} up`}
+                disabled={index === 0}
+                onClick={() => moveItem(item.value, index - 1)}
+              >
                 ↑
               </button>
-              <button type="button" aria-label={props.language === 'zh-CN' ? `下移 ${item.label}` : `Move ${item.label} down`} disabled={index === props.items.length - 1} onClick={() => moveItem(item.value, index + 1)}>
+              <button
+                data-icon-tooltip={props.language === 'zh-CN' ? `下移 ${item.label}` : `Move ${item.label} down`}
+                type="button"
+                aria-label={props.language === 'zh-CN' ? `下移 ${item.label}` : `Move ${item.label} down`}
+                disabled={index === props.items.length - 1}
+                onClick={() => moveItem(item.value, index + 1)}
+              >
                 ↓
               </button>
             </span>

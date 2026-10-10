@@ -610,7 +610,7 @@ export function OpenWithMenu(props: { label?: string; applicationsOnly?: boolean
         className="session-open-with-trigger"
         aria-haspopup="menu"
         aria-expanded={open}
-        title={props.label ?? (props.language === 'zh-CN' ? '打开方式' : 'Open with')}
+        data-icon-tooltip={props.label ?? (props.language === 'zh-CN' ? '打开方式' : 'Open with')}
         aria-label={props.language === 'zh-CN' ? `选择 ${props.resource.displayName} 的打开方式` : `Open ${props.resource.displayName} with`}
         disabled={props.disabled}
         onClick={() => void toggle()}

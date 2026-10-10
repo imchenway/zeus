@@ -94,7 +94,7 @@ export function TurnChangeCard(props: {
               className="session-turn-change-more"
               aria-expanded={expanded}
               aria-label={expanded ? (zh ? '收起文件' : 'Show fewer files') : zh ? `再显示 ${hiddenCount} 个文件` : `Show ${hiddenCount} more files`}
-              title={expanded ? (zh ? '收起文件' : 'Show fewer files') : zh ? `再显示 ${hiddenCount} 个文件` : `Show ${hiddenCount} more files`}
+              data-icon-tooltip={expanded ? (zh ? '收起文件' : 'Show fewer files') : zh ? `再显示 ${hiddenCount} 个文件` : `Show ${hiddenCount} more files`}
               onClick={() => setExpanded((value) => !value)}
             >
               <CaretDown aria-hidden="true" data-expanded={expanded || undefined} />
@@ -286,7 +286,13 @@ export function TurnDiffWorkspace(props: {
             </button>
           ) : null}
           {side === currentSide && activeFile && canOpen ? (
-            <button type="button" className="session-diff-line-number" aria-label={zh ? `在源码中打开第 ${line} 行` : `Open source at line ${line}`} onClick={() => void openFile(activeFile, line)}>
+            <button
+              data-icon-tooltip={zh ? `在源码中打开第 ${line} 行` : `Open source at line ${line}`}
+              type="button"
+              className="session-diff-line-number"
+              aria-label={zh ? `在源码中打开第 ${line} 行` : `Open source at line ${line}`}
+              onClick={() => void openFile(activeFile, line)}
+            >
               {line}
             </button>
           ) : (
@@ -364,7 +370,7 @@ export function TurnDiffWorkspace(props: {
           <button
             type="button"
             aria-label={props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width'}
-            title={props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width'}
+            data-icon-tooltip={props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width'}
             onClick={() => props.onFullWidthChange(!props.fullWidth)}
           >
             {props.fullWidth ? <ArrowsIn aria-hidden="true" /> : <ArrowsOut aria-hidden="true" />}

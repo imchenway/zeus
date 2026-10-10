@@ -29,9 +29,14 @@ const CodeDiffView = lazy(() => import('./CodeDiffView.js').then((module) => ({ 
 const Markdown = lazy(() => import('../session/ConversationMarkdown.js').then((module) => ({ default: module.ConversationMarkdown })));
 
 /** 图标按钮只接受一个功能名称，同时用于悬浮提示和无障碍名称。 */
-export function PreviewIconButton({ label, children, ...buttonProps }: { label: string; children: ReactNode } & Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'aria-label' | 'className' | 'title' | 'type'>) {
+export function PreviewIconButton({
+  label,
+  children,
+  tooltip = true,
+  ...buttonProps
+}: { label: string; children: ReactNode; /** 常见加减和关闭按钮保留原生提示，不启用应用气泡。 */ tooltip?: boolean } & Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'aria-label' | 'className' | 'title' | 'type'>) {
   return (
-    <button {...buttonProps} className="file-preview-icon-button" type="button" aria-label={label} title={label}>
+    <button {...buttonProps} className="file-preview-icon-button" type="button" aria-label={label} data-icon-tooltip={tooltip ? label : undefined} title={tooltip ? undefined : label}>
       {children}
     </button>
   );
@@ -287,10 +292,10 @@ export function PreviewImage(props: { url: string; name: string; zh: boolean; on
             </PreviewIconButton>
           </>
         )}
-        <PreviewIconButton label={props.zh ? '缩小' : 'Zoom out'} onClick={() => setZoom((value) => Math.max(0.25, (value || 1) / 2))}>
+        <PreviewIconButton tooltip={false} label={props.zh ? '缩小' : 'Zoom out'} onClick={() => setZoom((value) => Math.max(0.25, (value || 1) / 2))}>
           <Minus size={18} aria-hidden="true" />
         </PreviewIconButton>
-        <PreviewIconButton label={props.zh ? '放大' : 'Zoom in'} onClick={() => setZoom((value) => Math.min(16, (value || 1) * 2))}>
+        <PreviewIconButton tooltip={false} label={props.zh ? '放大' : 'Zoom in'} onClick={() => setZoom((value) => Math.min(16, (value || 1) * 2))}>
           <Plus size={18} aria-hidden="true" />
         </PreviewIconButton>
         {zoom && !props.compact ? <span>{zoom * 100}%</span> : null}

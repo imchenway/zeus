@@ -607,7 +607,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
         disabled={!props.commandClient}
         onClick={() => openProjectCommands(selectedProject.id)}
         aria-label={codeWorkspaceZh ? '命令（⌘4）' : 'Commands (⌘4)'}
-        title={codeWorkspaceZh ? '命令（⌘4）' : 'Commands (⌘4)'}
+        data-icon-tooltip={codeWorkspaceZh ? '命令（⌘4）' : 'Commands (⌘4)'}
         aria-haspopup="dialog"
       >
         <TerminalIcon aria-hidden="true" />
@@ -618,7 +618,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           <span>{codeWorkspaceZh ? '返回源码' : 'Back to source'}</span>
         </button>
       ) : (
-        <button type="button" onClick={() => openProjectSection(selectedProject, 'code', 'git')} aria-label="Git（⌘2）" title="Git（⌘2）">
+        <button type="button" onClick={() => openProjectSection(selectedProject, 'code', 'git')} aria-label="Git（⌘2）" data-icon-tooltip="Git（⌘2）">
           <GitBranchIcon aria-hidden="true" />
         </button>
       )}

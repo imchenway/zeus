@@ -231,6 +231,7 @@ export function ResponseSelectionActions(props: {
       </MotionPresence>
       {markers.map(({ annotation, index, left, top }) => (
         <button
+          data-icon-tooltip={props.language === 'zh-CN' ? `打开第 ${index + 1} 条评论` : `Open comment ${index + 1}`}
           type="button"
           key={annotation.id}
           className="session-response-annotation-marker"
@@ -310,7 +311,7 @@ function ResponseAnnotationEditor(props: {
       aria-label={zh ? '回答评论' : 'Response comment'}
     >
       <form className="session-response-annotation-row" onSubmit={submitAnnotation}>
-        <button type="button" aria-label={zh ? '评论选项' : 'Comment options'} aria-expanded={optionsOpen} onClick={() => setOptionsOpen((open) => !open)}>
+        <button data-icon-tooltip={zh ? '评论选项' : 'Comment options'} type="button" aria-label={zh ? '评论选项' : 'Comment options'} aria-expanded={optionsOpen} onClick={() => setOptionsOpen((open) => !open)}>
           <SlidersHorizontal aria-hidden="true" />
         </button>
         <textarea
@@ -323,7 +324,7 @@ function ResponseAnnotationEditor(props: {
           onChange={(event) => setNote(event.currentTarget.value)}
           onKeyDown={handleAnnotationKeyDown}
         />
-        <button type="submit" className="session-response-annotation-save" aria-label={zh ? '完成评论' : 'Save comment'}>
+        <button data-icon-tooltip={zh ? '完成评论' : 'Save comment'} type="submit" className="session-response-annotation-save" aria-label={zh ? '完成评论' : 'Save comment'}>
           <Check aria-hidden="true" weight="bold" />
         </button>
       </form>

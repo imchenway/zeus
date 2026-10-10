@@ -414,7 +414,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                   aria-haspopup="dialog"
                   aria-expanded={boardSettingsSection !== null}
                   aria-label={isEnglishCopy ? 'Board settings' : '看板设置'}
-                  title={isEnglishCopy ? 'Board settings' : '看板设置'}
+                  data-icon-tooltip={isEnglishCopy ? 'Board settings' : '看板设置'}
                   onClick={() => setBoardSettingsSection('layout')}
                 >
                   <GearSix aria-hidden="true" />

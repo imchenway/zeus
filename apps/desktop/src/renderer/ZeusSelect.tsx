@@ -42,6 +42,8 @@ export interface ZeusSelectProps<T extends string> {
   triggerIcon?: ReactNode;
   triggerClassName?: string;
   triggerTitle?: string;
+  /** 图标触发器可提供简短功能提示；普通带文案的选择框继续沿用原生标题。 */
+  triggerTooltip?: string;
   triggerRef?: RefObject<HTMLButtonElement | null>;
   hideSelectedLabel?: boolean;
   className?: string;
@@ -581,7 +583,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
                         type="button"
                         className="zeus-select-pin"
                         aria-label={`${pinned ? props.pinning.unpinLabel : props.pinning.pinLabel} ${optionLabel}`}
-                        title={pinned ? props.pinning.unpinLabel : props.pinning.pinLabel}
+                        data-icon-tooltip={`${pinned ? props.pinning.unpinLabel : props.pinning.pinLabel} ${optionLabel}`}
                         aria-pressed={pinned}
                         onClick={(event) => togglePin(option, event.currentTarget)}
                       >
@@ -627,7 +629,8 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
         aria-expanded={open}
         aria-controls={props.pinning ? `${rootId}-dialog` : listboxId}
         aria-activedescendant={open && !props.pinning ? activeOptionId : undefined}
-        title={props.triggerTitle}
+        data-icon-tooltip={props.triggerTooltip}
+        title={props.triggerTooltip ? undefined : props.triggerTitle}
         disabled={props.disabled}
         onClick={() => (open ? closeListbox(false) : openListbox(props.value))}
         onKeyDown={handleTriggerKeyDown}
