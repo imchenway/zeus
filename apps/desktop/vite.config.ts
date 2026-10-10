@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+/** 普通渲染模块按此体积分块；有初始化依赖的运行库单独保留完整共享模块。 */
 const rendererChunkTargetBytes = 360 * 1024;
 
 export default defineConfig(({ command }) => ({
@@ -27,6 +28,14 @@ export default defineConfig(({ command }) => ({
               name: 'markdown-runtime',
               test: /node_modules[\\/](?:markstream-react|markstream-core|stream-markdown-parser|markdown-it(?:-[^\\/]+)?|linkify-it|mdurl|uc\.micro|entities|punycode\.js|@floating-ui[\\/][^\\/]+|clsx)[\\/]/u,
               priority: 95,
+              maxSize: 2 * 1024 * 1024,
+            },
+            {
+              // Mermaid 共享模块之间含初始化依赖，拆分会在首次加载时调用尚未初始化的函数。
+              // 只合并主入口与共享模块，各图表类型继续按需加载，避免把所有图表放入首屏。
+              name: 'mermaid-runtime',
+              test: /node_modules[\\/]mermaid[\\/]dist[\\/](?:mermaid\.core\.mjs$|chunks[\\/]mermaid\.core[\\/]chunk-[^\\/]+\.mjs$)/u,
+              priority: 94,
               maxSize: 2 * 1024 * 1024,
             },
             {
