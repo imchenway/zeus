@@ -336,6 +336,36 @@ export class BrowserHost implements BrowserAutomationPort {
         ...(typeof value.url === 'string' ? { url: value.url } : {}),
       });
     });
+    /** 首发受理后迁移草稿网页；只允许当前窗口接管自己创建的草稿标签。 */
+    ipcMain.handle('zeus:browser:adopt-draft', (event, input: unknown) => {
+      /** 请求必须来自已注册的应用窗口。 */
+      const window = this.requireRendererWindow(event);
+      /** 草稿与真实会话身份分别校验，不接受空值或任意会话迁移。 */
+      const value = asRecord(input);
+      /** 只迁移浏览器草稿，已有会话不能从此入口重绑定。 */
+      const source = requireNonEmptyString(value.sourceConversationId, 'sourceConversationId');
+      /** 真实身份由会话首发的受理结果提供。 */
+      const target = requireNonEmptyString(value.conversationId, 'conversationId');
+      if (!source.startsWith('browser-draft-') || target.startsWith('browser-draft-')) throw new Error('Only a browser draft can be adopted by a conversation.');
+      /** 先检查全部标签归属，避免部分迁移后才发现跨窗口冲突。 */
+      const tabs = [...this.tabs.values()].filter((tab) => tab.snapshot.conversationId === source);
+      if (tabs.some((tab) => tab.ownerWindowId !== undefined && tab.ownerWindowId !== window.id)) throw new Error('The browser draft belongs to another window.');
+      if (tabs.length === 0) return this.snapshotFor(target);
+      /** 首发中明确提交的批注才标记为已发送。 */
+      const sent = new Set(Array.isArray(value.commentIds) ? value.commentIds.filter((id): id is string => typeof id === 'string') : []);
+      /** 迁移保留原网页实例、标签顺序和当前选中项。 */
+      const active = this.activeTabByConversation.get(source);
+      for (const tab of tabs) {
+        tab.snapshot = { ...tab.snapshot, conversationId: target, comments: tab.snapshot.comments.map((comment) => ({ ...comment, conversationId: target, status: sent.has(comment.id) ? 'sent' : comment.status })) };
+        this.syncPageComments(tab);
+      }
+      if (active) this.activeTabByConversation.set(target, active);
+      this.activeTabByConversation.delete(source);
+      for (const download of this.downloads) if (download.conversationId === source) download.conversationId = target;
+      this.emitSnapshot(source);
+      this.emitSnapshot(target);
+      return this.snapshotFor(target);
+    });
     ipcMain.handle('zeus:browser:activate-tab', async (event, input: unknown) => {
       const window = this.requireRendererWindow(event);
       const value = asRecord(input);

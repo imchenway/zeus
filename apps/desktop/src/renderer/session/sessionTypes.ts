@@ -1502,6 +1502,10 @@ export interface StartTaskModelPushRequest {
 
 export type StartNativeConversationRequest =
   | {
+      /** 首条消息的结构化网页批注，复用后续消息的处理链路。 */
+      browserComments?: ZeusBrowserComment[];
+      /** 首条消息的网页批注提示词。 */
+      browserCommentContent?: string;
       /** 本次创建选择的上下文窗口容量。 */
       contextCapacityTokens?: number | null;
       mode: 'create';
@@ -1548,6 +1552,10 @@ export type StartNativeConversationRequest =
     };
 
 export interface StartProjectConversationRequest {
+  /** 首条消息的结构化网页批注，复用后续消息的处理链路。 */
+  browserComments?: ZeusBrowserComment[];
+  /** 首条消息的网页批注提示词。 */
+  browserCommentContent?: string;
   /** 上下文窗口容量；空值使用默认。 */
   contextCapacityTokens?: number | null;
   source?: 'code_review';

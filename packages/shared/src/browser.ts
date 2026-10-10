@@ -199,6 +199,17 @@ export interface ZeusBrowserPreparedSubmission {
   }>;
 }
 
+/** 草稿和已有会话共用批注合并规则，同一批注与截图只保留一份。 */
+export function mergeBrowserSubmissions(current: ZeusBrowserPreparedSubmission | null, prepared: ZeusBrowserPreparedSubmission): ZeusBrowserPreparedSubmission {
+  /** 重复确认同一批注时使用最新正文。 */
+  const comments = [...new Map([...(current?.comments ?? []), ...prepared.comments].map((comment) => [comment.id, comment])).values()];
+  /** 已被替换或删除的截图不进入提交附件。 */
+  const screenshotPaths = new Set(comments.flatMap((comment) => (comment.screenshotPath ? [comment.screenshotPath] : [])));
+  /** 跨网页累计附件，按实际路径去重。 */
+  const attachments = [...new Map([...(current?.attachments ?? []), ...prepared.attachments].filter((attachment) => screenshotPaths.has(attachment.localPath)).map((attachment) => [attachment.localPath, attachment])).values()];
+  return { tabId: prepared.tabId, comments, commentIds: comments.map((comment) => comment.id), content: serializeBrowserComments(comments), attachments };
+}
+
 export type ZeusBrowserCommand =
   | { action: 'navigate'; url: string }
   | { action: 'back' }

@@ -369,6 +369,8 @@ contextBridge.exposeInMainWorld('zeus', {
   showBrowserMenu: (input: unknown) => ipcRenderer.invoke('zeus:browser:show-menu', input),
   getBrowserSnapshot: (conversationId: string) => ipcRenderer.invoke('zeus:browser:get-snapshot', conversationId),
   openBrowserTab: (input: unknown) => ipcRenderer.invoke('zeus:browser:open-tab', input),
+  /** 首发受理后把当前窗口的浏览器草稿归入真实会话。 */
+  adoptBrowserDraft: (input: unknown) => ipcRenderer.invoke('zeus:browser:adopt-draft', input),
   activateBrowserTab: (input: unknown) => ipcRenderer.invoke('zeus:browser:activate-tab', input),
   closeBrowserTab: (input: unknown) => ipcRenderer.invoke('zeus:browser:close-tab', input),
   /** 明确关闭当前会话浏览器并释放全部标签。 */

@@ -6514,6 +6514,15 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   padding: 10px 0;
 }
 
+/* 新对话在模型会话创建前也提供完整的浏览器工作面。 */
+.session-codex-parity-v1 .session-new-conversation-workspace {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-block-size: 0;
+  min-inline-size: 0;
+}
+
 .session-codex-parity-v1 .session-new-conversation {
   display: flex;
   flex: 1 1 auto;

@@ -75,7 +75,7 @@ import { type ConversationCapabilitiesSnapshot, ConversationCapabilityQueryAppli
 import { ConversationChoiceQueryApplication } from './conversationChoiceQueryApplication.js';
 import { ConversationExecutionCoordinator, type ConversationExecutionRoute } from './conversationExecutionCoordinator.js';
 import type { NativeConversationSkillInput } from './codexNativeConversationContracts.js';
-import { conversationTurnHasCompletedOutput, readNativeConversationSkills, readNativeSubmissionSkills } from './nativeConversationSubmissionInputs.js';
+import { appendConversationResourceContext, conversationTurnHasCompletedOutput, readNativeConversationSkills, readNativeSubmissionSkills } from './nativeConversationSubmissionInputs.js';
 import type { CreateConversationMessageBody, NativeConversationAttachment, ProjectConversationAcceptanceReservation, StartProjectConversationBody, StartTaskConversationBody, TaskConversationAcceptanceReservation } from './index.js';
 import { createModelConnectionService } from './modelConnectionService.js';
 import { resolveWritableNonCodexLegacyConversation, type WritableNonCodexLegacyConversationContext } from './nonCodexLegacyRuntime.js';
@@ -169,6 +169,10 @@ export interface PreparedConversationQueueReroute {
   };
 }
 export interface NativeTaskConversationStartPlan {
+  /** 从经过校验的首发输入冻结网页批注。 */
+  browserComments?: Record<string, unknown>[];
+  /** 从经过校验的首发输入冻结批注提示词。 */
+  browserCommentContent?: string;
   /** 新会话的冻结上下文容量；内部创建缺省继承所属项目。 */
   contextCapacityTokens?: number | null;
   agentKind: 'codex' | 'pi';
@@ -436,8 +440,12 @@ export function createConversationApplicationOperations(dependencies: Conversati
     if (mentions.length === 0) throw nativeApiError('ZEUS_EXPERT_MENTIONS_REQUIRED', '专家群聊至少需要点名一名数字员工。');
     if (input.body.goalObjective !== undefined) throw nativeApiError('ZEUS_EXPERT_GOAL_MUTUALLY_EXCLUSIVE', '同一草稿不能同时进入目标模式并点名数字员工。');
     const content = typeof input.body.content === 'string' ? input.body.content.trim() : '';
+    /** 点名数字员工时仍保留网页批注，所有首发入口使用同一资源校验。 */
+    const browserComments = normalizeNativeBrowserComments(input.body.browserComments).map((comment) => ({ ...comment, conversationId: input.conversation?.id ?? input.reservedConversationId }));
+    /** 员工获得经过校验的批注提示词。 */
+    const browserCommentContent = normalizeNativeBrowserCommentContent(input.body.browserCommentContent);
     const displayText = normalizeComposerDisplayText(input.body.displayText, content);
-    if (!content) throw nativeApiError('ZEUS_INVALID_CONVERSATION_MESSAGE', '专家群聊需要非空提示正文。');
+    if (!content && !browserComments.length) throw nativeApiError('ZEUS_INVALID_CONVERSATION_MESSAGE', '专家群聊需要非空提示正文或网页批注。');
     if (displayText.length > 100_000) throw nativeApiError('ZEUS_INVALID_CONVERSATION_MESSAGE', 'displayText 不能超过 100000 字符。');
     const permissionMode =
       input.body.permissionMode === undefined
@@ -579,7 +587,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       pluginReferences,
       attachments,
       displayText,
-      currentPrompt: taskPrompt,
+      currentPrompt: appendConversationResourceContext(taskPrompt, browserCommentContent, browserComments, undefined),
     };
     const participants = employees.map((employee, index) => {
       const member = memberConfigurations[index]!;
@@ -646,7 +654,16 @@ export function createConversationApplicationOperations(dependencies: Conversati
       clientMessageId: normalizeNativeClientUserMessageId(input.body.clientUserMessageId, `expert-client-${createHash('sha256').update(input.stableOperationId).digest('hex').slice(0, 24)}`),
       content,
       displayText,
-      input: { expertRound: true, text: content, displayText, expertMentions: mentions, settings, context: { projectLocalPath: executionRoot, ...(executionWorkspaceMode ? { executionWorkspaceMode } : {}) } },
+      input: {
+        expertRound: true,
+        text: content,
+        displayText,
+        browserComments,
+        ...(browserCommentContent ? { browserCommentContent } : {}),
+        expertMentions: mentions,
+        settings,
+        context: { projectLocalPath: executionRoot, ...(executionWorkspaceMode ? { executionWorkspaceMode } : {}) },
+      },
       createdAt: acceptedAt,
       queued,
       executions: participants.map(({ participant, actor, memberSettings }, ordinal) => ({
@@ -1638,14 +1655,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           : (() => {
               throw nativeApiError('ZEUS_INVALID_CONVERSATION_MESSAGE', 'composerDraft must be a string no longer than 100000 characters.');
             })();
-    const browserCommentContent =
-      body.browserCommentContent === undefined
-        ? undefined
-        : typeof body.browserCommentContent === 'string' && body.browserCommentContent.length <= 1_000_000
-          ? body.browserCommentContent
-          : (() => {
-              throw nativeApiError('ZEUS_INVALID_BROWSER_COMMENTS', 'browserCommentContent must be a string no larger than 1 MB.');
-            })();
+    const browserCommentContent = normalizeNativeBrowserCommentContent(body.browserCommentContent);
     const conversationContext = normalizeNativeConversationContext(body.conversationContext);
     if (body.pluginReferences !== undefined) {
       if (!zeusPluginService) throw nativeApiError('ZEUS_PLUGINS_UNAVAILABLE', 'Zeus Plugin Host 当前不可用，不能接受结构化 Plugin/Skill 引用。');
@@ -2092,6 +2102,13 @@ export function createConversationApplicationOperations(dependencies: Conversati
     });
   }
 
+  /** 首发、续聊和恢复共用批注提示词的边界校验。 */
+  function normalizeNativeBrowserCommentContent(value: unknown): string | undefined {
+    if (value === undefined) return undefined;
+    if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > 1_000_000) throw nativeApiError('ZEUS_INVALID_BROWSER_COMMENTS', 'browserCommentContent must be a string no larger than 1 MB.');
+    return value;
+  }
+
   function normalizeNativeBrowserComments(value: unknown): Record<string, unknown>[] {
     if (value === undefined) return [];
     if (!Array.isArray(value) || value.length > 200) {
@@ -2394,6 +2411,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const collaborationMode = body.collaborationMode === undefined ? 'default' : parseConversationCollaborationMode(body.collaborationMode);
     if (!collaborationMode) throw nativeApiError('ZEUS_INVALID_COLLABORATION_MODE', 'collaborationMode must be default or plan.');
     const attachments = normalizeNativeConversationAttachments(body.attachments, project.localPath);
+    /** 首发批注绑定已预留的真实会话，草稿身份不进入历史记录。 */
+    const browserComments = normalizeNativeBrowserComments(body.browserComments).map((comment) => ({ ...comment, conversationId: reservation.conversationId }));
+    /** 批注提示词经过与后续消息相同的校验。 */
+    const browserCommentContent = normalizeNativeBrowserCommentContent(body.browserCommentContent);
     const content = reviewWorkspace
       ? [
           '请审查当前会话工作树的代码变化。',
@@ -2406,7 +2427,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       : typeof body.content === 'string'
         ? body.content.trim()
         : '';
-    if (!content && attachments.length === 0) {
+    if (!content && attachments.length === 0 && browserComments.length === 0) {
       throw nativeApiError('ZEUS_INVALID_CONVERSATION_START', 'Project conversation content or attachments are required.');
     }
     const displayText = normalizeComposerDisplayText(body.displayText, content);
@@ -2475,9 +2496,15 @@ export function createConversationApplicationOperations(dependencies: Conversati
         // 跨会话延续时保留媒体，由模型接口返回实际支持结果。
         media: true,
         contextWindow: resolvedRoute.configuredModel?.contextWindow ?? selectedModel.contextWindow,
-        currentInputUtf8Bytes: Buffer.byteLength(providerContent, 'utf8') + Buffer.byteLength(JSON.stringify(attachments), 'utf8'),
+        currentInputUtf8Bytes: Buffer.byteLength(appendConversationResourceContext(providerContent, browserCommentContent, browserComments, undefined), 'utf8') + Buffer.byteLength(JSON.stringify(attachments), 'utf8'),
       },
-      userHistoryContent: { text: providerContent, ...(displayText !== providerContent ? { displayText } : {}), ...(attachments.length ? { attachments } : {}) },
+      userHistoryContent: {
+        text: providerContent,
+        ...(displayText !== providerContent ? { displayText } : {}),
+        ...(attachments.length ? { attachments } : {}),
+        ...(browserComments.length ? { browserComments } : {}),
+        ...(browserCommentContent ? { browserCommentContent } : {}),
+      },
     });
     zeusConversationPluginRuntime?.bindExplicitReferences({ conversationId: reservation.conversationId, projectId: project.id, references: pluginReferences });
     const nativeOperation =
@@ -2492,6 +2519,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
             executionWorkspaceMode: reviewWorkspace?.workspaceMode ?? (body.workspaceMode === 'worktree' ? 'worktree' : 'direct'),
             ...(goalObjective ? { goalObjective } : {}),
             prompt: providerContent,
+            browserComments,
+            browserCommentContent,
             ...(displayText !== providerContent ? { displayText } : {}),
             model: {
               sourceId: selectedModel.sourceId ?? null,
@@ -2519,6 +2548,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
             projectLocalPath: executionRoot,
             executionWorkspaceMode: reviewWorkspace?.workspaceMode ?? (body.workspaceMode === 'worktree' ? 'worktree' : 'direct'),
             prompt: providerContent,
+            browserComments,
+            browserCommentContent,
             ...(displayText !== providerContent ? { displayText } : {}),
             attachments,
             allowedAttachmentRoots: executionRoots,
@@ -2770,10 +2801,13 @@ export function createConversationApplicationOperations(dependencies: Conversati
         media: true,
         contextWindow: resolvedRoute.configuredModel?.contextWindow ?? null,
         currentInputUtf8Bytes:
-          Buffer.byteLength(plan.prompt, 'utf8') + Buffer.byteLength(JSON.stringify({ attachments: plan.attachments ?? [], taskPushLayout: plan.taskPushLayout ?? null, legacyReference: plan.legacyReference ?? null }), 'utf8'),
+          Buffer.byteLength(appendConversationResourceContext(plan.prompt, plan.browserCommentContent, plan.browserComments, undefined), 'utf8') +
+          Buffer.byteLength(JSON.stringify({ attachments: plan.attachments ?? [], taskPushLayout: plan.taskPushLayout ?? null, legacyReference: plan.legacyReference ?? null }), 'utf8'),
       },
       userHistoryContent: {
         text: plan.prompt,
+        ...(plan.browserComments?.length ? { browserComments: plan.browserComments } : {}),
+        ...(plan.browserCommentContent ? { browserCommentContent: plan.browserCommentContent } : {}),
         ...(plan.displayText ? { displayText: plan.displayText } : {}),
         ...(plan.attachments?.length ? { attachments: plan.attachments } : {}),
         ...(plan.taskPushLayout ? { taskPushLayout: plan.taskPushLayout } : {}),
@@ -2795,6 +2829,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
         cwd: plan.cwd,
         ...(plan.goalObjective ? { goalObjective: plan.goalObjective } : {}),
         prompt: plan.prompt,
+        browserComments: plan.browserComments,
+        browserCommentContent: plan.browserCommentContent,
         ...(plan.displayText ? { displayText: plan.displayText } : {}),
         model: plan.model,
         ...(plan.effort ? { thinkingLevel: plan.effort } : {}),
@@ -2832,6 +2868,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
       taskTitle: plan.taskTitle,
       ...(plan.conversationTitle ? { conversationTitle: plan.conversationTitle } : {}),
       prompt: plan.prompt,
+      browserComments: plan.browserComments,
+      browserCommentContent: plan.browserCommentContent,
       ...(plan.displayText ? { displayText: plan.displayText } : {}),
       ...(plan.attachments ? { attachments: plan.attachments } : {}),
       ...(plan.allowedAttachmentRoots ? { allowedAttachmentRoots: plan.allowedAttachmentRoots } : {}),
@@ -3540,10 +3578,14 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const permissionMode = body.permissionMode === undefined ? (task.allowCodeChanges ? 'auto' : 'read-only') : parseConversationPermissionMode(body.permissionMode);
         if (!permissionMode) throw nativeApiError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, auto-review, or full-access.');
         const explicitAttachments = normalizeNativeConversationAttachments(body.attachments, project.localPath);
+        /** 网页批注首发绑定真实身份，不误用任务的默认推送正文。 */
+        const browserComments = normalizeNativeBrowserComments(body.browserComments).map((comment) => ({ ...comment, conversationId: reservation.conversationId }));
+        /** 校验提示词后再冻结派发计划。 */
+        const browserCommentContent = normalizeNativeBrowserCommentContent(body.browserCommentContent);
         const explicitContent = typeof body.content === 'string' ? body.content.trim() : '';
-        const canonicalAttachmentInput = body.attachments === undefined && !explicitContent ? normalizeTaskPushAttachments(task, project.localPath) : null;
+        const canonicalAttachmentInput = body.attachments === undefined && !explicitContent && !browserComments.length ? normalizeTaskPushAttachments(task, project.localPath) : null;
         const attachments = canonicalAttachmentInput?.attachments ?? explicitAttachments;
-        const content = explicitContent || createTaskRuntimePrompt(task);
+        const content = explicitContent || (browserComments.length ? '' : createTaskRuntimePrompt(task));
         const displayText = normalizeComposerDisplayText(body.displayText, content);
         const skillReferences = normalizeSkillReferences(body.skillReferences);
         if (skillReferences.length > 0 && !zeusSkillService) throw nativeApiError('ZEUS_SKILLS_UNAVAILABLE', '当前执行宿主不支持 Zeus Skill。');
@@ -3599,6 +3641,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
           taskTitle: task.title,
           cwd: executionCwd,
           prompt: providerContent,
+          browserComments,
+          browserCommentContent,
           ...(displayText !== providerContent ? { displayText } : {}),
           model: { sourceId: selectedModel.sourceId ?? null, modelId: selectedModel.model, displayName: selectedModel.displayName ?? null },
           ...(selectedEffort ? { effort: selectedEffort } : {}),

@@ -285,6 +285,10 @@ export interface NativeQuestionAnswerAttachmentInput {
 }
 
 export interface StartTaskConversationInput {
+  /** 首发与后续消息共用结构化网页批注。 */
+  browserComments?: Record<string, unknown>[];
+  /** 首发与后续消息共用网页批注提示词。 */
+  browserCommentContent?: string;
   /** 会话创建时冻结的上下文容量，空值保留默认。 */
   contextCapacityTokens?: number | null;
   /** 绑定原始异步问题，沿用现有提交及确认链路。 */
@@ -345,6 +349,10 @@ export interface StartTaskConversationInput {
 }
 
 export interface StartProjectConversationInput {
+  /** 首发与后续消息共用结构化网页批注。 */
+  browserComments?: Record<string, unknown>[];
+  /** 首发与后续消息共用网页批注提示词。 */
+  browserCommentContent?: string;
   /** 会话创建时冻结的上下文容量，空值保留默认。 */
   contextCapacityTokens?: number | null;
   executionWorkspaceMode?: 'direct' | 'worktree';

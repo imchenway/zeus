@@ -53,6 +53,8 @@ export function registerConversationStartCommandRoutes(options: {
         [
           'agentKind',
           'attachments',
+          'browserComments',
+          'browserCommentContent',
           'clientUserMessageId',
           'collaborationMode',
           'computerUseRequested',
@@ -112,6 +114,8 @@ export function registerConversationStartCommandRoutes(options: {
         [
           'agentKind',
           'attachments',
+          'browserComments',
+          'browserCommentContent',
           'clientUserMessageId',
           'collaborationMode',
           'computerUseRequested',
