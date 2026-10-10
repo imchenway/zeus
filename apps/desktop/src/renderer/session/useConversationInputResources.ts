@@ -122,7 +122,7 @@ export function useConversationInputResources(options: UseConversationInputResou
             const attachments = await bridge([{ name: 'Pasted text.txt', type: 'text/plain', text, source: 'paste', kind: 'pasted_text' }]);
             if (!pending.current()) return;
             if (attachments.length === 0) throw new Error('长文本附件未能保存。');
-            // 受信引用接续即时摘要，保存后不重新读取已在输入框中的原文。
+            // 保存结果使用受信引用，卡片只显示已有元信息。
             pending.complete(attachments.map((attachment) => ({ id: attachment.localPath ?? attachment.uploadRef, name: attachment.name, kind: attachment.kind ?? 'pasted_text' })));
             latest.current.onAddAttachments(attachments);
           } catch (error) {

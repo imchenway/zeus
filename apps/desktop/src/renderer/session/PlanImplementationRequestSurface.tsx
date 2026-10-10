@@ -156,6 +156,16 @@ export function PlanImplementationRequestSurface(props: {
             onDragLeave={inputResources.handleDragLeave}
             onDrop={inputResources.handleDrop}
           >
+            {/* 计划修改沿用问答输入的附件上置顺序。 */}
+            <ConversationComposerAttachments
+              attachments={attachments}
+              pendingResources={inputResources.pendingResources}
+              language={props.language}
+              disabled={responding === true}
+              className="session-question-answer-attachments"
+              onRemove={removeAttachment}
+              onRestorePastedText={inputResources.restorePastedText}
+            />
             <span className="session-question-index">
               <PencilSimple aria-hidden="true" />
             </span>
@@ -177,15 +187,6 @@ export function PlanImplementationRequestSurface(props: {
               }}
             />
             {actions}
-            <ConversationComposerAttachments
-              attachments={attachments}
-              pendingResources={inputResources.pendingResources}
-              language={props.language}
-              disabled={responding === true}
-              className="session-question-answer-attachments"
-              onRemove={removeAttachment}
-              onRestorePastedText={inputResources.restorePastedText}
-            />
           </form>
         ) : (
           <div className="session-plan-refinement">
