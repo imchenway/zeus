@@ -2717,6 +2717,71 @@
   margin-block: 0 12px;
 }
 
+/* 图表只保留一层主题外壳，不依赖库内未定义的圆角变量或再套源码卡片。 */
+.session-codex-parity-v1 .session-conversation-markdown .session-mermaid-block {
+  --ms-radius: 8px;
+  background: var(--session-code);
+  border: 1px solid var(--session-line);
+  border-radius: 12px;
+  box-sizing: border-box;
+  margin-block: 12px;
+  overflow: hidden;
+}
+
+.session-codex-parity-v1 .session-mermaid-block .mermaid-block {
+  background: transparent;
+  border: 0;
+  border-radius: inherit;
+  box-shadow: none;
+  color: inherit;
+  margin: 0;
+}
+
+/* 标题、源码和图形共用同一背景；右侧为已有源码复制按钮留出空间。 */
+.session-codex-parity-v1 .session-mermaid-block .mermaid-block-header {
+  background: transparent;
+  border-block-end: 1px solid var(--session-line-soft);
+  color: var(--session-text-muted);
+  padding: 10px 48px 10px 14px;
+}
+
+.session-codex-parity-v1 .session-mermaid-block .mermaid-block-header :where(span) {
+  color: inherit;
+  font-family: inherit;
+}
+
+.session-codex-parity-v1 .session-mermaid-block .mermaid-block > :not(.mermaid-block-header) :where(.bg-gray-50, .bg-gray-900) {
+  background: transparent;
+}
+
+/* 图形按实际比例占用高度，完整展示长流程，短图不保留固定的空白区域。 */
+.session-codex-parity-v1 .session-mermaid-block .mermaid-block div:has(> [data-mermaid-wrapper]) {
+  min-block-size: 0;
+}
+
+/* 源码视图沿用卡片的边界，长行仍在卡片内部滚动。 */
+.session-codex-parity-v1 .session-conversation-markdown .session-mermaid-block pre {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .session-conversation-markdown .session-mermaid-block > pre {
+  padding: 14px;
+}
+
+/* 错误提示与完整源码取代空白图形；上游仍可响应后续正文修正。 */
+.session-codex-parity-v1 .session-mermaid-block[data-error='true'] .mermaid-block > :not(.mermaid-block-header) {
+  display: none;
+}
+
+.session-codex-parity-v1 .session-conversation-markdown .session-mermaid-block .session-markdown-code-truncated {
+  margin: 0;
+  padding: 0 14px 14px;
+}
+
 .session-codex-parity-v1 .session-conversation-markdown .session-markdown-code-truncated {
   color: var(--session-text-muted);
   display: block;

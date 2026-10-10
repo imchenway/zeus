@@ -24,7 +24,7 @@ const STRUCTURED_CUSTOM_COMPONENTS_ID = 'zeus-conversation-markdown-structured';
 const EMPTY_RESOURCES: ConversationResource[] = [];
 const CHILD_ARRAY_FIELDS = ['children', 'items', 'rows', 'cells', 'term', 'definition'] as const;
 /** 图表复用按需加载的原生预览，禁止正文开启脚本、链接交互或导出入口。 */
-const MERMAID_OPTIONS = { isStrict: true, enableMermaidInteractions: false, showCopyButton: false, showExportButton: false, showFullscreenButton: false, showCollapseButton: false, showTooltips: false } as const;
+const MERMAID_OPTIONS = { maxHeight: 'none', isStrict: true, enableMermaidInteractions: false, showCopyButton: false, showExportButton: false, showFullscreenButton: false, showCollapseButton: false, showTooltips: false } as const;
 const SMOOTH_STREAMING_OPTIONS = {
   minCharsPerSecond: 1_200,
   maxCharsPerSecond: 100_000,
@@ -50,7 +50,7 @@ const labels = {
     codeTruncated: '代码块过长，已截断',
     diagramRuntimeUnavailable: '图表运行库未加载，只能显示源码',
     diagramRenderFailed: '图表渲染失败：',
-    diagramNotRendered: '图表没有渲染出来，已回退为源码',
+    diagramSyntaxInvalid: 'Mermaid 语法不完整或无效，已保留源码',
   },
   'en-US': {
     copied: 'Copied',
@@ -64,7 +64,7 @@ const labels = {
     codeTruncated: 'Code block truncated',
     diagramRuntimeUnavailable: 'Diagram runtime unavailable; showing source',
     diagramRenderFailed: 'Diagram failed to render: ',
-    diagramNotRendered: 'Diagram did not render; showing source',
+    diagramSyntaxInvalid: 'Incomplete or invalid Mermaid syntax; showing source',
   },
 } as const;
 
@@ -344,66 +344,94 @@ function SecureCodeBlockNode(props: NodeComponentProps<MarkstreamNode>) {
   );
 }
 
-/**
- * 图表运行库只在首次需要时加载，上游加载失败会永久降级为源码视图。
- * 这里提前探测一次，把"没加载出来"变成可读原因，而不是只丢一段源码。
- */
-let mermaidRuntimeProbe: Promise<boolean> | null = null;
-function ensureMermaidRuntime(): Promise<boolean> {
-  mermaidRuntimeProbe ??= import('mermaid').then(() => true).catch(() => false);
+/** 图表运行库按需加载并复用，用于在上游静默回退之前说明加载或语法错误。 */
+let mermaidRuntimeProbe: Promise<(typeof import('mermaid'))['default'] | null> | null = null;
+/** 返回实际运行库，完成态直接用其解析接口核对语法，不依赖图标或等待时长判断成功。 */
+function ensureMermaidRuntime(): NonNullable<typeof mermaidRuntimeProbe> {
+  mermaidRuntimeProbe ??= import('mermaid').then((module) => module.default).catch(() => null);
   return mermaidRuntimeProbe;
 }
 
 /** 自定义节点不会收到默认 loading=false，须显式结束已闭合图表的生成状态。 */
 function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>) {
+  /** 语言和正文阶段来自所有 Markdown 展示入口共用的上下文。 */
+  const runtime = useContext(MarkdownRuntimeContext);
   /** 复用带可访问名称的复制按钮，关闭原生组件未标注名称的图标操作。 */
-  const languageLabels = labels[useContext(MarkdownRuntimeContext)?.language ?? 'en-US'];
+  const languageLabels = labels[runtime?.language ?? 'en-US'];
+  /** 图表外壳用于读取当前应用主题。 */
   const containerRef = useRef<HTMLDivElement | null>(null);
   /** 上游把"画不出来"处理成源码视图且不报错，这里补上用户能看懂的原因。 */
   const [diagnostic, setDiagnostic] = useState<string | null>(null);
   /** 正文已经结束时图表代码块不会再增长，必须结束生成态，否则上游会一直只显示源码。 */
-  const phase = useContext(MarkdownRuntimeContext)?.phase ?? 'streaming';
+  const phase = runtime?.phase ?? 'streaming';
+  /** 未闭合代码块继续生成；正文完成后覆盖解析节点残留的生成状态。 */
   const streaming = phase === 'streaming' && Boolean(props.node.loading);
-  useEffect(() => {
-    let active = true;
-    void ensureMermaidRuntime().then((available) => {
-      if (active && !available) setDiagnostic(languageLabels.diagramRuntimeUnavailable);
-    });
+  /** 上游优先读取 node.loading，必须与组件 loading 同步。 */
+  const node = useMemo(() => ({ ...props.node, loading: streaming }), [props.node, streaming]);
+  /** Mermaid 的图形颜色跟随应用主题，而非固定使用浅色。 */
+  const [isDark, setIsDark] = useState(false);
+  useLayoutEffect(() => {
+    /** 应用主题由已有容器类和系统主题共同决定。 */
+    const container = containerRef.current;
+    if (!container) return;
+    /** 设置变化时重新读取最终生效的颜色模式。 */
+    const syncTheme = () => setIsDark(getComputedStyle(container).colorScheme === 'dark');
+    /** 只观察当前应用主题容器，避免监听整个正文的更新。 */
+    const observer = new MutationObserver(syncTheme);
+    observer.observe(container.closest('.zeus-shell') ?? document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme'] });
+    /** 自动主题随系统设置变化更新图形。 */
+    const media = matchMedia('(prefers-color-scheme: dark)');
+    media.addEventListener('change', syncTheme);
+    syncTheme();
     return () => {
-      active = false;
+      observer.disconnect();
+      media.removeEventListener('change', syncTheme);
     };
-  }, [languageLabels.diagramRuntimeUnavailable]);
+  }, []);
   /** 返回 true 表示异常已由本组件说明，避免与上游错误界面重复提示。 */
   const onRenderError = useCallback(
     (error: unknown) => {
+      /** 错误摘要有界显示，完整源码继续可复制。 */
       const reason = error instanceof Error ? error.message : String(error);
       setDiagnostic(`${languageLabels.diagramRenderFailed}${reason.slice(0, 200)}`);
       return true;
     },
     [languageLabels.diagramRenderFailed],
   );
-  /** 生成结束后仍然没有图形，说明上游已静默回退，标出事实并允许后续重试覆盖它。 */
+  /** 上游解析失败可能不触发渲染回调；直接核对闭合图表，避免把标题图标当作成功。 */
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container || streaming) return;
+    /** 取消旧正文的异步结果，防止其错误覆盖新图表。 */
     let active = true;
-    const observer = new MutationObserver(() => {
-      if (container.querySelector('svg')) setDiagnostic(null);
+    setDiagnostic(null);
+    void ensureMermaidRuntime().then(async (mermaid) => {
+      if (!active) return;
+      if (!mermaid) {
+        setDiagnostic(languageLabels.diagramRuntimeUnavailable);
+        return;
+      }
+      if (streaming) return;
+      try {
+        /** 未闭合语法返回 false，不让 Mermaid 额外插入错误图形。 */
+        const parsed = await mermaid.parse(props.node.code, { suppressErrors: true });
+        if (active && parsed === false) setDiagnostic(`${languageLabels.diagramRenderFailed}${languageLabels.diagramSyntaxInvalid}`);
+      } catch (error) {
+        if (active) onRenderError(error);
+      }
     });
-    observer.observe(container, { childList: true, subtree: true });
-    const timer = setTimeout(() => {
-      if (active && !container.querySelector('svg')) setDiagnostic((current) => current ?? languageLabels.diagramNotRendered);
-    }, 2_500);
     return () => {
       active = false;
-      observer.disconnect();
-      clearTimeout(timer);
     };
-  }, [languageLabels.diagramNotRendered, streaming]);
+  }, [languageLabels.diagramRenderFailed, languageLabels.diagramRuntimeUnavailable, languageLabels.diagramSyntaxInvalid, onRenderError, props.node.code, streaming]);
   return (
-    <div ref={containerRef} className="session-code-block">
+    <div ref={containerRef} className="session-code-block session-mermaid-block" data-error={diagnostic ? 'true' : undefined} aria-busy={streaming || undefined}>
       <ConversationMarkdownCopyButton label={languageLabels.copyDiagram} copiedLabel={languageLabels.copied} text={props.node.code} />
-      <MermaidBlockNode {...props} loading={streaming} onRenderError={onRenderError} />
+      {/* 主题变化时重建图形状态，避免上游复用仅按源码缓存的旧 SVG。 */}
+      <MermaidBlockNode key={isDark ? 'dark' : 'light'} {...props} node={node} loading={streaming} isDark={isDark} onRenderError={onRenderError} />
+      {diagnostic ? (
+        <pre>
+          <code>{props.node.code}</code>
+        </pre>
+      ) : null}
       {diagnostic ? (
         <small className="session-markdown-code-truncated" role="status">
           {diagnostic}

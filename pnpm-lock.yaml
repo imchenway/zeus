@@ -13,6 +13,9 @@ patchedDependencies:
   '@jimp/core@0.22.12':
     hash: dcb3dc8fcd3f4cc917a30778daed0185f11a9d500766833e2274df8bd0d2485c
     path: patches/@jimp__core@0.22.12.patch
+  markstream-react@2.0.6:
+    hash: d6cab364f2b93a1e9f22f785630e31886d4fd0ebef2b2d3e8876121bc76f7ef9
+    path: patches/markstream-react@2.0.6.patch
   node-pty@1.1.0:
     hash: 03acd11208e90e06aed135ba98bb017a1101e68a132436e28b1d5fac56d50943
     path: patches/node-pty@1.1.0.patch
@@ -111,7 +114,7 @@ importers:
         version: 36.1.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       markstream-react:
         specifier: 2.0.6
-        version: 2.0.6(katex@0.16.47)(mermaid@11.17.2)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        version: 2.0.6(patch_hash=d6cab364f2b93a1e9f22f785630e31886d4fd0ebef2b2d3e8876121bc76f7ef9)(katex@0.16.47)(mermaid@11.17.2)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       mermaid:
         specifier: 11.17.2
         version: 11.17.2
@@ -7019,7 +7022,7 @@ snapshots:
 
   markstream-core@2.0.6: {}
 
-  markstream-react@2.0.6(katex@0.16.47)(mermaid@11.17.2)(react-dom@19.3.0(react@19.3.0))(react@19.3.0):
+  markstream-react@2.0.6(patch_hash=d6cab364f2b93a1e9f22f785630e31886d4fd0ebef2b2d3e8876121bc76f7ef9)(katex@0.16.47)(mermaid@11.17.2)(react-dom@19.3.0(react@19.3.0))(react@19.3.0):
     dependencies:
       '@floating-ui/dom': 1.8.0
       clsx: 2.1.1
