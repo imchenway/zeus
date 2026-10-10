@@ -21,7 +21,7 @@
     "ag-grid-community": "36.1.0",
     "ag-grid-react": "36.1.0",
     "markstream-react": "2.0.6",
-    "mermaid": "11.17.2",
+    "mermaid": "12.1.0",
     "qrcode": "1.5.4"
   },
   "devDependencies": {
