@@ -291,7 +291,9 @@ export function mergeConversationContentV2(snapshot: NativeConversationSnapshot,
     // 全文恢复后再次使用共享转换，短预览不能永久覆盖完整命令和结果。
     const presentation = processDetail ? conversationProcessPresentation(String(item.payload.processKind), content) : null;
     // 思考全文没有可读内容时保持为空，不能重新沿用预览阶段的通用标题。
-    const fallback = item.type === 'reasoning' ? '' : processDetail ? item.text : text;
+    /** 完整读取复用首屏的用户上下文投影，评论无正文时不显示 JSON。 */
+    const userPresentation = processDetail ? {} : historicalUserPresentation(content, item.type === 'userMessage');
+    const fallback = item.type === 'reasoning' || Object.keys(userPresentation).length ? '' : processDetail ? item.text : text;
     return {
       ...item,
       ...(presentation ? { type: presentation.type } : {}),
@@ -301,7 +303,7 @@ export function mergeConversationContentV2(snapshot: NativeConversationSnapshot,
         ...presentation?.payload,
         ...(item.payload.toolResult ? { toolResult: item.payload.toolResult } : {}),
         ...(processDetail ? { detail: content } : { content }),
-        ...(processDetail ? {} : historicalUserPresentation(content, item.type === 'userMessage')),
+        ...userPresentation,
         v2ContentTruncated: false,
         v2ContentCompleteHandle: handle,
         v2ContentRedacted: item.payload.v2ContentRedacted === true || redacted,
@@ -542,15 +544,15 @@ function historyItems(items: NativeConversationModelHistoryV2Item[], providerTur
     // Snapshot V2 为控制首屏体积会把结构化模型正文投影为纯文本，reasoningSummary
     // 是跨分页、冷启动仍稳定的语义身份；provenance 只用于兼容旧服务端返回。
     const reasoning = item.reasoningSummary || typeof contentRecord?.provenance === 'string';
-    // 空思考和纯附件消息不以 JSON 包装层代替正文；附件仍由既有呈现字段还原。
-    const text = projectionText(content, reasoning || (item.role === 'user' && Array.isArray(contentRecord?.attachments)) ? '' : item.content.preview, item.content.truncated);
+    /** 附件、评论和任务布局通过结构化字段展示，空正文不回退为 JSON。 */
+    const historicalUserPayload = historicalUserPresentation(content, item.role === 'user');
+    const text = projectionText(content, reasoning || Object.keys(historicalUserPayload).length ? '' : item.content.preview, item.content.truncated);
     const expertStatus = item.expertExecutionId && typeof contentRecord?.expertStatus === 'string' ? contentRecord.expertStatus : null;
     const persistedPlan = item.phase === 'plan';
     // 旧 Pi/DeepSeek 历史没有 phase；没有 reasoning/plan 证据的 assistant 内容是用户正文，
     // 不能因为缺少新版元数据就折叠进“处理过程”。
     const missingPhase = item.phase === null || item.phase === undefined || item.phase === '';
     const phase = reasoning ? 'prework' : item.role === 'assistant' && classifyAssistantMessage({ ...item.assistantMessage }, missingPhase && !persistedPlan ? 'final_answer' : item.phase) === 'final' ? 'final_answer' : 'prework';
-    const historicalUserPayload = historicalUserPresentation(content, item.role === 'user');
     return [
       {
         id: item.transcript.placement.entryId,
@@ -621,6 +623,8 @@ function historicalUserPresentation(content: unknown, userMessage: boolean): Rec
     ...(Array.isArray(contentRecord.attachments) ? { attachments: contentRecord.attachments } : {}),
     ...(recordValue(contentRecord.taskPushLayout) ? { taskPushLayout: contentRecord.taskPushLayout } : {}),
     ...(recordValue(contentRecord.conversationContext) ? { conversationContext: contentRecord.conversationContext } : {}),
+    // 网页评论与回答评论一样属于消息正文，首屏、分页和全文补载都必须保留。
+    ...(Array.isArray(contentRecord.browserComments) ? { browserComments: contentRecord.browserComments } : {}),
   };
 }
 
@@ -714,7 +718,8 @@ function leadingJsonText(preview: string): string | null {
 
 function leadingJsonString(preview: string, field: string): string | null {
   const match = new RegExp(`"${field}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)`, 'u').exec(preview);
-  if (!match?.[1]) return null;
+  // 空正文也是有效投影，不能把仅含附件或评论的消息回退成截断 JSON。
+  if (match?.[1] === undefined) return null;
   try {
     return JSON.parse(`"${match[1]}"`) as string;
   } catch {
@@ -727,6 +732,8 @@ function projectionText(value: unknown, fallback: string, truncated: boolean): s
   const fragments = textFragments(value);
   const text = fragments.join('\n\n').trim();
   if (text) return truncated && !text.endsWith('…') ? `${text}…` : text;
+  // 显式空正文由结构化卡片承载，全文到达前也不泄露 JSON 包装层。
+  if (typeof recordValue(value)?.text === 'string') return '';
   return truncated && fallback.trim() ? `${fallback.trim()}…` : fallback;
 }
 

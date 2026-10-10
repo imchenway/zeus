@@ -59,7 +59,7 @@ type ConversationPageKind = ConversationSnapshotV2PageKind;
 type ConversationProcessKind = 'reasoning' | 'tool' | 'command' | 'retry' | 'context_compaction' | 'waiting' | 'warning';
 
 // 模型历史持久化的是结构化 JSON；普通会话正文只读取其中的可见文本，绝不能把内部 tool_call 包装层当作消息正文。
-// 用户消息的附件、任务布局和上下文是正文展示所需结构，保留原 JSON 交给 Renderer 还原；工具调用没有 text 字段，
+// 用户消息的附件、任务布局、回答评论和网页评论是正文展示所需结构，保留原 JSON 交给 Renderer 还原；工具调用没有 text 字段，
 // 继续保留原 JSON 预览供结构分类，Renderer 会按 toolPairId/type 将其从消息流排除。
 // 旧任务历史只保存纯文字时，按同会话的发送身份补回展示快照；不读取或暴露执行配置。
 // 首屏、历史分页和完整正文共用此投影，保证预览长度与内容句柄一致。
@@ -84,6 +84,7 @@ const modelHistoryVisibleContentSql = `COALESCE(
      json_type(content_json, '$.attachments') = 'array'
      OR json_type(content_json, '$.taskPushLayout') = 'object'
      OR json_type(content_json, '$.conversationContext') = 'object'
+     OR json_type(content_json, '$.browserComments') = 'array'
    )
     THEN content_json
   WHEN json_valid(content_json) AND json_type(content_json, '$.text') = 'text'

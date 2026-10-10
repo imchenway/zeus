@@ -2120,7 +2120,7 @@
   color: var(--session-text);
   display: grid;
   gap: 9px;
-  inline-size: min(420px, calc(100vw - 32px));
+  inline-size: min(420px, calc(100vw - 32px), 100cqi);
   inset-inline-start: 0;
   max-block-size: min(320px, 50vh);
   opacity: 0;
@@ -5975,6 +5975,11 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
 .session-codex-parity-v1 .session-composer-shell {
   display: grid;
+  /* 评论浮层也以当前输入栏计量，不能伸入原生网页区域。 */
+  container-type: inline-size;
+  /* 草稿和附件不能用内容最小宽度撑开分栏。 */
+  grid-template-columns: minmax(0, 1fr);
+  min-inline-size: 0;
   flex: 0 0 auto;
   gap: 8px;
   inline-size: min(var(--session-composer-max), calc(100% - (2 * var(--session-gutter))));
@@ -5987,6 +5992,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 /* ZEUS-0732：排队卡片与输入框共用底部列宽，队列更新不重建编辑器。 */
 .session-codex-parity-v1 .session-composer-stack {
   display: grid;
+  /* 队列和编辑器始终以当前会话栏的可用宽度排版。 */
+  grid-template-columns: minmax(0, 1fr);
   flex: 0 0 auto;
   gap: 6px;
   inline-size: min(var(--session-composer-max), calc(100% - (2 * var(--session-gutter))));
@@ -6049,6 +6056,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
     0 8px 28px var(--session-shadow),
     0 1px 2px var(--session-shadow-soft);
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-inline-size: 0;
   gap: 6px;
   min-block-size: 96px;
   padding: 9px;
@@ -9244,14 +9253,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
 .macos-ai-app.zeus-shell .browser-annotation-actions > .browser-stage-comments:disabled {
   opacity: 0.42;
-}
-
-/* 网页评论沿用会话胶囊，正文预览另起一行，避免窄栏把标签挤成多行。 */
-.session-codex-parity-v1 .session-composer-browser-submission {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
 }
 
 @media (max-width: 760px) {
@@ -12885,26 +12886,22 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   white-space: nowrap;
 }
 
-/* 批注文字可直接辨认，展开图片复用现有缩放工具。 */
-.session-browser-comment-previews {
-  min-width: 0;
-  width: 100%;
-}
+/* 评论正文直接呈现，只有截图需要展开；布局与回答评论一致。 */
 .session-browser-comment-previews summary {
   cursor: pointer;
+  color: var(--session-text-muted);
+  font-size: 12px;
   overflow-wrap: anywhere;
-  padding: 8px 0;
+  padding: 4px 0;
 }
-.session-browser-comment-content {
-  overflow: auto;
-  max-height: 420px;
+.session-browser-comment-screenshot .file-preview-image {
+  height: 240px;
 }
-.session-browser-comment-content p {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.session-browser-comment-content .file-preview-image {
-  height: 320px;
+/* 悬浮详情内不叠加第二层卡片底色与内边距。 */
+.session-context-draft-preview > section.session-browser-comment-previews {
+  background: transparent;
+  inline-size: 100%;
+  padding: 0;
 }
 
 .session-browser-comment-previews summary:focus-visible {

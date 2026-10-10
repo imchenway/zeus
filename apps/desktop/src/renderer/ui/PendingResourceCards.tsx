@@ -5,7 +5,6 @@ import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCod
 import { FileCssIcon as FileCss } from '@phosphor-icons/react/dist/csr/FileCss';
 import { FileDocIcon as FileDoc } from '@phosphor-icons/react/dist/csr/FileDoc';
 import { FileHtmlIcon as FileHtml } from '@phosphor-icons/react/dist/csr/FileHtml';
-import { FileImageIcon as FileImage } from '@phosphor-icons/react/dist/csr/FileImage';
 import { FileJsIcon as FileJs } from '@phosphor-icons/react/dist/csr/FileJs';
 import { FileMdIcon as FileMd } from '@phosphor-icons/react/dist/csr/FileMd';
 import { FilePdfIcon as FilePdf } from '@phosphor-icons/react/dist/csr/FilePdf';
@@ -99,8 +98,8 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
   const textResource = isPendingResourceText(props.resource.name, props.resource.kind);
   /** 外部读取与内部读取共用失败状态，失败不能一直显示加载动画。 */
   const failed = previewFailed || props.resource.previewFailed;
-  /** 已有图片继续展示；没有预览能力时保留普通文件图标。 */
-  const previewLoading = props.resource.kind === 'image' && !failed && (previewUrl ? decodedPreviewUrl !== previewUrl : Boolean(props.onLoadPreview || props.resource.previewLoading));
+  /** 导入、读取和解码都显示同一骨架，不把等待状态画成文件图标。 */
+  const previewLoading = props.resource.kind === 'image' && !failed && (previewUrl ? decodedPreviewUrl !== previewUrl : Boolean(props.resource.pending || props.onLoadPreview || props.resource.previewLoading));
   /** 导入状态继续阻止提交；缩略图加载只影响展示。 */
   const busy = props.resource.pending || previewLoading;
   /** 状态说明保留给辅助技术与悬停提示。 */
@@ -141,7 +140,9 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
     <span className="pending-resource-visual" aria-hidden="true">
       {props.resource.kind === 'image' && previewUrl && !failed ? (
         <img src={previewUrl} alt="" style={decodedPreviewUrl === previewUrl ? undefined : { visibility: 'hidden' }} onLoad={() => setDecodedPreviewUrl(previewUrl)} onError={() => setPreviewFailed(true)} />
-      ) : previewLoading ? null : (
+      ) : previewLoading ? null : props.resource.kind === 'image' ? (
+        <span className="pending-resource-image-unavailable">{props.language === 'zh-CN' ? '预览不可用' : 'No preview'}</span>
+      ) : (
         <PendingResourceIcon resource={props.resource} extension={extension} />
       )}
       {previewLoading ? <ResourceLoading label={loadingLabel} /> : null}
@@ -154,7 +155,9 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
       data-resource-kind={props.resource.kind}
       data-text-preview={textResource || undefined}
       aria-busy={busy || undefined}
-      aria-label={busy ? `${loadingLabel}: ${props.resource.name}` : undefined}
+      aria-label={
+        busy ? `${loadingLabel}: ${props.resource.name}` : props.resource.kind === 'image' && (failed || !previewUrl) ? `${props.language === 'zh-CN' ? '图片预览不可用' : 'Image preview unavailable'}: ${props.resource.name}` : undefined
+      }
       title={props.resource.kind === 'image' ? pendingResourceOpenLabel(props.resource.kind, props.language) : (props.resource.title ?? props.resource.name)}
     >
       {props.onActivate && !props.resource.pending ? (
@@ -182,7 +185,7 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
           </span>
         </span>
       )}
-      {props.resource.pending ? <ResourceLoading label={loadingLabel} overlay /> : null}
+      {props.resource.pending && !previewLoading ? <ResourceLoading label={loadingLabel} overlay /> : null}
       {props.onRemove && !props.resource.pending ? (
         <button
           type="button"
@@ -202,7 +205,6 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
 
 function PendingResourceIcon(props: { resource: PendingResourceCardItem; extension: string }): ReactNode {
   const iconProps = { size: 22, weight: 'regular' as const, 'aria-hidden': true };
-  if (props.resource.kind === 'image') return <FileImage {...iconProps} />;
   if (props.resource.kind === 'directory') return <Folder {...iconProps} />;
   if (props.resource.kind === 'pasted_text') return <FileText {...iconProps} />;
   if (['zip', 'gz', 'tgz', 'rar', '7z', 'tar'].includes(props.extension)) return <FileArchive {...iconProps} />;
