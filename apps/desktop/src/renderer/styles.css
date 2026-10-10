@@ -17813,28 +17813,15 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   --pending-resource-remove-bg: transparent;
   --pending-resource-remove-fg: var(--zeus-product-muted);
   display: flex;
+  /* 自动换行让任务和会话输入中的所有附件都可发现。 */
+  flex-wrap: wrap;
   align-items: stretch;
   gap: 8px;
   min-inline-size: 0;
   margin: 0;
   padding: 2px 3px 4px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  list-style: none;
-  scroll-snap-type: x proximity;
-  scrollbar-width: none;
-}
-
-.macos-ai-app .pending-resource-strip::-webkit-scrollbar {
-  display: none;
-}
-
-/* 静态消息和任务正文完整显示所有附件；输入框仍沿用横向滚动。 */
-.macos-ai-app .session-user-message-attachments .pending-resource-strip,
-.macos-ai-app .session-task-push-field > .session-composer-attachments,
-.macos-ai-app .task-push-layout-field > .session-composer-attachments {
-  flex-wrap: wrap;
   overflow: visible;
+  list-style: none;
 }
 
 .macos-ai-app .pending-resource-card {
@@ -17859,11 +17846,11 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 
 .macos-ai-app .pending-resource-card[data-resource-kind='image'] {
   grid-template-columns: 1fr;
-  flex-basis: auto;
-  inline-size: fit-content;
-  min-inline-size: 64px;
-  max-inline-size: min(176px, 100%);
-  block-size: 88px;
+  /* 统一预览占位，加载前后不跳动，长图也不会挤走其他附件。 */
+  flex: 0 0 112px;
+  inline-size: 112px;
+  max-inline-size: 100%;
+  block-size: 80px;
   padding: 0;
   border: 0;
   border-radius: 6px;
@@ -18107,27 +18094,22 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 
 /* 图片按原比例展示，宽截图不裁边；移除入口继续独立于图片打开。 */
 .macos-ai-app .pending-resource-card[data-resource-kind='image'] .pending-resource-visual {
-  inline-size: auto;
-  block-size: 88px;
-  max-inline-size: 176px;
+  inline-size: 100%;
+  block-size: 80px;
   border-radius: 6px;
 }
 
 .macos-ai-app .pending-resource-card[data-resource-kind='image'] .pending-resource-visual img {
-  inline-size: auto;
-  block-size: auto;
-  max-inline-size: 176px;
-  max-block-size: 88px;
+  inline-size: 100%;
+  block-size: 100%;
   object-fit: contain;
 }
 
-/* 图片自身决定已加载缩略图的高度，占位仍保留稳定的点击区域。 */
-.macos-ai-app .pending-resource-card[data-resource-kind='image']:has(img) {
-  block-size: fit-content;
-}
-
-.macos-ai-app .pending-resource-card[data-resource-kind='image'] .pending-resource-visual:has(img) {
-  block-size: auto;
+/* 失败状态停止动画，保留原有打开入口和明确提示。 */
+.macos-ai-app .pending-resource-image-unavailable {
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+  line-height: 16px;
 }
 
 /* 打开图片使用轻微的明暗反馈，键盘焦点仍保留独立轮廓。 */

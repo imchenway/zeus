@@ -699,18 +699,28 @@ function ContextDraftAttachment(props: { draft: ConversationContextDraft; langua
   );
 }
 
-/** 浏览器批注可展开查看全文与截图，移除操作独立于预览。 */
+/** 网页评论沿用回答评论的摘要气泡，悬停或聚焦后查看原文与评论。 */
 export function BrowserSubmissionAttachment(props: { submission: ZeusBrowserPreparedSubmission; language: SessionUiLanguage; disabled: boolean; onRemove?: () => void }) {
+  /** 详情与当前气泡一一关联，支持键盘聚焦。 */
+  const previewId = useId();
+  /** 统一当前语言的摘要文案。 */
+  const zh = props.language === 'zh-CN';
+  /** 输入框只展示数量，完整内容放入悬浮详情。 */
+  const label = zh ? `${props.submission.comments.length} 条网页评论` : `${props.submission.comments.length} browser comments`;
   return (
-    <section className="session-composer-context-draft session-composer-browser-submission" aria-label={props.language === 'zh-CN' ? '待发送网页评论' : 'Pending browser comments'}>
+    <section className="session-composer-context-draft" aria-label={zh ? '待发送网页评论' : 'Pending browser comments'}>
       <span className="session-context-draft-chip">
-        <ChatCircle aria-hidden="true" weight="regular" />
-        <strong>{props.language === 'zh-CN' ? `${props.submission.comments.length} 条网页评论` : `${props.submission.comments.length} browser comments`}</strong>
+        <button type="button" className="session-context-draft-preview-trigger" aria-describedby={previewId}>
+          <ChatCircle aria-hidden="true" weight="regular" />
+          <strong>{label}</strong>
+        </button>
         <button type="button" aria-label={props.language === 'zh-CN' ? '移除网页评论' : 'Remove browser comments'} onClick={props.onRemove} disabled={props.disabled || !props.onRemove}>
           <span aria-hidden="true">×</span>
         </button>
       </span>
-      <BrowserCommentPreview comments={props.submission.comments} zh={props.language === 'zh-CN'} />
+      <aside id={previewId} className="session-context-draft-preview" aria-label={zh ? '网页评论详情' : 'Browser comment details'}>
+        <BrowserCommentPreview comments={props.submission.comments} zh={zh} />
+      </aside>
     </section>
   );
 }

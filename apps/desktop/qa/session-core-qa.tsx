@@ -11,6 +11,7 @@ import { Button } from '../src/renderer/ui/Button.js';
 import { ConversationMarkdown } from '../src/renderer/session/ConversationMarkdown.js';
 import { ConversationInlineResource, ConversationResourceCards, defaultOpenTarget } from '../src/renderer/session/ConversationResources.js';
 import { ConversationComposer, type ComposerRuntimeSettings } from '../src/renderer/session/ConversationComposer.js';
+import type { ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { QueuedConversationMessages } from '../src/renderer/session/QueuedConversationMessages.js';
 import { SessionActivityGroup } from '../src/renderer/session/SessionActivity.js';
 import { SubagentWorkspace } from '../src/renderer/session/SubagentWorkspace.js';
@@ -1474,6 +1475,7 @@ function ResourceWorkspaceQa(props: { state: NativeSessionState; resources: Conv
   /** 将同一组正文资源交给生产时间线，附件也通过会话提供的预览入口。 */
   const state: NativeSessionState = {
     ...props.state,
+    ...(parameters.has('browser-comments') ? { browserSubmission: browserCommentQaSubmission() } : {}),
     attachments: [{ name: '附件图片.png', kind: 'image', mime: 'image/png', size: 68, uploadRef: 'qa-image' }],
     contextDraft: { ...props.state.contextDraft, codeComments: comments },
     itemOrder: [...props.state.itemOrder, ...(edges ? [plan.key] : [])],
@@ -1935,6 +1937,42 @@ async function chooseComposerQaAttachments(): Promise<NativeConversationAttachme
   return [{ name: '对齐检查.txt', kind: 'file', mime: 'text/plain', size: 12, uploadRef: `qa:${crypto.randomUUID()}` }];
 }
 
+/** 固定网页评论覆盖元素原文、长评论和截图不可用，不读取用户历史。 */
+function browserCommentQaSubmission(): ZeusBrowserPreparedSubmission {
+  return {
+    tabId: 'qa-browser',
+    commentIds: ['qa-comment'],
+    content: '网页评论',
+    attachments: [],
+    comments: [
+      {
+        id: 'qa-comment',
+        number: 1,
+        conversationId: 'qa-layout',
+        tabId: 'qa-browser',
+        body: '请说明三个场景如何经过这段流程：单一问题、多问题混合、同时命中高频意图和知识库。发送后仍须显示这条评论和批注原文。',
+        anchor: {
+          kind: 'element',
+          pageUrl: 'https://example.com/flow',
+          frameUrl: 'https://example.com/flow',
+          pageTitle: '意图识别流程',
+          frameDepth: 0,
+          immediateText: '文字意图识别：用户选择与规则优先，无法判断时再由 AI 分类。',
+          rect: { x: 0, y: 0, width: 320, height: 180 },
+          viewport: { width: 1280, height: 800, deviceScaleFactor: 1 },
+          scroll: { x: 0, y: 0 },
+          fixed: false,
+        },
+        designChanges: [],
+        screenshotPath: '/qa/comment-unavailable.png',
+        status: 'draft',
+        createdAt: '',
+        updatedAt: '',
+      },
+    ],
+  };
+}
+
 /** 使用真实会话输入组件验收工具栏及粘贴，只在本页记录发送结果，不调用模型。 */
 function ComposerMarkdownQa() {
   /** 地址参数覆盖窄分栏、深色和英文。 */
@@ -1943,6 +1981,7 @@ function ComposerMarkdownQa() {
   const [state, setState] = useState(() => {
     /** 长记录与输入框放在同一真实容器内，核对返回最新按钮的悬停与滚动。 */
     const initial = createInitialSessionState();
+    if (parameters.has('browser-comments')) initial.browserSubmission = browserCommentQaSubmission();
     /** 固定评论仅用于真实摘要悬浮详情的交互验收。 */
     const contextDraft = parameters.has('context-draft')
       ? {
@@ -1996,6 +2035,11 @@ function ComposerMarkdownQa() {
     },
     0,
   );
+  // 历史消息通过真实用户消息组件展示原文、评论和按需截图。
+  if (parameters.has('browser-comments')) {
+    message.text = '';
+    message.payload = { browserComments: browserCommentQaSubmission().comments };
+  }
   /** 仅普通浏览器 QA 注入附件返回值，不接触原生剪贴板或磁盘。 */
   useEffect(() => {
     if (window.zeus) return;
@@ -2163,6 +2207,7 @@ function ComposerMarkdownQa() {
           onAddAttachments={(attachments) => setState((current) => ({ ...current, attachments: [...current.attachments, ...attachments] }))}
           onRemoveAttachment={(attachment) => setState((current) => ({ ...current, attachments: current.attachments.filter((candidate) => candidate !== attachment) }))}
           onContextDraftChange={(contextDraft) => setState((current) => ({ ...current, contextDraft }))}
+          onRemoveBrowserSubmission={() => setState((current) => ({ ...current, browserSubmission: null }))}
           onDraftChange={(draft) => setState((current) => ({ ...current, draft }))}
           onSubmit={(_delivery, settings) => {
             // 当前验收页不加载技能目录，提交正文必须逐字符等于原始草稿。
@@ -2353,12 +2398,16 @@ function TaskPasteFocusQa() {
     optimizationCurrentState: '当前状态',
     optimizationExpectedOutcome: '预期结果',
     tags: '焦点',
+    ...(parameters.has('images')
+      ? { attachments: Array.from({ length: 6 }, (_, index) => ({ path: `qa:image-${index}`, name: `页面参考 ${index + 1}.svg`, kind: 'image' as const, field: 'description' as const, mimeType: 'image/svg+xml' })) }
+      : {}),
   }));
   /** 保留真实标题控件供弹窗初始焦点使用。 */
   const titleRef = useRef<HTMLInputElement | null>(null);
   /** 页面打开后运行一次现有组件的粘贴检查，结果显示在弹窗提示区。 */
-  const [result, setResult] = useState('正在检查附件粘贴焦点');
+  const [result, setResult] = useState(parameters.has('images') ? '' : '正在检查附件粘贴焦点');
   useEffect(() => {
+    if (parameters.has('images')) return;
     const timer = setTimeout(() => {
       const control = document.getElementById(`task-create-${parameters.get('field') ?? 'description'}-input`);
       if (!(control instanceof HTMLTextAreaElement) && !(control instanceof HTMLInputElement)) {
@@ -2404,6 +2453,19 @@ function TaskPasteFocusQa() {
         };
       }}
       onMaterializeResources={async () => []}
+      onLoadAttachmentPreview={
+        parameters.has('images')
+          ? async (path) => {
+              // 固定等待和失败样例用于检查占位；其他缩略图直接由真实组件解码。
+              if (path === 'qa:image-4' && parameters.has('loading')) return new Promise(() => {});
+              if (path === 'qa:image-5' && parameters.has('loading')) return null;
+              return {
+                mimeType: 'image/svg+xml',
+                previewUrl: `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="#f2f1fb"/><rect x="20" y="20" width="280" height="64" rx="8" fill="white" stroke="#c5bfea"/><text x="36" y="58" font-size="18" fill="#4e4591">页面参考 ${path.slice(-1)}</text><path d="M160 84v26" stroke="#9185ca"/><rect x="70" y="110" width="180" height="44" rx="8" fill="white" stroke="#c5bfea"/></svg>`)}`,
+              };
+            }
+          : undefined
+      }
       onAddAttachments={(attachments) => setForm((current) => ({ ...current, attachments: [...current.attachments, ...attachments] }))}
       onRemoveAttachment={(path) => setForm((current) => ({ ...current, attachments: current.attachments.filter((attachment) => attachment.path !== path) }))}
       onParseThirdPartyLink={async () => ({ kind: 'unsupported' })}
