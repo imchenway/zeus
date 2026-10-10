@@ -21848,12 +21848,25 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   outline-offset: 1px;
 }
 
-.project-code-mode-host,
 .project-code-mode-pane {
   display: flex;
   min-width: 0;
   min-height: 0;
   flex: 1;
+}
+
+/* 源码始终位于上方；展开 Git 后按现有分隔条保存的比例分配高度。 */
+.project-code-mode-host {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+}
+
+/* 百分比与分隔条共用容器高度，底栏保留独立滚动区域。 */
+.project-code-mode-host[data-git-open='true'] {
+  grid-template-rows: minmax(0, var(--git-code-editor, 55%)) 6px minmax(0, 1fr);
 }
 
 .project-code-mode-pane[hidden] {
@@ -21880,10 +21893,30 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 .macos-ai-app .project-code-actions {
   display: flex;
   flex: 0 0 auto;
+  max-inline-size: 60%;
   align-items: center;
   gap: 4px;
   padding: 4px 8px;
   -webkit-app-region: no-drag;
+}
+
+/* 分支显示占用有界宽度，长分支名截断并通过原控件提示显示全文。 */
+.macos-ai-app .project-code-branch-slot {
+  display: flex;
+  min-inline-size: 0;
+  inline-size: clamp(100px, 20vw, 280px);
+}
+
+/* 尚未取得仓库快照时不占用文件标签空间。 */
+.macos-ai-app .project-code-branch-slot:empty {
+  display: none;
+}
+
+/* 顶部分支控件沿用原有样式，仅移除侧栏布局尺寸。 */
+.macos-ai-app .project-code-branch-slot > .project-git-branch-trigger {
+  margin: 0;
+  min-inline-size: 0;
+  inline-size: 100%;
 }
 
 .macos-ai-app .project-code-actions > button {
@@ -21908,7 +21941,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 }
 
 .macos-ai-app :is(.project-source-button, .project-code-actions > button):hover:not(:disabled),
-.macos-ai-app .project-source-button[aria-current='page'] {
+.macos-ai-app .project-source-button[aria-current='page'],
+.macos-ai-app .project-code-actions > button[aria-expanded='true'] {
   background: var(--zeus-interaction-hover);
   color: var(--zeus-control-text);
 }
@@ -21918,7 +21952,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   outline-offset: -2px;
 }
 
-/* 未找到仓库或读取失败时，返回源码的入口仍固定在右上角。 */
+/* 未找到仓库或读取失败时，底栏显示反馈，源码工具仍保留在顶部。 */
 .project-code-git-pane > .project-git-workbench-state {
   position: relative;
   flex: 1;

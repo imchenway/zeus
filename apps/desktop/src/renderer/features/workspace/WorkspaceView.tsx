@@ -1,3 +1,4 @@
+import type { ProjectGitWorkbenchSnapshot } from '../git/gitContracts.js';
 import { toolPages } from '../../tooling/index.js';
 import { temporaryWorkspaceId } from '@zeus/shared';
 import { MotionPresence } from '../../ui/MotionPresence.js';
@@ -22,11 +23,11 @@ import { GlobeIcon } from '@phosphor-icons/react/dist/csr/Globe';
 import { ChatCircleDotsIcon } from '@phosphor-icons/react/dist/csr/ChatCircleDots';
 import { PuzzlePieceIcon } from '@phosphor-icons/react/dist/csr/PuzzlePiece';
 import { GitBranchIcon } from '@phosphor-icons/react/dist/csr/GitBranch';
-import { ArrowLeftIcon } from '@phosphor-icons/react/dist/csr/ArrowLeft';
 import { TerminalIcon } from '@phosphor-icons/react/dist/csr/Terminal';
 import { ArrowCircleUpIcon } from '@phosphor-icons/react/dist/csr/ArrowCircleUp';
 import { DatabaseIcon } from '@phosphor-icons/react/dist/csr/Database';
 import { lazy, Suspense, useEffect, useId, useMemo, useState } from 'react';
+import { GitPaneSeparator } from '../../git/GitPaneSeparator.js';
 import type { ProjectRecord } from '../../apiClient.js';
 import { openAutomaticUpdateIndicatorInMain } from '../../appShellBridge.js';
 import { conversationDisplayTitle } from '../../session/conversationDisplayTitle.js';
@@ -597,11 +598,16 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     ? activeProjectSection === 'sessions' && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'digital-employees' && activeNavTarget !== 'digital-teams' && activeNavTarget !== 'automations'
     : projectSessionSourceListVisible;
 
+  /** 将工作台中的同一个分支控件挂到文件标签顶行，收起底栏时仍可使用。 */
+  const [projectCodeBranchContainer, setProjectCodeBranchContainer] = useState<HTMLDivElement | null>(null);
+  /** 源码文件状态与底部工作台共用快照，避免保留重复的更改组件。 */
+  const [projectCodeGitSnapshot, setProjectCodeGitSnapshot] = useState<ProjectGitWorkbenchSnapshot | null>(null);
   /** 源码与 Git 的工具入口跟随应用语言，复用内容区顶行。 */
   const codeWorkspaceZh = appShellSettings.appLanguage === 'zh-CN';
   /** Git 与源码共用项目身份，命令从任一视图打开均不离开工作区。 */
   const projectCodeToolbarActions = selectedProject ? (
     <div className="project-code-actions" role="group" aria-label={codeWorkspaceZh ? '源码工具' : 'Source tools'}>
+      <div className="project-code-branch-slot" ref={setProjectCodeBranchContainer} />
       <button
         type="button"
         disabled={!props.commandClient}
@@ -612,16 +618,16 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       >
         <TerminalIcon aria-hidden="true" />
       </button>
-      {projectCodeWorkspaceMode === 'git' ? (
-        <button type="button" onClick={() => openProjectSection(selectedProject, 'code', 'source')} title={codeWorkspaceZh ? '返回源码（⌘3）' : 'Back to source (⌘3)'}>
-          <ArrowLeftIcon aria-hidden="true" />
-          <span>{codeWorkspaceZh ? '返回源码' : 'Back to source'}</span>
-        </button>
-      ) : (
-        <button type="button" onClick={() => openProjectSection(selectedProject, 'code', 'git')} aria-label="Git（⌘2）" data-icon-tooltip="Git（⌘2）">
-          <GitBranchIcon aria-hidden="true" />
-        </button>
-      )}
+      <button
+        type="button"
+        onClick={() => openProjectSection(selectedProject, 'code', projectCodeWorkspaceMode === 'git' ? 'source' : 'git')}
+        aria-label={projectCodeWorkspaceMode === 'git' ? (codeWorkspaceZh ? '收起 Git 底栏（⌘3）' : 'Hide Git panel (⌘3)') : codeWorkspaceZh ? '打开 Git 底栏（⌘2）' : 'Show Git panel (⌘2)'}
+        data-icon-tooltip={projectCodeWorkspaceMode === 'git' ? (codeWorkspaceZh ? '收起 Git 底栏（⌘3）' : 'Hide Git panel (⌘3)') : codeWorkspaceZh ? '打开 Git 底栏（⌘2）' : 'Show Git panel (⌘2)'}
+        aria-expanded={projectCodeWorkspaceMode === 'git'}
+        aria-controls="project-code-git-panel"
+      >
+        <GitBranchIcon aria-hidden="true" />
+      </button>
     </div>
   ) : null;
 
@@ -1031,13 +1037,13 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           activeProjectSection === 'code' &&
           selectedProject ? (
             <section className={`workspace-view workspace-view-project-code project-code-workspace${projectCodeWorkspaceMode === 'git' ? ' workspace-view-project-git' : ''}`} aria-label={codeWorkspaceCopy.projectCodeAria}>
-              <div className="project-code-mode-host">
-                <div className="project-code-mode-pane" hidden={projectCodeWorkspaceMode !== 'source'} inert={projectCodeWorkspaceMode !== 'source'}>
+              <div className="project-code-mode-host" data-git-open={projectCodeWorkspaceMode === 'git'}>
+                <div className="project-code-mode-pane">
                   <ProjectSourceWorkspace
                     key={selectedProject.id}
                     ref={projectSourceWorkspaceRef}
                     toolbarActions={projectCodeToolbarActions}
-                    gitClient={props.nativeConversationClient ?? undefined}
+                    gitSnapshot={projectCodeGitSnapshot}
                     project={selectedProject}
                     language={appShellSettings.appLanguage}
                     preference={appShellSettings.codeWorkspaceByProject?.[selectedProject.id]}
@@ -1046,27 +1052,32 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     onOpenExternal={(relativePath, line) => void props.onOpenSource?.({ sourceRef: relativePath, lineStart: line, projectRoot: selectedProject.localPath })}
                   />
                 </div>
-                {projectCodeWorkspaceMode === 'git' ? (
-                  <div className="project-code-mode-pane project-code-git-pane">
-                    <Suspense
-                      fallback={
-                        <div className="project-git-workbench-state">
-                          {projectCodeToolbarActions}
-                          <span role="status">{codeWorkspaceZh ? '正在加载 Git…' : 'Loading Git…'}</span>
-                        </div>
-                      }
-                    >
-                      {props.nativeConversationClient ? (
-                        <ProjectGitWorkbench key={selectedProject.id} toolbarActions={projectCodeToolbarActions} project={selectedProject} client={props.nativeConversationClient} language={appShellSettings.appLanguage} />
-                      ) : (
-                        <div className="project-git-workbench-state">
-                          {projectCodeToolbarActions}
-                          <span role="alert">{codeWorkspaceZh ? 'Git 服务尚未连接。' : 'The Git service is not connected.'}</span>
-                        </div>
-                      )}
-                    </Suspense>
-                  </div>
-                ) : null}
+                {projectCodeWorkspaceMode === 'git' ? <GitPaneSeparator name="code-editor" axis="y" label={codeWorkspaceZh ? '调整源码与 Git 底栏高度' : 'Resize source and Git panel'} initial={55} min={20} max={80} /> : null}
+                <div id="project-code-git-panel" className="project-code-mode-pane project-code-git-pane" hidden={projectCodeWorkspaceMode !== 'git'} inert={projectCodeWorkspaceMode !== 'git'}>
+                  <Suspense
+                    fallback={
+                      <div className="project-git-workbench-state" role="status">
+                        {codeWorkspaceZh ? '正在加载 Git…' : 'Loading Git…'}
+                      </div>
+                    }
+                  >
+                    {props.nativeConversationClient ? (
+                      <ProjectGitWorkbench
+                        key={selectedProject.id}
+                        branchToolbarContainer={projectCodeBranchContainer}
+                        onSnapshot={setProjectCodeGitSnapshot}
+                        onOpenPanel={() => openProjectSection(selectedProject, 'code', 'git')}
+                        project={selectedProject}
+                        client={props.nativeConversationClient}
+                        language={appShellSettings.appLanguage}
+                      />
+                    ) : (
+                      <div className="project-git-workbench-state" role="alert">
+                        {codeWorkspaceZh ? 'Git 服务尚未连接。' : 'The Git service is not connected.'}
+                      </div>
+                    )}
+                  </Suspense>
+                </div>
               </div>
               <MotionPresence>
                 {projectCommandsProjectId === selectedProject.id && props.commandClient ? (
