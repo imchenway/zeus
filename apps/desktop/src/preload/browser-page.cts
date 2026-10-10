@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron';
+import { installIconTooltips } from './iconTooltip.js';
 
 /** 评论选项采用 Phosphor SlidersHorizontal 的 regular 原始路径，沙箱预加载无需引入 React。 */
 const commentOptionsIcon =
@@ -111,6 +112,9 @@ function install(): void {
   rootHost.id = overlayRootId;
   rootHost.style.cssText = 'position:fixed;inset:0;z-index:2147483647;pointer-events:none;';
   shadow = rootHost.attachShadow({ mode: 'closed' });
+  /** 评论浮层使用共享提示机制，监听只作用于自己的 ShadowRoot。 */
+  const disposeIconTooltips = installIconTooltips(shadow);
+  window.addEventListener('pagehide', disposeIconTooltips, { once: true });
   const style = document.createElement('style');
   style.textContent = `
     :host { all: initial; color-scheme: light dark; }
@@ -306,16 +310,16 @@ function openEditor(
   editor.dataset.expanded = 'false';
   editor.innerHTML = `
     <div class="editor-row">
-      <button type="button" data-action="adjust" aria-label="评论选项" title="评论选项" aria-expanded="false">
+      <button type="button" data-action="adjust" aria-label="评论选项" data-icon-tooltip="评论选项" aria-expanded="false">
         ${commentOptionsIcon}
       </button>
       <textarea rows="1" aria-label="评论内容" placeholder="添加评论…" maxlength="20000"></textarea>
-      <button type="button" data-action="voice" aria-label="Voice input" title="Voice input">
+      <button type="button" data-action="voice" aria-label="语音输入" data-icon-tooltip="语音输入">
         <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6"></path>
         </svg>
       </button>
-      <button type="button" class="editor-save" data-action="save" aria-label="完成评论" title="完成评论并添加到输入框">
+      <button type="button" class="editor-save" data-action="save" aria-label="完成评论" data-icon-tooltip="完成评论并添加到输入框">
         <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <path d="m6 12.5 4 4L18.5 8"></path>
         </svg>
@@ -408,7 +412,8 @@ function installVoiceInput(button: HTMLButtonElement, textarea: HTMLTextAreaElem
     (window as unknown as { webkitSpeechRecognition?: SpeechRecognitionConstructor; SpeechRecognition?: SpeechRecognitionConstructor }).SpeechRecognition ??
     (window as unknown as { webkitSpeechRecognition?: SpeechRecognitionConstructor }).webkitSpeechRecognition;
   if (!Recognition) {
-    button.title = 'Focus this field, then use system dictation';
+    button.dataset.iconTooltip = '聚焦输入框后使用系统听写';
+    button.setAttribute('aria-label', button.dataset.iconTooltip);
     button.addEventListener('click', () => textarea.focus());
     return;
   }
@@ -433,11 +438,16 @@ function installVoiceInput(button: HTMLButtonElement, textarea: HTMLTextAreaElem
     };
     const finish = (): void => {
       button.dataset.listening = 'false';
+      button.dataset.iconTooltip = '语音输入';
+      button.setAttribute('aria-label', '语音输入');
       speechRecognition = null;
     };
     recognition.onend = finish;
     recognition.onerror = finish;
     button.dataset.listening = 'true';
+    // 常见停止操作不新增气泡，辅助名称继续说明当前动作。
+    delete button.dataset.iconTooltip;
+    button.setAttribute('aria-label', '停止语音输入');
     recognition.start();
   });
 }
@@ -761,7 +771,8 @@ function renderMarkers(): void {
     marker.type = 'button';
     marker.textContent = String(comment.number);
     marker.dataset.commentId = comment.id;
-    marker.setAttribute('aria-label', `Browser comment ${comment.number}: ${comment.body}`);
+    marker.dataset.iconTooltip = `编辑第${comment.number}条网页评论`;
+    marker.setAttribute('aria-label', `${marker.dataset.iconTooltip}：${comment.body}`);
     marker.addEventListener('click', () => {
       // 已保存评论与会话消息一致：点击编号即可编辑，再确认更新草稿。
       openEditor(comment.anchor, null, resolveCommentMarker(comment), comment);

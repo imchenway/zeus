@@ -507,7 +507,7 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
           onClose={requestCloseSession}
         />
         <TerminalSearchButton search={search} language={props.language} />
-        <button type="button" className="zeus-terminal-action" aria-label={moveLabel} title={moveLabel} onClick={togglePosition}>
+        <button type="button" className="zeus-terminal-action" aria-label={moveLabel} data-icon-tooltip={moveLabel} onClick={togglePosition}>
           {right ? <Rows aria-hidden="true" /> : <SidebarSimple aria-hidden="true" style={{ transform: 'scaleX(-1)' }} />}
         </button>
         <button type="button" className="zeus-terminal-action" aria-label={copy.closePanel} title={copy.closePanel} onClick={props.onClose}>

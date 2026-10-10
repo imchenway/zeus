@@ -25,7 +25,16 @@ export function EmployeeAvatarPicker(props: { avatarId?: DigitalEmployeeAvatarId
   return (
     <div className="employee-avatar-options" role="group" aria-label={props.language === 'zh-CN' ? '预置头像' : 'Preset portraits'}>
       {digitalEmployeeAvatarIds.map((id) => (
-        <button key={id} type="button" className="employee-avatar-option" aria-label={id} title={id} aria-pressed={employeeAvatarId(props) === id} disabled={props.disabled} onClick={() => props.onChange(id)}>
+        <button
+          key={id}
+          type="button"
+          className="employee-avatar-option"
+          aria-label={props.language === 'zh-CN' ? `选择头像：${id}` : `Choose avatar: ${id}`}
+          data-icon-tooltip={props.language === 'zh-CN' ? `选择头像：${id}` : `Choose avatar: ${id}`}
+          aria-pressed={employeeAvatarId(props) === id}
+          disabled={props.disabled}
+          onClick={() => props.onChange(id)}
+        >
           <img src={portraits[id]} alt="" />
         </button>
       ))}

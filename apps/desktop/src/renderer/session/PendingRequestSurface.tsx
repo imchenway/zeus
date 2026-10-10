@@ -413,7 +413,16 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
                 </button>
               ) : null}
               {hasAllowOnce && menuDecisions.length > 1 ? (
-                <button ref={menuTriggerRef} type="button" className="session-request-grant-chevron" aria-label={copy.grantOptions} aria-expanded={menuOpen} aria-haspopup="menu" onClick={() => (menuOpen ? setMenuOpen(false) : openMenu())}>
+                <button
+                  data-icon-tooltip={copy.grantOptions}
+                  ref={menuTriggerRef}
+                  type="button"
+                  className="session-request-grant-chevron"
+                  aria-label={copy.grantOptions}
+                  aria-expanded={menuOpen}
+                  aria-haspopup="menu"
+                  onClick={() => (menuOpen ? setMenuOpen(false) : openMenu())}
+                >
                   <CaretDown aria-hidden="true" size={13} weight="bold" />
                 </button>
               ) : null}
@@ -984,6 +993,7 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
             {currentQuestion.allowOther ? (
               <div className="session-question-other" data-selected={selectedValues.includes(otherAnswerControlValue(currentQuestion)) || undefined}>
                 <button
+                  data-icon-tooltip={zh ? '其他回答' : 'Other answer'}
                   ref={(element) => {
                     optionRefs.current[currentQuestion.options.length] = element;
                   }}
@@ -1069,7 +1079,14 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
                   </div>
                 )}
                 {answerAttachmentsEnabled && props.onChooseAttachments ? (
-                  <button type="button" className="session-question-attachment-button" aria-label={zh ? '添加附件' : 'Add attachment'} disabled={inputResources.processing} onClick={() => void chooseAnswerAttachments()}>
+                  <button
+                    data-icon-tooltip={zh ? '添加附件' : 'Add attachment'}
+                    type="button"
+                    className="session-question-attachment-button"
+                    aria-label={zh ? '添加附件' : 'Add attachment'}
+                    disabled={inputResources.processing}
+                    onClick={() => void chooseAnswerAttachments()}
+                  >
                     <Paperclip aria-hidden="true" />
                   </button>
                 ) : null}
@@ -1138,7 +1155,14 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
                     onRestorePastedText={inputResources.restorePastedText}
                   />
                   {answerAttachmentsEnabled && props.onChooseAttachments ? (
-                    <button type="button" className="session-question-attachment-button" aria-label={zh ? '添加附件' : 'Add attachment'} disabled={inputResources.processing} onClick={() => void chooseAnswerAttachments()}>
+                    <button
+                      data-icon-tooltip={zh ? '添加附件' : 'Add attachment'}
+                      type="button"
+                      className="session-question-attachment-button"
+                      aria-label={zh ? '添加附件' : 'Add attachment'}
+                      disabled={inputResources.processing}
+                      onClick={() => void chooseAnswerAttachments()}
+                    >
                       <Paperclip aria-hidden="true" />
                     </button>
                   ) : null}

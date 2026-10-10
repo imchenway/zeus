@@ -138,7 +138,7 @@ export function TaskManagementStatusEditor(props: TaskManagementStatusEditorProp
               className="task-status-config-drag-handle"
               draggable
               aria-label={zh ? `拖动 ${props.labelForStatus(status)}` : `Drag ${props.labelForStatus(status)}`}
-              title={zh ? '拖动调整顺序' : 'Drag to reorder'}
+              data-icon-tooltip={zh ? '拖动调整顺序' : 'Drag to reorder'}
               onDragStart={(event) => {
                 setDraggedStatusId(status.id);
                 event.dataTransfer.effectAllowed = 'move';
@@ -162,7 +162,7 @@ export function TaskManagementStatusEditor(props: TaskManagementStatusEditorProp
                 })
               }
             />
-            <label className="task-status-config-color">
+            <label className="task-status-config-color" data-icon-tooltip={zh ? `修改状态颜色：${props.labelForStatus(status)}` : `Change status color: ${props.labelForStatus(status)}`}>
               <span className="sr-only">{zh ? `${props.labelForStatus(status)} 的颜色` : `Color for ${props.labelForStatus(status)}`}</span>
               <input
                 type="color"
@@ -179,10 +179,17 @@ export function TaskManagementStatusEditor(props: TaskManagementStatusEditorProp
               <span aria-hidden="true">{status.color.toUpperCase()}</span>
             </label>
             <span className="task-status-config-actions">
-              <button type="button" aria-label={zh ? `上移 ${props.labelForStatus(status)}` : `Move ${props.labelForStatus(status)} up`} disabled={index === 0} onClick={() => props.onChange(moveStatus(props.config, status.id, index - 1))}>
+              <button
+                data-icon-tooltip={zh ? `上移 ${props.labelForStatus(status)}` : `Move ${props.labelForStatus(status)} up`}
+                type="button"
+                aria-label={zh ? `上移 ${props.labelForStatus(status)}` : `Move ${props.labelForStatus(status)} up`}
+                disabled={index === 0}
+                onClick={() => props.onChange(moveStatus(props.config, status.id, index - 1))}
+              >
                 ↑
               </button>
               <button
+                data-icon-tooltip={zh ? `下移 ${props.labelForStatus(status)}` : `Move ${props.labelForStatus(status)} down`}
                 type="button"
                 aria-label={zh ? `下移 ${props.labelForStatus(status)}` : `Move ${props.labelForStatus(status)} down`}
                 disabled={index === props.config.statuses.length - 1}

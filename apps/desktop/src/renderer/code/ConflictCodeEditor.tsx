@@ -158,6 +158,11 @@ class ConflictMarker extends GutterMarker {
         ? `${action === 'accepted' ? '选入' : '移除'}${this.side === 'source' ? '来源分支' : '任务分支'}的此处修改${action === 'ignored' ? '（不采用该侧修改）' : ''}`
         : `${action === 'accepted' ? 'Include' : 'Exclude'} this ${this.side === 'source' ? 'source branch' : 'task branch'} change`;
       button.setAttribute('aria-label', button.title);
+      // 采纳箭头使用应用提示；用户排除的叉号保留原生标题。
+      if (action === 'accepted') {
+        button.dataset.iconTooltip = button.title;
+        button.removeAttribute('title');
+      }
       button.setAttribute('aria-pressed', String(state === action));
       button.onclick = () => this.current.current.onSideAction?.(this.block, this.side, action);
       group.append(button);
@@ -186,7 +191,7 @@ function conflictDecorations(view: EditorView, regions: Array<{ block: ConflictB
   /** 装饰仅覆盖当前可见行。 */
   const decorations = [];
   for (const visible of view.visibleRanges) {
-    for (let position = visible.from; position <= visible.to; ) {
+    for (let position = visible.from; position <= visible.to;) {
       /** 使用编辑器行索引定位，避免扫描全文。 */
       const line = view.state.doc.lineAt(position);
       /** 各栏使用各自的冲突位置，已处理块改用完成色。 */

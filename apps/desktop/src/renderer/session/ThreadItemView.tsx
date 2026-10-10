@@ -803,10 +803,18 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       {visibleText && subagentInput?.contentState !== 'unavailable' ? <CopyIconButton label={labels.copy} copiedLabel={labels.copied} text={itemText} /> : null}
       {role === 'assistant' ? (
         <>
-          <MessageIconButton label={labels.good} pressed={feedback === 'good'} onClick={() => setFeedback((current) => (current === 'good' ? null : 'good'))}>
+          <MessageIconButton
+            label={feedback === 'good' ? (props.language === 'zh-CN' ? '取消好评' : 'Remove positive feedback') : labels.good}
+            pressed={feedback === 'good'}
+            onClick={() => setFeedback((current) => (current === 'good' ? null : 'good'))}
+          >
             <MessageThumbIcon direction="up" selected={feedback === 'good'} />
           </MessageIconButton>
-          <MessageIconButton label={labels.bad} pressed={feedback === 'bad'} onClick={() => setFeedback((current) => (current === 'bad' ? null : 'bad'))}>
+          <MessageIconButton
+            label={feedback === 'bad' ? (props.language === 'zh-CN' ? '取消差评' : 'Remove negative feedback') : labels.bad}
+            pressed={feedback === 'bad'}
+            onClick={() => setFeedback((current) => (current === 'bad' ? null : 'bad'))}
+          >
             <MessageThumbIcon direction="down" selected={feedback === 'bad'} />
           </MessageIconButton>
           <MessageIconButton label={messageExpanded ? labels.collapseMessage : labels.expandMessage} expanded={messageExpanded} onClick={() => setMessageExpanded((current) => !current)}>
@@ -1296,7 +1304,7 @@ function CopyIconButton(props: { label: string; copiedLabel: string; text: strin
       type="button"
       className="session-copy-button"
       aria-label={copied ? props.copiedLabel : props.label}
-      title={copied ? props.copiedLabel : props.label}
+      data-icon-tooltip={copied ? props.copiedLabel : props.label}
       data-copied={copied || undefined}
       onClick={async () => setCopied(await copyText(props.text))}
     >
@@ -1311,7 +1319,7 @@ function MessageIconButton(props: { label: string; pressed?: boolean; expanded?:
       type="button"
       className="session-message-action-button"
       aria-label={props.label}
-      title={props.label}
+      data-icon-tooltip={props.label}
       aria-pressed={props.pressed === undefined ? undefined : props.pressed}
       aria-expanded={props.expanded === undefined ? undefined : props.expanded}
       data-selected={props.pressed || undefined}

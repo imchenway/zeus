@@ -884,7 +884,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
                           onClick={() => void openRunHistory(command)}
                           disabled={!props.project || busy}
                           aria-label={`${zh ? '查看执行历史' : 'View run history'} ${command.title}`}
-                          title={zh ? '执行历史' : 'Run history'}
+                          data-icon-tooltip={zh ? '查看执行历史' : 'View run history'}
                         >
                           <ClockCounterClockwise aria-hidden="true" />
                         </button>
@@ -897,10 +897,18 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
                     <span className="command-definition-management">
                       {editable ? (
                         <>
-                          <button type="button" className="command-definition-icon-action" onClick={() => openEdit(command)} disabled={busy} aria-label={`${zh ? '编辑' : 'Edit'} ${command.title}`}>
+                          <button
+                            data-icon-tooltip={`${zh ? '编辑命令' : 'Edit command'} ${command.title}`}
+                            type="button"
+                            className="command-definition-icon-action"
+                            onClick={() => openEdit(command)}
+                            disabled={busy}
+                            aria-label={`${zh ? '编辑' : 'Edit'} ${command.title}`}
+                          >
                             <PencilSimple aria-hidden="true" />
                           </button>
                           <button
+                            data-icon-tooltip={`${pendingDeleteId === command.id ? (zh ? '确认删除命令' : 'Confirm command deletion') : zh ? '删除命令' : 'Delete command'} ${command.title}`}
                             type="button"
                             className="command-definition-icon-action"
                             data-confirm={pendingDeleteId === command.id ? 'true' : undefined}

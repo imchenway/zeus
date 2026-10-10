@@ -3392,62 +3392,6 @@ body:has(.macos-ai-app.zeus-shell) {
   outline-offset: -2px;
 }
 
-@media (min-width: 760px) {
-  .macos-ai-app.zeus-shell .project-workspace-mode-rail > button[data-tooltip]::after {
-    background: #303139;
-    border: 1px solid rgb(255 255 255 / 12%);
-    border-radius: 7px;
-    box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
-    color: #f5f6f8;
-    content: attr(data-tooltip);
-    font-size: 12.5px;
-    font-weight: 520;
-    inset-inline-start: calc(100% + 10px);
-    line-height: 1;
-    opacity: 0;
-    padding: 9px 10px;
-    pointer-events: none;
-    position: absolute;
-    top: 50%;
-    transform: translate3d(-3px, -50%, 0) scale(0.98);
-    transform-origin: left center;
-    transition:
-      opacity 100ms ease 120ms,
-      transform 100ms ease 120ms;
-    visibility: hidden;
-    white-space: nowrap;
-    z-index: 80;
-  }
-
-  .macos-ai-app.zeus-shell .project-workspace-mode-rail > button[data-tooltip]::before {
-    background: #303139;
-    border-block-end: 1px solid rgb(255 255 255 / 12%);
-    border-inline-start: 1px solid rgb(255 255 255 / 12%);
-    block-size: 7px;
-    content: '';
-    inline-size: 7px;
-    inset-inline-start: calc(100% + 7px);
-    opacity: 0;
-    pointer-events: none;
-    position: absolute;
-    top: 50%;
-    transform: translateY(-50%) rotate(45deg);
-    transition: opacity 100ms ease 120ms;
-    visibility: hidden;
-    z-index: 81;
-  }
-
-  .macos-ai-app.zeus-shell .project-workspace-mode-rail > button[data-tooltip]:is(:hover, :focus-visible)::before,
-  .macos-ai-app.zeus-shell .project-workspace-mode-rail > button[data-tooltip]:is(:hover, :focus-visible)::after {
-    opacity: 1;
-    visibility: visible;
-  }
-
-  .macos-ai-app.zeus-shell .project-workspace-mode-rail > button[data-tooltip]:is(:hover, :focus-visible)::after {
-    transform: translate3d(0, -50%, 0) scale(1);
-  }
-}
-
 .macos-ai-app.zeus-shell .project-workspace-mode-rail-spacer {
   flex: 1 1 auto;
   min-block-size: 8px;

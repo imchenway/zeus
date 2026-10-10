@@ -209,7 +209,13 @@ export function TaskGitConflictWorkspace(props: {
           </span>
           <span>
             <span className="task-git-conflict-navigation" aria-label={props.zh ? '冲突导航' : 'Conflict navigation'}>
-              <button type="button" onClick={() => selectAdjacentBlock(-1)} disabled={props.busy || selectedBlockIndex <= 0} aria-label={props.zh ? '上一个冲突' : 'Previous conflict'} title={props.zh ? '上一个冲突' : 'Previous conflict'}>
+              <button
+                type="button"
+                onClick={() => selectAdjacentBlock(-1)}
+                disabled={props.busy || selectedBlockIndex <= 0}
+                aria-label={props.zh ? '上一个冲突' : 'Previous conflict'}
+                data-icon-tooltip={props.zh ? '上一个冲突' : 'Previous conflict'}
+              >
                 <ArrowLeft aria-hidden="true" />
               </button>
               <small>{blocks.length > 0 ? `${Math.min(selectedBlockIndex + 1, blocks.length)} / ${blocks.length}` : '0 / 0'}</small>
@@ -218,7 +224,7 @@ export function TaskGitConflictWorkspace(props: {
                 onClick={() => selectAdjacentBlock(1)}
                 disabled={props.busy || selectedBlockIndex >= blocks.length - 1}
                 aria-label={props.zh ? '下一个冲突' : 'Next conflict'}
-                title={props.zh ? '下一个冲突' : 'Next conflict'}
+                data-icon-tooltip={props.zh ? '下一个冲突' : 'Next conflict'}
               >
                 <ArrowRight aria-hidden="true" />
               </button>

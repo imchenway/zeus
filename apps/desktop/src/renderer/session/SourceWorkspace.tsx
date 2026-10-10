@@ -246,7 +246,7 @@ function SourceWorkspaceView(props: {
           type="button"
           aria-label={props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width'}
           disabled={props.canSplit === false}
-          title={props.canSplit === false ? (zh ? '窗口较窄，已自动全宽显示' : 'This window is too narrow for split view') : props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width'}
+          data-icon-tooltip={props.canSplit === false ? (zh ? '窗口较窄，已自动全宽显示' : 'This window is too narrow for split view') : props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width'}
           onClick={() => props.onFullWidthChange(!props.fullWidth)}
         >
           {props.fullWidth ? <ArrowsIn aria-hidden="true" /> : <ArrowsOut aria-hidden="true" />}
@@ -281,7 +281,13 @@ function SourceWorkspaceView(props: {
               {renderedMarkdown ? (zh ? '查看源代码' : 'View source') : zh ? '查看预览' : 'View preview'}
             </button>
           ) : null}
-          <button type="button" aria-label={zh ? '复制路径' : 'Copy path'} title={zh ? '复制路径' : 'Copy path'} disabled={!props.onOpen} onClick={() => void openResource('copy_path')}>
+          <button
+            type="button"
+            aria-label={copied ? (zh ? '已复制路径' : 'Path copied') : zh ? '复制路径' : 'Copy path'}
+            data-icon-tooltip={copied ? (zh ? '已复制路径' : 'Path copied') : zh ? '复制路径' : 'Copy path'}
+            disabled={!props.onOpen}
+            onClick={() => void openResource('copy_path')}
+          >
             {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
           </button>
           <span role="status" className="session-source-copy-status">
@@ -439,7 +445,7 @@ export function FilePreviewWorkspace(props: {
         <button
           type="button"
           disabled={!props.canSplit}
-          title={!props.canSplit ? (zh ? '窗口较窄，已自动全宽显示' : 'This window is too narrow for split view') : undefined}
+          data-icon-tooltip={!props.canSplit ? (zh ? '窗口较窄，已自动全宽显示' : 'This window is too narrow for split view') : props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width'}
           aria-label={props.fullWidth ? (zh ? '恢复分栏' : 'Restore split') : zh ? '扩展为全宽' : 'Expand full width'}
           onClick={() => props.onFullWidthChange(!props.fullWidth)}
         >

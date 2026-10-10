@@ -153,7 +153,7 @@ export function VisibleApplicationError(props: {
         type="button"
         className="application-error-details-link"
         aria-label={detailsLabel}
-        title={detailsLabel}
+        data-icon-tooltip={detailsLabel}
         onClick={() => reportApplicationError(props.error, { language, summary: props.summary, title: props.title, action: props.action, showDetails: true })}
       >
         <WarningCircle aria-hidden="true" />

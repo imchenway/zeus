@@ -513,7 +513,7 @@ function ConversationMarkdownCopyButton(props: { label: string; copiedLabel: str
       type="button"
       className="session-copy-button"
       aria-label={feedback || props.label}
-      title={feedback || props.label}
+      data-icon-tooltip={feedback || props.label}
       data-copied={copied || undefined}
       disabled={!props.text}
       onClick={async () => {

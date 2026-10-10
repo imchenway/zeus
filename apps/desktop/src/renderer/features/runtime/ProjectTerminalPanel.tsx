@@ -286,7 +286,7 @@ export function ProjectTerminalPanel(props: { project: ProjectRecord; client: Da
                   <TerminalSearchButton search={search} language={props.language} />
                   {selected ? (
                     <>
-                      <button className="zeus-terminal-action" type="button" title={zh ? '重新连接' : 'Reconnect'} aria-label={zh ? '重新连接' : 'Reconnect'} onClick={() => setConnection((value) => value + 1)}>
+                      <button className="zeus-terminal-action" type="button" data-icon-tooltip={zh ? '重新连接' : 'Reconnect'} aria-label={zh ? '重新连接' : 'Reconnect'} onClick={() => setConnection((value) => value + 1)}>
                         <ArrowClockwise aria-hidden="true" />
                       </button>
                       <button

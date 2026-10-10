@@ -255,13 +255,13 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                 )}
                 {editingId === submission.id ? null : (
                   <footer className="session-queued-message-actions">
-                    <button type="button" title={copy.edit} aria-label={copy.edit} onClick={() => startEdit(submission)} disabled={!submissionWritable || busy || !props.onEdit}>
+                    <button type="button" data-icon-tooltip={copy.edit} aria-label={copy.edit} onClick={() => startEdit(submission)} disabled={!submissionWritable || busy || !props.onEdit}>
                       <PencilSimple aria-hidden="true" />
                     </button>
                     <button
                       type="button"
                       className="session-queued-message-steer"
-                      title={steerReason ?? copy.steerHelp}
+                      data-icon-tooltip={steerReason ?? copy.steer}
                       aria-label={`${copy.steer}. ${steerReason ?? copy.steerHelp}`}
                       aria-disabled={Boolean(!submissionWritable || busy || !props.onSendNow || steerReason)}
                       onClick={() => {
@@ -274,17 +274,17 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                     <button
                       type="button"
                       className="session-queued-message-delete"
-                      title={copy.remove}
+                      data-icon-tooltip={copy.remove}
                       aria-label={copy.remove}
                       onClick={() => void runAction(submission.id, 'delete', () => props.onDelete?.(submission.id))}
                       disabled={!submissionWritable || busy || !props.onDelete}
                     >
                       <Trash aria-hidden="true" />
                     </button>
-                    <button type="button" title={copy.moveUp} aria-label={copy.moveUp} onClick={() => void reorder(submission, -1)} disabled={!submissionWritable || busy || !props.onReorder || !canMoveUp}>
+                    <button type="button" data-icon-tooltip={copy.moveUp} aria-label={copy.moveUp} onClick={() => void reorder(submission, -1)} disabled={!submissionWritable || busy || !props.onReorder || !canMoveUp}>
                       <ArrowUp aria-hidden="true" />
                     </button>
-                    <button type="button" title={copy.moveDown} aria-label={copy.moveDown} onClick={() => void reorder(submission, 1)} disabled={!submissionWritable || busy || !props.onReorder || !canMoveDown}>
+                    <button type="button" data-icon-tooltip={copy.moveDown} aria-label={copy.moveDown} onClick={() => void reorder(submission, 1)} disabled={!submissionWritable || busy || !props.onReorder || !canMoveDown}>
                       <ArrowDown aria-hidden="true" />
                     </button>
                   </footer>

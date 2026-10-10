@@ -96,7 +96,7 @@ export function TerminalSearchButton(props: { search: ReturnType<typeof useTermi
   /** 中英文入口共用相同操作和无障碍状态。 */
   const label = props.language === 'zh-CN' ? '搜索终端内容' : 'Search terminal contents';
   return (
-    <button className="zeus-terminal-action" type="button" title={label} aria-label={label} aria-expanded={props.search.open} disabled={!props.search.ready} onClick={props.search.openSearch}>
+    <button className="zeus-terminal-action" type="button" data-icon-tooltip={label} aria-label={label} aria-expanded={props.search.open} disabled={!props.search.ready} onClick={props.search.openSearch}>
       <MagnifyingGlass aria-hidden="true" />
     </button>
   );
@@ -127,10 +127,10 @@ export function TerminalSearchBar(props: { search: ReturnType<typeof useTerminal
         }}
       />
       {search.query && !search.found ? <span role="status">{zh ? '未找到' : 'No matches'}</span> : null}
-      <button type="button" aria-label={zh ? '上一个匹配' : 'Previous match'} title={zh ? '上一个匹配' : 'Previous match'} disabled={!search.query} onClick={() => search.find(search.query, true)}>
+      <button type="button" aria-label={zh ? '上一个匹配' : 'Previous match'} data-icon-tooltip={zh ? '上一个匹配' : 'Previous match'} disabled={!search.query} onClick={() => search.find(search.query, true)}>
         <ArrowUp aria-hidden="true" />
       </button>
-      <button type="button" aria-label={zh ? '下一个匹配' : 'Next match'} title={zh ? '下一个匹配' : 'Next match'} disabled={!search.query} onClick={() => search.find(search.query)}>
+      <button type="button" aria-label={zh ? '下一个匹配' : 'Next match'} data-icon-tooltip={zh ? '下一个匹配' : 'Next match'} disabled={!search.query} onClick={() => search.find(search.query)}>
         <ArrowDown aria-hidden="true" />
       </button>
       <button type="button" aria-label={zh ? '关闭搜索' : 'Close search'} title={zh ? '关闭搜索' : 'Close search'} onClick={search.closeSearch}>

@@ -356,7 +356,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
           aria-expanded={open}
           aria-haspopup="dialog"
           aria-label={zh ? '环境与快捷操作' : 'Environment and quick actions'}
-          title={zh ? '环境与快捷操作' : 'Environment and quick actions'}
+          data-icon-tooltip={zh ? '环境与快捷操作' : 'Environment and quick actions'}
           onClick={() => setOpen((current) => !current)}
         >
           <Desktop aria-hidden="true" weight="regular" />
@@ -385,7 +385,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                   type="button"
                   className="session-quick-actions-settings"
                   aria-label={zh ? '打开任务详情' : 'Open task details'}
-                  title={zh ? '打开任务详情' : 'Open task details'}
+                  data-icon-tooltip={zh ? '打开任务详情' : 'Open task details'}
                   onClick={() => {
                     setOpen(false);
                     props.onOpenTaskDetail?.(taskId);

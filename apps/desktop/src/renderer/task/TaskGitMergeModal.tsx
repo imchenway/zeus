@@ -1020,13 +1020,16 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     });
   }
 
-  async function copyBranchName(branchName: string): Promise<void> {
+  /** 返回实际复制结果，供分支图标显示短暂确认。 */
+  async function copyBranchName(branchName: string): Promise<boolean> {
     try {
       if (window.zeus?.writeClipboardText) await window.zeus.writeClipboardText(branchName);
       else await navigator.clipboard.writeText(branchName);
       setFeedback({ tone: 'info', text: zh ? `已复制分支名：${branchName}` : `Copied branch name: ${branchName}` });
+      return true;
     } catch {
       setError(zh ? '复制分支名失败，请稍后重试。' : 'The branch name could not be copied. Try again.');
+      return false;
     }
   }
 

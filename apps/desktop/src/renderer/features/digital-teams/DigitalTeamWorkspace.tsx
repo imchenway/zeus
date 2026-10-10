@@ -857,7 +857,14 @@ export function DigitalTeamWorkspace(props: DigitalTeamWorkspaceProps) {
             size="regular"
             searchable
           />
-          <Button className="digital-team-refresh-button" size="compact" aria-label={zh ? '刷新数字团队数据' : 'Refresh digital team data'} title={zh ? '刷新' : 'Refresh'} disabled={loading || busy} onClick={() => void refreshProject()}>
+          <Button
+            className="digital-team-refresh-button"
+            size="compact"
+            aria-label={zh ? '刷新数字团队数据' : 'Refresh digital team data'}
+            data-icon-tooltip={zh ? '刷新数字团队数据' : 'Refresh digital team data'}
+            disabled={loading || busy}
+            onClick={() => void refreshProject()}
+          >
             <Refresh aria-hidden="true" />
           </Button>
         </div>

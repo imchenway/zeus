@@ -399,8 +399,10 @@ export function ConversationGitDeliveryContent(props: { client: DashboardClient;
                   onCopyBranch={async (branch) => {
                     try {
                       await navigator.clipboard.writeText(branch);
+                      return true;
                     } catch (reason) {
                       setError(formatVisibleApplicationError(reason, zh ? 'zh-CN' : 'en'));
+                      return false;
                     }
                   }}
                 />

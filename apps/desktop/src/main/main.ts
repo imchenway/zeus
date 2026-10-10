@@ -2768,11 +2768,14 @@ async function createMenuBarUsageWindow(): Promise<BrowserWindow> {
   });
   window.on('blur', () => scheduleMenuBarUsageWindowBlurHide(window));
   window.on('focus', () => cancelMenuBarUsageWindowBlurHide());
+  window.on('show', updateTrayTooltip);
+  window.on('hide', updateTrayTooltip);
   window.on('closed', () => {
     cancelMenuBarUsageWindowBlurHide();
     if (menuBarUsageCostDetailWindow && !menuBarUsageCostDetailWindow.isDestroyed()) menuBarUsageCostDetailWindow.destroy();
     appCloseLayerActivityByWindow.delete(window.id);
     if (menuBarUsageWindow === window) menuBarUsageWindow = undefined;
+    updateTrayTooltip();
   });
   window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
     if (isMainFrame && errorCode !== -3) console.warn(`Zeus 菜单栏用量浮窗加载失败：${validatedUrl} ${errorDescription} (${errorCode})`);
@@ -2818,6 +2821,15 @@ async function toggleMenuBarUsageWindow(anchor: MenuBarUsageClickAnchor): Promis
   );
 }
 
+/** 菜单栏提示说明当前点击动作，并跟随用量窗口显示状态和界面语言更新。 */
+function updateTrayTooltip(): void {
+  /** 关闭或尚未创建的窗口均使用打开动作。 */
+  const visible = Boolean(menuBarUsageWindow && !menuBarUsageWindow.isDestroyed() && menuBarUsageWindow.isVisible());
+  /** 沿用用户的界面语言。 */
+  const action = appShellSettings.appLanguage === 'zh-CN' ? (visible ? '收起用量' : '查看用量') : visible ? 'Hide usage' : 'View usage';
+  tray?.setToolTip(`${desktopDisplayName()}：${action}`);
+}
+
 /** 创建固定显示尺寸的菜单栏图标，并同步菜单与点击行为。 */
 function setupTray(): void {
   if (!tray) {
@@ -2827,9 +2839,9 @@ function setupTray(): void {
     if (trayIcon.isEmpty()) throw new Error(`Zeus tray icon is empty: ${trayIconPath}`);
     trayIcon.setTemplateImage(true);
     tray = new Tray(trayIcon);
-    tray.setToolTip(desktopDisplayName());
     tray.setIgnoreDoubleClickEvents(true);
   }
+  updateTrayTooltip();
   menuBarUsageMenu = Menu.buildFromTemplate(
     buildMenuBarTrayTemplate({
       applicationName: desktopDisplayName(),

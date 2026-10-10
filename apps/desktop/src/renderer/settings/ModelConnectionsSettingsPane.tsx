@@ -646,6 +646,7 @@ export function ModelConnectionsSettingsPane(props: {
                   }}
                 />
                 <Button
+                  data-icon-tooltip={apiKeyVisible ? (zh ? '隐藏 API Key' : 'Hide API key') : zh ? '查看 API Key' : 'Show API key'}
                   size="compact"
                   aria-label={apiKeyVisible ? (zh ? '隐藏 API Key' : 'Hide API key') : zh ? '查看 API Key' : 'Show API key'}
                   aria-pressed={apiKeyVisible}
@@ -1276,7 +1277,7 @@ function ModelCapabilityFacts(props: { language: 'zh-CN' | 'en-US'; model: Model
               variant="secondary"
               className="model-reasoning-open"
               aria-label={zh ? `自定义 ${props.model.id} 的推理档位` : `Customize reasoning levels for ${props.model.id}`}
-              title={zh ? '自定义推理档位' : 'Customize reasoning levels'}
+              data-icon-tooltip={zh ? '自定义推理档位' : 'Customize reasoning levels'}
               onClick={() => setReasoningDialogOpen(true)}
             >
               <GearIcon aria-hidden="true" />

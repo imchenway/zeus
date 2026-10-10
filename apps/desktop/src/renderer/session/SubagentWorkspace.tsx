@@ -167,6 +167,7 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
         <span className="session-subagent-title">
           {selectedThreadId ? (
             <button
+              data-icon-tooltip={zh ? '返回智能体列表' : 'Back to agent list'}
               type="button"
               aria-label={zh ? '返回智能体列表' : 'Back to agent list'}
               onClick={() => {
@@ -189,10 +190,10 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
           </span>
         </span>
         <nav aria-label={zh ? '智能体面板操作' : 'Agent panel actions'}>
-          <button type="button" aria-label={zh ? '刷新智能体' : 'Refresh agents'} title={zh ? '刷新' : 'Refresh'} onClick={() => void (selectedThreadId ? openThread(selectedThreadId, false) : refreshList(true))}>
+          <button type="button" aria-label={zh ? '刷新智能体' : 'Refresh agents'} data-icon-tooltip={zh ? '刷新智能体' : 'Refresh agents'} onClick={() => void (selectedThreadId ? openThread(selectedThreadId, false) : refreshList(true))}>
             <ArrowsClockwise aria-hidden="true" />
           </button>
-          <button type="button" aria-label={toggleLabel} title={toggleLabel} onClick={() => props.onFullWidthChange(!props.fullWidth)}>
+          <button type="button" aria-label={toggleLabel} data-icon-tooltip={toggleLabel} onClick={() => props.onFullWidthChange(!props.fullWidth)}>
             {props.fullWidth ? <ArrowsIn aria-hidden="true" /> : <ArrowsOut aria-hidden="true" />}
           </button>
           <button type="button" aria-label={zh ? '关闭智能体面板' : 'Close agent panel'} title={zh ? '关闭' : 'Close'} onClick={props.onClose}>

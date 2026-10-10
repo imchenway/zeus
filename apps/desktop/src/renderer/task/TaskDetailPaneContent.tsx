@@ -1260,7 +1260,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
               {zh ? '打开会话' : 'Open conversation'}
             </Button>
           ) : null}
-          <Button variant="secondary" size="regular" className="task-detail-more-trigger" popoverTarget={moreActionsId} aria-label={zh ? '更多任务操作' : 'More task actions'} title={zh ? '更多操作' : 'More actions'}>
+          <Button variant="secondary" size="regular" className="task-detail-more-trigger" popoverTarget={moreActionsId} aria-label={zh ? '更多任务操作' : 'More task actions'} data-icon-tooltip={zh ? '更多任务操作' : 'More task actions'}>
             <DotsThreeIcon size={20} weight="bold" aria-hidden="true" />
           </Button>
           <section

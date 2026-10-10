@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, type ReactNode, type ComponentProps } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode, type ComponentProps } from 'react';
 import type { TaskGitFileStatus, TaskWorkspaceIndexSnapshot, TaskWorkspaceSnapshot, TaskGitDiffSummary } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
@@ -6,6 +6,7 @@ import { ZeusSelect } from '../ZeusSelect.js';
 import { SideBySideDiff } from './ProjectGitDiffViewer.js';
 import { GitPaneSeparator } from './GitPaneSeparator.js';
 import { CopySimpleIcon } from '@phosphor-icons/react/dist/csr/CopySimple';
+import { CheckIcon } from '@phosphor-icons/react/dist/csr/Check';
 import { WarningCircleIcon } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { FolderIcon } from '@phosphor-icons/react/dist/csr/Folder';
 import { FileTypeIcon } from '../code/FileTypeIcon.js';
@@ -109,8 +110,18 @@ export function DeliveryRepositoryFileTree(props: {
   onToggleFiles: (workspaceId: string, paths: string[], selected: boolean) => void;
   /** 双击仅打开差异，不改变勾选范围。 */
   onOpenFile: (workspaceId: string, path: string) => void;
-  onCopyBranch: (branchName: string) => void | Promise<void>;
+  /** 只有剪贴板写入成功才返回 true，避免把错误回报成已复制。 */
+  onCopyBranch: (branchName: string) => boolean | Promise<boolean>;
 }) {
+  /** 复制反馈只属于成功写入的分支。 */
+  const [copiedBranch, setCopiedBranch] = useState<string | null>(null);
+  // 短暂确认后恢复原操作名称，组件退出时释放定时器。
+  useEffect(() => {
+    if (!copiedBranch) return;
+    /** 确认持续时间与其他复制入口一致。 */
+    const timer = window.setTimeout(() => setCopiedBranch(null), 1600);
+    return () => window.clearTimeout(timer);
+  }, [copiedBranch]);
   /** 同一任务分支下的仓库保持现有排序与交付范围。 */
   const branchGroups = groupDeliveryRepositoriesByBranch(props.groups);
   return (
@@ -170,12 +181,15 @@ export function DeliveryRepositoryFileTree(props: {
                   {currentConversation ? <small className="task-git-current-conversation-badge">{props.zh ? '当前会话' : 'Current session'}</small> : null}
                   <button
                     type="button"
-                    aria-label={props.zh ? '复制分支名' : 'Copy branch name'}
-                    title={props.zh ? '复制分支名' : 'Copy branch name'}
-                    onClick={() => void props.onCopyBranch(branchGroup.branchName)}
+                    aria-label={copiedBranch === branchGroup.branchName ? (props.zh ? '已复制分支名' : 'Branch name copied') : props.zh ? '复制分支名' : 'Copy branch name'}
+                    data-icon-tooltip={copiedBranch === branchGroup.branchName ? (props.zh ? '已复制分支名' : 'Branch name copied') : props.zh ? '复制分支名' : 'Copy branch name'}
+                    onClick={async () => {
+                      // 回执由实际执行复制的调用方提供，不根据点击推测成功。
+                      setCopiedBranch((await props.onCopyBranch(branchGroup.branchName)) ? branchGroup.branchName : null);
+                    }}
                     disabled={props.disabled}
                   >
-                    <CopySimpleIcon size={14} aria-hidden="true" />
+                    {copiedBranch === branchGroup.branchName ? <CheckIcon size={14} aria-hidden="true" /> : <CopySimpleIcon size={14} aria-hidden="true" />}
                   </button>
                 </span>
               </header>
