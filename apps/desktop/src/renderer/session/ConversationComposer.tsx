@@ -700,7 +700,7 @@ function ContextDraftAttachment(props: { draft: ConversationContextDraft; langua
 }
 
 /** 浏览器批注可展开查看全文与截图，移除操作独立于预览。 */
-function BrowserSubmissionAttachment(props: { submission: ZeusBrowserPreparedSubmission; language: SessionUiLanguage; disabled: boolean; onRemove?: () => void }) {
+export function BrowserSubmissionAttachment(props: { submission: ZeusBrowserPreparedSubmission; language: SessionUiLanguage; disabled: boolean; onRemove?: () => void }) {
   return (
     <section className="session-composer-context-draft session-composer-browser-submission" aria-label={props.language === 'zh-CN' ? '待发送网页评论' : 'Pending browser comments'}>
       <span className="session-context-draft-chip">

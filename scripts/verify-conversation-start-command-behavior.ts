@@ -6,7 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Fastify from 'fastify';
-import { commandEnvelopeSchemaGeneration, type CommandEnvelope } from '../packages/shared/src/index.js';
+import { commandEnvelopeSchemaGeneration, mergeBrowserSubmissions, type CommandEnvelope, type ZeusBrowserComment } from '../packages/shared/src/index.js';
 import { ArtifactStore, CommandDeliveryRepository, createZeusDatabase } from '../packages/storage/src/index.js';
 import {
   ConversationStartCommandApplication,
@@ -73,6 +73,65 @@ try {
     const projectConversationResponse = await inject('/api/projects/project-a/conversations', projectConversation.body);
     const taskConversation = commandRequest('task-conversation', conversationStartCommandTypes.taskConversationCreate, 'task', 'task-a', { mode: 'create', content: 'task' });
     const taskConversationResponse = await inject('/api/tasks/task-a/conversations', taskConversation.body);
+    /** 网页批注允许直接作为项目及任务会话的首发，不要求占位正文。 */
+    const browserComment: ZeusBrowserComment = {
+      id: 'browser-comment-probe',
+      number: 1,
+      conversationId: 'browser-draft-probe',
+      tabId: 'browser-tab-probe',
+      body: '网页批注首发检查',
+      designChanges: [],
+      status: 'draft',
+      createdAt: now().toISOString(),
+      updatedAt: now().toISOString(),
+      anchor: {
+        kind: 'element',
+        pageUrl: 'http://localhost/',
+        frameUrl: 'http://localhost/',
+        pageTitle: '检查页面',
+        frameDepth: 0,
+        rect: { x: 0, y: 0, width: 100, height: 20 },
+        viewport: { width: 800, height: 600, deviceScaleFactor: 1 },
+        scroll: { x: 0, y: 0 },
+        fixed: false,
+      },
+      screenshotPath: '/tmp/browser-comment-before.png',
+    };
+    /** 初次确认和重复确认同一批注时，旧截图必须被替换。 */
+    const preparedBrowser = {
+      tabId: browserComment.tabId,
+      commentIds: [browserComment.id],
+      content: '',
+      comments: [browserComment],
+      attachments: [{ name: 'before.png', mime: 'image/png' as const, size: 1, localPath: browserComment.screenshotPath! }],
+    };
+    /** 合并检查使用明确的新正文和截图身份。 */
+    const mergedBrowser = mergeBrowserSubmissions(preparedBrowser, {
+      ...preparedBrowser,
+      comments: [{ ...browserComment, body: '更新后的网页批注', screenshotPath: '/tmp/browser-comment-after.png' }],
+      attachments: [{ name: 'after.png', mime: 'image/png', size: 2, localPath: '/tmp/browser-comment-after.png' }],
+    });
+    assertProbe(
+      mergedBrowser.comments.length === 1 &&
+        mergedBrowser.comments[0]!.body === '更新后的网页批注' &&
+        mergedBrowser.attachments.length === 1 &&
+        mergedBrowser.attachments[0]!.localPath === '/tmp/browser-comment-after.png' &&
+        mergedBrowser.content.includes('更新后的网页批注'),
+      '重复确认必须更新正文并只保留新截图。',
+    );
+    /** 首发命令保留合并后的结构化批注和同源提示词。 */
+    const browserInput = { mode: 'create', content: '', browserComments: mergedBrowser.comments, browserCommentContent: mergedBrowser.content };
+    /** 两个入口都必须透传资源字段，不能在命令白名单层拒绝。 */
+    const browserProject = commandRequest('browser-project', conversationStartCommandTypes.projectConversationCreate, 'project', 'project-browser', browserInput);
+    /** 任务批注首发使用独立的命令身份。 */
+    const browserTask = commandRequest('browser-task', conversationStartCommandTypes.taskConversationCreate, 'task', 'task-browser', browserInput);
+    /** 这里只验证真实命令路由和持久受理，不声称 Provider 已处理批注。 */
+    const browserResponses = await Promise.all([inject('/api/projects/project-browser/conversations', browserProject.body), inject('/api/tasks/task-browser/conversations', browserTask.body)]);
+    assertProbe(
+      browserResponses.every((response) => response.statusCode === 202),
+      '项目与任务首发路由必须接受网页批注字段。',
+    );
+    observed.browserFirstSubmission = browserResponses.map((response) => response.statusCode);
     const concurrent = commandRequest('concurrent', conversationStartCommandTypes.projectConversationCreate, 'project', 'project-a', { mode: 'create', content: 'concurrent' });
     const concurrentFirst = inject('/api/projects/project-a/conversations', concurrent.body);
     const concurrentDuplicate = inject('/api/projects/project-a/conversations', concurrent.body);

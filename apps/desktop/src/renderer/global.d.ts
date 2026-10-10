@@ -363,6 +363,8 @@ declare global {
       >;
       getBrowserSnapshot: (conversationId: string) => Promise<ZeusBrowserConversationSnapshot>;
       openBrowserTab: (input: { conversationId: string; url?: string }) => Promise<ZeusBrowserConversationSnapshot>;
+      /** 首发受理后迁移草稿网页，仅将本次提交的批注标记为已发送。 */
+      adoptBrowserDraft: (input: { sourceConversationId: string; conversationId: string; commentIds: string[] }) => Promise<ZeusBrowserConversationSnapshot>;
       activateBrowserTab: (input: { conversationId: string; tabId: string }) => Promise<ZeusBrowserConversationSnapshot>;
       closeBrowserTab: (input: { conversationId: string; tabId: string }) => Promise<ZeusBrowserConversationSnapshot>;
       /** 关闭当前会话全部标签，返回清理后的权威状态。 */

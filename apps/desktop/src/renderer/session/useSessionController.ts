@@ -4,7 +4,7 @@ import { asyncMessageQuestions, formatAsyncQuestionAnswer, validateCanonicalRequ
 import { userFacingErrorCause } from '@zeus/shared';
 import type { ConversationTranscriptEnvelope, ConversationTranscriptPlacementBatch, ConversationNavigationSnapshot } from '@zeus/shared';
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
-import { serializeBrowserComments, type ConversationContextDraft, emptyConversationContextDraft, hasConversationContext, serializeConversationContext, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import { mergeBrowserSubmissions, serializeBrowserComments, type ConversationContextDraft, emptyConversationContextDraft, hasConversationContext, serializeConversationContext, type ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { createInitialSessionState, durableUserMessageIdentity, sessionReducer, sessionTranscriptEntryId } from './sessionReducer.js';
 import {
   type CodexConversationCapabilities,
@@ -3196,11 +3196,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     stageBrowserComments(prepared) {
       /** 已进入待发送或已发送消息的评论无需重复加入草稿。 */
       if (browserSubmissionUsesReservedComments(prepared)) return;
-      /** 同一评论重复确认只保留最新内容，跨网页评论继续累加。 */
-      const comments = dedupeById([...(state.browserSubmission?.comments ?? []), ...structuredClone(prepared.comments)]);
-      /** 截图按文件身份去重，不污染用户主动上传的附件。 */
-      const attachments = [...new Map([...(state.browserSubmission?.attachments ?? []), ...prepared.attachments].map((attachment) => [attachment.localPath, attachment])).values()];
-      dispatch({ type: 'browser_submission_changed', browserSubmission: { tabId: prepared.tabId, comments, commentIds: comments.map((comment) => comment.id), content: serializeBrowserComments(comments), attachments } });
+      dispatch({ type: 'browser_submission_changed', browserSubmission: mergeBrowserSubmissions(state.browserSubmission, structuredClone(prepared)) });
       persistDraft();
     },
     setContextDraft(contextDraft) {

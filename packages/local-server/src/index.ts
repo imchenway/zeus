@@ -605,6 +605,10 @@ export type StartTaskConversationBody = (
   | { mode: 'resume'; conversationId: string; content: string }
   | { mode: 'reference_legacy'; sourceConversationId: string; messageIds: string[]; content: string; permissionMode?: ConversationPermissionMode }
 ) & {
+  /** 新对话首条消息的结构化网页批注。 */
+  browserComments?: unknown;
+  /** 新对话首条消息的网页批注提示词。 */
+  browserCommentContent?: string;
   clientUserMessageId?: string;
   displayText?: string;
   collaborationMode?: ConversationCollaborationMode;
@@ -615,6 +619,10 @@ export type StartTaskConversationBody = (
 };
 
 export interface StartProjectConversationBody {
+  /** 新对话首条消息的结构化网页批注。 */
+  browserComments?: unknown;
+  /** 新对话首条消息的网页批注提示词。 */
+  browserCommentContent?: string;
   source?: 'code_review';
   inheritConversationId?: string;
   worktree?: ConversationWorktreeOptions;

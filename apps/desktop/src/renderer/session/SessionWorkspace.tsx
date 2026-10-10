@@ -12,6 +12,7 @@ import { TerminalIcon as Terminal } from '@phosphor-icons/react/dist/csr/Termina
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import {
   isConversationSourcePreviewable,
+  mergeBrowserSubmissions,
   type FilePreviewRequest,
   type ConversationContextDraft,
   type ConversationFileLocation,
@@ -24,7 +25,7 @@ import type { DashboardClient, ProjectGitAction, ProjectGitActionResponse, Proje
 import { openConversationResourceInMain, openTurnChangeFileInMain } from '../appShellBridge.js';
 import { codexCapabilitiesChangedEvent } from '../features/codex/codexApiClient.js';
 import { ZeusSelect } from '../ZeusSelect.js';
-import { canSteerActiveTurn, type ComposerRuntimeSettings, ConversationComposer, type ConversationComposerProps, resolveComposerKeyIntent } from './ConversationComposer.js';
+import { canSteerActiveTurn, type ComposerRuntimeSettings, ConversationComposer, BrowserSubmissionAttachment, type ConversationComposerProps, resolveComposerKeyIntent } from './ConversationComposer.js';
 import { ConversationTranscript, type ConversationTranscriptProps, hasUnclaimedRecoveredRequestUserInput, type SessionCreationStatus } from './ConversationTranscript.js';
 import { QueuedConversationMessages, type QueuedConversationMessagesProps } from './QueuedConversationMessages.js';
 import { SessionPlanProgress } from './SessionActivity.js';
@@ -117,7 +118,17 @@ export interface SessionWorkspaceTask {
 
 export type SessionStartMode = 'create' | 'resume' | 'reference_legacy';
 
+/** 首发确认后，将草稿标签和已提交批注交给真实会话。 */
+export interface NewConversationBrowserDraft {
+  /** 草稿浏览器的独立归属身份。 */
+  conversationId: string;
+  /** 待发送批注；仅浏览网页时为空。 */
+  submission: ZeusBrowserPreparedSubmission | null;
+}
+
 export interface SessionWorkspaceStartInput {
+  /** 新对话的浏览器上下文，首发失败时仍属于原草稿。 */
+  browserDraft?: NewConversationBrowserDraft;
   /** 缺省继承项目，null 明确保留默认；草稿恢复保留选择。 */
   contextCapacityTokens?: number | null;
   mode: SessionStartMode;
@@ -145,6 +156,8 @@ export interface SessionWorkspaceStartInput {
 }
 
 export interface ProjectSessionWorkspaceStartInput {
+  /** 新对话的浏览器上下文，首发失败时仍属于原草稿。 */
+  browserDraft?: NewConversationBrowserDraft;
   /** 缺省继承项目，null 明确保留默认；草稿恢复保留选择。 */
   contextCapacityTokens?: number | null;
   source?: 'code_review';
@@ -1100,7 +1113,7 @@ export async function startProjectConversationWithDurableAcceptance<T>(options: 
 }
 
 function buildProjectConversationStartPayload(input: ProjectSessionWorkspaceStartInput): Omit<StartProjectConversationRequest, 'idempotencyKey' | 'clientUserMessageId'> {
-  if (!input.content.trim() && input.attachments.length === 0) throw new Error('Project conversation start content or attachments are required.');
+  if (!input.content.trim() && input.attachments.length === 0 && !input.browserDraft?.submission?.comments.length) throw new Error('Project conversation start content or attachments are required.');
   return {
     mode: 'create',
     ...(input.source ? { source: input.source, inheritConversationId: input.inheritConversationId } : {}),
@@ -1108,6 +1121,7 @@ function buildProjectConversationStartPayload(input: ProjectSessionWorkspaceStar
     ...(input.workspaceMode === 'worktree' && input.worktree ? { worktree: input.worktree } : {}),
     content: input.content,
     attachments: input.attachments,
+    ...(input.browserDraft?.submission ? { browserComments: input.browserDraft.submission.comments, browserCommentContent: input.browserDraft.submission.content } : {}),
     permissionMode: input.permissionMode ?? 'auto',
     collaborationMode: input.collaborationMode ?? 'default',
     ...(input.model ? { model: input.model } : {}),
@@ -1150,7 +1164,9 @@ function isProjectConversationStartRequest(value: unknown): value is StartProjec
     (value.source !== 'code_review' || (typeof value.inheritConversationId === 'string' && Boolean(value.inheritConversationId.trim()) && value.permissionMode === 'read-only' && value.collaborationMode === 'default')) &&
     typeof value.content === 'string' &&
     Array.isArray(value.attachments) &&
-    (Boolean(value.content.trim()) || value.attachments.length > 0) &&
+    (Boolean(value.content.trim()) || value.attachments.length > 0 || (Array.isArray(value.browserComments) && value.browserComments.length > 0)) &&
+    (value.browserComments === undefined || (Array.isArray(value.browserComments) && value.browserComments.length <= 200 && value.browserComments.every(isRecord))) &&
+    (value.browserCommentContent === undefined || typeof value.browserCommentContent === 'string') &&
     permissionModeField(value.permissionMode) !== undefined &&
     (value.collaborationMode === 'default' || value.collaborationMode === 'plan') &&
     serviceTierOverrideField(value.serviceTier) &&
@@ -1328,7 +1344,7 @@ export function createNativeConversationStartEnvelopeManager(options: {
 function buildStartNativeConversationPayload(input: SessionWorkspaceStartInput): StartNativeConversationPayload {
   const content = input.content.trim();
   if (input.mode === 'create') {
-    if (!content && !input.attachments?.length) throw new Error('Native conversation start content or attachments are required.');
+    if (!content && !input.attachments?.length && !input.browserDraft?.submission?.comments.length) throw new Error('Native conversation start content or attachments are required.');
     if (input.source === 'code_review' && (!input.inheritConversationId || !input.model)) {
       throw new Error('Code review requires an inherited conversation and an explicit model.');
     }
@@ -1338,6 +1354,7 @@ function buildStartNativeConversationPayload(input: SessionWorkspaceStartInput):
       ...(input.stageId ? { stageId: input.stageId } : {}),
       content,
       ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+      ...(input.browserDraft?.submission ? { browserComments: input.browserDraft.submission.comments, browserCommentContent: input.browserDraft.submission.content } : {}),
       ...(input.inheritConversationId ? { inheritConversationId: input.inheritConversationId } : {}),
       permissionMode: input.permissionMode ?? 'auto',
       collaborationMode: input.collaborationMode ?? 'default',
@@ -1404,7 +1421,9 @@ function isStartNativeConversationRequest(value: unknown): value is StartNativeC
   if (typeof request.idempotencyKey !== 'string' || !request.idempotencyKey || typeof request.clientUserMessageId !== 'string' || !request.clientUserMessageId || typeof request.content !== 'string') return false;
   if (request.mode === 'create') {
     return (
-      (Boolean(request.content.trim()) || (Array.isArray(request.attachments) && request.attachments.length > 0)) &&
+      (Boolean(request.content.trim()) || (Array.isArray(request.attachments) && request.attachments.length > 0) || (Array.isArray(request.browserComments) && request.browserComments.length > 0)) &&
+      (request.browserComments === undefined || (Array.isArray(request.browserComments) && request.browserComments.length <= 200 && request.browserComments.every(isRecord))) &&
+      (request.browserCommentContent === undefined || typeof request.browserCommentContent === 'string') &&
       (request.source === undefined || request.source === 'code_review') &&
       (request.skillId === undefined || (typeof request.skillId === 'string' && /^[a-f0-9]{32}$/u.test(request.skillId))) &&
       (request.stageId === undefined || (typeof request.stageId === 'string' && Boolean(request.stageId))) &&
@@ -1470,6 +1489,10 @@ export function isDurableNativeConversationAcceptance(
 }
 
 export interface NewConversationDraft {
+  /** 浏览器身份、显示状态和批注随输入草稿一起恢复。 */
+  browserDraft?: NewConversationBrowserDraft;
+  /** 返回创建界面时恢复浏览器工作面。 */
+  browserOpen?: boolean;
   worktreeDrafts?: Record<string, ConversationWorktreeOptions>;
   workspaceMode?: 'direct' | 'worktree';
   content: string;
@@ -1960,7 +1983,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent): void => {
-      if (!(event.metaKey || event.ctrlKey) || !event.shiftKey || event.key.toLowerCase() !== 'b' || legacy) return;
+      if (event.defaultPrevented || !props.conversation || !(event.metaKey || event.ctrlKey) || !event.shiftKey || event.key.toLowerCase() !== 'b' || legacy) return;
       event.preventDefault();
       contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       setContextFullWidth(false);
@@ -1969,7 +1992,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     };
     window.addEventListener('keydown', handleShortcut);
     return () => window.removeEventListener('keydown', handleShortcut);
-  }, [legacy]);
+  }, [legacy, props.conversation]);
 
   useEffect(() => {
     if (!terminalAvailable) return;
@@ -3258,6 +3281,18 @@ export function NewConversationComposer(props: {
   const textareaRef = useRef<ComposerInputHandle | null>(null);
   const draftKey = props.owner?.kind === 'task' ? `task:${props.task?.id}` : 'project';
   const [restoredDraft] = useState(() => props.drafts?.get(draftKey));
+  /** 创建界面重挂载时保留浏览器归属，不提前创建模型会话。 */
+  const [browserDraft, setBrowserDraft] = useState<NewConversationBrowserDraft>(() => restoredDraft?.browserDraft ?? { conversationId: `browser-draft-${crypto.randomUUID()}`, submission: null });
+  /** 浏览器工作面随当前输入草稿恢复。 */
+  const [browserOpen, setBrowserOpen] = useState(() => restoredDraft?.browserOpen ?? false);
+  /** 浏览器全宽只属于当前阅读状态。 */
+  const [browserExpanded, setBrowserExpanded] = useState(false);
+  /** 顶栏承接既有浏览器标签栏。 */
+  const [browserToolbarHost, setBrowserToolbarHost] = useState<HTMLDivElement | null>(null);
+  /** 由实际容器宽度决定分栏，不使用屏幕宽度估算。 */
+  const [browserLayoutWidth, setBrowserLayoutWidth] = useState(0);
+  /** 新对话和任务内停靠输入共用此布局容器。 */
+  const browserLayoutRef = useRef<HTMLDivElement | null>(null);
   const [tokenDraft] = useState(() => restoredDraft?.tokenDraft ?? { current: [] });
   const runtimePreferencesInitializedRef = useRef(Boolean(restoredDraft));
   const structuredSelectionRef = useRef<StructuredComposerSelection>({
@@ -3302,6 +3337,8 @@ export function NewConversationComposer(props: {
   const [goalObjective, setGoalObjective] = useState(() => restoredDraft?.goalObjective ?? '');
   useLayoutEffect(() => {
     props.drafts?.set(draftKey, {
+      browserDraft,
+      browserOpen,
       workspaceMode,
       worktreeDrafts,
       content,
@@ -3315,7 +3352,73 @@ export function NewConversationComposer(props: {
       goalObjective,
       tokenDraft,
     });
-  }, [props.drafts, draftKey, workspaceMode, worktreeDrafts, content, attachments, permissionMode, collaborationMode, selectedModelId, selectedEffort, serviceTierSelection, goalInputOpen, goalObjective, tokenDraft]);
+  }, [
+    props.drafts,
+    draftKey,
+    browserDraft,
+    browserOpen,
+    workspaceMode,
+    worktreeDrafts,
+    content,
+    attachments,
+    permissionMode,
+    collaborationMode,
+    selectedModelId,
+    selectedEffort,
+    serviceTierSelection,
+    goalInputOpen,
+    goalObjective,
+    tokenDraft,
+  ]);
+
+  useLayoutEffect(() => {
+    /** 挂载和缩放均重新测量可用宽度。 */
+    const layout = browserLayoutRef.current;
+    if (!layout) return;
+    /** ResizeObserver 只写入容器的真实宽度。 */
+    const observer = new ResizeObserver(() => setBrowserLayoutWidth(layout.getBoundingClientRect().width));
+    observer.observe(layout);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    return window.zeus?.onBrowserEvent?.((event) => {
+      if ((event.type !== 'comments_saved' && event.type !== 'comments_removed') || event.conversationId !== browserDraft.conversationId) return;
+      setBrowserDraft((current) => {
+        if (event.type === 'comments_saved') return { ...current, submission: mergeBrowserSubmissions(current.submission, event.prepared) };
+        if (!current.submission) return current;
+        /** 删除网页批注时同步移除草稿正文及对应截图。 */
+        const comments = current.submission.comments.filter((comment) => !event.commentIds.includes(comment.id));
+        return { ...current, submission: comments.length ? mergeBrowserSubmissions(null, { ...current.submission, comments }) : null };
+      });
+    });
+  }, [browserDraft.conversationId]);
+
+  /** 显式关闭释放标签；确认批注仅收起工作面，保留首发迁移所需的网页。 */
+  const closeBrowser = useCallback(async (): Promise<void> => {
+    try {
+      await window.zeus?.closeBrowserConversation?.(browserDraft.conversationId);
+      window.zeus?.notifySessionContextActivity?.({ active: false, kind: 'none' });
+      setBrowserOpen(false);
+      setBrowserExpanded(false);
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    } catch (error) {
+      setLocalError(formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
+    }
+  }, [browserDraft.conversationId, props.language]);
+
+  useEffect(() => {
+    /** 新对话处理自己的浏览器快捷键，停靠输入仅在本容器获得焦点时接管。 */
+    const handleShortcut = (event: KeyboardEvent): void => {
+      if (event.defaultPrevented || event.repeat || !(event.metaKey || event.ctrlKey) || !event.shiftKey || event.key.toLowerCase() !== 'b') return;
+      if (props.docked && !browserLayoutRef.current?.contains(document.activeElement)) return;
+      event.preventDefault();
+      if (browserOpen) void closeBrowser();
+      else setBrowserOpen(true);
+    };
+    window.addEventListener('keydown', handleShortcut);
+    return () => window.removeEventListener('keydown', handleShortcut);
+  }, [browserOpen, closeBrowser, props.docked]);
   const inputResources = useConversationInputResources({
     attachments: attachments,
     language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
@@ -3437,9 +3540,19 @@ export function NewConversationComposer(props: {
     if (inputResources.processing) return;
     const structured = structuredSelectionRef.current;
     const submittedContent = overrides.content ?? structured.promptText;
-    const submittedDisplayText = overrides.content === undefined ? structured.displayText : overrides.content;
+    const submittedDisplayText =
+      (overrides.content === undefined ? structured.displayText : overrides.content) ||
+      (browserDraft.submission ? (props.language === 'zh-CN' ? `${browserDraft.submission.comments.length} 条网页批注` : `${browserDraft.submission.comments.length} browser comments`) : '');
     const submittedGoal = (overrides.goalObjective ?? (goalInputActive ? goalObjective : '')).trim();
-    if (!props.owner || submitting || executionContextBusy || capabilitiesLoading || (!selectedModel && !needsModelSetup) || (!needsModelSetup && !submittedContent.trim() && attachments.length === 0) || (goalInputActive && !submittedGoal))
+    if (
+      !props.owner ||
+      submitting ||
+      executionContextBusy ||
+      capabilitiesLoading ||
+      (!selectedModel && !needsModelSetup) ||
+      (!needsModelSetup && !submittedContent.trim() && attachments.length === 0 && !browserDraft.submission) ||
+      (goalInputActive && !submittedGoal)
+    )
       return;
     if (needsModelSetup) {
       setLocalError(null);
@@ -3476,6 +3589,8 @@ export function NewConversationComposer(props: {
     setSubmitting(true);
     setLocalError(null);
     try {
+      /** 网页截图与用户附件共用既有去重和发送通道。 */
+      const submittedAttachments = mergeConversationAttachments(attachments, browserDraft.submission?.attachments ?? []);
       let accepted: void | boolean | NativeConversationStartPreparation | NativeConversationStartFailure;
       if (props.owner.kind === 'project') {
         if (!props.onStartProject) throw new Error('Project conversation start is unavailable.');
@@ -3484,7 +3599,8 @@ export function NewConversationComposer(props: {
           workspaceMode: props.owner.projectId === temporaryWorkspaceId ? 'direct' : workspaceMode,
           ...(props.owner.projectId !== temporaryWorkspaceId && workspaceMode === 'worktree' && worktree ? { worktree } : {}),
           content: submittedContent,
-          attachments,
+          attachments: submittedAttachments,
+          browserDraft,
           permissionMode,
           collaborationMode,
           serviceTierSelection,
@@ -3505,7 +3621,8 @@ export function NewConversationComposer(props: {
           task: props.task,
           ...(props.inheritConversationId ? { inheritConversationId: props.inheritConversationId } : {}),
           content: submittedContent,
-          attachments,
+          attachments: submittedAttachments,
+          browserDraft,
           permissionMode,
           collaborationMode,
           serviceTierSelection,
@@ -3554,6 +3671,7 @@ export function NewConversationComposer(props: {
         onRemove={(attachment) => setAttachments((current) => current.filter((candidate) => candidate !== attachment))}
         onRestorePastedText={goalInputActive ? undefined : inputResources.restorePastedText}
       />
+      {browserDraft.submission ? <BrowserSubmissionAttachment submission={browserDraft.submission} language={props.language} disabled={submitting} onRemove={() => setBrowserDraft((current) => ({ ...current, submission: null }))} /> : null}
       {visibleLocalError ? (
         <p className="session-new-conversation-error" role="alert">
           {typeof visibleLocalError === 'string' ? visibleLocalError : visibleLocalError.message}
@@ -3812,7 +3930,7 @@ export function NewConversationComposer(props: {
                   inputResources.processing ||
                   !props.owner ||
                   (!selectedModel && !needsModelSetup) ||
-                  (!needsModelSetup && (goalInputActive ? !goalObjectiveValid : !content.trim() && attachments.length === 0))
+                  (!needsModelSetup && (goalInputActive ? !goalObjectiveValid : !content.trim() && attachments.length === 0 && !browserDraft.submission))
                 }
                 aria-busy={submitting || undefined}
               >
@@ -3825,13 +3943,90 @@ export function NewConversationComposer(props: {
     </section>
   );
 
-  // 停靠态与普通输入框同为会话列的直接子项，避免恢复容器参与剩余空间分配后把输入框推到正文顶部。
-  if (props.docked) return composer;
-
+  /** 新对话复用已有会话的浏览器布局，网页和批注不依赖模型能力加载。 */
+  const browserWidth = resolveBrowserTargetWidth(browserLayoutWidth, 56, browserExpanded);
   return (
-    <section className="session-new-conversation">
-      <span className="session-new-conversation-spacer" aria-hidden="true" />
-      {composer}
+    <section
+      className="session-new-conversation-workspace"
+      onPointerDownCapture={(event) => {
+        /** 原生网页和输入框沿用已有会话的焦点归属通知。 */
+        const active = browserOpen && event.target instanceof Element && Boolean(event.target.closest('.session-context-sidecar, .session-context-toolbar-host'));
+        window.zeus?.notifySessionContextActivity?.({ active, kind: active ? 'browser' : 'none' });
+      }}
+      onFocusCapture={(event) => {
+        /** 焦点移入浏览器后，原生关闭标签快捷键只作用于当前网页。 */
+        const active = browserOpen && event.target instanceof Element && Boolean(event.target.closest('.session-context-sidecar, .session-context-toolbar-host'));
+        window.zeus?.notifySessionContextActivity?.({ active, kind: active ? 'browser' : 'none' });
+      }}
+    >
+      <header
+        className="session-thread-header"
+        data-context-toolbar={browserOpen || undefined}
+        data-context-full-width={browserExpanded || browserLayoutWidth <= 840 || undefined}
+        style={{ '--session-context-width': `${browserWidth}px` } as CSSProperties}
+      >
+        <div className="session-thread-title-copy">
+          <strong>{props.language === 'zh-CN' ? '新对话' : 'New conversation'}</strong>
+        </div>
+        <div className="session-context-header-tools">
+          <div ref={setBrowserToolbarHost} className="session-context-toolbar-host" />
+          <div className="session-thread-header-actions">
+            <button
+              type="button"
+              className={`session-browser-toggle ${browserOpen ? 'selected' : ''}`}
+              aria-label={props.language === 'zh-CN' ? '内置浏览器' : 'Built-in browser'}
+              aria-pressed={browserOpen}
+              aria-keyshortcuts="Meta+Shift+B Control+Shift+B"
+              data-icon-tooltip={props.language === 'zh-CN' ? '内置浏览器（⌘⇧B）' : 'Built-in browser (⌘⇧B)'}
+              onClick={() => (browserOpen ? void closeBrowser() : setBrowserOpen(true))}
+            >
+              <GlobeSimple aria-hidden="true" weight="regular" />
+            </button>
+          </div>
+        </div>
+      </header>
+      <div ref={browserLayoutRef} className="session-conversation-browser-layout" data-browser-open={browserOpen || undefined} data-browser-expanded={browserExpanded || undefined}>
+        <div className="session-conversation-pane">
+          {props.docked ? (
+            composer
+          ) : (
+            <section className="session-new-conversation">
+              <span className="session-new-conversation-spacer" aria-hidden="true" />
+              {composer}
+            </section>
+          )}
+        </div>
+        <aside
+          className="session-browser-sidecar session-context-sidecar"
+          aria-label={props.language === 'zh-CN' ? '新对话浏览器' : 'New conversation browser'}
+          aria-hidden={!browserOpen}
+          data-context-open={browserOpen}
+          style={{ width: browserOpen ? browserWidth : 0, opacity: browserOpen ? 1 : 0 }}
+        >
+          <div className="session-browser-pane">
+            {browserOpen ? (
+              <BrowserWorkspace
+                toolbarHost={browserToolbarHost}
+                conversationId={browserDraft.conversationId}
+                language={props.language}
+                disabled={submitting}
+                expanded={browserExpanded}
+                canSplit={browserLayoutWidth > 840}
+                onClose={closeBrowser}
+                onToggleExpanded={() => setBrowserExpanded((current) => !current)}
+                onResetSize={() => setBrowserExpanded(false)}
+                onStageComments={(prepared) => {
+                  setBrowserDraft((current) => ({ ...current, submission: mergeBrowserSubmissions(current.submission, prepared) }));
+                  window.zeus?.notifySessionContextActivity?.({ active: false, kind: 'none' });
+                  setBrowserOpen(false);
+                  setBrowserExpanded(false);
+                  requestAnimationFrame(() => textareaRef.current?.focus());
+                }}
+              />
+            ) : null}
+          </div>
+        </aside>
+      </div>
     </section>
   );
 }

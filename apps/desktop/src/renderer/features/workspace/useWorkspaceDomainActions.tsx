@@ -1916,6 +1916,16 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     return props.onChooseConversationResources?.() ?? [];
   }
 
+  /** 浏览器迁移失败不撤销已受理的首发，记录错误后继续进入真实会话。 */
+  async function adoptConversationBrowser(input: SessionWorkspaceStartInput | ProjectSessionWorkspaceStartInput, choice: NativeConversationChoice): Promise<void> {
+    if (!input.browserDraft || !window.zeus?.adoptBrowserDraft) return;
+    try {
+      await window.zeus.adoptBrowserDraft({ sourceConversationId: input.browserDraft.conversationId, conversationId: choice.id, commentIds: input.browserDraft.submission?.commentIds ?? [] });
+    } catch (error) {
+      recordLocalError('conversation-browser-adopt', error);
+    }
+  }
+
   async function startNativeConversation(input: SessionWorkspaceStartInput): Promise<boolean | NativeConversationStartPreparation | NativeConversationStartFailure> {
     const client = props.nativeConversationClient;
     if (!client) {
@@ -1945,7 +1955,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         input,
         envelopeManager: nativeConversationStartEnvelopeManager,
         dispatch: (taskId, request) => client.startNativeConversation(taskId, request),
-        onAccepted: (choice) => {
+        onAccepted: async (choice) => {
+          await adoptConversationBrowser(input, choice);
           // durable acceptance 到达后必须立即离开创建表单；历史摘要刷新只是 best-effort，
           // 不能把已接受操作重新暴露成使用新 ID 的第二次创建。
           nativeConversationChoiceLoadCoordinator.preserveAccepted(choice);
@@ -2014,7 +2025,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         input,
         envelopeManager: projectConversationStartEnvelopeManager,
         dispatch: (acceptedProjectId, request) => client.startProjectConversation(acceptedProjectId, request),
-        onAccepted: (choice) => {
+        onAccepted: async (choice) => {
+          await adoptConversationBrowser(input, choice);
           nativeProjectConversationChoiceLoadCoordinator.preserveAccepted(choice);
           setNativeConversationChoicesByProject((current) => {
             const prior = current[projectId];
