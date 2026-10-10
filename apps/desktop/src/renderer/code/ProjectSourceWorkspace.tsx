@@ -1,5 +1,4 @@
 import { FilePreview } from './FilePreview.js';
-import type { FilePreviewRequest } from '@zeus/shared';
 import { useMotionPresence } from '../ui/useMotionPresence.js';
 import { createPortal } from 'react-dom';
 import { MenuSurface } from '../ui/MenuSurface.js';
@@ -22,9 +21,7 @@ import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import './projectSourceWorkspace.css';
-import { SourceGitChanges, fileDiff, type SourceGitClient } from './SourceGitChanges.js';
-import type { GitDiffSummary } from '../features/git/gitContracts.js';
-import { SideBySideDiff } from '../git/ProjectGitDiffViewer.js';
+import type { ProjectGitWorkbenchSnapshot } from '../features/git/gitContracts.js';
 
 const ProjectSourceEditor = lazy(() => import('./ProjectSourceEditor.js').then((module) => ({ default: module.ProjectSourceEditor })));
 const CodeEditor = lazy(() => import('./CodeEditor.js').then((module) => ({ default: module.CodeEditor })));
@@ -64,7 +61,8 @@ export interface ProjectSourceWorkspaceHandle {
 export interface ProjectSourceWorkspaceProps {
   /** 文件标签右侧的工作区入口，不增加另一排导航。 */
   toolbarActions?: ReactNode;
-  gitClient?: SourceGitClient;
+  /** 文件树复用底部工作台的 Git 快照，不单独读取仓库。 */
+  gitSnapshot?: ProjectGitWorkbenchSnapshot | null;
   project: { id: string; name: string; localPath: string };
   language: AppLanguage;
   preference?: ProjectCodeWorkspacePreference;
@@ -83,11 +81,17 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(() => new Set(initialPreference.expandedDirectories));
   const [tabs, setTabs] = useState<SourceTab[]>([]);
   const [activePath, setActivePath] = useState<string | null>(initialPreference.activeFile);
-  /** 复用更改面板的真实 Git 快照，文件树和标签不额外扫描仓库。 */
-  const [gitFileStatuses, setGitFileStatuses] = useState<Record<string, string>>({});
-  const [changePreview, setChangePreview] = useState<{ projectId: string; path: string; diff: GitDiffSummary; revision: string; request: FilePreviewRequest } | null>(null);
+  /** 文件状态跟随同一个 Git 工作台；项目切换时忽略其他项目的快照。 */
+  const gitFileStatuses = useMemo<Record<string, string>>(
+    () =>
+      props.gitSnapshot?.projectId === props.project.id
+        ? Object.fromEntries(
+            props.gitSnapshot.repositories.flatMap((repository) => repository.snapshot.fileStatuses.map((file) => [[repository.relativePath === '.' ? '' : repository.relativePath, file.path].filter(Boolean).join('/'), file.category])),
+          )
+        : {},
+    [props.gitSnapshot, props.project.id],
+  );
   const [treeWidth, setTreeWidth] = useState(initialPreference.treeWidth);
-  const [sourceShare, setSourceShare] = useState(55);
   const [treeDrawerOpen, setTreeDrawerOpen] = useState(false);
   /** 窄布局遮罩退出完成后再移除，关闭立即停止命中。 */
   const treeBackdrop = useMotionPresence<HTMLButtonElement>(treeDrawerOpen);
@@ -118,10 +122,10 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   const dirty = tabs.some((tab) => tab.dirty);
   dirtyRef.current = dirty;
 
-  /** 标签恢复、切换和退出差异预览后，只滚动标签列表的必要范围。 */
+  /** 标签恢复和切换后，只滚动标签列表的必要范围。 */
   useEffect(() => {
     activeTabElementRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  }, [activePath, tabs.length, changePreview]);
+  }, [activePath, tabs.length]);
 
   const loadDirectory = useCallback(
     async (relativePath: string, force = false) => {
@@ -134,7 +138,6 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
 
   const openFile = useCallback(
     async (relativePath: string, line?: number) => {
-      setChangePreview(null);
       fileOpenRequestedRef.current = true;
       const existing = tabsRef.current.find((tab) => tab.document.relativePath === relativePath);
       if (existing) {
@@ -607,7 +610,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         </ModalPortal>
       ) : null}
       <div className="project-source-main">
-        <aside className="project-source-tree" style={{ '--source-module-share': `${sourceShare}%` } as CSSProperties} aria-label={zh ? '代码目录' : 'Source tree'}>
+        <aside className="project-source-tree" aria-label={zh ? '代码目录' : 'Source tree'}>
           <details className="project-source-module" open>
             <summary>
               <span>{zh ? '源码' : 'Source'}</span>
@@ -668,63 +671,6 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
               )}
             </div>
           </details>
-          <div
-            className="project-source-module-resizer"
-            role="separator"
-            aria-orientation="horizontal"
-            aria-label={zh ? '调整源码与更改模块高度' : 'Resize source and changes panels'}
-            aria-valuemin={15}
-            aria-valuemax={85}
-            aria-valuenow={sourceShare}
-            tabIndex={0}
-            onPointerDown={(event) => {
-              event.preventDefault();
-              event.currentTarget.setPointerCapture(event.pointerId);
-            }}
-            onPointerMove={(event) => {
-              if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
-              const bounds = event.currentTarget.parentElement!.getBoundingClientRect();
-              setSourceShare(Math.max(15, Math.min(85, ((event.clientY - bounds.top) / bounds.height) * 100)));
-            }}
-            onPointerUp={(event) => {
-              if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-            }}
-            onDoubleClick={() => setSourceShare(55)}
-            onKeyDown={(event) => {
-              if (!['ArrowUp', 'ArrowDown', 'Home'].includes(event.key)) return;
-              event.preventDefault();
-              setSourceShare((value) => (event.key === 'Home' ? 55 : Math.max(15, Math.min(85, value + (event.key === 'ArrowUp' ? -5 : 5)))));
-            }}
-          />
-          <SourceGitChanges
-            key={props.project.id}
-            projectId={props.project.id}
-            client={props.gitClient}
-            zh={zh}
-            onConflict={(path) => void openFile(path)}
-            onOpenFile={(path) => {
-              setChangePreview(null);
-              void openFile(path);
-            }}
-            onBeforeCommit={saveAll}
-            onOpen={({ path, diff, repositoryId, repositoryPath, revision }) =>
-              setChangePreview({ projectId: props.project.id, path, diff, revision, request: { kind: 'project-git', projectId: props.project.id, repositoryId, path: repositoryPath, stage: 'combined' } })
-            }
-            onSnapshot={(snapshot) => {
-              setGitFileStatuses(
-                Object.fromEntries(
-                  snapshot.repositories.flatMap((repository) => repository.snapshot.fileStatuses.map((file) => [[repository.relativePath === '.' ? '' : repository.relativePath, file.path].filter(Boolean).join('/'), file.category])),
-                ),
-              );
-              setChangePreview((current) => {
-                if (!current || current.request.kind !== 'project-git') return current;
-                const request = current.request;
-                const repository = snapshot.repositories.find((item) => item.id === request.repositoryId);
-                if (!repository || !repository.snapshot.fileStatuses.some((file) => file.path === request.path)) return null;
-                return { ...current, diff: fileDiff(repository, request.path), revision: snapshot.refreshedAt };
-              });
-            }}
-          />
         </aside>
         <div
           className="project-source-tree-resizer"
@@ -766,9 +712,9 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
               {tabs.map((tab, index) => (
                 <div
                   key={tab.document.relativePath}
-                  ref={!changePreview && tab.document.relativePath === activePath ? activeTabElementRef : undefined}
+                  ref={tab.document.relativePath === activePath ? activeTabElementRef : undefined}
                   className="zeus-workspace-tab-shell"
-                  data-active={(!changePreview && tab.document.relativePath === activePath) || undefined}
+                  data-active={tab.document.relativePath === activePath || undefined}
                   onAuxClick={(event) => {
                     if (event.button !== 1) return;
                     event.preventDefault();
@@ -779,11 +725,10 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                     type="button"
                     role="tab"
                     title={tab.document.relativePath}
-                    aria-selected={!changePreview && tab.document.relativePath === activePath}
+                    aria-selected={tab.document.relativePath === activePath}
                     tabIndex={tab.document.relativePath === activePath ? 0 : -1}
                     className="zeus-workspace-tab"
                     onClick={() => {
-                      setChangePreview(null);
                       setActivePath(tab.document.relativePath);
                     }}
                     onKeyDown={(event) => {
@@ -791,7 +736,6 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                       event.preventDefault();
                       /** 复用终端标签的循环选择方式，首尾键直接定位边界。 */
                       const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
-                      setChangePreview(null);
                       setActivePath(tabs[nextIndex]!.document.relativePath);
                       event.currentTarget.closest('[role="tablist"]')?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus();
                     }}
@@ -821,14 +765,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
             </div>
             {props.toolbarActions}
           </div>
-          {changePreview?.projectId === props.project.id ? (
-            <>
-              <div className="project-source-editor-track-placeholder" aria-hidden="true" />
-              <section className="project-source-change-preview">
-                <SideBySideDiff key={changePreview.path} revision={changePreview.revision} previewRequest={changePreview.request} diff={changePreview.diff} zh={zh} title={changePreview.path} onClose={() => setChangePreview(null)} fill />
-              </section>
-            </>
-          ) : activeTab ? (
+          {activeTab ? (
             <>
               <nav className="project-source-breadcrumbs" aria-label={zh ? '文件路径' : 'File path'}>
                 {breadcrumbs.map((part, index) => (
