@@ -8,7 +8,7 @@ export function isPendingResourceText(name: string, kind?: string): boolean {
   return kind === 'pasted_text' || name === 'Pasted text.txt';
 }
 
-/** 摘要尚未读取时使用中性名称，不把剪贴板来源当作标题。 */
+/** 自动生成的文本使用中性名称，原始身份继续用于打开。 */
 export function pendingResourceDisplayName(name: string, language: 'zh-CN' | 'en-US', kind?: string): string {
   return isPendingResourceText(name, kind) ? (language === 'zh-CN' ? '文本内容' : 'Text document') : name;
 }

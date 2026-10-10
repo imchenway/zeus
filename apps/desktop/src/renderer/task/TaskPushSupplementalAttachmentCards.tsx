@@ -29,8 +29,6 @@ export function TaskPushSupplementalAttachmentCards(props: {
         kind: attachment.kind ?? (attachment.mime === 'inode/directory' ? 'directory' : attachment.mime.startsWith('image/') ? 'image' : 'file'),
         mimeType: attachment.mime,
         size: attachment.size,
-        textExcerpt: attachment.restorableText?.slice(0, 400),
-        textPreviewRequest: { kind: 'attachment', ...(attachment.localPath ? { localPath: attachment.localPath } : { uploadRef: attachment.uploadRef }) },
         ...(attachment.characterCount !== undefined ? { characterCount: attachment.characterCount } : {}),
         ...(attachment.restorableText ? { restorable: true } : {}),
         title: attachment.name,

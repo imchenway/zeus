@@ -7216,10 +7216,15 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   line-height: inherit;
 }
 
-/* 附件独占输入行下方，不改变输入框与行尾操作的垂直中心。 */
+/* 附件独占首行，输入与操作在下一行保持垂直居中。 */
 .session-codex-parity-v1 .session-plan-refinement > .session-question-answer-attachments {
-  grid-column: 2 / -1;
+  grid-column: 1 / -1;
+  grid-row: 1;
   min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-plan-refinement:has(> .session-question-answer-attachments) > :is(.session-question-index, textarea, .session-rui-inline-actions) {
+  grid-row: 2;
 }
 
 .session-codex-parity-v1 .session-rui-request[data-inline-footer='true']:not([data-error='true']) footer {
@@ -8070,6 +8075,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   background: var(--session-message-background);
   border: 0;
   border-radius: 12px;
+  box-sizing: border-box;
   display: flex;
   gap: 10px;
   inline-size: 100%;
@@ -8097,32 +8103,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   min-inline-size: 0;
   padding: 2px;
   text-align: start;
-}
-
-/* 权威文本资源与草稿摘要使用同一尺寸，右侧仍保留打开方式菜单。 */
-.session-codex-parity-v1 .session-resource-card[data-text-preview='true'] {
-  inline-size: 256px;
-  min-block-size: 108px;
-  padding: 10px 12px;
-  align-items: flex-start;
-  border: 1px solid var(--session-line-soft);
-  border-radius: 8px;
-  background: transparent;
-}
-
-.session-codex-parity-v1 .session-resource-card[data-text-preview='true'] .session-resource-card-icon {
-  display: none;
-}
-
-.session-codex-parity-v1 .session-resource-card[data-text-preview='true'] .session-resource-card-copy .resource-text-preview > strong {
-  font-size: 13px;
-  font-weight: 550;
-  line-height: 18px;
-}
-
-.session-codex-parity-v1 .session-resource-card[data-text-preview='true'] .session-resource-card-copy .resource-text-preview > small {
-  font-size: 10px;
-  line-height: 16px;
 }
 
 .session-codex-parity-v1 .session-resource-card-main:hover:not(:disabled):not([aria-disabled='true']) .session-resource-card-copy strong {
@@ -9502,7 +9482,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
 .session-codex-parity-v1 .session-rui-request .session-question-freeform-editor > .session-question-answer-attachments {
   grid-column: 1 / -1;
-  grid-row: 2;
+  grid-row: 1;
 }
 
 .session-codex-parity-v1 .session-rui-request .session-question-freeform-editor > .session-question-attachment-button {
@@ -9515,8 +9495,21 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   grid-row: 1;
 }
 
+/* 仅有附件时增加首行，移除最后一个附件后恢复单行输入。 */
+.session-codex-parity-v1 .session-rui-request .session-question-freeform-editor:has(> .session-question-answer-attachments) > :is(textarea, .session-question-attachment-button, .session-rui-inline-actions) {
+  grid-row: 2;
+}
+
 /* 窄问答框把提交操作换行，避免附件与自由输入被按钮挤成一条细缝。 */
 @container session-question (max-width: 480px) {
+  /* 长提交文案允许按钮换行，操作区始终留在输入边界内。 */
+  .session-codex-parity-v1 .session-rui-request .session-rui-inline-actions,
+  .session-codex-parity-v1 form.session-plan-refinement > .session-rui-inline-actions {
+    flex-wrap: wrap;
+    max-inline-size: 100%;
+    min-inline-size: 0;
+  }
+
   /* 计划修改与问答输入共用窄栏换行策略。 */
   .session-codex-parity-v1 form.session-plan-refinement {
     grid-template-columns: 32px minmax(0, 1fr);
@@ -9524,12 +9517,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
   .session-codex-parity-v1 form.session-plan-refinement > .session-rui-inline-actions {
     grid-column: 2;
-    grid-row: 3;
+    grid-row: 2;
     justify-self: end;
   }
 
-  .session-codex-parity-v1 form.session-plan-refinement > .session-question-answer-attachments {
-    grid-row: 2;
+  .session-codex-parity-v1 form.session-plan-refinement:has(> .session-question-answer-attachments) > .session-rui-inline-actions {
+    grid-row: 3;
   }
 
   .session-codex-parity-v1 .session-rui-request .session-question-other {
@@ -9548,8 +9541,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
   .session-codex-parity-v1 .session-rui-request .session-question-freeform-editor > .session-rui-inline-actions {
     grid-column: 1 / -1;
-    grid-row: 3;
+    grid-row: 2;
     justify-self: end;
+  }
+
+  .session-codex-parity-v1 .session-rui-request .session-question-freeform-editor:has(> .session-question-answer-attachments) > .session-rui-inline-actions {
+    grid-row: 3;
   }
 }
 

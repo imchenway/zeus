@@ -158,8 +158,6 @@ export function TaskAttachmentPreviewList(props: TaskAttachmentPreviewListProps)
       name: attachment.name,
       kind: attachment.kind,
       mimeType: attachment.mimeType,
-      textExcerpt: attachment.restorableText?.slice(0, 400),
-      textPreviewRequest: { kind: 'attachment', localPath: attachment.path },
       ...(attachment.size !== undefined ? { size: attachment.size } : {}),
       ...(attachment.characterCount !== undefined ? { characterCount: attachment.characterCount } : {}),
       ...(previewUrl ? { previewUrl } : {}),

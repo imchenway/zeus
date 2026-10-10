@@ -16,9 +16,7 @@ import { FileXlsIcon as FileXls } from '@phosphor-icons/react/dist/csr/FileXls';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { ResourceLoading } from './ResourceLoading.js';
-import { isPendingResourceText, pendingResourceDisplayName } from './pendingResourcePolicy.js';
-import { ResourceTextPreview } from './ResourceTextPreview.js';
-import type { FilePreviewRequest } from '@zeus/shared';
+import { pendingResourceDisplayName } from './pendingResourcePolicy.js';
 
 export type PendingResourceKind = 'image' | 'file' | 'directory' | 'pasted_text';
 
@@ -29,10 +27,6 @@ export interface PendingResourceCardItem {
   mimeType?: string;
   size?: number;
   characterCount?: number;
-  /** 已有正文只取开头供界面显示，不重复保存完整文本。 */
-  textExcerpt?: string;
-  /** 旧文本附件通过业务身份读取；名称不能成为读取权限。 */
-  textPreviewRequest?: FilePreviewRequest;
   previewUrl?: string;
   /** 外部读取缩略图时也使用统一加载占位。 */
   previewLoading?: boolean;
@@ -94,8 +88,6 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
   const previewLoaderAvailable = Boolean(props.onLoadPreview);
   const extension = pendingResourceExtension(props.resource.name);
   const typeLabel = pendingResourceTypeLabel(props.resource, props.language);
-  /** 自动文本附件直接展示内容摘要，普通文件保留文件名。 */
-  const textResource = isPendingResourceText(props.resource.name, props.resource.kind);
   /** 外部读取与内部读取共用失败状态，失败不能一直显示加载动画。 */
   const failed = previewFailed || props.resource.previewFailed;
   /** 导入、读取和解码都显示同一骨架，不把等待状态画成文件图标。 */
@@ -153,7 +145,6 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
     <li
       className="pending-resource-card"
       data-resource-kind={props.resource.kind}
-      data-text-preview={textResource || undefined}
       aria-busy={busy || undefined}
       aria-label={
         busy ? `${loadingLabel}: ${props.resource.name}` : props.resource.kind === 'image' && (failed || !previewUrl) ? `${props.language === 'zh-CN' ? '图片预览不可用' : 'Image preview unavailable'}: ${props.resource.name}` : undefined
@@ -170,13 +161,9 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
       )}
       {props.resource.kind === 'image' ? null : (
         <span className="pending-resource-copy">
-          {textResource ? (
-            <ResourceTextPreview text={props.resource.textExcerpt} request={props.resource.textPreviewRequest} characterCount={props.resource.characterCount} pending={props.resource.pending} language={props.language} />
-          ) : (
-            <strong>{pendingResourceDisplayName(props.resource.name, props.language, props.resource.kind)}</strong>
-          )}
+          <strong>{pendingResourceDisplayName(props.resource.name, props.language, props.resource.kind)}</strong>
           <span className="pending-resource-meta">
-            {textResource ? null : <small>{props.resource.pending ? (props.language === 'zh-CN' ? '正在导入…' : 'Importing…') : typeLabel}</small>}
+            <small>{props.resource.pending ? (props.language === 'zh-CN' ? '正在导入…' : 'Importing…') : typeLabel}</small>
             {props.resource.kind === 'pasted_text' && props.resource.restorable && props.onRestoreText ? (
               <button type="button" className="pending-resource-restore" disabled={props.disabled} onClick={() => props.onRestoreText?.(props.resource)}>
                 {props.language === 'zh-CN' ? '恢复' : 'Restore'}

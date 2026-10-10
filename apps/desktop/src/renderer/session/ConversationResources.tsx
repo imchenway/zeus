@@ -20,8 +20,7 @@ import type { NativeConversationAttachment } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ResourceLoading } from '../ui/ResourceLoading.js';
-import { isPendingResourceText, pendingResourceDisplayName } from '../ui/pendingResourcePolicy.js';
-import { ResourceTextPreview } from '../ui/ResourceTextPreview.js';
+import { pendingResourceDisplayName } from '../ui/pendingResourcePolicy.js';
 
 export interface ConversationResourceInteraction {
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
@@ -399,7 +398,7 @@ function ConversationImagePreview(
   );
 }
 
-/** 图片只显示缩略图；文件保留名称和打开方式。 */
+/** 图片只显示缩略图；附件直接预览，项目文件保留打开方式。 */
 export function ConversationResourceCards(
   props: ConversationResourceInteraction & {
     resources: ConversationResource[];
@@ -459,8 +458,6 @@ function ConversationResourceCard(
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const subtitle = resourceSubtitle(props.resource, props.language);
-  /** 自动文本使用内容摘要，读取仍绑定当前会话的权威资源身份。 */
-  const textResource = props.resource.kind === 'attachment' && isPendingResourceText(props.resource.displayName);
 
   /** 读取错误就地显示，打开目标仍由受控资源决定。 */
   async function open(target = defaultOpenTarget(props.resource)): Promise<void> {
@@ -477,23 +474,18 @@ function ConversationResourceCard(
   }
 
   return (
-    <article className="session-resource-card" data-resource-kind={props.resource.kind} data-text-preview={textResource || undefined} data-compact={props.compact || undefined} data-error={Boolean(error) || undefined}>
+    <article className="session-resource-card" data-resource-kind={props.resource.kind} data-compact={props.compact || undefined} data-error={Boolean(error) || undefined}>
       <button type="button" className="session-resource-card-main" title={props.resource.displayName} aria-busy={busy || undefined} onClick={() => void open()}>
         <span className="session-resource-card-icon">
           <ResourceIcon resource={props.resource} />
         </span>
         <span className="session-resource-card-copy">
-          {textResource ? (
-            <ResourceTextPreview request={{ kind: 'resource', projectId: props.resource.projectId, conversationId: props.resource.conversationId, resourceId: props.resource.id }} language={props.language} />
-          ) : (
-            <>
-              <strong>{pendingResourceDisplayName(props.resource.displayName, props.language)}</strong>
-              <small>{subtitle}</small>
-            </>
-          )}
+          <strong>{pendingResourceDisplayName(props.resource.displayName, props.language)}</strong>
+          <small>{subtitle}</small>
         </span>
       </button>
-      <OpenWithMenu resource={props.resource} language={props.language} disabled={busy} onOpen={(target) => open(target)} />
+      {/* 附件卡只保留默认预览入口，外部应用操作由文件预览承载。 */}
+      {props.resource.kind !== 'attachment' ? <OpenWithMenu resource={props.resource} language={props.language} disabled={busy} onOpen={(target) => open(target)} /> : null}
       {error ? <VisibleApplicationError error={error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} /> : null}
     </article>
   );

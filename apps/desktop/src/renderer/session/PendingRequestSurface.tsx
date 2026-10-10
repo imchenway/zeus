@@ -1039,6 +1039,16 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
                     onDragLeave={inputResources.handleDragLeave}
                     onDrop={inputResources.handleDrop}
                   >
+                    {/* 附件先于正文，视觉顺序与键盘阅读顺序保持一致。 */}
+                    <ConversationComposerAttachments
+                      attachments={currentAttachments}
+                      pendingResources={inputResources.pendingResources}
+                      language={props.language}
+                      disabled={responding || inputResources.processing}
+                      className="session-question-answer-attachments"
+                      onRemove={(attachment) => removeAnswerAttachment(currentQuestion.id, attachment)}
+                      onRestorePastedText={inputResources.restorePastedText}
+                    />
                     <textarea
                       ref={(element) => {
                         otherAnswerRef.current = element;
@@ -1066,15 +1076,6 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
                         inputResources.handlePasteShortcut(event);
                         handleAnswerInputKeyDown(event);
                       }}
-                    />
-                    <ConversationComposerAttachments
-                      attachments={currentAttachments}
-                      pendingResources={inputResources.pendingResources}
-                      language={props.language}
-                      disabled={responding || inputResources.processing}
-                      className="session-question-answer-attachments"
-                      onRemove={(attachment) => removeAnswerAttachment(currentQuestion.id, attachment)}
-                      onRestorePastedText={inputResources.restorePastedText}
                     />
                   </div>
                 )}
@@ -1123,6 +1124,16 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
                   onDragLeave={inputResources.handleDragLeave}
                   onDrop={inputResources.handleDrop}
                 >
+                  {/* 自由回答也将附件置于输入行上方。 */}
+                  <ConversationComposerAttachments
+                    attachments={currentAttachments}
+                    pendingResources={inputResources.pendingResources}
+                    language={props.language}
+                    disabled={responding || inputResources.processing}
+                    className="session-question-answer-attachments"
+                    onRemove={(attachment) => removeAnswerAttachment(currentQuestion.id, attachment)}
+                    onRestorePastedText={inputResources.restorePastedText}
+                  />
                   <textarea
                     ref={(element) => {
                       freeformRef.current = element;
@@ -1144,15 +1155,6 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
                       inputResources.handlePasteShortcut(event);
                       handleAnswerInputKeyDown(event);
                     }}
-                  />
-                  <ConversationComposerAttachments
-                    attachments={currentAttachments}
-                    pendingResources={inputResources.pendingResources}
-                    language={props.language}
-                    disabled={responding || inputResources.processing}
-                    className="session-question-answer-attachments"
-                    onRemove={(attachment) => removeAnswerAttachment(currentQuestion.id, attachment)}
-                    onRestorePastedText={inputResources.restorePastedText}
                   />
                   {answerAttachmentsEnabled && props.onChooseAttachments ? (
                     <button

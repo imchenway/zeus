@@ -17807,6 +17807,8 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .pending-resource-strip {
+  /* 百分比宽度包含内边距，窄输入框中的附件列表不越过边框。 */
+  box-sizing: border-box;
   /* 附件保持透明底色，用细边界区分点击区域。 */
   --pending-resource-card-bg: transparent;
   --pending-resource-visual-bg: transparent;
@@ -17924,94 +17926,6 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* 文本附件像一段可打开的内容，标题和摘要不再被文件图标挤占。 */
-.macos-ai-app .pending-resource-card[data-text-preview='true'] {
-  grid-template-columns: minmax(0, 1fr);
-  flex-basis: 256px;
-  block-size: 108px;
-  padding: 10px 12px;
-}
-
-.macos-ai-app .pending-resource-card[data-text-preview='true'] .pending-resource-activate {
-  position: absolute;
-  inset: 0;
-}
-
-.macos-ai-app .pending-resource-card[data-text-preview='true'] .pending-resource-visual {
-  display: none;
-}
-
-.macos-ai-app .pending-resource-card[data-text-preview='true'] .pending-resource-meta:empty {
-  display: none;
-}
-
-.macos-ai-app .pending-resource-card[data-text-preview='true'] .pending-resource-meta:not(:empty) {
-  position: absolute;
-  inset-block-end: 10px;
-  inset-inline-end: 80px;
-}
-
-.macos-ai-app .pending-resource-card[data-text-preview='true'] .pending-resource-remove {
-  inset-block-start: 2px;
-}
-
-/* 会话、任务和输入框复用相同内容排版，全文仍从原附件打开。 */
-.resource-text-preview {
-  display: grid;
-  gap: 5px;
-  min-inline-size: 0;
-  text-align: start;
-}
-
-.resource-text-preview > strong {
-  padding-inline-end: 12px;
-  overflow: hidden;
-  color: var(--zeus-product-text);
-  font-size: 13px;
-  font-weight: 550;
-  line-height: 18px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.resource-text-preview .resource-text-excerpt {
-  display: -webkit-box;
-  min-block-size: 34px;
-  overflow: hidden;
-  color: var(--zeus-product-muted);
-  font-size: 12px;
-  line-height: 17px;
-  overflow-wrap: anywhere;
-  white-space: normal;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.resource-text-preview > small {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  color: var(--zeus-product-muted);
-  font-size: 10px;
-  line-height: 16px;
-  white-space: nowrap;
-}
-
-.resource-text-preview > small > span {
-  display: inline-flex;
-  gap: 4px;
-  color: var(--zeus-product-text);
-}
-
-/* 摘要读取时仅保留两条静态灰线，不增加另一套动画。 */
-.resource-text-preview[data-loading='true'] > strong,
-.resource-text-preview[data-loading='true'] .resource-text-excerpt {
-  inline-size: 70%;
-  border-radius: 3px;
-  background: color-mix(in srgb, var(--zeus-product-text) 5%, transparent);
 }
 
 .macos-ai-app .pending-resource-meta {
