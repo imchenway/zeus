@@ -1,6 +1,7 @@
 import { ListChecksIcon as ListChecks } from '@phosphor-icons/react/dist/csr/ListChecks';
 import type { NativeCollaborationMode } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
+import { IconTooltip } from '../ui/IconTooltip.js';
 
 /** 展示计划模式是否仍在规划，正式计划只能通过确认动作进入实施。 */
 export function CollaborationModeControl(props: {
@@ -11,10 +12,14 @@ export function CollaborationModeControl(props: {
   disabled?: boolean;
   onChange: (mode: NativeCollaborationMode) => void | Promise<void>;
 }) {
+  /** 是否已经开启计划模式。 */
   const plan = props.value === 'plan';
+  /** 无障碍说明保留当前按钮的操作。 */
   const action = plan ? (props.language === 'zh-CN' ? '退出计划模式' : 'Exit plan mode') : props.language === 'zh-CN' ? '创建计划' : 'Create a plan';
-  /** 开启后持续说明规划状态，权限继续由独立控件表达。 */
-  const title =
+  /** 悬停只显示模式名称及开关状态。 */
+  const title = props.language === 'zh-CN' ? `计划模式：${plan ? '开启' : '关闭'}` : `Plan mode: ${plan ? 'on' : 'off'}`;
+  /** 无障碍说明继续区分规划与正式计划待确认。 */
+  const accessibleLabel =
     props.language === 'zh-CN'
       ? plan
         ? props.formalPlanReady
@@ -27,10 +32,12 @@ export function CollaborationModeControl(props: {
           : `Plan mode: planning without implementation; no formal plan yet, the next message continues planning; ${action}`
         : `Plan mode: off; ${action}`;
   return (
-    <button type="button" className="session-collaboration-mode" data-active={plan || undefined} aria-pressed={plan} aria-label={title} title={title} disabled={props.disabled} onClick={() => void props.onChange(plan ? 'default' : 'plan')}>
-      <span className="session-collaboration-mode-icon" aria-hidden="true">
-        <ListChecks weight={plan ? 'bold' : 'regular'} />
-      </span>
-    </button>
+    <IconTooltip label={title}>
+      <button type="button" className="session-collaboration-mode" data-active={plan || undefined} aria-pressed={plan} aria-label={accessibleLabel} disabled={props.disabled} onClick={() => void props.onChange(plan ? 'default' : 'plan')}>
+        <span className="session-collaboration-mode-icon" aria-hidden="true">
+          <ListChecks weight={plan ? 'bold' : 'regular'} />
+        </span>
+      </button>
+    </IconTooltip>
   );
 }

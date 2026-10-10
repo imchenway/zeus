@@ -84,6 +84,7 @@ import { autosizeTextarea } from './textareaAutosize.js';
 import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
 import { conversationAttachmentIdentity, ConversationComposerAttachments } from './ConversationComposerAttachments.js';
 import { ContextUsageIndicator } from './ContextUsageIndicator.js';
+import { IconTooltip } from '../ui/IconTooltip.js';
 import { ServiceTierToggle } from './ServiceTierToggle.js';
 import { useConversationInputResources } from './useConversationInputResources.js';
 import { SessionQuickActionsCard } from './SessionQuickActionsCard.js';
@@ -3677,27 +3678,28 @@ export function NewConversationComposer(props: {
         )}
         <div className="session-composer-command-row">
           <span className="session-composer-leading-actions">
-            {/* 新建会话的附件入口也显示与无障碍名称一致的原生悬停提示。 */}
+            {/* 新建会话与共享输入框使用同一可见提示。 */}
             {props.onChooseAttachments ? (
-              <button
-                type="button"
-                className="session-attachment-button"
-                aria-label={copy.attach}
-                title={copy.attach}
-                disabled={submitting || inputResources.processing || !props.owner}
-                onClick={async () => {
-                  try {
-                    const selected = await props.onChooseAttachments?.();
-                    if (selected?.length) {
-                      setAttachments((current) => mergeConversationAttachments(current, selected));
+              <IconTooltip label={copy.attach}>
+                <button
+                  type="button"
+                  className="session-attachment-button"
+                  aria-label={copy.attach}
+                  disabled={submitting || inputResources.processing || !props.owner}
+                  onClick={async () => {
+                    try {
+                      const selected = await props.onChooseAttachments?.();
+                      if (selected?.length) {
+                        setAttachments((current) => mergeConversationAttachments(current, selected));
+                      }
+                    } catch (error) {
+                      setLocalError(formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
                     }
-                  } catch (error) {
-                    setLocalError(formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
-                  }
-                }}
-              >
-                <Paperclip aria-hidden="true" weight="regular" />
-              </button>
+                  }}
+                >
+                  <Paperclip aria-hidden="true" weight="regular" />
+                </button>
+              </IconTooltip>
             ) : null}
             <PermissionModeControl
               language={props.language}
@@ -3708,26 +3710,26 @@ export function NewConversationComposer(props: {
             />
             <CollaborationModeControl language={props.language} value={collaborationMode} disabled={submitting || !props.owner} onChange={setCollaborationMode} />
             {goalAvailable ? (
-              <button
-                type="button"
-                className="session-goal-trigger"
-                aria-label={goalInputActive ? copy.exitGoal : copy.createGoal}
-                aria-pressed={goalInputActive}
-                data-active={goalInputActive ? 'true' : 'false'}
-                // 开启目标输入后，悬停提示说明退出操作。
-                title={goalInputActive ? copy.exitGoal : copy.createGoal}
-                disabled={submitting || !props.owner}
-                onClick={() => {
-                  if (!goalInputActive && structuredSelectionRef.current.expertMentions.length > 0) {
-                    setLocalError(props.language === 'zh-CN' ? '目标模式暂不支持指定数字员工。请退出目标模式后再选择。' : 'Goal mode does not support choosing a digital employee. Exit goal mode before selecting one.');
-                    return;
-                  }
-                  setGoalInputOpen((open) => !open);
-                  requestAnimationFrame(() => textareaRef.current?.focus());
-                }}
-              >
-                <Target aria-hidden="true" weight={goalInputActive ? 'fill' : 'regular'} />
-              </button>
+              <IconTooltip label={goalInputActive ? copy.exitGoal : copy.createGoal}>
+                <button
+                  type="button"
+                  className="session-goal-trigger"
+                  aria-label={goalInputActive ? copy.exitGoal : copy.createGoal}
+                  aria-pressed={goalInputActive}
+                  data-active={goalInputActive ? 'true' : 'false'}
+                  disabled={submitting || !props.owner}
+                  onClick={() => {
+                    if (!goalInputActive && structuredSelectionRef.current.expertMentions.length > 0) {
+                      setLocalError(props.language === 'zh-CN' ? '目标模式暂不支持指定数字员工。请退出目标模式后再选择。' : 'Goal mode does not support choosing a digital employee. Exit goal mode before selecting one.');
+                      return;
+                    }
+                    setGoalInputOpen((open) => !open);
+                    requestAnimationFrame(() => textareaRef.current?.focus());
+                  }}
+                >
+                  <Target aria-hidden="true" weight={goalInputActive ? 'fill' : 'regular'} />
+                </button>
+              </IconTooltip>
             ) : null}
           </span>
           <span className="session-composer-trailing-actions">

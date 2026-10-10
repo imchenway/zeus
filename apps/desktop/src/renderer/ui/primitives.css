@@ -1054,6 +1054,45 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   padding-inline: 14px 12px;
 }
 
+/* 图标提示不改变控件尺寸；禁用按钮把悬停交给外层，点击仍被禁用。 */
+.zeus-icon-tooltip-trigger {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.zeus-icon-tooltip-trigger button:disabled {
+  pointer-events: none;
+}
+
+/* 提示复用应用主题，固定定位并保持在菜单与输入框上方。 */
+.zeus-icon-tooltip {
+  background: var(--zeus-product-panel);
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 7px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 16%);
+  box-sizing: border-box;
+  color: var(--zeus-product-text);
+  font-size: 12px;
+  font-weight: 500;
+  inline-size: max-content;
+  line-height: 1.5;
+  max-inline-size: min(300px, calc(100vw - 16px));
+  padding: 6px 9px;
+  pointer-events: none;
+  position: fixed;
+  white-space: normal;
+  z-index: 10000;
+}
+
+/* 系统高对比度模式下仍可识别提示边框和文字。 */
+@media (forced-colors: active) {
+  .zeus-icon-tooltip {
+    background: Canvas;
+    border-color: CanvasText;
+    color: CanvasText;
+  }
+}
+
 /* 非模态浮层只承载定位，复用主题变量时不能把整页画布绘制到窗口上方。 */
 .zeus-select-portal-root.macos-ai-app[data-zeus-primitive='select-popover'],
 .macos-ai-app.session-navigation-portal,

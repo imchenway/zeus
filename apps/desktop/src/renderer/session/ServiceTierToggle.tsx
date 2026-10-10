@@ -1,6 +1,7 @@
 import { fastServiceTier } from './serviceTierSelection.js';
 import type { CodexTaskPushModelCapability, NativeServiceTierSelection } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
+import { IconTooltip } from '../ui/IconTooltip.js';
 
 /** 用闪电表示速度切换，沿用当前模型能力和已选状态。 */
 export function ServiceTierToggle(props: {
@@ -10,11 +11,18 @@ export function ServiceTierToggle(props: {
   disabled?: boolean;
   onChange: (selection: NativeServiceTierSelection) => void | Promise<void>;
 }) {
+  /** 当前模型提供的 Fast 能力。 */
   const fast = fastServiceTier(props.model);
+  /** 当前选择是否为 Fast。 */
   const active = props.value.type === 'catalog' && props.value.id === 'priority';
+  /** 模型缺少 Fast 时继续使用原有禁用规则。 */
   const unsupported = !fast;
+  /** 无障碍名称说明点击后的操作。 */
   const action = active ? (props.language === 'zh-CN' ? '切换为标准速度' : 'Switch to Standard speed') : props.language === 'zh-CN' ? '切换为 Fast 速度' : 'Switch to Fast speed';
-  const title =
+  /** 悬停只显示速度名称及当前选择。 */
+  const title = props.language === 'zh-CN' ? `速度：${active ? 'Fast' : '标准'}` : `Speed: ${active ? 'Fast' : 'Standard'}`;
+  /** 无障碍说明继续保留模型能力不足时的原因。 */
+  const accessibleLabel =
     unsupported && active
       ? props.language === 'zh-CN'
         ? '已记住 Fast，但当前模型不支持；发送时将按标准速度运行。点击切换为标准速度'
@@ -23,25 +31,26 @@ export function ServiceTierToggle(props: {
         ? props.language === 'zh-CN'
           ? '当前模型不支持 Fast'
           : 'The current model does not support Fast'
-        : `${props.language === 'zh-CN' ? '速度' : 'Speed'}：${active ? 'Fast' : props.language === 'zh-CN' ? '标准' : 'Standard'}；${action}`;
+        : action;
 
   return (
-    <button
-      type="button"
-      className="session-service-tier-toggle"
-      data-active={active || undefined}
-      data-unavailable={unsupported && active ? 'true' : undefined}
-      aria-label={unsupported ? title : action}
-      aria-pressed={active}
-      title={title}
-      disabled={props.disabled || (unsupported && !active)}
-      onClick={() => void props.onChange(active ? { type: 'standard' } : { type: 'catalog', id: 'priority' })}
-    >
-      {/* 标准速度显示空心闪电，选中 Fast 后填实；沿用柔和轮廓，让状态不只依赖颜色区分。 */}
-      <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill={active ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round">
-        <path d="M13.6 2.8 5.2 12.2c-.6.7-.1 1.8.8 1.8h4.2l-1 6.1c-.2 1 .9 1.5 1.6.8l8-9.5c.6-.7.1-1.8-.8-1.8h-4.1l1.3-6c.2-1-.9-1.5-1.6-.8Z" />
-      </svg>
-      {unsupported && active ? <span>{props.language === 'zh-CN' ? 'Fast（已记住，当前不可用）' : 'Fast (remembered, currently unavailable)'}</span> : null}
-    </button>
+    <IconTooltip label={title}>
+      <button
+        type="button"
+        className="session-service-tier-toggle"
+        data-active={active || undefined}
+        data-unavailable={unsupported && active ? 'true' : undefined}
+        aria-label={accessibleLabel}
+        aria-pressed={active}
+        disabled={props.disabled || (unsupported && !active)}
+        onClick={() => void props.onChange(active ? { type: 'standard' } : { type: 'catalog', id: 'priority' })}
+      >
+        {/* 标准速度显示空心闪电，选中 Fast 后填实；沿用柔和轮廓，让状态不只依赖颜色区分。 */}
+        <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill={active ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round">
+          <path d="M13.6 2.8 5.2 12.2c-.6.7-.1 1.8.8 1.8h4.2l-1 6.1c-.2 1 .9 1.5 1.6.8l8-9.5c.6-.7.1-1.8-.8-1.8h-4.1l1.3-6c.2-1-.9-1.5-1.6-.8Z" />
+        </svg>
+        {unsupported && active ? <span>{props.language === 'zh-CN' ? 'Fast（已记住，当前不可用）' : 'Fast (remembered, currently unavailable)'}</span> : null}
+      </button>
+    </IconTooltip>
   );
 }
