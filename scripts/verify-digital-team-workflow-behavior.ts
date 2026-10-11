@@ -2052,6 +2052,14 @@ async function verifyUnifiedAutomation(database: ZeusDatabasePort, projectId: st
       const acceptedReview = createAutomationScheduler(reviewOptions);
       await acceptedReview.close();
       assert(automationRuns.getById(first.id)?.status === 'succeeded' && automationRuns.getById(third.id)?.queuePosition === 1 && dispatches === 1, '验收旧成果不能提前推进正在执行工作之后的队列。');
+      /** 已确认取消沿真实持久化队列释放后续触发，重启不会重派已停止工作。 */
+      const stopped = createAutomationScheduler({ ...reviewOptions, readExecution: () => ({ status: 'cancelled', errorCode: 'ZEUS_FORCED_QUIT_INTERRUPTED', errorMessage: '用户已停止工作。' }) });
+      await stopped.close();
+      assert(automationRuns.getById(second.id)?.status === 'cancelled' && automationRuns.getById(third.id)?.status === 'running' && dispatches === 2, '确认取消必须保持准确终态并仅派发下一条触发。');
+      /** 下一次恢复只读取新的活动执行，原取消记录不能被反复派发。 */
+      const stoppedRestart = createAutomationScheduler(reviewOptions);
+      await stoppedRestart.close();
+      assert(automationRuns.getById(second.id)?.status === 'cancelled' && dispatches === 2, '取消后的重启不得重复派发原工作或新运行。');
     }
     /** 结束本轮隔离记录，后续探针不继承执行占位。 */
     for (const entry of [first, second, third]) automationRuns.setTerminal(entry.id, 'cancelled');

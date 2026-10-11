@@ -1806,11 +1806,12 @@ function parseRecord(value: string, field: string): Record<string, unknown> {
   }
 }
 
+/** 活动员工执行可在确认 Provider 停止后取消，已冻结交付继续保留原终态边界。 */
 const executionTransitions: Record<DigitalEmployeeExecutionStatus, readonly DigitalEmployeeExecutionStatus[]> = {
   queued: ['queued', 'dispatching', 'cancelled', 'failed', 'blocked'],
-  dispatching: ['dispatching', 'running', 'waiting', 'failed', 'blocked'],
-  running: ['running', 'waiting', 'delivery_pending', 'failed', 'blocked'],
-  waiting: ['waiting', 'running', 'delivery_pending', 'failed', 'blocked'],
+  dispatching: ['dispatching', 'running', 'waiting', 'failed', 'blocked', 'cancelled'],
+  running: ['running', 'waiting', 'delivery_pending', 'failed', 'blocked', 'cancelled'],
+  waiting: ['waiting', 'running', 'delivery_pending', 'failed', 'blocked', 'cancelled'],
   delivery_pending: ['delivery_pending', 'delivered', 'failed', 'blocked'],
   delivered: ['delivered'],
   blocked: ['blocked', 'queued'],
