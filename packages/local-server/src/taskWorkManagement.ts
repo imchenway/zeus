@@ -1780,7 +1780,13 @@ async function processAgentRun(options: TaskWorkManagementOptions, run: TaskWork
   recordActuallyEnabledSkills(options, run);
   const conversation = options.conversations.getById(run.conversationId);
   if (!conversation || conversation.taskId !== run.taskId || conversation.projectId !== run.projectId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_CONVERSATION_MISSING', 'Agent 工作运行的会话已不可用。');
-  const executionState = conversationWorkExecutionState(conversation, options.conversationSubmissions.listByConversation(conversation.id));
+  const executionState = conversationWorkExecutionState(conversation, options.conversationSubmissions.listByConversation(conversation.id), options.conversationTurns.listByConversation(conversation.id));
+  if (executionState.type === 'cancelled') {
+    const item = options.items.getById(run.workItemId)!;
+    cancelWorkItem(options, item, item.revision, executionState);
+    publishChanged(options, run.taskId, run.workItemId, 'cancelled');
+    return;
+  }
   if (executionState.type === 'blocked') {
     blockAgentRunForProviderFailure(options, run, executionState.code, executionState.message);
     return;
@@ -2406,10 +2412,11 @@ function cloneFrozenSkillSnapshot(options: TaskWorkManagementOptions, previous: 
 }
 
 /** 确认外部执行停止后收口运行与工作项，不删除已经产生的成果证据。 */
-function cancelWorkItem(options: TaskWorkManagementOptions, item: TaskWorkItemRecord, expectedRevision: number) {
+function cancelWorkItem(options: TaskWorkManagementOptions, item: TaskWorkItemRecord, expectedRevision: number, reason?: { code: string; message: string }) {
   const completedAt = options.now().toISOString();
   const run = item.currentRunId ? options.runs.getById(item.currentRunId) : undefined;
-  if (run && ['prepared', 'dispatching', 'active', 'waiting_input', 'runtime_completed'].includes(run.status)) options.runs.update(run.id, { status: 'cancelled', completedAt });
+  if (run && ['prepared', 'dispatching', 'active', 'waiting_input', 'runtime_completed'].includes(run.status))
+    options.runs.update(run.id, { status: 'cancelled', completedAt, ...(reason ? { errorCode: reason.code, errorMessage: reason.message } : {}) });
   const cancelled = options.items.update(item.id, { expectedRevision, status: 'cancelled', completedAt });
   for (const decision of options.decisions.listByTask(item.taskId)) if (decision.workItemId === item.id && decision.status === 'pending') options.decisions.resolve(decision.id, decision.revision, { action: 'work_cancelled' }, 'dismissed');
   return cancelled;

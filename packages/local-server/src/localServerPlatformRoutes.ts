@@ -3885,6 +3885,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       conversationSubmissions,
       commandRuns,
       conversationCapabilities: conversationCapabilityQueries,
+      conversationTurns,
       taskWorkManagement,
       executeTaskConversationIdempotent: (project, task, body, idempotencyKey) => executeTaskConversationIdempotent(project, task, body, idempotencyKey),
       readTaskWorkspaceSnapshot,
