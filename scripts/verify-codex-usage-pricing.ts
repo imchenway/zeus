@@ -563,16 +563,23 @@ try {
   recordPeriodPrice('period-uncertain-merge', 'unavailable', { price: { ...apiPrice, inputRange: { minExclusive: 0, maxInclusive: 1_000 } } }, 'api:period');
   /** 汇总前保存实际仓库内容，结束后确认只读汇总未改写任何记录。 */
   const beforePeriodRead = ledger.list();
+  /** 周期样例属于有效连接；变更此目录同时检查概览缓存失效。 */
+  let periodConnections = [
+    { id: 'period', name: '周期供应商' },
+    { id: 'other-period', name: '其他周期供应商' },
+  ];
   /** 完整账本同时供应所有快捷范围，不为每个范围建立局部价格时间线。 */
-  const periodOverview = await createUsageOverviewService({
+  const periodOverviewService = createUsageOverviewService({
     ledger,
     codexUsage: service,
     projects: new ProjectRepository(db),
     conversations: new ConversationRepository(db),
     execution: new ConversationExecutionRepository(db),
-    modelConnections: { listMetadata: () => [] } as unknown as Parameters<typeof createUsageOverviewService>[0]['modelConnections'],
+    modelConnections: { listMetadata: () => periodConnections } as unknown as Parameters<typeof createUsageOverviewService>[0]['modelConnections'],
     now: () => new Date(periodNow),
-  }).read();
+  });
+  /** 首次概览保留当前有效供应商及其历史价格周期。 */
+  const periodOverview = await periodOverviewService.read();
   for (const range of ['today', '7d', '30d', 'all'] as const) {
     /** 找到真实响应中的费用行，比较本地价格周期；不依赖响应行排序。 */
     function checkPeriod(model: string, input: number, from: string | null, to: string | null = null, tier: string | null = 'standard', longContext = false, providerId = 'codex'): void {
@@ -634,6 +641,24 @@ try {
       }
     }
   }
+  assert.deepEqual(ledger.list(), beforePeriodRead);
+  /** 移除连接后概览立即失效，Codex 不受 API 连接目录影响。 */
+  periodConnections = [];
+  assert.deepEqual(
+    (await periodOverviewService.read()).providers.map((provider) => provider.providerId),
+    ['codex'],
+  );
+  /** 历史详情仍保存两个已移除供应商的完整用量，账本不可因概览过滤而改变。 */
+  const removedAnalytics = await periodOverviewService.readAnalytics({ range: 'all' });
+  for (const original of periodOverview.providers.filter((provider) => provider.kind === 'api')) {
+    /** 用原供应源身份核对历史消耗，包含 api 与 pi 前缀的同一连接记录。 */
+    const retained = removedAnalytics.providers.find((entry) => entry.provider.providerId === original.providerId);
+    assert.equal(retained?.provider.deleted, true);
+    assert.equal(retained?.local.totals.totalTokens, original.overviewRanges.all.local.totalTokens);
+  }
+  /** 同一身份恢复连接时重新进入概览，并使用新名称与既有账本。 */
+  periodConnections = [{ id: 'period', name: '恢复的供应商' }];
+  assert.equal((await periodOverviewService.read()).providers.find((provider) => provider.providerId === 'api:period')?.name, '恢复的供应商');
   assert.deepEqual(ledger.list(), beforePeriodRead);
   /** 速率沿用真实存储与汇总入口，重放旧版本误收录的交互等待样本。 */
   const rateExecution = new ConversationExecutionRepository(db);
