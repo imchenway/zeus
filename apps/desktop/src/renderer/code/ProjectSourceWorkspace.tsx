@@ -1,10 +1,26 @@
+import { sourceLanguageOptions } from '@zeus/shared';
 import { FilePreview } from './FilePreview.js';
 import { useMotionPresence } from '../ui/useMotionPresence.js';
 import { createPortal } from 'react-dom';
 import { MenuSurface } from '../ui/MenuSurface.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { Collapsible } from '../ui/Collapsible.js';
-import { Suspense, forwardRef, lazy, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type ReactNode, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import {
+  Suspense,
+  forwardRef,
+  lazy,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import { sourceConflictExtensions } from './sourceConflictExtensions.js';
 import { FileTypeIcon } from './FileTypeIcon.js';
 import { FilePlusIcon as FilePlus } from '@phosphor-icons/react/dist/csr/FilePlus';
@@ -61,6 +77,8 @@ export interface ProjectSourceWorkspaceHandle {
 export interface ProjectSourceWorkspaceProps {
   /** 文件标签右侧的工作区入口，不增加另一排导航。 */
   toolbarActions?: ReactNode;
+  /** 分支下拉框挂到目录顶行，替代重复的源码标题。 */
+  branchToolbarRef?(element: HTMLSpanElement | null): void;
   /** 文件树复用底部工作台的 Git 快照，不单独读取仓库。 */
   gitSnapshot?: ProjectGitWorkbenchSnapshot | null;
   project: { id: string; name: string; localPath: string };
@@ -436,6 +454,56 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
     if (activePathRef.current === path) setActivePath(next[Math.min(index, next.length - 1)]?.document.relativePath ?? null);
   }
 
+  /** 快捷键名称沿用当前平台，菜单与执行使用同一组组合键。 */
+  const macShortcuts = navigator.platform.startsWith('Mac');
+  /** 菜单显示名称保留平台常见符号，避免用户猜测组合键。 */
+  const fileShortcutLabels = {
+    createFile: macShortcuts ? '⌘N' : 'Ctrl+N',
+    createDirectory: macShortcuts ? '⌘⇧N' : 'Ctrl+Shift+N',
+    rename: 'F2',
+    move: macShortcuts ? '⌘⇧M' : 'Ctrl+Shift+M',
+    reveal: macShortcuts ? '⌘⇧R' : 'Ctrl+Shift+R',
+    delete: macShortcuts ? '⌘⌫' : 'Delete',
+  };
+  /** 无障碍快捷键使用标准修饰键名称，不复用展示符号。 */
+  const fileShortcutModifier = macShortcuts ? 'Meta' : 'Control';
+
+  /** 文件树和菜单共用快捷键；编辑器与输入框不参与文件删除操作。 */
+  function handleFileShortcut(entry: ProjectSourceEntry, event: ReactKeyboardEvent<HTMLElement>): void {
+    if (event.defaultPrevented || event.repeat || event.altKey || busyPath || operation || !entry.accessible || (event.target as HTMLElement).closest('input, textarea, [contenteditable="true"]')) return;
+    const primary = macShortcuts ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+    const plain = !event.metaKey && !event.ctrlKey;
+    const key = event.key.toLowerCase();
+    let next: FileOperation = null;
+    if (plain && (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) {
+      const bounds = event.currentTarget.getBoundingClientRect();
+      setContextMenu({ entry, x: bounds.left + 20, y: bounds.bottom });
+    } else if (primary && key === 'n') {
+      next = { kind: event.shiftKey ? 'create-directory' : 'create-file', parentRelativePath: entry.kind === 'directory' ? entry.relativePath : parentPath(entry.relativePath) };
+    } else if (plain && !event.shiftKey && event.key === 'F2') {
+      next = { kind: 'rename', entry };
+    } else if (primary && event.shiftKey && key === 'm') {
+      next = { kind: 'move', entry };
+    } else if (primary && event.shiftKey && key === 'r') {
+      void bridge?.revealProjectSourceEntry({ projectId: props.project.id, relativePath: entry.relativePath });
+      setContextMenu(null);
+    } else if (!event.shiftKey && (macShortcuts ? primary && ['Backspace', 'Delete'].includes(event.key) : plain && event.key === 'Delete')) {
+      next = { kind: 'delete', entry };
+    } else {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (next) beginOperation(next);
+  }
+
+  /** 目录和搜索结果使用同一右键入口，键盘菜单使用焦点行的位置。 */
+  function openFileContextMenu(entry: ProjectSourceEntry, event: ReactMouseEvent<HTMLButtonElement>): void {
+    event.preventDefault();
+    event.stopPropagation();
+    setContextMenu({ entry, x: event.clientX, y: event.clientY });
+  }
+
   function beginOperation(next: FileOperation): void {
     setContextMenu(null);
     setOperation(next);
@@ -613,7 +681,10 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         <aside className="project-source-tree" aria-label={zh ? '代码目录' : 'Source tree'}>
           <details className="project-source-module" open>
             <summary>
-              <span>{zh ? '源码' : 'Source'}</span>
+              <span className="project-source-branch-slot" ref={props.branchToolbarRef}>
+                {/* 占位文字有独立节点，刷新快照时不清空外部挂载的分支控件。 */}
+                <span hidden={props.gitSnapshot?.projectId === props.project.id}>{zh ? '源码' : 'Source'}</span>
+              </span>
               <span className="project-source-module-actions" aria-label={zh ? '源码操作' : 'Source actions'}>
                 <button
                   type="button"
@@ -648,7 +719,17 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
             </label>
             <div className="project-source-tree-scroll" role="tree" aria-busy={loadingTree}>
               {searchQuery.trim() ? (
-                <SearchResults entries={searchResults} activePath={activePath} gitFileStatuses={gitFileStatuses} truncated={searchTruncated} busyPath={busyPath} onOpen={(path) => void openFile(path)} zh={zh} />
+                <SearchResults
+                  entries={searchResults}
+                  activePath={activePath}
+                  gitFileStatuses={gitFileStatuses}
+                  truncated={searchTruncated}
+                  busyPath={busyPath}
+                  onOpen={(path) => void openFile(path)}
+                  onContextMenu={openFileContextMenu}
+                  onShortcut={handleFileShortcut}
+                  zh={zh}
+                />
               ) : loadingTree ? (
                 <p className="project-source-empty">{zh ? '正在读取项目目录…' : 'Loading the project folder…'}</p>
               ) : (
@@ -662,11 +743,8 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                   busyPath={busyPath}
                   onToggle={(path) => void toggleDirectory(path)}
                   onOpen={(path) => void openFile(path)}
-                  onContextMenu={(entry, event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    setContextMenu({ entry, x: event.clientX, y: event.clientY });
-                  }}
+                  onContextMenu={openFileContextMenu}
+                  onShortcut={handleFileShortcut}
                 />
               )}
             </div>
@@ -817,7 +895,22 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                 <span>{zh ? '文件预览 · 只读' : 'File preview · Read-only'}</span>
               ) : (
                 <>
-                  <span>{activeTab.document.language}</span>
+                  <select
+                    aria-label={zh ? '源码高亮语言' : 'Source syntax language'}
+                    value={activeTab.document.language}
+                    onChange={(event) => {
+                      /** 仅调整当前标签的高亮，不产生正文改动或保存操作。 */
+                      const language = event.currentTarget.value;
+                      setTabs((current) => current.map((tab) => (tab.document.relativePath === activePath ? { ...tab, document: { ...tab.document, language } } : tab)));
+                    }}
+                  >
+                    <option value="text">{zh ? '纯文本' : 'Plain text'}</option>
+                    {sourceLanguageOptions.map((language) => (
+                      <option key={language} value={language}>
+                        {language}
+                      </option>
+                    ))}
+                  </select>
                   <span>UTF-8{activeTab.document.hasBom ? ' BOM' : ''}</span>
                   <span>{activeTab.document.eol.toUpperCase()}</span>
                   <span>
@@ -851,35 +944,49 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         <div className="macos-ai-app project-source-menu-layer" style={{ display: 'contents' }}>
           <MotionPresence>
             {contextMenu ? (
-              <MenuSurface onClose={() => setContextMenu(null)} className="project-source-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
+              <MenuSurface
+                onClose={() => setContextMenu(null)}
+                className="project-source-context-menu"
+                role="menu"
+                style={{ left: contextMenu.x, top: contextMenu.y }}
+                onPointerDown={(event) => event.stopPropagation()}
+                onKeyDown={(event) => handleFileShortcut(contextMenu.entry, event)}
+              >
                 {contextMenu.entry.kind === 'directory' ? (
                   <>
-                    <button role="menuitem" type="button" onClick={() => beginOperation({ kind: 'create-file', parentRelativePath: contextMenu.entry.relativePath })}>
-                      {zh ? '新建文件' : 'New file'}
+                    <button role="menuitem" type="button" aria-keyshortcuts={`${fileShortcutModifier}+N`} onClick={() => beginOperation({ kind: 'create-file', parentRelativePath: contextMenu.entry.relativePath })}>
+                      <span>{zh ? '新建文件' : 'New file'}</span>
+                      <kbd>{fileShortcutLabels.createFile}</kbd>
                     </button>
-                    <button role="menuitem" type="button" onClick={() => beginOperation({ kind: 'create-directory', parentRelativePath: contextMenu.entry.relativePath })}>
-                      {zh ? '新建目录' : 'New folder'}
+                    <button role="menuitem" type="button" aria-keyshortcuts={`${fileShortcutModifier}+Shift+N`} onClick={() => beginOperation({ kind: 'create-directory', parentRelativePath: contextMenu.entry.relativePath })}>
+                      <span>{zh ? '新建目录' : 'New folder'}</span>
+                      <kbd>{fileShortcutLabels.createDirectory}</kbd>
                     </button>
                   </>
                 ) : null}
-                <button role="menuitem" type="button" onClick={() => beginOperation({ kind: 'rename', entry: contextMenu.entry })}>
-                  {zh ? '重命名' : 'Rename'}
+                <button role="menuitem" type="button" aria-keyshortcuts="F2" onClick={() => beginOperation({ kind: 'rename', entry: contextMenu.entry })}>
+                  <span>{zh ? '重命名' : 'Rename'}</span>
+                  <kbd>{fileShortcutLabels.rename}</kbd>
                 </button>
-                <button role="menuitem" type="button" onClick={() => beginOperation({ kind: 'move', entry: contextMenu.entry })}>
-                  {zh ? '移动…' : 'Move…'}
+                <button role="menuitem" type="button" aria-keyshortcuts={`${fileShortcutModifier}+Shift+M`} onClick={() => beginOperation({ kind: 'move', entry: contextMenu.entry })}>
+                  <span>{zh ? '移动…' : 'Move…'}</span>
+                  <kbd>{fileShortcutLabels.move}</kbd>
                 </button>
                 <button
                   role="menuitem"
                   type="button"
+                  aria-keyshortcuts={`${fileShortcutModifier}+Shift+R`}
                   onClick={() => {
                     void bridge?.revealProjectSourceEntry({ projectId: props.project.id, relativePath: contextMenu.entry.relativePath });
                     setContextMenu(null);
                   }}
                 >
-                  {zh ? '在 Finder 中显示' : 'Reveal in Finder'}
+                  <span>{zh ? '在 Finder 中显示' : 'Reveal in Finder'}</span>
+                  <kbd>{fileShortcutLabels.reveal}</kbd>
                 </button>
-                <button role="menuitem" type="button" className="danger" onClick={() => beginOperation({ kind: 'delete', entry: contextMenu.entry })}>
-                  {zh ? '移入废纸篓…' : 'Move to Trash…'}
+                <button role="menuitem" type="button" aria-keyshortcuts={macShortcuts ? 'Meta+Backspace' : 'Delete'} className="danger" onClick={() => beginOperation({ kind: 'delete', entry: contextMenu.entry })}>
+                  <span>{zh ? '移入废纸篓…' : 'Move to Trash…'}</span>
+                  <kbd>{fileShortcutLabels.delete}</kbd>
                 </button>
               </MenuSurface>
             ) : null}
@@ -1020,6 +1127,8 @@ function TreeRows(props: {
   onToggle(path: string): void;
   onOpen(path: string): void;
   onContextMenu(entry: ProjectSourceEntry, event: ReactMouseEvent<HTMLButtonElement>): void;
+  /** 文件行与右键菜单共享操作快捷键。 */
+  onShortcut(entry: ProjectSourceEntry, event: ReactKeyboardEvent<HTMLElement>): void;
 }) {
   const directory = props.directories[props.directoryPath];
   if (!directory) return null;
@@ -1038,6 +1147,7 @@ function TreeRows(props: {
           disabled={!entry.accessible || props.busyPath === entry.relativePath}
           onClick={() => (directoryEntry ? props.onToggle(entry.relativePath) : props.onOpen(entry.relativePath))}
           onContextMenu={(event) => props.onContextMenu(entry, event)}
+          onKeyDown={(event) => props.onShortcut(entry, event)}
         >
           <span className="project-source-disclosure" aria-hidden="true">
             {directoryEntry ? expanded ? <CaretDown size={12} /> : <CaretRight size={12} /> : null}
@@ -1057,7 +1167,17 @@ function TreeRows(props: {
 }
 
 /** 搜索结果沿用目录树的选中态和 Git 状态色。 */
-function SearchResults(props: { entries: ProjectSourceEntry[]; activePath: string | null; gitFileStatuses: Record<string, string>; truncated: boolean; busyPath: string | null; onOpen(path: string): void; zh: boolean }) {
+function SearchResults(props: {
+  entries: ProjectSourceEntry[];
+  activePath: string | null;
+  gitFileStatuses: Record<string, string>;
+  truncated: boolean;
+  busyPath: string | null;
+  onOpen(path: string): void;
+  onContextMenu(entry: ProjectSourceEntry, event: ReactMouseEvent<HTMLButtonElement>): void;
+  onShortcut(entry: ProjectSourceEntry, event: ReactKeyboardEvent<HTMLElement>): void;
+  zh: boolean;
+}) {
   if (props.entries.length === 0) return <p className="project-source-empty">{props.zh ? '没有匹配的文件。' : 'No matching files.'}</p>;
   return (
     <>
@@ -1070,6 +1190,8 @@ function SearchResults(props: { entries: ProjectSourceEntry[]; activePath: strin
           aria-selected={entry.relativePath === props.activePath}
           disabled={!entry.accessible || entry.kind === 'directory' || props.busyPath === entry.relativePath}
           onClick={() => props.onOpen(entry.relativePath)}
+          onContextMenu={(event) => props.onContextMenu(entry, event)}
+          onKeyDown={(event) => props.onShortcut(entry, event)}
         >
           {entry.kind === 'directory' ? <Folder weight="regular" aria-hidden="true" /> : <FileTypeIcon name={entry.name} />}
           <span>

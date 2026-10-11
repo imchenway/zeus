@@ -184,7 +184,7 @@ export class ProjectSourceWorkspaceService {
     return {
       relativePath: target.relativePath,
       name: basename(target.relativePath),
-      language: detectSourceLanguage(target.relativePath) ?? 'text',
+      language: detectSourceLanguage(target.relativePath, rawContent) ?? 'text',
       content: rawContent.replace(/\r\n?|\n/gu, '\n'),
       encoding: 'utf-8',
       eol,

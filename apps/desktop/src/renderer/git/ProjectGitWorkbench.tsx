@@ -76,7 +76,7 @@ interface GitContextTarget {
 export interface ProjectGitWorkbenchProps {
   /** 嵌入工作区提供额外工具入口。 */
   toolbarActions?: ReactNode;
-  /** 源码顶行提供挂载位置，分支控件仍使用本工作台的仓库和操作状态。 */
+  /** 源码目录顶行提供挂载位置，分支控件仍使用本工作台的仓库和操作状态。 */
   branchToolbarContainer?: HTMLElement | null;
   /** 顶部分支菜单发起操作时展开底栏，使提交表单和操作反馈可见。 */
   onOpenPanel?(): void;
@@ -1346,7 +1346,6 @@ function GitLogSurface(props: {
   onOpenDiff: (repository: ProjectGitRepositoryWorkbenchItem, filePath: string, options?: { stage?: 'combined' | ChangeStage; commitHash?: string; comparisonRef?: string; comparisonMode?: 'current' | 'working-tree' }) => void;
   onConfirmAction: (repository: ProjectGitRepositoryWorkbenchItem, action: Extract<ProjectGitAction, { type: 'revert' | 'cherry_pick' }>, title: string, description: string, danger?: boolean) => void;
 }) {
-  const selectedDiff = props.commitDetail?.diff.fileDiffs.find((file) => file.newPath === props.selectedFilePath || file.oldPath === props.selectedFilePath) ?? null;
   const [commitMenu, setCommitMenu] = useState<{ x: number; y: number } | null>(null);
   useEffect(() => {
     setCommitMenu(null);
@@ -1487,7 +1486,7 @@ function GitLogSurface(props: {
           </div>
         </div>
       </main>
-      <GitPaneSeparator name="history" label={props.zh ? '调整历史与详情高度' : 'Resize history and details'} axis="y" initial={55} min={20} max={75} />
+      <GitPaneSeparator name="history-columns" label={props.zh ? '调整历史与文件列表宽度' : 'Resize history and changed files'} initial={65} min={35} max={80} />
       <aside className="project-git-inspector">
         {props.commitLoading ? (
           <div className="project-git-inspector-loading">
@@ -1583,17 +1582,8 @@ function GitLogSurface(props: {
                 }}
               />
             </section>
-            <GitPaneSeparator name="inspector" label={props.zh ? '调整详情与差异宽度' : 'Resize details and diff'} initial={35} min={20} max={65} />
+            {/* 右侧保留文件树和提交详情；双击文件复用已有差异窗口。 */}
             <GitPaneSeparator name="details" label={props.zh ? '调整文件与提交详情高度' : 'Resize files and commit details'} axis="y" initial={55} min={20} max={80} />
-            <SideBySideDiff
-              previewRequest={
-                props.selectedRepository && props.selectedFilePath
-                  ? { kind: 'project-git', projectId: props.projectId, repositoryId: props.selectedRepository.id, path: props.selectedFilePath, commitHash: props.selectedCommitHash }
-                  : undefined
-              }
-              diff={selectedDiff ? { isRepository: true, files: [props.selectedFilePath], diffText: props.commitDetail.diff.diffText, fileDiffs: [selectedDiff] } : null}
-              zh={props.zh}
-            />
           </>
         ) : (
           <p className="project-git-empty-copy">{props.zh ? '选择一个提交查看文件与差异。' : 'Select a commit to inspect files and diff.'}</p>

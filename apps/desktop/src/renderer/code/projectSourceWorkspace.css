@@ -116,12 +116,14 @@
 }
 
 .project-source-tree {
+  box-sizing: border-box;
   overflow: auto;
   display: flex;
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  border-right: 0;
+  border: 0;
+  border-radius: 0;
   background: var(--zeus-product-panel-muted);
 }
 .project-source-conflict-comparison {
@@ -162,7 +164,7 @@
   background: color-mix(in srgb, #408bd8 18%, transparent);
 }
 .project-source-module {
-  --source-module-header-height: 30px;
+  --source-module-header-height: 36px;
   position: relative;
   flex: 0 0 auto;
   border-bottom: 0;
@@ -375,17 +377,26 @@ details[open] > summary > .project-source-disclosure {
   line-height: 1.5;
 }
 
+/* 竖线属于拖拽手柄，目录区域不绘制外围边框；保留完整点击范围。 */
 .project-source-tree-resizer {
+  position: relative;
   cursor: col-resize;
   touch-action: none;
   background: transparent;
+  outline: none;
+}
+.project-source-tree-resizer::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 50%;
+  width: 1px;
+  background: var(--zeus-product-line);
   transition: background-color var(--zeus-button-motion);
 }
-.project-source-tree-resizer:hover:not(:disabled):not([aria-disabled='true']),
-.project-source-tree-resizer:focus-visible,
-.project-source-tree-resizer[data-dragging='true'] {
+.project-source-tree-resizer:hover:not(:disabled):not([aria-disabled='true'])::after,
+.project-source-tree-resizer:focus-visible::after,
+.project-source-tree-resizer[data-dragging='true']::after {
   background: var(--zeus-product-accent);
-  outline: none;
 }
 
 .project-source-editor-pane {
@@ -521,7 +532,7 @@ details[open] > summary > .project-source-disclosure {
   position: fixed;
   z-index: 1200;
   display: flex;
-  width: 184px;
+  width: min(260px, calc(100vw - 24px));
   flex-direction: column;
   gap: 2px;
   padding: 5px;
@@ -531,6 +542,10 @@ details[open] > summary > .project-source-disclosure {
   background: var(--zeus-product-panel);
 }
 .project-source-context-menu button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
   min-height: 28px;
   padding: 0 8px;
   border: 0;
@@ -667,4 +682,34 @@ details[open] > summary > .project-source-disclosure {
   .project-source-tree-backdrop {
     opacity: 0;
   }
+}
+
+/* 分支控件沿用原有逻辑，宽度跟随目录栏并保留新建入口。 */
+.project-source-branch-slot {
+  display: flex;
+  min-width: 0;
+}
+.macos-ai-app .project-source-branch-slot > .project-git-branch-trigger {
+  margin: 0;
+  min-inline-size: 0;
+  inline-size: 100%;
+  min-block-size: 28px;
+  padding: 3px 5px;
+}
+
+/* 快捷键与操作名称并排显示，保留清晰的文件操作范围。 */
+.project-source-context-menu kbd {
+  color: var(--zeus-control-muted-text);
+  font: inherit;
+  white-space: nowrap;
+}
+
+/* 高亮语言可手动兜底，状态栏选择不改变文件的编码或内容。 */
+.project-source-statusbar select {
+  min-width: 0;
+  max-width: 130px;
+  font: inherit;
+  color: inherit;
+  border: 0;
+  background: transparent;
 }

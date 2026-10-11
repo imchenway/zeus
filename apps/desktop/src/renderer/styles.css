@@ -21887,6 +21887,17 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   grid-template-rows: minmax(0, var(--git-code-editor, 55%)) 6px minmax(0, 1fr);
 }
 
+/* 横线属于源码与 Git 底栏之间的拖拽手柄，不绘制工作台外围边框。 */
+.project-code-mode-host > .git-separator-code-editor::after {
+  inset: 2px 0 auto;
+  height: 1px;
+  border-radius: 0;
+  background: var(--zeus-product-line);
+}
+.project-code-mode-host > .git-separator-code-editor:is(:hover, :focus-visible, [data-dragging])::after {
+  background: var(--zeus-product-accent, var(--zeus-brand-primary));
+}
+
 .project-code-mode-pane[hidden] {
   display: none;
 }
@@ -21919,23 +21930,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 }
 
 /* 分支显示占用有界宽度，长分支名截断并通过原控件提示显示全文。 */
-.macos-ai-app .project-code-branch-slot {
-  display: flex;
-  min-inline-size: 0;
-  inline-size: clamp(100px, 20vw, 280px);
-}
 
 /* 尚未取得仓库快照时不占用文件标签空间。 */
-.macos-ai-app .project-code-branch-slot:empty {
-  display: none;
-}
 
 /* 顶部分支控件沿用原有样式，仅移除侧栏布局尺寸。 */
-.macos-ai-app .project-code-branch-slot > .project-git-branch-trigger {
-  margin: 0;
-  min-inline-size: 0;
-  inline-size: 100%;
-}
 
 .macos-ai-app .project-code-actions > button {
   display: inline-flex;

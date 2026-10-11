@@ -7,7 +7,7 @@ import { basename, join, relative, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
-import { filePreviewKind, filePreviewLimits, filePreviewMime, type FilePreviewIntent, type FilePreviewItem, type FilePreviewRequest, type FilePreviewSource } from '@zeus/shared';
+import { decodeFilePreviewText, filePreviewKind, filePreviewLimits, filePreviewMime, type FilePreviewIntent, type FilePreviewItem, type FilePreviewRequest, type FilePreviewSource } from '@zeus/shared';
 
 /** 只读媒体协议必须在 Electron 就绪前登记；不允许任意 file URL。 */
 protocol.registerSchemesAsPrivileged([{ scheme: 'zeus-preview', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }]);
@@ -233,7 +233,9 @@ export function registerFilePreview(services: {
           const identity = await fileIdentity(previewPath);
           item.byteLength = (await stat(previewPath)).size;
           item.kind = filePreviewKind(item.mime);
-          if (item.mime === 'image/icns' && process.platform === 'darwin' && item.byteLength <= filePreviewLimits.image) {
+          /** 浏览器不能直接显示的常见图片复用系统只读转码。 */
+          const convertImage = ['image/icns', 'image/heic', 'image/heif', 'image/tiff'].includes(item.mime);
+          if (convertImage && process.platform === 'darwin' && item.byteLength <= filePreviewLimits.image) {
             try {
               /** 只接受头部和声明长度一致的 ICNS 容器，拒绝误标的其他格式。 */
               const header = Buffer.alloc(8);
@@ -244,7 +246,7 @@ export function registerFilePreview(services: {
               } finally {
                 await handle.close();
               }
-              if (item.byteLength <= header.length || header.toString('ascii', 0, 4) !== 'icns' || header.readUInt32BE(4) !== item.byteLength) throw new Error('无效的 ICNS 文件头。');
+              if (item.mime === 'image/icns' && (item.byteLength <= header.length || header.toString('ascii', 0, 4) !== 'icns' || header.readUInt32BE(4) !== item.byteLength)) throw new Error('无效的 ICNS 文件头。');
               await mkdir(services.temporaryRoot, { recursive: true, mode: 0o700 });
               /** 解码临时文件只属于本次转换，读取完成后立即清理。 */
               const directory = await mkdtemp(join(services.temporaryRoot, 'icon-'));
@@ -259,24 +261,29 @@ export function registerFilePreview(services: {
               }
               item.kind = 'image';
             } catch {
-              item.reason = 'ICNS 图标无法解码，请使用系统预览或打开原文件。';
+              item.kind = 'system';
+              item.reason = '此图片无法转换为页内预览，请使用系统预览或打开原文件。';
             }
           }
-          /** 小内容严格解码；PDF 校验文件头，避免把错误页面当成阅读器。 */
-          if (item.byteLength <= filePreviewLimits.text) {
-            /** 受大小限制的原始文件内容。 */
-            const bytes = await readFile(previewPath);
-            if ((item.mime === 'application/octet-stream' || item.mime === 'image/svg+xml') && bytes.length <= filePreviewLimits.text) {
-              try {
-                if (bytes.includes(0)) throw new Error('binary');
-                item.content = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-                if (item.kind === 'system') {
-                  item.kind = 'text';
-                  item.mime = 'text/plain';
-                }
-              } catch {
-                item.reason = '此文件不是有效的 UTF-8 文本，请使用系统预览。';
+          /** 大文本只读取前 2 MiB；无法解码时保留系统操作和编码选择。 */
+          if (item.mime === 'application/octet-stream' || item.mime === 'image/svg+xml') {
+            /** 文件正文读取始终受限，不随大文件大小分配缓冲区。 */
+            const chunks: Buffer[] = [];
+            for await (const chunk of createReadStream(previewPath, { start: 0, end: filePreviewLimits.text - 1 })) chunks.push(chunk as Buffer);
+            /** 有界片段用于只读解码，不能进入源码保存路径。 */
+            const bytes = Buffer.concat(chunks);
+            try {
+              const decoded = decodeFilePreviewText(bytes, input.textEncoding, item.byteLength > bytes.length);
+              item.content = decoded.content;
+              item.encoding = decoded.encoding;
+              item.truncated = item.byteLength > bytes.length;
+              if (item.truncated) item.reason = '只读预览前 2 MiB 内容；请用外部编辑器查看完整文件。';
+              if (item.kind === 'system') {
+                item.kind = 'text';
+                item.mime = 'text/plain';
               }
+            } catch {
+              item.reason = input.textEncoding ? '无法按所选编码读取文本。请检查编码，或使用系统预览。' : '此文件不是可识别的 Unicode 文本。可选择其他预览编码，或使用系统预览。';
             }
           }
           if (item.kind === 'pdf') {
@@ -293,6 +300,10 @@ export function registerFilePreview(services: {
             } finally {
               await handle.close();
             }
+          }
+          if (convertImage && process.platform !== 'darwin') {
+            item.kind = 'system';
+            item.reason = '此图片格式使用系统预览。';
           }
           if (item.kind === 'image' && item.byteLength > filePreviewLimits.image) {
             item.kind = 'system';

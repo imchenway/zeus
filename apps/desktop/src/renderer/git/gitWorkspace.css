@@ -349,7 +349,7 @@
   box-shadow: inset 0 0 0 1px var(--zeus-control-focus);
 }
 
-/* Git 导航和内容区域去掉卡片外框，保留内部列表分隔。 */
+/* 导航和内容区域不绘制卡片外框，分区尺寸由已有拖拽手柄调整。 */
 .macos-ai-app.zeus-shell .project-git-workbench .project-git-navigator {
   background: var(--zeus-product-panel);
   border: 0;
