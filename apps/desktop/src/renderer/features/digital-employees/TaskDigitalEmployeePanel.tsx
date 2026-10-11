@@ -318,14 +318,10 @@ export function useTaskDigitalEmployeeManagement(
   return { employees, assignableEmployees, projection, teams, teamTemplates, pendingAssignment, conversationRequest, followAssignment, loadState, busy, error, load, act, dismissOperationError };
 }
 
-type ManagementTab = 'collaboration' | 'work' | 'deliverables' | 'evidence';
-
-/** 在任务概览与工作管理间切换，不重复堆叠两套详情。 */
+/** 会话、待办、工作和成果在同一页面展开，保留原会话与验收入口。 */
 export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
   /** 提示跟随应用语言。 */
   const zh = props.language === 'zh-CN';
-  /** 进入详情直接对照任务说明阅读沟通内容。 */
-  const [tab, setTab] = useState<ManagementTab>('collaboration');
   /** 待办和工作都定位原会话身份。 */
   const [conversationRequest, setConversationRequest] = useState<{ conversationId: string } | null>(null);
   /** 正式成果保留独立全文阅读状态。 */
@@ -338,7 +334,6 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
   useEffect(() => {
     if (!props.management.conversationRequest) return;
     setConversationRequest(props.management.conversationRequest);
-    setTab('collaboration');
   }, [props.management.conversationRequest]);
 
   if (!props.client) return <p className="task-conversation-feedback">{zh ? '工作服务未连接，任务说明仍可编辑。' : 'The work service is disconnected. Task requirements remain editable.'}</p>;
@@ -353,7 +348,6 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
       return;
     }
     setConversationRequest({ conversationId });
-    setTab('collaboration');
   }
   return (
     <section className="task-work-cockpit" aria-label={zh ? '任务内容与协作' : 'Task content and collaboration'}>
@@ -363,40 +357,13 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
         </p>
       ) : null}
 
-      {projection?.plan && tab !== 'work' ? (
-        <button type="button" className="task-work-progress-summary" onClick={() => setTab('work')}>
-          <span>
-            {projection.plan.state === 'paused'
-              ? '后续工作暂停'
-              : projection.plan.state === 'completed'
-                ? '本轮工作已通过'
-                : projection.plan.state === 'cancelled'
-                  ? '本轮安排已结束'
-                  : projection.plan.state === 'draft'
-                    ? '工作安排尚未启动'
-                    : '当前阶段'}{' '}
-            · {projection.plan.stages.find((stage) => !['accepted', 'skipped'].includes(stage.status))?.title ?? '全部阶段已结束'}
-          </span>
-          <small>
-            {projection.plan.stages.filter((stage) => stage.status === 'accepted').length} / {projection.plan.stages.length} 阶段通过 · 查看安排
-          </small>
-        </button>
+      {/* 待办直接展示，查看工作不再卸载或隐藏正在阅读的原会话。 */}
+      {projection && (pendingConversationRequests.length > 0 || pendingDecisions.length > 0) ? (
+        <div className="task-work-collaboration">
+          <ManagerInbox requests={pendingConversationRequests} decisions={pendingDecisions} language={props.language} onOpenConversation={openConversation} onSelect={setDecisionOpen} />
+        </div>
       ) : null}
-      {/* 沟通是任务详情默认正文；待办和已有工作仍可按上下文进入。 */}
-      <div role="region" aria-label={zh ? '沟通' : 'Conversation'} className="task-work-conversation-panel" hidden={tab !== 'collaboration'}>
-        {projection && (pendingConversationRequests.length > 0 || pendingDecisions.length > 0) ? (
-          <Button
-            className="task-conversation-inbox"
-            variant="secondary"
-            size="compact"
-            onClick={() => {
-              // 待办集中在工作页处理，聊天保留原会话及草稿。
-              setTab('work');
-            }}
-          >
-            {zh ? '待我处理' : 'Needs my attention'} · {pendingConversationRequests.length + pendingDecisions.length} · {zh ? '查看待办' : 'View pending items'}
-          </Button>
-        ) : null}
+      <div role="region" aria-label={zh ? '沟通' : 'Conversation'} className="task-work-conversation-panel">
         <TaskConversationPane
           readOnly={props.terminalReadOnly}
           conversations={props.conversations ?? []}
@@ -436,12 +403,9 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
           }}
         />
       </div>
-      {tab === 'work' && projection ? (
+      {projection && (projection.plan || projection.workItems.length > 0) ? (
         <div role="region" aria-label={zh ? '工作' : 'Work'} className="task-work-collaboration">
-          {pendingConversationRequests.length + pendingDecisions.length > 0 ? (
-            <ManagerInbox requests={pendingConversationRequests} decisions={pendingDecisions} language={props.language} onOpenConversation={openConversation} onSelect={setDecisionOpen} />
-          ) : null}
-          <TaskWorkPlanPanel onArrangeTeam={props.onArrangeTeam} taskId={props.taskId} client={props.client} management={props.management} readOnly={props.terminalReadOnly} />
+          {projection.plan ? <TaskWorkPlanPanel onArrangeTeam={props.onArrangeTeam} taskId={props.taskId} client={props.client} management={props.management} readOnly={props.terminalReadOnly} /> : null}
           {projection.workItems.some((item) => !item.arrangement || item.currentRunId) ? (
             <WorkItemBoard
               items={projection.workItems.filter((item) => !item.arrangement || item.currentRunId)}
@@ -457,18 +421,18 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
           ) : null}
         </div>
       ) : null}
-      {tab === 'deliverables' && projection ? (
+      {projection && (projection.deliverables.length > 0 || projection.workItems.length > 0) ? (
         <div role="region" aria-label={zh ? '成果' : 'Deliverables'}>
           <DeliverablesView deliverables={projection?.deliverables ?? []} language={props.language} onOpen={setReadingDeliverable} />
         </div>
       ) : null}
-      {tab === 'evidence' && projection ? (
+      {projection && (projection.evidenceRefs.length > 0 || projection.workItems.length > 0) ? (
         <div role="region" aria-label={zh ? '运行记录' : 'Activity'}>
           <EvidenceView items={projection?.workItems ?? []} refs={projection?.evidenceRefs ?? []} language={props.language} onOpenConversation={openConversation} onOpenCommand={setCommandEvidenceRunId} />
         </div>
       ) : null}
 
-      {tab !== 'collaboration' && !projection && loadState === 'loading' ? (
+      {!projection && loadState === 'loading' ? (
         <p className="task-conversation-feedback" role="status">
           {zh ? '正在读取工作记录…' : 'Loading work records…'}
         </p>
