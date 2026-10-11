@@ -24,7 +24,17 @@ const STRUCTURED_CUSTOM_COMPONENTS_ID = 'zeus-conversation-markdown-structured';
 const EMPTY_RESOURCES: ConversationResource[] = [];
 const CHILD_ARRAY_FIELDS = ['children', 'items', 'rows', 'cells', 'term', 'definition'] as const;
 /** 图表复用按需加载的原生预览，禁止正文开启脚本、链接交互或导出入口。 */
-const MERMAID_OPTIONS = { maxHeight: 'none', isStrict: true, enableMermaidInteractions: false, showCopyButton: false, showExportButton: false, showFullscreenButton: false, showCollapseButton: false, showTooltips: false } as const;
+const MERMAID_OPTIONS = {
+  maxHeight: 'none',
+  isStrict: true,
+  enableMermaidInteractions: false,
+  showHeader: false,
+  showCopyButton: false,
+  showExportButton: false,
+  showFullscreenButton: false,
+  showCollapseButton: false,
+  showTooltips: false,
+} as const;
 const SMOOTH_STREAMING_OPTIONS = {
   minCharsPerSecond: 1_200,
   maxCharsPerSecond: 100_000,
@@ -43,6 +53,10 @@ const labels = {
     copyCode: '复制代码',
     copyTable: '复制表格 Markdown',
     copyDiagram: '复制图表源码',
+    /** 图表操作采用会话语言，不显示运行库的英文标签页。 */
+    diagram: '图表',
+    showDiagramSource: '查看源码',
+    showDiagramPreview: '返回图表',
     copyFailed: '复制失败，请重试',
     image: '图片',
     imageUnavailable: '图片不可用',
@@ -57,6 +71,10 @@ const labels = {
     copyCode: 'Copy code',
     copyTable: 'Copy table Markdown',
     copyDiagram: 'Copy diagram source',
+    /** 英文界面使用同一组紧凑操作。 */
+    diagram: 'Diagram',
+    showDiagramSource: 'View source',
+    showDiagramPreview: 'Back to diagram',
     copyFailed: 'Copy failed, try again',
     image: 'Image',
     imageUnavailable: 'Image unavailable',
@@ -356,12 +374,16 @@ function ensureMermaidRuntime(): NonNullable<typeof mermaidRuntimeProbe> {
 function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>) {
   /** 语言和正文阶段来自所有 Markdown 展示入口共用的上下文。 */
   const runtime = useContext(MarkdownRuntimeContext);
-  /** 复用带可访问名称的复制按钮，关闭原生组件未标注名称的图标操作。 */
+  /** 图表标题和操作文案使用当前会话语言。 */
   const languageLabels = labels[runtime?.language ?? 'en-US'];
   /** 图表外壳用于读取当前应用主题。 */
   const containerRef = useRef<HTMLDivElement | null>(null);
   /** 上游把"画不出来"处理成源码视图且不报错，这里补上用户能看懂的原因。 */
   const [diagnostic, setDiagnostic] = useState<string | null>(null);
+  /** 源码视图保留原文，预览继续挂载以保留已有缩放状态。 */
+  const [showSource, setShowSource] = useState(false);
+  /** 未指定图表主题时才使用会话默认配色，作者的整图主题继续生效。 */
+  const [useDefaultTheme, setUseDefaultTheme] = useState(true);
   /** 正文已经结束时图表代码块不会再增长，必须结束生成态，否则上游会一直只显示源码。 */
   const phase = runtime?.phase ?? 'streaming';
   /** 未闭合代码块继续生成；正文完成后覆盖解析节点残留的生成状态。 */
@@ -403,6 +425,7 @@ function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>)
     /** 取消旧正文的异步结果，防止其错误覆盖新图表。 */
     let active = true;
     setDiagnostic(null);
+    setUseDefaultTheme(true);
     void ensureMermaidRuntime().then(async (mermaid) => {
       if (!active) return;
       if (!mermaid) {
@@ -413,6 +436,7 @@ function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>)
       try {
         /** 未闭合语法返回 false，不让 Mermaid 额外插入错误图形。 */
         const parsed = await mermaid.parse(props.node.code, { suppressErrors: true });
+        if (active && parsed !== false) setUseDefaultTheme(!parsed.config.theme && Object.keys(parsed.config.themeVariables ?? {}).length === 0);
         if (active && parsed === false) setDiagnostic(`${languageLabels.diagramRenderFailed}${languageLabels.diagramSyntaxInvalid}`);
       } catch (error) {
         if (active) onRenderError(error);
@@ -424,10 +448,23 @@ function ConversationMermaidNode(props: ComponentProps<typeof MermaidBlockNode>)
   }, [languageLabels.diagramRenderFailed, languageLabels.diagramRuntimeUnavailable, languageLabels.diagramSyntaxInvalid, onRenderError, props.node.code, streaming]);
   return (
     <div ref={containerRef} className="session-code-block session-mermaid-block" data-error={diagnostic ? 'true' : undefined} aria-busy={streaming || undefined}>
-      <ConversationMarkdownCopyButton label={languageLabels.copyDiagram} copiedLabel={languageLabels.copied} text={props.node.code} />
-      {/* 主题变化时重建图形状态，避免上游复用仅按源码缓存的旧 SVG。 */}
-      <MermaidBlockNode key={isDark ? 'dark' : 'light'} {...props} node={node} loading={streaming} isDark={isDark} onRenderError={onRenderError} />
-      {diagnostic ? (
+      <div className="session-mermaid-toolbar">
+        <span>{languageLabels.diagram}</span>
+        {/* 为已有缩放控件保留同行位置，由图表范围内的 CSS 锚点定位。 */}
+        {!showSource && !diagnostic ? <span className="session-mermaid-zoom-slot" aria-hidden="true" /> : null}
+        {/* 查看源码不改变图形内容；语法错误时直接显示源码与原因。 */}
+        {!diagnostic ? (
+          <button type="button" onClick={() => setShowSource((current) => !current)}>
+            {showSource ? languageLabels.showDiagramPreview : languageLabels.showDiagramSource}
+          </button>
+        ) : null}
+        <ConversationMarkdownCopyButton label={languageLabels.copyDiagram} copiedLabel={languageLabels.copied} text={props.node.code} />
+      </div>
+      <div className="session-mermaid-preview" data-default-theme={useDefaultTheme} hidden={showSource || Boolean(diagnostic)}>
+        {/* 主题变化时重建图形状态，避免上游复用仅按源码缓存的旧 SVG。 */}
+        <MermaidBlockNode key={isDark ? 'dark' : 'light'} {...props} node={node} loading={streaming} isDark={isDark} showHeader={false} onRenderError={onRenderError} />
+      </div>
+      {showSource || diagnostic ? (
         <pre>
           <code>{props.node.code}</code>
         </pre>

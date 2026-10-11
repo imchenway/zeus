@@ -2720,12 +2720,14 @@
 /* 图表只保留一层主题外壳，不依赖库内未定义的圆角变量或再套源码卡片。 */
 .session-codex-parity-v1 .session-conversation-markdown .session-mermaid-block {
   --ms-radius: 8px;
+  anchor-scope: --session-mermaid-zoom;
   background: var(--session-code);
   border: 1px solid var(--session-line);
   border-radius: 12px;
   box-sizing: border-box;
   margin-block: 12px;
   overflow: hidden;
+  position: relative;
 }
 
 .session-codex-parity-v1 .session-mermaid-block .mermaid-block {
@@ -2735,28 +2737,160 @@
   box-shadow: none;
   color: inherit;
   margin: 0;
+  overflow: visible;
 }
 
-/* 标题、源码和图形共用同一背景；右侧为已有源码复制按钮留出空间。 */
-.session-codex-parity-v1 .session-mermaid-block .mermaid-block-header {
-  background: transparent;
-  border-block-end: 1px solid var(--session-line-soft);
+/* 工具栏沿用会话操作的密度，标题让位给正文，操作集中在右侧。 */
+.session-codex-parity-v1 .session-mermaid-toolbar {
+  align-items: center;
   color: var(--session-text-muted);
-  padding: 10px 48px 10px 14px;
+  display: flex;
+  font-size: 12px;
+  gap: 4px;
+  min-block-size: 34px;
+  padding: 4px 8px 4px 14px;
 }
 
-.session-codex-parity-v1 .session-mermaid-block .mermaid-block-header :where(span) {
+.session-codex-parity-v1 .session-mermaid-toolbar > span:first-child {
+  flex: 1;
+  font-weight: 500;
+}
+
+/* 锚点仅属于当前图表，缩放沿用组件状态并与源码、复制保持同行。 */
+.session-codex-parity-v1 .session-mermaid-toolbar > .session-mermaid-zoom-slot {
+  anchor-name: --session-mermaid-zoom;
+  block-size: 28px;
+  flex: 0 0 104px;
+}
+
+.session-codex-parity-v1 .session-mermaid-block .session-mermaid-toolbar > button {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
   color: inherit;
-  font-family: inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+  font: inherit;
+  min-block-size: 28px;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
+.session-codex-parity-v1 .session-mermaid-block .session-mermaid-toolbar > .session-copy-button {
+  padding: 0;
+}
+
+.session-codex-parity-v1 .session-mermaid-toolbar > button:hover {
+  background: var(--session-control-hover);
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .session-mermaid-toolbar > button:focus-visible {
+  box-shadow: 0 0 0 3px var(--session-focus);
+  outline: 0;
+}
+
+.session-codex-parity-v1 .session-mermaid-toolbar .session-copy-button > svg {
+  block-size: 16px;
+  inline-size: 16px;
+}
+
+/* 图形与边框留出稳定留白，缩放操作通过锚点放入顶部工具栏。 */
+.session-codex-parity-v1 .session-mermaid-preview {
+  padding: 8px 14px 14px;
+}
+
+/* 控件与锚点共用卡片定位容器，图形自身的拖动视口继续独立裁切。 */
+.session-codex-parity-v1 .session-mermaid-preview .mermaid-block .relative:has(> .absolute > div > button) {
+  position: static;
+}
+
+.session-codex-parity-v1 .session-mermaid-preview .mermaid-block .relative > .absolute:has(button) {
+  border: 0;
+  border-radius: 6px;
+  color: var(--session-text-muted);
+  background: transparent;
+  font-size: 12px;
+  inset: auto;
+  left: anchor(left);
+  position-anchor: --session-mermaid-zoom;
+  top: anchor(top);
+}
+
+.session-codex-parity-v1 .session-mermaid-preview .mermaid-block .relative > .absolute:has(button) > div {
+  gap: 0;
+}
+
+.session-codex-parity-v1 .session-mermaid-preview .mermaid-block .relative > .absolute:has(button) button {
+  box-sizing: border-box;
+  color: inherit;
+  font: inherit;
+  min-block-size: 28px;
+  min-inline-size: 28px;
+  padding: 4px 6px;
+}
+
+.session-codex-parity-v1 .session-mermaid-preview .mermaid-block .relative > .absolute:has(button) button:last-child {
+  min-inline-size: 48px;
 }
 
 .session-codex-parity-v1 .session-mermaid-block .mermaid-block > :not(.mermaid-block-header) :where(.bg-gray-50, .bg-gray-900) {
   background: transparent;
 }
 
-/* 图形按实际比例占用高度，完整展示长流程，短图不保留固定的空白区域。 */
+/* 高度直接由 SVG 的 viewBox 决定，避免内部估算与高度动画留下裁切或空白。 */
 .session-codex-parity-v1 .session-mermaid-block .mermaid-block div:has(> [data-mermaid-wrapper]) {
+  height: auto !important;
   min-block-size: 0;
+  transition: none;
+}
+
+.session-codex-parity-v1 .session-mermaid-preview [data-mermaid-wrapper] {
+  inset: auto;
+  position: relative;
+}
+
+/* 库内动态 SVG ID 优先级高，覆盖默认色时须使用 important；源码显式样式仍优先生效。 */
+.session-codex-parity-v1 .session-mermaid-preview[data-default-theme='true'] .node :is(rect, path, polygon, circle, ellipse).label-container:not([style*='fill:']),
+.session-codex-parity-v1 .session-mermaid-preview[data-default-theme='true'] .node .label-container path:not([style*='fill:']),
+.session-codex-parity-v1 .session-mermaid-preview[data-default-theme='true'] rect:is(.actor, .note):not([style*='fill:']) {
+  fill: color-mix(in srgb, var(--session-canvas) 96%, var(--session-text) 4%) !important;
+}
+
+.session-codex-parity-v1 .session-mermaid-preview[data-default-theme='true'] .node :is(rect, path, polygon, circle, ellipse).label-container:not([style*='stroke:']),
+.session-codex-parity-v1 .session-mermaid-preview[data-default-theme='true'] .node .label-container path:not([style*='stroke:']),
+.session-codex-parity-v1 .session-mermaid-preview[data-default-theme='true'] .cluster rect:not([style*='stroke:']),
+.session-codex-parity-v1 .session-mermaid-preview[data-default-theme='true'] rect:is(.actor, .note):not([style*='stroke:']) {
+  stroke: var(--session-text-muted) !important;
+}
+
+.session-codex-parity-v1 .session-mermaid-preview[data-default-theme='true'] .node rect.label-container:not([rx]) {
+  rx: 6px;
+  ry: 6px;
+}
+
+/* 分组保留透明背景与浅色细实线，只表达源码已有的范围。 */
+.session-codex-parity-v1 .session-mermaid-preview[data-default-theme='true'] .cluster rect:not([style*='fill:']) {
+  fill: transparent !important;
+}
+
+.session-codex-parity-v1 .session-mermaid-preview[data-default-theme='true'] .cluster rect:not([style*='stroke:']):not([style*='stroke-dasharray:']) {
+  stroke: var(--session-line) !important;
+}
+
+.session-codex-parity-v1 .session-mermaid-preview[data-default-theme='true'] .cluster rect {
+  rx: 8px;
+  ry: 8px;
+}
+
+.session-codex-parity-v1 .session-mermaid-preview[data-default-theme='true'] .flowchart-link:not([style*='stroke:']) {
+  stroke: var(--session-text-muted) !important;
+}
+
+.session-codex-parity-v1 .session-mermaid-preview[data-default-theme='true'] .node text:not([style*='fill:']):not([style*='color:']),
+.session-codex-parity-v1 .session-mermaid-preview[data-default-theme='true'] .cluster-label text:not([style*='fill:']):not([style*='color:']),
+.session-codex-parity-v1 .session-mermaid-preview[data-default-theme='true'] text:is(.actor, .noteText, .messageText):not([style*='fill:']):not([style*='color:']) {
+  fill: var(--session-text) !important;
 }
 
 /* 源码视图沿用卡片的边界，长行仍在卡片内部滚动。 */
@@ -2770,11 +2904,6 @@
 
 .session-codex-parity-v1 .session-conversation-markdown .session-mermaid-block > pre {
   padding: 14px;
-}
-
-/* 错误提示与完整源码取代空白图形；上游仍可响应后续正文修正。 */
-.session-codex-parity-v1 .session-mermaid-block[data-error='true'] .mermaid-block > :not(.mermaid-block-header) {
-  display: none;
 }
 
 .session-codex-parity-v1 .session-conversation-markdown .session-mermaid-block .session-markdown-code-truncated {
