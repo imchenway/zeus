@@ -43,7 +43,7 @@ export interface UsageOverviewService {
   readAnalytics(input: { range: CodexUsageRange; projectId?: string | null; model?: string | null }): Promise<UsageAnalyticsSnapshot>;
 }
 
-/** 菜单栏只聚合 Zeus 实际记录到的供应源，不把不同计费口径强行相加。 */
+/** 菜单栏只聚合仍有效的已记录供应源；用量详情继续保留完整历史。 */
 export function createUsageOverviewService(options: CreateUsageOverviewServiceOptions): UsageOverviewService {
   const now = options.now ?? (() => new Date());
 
@@ -80,6 +80,8 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
         }
         return provider;
       })
+      // 概览只展示当前供应商，移除连接不删除用于历史统计的账本。
+      .filter((provider) => !provider.deleted)
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
     const snapshot: UsageOverviewSnapshot = { providers, providerCoverage: 'all-recorded', updatedAt: readAt.toISOString() };
     overviewCache = revision === null ? undefined : { key, snapshot };
