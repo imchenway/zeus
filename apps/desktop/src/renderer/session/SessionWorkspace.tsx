@@ -208,6 +208,8 @@ export interface SessionWorkspaceActions {
   onRemoveAttachment?: (attachment: NativeConversationAttachment) => void;
   onEditQueuedSubmission?: (submissionId: string, content: string, attachments: NativeConversationAttachment[]) => void | Promise<void>;
   onRetryQueuedSubmission?: (submissionId: string) => void | Promise<void>;
+  /** 网络失败停止后，只续跑用户明确选择的最新轮次。 */
+  onRetryFailedTurn?: (providerTurnId: string) => void | Promise<void>;
   onRetryPendingSend?: (clientUserMessageId: string, intent: 'check' | 'continue') => void | Promise<void>;
   onCancelPendingSend?: (clientUserMessageId: string) => void | Promise<void>;
   onRerouteQueuedSubmission?: (submissionId: string, settings: NativeNextTurnSettings) => void | Promise<void>;
@@ -836,6 +838,7 @@ export function createConnectedSessionActions(input: { controller: SessionContro
   };
   return {
     onReconnect: () => settle(input.controller.reconnect()),
+    onRetryFailedTurn: (providerTurnId) => input.controller.retryFailedTurn(providerTurnId).then(() => undefined),
     onDraftChange: input.controller.setDraft,
     onSubmit: (delivery, settings) => {
       const currentState = input.controller.getState();
@@ -2862,6 +2865,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     }
                     onOpenAiSettings={actions.onOpenAiSettings}
                     onRecoverQueue={transcriptInteractionsEnabled ? actions.onRecoverQueue : undefined}
+                    onReconnect={transcriptInteractionsEnabled ? actions.onReconnect : undefined}
+                    onRetryFailedTurn={transcriptInteractionsEnabled ? actions.onRetryFailedTurn : undefined}
                     onReconnectCodex={transcriptInteractionsEnabled ? actions.onReconnectCodex : undefined}
                     onInterrupt={!props.historyOnly && actions.onInterrupt ? actions.onInterrupt : undefined}
                     onRetryQueuedSubmission={transcriptInteractionsEnabled ? actions.onRetryQueuedSubmission : undefined}

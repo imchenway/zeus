@@ -699,8 +699,14 @@ function MessageLayoutQa() {
   const longOutput = parameters.has('long-output');
   /** 连接场景沿用生产提示，对照执行文字及原位失败恢复。 */
   const connecting = parameters.has('connecting');
+  /** 预览官方连接事件对应的生产状态与失败后的原位续跑入口。 */
+  const providerConnecting = parameters.has('provider-connection');
+  /** 单轮恢复计数可逐项推进，固定总数与产品一致。 */
+  const [providerRetryAttempt, setProviderRetryAttempt] = useState(1);
+  /** 第五次失败后转为停止，点击生产重试入口再进入连接状态。 */
+  const [providerConnectionFailed, setProviderConnectionFailed] = useState(parameters.has('connection-failed'));
   /** 直接展示时间线的场景使用与应用相同的有限滚动视口。 */
-  const directTranscript = links || processPaging || outputPaging || longOutput || connecting || deferredCommand || activityFile;
+  const directTranscript = links || processPaging || outputPaging || longOutput || connecting || providerConnecting || deferredCommand || activityFile;
   /** 首段和末尾标记用于确认没有截断、重复或缺失正文。 */
   const fullOutput = useMemo(
     () => (outputPaging || longOutput ? `${Array.from({ length: 1200 }, (_, index) => `输出第 ${index + 1} 行：${'连续阅读命令输出。'.repeat(10)}`).join('\n')}\n命令输出末尾标记` : '阶段检查通过'),
@@ -1200,6 +1206,19 @@ function MessageLayoutQa() {
     },
     terminalTurnIds: active ? {} : { 'qa-layout-turn': status },
   };
+  if (providerConnecting) {
+    /** 使用生产轮次错误结构，不从预览文案推断停止状态。 */
+    const turn = state.turnsByProviderId['qa-layout-turn']!;
+    turn.status = providerConnectionFailed ? 'failed' : 'running';
+    turn.error = providerConnectionFailed ? { category: 'network', code: 'ZEUS_SESSION_CONNECTION_RETRIES_EXHAUSTED', message: '连接重试五次均失败，会话已停止。请检查网络后重试。', providerStatus: 'failed', additionalDetails: [] } : null;
+    state.providerReconnectAttempt = providerConnectionFailed ? 0 : providerRetryAttempt;
+    state.providerReconnectAttempts = 5;
+    state.providerReconnectTurnId = providerConnectionFailed ? null : 'qa-layout-turn';
+    state.activeTurnId = providerConnectionFailed ? null : 'qa-layout-turn';
+    state.conversationState = providerConnectionFailed ? 'turn_failed' : 'active_prework';
+    state.terminalTurnIds = providerConnectionFailed ? { 'qa-layout-turn': 'failed' } : {};
+    state.snapshot = { id: state.conversationId, turns: [turn] } as NativeSessionState['snapshot'];
+  }
   /** 本场景只提供分页元数据；消息仍由上方生产时间线状态承载。 */
   if (processPaging)
     state.snapshot = {
@@ -1247,6 +1266,7 @@ function MessageLayoutQa() {
             子智能体
           </Button>
           <Button onClick={checkLayout}>检查耗时入口</Button>
+          {providerConnecting ? <Button onClick={() => (providerRetryAttempt < 5 ? setProviderRetryAttempt(providerRetryAttempt + 1) : setProviderConnectionFailed(true))}>下一次连接失败</Button> : null}
           {processGroups ? <Button onClick={() => void checkProcessContent().catch((error: unknown) => setLinkResult(String(error)))}>检查过程内容</Button> : null}
           {processGroups ? <Button onClick={() => setExtraOperation((value) => !value)}>{extraOperation ? '移除运行操作' : '新增运行操作'}</Button> : null}
           {replyTransition ? <Button onClick={() => setReplyText((text) => (text ? `${text}\n\n正文继续输出，过程入口保持原状态。` : '最终正文已经开始输出，轮次仍在运行。'))}>{replyText ? '继续输出正文' : '开始输出正文'}</Button> : null}
@@ -1261,6 +1281,14 @@ function MessageLayoutQa() {
             state={state}
             language={parameters.has('en') ? 'en-US' : 'zh-CN'}
             transcriptHydrated
+            onRetryFailedTurn={
+              providerConnecting
+                ? async () => {
+                    setProviderRetryAttempt(1);
+                    setProviderConnectionFailed(false);
+                  }
+                : undefined
+            }
             creationStatus={
               connectionState
                 ? {
