@@ -1,14 +1,12 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
-import { CaretRightIcon as CaretRight } from '@phosphor-icons/react/dist/csr/CaretRight';
 import type { DigitalTeamWorkflowTemplateRecord } from '@zeus/shared';
 import type { NativeConversationChoice } from '../../session/sessionTypes.js';
 import { Button } from '../../ui/Button.js';
 import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { MenuSurface } from '../../ui/MenuSurface.js';
 import { MotionPresence } from '../../ui/MotionPresence.js';
-import { ZeusSelect } from '../../ZeusSelect.js';
 import { DigitalEmployeeAvatar } from './DigitalEmployeeAvatar.js';
 import type { DigitalEmployeeRecord, TaskWorkItemRecord } from './digitalEmployeeContracts.js';
 import type { DigitalTeamRunProjection } from '../digital-teams/digitalTeamApiClient.js';
@@ -78,32 +76,16 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
   const [waitingFor, setWaitingFor] = useState<TaskConversationEntry | null>(null);
   /** 新讨论继续使用原输入框和草稿。 */
   const [creating, setCreating] = useState(false);
-  /** 首次打开终态任务可看结果，之后进度变化不切走正在阅读的内容。 */
-  const [viewingResults, setViewingResults] = useState(props.readOnly);
   /** 读取错误只属于当前目标。 */
   const [error, setError] = useState<unknown>(null);
   /** 重试只重读当前会话。 */
   const [retry, setRetry] = useState(0);
-  /** 容器宽度决定侧栏是否占据正文宽度。 */
-  const [narrow, setNarrow] = useState(false);
-  /** 窄面板的成员浮层由明确按钮打开。 */
-  const [navigationOpen, setNavigationOpen] = useState(false);
-  /** 同员工的分工只在名字下展开。 */
-  const [expanded, setExpanded] = useState<string | null>(null);
   /** 菜单位置只来自当前触发按钮。 */
   const [menu, setMenu] = useState<{ left: number; top: number } | null>(null);
   /** 菜单保留在所属模态区域内。 */
   const menuHost = useRef<HTMLElement | null>(null);
-  /** 可访问关系使用组件实例的稳定身份。 */
-  const navigationId = useId();
   /** 更多菜单与触发按钮的可访问关联。 */
   const menuId = useId();
-  /** 观察实际会话区，不依赖整个窗口大小。 */
-  const paneRef = useRef<HTMLElement>(null);
-  /** 窄窗口成员层从真实工具栏下方开始，按钮换行后不会遮挡操作。 */
-  const toolbarRef = useRef<HTMLElement>(null);
-  /** 收起成员层后将键盘焦点交回原入口。 */
-  const navigationTrigger = useRef<HTMLButtonElement>(null);
   /** 轮询更新回调不重复选择当前会话。 */
   const selectRef = useRef(props.onSelect);
   selectRef.current = props.onSelect;
@@ -145,39 +127,15 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
   const hasWork = Boolean(props.teams.length || props.items.length || props.pendingAssignment);
   /** 历史记录不会修改顶部任务状态。 */
   const historical = Boolean(group.team && (!isCurrentTaskTeam(group.team) || group.id !== initialGroup.id));
-  /** 宽面板展示成员，窄面板按需覆盖。 */
-  const showNavigation = hasWork && (!narrow || navigationOpen);
   /** 空任务不显示无内容的工具栏。 */
   const emptyTask = !hasWork && !props.conversations.length && !props.loading && !props.error;
   /** 新建与首次讨论复用同一个原输入组件。 */
   const showingNew = !props.readOnly && Boolean(props.newWorkspace) && (creating || emptyTask);
   /** 成果仅属于有真实工作来源的条目。 */
   const canReadResults = Boolean(selected && props.renderResults && (selected.workRunIds?.length || selected.attemptIds?.length));
-  /** 切换结果视图不卸载原会话，返回后保留阅读位置与草稿。 */
-  const showingResults = viewingResults && canReadResults && !showingNew;
   /** 受阻原因沿用团队权威展示。 */
   const blocker = group.team ? getDigitalTeamRunBlocker(group.team, zh) : null;
 
-  useEffect(() => {
-    if (!paneRef.current) return;
-    /** 原有 880px 边界依据实际会话容器。 */
-    const observer = new ResizeObserver((entries) => {
-      /** 面板宽度和工具栏高度分别观察，侧栏不依赖固定行高。 */
-      const pane = entries.find((entry) => entry.target === paneRef.current);
-      if (pane) setNarrow(pane.contentRect.width < 880);
-      paneRef.current?.style.setProperty('--task-conversation-toolbar-height', `${toolbarRef.current?.offsetHeight ?? 0}px`);
-    });
-    observer.observe(paneRef.current);
-    if (toolbarRef.current) observer.observe(toolbarRef.current);
-    return () => observer.disconnect();
-  }, [emptyTask]);
-  /** 成员浮层打开后可直接用键盘选人，Escape 和选择完成后回到原入口。 */
-  useEffect(() => {
-    if (!narrow || !navigationOpen) return;
-    /** 先聚焦正在查看的成员，再退回第一个真实导航入口。 */
-    const navigation = paneRef.current?.querySelector('.task-conversation-navigation');
-    (navigation?.querySelector<HTMLElement>('button[aria-current="true"]') ?? navigation?.querySelector<HTMLElement>('button'))?.focus({ preventScroll: true });
-  }, [narrow, navigationOpen]);
   useEffect(() => {
     if (!groupId && props.loading) return;
     if (!groupId) setGroupId(group.id);
@@ -204,7 +162,6 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
     setWaitingFor(null);
     setTarget(props.conversationRequest.conversationId);
     setCreating(false);
-    setViewingResults(false);
   }, [groups, props.conversationRequest]);
   useEffect(() => {
     if ((creating || lastShowingNew.current) && props.activeConversationId && props.activeConversationId !== lastActive.current) {
@@ -212,7 +169,6 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
       setMemberId(null);
       setTarget(props.activeConversationId);
       setCreating(false);
-      setViewingResults(false);
     }
     lastActive.current = props.activeConversationId;
     lastShowingNew.current = showingNew;
@@ -233,14 +189,9 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
   /** 点击员工只选择原会话，绝不调用指派或重跑。 */
   function selectEntry(entry: TaskConversationEntry, employeeId: string): void {
     setCreating(false);
-    setViewingResults(false);
     setMemberId(employeeId);
     setWaitingFor(entry.conversationId ? null : entry);
     setTarget(entry.conversationId);
-    if (narrow) {
-      setNavigationOpen(false);
-      navigationTrigger.current?.focus();
-    }
   }
   /** 切换执行历史后从该记录的真实分工定位，不改变执行状态。 */
   function selectGroup(id: string): void {
@@ -249,8 +200,6 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
     setMemberId(null);
     setWaitingFor(null);
     setCreating(false);
-    setViewingResults(false);
-    setExpanded(null);
   }
   /** 普通讨论入口一直可达，没有讨论时只显示原新建输入框。 */
   function openDiscussion(): void {
@@ -261,9 +210,6 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
       setMemberId(null);
       setWaitingFor(null);
       setCreating(!props.readOnly);
-      setViewingResults(false);
-      setNavigationOpen(false);
-      navigationTrigger.current?.focus();
     }
   }
   /** 状态携带原错误入口，不在会话上方堆叠警告卡片。 */
@@ -275,14 +221,12 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
       <span data-status={entry.status}>{taskConversationStatus(entry.status, zh)}</span>
     );
   }
-  /** 员工与团队主会话使用同一层级，分工在原员工下展开。 */
+  /** 员工与团队主会话使用同一层级，多份分工直接列在姓名下。 */
   function renderMember(member: TaskConversationEmployeeGroup): ReactNode {
     /** 当前工作和原创建时间已经在导航派生时排序。 */
     const first = member.entries[0];
     /** 多份分工只增加一层原记录。 */
     const multiple = member.entries.length > 1;
-    /** 展开状态必须包含团队执行身份。 */
-    const memberKey = group.id + ':' + member.id;
     return (
       <li key={member.id} className="task-conversation-member" data-selected={!creating && selectedMember?.id === member.id}>
         <div className="task-conversation-member-heading">
@@ -293,21 +237,9 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
               <small title={first.title}>{first.title}</small>
             </span>
           </button>
-          {multiple ? (
-            <button
-              data-icon-tooltip={expanded === memberKey ? (zh ? '收起分工记录' : 'Collapse assignments') : zh ? '展开分工记录' : 'Expand assignments'}
-              type="button"
-              className="task-conversation-member-expand"
-              aria-label={zh ? `${member.employee?.name ?? first.title}的分工记录` : `Assignments for ${member.employee?.name ?? first.title}`}
-              aria-expanded={expanded === memberKey}
-              onClick={() => setExpanded(expanded === memberKey ? null : memberKey)}
-            >
-              {expanded === memberKey ? <CaretDown aria-hidden="true" /> : <CaretRight aria-hidden="true" />}
-            </button>
-          ) : null}
         </div>
         <div className="task-conversation-member-status">{entryStatus(first)}</div>
-        {multiple && expanded === memberKey ? (
+        {multiple ? (
           <ul className="task-conversation-member-records">
             {member.entries.map((entry) => (
               <li key={entry.conversationId ?? entry.attemptIds?.[0] ?? entry.workRunIds?.[0] ?? entry.workItemIds?.[0] ?? entry.nodeIds?.[0]}>
@@ -323,7 +255,7 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
       </li>
     );
   }
-  /** 低频动作使用真正的菜单，选择器仅用于执行历史和多条讨论。 */
+  /** 低频动作使用真正的菜单，执行历史和多条讨论直接显示为导航。 */
   const menuOptions = [
     ...(!props.readOnly && props.newWorkspace ? [{ value: creating ? 'back' : 'new', label: creating ? (zh ? '返回会话' : 'Back to conversation') : zh ? '新建会话' : 'New conversation' }] : []),
     ...(group.team && props.onOpenTeamRun ? [{ value: 'run', label: zh ? '查看分工' : 'View assignments' }] : []),
@@ -331,90 +263,69 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
     ...(props.onReload ? [{ value: 'reload', label: zh ? '刷新会话' : 'Reload conversations' }] : []),
   ];
   return (
-    <section ref={paneRef} className="task-conversation-pane task-conversation-layout" data-navigation-open={showNavigation} data-narrow={narrow} data-empty={emptyTask} aria-label={zh ? '任务沟通' : 'Task conversations'}>
-      <aside
-        id={navigationId}
-        className="task-conversation-navigation"
-        aria-label={zh ? '执行人与任务讨论' : 'Employees and task discussions'}
-        hidden={!showNavigation}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape' && narrow) {
-            event.stopPropagation();
-            setNavigationOpen(false);
-            navigationTrigger.current?.focus();
-          }
-        }}
-      >
-        <h3>{zh ? '执行人' : 'Employees'}</h3>
-        <strong className="task-conversation-team-name">{group.team ? group.name : zh ? '独立工作' : 'Individual work'}</strong>
-        <div className="task-conversation-execution-caption">
-          {group.team ? (
-            <>
-              <time dateTime={group.team.run.createdAt}>{new Date(group.team.run.createdAt).toLocaleString(props.language, { dateStyle: 'short', timeStyle: 'short' })}</time>
-              {blocker ? <VisibleApplicationError error={blocker.reason} summary={digitalTeamRunStatusLabel(group.team.run, zh)} language={zh ? 'zh-CN' : 'en'} /> : <span>{digitalTeamRunStatusLabel(group.team.run, zh)}</span>}
-            </>
-          ) : null}
-          {historical ? <strong>{zh ? '历史' : 'History'}</strong> : null}
-        </div>
-        <ul className="task-conversation-members">{group.employees.filter((member) => member.employee || group.team).map(renderMember)}</ul>
-        {!group.employees.length && props.loading ? <p className="task-conversation-navigation-empty">{zh ? '正在读取分工…' : 'Loading assignments…'}</p> : null}
-        <nav className="task-conversation-navigation-actions" aria-label={zh ? '讨论与执行记录' : 'Discussions and executions'}>
-          <button type="button" aria-current={group.id === independentConversationGroupId && !selectedMember?.employee ? 'true' : undefined} onClick={openDiscussion}>
-            {zh ? '任务讨论' : 'Task discussion'}
-          </button>
-          {discussionGroup.employees.some((member) => member.employee) && group.id !== independentConversationGroupId ? (
-            <button type="button" onClick={() => selectGroup(independentConversationGroupId)}>
-              {zh ? '独立工作' : 'Individual work'}
+    <section className="task-conversation-pane task-conversation-layout" data-has-work={hasWork} data-reading={Boolean(target) && !showingNew} data-empty={emptyTask} aria-label={zh ? '任务沟通' : 'Task conversations'}>
+      {hasWork ? (
+        <aside className="task-conversation-navigation" aria-label={zh ? '执行人与任务讨论' : 'Employees and task discussions'}>
+          <h3>{zh ? '执行人' : 'Employees'}</h3>
+          <strong className="task-conversation-team-name">{group.team ? group.name : zh ? '独立工作' : 'Individual work'}</strong>
+          <div className="task-conversation-execution-caption">
+            {group.team ? (
+              <>
+                <time dateTime={group.team.run.createdAt}>{new Date(group.team.run.createdAt).toLocaleString(props.language, { dateStyle: 'short', timeStyle: 'short' })}</time>
+                {blocker ? <VisibleApplicationError error={blocker.reason} summary={digitalTeamRunStatusLabel(group.team.run, zh)} language={zh ? 'zh-CN' : 'en'} /> : <span>{digitalTeamRunStatusLabel(group.team.run, zh)}</span>}
+              </>
+            ) : null}
+            {historical ? <strong>{zh ? '历史' : 'History'}</strong> : null}
+          </div>
+          <ul className="task-conversation-members">{group.employees.filter((member) => member.employee || group.team).map(renderMember)}</ul>
+          {!group.employees.length && props.loading ? <p className="task-conversation-navigation-empty">{zh ? '正在读取分工…' : 'Loading assignments…'}</p> : null}
+          <nav className="task-conversation-navigation-actions" aria-label={zh ? '讨论与执行记录' : 'Discussions and executions'}>
+            <button type="button" aria-current={group.id === independentConversationGroupId && !selectedMember?.employee ? 'true' : undefined} onClick={openDiscussion}>
+              {zh ? '任务讨论' : 'Task discussion'}
             </button>
-          ) : null}
-          {props.teams.length > 1 || (props.teams.length && !group.team) ? (
-            <ZeusSelect
-              size="compact"
-              ariaLabel={zh ? '选择执行历史' : 'Choose execution history'}
-              value={group.team?.run.id ?? ''}
-              triggerLabel={zh ? '执行历史' : 'Execution history'}
-              options={groups.filter((entry) => entry.team).map((entry) => ({ value: entry.id, label: entry.name, description: entry.description }))}
-              onChange={selectGroup}
-            />
-          ) : null}
-        </nav>
-      </aside>
+            {discussionGroup.employees.some((member) => member.employee) && group.id !== independentConversationGroupId ? (
+              <button type="button" onClick={() => selectGroup(independentConversationGroupId)}>
+                {zh ? '独立工作' : 'Individual work'}
+              </button>
+            ) : null}
+            {props.teams.length ? (
+              <div className="task-conversation-history">
+                <h3>{zh ? '执行历史' : 'Execution history'}</h3>
+                {groups
+                  .filter((entry) => entry.team)
+                  .map((entry) => (
+                    <button key={entry.id} type="button" aria-current={group.id === entry.id ? 'true' : undefined} onClick={() => selectGroup(entry.id)}>
+                      <strong>{entry.name}</strong>
+                      <small>{entry.description}</small>
+                    </button>
+                  ))}
+              </div>
+            ) : null}
+          </nav>
+        </aside>
+      ) : null}
       <div className="task-conversation-main">
         {!emptyTask ? (
-          <header ref={toolbarRef} className="task-conversation-selector">
-            {hasWork && narrow ? (
-              <Button ref={navigationTrigger} variant="secondary" size="compact" aria-expanded={showNavigation} aria-controls={navigationId} onClick={() => setNavigationOpen(!showNavigation)}>
-                {zh ? '团队成员' : 'Team members'}
-              </Button>
-            ) : null}
+          <header className="task-conversation-selector">
             <div className="task-conversation-current" title={selected?.title}>
               {!showingNew && selectedMember?.employee ? <DigitalEmployeeAvatar {...selectedMember.employee} /> : null}
               <div>
                 <strong>{showingNew ? (zh ? '新建会话' : 'New conversation') : (selectedMember?.employee?.name ?? (group.team ? group.name : zh ? '任务讨论' : 'Task discussion'))}</strong>
-                {!showingNew && selected ? <span>{selected.title}</span> : null}
+                {!showingNew && selected && (selectedMember?.employee || discussions.length > 1) ? <span>{selected.title}</span> : null}
                 {historical && !showingNew ? <small>{zh ? '历史' : 'History'}</small> : null}
+                {!showingNew && selected && selectedMember?.employee ? (
+                  <div className="task-conversation-work-state">
+                    {entryStatus(selected)}
+                    {group.team && props.onOpenTeamRun ? (
+                      <button type="button" onClick={() => props.onOpenTeamRun?.(group.team!.run.id)}>
+                        {zh ? '查看分工' : 'View assignment'}
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             </div>
-            {!showingNew && !selectedMember?.employee && group.id === independentConversationGroupId && discussions.length > 1 ? (
-              <ZeusSelect
-                className="task-conversation-discussion-select"
-                size="compact"
-                ariaLabel={zh ? '切换任务会话' : 'Switch task conversation'}
-                value={target ?? ''}
-                triggerLabel={zh ? '切换会话' : 'Switch conversation'}
-                options={discussions.map((entry) => ({ value: entry.conversationId!, label: entry.title, description: new Date(entry.createdAt).toLocaleString(props.language) }))}
-                onChange={(id) => {
-                  const entry = discussions.find((record) => record.conversationId === id);
-                  if (entry) selectEntry(entry, 'discussion');
-                }}
-              />
-            ) : null}
             <div className="task-conversation-actions">
-              {!showingNew && canReadResults ? (
-                <Button variant="secondary" size="compact" onClick={() => setViewingResults(!showingResults)}>
-                  {showingResults ? (zh ? '查看原会话' : 'View conversation') : zh ? '查看结果' : 'View results'}
-                </Button>
-              ) : null}
               {target && props.onOpen && !showingNew ? (
                 <Button variant="secondary" size="compact" onClick={() => props.onOpen?.(target)}>
                   {zh ? '打开会话' : 'Open conversation'}
@@ -441,6 +352,16 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
             </div>
           </header>
         ) : null}
+        {!showingNew && !selectedMember?.employee && group.id === independentConversationGroupId && discussions.length > 1 ? (
+          <nav className="task-conversation-discussions" aria-label={zh ? '任务会话' : 'Task conversations'}>
+            {discussions.map((entry) => (
+              <button key={entry.conversationId} type="button" aria-current={entry.conversationId === target ? 'true' : undefined} onClick={() => selectEntry(entry, 'discussion')}>
+                <strong>{entry.title}</strong>
+                <small>{new Date(entry.createdAt).toLocaleString(props.language, { dateStyle: 'short', timeStyle: 'short' })}</small>
+              </button>
+            ))}
+          </nav>
+        ) : null}
         <MotionPresence>
           {menu && menuHost.current
             ? createPortal(
@@ -454,7 +375,6 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
                         setMenu(null);
                         if (option.value === 'new' || option.value === 'back') {
                           setCreating(option.value === 'new');
-                          setViewingResults(false);
                         }
                         if (option.value === 'reload') props.onReload?.();
                         if (option.value === 'team') props.onArrangeTeam?.();
@@ -490,16 +410,7 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
             )}
           </div>
         ) : null}
-        {!showingNew && selected && selectedMember?.employee ? (
-          <div className="task-conversation-work-state">
-            {entryStatus(selected)}
-            {group.team && props.onOpenTeamRun ? (
-              <button type="button" onClick={() => props.onOpenTeamRun?.(group.team!.run.id)}>
-                {zh ? '查看分工' : 'View assignment'}
-              </button>
-            ) : null}
-          </div>
-        ) : null}
+
         {error ? (
           <div className="task-conversation-feedback" role="alert">
             <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
@@ -517,22 +428,21 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
             {props.newWorkspace}
           </div>
         ) : null}
-        {!showingNew && (showingResults || (target && props.activeConversationId === target && props.workspace)) ? (
+        {!showingNew && target && props.activeConversationId === target && props.workspace ? (
           <div className="task-conversation-content">
             {target && props.activeConversationId === target && props.workspace ? (
-              <div className="task-conversation-session session-codex-parity-v1" aria-hidden={showingResults || Boolean(error)} inert={showingResults || Boolean(error)}>
+              <div className="task-conversation-session session-codex-parity-v1" aria-hidden={Boolean(error)} inert={Boolean(error)}>
                 {props.workspace}
               </div>
             ) : null}
-            {showingResults && selected ? <div className="task-conversation-results">{props.renderResults?.(selected, group.team)}</div> : null}
           </div>
         ) : null}
-        {!showingNew && !showingResults && !error && target && props.activeConversationId !== target ? (
+        {!showingNew && !error && target && props.activeConversationId !== target ? (
           <p className="task-conversation-feedback" role="status">
             {zh ? '正在读取所选会话…' : 'Loading the selected conversation…'}
           </p>
         ) : null}
-        {!showingNew && !showingResults && !error && !target ? (
+        {!showingNew && !error && !target ? (
           <div className="task-conversation-empty">
             <strong>{props.loading ? (zh ? '正在读取任务会话…' : 'Loading conversations…') : selected ? selected.title : zh ? '暂无会话' : 'No conversation yet'}</strong>
             <p>
@@ -552,6 +462,11 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
         ) : null}
         {props.readOnly && !showingNew ? <p className="task-conversation-readonly">{zh ? '任务已结束，可查看结果与历史会话' : 'The task has ended. Results and conversation history remain available.'}</p> : null}
       </div>
+      {!showingNew && canReadResults && selected ? (
+        <section className="task-conversation-results" aria-label={zh ? '所选分工结果' : 'Selected assignment results'}>
+          {props.renderResults?.(selected, group.team)}
+        </section>
+      ) : null}
     </section>
   );
 }
