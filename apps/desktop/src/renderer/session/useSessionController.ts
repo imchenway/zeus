@@ -52,7 +52,8 @@ import {
 import { adaptConversationSnapshotV2, mergeConversationHistoryV2, mergeConversationProcessV2, mergeConversationTurnHistoryV2, resumeCachedConversationSnapshot, updateConversationV2Paging } from './conversationSnapshotV2Adapter.js';
 import { markConversationNavigationRenderReady } from '../performanceTraceContext.js';
 
-export const reconnectBackoffMs = [250, 500, 1_000, 2_000, 5_000] as const;
+/** 会话事件流按指数退避重试五次，单次等待小于一分钟。 */
+export const reconnectBackoffMs = [1_000, 2_000, 4_000, 8_000, 16_000] as const;
 /** 常规只读核对次数；已接收消息阻挡待发队列时继续后台核对，不重放旧消息。 */
 export const pendingSendReconcileAttempts = 5 as const;
 /** 首次后台核对前的等待时间。 */
@@ -399,6 +400,8 @@ export interface SessionController {
   /** 回答绑定原问题，独立于 Composer 普通消息草稿。 */
   answerAsyncQuestion(item: NativeSessionItemBuffer, answers: AsyncQuestionAnswer['answers'], asNewMessage?: boolean, answerAttachments?: Record<string, NativeConversationAttachment[]>): Promise<NativeOperationAcceptance | void>;
   retryPendingSend(clientUserMessageId: string, intent: 'check' | 'continue'): Promise<NativeOperationAcceptance | void>;
+  /** 已失败轮次显式续跑，保留草稿与原轮次的发送事实。 */
+  retryFailedTurn(providerTurnId: string): Promise<NativeOperationAcceptance | void>;
   cancelPendingSend(clientUserMessageId: string): Promise<void>;
   editQueuedSubmission(submissionId: string, content: string, attachments?: NativeConversationAttachment[]): Promise<NativeQueueSnapshot>;
   retryQueuedSubmission(submissionId: string): Promise<NativeQueueSnapshot>;
@@ -1775,7 +1778,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const epoch = ++reconnectLoopEpoch;
     const loop = (async () => {
       let attempt = 0;
-      while (!disposed && epoch === reconnectLoopEpoch && stateNeedsRealtime()) {
+      while (!disposed && epoch === reconnectLoopEpoch && stateNeedsRealtime() && attempt < reconnectBackoffMs.length) {
         dispatch({ type: 'transport_changed', transportState: 'reconnecting', reconnectAttempt: attempt + 1 });
         const delayMs = reconnectDelayMs(attempt + 1);
         if (!(await waitForReconnectDelay(delayMs, epoch))) return;
@@ -1783,10 +1786,17 @@ export function createSessionController(options: CreateSessionControllerOptions)
           await hydrate(true, 'required');
           if (!disposed && epoch === reconnectLoopEpoch && state.transportState === 'ready') return;
         } catch {
-          // Keep retrying with capped exponential backoff until a connection succeeds,
-          // a manual reconnect replaces this loop, or the controller is disposed.
+          // 只继续剩余预算；手动重连或销毁会话会取消当前恢复链。
         }
         attempt += 1;
+      }
+      if (!disposed && epoch === reconnectLoopEpoch && attempt === reconnectBackoffMs.length) {
+        dispatch({
+          type: 'transport_changed',
+          transportState: 'failed',
+          reconnectAttempt: attempt,
+          error: { code: 'ZEUS_SESSION_CONNECTION_RETRIES_EXHAUSTED', message: '连接重试五次均失败。请检查网络后重试。', retryable: true, recoveryRequired: false },
+        });
       }
     })();
     reconnectLoopPromise = loop;
@@ -2354,6 +2364,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
         contextDraft: envelope.contextDraft,
         browserComments: envelope.browserSubmission?.comments ?? [],
         delivery: envelope.delivery,
+        preserveComposer: Boolean(envelope.composerConsumed),
         ...(envelope.questionAnswer ? { questionAnswer: envelope.questionAnswer, preserveComposer: true } : {}),
         previousConversationState: state.conversationState,
         startedAt: envelope.startedAt ?? new Date().toISOString(),
@@ -3430,6 +3441,37 @@ export function createSessionController(options: CreateSessionControllerOptions)
       return sendOrDeferEnvelope(envelope);
     },
     retryPendingSend,
+    /** 用户点击重试后，沿用已有耐久发送链路继续最新失败请求。 */
+    async retryFailedTurn(providerTurnId) {
+      /** 先取得权威终态；旧失败卡片不能在其他轮次运行时重新派发。 */
+      await applyAuthoritativeSnapshot(await loadConversationForHydration());
+      /** 只续跑最新的明确失败，不自动重放未知送达或已完成的请求。 */
+      const turn = state.snapshot?.turns.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)).at(-1);
+      if (turn?.providerTurnId !== providerTurnId || turn.status !== 'failed' || turn.error?.category !== 'network') throw new Error('该轮次已改变，请检查当前会话后重试。');
+      if (activeOperation || deferredSends.length || state.queue?.submissions.some((submission) => ['queued', 'dispatching', 'active'].includes(submission.status)) || (pendingSend && pendingSend.deliveryState !== 'accepted'))
+        throw new Error('请先处理尚未确认的消息。');
+      /** 明确续跑原请求，要求检查已执行操作；不复制原用户消息或附件。 */
+      const content = '请从上次连接失败的中断处继续完成我的请求。先检查已经完成的操作，避免重复执行。';
+      /** 同一失败轮次的重复点击和重启复用发送身份。 */
+      const identity = `connection-retry:${providerTurnId}`;
+      return sendOrDeferEnvelope({
+        ...state.snapshot?.nextTurnSettings,
+        fingerprint: identity,
+        content,
+        displayText: '重试上次中断的请求',
+        draft: '',
+        attachments: [],
+        composerAttachments: [],
+        browserSubmission: null,
+        contextDraft: structuredClone(emptyConversationContextDraft),
+        delivery: 'queue',
+        collaborationMode: state.snapshot?.nextTurnSettings?.collaborationMode ?? state.snapshot?.collaborationMode ?? 'default',
+        idempotencyKey: identity,
+        clientUserMessageId: identity,
+        composerConsumed: true,
+        startedAt: new Date().toISOString(),
+      });
+    },
     cancelPendingSend,
     editQueuedSubmission(submissionId, content, attachments) {
       return runOperation(

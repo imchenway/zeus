@@ -164,6 +164,10 @@ export interface CodexProviderEventProjectionDependencies {
 
   /** 回复流断开后只读核对 Provider 权威状态，不自动重放原轮次。 */
   recoverProviderStreamFailure(conversationId: string, providerThreadId: string, providerTurnId: string): void;
+  /** 连接重试只投影官方失败事件，跨传输共用同一个预算。 */
+  reportProviderConnectionRetry(conversationId: string, providerThreadId: string, providerTurnId: string, error: Record<string, unknown>): Promise<void>;
+  /** Provider 真实结束后收口提示，并读取连接耗尽的产品失败原因。 */
+  finishProviderConnectionRetry(conversationId: string, providerThreadId: string, providerTurnId: string, terminal?: boolean): { attempt: number; failure: Record<string, unknown> | null } | undefined;
 
   rejectTurnResultWaiters(key: string, error: Error): void;
 
@@ -211,6 +215,8 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     recoverExternalRequestUserInputAnswer,
     recoverExternallyResolvedRequestUserInputAnswers,
     recoverProviderStreamFailure,
+    reportProviderConnectionRetry,
+    finishProviderConnectionRetry,
     rejectTurnResultWaiters,
     resolveTurnResult,
     rememberProcessedProviderEvent,
@@ -353,7 +359,16 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     }
   }
 
-  if (event.method === 'thread/goal/updated' && conversation && threadId) {
+  if (conversation && threadId && event.method.endsWith('/delta') && typeof params.delta === 'string' && params.delta.trim()) {
+    /** 去重和线程校验后的真实输出才结束提示；迟到输出不能取消已发出的停止。 */
+    const providerTurnId = providerTurnIdFrom(params);
+    if (providerTurnId) finishProviderConnectionRetry(conversation.id, threadId, providerTurnId, false);
+  }
+  if (event.method === 'error' && params.willRetry === true && conversation && threadId) {
+    /** 错误必须绑定官方 thread 与 turn，不能从当前页面猜测运行身份。 */
+    const providerTurnId = providerTurnIdFrom(params);
+    if (providerTurnId && isRecord(params.error)) await reportProviderConnectionRetry(conversation.id, threadId, providerTurnId, params.error);
+  } else if (event.method === 'thread/goal/updated' && conversation && threadId) {
     const goal = await options.manager.readThreadGoal({ threadId });
     if (goal) projectGoal(conversation.id, goal, typeof params.turnId === 'string' ? params.turnId : null, event.receivedAt);
   } else if (event.method === 'thread/goal/cleared' && conversation && threadId) {
@@ -579,18 +594,31 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     if (!turn) return;
     await recoverExternallyResolvedRequestUserInputAnswers(conversation, providerTurnId);
     if (turn.status === 'completed' || turn.status === 'interrupted' || turn.status === 'failed') return;
-    const terminalStatus = providerTurnTerminalStatus(params);
+    /** 原生中断确认后，连接预算耗尽在产品层记为失败；原生终态仍保留在错误证据中。 */
+    const connectionRetry = finishProviderConnectionRetry(conversation.id, threadId, providerTurnId);
+    /** 自然完成优先于迟到的停止请求，不把已经成功的结果改写为失败。 */
+    const terminalStatus = connectionRetry?.failure && providerTurnTerminalStatus(params) === 'interrupted' ? 'failed' : providerTurnTerminalStatus(params);
     const interrupted = terminalStatus === 'interrupted';
     const failed = terminalStatus === 'failed';
     const timestamp = event.receivedAt;
     modelRequestTiming.clear(conversation.id, turn.id);
     sessionMetricsChanged = true;
-    const failure = failed ? providerTurnFailure(params, providerTurnId) : null;
+    const failure = failed
+      ? connectionRetry?.failure
+        ? Object.assign(coordinatorError(String(connectionRetry.failure.code), String(connectionRetry.failure.message)), { providerTurnId })
+        : providerTurnFailure(params, providerTurnId)
+      : null;
     /** 同一份官方失败记录同时驱动落库、展示和会话阻塞判断。 */
-    const failureRecord = failure ? providerTurnFailureRecord(params, failure) : undefined;
+    const failureRecord = failure
+      ? {
+          ...providerTurnFailureRecord(params, failure),
+          ...(connectionRetry?.failure ?? {}),
+          ...(connectionRetry && connectionRetry.attempt >= 5 ? { code: 'ZEUS_SESSION_CONNECTION_RETRIES_EXHAUSTED', message: '连接重试五次均失败，会话已停止。请检查网络后重试。' } : {}),
+        }
+      : undefined;
     /** 外部服务类错误暂停会话；本地 Runtime 与工具错误仍保持真实失败。 */
     const providerBlocked = failureRecord ? isProviderBlockingTurnFailure(failureRecord) : false;
-    if (failure && isProviderResponseStreamDisconnected(failure)) {
+    if (!connectionRetry && failure && isProviderResponseStreamDisconnected(failure)) {
       providerStreamRecovery = { conversationId: conversation.id, providerThreadId: threadId, providerTurnId };
     }
     const turnItems = options.providerItems.listByConversation(conversation.id).filter((item) => item.turnId === turn.id);

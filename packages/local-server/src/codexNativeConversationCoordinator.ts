@@ -170,6 +170,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   const autoResolutionTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** 同一会话只运行一条回复流恢复链，避免重复事件制造并发轮询。 */
   const providerStreamRecoveryRuns = new Map<string, Promise<void>>();
+  /** 同轮次连接预算跨传输回退累计，不能因 WebSocket 改为 HTTP 重新获得五次机会。 */
+  const providerConnectionRetries = new Map<string, { providerTurnId: string; attempt: number; nativeAttempt: number; failure: Record<string, unknown> | null }>();
   // 敏感回答不能落入 submission JSON；仅在当前宿主内存中保留到新 turn 被 app-server 接受。
   const volatileSubmissionText = new Map<string, string>();
   let closing = false;
@@ -3019,6 +3021,49 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     requestQueueDrain,
   });
 
+  /** 官方重试事件负责退避；这里记录进度并限制跨传输回退的总次数。 */
+  async function reportProviderConnectionRetry(conversationId: string, providerThreadId: string, providerTurnId: string, error: Record<string, unknown>): Promise<void> {
+    /** 只有同一个真实活动轮次才能更新连接计数。 */
+    const turn = options.turns.getByProvider(providerThreadId, providerTurnId);
+    if (!turn || !['running', 'waiting'].includes(turn.status)) return;
+    /** 首次 WebSocket 重试可能不发通知，使用官方文案中的计数补齐。 */
+    const nativeAttempt = Number(typeof error.message === 'string' ? error.message.match(/Reconnecting.*?(\d+)\/\d+/iu)?.[1] : 0) || 1;
+    /** 原轮次内的传输回退不重置预算，其他轮次不会继承旧计数。 */
+    const previous = providerConnectionRetries.get(conversationId);
+    /** 网络连续失败时才累计；收到真实输出后会清空此记录。 */
+    const current = previous?.providerTurnId === providerTurnId ? previous : undefined;
+    if (current?.failure) return;
+    /** 原生计数回退代表换传输，仍只消耗当前会话的剩余次数。 */
+    const attempt = (current?.attempt ?? 0) + (nativeAttempt > (current?.nativeAttempt ?? 0) ? nativeAttempt - (current?.nativeAttempt ?? 0) : 1);
+    if (attempt > providerStreamRecoveryDelaysMs.length) {
+      /** 中断的产品原因保留到 Provider 返回真实终态，不提前伪造轮次结束。 */
+      const failure = { code: 'ZEUS_SESSION_CONNECTION_RETRIES_EXHAUSTED', message: '连接重试五次均失败，会话已停止。请检查网络后重试。', providerError: error };
+      providerConnectionRetries.set(conversationId, { providerTurnId, attempt: 5, nativeAttempt, failure });
+      await executeTurnCommand({
+        operation: 'turn_interrupt',
+        conversationId,
+        threadId: providerThreadId,
+        turnId: providerTurnId,
+        commandKey: `connection-retry-limit:${providerTurnId}`,
+        requestIdentity: { threadId: providerThreadId, turnId: providerTurnId },
+        invoke: (traceIdentity) => options.manager.interruptTurn({ threadId: providerThreadId, turnId: providerTurnId, traceIdentity }),
+      });
+      return;
+    }
+    providerConnectionRetries.set(conversationId, { providerTurnId, attempt, nativeAttempt, failure: null });
+    options.broadcast('conversation.transport.changed', { conversationId, providerThreadId, providerTurnId, recoveryState: 'reconnecting', reconnectAttempt: attempt, reconnectAttempts: 5 });
+  }
+
+  /** 真实输出或终态结束连接提示，同时交回预算耗尽时的停止原因。 */
+  function finishProviderConnectionRetry(conversationId: string, providerThreadId: string, providerTurnId: string, terminal = true): { attempt: number; failure: Record<string, unknown> | null } | undefined {
+    /** 迟到的旧轮次不能清除新轮次的连接提示。 */
+    const current = providerConnectionRetries.get(conversationId);
+    if (current?.providerTurnId !== providerTurnId || (!terminal && current.failure)) return undefined;
+    providerConnectionRetries.delete(conversationId);
+    options.broadcast('conversation.transport.changed', { conversationId, providerThreadId, providerTurnId, recoveryState: 'idle', reconnectAttempt: 0, reconnectAttempts: 5 });
+    return current;
+  }
+
   /** 等待下一次 Provider 只读核对；unref 避免退避计时阻挡服务退出。 */
   function waitForProviderStreamRecovery(delayMs: number): Promise<void> {
     return new Promise((resolve) => {
@@ -3324,6 +3369,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         recoverExternalRequestUserInputAnswer: (conversation: ZeusConversationWithMessagesRecord, request: ZeusConversationServerRequestRecord, resolvedAt: string) => externalAnswerRecovery.recover(conversation, request, resolvedAt),
         recoverExternallyResolvedRequestUserInputAnswers: (conversation: ZeusConversationWithMessagesRecord, providerTurnId?: string) => externalAnswerRecovery.recoverAll(conversation, providerTurnId),
         recoverProviderStreamFailure: scheduleProviderStreamRecovery,
+        reportProviderConnectionRetry,
+        finishProviderConnectionRetry,
         rejectTurnResultWaiters,
         resolveTurnResult,
         rememberProcessedProviderEvent,
@@ -3448,6 +3495,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       await Promise.all([acceptedProviderEventChain, activeQueueDrain, providerAuthorityClose]);
       await flushScheduledPersist();
       closed = true;
+      providerConnectionRetries.clear();
       for (const key of [...turnResultWaiters.keys()]) rejectTurnResultWaiters(key, waiterError);
     })();
     return handoffPromise;

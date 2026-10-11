@@ -1203,6 +1203,24 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     }
   }
 
+  /** 新建和恢复线程共用连接预算；关闭无限重试及内层 HTTP 重试，避免五次预算被放大。 */
+  async function connectionRetryConfig(generationId: string, cwd?: string): Promise<Record<string, unknown>> {
+    /** 读取实际 Provider，覆盖自定义来源时也不回退到默认来源。 */
+    const config = asRecord(asRecord(await retryableReadRpc(generationId, 'config/read', { includeLayers: false, ...(cwd ? { cwd } : {}) })).config);
+    /** Codex 未指定来源时使用官方默认值。 */
+    const providerId = typeof config.model_provider === 'string' && config.model_provider.trim() ? config.model_provider : 'openai';
+    return {
+      /** 网络失败也必须使用有限预算，不能无限等待网络恢复。 */
+      'features.unbounded_connection_retries': false,
+      /** 原始请求之后只允许五次连接重试。 */
+      [`model_providers.${providerId}.stream_max_retries`]: 5,
+      /** HTTP 层不再另外增加重试，统一交给原生流恢复计数。 */
+      [`model_providers.${providerId}.request_max_retries`]: 0,
+      /** 已建立的回复流最长一分钟没有输出就进入断流恢复。 */
+      [`model_providers.${providerId}.stream_idle_timeout_ms`]: 60_000,
+    };
+  }
+
   async function readGoalCapability(generationId: string): Promise<CodexCapabilitiesSnapshot['goals']> {
     try {
       const response = asRecord(await retryableReadRpc(generationId, 'experimentalFeature/list', { limit: 200 }));
@@ -1615,6 +1633,8 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     },
     async startThread(input) {
       const capabilities = await awaitCapabilities();
+      /** 重试策略只作用于 Zeus 管理的线程，不修改终端配置。 */
+      const retryConfig = await connectionRetryConfig(capabilities.generationId, input.cwd);
       /** 只有订阅目录里的模型会走这条链路，档位必须先通过 Codex 自己的目录校验。 */
       const model = requireModel(capabilities, input.model);
       validateServiceTier(model, input.serviceTier);
@@ -1639,6 +1659,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             dynamicTools: input.dynamicTools,
             // 原生线程及其子任务也不能隐式取得整个系统临时目录的写权限。
             config: {
+              ...retryConfig,
               ...contextCapacityConfig(input.contextCapacityTokens),
               'sandbox_workspace_write.exclude_tmpdir_env_var': true,
               'sandbox_workspace_write.exclude_slash_tmp': true,
@@ -1666,6 +1687,8 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     },
     async resumeThread(input) {
       const capabilities = await awaitCapabilities();
+      /** 恢复历史会话时同样关闭旧配置中的无限连接重试。 */
+      const retryConfig = await connectionRetryConfig(capabilities.generationId, input.cwd);
       /** 仅在容量变化时卸载空闲线程；保留原线程身份、历史和其他会话的运行。 */
       const previousCapacity = threadCapacities.get(input.threadId);
       const capacityChanged = previousCapacity?.generationId !== capabilities.generationId || previousCapacity.tokens !== (input.contextCapacityTokens ?? null);
@@ -1699,6 +1722,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
             excludeTurns: true,
             cwd: input.cwd,
             config: {
+              ...retryConfig,
               ...contextCapacityConfig(input.contextCapacityTokens),
               // 恢复与新建遵守同一权限和子代理上限，不能恢复旧默认值。
               'sandbox_workspace_write.exclude_tmpdir_env_var': true,

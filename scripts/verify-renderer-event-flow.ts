@@ -1,7 +1,7 @@
 import { buildPersistedSessionViewCache } from '../apps/desktop/src/renderer/session/sessionHotCache.ts';
 import { inlineResourceRequestSignature } from '../apps/desktop/src/renderer/session/conversationResourceProjection.ts';
 import { ZeusApiError } from '../apps/desktop/src/renderer/transport/localApiTransport.ts';
-import { createSessionController, type SessionControllerClient, sessionRealtimeBufferBudget } from '../apps/desktop/src/renderer/session/useSessionController.ts';
+import { createSessionController, type SessionControllerClient, sessionRealtimeBufferBudget, reconnectBackoffMs } from '../apps/desktop/src/renderer/session/useSessionController.ts';
 import { adaptConversationSnapshotV2, mergeConversationProcessV2, resumeCachedConversationSnapshot } from '../apps/desktop/src/renderer/session/conversationSnapshotV2Adapter.ts';
 import { createHydratedSessionState, createInitialSessionState, sessionReducer } from '../apps/desktop/src/renderer/session/sessionReducer.ts';
 import type { NativePlanImplementationRequest, NativeRealtimeEventEnvelope, NativeQueueSnapshot, NativeSessionState, NativeConversationEvent } from '../apps/desktop/src/renderer/session/sessionTypes.ts';
@@ -163,6 +163,8 @@ function createHarness(
   const sockets: VerifierSocket[] = [];
   const requestedAfterSequences: number[] = [];
   const connectedAfterSequences: number[] = [];
+  /** 记录实际控制器选用的退避，不引入另一套计时规则。 */
+  const reconnectDelays: number[] = [];
   const client = {
     /** 差异读取用于验证终态摘要补齐和用户重试。 */
     loadTurnChangeSet: changeSetLoader,
@@ -241,7 +243,9 @@ function createHarness(
         storedDraft = null;
       },
     },
-    reconnectDelay: async () => undefined,
+    reconnectDelay: async (delayMs) => {
+      reconnectDelays.push(delayMs);
+    },
   });
   return {
     controller,
@@ -252,6 +256,7 @@ function createHarness(
     },
     sockets,
     connectedAfterSequences,
+    reconnectDelays,
     requestedAfterSequences,
     snapshotReads: () => snapshotReads,
     sendCalls: () => sendCalls,
@@ -1169,6 +1174,83 @@ async function verifyIdleTransitionReleasesSubscription() {
   assert(harness.connectedAfterSequences.length === 1, 'Intentional idle release must not schedule a reconnect loop.');
   harness.controller.dispose();
   return { socketClosed: 1, connections: harness.connectedAfterSequences.length, transportState: 'ready' };
+}
+
+/** 验证事件流五次失败停止，恢复按钮可重新连接，已有草稿不会丢失。 */
+async function verifyConnectionRetryBudget() {
+  /** 初次连接正常，之后让实际控制器遇到连续读取失败。 */
+  const harness = createHarness();
+  await harness.controller.start();
+  harness.controller.setDraft('断网期间保留的草稿');
+  /** 恢复原读取入口后可直接验证手动重连。 */
+  const read = harness.client.loadNativeConversationReadableSnapshot;
+  /** 明确计数自动读取，避免把停止状态当作只隐藏提示。 */
+  let failedReads = 0;
+  harness.client.loadNativeConversationReadableSnapshot = async () => {
+    failedReads += 1;
+    throw new Error('network connection unavailable');
+  };
+  harness.sockets[0]!.close();
+  await waitUntil(() => harness.controller.getState().error?.code === 'ZEUS_SESSION_CONNECTION_RETRIES_EXHAUSTED', '五次连接失败停止');
+  assert(failedReads === 5, '会话连接失败只能自动重试五次。');
+  assert(JSON.stringify(harness.reconnectDelays) === JSON.stringify(reconnectBackoffMs) && harness.reconnectDelays.every((delay) => delay <= 60_000), '连接间隔必须指数退避，且单次不超过一分钟。');
+  assert(harness.controller.getState().draft === '断网期间保留的草稿', '连接失败不能清空用户草稿。');
+  harness.client.loadNativeConversationReadableSnapshot = read;
+  await harness.controller.reconnect();
+  assert(harness.controller.getState().transportState === 'ready' && harness.controller.getState().reconnectAttempt === 0, '手动重试成功必须清除连接计数。');
+  harness.controller.dispose();
+  return { failedReads, delays: harness.reconnectDelays, manualReconnect: 'ready', draftRetained: true };
+}
+
+/** 验证最新失败的显式续跑使用稳定身份，并保留用户尚未发送的草稿。 */
+async function verifyFailedTurnRetry() {
+  /** 初始服务端状态是已停止的网络失败。 */
+  const harness = createHarness(undefined, 0, false);
+  harness.client.loadNativeConversationReadableSnapshot = async () => ({
+    snapshot: {
+      ...snapshotV2,
+      recentClosedTurns: [
+        {
+          id: 'failed-turn',
+          providerTurnId: 'failed-turn',
+          submissionId: null,
+          status: 'failed',
+          hasError: true,
+          error: { category: 'network', code: 'ZEUS_SESSION_CONNECTION_RETRIES_EXHAUSTED', message: '连接重试五次均失败。', providerStatus: 'failed', additionalDetails: [] },
+          hasPlan: false,
+          plan: null,
+          startedAt: occurredAt,
+          completedAt: occurredAt,
+          createdAt: occurredAt,
+          updatedAt: occurredAt,
+          agentKind: 'codex',
+          openingUserMessage: null,
+          completionOutput: null,
+          process: { available: false, latestSequence: 0 },
+          resourcesAvailable: false,
+          changeSetAvailable: false,
+        },
+      ],
+      limits: { ...snapshotV2.limits, returnedTurnCount: 1 },
+    },
+    history: historyV2,
+  });
+  await harness.controller.start();
+  harness.controller.setDraft('点击重试时保留的新草稿');
+  /** 同轮次重新读取权威快照时，正在连接的计数必须保持。 */
+  const retrying = { ...harness.controller.getState(), providerReconnectAttempt: 3, providerReconnectAttempts: 5, providerReconnectTurnId: 'failed-turn' };
+  /** 使用生产归约器验证快照替换，不依赖展示组件的局部变量。 */
+  const refreshed = sessionReducer(retrying, { type: 'snapshot_hydrated', snapshot: retrying.snapshot! });
+  assert(refreshed.providerReconnectAttempt === 3 && refreshed.providerReconnectAttempts === 5, '同轮次快照刷新不能清掉连接计数。');
+  await harness.controller.retryFailedTurn('failed-turn');
+  await waitUntil(() => harness.sendCalls() === 1, '网络失败显式续跑');
+  /** 读取实际进入既有发送入口的消息，不把点击回调视作发送完成。 */
+  const sent = harness.sentMessages[0]!;
+  assert(sent.clientUserMessageId === 'connection-retry:failed-turn' && sent.idempotencyKey === 'connection-retry:failed-turn', '同一失败轮次续跑必须复用稳定的发送身份。');
+  assert(typeof sent.content === 'string' && sent.content.includes('避免重复执行'), '续跑必须检查已完成操作，不能复制重发原用户请求。');
+  assert(harness.controller.getState().draft === '点击重试时保留的新草稿', '点击重试不能清空新草稿。');
+  harness.controller.dispose();
+  return { sentMessages: 1, stableIdentity: true, draftRetained: true, snapshotRetryRetained: true };
 }
 
 /** 验证 Provider 断流核对期间保留实时订阅，并向会话状态投影五次计数。 */
@@ -2142,7 +2224,7 @@ if (process.argv.includes('--transcript-initialization-only')) {
 
 /** 回复流恢复专项仅运行本次状态与订阅检查，避开无关历史队列场景。 */
 if (process.argv.includes('--provider-stream-recovery-only')) {
-  console.log(JSON.stringify({ providerStreamRecoveryStatus: await verifyProviderStreamRecoveryStatus() }));
+  console.log(JSON.stringify({ providerStreamRecoveryStatus: await verifyProviderStreamRecoveryStatus(), connectionRetryBudget: await verifyConnectionRetryBudget(), failedTurnRetry: await verifyFailedTurnRetry() }));
   process.exit(0);
 }
 
@@ -2181,6 +2263,8 @@ const result =
           activeSnapshotWatermarkSubscription: await verifyActiveSnapshotWatermarkSubscription(),
           idleTransitionReleasesSubscription: await verifyIdleTransitionReleasesSubscription(),
           providerStreamRecoveryStatus: await verifyProviderStreamRecoveryStatus(),
+          connectionRetryBudget: await verifyConnectionRetryBudget(),
+          failedTurnRetry: await verifyFailedTurnRetry(),
           renderDeltaOverflow: await verifyRenderDeltaOverflow(),
           syncGapByteOverflow: await verifyGapByteOverflow(),
           contiguousGapReplay: await verifyContiguousGapReplay(),
