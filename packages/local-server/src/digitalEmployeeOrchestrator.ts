@@ -14,6 +14,7 @@ import {
   CommandRunRepository,
   ConversationRepository,
   ConversationSubmissionRepository,
+  ConversationTurnRepository,
   type DigitalEmployeeAutomationRecord,
   DigitalEmployeeAutomationRepository,
   type DigitalEmployeeExecutionRecord,
@@ -82,6 +83,8 @@ interface DigitalEmployeeOrchestratorOptions {
   taskStageApplication: TaskStageApplication;
   conversations: ConversationRepository;
   conversationSubmissions: ConversationSubmissionRepository;
+  /** 读取 Provider 的确认终态，停止请求本身不能释放工作队列。 */
+  conversationTurns: ConversationTurnRepository;
   commandRuns: CommandRunRepository;
   conversationCapabilities: ConversationCapabilityQueryApplication;
   taskWorkManagement: TaskWorkManagementController;
@@ -453,7 +456,11 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
         return;
       }
     }
-    const executionState = conversationWorkExecutionState(conversation, options.conversationSubmissions.listByConversation(conversation.id));
+    const executionState = conversationWorkExecutionState(conversation, options.conversationSubmissions.listByConversation(conversation.id), options.conversationTurns.listByConversation(conversation.id));
+    if (executionState.type === 'cancelled') {
+      await failExecution(execution, orchestratorError(executionState.code, executionState.message, false), true);
+      return;
+    }
     if (executionState.type === 'blocked') throw orchestratorError(executionState.code, executionState.message, false, true);
     if (executionState.type === 'failed') throw orchestratorError(executionState.code, executionState.message, false);
     if (executionState.type === 'outcome_unknown') throw orchestratorError(executionState.code, executionState.message, true);
@@ -755,10 +762,10 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
     await options.save();
   }
 
-  /** 将执行失败、结果未知和 Provider 阻塞分别落为准确的数字员工终态。 */
-  async function failExecution(execution: DigitalEmployeeExecutionRecord, error: unknown): Promise<void> {
+  /** 将已确认取消、执行失败、结果未知和 Provider 阻塞分别落为准确终态。 */
+  async function failExecution(execution: DigitalEmployeeExecutionRecord, error: unknown, cancelled = false): Promise<void> {
     const failure = normalizeOrchestratorError(error);
-    const status = failure.recoveryRequired || failure.blocked ? 'blocked' : 'failed';
+    const status = failure.recoveryRequired || failure.blocked ? 'blocked' : cancelled ? 'cancelled' : 'failed';
     const current = options.executions.getById(execution.id);
     if (!current || current.status === 'delivered' || current.status === 'cancelled') return;
     const retryUnsafe = retryWouldDuplicateUnknownWork(failure.code);
@@ -772,14 +779,14 @@ export function createDigitalEmployeeOrchestrator(options: DigitalEmployeeOrches
     const updated = options.executions.update(execution.id, { status, deliveryState, errorCode: failure.code, errorMessage: failure.message, completedAt: now().toISOString() });
     options.taskEvents.create({
       taskId: execution.taskId,
-      eventType: 'task.digital_employee.failed',
-      title: status === 'blocked' ? '数字员工执行已阻塞' : '数字员工执行失败',
+      eventType: status === 'cancelled' ? 'task.digital_employee.cancelled' : 'task.digital_employee.failed',
+      title: status === 'blocked' ? '数字员工执行已阻塞' : status === 'cancelled' ? '数字员工执行已取消' : '数字员工执行失败',
       payload: { executionId: execution.id, employeeId: execution.employeeId, code: failure.code, message: failure.message, recoveryRequired: failure.recoveryRequired, retryUnsafe },
     });
     options.appendAuditLog({
       actorType: 'worker',
       actorRef: execution.employeeId,
-      action: status === 'blocked' ? 'digital_employee.execution.blocked' : 'digital_employee.execution.failed',
+      action: status === 'blocked' ? 'digital_employee.execution.blocked' : status === 'cancelled' ? 'digital_employee.execution.cancelled' : 'digital_employee.execution.failed',
       resourceType: 'digital_employee_execution',
       resourceId: execution.id,
       payload: { projectId: execution.projectId, taskId: execution.taskId, code: failure.code, message: failure.message, recoveryRequired: failure.recoveryRequired, retryUnsafe },

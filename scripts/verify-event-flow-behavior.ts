@@ -98,10 +98,35 @@ function verifyProviderStreamFailurePresentation(): Record<string, unknown> {
   const workConversation = { stage: 'failed', providerState: 'paused' } as Parameters<typeof conversationWorkExecutionState>[0];
   const submission = (error: Record<string, unknown>) =>
     [{ status: 'failed', pausedReason: null, errorJson: JSON.stringify(error), updatedAt: '2026-09-28T00:00:00.000Z', createdAt: '2026-09-28T00:00:00.000Z', id: 'probe-submission' }] as Parameters<typeof conversationWorkExecutionState>[1];
-  const providerWorkState = conversationWorkExecutionState(workConversation, submission(rateLimitRecord));
-  const runtimeWorkState = conversationWorkExecutionState({ ...workConversation, providerState: 'failed' }, submission(sandboxRecord));
+  const providerWorkState = conversationWorkExecutionState(workConversation, submission(rateLimitRecord), []);
+  const runtimeWorkState = conversationWorkExecutionState({ ...workConversation, providerState: 'failed' }, submission(sandboxRecord), []);
   assertBehavior(providerWorkState.type === 'blocked', '服务类官方错误必须让任务工作保持阻塞。');
   assertBehavior(runtimeWorkState.type === 'failed', '沙箱或 Runtime 错误必须让任务工作正常失败。');
+  /** 重放已停止退出的耐久状态；会话 ready 和已取消提交不能把工作留在运行中。 */
+  const stoppedConversation = { stage: 'ready', providerState: 'ready' } as Parameters<typeof conversationWorkExecutionState>[0];
+  /** 轮次身份与时间保留关联关系，后续提交不能被该历史中断覆盖。 */
+  const stoppedTurn = { id: 'stopped-turn', providerTurnId: 'provider-stopped', status: 'interrupted', errorJson: null, createdAt: '2026-10-10T09:30:05.000Z' } as Parameters<typeof conversationWorkExecutionState>[2][number];
+  /** 已确认停止的原输入，避免将用户取消误报为执行失败。 */
+  const cancelledSubmission = {
+    id: 'stopped-submission',
+    status: 'cancelled',
+    providerTurnId: stoppedTurn.providerTurnId,
+    errorJson: JSON.stringify({ code: 'ZEUS_FORCED_QUIT_INTERRUPTED', providerOutcomeUnconfirmed: false }),
+    createdAt: '2026-10-10T09:30:04.000Z',
+    updatedAt: '2026-10-10T09:38:45.000Z',
+  } as Parameters<typeof conversationWorkExecutionState>[1][number];
+  assertBehavior(conversationWorkExecutionState(stoppedConversation, [cancelledSubmission], [stoppedTurn]).type === 'cancelled', '已确认停止必须让独立工作与旧员工执行收口，不能继续占用自动化队列。');
+  /** 停止请求尚未确认时必须继续监测，不提前取消也不进入不可自动恢复的终态。 */
+  const pendingStopTurn = { ...stoppedTurn, errorJson: JSON.stringify({ code: 'ZEUS_PROVIDER_STOP_PENDING', providerStopPending: true, providerOutcomeUnconfirmed: true }) };
+  assertBehavior(conversationWorkExecutionState(stoppedConversation, [cancelledSubmission], [pendingStopTurn]).type === 'waiting', 'Provider 停止待确认必须继续等待原轮次。');
+  assertBehavior(conversationWorkExecutionState(stoppedConversation, [{ ...cancelledSubmission, errorJson: JSON.stringify({ providerOutcomeUnconfirmed: true }) }], []).type === 'waiting', '缺少轮次的未知取消结果不能释放队列。');
+  /** 用户在原会话后续发起的新工作继续执行，取消排队消息不影响活动轮次。 */
+  const resumedSubmission = { ...cancelledSubmission, id: 'resumed-submission', status: 'queued', providerTurnId: null, errorJson: null, createdAt: '2026-10-11T00:00:00.000Z', updatedAt: '2026-10-11T00:00:00.000Z' } as Parameters<
+    typeof conversationWorkExecutionState
+  >[1][number];
+  assertBehavior(conversationWorkExecutionState({ ...stoppedConversation, stage: 'running' }, [cancelledSubmission, resumedSubmission], [stoppedTurn]).type === 'running', '旧中断不得取消后续新提交。');
+  assertBehavior(conversationWorkExecutionState({ ...stoppedConversation, stage: 'running' }, [cancelledSubmission], [{ ...stoppedTurn, status: 'running' }]).type === 'running', '取消排队输入不得结束仍活动的 Provider 轮次。');
+  assertBehavior(conversationWorkExecutionState(stoppedConversation, [{ ...cancelledSubmission, providerTurnId: null }], []).type === 'cancelled', '未派发输入明确取消后也必须收口工作。');
   return {
     legacyDisconnect: { category: failure.category, cause: failure.cause?.code ?? null, message: explanation.message },
     objectFailure: { category: objectFailure.category, cause: objectFailure.cause?.code ?? null, httpStatus: objectFailure.additionalDetails[0] ?? null },

@@ -679,14 +679,16 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
   const hasVisibleActiveFeedback = activeTurnId
     ? Object.values(items).some((item) => item.turnId === activeTurnId && itemProvidesVisibleFeedback(item) && (!latestResolutionAt || (item.updatedAt ?? item.timelineAt ?? '') >= latestResolutionAt))
     : false;
+  /** 同线程同轮次的快照刷新不能清掉仍在进行的连接提示；正式结束事件负责收口。 */
+  const retainProviderRetry = state.providerThreadId === snapshot.providerThreadId && snapshot.turns.some((turn) => turn.providerTurnId === state.providerReconnectTurnId && ['running', 'waiting', 'failed'].includes(turn.status));
   return {
     ...state,
     projectId: snapshot.projectId,
     conversationId: snapshot.id,
     providerThreadId: snapshot.providerThreadId,
-    providerReconnectAttempt: 0,
-    providerReconnectAttempts: 0,
-    providerReconnectTurnId: null,
+    providerReconnectAttempt: retainProviderRetry ? state.providerReconnectAttempt : 0,
+    providerReconnectAttempts: retainProviderRetry ? state.providerReconnectAttempts : 0,
+    providerReconnectTurnId: retainProviderRetry ? state.providerReconnectTurnId : null,
     activeTurnId,
     startedTurnId: activeTurnId,
     snapshot: { ...snapshot, turns: retainedTurns, changeSets: Object.values(changeSetsByProviderId) },

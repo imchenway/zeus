@@ -353,3 +353,22 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* 解码与高亮选择影响查看结果，不隐藏系统打开入口。 */
+.file-preview-setting {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--zeus-control-muted-text);
+}
+.file-preview-setting select {
+  max-width: 130px;
+  min-width: 0;
+  font: inherit;
+  color: var(--zeus-control-text);
+  background: var(--zeus-control-bg);
+  border: 1px solid var(--zeus-control-border);
+  border-radius: 4px;
+  padding: 3px 4px;
+}

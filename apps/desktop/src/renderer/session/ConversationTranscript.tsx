@@ -76,6 +76,10 @@ export interface ConversationTranscriptProps {
   /** 打开现有登录或模型设置页，不代替用户修改配置。 */
   onOpenAiSettings?: (section: 'runtime' | 'models') => void;
   onRecoverQueue?: () => void | Promise<void>;
+  /** 本地连接预算耗尽后由用户手动重新连接。 */
+  onReconnect?: () => void | Promise<void>;
+  /** 最新网络失败轮次的显式续跑入口。 */
+  onRetryFailedTurn?: (providerTurnId: string) => void | Promise<void>;
   onReconnectCodex?: () => void | Promise<void>;
   onInterrupt?: (turnId: string) => void | Promise<void>;
   onRetryQueuedSubmission?: (submissionId: string) => void | Promise<void>;
@@ -1102,7 +1106,19 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       /** 后台仍在核对本轮时只显示统一运行状态，避免错误卡和重连状态同时闪烁。 */
       const recovering = props.state.providerReconnectTurnId === row.turnId && props.state.providerReconnectAttempt > 0;
       if (recovering) return null;
-      return <TurnFailureCard failure={row.failure} language={props.language} retainedAnswer={turnHasRetainedAssistantAnswer(items, row.turnId)} />;
+      /** 只对最新停止的网络失败提供续跑，历史轮次不重复提交。 */
+      const retryable =
+        !props.historyOnly &&
+        row.failure.category === 'network' &&
+        props.state.snapshot?.turns.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)).at(-1)?.providerTurnId === row.turnId;
+      return (
+        <TurnFailureCard
+          failure={row.failure}
+          language={props.language}
+          retainedAnswer={turnHasRetainedAssistantAnswer(items, row.turnId)}
+          onRetry={retryable && props.onRetryFailedTurn ? () => props.onRetryFailedTurn?.(row.turnId) : undefined}
+        />
+      );
     }
     if (row.kind === 'navigation_placeholder') return <NavigationHistoryPlaceholder entry={row.entry} language={props.language} onLoad={historyHydrated ? props.onLoadNavigationTurn : undefined} />;
     if (row.kind === 'answered_request') return <AnsweredRequestHistory request={row.request} language={props.language} />;
@@ -1410,8 +1426,23 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             activeStatusKind === 'executing' && activeReasoningItem ? (
               <SessionReasoningSummary item={activeReasoningItem} language={props.language} status={reasoningSummaryStatus(activeReasoningItem, props.state)} motionActive onVisibleContentChange={maintainLatestPosition} />
             ) : (
-              <TranscriptActiveStatus language={props.language} kind={activeStatusKind} reconnectAttempt={props.state.providerReconnectAttempt || props.state.reconnectAttempt} reconnectAttempts={props.state.providerReconnectAttempts} />
+              <TranscriptActiveStatus
+                language={props.language}
+                kind={activeStatusKind}
+                reconnectAttempt={props.state.providerReconnectAttempt || props.state.reconnectAttempt}
+                reconnectAttempts={props.state.providerReconnectAttempts || 5}
+              />
             )
+          ) : null}
+          {!props.historyOnly && props.state.transportState === 'failed' && props.state.error?.code === 'ZEUS_SESSION_CONNECTION_RETRIES_EXHAUSTED' ? (
+            <ConversationNotice label={props.language === 'zh-CN' ? '连接失败' : 'Connection failed'}>
+              <span>{props.language === 'zh-CN' ? '连接已断开。' : 'Connection lost.'}</span>
+              {props.onReconnect ? (
+                <button type="button" onClick={() => void props.onReconnect?.()}>
+                  {props.language === 'zh-CN' ? '重试' : 'Retry'}
+                </button>
+              ) : null}
+            </ConversationNotice>
           ) : null}
           {interactionAuthorityMissing && props.state.activeTurnId ? <InteractionAuthorityMissingNotice language={props.language} turnId={props.state.activeTurnId} onInterrupt={props.onInterrupt} /> : null}
           <span ref={latestContentMarkerRef} className="session-latest-content-marker" aria-hidden="true" />
@@ -1556,7 +1587,7 @@ function SessionCreationNotice(props: { status: SessionCreationStatus; language:
     );
   }
   /** 重试计数沿用实际创建状态，普通连接文案由调用方提供。 */
-  const retryingMessage = props.status.state === 'retrying' ? `${props.language === 'zh-CN' ? '正在重试' : 'Retrying'}… ${props.status.retryAttempt ?? 1}/${props.status.maxRetries ?? 5}` : props.status.message;
+  const retryingMessage = props.status.state === 'retrying' ? `${props.language === 'zh-CN' ? '正在连接...' : 'Connecting...'} (${props.status.retryAttempt ?? 1}/${props.status.maxRetries ?? 5})` : props.status.message;
   return (
     <section className={`session-creation-status is-${props.status.state}`} role="status" aria-live="polite">
       {sessionConnectionSymbol}
@@ -1582,12 +1613,31 @@ function ConversationNotice(props: { children: ReactNode; label: string; role?: 
 }
 
 /** 模型返回错误保留独立名称，避免与消息发送状态混淆。 */
-function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: SessionUiLanguage; retainedAnswer: boolean }) {
+function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: SessionUiLanguage; retainedAnswer: boolean; onRetry?: () => void | Promise<void> }) {
+  /** 请求提交期间禁用重复点击，失败原因保留在原提示中。 */
+  const [pending, setPending] = useState(false);
+  /** 手动续跑失败不能覆盖原轮次的官方错误。 */
+  const [retryError, setRetryError] = useState<unknown>(null);
+  /** 续跑沿用会话的耐久发送链路，未知结果不产生第二个提交。 */
+  async function retry(): Promise<void> {
+    if (pending || !props.onRetry) return;
+    setPending(true);
+    setRetryError(null);
+    try {
+      await props.onRetry();
+    } catch (error) {
+      setRetryError(error);
+    } finally {
+      setPending(false);
+    }
+  }
   /** 错误名称和详情入口使用同一语言。 */
   const zh = props.language === 'zh-CN';
+  /** 连接失败只显示停止状态和重试，原始诊断保留在轮次记录中。 */
+  const connectionFailure = props.failure.category === 'network';
   /** 已保留回答的断流不能再误报为“没有收到完整回复”。 */
   const retainedStreamFailure = props.retainedAnswer && props.failure.cause?.code === 'responseStreamDisconnected';
-  if (retainedStreamFailure) {
+  if (retainedStreamFailure && !props.onRetry && !connectionFailure) {
     return (
       <ConversationNotice role="status" label={zh ? '回答已保留' : 'Response retained'}>
         <span data-zeus-selectable="text">{zh ? '回答已保留，但 AI 服务未确认完整结束。你可以继续对话。' : 'The response was retained, but the AI service did not confirm a clean finish. You can continue the conversation.'}</span>
@@ -1598,8 +1648,14 @@ function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: 
     );
   }
   return (
-    <ConversationNotice label={zh ? '模型返回错误' : 'Model error'}>
-      <VisibleApplicationError error={props.failure} language={zh ? 'zh-CN' : 'en'} />
+    <ConversationNotice label={connectionFailure ? (zh ? '连接失败' : 'Connection failed') : zh ? '模型返回错误' : 'Model error'}>
+      {connectionFailure ? <span>{zh ? '连接失败，已停止。' : 'Connection failed. Stopped.'}</span> : <VisibleApplicationError error={props.failure} language={zh ? 'zh-CN' : 'en'} />}
+      {props.onRetry ? (
+        <button type="button" disabled={pending} onClick={() => void retry()}>
+          {pending ? (zh ? '正在连接...' : 'Connecting...') : zh ? '重试' : 'Retry'}
+        </button>
+      ) : null}
+      {retryError ? connectionFailure ? <span>{zh ? '重试失败。' : 'Retry failed.'}</span> : <VisibleApplicationError error={retryError} language={zh ? 'zh-CN' : 'en'} /> : null}
     </ConversationNotice>
   );
 }
@@ -2085,17 +2141,18 @@ function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: NonN
     compacting: ['正在整理较早对话以继续工作', 'Organizing earlier conversation to continue'],
     waiting_input: ['等待回答，请处理问题表单', 'Waiting for your answer'],
     waiting_approval: ['等待审批，请处理审批事项', 'Waiting for your approval'],
-    reconnecting: ['正在恢复连接，运行进度尚未确认', 'Reconnecting; progress is not yet confirmed'],
+    reconnecting: ['正在连接...', 'Connecting...'],
   };
-  /** Provider 五次核对显示明确计数；普通 Renderer 重连没有固定总数，保留原文案。 */
+  /** Provider 与会话事件流都显示真实计数，初次连接没有重试次数时保留原文案。 */
   const retryLabel =
     props.kind === 'reconnecting' && props.reconnectAttempt > 0 && props.reconnectAttempts > 0
       ? props.language === 'zh-CN'
-        ? `正在恢复连接（${props.reconnectAttempt}/${props.reconnectAttempts}）`
-        : `Reconnecting (${props.reconnectAttempt}/${props.reconnectAttempts})`
+        ? `正在连接... (${props.reconnectAttempt}/${props.reconnectAttempts})`
+        : `Connecting... (${props.reconnectAttempt}/${props.reconnectAttempts})`
       : labels[props.kind][props.language === 'zh-CN' ? 0 : 1];
   return (
     <p className="session-transcript-thinking" role="status" aria-live="polite">
+      {props.kind === 'reconnecting' ? sessionConnectionSymbol : null}
       <SessionSweepText className="session-current-status-text" text={retryLabel} active />
     </p>
   );

@@ -198,8 +198,12 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
           markOutcomeUnknown(run, '关联执行的结果未知，自动化不会重新派发。');
           continue;
         }
-        const failed = states.find((state) => state?.status === 'failed' || state?.status === 'cancelled');
+        /** 多目标运行保留真实失败，其他目标的用户取消不能掩盖失败原因。 */
+        const failed = states.find((state) => state?.status === 'failed');
+        /** 全部执行均已停止后，准确保留用户取消结果，同时释放下一次独立触发。 */
+        const cancelled = states.find((state) => state?.status === 'cancelled');
         if (failed) settle(run, 'failed', failed.errorCode ?? 'ZEUS_AUTOMATION_EXECUTION_FAILED', failed.errorMessage ?? '关联工作或流程未完成。');
+        else if (cancelled) settle(run, 'cancelled', cancelled.errorCode ?? 'ZEUS_AUTOMATION_EXECUTION_CANCELLED', cancelled.errorMessage ?? '关联工作或流程已取消。');
         else if (states.some((state) => state?.status === 'awaiting_review')) {
           /** 全部工作停止执行后，独立员工工作可排下一轮；项目流程继续等待验收。 */
           const updated = options.runs.markAwaitingReview(run.id);
@@ -227,7 +231,8 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
     }
   }
 
-  function settle(run: AutomationRunRecord, status: 'succeeded' | 'failed' | 'blocked', errorCode: string | null = null, errorMessage: string | null = null): void {
+  /** 耐久记录准确终态，再发布收件箱变化并由仓储释放串行队列。 */
+  function settle(run: AutomationRunRecord, status: 'succeeded' | 'failed' | 'blocked' | 'cancelled', errorCode: string | null = null, errorMessage: string | null = null): void {
     const updated = options.runs.setTerminal(run.id, status, errorCode, errorMessage);
     options.publish('automation.run.terminal', { automationId: updated.automationId, runId: updated.id, projectId: updated.projectId, status: updated.status, unread: true });
   }
