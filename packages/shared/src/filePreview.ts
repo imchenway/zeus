@@ -33,14 +33,23 @@ export interface FileReview {
 /** 文件内容的展示方式，与模型附件上传能力独立。 */
 export type FilePreviewKind = 'text' | 'image' | 'pdf' | 'audio' | 'video' | 'system' | 'unavailable';
 
+/** 只读预览允许的编码；显式选择不改变原文件或编辑器保存编码。 */
+export const filePreviewTextEncodings = ['utf-8', 'utf-16le', 'utf-16be', 'gb18030', 'windows-1252'] as const;
+/** 编码名称直接交给平台文本解码器，不接受任意解码配置。 */
+export type FilePreviewTextEncoding = (typeof filePreviewTextEncodings)[number];
+
 /** 渲染层只提供业务身份，不允许自行指定仓库根或历史对象。 */
-export type FilePreviewRequest =
+export type FilePreviewRequest = (
   | { kind: 'source'; projectId: string; path: string }
   | { kind: 'task-git'; taskId: string; workspaceId: string; path: string; scope: 'working' | 'committed' }
   | { kind: 'project-git'; projectId: string; repositoryId: string; path: string; stage?: 'combined' | 'staged' | 'unstaged'; commitHash?: string; comparisonRef?: string; comparisonMode?: 'current' | 'working-tree' }
   | { kind: 'resource'; projectId: string; conversationId: string; resourceId: string }
   | { kind: 'turn'; projectId: string; conversationId: string; turnId: string; changeSetId: string; fileId: string }
-  | { kind: 'attachment'; localPath?: string; uploadRef?: string };
+  | { kind: 'attachment'; localPath?: string; uploadRef?: string }
+) & {
+  /** 用户明确选择的只读解码方式；缺省仅识别 UTF BOM 与严格 UTF-8。 */
+  textEncoding?: FilePreviewTextEncoding;
+};
 
 /** 仅供受信主进程使用的读取授权，不向渲染层返回文件系统权限。 */
 export interface FilePreviewSource {
@@ -88,6 +97,10 @@ export interface FilePreviewItem {
   url?: string;
   /** 小文本及 SVG 源码；不包含任意二进制内容。 */
   content?: string;
+  /** 真实使用的只读解码方式，便于用户检查乱码。 */
+  encoding?: FilePreviewTextEncoding;
+  /** 大文件只读取前段，不将截断文本作为可编辑正文。 */
+  truncated?: boolean;
   /** 可理解的失败原因。 */
   reason?: string;
 }
@@ -118,6 +131,10 @@ const previewMimeTypes: Record<string, string> = {
   '7z': 'application/x-7z-compressed',
   rar: 'application/vnd.rar',
   icns: 'image/icns',
+  heic: 'image/heic',
+  heif: 'image/heif',
+  tif: 'image/tiff',
+  tiff: 'image/tiff',
   mp3: 'audio/mpeg',
   wav: 'audio/wav',
   ogg: 'audio/ogg',
@@ -138,4 +155,15 @@ export function filePreviewMime(name: string): string {
 /** 可视媒体优先于文本，SVG 不作为活动 HTML 文档执行。 */
 export function filePreviewKind(mime: string): FilePreviewKind {
   return mime === 'image/icns' ? 'system' : mime.startsWith('image/') ? 'image' : mime === 'application/pdf' ? 'pdf' : mime.startsWith('audio/') ? 'audio' : mime.startsWith('video/') ? 'video' : 'system';
+}
+
+/** 只读文本严格解码；UTF-16 仅按 BOM 或用户选择读取，不猜测二进制编码。 */
+export function decodeFilePreviewText(bytes: Uint8Array, requested?: FilePreviewTextEncoding, truncated = false): { content: string; encoding: FilePreviewTextEncoding } {
+  if (requested !== undefined && !filePreviewTextEncodings.includes(requested)) throw new Error('不支持的预览编码。');
+  /** 未明确选择时，只将确定的 BOM 用于自动识别。 */
+  const encoding = requested ?? (bytes[0] === 0xff && bytes[1] === 0xfe ? 'utf-16le' : bytes[0] === 0xfe && bytes[1] === 0xff ? 'utf-16be' : 'utf-8');
+  /** 片段末尾允许未读完的多字节字符；片段内部仍严格校验。 */
+  const content = new TextDecoder(encoding, { fatal: true }).decode(bytes, { stream: truncated });
+  if (content.includes('\0')) throw new Error('此文件包含二进制内容。');
+  return { content, encoding };
 }

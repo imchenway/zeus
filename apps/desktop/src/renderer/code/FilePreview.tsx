@@ -12,7 +12,18 @@ import { GitDiffIcon as GitDiff } from '@phosphor-icons/react/dist/csr/GitDiff';
 import { MinusIcon as Minus } from '@phosphor-icons/react/dist/csr/Minus';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
-import { detectSourceLanguage, userFacingErrorCause, type FilePreviewItem, type FilePreviewRequest, type FileReview, type ConversationFileLocation, type UserFacingErrorCause } from '@zeus/shared';
+import {
+  sourceLanguageOptions,
+  filePreviewTextEncodings,
+  type FilePreviewTextEncoding,
+  detectSourceLanguage,
+  userFacingErrorCause,
+  type FilePreviewItem,
+  type FilePreviewRequest,
+  type FileReview,
+  type ConversationFileLocation,
+  type UserFacingErrorCause,
+} from '@zeus/shared';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { FileTypeIcon } from './FileTypeIcon.js';
@@ -138,6 +149,8 @@ function FilePreviewBody(props: {
   const [error, setError] = useState<UserFacingErrorCause | string>('');
   /** 用户主动刷新次数。 */
   const [attempt, setAttempt] = useState(0);
+  /** 编码选择仅重载只读预览，不影响源码保存。 */
+  const [textEncoding, setTextEncoding] = useState<FilePreviewTextEncoding | ''>(() => (JSON.parse(props.identity) as FilePreviewRequest).textEncoding ?? '');
   /** 当前选择的版本侧。 */
   const [selected, setSelected] = useState(1);
   /** 当前差异或内容展示方式。 */
@@ -156,7 +169,7 @@ function FilePreviewBody(props: {
       return;
     }
     void bridge
-      .loadFilePreview(JSON.parse(props.identity) as FilePreviewRequest)
+      .loadFilePreview({ ...(JSON.parse(props.identity) as FilePreviewRequest), textEncoding: textEncoding || undefined })
       .then((result) => {
         ids = result.map((item) => item.id).filter(Boolean);
         if (active) setItems(result);
@@ -169,7 +182,7 @@ function FilePreviewBody(props: {
       active = false;
       if (ids.length) void bridge.releaseFilePreview(ids).catch(() => undefined);
     };
-  }, [props.identity, props.zh, attempt]);
+  }, [props.identity, props.zh, attempt, textEncoding]);
   /** 文字默认差异；有媒体时优先展示实际内容。 */
   const textOnly = items?.some((item) => item.kind === 'text') && items.every((item) => item.kind === 'text' || item.kind === 'unavailable');
   /** 按文件类型和用户选择确定当前视图。 */
@@ -257,6 +270,12 @@ function FilePreviewBody(props: {
               item={props.location ? { ...item, review: { ...item.review, location: props.location } } : item}
               zh={props.zh}
               fileStatus={props.fileStatus}
+              encoding={textEncoding}
+              onEncodingChange={(encoding) => {
+                // 用户选择编码时保留内容预览，避免文本解码成功后跳回默认差异页。
+                setMode('preview');
+                setTextEncoding(encoding);
+              }}
               toolbar={images ? undefined : toolbar}
             />
           ))}
@@ -322,10 +341,18 @@ export function PreviewImage(props: { url: string; name: string; zh: boolean; on
 }
 
 /** 已授权内容和系统操作共用明确的失败状态，绝不自动打开外部应用。 */
-function FilePreviewContent(props: { item: FilePreviewItem; zh: boolean; /** 比较视图提供的真实 Git 状态。 */ fileStatus?: string; /** 单文件操作与文件元信息共用一行。 */ toolbar?: ReactNode }) {
+function FilePreviewContent(props: {
+  item: FilePreviewItem;
+  zh: boolean;
+  /** 比较视图提供的真实 Git 状态。 */ fileStatus?: string;
+  /** 当前用户选择的解码方式。 */ encoding: FilePreviewTextEncoding | '';
+  /** 编码切换重读已授权文件。 */ onEncodingChange(encoding: FilePreviewTextEncoding | ''): void;
+  /** 单文件操作与文件元信息共用一行。 */ toolbar?: ReactNode;
+}) {
   /** 当前已授权的文件描述。 */
   const item = props.item;
-  /** 用户选择的源码展示状态。 */
+  /** 自动识别可切换为已支持语法或纯文本，不改变文件正文。 */
+  const [language, setLanguage] = useState(() => detectSourceLanguage(item.name, item.content) ?? 'text'); /** 用户选择的源码展示状态。 */
   const [source, setSource] = useState(Boolean(item.review?.location?.line));
   /** 本次操作的可见错误。 */
   const [error, setError] = useState<UserFacingErrorCause | string>('');
@@ -349,9 +376,43 @@ function FilePreviewContent(props: { item: FilePreviewItem; zh: boolean; /** 比
             {item.kind === 'image' ? (props.zh ? '图片预览' : 'Image preview') : item.name}
           </strong>
           <small>
-            {item.label} · {item.mime} · {item.byteLength.toLocaleString()} B
+            {item.label} · {item.mime} · {item.byteLength.toLocaleString()} B{item.encoding ? ` · ${item.encoding.toUpperCase()}` : ''}
           </small>
         </div>
+        {item.id && (item.kind === 'text' || item.mime === 'application/octet-stream' || item.mime === 'image/svg+xml') ? (
+          <label className="file-preview-setting">
+            <span>{props.zh ? '编码' : 'Encoding'}</span>
+            <select aria-label={props.zh ? '预览编码' : 'Preview encoding'} value={props.encoding} onChange={(event) => props.onEncodingChange(event.currentTarget.value as FilePreviewTextEncoding | '')}>
+              <option value="">{props.zh ? '自动识别' : 'Automatic'}</option>
+              {filePreviewTextEncodings.map((encoding) => (
+                <option key={encoding} value={encoding}>
+                  {encoding.toUpperCase()}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {item.content !== undefined && (item.kind === 'text' || source) ? (
+          <label className="file-preview-setting">
+            <span>{props.zh ? '语言' : 'Language'}</span>
+            <select
+              aria-label={props.zh ? '预览高亮语言' : 'Preview syntax language'}
+              value={language}
+              onChange={(event) => {
+                // 阅读模式下选择高亮语言时打开源码，使语言选择立即可见。
+                setLanguage(event.currentTarget.value);
+                if (markdown) setSource(true);
+              }}
+            >
+              <option value="text">{props.zh ? '纯文本' : 'Plain text'}</option>
+              {sourceLanguageOptions.map((language) => (
+                <option key={language} value={language}>
+                  {language}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         {item.id || props.toolbar ? (
           <nav className="file-preview-toolbar" aria-label={props.zh ? '文件操作' : 'File actions'}>
             {props.toolbar}
@@ -394,7 +455,7 @@ function FilePreviewContent(props: { item: FilePreviewItem; zh: boolean; /** 比
               </div>
             ) : (
               <div className="file-preview-text">
-                <CodeEditor path={item.name} label={item.name} language={detectSourceLanguage(item.name)} content={item.content} revealLine={item.review?.location?.line} readOnly />
+                <CodeEditor path={item.name} label={item.name} language={language} content={item.content} revealLine={item.review?.location?.line} readOnly />
               </div>
             )}
           </Suspense>

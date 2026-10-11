@@ -598,8 +598,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     ? activeProjectSection === 'sessions' && activeNavTarget !== 'settings' && activeNavTarget !== 'skills' && activeNavTarget !== 'digital-employees' && activeNavTarget !== 'digital-teams' && activeNavTarget !== 'automations'
     : projectSessionSourceListVisible;
 
-  /** 将工作台中的同一个分支控件挂到文件标签顶行，收起底栏时仍可使用。 */
-  const [projectCodeBranchContainer, setProjectCodeBranchContainer] = useState<HTMLDivElement | null>(null);
+  /** 将工作台中的同一个分支控件挂到左侧目录顶行，收起底栏时仍可使用。 */
+  const [projectCodeBranchContainer, setProjectCodeBranchContainer] = useState<HTMLSpanElement | null>(null);
   /** 源码文件状态与底部工作台共用快照，避免保留重复的更改组件。 */
   const [projectCodeGitSnapshot, setProjectCodeGitSnapshot] = useState<ProjectGitWorkbenchSnapshot | null>(null);
   /** 源码与 Git 的工具入口跟随应用语言，复用内容区顶行。 */
@@ -607,7 +607,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   /** Git 与源码共用项目身份，命令从任一视图打开均不离开工作区。 */
   const projectCodeToolbarActions = selectedProject ? (
     <div className="project-code-actions" role="group" aria-label={codeWorkspaceZh ? '源码工具' : 'Source tools'}>
-      <div className="project-code-branch-slot" ref={setProjectCodeBranchContainer} />
       <button
         type="button"
         disabled={!props.commandClient}
@@ -1043,6 +1042,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     key={selectedProject.id}
                     ref={projectSourceWorkspaceRef}
                     toolbarActions={projectCodeToolbarActions}
+                    branchToolbarRef={setProjectCodeBranchContainer}
                     gitSnapshot={projectCodeGitSnapshot}
                     project={selectedProject}
                     language={appShellSettings.appLanguage}

@@ -3,11 +3,13 @@ import type { Extension } from '@codemirror/state';
 import type { Parser } from '@lezer/common';
 import { isSourceLanguageId, type SourceLanguageId } from '@zeus/shared';
 
+/** 编辑器和静态高亮共享同一份语言扩展与解析器。 */
 export interface LoadedSourceLanguage {
   extension: Extension;
   parser: Parser;
 }
 
+/** 相同语言复用加载，失败时允许后续重新尝试。 */
 const languagePromises = new Map<SourceLanguageId, Promise<LoadedSourceLanguage>>();
 
 /** 编辑器和静态预览共用同一个语言实例，并只在真正打开对应文件时加载解析器。 */
@@ -15,16 +17,34 @@ export function loadSourceLanguage(language: string | null | undefined): Promise
   if (!isSourceLanguageId(language)) return Promise.resolve(null);
   const cached = languagePromises.get(language);
   if (cached) return cached;
-  const request = loadKnownSourceLanguage(language);
+  const request = loadKnownSourceLanguage(language).catch((reason) => {
+    languagePromises.delete(language);
+    throw reason;
+  });
   languagePromises.set(language, request);
   return request;
 }
 
+/** 仅加载应用已安装的语言包，不新增在线解析器依赖。 */
 async function loadKnownSourceLanguage(language: SourceLanguageId): Promise<LoadedSourceLanguage> {
   switch (language) {
     case 'c':
     case 'cpp':
       return fromSupport((await import('@codemirror/lang-cpp')).cpp());
+    case 'csharp':
+      return fromLegacy((await import('@codemirror/legacy-modes/mode/clike')).csharp);
+    case 'groovy':
+      return fromLegacy((await import('@codemirror/legacy-modes/mode/groovy')).groovy);
+    case 'lua':
+      return fromLegacy((await import('@codemirror/legacy-modes/mode/lua')).lua);
+    case 'nginx':
+      return fromLegacy((await import('@codemirror/legacy-modes/mode/nginx')).nginx);
+    case 'perl':
+      return fromLegacy((await import('@codemirror/legacy-modes/mode/perl')).perl);
+    case 'powershell':
+      return fromLegacy((await import('@codemirror/legacy-modes/mode/powershell')).powerShell);
+    case 'protobuf':
+      return fromLegacy((await import('@codemirror/legacy-modes/mode/protobuf')).protobuf);
     case 'css':
       return fromSupport((await import('@codemirror/lang-css')).css());
     case 'sass':
@@ -82,15 +102,18 @@ async function loadKnownSourceLanguage(language: SourceLanguageId): Promise<Load
   }
 }
 
+/** 标准语言包同时返回扩展和解析器。 */
 function fromSupport(support: LanguageSupport): LoadedSourceLanguage {
   return { extension: support.extension, parser: support.language.parser };
 }
 
+/** 已有流式语法接入同一语言加载入口。 */
 async function fromLegacy(parser: StreamParser<unknown>): Promise<LoadedSourceLanguage> {
   const { StreamLanguage } = await import('@codemirror/language');
   return fromLanguage(StreamLanguage.define(parser));
 }
 
+/** 语言对象统一转换为编辑器与高亮需要的结构。 */
 function fromLanguage(language: Language): LoadedSourceLanguage {
   return { extension: language.extension, parser: language.parser };
 }
