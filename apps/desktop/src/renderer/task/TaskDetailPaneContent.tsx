@@ -1,4 +1,4 @@
-import { DotsThreeIcon } from '@phosphor-icons/react/dist/csr/DotsThree';
+import { CaretDownIcon } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { GitBranchIcon } from '@phosphor-icons/react/dist/csr/GitBranch';
 import { TrashIcon } from '@phosphor-icons/react/dist/csr/Trash';
 import { retainInputFocus } from '../ui/retainInputFocus.js';
@@ -698,8 +698,7 @@ function TaskImmediateSelect<T extends string>(props: {
   );
 }
 
-/** 任务详情就地读取工作流和运行，管理动作保持为下拉中的独立选项。 */
-/** 低频项目操作默认折叠；修改需明确提交，失败保留目标便于调整。 */
+/** 项目归属与移动复制始终展开；修改需明确提交，失败保留目标便于调整。 */
 function TaskProjectActions(props: Pick<TaskDetailPaneContentProps, 'task' | 'projects' | 'language' | 'busy' | 'onUpdateTaskContent' | 'onCopyTask'>) {
   /** 默认保持当前项目，仅按钮提交时执行修改。 */
   const [projectId, setProjectId] = useState(props.task.projectId);
@@ -709,7 +708,7 @@ function TaskProjectActions(props: Pick<TaskDetailPaneContentProps, 'task' | 'pr
   const [error, setError] = useState('');
   /** 跟随应用的语言设置。 */
   const zh = props.language === 'zh-CN';
-  /** 折叠时展示实际归属，不把尚未提交的目标当成当前项目。 */
+  /** 展示实际归属，不把尚未提交的目标当成当前项目。 */
   const currentProjectName = props.projects.find((project) => project.id === props.task.projectId)?.name ?? props.task.projectId;
 
   /** 保存经过现有串行编辑队列，冲突时提示用户检查最新任务。 */
@@ -735,11 +734,11 @@ function TaskProjectActions(props: Pick<TaskDetailPaneContentProps, 'task' | 'pr
   }
 
   return (
-    <details className="task-detail-block task-detail-project-settings">
-      <summary>
-        <span>{zh ? '移动与复制' : 'Move and copy'}</span>
+    <section className="task-detail-block task-detail-project-settings" aria-label={zh ? '移动与复制' : 'Move and copy'}>
+      <header className="task-detail-section-heading">
+        <strong>{zh ? '移动与复制' : 'Move and copy'}</strong>
         <small title={currentProjectName}>{currentProjectName}</small>
-      </summary>
+      </header>
       <div className="task-detail-project-settings-content">
         <ZeusSelect
           size="compact"
@@ -775,7 +774,7 @@ function TaskProjectActions(props: Pick<TaskDetailPaneContentProps, 'task' | 'pr
           </p>
         ) : null}
       </div>
-    </details>
+    </section>
   );
 }
 
@@ -816,8 +815,6 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
   /** 提示归属对应操作，避免长列表把反馈推离按钮。 */
   const [relationshipHintTarget, setRelationshipHintTarget] = useState<'child' | 'relation'>('child');
   const [relatedTaskCandidateId, setRelatedTaskCandidateId] = useState('');
-  /** 未手动操作时随任务进度折叠说明，编辑和手动展开后保持原位置。 */
-  const [overviewExpanded, setOverviewExpanded] = useState<boolean | null>(null);
   const digitalEmployeeManagement = useTaskDigitalEmployeeManagement({
     taskId: props.task.id,
     projectId: props.task.projectId,
@@ -839,7 +836,6 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
     setRelationshipSaveState({ kind: 'idle' });
     setRelationshipHint('');
     setRelatedTaskCandidateId('');
-    setOverviewExpanded(null);
     moreActionsRef.current?.hidePopover();
     attachmentPasteRetryRef.current = null;
     if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
@@ -857,10 +853,8 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
   const conversations = [...(props.conversations ?? [])].sort(compareConversationCreatedAsc);
   /** 真实工作接纳后才展开协作布局，读取失败不会被猜成任务结束。 */
   const hasTaskWork = Boolean(digitalEmployeeManagement.teams.length || digitalEmployeeManagement.projection?.workItems.length || digitalEmployeeManagement.pendingAssignment);
-  /** 普通讨论同样收起默认说明，但不产生空员工栏。 */
+  /** 有原会话时提供稳定阅读高度，空任务输入紧接任务说明。 */
   const hasTaskActivity = hasTaskWork || conversations.length > 0;
-  /** 手动展开优先于后台进度，说明编辑不会被轮询打断。 */
-  const showOverview = overviewExpanded ?? !hasTaskActivity;
   const taskById = new Map(props.allTasks.map((task) => [task.id, task]));
   const directChildren = props.allTasks.filter((task) => task.parentTaskId === props.task.id).sort((left, right) => (right.updatedAt ?? '').localeCompare(left.updatedAt ?? ''));
   const relatedTasks = (props.task.relatedTaskIds ?? [])
@@ -1142,7 +1136,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             },
           ];
 
-  /** 任务正文与历史归入概览，复用原有编辑和操作入口。 */
+  /** 任务正文完整展开，复用原有编辑和附件入口。 */
   const taskOverview = (
     <div className="task-detail-overview">
       {typedContentFields.map((field) => (
@@ -1178,28 +1172,6 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           />
         </section>
       ))}
-
-      <details className="task-detail-block task-detail-events" aria-label={props.copy.eventsTitle}>
-        <summary className="task-detail-section-heading">
-          <strong>{props.copy.eventsTitle}</strong>
-          <small>{props.events.length}</small>
-        </summary>
-        {props.events.length === 0 ? (
-          <p>{props.copy.noEvents}</p>
-        ) : (
-          <ol className="task-detail-event-list">
-            {/* 展开后展示已加载的完整历史，数量必须与标题计数一致。 */}
-            {props.events.map((event) => (
-              <li className="task-detail-event-row" key={event.id}>
-                <span>
-                  <strong>{formatTaskEventTitle(event, props.language)}</strong>
-                </span>
-                <time dateTime={event.createdAt}>{formatTaskUpdatedAt(event.createdAt, props.copy.updatedAtMissing ?? (zh ? '未记录' : 'Not recorded'))}</time>
-              </li>
-            ))}
-          </ol>
-        )}
-      </details>
     </div>
   );
 
@@ -1256,13 +1228,14 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             <Button variant="secondary" size="regular" onClick={() => props.onRetryModelPush?.(props.task.id)}>
               {zh ? '重试创建' : 'Retry creation'}
             </Button>
-          ) : props.modelPushOperation?.status === 'accepted' && props.modelPushOperation.conversationId ? (
+          ) : props.modelPushOperation?.status === 'accepted' && props.modelPushOperation.conversationId && !conversations.some((conversation) => conversation.id === props.modelPushOperation?.conversationId) ? (
             <Button variant="secondary" size="regular" onClick={() => props.onOpenConversation(props.task.id, props.modelPushOperation?.conversationId ?? '')}>
               {zh ? '打开会话' : 'Open conversation'}
             </Button>
           ) : null}
           <Button variant="secondary" size="regular" className="task-detail-more-trigger" popoverTarget={moreActionsId} aria-label={zh ? '更多任务操作' : 'More task actions'} title={zh ? '更多操作' : 'More actions'}>
-            <DotsThreeIcon size={20} weight="bold" aria-hidden="true" />
+            {zh ? '任务操作' : 'Task actions'}
+            <CaretDownIcon size={14} aria-hidden="true" />
           </Button>
           <section
             ref={moreActionsRef}
@@ -1365,29 +1338,37 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         ) : null}
       </div>
       <div className="task-detail-workspace" data-has-activity={hasTaskActivity}>
-        {/* 说明、属性与原编辑控件保持同一棵树，进度变化只调整折叠状态。 */}
-        <div className="task-detail-context" aria-label={zh ? '任务说明与属性' : 'Requirements and properties'}>
-          <details className="task-detail-requirements" open={showOverview}>
-            <summary
-              onClick={(event) => {
-                event.preventDefault();
-                setOverviewExpanded(!showOverview);
-              }}
-            >
-              <strong>{zh ? '任务说明' : 'Requirements'}</strong>
-              {!showOverview ? (
-                <span>
-                  {typedContentFields
-                    .map((field) => field.value)
-                    .filter(Boolean)
-                    .join(' ')}
-                </span>
-              ) : null}
-            </summary>
-            <div onFocusCapture={() => setOverviewExpanded(true)}>{taskOverview}</div>
-          </details>
-          <details className="task-detail-properties">
-            <summary>{zh ? '任务属性' : 'Task properties'}</summary>
+        {/* 主区连续展示说明与会话，信息列直接展开；断点只改布局，不重建编辑和会话组件。 */}
+        <div className="task-detail-reading">
+          <section className="task-detail-requirements" aria-label={zh ? '任务说明' : 'Requirements'}>
+            {taskOverview}
+          </section>
+          <div className="task-detail-main">
+            <TaskDigitalEmployeePanel
+              onArrangeTeam={props.onUseDigitalTeam ? () => props.onUseDigitalTeam!({ kind: 'manage' }) : undefined}
+              onOpenTeamRun={props.onUseDigitalTeam ? (runId) => props.onUseDigitalTeam!({ kind: 'run', runId }) : undefined}
+              key={props.task.id}
+              taskId={props.task.id}
+              projectId={props.task.projectId}
+              terminalReadOnly={props.terminalReadOnly}
+              client={props.digitalEmployeeClient ?? null}
+              management={digitalEmployeeManagement}
+              language={props.language}
+              conversations={conversations}
+              conversationsLoading={props.conversationsLoading}
+              conversationsError={props.conversationsError}
+              activeConversationId={props.activeConversationId}
+              conversationWorkspace={props.conversationWorkspace}
+              newConversationWorkspace={props.terminalReadOnly ? null : props.newConversationWorkspace}
+              onSelectConversation={props.onSelectConversation ? (conversationId) => props.onSelectConversation!(props.task.id, conversationId) : undefined}
+              onReloadConversations={props.onReloadConversations ? () => props.onReloadConversations!(props.task.id) : undefined}
+              onOpenConversation={(conversationId) => props.onOpenConversation(props.task.id, conversationId)}
+            />
+          </div>
+        </div>
+        <aside className="task-detail-properties" aria-label={zh ? '任务信息' : 'Task information'}>
+          <section className="task-detail-metadata-section" aria-label={props.copy.metadataTitle}>
+            <h2 className="task-detail-information-heading">{zh ? '任务属性' : 'Task properties'}</h2>
             <section className="task-detail-summary-grid task-detail-task-facts" aria-label={props.copy.metadataTitle}>
               <span className="task-detail-summary-row">
                 <small>{zh ? '类型' : 'Type'}</small>
@@ -1480,156 +1461,152 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
                 onPasteResources={(request) => pasteTaskDetailResources('tags', request)}
               />
             </section>
-
-            <details className="task-detail-block task-detail-relationships task-detail-project-settings" aria-label={zh ? '任务关系' : 'Task relationships'}>
-              <summary>
-                <span>{zh ? '任务关系' : 'Task relationships'}</span>
-                <small>{zh ? '父子与关联' : 'Hierarchy and links'}</small>
-              </summary>
-              <div className="task-detail-relationships-content">
-                <span className="task-detail-section-heading">
-                  <span>
-                    <strong>{zh ? '父子关系' : 'Hierarchy'}</strong>
-                    <small>{zh ? `当前第 ${currentTaskDepth} 级` : `Level ${currentTaskDepth}`}</small>
-                  </span>
-                  <Button
-                    variant="secondary"
-                    size="compact"
-                    onClick={() => {
-                      setRelationshipHint('');
-                      props.onCreateChild(props.task.id);
-                    }}
-                    disabled={props.busy}
-                  >
-                    {zh ? '新增子任务' : 'Add child task'}
-                  </Button>
+          </section>
+          <section className="task-detail-block task-detail-relationships" aria-label={zh ? '任务关系' : 'Task relationships'}>
+            <header className="task-detail-section-heading">
+              <strong>{zh ? '任务关系' : 'Task relationships'}</strong>
+            </header>
+            <div className="task-detail-relationships-content">
+              <span className="task-detail-section-heading">
+                <span>
+                  <strong>{zh ? '父子关系' : 'Hierarchy'}</strong>
+                  <small>{zh ? `当前第 ${currentTaskDepth} 级` : `Level ${currentTaskDepth}`}</small>
                 </span>
-                {relationshipHint && relationshipHintTarget === 'child' ? <p role="status">{relationshipHint}</p> : null}
-                <label className="task-detail-relationship-control">
-                  <small>{zh ? '父任务' : 'Parent task'}</small>
-                  <ZeusSelect
-                    size="regular"
-                    ariaLabel={zh ? '更换父任务' : 'Change parent task'}
-                    value={props.task.parentTaskId ?? ''}
-                    options={[{ value: '', label: zh ? '无父任务（根任务）' : 'No parent (root task)' }, ...validParentTasks.map((task) => ({ value: task.id, label: `${task.taskCode ?? task.id} · ${task.title}` }))]}
-                    onChange={(parentTaskId) => void saveRelationships({ parentTaskId: parentTaskId || null })}
-                    disabled={props.busy || relationshipSaveState.kind === 'saving'}
-                  />
-                </label>
-                {directChildren.length > 0 ? (
-                  <div className="task-detail-relationship-list">
-                    <small>{zh ? `直接子任务 ${directChildren.length} 个` : `${directChildren.length} direct children`}</small>
-                    {directChildren.map((task) => (
-                      <span key={task.id} className="task-detail-relationship-row">
-                        <button type="button" className="task-detail-relationship-link" onClick={() => props.onOpenRelatedTask(task.id)} aria-label={zh ? `打开任务详情：${task.title}` : `Open task details: ${task.title}`}>
-                          <strong>{task.title}</strong>
-                          <small>{task.taskCode ?? task.id}</small>
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
-
-                <span className="task-detail-section-heading task-detail-related-heading">
-                  <span>
-                    <strong>{zh ? '关联任务' : 'Related tasks'}</strong>
-                    <small>{relatedTasks.length}</small>
-                  </span>
-                </span>
-                <div className="task-detail-related-add">
-                  <ZeusSelect
-                    size="regular"
-                    ariaLabel={zh ? '选择要关联的任务' : 'Choose a related task'}
-                    value={relatedTaskCandidateId}
-                    options={[{ value: '', label: zh ? '请选择要关联的任务' : 'Select a task to relate', disabled: true }, ...relatedCandidateTasks.map((task) => ({ value: task.id, label: `${task.taskCode ?? task.id} · ${task.title}` }))]}
-                    onChange={(taskId) => {
-                      setRelatedTaskCandidateId(taskId);
-                      setRelationshipHint('');
-                    }}
-                    disabled={props.busy || relationshipSaveState.kind === 'saving' || relatedCandidateTasks.length === 0}
-                  />
-                  <Button
-                    variant="secondary"
-                    size="compact"
-                    disabled={props.busy || relationshipSaveState.kind === 'saving'}
-                    onClick={() => {
-                      // 必选条件通过反馈说明，空目标不得进入持久化请求。
-                      if (!relatedTaskCandidateId) {
-                        setRelationshipHintTarget('relation');
-                        setRelationshipHint(
-                          relatedCandidateTasks.length === 0
-                            ? zh
-                              ? '当前没有可关联的任务。请先在本项目创建其他任务。'
-                              : 'No tasks are available to link. Create another task in this project first.'
-                            : zh
-                              ? '请先从上方下拉框选择要关联的任务。'
-                              : 'Choose a task from the dropdown above first.',
-                        );
-                        return;
-                      }
-                      setRelationshipHint('');
-                      void saveRelationships({ relatedTaskIds: [...(props.task.relatedTaskIds ?? []), relatedTaskCandidateId] });
-                    }}
-                  >
-                    {zh ? '添加关联' : 'Add relation'}
-                  </Button>
-                </div>
-                {relationshipHint && relationshipHintTarget === 'relation' ? <p role="status">{relationshipHint}</p> : null}
-                <div className="task-detail-relationship-list" role="list">
-                  {relatedTasks.map((task) => (
-                    <span key={task.id} className="task-detail-relationship-row" role="listitem">
+                <Button
+                  variant="secondary"
+                  size="compact"
+                  onClick={() => {
+                    setRelationshipHint('');
+                    props.onCreateChild(props.task.id);
+                  }}
+                  disabled={props.busy}
+                >
+                  {zh ? '新增子任务' : 'Add child task'}
+                </Button>
+              </span>
+              {relationshipHint && relationshipHintTarget === 'child' ? <p role="status">{relationshipHint}</p> : null}
+              <label className="task-detail-relationship-control">
+                <small>{zh ? '父任务' : 'Parent task'}</small>
+                <ZeusSelect
+                  size="regular"
+                  ariaLabel={zh ? '更换父任务' : 'Change parent task'}
+                  value={props.task.parentTaskId ?? ''}
+                  options={[{ value: '', label: zh ? '无父任务（根任务）' : 'No parent (root task)' }, ...validParentTasks.map((task) => ({ value: task.id, label: `${task.taskCode ?? task.id} · ${task.title}` }))]}
+                  onChange={(parentTaskId) => void saveRelationships({ parentTaskId: parentTaskId || null })}
+                  disabled={props.busy || relationshipSaveState.kind === 'saving'}
+                />
+              </label>
+              {directChildren.length > 0 ? (
+                <div className="task-detail-relationship-list">
+                  <small>{zh ? `直接子任务 ${directChildren.length} 个` : `${directChildren.length} direct children`}</small>
+                  {directChildren.map((task) => (
+                    <span key={task.id} className="task-detail-relationship-row">
                       <button type="button" className="task-detail-relationship-link" onClick={() => props.onOpenRelatedTask(task.id)} aria-label={zh ? `打开任务详情：${task.title}` : `Open task details: ${task.title}`}>
                         <strong>{task.title}</strong>
                         <small>{task.taskCode ?? task.id}</small>
                       </button>
-                      <Button
-                        variant="secondary"
-                        size="compact"
-                        onClick={() => void saveRelationships({ relatedTaskIds: (props.task.relatedTaskIds ?? []).filter((taskId) => taskId !== task.id) })}
-                        disabled={props.busy || relationshipSaveState.kind === 'saving'}
-                      >
-                        {zh ? '移除' : 'Remove'}
-                      </Button>
                     </span>
                   ))}
                 </div>
-                <TaskEditFeedback state={relationshipSaveState} copy={editCopy} statusId={`${attachmentStatusId}-relationships`} />
-              </div>
-            </details>
+              ) : null}
 
-            <TaskProjectActions
-              key={`${props.task.id}:${props.task.projectId}`}
-              task={props.task}
-              projects={props.projects}
-              language={props.language}
-              busy={props.busy}
-              onUpdateTaskContent={props.onUpdateTaskContent}
-              onCopyTask={props.onCopyTask}
-            />
-          </details>
-        </div>
-        <div className="task-detail-main">
-          <TaskDigitalEmployeePanel
-            onArrangeTeam={props.onUseDigitalTeam ? () => props.onUseDigitalTeam!({ kind: 'manage' }) : undefined}
-            onOpenTeamRun={props.onUseDigitalTeam ? (runId) => props.onUseDigitalTeam!({ kind: 'run', runId }) : undefined}
-            key={props.task.id}
-            taskId={props.task.id}
-            projectId={props.task.projectId}
-            terminalReadOnly={props.terminalReadOnly}
-            client={props.digitalEmployeeClient ?? null}
-            management={digitalEmployeeManagement}
+              <span className="task-detail-section-heading task-detail-related-heading">
+                <span>
+                  <strong>{zh ? '关联任务' : 'Related tasks'}</strong>
+                  <small>{relatedTasks.length}</small>
+                </span>
+              </span>
+              <div className="task-detail-related-add">
+                <ZeusSelect
+                  size="regular"
+                  ariaLabel={zh ? '选择要关联的任务' : 'Choose a related task'}
+                  value={relatedTaskCandidateId}
+                  options={[{ value: '', label: zh ? '请选择要关联的任务' : 'Select a task to relate', disabled: true }, ...relatedCandidateTasks.map((task) => ({ value: task.id, label: `${task.taskCode ?? task.id} · ${task.title}` }))]}
+                  onChange={(taskId) => {
+                    setRelatedTaskCandidateId(taskId);
+                    setRelationshipHint('');
+                  }}
+                  disabled={props.busy || relationshipSaveState.kind === 'saving' || relatedCandidateTasks.length === 0}
+                />
+                <Button
+                  variant="secondary"
+                  size="compact"
+                  disabled={props.busy || relationshipSaveState.kind === 'saving'}
+                  onClick={() => {
+                    // 必选条件通过反馈说明，空目标不得进入持久化请求。
+                    if (!relatedTaskCandidateId) {
+                      setRelationshipHintTarget('relation');
+                      setRelationshipHint(
+                        relatedCandidateTasks.length === 0
+                          ? zh
+                            ? '当前没有可关联的任务。请先在本项目创建其他任务。'
+                            : 'No tasks are available to link. Create another task in this project first.'
+                          : zh
+                            ? '请先从上方下拉框选择要关联的任务。'
+                            : 'Choose a task from the dropdown above first.',
+                      );
+                      return;
+                    }
+                    setRelationshipHint('');
+                    void saveRelationships({ relatedTaskIds: [...(props.task.relatedTaskIds ?? []), relatedTaskCandidateId] });
+                  }}
+                >
+                  {zh ? '添加关联' : 'Add relation'}
+                </Button>
+              </div>
+              {relationshipHint && relationshipHintTarget === 'relation' ? <p role="status">{relationshipHint}</p> : null}
+              <div className="task-detail-relationship-list" role="list">
+                {relatedTasks.map((task) => (
+                  <span key={task.id} className="task-detail-relationship-row" role="listitem">
+                    <button type="button" className="task-detail-relationship-link" onClick={() => props.onOpenRelatedTask(task.id)} aria-label={zh ? `打开任务详情：${task.title}` : `Open task details: ${task.title}`}>
+                      <strong>{task.title}</strong>
+                      <small>{task.taskCode ?? task.id}</small>
+                    </button>
+                    <Button
+                      variant="secondary"
+                      size="compact"
+                      onClick={() => void saveRelationships({ relatedTaskIds: (props.task.relatedTaskIds ?? []).filter((taskId) => taskId !== task.id) })}
+                      disabled={props.busy || relationshipSaveState.kind === 'saving'}
+                    >
+                      {zh ? '移除' : 'Remove'}
+                    </Button>
+                  </span>
+                ))}
+              </div>
+              <TaskEditFeedback state={relationshipSaveState} copy={editCopy} statusId={`${attachmentStatusId}-relationships`} />
+            </div>
+          </section>
+          <section className="task-detail-block task-detail-events" aria-label={props.copy.eventsTitle}>
+            <header className="task-detail-section-heading">
+              <strong>{props.copy.eventsTitle}</strong>
+              <small>{props.events.length}</small>
+            </header>
+            {props.events.length === 0 ? (
+              <p>{props.copy.noEvents}</p>
+            ) : (
+              <ol className="task-detail-event-list">
+                {/* 直接展示已加载的完整历史，数量必须与标题计数一致。 */}
+                {props.events.map((event) => (
+                  <li className="task-detail-event-row" key={event.id}>
+                    <span>
+                      <strong>{formatTaskEventTitle(event, props.language)}</strong>
+                    </span>
+                    <time dateTime={event.createdAt}>{formatTaskUpdatedAt(event.createdAt, props.copy.updatedAtMissing ?? (zh ? '未记录' : 'Not recorded'))}</time>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </section>
+          <TaskProjectActions
+            key={`${props.task.id}:${props.task.projectId}`}
+            task={props.task}
+            projects={props.projects}
             language={props.language}
-            conversations={conversations}
-            conversationsLoading={props.conversationsLoading}
-            conversationsError={props.conversationsError}
-            activeConversationId={props.activeConversationId}
-            conversationWorkspace={props.conversationWorkspace}
-            newConversationWorkspace={props.terminalReadOnly ? null : props.newConversationWorkspace}
-            onSelectConversation={props.onSelectConversation ? (conversationId) => props.onSelectConversation!(props.task.id, conversationId) : undefined}
-            onReloadConversations={props.onReloadConversations ? () => props.onReloadConversations!(props.task.id) : undefined}
-            onOpenConversation={(conversationId) => props.onOpenConversation(props.task.id, conversationId)}
+            busy={props.busy}
+            onUpdateTaskContent={props.onUpdateTaskContent}
+            onCopyTask={props.onCopyTask}
           />
-        </div>
+        </aside>
       </div>
       {undoAttachment || attachmentSaveState.kind === 'saving' || attachmentSaveState.kind === 'error' || attachmentSaveState.kind === 'conflict' ? (
         <section className="task-detail-attachment-feedback" aria-live="polite" aria-busy={attachmentSaveState.kind === 'saving' || undefined}>
