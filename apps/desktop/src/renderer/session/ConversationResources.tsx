@@ -492,7 +492,17 @@ function ConversationResourceCard(
 }
 
 /** 资源卡和文件工具栏复用同一套可用应用检测及键盘菜单。 */
-export function OpenWithMenu(props: { label?: string; applicationsOnly?: boolean; resource: ConversationResource; language: SessionUiLanguage; disabled: boolean; onOpen: (target: ConversationOpenTarget) => void | Promise<void> }) {
+export function OpenWithMenu(props: {
+  label?: string;
+  applicationsOnly?: boolean;
+  /** 文件工具栏优先向下展开，空间不足时仍避开窗口边界。 */ preferBelow?: boolean;
+  /** 已检测的真实应用供工具栏与菜单共用，避免重复检测。 */ targets?: ConversationResourceOpenTarget[];
+  /** 文件操作与应用列表分隔，仍处于同一个键盘菜单。 */ footer?: ReactNode;
+  resource: ConversationResource;
+  language: SessionUiLanguage;
+  disabled: boolean;
+  onOpen: (target: ConversationOpenTarget) => void | Promise<void>;
+}) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const [open, setOpen] = useState(false);
@@ -529,7 +539,7 @@ export function OpenWithMenu(props: { label?: string; applicationsOnly?: boolean
       const left = Math.max(margin, Math.min(triggerRect.right - menuRect.width, window.innerWidth - menuRect.width - margin));
       const above = triggerRect.top - menuRect.height - gap;
       const below = triggerRect.bottom + gap;
-      const top = above >= margin ? above : Math.max(margin, Math.min(below, window.innerHeight - menuRect.height - margin));
+      const top = props.preferBelow && below + menuRect.height <= window.innerHeight - margin ? below : above >= margin ? above : Math.max(margin, Math.min(below, window.innerHeight - menuRect.height - margin));
       setMenuPosition({ left, top });
     };
     position();
@@ -539,13 +549,14 @@ export function OpenWithMenu(props: { label?: string; applicationsOnly?: boolean
       window.removeEventListener('resize', position);
       window.removeEventListener('scroll', position, true);
     };
-  }, [error, loading, open, targets.length]);
+  }, [error, loading, open, targets.length, props.preferBelow]);
 
   useEffect(() => {
     if (!open || loading || targets.length === 0) return;
     requestAnimationFrame(() => menuButtons(menuRef.current)[0]?.focus());
   }, [loading, open, targets]);
 
+  /** 优先复用工具栏的检测结果，其他入口仍按需请求宿主。 */
   async function toggle(): Promise<void> {
     if (props.disabled) return;
     const next = !open;
@@ -554,13 +565,28 @@ export function OpenWithMenu(props: { label?: string; applicationsOnly?: boolean
     setLoading(true);
     setError(null);
     try {
-      const result = await listConversationResourceOpenTargetsInMain({
-        zeus: window.zeus,
-        projectId: props.resource.projectId,
-        conversationId: props.resource.conversationId,
-        resourceId: props.resource.id,
-      });
-      setTargets(props.applicationsOnly ? result.targets.filter((target) => target.available && (target.id === 'system_default' || target.id.startsWith('editor:') || target.id.startsWith('terminal:'))) : result.targets);
+      const result = props.targets
+        ? { targets: props.targets }
+        : await listConversationResourceOpenTargetsInMain({
+            zeus: window.zeus,
+            projectId: props.resource.projectId,
+            conversationId: props.resource.conversationId,
+            resourceId: props.resource.id,
+          });
+      /** 文件菜单先显示首选编辑器、默认应用和终端，其余编辑器随后展示。 */
+      const applications = result.targets.filter((target) => target.available && (target.id === 'system_default' || target.id.startsWith('editor:') || target.id.startsWith('terminal:')));
+      /** 与工具栏使用同一检测顺序，首个可用编辑器优先。 */
+      const primary = applications.find((target) => target.id.startsWith('editor:'));
+      setTargets(
+        props.applicationsOnly
+          ? [
+              ...(primary ? [primary] : []),
+              ...applications.filter((target) => target.id === 'system_default'),
+              ...applications.filter((target) => target.id.startsWith('terminal:')),
+              ...applications.filter((target) => target.id.startsWith('editor:') && target !== primary),
+            ]
+          : result.targets,
+      );
     } catch (loadError) {
       setError(loadError);
     } finally {
@@ -620,7 +646,7 @@ export function OpenWithMenu(props: { label?: string; applicationsOnly?: boolean
         ? createPortal(
             <div className={openWithPortalClassName()}>
               <div
-                className="session-open-with-menu"
+                className={`session-open-with-menu${props.applicationsOnly ? ' session-open-with-app-menu' : ''}`}
                 data-motion-surface="popover"
                 data-motion-state={open ? 'open' : 'closing'}
                 inert={!open}
@@ -630,6 +656,7 @@ export function OpenWithMenu(props: { label?: string; applicationsOnly?: boolean
                 onKeyDown={handleMenuKeyDown}
                 style={menuPositionStyle(menuPosition)}
               >
+                {/* 底部操作先关闭菜单并恢复焦点，随后由各自受控入口执行。 */}
                 {loading ? <span className="session-open-with-status">{props.language === 'zh-CN' ? '正在检测应用…' : 'Detecting apps…'}</span> : null}
                 {error ? (
                   <span className="session-open-with-status" role="alert">
@@ -665,12 +692,17 @@ export function OpenWithMenu(props: { label?: string; applicationsOnly?: boolean
                           ) : (
                             <AppWindow aria-hidden="true" />
                           )}
-                          {localizedTargetLabel(target, props.language)}
+                          {props.applicationsOnly && target.id === 'system_default' ? 'Default app' : props.applicationsOnly && target.id === 'editor:vscode' ? 'VS Code' : localizedTargetLabel(target, props.language)}
                         </span>
                         {target.exactLocation && target.available ? <small>{props.language === 'zh-CN' ? '精确到行' : 'Exact line'}</small> : null}
                       </button>
                     ))
                   : null}
+                {props.footer ? (
+                  <div className="session-open-with-footer" onClick={closeAndRestoreFocus}>
+                    {props.footer}
+                  </div>
+                ) : null}
               </div>
             </div>,
             document.body,

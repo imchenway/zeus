@@ -448,8 +448,9 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const answeredRequests = useMemo(() => props.state.pendingRequests.filter(isAnsweredUserInputRequest), [props.state.pendingRequests]);
   // 当前状态始终读取完整会话事件，不受活动列表的展示筛选影响。
   const activeStatusKind = transcriptRunStatus(props.state);
-  /** Codex 摘要与 Pi thinking/reasoning 共用当前进展位置，不按供应商或模型名称分支。 */
-  const activeReasoningItem = props.state.currentReasoningItem?.turnId === activeTurnId ? props.state.currentReasoningItem : null;
+  /** 同轮、未失败且有可读文字的摘要才接管当前进展；空摘要继续显示运行提示。 */
+  const activeReasoningItem =
+    props.state.currentReasoningItem?.turnId === activeTurnId && props.state.currentReasoningItem.status !== 'failed' && latestReasoningSummaryText(props.state.currentReasoningItem).length > 0 ? props.state.currentReasoningItem : null;
   // 创建中的会话尚未建立真实轮次时，由连接提示承担当前进度。
   const creatingSession = props.creationStatus?.state === 'creating' || props.creationStatus?.state === 'retrying';
   // 创建失败时保留创建错误，不再显示独立运行状态。
