@@ -2524,6 +2524,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         onEdit={transcriptInteractionsEnabled ? actions.onEditQueuedSubmission : undefined}
         onDelete={transcriptInteractionsEnabled ? actions.onDeleteQueuedSubmission : undefined}
         onSendNow={transcriptInteractionsEnabled ? actions.onSendQueuedNow : undefined}
+        onResumeQueue={transcriptInteractionsEnabled ? actions.onResumeQueue : undefined}
         onReorder={transcriptInteractionsEnabled ? actions.onReorderQueue : undefined}
       />
     );

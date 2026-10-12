@@ -400,6 +400,10 @@ function QueueActionsQa() {
   const parameters = new URLSearchParams(window.location.search);
   /** 正常排队作为默认视觉对照，其他状态用于验证权限和恢复提示。 */
   const [scenario, setScenario] = useState(parameters.get('state') ?? 'queued');
+  /** 复现消息已保存、模型尚未接手时的真实空闲队首。 */
+  const preparing = scenario === 'preparing';
+  /** 恢复前后共用生产归约器，连接提示只随权威结束事件清除。 */
+  const connectionFeedback = scenario === 'reconnecting' || scenario === 'reconnected';
   /** 内容样本覆盖短消息、长文本、图文、纯附件和连续排队。 */
   const [sample, setSample] = useState(parameters.get('sample') ?? 'reference');
   /** 主题与窄栏只改变本页，不写入应用设置。 */
@@ -463,8 +467,15 @@ function QueueActionsQa() {
       id: `qa-submission-${index + 1}`,
       content: editedContent[`qa-submission-${index + 1}`] ?? text,
       position: index + 1,
-      status: scenario === 'accepted' || outcomes[`qa-submission-${index + 1}`] === 'accepted' ? 'resolved' : scenario === 'queued' || scenario === 'restoring' ? 'queued' : scenario === 'failed' ? 'failed' : 'paused',
-      pausedReason: ['queued', 'accepted', 'restoring'].includes(scenario) ? null : scenario,
+      status:
+        scenario === 'accepted' || outcomes[`qa-submission-${index + 1}`] === 'accepted'
+          ? 'resolved'
+          : scenario === 'queued' || scenario === 'restoring' || preparing || connectionFeedback
+            ? 'queued'
+            : scenario === 'failed'
+              ? 'failed'
+              : 'paused',
+      pausedReason: ['queued', 'accepted', 'restoring'].includes(scenario) || preparing || connectionFeedback ? null : scenario,
       providerTurnId: scenario === 'accepted' || outcomes[`qa-submission-${index + 1}`] === 'accepted' ? 'qa-turn' : null,
       createdAt: '2026-09-10T02:00:00Z',
       attachments:
@@ -518,18 +529,49 @@ function QueueActionsQa() {
       updatedAt: submission.createdAt,
     }));
   /** 活动轮次确保普通队列正在等待，恢复原因直接传给生产投影。 */
-  const state: NativeSessionState = {
+  const previewState: NativeSessionState = {
     ...createInitialSessionState(),
     draft: composerDraft,
     conversationId: 'qa-queue',
+    providerThreadId: 'qa-thread',
     transportState: 'ready',
-    activeTurnId: 'qa-turn',
+    providerReconnectAttempt: connectionFeedback ? 4 : 0,
+    providerReconnectAttempts: connectionFeedback ? 5 : 0,
+    providerReconnectTurnId: connectionFeedback ? 'qa-turn' : null,
+    activeTurnId: preparing ? null : 'qa-turn',
     startedTurnId: 'qa-turn',
-    conversationState: 'active_prework',
+    conversationState: preparing ? 'native_idle' : scenario === 'interrupted' ? 'paused' : 'active_prework',
     items: Object.fromEntries(acceptedItems.map((item) => [item.key, item])),
     itemOrder: acceptedItems.map((item) => item.key),
-    queue: { state: { type: 'active', turnId: 'qa-turn', phase: 'prework' }, submissions, waitReason: scenario === 'restoring' ? 'conversation_restoring' : null },
+    queue: {
+      state: preparing ? { type: 'idle' } : scenario === 'interrupted' ? { type: 'paused', reason: 'interrupted' } : { type: 'active', turnId: 'qa-turn', phase: 'prework' },
+      submissions,
+      waitReason: preparing ? 'dispatch_pending' : scenario === 'restoring' ? 'conversation_restoring' : null,
+    },
   };
+  /** 收到实际恢复事件后仍保留活动轮次，核对执行提示及时接手。 */
+  const state =
+    scenario === 'reconnected'
+      ? sessionReducer(previewState, {
+          type: 'event_received',
+          event: {
+            id: 'qa-recovery-complete',
+            type: 'conversation.transport.changed',
+            createdAt: '2026-10-12T04:00:00Z',
+            payload: {
+              conversationId: 'qa-queue',
+              threadId: 'qa-thread',
+              generationId: 'qa-generation',
+              sequence: 1,
+              providerThreadId: 'qa-thread',
+              providerTurnId: 'qa-turn',
+              recoveryState: 'idle',
+              reconnectAttempt: 0,
+              reconnectAttempts: 5,
+            },
+          },
+        })
+      : previewState;
   /** 切换场景时清除本页模拟结果，避免上一场景影响新的操作检查。 */
   function resetPreview(): void {
     setOutcomes({});
@@ -553,7 +595,7 @@ function QueueActionsQa() {
     /** 已接纳消息退出队列操作，其余按真实状态计算可见入口。 */
     const pendingCount = submissions.filter((submission) => submission.status !== 'resolved').length;
     /** 只有普通 queued 和安全 paused 项进入输入框卡片。 */
-    const expectedCards = ['queued', 'restoring', 'preflight_failed'].includes(scenario) ? pendingCount : 0;
+    const expectedCards = preparing ? Math.max(0, pendingCount - 1) : ['queued', 'restoring', 'interrupted', 'preflight_failed', 'reconnecting', 'reconnected'].includes(scenario) ? pendingCount : 0;
     /** 送达未知只检查；写前失败和待恢复消息提供先核对再发送的重试。 */
     const expectedCheck = scenario === 'outcome_unknown' ? pendingCount : 0;
     /** 无需错误详情也能重试已确认未发送的消息。 */
@@ -586,9 +628,9 @@ function QueueActionsQa() {
                 resetPreview();
               }}
             >
-              {['queued', 'restoring', 'outcome_unknown', 'recovery_required', 'recovered_unsent', 'accepted', 'failed', 'preflight_failed'].map((value, index) => (
+              {['queued', 'restoring', 'outcome_unknown', 'recovery_required', 'recovered_unsent', 'accepted', 'failed', 'preflight_failed', 'interrupted', 'preparing', 'reconnecting', 'reconnected'].map((value, index) => (
                 <option key={value} value={value}>
-                  {['正常排队', '正在恢复', '送达未知', '等待恢复', '已确认未发送', '已接纳', '发送失败', '发送前准备失败'][index]}
+                  {['正常排队', '正在恢复', '送达未知', '等待恢复', '已确认未发送', '已接纳', '发送失败', '发送前准备失败', '中断后暂停', '模型接手前准备', '连接中', '模型已恢复输出'][index]}
                 </option>
               ))}
             </select>
@@ -648,6 +690,11 @@ function QueueActionsQa() {
             }}
             onDelete={(id) => runAction(id, 'deleted')}
             onSendNow={(id) => runAction(id, 'accepted')}
+            onResumeQueue={() => {
+              if (failAction) throw new Error('继续发送失败，原队列已保留。');
+              setScenario('queued');
+              setResult('继续发送回调已触发，原消息恢复排队');
+            }}
             onReorder={(orderedIds) => {
               setQueueOrder(orderedIds);
               setResult(`重排回调已触发：${orderedIds.join(' → ')}`);

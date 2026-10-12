@@ -2,8 +2,8 @@
 export const modelResponseRetryPolicy = {
   /** 首次请求之外允许的自动恢复次数。 */
   maxRetries: 5,
-  /** 单次模型响应等待上限，不包含工具执行。 */
-  attemptTimeoutMs: 60_000,
+  /** 单次建立模型连接的上限，收到响应头后不再限制生成耗时。 */
+  connectionTimeoutMs: 60_000,
   /** 指数退避从一秒开始。 */
   baseDelayMs: 1_000,
 } as const;
@@ -24,10 +24,10 @@ export function modelResponseRetryDelay(attempt: number): number {
   return modelResponseRetryPolicy.baseDelayMs * 2 ** Math.max(0, Math.min(attempt, modelResponseRetryPolicy.maxRetries) - 1);
 }
 
-/** 一次模型响应的截止时间；调用方结束请求时必须释放计时器。 */
-export function createModelResponseDeadline(onTimeout: () => void): () => void {
-  /** 单次截止时间不随零碎输出延长，工具和人工等待不应持有此计时器。 */
-  const timer = setTimeout(onTimeout, modelResponseRetryPolicy.attemptTimeoutMs);
+/** 仅供模型建链使用；收到响应头或流开始事件时必须释放计时器。 */
+export function createModelConnectionDeadline(onTimeout: () => void): () => void {
+  /** 已建立连接后不能继续计时，正常思考、输出和工具执行不消耗建链时间。 */
+  const timer = setTimeout(onTimeout, modelResponseRetryPolicy.connectionTimeoutMs);
   timer.unref();
   return () => clearTimeout(timer);
 }
