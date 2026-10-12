@@ -742,6 +742,8 @@
 }
 
 .session-codex-parity-v1 .session-queued-messages {
+  /* 排队卡片按实际分栏宽度换行，不能让操作按钮挤掉消息正文。 */
+  container-type: inline-size;
   background: var(--session-control);
   border: 1px solid var(--session-line-soft);
   border-radius: 12px;
@@ -812,8 +814,11 @@
   padding: 7px 8px 8px;
 }
 
-.session-codex-parity-v1 .session-queued-message[data-queue-status='paused'] {
-  background: color-mix(in srgb, var(--session-warning) 5%, transparent);
+/* 窄分栏仍保留一行正文，操作按钮在下一行右侧排列。 */
+@container (max-width: 420px) {
+  .session-codex-parity-v1 .session-queued-message {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .session-codex-parity-v1 .session-queued-message[data-queue-status='steering'] {

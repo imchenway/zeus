@@ -1,4 +1,4 @@
-import { createModelResponseDeadline, isRetryableModelResponseFailure, modelResponseRetryDelay, modelResponseRetryPolicy } from '@zeus/ai-runtime';
+import { isRetryableModelResponseFailure, modelResponseRetryDelay, modelResponseRetryPolicy } from '@zeus/ai-runtime';
 import { type AsyncQuestionAnswer } from '@zeus/shared';
 import { type CodexAppServerEvent, type CodexServerRequestResponse, type CodexThreadGoal, modelRef, parseModelRef } from '@zeus/ai-runtime';
 import { buildTaskPushInputParts, type CodexAdditionalContextEntry, parseCanonicalRequestUserInputQuestions, type TaskPushMessageLayout, validateCanonicalRequestUserInputAnswers } from '@zeus/shared';
@@ -184,16 +184,14 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       failure: Record<string, unknown> | null;
       /** 上一次已结束，正在等待下一次续接。 */
       retrying: boolean;
+      /** 当前轮次已收到真实输出，只用于结束连接提示，不重置恢复预算。 */
+      responseObserved: boolean;
       /** 用户停止、宿主关闭或发送不确定后禁止续接。 */
       cancelled: boolean;
       /** 最终结果需要结算的前序轮次身份。 */
       sourceTurns: Set<string>;
-      /** 释放当前模型响应截止计时。 */
-      stopDeadline: () => void;
       /** 尚未触发的指数退避计时。 */
       retryTimer: ReturnType<typeof setTimeout> | null;
-      /** 并行工具全部结束才恢复响应计时，长工具不消耗网络预算。 */
-      activeTools: Set<string>;
       /** 停止和关闭要等待正在准备的续接，不能遗留后台写入。 */
       dispatching: Promise<void> | null;
     }
@@ -272,24 +270,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     handleEventError: safelyHandleProviderEventError,
     async handleDynamicToolCall(event) {
       if (closed) return;
-      /** Zeus 工具脱离事件串行链，必须显式暂停模型响应计时。 */
-      const params = isRecord(event.params) ? event.params : {};
-      const conversation = typeof params.threadId === 'string' ? options.conversations.getByProviderThreadId(params.threadId) : undefined;
-      const turnId = providerTurnIdFrom(params);
-      const retry = conversation ? providerConnectionRetries.get(conversation.id) : undefined;
-      const toolKey = `dynamic:${String(event.requestId)}`;
-      if (retry?.providerTurnId === turnId) {
-        retry.activeTools.add(toolKey);
-        retry.stopDeadline();
-      }
-      try {
-        await handleDynamicToolRequest(event);
-      } finally {
-        if (conversation && retry && retry.providerTurnId === turnId && typeof params.threadId === 'string' && turnId) {
-          retry.activeTools.delete(toolKey);
-          if (retry.activeTools.size === 0 && !retry.failure && !retry.cancelled) observeProviderResponseWait(conversation.id, params.threadId, turnId);
-        }
-      }
+      await handleDynamicToolRequest(event);
     },
   });
   const externalAnswerRecovery = createCodexExternalRequestAnswerRecovery({
@@ -1890,7 +1871,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const retry = providerConnectionRetries.get(conversation.id);
     if (retry && (retry.providerTurnId === input.providerTurnId || retry.sourceTurns.has(input.providerTurnId))) {
       retry.cancelled = true;
-      retry.stopDeadline();
       if (retry.retryTimer) clearTimeout(retry.retryTimer);
       await retry.dispatching;
       // 点击停止时可能正好换到下一次尝试，只在同一恢复链中转交目标。
@@ -1968,17 +1948,20 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     };
   }
 
+  /** 用户明确继续未发送的中断队列；冻结提交交给统一派发 owner，内部提交沿用内部队列。 */
   async function resumeInterruptedQueue(input: { conversationId: string }): Promise<NativeQueueSnapshot> {
     assertOpen();
     const conversation = requireConversation(input.conversationId);
     const state = runStates.get(conversation.id) ?? inferRunState(conversation);
-    if (state.type !== 'paused' || state.reason !== 'interrupted') throw coordinatorError('ZEUS_NATIVE_QUEUE_NOT_INTERRUPTED', 'Queue is not paused by an interrupted turn.');
+    if (state.type !== 'idle' && (state.type !== 'paused' || state.reason !== 'interrupted')) throw coordinatorError('ZEUS_NATIVE_QUEUE_NOT_INTERRUPTED', 'Queue is not paused by an interrupted turn.');
     const paused = options.submissions.listByConversation(conversation.id).filter((entry) => entry.status === 'paused' && entry.pausedReason === 'interrupted' && !entry.providerTurnId);
+    if (paused.length === 0) throw coordinatorError('ZEUS_NATIVE_QUEUE_NOT_INTERRUPTED', 'Queue is not paused by an interrupted turn.');
+    if (paused.some((submission) => submission.submissionOutcome === 'outcome_unknown')) throw coordinatorError('ZEUS_NATIVE_SUBMISSION_OUTCOME_UNKNOWN', 'Submission delivery must be confirmed before continuing.');
     for (const submission of paused) options.submissions.updateStatus(submission.id, 'queued');
     runStates.set(conversation.id, { type: 'idle' });
     await persist();
-    const next = options.submissions.listByConversation(conversation.id).find((entry) => entry.status === 'queued' && !entry.providerTurnId);
-    if (next) await dispatchSubmission(conversation, next);
+    options.broadcast('conversation.queue.changed', { conversationId: conversation.id });
+    requestQueueDrain();
     return toQueueSnapshot(conversation.id);
   }
 
@@ -2433,9 +2416,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           providerState: 'active',
         });
         runStates.set(conversation.id, { type: 'active', turnId: turn.providerTurnId, phase: 'prework' });
-        /** 最后一个人工问题已答复，下一次模型响应重新使用一分钟窗口。 */
-        const retry = providerConnectionRetries.get(conversation.id);
-        if (retry && retry.activeTools.size === 0 && !retry.cancelled && !retry.failure) observeProviderResponseWait(conversation.id, turn.providerThreadId, turn.providerTurnId);
       }
     }
     await persist();
@@ -3134,24 +3114,17 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     requestQueueDrain,
   });
 
-  /** 新轮次接入统一截止时间；恢复轮次继承同一预算和等待结果的原始身份。 */
-  function observeProviderResponseWait(conversationId: string, providerThreadId: string, providerTurnId: string): void {
+  /** 新轮次登记恢复预算；原生传输负责建链超时，不给模型思考或输出设置截止时间。 */
+  function observeProviderTurn(conversationId: string, providerTurnId: string): void {
     if (closing || closed) return;
     /** 新请求创建预算，自动续接保留旧预算。 */
     let current = providerConnectionRetries.get(conversationId);
     if (!current) {
-      current = { providerTurnId, attempt: 0, failure: null, retrying: false, cancelled: false, sourceTurns: new Set(), stopDeadline: () => undefined, retryTimer: null, activeTools: new Set(), dispatching: null };
+      current = { providerTurnId, attempt: 0, failure: null, retrying: false, responseObserved: false, cancelled: false, sourceTurns: new Set(), retryTimer: null, dispatching: null };
       providerConnectionRetries.set(conversationId, current);
     }
+    if (current.providerTurnId !== providerTurnId) current.responseObserved = false;
     current.providerTurnId = providerTurnId;
-    current.stopDeadline();
-    current.stopDeadline = createModelResponseDeadline(() => {
-      void reportProviderConnectionRetry(conversationId, providerThreadId, providerTurnId, { code: 'ZEUS_MODEL_RESPONSE_TIMEOUT', message: '模型响应等待超过一分钟。' }).catch((error) => {
-        // 中断没有确认时绝不续发；保留错误并交给既有只读恢复入口。
-        markConversationRecoveryRequired(conversationId, error);
-        void persist();
-      });
-    });
   }
 
   /** 供应商连接失败后由 Zeus 停止旧轮次，收到真实终态才允许续接。 */
@@ -3161,7 +3134,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     if (closing || closed || !current || current.providerTurnId !== providerTurnId || current.cancelled || current.failure) return;
     /** 工具错误不从这里重放，只有模型响应故障可消费恢复预算。 */
     current.failure = { code: 'ZEUS_MODEL_RESPONSE_FAILED', ...error };
-    current.stopDeadline();
     try {
       await executeTurnCommand({
         operation: 'turn_interrupt',
@@ -3178,7 +3150,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     }
   }
 
-  /** 真实终态是续发的唯一入口；自然完成和用户停止优先于网络恢复。 */
+  /** 真实输出结束连接提示；只有终态决定续发，自然完成和用户停止优先。 */
   function finishProviderConnectionRetry(
     conversationId: string,
     providerThreadId: string,
@@ -3187,10 +3159,16 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     error?: Record<string, unknown>,
     status?: string,
   ): { attempt: number; failure: Record<string, unknown> | null; retrying: boolean } | undefined {
-    /** 部分文字不代表一次模型请求结束，不能清空次数或延长一分钟窗口。 */
+    /** 部分文字只结束连接提示，不清空同一请求的恢复次数。 */
     const current = providerConnectionRetries.get(conversationId);
-    if (!current || current.providerTurnId !== providerTurnId || !terminal) return undefined;
-    current.stopDeadline();
+    if (!current || current.providerTurnId !== providerTurnId) return undefined;
+    if (!terminal) {
+      // 已停止轮次的迟到输出不能结束下一次连接，也不能取消已发出的停止。
+      if (current.responseObserved || current.failure || current.cancelled || ['completed', 'failed', 'interrupted'].includes(options.turns.getByProvider(providerThreadId, providerTurnId)?.status ?? '')) return undefined;
+      current.responseObserved = true;
+      if (current.attempt > 0) options.broadcast('conversation.transport.changed', { conversationId, providerThreadId, providerTurnId, recoveryState: 'idle', reconnectAttempt: 0, reconnectAttempts: modelResponseRetryPolicy.maxRetries });
+      return undefined;
+    }
     current.failure = status === 'completed' || current.cancelled ? null : (current.failure ?? error ?? null);
     current.retrying = Boolean(current.failure && isRetryableModelResponseFailure(current.failure) && current.attempt < modelResponseRetryPolicy.maxRetries && !closing);
     if (current.retrying) {
@@ -3245,7 +3223,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         if (current.cancelled) return;
         current.cancelled = true;
         current.retrying = false;
-        current.stopDeadline();
         markConversationRecoveryRequired(conversationId, error);
         for (const turnId of current.sourceTurns) rejectTurnResultWaiters(`${conversationId}:${turnId}`, error instanceof Error ? error : new Error(String(error)));
         options.broadcast('conversation.transport.changed', { conversationId, recoveryState: 'idle', reconnectAttempt: 0, reconnectAttempts: modelResponseRetryPolicy.maxRetries });
@@ -3539,27 +3516,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       if (eventConversation) await transcriptInitialization.waitUntilReady(eventConversation.id);
       if (eventConversation) providerThreadAuthority.stopObserver(eventConversation.id);
     }
-    /** 模型响应和工具/人工等待分开计时；恢复只针对可确认身份的当前线程。 */
+    /** 恢复预算只绑定已确认的当前线程和轮次，不按生成耗时猜测连接失败。 */
     const retryConversation = eventThreadId ? options.conversations.getByProviderThreadId(eventThreadId) : undefined;
     const retryTurnId = providerTurnIdFrom(eventParams);
-    if (retryConversation && eventThreadId && retryTurnId) {
-      const retry = providerConnectionRetries.get(retryConversation.id);
-      const item = isRecord(eventParams.item) ? eventParams.item : {};
-      if (event.method === 'turn/started' && !['completed', 'failed', 'interrupted'].includes(options.turns.getByProvider(eventThreadId, retryTurnId)?.status ?? ''))
-        observeProviderResponseWait(retryConversation.id, eventThreadId, retryTurnId);
-      else if (retry?.providerTurnId === retryTurnId) {
-        if (event.requestId !== undefined) retry.stopDeadline();
-        if (typeof item.id === 'string' && !['userMessage', 'agentMessage', 'reasoning'].includes(String(item.type))) {
-          if (event.method === 'item/started') {
-            retry.activeTools.add(item.id);
-            retry.stopDeadline();
-          } else if (event.method === 'item/completed') {
-            retry.activeTools.delete(item.id);
-            if (retry.activeTools.size === 0 && !retry.failure && !retry.cancelled) observeProviderResponseWait(retryConversation.id, eventThreadId, retryTurnId);
-          }
-        }
-      }
-    }
+    if (retryConversation && eventThreadId && retryTurnId && event.method === 'turn/started' && !['completed', 'failed', 'interrupted'].includes(options.turns.getByProvider(eventThreadId, retryTurnId)?.status ?? ''))
+      observeProviderTurn(retryConversation.id, retryTurnId);
     await projectCodexProviderEvent(
       {
         clearAutoResolutionTimer,
@@ -3711,7 +3672,6 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     closing = true;
     for (const retry of providerConnectionRetries.values()) {
       retry.cancelled = true;
-      retry.stopDeadline();
       if (retry.retryTimer) clearTimeout(retry.retryTimer);
     }
     archivedRecoveryAbortController.abort();

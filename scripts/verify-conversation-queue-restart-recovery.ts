@@ -221,9 +221,10 @@ try {
   /** 为正常续发、额度恢复和两种回显顺序分别预留轮次。 */
   const restartedProvider = createRestartProbeManager({
     providerThreadId,
-    turnIds: [secondProviderTurnId, quotaRecoveryTurnId, ...Array.from({ length: 8 }, () => `turn_${randomUUID().replaceAll('-', '')}`)],
+    turnIds: [secondProviderTurnId, quotaRecoveryTurnId, ...Array.from({ length: 10 }, () => `turn_${randomUUID().replaceAll('-', '')}`)],
     // 线程实时状态已空闲，但历史日志在进程退出前没有写下结束标记。
-    initialTurns: [...staleHistoricalTurnIds.map((id) => ({ id, threadId: providerThreadId, status: 'inProgress', items: [] })), completedFirstTurn],
+    // 旧中断迟到时已有更新的成功轮次，不能把正常队首改成暂停。
+    initialTurns: [...staleHistoricalTurnIds.map((id, index) => ({ id, threadId: providerThreadId, status: index === 1 ? 'interrupted' : 'inProgress', items: [] })), completedFirstTurn],
   });
   /** 让恢复连接保持待定，覆盖断网或外部服务长期无回包的启动窗口。 */
   let releaseStartupRecovery: () => void = () => undefined;
@@ -458,14 +459,98 @@ try {
     assertBehavior(JSON.stringify(restartedProvider.startTurnInputs.at(-1)!.input).includes(queuedAttachmentPath), '连续排队丢失了附件原路径');
   }
 
+  /** 仅在临时数据库重建旧轮次和同步水位，复现网络恢复时迟到的历史中断。 */
+  const delayedHistory = new DatabaseSync(databasePath);
+  try {
+    delayedHistory.prepare('UPDATE conversation_turns SET status = ?, completed_at = NULL WHERE provider_turn_id = ?').run('running', staleHistoricalTurnIds[1]!);
+    delayedHistory.prepare('UPDATE conversation_provider_sync_checkpoints SET last_synced_turn_id = ? WHERE conversation_id = ?').run(staleHistoricalTurnIds[1]!, conversationId);
+  } finally {
+    delayedHistory.close();
+  }
+  /** 回显、正文和附件仍由真实 HTTP 消息命令接纳，历史核对不能暂停这条消息。 */
+  const historyClientId = randomUUID();
+  /** 新提交使用独立身份，不与历史内容去重。 */
+  const historyInput = { content: '网络恢复后继续排队', clientUserMessageId: historyClientId, idempotencyKey: randomUUID(), delivery: 'queue' };
+  /** 当前轮次自然完成后，统一派发 owner 必须继续原提交。 */
+  const historyActiveIndex = restartedProvider.startTurnInputs.length - 1;
+  /** 沿用产品消息入口冻结执行上下文。 */
+  const historyAccepted = await requestJson(runningServer, `/api/projects/${projectId}/conversations/${conversationId}/messages`, {
+    method: 'POST',
+    body: commandRequest({
+      commandType: 'conversation.message.submit',
+      scopeKind: 'product_conversation',
+      scopeId: conversationId,
+      operationIdentity: randomUUID(),
+      input: historyInput,
+      inputSha256: conversationDispatchInputSha256(historyInput),
+    }),
+  });
+  assertBehavior(historyAccepted.status === 202, '网络恢复场景的消息未接纳。');
+  await waitFor(async () => {
+    /** 查询真实落库，必须等旧中断已经完成投影才判定队列未受影响。 */
+    const inspection = new DatabaseSync(databasePath, { readOnly: true });
+    try {
+      return inspection.prepare('SELECT status FROM conversation_turns WHERE provider_turn_id = ?').get(staleHistoricalTurnIds[1]!)?.status === 'interrupted';
+    } finally {
+      inspection.close();
+    }
+  }, '迟到的历史中断未被核对。');
+  /** 权威队列状态不能从 queued 退成 paused。 */
+  const afterHistory = await requestJson(runningServer, `/api/projects/${projectId}/conversations/${conversationId}/queue-state`);
+  assertBehavior(
+    Array.isArray(afterHistory.body.submissions) && afterHistory.body.submissions.some((entry) => isRecord(entry) && entry.clientUserMessageId === historyClientId && entry.status === 'queued'),
+    '旧中断暂停了更新轮次中的排队消息。',
+  );
+  await restartedProvider.completeTurn(historyActiveIndex);
+  await waitFor(() => restartedProvider.startTurnInputs.some((entry) => entry.clientUserMessageId === historyClientId), '当前回复完成后，网络恢复场景的排队消息未自动发送。');
+  assertBehavior(restartedProvider.startTurnInputs.filter((entry) => entry.clientUserMessageId === historyClientId).length === 1, '网络恢复后排队消息被重复发送。');
+
+  /** 用户停止后保留未发消息，只有明确继续才交给统一队列 owner。 */
+  const resumeClientId = randomUUID();
+  /** 恢复沿用原正文和客户端身份，不创建替代消息。 */
+  const resumeInput = { content: '中断后由用户继续发送', clientUserMessageId: resumeClientId, idempotencyKey: randomUUID(), delivery: 'queue' };
+  /** 将消息排在当前活动回复之后。 */
+  const resumeAccepted = await requestJson(runningServer, `/api/projects/${projectId}/conversations/${conversationId}/messages`, {
+    method: 'POST',
+    body: commandRequest({
+      commandType: 'conversation.message.submit',
+      scopeKind: 'product_conversation',
+      scopeId: conversationId,
+      operationIdentity: randomUUID(),
+      input: resumeInput,
+      inputSha256: conversationDispatchInputSha256(resumeInput),
+    }),
+  });
+  assertBehavior(resumeAccepted.status === 202, '中断恢复场景的消息未接纳。');
+  await restartedProvider.interruptLatestTurn();
+  /** 真正的中断仍保持暂停，不能被历史修复自动放行。 */
+  const afterInterruption = await requestJson(runningServer, `/api/projects/${projectId}/conversations/${conversationId}/queue-state`);
+  assertBehavior(
+    Array.isArray(afterInterruption.body.submissions) &&
+      afterInterruption.body.submissions.some((entry) => isRecord(entry) && entry.clientUserMessageId === resumeClientId && entry.status === 'paused' && entry.pausedReason === 'interrupted'),
+    '主动中断没有保留暂停队列。',
+  );
+  assertBehavior(!restartedProvider.startTurnInputs.some((entry) => entry.clientUserMessageId === resumeClientId), '用户确认前自动发送了中断队列。');
+  /** 确认入口只恢复原身份，由统一 owner 派发冻结提交。 */
+  const resumed = await requestJson(runningServer, `/api/projects/${projectId}/conversations/${conversationId}/queue/resume`, {
+    method: 'POST',
+    body: commandRequest({ commandType: 'conversation.queue.resume', scopeKind: 'product_conversation', scopeId: conversationId, operationIdentity: randomUUID(), input: {}, inputSha256: conversationDispatchInputSha256({}) }),
+  });
+  assertBehavior(resumed.status === 202, `继续排队失败：${JSON.stringify(resumed.body)}`);
+  await waitFor(() => restartedProvider.startTurnInputs.some((entry) => entry.clientUserMessageId === resumeClientId), '继续后冻结提交未交给统一队列派发。');
+  assertBehavior(restartedProvider.startTurnInputs.filter((entry) => entry.clientUserMessageId === resumeClientId).length === 1, '继续队列后消息重复发送。');
+
   /** 完整本地服务上复现引导已接纳但回显延迟的连续发送。 */
   const steering = await verifyContinuousSteering(runningServer, conversationId, restartedProvider);
   await verifyInteractionRestart(conversationId, restartedProvider);
+  /** 恢复过程使用独立 Core 和数据库，避免旧暂停队首影响连续引导场景。 */
+  const retryFeedback = await verifyModelRetryOutputFeedback();
 
   console.log(
     JSON.stringify(
       {
         status: 'passed',
+        retryFeedback,
         steering,
         unansweredCardRestart: { optionAndCustomAnswer: true, sameThreadContinuation: true, duplicateResponseSentOnce: true },
         piPrewriteRejection: true,
@@ -473,6 +558,8 @@ try {
         restartCount: 1,
         staleLocalTurnReconciled: true,
         terminalHistoricalTurnsStayEnded: true,
+        delayedHistoricalInterruptionPreservesQueue: true,
+        interruptedQueueResumedByUnifiedOwner: true,
         providerAuthorityReads: restartedProvider.readThreadCalls,
         queueChangedRedispatch: true,
         secondProviderTurnId,
@@ -499,6 +586,92 @@ try {
     await runningServer.close().catch(() => undefined);
   }
   await rm(probeRoot, { recursive: true, force: true });
+}
+
+/** 使用真实 Core 事件和临时 SQLite 检查恢复输出，不访问付费 Provider。 */
+async function verifyModelRetryOutputFeedback() {
+  /** 失败尝试的暂停提交保留原样，与既有引导场景隔离。 */
+  const retryDataRoot = join(probeRoot, 'retry-data');
+  /** 首次请求加五次自动续接，均使用本探针自己的 Provider 身份。 */
+  const provider = createRestartProbeManager({ providerThreadId: randomUUID(), turnIds: Array.from({ length: 6 }, () => randomUUID()), initialTurns: [] });
+  /** 继续复用既有服务启动入口，仅隔离本场景数据目录。 */
+  const server = await startProbeServer(provider.manager, 'retry-feedback', retryDataRoot);
+  try {
+    /** 独立数据库通过正式命令创建项目，不复制或改写其他场景状态。 */
+    const projectInput = { name: '模型恢复提示探针', localPath: projectRoot };
+    const projectCreated = await requestJson(server, '/api/projects', {
+      method: 'POST',
+      body: commandRequest({ commandType: 'work_management.project.create', scopeKind: 'project', scopeId: projectId, operationIdentity: projectId, input: projectInput, inputSha256: workManagementInputSha256(projectInput) }),
+    });
+    assertBehavior(projectCreated.status === 201, '恢复提示场景的项目创建失败。');
+    /** 普通首轮作为完整恢复链的原请求。 */
+    const input = { mode: 'create', agentKind: 'codex', content: '恢复后继续更新过程', model: 'gpt-5.6-sol', effort: 'low', permissionMode: 'read-only', collaborationMode: 'default', clientUserMessageId: randomUUID() };
+    const created = await requestJson(server, `/api/projects/${projectId}/conversations`, {
+      method: 'POST',
+      body: commandRequest({ commandType: 'conversation.project.create', scopeKind: 'project', scopeId: projectId, operationIdentity: randomUUID(), input, inputSha256: conversationStartInputSha256(input) }),
+    });
+    assertBehavior(created.status === 202, '恢复提示场景的会话创建失败。');
+    /** 所有后续事件仅属于新建会话。 */
+    const conversationId = requiredResultString(created.body, ['conversation', 'id']);
+    await waitFor(() => provider.startTurnInputs.length === 1, '恢复提示场景未启动首轮。');
+    /** 只读取本探针自己的持久事件，避免仅检查适配器回调。 */
+    const db = new DatabaseSync(join(retryDataRoot, 'data', 'zeus.db'), { readOnly: true });
+    /** 最新的连接事件就是 Renderer 接收的权威恢复状态。 */
+    const recovery = () => {
+      /** 仅读取此会话的连接事件，正文和其他状态不参与推断。 */
+      const row = db.prepare("SELECT payload_json FROM conversation_sync_events WHERE conversation_id = ? AND json_extract(payload_json, '$.type') = 'conversation.transport.changed' ORDER BY sequence DESC LIMIT 1").get(conversationId);
+      return row ? (JSON.parse(String(row.payload_json)).payload as JsonObject) : {};
+    };
+    /** 同轮次首段输出只发布一次恢复完成，不随每个字重复广播。 */
+    const completedHints = () =>
+      Number(
+        db
+          .prepare(
+            "SELECT count(*) AS count FROM conversation_sync_events WHERE conversation_id = ? AND json_extract(payload_json, '$.type') = 'conversation.transport.changed' AND json_extract(payload_json, '$.payload.recoveryState') = 'idle'",
+          )
+          .get(conversationId)!.count,
+      );
+    try {
+      await provider.publishResponse(provider.startTurnInputs.length - 1, '恢复前的过程');
+      /** 跨过原来一分钟的误停窗口，期间持续投递真实模型文字。 */
+      for (let pulse = 0; pulse < 2; pulse += 1) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 31_000));
+        await provider.publishResponse(provider.startTurnInputs.length - 1, '模型仍在正常生成');
+      }
+      assertBehavior(provider.interruptTurnCalls === 0, '正常生成超过一分钟后被 Zeus 主动停止。');
+      for (let attempt = 1; attempt <= 5; attempt += 1) {
+        /** 终态先确认旧尝试失败，再由现有自动恢复入口创建新轮次。 */
+        const previousIndex = provider.startTurnInputs.length - 1;
+        await provider.failLatestTurn({ message: 'connection reset during model response', codexErrorInfo: 'sandboxError' });
+        assertBehavior(recovery().recoveryState === 'reconnecting' && recovery().reconnectAttempt === attempt, '真实输出不得重置同一请求的重试预算。');
+        await waitFor(() => provider.startTurnInputs.length === previousIndex + 2, '确认终态后没有按原预算自动续接。', 20_000);
+        await provider.publishUserMessage(provider.startTurnInputs.length - 1);
+        await provider.publishResponse(previousIndex, '迟到的旧轮次过程');
+        assertBehavior(recovery().recoveryState === 'reconnecting', '旧终态轮次的迟到输出不得结束新连接提示。');
+        /** 新轮次收到真实文字时结束提示，轮次保持活动而无需等待终态。 */
+        const idleHints = completedHints();
+        await provider.publishResponse(provider.startTurnInputs.length - 1, '模型已经恢复输出');
+        await waitFor(() => recovery().recoveryState === 'idle' && recovery().reconnectAttempt === 0, '模型已恢复输出，连接提示却没有结束。');
+        /** 后续文字落入生产投影后再核对次数，避免把异步合并前的读数当成结果。 */
+        const currentTurnId = String(recovery().providerTurnId);
+        await provider.publishResponse(provider.startTurnInputs.length - 1, '继续更新过程');
+        await waitFor(
+          () =>
+            String(
+              db.prepare('SELECT text_projection FROM conversation_provider_item_states WHERE conversation_id = ? AND provider_turn_id = ? AND item_type = ?').get(conversationId, currentTurnId, 'agentMessage')?.text_projection ?? '',
+            ).includes('继续更新过程'),
+          '持续输出没有进入真实条目投影。',
+        );
+        assertBehavior(completedHints() === idleHints + 1, '同轮次的连续输出重复发布恢复完成提示。');
+      }
+      return { responseContinuesPastMinute: true, clearedBeforeTurnCompletion: true, sharedRetryAttempts: 5, lateOutputIgnored: true, clearedOncePerTurn: true };
+    } finally {
+      db.close();
+    }
+  } finally {
+    await server.prepareForShutdown();
+    await server.close();
+  }
 }
 
 /** 从真实 HTTP 入口检查连续引导、回显、队首保护与写入边界，只写临时数据。 */
@@ -728,10 +901,11 @@ async function verifyInteractionRestart(conversationId: string, initialProvider:
   }
 }
 
-async function startProbeServer(manager: CodexAppServerManager, instanceId: string): Promise<RunningZeusLocalServer> {
+/** 在指定临时目录启动真实本地服务，默认沿用重启场景数据。 */
+async function startProbeServer(manager: CodexAppServerManager, instanceId: string, probeDataRoot = dataRoot): Promise<RunningZeusLocalServer> {
   return startZeusLocalServer({
-    dbPath: databasePath,
-    dataLayout: createZeusDataLayout(dataRoot),
+    dbPath: join(probeDataRoot, 'data', 'zeus.db'),
+    dataLayout: createZeusDataLayout(probeDataRoot),
     apiToken,
     keychainService: 'dev.hypha.zeus.test.conversation-queue-restart',
     projectRoot: probeRoot,
@@ -760,6 +934,8 @@ function createRestartProbeManager(input: { providerThreadId: string; turnIds: s
   /** 从原引导请求投递精确回显。 */
   publishSteeringMessage(index: number): Promise<void>;
   readonly readThreadCalls: number;
+  /** 记录真实停止入口，不能仅凭轮次状态推断是否发生误停。 */
+  readonly interruptTurnCalls: number;
   /** 控制下一次发送的回显与错误回执顺序。 */
   loseNextReceipt(order: 'before' | 'after'): void;
   /** 投递带有原客户端身份的模型回显。 */
@@ -768,6 +944,10 @@ function createRestartProbeManager(input: { providerThreadId: string; turnIds: s
   publishThreadStatus(): Promise<void>;
   /** 结束活动轮以唤醒下一条消息。 */
   completeTurn(index: number): Promise<void>;
+  /** 通过原生事件投递模型文字，覆盖首段和持续输出。 */
+  publishResponse(index: number, delta: string): Promise<void>;
+  /** 投递真实中断终态，覆盖用户明确继续之前的暂停边界。 */
+  interruptLatestTurn(): Promise<void>;
   /** 控制真实服务收到的失败终态通知，不调用付费模型。 */
   failLatestTurn(error?: { message: string; codexErrorInfo: 'usageLimitExceeded' | 'sandboxError' }): Promise<void>;
 } {
@@ -820,6 +1000,8 @@ function createRestartProbeManager(input: { providerThreadId: string; turnIds: s
   let nextSteerFailure: 'ended' | 'unknown' | null = null;
   const turns = [...input.initialTurns];
   let readThreadCalls = 0;
+  /** 正常生成时不允许产生额外停止请求。 */
+  let interruptTurnCalls = 0;
   /** 只丢失下一次成功回执，实际用户输入仍被模型接收。 */
   let lostReceiptOrder: 'before' | 'after' | null = null;
   /** 同一实例的事件序号持续推进。 */
@@ -862,6 +1044,10 @@ function createRestartProbeManager(input: { providerThreadId: string; turnIds: s
     readAccountRateLimits: async () => ({ generationId, rateLimits: { limitId: null, limitName: null, primary: null, secondary: null, credits: null, planType: null }, rateLimitsByLimitId: null }),
     readAccountUsage: async () => ({ generationId, summary: { lifetimeTokens: null, peakDailyTokens: null, longestRunningTurnSec: null, currentStreakDays: null, longestStreakDays: null }, dailyUsageBuckets: null }),
     startThread: async () => threadSnapshot(),
+    /** 记录调用，不伪造终态确认；未知停止仍遵守原有保护。 */
+    interruptTurn: async () => {
+      interruptTurnCalls += 1;
+    },
     resumeThread: async () => threadSnapshot(),
     readThread: async () => {
       readThreadCalls += 1;
@@ -968,6 +1154,29 @@ function createRestartProbeManager(input: { providerThreadId: string; turnIds: s
       await emit('thread/status/changed', { threadId: input.providerThreadId, status: threadSnapshot().status });
     },
     completeTurn,
+    /** 适配器只提供输入事件，连接提示仍由真实 Core 负责发布。 */
+    async publishResponse(index: number, delta: string) {
+      /** 指定轮次允许覆盖上一尝试已经结束的迟到输出。 */
+      const turn = turns[input.initialTurns.length + index]!;
+      /** 模型条目身份在连续输出中保持稳定，避免模拟重复轮次开始。 */
+      let item = turn.items.find((entry) => entry.id === `response_${turn.id}`);
+      if (!item) {
+        item = { type: 'agentMessage', id: `response_${turn.id}`, text: '', phase: 'commentary' };
+        turn.items.push(item);
+        await emit('turn/started', { threadId: input.providerThreadId, turn });
+        await emit('item/started', { threadId: input.providerThreadId, turnId: turn.id, item });
+      }
+      item.text = String(item.text ?? '') + delta;
+      await emit('item/agentMessage/delta', { threadId: input.providerThreadId, turnId: turn.id, itemId: item.id, delta });
+    },
+    /** 中断与自然完成使用同一 Provider 事件投影入口。 */
+    async interruptLatestTurn() {
+      /** 当前轮次由本探针创建，不操作外部模型。 */
+      const turn = turns.at(-1)!;
+      turn.status = 'interrupted';
+      turn.completedAt = new Date().toISOString();
+      await emit('turn/completed', { threadId: input.providerThreadId, turn });
+    },
     /** 失败与回显共用递增序号，避免后续事件被当作重复通知。 */
     async failLatestTurn(error = { message: '账户额度已用尽', codexErrorInfo: 'usageLimitExceeded' }) {
       /** 故障只结束最新轮次，旧历史和线程身份保持真实关联。 */
@@ -980,6 +1189,9 @@ function createRestartProbeManager(input: { providerThreadId: string; turnIds: s
     },
     get readThreadCalls() {
       return readThreadCalls;
+    },
+    get interruptTurnCalls() {
+      return interruptTurnCalls;
     },
   };
 }

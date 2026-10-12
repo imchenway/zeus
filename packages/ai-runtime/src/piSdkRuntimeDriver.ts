@@ -1,5 +1,5 @@
 import { assertContextCapacitySupported, type PortableHistoryEntry } from '@zeus/shared';
-import { createModelResponseDeadline, modelResponseRetryPolicy } from './modelResponseRetry.js';
+import { createModelConnectionDeadline, modelResponseRetryPolicy } from './modelResponseRetry.js';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
@@ -1258,20 +1258,42 @@ function withModelTransport(
   observePayload: (sessionId: string | undefined, model: Model<Api>, payload: unknown) => Promise<void>,
   projectContext: (model: Model<Api>, context: TranscriptContext, options?: StreamOptions) => Promise<TranscriptContext>,
 ): ProviderStreams {
-  /** 请求截止后取消旧连接；只有确认流结束后，会话恢复才允许下一次请求。 */
-  function projectStream(model: Model<Api>, setup: (signal: AbortSignal) => Promise<AsyncIterable<AssistantMessageEvent>>, signal?: AbortSignal) {
+  /** 只对网络建链计时；确认旧流结束后才允许恢复，不限制连接建立后的生成。 */
+  function projectStream(model: Model<Api>, setup: (options: StreamOptions) => Promise<AsyncIterable<AssistantMessageEvent>>, options?: StreamOptions) {
     /** 请求局部取消不影响用户整轮取消，避免超时被当成手动停止。 */
     const deadline = new AbortController();
-    /** 统一一分钟只约束模型响应，不包含工具执行。 */
-    const stopDeadline = createModelResponseDeadline(() => deadline.abort());
+    /** 在实际请求体准备完成后启动，收到响应头即结束，排除本地上下文准备时间。 */
+    let stopDeadline: () => void = () => undefined;
+    /** 用户停止使用原始信号，不能被建链超时改写为网络重试。 */
+    const signal = options?.signal;
     /** 外部停止优先，不能因超时改写为自动重试。 */
     const combined = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
+    /** 复用认证和写前接纳入口，只增加真实连接边界的计时。 */
+    const transportOptions = optionsFor(model, { ...options, signal: combined });
+    /** 保留调用方和 Core 的原有请求体回调。 */
+    const onPayload = transportOptions.onPayload;
+    /** 响应头先结束建链计时，再执行调用方的回调。 */
+    const onResponse = transportOptions.onResponse;
+    transportOptions.onPayload = async (payload, observedModel) => {
+      /** 持久接纳和请求体准备属于写前阶段，不能消耗网络建链时间。 */
+      const replacement = await onPayload?.(payload, observedModel);
+      stopDeadline();
+      stopDeadline = createModelConnectionDeadline(() => deadline.abort());
+      return replacement;
+    };
+    transportOptions.onResponse = async (response, observedModel) => {
+      stopDeadline();
+      await onResponse?.(response, observedModel);
+    };
     return lazyStream(model, async () => ({
       async *[Symbol.asyncIterator]() {
         try {
-          for await (const event of lazyStream(model, () => setup(combined))) {
+          for await (const event of lazyStream(model, () => setup(transportOptions))) {
+            // 复用连接或非 HTTP 传输可能没有响应头回调，流开始同样明确结束建链。
+            if (event.type === 'start') stopDeadline();
             if (event.type === 'error' && signal?.aborted) yield { ...event, reason: 'aborted' as const, error: { ...event.error, stopReason: 'aborted' as const } };
-            else if (event.type === 'error' && deadline.signal.aborted) yield { ...event, reason: 'error' as const, error: { ...event.error, stopReason: 'error' as const, errorMessage: 'Model response timeout after 60000ms' } };
+            else if (event.type === 'error' && deadline.signal.aborted)
+              yield { ...event, reason: 'error' as const, error: { ...event.error, stopReason: 'error' as const, errorMessage: 'Model connection establishment timeout after 60000ms' } };
             else yield event;
           }
         } finally {
@@ -1295,10 +1317,10 @@ function withModelTransport(
   };
   return {
     stream(model, context, options) {
-      return projectStream(model, async (signal) => streams.stream(model, await projectContext(model, context, { ...options, signal }), optionsFor(model, { ...options, signal })), options?.signal);
+      return projectStream(model, async (transportOptions) => streams.stream(model, await projectContext(model, context, transportOptions), transportOptions), options);
     },
     streamSimple(model, context, options) {
-      return projectStream(model, async (signal) => streams.streamSimple(model, await projectContext(model, context, { ...options, signal }), optionsFor(model, { ...options, signal })), options?.signal);
+      return projectStream(model, async (transportOptions) => streams.streamSimple(model, await projectContext(model, context, transportOptions), transportOptions), options);
     },
   };
 }

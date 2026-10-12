@@ -24,6 +24,8 @@ export interface QueuedConversationMessagesProps {
   onEdit?: (submissionId: string, content: string, attachments: NativeConversationAttachment[]) => void | Promise<void>;
   onDelete?: (submissionId: string) => void | Promise<void>;
   onSendNow?: (submissionId: string) => void | Promise<void>;
+  /** 中断后由用户明确继续原队列，沿用既有恢复命令。 */
+  onResumeQueue?: () => void | Promise<void>;
   onReorder?: (orderedSubmissionIds: string[]) => void | Promise<void>;
 }
 
@@ -33,6 +35,9 @@ const labels = {
     region: '排队消息',
     heading: (count: number) => `${count} 条排队消息`,
     queued: '排队中',
+    paused: '已暂停',
+    resume: '继续发送排队消息',
+    resumeHelp: '继续发送已暂停的队列',
     attachmentOnly: '仅附件消息',
     edit: '编辑排队消息',
     editLabel: '编辑排队消息内容',
@@ -58,6 +63,9 @@ const labels = {
     region: 'Queued messages',
     heading: (count: number) => `${count} queued message${count === 1 ? '' : 's'}`,
     queued: 'Queued',
+    paused: 'Paused',
+    resume: 'Resume queued messages',
+    resumeHelp: 'Continue sending the paused queue',
     attachmentOnly: 'Attachment-only message',
     edit: 'Edit queued message',
     editLabel: 'Edit queued message content',
@@ -172,8 +180,18 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
         {queue.map((submission) => {
           /** 本地待接纳投影只负责稳定首帧位置，服务端身份到达前禁止修改。 */
           const submissionWritable = writable && !submission.localOnly;
+          /** 旧暂停卡片保留明确继续入口；活动回复和未知送达不能从这里绕过。 */
+          const resumable =
+            submission.status === 'paused' &&
+            submission.pausedReason === 'interrupted' &&
+            reorderableQueue[0]?.id === submission.id &&
+            (props.state.queue?.state.type === 'idle' || (props.state.queue?.state.type === 'paused' && props.state.queue.state.reason === 'interrupted'));
+          /** 当前回复存在时引导，中断队列空闲时复用恢复操作。 */
+          const sendAction = resumable ? props.onResumeQueue : props.onSendNow ? () => props.onSendNow?.(submission.id) : undefined;
+          /** 操作名称明确区分引导当前回复与继续整个队列。 */
+          const sendLabel = resumable ? copy.resume : copy.steer;
           /** 引导保持可聚焦，禁用原因通过标题和可访问名称说明。 */
-          const steerReason = submission.localOnly ? copy.steerUnavailable : queuedSteerUnavailableReason(props.state, reorderableQueue, submission, copy);
+          const steerReason = resumable ? null : submission.localOnly ? copy.steerUnavailable : queuedSteerUnavailableReason(props.state, reorderableQueue, submission, copy);
           /** 上移只允许与相邻普通排队项交换。 */
           const canMoveUp = canMoveQueueSubmission(reorderableQueue, queue, submission.id, -1);
           /** 下移只允许与相邻普通排队项交换。 */
@@ -199,7 +217,7 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                 ) : (
                   <div className="session-queued-message-content" title={queuedMessageAccessiblePreview(submission, copy.attachmentOnly, props.language)}>
                     <Clock aria-hidden="true" weight="regular" />
-                    <span className="session-queued-message-state">{copy.queued}</span>
+                    <span className="session-queued-message-state">{submission.status === 'paused' ? copy.paused : copy.queued}</span>
                     {textPreview ? <span className="session-queued-message-preview">{textPreview}</span> : null}
                     {attachments.length > 0 ? (
                       <span className="session-queued-message-attachment-summary" data-attachment-only={!textPreview || undefined}>
@@ -217,12 +235,12 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                     <button
                       type="button"
                       className="session-queued-message-steer"
-                      data-icon-tooltip={steerReason ?? copy.steer}
-                      aria-label={`${copy.steer}. ${steerReason ?? copy.steerHelp}`}
-                      aria-disabled={Boolean(!submissionWritable || busy || !props.onSendNow || steerReason)}
+                      data-icon-tooltip={steerReason ?? sendLabel}
+                      aria-label={`${sendLabel}. ${steerReason ?? (resumable ? copy.resumeHelp : copy.steerHelp)}`}
+                      aria-disabled={Boolean(!submissionWritable || busy || !sendAction || steerReason)}
                       onClick={() => {
-                        if (!submissionWritable || busy || !props.onSendNow || steerReason) return;
-                        void runAction(submission.id, 'steer', () => props.onSendNow?.(submission.id));
+                        if (!submissionWritable || busy || !sendAction || steerReason) return;
+                        void runAction(submission.id, resumable ? 'resume' : 'steer', sendAction);
                       }}
                     >
                       <ArrowBendUpRight aria-hidden="true" weight="bold" />

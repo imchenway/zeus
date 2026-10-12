@@ -2131,12 +2131,23 @@ function isSamePlanItem(openItem: NativeSessionItemBuffer | null | undefined, it
   return openItem.itemId === item.itemId && openItem.turnId === item.turnId;
 }
 
-/** 运行状态只读取正式轮次、请求、连接及过程事件，不从计时或正文猜测。 */
+/** 运行状态只读取权威队列、轮次、请求、连接和过程事件，不从计时或正文猜测。 */
 export function transcriptRunStatus(state: NativeSessionState): 'starting' | 'executing' | 'compacting' | 'waiting_input' | 'waiting_approval' | 'reconnecting' | null {
   // 暂停或未知送达不代表模型继续运行，错误与核对入口由系统操作行承载。
   if (state.queue?.state.type === 'paused' || state.queue?.submissions.some((submission) => submission.internalOperation && submission.pausedReason === 'outcome_unknown')) return null;
   if (state.providerReconnectAttempt > 0) return 'reconnecting';
   if (state.conversationState === 'starting_turn') return 'starting';
+  /** 安全队首已经保存但尚未交给模型时，继续使用底部准备状态，不能因运行态暂为空闲而隐藏。 */
+  const head = visibleQueuedSubmissions(state.queue).find((submission) => submission.status === 'queued' && !submission.providerTurnId);
+  if (
+    state.transportState === 'ready' &&
+    state.conversationState === 'native_idle' &&
+    state.queue?.state.type === 'idle' &&
+    head &&
+    !head.error &&
+    (!state.queue.waitReason || state.queue.waitReason === 'dispatch_pending' || state.queue.waitReason === 'execution_context_preparing' || state.queue.waitReason === 'conversation_restoring')
+  )
+    return 'starting';
   if (!state.activeTurnId || state.terminalTurnIds[state.activeTurnId]) return null;
   // 切回会话需要重新订阅和读取权威状态，只有明确的重连状态才说明连接中断。
   if (state.transportState === 'reconnecting') return 'reconnecting';
@@ -2152,7 +2163,7 @@ export function transcriptRunStatus(state: NativeSessionState): 'starting' | 'ex
 function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: NonNullable<ReturnType<typeof transcriptRunStatus>>; reconnectAttempt: number; reconnectAttempts: number }): ReactNode {
   // 整理状态与活动记录沿用同一套用户表述，由当前状态位置统一承载进度。
   const labels = {
-    starting: ['正在启动处理', 'Starting processing'],
+    starting: ['正在准备发送', 'Preparing to send'],
     executing: ['正在执行', 'Executing'],
     compacting: ['正在整理较早对话以继续工作', 'Organizing earlier conversation to continue'],
     waiting_input: ['等待回答，请处理问题表单', 'Waiting for your answer'],
@@ -3086,10 +3097,12 @@ function sessionMotionKind(item: NativeSessionItemBuffer): Exclude<SessionMotion
   return null;
 }
 
+/** 准备发送和当前轮次共用底部状态，已有模型摘要或回复时由它们接手。 */
 export function shouldShowTranscriptThinking(state: NativeSessionState, items: readonly NativeSessionItemBuffer[] = Object.values(state.items)): boolean {
-  if (state.conversationState !== 'starting_turn' && state.conversationState !== 'active_prework' && state.conversationState !== 'active_final_answer') return false;
   if (hasUnclaimedRecoveredRequestUserInput(state)) return false;
-  if (state.conversationState === 'starting_turn') return true;
+  // 已保存的安全队首与本地首次发送共用准备状态，不依赖活动轮次身份。
+  if (transcriptRunStatus(state) === 'starting') return true;
+  if (state.conversationState !== 'starting_turn' && state.conversationState !== 'active_prework' && state.conversationState !== 'active_final_answer') return false;
   const effectiveActiveTurnId = state.activeTurnId && items.some((item) => item.turnId === state.activeTurnId) ? state.activeTurnId : latestLiveTurnId(items);
   if (!effectiveActiveTurnId) return true;
   return !items.some((item) => item.turnId === effectiveActiveTurnId && itemProvidesCurrentModelStatus(item, state));
