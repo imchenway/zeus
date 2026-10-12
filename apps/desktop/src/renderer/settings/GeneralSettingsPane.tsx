@@ -47,15 +47,19 @@ export function GeneralSettingsPane(props: {
     /** 设置页退出或重新刷新时停止接收旧目录。 */
     const controller = new AbortController();
     setModelsLoading(true);
-    void props.client.loadInputSuggestionModels(controller.signal).then((result) => {
-      if (controller.signal.aborted) return;
-      setSuggestionModels(result.items);
-      setSuggestionModelWarning(result.warning);
-    }).catch(() => {
-      if (!controller.signal.aborted) setSuggestionModelWarning(zh ? '模型目录暂不可用，请刷新。' : 'Models are unavailable. Refresh to retry.');
-    }).finally(() => {
-      if (!controller.signal.aborted) setModelsLoading(false);
-    });
+    void props.client
+      .loadInputSuggestionModels(controller.signal)
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        setSuggestionModels(result.items);
+        setSuggestionModelWarning(result.warning);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setSuggestionModelWarning(zh ? '模型目录暂不可用，请刷新。' : 'Models are unavailable. Refresh to retry.');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setModelsLoading(false);
+      });
     return () => controller.abort();
   }, [props.client, modelsRevision, zh]);
 
@@ -160,13 +164,26 @@ export function GeneralSettingsPane(props: {
       <section className="settings-product-section">
         <h3>{zh ? '输入建议' : 'Input suggestions'}</h3>
         <NativeSettingsPane label={zh ? '输入建议' : 'Input suggestions'}>
-          <NativeControlRow title={zh ? '回复后的输入建议' : 'Suggest the next message'} description={zh ? '回复结束后显示灰字。光标在输入框内时按 Tab 采纳，会增加专用模型用量。' : 'Show a gray suggestion after a reply. Press Tab in the composer to accept. This uses the selected model.'}>
+          <NativeControlRow
+            title={zh ? '回复后的输入建议' : 'Suggest the next message'}
+            description={zh ? '回复结束后显示灰字。光标在输入框内时按 Tab 采纳，会增加专用模型用量。' : 'Show a gray suggestion after a reply. Press Tab in the composer to accept. This uses the selected model.'}
+          >
             <label className="settings-switch-state">
-              <input className="native-switch-input" type="checkbox" aria-label={zh ? '启用输入建议' : 'Enable input suggestions'} checked={suggestions.enabled} disabled={!props.client || !suggestions.modelRef} onChange={(event) => void save({ inputSuggestions: { ...suggestions, enabled: event.currentTarget.checked } })} />
+              <input
+                className="native-switch-input"
+                type="checkbox"
+                aria-label={zh ? '启用输入建议' : 'Enable input suggestions'}
+                checked={suggestions.enabled}
+                disabled={!props.client || !suggestions.modelRef}
+                onChange={(event) => void save({ inputSuggestions: { ...suggestions, enabled: event.currentTarget.checked } })}
+              />
               <span className="native-switch-track" aria-hidden="true" />
             </label>
           </NativeControlRow>
-          <NativeControlRow title={zh ? '专用模型' : 'Suggestion model'} description={zh ? '独立于会话模型；未选择或模型不可用时不生成建议。' : 'Independent of the conversation model. No suggestion is generated without an available model.'}>
+          <NativeControlRow
+            title={zh ? '专用模型' : 'Suggestion model'}
+            description={zh ? '独立于会话模型；未选择或模型不可用时不生成建议。' : 'Independent of the conversation model. No suggestion is generated without an available model.'}
+          >
             <ZeusSelect
               size="regular"
               ariaLabel={zh ? '输入建议专用模型' : 'Input suggestion model'}
@@ -179,9 +196,15 @@ export function GeneralSettingsPane(props: {
                 ...(suggestions.modelRef && !suggestionModels.some((model) => model.id === suggestions.modelRef) ? [{ value: suggestions.modelRef, label: `${suggestions.modelRef} (${zh ? '不可用' : 'unavailable'})`, disabled: true }] : []),
               ]}
             />
-            <Button size="compact" disabled={!props.client || modelsLoading} onClick={() => setModelsRevision((value) => value + 1)}>{zh ? '刷新模型' : 'Refresh models'}</Button>
+            <Button size="compact" disabled={!props.client || modelsLoading} onClick={() => setModelsRevision((value) => value + 1)}>
+              {zh ? '刷新模型' : 'Refresh models'}
+            </Button>
           </NativeControlRow>
-          {suggestionModelWarning ? <p className="settings-field-error" role="status">{suggestionModelWarning}</p> : null}
+          {suggestionModelWarning ? (
+            <p className="settings-field-error" role="status">
+              {suggestionModelWarning}
+            </p>
+          ) : null}
         </NativeSettingsPane>
       </section>
       <section className="settings-product-section">

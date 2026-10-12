@@ -212,7 +212,16 @@ export function ConversationComposer(props: ConversationComposerProps) {
     settings: props.inputSuggestionSettings,
     generate: props.onGenerateInputSuggestion,
     working: active || busy || props.state.conversationState === 'starting_turn',
-    eligible: inputWritable && !hasDraft && editorValue.length === 0 && !goalInputActive && !goalOperationBusy && !isComposing && !inputResources.processing && props.state.pendingRequests.length === 0 && props.state.planImplementationRequests.length === 0,
+    eligible:
+      inputWritable &&
+      !hasDraft &&
+      editorValue.length === 0 &&
+      !goalInputActive &&
+      !goalOperationBusy &&
+      !isComposing &&
+      !inputResources.processing &&
+      props.state.pendingRequests.length === 0 &&
+      props.state.planImplementationRequests.length === 0,
   });
 
   useEffect(() => {

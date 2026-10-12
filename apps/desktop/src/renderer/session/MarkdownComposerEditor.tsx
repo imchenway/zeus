@@ -122,7 +122,11 @@ export function MarkdownComposerEditor(props: MarkdownComposerEditorProps) {
           'aria-multiline': 'true',
           'aria-label': props.ariaLabel,
           /** placeholder 不属于正文；辅助技术通过描述读出建议及采纳方法。 */
-          'aria-description': props.suggestion ? (props.language === 'zh-CN' ? `输入建议：${props.suggestion} 按 Tab 采纳后才成为正文，按 Escape 清除。` : `Input suggestion: ${props.suggestion} Press Tab to accept, or Escape to dismiss.`) : '',
+          'aria-description': props.suggestion
+            ? props.language === 'zh-CN'
+              ? `输入建议：${props.suggestion} 按 Tab 采纳后才成为正文，按 Escape 清除。`
+              : `Input suggestion: ${props.suggestion} Press Tab to accept, or Escape to dismiss.`
+            : '',
           'aria-keyshortcuts': props.ariaKeyShortcuts ?? '',
           'aria-disabled': String(Boolean(props.disabled)),
           'aria-autocomplete': props.listboxId ? 'list' : 'none',

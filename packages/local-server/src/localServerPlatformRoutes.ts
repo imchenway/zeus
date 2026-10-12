@@ -1426,7 +1426,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     repository: conversationSnapshotV2,
     projectExists: (projectId) => Boolean(projects.getById(projectId)),
     getConversation: (conversationId) => conversations.getRecordById(conversationId),
-    readSettings: () => readOnlyValidation ? undefined : platformMutableState.appShellSettings.inputSuggestions,
+    readSettings: () => (readOnlyValidation ? undefined : platformMutableState.appShellSettings.inputSuggestions),
     modelConnections,
     loadModels: loadTextGenerationModels,
     codexOptions: () => ({ commandPath: currentCodexRuntimeCommandPath(), codexHome: options.codexHome ?? dataLayout.codexHome, ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) }),

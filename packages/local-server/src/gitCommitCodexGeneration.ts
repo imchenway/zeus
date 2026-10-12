@@ -123,36 +123,39 @@ export interface CodexTextGenerationInput {
 
 /** 调用方控制独立进程身份、取消和反馈，不改变 Provider 配置。 */
 export interface CodexTextGenerationOptions {
-    /** 当前工作树使用的真实 Codex 命令。 */
-    commandPath: string;
-    /** 当前宿主拥有的独立 Codex 数据目录。 */
-    codexHome: string;
-    /** 当前宿主明确授权的外部资源目录。 */
-    externalAgentHome?: string;
-    /** 提交说明池可以复用传输，但临时会话始终隔离。 */
-    manager?: CodexAppServerManager;
-    /** 每阶段等待上限；总时限由调用方 AbortSignal 控制。 */
-    timeoutMs?: number;
-    /** 只在成功时允许调用方回收传输进程。 */
-    keepAlive?: boolean;
-    /** 输入、设置变化或 HTTP 断开时取消独立生成。 */
-    signal?: AbortSignal;
-    /** 输入建议在首次重连错误时结束；提交说明保持既有行为。 */
-    stopOnRetry?: boolean;
-    /** 原始文本增量由具体场景统一清理。 */
-    onText?: (text: string) => void;
-    /** 保留提交说明已有的阶段反馈。 */
-    onProgress?: (stage: string, elapsedMs: number) => void;
+  /** 当前工作树使用的真实 Codex 命令。 */
+  commandPath: string;
+  /** 当前宿主拥有的独立 Codex 数据目录。 */
+  codexHome: string;
+  /** 当前宿主明确授权的外部资源目录。 */
+  externalAgentHome?: string;
+  /** 提交说明池可以复用传输，但临时会话始终隔离。 */
+  manager?: CodexAppServerManager;
+  /** 每阶段等待上限；总时限由调用方 AbortSignal 控制。 */
+  timeoutMs?: number;
+  /** 只在成功时允许调用方回收传输进程。 */
+  keepAlive?: boolean;
+  /** 输入、设置变化或 HTTP 断开时取消独立生成。 */
+  signal?: AbortSignal;
+  /** 输入建议在首次重连错误时结束；提交说明保持既有行为。 */
+  stopOnRetry?: boolean;
+  /** 原始文本增量由具体场景统一清理。 */
+  onText?: (text: string) => void;
+  /** 保留提交说明已有的阶段反馈。 */
+  onProgress?: (stage: string, elapsedMs: number) => void;
 }
 
 /** 提交说明保留原有校验、单行长度和流式预览，共用独立文本生成。 */
 export async function generateCodexCommitMessage(input: GitCommitMessageInput, options: CodexTextGenerationOptions): Promise<{ message: string; model: string }> {
   if (!input.files.length || !input.stagedDiff.trim() || !input.modelRef?.startsWith('codex:')) throw new Error('请选择 Codex 模型并暂存需要提交的改动。');
   /** 只把已准备的提交材料送入临时线程。 */
-  const result = await generateCodexText({ ...buildGitCommitPrompt(input), modelRef: input.modelRef, effort: input.effort, serviceTier: input.serviceTier }, {
-    ...options,
-    onText: options.onText ? (text) => options.onText?.(normalizeGitCommitMessage(text)) : undefined,
-  });
+  const result = await generateCodexText(
+    { ...buildGitCommitPrompt(input), modelRef: input.modelRef, effort: input.effort, serviceTier: input.serviceTier },
+    {
+      ...options,
+      onText: options.onText ? (text) => options.onText?.(normalizeGitCommitMessage(text)) : undefined,
+    },
+  );
   /** 最终结果与已有预览遵循相同的单行、长度约束。 */
   const message = normalizeGitCommitMessage(result.text);
   if (!message) throw new Error('Codex 未返回有效的提交说明，请重试。');

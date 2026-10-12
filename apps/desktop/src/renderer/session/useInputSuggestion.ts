@@ -16,7 +16,11 @@ export function useInputSuggestion(options: {
   generate?: (completedTurnId: string, signal: AbortSignal) => Promise<InputSuggestionResult>;
 }) {
   /** 目录和流式正文更新不重复扫描历史轮次。 */
-  const latestTurn = useMemo(() => Object.values(options.state.turnsByProviderId).reduce<NativeTurnSnapshot | null>((latest, turn) => !latest || turn.createdAt > latest.createdAt || (turn.createdAt === latest.createdAt && turn.id > latest.id) ? turn : latest, null), [options.state.turnsByProviderId]);
+  const latestTurn = useMemo(
+    () =>
+      Object.values(options.state.turnsByProviderId).reduce<NativeTurnSnapshot | null>((latest, turn) => (!latest || turn.createdAt > latest.createdAt || (turn.createdAt === latest.createdAt && turn.id > latest.id) ? turn : latest), null),
+    [options.state.turnsByProviderId],
+  );
   /** 切换会话后的渲染不能显示上一个请求的文字。 */
   const sessionKey = `${options.state.projectId}:${options.state.conversationId}`;
   /** Provider 身份在实时事件与历史水合间保持稳定，服务端按本会话映射核对。 */
@@ -63,16 +67,19 @@ export function useInputSuggestion(options: {
     const controller = new AbortController();
     activeRequest.current = controller;
     setResult({ key: resultKey, text: null, pending: true });
-    void generate.current(turnId, controller.signal).then((response) => {
-      if (controller.signal.aborted) return;
-      if (response.completedTurnId !== turnId || response.modelRef !== modelRef) {
-        setResult(null);
-        return;
-      }
-      setResult({ key: resultKey, text: typeof response.text === 'string' && response.text.trim() ? response.text : null, pending: false });
-    }).catch(() => {
-      if (!controller.signal.aborted) setResult(null);
-    });
+    void generate
+      .current(turnId, controller.signal)
+      .then((response) => {
+        if (controller.signal.aborted) return;
+        if (response.completedTurnId !== turnId || response.modelRef !== modelRef) {
+          setResult(null);
+          return;
+        }
+        setResult({ key: resultKey, text: typeof response.text === 'string' && response.text.trim() ? response.text : null, pending: false });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setResult(null);
+      });
     return () => {
       controller.abort();
       if (activeRequest.current === controller) activeRequest.current = null;
@@ -87,5 +94,5 @@ export function useInputSuggestion(options: {
   }, []);
   /** 不等待效果清理，当前渲染已经失去资格时立即隐藏旧结果。 */
   const visible = enabled && options.eligible && !options.working && result?.key === resultKey;
-  return { text: visible ? result?.text ?? null : null, pending: visible && result?.pending === true, dismiss };
+  return { text: visible ? (result?.text ?? null) : null, pending: visible && result?.pending === true, dismiss };
 }

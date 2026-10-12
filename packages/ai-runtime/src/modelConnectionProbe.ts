@@ -257,7 +257,9 @@ function streamApiFor(piModel: Model<Api>): ProviderStreams {
 }
 
 /** 复用已配置连接生成受限文本，不提供工具、不继承会话内容。 */
-export async function generateConfiguredModelText(input: ProbeConfiguredModelInput & { system: string; text: string; signal?: AbortSignal; effort?: string; maxTokens?: number; /** 调用方可关闭供应商 SDK 重试，其他独立生成沿用既有默认。 */ maxRetries?: number }): Promise<string> {
+export async function generateConfiguredModelText(
+  input: ProbeConfiguredModelInput & { system: string; text: string; signal?: AbortSignal; effort?: string; maxTokens?: number; /** 调用方可关闭供应商 SDK 重试，其他独立生成沿用既有默认。 */ maxRetries?: number },
+): Promise<string> {
   /** 沿用真实运行的协议与鉴权适配。 */
   const model = toPiModel(input.model, `zeus-text-${input.connection.id}`, input.connection.baseUrl);
   if (input.effort && !input.model.capability.reasoning.options.some((option) => option.id === input.effort)) throw new Error('所选模型不支持此推理深度。');
