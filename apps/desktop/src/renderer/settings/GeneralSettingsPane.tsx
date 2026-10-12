@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react';
-import { normalizeTaskBranchPrefix } from '@zeus/shared';
+import { useEffect, useRef, useState } from 'react';
+import { defaultInputSuggestionSettings, normalizeTaskBranchPrefix, type InputSuggestionModelOption } from '@zeus/shared';
 import type { AppShellSettings } from '../apiClient.js';
 import type { SettingsApiClient } from '../features/settings/settingsApiClient.js';
 import { NativeControlRow, NativeSettingsPane } from '../features/workspace/workspaceSupport.js';
@@ -9,7 +9,7 @@ import { ZeusSelect } from '../ZeusSelect.js';
 import { SettingsSaveStatus } from './useSettingsAutosave.js';
 
 /** 通用偏好只保存所属字段，避免自动保存顺带覆盖其他页面的配置。 */
-type GeneralPreferences = Pick<AppShellSettings, 'appLanguage' | 'appearance' | 'mainLayout' | 'taskBranchPrefix' | 'desktopNotificationsEnabled'>;
+type GeneralPreferences = Pick<AppShellSettings, 'appLanguage' | 'appearance' | 'mainLayout' | 'taskBranchPrefix' | 'desktopNotificationsEnabled' | 'inputSuggestions'>;
 
 /** 通用设置即时应用、顺序保存；失败后保留当前选择并提供重试。 */
 export function GeneralSettingsPane(props: {
@@ -31,6 +31,33 @@ export function GeneralSettingsPane(props: {
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
   /** 前缀格式错误属于当前字段，不弹全局错误对话框。 */
   const [taskBranchPrefixError, setTaskBranchPrefixError] = useState<string | null>(null);
+  /** 专用模型与会话默认模型分开，旧用户没有隐式模型。 */
+  const suggestions = props.value.inputSuggestions ?? defaultInputSuggestionSettings;
+  /** 模型目录只在通用设置打开或用户刷新时读取。 */
+  const [suggestionModels, setSuggestionModels] = useState<InputSuggestionModelOption[]>([]);
+  /** 目录失败只在本设置区提示，不弹窗或更换已保存模型。 */
+  const [suggestionModelWarning, setSuggestionModelWarning] = useState('');
+  /** 刷新序号避免旧目录覆盖用户刚刷新后的结果。 */
+  const [modelsRevision, setModelsRevision] = useState(0);
+  /** 加载期间保持已保存的选择，不自动挑选第一个模型。 */
+  const [modelsLoading, setModelsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!props.client) return;
+    /** 设置页退出或重新刷新时停止接收旧目录。 */
+    const controller = new AbortController();
+    setModelsLoading(true);
+    void props.client.loadInputSuggestionModels(controller.signal).then((result) => {
+      if (controller.signal.aborted) return;
+      setSuggestionModels(result.items);
+      setSuggestionModelWarning(result.warning);
+    }).catch(() => {
+      if (!controller.signal.aborted) setSuggestionModelWarning(zh ? '模型目录暂不可用，请刷新。' : 'Models are unavailable. Refresh to retry.');
+    }).finally(() => {
+      if (!controller.signal.aborted) setModelsLoading(false);
+    });
+    return () => controller.abort();
+  }, [props.client, modelsRevision, zh]);
 
   /** 原始设置不含代理草稿，只有通过校验的代理配置进入队列。 */
   async function save(patch: Partial<GeneralPreferences>): Promise<void> {
@@ -45,6 +72,7 @@ export function GeneralSettingsPane(props: {
       mainLayout: next.mainLayout,
       taskBranchPrefix: next.taskBranchPrefix,
       desktopNotificationsEnabled: next.desktopNotificationsEnabled,
+      inputSuggestions: next.inputSuggestions,
     };
     /** 异步反馈的归属序号。 */
     const currentRevision = ++revision.current;
@@ -67,7 +95,7 @@ export function GeneralSettingsPane(props: {
       <header className="settings-page-heading">
         <span>
           <h2 className="settings-page-title">{zh ? '通用' : 'General'}</h2>
-          <p>{zh ? '调整界面与通知，修改后自动保存。' : 'Appearance and notifications. Changes save automatically.'}</p>
+          <p>{zh ? '调整界面、通知与输入建议，修改后自动保存。' : 'Appearance, notifications and input suggestions. Changes save automatically.'}</p>
         </span>
         {status === 'failed' ? (
           <div className="settings-heading-actions">
@@ -129,6 +157,33 @@ export function GeneralSettingsPane(props: {
           </label>
         </NativeControlRow>
       </NativeSettingsPane>
+      <section className="settings-product-section">
+        <h3>{zh ? '输入建议' : 'Input suggestions'}</h3>
+        <NativeSettingsPane label={zh ? '输入建议' : 'Input suggestions'}>
+          <NativeControlRow title={zh ? '回复后的输入建议' : 'Suggest the next message'} description={zh ? '回复结束后显示灰字。光标在输入框内时按 Tab 采纳，会增加专用模型用量。' : 'Show a gray suggestion after a reply. Press Tab in the composer to accept. This uses the selected model.'}>
+            <label className="settings-switch-state">
+              <input className="native-switch-input" type="checkbox" aria-label={zh ? '启用输入建议' : 'Enable input suggestions'} checked={suggestions.enabled} disabled={!props.client || !suggestions.modelRef} onChange={(event) => void save({ inputSuggestions: { ...suggestions, enabled: event.currentTarget.checked } })} />
+              <span className="native-switch-track" aria-hidden="true" />
+            </label>
+          </NativeControlRow>
+          <NativeControlRow title={zh ? '专用模型' : 'Suggestion model'} description={zh ? '独立于会话模型；未选择或模型不可用时不生成建议。' : 'Independent of the conversation model. No suggestion is generated without an available model.'}>
+            <ZeusSelect
+              size="regular"
+              ariaLabel={zh ? '输入建议专用模型' : 'Input suggestion model'}
+              value={suggestions.modelRef ?? ''}
+              disabled={!props.client || modelsLoading}
+              onChange={(value) => void save({ inputSuggestions: { enabled: suggestions.enabled && Boolean(value), modelRef: value || null } })}
+              options={[
+                { value: '', label: zh ? '请选择模型' : 'Choose a model' },
+                ...suggestionModels.map((model) => ({ value: model.id, label: model.label })),
+                ...(suggestions.modelRef && !suggestionModels.some((model) => model.id === suggestions.modelRef) ? [{ value: suggestions.modelRef, label: `${suggestions.modelRef} (${zh ? '不可用' : 'unavailable'})`, disabled: true }] : []),
+              ]}
+            />
+            <Button size="compact" disabled={!props.client || modelsLoading} onClick={() => setModelsRevision((value) => value + 1)}>{zh ? '刷新模型' : 'Refresh models'}</Button>
+          </NativeControlRow>
+          {suggestionModelWarning ? <p className="settings-field-error" role="status">{suggestionModelWarning}</p> : null}
+        </NativeSettingsPane>
+      </section>
       <section className="settings-product-section">
         <h3>Git</h3>
         <NativeSettingsPane label={zh ? '分支命名' : 'Branch naming'}>

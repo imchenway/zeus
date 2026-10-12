@@ -49,6 +49,8 @@ import { buildConversationDispatchCommandRequest, conversationDispatchClientComm
 import { buildConversationStartCommandRequest, conversationStartClientCommandTypes } from './conversationStartCommandClient.js';
 
 export interface ConversationApiClient {
+  /** 只提交本会话的权威完成轮次；模型和对话材料由服务端读取。 */
+  generateInputSuggestion: (projectId: string, conversationId: string, completedTurnId: string, signal: AbortSignal) => Promise<import('@zeus/shared').InputSuggestionResult>;
   /** 读取全部用户发言目录，不拉取正文。 */
   loadConversationNavigation: (projectId: string, conversationId: string) => Promise<ConversationNavigationSnapshot>;
   /** 读取旧会话正文，保留已有历史查看行为。 */
@@ -164,6 +166,7 @@ export interface ConversationApiClient {
 
 export function createConversationApiClient(transport: LocalApiTransport): ConversationApiClient {
   return {
+    generateInputSuggestion: (projectId, conversationId, completedTurnId, signal) => transport.request(`${conversationPath(projectId, conversationId)}/input-suggestion`, { ...jsonRequest('POST', { completedTurnId }), signal }),
     loadLegacyConversation: (projectId, conversationId) => transport.request<ConversationHistoryItem>(`/api/projects/${projectId}/conversations/${conversationId}`),
     sendConversationMessage: (projectId, conversationId, content) =>
       transport.request<SendConversationMessageResult>(`/api/projects/${projectId}/conversations/${conversationId}/messages`, { method: 'POST', body: JSON.stringify({ content }) }),

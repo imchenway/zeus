@@ -3,6 +3,7 @@ import {
   defaultTaskManagementStatusConfig,
   isTaskStatusFilter,
   normalizeNetworkProxySettings,
+  normalizeInputSuggestionSettings,
   normalizeSidebarConversationFilters,
   normalizeTaskBranchPrefix,
   normalizeTaskManagementStatusConfig,
@@ -314,6 +315,8 @@ export function migrateLegacyTaskTableColumnKeys(value: unknown): unknown {
 }
 
 export interface AppShellSettingsSnapshot {
+  /** 旧设置缺省关闭，不随主会话模型变化。 */
+  inputSuggestions?: import('@zeus/shared').InputSuggestionSettings;
   /** 完全退出并重开应用后使用的网络代理。 */
   networkProxy?: NetworkProxySettings;
   /** 首次接入状态；旧资料未记录时不自动弹出引导。 */
@@ -359,6 +362,8 @@ export interface AppShellSettingsSnapshot {
 }
 
 export interface UpdateAppShellSettingsBody {
+  /** 只更新专用建议设置，不改变 Provider 配置。 */
+  inputSuggestions?: import('@zeus/shared').InputSuggestionSettings;
   /** 省略时保留当前代理；显式提交和导入均经过相同校验。 */
   networkProxy?: NetworkProxySettings;
   /** 首次接入状态；旧资料未记录时不自动弹出引导。 */
@@ -501,6 +506,7 @@ export function normalizeAppShellSettings(value: AppShellSettingsSnapshot | unde
   const taskManagementStatusTemplate = normalizeTaskManagementStatusConfig(value?.taskManagementStatusTemplate, defaultTaskManagementStatusConfig);
   return {
     networkProxy: normalizeNetworkProxySettings(value?.networkProxy),
+    inputSuggestions: normalizeInputSuggestionSettings(value?.inputSuggestions),
     appLanguage,
     appearance,
     mainLayout,
@@ -550,6 +556,7 @@ export function patchAppShellSettings(current: AppShellSettingsSnapshot, input: 
     {
       ...current,
       networkProxy: input.networkProxy === undefined ? current.networkProxy : normalizeNetworkProxySettings(input.networkProxy),
+      inputSuggestions: input.inputSuggestions === undefined ? current.inputSuggestions : normalizeInputSuggestionSettings(input.inputSuggestions),
       appLanguage: input.appLanguage === 'en-US' || input.appLanguage === 'zh-CN' ? input.appLanguage : current.appLanguage,
       appearance: input.appearance ?? current.appearance,
       mainLayout: input.mainLayout === 'upstream' || input.mainLayout === 'current' ? input.mainLayout : current.mainLayout,

@@ -1,4 +1,4 @@
-import { defaultTaskManagementStatusConfig, normalizeTaskManagementStatusConfig } from '@zeus/shared';
+import { defaultTaskManagementStatusConfig, normalizeInputSuggestionSettings, normalizeTaskManagementStatusConfig } from '@zeus/shared';
 import { type AppLanguage } from './workspaceCopy.js';
 import { normalizeTaskTableColumnPreferences, normalizeTaskTableEnumSortOrders } from '../../task/taskWorkspaceModel.js';
 import { type AiRuntimeLogEntry, type AppShellSettings, type ExecuteGitOperationRequest, type GitDiffHunk, type GitDiffSummary, type GitOperationConfirmation } from '../../apiClient.js';
@@ -171,6 +171,7 @@ export function toSafeAppShellImport(
       | 'multiWindowEnabled'
       | 'backgroundModeEnabled'
       | 'desktopNotificationsEnabled'
+      | 'inputSuggestions'
       | 'openAtLoginEnabled'
       | 'autoUpdateChannel'
       | 'defaultProjectId'
@@ -198,6 +199,7 @@ export function toSafeAppShellImport(
     multiWindowEnabled: typeof raw.multiWindowEnabled === 'boolean' ? raw.multiWindowEnabled : true,
     backgroundModeEnabled: typeof raw.backgroundModeEnabled === 'boolean' ? raw.backgroundModeEnabled : true,
     desktopNotificationsEnabled: typeof raw.desktopNotificationsEnabled === 'boolean' ? raw.desktopNotificationsEnabled : true,
+    inputSuggestions: raw.inputSuggestions === undefined ? undefined : normalizeInputSuggestionSettings(raw.inputSuggestions),
     openAtLoginEnabled: typeof raw.openAtLoginEnabled === 'boolean' ? raw.openAtLoginEnabled : false,
     autoUpdateChannel: 'manual',
     defaultProjectId: typeof raw.defaultProjectId === 'string' ? raw.defaultProjectId : null,

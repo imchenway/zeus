@@ -61,6 +61,8 @@ export interface StructuredComposerInputProps {
   autoFocus?: boolean;
   ariaLabel: string;
   placeholder: string;
+  /** 空输入框的灰字提示，与结构化标签和发送正文分开。 */
+  suggestion?: string | null;
   ariaKeyShortcuts?: string;
   loadCatalog?: (projectId?: string, forceReload?: boolean) => Promise<SkillCatalog>;
   loadEmployees?: (projectId: string) => Promise<DigitalEmployeeRecord[]>;
@@ -365,6 +367,7 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
         ariaLabel={props.ariaLabel}
         ariaKeyShortcuts={props.ariaKeyShortcuts}
         placeholder={props.placeholder}
+        suggestion={props.suggestion}
         language={props.language}
         listboxId={trigger ? listboxId : undefined}
         activeDescendant={activeDescendant}

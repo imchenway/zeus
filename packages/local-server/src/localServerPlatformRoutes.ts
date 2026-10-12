@@ -170,6 +170,7 @@ import { registerProjectGitQueryRoutes } from './projectGitQueryRoutes.js';
 import { ProjectQueryApplication } from './projectQueryApplication.js';
 import { registerProjectQueryRoutes } from './projectQueryRoutes.js';
 import { createCommitCodexPool } from './gitCommitCodexGeneration.js';
+import { registerInputSuggestionRoutes } from './inputSuggestionRoutes.js';
 import { readGitCommitContext, readCommitFingerprint, resolveCommitRepository, resolveTaskCommitRepository } from './gitCommitContext.js';
 import { PassThrough } from 'node:stream';
 import { generateGitCommitMessage } from './gitCommitMessageGeneration.js';
@@ -907,6 +908,18 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
 
   server.get('/api/projects/:projectId/git/commit-models', async (request: FastifyRequest<{ Params: { projectId: string } }>, reply) => {
     if (!projects.getById(request.params.projectId)) return reply.code(404).send({ error: 'ZEUS_PROJECT_NOT_FOUND', message: '项目不存在。' });
+    /** 只有提交模型入口预热提交池，建议目录读取不启动额外提交进程。 */
+    const result = await loadTextGenerationModels();
+    if (codexNativeEnabled && !readOnlyValidation && result.items.some((item) => item.id.startsWith('codex:'))) {
+      void commitCodexPool.warm({ commandPath: currentCodexRuntimeCommandPath(), codexHome: options.codexHome ?? dataLayout.codexHome, ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) }).catch(() => {
+        console.info(JSON.stringify({ event: 'git_commit_prewarm_failed' }));
+      });
+    }
+    return result;
+  });
+
+  /** 提交说明和输入建议共用现有模型目录及登录能力。 */
+  async function loadTextGenerationModels() {
     /** 设置入口和生成服务使用同一份模型能力，不能猜测可用档位。 */
     const items: Array<Pick<CodexModelCapability, 'id' | 'model' | 'supportedReasoningEfforts' | 'defaultReasoningEffort' | 'serviceTiers'> & { label: string }> = (await modelConnections.listSelectableModels())
       .filter((model: SelectableConnectionModel) => model.available && model.enabled)
@@ -939,13 +952,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     } catch (error) {
       warning = redactSensitiveText(error instanceof Error ? error.message : 'Codex 模型加载失败。').text;
     }
-    if (codexNativeEnabled && !readOnlyValidation && items.some((item: { id: string }) => item.id.startsWith('codex:'))) {
-      void commitCodexPool.warm({ commandPath: currentCodexRuntimeCommandPath(), codexHome: options.codexHome ?? dataLayout.codexHome, ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) }).catch(() => {
-        console.info(JSON.stringify({ event: 'git_commit_prewarm_failed' }));
-      });
-    }
     return { items, warning };
-  });
+  }
 
   const commitCodexPool = createCommitCodexPool();
   server.addHook('onClose', () => commitCodexPool.close());
@@ -1411,6 +1419,18 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     now,
   });
   registerConversationCapabilityQueryRoutes({ server, application: conversationCapabilityQueries });
+
+  /** 建议拥有自己的取消范围，设置修改不会中断主会话。 */
+  const cancelInputSuggestions = registerInputSuggestionRoutes({
+    server,
+    repository: conversationSnapshotV2,
+    projectExists: (projectId) => Boolean(projects.getById(projectId)),
+    getConversation: (conversationId) => conversations.getRecordById(conversationId),
+    readSettings: () => readOnlyValidation ? undefined : platformMutableState.appShellSettings.inputSuggestions,
+    modelConnections,
+    loadModels: loadTextGenerationModels,
+    codexOptions: () => ({ commandPath: currentCodexRuntimeCommandPath(), codexHome: options.codexHome ?? dataLayout.codexHome, ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) }),
+  });
 
   registerConversationSnapshotV2Api({
     server,
@@ -4329,6 +4349,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         },
       });
       platformMutableState.appShellSettings = mutation.result;
+      if (previousSettings.inputSuggestions?.enabled !== mutation.result.inputSuggestions?.enabled || previousSettings.inputSuggestions?.modelRef !== mutation.result.inputSuggestions?.modelRef) cancelInputSuggestions();
       return platformMutableState.appShellSettings;
     } catch (error) {
       const mapped = settingsCommandHttpError(error, redactSensitiveText);
@@ -4429,7 +4450,10 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           });
         },
       });
-      if (mutation.result.planned.appShell) platformMutableState.appShellSettings = mutation.result.planned.appShell;
+      if (mutation.result.planned.appShell) {
+        cancelInputSuggestions();
+        platformMutableState.appShellSettings = mutation.result.planned.appShell;
+      }
       if (mutation.result.planned.runtime) platformMutableState.runtimeSettings = mutation.result.planned.runtime;
       if (mutation.result.planned.telegramNotification) platformMutableState.telegramNotificationSettings = mutation.result.planned.telegramNotification;
       if (mutation.result.planned.telegramSecurity) platformMutableState.telegramSecuritySettings = mutation.result.planned.telegramSecurity;

@@ -69,7 +69,6 @@ export function createConversationTranscriptStateSelector(): StateSelector {
 export function createConversationComposerStateSelector(): StateSelector {
   return cachedSelector((state) => ({
     ...state,
-    turnsByProviderId: emptyTurns,
     changeSetsByProviderId: emptyChangeSets,
     terminalTurnIds: emptyTerminalTurns,
     items: emptyItems,
@@ -77,8 +76,6 @@ export function createConversationComposerStateSelector(): StateSelector {
     currentReasoningItem: null,
     itemOrder: emptyItemOrder,
     queue: null,
-    pendingRequests: emptyRequests,
-    planImplementationRequests: emptyPlanRequests,
     tokenUsage: null,
     sessionMetrics: null,
     rateLimits: null,

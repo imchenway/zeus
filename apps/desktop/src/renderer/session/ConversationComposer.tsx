@@ -35,6 +35,7 @@ import { presentModelOptions } from '../modelOptionPresentation.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { StructuredComposerInput, type StructuredComposerSelection } from './StructuredComposerInput.js';
 import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
+import { useInputSuggestion } from './useInputSuggestion.js';
 
 export type ComposerKeyIntent = 'submit' | 'newline' | 'escape' | 'ignore';
 export interface ComposerRuntimeSettings {
@@ -49,6 +50,10 @@ export interface ComposerRuntimeSettings {
 }
 
 export interface ConversationComposerProps {
+  /** 主输入框独享建议设置；答题和其他复用输入框保持原有行为。 */
+  inputSuggestionSettings?: import('@zeus/shared').InputSuggestionSettings;
+  /** 只生成灰字，不提交下一轮或改变执行队列。 */
+  onGenerateInputSuggestion?: (completedTurnId: string, signal: AbortSignal) => Promise<import('@zeus/shared').InputSuggestionResult>;
   state: NativeSessionState;
   language: SessionUiLanguage;
   textareaRef?: RefObject<ComposerInputHandle | null>;
@@ -201,6 +206,15 @@ export function ConversationComposer(props: ConversationComposerProps) {
     if (textareaRef.current instanceof HTMLTextAreaElement) autosizeTextarea(textareaRef.current);
   }, [editorValue, goalDraft, goalInputActive, textareaRef]);
 
+  /** 预测与输入值分开，已有附件、评论、问题或目标输入时不生成。 */
+  const suggestion = useInputSuggestion({
+    state: props.state,
+    settings: props.inputSuggestionSettings,
+    generate: props.onGenerateInputSuggestion,
+    working: active || busy || props.state.conversationState === 'starting_turn',
+    eligible: inputWritable && !hasDraft && editorValue.length === 0 && !goalInputActive && !goalOperationBusy && !isComposing && !inputResources.processing && props.state.pendingRequests.length === 0 && props.state.planImplementationRequests.length === 0,
+  });
+
   useEffect(() => {
     // 拼音尚未上屏时由编辑器本地值持有组合文本，避免会话快照或草稿持久化回写打断输入法。
     if (!composingRef.current) setEditorValue(props.state.draft);
@@ -223,6 +237,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
   }, [textareaRef]);
 
   function submit(nextDelivery: 'queue' | 'steer_now'): void {
+    suggestion.dismiss();
     // 附件尚在导入时不能提交，避免正文先发出而附件随后落回草稿。
     if (inputResources.processing) return;
     if (nextDelivery === 'queue' && !selectedCapability) return;
@@ -309,6 +324,21 @@ export function ConversationComposer(props: ConversationComposerProps) {
 
   /** 普通输入与 Markdown 输入共用发送条件和附件快捷键。 */
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement | HTMLDivElement>): void {
+    // 输入法和候选菜单先处理按键；仅真正有焦点的空编辑器可以采纳灰字。
+    if (!isComposing && !composingRef.current && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) {
+      if (event.key === 'Tab' && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && suggestion.text && textareaRef.current?.insertSuggestion?.(suggestion.text)) {
+        event.preventDefault();
+        event.stopPropagation();
+        suggestion.dismiss();
+        return;
+      }
+      if (event.key === 'Escape' && (suggestion.text || suggestion.pending)) {
+        event.preventDefault();
+        event.stopPropagation();
+        suggestion.dismiss();
+        return;
+      }
+    }
     if (!goalInputActive) inputResources.handlePasteShortcut(event);
     const intent = resolveComposerKeyIntent({
       key: event.key,
@@ -357,6 +387,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
   return (
     <section
       className="session-composer-shell"
+      data-input-suggestion={suggestion.text || suggestion.pending ? 'true' : undefined}
       aria-label={inputLabel}
       aria-busy={busy || inputResources.processing || undefined}
       data-active={active ? 'true' : 'false'}
@@ -421,6 +452,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
           <StructuredComposerInput
             value={editorValue}
             onValueChange={(nextValue) => {
+              suggestion.dismiss();
               setEditorValue(nextValue);
               if (!composingRef.current) props.onDraftChange(nextValue);
             }}
@@ -434,6 +466,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
             ariaLabel={inputLabel}
             ariaKeyShortcuts="Enter Shift+Enter Escape Meta+A Control+A"
             placeholder={props.inputBlocked ? copy.recoveredInputBlocked : copy.placeholder}
+            suggestion={suggestion.text}
             loadCatalog={props.onLoadExtensions}
             loadEmployees={props.onLoadEmployees}
             goalAvailable={props.goalAvailable}
@@ -452,6 +485,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
             }}
             onOpenComputerSettings={props.onOpenComputerSettings}
             onCompositionStart={() => {
+              suggestion.dismiss();
               composingRef.current = true;
               setIsComposing(true);
             }}
@@ -468,7 +502,10 @@ export function ConversationComposer(props: ConversationComposerProps) {
               setEditorValue(nextValue);
               props.onDraftChange(nextValue);
             }}
-            onPaste={inputResources.handlePaste}
+            onPaste={(event) => {
+              suggestion.dismiss();
+              inputResources.handlePaste(event);
+            }}
             onKeyDown={handleKeyDown}
           />
         )}
