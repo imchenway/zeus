@@ -163,10 +163,13 @@ type TaskTypedContentField = {
   valueFromTask: (task: TaskRecord) => string;
 };
 
+/** 当前字段的一次粘贴载荷，快捷键兜底附带事件归属校验。 */
 type TaskAttachmentPasteRequest = {
   files: File[];
   plainText: string;
   readNativeClipboard: boolean;
+  /** 普通粘贴到达后，已开始读取的快捷键兜底不得继续保存或插入文字。 */
+  isCurrent?: () => boolean;
 };
 
 type TaskAttachmentPasteResult = {
@@ -337,6 +340,7 @@ function InlineTaskTextField(props: {
   const baseUpdatedAtRef = useRef(props.task.updatedAt ?? '');
   const composingRef = useRef(false);
   const suppressBlurRef = useRef(false);
+  /** 普通粘贴和卸载使旧快捷键兜底失效，包括已经开始的异步读取。 */
   const pasteShortcutFallbackTokenRef = useRef(0);
   /** 附件保存期间的失焦保存延后，避免正文使用过期任务版本提交。 */
   const deferredBlurSave = useRef(false);
@@ -488,18 +492,20 @@ function InlineTaskTextField(props: {
     }
   }
 
+  /** 原生文件未派发普通粘贴事件时读取剪贴板，回执仍须校验事件归属。 */
   function handlePasteShortcutFallback(event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>): void {
     if (!props.onPasteResources || saveState.kind === 'saving' || typeof window === 'undefined') return;
     if (event.key.toLowerCase() !== 'v' || (!event.metaKey && !event.ctrlKey) || event.altKey) return;
     const control = event.currentTarget;
     const selectionStart = control.selectionStart ?? control.value.length;
     const selectionEnd = control.selectionEnd ?? selectionStart;
+    /** 固定这次快捷键身份，后续普通粘贴可以取消正在读取的兜底。 */
     const fallbackToken = pasteShortcutFallbackTokenRef.current + 1;
     pasteShortcutFallbackTokenRef.current = fallbackToken;
     // Finder 与 Paste.app 有时只触发粘贴快捷键；正常 paste 到达时会取消这次原生兜底。
     window.setTimeout(() => {
       if (pasteShortcutFallbackTokenRef.current !== fallbackToken) return;
-      void applyPasteRequest(control, { files: [], plainText: '', readNativeClipboard: true }, selectionStart, selectionEnd)
+      void applyPasteRequest(control, { files: [], plainText: '', readNativeClipboard: true, isCurrent: () => pasteShortcutFallbackTokenRef.current === fallbackToken }, selectionStart, selectionEnd)
         .catch(() => undefined)
         .finally(() => {
           if (pasteShortcutFallbackTokenRef.current === fallbackToken) pasteShortcutFallbackTokenRef.current += 1;
@@ -935,9 +941,11 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
     return zh ? '无法添加粘贴的附件。请使用“添加附件”选择文件。' : 'The pasted attachment could not be added. Use Add attachment to select the file.';
   }
 
+  /** 导入当前字段资源，取消的快捷键兜底不再写入任务或显示失败。 */
   async function pasteTaskDetailResources(field: TaskAttachmentField, request: TaskAttachmentPasteRequest): Promise<TaskAttachmentPasteResult> {
+    /** 用户主动重试属于新操作，不沿用已结束的快捷键身份。 */
     const retryOperation = async () => {
-      await pasteTaskDetailResources(field, request);
+      await pasteTaskDetailResources(field, { ...request, isCurrent: undefined });
     };
     let additions: TaskAttachmentCandidate[] = [];
     let failedCount = 0;
@@ -946,7 +954,6 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
 
     /** 卡片先出现，保持到文件授权和任务记录保存都结束。 */
     const pending = previews.begin(request.files, request.plainText, field);
-    setAttachmentSaveState({ kind: 'saving' });
     try {
       if (request.files.length === 0 && request.readNativeClipboard && props.onReadClipboardResources) {
         try {
@@ -959,6 +966,9 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
           nativeReadFailed = true;
         }
       }
+
+      // 普通 paste 可以在系统读取期间到达；成功或失败的旧回执均不得重复操作任务。
+      if (!pending.current() || request.isCurrent?.() === false) return {};
 
       if (additions.length === 0 && request.files.length > 0) {
         if (!props.onAuthorizeFiles) throw new Error('Task attachment authorization is unavailable.');
