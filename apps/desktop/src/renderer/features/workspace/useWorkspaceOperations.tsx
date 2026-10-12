@@ -4,10 +4,8 @@ import { cloneTaskManagementStatusConfig, type TaskManagementStatusConfig } from
 import { notifyMainAppShellSettingsChanged, recordManualUpdateCheckInMain } from '../../appShellBridge.js';
 import { ConnectedSessionWorkspace, SessionWorkspace, NewConversationComposer, type NewConversationDraftStore } from '../../session/SessionWorkspace.js';
 import type { SessionTerminalClient } from '../../session/SessionTerminal.js';
-import { selectHasConfirmedUserMessage } from '../../session/sessionSelectors.js';
 import { TaskDetailPaneContent } from '../../task/TaskDetailPaneContent.js';
 import { TaskDigitalTeamProgress } from '../digital-teams/TaskDigitalTeamProgress.js';
-import { writeTaskModelPushPreferences } from '../../task/TaskModelPushModal.js';
 import { taskModelPushHasRealChoice } from '../../task/TaskModelPushPendingWorkspace.js';
 import { normalizeTaskTableColumnPreferences, normalizeTaskTableEnumSortOrders, resolveTaskManagementStatus } from '../../task/taskWorkspaceModel.js';
 import { createSessionOperationId } from '../../sessionOperationIdentity.js';
@@ -30,7 +28,6 @@ import { normalizeProjectConfig, normalizeRuntimeSettings, parseNumericList, res
 import { buildGitHunkReviewKey, buildGitOperationExecutionInput, formatGitOperationLabel, formatRuntimeLogLine, toSafeAppShellImport } from './workspaceFormatters.js';
 import {
   adjustProjectSidebarWidthForKeyboard,
-  browserNativeConversationStartStorage,
   buildRuntimeSessionTaskDraft,
   clampProjectSidebarWidth,
   createSessionWorkspaceTask,
@@ -1891,9 +1888,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           onChooseAttachments={props.onChooseConversationResources ? chooseNativeConversationAttachments : undefined}
           onStateChange={(conversationId, state) => {
             recordNativeConversationRuntimeState(conversationId, state);
-            if (selectedTaskModelPushOperation?.status === 'accepted' && selectedTaskModelPushOperation.choice?.id === conversationId && selectHasConfirmedUserMessage(state, selectedTaskModelPushOperation.request.clientUserMessageId)) {
-              writeTaskModelPushPreferences(browserNativeConversationStartStorage(), selectedTaskModelPushOperation.task.projectId, selectedTaskModelPushOperation.form);
-            }
           }}
           onStartConversation={startNativeConversation}
           onStartProjectConversation={startProjectConversation}

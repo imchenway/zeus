@@ -1325,6 +1325,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
             ) : null}
             <TaskDigitalEmployeeExecutor
               taskId={props.task.id}
+              activeConversationId={props.activeConversationId}
               projectId={props.task.projectId}
               terminalReadOnly={props.terminalReadOnly}
               client={props.digitalEmployeeClient ?? null}

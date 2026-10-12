@@ -2560,6 +2560,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
             : `The selected model does not accept reasoning effort ${normalizedForm.effort || '(empty)'}. Select it again before pushing.`,
         );
       }
+      // 本次明确确认的选项立即按项目保存，后续异步回执不能覆盖更新的选择。
+      writeTaskModelPushPreferences(browserNativeConversationStartStorage(), task.projectId, normalizedForm);
       const fingerprint = JSON.stringify({
         taskId: task.id,
         projectId: task.projectId,
@@ -2748,11 +2750,6 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       const attached = attachedStates[pending.task.id];
       if (!attached || !taskModelPushHasRealChoice(attached)) throw new Error('Real task-push conversation was not attached atomically.');
       setTaskModelPushAnnouncement(appShellSettings.appLanguage === 'zh-CN' ? `${pending.task.title}：会话已创建。` : `${pending.task.title}: Conversation created.`);
-      const submissionStatus = typeof acceptance.submission?.status === 'string' ? acceptance.submission.status : null;
-      if (submissionStatus === 'active') {
-        // 只有 thread/start 与首个 turn/start 都成功后，才更新同项目任务开发类型的选择记忆。
-        writeTaskModelPushPreferences(browserNativeConversationStartStorage(), pending.task.projectId, pending.form);
-      }
       // 真实会话只接管内部读写身份，绝不根据完成时的页面状态再次导航或滚动。
       await flushTaskModelPushDeferredMessages(attached);
       void refreshNativeConversationChoices(pending.task.id).catch((error: unknown) => recordLocalError('task-model-push-history-refresh', error));
