@@ -69,6 +69,38 @@ export interface ProjectCodeWorkspacePreference {
   treeWidth: number;
 }
 
+/** 源码页可编辑文本的效果预览；媒体文件继续使用统一文件预览。 */
+export type ProjectSourcePreviewKind = 'html' | 'markdown';
+
+/** 格式识别由主进程和源码页共用，避免高亮语言覆盖改变预览能力。 */
+export function projectSourcePreviewKind(path: string): ProjectSourcePreviewKind | null {
+  /** 只识别文件扩展名，不把项目路径交给浏览器直接访问。 */
+  const extension = path.split('.').pop()?.toLowerCase();
+  if (['html', 'htm', 'xhtml'].includes(extension ?? '')) return 'html';
+  if (['md', 'markdown', 'mdown', 'mkd'].includes(extension ?? '')) return 'markdown';
+  return null;
+}
+
+/** 预览只接受项目文件身份与当前草稿，不接受任意目录授权。 */
+export interface ProjectSourcePreviewRequest {
+  /** 当前项目身份。 */
+  projectId: string;
+  /** 项目内已存在的文件。 */
+  relativePath: string;
+  /** 当前编辑内容，预览不会写入磁盘。 */
+  content: string;
+}
+
+/** 临时资源授权绑定发起窗口，切换或关闭预览后撤销。 */
+export interface ProjectSourcePreviewGrant {
+  /** 主进程生成的不可猜测身份。 */
+  id: string;
+  /** 文件所在位置同时作为相对资源的解析基准。 */
+  url: string;
+  /** 当前授权对应的项目根 URL，用于准确解析本地链接。 */
+  rootUrl: string;
+}
+
 export interface SaveProjectSourceFileInput {
   projectId: string;
   relativePath: string;

@@ -3214,7 +3214,7 @@ a {
 .project-git-branch-actions,
 .project-git-branch-repository {
   border-bottom: 0;
-  padding: 4px 0 7px;
+  padding: 4px 0;
 }
 .project-git-branch-repository:last-child {
   border-bottom: 0;
@@ -3232,10 +3232,12 @@ a {
   font: inherit;
   font-size: 12px;
   gap: 7px;
-  min-height: 29px;
+  /* 分支选择中的操作行与分支树保持相同行高。 */
+  min-height: 24px;
   min-width: 0;
   overflow: hidden;
-  padding: 4px 9px;
+  padding: 2px 9px;
+  line-height: 20px;
   text-align: left;
   width: 100%;
 }
@@ -3254,7 +3256,7 @@ a {
   align-items: baseline;
   display: flex;
   gap: 8px;
-  padding: 7px 9px 4px;
+  padding: 4px 9px 2px;
 }
 .project-git-branch-repository > header strong {
   min-width: 0;
@@ -19665,6 +19667,11 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   position: absolute;
 }
 
+/* 经典布局的侧栏调宽手柄常驻直线，不增加侧栏或内容区外围边框。 */
+.macos-ai-app.main-layout-upstream > .project-sidebar-resizer::after {
+  background: var(--zeus-product-line);
+}
+
 .macos-ai-app .project-sidebar-resizer:hover:not(:disabled):not([aria-disabled='true'])::after,
 .macos-ai-app .project-sidebar-resizer:focus-visible::after,
 .macos-ai-app.zeus-shell[data-project-sidebar-resizing='true'] .project-sidebar-resizer::after {
@@ -21918,7 +21925,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   transition: opacity var(--zeus-source-list-row-motion);
 }
 
-/* 工具按钮只占现有顶行的尾部空间，窄窗口不挤掉文件标签。 */
+/* 工作区入口复用同一组按钮，具体间距由所在工具行决定。 */
 .macos-ai-app .project-code-actions {
   display: flex;
   flex: 0 0 auto;

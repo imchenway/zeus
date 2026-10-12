@@ -1,4 +1,4 @@
-import { sourceLanguageOptions } from '@zeus/shared';
+import { projectSourcePreviewKind, sourceLanguageOptions } from '@zeus/shared';
 import { FilePreview } from './FilePreview.js';
 import { useMotionPresence } from '../ui/useMotionPresence.js';
 import { createPortal } from 'react-dom';
@@ -12,6 +12,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -31,6 +32,9 @@ import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
+import { EyeIcon as Eye } from '@phosphor-icons/react/dist/csr/Eye';
+import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
+import { ColumnsIcon as Columns } from '@phosphor-icons/react/dist/csr/Columns';
 import type { ProjectCodeWorkspacePreference, ProjectSourceDirectorySnapshot, ProjectSourceDocument, ProjectSourceEntry, ProjectSourceEvent } from '@zeus/shared';
 import type { Text } from '@codemirror/state';
 import { Button } from '../ui/Button.js';
@@ -41,6 +45,16 @@ import type { ProjectGitWorkbenchSnapshot } from '../features/git/gitContracts.j
 
 const ProjectSourceEditor = lazy(() => import('./ProjectSourceEditor.js').then((module) => ({ default: module.ProjectSourceEditor })));
 const CodeEditor = lazy(() => import('./CodeEditor.js').then((module) => ({ default: module.CodeEditor })));
+/** 效果预览按需加载，不增加普通源码文件的首屏成本。 */
+const ProjectSourceRenderedPreview = lazy(() => import('./ProjectSourceRenderedPreview.js').then((module) => ({ default: module.ProjectSourceRenderedPreview })));
+/** 文件展示模式只影响当前源码标签。 */
+type SourceViewMode = 'source' | 'preview' | 'split';
+/** 三个固定入口只使用图标，名称同时用于悬停和键盘辅助。 */
+const sourceViewModes = [
+  { id: 'source', zh: '源码', en: 'Source', icon: FileCode },
+  { id: 'preview', zh: '预览', en: 'Preview', icon: Eye },
+  { id: 'split', zh: '分栏', en: 'Split view', icon: Columns },
+] as const;
 // 文件系统事件在这个时间窗内按目录和文件去重，避免批量写入触发重复读取与渲染。
 const sourceEventRefreshDelayMs = 100;
 
@@ -75,7 +89,7 @@ export interface ProjectSourceWorkspaceHandle {
 }
 
 export interface ProjectSourceWorkspaceProps {
-  /** 文件标签右侧的工作区入口，不增加另一排导航。 */
+  /** 分支右侧的工作区入口，复用 Git 和命令按钮。 */
   toolbarActions?: ReactNode;
   /** 分支下拉框挂到目录顶行，替代重复的源码标题。 */
   branchToolbarRef?(element: HTMLSpanElement | null): void;
@@ -99,6 +113,8 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(() => new Set(initialPreference.expandedDirectories));
   const [tabs, setTabs] = useState<SourceTab[]>([]);
   const [activePath, setActivePath] = useState<string | null>(initialPreference.activeFile);
+  /** 每个文件记住本次会话中的查看方式，不影响已有源码偏好。 */
+  const [viewModes, setViewModes] = useState<Record<string, SourceViewMode>>({});
   /** 文件状态跟随同一个 Git 工作台；项目切换时忽略其他项目的快照。 */
   const gitFileStatuses = useMemo<Record<string, string>>(
     () =>
@@ -137,6 +153,10 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   tabsRef.current = tabs;
   activePathRef.current = activePath;
   const activeTab = tabs.find((tab) => tab.document.relativePath === activePath) ?? null;
+  /** 只为可编辑且有实际效果的格式提供模式切换。 */
+  const renderedPreviewKind = activeTab?.document.editable ? projectSourcePreviewKind(activeTab.document.relativePath) : null;
+  /** 普通代码文件保持源码显示，预览文件首次打开也保留原编辑入口。 */
+  const viewMode: SourceViewMode = renderedPreviewKind && activePath ? (viewModes[activePath] ?? 'source') : 'source';
   const dirty = tabs.some((tab) => tab.dirty);
   dirtyRef.current = dirty;
 
@@ -157,6 +177,8 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   const openFile = useCallback(
     async (relativePath: string, line?: number) => {
       fileOpenRequestedRef.current = true;
+      // 搜索与 Git 的行定位必须显示源码，不能把位置藏在效果预览后。
+      if (line !== undefined) setViewModes((current) => ({ ...current, [relativePath]: 'source' }));
       const existing = tabsRef.current.find((tab) => tab.document.relativePath === relativePath);
       if (existing) {
         setTabs((current) => current.map((tab) => (tab.document.relativePath === relativePath ? { ...tab, revealLine: line ?? tab.revealLine } : tab)));
@@ -197,6 +219,15 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
       }
     },
     [bridge, props.project.id, zh],
+  );
+
+  /** 文档内的本地链接继续打开源码标签，并沿用文档预览模式。 */
+  const openPreviewFile = useCallback(
+    async (path: string) => {
+      if (projectSourcePreviewKind(path)) setViewModes((current) => ({ ...current, [path]: 'preview' }));
+      await openFile(path);
+    },
+    [openFile],
   );
 
   const saveTab = useCallback(
@@ -601,7 +632,53 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
     }
   }
 
-  /** 记录本次拖拽起点；指针捕获保证离开分隔条后仍能平顺拖动。 */
+  /** 保留网格中的分隔轨道，实际拖拽面延伸至当前工作台顶部。 */
+  const treeResizeTrackRef = useRef<HTMLDivElement>(null);
+  /** 浮动拖拽面使用实际布局坐标，不假定顶栏高度或侧栏布局。 */
+  const [treeResizeSurface, setTreeResizeSurface] = useState<{ host: HTMLElement; left: number; top: number; width: number; height: number } | null>(null);
+  /** 所有入口共用真实布局测量，位置没有变化时不重复渲染。 */
+  const updateTreeResizeSurface = useCallback(() => {
+    const track = treeResizeTrackRef.current;
+    const host = track?.closest<HTMLElement>('.zeus-shell');
+    if (!track || !host) return;
+    const bounds = track.getBoundingClientRect();
+    const top = host.getBoundingClientRect().top;
+    const next = bounds.width > 0 && bounds.height > 0 ? { host, left: bounds.left, top, width: bounds.width, height: Math.max(0, bounds.bottom - top) } : null;
+    setTreeResizeSurface((current) => (current?.host === next?.host && current?.left === next?.left && current?.top === next?.top && current?.width === next?.width && current?.height === next?.height ? current : next));
+  }, []);
+  /** React 已知的宽度、底栏及提示变化立即同步，不等待下一帧观察通知。 */
+  useLayoutEffect(updateTreeResizeSurface, [treeWidth, props.toolbarActions, notice, activeTab?.externalChange, updateTreeResizeSurface]);
+  useLayoutEffect(() => {
+    /** 所有测量均来自当前源码页，项目切换后释放观察器。 */
+    const track = treeResizeTrackRef.current;
+    /** 宿主保留当前主题，并避开源码工作区的顶部裁剪。 */
+    const host = track?.closest<HTMLElement>('.zeus-shell');
+    if (!track || !host) return;
+    updateTreeResizeSurface();
+    /** 只观察影响分隔面的位置与尺寸，避免观察浮层自身形成循环。 */
+    const observer = new ResizeObserver(updateTreeResizeSurface);
+    observer.observe(track);
+    observer.observe(host);
+    if (track.parentElement) observer.observe(track.parentElement);
+    if (track.previousElementSibling) observer.observe(track.previousElementSibling);
+    window.addEventListener('resize', updateTreeResizeSurface);
+    document.addEventListener('scroll', updateTreeResizeSurface, true);
+    /** 工作面进入动效不会改变布局尺寸，结束或取消时仍需重新对齐坐标。 */
+    host.addEventListener('animationend', updateTreeResizeSurface, true);
+    host.addEventListener('animationcancel', updateTreeResizeSurface, true);
+    host.addEventListener('transitionend', updateTreeResizeSurface, true);
+    host.addEventListener('transitioncancel', updateTreeResizeSurface, true);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', updateTreeResizeSurface);
+      document.removeEventListener('scroll', updateTreeResizeSurface, true);
+      host.removeEventListener('animationend', updateTreeResizeSurface, true);
+      host.removeEventListener('animationcancel', updateTreeResizeSurface, true);
+      host.removeEventListener('transitionend', updateTreeResizeSurface, true);
+      host.removeEventListener('transitioncancel', updateTreeResizeSurface, true);
+    };
+  }, [props.project.id, updateTreeResizeSurface]);
+  /** 记录本次拖拽起点，指针捕获保留原有调宽行为。 */
   const treeResize = useRef<{ x: number; width: number } | null>(null);
   /** 只有主鼠标键开始调宽，右键保持菜单行为。 */
   function startTreeResize(event: ReactPointerEvent<HTMLDivElement>): void {
@@ -620,6 +697,37 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   }
 
   const breadcrumbs = activePath?.split('/') ?? [];
+
+  /** 同一拖拽入口贯通顶部，继续复用原有指针与键盘调宽行为。 */
+  const sourceTreeResizer = treeResizeSurface
+    ? createPortal(
+        <div
+          className="project-source-tree-resizer project-source-tree-resizer-overlay"
+          style={{ left: treeResizeSurface.left, top: treeResizeSurface.top, width: treeResizeSurface.width, height: treeResizeSurface.height }}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={zh ? '调整代码目录宽度' : 'Resize source tree'}
+          aria-valuemin={200}
+          aria-valuemax={420}
+          aria-valuenow={treeWidth}
+          tabIndex={0}
+          onDoubleClick={() => setTreeWidth(260)}
+          onPointerDown={startTreeResize}
+          onPointerMove={(event) => {
+            if (treeResize.current && event.currentTarget.hasPointerCapture(event.pointerId)) setTreeWidth(clampTreeWidth(treeResize.current.width + event.clientX - treeResize.current.x));
+          }}
+          onPointerUp={finishTreeResize}
+          onPointerCancel={finishTreeResize}
+          onLostPointerCapture={finishTreeResize}
+          onKeyDown={(event) => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home'].includes(event.key)) return;
+            event.preventDefault();
+            setTreeWidth(event.key === 'Home' ? 260 : clampTreeWidth(treeWidth + (event.key === 'ArrowLeft' ? -1 : 1) * (event.shiftKey ? 24 : 8)));
+          }}
+        />,
+        treeResizeSurface.host,
+      )
+    : null;
 
   return (
     <section className="project-source-workspace" style={{ '--zeus-source-tree-width': `${treeWidth}px` } as CSSProperties} data-tree-open={treeDrawerOpen ? 'true' : 'false'}>
@@ -677,24 +785,29 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
           </section>
         </ModalPortal>
       ) : null}
+      {sourceTreeResizer}
       <div className="project-source-main">
         <aside className="project-source-tree" aria-label={zh ? '代码目录' : 'Source tree'}>
-          <details className="project-source-module" open>
-            <summary>
+          <div className="project-source-module">
+            <div className="project-source-module-header">
               <span className="project-source-branch-slot" ref={props.branchToolbarRef}>
                 {/* 占位文字有独立节点，刷新快照时不清空外部挂载的分支控件。 */}
                 <span hidden={props.gitSnapshot?.projectId === props.project.id}>{zh ? '源码' : 'Source'}</span>
               </span>
-              <span className="project-source-module-actions" aria-label={zh ? '源码操作' : 'Source actions'}>
+              {props.toolbarActions}
+            </div>
+            <div className="project-source-search-row">
+              <label className="project-source-search">
+                <MagnifyingGlass aria-hidden="true" />
+                <input type="search" value={searchQuery} onChange={(event) => setSearchQuery(event.currentTarget.value)} aria-label={zh ? '搜索文件名' : 'Search file names'} placeholder={zh ? '搜索文件名' : 'Search file names'} />
+              </label>
+              {/* 新建入口与搜索同行，默认位置继续使用当前文件的父目录。 */}
+              <span className="project-source-module-actions" role="group" aria-label={zh ? '新建文件或目录' : 'Create files or folders'}>
                 <button
                   type="button"
                   data-icon-tooltip={zh ? '新建文件' : 'New file'}
                   aria-label={zh ? '新建文件' : 'New file'}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    beginOperation({ kind: 'create-file', parentRelativePath: activePath ? parentPath(activePath) : '' });
-                  }}
+                  onClick={() => beginOperation({ kind: 'create-file', parentRelativePath: activePath ? parentPath(activePath) : '' })}
                 >
                   <FilePlus size={16} aria-hidden="true" />
                 </button>
@@ -702,21 +815,12 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                   type="button"
                   data-icon-tooltip={zh ? '新建目录' : 'New folder'}
                   aria-label={zh ? '新建目录' : 'New folder'}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    beginOperation({ kind: 'create-directory', parentRelativePath: activePath ? parentPath(activePath) : '' });
-                  }}
+                  onClick={() => beginOperation({ kind: 'create-directory', parentRelativePath: activePath ? parentPath(activePath) : '' })}
                 >
                   <FolderPlus size={16} aria-hidden="true" />
                 </button>
               </span>
-              <CaretRight className="project-source-disclosure" size={14} aria-hidden="true" />
-            </summary>
-            <label className="project-source-search">
-              <MagnifyingGlass aria-hidden="true" />
-              <input type="search" value={searchQuery} onChange={(event) => setSearchQuery(event.currentTarget.value)} placeholder={zh ? '搜索文件名' : 'Search file names'} />
-            </label>
+            </div>
             <div className="project-source-tree-scroll" role="tree" aria-busy={loadingTree}>
               {searchQuery.trim() ? (
                 <SearchResults
@@ -748,31 +852,9 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                 />
               )}
             </div>
-          </details>
+          </div>
         </aside>
-        <div
-          className="project-source-tree-resizer"
-          role="separator"
-          aria-orientation="vertical"
-          aria-label={zh ? '调整代码目录宽度' : 'Resize source tree'}
-          aria-valuemin={200}
-          aria-valuemax={420}
-          aria-valuenow={treeWidth}
-          tabIndex={0}
-          onDoubleClick={() => setTreeWidth(260)}
-          onPointerDown={startTreeResize}
-          onPointerMove={(event) => {
-            if (treeResize.current && event.currentTarget.hasPointerCapture(event.pointerId)) setTreeWidth(clampTreeWidth(treeResize.current.width + event.clientX - treeResize.current.x));
-          }}
-          onPointerUp={finishTreeResize}
-          onPointerCancel={finishTreeResize}
-          onLostPointerCapture={finishTreeResize}
-          onKeyDown={(event) => {
-            if (!['ArrowLeft', 'ArrowRight', 'Home'].includes(event.key)) return;
-            event.preventDefault();
-            setTreeWidth(event.key === 'Home' ? 260 : clampTreeWidth(treeWidth + (event.key === 'ArrowLeft' ? -1 : 1) * (event.shiftKey ? 24 : 8)));
-          }}
-        />
+        <div ref={treeResizeTrackRef} className="project-source-tree-resizer-track" aria-hidden="true" />
 
         <main className="project-source-editor-pane">
           <div className="project-source-editor-header">
@@ -841,15 +923,33 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                 </div>
               ))}
             </div>
-            {props.toolbarActions}
           </div>
           {activeTab ? (
             <>
-              <nav className="project-source-breadcrumbs" aria-label={zh ? '文件路径' : 'File path'}>
-                {breadcrumbs.map((part, index) => (
-                  <span key={`${part}-${index}`}>{part}</span>
-                ))}
-              </nav>
+              <div className="project-source-file-toolbar">
+                <nav className="project-source-breadcrumbs" aria-label={zh ? '文件路径' : 'File path'}>
+                  {breadcrumbs.map((part, index) => (
+                    <span key={`${part}-${index}`}>{part}</span>
+                  ))}
+                </nav>
+                {renderedPreviewKind ? (
+                  <div className="project-source-view-modes" role="group" aria-label={zh ? '源码显示方式' : 'Source view mode'}>
+                    {sourceViewModes.map(({ id, zh: chinese, en, icon: Icon }) => (
+                      <button
+                        key={id}
+                        type="button"
+                        data-source-view-mode={id}
+                        aria-label={zh ? chinese : en}
+                        data-icon-tooltip={zh ? chinese : en}
+                        aria-pressed={viewMode === id}
+                        onClick={() => setViewModes((current) => ({ ...current, [activeTab.document.relativePath]: id }))}
+                      >
+                        <Icon size={16} aria-hidden="true" />
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
               {!activeTab.document.editable ? (
                 <FilePreview
                   request={{ kind: 'source', projectId: props.project.id, path: activeTab.document.relativePath }}
@@ -858,25 +958,42 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                   zh={zh}
                 />
               ) : (
-                <Suspense fallback={<div className="project-source-code-editor-loading">{zh ? '正在加载代码编辑器…' : 'Loading code editor…'}</div>}>
-                  <ProjectSourceEditor
-                    projectId={props.project.id}
-                    revision={activeTab.document.revision.sha256}
-                    dirty={activeTab.dirty}
-                    zh={zh}
-                    extensions={conflictExtensions}
-                    path={activeTab.document.relativePath}
-                    language={activeTab.document.language}
-                    content={activeTab.draft}
-                    savedContent={activeTab.document.content}
-                    readOnly={false}
-                    revealLine={activeTab.revealLine}
-                    onDocumentChange={(content, dirty) => setTabs((current) => current.map((tab) => (tab.document.relativePath === activeTab.document.relativePath ? { ...tab, draft: content, dirty, revealLine: null } : tab)))}
-                    onCursorChange={(cursorLine, cursorColumn) => setTabs((current) => current.map((tab) => (tab.document.relativePath === activeTab.document.relativePath ? { ...tab, cursorLine, cursorColumn } : tab)))}
-                    onSave={() => void saveTab(activeTab.document.relativePath)}
-                    onSaveAll={() => void saveAll()}
-                  />
-                </Suspense>
+                <div className="project-source-document-views" data-view-mode={viewMode}>
+                  <div className="project-source-document-editor" hidden={viewMode === 'preview'} inert={viewMode === 'preview'}>
+                    <Suspense fallback={<div className="project-source-code-editor-loading">{zh ? '正在加载代码编辑器…' : 'Loading code editor…'}</div>}>
+                      <ProjectSourceEditor
+                        projectId={props.project.id}
+                        revision={activeTab.document.revision.sha256}
+                        dirty={activeTab.dirty}
+                        zh={zh}
+                        extensions={conflictExtensions}
+                        path={activeTab.document.relativePath}
+                        language={activeTab.document.language}
+                        content={activeTab.draft}
+                        savedContent={activeTab.document.content}
+                        readOnly={false}
+                        revealLine={activeTab.revealLine}
+                        onDocumentChange={(content, dirty) => setTabs((current) => current.map((tab) => (tab.document.relativePath === activeTab.document.relativePath ? { ...tab, draft: content, dirty, revealLine: null } : tab)))}
+                        onCursorChange={(cursorLine, cursorColumn) => setTabs((current) => current.map((tab) => (tab.document.relativePath === activeTab.document.relativePath ? { ...tab, cursorLine, cursorColumn } : tab)))}
+                        onSave={() => void saveTab(activeTab.document.relativePath)}
+                        onSaveAll={() => void saveAll()}
+                      />
+                    </Suspense>
+                  </div>
+                  {renderedPreviewKind && viewMode !== 'source' ? (
+                    <Suspense fallback={<div className="project-source-code-editor-loading">{zh ? '正在打开预览…' : 'Opening preview…'}</div>}>
+                      <ProjectSourceRenderedPreview
+                        key={`${props.project.id}:${activeTab.document.relativePath}`}
+                        projectId={props.project.id}
+                        path={activeTab.document.relativePath}
+                        kind={renderedPreviewKind}
+                        draft={activeTab.draft}
+                        language={props.language}
+                        openFile={openPreviewFile}
+                      />
+                    </Suspense>
+                  ) : null}
+                </div>
               )}
             </>
           ) : (

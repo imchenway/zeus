@@ -3,7 +3,6 @@ import { GitCommitIcon as GitCommit } from '@phosphor-icons/react/dist/csr/GitCo
 import { GitMergeIcon as GitMerge } from '@phosphor-icons/react/dist/csr/GitMerge';
 import { ArrowDownIcon as ArrowDown } from '@phosphor-icons/react/dist/csr/ArrowDown';
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
-import { ClockCounterClockwiseIcon as History } from '@phosphor-icons/react/dist/csr/ClockCounterClockwise';
 import { projectGitWorkbenchCacheEntry, readCachedProjectGitWorkbench, requestProjectGitWorkbench, subscribeProjectGitRefresh, notifyProjectGitChanged, visibleRepositoryFiles } from './projectGitWorkbenchState.js';
 import {
   BranchSwitcher,
@@ -95,6 +94,35 @@ const projectGitViewPreferences = new Map<string, { repositoryId: string; search
 
 export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const zh = props.language === 'zh-CN';
+  /** 快捷键只投递到当前可见工具栏，继续使用按钮原有禁用条件和操作流程。 */
+  const workbenchRef = useRef<HTMLElement>(null);
+  /** 数字与工具栏操作顺序对应，避开源码及全局导航的既有快捷键。 */
+  const macShortcuts = typeof navigator !== 'undefined' && navigator.platform.startsWith('Mac');
+  /** 无障碍快捷键使用平台主键，显示提示使用常见键盘符号。 */
+  const toolbarShortcut = (digit: number) => ({
+    'data-git-toolbar-key': String(digit),
+    'aria-keyshortcuts': `${macShortcuts ? 'Meta' : 'Control'}+Alt+${digit}`,
+  });
+  /** 操作名称和快捷键共同进入原悬停提示，不增加图标下方文字。 */
+  const toolbarLabel = (name: string, digit: number) => `${name}（${macShortcuts ? '⌘⌥' : 'Ctrl+Alt+'}${digit}）`;
+  useEffect(() => {
+    /** 仅响应当前工作区；弹窗、隐藏底栏、重复按键与输入法组合不触发 Git 操作。 */
+    const handleToolbarShortcut = (event: KeyboardEvent) => {
+      const root = workbenchRef.current;
+      if (!root || root.closest('[hidden], [inert]') || !root.getClientRects().length || event.defaultPrevented || event.repeat || event.isComposing || event.getModifierState('AltGraph')) return;
+      /** 数字键优先按物理位置匹配，兼容 Option 键或键盘布局产生的不同字符。 */
+      const digit = /^Digit[1-9]$/.test(event.code) ? event.code.slice(-1) : event.key;
+      if (!(macShortcuts ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) || !event.altKey || event.shiftKey || !/^[1-9]$/.test(digit)) return;
+      if ([...document.querySelectorAll<HTMLElement>('[role="dialog"]')].some((dialog) => !dialog.closest('[hidden], [inert]') && dialog.getClientRects().length)) return;
+      const button = root.querySelector<HTMLButtonElement>(`.git-command-toolbar button[data-git-toolbar-key="${digit}"]`);
+      if (!button || button.disabled || button.closest('[inert]')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      button.click();
+    };
+    document.addEventListener('keydown', handleToolbarShortcut);
+    return () => document.removeEventListener('keydown', handleToolbarShortcut);
+  }, [macShortcuts]);
   const [snapshot, setSnapshot] = useState<ProjectGitWorkbenchSnapshot | null>(() => readCachedProjectGitWorkbench(props.client, props.project.id));
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>(() => (snapshot ? 'ready' : 'loading'));
   const [error, setError] = useState<string | null>(null);
@@ -746,6 +774,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
 
   return (
     <section
+      ref={workbenchRef}
       className="project-git-workbench"
       onContextMenu={(event) => {
         const element = (event.target as HTMLElement).closest<HTMLElement>('[data-git-context]');
@@ -823,17 +852,128 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         </section>
       ) : null}
 
+      {/* 工具栏跨越整个 Git 工作区，底线与左右工作面同时衔接。 */}
+      <header className="project-git-toolbar git-command-toolbar" aria-label={zh ? 'Git 工具栏' : 'Git toolbar'}>
+        <strong className="git-workspace-heading">{zh ? '工作区' : 'Workspace'}</strong>
+        <button type="button" {...toolbarShortcut(1)} aria-label={toolbarLabel(zh ? '提交' : 'Commit', 1)} data-icon-tooltip={toolbarLabel(zh ? '提交' : 'Commit', 1)} disabled={!selectedRepository || busy !== null} onClick={openCommit}>
+          <GitCommit aria-hidden="true" />
+        </button>
+        <i />
+        <button
+          type="button"
+          {...toolbarShortcut(2)}
+          aria-label={toolbarLabel(zh ? '拉取' : 'Pull', 2)}
+          data-icon-tooltip={toolbarLabel(zh ? '拉取' : 'Pull', 2)}
+          disabled={!selectedRepository || busy !== null || selectedRepository.snapshot.detached || !selectedRepository.snapshot.remotes.length}
+          onClick={() => setPullOpen(true)}
+        >
+          <ArrowDown aria-hidden="true" />
+          {selectedRepository?.snapshot.behind ? <small>{selectedRepository.snapshot.behind}</small> : null}
+        </button>
+        <button
+          type="button"
+          {...toolbarShortcut(3)}
+          aria-label={toolbarLabel(zh ? '推送' : 'Push', 3)}
+          data-icon-tooltip={toolbarLabel(zh ? '推送' : 'Push', 3)}
+          disabled={!selectedRepository || busy !== null || selectedRepository.snapshot.detached || !selectedRepository.snapshot.remotes.length}
+          onClick={() => setPushOpen(true)}
+        >
+          <ArrowUp aria-hidden="true" />
+          {selectedRepository?.snapshot.ahead ? <small>{selectedRepository.snapshot.ahead}</small> : null}
+        </button>
+        <button
+          type="button"
+          {...toolbarShortcut(4)}
+          aria-label={toolbarLabel(zh ? '抓取' : 'Fetch', 4)}
+          data-icon-tooltip={toolbarLabel(zh ? '抓取' : 'Fetch', 4)}
+          disabled={!selectedRepository || busy !== null || !selectedRepository.snapshot.remotes.length}
+          onClick={() => {
+            if (selectedRepository) void execute(selectedRepository, { type: 'fetch' }, zh ? '获取远端' : 'Fetch');
+          }}
+        >
+          <ArrowsClockwise aria-hidden="true" />
+        </button>
+        <i />
+        <button
+          type="button"
+          {...toolbarShortcut(5)}
+          aria-label={toolbarLabel(zh ? '分支' : 'Branch', 5)}
+          data-icon-tooltip={toolbarLabel(zh ? '分支' : 'Branch', 5)}
+          disabled={!selectedRepository || busy !== null}
+          onClick={() => {
+            setNewBranchBase('');
+            setNewBranchOpen(true);
+          }}
+        >
+          <GitBranch aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          {...toolbarShortcut(6)}
+          aria-label={toolbarLabel(zh ? '合并' : 'Merge', 6)}
+          data-icon-tooltip={toolbarLabel(zh ? '合并' : 'Merge', 6)}
+          disabled={!selectedRepository || busy !== null || selectedRepository.snapshot.detached || Boolean(selectedRepository.snapshot.integrationState)}
+          onClick={() => setMergeOpen(true)}
+        >
+          <GitMerge aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          {...toolbarShortcut(7)}
+          aria-label={toolbarLabel(zh ? '贮藏' : 'Stash', 7)}
+          data-icon-tooltip={toolbarLabel(zh ? '贮藏' : 'Stash', 7)}
+          disabled={!selectedRepository || busy !== null || selectedRepository.snapshot.clean || selectedRepository.snapshot.conflictFiles.length > 0}
+          onClick={() => {
+            if (selectedRepository) setStashRepositoryId(selectedRepository.id);
+          }}
+        >
+          <Archive aria-hidden="true" />
+        </button>
+        <span className="project-git-menu-anchor">
+          <button
+            ref={operationsTriggerRef}
+            type="button"
+            {...toolbarShortcut(8)}
+            aria-label={toolbarLabel(zh ? '操作' : 'Actions', 8)}
+            data-icon-tooltip={toolbarLabel(zh ? '操作' : 'Actions', 8)}
+            aria-haspopup="menu"
+            aria-expanded={operationsOpen}
+            onClick={() => setOperationsOpen((current) => !current)}
+          >
+            <DotsThree aria-hidden="true" />
+          </button>
+          <MotionPresence>
+            {operationsOpen ? (
+              <OperationsMenu
+                anchor={operationsTriggerRef.current}
+                zh={zh}
+                onClose={() => setOperationsOpen(false)}
+                onOpenCommit={openCommit}
+                onOpenPush={() => setPushOpen(true)}
+                onOpenUpdate={() => setUpdateOpen(true)}
+                onOpenNewBranch={() => {
+                  setNewBranchBase('');
+                  setNewBranchOpen(true);
+                }}
+                onOpenRevision={() => setRevisionOpen(true)}
+                onSelectTab={setTab}
+                onOpenConsole={props.conversationScope ? undefined : () => setTab('console')}
+                onOpenSubtree={() => setSubtreeDialogOpen(true)}
+              />
+            ) : null}
+          </MotionPresence>
+        </span>
+
+        <button type="button" {...toolbarShortcut(9)} aria-label={toolbarLabel(zh ? '刷新' : 'Refresh', 9)} data-icon-tooltip={toolbarLabel(zh ? '刷新' : 'Refresh', 9)} disabled={busy !== null} onClick={() => void loadWorkbench()}>
+          <ArrowsClockwise aria-hidden="true" />
+        </button>
+        {props.toolbarActions}
+      </header>
       <div className="project-git-browser-layout">
         <aside className="project-git-navigator" aria-label={zh ? 'Git 导航' : 'Git navigation'}>
           {!props.branchToolbarContainer ? <div className="git-toolbar-identity">{branchSwitcher}</div> : null}
           <nav className="git-workspace-navigation" aria-label={zh ? 'Git 工作区' : 'Git workspace'}>
-            <strong>{zh ? '工作区' : 'Workspace'}</strong>
-            {(
-              [
-                ['changes', zh ? '文件状态' : 'File Status', <File key="file" />, changedCount],
-                ['log', zh ? '历史' : 'History', <History key="history" />, null],
-              ] as const
-            ).map(([id, label, icon, count]) => (
+            {([['changes', zh ? '文件状态' : 'File Status', <File key="file" />, changedCount]] as const).map(([id, label, icon, count]) => (
               <button type="button" key={id} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}>
                 {icon}
                 <span>{label}</span>
@@ -996,136 +1136,8 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         </aside>
         <GitPaneSeparator name="navigation" label={zh ? '调整 Git 导航宽度' : 'Resize Git navigation'} initial={20} min={12} max={40} />
         <div className="project-git-browser-content">
-          {/* 图标按钮复用悬停提示，并保留操作名称供辅助技术读取。 */}
-          <header className="project-git-toolbar git-command-toolbar" aria-label={zh ? 'Git 工具栏' : 'Git toolbar'}>
-            <button type="button" aria-label={zh ? '提交' : 'Commit'} data-icon-tooltip={zh ? '提交' : 'Commit'} disabled={!selectedRepository || busy !== null} onClick={openCommit}>
-              <GitCommit aria-hidden="true" />
-            </button>
-            <i />
-            <button
-              type="button"
-              aria-label={zh ? '拉取' : 'Pull'}
-              data-icon-tooltip={zh ? '拉取' : 'Pull'}
-              disabled={!selectedRepository || busy !== null || selectedRepository.snapshot.detached || !selectedRepository.snapshot.remotes.length}
-              onClick={() => setPullOpen(true)}
-            >
-              <ArrowDown aria-hidden="true" />
-              {selectedRepository?.snapshot.behind ? <small>{selectedRepository.snapshot.behind}</small> : null}
-            </button>
-            <button
-              type="button"
-              aria-label={zh ? '推送' : 'Push'}
-              data-icon-tooltip={zh ? '推送' : 'Push'}
-              disabled={!selectedRepository || busy !== null || selectedRepository.snapshot.detached || !selectedRepository.snapshot.remotes.length}
-              onClick={() => setPushOpen(true)}
-            >
-              <ArrowUp aria-hidden="true" />
-              {selectedRepository?.snapshot.ahead ? <small>{selectedRepository.snapshot.ahead}</small> : null}
-            </button>
-            <button
-              type="button"
-              aria-label={zh ? '抓取' : 'Fetch'}
-              data-icon-tooltip={zh ? '抓取' : 'Fetch'}
-              disabled={!selectedRepository || busy !== null || !selectedRepository.snapshot.remotes.length}
-              onClick={() => {
-                if (selectedRepository) void execute(selectedRepository, { type: 'fetch' }, zh ? '获取远端' : 'Fetch');
-              }}
-            >
-              <ArrowsClockwise aria-hidden="true" />
-            </button>
-            <i />
-            <button
-              type="button"
-              aria-label={zh ? '分支' : 'Branch'}
-              data-icon-tooltip={zh ? '分支' : 'Branch'}
-              disabled={!selectedRepository || busy !== null}
-              onClick={() => {
-                setNewBranchBase('');
-                setNewBranchOpen(true);
-              }}
-            >
-              <GitBranch aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              aria-label={zh ? '合并' : 'Merge'}
-              data-icon-tooltip={zh ? '合并' : 'Merge'}
-              disabled={!selectedRepository || busy !== null || selectedRepository.snapshot.detached || Boolean(selectedRepository.snapshot.integrationState)}
-              onClick={() => setMergeOpen(true)}
-            >
-              <GitMerge aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              aria-label={zh ? '贮藏' : 'Stash'}
-              data-icon-tooltip={zh ? '贮藏' : 'Stash'}
-              disabled={!selectedRepository || busy !== null || selectedRepository.snapshot.clean || selectedRepository.snapshot.conflictFiles.length > 0}
-              onClick={() => {
-                if (selectedRepository) setStashRepositoryId(selectedRepository.id);
-              }}
-            >
-              <Archive aria-hidden="true" />
-            </button>
-            <span className="project-git-menu-anchor">
-              <button
-                ref={operationsTriggerRef}
-                type="button"
-                aria-label={zh ? '操作' : 'Actions'}
-                data-icon-tooltip={zh ? '操作' : 'Actions'}
-                aria-haspopup="menu"
-                aria-expanded={operationsOpen}
-                onClick={() => setOperationsOpen((current) => !current)}
-              >
-                <DotsThree aria-hidden="true" />
-              </button>
-              <MotionPresence>
-                {operationsOpen ? (
-                  <OperationsMenu
-                    anchor={operationsTriggerRef.current}
-                    zh={zh}
-                    onClose={() => setOperationsOpen(false)}
-                    onOpenCommit={openCommit}
-                    onOpenPush={() => setPushOpen(true)}
-                    onOpenUpdate={() => setUpdateOpen(true)}
-                    onOpenNewBranch={() => {
-                      setNewBranchBase('');
-                      setNewBranchOpen(true);
-                    }}
-                    onOpenRevision={() => setRevisionOpen(true)}
-                    onSelectTab={setTab}
-                    onOpenConsole={props.conversationScope ? undefined : () => setTab('console')}
-                    onOpenSubtree={() => setSubtreeDialogOpen(true)}
-                  />
-                ) : null}
-              </MotionPresence>
-            </span>
-
-            <button type="button" aria-label={zh ? '刷新' : 'Refresh'} data-icon-tooltip={zh ? '刷新' : 'Refresh'} disabled={busy !== null} onClick={() => void loadWorkbench()}>
-              <ArrowsClockwise aria-hidden="true" />
-            </button>
-            {props.toolbarActions}
-          </header>
           <div className="git-content-toolbar">
             <strong>{tab === 'changes' ? (zh ? '文件状态' : 'File Status') : tab === 'log' ? (zh ? '提交历史' : 'Commit history') : tab === 'stash' ? (zh ? '贮藏' : 'Stashes') : zh ? '操作记录' : 'Operation history'}</strong>
-            {tab === 'log' && selectedRepository ? (
-              <select
-                aria-label={zh ? '历史分支范围' : 'History branch scope'}
-                value={historyRef}
-                onChange={(event) => {
-                  setHistoryRef(event.currentTarget.value);
-                  setSelectedCommit(null);
-                  setSelectedFilePath('');
-                }}
-              >
-                <option value="">{zh ? '全部分支' : 'All branches'}</option>
-                <option value="HEAD">{zh ? '当前分支' : 'Current branch'}</option>
-                {[...new Set([...selectedRepository.snapshot.localBranches, ...selectedRepository.snapshot.remoteBranches, ...selectedRepository.snapshot.tags])].map((ref) => (
-                  <option key={ref} value={ref}>
-                    {ref}
-                  </option>
-                ))}
-              </select>
-            ) : null}
             {tab === 'changes' || tab === 'log' ? (
               <label>
                 <MagnifyingGlass />

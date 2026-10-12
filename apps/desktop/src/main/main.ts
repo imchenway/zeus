@@ -1,6 +1,6 @@
 import { registerFilePreview } from './filePreview.js';
 import { filePreviewMime, filePreviewKind, filePreviewLimits, type FilePreviewIntent, type FilePreviewRequest } from '@zeus/shared';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, screen, session, shell, Tray } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, protocol, screen, session, shell, Tray } from 'electron';
 import { execFile as execFileCallback, spawn } from 'node:child_process';
 import { constants as fsConstants, existsSync, type FSWatcher, mkdtempSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
@@ -76,6 +76,7 @@ import { prepareZeusDataRoot } from './zeusDataMigration.js';
 import { loadDesktopReadOnlyValidationDescriptor, readOnlyValidationManifestEnvironmentName, verifyDesktopReadOnlyValidationDescriptor } from './readOnlyValidationManifest.js';
 import { installReadOnlyValidationIpcFence } from './readOnlyValidationIpcFence.js';
 import { ProjectSourceWorkspaceService } from './projectSourceWorkspace.js';
+import { ProjectSourcePreviewService } from './projectSourcePreview.js';
 import { type ProjectGitProjectIdentity, ProjectGitWorkbenchService } from './projectGitWorkbench.js';
 import {
   type CreateProjectSourceEntryInput,
@@ -159,6 +160,10 @@ let zeusDataRootIdentity: ZeusDataRootIdentityMarker | undefined;
 let dataRootPreparationError: unknown;
 let readOnlyValidationDescriptor: ReadOnlyValidationDescriptor | undefined;
 let projectSourceWorkspace: ProjectSourceWorkspaceService | undefined;
+/** 效果预览沿用同一项目根解析，草稿授权只存活于发起窗口。 */
+const projectSourcePreviews = new ProjectSourcePreviewService({ loadProjectRoot: loadProjectRootForSourceWorkspace });
+/** 每个预览窗口只登记一次关闭清理。 */
+const sourcePreviewOwners = new Set<number>();
 let projectGitWorkbench: ProjectGitWorkbenchService | undefined;
 let mainCommandLedger: MainCommandLedger | undefined;
 let fatalStartup = false;
@@ -1767,6 +1772,33 @@ function setupIpc(): void {
     if (typeof input?.projectId !== 'string' || typeof input.relativePath !== 'string') throw new TypeError('项目源码读取请求无效。');
     return service.readFile(input.projectId, input.relativePath);
   });
+  ipcMain.handle('zeus:project-source:prepare-preview', async (event, input: import('@zeus/shared').ProjectSourcePreviewRequest) => {
+    requireProjectSourceWorkspace(event);
+    /** 预览能力只提供给受信主框架，iframe 不能申请项目授权。 */
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window || event.senderFrame !== event.sender.mainFrame) throw new Error('源码预览请求来自不受信框架。');
+    if (!sourcePreviewOwners.has(window.id)) {
+      sourcePreviewOwners.add(window.id);
+      window.once('closed', () => {
+        sourcePreviewOwners.delete(window.id);
+        projectSourcePreviews.release(window.id);
+      });
+    }
+    /** 窗口可能在项目读取期间关闭，迟到授权必须立即撤销。 */
+    const grant = await projectSourcePreviews.prepare(window.id, input);
+    if (window.isDestroyed()) {
+      projectSourcePreviews.release(window.id);
+      throw new Error('源码预览窗口已经关闭。');
+    }
+    return grant;
+  });
+  ipcMain.handle('zeus:project-source:release-preview', (event, ids: string[]) => {
+    requireProjectSourceWorkspace(event);
+    /** 释放请求不能撤销其他窗口的资源。 */
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window || event.senderFrame !== event.sender.mainFrame || !Array.isArray(ids) || ids.length > 24 || ids.some((id) => typeof id !== 'string')) throw new Error('源码预览释放请求无效。');
+    projectSourcePreviews.release(window.id, ids);
+  });
   ipcMain.handle('zeus:project-source:blame', async (event, input: { projectId?: unknown; relativePath?: unknown; ref?: unknown; expectedSha256?: unknown }) => {
     requireProjectSourceWorkspace(event);
     if (typeof input?.projectId !== 'string' || typeof input.relativePath !== 'string' || (input.ref !== undefined && typeof input.ref !== 'string') || (input.expectedSha256 !== undefined && typeof input.expectedSha256 !== 'string')) {
@@ -3313,6 +3345,11 @@ function applyStartupAppearance(): void {
 async function initializeApplication(): Promise<void> {
   traceApplicationStartup('initialization_started');
   await app.whenReady();
+  /** 协议页面由受信资源服务响应，页面自身不持有桌面 IPC 能力。 */
+  protocol.handle('zeus-source-preview', (request) => {
+    const url = new URL(request.url);
+    return projectSourcePreviews.respond(url.hostname, url.pathname, request);
+  });
   traceApplicationStartup('electron_ready');
   ensureMacOSDockIconVisible();
   applyApplicationVisualIdentity();

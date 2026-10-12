@@ -10,7 +10,11 @@ import { promisify } from 'node:util';
 import { decodeFilePreviewText, filePreviewKind, filePreviewLimits, filePreviewMime, type FilePreviewIntent, type FilePreviewItem, type FilePreviewRequest, type FilePreviewSource } from '@zeus/shared';
 
 /** 只读媒体协议必须在 Electron 就绪前登记；不允许任意 file URL。 */
-protocol.registerSchemesAsPrivileged([{ scheme: 'zeus-preview', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }]);
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'zeus-preview', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
+  // 源码效果预览使用独立页面源，不向 HTML 暴露主窗口或桌面桥接。
+  { scheme: 'zeus-source-preview', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
+]);
 
 /** 系统图片解码异步执行并限制超时，不阻塞主进程或调用 shell。 */
 const execFileAsync = promisify(execFile);

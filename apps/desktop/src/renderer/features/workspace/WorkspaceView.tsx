@@ -602,7 +602,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   const [projectCodeBranchContainer, setProjectCodeBranchContainer] = useState<HTMLSpanElement | null>(null);
   /** 源码文件状态与底部工作台共用快照，避免保留重复的更改组件。 */
   const [projectCodeGitSnapshot, setProjectCodeGitSnapshot] = useState<ProjectGitWorkbenchSnapshot | null>(null);
-  /** 源码与 Git 的工具入口跟随应用语言，复用内容区顶行。 */
+  /** 源码与 Git 的工具入口跟随应用语言，放在侧栏分支右侧。 */
   const codeWorkspaceZh = appShellSettings.appLanguage === 'zh-CN';
   /** Git 与源码共用项目身份，命令从任一视图打开均不离开工作区。 */
   const projectCodeToolbarActions = selectedProject ? (

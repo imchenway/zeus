@@ -12,6 +12,14 @@
   overflow-x: auto;
   overflow-y: hidden;
 }
+/* 工作区标题留在左侧，工具栏底线覆盖整个工作台宽度。 */
+.git-command-toolbar > .git-workspace-heading {
+  margin-inline-end: auto;
+  padding-inline: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--zeus-product-muted);
+}
 .git-command-toolbar > button,
 .git-command-toolbar > .project-git-menu-anchor > button {
   position: relative;
@@ -198,21 +206,24 @@
   display: flex;
   flex-direction: column;
   border-block: 1px solid var(--zeus-product-line);
-  padding: 6px 0;
+  padding: 4px 0;
 }
+/* 下拉分支和仓库行采用紧凑行高，图标与正文仍保留完整点击范围。 */
 .git-branch-repositories > button,
 .git-reference-tree button {
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 30px;
-  padding: 5px 9px;
+  min-height: 24px;
+  padding: 2px 9px;
   border: 0;
   border-radius: 5px;
   color: inherit;
   background: transparent;
   font: inherit;
   font-size: 12px;
+  line-height: 20px;
   text-align: left;
   width: 100%;
   cursor: pointer;
@@ -273,14 +284,16 @@
   padding-left: 18px;
 }
 .git-reference-tree summary {
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 28px;
-  padding: 3px 9px;
+  min-height: 24px;
+  padding: 2px 9px;
   cursor: pointer;
   list-style: none;
   font-size: 12px;
+  line-height: 20px;
   border-radius: 5px;
 }
 .git-reference-tree summary::-webkit-details-marker {
@@ -364,8 +377,9 @@
 .macos-ai-app.zeus-shell .project-git-workbench .project-git-browser-layout {
   grid-template-columns: minmax(140px, var(--git-navigation, 20%)) 8px minmax(0, 1fr);
 }
-.macos-ai-app.zeus-shell .project-git-workbench .project-git-navigator details + details {
-  margin-block-start: 8px;
+/* 分组间距只留在导航顶层，嵌套分支目录不插入额外空行。 */
+.macos-ai-app.zeus-shell .project-git-workbench .project-git-navigator > details + details {
+  margin-block-start: 6px;
 }
 .macos-ai-app.zeus-shell .project-git-workbench .project-git-navigator button {
   min-height: 28px;
@@ -454,14 +468,16 @@
   z-index: 121;
 }
 .git-branch-collapsible-group > summary {
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 7px;
-  min-height: 30px;
-  padding: 5px 9px;
+  min-height: 24px;
+  padding: 2px 9px;
   border-radius: 5px;
   list-style: none;
   font-size: 12px;
+  line-height: 20px;
   cursor: pointer;
 }
 .git-branch-collapsible-group > summary::-webkit-details-marker {
