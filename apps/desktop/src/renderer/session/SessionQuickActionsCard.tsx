@@ -150,7 +150,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const cardVisible = !props.suppressed && (persistent || open);
   const cardMounted = cardVisible || Boolean(props.suppressed && persistent);
   /** 浮动快捷面板退场不延长数据订阅；常驻模式继续保持原组件身份。 */
-  const { ref: cardRef, present: cardPresent } = useMotionPresence<HTMLElement>(cardMounted);
+  const { ref: cardRef, present: cardPresent } = useMotionPresence<HTMLDivElement>(cardMounted);
   const popoverOpen = cardVisible && !persistent;
   /** 手动展开的环境侧栏仍由顶部按钮控制。 */
   const docked = !persistent && Boolean(props.dockHost);
@@ -365,178 +365,188 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
 
       {cardPresent ? (
         <SessionQuickActionsCardMount persistent={persistent || docked} host={docked ? props.dockHost : props.persistentHost}>
-          <section
+          <div
             ref={cardRef}
-            className="session-quick-actions-card"
+            className="session-quick-actions-surface"
             data-motion-surface={persistent ? undefined : 'popover'}
             data-motion-state={cardMounted ? 'open' : 'closing'}
             inert={!cardVisible}
             aria-hidden={!cardVisible}
             data-presentation={persistent ? 'persistent' : docked ? 'docked' : 'popover'}
-            data-sources-expanded={showAllSources || undefined}
-            role={persistent || docked ? 'region' : 'dialog'}
-            aria-label={zh ? '环境信息与快捷操作' : 'Environment information and quick actions'}
             hidden={props.suppressed || undefined}
           >
-            <header>
-              <strong>{zh ? '环境信息' : 'Environment'}</strong>
-              {taskId && props.onOpenTaskDetail ? (
-                <button
-                  type="button"
-                  className="session-quick-actions-settings"
-                  aria-label={zh ? '打开任务详情' : 'Open task details'}
-                  data-icon-tooltip={zh ? '打开任务详情' : 'Open task details'}
-                  onClick={() => {
-                    setOpen(false);
-                    props.onOpenTaskDetail?.(taskId);
-                  }}
-                >
-                  <GearSix aria-hidden="true" weight="regular" />
-                </button>
-              ) : null}
-            </header>
-
-            <div className="session-quick-actions-list">
-              <button type="button" className="session-quick-actions-row" disabled={!canOpenReview} onClick={openReview}>
-                <GitDiff aria-hidden="true" weight="regular" />
-                <span className="session-quick-actions-copy">
-                  <strong>{zh ? '变更' : 'Changes'}</strong>
-                  {workspaceState === 'loading' ? <small>{zh ? '正在读取 Git 状态…' : 'Loading Git status…'}</small> : null}
-                </span>
-                <span
-                  className="session-quick-actions-diff"
-                  aria-label={
-                    workspaceState !== 'ready' ? (zh ? '变更统计尚不可用' : 'Change counts unavailable') : zh ? `新增 ${changes.additions} 行，删除 ${changes.deletions} 行` : `${changes.additions} additions, ${changes.deletions} deletions`
-                  }
-                >
-                  <b>{workspaceState === 'ready' ? `+${changes.additions}` : '—'}</b>
-                  <i>{workspaceState === 'ready' ? `−${changes.deletions}` : '—'}</i>
-                </span>
-              </button>
-
-              <div className="session-quick-actions-row is-static" title={cwd ?? undefined}>
-                <Folder aria-hidden="true" weight="regular" />
-                <span className="session-quick-actions-copy">
-                  <strong>{zh ? '本地' : 'Local'}</strong>
-                  <small>{cwd ?? (zh ? '执行目录不可用' : 'Execution directory unavailable')}</small>
-                </span>
-              </div>
-
-              <div className="session-quick-actions-row is-static" title={branch ?? undefined}>
-                <GitBranch aria-hidden="true" weight="regular" />
-                <span className="session-quick-actions-copy">
-                  <strong>{branch ?? (cwd ? (zh ? '非 Git 目录' : 'Not a Git repository') : zh ? '分支不可用' : 'Branch unavailable')}</strong>
-                  {workspace?.sourceBranch ? <small>{zh ? `来源 ${workspace.sourceBranch}` : `Source ${workspace.sourceBranch}`}</small> : null}
-                </span>
-              </div>
-
-              {subagentCount > 0 && props.onOpenSubagents ? (
-                <button type="button" className="session-quick-actions-row" onClick={(event) => openSubagents(event.currentTarget)}>
-                  <UsersThree aria-hidden="true" weight="regular" />
-                  <span className="session-quick-actions-copy">
-                    <strong>{zh ? '智能体' : 'Agents'}</strong>
-                    <small>{zh ? `${subagentCount} 个线程` : `${subagentCount} ${subagentCount === 1 ? 'thread' : 'threads'}`}</small>
-                  </span>
-                  <ArrowSquareOut aria-hidden="true" weight="regular" />
-                </button>
-              ) : null}
-
-              <button type="button" className="session-quick-actions-row" onClick={openCommands}>
-                <TerminalWindow aria-hidden="true" weight="regular" />
-                <span className="session-quick-actions-copy">
-                  <strong>{zh ? '命令' : 'Commands'}</strong>
-                  <small>{zh ? '打开当前项目的完整命令中心' : 'Open the full command center for this project'}</small>
-                </span>
-                <ArrowSquareOut aria-hidden="true" weight="regular" />
-              </button>
-
-              <button type="button" className="session-quick-actions-row" disabled={!canStartCodeReview} title={codeReviewUnavailableReason ?? undefined} onClick={openCodeReview}>
-                <FileCode aria-hidden="true" weight="regular" />
-                <span className="session-quick-actions-copy">
-                  <strong>{zh ? '代码审查' : 'Code review'}</strong>
-                  <small>{codeReviewUnavailableReason ?? (zh ? '新建 AI 会话审查当前完整变化' : 'Review all current changes in a new AI conversation')}</small>
-                </span>
-                <ArrowSquareOut aria-hidden="true" weight="regular" />
-              </button>
-
-              <button
-                type="button"
-                className="session-quick-actions-row"
-                disabled={!canOpenDelivery}
-                title={!canOpenDelivery ? (zh ? '当前会话没有可用的项目 Git 入口' : 'Project Git is unavailable for this conversation') : undefined}
-                onClick={openDelivery}
-              >
-                <GithubLogo aria-hidden="true" weight="regular" />
-                <span className="session-quick-actions-copy">
-                  <strong>{zh ? '代码交付' : 'Code delivery'}</strong>
-                  <small>
-                    {workspaceState === 'loading'
-                      ? zh
-                        ? '正在读取 Git 状态…'
-                        : 'Loading Git status…'
-                      : workspaceState === 'error'
-                        ? zh
-                          ? 'Git 状态读取失败'
-                          : 'Failed to load Git status'
-                        : dirty
-                          ? zh
-                            ? `${changes.files} 个文件待提交`
-                            : `${changes.files} files to commit`
-                          : workspace?.sourceBranch
-                            ? `${workspace.branchName} → ${workspace.sourceBranch}`
-                            : zh
-                              ? '查看、提交、合入与推送'
-                              : 'Review, commit, merge, and push'}
-                  </small>
-                </span>
-                <ArrowSquareOut aria-hidden="true" weight="regular" />
-              </button>
-            </div>
-
-            <SessionComputerPreview key={props.conversation.id} conversationId={props.conversation.id} language={props.language} active={cardVisible} />
-
-            <section className="session-quick-actions-sources" aria-label={zh ? '来源' : 'Sources'}>
+            <section
+              className="session-quick-actions-card"
+              data-presentation={persistent ? 'persistent' : docked ? 'docked' : 'popover'}
+              data-sources-expanded={showAllSources || undefined}
+              role={persistent || docked ? 'region' : 'dialog'}
+              aria-label={zh ? '环境信息与快捷操作' : 'Environment information and quick actions'}
+            >
               <header>
-                <strong>{zh ? '来源' : 'Sources'}</strong>
-                {props.onAddSources ? (
-                  <button type="button" aria-label={zh ? '添加来源' : 'Add source'} title={zh ? '添加到当前输入' : 'Add to current input'} onClick={() => void props.onAddSources?.()}>
-                    <Plus aria-hidden="true" weight="regular" />
+                <strong>{zh ? '环境信息' : 'Environment'}</strong>
+                {taskId && props.onOpenTaskDetail ? (
+                  <button
+                    type="button"
+                    className="session-quick-actions-settings"
+                    aria-label={zh ? '打开任务详情' : 'Open task details'}
+                    data-icon-tooltip={zh ? '打开任务详情' : 'Open task details'}
+                    onClick={() => {
+                      setOpen(false);
+                      props.onOpenTaskDetail?.(taskId);
+                    }}
+                  >
+                    <GearSix aria-hidden="true" weight="regular" />
                   </button>
                 ) : null}
               </header>
-              {visibleSources.length > 0 ? (
-                <AnimatedSize changeKey={showAllSources}>
-                  <ol>
-                    {visibleSources.map((source) => (
-                      <li key={source.id}>
-                        {source.resource && props.onOpenSource ? (
-                          <button type="button" title={source.label} onClick={() => void props.onOpenSource?.(source.resource as ConversationResource)}>
-                            <SessionQuickActionSourceVisual source={source} onLoadResourcePreview={props.onLoadResourcePreview} />
-                            <span className="session-quick-actions-source-label">{source.label}</span>
-                          </button>
-                        ) : (
-                          <span title={source.label}>
-                            <SessionQuickActionSourceVisual source={source} onLoadResourcePreview={props.onLoadResourcePreview} />
-                            <span className="session-quick-actions-source-label">{source.label}</span>
-                          </span>
-                        )}
-                      </li>
-                    ))}
-                  </ol>
-                </AnimatedSize>
-              ) : (
-                <p>{zh ? '当前会话还没有来源。' : 'No sources in this conversation yet.'}</p>
-              )}
-              {sources.length > DEFAULT_VISIBLE_SOURCE_COUNT ? (
-                <button type="button" className="session-quick-actions-view-all" aria-expanded={showAllSources} onClick={() => setShowAllSources((current) => !current)}>
-                  <ShareNetwork aria-hidden="true" weight="regular" />
-                  <span>{showAllSources ? (zh ? '收起' : 'Show less') : zh ? '查看全部' : 'View all'}</span>
-                </button>
-              ) : null}
-            </section>
 
-            {workspaceState === 'error' ? <p role="status">{zh ? '显示最近一次读取的目录与分支。' : 'Shows the most recently loaded folder and branch.'}</p> : null}
-          </section>
+              <div className="session-quick-actions-list">
+                <button type="button" className="session-quick-actions-row" disabled={!canOpenReview} onClick={openReview}>
+                  <GitDiff aria-hidden="true" weight="regular" />
+                  <span className="session-quick-actions-copy">
+                    <strong>{zh ? '变更' : 'Changes'}</strong>
+                    {workspaceState === 'loading' ? <small>{zh ? '正在读取 Git 状态…' : 'Loading Git status…'}</small> : null}
+                  </span>
+                  <span
+                    className="session-quick-actions-diff"
+                    aria-label={
+                      workspaceState !== 'ready'
+                        ? zh
+                          ? '变更统计尚不可用'
+                          : 'Change counts unavailable'
+                        : zh
+                          ? `新增 ${changes.additions} 行，删除 ${changes.deletions} 行`
+                          : `${changes.additions} additions, ${changes.deletions} deletions`
+                    }
+                  >
+                    <b>{workspaceState === 'ready' ? `+${changes.additions}` : '—'}</b>
+                    <i>{workspaceState === 'ready' ? `−${changes.deletions}` : '—'}</i>
+                  </span>
+                </button>
+
+                <div className="session-quick-actions-row is-static" title={cwd ?? undefined}>
+                  <Folder aria-hidden="true" weight="regular" />
+                  <span className="session-quick-actions-copy">
+                    <strong>{zh ? '本地' : 'Local'}</strong>
+                    <small>{cwd ?? (zh ? '执行目录不可用' : 'Execution directory unavailable')}</small>
+                  </span>
+                </div>
+
+                <div className="session-quick-actions-row is-static" title={branch ?? undefined}>
+                  <GitBranch aria-hidden="true" weight="regular" />
+                  <span className="session-quick-actions-copy">
+                    <strong>{branch ?? (cwd ? (zh ? '非 Git 目录' : 'Not a Git repository') : zh ? '分支不可用' : 'Branch unavailable')}</strong>
+                    {workspace?.sourceBranch ? <small>{zh ? `来源 ${workspace.sourceBranch}` : `Source ${workspace.sourceBranch}`}</small> : null}
+                  </span>
+                </div>
+
+                {subagentCount > 0 && props.onOpenSubagents ? (
+                  <button type="button" className="session-quick-actions-row" onClick={(event) => openSubagents(event.currentTarget)}>
+                    <UsersThree aria-hidden="true" weight="regular" />
+                    <span className="session-quick-actions-copy">
+                      <strong>{zh ? '智能体' : 'Agents'}</strong>
+                      <small>{zh ? `${subagentCount} 个线程` : `${subagentCount} ${subagentCount === 1 ? 'thread' : 'threads'}`}</small>
+                    </span>
+                    <ArrowSquareOut aria-hidden="true" weight="regular" />
+                  </button>
+                ) : null}
+
+                <button type="button" className="session-quick-actions-row" onClick={openCommands}>
+                  <TerminalWindow aria-hidden="true" weight="regular" />
+                  <span className="session-quick-actions-copy">
+                    <strong>{zh ? '命令' : 'Commands'}</strong>
+                    <small>{zh ? '打开当前项目的完整命令中心' : 'Open the full command center for this project'}</small>
+                  </span>
+                  <ArrowSquareOut aria-hidden="true" weight="regular" />
+                </button>
+
+                <button type="button" className="session-quick-actions-row" disabled={!canStartCodeReview} title={codeReviewUnavailableReason ?? undefined} onClick={openCodeReview}>
+                  <FileCode aria-hidden="true" weight="regular" />
+                  <span className="session-quick-actions-copy">
+                    <strong>{zh ? '代码审查' : 'Code review'}</strong>
+                    <small>{codeReviewUnavailableReason ?? (zh ? '新建 AI 会话审查当前完整变化' : 'Review all current changes in a new AI conversation')}</small>
+                  </span>
+                  <ArrowSquareOut aria-hidden="true" weight="regular" />
+                </button>
+
+                <button
+                  type="button"
+                  className="session-quick-actions-row"
+                  disabled={!canOpenDelivery}
+                  title={!canOpenDelivery ? (zh ? '当前会话没有可用的项目 Git 入口' : 'Project Git is unavailable for this conversation') : undefined}
+                  onClick={openDelivery}
+                >
+                  <GithubLogo aria-hidden="true" weight="regular" />
+                  <span className="session-quick-actions-copy">
+                    <strong>{zh ? '代码交付' : 'Code delivery'}</strong>
+                    <small>
+                      {workspaceState === 'loading'
+                        ? zh
+                          ? '正在读取 Git 状态…'
+                          : 'Loading Git status…'
+                        : workspaceState === 'error'
+                          ? zh
+                            ? 'Git 状态读取失败'
+                            : 'Failed to load Git status'
+                          : dirty
+                            ? zh
+                              ? `${changes.files} 个文件待提交`
+                              : `${changes.files} files to commit`
+                            : workspace?.sourceBranch
+                              ? `${workspace.branchName} → ${workspace.sourceBranch}`
+                              : zh
+                                ? '查看、提交、合入与推送'
+                                : 'Review, commit, merge, and push'}
+                    </small>
+                  </span>
+                  <ArrowSquareOut aria-hidden="true" weight="regular" />
+                </button>
+              </div>
+
+              <section className="session-quick-actions-sources" aria-label={zh ? '来源' : 'Sources'}>
+                <header>
+                  <strong>{zh ? '来源' : 'Sources'}</strong>
+                  {props.onAddSources ? (
+                    <button type="button" aria-label={zh ? '添加来源' : 'Add source'} title={zh ? '添加到当前输入' : 'Add to current input'} onClick={() => void props.onAddSources?.()}>
+                      <Plus aria-hidden="true" weight="regular" />
+                    </button>
+                  ) : null}
+                </header>
+                {visibleSources.length > 0 ? (
+                  <AnimatedSize changeKey={showAllSources}>
+                    <ol>
+                      {visibleSources.map((source) => (
+                        <li key={source.id}>
+                          {source.resource && props.onOpenSource ? (
+                            <button type="button" title={source.label} onClick={() => void props.onOpenSource?.(source.resource as ConversationResource)}>
+                              <SessionQuickActionSourceVisual source={source} onLoadResourcePreview={props.onLoadResourcePreview} />
+                              <span className="session-quick-actions-source-label">{source.label}</span>
+                            </button>
+                          ) : (
+                            <span title={source.label}>
+                              <SessionQuickActionSourceVisual source={source} onLoadResourcePreview={props.onLoadResourcePreview} />
+                              <span className="session-quick-actions-source-label">{source.label}</span>
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ol>
+                  </AnimatedSize>
+                ) : (
+                  <p>{zh ? '当前会话还没有来源。' : 'No sources in this conversation yet.'}</p>
+                )}
+                {sources.length > DEFAULT_VISIBLE_SOURCE_COUNT ? (
+                  <button type="button" className="session-quick-actions-view-all" aria-expanded={showAllSources} onClick={() => setShowAllSources((current) => !current)}>
+                    <ShareNetwork aria-hidden="true" weight="regular" />
+                    <span>{showAllSources ? (zh ? '收起' : 'Show less') : zh ? '查看全部' : 'View all'}</span>
+                  </button>
+                ) : null}
+              </section>
+
+              {workspaceState === 'error' ? <p role="status">{zh ? '显示最近一次读取的目录与分支。' : 'Shows the most recently loaded folder and branch.'}</p> : null}
+            </section>
+            <SessionComputerPreview key={props.conversation.id} conversationId={props.conversation.id} language={props.language} active={cardVisible} />
+          </div>
         </SessionQuickActionsCardMount>
       ) : null}
       <MotionPresence>

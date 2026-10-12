@@ -1,9 +1,14 @@
 import type { ConversationResource, ConversationFileLocation } from '@zeus/shared';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
+import { AppWindowIcon as AppWindow } from '@phosphor-icons/react/dist/csr/AppWindow';
+import { FileMagnifyingGlassIcon as FileMagnifyingGlass } from '@phosphor-icons/react/dist/csr/FileMagnifyingGlass';
+import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
+import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
 import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { OpenWithMenu } from './ConversationResources.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
-import type { ConversationOpenTarget } from '@zeus/shared';
+import type { ConversationOpenTarget, ConversationResourceOpenTarget } from '@zeus/shared';
+import { listConversationResourceOpenTargetsInMain } from '../appShellBridge.js';
 import { FilePreview, FileReviewContent, PreviewImage } from '../code/FilePreview.js';
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -90,7 +95,28 @@ function SourceWorkspaceView(props: {
   /** 当前界面文案与资源展示信息。 */
   const zh = props.language === 'zh-CN';
   /** 分段打开按钮保留本次预览选择的外部应用。 */
-  const [openTarget, setOpenTarget] = useState<ConversationOpenTarget>('system_default');
+  const [openTarget, setOpenTarget] = useState<ConversationOpenTarget | null>(null);
+  /** 图标与菜单共用本机检测结果，不显示未安装应用。 */
+  const [openTargets, setOpenTargets] = useState<ConversationResourceOpenTarget[]>([]);
+  useEffect(() => {
+    /** 文件切换后拒绝上一文件的迟到检测结果。 */
+    let active = true;
+    setOpenTargets([]);
+    setOpenTarget(null);
+    void listConversationResourceOpenTargetsInMain({ zeus: window.zeus, projectId: props.preview.resource.projectId, conversationId: props.preview.resource.conversationId, resourceId: props.preview.resource.id })
+      .then((result) => {
+        if (!active) return;
+        setOpenTargets(result.targets);
+        // 首次检测只补齐尚未选择的目标，保留用户已选的应用。
+        setOpenTarget((current) => current ?? result.targets.find((target) => target.available && target.id.startsWith('editor:'))?.id ?? 'system_default');
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [props.preview.resource.projectId, props.preview.resource.conversationId, props.preview.resource.id]);
+  /** 当前打开应用的真实图标与名称。 */
+  const openApplication = openTargets.find((target) => target.id === openTarget);
   /** 展示宿主打开失败，不吞掉权限或应用错误。 */
   const [openError, setOpenError] = useState<unknown>(null);
   /** 成功提示绑定资源，切换文件不会显示上一文件的复制结果。 */
@@ -106,12 +132,36 @@ function SourceWorkspaceView(props: {
   const copied = copiedResourceId === props.preview.resource.id;
   /** 统一处理复制与外部应用打开。 */
   async function openResource(target: ConversationOpenTarget): Promise<void> {
+    setOpenError(null);
     try {
       if (target === 'copy_path') setCopiedResourceId(null);
       await props.onOpen?.(target, props.preview.resource);
       if (target === 'copy_path' && props.onOpen) setCopiedResourceId(props.preview.resource.id);
     } catch (error) {
       setOpenError(error);
+    }
+  }
+  /** 系统预览和另存为只使用宿主发放的文件令牌，操作结束撤销全部令牌。 */
+  async function fileAction(action: 'quick-look' | 'export'): Promise<void> {
+    /** 当前受信桥接同时负责授权读取、系统操作和授权释放。 */
+    const bridge = window.zeus;
+    if (!bridge) {
+      setOpenError(new Error(zh ? '当前环境没有文件操作服务。' : 'File actions are unavailable in this environment.'));
+      return;
+    }
+    /** 令牌只在此次用户操作期间有效。 */
+    let ids: string[] = [];
+    setOpenError(null);
+    try {
+      /** 仅请求当前会话登记的资源，不接受渲染层拼接的本地路径。 */
+      const items = await bridge.loadFilePreview({ kind: 'resource', projectId: props.preview.resource.projectId, conversationId: props.preview.resource.conversationId, resourceId: props.preview.resource.id });
+      ids = items.map((item) => item.id).filter(Boolean);
+      if (!ids[0]) throw new Error(zh ? '当前文件无法执行此操作。' : 'This action is unavailable for the current file.');
+      await bridge.actOnFilePreview(ids[0], action);
+    } catch (error) {
+      setOpenError(error);
+    } finally {
+      if (ids.length) void bridge.releaseFilePreview(ids).catch(() => undefined);
     }
   }
   /** 打开资源时供键盘用户定位预览标题。 */
@@ -215,7 +265,7 @@ function SourceWorkspaceView(props: {
               title={preview.resource.displayName}
               onClick={() => props.onSelectTab?.(preview)}
             >
-              <FileTypeIcon name={preview.resource.kind === 'file' ? preview.resource.projectRelativePath : preview.resource.displayName} />
+              {supportsMarkdownPreview(preview) ? <File aria-hidden="true" /> : <FileTypeIcon name={preview.resource.kind === 'file' ? preview.resource.projectRelativePath : preview.resource.displayName} />}
               <span>{basename(preview.resource.kind === 'file' ? preview.resource.projectRelativePath : preview.resource.displayName)}</span>
             </button>
             <button
@@ -230,23 +280,26 @@ function SourceWorkspaceView(props: {
           </div>
         ))}
         {props.onOpenFile && props.resources?.length ? (
-          <select
-            className="session-source-add-tab"
-            aria-label={zh ? '打开文件标签' : 'Open file tab'}
-            value=""
-            title={zh ? '打开本会话中的文件' : 'Open a file from this conversation'}
-            onChange={(event) => {
-              const resource = props.resources?.find((candidate) => candidate.id === event.currentTarget.value);
-              if (resource) void Promise.resolve(props.onOpenFile?.(resource)).catch(setOpenError);
-            }}
-          >
-            <option value="">{zh ? '打开文件…' : 'Open file…'}</option>
-            {props.resources?.map((resource) => (
-              <option key={resource.id} value={resource.id}>
-                {resource.displayName}
-              </option>
-            ))}
-          </select>
+          <div className="session-source-add-tab-shell">
+            <Plus aria-hidden="true" />
+            <select
+              className="session-source-add-tab"
+              aria-label={zh ? '打开文件标签' : 'Open file tab'}
+              value=""
+              title={zh ? '打开本会话中的文件' : 'Open a file from this conversation'}
+              onChange={(event) => {
+                const resource = props.resources?.find((candidate) => candidate.id === event.currentTarget.value);
+                if (resource) void Promise.resolve(props.onOpenFile?.(resource)).catch(setOpenError);
+              }}
+            >
+              <option value="">{zh ? '打开文件…' : 'Open file…'}</option>
+              {props.resources?.map((resource) => (
+                <option key={resource.id} value={resource.id}>
+                  {resource.displayName}
+                </option>
+              ))}
+            </select>
+          </div>
         ) : null}
       </div>
       <nav aria-label={zh ? '源码预览操作' : 'Source preview actions'}>
@@ -284,6 +337,9 @@ function SourceWorkspaceView(props: {
           ))}
         </nav>
         <div className="session-source-actions">
+          <button type="button" aria-label={zh ? '系统预览' : 'Quick Look'} data-icon-tooltip={zh ? '系统预览' : 'Quick Look'} disabled={!props.onOpen} onClick={() => void fileAction('quick-look')}>
+            <FileMagnifyingGlass aria-hidden="true" />
+          </button>
           {markdownPreview ? (
             <button type="button" onClick={() => props.onViewModeChange(renderedMarkdown ? 'source' : 'preview')}>
               {renderedMarkdown ? (zh ? '查看源代码' : 'View source') : zh ? '查看预览' : 'View preview'}
@@ -302,7 +358,8 @@ function SourceWorkspaceView(props: {
             {copied ? (zh ? '已复制路径' : 'Path copied') : ''}
           </span>
           <div className="session-source-open-group">
-            <button type="button" disabled={!props.onOpen} onClick={() => void openResource(openTarget)}>
+            <button type="button" disabled={!props.onOpen} title={openApplication?.label} onClick={() => void openResource(openTarget ?? 'system_default')}>
+              {openApplication?.iconDataUrl ? <img src={openApplication.iconDataUrl} alt="" width={18} height={18} /> : <AppWindow aria-hidden="true" />}
               {zh ? '打开' : 'Open'}
             </button>
             <OpenWithMenu
@@ -311,6 +368,18 @@ function SourceWorkspaceView(props: {
               language={props.language}
               disabled={!props.onOpen}
               applicationsOnly
+              preferBelow
+              targets={openTargets.length ? openTargets : undefined}
+              footer={
+                <>
+                  <button type="button" role="menuitem" onClick={() => void openResource('file_manager')}>
+                    {zh ? '打开所在文件夹' : 'Show in folder'}
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => void fileAction('export')}>
+                    {zh ? '另存为…' : 'Save as…'}
+                  </button>
+                </>
+              }
               onOpen={(target) => {
                 setOpenTarget(target);
                 return openResource(target);

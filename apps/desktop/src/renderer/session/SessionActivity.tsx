@@ -9,6 +9,7 @@ import { StackSimpleIcon as StackSimple } from '@phosphor-icons/react/dist/csr/S
 import { FileTextIcon as FileText } from '@phosphor-icons/react/dist/csr/FileText';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import { ImageIcon as Image } from '@phosphor-icons/react/dist/csr/Image';
+import { ImagesIcon as Images } from '@phosphor-icons/react/dist/csr/Images';
 import { ListChecksIcon as ListChecks } from '@phosphor-icons/react/dist/csr/ListChecks';
 import { MagnifyingGlassIcon as MagnifyingGlass } from '@phosphor-icons/react/dist/csr/MagnifyingGlass';
 import { NotePencilIcon as NotePencil } from '@phosphor-icons/react/dist/csr/NotePencil';
@@ -169,9 +170,14 @@ function SessionActivityGroupContent(props: SessionActivityGroupProps) {
           </ol>
         ) : null}
         {imageResources.length > 0 ? (
-          <div className="session-activity-images">
+          <details className="session-activity-images" open>
+            <summary>
+              <Images aria-hidden="true" />
+              <span>{props.language === 'zh-CN' ? `已查看 ${imageResources.length} 张图像` : `Viewed ${imageResources.length} ${imageResources.length === 1 ? 'image' : 'images'}`}</span>
+              <CaretDown aria-hidden="true" className="session-activity-images-caret" />
+            </summary>
             <ConversationResourceCards resources={imageResources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
-          </div>
+          </details>
         ) : null}
       </div>
     </AnimatedSize>

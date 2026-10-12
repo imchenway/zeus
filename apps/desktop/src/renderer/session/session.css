@@ -1,76 +1,156 @@
 /* ZEUS-0074：会话右上角只汇总真实执行现场与既有 Git 能力，不在 Renderer 猜测工作区状态。 */
-/* 屏幕控制画面归属当前环境卡，不创建桌面窗口；来源展开时也保留完整控制入口。 */
+/* 屏幕画面独立悬浮在来源卡下方，控制身份仍属于当前会话。 */
 .session-computer-preview {
-  border-top: 0;
   flex: 0 0 auto;
-  margin-block-start: 12px;
-  padding-block-start: 12px;
+  inline-size: min(400px, calc(100% - 88px));
+  margin: 12px 16px 32px auto;
+  color: var(--session-text);
 }
-
-.session-computer-preview > header,
-.session-computer-preview > header > div {
-  align-items: center;
-  display: flex;
-  gap: 6px;
-  justify-content: space-between;
-}
-
-.session-computer-preview > header > span {
-  display: grid;
-  gap: 3px;
-  min-inline-size: 0;
-}
-
-.session-computer-preview strong {
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.session-computer-preview small,
+/* 失败和暂停说明始终可读，正常控制说明仅供辅助技术使用。 */
 .session-computer-preview p {
   color: var(--session-text-muted);
-  font-size: 11px;
+  font-size: 12px;
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
 }
-
-.session-computer-preview button {
-  background: var(--session-control-hover);
-  border: 1px solid var(--session-line);
-  border-radius: 6px;
+.session-computer-preview-status:not([data-visible='true']) {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  clip-path: inset(50%);
+  overflow: hidden;
+}
+/* 缩略画面保留原始比例，阴影与小圆角匹配参考图。 */
+.session-computer-preview-image {
+  background: var(--session-canvas);
+  border-radius: 4px;
+  box-shadow: 0 16px 36px color-mix(in srgb, var(--session-text) 17%, transparent);
+  position: relative;
+  isolation: isolate;
+}
+.session-computer-preview-image::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--session-text) 7%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+/* 画面按钮与控制按钮分开，禁止嵌套交互控件。 */
+.session-computer-preview .session-computer-preview-open {
+  display: block;
+  inline-size: 100%;
+  border: 0;
+  border-radius: inherit;
+  overflow: hidden;
+  background: transparent;
+  padding: 0;
+  cursor: zoom-in;
+}
+.session-computer-preview-open > img {
+  display: block;
+  inline-size: 100%;
+  max-block-size: 300px;
+  object-fit: contain;
+}
+.session-computer-preview-image > p {
+  min-block-size: 110px;
+  padding: 48px 12px 16px;
+  box-sizing: border-box;
+}
+/* 悬停和键盘聚焦显示同一组操作，无图时始终保留停止入口。 */
+.session-computer-preview-controls {
+  align-items: start;
+  display: flex;
+  gap: 0;
+  position: absolute;
+  inset: 10px auto auto 7px;
+  inset-inline-end: 7px;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 1;
+  transition: opacity 120ms ease;
+}
+.session-computer-preview-image:is(:hover, :focus-within, :has(details[open]), :not(:has(img))) .session-computer-preview-controls,
+.session-computer-preview-image:is(:hover, :focus-within, :has(details[open]))::after {
+  opacity: 1;
+}
+.session-computer-preview-controls > button,
+.session-computer-preview-info > summary {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
   color: var(--session-text);
   cursor: pointer;
-  font-size: 11px;
-  min-block-size: 28px;
-  padding-inline: 8px;
+  inline-size: 24px;
+  block-size: 24px;
+  padding: 0;
+  list-style: none;
 }
-
-.session-computer-preview button:focus-visible {
-  outline: 2px solid currentColor;
+.session-computer-preview-info > summary::-webkit-details-marker {
+  display: none;
+}
+/* 操作仍可点击，空白操作行不阻挡用户打开完整画面。 */
+.session-computer-preview-controls > button,
+.session-computer-preview-info {
+  pointer-events: auto;
+}
+.session-computer-preview-controls svg {
+  inline-size: 16px;
+  block-size: 16px;
+}
+.session-computer-preview-info > summary > svg {
+  inline-size: 18px;
+  block-size: 18px;
+}
+.session-computer-preview-controls > button:hover,
+.session-computer-preview-info > summary:hover {
+  background: var(--session-control-hover);
+}
+/* 焦点环和禁用反馈不能被悬浮遮罩隐藏。 */
+.session-computer-preview :is(button, summary):focus-visible {
+  outline: 2px solid var(--session-focus-outline);
   outline-offset: 2px;
 }
-
 .session-computer-preview button:disabled {
   cursor: default;
   opacity: 0.5;
 }
-
-.session-computer-preview-image {
+/* 状态详情在画面内展开，不暴露内部进程编号。 */
+.session-computer-preview-info > div {
+  position: absolute;
+  inset: 38px auto auto 0;
+  inline-size: min(240px, 100%);
+  max-block-size: 200px;
+  overflow: auto;
+  display: grid;
+  gap: 6px;
+  box-sizing: border-box;
+  padding: 12px;
+  background: var(--session-canvas);
   border: 1px solid var(--session-line);
-  border-radius: 8px;
-  margin-block-start: 10px;
-  overflow: hidden;
-  position: relative;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px var(--session-shadow);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
-
-.session-computer-preview-image > img {
-  display: block;
-  inline-size: 100%;
+@media (hover: none) {
+  /* 触屏没有悬停，始终展示停止和详情操作。 */
+  .session-computer-preview-controls {
+    opacity: 1;
+  }
 }
-
-.session-computer-preview-image > p {
-  padding: 20px 12px;
-  text-align: center;
+@media (prefers-reduced-motion: reduce) {
+  /* 减少动态效果时不播放悬浮遮罩的淡入淡出。 */
+  .session-computer-preview-controls,
+  .session-computer-preview-image::after {
+    transition: none;
+  }
 }
 
 .session-codex-parity-v1 .session-quick-actions-anchor {
@@ -103,7 +183,18 @@
   inline-size: 20px;
 }
 
-/* 环境信息常驻卡片与弹层仅用细边框区分同色背景，保持无阴影的扁平外观。 */
+/* 外层统一定位环境卡和其下方的屏幕预览，整体高度受视口约束。 */
+.session-codex-parity-v1 .session-quick-actions-surface {
+  inline-size: min(360px, calc(100vw - 32px));
+  inset-block-start: calc(100% + 8px);
+  inset-inline-end: 0;
+  max-block-size: min(620px, var(--session-quick-actions-available-height, calc(100vh - 86px)));
+  overflow: auto;
+  position: absolute;
+  pointer-events: auto;
+  z-index: 80;
+}
+/* 环境卡使用细边框，屏幕画面在卡片边界外独立展示。 */
 .session-codex-parity-v1 .session-quick-actions-card {
   background: var(--zeus-card-background, var(--session-canvas));
   border: 1px solid var(--zeus-card-border, var(--session-line));
@@ -111,14 +202,9 @@
   box-sizing: border-box;
   box-shadow: none;
   color: var(--session-text);
-  inline-size: min(360px, calc(100vw - 32px));
-  inset-block-start: calc(100% + 8px);
-  inset-inline-end: 0;
-  max-block-size: min(620px, var(--session-quick-actions-available-height, calc(100vh - 86px)));
-  overflow-x: hidden;
-  overflow-y: auto;
+  inline-size: 100%;
   padding: 14px;
-  position: absolute;
+  position: relative;
   text-align: start;
   z-index: 80;
 }
@@ -137,7 +223,7 @@
 }
 
 /* ZEUS-0160：宽屏空闲区直接承载环境卡；右侧工作面或窄窗口继续使用顶部按钮。 */
-.session-codex-parity-v1 .session-quick-actions-card[data-presentation='persistent'] {
+.session-codex-parity-v1 .session-quick-actions-surface[data-presentation='persistent'] {
   inline-size: 300px;
   inset-block-start: 16px;
   inset-inline-end: 16px;
@@ -160,7 +246,7 @@
   z-index: 30;
 }
 
-.session-codex-parity-v1 .session-quick-actions-persistent-host:has(> .session-quick-actions-card[data-presentation='persistent']:not([hidden])) {
+.session-codex-parity-v1 .session-quick-actions-persistent-host:has(> .session-quick-actions-surface[data-presentation='persistent']:not([hidden])) {
   flex-basis: 332px;
 }
 
@@ -221,6 +307,8 @@
   border-radius: 9px;
   color: inherit;
   display: grid;
+  /* 静态行与按钮采用同一盒模型，避免百分比宽度叠加内边距产生横向滚动。 */
+  box-sizing: border-box;
   gap: 10px;
   grid-template-columns: 20px minmax(0, 1fr) auto;
   inline-size: 100%;
@@ -420,7 +508,7 @@
     padding-inline: 7px;
   }
 
-  .session-codex-parity-v1 .session-quick-actions-card {
+  .session-codex-parity-v1 .session-quick-actions-surface[data-presentation='popover'] {
     inset-inline-end: -52px;
   }
 }
@@ -3003,19 +3091,67 @@
 }
 
 .session-codex-parity-v1 .session-activity-images {
-  margin-block-start: 5px;
+  margin-block-start: 4px;
+  margin-inline-start: -27px;
+}
+/* 图片查看记录有独立数量入口，折叠不改变原始工具记录。 */
+.session-codex-parity-v1 .session-activity-images > summary {
+  align-items: center;
+  color: var(--session-text-muted);
+  cursor: pointer;
+  display: flex;
+  font-size: 28px;
+  line-height: 1.2;
+  gap: 16px;
+  inline-size: fit-content;
+  list-style: none;
+  padding: 0;
+}
+.session-codex-parity-v1 .session-activity-images > summary::-webkit-details-marker {
+  display: none;
+}
+.session-codex-parity-v1 .session-activity-images > summary > svg {
+  inline-size: 28px;
+  block-size: 28px;
+}
+.session-codex-parity-v1 .session-activity-images > summary > .session-activity-images-caret {
+  inline-size: 20px;
+  block-size: 20px;
+}
+.session-codex-parity-v1 .session-activity-images:not([open]) .session-activity-images-caret {
+  transform: rotate(-90deg);
+}
+.session-codex-parity-v1 .session-activity-images > summary:focus-visible {
+  outline: 2px solid var(--session-focus-outline);
+  outline-offset: 3px;
+  border-radius: 4px;
 }
 
 .session-codex-parity-v1 .session-activity-images .session-resource-card-list[data-layout='images'] {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 16px;
+  margin-block: 16px 4px;
 }
 
+/* 方形缩略图裁切真实画面，点击后查看完整内容。 */
 .session-codex-parity-v1 .session-activity-images .session-resource-image {
-  block-size: 112px;
-  inline-size: 112px;
-  max-inline-size: 112px;
+  block-size: 160px;
+  inline-size: min(160px, 100%);
+  max-inline-size: 160px;
+  max-block-size: none;
+  min-block-size: 160px;
+  flex: 0 0 auto;
+  border: 1px solid var(--session-line);
+  border-radius: 18px;
+  background: var(--session-canvas);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--session-text) 4%, transparent);
+}
+.session-codex-parity-v1 .session-activity-images .session-resource-image > img {
+  inline-size: 100%;
+  block-size: 100%;
+  max-block-size: none;
+  object-fit: cover;
 }
 
 /* 计划、命令、文件、技能和上下文整理是语义图标，不得作为加载环旋转。 */
@@ -8343,15 +8479,16 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .session-open-with-menu {
+  box-sizing: border-box;
   background: var(--session-canvas);
   border: 1px solid var(--session-line);
-  border-radius: 11px;
-  box-shadow: 0 12px 34px var(--session-shadow);
+  border-radius: 18px;
+  box-shadow: 0 8px 24px var(--session-shadow);
   display: grid;
   inline-size: max-content;
   max-inline-size: 260px;
   min-inline-size: 210px;
-  padding: 5px;
+  padding: 8px;
   position: absolute;
   inset-block-end: calc(100% + 6px);
   inset-inline-end: 0;
@@ -8383,8 +8520,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   display: flex;
   gap: 12px;
   justify-content: space-between;
-  min-block-size: 34px;
-  padding: 6px 9px;
+  min-block-size: 36px;
+  padding: 7px 8px;
+  font: inherit;
+  font-size: 14px;
   text-align: start;
 }
 
@@ -8395,6 +8534,16 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 .session-codex-parity-v1 .session-open-with-menu button:disabled {
   cursor: default;
   opacity: 0.42;
+}
+/* 文件操作与应用列表分隔，仍共用菜单键盘导航。 */
+.session-codex-parity-v1 .session-open-with-footer {
+  border-block-start: 1px solid var(--session-line);
+  display: grid;
+  margin-block-start: 6px;
+  padding-block-start: 6px;
+}
+.session-codex-parity-v1 .session-open-with-app-menu button small {
+  display: none;
 }
 
 .session-codex-parity-v1 .session-open-with-menu button small,
@@ -12802,11 +12951,18 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 }
 
 .session-codex-parity-v1 .session-quick-actions-card[data-presentation='docked'] {
-  block-size: 100%;
+  block-size: auto;
   border: 0;
   border-radius: 0;
   box-shadow: none;
   box-sizing: border-box;
+  inline-size: 100%;
+  max-block-size: 100%;
+  position: static;
+}
+/* 浏览器环境栏与弹层共用内容，滚动由外层承担。 */
+.session-codex-parity-v1 .session-quick-actions-surface[data-presentation='docked'] {
+  block-size: 100%;
   inline-size: 100%;
   max-block-size: 100%;
   position: static;
@@ -13141,14 +13297,25 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 0;
-  background: transparent;
+  border: 1px solid var(--session-line-soft);
+  background: var(--session-canvas);
   color: inherit;
   font: inherit;
   cursor: pointer;
-  padding: 6px;
-  border-radius: 8px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  min-block-size: 40px;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--session-text) 3%, transparent);
   white-space: nowrap;
+}
+/* 图标与文字操作共用胶囊高度。 */
+.session-source-actions > button:has(> svg:only-child) {
+  inline-size: 40px;
+  padding: 0;
+}
+.session-source-actions > button:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 .session-source-actions > button svg {
   width: 18px;
@@ -13158,16 +13325,24 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--session-line);
+  padding: 8px 16px 12px;
 }
+/* 路径胶囊保留截断与悬停说明，长路径不会挤走操作。 */
 .session-source-breadcrumbs {
   display: flex;
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   gap: 8px;
+  align-items: center;
+  box-sizing: border-box;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--session-line-soft);
+  border-radius: 999px;
+  background: var(--session-canvas);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--session-text) 3%, transparent);
 }
 .session-source-breadcrumbs > span {
   display: inline-flex;
@@ -13186,14 +13361,16 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 .session-source-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  margin-inline-start: auto;
+  flex: 0 0 auto;
 }
 .session-source-actions > button:hover {
   background: var(--session-hover);
 }
 .session-source-actions .session-open-with-trigger {
   border: 1px solid var(--session-line);
-  border-radius: 10px;
+  border-radius: 999px;
   padding: 7px 10px;
 }
 @container (max-width: 520px) {
@@ -13204,12 +13381,23 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
     flex-basis: 100%;
   }
 }
+@container (max-width: 360px) {
+  /* 窄文件面板允许操作换行，保留完整文案和点击范围。 */
+  .session-source-actions {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    margin-inline-start: 0;
+  }
+}
 
 .session-source-open-group {
   display: flex;
   border: 1px solid var(--session-line);
-  border-radius: 10px;
+  border-radius: 999px;
   overflow: hidden;
+  min-block-size: 40px;
+  background: var(--session-canvas);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--session-text) 3%, transparent);
 }
 .session-source-open-group > button {
   background: transparent;
@@ -13218,11 +13406,30 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   font: inherit;
   padding: 6px 12px;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+/* 本机应用图标随打开目标同步变化。 */
+.session-source-open-group > button > :is(img, svg) {
+  inline-size: 18px;
+  block-size: 18px;
+  object-fit: contain;
+}
+.session-source-open-group > button:hover:not(:disabled) {
+  background: var(--session-control-hover);
+}
+.session-source-open-group > button:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 .session-source-actions .session-source-open-group .session-open-with-trigger {
   border: 0;
-  border-left: 1px solid var(--session-line);
+  border-left: 0;
   border-radius: 0;
+  min-block-size: 40px;
+  padding: 0 10px;
 }
 
 .session-codex-parity-v1 .session-source-header .session-context-workspace-title strong {
@@ -13234,6 +13441,57 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 }
 .session-codex-parity-v1 .session-source-markdown-scroll > .session-markdown {
   max-inline-size: none;
+  font-size: 18px;
+  line-height: 1.45;
+}
+/* 文件正文按阅读页面排版，标题与段落保持参考图的层级。 */
+.session-codex-parity-v1 .session-source-markdown-scroll .session-markdown h1 {
+  font-size: 28px;
+  line-height: 1.3;
+  margin-block-end: 28px;
+}
+.session-codex-parity-v1 .session-source-markdown-scroll .session-markdown h2 {
+  font-size: 22px;
+  line-height: 1.4;
+  margin-block: 24px;
+}
+.session-codex-parity-v1 .session-source-markdown-scroll .session-markdown :not(pre) > code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+/* 文件列表使用紧凑行距和原生短横线标记，保留列表语义。 */
+.session-codex-parity-v1 .session-source-markdown-scroll .session-markdown ul {
+  padding-inline-start: 24px;
+}
+.session-codex-parity-v1 .session-source-markdown-scroll .session-markdown li {
+  margin-block: 2px;
+}
+.session-codex-parity-v1 .session-source-markdown-scroll .session-markdown ul > li::marker {
+  content: '- ';
+  color: var(--session-text-muted);
+}
+/* 文件标签独立承载文件名，窄面板仍可缩短并横向滚动。 */
+.session-codex-parity-v1 .session-source-header {
+  background: color-mix(in srgb, var(--session-text) 2%, var(--session-canvas));
+}
+.session-codex-parity-v1 .session-source-tabs .zeus-workspace-tab-shell {
+  inline-size: clamp(140px, 35cqw, 288px);
+  max-inline-size: 288px;
+  flex: 0 1 auto;
+  block-size: 40px;
+  border-radius: 10px;
+  font-size: 14px;
+}
+.session-codex-parity-v1 .session-source-tabs .zeus-workspace-tab {
+  flex: 1;
+}
+/* 窄屏保留数量标题完整文案，不让大号标题撑出面板。 */
+@container (max-width: 400px) {
+  .session-codex-parity-v1 .session-activity-images > summary {
+    font-size: 20px;
+    gap: 8px;
+  }
 }
 
 .session-source-tabs {
@@ -13241,9 +13499,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 }
 /* 为原生菜单保留文字和系统箭头的空间，避免全局输入框内边距挤空内容。 */
 .session-codex-parity-v1 .session-source-add-tab {
-  flex: 0 0 auto;
-  width: auto;
-  min-width: 112px;
+  position: absolute;
+  inset: 0;
+  width: 32px;
+  min-width: 0;
   height: 32px;
   appearance: auto;
   border: 1px solid var(--session-line);
@@ -13254,6 +13513,25 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   font-size: 12px;
   cursor: pointer;
   padding: 0 8px;
+  opacity: 0;
+}
+/* 加号保留原生选择菜单，仍只允许选择会话授权文件。 */
+.session-source-add-tab-shell {
+  position: relative;
+  flex: 0 0 32px;
+  block-size: 32px;
+  display: grid;
+  place-items: center;
+  color: var(--session-text-muted);
+  border-radius: 8px;
+}
+.session-source-add-tab-shell > svg {
+  inline-size: 20px;
+  block-size: 20px;
+  pointer-events: none;
+}
+.session-source-add-tab-shell:focus-within {
+  outline: 2px solid var(--session-focus-outline);
 }
 
 /* 复制反馈与操作同排显示，空状态不额外占用工具栏宽度。 */

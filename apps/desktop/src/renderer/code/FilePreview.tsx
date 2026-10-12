@@ -53,7 +53,7 @@ export function PreviewIconButton({
   );
 }
 
-/** 两类文件审阅共用切换入口；带行号先定位源码，普通打开优先查看差异。 */
+/** 两类审阅共用切换入口；没有差异直接阅读，读取失败仍保留说明。 */
 export function FileReviewContent(props: { review?: FileReview; zh: boolean; children: ReactNode }) {
   /** 用户选择只影响本次打开的文件。 */
   const [showDiff, setShowDiff] = useState(Boolean(props.review?.diff && !props.review.location?.line));
@@ -87,8 +87,6 @@ export function FileReviewContent(props: { review?: FileReview; zh: boolean; chi
             </span>
           </span>
         </nav>
-      ) : props.review?.diff === null ? (
-        <p role="status">{props.zh ? '与 HEAD 相同，无 Git 差异。' : 'No Git diff from HEAD.'}</p>
       ) : null}
       {props.review?.error ? (
         <p role="status">
