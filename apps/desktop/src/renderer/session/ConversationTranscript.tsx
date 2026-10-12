@@ -1,3 +1,4 @@
+import type { ConversationProcessGroup } from '@zeus/shared';
 import { matchingInlineResource } from './ConversationMarkdown.js';
 import { inlineResourceRequestSignature } from './conversationResourceProjection.js';
 import { createTranscriptProjection, reuseTranscriptRows, reuseTranscriptTurnRows, updateTranscriptProjection, type TranscriptProjection } from './transcriptProjection.js';
@@ -68,7 +69,7 @@ export interface ConversationTranscriptProps {
   onRemoveResponseAnnotation?: (id: string) => void;
   onLoadEarlierHistory?: () => void | Promise<void>;
   /** 深历史可能没有有界轮次 DTO，展开入口同时传递是否应从头读取。 */
-  onLoadTurnProcess?: (turnId: string, startAtBeginning?: boolean) => void | Promise<void>;
+  onLoadTurnProcess?: (turnId: string, startAtBeginning?: boolean, group?: ConversationProcessGroup) => void | Promise<void>;
   onLoadConversationResources?: () => void | Promise<void>;
   onLoadTurnArtifacts?: (turnId: string) => void | Promise<void>;
   onLoadV2Content?: (handle: string) => Promise<void>;
@@ -362,9 +363,21 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const composerQueueClientUserMessageIds = useMemo(() => new Set(composerQueue.map((submission) => submission.clientUserMessageId).filter((value): value is string => Boolean(value))), [composerQueue]);
   /** 引导、失败和恢复项仍由时间线承载，只有普通等待项进入输入框卡片。 */
   const transcriptQueuedSubmissions = useMemo(() => queuedSubmissions.filter((submission) => !composerQueueSubmissionIds.has(submission.id)), [composerQueueSubmissionIds, queuedSubmissions]);
+  /** 新沟通消息形成过程边界；工具增量和旧历史补页不重复读取目录。 */
+  const latestNavigationMessage = props.state.itemOrder.map((key) => props.state.items[key]).findLast((item) => item && ['user', 'assistant', 'commentary'].includes(itemRole(item)) && normalizeItemType(item.type) !== 'reasoning');
+  /** 只观察最新发言的身份与结束状态，不订阅流式正文。 */
+  const navigationRefreshKey = `${props.state.transportState}:${latestNavigationMessage?.clientUserMessageId ?? latestNavigationMessage?.itemId ?? ''}:${latestNavigationMessage?.status ?? ''}:${Object.entries(props.state.terminalTurnIds)
+    .map(([id, status]) => `${id}:${status}`)
+    .join('|')}:${props.state.pendingRequests
+    .filter(isAnsweredUserInputRequest)
+    .map((request) => `${request.id}:${request.resolvedAt}`)
+    .join('|')}`;
+  /** 完整目录与首屏正文并行取得，绝不要求用户先滚到更早历史。 */
+  const navigation = useConversationNavigation({ scopeKey: props.state.conversationId, refreshKey: navigationRefreshKey, load: props.onLoadNavigation });
   /** 内容批次复用已建立的输入、阶段和父组索引。 */
   const previousProjection = useRef<TranscriptProjection | null>(null);
   const projectionContext = [
+    navigation.snapshot?.processGroups,
     props.state.conversationId,
     props.state.itemOrder,
     props.state.activeTurnId,
@@ -472,21 +485,13 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const processAvailableTurnIds = useMemo(() => availableTurnProcessIds(props.state.snapshot), [props.state.snapshot?.snapshotV2]);
   const closedTurnChangeSetIds = useMemo(() => availableClosedTurnChangeSetIds(props.state.snapshot), [props.state.snapshot?.snapshotV2]);
   const baseTurnRows = useMemo(
-    () => contentProjection?.turnRows ?? reuseTranscriptTurnRows(previousProjection.current?.turnRows ?? [], projectTranscriptTurnRows(transcriptRows, activeTurnId, props.state.terminalTurnIds, processAvailableTurnIds)),
-    [activeTurnId, processAvailableTurnIds, props.state.terminalTurnIds, transcriptRows],
+    () =>
+      contentProjection?.turnRows ??
+      reuseTranscriptTurnRows(previousProjection.current?.turnRows ?? [], projectTranscriptTurnRows(transcriptRows, activeTurnId, props.state.terminalTurnIds, processAvailableTurnIds, navigation.snapshot?.processGroups)),
+    [activeTurnId, processAvailableTurnIds, props.state.terminalTurnIds, transcriptRows, navigation.snapshot?.processGroups],
   );
   previousProjection.current = contentProjection ?? createTranscriptProjection(props.state, projectionContext, items, transcriptRows, baseTurnRows);
 
-  /** 目录只在稳定身份、送达状态、轮次结束或连接变化时重新读取。 */
-  const latestNavigationUser = props.state.items[lastUserKey ?? ''];
-  /** 前插历史不触发完整目录重读，只观察最新发言的确认状态。 */
-  const navigationRefreshKey = `${props.state.transportState}:${latestNavigationUser?.clientUserMessageId ?? latestNavigationUser?.itemId ?? ''}:${latestNavigationUser?.optimistic ? latestNavigationUser.status : 'confirmed'}:${Object.entries(
-    props.state.terminalTurnIds,
-  )
-    .map(([id, status]) => `${id}:${status}`)
-    .join('|')}:${answeredRequests.map((request) => `${request.id}:${request.resolvedAt}`).join('|')}`;
-  /** 完整目录与首屏正文并行取得，绝不要求用户先滚到更早历史。 */
-  const navigation = useConversationNavigation({ scopeKey: props.state.conversationId, refreshKey: navigationRefreshKey, load: props.onLoadNavigation });
   /** 真实投影提供已加载身份，目录只补齐缺失历史。 */
   const liveNavigationEntries = useMemo(() => transcriptNavigationEntries(baseTurnRows, props.state), [baseTurnRows, props.state.turnsByProviderId, props.state.terminalTurnIds]);
   /** 摘录不变时复用目录，流式长正文不会反复刷新全部刻度。 */
@@ -494,13 +499,18 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   /** 目录与实时发送按稳定身份合并。 */
   const navigationEntries = useMemo(() => {
     /** 所有成员均为标量字段，字段比较不读取正文。 */
-    const next = mergeNavigationEntries(navigation.snapshot?.entries ?? [], liveNavigationEntries);
+    const next = mergeNavigationEntries(navigation.snapshot?.entries ?? [], liveNavigationEntries, (entry) => {
+      /** 逐轮完整读取或覆盖开场的连续尾页才代表历史完整，用户气泡不能代替此判断。 */
+      const paging = props.state.snapshot?.v2Paging;
+      const turnPage = paging?.historyByTurn?.[entry.providerTurnId ?? entry.turnId] ?? paging?.historyByTurn?.[entry.turnId];
+      return Boolean((turnPage?.loaded && !turnPage.hasMore) || (paging?.history.oldestLoadedSequence != null && paging.history.oldestLoadedSequence <= entry.sequence));
+    });
     /** 保持旧对象以隔离刻度与正文的刷新频率。 */
     const previous = previousNavigationEntriesRef.current;
     if (next.length === previous.length && next.every((entry, index) => Object.keys(entry).every((key) => entry[key as keyof TranscriptNavigationEntry] === previous[index]?.[key as keyof TranscriptNavigationEntry]))) return previous;
     previousNavigationEntriesRef.current = next;
     return next;
-  }, [navigation.snapshot, liveNavigationEntries]);
+  }, [navigation.snapshot, liveNavigationEntries, props.state.snapshot?.v2Paging]);
   /** 普通发言和已提交答题卡合计至少两次互动才显示刻度，单次互动保留原生滚动。 */
   const showNavigation = Boolean(props.onLoadNavigation && navigation.snapshot && navigationEntries.length > 1);
   /** 失败记录与历史占位一同进入时间线，后续发言不能越过已发生的错误。 */
@@ -1124,7 +1134,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     if (row.kind === 'turn_work') {
       const turn = props.state.turnsByProviderId[row.turnId];
       /** 过程沿已有分页范围补齐，展开本身不改变读取方向。 */
-      const processPaging = turnDetailPaging(props.state.snapshot, turn?.providerTurnId ?? row.turnId);
+      const processPaging = turnDetailPaging(props.state.snapshot, row.processGroup?.id ?? turn?.providerTurnId ?? row.turnId);
       /** 只有首次读取时，正常完成态优先从头阅读。 */
       const turnCompleted = props.state.terminalTurnIds[row.turnId] === 'completed' || turn?.status === 'completed';
       /** 倒序读取时，自动补页边界放在已读过程之前。 */
@@ -1132,7 +1142,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       /** 只在展开后滚动到缺页边界时补读，避免一次读完整个长轮次。 */
       const pageSentinel =
         row.loadMore && processPaging && ((processPaging.loaded && processPaging.hasMore) || processPaging.error) && renderProps.onLoadTurnProcess ? (
-          <TurnProcessPageSentinel enabled={expandedRowKeys.has(turnProcessExpansionKey(row.key))} paging={processPaging} turnId={row.turnId} onLoad={renderProps.onLoadTurnProcess} />
+          <TurnProcessPageSentinel enabled={expandedRowKeys.has(turnProcessExpansionKey(row.key))} paging={processPaging} turnId={row.turnId} group={row.processGroup} onLoad={renderProps.onLoadTurnProcess} />
         ) : null;
       const expansionKey = turnProcessExpansionKey(row.key);
       const containsCompletionAnchor = row.segments.some(
@@ -1144,7 +1154,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       /** 只有当前输入所属的活动轮次显示外置进展。 */
       const processLive = row.live && turnActive;
       /** 逐段进展使用真实操作数量；最终正文可见后的整轮入口改用实际用时。 */
-      const processActivityCount = turnProcessActivityCount(row.segments);
+      const processActivityCount = Math.max(row.processGroup?.itemCount ?? 0, turnProcessActivityCount(row.segments));
       /** 过程展开后保留原始顺序；完成轮次的中途说明也在这里回看。 */
       const renderProcessSegments = (active: boolean): ReactNode =>
         row.segments.map((segment, segmentIndex) => {
@@ -1190,7 +1200,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           );
         });
       if (!turn) {
-        const hasProcessDetails = row.segments.length > 0 || (row.loadMore && turnProcessAvailable(props.state.snapshot, row.turnId));
+        const hasProcessDetails = Boolean(row.processGroup) || row.segments.length > 0 || (row.loadMore && turnProcessAvailable(props.state.snapshot, row.turnId));
         return (
           <>
             {hasProcessDetails ? (
@@ -1201,9 +1211,10 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                 error={row.loadMore ? processPaging?.error : null}
                 open={expandedRowKeys.has(expansionKey)}
                 onOpenChange={(open, trigger) => setTranscriptRowExpanded(expansionKey, open, trigger)}
+                loadKey={row.processGroup?.id}
                 onOpen={async () => {
                   if (!row.loadMore) return;
-                  if (turnProcessNeedsLoad(processPaging)) await renderProps.onLoadTurnProcess?.(row.turnId, turnCompleted);
+                  if (turnProcessNeedsLoad(processPaging) && (row.replyVisible || row.processGroup || !props.onLoadNavigation)) await renderProps.onLoadTurnProcess?.(row.turnId, turnCompleted, row.processGroup);
                   await renderProps.onLoadTurnArtifacts?.(row.turnId);
                 }}
               >
@@ -1216,7 +1227,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
         );
       }
       const v2PagingKey = turn.providerTurnId ?? turn.id;
-      const hasProcessDetails = row.segments.length > 0 || (row.loadMore && turnProcessAvailable(props.state.snapshot, v2PagingKey));
+      const hasProcessDetails = Boolean(row.processGroup) || row.segments.length > 0 || (row.loadMore && turnProcessAvailable(props.state.snapshot, v2PagingKey));
       const process = renderProcessSegments(processLive);
       return (
         <>
@@ -1231,9 +1242,10 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
               error={row.loadMore ? processPaging?.error : null}
               open={expandedRowKeys.has(expansionKey)}
               onOpenChange={(open, trigger) => setTranscriptRowExpanded(expansionKey, open, trigger)}
+              loadKey={row.processGroup?.id}
               onOpen={async () => {
                 if (!row.loadMore) return;
-                if (turnProcessNeedsLoad(processPaging)) await renderProps.onLoadTurnProcess?.(row.turnId, turnCompleted);
+                if (turnProcessNeedsLoad(processPaging) && (row.replyVisible || row.processGroup || !props.onLoadNavigation)) await renderProps.onLoadTurnProcess?.(row.turnId, turnCompleted, row.processGroup);
                 await renderProps.onLoadTurnArtifacts?.(row.turnId);
               }}
             >
@@ -1545,7 +1557,13 @@ function V2HistoryPageStatus(props: { state: NativeSessionState; language: Sessi
 }
 
 /** 只在缺页边界进入会话视口时补读，过程内不增加分页或重试按钮。 */
-function TurnProcessPageSentinel(props: { enabled: boolean; paging: NonNullable<ReturnType<typeof turnDetailPaging>>; turnId: string; onLoad: (turnId: string) => void | Promise<void> }) {
+function TurnProcessPageSentinel(props: {
+  enabled: boolean;
+  paging: NonNullable<ReturnType<typeof turnDetailPaging>>;
+  turnId: string;
+  group?: ConversationProcessGroup;
+  onLoad: NonNullable<ConversationTranscriptProps['onLoadTurnProcess']>;
+}) {
   /** 观察真实的缺页位置，收起或滚动其他容器不触发读取。 */
   const sentinelRef = useRef<HTMLSpanElement>(null);
   /** 同一游标最多请求一次，失败或没有推进时停止自动补页。 */
@@ -1564,8 +1582,8 @@ function TurnProcessPageSentinel(props: { enabled: boolean; paging: NonNullable<
   useEffect(() => {
     if (!props.enabled || !intersecting || !props.paging.hasMore || props.paging.loading || props.paging.error || requestedCursorRef.current === props.paging.cursor) return;
     requestedCursorRef.current = props.paging.cursor;
-    void Promise.resolve(props.onLoad(props.turnId)).catch(() => undefined);
-  }, [intersecting, props.enabled, props.onLoad, props.paging.cursor, props.paging.error, props.paging.hasMore, props.paging.loading, props.turnId]);
+    void Promise.resolve(props.onLoad(props.turnId, false, props.group)).catch(() => undefined);
+  }, [intersecting, props.enabled, props.onLoad, props.paging.cursor, props.paging.error, props.paging.hasMore, props.paging.loading, props.turnId, props.group]);
   return <span ref={sentinelRef} className="session-turn-process-page-sentinel" data-process-page aria-hidden="true" />;
 }
 
@@ -1634,6 +1652,8 @@ function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: 
   const zh = props.language === 'zh-CN';
   /** 连接失败只显示停止状态和重试，原始诊断保留在轮次记录中。 */
   const connectionFailure = props.failure.category === 'network';
+  /** 重试结果接管同一条状态文案，原始错误仍由详情入口说明。 */
+  const connectionMessage = pending ? (zh ? '正在重新连接…' : 'Reconnecting…') : retryError ? (zh ? '重试失败，请查看原因。' : 'Retry failed. View details.') : zh ? '连接失败，已停止。' : 'Connection failed. Stopped.';
   /** 已保留回答的断流不能再误报为“没有收到完整回复”。 */
   const retainedStreamFailure = props.retainedAnswer && props.failure.cause?.code === 'responseStreamDisconnected';
   if (retainedStreamFailure && !props.onRetry && !connectionFailure) {
@@ -1648,13 +1668,19 @@ function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: 
   }
   return (
     <ConversationNotice label={connectionFailure ? (zh ? '连接失败' : 'Connection failed') : zh ? '模型返回错误' : 'Model error'}>
-      {connectionFailure ? <span>{zh ? '连接失败，已停止。' : 'Connection failed. Stopped.'}</span> : <VisibleApplicationError error={props.failure} language={zh ? 'zh-CN' : 'en'} />}
-      {props.onRetry ? (
-        <button type="button" disabled={pending} onClick={() => void retry()}>
-          {pending ? (zh ? '正在连接...' : 'Connecting...') : zh ? '重试' : 'Retry'}
-        </button>
-      ) : null}
-      {retryError ? connectionFailure ? <span>{zh ? '重试失败。' : 'Retry failed.'}</span> : <VisibleApplicationError error={retryError} language={zh ? 'zh-CN' : 'en'} /> : null}
+      {connectionFailure ? <span>{connectionMessage}</span> : <VisibleApplicationError error={props.failure} language={zh ? 'zh-CN' : 'en'} />}
+      <span className="session-message-delivery-actions">
+        {retryError ? (
+          <button type="button" className="application-error-details-link" onClick={() => reportApplicationError(retryError, { language: zh ? 'zh-CN' : 'en', showDetails: true })}>
+            {zh ? '查看原因' : 'View details'}
+          </button>
+        ) : null}
+        {props.onRetry ? (
+          <button type="button" disabled={pending} onClick={() => void retry()}>
+            {pending ? (zh ? '正在连接...' : 'Connecting...') : zh ? '重试' : 'Retry'}
+          </button>
+        ) : null}
+      </span>
     </ConversationNotice>
   );
 }
@@ -1726,6 +1752,8 @@ function primitiveValue(value: unknown): string | null {
 }
 
 export interface TranscriptTurnWorkRow {
+  /** 局部组使用持久边界与权威总数；整轮回看不限定局部边界。 */
+  processGroup?: ConversationProcessGroup;
   kind: 'turn_work';
   key: string;
   turnId: string;
@@ -2366,14 +2394,42 @@ export function projectTranscriptTurnRows(
   activeTurnId: string | null = null,
   terminalTurnIds: Readonly<Record<string, 'completed' | 'interrupted' | 'failed'>> = {},
   processAvailableTurnIds: ReadonlySet<string> = new Set(),
+  processGroups: readonly ConversationProcessGroup[] = [],
 ): TranscriptTurnRow[] {
   const orderedRows = projectDeliverablesAfterFinalAnswer(rows);
   const completionOutputTurnIds = new Set(orderedRows.flatMap((row) => (row.kind === 'item' && isTurnCompletionOutputItem(row.item) ? [row.item.turnId] : [])));
   /** 活动轮次和已结束轮次共用消息边界，展开与收起都不能改变沟通顺序。 */
-  const projectedTurnIds = new Set([...completionOutputTurnIds, ...Object.keys(terminalTurnIds), ...(activeTurnId ? [activeTurnId] : [])]);
+  const projectedTurnIds = new Set([...completionOutputTurnIds, ...Object.keys(terminalTurnIds), ...processGroups.flatMap((group) => [group.turnId, group.providerTurnId ?? group.turnId]), ...(activeTurnId ? [activeTurnId] : [])]);
   const projected: TranscriptTurnRow[] = [];
   /** 已加载过程用于判断是否还需生成一个空的按需加载入口。 */
   const loadedProcessTurnIds = new Set<string>();
+  /** 每个轮次只检索自己的沟通区间，长会话不扫描其他轮次。 */
+  const groupsByTurn = Map.groupBy(processGroups, (group) => group.turnId);
+  /** 起点身份直接定位空摘要。 */
+  const groupByBoundary = new Map(processGroups.map((group) => [group.afterEntryId, group]));
+  /** 原始沟通行与已加载详情共用持久边界，按有序区间二分查找。 */
+  const groupForRow = (row: TranscriptRow): ConversationProcessGroup | undefined => {
+    /** 操作行中的成员按持久顺序排列。 */
+    const item = row.kind === 'item' ? row.item : row.kind === 'activity' ? row.items[0] : undefined;
+    /** 本地轮次身份与服务端目录一致。 */
+    const placement = item?.transcript?.placement;
+    if (placement?.order == null || !placement.turnId) return undefined;
+    /** 目录按顺序返回，查找起点小于条目位置的最后一组。 */
+    const groups = groupsByTurn.get(placement.turnId) ?? [];
+    /** 二分区间左端。 */
+    let low = 0;
+    /** 二分区间右端，不包含该位置。 */
+    let high = groups.length;
+    while (low < high) {
+      /** 中点只决定搜索范围，不改写目录。 */
+      const middle = (low + high) >>> 1;
+      if (groups[middle]!.afterOrder < placement.order) low = middle + 1;
+      else high = middle;
+    }
+    /** 结束边界排除下一段沟通后的详情。 */
+    const group = groups[low - 1];
+    return group && (group.beforeOrder === null || placement.order < group.beforeOrder) ? group : undefined;
+  };
   /** Provider 事件早于开场消息落库时，持久输入身份仍负责把过程放回用户消息之后。 */
   const userAnchorByOpeningInputId = new Map<string, { index: number; rowKey: string; turnId: string }>();
   /** 缺少持久输入身份的旧记录只兼容同轮第一条普通用户消息。 */
@@ -2403,9 +2459,11 @@ export function projectTranscriptTurnRows(
     const openingInputId = transcriptRowOpeningInputId(row);
     /** 只收拢相邻的过程行；任意用户输入、助手沟通、交互或交付物都会结束本组。 */
     const chunk = [row];
+    /** 详情在冷读与补页后都归属同一个已登记分组。 */
+    const processGroup = groupForRow(row);
     while (index + 1 < orderedRows.length) {
       const candidate = orderedRows[index + 1]!;
-      if (transcriptRowTurnId(candidate) !== turnId || transcriptRowOpeningInputId(candidate) !== openingInputId || !isTurnProcessRow(candidate)) break;
+      if (transcriptRowTurnId(candidate) !== turnId || transcriptRowOpeningInputId(candidate) !== openingInputId || !isTurnProcessRow(candidate) || groupForRow(candidate)?.id !== processGroup?.id) break;
       chunk.push(candidate);
       index += 1;
     }
@@ -2420,8 +2478,11 @@ export function projectTranscriptTurnRows(
     /** 首组沿用开场身份；后续组绑定真正切断过程的消息。 */
     const boundaryKey = boundaryRow && boundaryRow.key !== userAnchor?.rowKey ? boundaryRow.key : null;
     /** 相同持久历史在冷读和补页后生成同一个过程身份。 */
-    const key = `turn-work:${encodeURIComponent(boundaryIdentity)}${boundaryKey ? `:after:${encodeURIComponent(boundaryKey)}` : ''}`;
+    /** 目录返回前也沿用同一消息身份，保留已经展开的选择。 */
+    const boundaryEntryId = boundaryRow?.kind === 'item' ? boundaryRow.item.transcript?.placement.entryId : boundaryRow?.kind === 'answered_request' ? boundaryRow.request.transcript?.placement.entryId : undefined;
+    const key = processGroup?.id ?? (boundaryEntryId ? `turn-work-group:${boundaryEntryId}` : `turn-work:${encodeURIComponent(boundaryIdentity)}${boundaryKey ? `:after:${encodeURIComponent(boundaryKey)}` : ''}`);
     const workRow: TranscriptTurnWorkRow = {
+      ...(processGroup ? { processGroup } : {}),
       kind: 'turn_work',
       key,
       turnId: projectedTurnId,
@@ -2439,6 +2500,21 @@ export function projectTranscriptTurnRows(
     } else {
       projected.push(workRow);
     }
+  }
+
+  /** 摘要入口独立于详情，未展开的兄弟组在补页前后保持原位与数量。 */
+  const projectedKeys = new Set(projected.map((row) => row.key));
+  for (let index = projected.length - 1; index >= 0; index -= 1) {
+    const boundary = projected[index]!;
+    if (boundary.kind !== 'item' && boundary.kind !== 'answered_request') continue;
+    /** 普通消息与答题卡共用持久边界。 */
+    const entryId = boundary.kind === 'item' ? boundary.item.transcript?.placement.entryId : boundary.request.transcript?.placement.entryId;
+    const group = groupByBoundary.get(entryId ?? '');
+    if (!group) continue;
+    loadedProcessTurnIds.add(group.turnId);
+    loadedProcessTurnIds.add(group.providerTurnId ?? group.turnId);
+    if (projectedKeys.has(group.id)) continue;
+    projected.splice(index + 1, 0, { kind: 'turn_work', key: group.id, turnId: transcriptRowTurnId(boundary) ?? group.providerTurnId ?? group.turnId, segments: [], live: false, loadMore: true, processGroup: group });
   }
 
   /** 尚未加载过程正文时保留一个入口，避免 Snapshot 明确有过程却无处展开。 */

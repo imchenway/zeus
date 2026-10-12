@@ -86,7 +86,7 @@ export interface ConversationApiClient {
     projectId: string,
     conversationId: string,
     turnId: string,
-    options?: { cursor?: string; direction?: 'forward' | 'tail'; limit?: number; byteLimit?: number; kind?: NativeConversationProcessV2Item['kind'] },
+    options?: { cursor?: string; direction?: 'forward' | 'tail'; limit?: number; byteLimit?: number; kind?: NativeConversationProcessV2Item['kind']; afterEntryId?: string; beforeEntryId?: string },
   ) => Promise<NativeConversationSnapshotV2Page<NativeConversationProcessV2Item>>;
   loadNativeConversationResourcesV2: (
     projectId: string,
@@ -404,7 +404,7 @@ function queueSubmissionPath(projectId: string, conversationId: string, submissi
   return `${conversationPath(projectId, conversationId)}/queue/${encodeURIComponent(submissionId)}`;
 }
 
-function pageQuery(options?: { cursor?: string; limit?: number; byteLimit?: number; direction?: 'forward' | 'tail'; kind?: string }): string {
+function pageQuery(options?: { cursor?: string; limit?: number; byteLimit?: number; direction?: 'forward' | 'tail'; kind?: string; afterEntryId?: string; beforeEntryId?: string }): string {
   if (!options) return '';
   const query = new URLSearchParams();
   if (options.cursor) query.set('cursor', options.cursor);
@@ -412,6 +412,8 @@ function pageQuery(options?: { cursor?: string; limit?: number; byteLimit?: numb
   if (options.byteLimit !== undefined) query.set('byteLimit', String(options.byteLimit));
   if (options.direction) query.set('direction', options.direction);
   if (options.kind) query.set('kind', options.kind);
+  if (options.afterEntryId) query.set('afterEntryId', options.afterEntryId);
+  if (options.beforeEntryId) query.set('beforeEntryId', options.beforeEntryId);
   return query.size > 0 ? `?${query.toString()}` : '';
 }
 

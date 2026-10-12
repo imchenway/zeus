@@ -21,7 +21,7 @@ export function navigationRowKey(entry: Pick<ConversationNavigationEntry, 'clien
 }
 
 /** 完整目录提供顺序，实时投影只补充相同发言的内容与新发言。 */
-export function mergeNavigationEntries(history: readonly ConversationNavigationEntry[], live: readonly TranscriptNavigationEntry[]): TranscriptNavigationEntry[] {
+export function mergeNavigationEntries(history: readonly ConversationNavigationEntry[], live: readonly TranscriptNavigationEntry[], contentLoaded?: (entry: ConversationNavigationEntry) => boolean): TranscriptNavigationEntry[] {
   /** 多种权威身份都可命中同一消息，禁止用相同正文猜测去重。 */
   const byIdentity = new Map<string, TranscriptNavigationEntry>();
   for (const entry of live) for (const identity of navigationIdentities(entry)) byIdentity.set(identity, entry);
@@ -39,7 +39,7 @@ export function mergeNavigationEntries(history: readonly ConversationNavigationE
       rowKey: navigationRowKey(entry),
       loaded: Boolean(current),
       // 用户气泡先到达不能结束整轮加载；已答题卡使用自身正文，不补读普通回复。
-      needsTurnContent: Boolean(current && !entry.requestId && entry.response && !current.response),
+      needsTurnContent: Boolean(current && !entry.requestId && (entry.hasContent ?? Boolean(entry.response)) && !(contentLoaded ? contentLoaded(entry) : current.response)),
       ...(current ? { prompt: current.prompt || entry.prompt, response: current.response || entry.response, status: current.status, parentRowKey: current.parentRowKey } : {}),
     };
   });
@@ -96,6 +96,32 @@ export function useConversationNavigation(input: { scopeKey: string | null; refr
           if (identities.has(identity)) throw new Error('历史目录包含重复消息。');
           identities.add(identity);
         }
+        /** 操作摘要用于生成读取范围；拒绝损坏、重复或乱序边界。 */
+        const groups = snapshot.processGroups;
+        if (
+          groups !== undefined &&
+          (!Array.isArray(groups) ||
+            groups.some(
+              (group, index) =>
+                !group ||
+                typeof group.id !== 'string' ||
+                !group.id ||
+                typeof group.turnId !== 'string' ||
+                !group.turnId ||
+                typeof group.afterEntryId !== 'string' ||
+                !group.afterEntryId ||
+                (group.providerTurnId !== null && typeof group.providerTurnId !== 'string') ||
+                (group.beforeEntryId !== null && (typeof group.beforeEntryId !== 'string' || !group.beforeEntryId)) ||
+                !Number.isSafeInteger(group.afterOrder) ||
+                !Number.isSafeInteger(group.itemCount) ||
+                group.itemCount < 0 ||
+                (group.beforeOrder !== null && (!Number.isSafeInteger(group.beforeOrder) || group.beforeOrder <= group.afterOrder)) ||
+                (group.beforeEntryId === null) !== (group.beforeOrder === null) ||
+                (index > 0 && group.afterOrder <= groups[index - 1]!.afterOrder),
+            ) ||
+            new Set(groups.map((group) => group.id)).size !== groups.length)
+        )
+          throw new Error('历史目录包含无效操作组。');
         setResult({ scope: input.scopeKey, snapshot, error: null, loading: false });
       })
       .catch((error: unknown) => {

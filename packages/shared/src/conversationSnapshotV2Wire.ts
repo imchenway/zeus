@@ -62,13 +62,35 @@ export interface ConversationNavigationEntry {
   prompt: string;
   /** 最多 320 字的最终答复、正式计划或答题卡答案摘录。 */
   response: string;
+  /** 存在已落库的助手内容，包括失败前的中途说明。 */
+  hasContent?: boolean;
   /** 所属轮次的真实状态。 */
   status: string;
   /** 目录与正文共用的稳定显示位置。 */
   placement?: ConversationTranscriptPlacement;
 }
 
-/** 完整目录的只读结果；事件进度只用于判断新旧，不能推进实时同步游标。 */
+/** 持久沟通边界之间的轻量操作摘要，不包含工具正文。 */
+export interface ConversationProcessGroup {
+  /** 分组身份固定在前一条沟通消息，详情补页不会改变它。 */
+  id: string;
+  /** 持久轮次身份与实时轮次身份。 */
+  turnId: string;
+  /** Provider 未接纳时可以没有实时轮次身份。 */
+  providerTurnId: string | null;
+  /** 组前消息的持久身份。 */
+  afterEntryId: string;
+  /** 组后消息的持久身份；最新开放组没有结束边界。 */
+  beforeEntryId: string | null;
+  /** 组前消息位置。 */
+  afterOrder: number;
+  /** 组后消息位置。 */
+  beforeOrder: number | null;
+  /** 已落库的操作总数，不使用已加载详情数量冒充总数。 */
+  itemCount: number;
+}
+
+/** 完整目录同时提供轻量操作组摘要，详情仍按需读取。 */
 export interface ConversationNavigationSnapshot {
   /** 当前目录所属会话。 */
   conversationId: string;
@@ -78,6 +100,8 @@ export interface ConversationNavigationSnapshot {
   orderEpoch: number;
   /** 按发言顺序排列的完整目录。 */
   entries: ConversationNavigationEntry[];
+  /** 以沟通消息为边界的操作摘要。 */
+  processGroups?: ConversationProcessGroup[];
 }
 
 /** 为 Snapshot V2 可见条目附加稳定位置和来源修订。 */

@@ -7,6 +7,7 @@ import {
   conversationQuestionNavigationExcerpt,
   type ConversationNavigationEntry,
   type ConversationNavigationSnapshot,
+  type ConversationProcessGroup,
   type AssistantMessageMetadata,
   type AsyncQuestionAnswer,
   type AsyncQuestionResponse,
@@ -499,6 +500,8 @@ export interface ConversationProcessPageItem {
 }
 
 export interface ConversationResourcePageItem {
+  /** 资源所属消息的持久显示身份，不受 Provider 线程续接影响。 */
+  ownerEntryId: string | null;
   id: string;
   turnId: string;
   itemId: string;
@@ -818,6 +821,8 @@ export class ConversationSnapshotV2Repository {
       assistant_phase: string | null;
       assistant_metadata_json: string | null;
       formal_plan: number;
+      /** 正式计划可能来自思考摘要，位置别名须保持原始分面。 */
+      reasoning_summary: number;
       question_answer_json: string | null;
     }>(
       `SELECT conversation_model_history.id, conversation_model_history.sequence,
@@ -829,6 +834,7 @@ export class ConversationSnapshotV2Repository {
         ${modelHistoryAssistantPhaseSql} AS assistant_phase,
         ${modelHistoryAssistantMetadataSql} AS assistant_metadata_json,
         ${modelHistoryFormalPlanSql} AS formal_plan,
+        ${modelHistoryReasoningSummarySql} AS reasoning_summary,
         ${modelHistoryQuestionAnswerSql} AS question_answer_json,
         substr(CASE WHEN json_valid(content_json) THEN COALESCE(
           NULLIF(json_extract(content_json, '$.displayText'), ''),
@@ -849,12 +855,15 @@ export class ConversationSnapshotV2Repository {
     );
     /** 同轮补充发言共用最终答复；正式计划只有在没有最终答复时使用。 */
     const answers = new Map<string, { text: string; final: boolean }>();
+    /** 内容存在性不依赖最终答复，失败轮次也必须拥有补读入口。 */
+    const contentTurnIds = new Set<string>();
     /** 每次用户发言独立占一条刻度，使用持久身份去重。 */
     const entries = new Map<string, ConversationNavigationEntry>();
     for (const row of rows) {
       /** 脱敏沿用现有历史预览规则。 */
       const text = redactSensitivePreview(row.preview).text;
       if (row.role === 'assistant') {
+        if (text.trim()) contentTurnIds.add(row.turn_id);
         /** 旧历史没有 phase 时与既有正文适配器保持相同的最终答复口径。 */
         const final = row.assistant_phase !== 'plan' && classifyAssistantMessage(parseJsonRecordOrNull(row.assistant_metadata_json) ?? {}, row.assistant_phase || 'final_answer') === 'final';
         if (text.trim() && (final || (row.formal_plan === 1 && !answers.get(row.turn_id)?.final))) answers.set(row.turn_id, { text: conversationNavigationExcerpt(text, 320), final });
@@ -882,7 +891,7 @@ export class ConversationSnapshotV2Repository {
         });
     }
     /** 普通发言保持模型历史顺序，答题卡保留自己的答案摘录。 */
-    const directory = [...entries.values()].map((entry) => ({ ...entry, response: entry.response || answers.get(entry.turnId)?.text || '' }));
+    const directory: ConversationNavigationEntry[] = [...entries.values()].map((entry) => ({ ...entry, hasContent: contentTurnIds.has(entry.turnId), response: entry.response || answers.get(entry.turnId)?.text || '' }));
     /** 同步询问独立存储，必须进入完整目录而不能只依赖已加载正文。 */
     const requests = this.db.select<{ id: string; turn_id: string; provider_turn_id: string | null; payload_json: string; response_json: string; contains_secret: number; occurred_at: string }>(
       `SELECT request.id, request.turn_id, turn.provider_turn_id, request.payload_json, request.response_json, request.contains_secret,
@@ -917,7 +926,54 @@ export class ConversationSnapshotV2Repository {
       });
     }
     directory.sort((left, right) => (left.placement?.order ?? Number.MAX_SAFE_INTEGER) - (right.placement?.order ?? Number.MAX_SAFE_INTEGER) || left.id.localeCompare(right.id));
-    return { conversationId, throughEventSeq, orderEpoch: this.transcript.orderEpoch(conversationId), entries: directory };
+    /** 沟通边界来自持久消息位置，思考与操作详情不进入目录正文。 */
+    const messageBoundaries = rows
+      .filter((row) => row.preview.trim())
+      .map((row) => ({
+        turnId: row.turn_id,
+        providerTurnId: row.provider_turn_id,
+        placement: this.requiredTranscriptEnvelope({ conversationId, sourceDomain: 'model_history', sourceScope: row.segment_id, sourceId: row.id, facet: row.reasoning_summary === 1 ? 'reasoning_block' : 'body' }).placement,
+      }));
+    /** 已回答询问也切断过程；同一消息的多个来源只登记一个边界。 */
+    const boundaries = [
+      ...new Map(
+        [...messageBoundaries, ...directory.filter((entry) => entry.requestId && entry.placement).map((entry) => ({ turnId: entry.turnId, providerTurnId: entry.providerTurnId, placement: entry.placement! }))].map((row) => [
+          row.placement.entryId,
+          row,
+        ]),
+      ).values(),
+    ]
+      .filter((row) => row.placement.order !== null)
+      .sort((left, right) => left.placement.order! - right.placement.order!);
+    /** 每个区间仅包含身份、位置和总数，长工具输出不会进入首屏。 */
+    const ranges = boundaries.map((row, index) => ({
+      id: `turn-work-group:${row.placement.entryId}`,
+      turnId: row.turnId,
+      providerTurnId: row.providerTurnId,
+      afterEntryId: row.placement.entryId,
+      beforeEntryId: boundaries[index + 1]?.placement.entryId ?? null,
+      afterOrder: row.placement.order!,
+      beforeOrder: boundaries[index + 1]?.placement.order ?? null,
+    }));
+    /** 使用持久顺序索引聚合，详情是否已读不影响分组存在性。 */
+    const counts = this.db.select<{ id: string; item_count: number }>(
+      `SELECT json_extract(boundary.value, '$.id') AS id,
+              COUNT(DISTINCT CASE WHEN EXISTS (SELECT 1 FROM conversation_transcript_aliases AS activity
+                WHERE activity.conversation_id = entry.conversation_id AND activity.entry_id = entry.id AND activity.facet = 'tool_activity') THEN entry.id END) AS item_count
+         FROM json_each(?) AS boundary
+         JOIN conversation_transcript_entries AS entry
+           ON entry.conversation_id = ? AND entry.turn_id = json_extract(boundary.value, '$.turnId')
+          AND entry.display_order > json_extract(boundary.value, '$.afterOrder')
+          AND (json_extract(boundary.value, '$.beforeOrder') IS NULL OR entry.display_order < json_extract(boundary.value, '$.beforeOrder'))
+        WHERE entry.removed_revision IS NULL AND (entry.kind = 'tool_activity' OR EXISTS (
+          SELECT 1 FROM conversation_transcript_aliases AS alias WHERE alias.conversation_id = entry.conversation_id AND alias.entry_id = entry.id AND alias.facet = 'reasoning_block'))
+        GROUP BY json_extract(boundary.value, '$.id')`,
+      [JSON.stringify(ranges), conversationId],
+    );
+    /** 空白区间不产生虚假的操作入口。 */
+    const countById = new Map(counts.map((row) => [row.id, row.item_count]));
+    const processGroups: ConversationProcessGroup[] = ranges.flatMap((range) => (countById.has(range.id) ? [{ ...range, itemCount: countById.get(range.id)! }] : []));
+    return { conversationId, throughEventSeq, orderEpoch: this.transcript.orderEpoch(conversationId), entries: directory, processGroups };
   }
 
   readSnapshot(conversationIdValue: string, options: { closedTurnLimit?: number; byteLimit?: number; includeSessionMetrics?: boolean; executionContext?: ConversationSnapshotV2ExecutionContext } = {}): ConversationSnapshotV2 {
@@ -1304,6 +1360,10 @@ export class ConversationSnapshotV2Repository {
   listProcessPage(input: {
     conversationId: string;
     turnId: string;
+    /** 只读取指定沟通边界之间的过程；省略时读取整轮回看。 */
+    afterEntryId?: string;
+    /** 开放中的最后一组没有结束消息。 */
+    beforeEntryId?: string;
     kind?: ConversationProcessKind;
     cursor?: string;
     direction?: 'forward' | 'tail';
@@ -1314,12 +1374,29 @@ export class ConversationSnapshotV2Repository {
     const turnId = this.requireTurn(conversationId, input.turnId);
     const kind = input.kind === undefined ? null : processKind(input.kind);
     const pageKind = kind === 'command' ? 'commands' : 'process';
-    const scope = `${turnId}\0${kind ?? '*'}`;
+    /** 分组边界只接受同会话的持久消息，禁止使用客户端提供的位置值。 */
+    const after = input.afterEntryId === undefined ? null : this.transcript.envelopeForEntry(conversationId, requiredIdentity(input.afterEntryId, 'afterEntryId'))?.placement;
+    /** 结束边界可以来自同会话的下一轮，但必须严格晚于当前起点。 */
+    const before = input.beforeEntryId === undefined ? null : this.transcript.envelopeForEntry(conversationId, requiredIdentity(input.beforeEntryId, 'beforeEntryId'))?.placement;
+    if ((input.afterEntryId !== undefined && (!after || after.turnId !== turnId || after.order === null)) || (input.beforeEntryId !== undefined && (!after || !before || before.order === null || before.order <= after.order!)))
+      throw snapshotError('ZEUS_CONVERSATION_SNAPSHOT_V2_INVALID_ARGUMENT', '操作组边界无效，请重新读取会话目录。', 400);
+    /** 游标绑定起点，后续沟通可以收紧结束边界，但不能换到其他组。 */
+    const scope = `${turnId}\0${kind ?? '*'}${after ? `\0${after.entryId}` : ''}`;
+    /** 源别名连接到持久顺序，读取范围不依赖已挂载的界面元素。 */
+    const groupWhere = after
+      ? ` AND EXISTS (SELECT 1 FROM conversation_transcript_aliases AS alias JOIN conversation_transcript_entries AS entry
+      ON entry.conversation_id = alias.conversation_id AND entry.id = alias.entry_id
+      WHERE alias.conversation_id = conversation_process_items.conversation_id AND alias.source_domain = 'process'
+        AND alias.source_scope = conversation_process_items.segment_id AND alias.source_id = conversation_process_items.id
+        AND entry.removed_revision IS NULL AND entry.display_order > ?${before ? ' AND entry.display_order < ?' : ''})`
+      : '';
+    /** SQL 参数保持与授权后的边界一一对应。 */
+    const groupParams = after ? [after.order!, ...(before ? [before.order!] : [])] : [];
     const context = this.sequencePageContext({ ...input, conversationId }, pageKind, scope, {
       table: 'conversation_process_items',
       column: 'process_sequence',
-      extraWhere: kind ? ' AND turn_id = ? AND kind = ?' : ' AND turn_id = ?',
-      extraParams: kind ? [turnId, kind] : [turnId],
+      extraWhere: ` AND turn_id = ?${kind ? ' AND kind = ?' : ''}${groupWhere}`,
+      extraParams: [turnId, ...(kind ? [kind] : []), ...groupParams],
     });
     const rows = this.db.select<{
       id: string;
@@ -1368,11 +1445,11 @@ export class ConversationSnapshotV2Repository {
                        )))
                    ELSE NULL END AS presentation_json
          FROM conversation_process_items
-        WHERE conversation_id = ? AND turn_id = ?${kind ? ' AND kind = ?' : ''}
+        WHERE conversation_id = ? AND turn_id = ?${kind ? ' AND kind = ?' : ''}${groupWhere}
           AND process_sequence ${context.direction === 'tail' ? '<' : '>'} ? AND process_sequence <= ?
         ORDER BY process_sequence ${context.direction === 'tail' ? 'DESC' : 'ASC'}
         LIMIT ?`,
-      [previewCharacterLimit, context.conversationId, turnId, ...(kind ? [kind] : []), context.afterSequence, context.throughSequence, context.entryLimit + 1],
+      [previewCharacterLimit, context.conversationId, turnId, ...(kind ? [kind] : []), ...groupParams, context.afterSequence, context.throughSequence, context.entryLimit + 1],
     );
     const pairIds = rows.map((row) => conversationProcessProviderItemId(row.source_event_id));
     const toolResults = this.toolResultsByPair(context.conversationId, pairIds);
@@ -1445,6 +1522,8 @@ export class ConversationSnapshotV2Repository {
     if (!through) return emptyPage(conversationId, 'resources', throughEventSeq, this.transcript.orderEpoch(conversationId), limits);
     const after = cursor?.after ?? null;
     const rows = this.db.select<{
+      /** 原消息的规范显示身份。 */
+      owner_entry_id: string | null;
       id: string;
       turn_id: string;
       item_id: string;
@@ -1467,6 +1546,17 @@ export class ConversationSnapshotV2Repository {
       updated_at: string;
     }>(
       `SELECT id, turn_id, item_id, source_index, kind, presentation,
+              (SELECT alias.entry_id
+                 FROM conversation_transcript_aliases AS alias
+                 JOIN conversation_provider_item_states AS source
+                   ON source.conversation_id = alias.conversation_id
+                  AND source.provider_thread_id = alias.source_scope
+                  AND source.provider_item_id = alias.source_id
+                WHERE source.id = conversation_resources.item_id
+                  AND source.conversation_id = conversation_resources.conversation_id
+                  AND alias.source_domain = 'provider_item'
+                ORDER BY CASE alias.facet WHEN 'body' THEN 0 ELSE 1 END
+                LIMIT 1) AS owner_entry_id,
               CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.displayName') AS TEXT), 1, 512) ELSE NULL END AS display_name,
               CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.mimeType') AS TEXT), 1, 256) ELSE NULL END AS mime_type,
               CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.previewKind') AS TEXT), 1, 64) ELSE NULL END AS preview_kind,
@@ -1489,6 +1579,7 @@ export class ConversationSnapshotV2Repository {
       [conversationId, ...(after ? [after.createdAt, after.sourceIndex, after.id] : []), through.createdAt, through.sourceIndex, through.id, limits.entryLimit + 1],
     );
     const items = rows.map((row) => ({
+      ownerEntryId: row.owner_entry_id,
       id: row.id,
       turnId: row.turn_id,
       itemId: row.item_id,

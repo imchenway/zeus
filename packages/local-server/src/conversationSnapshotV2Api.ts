@@ -192,7 +192,7 @@ export function registerConversationSnapshotV2Api(options: ConversationSnapshotV
     async (
       request: FastifyRequest<{
         Params: TurnParams;
-        Querystring: PageQuery & { kind?: string };
+        Querystring: PageQuery & { kind?: string; afterEntryId?: string; beforeEntryId?: string };
       }>,
       reply,
     ) => {
@@ -204,6 +204,8 @@ export function registerConversationSnapshotV2Api(options: ConversationSnapshotV
           turnId: request.params.turnId,
           direction: pageDirection(request.query.direction),
           ...(request.query.kind === undefined ? {} : { kind: parseProcessKind(request.query.kind) }),
+          afterEntryId: request.query.afterEntryId,
+          beforeEntryId: request.query.beforeEntryId,
         });
       } catch (error) {
         return sendSnapshotV2Error(reply, error);

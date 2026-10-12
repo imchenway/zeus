@@ -9,9 +9,14 @@ export function inlineResourceRequestSignature(items: readonly { key: string; tu
 /** 资源元数据到会话项的投影，不持有订阅、重连或发送状态。 */
 const conversationFileIconKinds = new Set<ConversationFileIconKind>(['code', 'java', 'javascript', 'typescript', 'json', 'markdown', 'sql', 'html', 'css', 'image', 'pdf', 'spreadsheet', 'presentation', 'document', 'archive', 'file']);
 
+/** 将资源挂回原消息，线程切换与多来源别名都不改变归属。 */
 export async function attachV2ResourcesToSnapshot(snapshot: NativeConversationSnapshot, metadata: NativeConversationResourceV2Item[]): Promise<NativeConversationSnapshot> {
-  const providerThreadId = snapshot.providerThreadId;
   if (metadata.length === 0) return snapshot;
+  /** 由服务端持久身份关联历史消息，不用当前线程重算旧消息的资源身份。 */
+  const resourceItemsByEntry = Map.groupBy(
+    metadata.filter((item) => item.ownerEntryId),
+    (item) => item.ownerEntryId!,
+  );
   const resourcesByItemId = new Map<string, ConversationResource[]>();
   const projectedResources: ConversationResource[] = [];
   for (const item of metadata) {
@@ -22,30 +27,26 @@ export async function attachV2ResourcesToSnapshot(snapshot: NativeConversationSn
     resources.push(resource);
     resourcesByItemId.set(item.itemId, resources);
   }
-  const canResolveProviderStateId = Boolean(providerThreadId && globalThis.crypto?.subtle);
-  const projectedItemIds = await Promise.all(
-    snapshot.items.map(async (item) => ({
-      item,
-      providerStateId: canResolveProviderStateId && item.providerItemId ? await conversationProviderItemStateId(providerThreadId!, item.providerItemId) : null,
-    })),
-  );
+  const projectedItemIds = snapshot.items.map((item) => ({
+    item,
+    resourceItemIds: [...new Set([...(resourceItemsByEntry.get(item.transcript.placement.entryId) ?? []).map((resource) => resource.itemId), item.id])],
+  }));
   const actualDeliveryItemIds = new Set<string>();
-  for (const { item, providerStateId } of projectedItemIds) {
+  for (const { item, resourceItemIds } of projectedItemIds) {
     if (syntheticAssistantDeliverableItemId(item)) continue;
-    const resourceItemId = providerStateId ?? (resourcesByItemId.has(item.id) ? item.id : null);
-    if (resourceItemId && resourcesByItemId.get(resourceItemId)?.some((resource) => resource.delivery === 'assistant')) actualDeliveryItemIds.add(resourceItemId);
+    for (const resourceItemId of resourceItemIds) if (resourcesByItemId.get(resourceItemId)?.some((resource) => resource.delivery === 'assistant')) actualDeliveryItemIds.add(resourceItemId);
   }
   let changed = false;
   const syntheticDeliveryItemIds = new Set<string>();
-  const items = projectedItemIds.flatMap(({ item, providerStateId }) => {
+  const items = projectedItemIds.flatMap(({ item, resourceItemIds }) => {
     const syntheticItemId = syntheticAssistantDeliverableItemId(item);
     if (syntheticItemId && actualDeliveryItemIds.has(syntheticItemId)) {
       changed = true;
       return [];
     }
     if (syntheticItemId) syntheticDeliveryItemIds.add(syntheticItemId);
-    const exactItemId = providerStateId ?? syntheticItemId ?? (resourcesByItemId.has(item.id) ? item.id : null);
-    const exactResources = exactItemId ? resourcesByItemId.get(exactItemId) : undefined;
+    /** 同一正文可接收多个 Provider 别名归档的资源。 */
+    const exactResources = resourceItemIds.flatMap((id) => resourcesByItemId.get(id) ?? []);
     // 本地持久用户消息可能没有 providerItemId，而 Provider 会为同一附件生成一个或
     // 多个别名 item。此时按同轮次的耐久附件身份回接，不能退回 payload.localPath；
     // 后者在 Test 数据根、迁移或历史 Worktree 清理后不再是可授权读取入口。
@@ -109,13 +110,6 @@ function compareV2ResourceItems(left: NativeItemSnapshot, right: NativeItemSnaps
   return (left.transcript.placement.order ?? Number.MAX_SAFE_INTEGER) - (right.transcript.placement.order ?? Number.MAX_SAFE_INTEGER) || left.id.localeCompare(right.id);
 }
 
-async function conversationProviderItemStateId(providerThreadId: string, providerItemId: string): Promise<string> {
-  const source = new TextEncoder().encode(`${providerThreadId}\u0000${providerItemId}`);
-  const digest = new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', source));
-  const hex = [...digest].map((value) => value.toString(16).padStart(2, '0')).join('');
-  return `conversation_provider_item_${hex.slice(0, 32)}`;
-}
-
 function conversationResourceFromV2Metadata(snapshot: NativeConversationSnapshot, item: NativeConversationResourceV2Item): ConversationResource | null {
   const presentation = item.presentation === 'card' ? 'card' : 'inline';
   const base = {
@@ -172,7 +166,7 @@ function conversationResourcesMatchingItemAttachments(item: NativeConversationSn
   return resources.filter(
     (resource) =>
       resource.kind === 'attachment' &&
-      resource.turnId === item.turnId &&
+      resource.turnId === (item.transcript.placement.turnId ?? item.turnId) &&
       ((resource.taskPushAttachmentKey && taskPushAttachmentKeys.has(resource.taskPushAttachmentKey)) || uploadRefs.has(resource.attachmentRef) || names.has(resource.displayName)),
   );
 }

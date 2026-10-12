@@ -794,6 +794,8 @@ export interface NativeConversationProcessV2Item {
 }
 
 export interface NativeConversationResourceV2Item {
+  /** 原消息的持久显示身份，旧缓存缺失时等待资源重新读取。 */
+  ownerEntryId?: string | null;
   id: string;
   turnId: string;
   itemId: string;

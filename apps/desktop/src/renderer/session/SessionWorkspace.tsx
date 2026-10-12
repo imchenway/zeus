@@ -1,3 +1,4 @@
+import type { ConversationProcessGroup } from '@zeus/shared';
 import { ActivitySkillCatalogContext } from './SessionActivity.js';
 import { FilePreviewDialog, FilePreviewOpenContext } from '../code/FilePreview.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
@@ -258,7 +259,7 @@ export interface SessionWorkspaceActions {
   onOperateTurnChangeSet?: (changeSet: TurnChangeSet, action: 'undo' | 'reapply') => Promise<TurnChangeSetOperationResult>;
   onLoadEarlierHistory?: () => void | Promise<void>;
   /** 深历史展开时保留从头或从尾读取的明确意图。 */
-  onLoadTurnProcess?: (turnId: string, startAtBeginning?: boolean) => void | Promise<void>;
+  onLoadTurnProcess?: (turnId: string, startAtBeginning?: boolean, group?: ConversationProcessGroup) => void | Promise<void>;
   onLoadConversationResources?: () => void | Promise<void>;
   onLoadTurnArtifacts?: (turnId: string) => void | Promise<void>;
   onLoadV2Content?: (handle: string) => Promise<void>;
@@ -906,7 +907,7 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     onPermissionModeChange: (permissionMode) => settle(input.controller.setPermissionMode(permissionMode)),
     onCollaborationModeChange: (collaborationMode) => settle(input.controller.setCollaborationMode(collaborationMode)),
     onLoadEarlierHistory: () => settle(input.controller.loadEarlierHistory()),
-    onLoadTurnProcess: (turnId, startAtBeginning) => settle(input.controller.loadTurnProcess(turnId, startAtBeginning)),
+    onLoadTurnProcess: (turnId, startAtBeginning, group) => settle(input.controller.loadTurnProcess(turnId, startAtBeginning, group)),
     onLoadConversationResources: () => settle(input.controller.loadConversationResources()),
     onLoadTurnArtifacts: (turnId) => settle(input.controller.loadTurnArtifacts(turnId)),
     onLoadV2Content: (handle) => input.controller.loadV2Content(handle),

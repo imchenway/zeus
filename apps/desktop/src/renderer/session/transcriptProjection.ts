@@ -26,7 +26,9 @@ export function reuseTranscriptTurnRows(previous: readonly TranscriptTurnRow[], 
       const before = oldSegments.get(segment.key);
       return before && before.summary === segment.summary && sameReferences(before.rows, segment.rows) ? before : segment;
     });
-    return old.turnId === row.turnId && old.live === row.live && old.loadMore === row.loadMore && old.replyVisible === row.replyVisible && sameReferences(old.segments, segments) ? old : { ...row, segments };
+    return old.turnId === row.turnId && old.live === row.live && old.loadMore === row.loadMore && old.replyVisible === row.replyVisible && old.processGroup === row.processGroup && sameReferences(old.segments, segments)
+      ? old
+      : { ...row, segments };
   });
 }
 

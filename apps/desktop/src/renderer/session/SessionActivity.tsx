@@ -627,6 +627,8 @@ export function SessionTurnProcessDisclosure(props: {
   language: SessionUiLanguage;
   children: ReactNode;
   onOpen?: () => void | Promise<void>;
+  /** 目录晚于用户展开抵达时，按同一持久分组补读一次。 */
+  loadKey?: string;
   loading?: boolean;
   error?: string | null;
   /** 入口可表达整轮处理过程或补载的轮次详情。 */
@@ -655,7 +657,7 @@ export function SessionTurnProcessDisclosure(props: {
   useEffect(() => {
     if (!open || !onOpenRef.current) return;
     void Promise.resolve(onOpenRef.current()).catch(() => undefined);
-  }, [open]);
+  }, [open, props.loadKey]);
   /** 数量由当前真实条目生成，作为阶段入口的固定摘要。 */
   const countLabel = props.itemCount ? (props.language === 'zh-CN' ? `${props.itemCount} 项操作` : `${props.itemCount} ${props.itemCount === 1 ? 'operation' : 'operations'}`) : null;
   /** 轮次过程和补载详情共用同一个入口组件。 */

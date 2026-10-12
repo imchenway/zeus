@@ -1374,7 +1374,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
           displayText: '已请求继续上次中断的操作',
           delivery: 'queue',
           contextCapacityTokens: (frozenCapacity as number | null | undefined) ?? null,
-          model: typeof context.modelSourceId === 'string' ? modelRef(context.modelSourceId, context.model) : context.model,
+          // Codex 原生目录使用模型本名，只有独立模型连接使用带来源的身份。
+          model: typeof context.modelSourceId === 'string' && context.modelSourceId !== 'codex' ? modelRef(context.modelSourceId, context.model) : context.model,
           effort: typeof context.effort === 'string' ? context.effort : typeof context.thinkingLevel === 'string' ? context.thinkingLevel : undefined,
           ...(Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? { serviceTier: context.serviceTier as string | null } : {}),
           permissionMode: context.permissionMode as ConversationPermissionMode,

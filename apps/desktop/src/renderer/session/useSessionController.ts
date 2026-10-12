@@ -1,3 +1,4 @@
+import type { ConversationProcessGroup } from '@zeus/shared';
 import { restoreSessionViewCache } from './sessionHotCache.js';
 import { attachV2ResourcesToSnapshot } from './conversationResourceProjection.js';
 import { asyncMessageQuestions, formatAsyncQuestionAnswer, validateCanonicalRequestUserInputAnswers, type AsyncQuestionAnswer, type AsyncQuestionResponse } from '@zeus/shared';
@@ -281,7 +282,7 @@ export interface SessionControllerClient {
     projectId: string,
     conversationId: string,
     turnId: string,
-    options?: { cursor?: string; direction?: 'forward' | 'tail'; limit?: number; byteLimit?: number; kind?: NativeConversationProcessV2Item['kind'] },
+    options?: { cursor?: string; direction?: 'forward' | 'tail'; limit?: number; byteLimit?: number; kind?: NativeConversationProcessV2Item['kind']; afterEntryId?: string; beforeEntryId?: string },
   ): Promise<NativeConversationSnapshotV2Page<NativeConversationProcessV2Item>>;
   loadNativeConversationResourcesV2?(
     projectId: string,
@@ -437,7 +438,7 @@ export interface SessionController {
   /** 导航只补齐指定轮次模型正文，处理过程继续由展开入口读取。 */
   loadNavigationTurn(turnId: string): Promise<void>;
   /** 仅首次读取采用指定方向；已有详情始终沿原游标补齐。 */
-  loadTurnProcess(turnId: string, startAtBeginning?: boolean): Promise<void>;
+  loadTurnProcess(turnId: string, startAtBeginning?: boolean, group?: ConversationProcessGroup): Promise<void>;
   loadConversationResources(): Promise<void>;
   loadTurnArtifacts(turnId: string): Promise<void>;
   loadV2Content(handle: string): Promise<void>;
@@ -2816,7 +2817,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
   }
 
   /** 展开只补齐操作详情，不借过程补读改变主消息列表和当前状态。 */
-  async function loadTurnProcessV2(turnIdentity: string, startAtBeginning = false): Promise<void> {
+  async function loadTurnProcessV2(turnIdentity: string, startAtBeginning = false, group?: ConversationProcessGroup): Promise<void> {
     const loadProcess = options.client.loadNativeConversationProcessV2;
     const generation = connectionToken;
     /** 完整目录为深历史提供准确身份，导航与展开不能按别名各自读取。 */
@@ -2826,8 +2827,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
     // Snapshot V2 的固定首屏只携带最近闭合轮次；更早模型历史仍保留本地 turn id，
     // 服务端过程入口同时接受本地和 Provider 身份，因此旧轮次可以直接按历史身份读取。
     const localTurnId = turn.id;
-    const pagingKey = turnReadPagingKey(current, turn);
-    const currentProcessPage = turnReadPaging(current, turn, 'processByTurn');
+    const pagingKey = group?.id ?? turnReadPagingKey(current, turn);
+    const currentProcessPage = group ? current.v2Paging.processByTurn[group.id] : turnReadPaging(current, turn, 'processByTurn');
     /** 失败和中断需要优先看到末尾错误上下文；只有正常完成态切换为从头阅读。 */
     const preferredDirection = startAtBeginning || turn?.status === 'completed' ? 'forward' : 'tail';
     /** 已存在的连续范围沿原方向续读；首次完成态直接从最早一页开始。 */
@@ -2855,6 +2856,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     );
     /** 过程响应只合入原轮次；正文历史由独立入口推进。 */
     const settledProcess = await loadProcess(options.projectId, options.conversationId, localTurnId, {
+      ...(group ? { afterEntryId: group.afterEntryId, ...(group.beforeEntryId ? { beforeEntryId: group.beforeEntryId } : {}) } : {}),
       ...(currentProcessPage?.nextCursor ? { cursor: currentProcessPage.nextCursor } : {}),
       // 首次读取与后续页使用同一小批量预算，避免长轮次一次挂载大量内容。
       direction,
