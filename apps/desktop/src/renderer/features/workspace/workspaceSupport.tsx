@@ -1,4 +1,4 @@
-import { temporaryWorkspaceId } from '@zeus/shared';
+import { normalizeInputSuggestionSettings, temporaryWorkspaceId } from '@zeus/shared';
 import { usePresenceOpen } from '../../ui/MotionPresence.js';
 import { retainInputFocus } from '../../ui/retainInputFocus.js';
 import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
@@ -607,6 +607,7 @@ export type AppShellSettingsSavePayload = Pick<
   | 'multiWindowEnabled'
   | 'backgroundModeEnabled'
   | 'desktopNotificationsEnabled'
+  | 'inputSuggestions'
   | 'openAtLoginEnabled'
   | 'autoUpdateChannel'
   | 'defaultProjectId'
@@ -942,6 +943,7 @@ export function normalizeRendererAppShellSettings(settings: AppShellSettings): A
   const taskManagementStatusTemplate = normalizeTaskManagementStatusConfig(settings.taskManagementStatusTemplate, defaultTaskManagementStatusConfig);
   return {
     ...settings,
+    inputSuggestions: normalizeInputSuggestionSettings(settings.inputSuggestions),
     mainLayout: settings.mainLayout === 'current' ? 'current' : 'upstream',
     taskBranchPrefix: normalizeTaskBranchPrefix(settings.taskBranchPrefix) ?? defaultTaskBranchPrefix,
     collapsedProjectIds: Array.isArray(settings.collapsedProjectIds) ? [...new Set(settings.collapsedProjectIds.filter((id): id is string => typeof id === 'string' && Boolean(id.trim())).map((id) => id.trim()))].slice(0, 100) : [],
@@ -971,6 +973,7 @@ export function toAppShellSettingsSavePayload(settings: AppShellSettings, taskMa
     multiWindowEnabled: settings.multiWindowEnabled,
     backgroundModeEnabled: settings.backgroundModeEnabled,
     desktopNotificationsEnabled: settings.desktopNotificationsEnabled,
+    inputSuggestions: settings.inputSuggestions,
     openAtLoginEnabled: settings.openAtLoginEnabled,
     autoUpdateChannel: settings.autoUpdateChannel,
     defaultProjectId: settings.defaultProjectId,

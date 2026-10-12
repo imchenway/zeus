@@ -3,7 +3,7 @@ import type { ProjectRecord } from '../projects/projectContracts.js';
 import type { RuntimeSettings } from '../runtime/runtimeContracts.js';
 import type { TaskEventRecord, TaskRecord, TaskTableColumnPreferences, TaskTableEnumSortOrders, TaskTemplateRecord } from '../tasks/taskContracts.js';
 import type { TelegramNotificationSettings, TelegramSecuritySettings } from '../telegram/telegramContracts.js';
-import type { NetworkProxySettings, SidebarConversationFilters } from '@zeus/shared';
+import type { InputSuggestionSettings, NetworkProxySettings, SidebarConversationFilters } from '@zeus/shared';
 
 export interface AppShellSettings {
   /** 完全退出并重开应用后使用的网络代理。 */
@@ -21,6 +21,8 @@ export interface AppShellSettings {
   multiWindowEnabled: boolean;
   backgroundModeEnabled: boolean;
   desktopNotificationsEnabled: boolean;
+  /** 回复结束后的灰字建议使用独立开关和专用模型。 */
+  inputSuggestions?: InputSuggestionSettings;
   openAtLoginEnabled: boolean;
   autoUpdateChannel: 'manual';
   defaultProjectId: string | null;
@@ -63,6 +65,7 @@ export type UpdateAppShellSettingsRequest = Partial<
     | 'multiWindowEnabled'
     | 'backgroundModeEnabled'
     | 'desktopNotificationsEnabled'
+    | 'inputSuggestions'
     | 'openAtLoginEnabled'
     | 'autoUpdateChannel'
   >

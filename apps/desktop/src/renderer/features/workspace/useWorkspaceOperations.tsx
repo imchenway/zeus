@@ -1791,6 +1791,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           language={appShellSettings.appLanguage}
           client={props.nativeConversationClient}
           controllerEnabled={false}
+          inputSuggestionSettings={appShellSettings.inputSuggestions}
           localState={pending.session}
           conversation={pending.choice}
           task={nativeSessionTask}
@@ -1853,6 +1854,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           language={appShellSettings.appLanguage}
           client={props.nativeConversationClient}
           controllerEnabled={!selectedTaskModelPushOperation || (selectedTaskModelPushOperation.status === 'accepted' && taskModelPushHasRealChoice(selectedTaskModelPushOperation))}
+          inputSuggestionSettings={appShellSettings.inputSuggestions}
           localState={selectedTaskModelPushOperation?.session}
           localActions={selectedTaskModelPushOperation ? taskModelPushWorkspaceActions(selectedTaskModelPushOperation, onOpenTaskDetail) : undefined}
           conversation={selectedNativeConversation}

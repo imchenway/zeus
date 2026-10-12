@@ -251,6 +251,8 @@ function realtimeBufferBudgetError(kind: RealtimeBufferKind): Error {
 }
 
 export interface SessionControllerClient {
+  /** 独立生成下一条输入建议；旧只读客户端可省略此能力。 */
+  generateInputSuggestion?(projectId: string, conversationId: string, completedTurnId: string, signal: AbortSignal): Promise<import('@zeus/shared').InputSuggestionResult>;
   /** 独立读取全历史目录，不参与事件消费。 */
   loadConversationNavigation?(projectId: string, conversationId: string): Promise<ConversationNavigationSnapshot>;
   loadCodexConversationCapabilities?(projectId: string): Promise<CodexConversationCapabilities>;
