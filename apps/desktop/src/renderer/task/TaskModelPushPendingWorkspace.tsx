@@ -113,28 +113,38 @@ export function createTaskModelPushPendingState(input: {
   };
 }
 
+/** 重试保留原消息身份并清除上一轮失败展示，避免连接期间仍显示旧错误。 */
 export function retryTaskModelPushPendingState(pending: TaskModelPushPendingState): TaskModelPushPendingState {
   return {
     ...pending,
+    session: sessionReducer(pending.session, { type: 'send_accepted', clientUserMessageId: pending.request.clientUserMessageId, status: 'pending' }),
     status: 'submitting',
     error: null,
     retryProgress: null,
   };
 }
 
-/** 失败保留原因；结果未知、登录和配置问题不提供默认重试。 */
+/** 失败原因归属原消息；配置装载明确拒绝时允许用户修正后手动重试。 */
 export function failTaskModelPushPendingState(pending: TaskModelPushPendingState, message: string, error?: unknown): TaskModelPushPendingState {
+  /** 原始诊断与用户摘要共用同一份错误链。 */
   const cause = userFacingErrorCause(error ?? message);
+  /** 仅明确未执行的配置拒绝和既有安全重试原因开放重试。 */
   const explanation = describeUserFacingError(cause);
-  const canRetry = explanation.action === 'retry' && !explanation.outcomeUnconfirmed;
+  /** 配置加载失败发生在模型请求之前，不把未知送达放行成再次发送。 */
+  const canRetry = (explanation.action === 'retry' || explanation.message.startsWith('failed to load configuration:')) && !explanation.outcomeUnconfirmed;
+  /** 消息内联反馈与工作面状态保存相同的诊断。 */
+  const deliveryError = { message, code: 'ZEUS_TASK_MODEL_PUSH_CREATION_FAILED', recoveryRequired: false, retryable: canRetry, cause };
+  /** 失败只更新时间，不改变原消息位置。 */
   const failedAt = new Date().toISOString();
+  /** 只标记本次任务首发消息，后续消息不继承该错误。 */
   const failedItems = Object.fromEntries(
     Object.entries(pending.session.items).map(([key, item]) => [
       key,
       item.clientUserMessageId === pending.request.clientUserMessageId
         ? {
             ...item,
-            status: 'failed',
+            status: explanation.outcomeUnconfirmed ? 'unconfirmed' : 'failed',
+            payload: { ...item.payload, deliveryError },
             updatedAt: failedAt,
           }
         : item,
@@ -165,13 +175,7 @@ export function failTaskModelPushPendingState(pending: TaskModelPushPendingState
         state: { type: 'idle' },
         submissions: [],
       },
-      error: {
-        message,
-        code: 'ZEUS_TASK_MODEL_PUSH_CREATION_FAILED',
-        recoveryRequired: false,
-        retryable: canRetry,
-        cause,
-      },
+      error: deliveryError,
     },
     status: 'failed',
     error: message,
@@ -181,7 +185,7 @@ export function failTaskModelPushPendingState(pending: TaskModelPushPendingState
   };
 }
 
-/** 真实身份接管读写目标并确认首条任务消息，稳定导航身份和当前工作面内容保持不变。 */
+/** 持久会话身份接管读写；模型尚未连接时由控制器读取原提交失败并提供安全重试。 */
 export function attachTaskModelPushChoice(pending: TaskModelPushPendingState, choice: NativeConversationChoice): TaskModelPushPendingState {
   const projectedChoice = { ...choice, navigationId: pending.navigationId, taskPushCreating: true };
   return {
@@ -190,7 +194,7 @@ export function attachTaskModelPushChoice(pending: TaskModelPushPendingState, ch
     session: sessionReducer(remapPendingSession(pending.session, projectedChoice), {
       type: 'send_accepted',
       clientUserMessageId: pending.request.clientUserMessageId,
-      status: 'active',
+      status: choice.providerThreadId ? 'active' : 'pending',
     }),
     status: 'submitting',
     error: null,
@@ -201,7 +205,7 @@ export function attachTaskModelPushChoice(pending: TaskModelPushPendingState, ch
 /** 后续排队消息发送完成后结束任务推送过渡态。 */
 export function acceptTaskModelPushPendingState(pending: TaskModelPushPendingState): TaskModelPushPendingState {
   if (!taskModelPushHasRealChoice(pending)) {
-    throw new Error('Task model push cannot be accepted before a real conversation and provider thread are attached.');
+    throw new Error('Task model push cannot be accepted before a durable conversation is attached.');
   }
   return {
     ...pending,
@@ -221,8 +225,9 @@ export function updateTaskModelPushRetryProgress(pending: TaskModelPushPendingSt
   return pending.status === 'submitting' ? { ...pending, retryProgress } : pending;
 }
 
+/** 持久会话即可接管失败恢复，不把模型线程创建成功作为读取原消息的前提。 */
 export function taskModelPushHasRealChoice(pending: TaskModelPushPendingState): boolean {
-  return pending.choice.id !== pending.navigationId && Boolean(pending.choice.providerThreadId);
+  return pending.choice.id !== pending.navigationId;
 }
 
 /** 同一次推送只投影一个入口，临时导航身份不能覆盖已接纳的真实会话。 */

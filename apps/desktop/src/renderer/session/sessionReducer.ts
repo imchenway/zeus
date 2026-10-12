@@ -1080,6 +1080,7 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
         conversationState: 'active_prework',
       };
     }
+    case 'conversation.turn.retrying':
     case 'conversation.turn.completed': {
       const turnId = stringValue(payload.turnId);
       if (!turnId) return base;
@@ -1134,6 +1135,8 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
         turnsByProviderId: { ...base.turnsByProviderId, [canonicalTurnId]: turn },
         transcriptRevision: base.transcriptRevision + 1,
       };
+      // 自动恢复只封存上一次尝试，保留停止入口和正在连接状态。
+      if (event.type === 'conversation.turn.retrying') return { ...nextState, conversationState: 'active_prework' };
       if (!base.activeTurnId || !turnIdentities.has(base.activeTurnId)) return nextState;
       return {
         ...nextState,

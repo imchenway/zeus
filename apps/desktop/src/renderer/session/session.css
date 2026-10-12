@@ -1533,6 +1533,25 @@
   }
 }
 
+/* 发送状态、错误摘要和重试始终同排；窄栏只收缩摘要，详情仍可打开。 */
+.session-codex-parity-v1 .session-message-delivery-feedback[data-state='failed'] .session-turn-failure-message,
+.session-codex-parity-v1 .session-message-delivery-feedback[data-state='unconfirmed'] .session-turn-failure-message {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+/* 状态名称保持完整，长错误由中间列截断。 */
+.session-codex-parity-v1 .session-message-delivery-status {
+  white-space: nowrap;
+}
+
+/* 重试固定在行尾，不受其他会话提示的窄栏换行规则影响。 */
+.session-codex-parity-v1 .session-message-delivery-status ~ .session-message-delivery-actions {
+  grid-column: 3;
+  flex-wrap: nowrap;
+  margin-block-start: 0;
+}
+
 /* 目标摘要沿用输入框的宽度和两侧留白，避免分栏时独立撑满。 */
 .session-codex-parity-v1 .session-goal-rail {
   box-sizing: border-box;

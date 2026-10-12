@@ -1,3 +1,4 @@
+import { createModelResponseDeadline, isRetryableModelResponseFailure, modelResponseRetryDelay, modelResponseRetryPolicy } from '@zeus/ai-runtime';
 import { type AsyncQuestionAnswer } from '@zeus/shared';
 import { type CodexAppServerEvent, type CodexServerRequestResponse, type CodexThreadGoal, modelRef, parseModelRef } from '@zeus/ai-runtime';
 import { buildTaskPushInputParts, type CodexAdditionalContextEntry, parseCanonicalRequestUserInputQuestions, type TaskPushMessageLayout, validateCanonicalRequestUserInputAnswers } from '@zeus/shared';
@@ -170,8 +171,32 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   const autoResolutionTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** 同一会话只运行一条回复流恢复链，避免重复事件制造并发轮询。 */
   const providerStreamRecoveryRuns = new Map<string, Promise<void>>();
-  /** 同轮次连接预算跨传输回退累计，不能因 WebSocket 改为 HTTP 重新获得五次机会。 */
-  const providerConnectionRetries = new Map<string, { providerTurnId: string; attempt: number; nativeAttempt: number; failure: Record<string, unknown> | null }>();
+  /** Zeus 持有恢复预算；换原生轮次仍属于同一次请求恢复，不重新获得预算。 */
+  const providerConnectionRetries = new Map<
+    string,
+    {
+      /** 当前正在尝试的原生轮次。 */
+      providerTurnId: string;
+      /** 已安排的 Zeus 恢复次数。 */
+      attempt: number;
+      /** 本次响应故障，确认停止后再决定是否恢复。 */
+      failure: Record<string, unknown> | null;
+      /** 上一次已结束，正在等待下一次续接。 */
+      retrying: boolean;
+      /** 用户停止、宿主关闭或发送不确定后禁止续接。 */
+      cancelled: boolean;
+      /** 最终结果需要结算的前序轮次身份。 */
+      sourceTurns: Set<string>;
+      /** 释放当前模型响应截止计时。 */
+      stopDeadline: () => void;
+      /** 尚未触发的指数退避计时。 */
+      retryTimer: ReturnType<typeof setTimeout> | null;
+      /** 并行工具全部结束才恢复响应计时，长工具不消耗网络预算。 */
+      activeTools: Set<string>;
+      /** 停止和关闭要等待正在准备的续接，不能遗留后台写入。 */
+      dispatching: Promise<void> | null;
+    }
+  >();
   // 敏感回答不能落入 submission JSON；仅在当前宿主内存中保留到新 turn 被 app-server 接受。
   const volatileSubmissionText = new Map<string, string>();
   let closing = false;
@@ -244,7 +269,27 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     },
     handleEvent: handleProviderEvent,
     handleEventError: safelyHandleProviderEventError,
-    handleDynamicToolCall: (event) => (closed ? Promise.resolve() : handleDynamicToolRequest(event)),
+    async handleDynamicToolCall(event) {
+      if (closed) return;
+      /** Zeus 工具脱离事件串行链，必须显式暂停模型响应计时。 */
+      const params = isRecord(event.params) ? event.params : {};
+      const conversation = typeof params.threadId === 'string' ? options.conversations.getByProviderThreadId(params.threadId) : undefined;
+      const turnId = providerTurnIdFrom(params);
+      const retry = conversation ? providerConnectionRetries.get(conversation.id) : undefined;
+      const toolKey = `dynamic:${String(event.requestId)}`;
+      if (retry?.providerTurnId === turnId) {
+        retry.activeTools.add(toolKey);
+        retry.stopDeadline();
+      }
+      try {
+        await handleDynamicToolRequest(event);
+      } finally {
+        if (conversation && retry && retry.providerTurnId === turnId && typeof params.threadId === 'string' && turnId) {
+          retry.activeTools.delete(toolKey);
+          if (retry.activeTools.size === 0 && !retry.failure && !retry.cancelled) observeProviderResponseWait(conversation.id, params.threadId, turnId);
+        }
+      }
+    },
   });
   const externalAnswerRecovery = createCodexExternalRequestAnswerRecovery({
     conversations: options.conversations,
@@ -268,6 +313,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const current = options.submissions.getById(submissionId);
     if (current && options.conversations.getRecordById(current.conversationId)?.archived) {
       throw coordinatorError('ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED', '会话已归档，请先恢复会话再继续。');
+    }
+    if (current?.idempotencyKey.startsWith('model-response-retry:') && providerConnectionRetries.get(current.conversationId)?.cancelled) {
+      if (!current.providerTurnId) options.submissions.updateStatus(current.id, 'cancelled', { resolvedAt: now() });
+      throw coordinatorError('ZEUS_MODEL_RETRY_CANCELLED', '自动重试已停止。');
     }
     if (!current || current.providerTurnId || (current.status !== 'queued' && current.status !== 'dispatching')) {
       throw coordinatorError('ZEUS_NATIVE_SUBMISSION_NOT_QUEUED', '这条消息已取消、替换或离开待发送状态，不会再次发送。');
@@ -1033,7 +1082,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     const failed = failedTurnResults.get(key);
     if (failed) return Promise.reject(failed);
     const persistedTurn = options.turns.listByConversation(input.conversationId).find((turn) => turn.providerTurnId === input.providerTurnId);
-    if (persistedTurn?.status === 'failed') return Promise.reject(failedTurnErrorFromRecord(persistedTurn));
+    if (persistedTurn?.status === 'failed' && !providerConnectionRetries.get(input.conversationId)?.sourceTurns.has(input.providerTurnId)) return Promise.reject(failedTurnErrorFromRecord(persistedTurn));
     const timeoutMs = input.timeoutMs ?? 60_000;
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return Promise.reject(coordinatorError('ZEUS_CODEX_TURN_RESULT_TIMEOUT_INVALID', 'Native turn result timeout must be a positive number.'));
     return new Promise((resolveResult, rejectResult) => {
@@ -1521,22 +1570,33 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   }
 
   function rejectTurnResultWaiters(key: string, error: Error): void {
-    const waiters = turnResultWaiters.get(key) ?? [];
-    turnResultWaiters.delete(key);
-    for (const waiter of waiters) {
-      clearTimeout(waiter.timer);
-      waiter.reject(error);
+    /** 续接最终失败同时结束原请求的等待，不让后台调用空等超时。 */
+    const retry = [...providerConnectionRetries.entries()].find(([id, state]) => `${id}:${state.providerTurnId}` === key);
+    const keys = new Set([key, ...(retry ? [...retry[1].sourceTurns].map((id) => `${retry[0]}:${id}`) : [])]);
+    for (const target of keys) {
+      failedTurnResults.set(target, Object.assign(error, { code: (error as { code?: string }).code ?? 'ZEUS_MODEL_RESPONSE_FAILED' }));
+      for (const waiter of turnResultWaiters.get(target) ?? []) {
+        clearTimeout(waiter.timer);
+        waiter.reject(error);
+      }
+      turnResultWaiters.delete(target);
     }
   }
 
   function resolveTurnResult(result: NativeTurnResult): void {
-    const key = `${result.conversationId}:${result.providerTurnId}`;
-    completedTurnResults.set(key, result);
-    for (const waiter of turnResultWaiters.get(key) ?? []) {
-      clearTimeout(waiter.timer);
-      waiter.resolve(result);
+    /** 原请求与所有自动续接共享最终答案，原生轮次身份仍各自留存。 */
+    const retry = providerConnectionRetries.get(result.conversationId);
+    const turnIds = new Set([result.providerTurnId, ...(retry?.providerTurnId === result.providerTurnId ? retry.sourceTurns : [])]);
+    for (const providerTurnId of turnIds) {
+      const key = `${result.conversationId}:${providerTurnId}`;
+      const settled = { ...result, providerTurnId };
+      completedTurnResults.set(key, settled);
+      for (const waiter of turnResultWaiters.get(key) ?? []) {
+        clearTimeout(waiter.timer);
+        waiter.resolve(settled);
+      }
+      turnResultWaiters.delete(key);
     }
-    turnResultWaiters.delete(key);
   }
 
   function projectProviderUserMessage(
@@ -1682,7 +1742,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
     for (const submission of candidates) {
       const exactProviderMessage = hasExactProviderUserMessage(conversation, submission, providerTurnId);
-      const delivered = submissionDeliveryConfirmedForTurn(submission, turn, exactProviderMessage);
+      /** 内部续接不显示用户气泡，改用已持久保存的精确 turn/start 接纳回执确认送达。 */
+      const acceptedReceipt =
+        submission.id === turn.clientSubmissionId &&
+        options.commandDeliveries
+          .getByScope('submission', submission.id)
+          ?.attempts.some((attempt) => attempt.outcome === 'accepted' && attempt.receipt?.nativeSessionId === turn.providerThreadId && attempt.receipt.nativeTurnId === providerTurnId);
+      const delivered = submissionDeliveryConfirmedForTurn(submission, turn, exactProviderMessage) || acceptedReceipt === true;
       if (!delivered) {
         markSubmissionRecoveryRequired(submission, coordinatorError('ZEUS_NATIVE_SUBMISSION_DELIVERY_UNCONFIRMED', 'The provider turn ended without exact evidence that this user message was received.'));
         recoveryRequired.push(submission);
@@ -1810,6 +1876,36 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   async function interruptTurn(input: InterruptNativeTurnInput): Promise<NativeAcceptedOperation> {
     assertOpen();
     const conversation = requireConversation(input.conversationId);
+    /** 用户停止优先撤销尚未开始的自动恢复。 */
+    const retry = providerConnectionRetries.get(conversation.id);
+    if (retry && (retry.providerTurnId === input.providerTurnId || retry.sourceTurns.has(input.providerTurnId))) {
+      retry.cancelled = true;
+      retry.stopDeadline();
+      if (retry.retryTimer) clearTimeout(retry.retryTimer);
+      await retry.dispatching;
+      // 点击停止时可能正好换到下一次尝试，只在同一恢复链中转交目标。
+      input = { ...input, providerTurnId: retry.providerTurnId };
+      const stoppedTurn = options.turns.getByProvider(requireString(conversation.providerThreadId, 'provider thread id'), input.providerTurnId);
+      if (stoppedTurn && ['failed', 'interrupted'].includes(stoppedTurn.status)) {
+        options.turns.upsert({ ...stoppedTurn, status: 'interrupted', error: null, completedAt: now(), updatedAt: now() });
+        retry.retrying = false;
+        resolveTurnResult({ conversationId: conversation.id, providerThreadId: requireString(conversation.providerThreadId, 'provider thread id'), providerTurnId: input.providerTurnId, status: 'interrupted', answer: '' });
+        runStates.set(conversation.id, { type: 'idle' });
+        options.conversations.bindProvider(conversation.id, { providerId: 'codex', providerThreadId: requireString(conversation.providerThreadId, 'provider thread id'), providerModel: conversation.providerModel, providerState: 'ready' });
+        providerConnectionRetries.delete(conversation.id);
+        options.broadcast('conversation.transport.changed', { conversationId: conversation.id, recoveryState: 'idle', reconnectAttempt: 0, reconnectAttempts: modelResponseRetryPolicy.maxRetries });
+        await persist();
+        options.broadcast('conversation.turn.completed', {
+          conversationId: conversation.id,
+          providerThreadId: conversation.providerThreadId,
+          providerTurnId: input.providerTurnId,
+          status: 'interrupted',
+          completedAt: now(),
+          notificationEligible: false,
+        });
+        return { operationId: operationId(), conversationId: conversation.id, submissionId: '', providerThreadId: conversation.providerThreadId, providerTurnId: input.providerTurnId, status: 'interrupted' };
+      }
+    }
     const state = runStates.get(conversation.id) ?? inferRunState(conversation);
     const recoverableMissingInteraction = state.type === 'paused' && state.reason === 'interaction_authority_missing';
     if (state.type !== 'active' && state.type !== 'waiting' && !recoverableMissingInteraction) throw coordinatorError('ZEUS_NATIVE_TURN_NOT_ACTIVE', 'No active Codex native turn to interrupt.');
@@ -2327,6 +2423,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
           providerState: 'active',
         });
         runStates.set(conversation.id, { type: 'active', turnId: turn.providerTurnId, phase: 'prework' });
+        /** 最后一个人工问题已答复，下一次模型响应重新使用一分钟窗口。 */
+        const retry = providerConnectionRetries.get(conversation.id);
+        if (retry && retry.activeTools.size === 0 && !retry.cancelled && !retry.failure) observeProviderResponseWait(conversation.id, turn.providerThreadId, turn.providerTurnId);
       }
     }
     await persist();
@@ -2971,6 +3070,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   }
 
   const { reconcilePersistedTerminalTurnSubmissions, reconcileProviderTurnsSinceCheckpoint, projectedProviderThreadSnapshot, reconcileConversationSnapshot } = createCodexProviderHistoryProjection({
+    isProviderConnectionRetryPending: (conversationId, providerTurnId) => {
+      const retry = providerConnectionRetries.get(conversationId);
+      return Boolean(retry && !retry.cancelled && retry.sourceTurns.has(providerTurnId));
+    },
     failedTurnResults,
     hasExactProviderUserMessage,
     isSteeringSubmission,
@@ -3021,47 +3124,133 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     requestQueueDrain,
   });
 
-  /** 官方重试事件负责退避；这里记录进度并限制跨传输回退的总次数。 */
+  /** 新轮次接入统一截止时间；恢复轮次继承同一预算和等待结果的原始身份。 */
+  function observeProviderResponseWait(conversationId: string, providerThreadId: string, providerTurnId: string): void {
+    if (closing || closed) return;
+    /** 新请求创建预算，自动续接保留旧预算。 */
+    let current = providerConnectionRetries.get(conversationId);
+    if (!current) {
+      current = { providerTurnId, attempt: 0, failure: null, retrying: false, cancelled: false, sourceTurns: new Set(), stopDeadline: () => undefined, retryTimer: null, activeTools: new Set(), dispatching: null };
+      providerConnectionRetries.set(conversationId, current);
+    }
+    current.providerTurnId = providerTurnId;
+    current.stopDeadline();
+    current.stopDeadline = createModelResponseDeadline(() => {
+      void reportProviderConnectionRetry(conversationId, providerThreadId, providerTurnId, { code: 'ZEUS_MODEL_RESPONSE_TIMEOUT', message: '模型响应等待超过一分钟。' }).catch((error) => {
+        // 中断没有确认时绝不续发；保留错误并交给既有只读恢复入口。
+        markConversationRecoveryRequired(conversationId, error);
+        void persist();
+      });
+    });
+  }
+
+  /** 供应商连接失败后由 Zeus 停止旧轮次，收到真实终态才允许续接。 */
   async function reportProviderConnectionRetry(conversationId: string, providerThreadId: string, providerTurnId: string, error: Record<string, unknown>): Promise<void> {
-    /** 只有同一个真实活动轮次才能更新连接计数。 */
-    const turn = options.turns.getByProvider(providerThreadId, providerTurnId);
-    if (!turn || !['running', 'waiting'].includes(turn.status)) return;
-    /** 首次 WebSocket 重试可能不发通知，使用官方文案中的计数补齐。 */
-    const nativeAttempt = Number(typeof error.message === 'string' ? error.message.match(/Reconnecting.*?(\d+)\/\d+/iu)?.[1] : 0) || 1;
-    /** 原轮次内的传输回退不重置预算，其他轮次不会继承旧计数。 */
-    const previous = providerConnectionRetries.get(conversationId);
-    /** 网络连续失败时才累计；收到真实输出后会清空此记录。 */
-    const current = previous?.providerTurnId === providerTurnId ? previous : undefined;
-    if (current?.failure) return;
-    /** 原生计数回退代表换传输，仍只消耗当前会话的剩余次数。 */
-    const attempt = (current?.attempt ?? 0) + (nativeAttempt > (current?.nativeAttempt ?? 0) ? nativeAttempt - (current?.nativeAttempt ?? 0) : 1);
-    if (attempt > providerStreamRecoveryDelaysMs.length) {
-      /** 中断的产品原因保留到 Provider 返回真实终态，不提前伪造轮次结束。 */
-      const failure = { code: 'ZEUS_SESSION_CONNECTION_RETRIES_EXHAUSTED', message: '连接重试五次均失败，会话已停止。请检查网络后重试。', providerError: error };
-      providerConnectionRetries.set(conversationId, { providerTurnId, attempt: 5, nativeAttempt, failure });
+    /** 迟到事件和用户停止都不能重新启动恢复。 */
+    const current = providerConnectionRetries.get(conversationId);
+    if (closing || closed || !current || current.providerTurnId !== providerTurnId || current.cancelled || current.failure) return;
+    /** 工具错误不从这里重放，只有模型响应故障可消费恢复预算。 */
+    current.failure = { code: 'ZEUS_MODEL_RESPONSE_FAILED', ...error };
+    current.stopDeadline();
+    try {
       await executeTurnCommand({
         operation: 'turn_interrupt',
         conversationId,
         threadId: providerThreadId,
         turnId: providerTurnId,
-        commandKey: `connection-retry-limit:${providerTurnId}`,
+        commandKey: `connection-retry-stop:${providerTurnId}`,
         requestIdentity: { threadId: providerThreadId, turnId: providerTurnId },
         invoke: (traceIdentity) => options.manager.interruptTurn({ threadId: providerThreadId, turnId: providerTurnId, traceIdentity }),
       });
-      return;
+    } catch (error) {
+      current.cancelled = true;
+      throw error;
     }
-    providerConnectionRetries.set(conversationId, { providerTurnId, attempt, nativeAttempt, failure: null });
-    options.broadcast('conversation.transport.changed', { conversationId, providerThreadId, providerTurnId, recoveryState: 'reconnecting', reconnectAttempt: attempt, reconnectAttempts: 5 });
   }
 
-  /** 真实输出或终态结束连接提示，同时交回预算耗尽时的停止原因。 */
-  function finishProviderConnectionRetry(conversationId: string, providerThreadId: string, providerTurnId: string, terminal = true): { attempt: number; failure: Record<string, unknown> | null } | undefined {
-    /** 迟到的旧轮次不能清除新轮次的连接提示。 */
+  /** 真实终态是续发的唯一入口；自然完成和用户停止优先于网络恢复。 */
+  function finishProviderConnectionRetry(
+    conversationId: string,
+    providerThreadId: string,
+    providerTurnId: string,
+    terminal = true,
+    error?: Record<string, unknown>,
+    status?: string,
+  ): { attempt: number; failure: Record<string, unknown> | null; retrying: boolean } | undefined {
+    /** 部分文字不代表一次模型请求结束，不能清空次数或延长一分钟窗口。 */
     const current = providerConnectionRetries.get(conversationId);
-    if (current?.providerTurnId !== providerTurnId || (!terminal && current.failure)) return undefined;
-    providerConnectionRetries.delete(conversationId);
-    options.broadcast('conversation.transport.changed', { conversationId, providerThreadId, providerTurnId, recoveryState: 'idle', reconnectAttempt: 0, reconnectAttempts: 5 });
+    if (!current || current.providerTurnId !== providerTurnId || !terminal) return undefined;
+    current.stopDeadline();
+    current.failure = status === 'completed' || current.cancelled ? null : (current.failure ?? error ?? null);
+    current.retrying = Boolean(current.failure && isRetryableModelResponseFailure(current.failure) && current.attempt < modelResponseRetryPolicy.maxRetries && !closing);
+    if (current.retrying) {
+      current.sourceTurns.add(providerTurnId);
+      current.attempt += 1;
+    } else if (current.failure && isRetryableModelResponseFailure(current.failure) && current.attempt >= modelResponseRetryPolicy.maxRetries) {
+      current.failure = { code: 'ZEUS_SESSION_CONNECTION_RETRIES_EXHAUSTED', message: '连接重试五次均失败，会话已停止。请检查网络后重试。', providerError: current.failure };
+    }
+    options.broadcast('conversation.transport.changed', {
+      conversationId,
+      providerThreadId,
+      providerTurnId,
+      recoveryState: current.retrying ? 'reconnecting' : 'idle',
+      reconnectAttempt: current.retrying ? current.attempt : 0,
+      reconnectAttempts: modelResponseRetryPolicy.maxRetries,
+    });
     return current;
+  }
+
+  /** 终态投影保存后才安排续接，避免在事件处理链里等待自己的下一条回执。 */
+  function scheduleProviderResponseRetry(conversationId: string): void {
+    /** 一条会话只能有一个退避计时器。 */
+    const current = providerConnectionRetries.get(conversationId);
+    if (!current?.retrying || current.retryTimer || current.cancelled || closing) return;
+    current.retryTimer = setTimeout(() => {
+      current.retryTimer = null;
+      /** 纳入宿主关闭的等待集合，旧任务不能在关闭后继续写入。 */
+      const run = (async () => {
+        if (closing || current.cancelled || providerConnectionRetries.get(conversationId) !== current) return;
+        /** 原线程和冻结设置继续使用，禁止复制原消息或重新执行已完成工具。 */
+        const conversation = requireConversation(conversationId);
+        /** 停止未被原生终态确认时，永远不走此发送入口。 */
+        const previousTurn = options.turns.getByProvider(requireString(conversation.providerThreadId, 'provider thread id'), current.providerTurnId);
+        if (!previousTurn || !['failed', 'interrupted'].includes(previousTurn.status)) throw coordinatorError('ZEUS_NATIVE_PROVIDER_STATE_UNCONFIRMED', '上次请求尚未确认停止，自动重试已停止。');
+        /** 每个自动尝试有稳定身份，重入不能创建第二次写入。 */
+        const identity = `model-response-retry:${[...current.sourceTurns][0]}:${current.attempt}`;
+        /** 延续原轮次权限和模型，不读取用户正在编辑的下轮设置。 */
+        const previousSubmission = previousTurn.clientSubmissionId ? options.submissions.getById(previousTurn.clientSubmissionId) : undefined;
+        /** 恢复属于原请求，不改变工作区或执行权限。 */
+        const context = previousSubmission ? contextFromSubmission(previousSubmission) : (contexts.get(conversationId) ?? contextFromConversation(conversation));
+        const submission = createSubmission(conversationId, '请从上次连接失败的中断处继续完成我的请求。先检查已经完成的操作，避免重复执行。', { idempotencyKey: identity, clientUserMessageId: identity, internalOperation: true }, context);
+        options.submissions.promoteQueuedHead(conversationId, submission.id, now());
+        runStates.set(conversationId, { type: 'idle' });
+        options.conversations.bindProvider(conversationId, { providerId: 'codex', providerThreadId: requireString(conversation.providerThreadId, 'provider thread id'), providerModel: conversation.providerModel, providerState: 'ready' });
+        current.retrying = false;
+        current.failure = null;
+        await persist();
+        /** 复用耐久写入与结果未知保护；这里不自行重发 turn/start。 */
+        const result = await dispatchSubmission(requireConversation(conversationId), submission);
+        if (result.status !== 'active') throw coordinatorError('ZEUS_MODEL_RETRY_NOT_ACCEPTED', '自动重试未被确认接纳，已停止。请检查当前消息状态。');
+      })().catch(async (error) => {
+        if (current.cancelled) return;
+        current.cancelled = true;
+        current.retrying = false;
+        current.stopDeadline();
+        markConversationRecoveryRequired(conversationId, error);
+        for (const turnId of current.sourceTurns) rejectTurnResultWaiters(`${conversationId}:${turnId}`, error instanceof Error ? error : new Error(String(error)));
+        options.broadcast('conversation.transport.changed', { conversationId, recoveryState: 'idle', reconnectAttempt: 0, reconnectAttempts: modelResponseRetryPolicy.maxRetries });
+        await persist();
+      });
+      current.dispatching = run;
+      queueDrainPromises.add(run);
+      void run
+        .finally(() => {
+          if (current.dispatching === run) current.dispatching = null;
+          queueDrainPromises.delete(run);
+        })
+        .catch(() => undefined);
+    }, modelResponseRetryDelay(current.attempt));
+    current.retryTimer.unref();
   }
 
   /** 等待下一次 Provider 只读核对；unref 避免退避计时阻挡服务退出。 */
@@ -3340,6 +3529,27 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       if (eventConversation) await transcriptInitialization.waitUntilReady(eventConversation.id);
       if (eventConversation) providerThreadAuthority.stopObserver(eventConversation.id);
     }
+    /** 模型响应和工具/人工等待分开计时；恢复只针对可确认身份的当前线程。 */
+    const retryConversation = eventThreadId ? options.conversations.getByProviderThreadId(eventThreadId) : undefined;
+    const retryTurnId = providerTurnIdFrom(eventParams);
+    if (retryConversation && eventThreadId && retryTurnId) {
+      const retry = providerConnectionRetries.get(retryConversation.id);
+      const item = isRecord(eventParams.item) ? eventParams.item : {};
+      if (event.method === 'turn/started' && !['completed', 'failed', 'interrupted'].includes(options.turns.getByProvider(eventThreadId, retryTurnId)?.status ?? ''))
+        observeProviderResponseWait(retryConversation.id, eventThreadId, retryTurnId);
+      else if (retry?.providerTurnId === retryTurnId) {
+        if (event.requestId !== undefined) retry.stopDeadline();
+        if (typeof item.id === 'string' && !['userMessage', 'agentMessage', 'reasoning'].includes(String(item.type))) {
+          if (event.method === 'item/started') {
+            retry.activeTools.add(item.id);
+            retry.stopDeadline();
+          } else if (event.method === 'item/completed') {
+            retry.activeTools.delete(item.id);
+            if (retry.activeTools.size === 0 && !retry.failure && !retry.cancelled) observeProviderResponseWait(retryConversation.id, eventThreadId, retryTurnId);
+          }
+        }
+      }
+    }
     await projectCodexProviderEvent(
       {
         clearAutoResolutionTimer,
@@ -3385,6 +3595,13 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       event,
       receiptEvents,
     );
+    if (event.method === 'turn/completed' && retryConversation && retryTurnId) {
+      const retry = providerConnectionRetries.get(retryConversation.id);
+      if (retry?.providerTurnId === retryTurnId) {
+        if (retry.retrying) scheduleProviderResponseRetry(retryConversation.id);
+        else providerConnectionRetries.delete(retryConversation.id);
+      }
+    }
     if (event.method === 'thread/status/changed' && eventThreadId) {
       const status = isRecord(eventParams.status) ? eventParams.status : {};
       const activeFlags = Array.isArray(status.activeFlags) ? status.activeFlags.filter((flag): flag is string => typeof flag === 'string') : [];
@@ -3482,6 +3699,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   function beginHandoff(waiterError: Error): Promise<void> {
     if (handoffPromise) return handoffPromise;
     closing = true;
+    for (const retry of providerConnectionRetries.values()) {
+      retry.cancelled = true;
+      retry.stopDeadline();
+      if (retry.retryTimer) clearTimeout(retry.retryTimer);
+    }
     archivedRecoveryAbortController.abort();
     providerStopRecovery.close();
     interactionRecovery.close();

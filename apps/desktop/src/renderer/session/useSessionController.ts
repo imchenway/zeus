@@ -2470,7 +2470,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const request = (async () => {
       /** 目录和正文独立读取，不把目录进度写回实时同步水位。 */
       const result = await options.client.loadConversationNavigation!(options.projectId, options.conversationId);
-      if (disposed || generation !== connectionToken) throw new Error('会话连接已变化，请重新读取目录。');
+      if (disposed) throw new DOMException('目录读取已取消。', 'AbortError');
+      // 连接换代属于内部读取失效，直接读取当前目录，不要求用户处理。
+      if (generation !== connectionToken) return loadNavigation();
       for (const entry of result.entries) {
         /** 多次发言属于同一真实轮次，别名复用同一份轻量身份。 */
         const identity = { id: entry.turnId, providerTurnId: entry.providerTurnId, status: entry.status };

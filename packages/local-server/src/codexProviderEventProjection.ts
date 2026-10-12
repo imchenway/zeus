@@ -164,10 +164,17 @@ export interface CodexProviderEventProjectionDependencies {
 
   /** 回复流断开后只读核对 Provider 权威状态，不自动重放原轮次。 */
   recoverProviderStreamFailure(conversationId: string, providerThreadId: string, providerTurnId: string): void;
-  /** 连接重试只投影官方失败事件，跨传输共用同一个预算。 */
+  /** Zeus 接管连接失败，先确认原轮次停止再安排恢复。 */
   reportProviderConnectionRetry(conversationId: string, providerThreadId: string, providerTurnId: string, error: Record<string, unknown>): Promise<void>;
   /** Provider 真实结束后收口提示，并读取连接耗尽的产品失败原因。 */
-  finishProviderConnectionRetry(conversationId: string, providerThreadId: string, providerTurnId: string, terminal?: boolean): { attempt: number; failure: Record<string, unknown> | null } | undefined;
+  finishProviderConnectionRetry(
+    conversationId: string,
+    providerThreadId: string,
+    providerTurnId: string,
+    terminal?: boolean,
+    error?: Record<string, unknown>,
+    status?: string,
+  ): { attempt: number; failure: Record<string, unknown> | null; retrying: boolean } | undefined;
 
   rejectTurnResultWaiters(key: string, error: Error): void;
 
@@ -595,7 +602,17 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     await recoverExternallyResolvedRequestUserInputAnswers(conversation, providerTurnId);
     if (turn.status === 'completed' || turn.status === 'interrupted' || turn.status === 'failed') return;
     /** 原生中断确认后，连接预算耗尽在产品层记为失败；原生终态仍保留在错误证据中。 */
-    const connectionRetry = finishProviderConnectionRetry(conversation.id, threadId, providerTurnId);
+    const nativeStatus = providerTurnTerminalStatus(params);
+    /** 原生失败只是一次尝试的结果；预算未耗尽时继续保留产品请求。 */
+    const connectionRetry = finishProviderConnectionRetry(
+      conversation.id,
+      threadId,
+      providerTurnId,
+      true,
+      nativeStatus === 'failed' ? providerTurnFailureRecord(params, providerTurnFailure(params, providerTurnId)) : undefined,
+      nativeStatus,
+    );
+    const retrying = connectionRetry?.retrying === true;
     /** 自然完成优先于迟到的停止请求，不把已经成功的结果改写为失败。 */
     const terminalStatus = connectionRetry?.failure && providerTurnTerminalStatus(params) === 'interrupted' ? 'failed' : providerTurnTerminalStatus(params);
     const interrupted = terminalStatus === 'interrupted';
@@ -613,7 +630,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       ? {
           ...providerTurnFailureRecord(params, failure),
           ...(connectionRetry?.failure ?? {}),
-          ...(connectionRetry && connectionRetry.attempt >= 5 ? { code: 'ZEUS_SESSION_CONNECTION_RETRIES_EXHAUSTED', message: '连接重试五次均失败，会话已停止。请检查网络后重试。' } : {}),
+          ...(retrying ? { code: 'ZEUS_MODEL_RESPONSE_RETRYING' } : {}),
         }
       : undefined;
     /** 外部服务类错误暂停会话；本地 Runtime 与工具错误仍保持真实失败。 */
@@ -712,6 +729,8 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
     if (!internalContextCompaction && !failed && !interrupted) createdPlanImplementationRequest = ensurePlanImplementationRequest(conversation.id, turn, activeSubmission, timestamp);
     if (internalContextCompaction) {
       runStates.set(conversation.id, { type: 'idle' });
+    } else if (retrying) {
+      runStates.set(conversation.id, { type: 'active', turnId: providerTurnId, phase: 'prework' });
     } else if (failed) {
       for (const queued of submissions.filter((entry) => entry.status === 'queued')) options.submissions.updateStatus(queued.id, 'paused', { pausedReason: 'recovery_required' });
       runStates.set(conversation.id, { type: 'paused', reason: 'recovery_required' });
@@ -730,11 +749,11 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       providerId: 'codex',
       providerThreadId: threadId,
       providerModel: conversation.providerModel,
-      providerState: internalContextCompaction ? 'ready' : failed ? (providerBlocked ? 'paused' : 'failed') : recoveryRequiredSubmissions.length > 0 || (interrupted && hasInterruptedQueue) ? 'paused' : 'ready',
+      providerState: retrying ? 'waiting' : internalContextCompaction ? 'ready' : failed ? (providerBlocked ? 'paused' : 'failed') : recoveryRequiredSubmissions.length > 0 || (interrupted && hasInterruptedQueue) ? 'paused' : 'ready',
     });
     const ephemeral = contexts.get(conversation.id)?.ephemeral === true;
     const conversationGoal = options.goals.get(conversation.id);
-    if (!internalContextCompaction && !ephemeral && !conversationGoal) {
+    if (!retrying && !internalContextCompaction && !ephemeral && !conversationGoal) {
       options.conversations.markAttentionUnread(conversation.id, {
         kind: failed ? 'failed' : interrupted ? 'interrupted' : 'completed',
         turnId: providerTurnId,
@@ -742,8 +761,8 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       });
     }
     const resultKey = `${conversation.id}:${providerTurnId}`;
-    if (internalContextCompaction) {
-      // 压缩轮次没有用户提交和回答等待者；只保留过程、usage 与终态，不制造普通回答结果。
+    if (internalContextCompaction || retrying) {
+      // 自动续接由最终尝试结算原请求；压缩轮次没有用户提交和回答等待者；只保留过程、usage 与终态，不制造普通回答结果。
     } else if (failure) {
       failedTurnResults.set(resultKey, failure);
       rejectTurnResultWaiters(resultKey, failure);
@@ -759,7 +778,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       };
       resolveTurnResult(result);
     }
-    if (!internalContextCompaction && ephemeral) {
+    if (!retrying && !internalContextCompaction && ephemeral) {
       options.conversations.bindProvider(conversation.id, {
         providerId: 'codex',
         providerThreadId: threadId,
@@ -770,7 +789,7 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
       contexts.delete(conversation.id);
     }
     broadcast = {
-      type: 'conversation.turn.completed',
+      type: retrying ? 'conversation.turn.retrying' : 'conversation.turn.completed',
       payload: {
         conversationId: conversation.id,
         projectId: conversation.projectId,
@@ -780,7 +799,8 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
         completedAt: timestamp,
         ...(failureRecord ? { error: projectConversationTurnFailure(failureRecord) } : {}),
         hasUnreadAttention: options.conversations.getById(conversation.id)?.attentionUnread === true,
-        notificationEligible: !internalContextCompaction && !conversationGoal,
+        notificationEligible: !retrying && !internalContextCompaction && !conversationGoal,
+        ...(retrying ? { internalOperation: 'connection_retry', retrying: true } : {}),
         ...(internalContextCompaction ? { internalOperation: 'context_compaction' } : {}),
       },
     };

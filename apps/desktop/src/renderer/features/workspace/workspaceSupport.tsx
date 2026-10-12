@@ -572,6 +572,7 @@ export const nativeConversationListLifecycleEventTypes = new Set([
   'conversation.thread.changed',
   'conversation.turn.started',
   'conversation.turn.completed',
+  'conversation.turn.retrying',
   'conversation.queue.changed',
   'conversation.request.created',
   'conversation.request.resolved',

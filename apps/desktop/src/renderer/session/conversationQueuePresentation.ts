@@ -82,7 +82,10 @@ export function composerQueuedSubmissions(state: NativeSessionState): ComposerQu
         submission.pausedReason !== 'outcome_unknown' &&
         submission.pausedReason !== 'recovery_required' &&
         submission.pausedReason !== 'recovered_unsent' &&
-        !submission.error?.recoveryRequired &&
+        // 发送失败留在原消息旁，不能退回普通排队卡片。
+        !submission.error &&
+        submission.pausedReason !== 'preflight_failed' &&
+        submission.pausedReason !== 'runtime_rejected' &&
         isSubmissionWaitingInQueue(state.queue, submission),
     )
     .map((submission) => ({ ...submission, localOnly: false }));

@@ -1,3 +1,4 @@
+import { modelResponseRetryPolicy } from '@zeus/ai-runtime';
 import { piSdkBinaryVersion } from '@zeus/ai-runtime';
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
 import type { AsyncQuestionAnswer, ConversationResource } from '@zeus/shared';
@@ -1692,6 +1693,17 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     if (!run) return;
     await options.transcripts.waitUntilReady(run.conversationId);
     const payload = asRecord(event.payload);
+    if (event.type === 'auto_retry_start' || event.type === 'auto_retry_end') {
+      options.publish('conversation.transport.changed', {
+        conversationId: run.conversationId,
+        providerThreadId: run.providerThreadId,
+        providerTurnId: run.providerTurnId,
+        recoveryState: event.type === 'auto_retry_start' ? 'reconnecting' : 'idle',
+        reconnectAttempt: event.type === 'auto_retry_start' ? payload.attempt : 0,
+        reconnectAttempts: modelResponseRetryPolicy.maxRetries,
+      });
+    }
+
     const segment = options.execution.segmentByNativeSession(run.providerThreadId, run.conversationId);
     const protocolFamily = segment ? projectionProtocolFamily(run, segment) : null;
     const terminalMessage = event.type === 'message_end' ? asRecord(payload.message) : null;

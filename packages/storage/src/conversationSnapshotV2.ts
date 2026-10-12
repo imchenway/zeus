@@ -2592,6 +2592,10 @@ function classifyTurnFailure(code: string | null, httpStatusCode: number | null,
   )
     return 'rate_limit';
   if (
+    code === 'ZEUS_SESSION_CONNECTION_RETRIES_EXHAUSTED' ||
+    code === 'ZEUS_MODEL_RESPONSE_TIMEOUT' ||
+    code === 'ZEUS_MODEL_RESPONSE_RETRYING' ||
+    code === 'ZEUS_MODEL_RESPONSE_FAILED' ||
     code === 'httpConnectionFailed' ||
     code === 'responseStreamConnectionFailed' ||
     code === 'responseStreamDisconnected' ||

@@ -2713,24 +2713,12 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         const submissionError = submission && typeof submission.error === 'object' && submission.error !== null ? (submission.error as Record<string, unknown>) : {};
         const recoverableDirectDirectoryFailure =
           submission?.status === 'paused' && submission.pausedReason === 'recovery_required' && submissionError.code === 'ZEUS_NATIVE_CONVERSATION_WORKTREE_UNAVAILABLE' && submissionError.recoveryRequired === true;
-        if (!recoverableDirectDirectoryFailure) {
-          const reason = typeof submissionError.message === 'string' && submissionError.message.trim() ? submissionError.message : null;
-          throw Object.assign(
-            new Error(
-              reason ??
-                (appShellSettings.appLanguage === 'zh-CN'
-                  ? '对话还未连接到 AI 服务。为避免重复创建，Zeus 已暂停再次尝试。'
-                  : 'The conversation has not connected to the AI service. Zeus has paused further attempts to avoid creating duplicates.'),
-            ),
-            { code: typeof submissionError.code === 'string' ? submissionError.code : 'ZEUS_TASK_MODEL_PUSH_PROVIDER_NOT_ESTABLISHED' },
-          );
+        if (recoverableDirectDirectoryFailure) {
+          // 原提交在 Provider RPC 前失败；恢复同一会话和提交，避免另建会话或重复首条消息。
+          await client.recoverNativeQueue(pending.task.projectId, acceptance.conversation.id, 'continue');
+          choice = await client.loadNativeConversationChoice(pending.task.projectId, acceptance.conversation.id);
         }
-        // 原提交在 Provider RPC 前失败；恢复同一会话和提交，避免另建会话或重复首条消息。
-        await client.recoverNativeQueue(pending.task.projectId, acceptance.conversation.id, 'continue');
-        choice = await client.loadNativeConversationChoice(pending.task.projectId, acceptance.conversation.id);
-        if (!choice.providerThreadId) {
-          throw new Error(appShellSettings.appLanguage === 'zh-CN' ? '工作目录已可用，但对话仍未连接到 AI 服务。' : 'The working folder is available, but the conversation has not connected to the AI service.');
-        }
+        // 已落库的失败交给会话控制器核对与重试，不能重新调用只会返回原接纳结果的创建接口。
       }
       taskModelPushEnvelopeRef.current.delete(pending.task.id);
       taskModelPushDispatchingTaskIdsRef.current.delete(pending.task.id);

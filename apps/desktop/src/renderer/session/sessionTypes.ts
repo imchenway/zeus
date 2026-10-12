@@ -1724,6 +1724,7 @@ export type NativeConversationEvent =
   | NativeEvent<'conversation.thread.changed', NativeEventIdentity & { providerThreadId?: string; providerState?: string }>
   | NativeEvent<'conversation.turn.started', NativeTurnEventPayload>
   | NativeEvent<'conversation.turn.completed', NativeTurnEventPayload>
+  | NativeEvent<'conversation.turn.retrying', NativeTurnEventPayload>
   | NativeEvent<'conversation.turn.plan.updated', NativeTurnEventPayload & { plan: NativeTurnPlanSnapshot }>
   | NativeEvent<'conversation.turn.change_set.changed', NativeTurnEventPayload & { changeSetId: string; changeSet: TurnChangeSet }>
   | NativeEvent<'conversation.item.started', NativeItemEventPayload>
@@ -1808,6 +1809,7 @@ export const nativeConversationEventTypes = new Set<NativeConversationEvent['typ
   'conversation.thread.changed',
   'conversation.turn.started',
   'conversation.turn.completed',
+  'conversation.turn.retrying',
   'conversation.turn.plan.updated',
   'conversation.turn.change_set.changed',
   'conversation.item.started',

@@ -97,6 +97,8 @@ export function filterCompatibilitySnapshotItemAliases(items: readonly ZeusConve
 }
 
 export interface CodexProviderHistoryProjectionDependencies {
+  /** 自动续接仍在执行时，历史读取不能提前结算原请求。 */
+  isProviderConnectionRetryPending(conversationId: string, providerTurnId: string): boolean;
   options: CreateCodexNativeConversationCoordinatorOptions;
   failedTurnResults: Map<string, Error & { code: string }>;
   processProjector: TurnProcessProjector;
@@ -443,7 +445,10 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
   ): Promise<ZeusConversationTurnRecord> {
     // 读取正文期间可能收到实时结束事件，必须采用此刻已落库的轮次状态。
     const existingTurn = existingTurnInput ? (options.turns.getById(existingTurnInput.id) ?? existingTurnInput) : undefined;
-    let classification = classifySnapshotTurn(providerTurn);
+    /** 原生中断由 Zeus 的网络恢复发起时，保留产品失败原因与原始证据。 */
+    const storedFailure = parseJsonRecord(existingTurn?.errorJson ?? '{}');
+    const preserveResponseFailure = existingTurn?.status === 'failed' && /^ZEUS_(?:MODEL_RESPONSE_|SESSION_CONNECTION_)/u.test(String(storedFailure.code));
+    let classification = preserveResponseFailure ? ('failed' as const) : classifySnapshotTurn(providerTurn);
     if (classification === 'unknown') throw coordinatorError('ZEUS_NATIVE_PROVIDER_TURN_INVALID', `Provider turn has an unknown status: ${providerTurn.id}`);
     const submissions = options.submissions.listByConversation(conversation.id);
     if (classification === 'active' && existingTurn && shouldPreserveProviderStopTerminalTurn({ turn: existingTurn, submissions })) {
@@ -493,7 +498,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
     const stateChanged = !existingTurn || existingTurn.status !== status;
     const turnProjectionChanged = !existingTurn || existingTurn.status !== status || existingTurn.clientSubmissionId !== clientSubmissionId || existingTurn.startedAt !== startedAt || existingTurn.completedAt !== completedAt;
     /** 历史恢复与实时事件复用同一份官方失败记录和阻塞判断。 */
-    const failureRecord = classification === 'failed' ? providerTurnFailureRecord({ turn: providerTurn }, providerTurnFailure({ turn: providerTurn }, providerTurn.id)) : undefined;
+    const failureRecord = preserveResponseFailure ? storedFailure : classification === 'failed' ? providerTurnFailureRecord({ turn: providerTurn }, providerTurnFailure({ turn: providerTurn }, providerTurn.id)) : undefined;
     /** 只有官方服务不可用类错误暂停会话，本地执行错误仍保持失败。 */
     const providerBlocked = failureRecord ? isProviderBlockingTurnFailure(failureRecord) : false;
     let turn = turnProjectionChanged
@@ -526,6 +531,8 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
         updatedAt: timestamp,
       });
     }
+
+    if (dependencies.isProviderConnectionRetryPending(conversation.id, providerTurn.id)) return turn;
 
     if (classification === 'active') {
       if (matchedSubmission && (matchedSubmission.status === 'dispatching' || matchedSubmission.status === 'queued')) {

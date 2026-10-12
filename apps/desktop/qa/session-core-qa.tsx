@@ -1768,9 +1768,13 @@ function ErrorLayoutQa() {
   const [dark, setDark] = useState(false);
   /** 文件审核只展示预览反馈，不读取或操作工作区。 */
   const [review, setReview] = useState(false);
+  /** 记录真实反馈组件的点击结果，不连接账号或发送模型消息。 */
+  const [retryCount, setRetryCount] = useState(0);
+  /** 同一预览覆盖普通发送和任务首次推送两条生产入口。 */
+  const [taskPush, setTaskPush] = useState(true);
   /** 沿用用户截图中的错误码和原始说明，不假设消息已经发送或取消。 */
-  const error = { code: 'ZEUS_NATIVE_SUBMISSION_NOT_QUEUED', message: '这条消息已取消、替换或离开待发送状态，不会再次发送。' };
-  /** 合成消息复现未确认状态，预览不提供重发入口。 */
+  const error = { message: 'failed to load configuration: model_providers contains reserved built-in provider IDs: `openai`. Built-in providers cannot be overridden.' };
+  /** 合成消息复现明确未发送，使用生产反馈组件与重试按钮。 */
   const pending: NativeSessionItemBuffer = {
     key: 'preview-pending',
     conversationId: 'preview',
@@ -1779,11 +1783,12 @@ function ErrorLayoutQa() {
     itemId: 'preview-pending',
     type: 'userMessage',
     phase: 'user',
-    text: '',
-    status: 'paused',
+    text: '请修复 Codex 模型发送报错。',
+    status: 'failed',
     optimistic: true,
     resources: [],
-    payload: { deliveryError: error },
+    clientUserMessageId: 'preview-client-message',
+    payload: { deliveryError: error, ...(taskPush ? { taskPushLayout: buildTaskPushLayout({ taskTitle: 'Codex 发送失败', taskType: 'requirement', taskDescription: '请修复 Codex 模型发送报错。' }) } : {}) },
   };
   /** 回复文字用于对照截图中的正文边缘，不代表本次新增交付结果。 */
   const answer: NativeSessionItemBuffer = {
@@ -1846,13 +1851,23 @@ function ErrorLayoutQa() {
           <p>已确认样式 · 直接展示会话组件</p>
         </div>
         <nav aria-label="预览切换">
+          <Button aria-pressed={taskPush} onClick={() => setTaskPush(!taskPush)}>
+            {taskPush ? '检查普通消息' : '检查任务推送'}
+          </Button>
           <Button aria-pressed={dark} onClick={() => setDark(!dark)}>
             {dark ? '浅色' : '深色'}
           </Button>
         </nav>
       </header>
       <div className="session-transcript">
-        <MessageDeliveryOutcomeFeedback item={pending} language="zh-CN" />
+        <ConversationTranscript
+          state={{ ...createInitialSessionState(), conversationId: 'preview', transportState: 'ready', items: { [pending.key]: pending }, itemOrder: [pending.key] }}
+          language="zh-CN"
+          transcriptHydrated
+          creationStatus={taskPush ? { state: 'failed', message: '会话创建失败', errorCause: error, onRetry: () => setRetryCount((count) => count + 1) } : undefined}
+          onRetryPendingSend={() => setRetryCount((count) => count + 1)}
+        />
+        <p role="status">已请求重试 {retryCount} 次</p>
         <ThreadItemView item={answer} language="zh-CN" showAssistantActions />
         <TurnChangeCard changeSet={changeSet} language="zh-CN" onReview={() => setReview(true)} />
       </div>

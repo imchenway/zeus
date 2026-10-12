@@ -464,8 +464,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const creationFailed = props.creationStatus?.state === 'failed';
   // 本地创建工作面使用合成轮次保持可交互；只有权威快照里的轮次才能接管创建进度。
   const realTurnStarted = Boolean(activeTurnId && props.state.snapshot);
-  // 创建期只保留一个主进度：真实轮次建立前显示连接，建立后由轮次状态或真实过程内容接管。
-  const showCreationStatus = Boolean(props.creationStatus) && !(creatingSession && realTurnStarted);
+  // 创建期只保留一个主进度；失败原因已归属原消息时不再追加创建错误。
+  const showCreationStatus = Boolean(props.creationStatus) && !(creatingSession && realTurnStarted) && !(creationFailed && items.some((item) => item.optimistic && item.payload.taskPushLayout && hasScopedDeliveryFailure(item)));
   // 只有实际渲染的底部状态可以接管过程中的整理提示。
   const showStandaloneActiveStatus = !props.historyOnly && Boolean(activeStatusKind) && !creationFailed && !(creatingSession && !realTurnStarted);
   // 只筛选底部已承载的同轮进行中整理；完成、失败、历史及其他活动继续参与原有投影。
@@ -1105,7 +1105,11 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     if (row.kind === 'turn_failure') {
       /** 后台仍在核对本轮时只显示统一运行状态，避免错误卡和重连状态同时闪烁。 */
       const recovering = props.state.providerReconnectTurnId === row.turnId && props.state.providerReconnectAttempt > 0;
-      if (recovering) return null;
+      // 已由后续尝试接管的失败不再作为独立错误卡；重启后最后一次失败仍可手动恢复。
+      const continuedFailure =
+        row.failure.code === 'ZEUS_MODEL_RESPONSE_RETRYING' &&
+        (props.state.providerReconnectAttempt > 0 || props.state.snapshot?.turns.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)).at(-1)?.providerTurnId !== row.turnId);
+      if (recovering || continuedFailure) return null;
       /** 只对最新停止的网络失败提供续跑，历史轮次不重复提交。 */
       const retryable =
         !props.historyOnly &&
@@ -2043,7 +2047,9 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
       </TranscriptV2ContentBoundary>
     );
   }
-  const showPendingDeliveryFeedback = row.item.optimistic && shouldShowPendingMessageDeliveryFeedback(row.item, options.showThinking);
+  /** 任务首发的失败也使用原消息反馈，重试期间由连接状态接管。 */
+  const taskCreation = row.item.payload.taskPushLayout ? options.props.creationStatus : undefined;
+  const showPendingDeliveryFeedback = row.item.optimistic && (!taskCreation || taskCreation.state === 'failed') && shouldShowPendingMessageDeliveryFeedback(row.item, options.showThinking);
   const queuedSubmission = queuedSubmissionForItem(row.item, options.props.state.queue);
   return (
     <TranscriptV2ContentBoundary item={row.item} onLoadContent={options.props.onLoadV2Content}>
@@ -2080,7 +2086,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
           onRetryQueuedSubmission={options.props.onRetryQueuedSubmission}
           onCancelQueuedSubmission={options.props.onCancelQueuedSubmission}
           clientUserMessageId={row.item.clientUserMessageId ?? row.item.durableClientUserMessageId}
-          onRetryPendingSend={options.props.onRetryPendingSend}
+          onRetryPendingSend={taskCreation?.state === 'failed' ? taskCreation.onRetry : options.props.onRetryPendingSend}
           onCancelPendingSend={options.props.onCancelPendingSend}
         />
       ) : null}
@@ -2216,12 +2222,14 @@ export function MessageDeliveryOutcomeFeedback(props: {
     );
   }
   const deliveryError = nativeSessionErrorFrom(props.item.payload.deliveryError) ?? nativeSessionErrorFrom(props.item.payload.error);
-  const unconfirmed = props.item.status === 'unconfirmed' || props.item.status === 'paused';
-  const failed = props.item.status === 'failed';
+  /** 运行内核和发送前检查明确拒绝时，持久暂停状态也表示未发送。 */
+  const failed = props.item.status === 'failed' || pausedReason === 'preflight_failed' || pausedReason === 'runtime_rejected';
+  /** 只有尚无明确拒绝事实的暂停或未知状态才显示待确认。 */
+  const unconfirmed = !failed && (props.item.status === 'unconfirmed' || props.item.status === 'paused');
   if (!failed && !unconfirmed) return null;
   const feedbackState = failed ? 'failed' : 'unconfirmed';
   /** 确切的未知送达仅开放核对；普通重试也会由现有接口先检查未发送证据。 */
-  const checkOnly = Boolean(props.submissionId) && (props.item.status === 'unconfirmed' || pausedReason === 'outcome_unknown');
+  const checkOnly = props.item.status === 'unconfirmed' || pausedReason === 'outcome_unknown';
   /** 已落库消息沿用提交身份，本地发送失败沿用原客户端消息身份。 */
   const canAct = props.submissionId ? Boolean(checkOnly ? props.onRecoverQueue : props.onRetryQueuedSubmission) : Boolean(props.clientUserMessageId && props.onRetryPendingSend);
   /** 复用现有重试与只读核对，不把失败正文重新作为一条普通新消息提交。 */
@@ -2245,19 +2253,16 @@ export function MessageDeliveryOutcomeFeedback(props: {
 
   return (
     <ConversationNotice deliveryState={feedbackState} label={props.language === 'zh-CN' ? '消息发送状态' : 'Message delivery status'}>
-      {actionError || deliveryError ? (
-        <VisibleApplicationError className="session-message-delivery-error" error={actionError ?? deliveryError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
-      ) : (
-        <span>
-          {unconfirmed && pausedReason !== 'recovered_unsent'
-            ? props.language === 'zh-CN'
-              ? '暂时无法确认消息的发送状态。'
-              : 'Message delivery status is not yet confirmed.'
-            : props.language === 'zh-CN'
-              ? '消息尚未发送。'
-              : 'This message has not been sent.'}
-        </span>
-      )}
+      <span className="session-message-delivery-status">
+        {unconfirmed && pausedReason !== 'recovered_unsent'
+          ? props.language === 'zh-CN'
+            ? '暂时无法确认消息的发送状态。'
+            : 'Message delivery status is not yet confirmed.'
+          : props.language === 'zh-CN'
+            ? '消息尚未发送。'
+            : 'This message has not been sent.'}
+      </span>
+      {actionError || deliveryError ? <VisibleApplicationError className="session-message-delivery-error" error={actionError ?? deliveryError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} /> : null}
       {canAct ? (
         <div className="session-message-delivery-actions">
           <button type="button" disabled={pending} onClick={() => void retryDelivery()}>
@@ -2276,6 +2281,8 @@ function shouldShowPendingMessageDeliveryFeedback(item: NativeSessionItemBuffer,
   if (item.status === 'paused')
     return (
       Boolean(item.payload.deliveryError || item.payload.error) ||
+      item.payload.pausedReason === 'preflight_failed' ||
+      item.payload.pausedReason === 'runtime_rejected' ||
       item.payload.pausedReason === 'outcome_unknown' ||
       item.payload.pausedReason === 'recovery_required' ||
       item.payload.pausedReason === 'provider_stop_pending' ||
@@ -2949,11 +2956,15 @@ function isComposerQueuedUserItem(item: NativeSessionItemBuffer, submissionIds: 
   return transcriptUserMessageClientIds(item).some((identity) => clientUserMessageIds.has(identity));
 }
 
+/** 提交身份和客户端身份都可定位原消息，接纳回执先后到达不影响重试入口。 */
 function queuedSubmissionForItem(item: NativeSessionItemBuffer, queue: NativeQueueSnapshot | null): NativeQueuedSubmission | null {
+  /** 本地和持久投影的提交身份。 */
   const submissionIds = [item.localItemId, item.itemId, primitiveValue(item.payload.submissionId)].filter((value): value is string => Boolean(value));
-  if (submissionIds.length === 0) return null;
+  /** 原客户端身份覆盖尚未补齐提交身份的消息。 */
+  const clientIds = transcriptUserMessageClientIds(item);
+  /** 身份集合只用于精确匹配，不根据正文猜测归属。 */
   const identities = new Set(submissionIds);
-  return queue?.submissions.find((submission) => identities.has(submission.id)) ?? null;
+  return queue?.submissions.find((submission) => identities.has(submission.id) || Boolean(submission.clientUserMessageId && clientIds.includes(submission.clientUserMessageId))) ?? null;
 }
 
 /**

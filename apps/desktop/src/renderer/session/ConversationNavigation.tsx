@@ -99,6 +99,8 @@ export function useConversationNavigation(input: { scopeKey: string | null; refr
         setResult({ scope: input.scopeKey, snapshot, error: null, loading: false });
       })
       .catch((error: unknown) => {
+        // 页面退出取消的读取没有用户可处理的问题，不显示错误提示。
+        if (error instanceof Error && error.name === 'AbortError') return;
         if (!cancelled) setResult((previous) => ({ ...previous, error: error instanceof Error ? error.message : '历史目录读取失败。', loading: false }));
       });
     return () => {
