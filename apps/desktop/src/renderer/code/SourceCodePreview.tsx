@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, type RefObject } from 'react';
+import { memo, useEffect, useRef, type RefObject } from 'react';
 import { Compartment, EditorState } from '@codemirror/state';
 import { defaultKeymap } from '@codemirror/commands';
 import { syntaxHighlighting } from '@codemirror/language';
@@ -6,7 +6,6 @@ import { Decoration, EditorView, GutterMarker, ViewPlugin, WidgetType, gutter, k
 import { classHighlighter } from '@lezer/highlight';
 import type { ConversationFileLocation } from '@zeus/shared';
 import { blameDecorations } from './blameDecorations.js';
-import { GitBlameToolbar, type SourceBlameLabels } from './GitBlameToolbar.js';
 import { loadSourceLanguage } from './sourceLanguageRegistry.js';
 import { useGitBlame } from './useGitBlame.js';
 import './blameGutter.css';
@@ -28,7 +27,8 @@ interface SourceCodePreviewProps {
   projectId?: string;
   conversationId?: string;
   resourceId?: string;
-  blameLabels?: SourceBlameLabels;
+  /** 行尾归属日期使用当前界面语言。 */
+  locale?: string;
   location?: ConversationFileLocation;
   widgets: SourceLineWidget[];
   /** 新打开的评论容器，完成代码区布局后再聚焦。 */
@@ -54,17 +54,7 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
   const blameSlot = useRef(new Compartment()).current;
   /** 只读历史仍可查看代码，无评论权限时不创建加号入口。 */
   const commentsEnabled = Boolean(props.onComment);
-  const blameLabels = useMemo<SourceBlameLabels>(
-    () =>
-      props.blameLabels ?? {
-        show: 'Show Git blame',
-        hide: 'Hide Git blame',
-        loading: 'Loading Git blame…',
-        unavailable: 'Git blame unavailable',
-        retry: 'Retry',
-      },
-    [props.blameLabels],
-  );
+  /** 自动读取当前资源归属，不再创建额外的按钮或状态行。 */
   const gitBlame = useGitBlame({ projectId: props.projectId, filePath: props.path, conversationId: props.conversationId, resourceId: props.resourceId, content: props.content });
 
   useEffect(() => {
@@ -152,9 +142,10 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    const extension = gitBlame.enabled && gitBlame.blame?.lines.length ? blameDecorations(gitBlame.blame.lines, blameLabels) : [];
+    /** 只在可信资源内容对应的归属读取完成后添加当前行提示。 */
+    const extension = gitBlame?.lines.length ? blameDecorations(gitBlame.lines, { locale: props.locale }) : [];
     view.dispatch({ effects: blameSlot.reconfigure(extension) });
-  }, [blameLabels, blameSlot, gitBlame.blame, gitBlame.enabled, props.content, props.path, props.label, commentsEnabled]);
+  }, [props.locale, blameSlot, gitBlame, props.content, props.path, props.label, commentsEnabled]);
 
   useEffect(() => {
     /** 新评论先定位到所属行，反向范围评论的结束行也可能在屏幕外。 */
@@ -187,12 +178,7 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
     view.dispatch({ effects: EditorView.scrollIntoView(view.state.doc.line(boundedLine).from, { y: 'center' }) });
   }, [props.location, props.content, props.path, props.label, commentsEnabled]);
 
-  return (
-    <>
-      <GitBlameToolbar blame={gitBlame} labels={blameLabels} />
-      <div className="session-source-code-preview" ref={hostRef} />
-    </>
-  );
+  return <div className="session-source-code-preview" ref={hostRef} />;
 });
 
 /** 只为可视代码行提供原有的加号与键盘可达的评论按钮。 */
@@ -247,7 +233,7 @@ function selectedLineDecorations(view: EditorView, location?: ConversationFileLo
   const decorations = [];
   // 编辑器已经计算好可视范围，无须扫描全文。
   for (const range of view.visibleRanges) {
-    for (let position = range.from; position <= range.to; ) {
+    for (let position = range.from; position <= range.to;) {
       /** 根据文档偏移读取当前行。 */
       const line = view.state.doc.lineAt(position);
       /** 高亮原始请求范围内的可视行。 */

@@ -166,53 +166,39 @@
 .project-source-module {
   --source-module-header-height: 36px;
   position: relative;
-  flex: 0 0 auto;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
   border-bottom: 0;
 }
-.macos-ai-app .project-source-tree .project-source-module > summary {
+/* 目录常驻展开，分支和工作区入口共享固定顶行。 */
+.macos-ai-app .project-source-tree .project-source-module-header {
   box-sizing: border-box;
   width: 100%;
   inline-size: 100%;
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
-  justify-content: space-between;
-  list-style: none;
-  cursor: pointer;
-  padding: 10px 12px;
+  gap: 4px;
   font-weight: 600;
-}
-.macos-ai-app .project-source-tree .project-source-module > summary {
   height: var(--source-module-header-height);
   min-height: var(--source-module-header-height);
   padding: 5px 12px;
   font-size: 12px;
   line-height: 20px;
 }
-.project-source-module > summary::-webkit-details-marker {
-  display: none;
-}
-/* 折叠指示直接使用 Phosphor 图标，原生 details 决定方向。 */
-svg.project-source-disclosure {
-  flex: 0 0 auto;
-  width: 14px;
-  height: 14px;
-  color: var(--zeus-control-muted-text);
-}
-details[open] > summary > .project-source-disclosure {
-  transform: rotate(90deg);
-}
-.project-source-module > summary > .project-source-disclosure {
-  margin-inline-start: 4px;
-}
-.project-source-module > summary::marker {
-  content: '';
-}
-.project-source-module > summary > span:first-child {
+.project-source-module-header > .project-source-branch-slot {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.macos-ai-app .project-source-module-header > .project-code-actions {
+  max-inline-size: none;
+  padding: 0;
 }
 .project-source-module-actions {
   display: inline-flex;
@@ -251,47 +237,45 @@ details[open] > summary > .project-source-disclosure {
 .project-source-tree:has(> .project-source-module) {
   overflow: hidden;
 }
-.project-source-tree > .project-source-module[open] {
-  height: 0;
-  min-height: 80px;
-  overflow: hidden;
-  flex: 1;
-}
-/* 文件树填满侧栏，可滚动内容不使用通用 details 的自然高度动画。 */
-.macos-ai-app .project-source-tree > .project-source-module[open]::details-content {
-  position: absolute;
-  inset: var(--source-module-header-height) 0 0;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  block-size: auto;
-  transition: none;
-  overflow: hidden;
-}
 .project-source-module .project-source-tree-scroll {
   max-height: none;
   overflow: auto;
 }
 
-.project-source-search {
+/* 搜索与新建入口并排，输入框使用剩余宽度，按钮不嵌入输入标签。 */
+.project-source-search-row {
   display: flex;
   flex-shrink: 0;
-  min-height: 42px;
+  min-height: 32px;
   align-items: center;
-  gap: 7px;
-  margin: 0 8px;
+  gap: 6px;
+  margin: 8px 10px;
+}
+.project-source-search {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  margin: 0;
   color: var(--zeus-control-muted-text);
 }
 
+/* 放大镜放在输入框内，点击图标时仍由输入标签聚焦搜索框。 */
 .project-source-search svg {
+  position: absolute;
+  top: 50%;
+  left: 8px;
   width: 14px;
   height: 14px;
+  transform: translateY(-50%);
+  pointer-events: none;
 }
 .project-source-search input {
   min-width: 0;
   height: 28px;
   flex: 1;
-  padding: 0 8px;
+  padding: 0 8px 0 28px;
   border: 1px solid var(--zeus-control-border);
   border-radius: 6px;
   outline: none;
@@ -384,6 +368,12 @@ details[open] > summary > .project-source-disclosure {
   touch-action: none;
   background: transparent;
   outline: none;
+}
+/* 拖拽面在工作台宿主中贯通顶部，网格轨道继续保留原有布局宽度。 */
+.project-source-tree-resizer.project-source-tree-resizer-overlay {
+  position: fixed;
+  z-index: 40;
+  -webkit-app-region: no-drag;
 }
 .project-source-tree-resizer::after {
   content: '';
@@ -644,7 +634,8 @@ details[open] > summary > .project-source-disclosure {
     grid-template-columns: minmax(0, 1fr);
     position: relative;
   }
-  .project-source-tree-resizer {
+  .project-source-tree-resizer,
+  .project-source-tree-resizer-track {
     display: none;
   }
   .project-source-tree {
@@ -684,7 +675,7 @@ details[open] > summary > .project-source-disclosure {
   }
 }
 
-/* 分支控件沿用原有逻辑，宽度跟随目录栏并保留新建入口。 */
+/* 分支控件沿用原有逻辑，宽度跟随目录栏并保留工作区入口。 */
 .project-source-branch-slot {
   display: flex;
   min-width: 0;
@@ -712,4 +703,114 @@ details[open] > summary > .project-source-disclosure {
   color: inherit;
   border: 0;
   background: transparent;
+}
+
+/* 文件效果入口并入已有路径行，避免额外占用一排工具栏。 */
+.project-source-file-toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+.project-source-file-toolbar > .project-source-breadcrumbs {
+  flex: 1;
+  min-width: 0;
+}
+.project-source-view-modes {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 2px;
+  padding-inline: 8px;
+}
+.project-source-view-modes button,
+.project-source-preview-refresh {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 5px;
+  color: var(--zeus-control-muted-text);
+  background: transparent;
+  cursor: pointer;
+}
+.project-source-view-modes button:hover,
+.project-source-preview-refresh:hover {
+  color: var(--zeus-control-text);
+  background: var(--zeus-interaction-hover);
+}
+.project-source-view-modes button[aria-pressed='true'] {
+  color: var(--zeus-control-text);
+  background: color-mix(in srgb, var(--zeus-control-accent) 14%, transparent);
+}
+.project-source-view-modes button:focus-visible,
+.project-source-preview-refresh:focus-visible {
+  outline: 2px solid var(--zeus-control-accent);
+  outline-offset: -2px;
+}
+/* 编辑器持续挂载，查看效果不会丢失草稿、滚动或撤销历史。 */
+.project-source-document-views {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  grid-template-columns: minmax(0, 1fr);
+}
+.project-source-document-views[data-view-mode='split'] {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+.project-source-document-editor {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.project-source-document-editor[hidden] {
+  display: none;
+}
+/* HTML 使用独立页面，Markdown 使用现有主题渲染，不恢复外围卡片边框。 */
+.project-source-rendered-preview {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--zeus-product-panel);
+}
+.project-source-html-preview {
+  display: block;
+  border: 0;
+  width: 100%;
+  height: 100%;
+  background: #fff;
+}
+.project-source-preview-refresh {
+  position: absolute;
+  z-index: 1;
+  top: 5px;
+  right: 8px;
+  background: var(--zeus-product-panel);
+}
+.project-source-preview-message {
+  margin: 0;
+  padding: 20px 44px 20px 20px;
+  font-size: 12px;
+}
+.project-source-markdown-preview {
+  box-sizing: border-box;
+  height: 100%;
+  overflow: auto;
+  padding: 20px 36px 32px 24px;
+}
+.project-source-markdown-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+/* 较窄窗口上下分栏，保留两边完整滚动范围。 */
+@media (max-width: 1100px) {
+  .project-source-document-views[data-view-mode='split'] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
 }

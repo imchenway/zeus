@@ -102,6 +102,13 @@ export interface ConversationMarkdownProps {
   renderImmediately?: boolean;
   /** 输入框可替换表格交互，单元格解析、安全链接和内联格式仍沿用正文渲染。 */
   customComponentsId?: string;
+  /** 源码页提供自己的已授权相对资源解析，不伪造会话资源身份。 */
+  filePreview?: {
+    /** 只返回当前文件预览授权下的图片地址。 */
+    imageUrl(path: string): string | undefined;
+    /** 文件链接由源码页打开，不改变会话路由。 */
+    openLink(path: string): void | Promise<void>;
+  };
 }
 
 export type StructuredMessageToken = {
@@ -117,6 +124,8 @@ interface MarkdownRuntimeContextValue {
   onOpenResource?: ConversationMarkdownProps['onOpenResource'];
   onLoadResourcePreview?: ConversationMarkdownProps['onLoadResourcePreview'];
   structuredTokens?: readonly StructuredMessageToken[];
+  /** 文件预览能力只由受信源码页提供。 */
+  filePreview?: ConversationMarkdownProps['filePreview'];
 }
 
 interface MarkstreamNode {
@@ -191,8 +200,9 @@ export const ConversationMarkdown = memo(function ConversationMarkdown(props: Co
       onOpenResource: props.onOpenResource,
       onLoadResourcePreview: props.onLoadResourcePreview,
       structuredTokens: props.structuredTokens,
+      filePreview: props.filePreview,
     }),
-    [props.language, props.onLoadResourcePreview, props.onOpenResource, props.phase, props.resources, props.structuredTokens],
+    [props.language, props.onLoadResourcePreview, props.onOpenResource, props.phase, props.resources, props.structuredTokens, props.filePreview],
   );
 
   useLayoutEffect(() => {
@@ -294,6 +304,19 @@ function SecureLinkNode(props: NodeComponentProps<MarkstreamNode>) {
   if (resource) {
     return <ConversationInlineResource resource={resource} label={label || resource.displayName} language={runtime.language} onOpenResource={runtime.onOpenResource} />;
   }
+  if (runtime.filePreview) {
+    return (
+      <a
+        href="#"
+        onClick={(event) => {
+          event.preventDefault();
+          void runtime.filePreview?.openLink(href);
+        }}
+      >
+        {label}
+      </a>
+    );
+  }
   if (href.startsWith('#')) return <a href={href}>{label}</a>;
   return (
     <span className="session-markdown-unavailable-resource" title={href}>
@@ -310,6 +333,9 @@ function SecureImageNode(props: NodeComponentProps<MarkstreamNode>) {
   const fallbackLabel = runtime?.language === 'zh-CN' ? labels['zh-CN'].image : labels['en-US'].image;
   const label = (typeof props.node.alt === 'string' && props.node.alt.trim()) || (typeof props.node.title === 'string' && props.node.title.trim()) || fallbackLabel;
   const resource = runtime ? matchingInlineResource(runtime.resources, label, src) : null;
+  /** 项目文件图片使用已授权的预览 URL，会话资源仍走原有链路。 */
+  const fileImage = !resource ? runtime?.filePreview?.imageUrl(src) : undefined;
+  if (fileImage) return <SourcePreviewImage key={fileImage} url={fileImage} label={label} language={runtime?.language ?? 'en-US'} />;
   if (!runtime || !resource || !isImageResource(resource)) {
     /** 正文生成与资源水合均未结束时保持真实的准备状态。 */
     const preparing = runtime?.phase === 'streaming' || imageResources?.state === 'loading';
@@ -342,6 +368,20 @@ function SecureImageNode(props: NodeComponentProps<MarkstreamNode>) {
     );
   }
   return <ConversationMarkdownImage resource={resource} label={label} language={runtime.language} onOpenResource={runtime.onOpenResource} onLoadResourcePreview={runtime.onLoadResourcePreview} />;
+}
+
+/** 图片解码失败时保留文件说明，不影响文档其余部分。 */
+function SourcePreviewImage(props: { url: string; label: string; language: SessionUiLanguage }) {
+  /** 图片身份变化通过 key 重新开始解码。 */
+  const [failed, setFailed] = useState(false);
+  return failed ? (
+    <span role="status">
+      {props.language === 'zh-CN' ? '图片不可用：' : 'Image unavailable: '}
+      {props.label}
+    </span>
+  ) : (
+    <img className="project-source-markdown-image" src={props.url} alt={props.label} loading="lazy" onError={() => setFailed(true)} />
+  );
 }
 
 function SecureCodeBlockNode(props: NodeComponentProps<MarkstreamNode>) {

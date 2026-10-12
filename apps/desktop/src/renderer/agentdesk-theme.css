@@ -1530,7 +1530,7 @@ body:has(.macos-ai-app.zeus-shell) {
   background: transparent;
   border-inline-end: 1px solid var(--zeus-navigation-divider);
 }
-.macos-ai-app.zeus-shell .project-git-navigator details + details {
+.macos-ai-app.zeus-shell .project-git-navigator > details + details {
   margin-block-start: 20px;
 }
 .macos-ai-app.zeus-shell .project-git-navigator summary {
@@ -2583,10 +2583,11 @@ body:has(.macos-ai-app.zeus-shell) {
 .macos-ai-app.zeus-shell .project-git-navigator .project-git-branch-folder > summary,
 .macos-ai-app.zeus-shell .project-git-navigator .project-git-branch-directory-tree button {
   box-sizing: border-box;
-  min-height: 28px;
-  min-block-size: 28px !important;
-  margin-block: 1px;
-  padding-block: 3px !important;
+  /* 分支和目录共用紧凑行距，不缩小文字与层级缩进。 */
+  min-height: 24px;
+  min-block-size: 24px !important;
+  margin-block: 0;
+  padding-block: 2px !important;
   padding-right: 8px;
   gap: 6px;
   font-size: 12px !important;
@@ -3863,7 +3864,7 @@ body:has(.macos-ai-app.zeus-shell) {
   background: color-mix(in srgb, var(--zeus-control-text) 10%, var(--zeus-code-editor-bg)) !important;
 }
 .macos-ai-app.zeus-shell .project-source-search {
-  margin: 8px 10px;
+  margin: 0;
   min-height: 32px;
   gap: 8px;
 }

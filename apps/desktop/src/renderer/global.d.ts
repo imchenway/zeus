@@ -198,6 +198,10 @@ declare global {
       /** 用户主动请求系统查看或导出当前预览版本。 */
       actOnFilePreview: (id: string, action: 'quick-look' | 'open' | 'reveal' | 'export') => Promise<void>;
       readProjectSourceFile: (input: { projectId: string; relativePath: string }) => Promise<ProjectSourceDocument>;
+      /** 项目内的草稿效果预览与相对资源读取。 */
+      prepareProjectSourcePreview: (input: import('@zeus/shared').ProjectSourcePreviewRequest) => Promise<import('@zeus/shared').ProjectSourcePreviewGrant>;
+      /** 资源授权绑定当前窗口，不保留已关闭页面。 */
+      releaseProjectSourcePreview: (ids: string[]) => Promise<void>;
       saveProjectSourceFile: (input: SaveProjectSourceFileInput) => Promise<ProjectSourceDocument>;
       createProjectSourceEntry: (input: CreateProjectSourceEntryInput) => Promise<ProjectSourceEntry>;
       moveProjectSourceEntry: (input: MoveProjectSourceEntryInput) => Promise<ProjectSourceEntry>;

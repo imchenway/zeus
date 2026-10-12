@@ -257,6 +257,10 @@ contextBridge.exposeInMainWorld('zeus', {
   releaseFilePreview: (ids: string[]) => ipcRenderer.invoke('zeus:file-preview:release', ids),
   actOnFilePreview: (id: string, action: string) => ipcRenderer.invoke('zeus:file-preview:action', id, action),
   readProjectSourceFile: (input: unknown) => ipcRenderer.invoke('zeus:project-source:read-file', input),
+  /** 只向受信源码页提供草稿效果预览。 */
+  prepareProjectSourcePreview: (input: unknown) => ipcRenderer.invoke('zeus:project-source:prepare-preview', input),
+  /** 关闭页面或切换文件后撤销资源授权。 */
+  releaseProjectSourcePreview: (ids: string[]) => ipcRenderer.invoke('zeus:project-source:release-preview', ids),
   saveProjectSourceFile: (input: unknown) => invokeProjectSourceCommand('zeus:project-source:save-file', 'desktop.project_source.save_file', input),
   createProjectSourceEntry: (input: unknown) => invokeProjectSourceCommand('zeus:project-source:create-entry', 'desktop.project_source.create_entry', input),
   moveProjectSourceEntry: (input: unknown) => invokeProjectSourceCommand('zeus:project-source:move-entry', 'desktop.project_source.move_entry', input),

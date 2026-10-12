@@ -12,10 +12,6 @@ const ttlMs = 30_000;
 const maximumEntries = 24;
 const maximumLines = 100_000;
 
-export function invalidateGitBlame(key: string): void {
-  entries.delete(key);
-}
-
 /** 每个文件只保留一个版本；按最近使用顺序限制文件数和逐行数据量。 */
 function prune(): void {
   const now = Date.now();
