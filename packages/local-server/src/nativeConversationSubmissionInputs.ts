@@ -7,6 +7,9 @@ import { isAbsolute } from 'node:path';
 import type { ConversationDispatchContext, NativeConversationAttachmentInput, NativeConversationSkillInput, NativeSubmissionRecoveryKind } from './codexNativeConversationContracts.js';
 import { coordinatorError, isRecord, parseJsonRecord } from './codexNativeConversationPolicy.js';
 
+/** 自动续接与用户请求重试共用模型指令，正常界面只展示恢复状态。 */
+export const connectionRetryPrompt = '请从上次连接失败的中断处继续完成我的请求。先检查已经完成的操作，避免重复执行。';
+
 /** 所有引导入口共用正式交付判断，后台收尾不能重新开放已经交付的轮次。 */
 export function conversationTurnHasCompletedOutput(
   conversationId: string,

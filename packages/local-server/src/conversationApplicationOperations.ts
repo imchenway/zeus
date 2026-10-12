@@ -1,4 +1,5 @@
 import { piSdkBinaryVersion } from '@zeus/ai-runtime';
+import { projectConversationTurnFailure } from '@zeus/storage';
 import { resolveContextCapacityPolicy } from './contextCapacitySupport.js';
 import { assertContextCapacity, assertContextCapacitySupported, contextCapacityUnavailableReason } from '@zeus/shared';
 import { resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
@@ -75,7 +76,7 @@ import { type ConversationCapabilitiesSnapshot, ConversationCapabilityQueryAppli
 import { ConversationChoiceQueryApplication } from './conversationChoiceQueryApplication.js';
 import { ConversationExecutionCoordinator, type ConversationExecutionRoute } from './conversationExecutionCoordinator.js';
 import type { NativeConversationSkillInput } from './codexNativeConversationContracts.js';
-import { appendConversationResourceContext, conversationTurnHasCompletedOutput, readNativeConversationSkills, readNativeSubmissionSkills } from './nativeConversationSubmissionInputs.js';
+import { appendConversationResourceContext, connectionRetryPrompt, conversationTurnHasCompletedOutput, readNativeConversationSkills, readNativeSubmissionSkills } from './nativeConversationSubmissionInputs.js';
 import type { CreateConversationMessageBody, NativeConversationAttachment, ProjectConversationAcceptanceReservation, StartProjectConversationBody, StartTaskConversationBody, TaskConversationAcceptanceReservation } from './index.js';
 import { createModelConnectionService } from './modelConnectionService.js';
 import { resolveWritableNonCodexLegacyConversation, type WritableNonCodexLegacyConversationContext } from './nonCodexLegacyRuntime.js';
@@ -1129,9 +1130,11 @@ export function createConversationApplicationOperations(dependencies: Conversati
   function toNativeSubmission(submission: NonNullable<ReturnType<ConversationSubmissionRepository['getById']>>, options: { includeRecoveryPayload?: boolean; fallbackPosition?: number } = {}) {
     const input = parseJsonObject(submission.inputJson);
     return {
+      // 内部操作的原始模型指令不能进入正常会话展示。
+      ...(input.internalOperation === true ? { internalOperation: true } : {}),
       id: submission.id,
       conversationId: submission.conversationId,
-      content: typeof input.displayText === 'string' && input.displayText.trim() ? input.displayText : typeof input.text === 'string' ? input.text : '',
+      content: typeof input.displayText === 'string' && input.displayText.trim() ? input.displayText : input.internalOperation === true ? '系统操作' : typeof input.text === 'string' ? input.text : '',
       ...(options.includeRecoveryPayload && typeof input.composerDraft === 'string' ? { composerDraft: input.composerDraft } : {}),
       status: submission.status,
       delivery: submission.targetProviderTurnId || input.delivery === 'steer_now' ? 'steer_now' : 'queue',
@@ -1316,6 +1319,76 @@ export function createConversationApplicationOperations(dependencies: Conversati
     if (conversation.agentKind === 'claude') throw Object.assign(nativeApiError('ZEUS_AGENT_NOT_AVAILABLE', 'Claude Agent 当前尚未开放。'), { statusCode: 409 });
     const idempotencyKey = typeof input.body.idempotencyKey === 'string' ? input.body.idempotencyKey.trim() : '';
     if (!idempotencyKey) throw Object.assign(nativeApiError('ZEUS_IDEMPOTENCY_KEY_REQUIRED', 'input.idempotencyKey is required.'), { statusCode: 400 });
+    if (input.body.retryOfTurnId !== undefined) {
+      /** 恢复只接受目标和稳定身份，不能夹带新正文、附件或权限设置。 */
+      const retryOfTurnId = typeof input.body.retryOfTurnId === 'string' ? input.body.retryOfTurnId.trim() : '';
+      if (
+        !retryOfTurnId ||
+        conversation.transportKind !== 'codex_native' ||
+        idempotencyKey !== `connection-retry:${retryOfTurnId}` ||
+        input.body.clientUserMessageId !== idempotencyKey ||
+        Object.keys(input.body).some((key) => !['retryOfTurnId', 'idempotencyKey', 'clientUserMessageId'].includes(key))
+      ) {
+        throw Object.assign(nativeApiError('ZEUS_INVALID_CONVERSATION_RETRY', '恢复请求只能指定原失败轮次。'), { statusCode: 400 });
+      }
+      /** 原回执已接纳时只返回原提交，重复点击不能创建另一轮。 */
+      const existing = conversationSubmissions.listByConversation(conversation.id).find((submission) => submission.idempotencyKey === idempotencyKey);
+      if (existing) {
+        if (parseJsonObject(existing.inputJson).internalOperation !== true) throw nativeApiError('ZEUS_INVALID_CONVERSATION_RETRY', '该恢复身份已由其他请求使用。');
+        return { statusCode: 202, body: toNativeDurableAcceptance(input.operationIdentity, idempotencyKey, conversation, existing) };
+      }
+      /** 只允许续接最新的明确网络失败，拒绝活动轮次和未知送达。 */
+      const turn = conversationTurns
+        .listByConversation(conversation.id)
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
+        .at(-1);
+      if (
+        turn?.providerTurnId !== retryOfTurnId ||
+        turn.status !== 'failed' ||
+        projectConversationTurnFailure(parseJsonObject(turn.errorJson ?? '{}')).category !== 'network' ||
+        conversationTurns.getLatestActiveByConversation(conversation.id) ||
+        conversationSubmissions.listQueueProjectionByConversation(conversation.id).some((submission) => ['queued', 'paused', 'dispatching', 'active'].includes(submission.status))
+      ) {
+        throw Object.assign(nativeApiError('ZEUS_CONVERSATION_RETRY_NOT_READY', '该轮次已改变，或仍有消息尚未确认，请先检查处理状态。'), { statusCode: 409 });
+      }
+      /** 原提交拥有模型和权限；恢复不读取用户编辑中的下轮设置。 */
+      const previous = turn.clientSubmissionId ? conversationSubmissions.getById(turn.clientSubmissionId) : undefined;
+      /** 持久设置不完整时停止恢复，不能猜测更宽的权限。 */
+      const persistedContext = previous ? parseJsonObject(previous.inputJson).context : null;
+      /** 冻结上下文已经是对象，不再次按 JSON 字符串解析。 */
+      const context = isNativeApiRecord(persistedContext) ? persistedContext : {};
+      if (typeof context.model !== 'string' || !context.model || !['read-only', 'auto', 'auto-review', 'full-access'].includes(String(context.permissionMode))) {
+        throw nativeApiError('ZEUS_CONVERSATION_RETRY_CONTEXT_MISSING', '无法确认原请求的模型和权限，请检查会话。');
+      }
+      /** 原执行快照拥有容量，恢复不能继承用户新选的下一轮容量。 */
+      const frozenSnapshot = previous?.executionSnapshotId ? conversationExecution.getExecutionSnapshot(previous.executionSnapshotId) : undefined;
+      /** 旧提交没有执行快照时只读取其持久上下文，不回退到当前会话设置。 */
+      const frozenCapacity = frozenSnapshot ? parseJsonObject(frozenSnapshot.contextCapacityJson).contextCapacityTokens : context.contextCapacityTokens;
+      assertContextCapacity(frozenCapacity ?? null);
+      /** 新提交只携带服务端生成的续接意图，不复制原用户消息和附件。 */
+      const restored = await acceptNativeConversationMessage(
+        conversation,
+        connectionRetryPrompt,
+        {
+          clientUserMessageId: idempotencyKey,
+          displayText: '已请求继续上次中断的操作',
+          delivery: 'queue',
+          contextCapacityTokens: (frozenCapacity as number | null | undefined) ?? null,
+          model: typeof context.modelSourceId === 'string' ? modelRef(context.modelSourceId, context.model) : context.model,
+          effort: typeof context.effort === 'string' ? context.effort : typeof context.thinkingLevel === 'string' ? context.thinkingLevel : undefined,
+          ...(Object.prototype.hasOwnProperty.call(context, 'serviceTier') ? { serviceTier: context.serviceTier as string | null } : {}),
+          permissionMode: context.permissionMode as ConversationPermissionMode,
+          collaborationMode: context.workMode === 'plan' ? 'plan' : 'default',
+        },
+        idempotencyKey,
+        input.operationIdentity,
+        input.providerWriteLifecycle,
+        undefined,
+        true,
+        previous?.id,
+      );
+      return { statusCode: 202, body: restored };
+    }
     const content = typeof input.body.content === 'string' ? input.body.content.trim() : '';
     const hasNativeResourceInput =
       conversation.transportKind === 'codex_native' &&
@@ -1578,6 +1651,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
     stableOperationId: string,
     providerWriteLifecycle: { markPrepared(resourceId: string): Promise<void>; markRpcStarted(resourceId: string): void },
     reservedSubmissionId?: string,
+    /** 仅服务端已校验的恢复分支可以设置内部来源。 */
+    internalOperation = false,
+    /** 原提交身份只在服务端恢复分支传入。 */
+    resumeSubmissionId?: string,
   ) {
     if (body.contextCapacityTokens !== undefined) assertContextCapacity(body.contextCapacityTokens);
     const project = projects.getById(conversation.projectId);
@@ -1771,7 +1848,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
         delivery = 'queue';
       }
     }
-    if (body.contextCapacityTokens !== undefined && delivery === 'queue') {
+    // 系统恢复只使用原容量，不回写用户下一轮的容量选择。
+    if (!internalOperation && body.contextCapacityTokens !== undefined && delivery === 'queue') {
       conversations.updateContextCapacity(conversation.id, body.contextCapacityTokens);
       conversation = { ...conversation, contextCapacityTokens: body.contextCapacityTokens };
     }
@@ -1798,15 +1876,34 @@ export function createConversationApplicationOperations(dependencies: Conversati
           })
         : null;
     const conversationSkills = segmentLifecycle?.requiresNewSegment ? readNativeConversationSkills(conversationSubmissions.listByConversation(conversation.id)) : [];
+    // 续接属于原会话片段，路由变化不能借恢复动作建立另一线程。
+    if (internalOperation && segmentLifecycle?.requiresNewSegment) throw nativeApiError('ZEUS_CONVERSATION_RETRY_ROUTE_CHANGED', '原模型路由已改变，请检查会话后继续。');
     const conflictAttempt = taskIntegrationAttempts.getByConversationId(conversation.id);
     const conflictPreparationHeld = conflictAttempt?.state === 'preparing' || conflictAttempt?.state === 'failed';
     if (conflictPreparationHeld && delivery === 'steer_now') {
       throw nativeApiError('ZEUS_CONFLICT_PREPARATION_NOT_ACTIVE', '冲突现场尚未准备完成，补充消息只能进入当前会话队列。');
     }
+    if (internalOperation) {
+      /** 模型能力读取期间会话可能变化，入队前再次核对同一失败身份。 */
+      const latest = conversationTurns
+        .listByConversation(conversation.id)
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
+        .at(-1);
+      if (
+        !latest?.providerTurnId ||
+        latest.status !== 'failed' ||
+        idempotencyKey !== `connection-retry:${latest.providerTurnId}` ||
+        conversationTurns.getLatestActiveByConversation(conversation.id) ||
+        conversationSubmissions.listQueueProjectionByConversation(conversation.id).some((submission) => ['queued', 'paused', 'dispatching', 'active'].includes(submission.status))
+      ) {
+        throw nativeApiError('ZEUS_CONVERSATION_RETRY_NOT_READY', '会话状态已改变，请先检查处理状态。');
+      }
+    }
     const nativeOperation = await (async () => {
       if (selectedAgentKind === 'pi') {
         if (delivery === 'queue') {
           return piNativeCoordinator.queueHeldMessage({
+            ...(internalOperation ? { internalOperation: true } : {}),
             cwd: executionRoot,
             conversation,
             submissionId: reservedSubmissionId ?? `conversation_submission_${createHash('sha256').update(`${stableOperationId}\0pi-queued`).digest('hex').slice(0, 24)}`,
@@ -1930,6 +2027,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
         });
       }
       return codexNativeCoordinator.submitMessage({
+        ...(internalOperation ? { internalOperation: true } : {}),
+        ...(resumeSubmissionId ? { resumeSubmissionId } : {}),
         conversationId: conversation.id,
         ...(reservedSubmissionId ? { submissionId: reservedSubmissionId } : {}),
         content: providerContent,

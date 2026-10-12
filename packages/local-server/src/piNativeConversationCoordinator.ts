@@ -1300,12 +1300,14 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         providerModel,
       });
     }
-    options.conversations.updateNextTurnSettings(input.conversation.id, {
-      model: providerModel,
-      ...(input.thinkingLevel ? { effort: input.thinkingLevel } : {}),
-      permissionMode: input.permissionMode,
-      collaborationMode: input.workMode,
-    });
+    // 已持久化的内部续接不改变用户下一轮的设置。
+    if (parseJsonRecord(submission.inputJson).internalOperation !== true)
+      options.conversations.updateNextTurnSettings(input.conversation.id, {
+        model: providerModel,
+        ...(input.thinkingLevel ? { effort: input.thinkingLevel } : {}),
+        permissionMode: input.permissionMode,
+        collaborationMode: input.workMode,
+      });
     const turn =
       acceptedTurnProjection ??
       options.turns.upsert({
@@ -1360,6 +1362,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   }
 
   async function queueHeldMessage(input: {
+    /** 只有服务端恢复入口设置内部来源，正常用户输入不接受此标记。 */
+    internalOperation?: boolean;
     /** 入队时保留统一路由选定的目录身份，不在此恢复或猜测工作目录。 */
     cwd: string;
     /** 原异步问题的答复关联。 */
@@ -1404,6 +1408,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       status: 'queued',
       input: {
         text: input.content,
+        ...(input.internalOperation ? { internalOperation: true } : {}),
         ...(input.questionAnswer ? { questionAnswer: input.questionAnswer } : {}),
         ...(input.displayText ? { displayText: input.displayText } : {}),
         ...(input.attachments?.length ? { attachments: input.attachments } : {}),
@@ -1430,12 +1435,14 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     projectLocallyAcceptedUserMessage({ conversations: options.conversations, submission, broadcast: options.publish });
     await input.segmentLifecycle?.prepare(submission);
     const providerModel = input.model.sourceId ? modelRef(input.model.sourceId, input.model.modelId) : input.model.modelId;
-    options.conversations.updateNextTurnSettings(input.conversation.id, {
-      model: providerModel,
-      ...(input.thinkingLevel ? { effort: input.thinkingLevel } : {}),
-      permissionMode: input.permissionMode ?? input.conversation.permissionMode,
-      collaborationMode: input.workMode ?? input.conversation.collaborationMode,
-    });
+    // 系统续接不得覆盖用户正在编辑的下一轮设置。
+    if (!input.internalOperation)
+      options.conversations.updateNextTurnSettings(input.conversation.id, {
+        model: providerModel,
+        ...(input.thinkingLevel ? { effort: input.thinkingLevel } : {}),
+        permissionMode: input.permissionMode ?? input.conversation.permissionMode,
+        collaborationMode: input.workMode ?? input.conversation.collaborationMode,
+      });
     await options.db.save();
     await input.providerWriteLifecycle?.markPrepared(submission.id);
     return { conversationId: input.conversation.id, submissionId: submission.id, providerThreadId: null, providerTurnId: null, status: 'queued' as const };
@@ -1453,7 +1460,18 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     const persisted = asRecord(JSON.parse(next.inputJson));
     const persistedContext = asRecord(persisted.context);
     const content = typeof persisted.text === 'string' ? persisted.text : '';
-    const settings = options.conversations.getNextTurnSettings(conversationId);
+    // 历史内部提交也使用持久配置，不能在恢复时读取下一轮的新选择。
+    if (persisted.internalOperation === true && (typeof persistedContext.model !== 'string' || !['read-only', 'auto', 'auto-review', 'full-access'].includes(String(persistedContext.permissionMode))))
+      throw piError('ZEUS_CONVERSATION_RETRY_CONTEXT_MISSING', '无法确认原请求的冻结设置，请检查会话。');
+    const settings =
+      persisted.internalOperation === true
+        ? {
+            model: typeof persistedContext.modelSourceId === 'string' ? modelRef(persistedContext.modelSourceId, String(persistedContext.model)) : String(persistedContext.model),
+            effort: typeof persistedContext.thinkingLevel === 'string' ? persistedContext.thinkingLevel : undefined,
+            permissionMode: persistedContext.permissionMode as 'read-only' | 'auto' | 'auto-review' | 'full-access',
+            collaborationMode: persistedContext.workMode === 'plan' ? ('plan' as const) : ('default' as const),
+          }
+        : options.conversations.getNextTurnSettings(conversationId);
     const selectedModelRef = settings?.model ? parseModelRef(settings.model) : null;
     const selectedModel = selectedModelRef
       ? { sourceId: selectedModelRef.sourceId, modelId: selectedModelRef.modelId, displayName: null }
@@ -1632,22 +1650,23 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
               attachmentInput.attachments,
             );
             // 正文事件负责即时展示；统一用户历史负责轮次结束、重连和重新打开后的相同消息。
-            options.execution.appendModelHistory({
-              conversationId: input.conversation.id,
-              turnId: run.turnId,
-              segmentId: segment.id,
-              role: 'user',
-              content: {
-                text: input.content,
-                providerItemId: projection.userItem.providerItemId,
-                attachments: attachmentInput.attachments,
-                ...(input.browserComments?.length ? { browserComments: input.browserComments } : {}),
-                ...(input.conversationContext ? { conversationContext: input.conversationContext } : {}),
-                ...(input.questionAnswer ? { questionAnswer: input.questionAnswer } : {}),
-              },
-              submissionId: submission.id,
-              confirmedAt: accepted.acceptedAt,
-            });
+            if (projection.userItem)
+              options.execution.appendModelHistory({
+                conversationId: input.conversation.id,
+                turnId: run.turnId,
+                segmentId: segment.id,
+                role: 'user',
+                content: {
+                  text: input.content,
+                  providerItemId: projection.userItem.providerItemId,
+                  attachments: attachmentInput.attachments,
+                  ...(input.browserComments?.length ? { browserComments: input.browserComments } : {}),
+                  ...(input.conversationContext ? { conversationContext: input.conversationContext } : {}),
+                  ...(input.questionAnswer ? { questionAnswer: input.questionAnswer } : {}),
+                },
+                submissionId: submission.id,
+                confirmedAt: accepted.acceptedAt,
+              });
             options.submissions.updateStatus(submission.id, 'resolved', { providerTurnId: accepted.nativeRunId, resolvedAt: accepted.acceptedAt, updatedAt: accepted.acceptedAt });
           },
         },
@@ -2160,7 +2179,10 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     messageCreatedAt: string,
     attachments: NativeConversationAttachmentInput[] = [],
     taskPushLayout?: TaskPushMessageLayout,
-  ): ZeusConversationItemRecord {
+  ): ZeusConversationItemRecord | undefined {
+    /** Provider 回显也核对持久来源，所有 Pi 发送入口共用同一展示边界。 */
+    const submission = options.submissions.listByConversation(conversationId).find((entry) => entry.clientMessageId === clientMessageId);
+    if (submission && parseJsonRecord(submission.inputJson).internalOperation === true) return undefined;
     const itemId = `pi_user_${clientMessageId}`;
     const attachmentMetadata = persistedPiAttachmentMetadata(attachments);
     // 先保存客户端身份，Provider 来源才能与已接纳的用户历史共用同一过程归属。

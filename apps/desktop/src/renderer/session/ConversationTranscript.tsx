@@ -209,21 +209,13 @@ export function hasUnclaimedRecoveredRequestUserInput(state: NativeSessionState)
   );
 }
 
-/** 正文与过程共用加载状态，保留游标方向以决定补页位置。 */
+/** 展开只读取过程页，正文补页由历史读取和导航入口拥有。 */
 function turnDetailPaging(snapshot: NativeSessionState['snapshot'], turnId: string) {
   const process = snapshot?.v2Paging?.processByTurn[turnId];
-  // v0.3.46 之前已经留在 Renderer 内存中的分页对象没有 historyByTurn。
-  // 升级后第一次打开历史会话必须把它视为空映射，而不是在旧快照上崩溃。
-  const history = snapshot?.v2Paging?.historyByTurn?.[turnId];
-  if (!process && !history) return undefined;
+  if (!process) return undefined;
   return {
-    direction: process?.direction ?? history?.direction ?? 'forward',
-    loading: Boolean(process?.loading || history?.loading),
-    error: process?.error ?? history?.error ?? null,
-    loaded: Boolean(process?.loaded || history?.loaded),
-    hasMore: Boolean(process?.hasMore || history?.hasMore),
-    /** 正文与过程独立推进，任一游标变化都允许读取下一批。 */
-    cursor: JSON.stringify([process?.nextCursor ?? null, history?.nextCursor ?? null]),
+    ...process,
+    cursor: process.nextCursor ?? null,
   };
 }
 
@@ -457,7 +449,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   // 当前状态始终读取完整会话事件，不受活动列表的展示筛选影响。
   const activeStatusKind = transcriptRunStatus(props.state);
   /** Codex 摘要与 Pi thinking/reasoning 共用当前进展位置，不按供应商或模型名称分支。 */
-  const activeReasoningItem = useMemo(() => latestActiveReasoningSummaryItem(items, activeTurnId), [activeTurnId, items]);
+  const activeReasoningItem = props.state.currentReasoningItem?.turnId === activeTurnId ? props.state.currentReasoningItem : null;
   // 创建中的会话尚未建立真实轮次时，由连接提示承担当前进度。
   const creatingSession = props.creationStatus?.state === 'creating' || props.creationStatus?.state === 'retrying';
   // 创建失败时保留创建错误，不再显示独立运行状态。
@@ -1114,6 +1106,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       const retryable =
         !props.historyOnly &&
         row.failure.category === 'network' &&
+        // 送达尚未核对的提交只开放原恢复入口，不能从旧失败卡发起另一条续接。
+        !props.state.queue?.submissions.some((submission) => ['queued', 'paused', 'dispatching', 'active'].includes(submission.status)) &&
         props.state.snapshot?.turns.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)).at(-1)?.providerTurnId === row.turnId;
       return (
         <TurnFailureCard
@@ -2051,6 +2045,20 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
   const taskCreation = row.item.payload.taskPushLayout ? options.props.creationStatus : undefined;
   const showPendingDeliveryFeedback = row.item.optimistic && (!taskCreation || taskCreation.state === 'failed') && shouldShowPendingMessageDeliveryFeedback(row.item, options.showThinking);
   const queuedSubmission = queuedSubmissionForItem(row.item, options.props.state.queue);
+  if (row.item.payload.internalOperation === true) {
+    return (
+      <MessageDeliveryOutcomeFeedback
+        item={row.item}
+        submissionId={queuedSubmission?.id}
+        language={options.props.language}
+        onRecoverQueue={options.props.onRecoverQueue}
+        onRetryQueuedSubmission={options.props.onRetryQueuedSubmission}
+        onReconnectCodex={options.props.onReconnectCodex}
+        onCancelQueuedSubmission={options.props.onCancelQueuedSubmission}
+        onOpenAiSettings={options.props.onOpenAiSettings}
+      />
+    );
+  }
   return (
     <TranscriptV2ContentBoundary item={row.item} onLoadContent={options.props.onLoadV2Content}>
       <ThreadItemView
@@ -2125,6 +2133,8 @@ function isSamePlanItem(openItem: NativeSessionItemBuffer | null | undefined, it
 
 /** 运行状态只读取正式轮次、请求、连接及过程事件，不从计时或正文猜测。 */
 export function transcriptRunStatus(state: NativeSessionState): 'starting' | 'executing' | 'compacting' | 'waiting_input' | 'waiting_approval' | 'reconnecting' | null {
+  // 暂停或未知送达不代表模型继续运行，错误与核对入口由系统操作行承载。
+  if (state.queue?.state.type === 'paused' || state.queue?.submissions.some((submission) => submission.internalOperation && submission.pausedReason === 'outcome_unknown')) return null;
   if (state.providerReconnectAttempt > 0) return 'reconnecting';
   if (state.conversationState === 'starting_turn') return 'starting';
   if (!state.activeTurnId || state.terminalTurnIds[state.activeTurnId]) return null;
@@ -2226,7 +2236,12 @@ export function MessageDeliveryOutcomeFeedback(props: {
   const failed = props.item.status === 'failed' || pausedReason === 'preflight_failed' || pausedReason === 'runtime_rejected';
   /** 只有尚无明确拒绝事实的暂停或未知状态才显示待确认。 */
   const unconfirmed = !failed && (props.item.status === 'unconfirmed' || props.item.status === 'paused');
-  if (!failed && !unconfirmed) return null;
+  if (!failed && !unconfirmed)
+    return props.item.payload.internalOperation === true ? (
+      <ConversationNotice role="status" label={props.language === 'zh-CN' ? '系统操作' : 'System operation'}>
+        {props.item.text}
+      </ConversationNotice>
+    ) : null;
   const feedbackState = failed ? 'failed' : 'unconfirmed';
   /** 确切的未知送达仅开放核对；普通重试也会由现有接口先检查未发送证据。 */
   const checkOnly = props.item.status === 'unconfirmed' || pausedReason === 'outcome_unknown';
@@ -2252,11 +2267,16 @@ export function MessageDeliveryOutcomeFeedback(props: {
   }
 
   return (
-    <ConversationNotice deliveryState={feedbackState} label={props.language === 'zh-CN' ? '消息发送状态' : 'Message delivery status'}>
+    <ConversationNotice
+      deliveryState={feedbackState}
+      label={props.item.payload.internalOperation === true ? (props.language === 'zh-CN' ? '系统操作' : 'System operation') : props.language === 'zh-CN' ? '消息发送状态' : 'Message delivery status'}
+    >
       <span className="session-message-delivery-status">
         {unconfirmed && pausedReason !== 'recovered_unsent'
           ? props.language === 'zh-CN'
-            ? '暂时无法确认消息的发送状态。'
+            ? props.item.payload.internalOperation === true
+              ? '正在核对上次操作是否已执行。'
+              : '暂时无法确认消息的发送状态。'
             : 'Message delivery status is not yet confirmed.'
           : props.language === 'zh-CN'
             ? '消息尚未发送。'
@@ -2764,12 +2784,6 @@ export function projectTranscriptRows(
   return rows;
 }
 
-/** 活动轮只选择最新的可读思考内容；Codex 摘要和 Pi 过程正文共享同一优先级。 */
-function latestActiveReasoningSummaryItem(items: readonly NativeSessionItemBuffer[], activeTurnId: string | null): NativeSessionItemBuffer | null {
-  if (!activeTurnId || items.some((item) => item.turnId === activeTurnId && isFinalAnswerItem(item))) return null;
-  return [...items].reverse().find((item) => item.turnId === activeTurnId && normalizeItemType(item.type) === 'reasoning' && item.status !== 'failed' && latestReasoningSummaryText(item).length > 0) ?? null;
-}
-
 function latestCurrentActivityItemKey(items: readonly NativeSessionItemBuffer[], activeTurnId: string | null): string | null {
   if (!activeTurnId) return null;
   for (let index = items.length - 1; index >= 0; index -= 1) {
@@ -3004,12 +3018,13 @@ export function projectQueuedSubmissionItems(state: NativeSessionState, submissi
         turnId: `pending:${submission.id}`,
         itemId: `queued-submission:${submission.id}`,
         localItemId: submission.id,
-        type: 'userMessage',
+        type: submission.internalOperation ? 'systemOperation' : 'userMessage',
         status: submission.status,
         phase: 'user',
         text,
         payload: {
-          role: 'user',
+          role: submission.internalOperation ? 'system' : 'user',
+          ...(submission.internalOperation ? { internalOperation: true } : {}),
           content: text,
           submissionId: submission.id,
           delivery: submission.delivery ?? 'queue',
