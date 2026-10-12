@@ -26,6 +26,8 @@ export function createSessionWorkspaceStateSelector(): StateSelector {
     const next: NativeSessionState = {
       ...state,
       items: previousResourceItems,
+      // 工作区壳不订阅逐字更新的当前摘要。
+      currentReasoningItem: null,
       itemOrder: emptyItemOrder,
       seenEventIds: emptySeenEvents,
       lastSequenceByGeneration: emptySequences,
@@ -71,6 +73,8 @@ export function createConversationComposerStateSelector(): StateSelector {
     changeSetsByProviderId: emptyChangeSets,
     terminalTurnIds: emptyTerminalTurns,
     items: emptyItems,
+    // 当前摘要只属于会话正文，不能驱动输入区重新渲染。
+    currentReasoningItem: null,
     itemOrder: emptyItemOrder,
     queue: null,
     pendingRequests: emptyRequests,
@@ -113,6 +117,8 @@ export function createConversationQueueStateSelector(): StateSelector {
       changeSetsByProviderId: emptyChangeSets,
       terminalTurnIds: emptyTerminalTurns,
       items: previousProjection.items,
+      // 排队区只订阅提交状态，不跟随实时摘要。
+      currentReasoningItem: null,
       itemOrder: previousProjection.itemOrder,
       pendingRequests: emptyRequests,
       planImplementationRequests: emptyPlanRequests,

@@ -2815,29 +2815,25 @@ export function createSessionController(options: CreateSessionControllerOptions)
     }
   }
 
-  /** 同时补齐本轮正文和过程；首次选择方向后始终沿已有连续范围补页。 */
+  /** 展开只补齐操作详情，不借过程补读改变主消息列表和当前状态。 */
   async function loadTurnProcessV2(turnIdentity: string, startAtBeginning = false): Promise<void> {
     const loadProcess = options.client.loadNativeConversationProcessV2;
-    const loadHistory = options.client.loadNativeConversationTurnModelHistoryV2;
     const generation = connectionToken;
     /** 完整目录为深历史提供准确身份，导航与展开不能按别名各自读取。 */
     const turn = await loadTurnReadIdentity(turnIdentity, generation);
     const current = state.snapshot;
-    if ((!loadProcess && !loadHistory) || !current?.snapshotV2 || !current.v2Paging) return;
+    if (!loadProcess || !current?.snapshotV2 || !current.v2Paging) return;
     // Snapshot V2 的固定首屏只携带最近闭合轮次；更早模型历史仍保留本地 turn id，
     // 服务端过程入口同时接受本地和 Provider 身份，因此旧轮次可以直接按历史身份读取。
     const localTurnId = turn.id;
     const pagingKey = turnReadPagingKey(current, turn);
     const currentProcessPage = turnReadPaging(current, turn, 'processByTurn');
-    const currentHistoryPage = turnReadPaging(current, turn, 'historyByTurn');
     /** 失败和中断需要优先看到末尾错误上下文；只有正常完成态切换为从头阅读。 */
     const preferredDirection = startAtBeginning || turn?.status === 'completed' ? 'forward' : 'tail';
     /** 已存在的连续范围沿原方向续读；首次完成态直接从最早一页开始。 */
-    const direction = currentProcessPage?.direction ?? currentHistoryPage?.direction ?? preferredDirection;
+    const direction = currentProcessPage?.direction ?? preferredDirection;
     if (currentProcessPage?.loading) return;
-    const shouldLoadProcess = Boolean(loadProcess && !(currentProcessPage?.loaded && !currentProcessPage.hasMore));
-    const shouldLoadHistory = Boolean(loadHistory && !(currentHistoryPage?.loaded && !currentHistoryPage.hasMore));
-    if (!shouldLoadProcess && !shouldLoadHistory) return;
+    if (currentProcessPage?.loaded && !currentProcessPage.hasMore) return;
     /** 每次真正发起读取都换代，丢弃已失效的旧请求结果。 */
     const loadRevision = (turnDetailLoadRevisions.get(pagingKey) ?? 0) + 1;
     turnDetailLoadRevisions.set(pagingKey, loadRevision);
@@ -2846,45 +2842,33 @@ export function createSessionController(options: CreateSessionControllerOptions)
         ...paging,
         processByTurn: {
           ...paging.processByTurn,
-          ...(shouldLoadProcess
-            ? {
-                [pagingKey]: {
-                  direction,
-                  nextCursor: currentProcessPage?.nextCursor ?? null,
-                  hasMore: currentProcessPage?.hasMore ?? true,
-                  loading: true,
-                  loaded: currentProcessPage?.loaded ?? false,
-                  error: null,
-                },
-              }
-            : {}),
+          [pagingKey]: {
+            direction,
+            nextCursor: currentProcessPage?.nextCursor ?? null,
+            hasMore: currentProcessPage?.hasMore ?? true,
+            loading: true,
+            loaded: currentProcessPage?.loaded ?? false,
+            error: null,
+          },
         },
       })),
     );
-    const processResult = shouldLoadProcess
-      ? loadProcess!(options.projectId, options.conversationId, localTurnId, {
-          ...(currentProcessPage?.nextCursor ? { cursor: currentProcessPage.nextCursor } : {}),
-          // 首次读取与后续页使用同一小批量预算，避免长轮次一次挂载大量内容。
-          direction,
-          limit: 48,
-          byteLimit: 96 * 1024,
-        }).then(
-          (page) => ({ page, error: null as unknown }),
-          (error: unknown) => ({ page: null, error }),
-        )
-      : Promise.resolve({ page: null, error: null as unknown });
-    const historyResult = shouldLoadHistory
-      ? loadTurnHistoryPageV2(turn, direction).then(
-          () => ({ error: null as unknown }),
-          (error: unknown) => ({ error }),
-        )
-      : Promise.resolve({ error: null as unknown });
-    const [settledProcess, settledHistory] = await Promise.all([processResult, historyResult]);
+    /** 过程响应只合入原轮次；正文历史由独立入口推进。 */
+    const settledProcess = await loadProcess(options.projectId, options.conversationId, localTurnId, {
+      ...(currentProcessPage?.nextCursor ? { cursor: currentProcessPage.nextCursor } : {}),
+      // 首次读取与后续页使用同一小批量预算，避免长轮次一次挂载大量内容。
+      direction,
+      limit: 48,
+      byteLimit: 96 * 1024,
+    }).then(
+      (page) => ({ page, error: null as unknown }),
+      (error: unknown) => ({ page: null, error }),
+    );
     if (disposed || generation !== connectionToken || turnDetailLoadRevisions.get(pagingKey) !== loadRevision) return;
     const latest = state.snapshot;
     if (!latest?.snapshotV2 || !latest.v2Paging) return;
     let next = latest;
-    // 正文由共享入口实际接管后，再用更完整的过程投影补充同一 Provider item。
+    // 同一过程页补充稳定显示身份，不重新读取用户消息或助手回复。
     if (settledProcess.page) next = mergeConversationProcessV2(next, pagingKey, settledProcess.page);
     if (settledProcess.error) {
       next = updateConversationV2Paging(next, (paging) => ({
@@ -2906,7 +2890,6 @@ export function createSessionController(options: CreateSessionControllerOptions)
     }
     await commitV2Snapshot(canonicalizeTurnReadPaging(next, turn), generation);
     if (settledProcess.error) throw settledProcess.error;
-    if (settledHistory.error) throw settledHistory.error;
   }
 
   async function loadTurnArtifactsV2(turnIdentity: string, refreshResources = false): Promise<void> {
@@ -3450,29 +3433,28 @@ export function createSessionController(options: CreateSessionControllerOptions)
       /** 只续跑最新的明确失败，不自动重放未知送达或已完成的请求。 */
       const turn = state.snapshot?.turns.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)).at(-1);
       if (turn?.providerTurnId !== providerTurnId || turn.status !== 'failed' || turn.error?.category !== 'network') throw new Error('该轮次已改变，请检查当前会话后重试。');
-      if (activeOperation || deferredSends.length || state.queue?.submissions.some((submission) => ['queued', 'dispatching', 'active'].includes(submission.status)) || (pendingSend && pendingSend.deliveryState !== 'accepted'))
+      if (activeOperation || deferredSends.length || state.queue?.submissions.some((submission) => ['queued', 'paused', 'dispatching', 'active'].includes(submission.status)) || (pendingSend && pendingSend.deliveryState !== 'accepted'))
         throw new Error('请先处理尚未确认的消息。');
-      /** 明确续跑原请求，要求检查已执行操作；不复制原用户消息或附件。 */
-      const content = '请从上次连接失败的中断处继续完成我的请求。先检查已经完成的操作，避免重复执行。';
       /** 同一失败轮次的重复点击和重启复用发送身份。 */
       const identity = `connection-retry:${providerTurnId}`;
-      return sendOrDeferEnvelope({
-        ...state.snapshot?.nextTurnSettings,
-        fingerprint: identity,
-        content,
-        displayText: '重试上次中断的请求',
-        draft: '',
-        attachments: [],
-        composerAttachments: [],
-        browserSubmission: null,
-        contextDraft: structuredClone(emptyConversationContextDraft),
-        delivery: 'queue',
-        collaborationMode: state.snapshot?.nextTurnSettings?.collaborationMode ?? state.snapshot?.collaborationMode ?? 'default',
-        idempotencyKey: identity,
-        clientUserMessageId: identity,
-        composerConsumed: true,
-        startedAt: new Date().toISOString(),
-      });
+      // 恢复是系统动作，不创建本地用户气泡，也不消耗正在编辑的草稿。
+      return runOperation(
+        identity,
+        () =>
+          options.client.sendNativeMessage(options.projectId, options.conversationId, {
+            retryOfTurnId: providerTurnId,
+            content: '',
+            attachments: [],
+            delivery: 'queue',
+            collaborationMode: 'default',
+            idempotencyKey: identity,
+            clientUserMessageId: identity,
+          }),
+        async (acceptance) => {
+          if (acceptance.queue) await applyAuthoritativeQueue(acceptance.queue);
+          await applyAuthoritativeSnapshot(await loadConversationForHydration());
+        },
+      );
     },
     cancelPendingSend,
     editQueuedSubmission(submissionId, content, attachments) {

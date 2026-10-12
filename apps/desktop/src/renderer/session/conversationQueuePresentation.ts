@@ -76,6 +76,7 @@ export function composerQueuedSubmissions(state: NativeSessionState): ComposerQu
   const durable = visibleQueuedSubmissions(state.queue)
     .filter(
       (submission) =>
+        !submission.internalOperation &&
         !submission.controlAction &&
         !submission.providerTurnId &&
         (submission.status === 'queued' || submission.status === 'paused') &&

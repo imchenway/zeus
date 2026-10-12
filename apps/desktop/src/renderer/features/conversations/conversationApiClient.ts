@@ -317,12 +317,14 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
     },
     connectEvents: (onEvent, options) => transport.connectEvents(onEvent, options),
     sendNativeMessage: async (projectId, conversationId, input) => {
+      /** 续接只发送目标和稳定身份，模型指令由服务端生成。 */
+      const value = input.retryOfTurnId ? { retryOfTurnId: input.retryOfTurnId, idempotencyKey: input.idempotencyKey, clientUserMessageId: input.clientUserMessageId } : input;
       const body = await buildConversationDispatchCommandRequest({
         commandType: conversationDispatchClientCommandTypes.messageSubmit,
         scopeKind: 'product_conversation',
         scopeId: conversationId,
         reconnectIdentity: input.idempotencyKey,
-        value: input,
+        value,
       });
       return transport.request<NativeOperationAcceptance>(`${conversationPath(projectId, conversationId)}/messages`, jsonRequest('POST', body));
     },

@@ -509,6 +509,8 @@ export interface WorkspaceGitExplicitRejection extends Error {
 }
 
 export interface CreateConversationMessageBody {
+  /** 服务端核对失败轮次后才创建内部续接，拒绝客户端夹带提示词或设置。 */
+  retryOfTurnId?: string;
   /** 只在下一轮应用的窗口容量。 */
   contextCapacityTokens?: number | null;
   /** 绑定原始异步问题，沿用现有提交及确认链路。 */

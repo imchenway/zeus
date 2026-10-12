@@ -312,6 +312,12 @@ async function verifyStableHydrationPages() {
   const harness = createHarness(undefined, 0, false, [], null, undefined, undefined, createHydratedSessionState(partial));
   /** 真实控制器的请求参数决定是否保留方向与游标。 */
   const requests: Array<{ cursor?: string; direction?: string }> = [];
+  /** 展开不能借操作读取重新取得正文历史。 */
+  let historyReads = 0;
+  harness.client.loadNativeConversationTurnModelHistoryV2 = async () => {
+    historyReads += 1;
+    return historyV2;
+  };
   harness.client.loadNativeConversationProcessV2 = async (_project, _conversation, _turn, options) => {
     requests.push(options ?? {});
     if (requests.length === 1) throw new Error('隔离探针模拟首次补页失败');
@@ -327,6 +333,7 @@ async function verifyStableHydrationPages() {
     await harness.controller.loadTurnProcess('turn', true);
     await harness.controller.loadTurnProcess('turn', true);
     assert(requests.length === 2 && requests.every((request) => request.direction === 'tail' && request.cursor === 'earlier-process'), '完成态展开与重试必须延续末页游标，完成后再次读取不得发请求。');
+    assert(historyReads === 0, '展开操作不能读取正文历史。');
   } finally {
     harness.controller.dispose();
   }
@@ -1202,7 +1209,47 @@ async function verifyConnectionRetryBudget() {
   return { failedReads, delays: harness.reconnectDelays, manualReconnect: 'ready', draftRetained: true };
 }
 
-/** 验证最新失败的显式续跑使用稳定身份，并保留用户尚未发送的草稿。 */
+/** 当前进度只由活动快照和实时事件更新，历史补页没有更新权限。 */
+function verifyReasoningProgressOwnership() {
+  /** 隔离首屏沿用真实快照转换，不连接 Provider。 */
+  const snapshot = adaptConversationSnapshotV2({ snapshot: snapshotV2, history: historyV2, queue, requests: [], planImplementationRequests: [], choice, goal });
+  /** 真实归约器接纳活动轮次与第一条实时摘要。 */
+  let state = sessionReducer(createHydratedSessionState(snapshot), { type: 'event_received', event: conversationEvent(1, 'conversation.turn.started', { turnId: 'progress-turn' }) });
+  state = sessionReducer(state, {
+    type: 'event_received',
+    event: conversationEvent(2, 'conversation.item.delta', { turnId: 'progress-turn', itemId: 'progress', itemType: 'reasoning', textContent: '当前实时进度', transcript: transcript('progress', 1) }),
+  });
+  /** 保存实时摘要的对象身份，后续补页只能影响历史集合。 */
+  const current = state.currentReasoningItem;
+  assert(current?.text === '当前实时进度', '实时事件必须更新当前摘要。');
+  /** 补入位置更靠后的旧摘要，覆盖之前从列表末尾取摘要的缺口。 */
+  const historical = {
+    id: 'historical-reasoning',
+    turnId: 'progress-turn',
+    providerItemId: 'historical-reasoning',
+    type: 'reasoning',
+    status: 'completed',
+    phase: 'prework',
+    text: '历史补读的摘要',
+    payload: { v2ContentKind: 'process_detail' },
+    resources: [],
+    startedAt: occurredAt,
+    updatedAt: occurredAt,
+    transcript: transcript('historical-reasoning', 3),
+  };
+  state = sessionReducer(state, { type: 'snapshot_v2_page_merged', snapshot: { ...state.snapshot!, items: [...state.snapshot!.items, historical] } });
+  assert(state.currentReasoningItem === current, '历史补页不能替换当前实时摘要。');
+  /** 冷开读取权威活动投影，不从历史过程恢复进度。 */
+  const cold = createHydratedSessionState({
+    ...snapshot,
+    turns: Object.values(state.turnsByProviderId),
+    items: [{ ...historical, id: 'progress', providerItemId: 'progress', text: '权威活动进度', payload: { v2ContentKind: 'active_item' } }],
+  });
+  assert(cold.currentReasoningItem?.text === '权威活动进度', '冷开必须恢复权威活动摘要。');
+  return { realtime: true, historicalPageRetainedCurrent: true, coldSnapshot: true };
+}
+
+/** 重试只传目标轮次，不写入用户消息或清空草稿。 */
 async function verifyFailedTurnRetry() {
   /** 初始服务端状态是已停止的网络失败。 */
   const harness = createHarness(undefined, 0, false);
@@ -1247,7 +1294,8 @@ async function verifyFailedTurnRetry() {
   /** 读取实际进入既有发送入口的消息，不把点击回调视作发送完成。 */
   const sent = harness.sentMessages[0]!;
   assert(sent.clientUserMessageId === 'connection-retry:failed-turn' && sent.idempotencyKey === 'connection-retry:failed-turn', '同一失败轮次续跑必须复用稳定的发送身份。');
-  assert(typeof sent.content === 'string' && sent.content.includes('避免重复执行'), '续跑必须检查已完成操作，不能复制重发原用户请求。');
+  assert(sent.retryOfTurnId === 'failed-turn' && sent.content === '', '客户端只传失败轮次，续接指令必须由服务端生成。');
+  assert(!Object.values(harness.controller.getState().items).some((item) => item.optimistic && item.type === 'userMessage'), '系统续接不能创建乐观用户气泡。');
   assert(harness.controller.getState().draft === '点击重试时保留的新草稿', '点击重试不能清空新草稿。');
   harness.controller.dispose();
   return { sentMessages: 1, stableIdentity: true, draftRetained: true, snapshotRetryRetained: true };
@@ -2228,6 +2276,20 @@ if (process.argv.includes('--provider-stream-recovery-only')) {
   process.exit(0);
 }
 
+/** 当前任务的恢复与展开核验独立执行，未完成的异步读取必须报错而非静默退出。 */
+if (process.argv.includes('--recovery-presentation-only')) {
+  /** 有界截止时间同时保持事件循环，避免未完成的 Promise 被误判为成功。 */
+  const deadline = setTimeout(() => {
+    throw new Error('恢复展示探针在二十秒内未完成。');
+  }, 20_000);
+  try {
+    console.log(JSON.stringify({ stableHydrationPages: await verifyStableHydrationPages(), failedTurnRetry: await verifyFailedTurnRetry(), reasoningProgressOwnership: verifyReasoningProgressOwnership() }));
+  } finally {
+    clearTimeout(deadline);
+  }
+  process.exit(0);
+}
+
 const placementTakeover = await verifyPlacementEpochTakeover();
 console.log(JSON.stringify({ placementTakeover }));
 
@@ -2265,6 +2327,7 @@ const result =
           providerStreamRecoveryStatus: await verifyProviderStreamRecoveryStatus(),
           connectionRetryBudget: await verifyConnectionRetryBudget(),
           failedTurnRetry: await verifyFailedTurnRetry(),
+          reasoningProgressOwnership: verifyReasoningProgressOwnership(),
           renderDeltaOverflow: await verifyRenderDeltaOverflow(),
           syncGapByteOverflow: await verifyGapByteOverflow(),
           contiguousGapReplay: await verifyContiguousGapReplay(),

@@ -99,6 +99,7 @@ import { createCodexNativeConversationAccess } from './codexNativeConversationAc
 import { createCodexNativeDispatchPipeline } from './codexNativeDispatchPipeline.js';
 import {
   appendConversationResourceContext,
+  connectionRetryPrompt,
   conversationTurnHasCompletedOutput,
   type PersistedSubmissionInput,
   readNativeSubmissionRecoveryKind,
@@ -648,9 +649,11 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         return {
           id: submission.id,
           conversationId: submission.conversationId,
+          // 内部动作仍参与调度和恢复，但不冒充用户发言。
+          ...(input.internalOperation === true ? { internalOperation: true } : {}),
           content:
             (typeof input.displayText === 'string' ? input.displayText.trim() : '') ||
-            submissionText(submission) ||
+            (input.internalOperation === true ? '系统操作' : submissionText(submission)) ||
             submissionAttachments(submission)
               .map((attachment) => attachment.name)
               .join('、'),
@@ -831,7 +834,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   }
 
   function dispatchContextForSubmission(submission: ZeusConversationSubmissionRecord): ConversationDispatchContext {
-    const latest = contextWithLatestNextTurnSettings(submission.conversationId, contextFromSubmission(submission));
+    // 内部续接继续使用原提交的冻结选择，不能被下一轮设置覆盖。
+    const latest = parseJsonRecord(submission.inputJson).internalOperation === true ? contextFromSubmission(submission) : contextWithLatestNextTurnSettings(submission.conversationId, contextFromSubmission(submission));
     /** 每次推送的容量随接纳快照冻结，排队期间的其他选择不回写此条消息。 */
     const frozen = submission.executionSnapshotId ? options.execution.getExecutionSnapshot(submission.executionSnapshotId) : undefined;
     if (frozen) latest.contextCapacityTokens = (parseJsonRecord(frozen.contextCapacityJson).contextCapacityTokens as number | null) ?? null;
@@ -1131,19 +1135,25 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     if (!requiresNewSegment && hasRecoveredUnsentSubmission(options.submissions.listByConversation(conversation.id))) {
       throw coordinatorError('ZEUS_RECOVERED_UNSENT_CONFIRMATION_REQUIRED', '恢复后有多条尚未发送的消息，请先逐条重试或取消。');
     }
-    const previousContext = contextWithLatestNextTurnSettings(conversation.id, contexts.get(conversation.id) ?? contextFromConversation(conversation));
-    const context: ConversationDispatchContext = {
-      ...previousContext,
-      contextCapacityTokens: options.conversations.getRecordById(conversation.id)?.contextCapacityTokens ?? null,
-      permissionMode: input.permissionMode ?? previousContext.permissionMode,
-      workMode: input.collaborationMode ?? conversation.collaborationMode,
-      ...(input.model ? { model: input.model } : {}),
-      ...(Object.prototype.hasOwnProperty.call(input, 'modelSourceId') ? { modelSourceId: input.modelSourceId ?? null } : {}),
-      ...(input.effort ? { effort: input.effort } : {}),
-      ...(Object.prototype.hasOwnProperty.call(input, 'serviceTier') ? { serviceTier: input.serviceTier } : {}),
-    };
-    if (input.model && input.model !== previousContext.model && !input.effort) delete context.effort;
-    options.conversations.updateNextTurnSettings(conversation.id, nextTurnSettingsFromContext(context));
+    /** 原提交由服务端恢复入口绑定，不从提示词或时间猜测归属。 */
+    const resumeSubmission = input.internalOperation && input.resumeSubmissionId ? options.submissions.getById(input.resumeSubmissionId) : undefined;
+    if (input.internalOperation && (!resumeSubmission || resumeSubmission.conversationId !== conversation.id)) throw coordinatorError('ZEUS_CONVERSATION_RETRY_CONTEXT_MISSING', '无法确认原请求的冻结设置，请检查会话。');
+    const previousContext = resumeSubmission ? contextFromSubmission(resumeSubmission) : contextWithLatestNextTurnSettings(conversation.id, contexts.get(conversation.id) ?? contextFromConversation(conversation));
+    const context: ConversationDispatchContext = resumeSubmission
+      ? { ...previousContext }
+      : {
+          ...previousContext,
+          contextCapacityTokens: options.conversations.getRecordById(conversation.id)?.contextCapacityTokens ?? null,
+          permissionMode: input.permissionMode ?? previousContext.permissionMode,
+          workMode: input.collaborationMode ?? conversation.collaborationMode,
+          ...(input.model ? { model: input.model } : {}),
+          ...(Object.prototype.hasOwnProperty.call(input, 'modelSourceId') ? { modelSourceId: input.modelSourceId ?? null } : {}),
+          ...(input.effort ? { effort: input.effort } : {}),
+          ...(Object.prototype.hasOwnProperty.call(input, 'serviceTier') ? { serviceTier: input.serviceTier } : {}),
+        };
+    if (!resumeSubmission && input.model && input.model !== previousContext.model && !input.effort) delete context.effort;
+    // 恢复沿用原冻结设置，不覆盖用户正在编辑的下一轮配置。
+    if (!input.internalOperation) options.conversations.updateNextTurnSettings(conversation.id, nextTurnSettingsFromContext(context));
     const submission = createSubmission(conversation.id, input.content, input, context);
     await input.segmentLifecycle?.prepare(submission);
     await persist();
@@ -3221,7 +3231,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
         const previousSubmission = previousTurn.clientSubmissionId ? options.submissions.getById(previousTurn.clientSubmissionId) : undefined;
         /** 恢复属于原请求，不改变工作区或执行权限。 */
         const context = previousSubmission ? contextFromSubmission(previousSubmission) : (contexts.get(conversationId) ?? contextFromConversation(conversation));
-        const submission = createSubmission(conversationId, '请从上次连接失败的中断处继续完成我的请求。先检查已经完成的操作，避免重复执行。', { idempotencyKey: identity, clientUserMessageId: identity, internalOperation: true }, context);
+        const submission = createSubmission(conversationId, connectionRetryPrompt, { idempotencyKey: identity, clientUserMessageId: identity, internalOperation: true, displayText: '系统正在续接上次中断的请求' }, context);
         options.submissions.promoteQueuedHead(conversationId, submission.id, now());
         runStates.set(conversationId, { type: 'idle' });
         options.conversations.bindProvider(conversationId, { providerId: 'codex', providerThreadId: requireString(conversation.providerThreadId, 'provider thread id'), providerModel: conversation.providerModel, providerState: 'ready' });

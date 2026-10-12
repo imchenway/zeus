@@ -132,6 +132,7 @@ export function createInitialSessionState(): NativeSessionState {
     providerThreadId: null,
     activeTurnId: null,
     startedTurnId: null,
+    currentReasoningItem: null,
     snapshot: null,
     turnsByProviderId: {},
     changeSetsByProviderId: {},
@@ -679,6 +680,14 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
   const hasVisibleActiveFeedback = activeTurnId
     ? Object.values(items).some((item) => item.turnId === activeTurnId && itemProvidesVisibleFeedback(item) && (!latestResolutionAt || (item.updatedAt ?? item.timelineAt ?? '') >= latestResolutionAt))
     : false;
+  /** 当前摘要只取权威活动投影，不从已缓存的历史过程选取。 */
+  const reasoningSnapshot =
+    activeTurnId && !snapshot.snapshotV2?.activeTurn?.completionOutput ? snapshot.items.toReversed().find((item) => item.turnId === activeTurnId && item.type === 'reasoning' && item.payload.v2ContentKind === 'active_item') : undefined;
+  /** 复用条目的显示身份，摘要正文仍由权威活动投影拥有。 */
+  const reasoningBuffer = reasoningSnapshot ? Object.values(stableItems).find((item) => item.localItemId === reasoningSnapshot.id) : undefined;
+  /** 旧快照不能覆盖比它更新的实时摘要。 */
+  const currentReasoningItem =
+    reasoningSnapshot && reasoningBuffer ? { ...reasoningBuffer, text: reasoningSnapshot.text, payload: reasoningSnapshot.payload, transcript: reasoningSnapshot.transcript, updatedAt: reasoningSnapshot.updatedAt } : null;
   /** 同线程同轮次的快照刷新不能清掉仍在进行的连接提示；正式结束事件负责收口。 */
   const retainProviderRetry = state.providerThreadId === snapshot.providerThreadId && snapshot.turns.some((turn) => turn.providerTurnId === state.providerReconnectTurnId && ['running', 'waiting', 'failed'].includes(turn.status));
   return {
@@ -691,6 +700,7 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
     providerReconnectTurnId: retainProviderRetry ? state.providerReconnectTurnId : null,
     activeTurnId,
     startedTurnId: activeTurnId,
+    currentReasoningItem: currentReasoningItem && state.currentReasoningItem?.turnId === activeTurnId ? mergeTranscriptItem(state.currentReasoningItem, currentReasoningItem) : currentReasoningItem,
     snapshot: { ...snapshot, turns: retainedTurns, changeSets: Object.values(changeSetsByProviderId) },
     turnsByProviderId,
     changeSetsByProviderId,
@@ -895,6 +905,7 @@ function mergeSnapshotV2Page(state: NativeSessionState, snapshot: NativeConversa
     itemOrder: stableItemOrder,
     activeTurnId: state.activeTurnId,
     startedTurnId: state.startedTurnId,
+    currentReasoningItem: state.currentReasoningItem,
     queue: state.queue,
     pendingRequests: state.pendingRequests,
     planImplementationRequests: state.planImplementationRequests,
@@ -1072,6 +1083,7 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
         ...turnBase,
         activeTurnId: turnId,
         startedTurnId: turnId,
+        currentReasoningItem: turnBase.activeTurnId === turnId ? turnBase.currentReasoningItem : null,
         queue,
         items,
         turnsByProviderId: { ...turnBase.turnsByProviderId, [turnId]: turn },
@@ -1141,6 +1153,7 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
       return {
         ...nextState,
         activeTurnId: null,
+        currentReasoningItem: null,
         conversationState: status === 'failed' && !warning ? 'turn_failed' : 'native_idle',
       };
     }
@@ -1486,7 +1499,8 @@ function reduceItemEvent(state: NativeSessionState, event: Extract<NativeConvers
   };
   /** 实时、历史与分页共用正文权威判定。 */
   const next = previous ? mergeTranscriptItem(previous, projected) : projected;
-  if (next === previous) return state;
+  // 详情可能先载入同一条目；实时摘要仍需要取得独立的当前状态所有权。
+  if (next === previous && effectiveType !== 'reasoning') return state;
   const isNew = previous === undefined;
   const items = { ...state.items, [key]: next };
   if (matchedKey && matchedKey !== key) delete items[matchedKey];
@@ -1498,6 +1512,7 @@ function reduceItemEvent(state: NativeSessionState, event: Extract<NativeConvers
   return {
     ...state,
     activeTurnId: terminal ? state.activeTurnId : turnId,
+    currentReasoningItem: terminal ? state.currentReasoningItem : effectiveType === 'reasoning' ? next : next.phase === 'final_answer' ? null : state.currentReasoningItem?.turnId === turnId ? state.currentReasoningItem : null,
     items,
     itemOrder,
     transcriptRevision: state.transcriptRevision + 1,

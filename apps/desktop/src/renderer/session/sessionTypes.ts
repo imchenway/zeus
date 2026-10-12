@@ -266,6 +266,8 @@ export interface NativeSubagentPromptFact {
 export type NativeSubmissionReceipt = Pick<NativeQueuedSubmission, 'id' | 'conversationId' | 'clientUserMessageId' | 'status' | 'pausedReason' | 'providerTurnId'>;
 
 export interface NativeQueuedSubmission {
+  /** 内部提交只显示系统状态，仍保留送达核对和错误反馈。 */
+  internalOperation?: boolean;
   /** 明确关联被取消的原提交，实时与重新加载均可清理其临时气泡。 */
   replacementOfSubmissionId?: string;
   /** 绑定原始异步问题，沿用现有提交及确认链路。 */
@@ -1582,6 +1584,8 @@ export interface StartProjectConversationRequest {
 }
 
 export interface SendNativeMessageRequest {
+  /** 用户只指定原失败轮次，续接指令和权限由服务端生成。 */
+  retryOfTurnId?: string;
   /** 本次发送的容量，独立于当前正在执行的轮次。 */
   contextCapacityTokens?: number | null;
   /** 绑定原始异步问题，沿用现有提交及确认链路。 */
@@ -1906,6 +1910,8 @@ export interface NativeSessionState {
   providerThreadId: string | null;
   activeTurnId: string | null;
   startedTurnId: string | null;
+  /** 权威首屏或实时事件拥有的当前摘要，历史补读不能改写。 */
+  currentReasoningItem?: NativeSessionItemBuffer | null;
   snapshot: NativeConversationSnapshot | null;
   turnsByProviderId: Record<string, NativeTurnSnapshot>;
   changeSetsByProviderId: Record<string, TurnChangeSet>;

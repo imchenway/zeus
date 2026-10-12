@@ -158,6 +158,8 @@ export interface NativeSubmissionError {
 export type NativeSubmissionRecoveryKind = 'interaction_response';
 
 export interface NativeQueuedSubmission {
+  /** 内部提交保留队列与恢复能力，展示为系统操作而非用户发言。 */
+  internalOperation?: boolean;
   /** 明确关联被取消的原提交，实时与重新加载均可清理其临时气泡。 */
   replacementOfSubmissionId?: string;
   /** 绑定原始异步问题，沿用现有提交及确认链路。 */
@@ -395,6 +397,10 @@ export interface SetNativeGoalInput {
 }
 
 export interface SubmitNativeMessageInput {
+  /** 由恢复入口绑定原提交，模型、权限和容量继续使用其冻结上下文。 */
+  resumeSubmissionId?: string;
+  /** 仅由服务端恢复入口设置，客户端不能自行隐藏普通消息。 */
+  internalOperation?: boolean;
   /** 绑定原始异步问题，沿用现有提交及确认链路。 */
   questionAnswer?: AsyncQuestionAnswer;
   conversationId: string;
