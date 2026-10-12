@@ -72,8 +72,10 @@ export interface TaskDigitalEmployeeManagement {
   teamTemplates: DigitalTeamWorkflowTemplateRecord[];
   /** 接纳后等待真实会话，不能把接纳回执当成启动完成。 */
   pendingAssignment: { employeeId: string; workflowRunId?: string; workRunId?: string; previousAttempts: string[]; reason?: string } | null;
-  /** 交接成功后要求打开的原会话。 */
-  conversationRequest: { conversationId: string } | null;
+  /** 查看员工或交接成功后定位的原会话，保留员工和团队身份。 */
+  conversationRequest: { conversationId: string; employeeId?: string; groupId?: string } | null;
+  /** 查看操作仅定位会话，不产生指派或重跑命令。 */
+  requestConversation(request: NonNullable<TaskDigitalEmployeeManagement['conversationRequest']>): void;
   /** 跟随本次接纳的准确运行，不使用最近会话猜测结果。 */
   followAssignment(employeeId: string, result: { workflowRunId: string } | { run: { id: string } }): void;
   employees: DigitalEmployeeRecord[];
@@ -315,7 +317,7 @@ export function useTaskDigitalEmployeeManagement(
     setError(null);
   }, []);
 
-  return { employees, assignableEmployees, projection, teams, teamTemplates, pendingAssignment, conversationRequest, followAssignment, loadState, busy, error, load, act, dismissOperationError };
+  return { employees, assignableEmployees, projection, teams, teamTemplates, pendingAssignment, conversationRequest, requestConversation: setConversationRequest, followAssignment, loadState, busy, error, load, act, dismissOperationError };
 }
 
 /** 会话、待办、工作和成果在同一页面展开，保留原会话与验收入口。 */
@@ -323,7 +325,7 @@ export function TaskDigitalEmployeePanel(props: TaskDigitalEmployeePanelProps) {
   /** 提示跟随应用语言。 */
   const zh = props.language === 'zh-CN';
   /** 待办和工作都定位原会话身份。 */
-  const [conversationRequest, setConversationRequest] = useState<{ conversationId: string } | null>(null);
+  const [conversationRequest, setConversationRequest] = useState<TaskDigitalEmployeeManagement['conversationRequest']>(null);
   /** 正式成果保留独立全文阅读状态。 */
   const [readingDeliverable, setReadingDeliverable] = useState<TaskWorkDeliverableRecord | null>(null);
   /** 选中的待处理事项继续使用原有确认弹窗。 */
@@ -727,6 +729,8 @@ export function TaskDigitalEmployeeExecutor(props: {
   client: DigitalEmployeeApiClient | null;
   language: DigitalEmployeeLanguage;
   management: TaskDigitalEmployeeManagement;
+  /** 当前阅读会话只用于标记执行人入口，不影响指派状态。 */
+  activeConversationId?: string | null;
   onLoadCapabilities?: () => Promise<CodexTaskPushCapabilities>;
   /** 缺少员工时进入统一的数字员工管理。 */
   onManageEmployees?(): void;
@@ -747,6 +751,10 @@ export function TaskDigitalEmployeeExecutor(props: {
   const assignedEmployees = [
     ...new Map(navigation.flatMap((group) => group.employees.filter((member) => member.employee && member.entries.some((entry) => entry.current)).map((member) => [member.employee!.id, member.employee!] as const))).values(),
   ];
+  /** 顶部显示当前团队的全部成员，已完成分工仍能查看原会话。 */
+  const visibleGroup = navigation.find((group) => group.team && isCurrentTaskTeam(group.team)) ?? navigation.find((group) => !group.team && group.employees.some((member) => member.entries.some((entry) => entry.current))) ?? navigation[0];
+  /** 等待开始的成员保留身份，其会话入口等待真实记录建立。 */
+  const visibleMembers = visibleGroup?.employees.filter((member) => member.employee) ?? [];
   /** 人工交接必须依据当前冻结团队，不使用正在查看的历史团队。 */
   const activeTeam = props.management.teams.find(isCurrentTaskTeam);
   /** 冻结项目身份与全局来源共同定位可交接员工。 */
@@ -772,8 +780,29 @@ export function TaskDigitalEmployeeExecutor(props: {
   ];
   return (
     <span className="task-digital-employee-executor">
+      {visibleMembers.map((member) => {
+        /** 导航已按当前工作及创建时间排序，不按员工名称猜测会话。 */
+        const entry = member.entries[0];
+        return (
+          <Button
+            key={member.id}
+            className="task-digital-employee-conversation"
+            size="compact"
+            aria-label={zh ? `查看${member.employee!.name}的${entry.title}会话` : `View ${member.employee!.name}'s ${entry.title} conversation`}
+            aria-current={entry.conversationId && props.activeConversationId === entry.conversationId ? 'true' : undefined}
+            title={entry.reason ?? (entry.conversationId ? entry.title : zh ? '等待会话创建' : 'Waiting for a conversation')}
+            disabled={!entry.conversationId}
+            onClick={() => props.management.requestConversation({ conversationId: entry.conversationId!, employeeId: member.id, groupId: visibleGroup.id })}
+          >
+            <DigitalEmployeeAvatar {...member.employee!} />
+            {member.employee!.name}
+          </Button>
+        );
+      })}
       {props.terminalReadOnly ? (
-        <span>{assignedEmployees.map((employee) => employee.name).join('、') || (zh ? '暂无执行人' : 'No current employee')}</span>
+        visibleMembers.length ? null : (
+          <span>{zh ? '暂无执行人' : 'No current employee'}</span>
+        )
       ) : runnableEmployees.length > 0 ? (
         <ZeusSelect
           size="regular"

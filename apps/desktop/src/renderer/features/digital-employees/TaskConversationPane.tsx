@@ -40,7 +40,7 @@ export interface TaskConversationPaneProps {
   /** 原新建会话组件。 */
   newWorkspace?: ReactNode;
   /** 待办和交接要求定位的原会话。 */
-  conversationRequest?: { conversationId: string } | null;
+  conversationRequest?: { conversationId: string; employeeId?: string; groupId?: string } | null;
   /** 当前语言。 */
   language: 'zh-CN' | 'en-US';
   /** 原成果列表及阅读器按所选工作运行提供内容。 */
@@ -152,15 +152,20 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
     if (target === null && !creating && selected?.conversationId) setTarget(selected.conversationId);
   }, [target, creating, selected]);
   useEffect(() => {
-    if (!props.conversationRequest || handledRequest.current === props.conversationRequest) return;
+    /** 明确指定员工与团队时保持其身份，避免共享会话误选其他成员。 */
+    const request = props.conversationRequest;
+    if (!request || handledRequest.current === request) return;
     /** 等待真实关联抵达，不把新执行猜成普通讨论。 */
-    const requested = groups.find((entry) => entry.employees.some((member) => member.entries.some((record) => record.conversationId === props.conversationRequest!.conversationId)));
+    const requested = groups.find(
+      (entry) =>
+        (!request.groupId || entry.id === request.groupId) && entry.employees.some((member) => (!request.employeeId || member.id === request.employeeId) && member.entries.some((record) => record.conversationId === request.conversationId)),
+    );
     if (!requested) return;
-    handledRequest.current = props.conversationRequest;
+    handledRequest.current = request;
     setGroupId(requested.id);
-    setMemberId(null);
+    setMemberId(request.employeeId ?? null);
     setWaitingFor(null);
-    setTarget(props.conversationRequest.conversationId);
+    setTarget(request.conversationId);
     setCreating(false);
   }, [groups, props.conversationRequest]);
   useEffect(() => {

@@ -1976,6 +1976,31 @@
   margin: 0 0 6px;
   padding: 4px 8px;
 }
+/* 执行人与指派入口可换行，长姓名不扩大任务详情宽度。 */
+.macos-ai-app .task-digital-employee-executor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-inline-size: 0;
+}
+
+/* 查看会话使用已有按钮样式，头像与选中状态只补充辨识信息。 */
+.macos-ai-app .task-digital-employee-conversation {
+  max-inline-size: 100%;
+  white-space: normal;
+}
+
+.macos-ai-app .task-digital-employee-conversation .digital-employee-avatar {
+  inline-size: 24px;
+  block-size: 24px;
+  flex-shrink: 0;
+}
+
+.macos-ai-app .task-digital-employee-conversation[aria-current='true'] {
+  border-color: var(--zeus-product-accent);
+}
+
 .macos-ai-app .task-conversation-members,
 .macos-ai-app .task-conversation-member-records {
   list-style: none;
