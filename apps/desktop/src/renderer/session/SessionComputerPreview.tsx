@@ -2,11 +2,20 @@ import { useEffect, useRef, useState } from 'react';
 import type { ZeusComputerPreview } from '@zeus/shared';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
+import { HandPalmIcon as HandPalm } from '@phosphor-icons/react/dist/csr/HandPalm';
+import { PreviewImage } from '../code/FilePreview.js';
+import { ModalPortal } from '../ui/ModalPortal.js';
+import { MotionPresence } from '../ui/MotionPresence.js';
 
 /** 会话环境信息下展示最近一次观察，更新不触发整个会话重新渲染。 */
 export function SessionComputerPreview(props: { conversationId: string; language: SessionUiLanguage; active: boolean }) {
   /** 仅保留本会话最新的有界缩略图。 */
   const [preview, setPreview] = useState<ZeusComputerPreview | null>(null);
+  /** 完整预览固定用户点击时的画面，后续观察不会替换正在审阅的图片。 */
+  const [expanded, setExpanded] = useState<{ url: string; name: string } | null>(null);
+  /** 画面解码失败时就地降级，新观察图片到达后自动恢复。 */
+  const [failedImage, setFailedImage] = useState<string | null>(null);
   /** 只禁用正在停止的精确控制身份，旧请求不能禁用新会话的停止按钮。 */
   const [stopping, setStopping] = useState<{ conversationId: string; sessionId: string } | null>(null);
   /** 只接受最近一次停止请求的失败说明，避免旧请求覆盖新请求结果。 */
@@ -94,59 +103,83 @@ export function SessionComputerPreview(props: { conversationId: string; language
   }
 
   if (!props.active || (!preview && !errorMessage && !readFailed)) return null;
+  /** 正常控制只保留辅助说明，异常状态始终展示，不能藏在悬浮详情中。 */
+  const status =
+    preview?.state === 'paused'
+      ? zh
+        ? '已让权给你'
+        : 'Paused for you'
+      : preview?.state === 'error'
+        ? zh
+          ? '需要处理'
+          : 'Needs attention'
+        : preview?.state === 'starting'
+          ? zh
+            ? '正在启动'
+            : 'Starting'
+          : preview?.needsObservation
+            ? zh
+              ? '等待重新观察'
+              : 'Waiting for observation'
+            : zh
+              ? '正在控制'
+              : 'Controlling';
   return (
     <section className="session-computer-preview" aria-label={zh ? '屏幕控制' : 'Screen control'}>
       {preview ? (
         <>
-          <header>
-            <span>
-              <strong>{preview.appName}</strong>
-              <small role="status">
-                {preview.state === 'paused'
-                  ? zh
-                    ? '已让权给你'
-                    : 'Paused for you'
-                  : preview.state === 'error'
-                    ? zh
-                      ? '需要处理'
-                      : 'Needs attention'
-                    : preview.state === 'starting'
-                      ? zh
-                        ? '正在启动'
-                        : 'Starting'
-                      : preview.needsObservation
-                        ? zh
-                          ? '等待重新观察'
-                          : 'Waiting for observation'
-                        : zh
-                          ? '正在控制'
-                          : 'Controlling'}
-              </small>
-            </span>
-            <div>
-              <button type="button" disabled={busy} aria-label={zh ? '停止本会话屏幕控制' : 'Stop screen control for this conversation'} onClick={() => void stopControl()}>
-                {zh ? '停止' : 'Stop'}
-              </button>
-            </div>
-          </header>
-          <p role="status">
-            {preview.windowTitle || preview.appName}
-            {preview.pid ? ` · PID ${preview.pid} · ${preview.windowId ?? '—'}` : ''} · {preview.action}
-          </p>
-          {preview.capturedAt ? (
-            <small>
-              {zh ? '上次画面：' : 'Last capture: '}
-              <time dateTime={preview.capturedAt}>{new Date(preview.capturedAt).toLocaleTimeString()}</time>
-            </small>
-          ) : null}
-          {preview.detail ? <p role="status">{preview.detail}</p> : null}
           <div className="session-computer-preview-image">
-            {preview.imageUrl ? (
-              <img src={preview.imageUrl} alt={zh ? `${preview.appName} 上次观察画面` : `Last observed view of ${preview.appName}`} draggable={false} />
+            {preview.imageUrl && failedImage !== preview.imageUrl ? (
+              <button
+                type="button"
+                className="session-computer-preview-open"
+                aria-label={zh ? `预览 ${preview.appName} 完整画面` : `Preview full capture of ${preview.appName}`}
+                onClick={() => setExpanded({ url: preview.imageUrl!, name: preview.appName })}
+              >
+                <img src={preview.imageUrl} alt={zh ? `${preview.appName} 上次观察画面` : `Last observed view of ${preview.appName}`} draggable={false} onError={() => setFailedImage(preview.imageUrl)} />
+              </button>
             ) : (
-              <p>{zh ? '尚无截图，仍可停止控制。' : 'No capture yet. You can still stop control.'}</p>
+              <p role="status">
+                {preview.imageUrl && failedImage === preview.imageUrl
+                  ? zh
+                    ? '画面加载失败，仍可停止控制。'
+                    : 'Capture unavailable. You can still stop control.'
+                  : zh
+                    ? '尚无截图，仍可停止控制。'
+                    : 'No capture yet. You can still stop control.'}
+              </p>
             )}
+            <div className="session-computer-preview-controls">
+              <button
+                type="button"
+                disabled={busy}
+                aria-busy={busy || undefined}
+                aria-label={zh ? '停止本会话屏幕控制' : 'Stop screen control for this conversation'}
+                title={zh ? '停止屏幕控制' : 'Stop screen control'}
+                onClick={() => void stopControl()}
+              >
+                <X aria-hidden="true" />
+              </button>
+              <details className="session-computer-preview-info">
+                <summary aria-label={zh ? '屏幕控制详情' : 'Screen control details'} title={zh ? '屏幕控制详情' : 'Screen control details'}>
+                  <HandPalm aria-hidden="true" />
+                </summary>
+                <div>
+                  <strong>{preview.appName}</strong>
+                  <span>{preview.windowTitle || preview.appName}</span>
+                  <span>
+                    {status} · {preview.action}
+                  </span>
+                  {preview.capturedAt ? <time dateTime={preview.capturedAt}>{new Date(preview.capturedAt).toLocaleTimeString()}</time> : null}
+                  {preview.detail ? <span>{preview.detail}</span> : null}
+                </div>
+              </details>
+            </div>
           </div>
+          <p className="session-computer-preview-status" data-visible={preview.state === 'paused' || preview.state === 'error' || preview.state === 'starting' || preview.needsObservation || !preview.imageUrl || undefined} role="status">
+            {status}
+            {preview.detail && (preview.state === 'error' || preview.state === 'paused') ? `：${preview.detail}` : ''}
+          </p>
         </>
       ) : null}
       {errorMessage ? (
@@ -155,6 +188,23 @@ export function SessionComputerPreview(props: { conversationId: string; language
         </p>
       ) : null}
       {readFailed ? <p role="status">{zh ? '屏幕控制状态暂时不可用。' : 'Screen control status is unavailable.'}</p> : null}
+      <MotionPresence>
+        {expanded ? (
+          <ModalPortal rootClassName="file-preview-portal" role="dialog" aria-label={zh ? '屏幕画面预览' : 'Screen capture preview'} onDismiss={() => setExpanded(null)}>
+            <section className="file-preview-dialog" data-modal-surface="dialog">
+              <div className="file-preview file-preview-simple-image">
+                <header className="file-preview-dialog-header">
+                  <strong>{expanded.name}</strong>
+                  <button type="button" className="file-preview-close" aria-label={zh ? '关闭' : 'Close'} onClick={() => setExpanded(null)}>
+                    <X size={18} aria-hidden="true" />
+                  </button>
+                </header>
+                <PreviewImage url={expanded.url} name={expanded.name} zh={zh} compact />
+              </div>
+            </section>
+          </ModalPortal>
+        ) : null}
+      </MotionPresence>
     </section>
   );
 }
