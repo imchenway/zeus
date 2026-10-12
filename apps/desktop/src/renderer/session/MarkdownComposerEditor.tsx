@@ -7,7 +7,10 @@ import type { StructuredToken } from './StructuredComposerInput.js';
 import { composerMarkdownPreview } from './composerMarkdownPreview.js';
 
 /** 普通目标输入和 Markdown 输入共用正文、选区与焦点接口，不依赖具体编辑节点。 */
-export type ComposerInputHandle = Pick<HTMLTextAreaElement, 'value' | 'selectionStart' | 'selectionEnd' | 'focus' | 'setSelectionRange' | 'isConnected' | 'contains'>;
+export type ComposerInputHandle = Pick<HTMLTextAreaElement, 'value' | 'selectionStart' | 'selectionEnd' | 'focus' | 'setSelectionRange' | 'isConnected' | 'contains'> & {
+  /** 仅在空编辑器有焦点时以可撤销的输入事务采纳灰字。 */
+  insertSuggestion?: (text: string) => boolean;
+};
 
 /** 会话输入只暴露正文和编辑事件，排版不参与发送内容计算。 */
 interface MarkdownComposerEditorProps {
@@ -19,6 +22,8 @@ interface MarkdownComposerEditorProps {
   ariaLabel: string;
   ariaKeyShortcuts?: string;
   placeholder: string;
+  /** 灰字只属于 placeholder，不改变文档、撤销栈或草稿。 */
+  suggestion?: string | null;
   language: 'zh-CN' | 'en-US';
   listboxId?: string;
   activeDescendant?: string;
@@ -86,6 +91,12 @@ export function MarkdownComposerEditor(props: MarkdownComposerEditorProps) {
       },
       contains: (node) => view.dom.contains(node),
       focus: () => view.focus(),
+      /** 真实编辑事务会通知草稿同步，并保留撤销和重做。 */
+      insertSuggestion: (text) => {
+        if (!view.hasFocus || view.composing || view.state.readOnly || view.state.doc.length !== 0) return false;
+        view.dispatch({ changes: { from: 0, insert: text }, selection: { anchor: text.length }, annotations: Transaction.userEvent.of('input.inputSuggestion') });
+        return true;
+      },
       setSelectionRange: (start, end) => {
         view.dispatch({ selection: { anchor: Math.max(0, Math.min(start ?? 0, view.state.doc.length)), head: Math.max(0, Math.min(end ?? 0, view.state.doc.length)) }, scrollIntoView: true });
       },
@@ -105,11 +116,13 @@ export function MarkdownComposerEditor(props: MarkdownComposerEditorProps) {
       effects: options.current.reconfigure([
         EditorState.readOnly.of(Boolean(props.disabled)),
         EditorView.editable.of(!props.disabled),
-        placeholder(props.placeholder),
+        placeholder(props.suggestion ?? props.placeholder),
         EditorView.contentAttributes.of({
           role: 'textbox',
           'aria-multiline': 'true',
           'aria-label': props.ariaLabel,
+          /** placeholder 不属于正文；辅助技术通过描述读出建议及采纳方法。 */
+          'aria-description': props.suggestion ? (props.language === 'zh-CN' ? `输入建议：${props.suggestion} 按 Tab 采纳后才成为正文，按 Escape 清除。` : `Input suggestion: ${props.suggestion} Press Tab to accept, or Escape to dismiss.`) : '',
           'aria-keyshortcuts': props.ariaKeyShortcuts ?? '',
           'aria-disabled': String(Boolean(props.disabled)),
           'aria-autocomplete': props.listboxId ? 'list' : 'none',
@@ -119,7 +132,7 @@ export function MarkdownComposerEditor(props: MarkdownComposerEditorProps) {
         }),
       ]),
     });
-  }, [props.disabled, props.placeholder, props.ariaLabel, props.ariaKeyShortcuts, props.listboxId, props.activeDescendant]);
+  }, [props.disabled, props.placeholder, props.suggestion, props.language, props.ariaLabel, props.ariaKeyShortcuts, props.listboxId, props.activeDescendant]);
 
   useLayoutEffect(() => {
     /** 本地输入的回显不替换文档；发送清空同时清理撤销，避免下一轮撤销恢复已发消息。 */

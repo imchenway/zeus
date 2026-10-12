@@ -344,6 +344,8 @@ export async function loadLegacyConversationDetail<T>(conversation: NativeConver
 }
 
 export interface ConnectedSessionWorkspaceProps {
+  /** 所有 Provider 共用专用建议设置，不继承会话模型。 */
+  inputSuggestionSettings?: import('@zeus/shared').InputSuggestionSettings;
   gitContext?: { client: DashboardClient; project: ProjectRecord };
   language: SessionUiLanguage;
   client: SessionControllerClient;
@@ -773,6 +775,8 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
   return (
     <SessionWorkspace
       language={props.language}
+      inputSuggestionSettings={props.inputSuggestionSettings}
+      onGenerateInputSuggestion={props.client.generateInputSuggestion ? (turnId, signal) => props.client.generateInputSuggestion!(displayedConversation.projectId, displayedConversation.id, turnId, signal) : undefined}
       state={displayedState}
       stateController={displayedState === state ? controller : undefined}
       conversation={displayedConversation}
@@ -1513,6 +1517,10 @@ export interface NewConversationDraft {
 export type NewConversationDraftStore = Map<string, NewConversationDraft>;
 
 export interface SessionWorkspaceProps {
+  /** 仅主输入框消费这份独立建议设置。 */
+  inputSuggestionSettings?: import('@zeus/shared').InputSuggestionSettings;
+  /** 客户端由真实会话身份绑定轮次请求，不接收任意预测材料。 */
+  onGenerateInputSuggestion?: ConversationComposerProps['onGenerateInputSuggestion'];
   gitContext?: { client: DashboardClient; project: ProjectRecord };
   newConversationDrafts?: NewConversationDraftStore;
   language: SessionUiLanguage;
@@ -2074,6 +2082,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     // 格式预览先退出阅读状态，避免编辑草稿时触发中断确认。
     if (event.target instanceof Element && event.target.closest('.structured-composer-preview')) return;
     if (event.target instanceof Element && event.target.closest('.session-composer-shell[data-goal-input="true"]')) return;
+    // 灰字的 Escape 由输入框消费，不能穿透为关闭工作面或中断操作。
+    if (event.target instanceof Element && event.target.closest('.session-composer-shell[data-input-suggestion="true"]')) return;
     const planRequest = pendingRequests.length === 0 ? pendingPlanImplementationRequests[0] : undefined;
     if (planRequest) {
       event.preventDefault();
@@ -2473,6 +2483,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     return (
       <SessionComposerProjection
         textareaRef={composerRef}
+        inputSuggestionSettings={props.inputSuggestionSettings}
+        onGenerateInputSuggestion={props.onGenerateInputSuggestion}
         state={props.state}
         controller={props.stateController}
         language={props.language}

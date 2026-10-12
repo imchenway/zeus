@@ -257,7 +257,7 @@ function streamApiFor(piModel: Model<Api>): ProviderStreams {
 }
 
 /** 复用已配置连接生成受限文本，不提供工具、不继承会话内容。 */
-export async function generateConfiguredModelText(input: ProbeConfiguredModelInput & { system: string; text: string; signal?: AbortSignal; effort?: string; maxTokens?: number }): Promise<string> {
+export async function generateConfiguredModelText(input: ProbeConfiguredModelInput & { system: string; text: string; signal?: AbortSignal; effort?: string; maxTokens?: number; /** 调用方可关闭供应商 SDK 重试，其他独立生成沿用既有默认。 */ maxRetries?: number }): Promise<string> {
   /** 沿用真实运行的协议与鉴权适配。 */
   const model = toPiModel(input.model, `zeus-text-${input.connection.id}`, input.connection.baseUrl);
   if (input.effort && !input.model.capability.reasoning.options.some((option) => option.id === input.effort)) throw new Error('所选模型不支持此推理深度。');
@@ -269,6 +269,8 @@ export async function generateConfiguredModelText(input: ProbeConfiguredModelInp
   const options: SimpleStreamOptions = {
     apiKey: input.apiKey,
     maxTokens: input.maxTokens ?? 8192,
+    /** 输入建议固定为零，避免 SDK 在后台重新发送付费请求。 */
+    maxRetries: input.maxRetries,
     signal: input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(input.timeoutMs ?? 80_000)]) : AbortSignal.timeout(input.timeoutMs ?? 80_000),
     ...(input.fetch ? { fetch: input.fetch } : {}),
     ...(reasoning ? { reasoning } : {}),

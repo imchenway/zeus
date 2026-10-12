@@ -2,6 +2,7 @@ import type { RuntimeSettings } from '../runtime/runtimeContracts.js';
 import type { GlobalAgentSettingsMetadata, GlobalAgentSettingsSnapshot, SaveGlobalAgentSettingsInput } from '@zeus/shared';
 import type { AppShellSettings, ImportLocalSettingsRequest, ImportLocalSettingsResult, LocalSettingsExportSnapshot, UpdateAppShellSettingsRequest } from './settingsContracts.js';
 import type { NetworkProxySettings } from '@zeus/shared';
+import type { InputSuggestionModelOption } from '@zeus/shared';
 import { jsonRequest, type LocalApiTransport } from '../../transport/localApiTransport.js';
 import { buildSettingsCommandRequest, settingsClientCommandTypes } from './settingsCommandClient.js';
 
@@ -13,6 +14,8 @@ export interface SettingsApiClient {
   loadRuntimeSettings: () => Promise<RuntimeSettings>;
   saveRuntimeSettings: (input: RuntimeSettings) => Promise<RuntimeSettings>;
   loadAppShellSettings: () => Promise<AppShellSettings>;
+  /** 输入建议选择器复用已登录 Codex 与配置连接的模型目录。 */
+  loadInputSuggestionModels: (signal?: AbortSignal) => Promise<{ items: InputSuggestionModelOption[]; warning: string }>;
   /** 读取本次宿主启动时已生效的代理，不把刚保存的待重启值冒充为运行值。 */
   loadActiveNetworkProxy: () => Promise<NetworkProxySettings>;
   saveAppShellSettings: (input: UpdateAppShellSettingsRequest) => Promise<AppShellSettings>;
@@ -36,6 +39,7 @@ export function createSettingsApiClient(transport: LocalApiTransport): SettingsA
       return transport.request<RuntimeSettings>('/api/runtime/settings', jsonRequest('PUT', body));
     },
     loadAppShellSettings: () => transport.request<AppShellSettings>('/api/settings/app-shell'),
+    loadInputSuggestionModels: (signal) => transport.request('/api/input-suggestions/models', { signal }),
     loadActiveNetworkProxy: () => transport.request<NetworkProxySettings>('/api/settings/network-proxy'),
     saveAppShellSettings: (input: UpdateAppShellSettingsRequest) => {
       /** 失败继续交给调用方处理，同时允许后续修改正常保存。 */
