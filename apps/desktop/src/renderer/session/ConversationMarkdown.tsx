@@ -293,11 +293,12 @@ export const ConversationMarkdown = memo(function ConversationMarkdown(props: Co
   );
 });
 
+/** 链接以授权资源是否就绪为准，解析器缓存的流式标记不能遮住已完成链接。 */
 function SecureLinkNode(props: NodeComponentProps<MarkstreamNode>) {
   const runtime = useContext(MarkdownRuntimeContext);
   const href = typeof props.node.href === 'string' ? props.node.href : '';
   const label = typeof props.node.text === 'string' && props.node.text ? props.node.text : href;
-  if (!runtime || props.node.loading || !href) {
+  if (!runtime || !href) {
     return <span className="session-markdown-unavailable-resource">{label}</span>;
   }
   const resource = matchingInlineResource(runtime.resources, label, href);

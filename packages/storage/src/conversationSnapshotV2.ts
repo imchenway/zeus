@@ -509,6 +509,10 @@ export interface ConversationResourcePageItem {
   kind: string;
   presentation: string;
   displayName: string;
+  /** 文件匹配使用已登记的项目相对路径，不能把链接标题当成目标。 */
+  projectRelativePath: string | null;
+  /** 网站匹配使用已登记的 URL，打开仍须提交资源身份。 */
+  url: string | null;
   mimeType: string | null;
   previewKind: string | null;
   iconKind: string | null;
@@ -1531,6 +1535,10 @@ export class ConversationSnapshotV2Repository {
       kind: string;
       presentation: string;
       display_name: string | null;
+      /** 正文匹配所需的授权路径；不下发本地绝对路径。 */
+      project_relative_path: string | null;
+      /** 已登记网站的目标，用于区分同名链接。 */
+      url: string | null;
       mime_type: string | null;
       preview_kind: string | null;
       icon_kind: string | null;
@@ -1558,6 +1566,8 @@ export class ConversationSnapshotV2Repository {
                 ORDER BY CASE alias.facet WHEN 'body' THEN 0 ELSE 1 END
                 LIMIT 1) AS owner_entry_id,
               CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.displayName') AS TEXT), 1, 512) ELSE NULL END AS display_name,
+              CASE WHEN kind = 'file' AND json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.projectRelativePath') AS TEXT), 1, 4096) ELSE NULL END AS project_relative_path,
+              CASE WHEN kind = 'website' AND json_valid(target_json) THEN substr(CAST(json_extract(target_json, '$.url') AS TEXT), 1, 8192) ELSE NULL END AS url,
               CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.mimeType') AS TEXT), 1, 256) ELSE NULL END AS mime_type,
               CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.previewKind') AS TEXT), 1, 64) ELSE NULL END AS preview_kind,
               CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.iconKind') AS TEXT), 1, 64) ELSE NULL END AS icon_kind,
@@ -1587,6 +1597,8 @@ export class ConversationSnapshotV2Repository {
       kind: row.kind,
       presentation: row.presentation,
       displayName: row.display_name ?? 'Resource',
+      projectRelativePath: row.project_relative_path,
+      url: row.url,
       mimeType: row.mime_type,
       previewKind: row.preview_kind,
       iconKind: row.icon_kind,

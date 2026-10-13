@@ -231,6 +231,13 @@ export interface UsageProviderAnalytics {
   projectId: string | null;
   model: string | null;
   official: CodexOfficialUsageSnapshot | null;
+  /** 当前供应商的筛选目录，不受时间、项目和模型裁剪，空范围不会擅自清除选择。 */
+  filters: {
+    /** 模型目录仅包含该当前供应商的历史记录。 */
+    models: Array<Pick<CodexLocalUsageGroup, 'id' | 'label'>>;
+    /** 项目目录保留历史项目名称的现有解析规则。 */
+    projects: Array<Pick<CodexLocalUsageGroup, 'id' | 'label'>>;
+  };
   local: {
     totals: CodexLocalUsageTotals;
     daily: CodexLocalUsageDay[];
