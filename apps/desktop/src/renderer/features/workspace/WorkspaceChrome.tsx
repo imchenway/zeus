@@ -881,6 +881,8 @@ export function ProjectWorkspaceNavigation(props: {
 
 /** 项目导航将状态筛选与搜索叠加，会话始终平铺。 */
 export function SidebarNav(props: {
+  /** 通知状态驻留工作台，标题行仅承载全局入口。 */
+  notificationCenter?: ReactNode;
   mainLayout?: 'current' | 'upstream';
   activeNavTarget: WorkspaceViewId;
   activeProjectId?: string;
@@ -1224,7 +1226,10 @@ export function SidebarNav(props: {
       <div className="project-window-control-reserved-space" aria-hidden="true" />
       {props.mainLayout === 'upstream' ? (
         <nav className="project-quick-actions codex-source-list-quick-actions" aria-label={copy.quickActionsLabel}>
-          <strong className="project-sidebar-brand">Zeus</strong>
+          <div className="project-sidebar-brand-row">
+            <strong className="project-sidebar-brand">Zeus</strong>
+            {props.notificationCenter}
+          </div>
           <button type="button" className="project-quick-action" onClick={props.onCreateConversation} disabled={!props.activeProjectId}>
             <span className="project-quick-action-icon" aria-hidden="true">
               <svg viewBox="0 0 20 20" focusable="false">

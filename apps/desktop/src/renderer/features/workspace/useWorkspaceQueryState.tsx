@@ -236,7 +236,8 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const [selectedNativeConversationId, setSelectedNativeConversationId] = useState<string | null>(() => props.initialSelectedNativeConversationId ?? null);
   const selectedNativeConversationIdRef = useRef<string | null>(props.initialSelectedNativeConversationId ?? null);
   const [selectedNativeConversationPresentation, setSelectedNativeConversationPresentation] = useState<'history' | 'interactive'>(() => (props.initialSelectedNativeConversationId ? 'history' : 'interactive'));
-  const [latestConversationContentVisible, setLatestConversationContentVisible] = useState(false);
+  /** 可见回执绑定真实会话，切换时不复用上一条会话的布尔状态。 */
+  const [latestConversationContentVisibility, setLatestConversationContentVisibility] = useState<{ identity: string | null; visible: boolean }>({ identity: null, visible: false });
   const [zeusWindowForeground, setZeusWindowForeground] = useState(false);
   const [focusedArchivedConversation, setFocusedArchivedConversation] = useState<NativeConversationChoice | null>(null);
   const [optimisticTerminalTaskStatuses, setOptimisticTerminalTaskStatuses] = useState<Record<string, TaskManagementStatus>>({});
@@ -1093,6 +1094,21 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     selectedNativeConversation?.projectId === sessionDrawerTarget.projectId &&
     resolveConversationNavigationId(selectedNativeConversation) === sessionDrawerTarget.navigationId,
   );
+  /** 项目和真实会话共同决定正文回执归属。 */
+  const visibleConversationIdentity = selectedNativeConversation ? JSON.stringify([selectedNativeConversation.projectId, selectedNativeConversation.id]) : null;
+  /** 拒绝已经卸载会话的迟到可见回调。 */
+  const currentVisibleConversationIdentity = useRef(visibleConversationIdentity);
+  currentVisibleConversationIdentity.current = visibleConversationIdentity;
+  /** 已加载会话的回执只有在其仍被选中时才有效。 */
+  const latestConversationContentVisible = Boolean(visibleConversationIdentity && latestConversationContentVisibility.identity === visibleConversationIdentity && latestConversationContentVisibility.visible);
+  /** 旧组件卸载时的回调仍绑定旧身份，不会误确认新会话。 */
+  const setLatestConversationContentVisible = useCallback(
+    (visible: boolean) => {
+      if (currentVisibleConversationIdentity.current !== visibleConversationIdentity) return;
+      setLatestConversationContentVisibility((current) => (current.identity === visibleConversationIdentity && current.visible === visible ? current : { identity: visibleConversationIdentity, visible }));
+    },
+    [visibleConversationIdentity],
+  );
   useEffect(() => {
     if (!selectedNativeConversation?.taskId) return;
     const taskId = selectedNativeConversation.taskId;
@@ -1141,7 +1157,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   }, [selectedNativeConversation?.taskId, selectedNativeConversation?.workspaceId]);
   useEffect(() => {
     selectedNativeConversationIdRef.current = selectedNativeConversationId;
-    setLatestConversationContentVisible(false);
   }, [selectedNativeConversationId]);
   const nativeConversationGroups = useMemo<ProjectConversationGroup[]>(
     () =>

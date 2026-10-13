@@ -17,6 +17,8 @@ export interface AutomationDispatchResult {
 }
 
 export interface AutomationSchedulerOptions {
+  /** 每轮结果持久化后补齐逐会话通知；漏事件和重启均可收敛。 */
+  synchronizeNotifications?(): void;
   /** 在旧调度启动前原子移交员工规则及在途关联。 */
   migrateLegacy?(): void;
   /** 按原规则修订或原事件序号解释退役项目状态，不扩大多项目筛选范围。 */
@@ -70,6 +72,7 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
     /** 未完成逐目标派发的原运行优先恢复，不能让排队运行越过它。 */
     for (const candidate of [...options.runs.listInFlight().filter((run) => run.status === 'dispatching'), ...options.runs.listDispatchable(8)]) await dispatch(candidate);
     await options.save();
+    options.synchronizeNotifications?.();
   }
 
   /** 按原事件的前后状态与来源接纳，不从处理时的任务状态重新推断。 */

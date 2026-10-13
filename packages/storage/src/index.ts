@@ -55,6 +55,8 @@ export * from './defectWorkflowStore.js';
 export * from './workArtifactStore.js';
 export * from './automationEmployeeMigration.js';
 export * from './automationStore.js';
+/** 逐会话通知存储与确认。 */
+export * from './automationNotificationStore.js';
 export * from './digitalEmployeeCapabilityMigration.js';
 export * from './digitalEmployeeStageHandoffMigration.js';
 export * from './digitalEmployeeLegacyRetirementMigration.js';

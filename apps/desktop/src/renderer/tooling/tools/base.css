@@ -17,31 +17,28 @@
 .macos-ai-app .automations-header,
 .macos-ai-app .automations-header-actions,
 .macos-ai-app .automation-row,
-.macos-ai-app .automation-row-actions,
-.macos-ai-app .automation-inbox-actions {
+.macos-ai-app .automation-row-actions {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
 /* 固定操作文案不拆字，窄窗口按按钮整体换行。 */
-.macos-ai-app :where(.automations-header-actions, .automation-inbox-actions, .automation-editor footer) {
+.macos-ai-app :where(.automations-header-actions, .automation-editor footer) {
   min-inline-size: 0;
   flex-wrap: wrap;
 }
-.macos-ai-app :where(.automations-workspace, .automation-editor) .zeus-button,
-.macos-ai-app .automations-tabs button,
-.macos-ai-app .automation-run-status {
+.macos-ai-app :where(.automations-workspace, .automation-editor) .zeus-button {
   flex-shrink: 0;
   white-space: nowrap;
 }
 
 /* 正文可折行，下拉只省略显示，不截断实际配置和可访问名称。 */
-.macos-ai-app :where(.automation-editor label, .automation-editor .zeus-select, .automation-inbox-actions .zeus-select) {
+.macos-ai-app :where(.automation-editor label, .automation-editor .zeus-select) {
   min-inline-size: 0;
   max-inline-size: 100%;
 }
-.macos-ai-app :where(.automation-editor small, .automation-editor label > span, .automation-inbox-row li) {
+.macos-ai-app :where(.automation-editor small, .automation-editor label > span) {
   overflow-wrap: anywhere;
 }
 .macos-ai-app .automations-header {
@@ -72,48 +69,10 @@
   flex-shrink: 0;
 }
 
-.macos-ai-app .automations-workspace .zeus-button svg,
-.macos-ai-app .automations-tabs svg {
+.macos-ai-app .automations-workspace .zeus-button svg {
   inline-size: 16px;
   block-size: 16px;
   flex-shrink: 0;
-}
-
-.macos-ai-app .automations-tabs {
-  display: flex;
-  inline-size: fit-content;
-  gap: 4px;
-}
-
-.macos-ai-app .automations-tabs button {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-block-size: 32px;
-  padding: 4px 12px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--zeus-product-muted);
-  font: inherit;
-}
-
-.macos-ai-app .automations-tabs button[aria-current='page'] {
-  color: var(--zeus-brand-text);
-  font-weight: 600;
-}
-
-.macos-ai-app .automations-tabs button > span {
-  border-radius: 999px;
-  background: var(--zeus-product-panel-muted);
-  padding: 1px 6px;
-  font-size: 11px;
-  text-align: center;
-}
-
-.macos-ai-app .automations-tabs button > .automations-unread-count {
-  background: var(--zeus-product-accent);
-  color: var(--zeus-control-primary-text, white);
 }
 
 .macos-ai-app .automations-layout {
@@ -125,14 +84,12 @@
   overflow: hidden;
 }
 
-.macos-ai-app .automation-row,
-.macos-ai-app .automation-inbox-row {
+.macos-ai-app .automation-row {
   min-inline-size: 0;
   border-block-end: 1px solid var(--zeus-product-line-soft);
 }
 
-.macos-ai-app .automation-row:last-child,
-.macos-ai-app .automation-inbox-row:last-child {
+.macos-ai-app .automation-row:last-child {
   border-block-end: 0;
 }
 
@@ -166,15 +123,13 @@
   background: var(--zeus-product-subtle);
 }
 
-.macos-ai-app .automation-row-main > span:nth-child(2),
-.macos-ai-app .automation-inbox-row > div:first-of-type {
+.macos-ai-app .automation-row-main > span:nth-child(2) {
   display: grid;
   min-inline-size: 0;
   gap: 4px;
 }
 
-.macos-ai-app .automation-row-main strong,
-.macos-ai-app .automation-inbox-row strong {
+.macos-ai-app .automation-row-main strong {
   overflow-wrap: anywhere;
   font-size: 13px;
   font-weight: 600;
@@ -187,7 +142,6 @@
 }
 
 .macos-ai-app .automation-row-main small,
-.macos-ai-app .automation-inbox-row small,
 .macos-ai-app .automation-row-schedule {
   color: var(--zeus-product-muted);
   font-size: 12px;
@@ -205,59 +159,6 @@
 .macos-ai-app .automation-icon-action {
   inline-size: 32px;
   padding: 0;
-}
-
-.macos-ai-app .automation-inbox-row {
-  display: grid;
-  grid-template-columns: 80px minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 16px;
-  padding: 16px;
-}
-
-/* 未读结果通过标题字重区分，避免使用侧边色条。 */
-.macos-ai-app .automation-inbox-row[data-unread='true'] strong {
-  font-weight: 700;
-}
-
-.macos-ai-app .automation-run-status {
-  inline-size: fit-content;
-  padding: 4px 8px;
-  border-radius: 999px;
-  background: var(--zeus-product-panel-muted);
-  color: var(--zeus-product-muted);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.macos-ai-app .automation-run-status.status-succeeded {
-  color: var(--zeus-status-success-text);
-}
-
-.macos-ai-app .automation-run-status.status-failed,
-.macos-ai-app .automation-run-status.status-outcome_unknown {
-  background: var(--zeus-control-danger-bg);
-  color: var(--zeus-control-danger-text);
-}
-
-.macos-ai-app .automation-run-status.status-blocked,
-.macos-ai-app .automation-run-status.status-awaiting_review,
-.macos-ai-app .automation-inbox-row .automation-warning {
-  background: var(--zeus-warning-bg);
-  color: var(--zeus-product-text);
-}
-
-.macos-ai-app .automation-inbox-row p {
-  margin: 3px 0 0;
-  color: var(--zeus-product-muted);
-  font-size: 12px;
-  line-height: 1.55;
-  overflow-wrap: anywhere;
-}
-
-.macos-ai-app .automation-inbox-actions {
-  flex-wrap: wrap;
-  justify-content: flex-end;
 }
 
 .macos-ai-app .zeus-form-dialog.automation-editor {
@@ -412,23 +313,10 @@
   font-size: 13px;
   line-height: 1.55;
 }
-
-.macos-ai-app .automations-tabs button:focus-visible,
 .macos-ai-app .automation-row-main:focus-visible,
 .macos-ai-app .automation-editor summary:focus-visible {
   outline: 2px solid var(--zeus-product-accent);
   outline-offset: -2px;
-}
-
-/* 收件箱结果保留正文空间，较窄页面把操作移到下一行。 */
-@media (max-width: 980px) {
-  .macos-ai-app .automation-inbox-row {
-    grid-template-columns: 80px minmax(0, 1fr);
-  }
-  .macos-ai-app .automation-inbox-actions {
-    grid-column: 2;
-    justify-content: flex-start;
-  }
 }
 
 /* 窄窗口恢复原有阅读顺序，避免双栏挤压长文本和下拉控件。 */
@@ -465,14 +353,6 @@
   }
   .macos-ai-app .automation-row-schedule {
     grid-column: 2;
-  }
-  .macos-ai-app .automation-inbox-row {
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: 12px;
-  }
-  .macos-ai-app .automation-inbox-actions {
-    grid-column: 2;
-    justify-content: flex-start;
   }
 }
 

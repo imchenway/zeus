@@ -1,8 +1,4 @@
 import type { AutomationDispatchTarget, AutomationActionConfig, AutomationExecutionReference, AutomationSourceEvent } from '@zeus/shared';
-/** 自动化引用导航复用既有会话、任务详情和流程页面。 */
-export type AutomationExecutionTarget = 'conversation' | 'task' | 'workflow';
-/** 宿主和工具页面使用同一真实执行引用契约。 */
-export type { AutomationExecutionReference } from '@zeus/shared';
 
 export type AutomationStatus = 'active' | 'paused' | 'deleted';
 export type AutomationTriggerKind = 'manual' | 'once' | 'interval' | 'daily' | 'weekly' | 'rrule' | 'event';

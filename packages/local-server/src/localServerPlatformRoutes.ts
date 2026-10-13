@@ -11,6 +11,7 @@ import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
 import { TaskWorkPlanningRepository, TaskWorkReviewRepository, TaskWorkDeploymentRepository } from '@zeus/storage';
 import { hasDatabaseUriPassword } from './projectCore.js';
 import { createAutomationConversationDispatch } from './automationConversationDispatch.js';
+import { createAutomationNotificationService } from './automationNotificationService.js';
 import { probeCodexConversation } from './codexConnectionDiagnostic.js';
 import {
   checkAiCliAdapter,
@@ -3489,6 +3490,19 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       );
   const automationTasks = new AutomationTaskRepository(db);
   const automationRuns = new AutomationRunRepository(db);
+  /** 自动化通知复用原执行仓库和事件连接，避免独立业务事实源。 */
+  const automationNotifications = createAutomationNotificationService({
+    db,
+    runs: automationRuns,
+    tasks: automationTasks,
+    conversations,
+    projects,
+    workRuns: taskWorkRuns,
+    legacyExecutions: digitalEmployeeExecutions,
+    readOnly: readOnlyValidation,
+    redact: (message) => redactSensitiveText(message).text,
+    publish: publishRealtimeEvent,
+  });
   /** 自动化存储统一接收 ISO 时间，避免 Date 被 SQLite 静默绑定为 NULL。 */
   const automationNow = (): string => now().toISOString();
   /** 无项目自动化复用产品已有临时会话工作区，不创建普通项目。 */
@@ -3504,6 +3518,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     tasks: automationTasks,
     runs: automationRuns,
     db,
+    notifications: automationNotifications,
     ensureTemporaryWorkspace: ensureAutomationTemporaryWorkspace,
     kick: () => automationScheduler?.kick(),
     now: automationNow,
@@ -3715,6 +3730,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
 
   if (!readOnlyValidation) {
     automationScheduler = createAutomationScheduler({
+      synchronizeNotifications: () => automationNotifications.synchronize(),
       migrateLegacy: () => migrateEmployeeAutomationsToUnified(db),
       resolveLegacyTaskStatus: resolveArchivedTaskStatus,
       tasks: automationTasks,

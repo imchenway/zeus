@@ -1,4 +1,5 @@
-import type { AutomationRunRepository, AutomationRunStatus, AutomationTaskRepository, CreateAutomationTaskInput, UpdateAutomationTaskInput, ZeusDatabasePort } from '@zeus/storage';
+import type { AutomationRunRepository, AutomationTaskRepository, CreateAutomationTaskInput, UpdateAutomationTaskInput, ZeusDatabasePort } from '@zeus/storage';
+import type { AutomationNotificationService } from './automationNotificationService.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { AutomationMutationApplication, type AutomationMutationResult } from './automationMutationApplication.js';
 import { computeNextRun } from './automationScheduler.js';
@@ -8,6 +9,8 @@ export interface RegisterAutomationRoutesOptions {
   tasks: AutomationTaskRepository;
   runs: AutomationRunRepository;
   db: ZeusDatabasePort;
+  /** 逐会话通知和已读确认的统一入口。 */
+  notifications: AutomationNotificationService;
   /** 无项目触发在写运行前按需创建托管工作区。 */
   ensureTemporaryWorkspace(runIdentity: string): { id: string };
   kick(): void;
@@ -31,9 +34,10 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
     items: tasks.list().map((task) => ({ ...task, projectIds: tasks.listTargets(task.id).map((target) => target.projectId), runs: runs.listByAutomation(task.id, 20) })),
   }));
 
-  server.get('/api/automations/inbox', async (request: FastifyRequest<{ Querystring: { unread?: string; status?: string } }>, reply) => {
+  /** 固定页大小由服务端控制，游标在存储边界验证。 */
+  server.get('/api/automations/notifications', async (request: FastifyRequest<{ Querystring: { cursor?: string } }>, reply) => {
     try {
-      return { items: runs.listInbox({ unreadOnly: request.query.unread === 'true', status: request.query.status as AutomationRunStatus | undefined }) };
+      return options.notifications.list(request.query.cursor);
     } catch (error) {
       return sendError(reply, error);
     }
@@ -116,11 +120,14 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
     return mutate(request, reply, () => ({ statusCode: 202, body: runs.resumeDispatch(request.params.runId) }));
   });
 
-  server.post('/api/automation-runs/:runId/read', async (request: FastifyRequest<{ Params: { runId: string } }>, reply) => {
-    return mutate(request, reply, () => {
-      const run = runs.acknowledge(request.params.runId);
-      return { statusCode: 200, body: run };
-    });
+  /** 先补齐源修订，再进入已有幂等耐久事务，旧请求不会确认新结果。 */
+  server.post('/api/automation-notifications/:id/read', async (request: FastifyRequest<{ Params: { id: string }; Body: { expectedRevision?: number } }>, reply) => {
+    try {
+      options.notifications.synchronize();
+      return mutate(request, reply, () => ({ statusCode: 200, body: options.notifications.acknowledge(request.params.id, request.body?.expectedRevision as number) }));
+    } catch (error) {
+      return sendError(reply, error);
+    }
   });
 }
 

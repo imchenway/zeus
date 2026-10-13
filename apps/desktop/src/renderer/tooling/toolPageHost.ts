@@ -26,8 +26,6 @@ export { codexCapabilitiesChangedEvent } from '../features/codex/codexApiClient.
 export { SkillSelector, skillCatalogChangedEvent } from '../features/skills/SkillSelector.js';
 export {
   type AutomationBlockStrategy,
-  type AutomationExecutionReference,
-  type AutomationExecutionTarget,
   type AutomationConversationMode,
   type AutomationPermissionMode,
   type AutomationRunRecord,

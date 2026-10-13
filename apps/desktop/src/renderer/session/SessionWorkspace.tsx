@@ -1830,6 +1830,26 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const previousBlockingInteractionCountRef = useRef(0);
   const composerFocusRestorationPendingRef = useRef(false);
   const legacy = props.conversation && props.conversation.transportKind !== 'codex_native';
+  /** 旧会话复用已读取的正文，通知不会为确认已读而重新启动执行。 */
+  const legacyMessages = props.conversation ? (props.legacyMessages?.[props.conversation.legacySourceConversationId ?? props.conversation.id] ?? []) : [];
+  /** 旧会话的底部标记提供与原生正文相同的可见证据。 */
+  const legacyLatestContentRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    /** 回调与当前会话身份绑定，卸载时撤销旧会话的可见状态。 */
+    const report = props.onLatestContentVisibilityChange;
+    if (!legacy || !report) return;
+    report(false);
+    /** 没有成功加载正文时保留未读，加载失败不确认。 */
+    const marker = legacyLatestContentRef.current;
+    if (!marker || !legacyMessages.length || props.loadState === 'loading' || props.loadState === 'error' || typeof IntersectionObserver === 'undefined') return;
+    /** 实际滚动到已加载内容的末尾才允许确认。 */
+    const observer = new IntersectionObserver((entries) => report(entries[0]?.isIntersecting === true));
+    observer.observe(marker);
+    return () => {
+      observer.disconnect();
+      report(false);
+    };
+  }, [legacy, legacyMessages.length, props.loadState, props.conversation?.id, props.onLatestContentVisibilityChange]);
   // 终端只依赖稳定的项目与会话身份；会话快照重水合期间短暂为空不能关闭仍存活的 PTY 面板。
   const terminalAvailable = Boolean(props.terminalClient && props.conversation && props.projectPath && !legacy);
   const closeSessionTerminal = useCallback((): void => {
@@ -2830,14 +2850,15 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
               {props.language === 'zh-CN' ? '旧会话仍保持只读。' : 'The legacy conversation remains read-only.'}
             </p>
           ) : null}
-          {(props.legacyMessages?.[props.conversation.legacySourceConversationId ?? props.conversation.id] ?? []).length > 0 ? (
+          {legacyMessages.length > 0 ? (
             <section className="session-legacy-transcript" role="log" aria-live="off" aria-label={copy.legacyTranscript}>
-              {(props.legacyMessages?.[props.conversation.legacySourceConversationId ?? props.conversation.id] ?? []).map((message) => (
+              {legacyMessages.map((message) => (
                 <article key={message.id} className={`session-legacy-message session-legacy-message-${message.role}`}>
                   <strong>{message.role}</strong>
                   <ConversationMarkdown text={message.content} streamId={`legacy:${props.conversation!.id}:${message.id}`} phase="final" language={props.language} />
                 </article>
               ))}
+              <span ref={legacyLatestContentRef} className="session-latest-content-marker" aria-hidden="true" />
             </section>
           ) : null}
         </>

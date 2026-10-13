@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { temporaryWorkspaceId, type AutomationActionConfig, type AutomationDispatchTarget, type AutomationExecutionReference, type AutomationSourceEvent } from '@zeus/shared';
 import { randomId } from './randomId.js';
+import { migrateAutomationNotifications } from './automationNotificationStore.js';
 import type { ZeusDatabasePort } from './databasePort.js';
 
 export const automationSchemaMigrationId = '20260829_0374_automation_tasks_v1';
@@ -557,6 +558,7 @@ export function migrateAutomationSchema(db: ZeusDatabasePort): void {
   migrateAutomationDispatchProgress(db);
   migrateAutomationTaskCreationGrants(db);
   migrateAutomationConversationRules(db);
+  migrateAutomationNotifications(db);
 }
 
 /** 旧普通会话只保留历史，规则需显式改选员工动作才可再次启用。 */
@@ -1057,20 +1059,6 @@ export class AutomationRunRepository {
     return this.db.select<DbAutomationRunRow>(`SELECT ${runSelect} FROM automation_runs WHERE automation_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`, [automationId, safeLimit]).map(mapRun);
   }
 
-  /** 按同一筛选入口读取在途和历史回执，排队不再从收件箱中消失。 */
-  listInbox(input: { unreadOnly?: boolean; status?: AutomationRunStatus; limit?: number } = {}): AutomationRunRecord[] {
-    /** 在途和待验收记录也必须可见，不能把已触发任务显示成空收件箱。 */
-    const clauses: string[] = [];
-    const params: Array<string | number> = [];
-    if (input.unreadOnly) clauses.push('unread = 1');
-    if (input.status) {
-      clauses.push('status = ?');
-      params.push(input.status);
-    }
-    params.push(Math.max(1, Math.min(Math.trunc(input.limit ?? 100), 500)));
-    return this.db.select<DbAutomationRunRow>(`SELECT ${runSelect} FROM automation_runs ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''} ORDER BY created_at DESC, id DESC LIMIT ?`, params).map(mapRun);
-  }
-
   /** 待验收继续对账真实成果，不受历史列表页数限制。 */
   listInFlight(): AutomationRunRecord[] {
     return this.db.select<DbAutomationRunRow>(`SELECT ${runSelect} FROM automation_runs WHERE status IN ('dispatching', 'running', 'awaiting_review') ORDER BY accepted_at, id`).map(mapRun);
@@ -1346,13 +1334,6 @@ export class AutomationRunRepository {
       }
       this.promoteNext(id);
     });
-    const updated = this.getById(id);
-    if (!updated) throw new Error('ZEUS_AUTOMATION_RUN_NOT_FOUND: 自动化运行不存在。');
-    return updated;
-  }
-
-  acknowledge(id: string): AutomationRunRecord {
-    this.db.execute(`UPDATE automation_runs SET unread = 0 WHERE id = ?`, [id]);
     const updated = this.getById(id);
     if (!updated) throw new Error('ZEUS_AUTOMATION_RUN_NOT_FOUND: 自动化运行不存在。');
     return updated;
