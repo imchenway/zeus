@@ -112,6 +112,20 @@ export class TaskWorkPlanningRepository {
     private readonly now: () => string = () => new Date().toISOString(),
   ) {}
 
+  /** 按原安排代次读取真实工作运行，禁止用任务当前代次代替历史通知。 */
+  listRunIdsForGeneration(workflowId: string, generation: number): string[] {
+    return this.db
+      .select<{ id: string }>(
+        `WITH RECURSIVE scoped_items(id) AS (
+      SELECT item.id FROM task_work_items item JOIN task_stages stage ON stage.id = json_extract(item.arrangement_json, '$.stageId')
+      WHERE stage.workflow_id = ? AND COALESCE(json_extract(stage.output_contract_json, '$.workGeneration'), 1) = ?
+      UNION SELECT child.id FROM task_work_items child JOIN scoped_items parent ON json_extract(child.arrangement_json, '$.parentWorkItemId') = parent.id
+    ) SELECT run.id FROM task_work_runs run JOIN scoped_items item ON item.id = run.work_item_id ORDER BY run.created_at, run.id`,
+        [workflowId, generation],
+      )
+      .map((run) => run.id);
+  }
+
   /** 读取现行安排，旧阶段保留原有历史入口。 */
   get(taskId: string): TaskWorkPlan | null {
     /** 仅工作管理拥有的流程进入新调度。 */

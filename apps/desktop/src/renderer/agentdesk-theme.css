@@ -562,7 +562,7 @@ body:has(.macos-ai-app.zeus-shell) {
   background: rgb(213 230 246 / 62%);
 }
 
-.macos-ai-app.zeus-shell :where(.project-git-tabs, .settings-section-nav, .project-settings-section-tabs, .digital-employee-section-tabs, .automations-tabs) {
+.macos-ai-app.zeus-shell :where(.project-git-tabs, .settings-section-nav, .project-settings-section-tabs, .digital-employee-section-tabs) {
   border-color: var(--agentdesk-border);
   border-radius: 12px;
   background: rgb(218 233 247 / 44%);
@@ -1393,7 +1393,7 @@ body:has(.macos-ai-app.zeus-shell) {
   }
 }
 
-.macos-ai-app.zeus-shell :is(.extension-tabs, .automations-tabs) {
+.macos-ai-app.zeus-shell :is(.extension-tabs) {
   inline-size: 100%;
   min-inline-size: 0;
   display: flex;
@@ -1405,7 +1405,7 @@ body:has(.macos-ai-app.zeus-shell) {
   background: transparent;
   box-shadow: none;
 }
-.macos-ai-app.zeus-shell :is(.extension-tabs, .automations-tabs) > button {
+.macos-ai-app.zeus-shell :is(.extension-tabs) > button {
   min-block-size: 38px;
   padding: 8px 2px;
   border: 0;
@@ -1418,21 +1418,15 @@ body:has(.macos-ai-app.zeus-shell) {
   line-height: 20px;
   font-weight: 500;
 }
-.macos-ai-app.zeus-shell :is(.extension-tabs, .automations-tabs) > button[aria-current='page'] {
+.macos-ai-app.zeus-shell :is(.extension-tabs) > button[aria-current='page'] {
   background: transparent;
   border-block-end-color: var(--zeus-brand-primary);
   color: var(--zeus-product-text);
   font-weight: 600;
 }
-.macos-ai-app.zeus-shell :is(.extension-tabs, .automations-tabs) > button:hover:not(:disabled):not([aria-disabled='true']) {
+.macos-ai-app.zeus-shell :is(.extension-tabs) > button:hover:not(:disabled):not([aria-disabled='true']) {
   background: transparent;
   color: var(--zeus-product-text);
-}
-/* 普通数量只是补充信息，未读数继续沿用独立提醒颜色。 */
-.macos-ai-app.zeus-shell .automations-tabs > button > span:not(.automations-unread-count) {
-  background: transparent;
-  color: var(--zeus-product-subtle);
-  padding-inline: 2px;
 }
 
 /* 设置内容由页面统一承载背景，复用的功能根容器不得再画一块页面底色。 */

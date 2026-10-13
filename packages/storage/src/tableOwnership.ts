@@ -133,6 +133,7 @@ const ownershipGroups = [
       'automation_causal_chain_members',
       'automation_full_access_grants',
       'automation_notification_outbox',
+      'automation_notifications',
     ],
   },
   {

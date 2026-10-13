@@ -31,6 +31,8 @@ import { GitPaneSeparator } from '../../git/GitPaneSeparator.js';
 import type { ProjectRecord } from '../../apiClient.js';
 import { openAutomaticUpdateIndicatorInMain } from '../../appShellBridge.js';
 import { conversationDisplayTitle } from '../../session/conversationDisplayTitle.js';
+import { AutomationNotificationCenter } from '../automations/AutomationNotificationCenter.js';
+import { useAutomationNotifications } from '../automations/useAutomationNotifications.js';
 import type { NativeConversationChoice } from '../../session/sessionTypes.js';
 import { TaskGitReviewModal } from '../../task/TaskGitReviewModal.js';
 import { persistPendingConflictAiStart, TaskGitMergeModal } from '../../task/TaskGitMergeModal.js';
@@ -123,6 +125,21 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   const [taskField, setTaskField] = useState<'status' | 'priority' | 'runStatus'>('status');
   const [zentaoImportOpen, setZentaoImportOpen] = useState(false);
   const { state, domainActions, operations } = input;
+  /** 进入会话后通知状态仍驻留，等待准确正文可见再确认已读。 */
+  const automationNotifications = useAutomationNotifications({
+    client: state.props.commandClient ?? null,
+    subscribe: state.props.onSubscribeRealtimeEvents,
+    language: state.appShellSettings.appLanguage,
+    visibleConversationId: state.selectedNativeConversation?.id ?? null,
+    visibleProjectId: state.selectedNativeConversation?.projectId ?? null,
+    contentVisible: state.zeusWindowForeground && state.latestConversationContentVisible && state.nativeConversationStatusSyncState === 'connected',
+    onOpenConversation: async (item) => {
+      if (!item.conversationId || !state.props.nativeConversationClient) throw new Error('会话服务尚未连接。');
+      /** 从真实会话选择接口读取准确项目和会话，再沿用工作台导航。 */
+      const choice = await state.props.nativeConversationClient.loadNativeConversationChoice(item.projectId, item.conversationId);
+      return domainActions.selectNativeConversation(choice);
+    },
+  });
   const {
     actionState,
     activeNavTarget,
@@ -851,6 +868,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       ) : null}
       {activeNavTarget !== 'settings' && (upstreamMainLayout || !selectedProject || projectSessionSourceListVisible) ? (
         <SidebarNav
+          notificationCenter={<AutomationNotificationCenter model={automationNotifications} language={appShellSettings.appLanguage} />}
           mainLayout={appShellSettings.mainLayout}
           activeNavTarget={activeNavTarget}
           activeProjectId={activeProjectId}
@@ -988,45 +1006,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
               />
             ) : null}
           </MotionPresence>
-          {activeNavTarget === 'automations' ? (
-            <toolPages.automations
-              client={props.commandClient ?? null}
-              projects={snapshot.projects}
-              language={appShellSettings.appLanguage}
-              onOpenConversation={async (run) => {
-                if (!run.conversationId || !props.nativeConversationClient) return;
-                const choice = await props.nativeConversationClient.loadNativeConversationChoice(run.projectId, run.conversationId);
-                await selectNativeConversation(choice);
-              }}
-              onOpenExecution={async (_run, reference, target) => {
-                /** 员工工作和流程都先读取实际任务归属，临时工作不依赖左栏项目目录。 */
-                const client = props.commandClient;
-                if (!client) throw new Error('工作服务尚未连接。');
-                const taskId = reference.taskId ?? (reference.kind === 'workflow' ? (await client.loadDigitalTeamRun(reference.id)).run.taskId : null);
-                if (!taskId) throw new Error('当前执行尚未提供可查看的任务身份。');
-                const task = await client.loadTask(taskId);
-                if (target === 'conversation') {
-                  /** TaskWork 会话在真实派发后生成，不能把运行 ID 当作会话 ID。 */
-                  const workRun = reference.kind === 'task_work' ? (await client.loadTaskWorkManagement(task.id)).workItems.flatMap((item) => item.runs).find((item) => item.id === reference.id) : null;
-                  const conversationId = workRun?.conversationId ?? reference.conversationId;
-                  if (!conversationId || !props.nativeConversationClient) throw new Error('工作会话尚未建立，请先查看任务与成果。');
-                  await selectNativeConversation(await props.nativeConversationClient.loadNativeConversationChoice(task.projectId, conversationId));
-                  return;
-                }
-                if (target === 'workflow') {
-                  /** 沿用任务详情进入数字团队的同一页面与准确运行选择。 */
-                  closeTaskDetail();
-                  state.setDigitalTeamTask(task);
-                  state.setDigitalTeamEntrySelection({ kind: 'run', runId: reference.id });
-                  state.setActiveNavTarget('digital-teams');
-                  return;
-                }
-                const project = snapshot.projects.find((item) => item.id === task.projectId) ?? (await client.loadProject(task.projectId));
-                setPendingGlobalTask({ taskId: task.id, projectId: project.id, presentation: 'full_page' });
-                openProjectSection(project, 'tasks');
-              }}
-            />
-          ) : null}
+          {activeNavTarget === 'automations' ? <toolPages.automations client={props.commandClient ?? null} projects={snapshot.projects} language={appShellSettings.appLanguage} /> : null}
 
           {activeNavTarget !== 'settings' &&
           activeNavTarget !== 'skills' &&

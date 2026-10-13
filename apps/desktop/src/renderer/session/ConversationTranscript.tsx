@@ -270,6 +270,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const maintainLatestPositionRef = useRef<() => void>(() => undefined);
   const latestVisibilityFrameRef = useRef<number | null>(null);
   const lastReportedLatestVisibilityRef = useRef<boolean | null>(null);
+  /** 加载占位和读取失败不能作为正文已查看的证据。 */
+  const latestContentReadyRef = useRef(false);
   const latestVisibilityCallbackRef = useRef(props.onLatestContentVisibilityChange);
   latestVisibilityCallbackRef.current = props.onLatestContentVisibilityChange;
   const historyPrependAnchorRef = useRef<(TranscriptViewportAnchor & { frozenCursor: string }) | null>(null);
@@ -446,6 +448,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   // 原始思考摘要完整保留在会话状态中；会话记录的当前态选择统一交给行投影处理。
   const items = transcriptItems;
   const historyHydrated = props.transcriptHydrated ?? props.state.snapshot !== null;
+  latestContentReadyRef.current = historyHydrated && !props.historyLoading && props.state.transportState === 'ready';
   const enteringItemIds = useNewItemMotionIds(
     items.map((item) => item.key),
     newItemMotionDurationMs,
@@ -736,7 +739,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     const container = containerRef.current;
     if (!container) return;
     const current = metrics(container);
-    const visible = current.scrollHeight - current.scrollTop - current.clientHeight <= 24 && latestMarkerIntersectingRef.current;
+    const visible = latestContentReadyRef.current && current.scrollHeight - current.scrollTop - current.clientHeight <= 24 && latestMarkerIntersectingRef.current;
     if (lastReportedLatestVisibilityRef.current === visible) return;
     lastReportedLatestVisibilityRef.current = visible;
     latestVisibilityCallbackRef.current?.(visible);
@@ -749,6 +752,12 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       publishLatestContentVisibility();
     });
   }, [publishLatestContentVisibility]);
+
+  useLayoutEffect(() => {
+    // 即使底部位置未变化，加载完成或会话身份变化后也必须重新报告可见事实。
+    lastReportedLatestVisibilityRef.current = null;
+    scheduleLatestContentVisibility();
+  }, [historyHydrated, props.historyLoading, props.state.transportState, props.state.conversationId, props.onLatestContentVisibilityChange, scheduleLatestContentVisibility]);
 
   /** 只读取已经挂载的可见行，当前刻度变化才刷新状态。 */
   const updateNavigationCurrent = useCallback(

@@ -1669,16 +1669,27 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     [requestWorkspaceLeaveRef],
   );
 
+  /** 慢目录读取不能覆盖用户后来选择的另一条会话。 */
+  const nativeConversationSelectionRevision = useRef(0);
+
   /** 所有入口先沿用当前投影的导航身份，真实会话身份仍用于读取消息。 */
   async function applyNativeConversationSelection(conversation: NativeConversationChoice, navigation: 'page' | 'preserve', presentation?: 'history' | 'interactive'): Promise<void> {
-    const targetProject = snapshot.projects.find((candidate) => candidate.id === conversation.projectId);
-    if (targetProject) {
-      activeProjectIdRef.current = targetProject.id;
-      setProjectDetail(targetProject);
-    }
-    const task = conversation.taskId ? snapshot.tasks.find((candidate) => candidate.id === conversation.taskId) : undefined;
-    if (task) setTaskDetail(task);
-    else setTaskDetail(undefined);
+    /** 此次导航在开始读取前冻结其先后顺序。 */
+    const selectionRevision = ++nativeConversationSelectionRevision.current;
+    /** 自动化会话可能早于项目和任务目录到达，先并行补读其真实归属。 */
+    const [targetProject, task] = await Promise.all([
+      snapshot.projects.find((candidate) => candidate.id === conversation.projectId) ?? props.onLoadProject?.(conversation.projectId) ?? props.commandClient?.loadProject(conversation.projectId),
+      conversation.taskId ? (snapshot.tasks.find((candidate) => candidate.id === conversation.taskId) ?? props.onLoadTask?.(conversation.taskId) ?? props.commandClient?.loadTask(conversation.taskId)) : undefined,
+    ]);
+    if (selectionRevision !== nativeConversationSelectionRevision.current) return;
+    if (!targetProject || targetProject.id !== conversation.projectId) throw new Error('原会话所属项目无法读取。');
+    if (conversation.taskId && (!task || task.id !== conversation.taskId || task.projectId !== targetProject.id)) throw new Error('原会话所属任务无法读取。');
+    /** 查看无项目会话也只读取已存在的托管工作区，不创建替代项目。 */
+    setSnapshot((current) => (current.projects.some((project) => project.id === targetProject.id) ? current : { ...current, projects: [...current.projects, targetProject] }));
+    activeProjectIdRef.current = targetProject.id;
+    setProjectDetail(targetProject);
+    if (task) mergeTaskRecord(task);
+    setTaskDetail(task);
     /** 自动化等入口可先于列表拿到会话；选择前补齐列表事实，页面才能解析实际会话。 */
     const listedConversation = resolveSelectedNativeConversationForProject(state.nativeConversationChoices, conversation.id, conversation.projectId);
     // 创建期入口只属于本地工作面，不能写入正式目录或被当作已接纳会话保留。

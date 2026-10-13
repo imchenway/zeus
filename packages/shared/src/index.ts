@@ -1,5 +1,7 @@
 /** 所有文件入口共用预览类型与格式策略。 */
 export * from './filePreview.js';
+/** 自动化通知中心的跨层查询与确认契约。 */
+export * from './automationNotifications.js';
 import type { UserFacingErrorCause } from './userFacingError.js';
 /** Zeus 任务状态：只描述真实任务生命周期，不承载任何示例或 mock 业务数据。 */
 export * from './taskPush.js';
