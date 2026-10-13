@@ -2872,11 +2872,25 @@ a {
   box-shadow: var(--zeus-control-focus);
   outline: 0;
 }
+/* 项目与会话共用层级尺寸，主题文件只引用这些值，不再覆盖会话缩进。 */
+.macos-ai-app.zeus-shell .project-first-sidebar {
+  /* 项目文件夹图标尺寸。 */
+  --zeus-sidebar-folder-size: 17px;
+  /* 项目与会话共用的图标列宽。 */
+  --zeus-sidebar-icon-column: 18px;
+  /* 图标与标题的间距，也是子级缩进的一部分。 */
+  --zeus-sidebar-label-gap: 8px;
+  /* 补偿快捷入口的 1px 边框与图标列半宽差（22px 与 18px），对齐图标起点。 */
+  --zeus-sidebar-row-inset: 3px;
+  /* 项目名称与子级会话图标共用的起点。 */
+  --zeus-sidebar-label-start: calc(var(--zeus-sidebar-row-inset) + var(--zeus-sidebar-icon-column) + var(--zeus-sidebar-label-gap));
+}
 .project-sidebar-conversations {
   container-name: project-sidebar-conversations;
   container-type: inline-size;
-  margin: 1px 0 5px 6px;
+  margin: 1px 0 3px;
   min-width: 0;
+  padding: 0;
   position: relative;
 }
 .project-sidebar-conversations .session-project-conversation-tree {
@@ -2890,9 +2904,12 @@ a {
 }
 .macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-conversations .session-conversation-tree-row {
   block-size: 28px;
+  border: 0;
   box-sizing: border-box;
   min-block-size: 28px;
-  padding: 0 0 0 4px;
+  /* 会话图标对齐项目名称，标题再向右缩进一个图标列与间距。 */
+  padding-block: 0;
+  padding-inline: var(--zeus-sidebar-label-start) 0;
 }
 .project-sidebar-conversations .session-conversation-tree-row .session-conversation-title {
   font-size: 12px;
@@ -2947,7 +2964,8 @@ a {
   font-weight: 560;
   margin-block-start: 2px;
   min-block-size: 24px;
-  padding-inline: 6px;
+  /* 展开入口与会话标题对齐，不与会话图标混在同一列。 */
+  padding-inline: calc(var(--zeus-sidebar-label-start) + var(--zeus-sidebar-icon-column) + var(--zeus-sidebar-label-gap)) 6px;
   text-align: start;
   width: 100%;
 }
@@ -10017,7 +10035,8 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   min-block-size: 100vh;
   overflow: hidden;
   padding-block-start: var(--zeus-hidden-titlebar-safe-top);
-  padding-inline: 10px;
+  /* 左侧保留入口基线，右侧收窄留白并为拖拽手柄保留空间。 */
+  padding-inline: 10px 8px;
   padding-block-end: 10px;
 }
 
@@ -10397,11 +10416,13 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   border: 1px solid transparent;
   border-radius: 7px;
   display: grid;
-  gap: 6px;
-  grid-template-columns: 18px minmax(0, 1fr) 26px;
+  /* 状态退出网格后，标题使用类型图标之外的全部可用宽度。 */
+  gap: var(--zeus-sidebar-label-gap, 6px);
+  grid-template-columns: var(--zeus-sidebar-icon-column, 18px) minmax(0, 1fr);
   inline-size: 100%;
   min-block-size: 38px;
   padding: 6px 0 6px 32px;
+  position: relative;
   text-align: left;
 }
 
@@ -10422,8 +10443,16 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 }
 
 .macos-ai-app .session-conversation-tree-row > .session-conversation-status-icon {
-  grid-column: 3;
-  justify-self: center;
+  /* 状态悬浮在标题右端，保留原有提示与整行点击行为。 */
+  position: absolute;
+  inset-inline-end: 4px;
+  inset-block-start: 50%;
+  transform: translateY(-50%);
+}
+
+/* 仅有状态时渐隐标题末端；右侧 22px 避开图标，前方 8px 平滑过渡。 */
+.macos-ai-app .session-conversation-tree-row:has(> .session-conversation-status-icon) > .session-conversation-title {
+  mask-image: linear-gradient(to right, #000 calc(100% - 30px), transparent calc(100% - 22px));
 }
 
 .macos-ai-app .session-conversation-tree-row:where(:hover:not(:disabled):not([aria-disabled='true']), :focus-visible) {
@@ -12131,7 +12160,6 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
 /* 2026-06-18 侧栏布局最终覆盖：侧栏保留 macOS 隐藏标题栏安全区，左右留白继续压缩；项目行视觉和状态由 SourceListRow 原语统一负责。 */
 .macos-ai-app.zeus-shell .project-first-sidebar {
   padding-block-start: var(--zeus-hidden-titlebar-safe-top);
-  padding-inline: 10px;
   padding-block-end: 10px;
 }
 
