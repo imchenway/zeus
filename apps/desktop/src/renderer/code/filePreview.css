@@ -8,6 +8,10 @@
   overflow: auto;
   color: inherit;
 }
+/* 带行号引用在全文预览中持续标出目标行，不依赖输入焦点。 */
+.file-preview-text .cm-line[data-selected='true'] {
+  background: var(--zeus-source-list-selected, var(--zeus-code-editor-active-line));
+}
 .file-preview-toolbar {
   display: flex;
   flex-wrap: wrap;

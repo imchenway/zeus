@@ -40,17 +40,27 @@
   line-height: 20px;
 }
 .code-diff-line-number {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  min-width: 54px;
+  min-width: 4ch;
   min-height: 20px;
-  padding-inline: 4px;
+  padding-inline: 8px;
   white-space: nowrap;
 }
 .code-diff-view.is-unified .code-diff-line-number > span {
-  min-width: 42px;
+  min-width: 3ch;
   text-align: right;
+}
+/* 同一行的评论与源码定位各有点击范围；只在可评论时留出图标位置。 */
+.session-codex-parity-v1 .code-diff-line-number:has(> .session-code-comment-add) {
+  min-width: 3ch;
+  padding-inline-start: 22px;
+}
+.session-codex-parity-v1 .code-diff-line-number > .session-code-comment-add {
+  inline-size: 20px;
+  min-inline-size: 20px;
 }
 .code-diff-line.is-addition,
 .code-diff-view > :last-of-type .code-diff-line.is-replacement {
@@ -85,8 +95,4 @@
   min-height: 0;
   height: 100%;
   overflow: hidden !important;
-}
-.session-codex-parity-v1 .code-diff-line-number:hover:not(:disabled):not([aria-disabled='true']) .session-code-comment-add {
-  background: var(--zeus-product-accent);
-  color: #fff;
 }

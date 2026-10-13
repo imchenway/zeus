@@ -1,5 +1,5 @@
 import type { ConversationFileIconKind, ConversationResource } from '@zeus/shared';
-import type { NativeConversationSnapshot, NativeConversationResourceV2Item, NativeItemSnapshot } from './sessionTypes.js';
+import type { NativeConversationSnapshot, NativeConversationResourceV2Item, NativeItemSnapshot, NativeSessionItemBuffer } from './sessionTypes.js';
 
 /** 汇总待补载正文的链接身份与完成状态，旧消息失败不挡住新回复，普通文字增量不重试。 */
 export function inlineResourceRequestSignature(items: readonly { key: string; turnId: string; providerItemId?: string | null; status?: string | null; text: string }[]): string {
@@ -9,7 +9,8 @@ export function inlineResourceRequestSignature(items: readonly { key: string; tu
 /** 资源元数据到会话项的投影，不持有订阅、重连或发送状态。 */
 const conversationFileIconKinds = new Set<ConversationFileIconKind>(['code', 'java', 'javascript', 'typescript', 'json', 'markdown', 'sql', 'html', 'css', 'image', 'pdf', 'spreadsheet', 'presentation', 'document', 'archive', 'file']);
 
-export async function attachV2ResourcesToSnapshot(snapshot: NativeConversationSnapshot, metadata: NativeConversationResourceV2Item[]): Promise<NativeConversationSnapshot> {
+/** 资源补载同时接管实时正文；读取快照未包含新回复时也能按原 Provider 身份挂接。 */
+export async function attachV2ResourcesToSnapshot(snapshot: NativeConversationSnapshot, metadata: NativeConversationResourceV2Item[], displayedItems: readonly NativeSessionItemBuffer[] = []): Promise<NativeConversationSnapshot> {
   const providerThreadId = snapshot.providerThreadId;
   if (metadata.length === 0) return snapshot;
   const resourcesByItemId = new Map<string, ConversationResource[]>();
@@ -29,13 +30,49 @@ export async function attachV2ResourcesToSnapshot(snapshot: NativeConversationSn
       providerStateId: canResolveProviderStateId && item.providerItemId ? await conversationProviderItemStateId(providerThreadId!, item.providerItemId) : null,
     })),
   );
+  /** 只补入确有登记资源的实时条目，不把整个会话缓冲复制进有界快照。 */
+  const snapshotEntryIds = new Set(snapshot.items.map((item) => item.transcript.placement.entryId));
+  /** 乐观输入没有权威位置，不能因同名附件获得另一条消息的资源。 */
+  const missingDisplayedItems = displayedItems.filter((item) => item.conversationId === snapshot.id && !item.optimistic && item.transcript && !snapshotEntryIds.has(item.transcript.placement.entryId));
+  const displayedItemIds = await Promise.all(
+    missingDisplayedItems.map(async (item) => {
+      /** 每条实时消息携带自己的线程身份，恢复会话后不借用新线程计算旧资源编号。 */
+      const providerStateId = globalThis.crypto?.subtle && item.threadId && (item.providerItemId ?? item.itemId) ? await conversationProviderItemStateId(item.threadId, item.providerItemId ?? item.itemId) : null;
+      if (!providerStateId || !resourcesByItemId.has(providerStateId)) return null;
+      return {
+        providerStateId,
+        item: {
+          id: item.transcript!.placement.entryId,
+          turnId: item.turnId,
+          providerItemId: item.providerItemId ?? item.itemId,
+          type: item.type,
+          status: item.status,
+          phase: item.phase,
+          protocolFamily: item.protocolFamily,
+          stageId: item.stageId,
+          text: item.text,
+          payload: item.payload,
+          resources: item.resources,
+          messageCreatedAt: item.messageCreatedAt,
+          startedAt: item.timelineAt ?? null,
+          completedAt: null,
+          updatedAt: item.updatedAt ?? item.timelineAt ?? '',
+          transcript: item.transcript!,
+        } satisfies NativeItemSnapshot,
+      };
+    }),
+  );
+  for (const projected of displayedItemIds) {
+    if (projected) projectedItemIds.push(projected);
+  }
   const actualDeliveryItemIds = new Set<string>();
   for (const { item, providerStateId } of projectedItemIds) {
     if (syntheticAssistantDeliverableItemId(item)) continue;
     const resourceItemId = providerStateId ?? (resourcesByItemId.has(item.id) ? item.id : null);
     if (resourceItemId && resourcesByItemId.get(resourceItemId)?.some((resource) => resource.delivery === 'assistant')) actualDeliveryItemIds.add(resourceItemId);
   }
-  let changed = false;
+  /** 新挂接的实时条目本身也是快照增量，即使原缓冲已有同一资源也必须接管。 */
+  let changed = displayedItemIds.some(Boolean);
   const syntheticDeliveryItemIds = new Set<string>();
   const items = projectedItemIds.flatMap(({ item, providerStateId }) => {
     const syntheticItemId = syntheticAssistantDeliverableItemId(item);

@@ -64,6 +64,8 @@ interface EditorTargetDescriptor {
   label: string;
   appName: string;
   appPaths: string[];
+  /** 只有兼容 VS Code 命令行的应用才声明精确行定位。 */
+  supportsGoto?: boolean;
 }
 
 export interface ConversationResourceOpenServices {
@@ -82,6 +84,7 @@ export interface ConversationResourceOpenServices {
   getSettings: () => ZeusBrowserSettings;
 }
 
+/** 编辑器只在本机真实安装后展示，不用品牌图标冒充可用应用。 */
 const editorTargets: EditorTargetDescriptor[] = [
   {
     id: 'editor:vscode',
@@ -106,6 +109,27 @@ const editorTargets: EditorTargetDescriptor[] = [
     label: 'Windsurf',
     appName: 'Windsurf',
     appPaths: ['/Applications/Windsurf.app'],
+  },
+  {
+    id: 'editor:intellij-idea',
+    label: 'IntelliJ IDEA',
+    appName: 'IntelliJ IDEA',
+    appPaths: ['/Applications/IntelliJ IDEA.app', '/Applications/IntelliJ IDEA CE.app'],
+    supportsGoto: false,
+  },
+  {
+    id: 'editor:rider',
+    label: 'Rider',
+    appName: 'Rider',
+    appPaths: ['/Applications/Rider.app'],
+    supportsGoto: false,
+  },
+  {
+    id: 'editor:webstorm',
+    label: 'WebStorm',
+    appName: 'WebStorm',
+    appPaths: ['/Applications/WebStorm.app'],
+    supportsGoto: false,
   },
 ];
 
@@ -172,7 +196,7 @@ async function listOpenTargetsForIntent(intent: ConversationResourceOpenIntent, 
         id: editor.id,
         label: editor.label,
         available,
-        exactLocation: available,
+        exactLocation: available && editor.supportsGoto !== false,
         ...(includeIcons && applicationPath ? { iconDataUrl: await services.getApplicationIcon(applicationPath) } : {}),
         ...(!available ? { reason: 'application_not_installed' } : {}),
       });
@@ -266,14 +290,21 @@ async function openResourceIntent(
     return { opened: true, resourceId: intent.id, target, mode: 'external' };
   }
   if (target.startsWith('editor:')) {
+    /** 图标与实际打开使用同一个已安装应用路径。 */
     const editor = editorTargets.find((candidate) => candidate.id === target);
-    if (!editor || !(await findInstalledApplication(editor, services))) {
+    /** 打开前重新核对，避免菜单展示后应用被删除。 */
+    const applicationPath = editor ? await findInstalledApplication(editor, services) : null;
+    if (!editor || !applicationPath) {
       throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_TARGET_UNAVAILABLE', 'The selected editor is not installed.');
+    }
+    if (editor.supportsGoto === false) {
+      await services.executeFile('/usr/bin/open', ['-a', applicationPath, file.absolutePath]);
+      return { opened: true, resourceId: intent.id, target, mode: 'file' };
     }
     const location = normalizeLocation(request.location) ?? normalizeLocation(intent.target.location);
     await validateLocation(file.absolutePath, location?.line);
     const targetPath = location?.line ? `${file.absolutePath}:${location.line}${location.column ? `:${location.column}` : ''}` : file.absolutePath;
-    await services.executeFile('/usr/bin/open', ['-a', editor.appName, '--args', '--goto', targetPath]);
+    await services.executeFile('/usr/bin/open', ['-a', applicationPath, '--args', '--goto', targetPath]);
     return { opened: true, resourceId: intent.id, target, mode: 'file' };
   }
   throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_TARGET_UNAVAILABLE', 'The selected open target is unavailable for this resource.');

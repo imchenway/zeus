@@ -1,4 +1,5 @@
 import { registerFilePreview } from './filePreview.js';
+import { getApplicationIcon } from './applicationIcon.js';
 import { filePreviewMime, filePreviewKind, filePreviewLimits, type FilePreviewIntent, type FilePreviewRequest } from '@zeus/shared';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, protocol, screen, session, shell, Tray } from 'electron';
 import { execFile as execFileCallback, spawn } from 'node:child_process';
@@ -1191,15 +1192,7 @@ function conversationResourceOpenServices(requestingWindow: BrowserWindow) {
     showItemInFolder: (path: string) => shell.showItemInFolder(path),
     writeClipboardText: (text: string) => clipboard.writeText(text),
     /** 只读取宿主已确认的本机应用图标，失败时由菜单展示通用图标。 */
-    getApplicationIcon: async (path: string) => {
-      try {
-        /** 空图像也按读取失败处理，避免菜单出现破损图片。 */
-        const icon = await app.getFileIcon(path, { size: 'small' });
-        return icon.isEmpty() ? undefined : icon.toDataURL();
-      } catch {
-        return undefined;
-      }
-    },
+    getApplicationIcon,
     openBrowser: async (input: { conversationId: string; url: string }) => {
       if (!browserHost) throw new Error('Zeus BrowserHost is not ready.');
       return browserHost.openConversationResource(requestingWindow, input);

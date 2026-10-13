@@ -2853,43 +2853,66 @@ export function createSessionController(options: CreateSessionControllerOptions)
         },
       })),
     );
-    /** 过程响应只合入原轮次；正文历史由独立入口推进。 */
-    const settledProcess = await loadProcess(options.projectId, options.conversationId, localTurnId, {
-      ...(currentProcessPage?.nextCursor ? { cursor: currentProcessPage.nextCursor } : {}),
-      // 首次读取与后续页使用同一小批量预算，避免长轮次一次挂载大量内容。
-      direction,
-      limit: 48,
-      byteLimit: 96 * 1024,
-    }).then(
-      (page) => ({ page, error: null as unknown }),
-      (error: unknown) => ({ page: null, error }),
-    );
+    /** 完成轮次一次交付完整计数，活动、失败及中断轮次继续逐页读取。 */
+    const completeBeforeDisplay = turn.status === 'completed' || startAtBeginning;
+    /** 有界预览先留在本次读取中，不逐页改写用户看到的操作数量。 */
+    const processPages: NativeConversationSnapshotV2Page<NativeConversationProcessV2Item>[] = [];
+    /** 游标沿同一冻结范围推进，重复或缺失游标不能触发无限读取。 */
+    const seenCursors = new Set<string | null>();
+    /** 已读页面继续复用，只补齐尚未取得的范围。 */
+    let cursor = currentProcessPage?.nextCursor ?? null;
+    /** 失败保留原先的完整画面和已读游标，不展示本次尚未齐全的数量。 */
+    let processError: unknown = null;
+    try {
+      do {
+        if (seenCursors.has(cursor)) throw new Error('处理过程分页没有推进，请重新读取。');
+        seenCursors.add(cursor);
+        /** 每次请求仍只读取短预览，完整工具输出由展开单项时的独立入口负责。 */
+        const page = await loadProcess(options.projectId, options.conversationId, localTurnId, {
+          ...(cursor ? { cursor } : {}),
+          direction,
+          limit: 48,
+          byteLimit: 96 * 1024,
+        });
+        if (disposed || generation !== connectionToken || turnDetailLoadRevisions.get(pagingKey) !== loadRevision) return;
+        processPages.push(page);
+        if (!completeBeforeDisplay || !page.hasMore) break;
+        if (!page.nextCursor) throw new Error('处理过程分页缺少后续位置，请重新读取。');
+        cursor = page.nextCursor;
+      } while (completeBeforeDisplay);
+    } catch (error: unknown) {
+      processError = error;
+    }
     if (disposed || generation !== connectionToken || turnDetailLoadRevisions.get(pagingKey) !== loadRevision) return;
     const latest = state.snapshot;
     if (!latest?.snapshotV2 || !latest.v2Paging) return;
     let next = latest;
-    // 同一过程页补充稳定显示身份，不重新读取用户消息或助手回复。
-    if (settledProcess.page) next = mergeConversationProcessV2(next, pagingKey, settledProcess.page);
-    if (settledProcess.error) {
+    /** 同一次读取只提交一个最终投影，期间到达的实时消息及资源保留在最新快照中。 */
+    try {
+      if (!processError) for (const page of processPages) next = mergeConversationProcessV2(next, pagingKey, page);
+    } catch (error: unknown) {
+      /** 页面身份无效时整批放弃，错误状态也必须结束读取提示。 */
+      next = latest;
+      processError = error;
+    }
+    if (processError) {
       next = updateConversationV2Paging(next, (paging) => ({
         ...paging,
-        processByTurn: settledProcess.error
-          ? {
-              ...paging.processByTurn,
-              [pagingKey]: {
-                direction,
-                nextCursor: currentProcessPage?.nextCursor ?? null,
-                hasMore: currentProcessPage?.hasMore ?? true,
-                loading: false,
-                loaded: currentProcessPage?.loaded ?? false,
-                error: errorMessage(settledProcess.error),
-              },
-            }
-          : paging.processByTurn,
+        processByTurn: {
+          ...paging.processByTurn,
+          [pagingKey]: {
+            direction,
+            nextCursor: currentProcessPage?.nextCursor ?? null,
+            hasMore: currentProcessPage?.hasMore ?? true,
+            loading: false,
+            loaded: currentProcessPage?.loaded ?? false,
+            error: errorMessage(processError),
+          },
+        },
       }));
     }
     await commitV2Snapshot(canonicalizeTurnReadPaging(next, turn), generation);
-    if (settledProcess.error) throw settledProcess.error;
+    if (processError) throw processError;
   }
 
   async function loadTurnArtifactsV2(turnIdentity: string, refreshResources = false): Promise<void> {
@@ -2911,7 +2934,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const shouldLoadChange = Boolean((v2Turn?.changeSetAvailable || knownChangeSet) && options.client.loadTurnChangeSet && (!knownChangeSet || knownChangeSet.contentProjection === 'summary'));
     if (!shouldLoadResources && !shouldLoadChange) {
       if (resources.loading) return;
-      const merged = await attachV2ResourcesToSnapshot(current, resources.items);
+      const merged = await attachV2ResourcesToSnapshot(current, resources.items, Object.values(state.items));
       if (!disposed && generation === connectionToken && merged !== current) dispatchV2Snapshot(merged);
       return;
     }
@@ -2970,13 +2993,13 @@ export function createSessionController(options: CreateSessionControllerOptions)
             }
             let latest = state.snapshot;
             if (!latest?.snapshotV2 || !latest.v2Paging) return;
-            let merged = await attachV2ResourcesToSnapshot(latest, items);
+            let merged = await attachV2ResourcesToSnapshot(latest, items, Object.values(state.items));
             if (disposed || generation !== connectionToken) return;
             // 资源挂接会计算 Provider item 身份；期间变更集可能已先写回，须基于最新快照重放一次。
             if (state.snapshot !== latest) {
               latest = state.snapshot;
               if (!latest?.snapshotV2 || !latest.v2Paging) return;
-              merged = await attachV2ResourcesToSnapshot(latest, items);
+              merged = await attachV2ResourcesToSnapshot(latest, items, Object.values(state.items));
               if (disposed || generation !== connectionToken) return;
             }
             dispatchV2Snapshot(

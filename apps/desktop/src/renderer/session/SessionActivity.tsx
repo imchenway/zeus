@@ -172,9 +172,14 @@ function SessionActivityGroupContent(props: SessionActivityGroupProps) {
         {imageResources.length > 0 ? (
           <details className="session-activity-images" open>
             <summary>
-              <Images aria-hidden="true" />
-              <span>{props.language === 'zh-CN' ? `已查看 ${imageResources.length} 张图像` : `Viewed ${imageResources.length} ${imageResources.length === 1 ? 'image' : 'images'}`}</span>
-              <CaretDown aria-hidden="true" className="session-activity-images-caret" />
+              {/* 图片数量沿用普通操作行的图标列、标题和箭头，保持混合记录对齐。 */}
+              <span className="session-activity-item-icon" aria-hidden="true">
+                <Images />
+              </span>
+              <span className="session-activity-item-copy session-activity-item-summary">
+                <span className="session-activity-item-title">{props.language === 'zh-CN' ? `已查看 ${imageResources.length} 张图像` : `Viewed ${imageResources.length} ${imageResources.length === 1 ? 'image' : 'images'}`}</span>
+                <CaretDown aria-hidden="true" className="session-activity-item-caret session-activity-images-caret" weight="bold" />
+              </span>
             </summary>
             <ConversationResourceCards resources={imageResources} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} />
           </details>
@@ -629,6 +634,8 @@ export function SessionTurnProcessDisclosure(props: {
   onOpen?: () => void | Promise<void>;
   loading?: boolean;
   error?: string | null;
+  /** 完成轮次的预览尚未齐全时只显示读取状态，不逐页展示递增数量。 */
+  contentPending?: boolean;
   /** 入口可表达整轮处理过程或补载的轮次详情。 */
   labelKind?: 'process' | 'details';
   /** 整轮入口使用真实轮次用时，缺失时间时显示原文案。 */
@@ -700,12 +707,12 @@ export function SessionTurnProcessDisclosure(props: {
       </div>
       <Collapsible id={bodyId} open={open} revealWithinViewport>
         <div className="session-turn-process-body">
-          {props.loading ? (
+          {props.loading || (props.contentPending && !props.error) ? (
             <p className="session-v2-page-status" role="status" aria-live="polite">
               {props.language === 'zh-CN' ? '正在读取处理过程…' : 'Loading process…'}
             </p>
           ) : null}
-          {props.children}
+          {props.contentPending ? null : props.children}
           {props.error ? (
             <p className="session-v2-page-error" role="alert">
               <VisibleApplicationError error={props.error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />

@@ -149,6 +149,8 @@ export function SessionComputerPreview(props: { conversationId: string; language
                     : 'No capture yet. You can still stop control.'}
               </p>
             )}
+            {/* 同一张已授权截图提供局部虚化层，画面中心与控件继续使用清晰内容。 */}
+            {preview.imageUrl && failedImage !== preview.imageUrl ? <img className="session-computer-preview-blur" src={preview.imageUrl} alt="" aria-hidden="true" draggable={false} /> : null}
             <div className="session-computer-preview-controls">
               <button
                 type="button"
