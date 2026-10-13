@@ -37,7 +37,7 @@ export function useInputSuggestion(options: {
   /** 输入事件同步取消，避免 React 效果尚未执行时回写结果。 */
   const activeRequest = useRef<AbortController | null>(null);
   /** 灰字和加载身份始终与正文状态分开。 */
-  const [result, setResult] = useState<{ key: string; text: string | null; pending: boolean } | null>(null);
+  const [result, setResult] = useState<{ key: string; text: string | null; pending: boolean; reason: InputSuggestionResult['reason'] } | null>(null);
   /** 失败、中断和历史关闭状态不能当作成功回复。 */
   const status = latestTurn?.status ?? null;
   /** 开始身份来自实时事件；即使快速回复合并为一次渲染，也不会漏掉刚完成的轮次。 */
@@ -47,8 +47,16 @@ export function useInputSuggestion(options: {
   /** 捕获专用模型，后续变更会取消当前调用。 */
   const modelRef = options.settings?.modelRef ?? null;
 
+  // 请求只跟随会话、轮次状态、模型和输入资格取消；开始标记的快照回写不能中断同一轮建议。
   useEffect(() => {
     setResult(null);
+    return () => {
+      activeRequest.current?.abort();
+      activeRequest.current = null;
+    };
+  }, [resultKey, status, enabled, options.eligible, options.working]);
+
+  useEffect(() => {
     /** 若终态先到达，保留此前进行中身份，等待队列收口后再判断。 */
     if (status === 'completed' && options.working) return;
     /** 当前变化与首次挂载基线比较，不把历史消息当作刚结束的回复。 */
@@ -66,7 +74,7 @@ export function useInputSuggestion(options: {
     /** 每次调用拥有独立取消身份，不中断主会话。 */
     const controller = new AbortController();
     activeRequest.current = controller;
-    setResult({ key: resultKey, text: null, pending: true });
+    setResult({ key: resultKey, text: null, pending: true, reason: null });
     void generate
       .current(turnId, controller.signal)
       .then((response) => {
@@ -75,15 +83,11 @@ export function useInputSuggestion(options: {
           setResult(null);
           return;
         }
-        setResult({ key: resultKey, text: typeof response.text === 'string' && response.text.trim() ? response.text : null, pending: false });
+        setResult({ key: resultKey, text: typeof response.text === 'string' && response.text.trim() ? response.text : null, pending: false, reason: response.reason });
       })
       .catch(() => {
-        if (!controller.signal.aborted) setResult(null);
+        if (!controller.signal.aborted) setResult({ key: resultKey, text: null, pending: false, reason: 'failed' });
       });
-    return () => {
-      controller.abort();
-      if (activeRequest.current === controller) activeRequest.current = null;
-    };
   }, [sessionKey, turnId, status, startedTurnId, enabled, modelRef, options.eligible, options.working, resultKey, options.state.projectId, options.state.conversationId]);
 
   /** 输入、采纳、发送或 Escape 都同步清除独立建议。 */
@@ -93,6 +97,6 @@ export function useInputSuggestion(options: {
     setResult(null);
   }, []);
   /** 不等待效果清理，当前渲染已经失去资格时立即隐藏旧结果。 */
-  const visible = enabled && options.eligible && !options.working && result?.key === resultKey;
-  return { text: visible ? (result?.text ?? null) : null, pending: visible && result?.pending === true, dismiss };
+  const visible = enabled && status === 'completed' && options.eligible && !options.working && result?.key === resultKey;
+  return { text: visible ? (result?.text ?? null) : null, pending: visible && result?.pending === true, reason: visible ? (result?.reason ?? null) : null, dismiss };
 }

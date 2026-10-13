@@ -22,6 +22,8 @@ export interface InputSuggestionResult {
   modelRef: string | null;
   /** 空值表示没有合理建议或功能不可用，不属于输入正文。 */
   text: string | null;
+  /** 无正文时明确区分未生成、正常空结果和故障，不返回供应商原始错误。 */
+  reason: 'disabled' | 'context_unavailable' | 'model_unavailable' | 'no_suggestion' | 'timed_out' | 'failed' | 'cancelled' | null;
 }
 
 /** 未配置的新旧用户均保持关闭，不隐式选择付费模型。 */

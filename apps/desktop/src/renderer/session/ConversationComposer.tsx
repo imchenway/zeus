@@ -8,7 +8,7 @@ import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paper
 import { SquareIcon as Square } from '@phosphor-icons/react/dist/csr/Square';
 import { TargetIcon as Target } from '@phosphor-icons/react/dist/csr/Target';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
-import type { ConversationContextDraft, ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import type { ConversationContextDraft, InputSuggestionResult, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import type {
   CodexConversationCapabilities,
   NativeCollaborationMode,
@@ -36,6 +36,26 @@ import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { StructuredComposerInput, type StructuredComposerSelection } from './StructuredComposerInput.js';
 import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
 import { useInputSuggestion } from './useInputSuggestion.js';
+
+/** 建议反馈独立于灰字正文，不会被 Tab 采纳或随消息发送。 */
+const inputSuggestionFeedback: Record<NonNullable<InputSuggestionResult['reason']> | 'generating', Record<SessionUiLanguage, string>> = {
+  /** 生成期间让用户确认本轮已经触发。 */
+  generating: { 'zh-CN': '正在生成输入建议…', 'en-US': 'Generating an input suggestion…' },
+  /** 设置变化后只提示状态，不自动重新启用。 */
+  disabled: { 'zh-CN': '输入建议未启用，请检查通用设置。', 'en-US': 'Input suggestions are off. Check General settings.' },
+  /** 缺少有效回复时不读取其他会话替代。 */
+  context_unavailable: { 'zh-CN': '本轮回复内容不可用，未生成输入建议。', 'en-US': 'The reply is unavailable. No input suggestion was generated.' },
+  /** 专用模型失效时不自动切换供应商。 */
+  model_unavailable: { 'zh-CN': '输入建议模型不可用，请检查通用设置。', 'en-US': 'The suggestion model is unavailable. Check General settings.' },
+  /** 正常空结果与生成故障分开说明。 */
+  no_suggestion: { 'zh-CN': '本轮暂无合适的输入建议。', 'en-US': 'No suitable input suggestion for this reply.' },
+  /** 超时不重试，也不影响主会话输入。 */
+  timed_out: { 'zh-CN': '输入建议生成超时，可直接输入。', 'en-US': 'The input suggestion timed out. You can type your message.' },
+  /** 不把供应商错误或凭据写入提示。 */
+  failed: { 'zh-CN': '输入建议生成失败，请检查专用模型连接。', 'en-US': 'The input suggestion failed. Check the suggestion model connection.' },
+  /** 用户输入或切换会话造成的取消无需提示。 */
+  cancelled: { 'zh-CN': '', 'en-US': '' },
+};
 
 export type ComposerKeyIntent = 'submit' | 'newline' | 'escape' | 'ignore';
 export interface ComposerRuntimeSettings {
@@ -220,9 +240,12 @@ export function ConversationComposer(props: ConversationComposerProps) {
       !goalOperationBusy &&
       !isComposing &&
       !inputResources.processing &&
-      props.state.pendingRequests.length === 0 &&
-      props.state.planImplementationRequests.length === 0,
+      // 已处理的问题和计划仍保留在历史中，只有待处理项阻止建议。
+      !props.state.pendingRequests.some((request) => request.status === 'pending') &&
+      !props.state.planImplementationRequests.some((request) => request.status === 'pending'),
   });
+  /** 只呈现当前请求的反馈，不写入输入框、草稿或撤销记录。 */
+  const suggestionFeedback = suggestion.pending ? inputSuggestionFeedback.generating[props.language] : suggestion.reason ? inputSuggestionFeedback[suggestion.reason][props.language] : '';
 
   useEffect(() => {
     // 拼音尚未上屏时由编辑器本地值持有组合文本，避免会话快照或草稿持久化回写打断输入法。
@@ -341,7 +364,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
         suggestion.dismiss();
         return;
       }
-      if (event.key === 'Escape' && (suggestion.text || suggestion.pending)) {
+      if (event.key === 'Escape' && (suggestion.text || suggestion.pending || suggestion.reason)) {
         event.preventDefault();
         event.stopPropagation();
         suggestion.dismiss();
@@ -518,6 +541,11 @@ export function ConversationComposer(props: ConversationComposerProps) {
             onKeyDown={handleKeyDown}
           />
         )}
+        {suggestionFeedback ? (
+          <p className="session-composer-suggestion-status" role="status">
+            {suggestionFeedback}
+          </p>
+        ) : null}
         <div className="session-composer-command-row">
           <span className="session-composer-leading-actions">
             {/* 附件入口直接显示功能提示，禁用时仍可识别用途。 */}
