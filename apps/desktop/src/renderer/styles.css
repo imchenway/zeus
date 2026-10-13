@@ -9842,7 +9842,8 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   overflow: visible;
 }
 
-.macos-ai-app .project-quick-actions button {
+/* 两列布局仅属于快捷导航入口，不能作用于标题通知和弹层内的按钮。 */
+.macos-ai-app .project-quick-actions > .project-quick-action {
   align-items: center;
   border-radius: 8px;
   display: grid;
@@ -9857,7 +9858,7 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   text-align: left;
 }
 
-.macos-ai-app .project-quick-actions button > span[aria-hidden='true'] {
+.macos-ai-app .project-quick-actions > .project-quick-action > .project-quick-action-icon {
   align-items: center;
   color: var(--zeus-product-muted);
   display: inline-flex;

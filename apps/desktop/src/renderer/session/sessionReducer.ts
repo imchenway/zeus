@@ -34,6 +34,7 @@ import { mergeConversationContentV2, reconcileConversationHistoryCache } from '.
 import { isTranscriptContentUpdate } from './transcriptProjection.js';
 import { compareTranscriptTimelineOrder, mergeDurableItemResources, mergeTranscriptItem, newestTranscriptPlacement, reconcileTranscriptItems, transcriptContentRevision } from './transcriptReconciliation.js';
 import { isUnacceptedTranscriptMessage } from './conversationQueuePresentation.js';
+import { retainResourcesOwnedByItem } from './conversationResourceProjection.js';
 
 export type NativeSessionAction =
   | { type: 'transport_changed'; transportState: TransportState; reconnectAttempt?: number; error?: NativeSessionError | null }
@@ -662,6 +663,14 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
       return left.stableIndex - right.stableIndex;
     })
     .map((entry) => entry.key);
+  /** 轻量快照会合并旧资源，合并之后仍须按权威消息归属去掉历史错误关联。 */
+  const resourceMetadataById = new Map((snapshot.v2Paging?.resources.items ?? []).map((resource) => [resource.id, resource]));
+  for (const [key, item] of Object.entries(items)) {
+    if (!isUserMessageItem(item)) continue;
+    /** 只移除已被权威元数据明确归给其他消息的资源。 */
+    const ownedResources = retainResourcesOwnedByItem(item.resources, item.localItemId ?? item.itemId, item.transcript?.placement.entryId, resourceMetadataById);
+    if (ownedResources !== item.resources) items[key] = { ...item, resources: ownedResources };
+  }
   const stableItems = reuseEquivalentSessionItems(state.items, items);
   /** 只为仍在页面缓存中的条目保留额外摘要，避免轮次缓存无界增长。 */
   const retainedTurnIds = new Set(Object.values(stableItems).map((item) => item.turnId));
