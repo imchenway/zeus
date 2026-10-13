@@ -1,16 +1,42 @@
-import { defaultKeymap, history, historyKeymap, insertNewline } from '@codemirror/commands';
+import { defaultKeymap, history, historyKeymap, insertNewline, invertedEffects, isolateHistory } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
-import { Compartment, EditorState, Transaction } from '@codemirror/state';
+import { Compartment, EditorState, StateEffect, Transaction } from '@codemirror/state';
 import { EditorView, keymap, placeholder } from '@codemirror/view';
 import { type ClipboardEventHandler, type KeyboardEventHandler, type RefObject, useLayoutEffect, useRef } from 'react';
 import type { StructuredToken } from './StructuredComposerInput.js';
 import { composerMarkdownPreview } from './composerMarkdownPreview.js';
 
+/** 标签位置随润色事务进入原生撤销历史，不另建有限长度的草稿缓存。 */
+const composerTokenReplacement = StateEffect.define<{ before: StructuredToken[]; after: StructuredToken[] }>();
+
 /** 普通目标输入和 Markdown 输入共用正文、选区与焦点接口，不依赖具体编辑节点。 */
 export type ComposerInputHandle = Pick<HTMLTextAreaElement, 'value' | 'selectionStart' | 'selectionEnd' | 'focus' | 'setSelectionRange' | 'isConnected' | 'contains'> & {
   /** 仅在空编辑器有焦点时以可撤销的输入事务采纳灰字。 */
   insertSuggestion?: (text: string) => boolean;
+  /** 明确采用润色后，以独立可撤销事务替换仍与请求一致的原文。 */
+  replaceDraft?: (expected: string, text: string) => boolean;
 };
+
+/** 润色必须保留所有引用标签的顺序和数量，无法确定位置时拒绝替换。 */
+export function relocateComposerTokens(text: string, tokens: readonly StructuredToken[]): StructuredToken[] | null {
+  /** 相同标签可出现多次，但不能由模型增删。 */
+  const labels = new Set(tokens.map((token) => token.label));
+  for (const label of labels) {
+    if (!label || text.split(label).length - 1 !== tokens.filter((token) => token.label === label).length) return null;
+  }
+  /** 引用顺序也是用户意图的一部分。 */
+  let cursor = 0;
+  /** 保留原身份，只调整文字位置。 */
+  const relocated: StructuredToken[] = [];
+  for (const token of tokens) {
+    /** 每个标签都必须在前一个之后出现。 */
+    const start = text.indexOf(token.label, cursor);
+    if (start < 0) return null;
+    cursor = start + token.label.length;
+    relocated.push({ ...token, start, end: cursor });
+  }
+  return relocated;
+}
 
 /** 会话输入只暴露正文和编辑事件，排版不参与发送内容计算。 */
 interface MarkdownComposerEditorProps {
@@ -27,7 +53,7 @@ interface MarkdownComposerEditorProps {
   language: 'zh-CN' | 'en-US';
   listboxId?: string;
   activeDescendant?: string;
-  onChange(value: string, caret: number): void;
+  onChange(value: string, caret: number, restoredTokens?: StructuredToken[]): void;
   onSelect(caret: number): void;
   onKeyDown: KeyboardEventHandler<HTMLDivElement>;
   onPaste?: ClipboardEventHandler<HTMLTextAreaElement | HTMLDivElement>;
@@ -62,14 +88,19 @@ export function MarkdownComposerEditor(props: MarkdownComposerEditorProps) {
         extensions: [
           markdown({ base: markdownLanguage, addKeymap: false, completeHTMLTags: false, pasteURLAsLink: false }),
           undoSlot.current.of(history()),
+          // 撤销和重做使用同一效果的反向映射，保留原标签身份。
+          invertedEffects.of((transaction) => transaction.effects.flatMap((effect) => (effect.is(composerTokenReplacement) ? [composerTokenReplacement.of({ before: effect.value.after, after: effect.value.before })] : []))),
           EditorView.lineWrapping,
           keymap.of([{ key: 'Shift-Enter', run: insertNewline }, ...defaultKeymap, ...historyKeymap]),
           composerMarkdownPreview(() => latest.current.tokens, latest.current.language),
           options.current.of([]),
           EditorView.updateListener.of((update) => {
             if (applying.current) return;
-            if (update.docChanged) latest.current.onChange(update.state.doc.toString(), update.state.selection.main.head);
-            else if (update.selectionSet) latest.current.onSelect(update.state.selection.main.head);
+            if (update.docChanged) {
+              /** 只有明确润色及其撤销、重做携带标签恢复效果。 */
+              const replacement = update.transactions.flatMap((transaction) => transaction.effects).find((effect) => effect.is(composerTokenReplacement));
+              latest.current.onChange(update.state.doc.toString(), update.state.selection.main.head, replacement?.is(composerTokenReplacement) ? replacement.value.after : undefined);
+            } else if (update.selectionSet) latest.current.onSelect(update.state.selection.main.head);
           }),
         ],
       }),
@@ -95,6 +126,20 @@ export function MarkdownComposerEditor(props: MarkdownComposerEditorProps) {
       insertSuggestion: (text) => {
         if (!view.hasFocus || view.composing || view.state.readOnly || view.state.doc.length !== 0) return false;
         view.dispatch({ changes: { from: 0, insert: text }, selection: { anchor: text.length }, annotations: Transaction.userEvent.of('input.inputSuggestion') });
+        return true;
+      },
+      /** 替换前核对原文，引用未保留时继续编辑，不删除标签。 */
+      replaceDraft: (expected, text) => {
+        if (view.composing || view.state.readOnly || view.state.doc.toString() !== expected) return false;
+        /** 标签按原身份定位，任一缺失都拒绝修改正文。 */
+        const relocated = relocateComposerTokens(text, latest.current.tokens);
+        if (!relocated) return false;
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert: text },
+          selection: { anchor: text.length },
+          effects: composerTokenReplacement.of({ before: latest.current.tokens, after: relocated }),
+          annotations: [Transaction.userEvent.of('input.polish'), isolateHistory.of('full')],
+        });
         return true;
       },
       setSelectionRange: (start, end) => {

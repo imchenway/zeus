@@ -1917,6 +1917,8 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     }
     return (
       <SessionWorkspace
+        inputSuggestionSettings={appShellSettings.inputSuggestions}
+        onGenerateInputSuggestion={props.nativeConversationClient?.generateInputSuggestion}
         newConversationDrafts={newConversationDrafts}
         key={selectedNativeConversation ? `${selectedNativeConversation.projectId}:${selectedNativeConversation.navigationId ?? selectedNativeConversation.id}` : `new-conversation-${newConversationFocusRequest}`}
         language={appShellSettings.appLanguage}
@@ -2031,6 +2033,8 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           props.nativeConversationClient ? (
             <NewConversationComposer
               key={`task-discussion-${taskDetailPaneTask.id}`}
+              inputSuggestionSettings={appShellSettings.inputSuggestions}
+              onGenerateInputSuggestion={props.nativeConversationClient.generateInputSuggestion}
               docked
               drafts={newConversationDrafts}
               language={appShellSettings.appLanguage}

@@ -976,6 +976,13 @@ export class ConversationSnapshotV2Repository {
     return { conversationId, throughEventSeq, orderEpoch: this.transcript.orderEpoch(conversationId), entries: directory, processGroups };
   }
 
+  /** 独立文本生成只读取最近三轮已关闭对话，不扩大首屏快照的两轮载入上限。 */
+  readRecentClosedTurns(conversationIdValue: string): ConversationSnapshotV2TurnSummary[] {
+    /** 所有正文及内容句柄仍绑定调用方指定的同一会话。 */
+    const conversationId = requiredIdentity(conversationIdValue, 'conversationId');
+    return this.latestTurnsByStatus(conversationId, ['completed', 'interrupted', 'failed'], 3).map((turn) => this.toTurnSummary(conversationId, turn));
+  }
+
   readSnapshot(conversationIdValue: string, options: { closedTurnLimit?: number; byteLimit?: number; includeSessionMetrics?: boolean; executionContext?: ConversationSnapshotV2ExecutionContext } = {}): ConversationSnapshotV2 {
     const conversationId = requiredIdentity(conversationIdValue, 'conversationId');
     const closedTurnLimit = boundedInteger(options.closedTurnLimit ?? conversationSnapshotV2Limits.snapshot.defaultClosedTurnLimit, 'closedTurnLimit', 1, conversationSnapshotV2Limits.snapshot.maximumClosedTurnLimit);

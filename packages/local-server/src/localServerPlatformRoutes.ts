@@ -81,6 +81,7 @@ import {
   TaskWorkspaceRepository,
   TerminalEventRepository,
   type ZeusConversationRecord,
+  type ZeusConversationSubmissionRecord,
   type ZeusProjectRecord,
   type ZeusTaskIntegrationAttemptRecord,
   type ZeusTaskRecord,
@@ -1427,6 +1428,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     repository: conversationSnapshotV2,
     projectExists: (projectId) => Boolean(projects.getById(projectId)),
     getConversation: (conversationId) => conversations.getRecordById(conversationId),
+    /** 只读取本会话队列，提交尚未建轮次时也不能使用上一轮回复。 */
+    hasPendingSubmission: (conversationId) => conversationSubmissions.listQueueProjectionByConversation(conversationId).some((submission: ZeusConversationSubmissionRecord) => ['queued', 'dispatching', 'active'].includes(submission.status)),
     readSettings: () => (readOnlyValidation ? undefined : platformMutableState.appShellSettings.inputSuggestions),
     modelConnections,
     loadModels: loadTextGenerationModels,
@@ -4365,7 +4368,12 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         },
       });
       platformMutableState.appShellSettings = mutation.result;
-      if (previousSettings.inputSuggestions?.enabled !== mutation.result.inputSuggestions?.enabled || previousSettings.inputSuggestions?.modelRef !== mutation.result.inputSuggestions?.modelRef) cancelInputSuggestions();
+      if (
+        previousSettings.inputSuggestions?.enabled !== mutation.result.inputSuggestions?.enabled ||
+        previousSettings.inputSuggestions?.modelRef !== mutation.result.inputSuggestions?.modelRef ||
+        previousSettings.inputSuggestions?.effort !== mutation.result.inputSuggestions?.effort
+      )
+        cancelInputSuggestions();
       return platformMutableState.appShellSettings;
     } catch (error) {
       const mapped = settingsCommandHttpError(error, redactSensitiveText);

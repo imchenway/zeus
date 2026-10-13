@@ -4,6 +4,7 @@ import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completio
 import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy';
 import { Type } from 'typebox';
 import { normalizeContext } from '@earendil-works/pi-ai/utils/transcript';
+import { userFacingErrorCause } from '@zeus/shared';
 import { applyModelAuthentication, toPiModel } from './piSdkRuntimeDriver.js';
 import { resolvePiThinkingLevel, type ConfiguredModelCapability, type ConfiguredModelDefinition, type ModelCapabilityEvidence, type ModelCapabilityState, type ModelConnectionRecord, type PiThinkingLevel } from './modelConnectionCatalog.js';
 
@@ -280,9 +281,12 @@ export async function generateConfiguredModelText(
   /** 用户的密钥只发往原模型连接，不发往输入文本中的网址。 */
   const authenticated = (applyModelAuthentication(options, input.model.authenticationScheme) ?? options) as SimpleStreamOptions;
   for await (const event of streamApiFor(model).streamSimple(model, normalizeContext({ systemPrompt: input.system, messages: [{ role: 'user', content: input.text, timestamp: Date.now() }] }), authenticated)) {
-    if (event.type === 'error') throw new Error('模型文本生成请求失败。');
+    // SDK 错误事件携带实际原因；只保留脱敏说明，不能把整份消息或凭据传给调用方。
+    if (event.type === 'error') throw new Error('模型文本生成请求失败。', { cause: userFacingErrorCause(event.error.errorMessage ?? '模型未提供失败原因。') });
     if (event.type === 'done') {
-      if (event.message.stopReason !== 'stop') throw new Error('模型文本生成结果不完整。');
+      // 输出上限与连接失败分别说明；不把被截断的内容当成完整建议。
+      if (event.message.stopReason !== 'stop')
+        throw Object.assign(new Error('模型文本生成结果不完整。'), { code: event.message.stopReason === 'length' ? 'ZEUS_MODEL_TEXT_OUTPUT_LIMIT' : 'ZEUS_MODEL_TEXT_INCOMPLETE', details: `stopReason=${event.message.stopReason}` });
       return event.message.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n');
     }
   }

@@ -8,7 +8,7 @@ import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paper
 import { SquareIcon as Square } from '@phosphor-icons/react/dist/csr/Square';
 import { TargetIcon as Target } from '@phosphor-icons/react/dist/csr/Target';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
-import type { ConversationContextDraft, InputSuggestionResult, ZeusBrowserPreparedSubmission } from '@zeus/shared';
+import type { ConversationContextDraft, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import type {
   CodexConversationCapabilities,
   NativeCollaborationMode,
@@ -36,26 +36,7 @@ import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { StructuredComposerInput, type StructuredComposerSelection } from './StructuredComposerInput.js';
 import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
 import { useInputSuggestion } from './useInputSuggestion.js';
-
-/** 建议反馈独立于灰字正文，不会被 Tab 采纳或随消息发送。 */
-const inputSuggestionFeedback: Record<NonNullable<InputSuggestionResult['reason']> | 'generating', Record<SessionUiLanguage, string>> = {
-  /** 生成期间让用户确认本轮已经触发。 */
-  generating: { 'zh-CN': '正在生成输入建议…', 'en-US': 'Generating an input suggestion…' },
-  /** 设置变化后只提示状态，不自动重新启用。 */
-  disabled: { 'zh-CN': '输入建议未启用，请检查通用设置。', 'en-US': 'Input suggestions are off. Check General settings.' },
-  /** 缺少有效回复时不读取其他会话替代。 */
-  context_unavailable: { 'zh-CN': '本轮回复内容不可用，未生成输入建议。', 'en-US': 'The reply is unavailable. No input suggestion was generated.' },
-  /** 专用模型失效时不自动切换供应商。 */
-  model_unavailable: { 'zh-CN': '输入建议模型不可用，请检查通用设置。', 'en-US': 'The suggestion model is unavailable. Check General settings.' },
-  /** 正常空结果与生成故障分开说明。 */
-  no_suggestion: { 'zh-CN': '本轮暂无合适的输入建议。', 'en-US': 'No suitable input suggestion for this reply.' },
-  /** 超时不重试，也不影响主会话输入。 */
-  timed_out: { 'zh-CN': '输入建议生成超时，可直接输入。', 'en-US': 'The input suggestion timed out. You can type your message.' },
-  /** 不把供应商错误或凭据写入提示。 */
-  failed: { 'zh-CN': '输入建议生成失败，请检查专用模型连接。', 'en-US': 'The input suggestion failed. Check the suggestion model connection.' },
-  /** 用户输入或切换会话造成的取消无需提示。 */
-  cancelled: { 'zh-CN': '', 'en-US': '' },
-};
+import { InputSuggestionButton, InputSuggestionPreview, InputSuggestionStatus } from './InputSuggestionControl.js';
 
 export type ComposerKeyIntent = 'submit' | 'newline' | 'escape' | 'ignore';
 export interface ComposerRuntimeSettings {
@@ -72,8 +53,8 @@ export interface ComposerRuntimeSettings {
 export interface ConversationComposerProps {
   /** 主输入框独享建议设置；答题和其他复用输入框保持原有行为。 */
   inputSuggestionSettings?: import('@zeus/shared').InputSuggestionSettings;
-  /** 只生成灰字，不提交下一轮或改变执行队列。 */
-  onGenerateInputSuggestion?: (completedTurnId: string, signal: AbortSignal) => Promise<import('@zeus/shared').InputSuggestionResult>;
+  /** 生成灰字或润色候选，不提交下一轮或改变执行队列。 */
+  onGenerateInputSuggestion?: (input: import('@zeus/shared').InputSuggestionRequest, signal: AbortSignal) => Promise<import('@zeus/shared').InputSuggestionResult>;
   state: NativeSessionState;
   language: SessionUiLanguage;
   textareaRef?: RefObject<ComposerInputHandle | null>;
@@ -229,13 +210,13 @@ export function ConversationComposer(props: ConversationComposerProps) {
   /** 预测与输入值分开，已有附件、评论、问题或目标输入时不生成。 */
   const suggestion = useInputSuggestion({
     state: props.state,
+    draft: editorValue,
+    automaticEligible: !hasDraft && editorValue.length === 0,
     settings: props.inputSuggestionSettings,
     generate: props.onGenerateInputSuggestion,
     working: active || busy || props.state.conversationState === 'starting_turn',
     eligible:
       inputWritable &&
-      !hasDraft &&
-      editorValue.length === 0 &&
       !goalInputActive &&
       !goalOperationBusy &&
       !isComposing &&
@@ -244,8 +225,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
       !props.state.pendingRequests.some((request) => request.status === 'pending') &&
       !props.state.planImplementationRequests.some((request) => request.status === 'pending'),
   });
-  /** 只呈现当前请求的反馈，不写入输入框、草稿或撤销记录。 */
-  const suggestionFeedback = suggestion.pending ? inputSuggestionFeedback.generating[props.language] : suggestion.reason ? inputSuggestionFeedback[suggestion.reason][props.language] : '';
 
   useEffect(() => {
     // 拼音尚未上屏时由编辑器本地值持有组合文本，避免会话快照或草稿持久化回写打断输入法。
@@ -364,7 +343,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
         suggestion.dismiss();
         return;
       }
-      if (event.key === 'Escape' && (suggestion.text || suggestion.pending || suggestion.reason)) {
+      if (event.key === 'Escape' && (suggestion.text || suggestion.polishedText || suggestion.pending || suggestion.reason)) {
         event.preventDefault();
         event.stopPropagation();
         suggestion.dismiss();
@@ -419,7 +398,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
   return (
     <section
       className="session-composer-shell"
-      data-input-suggestion={suggestion.text || suggestion.pending ? 'true' : undefined}
+      data-input-suggestion={suggestion.text || suggestion.polishedText || suggestion.pending || suggestion.reason ? 'true' : undefined}
       aria-label={inputLabel}
       aria-busy={busy || inputResources.processing || undefined}
       data-active={active ? 'true' : 'false'}
@@ -442,7 +421,8 @@ export function ConversationComposer(props: ConversationComposerProps) {
           <VisibleApplicationError error={inputResourceError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
         </p>
       ) : null}
-      <div className="session-composer-input-frame" data-goal-input={goalInputActive ? 'true' : 'false'}>
+      <InputSuggestionPreview suggestion={suggestion} inputRef={textareaRef} language={props.language} />
+      <div className="session-composer-input-frame" data-goal-input={goalInputActive ? 'true' : 'false'} data-input-suggestion={!goalInputActive && props.onGenerateInputSuggestion ? 'true' : undefined}>
         {goalInputActive ? (
           <div className="session-goal-compose-context">
             <Target aria-hidden="true" weight="regular" />
@@ -481,71 +461,70 @@ export function ConversationComposer(props: ConversationComposerProps) {
             onKeyDown={handleKeyDown}
           />
         ) : (
-          <StructuredComposerInput
-            value={editorValue}
-            onValueChange={(nextValue) => {
-              suggestion.dismiss();
-              setEditorValue(nextValue);
-              if (!composingRef.current) props.onDraftChange(nextValue);
-            }}
-            onSelectionChange={(selection) => {
-              structuredSelectionRef.current = selection;
-            }}
-            textareaRef={textareaRef}
-            projectId={props.projectId}
-            language={props.language}
-            disabled={!inputWritable || busy || goalOperationBusy}
-            ariaLabel={inputLabel}
-            ariaKeyShortcuts="Enter Shift+Enter Escape Meta+A Control+A"
-            placeholder={props.inputBlocked ? copy.recoveredInputBlocked : copy.placeholder}
-            suggestion={suggestion.text}
-            loadCatalog={props.onLoadExtensions}
-            loadEmployees={props.onLoadEmployees}
-            goalAvailable={props.goalAvailable}
-            onPlanMode={() =>
-              props.onRuntimeSettingsChange?.({
-                model: effectiveModel,
-                effort: selectedEffort,
-                ...serviceTierWireOverride(selectedServiceTier),
-                permissionMode: props.permissionMode,
-                collaborationMode: props.collaborationMode === 'plan' ? 'default' : 'plan',
-              })
-            }
-            onGoalMode={() => {
-              if (props.goal) props.onOpenGoal?.();
-              else enterGoalInput();
-            }}
-            onOpenComputerSettings={props.onOpenComputerSettings}
-            onCompositionStart={() => {
-              suggestion.dismiss();
-              composingRef.current = true;
-              setIsComposing(true);
-            }}
-            onCompositionEnd={(nextValue) => {
-              composingRef.current = false;
-              setIsComposing(false);
-              setEditorValue(nextValue);
-              props.onDraftChange(nextValue);
-            }}
-            onBlur={(nextValue) => {
-              if (!composingRef.current) return;
-              composingRef.current = false;
-              setIsComposing(false);
-              setEditorValue(nextValue);
-              props.onDraftChange(nextValue);
-            }}
-            onPaste={(event) => {
-              suggestion.dismiss();
-              inputResources.handlePaste(event);
-            }}
-            onKeyDown={handleKeyDown}
-          />
+          <div className="session-composer-editor-with-suggestion" data-enabled={props.onGenerateInputSuggestion ? 'true' : undefined}>
+            {props.onGenerateInputSuggestion ? <InputSuggestionButton suggestion={suggestion} draft={editorValue} language={props.language} configured={Boolean(props.inputSuggestionSettings?.modelRef)} /> : null}
+            <StructuredComposerInput
+              value={editorValue}
+              onValueChange={(nextValue) => {
+                suggestion.dismiss();
+                setEditorValue(nextValue);
+                if (!composingRef.current) props.onDraftChange(nextValue);
+              }}
+              onSelectionChange={(selection) => {
+                structuredSelectionRef.current = selection;
+              }}
+              textareaRef={textareaRef}
+              projectId={props.projectId}
+              language={props.language}
+              disabled={!inputWritable || busy || goalOperationBusy}
+              ariaLabel={inputLabel}
+              ariaKeyShortcuts="Enter Shift+Enter Escape Meta+A Control+A"
+              placeholder={props.inputBlocked ? copy.recoveredInputBlocked : copy.placeholder}
+              suggestion={suggestion.text}
+              loadCatalog={props.onLoadExtensions}
+              loadEmployees={props.onLoadEmployees}
+              goalAvailable={props.goalAvailable}
+              onPlanMode={() =>
+                props.onRuntimeSettingsChange?.({
+                  model: effectiveModel,
+                  effort: selectedEffort,
+                  ...serviceTierWireOverride(selectedServiceTier),
+                  permissionMode: props.permissionMode,
+                  collaborationMode: props.collaborationMode === 'plan' ? 'default' : 'plan',
+                })
+              }
+              onGoalMode={() => {
+                if (props.goal) props.onOpenGoal?.();
+                else enterGoalInput();
+              }}
+              onOpenComputerSettings={props.onOpenComputerSettings}
+              onCompositionStart={() => {
+                suggestion.dismiss();
+                composingRef.current = true;
+                setIsComposing(true);
+              }}
+              onCompositionEnd={(nextValue) => {
+                composingRef.current = false;
+                setIsComposing(false);
+                setEditorValue(nextValue);
+                props.onDraftChange(nextValue);
+              }}
+              onBlur={(nextValue) => {
+                if (!composingRef.current) return;
+                composingRef.current = false;
+                setIsComposing(false);
+                setEditorValue(nextValue);
+                props.onDraftChange(nextValue);
+              }}
+              onPaste={(event) => {
+                suggestion.dismiss();
+                inputResources.handlePaste(event);
+              }}
+              onKeyDown={handleKeyDown}
+            />
+          </div>
         )}
-        {suggestionFeedback ? (
-          <p className="session-composer-suggestion-status" role="status">
-            {suggestionFeedback}
-          </p>
-        ) : null}
+        <InputSuggestionStatus suggestion={suggestion} language={props.language} />
         <div className="session-composer-command-row">
           <span className="session-composer-leading-actions">
             {/* 附件入口直接显示功能提示，禁用时仍可识别用途。 */}
