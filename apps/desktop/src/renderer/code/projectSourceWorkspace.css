@@ -529,7 +529,7 @@
   border: 1px solid var(--zeus-control-border);
   border-radius: 8px;
   box-shadow: 0 12px 32px rgb(0 0 0 / 18%);
-  background: var(--zeus-product-panel);
+  background: var(--zeus-solid-surface-bg, var(--zeus-product-panel));
 }
 .project-source-context-menu button {
   display: flex;
@@ -572,7 +572,7 @@
   border: 1px solid var(--zeus-control-border);
   border-radius: 12px;
   box-shadow: 0 24px 70px rgb(0 0 0 / 26%);
-  background: var(--zeus-product-panel);
+  background: var(--zeus-solid-surface-bg, var(--zeus-product-panel));
 }
 .project-source-operation-modal > header,
 .project-source-operation-modal > footer {

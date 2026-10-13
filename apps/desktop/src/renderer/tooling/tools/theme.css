@@ -8,9 +8,10 @@
 }
 
 .macos-ai-app.zeus-shell :where(.project-git-tabs, .settings-section-nav, .project-settings-section-tabs, .digital-employee-section-tabs) {
-  border-color: rgb(255 255 255 / 56%);
+  border-color: light-dark(rgb(255 255 255 / 56%), var(--zeus-dark-line));
   border-radius: 12px;
-  background: rgb(218 233 247 / 44%);
+  /* 各工作区导航复用主题表面，不再独立铺蓝色底。 */
+  background: light-dark(rgb(218 233 247 / 44%), var(--zeus-dark-surface));
 }
 
 .macos-ai-app.zeus-shell :is(.settings-section-nav, .project-settings-section-tabs, .project-git-tabs, .digital-employee-section-tabs) {

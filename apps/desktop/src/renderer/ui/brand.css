@@ -1,5 +1,23 @@
 /* 所有窗口共用既定紫色品牌色，应用图标替换不改变交互配色。 */
 :root {
+  /* 深色正文、工作区与编辑区共用底层表面。 */
+  --zeus-dark-canvas: #181818;
+  /* 深色仅导航侧栏、输入控件与浮层使用上层表面。 */
+  --zeus-dark-surface: #242424;
+  /* 常规分隔线只表达边界，不增加第三层背景。 */
+  --zeus-dark-line: #383838;
+  /* 弱分隔线用于正文与列表内部。 */
+  --zeus-dark-line-soft: #303030;
+  /* 强边界用于可调整区域与需要强调的控件边缘。 */
+  --zeus-dark-line-strong: #4a4a4a;
+  /* 主要文字使用中性灰白，避免冷蓝色偏。 */
+  --zeus-dark-text: #ebebeb;
+  /* 次要说明仍与两层背景保持清晰对比。 */
+  --zeus-dark-muted: #ababab;
+  /* 占位、时间和辅助图标使用较弱的中性文字。 */
+  --zeus-dark-subtle: #8e8e8e;
+  /* 选中是短暂状态，使用低对比度中性提亮。 */
+  --zeus-dark-selected: rgb(255 255 255 / 8%);
   /* 深紫色用于主操作与交互反馈。 */
   --zeus-brand-primary: #6155d8;
   /* 普通悬停统一为浅紫色，主窗口与独立窗口保持同样的轻量反馈。 */
@@ -14,6 +32,8 @@
 .macos-ai-app.theme-dark,
 html[data-zeus-theme='dark'] body > .macos-ai-app,
 .menu-bar-usage-root[data-appearance='dark'] {
+  /* 深色悬停不混入品牌色，品牌色只承担操作强调。 */
+  --zeus-brand-hover: rgb(255 255 255 / 5%);
   --zeus-brand-text: color-mix(in srgb, var(--zeus-brand-highlight) 80%, white);
 }
 
@@ -21,6 +41,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app,
   .macos-ai-app.theme-system,
   html[data-zeus-theme='system'] body > .macos-ai-app,
   .menu-bar-usage-root[data-appearance='system'] {
+    /* 跟随系统深色时与手动深色保持一致。 */
+    --zeus-brand-hover: rgb(255 255 255 / 5%);
     --zeus-brand-text: color-mix(in srgb, var(--zeus-brand-highlight) 80%, white);
   }
 }

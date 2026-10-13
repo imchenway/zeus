@@ -216,8 +216,14 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
         }
     }
 
+    /** 先同步主应用的实际主题，再更新或显示窗口；无效外观值不改变当前设置。 */
     private func handle(_ command: [String: Any]) {
         guard let type = command["type"] as? String else { return }
+        if let appearance = command["appearance"] as? String, appearance == "dark" || appearance == "light" {
+            NSApp.appearance = NSAppearance(named: appearance == "dark" ? .darkAqua : .aqua)
+            // 原生内容面与网页弹窗共用 #242424；标题栏与按钮继续由 AppKit 绘制。
+            panel.backgroundColor = appearance == "dark" ? NSColor(white: 36.0 / 255.0, alpha: 1) : .windowBackgroundColor
+        }
         if let nextLanguage = command["language"] as? String {
             language = nextLanguage == "en-US" ? "en-US" : "zh-CN"
         }

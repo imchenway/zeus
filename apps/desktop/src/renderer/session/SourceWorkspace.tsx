@@ -330,89 +330,94 @@ function SourceWorkspaceView(props: {
           <VisibleApplicationError error={openError} language={zh ? 'zh-CN' : 'en'} />
         </p>
       ) : null}
-      <div className="session-source-toolbar">
-        <nav className="session-source-breadcrumbs" aria-label={zh ? '文件路径' : 'File path'} title={displayPath}>
-          {displayPath.split('/').map((part, index) => (
-            <span key={index}>
-              {index > 0 ? <span aria-hidden="true">›</span> : null}
-              {part}
-            </span>
-          ))}
-        </nav>
-        <div className="session-source-actions">
-          <button
-            type="button"
-            aria-label={zh ? '在文件中搜索' : 'Find in file'}
-            data-icon-tooltip={zh ? '在文件中搜索' : 'Find in file'}
-            disabled={!sourcePreview}
-            onClick={() => {
-              props.onViewModeChange('source');
-              setSearchRequest((request) => request + 1);
-            }}
-          >
-            <FileMagnifyingGlass aria-hidden="true" />
-          </button>
-          {markdownPreview ? (
-            <button type="button" onClick={() => props.onViewModeChange(renderedMarkdown ? 'source' : 'preview')}>
-              {renderedMarkdown ? (zh ? '查看源代码' : 'View source') : zh ? '查看预览' : 'View preview'}
-            </button>
-          ) : null}
-          <button
-            type="button"
-            aria-label={copied ? (zh ? '已复制路径' : 'Path copied') : zh ? '复制路径' : 'Copy path'}
-            data-icon-tooltip={copied ? (zh ? '已复制路径' : 'Path copied') : zh ? '复制路径' : 'Copy path'}
-            disabled={!props.onOpen}
-            onClick={() => void openResource('copy_path')}
-          >
-            {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-          </button>
-          <span role="status" className="session-source-copy-status">
-            {copied ? (zh ? '已复制路径' : 'Path copied') : ''}
-          </span>
-          <div className="session-source-open-group">
-            <button type="button" disabled={!props.onOpen} title={openApplication?.label} onClick={() => void openResource(openTarget ?? 'system_default')}>
-              {openApplication?.iconDataUrl ? (
-                <img src={openApplication.iconDataUrl} alt="" width={18} height={18} />
-              ) : openTarget === 'system_default' ? (
-                <FolderOpen className="session-open-with-default-icon" aria-hidden="true" weight="duotone" />
-              ) : (
-                <AppWindow aria-hidden="true" />
-              )}
-              {zh ? '打开' : 'Open'}
-            </button>
-            <OpenWithMenu
-              key={props.preview.resource.id}
-              resource={props.preview.resource}
-              language={props.language}
-              disabled={!props.onOpen}
-              applicationsOnly
-              preferBelow
-              targets={openTargets.length ? openTargets : undefined}
-              footer={
-                <>
-                  <button type="button" role="menuitem" onClick={() => void openResource('file_manager')}>
-                    {zh ? '打开所在文件夹' : 'Show in folder'}
-                  </button>
-                  <button type="button" role="menuitem" onClick={() => void fileAction('export')}>
-                    {zh ? '另存为…' : 'Save as…'}
-                  </button>
-                </>
-              }
-              onOpen={(target) => {
-                setOpenTarget(target);
-                return openResource(target);
-              }}
-              label=""
-            />
-          </div>
-        </div>
-      </div>
-      {sourcePreview?.truncated ? <div role="status">{zh ? '预览已截断' : 'Preview truncated'}</div> : null}
       <FileReviewContent
         sourceRequest={searchRequest}
         key={`${props.preview.resource.id}:${sourcePreview?.location?.line ?? ''}:${sourcePreview?.location?.endLine ?? ''}`}
         review={sourcePreview ? { ...sourcePreview.review, location: sourcePreview.location } : undefined}
         zh={zh}
+        toolbar={(reviewActions) => (
+          <>
+            <div className="session-source-toolbar">
+              <nav className="session-source-breadcrumbs" aria-label={zh ? '文件路径' : 'File path'} title={displayPath}>
+                {displayPath.split('/').map((part, index) => (
+                  <span key={index}>
+                    {index > 0 ? <span aria-hidden="true">›</span> : null}
+                    {part}
+                  </span>
+                ))}
+              </nav>
+              <div className="session-source-actions">
+                {reviewActions}
+                <button
+                  type="button"
+                  aria-label={zh ? '在文件中搜索' : 'Find in file'}
+                  data-icon-tooltip={zh ? '在文件中搜索' : 'Find in file'}
+                  disabled={!sourcePreview}
+                  onClick={() => {
+                    props.onViewModeChange('source');
+                    setSearchRequest((request) => request + 1);
+                  }}
+                >
+                  <FileMagnifyingGlass aria-hidden="true" />
+                </button>
+                {markdownPreview ? (
+                  <button type="button" onClick={() => props.onViewModeChange(renderedMarkdown ? 'source' : 'preview')}>
+                    {renderedMarkdown ? (zh ? '查看源代码' : 'View source') : zh ? '查看预览' : 'View preview'}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  aria-label={copied ? (zh ? '已复制路径' : 'Path copied') : zh ? '复制路径' : 'Copy path'}
+                  data-icon-tooltip={copied ? (zh ? '已复制路径' : 'Path copied') : zh ? '复制路径' : 'Copy path'}
+                  disabled={!props.onOpen}
+                  onClick={() => void openResource('copy_path')}
+                >
+                  {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+                </button>
+                <span role="status" className="session-source-copy-status">
+                  {copied ? (zh ? '已复制路径' : 'Path copied') : ''}
+                </span>
+                <div className="session-source-open-group">
+                  <button type="button" disabled={!props.onOpen} title={openApplication?.label} onClick={() => void openResource(openTarget ?? 'system_default')}>
+                    {openApplication?.iconDataUrl ? (
+                      <img src={openApplication.iconDataUrl} alt="" width={18} height={18} />
+                    ) : openTarget === 'system_default' ? (
+                      <FolderOpen className="session-open-with-default-icon" aria-hidden="true" weight="duotone" />
+                    ) : (
+                      <AppWindow aria-hidden="true" />
+                    )}
+                    {zh ? '打开' : 'Open'}
+                  </button>
+                  <OpenWithMenu
+                    key={props.preview.resource.id}
+                    resource={props.preview.resource}
+                    language={props.language}
+                    disabled={!props.onOpen}
+                    applicationsOnly
+                    preferBelow
+                    targets={openTargets.length ? openTargets : undefined}
+                    footer={
+                      <>
+                        <button type="button" role="menuitem" onClick={() => void openResource('file_manager')}>
+                          {zh ? '打开所在文件夹' : 'Show in folder'}
+                        </button>
+                        <button type="button" role="menuitem" onClick={() => void fileAction('export')}>
+                          {zh ? '另存为…' : 'Save as…'}
+                        </button>
+                      </>
+                    }
+                    onOpen={(target) => {
+                      setOpenTarget(target);
+                      return openResource(target);
+                    }}
+                    label=""
+                  />
+                </div>
+              </div>
+            </div>
+            {sourcePreview?.truncated ? <div role="status">{zh ? '预览已截断' : 'Preview truncated'}</div> : null}
+          </>
+        )}
       >
         <div className={renderedMarkdown ? 'session-source-markdown-scroll' : `session-source-scroll ${props.preview.kind === 'image' ? 'session-image-preview' : ''}`}>
           {props.preview.kind === 'image' ? (

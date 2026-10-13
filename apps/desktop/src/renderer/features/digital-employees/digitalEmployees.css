@@ -482,7 +482,8 @@
 
 .macos-ai-app .digital-employee-section-tabs button.is-selected {
   color: var(--zeus-control-text);
-  background: var(--zeus-product-panel);
+  /* 选中态独立于内容底色，页面合并表面后仍保持可辨认。 */
+  background: light-dark(var(--zeus-product-panel), var(--zeus-product-selected));
   box-shadow: none;
 }
 

@@ -25,6 +25,7 @@ import {
   type UserFacingErrorCause,
 } from '@zeus/shared';
 import { ModalPortal } from '../ui/ModalPortal.js';
+import { Button } from '../ui/Button.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { FileTypeIcon } from './FileTypeIcon.js';
 import { sourceLocationDecorations } from './sourceLocationDecorations.js';
@@ -54,10 +55,18 @@ export function PreviewIconButton({
   );
 }
 
-/** 两类审阅共用切换入口；没有差异直接阅读，读取失败仍保留说明。 */
-export function FileReviewContent(props: { review?: FileReview; zh: boolean; /** 工具栏搜索时先显示完整源码，再由源码编辑器打开查找。 */ sourceRequest?: number; children: ReactNode }) {
-  /** 用户选择只影响本次打开的文件。 */
-  const [showDiff, setShowDiff] = useState(Boolean(props.review?.diff && !props.review.location?.line));
+/** 打开引用先阅读文件；有 Git 改动时通过标准按钮进入比较，读取失败仍保留说明。 */
+export function FileReviewContent(props: {
+  review?: FileReview;
+  zh: boolean;
+  /** 工具栏搜索时先显示完整源码，再由源码编辑器打开查找。 */
+  sourceRequest?: number;
+  /** 审阅操作并入调用方的文件工具栏，不再生成独立一行。 */
+  toolbar: (actions: ReactNode) => ReactNode;
+  children: ReactNode;
+}) {
+  /** 文件内容是默认入口，只有用户主动查看改动才显示差异。 */
+  const [showDiff, setShowDiff] = useState(false);
   useEffect(() => {
     // 再次点击同一引用也回到源码，不能停留在上次切换的差异页。
     if (props.review?.location?.line) setShowDiff(false);
@@ -68,31 +77,28 @@ export function FileReviewContent(props: { review?: FileReview; zh: boolean; /**
   }, [props.sourceRequest]);
   return (
     <>
-      {props.review?.diff ? (
-        <nav className="file-preview-toolbar file-review-toolbar" aria-label={props.zh ? 'Git 差异与源码' : 'Git diff and source'}>
-          <div className="file-review-modes" role="group" aria-label={props.zh ? '显示模式' : 'View mode'}>
-            <button type="button" aria-pressed={showDiff} onClick={() => setShowDiff(true)}>
-              <GitDiff size={14} aria-hidden="true" />
-              {props.zh ? '差异' : 'Diff'}
-            </button>
-            <button type="button" aria-pressed={!showDiff} onClick={() => setShowDiff(false)}>
-              <FileCode size={14} aria-hidden="true" />
-              {props.zh ? '内容' : 'Content'}
-            </button>
-          </div>
-          <span className="file-review-range" title={props.zh ? 'HEAD → 当前文件（含暂存与未暂存）' : 'HEAD → Current file (staged and unstaged)'}>
-            HEAD → {props.zh ? '当前文件' : 'Current file'}
-          </span>
-          <span className="file-review-stats">
-            <span className="is-addition" aria-label={`${props.zh ? '新增行数' : 'Added lines'}: ${props.review.diff.addedLines}`}>
-              +{props.review.diff.addedLines}
+      {props.toolbar(
+        props.review?.diff ? (
+          <>
+            <Button
+              size="compact"
+              title={showDiff ? (props.zh ? '返回文件内容' : 'Back to file content') : props.zh ? '与上次提交比较（含暂存与未暂存改动）' : 'Compare with the last commit (staged and unstaged changes)'}
+              onClick={() => setShowDiff(!showDiff)}
+            >
+              {showDiff ? <FileCode aria-hidden="true" /> : <GitDiff aria-hidden="true" />}
+              {showDiff ? (props.zh ? '返回文件' : 'Back to file') : props.zh ? '查看改动' : 'View changes'}
+            </Button>
+            <span className="file-review-stats">
+              <span className="is-addition" aria-label={`${props.zh ? '新增行数' : 'Added lines'}: ${props.review.diff.addedLines}`}>
+                +{props.review.diff.addedLines}
+              </span>
+              <span className="is-deletion" aria-label={`${props.zh ? '删除行数' : 'Deleted lines'}: ${props.review.diff.deletedLines}`}>
+                −{props.review.diff.deletedLines}
+              </span>
             </span>
-            <span className="is-deletion" aria-label={`${props.zh ? '删除行数' : 'Deleted lines'}: ${props.review.diff.deletedLines}`}>
-              −{props.review.diff.deletedLines}
-            </span>
-          </span>
-        </nav>
-      ) : null}
+          </>
+        ) : null,
+      )}
       {props.review?.error ? (
         <p role="status">
           {props.zh ? 'Git 差异读取失败：' : 'Could not read Git diff: '}
@@ -374,84 +380,92 @@ function FilePreviewContent(props: {
   }
   return (
     <article className="file-preview-content">
-      <header>
-        <FileTypeIcon name={item.name} size={20} />
-        <div className="file-preview-identity">
-          <strong title={item.kind === 'image' ? undefined : item.name} data-file-status={props.fileStatus ?? item.review?.diff?.changeType}>
-            {item.kind === 'image' ? (props.zh ? '图片预览' : 'Image preview') : item.name}
-          </strong>
-          <small>
-            {item.label} · {item.mime} · {item.byteLength.toLocaleString()} B{item.encoding ? ` · ${item.encoding.toUpperCase()}` : ''}
-          </small>
-        </div>
-        {item.id && (item.kind === 'text' || item.mime === 'application/octet-stream' || item.mime === 'image/svg+xml') ? (
-          <label className="file-preview-setting">
-            <span>{props.zh ? '编码' : 'Encoding'}</span>
-            <select aria-label={props.zh ? '预览编码' : 'Preview encoding'} value={props.encoding} onChange={(event) => props.onEncodingChange(event.currentTarget.value as FilePreviewTextEncoding | '')}>
-              <option value="">{props.zh ? '自动识别' : 'Automatic'}</option>
-              {filePreviewTextEncodings.map((encoding) => (
-                <option key={encoding} value={encoding}>
-                  {encoding.toUpperCase()}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-        {item.content !== undefined && (item.kind === 'text' || source) ? (
-          <label className="file-preview-setting">
-            <span>{props.zh ? '语言' : 'Language'}</span>
-            <select
-              aria-label={props.zh ? '预览高亮语言' : 'Preview syntax language'}
-              value={language}
-              onChange={(event) => {
-                // 阅读模式下选择高亮语言时打开源码，使语言选择立即可见。
-                setLanguage(event.currentTarget.value);
-                if (markdown) setSource(true);
-              }}
-            >
-              <option value="text">{props.zh ? '纯文本' : 'Plain text'}</option>
-              {sourceLanguageOptions.map((language) => (
-                <option key={language} value={language}>
-                  {language}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-        {item.id || props.toolbar ? (
-          <nav className="file-preview-toolbar" aria-label={props.zh ? '文件操作' : 'File actions'}>
-            {props.toolbar}
-            {item.id ? (
-              <>
-                {(markdown || item.mime === 'image/svg+xml') && item.content !== undefined ? (
-                  <PreviewIconButton label={source ? (props.zh ? '查看效果' : 'Rendered') : props.zh ? '查看源码' : 'Source'} aria-pressed={source} onClick={() => setSource(!source)}>
-                    {source ? <Eye size={18} aria-hidden="true" /> : <FileCode size={18} aria-hidden="true" />}
-                  </PreviewIconButton>
-                ) : null}
-                <PreviewIconButton label={props.zh ? '系统预览' : 'Quick Look'} onClick={() => void action('quick-look')}>
-                  <Eye size={18} aria-hidden="true" />
-                </PreviewIconButton>
-                <PreviewIconButton label={props.zh ? '打开文件' : 'Open'} onClick={() => void action('open')}>
-                  <ArrowSquareOut size={18} aria-hidden="true" />
-                </PreviewIconButton>
-                <PreviewIconButton label={props.zh ? '定位文件' : 'Reveal'} onClick={() => void action('reveal')}>
-                  <FolderOpen size={18} aria-hidden="true" />
-                </PreviewIconButton>
-                <PreviewIconButton label={props.zh ? '导出此版本' : 'Export version'} onClick={() => void action('export')}>
-                  <DownloadSimple size={18} aria-hidden="true" />
-                </PreviewIconButton>
-              </>
+      <FileReviewContent
+        review={item.kind === 'text' ? item.review : undefined}
+        zh={props.zh}
+        toolbar={(reviewActions) => (
+          <>
+            <header>
+              <FileTypeIcon name={item.name} size={20} />
+              <div className="file-preview-identity">
+                <strong title={item.kind === 'image' ? undefined : item.name} data-file-status={props.fileStatus ?? item.review?.diff?.changeType}>
+                  {item.kind === 'image' ? (props.zh ? '图片预览' : 'Image preview') : item.name}
+                </strong>
+                <small>
+                  {item.label} · {item.mime} · {item.byteLength.toLocaleString()} B{item.encoding ? ` · ${item.encoding.toUpperCase()}` : ''}
+                </small>
+              </div>
+              {item.id && (item.kind === 'text' || item.mime === 'application/octet-stream' || item.mime === 'image/svg+xml') ? (
+                <label className="file-preview-setting">
+                  <span>{props.zh ? '编码' : 'Encoding'}</span>
+                  <select aria-label={props.zh ? '预览编码' : 'Preview encoding'} value={props.encoding} onChange={(event) => props.onEncodingChange(event.currentTarget.value as FilePreviewTextEncoding | '')}>
+                    <option value="">{props.zh ? '自动识别' : 'Automatic'}</option>
+                    {filePreviewTextEncodings.map((encoding) => (
+                      <option key={encoding} value={encoding}>
+                        {encoding.toUpperCase()}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              {item.content !== undefined && (item.kind === 'text' || source) ? (
+                <label className="file-preview-setting">
+                  <span>{props.zh ? '语言' : 'Language'}</span>
+                  <select
+                    aria-label={props.zh ? '预览高亮语言' : 'Preview syntax language'}
+                    value={language}
+                    onChange={(event) => {
+                      // 阅读模式下选择高亮语言时打开源码，使语言选择立即可见。
+                      setLanguage(event.currentTarget.value);
+                      if (markdown) setSource(true);
+                    }}
+                  >
+                    <option value="text">{props.zh ? '纯文本' : 'Plain text'}</option>
+                    {sourceLanguageOptions.map((language) => (
+                      <option key={language} value={language}>
+                        {language}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              {item.id || props.toolbar || reviewActions ? (
+                <nav className="file-preview-toolbar" aria-label={props.zh ? '文件操作' : 'File actions'}>
+                  {reviewActions}
+                  {props.toolbar}
+                  {item.id ? (
+                    <>
+                      {(markdown || item.mime === 'image/svg+xml') && item.content !== undefined ? (
+                        <PreviewIconButton label={source ? (props.zh ? '查看效果' : 'Rendered') : props.zh ? '查看源码' : 'Source'} aria-pressed={source} onClick={() => setSource(!source)}>
+                          {source ? <Eye size={18} aria-hidden="true" /> : <FileCode size={18} aria-hidden="true" />}
+                        </PreviewIconButton>
+                      ) : null}
+                      <PreviewIconButton label={props.zh ? '系统预览' : 'Quick Look'} onClick={() => void action('quick-look')}>
+                        <Eye size={18} aria-hidden="true" />
+                      </PreviewIconButton>
+                      <PreviewIconButton label={props.zh ? '打开文件' : 'Open'} onClick={() => void action('open')}>
+                        <ArrowSquareOut size={18} aria-hidden="true" />
+                      </PreviewIconButton>
+                      <PreviewIconButton label={props.zh ? '定位文件' : 'Reveal'} onClick={() => void action('reveal')}>
+                        <FolderOpen size={18} aria-hidden="true" />
+                      </PreviewIconButton>
+                      <PreviewIconButton label={props.zh ? '导出此版本' : 'Export version'} onClick={() => void action('export')}>
+                        <DownloadSimple size={18} aria-hidden="true" />
+                      </PreviewIconButton>
+                    </>
+                  ) : null}
+                </nav>
+              ) : null}
+            </header>
+            {error ? (
+              <p role="alert">
+                <VisibleApplicationError error={error} language={props.zh ? 'zh-CN' : 'en'} />
+              </p>
             ) : null}
-          </nav>
-        ) : null}
-      </header>
-      {error ? (
-        <p role="alert">
-          <VisibleApplicationError error={error} language={props.zh ? 'zh-CN' : 'en'} />
-        </p>
-      ) : null}
-      {item.reason ? <p role="status">{item.reason}</p> : item.id && item.byteLength === 0 ? <p role="status">{props.zh ? '此版本是空文件。' : 'This version is an empty file.'}</p> : null}
-      <FileReviewContent review={item.kind === 'text' ? item.review : undefined} zh={props.zh}>
+            {item.reason ? <p role="status">{item.reason}</p> : item.id && item.byteLength === 0 ? <p role="status">{props.zh ? '此版本是空文件。' : 'This version is an empty file.'}</p> : null}
+          </>
+        )}
+      >
         {(item.kind === 'text' || source) && item.content !== undefined ? (
           <Suspense fallback={<p role="status">{props.zh ? '正在打开文本…' : 'Opening text…'}</p>}>
             {markdown && !source ? (

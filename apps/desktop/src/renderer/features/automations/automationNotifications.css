@@ -68,7 +68,7 @@
   box-sizing: border-box;
   border: 1px solid var(--zeus-card-border);
   border-radius: 10px;
-  background: var(--zeus-card-background);
+  background: var(--zeus-popover-bg);
   color: var(--zeus-product-text);
   box-shadow: 0 12px 36px rgb(0 0 0 / 18%);
   overflow: hidden;

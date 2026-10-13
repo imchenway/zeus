@@ -662,8 +662,8 @@ function renderConversationStoreMigration(status: NonNullable<Awaited<ReturnType
     padding: '32px',
     boxSizing: 'border-box',
     // 迁移早于应用设置加载，颜色继承首屏的系统或明确主题。
-    background: 'light-dark(#f7f8fa, #17191d)',
-    color: 'light-dark(#202124, #ebedf0)',
+    background: 'light-dark(#f7f8fa, var(--zeus-dark-canvas))',
+    color: 'light-dark(#202124, var(--zeus-dark-text))',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   });
   const panel = document.createElement('section');
@@ -679,7 +679,7 @@ function renderConversationStoreMigration(status: NonNullable<Awaited<ReturnType
   Object.assign(title.style, { margin: '0 0 12px', fontSize: '22px', lineHeight: '1.3' });
   const detail = document.createElement('p');
   detail.textContent = zh ? '正在准备和检查你的对话记录。完成后会自动打开 Zeus，请保持应用开启。' : 'Preparing and checking your conversation history. Zeus will open automatically when ready. Keep the app open.';
-  Object.assign(detail.style, { margin: '0', color: 'light-dark(#5f6368, #a7acb4)', lineHeight: '1.65', whiteSpace: 'pre-wrap' });
+  Object.assign(detail.style, { margin: '0', color: 'light-dark(#5f6368, var(--zeus-dark-muted))', lineHeight: '1.65', whiteSpace: 'pre-wrap' });
   panel.append(title);
   panel.append(detail);
   shell.append(panel);
