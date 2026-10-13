@@ -3797,14 +3797,7 @@ body:has(.macos-ai-app.zeus-shell) {
   border: 0 !important;
   box-shadow: none !important;
 }
-/* 项目名与会话标题共用文字基线，包含内边距、图标列和间距。 */
-.macos-ai-app.zeus-shell .project-first-sidebar {
-  --zeus-sidebar-folder-size: 17px;
-  --zeus-sidebar-icon-column: 18px;
-  --zeus-sidebar-label-gap: 8px;
-  --zeus-sidebar-row-inset: 8px;
-  --zeus-sidebar-label-start: calc(var(--zeus-sidebar-row-inset) + var(--zeus-sidebar-icon-column) + var(--zeus-sidebar-label-gap));
-}
+/* 项目行引用共用层级尺寸，会话缩进统一由基础样式管理。 */
 .macos-ai-app.zeus-shell .project-first-sidebar .native-folder-icon {
   inline-size: var(--zeus-sidebar-folder-size);
   block-size: var(--zeus-sidebar-folder-size);
@@ -3818,16 +3811,6 @@ body:has(.macos-ai-app.zeus-shell) {
   border: 0;
   grid-template-columns: var(--zeus-sidebar-icon-column) minmax(0, 1fr);
   gap: var(--zeus-sidebar-label-gap);
-}
-.macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-conversations {
-  margin: 1px 0 3px;
-  padding: 0;
-}
-/* 会话标题与展开更多共用项目文字起点，避免主题间距调整后错位。 */
-.macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-conversations .session-conversation-tree-row,
-.macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-conversations .session-conversation-show-more {
-  padding-inline-start: var(--zeus-sidebar-label-start);
-  border: 0;
 }
 .macos-ai-app.zeus-shell .project-first-sidebar .session-conversation-tree-row {
   box-shadow: none !important;
