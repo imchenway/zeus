@@ -29,6 +29,9 @@
 
 /* 所有设置控件和分组在一个作用域内定义，避免各页面继续叠加卡片主题覆盖。 */
 .macos-ai-app.zeus-shell .settings-reference-shell {
+  /* 分组卡片共用圆角和内边距，窄窗口只收紧内边距。 */
+  --settings-card-radius: 18px;
+  --settings-card-padding: 20px;
   color: var(--zeus-product-text);
   font-size: 13px;
   line-height: 1.5;
@@ -184,15 +187,15 @@
     display: flex;
     flex-direction: column;
     flex: 0 0 auto;
-    gap: 24px;
+    gap: 32px;
     inline-size: 100%;
-    max-inline-size: 1160px;
+    max-inline-size: 1120px;
     min-inline-size: 0;
     box-sizing: border-box;
-    margin: 0;
+    margin: 0 auto;
     /* 宽窗口增加正文两侧留白，窄窗口沿用下方断点的紧凑间距。 */
-    padding: 18px 64px 48px;
-    align-self: start;
+    padding: 32px 48px 64px;
+    align-self: center;
   }
   .settings-content-column > * {
     min-inline-size: 0;
@@ -200,12 +203,12 @@
   .settings-product-pane {
     display: grid;
     align-content: start;
-    gap: 28px;
+    gap: 32px;
     padding: 0;
   }
   /* 全局规则沿用设置页比例，文件路径换行，编辑器独立滚动。 */
   .global-agent-settings {
-    gap: 16px;
+    gap: 32px;
   }
   .global-agent-settings-info {
     display: grid;
@@ -225,7 +228,7 @@
     border: 1px solid var(--zeus-control-border);
     border-radius: 8px;
   }
-  :where(.settings-product-pane, .settings-product-section, .native-settings-pane, .codex-usage-section, .memory-scope-controls, .codex-remote-control-settings) {
+  :where(.settings-product-pane, .settings-product-section, .codex-remote-control-settings) {
     border: 0 !important;
     border-radius: 0;
     box-shadow: none !important;
@@ -238,14 +241,63 @@
   }
   .native-settings-pane {
     display: block;
-    padding: 0;
+    padding: 0 var(--settings-card-padding);
     overflow: visible;
+  }
+  /* 同一语义分组只画一层卡片，页面标题和分组标题保持开放排版。 */
+  :is(
+    .native-settings-pane,
+    .settings-card,
+    .network-runtime-summary,
+    .network-settings-group,
+    .model-setup-account,
+    .model-connection-editor,
+    .codex-usage-section,
+    .memory-scope-controls,
+    .memory-record,
+    .memory-tombstone-confirmation,
+    .task-field-detail,
+    .legacy-import-settings,
+    .command-definition-list,
+    .release-update-workbench,
+    .release-technical-details,
+    .settings-archived-conversations-row
+  ) {
+    min-inline-size: 0;
+    border: 1px solid var(--zeus-card-border);
+    border-radius: var(--settings-card-radius);
+    background: var(--zeus-card-background);
+    box-shadow: none;
+  }
+  /* 自由表单和多组内容复用现有容器，不把页面本身包成大卡片。 */
+  .settings-card {
+    display: grid;
+    gap: 20px;
+    padding: var(--settings-card-padding);
+  }
+  .settings-group-stack {
+    display: grid;
+    gap: 24px;
+    min-inline-size: 0;
+  }
+  /* 相邻行只在卡片内绘制细线，保留两侧内缩和圆角留白。 */
+  .native-settings-pane > :not(:first-child),
+  .network-settings-group > .native-control-row + .native-control-row,
+  .release-update-workbench > * + *,
+  .release-technical-details > section + section {
+    border-block-start: 1px solid var(--zeus-card-border);
+  }
+  .native-settings-pane > :is(.settings-field-error, .browser-settings-actions) {
+    padding-block: 16px;
+  }
+  .native-settings-pane > .settings-field-error {
+    margin: 0;
   }
   .settings-page-title,
   .memory-settings-header h2,
   .command-center-header h2 {
     color: var(--zeus-product-text);
-    font-size: 24px;
+    font-size: 28px;
     line-height: 1.35;
     font-weight: 650;
     letter-spacing: -0.025em;
@@ -304,7 +356,7 @@
     block-size: auto;
     padding: 6px 12px;
     border: 1px solid var(--zeus-control-border);
-    border-radius: 5px;
+    border-radius: 10px;
     box-shadow: none;
     background: var(--zeus-card-background);
     color: var(--zeus-product-text);
@@ -353,7 +405,7 @@
     margin: 0;
     padding: 6px 10px;
     border: 1px solid var(--zeus-control-border);
-    border-radius: 5px;
+    border-radius: 10px;
     background: var(--zeus-card-background);
     color: var(--zeus-product-text);
     font-size: 13px;
@@ -439,9 +491,6 @@
     padding: 16px 0;
     border: 0;
   }
-  .native-control-row + .native-control-row {
-    border-block-start: 0;
-  }
   :where(.native-control-copy, .settings-row-copy, .release-update-copy) {
     display: grid;
     gap: 4px;
@@ -460,14 +509,25 @@
   }
   .native-control-slot {
     display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
     justify-content: flex-end;
     min-inline-size: 0;
+  }
+  /* 多行终端命令使用完整宽度，长命令与解释保持在同一分组内。 */
+  .native-control-row.terminal-startup-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  .browser-settings-actions {
+    flex-wrap: wrap;
   }
   /* 网络页先说明“当前运行”和“已保存”，避免把待重启配置误当成供应商检查所用配置。 */
   .network-runtime-summary {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    border-block: 1px solid var(--zeus-product-border);
+    padding: 4px var(--settings-card-padding);
   }
   .network-runtime-summary > div {
     display: grid;
@@ -499,15 +559,11 @@
   .network-runtime-summary [data-state='restart'] small {
     color: var(--zeus-status-warning-text, #8a5b12);
   }
-  /* 三个工作区按操作顺序排列，使用留白和细分隔而非卡片堆叠。 */
+  /* 网络配置和两类诊断各自成组，卡片间留白表示不同操作。 */
   .network-settings-group {
     display: grid;
     gap: 0;
-    padding-block: 10px 24px;
-    border-block-end: 1px solid var(--zeus-product-border);
-  }
-  .network-settings-group:last-of-type {
-    border-block-end: 0;
+    padding: var(--settings-card-padding);
   }
   .network-settings-group-heading {
     display: grid;
@@ -810,8 +866,7 @@
     gap: 18px;
     min-inline-size: 0;
     margin: 0;
-    padding: 0;
-    border: 0;
+    padding: var(--settings-card-padding);
   }
   .model-connection-field-grid {
     display: grid;
@@ -852,7 +907,7 @@
     gap: 12px;
     min-inline-size: 0;
     padding-block-start: 18px;
-    border-block-start: 0;
+    border-block-start: 1px solid var(--zeus-card-border);
   }
   /* 批量展开保持独立快捷入口，标题和说明共用左侧空间。 */
   .model-definition-section > header {
@@ -888,9 +943,8 @@
   .model-definition-list {
     display: grid;
     gap: 0;
-    border: 0;
-    border-radius: 0;
-    overflow: hidden;
+    border: 1px solid var(--zeus-card-border);
+    border-radius: 12px;
   }
   .model-definition-list:empty {
     display: none;
@@ -936,7 +990,7 @@
     box-shadow: none !important;
   }
   .model-definition-card + .model-definition-card {
-    border-block-start: 0 !important;
+    border-block-start: 1px solid var(--zeus-card-border) !important;
   }
   .model-definition-header {
     display: flex;
@@ -1059,7 +1113,7 @@
     flex-wrap: wrap;
     gap: 8px;
     padding-block-start: 16px;
-    border-block-start: 0;
+    border-block-start: 1px solid var(--zeus-card-border);
   }
   .model-connection-actions > [data-button-variant='danger'] {
     margin-inline-start: auto;
@@ -1078,8 +1132,8 @@
     display: grid;
     grid-template-columns: 1fr auto;
     gap: 8px 20px;
-    padding: 0 0 22px;
-    border-block-end: 0 !important;
+    margin: 0;
+    padding: var(--settings-card-padding);
   }
   .model-setup-account > p {
     color: var(--zeus-product-muted);
@@ -1177,11 +1231,10 @@
     overflow-wrap: anywhere;
   }
 
-  /* Zeus 本地明细保持原始开放布局，只有官方账户半年活动图使用独立日历卡片。 */
+  /* 官方与本地用量分别成组，统计和表格共用卡片的边界。 */
   .codex-usage-section {
     gap: 18px;
-    padding-block-end: 24px;
-    border-block-end: 0 !important;
+    padding: var(--settings-card-padding);
   }
   .codex-usage-section > header {
     gap: 20px;
@@ -1306,6 +1359,13 @@
     border-radius: 16px;
     background: color-mix(in srgb, var(--zeus-product-panel) 88%, var(--zeus-product-canvas));
   }
+  /* 总览卡片沿用同一组圆角与中性底色，避免不同数据来源使用不同材质。 */
+  .codex-usage-provider-card {
+    padding: var(--settings-card-padding);
+    border-color: var(--zeus-card-border);
+    border-radius: var(--settings-card-radius);
+    background: var(--zeus-card-background);
+  }
   @media (max-width: 980px) {
     .codex-usage-official-detail-grid {
       grid-template-columns: minmax(0, 1fr);
@@ -1328,7 +1388,7 @@
   }
   .codex-usage-table-wrap :where(th, td) {
     padding: 12px 8px;
-    border-block-end: 0;
+    border-block-end: 1px solid var(--zeus-card-border);
     font-variant-numeric: tabular-nums;
   }
   .codex-usage-table-wrap thead th {
@@ -1352,26 +1412,21 @@
 
   /* 记忆、任务和归档沿用行布局；空状态使用完整内容宽度。 */
   .memory-settings-pane {
-    gap: 24px;
+    gap: 32px;
   }
   .memory-scope-controls {
     display: flex;
     justify-content: flex-start;
     flex-wrap: wrap;
     gap: 8px;
-    padding: 0 0 16px;
-    border-block-end: 0 !important;
+    padding: var(--settings-card-padding);
   }
   .memory-scope-controls > button:last-child {
     margin-inline-start: auto;
   }
   .memory-record,
   .memory-tombstone-confirmation {
-    padding: 16px;
-    border: 0 !important;
-    border-radius: 8px;
-    background: transparent !important;
-    box-shadow: none;
+    padding: var(--settings-card-padding);
   }
   /* 编辑器本身只是字段布局，边界由输入控件承担。 */
   .memory-editor {
@@ -1432,8 +1487,7 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     gap: 16px;
-    padding: 24px 0 0;
-    border: 0;
+    padding: var(--settings-card-padding);
   }
   .settings-archived-conversation-list {
     display: grid;
@@ -1447,7 +1501,7 @@
     gap: 20px;
     padding: 14px 0;
     border: 0;
-    border-block-end: 0;
+    border-block-end: 1px solid var(--zeus-card-border);
     border-radius: 0;
   }
   .settings-archived-conversation-copy {
@@ -1464,14 +1518,30 @@
   }
   .settings-content-column .command-center {
     padding: 0;
-    gap: 24px;
+    gap: 32px;
+    overflow: visible;
+  }
+  /* 命令列表按组包裹，条目之间用细线区分，空状态处于同一内容面。 */
+  .command-definition-list {
+    padding: 0 var(--settings-card-padding);
+    gap: 0;
+  }
+  .command-definition-row {
+    padding: 18px 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .command-definition-row + .command-definition-row {
+    border-block-start: 1px solid var(--zeus-card-border);
   }
 
   /* 更新主操作与版本优先展示，安装包与签名信息直接列明。 */
   .release-update-workbench {
     display: grid;
     gap: 0;
-    padding: 0;
+    padding: 0 var(--settings-card-padding);
   }
   :where(.release-update-command-row, .release-update-version-row, .release-update-artifact-row, .release-technical-details > .settings-state-row, .release-detail-row) {
     display: grid;
@@ -1548,7 +1618,7 @@
       justify-content: flex-start;
     }
   }
-  @media (max-width: 880px) {
+  @media (max-width: 960px) {
     .model-connections-layout,
     .model-connection-field-grid {
       grid-template-columns: minmax(0, 1fr);
@@ -1567,8 +1637,18 @@
       flex: 0 0 136px;
     }
     .native-control-row {
-      grid-template-columns: minmax(0, 1fr) minmax(150px, 210px);
+      grid-template-columns: minmax(0, 1fr);
       gap: 16px;
+    }
+    .native-control-slot {
+      justify-content: flex-start;
+    }
+    .computer-permission-panel,
+    .computer-permission-details {
+      align-items: flex-start;
+    }
+    .browser-settings-actions {
+      justify-content: flex-start;
     }
     .network-proxy-check-row {
       grid-template-columns: minmax(0, 1fr);
@@ -1598,6 +1678,8 @@
     }
   }
   @media (max-width: 640px) {
+    /* 小窗口保留边框和触达面积，只压缩卡片内边距。 */
+    --settings-card-padding: 16px;
     .network-proxy-check {
       align-items: stretch;
       flex-direction: column;
@@ -1781,8 +1863,7 @@
   }
   .task-field-detail {
     min-inline-size: 0;
-    border: 0;
-    padding: 0;
+    padding: var(--settings-card-padding);
     margin: 0;
   }
   .task-field-detail .task-enum-order-grid {
@@ -1923,7 +2004,6 @@
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 14px;
     padding-block: 16px;
-    border-bottom: 0;
   }
   .remote-connection-summary > .settings-row-copy {
     grid-column: 1;
@@ -1949,7 +2029,6 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px 24px;
     padding-block: 18px;
-    border-bottom: 0;
   }
   .remote-host-details > div {
     display: grid;
@@ -1969,7 +2048,7 @@
     gap: 3px 16px;
     align-items: center;
     padding-block: 9px;
-    border-bottom: 0;
+    border-bottom: 1px solid var(--zeus-card-border);
   }
   .remote-device-row > button {
     grid-column: 2;
@@ -1990,8 +2069,8 @@
   .legacy-import-settings {
     display: grid;
     gap: 16px;
-    padding-block: 24px;
-    border-top: 0;
+    margin: 0;
+    padding: var(--settings-card-padding);
   }
   .legacy-import-heading {
     display: flex;
@@ -2019,7 +2098,7 @@
     justify-content: space-between;
     gap: 12px;
     padding-block: 10px;
-    border-bottom: 0;
+    border-bottom: 1px solid var(--zeus-card-border);
   }
   .legacy-import-history strong {
     overflow-wrap: anywhere;
@@ -2033,7 +2112,7 @@
   .release-technical-details {
     display: grid;
     gap: 0;
-    padding-top: 24px;
+    padding: var(--settings-card-padding);
   }
   .release-technical-details > h3 {
     margin-bottom: 8px;

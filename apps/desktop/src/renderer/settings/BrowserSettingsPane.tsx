@@ -350,158 +350,177 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
         </span>
         <SettingsSaveStatus language={props.language} status={busy ? 'saving' : error ? 'failed' : status === labels.saved || status === labels.switchSaved ? 'saved' : 'idle'} />
       </header>
-      <section className="native-settings-pane browser-settings-pane" aria-label={labels.title}>
-        <BrowserSettingRow title={labels.enabled} description={labels.enabledHelp}>
-          <BrowserSwitch label={labels.enabled} checked={settings.enabled} disabled={busy} onChange={(checked) => void setBoolean('enabled', checked)} />
-        </BrowserSettingRow>
-        <BrowserSettingRow title={labels.webLinks} description={labels.webLinksHelp}>
-          <ZeusSelect
-            size="regular"
-            ariaLabel={labels.webLinks}
-            value={settings.webLinkOpenTarget}
-            disabled={busy}
-            onChange={(value) => void save({ webLinkOpenTarget: value })}
-            options={[
-              { value: 'zeus_browser', label: labels.zeusBrowser },
-              { value: 'system_default', label: labels.externalBrowser },
-            ]}
-          />
-        </BrowserSettingRow>
-        <BrowserSettingRow title={labels.localWeb} description={labels.localWebHelp}>
-          <ZeusSelect
-            size="regular"
-            ariaLabel={labels.localWeb}
-            value={settings.localWebOpenTarget}
-            disabled={busy}
-            onChange={(value) => void save({ localWebOpenTarget: value })}
-            options={[
-              { value: 'zeus_browser', label: labels.zeusBrowser },
-              { value: 'system_default', label: labels.externalBrowser },
-            ]}
-          />
-        </BrowserSettingRow>
-        <BrowserSettingRow title={labels.files} description={labels.filesHelp}>
-          <ZeusSelect
-            size="regular"
-            ariaLabel={labels.files}
-            value={settings.fileOpenTarget}
-            disabled={busy}
-            onChange={(value) => void save({ fileOpenTarget: value })}
-            options={[
-              { value: 'zeus_source', label: labels.zeusPreview },
-              { value: 'system_default', label: labels.systemDefault },
-              { value: 'editor:vscode', label: 'Visual Studio Code' },
-              { value: 'editor:vscode-insiders', label: 'Visual Studio Code - Insiders' },
-              { value: 'editor:cursor', label: 'Cursor' },
-              { value: 'editor:windsurf', label: 'Windsurf' },
-            ]}
-          />
-        </BrowserSettingRow>
-        <BrowserSettingRow title={labels.screenshots} description={labels.screenshotsHelp}>
-          <ZeusSelect
-            size="regular"
-            ariaLabel={labels.screenshots}
-            value={settings.screenshotMode}
-            disabled={busy}
-            onChange={(value) => void save({ screenshotMode: value })}
-            options={[
-              { value: 'always', label: labels.always },
-              { value: 'necessary', label: labels.necessary },
-            ]}
-          />
-        </BrowserSettingRow>
-        <BrowserSettingRow title={labels.downloads} description={labels.downloadsHelp}>
-          <input
-            aria-label={labels.downloads}
-            value={settings.downloadDirectory}
-            disabled={busy}
-            onChange={(event) => {
-              setStatus(null);
-              setSettings({ ...settings, downloadDirectory: event.currentTarget.value });
-            }}
-            onBlur={(event) => void save({ downloadDirectory: event.currentTarget.value })}
-          />
-        </BrowserSettingRow>
-        <BrowserSettingRow title={labels.askWhere} description={labels.askWhereHelp}>
-          <BrowserSwitch label={labels.askWhere} checked={settings.askWhereToSave} disabled={busy} onChange={(checked) => void setBoolean('askWhereToSave', checked)} />
-        </BrowserSettingRow>
-        <BrowserSettingRow title={labels.chromeEnable} description={labels.chromeHelp}>
-          <BrowserSwitch label={labels.chromeEnable} checked={settings.externalChromeEnabled} disabled={busy} onChange={(checked) => void setBoolean('externalChromeEnabled', checked)} />
-        </BrowserSettingRow>
-        <BrowserSettingRow title={labels.edgeEnable} description={labels.edgeHelp}>
-          <BrowserSwitch label={labels.edgeEnable} checked={settings.externalEdgeEnabled} disabled={busy} onChange={(checked) => void setBoolean('externalEdgeEnabled', checked)} />
-        </BrowserSettingRow>
-        {computerSettings ? (
-          <BrowserSettingRow title={labels.computerTitle} description={`${labels.computerHelp}${computerSettings.detail ? ` ${computerSettings.detail}` : ''}`} danger>
-            <span className="computer-permission-panel">
+      <section className="settings-product-section">
+        <h3>{props.language === 'zh-CN' ? '打开方式' : 'Open preferences'}</h3>
+        <section className="native-settings-pane browser-settings-pane" aria-label={props.language === 'zh-CN' ? '打开方式' : 'Open preferences'}>
+          <BrowserSettingRow title={labels.enabled} description={labels.enabledHelp}>
+            <BrowserSwitch label={labels.enabled} checked={settings.enabled} disabled={busy} onChange={(checked) => void setBoolean('enabled', checked)} />
+          </BrowserSettingRow>
+          <BrowserSettingRow title={labels.webLinks} description={labels.webLinksHelp}>
+            <ZeusSelect
+              size="regular"
+              ariaLabel={labels.webLinks}
+              value={settings.webLinkOpenTarget}
+              disabled={busy}
+              onChange={(value) => void save({ webLinkOpenTarget: value })}
+              options={[
+                { value: 'zeus_browser', label: labels.zeusBrowser },
+                { value: 'system_default', label: labels.externalBrowser },
+              ]}
+            />
+          </BrowserSettingRow>
+          <BrowserSettingRow title={labels.localWeb} description={labels.localWebHelp}>
+            <ZeusSelect
+              size="regular"
+              ariaLabel={labels.localWeb}
+              value={settings.localWebOpenTarget}
+              disabled={busy}
+              onChange={(value) => void save({ localWebOpenTarget: value })}
+              options={[
+                { value: 'zeus_browser', label: labels.zeusBrowser },
+                { value: 'system_default', label: labels.externalBrowser },
+              ]}
+            />
+          </BrowserSettingRow>
+          <BrowserSettingRow title={labels.files} description={labels.filesHelp}>
+            <ZeusSelect
+              size="regular"
+              ariaLabel={labels.files}
+              value={settings.fileOpenTarget}
+              disabled={busy}
+              onChange={(value) => void save({ fileOpenTarget: value })}
+              options={[
+                { value: 'zeus_source', label: labels.zeusPreview },
+                { value: 'system_default', label: labels.systemDefault },
+                { value: 'editor:vscode', label: 'Visual Studio Code' },
+                { value: 'editor:vscode-insiders', label: 'Visual Studio Code - Insiders' },
+                { value: 'editor:cursor', label: 'Cursor' },
+                { value: 'editor:windsurf', label: 'Windsurf' },
+              ]}
+            />
+          </BrowserSettingRow>
+        </section>
+      </section>
+      <section className="settings-product-section">
+        <h3>{props.language === 'zh-CN' ? '下载' : 'Downloads'}</h3>
+        <section className="native-settings-pane browser-settings-pane" aria-label={props.language === 'zh-CN' ? '下载' : 'Downloads'}>
+          <BrowserSettingRow title={labels.downloads} description={labels.downloadsHelp}>
+            <input
+              aria-label={labels.downloads}
+              value={settings.downloadDirectory}
+              disabled={busy}
+              onChange={(event) => {
+                setStatus(null);
+                setSettings({ ...settings, downloadDirectory: event.currentTarget.value });
+              }}
+              onBlur={(event) => void save({ downloadDirectory: event.currentTarget.value })}
+            />
+          </BrowserSettingRow>
+          <BrowserSettingRow title={labels.askWhere} description={labels.askWhereHelp}>
+            <BrowserSwitch label={labels.askWhere} checked={settings.askWhereToSave} disabled={busy} onChange={(checked) => void setBoolean('askWhereToSave', checked)} />
+          </BrowserSettingRow>
+        </section>
+      </section>
+      <section className="settings-product-section">
+        <h3>{props.language === 'zh-CN' ? '自动化与权限' : 'Automation and permissions'}</h3>
+        <section className="native-settings-pane browser-settings-pane" aria-label={props.language === 'zh-CN' ? '自动化与权限' : 'Automation and permissions'}>
+          <BrowserSettingRow title={labels.screenshots} description={labels.screenshotsHelp}>
+            <ZeusSelect
+              size="regular"
+              ariaLabel={labels.screenshots}
+              value={settings.screenshotMode}
+              disabled={busy}
+              onChange={(value) => void save({ screenshotMode: value })}
+              options={[
+                { value: 'always', label: labels.always },
+                { value: 'necessary', label: labels.necessary },
+              ]}
+            />
+          </BrowserSettingRow>
+          <BrowserSettingRow title={labels.chromeEnable} description={labels.chromeHelp}>
+            <BrowserSwitch label={labels.chromeEnable} checked={settings.externalChromeEnabled} disabled={busy} onChange={(checked) => void setBoolean('externalChromeEnabled', checked)} />
+          </BrowserSettingRow>
+          <BrowserSettingRow title={labels.edgeEnable} description={labels.edgeHelp}>
+            <BrowserSwitch label={labels.edgeEnable} checked={settings.externalEdgeEnabled} disabled={busy} onChange={(checked) => void setBoolean('externalEdgeEnabled', checked)} />
+          </BrowserSettingRow>
+          {computerSettings ? (
+            <BrowserSettingRow title={labels.computerTitle} description={`${labels.computerHelp}${computerSettings.detail ? ` ${computerSettings.detail}` : ''}`} danger>
+              <span className="computer-permission-panel">
+                <span className="browser-settings-actions">
+                  <BrowserSwitch label={labels.computerEnable} checked={computerSettings.enabled} disabled={busy} onChange={(checked) => void setComputerEnabled(checked)} />
+                  <Button variant="danger" size="compact" onClick={() => void stopComputer()} busy={busy} disabled={!computerSettings.enabled && computerSettings.serviceState === 'disabled'}>
+                    {labels.computerStop}
+                  </Button>
+                </span>
+                {computerSettings.enabled ? (
+                  <span className="computer-permission-details" role="status" aria-live="polite">
+                    <span className={computerSettings.permissionCheckState !== 'checked' ? undefined : computerSettings.accessibilityTrusted ? 'granted' : 'missing'}>
+                      {labels.computerAccessibility}：
+                      {computerSettings.permissionCheckState === 'error'
+                        ? labels.computerUnavailable
+                        : computerSettings.permissionCheckState !== 'checked'
+                          ? labels.computerUnchecked
+                          : computerSettings.accessibilityTrusted
+                            ? labels.computerGranted
+                            : labels.computerMissing}
+                    </span>
+                    <span className={computerSettings.permissionCheckState !== 'checked' ? undefined : computerSettings.screenCaptureAvailable ? 'granted' : 'missing'}>
+                      {labels.computerScreenCapture}：
+                      {computerSettings.permissionCheckState === 'error'
+                        ? labels.computerUnavailable
+                        : computerSettings.permissionCheckState !== 'checked'
+                          ? labels.computerUnchecked
+                          : computerSettings.screenCaptureAvailable
+                            ? labels.computerGranted
+                            : labels.computerMissing}
+                    </span>
+                    <span className="browser-settings-actions">
+                      <Button variant="secondary" size="compact" onClick={() => void requestComputerPermissions()} busy={busy}>
+                        {labels.computerRequestPermissions}
+                      </Button>
+                      {computerSettings.permissionCheckState === 'checked' && !computerSettings.accessibilityTrusted ? (
+                        <Button variant="secondary" size="compact" onClick={() => void openComputerPermissionSettings('accessibility')} busy={busy}>
+                          {labels.computerOpenAccessibility}
+                        </Button>
+                      ) : null}
+                      {computerSettings.permissionCheckState === 'checked' && !computerSettings.screenCaptureAvailable ? (
+                        <Button variant="secondary" size="compact" onClick={() => void openComputerPermissionSettings('screen_capture')} busy={busy}>
+                          {labels.computerOpenScreenCapture}
+                        </Button>
+                      ) : null}
+                    </span>
+                  </span>
+                ) : null}
+              </span>
+            </BrowserSettingRow>
+          ) : null}
+        </section>
+      </section>
+      <section className="settings-product-section">
+        <h3>{props.language === 'zh-CN' ? '浏览器数据' : 'Browser data'}</h3>
+        <section className="native-settings-pane browser-settings-pane" aria-label={props.language === 'zh-CN' ? '浏览器数据' : 'Browser data'}>
+          {retiredRuntimeState ? (
+            <BrowserSettingRow
+              title={labels.retiredTitle}
+              description={`${labels.retiredHelp} ${retiredRuntimeState.entries.length > 0 ? retiredRuntimeState.entries.join('、') : labels.retiredNone}${retiredRuntimeState.latestBackupRoot ? ` ${retiredRuntimeState.latestBackupRoot}` : ''}`}
+            >
               <span className="browser-settings-actions">
-                <BrowserSwitch label={labels.computerEnable} checked={computerSettings.enabled} disabled={busy} onChange={(checked) => void setComputerEnabled(checked)} />
-                <Button variant="danger" size="compact" onClick={() => void stopComputer()} busy={busy} disabled={!computerSettings.enabled && computerSettings.serviceState === 'disabled'}>
-                  {labels.computerStop}
+                <Button variant="secondary" size="compact" onClick={() => void archiveRetiredRuntimes()} busy={busy} disabled={retiredRuntimeState.entries.length === 0}>
+                  {labels.retiredArchive}
+                </Button>
+                <Button variant="secondary" size="compact" onClick={() => void restoreRetiredRuntimes()} busy={busy} disabled={!retiredRuntimeState.latestBackupRoot || Boolean(retiredRuntimeState.restoredAt)}>
+                  {labels.retiredRestore}
                 </Button>
               </span>
-              {computerSettings.enabled ? (
-                <span className="computer-permission-details" role="status" aria-live="polite">
-                  <span className={computerSettings.permissionCheckState !== 'checked' ? undefined : computerSettings.accessibilityTrusted ? 'granted' : 'missing'}>
-                    {labels.computerAccessibility}：
-                    {computerSettings.permissionCheckState === 'error'
-                      ? labels.computerUnavailable
-                      : computerSettings.permissionCheckState !== 'checked'
-                        ? labels.computerUnchecked
-                        : computerSettings.accessibilityTrusted
-                          ? labels.computerGranted
-                          : labels.computerMissing}
-                  </span>
-                  <span className={computerSettings.permissionCheckState !== 'checked' ? undefined : computerSettings.screenCaptureAvailable ? 'granted' : 'missing'}>
-                    {labels.computerScreenCapture}：
-                    {computerSettings.permissionCheckState === 'error'
-                      ? labels.computerUnavailable
-                      : computerSettings.permissionCheckState !== 'checked'
-                        ? labels.computerUnchecked
-                        : computerSettings.screenCaptureAvailable
-                          ? labels.computerGranted
-                          : labels.computerMissing}
-                  </span>
-                  <span className="browser-settings-actions">
-                    <Button variant="secondary" size="compact" onClick={() => void requestComputerPermissions()} busy={busy}>
-                      {labels.computerRequestPermissions}
-                    </Button>
-                    {computerSettings.permissionCheckState === 'checked' && !computerSettings.accessibilityTrusted ? (
-                      <Button variant="secondary" size="compact" onClick={() => void openComputerPermissionSettings('accessibility')} busy={busy}>
-                        {labels.computerOpenAccessibility}
-                      </Button>
-                    ) : null}
-                    {computerSettings.permissionCheckState === 'checked' && !computerSettings.screenCaptureAvailable ? (
-                      <Button variant="secondary" size="compact" onClick={() => void openComputerPermissionSettings('screen_capture')} busy={busy}>
-                        {labels.computerOpenScreenCapture}
-                      </Button>
-                    ) : null}
-                  </span>
-                </span>
-              ) : null}
-            </span>
-          </BrowserSettingRow>
-        ) : null}
-        {retiredRuntimeState ? (
-          <BrowserSettingRow
-            title={labels.retiredTitle}
-            description={`${labels.retiredHelp} ${retiredRuntimeState.entries.length > 0 ? retiredRuntimeState.entries.join('、') : labels.retiredNone}${retiredRuntimeState.latestBackupRoot ? ` ${retiredRuntimeState.latestBackupRoot}` : ''}`}
-          >
-            <span className="browser-settings-actions">
-              <Button variant="secondary" size="compact" onClick={() => void archiveRetiredRuntimes()} busy={busy} disabled={retiredRuntimeState.entries.length === 0}>
-                {labels.retiredArchive}
-              </Button>
-              <Button variant="secondary" size="compact" onClick={() => void restoreRetiredRuntimes()} busy={busy} disabled={!retiredRuntimeState.latestBackupRoot || Boolean(retiredRuntimeState.restoredAt)}>
-                {labels.retiredRestore}
-              </Button>
-            </span>
-          </BrowserSettingRow>
-        ) : null}
-        <div className="browser-settings-actions">
-          <Button variant="danger" size="compact" onClick={() => void clear()} busy={busy}>
-            {labels.clear}
-          </Button>
-        </div>
+            </BrowserSettingRow>
+          ) : null}
+          <div className="browser-settings-actions">
+            <Button variant="danger" size="compact" onClick={() => void clear()} busy={busy}>
+              {labels.clear}
+            </Button>
+          </div>
+        </section>
+        <p className="browser-settings-clear-help">{labels.clearHelp}</p>
       </section>
       {status && status !== labels.saved && status !== labels.switchSaved ? (
         <p className="browser-settings-status" role="status">
@@ -513,7 +532,6 @@ export function BrowserSettingsPane(props: BrowserSettingsPaneProps) {
           <VisibleApplicationError error={error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
         </p>
       ) : null}
-      <p className="browser-settings-clear-help">{labels.clearHelp}</p>
     </section>
   );
 }

@@ -111,3 +111,15 @@ final result: passed for observable packaged Command and cockpit state; authenti
 - 两个长命令返回运行句柄后，Pi 没有继续轮询；仅同步命令的退出码可作为真实命令结束证据。
 
 final result: passed for the core authenticated Codex and Pi Electron conversation flows; pagination, reconnect and interruption remain unverified
+
+---
+
+# ZEUS-0835 设置页视觉验收状态
+
+final result: blocked
+
+- 参考：用户提供的 Codex 语音设置截图，采用浅边框圆角分组、组内分隔线和主次文字。
+- 已完成：全部设置分类的样式与布局代码调整、类型检查、ESLint、渲染端构建、CSS 格式检查。
+- 未执行：运行界面截图、同尺寸对照、深浅主题和窄窗口的实际显示检查、原生交互验收。
+- 原因：本任务用户规则明确禁止未授权的测试工作。静态检查不能代替视觉验收，因此不记录通过，也不推测实际显示效果。
+- 详细范围与结果见 `docs/ZEUS-0835_设置页显示效果和布局重构.md`。

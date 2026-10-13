@@ -110,57 +110,60 @@ export function GeneralSettingsPane(props: {
           </div>
         ) : null}
       </header>
-      <NativeSettingsPane label={zh ? '界面与通知' : 'Appearance and notifications'}>
-        <NativeControlRow title={zh ? '应用语言' : 'Language'} description={zh ? '选择 Zeus 的界面语言。' : 'Choose the Zeus interface language.'}>
-          <ZeusSelect
-            size="regular"
-            ariaLabel={zh ? '应用语言' : 'Language'}
-            value={props.value.appLanguage}
-            onChange={(appLanguage) => save({ appLanguage })}
-            options={[
-              { value: 'zh-CN', label: '简体中文' },
-              { value: 'en-US', label: 'English' },
-            ]}
-          />
-        </NativeControlRow>
-        <NativeControlRow title={zh ? '外观' : 'Appearance'} description={zh ? '跟随系统，或固定为浅色、深色。' : 'Follow the system or choose a light or dark theme.'}>
-          <ZeusSelect
-            size="regular"
-            ariaLabel={zh ? '外观' : 'Appearance'}
-            value={props.value.appearance}
-            onChange={(appearance) => save({ appearance })}
-            options={[
-              { value: 'system', label: zh ? '跟随系统' : 'System' },
-              { value: 'light', label: zh ? '浅色' : 'Light' },
-              { value: 'dark', label: zh ? '深色' : 'Dark' },
-            ]}
-          />
-        </NativeControlRow>
-        <NativeControlRow title={zh ? '主界面布局' : 'Main layout'} description={zh ? '选择主界面布局，修改后立即生效。' : 'Choose the main interface layout. Changes apply immediately.'}>
-          <ZeusSelect
-            size="regular"
-            ariaLabel={zh ? '主界面布局' : 'Main layout'}
-            value={props.value.mainLayout}
-            onChange={(mainLayout) => save({ mainLayout })}
-            options={[
-              { value: 'upstream', label: zh ? '经典布局' : 'Classic layout' },
-              { value: 'current', label: zh ? '紧凑布局' : 'Compact layout' },
-            ]}
-          />
-        </NativeControlRow>
-        <NativeControlRow title={zh ? '桌面通知' : 'Desktop notifications'} description={zh ? '在任务完成或需要你处理时提醒。' : 'Notify when work finishes or needs your attention.'}>
-          <label className="settings-switch-state">
-            <input
-              className="native-switch-input"
-              aria-label={zh ? '桌面通知' : 'Desktop notifications'}
-              type="checkbox"
-              checked={props.value.desktopNotificationsEnabled}
-              onChange={(event) => save({ desktopNotificationsEnabled: event.currentTarget.checked })}
+      <section className="settings-product-section">
+        <h3>{zh ? '界面与通知' : 'Appearance and notifications'}</h3>
+        <NativeSettingsPane label={zh ? '界面与通知' : 'Appearance and notifications'}>
+          <NativeControlRow title={zh ? '应用语言' : 'Language'} description={zh ? '选择 Zeus 的界面语言。' : 'Choose the Zeus interface language.'}>
+            <ZeusSelect
+              size="regular"
+              ariaLabel={zh ? '应用语言' : 'Language'}
+              value={props.value.appLanguage}
+              onChange={(appLanguage) => save({ appLanguage })}
+              options={[
+                { value: 'zh-CN', label: '简体中文' },
+                { value: 'en-US', label: 'English' },
+              ]}
             />
-            <span className="native-switch-track" aria-hidden="true" />
-          </label>
-        </NativeControlRow>
-      </NativeSettingsPane>
+          </NativeControlRow>
+          <NativeControlRow title={zh ? '外观' : 'Appearance'} description={zh ? '跟随系统，或固定为浅色、深色。' : 'Follow the system or choose a light or dark theme.'}>
+            <ZeusSelect
+              size="regular"
+              ariaLabel={zh ? '外观' : 'Appearance'}
+              value={props.value.appearance}
+              onChange={(appearance) => save({ appearance })}
+              options={[
+                { value: 'system', label: zh ? '跟随系统' : 'System' },
+                { value: 'light', label: zh ? '浅色' : 'Light' },
+                { value: 'dark', label: zh ? '深色' : 'Dark' },
+              ]}
+            />
+          </NativeControlRow>
+          <NativeControlRow title={zh ? '主界面布局' : 'Main layout'} description={zh ? '选择主界面布局，修改后立即生效。' : 'Choose the main interface layout. Changes apply immediately.'}>
+            <ZeusSelect
+              size="regular"
+              ariaLabel={zh ? '主界面布局' : 'Main layout'}
+              value={props.value.mainLayout}
+              onChange={(mainLayout) => save({ mainLayout })}
+              options={[
+                { value: 'upstream', label: zh ? '经典布局' : 'Classic layout' },
+                { value: 'current', label: zh ? '紧凑布局' : 'Compact layout' },
+              ]}
+            />
+          </NativeControlRow>
+          <NativeControlRow title={zh ? '桌面通知' : 'Desktop notifications'} description={zh ? '在任务完成或需要你处理时提醒。' : 'Notify when work finishes or needs your attention.'}>
+            <label className="settings-switch-state">
+              <input
+                className="native-switch-input"
+                aria-label={zh ? '桌面通知' : 'Desktop notifications'}
+                type="checkbox"
+                checked={props.value.desktopNotificationsEnabled}
+                onChange={(event) => save({ desktopNotificationsEnabled: event.currentTarget.checked })}
+              />
+              <span className="native-switch-track" aria-hidden="true" />
+            </label>
+          </NativeControlRow>
+        </NativeSettingsPane>
+      </section>
       <section className="settings-product-section">
         <h3>{zh ? '输入建议' : 'Input suggestions'}</h3>
         <NativeSettingsPane label={zh ? '输入建议' : 'Input suggestions'}>

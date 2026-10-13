@@ -145,58 +145,60 @@ export function GlobalAgentSettingsPane(props: {
           </Button>
         </div>
       </header>
-      <div className="global-agent-settings-info">
-        {snapshot ? <code className="global-agent-settings-path">{snapshot.path}</code> : null}
-        <p>{zh ? '保存后，新会话将读取更新后的规则。已有会话可能仍使用原规则。' : 'New conversations will read the saved rules. Existing conversations may still use the previous rules.'}</p>
-        {snapshot && !snapshot.exists ? <p>{zh ? '文件尚未创建，点击保存后创建。内容可以为空。' : 'The file will be created when you save. Empty content is allowed.'}</p> : null}
-        <span role="status" aria-live="polite">
-          {busy === 'loading'
-            ? zh
-              ? '正在读取…'
-              : 'Loading…'
-            : busy === 'saving'
+      <section className="settings-card" aria-label={zh ? '全局规则文件' : 'Global rules file'}>
+        <div className="global-agent-settings-info">
+          {snapshot ? <code className="global-agent-settings-path">{snapshot.path}</code> : null}
+          <p>{zh ? '保存后，新会话将读取更新后的规则。已有会话可能仍使用原规则。' : 'New conversations will read the saved rules. Existing conversations may still use the previous rules.'}</p>
+          {snapshot && !snapshot.exists ? <p>{zh ? '文件尚未创建，点击保存后创建。内容可以为空。' : 'The file will be created when you save. Empty content is allowed.'}</p> : null}
+          <span role="status" aria-live="polite">
+            {busy === 'loading'
               ? zh
-                ? '正在保存…'
-                : 'Saving…'
-              : error
+                ? '正在读取…'
+                : 'Loading…'
+              : busy === 'saving'
                 ? zh
-                  ? '操作失败，内容已保留'
-                  : 'Failed. Your content is retained.'
-                : dirty
+                  ? '正在保存…'
+                  : 'Saving…'
+                : error
                   ? zh
-                    ? '未保存'
-                    : 'Unsaved'
-                  : saved
+                    ? '操作失败，内容已保留'
+                    : 'Failed. Your content is retained.'
+                  : dirty
                     ? zh
-                      ? '已保存'
-                      : 'Saved'
-                    : snapshot?.exists
+                      ? '未保存'
+                      : 'Unsaved'
+                    : saved
                       ? zh
-                        ? '已读取'
-                        : 'Loaded'
-                      : null}
-        </span>
-        {error ? (
-          <p role="alert">
-            <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
-          </p>
-        ) : null}
-      </div>
-      {snapshot ? (
-        <div className="global-agent-settings-editor">
-          <CodeEditor
-            path={snapshot.path}
-            language="markdown"
-            label={zh ? 'AGENTS.md 全局规则内容' : 'AGENTS.md global rules content'}
-            content={draft}
-            readOnly={busy !== null}
-            onChange={setDraft}
-            onSave={() => {
-              void save();
-            }}
-          />
+                        ? '已保存'
+                        : 'Saved'
+                      : snapshot?.exists
+                        ? zh
+                          ? '已读取'
+                          : 'Loaded'
+                        : null}
+          </span>
+          {error ? (
+            <p role="alert">
+              <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
+            </p>
+          ) : null}
         </div>
-      ) : null}
+        {snapshot ? (
+          <div className="global-agent-settings-editor">
+            <CodeEditor
+              path={snapshot.path}
+              language="markdown"
+              label={zh ? 'AGENTS.md 全局规则内容' : 'AGENTS.md global rules content'}
+              content={draft}
+              readOnly={busy !== null}
+              onChange={setDraft}
+              onSave={() => {
+                void save();
+              }}
+            />
+          </div>
+        ) : null}
+      </section>
     </section>
   );
 }

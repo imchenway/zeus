@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AppShellSettings, DashboardClient } from '../apiClient.js';
-import { NativeSettingsPane } from '../features/workspace/workspaceSupport.js';
 import { notifyMainAppShellSettingsChanged } from '../appShellBridge.js';
 import { Button } from '../ui/Button.js';
 import { NetworkProxySettingsFields } from './NetworkProxySettingsFields.js';
@@ -136,9 +135,9 @@ export function NetworkSettingsPane(props: {
           </small>
         </div>
       </div>
-      <NativeSettingsPane label={zh ? '网络代理与连接检测' : 'Network proxy and connection checks'}>
+      <div className="settings-group-stack">
         <NetworkProxySettingsFields language={props.value.appLanguage} value={props.value.networkProxy} activeValue={activeProxy} disabled={!props.client} client={props.client} onChange={(networkProxy) => void save(networkProxy)} />
-      </NativeSettingsPane>
+      </div>
     </section>
   );
 }
