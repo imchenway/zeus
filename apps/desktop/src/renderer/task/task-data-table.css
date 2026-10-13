@@ -144,7 +144,8 @@
   inset: 32px 0 0;
   display: grid;
   place-items: center;
-  background: var(--zeus-card-background);
+  /* 空态与加载态继续覆盖正文底层，避免表格切换时整块变亮。 */
+  background: var(--zeus-product-canvas);
 }
 
 .task-data-table-overlay > section {

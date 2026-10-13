@@ -756,7 +756,7 @@ async function openProjectGitDiffWindow(parent: BrowserWindow, input: Extract<Fi
     modal: false,
     title: `${appShellSettings.appLanguage === 'zh-CN' ? '仓库差异' : 'Repository Diff'} · ${desktopDisplayName()}`,
     // 网页首帧前的原生底色与加载页使用同一主题。
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#17191d' : '#f7f8fa',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#181818' : '#f7f8fa',
     show: false,
     // 差异窗口直接使用系统标题栏，提供可发现的拖动、缩放与全屏入口。
     titleBarStyle: 'default',
@@ -859,7 +859,7 @@ async function openTaskGitDeliveryWindow(parent: BrowserWindow, target: GitDeliv
     modal: false,
     title: `${appShellSettings.appLanguage === 'zh-CN' ? '代码交付' : 'Code Delivery'} · ${desktopDisplayName()}`,
     // 网页首帧前的原生底色与加载页使用同一主题。
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#17191d' : '#f7f8fa',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#181818' : '#f7f8fa',
     show: false,
     resizable: true,
     minimizable: true,
@@ -1300,7 +1300,7 @@ function setupIpc(): void {
   /** 明暗设置或系统外观变化时，同步已打开差异窗口的原生底色。 */
   nativeTheme.on('updated', () => {
     for (const window of projectGitDiffWindows) {
-      if (!window.isDestroyed()) window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#17191d' : '#f7f8fa');
+      if (!window.isDestroyed()) window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#181818' : '#f7f8fa');
     }
   });
   ipcMain.handle('zeus:conversation-store-migration:get-status', () => {

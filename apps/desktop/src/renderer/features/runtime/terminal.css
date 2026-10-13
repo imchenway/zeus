@@ -142,9 +142,9 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--zeus-brand-primary) 16%, transparent);
 }
 
-/* 两个终端共用卡片底色；容器不加边框，避免 FitAddon 把边框计入字符网格。 */
+/* 终端输出与代码编辑使用同一底层表面；边框不参与字符网格尺寸。 */
 .zeus-terminal-screen {
-  background: var(--zeus-card-background, var(--zeus-product-panel, #fff));
+  background: var(--zeus-code-editor-bg, var(--zeus-product-canvas, #fff));
   color: var(--zeus-control-text, #111827);
   border: 0;
   box-sizing: border-box;
@@ -164,6 +164,15 @@
 
 /* 外层滚动区域不使用 xterm 的默认黑底，留白与网格余量显示容器的主题背景。 */
 .zeus-terminal-screen .xterm .xterm-viewport {
+  background-color: transparent;
+}
+
+/* 只读运行日志同样交由共享主题驱动，禁止保留独立的蓝黑底。 */
+.xterm-runtime-pane {
+  background: var(--zeus-code-editor-bg, var(--zeus-product-canvas, #fff));
+  color: var(--zeus-product-text);
+}
+.xterm-runtime-pane .xterm-viewport {
   background-color: transparent;
 }
 

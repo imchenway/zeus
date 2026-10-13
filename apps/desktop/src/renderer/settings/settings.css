@@ -106,7 +106,7 @@
     padding: 0 10px 0 31px;
     border: 1px solid var(--zeus-product-line-soft);
     border-radius: 5px;
-    background: var(--zeus-card-background);
+    background: var(--zeus-control-bg);
     color: inherit;
     font: inherit;
   }
@@ -354,7 +354,7 @@
     padding: 6px 10px;
     border: 1px solid var(--zeus-control-border);
     border-radius: 5px;
-    background: var(--zeus-card-background);
+    background: var(--zeus-control-bg);
     color: var(--zeus-product-text);
     font-size: 13px;
     font-weight: 400;
@@ -380,6 +380,8 @@
     inline-size: 100%;
     justify-content: space-between;
     font-weight: 450;
+    /* 选择框使用输入底色，不继承普通操作按钮的透明内容层。 */
+    background: var(--zeus-control-bg);
   }
   .settings-content-column label:has(> input[type='checkbox']) {
     align-items: center;

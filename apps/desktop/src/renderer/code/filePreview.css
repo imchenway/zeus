@@ -118,41 +118,11 @@
   margin-inline-start: auto;
   padding: 0;
 }
-/* 审阅模式、比较范围和增删统计各自保持清楚的阅读顺序。 */
-.file-review-toolbar {
-  gap: 10px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--zeus-control-border);
-  background: var(--zeus-product-panel-muted);
-  font-size: 11px;
-}
-.file-review-modes {
-  display: inline-flex;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--zeus-control-border);
-  border-radius: 6px;
-}
-.file-review-modes > button {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-height: 26px;
-  padding: 3px 8px;
-  color: var(--zeus-control-muted-text);
-  font-size: 12px;
-}
-.file-review-modes > button[aria-pressed='true'] {
-  color: var(--zeus-control-text);
-  background: var(--zeus-product-panel);
-}
-.file-review-range {
-  color: var(--zeus-control-muted-text);
-}
+/* 增删统计跟随审阅按钮并入文件工具栏，不额外占用内容高度。 */
 .file-review-stats {
   display: inline-flex;
   gap: 8px;
-  margin-inline-start: auto;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 .file-review-stats > .is-addition {
@@ -242,7 +212,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--zeus-product-panel, #fff);
+  background: var(--zeus-solid-surface-bg, var(--zeus-product-panel, #fff));
   color: var(--zeus-product-text, #222);
   border-radius: 14px;
   box-shadow:
@@ -254,7 +224,7 @@
   position: sticky;
   top: 0;
   z-index: 1;
-  background: var(--zeus-product-panel, #fff);
+  background: var(--zeus-solid-surface-bg, var(--zeus-product-panel, #fff));
   display: flex;
   align-items: center;
   gap: 10px;

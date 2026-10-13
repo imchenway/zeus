@@ -47,15 +47,15 @@ const taskTableModules = [ClientSideRowModelModule, ColumnApiModule, ColumnAutoS
 const taskTableRowClassRules: RowClassRules<TaskRowViewModel> = { 'task-data-table-selected': ({ data }) => Boolean(data?.selected) };
 /** 表格颜色跟随 Zeus 主题，固定行高确保虚拟滚动无需逐行测量。 */
 const taskTableTheme = themeQuartz.withParams({
-  backgroundColor: 'var(--zeus-card-background)',
-  dataBackgroundColor: 'var(--zeus-card-background)',
-  oddRowBackgroundColor: 'var(--zeus-card-background)',
+  backgroundColor: 'var(--zeus-product-canvas)',
+  dataBackgroundColor: 'var(--zeus-product-canvas)',
+  oddRowBackgroundColor: 'var(--zeus-product-canvas)',
   foregroundColor: 'var(--zeus-product-text)',
   headerBackgroundColor: 'var(--zeus-card-background)',
   headerTextColor: 'var(--zeus-product-muted)',
   borderColor: 'var(--zeus-card-border)',
   accentColor: 'var(--zeus-accent)',
-  rowHoverColor: 'color-mix(in srgb, var(--zeus-product-text) 3%, var(--zeus-card-background))',
+  rowHoverColor: 'color-mix(in srgb, var(--zeus-product-text) 3%, var(--zeus-product-canvas))',
   fontFamily: 'inherit',
   fontSize: 12,
   headerFontSize: 11,

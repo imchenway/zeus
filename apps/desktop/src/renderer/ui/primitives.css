@@ -1,6 +1,8 @@
-/* Zeus 交互原语层最后加载。业务页面可以选择显式变体，但不能重新定义核心状态。 */
+/* Zeus 交互原语统一核心状态。业务页面可以选择显式变体，但不能重新定义核心状态。 */
 .macos-ai-app {
-  /* 文本输入只加深原有边界，不叠加第二层焦点圈或改变尺寸。 */
+  /* 输入焦点沿用明暗主题的强调色，避免深色背景上出现白边。 */
+  --zeus-field-focus-line: var(--zeus-brand-text);
+  /* 文本输入只改变原有边界，不叠加第二层焦点圈或改变尺寸。 */
   --zeus-field-focus: none;
   --zeus-motion-duration-state: 120ms;
   --zeus-motion-duration-object: 180ms;
@@ -283,14 +285,14 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   transition: none;
 }
 
-/* 悬停保留浅紫色，按下与选中逐级加深，不把颜色深浅混作不同操作。 */
+/* 深色悬停与按下使用中性提亮，主操作继续使用品牌色。 */
 .macos-ai-app {
   --zeus-interaction-hover: var(--zeus-brand-hover);
   /* 按下加深一档，主操作保留白字，键盘焦点使用独立描边。 */
-  --zeus-interaction-pressed: color-mix(in srgb, var(--zeus-product-accent) 10%, transparent);
+  --zeus-interaction-pressed: light-dark(color-mix(in srgb, var(--zeus-product-accent) 10%, transparent), rgb(255 255 255 / 8%));
   --zeus-interaction-primary-hover: color-mix(in srgb, var(--zeus-product-accent) 90%, black);
   --zeus-interaction-primary-pressed: color-mix(in srgb, var(--zeus-product-accent) 80%, black);
-  --zeus-interaction-line: color-mix(in srgb, var(--zeus-product-accent) 38%, var(--zeus-product-line));
+  --zeus-interaction-line: light-dark(color-mix(in srgb, var(--zeus-product-accent) 38%, var(--zeus-product-line)), var(--zeus-dark-line-strong));
 }
 
 .macos-ai-app :where(summary, .zeus-select-option, .zeus-select-trigger) {
@@ -324,7 +326,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   background-color: var(--zeus-interaction-pressed);
 }
 .macos-ai-app :focus-visible {
-  /* 原语层最后加载并统一钳制焦点轮廓色，避免页面级规则恢复品牌紫色描边。 */
+  /* 普通控件保留中性轮廓，输入控件在下方使用独立的主题强调色。 */
   outline-color: var(--zeus-focus-line) !important;
 }
 .macos-ai-app :where(button, summary, [role='button'], [role='tab'], [role='option'], a[href]):focus-visible {
@@ -336,9 +338,13 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 }
 /* 页面与 body 下的弹窗共用输入焦点；复合控件继续由自身外框负责。 */
 .macos-ai-app :where(input, select, textarea):focus-visible {
-  border-color: var(--zeus-focus-line) !important;
+  border-color: var(--zeus-field-focus-line) !important;
   box-shadow: var(--zeus-field-focus);
   outline: 0;
+}
+/* 无边框编辑器与自带轮廓的输入保留原有焦点形状，统一使用输入强调色。 */
+.macos-ai-app :where(input, select, textarea, [contenteditable='true']):focus-visible {
+  outline-color: var(--zeus-field-focus-line) !important;
 }
 /* 错误状态保留语义色，不能被普通焦点覆盖。 */
 .macos-ai-app :is(input, select, textarea):is([aria-invalid='true'], :user-invalid):focus-visible {
@@ -347,7 +353,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 }
 /* 强制配色会移除阴影，用内收轮廓保留键盘定位。 */
 @media (forced-colors: active) {
-  .macos-ai-app :where(input, select, textarea):focus-visible {
+  .macos-ai-app :where(input, select, textarea, [contenteditable='true']):focus-visible {
     outline: 2px solid Highlight !important;
     outline-offset: -2px !important;
   }
@@ -1704,7 +1710,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   max-block-size: calc(100vh - 32px);
   border: 1px solid var(--zeus-product-line);
   border-radius: 14px;
-  background: var(--zeus-product-panel);
+  background: var(--zeus-solid-surface-bg, var(--zeus-product-panel));
   color: var(--zeus-product-text);
   overflow: hidden;
 }

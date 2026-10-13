@@ -127,7 +127,8 @@
 
 .digital-team-view-switch button[aria-pressed='true'] {
   color: var(--zeus-product-text);
-  background: var(--zeus-product-panel);
+  /* 选中态独立于内容底色，页面合并表面后仍保持可辨认。 */
+  background: light-dark(var(--zeus-product-panel), var(--zeus-product-selected));
   box-shadow: none;
 }
 
@@ -352,7 +353,7 @@
   padding: 14px;
   border: 1px solid var(--zeus-product-line);
   border-radius: 12px;
-  background: var(--zeus-product-panel);
+  background: var(--zeus-popover-bg, var(--zeus-product-panel));
   box-shadow: var(--zeus-product-shadow, 0 12px 32px rgb(0 0 0 / 14%));
 }
 

@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
+import { nativeTheme } from 'electron';
 
 /** 打开安装包与自动重启安装使用独立动作。 */
 export type NativeUpdateProgressAction = 'download' | 'check' | 'open_download_page' | 'open_installer' | 'reconnect' | 'restart' | 'retry' | 'later' | 'closed' | 'close';
@@ -72,14 +73,23 @@ export async function createNativeUpdateProgressHost(options: CreateNativeUpdate
   });
   child.once('exit', () => {
     closed = true;
+    nativeTheme.removeListener('updated', syncAppearance);
     stdout.close();
     for (const listener of exitListeners) listener();
   });
 
+  /** 独立辅助进程不继承 Electron 的外观，每条消息携带当前实际主题。 */
   function send(message: Record<string, unknown>): void {
     if (closed || child.stdin.destroyed) return;
-    child.stdin.write(`${JSON.stringify({ ...message, language: typeof options.language === 'function' ? options.language() : options.language })}\n`);
+    child.stdin.write(`${JSON.stringify({ ...message, appearance: nativeTheme.shouldUseDarkColors ? 'dark' : 'light', language: typeof options.language === 'function' ? options.language() : options.language })}\n`);
   }
+
+  /** 主题变化只更新外观，不显示窗口，也不改变下载状态或键盘焦点。 */
+  function syncAppearance(): void {
+    send({ type: 'appearance' });
+  }
+  nativeTheme.on('updated', syncAppearance);
+  syncAppearance();
 
   return {
     show: () => send({ type: 'show' }),
@@ -88,6 +98,7 @@ export async function createNativeUpdateProgressHost(options: CreateNativeUpdate
     relaunchAfterProcessExit: (input) => send({ type: 'relaunch', ...input }),
     close: () => {
       if (closed) return;
+      nativeTheme.removeListener('updated', syncAppearance);
       send({ type: 'quit' });
       child.stdin.end();
     },
