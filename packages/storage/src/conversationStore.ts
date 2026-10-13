@@ -2365,7 +2365,7 @@ export class ConversationSubmissionRepository {
       .map(mapConversationSubmissionRow);
   }
 
-  /** 展示交接包含尚在发送中的提交和未接纳的失败项，调度队首仍使用独立的可调度队列。 */
+  /** 展示交接保留 Provider 回显前的提交；本地接纳记录不能提前撤销气泡，调度仍使用独立队列。 */
   listQueueProjectionByConversation(conversationId: string): ZeusConversationSubmissionRecord[] {
     return this.db
       .select<DbConversationSubmissionRow>(
@@ -2373,7 +2373,7 @@ export class ConversationSubmissionRepository {
        AND (status IN ('queued', 'paused', 'dispatching') OR (status = 'failed' AND provider_turn_id IS NULL)
          OR (status = 'active' AND NOT EXISTS (SELECT 1 FROM conversation_messages AS message
            WHERE message.conversation_id = conversation_submissions.conversation_id AND message.role = 'user'
-             AND message.client_message_id = conversation_submissions.client_message_id)))
+             AND message.client_message_id = conversation_submissions.client_message_id AND message.provider_item_id IS NOT NULL)))
        AND COALESCE(json_extract(input_json, '$.expertRound'), 0) <> 1
        ORDER BY queue_position, created_at, id`,
         [conversationId],

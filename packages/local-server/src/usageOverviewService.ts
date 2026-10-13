@@ -43,7 +43,7 @@ export interface UsageOverviewService {
   readAnalytics(input: { range: CodexUsageRange; projectId?: string | null; model?: string | null }): Promise<UsageAnalyticsSnapshot>;
 }
 
-/** 菜单栏只聚合仍有效的已记录供应源；用量详情继续保留完整历史。 */
+/** 菜单栏与用量详情只展示当前供应源，移除配置不删除历史账本。 */
 export function createUsageOverviewService(options: CreateUsageOverviewServiceOptions): UsageOverviewService {
   const now = options.now ?? (() => new Date());
 
@@ -88,6 +88,7 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
     return snapshot;
   }
 
+  /** 同次读取生成当前供应商的详情和筛选目录，避免前端累积失效选项。 */
   async function readAnalytics(input: Parameters<UsageOverviewService['readAnalytics']>[0]): Promise<UsageAnalyticsSnapshot> {
     const readAt = now();
     const official = options.codexUsage.readCachedOfficialUsage();
@@ -112,7 +113,10 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
     const providers = [...groups.entries()]
       .map(([providerId, rows]): UsageProviderAnalytics => {
         const isCodex = providerId === 'codex';
-        const filteredRows = rows.filter((row) => (!since || row.occurredAt >= since) && (!input.projectId || row.projectId === input.projectId) && (!input.model || row.model === input.model));
+        /** 先按时间裁剪明细；筛选目录独立保留当前供应商的历史选项。 */
+        const rangeRows = rows.filter((row) => !since || row.occurredAt >= since);
+        /** 明细按项目和模型共同筛选。 */
+        const filteredRows = rangeRows.filter((row) => (!input.projectId || row.projectId === input.projectId) && (!input.model || row.model === input.model));
         const provider = buildProviderSummary({ providerId, rows, outputRateByTurn, readAt, official, connectionNames, connectionsById });
         const pricingRows = filteredRows.length > 0 ? filteredRows : rows;
         const catalogDates = [...new Set(pricingRows.map((row) => row.estimate.rateSnapshot.catalogDate))].sort();
@@ -123,6 +127,10 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
           projectId: input.projectId ?? null,
           model: input.model ?? null,
           official: isCodex ? official : null,
+          filters: {
+            models: [...new Set(rows.map((row) => row.model))].sort().map((model) => ({ id: model, label: model })),
+            projects: [...new Set(rows.map((row) => row.projectId))].map((projectId) => ({ id: projectId, label: options.projects.getById(projectId)?.name ?? '已删除项目' })),
+          },
           local: {
             totals: aggregateRows(filteredRows, outputRateByTurn),
             daily: groupRows(filteredRows, (row) => localDate(new Date(row.occurredAt))).map(([date, entries]) => ({ date, ...aggregateRows(entries, outputRateByTurn) })),
@@ -146,7 +154,9 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
           },
         };
       })
-      .sort((left, right) => right.provider.updatedAt.localeCompare(left.provider.updatedAt));
+      // 详情与菜单栏采用相同的当前供应商边界；完整历史仍保存在账本中。
+      .filter((analytics) => !analytics.provider.deleted)
+      .sort((left, right) => right.local.totals.totalTokens - left.local.totals.totalTokens || left.provider.name.localeCompare(right.provider.name));
     return {
       range: input.range,
       projectId: input.projectId ?? null,

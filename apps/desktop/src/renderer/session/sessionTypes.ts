@@ -803,6 +803,10 @@ export interface NativeConversationResourceV2Item {
   kind: string;
   presentation: string;
   displayName: string;
+  /** 已登记文件的项目相对路径；旧缓存缺失时重新读取资源页。 */
+  projectRelativePath?: string | null;
+  /** 已登记网站的 URL；链接标题不作为目标替代值。 */
+  url?: string | null;
   mimeType: string | null;
   previewKind: string | null;
   iconKind: string | null;

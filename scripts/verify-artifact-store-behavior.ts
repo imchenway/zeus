@@ -10,6 +10,8 @@ import {
   ArtifactStore,
   ArtifactStoreError,
   ConversationExecutionRepository,
+  ConversationRepository,
+  ConversationSubmissionRepository,
   ConversationProviderItemRepository,
   ConversationResourceRepository,
   ConversationSnapshotV2Repository,
@@ -142,6 +144,42 @@ async function verifyConversationFileResources(): Promise<void> {
     const resources = new ConversationResourceRepository(database);
     /** 固定时间避免探针把时钟变化误当作资源变化。 */
     const timestamp = '2026-09-23T06:00:00.000Z';
+    /** 本地接纳与 Provider 回显分开落库，复现整理对话期间的展示交接。 */
+    const conversations = new ConversationRepository(database);
+    /** 排队展示与真实消息共享同一客户端身份。 */
+    const submissions = new ConversationSubmissionRepository(database);
+    new ProjectRepository(database).create({ id: 'resource-project', name: '会话投影', localPath: root });
+    conversations.create({ id: 'resource-conversation', projectId: 'resource-project', title: '会话投影' });
+    /** 已接纳但模型尚未回显的原始输入。 */
+    const submission = submissions.createOrGet({
+      id: 'compacting-submission',
+      conversationId: 'resource-conversation',
+      idempotencyKey: 'compacting-submission',
+      requestHash: 'compacting-submission',
+      clientMessageId: 'compacting-message',
+      kind: 'message',
+      requestedDelivery: 'queue',
+      status: 'active',
+      input: { text: '你在等什么？' },
+      createdAt: timestamp,
+    });
+    /** 本地消息先于模型开始整理上下文，不能据此撤销展示。 */
+    const message = {
+      conversationId: submission.conversationId,
+      role: 'user' as const,
+      content: '你在等什么？',
+      source: 'zeus_local_submission',
+      metadata: { submissionId: submission.id },
+      createdAt: timestamp,
+      clientMessageId: submission.clientMessageId,
+    };
+    conversations.appendMessage(message);
+    assertProbe(
+      submissions.listQueueProjectionByConversation(submission.conversationId).some((entry) => entry.id === submission.id),
+      '整理对话期间，本地接纳记录不能让用户消息退出展示',
+    );
+    conversations.appendMessage({ ...message, providerThreadId: 'codex', providerTurnId: 'turn', providerItemId: 'compacting-user-echo' });
+    assertProbe(!submissions.listQueueProjectionByConversation(submission.conversationId).some((entry) => entry.id === submission.id), '模型回显接管后必须移除临时投影，避免重复气泡');
     for (const agentKind of ['codex', 'pi'] as const) {
       /** 相同输入仅改变执行链身份。 */
       const item = items.upsertCompleted({
@@ -224,6 +262,14 @@ async function verifyConversationFileResources(): Promise<void> {
     );
     /** 界面资源分页须返回同一批稳定身份，不能只在底层仓库中存在。 */
     const page = new ConversationSnapshotV2Repository(reopened).listResourcePage({ conversationId: 'resource-conversation' });
+    assertProbe(
+      page.items.some((resource) => resource.displayName === '说明' && resource.projectRelativePath === 'docs/说明.md'),
+      '资源分页必须区分文件标题和授权路径',
+    );
+    assertProbe(
+      page.items.some((resource) => resource.displayName === '官方提示词指南' && resource.url === 'https://platform.openai.com/docs/guides/prompt-engineering'),
+      '资源分页必须保留网站目标，不能把链接标题当作 URL',
+    );
     assertProbe(
       resourceIds.every((id) => page.items.some((resource) => resource.id === id)),
       '重新打开后界面资源分页必须返回两条执行链的文件链接和卡片',

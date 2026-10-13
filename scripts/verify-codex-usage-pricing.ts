@@ -648,17 +648,30 @@ try {
     (await periodOverviewService.read()).providers.map((provider) => provider.providerId),
     ['codex'],
   );
-  /** 历史详情仍保存两个已移除供应商的完整用量，账本不可因概览过滤而改变。 */
+  /** 日常详情排除已移除连接，原账本和费用记录保持完整。 */
   const removedAnalytics = await periodOverviewService.readAnalytics({ range: 'all' });
-  for (const original of periodOverview.providers.filter((provider) => provider.kind === 'api')) {
-    /** 用原供应源身份核对历史消耗，包含 api 与 pi 前缀的同一连接记录。 */
-    const retained = removedAnalytics.providers.find((entry) => entry.provider.providerId === original.providerId);
-    assert.equal(retained?.provider.deleted, true);
-    assert.equal(retained?.local.totals.totalTokens, original.overviewRanges.all.local.totalTokens);
-  }
+  assert.deepEqual(
+    removedAnalytics.providers.map((entry) => entry.provider.providerId),
+    ['codex'],
+  );
+  assert.deepEqual(ledger.list(), beforePeriodRead);
   /** 同一身份恢复连接时重新进入概览，并使用新名称与既有账本。 */
   periodConnections = [{ id: 'period', name: '恢复的供应商' }];
   assert.equal((await periodOverviewService.read()).providers.find((provider) => provider.providerId === 'api:period')?.name, '恢复的供应商');
+  /** 恢复连接后可读回历史用量，筛选目录不被空结果覆盖。 */
+  const restoredAnalytics = await periodOverviewService.readAnalytics({ range: 'all' });
+  /** 用同一身份查找恢复后的供应商。 */
+  const restoredProvider = restoredAnalytics.providers.find((entry) => entry.provider.providerId === 'api:period')!;
+  assert.equal(restoredProvider.local.totals.totalTokens, periodOverview.providers.find((entry) => entry.providerId === 'api:period')!.overviewRanges.all.local.totalTokens);
+  /** 不存在的模型筛选只清空结果，不影响真实目录。 */
+  const emptyFilteredProvider = (await periodOverviewService.readAnalytics({ range: 'all', model: 'not-a-recorded-model' })).providers.find((entry) => entry.provider.providerId === 'api:period')!;
+  assert.equal(emptyFilteredProvider.local.totals.turnCount, 0);
+  assert.deepEqual(emptyFilteredProvider.filters, restoredProvider.filters);
+  assert.equal(
+    restoredProvider.filters.models.some((entry) => entry.id === model),
+    true,
+  );
+
   assert.deepEqual(ledger.list(), beforePeriodRead);
   /** 速率沿用真实存储与汇总入口，重放旧版本误收录的交互等待样本。 */
   const rateExecution = new ConversationExecutionRepository(db);

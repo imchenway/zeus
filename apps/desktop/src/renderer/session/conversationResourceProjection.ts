@@ -104,9 +104,15 @@ export async function attachV2ResourcesToSnapshot(snapshot: NativeConversationSn
     const resourcesChanged =
       merged.length !== currentResources.size ||
       merged.some((resource) => {
-        /** 同一资源编号仍可能补齐稳定的图片身份。 */
+        /** 同一资源编号仍可能补齐目标或图片身份，旧缓存不能挡住正确链接。 */
         const current = currentResources.get(resource.id);
-        return !current || current.delivery !== resource.delivery || (resource.kind === 'attachment' && current.kind === 'attachment' && current.attachmentRef !== resource.attachmentRef);
+        return (
+          !current ||
+          current.delivery !== resource.delivery ||
+          (resource.kind === 'file' && current.kind === 'file' && current.projectRelativePath !== resource.projectRelativePath) ||
+          (resource.kind === 'website' && current.kind === 'website' && current.url !== resource.url) ||
+          (resource.kind === 'attachment' && current.kind === 'attachment' && current.attachmentRef !== resource.attachmentRef)
+        );
       });
     if (!resourcesChanged) return [item];
     changed = true;
@@ -155,6 +161,7 @@ function compareV2ResourceItems(left: NativeItemSnapshot, right: NativeItemSnaps
   return (left.transcript.placement.order ?? Number.MAX_SAFE_INTEGER) - (right.transcript.placement.order ?? Number.MAX_SAFE_INTEGER) || left.id.localeCompare(right.id);
 }
 
+/** 资源标题只用于显示；匹配依据来自服务端登记，缺失时等待资源重读。 */
 function conversationResourceFromV2Metadata(snapshot: NativeConversationSnapshot, item: NativeConversationResourceV2Item): ConversationResource | null {
   const presentation = item.presentation === 'card' ? 'card' : 'inline';
   const base = {
@@ -171,22 +178,25 @@ function conversationResourceFromV2Metadata(snapshot: NativeConversationSnapshot
   } as const;
   const iconKind = conversationFileIconKinds.has(item.iconKind as ConversationFileIconKind) ? (item.iconKind as ConversationFileIconKind) : item.mimeType?.startsWith('image/') ? 'image' : 'file';
   if (item.kind === 'file') {
+    if (!item.projectRelativePath) return null;
     return {
       ...base,
       kind: 'file',
-      projectRelativePath: item.displayName,
+      projectRelativePath: item.projectRelativePath,
       iconKind,
       ...(item.mimeType ? { mimeType: item.mimeType } : {}),
     };
   }
   if (item.kind === 'website') {
-    let domain = item.displayName;
+    if (!item.url) return null;
+    /** 域名由同一已登记 URL 派生，非法元数据不生成可点击项。 */
+    let domain: string;
     try {
-      domain = new URL(item.displayName).hostname || item.displayName;
+      domain = new URL(item.url).hostname;
     } catch {
-      // V2 元数据故意不下发真实 URL；点击时仍由受信资源 id 解析实际目标。
+      return null;
     }
-    return { ...base, kind: 'website', url: item.displayName, domain, title: item.displayName, local: false };
+    return { ...base, kind: 'website', url: item.url, domain, title: item.displayName, local: false };
   }
   if (item.kind === 'attachment') {
     return {
