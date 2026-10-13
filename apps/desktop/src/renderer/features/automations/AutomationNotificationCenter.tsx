@@ -1,4 +1,5 @@
 import { useId, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { BellIcon } from '@phosphor-icons/react/dist/csr/Bell';
 import type { AutomationNotificationStatus } from '@zeus/shared';
 import type { AutomationNotificationsModel } from './useAutomationNotifications.js';
@@ -26,8 +27,14 @@ export function AutomationNotificationCenter({ model, language }: { /** 工作�
   const [open, setOpen] = useState(false);
   /** 关闭后返回铃铛，避免焦点落到页面根节点。 */
   const trigger = useRef<HTMLButtonElement>(null);
-  /** 顶层弹层仍留在主题容器内继承颜色。 */
+  /** 弹层挂在当前主题壳层，隔离侧栏导航样式并继承颜色。 */
+  const [portalHost, setPortalHost] = useState<HTMLElement | null>(null);
+  /** 原生弹层负责顶层显示和外部点击关闭。 */
   const surface = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    setPortalHost(trigger.current?.closest<HTMLElement>('.macos-ai-app.zeus-shell') ?? null);
+  }, []);
 
   useLayoutEffect(() => {
     if (!open || !trigger.current || !surface.current) return;
@@ -77,108 +84,117 @@ export function AutomationNotificationCenter({ model, language }: { /** 工作�
           </span>
         ) : null}
       </button>
-      <div
-        id={id}
-        ref={surface}
-        popover="auto"
-        role="dialog"
-        tabIndex={-1}
-        aria-label={zh ? '自动化通知' : 'Automation notifications'}
-        className="automation-notification-popover"
-        onToggle={(event) => {
-          /** 弹出仅刷新列表，不提交任何已读确认。 */
-          const expanded = event.newState === 'open';
-          setOpen(expanded);
-          if (expanded) void model.refresh();
-          else if (!document.querySelector('[aria-modal="true"]:not([aria-hidden="true"])')) trigger.current?.focus({ preventScroll: true });
-        }}
-      >
-        <header className="automation-notification-header">
-          <strong>{zh ? '通知' : 'Notifications'}</strong>
-          <span>{zh ? `${model.unreadCount} 条未读` : `${model.unreadCount} unread`}</span>
-        </header>
-        {model.loadError || model.actionError ? (
-          <div className="automation-notification-error" role="alert">
-            <p>{model.actionError ?? model.loadError}</p>
-            {model.loadError ? (
-              <Button disabled={model.loading} onClick={() => void model.refresh()}>
-                {zh ? '重新加载' : 'Reload'}
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
-        <div className="automation-notification-list" aria-busy={model.loading}>
-          {!model.loaded && !model.loadError ? (
-            <p className="automation-notification-empty" role="status">
-              {zh ? '正在读取通知…' : 'Loading notifications…'}
-            </p>
-          ) : null}
-          {model.loaded && !model.items.length && !model.loadError ? (
-            <p className="automation-notification-empty" role="status">
-              {zh ? '暂无未读通知' : 'No unread notifications'}
-            </p>
-          ) : null}
-          <ul>
-            {model.items.map((item) => (
-              <li key={item.id} className="automation-notification-item">
-                {item.conversationId ? (
-                  <button
-                    type="button"
-                    className="automation-notification-open"
-                    disabled={Boolean(model.busyId)}
-                    onClick={() => {
-                      // 先让出顶层表面，导航途中的未保存确认弹窗才能获得正常焦点。
-                      surface.current?.hidePopover();
-                      void model.open(item).then((opened) => {
-                        if (!opened && surface.current?.isConnected) surface.current.showPopover();
-                      });
-                    }}
-                  >
-                    <strong>{item.automationName}</strong>
-                    <span>{item.conversationTitle || (zh ? '打开会话' : 'Open conversation')}</span>
-                  </button>
-                ) : (
-                  <div className="automation-notification-summary">
-                    <strong>{item.automationName}</strong>
-                    <span>{zh ? '无可用会话' : 'No available conversation'}</span>
-                  </div>
-                )}
-                <div className="automation-notification-meta">
-                  <span>{item.projectName || (zh ? '无项目' : 'No project')}</span>
-                  <span>{notificationStatusLabels[item.status][zh ? 0 : 1]}</span>
-                  <time dateTime={item.occurredAt}>{new Intl.DateTimeFormat(language, { dateStyle: 'short', timeStyle: 'short' }).format(new Date(item.occurredAt))}</time>
+      {portalHost
+        ? createPortal(
+            <div
+              id={id}
+              ref={surface}
+              popover="auto"
+              role="dialog"
+              tabIndex={-1}
+              aria-label={zh ? '自动化通知' : 'Automation notifications'}
+              className="automation-notification-popover"
+              onClickCapture={(event) => {
+                // 打开完整异常说明前让出顶层，避免通知遮住说明窗口。
+                if (event.target instanceof Element && event.target.closest('.application-error-details-link')) surface.current?.hidePopover();
+              }}
+              onToggle={(event) => {
+                /** 弹出仅刷新列表，不提交任何已读确认。 */
+                const expanded = event.newState === 'open';
+                setOpen(expanded);
+                if (expanded) void model.refresh();
+                else if (!document.querySelector('[aria-modal="true"]:not([aria-hidden="true"])')) trigger.current?.focus({ preventScroll: true });
+              }}
+            >
+              <header className="automation-notification-header">
+                <strong>{zh ? '通知' : 'Notifications'}</strong>
+                <span>{zh ? `${model.unreadCount} 条未读` : `${model.unreadCount} unread`}</span>
+              </header>
+              {model.loadError || model.actionError ? (
+                <div className="automation-notification-error" role="alert">
+                  <p>{model.actionError ?? model.loadError}</p>
+                  {model.loadError ? (
+                    <Button size="compact" disabled={model.loading} onClick={() => void model.refresh()}>
+                      {zh ? '重新加载' : 'Reload'}
+                    </Button>
+                  ) : null}
                 </div>
-                {item.errorMessage ? (
-                  <p className="automation-notification-reason">
-                    <VisibleApplicationError error={{ code: item.errorCode, message: item.errorMessage }} language={zh ? 'zh-CN' : 'en'} />
+              ) : null}
+              <div className="automation-notification-list" aria-busy={model.loading}>
+                {!model.loaded && !model.loadError ? (
+                  <p className="automation-notification-empty" role="status">
+                    {zh ? '正在读取通知…' : 'Loading notifications…'}
                   </p>
                 ) : null}
-                {!item.conversationId || item.canResume ? (
-                  <div className="automation-notification-actions">
-                    {!item.conversationId ? (
-                      <Button disabled={Boolean(model.busyId)} busy={model.busyId === item.id} onClick={() => void model.act(item, 'read')}>
-                        {zh ? '标为已读' : 'Mark read'}
-                      </Button>
-                    ) : null}
-                    {item.canResume ? (
-                      <Button disabled={Boolean(model.busyId)} onClick={() => void model.act(item, 'resume')}>
-                        {zh ? '继续剩余项目' : 'Resume remaining projects'}
-                      </Button>
-                    ) : null}
-                  </div>
+                {model.loaded && !model.items.length && !model.loadError ? (
+                  <p className="automation-notification-empty" role="status">
+                    {zh ? '暂无未读通知' : 'No unread notifications'}
+                  </p>
                 ) : null}
-              </li>
-            ))}
-          </ul>
-        </div>
-        {model.nextCursor ? (
-          <footer className="automation-notification-footer">
-            <Button disabled={model.loading} busy={model.loading} onClick={() => void model.refresh(model.nextCursor ?? undefined)}>
-              {zh ? '加载更多' : 'Load more'}
-            </Button>
-          </footer>
-        ) : null}
-      </div>
+                <ul>
+                  {model.items.map((item) => (
+                    <li key={item.id} className="automation-notification-item">
+                      {item.conversationId ? (
+                        <button
+                          type="button"
+                          className="automation-notification-open"
+                          disabled={Boolean(model.busyId)}
+                          onClick={() => {
+                            // 先让出顶层表面，导航途中的未保存确认弹窗才能获得正常焦点。
+                            surface.current?.hidePopover();
+                            void model.open(item).then((opened) => {
+                              if (!opened && surface.current?.isConnected) surface.current.showPopover();
+                            });
+                          }}
+                        >
+                          <strong>{item.automationName}</strong>
+                          <span>{item.conversationTitle || (zh ? '打开会话' : 'Open conversation')}</span>
+                        </button>
+                      ) : (
+                        <div className="automation-notification-summary">
+                          <strong>{item.automationName}</strong>
+                          <span>{zh ? '无可用会话' : 'No available conversation'}</span>
+                        </div>
+                      )}
+                      <div className="automation-notification-meta">
+                        <span>{item.projectName || (zh ? '无项目' : 'No project')}</span>
+                        <span>{notificationStatusLabels[item.status][zh ? 0 : 1]}</span>
+                        <time dateTime={item.occurredAt}>{new Intl.DateTimeFormat(language, { dateStyle: 'short', timeStyle: 'short' }).format(new Date(item.occurredAt))}</time>
+                      </div>
+                      {item.errorMessage ? (
+                        <p className="automation-notification-reason">
+                          <VisibleApplicationError error={{ code: item.errorCode, message: item.errorMessage }} language={zh ? 'zh-CN' : 'en'} />
+                        </p>
+                      ) : null}
+                      {!item.conversationId || item.canResume ? (
+                        <div className="automation-notification-actions">
+                          {!item.conversationId ? (
+                            <Button size="compact" disabled={Boolean(model.busyId)} busy={model.busyId === item.id} onClick={() => void model.act(item, 'read')}>
+                              {zh ? '标为已读' : 'Mark read'}
+                            </Button>
+                          ) : null}
+                          {item.canResume ? (
+                            <Button size="compact" disabled={Boolean(model.busyId)} onClick={() => void model.act(item, 'resume')}>
+                              {zh ? '继续剩余项目' : 'Resume remaining projects'}
+                            </Button>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              {model.nextCursor ? (
+                <footer className="automation-notification-footer">
+                  <Button size="compact" disabled={model.loading} busy={model.loading} onClick={() => void model.refresh(model.nextCursor ?? undefined)}>
+                    {zh ? '加载更多' : 'Load more'}
+                  </Button>
+                </footer>
+              ) : null}
+            </div>,
+            portalHost,
+          )
+        : null}
     </>
   );
 }

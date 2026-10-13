@@ -1,6 +1,7 @@
 import { emptyConversationContextDraft } from '@zeus/shared';
 import type { NativeSessionState } from './sessionTypes.js';
 import { resumeCachedConversationSnapshot } from './conversationSnapshotV2Adapter.js';
+import { retainResourcesOwnedByItem } from './conversationResourceProjection.js';
 
 export const ordinarySessionHotCacheLimit = 6;
 export const sessionHotCacheByteLimit = 32 * 1024 * 1024;
@@ -155,7 +156,17 @@ function sanitizeSessionStateForPersistence(state: NativeSessionState): NativeSe
     /** 旧窗口留下的重复正文不能随缓存恢复再次触发界面错误。 */
     const transcriptEntryIds = authoritativeItemOrder.flatMap((key) => (state.items[key]!.transcript ? [state.items[key]!.transcript!.placement.entryId] : []));
     if (new Set(transcriptEntryIds).size !== transcriptEntryIds.length) return null;
-    const authoritativeItems = Object.fromEntries(authoritativeItemOrder.map((key) => [key, state.items[key]]));
+    /** 缓存首帧也遵守资源归属，不能等联网后才移除串到其他消息的图片。 */
+    const resourceMetadataById = new Map((state.snapshot.v2Paging?.resources.items ?? []).map((resource) => [resource.id, resource]));
+    /** 用户消息只恢复属于自己的附件，保留其他条目的现有资源行为。 */
+    const authoritativeItems = Object.fromEntries(
+      authoritativeItemOrder.map((key) => {
+        /** 只清理用户消息；助手合成交付项仍代表原工具的资源。 */
+        const item = state.items[key]!;
+        if (!['usermessage', 'user'].includes(item.type.toLowerCase().replace(/[\s_\-/]+/gu, ''))) return [key, item];
+        return [key, { ...item, resources: retainResourcesOwnedByItem(item.resources, item.localItemId ?? item.itemId, item.transcript?.placement.entryId, resourceMetadataById) }];
+      }),
+    );
     const emptyQueue = { throughEventSeq: 0, state: { type: 'idle' as const }, submissions: [] };
     const resumedSnapshot = resumeCachedConversationSnapshot(state.snapshot);
     return {
@@ -164,6 +175,12 @@ function sanitizeSessionStateForPersistence(state: NativeSessionState): NativeSe
       reconnectAttempt: 0,
       snapshot: {
         ...resumedSnapshot,
+        /** 同时清理快照副本，避免后续状态合并再次带回错误关联。 */
+        items: resumedSnapshot.items.map((item) =>
+          ['usermessage', 'user'].includes(item.type.toLowerCase().replace(/[\s_\-/]+/gu, ''))
+            ? { ...item, resources: retainResourcesOwnedByItem(item.resources ?? [], item.id, item.transcript.placement.entryId, resourceMetadataById) }
+            : item,
+        ),
         pendingRequestKind: null,
         executionQueue: emptyQueue,
         submissions: [],
