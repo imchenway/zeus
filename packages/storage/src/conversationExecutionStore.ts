@@ -763,6 +763,7 @@ export class ConversationExecutionRepository {
     return this.segmentById(operation.targetSegmentId)!;
   }
 
+  /** 接纳与外部回执共同提交，同时清除接纳前的暂停及错误状态。 */
   acceptSwitchDurably(input: AcceptSwitchInput, settleExternalReceipt?: () => void): ConversationSwitchOperationRecord {
     return this.db.durableTransactionSync(() => {
       const operation = this.requireOpenSwitch(input.operationId);
@@ -811,7 +812,7 @@ export class ConversationExecutionRepository {
       );
       this.db.execute(
         `UPDATE conversation_submissions
-            SET status = 'active', provider_turn_id = ?, submission_outcome = 'accepted',
+            SET status = 'active', provider_turn_id = ?, submission_outcome = 'accepted', paused_reason = NULL, error_json = NULL,
                 accepted_at = ?, timeline_sequence = ?, model_history_sequence = ?, updated_at = ?
           WHERE id = ?`,
         [input.providerTurnId, input.acceptedAt, timelineSequence, modelHistorySequence, input.acceptedAt, operation.submissionId],
@@ -848,6 +849,7 @@ export class ConversationExecutionRepository {
     this.db.execute(`UPDATE conversation_submissions SET execution_snapshot_id = ?, segment_id = ? WHERE id = ? AND conversation_id = ?`, [input.executionSnapshotId, input.segmentId, input.submissionId, input.conversationId]);
   }
 
+  /** 当前分段收到确定接纳后，与新分段一样清除旧的未知或失败标记。 */
   acceptOnCurrentSegmentDurably(input: AcceptCurrentSegmentInput, settleExternalReceipt?: () => void): void {
     this.db.durableTransactionSync(() => {
       const segment = this.currentSegment(input.conversationId);
@@ -875,7 +877,7 @@ export class ConversationExecutionRepository {
       });
       this.db.execute(
         `UPDATE conversation_submissions
-            SET status = 'active', provider_turn_id = ?, submission_outcome = 'accepted',
+            SET status = 'active', provider_turn_id = ?, submission_outcome = 'accepted', paused_reason = NULL, error_json = NULL,
                 accepted_at = ?, timeline_sequence = ?, model_history_sequence = ?, updated_at = ?
           WHERE id = ? AND conversation_id = ?`,
         [input.providerTurnId, input.acceptedAt, timelineSequence, modelHistorySequence, input.acceptedAt, input.submissionId, input.conversationId],

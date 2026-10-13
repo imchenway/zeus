@@ -9,6 +9,8 @@ interface CodexRemoteControlConversationSyncPorts {
   submissions: Pick<ConversationSubmissionRepository, 'listByConversation'>;
   turns: Pick<ConversationTurnRepository, 'listByConversation'>;
   getConversation(conversationId: string): ZeusConversationWithMessagesRecord | undefined;
+  /** 先核对候选线程，接纳后再沿新的会话绑定追赶历史。 */
+  reconcileOutcomeUnknownSwitches?: (conversationId: string) => Promise<void>;
   ensureGenerationReconciled(conversationIds: readonly string[]): Promise<void>;
   reconcile(conversation: ZeusConversationWithMessagesRecord): Promise<void>;
   persist(): Promise<void>;
@@ -28,6 +30,7 @@ export function createCodexRemoteControlConversationSyncApplication(ports: Codex
   function needsProjectListCatchUp(conversationId: string): boolean {
     const conversation = ports.getConversation(conversationId);
     if (!conversation) return false;
+    if (ports.submissions.listByConversation(conversationId).some((submission) => submission.submissionOutcome === 'outcome_unknown')) return true;
     if (conversation.providerState === 'binding' || conversation.providerState === 'active' || conversation.providerState === 'waiting') return true;
     return ports.turns.listByConversation(conversationId).some((turn) => turn.status === 'dispatching' || turn.status === 'running' || turn.status === 'waiting');
   }
@@ -41,18 +44,15 @@ export function createCodexRemoteControlConversationSyncApplication(ports: Codex
     const work = (async () => {
       if (ports.isClosed()) return;
       const conversation = ports.getConversation(input.conversationId);
-      if (
-        !conversation ||
-        conversation.agentKind !== 'codex' ||
-        conversation.archived ||
-        !conversation.providerThreadId ||
-        conversation.providerState === 'archived' ||
-        conversation.providerState === 'closed' ||
-        conversation.providerState === 'failed'
-      ) {
+      if (!conversation || conversation.agentKind !== 'codex' || conversation.archived || conversation.providerState === 'archived' || conversation.providerState === 'closed' || conversation.providerState === 'failed') {
         return;
       }
       lastCheckStartedAt.set(input.conversationId, startedAt);
+      // 首次发送也可能停在候选分段，此时产品会话还没有已接纳的线程绑定。
+      await ports.reconcileOutcomeUnknownSwitches?.(conversation.id);
+      /** 恢复可能提升新线程或遇到归档，不能继续使用恢复前的会话快照。 */
+      const recovered = ports.getConversation(conversation.id);
+      if (ports.isClosed() || !recovered || recovered.archived || !recovered.providerThreadId) return;
       // 新执行宿主必须先完成当前世代对账和活动线程订阅恢复；本地仍标记为活动
       // 恰好是断线现场，不能在世代恢复之前用普通轮询门禁把它短路。
       await ports.ensureGenerationReconciled([conversation.id]);

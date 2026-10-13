@@ -1972,6 +1972,9 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       throw coordinatorError('ZEUS_NATIVE_QUEUE_PROVIDER_ARCHIVED', '会话已归档，请先恢复会话再继续。');
     }
     if (input.intent === 'check') {
+      // 先核对本次发送的候选线程；旧线程空闲不能证明新线程是否接收了消息。
+      await options.reconcileOutcomeUnknownSwitches?.(conversation.id);
+      conversation = requireConversation(conversation.id);
       // 未绑定线程时没有外部事实可读；不得为检查创建线程或准备工作目录。
       if (conversation.providerThreadId) {
         await providerThreadAuthority.inspect(conversation, null, { readOnly: true });
@@ -3402,6 +3405,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     submissions: options.submissions,
     turns: options.turns,
     getConversation: (conversationId) => options.conversations.getById(conversationId),
+    reconcileOutcomeUnknownSwitches: options.reconcileOutcomeUnknownSwitches,
     ensureGenerationReconciled,
     reconcile: (conversation) => enqueueProviderTurnReconciliation(conversation, { priority: 'control' }),
     persist,

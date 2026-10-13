@@ -58,6 +58,8 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
   usage: CodexUsageService;
   execution: ConversationExecutionRepository;
   commandDeliveries: CommandDeliveryRepository;
+  /** 核对跨分段发送的候选线程；与组合根的启动恢复共用持久接纳流程。 */
+  reconcileOutcomeUnknownSwitches?: (conversationId: string) => Promise<void>;
   toolResults: ManagedConversationToolResultStore;
   eventFlow: ConversationEventFlowControl;
   broadcast: (type: string, payload: Record<string, unknown>) => void;

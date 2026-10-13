@@ -2034,6 +2034,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       execution: conversationExecution,
       commandDeliveries,
       toolResults: conversationToolResults,
+      // 只读检查与后台同步都必须核对真正收到本次发送的候选线程。
+      reconcileOutcomeUnknownSwitches: (conversationId) => recoverUnifiedOutcomeUnknownSwitches(conversationId),
       eventFlow: conversationEventFlow,
       browserAutomation: options.browserAutomation,
       workTools: nativeWorkTools,
@@ -2297,13 +2299,19 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     },
   });
   dispatchUnifiedConversationQueueHead = (conversationId) => unifiedQueueDispatchScheduler.request(conversationId);
-  const recoverUnifiedOutcomeUnknownSwitches = async () => {
-    const operations = conversationExecution.listOpenSwitchOperations().filter((operation) => operation.state === 'outcome_unknown');
+  /** 启动、后台同步和手动检查共用候选线程核对；只补接纳事实，不重发消息。 */
+  const recoverUnifiedOutcomeUnknownSwitches = async (conversationId?: string) => {
+    /** 按当前会话缩小范围，避免一次检查拉取所有未知提交。 */
+    const operations = conversationExecution.listOpenSwitchOperations().filter((operation) => operation.state === 'outcome_unknown' && (!conversationId || operation.conversationId === conversationId));
     for (const operation of operations) {
       const segment = conversationExecution.segmentById(operation.targetSegmentId);
       const submission = conversationSubmissions.getById(operation.submissionId);
       if (!segment || !submission || segment.runtimeKind !== 'codex' || !segment.nativeSessionId) continue;
+      /** 归档边界在只读恢复时同样有效。 */
+      const conversation = conversations.getRecordById(operation.conversationId);
+      if (!conversation || conversation.archived || conversation.providerState === 'archived') continue;
       try {
+        await codexAppServerManager.ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) });
         const page = await codexAppServerManager.listThreadTurns({ threadId: segment.nativeSessionId, limit: 100, sortDirection: 'desc', itemsView: 'notLoaded' });
         /** 逐轮读取完整条目以核对原消息身份，命中后停止下载其余历史。 */
         let matched: (typeof page.data)[number] | undefined;
@@ -2323,6 +2331,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           });
           continue;
         }
+        /** 读取期间其他入口可能已经恢复或归档会话，落库前复验当前归属。 */
+        const currentConversation = conversations.getRecordById(operation.conversationId);
+        if (conversationExecution.getSwitch(operation.id)?.state !== 'outcome_unknown' || !currentConversation || currentConversation.archived || currentConversation.providerState === 'archived') continue;
         const recoveredAt = now().toISOString();
         const persisted = isNativeApiRecord(JSON.parse(submission.inputJson)) ? (JSON.parse(submission.inputJson) as Record<string, unknown>) : {};
         const turnId = `conversation_turn_${createHash('sha256').update(`${operation.conversationId}\0${segment.id}\0${matched.id}`).digest('hex').slice(0, 24)}`;
@@ -2334,7 +2345,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
             providerTurnId: matched.id,
             turnId,
             acceptanceEvidence: {
-              source: 'startup_reconciliation',
+              source: 'provider_history_reconciliation',
               nativeSessionId: segment.nativeSessionId,
               clientUserMessageId: submission.clientMessageId,
               nativeTurnListed: true,
@@ -2343,8 +2354,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
               text: typeof persisted.text === 'string' ? persisted.text : '',
               ...(typeof persisted.displayText === 'string' ? { displayText: persisted.displayText } : {}),
               ...(Array.isArray(persisted.attachments) ? { attachments: persisted.attachments } : {}),
+              ...(isNativeApiRecord(persisted.taskPushLayout) ? { taskPushLayout: persisted.taskPushLayout } : {}),
               ...(Array.isArray(persisted.browserComments) ? { browserComments: persisted.browserComments } : {}),
               ...(isNativeApiRecord(persisted.conversationContext) ? { conversationContext: persisted.conversationContext } : {}),
+              ...(isNativeApiRecord(persisted.questionAnswer) ? { questionAnswer: persisted.questionAnswer } : {}),
             },
             acceptedAt: recoveredAt,
           },
@@ -2353,7 +2366,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
                 commandDeliveries.reconcileUnknownAsAcceptedInCurrentTransaction({
                   outboxId: unknownOutbox.id,
                   evidence: {
-                    source: 'startup_provider_history_reconciliation',
+                    source: 'provider_history_reconciliation',
                     nativeSessionId: segment.nativeSessionId,
                     clientUserMessageId: submission.clientMessageId,
                     nativeTurnListed: true,
@@ -2382,6 +2395,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           payload: { operationId: operation.id, nativeTurnId: matched.id, clientUserMessageId: submission.clientMessageId },
           occurredAt: recoveredAt,
         });
+        publishNativeConversationEvent('conversation.queue.changed', { conversationId: operation.conversationId, submissionId: submission.id, queueDispatchRequested: false });
       } catch (error) {
         conversationExecution.persistWarning({
           conversationId: operation.conversationId,
