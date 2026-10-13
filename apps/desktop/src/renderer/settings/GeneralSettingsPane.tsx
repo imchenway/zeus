@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { defaultInputSuggestionSettings, normalizeTaskBranchPrefix, type InputSuggestionModelOption } from '@zeus/shared';
+import { codexCapabilitiesChangedEvent } from '../features/codex/codexApiClient.js';
 import type { AppShellSettings } from '../apiClient.js';
 import type { SettingsApiClient } from '../features/settings/settingsApiClient.js';
 import { NativeControlRow, NativeSettingsPane } from '../features/workspace/workspaceSupport.js';
@@ -41,6 +42,21 @@ export function GeneralSettingsPane(props: {
   const [modelsRevision, setModelsRevision] = useState(0);
   /** 加载期间保持已保存的选择，不自动挑选第一个模型。 */
   const [modelsLoading, setModelsLoading] = useState(false);
+  /** 档位只来自已选模型，切换模型时重新采用自动最低。 */
+  const selectedSuggestionModel = suggestionModels.find((model) => model.id === suggestions.modelRef);
+  /** 已失效的显式档位保留可见提示，不静默改用其他档位。 */
+  const suggestionEfforts = selectedSuggestionModel?.supportedReasoningEfforts ?? [];
+
+  useEffect(() => {
+    /** 返回窗口或登录能力变化后重新读取目录，省去常驻刷新按钮。 */
+    const refresh = () => setModelsRevision((value) => value + 1);
+    window.addEventListener('focus', refresh);
+    window.addEventListener(codexCapabilitiesChangedEvent, refresh);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener(codexCapabilitiesChangedEvent, refresh);
+    };
+  }, []);
 
   useEffect(() => {
     if (!props.client) return;
@@ -165,14 +181,18 @@ export function GeneralSettingsPane(props: {
         <h3>{zh ? '输入建议' : 'Input suggestions'}</h3>
         <NativeSettingsPane label={zh ? '输入建议' : 'Input suggestions'}>
           <NativeControlRow
-            title={zh ? '回复后的输入建议' : 'Suggest the next message'}
-            description={zh ? '回复结束后显示灰字。光标在输入框内时按 Tab 采纳，会增加专用模型用量。' : 'Show a gray suggestion after a reply. Press Tab in the composer to accept. This uses the selected model.'}
+            title={zh ? '自动显示输入建议' : 'Automatic input suggestions'}
+            description={
+              zh
+                ? '回复结束后显示灰字，按 Tab 采纳。关闭后仍可点击输入框星光按钮。每次生成会使用专用模型。'
+                : 'Show a gray suggestion after a reply; press Tab to accept. The sparkle button remains available when this is off. Each request uses the suggestion model.'
+            }
           >
             <label className="settings-switch-state">
               <input
                 className="native-switch-input"
                 type="checkbox"
-                aria-label={zh ? '启用输入建议' : 'Enable input suggestions'}
+                aria-label={zh ? '启用自动输入建议' : 'Enable automatic input suggestions'}
                 checked={suggestions.enabled}
                 disabled={!props.client || !suggestions.modelRef}
                 onChange={(event) => void save({ inputSuggestions: { ...suggestions, enabled: event.currentTarget.checked } })}
@@ -188,21 +208,39 @@ export function GeneralSettingsPane(props: {
               size="regular"
               ariaLabel={zh ? '输入建议专用模型' : 'Input suggestion model'}
               value={suggestions.modelRef ?? ''}
-              disabled={!props.client || modelsLoading}
-              onChange={(value) => void save({ inputSuggestions: { enabled: suggestions.enabled && Boolean(value), modelRef: value || null } })}
+              disabled={!props.client || (modelsLoading && !suggestionModels.length)}
+              onChange={(value) => void save({ inputSuggestions: { enabled: suggestions.enabled && Boolean(value), modelRef: value || null, effort: null } })}
               options={[
                 { value: '', label: zh ? '请选择模型' : 'Choose a model' },
                 ...suggestionModels.map((model) => ({ value: model.id, label: model.label })),
                 ...(suggestions.modelRef && !suggestionModels.some((model) => model.id === suggestions.modelRef) ? [{ value: suggestions.modelRef, label: `${suggestions.modelRef} (${zh ? '不可用' : 'unavailable'})`, disabled: true }] : []),
               ]}
             />
-            <Button size="compact" disabled={!props.client || modelsLoading} onClick={() => setModelsRevision((value) => value + 1)}>
-              {zh ? '刷新模型' : 'Refresh models'}
-            </Button>
+          </NativeControlRow>
+          <NativeControlRow
+            title={zh ? '推理深度' : 'Reasoning effort'}
+            description={zh ? '仅用于输入建议和润色。较高档位可能更慢、用量更多；每次最多等待 20 秒。' : 'Applies to suggestions and polishing only. Higher effort may take longer and use more tokens. Each request has a 20-second limit.'}
+          >
+            <ZeusSelect
+              size="regular"
+              ariaLabel={zh ? '输入建议推理深度' : 'Input suggestion reasoning effort'}
+              value={suggestions.effort ?? ''}
+              disabled={!props.client || !selectedSuggestionModel || (!suggestionEfforts.length && !suggestions.effort)}
+              searchable={false}
+              onChange={(effort) => void save({ inputSuggestions: { ...suggestions, effort: effort || null } })}
+              options={[
+                { value: '', label: suggestionEfforts.length ? (zh ? '自动（最低档位）' : 'Automatic (lowest effort)') : zh ? '模型未提供可选档位' : 'No selectable effort' },
+                ...suggestionEfforts.map((effort) => ({ value: effort, label: effort })),
+                ...(suggestions.effort && !suggestionEfforts.includes(suggestions.effort) ? [{ value: suggestions.effort, label: `${suggestions.effort} (${zh ? '不可用' : 'unavailable'})`, disabled: true }] : []),
+              ]}
+            />
           </NativeControlRow>
           {suggestionModelWarning ? (
             <p className="settings-field-error" role="status">
               {suggestionModelWarning}
+              <Button size="compact" disabled={!props.client || modelsLoading} onClick={() => setModelsRevision((value) => value + 1)}>
+                {zh ? '重试加载' : 'Retry loading'}
+              </Button>
             </p>
           ) : null}
         </NativeSettingsPane>

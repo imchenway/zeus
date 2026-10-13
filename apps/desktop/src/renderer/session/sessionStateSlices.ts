@@ -1,5 +1,6 @@
 import { classifyAssistantMessage, emptyConversationContextDraft } from '@zeus/shared';
 import type { NativeSessionItemBuffer, NativeSessionState } from './sessionTypes.js';
+import { isInputSuggestionPendingMessage, isInputSuggestionReply } from './sessionSelectors.js';
 
 const emptyItems: NativeSessionState['items'] = Object.freeze({});
 const emptyItemOrder: NativeSessionState['itemOrder'] = Object.freeze([]) as unknown as NativeSessionState['itemOrder'];
@@ -65,29 +66,37 @@ export function createConversationTranscriptStateSelector(): StateSelector {
   }));
 }
 
-/** 输入区只订阅草稿、附件、运行选择、用量和当前轮次控制字段。 */
+/** 输入区订阅已完成正文和提交状态以触发建议，仍隔离逐字正文与过程输出。 */
 export function createConversationComposerStateSelector(): StateSelector {
-  return cachedSelector((state) => ({
-    ...state,
-    changeSetsByProviderId: emptyChangeSets,
-    terminalTurnIds: emptyTerminalTurns,
-    items: emptyItems,
-    // 当前摘要只属于会话正文，不能驱动输入区重新渲染。
-    currentReasoningItem: null,
-    itemOrder: emptyItemOrder,
-    queue: null,
-    tokenUsage: null,
-    sessionMetrics: null,
-    rateLimits: null,
-    mcpStartup: null,
-    seenEventIds: emptySeenEvents,
-    lastSequenceByGeneration: emptySequences,
-    lastEventId: null,
-    transcriptRevision: 0,
-    feedbackEpoch: 0,
-    visibleFeedbackEpoch: 0,
-    error: null,
-  }));
+  /** 只在完整回复或待发送消息变化时更新输入区正文投影。 */
+  let previousSuggestionItems: NativeSessionState['items'] = emptyItems;
+  return cachedSelector((state) => {
+    /** 稳定条目引用避免每个流式事件都重绘输入器。 */
+    const entries = Object.entries(state.items).filter(([, item]) => isInputSuggestionReply(item) || isInputSuggestionPendingMessage(item));
+    /** 对照上次完整回复与提交集合，不把流式文本带入输入器。 */
+    const previousEntries = Object.entries(previousSuggestionItems);
+    if (entries.length !== previousEntries.length || entries.some(([key, item], index) => previousEntries[index]?.[0] !== key || previousEntries[index]?.[1] !== item)) previousSuggestionItems = Object.fromEntries(entries);
+    return {
+      ...state,
+      changeSetsByProviderId: emptyChangeSets,
+      terminalTurnIds: emptyTerminalTurns,
+      items: previousSuggestionItems,
+      // 当前摘要只属于会话正文，不能驱动输入区重新渲染。
+      currentReasoningItem: null,
+      itemOrder: emptyItemOrder,
+      tokenUsage: null,
+      sessionMetrics: null,
+      rateLimits: null,
+      mcpStartup: null,
+      seenEventIds: emptySeenEvents,
+      lastSequenceByGeneration: emptySequences,
+      lastEventId: null,
+      transcriptRevision: 0,
+      feedbackEpoch: 0,
+      visibleFeedbackEpoch: 0,
+      error: null,
+    };
+  });
 }
 
 /** 排队卡片订阅权威队列、本地待接纳消息和操作闸机，不随正文流、草稿或附件变化重绘。 */

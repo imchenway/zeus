@@ -6427,6 +6427,106 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
     0 1px 2px var(--session-shadow-soft);
 }
 
+/* 星光入口只占编辑区右上角，不压住附件、项目选择或底部工具。 */
+.session-codex-parity-v1 .session-composer-editor-with-suggestion {
+  min-inline-size: 0;
+  position: relative;
+}
+
+.session-codex-parity-v1 .session-composer-editor-with-suggestion[data-enabled='true'] {
+  padding-inline-end: 36px;
+}
+
+.session-codex-parity-v1 .session-suggestion-action {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: 0;
+  z-index: 1;
+}
+
+.session-codex-parity-v1 .session-suggestion-button {
+  display: grid;
+  place-items: center;
+  inline-size: 30px;
+  block-size: 30px;
+  padding: 5px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--session-text-muted);
+  cursor: pointer;
+}
+
+.session-codex-parity-v1 .session-suggestion-button:not(:disabled):hover {
+  background: var(--zeus-interaction-hover);
+  color: var(--session-text);
+}
+
+.session-codex-parity-v1 .session-suggestion-button:focus-visible {
+  outline: 2px solid var(--session-focus-outline);
+  outline-offset: 2px;
+}
+
+.session-codex-parity-v1 .session-suggestion-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.session-codex-parity-v1 .session-suggestion-button svg {
+  inline-size: 20px;
+  block-size: 20px;
+}
+
+/* 候选保留完整正文，长文本在输入框上方独立滚动。 */
+.session-codex-parity-v1 .session-suggestion-preview {
+  display: grid;
+  gap: 10px;
+  min-inline-size: 0;
+  padding: 12px;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 12px;
+  background: var(--zeus-product-panel);
+  color: var(--session-text);
+  font-size: 13px;
+}
+
+.session-codex-parity-v1 .session-suggestion-preview-text {
+  max-block-size: min(32vh, 280px);
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+.session-codex-parity-v1 .session-suggestion-preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.session-codex-parity-v1 .session-suggestion-preview-actions small {
+  color: var(--session-text-muted);
+}
+
+.session-codex-parity-v1 .session-suggestion-spinner {
+  animation: session-suggestion-spin 900ms linear infinite;
+}
+
+/* 减少动态效果的系统偏好同样适用于手动生成。 */
+@media (prefers-reduced-motion: reduce) {
+  .session-codex-parity-v1 .session-suggestion-spinner {
+    animation: none;
+  }
+}
+
+/* 旋转仅表示本次请求进行中，不通过动效表示进度百分比。 */
+@keyframes session-suggestion-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .session-codex-parity-v1 .session-composer-input-frame > textarea {
   appearance: none;
   background: transparent !important;

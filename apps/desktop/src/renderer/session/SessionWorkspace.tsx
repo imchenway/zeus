@@ -85,6 +85,8 @@ import { ConversationMarkdown } from './ConversationMarkdown.js';
 import { autosizeTextarea } from './textareaAutosize.js';
 import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
 import { conversationAttachmentIdentity, ConversationComposerAttachments } from './ConversationComposerAttachments.js';
+import { useInputSuggestion } from './useInputSuggestion.js';
+import { InputSuggestionButton, InputSuggestionPreview, InputSuggestionStatus } from './InputSuggestionControl.js';
 import { ContextUsageIndicator } from './ContextUsageIndicator.js';
 import { IconTooltip } from '../ui/IconTooltip.js';
 import { ServiceTierToggle } from './ServiceTierToggle.js';
@@ -777,7 +779,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     <SessionWorkspace
       language={props.language}
       inputSuggestionSettings={props.inputSuggestionSettings}
-      onGenerateInputSuggestion={props.client.generateInputSuggestion ? (turnId, signal) => props.client.generateInputSuggestion!(displayedConversation.projectId, displayedConversation.id, turnId, signal) : undefined}
+      onGenerateInputSuggestion={props.client.generateInputSuggestion}
       state={displayedState}
       stateController={displayedState === state ? controller : undefined}
       conversation={displayedConversation}
@@ -3119,6 +3121,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       ) : (
         <NewConversationComposer
           key={owner?.kind === 'task' ? `task:${props.task?.id}` : 'project'}
+          inputSuggestionSettings={props.inputSuggestionSettings}
+          onGenerateInputSuggestion={props.onGenerateInputSuggestion}
           drafts={props.newConversationDrafts}
           language={props.language}
           taskBranchPrefix={props.taskBranchPrefix}
@@ -3269,6 +3273,10 @@ function isComposerWritableForFocus(state: NativeSessionState | null, readOnly: 
 }
 
 export function NewConversationComposer(props: {
+  /** 新建项目、临时和任务会话使用同一专用模型设置。 */
+  inputSuggestionSettings?: ConversationComposerProps['inputSuggestionSettings'];
+  /** 未创建会话也可主动润色草稿，不提前启动 Provider。 */
+  onGenerateInputSuggestion?: ConversationComposerProps['onGenerateInputSuggestion'];
   drafts?: NewConversationDraftStore;
   language: SessionUiLanguage;
   /** 新建项目会话工作树时使用的全局分支前缀。 */
@@ -3670,10 +3678,22 @@ export function NewConversationComposer(props: {
     }
   }
 
+  /** 新草稿只在用户点击时发送，项目和任务切换立即取消旧结果。 */
+  const suggestion = useInputSuggestion({
+    scopeKey: `new:${props.owner?.kind === 'task' ? props.owner.taskId : (props.owner?.projectId ?? '')}`,
+    projectId: props.owner?.projectId,
+    draft: content,
+    eligible: Boolean(props.owner) && !goalInputActive && !isComposing && !inputResources.processing,
+    working: submitting,
+    settings: props.inputSuggestionSettings,
+    generate: props.onGenerateInputSuggestion,
+  });
+
   const composer = (
     <section
       className="session-composer-shell session-new-conversation-composer"
       aria-label={copy.newInput}
+      data-input-suggestion={suggestion.polishedText || suggestion.pending || suggestion.reason ? 'true' : undefined}
       aria-busy={submitting || executionContextBusy || capabilitiesLoading || inputResources.processing || undefined}
       data-goal-input={goalInputActive ? 'true' : 'false'}
       data-resource-dragging={inputResources.dragging ? 'true' : 'false'}
@@ -3696,6 +3716,7 @@ export function NewConversationComposer(props: {
           {typeof visibleLocalError === 'string' ? visibleLocalError : visibleLocalError.message}
         </p>
       ) : null}
+      <InputSuggestionPreview suggestion={suggestion} inputRef={textareaRef} language={props.language} />
       <div className="session-composer-input-frame" data-goal-input={goalInputActive ? 'true' : 'false'}>
         {props.owner?.kind === 'project' && props.projects?.length ? (
           <NewConversationExecutionContext
@@ -3760,77 +3781,96 @@ export function NewConversationComposer(props: {
             }}
           />
         ) : (
-          <StructuredComposerInput
-            tokenDraft={tokenDraft}
-            value={content}
-            onValueChange={setContent}
-            onSelectionChange={(selection) => {
-              structuredSelectionRef.current = selection;
-            }}
-            textareaRef={textareaRef}
-            projectId={props.owner?.projectId}
-            language={props.language}
-            disabled={submitting || !props.owner}
-            autoFocus={props.autoFocus}
-            ariaLabel={copy.newInput}
-            ariaKeyShortcuts="Enter Shift+Enter Escape"
-            placeholder={copy.newPlaceholder}
-            loadCatalog={props.onLoadSkills}
-            loadEmployees={props.onLoadDigitalEmployees}
-            goalAvailable={goalAvailable}
-            onPlanMode={() => setCollaborationMode((current) => (current === 'plan' ? 'default' : 'plan'))}
-            onGoalMode={() => {
-              if (!goalAvailable) return;
-              setGoalInputOpen(true);
-              requestAnimationFrame(() => textareaRef.current?.focus());
-            }}
-            onOpenComputerSettings={props.onOpenComputerSettings}
-            onCompositionStart={() => setIsComposing(true)}
-            onCompositionEnd={() => setIsComposing(false)}
-            onPaste={inputResources.handlePaste}
-            onKeyDown={(event) => {
-              if (!goalInputActive) inputResources.handlePasteShortcut(event);
-              const intent = resolveComposerKeyIntent({
-                key: event.key,
-                shiftKey: event.shiftKey,
-                isComposing: isComposing || event.nativeEvent.isComposing,
-                keyCode: event.nativeEvent.keyCode,
-                repeat: event.repeat,
-              });
-              if (intent === 'escape' && goalInputActive) {
-                event.preventDefault();
-                event.stopPropagation();
-                setGoalInputOpen(false);
-                return;
-              }
-              if (intent !== 'submit') return;
-              event.preventDefault();
-              if (goalInputActive) {
-                if (goalObjectiveValid) void submit({ content: content.trim() ? content : goalObjective, goalObjective });
-                return;
-              }
-              if (/^\/goal(?:\s|$)/u.test(content.trim()) && goalAvailable) {
-                if (structuredSelectionRef.current.expertMentions.length > 0) {
-                  setLocalError(props.language === 'zh-CN' ? '目标模式暂不支持指定数字员工。请退出目标模式后再选择。' : 'Goal mode does not support choosing a digital employee. Exit goal mode before selecting one.');
-                  return;
-                }
-                const objective = content.trim().slice('/goal'.length).trim();
-                if (['pause', 'resume', 'clear'].includes(objective)) return;
-                setContent('');
-                if (!objective) {
-                  setGoalInputOpen(true);
-                  requestAnimationFrame(() => textareaRef.current?.focus());
-                  return;
-                }
-                setGoalObjective(objective);
+          <div className="session-composer-editor-with-suggestion" data-enabled={props.onGenerateInputSuggestion ? 'true' : undefined}>
+            {props.onGenerateInputSuggestion ? <InputSuggestionButton suggestion={suggestion} draft={content} language={props.language} configured={Boolean(props.inputSuggestionSettings?.modelRef)} /> : null}
+            <StructuredComposerInput
+              tokenDraft={tokenDraft}
+              value={content}
+              onValueChange={(value) => {
+                suggestion.dismiss();
+                setContent(value);
+              }}
+              onSelectionChange={(selection) => {
+                structuredSelectionRef.current = selection;
+              }}
+              textareaRef={textareaRef}
+              projectId={props.owner?.projectId}
+              language={props.language}
+              disabled={submitting || !props.owner}
+              autoFocus={props.autoFocus}
+              ariaLabel={copy.newInput}
+              ariaKeyShortcuts="Enter Shift+Enter Escape"
+              placeholder={copy.newPlaceholder}
+              loadCatalog={props.onLoadSkills}
+              loadEmployees={props.onLoadDigitalEmployees}
+              goalAvailable={goalAvailable}
+              onPlanMode={() => setCollaborationMode((current) => (current === 'plan' ? 'default' : 'plan'))}
+              onGoalMode={() => {
+                if (!goalAvailable) return;
                 setGoalInputOpen(true);
-                void submit({ content: objective, goalObjective: objective });
-                return;
-              }
-              void submit();
-            }}
-          />
+                requestAnimationFrame(() => textareaRef.current?.focus());
+              }}
+              onOpenComputerSettings={props.onOpenComputerSettings}
+              onCompositionStart={() => {
+                suggestion.dismiss();
+                setIsComposing(true);
+              }}
+              onCompositionEnd={() => setIsComposing(false)}
+              onPaste={(event) => {
+                suggestion.dismiss();
+                inputResources.handlePaste(event);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape' && (suggestion.polishedText || suggestion.pending || suggestion.reason)) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  suggestion.dismiss();
+                  return;
+                }
+                if (!goalInputActive) inputResources.handlePasteShortcut(event);
+                const intent = resolveComposerKeyIntent({
+                  key: event.key,
+                  shiftKey: event.shiftKey,
+                  isComposing: isComposing || event.nativeEvent.isComposing,
+                  keyCode: event.nativeEvent.keyCode,
+                  repeat: event.repeat,
+                });
+                if (intent === 'escape' && goalInputActive) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setGoalInputOpen(false);
+                  return;
+                }
+                if (intent !== 'submit') return;
+                event.preventDefault();
+                if (goalInputActive) {
+                  if (goalObjectiveValid) void submit({ content: content.trim() ? content : goalObjective, goalObjective });
+                  return;
+                }
+                if (/^\/goal(?:\s|$)/u.test(content.trim()) && goalAvailable) {
+                  if (structuredSelectionRef.current.expertMentions.length > 0) {
+                    setLocalError(props.language === 'zh-CN' ? '目标模式暂不支持指定数字员工。请退出目标模式后再选择。' : 'Goal mode does not support choosing a digital employee. Exit goal mode before selecting one.');
+                    return;
+                  }
+                  const objective = content.trim().slice('/goal'.length).trim();
+                  if (['pause', 'resume', 'clear'].includes(objective)) return;
+                  setContent('');
+                  if (!objective) {
+                    setGoalInputOpen(true);
+                    requestAnimationFrame(() => textareaRef.current?.focus());
+                    return;
+                  }
+                  setGoalObjective(objective);
+                  setGoalInputOpen(true);
+                  void submit({ content: objective, goalObjective: objective });
+                  return;
+                }
+                void submit();
+              }}
+            />
+          </div>
         )}
+        <InputSuggestionStatus suggestion={suggestion} language={props.language} />
         <div className="session-composer-command-row">
           <span className="session-composer-leading-actions">
             {/* 新建会话与共享输入框使用同一可见提示。 */}
