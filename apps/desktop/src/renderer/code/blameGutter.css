@@ -20,7 +20,8 @@
   max-inline-size: min(68vw, 720px);
   margin-inline-start: 2em;
   color: var(--session-text-muted, #8b93a1);
-  cursor: help;
+  /* 提交注释使用普通箭头，避免问号光标干扰代码阅读。 */
+  cursor: default;
   opacity: 0.72;
 }
 
