@@ -2001,7 +2001,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                           ) : null}
                         </section>
                       ) : (
-                        <NativeSettingsPane label={settingsWorkspaceCopy.release.paneTitle} className="deep-settings-pane release-settings-pane">
+                        <div className="settings-group-stack">
                           <section className="release-update-workbench" aria-label={settingsWorkspaceCopy.release.updateAria}>
                             <section className="release-update-command-row" aria-label={settingsWorkspaceCopy.release.updateActionAria}>
                               <span className="release-update-copy">
@@ -2112,7 +2112,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                               </span>
                             </section>
                           </section>
-                        </NativeSettingsPane>
+                        </div>
                       )}
                     </section>
                   ) : null}
@@ -2150,92 +2150,88 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                             </button>
                           </span>
                         </section>
-                        <section className="settings-archived-conversations-row" aria-label={settingsWorkspaceCopy.data.archivedConversationsAria}>
-                          <span className="settings-row-copy">
-                            <strong>{settingsWorkspaceCopy.data.archivedConversationsTitle}</strong>
-                            <small>{settingsWorkspaceCopy.data.archivedConversationsDescription}</small>
-                          </span>
-                          <div className="settings-archive-filters">
-                            <ZeusSelect
-                              size="regular"
-                              ariaLabel={appShellSettings.appLanguage === 'zh-CN' ? '筛选归档项目' : 'Filter archived projects'}
-                              value={archiveProjectId}
-                              onChange={(id) => {
-                                setArchiveProjectId(id);
-                                setArchiveRequestedPage(1);
-                              }}
-                              options={[
-                                { value: '', label: appShellSettings.appLanguage === 'zh-CN' ? '全部项目' : 'All projects' },
-                                ...Array.from(new Map(archiveItems.map(({ conversation, project }) => [conversation.projectId, { value: conversation.projectId, label: project?.name ?? conversation.projectId }])).values()),
-                              ]}
-                            />
-                            <input
-                              type="search"
-                              className="settings-list-search"
-                              aria-label={appShellSettings.appLanguage === 'zh-CN' ? '搜索归档会话' : 'Search archived conversations'}
-                              placeholder={appShellSettings.appLanguage === 'zh-CN' ? '搜索标题、项目或任务编号' : 'Search title, project or task'}
-                              value={archiveQuery}
-                              onChange={(event) => {
-                                setArchiveQuery(event.currentTarget.value);
-                                setArchiveRequestedPage(1);
-                              }}
-                            />
-                          </div>
-                          <span className="settings-archived-conversation-list" aria-live="polite">
-                            {archivedConversationLoadState === 'loading' ? <small>{settingsWorkspaceCopy.data.loadingArchivedConversations}</small> : null}
-                            {archivedConversationLoadState === 'error' ? (
-                              <span className="settings-archived-conversation-state" role="alert">
-                                <VisibleApplicationError error={archivedConversationError ?? settingsWorkspaceCopy.data.archivedConversationsError} language={appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en'} />
-                                <button type="button" onClick={() => void refreshArchivedConversations()}>
-                                  {settingsWorkspaceCopy.data.retryArchivedConversations}
+                      </NativeSettingsPane>
+                      <section className="settings-archived-conversations-row" aria-label={settingsWorkspaceCopy.data.archivedConversationsAria}>
+                        <span className="settings-row-copy">
+                          <strong>{settingsWorkspaceCopy.data.archivedConversationsTitle}</strong>
+                          <small>{settingsWorkspaceCopy.data.archivedConversationsDescription}</small>
+                        </span>
+                        <div className="settings-archive-filters">
+                          <ZeusSelect
+                            size="regular"
+                            ariaLabel={appShellSettings.appLanguage === 'zh-CN' ? '筛选归档项目' : 'Filter archived projects'}
+                            value={archiveProjectId}
+                            onChange={(id) => {
+                              setArchiveProjectId(id);
+                              setArchiveRequestedPage(1);
+                            }}
+                            options={[
+                              { value: '', label: appShellSettings.appLanguage === 'zh-CN' ? '全部项目' : 'All projects' },
+                              ...Array.from(new Map(archiveItems.map(({ conversation, project }) => [conversation.projectId, { value: conversation.projectId, label: project?.name ?? conversation.projectId }])).values()),
+                            ]}
+                          />
+                          <input
+                            type="search"
+                            className="settings-list-search"
+                            aria-label={appShellSettings.appLanguage === 'zh-CN' ? '搜索归档会话' : 'Search archived conversations'}
+                            placeholder={appShellSettings.appLanguage === 'zh-CN' ? '搜索标题、项目或任务编号' : 'Search title, project or task'}
+                            value={archiveQuery}
+                            onChange={(event) => {
+                              setArchiveQuery(event.currentTarget.value);
+                              setArchiveRequestedPage(1);
+                            }}
+                          />
+                        </div>
+                        <span className="settings-archived-conversation-list" aria-live="polite">
+                          {archivedConversationLoadState === 'loading' ? <small>{settingsWorkspaceCopy.data.loadingArchivedConversations}</small> : null}
+                          {archivedConversationLoadState === 'error' ? (
+                            <span className="settings-archived-conversation-state" role="alert">
+                              <VisibleApplicationError error={archivedConversationError ?? settingsWorkspaceCopy.data.archivedConversationsError} language={appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en'} />
+                              <button type="button" onClick={() => void refreshArchivedConversations()}>
+                                {settingsWorkspaceCopy.data.retryArchivedConversations}
+                              </button>
+                            </span>
+                          ) : null}
+                          {archiveActionError ? (
+                            <small role="alert">
+                              <VisibleApplicationError error={archiveActionError} language={appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en'} />
+                            </small>
+                          ) : null}
+                          {archivedConversationLoadState === 'ready' && filteredArchives.length === 0 ? (
+                            <small>
+                              {normalizedArchiveQuery || archiveProjectId ? (appShellSettings.appLanguage === 'zh-CN' ? '没有匹配的归档会话。' : 'No matching archived conversations.') : settingsWorkspaceCopy.data.emptyArchivedConversations}
+                            </small>
+                          ) : null}
+                          {filteredArchives.slice((archivePage - 1) * settingsPageSize, archivePage * settingsPageSize).map(({ conversation, task, project }) => {
+                            return (
+                              <span className="settings-archived-conversation-item" key={conversation.id}>
+                                <span className="settings-archived-conversation-copy">
+                                  <strong>{conversationDisplayTitle(conversation.title, task?.title, appShellSettings.appLanguage)}</strong>
+                                  <small>
+                                    {task
+                                      ? settingsWorkspaceCopy.data.archivedConversationContext(project?.name ?? conversation.projectId, task.taskCode ?? task.id)
+                                      : settingsWorkspaceCopy.data.archivedProjectConversationContext(project?.name ?? conversation.projectId)}
+                                  </small>
+                                  <time className="settings-archive-date" dateTime={conversation.updatedAt}>
+                                    {formatArchivedConversationDate(conversation.updatedAt, appShellSettings.appLanguage)}
+                                  </time>
+                                </span>
+                                <button type="button" disabled={restoringArchivedConversationId !== null} onClick={() => void restoreArchivedConversation(conversation)}>
+                                  {restoringArchivedConversationId === conversation.id ? settingsWorkspaceCopy.data.restoringArchivedConversation : settingsWorkspaceCopy.data.restoreArchivedConversation}
                                 </button>
                               </span>
-                            ) : null}
-                            {archiveActionError ? (
-                              <small role="alert">
-                                <VisibleApplicationError error={archiveActionError} language={appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en'} />
-                              </small>
-                            ) : null}
-                            {archivedConversationLoadState === 'ready' && filteredArchives.length === 0 ? (
-                              <small>
-                                {normalizedArchiveQuery || archiveProjectId
-                                  ? appShellSettings.appLanguage === 'zh-CN'
-                                    ? '没有匹配的归档会话。'
-                                    : 'No matching archived conversations.'
-                                  : settingsWorkspaceCopy.data.emptyArchivedConversations}
-                              </small>
-                            ) : null}
-                            {filteredArchives.slice((archivePage - 1) * settingsPageSize, archivePage * settingsPageSize).map(({ conversation, task, project }) => {
-                              return (
-                                <span className="settings-archived-conversation-item" key={conversation.id}>
-                                  <span className="settings-archived-conversation-copy">
-                                    <strong>{conversationDisplayTitle(conversation.title, task?.title, appShellSettings.appLanguage)}</strong>
-                                    <small>
-                                      {task
-                                        ? settingsWorkspaceCopy.data.archivedConversationContext(project?.name ?? conversation.projectId, task.taskCode ?? task.id)
-                                        : settingsWorkspaceCopy.data.archivedProjectConversationContext(project?.name ?? conversation.projectId)}
-                                    </small>
-                                    <time className="settings-archive-date" dateTime={conversation.updatedAt}>
-                                      {formatArchivedConversationDate(conversation.updatedAt, appShellSettings.appLanguage)}
-                                    </time>
-                                  </span>
-                                  <button type="button" disabled={restoringArchivedConversationId !== null} onClick={() => void restoreArchivedConversation(conversation)}>
-                                    {restoringArchivedConversationId === conversation.id ? settingsWorkspaceCopy.data.restoringArchivedConversation : settingsWorkspaceCopy.data.restoreArchivedConversation}
-                                  </button>
-                                </span>
-                              );
-                            })}
-                          </span>
-                          <SettingsPagination
-                            label={settingsWorkspaceCopy.data.archivedConversationsTitle}
-                            language={appShellSettings.appLanguage}
-                            total={filteredArchives.length}
-                            page={archivePage}
-                            onChange={setArchiveRequestedPage}
-                            disabled={archivedConversationLoadState === 'loading'}
-                          />
-                        </section>
-                      </NativeSettingsPane>
+                            );
+                          })}
+                        </span>
+                        <SettingsPagination
+                          label={settingsWorkspaceCopy.data.archivedConversationsTitle}
+                          language={appShellSettings.appLanguage}
+                          total={filteredArchives.length}
+                          page={archivePage}
+                          onChange={setArchiveRequestedPage}
+                          disabled={archivedConversationLoadState === 'loading'}
+                        />
+                      </section>
                     </section>
                   ) : null}
                 </div>

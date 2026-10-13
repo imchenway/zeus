@@ -53,6 +53,7 @@ export function TerminalSettingsPane(props: { client: Pick<SettingsApiClient, 'l
       </header>
       <NativeSettingsPane label={zh ? '启动' : 'Startup'}>
         <NativeControlRow
+          className="terminal-startup-row"
           title={zh ? '启动命令' : 'Startup command'}
           description={zh ? '每个新终端在当前项目目录执行一次。留空则不执行，保存后对新终端生效。' : 'Runs once in the current project directory for each new terminal. Leave blank to disable. Changes apply to new terminals after saving.'}
         >

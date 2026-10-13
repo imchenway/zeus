@@ -2549,7 +2549,7 @@ export function activeTaskCreateContentField(taskType: TaskType | ''): Extract<T
   return 'description';
 }
 
-/** Codex macOS 风格纯色设置 pane：用标题、留白和控件边界分组，不再用灰度条带或横线切割内容。 */
+/** 设置分组使用浅边框圆角卡片，组内行分隔和内边距统一由设置样式提供。 */
 export function NativeSettingsPane(props: { label: string; children: ReactNode; className?: string }) {
   return (
     <section className={`native-settings-pane ${props.className ?? ''}`} aria-label={props.label}>
