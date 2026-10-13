@@ -1075,14 +1075,36 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   }, [historyHydrated, maintainLatestPosition, props.state.conversationId]);
 
   /** 用户主动展开过程时进入静态阅读，避免内容增高后的自动贴底移动入口。 */
-  const setTranscriptRowExpanded = useCallback(
-    (rowKey: string, open: boolean, trigger: HTMLButtonElement): void => {
-      if (containerRef.current) {
+  const rememberProcessReadingAnchor = useCallback(
+    (trigger: HTMLButtonElement): void => {
+      /** 入口所在的真实行贯穿首次展开和后续补载，不锚定被内容推移的后方正文。 */
+      const container = containerRef.current;
+      /** 使用虚拟列表的真实身份，确保测量期间入口不会卸载。 */
+      const row = trigger.closest<HTMLElement>('[data-transcript-row-key]');
+      if (container) {
+        clearUserScrollIntent();
         scrollController.onExplicitHistoryRequest();
-        rememberStaticReadingAnchor(containerRef.current);
-        pendingProcessAnchorRef.current = { trigger, top: trigger.getBoundingClientRect().top };
+        if (row) {
+          staticReadingAnchorRef.current = {
+            itemKey: null,
+            rowKey: row.dataset.transcriptRowKey ?? null,
+            topOffset: row.getBoundingClientRect().top - container.getBoundingClientRect().top,
+            scrollHeight: container.scrollHeight,
+            scrollTop: container.scrollTop,
+          };
+          setStaticReadingAnchorRowKey(staticReadingAnchorRef.current.rowKey);
+        } else rememberStaticReadingAnchor(container);
         setReturnToLatestVisible(true);
       }
+    },
+    [clearUserScrollIntent, rememberStaticReadingAnchor, scrollController],
+  );
+
+  /** 整轮开合额外补偿提交首帧，异步内容继续沿用同一阅读锚点。 */
+  const setTranscriptRowExpanded = useCallback(
+    (rowKey: string, open: boolean, trigger: HTMLButtonElement): void => {
+      rememberProcessReadingAnchor(trigger);
+      pendingProcessAnchorRef.current = { trigger, top: trigger.getBoundingClientRect().top };
       setRowExpansionOverrides((current) => {
         if (current.get(rowKey) === open) return current;
         const next = new Map(current);
@@ -1090,7 +1112,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
         return next;
       });
     },
-    [rememberStaticReadingAnchor, scrollController],
+    [rememberProcessReadingAnchor],
   );
 
   useLayoutEffect(() => {
@@ -1345,6 +1367,11 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           tabIndex={-1}
           aria-live="off"
           aria-label={props.language === 'zh-CN' ? '对话记录' : 'Conversation transcript'}
+          onClickCapture={(event) => {
+            /** 嵌套操作入口也进入静态阅读，键盘点击与鼠标点击共用锚点。 */
+            const trigger = event.target instanceof Element ? event.target.closest<HTMLButtonElement>('.session-activity-group .session-turn-process-control > button') : null;
+            if (trigger) rememberProcessReadingAnchor(trigger);
+          }}
           onWheel={(event) => {
             if (event.deltaY !== 0) beginUserScrollIntent();
             if (event.deltaY < 0) armHistoryPaging();

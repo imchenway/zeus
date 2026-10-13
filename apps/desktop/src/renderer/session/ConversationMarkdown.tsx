@@ -98,7 +98,7 @@ export interface ConversationMarkdownProps {
   onRenderSettled?: () => void;
   /** 用户消息中的结构化引用标签，按原标签文本渲染为胶囊而不是普通 Markdown 文本。 */
   structuredTokens?: readonly StructuredMessageToken[];
-  /** 已冻结的短文档可一次呈现，长会话继续按批次渲染。 */
+  /** 编辑器等场景可主动关闭流式分批；已完成正文默认一次呈现。 */
   renderImmediately?: boolean;
   /** 输入框可替换表格交互，单元格解析、安全链接和内联格式仍沿用正文渲染。 */
   customComponentsId?: string;
@@ -273,9 +273,9 @@ export const ConversationMarkdown = memo(function ConversationMarkdown(props: Co
           htmlPolicy="escape"
           typewriter={false}
           fade={false}
-          smoothStreaming={!props.renderImmediately}
+          smoothStreaming={props.phase === 'streaming' && !props.renderImmediately}
           smoothStreamingOptions={SMOOTH_STREAMING_OPTIONS}
-          batchRendering={!props.renderImmediately}
+          batchRendering={props.phase === 'streaming' && !props.renderImmediately}
           initialRenderBatchSize={24}
           renderBatchSize={16}
           renderBatchDelay={8}

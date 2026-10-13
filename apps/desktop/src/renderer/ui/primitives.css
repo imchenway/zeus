@@ -277,8 +277,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   transition-timing-function: var(--zeus-motion-ease-out), var(--zeus-motion-ease-out), linear, step-end;
 }
 
-/* 可见范围展开由原生高度动画接管；保留内容测量，退出期间继续禁止交互。 */
-.macos-ai-app [data-zeus-primitive='collapsible'][data-viewport-reveal='true'] {
+/* 连续高度由原生动画接管；自然内容保持可测量，退出期间继续禁止交互。 */
+.macos-ai-app [data-zeus-primitive='collapsible'][data-animate-height='true'] {
   content-visibility: visible;
   transition: none;
 }
