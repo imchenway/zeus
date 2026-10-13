@@ -1,6 +1,7 @@
 import type { ConversationResource, ConversationFileLocation } from '@zeus/shared';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import { AppWindowIcon as AppWindow } from '@phosphor-icons/react/dist/csr/AppWindow';
+import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import { FileMagnifyingGlassIcon as FileMagnifyingGlass } from '@phosphor-icons/react/dist/csr/FileMagnifyingGlass';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
@@ -98,6 +99,8 @@ function SourceWorkspaceView(props: {
   const [openTarget, setOpenTarget] = useState<ConversationOpenTarget | null>(null);
   /** 图标与菜单共用本机检测结果，不显示未安装应用。 */
   const [openTargets, setOpenTargets] = useState<ConversationResourceOpenTarget[]>([]);
+  /** 每次点击都请求聚焦当前文件的查找面板，关闭后也能再次打开。 */
+  const [searchRequest, setSearchRequest] = useState(0);
   useEffect(() => {
     /** 文件切换后拒绝上一文件的迟到检测结果。 */
     let active = true;
@@ -141,8 +144,8 @@ function SourceWorkspaceView(props: {
       setOpenError(error);
     }
   }
-  /** 系统预览和另存为只使用宿主发放的文件令牌，操作结束撤销全部令牌。 */
-  async function fileAction(action: 'quick-look' | 'export'): Promise<void> {
+  /** 另存为只使用宿主发放的文件令牌，操作结束撤销全部令牌。 */
+  async function fileAction(action: 'export'): Promise<void> {
     /** 当前受信桥接同时负责授权读取、系统操作和授权释放。 */
     const bridge = window.zeus;
     if (!bridge) {
@@ -337,7 +340,16 @@ function SourceWorkspaceView(props: {
           ))}
         </nav>
         <div className="session-source-actions">
-          <button type="button" aria-label={zh ? '系统预览' : 'Quick Look'} data-icon-tooltip={zh ? '系统预览' : 'Quick Look'} disabled={!props.onOpen} onClick={() => void fileAction('quick-look')}>
+          <button
+            type="button"
+            aria-label={zh ? '在文件中搜索' : 'Find in file'}
+            data-icon-tooltip={zh ? '在文件中搜索' : 'Find in file'}
+            disabled={!sourcePreview}
+            onClick={() => {
+              props.onViewModeChange('source');
+              setSearchRequest((request) => request + 1);
+            }}
+          >
             <FileMagnifyingGlass aria-hidden="true" />
           </button>
           {markdownPreview ? (
@@ -359,7 +371,13 @@ function SourceWorkspaceView(props: {
           </span>
           <div className="session-source-open-group">
             <button type="button" disabled={!props.onOpen} title={openApplication?.label} onClick={() => void openResource(openTarget ?? 'system_default')}>
-              {openApplication?.iconDataUrl ? <img src={openApplication.iconDataUrl} alt="" width={18} height={18} /> : <AppWindow aria-hidden="true" />}
+              {openApplication?.iconDataUrl ? (
+                <img src={openApplication.iconDataUrl} alt="" width={18} height={18} />
+              ) : openTarget === 'system_default' ? (
+                <FolderOpen className="session-open-with-default-icon" aria-hidden="true" weight="duotone" />
+              ) : (
+                <AppWindow aria-hidden="true" />
+              )}
               {zh ? '打开' : 'Open'}
             </button>
             <OpenWithMenu
@@ -391,6 +409,7 @@ function SourceWorkspaceView(props: {
       </div>
       {sourcePreview?.truncated ? <div role="status">{zh ? '预览已截断' : 'Preview truncated'}</div> : null}
       <FileReviewContent
+        sourceRequest={searchRequest}
         key={`${props.preview.resource.id}:${sourcePreview?.location?.line ?? ''}:${sourcePreview?.location?.endLine ?? ''}`}
         review={sourcePreview ? { ...sourcePreview.review, location: sourcePreview.location } : undefined}
         zh={zh}
@@ -412,6 +431,7 @@ function SourceWorkspaceView(props: {
                 conversationId={props.preview.resource.kind === 'file' ? props.preview.resource.conversationId : undefined}
                 resourceId={props.preview.resource.kind === 'file' ? props.preview.resource.id : undefined}
                 locale={props.language}
+                searchRequest={searchRequest}
                 location={props.preview.location}
                 widgets={widgets}
                 focusWidget={widgets.find((widget) => widget.line === activeCommentLine)?.element}

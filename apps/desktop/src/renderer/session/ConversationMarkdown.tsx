@@ -773,6 +773,7 @@ export function matchingInlineResource(resources: ConversationResource[], label:
   return resource.kind === 'file' && location ? { ...resource, location } : resource;
 }
 
+/** 按已登记资源核对链接目标，说明标签不充当文件路径。 */
 function inlineResourceHrefMatches(resource: ConversationResource, href: string): boolean {
   if (resource.presentation !== 'inline') return false;
   if (resource.kind === 'website') {
@@ -784,14 +785,8 @@ function inlineResourceHrefMatches(resource: ConversationResource, href: string)
   }
   if (resource.kind === 'attachment') return false;
   const reference = decodeReferencePath(href);
-  return (
-    reference.endsWith(resource.projectRelativePath) ||
-    reference.endsWith(`/${resource.projectRelativePath}`) ||
-    reference
-      .split('/')
-      .pop()
-      ?.replace(/(?::\d+(?::\d+)?)|(?:#L\d+(?:-L?\d+)?)$/u, '') === resource.projectRelativePath.split('/').pop()
-  );
+  // 带目录的引用按完整路径匹配，只有裸文件名才允许省略目录。
+  return reference === resource.projectRelativePath || reference.endsWith(`/${resource.projectRelativePath}`) || (!reference.includes('/') && reference === resource.projectRelativePath.split('/').at(-1));
 }
 
 /** 正文与资源卡共用受信资源；历史元数据未提供网址时按名称回接，打开仍使用资源编号。 */
@@ -804,21 +799,23 @@ function inlineResourceMatches(resource: ConversationResource, label: string, hr
     }
   }
   if (resource.kind === 'attachment') return resource.displayName === label;
-  return resource.displayName === label || inlineResourceHrefMatches(resource, href);
+  // 相同的“代码位置”标签不能把另一份文件的行号带入当前文件。
+  return inlineResourceHrefMatches(resource, href);
 }
 
+/** 先规范化路径编码，再分离引用位置，访问仍要求匹配已登记资源。 */
 function decodeReferencePath(href: string): string {
-  let value = href
-    .replace(/^file:\/\//iu, '')
-    .replace(/#L\d+(?:-L?\d+)?$/iu, '')
-    .replace(/:L\d+(?:-L?\d+)?$/iu, '')
-    .replace(/:\d+(?::\d+)?$/u, '');
+  let value = href.replace(/^file:\/\//iu, '');
   try {
     value = decodeURIComponent(value);
   } catch {
     // 非法编码保留原值，且仍需匹配权威资源后才能获得打开权限。
   }
-  return value;
+  // 先解码再去除位置，百分号编码的行号也必须落在同一文件上。
+  return value
+    .replace(/#L\d+(?:-L?\d+)?$/iu, '')
+    .replace(/:L\d+(?:-L?\d+)?$/iu, '')
+    .replace(/:\d+(?::\d+)?$/u, '');
 }
 
 async function copyText(text: string): Promise<boolean> {

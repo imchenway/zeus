@@ -220,9 +220,9 @@ function turnDetailPaging(snapshot: NativeSessionState['snapshot'], turnId: stri
   };
 }
 
-/** 展开准备尚未读取的详情或恢复失败页；后续页由可见边界自动补齐。 */
-function turnProcessNeedsLoad(paging: ReturnType<typeof turnDetailPaging>): boolean {
-  return !paging?.loading && (!paging?.loaded || Boolean(paging.error));
+/** 完成轮次先补齐预览再显示数量；其余轮次仍由可见边界自动补页。 */
+function turnProcessNeedsLoad(paging: ReturnType<typeof turnDetailPaging>, completeBeforeDisplay = false): boolean {
+  return !paging?.loading && (!paging?.loaded || Boolean(paging.error) || (completeBeforeDisplay && paging.hasMore));
 }
 
 function turnProcessAvailable(snapshot: NativeSessionState['snapshot'], turnId: string): boolean {
@@ -1137,9 +1137,11 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       const processPaging = turnDetailPaging(props.state.snapshot, row.processGroup?.id ?? turn?.providerTurnId ?? row.turnId);
       /** 只有首次读取时，正常完成态优先从头阅读。 */
       const turnCompleted = props.state.terminalTurnIds[row.turnId] === 'completed' || turn?.status === 'completed';
+      /** 只有可补读的完成轮次需要等待最终数量，普通只读投影仍直接展示现有完整数据。 */
+      const processContentPending = Boolean(row.loadMore && turnCompleted && props.state.snapshot?.snapshotV2 && renderProps.onLoadTurnProcess && (!processPaging?.loaded || processPaging.hasMore));
       /** 倒序读取时，自动补页边界放在已读过程之前。 */
       const earlierProcess = processPaging?.direction === 'tail';
-      /** 只在展开后滚动到缺页边界时补读，避免一次读完整个长轮次。 */
+      /** 活动、失败及中断轮次展开后，进入缺页边界时继续补读。 */
       const pageSentinel =
         row.loadMore && processPaging && ((processPaging.loaded && processPaging.hasMore) || processPaging.error) && renderProps.onLoadTurnProcess ? (
           <TurnProcessPageSentinel enabled={expandedRowKeys.has(turnProcessExpansionKey(row.key))} paging={processPaging} turnId={row.turnId} group={row.processGroup} onLoad={renderProps.onLoadTurnProcess} />
@@ -1209,12 +1211,13 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                 itemCount={row.replyVisible ? undefined : processActivityCount}
                 loading={Boolean(row.loadMore && processPaging?.loading)}
                 error={row.loadMore ? processPaging?.error : null}
+                contentPending={processContentPending}
                 open={expandedRowKeys.has(expansionKey)}
                 onOpenChange={(open, trigger) => setTranscriptRowExpanded(expansionKey, open, trigger)}
                 loadKey={row.processGroup?.id}
                 onOpen={async () => {
                   if (!row.loadMore) return;
-                  if (turnProcessNeedsLoad(processPaging) && (row.replyVisible || row.processGroup || !props.onLoadNavigation)) await renderProps.onLoadTurnProcess?.(row.turnId, turnCompleted, row.processGroup);
+                  if (turnProcessNeedsLoad(processPaging, turnCompleted) && (row.replyVisible || row.processGroup || !props.onLoadNavigation)) await renderProps.onLoadTurnProcess?.(row.turnId, turnCompleted, row.processGroup);
                   await renderProps.onLoadTurnArtifacts?.(row.turnId);
                 }}
               >
@@ -1240,12 +1243,13 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
               itemCount={row.replyVisible ? undefined : processActivityCount}
               loading={Boolean(row.loadMore && processPaging?.loading)}
               error={row.loadMore ? processPaging?.error : null}
+              contentPending={processContentPending}
               open={expandedRowKeys.has(expansionKey)}
               onOpenChange={(open, trigger) => setTranscriptRowExpanded(expansionKey, open, trigger)}
               loadKey={row.processGroup?.id}
               onOpen={async () => {
                 if (!row.loadMore) return;
-                if (turnProcessNeedsLoad(processPaging) && (row.replyVisible || row.processGroup || !props.onLoadNavigation)) await renderProps.onLoadTurnProcess?.(row.turnId, turnCompleted, row.processGroup);
+                if (turnProcessNeedsLoad(processPaging, turnCompleted) && (row.replyVisible || row.processGroup || !props.onLoadNavigation)) await renderProps.onLoadTurnProcess?.(row.turnId, turnCompleted, row.processGroup);
                 await renderProps.onLoadTurnArtifacts?.(row.turnId);
               }}
             >
@@ -1296,10 +1300,11 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
             labelKind={historicalProcessAvailable ? 'process' : 'details'}
             loading={Boolean(v2ProcessPaging?.loading)}
             error={v2ProcessPaging?.error}
+            contentPending={Boolean(turnCompleted && renderProps.onLoadTurnProcess && (!v2ProcessPaging?.loaded || v2ProcessPaging.hasMore))}
             open={expandedRowKeys.has(expansionKey)}
             onOpenChange={(open, trigger) => setTranscriptRowExpanded(expansionKey, open, trigger)}
             onOpen={async () => {
-              if (turnProcessNeedsLoad(v2ProcessPaging)) await renderProps.onLoadTurnProcess?.(lastRowItem.turnId, turnCompleted);
+              if (turnProcessNeedsLoad(v2ProcessPaging, turnCompleted)) await renderProps.onLoadTurnProcess?.(lastRowItem.turnId, turnCompleted);
               await renderProps.onLoadTurnArtifacts?.(lastRowItem.turnId);
             }}
           >

@@ -1,4 +1,4 @@
-import { createContext, lazy, Suspense, useEffect, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { createContext, lazy, Suspense, useEffect, useMemo, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { ArrowCounterClockwiseIcon as ArrowCounterClockwise } from '@phosphor-icons/react/dist/csr/ArrowCounterClockwise';
 import { ArrowSquareOutIcon as ArrowSquareOut } from '@phosphor-icons/react/dist/csr/ArrowSquareOut';
@@ -27,6 +27,7 @@ import {
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { FileTypeIcon } from './FileTypeIcon.js';
+import { sourceLocationDecorations } from './sourceLocationDecorations.js';
 import './filePreview.css';
 
 /** 会话统一选择预览容器：图片可用弹窗，其他文件进入右侧审阅。 */
@@ -54,13 +55,17 @@ export function PreviewIconButton({
 }
 
 /** 两类审阅共用切换入口；没有差异直接阅读，读取失败仍保留说明。 */
-export function FileReviewContent(props: { review?: FileReview; zh: boolean; children: ReactNode }) {
+export function FileReviewContent(props: { review?: FileReview; zh: boolean; /** 工具栏搜索时先显示完整源码，再由源码编辑器打开查找。 */ sourceRequest?: number; children: ReactNode }) {
   /** 用户选择只影响本次打开的文件。 */
   const [showDiff, setShowDiff] = useState(Boolean(props.review?.diff && !props.review.location?.line));
   useEffect(() => {
     // 再次点击同一引用也回到源码，不能停留在上次切换的差异页。
     if (props.review?.location?.line) setShowDiff(false);
   }, [props.review?.location]);
+  useEffect(() => {
+    // 搜索当前文件必须挂载源码，不能继续停在差异编辑器。
+    if (props.sourceRequest) setShowDiff(false);
+  }, [props.sourceRequest]);
   return (
     <>
       {props.review?.diff ? (
@@ -349,6 +354,8 @@ function FilePreviewContent(props: {
 }) {
   /** 当前已授权的文件描述。 */
   const item = props.item;
+  /** 通用文本入口与会话源码使用同一行定位高亮，保留范围终点。 */
+  const locationDecorations = useMemo(() => (item.review?.location?.line ? sourceLocationDecorations(() => item.review?.location) : []), [item.review?.location]);
   /** 自动识别可切换为已支持语法或纯文本，不改变文件正文。 */
   const [language, setLanguage] = useState(() => detectSourceLanguage(item.name, item.content) ?? 'text'); /** 用户选择的源码展示状态。 */
   const [source, setSource] = useState(Boolean(item.review?.location?.line));
@@ -453,7 +460,7 @@ function FilePreviewContent(props: {
               </div>
             ) : (
               <div className="file-preview-text">
-                <CodeEditor path={item.name} label={item.name} language={language} content={item.content} revealLine={item.review?.location?.line} readOnly />
+                <CodeEditor path={item.name} label={item.name} language={language} content={item.content} location={item.review?.location} extensions={locationDecorations} readOnly />
               </div>
             )}
           </Suspense>
