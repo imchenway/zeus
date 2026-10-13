@@ -40,7 +40,7 @@ interface AnnotationPair {
 interface CodeDiffViewProps {
   /** 已解析的补丁，只在文件内容变化时转换一次。 */
   file: TaskGitFileDiff;
-  /** 统一视图保留补丁的增删前缀和双行号。 */
+  /** 统一视图按行底色区分增删，保留两侧原始行号。 */
   unified?: boolean;
   /** 新增或删除文件只挂载实际存在的一侧，保留原始行号和评论身份。 */
   singleSide?: 'left' | 'right';
@@ -64,15 +64,19 @@ interface CodeDiffViewProps {
 
 /** 差异全文存于编辑器文档，页面节点只覆盖可视区域。 */
 export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps) {
+  /** 所有入口对新增、删除文件只显示有效侧，不留空白旧行号列。 */
+  const singleSide = props.singleSide ?? (props.file.changeType === 'added' ? 'right' : props.file.changeType === 'deleted' ? 'left' : undefined);
+  /** 两侧均存在时才需要统一视图的双行号。 */
+  const unified = Boolean(props.unified && !singleSide);
   /** 文件内容和布局变化时才构造显示行。 */
-  const rows = useMemo(() => diffRows(props.file, Boolean(props.alignReplacements && !props.unified), Boolean(props.omitHunkHeaders)), [props.file, props.alignReplacements, props.unified, props.omitHunkHeaders]);
+  const rows = useMemo(() => diffRows(props.file, Boolean(props.alignReplacements && !unified), Boolean(props.omitHunkHeaders)), [props.file, props.alignReplacements, unified, props.omitHunkHeaders]);
   /** 行文本只生成一次，不跟随评论或会话输入更新。 */
   const documents = useMemo(
     () => ({
-      left: Text.of(rows.map((row) => (props.unified ? `${row.kind === 'addition' ? '+' : row.kind === 'deletion' ? '-' : row.kind === 'header' ? '' : ' '}${row.kind === 'deletion' ? row.left : row.right}` : row.left))),
+      left: Text.of(rows.map((row) => (unified ? (row.kind === 'deletion' ? row.left : row.right) : row.left))),
       right: Text.of(rows.map((row) => row.right)),
     }),
-    [rows, props.unified],
+    [rows, unified],
   );
   /** 原始行号到显示行的索引供稀疏评论定位。 */
   const positions = useMemo(() => {
@@ -144,9 +148,9 @@ export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps)
       gutter({ class: 'code-diff-gutter', lineMarker: (view, line) => new DiffGutterMarker(view.state.doc.lineAt(line.from).number - 1, side, gutterPortals) }),
       ViewPlugin.define(
         (view) => ({
-          decorations: diffLineDecorations(view, rows, side, Boolean(props.unified)),
+          decorations: diffLineDecorations(view, rows, side, unified),
           update(update: ViewUpdate) {
-            if (update.viewportChanged || update.docChanged) this.decorations = diffLineDecorations(update.view, rows, side, Boolean(props.unified));
+            if (update.viewportChanged || update.docChanged) this.decorations = diffLineDecorations(update.view, rows, side, unified);
           },
         }),
         { decorations: (plugin) => plugin.decorations },
@@ -169,7 +173,7 @@ export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps)
         },
       }),
       EditorView.clipboardOutputFilter.of((text, state) => {
-        if (props.unified || state.selection.ranges.every((range) => range.empty)) return text;
+        if (state.selection.ranges.every((range) => range.empty)) return text;
         // 复制按原始行过滤补位与片段头，保留真实空行和首尾选择范围。
         return state.selection.ranges
           .filter((range) => !range.empty)
@@ -179,7 +183,7 @@ export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps)
             const selected: string[] = [];
             for (let number = fromLine; number <= toLine; number += 1) {
               const row = rows[number - 1];
-              if (!row || row[side === 'left' ? 'leftNumber' : 'rightNumber'] === null) continue;
+              if (!row || (unified ? row.leftNumber === null && row.rightNumber === null : row[side === 'left' ? 'leftNumber' : 'rightNumber'] === null)) continue;
               const line = state.doc.line(number);
               selected.push(state.doc.sliceString(Math.max(range.from, line.from), Math.min(range.to, line.to)));
             }
@@ -189,7 +193,7 @@ export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps)
       }),
     ];
     return { left: make('left'), right: make('right') };
-  }, [rows, pairs, documents, props.unified, gutterPortals]);
+  }, [rows, pairs, documents, unified, gutterPortals]);
 
   useEffect(() => {
     /** 评论折行、编辑和左右宽度变化时同步区块高度。 */
@@ -247,11 +251,11 @@ export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps)
   }, [focusBody]);
 
   return (
-    <div className={`code-diff-view${props.unified ? ' is-unified' : ''}${props.resizable ? ' is-resizable' : ''}${props.singleSide ? ' is-single-side' : ''}`} aria-label={props.label}>
-      {props.singleSide !== 'right' ? (
+    <div className={`code-diff-view${unified ? ' is-unified' : ''}${props.resizable ? ' is-resizable' : ''}${singleSide ? ' is-single-side' : ''}`} aria-label={props.label}>
+      {singleSide !== 'right' ? (
         <CodeEditor
-          path={`${props.file.oldPath || props.file.newPath}:left:${Boolean(props.unified)}`}
-          language={detectSourceLanguage(props.unified ? props.file.newPath || props.file.oldPath : props.file.oldPath) ?? null}
+          path={`${props.file.oldPath || props.file.newPath}:left:${unified}`}
+          language={detectSourceLanguage(unified ? props.file.newPath || props.file.oldPath : props.file.oldPath) ?? null}
           content={documents.left}
           readOnly
           label={props.label}
@@ -261,8 +265,8 @@ export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps)
           }}
         />
       ) : null}
-      {!props.unified && !props.singleSide && props.resizable ? <GitPaneSeparator name="diff" label={props.label} initial={50} min={20} max={80} target=".project-git-diff-side-by-side" /> : null}
-      {!props.unified && props.singleSide !== 'left' ? (
+      {!unified && !singleSide && props.resizable ? <GitPaneSeparator name="diff" label={props.label} initial={50} min={20} max={80} target=".project-git-diff-side-by-side" /> : null}
+      {!unified && singleSide !== 'left' ? (
         <CodeEditor
           path={`${props.file.newPath || props.file.oldPath}:right`}
           language={detectSourceLanguage(props.file.newPath) ?? null}
@@ -280,7 +284,7 @@ export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps)
         if (!row) return null;
         const number = row[portal.side === 'left' ? 'leftNumber' : 'rightNumber'];
         return createPortal(
-          props.unified ? (
+          unified ? (
             <>
               <span>{row.leftNumber ?? ''}</span>
               <span>{row.rightNumber ?? ''}</span>

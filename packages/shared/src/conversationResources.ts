@@ -85,6 +85,9 @@ export type ConversationOpenTarget =
   | 'editor:vscode-insiders'
   | 'editor:cursor'
   | 'editor:windsurf'
+  | 'editor:intellij-idea'
+  | 'editor:rider'
+  | 'editor:webstorm'
   | 'terminal:terminal'
   | 'terminal:ghostty';
 

@@ -10,6 +10,7 @@ import { CheckIcon } from '@phosphor-icons/react/dist/csr/Check';
 import { WarningCircleIcon } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { FolderIcon } from '@phosphor-icons/react/dist/csr/Folder';
 import { FileTypeIcon } from '../code/FileTypeIcon.js';
+import { groupDirectoryFiles } from '../code/groupDirectoryFiles.js';
 import { GitCommitGenerationSettingsButton } from './GitCommitGenerationSettings.js';
 import type { GitCommitModelsClient } from './gitCommitModels.js';
 
@@ -267,37 +268,7 @@ function DeliveryDirectoryFiles(props: {
   onOpen: (path: string) => void;
 }) {
   /** 文件按下一级路径分组，目录排序在普通文件之前。 */
-  const entries = useMemo(() => {
-    /** 每个目录记录其后代，选择时无需重新扫描其他仓库。 */
-    const groups = new Map<string, DeliveryFile[]>();
-    for (const file of props.files) {
-      /** 尾部斜杠区分目录与叶子。 */
-      const remainder = file.path.slice(props.prefix.length);
-      /** 找到当前目录下一级边界。 */
-      const slash = remainder.indexOf('/');
-      /** 叶子保留文件名，目录保留末尾分隔符。 */
-      const name = slash < 0 ? remainder : remainder.slice(0, slash + 1);
-      /** 同目录后代共用一份集合。 */
-      const files = groups.get(name) ?? [];
-      files.push(file);
-      groups.set(name, files);
-    }
-    return [...groups]
-      .map(([name, files]) => {
-        // 连续单子目录合成一行；遇到文件或目录分叉即停止，保持批量勾选范围。
-        while (name.endsWith('/')) {
-          /** 第一条路径提供下一级边界，所有后代必须共享该目录。 */
-          const slash = files[0]!.path.indexOf('/', props.prefix.length + name.length);
-          if (slash < 0) break;
-          /** 合并名称仍保留末尾斜杠，递归与复选框继续使用完整路径。 */
-          const next = files[0]!.path.slice(props.prefix.length, slash + 1);
-          if (!files.every((file) => file.path.startsWith(props.prefix + next))) break;
-          name = next;
-        }
-        return [name, files] as const;
-      })
-      .sort(([left], [right]) => Number(right.endsWith('/')) - Number(left.endsWith('/')) || left.localeCompare(right));
-  }, [props.files, props.prefix]);
+  const entries = useMemo(() => groupDirectoryFiles(props.files, props.prefix), [props.files, props.prefix]);
   return (
     <ol>
       {entries.map(([name, files]) => {

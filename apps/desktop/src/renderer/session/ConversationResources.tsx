@@ -162,6 +162,7 @@ async function loadPendingAttachmentPreview(
   return loadTaskPreview(attachment.localPath);
 }
 
+/** 消息文件引用显示真实文件名，点击仍使用登记资源和本次行号。 */
 export function ConversationInlineResource(
   props: ConversationResourceInteraction & {
     resource: ConversationResource;
@@ -169,14 +170,20 @@ export function ConversationInlineResource(
     language: SessionUiLanguage;
   },
 ) {
+  /** 打开完成前阻止重复请求，不把处理中状态当作打开成功。 */
   const [busy, setBusy] = useState(false);
+  /** 本次打开失败沿用消息中的可见错误说明。 */
   const [error, setError] = useState<unknown>(null);
+  /** 文件位置与展示文字分开，按当前界面语言显示。 */
   const rawLocation = props.resource.kind === 'file' ? locationLabel(props.resource, props.language) : null;
-  /** 已有英文行号由结构化位置统一本地化，避免正文重复追加。 */
-  const label = rawLocation ? props.label.replace(/\s*\(\s*lines?\s+\d+(?:\s*[–-]\s*\d+)?\s*\)\s*$/iu, '') : props.label;
+  /** 文件引用显示真实文件名，说明性链接文字不覆盖文件身份。 */
+  const label = props.resource.kind === 'file' ? props.resource.projectRelativePath.split('/').at(-1) || props.resource.displayName : props.label;
+  /** 位置只追加一次，保留未带行号的普通文件引用。 */
   const location = rawLocation && !label.endsWith(rawLocation) ? rawLocation : null;
+  /** 完整路径或网址作为提示，原文件名不承担访问授权。 */
   const title = props.resource.kind === 'file' ? props.resource.projectRelativePath : props.resource.kind === 'website' ? props.resource.url : props.resource.displayName;
 
+  /** 打开沿用资源身份和当前点击的位置，不按显示名称读取文件。 */
   async function open(): Promise<void> {
     if (!props.onOpenResource || busy) return;
     setBusy(true);
@@ -194,8 +201,14 @@ export function ConversationInlineResource(
     <span className="session-inline-resource-shell" data-resource-kind={props.resource.kind}>
       <button type="button" className="session-inline-resource" title={title} aria-label={`${label}${location ? ` ${location}` : ''}`} aria-busy={busy || undefined} data-error={Boolean(error) || undefined} onClick={() => void open()}>
         <ResourceIcon resource={props.resource} />
+        {props.resource.kind === 'file' ? '\u00a0' : null}
         <span>{label}</span>
-        {location ? <span className="session-inline-resource-location">{location}</span> : null}
+        {location ? (
+          <>
+            {' '}
+            <span className="session-inline-resource-location">{location}</span>
+          </>
+        ) : null}
       </button>
       {error ? <VisibleApplicationError error={error} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} /> : null}
     </span>
@@ -679,6 +692,8 @@ export function OpenWithMenu(props: {
                         <span className="session-open-with-target-label">
                           {target.iconDataUrl ? (
                             <img src={target.iconDataUrl} alt="" width={20} height={20} />
+                          ) : target.id === 'system_default' && props.applicationsOnly ? (
+                            <FolderOpen className="session-open-with-default-icon" aria-hidden="true" weight="duotone" />
                           ) : target.id.startsWith('terminal:') ? (
                             <TerminalWindow aria-hidden="true" />
                           ) : target.id === 'copy_path' || target.id === 'copy_link' ? (

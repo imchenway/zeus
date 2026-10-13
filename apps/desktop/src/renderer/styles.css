@@ -6323,8 +6323,9 @@ body[data-surface='project-git-diff'] .macos-ai-app.zeus-shell.project-git-diff-
   padding: 0 0 8px;
 }
 
-.macos-ai-app .git-hunk-decision code,
-.macos-ai-app .product-drawer-pane code {
+/* 抽屉中的独立代码值使用块布局，嵌入 Markdown 的行内代码和代码块由正文样式负责。 */
+.macos-ai-app .git-hunk-decision code:not(:where(.session-markdown code)),
+.macos-ai-app .product-drawer-pane code:not(:where(.session-markdown code)) {
   background: oklch(94.2% 0.006 255);
   border: 1px solid var(--zeus-product-line-soft);
   border-radius: 6px;

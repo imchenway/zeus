@@ -5,6 +5,7 @@ import { Compartment, EditorState, type Extension, type Text } from '@codemirror
 import { EditorView, highlightSpecialChars, keymap, lineNumbers } from '@codemirror/view';
 import { syntaxHighlighting } from '@codemirror/language';
 import { classHighlighter } from '@lezer/highlight';
+import type { ConversationFileLocation } from '@zeus/shared';
 import { loadSourceLanguage } from './sourceLanguageRegistry.js';
 
 /** 一次编辑在旧文档中的范围及替换后的长度，多光标编辑取共同覆盖范围。 */
@@ -33,6 +34,8 @@ export interface CodeEditorProps {
   label?: string;
   /** 一基目标行号；定位不会抢占其他输入框焦点。 */
   revealLine?: number | null;
+  /** 文件引用保留每次点击的位置对象，同一行重复点击也重新定位。 */
+  location?: ConversationFileLocation;
   /** 行号、差异标记、评论和滚动同步等实际视图扩展。 */
   extensions?: Extension;
   /** 需要字符串的冲突模型在这里接收变更。 */
@@ -206,11 +209,11 @@ export const CodeEditor = memo(function CodeEditor(props: CodeEditorProps) {
   useEffect(() => {
     /** 定位仅滚动目标编辑器，不抢占会话或评论输入焦点。 */
     const view = viewRef.current;
-    const requested = props.revealLine;
+    const requested = props.location?.line ?? props.revealLine;
     if (!view || !requested || !Number.isFinite(requested)) return;
     const line = view.state.doc.line(Math.max(1, Math.min(Math.trunc(requested), view.state.doc.lines)));
     view.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: 'center' }) });
-  }, [props.revealLine, props.path]);
+  }, [props.location, props.revealLine, props.path]);
 
   return <div className="project-source-code-editor" style={{ height: '100%', minHeight: 0, minWidth: 0, overflow: 'hidden' }} ref={hostRef} aria-label={props.label ?? props.path} />;
 });

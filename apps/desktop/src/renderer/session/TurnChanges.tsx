@@ -1,7 +1,8 @@
 import { FilePreview } from '../code/FilePreview.js';
 import { FileTypeIcon } from '../code/FileTypeIcon.js';
+import { groupDirectoryFiles } from '../code/groupDirectoryFiles.js';
 import { AnimatedSize } from '../ui/AnimatedSize.js';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from 'react';
 import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { ArrowCounterClockwiseIcon as ArrowCounterClockwise } from '@phosphor-icons/react/dist/csr/ArrowCounterClockwise';
 import { ArrowsInIcon as ArrowsIn } from '@phosphor-icons/react/dist/csr/ArrowsIn';
@@ -9,6 +10,7 @@ import { ArrowsOutIcon as ArrowsOut } from '@phosphor-icons/react/dist/csr/Arrow
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
 import { FilesIcon as Files } from '@phosphor-icons/react/dist/csr/Files';
+import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
 import { GitDiffIcon as GitDiff } from '@phosphor-icons/react/dist/csr/GitDiff';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import {
@@ -194,23 +196,83 @@ export function TurnDiffWorkspace(props: {
   /** 将本轮补丁转换为交付页共用的双栏数据，避免重复维护布局与高亮。 */
   const diff = useMemo(() => turnFileDiff(activeFile), [activeFile]);
   const activePath = activeFile ? commentPath(activeFile) : null;
+  /** 目录展示只投影本轮文件，选择与预览继续使用原文件身份。 */
+  const directoryFiles = useMemo(() => changeSet.files.map((file) => ({ path: commentPath(file), file })), [changeSet.files]);
+  /** 目录宽度沿用源码页默认值，并随所在面板限制上限。 */
+  const [treeWidth, setTreeWidth] = useState(260);
+  /** 面板尺寸由实际布局测量，窄面板仍为差异正文留出空间。 */
+  const [layoutWidth, setLayoutWidth] = useState(0);
+  /** 拖拽和布局测量只操作本审阅面板。 */
+  const layoutRef = useRef<HTMLDivElement>(null);
+  /** 外部跳转文件时展开其所在目录。 */
+  const filesRef = useRef<HTMLElement>(null);
+  /** 指针捕获期间保留起始位置，不添加全局拖拽监听。 */
+  const treeResize = useRef<{ x: number; width: number } | null>(null);
+  /** 目录最宽与源码页一致，正文至少保留 160px。 */
+  const maximumTreeWidth = Math.max(150, Math.min(420, layoutWidth - 168));
+  /** 窗口或分栏变窄时只限制显示宽度，保留用户原来的选择。 */
+  const visibleTreeWidth = Math.min(treeWidth, maximumTreeWidth);
   const comments = useMemo(() => (props.comments ?? []).filter((comment) => comment.position.path === activePath), [props.comments, activePath]);
   /** 只为实际评论和当前草稿登记位置，不遍历代码行。 */
   const annotationLines = useMemo(() => [...comments.map((comment) => comment.position), ...(draftPosition ? [draftPosition] : [])], [comments, draftPosition]);
+
+  useLayoutEffect(() => {
+    /** 观察实际面板，覆盖窗口缩放与全宽切换。 */
+    const layout = layoutRef.current;
+    if (!layout) return;
+    /** 按布局宽度限制目录，不把入场动画的缩放算作真实面板尺寸。 */
+    const updateWidth = (): void => setLayoutWidth(layout.clientWidth);
+    updateWidth();
+    /** 生命周期结束后移除布局观察。 */
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(layout);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    /** 保留手动折叠，仅在当前文件改变时展开它的祖先目录。 */
+    let directory = filesRef.current?.querySelector('[aria-current="true"]')?.closest('details');
+    while (directory) {
+      directory.open = true;
+      directory = directory.parentElement?.closest('details') ?? null;
+    }
+  }, [activeFile?.id, activePath]);
+
+  /** 使用源码页同样的指针捕获和拖拽手感。 */
+  function startTreeResize(event: ReactPointerEvent<HTMLDivElement>): void {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.focus();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.currentTarget.dataset.dragging = 'true';
+    treeResize.current = { x: event.clientX, width: visibleTreeWidth };
+  }
+
+  /** 松开、取消和失去捕获都结束当前拖拽。 */
+  function finishTreeResize(event: ReactPointerEvent<HTMLDivElement>): void {
+    treeResize.current = null;
+    delete event.currentTarget.dataset.dragging;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+
+  /** 指针、键盘和复位共用同一布局边界。 */
+  function resizeTree(width: number): void {
+    setTreeWidth(Math.max(150, Math.min(maximumTreeWidth, Math.round(width))));
+  }
 
   useEffect(() => {
     titleRef.current?.focus();
   }, [props.changeSet.id]);
 
   useEffect(() => {
-    if (props.initialFileId && changeSet.files.some((file) => file.id === props.initialFileId)) {
-      setActiveFileId(props.initialFileId);
-      return;
-    }
-    if (!changeSet.files.some((file) => file.id === activeFileId)) {
-      setActiveFileId(changeSet.files[0]?.id ?? null);
-    }
-  }, [activeFileId, changeSet.files, props.initialFileId]);
+    // 外部打开意图只在目标改变时生效，不能覆盖用户随后在目录中的选择。
+    setActiveFileId(props.initialFileId ?? callbacksRef.current.changeSet.files[0]?.id ?? null);
+  }, [props.changeSet.id, props.initialFileId]);
+
+  useEffect(() => {
+    // 正文刷新保留仍存在的当前文件；文件被移除时才回退到第一项。
+    setActiveFileId((current) => (changeSet.files.some((file) => file.id === current) ? current : (changeSet.files[0]?.id ?? null)));
+  }, [changeSet.files]);
 
   useEffect(() => {
     setDraftPosition(null);
@@ -281,9 +343,7 @@ export function TurnDiffWorkspace(props: {
                 setEditingCommentId(null);
                 setDraftPosition({ path: activePath, line: endLine, side, ...(startLine !== endLine ? { startLine, startSide: side } : {}) });
               }}
-            >
-              +
-            </button>
+            />
           ) : null}
           {side === currentSide && activeFile && canOpen ? (
             <button
@@ -391,22 +451,37 @@ export function TurnDiffWorkspace(props: {
           <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
         </p>
       ) : null}
-      <div className="session-turn-diff-layout">
-        <nav className="session-turn-diff-files" aria-label={zh ? '变更文件' : 'Changed files'}>
+      <div className="session-turn-diff-layout" ref={layoutRef} style={{ gridTemplateColumns: `${visibleTreeWidth}px 8px minmax(0, 1fr)` }}>
+        <nav className="session-turn-diff-files" ref={filesRef} aria-label={zh ? '变更文件' : 'Changed files'}>
           <div className="session-turn-diff-totals">
             <span className="session-change-added">+{changeSet.addedLines}</span>
             <span className="session-change-deleted">-{changeSet.deletedLines}</span>
           </div>
-          {changeSet.files.map((file) => (
-            <button type="button" key={file.id} aria-current={file.id === activeFile?.id ? 'true' : undefined} onClick={() => setActiveFileId(file.id)}>
-              <span title={displayPath(file)}>{displayPath(file)}</span>
-              <small>
-                {file.addedLines ? <span className="session-change-added">+{file.addedLines}</span> : null}
-                {file.deletedLines ? <span className="session-change-deleted">-{file.deletedLines}</span> : null}
-              </small>
-            </button>
-          ))}
+          <TurnDiffDirectory files={directoryFiles} prefix="" depth={0} activeFileId={activeFile?.id} language={props.language} onSelect={setActiveFileId} />
         </nav>
+        <div
+          className="session-turn-diff-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={zh ? '调整变更目录宽度' : 'Resize changed files'}
+          aria-valuemin={150}
+          aria-valuemax={maximumTreeWidth}
+          aria-valuenow={visibleTreeWidth}
+          tabIndex={0}
+          onDoubleClick={() => resizeTree(260)}
+          onPointerDown={startTreeResize}
+          onPointerMove={(event) => {
+            if (treeResize.current && event.currentTarget.hasPointerCapture(event.pointerId)) resizeTree(treeResize.current.width + event.clientX - treeResize.current.x);
+          }}
+          onPointerUp={finishTreeResize}
+          onPointerCancel={finishTreeResize}
+          onLostPointerCapture={finishTreeResize}
+          onKeyDown={(event) => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home'].includes(event.key)) return;
+            event.preventDefault();
+            resizeTree(event.key === 'Home' ? 260 : visibleTreeWidth + (event.key === 'ArrowLeft' ? -1 : 1) * (event.shiftKey ? 24 : 8));
+          }}
+        />
         <section className="session-turn-diff-content" aria-label={activeFile ? displayPath(activeFile) : undefined}>
           {activeFile ? (
             <>
@@ -458,9 +533,9 @@ export function TurnDiffWorkspace(props: {
                     </p>
                   ) : (
                     <div className="session-turn-diff-table">
-                      <div className="session-turn-diff-side-labels">
-                        <span title={activeFile.oldPath ?? ''}>{zh ? '修改前' : 'Before'}</span>
-                        <span title={activeFile.newPath ?? ''}>{zh ? '修改后' : 'After'}</span>
+                      <div className="session-turn-diff-side-labels" data-single-side={activeFile.changeType === 'added' || activeFile.changeType === 'deleted' ? 'true' : undefined}>
+                        {activeFile.changeType !== 'added' ? <span title={activeFile.oldPath ?? ''}>{zh ? '修改前' : 'Before'}</span> : null}
+                        {activeFile.changeType !== 'deleted' ? <span title={activeFile.newPath ?? ''}>{zh ? '修改后' : 'After'}</span> : null}
                       </div>
                       <TaskGitDiffTable
                         diff={diff}
@@ -485,6 +560,54 @@ export function TurnDiffWorkspace(props: {
   );
 }
 
+/** 目录折叠只影响展示，叶子选择始终回传原始文件身份。 */
+function TurnDiffDirectory(props: { files: Array<{ path: string; file: TurnChangeFile }>; prefix: string; depth: number; activeFileId?: string; language: SessionUiLanguage; onSelect: (fileId: string) => void }) {
+  /** 与既有 Git 文件列表共用分组和连续单目录合并规则。 */
+  const entries = useMemo(() => groupDirectoryFiles(props.files, props.prefix), [props.files, props.prefix]);
+  return (
+    <ol className="session-turn-diff-tree">
+      {entries.map(([name, files]) => (
+        <li key={props.prefix + name}>
+          {name.endsWith('/') ? (
+            <details className="session-turn-diff-directory" open>
+              <summary title={props.prefix + name} style={{ paddingInlineStart: 7 + props.depth * 14 }}>
+                <CaretDown aria-hidden="true" />
+                <Folder aria-hidden="true" weight="regular" />
+                <span>{name.slice(0, -1)}</span>
+                <small>{files.length}</small>
+              </summary>
+              <TurnDiffDirectory {...props} files={files} prefix={props.prefix + name} depth={props.depth + 1} />
+            </details>
+          ) : (
+            files.map(({ file }) => (
+              <button
+                type="button"
+                className="session-turn-diff-file"
+                key={file.id}
+                title={displayPath(file)}
+                aria-current={file.id === props.activeFileId ? 'true' : undefined}
+                onClick={() => props.onSelect(file.id)}
+                style={{ paddingInlineStart: 7 + props.depth * 14 }}
+              >
+                <span className="session-turn-diff-file-name">
+                  <FileTypeIcon name={name} />
+                  <span data-file-status={file.changeType === 'binary' ? 'modified' : file.changeType}>{name}</span>
+                </span>
+                <small>
+                  <span>{localizedChangeType(file, props.language)}</span>
+                  {file.addedLines ? <span className="session-change-added">+{file.addedLines}</span> : null}
+                  {file.deletedLines ? <span className="session-change-deleted">-{file.deletedLines}</span> : null}
+                </small>
+              </button>
+            ))
+          )}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** 目录分组和评论统一按新路径定位，删除文件回退到旧路径。 */
 function commentPath(file: TurnChangeFile): string {
   return file.newPath ?? file.oldPath ?? 'unknown';
 }
