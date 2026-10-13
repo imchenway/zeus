@@ -9,6 +9,18 @@ export function inlineResourceRequestSignature(items: readonly { key: string; tu
 /** 资源元数据到会话项的投影，不持有订阅、重连或发送状态。 */
 const conversationFileIconKinds = new Set<ConversationFileIconKind>(['code', 'java', 'javascript', 'typescript', 'json', 'markdown', 'sql', 'html', 'css', 'image', 'pdf', 'spreadsheet', 'presentation', 'document', 'archive', 'file']);
 
+/** 权威归属覆盖旧显示缓存；尚未补载的资源继续保留，不能凭名称或轮次改变所属消息。 */
+export function retainResourcesOwnedByItem(resources: ConversationResource[], itemId: string, entryId: string | undefined, metadataById: ReadonlyMap<string, NativeConversationResourceV2Item>): ConversationResource[] {
+  /** 资源页同时携带真实条目与规范消息身份，明确的消息归属优先。 */
+  const retained = resources.filter((resource) => {
+    /** 缺少元数据表示尚未补载，不能把实时到达的有效附件删除。 */
+    const metadata = metadataById.get(resource.id);
+    if (!metadata) return true;
+    return metadata.ownerEntryId ? metadata.ownerEntryId === entryId : metadata.itemId === itemId;
+  });
+  return retained.length === resources.length ? resources : retained;
+}
+
 /** 按持久消息身份挂接历史和实时资源，线程切换与多来源别名都不改变归属。 */
 export async function attachV2ResourcesToSnapshot(snapshot: NativeConversationSnapshot, metadata: NativeConversationResourceV2Item[], displayedItems: readonly NativeSessionItemBuffer[] = []): Promise<NativeConversationSnapshot> {
   if (metadata.length === 0) return snapshot;
@@ -17,12 +29,12 @@ export async function attachV2ResourcesToSnapshot(snapshot: NativeConversationSn
     metadata.filter((item) => item.ownerEntryId),
     (item) => item.ownerEntryId!,
   );
+  /** 同一批元数据同时用于挂回资源和清理旧的跨消息关联。 */
+  const metadataById = new Map(metadata.map((item) => [item.id, item]));
   const resourcesByItemId = new Map<string, ConversationResource[]>();
-  const projectedResources: ConversationResource[] = [];
   for (const item of metadata) {
     const resource = conversationResourceFromV2Metadata(snapshot, item);
     if (!resource) continue;
-    projectedResources.push(resource);
     const resources = resourcesByItemId.get(item.itemId) ?? [];
     resources.push(resource);
     resourcesByItemId.set(item.itemId, resources);
@@ -83,13 +95,10 @@ export async function attachV2ResourcesToSnapshot(snapshot: NativeConversationSn
     if (syntheticItemId) syntheticDeliveryItemIds.add(syntheticItemId);
     /** 同一正文可接收多个 Provider 别名归档的资源。 */
     const exactResources = resourceItemIds.flatMap((id) => resourcesByItemId.get(id) ?? []);
-    // 本地持久用户消息可能没有 providerItemId，而 Provider 会为同一附件生成一个或
-    // 多个别名 item。此时按同轮次的耐久附件身份回接，不能退回 payload.localPath；
-    // 后者在 Test 数据根、迁移或历史 Worktree 清理后不再是可授权读取入口。
-    const attachmentResources = conversationResourcesMatchingItemAttachments(item, projectedResources);
-    const resources = dedupeById([...(exactResources ?? []), ...attachmentResources]);
-    if (!resources?.length) return [item];
-    const merged = dedupeById([...(item.resources ?? []), ...resources]);
+    /** 只沿原条目或规范消息身份接管资源；同轮同名的截图仍是不同消息的附件。 */
+    const candidates = dedupeById([...(item.resources ?? []), ...exactResources]);
+    /** 合成交付项代表原工具产物，真实消息必须按服务端归属排除旧的错误关联。 */
+    const merged = syntheticItemId ? candidates : retainResourcesOwnedByItem(candidates, item.id, item.transcript.placement.entryId, metadataById);
     const currentResources = new Map((item.resources ?? []).map((resource) => [resource.id, resource]));
     /** 历史资源恢复图片身份后也必须接管旧附件引用，不能只比较交付状态。 */
     const resourcesChanged =
@@ -97,7 +106,7 @@ export async function attachV2ResourcesToSnapshot(snapshot: NativeConversationSn
       merged.some((resource) => {
         /** 同一资源编号仍可能补齐稳定的图片身份。 */
         const current = currentResources.get(resource.id);
-        return current?.delivery !== resource.delivery || (resource.kind === 'attachment' && current?.kind === 'attachment' && current.attachmentRef !== resource.attachmentRef);
+        return !current || current.delivery !== resource.delivery || (resource.kind === 'attachment' && current.kind === 'attachment' && current.attachmentRef !== resource.attachmentRef);
       });
     if (!resourcesChanged) return [item];
     changed = true;
@@ -191,41 +200,6 @@ function conversationResourceFromV2Metadata(snapshot: NativeConversationSnapshot
     };
   }
   return null;
-}
-
-function conversationResourcesMatchingItemAttachments(item: NativeConversationSnapshot['items'][number], resources: ConversationResource[]): ConversationResource[] {
-  const attachments = conversationItemAttachmentDescriptors(item);
-  if (attachments.length === 0) return [];
-  const taskPushAttachmentKeys = new Set(attachments.map((attachment) => attachment.taskPushAttachmentKey).filter((value): value is string => Boolean(value)));
-  const uploadRefs = new Set(attachments.map((attachment) => attachment.uploadRef).filter((value): value is string => Boolean(value)));
-  const names = new Set(attachments.map((attachment) => attachment.name));
-  return resources.filter(
-    (resource) =>
-      resource.kind === 'attachment' &&
-      resource.turnId === (item.transcript.placement.turnId ?? item.turnId) &&
-      ((resource.taskPushAttachmentKey && taskPushAttachmentKeys.has(resource.taskPushAttachmentKey)) || uploadRefs.has(resource.attachmentRef) || names.has(resource.displayName)),
-  );
-}
-
-function conversationItemAttachmentDescriptors(item: NativeConversationSnapshot['items'][number]): Array<{ name: string; uploadRef: string | null; taskPushAttachmentKey: string | null }> {
-  const content = typeof item.payload.content === 'object' && item.payload.content !== null && !Array.isArray(item.payload.content) ? (item.payload.content as Record<string, unknown>) : null;
-  const sources = [item.payload.attachments, content?.attachments].filter(Array.isArray);
-  const descriptors = sources.flatMap((source) =>
-    source.flatMap((entry) => {
-      if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return [];
-      const attachment = entry as Record<string, unknown>;
-      const name = typeof attachment.name === 'string' ? attachment.name : '';
-      if (!name) return [];
-      return [
-        {
-          name,
-          uploadRef: typeof attachment.uploadRef === 'string' && attachment.uploadRef ? attachment.uploadRef : null,
-          taskPushAttachmentKey: typeof attachment.taskPushAttachmentKey === 'string' && attachment.taskPushAttachmentKey ? attachment.taskPushAttachmentKey : null,
-        },
-      ];
-    }),
-  );
-  return [...new Map(descriptors.map((descriptor) => [`${descriptor.taskPushAttachmentKey ?? ''}\u0000${descriptor.uploadRef ?? ''}\u0000${descriptor.name}`, descriptor])).values()];
 }
 
 function dedupeById<T extends { id: string }>(items: T[]): T[] {
