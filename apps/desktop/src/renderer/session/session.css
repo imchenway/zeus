@@ -6492,6 +6492,15 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   gap: 2px;
 }
 
+/* 输入建议状态随主题换色，窄窗口换行，不遮挡输入与操作按钮。 */
+.session-composer-suggestion-status {
+  color: var(--session-text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 0 5px;
+  overflow-wrap: anywhere;
+}
+
 .session-codex-parity-v1 .session-service-tier-note {
   color: var(--session-text-muted);
   display: block;
@@ -7479,7 +7488,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   resize: none;
 }
 
-/* 卡片内部自由输入以浅底标识当前位置，避免嵌套边框与主题内阴影。 */
+/* 卡片内部输入由外框提供边界，避免嵌套边框与主题内阴影。 */
 .macos-ai-app.zeus-shell .session-plan-refinement > textarea,
 .macos-ai-app.zeus-shell .session-question-answer-editor > textarea,
 .macos-ai-app.zeus-shell .session-question-freeform-editor > textarea {
@@ -7488,10 +7497,14 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   outline: 0;
 }
 
-.macos-ai-app.zeus-shell .session-plan-refinement > textarea:focus,
-.macos-ai-app.zeus-shell .session-question-answer-editor > textarea:focus,
-.macos-ai-app.zeus-shell .session-question-freeform-editor > textarea:focus {
+.macos-ai-app.zeus-shell .session-plan-refinement > textarea:focus {
   background: var(--session-message-background);
+}
+
+/* 回答框沿用透明正文背景，通过外框轮廓保留鼠标和键盘焦点提示。 */
+.macos-ai-app.zeus-shell .session-question-answer-editor:focus-within {
+  outline: 2px solid var(--session-focus-outline);
+  outline-offset: 2px;
 }
 
 /* 空值按 rows 的单行尺寸显示，窄宽度下的长占位提示不参与自动增高。 */

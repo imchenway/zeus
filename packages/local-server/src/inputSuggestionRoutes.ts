@@ -151,12 +151,16 @@ export function registerInputSuggestionRoutes(options: {
       /** 当前请求捕获模型身份，生成期间不切换模型。 */
       const settings = normalizeInputSuggestionSettings(options.readSettings());
       /** 所有无建议结果使用相同形状，不改变输入框。 */
-      const result: InputSuggestionResult = { completedTurnId: request.body.completedTurnId, modelRef: settings.modelRef, text: null };
+      const result: InputSuggestionResult = { completedTurnId: request.body.completedTurnId, modelRef: settings.modelRef, text: null, reason: 'disabled' };
       if (!settings.enabled || !settings.modelRef) return result;
       /** HTTP 断开或宿主关闭时取消本次生成。 */
       const controller = new AbortController();
       /** 总超时包含目录、账户读取、线程初始化和模型生成。 */
-      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]);
+      const deadline = AbortSignal.timeout(20_000);
+      /** 用户取消与总超时分别反馈，不能把模型失败当成没有合理建议。 */
+      const signal = AbortSignal.any([controller.signal, deadline]);
+      /** 取消竞态的两个收口路径必须返回同一种原因。 */
+      const cancelledResult = (): InputSuggestionResult => ({ ...result, reason: deadline.aborted ? 'timed_out' : 'cancelled' });
       /** 已发送回执的正常关闭不能取消其他请求。 */
       const disconnect = () => {
         if (!reply.raw.writableEnded) controller.abort();
@@ -167,20 +171,23 @@ export function registerInputSuggestionRoutes(options: {
         try {
           /** 无成功终态或不存在当前轮次时，不读取其他轮次代替。 */
           const context = readInputSuggestionContext(options.repository, conversationId, result.completedTurnId);
-          if (!context) return result;
+          if (!context) return { ...result, reason: 'context_unavailable' };
           /** 目录与正文准备完成后再次核对取消。 */
           const models = await options.loadModels();
           signal.throwIfAborted();
+          if (!models.items.some((model) => model.id === settings.modelRef)) return { ...result, reason: 'model_unavailable' };
           /** 纯文本生成不注册执行工具，也不进入任务或提交队列。 */
           const text = await generateSuggestionText({ context, selectedModelRef: settings.modelRef!, modelConnections: options.modelConnections, codexOptions: options.codexOptions(), signal, models: models.items });
           signal.throwIfAborted();
           /** 主会话或设置已经变化时不返回旧建议。 */
           const current = normalizeInputSuggestionSettings(options.readSettings());
-          if (!current.enabled || current.modelRef !== settings.modelRef || !readInputSuggestionContext(options.repository, conversationId, result.completedTurnId)) return result;
-          return { ...result, text: normalizeInputSuggestion(text) };
+          if (!current.enabled || current.modelRef !== settings.modelRef || !readInputSuggestionContext(options.repository, conversationId, result.completedTurnId)) return { ...result, reason: 'cancelled' };
+          /** 仅模型正常返回空结果时显示没有建议，故障保留独立原因。 */
+          const suggestion = normalizeInputSuggestion(text);
+          return { ...result, text: suggestion, reason: suggestion ? null : 'no_suggestion' };
         } catch {
           // 建议不可用属于可选功能失败，不把 Provider 错误或凭据回传输入框。
-          return result;
+          return signal.aborted ? cancelledResult() : { ...result, reason: 'failed' };
         }
       };
       /** 将真实调用与宿主清理绑定，不另建任务安排。 */
@@ -190,7 +197,7 @@ export function registerInputSuggestionRoutes(options: {
       let resolveAborted: () => void = () => {};
       /** 信号到期后，迟到目录结果在运行函数内被拒绝，不再发起模型调用。 */
       const aborted = new Promise<InputSuggestionResult>((resolve) => {
-        resolveAborted = () => resolve(result);
+        resolveAborted = () => resolve(cancelledResult());
       });
       signal.addEventListener('abort', resolveAborted, { once: true });
       if (signal.aborted) resolveAborted();
