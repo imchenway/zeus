@@ -722,8 +722,10 @@ function MessageLayoutQa() {
   const parameters = new URLSearchParams(window.location.search);
   /** 链接场景直接呈现最终答复，复现历史资源只有名称和编号的恢复结果。 */
   const links = parameters.has('links');
+  /** 延迟过程页晚于首次展开动画抵达，复现加载完成后的二次增高。 */
+  const delayedProcess = parameters.has('delayed-process');
   /** 长过程覆盖九十三项操作和三十段思考，复现多屏内容的展开动效。 */
-  const longProcess = parameters.has('long-process');
+  const longProcess = parameters.has('long-process') || delayedProcess;
   /** 多阶段场景复现摘要、不同数量操作和外层折叠的延迟挂载。 */
   const processGroups = parameters.has('process-groups') || longProcess;
   /** 单条无详情的上下文整理也必须经过同一段操作折叠入口。 */
@@ -733,7 +735,7 @@ function MessageLayoutQa() {
   /** 沿用第一条操作，分别预览文件读取和目录浏览的真实图标映射。 */
   const activityAction = parameters.get('activity-action');
   /** 分页场景保留已读范围，缺页边界可见时沿用真实组件自动补齐。 */
-  const processPaging = parameters.has('process-paging');
+  const processPaging = parameters.has('process-paging') || delayedProcess;
   /** 同一条命令分别核对本地长输出和不可变结果分页。 */
   const outputPaging = parameters.has('output-paging');
   /** 复现旧活动首屏丢失命令预览、但历史详情句柄仍可读取的场景。 */
@@ -771,6 +773,8 @@ function MessageLayoutQa() {
   const processReadCount = useRef(0);
   /** 读取回调只推进未读范围，不依赖额外分页按钮。 */
   const [processPageFinished, setProcessPageFinished] = useState(false);
+  /** 加载提示与真实内容分两次提交，覆盖异步尺寸变化。 */
+  const [processPageLoading, setProcessPageLoading] = useState(false);
   /** 失败预览保留原有过程，通过重新打开原有入口恢复未读页。 */
   const [processPageError, setProcessPageError] = useState<string | null>(null);
   /** 手动切换运行终态，检查每种耗时文案及过程折叠。 */
@@ -982,7 +986,7 @@ function MessageLayoutQa() {
       if (phaseControls.length !== expectedLabels.length || phaseControls.some((control, index) => control.textContent?.trim() !== expectedLabels[index])) throw new Error('逐段过程未显示真实数量入口');
       for (const control of phaseControls) if (control.getAttribute('aria-expanded') === 'true') control.click();
       await settle();
-      content.querySelectorAll('[data-viewport-reveal]').forEach((node) => node.getAnimations().forEach((animation) => animation.finish()));
+      content.querySelectorAll('[data-animate-height]').forEach((node) => node.getAnimations().forEach((animation) => animation.finish()));
       await waitForState(() => !content.querySelector('.session-activity-group'));
       if (content.querySelector('.session-activity-item-title, .session-activity-live, .session-activity-images, .session-activity-item-detail-body')) throw new Error('收起操作后仍挂载命令或图片');
       /** 操作开合不能改变既有会话行的位置与身份。 */
@@ -996,7 +1000,7 @@ function MessageLayoutQa() {
         control.click();
         await settle();
         phase
-          .querySelector('[data-viewport-reveal]')
+          .querySelector('[data-animate-height]')
           ?.getAnimations()
           .forEach((animation) => animation.finish());
         await waitForState(() => !phase.querySelector('.session-activity-group'));
@@ -1034,22 +1038,37 @@ function MessageLayoutQa() {
       outerControl.click();
       await settle();
       /** 手动检查同时核对真实高度动画：长内容不能在一帧内全部展开。 */
-      const disclosure = outerControl.closest('.session-turn-process')?.querySelector<HTMLElement>('[data-viewport-reveal]');
+      const disclosure = outerControl.closest('.session-turn-process')?.querySelector<HTMLElement>('[data-animate-height]');
       /** 后台页面不依赖逐帧回调，通过原生动画时间点验证中间展开状态。 */
       const animation = disclosure?.getAnimations()[0];
       if (disclosure && animation) {
         /** 先锁定终点，再检查中途确实只显露部分内容，最后恢复正常展开状态。 */
         const frames = animation.effect?.getKeyframes() ?? [];
-        /** 高度终点必须受可见范围约束，短内容沿用自身高度。 */
+        /** 高度终点必须等于完整自然内容，不能在结束帧跳到另一高度。 */
         const targetHeight = Number.parseFloat(String(frames.at(-1)?.blockSize));
         animation.pause();
         animation.currentTime = 70;
         /** 实际中间高度应介于零和目标高度之间。 */
         const middleHeight = disclosure.getBoundingClientRect().height;
         animation.finish();
-        if (!(targetHeight > 0 && targetHeight <= window.innerHeight && middleHeight > 0 && middleHeight < targetHeight)) throw new Error('处理过程没有逐步展开可见内容');
+        if (!(targetHeight > 0 && middleHeight > 0 && middleHeight < targetHeight && Math.abs(disclosure.getBoundingClientRect().height - targetHeight) < 1)) throw new Error('处理过程高度过渡不连续');
         await settle();
       }
+    }
+    if (delayedProcess && !processPageFinished) {
+      /** 请求完成后仍须由同一个外壳衔接高度，不能直接跳到完整正文。 */
+      const disclosure = outerControl.closest('.session-turn-process')?.querySelector<HTMLElement>('[data-animate-height]');
+      await waitForState(() => content.querySelectorAll('.session-activity-group').length === expectedCounts.length && Boolean(disclosure?.getAnimations().length));
+      /** 比较延迟到达后动画的终点和实际布局，排除一屏终点造成的尾帧跳变。 */
+      const animation = disclosure!.getAnimations()[0]!;
+      /** 原生动画关键帧记录实际接续高度。 */
+      const frames = animation.effect!.getKeyframes();
+      /** 请求结果包含三十段正文，终点应大于最初已读部分。 */
+      const targetHeight = Number.parseFloat(String(frames.at(-1)?.blockSize));
+      if (!(targetHeight > Number.parseFloat(String(frames[0]?.blockSize)))) throw new Error('异步内容未接续展开动画');
+      animation.finish();
+      if (Math.abs(disclosure!.getBoundingClientRect().height - targetHeight) >= 1) throw new Error('异步展开结束时高度跳变');
+      await settle();
     }
     /** 每段摘要只保留一个固定数量入口，不提前展示命令标题。 */
     const nestedControls = [...content.querySelectorAll<HTMLButtonElement>('.session-activity-group .session-turn-process-control > button')];
@@ -1080,7 +1099,7 @@ function MessageLayoutQa() {
     outerControl.click();
     await waitForState(() => outerControl.getAttribute('aria-expanded') === 'false');
     content
-      .querySelector('[data-viewport-reveal]')
+      .querySelector('[data-animate-height]')
       ?.getAnimations()
       .forEach((animation) => animation.finish());
     await waitForState(() => !content.querySelector('.session-activity-group'));
@@ -1155,7 +1174,7 @@ function MessageLayoutQa() {
             },
             { type: 'imageView', phase: 'prework', stageId: 'verify', text: '', payload: { path: 'artifacts/阶段截图.png' }, resources: [processImageResource], status: 'completed' },
             ...(extraOperation ? [{ type: 'webSearch', phase: 'prework', stageId: 'verify', text: '', payload: { query: 'Zeus 处理过程折叠' }, status: active ? 'in_progress' : 'completed' }] : []),
-            ...(longProcess
+            ...(longProcess && (!delayedProcess || processPageFinished)
               ? Array.from({ length: 30 }, (_, index) => [
                   {
                     type: 'agentMessage',
@@ -1276,7 +1295,14 @@ function MessageLayoutQa() {
         history: { nextCursor: null, hasMore: false, loading: false, error: null, loadedThroughSequence: 0, oldestLoadedSequence: null },
         historyByTurn: {},
         processByTurn: {
-          'qa-layout-turn': { direction: parameters.has('process-forward') ? 'forward' : 'tail', loaded: true, loading: false, hasMore: !processPageFinished, nextCursor: processPageFinished ? null : 'qa-next', error: processPageError },
+          'qa-layout-turn': {
+            direction: parameters.has('process-forward') ? 'forward' : 'tail',
+            loaded: !delayedProcess || processPageFinished,
+            loading: processPageLoading,
+            hasMore: !processPageFinished,
+            nextCursor: processPageFinished ? null : 'qa-next',
+            error: processPageError,
+          },
         },
         resources: { nextCursor: null, hasMore: false, loading: false, loaded: true, error: null, items: [] },
         changeSetsByTurn: {},
@@ -1352,6 +1378,11 @@ function MessageLayoutQa() {
               processPaging
                 ? async () => {
                     processReadCount.current += 1;
+                    if (delayedProcess) {
+                      setProcessPageLoading(true);
+                      await new Promise<void>((resolve) => setTimeout(resolve, 600));
+                      setProcessPageLoading(false);
+                    }
                     if (parameters.has('process-error') && processReadCount.current === 1) {
                       setProcessPageError('过程分页示例失败');
                       throw new Error('过程分页示例失败');
