@@ -2851,6 +2851,10 @@
 
 /* ZEUS-0367：会话 Markdown 由 markstream-react 增量挂载，外层会话视口继续负责虚拟化。 */
 .session-codex-parity-v1 .session-conversation-markdown > .markstream-react.markdown-renderer {
+  /* 新增文字快速显现，避免淡入时间叠加流式缓冲；减少动态效果仍由下方媒体规则接管。 */
+  --stream-update-fade-duration: 140ms;
+  /* 尾部快速达到完整对比度，便于连续阅读。 */
+  --stream-update-fade-ease: ease-out;
   color: inherit;
   contain: layout;
   contain-intrinsic-size: auto;

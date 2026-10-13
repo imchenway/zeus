@@ -35,15 +35,25 @@ const MERMAID_OPTIONS = {
   showCollapseButton: false,
   showTooltips: false,
 } as const;
+/** 由运行库按帧释放增量；小片段平滑呈现，积压与完成内容及时追齐。 */
 const SMOOTH_STREAMING_OPTIONS = {
-  minCharsPerSecond: 1_200,
+  /** 正常片段每帧约呈现一到两字，避免一次刷新耗尽整个片段。 */
+  minCharsPerSecond: 60,
+  /** 大批到达仍允许快速追赶，不用固定打字速度拖延完整回复。 */
   maxCharsPerSecond: 100_000,
-  targetLatencyMs: 80,
-  catchUpLatencyMs: 32,
-  catchUpThreshold: 64,
+  /** 以短缓冲平摊收包间隔，单位为毫秒。 */
+  targetLatencyMs: 180,
+  /** 积压时缩短目标延迟，单位为毫秒。 */
+  catchUpLatencyMs: 80,
+  /** 普通句子保持平滑，超过此字数才进入快速追赶。 */
+  catchUpThreshold: 256,
+  /** 跟随浏览器绘制，限制每秒 Markdown 更新次数。 */
   maxCommitFps: 60,
+  /** 首个片段到达后立即开始呈现，不额外等待启动计时。 */
   startDelayMs: 0,
+  /** 保留大段输出的单帧追赶能力。 */
   maxCharsPerCommit: 2_048,
+  /** 完成时立即显示剩余内容，不继续播放打字效果。 */
   flushOnFinish: true,
 } as const;
 
@@ -170,6 +180,7 @@ export function hasMissingMarkdownImages(text: string, resources: ConversationRe
   return false;
 }
 
+/** 会话正文共用安全 Markdown 渲染与增量显示策略。 */
 export const ConversationMarkdown = memo(function ConversationMarkdown(props: ConversationMarkdownProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const onVisibleContentChangeRef = useRef(props.onVisibleContentChange);
@@ -272,15 +283,12 @@ export const ConversationMarkdown = memo(function ConversationMarkdown(props: Co
           indexKey={props.streamId}
           htmlPolicy="escape"
           typewriter={false}
-          fade={false}
+          // 运行库只淡入新增文字，已读正文与完整历史不重复播放动画。
+          fade={props.phase === 'streaming' && !props.renderImmediately}
           smoothStreaming={props.phase === 'streaming' && !props.renderImmediately}
           smoothStreamingOptions={SMOOTH_STREAMING_OPTIONS}
-          batchRendering={props.phase === 'streaming' && !props.renderImmediately}
-          initialRenderBatchSize={24}
-          renderBatchSize={16}
-          renderBatchDelay={8}
-          renderBatchBudgetMs={4}
-          renderBatchIdleTimeoutMs={64}
+          // 文字已有按帧调度；节点直接挂载，避免每个新段落先闪占位条再改变高度。
+          batchRendering={false}
           deferNodesUntilVisible={false}
           maxLiveNodes={0}
           renderCodeBlocksAsPre
