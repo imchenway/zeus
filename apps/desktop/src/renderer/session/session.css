@@ -6555,7 +6555,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   color: var(--session-text);
 }
 
-/* 失败仍占用原图标区域，颜色之外同时提供警告图形和可读说明。 */
+/* 失败仍占用原图标区域，可重试时显示箭头，错误原因由共享提示显示。 */
 .session-codex-parity-v1 .session-suggestion-button[data-error='true'] {
   color: var(--zeus-control-error-text);
 }
