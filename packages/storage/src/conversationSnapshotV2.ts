@@ -1284,13 +1284,24 @@ export class ConversationSnapshotV2Repository {
    * 按权威 turn 身份补齐完成轮次的模型正文。过程表只保存命令、工具和摘要，
    * 不能替代运行期间已经展示过的阶段性 commentary；展开历史轮次时必须同时读取二者。
    */
-  listTurnModelHistoryPage(input: { conversationId: string; turnId: string; cursor?: string; direction?: 'forward' | 'tail'; entryLimit?: number; byteLimit?: number }): ConversationSnapshotV2Page<ConversationModelHistoryPageItem> {
+  listTurnModelHistoryPage(input: {
+    conversationId: string;
+    turnId: string;
+    cursor?: string;
+    direction?: 'forward' | 'tail';
+    entryLimit?: number;
+    byteLimit?: number;
+    /** 仅取已保存的用户与助手对话，避免工具结果或思考摘要占满建议材料。 */
+    dialogueOnly?: boolean;
+  }): ConversationSnapshotV2Page<ConversationModelHistoryPageItem> {
     const conversationId = requiredIdentity(input.conversationId, 'conversationId');
     const turnId = this.requireTurn(conversationId, input.turnId);
-    const context = this.sequencePageContext({ ...input, conversationId }, 'model_history', `turn:${turnId}`, {
+    /** 查询和游标高水位使用相同过滤条件，不扫描工具正文后再丢弃。 */
+    const dialogueWhere = input.dialogueOnly ? ` AND role IN ('user', 'assistant') AND tool_pair_id IS NULL AND COALESCE(${modelHistoryReasoningSummarySql}, 0) = 0` : '';
+    const context = this.sequencePageContext({ ...input, conversationId }, 'model_history', `turn:${turnId}${input.dialogueOnly ? ':dialogue' : ''}`, {
       table: 'conversation_model_history',
       column: 'sequence',
-      extraWhere: ' AND turn_id = ?',
+      extraWhere: ` AND turn_id = ?${dialogueWhere}`,
       extraParams: [turnId],
     });
     const rows = this.db.select<ModelHistoryProjectionRow>(
@@ -1319,7 +1330,7 @@ export class ConversationSnapshotV2Repository {
               length(CAST(${modelHistoryVisibleContentSql} AS BLOB)) AS content_bytes,
               length(${modelHistoryVisibleContentSql})               AS content_characters
          FROM conversation_model_history
-        WHERE conversation_id = ? AND turn_id = ?
+        WHERE conversation_id = ? AND turn_id = ?${dialogueWhere}
           AND sequence ${context.direction === 'tail' ? '<' : '>'} ? AND sequence <= ?
         ORDER BY sequence ${context.direction === 'tail' ? 'DESC' : 'ASC'}
         LIMIT ?`,

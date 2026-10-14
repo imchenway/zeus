@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState, type RefObject } from 'rea
 import { diffArrays } from 'diff';
 import { SparkleIcon } from '@phosphor-icons/react/dist/csr/Sparkle';
 import { CircleNotchIcon } from '@phosphor-icons/react/dist/csr/CircleNotch';
+import { ArrowClockwiseIcon } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { WarningCircleIcon } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { InfoIcon } from '@phosphor-icons/react/dist/csr/Info';
 import type { InputSuggestionResult } from '@zeus/shared';
@@ -52,8 +53,10 @@ export function InputSuggestionButton(props: { suggestion: SuggestionState; draf
     // 结果到达时展示一次，不聚焦按钮或编辑器，避免打断用户继续输入。
     if (props.suggestion.polishedText && props.suggestion.sourceDraft !== null) previewRef.current?.showPopover();
   }, [props.suggestion.polishedText, props.suggestion.sourceDraft]);
-  /** 配置、超时和生成失败共用图标详情入口，不在输入框下方增加错误行。 */
+  /** 配置、超时和生成失败仍占用原图标区域，不在输入框下方增加错误行。 */
   const failed = ['failed', 'timed_out', 'model_unavailable', 'effort_unavailable'].includes(props.suggestion.reason ?? '');
+  /** 失败不锁定入口；允许输入时，同一按钮直接重试生成。 */
+  const canRetry = failed && props.suggestion.available;
   /** 加载、空结果和错误只进入提示及读屏说明，不进入用户草稿。 */
   const message = props.suggestion.pending
     ? props.suggestion.mode === 'polish'
@@ -70,9 +73,13 @@ export function InputSuggestionButton(props: { suggestion: SuggestionState; draf
         : '';
   /** 提示说明点击时将执行的操作，图标不代替名称。 */
   const actionLabel = failed
-    ? props.language === 'zh-CN'
-      ? '查看详情'
-      : 'View details'
+    ? canRetry
+      ? props.language === 'zh-CN'
+        ? '点击重试生成'
+        : 'Retry generation'
+      : props.language === 'zh-CN'
+        ? '查看详情'
+        : 'View details'
     : !props.configured
       ? props.language === 'zh-CN'
         ? '请先在通用设置选择输入建议模型'
@@ -117,12 +124,15 @@ export function InputSuggestionButton(props: { suggestion: SuggestionState; draf
           onMouseDown={(event) => event.preventDefault()}
           onClick={(event) => {
             if (props.suggestion.pending) props.suggestion.dismiss();
-            else if (failed)
+            else if (canRetry) {
+              // 复用主动生成入口，立即进入加载状态；错误原因仍可在重试前悬停或聚焦查看。
+              event.preventDefault();
+              props.suggestion.requestManual();
+            } else if (failed)
               reportApplicationError(props.suggestion.cause ?? message, {
                 language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
                 title: props.language === 'zh-CN' ? '输入建议生成失败' : 'Input suggestion failed',
                 showDetails: true,
-                action: props.suggestion.available ? { label: props.language === 'zh-CN' ? '重试' : 'Retry', onClick: props.suggestion.requestManual } : undefined,
               });
             else if (!hasPreview || previewOpen) {
               // 展开时复用同一图标重新生成；收起时仍由原生浮层重新展示已有候选。
@@ -139,6 +149,8 @@ export function InputSuggestionButton(props: { suggestion: SuggestionState; draf
         >
           {props.suggestion.pending ? (
             <CircleNotchIcon className="session-suggestion-spinner" aria-hidden="true" />
+          ) : canRetry ? (
+            <ArrowClockwiseIcon aria-hidden="true" />
           ) : failed ? (
             <WarningCircleIcon aria-hidden="true" />
           ) : message ? (
