@@ -1,10 +1,12 @@
 import { useState, type RefObject } from 'react';
 import { SparkleIcon } from '@phosphor-icons/react/dist/csr/Sparkle';
 import { CircleNotchIcon } from '@phosphor-icons/react/dist/csr/CircleNotch';
+import { WarningCircleIcon } from '@phosphor-icons/react/dist/csr/WarningCircle';
+import { InfoIcon } from '@phosphor-icons/react/dist/csr/Info';
 import type { InputSuggestionResult } from '@zeus/shared';
 import { Button } from '../ui/Button.js';
 import { IconTooltip } from '../ui/IconTooltip.js';
-import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { formatVisibleApplicationError, reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import type { useInputSuggestion } from './useInputSuggestion.js';
@@ -36,33 +38,66 @@ const feedback: Record<NonNullable<InputSuggestionResult['reason']>, Record<Sess
 
 /** 星光按钮固定在输入区右上角，忙碌时同一个入口取消生成。 */
 export function InputSuggestionButton(props: { suggestion: SuggestionState; draft: string; language: SessionUiLanguage; configured: boolean }) {
-  /** 提示说明点击时将执行的操作，图标不代替名称。 */
-  const label = !props.configured
-    ? props.language === 'zh-CN'
-      ? '请先在通用设置选择输入建议模型'
-      : 'Choose a suggestion model in General settings'
-    : props.suggestion.pending
+  /** 配置、超时和生成失败共用图标详情入口，不在输入框下方增加错误行。 */
+  const failed = ['failed', 'timed_out', 'model_unavailable', 'effort_unavailable'].includes(props.suggestion.reason ?? '');
+  /** 加载、空结果和错误只进入提示及读屏说明，不进入用户草稿。 */
+  const message = props.suggestion.pending
+    ? props.suggestion.mode === 'polish'
       ? props.language === 'zh-CN'
-        ? '取消生成'
-        : 'Cancel generation'
-      : props.draft.trim()
+        ? '正在润色草稿…'
+        : 'Polishing your draft…'
+      : props.language === 'zh-CN'
+        ? '正在生成输入建议…'
+        : 'Generating a suggestion…'
+    : props.suggestion.reason === 'failed' && props.suggestion.cause
+      ? formatVisibleApplicationError(props.suggestion.cause, props.language === 'zh-CN' ? 'zh-CN' : 'en')
+      : props.suggestion.reason
+        ? feedback[props.suggestion.reason][props.language]
+        : '';
+  /** 提示说明点击时将执行的操作，图标不代替名称。 */
+  const actionLabel = failed
+    ? props.language === 'zh-CN'
+      ? '查看详情'
+      : 'View details'
+    : !props.configured
+      ? props.language === 'zh-CN'
+        ? '请先在通用设置选择输入建议模型'
+        : 'Choose a suggestion model in General settings'
+      : props.suggestion.pending
         ? props.language === 'zh-CN'
-          ? '润色草稿'
-          : 'Polish draft'
-        : props.language === 'zh-CN'
-          ? '生成输入建议'
-          : 'Suggest the next message';
+          ? '取消生成'
+          : 'Cancel generation'
+        : props.draft.trim()
+          ? props.language === 'zh-CN'
+            ? '润色草稿'
+            : 'Polish draft'
+          : props.language === 'zh-CN'
+            ? '生成输入建议'
+            : 'Suggest the next message';
+  /** 状态与操作同时可读，悬停和键盘焦点使用同一个提示。 */
+  const label = message ? `${message} ${actionLabel}` : actionLabel;
+  // 容器标记忙碌，按钮保留取消操作，避免全局忙碌按钮样式追加圆点并屏蔽点击。
   return (
-    <span className="session-suggestion-action">
+    <span className="session-suggestion-action" aria-busy={props.suggestion.pending || undefined}>
       <IconTooltip label={label}>
         <button
           type="button"
           className="session-suggestion-button"
           aria-label={label}
-          aria-busy={props.suggestion.pending || undefined}
-          disabled={!props.suggestion.available && !props.suggestion.pending}
+          data-error={failed || undefined}
+          disabled={!props.suggestion.available && !props.suggestion.pending && !failed}
           onMouseDown={(event) => event.preventDefault()}
-          onClick={props.suggestion.pending ? props.suggestion.dismiss : props.suggestion.requestManual}
+          onClick={() => {
+            if (props.suggestion.pending) props.suggestion.dismiss();
+            else if (failed)
+              reportApplicationError(props.suggestion.cause ?? message, {
+                language: props.language === 'zh-CN' ? 'zh-CN' : 'en',
+                title: props.language === 'zh-CN' ? '输入建议生成失败' : 'Input suggestion failed',
+                showDetails: true,
+                action: props.suggestion.available ? { label: props.language === 'zh-CN' ? '重试' : 'Retry', onClick: props.suggestion.requestManual } : undefined,
+              });
+            else props.suggestion.requestManual();
+          }}
           onKeyDown={(event) => {
             if (event.key !== 'Escape') return;
             event.preventDefault();
@@ -70,9 +105,20 @@ export function InputSuggestionButton(props: { suggestion: SuggestionState; draf
             props.suggestion.dismiss();
           }}
         >
-          {props.suggestion.pending ? <CircleNotchIcon className="session-suggestion-spinner" aria-hidden="true" /> : <SparkleIcon aria-hidden="true" />}
+          {props.suggestion.pending ? (
+            <CircleNotchIcon className="session-suggestion-spinner" aria-hidden="true" />
+          ) : failed ? (
+            <WarningCircleIcon aria-hidden="true" />
+          ) : message ? (
+            <InfoIcon aria-hidden="true" />
+          ) : (
+            <SparkleIcon aria-hidden="true" />
+          )}
         </button>
       </IconTooltip>
+      <span className="visually-hidden" role="status">
+        {message}
+      </span>
     </span>
   );
 }
@@ -125,25 +171,4 @@ export function InputSuggestionPreview(props: { suggestion: SuggestionState; inp
       </div>
     </section>
   );
-}
-
-/** 加载、空结果和故障均保留在输入区，不自动打开弹窗。 */
-export function InputSuggestionStatus(props: { suggestion: SuggestionState; language: SessionUiLanguage }) {
-  /** 润色与预测分别说明当前操作。 */
-  const message = props.suggestion.pending
-    ? props.suggestion.mode === 'polish'
-      ? props.language === 'zh-CN'
-        ? '正在润色草稿…'
-        : 'Polishing your draft…'
-      : props.language === 'zh-CN'
-        ? '正在生成输入建议…'
-        : 'Generating a suggestion…'
-    : props.suggestion.reason
-      ? feedback[props.suggestion.reason][props.language]
-      : '';
-  return message ? (
-    <p className="session-composer-suggestion-status" role="status">
-      {props.suggestion.reason === 'failed' && props.suggestion.cause ? <VisibleApplicationError error={props.suggestion.cause} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} title={message} /> : message}
-    </p>
-  ) : null;
 }

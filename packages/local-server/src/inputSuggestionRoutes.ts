@@ -108,7 +108,7 @@ async function generateSuggestionText(options: {
   if (!selected) throw new Error('输入建议模型不可用。');
   /** 生成档位与会话本身的推理设置分开。 */
   const effort = options.effort ?? lowestSuggestionEffort(selected.supportedReasoningEfforts ?? []);
-  /** 两种操作共享传输，只在提示词与输出预算上区分。 */
+  /** 两种操作共享模型预算，仅通过提示词区分正文要求。 */
   const system = options.mode === 'polish' ? inputPolishInstructions : inputSuggestionInstructions;
   if (options.selectedModelRef.startsWith('codex:')) {
     /** Codex 共用提交说明的临时线程，固定标准速率并及时释放。 */
@@ -129,7 +129,8 @@ async function generateSuggestionText(options: {
       system,
       text: options.context,
       effort,
-      maxTokens: options.mode === 'polish' ? Math.min(model.maxTokens, 8192) : 2048,
+      /** 推理与正文可能共用输出额度；沿用所选模型上限，不能用短建议长度压缩推理空间。 */
+      maxTokens: model.maxTokens,
       maxRetries: 0,
       timeoutMs: 20_000,
       signal: options.signal,

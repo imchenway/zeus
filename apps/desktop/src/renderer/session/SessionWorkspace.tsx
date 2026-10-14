@@ -86,7 +86,7 @@ import { autosizeTextarea } from './textareaAutosize.js';
 import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
 import { conversationAttachmentIdentity, ConversationComposerAttachments } from './ConversationComposerAttachments.js';
 import { useInputSuggestion } from './useInputSuggestion.js';
-import { InputSuggestionButton, InputSuggestionPreview, InputSuggestionStatus } from './InputSuggestionControl.js';
+import { InputSuggestionButton, InputSuggestionPreview } from './InputSuggestionControl.js';
 import { ContextUsageIndicator } from './ContextUsageIndicator.js';
 import { IconTooltip } from '../ui/IconTooltip.js';
 import { ServiceTierToggle } from './ServiceTierToggle.js';
@@ -3891,7 +3891,6 @@ export function NewConversationComposer(props: {
             />
           </div>
         )}
-        <InputSuggestionStatus suggestion={suggestion} language={props.language} />
         <div className="session-composer-command-row">
           <span className="session-composer-leading-actions">
             {/* 新建会话与共享输入框使用同一可见提示。 */}
