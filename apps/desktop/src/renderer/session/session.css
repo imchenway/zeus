@@ -6519,6 +6519,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .session-suggestion-action {
+  /* 每个输入框的浮层只定位到自己的图标。 */
+  anchor-scope: --session-input-suggestion;
   position: absolute;
   inset-block-start: 0;
   inset-inline-end: 0;
@@ -6534,8 +6536,18 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: var(--session-text-muted);
+  color: var(--session-text);
   cursor: pointer;
+}
+
+.session-codex-parity-v1 .session-suggestion-action > .zeus-icon-tooltip-trigger > .session-suggestion-button {
+  anchor-name: --session-input-suggestion;
+}
+
+/* 候选状态突出原入口，收起后可重开，展开时可重新生成。 */
+.session-codex-parity-v1 .session-suggestion-button[data-ready='true'] {
+  background: var(--zeus-interaction-hover);
+  color: var(--session-focus-outline);
 }
 
 .session-codex-parity-v1 .session-suggestion-button:not(:disabled):hover {
@@ -6563,36 +6575,82 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   block-size: 20px;
 }
 
-/* 候选保留完整正文，长文本在输入框上方独立滚动。 */
+/* 原生顶层浮层贴近图标，窄窗口自动翻转，不占输入区的排版高度。 */
 .session-codex-parity-v1 .session-suggestion-preview {
-  display: grid;
-  gap: 10px;
+  position-anchor: --session-input-suggestion;
+  position-area: top span-left;
+  position-try-fallbacks: flip-block, flip-inline;
+  inset: auto;
+  margin: 8px 0;
+  inline-size: min(360px, calc(100vw - 32px));
+  max-block-size: min(360px, calc(100dvh - 32px));
+  box-sizing: border-box;
+  gap: 8px;
   min-inline-size: 0;
-  padding: 12px;
-  border: 1px solid var(--zeus-product-line);
-  border-radius: 12px;
-  background: var(--zeus-product-panel);
+  padding: 14px 16px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  /* 两层背景分别绘制轻染色表面与渐变细边，明暗主题共用品牌色。 */
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--zeus-brand-primary) 7%, var(--zeus-product-panel)), color-mix(in srgb, var(--zeus-brand-highlight) 3%, var(--zeus-product-panel))) padding-box,
+    linear-gradient(135deg, color-mix(in srgb, var(--zeus-brand-primary) 32%, var(--zeus-product-line)), color-mix(in srgb, var(--zeus-brand-highlight) 16%, var(--zeus-product-line))) border-box;
   color: var(--session-text);
   font-size: 13px;
+  box-shadow:
+    0 12px 32px var(--session-shadow-soft),
+    0 3px 10px color-mix(in srgb, var(--zeus-brand-primary) 8%, transparent);
+  transition: box-shadow 140ms ease-out;
+}
+
+/* 只在原生浮层打开时布局，避免覆盖浏览器的隐藏规则。 */
+.session-codex-parity-v1 .session-suggestion-preview:popover-open {
+  display: flex;
+  flex-direction: column;
+  animation: session-suggestion-appear 140ms ease-out;
+}
+
+/* 鼠标进入正文区域时提高浮层层次，不额外增加按钮或装饰图标。 */
+.session-codex-parity-v1 .session-suggestion-preview:has(.session-suggestion-preview-text:hover) {
+  box-shadow:
+    0 14px 36px var(--session-shadow-soft),
+    0 4px 16px color-mix(in srgb, var(--zeus-brand-primary) 14%, transparent);
 }
 
 .session-codex-parity-v1 .session-suggestion-preview-text {
-  max-block-size: min(32vh, 280px);
+  /* 正文本身就是采纳入口，视觉保持文本，键盘沿用原生按钮行为。 */
+  display: block;
+  inline-size: 100%;
+  min-block-size: 0;
+  max-block-size: min(30vh, 200px);
+  padding: 3px 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
   overflow-y: auto;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
-  line-height: 1.5;
+  line-height: 1.7;
 }
 
-.session-codex-parity-v1 .session-suggestion-preview-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
+/* 只在最终候选中轻染改写词段，避免红绿旧文和线条打断阅读。 */
+.session-codex-parity-v1 .session-suggestion-preview-text mark {
+  border-radius: 3px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  background: color-mix(in srgb, var(--zeus-brand-primary) 9%, transparent);
+  color: var(--zeus-brand-text);
+  font-weight: 550;
+  text-decoration: none;
 }
 
-.session-codex-parity-v1 .session-suggestion-preview-actions small {
-  color: var(--session-text-muted);
+.session-codex-parity-v1 .session-suggestion-preview-text:focus-visible {
+  outline: 2px solid var(--session-focus-outline);
+  outline-offset: 3px;
 }
 
 .session-codex-parity-v1 .session-suggestion-spinner {
@@ -6601,8 +6659,21 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
 /* 减少动态效果的系统偏好同样适用于手动生成。 */
 @media (prefers-reduced-motion: reduce) {
-  .session-codex-parity-v1 .session-suggestion-spinner {
+  .session-codex-parity-v1 .session-suggestion-spinner,
+  .session-codex-parity-v1 .session-suggestion-preview:popover-open {
     animation: none;
+  }
+}
+
+/* 候选轻微浮现，不改变输入框布局或焦点。 */
+@keyframes session-suggestion-appear {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 

@@ -1,3 +1,4 @@
+import { useBackgroundInputSuggestions } from '../../session/useBackgroundInputSuggestions.js';
 import type { ProjectRecord } from '../../apiClient.js';
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { temporaryWorkspaceId, describeUserFacingError, isTaskPriority, type ProjectCodeWorkspacePreference, renderTaskPushLayoutText, type ThirdPartyTaskExtract } from '@zeus/shared';
@@ -439,6 +440,9 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     [attentionAcknowledgementCoordinator, props.nativeConversationClient],
   );
 
+  /** 后台建议复用工作台全局事件，无需等待对应会话显示。 */
+  const observeInputSuggestion = useBackgroundInputSuggestions({ client: props.nativeConversationClient, settings: appShellSettings.inputSuggestions });
+
   useEffect(() => {
     const subscribeRealtimeEvents = props.onSubscribeRealtimeEvents;
     if (!subscribeRealtimeEvents) return;
@@ -563,6 +567,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     };
     const unsubscribe = subscribeRealtimeEvents(
       (event) => {
+        observeInputSuggestion(event);
         if (event.type === 'codex.models.changed') {
           // 当前连接发布新目录后，所有模型选择器共用一次能力变更通知。
           if (event.payload.succeeded === true) window.dispatchEvent(new Event(codexCapabilitiesChangedEvent));
@@ -732,6 +737,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     props.nativeConversationClient,
     props.onLoadTask,
     props.onSubscribeRealtimeEvents,
+    observeInputSuggestion,
     reconcileNativeConversationProjectSnapshot,
     reconcileNativeConversationProjectionStates,
     resumeNativeConversationAttentionAcknowledgements,

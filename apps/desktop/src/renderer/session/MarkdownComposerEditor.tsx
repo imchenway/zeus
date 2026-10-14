@@ -13,7 +13,7 @@ const composerTokenReplacement = StateEffect.define<{ before: StructuredToken[];
 export type ComposerInputHandle = Pick<HTMLTextAreaElement, 'value' | 'selectionStart' | 'selectionEnd' | 'focus' | 'setSelectionRange' | 'isConnected' | 'contains'> & {
   /** 仅在空编辑器有焦点时以可撤销的输入事务采纳灰字。 */
   insertSuggestion?: (text: string) => boolean;
-  /** 明确采用润色后，以独立可撤销事务替换仍与请求一致的原文。 */
+  /** 明确采用建议或润色后，以独立可撤销事务替换仍与请求一致的原文。 */
   replaceDraft?: (expected: string, text: string) => boolean;
 };
 
@@ -169,8 +169,8 @@ export function MarkdownComposerEditor(props: MarkdownComposerEditorProps) {
           /** placeholder 不属于正文；辅助技术通过描述读出建议及采纳方法。 */
           'aria-description': props.suggestion
             ? props.language === 'zh-CN'
-              ? `输入建议：${props.suggestion} 按 Tab 采纳后才成为正文，按 Escape 清除。`
-              : `Input suggestion: ${props.suggestion} Press Tab to accept, or Escape to dismiss.`
+              ? `输入建议：${props.suggestion} 按 Tab 采纳后编辑，或点击发送按钮直接发送；按 Escape 清除。`
+              : `Input suggestion: ${props.suggestion} Press Tab to accept and edit, click Send to send directly, or press Escape to dismiss.`
             : '',
           'aria-keyshortcuts': props.ariaKeyShortcuts ?? '',
           'aria-disabled': String(Boolean(props.disabled)),

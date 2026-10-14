@@ -1,10 +1,10 @@
-import { useState, type RefObject } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type RefObject } from 'react';
+import { diffArrays } from 'diff';
 import { SparkleIcon } from '@phosphor-icons/react/dist/csr/Sparkle';
 import { CircleNotchIcon } from '@phosphor-icons/react/dist/csr/CircleNotch';
 import { WarningCircleIcon } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { InfoIcon } from '@phosphor-icons/react/dist/csr/Info';
 import type { InputSuggestionResult } from '@zeus/shared';
-import { Button } from '../ui/Button.js';
 import { IconTooltip } from '../ui/IconTooltip.js';
 import { formatVisibleApplicationError, reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
@@ -37,7 +37,21 @@ const feedback: Record<NonNullable<InputSuggestionResult['reason']>, Record<Sess
 };
 
 /** 星光按钮固定在输入区右上角，忙碌时同一个入口取消生成。 */
-export function InputSuggestionButton(props: { suggestion: SuggestionState; draft: string; language: SessionUiLanguage; configured: boolean }) {
+export function InputSuggestionButton(props: { suggestion: SuggestionState; draft: string; inputRef: RefObject<ComposerInputHandle | null>; language: SessionUiLanguage; configured: boolean }) {
+  /** 每个输入框独立关联图标和浮层，不与其他会话共用 DOM 身份。 */
+  const previewId = useId();
+  /** 浮层关闭后键盘焦点可返回原图标。 */
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  /** 原生浮层负责顶层绘制、外部点击和窗口边缘翻转。 */
+  const previewRef = useRef<HTMLDivElement>(null);
+  /** 展开状态只反映浮层显示，收起不丢弃候选。 */
+  const [previewOpen, setPreviewOpen] = useState(false);
+  /** 空输入仍沿用灰字，只有需要替换草稿的结果进入紧凑预览。 */
+  const hasPreview = Boolean(props.suggestion.polishedText && props.suggestion.sourceDraft !== null);
+  useEffect(() => {
+    // 结果到达时展示一次，不聚焦按钮或编辑器，避免打断用户继续输入。
+    if (props.suggestion.polishedText && props.suggestion.sourceDraft !== null) previewRef.current?.showPopover();
+  }, [props.suggestion.polishedText, props.suggestion.sourceDraft]);
   /** 配置、超时和生成失败共用图标详情入口，不在输入框下方增加错误行。 */
   const failed = ['failed', 'timed_out', 'model_unavailable', 'effort_unavailable'].includes(props.suggestion.reason ?? '');
   /** 加载、空结果和错误只进入提示及读屏说明，不进入用户草稿。 */
@@ -67,13 +81,21 @@ export function InputSuggestionButton(props: { suggestion: SuggestionState; draf
         ? props.language === 'zh-CN'
           ? '取消生成'
           : 'Cancel generation'
-        : props.draft.trim()
-          ? props.language === 'zh-CN'
-            ? '润色草稿'
-            : 'Polish draft'
-          : props.language === 'zh-CN'
-            ? '生成输入建议'
-            : 'Suggest the next message';
+        : hasPreview
+          ? previewOpen
+            ? props.language === 'zh-CN'
+              ? '重新生成润色建议'
+              : 'Regenerate draft suggestion'
+            : props.language === 'zh-CN'
+              ? '查看润色建议'
+              : 'View draft suggestion'
+          : props.draft.trim()
+            ? props.language === 'zh-CN'
+              ? '润色草稿'
+              : 'Polish draft'
+            : props.language === 'zh-CN'
+              ? '生成输入建议'
+              : 'Suggest the next message';
   /** 状态与操作同时可读，悬停和键盘焦点使用同一个提示。 */
   const label = message ? `${message} ${actionLabel}` : actionLabel;
   // 容器标记忙碌，按钮保留取消操作，避免全局忙碌按钮样式追加圆点并屏蔽点击。
@@ -81,13 +103,19 @@ export function InputSuggestionButton(props: { suggestion: SuggestionState; draf
     <span className="session-suggestion-action" aria-busy={props.suggestion.pending || undefined}>
       <IconTooltip label={label}>
         <button
+          ref={triggerRef}
           type="button"
           className="session-suggestion-button"
           aria-label={label}
           data-error={failed || undefined}
+          data-ready={hasPreview || undefined}
+          popoverTarget={hasPreview ? previewId : undefined}
+          aria-haspopup={hasPreview ? 'dialog' : undefined}
+          aria-expanded={hasPreview ? previewOpen : undefined}
+          aria-controls={hasPreview ? previewId : undefined}
           disabled={!props.suggestion.available && !props.suggestion.pending && !failed}
           onMouseDown={(event) => event.preventDefault()}
-          onClick={() => {
+          onClick={(event) => {
             if (props.suggestion.pending) props.suggestion.dismiss();
             else if (failed)
               reportApplicationError(props.suggestion.cause ?? message, {
@@ -96,7 +124,11 @@ export function InputSuggestionButton(props: { suggestion: SuggestionState; draf
                 showDetails: true,
                 action: props.suggestion.available ? { label: props.language === 'zh-CN' ? '重试' : 'Retry', onClick: props.suggestion.requestManual } : undefined,
               });
-            else props.suggestion.requestManual();
+            else if (!hasPreview || previewOpen) {
+              // 展开时复用同一图标重新生成；收起时仍由原生浮层重新展示已有候选。
+              event.preventDefault();
+              props.suggestion.requestManual();
+            }
           }}
           onKeyDown={(event) => {
             if (event.key !== 'Escape') return;
@@ -119,56 +151,96 @@ export function InputSuggestionButton(props: { suggestion: SuggestionState; draf
       <span className="visually-hidden" role="status">
         {message}
       </span>
+      {hasPreview ? <InputSuggestionPreview {...props} id={previewId} previewRef={previewRef} triggerRef={triggerRef} onOpenChange={setPreviewOpen} /> : null}
     </span>
   );
 }
 
 /** 候选只在明确采用后进入编辑器，替换使用可撤销的编辑事务。 */
-export function InputSuggestionPreview(props: { suggestion: SuggestionState; inputRef: RefObject<ComposerInputHandle | null>; language: SessionUiLanguage }) {
+function InputSuggestionPreview(props: {
+  /** 候选和原文必须来自同一次请求。 */
+  suggestion: SuggestionState;
+  /** 实际编辑器负责原文校验、引用保留及撤销事务。 */
+  inputRef: RefObject<ComposerInputHandle | null>;
+  /** 控件说明沿用界面语言。 */
+  language: SessionUiLanguage;
+  /** 原生浮层与触发按钮共用唯一身份。 */
+  id: string;
+  /** 候选到达时通过原生方法展开。 */
+  previewRef: RefObject<HTMLDivElement | null>;
+  /** 关闭后返回原图标，不抢占用户在其他区域的焦点。 */
+  triggerRef: RefObject<HTMLButtonElement | null>;
+  /** 按钮的展开语义跟随原生浮层同步。 */
+  onOpenChange: (open: boolean) => void;
+}) {
   /** 引用标签未完整保留时拒绝采用，不能悄悄删除执行意图。 */
   const [failedCandidate, setFailedCandidate] = useState<{ text: string; source: string } | null>(null);
+  /** 只在候选变化时对比，按自然词分段并保留空格、换行和完整字符。 */
+  const changes = useMemo(() => {
+    /** 缺少有效候选时不创建差异内容。 */
+    const { sourceDraft, polishedText } = props.suggestion;
+    if (sourceDraft === null || !polishedText) return [];
+    /** 中英文均使用原生分词，避免把中文整句视为一个词或拆开表情。 */
+    const segmenter = new Intl.Segmenter(props.language, { granularity: 'word' });
+    /** 所有片段参与比较，空白变化也不能被静默忽略。 */
+    const tokenize = (text: string) => Array.from(segmenter.segment(text), (part) => part.segment);
+    /** 预览只读最终候选，删除内容仍可在下方原输入框对照。 */
+    const parts = (diffArrays(tokenize(sourceDraft), tokenize(polishedText), { timeout: 20, maxEditLength: 1000 }) ?? [{ value: [polishedText], added: true, removed: false }])
+      .filter((change) => !change.removed)
+      .map((change) => ({ text: change.value.join(''), changed: change.added }));
+    /** 合并短小的词间间隔，避免“了”等单字把同一处改写割成色块。 */
+    for (let index = 1; index < parts.length - 1; index += 1) {
+      if (!parts[index].changed && !parts[index].text.includes('\n') && Array.from(parts[index].text).length <= 2 && parts[index - 1].changed && parts[index + 1].changed) parts[index].changed = true;
+    }
+    return parts.reduce<Array<{ text: string; changed: boolean }>>((result, part) => {
+      /** 单独的标点不染色，改写句段使用连续的轻量强调。 */
+      const changed = part.changed && /[\p{L}\p{N}\p{S}]/u.test(part.text);
+      /** 相邻同类片段合并，减少视觉边界和 DOM 节点。 */
+      const previous = result.at(-1);
+      if (previous?.changed === changed) previous.text += part.text;
+      else result.push({ text: part.text, changed });
+      return result;
+    }, []);
+  }, [props.suggestion.sourceDraft, props.suggestion.polishedText, props.language]);
   if (!props.suggestion.polishedText || props.suggestion.sourceDraft === null) return null;
   return (
-    <section
+    <div
+      id={props.id}
+      ref={props.previewRef}
+      popover="auto"
+      role="dialog"
       className="session-suggestion-preview"
       aria-label={props.language === 'zh-CN' ? '输入候选预览' : 'Draft preview'}
+      onToggle={(event) => props.onOpenChange(event.newState === 'open')}
       onKeyDown={(event) => {
         if (event.key !== 'Escape') return;
         event.preventDefault();
         event.stopPropagation();
-        props.suggestion.dismiss();
-        props.inputRef.current?.focus();
+        props.previewRef.current?.hidePopover();
+        props.triggerRef.current?.focus({ preventScroll: true });
       }}
     >
-      <strong>{props.suggestion.mode === 'polish' ? (props.language === 'zh-CN' ? '润色建议' : 'Polished draft') : props.language === 'zh-CN' ? '输入建议' : 'Input suggestion'}</strong>
-      <div className="session-suggestion-preview-text" data-zeus-selectable="text">
-        {props.suggestion.polishedText}
-      </div>
+      <button
+        type="button"
+        className="session-suggestion-preview-text"
+        aria-label={`${props.language === 'zh-CN' ? '采用建议' : 'Use suggestion'}: ${props.suggestion.polishedText}`}
+        data-icon-tooltip={props.language === 'zh-CN' ? '点击采用，可撤销' : 'Click to use; you can undo this change'}
+        onClick={() => {
+          /** 原文和引用仍由编辑器核对，点击候选只产生一次可撤销的替换。 */
+          const adopted = props.inputRef.current?.replaceDraft?.(props.suggestion.sourceDraft!, props.suggestion.polishedText!) === true;
+          if (!adopted) {
+            setFailedCandidate({ text: props.suggestion.polishedText!, source: props.suggestion.sourceDraft! });
+            return;
+          }
+          props.suggestion.dismiss();
+          props.inputRef.current?.focus();
+        }}
+      >
+        {changes.map((change, index) => (change.changed ? <mark key={index}>{change.text}</mark> : change.text))}
+      </button>
       {failedCandidate?.text === props.suggestion.polishedText && failedCandidate.source === props.suggestion.sourceDraft ? (
-        <p role="status">{props.language === 'zh-CN' ? '原文已变化，或结果未保留引用标签。请保留原文并重新生成。' : 'The draft changed or a reference tag was altered. Keep your draft and generate again.'}</p>
+        <div role="status">{props.language === 'zh-CN' ? '原文已变化，或结果未保留引用标签。请保留原文并重新生成。' : 'The draft changed or a reference tag was altered. Keep your draft and generate again.'}</div>
       ) : null}
-      <div className="session-suggestion-preview-actions">
-        <Button
-          size="compact"
-          variant="primary"
-          onClick={() => {
-            /** 编辑器再次核对原文和结构化引用，按钮出现并不代表原文仍未变化。 */
-            const adopted = props.inputRef.current?.replaceDraft?.(props.suggestion.sourceDraft!, props.suggestion.polishedText!) === true;
-            if (!adopted) {
-              setFailedCandidate({ text: props.suggestion.polishedText!, source: props.suggestion.sourceDraft! });
-              return;
-            }
-            props.suggestion.dismiss();
-            props.inputRef.current?.focus();
-          }}
-        >
-          {props.language === 'zh-CN' ? '采用' : 'Use this'}
-        </Button>
-        <Button size="compact" variant="secondary" onClick={props.suggestion.dismiss}>
-          {props.language === 'zh-CN' ? '保留原文' : 'Keep original'}
-        </Button>
-        <small>{props.language === 'zh-CN' ? '采用后可撤销' : 'You can undo this change'}</small>
-      </div>
-    </section>
+    </div>
   );
 }

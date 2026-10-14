@@ -1,5 +1,5 @@
 import { classifyAssistantMessage } from '@zeus/shared';
-import { type KeyboardEvent, type RefObject, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type KeyboardEvent, type RefObject, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
 import { ModelBrainIcon } from './ModelBrainIcon.js';
@@ -36,7 +36,7 @@ import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { StructuredComposerInput, type StructuredComposerSelection } from './StructuredComposerInput.js';
 import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
 import { useInputSuggestion } from './useInputSuggestion.js';
-import { InputSuggestionButton, InputSuggestionPreview } from './InputSuggestionControl.js';
+import { InputSuggestionButton } from './InputSuggestionControl.js';
 
 export type ComposerKeyIntent = 'submit' | 'newline' | 'escape' | 'ignore';
 export interface ComposerRuntimeSettings {
@@ -93,6 +93,8 @@ const labels = {
     input: (provider: string) => `发送消息给 ${provider}`,
     placeholder: '继续对话，Enter 发送，Shift+Enter 换行',
     send: '发送',
+    /** 空输入时，发送按钮明确提交当前可见建议。 */
+    sendSuggestion: '发送输入建议',
     stop: '停止',
     attach: '添加附件',
     removeAttachment: '移除附件',
@@ -114,6 +116,8 @@ const labels = {
     input: (provider: string) => `Message ${provider}`,
     placeholder: 'Continue the conversation. Enter to send, Shift+Enter for a newline.',
     send: 'Send',
+    /** 与中文一致说明直接发送建议的操作。 */
+    sendSuggestion: 'Send input suggestion',
     stop: 'Stop',
     attach: 'Add attachment',
     removeAttachment: 'Remove attachment',
@@ -144,7 +148,14 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const composingRef = useRef(false);
   const structuredSelectionRef = useRef<StructuredComposerSelection>({ displayText: props.state.draft, promptText: props.state.draft, expertMentions: [], skillReferences: [], pluginReferences: [], computerUseRequested: false });
   const [isComposing, setIsComposing] = useState(false);
-  const [editorValue, setEditorValue] = useState(props.state.draft);
+  /** 输入 DOM 可复用，但草稿本地值必须跟随实际会话归属。 */
+  const editorScopeKey = JSON.stringify([props.state.projectId, props.state.conversationId]);
+  /** 输入法组合中的本地文本不回写到其他会话。 */
+  const [editorDraft, setEditorDraft] = useState({ key: editorScopeKey, text: props.state.draft });
+  /** 切换的首帧即使用新会话草稿，避免旧本地值取消已保存的生成。 */
+  const editorValue = editorDraft.key === editorScopeKey ? editorDraft.text : props.state.draft;
+  /** 所有本地输入更新都捕获当前会话身份。 */
+  const setEditorValue = useCallback((text: string) => setEditorDraft({ key: editorScopeKey, text }), [editorScopeKey]);
   const [goalInputOpen, setGoalInputOpen] = useState(false);
   const [goalDraft, setGoalDraft] = useState('');
   const [goalSubmitting, setGoalSubmitting] = useState(false);
@@ -163,7 +174,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const goalCount = [...goalDraft.trim()].length;
   const goalDraftValid = goalCount > 0 && goalCount <= 4_000;
   const goalOperationBusy = goalSubmitting || props.goalBusy === true;
-  const showSendCommand = props.inputBlocked !== true && (goalInputActive || !active || hasDraft);
   const modelPresentation = useMemo(() => presentModelOptions(props.capabilities?.models ?? [], selectedModel, props.language, { preserveMissingSelection: true }), [props.capabilities?.models, props.language, selectedModel]);
   const effectiveModel = modelPresentation.selectedId || selectedModel;
   const selectedCapability = resolveModelCapability(modelPresentation.models, effectiveModel);
@@ -207,29 +217,28 @@ export function ConversationComposer(props: ConversationComposerProps) {
     if (textareaRef.current instanceof HTMLTextAreaElement) autosizeTextarea(textareaRef.current);
   }, [editorValue, goalDraft, goalInputActive, textareaRef]);
 
-  /** 预测与输入值分开，已有附件、评论、问题或目标输入时不生成。 */
+  /** 自动预测要求空输入且无待处理交互；手动生成可以与主会话并行。 */
   const suggestion = useInputSuggestion({
     state: props.state,
     draft: editorValue,
-    automaticEligible: !hasDraft && editorValue.length === 0,
+    // 待处理问题由后台读取权威状态；这里仅报告即时输入限制，避免落后的会话投影漏掉完成事件。
+    automaticEligible: inputWritable && !hasDraft && editorValue.length === 0 && !goalInputActive && !goalOperationBusy && !isComposing && !inputResources.processing,
     settings: props.inputSuggestionSettings,
     generate: props.onGenerateInputSuggestion,
     working: active || busy || props.state.conversationState === 'starting_turn',
-    eligible:
-      inputWritable &&
-      !goalInputActive &&
-      !goalOperationBusy &&
-      !isComposing &&
-      !inputResources.processing &&
-      // 已处理的问题和计划仍保留在历史中，只有待处理项阻止建议。
-      !props.state.pendingRequests.some((request) => request.status === 'pending') &&
-      !props.state.planImplementationRequests.some((request) => request.status === 'pending'),
+    eligible: inputWritable && !busy && !goalInputActive && !goalOperationBusy && !isComposing && !inputResources.processing,
   });
+  /** 只有空输入中的可见灰字可直接发送；已有正文优先，附件和评论仍随消息提交。 */
+  const sendableSuggestion = editorValue.length === 0 ? suggestion.text : null;
+  /** 按钮启用与真正发送共用当前可提交的内容，生成中和空结果不计入。 */
+  const hasSendableContent = hasDraft || Boolean(sendableSuggestion?.trim());
+  /** 主会话运行中也允许把已生成的建议加入原有发送队列。 */
+  const showSendCommand = props.inputBlocked !== true && (goalInputActive || !active || hasSendableContent);
 
   useEffect(() => {
     // 拼音尚未上屏时由编辑器本地值持有组合文本，避免会话快照或草稿持久化回写打断输入法。
     if (!composingRef.current) setEditorValue(props.state.draft);
-  }, [props.state.draft]);
+  }, [props.state.draft, setEditorValue]);
 
   useEffect(() => {
     if (!props.goal) return;
@@ -247,11 +256,17 @@ export function ConversationComposer(props: ConversationComposerProps) {
     return () => view.removeEventListener('resize', resize);
   }, [textareaRef]);
 
-  function submit(nextDelivery: 'queue' | 'steer_now'): void {
-    suggestion.dismiss();
+  /** 发送按钮明确允许采纳灰字；输入框 Enter 沿用原有草稿发送行为。 */
+  function submit(nextDelivery: 'queue' | 'steer_now', acceptSuggestion = false): void {
     // 附件尚在导入时不能提交，避免正文先发出而附件随后落回草稿。
-    if (inputResources.processing) return;
+    if (!inputWritable || busy || goalOperationBusy || isComposing || composingRef.current || inputResources.processing) return;
     if (nextDelivery === 'queue' && !selectedCapability) return;
+    // 点击按钮后编辑器已失去焦点，使用核对空原文的事务；失败时不发送或清空候选。
+    if (acceptSuggestion && sendableSuggestion?.trim()) {
+      if (!textareaRef.current?.replaceDraft?.('', sendableSuggestion)) return;
+    } else if (!hasDraft) return;
+    suggestion.dismiss();
+    /** 采纳事务同步更新正文与引用后，再捕获发送内容，避免提交空正文。 */
     const structured = structuredSelectionRef.current;
     const settings =
       nextDelivery === 'queue' && effectiveModel
@@ -421,7 +436,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
           <VisibleApplicationError error={inputResourceError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
         </p>
       ) : null}
-      <InputSuggestionPreview suggestion={suggestion} inputRef={textareaRef} language={props.language} />
       <div className="session-composer-input-frame" data-goal-input={goalInputActive ? 'true' : 'false'} data-input-suggestion={!goalInputActive && props.onGenerateInputSuggestion ? 'true' : undefined}>
         {goalInputActive ? (
           <div className="session-goal-compose-context">
@@ -462,7 +476,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
           />
         ) : (
           <div className="session-composer-editor-with-suggestion" data-enabled={props.onGenerateInputSuggestion ? 'true' : undefined}>
-            {props.onGenerateInputSuggestion ? <InputSuggestionButton suggestion={suggestion} draft={editorValue} language={props.language} configured={Boolean(props.inputSuggestionSettings?.modelRef)} /> : null}
+            {props.onGenerateInputSuggestion ? <InputSuggestionButton suggestion={suggestion} draft={editorValue} inputRef={textareaRef} language={props.language} configured={Boolean(props.inputSuggestionSettings?.modelRef)} /> : null}
             <StructuredComposerInput
               value={editorValue}
               onValueChange={(nextValue) => {
@@ -677,9 +691,9 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 <button
                   type="button"
                   className="session-send-button"
-                  aria-label={goalInputActive ? copy.createGoal : copy.send}
-                  onClick={() => (goalInputActive ? void setGoalObjective(goalDraft) : submit('queue'))}
-                  disabled={!inputWritable || !settingsWritable || busy || goalOperationBusy || inputResources.processing || (goalInputActive ? !goalDraftValid : !hasDraft)}
+                  aria-label={goalInputActive ? copy.createGoal : sendableSuggestion ? copy.sendSuggestion : copy.send}
+                  onClick={() => (goalInputActive ? void setGoalObjective(goalDraft) : submit('queue', true))}
+                  disabled={!inputWritable || !settingsWritable || busy || goalOperationBusy || inputResources.processing || (goalInputActive ? !goalDraftValid : !hasSendableContent)}
                   aria-busy={busy || goalOperationBusy || inputResources.processing || undefined}
                 >
                   {busy || goalOperationBusy || inputResources.processing ? <span className="session-command-spinner" aria-hidden="true" /> : <ArrowUp aria-hidden="true" weight="bold" />}
