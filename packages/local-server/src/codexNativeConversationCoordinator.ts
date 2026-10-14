@@ -1733,13 +1733,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
 
     for (const submission of candidates) {
       const exactProviderMessage = hasExactProviderUserMessage(conversation, submission, providerTurnId);
-      /** 内部续接不显示用户气泡，改用已持久保存的精确 turn/start 接纳回执确认送达。 */
-      const acceptedReceipt =
-        submission.id === turn.clientSubmissionId &&
-        options.commandDeliveries
-          .getByScope('submission', submission.id)
-          ?.attempts.some((attempt) => attempt.outcome === 'accepted' && attempt.receipt?.nativeSessionId === turn.providerThreadId && attempt.receipt.nativeTurnId === providerTurnId);
-      const delivered = submissionDeliveryConfirmedForTurn(submission, turn, exactProviderMessage) || acceptedReceipt === true;
+      /** 与运行态核对使用同一份送达证据，避免续接在不同阶段得到相反结论。 */
+      const delivered = submissionDeliveryConfirmedForTurn(submission, turn, exactProviderMessage, options.commandDeliveries);
       if (!delivered) {
         markSubmissionRecoveryRequired(submission, coordinatorError('ZEUS_NATIVE_SUBMISSION_DELIVERY_UNCONFIRMED', 'The provider turn ended without exact evidence that this user message was received.'));
         recoveryRequired.push(submission);

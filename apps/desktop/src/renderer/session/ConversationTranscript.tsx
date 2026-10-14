@@ -2317,12 +2317,8 @@ export function MessageDeliveryOutcomeFeedback(props: {
   const failed = props.item.status === 'failed' || pausedReason === 'preflight_failed' || pausedReason === 'runtime_rejected';
   /** 只有尚无明确拒绝事实的暂停或未知状态才显示待确认。 */
   const unconfirmed = !failed && (props.item.status === 'unconfirmed' || props.item.status === 'paused');
-  if (!failed && !unconfirmed)
-    return props.item.payload.internalOperation === true ? (
-      <ConversationNotice role="status" label={props.language === 'zh-CN' ? '系统操作' : 'System operation'}>
-        {props.item.text}
-      </ConversationNotice>
-    ) : null;
+  // 正常内部续接由底部运行状态承载，不再额外显示带感叹号的系统操作横条。
+  if (!failed && !unconfirmed) return null;
   const feedbackState = failed ? 'failed' : 'unconfirmed';
   /** 确切的未知送达仅开放核对；普通重试也会由现有接口先检查未发送证据。 */
   const checkOnly = props.item.status === 'unconfirmed' || pausedReason === 'outcome_unknown';

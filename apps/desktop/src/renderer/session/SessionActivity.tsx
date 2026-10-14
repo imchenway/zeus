@@ -601,8 +601,8 @@ export function SessionTurnDuration(props: { turn: NativeTurnSnapshot; requests:
   if (duration === null) return props.fallback ?? null;
   /** 紧凑时长与参考布局一致。 */
   const value = formatDuration(duration);
-  /** 失败和中断仍明确区分于正常完成。 */
-  const terminalStatus = props.turn.status === 'interrupted' || props.turn.status === 'failed' ? props.turn.status : 'completed';
+  /** 已有失败详情由统一错误反馈承载，耗时不再重复报错；缺少详情和用户中断仍保留状态。 */
+  const terminalStatus = props.turn.status === 'interrupted' || (props.turn.status === 'failed' && !props.turn.error) ? props.turn.status : 'completed';
   /** 状态文案随界面语言变化。 */
   const label =
     props.language === 'zh-CN'
