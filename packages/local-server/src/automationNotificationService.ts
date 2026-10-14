@@ -191,6 +191,13 @@ export function createAutomationNotificationService(options: AutomationNotificat
       });
       return page;
     },
+    /** 全量确认使用调用方的幂等事务，提交成功后统一刷新各窗口角标。 */
+    acknowledgeAll() {
+      /** 不读取列表分页，避免遗漏尚未加载的通知。 */
+      const result = notifications.acknowledgeAll();
+      publishChanged();
+      return result;
+    },
     /** 调用方以已有幂等事务提交确认，只有提交成功才广播。 */
     acknowledge(id: string, expectedRevision: number) {
       /** 返回是否确实确认该修订，过期确认保持新结果未读。 */

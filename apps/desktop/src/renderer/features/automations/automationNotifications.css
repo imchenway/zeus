@@ -89,12 +89,21 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
+  flex-wrap: wrap;
   flex: 0 0 auto;
-  padding: 14px 16px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--zeus-product-line-soft);
 }
-.automation-notification-header > span,
+/* 已读操作固定在标题右端，不随通知列表滚出视口。 */
+.automation-notification-header-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-inline-start: auto;
+}
+.automation-notification-header-actions > span,
 .automation-notification-meta {
   color: var(--zeus-product-muted);
   font-size: 12px;
@@ -110,7 +119,7 @@
   list-style: none;
 }
 .automation-notification-item {
-  padding: 12px 16px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--zeus-product-line-soft);
   overflow-wrap: anywhere;
 }
@@ -123,7 +132,7 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 4px;
+  gap: 2px;
   width: 100%;
   min-width: 0;
   padding: 0;
@@ -144,35 +153,70 @@
   opacity: 0.65;
   cursor: default;
 }
+/* 标题与会话各最多一行，完整标题保留在悬停说明和可访问名称中。 */
+.automation-notification-open > strong,
+.automation-notification-open > span,
+.automation-notification-summary > strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.automation-notification-open > span,
+.automation-notification-summary > span {
+  font-size: 12px;
+  color: var(--zeus-product-muted);
+}
+/* 无会话提示与名称同行，避免为不可点击的占位说明单独占一行。 */
+.automation-notification-summary {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 8px;
+}
+.automation-notification-summary > span {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+}
 .automation-notification-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 10px;
-  margin-top: 7px;
+  align-items: baseline;
+  gap: 2px 8px;
+  margin-top: 3px;
+}
+/* 项目名过长时保留悬停全文，让状态与时间优先留在同一行。 */
+.automation-notification-project {
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .automation-notification-meta > time {
-  flex-basis: 100%;
+  margin-inline-start: auto;
 }
 .automation-notification-reason {
-  margin: 8px 0 0;
+  margin: 4px 0 0;
   white-space: pre-wrap;
 }
-/* 异常原因直接换行显示，不能因紧凑错误组件的单行省略而只剩图标。 */
+/* 异常摘要最多两行，独立的完整说明按钮始终可见。 */
 .macos-ai-app .automation-notification-reason .application-error-inline {
   display: flex;
   align-items: flex-start;
 }
 .macos-ai-app .automation-notification-reason .application-error-inline-summary {
   flex: 1 1 auto;
-  overflow: visible;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 .automation-notification-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
+  gap: 6px;
+  margin-top: 6px;
 }
 .automation-notification-empty {
   padding: 24px 16px;

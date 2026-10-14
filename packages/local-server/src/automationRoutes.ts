@@ -120,6 +120,16 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
     return mutate(request, reply, () => ({ statusCode: 202, body: runs.resumeDispatch(request.params.runId) }));
   });
 
+  /** 先补齐结果，再一次确认全部未读；同幂等键重放不会清除后来新增的提醒。 */
+  server.post('/api/automation-notifications/read-all', async (request, reply) => {
+    try {
+      options.notifications.synchronize();
+      return mutate(request, reply, () => ({ statusCode: 200, body: options.notifications.acknowledgeAll() }));
+    } catch (error) {
+      return sendError(reply, error);
+    }
+  });
+
   /** 先补齐源修订，再进入已有幂等耐久事务，旧请求不会确认新结果。 */
   server.post('/api/automation-notifications/:id/read', async (request: FastifyRequest<{ Params: { id: string }; Body: { expectedRevision?: number } }>, reply) => {
     try {

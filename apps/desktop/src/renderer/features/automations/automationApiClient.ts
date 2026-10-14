@@ -14,6 +14,8 @@ export interface AutomationApiClient {
   loadAutomationNotifications(cursor?: string): Promise<AutomationNotificationPage>;
   /** 只确认已实际查看的通知修订。 */
   acknowledgeAutomationNotification(id: string, expectedRevision: number): Promise<{ acknowledged: boolean }>;
+  /** 一次确认服务端全部未读通知，包含未加载分页。 */
+  acknowledgeAllAutomationNotifications(): Promise<{ acknowledged: boolean }>;
   /** 沿原运行身份继续尚未接纳的目标，不重跑已接纳工作。 */
   resumeAutomationRun(runId: string): Promise<AutomationRunRecord>;
 }
@@ -33,6 +35,8 @@ export function createAutomationApiClient(transport: LocalApiTransport): Automat
     resumeAutomationRun: (runId) => transport.request(`/api/automation-runs/${encodeURIComponent(runId)}/resume`, automationRequest('POST', {})),
     /** 原通知身份和修订随幂等写入一起提交。 */
     acknowledgeAutomationNotification: (id, expectedRevision) => transport.request(`/api/automation-notifications/${encodeURIComponent(id)}/read`, automationRequest('POST', { expectedRevision })),
+    /** 全量确认复用相同的幂等写入边界。 */
+    acknowledgeAllAutomationNotifications: () => transport.request('/api/automation-notifications/read-all', automationRequest('POST', {})),
   };
 }
 
