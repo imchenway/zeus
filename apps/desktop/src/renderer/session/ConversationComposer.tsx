@@ -36,7 +36,7 @@ import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { StructuredComposerInput, type StructuredComposerSelection } from './StructuredComposerInput.js';
 import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
 import { useInputSuggestion } from './useInputSuggestion.js';
-import { InputSuggestionButton, InputSuggestionPreview, InputSuggestionStatus } from './InputSuggestionControl.js';
+import { InputSuggestionButton, InputSuggestionPreview } from './InputSuggestionControl.js';
 
 export type ComposerKeyIntent = 'submit' | 'newline' | 'escape' | 'ignore';
 export interface ComposerRuntimeSettings {
@@ -524,7 +524,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
             />
           </div>
         )}
-        <InputSuggestionStatus suggestion={suggestion} language={props.language} />
         <div className="session-composer-command-row">
           <span className="session-composer-leading-actions">
             {/* 附件入口直接显示功能提示，禁用时仍可识别用途。 */}

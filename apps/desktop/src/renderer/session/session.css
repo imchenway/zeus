@@ -6543,6 +6543,11 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   color: var(--session-text);
 }
 
+/* 失败仍占用原图标区域，颜色之外同时提供警告图形和可读说明。 */
+.session-codex-parity-v1 .session-suggestion-button[data-error='true'] {
+  color: var(--zeus-control-error-text);
+}
+
 .session-codex-parity-v1 .session-suggestion-button:focus-visible {
   outline: 2px solid var(--session-focus-outline);
   outline-offset: 2px;
@@ -6671,15 +6676,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   align-items: center;
   display: inline-flex;
   gap: 2px;
-}
-
-/* 输入建议状态随主题换色，窄窗口换行，不遮挡输入与操作按钮。 */
-.session-composer-suggestion-status {
-  color: var(--session-text-muted);
-  font-size: 12px;
-  line-height: 1.4;
-  margin: 0 5px;
-  overflow-wrap: anywhere;
 }
 
 .session-codex-parity-v1 .session-service-tier-note {
