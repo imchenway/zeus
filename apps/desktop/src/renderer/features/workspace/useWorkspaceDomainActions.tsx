@@ -948,6 +948,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     });
   }
 
+  /** 详情读取同步共享任务记录，防止后续会话选择用摘要覆盖完整正文。 */
   async function loadTaskDetail(taskId: string): Promise<void> {
     setConversationDraftOpen(false);
     if (!props.onLoadTask) {
@@ -956,7 +957,9 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     }
     setActionState('updating-task');
     try {
+      /** 完整记录先回填共享集合，再建立当前详情选中态。 */
       const task = await props.onLoadTask(taskId);
+      mergeTaskRecord(task);
       setTaskDetail(task);
       setActionState('idle');
     } catch (error) {
