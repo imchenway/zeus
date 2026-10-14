@@ -237,7 +237,8 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
             <span className="session-conversation-title" title={displayTitle}>
               {displayTitle}
             </span>
-            <ConversationRowState conversation={conversation} runtimeState={runtimeState} language={props.language} />
+            {/* 归档进度复用行末状态位置，完成后恢复会话自身状态。 */}
+            {archivingConversationId === conversation.id ? <ConversationStatusIcon status="running" label={copy.archiving} /> : <ConversationRowState conversation={conversation} runtimeState={runtimeState} language={props.language} />}
           </button>
           {archiveError?.conversationId === conversation.id ? (
             <span className="session-conversation-row-error" role="alert">

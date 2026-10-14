@@ -1,5 +1,4 @@
 import { normalizeTaskDeadline, type TaskDeadline } from '@zeus/shared';
-import { TaskDeadlineField } from '../../task/TaskDeadlineField.js';
 import { normalizeInputSuggestionSettings, temporaryWorkspaceId } from '@zeus/shared';
 import { usePresenceOpen } from '../../ui/MotionPresence.js';
 import { retainInputFocus } from '../../ui/retainInputFocus.js';
@@ -1518,8 +1517,6 @@ export function TaskCreateModal(props: {
   onFormChange: (field: TaskCreateTextField, value: string) => void;
   onTaskTypeChange: (taskType: TaskType | '') => void;
   onPriorityChange: (priority: TaskPriority) => void;
-  /** 日期、时间和提醒作为一份草稿提交。 */
-  onDeadlineChange: (deadline: TaskDeadline | null) => void;
   onParentChange: (parentTaskId: string | null) => void;
   onAuthorizeFiles: (files: File[], source: 'paste' | 'drop') => Promise<TaskResourceAuthorizationResult>;
   onMaterializeResources: (resources: TaskResourcePayload[]) => Promise<TaskCreateAttachmentCandidate[]>;
@@ -2020,10 +2017,6 @@ export function TaskCreateModal(props: {
                     disabled={interactionBusy}
                   />
                 </div>
-              </div>
-              <div className="task-create-field">
-                <span>{props.copy.taskCountPrefix === 'Tasks' ? 'Deadline' : '截止时间'}</span>
-                <TaskDeadlineField value={props.form.deadline ?? null} onChange={props.onDeadlineChange} disabled={interactionBusy} language={props.copy.taskCountPrefix === 'Tasks' ? 'en-US' : 'zh-CN'} />
               </div>
               {props.form.taskType === 'task' || props.form.taskType === 'requirement' ? (
                 <div className="task-create-field task-create-description-field">

@@ -6686,8 +6686,8 @@ body[data-surface='project-git-diff'] .macos-ai-app.zeus-shell.project-git-diff-
   pointer-events: none;
 }
 
-/* 已有命令圆环或附件骨架的按钮不再追加圆点，避免双重动画挤偏主图形。 */
-.macos-ai-app :where(button, a):where([aria-busy='true'], [data-loading='true']):where(:not(:has(> .session-command-spinner, .resource-loading)))::after {
+/* 已有命令圆环或附件骨架的按钮，以及自带行末状态图标的会话行，不再追加圆点。 */
+.macos-ai-app :where(button, a):where([aria-busy='true'], [data-loading='true']):where(:not(:has(> .session-command-spinner, .resource-loading), .session-conversation-tree-row:has(> .session-conversation-status-icon)))::after {
   animation: zeus-control-loading-pulse 900ms ease-out infinite;
   background: var(--zeus-control-loading-dot);
   block-size: 5px;
