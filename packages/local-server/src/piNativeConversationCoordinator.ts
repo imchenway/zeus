@@ -2133,6 +2133,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
         ...(warning ? { severity: 'warning' } : {}),
         completedAt: event.createdAt,
         notificationEligible: true,
+        /** 建议使用真实正常完成事件，不从历史页面或正文增量补触发。 */
+        inputSuggestionEligible: !failed && !interrupted,
       });
       publish('conversation.sessionMetrics.changed', run.conversationId, {});
       if (interrupted) publish('conversation.queue.changed', run.conversationId, { turnId: run.providerTurnId, submissionId: run.submissionId });

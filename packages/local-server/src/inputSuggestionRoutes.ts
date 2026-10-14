@@ -44,9 +44,9 @@ export function readInputSuggestionContext(repository: ConversationSnapshotV2Rep
   if (!resolvedTurnId) return null;
   /** 首屏快照只核对当前状态和最新终态，不能用它读取三轮历史。 */
   const snapshot = repository.readSnapshot(conversationId, { closedTurnLimit: 1, includeSessionMetrics: false });
-  /** 最近关闭轮次不能被客户端替换成旧轮次或失败轮次。 */
+  /** 只读最新已完成材料，不读取活动轮次；自动触发的空闲条件由路由核对。 */
   const latest = snapshot.recentClosedTurns[0];
-  if (snapshot.activeTurn || snapshot.conversation.archived || !latest || latest.id !== resolvedTurnId || latest.status !== 'completed' || latest.hasError) return null;
+  if (snapshot.conversation.archived || !latest || latest.id !== resolvedTurnId || latest.status !== 'completed' || latest.hasError) return null;
   /** 为角色标题和分隔符预留空间，整个对话材料不超过 16,000 字符。 */
   let remaining = 15_900;
   /** 每项保存一组用户消息和最终回复，最后恢复原对话顺序。 */
@@ -220,7 +220,7 @@ export function registerInputSuggestionRoutes(options: {
       try {
         /** 主动操作可使用已打开的历史会话；自动操作仍核对刚完成轮次。 */
         const snapshot = conversationId ? options.repository.readSnapshot(conversationId, { closedTurnLimit: 1, includeSessionMetrics: false }) : null;
-        if (snapshot?.activeTurn || snapshot?.conversation.archived || (conversationId && options.hasPendingSubmission(conversationId))) return { ...result, reason: 'context_unavailable' };
+        if (snapshot?.conversation.archived || (input.trigger === 'automatic' && (snapshot?.activeTurn || (conversationId && options.hasPendingSubmission(conversationId))))) return { ...result, reason: 'context_unavailable' };
         /** 本地轮次身份用于生成前后核对，新草稿可以没有历史。 */
         const latestTurnId = snapshot?.recentClosedTurns[0]?.id ?? null;
         /** 无成功终态时不把其他会话或未完成过程当作材料。 */
@@ -230,12 +230,11 @@ export function registerInputSuggestionRoutes(options: {
         const isCurrent = (): boolean => {
           /** 设置变化不能让本次调用带着旧模型或深度继续。 */
           const current = normalizeInputSuggestionSettings(options.readSettings());
-          if (current.enabled !== settings.enabled || current.modelRef !== settings.modelRef || current.effort !== settings.effort) return false;
+          if ((input.trigger === 'automatic' && current.enabled !== settings.enabled) || current.modelRef !== settings.modelRef || current.effort !== settings.effort) return false;
           if (!conversationId) return true;
-          if (options.hasPendingSubmission(conversationId)) return false;
-          /** 新提交可能先进入队列，真实轮次和正文随后才到达。 */
+          /** 手动操作使用点击时的完整材料，主会话推进不使草稿润色失效。 */
           const after = options.repository.readSnapshot(conversationId, { closedTurnLimit: 1, includeSessionMetrics: false });
-          return !after.activeTurn && !after.conversation.archived && (after.recentClosedTurns[0]?.id ?? null) === latestTurnId;
+          return !after.conversation.archived && (input.trigger === 'manual' || (!options.hasPendingSubmission(conversationId) && !after.activeTurn && (after.recentClosedTurns[0]?.id ?? null) === latestTurnId));
         };
         /** 目录与正文准备完成后再次核对取消。 */
         const models = await options.loadModels();

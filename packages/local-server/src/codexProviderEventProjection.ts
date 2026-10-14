@@ -800,6 +800,8 @@ export async function projectCodexProviderEvent(dependencies: CodexProviderEvent
         ...(failureRecord ? { error: projectConversationTurnFailure(failureRecord) } : {}),
         hasUnreadAttention: options.conversations.getById(conversation.id)?.attentionUnread === true,
         notificationEligible: !retrying && !internalContextCompaction && !conversationGoal,
+        /** 正常实时完成才允许预测下一句，独立于桌面通知和目标模式。 */
+        inputSuggestionEligible: !retrying && !internalContextCompaction,
         ...(retrying ? { internalOperation: 'connection_retry', retrying: true } : {}),
         ...(internalContextCompaction ? { internalOperation: 'context_compaction' } : {}),
       },

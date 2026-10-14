@@ -540,7 +540,7 @@ class SocketDisconnectedDuringHydrationError extends Error {
 
 export function createSessionController(options: CreateSessionControllerOptions): SessionController {
   const storage = options.storage ?? browserStorage();
-  const storageKey = `zeus.native-session-draft:${options.projectId}:${options.conversationId}`;
+  const storageKey = conversationDraftStorageKey(options.projectId, options.conversationId);
   const persisted = readPersistedDraft(storage, storageKey);
   let pendingSend = persisted.pendingSend ?? null;
   let deferredSends: PendingSendEnvelope[] = (persisted.deferredSends ?? []).map((envelope) => ({
@@ -3754,6 +3754,25 @@ function errorMessage(error: unknown): string {
   return error instanceof Error && error.message.trim() ? error.message : '按需读取失败。';
 }
 
+/** 输入框与后台建议共用草稿身份，不能另建一份草稿键规则。 */
+function conversationDraftStorageKey(projectId: string, conversationId: string): string {
+  return `zeus.native-session-draft:${projectId}:${conversationId}`;
+}
+
+/** 未打开的会话也按同一份草稿、附件和待发送记录判断是否允许自动建议。 */
+export function conversationDraftAllowsInputSuggestion(projectId: string, conversationId: string): boolean {
+  /** 无法读取草稿时不猜测为空，避免覆盖用户已有输入的意图。 */
+  const storage = browserStorage();
+  if (!storage) return false;
+  /** 后台自动生成不能把读取失败后的空草稿当作真实用户输入。 */
+  let readFailed = false;
+  /** 复用正式草稿读取与归一化逻辑，不复制存储格式。 */
+  const draft = readPersistedDraft(storage, conversationDraftStorageKey(projectId, conversationId), () => {
+    readFailed = true;
+  });
+  return !readFailed && !draft.draft.length && draft.attachments.length === 0 && !draft.browserSubmission && !hasConversationContext(draft.contextDraft ?? emptyConversationContextDraft) && !draft.pendingSend && !draft.deferredSends?.length;
+}
+
 function browserStorage(): SessionDraftStorage | undefined {
   try {
     return typeof window === 'undefined' ? undefined : window.localStorage;
@@ -3762,7 +3781,8 @@ function browserStorage(): SessionDraftStorage | undefined {
   }
 }
 
-function readPersistedDraft(storage: SessionDraftStorage | undefined, key: string): PersistedDraft {
+/** 输入框可显示安全空值，后台调用方同时接收读取失败，避免误启动模型。 */
+function readPersistedDraft(storage: SessionDraftStorage | undefined, key: string, onReadError?: () => void): PersistedDraft {
   const empty: PersistedDraft = { draft: '', attachments: [], contextDraft: structuredClone(emptyConversationContextDraft) };
   if (!storage) return empty;
   try {
@@ -3789,6 +3809,7 @@ function readPersistedDraft(storage: SessionDraftStorage | undefined, key: strin
       ...(pendingBrowserCommentMarks.length > 0 ? { pendingBrowserCommentMarks } : {}),
     };
   } catch {
+    onReadError?.();
     return empty;
   }
 }

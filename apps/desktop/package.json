@@ -20,6 +20,7 @@
     "@zeus/shared": "workspace:*",
     "ag-grid-community": "36.1.0",
     "ag-grid-react": "36.1.0",
+    "diff": "8.0.4",
     "markstream-react": "2.0.6",
     "mermaid": "11.17.2",
     "qrcode": "1.5.4"

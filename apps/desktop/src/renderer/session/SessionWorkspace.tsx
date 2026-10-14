@@ -86,7 +86,7 @@ import { autosizeTextarea } from './textareaAutosize.js';
 import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
 import { conversationAttachmentIdentity, ConversationComposerAttachments } from './ConversationComposerAttachments.js';
 import { useInputSuggestion } from './useInputSuggestion.js';
-import { InputSuggestionButton, InputSuggestionPreview } from './InputSuggestionControl.js';
+import { InputSuggestionButton } from './InputSuggestionControl.js';
 import { ContextUsageIndicator } from './ContextUsageIndicator.js';
 import { IconTooltip } from '../ui/IconTooltip.js';
 import { ServiceTierToggle } from './ServiceTierToggle.js';
@@ -3634,6 +3634,7 @@ export function NewConversationComposer(props: {
       setLocalError(props.language === 'zh-CN' ? '请选择来源分支并填写工作树分支名。' : 'Choose a source branch and enter a worktree branch name.');
       return;
     }
+    suggestion.dismiss();
     setSubmitting(true);
     setLocalError(null);
     try {
@@ -3699,12 +3700,12 @@ export function NewConversationComposer(props: {
     }
   }
 
-  /** 新草稿只在用户点击时发送，项目和任务切换立即取消旧结果。 */
+  /** 新草稿只在用户点击时生成，按项目和任务保存跨页面的请求结果。 */
   const suggestion = useInputSuggestion({
     scopeKey: `new:${props.owner?.kind === 'task' ? props.owner.taskId : (props.owner?.projectId ?? '')}`,
     projectId: props.owner?.projectId,
     draft: content,
-    eligible: Boolean(props.owner) && !goalInputActive && !isComposing && !inputResources.processing,
+    eligible: Boolean(props.owner) && !submitting && !goalInputActive && !isComposing && !inputResources.processing,
     working: submitting,
     settings: props.inputSuggestionSettings,
     generate: props.onGenerateInputSuggestion,
@@ -3737,7 +3738,6 @@ export function NewConversationComposer(props: {
           {typeof visibleLocalError === 'string' ? visibleLocalError : visibleLocalError.message}
         </p>
       ) : null}
-      <InputSuggestionPreview suggestion={suggestion} inputRef={textareaRef} language={props.language} />
       <div className="session-composer-input-frame" data-goal-input={goalInputActive ? 'true' : 'false'}>
         {props.owner?.kind === 'project' && props.projects?.length ? (
           <NewConversationExecutionContext
@@ -3803,7 +3803,7 @@ export function NewConversationComposer(props: {
           />
         ) : (
           <div className="session-composer-editor-with-suggestion" data-enabled={props.onGenerateInputSuggestion ? 'true' : undefined}>
-            {props.onGenerateInputSuggestion ? <InputSuggestionButton suggestion={suggestion} draft={content} language={props.language} configured={Boolean(props.inputSuggestionSettings?.modelRef)} /> : null}
+            {props.onGenerateInputSuggestion ? <InputSuggestionButton suggestion={suggestion} draft={content} inputRef={textareaRef} language={props.language} configured={Boolean(props.inputSuggestionSettings?.modelRef)} /> : null}
             <StructuredComposerInput
               tokenDraft={tokenDraft}
               value={content}
