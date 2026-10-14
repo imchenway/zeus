@@ -816,6 +816,8 @@ export interface NativeConversationResourceV2Item {
   previewKind: string | null;
   iconKind: string | null;
   attachmentRef?: string | null;
+  /** 图片按原始引用匹配，不能用相同说明串接其他图片。 */
+  sourceReference?: string | null;
   taskPushAttachmentKey?: string | null;
   origin?: string | null;
   /** 旧 Snapshot V2 缓存可能没有该字段；缺失必须按普通过程资源处理。 */

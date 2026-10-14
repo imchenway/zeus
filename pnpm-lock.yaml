@@ -273,7 +273,11 @@ importers:
         specifier: 0.12.1
         version: 0.12.1
 
-  packages/shared: {}
+  packages/shared:
+    dependencies:
+      markdown-it-ts:
+        specifier: 1.1.2
+        version: 1.1.2
 
   packages/storage:
     dependencies:
