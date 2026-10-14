@@ -1,3 +1,4 @@
+import { parseConversationSystemMessage, type ConversationSystemMessageInput, type ConversationSystemMessage } from '@zeus/shared';
 import { assertContextCapacity } from '@zeus/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type {
@@ -92,6 +93,8 @@ export function registerConversationCommandRoutes(options: {
     ConversationRepository,
     'getById' | 'getRecordById' | 'getNextTurnSettings' | 'setSessionFileEditGrant' | 'updateNextTurnSettings' | 'updatePermissionMode' | 'updateCollaborationMode' | 'acknowledgeAttention' | 'archive' | 'restore' | 'updateTitle'
   >;
+  /** 在命令事务内写系统消息与耐久事件。 */
+  saveSystemMessage(conversationId: string, input: ConversationSystemMessageInput): ConversationSystemMessage;
   goals: Pick<ConversationGoalRepository, 'get' | 'listEvents'>;
   codex: {
     readGoal(input: { conversationId: string }): Promise<ZeusConversationGoalRecord | null>;
@@ -125,6 +128,30 @@ export function registerConversationCommandRoutes(options: {
     }
     return options.sendNativeError(reply, error);
   };
+
+  // 系统消息沿用公开命令接纳和幂等回执，不直接调用 Provider。
+  server.post('/api/projects/:projectId/conversations/:conversationId/system-messages', async (request: FastifyRequest<{ Params: ConversationParams; Body: ConversationMutationRequest<ConversationSystemMessageInput> }>, reply) => {
+    try {
+      /** 命令身份和会话归属都在任何写入之前校验。 */
+      const parsed = parseCommand(request, conversationCommandTypes.systemMessageSave);
+      requireNativeConversation(request.params, true);
+      /** 诊断仅接受有界系统消息字段。 */
+      let input: ConversationSystemMessageInput;
+      try {
+        input = parseConversationSystemMessage(parsed.input);
+      } catch {
+        return reply.code(400).send({ error: 'ZEUS_SYSTEM_MESSAGE_INVALID', message: '系统消息内容或关联身份无效。' });
+      }
+      return application.executeCore({
+        parsed,
+        destinationId: 'conversation-system-message-application',
+        resourceId: request.params.conversationId,
+        mutateBusinessState: () => options.saveSystemMessage(request.params.conversationId, input),
+      }).result;
+    } catch (error) {
+      return sendRouteError(reply, error);
+    }
+  });
 
   server.patch('/api/projects/:projectId/conversations/:conversationId/next-turn-settings', async (request: FastifyRequest<{ Params: ConversationParams; Body: ConversationMutationRequest<NextTurnSettingsInput> }>, reply) => {
     try {

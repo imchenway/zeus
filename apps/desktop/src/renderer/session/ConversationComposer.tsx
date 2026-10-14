@@ -32,7 +32,7 @@ import { resolveModelCapability } from './modelSelection.js';
 import { useConversationInputResources } from './useConversationInputResources.js';
 import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, serviceTierSelectionValue, serviceTierWireOverride } from './serviceTierSelection.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
-import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { systemMessageScope, recordSystemMessage, recoverSystemMessage, useConversationSystemMessages } from './conversationSystemMessages.js';
 import { StructuredComposerInput, type StructuredComposerSelection } from './StructuredComposerInput.js';
 import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
 import { useInputSuggestion } from './useInputSuggestion.js';
@@ -159,7 +159,17 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const [goalInputOpen, setGoalInputOpen] = useState(false);
   const [goalDraft, setGoalDraft] = useState('');
   const [goalSubmitting, setGoalSubmitting] = useState(false);
-  const [inputResourceError, setInputResourceError] = useState<unknown>(null);
+  /** 输入区只记录系统消息，正文区域负责按持久位置展示。 */
+  const systemScope = systemMessageScope(props.state.projectId ?? props.projectId ?? '', props.state.conversationId);
+  const pendingSystemMessages = useConversationSystemMessages(systemScope);
+  /** 输入文件的失败与消息提交失败分别记录。 */
+  const setInputResourceError = (error: unknown): void => {
+    if (error) recordSystemMessage(systemScope, error, 'input_resource', '输入附件处理失败。');
+  };
+  /** 只有对应操作实际成功才补充恢复事实。 */
+  const recoverInputOperation = (operation: 'input_resource' | 'message_send'): void => {
+    for (const message of [...Object.values(props.state.systemMessages ?? {}), ...pendingSystemMessages]) if (message.operation === operation && !message.recoveredAt) recoverSystemMessage(systemScope, message);
+  };
   const [selectedModel, setSelectedModel] = useState(initialModel);
   /** 已持久化的下一轮容量；正在执行的请求保持原容量。 */
   const selectedCapacity = props.runtimeSettings?.contextCapacityTokens !== undefined ? props.runtimeSettings.contextCapacityTokens : (props.state.snapshot?.contextCapacityTokens ?? null);
@@ -192,7 +202,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
     disabled: !inputWritable || busy || goalInputActive,
     onTextChange: props.onDraftChange,
     onAddAttachments: (attachments) => {
-      setInputResourceError(null);
+      recoverInputOperation('input_resource');
       props.onAddAttachments?.(attachments);
     },
     onRemoveAttachment: (attachment) => props.onRemoveAttachment?.(attachment),
@@ -288,7 +298,8 @@ export function ConversationComposer(props: ConversationComposerProps) {
     setInputResourceError(null);
     void Promise.resolve()
       .then(() => props.onSubmit(nextDelivery, settings))
-      .catch(setInputResourceError);
+      .then(() => recoverInputOperation('message_send'))
+      .catch((error: unknown) => recordSystemMessage(systemScope, error, 'message_send', '消息提交失败。'));
   }
 
   function enterGoalInput(initialObjective?: string): void {
@@ -430,11 +441,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
       {!goalInputActive && (props.state.contextDraft.responseAnnotations.length || props.state.contextDraft.codeComments.length) ? (
         <ContextDraftAttachment draft={props.state.contextDraft} language={props.language} disabled={!inputWritable || busy} onRemove={() => props.onContextDraftChange?.({ responseAnnotations: [], codeComments: [] })} />
       ) : null}
-      {inputResourceError ? (
-        <p className="session-new-conversation-error" role="alert">
-          <VisibleApplicationError error={inputResourceError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
-        </p>
-      ) : null}
       <div className="session-composer-input-frame" data-goal-input={goalInputActive ? 'true' : 'false'} data-input-suggestion={!goalInputActive && props.onGenerateInputSuggestion ? 'true' : undefined}>
         {goalInputActive ? (
           <div className="session-goal-compose-context">
@@ -548,9 +554,11 @@ export function ConversationComposer(props: ConversationComposerProps) {
                   aria-label={copy.attach}
                   onClick={() => {
                     setInputResourceError(null);
-                    void Promise.resolve(props.onChooseAttachments?.()).catch((error: unknown) => {
-                      setInputResourceError(error);
-                    });
+                    void Promise.resolve()
+                      .then(() => props.onChooseAttachments?.())
+                      .catch((error: unknown) => {
+                        setInputResourceError(error);
+                      });
                   }}
                   disabled={!inputWritable || busy || inputResources.processing}
                 >

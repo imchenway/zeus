@@ -64,6 +64,16 @@ export function registerConversationSnapshotV2Api(options: ConversationSnapshotV
     return receipt;
   });
 
+  // 系统消息使用独立分页，读取失败不会创建新的失败消息。
+  server.get('/api/projects/:projectId/conversations/:conversationId/system-messages', async (request: FastifyRequest<{ Params: ConversationParams; Querystring: { cursor?: string } }>, reply) => {
+    if (!hasConversationAccess(options, request.params)) return conversationNotFound(reply);
+    try {
+      return repository.systemMessages.list(request.params.conversationId, request.query.cursor);
+    } catch (error) {
+      return sendSnapshotV2Error(reply, error);
+    }
+  });
+
   // 目录覆盖完整历史，正文仍按轮次分页；不改变消息读取及实时同步进度。
   server.get('/api/projects/:projectId/conversations/:conversationId/navigation', async (request: FastifyRequest<{ Params: ConversationParams }>, reply) => {
     if (!hasConversationAccess(options, request.params)) return conversationNotFound(reply);
@@ -91,7 +101,7 @@ export function registerConversationSnapshotV2Api(options: ConversationSnapshotV
       });
       // 此处不能加入异步等待或写事务，确保消息与结构共享同一事件进度，并支持只读资料。
       const history = repository.listModelHistoryTailPage({ conversationId: request.params.conversationId, entryLimit: 48, byteLimit: 96 * 1024 });
-      return { snapshot, history };
+      return { snapshot, history, systemMessages: repository.systemMessages.list(request.params.conversationId) };
     } catch (error) {
       return sendSnapshotV2Error(reply, error);
     }

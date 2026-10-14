@@ -33,10 +33,13 @@ import { type ConversationContextDraft, emptyConversationContextDraft, type Task
 import { mergeConversationContentV2, reconcileConversationHistoryCache } from './conversationSnapshotV2Adapter.js';
 import { isTranscriptContentUpdate } from './transcriptProjection.js';
 import { compareTranscriptTimelineOrder, mergeDurableItemResources, mergeTranscriptItem, newestTranscriptPlacement, reconcileTranscriptItems, transcriptContentRevision } from './transcriptReconciliation.js';
+import { mergeSystemMessages } from './systemMessageProjection.js';
 import { isUnacceptedTranscriptMessage } from './conversationQueuePresentation.js';
 import { retainResourcesOwnedByItem } from './conversationResourceProjection.js';
 
 export type NativeSessionAction =
+  /** 系统消息命令回执或历史页不推进实时事件水位。 */
+  | { type: 'system_messages_loaded'; page: import('@zeus/shared').ConversationSystemMessagePage; history?: boolean }
   | { type: 'transport_changed'; transportState: TransportState; reconnectAttempt?: number; error?: NativeSessionError | null }
   /** 只更新准备状态，不触碰消息、排序、草稿或当前快照。 */
   | { type: 'transcript_initialization_changed'; initializing: boolean }
@@ -179,6 +182,10 @@ export function createHydratedSessionState(snapshot: NativeConversationSnapshot)
 
 export function sessionReducer(state: NativeSessionState, action: NativeSessionAction): NativeSessionState {
   switch (action.type) {
+    case 'system_messages_loaded':
+      return state.conversationId === action.page.conversationId
+        ? { ...state, systemMessages: mergeSystemMessages(state.systemMessages, action.page.items), systemMessagesCursor: action.history ? action.page.nextCursor : state.systemMessagesCursor }
+        : state;
     case 'transcript_initialization_changed':
       return state.transcriptInitializing === action.initializing ? state : { ...state, transcriptInitializing: action.initializing };
     case 'transport_changed':
@@ -701,6 +708,8 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
   const retainProviderRetry = state.providerThreadId === snapshot.providerThreadId && snapshot.turns.some((turn) => turn.providerTurnId === state.providerReconnectTurnId && ['running', 'waiting', 'failed'].includes(turn.status));
   return {
     ...state,
+    systemMessages: mergeSystemMessages(state.conversationId === snapshot.id ? state.systemMessages : undefined, snapshot.systemMessages?.items ?? []),
+    systemMessagesCursor: state.conversationId === snapshot.id && state.systemMessagesCursor !== undefined ? state.systemMessagesCursor : (snapshot.systemMessages?.nextCursor ?? null),
     projectId: snapshot.projectId,
     conversationId: snapshot.id,
     providerThreadId: snapshot.providerThreadId,
@@ -1008,6 +1017,8 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
   };
 
   switch (event.type) {
+    case 'conversation.system_message.updated':
+      return { ...base, systemMessages: mergeSystemMessages(base.systemMessages, [event.payload.message]) };
     case 'conversation.transport.changed':
       return applyProviderIdentityChange(base, payload, true);
     case 'conversation.thread.changed':
@@ -1558,7 +1569,15 @@ function reduceTranscriptPlacements(state: NativeSessionState, batch: NativeConv
     const placement = entryId ? placements.get(entryId) : null;
     return [placement && request.transcript ? { ...request, transcript: { ...request.transcript, placement } } : request];
   });
-  return { ...state, items, pendingRequests, removedTranscriptEntryIds, itemOrder: sortSessionItemOrder(candidateOrder, items), transcriptRevision: state.transcriptRevision + 1 };
+  /** 系统消息与普通消息同批接管位置代次，避免混用新旧顺序。 */
+  const systemMessages = Object.fromEntries(
+    Object.entries(state.systemMessages ?? {}).flatMap(([id, message]) => {
+      const placement = placements.get(message.transcript.placement.entryId);
+      if (removed.has(message.transcript.placement.entryId)) return [];
+      return [[id, placement ? { ...message, transcript: { ...message.transcript, placement } } : message]];
+    }),
+  );
+  return { ...state, systemMessages, items, pendingRequests, removedTranscriptEntryIds, itemOrder: sortSessionItemOrder(candidateOrder, items), transcriptRevision: state.transcriptRevision + 1 };
 }
 
 /** 实时条目按正文时间线插入；已开轮用户消息用后续事件的显式开场身份临时固定位置。 */

@@ -1828,6 +1828,21 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   );
 
   registerConversationCommandRoutes({
+    /** 命令事务提交后才广播，失败回滚不能泄漏成功消息。 */
+    saveSystemMessage: (conversationId, input) => {
+      /** 原消息与位置登记共用当前命令事务。 */
+      const message = conversationSnapshotV2.systemMessages.save(conversationId, input);
+      /** 内容修订用于重复广播去重，恢复不改变位置修订。 */
+      const revision = `${message.transcript.sources[0]!.revision}:${message.transcript.placement.placementRevision}:${message.transcript.placement.orderEpoch}`;
+      conversationSyncProtocol.append({
+        conversationId,
+        type: 'conversation.system_message.updated',
+        eventId: `system-message:${conversationId}:${message.id}:${revision}`,
+        occurredAt: message.recoveredAt ?? message.occurredAt,
+        payload: { projectId: conversations.getRecordById(conversationId)!.projectId, message, entityRevision: revision },
+      });
+      return message;
+    },
     server,
     application: conversationCommands,
     projects,

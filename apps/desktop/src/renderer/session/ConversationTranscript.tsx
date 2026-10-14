@@ -1,3 +1,6 @@
+import { redactUserFacingErrorDetails } from '@zeus/shared';
+import type { ConversationSystemMessage, ConversationSystemMessageInput, ConversationTranscriptEnvelope } from '@zeus/shared';
+import { systemMessageScope, useConversationSystemMessages, recordSystemMessage, recoverSystemMessage, setSystemMessageAnchor } from './conversationSystemMessages.js';
 import type { ConversationProcessGroup } from '@zeus/shared';
 import { matchingInlineResource } from './ConversationMarkdown.js';
 import { inlineResourceRequestSignature } from './conversationResourceProjection.js';
@@ -41,6 +44,8 @@ import type { McpAppToolCall, McpAppToolResult } from './McpAppFrame.js';
 import { ConversationNavigation, mergeNavigationEntries, navigationRowKey, useConversationNavigation, type TranscriptNavigationEntry } from './ConversationNavigation.js';
 
 export interface ConversationTranscriptProps {
+  /** 系统消息保存只写会话历史，不触发模型请求。 */
+  onSaveSystemMessage?: (message: ConversationSystemMessageInput) => Promise<ConversationSystemMessage>;
   /** 主会话读取完整目录，独立子线程不传此入口。 */
   onLoadNavigation?: () => Promise<ConversationNavigationSnapshot>;
   /** 按需读取选中轮次的正文，不展开工具过程。 */
@@ -251,6 +256,28 @@ function useStableOptionalCallback<Arguments extends unknown[], Result>(callback
 
 /** 会话正文、历史过程与当前状态共用原始事件，仅在展示时分配提示职责。 */
 export function ConversationTranscript(props: ConversationTranscriptProps) {
+  /** 产品会话隔离待确认消息，子线程只读投影不接管主会话写入。 */
+  const systemScope = systemMessageScope(props.state.projectId ?? '', props.state.conversationId);
+  /** 补写中的消息与权威回执共享身份。 */
+  const pendingSystemMessages = useConversationSystemMessages(systemScope, props.onSaveSystemMessage, props.state.systemMessages);
+  /** 恢复中的待确认记录覆盖同身份旧状态，但不复制一条消息。 */
+  const systemMessages = useMemo(
+    () => [
+      ...new Map<string, ConversationSystemMessageInput & { transcript?: ConversationTranscriptEnvelope }>([
+        ...Object.values(props.state.systemMessages ?? {}).map((message) => [message.id, message] as const),
+        ...pendingSystemMessages.map((message) => [message.id, { ...props.state.systemMessages?.[message.id], ...message, recoveredAt: props.state.systemMessages?.[message.id]?.recoveredAt ?? message.recoveredAt }] as const),
+      ]).values(),
+    ],
+    [props.state.systemMessages, pendingSystemMessages],
+  );
+  /** 首次失败捕获最近的真实正文位置，系统消息自身不成为锚点。 */
+  useEffect(() => {
+    const latest = Object.values(props.state.items)
+      .filter((item) => (item.type === 'userMessage' || item.type === 'agentMessage') && item.transcript?.placement.order != null)
+      .sort((left, right) => left.transcript!.placement.order! - right.transcript!.placement.order!)
+      .at(-1);
+    setSystemMessageAnchor(systemScope, latest?.transcript?.placement.entryId ?? null);
+  }, [systemScope, props.state.items]);
   /** 导航和预览共用会话外壳，不被正文滚动裁切。 */
   const shellRef = useRef<HTMLDivElement | null>(null);
   /** 显式跳转目标先加入虚拟列表，挂载后再校准。 */
@@ -258,7 +285,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   /** 仅在阅读位置跨过发言时更新当前刻度。 */
   const [activeNavigationKey, setActiveNavigationKey] = useState<string | null>(null);
   /** 跳转读取失败留在当前工作面，不覆盖正文错误状态。 */
-  const [navigationReadError, setNavigationReadError] = useState<{ entry: TranscriptNavigationEntry; message: string } | null>(null);
+
   /** 连续点击和会话切换后，旧读取错误不能覆盖当前目标。 */
   const navigationRequestRef = useRef(0);
   const containerRef = useRef<HTMLElement | null>(null);
@@ -376,6 +403,13 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     .join('|')}`;
   /** 完整目录与首屏正文并行取得，绝不要求用户先滚到更早历史。 */
   const navigation = useConversationNavigation({ scopeKey: props.state.conversationId, refreshKey: navigationRefreshKey, load: props.onLoadNavigation });
+  useEffect(() => {
+    if (!props.onSaveSystemMessage) return;
+    /** 同一后台故障已被接纳时不因自动刷新再创建记录。 */
+    if (navigation.error && !systemMessages.some((message) => message.operation === 'navigation' && !message.recoveredAt && message.detail === redactUserFacingErrorDetails(navigation.error!)))
+      recordSystemMessage(systemScope, navigation.error, 'navigation', '会话目录读取失败。');
+    if (!navigation.error && !navigation.loading && navigation.snapshot) for (const message of systemMessages) if (message.operation === 'navigation' && !message.recoveredAt) recoverSystemMessage(systemScope, message);
+  }, [navigation.error, navigation.loading, navigation.snapshot, props.onSaveSystemMessage, systemScope, systemMessages]);
   /** 内容批次复用已建立的输入、阶段和父组索引。 */
   const previousProjection = useRef<TranscriptProjection | null>(null);
   const projectionContext = [
@@ -518,8 +552,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const showNavigation = Boolean(props.onLoadNavigation && navigation.snapshot && navigationEntries.length > 1);
   /** 失败记录与历史占位一同进入时间线，后续发言不能越过已发生的错误。 */
   const turnRows = useMemo(
-    () => projectTranscriptFailureRows(props.onLoadNavigation ? projectNavigationRows(baseTurnRows, navigationEntries) : baseTurnRows, props.state.turnsByProviderId),
-    [baseTurnRows, navigationEntries, props.onLoadNavigation, props.state.turnsByProviderId],
+    () => projectSystemMessageRows(projectTranscriptFailureRows(props.onLoadNavigation ? projectNavigationRows(baseTurnRows, navigationEntries) : baseTurnRows, props.state.turnsByProviderId), systemMessages),
+    [baseTurnRows, navigationEntries, props.onLoadNavigation, props.state.turnsByProviderId, systemMessages],
   );
   /** 任意正文行映射到其前方最近一次用户发言，长回答内滚动也能维持当前刻度。 */
   const navigationKeyByRow = useMemo(() => {
@@ -570,6 +604,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     (key: string): string => {
       const row = turnRowsByKey.get(key);
       if (!row) return 'absent';
+      if (row.kind === 'system_message') return `${row.message.id}:${row.message.recoveredAt ?? ''}`;
       const rows = row.kind === 'turn_work' ? row.segments.flatMap((segment) => [...(segment.summary ? [segment.summary] : []), ...segment.rows]) : [row];
       let revision = 0;
       let length = 0;
@@ -786,7 +821,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       positionedConversationIdRef.current = props.state.conversationId;
       clearUserScrollIntent();
       clearStaticReadingAnchor();
-      setNavigationReadError(null);
+
       setNavigationTargetKey(entry.rowKey);
       /** 历史卡片仍留在处理过程里；明确导航时才展开所属过程。 */
       const processKey = turnProcessExpansionKey(entry.parentRowKey ?? `turn-work:${encodeURIComponent(entry.providerTurnId ?? entry.turnId)}`);
@@ -797,11 +832,16 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       const request = ++navigationRequestRef.current;
       // 显式跳转立即读取目标轮次，不等待虚拟占位进入观察区域；控制器会合并并发请求。
       if (props.onLoadNavigationTurn)
-        void props.onLoadNavigationTurn(entry.turnId).catch((error: unknown) => {
-          if (request === navigationRequestRef.current) setNavigationReadError({ entry, message: error instanceof Error ? error.message : '正文读取失败。' });
-        });
+        void props
+          .onLoadNavigationTurn(entry.turnId)
+          .then(() => {
+            for (const message of systemMessages) if (message.operation === 'navigation_body' && message.targetTurnId === entry.turnId && !message.recoveredAt) recoverSystemMessage(systemScope, message);
+          })
+          .catch((error: unknown) => {
+            if (request === navigationRequestRef.current) recordSystemMessage(systemScope, error, 'navigation_body', '会话正文读取失败。', { entryId: entry.placement?.entryId ?? null, turnId: entry.turnId });
+          });
     },
-    [scrollController, clearUserScrollIntent, clearStaticReadingAnchor, props.onLoadNavigationTurn, props.state.conversationId],
+    [scrollController, clearUserScrollIntent, clearStaticReadingAnchor, props.onLoadNavigationTurn, props.state.conversationId, systemScope, systemMessages],
   );
 
   useLayoutEffect(() => {
@@ -836,7 +876,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   useEffect(() => {
     navigationRequestRef.current += 1;
     setNavigationTargetKey(null);
-    setNavigationReadError(null);
     return () => {
       navigationRequestRef.current += 1;
     };
@@ -1136,6 +1175,24 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   }, [expandedRowKeys, synchronizeTranscriptViewport]);
 
   const renderTranscriptTurnRow = (row: TranscriptViewportRow): ReactNode => {
+    if (row.kind === 'system_message')
+      return (
+        <SystemMessageNotice
+          message={row.message}
+          language={props.language}
+          busy={row.message.operation === 'navigation' && navigation.loading}
+          onRetry={
+            row.message.operation === 'navigation'
+              ? () => navigation.retry()
+              : row.message.operation === 'navigation_body' && row.message.targetTurnId && props.onLoadNavigationTurn
+                ? async () => {
+                    await props.onLoadNavigationTurn!(row.message.targetTurnId!);
+                    recoverSystemMessage(systemScope, row.message);
+                  }
+                : undefined
+          }
+        />
+      );
     if (row.kind === 'turn_failure') {
       /** 后台仍在核对本轮时只显示统一运行状态，避免错误卡和重连状态同时闪烁。 */
       const recovering = props.state.providerReconnectTurnId === row.turnId && props.state.providerReconnectAttempt > 0;
@@ -1160,7 +1217,18 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
         />
       );
     }
-    if (row.kind === 'navigation_placeholder') return <NavigationHistoryPlaceholder entry={row.entry} language={props.language} onLoad={historyHydrated ? props.onLoadNavigationTurn : undefined} />;
+    if (row.kind === 'navigation_placeholder')
+      return (
+        <NavigationHistoryPlaceholder
+          onReadSuccess={() => {
+            for (const message of systemMessages) if (message.operation === 'navigation_body' && message.targetTurnId === row.entry.turnId) recoverSystemMessage(systemScope, message);
+          }}
+          entry={row.entry}
+          language={props.language}
+          onLoad={historyHydrated ? props.onLoadNavigationTurn : undefined}
+          onReadError={props.onSaveSystemMessage ? (error) => recordSystemMessage(systemScope, error, 'navigation_body', '会话正文读取失败。', { entryId: row.entry.placement?.entryId ?? null, turnId: row.entry.turnId }) : undefined}
+        />
+      );
     if (row.kind === 'answered_request') return <AnsweredRequestHistory request={row.request} language={props.language} />;
     if (row.kind === 'turn_work') {
       const turn = props.state.turnsByProviderId[row.turnId];
@@ -1187,7 +1255,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       /** 只有当前输入所属的活动轮次显示外置进展。 */
       const processLive = row.live && turnActive;
       /** 逐段进展使用真实操作数量；最终正文可见后的整轮入口改用实际用时。 */
-      const processActivityCount = Math.max(row.processGroup?.itemCount ?? 0, turnProcessActivityCount(row.segments));
+      const processActivityCount = Math.max(row.systemMessageBoundary ? 0 : (row.processGroup?.itemCount ?? 0), turnProcessActivityCount(row.segments));
       /** 过程展开后保留原始顺序；完成轮次的中途说明也在这里回看。 */
       const renderProcessSegments = (active: boolean): ReactNode =>
         row.segments.map((segment, segmentIndex) => {
@@ -1500,21 +1568,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           <span ref={latestContentMarkerRef} className="session-latest-content-marker" aria-hidden="true" />
         </section>
         {showNavigation ? <ConversationNavigation key={props.state.conversationId} entries={navigationEntries} activeRowKey={activeNavigationKey} language={props.language} shellRef={shellRef} onNavigate={navigateToEntry} /> : null}
-        {/* 目录在后台补齐，不把已有正文的正常读取显示成会话加载；失败仍可原位重试。 */}
-        {props.onLoadNavigation && (navigation.error || navigationReadError) ? (
-          <div className="session-navigation-status" role="status">
-            <span>{navigationReadError?.message ?? navigation.error}</span>
-            <button
-              type="button"
-              onClick={() => {
-                if (navigationReadError) navigateToEntry(navigationReadError.entry);
-                else navigation.retry();
-              }}
-            >
-              {props.language === 'zh-CN' ? '重试' : 'Retry'}
-            </button>
-          </div>
-        ) : null}
         <V2HistoryPageStatus state={props.state} language={props.language} enabled={historyPagingArmed && historyPagingRequested} intersecting={historySentinelIntersecting} />
         <button
           type="button"
@@ -1558,8 +1611,8 @@ function V2HistoryPageSentinel(props: { state: NativeSessionState; enabled: bool
   const sentinelRef = useRef<HTMLSpanElement | null>(null);
   const requestedCursorRef = useRef<string | null>(null);
   const [intersecting, setIntersecting] = useState(false);
-  const cursor = paging?.nextCursor ?? null;
-  const visible = Boolean(props.state.snapshot?.snapshotV2 && paging && (paging.hasMore || paging.error));
+  const cursor = [paging?.nextCursor ?? '', props.state.systemMessagesCursor ?? ''].join(':');
+  const visible = Boolean(props.state.snapshot?.snapshotV2 && paging && (paging.hasMore || paging.error || props.state.systemMessagesCursor));
   useEffect(() => {
     const sentinel = sentinelRef.current;
     if (!sentinel) return;
@@ -1578,10 +1631,10 @@ function V2HistoryPageSentinel(props: { state: NativeSessionState; enabled: bool
   }, [visible]);
   useEffect(() => props.onIntersectionChange(intersecting), [intersecting, props.onIntersectionChange]);
   useEffect(() => {
-    if (!props.enabled || !intersecting || !cursor || !paging?.hasMore || paging.loading || paging.error || !props.onLoadEarlier || requestedCursorRef.current === cursor) return;
+    if (!props.enabled || !intersecting || cursor === ':' || (!paging?.hasMore && !props.state.systemMessagesCursor) || paging?.loading || paging?.error || !props.onLoadEarlier || requestedCursorRef.current === cursor) return;
     requestedCursorRef.current = cursor;
     void Promise.resolve(props.onLoadEarlier()).catch(() => undefined);
-  }, [cursor, intersecting, paging?.error, paging?.hasMore, paging?.loading, props.enabled, props.onLoadEarlier]);
+  }, [cursor, intersecting, paging?.error, paging?.hasMore, paging?.loading, props.enabled, props.onLoadEarlier, props.state.systemMessagesCursor]);
   if (!visible) return null;
   return <span ref={sentinelRef} className="session-v2-history-sentinel" aria-hidden="true" />;
 }
@@ -1671,6 +1724,41 @@ function ConversationNotice(props: { children: ReactNode; label: string; role?: 
 }
 
 /** 模型返回错误保留独立名称，避免与消息发送状态混淆。 */
+/** 系统消息沿用会话错误外观；恢复后保留原错误，不展示恢复状态。 */
+export function SystemMessageNotice(props: { message: ConversationSystemMessageInput; language: SessionUiLanguage; busy?: boolean; onRetry?: () => void | Promise<void> }) {
+  /** 防止用户重复点击同一读取操作。 */
+  const [pending, setPending] = useState(false);
+  /** 重试失败只更新原消息的交互反馈，不生成嵌套错误。 */
+  const [retryFailed, setRetryFailed] = useState(false);
+  /** 重试只由当前消息提供真实操作，绝不推断模型续跑。 */
+  async function retry(): Promise<void> {
+    if (!props.onRetry || pending || props.busy) return;
+    setPending(true);
+    setRetryFailed(false);
+    try {
+      await props.onRetry();
+    } catch {
+      setRetryFailed(true);
+    } finally {
+      setPending(false);
+    }
+  }
+  return (
+    <ConversationNotice label={props.language === 'zh-CN' ? 'Zeus 系统消息' : 'Zeus system message'} role={props.message.recoveredAt ? 'status' : 'alert'}>
+      <span>
+        <span>{props.language === 'zh-CN' ? 'Zeus 系统消息 · ' : 'Zeus · '}</span>
+        <VisibleApplicationError error={props.message.detail} summary={props.message.summary} title={props.language === 'zh-CN' ? 'Zeus 系统消息' : 'Zeus system message'} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
+      </span>
+      {!props.message.recoveredAt && props.onRetry ? (
+        <button type="button" disabled={pending || props.busy} onClick={() => void retry()}>
+          {pending || props.busy ? (props.language === 'zh-CN' ? '正在重试…' : 'Retrying…') : props.language === 'zh-CN' ? '重试' : 'Retry'}
+        </button>
+      ) : null}
+      {retryFailed ? <span role="status">{props.language === 'zh-CN' ? '重试未成功。' : 'Retry failed.'}</span> : null}
+    </ConversationNotice>
+  );
+}
+
 function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: SessionUiLanguage; retainedAnswer: boolean; onRetry?: () => void | Promise<void> }) {
   /** 请求提交期间禁用重复点击，失败原因保留在原提示中。 */
   const [pending, setPending] = useState(false);
@@ -1793,6 +1881,8 @@ function primitiveValue(value: unknown): string | null {
 }
 
 export interface TranscriptTurnWorkRow {
+  /** 系统消息切开过程时，每侧只展示本段数量，分页仍沿用真实分组。 */
+  systemMessageBoundary?: boolean;
   /** 局部组使用持久边界与权威总数；整轮回看不限定局部边界。 */
   processGroup?: ConversationProcessGroup;
   kind: 'turn_work';
@@ -1815,7 +1905,71 @@ export type TranscriptTurnRow = TranscriptRow | TranscriptTurnWorkRow;
 
 /** 目录补齐尚未读取的发言位置，不伪造一条可编辑或可发送的消息。 */
 type TranscriptViewportRow =
-  TranscriptTurnRow | { kind: 'navigation_placeholder'; key: string; entry: TranscriptNavigationEntry } | { kind: 'turn_failure'; key: string; turnId: string; occurredAt: string; failure: NativeTurnFailureSnapshot };
+  | TranscriptTurnRow
+  | { kind: 'system_message'; key: string; message: ConversationSystemMessageInput & { transcript?: ConversationTranscriptEnvelope } }
+  | { kind: 'navigation_placeholder'; key: string; entry: TranscriptNavigationEntry }
+  | { kind: 'turn_failure'; key: string; turnId: string; occurredAt: string; failure: NativeTurnFailureSnapshot };
+
+/** 从真实可见行取得已有位置，不用更新时间重排普通消息。 */
+function systemMessageRowPlacement(row: TranscriptViewportRow): { entryId: string; order: number | null } | undefined {
+  if (row.kind === 'system_message') return row.message.transcript?.placement;
+  if (row.kind === 'navigation_placeholder') return row.entry.placement;
+  if (row.kind === 'turn_failure' || row.kind === 'answered_request') return undefined;
+  if (row.kind === 'turn_work') {
+    /** 过程行使用首个真实子行的位置。 */
+    const first = row.segments.flatMap((segment) => [...(segment.summary ? [segment.summary] : []), ...segment.rows])[0];
+    return first ? systemMessageRowPlacement(first) : undefined;
+  }
+  return (row.kind === 'item' ? row.item : row.items[0])?.transcript?.placement;
+}
+
+/** 系统消息作为虚拟列表中的普通行插入，后续消息不能将它推到尾部。 */
+export function projectSystemMessageRows(rows: readonly TranscriptViewportRow[], messages: readonly (ConversationSystemMessageInput & { transcript?: ConversationTranscriptEnvelope })[]): TranscriptViewportRow[] {
+  /** 保持原正文顺序，只插入系统消息。 */
+  const result = [...rows];
+  for (const message of [...messages].sort((left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id))) {
+    /** 权威位置优先，尚未落库时使用首次记录的消息锚点。 */
+    const order = message.transcript?.placement.order;
+    /** 折叠的过程也不能吞掉消息边界；后续工具流式追加留在提示之后。 */
+    for (let rowIndex = 0; rowIndex < result.length; rowIndex += 1) {
+      const row = result[rowIndex]!;
+      if (row.kind !== 'turn_work') continue;
+      const children = row.segments.flatMap((segment) => [...(segment.summary ? [segment.summary] : []), ...segment.rows]);
+      const relatedIndex = children.findIndex((child) => systemMessageRowPlacement(child)?.entryId === message.relatedEntryId);
+      const boundary =
+        order != null
+          ? children.findIndex((child) => (systemMessageRowPlacement(child)?.order ?? -Infinity) > order)
+          : relatedIndex >= 0
+            ? relatedIndex + 1
+            : children.findIndex((child) => transcriptViewportRowTime(child) > message.occurredAt);
+      if (boundary <= 0 || boundary >= children.length) continue;
+      /** 原组身份留在前段，后段以固定系统消息身份命名。 */
+      const suffix = `${row.key}:after-system:${message.id}`;
+      result.splice(
+        rowIndex,
+        1,
+        { ...row, systemMessageBoundary: true, segments: [{ key: row.key, summary: null, rows: children.slice(0, boundary) }], live: false },
+        { ...row, key: suffix, systemMessageBoundary: true, segments: [{ key: suffix, summary: null, rows: children.slice(boundary) }] },
+      );
+      rowIndex += 1;
+    }
+    const anchorIndex = message.relatedEntryId ? result.findIndex((row) => systemMessageRowPlacement(row)?.entryId === message.relatedEntryId) : -1;
+    let index =
+      order != null
+        ? result.findIndex((row) => {
+            const placement = systemMessageRowPlacement(row);
+            return placement?.order != null && placement.order > order;
+          })
+        : anchorIndex >= 0
+          ? anchorIndex + 1
+          : result.findIndex((row) => transcriptViewportRowTime(row) > message.occurredAt);
+    if (index < 0) index = result.length;
+    /** 相同消息后的多个待确认提示保持首次发生顺序。 */
+    while (order == null && index < result.length && result[index]?.kind === 'system_message' && transcriptViewportRowTime(result[index]!) <= message.occurredAt) index += 1;
+    result.splice(index, 0, { kind: 'system_message', key: `system-message:${message.id}`, message });
+  }
+  return result;
+}
 
 /** 失败属于发生时的会话记录，不依附最后一条消息或整个列表的底部。 */
 export function projectTranscriptFailureRows(rows: readonly TranscriptViewportRow[], turns: NativeSessionState['turnsByProviderId']): TranscriptViewportRow[] {
@@ -1854,6 +2008,7 @@ export function projectTranscriptFailureRows(rows: readonly TranscriptViewportRo
 
 /** 各类可见行共用稳定时间，折叠过程取首条记录，缺页占位取持久发言时间。 */
 function transcriptViewportRowTime(row: TranscriptViewportRow): string {
+  if (row.kind === 'system_message') return row.message.occurredAt;
   if (row.kind === 'turn_failure') return row.occurredAt;
   if (row.kind === 'navigation_placeholder') return row.entry.occurredAt;
   if (row.kind === 'turn_work') {
@@ -1998,9 +2153,15 @@ function projectNavigationRows(rows: readonly TranscriptTurnRow[], entries: read
 }
 
 /** 只在占位真正靠近视口时读取对应轮次；失败保留在原位，等待用户重试。 */
-function NavigationHistoryPlaceholder(props: { entry: TranscriptNavigationEntry; language: SessionUiLanguage; onLoad?: (turnId: string) => Promise<void> }) {
+function NavigationHistoryPlaceholder(props: { entry: TranscriptNavigationEntry; language: SessionUiLanguage; onLoad?: (turnId: string) => Promise<void>; onReadError?: (error: unknown) => void; onReadSuccess?: () => void }) {
   /** 观察真实占位，虚拟列表远处保留的节点不能触发无关读取。 */
   const ref = useRef<HTMLElement | null>(null);
+  /** 回调变化不触发再次读取；失败仍归属本次目标。 */
+  const onReadError = useRef(props.onReadError);
+  onReadError.current = props.onReadError;
+  /** 成功回执也更新原错误，回调身份不触发重复读取。 */
+  const onReadSuccess = useRef(props.onReadSuccess);
+  onReadSuccess.current = props.onReadSuccess;
   /** 同一占位失败后不因重复相交自动重放。 */
   const [attempt, setAttempt] = useState(0);
   /** 状态只影响此处占位，不覆盖整个会话。 */
@@ -2016,9 +2177,16 @@ function NavigationHistoryPlaceholder(props: { entry: TranscriptNavigationEntry;
         observer.disconnect();
         setStatus({ loading: true, error: null });
         // 正文合并后由真实行接管；请求完成先于 React 提交，不能在这段间隙制造一次错误闪烁。
-        void props.onLoad!(props.entry.turnId).catch((error: unknown) => {
-          if (!cancelled) setStatus({ loading: false, error: error instanceof Error ? error.message : '正文读取失败。' });
-        });
+        /** 固定本次读取归属，切换会话后不借用新回调。 */
+        const succeeded = onReadSuccess.current;
+        void props.onLoad!(props.entry.turnId)
+          .then(() => succeeded?.())
+          .catch((error: unknown) => {
+            if (!cancelled) {
+              setStatus({ loading: false, error: error instanceof Error ? error.message : '正文读取失败。' });
+              onReadError.current?.(error);
+            }
+          });
       },
       { root: ref.current.closest('.session-transcript'), rootMargin: '200px 0px' },
     );
@@ -2030,8 +2198,8 @@ function NavigationHistoryPlaceholder(props: { entry: TranscriptNavigationEntry;
   }, [props.entry.turnId, props.onLoad, props.language, attempt]);
   return (
     <section ref={ref} className="session-navigation-placeholder" aria-busy={status.loading}>
-      {status.error ? <span role="alert">{status.error}</span> : null}
-      {status.error ? (
+      {status.error && !props.onReadError ? <span role="alert">{status.error}</span> : null}
+      {status.error && !props.onReadError ? (
         <button type="button" onClick={() => setAttempt((current) => current + 1)}>
           {props.language === 'zh-CN' ? '重试' : 'Retry'}
         </button>
@@ -2764,6 +2932,7 @@ function defaultExpandedTurnProcessKeys(rows: readonly TranscriptTurnRow[], turn
 }
 
 function transcriptTurnRowTurnId(row: TranscriptViewportRow): string | null {
+  if (row.kind === 'system_message') return row.message.transcript?.placement.turnId ?? null;
   if (row.kind === 'navigation_placeholder') return row.entry.providerTurnId ?? row.entry.turnId;
   return row.kind === 'turn_work' || row.kind === 'turn_failure' ? row.turnId : transcriptRowTurnId(row);
 }

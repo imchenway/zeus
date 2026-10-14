@@ -1,3 +1,5 @@
+import { systemMessageScope, recordSystemMessage, recoverSystemMessageOperation, bindDraftSystemMessages, useConversationSystemMessages } from './conversationSystemMessages.js';
+import { SystemMessageNotice } from './ConversationTranscript.js';
 import type { ConversationProcessGroup } from '@zeus/shared';
 import { ActivitySkillCatalogContext } from './SessionActivity.js';
 import { FilePreviewDialog, FilePreviewOpenContext } from '../code/FilePreview.js';
@@ -842,6 +844,9 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     const byIdentity = new Map(currentAttachments.map((attachment) => [conversationAttachmentIdentity(attachment), attachment]));
     attachments.forEach((attachment) => byIdentity.set(conversationAttachmentIdentity(attachment), attachment));
     input.controller.setAttachments([...byIdentity.values()]);
+    /** 文件实际加入后才恢复附件错误，取消选择不改变状态。 */
+    const state = input.controller.getState();
+    if (attachments.length) recoverSystemMessageOperation(systemMessageScope(state.projectId ?? '', state.conversationId), 'input_resource', Object.values(state.systemMessages ?? {}));
   };
   return {
     onReconnect: () => settle(input.controller.reconnect()),
@@ -850,7 +855,7 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     onSubmit: (delivery, settings) => {
       const currentState = input.controller.getState();
       const effectiveDelivery = delivery === 'steer_now' && canSteerActiveTurn(currentState) ? 'steer_now' : 'queue';
-      // 发送失败交回输入区显示；前置校验错误不一定经过控制器的运行操作状态。
+      // 发送失败交回组件记录系统消息；前置校验错误不一定经过控制器的运行操作状态。
       return input.controller.send(effectiveDelivery, effectiveDelivery === 'steer_now' ? (currentState.activeTurnId ?? undefined) : undefined, effectiveDelivery === 'queue' ? settings : undefined).then(() => undefined);
     },
     onStageBrowserComments: (prepared) => input.controller.stageBrowserComments(prepared),
@@ -912,7 +917,7 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     onNextTurnSettingsChange: (settings) => input.controller.setNextTurnSettings(settings).then(() => undefined),
     onPermissionModeChange: (permissionMode) => settle(input.controller.setPermissionMode(permissionMode)),
     onCollaborationModeChange: (collaborationMode) => settle(input.controller.setCollaborationMode(collaborationMode)),
-    onLoadEarlierHistory: () => settle(input.controller.loadEarlierHistory()),
+    onLoadEarlierHistory: () => settle(Promise.all([input.controller.loadEarlierHistory(), input.controller.loadEarlierSystemMessages()])),
     onLoadTurnProcess: (turnId, startAtBeginning, group) => settle(input.controller.loadTurnProcess(turnId, startAtBeginning, group)),
     onLoadConversationResources: () => settle(input.controller.loadConversationResources()),
     onLoadTurnArtifacts: (turnId) => settle(input.controller.loadTurnArtifacts(turnId)),
@@ -999,6 +1004,8 @@ export async function startNativeConversationWithDurableAcceptance<T>(options: {
   if (!isDurableNativeConversationAcceptance(request, acceptance, operationIdentity)) throw new Error('Native conversation start did not return a durable accepted operation.');
   options.envelopeManager.clearAccepted(options.input, request, acceptance, operationIdentity);
   const choice = nativeConversationChoiceFromAcceptance(acceptance, options.input.task);
+  // 只用本次耐久创建回执迁移草稿消息，不依据界面当前选中的会话猜测。
+  bindDraftSystemMessages(options.input.task.projectId, options.input.task.id, choice.id);
   // acceptance 导航属于 durable 边界，必须先于摘要刷新发生。
   await options.onAccepted(choice);
   try {
@@ -1113,6 +1120,7 @@ export async function startProjectConversationWithDurableAcceptance<T>(options: 
   if (!isDurableNativeConversationAcceptance(request, acceptance, operationIdentity)) throw new Error('Project conversation start did not return a durable accepted operation.');
   options.envelopeManager.clearAccepted(options.input, request, acceptance, operationIdentity);
   const choice = projectConversationChoiceFromAcceptance(acceptance, options.input.owner);
+  bindDraftSystemMessages(options.input.owner.projectId, null, choice.id);
   choice.workspaceMode ??= request.workspaceMode ?? 'direct';
   await options.onAccepted(choice);
   try {
@@ -1598,7 +1606,7 @@ function useOptionalSessionStateSlice(controller: SessionController | undefined,
 function SessionTranscriptProjection(props: Omit<ConversationTranscriptProps, 'state'> & { state: NativeSessionState; controller?: SessionController }) {
   const { controller, state: fallbackState, ...transcriptProps } = props;
   const state = useOptionalSessionStateSlice(controller, fallbackState, createConversationTranscriptStateSelector);
-  return <ConversationTranscript {...transcriptProps} state={state} onLoadNavigation={controller?.loadNavigation} onLoadNavigationTurn={controller?.loadNavigationTurn} />;
+  return <ConversationTranscript {...transcriptProps} state={state} onLoadNavigation={controller?.loadNavigation} onLoadNavigationTurn={controller?.loadNavigationTurn} onSaveSystemMessage={controller?.saveSystemMessage} />;
 }
 
 function SessionComposerProjection(props: Omit<ConversationComposerProps, 'state'> & { state: NativeSessionState; controller?: SessionController }) {
@@ -3377,7 +3385,23 @@ export function NewConversationComposer(props: {
     [worktreeProjectId],
   );
   const [executionContextBusy, setExecutionContextBusy] = useState(false);
-  const [localError, setLocalError] = useState<string | NativeConversationStartFailure | null>(null);
+  /** 创建前消息归属项目及任务草稿，重启后仍保留。 */
+  const systemScope = systemMessageScope(props.owner?.projectId ?? '', null, props.owner?.kind === 'task' ? props.owner.taskId : null);
+  const draftSystemMessages = useConversationSystemMessages(systemScope);
+  /** 空值只清理调用方的临时状态，不能删除已发生的系统消息。 */
+  const setLocalError = useCallback(
+    (error: string | NativeConversationStartFailure | null): void => {
+      if (error) recordSystemMessage(systemScope, typeof error === 'string' ? error : error.message, 'conversation_start', '会话操作失败。');
+    },
+    [systemScope],
+  );
+  /** 成功创建前的准备故障按其真实结果更新，历史仍保留。 */
+  const recoverDraftOperation = useCallback(
+    (operation: import('@zeus/shared').ConversationSystemMessageInput['operation']): void => {
+      recoverSystemMessageOperation(systemScope, operation);
+    },
+    [systemScope],
+  );
   /** 接入结果只属于原草稿，切换项目或卸载时取消。 */
   const modelSetupRequestRef = useRef<AbortController | null>(null);
   useEffect(() => () => modelSetupRequestRef.current?.abort(), [props.owner?.projectId]);
@@ -3446,14 +3470,15 @@ export function NewConversationComposer(props: {
   const closeBrowser = useCallback(async (): Promise<void> => {
     try {
       await window.zeus?.closeBrowserConversation?.(browserDraft.conversationId);
+      recoverDraftOperation('browser_close');
       window.zeus?.notifySessionContextActivity?.({ active: false, kind: 'none' });
       setBrowserOpen(false);
       setBrowserExpanded(false);
       requestAnimationFrame(() => textareaRef.current?.focus());
     } catch (error) {
-      setLocalError(formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
+      recordSystemMessage(systemScope, error, 'browser_close', '浏览器关闭失败。');
     }
-  }, [browserDraft.conversationId, props.language]);
+  }, [browserDraft.conversationId, systemScope, recoverDraftOperation]);
 
   useEffect(() => {
     /** 新对话处理自己的浏览器快捷键，停靠输入仅在本容器获得焦点时接管。 */
@@ -3475,17 +3500,19 @@ export function NewConversationComposer(props: {
     disabled: submitting || !props.owner || goalInputOpen,
     onTextChange: setContent,
     onAddAttachments: (selected) => {
-      setLocalError(null);
+      recoverDraftOperation('input_resource');
       setAttachments((current) => mergeConversationAttachments(current, selected));
     },
     onRemoveAttachment: (attachment) => {
       setAttachments((current) => current.filter((candidate) => candidate !== attachment));
     },
-    onError: setLocalError,
+    onError: (error) => recordSystemMessage(systemScope, error, 'input_resource', '输入附件处理失败。'),
   });
 
-  /** 新会话初始化和附件错误共用编辑器内的错误位。 */
-  const visibleLocalError = localError ?? (props.loadState === 'error' ? props.loadError : null);
+  /** 新会话初始化失败进入草稿消息流，输入框不承载错误。 */
+  useEffect(() => {
+    if (props.loadState === 'error' && props.loadError) setLocalError(props.loadError);
+  }, [props.loadState, props.loadError, setLocalError]);
 
   useEffect(() => {
     if (props.autoFocus) textareaRef.current?.focus();
@@ -3505,6 +3532,7 @@ export function NewConversationComposer(props: {
     }
     if (props.capabilities && capabilitiesRevision === 0) {
       setCapabilities(props.capabilities);
+      recoverDraftOperation('model_capabilities');
       setCapabilitiesLoading(false);
       return;
     }
@@ -3514,10 +3542,13 @@ export function NewConversationComposer(props: {
     void props
       .onLoadCapabilities?.(projectId)
       .then((snapshot) => {
-        if (active && snapshot) setCapabilities(snapshot);
+        if (active && snapshot) {
+          setCapabilities(snapshot);
+          recoverDraftOperation('model_capabilities');
+        }
       })
       .catch((error: unknown) => {
-        if (active) setLocalError(formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
+        if (active) recordSystemMessage(systemScope, error, 'model_capabilities', '模型选项读取失败。');
       })
       .finally(() => {
         if (active) setCapabilitiesLoading(false);
@@ -3525,7 +3556,7 @@ export function NewConversationComposer(props: {
     return () => {
       active = false;
     };
-  }, [props.capabilities, props.onLoadCapabilities, props.owner?.projectId, capabilitiesRevision]);
+  }, [props.capabilities, props.onLoadCapabilities, props.owner?.projectId, capabilitiesRevision, systemScope, recoverDraftOperation]);
 
   const preferredModel = resolveModelCapability(capabilities?.models, selectedModelId) ?? resolveModelCapability(capabilities?.models, capabilities?.preferredModel);
   const modelPresentation = useMemo(() => presentModelOptions(capabilities?.models ?? [], preferredModel?.id ?? selectedModelId, props.language), [capabilities?.models, preferredModel?.id, props.language, selectedModelId]);
@@ -3620,6 +3651,7 @@ export function NewConversationComposer(props: {
           const model = reference ? resolveModelCapability(refreshed?.models, reference) : refreshed?.models.find((candidate) => candidate.sourceId === 'codex' && candidate.available !== false);
           if (!refreshed || !hasAvailableConversationModel(refreshed) || !model || model.available === false) throw new Error('ZEUS_MODEL_UNAVAILABLE');
           setCapabilities(refreshed);
+          recoverDraftOperation('model_capabilities');
           setSelectedModelId(model.id);
         },
       };
@@ -3732,11 +3764,6 @@ export function NewConversationComposer(props: {
         onRestorePastedText={goalInputActive ? undefined : inputResources.restorePastedText}
       />
       {browserDraft.submission ? <BrowserSubmissionAttachment submission={browserDraft.submission} language={props.language} disabled={submitting} onRemove={() => setBrowserDraft((current) => ({ ...current, submission: null }))} /> : null}
-      {visibleLocalError ? (
-        <p className="session-new-conversation-error" role="alert">
-          {typeof visibleLocalError === 'string' ? visibleLocalError : visibleLocalError.message}
-        </p>
-      ) : null}
       <div className="session-composer-input-frame" data-goal-input={goalInputActive ? 'true' : 'false'}>
         {props.owner?.kind === 'project' && props.projects?.length ? (
           <NewConversationExecutionContext
@@ -3904,10 +3931,11 @@ export function NewConversationComposer(props: {
                     try {
                       const selected = await props.onChooseAttachments?.();
                       if (selected?.length) {
+                        recoverDraftOperation('input_resource');
                         setAttachments((current) => mergeConversationAttachments(current, selected));
                       }
                     } catch (error) {
-                      setLocalError(formatVisibleApplicationError(error, props.language === 'zh-CN' ? 'zh-CN' : 'en'));
+                      recordSystemMessage(systemScope, error, 'input_resource', '输入附件处理失败。');
                     }
                   }}
                 >
@@ -4065,6 +4093,13 @@ export function NewConversationComposer(props: {
       </header>
       <div ref={browserLayoutRef} className="session-conversation-browser-layout" data-browser-open={browserOpen || undefined} data-browser-expanded={browserExpanded || undefined}>
         <div className="session-conversation-pane">
+          {draftSystemMessages.length ? (
+            <section className="session-transcript" role="log" aria-label={props.language === 'zh-CN' ? 'Zeus 系统消息' : 'Zeus system messages'}>
+              {draftSystemMessages.map((message) => (
+                <SystemMessageNotice key={message.id} message={message} language={props.language} />
+              ))}
+            </section>
+          ) : null}
           {props.docked ? (
             composer
           ) : (

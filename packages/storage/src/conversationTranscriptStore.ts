@@ -50,6 +50,10 @@ export interface RegisterConversationTranscriptSourceInput {
   segmentId: string | null;
   /** 明确所属普通输入；缺失时只从已持久位置查找。 */
   openingInputId?: string | null;
+  /** 系统消息显式跟随的真实条目；仅首次登记使用。 */
+  afterEntryId?: string | null;
+  /** 无前项的历史系统消息可以明确插入首条真实消息之前。 */
+  beforeEntryId?: string | null;
   /** 明确的 Provider 展示阶段。 */
   displayStageId?: string | null;
   /** 该来源是否开启新的持久展示阶段。 */
@@ -889,13 +893,32 @@ export class ConversationTranscriptRepository {
           ];
     /** 前后引用可以指向本批尚未赋整数的新条目。 */
     let left: TranscriptOrderReference | null = null;
+    /** 早期草稿诊断补入时使用明确后邻。 */
+    let right: TranscriptOrderReference | null = null;
+    if (input.beforeEntryId) {
+      const next = this.db.get<{ id: string; display_order: number }>('SELECT id, display_order FROM conversation_transcript_entries WHERE conversation_id = ? AND id = ? AND display_order IS NOT NULL AND removed_revision IS NULL', [
+        input.conversationId,
+        input.beforeEntryId,
+      ]);
+      if (!next) throw transcriptError('ZEUS_CONVERSATION_TRANSCRIPT_INVALID_ANCHOR', '系统消息关联位置不可用。');
+      right = { id: next.id, order: next.display_order };
+    }
+    if (input.afterEntryId) {
+      /** 限定同一会话，避免跨会话或已删除位置成为锚点。 */
+      const anchor = this.db.get<{ id: string; display_order: number }>('SELECT id, display_order FROM conversation_transcript_entries WHERE conversation_id = ? AND id = ? AND display_order IS NOT NULL AND removed_revision IS NULL', [
+        input.conversationId,
+        input.afterEntryId,
+      ]);
+      if (!anchor) throw transcriptError('ZEUS_CONVERSATION_TRANSCRIPT_INVALID_ANCHOR', '系统消息关联位置不可用。');
+      left = { id: anchor.id, order: anchor.display_order };
+    }
     for (const [column, identity] of scopes) {
+      if (left || right) break;
       if (identity) left = this.scopeTail(batch, column, identity);
       if (left) break;
     }
     /** 没有本轮前项时，查找下一轮已经存在的最早位置。 */
-    let right: TranscriptOrderReference | null = null;
-    if (!left && input.turnId) {
+    if (!left && !right && input.turnId) {
       /** 缺少轮次行的旧资料仍走确定性的当前批次尾部。 */
       const startedAt = this.turnStart(batch, input.turnId);
       if (startedAt) {
