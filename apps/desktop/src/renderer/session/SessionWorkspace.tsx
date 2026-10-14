@@ -224,7 +224,6 @@ export interface SessionWorkspaceActions {
   onAnswerAsyncQuestion?: (item: NativeSessionItemBuffer, answers: AsyncQuestionAnswer['answers'], asNewMessage: boolean, answerAttachments?: Record<string, NativeConversationAttachment[]>) => Promise<void>;
   onReorderQueue?: (orderedSubmissionIds: string[]) => void | Promise<void>;
   onResumeQueue?: () => void | Promise<void>;
-  onRecoverQueue?: () => void | Promise<void>;
   onRestoreArchivedConversation?: () => void | Promise<void>;
   onRespondToRequest?: (requestId: string, response: Record<string, unknown>) => void | Promise<void>;
   onEditUserItem?: (item: NativeSessionItemBuffer, content: string) => void | Promise<void>;
@@ -906,10 +905,6 @@ export function createConnectedSessionActions(input: { controller: SessionContro
       await input.controller.reorderQueue(orderedSubmissionIds);
     },
     onResumeQueue: () => settle(input.controller.resumeQueue()),
-    // 检查失败回传消息旁的反馈，不由通用操作吞掉或重复弹窗。
-    onRecoverQueue: async () => {
-      await input.controller.recoverQueue('check');
-    },
     onRestoreArchivedConversation: () => settle(input.controller.restoreArchivedConversation()),
     onRespondToRequest: (requestId, response) => input.controller.respondToRequest(requestId, response).then(() => undefined),
     onRespondToPlanImplementationRequest: (requestId, response) => input.controller.respondToPlanImplementationRequest(requestId, response),
@@ -2909,7 +2904,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                         : undefined
                     }
                     onOpenAiSettings={actions.onOpenAiSettings}
-                    onRecoverQueue={transcriptInteractionsEnabled ? actions.onRecoverQueue : undefined}
                     onReconnect={transcriptInteractionsEnabled ? actions.onReconnect : undefined}
                     onRetryFailedTurn={transcriptInteractionsEnabled ? actions.onRetryFailedTurn : undefined}
                     onReconnectCodex={transcriptInteractionsEnabled ? actions.onReconnectCodex : undefined}
