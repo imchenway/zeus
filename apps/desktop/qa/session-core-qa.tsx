@@ -670,14 +670,7 @@ function QueueActionsQa() {
         {result}
       </p>
       <div ref={surface} className="ai-workspace" style={{ display: 'flex', flexDirection: 'column', height: 620, maxWidth: narrow ? 360 : 960, marginInline: 'auto' }}>
-        <ConversationTranscript
-          state={state}
-          language={language}
-          transcriptHydrated
-          onCancelQueuedSubmission={(id) => runAction(id, 'deleted')}
-          onRetryQueuedSubmission={(id) => runAction(id, 'accepted')}
-          onRecoverQueue={() => setResult('检查处理状态回调已触发')}
-        />
+        <ConversationTranscript state={state} language={language} transcriptHydrated onCancelQueuedSubmission={(id) => runAction(id, 'deleted')} onRetryQueuedSubmission={(id) => runAction(id, 'accepted')} />
         <div className="session-composer-stack">
           <QueuedConversationMessages
             state={state}
@@ -3029,13 +3022,9 @@ function CopyErrorQa() {
               item={item}
               submissionId="copy-submission"
               language={zh ? 'zh-CN' : 'en-US'}
-              onRecoverQueue={check}
               onOpenAiSettings={(section) => setAction(section === 'runtime' ? '导航：设置 → AI 连接' : '导航：设置 → 模型供应商')}
               onReconnectCodex={() => setAction('请求连接 Codex；未重发消息')}
-              onRetryQueuedSubmission={() => {
-                setAction('请求发送已确认未发送的消息');
-                setPhase('waiting');
-              }}
+              onRetryQueuedSubmission={check}
               onCancelQueuedSubmission={() => {
                 setAction('请求取消此消息');
                 setPhase('complete');

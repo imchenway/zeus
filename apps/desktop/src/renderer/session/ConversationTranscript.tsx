@@ -5,7 +5,7 @@ import { createTranscriptProjection, reuseTranscriptRows, reuseTranscriptTurnRow
 import { asyncQuestionAnswerHistory, AsyncQuestionMessage } from './AsyncQuestionMessage.js';
 import { classifyAssistantMessage, conversationNavigationExcerpt, conversationQuestionNavigationExcerpt, type ConversationNavigationSnapshot, type AsyncQuestionAnswer } from '@zeus/shared';
 import type { UserFacingErrorCause } from '@zeus/shared';
-import { userFacingErrorCause } from '@zeus/shared';
+import { describeUserFacingError, userFacingErrorCause } from '@zeus/shared';
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { activityCategory, isActiveSessionTurn, isLiveActivityItem, isOperationalActivityItem, type SessionActivityCategory, SessionActivityGroup, SessionTurnDuration, SessionTurnProcessDisclosure } from './SessionActivity.js';
 import { itemRole, type SessionUiLanguage, ThreadItemView, transcriptItemText } from './ThreadItemView.js';
@@ -76,7 +76,6 @@ export interface ConversationTranscriptProps {
   onLoadV2ToolResult?: (handle: string, offset?: number) => Promise<NativeConversationToolResultPage>;
   /** 打开现有登录或模型设置页，不代替用户修改配置。 */
   onOpenAiSettings?: (section: 'runtime' | 'models') => void;
-  onRecoverQueue?: () => void | Promise<void>;
   /** 本地连接预算耗尽后由用户手动重新连接。 */
   onReconnect?: () => void | Promise<void>;
   /** 最新网络失败轮次的显式续跑入口。 */
@@ -1654,17 +1653,17 @@ function SessionCreationNotice(props: { status: SessionCreationStatus; language:
   );
 }
 
-/** 沿用既有会话提示外观，具体状态的文案、操作和播报级别由调用方保留。 */
+/** 普通状态沿用底部进度样式，只有真正的错误使用警告图标和边框。 */
 function ConversationNotice(props: { children: ReactNode; label: string; role?: 'alert' | 'status'; deliveryState?: 'unconfirmed' | 'failed' | 'provider-stop-pending' | 'interaction-recovery-pending' }) {
   return (
     <section
-      className={`session-turn-failure${props.deliveryState ? ' session-message-delivery-feedback' : ''}`}
+      className={`${props.role === 'status' ? 'session-transcript-thinking' : 'session-turn-failure'}${props.deliveryState ? ' session-message-delivery-feedback' : ''}`}
       data-state={props.deliveryState}
       role={props.role ?? 'alert'}
       aria-live={props.role === 'status' ? 'polite' : 'assertive'}
       aria-label={props.label}
     >
-      {turnFailureSymbol}
+      {props.role === 'status' ? null : turnFailureSymbol}
       <div className="session-turn-failure-message">{props.children}</div>
     </section>
   );
@@ -2121,7 +2120,6 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         item={row.item}
         submissionId={queuedSubmission?.id}
         language={options.props.language}
-        onRecoverQueue={options.props.onRecoverQueue}
         onRetryQueuedSubmission={options.props.onRetryQueuedSubmission}
         onReconnectCodex={options.props.onReconnectCodex}
         onCancelQueuedSubmission={options.props.onCancelQueuedSubmission}
@@ -2159,7 +2157,6 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
           submissionId={queuedSubmission?.id}
           language={options.props.language}
           onOpenAiSettings={options.props.onOpenAiSettings}
-          onRecoverQueue={options.props.onRecoverQueue}
           onReconnectCodex={options.props.onReconnectCodex}
           onRetryQueuedSubmission={options.props.onRetryQueuedSubmission}
           onCancelQueuedSubmission={options.props.onCancelQueuedSubmission}
@@ -2277,14 +2274,13 @@ function InteractionAuthorityMissingNotice(props: { language: SessionUiLanguage;
   );
 }
 
-/** 发送失败在原消息旁重试；送达未知时只核对状态，避免重复发送。 */
+/** 错误只显示一次；手动重试沿用控制器的送达检查，避免重复发送。 */
 export function MessageDeliveryOutcomeFeedback(props: {
   item: NativeSessionItemBuffer;
   submissionId?: string;
   language: SessionUiLanguage;
   /** 打开现有登录或模型设置页，不代替用户修改配置。 */
   onOpenAiSettings?: (section: 'runtime' | 'models') => void;
-  onRecoverQueue?: () => void | Promise<void>;
   onReconnectCodex?: () => void | Promise<void>;
   onRetryQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   onCancelQueuedSubmission?: (submissionId: string) => void | Promise<void>;
@@ -2300,15 +2296,15 @@ export function MessageDeliveryOutcomeFeedback(props: {
   const interactionResponseRecovery = props.item.payload.recoveryKind === 'interaction_response';
   if (interactionResponseRecovery && props.item.status === 'queued') {
     return (
-      <ConversationNotice deliveryState="interaction-recovery-pending" role="status" label={props.language === 'zh-CN' ? '正在恢复对话' : 'Restoring conversation'}>
-        {props.language === 'zh-CN' ? '正在恢复对话并继续处理你的回答…' : 'Restoring the conversation to continue with your answer…'}
+      <ConversationNotice deliveryState="interaction-recovery-pending" role="status" label={props.language === 'zh-CN' ? '请稍候' : 'Please wait'}>
+        {props.language === 'zh-CN' ? '请稍候…' : 'Please wait…'}
       </ConversationNotice>
     );
   }
   if (pausedReason === 'provider_stop_pending') {
     return (
-      <ConversationNotice deliveryState="provider-stop-pending" role="status" label={props.language === 'zh-CN' ? '正在确认运行状态' : 'Checking run status'}>
-        {props.language === 'zh-CN' ? '正在确认上次运行已停止，确认后将自动继续' : 'Confirming the previous run has stopped. This message will continue automatically afterward.'}
+      <ConversationNotice deliveryState="provider-stop-pending" role="status" label={props.language === 'zh-CN' ? '请稍候' : 'Please wait'}>
+        {props.language === 'zh-CN' ? '请稍候…' : 'Please wait…'}
       </ConversationNotice>
     );
   }
@@ -2320,21 +2316,35 @@ export function MessageDeliveryOutcomeFeedback(props: {
   // 正常内部续接由底部运行状态承载，不再额外显示带感叹号的系统操作横条。
   if (!failed && !unconfirmed) return null;
   const feedbackState = failed ? 'failed' : 'unconfirmed';
-  /** 确切的未知送达仅开放核对；普通重试也会由现有接口先检查未发送证据。 */
-  const checkOnly = props.item.status === 'unconfirmed' || pausedReason === 'outcome_unknown';
+  /** 最新错误接管同一处提示，原始诊断只在用户打开详情时展示。 */
+  const feedbackError = actionError ?? deliveryError;
+  /** 错误摘要和操作使用同一语言。 */
+  const zh = props.language === 'zh-CN';
+  /** 复用统一错误解释，仅将内部送达核对说明替换为用户可理解的结果获取失败。 */
+  const explanation = feedbackError ? describeUserFacingError(feedbackError, zh ? 'zh-CN' : 'en') : null;
+  /** 没有送达结论时不能声称消息未发送，更不能声称模型仍在回复。 */
+  const message =
+    explanation && explanation.action !== 'check'
+      ? explanation.message
+      : (unconfirmed && pausedReason !== 'recovered_unsent') || explanation?.action === 'check'
+        ? zh
+          ? '无法获取请求结果，请重试。'
+          : 'Unable to retrieve the request result. Please retry.'
+        : zh
+          ? '消息尚未发送。'
+          : 'This message has not been sent.';
   /** 已落库消息沿用提交身份，本地发送失败沿用原客户端消息身份。 */
-  const canAct = props.submissionId ? Boolean(checkOnly ? props.onRecoverQueue : props.onRetryQueuedSubmission) : Boolean(props.clientUserMessageId && props.onRetryPendingSend);
-  /** 复用现有重试与只读核对，不把失败正文重新作为一条普通新消息提交。 */
+  const canAct = props.submissionId ? Boolean(props.onRetryQueuedSubmission) : Boolean(props.clientUserMessageId && props.onRetryPendingSend);
+  /** 现有重试先读取原请求，只有确认未发送才发送；组件不创建新的恢复或重发流程。 */
   async function retryDelivery(): Promise<void> {
     if (pending || !canAct) return;
     setPending(true);
     setActionError(null);
     try {
       if (props.submissionId) {
-        if (checkOnly) await props.onRecoverQueue?.();
-        else await props.onRetryQueuedSubmission?.(props.submissionId);
+        await props.onRetryQueuedSubmission?.(props.submissionId);
       } else if (props.clientUserMessageId) {
-        await props.onRetryPendingSend?.(props.clientUserMessageId, checkOnly ? 'check' : 'continue');
+        await props.onRetryPendingSend?.(props.clientUserMessageId, 'continue');
       }
     } catch (error) {
       setActionError(error);
@@ -2344,27 +2354,20 @@ export function MessageDeliveryOutcomeFeedback(props: {
   }
 
   return (
-    <ConversationNotice
-      deliveryState={feedbackState}
-      label={props.item.payload.internalOperation === true ? (props.language === 'zh-CN' ? '系统操作' : 'System operation') : props.language === 'zh-CN' ? '消息发送状态' : 'Message delivery status'}
-    >
-      <span className="session-message-delivery-status">
-        {unconfirmed && pausedReason !== 'recovered_unsent'
-          ? props.language === 'zh-CN'
-            ? props.item.payload.internalOperation === true
-              ? '正在核对上次操作是否已执行。'
-              : '暂时无法确认消息的发送状态。'
-            : 'Message delivery status is not yet confirmed.'
-          : props.language === 'zh-CN'
-            ? '消息尚未发送。'
-            : 'This message has not been sent.'}
-      </span>
-      {actionError || deliveryError ? <VisibleApplicationError className="session-message-delivery-error" error={actionError ?? deliveryError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} /> : null}
-      {canAct ? (
+    <ConversationNotice deliveryState={feedbackState} label={zh ? '请求错误' : 'Request error'}>
+      <span data-zeus-selectable="text">{message}</span>
+      {canAct || feedbackError ? (
         <div className="session-message-delivery-actions">
-          <button type="button" disabled={pending} onClick={() => void retryDelivery()}>
-            {pending ? (props.language === 'zh-CN' ? '处理中…' : 'Working…') : checkOnly ? (props.language === 'zh-CN' ? '检查处理状态' : 'Check processing status') : props.language === 'zh-CN' ? '重试' : 'Retry'}
-          </button>
+          {feedbackError ? (
+            <button type="button" className="application-error-details-link" onClick={() => reportApplicationError(feedbackError, { language: zh ? 'zh-CN' : 'en', summary: message, showDetails: true })}>
+              {zh ? '查看原因' : 'View details'}
+            </button>
+          ) : null}
+          {canAct ? (
+            <button type="button" disabled={pending} onClick={() => void retryDelivery()}>
+              {pending ? (zh ? '正在重试…' : 'Retrying…') : zh ? '重试' : 'Retry'}
+            </button>
+          ) : null}
         </div>
       ) : null}
     </ConversationNotice>
