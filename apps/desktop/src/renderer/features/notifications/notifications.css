@@ -33,7 +33,8 @@
   color: var(--zeus-product-text);
 }
 .automation-notification-trigger:focus-visible,
-.automation-notification-open:focus-visible {
+.automation-notification-open:focus-visible,
+.automation-notification-read:focus-visible {
   outline: 2px solid var(--zeus-brand-primary);
   outline-offset: 2px;
 }
@@ -104,7 +105,7 @@
   margin-inline-start: auto;
 }
 .automation-notification-header-actions > span,
-.automation-notification-meta {
+.automation-notification-time {
   color: var(--zeus-product-muted);
   font-size: 12px;
 }
@@ -126,14 +127,11 @@
 .automation-notification-item:last-child {
   border-bottom: 0;
 }
-/* 整段会话摘要可点击，异常操作独立，避免嵌套按钮。 */
+/* 标题独立导航，描述和已读操作不嵌套进标题按钮。 */
 .automation-notification-open,
 .automation-notification-summary {
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 2px;
-  width: 100%;
+  flex: 1 1 auto;
   min-width: 0;
   padding: 0;
   text-align: start;
@@ -153,57 +151,30 @@
   opacity: 0.65;
   cursor: default;
 }
-/* 标题与会话各最多一行，完整标题保留在悬停说明和可访问名称中。 */
+/* 标题最多一行，完整名称保留在悬停说明和可访问名称中。 */
 .automation-notification-open > strong,
-.automation-notification-open > span,
 .automation-notification-summary > strong {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.automation-notification-open > span,
-.automation-notification-summary > span {
-  font-size: 12px;
-  color: var(--zeus-product-muted);
-}
-/* 无会话提示与名称同行，避免为不可点击的占位说明单独占一行。 */
-.automation-notification-summary {
-  flex-direction: row;
-  align-items: baseline;
-  gap: 8px;
-}
-.automation-notification-summary > span {
+/* 时间是独立主体，靠右展示并保持完整，不再承载项目和状态字段。 */
+.automation-notification-time {
   flex: 0 0 auto;
   margin-inline-start: auto;
-}
-.automation-notification-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px 8px;
-  margin-top: 3px;
-}
-/* 项目名过长时保留悬停全文，让状态与时间优先留在同一行。 */
-.automation-notification-project {
-  max-width: 40%;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
-.automation-notification-meta > time {
-  margin-inline-start: auto;
-}
-.automation-notification-reason {
+.automation-notification-description {
   margin: 4px 0 0;
   white-space: pre-wrap;
 }
 /* 异常摘要最多两行，独立的完整说明按钮始终可见。 */
-.macos-ai-app .automation-notification-reason .application-error-inline {
+.macos-ai-app .automation-notification-description .application-error-inline {
   display: flex;
   align-items: flex-start;
 }
-.macos-ai-app .automation-notification-reason .application-error-inline-summary {
+.macos-ai-app .automation-notification-description .application-error-inline-summary {
   flex: 1 1 auto;
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -212,11 +183,38 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.automation-notification-actions {
+.automation-notification-item-header {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
-  margin-top: 6px;
+}
+/* 单条已读不额外占一行；布局始终预留点击区域，显隐时不会挤动标题。 */
+.macos-ai-app.zeus-shell .automation-notification-read.zeus-button[data-button-size='compact'] {
+  flex: 0 0 24px;
+  inline-size: 24px;
+  min-inline-size: 24px;
+  block-size: 24px;
+  min-block-size: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--zeus-product-muted);
+  opacity: 0;
+}
+.macos-ai-app.zeus-shell .automation-notification-item:hover .automation-notification-read.zeus-button,
+.macos-ai-app.zeus-shell .automation-notification-item:focus-within .automation-notification-read.zeus-button,
+.macos-ai-app.zeus-shell .automation-notification-read.zeus-button[data-loading='true'] {
+  opacity: 1;
+}
+.macos-ai-app.zeus-shell .automation-notification-read.zeus-button:hover {
+  color: var(--zeus-product-text);
+  background: var(--zeus-hover-background, rgb(127 127 127 / 10%));
+}
+/* 触控或无悬停输入始终显示操作，不让用户寻找隐藏按钮。 */
+@media (hover: none) {
+  .macos-ai-app.zeus-shell .automation-notification-read.zeus-button[data-button-size='compact'] {
+    opacity: 1;
+  }
 }
 .automation-notification-empty {
   padding: 24px 16px;

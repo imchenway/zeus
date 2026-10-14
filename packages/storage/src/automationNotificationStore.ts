@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import type { AutomationRunRecord } from './automationStore.js';
-import type { AutomationNotification, AutomationNotificationPage } from '@zeus/shared';
+import type { AutomationNotification, AutomationNotificationPage, NotificationPosition } from '@zeus/shared';
 import type { ZeusDatabasePort, SqlValue } from './databasePort.js';
 import { randomId } from './randomId.js';
 
@@ -120,7 +120,7 @@ export class AutomationNotificationRepository {
   }
 
   /** 游标按发生时间和稳定身份排序，读取时同时给出准确的未读总数。 */
-  list(cursor?: string): AutomationNotificationPage {
+  list(cursor?: string, before?: NotificationPosition): AutomationNotificationPage {
     /** 游标来自客户端，必须验证结构后才绑定到查询。 */
     const params: SqlValue[] = [];
     /** 首次查询覆盖最新一页，后续页面严格位于游标之后。 */
@@ -136,6 +136,11 @@ export class AutomationNotificationRepository {
       } catch {
         throw new Error('ZEUS_AUTOMATION_NOTIFICATION_CURSOR_INVALID: 通知分页位置无效，请重新加载。');
       }
+    }
+    if (before) {
+      // 统一列表对两个来源使用相同的严格边界，包括同一时间的稳定身份。
+      after = " AND (occurred_at, 'automation', id) < (?, ?, ?)";
+      params.splice(0, params.length, before.occurredAt, before.source, before.id);
     }
     /** 多取一条只用于判断下一页，不以页长度代替总数。 */
     const rows = this.db.select<NotificationRow>(`SELECT * FROM automation_notifications WHERE read_at IS NULL${after} ORDER BY occurred_at DESC, id DESC LIMIT 21`, params);

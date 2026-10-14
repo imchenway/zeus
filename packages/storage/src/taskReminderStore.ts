@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import type { TaskDeadline, TaskReminder, TaskReminderPage } from '@zeus/shared';
+import assert from 'node:assert/strict';
+import { compareNotificationPositions, type NotificationPosition, type TaskDeadline, type TaskReminder, type TaskReminderPage } from '@zeus/shared';
 import type { ZeusDatabasePort } from './databasePort.js';
 
 /** 截止时间及提醒修订与任务共用事务，不依赖 Renderer 存活。 */
@@ -109,7 +110,7 @@ export class TaskReminderRepository {
   }
 
   /** 游标记录稳定时间和身份，已读后仍可继续翻页。 */
-  list(cursor?: string): TaskReminderPage {
+  list(cursor?: string, before?: NotificationPosition): TaskReminderPage {
     /** 先计算完整未读，再截取当前页。 */
     const all = this.unread();
     /** 页起点不依赖游标行是否仍为未读。 */
@@ -124,7 +125,7 @@ export class TaskReminderRepository {
       }
     }
     /** 倒序查询与游标边界保持一致。 */
-    const remaining = all.filter((item) => !after || item.occurredAt < after.occurredAt || (item.occurredAt === after.occurredAt && item.id < after.id));
+    const remaining = all.filter((item) => (before ? compareNotificationPositions({ ...item, source: 'task' }, before) > 0 : !after || item.occurredAt < after.occurredAt || (item.occurredAt === after.occurredAt && item.id < after.id)));
     /** 一次展示五十条，完整计数不受分页限制。 */
     const items = remaining.slice(0, 50);
     /** 下一页复用最后一条记录的稳定位置。 */
@@ -134,9 +135,16 @@ export class TaskReminderRepository {
 
   /** 主进程恢复时读取尚未处理的通知，批量补发只弹一次摘要。 */
   systemPending(): { ids: string[]; first: TaskReminder | null } {
-    /** 单条显示任务详情，多条打开提醒分类。 */
+    /** 单条显示任务详情，多条打开统一通知列表。 */
     const items = this.unread(true);
     return { ids: items.map((item) => item.id), first: items[0] ?? null };
+  }
+
+  /** 调用方以统一事务确认所有有效未读，不改写系统投递状态。 */
+  acknowledgeAll(now: string): void {
+    for (const item of this.unread()) this.acknowledge([item.id], false, now);
+    // 全量确认存在遗漏时使外层事务回滚，避免返回部分成功。
+    assert.equal(this.unread().length, 0, '全部已读后仍有未确认的任务提醒。');
   }
 
   /** 按点击时冻结的通知身份确认，旧请求不能清除新修订。 */

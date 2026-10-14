@@ -1,4 +1,4 @@
-import { temporaryWorkspaceId, type AutomationNotificationPage, type AutomationNotificationStatus } from '@zeus/shared';
+import { temporaryWorkspaceId, type AutomationNotificationPage, type AutomationNotificationStatus, type NotificationPosition } from '@zeus/shared';
 import {
   AutomationNotificationRepository,
   DigitalTeamNodeAttemptRepository,
@@ -172,10 +172,10 @@ export function createAutomationNotificationService(options: AutomationNotificat
   return {
     synchronize,
     /** 查询前补齐源修订，之后确认才不会错过刚产生的结果。 */
-    list(cursor?: string): AutomationNotificationPage {
+    list(cursor?: string, before?: NotificationPosition): AutomationNotificationPage {
       synchronize();
       /** 删除会话或恢复运行后读取现状，不重新制造未读修订。 */
-      const page = notifications.list(cursor);
+      const page = notifications.list(cursor, before);
       page.items = page.items.map((item) => {
         /** 每页只核对会话元数据与当前恢复资格。 */
         const conversation = item.conversationId ? options.conversations.getRecordById(item.conversationId) : undefined;

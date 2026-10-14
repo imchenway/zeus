@@ -1,4 +1,3 @@
-import { useTaskReminders } from '../tasks/useTaskReminders.js';
 import type { ProjectGitWorkbenchSnapshot } from '../git/gitContracts.js';
 import { toolPages } from '../../tooling/index.js';
 import { temporaryWorkspaceId } from '@zeus/shared';
@@ -32,8 +31,8 @@ import { GitPaneSeparator } from '../../git/GitPaneSeparator.js';
 import type { ProjectRecord } from '../../apiClient.js';
 import { openAutomaticUpdateIndicatorInMain } from '../../appShellBridge.js';
 import { conversationDisplayTitle } from '../../session/conversationDisplayTitle.js';
-import { AutomationNotificationCenter } from '../automations/AutomationNotificationCenter.js';
-import { useAutomationNotifications } from '../automations/useAutomationNotifications.js';
+import { NotificationCenter } from '../notifications/NotificationCenter.js';
+import { useNotifications } from '../notifications/useNotifications.js';
 import type { NativeConversationChoice } from '../../session/sessionTypes.js';
 import { TaskGitReviewModal } from '../../task/TaskGitReviewModal.js';
 import { persistPendingConflictAiStart, TaskGitMergeModal } from '../../task/TaskGitMergeModal.js';
@@ -127,7 +126,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   const [zentaoImportOpen, setZentaoImportOpen] = useState(false);
   const { state, domainActions, operations } = input;
   /** 进入会话后通知状态仍驻留，等待准确正文可见再确认已读。 */
-  const automationNotifications = useAutomationNotifications({
+  const notifications = useNotifications({
     client: state.props.commandClient ?? null,
     subscribe: state.props.onSubscribeRealtimeEvents,
     language: state.appShellSettings.appLanguage,
@@ -140,15 +139,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       const choice = await state.props.nativeConversationClient.loadNativeConversationChoice(item.projectId, item.conversationId);
       return domainActions.selectNativeConversation(choice);
     },
-  });
-  /** 任务详情必须真正加载并位于前台，才确认本次通知。 */
-  const taskReminders = useTaskReminders({
-    client: state.props.nativeConversationClient?.tasks ?? null,
-    subscribe: state.props.onSubscribeRealtimeEvents,
-    language: state.appShellSettings.appLanguage,
     visibleTaskId: state.taskDetail && state.taskDetail.id === state.taskDetailPaneTaskId ? state.taskDetail.id : null,
-    visibleProjectId: state.taskDetail?.projectId ?? null,
-    contentVisible: state.zeusWindowForeground && state.activeNavTarget === 'projects' && state.activeProjectSection === 'tasks' && state.activeProjectId === state.taskDetail?.projectId,
+    visibleTaskProjectId: state.taskDetail?.projectId ?? null,
+    taskContentVisible: state.zeusWindowForeground && state.activeNavTarget === 'projects' && state.activeProjectSection === 'tasks' && state.activeProjectId === state.taskDetail?.projectId,
     onOpenTask: async (item) => {
       /** 点击时重新核对任务及项目，已删除或移动的记录不误导航。 */
       const client = state.props.nativeConversationClient?.tasks;
@@ -174,7 +167,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             const page = await client.loadTaskReminders(cursor);
             const item = page.items.find((entry) => entry.id === target.reminderId);
             if (item) {
-              await taskReminders.open(item);
+              await notifications.open({ ...item, source: 'task' });
               return;
             }
             cursor = page.nextCursor ?? undefined;
@@ -182,7 +175,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           openSearchedTask(target.taskId!, target.projectId!);
         })().catch(() => window.dispatchEvent(new Event('zeus:task-reminders:show')));
       }),
-    [state.props.nativeConversationClient, taskReminders],
+    [state.props.nativeConversationClient, notifications],
   );
   const {
     actionState,
@@ -912,7 +905,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       ) : null}
       {activeNavTarget !== 'settings' && (upstreamMainLayout || !selectedProject || projectSessionSourceListVisible) ? (
         <SidebarNav
-          notificationCenter={<AutomationNotificationCenter model={automationNotifications} tasks={taskReminders} language={appShellSettings.appLanguage} />}
+          notificationCenter={<NotificationCenter model={notifications} language={appShellSettings.appLanguage} />}
           mainLayout={appShellSettings.mainLayout}
           activeNavTarget={activeNavTarget}
           activeProjectId={activeProjectId}

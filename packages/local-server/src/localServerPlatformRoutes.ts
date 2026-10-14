@@ -1,4 +1,5 @@
 import { registerTaskReminderService } from './taskReminderService.js';
+import { registerNotificationRoutes } from './notificationRoutes.js';
 import { repairTaskAttachmentReferences } from './taskAttachmentLifecycle.js';
 import { resolveContextCapacityPolicy } from './contextCapacitySupport.js';
 import { resolveArchivedTaskManagementStatus, type ArchivedProjectTaskStatuses } from './taskManagementStatusMigration.js';
@@ -1152,7 +1153,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     return [roles.completedStatusId, roles.cancelledStatusId];
   };
   const workManagementQueries = new WorkManagementQueryApplication({ projects, tasks, taskBoards, taskEvents, taskTemplates, terminalStatuses: deadlineTerminalStatuses });
-  registerTaskReminderService({ server, db, terminalStatuses: deadlineTerminalStatuses, readOnly: readOnlyValidation, publish: publishRealtimeEvent, now });
+  /** 统一通知复用这一服务，避免重复创建任务提醒定时器。 */
+  const taskReminders = registerTaskReminderService({ server, db, terminalStatuses: deadlineTerminalStatuses, readOnly: readOnlyValidation, publish: publishRealtimeEvent, now });
   registerWorkManagementQueryRoutes({ server, application: workManagementQueries });
 
   const taskStageApplication = new TaskStageApplication({
@@ -3529,6 +3531,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     redact: (message) => redactSensitiveText(message).text,
     publish: publishRealtimeEvent,
   });
+  registerNotificationRoutes({ server, db, automations: automationNotifications, tasks: taskReminders, readOnly: readOnlyValidation });
   /** 自动化存储统一接收 ISO 时间，避免 Date 被 SQLite 静默绑定为 NULL。 */
   const automationNow = (): string => now().toISOString();
   /** 无项目自动化复用产品已有临时会话工作区，不创建普通项目。 */

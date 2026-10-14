@@ -1,5 +1,6 @@
 import { createCodexApiClient, type CodexApiClient } from './features/codex/codexApiClient.js';
 import { createAutomationApiClient, type AutomationApiClient } from './features/automations/automationApiClient.js';
+import { createNotificationApiClient, type NotificationApiClient } from './features/notifications/notificationApiClient.js';
 import { createCommandCenterApiClient, type CommandCenterApiClient } from './features/command-center/commandCenterApiClient.js';
 import { createConversationApiClient, type ConversationApiClient } from './features/conversations/conversationApiClient.js';
 import { createDashboardApiClient, type DashboardApiClient } from './features/dashboard/dashboardApiClient.js';
@@ -22,6 +23,7 @@ export interface DashboardClient
   extends
     DashboardApiClient,
     AutomationApiClient,
+    NotificationApiClient,
     DigitalEmployeeApiClient,
     DigitalTeamApiClient,
     CodexApiClient,
@@ -81,6 +83,8 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
   });
   const memory = createMemoryApiClient(transport);
   const automations = createAutomationApiClient(transport);
+  /** 统一通知仅负责通知查看，不启动任何业务执行。 */
+  const notifications = createNotificationApiClient(transport);
   const conversations = createConversationApiClient(transport);
   const digitalEmployees = createDigitalEmployeeApiClient(transport);
   /** 数字团队只组合独立的图模板与运行 API，不扩展旧员工编排语义。 */
@@ -94,6 +98,7 @@ export function createDashboardClient(options: DashboardClientOptions): Dashboar
   return {
     memory,
     ...automations,
+    ...notifications,
     conversations,
     projects,
     tasks,

@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AutomationNotification } from '@zeus/shared';
+import type { AutomationNotification, NotificationItem, TaskReminder } from '@zeus/shared';
 import type { DashboardClient } from '../../apiClient.js';
 import type { WorkspacePageProps } from '../workspace/workspaceContracts.js';
 import { formatVisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 
-/** 通知数据驻留工作台，切换到会话后仍可等待正文可见再确认。 */
-export function useAutomationNotifications(input: {
+/** 两类通知共享列表和操作状态，导航后仍等待准确内容可见再确认。 */
+export function useNotifications(input: {
   /** 复用已认证的命令客户端。 */
   client: DashboardClient | null;
   /** 所有通知共享已有实时连接。 */
@@ -18,13 +18,21 @@ export function useAutomationNotifications(input: {
   visibleProjectId: string | null;
   /** 主窗口在前台且最新正文确实可见。 */
   contentVisible: boolean;
+  /** 实际显示的任务详情身份。 */
+  visibleTaskId: string | null;
+  /** 任务详情的真实项目，独立于会话选中状态。 */
+  visibleTaskProjectId: string | null;
+  /** 工作台在前台且准确任务详情已经加载。 */
+  taskContentVisible: boolean;
   /** 复用工作台现有离开确认与会话导航，取消返回 false。 */
   onOpenConversation(item: AutomationNotification): Promise<boolean>;
+  /** 复用已有任务导航和未保存草稿保护。 */
+  onOpenTask(item: TaskReminder): Promise<void>;
 }) {
   /** 当前客户端和语言决定刷新函数的生命周期。 */
   const { client, subscribe, language } = input;
   /** 列表只展示未读记录。 */
-  const [items, setItems] = useState<AutomationNotification[]>([]);
+  const [items, setItems] = useState<NotificationItem[]>([]);
   /** 全量数量由服务端返回，不从本页推算。 */
   const [unreadCount, setUnreadCount] = useState(0);
   /** 下一页使用服务端稳定游标。 */
@@ -40,7 +48,7 @@ export function useAutomationNotifications(input: {
   /** 同一时间只处理一个用户操作。 */
   const [busyId, setBusyId] = useState<string | null>(null);
   /** 成功导航仍需等待正文的可见回执。 */
-  const [pendingRead, setPendingRead] = useState<AutomationNotification | null>(null);
+  const [pendingRead, setPendingRead] = useState<NotificationItem | null>(null);
   /** 旧查询响应不能覆盖后来的实时刷新或客户端切换。 */
   const queryRevision = useRef(0);
   /** 同步锁在 React 重渲染前也能阻止重复请求。 */
@@ -58,9 +66,9 @@ export function useAutomationNotifications(input: {
       setLoadError(null);
       try {
         /** 数据库投影在接口内补齐，Renderer 不从事件猜测未读数量。 */
-        const page = await client.loadAutomationNotifications(cursor);
+        const page = await client.loadNotifications(cursor);
         if (queryRevision.current !== revision) return;
-        setItems((current) => (cursor ? [...new Map([...current, ...page.items].map((item) => [item.id, item])).values()] : page.items));
+        setItems((current) => (cursor ? [...new Map([...current, ...page.items].map((item) => [`${item.source}:${item.id}`, item])).values()] : page.items));
         setUnreadCount(page.unreadCount);
         setNextCursor(page.nextCursor);
         setLoaded(true);
@@ -93,27 +101,30 @@ export function useAutomationNotifications(input: {
     /** 启动、断线重连以及通知变化均从服务端补读。 */
     const dispose = subscribe?.(
       (event) => {
-        if (event.type.startsWith('automation.') || event.type === 'conversation.thread.deleted') scheduleRefresh();
+        if (event.type.startsWith('automation.') || event.type.startsWith('task.') || event.type.startsWith('project.') || event.type === 'conversation.thread.deleted') scheduleRefresh();
       },
       (state) => {
         if (state === 'connected') scheduleRefresh();
       },
     );
+    window.addEventListener('focus', scheduleRefresh);
     return () => {
       queryRevision.current += 1;
       clearTimeout(timer);
       dispose?.();
+      window.removeEventListener('focus', scheduleRefresh);
     };
   }, [refresh, subscribe]);
 
   /** 确认后重新读取计数，旧修订确认失败时保留新提醒。 */
   const acknowledge = useCallback(
-    async (item: AutomationNotification): Promise<void> => {
+    async (item: NotificationItem): Promise<void> => {
       if (!client) return;
       setActionError(null);
       try {
         /** 只使用点击时的修订，不替换为刷新后尚未看见的修订。 */
-        await client.acknowledgeAutomationNotification(item.id, item.revision);
+        if (item.source === 'automation') await client.acknowledgeAutomationNotification(item.id, item.revision);
+        else await client.acknowledgeTaskReminders([item.id]);
         await refresh();
       } catch (error) {
         setActionError(formatVisibleApplicationError(error, language === 'zh-CN' ? 'zh-CN' : 'en'));
@@ -123,16 +134,19 @@ export function useAutomationNotifications(input: {
   );
 
   useEffect(() => {
-    if (!pendingRead || !input.contentVisible || pendingRead.conversationId !== input.visibleConversationId || pendingRead.projectId !== input.visibleProjectId) return;
+    if (!pendingRead) return;
+    if (pendingRead.source === 'automation') {
+      if (!input.contentVisible || pendingRead.conversationId !== input.visibleConversationId || pendingRead.projectId !== input.visibleProjectId) return;
+    } else if (!input.taskContentVisible || pendingRead.taskId !== input.visibleTaskId || pendingRead.projectId !== input.visibleTaskProjectId) return;
     /** 同一个点击即使重渲染也只发一次确认。 */
-    const key = `${pendingRead.id}:${pendingRead.revision}`;
+    const key = `${pendingRead.source}:${pendingRead.id}:${pendingRead.source === 'automation' ? pendingRead.revision : ''}`;
     if (readInFlight.current === key) return;
     readInFlight.current = key;
     void acknowledge(pendingRead).finally(() => {
-      setPendingRead((current) => (current?.id === pendingRead.id && current.revision === pendingRead.revision ? null : current));
+      setPendingRead((current) => (current === pendingRead ? null : current));
       if (readInFlight.current === key) readInFlight.current = null;
     });
-  }, [acknowledge, input.contentVisible, input.visibleConversationId, input.visibleProjectId, pendingRead]);
+  }, [acknowledge, input.contentVisible, input.visibleConversationId, input.visibleProjectId, input.taskContentVisible, input.visibleTaskId, input.visibleTaskProjectId, pendingRead]);
 
   return {
     items,
@@ -148,11 +162,11 @@ export function useAutomationNotifications(input: {
     async markAllRead(): Promise<void> {
       if (actionInFlight.current || !client) return;
       actionInFlight.current = true;
-      // 通知身份始终有 automation_notice_ 前缀，all 仅标识全量操作。
+      // 单条操作使用来源与身份组合，all 仅标识全量操作。
       setBusyId('all');
       setActionError(null);
       try {
-        await client.acknowledgeAllAutomationNotifications();
+        await client.acknowledgeAllNotifications();
         await refresh();
       } catch (error) {
         setActionError(formatVisibleApplicationError(error, language === 'zh-CN' ? 'zh-CN' : 'en'));
@@ -162,14 +176,16 @@ export function useAutomationNotifications(input: {
       }
     },
     /** 列表导航成功后才关闭弹层；失败时保留消息并补读失效会话。 */
-    async open(item: AutomationNotification): Promise<boolean> {
-      if (actionInFlight.current || !item.conversationId || !client) return false;
+    async open(item: NotificationItem): Promise<boolean> {
+      if (actionInFlight.current || !client || (item.source === 'automation' && !item.conversationId)) return false;
       actionInFlight.current = true;
-      setBusyId(item.id);
+      setBusyId(`${item.source}:${item.id}`);
       setActionError(null);
       try {
         /** 用户取消未保存内容的离开确认时，不产生已读。 */
-        const opened = await input.onOpenConversation(item);
+        let opened = true;
+        if (item.source === 'automation') opened = await input.onOpenConversation(item);
+        else await input.onOpenTask(item);
         if (opened) setPendingRead(item);
         return opened;
       } catch (error) {
@@ -181,20 +197,14 @@ export function useAutomationNotifications(input: {
         setBusyId(null);
       }
     },
-    /** 无会话异常由用户明确确认，恢复继续使用原运行接口。 */
-    async act(item: AutomationNotification, action: 'read' | 'resume'): Promise<void> {
+    /** 单条图标可确认任意通知，不导航、不恢复或启动任何工作。 */
+    async markRead(item: NotificationItem): Promise<void> {
       if (actionInFlight.current || !client) return;
       actionInFlight.current = true;
-      setBusyId(item.id);
+      setBusyId(`${item.source}:${item.id}`);
       setActionError(null);
       try {
-        if (action === 'read') await acknowledge(item);
-        else {
-          await client.resumeAutomationRun(item.runId);
-          await refresh();
-        }
-      } catch (error) {
-        setActionError(formatVisibleApplicationError(error, language === 'zh-CN' ? 'zh-CN' : 'en'));
+        await acknowledge(item);
       } finally {
         actionInFlight.current = false;
         setBusyId(null);
@@ -204,4 +214,4 @@ export function useAutomationNotifications(input: {
 }
 
 /** 弹层只消费数据和操作，不拥有后台连接。 */
-export type AutomationNotificationsModel = ReturnType<typeof useAutomationNotifications>;
+export type NotificationsModel = ReturnType<typeof useNotifications>;

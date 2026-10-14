@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { TaskReminderRepository, type ZeusDatabasePort } from '@zeus/storage';
+import type { NotificationPosition, TaskReminderPage } from '@zeus/shared';
 
 /** 提醒只依赖本地任务事实，生命周期由本地服务管理。 */
 export function registerTaskReminderService(options: {
@@ -15,7 +16,7 @@ export function registerTaskReminderService(options: {
   publish(type: string, payload: Record<string, unknown>): void;
   /** 统一时钟便于行为核对。 */
   now(): Date;
-}): void {
+}) {
   /** 一份仓库负责未读和系统投递状态。 */
   const reminders = new TaskReminderRepository(options.db, options.terminalStatuses);
   /** 空闲时也检查时钟，休眠恢复后首个回调补齐遗漏。 */
@@ -37,10 +38,14 @@ export function registerTaskReminderService(options: {
   };
   /** 所有接口保留明确错误状态，不返回成功空列表掩盖失败。 */
   const fail = (reply: FastifyReply, error: unknown) => reply.code((error as { statusCode?: number })?.statusCode ?? 500).send({ code: 'ZEUS_TASK_REMINDER_ERROR', message: error instanceof Error ? error.message : '任务提醒操作失败。' });
+  /** 原列表和统一通知入口共用同一批有效提醒。 */
+  const list = (cursor?: string, before?: NotificationPosition): TaskReminderPage => {
+    synchronize();
+    return reminders.list(cursor, before);
+  };
   options.server.get('/api/task-reminders', async (request: FastifyRequest<{ Querystring: { cursor?: string } }>, reply) => {
     try {
-      synchronize();
-      return reminders.list(request.query.cursor);
+      return list(request.query.cursor);
     } catch (error) {
       return fail(reply, error);
     }
@@ -76,4 +81,16 @@ export function registerTaskReminderService(options: {
     // 任务、项目或配置变更后立即对账；提醒确认本身不触发递归检查。
     if (request.method !== 'GET' && reply.statusCode < 400 && !request.url.startsWith('/api/task-reminders')) safeSynchronize();
   });
+  return {
+    synchronize,
+    list,
+    /** 由统一入口提供耐久事务，提交完成后才刷新所有窗口。 */
+    acknowledgeAll(): void {
+      reminders.acknowledgeAll(options.now().toISOString());
+      options.db.afterCommit(() => options.publish('task.reminders.changed', {}));
+    },
+  };
 }
+
+/** 统一通知复用任务提醒服务，不额外创建定时器或事实源。 */
+export type TaskReminderService = ReturnType<typeof registerTaskReminderService>;
