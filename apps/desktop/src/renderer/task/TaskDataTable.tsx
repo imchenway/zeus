@@ -285,13 +285,13 @@ function TaskCell(props: CustomCellRendererProps<TaskRowViewModel>) {
   }
   if (columnKey === 'taskType')
     return (
-      <span title={cell.primary} className={`task-status-chip task-type-chip task-status-tone-${taskTypeTone(task.taskType)}`}>
+      <span data-icon-tooltip={cell.primary} className={`task-status-chip task-type-chip task-status-tone-${taskTypeTone(task.taskType)}`}>
         <strong>{cell.primary}</strong>
       </span>
     );
   if (columnKey === 'branchStatus')
     return (
-      <span title={cell.primary} className={`task-status-chip task-branch-status-chip task-status-tone-${taskBranchStatusTone(cell.sortValue as TaskBranchStatus)}`}>
+      <span data-icon-tooltip={cell.primary} className={`task-status-chip task-branch-status-chip task-status-tone-${taskBranchStatusTone(cell.sortValue as TaskBranchStatus)}`}>
         <strong>{cell.primary}</strong>
       </span>
     );
@@ -312,7 +312,7 @@ function TaskCell(props: CustomCellRendererProps<TaskRowViewModel>) {
       />
     );
   return (
-    <span className="task-data-table-text" title={[cell.primary, cell.secondary].filter(Boolean).join('\n')}>
+    <span className="task-data-table-text" data-icon-tooltip={[cell.primary, cell.secondary].filter(Boolean).join('\n')}>
       {cell.primary}
       {cell.secondary ? <small> · {cell.secondary}</small> : null}
     </span>

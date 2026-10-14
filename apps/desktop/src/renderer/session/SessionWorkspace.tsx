@@ -2648,7 +2648,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   <button
                     type="button"
                     className="session-thread-task-title"
-                    title={displayedHeader.title}
+                    data-icon-tooltip={displayedHeader.title}
                     aria-label={props.language === 'zh-CN' ? `打开任务详情：${displayedHeader.title}` : `Open task details: ${displayedHeader.title}`}
                     onClick={() => {
                       if (displayedHeader.taskId) actions.onOpenTaskDetail?.(displayedHeader.taskId);
@@ -2657,7 +2657,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     {displayedHeader.title}
                   </button>
                 ) : (
-                  <strong title={displayedHeader.title}>{displayedHeader.title}</strong>
+                  <strong data-icon-tooltip={displayedHeader.title}>{displayedHeader.title}</strong>
                 )}
                 {displayedHeader.taskId && displayedHeader.taskManagementStatus && displayedHeader.taskManagementStatusOptions?.length && actions.onTaskManagementStatusChange ? (
                   <ZeusSelect
@@ -2684,7 +2684,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     style={{ '--task-status-tone': displayedHeader.taskManagementStatus.color } as CSSProperties}
                     role="status"
                     aria-label={props.language === 'zh-CN' ? `任务状态：${displayedHeader.taskManagementStatus.label}` : `Task status: ${displayedHeader.taskManagementStatus.label}`}
-                    title={props.language === 'zh-CN' ? `任务状态：${displayedHeader.taskManagementStatus.label}` : `Task status: ${displayedHeader.taskManagementStatus.label}`}
+                    data-icon-tooltip={props.language === 'zh-CN' ? `任务状态：${displayedHeader.taskManagementStatus.label}` : `Task status: ${displayedHeader.taskManagementStatus.label}`}
                   >
                     <strong>{displayedHeader.taskManagementStatus.label}</strong>
                   </span>
@@ -2814,7 +2814,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
           {/* 运行详情归左侧正文；旧会话或未就绪会话仅在标题下保留项目名称。 */}
           {(legacy || !props.state) && displayedHeader.contextLabel ? (
             <div className="session-thread-subtitle-row">
-              <small className="session-thread-project-name" title={displayedHeader.contextLabel}>
+              <small className="session-thread-project-name" data-icon-tooltip={displayedHeader.contextLabel}>
                 {displayedHeader.contextLabel}
               </small>
             </div>

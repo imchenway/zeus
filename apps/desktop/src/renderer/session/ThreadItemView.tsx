@@ -773,7 +773,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       ) : null}
       {role !== 'error' && !showUserMessageAttachmentGroup && !taskPushLayout ? <ItemImages item={props.item} label={labels.conversationImage} /> : null}
       {remoteDeviceInput ? (
-        <span className="session-message-remote-origin" aria-label={labels.remoteDevice} title={labels.remoteDevice}>
+        <span className="session-message-remote-origin" aria-label={labels.remoteDevice} data-icon-tooltip={labels.remoteDevice}>
           <MessageRemoteDeviceIcon />
         </span>
       ) : null}
@@ -870,7 +870,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
                   className="session-queued-thread-steer"
                   aria-disabled={Boolean(queuedAction || props.queuedSteerDisabledReason)}
                   aria-label={`${labels.steerQueued}: ${props.queuedSteerDisabledReason ?? labels.steerQueuedHelp}`}
-                  title={props.queuedSteerDisabledReason ?? labels.steerQueuedHelp}
+                  data-icon-tooltip={props.queuedSteerDisabledReason ?? labels.steerQueuedHelp}
                   onClick={() => {
                     if (queuedAction || props.queuedSteerDisabledReason) return;
                     void runQueuedAction('steer', () => props.onSteerQueuedSubmission?.(props.queuedSubmissionId!));

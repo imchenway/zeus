@@ -292,7 +292,7 @@ export function ProjectTerminalPanel(props: { project: ProjectRecord; client: Da
                       <button
                         className="zeus-terminal-action"
                         type="button"
-                        title={zh ? '结束会话' : 'End session'}
+                        data-icon-tooltip={zh ? '结束会话' : 'End session'}
                         aria-label={zh ? '结束会话' : 'End session'}
                         disabled={busy || loadFailed || !['running', 'orphan_detected'].includes(selected.status)}
                         onClick={() => void stop()}
@@ -301,7 +301,7 @@ export function ProjectTerminalPanel(props: { project: ProjectRecord; client: Da
                       </button>
                     </>
                   ) : null}
-                  <button className="zeus-terminal-action" type="button" title={zh ? '收起终端' : 'Hide terminal'} aria-label={zh ? '收起终端' : 'Hide terminal'} onClick={hide}>
+                  <button className="zeus-terminal-action" type="button" data-icon-tooltip={zh ? '收起终端' : 'Hide terminal'} aria-label={zh ? '收起终端' : 'Hide terminal'} onClick={hide}>
                     <X aria-hidden="true" />
                   </button>
                 </header>

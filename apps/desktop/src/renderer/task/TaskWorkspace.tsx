@@ -459,7 +459,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                     aria-haspopup="dialog"
                     popoverTarget={fieldSettingsId}
                     aria-label={props.copy.fieldSettingsAria}
-                    title={props.copy.fieldSettingsAria}
+                    data-icon-tooltip={props.copy.fieldSettingsAria}
                   >
                     <span className="task-table-field-settings-label">{columnViewActionLabel}</span>
                   </button>

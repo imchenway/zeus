@@ -66,7 +66,7 @@ export function PlanSummary(props: { item: NativeSessionItemBuffer; language: Se
     >
       <header>
         <div className="session-plan-summary-heading">
-          <button type="button" className="session-plan-summary-title" disabled={!props.onOpenPanel} onClick={() => props.onOpenPanel?.(props.item)} title={zh ? '在右侧打开计划' : 'Open plan at right'}>
+          <button type="button" className="session-plan-summary-title" disabled={!props.onOpenPanel} onClick={() => props.onOpenPanel?.(props.item)} data-icon-tooltip={zh ? '在右侧打开计划' : 'Open plan at right'}>
             <span className="session-plan-summary-symbol" aria-hidden="true">
               <Lightbulb />
             </span>

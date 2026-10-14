@@ -215,7 +215,7 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                     onError={(message) => setActionError({ submissionId: submission.id, message })}
                   />
                 ) : (
-                  <div className="session-queued-message-content" title={queuedMessageAccessiblePreview(submission, copy.attachmentOnly, props.language)}>
+                  <div className="session-queued-message-content" data-icon-tooltip={queuedMessageAccessiblePreview(submission, copy.attachmentOnly, props.language)}>
                     <Clock aria-hidden="true" weight="regular" />
                     <span className="session-queued-message-state">{submission.status === 'paused' ? copy.paused : copy.queued}</span>
                     {textPreview ? <span className="session-queued-message-preview">{textPreview}</span> : null}
@@ -387,7 +387,7 @@ function QueuedMessageEditor(props: {
       />
       <footer>
         <small aria-hidden="true">{copy.editShortcut}</small>
-        <button type="button" title={copy.addAttachments} aria-label={copy.addAttachments} onClick={inputResources.chooseAttachments} disabled={props.busy || inputResources.processing}>
+        <button type="button" data-icon-tooltip={copy.addAttachments} aria-label={copy.addAttachments} onClick={inputResources.chooseAttachments} disabled={props.busy || inputResources.processing}>
           <Paperclip aria-hidden="true" />
         </button>
         <button type="button" className="session-queued-message-editor-cancel" onClick={props.onCancel} disabled={props.busy}>

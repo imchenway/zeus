@@ -157,13 +157,13 @@ export function SessionComputerPreview(props: { conversationId: string; language
                 disabled={busy}
                 aria-busy={busy || undefined}
                 aria-label={zh ? '停止本会话屏幕控制' : 'Stop screen control for this conversation'}
-                title={zh ? '停止屏幕控制' : 'Stop screen control'}
+                data-icon-tooltip={zh ? '停止屏幕控制' : 'Stop screen control'}
                 onClick={() => void stopControl()}
               >
                 <X aria-hidden="true" />
               </button>
               <details className="session-computer-preview-info">
-                <summary aria-label={zh ? '屏幕控制详情' : 'Screen control details'} title={zh ? '屏幕控制详情' : 'Screen control details'}>
+                <summary aria-label={zh ? '屏幕控制详情' : 'Screen control details'} data-icon-tooltip={zh ? '屏幕控制详情' : 'Screen control details'}>
                   <HandPalm aria-hidden="true" />
                 </summary>
                 <div>

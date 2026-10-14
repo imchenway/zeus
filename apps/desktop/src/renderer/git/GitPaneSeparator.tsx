@@ -50,7 +50,7 @@ export function GitPaneSeparator(props: { name: string; label: string; axis?: 'x
       aria-valuemin={minimum}
       aria-valuemax={maximum}
       aria-valuenow={props.initial}
-      title={`${props.label} · 双击恢复默认`}
+      data-icon-tooltip={`${props.label} · 双击恢复默认`}
       onDoubleClick={() => apply(props.initial, true)}
       onPointerDown={(event) => {
         if (event.button !== 0) return;

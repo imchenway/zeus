@@ -991,7 +991,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                   type="button"
                   key={module.path}
                   disabled={busy !== null}
-                  title={zh ? '检出父仓库记录的子模块提交，保留未提交修改；有冲突时 Git 会拒绝更新。' : 'Check out the recorded submodule commit without forcing local changes.'}
+                  data-icon-tooltip={zh ? '检出父仓库记录的子模块提交，保留未提交修改；有冲突时 Git 会拒绝更新。' : 'Check out the recorded submodule commit without forcing local changes.'}
                   onClick={() => void execute(selectedRepository, { type: 'submodule_update', path: module.path }, zh ? '初始化/更新子模块' : 'Initialize/update submodule')}
                 >
                   <span>{module.path}</span>
@@ -1105,7 +1105,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                       setSelectedStashRef(stash.ref);
                       setTab('stash');
                     }}
-                    title={stash.subject}
+                    data-icon-tooltip={stash.subject}
                   >
                     <Archive aria-hidden="true" />
                     <span>{stash.subject}</span>
@@ -1452,18 +1452,18 @@ function GitLogSurface(props: {
                   className={`project-git-commit-row${selected ? ' is-current' : ''}`}
                   onClick={() => props.onSelectCommit(repository, commit.hash)}
                 >
-                  <span className="project-git-commit-subject" title={commit.subject}>
+                  <span className="project-git-commit-subject" data-icon-tooltip={commit.subject}>
                     {repository.snapshot.headSha === commit.hash ? (
-                      <span className="git-history-ref" title={repository.snapshot.detached ? 'HEAD' : `HEAD → ${repository.snapshot.branch}`}>
+                      <span className="git-history-ref" data-icon-tooltip={repository.snapshot.detached ? 'HEAD' : `HEAD → ${repository.snapshot.branch}`}>
                         <GitBranch aria-hidden="true" />
                         {repository.snapshot.detached ? 'HEAD' : repository.snapshot.branch}
                       </span>
                     ) : null}
                     <strong>{commit.subject}</strong>
                   </span>
-                  <code title={commit.hash}>{commit.shortHash}</code>
-                  <span title={commit.author}>{commit.author}</span>
-                  <time dateTime={commit.authoredAt} title={new Date(commit.authoredAt).toLocaleString()}>
+                  <code data-icon-tooltip={commit.hash}>{commit.shortHash}</code>
+                  <span data-icon-tooltip={commit.author}>{commit.author}</span>
+                  <time dateTime={commit.authoredAt} data-icon-tooltip={new Date(commit.authoredAt).toLocaleString()}>
                     {formatRelativeTime(commit.authoredAt, props.zh)}
                   </time>
                 </button>
@@ -1652,7 +1652,7 @@ function CommitFileTreeEntry(props: Parameters<typeof CommitFileDirectoryTree>[0
       onDoubleClick={() => props.onOpen(props.node.path)}
     >
       <FileTypeIcon name={props.node.path} />
-      <span title={props.node.path} data-file-status={props.node.stats.changeType}>
+      <span data-icon-tooltip={props.node.path} data-file-status={props.node.stats.changeType}>
         {props.node.name}
       </span>
       <em>+{props.node.stats.additions}</em>
@@ -1801,12 +1801,12 @@ function RepositoryNavigationTree(props: { repositories: ProjectGitRepositoryWor
           className="project-git-navigation-repository"
           aria-current={props.selectedId === repository.id ? 'true' : undefined}
           onClick={() => props.onSelect(repository.id)}
-          title={`${repository.name} · ${repository.relativePath}\n${snapshot.branch} → ${snapshot.upstream ?? (props.zh ? '未设置远程跟踪分支' : 'No upstream')}\n${relation}`}
+          data-icon-tooltip={`${repository.name} · ${repository.relativePath}\n${snapshot.branch} → ${snapshot.upstream ?? (props.zh ? '未设置远程跟踪分支' : 'No upstream')}\n${relation}`}
         >
           <span className="project-git-navigation-repository-color" style={{ backgroundColor: repositoryColor(repository.id) }} aria-hidden="true" />
           <span className="project-git-navigation-repository-label">
             <strong>{node.name}</strong>
-            <small title={snapshot.detached ? snapshot.headSha : snapshot.branch}>{snapshot.detached ? snapshot.headSha.slice(0, 7) : snapshot.branch}</small>
+            <small data-icon-tooltip={snapshot.detached ? snapshot.headSha : snapshot.branch}>{snapshot.detached ? snapshot.headSha.slice(0, 7) : snapshot.branch}</small>
           </span>
           <span className="git-tracking-badge" aria-label={relation}>
             {relation}
@@ -1923,7 +1923,7 @@ function LocalChangesSurface(props: {
               <strong>{props.zh ? `冲突文件 (${repository.snapshot.conflictFiles.length})` : `Conflicts (${repository.snapshot.conflictFiles.length})`}</strong>
             </header>
             {repository.snapshot.conflictFiles.map((path) => (
-              <button key={path} type="button" className={path === props.selectedFilePath ? 'is-current' : ''} onClick={() => props.onSelectFile(path, 'unstaged')} title={path}>
+              <button key={path} type="button" className={path === props.selectedFilePath ? 'is-current' : ''} onClick={() => props.onSelectFile(path, 'unstaged')} data-icon-tooltip={path}>
                 <FileTypeIcon name={path} />
                 <span data-file-status="conflict">{path}</span>
               </button>
@@ -1932,7 +1932,7 @@ function LocalChangesSurface(props: {
         ) : null}
         <header>
           <strong>{props.zh ? '变更文件' : 'Changed files'}</strong>
-          <span className="project-git-file-view-control" title={fileView === 'flat' ? (props.zh ? '平铺结构' : 'Flat view') : props.zh ? '树状结构' : 'Tree view'}>
+          <span className="project-git-file-view-control" data-icon-tooltip={fileView === 'flat' ? (props.zh ? '平铺结构' : 'Flat view') : props.zh ? '树状结构' : 'Tree view'}>
             {fileView === 'flat' ? <ListBullets aria-hidden="true" /> : <TreeStructure aria-hidden="true" />}
             <CaretDown aria-hidden="true" />
             <select
@@ -1985,7 +1985,7 @@ function LocalChangesSurface(props: {
                           checked={stage === 'staged' && files.length > 0}
                           disabled={!repository || !files.length || props.busy !== null}
                           aria-label={stage === 'staged' ? (props.zh ? '取消暂存全部显示文件' : 'Unstage all displayed files') : props.zh ? '暂存全部显示文件' : 'Stage all displayed files'}
-                          title={stage === 'staged' ? (props.zh ? '取消暂存全部显示文件' : 'Unstage all displayed files') : props.zh ? '暂存全部显示文件' : 'Stage all displayed files'}
+                          data-icon-tooltip={stage === 'staged' ? (props.zh ? '取消暂存全部显示文件' : 'Unstage all displayed files') : props.zh ? '暂存全部显示文件' : 'Stage all displayed files'}
                           onChange={() => {
                             if (repository && files.length && !props.busy)
                               void props.onExecute(
@@ -2108,7 +2108,7 @@ function LocalChangesSurface(props: {
               <div className="project-git-commit-message-heading">
                 <label htmlFor="project-git-commit-message">{props.zh ? '提交说明' : 'Commit message'}</label>
                 <div className="project-git-commit-generation-controls">
-                  <small className="project-git-commit-generation-feedback" role="status" title={props.commitModelsError || undefined}>
+                  <small className="project-git-commit-generation-feedback" role="status" data-icon-tooltip={props.commitModelsError || undefined}>
                     {!props.commitModelsLoading && !props.commitModels.length
                       ? props.zh
                         ? '暂无可用模型，请在设置中配置模型连接后刷新。'
@@ -2188,7 +2188,7 @@ function LocalChangesSurface(props: {
         </>
       ) : (
         <aside className="project-git-commit-collapsed">
-          <span title={repository?.name}>{repository?.name ?? (props.zh ? '提交' : 'Commit')}</span>
+          <span data-icon-tooltip={repository?.name}>{repository?.name ?? (props.zh ? '提交' : 'Commit')}</span>
           <button
             type="button"
             disabled={!repository || workspaceClean}
@@ -2289,7 +2289,7 @@ function ChangeTreeEntry(props: Parameters<typeof ChangeDirectoryTree>[0] & { no
       <button
         type="button"
         style={{ marginLeft: `${props.depth * 13}px` }}
-        title={props.node.path}
+        data-icon-tooltip={props.node.path}
         onClick={() => {
           props.onSelectRepository(props.repository.id);
           props.onSelectFile(props.node.path, props.stage);

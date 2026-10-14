@@ -20,7 +20,7 @@ export function PlanWorkspace(props: { item: NativeSessionItemBuffer; language: 
           <button type="button" aria-label={toggleLabel} data-icon-tooltip={toggleLabel} onClick={() => props.onFullWidthChange(!props.fullWidth)}>
             {props.fullWidth ? <ArrowsIn aria-hidden="true" /> : <ArrowsOut aria-hidden="true" />}
           </button>
-          <button type="button" aria-label={zh ? '关闭计划工作区' : 'Close plan workspace'} title={zh ? '关闭' : 'Close'} onClick={props.onClose}>
+          <button type="button" aria-label={zh ? '关闭计划工作区' : 'Close plan workspace'} data-icon-tooltip={zh ? '关闭' : 'Close'} onClick={props.onClose}>
             <X aria-hidden="true" />
           </button>
         </nav>

@@ -254,7 +254,7 @@ export function NewConversationExecutionContext(props: NewConversationExecutionC
           </span>
         ) : null}
         {temporary ? (
-          <span title={selectedProject?.localPath}>{zh ? '文件保存在默认目录' : 'Files saved in the default folder'}</span>
+          <span data-icon-tooltip={selectedProject?.localPath}>{zh ? '文件保存在默认目录' : 'Files saved in the default folder'}</span>
         ) : props.workspaceMode === 'direct' ? (
           <span className="session-new-conversation-context-control">
             <ZeusSelect

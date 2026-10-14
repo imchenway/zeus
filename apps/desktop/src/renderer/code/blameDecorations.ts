@@ -28,7 +28,7 @@ function activeBlameDecorations(view: EditorView, byLine: Map<number, GitBlameLi
   return Decoration.set([Decoration.widget({ widget: new BlameWidget(blame, labels), side: 1 }).range(line.to)]);
 }
 
-/** 行尾简要信息可直接阅读，原生 title 保留 commit、作者和绝对时间等完整信息。 */
+/** 行尾简要信息可直接阅读，统一提示保留 commit、作者和绝对时间等完整信息。 */
 class BlameWidget extends WidgetType {
   constructor(
     private readonly blame: GitBlameLine,
@@ -51,7 +51,7 @@ class BlameWidget extends WidgetType {
   toDOM(): HTMLElement {
     /** 外层继承代码行高，内层独立设置注释字号，避免裁剪改变基线。 */
     const element = document.createElement('span');
-    /** 长归属信息在同一行省略，完整详情仍由外层 title 提供。 */
+    /** 长归属信息在同一行省略，完整详情由外层统一提示提供。 */
     const text = document.createElement('span');
     /** 作者缺省值沿用已有显示约定。 */
     const author = this.blame.author || 'Unknown';
@@ -63,7 +63,7 @@ class BlameWidget extends WidgetType {
     text.className = 'session-source-blame-text';
     text.textContent = `${author}, ${relativeTime} • ${subject}`;
     element.append(text);
-    element.title = [author, formatAbsoluteTime(this.blame.authorTime, this.labels.locale), this.blame.shortHash, this.blame.subject].filter(Boolean).join('\n');
+    element.dataset.iconTooltip = [author, formatAbsoluteTime(this.blame.authorTime, this.labels.locale), this.blame.shortHash, this.blame.subject].filter(Boolean).join('\n');
     element.setAttribute('aria-label', `${author}, ${relativeTime}, ${subject}`);
     return element;
   }

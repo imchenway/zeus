@@ -178,7 +178,7 @@ function RuntimeCode(props: { fact: NativeRuntimeFact<string>; language: Session
   const midpoint = Math.ceil(characters.length / 2);
   return (
     <span className="session-runtime-code-value">
-      <code title={props.fact.value} aria-label={props.fact.value}>
+      <code data-icon-tooltip={props.fact.value} aria-label={props.fact.value}>
         <span className="session-runtime-code-start" aria-hidden="true">
           {characters.slice(0, midpoint).join('')}
         </span>
@@ -229,7 +229,7 @@ function formatTokenFact(fact: NativeRuntimeFact<number>, language: SessionUiLan
   if (fact.state === 'unavailable') return unavailableValue(language);
   const formatted = formatTokenCount(fact.value, language);
   return (
-    <span title={`${formatted.exact} Token`} aria-label={`${formatted.exact} Token`}>
+    <span data-icon-tooltip={`${formatted.exact} Token`} aria-label={`${formatted.exact} Token`}>
       {compact ? formatted.compact : formatted.exact}
     </span>
   );
@@ -248,7 +248,7 @@ function formatContextUsage(tokens: NativeRuntimeFact<number>, window: NativeRun
   const used = formatTokenCount(tokens.value, language);
   const total = formatTokenCount(window.value, language);
   return (
-    <span title={`${percentage} · ${used.exact} / ${total.exact} Token`} aria-label={`${percentage}, ${used.exact} / ${total.exact} Token`}>
+    <span data-icon-tooltip={`${percentage} · ${used.exact} / ${total.exact} Token`} aria-label={`${percentage}, ${used.exact} / ${total.exact} Token`}>
       {percentage} {used.compact} / {total.compact}
     </span>
   );

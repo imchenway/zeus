@@ -183,7 +183,7 @@ export function ProjectCreateDialog(props: {
               </span>
               <span className="project-create-folder-picker-copy">
                 <strong>{props.form.localPath ? defaultProjectNameFromLocalPath(props.form.localPath) : props.copy.createChooseFolder}</strong>
-                {props.form.localPath ? <small title={props.form.localPath}>{props.form.localPath}</small> : null}
+                {props.form.localPath ? <small data-icon-tooltip={props.form.localPath}>{props.form.localPath}</small> : null}
               </span>
               <span className="project-create-folder-change">{props.form.localPath ? props.copy.createChangeFolder : props.copy.createSelectFolder}</span>
             </button>
@@ -666,7 +666,7 @@ export function ProjectWorkspaceNavigation(props: {
                     type="button"
                     className="project-workspace-project-slot-primary"
                     aria-label={projectStatus ? `${selectLabel}，${projectStatus.label}` : selectLabel}
-                    title={projectStatus?.label}
+                    data-icon-tooltip={projectStatus?.label}
                     aria-pressed={active}
                     aria-disabled={!slotProject || undefined}
                     onClick={() => {
@@ -715,7 +715,9 @@ export function ProjectWorkspaceNavigation(props: {
                     className="project-workspace-project-slot-close"
                     disabled={projectSlots.length <= 1}
                     aria-label={slotProject ? (zh ? `关闭项目 ${slotProject.name}` : `Close project ${slotProject.name}`) : zh ? '关闭项目槽位' : 'Close project slot'}
-                    title={projectSlots.length <= 1 ? (zh ? '至少保留一个项目' : 'Keep at least one project open') : slotProject ? (zh ? `关闭 ${slotProject.name}` : `Close ${slotProject.name}`) : zh ? '关闭项目槽位' : 'Close project slot'}
+                    data-icon-tooltip={
+                      projectSlots.length <= 1 ? (zh ? '至少保留一个项目' : 'Keep at least one project open') : slotProject ? (zh ? `关闭 ${slotProject.name}` : `Close ${slotProject.name}`) : zh ? '关闭项目槽位' : 'Close project slot'
+                    }
                     onClick={(event) => {
                       event.stopPropagation();
                       closeProjectSlot(slot.id);
@@ -1351,7 +1353,7 @@ export function SidebarNav(props: {
                   }
                   footer={
                     <>
-                      <label className="project-conversation-filter-display" title={copy.hideEmptyFilteredProjects}>
+                      <label className="project-conversation-filter-display" data-icon-tooltip={copy.hideEmptyFilteredProjects}>
                         <span>{copy.hideEmptyFilteredProjectsLabel}</span>
                         <span className="settings-switch-state">
                           <input
@@ -1388,7 +1390,15 @@ export function SidebarNav(props: {
                 />
               ) : null}
               {!props.activeProjectId && props.mainLayout !== 'upstream' ? (
-                <button type="button" className="project-add-button" aria-label={copy.addProject} title={copy.addProject} onClick={props.onCreateProject} disabled={!props.canCreateProject} {...controlBusyProps(props.createProjectBusy)}>
+                <button
+                  type="button"
+                  className="project-add-button"
+                  aria-label={copy.addProject}
+                  data-icon-tooltip={copy.addProject}
+                  onClick={props.onCreateProject}
+                  disabled={!props.canCreateProject}
+                  {...controlBusyProps(props.createProjectBusy)}
+                >
                   <Plus aria-hidden="true" weight="regular" />
                 </button>
               ) : null}
@@ -1735,7 +1745,7 @@ export function AutomaticUpdateIndicatorButton(props: { state: AutomaticUpdateIn
   const actionHint = zh ? '点击打开更新窗口' : 'Open the update window';
   return (
     <section className="automatic-update-indicator" data-phase={props.state.phase} aria-live="polite" aria-atomic="true">
-      <button type="button" title={`${props.state.detail} ${actionHint}`} aria-label={zh ? `${label}。${props.state.detail} ${actionHint}` : `${label}. ${props.state.detail} ${actionHint}`} onClick={props.onOpen}>
+      <button type="button" data-icon-tooltip={`${props.state.detail} ${actionHint}`} aria-label={zh ? `${label}。${props.state.detail} ${actionHint}` : `${label}. ${props.state.detail} ${actionHint}`} onClick={props.onOpen}>
         <span className="automatic-update-indicator-icon" aria-hidden="true">
           {icon}
         </span>

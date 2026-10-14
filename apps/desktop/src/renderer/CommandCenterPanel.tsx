@@ -251,7 +251,7 @@ function CommandRunFileActions(props: { artifacts: CommandArtifact[]; client: Da
                     role="menuitem"
                     disabled={Boolean(downloadingId)}
                     aria-busy={downloadingId === artifact.id || undefined}
-                    title={artifact.relativePath}
+                    data-icon-tooltip={artifact.relativePath}
                     onClick={() => void downloadArtifact(artifact)}
                   >
                     {downloadingId === artifact.id ? <CircleNotch className="command-run-copy-spinner" aria-hidden="true" /> : <DownloadSimple aria-hidden="true" />}
@@ -360,7 +360,7 @@ function CommandRunLog(props: { runId: string; content: string; ariaLabel: strin
             aria-busy={copyState === 'copying' || undefined}
             data-copy-state={copyState}
             aria-label={copyLabel}
-            title={copyLabel}
+            data-icon-tooltip={copyLabel}
             onClick={() => void copyCompleteLog()}
           >
             {copyState === 'copying' ? (
@@ -839,7 +839,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
               {zh ? '新建命令' : 'New command'}
             </Button>
             {props.onClose ? (
-              <button type="button" className="command-center-close" disabled={busy} onClick={props.onClose} aria-label={zh ? '关闭命令' : 'Close commands'} title={zh ? '关闭命令' : 'Close commands'}>
+              <button type="button" className="command-center-close" disabled={busy} onClick={props.onClose} aria-label={zh ? '关闭命令' : 'Close commands'} data-icon-tooltip={zh ? '关闭命令' : 'Close commands'}>
                 <X aria-hidden="true" />
               </button>
             ) : null}
@@ -1091,7 +1091,7 @@ function CommandRunHistoryModal(props: {
                   <header>
                     <span>
                       <strong>{formatRunTime(props.runDetail.run.createdAt)}</strong>
-                      <small title={props.runDetail.run.cwd}>{props.runDetail.run.cwd}</small>
+                      <small data-icon-tooltip={props.runDetail.run.cwd}>{props.runDetail.run.cwd}</small>
                     </span>
                     <div className="command-run-detail-actions">
                       {selectedStatus ? <span className={`command-run-status ${selectedStatus.className}`}>{selectedStatus.label}</span> : null}
@@ -1412,10 +1412,10 @@ function CommandRunModal(props: {
         <div className="command-modal-body command-run-body" inert={props.busy} aria-busy={props.busy || undefined}>
           <div className="command-run-context">
             <FolderSimple aria-hidden="true" />
-            <span title={props.project.localPath} aria-label={`${zh ? '项目目录' : 'Project directory'} ${props.project.localPath}`}>
+            <span data-icon-tooltip={props.project.localPath} aria-label={`${zh ? '项目目录' : 'Project directory'} ${props.project.localPath}`}>
               {props.project.localPath}
             </span>
-            <small title={zh ? '超时上限' : 'Timeout limit'}>{timeoutLabel}</small>
+            <small data-icon-tooltip={zh ? '超时上限' : 'Timeout limit'}>{timeoutLabel}</small>
           </div>
           <div className="command-run-parameters">
             {requiredParameters.map((parameter, index) => (

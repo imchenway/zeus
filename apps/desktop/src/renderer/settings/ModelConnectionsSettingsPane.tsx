@@ -1367,13 +1367,13 @@ function ModelDefinitionEditor(props: {
         </span>
         <button type="button" className="model-definition-identity" onClick={props.onToggle} aria-expanded={props.expanded} aria-controls={detailsId}>
           <span>
-            <strong title={model.displayName || model.id}>{model.displayName || model.id}</strong>
+            <strong data-icon-tooltip={model.displayName || model.id}>{model.displayName || model.id}</strong>
             <small>{model.displayName && model.displayName !== model.id ? `${model.id} · ${modelRouteLabel(model, zh)}` : modelRouteLabel(model, zh)}</small>
           </span>
           <CaretDownIcon className="model-definition-chevron" aria-hidden="true" />
         </button>
         {props.readOnly ? null : (
-          <button className="model-definition-remove" type="button" onClick={props.onRemove} aria-label={zh ? `移除模型 ${model.id}` : `Remove model ${model.id}`} title={zh ? '移除模型' : 'Remove model'}>
+          <button className="model-definition-remove" type="button" onClick={props.onRemove} aria-label={zh ? `移除模型 ${model.id}` : `Remove model ${model.id}`} data-icon-tooltip={zh ? '移除模型' : 'Remove model'}>
             <X aria-hidden="true" weight="bold" />
           </button>
         )}

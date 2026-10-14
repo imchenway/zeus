@@ -207,7 +207,7 @@ export function GoalRail(props: { goal: NativeGoalSnapshot; language: SessionUiL
       <span className={`session-goal-status-dot is-${props.goal.status}`} aria-hidden="true" />
       <span className="session-goal-rail-copy">
         <strong>{statusLabels[props.goal.status][zh ? 'zh' : 'en']}</strong>
-        <span title={props.goal.objective}>{props.goal.objective}</span>
+        <span data-icon-tooltip={props.goal.objective}>{props.goal.objective}</span>
       </span>
       <span className="session-goal-rail-meta">
         {formatDuration(props.goal.timeUsedSeconds, zh)} ·{' '}

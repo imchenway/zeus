@@ -133,7 +133,7 @@ export function DeliveryRepositoryFileTree(props: {
             type="button"
             className={props.diffScope === 'working' ? 'is-active' : ''}
             aria-pressed={props.diffScope === 'working'}
-            title={props.zh ? '本机未提交' : 'Local uncommitted'}
+            data-icon-tooltip={props.zh ? '本机未提交' : 'Local uncommitted'}
             onClick={() => props.onScopeChange('working')}
             disabled={props.disabled}
           >
@@ -143,7 +143,7 @@ export function DeliveryRepositoryFileTree(props: {
             type="button"
             className={props.diffScope === 'committed' ? 'is-active' : ''}
             aria-pressed={props.diffScope === 'committed'}
-            title={props.zh ? '已提交成果' : 'Committed result'}
+            data-icon-tooltip={props.zh ? '已提交成果' : 'Committed result'}
             onClick={() => props.onScopeChange('committed')}
             disabled={props.disabled}
           >
@@ -302,7 +302,7 @@ function DeliveryDirectoryFiles(props: {
           <li key={path}>
             {directory ? (
               <details open className="task-git-delivery-directory">
-                <summary title={path}>
+                <summary data-icon-tooltip={path}>
                   {checkbox}
                   <DeliveryEntryIcon />
                   <span>{name.slice(0, -1)}</span>
@@ -313,7 +313,7 @@ function DeliveryDirectoryFiles(props: {
             ) : (
               <div className={`task-git-delivery-file-row${props.selectedFile === path ? ' is-active' : ''}`}>
                 {checkbox}
-                <button type="button" title={path} aria-pressed={props.selectedFile === path} onClick={() => props.onSelect(path)} onDoubleClick={() => props.onOpen(path)} disabled={props.disabled}>
+                <button type="button" data-icon-tooltip={path} aria-pressed={props.selectedFile === path} onClick={() => props.onSelect(path)} onDoubleClick={() => props.onOpen(path)} disabled={props.disabled}>
                   <DeliveryEntryIcon path={path} />
                   <span>{name}</span>
                   <small>
@@ -352,14 +352,18 @@ export function DeliveryFeedbackNotice(props: {
   const resultTrigger = useRef<HTMLButtonElement>(null);
   /** 短暂跨过入口与浮层间隙时，不立即关闭正在查看的内容。 */
   const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  /** 鼠标等待后展示逐仓结果，点击与键盘继续使用即时原生浮层。 */
+  const hoverIntent = useHoverIntent(() => showResults());
   useEffect(() => () => clearTimeout(closeTimer.current), []);
   /** 原生浮层负责定位、外部点击和 Escape，悬停只控制显示。 */
   function showResults(): void {
+    hoverIntent.cancel();
     clearTimeout(closeTimer.current);
     if (!resultPopover.current?.matches(':popover-open')) resultPopover.current?.showPopover();
   }
   /** 鼠标与焦点离开入口和明细后才关闭，便于阅读或复制长内容。 */
   function closeResultsLater(): void {
+    hoverIntent.cancel();
     clearTimeout(closeTimer.current);
     closeTimer.current = setTimeout(() => {
       if (!resultTrigger.current?.matches(':hover, :focus') && !resultPopover.current?.matches(':hover, :focus-within')) resultPopover.current?.hidePopover();
@@ -390,9 +394,16 @@ export function DeliveryFeedbackNotice(props: {
             popoverTargetAction="show"
             aria-describedby={resultId}
             style={{ anchorName: resultAnchor }}
-            onPointerEnter={showResults}
+            onPointerEnter={(event) => {
+              clearTimeout(closeTimer.current);
+              if (event.pointerType !== 'touch' && event.buttons === 0) hoverIntent.schedule(event.currentTarget);
+            }}
             onPointerLeave={closeResultsLater}
-            onFocus={showResults}
+            onClick={hoverIntent.cancel}
+            onFocus={(event) => {
+              hoverIntent.cancel();
+              if (event.currentTarget.matches(':focus-visible')) showResults();
+            }}
             onBlur={closeResultsLater}
           >
             <span>{props.feedback.summary ?? props.feedback.text}</span>
@@ -492,7 +503,7 @@ export function GitDeliveryWorkspace(props: {
         <GitPaneSeparator name="delivery-height" label={props.zh ? '调整文件区与差异区高度' : 'Resize files and diff'} axis="y" initial={42} min={25} max={65} />
         <main className="task-git-review-main task-git-delivery-diff-main">
           <header className="task-git-review-pane-title">
-            <strong title={props.selectedFile}>{props.diffTitle}</strong>
+            <strong data-icon-tooltip={props.selectedFile}>{props.diffTitle}</strong>
           </header>
           {!props.selectedFile ? (
             <div className="task-git-delivery-empty">
@@ -624,3 +635,4 @@ export function GitDeliveryActions(props: {
     </aside>
   );
 }
+import { useHoverIntent } from '../ui/useHoverIntent.js';

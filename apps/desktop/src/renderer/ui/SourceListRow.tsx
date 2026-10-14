@@ -32,7 +32,8 @@ export type SourceListRowProps = SourceListRowCommonProps &
   );
 
 export function SourceListRow(props: SourceListRowProps) {
-  const { className: buttonClassName, ...buttonProps } = props.buttonProps;
+  /** 调用方保留 title 接口，实际按钮只保留一个应用提示入口。 */
+  const { className: buttonClassName, title, ...buttonProps } = props.buttonProps;
   const className = ['zeus-source-list-row', props.className].filter(Boolean).join(' ');
   const mainClassName = ['zeus-source-list-row-main', buttonClassName].filter(Boolean).join(' ');
 
@@ -48,7 +49,7 @@ export function SourceListRow(props: SourceListRowProps) {
       data-disclosure-placement={props.disclosure ? (props.disclosurePlacement ?? 'leading') : undefined}
     >
       {props.disclosure && props.disclosurePlacement !== 'trailing' ? <div className="zeus-source-list-row-disclosure">{props.disclosure}</div> : null}
-      <button {...buttonProps} className={mainClassName} aria-expanded={props.disclosure ? undefined : props.expanded}>
+      <button {...buttonProps} data-icon-tooltip={buttonProps['data-icon-tooltip'] || title} className={mainClassName} aria-expanded={props.disclosure ? undefined : props.expanded}>
         <span className="zeus-source-list-row-icon" aria-hidden="true">
           {props.icon}
         </span>

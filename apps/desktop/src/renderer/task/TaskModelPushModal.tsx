@@ -1278,7 +1278,7 @@ export function TaskModelPushModal(props: {
                     <ul className="task-model-push-existing-repositories">
                       {pendingEnvironmentRepositories.map((repository) => (
                         <li key={repository.repositoryId}>
-                          <span title={repository.relativePath}>{repository.repositoryName}</span>
+                          <span data-icon-tooltip={repository.relativePath}>{repository.repositoryName}</span>
                           <Button
                             variant="secondary"
                             size="compact"

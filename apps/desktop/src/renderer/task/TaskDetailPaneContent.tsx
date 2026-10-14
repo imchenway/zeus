@@ -744,7 +744,7 @@ function TaskProjectActions(props: Pick<TaskDetailPaneContentProps, 'task' | 'pr
     <section className="task-detail-block task-detail-project-settings" aria-label={zh ? '移动与复制' : 'Move and copy'}>
       <header className="task-detail-section-heading">
         <strong>{zh ? '移动与复制' : 'Move and copy'}</strong>
-        <small title={currentProjectName}>{currentProjectName}</small>
+        <small data-icon-tooltip={currentProjectName}>{currentProjectName}</small>
       </header>
       <div className="task-detail-project-settings-content">
         <ZeusSelect

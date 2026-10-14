@@ -884,7 +884,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                   <button
                     type="button"
                     role="tab"
-                    title={tab.document.relativePath}
+                    data-icon-tooltip={tab.document.relativePath}
                     aria-selected={tab.document.relativePath === activePath}
                     tabIndex={tab.document.relativePath === activePath ? 0 : -1}
                     className="zeus-workspace-tab"
@@ -913,7 +913,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                   <button
                     type="button"
                     className="zeus-workspace-tab-close"
-                    title={zh ? `关闭 ${tab.document.name}` : `Close ${tab.document.name}`}
+                    data-icon-tooltip={zh ? `关闭 ${tab.document.name}` : `Close ${tab.document.name}`}
                     aria-label={zh ? `关闭 ${tab.document.name}` : `Close ${tab.document.name}`}
                     disabled={tab.saving}
                     onClick={() => closeTab(tab.document.relativePath)}

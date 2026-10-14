@@ -1,5 +1,6 @@
 import { classifyAssistantMessage } from '@zeus/shared';
-import { type KeyboardEvent, type RefObject, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type HTMLAttributes, type KeyboardEvent, type RefObject, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useHoverIntent } from '../ui/useHoverIntent.js';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
 import { ModelBrainIcon } from './ModelBrainIcon.js';
@@ -725,8 +726,68 @@ export function ConversationComposer(props: ConversationComposerProps) {
   );
 }
 
+/** 两类评论附件共用开关行为，等待只影响悬停，保留键盘和点击查看。 */
+function useContextDraftPreview() {
+  /** CSS 只负责展示，是否展开由真实交互状态决定。 */
+  const [open, setOpen] = useState(false);
+  /** 跨过气泡与详情之间的间隙时保留阅读入口。 */
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  /** 附件和其他详情采用同一连续停留时间。 */
+  const hoverIntent = useHoverIntent(() => setOpen(true));
+  useEffect(() => () => clearTimeout(closeTimer.current), []);
+
+  /** 点击与键盘操作直接展示，并撤销所有旧计时。 */
+  function show(): void {
+    clearTimeout(closeTimer.current);
+    hoverIntent.cancel();
+    setOpen(true);
+  }
+
+  /** 移出后允许跨越小间隙，焦点仍在详情内时继续阅读。 */
+  function closeLater(element: HTMLElement): void {
+    hoverIntent.cancel();
+    clearTimeout(closeTimer.current);
+    closeTimer.current = setTimeout(() => {
+      if (!element.matches(':hover') && !element.contains(element.ownerDocument.activeElement)) setOpen(false);
+    }, 120);
+  }
+
+  /** 两种附件使用同一组事件，移除按钮不单独创建提示。 */
+  const surfaceProps: HTMLAttributes<HTMLElement> & { 'data-preview-open': boolean } = {
+    'data-preview-open': open,
+    onPointerEnter(event) {
+      clearTimeout(closeTimer.current);
+      if (!open && event.pointerType !== 'touch' && event.buttons === 0) hoverIntent.schedule(event.currentTarget);
+    },
+    onPointerLeave(event) {
+      closeLater(event.currentTarget);
+    },
+    onFocusCapture(event) {
+      hoverIntent.cancel();
+      if (event.target.matches(':focus-visible') && !event.currentTarget.contains(event.relatedTarget)) show();
+    },
+    onBlurCapture(event) {
+      if (!event.currentTarget.contains(event.relatedTarget)) closeLater(event.currentTarget);
+    },
+    onKeyDown(event) {
+      if (event.key !== 'Escape') return;
+      hoverIntent.cancel();
+      clearTimeout(closeTimer.current);
+      if (!open) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(false);
+      // 从详情内部关闭时把焦点送回摘要，同一容器内的焦点恢复不会重新展开。
+      event.currentTarget.querySelector<HTMLButtonElement>('.session-context-draft-preview-trigger')?.focus({ preventScroll: true });
+    },
+  };
+  return { open, show, surfaceProps };
+}
+
 /** 待发送评论统一计数，悬停或聚焦时展示原文、来源与内容。 */
 function ContextDraftAttachment(props: { draft: ConversationContextDraft; language: SessionUiLanguage; disabled: boolean; onRemove?: () => void }) {
+  /** 评论摘要沿用共享的延迟与立即打开行为。 */
+  const preview = useContextDraftPreview();
   /** 回答和代码评论在摘要中合计，详情继续保留各自来源。 */
   const count = props.draft.responseAnnotations.length + props.draft.codeComments.length;
   const zh = props.language === 'zh-CN';
@@ -734,9 +795,9 @@ function ContextDraftAttachment(props: { draft: ConversationContextDraft; langua
   const previewId = useId();
   const label = zh ? `${count} 条评论` : `${count} ${count === 1 ? 'comment' : 'comments'}`;
   return (
-    <section className="session-composer-context-draft" aria-label={zh ? '待发送评论' : 'Pending comments'}>
+    <section {...preview.surfaceProps} className="session-composer-context-draft" aria-label={zh ? '待发送评论' : 'Pending comments'}>
       <span className="session-context-draft-chip">
-        <button type="button" className="session-context-draft-preview-trigger" aria-describedby={previewId}>
+        <button type="button" className="session-context-draft-preview-trigger" aria-describedby={preview.open ? previewId : undefined} onClick={preview.show}>
           <ChatCircle aria-hidden="true" weight="regular" />
           <strong>{label}</strong>
         </button>
@@ -744,7 +805,7 @@ function ContextDraftAttachment(props: { draft: ConversationContextDraft; langua
           <span aria-hidden="true">×</span>
         </button>
       </span>
-      <aside id={previewId} className="session-context-draft-preview" role="tooltip">
+      <aside id={previewId} className="session-context-draft-preview" role="tooltip" aria-hidden={!preview.open} inert={!preview.open}>
         <header>
           <strong>{zh ? '待发送详情' : 'Pending details'}</strong>
           <span>{label}</span>
@@ -774,6 +835,8 @@ function ContextDraftAttachment(props: { draft: ConversationContextDraft; langua
 
 /** 网页评论沿用回答评论的摘要气泡，悬停或聚焦后查看原文与评论。 */
 export function BrowserSubmissionAttachment(props: { submission: ZeusBrowserPreparedSubmission; language: SessionUiLanguage; disabled: boolean; onRemove?: () => void }) {
+  /** 网页评论与代码评论使用同一个展开规则。 */
+  const preview = useContextDraftPreview();
   /** 详情与当前气泡一一关联，支持键盘聚焦。 */
   const previewId = useId();
   /** 统一当前语言的摘要文案。 */
@@ -781,9 +844,9 @@ export function BrowserSubmissionAttachment(props: { submission: ZeusBrowserPrep
   /** 输入框只展示数量，完整内容放入悬浮详情。 */
   const label = zh ? `${props.submission.comments.length} 条网页评论` : `${props.submission.comments.length} browser comments`;
   return (
-    <section className="session-composer-context-draft" aria-label={zh ? '待发送网页评论' : 'Pending browser comments'}>
+    <section {...preview.surfaceProps} className="session-composer-context-draft" aria-label={zh ? '待发送网页评论' : 'Pending browser comments'}>
       <span className="session-context-draft-chip">
-        <button type="button" className="session-context-draft-preview-trigger" aria-describedby={previewId}>
+        <button type="button" className="session-context-draft-preview-trigger" aria-describedby={preview.open ? previewId : undefined} onClick={preview.show}>
           <ChatCircle aria-hidden="true" weight="regular" />
           <strong>{label}</strong>
         </button>
@@ -791,7 +854,7 @@ export function BrowserSubmissionAttachment(props: { submission: ZeusBrowserPrep
           <span aria-hidden="true">×</span>
         </button>
       </span>
-      <aside id={previewId} className="session-context-draft-preview" aria-label={zh ? '网页评论详情' : 'Browser comment details'}>
+      <aside id={previewId} className="session-context-draft-preview" aria-label={zh ? '网页评论详情' : 'Browser comment details'} aria-hidden={!preview.open} inert={!preview.open}>
         <BrowserCommentPreview comments={props.submission.comments} zh={zh} />
       </aside>
     </section>

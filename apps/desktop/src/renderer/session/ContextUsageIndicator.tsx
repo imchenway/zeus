@@ -1,4 +1,5 @@
 import { useMotionPresence } from '../ui/useMotionPresence.js';
+import { useHoverIntent } from '../ui/useHoverIntent.js';
 import { type CSSProperties, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { NativeUnifiedUsageSnapshot } from './sessionTypes.js';
@@ -17,6 +18,8 @@ export function ContextUsageIndicator(props: {
   const tooltipId = `session-context-usage-${useId().replaceAll(':', '')}`;
   const indicatorRef = useRef<HTMLSpanElement | null>(null);
   const [tooltipOpen, setTooltipOpen] = useState(false);
+  /** 悬停等待与普通按钮一致，主动查看仍即时显示。 */
+  const hoverIntent = useHoverIntent(() => setTooltipOpen(true));
   /** 鼠标移开后平滑退出，并且不把最后位置重置到页面左上角。 */
   const { ref: tooltipRef, present: tooltipPresent } = useMotionPresence<HTMLSpanElement>(tooltipOpen);
   const [tooltipPosition, setTooltipPosition] = useState<{ left: number; top: number } | null>(null);
@@ -83,12 +86,12 @@ export function ContextUsageIndicator(props: {
       <dl>
         <div>
           <dt>{props.language === 'zh-CN' ? '所选容量' : 'Selected capacity'}</dt>
-          <dd title={selectedCapacity ? `${selectedCapacity.exact} Token` : undefined}>{selectedCapacity ? `${selectedCapacity.compact} Token` : props.language === 'zh-CN' ? '默认' : 'Default'}</dd>
+          <dd data-icon-tooltip={selectedCapacity ? `${selectedCapacity.exact} Token` : undefined}>{selectedCapacity ? `${selectedCapacity.compact} Token` : props.language === 'zh-CN' ? '默认' : 'Default'}</dd>
         </div>
         {available && engineCapacity ? (
           <div>
             <dt>{props.language === 'zh-CN' ? '引擎回报的可用空间' : 'Engine usable window'}</dt>
-            <dd title={`${engineCapacity.exact} Token`}>{engineCapacity.compact} Token</dd>
+            <dd data-icon-tooltip={`${engineCapacity.exact} Token`}>{engineCapacity.compact} Token</dd>
           </div>
         ) : null}
         {available ? (
@@ -99,18 +102,18 @@ export function ContextUsageIndicator(props: {
             </div>
             <div>
               <dt>{copy.usedLabel}</dt>
-              <dd title={copy.usedTitle}>{copy.used}</dd>
+              <dd data-icon-tooltip={copy.usedTitle}>{copy.used}</dd>
             </div>
             <div>
               <dt>{copy.remainingLabel}</dt>
-              <dd title={copy.remainingTitle}>{copy.remaining}</dd>
+              <dd data-icon-tooltip={copy.remainingTitle}>{copy.remaining}</dd>
             </div>
           </>
         ) : null}
         {copy.estimatedHeadroom ? (
           <div>
             <dt>{copy.estimatedHeadroomLabel}</dt>
-            <dd title={copy.estimatedHeadroomTitle}>{copy.estimatedHeadroom}</dd>
+            <dd data-icon-tooltip={copy.estimatedHeadroomTitle}>{copy.estimatedHeadroom}</dd>
           </div>
         ) : null}
         {copy.compaction ? (
@@ -139,14 +142,28 @@ export function ContextUsageIndicator(props: {
       role="img"
       aria-label={copy.accessibleLabel}
       aria-describedby={tooltipOpen ? tooltipId : undefined}
-      onPointerEnter={() => setTooltipOpen(true)}
+      onPointerEnter={(event) => {
+        if (event.pointerType !== 'touch' && event.buttons === 0) hoverIntent.schedule(event.currentTarget);
+      }}
       onPointerLeave={(event) => {
+        hoverIntent.cancel();
         if (document.activeElement !== event.currentTarget) setTooltipOpen(false);
       }}
-      onFocus={() => setTooltipOpen(true)}
-      onBlur={() => setTooltipOpen(false)}
+      onFocus={(event) => {
+        hoverIntent.cancel();
+        if (event.currentTarget.matches(':focus-visible')) setTooltipOpen(true);
+      }}
+      onClick={() => {
+        hoverIntent.cancel();
+        setTooltipOpen(true);
+      }}
+      onBlur={() => {
+        hoverIntent.cancel();
+        setTooltipOpen(false);
+      }}
       onKeyDown={(event) => {
         if (event.key === 'Escape') {
+          hoverIntent.cancel();
           event.preventDefault();
           event.stopPropagation();
           setTooltipOpen(false);

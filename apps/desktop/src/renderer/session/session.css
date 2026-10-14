@@ -2283,8 +2283,8 @@
   z-index: 12;
 }
 
-.session-codex-parity-v1 .session-composer-context-draft:hover > .session-context-draft-preview,
-.session-codex-parity-v1 .session-composer-context-draft:focus-within > .session-context-draft-preview {
+/* 展开由共享悬停计时与键盘、点击状态控制，CSS 不再绕过等待。 */
+.session-codex-parity-v1 .session-composer-context-draft[data-preview-open='true'] > .session-context-draft-preview {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);

@@ -270,7 +270,7 @@ const TaskBoardCard = memo(function TaskBoardCard(props: {
               className={`task-board-card-property task-board-card-property-${property}${toned ? ` is-toned task-board-card-property-tone-${accent.tone}` : ''}`}
               style={accent.color ? ({ '--task-board-property-color': accent.color } as CSSProperties) : undefined}
               key={property}
-              title={translate(cardPropertyLabels[property], props.context.language)}
+              data-icon-tooltip={translate(cardPropertyLabels[property], props.context.language)}
             >
               <small>{translate(cardPropertyLabels[property], props.context.language)}</small>
               <span>{taskBoardPropertyLabel(property, props.card.task, props.context)}</span>

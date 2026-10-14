@@ -230,11 +230,11 @@ export function ProjectConversationTree(props: ProjectConversationTreeProps) {
               data-workspace-mode={worktree ? 'worktree' : 'direct'}
               role="img"
               aria-label={workspaceLabel}
-              title={[workspaceLabel, conversation.executionPath].filter(Boolean).join(' · ')}
+              data-icon-tooltip={[workspaceLabel, conversation.executionPath].filter(Boolean).join(' · ')}
             >
               {worktree ? <GitBranch aria-hidden="true" /> : <Folder aria-hidden="true" />}
             </span>
-            <span className="session-conversation-title" title={displayTitle}>
+            <span className="session-conversation-title" data-icon-tooltip={displayTitle}>
               {displayTitle}
             </span>
             {/* 归档进度复用行末状态位置，完成后恢复会话自身状态。 */}
@@ -460,7 +460,7 @@ export function ConversationStatusIcon(props: { status: ConversationStatusIconKi
   }
 
   return (
-    <span className={`session-conversation-status-icon is-${props.status}`} role="img" aria-label={props.label} title={props.label}>
+    <span className={`session-conversation-status-icon is-${props.status}`} role="img" aria-label={props.label} data-icon-tooltip={props.label}>
       {icon}
     </span>
   );
