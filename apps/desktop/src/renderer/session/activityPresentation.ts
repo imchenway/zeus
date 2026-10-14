@@ -99,9 +99,9 @@ function noMatchSearch(payload: Record<string, unknown>): boolean {
   /** Pi 受管 bash 返回完整结构化进程结果，不能把 JSON 元信息当成命令输出。 */
   const managed = payload.toolName === 'bash' ? record(payload.output) : {};
   if (typeof managed.processId === 'string' && typeof managed.output === 'string') return managed.exitCode === 1 && managed.hasMore === false && managed.output.trim() === '';
-  /** 普通命令必须实际提供输出，字段缺失时不能猜测搜索没有结果。 */
+  /** Codex 的终态空输出允许显式为 null；字段缺失仍不能当作已确认的空输出。 */
   const output = [payload.aggregatedOutput, payload.output, payload.stdout, payload.stderr];
-  return output.some((value) => typeof value === 'string') && output.every((value) => value == null || (typeof value === 'string' && value.trim() === ''));
+  return (payload.aggregatedOutput === null || output.some((value) => typeof value === 'string')) && output.every((value) => value == null || (typeof value === 'string' && value.trim() === ''));
 }
 
 /** 确认命令只有一个 rg；组合命令、重定向和变量展开都不能套用搜索退出语义。 */
@@ -112,12 +112,24 @@ function singleRgCommand(value: unknown): boolean {
     return value.length === 3 && /(?:^|\/)(?:sh|bash|zsh)$/u.test(value[0] ?? '') && /^-l?c$/u.test(value[1] ?? '') && singleRgCommand(value[2]);
   }
   if (typeof value !== 'string' || /[\r\n]/u.test(value)) return false;
-  /** ponytail: 只识别字面参数；复杂 shell 保留原状态，获得结构化 argv 后再扩大覆盖。 */
+  /** ponytail: 只解码字面参数与引号拼接；展开、管道和重定向继续保留原状态。 */
   const command = value.trim();
-  /** shell 包装必须只有一个完整脚本参数，不接受附加命令或展开。 */
-  const wrapped = command.match(/^(?:\/[^\s'"\\;&|<>`$(){}*?[\]#!~]+\/)?(?:sh|bash|zsh) +-l?c +(?:'([^']*)'|"([^"\\$`]*)")$/u);
-  if (wrapped) return singleRgCommand(wrapped[1] ?? wrapped[2]);
-  return /^(?:rg|\/[^\s'"\\;&|<>`$(){}*?[\]#!~]+\/rg)(?: +(?:[^\s'"\\;&|<>`$(){}*?[\]#!~]+|'[^']*'|"[^"\\$`]*"))+$/u.test(command);
+  /** 同一参数可以由多段引号组成；粘连的 shell 操作符不能被跳过。 */
+  const wordPattern = /(?:[^\s'"\\;&|<>`$(){}*?[\]#!~]+|'[^']*'|"(?:[^"\\$`]|\\["\\])*")+/uy;
+  /** 解码后复用结构化参数的命令身份与 shell 层数判断。 */
+  const words: string[] = [];
+  /** 逐段完整消费原命令，不能从组合命令中只挑出 rg。 */
+  let offset = 0;
+  while (offset < command.length) {
+    wordPattern.lastIndex = offset;
+    /** 匹配失败或后接操作符时，保留真实失败状态。 */
+    const word = wordPattern.exec(command);
+    if (!word || (wordPattern.lastIndex < command.length && !/[ \t]/u.test(command[wordPattern.lastIndex]!))) return false;
+    words.push(word[0].replace(/'([^']*)'|"((?:[^"\\$`]|\\["\\])*)"/gu, (_match, single: string | undefined, double: string) => single ?? double.replace(/\\(["\\])/gu, '$1')));
+    offset = wordPattern.lastIndex;
+    while (offset < command.length && /[ \t]/u.test(command[offset]!)) offset += 1;
+  }
+  return singleRgCommand(words);
 }
 
 /** 动作名只描述工具实际能力，输入内容和内部选择器不进入摘要。 */
