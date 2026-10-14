@@ -48,7 +48,8 @@ export function conversationProcessPresentation(kind: string, detail: unknown): 
     'answers',
     'resolutionReason',
   ]) {
-    if (source[key] !== undefined && source[key] !== null) payload[key] = source[key];
+    // Codex 用显式 null 表示终态没有聚合输出；历史适配必须保留它与缺失字段的区别。
+    if (source[key] !== undefined && (source[key] !== null || key === 'aggregatedOutput')) payload[key] = source[key];
   }
   for (const key of ['provider', 'itemType', 'eventType', 'protocolFamily', 'stageId', 'reasoningPresentation']) {
     if (record[key] !== undefined) payload[key] = record[key];
