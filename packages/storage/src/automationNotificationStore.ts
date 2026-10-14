@@ -148,6 +148,14 @@ export class AutomationNotificationRepository {
     };
   }
 
+  /** 同一事务确认全部未读记录，覆盖未加载分页，后续新修订仍由投影保持未读。 */
+  acknowledgeAll(): { acknowledged: boolean } {
+    this.db.execute('UPDATE automation_notifications SET read_at = ? WHERE read_at IS NULL', [new Date().toISOString()]);
+    // 提交前检查全量确认，防止分页限制或遗漏造成部分成功。
+    assert.equal(this.db.get<{ count: number }>('SELECT COUNT(*) AS count FROM automation_notifications WHERE read_at IS NULL')!.count, 0, '全部已读后仍有未确认的通知。');
+    return { acknowledged: true };
+  }
+
   /** 仅确认用户实际看见的修订；过期确认不清除较新结果。 */
   acknowledge(id: string, expectedRevision: number): { acknowledged: boolean } {
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) throw new Error('ZEUS_AUTOMATION_NOTIFICATION_REVISION_INVALID: 通知修订无效。');

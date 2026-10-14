@@ -144,6 +144,23 @@ export function useAutomationNotifications(input: {
     actionError,
     busyId,
     refresh,
+    /** 全部已读覆盖服务端全部分页，写入成功后再刷新，失败时保留现有通知。 */
+    async markAllRead(): Promise<void> {
+      if (actionInFlight.current || !client) return;
+      actionInFlight.current = true;
+      // 通知身份始终有 automation_notice_ 前缀，all 仅标识全量操作。
+      setBusyId('all');
+      setActionError(null);
+      try {
+        await client.acknowledgeAllAutomationNotifications();
+        await refresh();
+      } catch (error) {
+        setActionError(formatVisibleApplicationError(error, language === 'zh-CN' ? 'zh-CN' : 'en'));
+      } finally {
+        actionInFlight.current = false;
+        setBusyId(null);
+      }
+    },
     /** 列表导航成功后才关闭弹层；失败时保留消息并补读失效会话。 */
     async open(item: AutomationNotification): Promise<boolean> {
       if (actionInFlight.current || !item.conversationId || !client) return false;

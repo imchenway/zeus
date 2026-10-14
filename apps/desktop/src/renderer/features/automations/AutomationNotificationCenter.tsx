@@ -21,6 +21,10 @@ const notificationStatusLabels: Record<AutomationNotificationStatus, [string, st
 export function AutomationNotificationCenter({ model, language }: { /** 工作台持有通知状态。 */ model: AutomationNotificationsModel; /** 应用当前语言。 */ language: 'zh-CN' | 'en-US' }) {
   /** 当前文案语言。 */
   const zh = language === 'zh-CN';
+  /** 恢复会继续原运行并重新启用规则，不能暗示只是查看或确认通知。 */
+  const resumeDescription = zh
+    ? '请先处理失败原因。恢复后继续本次尚未启动的项目，已启动的项目会先核对已有结果，不会重复启动；同时重新启用后续自动化排程。'
+    : 'Resolve the failure first. Resume the projects not yet started in this run. Existing work is checked without starting it again. Future scheduled runs are also re-enabled.';
   /** 每个工作台的弹层身份保持独立。 */
   const id = useId();
   /** 原生弹层的开关状态用于可访问属性和定位。 */
@@ -108,7 +112,12 @@ export function AutomationNotificationCenter({ model, language }: { /** 工作�
             >
               <header className="automation-notification-header">
                 <strong>{zh ? '通知' : 'Notifications'}</strong>
-                <span>{zh ? `${model.unreadCount} 条未读` : `${model.unreadCount} unread`}</span>
+                <div className="automation-notification-header-actions">
+                  <span>{zh ? `${model.unreadCount} 条未读` : `${model.unreadCount} unread`}</span>
+                  <Button size="compact" disabled={!model.unreadCount || Boolean(model.busyId)} busy={model.busyId === 'all'} onClick={() => void model.markAllRead()}>
+                    {zh ? '全部已读' : 'Mark all read'}
+                  </Button>
+                </div>
               </header>
               {model.loadError || model.actionError ? (
                 <div className="automation-notification-error" role="alert">
@@ -138,6 +147,7 @@ export function AutomationNotificationCenter({ model, language }: { /** 工作�
                         <button
                           type="button"
                           className="automation-notification-open"
+                          title={`${item.automationName}\n${item.conversationTitle || (zh ? '打开会话' : 'Open conversation')}`}
                           disabled={Boolean(model.busyId)}
                           onClick={() => {
                             // 先让出顶层表面，导航途中的未保存确认弹窗才能获得正常焦点。
@@ -148,16 +158,18 @@ export function AutomationNotificationCenter({ model, language }: { /** 工作�
                           }}
                         >
                           <strong>{item.automationName}</strong>
-                          <span>{item.conversationTitle || (zh ? '打开会话' : 'Open conversation')}</span>
+                          {item.conversationTitle && item.conversationTitle !== item.automationName ? <span>{item.conversationTitle}</span> : null}
                         </button>
                       ) : (
                         <div className="automation-notification-summary">
-                          <strong>{item.automationName}</strong>
+                          <strong title={item.automationName}>{item.automationName}</strong>
                           <span>{zh ? '无可用会话' : 'No available conversation'}</span>
                         </div>
                       )}
                       <div className="automation-notification-meta">
-                        <span>{item.projectName || (zh ? '无项目' : 'No project')}</span>
+                        <span className="automation-notification-project" title={item.projectName || (zh ? '无项目' : 'No project')}>
+                          {item.projectName || (zh ? '无项目' : 'No project')}
+                        </span>
                         <span>{notificationStatusLabels[item.status][zh ? 0 : 1]}</span>
                         <time dateTime={item.occurredAt}>{new Intl.DateTimeFormat(language, { dateStyle: 'short', timeStyle: 'short' }).format(new Date(item.occurredAt))}</time>
                       </div>
@@ -174,8 +186,8 @@ export function AutomationNotificationCenter({ model, language }: { /** 工作�
                             </Button>
                           ) : null}
                           {item.canResume ? (
-                            <Button size="compact" disabled={Boolean(model.busyId)} onClick={() => void model.act(item, 'resume')}>
-                              {zh ? '继续剩余项目' : 'Resume remaining projects'}
+                            <Button size="compact" disabled={Boolean(model.busyId)} title={resumeDescription} aria-description={resumeDescription} onClick={() => void model.act(item, 'resume')}>
+                              {zh ? '恢复自动化' : 'Resume automation'}
                             </Button>
                           ) : null}
                         </div>
