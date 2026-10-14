@@ -81,6 +81,8 @@ const ownershipGroups = [
       'project_repositories',
       'project_shared_paths',
       'tasks',
+      // 任务提醒与任务共享耐久事务，由工作管理维护已读、取消和系统投递状态。
+      'task_reminders',
       'task_relations',
       'task_templates',
       'task_events',
