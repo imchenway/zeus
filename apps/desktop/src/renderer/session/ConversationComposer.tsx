@@ -225,7 +225,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
     automaticEligible: inputWritable && !hasDraft && editorValue.length === 0 && !goalInputActive && !goalOperationBusy && !isComposing && !inputResources.processing,
     settings: props.inputSuggestionSettings,
     generate: props.onGenerateInputSuggestion,
-    working: active || busy || props.state.conversationState === 'starting_turn',
     eligible: inputWritable && !busy && !goalInputActive && !goalOperationBusy && !isComposing && !inputResources.processing,
   });
   /** 只有空输入中的可见灰字可直接发送；已有正文优先，附件和评论仍随消息提交。 */

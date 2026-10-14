@@ -3706,7 +3706,6 @@ export function NewConversationComposer(props: {
     projectId: props.owner?.projectId,
     draft: content,
     eligible: Boolean(props.owner) && !submitting && !goalInputActive && !isComposing && !inputResources.processing,
-    working: submitting,
     settings: props.inputSuggestionSettings,
     generate: props.onGenerateInputSuggestion,
   });
