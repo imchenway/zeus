@@ -1141,7 +1141,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                       {selectedWorkspace && selectedWorkspace.activeConversationCount > 0 ? (
                         <small
                           className="task-git-review-active-sessions"
-                          title={zh ? '合入只包含已提交内容；关联会话未归档时保留工作目录。' : 'Only committed changes are merged. The working folder is preserved while linked conversations remain unarchived.'}
+                          data-icon-tooltip={zh ? '合入只包含已提交内容；关联会话未归档时保留工作目录。' : 'Only committed changes are merged. The working folder is preserved while linked conversations remain unarchived.'}
                         >
                           {zh ? `${selectedWorkspace.activeConversationCount} 个会话运行中` : `${selectedWorkspace.activeConversationCount} active conversations`}
                         </small>

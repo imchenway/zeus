@@ -478,7 +478,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
             <button
               type="button"
               role="tab"
-              title={tab.url}
+              data-icon-tooltip={tab.url}
               aria-selected={tab.id === snapshot.activeTabId}
               tabIndex={tab.id === snapshot.activeTabId ? 0 : -1}
               className="zeus-workspace-tab"
@@ -496,13 +496,13 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
               <span>{tab.url === 'about:blank' ? labels.newTab : tab.title || tab.url}</span>
               {tab.loading ? <span className="browser-tab-loading" aria-hidden="true" /> : null}
             </button>
-            <button type="button" className="zeus-workspace-tab-close" aria-label={`${labels.closeTab}: ${tab.title || tab.url}`} title={labels.closeTab} onClick={() => void closeTab(tab.id)}>
+            <button type="button" className="zeus-workspace-tab-close" aria-label={`${labels.closeTab}: ${tab.title || tab.url}`} data-icon-tooltip={labels.closeTab} onClick={() => void closeTab(tab.id)}>
               <X size={14} aria-hidden="true" weight="regular" />
             </button>
           </div>
         ))}
       </div>
-      <button type="button" className="browser-new-tab" aria-label={labels.newTab} title={labels.newTab} onClick={() => void addTab()}>
+      <button type="button" className="browser-new-tab" aria-label={labels.newTab} data-icon-tooltip={labels.newTab} onClick={() => void addTab()}>
         <Plus aria-hidden="true" weight="bold" />
       </button>
       <span className="browser-tab-strip-spacer" aria-hidden="true" />
@@ -516,7 +516,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
         >
           {props.expanded ? <ArrowsInSimple aria-hidden="true" weight="regular" /> : <ArrowsOutSimple aria-hidden="true" weight="regular" />}
         </button>
-        <button type="button" aria-label={labels.close} title={labels.close} onClick={props.onClose}>
+        <button type="button" aria-label={labels.close} data-icon-tooltip={labels.close} onClick={props.onClose}>
           <X aria-hidden="true" weight="regular" />
         </button>
       </span>
@@ -535,14 +535,14 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
       {activeTab.annotationMode && draftComments.length > 0 ? (
         <div className="browser-toolbar browser-annotation-toolbar">
           <span className="browser-annotation-actions browser-annotation-actions-leading">
-            <button type="button" aria-label={labels.exit} title={labels.exit} onClick={() => void command({ action: 'set_annotation_mode', enabled: false })}>
+            <button type="button" aria-label={labels.exit} data-icon-tooltip={labels.exit} onClick={() => void command({ action: 'set_annotation_mode', enabled: false })}>
               <X aria-hidden="true" weight="bold" />
             </button>
-            <button type="button" aria-label={labels.clear} title={labels.clear} disabled={draftComments.length === 0} onClick={() => void clearComments()}>
+            <button type="button" aria-label={labels.clear} data-icon-tooltip={labels.clear} disabled={draftComments.length === 0} onClick={() => void clearComments()}>
               <Trash aria-hidden="true" weight="regular" />
             </button>
           </span>
-          <span className="browser-annotation-context" title={activeTab.url}>
+          <span className="browser-annotation-context" data-icon-tooltip={activeTab.url}>
             {labels.annotating(activeTab.url)}
           </span>
           <span className="browser-annotation-actions browser-annotation-actions-trailing">
@@ -579,8 +579,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
             <button
               type="button"
               aria-label={activeTab.loading ? labels.stop : labels.reload}
-              data-icon-tooltip={activeTab.loading ? undefined : labels.reload}
-              title={activeTab.loading ? labels.stop : undefined}
+              data-icon-tooltip={activeTab.loading ? labels.stop : labels.reload}
               onClick={() => void command(activeTab.loading ? { action: 'stop' } : { action: 'reload' })}
             >
               {activeTab.loading ? <X aria-hidden="true" weight="regular" /> : <ArrowsClockwise aria-hidden="true" weight="regular" />}
@@ -607,7 +606,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
               className={`browser-annotate-button ${activeTab.annotationMode ? 'selected' : ''}`}
               aria-label={activeTab.annotationMode ? labels.annotatingMode : labels.annotate}
               aria-pressed={activeTab.annotationMode}
-              title={activeTab.annotationMode ? labels.annotatingMode : labels.annotate}
+              data-icon-tooltip={activeTab.annotationMode ? labels.annotatingMode : labels.annotate}
               onClick={() => void command({ action: 'set_annotation_mode', enabled: !activeTab.annotationMode })}
             >
               <span className="browser-annotate-icon" aria-hidden="true">
@@ -646,7 +645,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
           <button type="submit" aria-label={labels.findNext} data-icon-tooltip={labels.findNext} disabled={!findText.trim()}>
             <ArrowDown aria-hidden="true" />
           </button>
-          <button type="button" aria-label={labels.closeFind} title={labels.closeFind} onClick={() => void closeFind()}>
+          <button type="button" aria-label={labels.closeFind} data-icon-tooltip={labels.closeFind} onClick={() => void closeFind()}>
             <X aria-hidden="true" />
           </button>
         </form>

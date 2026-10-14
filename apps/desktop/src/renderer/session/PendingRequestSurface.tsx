@@ -367,7 +367,7 @@ function CompactApprovalPanel(props: CompactApprovalPanelProps) {
             <Icon aria-hidden="true" />
             <span>{props.kind === 'command' ? copy.runCommand : copy.editFiles}</span>
           </span>
-          <span className="session-compact-approval-mode" title={`${copy.mode}: ${mode}`}>
+          <span className="session-compact-approval-mode" data-icon-tooltip={`${copy.mode}: ${mode}`}>
             {mode}
           </span>
         </header>
@@ -499,10 +499,15 @@ function ApprovalDecisionHelp(props: { title: string; description: string }) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   /** 焦点进入说明时保留内容，离开后自动收起。 */
   const buttonRef = useRef<HTMLButtonElement | null>(null);
+  /** 授权说明复用全局悬停等待，原生点击打开行为不变。 */
+  const hoverIntent = useHoverIntent(() => popoverRef.current?.showPopover());
   return (
     <span
-      onPointerEnter={() => popoverRef.current?.showPopover()}
+      onPointerEnter={(event) => {
+        if (event.pointerType !== 'touch' && event.buttons === 0) hoverIntent.schedule(event.currentTarget);
+      }}
       onPointerLeave={() => {
+        hoverIntent.cancel();
         if (document.activeElement !== buttonRef.current) popoverRef.current?.hidePopover();
       }}
     >
@@ -516,8 +521,15 @@ function ApprovalDecisionHelp(props: { title: string; description: string }) {
         popoverTarget={id}
         popoverTargetAction="show"
         style={{ anchorName: anchor }}
-        onFocus={() => popoverRef.current?.showPopover()}
-        onBlur={() => popoverRef.current?.hidePopover()}
+        onClick={hoverIntent.cancel}
+        onFocus={(event) => {
+          hoverIntent.cancel();
+          if (event.currentTarget.matches(':focus-visible')) popoverRef.current?.showPopover();
+        }}
+        onBlur={() => {
+          hoverIntent.cancel();
+          popoverRef.current?.hidePopover();
+        }}
       >
         <WarningCircle aria-hidden="true" />
       </button>
@@ -538,7 +550,7 @@ function FileApprovalTargetList(props: { paths: readonly string[]; moreLabel: (c
           const parts = approvalPathParts(path);
           return (
             <li key={path}>
-              <code title={path}>
+              <code data-icon-tooltip={path}>
                 <span className="session-file-approval-directory">{parts.directory}</span>
                 <span className="session-file-approval-name">{parts.name}</span>
               </code>
@@ -1910,3 +1922,4 @@ function buildQuestionResponse(
     ...(Object.keys(answerAttachments).length > 0 ? { answerAttachments } : {}),
   };
 }
+import { useHoverIntent } from '../ui/useHoverIntent.js';

@@ -74,13 +74,15 @@ export function TurnChangeCard(props: {
           </span>
           <span>
             <span className="session-turn-change-heading">
-              <span className="session-turn-change-title" title={changeSetTitle(changeSet, props.language)}>
+              <span className="session-turn-change-title" data-icon-tooltip={changeSetTitle(changeSet, props.language)}>
                 {title}
               </span>
               {availability ? <span className="session-turn-change-availability">{availability}</span> : null}
             </span>
             <small
-              title={zh ? `${changeSet.fileCount} 个文件，新增 ${changeSet.addedLines} 行，删除 ${changeSet.deletedLines} 行` : `${changeSet.fileCount} files, ${changeSet.addedLines} added lines, ${changeSet.deletedLines} deleted lines`}
+              data-icon-tooltip={
+                zh ? `${changeSet.fileCount} 个文件，新增 ${changeSet.addedLines} 行，删除 ${changeSet.deletedLines} 行` : `${changeSet.fileCount} files, ${changeSet.addedLines} added lines, ${changeSet.deletedLines} deleted lines`
+              }
             >
               <span className="session-turn-change-total">{zh ? `${changeSet.fileCount} 个文件` : `${changeSet.fileCount} files`}</span>
               <span className="session-turn-change-stats">
@@ -106,7 +108,7 @@ export function TurnChangeCard(props: {
             <button
               type="button"
               className="session-turn-change-undo"
-              title={zh ? '仅操作此卡片列出的已记录变更' : 'Only affects recorded changes listed in this card'}
+              data-icon-tooltip={zh ? '仅操作此卡片列出的已记录变更' : 'Only affects recorded changes listed in this card'}
               disabled={Boolean(busy) || !props.onOperate}
               onClick={() => void operate()}
             >
@@ -137,7 +139,7 @@ export function TurnChangeCard(props: {
               <li key={file.id}>
                 <button type="button" onClick={() => props.onReview?.(changeSet, file.id)} disabled={!props.onReview}>
                   <FileTypeIcon name={file.newPath ?? file.oldPath ?? ''} />
-                  <span className="session-turn-change-path" title={displayPath(file)}>
+                  <span className="session-turn-change-path" data-icon-tooltip={displayPath(file)}>
                     {displayPath(file)}
                   </span>
                   <span className="session-turn-change-file-counts">
@@ -435,7 +437,7 @@ export function TurnDiffWorkspace(props: {
           >
             {props.fullWidth ? <ArrowsIn aria-hidden="true" /> : <ArrowsOut aria-hidden="true" />}
           </button>
-          <button type="button" aria-label={zh ? '关闭变更审核' : 'Close change review'} title={zh ? '关闭' : 'Close'} onClick={props.onClose}>
+          <button type="button" aria-label={zh ? '关闭变更审核' : 'Close change review'} data-icon-tooltip={zh ? '关闭' : 'Close'} onClick={props.onClose}>
             <X aria-hidden="true" />
           </button>
         </nav>
@@ -486,7 +488,7 @@ export function TurnDiffWorkspace(props: {
           {activeFile ? (
             <>
               <header>
-                <strong title={displayPath(activeFile)} data-file-status={activeFile.changeType === 'binary' ? 'modified' : activeFile.changeType}>
+                <strong data-icon-tooltip={displayPath(activeFile)} data-file-status={activeFile.changeType === 'binary' ? 'modified' : activeFile.changeType}>
                   {displayPath(activeFile)}
                 </strong>
                 <span>
@@ -534,8 +536,8 @@ export function TurnDiffWorkspace(props: {
                   ) : (
                     <div className="session-turn-diff-table">
                       <div className="session-turn-diff-side-labels" data-single-side={activeFile.changeType === 'added' || activeFile.changeType === 'deleted' ? 'true' : undefined}>
-                        {activeFile.changeType !== 'added' ? <span title={activeFile.oldPath ?? ''}>{zh ? '修改前' : 'Before'}</span> : null}
-                        {activeFile.changeType !== 'deleted' ? <span title={activeFile.newPath ?? ''}>{zh ? '修改后' : 'After'}</span> : null}
+                        {activeFile.changeType !== 'added' ? <span data-icon-tooltip={activeFile.oldPath ?? ''}>{zh ? '修改前' : 'Before'}</span> : null}
+                        {activeFile.changeType !== 'deleted' ? <span data-icon-tooltip={activeFile.newPath ?? ''}>{zh ? '修改后' : 'After'}</span> : null}
                       </div>
                       <TaskGitDiffTable
                         diff={diff}
@@ -570,7 +572,7 @@ function TurnDiffDirectory(props: { files: Array<{ path: string; file: TurnChang
         <li key={props.prefix + name}>
           {name.endsWith('/') ? (
             <details className="session-turn-diff-directory" open>
-              <summary title={props.prefix + name} style={{ paddingInlineStart: 7 + props.depth * 14 }}>
+              <summary data-icon-tooltip={props.prefix + name} style={{ paddingInlineStart: 7 + props.depth * 14 }}>
                 <CaretDown aria-hidden="true" />
                 <Folder aria-hidden="true" weight="regular" />
                 <span>{name.slice(0, -1)}</span>
@@ -584,7 +586,7 @@ function TurnDiffDirectory(props: { files: Array<{ path: string; file: TurnChang
                 type="button"
                 className="session-turn-diff-file"
                 key={file.id}
-                title={displayPath(file)}
+                data-icon-tooltip={displayPath(file)}
                 aria-current={file.id === props.activeFileId ? 'true' : undefined}
                 onClick={() => props.onSelect(file.id)}
                 style={{ paddingInlineStart: 7 + props.depth * 14 }}

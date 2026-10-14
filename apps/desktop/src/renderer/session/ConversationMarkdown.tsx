@@ -329,7 +329,7 @@ function SecureLinkNode(props: NodeComponentProps<MarkstreamNode>) {
   }
   if (href.startsWith('#')) return <a href={href}>{label}</a>;
   return (
-    <span className="session-markdown-unavailable-resource" title={href}>
+    <span className="session-markdown-unavailable-resource" data-icon-tooltip={href}>
       {label}
     </span>
   );

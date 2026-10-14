@@ -246,7 +246,7 @@ export function SkillsWorkspace(props: { client: SkillsClient | null; language: 
                           <code>{skill.invocation}</code>
                         </span>
                         <span>{skill.shortDescription || skill.description}</span>
-                        <small title={skill.path}>{skill.path}</small>
+                        <small data-icon-tooltip={skill.path}>{skill.path}</small>
                       </span>
                       {skill.removable ? (
                         <Button variant="danger" size="compact" busy={removingId === skill.id} disabled={Boolean(removingId)} onClick={() => setPendingRemoval(skill)}>

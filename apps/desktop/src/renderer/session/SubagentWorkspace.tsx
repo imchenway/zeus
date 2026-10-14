@@ -196,7 +196,7 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
           <button type="button" aria-label={toggleLabel} data-icon-tooltip={toggleLabel} onClick={() => props.onFullWidthChange(!props.fullWidth)}>
             {props.fullWidth ? <ArrowsIn aria-hidden="true" /> : <ArrowsOut aria-hidden="true" />}
           </button>
-          <button type="button" aria-label={zh ? '关闭智能体面板' : 'Close agent panel'} title={zh ? '关闭' : 'Close'} onClick={props.onClose}>
+          <button type="button" aria-label={zh ? '关闭智能体面板' : 'Close agent panel'} data-icon-tooltip={zh ? '关闭' : 'Close'} onClick={props.onClose}>
             <X aria-hidden="true" />
           </button>
         </nav>

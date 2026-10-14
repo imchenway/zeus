@@ -149,7 +149,7 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
       aria-label={
         busy ? `${loadingLabel}: ${props.resource.name}` : props.resource.kind === 'image' && (failed || !previewUrl) ? `${props.language === 'zh-CN' ? '图片预览不可用' : 'Image preview unavailable'}: ${props.resource.name}` : undefined
       }
-      title={props.resource.kind === 'image' ? pendingResourceOpenLabel(props.resource.kind, props.language) : (props.resource.title ?? props.resource.name)}
+      data-icon-tooltip={props.resource.kind === 'image' ? pendingResourceOpenLabel(props.resource.kind, props.language) : (props.resource.title ?? props.resource.name)}
     >
       {props.onActivate && !props.resource.pending ? (
         /* 预览只读取附件；提交中和只读界面只禁用移除、恢复等修改操作。 */

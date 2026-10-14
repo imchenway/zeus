@@ -7,6 +7,7 @@ import { syntaxHighlighting } from '@codemirror/language';
 import { classHighlighter } from '@lezer/highlight';
 import type { ConversationFileLocation } from '@zeus/shared';
 import { loadSourceLanguage } from './sourceLanguageRegistry.js';
+import { editorTooltips } from './editorTooltips.js';
 
 /** 一次编辑在旧文档中的范围及替换后的长度，多光标编辑取共同覆盖范围。 */
 export interface CodeTextChange {
@@ -93,6 +94,7 @@ export const CodeEditor = memo(function CodeEditor(props: CodeEditorProps) {
         extensions: [
           // 只读栏同样显示控制字符，CRLF 原文中的 CR 不额外撑开代码行。
           callbacksRef.current.onChange || callbacksRef.current.onDocumentChange ? basicSetup : [lineNumbers(), highlightSpecialChars(), keymap.of(defaultKeymap)],
+          editorTooltips,
           languageSlot.of([]),
           accessSlot.of([]),
           decorationSlot.of(callbacksRef.current.extensions ?? []),

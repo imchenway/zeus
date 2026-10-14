@@ -133,7 +133,7 @@ export function TerminalSearchBar(props: { search: ReturnType<typeof useTerminal
       <button type="button" aria-label={zh ? '下一个匹配' : 'Next match'} data-icon-tooltip={zh ? '下一个匹配' : 'Next match'} disabled={!search.query} onClick={() => search.find(search.query)}>
         <ArrowDown aria-hidden="true" />
       </button>
-      <button type="button" aria-label={zh ? '关闭搜索' : 'Close search'} title={zh ? '关闭搜索' : 'Close search'} onClick={search.closeSearch}>
+      <button type="button" aria-label={zh ? '关闭搜索' : 'Close search'} data-icon-tooltip={zh ? '关闭搜索' : 'Close search'} onClick={search.closeSearch}>
         <X aria-hidden="true" />
       </button>
     </div>

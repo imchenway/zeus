@@ -47,9 +47,11 @@ export function PreviewIconButton({
   children,
   tooltip = true,
   ...buttonProps
-}: { label: string; children: ReactNode; /** 常见加减和关闭按钮保留原生提示，不启用应用气泡。 */ tooltip?: boolean } & Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'aria-label' | 'className' | 'title' | 'type'>) {
+}: { label: string; children: ReactNode; /** 保留调用接口；普通图标与常见操作现在共用延迟提示。 */ tooltip?: boolean } & Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'aria-label' | 'className' | 'title' | 'type'>) {
+  // 不把提示样式参数透传给原生按钮，所有已有提示使用统一气泡。
+  void tooltip;
   return (
-    <button {...buttonProps} className="file-preview-icon-button" type="button" aria-label={label} data-icon-tooltip={tooltip ? label : undefined} title={tooltip ? undefined : label}>
+    <button {...buttonProps} className="file-preview-icon-button" type="button" aria-label={label} data-icon-tooltip={label}>
       {children}
     </button>
   );
@@ -249,7 +251,7 @@ function FilePreviewBody(props: {
       {props.onClose ? (
         <header className="file-preview-dialog-header">
           <strong>{simpleImage ? (props.zh ? '图片预览' : 'Image preview') : props.zh ? '文件预览' : 'File preview'}</strong>
-          <button type="button" className="file-preview-close" aria-label={props.zh ? '关闭' : 'Close'} title={props.zh ? '关闭' : 'Close'} onClick={props.onClose}>
+          <button type="button" className="file-preview-close" aria-label={props.zh ? '关闭' : 'Close'} data-icon-tooltip={props.zh ? '关闭' : 'Close'} onClick={props.onClose}>
             <X size={18} aria-hidden="true" />
           </button>
         </header>
@@ -388,7 +390,7 @@ function FilePreviewContent(props: {
             <header>
               <FileTypeIcon name={item.name} size={20} />
               <div className="file-preview-identity">
-                <strong title={item.kind === 'image' ? undefined : item.name} data-file-status={props.fileStatus ?? item.review?.diff?.changeType}>
+                <strong data-icon-tooltip={item.kind === 'image' ? undefined : item.name} data-file-status={props.fileStatus ?? item.review?.diff?.changeType}>
                   {item.kind === 'image' ? (props.zh ? '图片预览' : 'Image preview') : item.name}
                 </strong>
                 <small>

@@ -1696,6 +1696,8 @@ function setupIpc(): void {
       existingWindow.setBounds(resolveMenuBarUsageCostDetailMeasurementBounds(payload.anchor), false);
     }
     await createMenuBarUsageCostDetailWindow();
+    // 等待窗口创建期间可能已关闭或切换指标，旧请求不能再次发布已失效的详情。
+    if (menuBarUsageCostDetailPayload !== payload) return { shown: false };
     broadcastMenuBarUsageCostDetailPayload(payload);
     return { shown: true };
   });

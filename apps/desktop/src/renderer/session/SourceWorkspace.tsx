@@ -265,7 +265,7 @@ function SourceWorkspaceView(props: {
               className="zeus-workspace-tab"
               tabIndex={preview.resource.id === props.preview.resource.id ? 0 : -1}
               aria-selected={preview.resource.id === props.preview.resource.id}
-              title={preview.resource.displayName}
+              data-icon-tooltip={preview.resource.displayName}
               onClick={() => props.onSelectTab?.(preview)}
             >
               {supportsMarkdownPreview(preview) ? <File aria-hidden="true" /> : <FileTypeIcon name={preview.resource.kind === 'file' ? preview.resource.projectRelativePath : preview.resource.displayName} />}
@@ -275,7 +275,7 @@ function SourceWorkspaceView(props: {
               type="button"
               className="zeus-workspace-tab-close"
               aria-label={`${zh ? '关闭' : 'Close'} ${preview.resource.displayName}`}
-              title={`${zh ? '关闭' : 'Close'} ${preview.resource.displayName}`}
+              data-icon-tooltip={`${zh ? '关闭' : 'Close'} ${preview.resource.displayName}`}
               onClick={() => (props.onCloseTab ? props.onCloseTab(preview) : props.onClose())}
             >
               <X aria-hidden="true" />
@@ -289,7 +289,7 @@ function SourceWorkspaceView(props: {
               className="session-source-add-tab"
               aria-label={zh ? '打开文件标签' : 'Open file tab'}
               value=""
-              title={zh ? '打开本会话中的文件' : 'Open a file from this conversation'}
+              data-icon-tooltip={zh ? '打开本会话中的文件' : 'Open a file from this conversation'}
               onChange={(event) => {
                 const resource = props.resources?.find((candidate) => candidate.id === event.currentTarget.value);
                 if (resource) void Promise.resolve(props.onOpenFile?.(resource)).catch(setOpenError);
@@ -338,7 +338,7 @@ function SourceWorkspaceView(props: {
         toolbar={(reviewActions) => (
           <>
             <div className="session-source-toolbar">
-              <nav className="session-source-breadcrumbs" aria-label={zh ? '文件路径' : 'File path'} title={displayPath}>
+              <nav className="session-source-breadcrumbs" aria-label={zh ? '文件路径' : 'File path'} data-icon-tooltip={displayPath}>
                 {displayPath.split('/').map((part, index) => (
                   <span key={index}>
                     {index > 0 ? <span aria-hidden="true">›</span> : null}
@@ -378,7 +378,7 @@ function SourceWorkspaceView(props: {
                   {copied ? (zh ? '已复制路径' : 'Path copied') : ''}
                 </span>
                 <div className="session-source-open-group">
-                  <button type="button" disabled={!props.onOpen} title={openApplication?.label} onClick={() => void openResource(openTarget ?? 'system_default')}>
+                  <button type="button" disabled={!props.onOpen} data-icon-tooltip={openApplication?.label} onClick={() => void openResource(openTarget ?? 'system_default')}>
                     {openApplication?.iconDataUrl ? (
                       <img src={openApplication.iconDataUrl} alt="" width={18} height={18} />
                     ) : openTarget === 'system_default' ? (

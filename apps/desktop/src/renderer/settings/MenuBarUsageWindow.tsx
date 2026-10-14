@@ -371,7 +371,7 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
             <strong>Zeus</strong>
           </span>
           <span className="menu-bar-usage-refresh-status">
-            <small className="menu-bar-usage-freshness" aria-live="polite" title={freshness}>
+            <small className="menu-bar-usage-freshness" aria-live="polite" data-icon-tooltip={freshness}>
               {freshness}
             </small>
             <button
@@ -400,7 +400,7 @@ export function MenuBarUsageWindow(props: { client: UsageClient; language: Langu
               aria-label={providerDisplayName(provider)}
               aria-selected={selection === provider.providerId}
               tabIndex={selection === provider.providerId ? 0 : -1}
-              title={provider.deleted ? providerDisplayName(provider) : undefined}
+              data-icon-tooltip={provider.deleted ? providerDisplayName(provider) : undefined}
               onClick={() => select(provider.providerId)}
               onKeyDown={handleTabKeyDown}
             >
@@ -554,9 +554,15 @@ function AllProviders(props: { providers: UsageProviderSummary[]; language: Lang
                 </svg>
               </button>
             ) : null}
-            <button className="menu-bar-usage-provider-open" type="button" aria-label={`${fullName} · ${text.todayToken} ${todayValue}`} title={`${fullName} · ${providerDetail}`} onClick={() => props.onSelect(provider.providerId)}>
+            <button
+              className="menu-bar-usage-provider-open"
+              type="button"
+              aria-label={`${fullName} · ${text.todayToken} ${todayValue}`}
+              data-icon-tooltip={`${fullName} · ${providerDetail}`}
+              onClick={() => props.onSelect(provider.providerId)}
+            >
               <span className="menu-bar-usage-provider-copy">
-                <strong title={provider.deleted ? fullName : undefined}>{fullName}</strong>
+                <strong data-icon-tooltip={provider.deleted ? fullName : undefined}>{fullName}</strong>
                 {provider.deleted ? <small>{text.removedStatus}</small> : null}
               </span>
               <span className="menu-bar-usage-provider-value">
@@ -788,7 +794,7 @@ function DailyBars(props: { provider: UsageProviderSummary; language: Language }
           const barLabel = slot.value === null ? '—' : formatted;
           const chartLabel = slot.value === null ? barLabel : costDimension ? formatCurrency(slot.value, props.language) : barLabel.length > 6 ? `${slot.complete ? '' : '≥'}${formatTokens(slot.value, props.language, 0)}` : barLabel;
           return (
-            <span key={slot.date} data-state={state} aria-label={`${formatShortDate(slot.date, props.language)} ${value}`} title={`${slot.date} · ${value}`}>
+            <span key={slot.date} data-state={state} aria-label={`${formatShortDate(slot.date, props.language)} ${value}`} data-icon-tooltip={`${slot.date} · ${value}`}>
               <span className="menu-bar-usage-bar-slot">
                 <span className="menu-bar-usage-bar-column" style={{ blockSize: slot.value ? `${Math.max(2, (slot.value / maximum) * 100)}%` : '2px' }}>
                   {/* 零用量不显示柱顶数字，日期与悬浮用量仍保留。 */}
@@ -836,6 +842,8 @@ function CostBreakdownPopover(props: { entries: UsageModelCostBreakdown[]; label
   const pinnedRef = useRef(false);
   /** 展开状态只用于触发器可访问性，实际窗口状态由主进程广播校准。 */
   const [open, setOpen] = useState(false);
+  /** 等待完成后才请求原生费用窗口，避免鼠标经过时创建或展示明细。 */
+  const hoverIntent = useHoverIntent(() => showCostDetail(pinnedRef.current));
   /** 把当前内容和锚点交给独立原生窗口；主进程负责屏幕边界与显示时机。 */
   const showCostDetail = useCallback(
     (pinned: boolean) => {
@@ -900,20 +908,23 @@ function CostBreakdownPopover(props: { entries: UsageModelCostBreakdown[]; label
   }, [open]);
 
   /** 悬停时记录真实屏幕锚点并打开非固定明细。 */
-  const showFromPointer = (event: { screenX: number; screenY: number }) => {
+  const showFromPointer = (event: { screenX: number; screenY: number; pointerType: string; buttons: number; currentTarget: HTMLElement }) => {
+    if (event.pointerType === 'touch' || event.buttons > 0) return;
     pointerAnchorRef.current = { x: event.screenX, y: event.screenY };
-    void window.zeus?.cancelHideMenuBarUsageCostDetail?.();
-    showCostDetail(pinnedRef.current);
+    if (open) void window.zeus?.cancelHideMenuBarUsageCostDetail?.();
+    else hoverIntent.schedule(event.currentTarget);
   };
 
   /** 未固定时由主进程延迟关闭，允许鼠标跨过两个原生窗口之间的间距。 */
   const scheduleHoverClose = () => {
+    hoverIntent.cancel();
     if (pinnedRef.current) return;
     void window.zeus?.scheduleHideMenuBarUsageCostDetail?.();
   };
 
   /** 点击在固定与关闭之间切换。 */
   const togglePinned = () => {
+    hoverIntent.cancel();
     if (pinnedRef.current) {
       pinnedRef.current = false;
       void window.zeus?.hideMenuBarUsageCostDetail?.();
@@ -934,6 +945,7 @@ function CostBreakdownPopover(props: { entries: UsageModelCostBreakdown[]; label
         aria-haspopup="dialog"
         onClick={togglePinned}
         onFocus={(event) => {
+          hoverIntent.cancel();
           if (!event.currentTarget.matches(':focus-visible')) return;
           pointerAnchorRef.current = null;
           showCostDetail(true);
@@ -1319,3 +1331,4 @@ function readStoredChartDimension(): ChartDimension {
     return 'tokens';
   }
 }
+import { useHoverIntent } from '../ui/useHoverIntent.js';

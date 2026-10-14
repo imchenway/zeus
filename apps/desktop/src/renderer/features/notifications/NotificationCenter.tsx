@@ -171,7 +171,7 @@ export function NotificationCenter({
                             <button
                               type="button"
                               className="automation-notification-open"
-                              title={title}
+                              data-icon-tooltip={title}
                               disabled={Boolean(model.busyId)}
                               onClick={() => {
                                 // 导航确认弹窗需要正常焦点；取消导航时恢复通知列表。
@@ -185,7 +185,7 @@ export function NotificationCenter({
                             </button>
                           ) : (
                             <div className="automation-notification-summary">
-                              <strong title={title}>{title}</strong>
+                              <strong data-icon-tooltip={title}>{title}</strong>
                             </div>
                           )}
                           <time className="automation-notification-time" dateTime={item.occurredAt}>

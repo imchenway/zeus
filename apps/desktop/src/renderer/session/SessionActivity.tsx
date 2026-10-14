@@ -253,7 +253,7 @@ const ActivityItemRow = memo(function ActivityItemRow(props: {
           <span>{target.prefix}</span>{' '}
         </>
       ) : null}
-      <button type="button" className="session-activity-resource-link" title={target.title} onClick={() => void props.onOpenResource?.(target.resource, defaultOpenTarget(target.resource))}>
+      <button type="button" className="session-activity-resource-link" data-icon-tooltip={target.title} onClick={() => void props.onOpenResource?.(target.resource, defaultOpenTarget(target.resource))}>
         {skillActivity ? title : target.label}
       </button>
     </span>
@@ -480,6 +480,8 @@ function activityOutputPreview(output: string, visibleCharacters: number): { tex
 
 export function SessionPlanProgress(props: { plan: NativeTurnPlanSnapshot; language: SessionUiLanguage }) {
   const [open, setOpen] = useState(false);
+  /** 计划详情仅在持续悬停后展开，点击与键盘仍直接打开。 */
+  const hoverIntent = useHoverIntent(() => show());
   /** 鼠标离开后仍在面板内输入时保留展开。 */
   const dockRef = useRef<HTMLElement>(null);
   const popoverId = useId();
@@ -498,11 +500,13 @@ export function SessionPlanProgress(props: { plan: NativeTurnPlanSnapshot; langu
   }
 
   function show(): void {
+    hoverIntent.cancel();
     cancelClose();
     setOpen(true);
   }
 
   function scheduleClose(): void {
+    hoverIntent.cancel();
     cancelClose();
     closeTimerRef.current = setTimeout(() => {
       if (!dockRef.current?.contains(document.activeElement)) setOpen(false);
@@ -537,10 +541,13 @@ export function SessionPlanProgress(props: { plan: NativeTurnPlanSnapshot; langu
     <section
       ref={dockRef}
       className="session-plan-dock"
-      onPointerEnter={show}
+      onPointerEnter={(event) => {
+        cancelClose();
+        if (!open && event.pointerType !== 'touch' && event.buttons === 0) hoverIntent.schedule(event.currentTarget);
+      }}
       onPointerLeave={scheduleClose}
       onFocusCapture={(event) => {
-        if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) show();
+        if (event.target instanceof HTMLElement && event.target.matches(':focus-visible') && (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget))) show();
       }}
       onBlurCapture={handleBlur}
       onKeyDown={handleKeyDown}
@@ -694,7 +701,7 @@ export function SessionTurnProcessDisclosure(props: {
         <button
           type="button"
           aria-label={accessibleLabel}
-          title={accessibleLabel}
+          data-icon-tooltip={accessibleLabel}
           aria-expanded={open}
           aria-controls={bodyId}
           onClick={(event) => {
@@ -1039,3 +1046,4 @@ function primitive(value: unknown): string | null {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
+import { useHoverIntent } from '../ui/useHoverIntent.js';

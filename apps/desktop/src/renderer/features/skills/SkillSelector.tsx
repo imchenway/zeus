@@ -97,7 +97,7 @@ export function SkillSelector(props: {
   const selected = options.find((option) => option.value === props.value);
   const fallbackLabel = loading ? (zh ? '正在读取 Skill…' : 'Loading skills…') : props.adding ? (zh ? '添加 Skill' : 'Add skill') : zh ? '不使用 Skill' : 'No skill';
   return (
-    <span className={`codex-skill-selector${props.className ? ` ${props.className}` : ''}`} title={selected?.label}>
+    <span className={`codex-skill-selector${props.className ? ` ${props.className}` : ''}`} data-icon-tooltip={selected?.label}>
       <ZeusSelect
         ariaLabel={props.ariaLabel ?? (zh ? '选择 Skill' : 'Choose skill')}
         value={props.value}
@@ -115,7 +115,7 @@ export function SkillSelector(props: {
         <button
           type="button"
           className="zeus-select-trigger codex-skill-retry"
-          title={error}
+          data-icon-tooltip={error}
           aria-label={loading ? (zh ? '正在重新加载 Skill' : 'Reloading skills') : `${zh ? 'Skill 目录加载失败，重试。' : 'Skills failed to load. Retry.'} ${error}`}
           disabled={props.disabled || loading || !props.client}
           onClick={() => setReloadRevision((revision) => revision + 1)}
@@ -162,7 +162,7 @@ export function SkillMultiSelector(props: {
         {props.value.map((skillId) => {
           const skill = catalog?.skills.find((candidate) => candidate.id === skillId);
           return (
-            <span key={skillId} title={skill ? skill.invocation : skillId}>
+            <span key={skillId} data-icon-tooltip={skill ? skill.invocation : skillId}>
               <code>{skill?.name ?? (zh ? '原 Skill 已不可用' : 'Previous skill unavailable')}</code>
               <button type="button" disabled={props.disabled} onClick={() => props.onChange(props.value.filter((id) => id !== skillId))}>
                 {zh ? '移除' : 'Remove'}

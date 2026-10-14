@@ -518,11 +518,11 @@ function DigitalEmployeeProfileEditor(props: {
         </div>
       </section>
       <div className="digital-employee-form-grid">
-        <label title={zh ? '员工资料，不作为提示词发送' : 'Profile information, not sent as a prompt'}>
+        <label data-icon-tooltip={zh ? '员工资料，不作为提示词发送' : 'Profile information, not sent as a prompt'}>
           <span>{zh ? '业务领域' : 'Domain'}</span>
           <input value={props.draft.domain} onChange={(event) => patch({ domain: event.currentTarget.value })} disabled={props.disabled} maxLength={120} />
         </label>
-        <label title={zh ? '员工资料，不作为提示词发送' : 'Profile information, not sent as a prompt'}>
+        <label data-icon-tooltip={zh ? '员工资料，不作为提示词发送' : 'Profile information, not sent as a prompt'}>
           <span>{zh ? '说明' : 'Description'}</span>
           <textarea value={props.draft.description} onChange={(event) => patch({ description: event.currentTarget.value })} disabled={props.disabled} rows={2} maxLength={1000} />
         </label>

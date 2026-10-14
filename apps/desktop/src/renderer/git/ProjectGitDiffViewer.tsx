@@ -138,7 +138,7 @@ export function ProjectGitDiffWindow(props: {
                   return (
                     <button key={`${file.oldPath}:${file.newPath}`} type="button" className={path === selectedPath ? 'is-current' : ''} onClick={() => setSelectedPath(path)}>
                       <FileTypeIcon name={path} />
-                      <span title={path} data-file-status={file.changeType}>
+                      <span data-icon-tooltip={path} data-file-status={file.changeType}>
                         {path}
                       </span>
                       <em>+{file.addedLines}</em>
@@ -171,7 +171,7 @@ function TextSideBySideDiff(props: SideBySideDiffProps & { /** 共享文件操�
     <section className={`project-git-diff-preview${props.fill ? ' is-fill' : ''}`} aria-label={props.zh ? '文件差异' : 'File diff'}>
       <header>
         <FileTypeIcon name={file.newPath || file.oldPath} />
-        <strong title={props.title ?? (file.newPath || file.oldPath)} data-file-status={file.changeType}>
+        <strong data-icon-tooltip={props.title ?? (file.newPath || file.oldPath)} data-file-status={file.changeType}>
           {props.title ?? (file.newPath || file.oldPath)}
         </strong>
         {props.toolbar ? (
@@ -207,8 +207,8 @@ function TextSideBySideDiff(props: SideBySideDiffProps & { /** 共享文件操�
       <div className="project-git-diff-side-by-side">
         {mode === 'side-by-side' ? (
           <div className="project-git-diff-side-head">
-            <span title={oldPath}>{oldPath}</span>
-            <span title={newPath}>{newPath}</span>
+            <span data-icon-tooltip={oldPath}>{oldPath}</span>
+            <span data-icon-tooltip={newPath}>{newPath}</span>
           </div>
         ) : null}
         {file.hunks.length === 0 ? (
@@ -267,7 +267,7 @@ function DiffHunkSection(props: {
       <header className="project-git-diff-hunk-header">
         <span>
           <strong>{label}</strong>
-          <small title={props.hunk.header}>{range}</small>
+          <small data-icon-tooltip={props.hunk.header}>{range}</small>
         </span>
         {props.onAction || props.onDiscard ? (
           <span className="project-git-diff-hunk-commands">

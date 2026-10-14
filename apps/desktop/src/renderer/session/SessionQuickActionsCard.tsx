@@ -424,7 +424,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                   </span>
                 </button>
 
-                <div className="session-quick-actions-row is-static" title={cwd ?? undefined}>
+                <div className="session-quick-actions-row is-static" data-icon-tooltip={cwd ?? undefined}>
                   <Folder aria-hidden="true" weight="regular" />
                   <span className="session-quick-actions-copy">
                     <strong>{zh ? '本地' : 'Local'}</strong>
@@ -432,7 +432,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                   </span>
                 </div>
 
-                <div className="session-quick-actions-row is-static" title={branch ?? undefined}>
+                <div className="session-quick-actions-row is-static" data-icon-tooltip={branch ?? undefined}>
                   <GitBranch aria-hidden="true" weight="regular" />
                   <span className="session-quick-actions-copy">
                     <strong>{branch ?? (cwd ? (zh ? '非 Git 目录' : 'Not a Git repository') : zh ? '分支不可用' : 'Branch unavailable')}</strong>
@@ -460,7 +460,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                   <ArrowSquareOut aria-hidden="true" weight="regular" />
                 </button>
 
-                <button type="button" className="session-quick-actions-row" disabled={!canStartCodeReview} title={codeReviewUnavailableReason ?? undefined} onClick={openCodeReview}>
+                <button type="button" className="session-quick-actions-row" disabled={!canStartCodeReview} data-icon-tooltip={codeReviewUnavailableReason ?? undefined} onClick={openCodeReview}>
                   <FileCode aria-hidden="true" weight="regular" />
                   <span className="session-quick-actions-copy">
                     <strong>{zh ? '代码审查' : 'Code review'}</strong>
@@ -473,7 +473,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                   type="button"
                   className="session-quick-actions-row"
                   disabled={!canOpenDelivery}
-                  title={!canOpenDelivery ? (zh ? '当前会话没有可用的项目 Git 入口' : 'Project Git is unavailable for this conversation') : undefined}
+                  data-icon-tooltip={!canOpenDelivery ? (zh ? '当前会话没有可用的项目 Git 入口' : 'Project Git is unavailable for this conversation') : undefined}
                   onClick={openDelivery}
                 >
                   <GithubLogo aria-hidden="true" weight="regular" />
@@ -507,7 +507,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                 <header>
                   <strong>{zh ? '来源' : 'Sources'}</strong>
                   {props.onAddSources ? (
-                    <button type="button" aria-label={zh ? '添加来源' : 'Add source'} title={zh ? '添加到当前输入' : 'Add to current input'} onClick={() => void props.onAddSources?.()}>
+                    <button type="button" aria-label={zh ? '添加来源' : 'Add source'} data-icon-tooltip={zh ? '添加到当前输入' : 'Add to current input'} onClick={() => void props.onAddSources?.()}>
                       <Plus aria-hidden="true" weight="regular" />
                     </button>
                   ) : null}
@@ -518,12 +518,12 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                       {visibleSources.map((source) => (
                         <li key={source.id}>
                           {source.resource && props.onOpenSource ? (
-                            <button type="button" title={source.label} onClick={() => void props.onOpenSource?.(source.resource as ConversationResource)}>
+                            <button type="button" data-icon-tooltip={source.label} onClick={() => void props.onOpenSource?.(source.resource as ConversationResource)}>
                               <SessionQuickActionSourceVisual source={source} onLoadResourcePreview={props.onLoadResourcePreview} />
                               <span className="session-quick-actions-source-label">{source.label}</span>
                             </button>
                           ) : (
-                            <span title={source.label}>
+                            <span data-icon-tooltip={source.label}>
                               <SessionQuickActionSourceVisual source={source} onLoadResourcePreview={props.onLoadResourcePreview} />
                               <span className="session-quick-actions-source-label">{source.label}</span>
                             </span>

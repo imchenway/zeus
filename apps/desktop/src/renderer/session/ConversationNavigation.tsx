@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useId, useRef, 
 import { createPortal } from 'react-dom';
 import type { ConversationNavigationEntry, ConversationNavigationSnapshot } from '@zeus/shared';
 import { useMotionPresence } from '../ui/useMotionPresence.js';
+import { useHoverIntent } from '../ui/useHoverIntent.js';
 
 /** 目录条目附带当前正文行身份；未加载的条目使用同一身份占位。 */
 export interface TranscriptNavigationEntry extends ConversationNavigationEntry {
@@ -158,8 +159,6 @@ export const ConversationNavigation = memo(function ConversationNavigation(props
   const railRef = useRef<HTMLElement | null>(null);
   /** 每条刻度的真实元素用于定位预览和焦点。 */
   const buttonsRef = useRef(new Map<string, HTMLButtonElement>());
-  /** 首次悬停等待，邻近刻度共享这一次等待。 */
-  const enterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** 跨越刻度与卡片间隙时不立即关闭。 */
   const leaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** 事件处理同步知道开关，避免同一帧重复等待。 */
@@ -172,38 +171,44 @@ export const ConversationNavigation = memo(function ConversationNavigation(props
   const preview = props.entries.find((entry) => entry.rowKey === previewKey);
   /** 文案随会话语言切换。 */
   const zh = props.language === 'zh-CN';
+  /** 每个刻度独立等待，切换时不沿用前一条消息的显示时机。 */
+  const hoverIntent = useHoverIntent<string>((rowKey) => {
+    setPreviewKey(rowKey);
+    openRef.current = true;
+    setOpen(true);
+  });
 
   /** 重入只撤销关闭，不重置动画起点。 */
   const cancelClose = useCallback(() => {
     if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
     leaveTimerRef.current = null;
   }, []);
-  /** 键盘立即预览，鼠标首次停留后才显示。 */
+  /** 键盘立即预览，鼠标每次换目标都重新等待。 */
   const show = useCallback(
     (rowKey: string, immediate = false) => {
       cancelClose();
-      setPreviewKey(rowKey);
-      if (immediate || openRef.current || presence.present) {
-        if (enterTimerRef.current) clearTimeout(enterTimerRef.current);
-        enterTimerRef.current = null;
+      if (immediate) {
+        hoverIntent.cancel();
+        setPreviewKey(rowKey);
         openRef.current = true;
         setOpen(true);
-      } else if (!enterTimerRef.current) {
-        enterTimerRef.current = setTimeout(() => {
-          enterTimerRef.current = null;
-          openRef.current = true;
-          setOpen(true);
-        }, 250);
+      } else {
+        /** 已显示的同一条消息只取消关闭；其他条目重新计时。 */
+        const target = buttonsRef.current.get(rowKey);
+        if (!target || (openRef.current && previewKey === rowKey)) return;
+        openRef.current = false;
+        setOpen(false);
+        setCardHovered(false);
+        hoverIntent.schedule(target, rowKey);
       }
     },
-    [cancelClose, presence.present],
+    [cancelClose, hoverIntent, previewKey],
   );
   /** 退出保持 100ms 容错，淡出结束后由共享机制卸载。 */
   const hide = useCallback(
     (immediate = false) => {
       cancelClose();
-      if (enterTimerRef.current) clearTimeout(enterTimerRef.current);
-      enterTimerRef.current = null;
+      hoverIntent.cancel();
       /** 关闭仅改变目标状态，不清空最后内容与位置。 */
       const close = () => {
         leaveTimerRef.current = null;
@@ -214,12 +219,11 @@ export const ConversationNavigation = memo(function ConversationNavigation(props
       if (immediate) close();
       else leaveTimerRef.current = setTimeout(close, 100);
     },
-    [cancelClose],
+    [cancelClose, hoverIntent],
   );
 
   useEffect(
     () => () => {
-      if (enterTimerRef.current) clearTimeout(enterTimerRef.current);
       if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
     },
     [],
@@ -292,7 +296,10 @@ export const ConversationNavigation = memo(function ConversationNavigation(props
           aria-current={props.activeRowKey === entry.rowKey ? 'true' : undefined}
           aria-label={`${zh ? '跳到：' : 'Jump to: '}${entry.prompt}`}
           tabIndex={entry.rowKey === (props.activeRowKey ?? props.entries[0]?.rowKey) ? 0 : -1}
-          onPointerEnter={() => show(entry.rowKey)}
+          onPointerEnter={(event) => {
+            if (event.pointerType !== 'touch' && event.buttons === 0) show(entry.rowKey);
+          }}
+          onPointerLeave={() => hide()}
           onFocus={(event) => {
             if (event.currentTarget.matches(':focus-visible')) show(entry.rowKey, true);
           }}

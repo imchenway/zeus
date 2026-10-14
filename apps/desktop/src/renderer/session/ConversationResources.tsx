@@ -107,7 +107,7 @@ function ConversationPendingAttachmentImage(props: { attachment: NativeConversat
         className="session-resource-image session-pending-attachment-image"
         aria-label={`${props.language === 'zh-CN' ? '在 Zeus 中预览' : 'Preview in Zeus'}：${props.attachment.name}`}
         aria-busy={(!failed && (loading || decodedPreviewUrl !== previewUrl)) || undefined}
-        title={failed ? (props.language === 'zh-CN' ? '缩略图不可用，点击查看文件与可用操作' : 'Thumbnail unavailable. Open file preview and actions.') : props.language === 'zh-CN' ? '预览图片' : 'Preview image'}
+        data-icon-tooltip={failed ? (props.language === 'zh-CN' ? '缩略图不可用，点击查看文件与可用操作' : 'Thumbnail unavailable. Open file preview and actions.') : props.language === 'zh-CN' ? '预览图片' : 'Preview image'}
         onClick={() => (openFilePreview ? openFilePreview({ kind: 'attachment', localPath: props.attachment.localPath, uploadRef: props.attachment.uploadRef }, true) : setPreviewOpen(true))}
       >
         {failed ? (
@@ -199,7 +199,15 @@ export function ConversationInlineResource(
 
   return (
     <span className="session-inline-resource-shell" data-resource-kind={props.resource.kind}>
-      <button type="button" className="session-inline-resource" title={title} aria-label={`${label}${location ? ` ${location}` : ''}`} aria-busy={busy || undefined} data-error={Boolean(error) || undefined} onClick={() => void open()}>
+      <button
+        type="button"
+        className="session-inline-resource"
+        data-icon-tooltip={title}
+        aria-label={`${label}${location ? ` ${location}` : ''}`}
+        aria-busy={busy || undefined}
+        data-error={Boolean(error) || undefined}
+        onClick={() => void open()}
+      >
         <ResourceIcon resource={props.resource} />
         {props.resource.kind === 'file' ? '\u00a0' : null}
         <span>{label}</span>
@@ -374,7 +382,7 @@ function ConversationImagePreview(
       aria-label={`${error && !previewTooLarge ? (props.language === 'zh-CN' ? '重新加载图片' : 'Retry image') : props.language === 'zh-CN' ? '在 Zeus 中预览' : 'Preview in Zeus'}：${props.label}`}
       aria-busy={(!error && !unavailable && (loading || !preview || decodedPreviewUrl !== preview.dataUrl)) || undefined}
       data-error={Boolean(error) || undefined}
-      title={error ? status : props.language === 'zh-CN' ? '预览图片' : 'Preview image'}
+      data-icon-tooltip={error ? status : props.language === 'zh-CN' ? '预览图片' : 'Preview image'}
       onClick={() => {
         setVisible(true);
         if (error && !previewTooLarge) {
@@ -488,7 +496,7 @@ function ConversationResourceCard(
 
   return (
     <article className="session-resource-card" data-resource-kind={props.resource.kind} data-compact={props.compact || undefined} data-error={Boolean(error) || undefined}>
-      <button type="button" className="session-resource-card-main" title={props.resource.displayName} aria-busy={busy || undefined} onClick={() => void open()}>
+      <button type="button" className="session-resource-card-main" data-icon-tooltip={props.resource.displayName} aria-busy={busy || undefined} onClick={() => void open()}>
         <span className="session-resource-card-icon">
           <ResourceIcon resource={props.resource} />
         </span>
@@ -683,7 +691,7 @@ export function OpenWithMenu(props: {
                         role="menuitem"
                         key={target.id}
                         disabled={!target.available}
-                        title={!target.available ? target.reason : undefined}
+                        data-icon-tooltip={!target.available ? target.reason : undefined}
                         onClick={() => {
                           closeAndRestoreFocus();
                           void props.onOpen(target.id);

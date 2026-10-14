@@ -242,7 +242,7 @@ export function BranchSwitcher(props: {
                         setQuery('');
                       }
                     }}
-                    title={repository.relativePath}
+                    data-icon-tooltip={repository.relativePath}
                   >
                     <span className="git-repository-dot" style={{ backgroundColor: repositoryColor(repository.id) }} />
                     <span>{repository.name}</span>
@@ -383,7 +383,7 @@ export function BranchSwitcher(props: {
         }}
       >
         <GitBranch aria-hidden="true" />
-        <span title={`${props.selectedRepository?.name ?? ''} · ${triggerLabel}`}>{triggerLabel}</span>
+        <span data-icon-tooltip={`${props.selectedRepository?.name ?? ''} · ${triggerLabel}`}>{triggerLabel}</span>
         <CaretDown aria-hidden="true" />
       </button>
       {typeof document !== 'undefined' && document.body && popover ? createPortal(popover, triggerRef.current?.closest('.macos-ai-app') ?? document.body) : popover}
@@ -477,7 +477,7 @@ function ReferenceTree(props: {
           type="button"
           className={props.activeAnchorId === `${treeId}-${index}` ? 'is-active' : item.kind === 'local' && item.ref === props.repository.snapshot.branch ? 'is-current' : ''}
           id={`${treeId}-${index}`}
-          title={item.ref}
+          data-icon-tooltip={item.ref}
           aria-haspopup="menu"
           aria-expanded={props.activeAnchorId === `${treeId}-${index}`}
           aria-controls={props.activeAnchorId === `${treeId}-${index}` ? props.submenuId : undefined}
@@ -526,7 +526,7 @@ export function RevisionContextMenu(props: {
       aria-label={props.zh ? `引用操作：${props.revision}` : `Reference actions: ${props.revision}`}
       style={{ left: props.x, top: props.y }}
     >
-      <div className="git-reference-menu-heading" title={props.revision}>
+      <div className="git-reference-menu-heading" data-icon-tooltip={props.revision}>
         <GitBranch aria-hidden="true" />
         <strong>{props.revision}</strong>
       </div>
@@ -981,17 +981,17 @@ export function BranchTreeEntry(props: Parameters<typeof BranchDirectoryTree>[0]
       onClick={() => props.onSelect?.(props.node.branch)}
       onDoubleClick={() => props.onCheckout?.(props.node.branch)}
       onContextMenu={(event) => props.onContextMenu(event, props.node.branch)}
-      title={props.onCheckout ? (props.zh ? `双击切换到分支“${props.node.branch}”` : `Double-click to check out '${props.node.branch}'`) : undefined}
+      data-icon-tooltip={props.onCheckout ? (props.zh ? `双击切换到分支“${props.node.branch}”` : `Double-click to check out '${props.node.branch}'`) : undefined}
     >
       {props.hideBranchIcons ? null : <GitBranch aria-hidden="true" />}
       <span>{props.node.name}</span>
       {props.node.branch === props.current ? (
-        <small className="git-checked-out-mark" title={props.zh ? '当前检出分支' : 'Checked out branch'}>
+        <small className="git-checked-out-mark" data-icon-tooltip={props.zh ? '当前检出分支' : 'Checked out branch'}>
           ✓
         </small>
       ) : null}
       {divergenceText ? (
-        <span className="git-tracking-badge" aria-label={divergenceLabel} title={divergenceLabel}>
+        <span className="git-tracking-badge" aria-label={divergenceLabel} data-icon-tooltip={divergenceLabel}>
           {divergenceText}
         </span>
       ) : null}
@@ -1132,7 +1132,7 @@ export function BranchContextMenu(props: {
       aria-label={props.zh ? `分支操作：${props.branch}` : `Reference actions: ${props.branch}`}
       style={{ left: props.x, top: props.y }}
     >
-      <div className="git-reference-menu-heading" title={props.branch}>
+      <div className="git-reference-menu-heading" data-icon-tooltip={props.branch}>
         <GitBranch aria-hidden="true" />
         <strong>{props.branch}</strong>
       </div>
@@ -1247,7 +1247,7 @@ export function StashDialog(props: {
             <span>{props.zh ? '信息：' : 'Message:'}</span>
             <input autoFocus value={message} disabled={locked} placeholder={props.zh ? '可选' : 'Optional'} onChange={(event) => setMessage(event.currentTarget.value)} />
           </label>
-          <label className="project-git-stash-keep-index" title={props.zh ? '保留当前已经暂存到索引中的修改' : 'Leave changes already staged in the index intact'}>
+          <label className="project-git-stash-keep-index" data-icon-tooltip={props.zh ? '保留当前已经暂存到索引中的修改' : 'Leave changes already staged in the index intact'}>
             <input type="checkbox" checked={keepIndex} disabled={locked} onChange={(event) => setKeepIndex(event.currentTarget.checked)} />
             <span>{props.zh ? '保留已暂存的变更' : 'Keep staged changes'}</span>
           </label>

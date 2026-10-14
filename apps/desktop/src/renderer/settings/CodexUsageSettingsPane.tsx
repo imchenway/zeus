@@ -292,7 +292,7 @@ function AllProvidersOverview(props: { providers: UsageProviderAnalytics[]; lang
                   {analytics.provider.cacheUsageAvailable && analytics.local.totals.cacheHitRate !== null ? formatPercent(analytics.local.totals.cacheHitRate, props.language) : '—'}
                 </td>
                 <td data-label={props.language === 'zh-CN' ? '输出速率' : 'Output rate'}>{formatOutputRate(analytics.local.totals.outputTokensPerSecond, props.language)}</td>
-                <td data-label={usageCostLabel(analytics.provider, props.language)} title={formatEstimatedCosts(analytics.local.totals.costs, analytics.local.totals.apiEquivalentUsd)}>
+                <td data-label={usageCostLabel(analytics.provider, props.language)} data-icon-tooltip={formatEstimatedCosts(analytics.local.totals.costs, analytics.local.totals.apiEquivalentUsd)}>
                   <strong>{formatUsageCost(analytics.local.totals, props.language)}</strong>
                   <small>
                     {usageCostLabel(analytics.provider, props.language)}
@@ -354,7 +354,7 @@ function OfficialOverview(props: { snapshot: CodexOfficialUsageSnapshot; languag
             <p className="codex-usage-note">{props.language === 'zh-CN' ? '官方暂未提供额度。' : 'Account limits are not available.'}</p>
           )}
           {props.snapshot.state === 'available' && !props.snapshot.creditsUnlimited && hasPositiveCodexCredits(props.snapshot.creditBalance) ? (
-            <p className="codex-usage-note" title={copy.creditsHelp}>
+            <p className="codex-usage-note" data-icon-tooltip={copy.creditsHelp}>
               {props.language === 'zh-CN' ? '剩余点数' : 'Remaining credits'} <strong>{formatCodexCredits(props.snapshot.creditBalance, props.language)}</strong>
             </p>
           ) : null}
@@ -550,7 +550,13 @@ function OfficialUsageCalendar(props: { days: Array<Pick<CodexLocalUsageDay, 'da
   const [hover, setHover] = useState<{ day: UsageCalendarCell; left: number; top: number } | null>(null);
   const tooltipId = useId();
   const zh = props.language === 'zh-CN';
-  const hide = useCallback(() => setHover(null), []);
+  /** 每个日期重新等待，回调读取最新用量数据。 */
+  const hoverIntent = useHoverIntent<UsageCalendarCell>((day, element) => show(day, element));
+  /** 离开或页面变化同时撤销未显示的详情。 */
+  const hide = useCallback(() => {
+    hoverIntent.cancel();
+    setHover(null);
+  }, [hoverIntent]);
   useEffect(() => {
     window.addEventListener('scroll', hide, true);
     window.addEventListener('resize', hide);
@@ -560,6 +566,7 @@ function OfficialUsageCalendar(props: { days: Array<Pick<CodexLocalUsageDay, 'da
     };
   }, [hide]);
   const show = (day: UsageCalendarCell, element: HTMLElement) => {
+    hoverIntent.cancel();
     if (day.future) return;
     const rect = element.getBoundingClientRect();
     setHover({ day, left: Math.max(8, Math.min(rect.left, window.innerWidth - 280)), top: Math.max(8, Math.min(rect.bottom + 8, window.innerHeight - 310)) });
@@ -613,9 +620,16 @@ function OfficialUsageCalendar(props: { days: Array<Pick<CodexLocalUsageDay, 'da
                 tabIndex={day.future ? undefined : 0}
                 aria-label={day.title}
                 aria-describedby={hover?.day.date === day.date ? tooltipId : undefined}
-                onMouseEnter={(event) => show(day, event.currentTarget)}
-                onMouseLeave={hide}
-                onFocus={(event) => show(day, event.currentTarget)}
+                onPointerEnter={(event) => {
+                  hide();
+                  if (!day.future && event.pointerType !== 'touch' && event.buttons === 0) hoverIntent.schedule(event.currentTarget, day);
+                }}
+                onPointerLeave={hide}
+                onFocus={(event) => {
+                  hoverIntent.cancel();
+                  if (event.currentTarget.matches(':focus-visible')) show(day, event.currentTarget);
+                }}
+                onClick={(event) => show(day, event.currentTarget)}
                 onBlur={hide}
                 onKeyDown={(event) => {
                   if (event.key === 'Escape') hide();
@@ -696,7 +710,7 @@ function LocalUsageTrend(props: { days: Array<Pick<CodexLocalUsageDay, 'date' | 
             key={day.date}
             role="listitem"
             tabIndex={0}
-            title={`${day.date}: ${new Intl.NumberFormat(props.language).format(day.totalTokens)} Token`}
+            data-icon-tooltip={`${day.date}: ${new Intl.NumberFormat(props.language).format(day.totalTokens)} Token`}
             aria-label={`${day.date}: ${new Intl.NumberFormat(props.language).format(day.totalTokens)} Token`}
           >
             <i style={{ blockSize: `${Math.max(day.totalTokens > 0 ? 2 : 0, (day.totalTokens / maximum) * 100)}%` }} />
@@ -820,13 +834,13 @@ function UsageBreakdownTable(props: { title: string; rows: CodexLocalUsageGroup[
           <tbody>
             {rows.slice((page - 1) * settingsPageSize, page * settingsPageSize).map((row) => (
               <tr key={row.id}>
-                <th scope="row" title={row.label}>
+                <th scope="row" data-icon-tooltip={row.label}>
                   {row.label}
                 </th>
                 <td>{formatTokens(row.totalTokens, props.language)}</td>
                 <td>{formatPercent(row.cacheHitRate, props.language)}</td>
                 <td>{formatOutputRate(row.outputTokensPerSecond, props.language)}</td>
-                <td title={formatEstimatedCosts(row.costs, row.apiEquivalentUsd)}>{formatUsageCost(row, props.language)}</td>
+                <td data-icon-tooltip={formatEstimatedCosts(row.costs, row.apiEquivalentUsd)}>{formatUsageCost(row, props.language)}</td>
                 <td>{formatPercent(row.priceCoverage, props.language)}</td>
               </tr>
             ))}
@@ -899,3 +913,4 @@ function formatDateTime(value: string, language: Language): string {
 function formatUpdatedAt(value: string, language: Language): string {
   return `${language === 'zh-CN' ? '更新于' : 'Updated'} ${formatDateTime(value, language)}`;
 }
+import { useHoverIntent } from '../ui/useHoverIntent.js';

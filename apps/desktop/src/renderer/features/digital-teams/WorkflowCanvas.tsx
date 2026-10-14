@@ -264,19 +264,23 @@ function WorkflowNodeCard(props: NodeProps<CanvasNode>) {
   return (
     <article className={`digital-team-node is-${node.type}${props.selected ? ' is-selected' : ''}${props.data.issues.length ? ' has-error' : ''}`} aria-label={`${displayTitle}，${workModeLabel ? `${workModeLabel}，` : ''}${detail}`}>
       {node.type !== 'start' ? (
-        <Handle tabIndex={props.isConnectable ? 0 : -1} id="in-left" type="target" position={Position.Left} isConnectable={props.isConnectable} aria-label="输入：连接上游节点" title="输入：从上游节点右侧拖到这里" />
+        <Handle tabIndex={props.isConnectable ? 0 : -1} id="in-left" type="target" position={Position.Left} isConnectable={props.isConnectable} aria-label="输入：连接上游节点" data-icon-tooltip="输入：从上游节点右侧拖到这里" />
       ) : null}
-      {node.type === 'employee' ? <Handle tabIndex={props.isConnectable ? 0 : -1} id="in-top" type="target" position={Position.Top} isConnectable={props.isConnectable} aria-label="上侧输入：连接上游节点" title="上侧输入" /> : null}
-      {node.type === 'employee' ? <Handle tabIndex={props.isConnectable ? 0 : -1} id="out-bottom" type="source" position={Position.Bottom} isConnectable={props.isConnectable} aria-label="下侧输出：连接下游节点" title="下侧输出" /> : null}
+      {node.type === 'employee' ? (
+        <Handle tabIndex={props.isConnectable ? 0 : -1} id="in-top" type="target" position={Position.Top} isConnectable={props.isConnectable} aria-label="上侧输入：连接上游节点" data-icon-tooltip="上侧输入" />
+      ) : null}
+      {node.type === 'employee' ? (
+        <Handle tabIndex={props.isConnectable ? 0 : -1} id="out-bottom" type="source" position={Position.Bottom} isConnectable={props.isConnectable} aria-label="下侧输出：连接下游节点" data-icon-tooltip="下侧输出" />
+      ) : null}
       <span className="digital-team-node-kind">{nodeTypeLabel(node.type)}</span>
       <strong>{displayTitle}</strong>
       {workModeLabel ? <span className="digital-team-node-status">{workModeLabel}</span> : null}
-      <small title={detail}>{detail}</small>
+      <small data-icon-tooltip={detail}>{detail}</small>
       {assignmentLabel ? <span className="digital-team-node-status">{assignmentLabel}</span> : null}
       {runtimeLabel ? <span className="digital-team-node-status">{runtimeLabel}</span> : null}
       {props.data.issues[0] ? <span className="digital-team-node-error">{props.data.issues[0]}</span> : null}
       {node.type !== 'end' ? (
-        <Handle tabIndex={props.isConnectable ? 0 : -1} id="out-right" type="source" position={Position.Right} isConnectable={props.isConnectable} aria-label="输出：连接下游节点" title="输出：拖到下游节点左侧" />
+        <Handle tabIndex={props.isConnectable ? 0 : -1} id="out-right" type="source" position={Position.Right} isConnectable={props.isConnectable} aria-label="输出：连接下游节点" data-icon-tooltip="输出：拖到下游节点左侧" />
       ) : null}
     </article>
   );

@@ -118,7 +118,7 @@ export function TerminalTabs(props: TerminalTabsProps) {
               aria-controls={props.panelId}
               aria-selected={active}
               tabIndex={active ? 0 : -1}
-              title={session.cwd}
+              data-icon-tooltip={session.cwd}
               className="zeus-terminal-tab"
               onClick={() => props.onSelect(session.id)}
               onKeyDown={(event) => {
@@ -134,15 +134,15 @@ export function TerminalTabs(props: TerminalTabsProps) {
             >
               <TerminalGlyph aria-hidden="true" />
               <span>{title}</span>
-              <i data-status={session.status} aria-label={statusLabels[session.status]} title={statusLabels[session.status]} />
+              <i data-status={session.status} aria-label={statusLabels[session.status]} data-icon-tooltip={statusLabels[session.status]} />
             </button>
-            <button className="zeus-terminal-tab-close" type="button" aria-label={closeLabel} title={closeLabel} disabled={props.closeDisabled} onClick={() => props.onClose(session)}>
+            <button className="zeus-terminal-tab-close" type="button" aria-label={closeLabel} data-icon-tooltip={closeLabel} disabled={props.closeDisabled} onClick={() => props.onClose(session)}>
               {props.closingId === session.id ? <CircleNotch aria-hidden="true" className="zeus-terminal-spinner" /> : <X aria-hidden="true" />}
             </button>
           </div>
         );
       })}
-      <button className="zeus-terminal-action" type="button" aria-label={zh ? '新建终端' : 'New terminal'} title={zh ? '新建终端' : 'New terminal'} disabled={props.newDisabled} onClick={props.onNew}>
+      <button className="zeus-terminal-action" type="button" aria-label={zh ? '新建终端' : 'New terminal'} data-icon-tooltip={zh ? '新建终端' : 'New terminal'} disabled={props.newDisabled} onClick={props.onNew}>
         {props.starting ? <CircleNotch aria-hidden="true" className="zeus-terminal-spinner" /> : <Plus aria-hidden="true" />}
       </button>
     </div>

@@ -510,7 +510,7 @@ export function SessionTerminalPanel(props: SessionTerminalPanelProps) {
         <button type="button" className="zeus-terminal-action" aria-label={moveLabel} data-icon-tooltip={moveLabel} onClick={togglePosition}>
           {right ? <Rows aria-hidden="true" /> : <SidebarSimple aria-hidden="true" style={{ transform: 'scaleX(-1)' }} />}
         </button>
-        <button type="button" className="zeus-terminal-action" aria-label={copy.closePanel} title={copy.closePanel} onClick={props.onClose}>
+        <button type="button" className="zeus-terminal-action" aria-label={copy.closePanel} data-icon-tooltip={copy.closePanel} onClick={props.onClose}>
           <X aria-hidden="true" />
         </button>
       </header>

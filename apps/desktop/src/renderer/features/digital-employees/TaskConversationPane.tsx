@@ -239,7 +239,7 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
             {member.employee ? <DigitalEmployeeAvatar {...member.employee} /> : null}
             <span>
               <strong>{member.employee?.name ?? first.title}</strong>
-              <small title={first.title}>{first.title}</small>
+              <small data-icon-tooltip={first.title}>{first.title}</small>
             </span>
           </button>
         </div>
@@ -312,7 +312,7 @@ export function TaskConversationPane(props: TaskConversationPaneProps) {
       <div className="task-conversation-main">
         {!emptyTask ? (
           <header className="task-conversation-selector">
-            <div className="task-conversation-current" title={selected?.title}>
+            <div className="task-conversation-current" data-icon-tooltip={selected?.title}>
               {!showingNew && selectedMember?.employee ? <DigitalEmployeeAvatar {...selectedMember.employee} /> : null}
               <div>
                 <strong>{showingNew ? (zh ? '新建会话' : 'New conversation') : (selectedMember?.employee?.name ?? (group.team ? group.name : zh ? '任务讨论' : 'Task discussion'))}</strong>

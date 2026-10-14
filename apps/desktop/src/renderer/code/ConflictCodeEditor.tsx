@@ -154,15 +154,10 @@ class ConflictMarker extends GutterMarker {
       button.disabled = this.disabled;
       button.className = `is-${action}`;
       button.textContent = action === 'ignored' ? '×' : this.side === 'source' ? '→' : '←';
-      button.title = this.zh
+      button.dataset.iconTooltip = this.zh
         ? `${action === 'accepted' ? '选入' : '移除'}${this.side === 'source' ? '来源分支' : '任务分支'}的此处修改${action === 'ignored' ? '（不采用该侧修改）' : ''}`
         : `${action === 'accepted' ? 'Include' : 'Exclude'} this ${this.side === 'source' ? 'source branch' : 'task branch'} change`;
-      button.setAttribute('aria-label', button.title);
-      // 采纳箭头使用应用提示；用户排除的叉号保留原生标题。
-      if (action === 'accepted') {
-        button.dataset.iconTooltip = button.title;
-        button.removeAttribute('title');
-      }
+      button.setAttribute('aria-label', button.dataset.iconTooltip);
       button.setAttribute('aria-pressed', String(state === action));
       button.onclick = () => this.current.current.onSideAction?.(this.block, this.side, action);
       group.append(button);
