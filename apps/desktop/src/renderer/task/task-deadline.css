@@ -78,12 +78,8 @@
 .task-deadline-overdue {
   color: var(--color-danger, #c94545);
 }
+/* 截止筛选只约束工具栏宽度，外观沿用统一选择器。 */
 .task-deadline-quick-filter {
   max-width: 160px;
   min-width: 90px;
-  color: inherit;
-  background: transparent;
-  border: 1px solid var(--border-color, #8885);
-  border-radius: 5px;
-  padding: 5px;
 }

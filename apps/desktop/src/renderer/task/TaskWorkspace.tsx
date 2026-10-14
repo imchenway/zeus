@@ -391,20 +391,24 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
               </button>
             ))}
           </div>
-          <select
+          {/* 截止筛选复用统一选择器的菜单、选中标记和键盘交互。 */}
+          <ZeusSelect
+            size="compact"
+            searchable={false}
             className="task-deadline-quick-filter"
-            aria-label={isEnglishCopy ? 'Filter by deadline' : '按截止时间筛选'}
+            ariaLabel={isEnglishCopy ? 'Filter by deadline' : '按截止时间筛选'}
             value={props.deadlineFilter ?? 'all'}
-            onChange={(event) => {
-              if (isTaskDeadlineFilter(event.currentTarget.value)) props.onDeadlineFilterChange?.(event.currentTarget.value);
+            onChange={(value) => {
+              if (isTaskDeadlineFilter(value)) props.onDeadlineFilterChange?.(value);
             }}
-          >
-            <option value="all">{isEnglishCopy ? 'All deadlines' : '全部截止时间'}</option>
-            <option value="overdue">{isEnglishCopy ? 'Overdue' : '已逾期'}</option>
-            <option value="today">{isEnglishCopy ? 'Due today' : '今天截止'}</option>
-            <option value="next_seven_days">{isEnglishCopy ? 'Next 7 days' : '未来 7 天'}</option>
-            <option value="unset">{isEnglishCopy ? 'No deadline' : '未设截止'}</option>
-          </select>
+            options={[
+              { value: 'all', label: isEnglishCopy ? 'All deadlines' : '全部截止时间' },
+              { value: 'overdue', label: isEnglishCopy ? 'Overdue' : '已逾期' },
+              { value: 'today', label: isEnglishCopy ? 'Due today' : '今天截止' },
+              { value: 'next_seven_days', label: isEnglishCopy ? 'Next 7 days' : '未来 7 天' },
+              { value: 'unset', label: isEnglishCopy ? 'No deadline' : '未设截止' },
+            ]}
+          />
           <div className="task-table-view-actions" aria-label={isEnglishCopy ? 'Task view actions' : '任务视图动作'}>
             <div className="task-table-page-view-segments" role="group" aria-label={isEnglishCopy ? 'Task view' : '任务视图'}>
               <button className="task-table-view-pill" type="button" aria-pressed={props.pageViewMode === 'list'} onClick={() => props.onPageViewModeChange('list')}>
