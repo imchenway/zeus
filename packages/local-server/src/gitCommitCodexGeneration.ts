@@ -16,13 +16,28 @@ function textManager(codexHome: string) {
   });
 }
 
-/** 服务级独占租用池：复用进程但不复用会话，失败进程不再归还。 */
+/** 提交说明保留原有校验和回执，池实例不与输入建议共享。 */
 export function createCommitCodexPool() {
+  return createCodexGenerationPool(generateCodexCommitMessage);
+}
+
+/** 输入建议租用自己的轻量进程，每次仍创建独立临时线程。 */
+export function createCodexTextPool() {
+  return createCodexGenerationPool(generateCodexText);
+}
+
+/** 两种纯文本生成复用同一租用实现，实例之间的取消和关闭互不影响。 */
+function createCodexGenerationPool<Input, Result>(generate: (input: Input, options: CodexTextGenerationOptions) => Promise<Result>) {
+  /** 空闲进程按实际宿主身份分组。 */
   const idle = new Map<string, { manager: CodexAppServerManager; timer: ReturnType<typeof setTimeout> }>();
+  /** 关闭宿主时包括仍在运行或预热的进程。 */
   const all = new Set<CodexAppServerManager>();
+  /** 同一身份只预热一次。 */
   const warming = new Map<string, Promise<void>>();
+  /** 关闭后禁止再次借出进程。 */
   let closed = false;
   return {
+    /** 只预热本实例拥有的空闲进程，不借用主会话或其他功能的连接。 */
     warm(options: { commandPath: string; codexHome: string; externalAgentHome?: string }) {
       const key = JSON.stringify([options.commandPath, options.codexHome, options.externalAgentHome]);
       if (closed || idle.has(key)) return Promise.resolve();
@@ -64,22 +79,30 @@ export function createCommitCodexPool() {
       warming.set(key, promise);
       return promise;
     },
-    async generate(input: GitCommitMessageInput, options: Parameters<typeof generateCodexCommitMessage>[1]) {
-      if (closed) throw new Error('提交说明服务正在关闭。');
+    /** 独占租用不共享线程，成功后才把进程放回池。 */
+    async generate(input: Input, options: CodexTextGenerationOptions) {
+      if (closed) throw new Error('文本生成服务正在关闭。');
+      /** 身份变化不能沿用另一宿主的账号或命令。 */
       const key = JSON.stringify([options.commandPath, options.codexHome, options.externalAgentHome]);
       await warming.get(key);
       options.signal?.throwIfAborted();
-      if (closed) throw new Error('提交说明服务正在关闭。');
+      if (closed) throw new Error('文本生成服务正在关闭。');
+      /** 从池中取出后不可再被其他请求借用。 */
       const cached = idle.get(key);
       if (cached) {
         clearTimeout(cached.timer);
         idle.delete(key);
       }
+      /** 耗时日志只记录是否复用，不包含正文或账号。 */
+      options.onReuse?.(cached?.manager.getState().type === 'ready');
+      /** 没有空闲进程时才冷启动。 */
       const manager = cached?.manager ?? textManager(options.codexHome);
       all.add(manager);
+      /** 失败或取消的进程不能归还。 */
       let reusable = false;
       try {
-        const result = await generateCodexCommitMessage(input, { ...options, manager, keepAlive: true });
+        /** 具体生成函数保留自己的文本校验和输出合同。 */
+        const result = await generate(input, { ...options, manager, keepAlive: true });
         reusable = true;
         return result;
       } finally {
@@ -97,6 +120,7 @@ export function createCommitCodexPool() {
         }
       }
     },
+    /** 关闭只回收本实例的进程与空闲计时器。 */
     async close() {
       closed = true;
       for (const entry of idle.values()) clearTimeout(entry.timer);
@@ -129,7 +153,7 @@ export interface CodexTextGenerationOptions {
   codexHome: string;
   /** 当前宿主明确授权的外部资源目录。 */
   externalAgentHome?: string;
-  /** 提交说明池可以复用传输，但临时会话始终隔离。 */
+  /** 纯文本生成池可以复用传输，但临时会话始终隔离。 */
   manager?: CodexAppServerManager;
   /** 每阶段等待上限；总时限由调用方 AbortSignal 控制。 */
   timeoutMs?: number;
@@ -143,6 +167,8 @@ export interface CodexTextGenerationOptions {
   onText?: (text: string) => void;
   /** 保留提交说明已有的阶段反馈。 */
   onProgress?: (stage: string, elapsedMs: number) => void;
+  /** 记录冷启动或进程复用，不暴露提示词。 */
+  onReuse?: (reused: boolean) => void;
 }
 
 /** 提交说明保留原有校验、单行长度和流式预览，共用独立文本生成。 */

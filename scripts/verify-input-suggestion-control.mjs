@@ -34,7 +34,8 @@ for (const state of [{ pending: true }, { reason: 'failed', cause: { code: 'ZEUS
     assert.match(button, /正在生成输入建议.*取消生成/u);
   } else if (state.reason === 'failed' || state.reason === 'timed_out') {
     assert.match(button, /data-error="true"/u);
-    assert.match(button, /查看详情/u);
+    /** 失败入口沿用当前组件的直接重试行为。 */
+    assert.match(button, /点击重试生成/u);
     if (state.reason === 'failed') assert.match(button, /输出上限/u);
   } else {
     assert.match(button, /生成输入建议/u);
