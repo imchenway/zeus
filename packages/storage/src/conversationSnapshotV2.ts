@@ -1244,11 +1244,30 @@ export class ConversationSnapshotV2Repository {
     );
   }
 
-  /** Telegram 从送达位置读取符合既有规则的结果，其他历史读取维持原有分页合同。 */
-  listModelHistoryPage(input: { conversationId: string; cursor?: string; entryLimit?: number; byteLimit?: number; afterSequence?: number; assistantOutputOnly?: boolean }): ConversationSnapshotV2Page<ConversationModelHistoryPageItem> {
-    const context = this.sequencePageContext(input, 'model_history', input.assistantOutputOnly ? 'assistant-output' : '');
+  /** 送达和建议复用冻结分页；建议在数据库层筛掉工具与思考，不能扩大到其他会话。 */
+  listModelHistoryPage(input: {
+    conversationId: string;
+    cursor?: string;
+    entryLimit?: number;
+    byteLimit?: number;
+    afterSequence?: number;
+    assistantOutputOnly?: boolean;
+    /** 建议可分别读取用户原话与助手正文，给用户要求保留独立预算。 */
+    dialogueRole?: 'user' | 'assistant';
+    /** 从尾部读取时仍返回正序结果，后续页保持相同过滤和高水位。 */
+    direction?: 'forward' | 'tail';
+  }): ConversationSnapshotV2Page<ConversationModelHistoryPageItem> {
+    /** 角色是内部枚举，SQL 仍使用参数绑定，不拼接外部文本。 */
+    const dialogueWhere = input.dialogueRole ? ` AND role = ? AND tool_pair_id IS NULL AND COALESCE(${modelHistoryReasoningSummarySql}, 0) = 0` : '';
+    /** 游标绑定过滤条件，不能把用户页游标用于助手正文。 */
+    const context = this.sequencePageContext(
+      input,
+      'model_history',
+      input.dialogueRole ? `dialogue:${input.dialogueRole}` : input.assistantOutputOnly ? 'assistant-output' : '',
+      input.dialogueRole ? { table: 'conversation_model_history', column: 'sequence', extraWhere: dialogueWhere, extraParams: [input.dialogueRole] } : null,
+    );
     if (!input.cursor && input.afterSequence !== undefined) {
-      if (!Number.isSafeInteger(input.afterSequence) || input.afterSequence < 0) throw new Error('消息送达位置必须是非负安全整数。');
+      if (!Number.isSafeInteger(input.afterSequence) || input.afterSequence < 0 || context.direction !== 'forward') throw new Error('消息送达位置必须是正向分页的非负安全整数。');
       context.afterSequence = input.afterSequence;
     }
     const rows = this.db.select<ModelHistoryProjectionRow>(
@@ -1277,11 +1296,11 @@ export class ConversationSnapshotV2Repository {
               length(CAST(${modelHistoryVisibleContentSql} AS BLOB)) AS content_bytes,
               length(${modelHistoryVisibleContentSql})               AS content_characters
          FROM conversation_model_history
-        WHERE conversation_id = ? AND sequence > ? AND sequence <= ?
+        WHERE conversation_id = ? AND sequence ${context.direction === 'tail' ? '<' : '>'} ? AND sequence <= ?${dialogueWhere}
           ${input.assistantOutputOnly ? `AND role = 'assistant' AND tool_pair_id IS NULL AND COALESCE(${modelHistoryReasoningSummarySql}, 0) = 0` : ''}
-        ORDER BY sequence
+        ORDER BY sequence ${context.direction === 'tail' ? 'DESC' : 'ASC'}
         LIMIT ?`,
-      [previewCharacterLimit, context.conversationId, context.afterSequence, context.throughSequence, context.entryLimit + 1],
+      [previewCharacterLimit, context.conversationId, context.afterSequence, context.throughSequence, ...(input.dialogueRole ? [input.dialogueRole] : []), context.entryLimit + 1],
     );
     return buildSequencePage(context, this.mapModelHistoryRows(context.conversationId, rows));
   }

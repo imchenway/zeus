@@ -94,8 +94,10 @@ export interface ModelConnectionService {
   /** 对已启用模型真实探测一次，用观测结果替换静态能力声明。 */
   probeModels(id: string): Promise<ModelCapabilityProbeSummary>;
   diagnose(id: string): Promise<ModelConnectionDiagnostic>;
-  listSelectableModels(): Promise<SelectableConnectionModel[]>;
-  loadRuntimeConnections(): Promise<Array<ModelConnectionRecord & { apiKey?: string }>>;
+  /** 生成入口只解析选中连接，设置入口省略参数时读取完整目录。 */
+  listSelectableModels(selectedModelRef?: string): Promise<SelectableConnectionModel[]>;
+  /** 可选模型身份限制凭据读取，普通运行调用仍读取原有连接集合。 */
+  loadRuntimeConnections(selectedModelRef?: string): Promise<Array<ModelConnectionRecord & { apiKey?: string }>>;
 }
 
 const modelConnectionsSettingKey = 'models.connections';
@@ -124,6 +126,11 @@ export function createModelConnectionService(options: {
 
   function readStored(): ModelConnectionRecord[] {
     return normalizeStoredModelConnections(options.settings.getJson<unknown>(modelConnectionsSettingKey));
+  }
+
+  /** 在读取 Keychain 前按稳定模型身份过滤，避免无关连接增加延迟。 */
+  function connectionsForModel(selectedModelRef?: string): ModelConnectionRecord[] {
+    return readStored().filter((connection) => !selectedModelRef || (connection.enabled && connection.models.some((model) => model.enabled && modelRef(connection.id, model.id) === selectedModelRef)));
   }
 
   /** 使用现有连接的模型能力读取价格，页面内容不进入任何用户会话。 */
@@ -398,16 +405,18 @@ export function createModelConnectionService(options: {
         };
       }
     },
-    async listSelectableModels() {
-      return listSelectableConnectionModels(await hydrate());
+    async listSelectableModels(selectedModelRef) {
+      return listSelectableConnectionModels(await hydrate(connectionsForModel(selectedModelRef)));
     },
-    async loadRuntimeConnections() {
-      const connections = await hydrate();
+    async loadRuntimeConnections(selectedModelRef) {
+      /** 只为选中模型读取实际密钥，不访问其他连接的凭据。 */
+      const connections = connectionsForModel(selectedModelRef);
       return Promise.all(
-        connections.map(async (connection) => ({
-          ...connection,
-          ...(connection.apiKeyConfigured ? { apiKey: await options.secretStore.getSecret(modelConnectionSecretAccount(connection.id)) } : {}),
-        })),
+        connections.map(async (connection) => {
+          /** 可用状态和实际凭据来自同一次读取，避免重复访问 Keychain。 */
+          const apiKey = await options.secretStore.getSecret(modelConnectionSecretAccount(connection.id));
+          return { ...connection, pricingCatalog: pricing.read(connection), apiKeyConfigured: Boolean(apiKey), ...(apiKey ? { apiKey } : {}) };
+        }),
       );
     },
   };

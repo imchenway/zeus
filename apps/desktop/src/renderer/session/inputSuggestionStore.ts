@@ -48,6 +48,8 @@ class InputSuggestionSession {
   private lastSuggestion: { key: string; text: string; modelKey: string } | null = null;
   /** 自动完成事件跨页面去重，重开会话不能重复产生用量。 */
   private requestedTurn: string | null = null;
+  /** 用户消息事件可能重复送达，只在新的稳定身份出现时清除旧候选。 */
+  private observedUserInputs = new Set<string>();
   /** 已挂载输入框报告即时限制，卸载后改用已保存的草稿判断。 */
   private automaticEligibility = new Map<symbol, boolean>();
   /** 每个会话独立通知，后台结果不会刷新其他会话。 */
@@ -91,6 +93,15 @@ class InputSuggestionSession {
   /** 主会话继续运行时只清除自动预测，手动润色仍可独立完成。 */
   dismissAutomatic(): void {
     if (this.result?.trigger === 'automatic') this.dismiss();
+  }
+
+  /** 已发送要求变化时同时清除手动润色和辅助建议，普通助手进度不走此入口。 */
+  observeUserInput(identity: string): void {
+    if (this.observedUserInputs.has(identity)) return;
+    this.observedUserInputs.add(identity);
+    if (this.observedUserInputs.size > 64) this.observedUserInputs.delete(this.observedUserInputs.values().next().value!);
+    this.lastSuggestion = null;
+    this.dismiss();
   }
 
   /** 正在使用或生成的会话不能被容量回收中断。 */

@@ -39,7 +39,7 @@ export function resolveEmployeeMemories(repository: LongTermMemoryRepository, em
 }
 
 /** 领域知识按当前目标匹配，不把无关项目细节全部塞进个人上下文。 */
-function relevantEmployeeKnowledge(content: string, query: string): boolean {
+export function relevantEmployeeKnowledge(content: string, query: string): boolean {
   /** 英文按词，中文按相邻双字提取有界检索线索。 */
   const terms = query.toLocaleLowerCase().match(/[a-z0-9_]{3,}|[\p{Script=Han}]{2,}/gu) ?? [];
   /** 忽略常见空泛词，减少与任务无关的记忆进入工作。 */

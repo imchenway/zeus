@@ -923,10 +923,13 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   });
 
   /** 提交说明和输入建议共用现有模型目录及登录能力。 */
-  async function loadTextGenerationModels() {
+  async function loadTextGenerationModels(selectedModelRef?: string) {
     /** 设置入口和生成服务使用同一份模型能力，不能猜测可用档位。 */
-    const items: Array<Pick<CodexModelCapability, 'id' | 'model' | 'supportedReasoningEfforts' | 'defaultReasoningEffort' | 'serviceTiers'> & { label: string }> = (await modelConnections.listSelectableModels())
+    const items: Array<Pick<CodexModelCapability, 'id' | 'model' | 'supportedReasoningEfforts' | 'defaultReasoningEffort' | 'serviceTiers'> & { label: string }> = (
+      selectedModelRef?.startsWith('codex:') ? [] : await modelConnections.listSelectableModels(selectedModelRef)
+    )
       .filter((model: SelectableConnectionModel) => model.available && model.enabled)
+      .filter((model: SelectableConnectionModel) => !selectedModelRef || model.id === selectedModelRef)
       .map((model: SelectableConnectionModel) => ({
         id: model.id,
         model: model.model,
@@ -935,6 +938,9 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         defaultReasoningEffort: model.defaultReasoningEffort ?? undefined,
         serviceTiers: model.serviceTiers,
       }));
+    /** API 生成不初始化无关的 Codex 进程或查询其账户。 */
+    if (selectedModelRef && !selectedModelRef.startsWith('codex:')) return { items, warning: '' };
+    /** 设置页面仍完整展示各供应商的可用模型和告警。 */
     let warning = '';
     try {
       if (!codexNativeEnabled) throw new Error('Codex 尚未启用。');
@@ -944,6 +950,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       items.push(
         ...capabilities.models
           .filter((model: CodexModelCapability) => model.raw.hidden !== true)
+          .filter((model: CodexModelCapability) => !selectedModelRef || selectedModelRef === `codex:${model.model}`)
           .map((model: CodexModelCapability) => ({
             id: `codex:${model.model}`,
             model: model.model,
@@ -1443,6 +1450,30 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     readSettings: () => (readOnlyValidation ? undefined : platformMutableState.appShellSettings.inputSuggestions),
     modelConnections,
     loadModels: loadTextGenerationModels,
+    loadModel: async (selectedModelRef) => (await loadTextGenerationModels(selectedModelRef)).items.find((model) => model.id === selectedModelRef),
+    readSources: (projectId, conversationId) => {
+      /** 任务归属来自当前会话，禁止按任务名称寻找其他项目材料。 */
+      const conversation = conversationId ? conversations.getRecordById(conversationId) : undefined;
+      /** 新草稿没有任务身份，不猜测用户当前选中了哪项任务。 */
+      const task = conversation?.taskId ? tasks.getById(conversation.taskId) : undefined;
+      return {
+        task:
+          task?.projectId === projectId && task
+            ? {
+                id: task.id,
+                title: redactSensitiveText(task.title).text,
+                description: redactSensitiveText(
+                  [task.description, task.defectCurrentState, task.defectExpectedOutcome, task.defectReproductionSteps, task.optimizationCurrentState, task.optimizationExpectedOutcome].filter(Boolean).join('\n'),
+                ).text,
+                updatedAt: task.updatedAt,
+              }
+            : null,
+        memories: longTermMemories
+          .resolveForContext({ projectId, asOf: now().toISOString() })
+          .selected.filter((memory: import('@zeus/storage').LongTermMemoryRecord) => memory.confirmationLevel !== 'observed' && (memory.scope.kind === 'global' || memory.scope.kind === 'project'))
+          .map((memory: import('@zeus/storage').LongTermMemoryRecord) => ({ ...memory, content: redactSensitiveText(memory.content).text })),
+      };
+    },
     codexOptions: () => ({ commandPath: currentCodexRuntimeCommandPath(), codexHome: options.codexHome ?? dataLayout.codexHome, ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) }),
   });
 

@@ -32,7 +32,10 @@ export function useBackgroundInputSuggestions(options: {
       /** 生成仍复用已认证的客户端函数。 */
       const generate = client.generateInputSuggestion;
       /** 只处理真实会话生命周期，正文增量不会触发额外生成。 */
-      if (!['conversation.turn.started', 'conversation.turn.completed', 'conversation.request.created', 'conversation.plan_implementation_request.changed'].includes(event.type)) return;
+      const userMessageEvent = ['conversation.item.started', 'conversation.item.updated', 'conversation.item.completed'].includes(event.type);
+      if (!userMessageEvent && !['conversation.turn.started', 'conversation.turn.completed', 'conversation.request.created', 'conversation.plan_implementation_request.changed', 'conversation.submission.steered'].includes(event.type))
+        return;
+      if (userMessageEvent && event.payload.itemType !== 'userMessage') return;
       /** 所有读写都使用服务端事件中的项目和会话身份。 */
       const { projectId, conversationId } = event.payload;
       if (typeof projectId !== 'string' || typeof conversationId !== 'string') return;
@@ -44,6 +47,14 @@ export function useBackgroundInputSuggestions(options: {
       const identity = inputSuggestionIdentity({ projectId, conversationId, settings: selectedSettings, turnId: typeof turnId === 'string' ? turnId : null });
       /** 状态层保持后台运行，当前页面只订阅其需要显示的会话。 */
       const session = getInputSuggestionSession(identity.sessionKey);
+      if (userMessageEvent || event.type === 'conversation.submission.steered') {
+        /** 原生消息投影把稳定的客户端身份放在正文对象中。 */
+        const itemPayload = event.payload.itemPayload && typeof event.payload.itemPayload === 'object' ? (event.payload.itemPayload as Record<string, unknown>) : null;
+        /** 使用服务端消息身份清除旧要求对应的结果，不根据正文猜测用户是否改意。 */
+        const userInputId = event.payload.clientUserMessageId ?? itemPayload?.clientId ?? event.payload.submissionId ?? event.payload.providerItemId ?? event.payload.itemId;
+        if (typeof userInputId === 'string') session.observeUserInput(userInputId);
+        return;
+      }
       if (event.type === 'conversation.turn.started' || event.type === 'conversation.request.created' || (event.type === 'conversation.plan_implementation_request.changed' && event.payload.status === 'pending')) {
         session.dismissAutomatic();
         return;
