@@ -34,6 +34,7 @@ export const conversationEventTypeRegistry = {
     'conversation.thread.unarchived',
     'conversation.transport.changed',
     'conversation.turn.started',
+    'conversation.system_message.updated',
     'conversation.turn.completed',
     'conversation.turn.retrying',
     'conversation.request.created',

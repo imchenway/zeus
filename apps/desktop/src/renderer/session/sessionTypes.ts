@@ -1,3 +1,4 @@
+import type { ConversationSystemMessage, ConversationSystemMessagePage } from '@zeus/shared';
 import type { ConversationWorktreeOptions } from '@zeus/shared';
 import type { ConversationFeatureCatalog } from '@zeus/shared';
 import type { AssistantMessageMetadata, AsyncQuestionAnswer, AsyncQuestionResponse } from '@zeus/shared';
@@ -530,6 +531,8 @@ export interface NativeConversationExecutionContext {
 export type NativeConversationStage = 'created' | 'connecting' | 'queued' | 'running' | 'waiting_user' | 'waiting_approval' | 'completed' | 'failed' | 'paused' | 'ready' | 'archived';
 
 export interface NativeConversationSnapshot {
+  /** 同一读取进度下的有界系统消息。 */
+  systemMessages?: ConversationSystemMessagePage;
   /** 会话下次执行使用的容量，与本轮实际用量分开显示。 */
   contextCapacityTokens?: number | null;
   /** 原生窗口配置的最近发送或读回证据。 */
@@ -720,6 +723,8 @@ export type NativeConversationSnapshotV2Page<T> = SharedConversationSnapshotV2Pa
 
 /** 会话结构和最新消息由服务端在同一次同步读取中生成。 */
 export interface NativeConversationReadableSnapshot {
+  /** 同一读取进度下的有界系统消息。 */
+  systemMessages?: ConversationSystemMessagePage;
   /** 当前事件进度对应的有界会话结构。 */
   snapshot: NativeConversationSnapshotV2;
   /** 与结构具有相同事件进度的消息尾页。 */
@@ -1717,6 +1722,7 @@ export interface NativeExpertExecutionProjection {
 }
 
 export type NativeConversationEvent =
+  | NativeEvent<'conversation.system_message.updated', NativeEventIdentity & { message: ConversationSystemMessage }>
   | NativeEvent<
       'conversation.transport.changed',
       NativeEventIdentity & {
@@ -1815,6 +1821,7 @@ export type NativeConversationEvent =
   | NativeEvent<'conversation.native.error', NativeEventIdentity & { turnId?: string; error?: string | Record<string, unknown>; message?: string; recoveryRequired?: boolean; retryable?: boolean }>;
 
 export const nativeConversationEventTypes = new Set<NativeConversationEvent['type']>([
+  'conversation.system_message.updated',
   'conversation.transport.changed',
   'conversation.thread.changed',
   'conversation.turn.started',
@@ -1900,6 +1907,10 @@ export interface NativeSessionError {
 }
 
 export interface NativeSessionState {
+  /** 已接纳的系统消息不参与 Provider 轮次状态。 */
+  systemMessages?: Record<string, ConversationSystemMessage>;
+  /** 更早系统消息的独立持久位置游标。 */
+  systemMessagesCursor?: string | null;
   /** 位置索引仍在准备，保留当前正文而不当作模型失败。 */
   transcriptInitializing?: boolean;
   transportState: TransportState;

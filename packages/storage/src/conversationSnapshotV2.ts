@@ -27,6 +27,7 @@ import { type ArtifactRef, type ArtifactStore, artifactStoreGeneration } from '.
 import { conversationSchemaGeneration, type ConversationSessionMetricsSnapshot, readConversationSessionMetrics } from './conversationExecutionStore.js';
 import { ConversationTranscriptRepository, providerFacet } from './conversationTranscriptStore.js';
 import { createHash } from 'node:crypto';
+import { ConversationSystemMessageRepository } from './conversationSystemMessageStore.js';
 import { isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { conversationImageAttachmentRef } from './conversationStore.js';
@@ -741,6 +742,8 @@ const stableChangeSetStates = new Set(['applied', 'undone', 'conflicted', 'unava
  * 游标携带第一页读取时的高水位，后续追加的数据不会插入当前分页窗口。
  */
 export class ConversationSnapshotV2Repository {
+  /** 系统消息独立于模型历史，但共用产品会话的持久位置。 */
+  readonly systemMessages: ConversationSystemMessageRepository;
   /** 读取既有正文时只投影位置索引，不修改正文表。 */
   private readonly transcript: ConversationTranscriptRepository;
 
@@ -749,6 +752,7 @@ export class ConversationSnapshotV2Repository {
     private readonly artifactStore?: ArtifactStore,
   ) {
     this.transcript = new ConversationTranscriptRepository(db);
+    this.systemMessages = new ConversationSystemMessageRepository(db);
   }
 
   /** 只返回可见会话的正文命中身份；大历史保留元数据检索，不拖慢运行宿主。 */
@@ -970,13 +974,13 @@ export class ConversationSnapshotV2Repository {
           AND (json_extract(boundary.value, '$.beforeOrder') IS NULL OR entry.display_order < json_extract(boundary.value, '$.beforeOrder'))
          JOIN conversation_transcript_aliases AS alias
            ON alias.conversation_id = entry.conversation_id AND alias.entry_id = entry.id
-         LEFT JOIN conversation_process_items AS process
-           ON alias.source_domain = 'process' AND process.conversation_id = alias.conversation_id
-          AND process.segment_id = alias.source_scope AND process.id = alias.source_id
+         LEFT JOIN conversation_process_items
+           ON alias.source_domain = 'process' AND conversation_process_items.conversation_id = alias.conversation_id
+          AND conversation_process_items.segment_id = alias.source_scope AND conversation_process_items.id = alias.source_id
         WHERE entry.removed_revision IS NULL AND (
-          alias.facet = 'tool_activity' OR (alias.facet = 'reasoning_block' AND process.kind = 'reasoning' AND (
-            process.source_event_id GLOB 'pi:block:*' OR process.protocol_family = 'anthropic_messages'
-            OR CASE WHEN json_valid(process.detail_json) THEN json_extract(process.detail_json, '$.reasoningPresentation') END IN ('process_text', 'details_collapsed')
+          alias.facet = 'tool_activity' OR (alias.facet = 'reasoning_block' AND conversation_process_items.kind = 'reasoning' AND (
+            conversation_process_items.source_event_id GLOB 'pi:block:*' OR ${processProtocolFamilySql} = 'anthropic_messages'
+            OR CASE WHEN json_valid(conversation_process_items.detail_json) THEN json_extract(conversation_process_items.detail_json, '$.reasoningPresentation') END IN ('process_text', 'details_collapsed')
           )))
         GROUP BY json_extract(boundary.value, '$.id')`,
       [JSON.stringify(ranges), conversationId],

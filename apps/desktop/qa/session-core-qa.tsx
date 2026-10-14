@@ -1,3 +1,4 @@
+import { SystemMessagesQa } from './system-messages-qa.js';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ModelSelectQa } from './model-select-qa.js';
 import { asyncMessageQuestions, conversationQuestionNavigationExcerpt, buildTaskPushLayout, describeUserFacingError, formatAsyncQuestionAnswer, type ConversationNavigationEntry, type UserFacingErrorCause } from '@zeus/shared';
@@ -77,6 +78,7 @@ const scenes: QaScene[] = [
   { query: 'model-select', title: '模型选择与置顶', summary: '共享选择框的分组、焦点、搜索和持久置顶。', answer: '', activities: [] },
   { query: 'paste-focus', title: '附件粘贴焦点', summary: '真实任务输入的异步附件与光标保持。', answer: '', activities: [] },
   { query: 'composer', title: '粘贴 Markdown', summary: '真实输入组件的 Markdown 排版、直接编辑和发送原文。', answer: '', activities: [] },
+  { query: 'system-messages', title: 'Zeus 系统消息', summary: '持久化、恢复和草稿归属。', answer: '', activities: [] },
   { query: 'error-order', title: '报错后的消息顺序', summary: '失败记录固定在发生位置。', answer: '', activities: [] },
   { query: 'error-layout', title: '会话错误提示预览', summary: '已确认的提示样式直接来自会话组件。', answer: '', activities: [] },
   { query: 'review', title: 'Markdown 变更审核', summary: '真实审核组件的预览、差异与读取状态。', answer: '', activities: [] },
@@ -188,6 +190,7 @@ export function SessionQaApp(props: { scene: QaScene }) {
   if (props.scene.query === 'queue-actions') return <QueueActionsQa />;
   if (props.scene.query === 'message-layout') return <MessageLayoutQa />;
   if (props.scene.query === 'model-select') return <ModelSelectQa />;
+  if (props.scene.query === 'system-messages') return <SystemMessagesQa />;
   if (props.scene.query === 'error-order') return <ErrorOrderQa />;
   if (props.scene.query === 'error-layout') return <ErrorLayoutQa />;
   if (props.scene.query === 'paste-focus') return <TaskPasteFocusQa />;

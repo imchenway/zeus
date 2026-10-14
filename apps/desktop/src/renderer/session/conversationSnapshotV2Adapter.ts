@@ -21,6 +21,8 @@ import { reconcileTranscriptItems } from './transcriptReconciliation.js';
 const syncStreamProtocolGeneration = 'zeus-conversation-sync-v2' as const;
 
 export interface ConversationSnapshotV2BootstrapInput {
+  /** 首屏系统消息独立于模型历史。 */
+  systemMessages?: import('@zeus/shared').ConversationSystemMessagePage;
   snapshot: NativeConversationSnapshotV2;
   history: NativeConversationSnapshotV2Page<NativeConversationModelHistoryV2Item>;
   queue: NativeQueueSnapshot;
@@ -145,6 +147,7 @@ export function adaptConversationSnapshotV2(input: ConversationSnapshotV2Bootstr
     goalTimeline: input.goal.timeline,
     goalCapability: input.goal.capability,
     snapshotV2: snapshot,
+    systemMessages: input.systemMessages,
     v2Paging: {
       history: {
         nextCursor: input.history.nextCursor,

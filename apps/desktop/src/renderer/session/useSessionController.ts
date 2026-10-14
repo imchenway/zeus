@@ -1,3 +1,4 @@
+import type { ConversationSystemMessage, ConversationSystemMessageInput, ConversationSystemMessagePage } from '@zeus/shared';
 import type { ConversationProcessGroup } from '@zeus/shared';
 import { restoreSessionViewCache } from './sessionHotCache.js';
 import { attachV2ResourcesToSnapshot } from './conversationResourceProjection.js';
@@ -255,6 +256,10 @@ export interface SessionControllerClient {
   /** 独立生成建议或润色候选；只读客户端可省略此能力。 */
   generateInputSuggestion?(input: import('@zeus/shared').InputSuggestionRequest, signal: AbortSignal): Promise<import('@zeus/shared').InputSuggestionResult>;
   /** 独立读取全历史目录，不参与事件消费。 */
+  /** 持久系统消息的独立命令与读取端口。 */
+  saveConversationSystemMessage?(projectId: string, conversationId: string, input: ConversationSystemMessageInput): Promise<ConversationSystemMessage>;
+  /** 有界读取更早系统消息。 */
+  loadConversationSystemMessages?(projectId: string, conversationId: string, cursor?: string): Promise<ConversationSystemMessagePage>;
   loadConversationNavigation?(projectId: string, conversationId: string): Promise<ConversationNavigationSnapshot>;
   loadCodexConversationCapabilities?(projectId: string): Promise<CodexConversationCapabilities>;
 
@@ -436,6 +441,10 @@ export interface SessionController {
   setNextTurnSettings(settings: NativeNextTurnSettings): Promise<NativeNextTurnSettings>;
   loadEarlierHistory(): Promise<void>;
   /** 全历史目录由工作面按进入、重连和稳定消息变化刷新。 */
+  /** 系统消息回执归入当前会话，不触发 Provider。 */
+  saveSystemMessage(input: ConversationSystemMessageInput): Promise<ConversationSystemMessage>;
+  /** 系统消息历史独立补页。 */
+  loadEarlierSystemMessages(): Promise<void>;
   loadNavigation(): Promise<ConversationNavigationSnapshot>;
   /** 导航只补齐指定轮次模型正文，处理过程继续由展开入口读取。 */
   loadNavigationTurn(turnId: string): Promise<void>;
@@ -804,12 +813,15 @@ export function createSessionController(options: CreateSessionControllerOptions)
 
   /** 收集动作中实际出现的持久身份，包含等待接管时新到的条目。 */
   function actionTranscripts(action: Parameters<typeof sessionReducer>[1]): ConversationTranscriptEnvelope[] {
-    if (action.type === 'snapshot_hydrated' || action.type === 'snapshot_v2_page_merged') return [...action.snapshot.items, ...action.snapshot.requests].flatMap((item) => (item.transcript ? [item.transcript] : []));
+    if (action.type === 'system_messages_loaded') return action.page.items.map((message) => message.transcript);
+    if (action.type === 'snapshot_hydrated' || action.type === 'snapshot_v2_page_merged')
+      return [...action.snapshot.items, ...action.snapshot.requests, ...(action.snapshot.systemMessages?.items ?? [])].flatMap((item) => (item.transcript ? [item.transcript] : []));
     if (action.type === 'pending_requests_hydrated') return [...action.requests, ...(action.items ?? [])].flatMap((item) => (item.transcript ? [item.transcript] : []));
     if (action.type === 'event_received') {
       const payload = action.event.payload;
       const candidates = [
         payload,
+        ...('message' in payload && payload.message && typeof payload.message === 'object' ? [payload.message] : []),
         ...('request' in payload && payload.request ? [payload.request] : []),
         ...('execution' in payload ? [payload.execution] : []),
         ...('executions' in payload && Array.isArray(payload.executions) ? payload.executions : []),
@@ -834,6 +846,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
           const entryId = sessionTranscriptEntryId(item);
           return entryId ? [entryId] : [];
         }),
+        ...Object.values(state.systemMessages ?? {}).map((message) => message.transcript.placement.entryId),
         ...state.pendingRequests.flatMap((request) => (request.transcript ? [request.transcript.placement.entryId] : [])),
       ]);
       for (const action of placementActions) for (const envelope of actionTranscripts(action)) ids.add(envelope.placement.entryId);
@@ -3644,6 +3657,22 @@ export function createSessionController(options: CreateSessionControllerOptions)
       });
     },
     loadEarlierHistory: loadEarlierHistoryV2,
+    async saveSystemMessage(input) {
+      if (!options.client.saveConversationSystemMessage) throw new Error('系统消息存储暂不可用。');
+      /** 回执和后续实时事件按相同消息身份合并。 */
+      const message = await options.client.saveConversationSystemMessage(options.projectId, options.conversationId, input);
+      if (message.conversationId !== options.conversationId) throw new Error('系统消息回执会话不一致。');
+      if (!disposed) dispatch({ type: 'system_messages_loaded', page: { conversationId: options.conversationId, items: [message], nextCursor: null } });
+      return message;
+    },
+    async loadEarlierSystemMessages() {
+      /** 以调用时已确认的游标读取，不用页号推算。 */
+      const cursor = state.systemMessagesCursor;
+      if (!cursor || !options.client.loadConversationSystemMessages) return;
+      /** 分页失败交回原读取入口，不递归创建系统消息。 */
+      const page = await options.client.loadConversationSystemMessages(options.projectId, options.conversationId, cursor);
+      if (!disposed && page.conversationId === options.conversationId && state.systemMessagesCursor === cursor) dispatch({ type: 'system_messages_loaded', page, history: true });
+    },
     loadNavigation,
     loadNavigationTurn,
     loadTurnProcess: loadTurnProcessV2,

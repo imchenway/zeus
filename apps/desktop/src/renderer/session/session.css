@@ -7162,13 +7162,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   max-inline-size: 100%;
 }
 
-.session-codex-parity-v1 .session-new-conversation-error {
-  color: var(--session-danger);
-  line-height: 1.4;
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
 .session-codex-parity-v1 .session-request-mode {
   color: var(--session-text-muted);
   display: flex;
@@ -13532,44 +13525,13 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   line-height: 20px;
 }
 
-/* 读取反馈局部呈现，正文失败保留原有阅读锚点与重试入口。 */
-.session-codex-parity-v1 .session-navigation-status {
-  position: absolute;
-  /* 目录反馈沿用正文列起点，不能固定贴在宽会话外壳的左侧。 */
-  left: max(var(--session-gutter), calc((100% - var(--session-thread-max)) / 2));
-  bottom: 12px;
-  width: fit-content;
-  max-width: min(var(--session-thread-max), calc(100% - 2 * var(--session-gutter)));
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border: 0;
-  border-radius: 8px;
-  background: var(--session-canvas);
-  color: var(--session-text-muted);
-  font-size: 12px;
-}
-/* 长错误允许换行，重试入口保留完整可点击宽度。 */
-.session-codex-parity-v1 .session-navigation-status > span {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.session-codex-parity-v1 .session-navigation-status > button {
-  flex-shrink: 0;
-}
-/* 浏览旧消息时为返回按钮让出一行，窄分栏也不会互相遮挡。 */
-.session-codex-parity-v1 .session-transcript-shell:has(> .session-return-latest[data-visible='true']) > .session-navigation-status {
-  bottom: 56px;
-}
 .session-codex-parity-v1 .session-navigation-placeholder {
   /* 保留可观察的读取锚点，后台补读不制造多条空白消息。 */
   min-height: 1px;
   color: var(--session-text-muted);
   font-size: 13px;
 }
-.session-codex-parity-v1 :is(.session-navigation-status, .session-navigation-placeholder) > button {
+.session-codex-parity-v1 .session-navigation-placeholder > button {
   border: 0;
   background: transparent;
   color: var(--session-text);

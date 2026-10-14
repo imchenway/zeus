@@ -1,3 +1,4 @@
+import type { ConversationSystemMessage, ConversationSystemMessageInput, ConversationSystemMessagePage } from '@zeus/shared';
 import type { SendConversationMessageResult } from './conversationContracts.js';
 import type { ConversationNavigationSnapshot } from '@zeus/shared';
 import type { ConversationHistoryItem } from '../conversations/conversationContracts.js';
@@ -49,6 +50,10 @@ import { buildConversationDispatchCommandRequest, conversationDispatchClientComm
 import { buildConversationStartCommandRequest, conversationStartClientCommandTypes } from './conversationStartCommandClient.js';
 
 export interface ConversationApiClient {
+  /** 分页读取 Zeus 系统消息，不请求模型历史。 */
+  loadConversationSystemMessages(projectId: string, conversationId: string, cursor?: string): Promise<ConversationSystemMessagePage>;
+  /** 通过公开命令保存系统消息及其恢复事实。 */
+  saveConversationSystemMessage(projectId: string, conversationId: string, input: ConversationSystemMessageInput): Promise<ConversationSystemMessage>;
   /** 自动建议只提交轮次身份；主动润色才传草稿，模型和历史由服务端读取。 */
   generateInputSuggestion: (input: import('@zeus/shared').InputSuggestionRequest, signal: AbortSignal) => Promise<import('@zeus/shared').InputSuggestionResult>;
   /** 读取全部用户发言目录，不拉取正文。 */
@@ -212,6 +217,13 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
         headers: { 'x-zeus-snapshot-caller': 'renderer-session-v2' },
         signal: options?.signal,
       }),
+    loadConversationSystemMessages: (projectId, conversationId, cursor) =>
+      transport.request<ConversationSystemMessagePage>(`${conversationPath(projectId, conversationId)}/system-messages${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`),
+    saveConversationSystemMessage: async (projectId, conversationId, input) =>
+      transport.request<ConversationSystemMessage>(
+        `${conversationPath(projectId, conversationId)}/system-messages`,
+        jsonRequest('POST', await buildConversationCommandRequest({ commandType: conversationClientCommandTypes.systemMessageSave, conversationId, value: input })),
+      ),
     loadConversationNavigation: (projectId, conversationId) => transport.request<ConversationNavigationSnapshot>(`${conversationPath(projectId, conversationId)}/navigation`),
     loadNativeConversationSessionMetrics: (projectId, conversationId) => transport.request<NativeSessionMetricsSnapshot>(`${conversationPath(projectId, conversationId)}/session-metrics`),
     loadNativeConversationTranscriptPlacements: (projectId, conversationId, entryIds, expectedOrderEpoch) =>

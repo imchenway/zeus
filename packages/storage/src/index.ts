@@ -71,6 +71,7 @@ export * from './conversationExecutionStore.js';
 export * from './conversationExpertStore.js';
 export * from './conversationRuntimeStore.js';
 export * from './conversationTranscriptStore.js';
+export * from './conversationSystemMessageStore.js';
 export * from './conversationLegacyCutover.js';
 export * from './conversationProviderItemStore.js';
 export * from './conversationSnapshotV2.js';

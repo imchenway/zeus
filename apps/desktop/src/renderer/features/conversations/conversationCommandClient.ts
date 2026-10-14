@@ -14,6 +14,8 @@ export const conversationClientCommandTypes = {
   archive: 'conversation.archive',
   restore: 'conversation.restore',
   rename: 'conversation.rename',
+  /** 记录 Zeus 系统消息或补充恢复事实。 */
+  systemMessageSave: 'conversation.system_message.save',
 } as const;
 
 type ConversationClientCommandType = (typeof conversationClientCommandTypes)[keyof typeof conversationClientCommandTypes];

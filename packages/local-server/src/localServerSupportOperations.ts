@@ -1508,6 +1508,8 @@ export function createLocalServerSupportOperations(dependencies: LocalServerSupp
 
   function buildNonCodexLegacyContinuationPrompt(context: WritableNonCodexLegacyConversationContext, task: ZeusTaskRecord): string {
     const recentHistory = context.conversation.messages
+      // 产品诊断不进入模型上下文，包括未来恢复的历史会话。
+      .filter((message) => message.source !== 'zeus_system')
       .slice(-NON_CODEX_LEGACY_HISTORY_LIMIT)
       .map((message) => `[${message.role}/${message.source}/${message.createdAt}]\n${message.content}`)
       .join('\n\n');
