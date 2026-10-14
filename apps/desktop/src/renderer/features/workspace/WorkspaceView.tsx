@@ -1034,7 +1034,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                 onFormChange={updateTaskCreateForm}
                 onTaskTypeChange={updateTaskCreateType}
                 onPriorityChange={updateTaskCreatePriority}
-                onDeadlineChange={(deadline) => setTaskCreateForm((current) => ({ ...current, deadline }))}
                 onParentChange={(parentTaskId) => setTaskCreateForm((current) => ({ ...current, parentTaskId }))}
                 onAuthorizeFiles={authorizeTaskCreateFiles}
                 onMaterializeResources={materializeTaskCreateResources}
