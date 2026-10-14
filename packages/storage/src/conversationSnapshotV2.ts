@@ -959,18 +959,25 @@ export class ConversationSnapshotV2Repository {
       afterOrder: row.placement.order!,
       beforeOrder: boundaries[index + 1]?.placement.order ?? null,
     }));
-    /** 使用持久顺序索引聚合，详情是否已读不影响分组存在性。 */
+    /** 使用持久顺序索引聚合；临时思考摘要不生成入口，真实操作与持久思考正文仍可按需展开。 */
     const counts = this.db.select<{ id: string; item_count: number }>(
       `SELECT json_extract(boundary.value, '$.id') AS id,
-              COUNT(DISTINCT CASE WHEN EXISTS (SELECT 1 FROM conversation_transcript_aliases AS activity
-                WHERE activity.conversation_id = entry.conversation_id AND activity.entry_id = entry.id AND activity.facet = 'tool_activity') THEN entry.id END) AS item_count
+              COUNT(DISTINCT CASE WHEN alias.facet = 'tool_activity' THEN entry.id END) AS item_count
          FROM json_each(?) AS boundary
          JOIN conversation_transcript_entries AS entry
            ON entry.conversation_id = ? AND entry.turn_id = json_extract(boundary.value, '$.turnId')
           AND entry.display_order > json_extract(boundary.value, '$.afterOrder')
           AND (json_extract(boundary.value, '$.beforeOrder') IS NULL OR entry.display_order < json_extract(boundary.value, '$.beforeOrder'))
-        WHERE entry.removed_revision IS NULL AND (entry.kind = 'tool_activity' OR EXISTS (
-          SELECT 1 FROM conversation_transcript_aliases AS alias WHERE alias.conversation_id = entry.conversation_id AND alias.entry_id = entry.id AND alias.facet = 'reasoning_block'))
+         JOIN conversation_transcript_aliases AS alias
+           ON alias.conversation_id = entry.conversation_id AND alias.entry_id = entry.id
+         LEFT JOIN conversation_process_items AS process
+           ON alias.source_domain = 'process' AND process.conversation_id = alias.conversation_id
+          AND process.segment_id = alias.source_scope AND process.id = alias.source_id
+        WHERE entry.removed_revision IS NULL AND (
+          alias.facet = 'tool_activity' OR (alias.facet = 'reasoning_block' AND process.kind = 'reasoning' AND (
+            process.source_event_id GLOB 'pi:block:*' OR process.protocol_family = 'anthropic_messages'
+            OR CASE WHEN json_valid(process.detail_json) THEN json_extract(process.detail_json, '$.reasoningPresentation') END IN ('process_text', 'details_collapsed')
+          )))
         GROUP BY json_extract(boundary.value, '$.id')`,
       [JSON.stringify(ranges), conversationId],
     );
