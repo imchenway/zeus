@@ -1,3 +1,5 @@
+import { matchesTaskDeadline, isTaskDeadlineFilter, type TaskDeadlineFilter } from '@zeus/shared';
+import './task-deadline.css';
 import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { GearSixIcon as GearSix } from '@phosphor-icons/react/dist/csr/GearSix';
 import { type TaskBoardFilterGroup, type TaskManagementStatusDefinition } from '@zeus/shared';
@@ -143,6 +145,10 @@ export type TaskWorkspaceBulkActionStatus = { kind: 'idle' | 'running' | 'done' 
 export type TaskWorkspaceListState = 'ready' | 'loading' | 'error';
 
 export interface TaskWorkspaceProps {
+  /** 时间筛选、共享时钟及条件修改入口。 */
+  deadlineFilter?: TaskDeadlineFilter;
+  deadlineNow?: number;
+  onDeadlineFilterChange?: (value: TaskDeadlineFilter) => void;
   projectName?: string;
   tasks: TaskRecord[];
   boardTasks?: TaskRecord[];
@@ -233,7 +239,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
   const model = useMemo(
     () =>
       createTaskWorkspaceViewModel({
-        tasks: props.tasks,
+        tasks: props.tasks.filter((task) => matchesTaskDeadline(task, props.deadlineFilter ?? 'all', props.deadlineNow, [props.completedStatusId, props.cancelledStatusId])),
         query: props.searchQuery,
         status: props.statusFilter,
         tag: props.tagFilter,
@@ -255,6 +261,8 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
       }),
     [
       props.tasks,
+      props.deadlineFilter,
+      props.deadlineNow,
       props.searchQuery,
       props.statusFilter,
       props.tagFilter,
@@ -292,6 +300,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
       createdAt: props.copy.createdAtColumnTitle,
       updatedAt: props.copy.updatedAtColumnTitle,
       priority: props.copy.priorityColumnTitle,
+      deadline: props.copy.taskCountPrefix === 'Tasks' ? 'Deadline' : '截止时间',
       project: props.copy.projectColumnTitle,
       template: props.copy.templateColumnTitle,
       description: props.copy.descriptionColumnTitle,
@@ -382,6 +391,20 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
               </button>
             ))}
           </div>
+          <select
+            className="task-deadline-quick-filter"
+            aria-label={isEnglishCopy ? 'Filter by deadline' : '按截止时间筛选'}
+            value={props.deadlineFilter ?? 'all'}
+            onChange={(event) => {
+              if (isTaskDeadlineFilter(event.currentTarget.value)) props.onDeadlineFilterChange?.(event.currentTarget.value);
+            }}
+          >
+            <option value="all">{isEnglishCopy ? 'All deadlines' : '全部截止时间'}</option>
+            <option value="overdue">{isEnglishCopy ? 'Overdue' : '已逾期'}</option>
+            <option value="today">{isEnglishCopy ? 'Due today' : '今天截止'}</option>
+            <option value="next_seven_days">{isEnglishCopy ? 'Next 7 days' : '未来 7 天'}</option>
+            <option value="unset">{isEnglishCopy ? 'No deadline' : '未设截止'}</option>
+          </select>
           <div className="task-table-view-actions" aria-label={isEnglishCopy ? 'Task view actions' : '任务视图动作'}>
             <div className="task-table-page-view-segments" role="group" aria-label={isEnglishCopy ? 'Task view' : '任务视图'}>
               <button className="task-table-view-pill" type="button" aria-pressed={props.pageViewMode === 'list'} onClick={() => props.onPageViewModeChange('list')}>
@@ -540,6 +563,8 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
               loading={Boolean(props.taskBoardLoading)}
               error={props.taskBoardError ?? null}
               statusDefinitions={props.statusDefinitions}
+              terminalStatuses={[props.completedStatusId, props.cancelledStatusId]}
+              now={props.deadlineNow}
               runStatuses={boardRunStatuses}
               branchStatuses={boardBranchStatuses}
               settingsOpen={boardSettingsSection !== null}
@@ -547,12 +572,13 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
               onSettingsOpenChange={(open) => setBoardSettingsSection((current) => (open ? (current ?? 'layout') : null))}
               onSettingsSectionChange={setBoardSettingsSection}
               projectTaskCount={props.tasks.length}
-              externalFiltersActive={Boolean(props.searchQuery.trim() || props.statusFilter || props.tagFilter)}
+              externalFiltersActive={Boolean(props.searchQuery.trim() || props.statusFilter || props.tagFilter || (props.deadlineFilter && props.deadlineFilter !== 'all'))}
               onCreateTask={props.onCreateTask}
               onClearExternalFilters={() => {
                 props.onSearchChange('');
                 props.onStatusFilterChange('');
                 props.onTagFilterChange('');
+                props.onDeadlineFilterChange?.('all');
               }}
               onReload={() => props.onReloadTaskBoard?.()}
               onUpdateSettings={(settings) => {

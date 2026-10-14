@@ -1,3 +1,4 @@
+import { normalizeTaskDeadline, taskDeadlineTimes, type TaskDeadline } from '@zeus/shared';
 import { statSync } from 'node:fs';
 import { type CommandDefinition, isTaskAttachmentField, type TaskAttachmentField, validateCommandDefinitionInput } from '@zeus/shared';
 import { CommandDefinitionRepository, isTaskManagementStatus, isTaskType, type TaskManagementStatus, type TaskType, type ZeusDatabase } from '@zeus/storage';
@@ -44,6 +45,8 @@ export interface PortableProjectRecord {
 }
 
 export interface PortableTaskRecord {
+  /** 可移植的截止日期、时区和提醒配置。 */
+  deadline?: TaskDeadline | null;
   id: string;
   projectId: string;
   title: string;
@@ -116,6 +119,7 @@ export function exportLocalBusinessData(db: ZeusDatabase, exportedAt: string): L
                 task_code,
                 task_sequence,
                 priority,
+                deadline_json,
                 created_from,
                 source_context_json,
                 created_at,
@@ -224,11 +228,15 @@ export function importLocalBusinessData(db: ZeusDatabase, snapshot: LocalDataExp
     );
   }
   for (const task of tasks) {
+    /** 导入先校验，再写入派生时刻，避免本机时区重解释日期。 */
+    const deadline = normalizeTaskDeadline(task.deadline);
+    /** 无截止时间不生成提醒。 */
+    const deadlineTimes = deadline ? taskDeadlineTimes(deadline) : null;
     const taskType = isTaskType(task.taskType) ? task.taskType : 'requirement';
     db.execute(
       `INSERT OR REPLACE INTO tasks (id, project_id, title, task_type, description, defect_current_state, defect_expected_outcome, defect_reproduction_steps,
-        optimization_current_state, optimization_expected_outcome, management_status, status, tags_json, template_id, task_code, task_sequence, priority, created_from, source_context_json, archived, created_at, updated_at, deleted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL)`,
+        optimization_current_state, optimization_expected_outcome, management_status, status, tags_json, template_id, task_code, task_sequence, priority, created_from, source_context_json, archived, created_at, updated_at, deleted_at, deadline_json, deadline_at, reminder_at, reminder_revision)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, ?, ?, 1)`,
       [
         task.id,
         task.projectId,
@@ -251,6 +259,9 @@ export function importLocalBusinessData(db: ZeusDatabase, snapshot: LocalDataExp
         normalizeImportedTaskSourceContextJson(task.sourceContextJson, taskType),
         task.createdAt,
         task.updatedAt,
+        deadline ? JSON.stringify(deadline) : null,
+        deadlineTimes?.dueAt ?? null,
+        deadlineTimes?.remindAt ?? null,
       ],
     );
   }
@@ -377,6 +388,8 @@ export interface PortableProjectDbRow {
 }
 
 export interface PortableTaskDbRow {
+  /** 存储层截止配置。 */
+  deadline_json?: string | null;
   id: string;
   project_id: string;
   title: string;
@@ -455,6 +468,7 @@ export function mapPortableTaskRow(row: PortableTaskDbRow): PortableTaskRecord {
     taskCode: row.task_code ?? undefined,
     taskSequence: row.task_sequence,
     priority: row.priority ?? 'normal',
+    deadline: row.deadline_json ? normalizeTaskDeadline(JSON.parse(row.deadline_json)) : null,
     createdFrom: row.created_from,
     sourceContextJson: row.source_context_json,
     createdAt: row.created_at,
@@ -504,6 +518,12 @@ export function isPortableProjectRecord(value: unknown): value is PortableProjec
 
 export function isPortableTaskRecord(value: unknown): value is PortableTaskRecord {
   const record = value as Partial<PortableTaskRecord>;
+  if (!record || typeof record !== 'object') return false;
+  try {
+    normalizeTaskDeadline(record.deadline);
+  } catch {
+    return false;
+  }
   return (
     typeof record.id === 'string' &&
     typeof record.projectId === 'string' &&

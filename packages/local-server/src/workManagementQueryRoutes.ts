@@ -1,3 +1,4 @@
+import type { TaskDeadlineFilter } from '@zeus/shared';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { sendNativeQueryRouteError } from './nativeQueryRouteError.js';
 import type { ListWorkManagementTasksQuery, WorkManagementQueryApplication } from './workManagementQueryApplication.js';
@@ -22,7 +23,7 @@ export function registerWorkManagementQueryRoutes(options: { server: FastifyInst
 
   options.server.get('/api/tasks/:taskId/events', async (request: FastifyRequest<{ Params: { taskId: string } }>) => options.application.listTaskEvents(request.params.taskId));
 
-  options.server.get('/api/task-summaries', async (request: FastifyRequest<{ Querystring: { projectId?: string; cursor?: string; limit?: string; query?: string } }>, reply) => {
+  options.server.get('/api/task-summaries', async (request: FastifyRequest<{ Querystring: { projectId?: string; cursor?: string; limit?: string; query?: string; deadlineFilter?: TaskDeadlineFilter } }>, reply) => {
     try {
       return options.application.listTaskSummaries(request.query);
     } catch (error) {

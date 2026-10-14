@@ -1,3 +1,4 @@
+import { registerTaskReminderService } from './taskReminderService.js';
 import { repairTaskAttachmentReferences } from './taskAttachmentLifecycle.js';
 import { resolveContextCapacityPolicy } from './contextCapacitySupport.js';
 import { resolveArchivedTaskManagementStatus, type ArchivedProjectTaskStatuses } from './taskManagementStatusMigration.js';
@@ -1144,7 +1145,14 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   });
   registerProjectQueryRoutes({ server, application: projectQueries });
 
-  const workManagementQueries = new WorkManagementQueryApplication({ projects, tasks, taskBoards, taskEvents, taskTemplates });
+  /** 查询和提醒共用项目配置中的完成、取消角色。 */
+  const deadlineTerminalStatuses = (projectId: string): string[] => {
+    /** 配置可能在运行中修改，每次读取当前角色。 */
+    const roles = resolveTaskManagementStatusConfigForProject(projectId).roles;
+    return [roles.completedStatusId, roles.cancelledStatusId];
+  };
+  const workManagementQueries = new WorkManagementQueryApplication({ projects, tasks, taskBoards, taskEvents, taskTemplates, terminalStatuses: deadlineTerminalStatuses });
+  registerTaskReminderService({ server, db, terminalStatuses: deadlineTerminalStatuses, readOnly: readOnlyValidation, publish: publishRealtimeEvent, now });
   registerWorkManagementQueryRoutes({ server, application: workManagementQueries });
 
   const taskStageApplication = new TaskStageApplication({

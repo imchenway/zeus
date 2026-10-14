@@ -1,3 +1,5 @@
+import { normalizeTaskDeadline, type TaskDeadline } from '@zeus/shared';
+import { TaskDeadlineField } from '../../task/TaskDeadlineField.js';
 import { normalizeInputSuggestionSettings, temporaryWorkspaceId } from '@zeus/shared';
 import { usePresenceOpen } from '../../ui/MotionPresence.js';
 import { retainInputFocus } from '../../ui/retainInputFocus.js';
@@ -156,6 +158,8 @@ export type ControlBusyProps = { 'aria-busy'?: true; 'data-loading'?: 'true' };
 export type TaskCreateAttachment = TaskAttachmentView;
 export type TaskCreateAttachmentCandidate = TaskAttachmentCandidate;
 export type TaskCreateFormState = {
+  /** 独立的截止配置，不从父任务继承。 */
+  deadline?: TaskDeadline | null;
   /** 草稿提交目标，与当前浏览的项目独立。 */
   projectId: string;
   /** 复制草稿显示专用标题；保存仍走普通创建命令。 */
@@ -179,6 +183,8 @@ export type TaskCreateTextField = Extract<
 >;
 export type TaskCreateAttachmentField = Exclude<TaskCreateTextField, 'title'>;
 export type TaskCreateDraft = {
+  /** 独立的截止配置，不从父任务继承。 */
+  deadline?: TaskDeadline | null;
   parentTaskId: string | null;
   title: string;
   taskType: TaskType;
@@ -1177,6 +1183,7 @@ export function buildTaskCreateInitialForm(_appLanguage: AppLanguage): TaskCreat
     optimizationCurrentState: '',
     optimizationExpectedOutcome: '',
     priority: 'p3',
+    deadline: null,
     tags: '',
     attachments: [],
   };
@@ -1188,6 +1195,13 @@ export function normalizeTaskCreateDraft(form: TaskCreateFormState, titleRequire
   const title = form.title.trim() || (form.taskType === 'task' ? (form.description.trim().split(/\r?\n/u)[0] || form.attachments[0]?.name || '').slice(0, 120) : '');
   if (!title) return { error: titleRequiredMessage };
   if (!form.taskType) return { error: typeRequiredMessage };
+  /** 创建时拒绝无效日期，错误留在现有表单中展示。 */
+  let deadline: TaskDeadline | null;
+  try {
+    deadline = normalizeTaskDeadline(form.deadline);
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : '截止时间无效。' };
+  }
   const seenTags = new Set<string>();
   const tags = form.tags
     .split(',')
@@ -1209,6 +1223,7 @@ export function normalizeTaskCreateDraft(form: TaskCreateFormState, titleRequire
       optimizationCurrentState: form.optimizationCurrentState.trim(),
       optimizationExpectedOutcome: form.optimizationExpectedOutcome.trim(),
       priority: form.priority,
+      deadline,
       tags,
       // 任务持久化只保存 Zeus 托管后的本机路径与元信息；data URL 预览只留在本次 UI 状态，避免把大图写入任务 JSON。
       attachments: form.attachments.map(toPersistedTaskAttachment),
@@ -1503,6 +1518,8 @@ export function TaskCreateModal(props: {
   onFormChange: (field: TaskCreateTextField, value: string) => void;
   onTaskTypeChange: (taskType: TaskType | '') => void;
   onPriorityChange: (priority: TaskPriority) => void;
+  /** 日期、时间和提醒作为一份草稿提交。 */
+  onDeadlineChange: (deadline: TaskDeadline | null) => void;
   onParentChange: (parentTaskId: string | null) => void;
   onAuthorizeFiles: (files: File[], source: 'paste' | 'drop') => Promise<TaskResourceAuthorizationResult>;
   onMaterializeResources: (resources: TaskResourcePayload[]) => Promise<TaskCreateAttachmentCandidate[]>;
@@ -2003,6 +2020,10 @@ export function TaskCreateModal(props: {
                     disabled={interactionBusy}
                   />
                 </div>
+              </div>
+              <div className="task-create-field">
+                <span>{props.copy.taskCountPrefix === 'Tasks' ? 'Deadline' : '截止时间'}</span>
+                <TaskDeadlineField value={props.form.deadline ?? null} onChange={props.onDeadlineChange} disabled={interactionBusy} language={props.copy.taskCountPrefix === 'Tasks' ? 'en-US' : 'zh-CN'} />
               </div>
               {props.form.taskType === 'task' || props.form.taskType === 'requirement' ? (
                 <div className="task-create-field task-create-description-field">

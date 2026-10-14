@@ -1,0 +1,89 @@
+/* 常态只占一行，右侧图标单独进入提醒配置。 */
+.task-deadline-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-inline-size: 0;
+}
+.macos-ai-app .task-deadline-field > .zeus-button {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+.macos-ai-app .task-deadline-field > .zeus-button.task-deadline-value {
+  display: block;
+  flex: 1;
+  min-inline-size: 0;
+  justify-content: flex-start;
+  padding-inline: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: start;
+  font-weight: 400;
+}
+.macos-ai-app .task-deadline-reminder {
+  flex: 0 0 32px;
+  inline-size: 32px;
+  block-size: 32px;
+  padding: 0;
+  color: var(--zeus-product-muted);
+}
+.task-deadline-reminder svg {
+  inline-size: 16px;
+  block-size: 16px;
+}
+/* 配置页沿用统一表单弹窗，窄窗口中日期和时间可以换行。 */
+.macos-ai-app .task-deadline-dialog {
+  inline-size: min(420px, 100%);
+}
+.task-deadline-date-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.task-deadline-date-fields > label {
+  flex: 1 1 140px;
+}
+.task-deadline-date-fields input {
+  min-inline-size: 0;
+}
+.macos-ai-app .task-deadline-clear {
+  justify-self: start;
+}
+.macos-ai-app .task-deadline-reminder-options > label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-block-size: 44px;
+  cursor: pointer;
+}
+.macos-ai-app .task-deadline-reminder-options input[type='radio'] {
+  appearance: auto;
+  flex: 0 0 16px;
+  inline-size: 16px;
+  block-size: 16px;
+  min-block-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: none;
+}
+.task-deadline-error {
+  margin: 0;
+  color: var(--color-danger, #c94545);
+}
+.task-deadline-overdue {
+  color: var(--color-danger, #c94545);
+}
+.task-deadline-quick-filter {
+  max-width: 160px;
+  min-width: 90px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--border-color, #8885);
+  border-radius: 5px;
+  padding: 5px;
+}

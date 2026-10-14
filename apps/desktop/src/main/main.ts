@@ -4096,10 +4096,36 @@ function startSystemNotificationBridge(config: { baseUrl: string; apiToken: stri
             };
           }
         ).WebSocket(url, protocol),
+      /** 持久队列补读不受 WebSocket 连接时序影响。 */
+      loadTaskReminders: async () => {
+        /** 本地请求带上已有认证，超时后留到下次重试。 */
+        const response = await fetch(`${config.baseUrl}/api/task-reminders/system-pending`, { headers: { authorization: `Bearer ${config.apiToken}` }, signal: AbortSignal.timeout(10000) });
+        if (!response.ok) throw new Error(`读取任务提醒失败：${response.status}`);
+        return response.json() as Promise<{ ids: string[]; first: import('@zeus/shared').TaskReminder | null }>;
+      },
+      /** 精确确认已处理的身份，应用内未读保持独立。 */
+      acknowledgeTaskReminders: async (ids) => {
+        /** 已确认身份可安全重试，不批量确认未来提醒。 */
+        const response = await fetch(`${config.baseUrl}/api/task-reminders/acknowledge`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${config.apiToken}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ ids, system: true }),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!response.ok) throw new Error(`确认系统提醒失败：${response.status}`);
+      },
       showNotification: (payload) => {
         // 系统通知只展示真实事件摘要，不包含 token、证书、命令明文等敏感数据。
         const notification = new Notification({ title: payload.title, body: payload.body });
-        if (payload.projectId && payload.conversationId) {
+        if (payload.taskReminders) {
+          notification.on('click', () => {
+            void requestMainWindow().then(() => {
+              if (!mainWindow || mainWindow.isDestroyed()) return;
+              revealMainWindow(mainWindow);
+              mainWindow.webContents.send('zeus:task-notification:open', { projectId: payload.projectId, taskId: payload.taskId, reminderId: payload.reminderId });
+            });
+          });
+        } else if (payload.projectId && payload.conversationId) {
           notification.on('click', () => {
             void requestMainWindow().then(() => {
               if (!mainWindow || mainWindow.isDestroyed()) return;

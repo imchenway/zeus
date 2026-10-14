@@ -161,6 +161,8 @@ declare global {
       onProjectGitDiffAppearance: (listener: (appearance: 'light' | 'dark' | 'system') => void) => () => void;
       onTaskGitDeliveryChanged: (listener: (taskId: string) => void) => () => void;
       onOpenTaskGitDeliveryConversation: (listener: (input: { taskId: string; conversationId: string }) => void) => () => void;
+      /** 系统单条提醒打开任务，汇总提醒打开通知分类。 */
+      onOpenTaskNotification?: (listener: (input: { projectId?: string; taskId?: string; reminderId?: string }) => void) => () => void;
       onOpenConversationNotification: (listener: (input: { projectId: string; conversationId: string }) => void) => () => void;
       getRequestingWindowForeground: () => Promise<{ foreground: boolean }>;
       onRequestingWindowForegroundChanged: (listener: (foreground: boolean) => void) => () => void;

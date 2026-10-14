@@ -167,6 +167,7 @@ async function renderWithClient(
                 optimizationExpectedOutcome: draft.optimizationExpectedOutcome,
                 tags: draft.tags,
                 priority: draft.priority,
+                deadline: draft.deadline,
                 sourceContext: {
                   path: snapshot.projects.find((project) => project.id === projectId)?.localPath ?? snapshot.projects[0]?.localPath ?? '',
                   attachments: draft.attachments,

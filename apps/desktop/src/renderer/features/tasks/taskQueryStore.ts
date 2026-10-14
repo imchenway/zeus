@@ -1,3 +1,4 @@
+import type { TaskDeadlineFilter } from '@zeus/shared';
 import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import type { TaskBoardViewSnapshot } from '@zeus/shared';
 import type { TaskRecord } from '../../apiClient.js';
@@ -6,6 +7,8 @@ import { errorMessage, ExternalStore } from '../../externalStore.js';
 
 /** 项目分页分别记录未加载、加载中、已就绪与失败，旧页不冒充空列表。 */
 export interface TaskPageState {
+  /** 页游标只属于当前时间条件。 */
+  deadlineFilter?: TaskDeadlineFilter;
   query: string;
   itemIds: string[];
   state: 'loading' | 'ready' | 'error';
@@ -70,12 +73,13 @@ export class TaskQueryStore extends ExternalStore<TaskQuerySnapshot> {
   }
 
   /** 同项目只发一个请求，结果按项目身份归档，切换后不会覆盖新项目。 */
-  async loadPage(projectId: string, reset = false, query = ''): Promise<void> {
+  async loadPage(projectId: string, reset = false, query = '', deadlineFilter: TaskDeadlineFilter = 'all'): Promise<void> {
     const previous = this.snapshot.pages[projectId];
-    if (previous?.query === query && (previous.state === 'loading' || (!reset && previous.loaded && !previous.hasMore))) return;
-    reset ||= previous?.query !== query;
+    if (previous?.query === query && (previous.deadlineFilter ?? 'all') === deadlineFilter && (previous.state === 'loading' || (!reset && previous.loaded && !previous.hasMore))) return;
+    reset ||= previous?.query !== query || (previous?.deadlineFilter ?? 'all') !== deadlineFilter;
     const page: TaskPageState = {
       query,
+      deadlineFilter,
       itemIds: reset ? [] : (previous?.itemIds ?? []),
       state: 'loading',
       loaded: reset ? false : (previous?.loaded ?? false),
@@ -85,7 +89,7 @@ export class TaskQueryStore extends ExternalStore<TaskQuerySnapshot> {
     };
     this.publish({ ...this.snapshot, pages: { ...this.snapshot.pages, [projectId]: page } });
     try {
-      const result = await this.requireClient().loadTaskSummaries({ projectId, query, ...(page.nextCursor ? { cursor: page.nextCursor } : {}) });
+      const result = await this.requireClient().loadTaskSummaries({ projectId, query, deadlineFilter, ...(page.nextCursor ? { cursor: page.nextCursor } : {}) });
       if (this.snapshot.pages[projectId] !== page) return;
       if (result.items.some((item) => item.projectId !== projectId) || (result.hasMore && (!result.nextCursor || result.nextCursor === page.nextCursor))) throw new Error('任务分页返回了无效身份或重复游标。');
       this.mergeSummaries(result.items);
@@ -93,7 +97,7 @@ export class TaskQueryStore extends ExternalStore<TaskQuerySnapshot> {
         ...this.snapshot,
         pages: {
           ...this.snapshot.pages,
-          [projectId]: { query, itemIds: [...new Set([...page.itemIds, ...result.items.map((item) => item.id)])], state: 'ready', loaded: true, nextCursor: result.nextCursor, hasMore: result.hasMore, error: null },
+          [projectId]: { query, deadlineFilter, itemIds: [...new Set([...page.itemIds, ...result.items.map((item) => item.id)])], state: 'ready', loaded: true, nextCursor: result.nextCursor, hasMore: result.hasMore, error: null },
         },
       });
     } catch (error) {

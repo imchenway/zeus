@@ -499,6 +499,7 @@ export class WorkManagementTaskOperations<TCleanup, TConversation extends Reopen
       optimizationCurrentState: input.optimizationCurrentState,
       optimizationExpectedOutcome: input.optimizationExpectedOutcome,
       priority: input.priority,
+      deadline: input.deadline,
       tags: input.tags,
       attachments,
       sourceContext,

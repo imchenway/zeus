@@ -206,6 +206,13 @@ contextBridge.exposeInMainWorld('zeus', {
     ipcRenderer.on('zeus:task-git-delivery:open-conversation', handler);
     return () => ipcRenderer.removeListener('zeus:task-git-delivery:open-conversation', handler);
   },
+  /** 系统提醒只携带任务身份，Renderer 沿用现有导航和草稿保护。 */
+  onOpenTaskNotification: (listener: (input: unknown) => void) => {
+    /** 精确频道不向页面暴露通用 IPC 能力。 */
+    const handler = (_event: unknown, input: unknown) => listener(input);
+    ipcRenderer.on('zeus:task-notification:open', handler);
+    return () => ipcRenderer.removeListener('zeus:task-notification:open', handler);
+  },
   onOpenConversationNotification: (listener: (input: unknown) => void) => {
     const handler = (_event: unknown, input: unknown) => listener(input);
     ipcRenderer.on('zeus:conversation-notification:open', handler);

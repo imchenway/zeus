@@ -1,3 +1,4 @@
+import type { TaskDeadline } from '@zeus/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { CommandActor, TaskAttachmentReference, TaskBoardMoveRequest } from '@zeus/shared';
 import type { CommandDeliveryOutcome, TaskPriority, TaskType, ZeusTaskRecord } from '@zeus/storage';
@@ -28,6 +29,8 @@ export type TaskRuntimeCommandAction = 'run' | 'pause' | 'continue' | 'cancel';
 export type EmptyTaskRuntimeCommandInput = Record<string, never>;
 
 export interface UpdateTaskContentCommandInput {
+  /** 截止配置；显式空值清除截止和提醒。 */
+  deadline?: TaskDeadline | null;
   /** 用户选择的目标项目；省略时保持当前归属。 */
   projectId?: string;
   expectedUpdatedAt?: string;

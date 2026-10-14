@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useSyncExternalStore } from 'react';
-import type { TaskBoardViewSnapshot } from '@zeus/shared';
+import type { TaskDeadlineFilter, TaskBoardViewSnapshot } from '@zeus/shared';
 import type { TaskRecord } from '../../apiClient.js';
 import type { TaskApiClient } from './taskApiClient.js';
 import { TaskQueryStore } from './taskQueryStore.js';
@@ -15,7 +15,7 @@ export function useTaskFeatureController(input: { client: TaskApiClient | null; 
   const upsert = useCallback((task: TaskRecord) => store.upsert(task), [store]);
   const remove = useCallback((taskId: string) => store.remove(taskId), [store]);
   /** 分页与补充会话入口共用同一任务集合。 */
-  const loadPage = useCallback((projectId: string, reset = false, query = '') => store.loadPage(projectId, reset, query), [store]);
+  const loadPage = useCallback((projectId: string, reset = false, query = '', deadlineFilter: TaskDeadlineFilter = 'all') => store.loadPage(projectId, reset, query, deadlineFilter), [store]);
   const mergeSummaries = useCallback((items: readonly TaskRecord[]) => store.mergeSummaries(items), [store]);
   return { loadPage, mergeSummaries, snapshot, replace, load, loadOne, loadBoard, setBoard, upsert, remove };
 }

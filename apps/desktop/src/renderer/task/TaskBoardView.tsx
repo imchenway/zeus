@@ -1,3 +1,4 @@
+import { formatTaskDeadline, matchesTaskDeadline } from '@zeus/shared';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { Collapsible } from '../ui/Collapsible.js';
 import {
@@ -56,6 +57,9 @@ import { formatTaskType, type TaskBranchStatus } from './taskWorkspaceModel.js';
 import { taskBranchStatusTone, taskPriorityTone, taskRunStatusTone, taskTypeTone, type TaskSemanticTone } from './TaskRunStatusChip.js';
 
 export interface TaskBoardViewProps {
+  /** 当前时刻与项目的终态配置。 */
+  now?: number;
+  terminalStatuses?: readonly string[];
   projectId: string;
   language: 'zh-CN' | 'en-US';
   tasks: TaskRecord[];
@@ -138,6 +142,7 @@ const cardPropertyLabels: Record<TaskBoardCardProperty, [string, string]> = {
   source: ['任务来源', 'Source'],
   createdAt: ['创建时间', 'Created'],
   updatedAt: ['更新时间', 'Updated'],
+  deadline: ['截止时间', 'Deadline'],
 };
 
 const filterOperators: Array<{ value: TaskBoardFilterOperator; label: [string, string] }> = [
@@ -161,6 +166,7 @@ function transformStyle(transform: { x: number; y: number; scaleX?: number; scal
 }
 
 function taskBoardPropertyLabel(property: TaskBoardCardProperty, task: TaskRecord, context: TaskBoardProjectionContext): string {
+  if (property === 'deadline') return `${formatTaskDeadline(task.deadline)}${matchesTaskDeadline(task, 'overdue', context.now, context.terminalStatuses) ? (context.language === 'zh-CN' ? ' · 已逾期' : ' · Overdue') : ''}`;
   const values = taskBoardCardPropertyValues(task, property, context);
   if (property === 'taskType') return formatTaskType(task.taskType, context.language);
   if (property === 'managementStatus') return new Map(taskBoardGroupOptions(context, 'managementStatus').map((option) => [option.id, option.label])).get(values[0] ?? '') ?? values[0] ?? '—';
@@ -184,6 +190,7 @@ function taskBoardPropertyAccent(property: TaskBoardCardProperty, task: TaskReco
     const color = context.statusDefinitions.find((status) => status.id === (task.managementStatus ?? 'todo'))?.color;
     return { tone: 'neutral', color };
   }
+  if (property === 'deadline' && matchesTaskDeadline(task, 'overdue', context.now, context.terminalStatuses)) return { tone: 'neutral', color: '#c94545' };
   if (property === 'priority') return { tone: taskPriorityTone(task.priority ?? null) };
   if (property === 'taskType') return { tone: taskTypeTone(task.taskType) };
   if (property === 'runStatus') return { tone: taskRunStatusTone(context.runStatuses[task.id] ?? 'not_started') };
@@ -1112,6 +1119,8 @@ export function TaskBoardView(props: TaskBoardViewProps) {
       settings
         ? {
             language: props.language,
+            now: props.now,
+            terminalStatuses: props.terminalStatuses,
             tasks: localTasks,
             settings,
             positions: snapshot?.positions ?? [],
@@ -1120,7 +1129,7 @@ export function TaskBoardView(props: TaskBoardViewProps) {
             branchStatuses: props.branchStatuses,
           }
         : null,
-    [localTasks, props.branchStatuses, props.language, props.runStatuses, props.statusDefinitions, settings, snapshot?.positions],
+    [props.now, props.terminalStatuses, localTasks, props.branchStatuses, props.language, props.runStatuses, props.statusDefinitions, settings, snapshot?.positions],
   );
   const groups = useMemo(() => (context ? buildTaskBoardGroups(context) : []), [context]);
   const groupOptions = useMemo(() => (context ? taskBoardGroupOptions(context, context.settings.groupBy) : []), [context]);

@@ -91,6 +91,7 @@ export class WorkManagementCoreOperations {
       sourceContext,
       tags: input.tags,
       priority: input.priority,
+      deadline: input.deadline,
       allowCodeChanges: input.allowCodeChanges,
       allowTests: input.allowTests,
       allowGitCommit: input.allowGitCommit,
