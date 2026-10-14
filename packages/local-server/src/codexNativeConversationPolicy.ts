@@ -8,6 +8,7 @@ import { commandEnvelopeSchemaGeneration, parseCommandEnvelope, type CommandEnve
 import { currentDatabasePerformanceTraceId } from '@zeus/storage';
 import type {
   CodexMcpServerStartupState,
+  CommandDeliveryRepository,
   ConversationCollaborationMode,
   ConversationItemPhase,
   ConversationItemType,
@@ -317,9 +318,24 @@ export function isSteeringSubmission(submission: Pick<ZeusConversationSubmission
   return Boolean(submission.targetProviderTurnId);
 }
 
-/** 目标轮次身份不是 steer 消息的送达回执；仅接受 Provider 精确用户消息或 turn/start 的耐久接纳事实。 */
-export function submissionDeliveryConfirmedForTurn(submission: ZeusConversationSubmissionRecord, turn: ZeusConversationTurnRecord, exactProviderMessage: boolean): boolean {
-  return exactProviderMessage || (submission.id === turn.clientSubmissionId && submission.submissionOutcome === 'accepted' && Boolean(submission.acceptedAt));
+/** 运行态与终态共用精确送达证据；内部续接没有用户气泡，须核对同一提交和轮次的接纳回执。 */
+export function submissionDeliveryConfirmedForTurn(submission: ZeusConversationSubmissionRecord, turn: ZeusConversationTurnRecord, exactProviderMessage: boolean, commandDeliveries: Pick<CommandDeliveryRepository, 'getByScope'>): boolean {
+  if (exactProviderMessage) return true;
+  if (submission.id !== turn.clientSubmissionId) return false;
+  if (submission.submissionOutcome === 'accepted' && submission.acceptedAt) return true;
+  return Boolean(
+    turn.providerTurnId &&
+    commandDeliveries
+      .getByScope('submission', submission.id)
+      ?.attempts.some(
+        (attempt) =>
+          attempt.destinationKind === 'provider_turn' &&
+          attempt.outcome === 'accepted' &&
+          attempt.receipt?.providerId === 'codex' &&
+          attempt.receipt.nativeSessionId === turn.providerThreadId &&
+          attempt.receipt.nativeTurnId === turn.providerTurnId,
+      ),
+  );
 }
 
 /** 失败标记可以留在线程上；只有轮次均已结束时，才允许用户发起下一轮。 */

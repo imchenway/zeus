@@ -31,6 +31,7 @@ import {
   requireString,
   snapshotConfirmsIdleProviderThread,
   snapshotConfirmsSafeResumeBoundary,
+  submissionDeliveryConfirmedForTurn,
 } from './codexNativeConversationPolicy.js';
 import { appendProviderSyncAudit, type ProviderSyncAuditOutcome } from './providerSyncAudit.js';
 import { sanitizeConversationItemPayload } from './conversationResources.js';
@@ -971,7 +972,7 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       if (classification === 'active') {
         const pending = options.requests.listByConversation(conversation.id).find((request) => request.turnId === turn.id && request.status === 'pending' && request.transportGenerationId === generationId);
         if (pending) options.turns.upsert({ ...turn, status: 'waiting', updatedAt: timestamp });
-        if (exactDeliveryConfirmed || initialTurnAcceptanceConfirmed) {
+        if (submissionDeliveryConfirmedForTurn(submission, turn, exactDeliveryConfirmed, options.commandDeliveries)) {
           options.submissions.updateStatus(submission.id, 'active', { providerTurnId });
         } else {
           markSubmissionRecoveryRequired(submission, coordinatorError('ZEUS_NATIVE_SUBMISSION_DELIVERY_UNCONFIRMED', 'The active provider turn does not contain exact evidence that this user message was received.'));
