@@ -518,6 +518,8 @@ export interface ConversationResourcePageItem {
   previewKind: string | null;
   iconKind: string | null;
   attachmentRef: string | null;
+  /** 原正文引用用于准确挂接图片，不暴露受管归档位置。 */
+  sourceReference?: string | null;
   taskPushAttachmentKey: string | null;
   origin: string | null;
   delivery: 'assistant' | null;
@@ -1572,6 +1574,8 @@ export class ConversationSnapshotV2Repository {
       preview_kind: string | null;
       icon_kind: string | null;
       attachment_ref: string | null;
+      /** 原始 Markdown 引用由资源登记时持久保存。 */
+      source_reference: string | null;
       /** 仅用于恢复图片身份，不进入资源页响应。 */
       target_json: string | null;
       /** 旧归档的原始引用由对应 Provider 正文确认，不按文件名猜测。 */
@@ -1601,6 +1605,7 @@ export class ConversationSnapshotV2Repository {
               CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.previewKind') AS TEXT), 1, 64) ELSE NULL END AS preview_kind,
               CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.iconKind') AS TEXT), 1, 64) ELSE NULL END AS icon_kind,
               CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.attachmentRef') AS TEXT), 1, 512) ELSE NULL END AS attachment_ref,
+              CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.sourceReference') AS TEXT), 1, 8192) ELSE NULL END AS source_reference,
               CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.taskPushAttachmentKey') AS TEXT), 1, 512) ELSE NULL END AS task_push_attachment_key,
               CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.origin') AS TEXT), 1, 128) ELSE NULL END AS origin,
               CASE WHEN json_valid(display_json) THEN substr(CAST(json_extract(display_json, '$.delivery') AS TEXT), 1, 32) ELSE NULL END AS delivery,
@@ -1632,6 +1637,7 @@ export class ConversationSnapshotV2Repository {
       previewKind: row.preview_kind,
       iconKind: row.icon_kind,
       attachmentRef: restoredAssistantImageAttachmentRef(row),
+      sourceReference: row.source_reference,
       taskPushAttachmentKey: row.task_push_attachment_key,
       origin: row.origin,
       delivery: row.delivery === 'assistant' ? ('assistant' as const) : null,

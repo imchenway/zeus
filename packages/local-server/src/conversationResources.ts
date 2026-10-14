@@ -1,4 +1,4 @@
-import { classifyAssistantMessage, conversationFileLocationFromReference } from '@zeus/shared';
+import { classifyAssistantMessage, conversationFileLocationFromReference, conversationMarkdownReferences } from '@zeus/shared';
 import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, closeSync, constants as fsConstants, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -43,7 +43,10 @@ interface AttachmentResourceCandidate extends ResourceCandidateBase {
   previewKind: 'image' | 'document' | 'none';
   iconKind: ConversationFileIconKind;
   taskPushAttachmentKey?: string;
-  origin?: 'assistant_markdown_image';
+  origin?: 'assistant_markdown_image' | 'assistant_generated_image';
+  /** 原正文引用用于准确匹配，归档请求仅保存在服务端授权数据中。 */
+  sourceReference?: string;
+  imageArchive?: AssistantImageArchiveRequest;
 }
 
 type ResourceCandidate = FileResourceCandidate | WebsiteResourceCandidate | AttachmentResourceCandidate;
@@ -84,7 +87,6 @@ export interface ConversationFileOpenGrant {
   intent: ConversationResourceOpenIntent;
 }
 
-const markdownLinkPattern = /(!?)\[([^\]\n]+)\]\(([^)\n]+)\)/gu;
 const maximumResourceUrlLength = 8_192;
 const maximumResourcesPerItem = 128;
 const maximumArchivedAssistantImageBytes = 16 * 1_024 * 1_024;
@@ -92,9 +94,25 @@ const maximumArchivedAssistantImageBatchBytes = 64 * 1_024 * 1_024;
 
 /** 两条执行链共用资源识别、授权及落盘，实时事件与重新打开会话读取同一份资源。 */
 export function syncConversationResources(input: NormalizeConversationResourcesInput, resources: ConversationResourceRepository): ConversationResource[] {
-  /** Provider 的后续事件可能只带状态而省略资源字段；空投影不能删除已经展示的持久资源。 */
-  const normalized = normalizeConversationResources(input);
-  return (normalized.length > 0 ? resources.replaceForItem(input.item.id, normalized, input.now) : resources.listByItem(input.item.id)).map(toConversationResource).filter((resource): resource is ConversationResource => resource !== null);
+  /** 状态增量和局部归档失败不能删除同一消息已经登记的其他资源。 */
+  const previous = resources.listByItem(input.item.id);
+  /** 附件归档路径和事件内序号会变化；已有附件身份与首次位置继续沿用。 */
+  const identity = (resource: Pick<ZeusConversationResourceRecord, 'kind' | 'presentation' | 'displayJson' | 'canonicalTargetDigest'>) =>
+    `${resource.presentation}:${resource.kind}:${resource.kind === 'attachment' ? (stringValue(parseJsonRecord(resource.displayJson).attachmentRef) ?? resource.canonicalTargetDigest) : resource.canonicalTargetDigest}`;
+  const previousByIdentity = new Map(previous.map((resource) => [identity(resource), resource]));
+  const normalized = normalizeConversationResources(input).map((resource) => {
+    const before = previousByIdentity.get(identity(resource));
+    return before ? { ...resource, id: before.id, sourceIndex: before.sourceIndex } : resource;
+  });
+  /** 内容相同时不重写位置、分页时钟或既有归档。 */
+  const previousById = new Map(previous.map((resource) => [resource.id, resource]));
+  const changed = normalized.some((resource) => {
+    const before = previousById.get(resource.id);
+    return !before || before.displayJson !== resource.displayJson || before.targetJson !== resource.targetJson || before.authorityJson !== resource.authorityJson;
+  });
+  const incomingIds = new Set(normalized.map((resource) => resource.id));
+  const merged = [...previous.filter((resource) => !incomingIds.has(resource.id)), ...normalized];
+  return (changed ? resources.replaceForItem(input.item.id, merged, input.now) : previous).map(toConversationResource).filter((resource): resource is ConversationResource => resource !== null);
 }
 
 export function normalizeConversationResources(input: NormalizeConversationResourcesInput): Array<Omit<ZeusConversationResourceRecord, 'createdAt' | 'updatedAt'>> {
@@ -102,8 +120,7 @@ export function normalizeConversationResources(input: NormalizeConversationResou
   const assistantImageArchiveBudget = { remainingBytes: maximumArchivedAssistantImageBatchBytes };
   const assistantImageSourceRoots = [input.projectRoot, input.registeredProjectRoot, ...input.trustedAttachmentRoots, input.generatedImageRoot, input.artifactsDirectory, tmpdir(), '/private/tmp']
     .filter((root): root is string => Boolean(root))
-    .map(safeRealpath)
-    .filter((root): root is string => Boolean(root));
+    .map((root) => safeRealpath(root) ?? resolve(root));
   let sourceIndex = 0;
 
   const generatedImages = normalizeGeneratedImageResources({
@@ -113,7 +130,21 @@ export function normalizeConversationResources(input: NormalizeConversationResou
     generatedImageRoot: input.generatedImageRoot,
   });
   for (const generatedImage of generatedImages) {
-    candidates.push(generatedImage);
+    /** 模型明确交付的生成图也必须进入受管归档，不能依赖 Provider 临时目录。 */
+    const archived = normalizeArchivedAssistantImage({
+      sourceIndex,
+      label: generatedImage.displayName,
+      href: generatedImage.absolutePath,
+      conversationId: input.conversationId,
+      item: input.item,
+      archiveRoot: input.assistantImageArchiveRoot ?? input.trustedAttachmentRoots.find((root) => basename(root) === 'conversation-attachments'),
+      projectRoot: input.projectRoot,
+      sourceRoots: [generatedImage.allowedRoot],
+      repositoryRoot: null,
+      budget: assistantImageArchiveBudget,
+      generated: true,
+    });
+    candidates.push(archived ? { ...archived, presentation: generatedImage.presentation, delivery: generatedImage.delivery, origin: 'assistant_generated_image' } : generatedImage);
     sourceIndex += 1;
   }
 
@@ -130,18 +161,20 @@ export function normalizeConversationResources(input: NormalizeConversationResou
     sourceIndex += 1;
   }
 
-  for (const link of markdownLinks(input.text)) {
+  for (const link of conversationMarkdownReferences(input.text)) {
     const linkSourceIndex = sourceIndex++;
     const candidate =
       (link.image
-        ? normalizeArchivedAssistantMarkdownImage({
+        ? normalizeArchivedAssistantImage({
             sourceIndex: linkSourceIndex,
             label: link.label,
             href: link.href,
             conversationId: input.conversationId,
             item: input.item,
             archiveRoot: input.assistantImageArchiveRoot ?? input.trustedAttachmentRoots.find((root) => basename(root) === 'conversation-attachments'),
+            projectRoot: input.projectRoot,
             sourceRoots: assistantImageSourceRoots,
+            repositoryRoot: input.registeredProjectRoot ?? input.projectRoot,
             budget: assistantImageArchiveBudget,
           })
         : null) ??
@@ -259,76 +292,147 @@ function normalizeViewedImageResource(input: { sourceIndex: number; item: ZeusCo
 }
 
 /**
- * 助手最终答复引用的本地图片不能继续依赖 /tmp、任务 worktree 或 Provider 临时目录。
+ * 助手明确交付的本地图片不能继续依赖 /tmp、任务 worktree 或 Provider 临时目录。
  * 资源投影完成时把图片复制进 Zeus 自管目录；目标身份由会话、item 与原始引用共同决定，
  * 后续即使来源已清理，也能从同一稳定位置恢复，而不会在重复水合时删除已归档图片。
  */
-function normalizeArchivedAssistantMarkdownImage(input: {
+/** 可重试的归档请求持久保存在资源授权记录中，不依赖临时内存或原消息重放。 */
+interface AssistantImageArchiveRequest {
+  /** 原图真实来源；无法解析的协议保持空值并在读取时给出明确错误。 */
+  sourcePath: string | null;
+  /** 冻结创建该消息时已有的来源授权，不由浏览器提交路径扩权。 */
+  sourceRoots: readonly string[];
+  /** 额外工作树必须属于此注册仓库。 */
+  repositoryRoot: string | null;
+  /** 预期格式来自原引用，读取仍须核对文件实际内容。 */
+  mimeType: string | null;
+}
+
+/** 固定图片身份并保留归档请求；首次复制失败也返回登记内容，预览可重试同一请求。 */
+function normalizeArchivedAssistantImage(input: {
   sourceIndex: number;
   label: string;
   href: string;
   conversationId: string;
   item: ZeusConversationItemRecord;
   archiveRoot?: string;
+  projectRoot: string;
   sourceRoots: readonly string[];
+  repositoryRoot: string | null;
   budget: { remainingBytes: number };
+  /** 仅用于已通过生成图来源校验的明确交付，不改变原始消息身份。 */
+  generated?: boolean;
 }): AttachmentResourceCandidate | null {
   if (!input.archiveRoot || input.item.itemType === 'userMessage' || input.item.status !== 'completed') return null;
+  if (!input.generated && classifyAssistantMessage(parseJsonRecord(input.item.payloadJson), input.item.phase) !== 'final') return null;
+  /** 相对路径必须按消息执行根解析，不能依赖进程当前目录。 */
+  const sourcePath = localMarkdownImagePath(input.href, input.projectRoot);
+  const sourceExtension = sourcePath ? extname(sourcePath).toLocaleLowerCase() : '.image';
+  const archiveRoot = resolve(input.archiveRoot);
+  const conversationDirectory = join(archiveRoot, 'assistant-markdown-images', createHash('sha256').update(input.conversationId).digest('hex').slice(0, 24));
+  const sourceIdentity = createHash('sha256').update(`${input.item.id}\0${input.href}`).digest('hex');
+  const destination = join(conversationDirectory, `${sourceIdentity}${sourceExtension}`);
+  const imageArchive: AssistantImageArchiveRequest = { sourcePath, sourceRoots: input.sourceRoots, repositoryRoot: input.repositoryRoot, mimeType: supportedArchivedImageMimeType(sourceExtension) };
   try {
-    if (classifyAssistantMessage(JSON.parse(input.item.payloadJson) as Record<string, unknown>, input.item.phase) !== 'final') return null;
-    const sourcePath = localMarkdownImagePath(input.href);
-    if (!sourcePath) return null;
-    const sourceExtension = extname(sourcePath).toLocaleLowerCase();
-    const expectedMimeType = supportedArchivedImageMimeType(sourceExtension);
-    if (!expectedMimeType) return null;
-
-    const archiveRoot = resolve(input.archiveRoot);
-    const conversationDirectory = join(archiveRoot, 'assistant-markdown-images', createHash('sha256').update(input.conversationId).digest('hex').slice(0, 24));
-    const sourceIdentity = createHash('sha256').update(`${input.item.id}\0${input.href}`).digest('hex');
-    const destination = join(conversationDirectory, `${sourceIdentity}${sourceExtension}`);
-    mkdirSync(conversationDirectory, { recursive: true, mode: 0o700 });
-    const canonicalArchiveRoot = safeRealpath(archiveRoot);
-    const canonicalConversationDirectory = safeRealpath(conversationDirectory);
-    if (!canonicalArchiveRoot || !canonicalConversationDirectory || !isInsideRoot(canonicalConversationDirectory, canonicalArchiveRoot)) return null;
-
-    const existingMimeType = archivedImageMimeType(destination);
-    if (existingMimeType) {
-      return archivedAssistantImageCandidate({ ...input, sourcePath, absolutePath: destination, allowedRoot: canonicalArchiveRoot, mimeType: existingMimeType });
-    }
-
-    const canonicalSource = safeRealpath(sourcePath);
-    if (!canonicalSource || !resolveAuthorizedPath(canonicalSource, input.sourceRoots)) return null;
-    const sourceStat = statSync(canonicalSource);
-    if (!sourceStat.isFile() || sourceStat.size <= 0 || sourceStat.size > maximumArchivedAssistantImageBytes || sourceStat.size > input.budget.remainingBytes) return null;
-    const sourceMimeType = generatedImageMimeType(canonicalSource);
-    if (sourceMimeType !== expectedMimeType) return null;
-
-    const bytes = readFileSync(canonicalSource);
-    if (bytes.byteLength !== sourceStat.size) return null;
-    const staging = join(conversationDirectory, `.${sourceIdentity}.${randomUUID()}.tmp`);
-    try {
-      writeFileSync(staging, bytes, { flag: 'wx', mode: 0o600 });
-      chmodSync(staging, 0o600);
-      syncPath(staging);
-      try {
-        linkSync(staging, destination);
-        input.budget.remainingBytes -= bytes.byteLength;
-      } catch (error) {
-        if (!isFileExistsError(error)) throw error;
-      }
-    } finally {
-      try {
-        unlinkSync(staging);
-      } catch {
-        // 暂存文件可能尚未创建，或已经完成清理。
-      }
-    }
-    syncPath(conversationDirectory);
-    const archivedMimeType = archivedImageMimeType(destination);
-    return archivedMimeType ? archivedAssistantImageCandidate({ ...input, sourcePath, absolutePath: destination, allowedRoot: canonicalArchiveRoot, mimeType: archivedMimeType }) : null;
+    ensureAssistantImageArchive(destination, archiveRoot, imageArchive, input.budget);
   } catch {
-    // 单张图片归档失败不能阻断会话正文或其他资源投影。
-    return null;
+    // 失败请求仍完整登记；读取和重试由相同入口返回当前的具体失败原因。
+  }
+  return {
+    ...archivedAssistantImageCandidate({ ...input, sourcePath: sourcePath ?? input.href, absolutePath: destination, allowedRoot: archiveRoot, mimeType: imageArchive.mimeType ?? '' }),
+    displayName: input.label || (sourcePath ? basename(sourcePath) : '图片'),
+    sourceReference: input.href,
+    imageArchive,
+  };
+}
+
+/** 归档与重试共用同一权限、格式和原子写入规则；已完成归档不再依赖原图。 */
+function ensureAssistantImageArchive(destination: string, archiveRoot: string, request: AssistantImageArchiveRequest, budget = { remainingBytes: maximumArchivedAssistantImageBatchBytes }): void {
+  /** 失败原因必须能通过既有错误详情呈现，不能伪装成仍在准备。 */
+  const unavailable = (code: string, message: string) => Object.assign(new Error(message), { code: `ZEUS_CONVERSATION_IMAGE_${code}` });
+  if (!request.sourcePath) throw unavailable('REFERENCE_UNSUPPORTED', '这张图片的引用无法作为本地附件归档。请提供本地图片或已保存的附件。');
+  if (!request.mimeType) throw unavailable('FORMAT_UNSUPPORTED', '这张图片的格式不支持会话预览。');
+  if (!isInsideRoot(destination, archiveRoot) || destination === archiveRoot) throw unavailable('FORBIDDEN', '图片归档目标不在授权目录中。');
+  /** 只在受管归档根下创建目录，实际读写前再次核对真实路径。 */
+  const directory = dirname(destination);
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const canonicalArchiveRoot = safeRealpath(archiveRoot);
+  const canonicalDirectory = safeRealpath(directory);
+  if (!canonicalArchiveRoot || !canonicalDirectory || !isInsideRoot(canonicalDirectory, canonicalArchiveRoot)) throw unavailable('FORBIDDEN', '图片归档目录的真实位置不在授权范围内。');
+  /** 已有归档也须核对真实目标，不能跟随后来替换的外部符号链接。 */
+  const existingPath = safeRealpath(destination);
+  if (existingPath && !isInsideRoot(existingPath, canonicalArchiveRoot)) throw unavailable('FORBIDDEN', '图片归档被重定向到授权目录之外。');
+  if (archivedImageMimeType(destination) === request.mimeType) return;
+  const source = safeRealpath(request.sourcePath);
+  if (!source) throw unavailable('SOURCE_MISSING', '原始图片文件不存在，尚未完成归档。文件恢复后可以重试。');
+  if (!resolveAuthorizedPath(source, request.sourceRoots) && !(request.repositoryRoot && isRegisteredWorktreeImage(source, request.repositoryRoot))) throw unavailable('FORBIDDEN', '原始图片不在此会话已授权的项目、工作树或产物目录中。');
+  const sourceStat = statSync(source);
+  if (!sourceStat.isFile() || sourceStat.size <= 0) throw unavailable('SOURCE_INVALID', '原始图片不是有效文件或内容为空。');
+  if (sourceStat.size > maximumArchivedAssistantImageBytes || sourceStat.size > budget.remainingBytes) throw unavailable('TOO_LARGE', '图片超过会话归档的体积限制。');
+  if (generatedImageMimeType(source) !== request.mimeType) throw unavailable('SOURCE_INVALID', '图片内容与文件格式不符，无法完成归档。');
+  const bytes = readFileSync(source);
+  if (bytes.byteLength !== sourceStat.size) throw unavailable('SOURCE_CHANGED', '图片文件仍在写入，请完成后重试。');
+  const staging = join(directory, `.${basename(destination)}.${randomUUID()}.tmp`);
+  try {
+    writeFileSync(staging, bytes, { flag: 'wx', mode: 0o600 });
+    chmodSync(staging, 0o600);
+    syncPath(staging);
+    try {
+      linkSync(staging, destination);
+      budget.remainingBytes -= bytes.byteLength;
+    } catch (error) {
+      if (!isFileExistsError(error)) throw error;
+    }
+  } finally {
+    try {
+      unlinkSync(staging);
+    } catch {
+      /* 暂存文件创建失败时仍保留原错误。 */
+    }
+  }
+  syncPath(directory);
+  if (archivedImageMimeType(destination) !== request.mimeType) throw unavailable('ARCHIVE_INVALID', '已归档图片损坏，无法完成预览。');
+}
+
+/** Git 指针按所在目录解析；只读取元数据，不执行命令或更改仓库。 */
+function worktreeGitDirectory(root: string): string | null {
+  /** 工作树入口必须是 Git 指针，普通目录不能冒充登记的工作树。 */
+  const pointer = readFileSync(join(root, '.git'), 'utf8').trim();
+  return pointer.startsWith('gitdir: ') ? safeRealpath(resolve(root, pointer.slice(8))) : null;
+}
+
+/** 最终图片可来自同项目的独立工作树，必须同时通过公共仓库和双向登记核对。 */
+function isRegisteredWorktreeImage(sourcePath: string, repositoryRoot: string): boolean {
+  try {
+    /** Git 内部文件不属于可交付图片。 */
+    if (sourcePath.split(sep).includes('.git')) return false;
+    /** 项目本身也可能是工作树，公共目录以其真实 Git 元数据为准。 */
+    const projectGitPath = join(repositoryRoot, '.git');
+    /** 普通仓库直接持有公共目录，工作树通过 commondir 引用它。 */
+    const projectGit = statSync(projectGitPath).isDirectory() ? safeRealpath(projectGitPath) : worktreeGitDirectory(repositoryRoot);
+    if (!projectGit) return false;
+    /** 主仓库没有 commondir；登记工作树的指针必须能解析到真实目录。 */
+    const commonDirectory = statSync(projectGitPath).isDirectory() ? projectGit : safeRealpath(resolve(projectGit, readFileSync(join(projectGit, 'commondir'), 'utf8').trim()));
+    if (!commonDirectory) return false;
+    /** 从图片真实路径向上找最近的仓库边界，符号链接不能把范围带到外部。 */
+    let root = dirname(sourcePath);
+    while (true) {
+      if (safeRealpath(join(root, '.git'))) {
+        /** Git 登记目录必须直属当前项目，不能只靠伪造 .git 指针授权。 */
+        const gitDirectory = worktreeGitDirectory(root);
+        if (!gitDirectory || dirname(gitDirectory) !== join(commonDirectory, 'worktrees')) return false;
+        /** 两边必须互相指回同一工作树，已删除或移走的登记不能继续授权。 */
+        const backlink = resolve(gitDirectory, readFileSync(join(gitDirectory, 'gitdir'), 'utf8').trim());
+        return safeRealpath(dirname(backlink)) === root && safeRealpath(backlink) === safeRealpath(join(root, '.git')) && safeRealpath(resolve(gitDirectory, readFileSync(join(gitDirectory, 'commondir'), 'utf8').trim())) === commonDirectory;
+      }
+      /** 到达文件系统根仍无 Git 身份时，保持拒绝。 */
+      const parent = dirname(root);
+      if (parent === root) return false;
+      root = parent;
+    }
+  } catch {
+    // 登记缺失、失效或不可读时不扩大既有授权范围。
+    return false;
   }
 }
 
@@ -349,7 +453,8 @@ function archivedAssistantImageCandidate(input: { sourceIndex: number; label: st
   };
 }
 
-function localMarkdownImagePath(href: string): string | null {
+/** 本地引用按消息执行根解析；其他协议只登记失败，不转换为本地读取权限。 */
+function localMarkdownImagePath(href: string, projectRoot: string): string | null {
   let reference = href.trim().replace(/^<|>$/gu, '');
   if (!reference || reference.includes('\0')) return null;
   if (/^file:/iu.test(reference)) {
@@ -361,17 +466,19 @@ function localMarkdownImagePath(href: string): string | null {
       return null;
     }
   } else {
-    if (!isAbsolute(reference) || reference.includes('?') || reference.includes('#')) return null;
+    if (/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(reference) || reference.includes('\0')) return null;
     try {
       reference = decodeURIComponent(reference);
     } catch {
       return null;
     }
   }
-  return isAbsolute(reference) ? resolve(reference) : null;
+  return resolve(projectRoot, reference);
 }
 
-function supportedArchivedImageMimeType(extension: string): 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp' | null {
+/** 归档支持既有可预览图片格式，实际字节仍单独核对。 */
+function supportedArchivedImageMimeType(extension: string): string | null {
+  if (extension === '.svg') return 'image/svg+xml';
   if (extension === '.png') return 'image/png';
   if (extension === '.jpg' || extension === '.jpeg') return 'image/jpeg';
   if (extension === '.gif') return 'image/gif';
@@ -473,34 +580,28 @@ function richOutputBlocks(payload: Record<string, unknown>): Record<string, unkn
   return [payload.output, payload.result, payload.content].flatMap((value) => (Array.isArray(value) ? value.filter(isRecord) : isRecord(value) ? [value] : []));
 }
 
+/** 先按生成会话登记来源；文件是否就绪留给共用归档入口检查和重试。 */
 function normalizeGeneratedImagePath(input: { sourceIndex: number; item: ZeusConversationItemRecord; generatedImageRoot: string; savedPath: string }): AttachmentResourceCandidate | null {
   if (!isAbsolute(input.savedPath)) return null;
 
   const generatedImageRoot = resolve(input.generatedImageRoot);
   const sessionRoot = resolve(generatedImageRoot, input.item.providerThreadId);
   if (!isInsideRoot(sessionRoot, generatedImageRoot) || sessionRoot === generatedImageRoot) return null;
-  const resolved = resolveAuthorizedPath(input.savedPath, [sessionRoot]);
-  if (!resolved) return null;
-
-  let regularFile = false;
-  try {
-    regularFile = statSync(resolved.absolutePath).isFile();
-  } catch {
-    return null;
-  }
-  const mimeType = generatedImageMimeType(resolved.absolutePath);
-  if (!regularFile || !mimeType) return null;
-  const displayName = basename(resolved.absolutePath);
+  /** 路径只属于当前 Provider 会话，缺文件也不能退回其他会话目录。 */
+  const absolutePath = resolve(input.savedPath);
+  if (!isInsideRoot(absolutePath, sessionRoot) || absolutePath === sessionRoot) return null;
+  const mimeType = supportedArchivedImageMimeType(extname(absolutePath).toLocaleLowerCase());
+  const displayName = basename(absolutePath);
   return {
     kind: 'attachment',
     sourceIndex: input.sourceIndex,
     presentation: 'card',
     delivery: 'assistant',
     displayName,
-    absolutePath: resolved.absolutePath,
-    allowedRoot: resolved.allowedRoot,
+    absolutePath,
+    allowedRoot: safeRealpath(sessionRoot) ?? sessionRoot,
     attachmentRef: conversationImageAttachmentRef(input.savedPath),
-    mimeType,
+    ...(mimeType ? { mimeType } : {}),
     previewKind: 'image',
     iconKind: 'image',
   };
@@ -511,11 +612,12 @@ function generatedImageMimeType(path: string): string | null {
   let descriptor: number | null = null;
   try {
     descriptor = openSync(path, 'r');
-    const header = Buffer.alloc(12);
+    const header = Buffer.alloc(extension === '.svg' ? 1024 : 12);
     const bytesRead = readSync(descriptor, header, 0, header.length, 0);
     if (extension === '.png' && bytesRead >= 8 && header.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
     if ((extension === '.jpg' || extension === '.jpeg') && bytesRead >= 3 && header[0] === 0xff && header[1] === 0xd8 && header[2] === 0xff) return 'image/jpeg';
     const asciiHeader = header.subarray(0, bytesRead).toString('ascii');
+    if (extension === '.svg' && /<svg(?:\s|>)/iu.test(asciiHeader)) return 'image/svg+xml';
     if (extension === '.gif' && (asciiHeader.startsWith('GIF87a') || asciiHeader.startsWith('GIF89a'))) return 'image/gif';
     if (extension === '.webp' && bytesRead >= 12 && asciiHeader.startsWith('RIFF') && asciiHeader.slice(8, 12) === 'WEBP') return 'image/webp';
     return null;
@@ -605,6 +707,7 @@ export function toConversationResource(record: ZeusConversationResourceRecord): 
     ...base,
     kind: 'attachment',
     attachmentRef,
+    ...(stringValue(display.sourceReference) ? { sourceReference: stringValue(display.sourceReference)! } : {}),
     previewKind,
     iconKind,
     ...(stringValue(display.mimeType) ? { mimeType: stringValue(display.mimeType)! } : {}),
@@ -613,6 +716,24 @@ export function toConversationResource(record: ZeusConversationResourceRecord): 
 }
 
 export function toConversationResourceOpenIntent(record: ZeusConversationResourceRecord): ConversationResourceOpenIntent {
+  /** 预览和打开都重试同一持久归档请求，不重发消息，也不只重读旧的空资源表。 */
+  const authority = parseJsonRecord(record.authorityJson);
+  const target = parseJsonRecord(record.targetJson);
+  const request = authority.imageArchive;
+  if (request !== undefined) {
+    if (!(
+      isRecord(request) &&
+      typeof target.absolutePath === 'string' &&
+      typeof authority.allowedRoot === 'string' &&
+      (typeof request.sourcePath === 'string' || request.sourcePath === null) &&
+      Array.isArray(request.sourceRoots) &&
+      request.sourceRoots.every((root) => typeof root === 'string') &&
+      (typeof request.repositoryRoot === 'string' || request.repositoryRoot === null) &&
+      (typeof request.mimeType === 'string' || request.mimeType === null)
+    ))
+      throw Object.assign(new Error('图片归档记录不完整，无法安全读取。'), { code: 'ZEUS_CONVERSATION_IMAGE_ARCHIVE_INVALID' });
+    ensureAssistantImageArchive(target.absolutePath, authority.allowedRoot, request as unknown as AssistantImageArchiveRequest);
+  }
   return {
     id: record.id,
     projectId: record.projectId,
@@ -978,19 +1099,6 @@ function safeRealpath(path: string): string | null {
   }
 }
 
-function markdownLinks(text: string): Array<{ label: string; href: string; image: boolean }> {
-  const links: Array<{ label: string; href: string; image: boolean }> = [];
-  let match: RegExpExecArray | null;
-  markdownLinkPattern.lastIndex = 0;
-  while ((match = markdownLinkPattern.exec(text))) {
-    const label = (match[2] ?? '').trim();
-    const href = (match[3] ?? '').trim().replace(/^<|>$/gu, '');
-    if (label && href) links.push({ label, href, image: match[1] === '!' });
-    if (links.length >= maximumResourcesPerItem) break;
-  }
-  return links;
-}
-
 function displayForCandidate(candidate: ResourceCandidate): Record<string, unknown> {
   const delivery = candidate.delivery === 'assistant' ? { delivery: candidate.delivery } : {};
   if (candidate.kind === 'file') {
@@ -1021,6 +1129,7 @@ function displayForCandidate(candidate: ResourceCandidate): Record<string, unkno
     ...(candidate.mimeType ? { mimeType: candidate.mimeType } : {}),
     ...(candidate.taskPushAttachmentKey ? { taskPushAttachmentKey: candidate.taskPushAttachmentKey } : {}),
     ...(candidate.origin ? { origin: candidate.origin } : {}),
+    ...(candidate.sourceReference ? { sourceReference: candidate.sourceReference } : {}),
   };
 }
 
@@ -1034,7 +1143,7 @@ function targetForCandidate(candidate: ResourceCandidate): Record<string, unknow
 
 function authorityForCandidate(candidate: ResourceCandidate): Record<string, unknown> {
   if (candidate.kind === 'website') return { allowedSchemes: ['http:', 'https:', 'mailto:'] };
-  return { allowedRoot: candidate.allowedRoot };
+  return { allowedRoot: candidate.allowedRoot, ...(candidate.kind === 'attachment' && candidate.imageArchive ? { imageArchive: candidate.imageArchive } : {}) };
 }
 
 function digestResourceCandidate(candidate: ResourceCandidate): string {

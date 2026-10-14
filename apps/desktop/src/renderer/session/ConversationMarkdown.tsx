@@ -1,6 +1,6 @@
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import type { ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourcePreview } from '@zeus/shared';
-import { conversationFileLocationFromReference } from '@zeus/shared';
+import { conversationFileLocationFromReference, conversationMarkdownReferences, enableConversationCjkStrong, normalizeConversationResourceReference } from '@zeus/shared';
 import MarkdownRender, { MermaidBlockNode, TableNode, setCustomComponents, type CustomComponentMap, type NodeComponentProps, type NodeRendererProps } from 'markstream-react';
 import 'markstream-react/index.css';
 import { memo, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
@@ -172,9 +172,9 @@ export const ConversationImageResourcesContext = createContext<{
 
 /** 每张 Markdown 图片分别核对，已有一张图片不能掩盖其余缺失资源。 */
 export function hasMissingMarkdownImages(text: string, resources: ConversationResource[]): boolean {
-  for (const match of text.matchAll(/!\[([^\]]*)\]\(([^)]+)\)/gu)) {
+  for (const match of conversationMarkdownReferences(text).filter((reference) => reference.image)) {
     /** 解析仅用于发现缺失，真正加载仍走已授权资源编号。 */
-    const resource = matchingInlineResource(resources, match[1].trim(), match[2]);
+    const resource = matchingInlineResource(resources, match.label, match.href);
     if (!resource || !isImageResource(resource)) return true;
   }
   return false;
@@ -279,6 +279,7 @@ export const ConversationMarkdown = memo(function ConversationMarkdown(props: Co
           content={bounded.text}
           final={props.phase === 'final'}
           parseOptions={parseOptions}
+          customMarkdownIt={enableConversationCjkStrong}
           customId={customId}
           indexKey={props.streamId}
           htmlPolicy="escape"
@@ -358,8 +359,8 @@ function SecureImageNode(props: NodeComponentProps<MarkstreamNode>) {
           ? '图片加载失败'
           : 'Image loading failed'
         : runtime?.language === 'zh-CN'
-          ? '图片暂未就绪'
-          : 'Image not ready';
+          ? '图片引用未登记'
+          : 'Image reference is not registered';
     return (
       <span className="session-markdown-image-unavailable" role="status" aria-busy={preparing || undefined}>
         <span>{`${status}：${label}`}</span>
@@ -772,10 +773,17 @@ function isMarkstreamNode(value: unknown): value is MarkstreamNode {
 
 /** 正文渲染与缺失资源检测共用匹配规则，打开仍使用登记身份。 */
 export function matchingInlineResource(resources: ConversationResource[], label: string, href: string): ConversationResource | null {
-  /** 标题完全一致的资源优先，避免同文件不同位置命中第一条记录。 */
+  /** 图片按完整来源匹配，同说明不能替代资源身份。 */
+  const exactImage = resources.find(
+    (candidate) => candidate.presentation === 'inline' && candidate.kind === 'attachment' && candidate.sourceReference && normalizeConversationResourceReference(candidate.sourceReference) === normalizeConversationResourceReference(href),
+  );
+  /** 旧记录若存在同说明图片则拒绝猜测；新记录始终按完整引用匹配。 */
+  const legacyImages = resources.filter((candidate) => candidate.kind === 'attachment' && !candidate.sourceReference && candidate.displayName === label);
+  const candidates = legacyImages.length > 1 ? resources.filter((candidate) => !legacyImages.includes(candidate)) : resources;
   const resource =
-    resources.find((candidate) => candidate.presentation === 'inline' && candidate.displayName === label && inlineResourceMatches(candidate, label, href)) ??
-    resources.find((candidate) => candidate.presentation === 'inline' && inlineResourceMatches(candidate, label, href));
+    exactImage ??
+    candidates.find((candidate) => candidate.presentation === 'inline' && candidate.displayName === label && inlineResourceMatches(candidate, label, href)) ??
+    candidates.find((candidate) => candidate.presentation === 'inline' && inlineResourceMatches(candidate, label, href));
   if (!resource) return null;
   /** 位置属于本次点击，访问权限始终使用已登记的资源身份。 */
   const location = resource.kind === 'file' ? (conversationFileLocationFromReference(href) ?? conversationFileLocationFromReference(label) ?? resource.location) : undefined;
@@ -807,7 +815,7 @@ function inlineResourceMatches(resource: ConversationResource, label: string, hr
       return resource.displayName === label;
     }
   }
-  if (resource.kind === 'attachment') return resource.displayName === label;
+  if (resource.kind === 'attachment') return resource.sourceReference ? normalizeConversationResourceReference(resource.sourceReference) === normalizeConversationResourceReference(href) : resource.displayName === label;
   // 相同的“代码位置”标签不能把另一份文件的行号带入当前文件。
   return inlineResourceHrefMatches(resource, href);
 }

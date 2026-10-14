@@ -111,7 +111,7 @@ export async function attachV2ResourcesToSnapshot(snapshot: NativeConversationSn
           current.delivery !== resource.delivery ||
           (resource.kind === 'file' && current.kind === 'file' && current.projectRelativePath !== resource.projectRelativePath) ||
           (resource.kind === 'website' && current.kind === 'website' && current.url !== resource.url) ||
-          (resource.kind === 'attachment' && current.kind === 'attachment' && current.attachmentRef !== resource.attachmentRef)
+          (resource.kind === 'attachment' && current.kind === 'attachment' && (current.attachmentRef !== resource.attachmentRef || current.sourceReference !== resource.sourceReference))
         );
       });
     if (!resourcesChanged) return [item];
@@ -203,6 +203,7 @@ function conversationResourceFromV2Metadata(snapshot: NativeConversationSnapshot
       ...base,
       kind: 'attachment',
       attachmentRef: item.attachmentRef ?? item.id,
+      ...(item.sourceReference ? { sourceReference: item.sourceReference } : {}),
       previewKind: item.previewKind === 'image' || item.previewKind === 'document' ? item.previewKind : 'none',
       iconKind,
       ...(item.mimeType ? { mimeType: item.mimeType } : {}),

@@ -3202,14 +3202,15 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
                 resourceFailures += 1;
                 continue;
               }
-              const intent = toConversationResourceOpenIntent(record);
-              const absolutePath = typeof intent.target.absolutePath === 'string' ? resolve(intent.target.absolutePath) : '';
-              const allowedRoot = typeof intent.authority.allowedRoot === 'string' ? resolve(intent.authority.allowedRoot) : '';
-              if (!absolutePath || !allowedRoot || absolutePath === allowedRoot || !isPathInsideRoot(absolutePath, allowedRoot)) {
-                resourceFailures += 1;
-                continue;
-              }
               try {
+                /** 单个附件归档失败计入该条资源，不中断其他已完成输出。 */
+                const intent = toConversationResourceOpenIntent(record);
+                const absolutePath = typeof intent.target.absolutePath === 'string' ? resolve(intent.target.absolutePath) : '';
+                const allowedRoot = typeof intent.authority.allowedRoot === 'string' ? resolve(intent.authority.allowedRoot) : '';
+                if (!absolutePath || !allowedRoot || absolutePath === allowedRoot || !isPathInsideRoot(absolutePath, allowedRoot)) {
+                  resourceFailures += 1;
+                  continue;
+                }
                 const realRoot = realpathSync(allowedRoot);
                 const realFile = realpathSync(absolutePath);
                 const stats = statSync(realFile);

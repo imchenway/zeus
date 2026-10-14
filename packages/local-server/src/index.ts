@@ -969,8 +969,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const appShellSettingsKey = 'app.shell.settings';
   const codexAccountFingerprintSaltKey = 'codex.usage.account_fingerprint_salt';
   const conversationResourceBackfillSettingKey = 'conversation.resource_backfill';
-  /** 升级时补回共享真实路径的历史链接，保留已登记资源与原件。 */
-  const conversationResourceBackfillRevision = 'authorized_shared_directory_real_path_links';
+  /** 升级时补齐历史图片引用和可重试归档请求，保留既有资源与原件。 */
+  const conversationResourceBackfillRevision = 'durable_image_archive_requests';
   const localLogDirectory = dataLayout.localLogs;
   const localConfigPath = options.localConfigPath ?? dataLayout.localConfig;
   // 本地日志目录是设计书明确要求的物理落点；服务启动时创建，避免 UI 只展示一个不存在的路径。
@@ -1812,29 +1812,26 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       const projectRoot = resolveNativeConversationExecutionRoot(conversation);
       // 执行根丢失时不借用项目主目录，否则同名代码文件会指向错误工作树。
       if (!projectRoot) continue;
-      const normalized = normalizeConversationResources({
-        projectId: conversation.projectId,
-        projectRoot,
-        registeredProjectRoot: project.localPath ?? undefined,
-        conversationId: conversation.id,
-        turnId: item.turnId,
-        item,
-        payload: parseJsonObject(item.payloadJson),
-        text: item.textContent,
-        trustedAttachmentRoots: trustedConversationAttachmentRoots,
-        generatedImageRoot,
-        assistantImageArchiveRoot: conversationAttachmentRoot,
-        artifactsDirectory: dataLayout.artifactsDirectory,
-        now: item.updatedAt,
-      });
-      if (normalized.length === 0) continue;
-      const existing = conversationResources.listByItem(item.id);
-      // 同一 HTML 的正文链接和卡片共用目标，但属于两种展示，必须分别补齐。
-      const existingDigests = new Set(existing.map((resource) => `${resource.presentation}:${resource.canonicalTargetDigest}`));
-      const merged = [...existing, ...normalized.filter((resource) => !existingDigests.has(`${resource.presentation}:${resource.canonicalTargetDigest}`))];
-      if (merged.length === existing.length) continue;
-      conversationResources.replaceForItem(item.id, merged, item.updatedAt);
-      conversationResourceBackfillCount += merged.length - existing.length;
+      const previousResourceCount = conversationResources.listByItem(item.id).length;
+      const updatedResources = syncConversationResources(
+        {
+          projectId: conversation.projectId,
+          projectRoot,
+          registeredProjectRoot: project.localPath ?? undefined,
+          conversationId: conversation.id,
+          turnId: item.turnId,
+          item,
+          payload: parseJsonObject(item.payloadJson),
+          text: item.textContent,
+          trustedAttachmentRoots: trustedConversationAttachmentRoots,
+          generatedImageRoot,
+          assistantImageArchiveRoot: conversationAttachmentRoot,
+          artifactsDirectory: dataLayout.artifactsDirectory,
+          now: item.updatedAt,
+        },
+        conversationResources,
+      );
+      conversationResourceBackfillCount += updatedResources.length - previousResourceCount;
     }
     const projectedResourceCount = db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM conversation_resources`)?.count ?? 0;
     settings.setJson(conversationResourceBackfillSettingKey, {

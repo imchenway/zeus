@@ -314,9 +314,10 @@ export class ConversationProviderItemRepository {
         `SELECT *
            FROM conversation_provider_item_states
           WHERE status = 'completed' AND (
-            item_type = 'imageView'
+            item_type IN ('imageView', 'imageGeneration')
+            OR instr(payload_projection_json, 'Generated images are saved') > 0
             OR (phase = 'final_answer' AND instr(text_projection, '![') > 0)
-            OR ((agent_kind = 'pi' OR item_type = 'agentMessage') AND instr(text_projection, '](') > 0)
+            OR ((agent_kind = 'pi' OR item_type = 'agentMessage') AND (instr(text_projection, '](') > 0 OR instr(text_projection, '![') > 0))
           )
           ORDER BY conversation_id, updated_at, id`,
       )

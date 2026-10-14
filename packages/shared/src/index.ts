@@ -576,6 +576,8 @@ export * from './browser.js';
 export * from './commands.js';
 export * from './conversationContext.js';
 export * from './conversationResources.js';
+export * from './conversationMarkdownReferences.js';
+export * from './conversationMarkdown.js';
 export * from './portableConversationContext.js';
 export * from './projectSourceWorkspace.js';
 export * from './requestUserInput.js';
