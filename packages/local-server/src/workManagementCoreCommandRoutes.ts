@@ -1,3 +1,4 @@
+import type { TaskDeadline } from '@zeus/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { CommandActor, TaskBoardViewUpdateRequest } from '@zeus/shared';
 import type { TaskPriority, TaskType } from '@zeus/storage';
@@ -19,6 +20,8 @@ export interface CreateTaskFromTemplateInput {
 }
 
 export interface CreateUserTaskInput {
+  /** 截止配置；显式空值清除截止和提醒。 */
+  deadline?: TaskDeadline | null;
   projectId: string;
   parentTaskId?: string | null;
   title: string;

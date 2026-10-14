@@ -1,3 +1,4 @@
+import type { TaskDeadlineFilter, TaskReminderPage } from '@zeus/shared';
 import type { TaskSummaryPage, TaskTemplateRecord, CreateTaskTemplateRequest, CreateTaskFromTemplateRequest } from './taskContracts.js';
 import type { TaskBoardMoveRequest, TaskBoardViewSettings, TaskBoardViewSnapshot, TaskManagementStatus } from '@zeus/shared';
 import type {
@@ -19,8 +20,13 @@ import { jsonRequest, type LocalApiTransport } from '../../transport/localApiTra
 import { buildWorkManagementCommandRequest, workManagementClientCommandTypes } from '../work-management/workManagementCommandClient.js';
 
 export interface TaskApiClient {
+  /** 读取持久化任务提醒及完整未读数。 */
+  loadTaskReminders: (cursor?: string) => Promise<TaskReminderPage>;
+  /** 精确确认当前通知身份，不确认后来的修订。 */
+  acknowledgeTaskReminders: (ids: string[]) => Promise<{ acknowledged: boolean }>;
+
   /** 首页独立分页，不能充当完整任务快照。 */
-  loadTaskSummaries: (input: { projectId: string; cursor?: string; query?: string; signal?: AbortSignal }) => Promise<TaskSummaryPage>;
+  loadTaskSummaries: (input: { projectId: string; cursor?: string; query?: string; deadlineFilter?: TaskDeadlineFilter; signal?: AbortSignal }) => Promise<TaskSummaryPage>;
   loadTaskTemplates: (projectId?: string) => Promise<TaskTemplateRecord[]>;
   createTaskTemplate: (input: CreateTaskTemplateRequest) => Promise<TaskTemplateRecord>;
   createTaskFromTemplate: (templateId: string, input: CreateTaskFromTemplateRequest) => Promise<TaskRecord>;
@@ -59,7 +65,12 @@ export interface TaskApiClient {
 
 export function createTaskApiClient(transport: LocalApiTransport): TaskApiClient {
   return {
-    loadTaskSummaries: ({ projectId, cursor, query, signal }) => transport.request<TaskSummaryPage>(`/api/task-summaries?${new URLSearchParams({ projectId, ...(cursor ? { cursor } : {}), ...(query ? { query } : {}) })}`, { signal }),
+    loadTaskReminders: (cursor) => transport.request<TaskReminderPage>(`/api/task-reminders${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`),
+    acknowledgeTaskReminders: (ids) => transport.request<{ acknowledged: boolean }>('/api/task-reminders/acknowledge', jsonRequest('POST', { ids, system: false })),
+    loadTaskSummaries: ({ projectId, cursor, query, deadlineFilter, signal }) =>
+      transport.request<TaskSummaryPage>(`/api/task-summaries?${new URLSearchParams({ projectId, ...(cursor ? { cursor } : {}), ...(query ? { query } : {}), ...(deadlineFilter && deadlineFilter !== 'all' ? { deadlineFilter } : {}) })}`, {
+        signal,
+      }),
     loadTaskTemplates: (projectId) => transport.request<TaskTemplateRecord[]>(`/api/task-templates${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`),
     createTaskTemplate: async (input) => {
       const body = await buildWorkManagementCommandRequest({
@@ -105,6 +116,7 @@ export function createTaskApiClient(transport: LocalApiTransport): TaskApiClient
     loadTasks: (input) => {
       const query = new URLSearchParams({ projectId: input.projectId });
       if (input.query) query.set('query', input.query);
+      if (input.deadlineFilter) query.set('deadlineFilter', input.deadlineFilter);
       if (input.managementStatus) query.set('managementStatus', input.managementStatus);
       if (input.tag) query.set('tag', input.tag);
       if (input.sortBy) query.set('sortBy', input.sortBy);

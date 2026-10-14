@@ -1,5 +1,7 @@
 /** 所有文件入口共用预览类型与格式策略。 */
 export * from './filePreview.js';
+/** 任务截止时间与提醒共用的跨层契约。 */
+export * from './taskDeadline.js';
 /** 自动化通知中心的跨层查询与确认契约。 */
 export * from './automationNotifications.js';
 import type { UserFacingErrorCause } from './userFacingError.js';
@@ -314,7 +316,7 @@ export const taskBoardGroupProperties = ['managementStatus', 'priority', 'taskTy
 export type TaskBoardGroupProperty = (typeof taskBoardGroupProperties)[number];
 export const taskBoardEmptyGroupId = '__zeus_none__';
 
-export const taskBoardCardProperties = ['code', 'managementStatus', 'priority', 'taskType', 'runStatus', 'branchStatus', 'tags', 'parentTask', 'source', 'createdAt', 'updatedAt'] as const;
+export const taskBoardCardProperties = ['code', 'managementStatus', 'priority', 'taskType', 'runStatus', 'branchStatus', 'tags', 'parentTask', 'source', 'createdAt', 'updatedAt', 'deadline'] as const;
 export type TaskBoardCardProperty = (typeof taskBoardCardProperties)[number];
 export type TaskBoardCardSize = 'small' | 'medium' | 'large';
 export type TaskBoardPreviewMode = 'none' | 'content' | 'first_image';
@@ -455,7 +457,7 @@ export function createDefaultTaskBoardViewSettings(): TaskBoardViewSettings {
     colorColumns: true,
     columnColors: {},
     cardSize: 'medium',
-    visibleProperties: ['code', 'priority', 'taskType', 'runStatus', 'tags'],
+    visibleProperties: ['code', 'priority', 'taskType', 'runStatus', 'tags', 'deadline'],
     propertyOrder: [...taskBoardCardProperties],
     preview: 'none',
     fitPreview: true,

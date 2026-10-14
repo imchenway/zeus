@@ -1,7 +1,10 @@
+import { isTaskDeadlineFilter, type TaskDeadlineFilter } from '@zeus/shared';
 import type { TaskStatus } from '@zeus/shared';
 import type { ProjectRepository, TaskBoardRepository, TaskEventRepository, TaskManagementStatus, TaskRepository, TaskTemplateRepository, ZeusTaskRecord } from '@zeus/storage';
 
 export interface ListWorkManagementTasksQuery {
+  /** 服务端在返回列表前执行时间条件。 */
+  deadlineFilter?: TaskDeadlineFilter;
   projectId?: string;
   query?: string;
   status?: TaskStatus;
@@ -12,6 +15,8 @@ export interface ListWorkManagementTasksQuery {
 }
 
 interface WorkManagementQueryPorts {
+  /** 项目完成和取消角色；未提供时采用默认配置。 */
+  terminalStatuses?(projectId: string): readonly string[];
   projects: Pick<ProjectRepository, 'getById'>;
   tasks: Pick<TaskRepository, 'getById' | 'listByProject' | 'listArchivedByProject' | 'listSummaryPage'>;
   taskBoards: Pick<TaskBoardRepository, 'getSnapshot'>;
@@ -42,7 +47,10 @@ export class WorkManagementQueryApplication {
   listTasks(query: ListWorkManagementTasksQuery): ZeusTaskRecord[] {
     const projectId = query.projectId;
     if (!projectId) throw queryError('ZEUS_PROJECT_REQUIRED', 'projectId is required', 400);
+    if (query.deadlineFilter !== undefined && !isTaskDeadlineFilter(query.deadlineFilter)) throw queryError('ZEUS_TASK_DEADLINE_FILTER_INVALID', '截止时间筛选无效。', 400);
     return this.ports.tasks.listByProject(projectId, {
+      deadlineFilter: query.deadlineFilter,
+      terminalStatuses: this.ports.terminalStatuses?.(projectId),
       query: query.query,
       status: query.status,
       managementStatus: query.managementStatus,
@@ -53,8 +61,9 @@ export class WorkManagementQueryApplication {
   }
 
   /** 分页参数在 HTTP 边界显式校验，完整任务查询不被摘要替代。 */
-  listTaskSummaries(query: { projectId?: string; cursor?: string; limit?: string; query?: string }) {
+  listTaskSummaries(query: { projectId?: string; cursor?: string; limit?: string; query?: string; deadlineFilter?: TaskDeadlineFilter }) {
     if (
+      (query.deadlineFilter !== undefined && !isTaskDeadlineFilter(query.deadlineFilter)) ||
       typeof query.projectId !== 'string' ||
       !query.projectId ||
       query.projectId.length > 512 ||
@@ -63,7 +72,13 @@ export class WorkManagementQueryApplication {
     )
       throw queryError('ZEUS_TASK_SUMMARY_QUERY_INVALID', '任务摘要查询无效。', 400);
     if (!this.ports.projects.getById(query.projectId)) throw queryError('ZEUS_PROJECT_NOT_FOUND', 'Project not found', 404);
-    return this.ports.tasks.listSummaryPage(query.projectId, { cursor: query.cursor, query: query.query, limit: query.limit === undefined ? 50 : Number(query.limit) });
+    return this.ports.tasks.listSummaryPage(query.projectId, {
+      cursor: query.cursor,
+      query: query.query,
+      deadlineFilter: query.deadlineFilter,
+      terminalStatuses: this.ports.terminalStatuses?.(query.projectId),
+      limit: query.limit === undefined ? 50 : Number(query.limit),
+    });
   }
 
   listArchivedTasks(projectId?: string): ZeusTaskRecord[] {

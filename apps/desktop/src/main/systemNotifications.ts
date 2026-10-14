@@ -1,3 +1,4 @@
+import { formatTaskDeadline, type TaskReminder } from '@zeus/shared';
 import { describeUserFacingError, type UserFacingErrorLanguage } from '@zeus/shared';
 
 export interface ZeusRealtimeEvent {
@@ -6,6 +7,10 @@ export interface ZeusRealtimeEvent {
 }
 
 export interface ZeusSystemNotificationPayload {
+  /** 任务提醒点击使用任务身份或打开汇总列表。 */
+  taskId?: string;
+  reminderId?: string;
+  taskReminders?: boolean;
   title: string;
   body: string;
   projectId?: string;
@@ -18,6 +23,11 @@ export interface ZeusSystemNotificationSocket {
 }
 
 export interface CreateSystemNotificationBridgeOptions {
+  /** 启动及恢复时补读耐久系统投递队列。 */
+  loadTaskReminders?: () => Promise<{ ids: string[]; first: TaskReminder | null }>;
+  /** 系统展示成功或前台抑制后确认这批身份。 */
+  acknowledgeTaskReminders?: (ids: string[]) => Promise<void>;
+
   baseUrl: string;
   apiToken: string;
   openWebSocket: (url: string, protocol: string) => ZeusSystemNotificationSocket;
@@ -151,11 +161,54 @@ export function buildSystemNotificationFromRealtimeEvent(event: ZeusRealtimeEven
 export function createSystemNotificationBridge(options: CreateSystemNotificationBridgeOptions): SystemNotificationBridge {
   const url = `${options.baseUrl.replace(/^http/u, 'ws')}/api/events`;
   const socket = options.openWebSocket(url, buildZeusWebSocketProtocol(options.apiToken));
+  /** 本地连接生命周期结束后，迟到结果不再展示。 */
+  let closed = false;
+  /** 同一进程内确认请求重试不会重复弹出已展示的通知。 */
+  const shownReminders = new Set<string>();
+  /** 运行中的读取合并事件和定时唤醒。 */
+  let checkingReminders = false;
+  /** 先从持久队列读取，再展示摘要，最后确认准确通知身份。 */
+  async function checkTaskReminders(): Promise<void> {
+    if (closed || checkingReminders || !options.loadTaskReminders || !options.acknowledgeTaskReminders) return;
+    checkingReminders = true;
+    try {
+      /** 即使启动时 WebSocket 尚未连接，也能补齐之前的提醒。 */
+      const batch = await options.loadTaskReminders();
+      if (closed || !batch.ids.length) return;
+      /** 展示成功但确认失败的身份只重试确认。 */
+      const newIds = batch.ids.filter((id) => !shownReminders.has(id));
+      if (newIds.length && (!options.shouldNotify || options.shouldNotify())) {
+        /** 单条直接打开任务，多条只打开通知分类。 */
+        const item = newIds.length === 1 && batch.ids.length === 1 ? batch.first : null;
+        /** 文案在投递时读取当前语言。 */
+        const zh = options.language?.() !== 'en-US';
+        options.showNotification({
+          title: zh ? 'Zeus 任务提醒' : 'Zeus task reminder',
+          body: item ? `${item.title} · ${formatTaskDeadline(item.deadline)}` : zh ? `有 ${newIds.length} 条任务提醒，请打开 Zeus 查看。` : `${newIds.length} task reminders. Open Zeus to review them.`,
+          taskReminders: true,
+          ...(item ? { taskId: item.taskId, projectId: item.projectId, reminderId: item.id } : {}),
+        });
+      }
+      for (const id of batch.ids) shownReminders.add(id);
+      // 确认按批提交，服务端即使重放也不会确认后来生成的修订。
+      for (let offset = 0; offset < batch.ids.length; offset += 1000) await options.acknowledgeTaskReminders(batch.ids.slice(offset, offset + 1000));
+      for (const id of batch.ids) shownReminders.delete(id);
+    } catch (error) {
+      options.onError?.(error);
+    } finally {
+      checkingReminders = false;
+    }
+  }
+  /** 不依赖 Renderer 活跃或事件历史，系统恢复后自动补读。 */
+  const reminderTimer = options.loadTaskReminders ? setInterval(() => void checkTaskReminders(), 15000) : undefined;
+  reminderTimer?.unref?.();
+  void checkTaskReminders();
   const notifiedOrdinaryTurns = new Set<string>();
   const deliveredKeys = new Set<string>();
   socket.addEventListener('message', (message) => {
     try {
       const event = JSON.parse(message.data) as ZeusRealtimeEvent;
+      if (event.type === 'task.reminders.changed') void checkTaskReminders();
       if (options.shouldNotify && !options.shouldNotify()) return;
       const notificationKey = conversationNotificationKey(event);
       if (notificationKey?.suppressBecauseOrdinary && notifiedOrdinaryTurns.has(notificationKey.turnKey)) return;
@@ -174,6 +227,8 @@ export function createSystemNotificationBridge(options: CreateSystemNotification
   });
   return {
     close() {
+      closed = true;
+      clearInterval(reminderTimer);
       socket.close();
     },
   };

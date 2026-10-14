@@ -1,5 +1,10 @@
 import { randomId } from './randomId.js';
 import {
+  normalizeTaskDeadline,
+  taskDeadlineTimes,
+  matchesTaskDeadline,
+  type TaskDeadline,
+  type TaskDeadlineFilter,
   isTaskManagementStatus,
   isTaskType,
   normalizeTaskBoardViewSettings,
@@ -60,6 +65,8 @@ export interface ZeusProjectSharedPathRecord {
 }
 
 export interface ZeusTaskRecord {
+  /** 截止日期、具体时间、时区及提醒方式。 */
+  deadline?: TaskDeadline | null;
   id: string;
   projectId: string;
   taskCode: string;
@@ -320,6 +327,8 @@ export interface ProjectArchiveConfirmation {
 }
 
 export interface CreateTaskInput {
+  /** 未提供时不设置截止时间。 */
+  deadline?: TaskDeadline | null;
   id?: string;
   projectId: string;
   parentTaskId?: string | null;
@@ -381,7 +390,7 @@ export interface CreateTaskFromTemplateInput {
 /** 列表只携带排序、筛选与入口字段；正文和来源上下文仍由详情查询返回。 */
 export type ZeusTaskSummary = Pick<
   ZeusTaskRecord,
-  'id' | 'projectId' | 'taskCode' | 'taskSequence' | 'parentTaskId' | 'relatedTaskIds' | 'title' | 'taskType' | 'managementStatus' | 'status' | 'priority' | 'tags' | 'createdAt' | 'updatedAt' | 'createdFrom' | 'templateId'
+  'id' | 'projectId' | 'taskCode' | 'taskSequence' | 'parentTaskId' | 'relatedTaskIds' | 'title' | 'taskType' | 'managementStatus' | 'status' | 'priority' | 'tags' | 'createdAt' | 'updatedAt' | 'createdFrom' | 'templateId' | 'deadline'
 > & { contentPreview: string; matchedQuery?: string };
 /** 游标绑定项目和排序条件，不能跨查询使用。 */
 export interface TaskSummaryPage {
@@ -391,6 +400,12 @@ export interface TaskSummaryPage {
 }
 /** 摘要分页每页默认 50 条，详情查询含义保持不变。 */
 export interface TaskSummaryQuery {
+  /** 时间条件必须在分页前应用。 */
+  deadlineFilter?: TaskDeadlineFilter;
+  /** 项目配置指定的结束状态。 */
+  terminalStatuses?: readonly string[];
+  /** 一次查询冻结当前时刻。 */
+  now?: number;
   /** 搜索复用完整任务匹配规则，仅返回摘要字段。 */
   query?: string;
   cursor?: string;
@@ -398,6 +413,12 @@ export interface TaskSummaryQuery {
 }
 
 export interface TaskListOptions {
+  /** 与搜索及状态取交集的时间条件。 */
+  deadlineFilter?: TaskDeadlineFilter;
+  /** 完成和取消角色使用项目配置。 */
+  terminalStatuses?: readonly string[];
+  /** 一次查询冻结时刻。 */
+  now?: number;
   query?: string;
   status?: ZeusTaskRecord['status'];
   managementStatus?: TaskManagementStatus;
@@ -407,6 +428,8 @@ export interface TaskListOptions {
 }
 
 export interface UpdateTaskInput {
+  /** 省略表示不改，空值同时清除截止和提醒。 */
+  deadline?: TaskDeadline | null;
   title?: string;
   taskType?: TaskType;
   description?: string;
@@ -421,6 +444,7 @@ export interface UpdateTaskInput {
 }
 
 export type TaskEditableField =
+  | 'deadline'
   | 'projectId'
   | 'title'
   | 'taskType'
@@ -601,7 +625,7 @@ function filterAndSortTasks(records: ZeusTaskRecord[], options: TaskListOptions)
     const matchesStatus = !options.status || record.status === options.status;
     const matchesManagementStatus = !options.managementStatus || record.managementStatus === options.managementStatus;
     const matchesTag = !tag || record.tags.includes(tag);
-    return matchesQuery && matchesStatus && matchesManagementStatus && matchesTag;
+    return matchesQuery && matchesStatus && matchesManagementStatus && matchesTag && matchesTaskDeadline(record, options.deadlineFilter ?? 'all', options.now, options.terminalStatuses);
   });
   const sortBy = options.sortBy ?? 'createdAt';
   const direction = options.sortDirection === 'desc' ? -1 : 1;
@@ -823,7 +847,7 @@ export class ProjectRepository {
 
 const selectTaskFields = `id, project_id, task_code, task_sequence, parent_task_id, title, task_type, description,
   defect_current_state, defect_expected_outcome, defect_reproduction_steps, optimization_current_state, optimization_expected_outcome,
-  management_status, status, priority, tags_json, template_id,
+  management_status, status, priority, deadline_json, tags_json, template_id,
   allow_code_changes, allow_tests, allow_git_commit, created_from, source_context_json, created_at, updated_at`;
 
 /** 任务仓储保存真实任务定义，初始状态统一为 ready，等待用户或 runtime 执行。 */
@@ -864,6 +888,7 @@ export class TaskRepository {
         managementStatus: isTaskManagementStatus(input.managementStatus) ? input.managementStatus : 'todo',
         status: 'ready',
         priority: input.priority ?? 'p3',
+        deadline: normalizeTaskDeadline(input.deadline),
         allowCodeChanges: input.allowCodeChanges === true,
         allowTests: input.allowTests === true,
         allowGitCommit: input.allowGitCommit === true,
@@ -908,8 +933,19 @@ export class TaskRepository {
           record.updatedAt,
         ],
       );
+      // 截止配置与任务创建共用事务，提醒时刻只由共享规则计算。
+      this.writeDeadline(record.id, record.deadline ?? null);
       return record;
     });
+  }
+
+  /** 截止时刻和提醒时刻是经过校验的派生索引。 */
+  private writeDeadline(taskId: string, value: TaskDeadline | null): void {
+    /** 标准化字段顺序保证相同配置不会推进修订。 */
+    const deadline = normalizeTaskDeadline(value);
+    /** 空配置必须同时清除待发时间。 */
+    const times = deadline ? taskDeadlineTimes(deadline) : null;
+    this.db.execute('UPDATE tasks SET deadline_json = ?, deadline_at = ?, reminder_at = ? WHERE id = ?', [deadline ? JSON.stringify(deadline) : null, times?.dueAt ?? null, times?.remindAt ?? null, taskId]);
   }
 
   createFromTemplate(input: CreateTaskFromTemplateInput): ZeusTaskRecord {
@@ -1011,34 +1047,40 @@ export class TaskRepository {
   }
 
   update(taskId: string, input: UpdateTaskInput): ZeusTaskRecord {
-    const existing = this.getById(taskId);
-    if (!existing) {
-      throw new Error(`Zeus task not found: ${taskId}`);
-    }
-    const timestamp = nextIsoTimestamp(existing.updatedAt);
-    this.db.execute(
-      `UPDATE tasks SET title = ?, task_type = ?, description = ?, defect_current_state = ?, defect_expected_outcome = ?, defect_reproduction_steps = ?, optimization_current_state = ?, optimization_expected_outcome = ?, allow_code_changes = ?, allow_tests = ?, allow_git_commit = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
-      [
-        input.title ?? existing.title,
-        input.taskType ?? existing.taskType,
-        input.description ?? existing.description,
-        input.defectCurrentState ?? existing.defectCurrentState,
-        input.defectExpectedOutcome ?? existing.defectExpectedOutcome,
-        input.defectReproductionSteps ?? existing.defectReproductionSteps,
-        input.optimizationCurrentState ?? existing.optimizationCurrentState,
-        input.optimizationExpectedOutcome ?? existing.optimizationExpectedOutcome,
-        (input.allowCodeChanges ?? existing.allowCodeChanges) ? 1 : 0,
-        (input.allowTests ?? existing.allowTests) ? 1 : 0,
-        (input.allowGitCommit ?? existing.allowGitCommit) ? 1 : 0,
-        timestamp,
-        taskId,
-      ],
-    );
-    const updated = this.getById(taskId);
-    if (!updated) {
-      throw new Error(`Zeus task not found: ${taskId}`);
-    }
-    return updated;
+    // 内容和截止配置共用事务，写入失败不能留下部分更新。
+    return this.db.transaction(() => {
+      const existing = this.getById(taskId);
+      if (!existing) {
+        throw new Error(`Zeus task not found: ${taskId}`);
+      }
+      /** 内部更新仍沿用截止校验，避免导入路径写入无效配置。 */
+      const deadline = input.deadline === undefined ? (existing.deadline ?? null) : normalizeTaskDeadline(input.deadline);
+      const timestamp = nextIsoTimestamp(existing.updatedAt);
+      this.db.execute(
+        `UPDATE tasks SET title = ?, task_type = ?, description = ?, defect_current_state = ?, defect_expected_outcome = ?, defect_reproduction_steps = ?, optimization_current_state = ?, optimization_expected_outcome = ?, allow_code_changes = ?, allow_tests = ?, allow_git_commit = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
+        [
+          input.title ?? existing.title,
+          input.taskType ?? existing.taskType,
+          input.description ?? existing.description,
+          input.defectCurrentState ?? existing.defectCurrentState,
+          input.defectExpectedOutcome ?? existing.defectExpectedOutcome,
+          input.defectReproductionSteps ?? existing.defectReproductionSteps,
+          input.optimizationCurrentState ?? existing.optimizationCurrentState,
+          input.optimizationExpectedOutcome ?? existing.optimizationExpectedOutcome,
+          (input.allowCodeChanges ?? existing.allowCodeChanges) ? 1 : 0,
+          (input.allowTests ?? existing.allowTests) ? 1 : 0,
+          (input.allowGitCommit ?? existing.allowGitCommit) ? 1 : 0,
+          timestamp,
+          taskId,
+        ],
+      );
+      if (input.deadline !== undefined) this.writeDeadline(taskId, deadline);
+      const updated = this.getById(taskId);
+      if (!updated) {
+        throw new Error(`Zeus task not found: ${taskId}`);
+      }
+      return updated;
+    });
   }
 
   /** 内容与项目归属在同一事务内更新，避免编号、关系和正文部分成功。 */
@@ -1102,6 +1144,8 @@ export class TaskRepository {
       const defectReproductionSteps = input.defectReproductionSteps ?? existing.defectReproductionSteps;
       const optimizationCurrentState = input.optimizationCurrentState ?? existing.optimizationCurrentState;
       const optimizationExpectedOutcome = input.optimizationExpectedOutcome ?? existing.optimizationExpectedOutcome;
+      /** 截止配置只在显式修改时更换。 */
+      const deadline = input.deadline === undefined ? (existing.deadline ?? null) : normalizeTaskDeadline(input.deadline);
       const priority = input.priority ?? existing.priority;
       const tags = input.tags === undefined ? existing.tags : normalizeTags(input.tags);
       const allowCodeChanges = input.allowCodeChanges ?? existing.allowCodeChanges;
@@ -1114,6 +1158,7 @@ export class TaskRepository {
       const sourceContextJson = JSON.stringify(sourceContext);
       const changedFields: TaskEditableField[] = [];
       if (projectChanged) changedFields.push('projectId');
+      if (canonicalJson(deadline) !== canonicalJson(existing.deadline ?? null)) changedFields.push('deadline');
       if (title !== existing.title) changedFields.push('title');
       if (taskType !== existing.taskType) changedFields.push('taskType');
       if (description !== existing.description) changedFields.push('description');
@@ -1195,6 +1240,7 @@ export class TaskRepository {
         const current = this.getById(taskId);
         throwTaskEditConflict(taskId, current?.updatedAt ?? existing.updatedAt);
       }
+      if (changedFields.includes('deadline')) this.writeDeadline(taskId, deadline);
       const updated = this.getById(taskId);
       if (!updated) {
         throw new Error(`Zeus task not found after update: ${taskId}`);
@@ -1322,7 +1368,7 @@ export class TaskRepository {
   listSummaryPage(projectId: string, options: TaskSummaryQuery = {}): TaskSummaryPage {
     const limit = options.limit ?? 50;
     if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw Object.assign(new Error('任务摘要每页数量必须为 1 到 200。'), { statusCode: 400 });
-    let after: { projectId: string; createdAt: string; id: string; query?: string } | undefined;
+    let after: { projectId: string; createdAt: string; id: string; query?: string; deadlineFilter?: TaskDeadlineFilter } | undefined;
     if (options.cursor) {
       try {
         if (options.cursor.length > 2048) throw new Error();
@@ -1330,6 +1376,7 @@ export class TaskRepository {
         if (
           !after ||
           after.projectId !== projectId ||
+          (after.deadlineFilter ?? 'all') !== (options.deadlineFilter ?? 'all') ||
           (after.query ?? '') !== (options.query?.trim().toLowerCase() ?? '') ||
           typeof after.createdAt !== 'string' ||
           typeof after.id !== 'string' ||
@@ -1342,9 +1389,11 @@ export class TaskRepository {
       }
     }
     const query = options.query?.trim().toLowerCase() ?? '';
-    if (query) {
+    if (query || (options.deadlineFilter && options.deadlineFilter !== 'all')) {
       // ponytail: 按需搜索沿用原有 Unicode 匹配；超大项目搜索慢时由存储层引入全文索引。
-      const matches = this.listByProject(projectId, { query }).filter((task) => !after || task.createdAt > after.createdAt || (task.createdAt === after.createdAt && task.id > after.id));
+      const matches = this.listByProject(projectId, { query, deadlineFilter: options.deadlineFilter, terminalStatuses: options.terminalStatuses, now: options.now }).filter(
+        (task) => !after || task.createdAt > after.createdAt || (task.createdAt === after.createdAt && task.id > after.id),
+      );
       const selected = matches.slice(0, limit);
       const order = new Map(selected.map((task, index) => [task.id, index]));
       const items = this.summariesByIds(
@@ -1355,7 +1404,7 @@ export class TaskRepository {
         .sort((left, right) => order.get(left.id)! - order.get(right.id)!);
       const last = items.at(-1);
       const hasMore = matches.length > limit;
-      return { items, hasMore, nextCursor: hasMore && last ? Buffer.from(JSON.stringify({ projectId, createdAt: last.createdAt, id: last.id, query })).toString('base64url') : null };
+      return { items, hasMore, nextCursor: hasMore && last ? Buffer.from(JSON.stringify({ projectId, createdAt: last.createdAt, id: last.id, query, deadlineFilter: options.deadlineFilter })).toString('base64url') : null };
     }
     const rows = this.readSummaries(`project_id = ? AND archived = 0 AND deleted_at IS NULL${after ? ' AND (created_at > ? OR (created_at = ? AND id > ?))' : ''} ORDER BY created_at ASC, id ASC LIMIT ?`, [
       projectId,
@@ -1380,11 +1429,11 @@ export class TaskRepository {
 
   /** 所有摘要入口共用字段映射与任务关系读取。 */
   private readSummaries(where: string, values: Array<string | number>): ZeusTaskSummary[] {
-    const rows = this.db.select<Omit<ZeusTaskSummary, 'tags' | 'relatedTaskIds'> & { tagsJson: string }>(
-      `SELECT id, project_id AS projectId, task_code AS taskCode, task_sequence AS taskSequence, parent_task_id AS parentTaskId, title, task_type AS taskType, management_status AS managementStatus, status, priority, tags_json AS tagsJson, created_from AS createdFrom, template_id AS templateId, substr(CASE task_type WHEN 'defect' THEN defect_current_state WHEN 'optimization' THEN optimization_current_state ELSE description END, 1, 160) AS contentPreview, created_at AS createdAt, updated_at AS updatedAt FROM tasks WHERE ${where}`,
+    const rows = this.db.select<Omit<ZeusTaskSummary, 'tags' | 'relatedTaskIds' | 'deadline'> & { tagsJson: string; deadlineJson: string | null }>(
+      `SELECT id, project_id AS projectId, task_code AS taskCode, task_sequence AS taskSequence, parent_task_id AS parentTaskId, title, task_type AS taskType, management_status AS managementStatus, status, priority, deadline_json AS deadlineJson, tags_json AS tagsJson, created_from AS createdFrom, template_id AS templateId, substr(CASE task_type WHEN 'defect' THEN defect_current_state WHEN 'optimization' THEN optimization_current_state ELSE description END, 1, 160) AS contentPreview, created_at AS createdAt, updated_at AS updatedAt FROM tasks WHERE ${where}`,
       values,
     );
-    const summaries = rows.map(({ tagsJson, ...row }) => ({ ...row, tags: JSON.parse(tagsJson) as string[], relatedTaskIds: [] as string[] }));
+    const summaries = rows.map(({ tagsJson, deadlineJson, ...row }) => ({ ...row, deadline: deadlineJson ? (JSON.parse(deadlineJson) as TaskDeadline) : null, tags: JSON.parse(tagsJson) as string[], relatedTaskIds: [] as string[] }));
     this.attachRelatedTaskIds(summaries);
     return summaries;
   }
@@ -2255,6 +2304,8 @@ interface DbTaskEnvironmentRow {
 }
 
 interface DbTaskRow {
+  /** 已标准化的截止配置。 */
+  deadline_json: string | null;
   id: string;
   project_id: string;
   task_code: string | null;
@@ -2435,6 +2486,7 @@ function mapTaskRow(row: DbTaskRow): ZeusTaskRecord {
     managementStatus: isTaskManagementStatus(row.management_status) ? row.management_status : 'todo',
     status: row.status,
     priority: row.priority || 'normal',
+    deadline: row.deadline_json ? (JSON.parse(row.deadline_json) as TaskDeadline) : null,
     allowCodeChanges: row.allow_code_changes === 1,
     allowTests: row.allow_tests === 1,
     allowGitCommit: row.allow_git_commit === 1,

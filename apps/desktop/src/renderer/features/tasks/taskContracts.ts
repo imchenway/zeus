@@ -1,3 +1,4 @@
+import type { TaskDeadline, TaskDeadlineFilter } from '@zeus/shared';
 import type { ConversationHistoryItem } from '../conversations/conversationContracts.js';
 import type { TaskAttachmentReference, TaskManagementStatus, TaskPriority, TaskType } from '@zeus/shared';
 import type { AiRuntimeSession } from '../runtime/runtimeContracts.js';
@@ -7,7 +8,7 @@ export type TaskStatus = 'draft' | 'ready' | 'running' | 'paused' | 'waiting_con
 export type TaskAgentRunStatus = 'not_started' | 'connecting' | 'reconnecting' | 'running' | 'waiting_user' | 'waiting_approval' | 'paused' | 'idle' | 'failed' | 'legacy_readonly';
 
 export type TaskTableColumnKey =
-  'code' | 'intent' | 'taskType' | 'managementStatus' | 'branchStatus' | 'runStatus' | 'source' | 'updatedAt' | 'createdAt' | 'template' | 'project' | 'priority' | 'description' | 'runtimeSession' | 'rawId' | 'createdFrom';
+  'code' | 'intent' | 'deadline' | 'taskType' | 'managementStatus' | 'branchStatus' | 'runStatus' | 'source' | 'updatedAt' | 'createdAt' | 'template' | 'project' | 'priority' | 'description' | 'runtimeSession' | 'rawId' | 'createdFrom';
 
 export type TaskTableColumnWidth = number;
 
@@ -32,6 +33,8 @@ export interface TaskTableEnumSortOrders {
 }
 
 export interface TaskRecord {
+  /** 截止配置；显式空值清除截止和提醒。 */
+  deadline?: TaskDeadline | null;
   /** 正文在详情读取，列表预览只供显示。 */
   contentPreview?: string;
   /** 服务端完整内容搜索命中的查询，不能当作正文使用。 */
@@ -224,6 +227,8 @@ export interface UpdateTaskStageRequest {
 }
 
 export interface CreateTaskRequest {
+  /** 截止配置；显式空值清除截止和提醒。 */
+  deadline?: TaskDeadline | null;
   idempotencyKey: string;
   projectId: string;
   parentTaskId?: string | null;
@@ -258,6 +263,8 @@ export interface DeleteTaskResult {
 }
 
 export interface LoadTasksRequest {
+  /** 时间快捷筛选。 */
+  deadlineFilter?: TaskDeadlineFilter;
   projectId: string;
   query?: string;
   managementStatus?: TaskManagementStatus;
@@ -267,6 +274,8 @@ export interface LoadTasksRequest {
 }
 
 export interface UpdateTaskRequest {
+  /** 截止配置；显式空值清除截止和提醒。 */
+  deadline?: TaskDeadline | null;
   /** 修改任务归属时传入目标项目。 */
   projectId?: string;
   expectedUpdatedAt: string;

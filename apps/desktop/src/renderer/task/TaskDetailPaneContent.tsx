@@ -1,3 +1,4 @@
+import { TaskDeadlineEditor } from './TaskDeadlineField.js';
 import { CaretDownIcon } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { GitBranchIcon } from '@phosphor-icons/react/dist/csr/GitBranch';
 import { TrashIcon } from '@phosphor-icons/react/dist/csr/Trash';
@@ -1406,6 +1407,10 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
                   }
                 />
               </span>
+              <div className="task-detail-summary-row">
+                <small>{zh ? '截止时间' : 'Deadline'}</small>
+                <TaskDeadlineEditor key={props.task.id} task={props.task} language={props.language} disabled={props.busy} onSave={(deadline, expectedUpdatedAt) => props.onUpdateTaskContent(props.task.id, { deadline, expectedUpdatedAt })} />
+              </div>
               <span className="task-detail-summary-row">
                 <small>{props.copy.sourceLabel ?? (zh ? '上下文来源' : 'Context source')}</small>
                 <strong>{formatTaskSource(props.task, props.copy.sourceLabels)}</strong>

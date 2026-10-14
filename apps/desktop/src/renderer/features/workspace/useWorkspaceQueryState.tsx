@@ -1,3 +1,4 @@
+import { matchesTaskDeadline, type TaskDeadlineFilter } from '@zeus/shared';
 import type { DigitalTeamEntrySelection } from '../digital-teams/DigitalTeamWorkspace.js';
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GlobalAgentSettingsHandle } from '../../settings/GlobalAgentSettingsPane.js';
@@ -343,6 +344,23 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const projectCreateReturnFocusRef = useRef<HTMLElement | null>(null);
   const [taskSearchQuery, setTaskSearchQuery] = useState('');
   const [taskTagFilter, setTaskTagFilter] = useState('');
+  /** 时间快捷筛选只作用于当前项目。 */
+  const [taskDeadlineFilter, setTaskDeadlineFilter] = useState<TaskDeadlineFilter>('all');
+  /** 时钟用于到期文字及时间筛选；一次刷新使用同一时刻。 */
+  const [taskDeadlineNow, setTaskDeadlineNow] = useState(Date.now);
+  useEffect(() => {
+    /** 恢复应用或跨过分钟边界时更新已加载结果。 */
+    const refresh = () => setTaskDeadlineNow(Date.now());
+    /** 后台休眠时无需持续运行，恢复后回调会追上当前时刻。 */
+    const timer = window.setInterval(refresh, 15000);
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, []);
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
   const [taskBulkActionStatus, setTaskBulkActionStatus] = useState<TaskBulkActionStatusState>({ kind: 'idle' });
   const [projectEditForm, setProjectEditForm] = useState(() => ({
@@ -921,19 +939,22 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
       if (projectId !== activeProjectId && activeProjectId && !taskQuery.pages[activeProjectId]?.loaded && taskQuery.pages[activeProjectId]?.state !== 'error') continue;
       const page = taskQuery.pages[projectId];
       const query = projectId === activeProjectId ? taskSearchQuery.trim().toLowerCase() : '';
-      if (!page || page.query !== query) void loadTaskPage(projectId, true, query);
+      /** 非当前项目的侧栏仍按原条件读取。 */
+      const deadlineFilter = projectId === activeProjectId ? taskDeadlineFilter : 'all';
+      if (!page || page.query !== query || (page.deadlineFilter ?? 'all') !== deadlineFilter) void loadTaskPage(projectId, true, query, deadlineFilter);
       else if (
         projectId === activeProjectId &&
         page.state === 'ready' &&
         page.hasMore &&
         (taskSearchQuery ||
+          taskDeadlineFilter !== 'all' ||
           taskTagFilter ||
           (taskStatusFilter && taskStatusFilter !== 'unfinished') ||
           taskPageViewMode === 'board' ||
           Boolean(activeTaskTableColumns.sort?.direction) ||
           filterVisibleTasks(currentProjectTasks, '', taskStatusFilter, '', { completed: activeTaskManagementStatusConfig.roles.completedStatusId, cancelled: activeTaskManagementStatusConfig.roles.cancelledStatusId }).length < 50)
       )
-        void loadTaskPage(projectId, false, query);
+        void loadTaskPage(projectId, false, query, deadlineFilter);
     }
   }, [
     activeTaskTableColumns.sort,
@@ -943,11 +964,19 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     activeProjectId,
     taskQuery.pages,
     taskSearchQuery,
+    taskDeadlineFilter,
     taskTagFilter,
     taskStatusFilter,
     taskPageViewMode,
     loadTaskPage,
   ]);
+  useEffect(() => {
+    setTaskDeadlineFilter('all');
+  }, [activeProjectId]);
+  useEffect(() => {
+    // 时间筛选会因时钟变化增加任务，重新查询首批，不能只过滤已加载摘要。
+    if (activeProjectId && taskDeadlineFilter !== 'all') void loadTaskPage(activeProjectId, true, taskSearchQuery.trim().toLowerCase(), taskDeadlineFilter);
+  }, [activeProjectId, loadTaskPage, taskDeadlineFilter, taskDeadlineNow, taskSearchQuery]);
   /** 首页状态独立更新，失败可重试，不改写成“没有集成”。 */
   useEffect(() => {
     const client = props.nativeConversationClient;
@@ -1420,11 +1449,17 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   }, [nativeLegacyConversationDetails, selectedTask?.id, selectedTask?.projectId]);
   const visibleTasks = useMemo(
     () =>
-      filterVisibleTasks(currentProjectTasks, taskSearchQuery, taskStatusFilter, taskTagFilter, {
-        completed: activeTaskManagementStatusConfig.roles.completedStatusId,
-        cancelled: activeTaskManagementStatusConfig.roles.cancelledStatusId,
-      }),
-    [activeTaskManagementStatusConfig.roles.cancelledStatusId, activeTaskManagementStatusConfig.roles.completedStatusId, currentProjectTasks, taskSearchQuery, taskStatusFilter, taskTagFilter],
+      filterVisibleTasks(
+        currentProjectTasks.filter((task) => matchesTaskDeadline(task, taskDeadlineFilter, taskDeadlineNow, [activeTaskManagementStatusConfig.roles.completedStatusId, activeTaskManagementStatusConfig.roles.cancelledStatusId])),
+        taskSearchQuery,
+        taskStatusFilter,
+        taskTagFilter,
+        {
+          completed: activeTaskManagementStatusConfig.roles.completedStatusId,
+          cancelled: activeTaskManagementStatusConfig.roles.cancelledStatusId,
+        },
+      ),
+    [activeTaskManagementStatusConfig.roles.cancelledStatusId, activeTaskManagementStatusConfig.roles.completedStatusId, currentProjectTasks, taskSearchQuery, taskStatusFilter, taskTagFilter, taskDeadlineFilter, taskDeadlineNow],
   );
 
   useEffect(() => {
@@ -1440,6 +1475,9 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   }, []);
   return {
     taskQuery,
+    taskDeadlineFilter,
+    taskDeadlineNow,
+    setTaskDeadlineFilter,
     loadTaskPage,
     props,
     actionState,

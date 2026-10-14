@@ -1,3 +1,4 @@
+import { useTaskReminders } from '../tasks/useTaskReminders.js';
 import type { ProjectGitWorkbenchSnapshot } from '../git/gitContracts.js';
 import { toolPages } from '../../tooling/index.js';
 import { temporaryWorkspaceId } from '@zeus/shared';
@@ -140,6 +141,49 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       return domainActions.selectNativeConversation(choice);
     },
   });
+  /** 任务详情必须真正加载并位于前台，才确认本次通知。 */
+  const taskReminders = useTaskReminders({
+    client: state.props.nativeConversationClient?.tasks ?? null,
+    subscribe: state.props.onSubscribeRealtimeEvents,
+    language: state.appShellSettings.appLanguage,
+    visibleTaskId: state.taskDetail && state.taskDetail.id === state.taskDetailPaneTaskId ? state.taskDetail.id : null,
+    visibleProjectId: state.taskDetail?.projectId ?? null,
+    contentVisible: state.zeusWindowForeground && state.activeNavTarget === 'projects' && state.activeProjectSection === 'tasks' && state.activeProjectId === state.taskDetail?.projectId,
+    onOpenTask: async (item) => {
+      /** 点击时重新核对任务及项目，已删除或移动的记录不误导航。 */
+      const client = state.props.nativeConversationClient?.tasks;
+      if (!client) throw new Error('任务服务尚未连接。');
+      const task = await client.loadTask(item.taskId);
+      if (!state.snapshot.projects.some((project) => project.id === task.projectId)) throw new Error('任务所属项目不可用。');
+      openSearchedTask(task.id, task.projectId);
+    },
+  });
+  useEffect(
+    () =>
+      window.zeus?.onOpenTaskNotification?.((target) => {
+        if (!target.taskId || !target.projectId) {
+          window.dispatchEvent(new Event('zeus:task-reminders:show'));
+          return;
+        }
+        // 系统点击复用通知列表中的准确身份，成功显示详情后再确认。
+        void (async () => {
+          const client = state.props.nativeConversationClient?.tasks;
+          if (!client) return;
+          let cursor: string | undefined;
+          do {
+            const page = await client.loadTaskReminders(cursor);
+            const item = page.items.find((entry) => entry.id === target.reminderId);
+            if (item) {
+              await taskReminders.open(item);
+              return;
+            }
+            cursor = page.nextCursor ?? undefined;
+          } while (cursor);
+          openSearchedTask(target.taskId!, target.projectId!);
+        })().catch(() => window.dispatchEvent(new Event('zeus:task-reminders:show')));
+      }),
+    [state.props.nativeConversationClient, taskReminders],
+  );
   const {
     actionState,
     activeNavTarget,
@@ -868,7 +912,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       ) : null}
       {activeNavTarget !== 'settings' && (upstreamMainLayout || !selectedProject || projectSessionSourceListVisible) ? (
         <SidebarNav
-          notificationCenter={<AutomationNotificationCenter model={automationNotifications} language={appShellSettings.appLanguage} />}
+          notificationCenter={<AutomationNotificationCenter model={automationNotifications} tasks={taskReminders} language={appShellSettings.appLanguage} />}
           mainLayout={appShellSettings.mainLayout}
           activeNavTarget={activeNavTarget}
           activeProjectId={activeProjectId}
@@ -990,6 +1034,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                 onFormChange={updateTaskCreateForm}
                 onTaskTypeChange={updateTaskCreateType}
                 onPriorityChange={updateTaskCreatePriority}
+                onDeadlineChange={(deadline) => setTaskCreateForm((current) => ({ ...current, deadline }))}
                 onParentChange={(parentTaskId) => setTaskCreateForm((current) => ({ ...current, parentTaskId }))}
                 onAuthorizeFiles={authorizeTaskCreateFiles}
                 onMaterializeResources={materializeTaskCreateResources}
@@ -1111,6 +1156,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                         searchQuery={taskSearchQuery}
                         statusFilter={taskStatusFilter}
                         tagFilter={taskTagFilter}
+                        deadlineFilter={state.taskDeadlineFilter}
+                        deadlineNow={state.taskDeadlineNow}
+                        onDeadlineFilterChange={state.setTaskDeadlineFilter}
                         statusOptions={taskStatusFilterValues}
                         statusLabels={activeTaskManagementStatusLabels}
                         statusDefinitions={activeTaskManagementStatusConfig.statuses}
@@ -1142,7 +1190,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                         hasMoreTasks={activeProjectId ? taskQuery.pages[activeProjectId]?.hasMore : false}
                         loadingMoreTasks={activeProjectId ? taskQuery.pages[activeProjectId]?.state === 'loading' : false}
                         taskPageError={activeProjectId ? taskQuery.pages[activeProjectId]?.error : null}
-                        onLoadMoreTasks={activeProjectId ? () => void loadTaskPage(activeProjectId, false, taskSearchQuery.trim().toLowerCase()) : undefined}
+                        onLoadMoreTasks={activeProjectId ? () => void loadTaskPage(activeProjectId, false, taskSearchQuery.trim().toLowerCase(), state.taskDeadlineFilter) : undefined}
                         activeProjectId={activeProjectId}
                         pageViewMode={taskPageViewMode}
                         taskBoardSnapshot={activeProjectId ? (taskBoardSnapshots[activeProjectId] ?? null) : null}
@@ -1172,7 +1220,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                         onTaskPriorityChange={updateTaskContent}
                         onBulkTaskStatusChange={(targetStatus, taskIds) => void runBulkTaskStatusChange(targetStatus, taskIds)}
                         onBulkTaskDelete={(taskIds) => void runBulkTaskDelete(taskIds)}
-                        onRetryTaskList={activeProjectId ? () => void loadTaskPage(activeProjectId, true, taskSearchQuery.trim().toLowerCase()) : undefined}
+                        onRetryTaskList={activeProjectId ? () => void loadTaskPage(activeProjectId, true, taskSearchQuery.trim().toLowerCase(), state.taskDeadlineFilter) : undefined}
                         onOpenProjectCode={selectedProject ? () => openProjectSection(selectedProject, 'code') : undefined}
                         controlBusyProps={controlBusyProps}
                       />

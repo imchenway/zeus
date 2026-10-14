@@ -1,3 +1,4 @@
+import { formatTaskDeadline, taskDeadlineTimes, matchesTaskDeadline } from '@zeus/shared';
 import { taskTypeOrder } from '@zeus/shared';
 import type {
   AiRuntimeSession,
@@ -32,6 +33,7 @@ export const defaultTaskTableColumnOrder: TaskTableColumnKey[] = [
   'intent',
   'taskType',
   'managementStatus',
+  'deadline',
   'branchStatus',
   'runStatus',
   'source',
@@ -45,7 +47,7 @@ export const defaultTaskTableColumnOrder: TaskTableColumnKey[] = [
   'rawId',
   'createdFrom',
 ];
-export const defaultVisibleTaskTableColumns: TaskTableColumnKey[] = ['code', 'intent', 'taskType', 'managementStatus', 'branchStatus', 'runStatus', 'source', 'createdAt', 'updatedAt'];
+export const defaultVisibleTaskTableColumns: TaskTableColumnKey[] = ['code', 'intent', 'taskType', 'managementStatus', 'deadline', 'branchStatus', 'runStatus', 'source', 'createdAt', 'updatedAt'];
 export const defaultTaskTableColumnWidths: Record<TaskTableColumnKey, number> = {
   code: 112,
   intent: 280,
@@ -59,6 +61,8 @@ export const defaultTaskTableColumnWidths: Record<TaskTableColumnKey, number> = 
   template: 144,
   project: 144,
   priority: 112,
+  /** 日期和可选时间共用一列。 */
+  deadline: 210,
   description: 220,
   runtimeSession: 180,
   rawId: 180,
@@ -88,6 +92,11 @@ const preBranchStatusDefaultTaskTableColumnOrder: TaskTableColumnKey[] = [
 ];
 const preBranchStatusDefaultVisibleTaskTableColumns: TaskTableColumnKey[] = ['code', 'intent', 'managementStatus', 'runStatus', 'source', 'createdAt', 'updatedAt'];
 const previousDefaultTaskTableColumns: Array<{ visible: TaskTableColumnKey[]; order: TaskTableColumnKey[] }> = [
+  // 原默认布局升级后展示截止时间，自定义布局仍保持用户选择。
+  {
+    visible: ['code', 'intent', 'taskType', 'managementStatus', 'branchStatus', 'runStatus', 'source', 'createdAt', 'updatedAt'],
+    order: ['code', 'intent', 'taskType', 'managementStatus', 'branchStatus', 'runStatus', 'source', 'createdAt', 'updatedAt', 'template', 'project', 'priority', 'description', 'runtimeSession', 'rawId', 'createdFrom'],
+  },
   {
     visible: preBranchStatusDefaultVisibleTaskTableColumns,
     order: preBranchStatusDefaultTaskTableColumnOrder,
@@ -413,7 +422,10 @@ export function createTaskWorkspaceViewModel(input: TaskWorkspaceViewModelInput)
       action: 'open-detail',
       runStatusConversationId: resolveTaskAgentRunStatusConversation(taskConversations)?.id,
       minHitArea: 44,
-      cells: buildTaskTableCells(task, input.runtimeSessions ?? [], input.projectName, taskConversations, input.conversationRunStatuses ?? {}, input.managementStatusLabels, input.runStatusLabels, input.appLanguage ?? 'zh-CN'),
+      cells: buildTaskTableCells(task, input.runtimeSessions ?? [], input.projectName, taskConversations, input.conversationRunStatuses ?? {}, input.managementStatusLabels, input.runStatusLabels, input.appLanguage ?? 'zh-CN', [
+        input.completedManagementStatusId ?? 'completed',
+        input.cancelledManagementStatusId ?? 'cancelled',
+      ]),
     };
   });
   // 列表始终按筛选和排序展示全部匹配任务，不再读取折叠状态或补入未匹配的父任务。
@@ -591,6 +603,8 @@ function buildTaskTableCells(
   managementStatusLabels?: Partial<Record<TaskManagementStatus, string>>,
   runStatusLabels?: Partial<Record<TaskAgentRunStatus, string>>,
   language: 'zh-CN' | 'en-US' = 'zh-CN',
+  /** 项目配置的终态决定是否标记逾期。 */
+  terminalStatuses: readonly string[] = ['completed', 'cancelled'],
 ): Record<TaskTableColumnKey, TaskTableCellViewModel> {
   const taskRuntimeSession = findLinkedRuntimeSession(task, runtimeSessions);
   // 表格缺省说明使用当前语言，不改写任务数据。
@@ -625,6 +639,10 @@ function buildTaskTableCells(
     createdAt: { primary: formatTaskUpdatedAt(task.createdAt, zh ? '未记录' : 'Not recorded'), sortValue: parseTaskDateSortValue(task.createdAt) },
     template: { primary: task.templateId ?? (zh ? '未绑定模板' : 'No template'), sortValue: task.templateId ?? null },
     project: { primary: displayProjectName, sortValue: displayProjectName },
+    deadline: {
+      primary: `${formatTaskDeadline(task.deadline)}${matchesTaskDeadline(task, 'overdue', Date.now(), terminalStatuses) ? (zh ? ' · 已逾期' : ' · Overdue') : ''}`,
+      sortValue: task.deadline ? Date.parse(taskDeadlineTimes(task.deadline).dueAt) : null,
+    },
     priority: { primary: task.priority ?? (zh ? '未设置' : 'Not set'), sortValue: task.priority ?? null },
     description: {
       primary: activeContent?.trim() || (task.contentPreview ? `${task.contentPreview}${task.contentPreview.length === 160 ? '…' : ''}` : language === 'zh-CN' ? '无内容' : 'No content'),
