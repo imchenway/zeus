@@ -202,18 +202,38 @@ export function useModelSetup(input: {
   }, []);
 
   useEffect(() => {
+    /** 操作或客户端切换后，旧路径复核的回执不得覆盖新选择。 */
+    let active = true;
     /** 后台结果只更新同一份程序的提示，不能覆盖用户正在安装的版本。 */
     const receiveUpdateCheck = (event: Event): void => {
       /** 事件字段先核对再使用，缺失或其他安装路径的结果不进入当前页面。 */
       const checked = (event as CustomEvent<CodexRuntimeUpdateStatus | undefined>).detail;
       if (operation !== 'idle' || !checked || !['available', 'up_to_date', 'unavailable'].includes(checked.status) || typeof checked.managedInstallation !== 'boolean' || typeof checked.checkedAt !== 'string') return;
       if (!(checked.currentVersion === null || typeof checked.currentVersion === 'string') || !(checked.latestVersion === null || typeof checked.latestVersion === 'string')) return;
-      if (!installationCheck?.resolvedCommandPath || checked.adapter?.resolvedCommandPath !== installationCheck.resolvedCommandPath) return;
-      setUpdateCheck(checked);
+      if (!installationCheck?.resolvedCommandPath || !checked.adapter?.resolvedCommandPath) return;
+      if (checked.adapter.resolvedCommandPath === installationCheck.resolvedCommandPath) {
+        setUpdateCheck(checked);
+        return;
+      }
+      /** 官方安装器可能切换版本目录，先读取当前选择的真实程序再接纳新路径。 */
+      const client = input.client;
+      /** 用户开始其他操作时会推进请求身份，旧的后台回执必须丢弃。 */
+      const request = requestRef.current;
+      void client
+        ?.checkRuntimeAdapter('codex')
+        .then((adapter) => {
+          if (!active || requestRef.current !== request || adapter.resolvedCommandPath !== checked.adapter.resolvedCommandPath) return;
+          setInstallationCheck(adapter);
+          setUpdateCheck(checked);
+        })
+        .catch(() => undefined);
     };
     window.addEventListener(codexRuntimeUpdateCheckedEvent, receiveUpdateCheck);
-    return () => window.removeEventListener(codexRuntimeUpdateCheckedEvent, receiveUpdateCheck);
-  }, [operation, installationCheck]);
+    return () => {
+      active = false;
+      window.removeEventListener(codexRuntimeUpdateCheckedEvent, receiveUpdateCheck);
+    };
+  }, [operation, installationCheck, input.client]);
 
   useEffect(() => {
     /** 登录或重新连接完成后原地刷新模型目录，不清空已经显示的账号状态。 */

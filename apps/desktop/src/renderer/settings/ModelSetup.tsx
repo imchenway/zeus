@@ -119,31 +119,28 @@ export function CodexAccountSettings({ controller }: { controller: ModelSetupCon
           </Button>
         ) : null}
       </div>
-      <div className="codex-update-row">
-        <p className="codex-update-state" role="status" aria-live="polite">
-          {updateLabel}
-        </p>
-        <Button variant="secondary" disabled={controller.operation !== 'idle'} busy={controller.operation === 'checking_update'} onClick={() => void controller.refreshCodexOverview('check_update')}>
-          {zh ? '检测更新' : 'Check for updates'}
-        </Button>
-      </div>
-      {controller.updateCheck?.status === 'available' ? (
-        controller.updateCheck.managedInstallation ? (
-          <div className="codex-update-row">
-            <p className="codex-update-state">
-              {zh
-                ? '更新后将重新连接。若连接失败，请先重新连接；Zeus 不会自动降级或用旧数据覆盖对话。'
-                : 'Updating reconnects Codex. If it fails, reconnect first; Zeus will not downgrade automatically or overwrite conversations with older data.'}
-            </p>
-            <Button variant="primary" disabled={controller.operation !== 'idle'} onClick={() => void controller.refreshCodexOverview('install_update')}>
-              {zh ? `安装 ${controller.updateCheck.latestVersion}` : `Install ${controller.updateCheck.latestVersion}`}
-            </Button>
-          </div>
-        ) : (
-          <p className="codex-update-state">
-            {zh ? '这份 Codex 由你自行安装。请使用原安装方式更新，再点击“检测更新”；Zeus 不会修改它。' : 'This Codex installation is managed outside Zeus. Update it with its original installer, then check again; Zeus will not modify it.'}
+      {/* 已确认的外部安装不显示更新状态或入口；来源读取期间保留现有加载状态。 */}
+      {controller.updateCheck?.managedInstallation !== false ? (
+        <div className="codex-update-row">
+          <p className="codex-update-state" role="status" aria-live="polite">
+            {updateLabel}
           </p>
-        )
+          <Button variant="secondary" disabled={controller.operation !== 'idle'} busy={controller.operation === 'checking_update'} onClick={() => void controller.refreshCodexOverview('check_update')}>
+            {zh ? '检测更新' : 'Check for updates'}
+          </Button>
+        </div>
+      ) : null}
+      {controller.updateCheck?.managedInstallation && controller.updateCheck.status === 'available' ? (
+        <div className="codex-update-row">
+          <p className="codex-update-state">
+            {zh
+              ? '更新后将重新连接。若连接失败，请先重新连接；Zeus 不会自动降级或用旧数据覆盖对话。'
+              : 'Updating reconnects Codex. If it fails, reconnect first; Zeus will not downgrade automatically or overwrite conversations with older data.'}
+          </p>
+          <Button variant="primary" disabled={controller.operation !== 'idle'} onClick={() => void controller.refreshCodexOverview('install_update')}>
+            {zh ? `安装 ${controller.updateCheck.latestVersion}` : `Install ${controller.updateCheck.latestVersion}`}
+          </Button>
+        </div>
       ) : null}
       {controller.operation === 'updating' ? (
         <div className="codex-update-progress">

@@ -46,14 +46,14 @@ export interface RuntimeAdapterReadEffectPort {
   listAdapters(): AiCliAdapterDescriptor[];
   /** 用户显式进入单个 check 路由时才允许探测 CLI；不得启动会话或保存探测结果。 */
   checkAdapter(adapterId: string, configuredCommandPath?: string): Promise<AiCliAdapterStatus>;
-  /** 用户明确检测 Codex 更新时才访问官方发布源。 */
+  /** 仅为 Zeus 管理的 Codex 检测官方更新，外部安装不查询新版。 */
   checkCodexUpdate(adapter: AiCliAdapterStatus): Promise<CodexRuntimeUpdateStatus>;
 }
 
 /** Codex 程序版本检测结果；模型权限仍由运行时目录单独决定。 */
 export interface CodexRuntimeUpdateStatus {
   adapter: AiCliAdapterStatus;
-  /** 只有 Zeus 管理的安装才允许由设置页执行更新。 */
+  /** 只有 Zeus 管理的安装才参与版本更新检查、提醒和安装。 */
   managedInstallation: boolean;
   status: 'available' | 'up_to_date' | 'unavailable';
   currentVersion: string | null;
@@ -72,7 +72,7 @@ export function assertCodexUpdateTarget(update: Pick<CodexRuntimeUpdateStatus, '
   if (typeof targetVersion !== 'string' || !/^\d+\.\d+\.\d+(?:-(?:alpha|beta)(?:\.\d+)*)?$/u.test(targetVersion)) {
     throw queryError('ZEUS_CODEX_UPDATE_CONFIRMATION_REQUIRED', '请先检测更新，再选择要安装的 Codex 版本。', 400);
   }
-  if (!update.managedInstallation) throw queryError('ZEUS_CODEX_UPDATE_EXTERNAL_INSTALLATION', '这份 Codex 由用户自行安装，请使用原安装方式更新。', 409);
+  if (!update.managedInstallation) throw queryError('ZEUS_CODEX_UPDATE_EXTERNAL_INSTALLATION', 'Zeus 不管理这份 Codex。', 409);
   if (update.status === 'unavailable') throw queryError('ZEUS_CODEX_UPDATE_NOT_AVAILABLE', '当前 Codex 程序不可更新，请重新检测。', 409);
   /** 已安装目标版本时只允许复核运行状态，不重新下载或降级。 */
   const expectedVersion = update.status === 'available' ? update.latestVersion : update.currentVersion;
