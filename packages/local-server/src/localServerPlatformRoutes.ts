@@ -1357,6 +1357,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           return updated;
         });
         reportProgress(1, 'completed');
+        /** 安装和运行实例核验完成后发布实际版本；请求方断线不影响已打开设置页刷新。 */
+        publishRealtimeEvent('codex.update.checked', { ...result });
         return result;
       });
       codexUpdateChain = operation.then(
