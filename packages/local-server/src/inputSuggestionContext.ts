@@ -61,8 +61,8 @@ function uniqueMessages(items: readonly ConversationModelHistoryPageItem[]): Con
   return [...new Map(items.map((item) => [item.id, item])).values()].sort((left, right) => (left.messageCreatedAt ?? left.confirmedAt).localeCompare(right.messageCreatedAt ?? right.confirmedAt) || left.sequence - right.sequence);
 }
 
-/** 按优先级分配预算，最后恢复原对话顺序；来源标签算入总长度。 */
-function renderMessages(repository: SuggestionRepository, conversationId: string, items: readonly ConversationModelHistoryPageItem[], budget: number): string {
+/** 按角色独立分配预算，保留消息身份供合并排序；来源标签和分隔符算入总长度。 */
+function renderMessages(repository: SuggestionRepository, conversationId: string, items: readonly ConversationModelHistoryPageItem[], budget: number): Array<{ item: ConversationModelHistoryPageItem; text: string }> {
   /** 优先选择的消息不能被排序过程挤走。 */
   const selected: Array<{ item: ConversationModelHistoryPageItem; text: string }> = [];
   /** 单条长消息最多占四分之一，短消息可以让更多原话进入材料。 */
@@ -83,10 +83,7 @@ function renderMessages(repository: SuggestionRepository, conversationId: string
     selected.push({ item, text: heading + body });
     remaining -= heading.length + body.length + 2;
   }
-  return selected
-    .sort((left, right) => (left.item.messageCreatedAt ?? left.item.confirmedAt).localeCompare(right.item.messageCreatedAt ?? right.item.confirmedAt) || left.item.sequence - right.item.sequence)
-    .map((entry) => entry.text)
-    .join('\n\n');
+  return selected;
 }
 
 /** 当前项目与全局的生效偏好可影响表达，未确认和员工专属经验不能提升为用户要求。 */
@@ -198,10 +195,16 @@ export function createInputSuggestionContextReader(repository: SuggestionReposit
       /** 任务和记忆单独占用最多 4,000 字符。 */
       const support = renderSources(input.sources, input.projectId, query, state);
       /** 助手最多占用 4,000 字符；其余全部优先留给用户原话。 */
-      const assistant = snapshot ? renderMessages(repository, snapshot.conversation.id, [...(history?.assistants ?? [])].reverse(), 3_996) : '';
-      /** 分隔符也计入预算，用户可使用空缺的任务、记忆或助手额度。 */
-      const user = snapshot ? renderMessages(repository, snapshot.conversation.id, prioritizedUsers, 16_000 - support.length - assistant.length - 4) : '';
-      return { text: [support, user, assistant].filter(Boolean).join('\n\n'), hasDialogue: users.length > 0, sourcesFingerprint };
+      const assistant = snapshot ? renderMessages(repository, snapshot.conversation.id, [...(history?.assistants ?? [])].reverse(), 3_996) : [];
+      /** 每条消息前的分隔符计入占用，用户可使用任务、记忆和助手剩余的全部额度。 */
+      const assistantLength = assistant.reduce((length, entry) => length + entry.text.length + 2, 0);
+      /** 保留用户原话的选择优先级，最终展示顺序不参与预算竞争。 */
+      const user = snapshot ? renderMessages(repository, snapshot.conversation.id, prioritizedUsers, 16_000 - support.length - assistantLength) : [];
+      /** 入选后统一按消息时间及同时间序号排列，最新用户修正不会被移到此前助手回复之前。 */
+      const dialogue = [...user, ...assistant]
+        .sort((left, right) => (left.item.messageCreatedAt ?? left.item.confirmedAt).localeCompare(right.item.messageCreatedAt ?? right.item.confirmedAt) || left.item.sequence - right.item.sequence)
+        .map((entry) => entry.text);
+      return { text: [support, ...dialogue].join('\n\n'), hasDialogue: users.length > 0, sourcesFingerprint };
     },
   };
 }
