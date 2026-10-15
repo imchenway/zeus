@@ -3,8 +3,10 @@ import { classifyAssistantMessage } from '@zeus/shared';
 import type { ConversationModelHistoryPageItem, ConversationSnapshotV2, ConversationSnapshotV2Repository, LongTermMemoryRecord } from '@zeus/storage';
 import { relevantEmployeeKnowledge } from './employeeMemoryContext.js';
 
-/** 建议只读已确认的任务和记忆，不创建画像，也不读取 Provider 私有记忆目录。 */
+/** 建议只读当前规则、任务和已确认记忆，不创建画像，也不读取 Provider 私有记忆目录。 */
 export interface InputSuggestionSources {
+  /** 与正常会话共用读取器合成的全局与项目规则；空值表示没有规则文件。 */
+  agentRules: string | null;
   /** 任务身份由会话所属关系解析，不从标题猜测。 */
   task: { id: string; title: string; description: string; updatedAt: string } | null;
   /** 调用方已按当前项目、全局范围、有效期和统一脱敏边界解析的记忆。 */

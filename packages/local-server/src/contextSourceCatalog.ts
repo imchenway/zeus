@@ -221,20 +221,28 @@ export class ContextSourceCatalog {
    * 规则的先后顺序随文件修改时间漂移，破坏“项目规则覆盖全局规则”的语义。
    * 符号链接一律拒绝——真源必须唯一，投影链接只供按文件读取的运行内核使用。
    */
-  async agentRulesFragment(input: { globalRootId?: string; projectRootId: string; projectId: string; idPrefix: string }): Promise<{
+  async agentRulesFragment(input: { globalRootId?: string; projectRootId?: string; projectId?: string; idPrefix: string }): Promise<{
     fragment: ContextFragment | null;
     globalFile: AgentRuleFileSummary | null;
     projectFile: AgentRuleFileSummary | null;
     indexedRuleCount: number;
   }> {
+    // 无项目的草稿只加载全局规则；项目身份和受控根必须同时提供，不能借用其他目录。
+    if ((input.projectRootId === undefined) !== (input.projectId === undefined)) throw invalidArgument('项目规则的根目录与项目身份必须同时提供。', { field: 'projectRootId' });
     const globalRoot = input.globalRootId ? this.requireRoot(input.globalRootId) : null;
-    const projectRoot = this.requireRoot(input.projectRootId);
-    const projectId = boundedText(input.projectId, 'projectId', 1, 512);
+    /** 未关联项目时不建立项目根，其他调用方继续使用原有项目范围。 */
+    const projectRoot = input.projectRootId === undefined ? null : this.requireRoot(input.projectRootId);
+    /** 全局独立片段不伪造项目身份。 */
+    const projectId = input.projectId === undefined ? undefined : boundedText(input.projectId, 'projectId', 1, 512);
     const globalFile = globalRoot ? await readRuleFile(globalRoot, agentRulesFileName) : null;
-    const projectFile = await readRuleFile(projectRoot, agentRulesFileName);
-    const projectPath = await canonicalRoot(projectRoot);
+    /** 只有登记的项目根才能提供项目正文。 */
+    const projectFile = projectRoot ? await readRuleFile(projectRoot, agentRulesFileName) : null;
     const indexed: AgentRuleFileSummary[] = [];
-    await collectAgentRulePaths(projectPath, projectPath, 0, indexed);
+    if (projectRoot) {
+      /** 只有真实项目根参与子目录索引，全局规则目录不充当项目目录。 */
+      const projectPath = await canonicalRoot(projectRoot);
+      await collectAgentRulePaths(projectPath, projectPath, 0, indexed);
+    }
     indexed.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
     if (!globalFile && !projectFile && indexed.length === 0) return { fragment: null, globalFile: null, projectFile: null, indexedRuleCount: 0 };
     const listed = indexed.slice(0, maximumAgentRuleIndexEntries);
@@ -264,10 +272,10 @@ export class ContextSourceCatalog {
         provenance: 'zeus_current',
         projectId,
         content,
-        sourceRef: `${globalRoot?.id ?? projectRoot.id}:${agentRulesFileName}`,
+        sourceRef: `${globalRoot?.id ?? projectRoot?.id}:${agentRulesFileName}`,
         sourceVersion: `${modifiedAt}:${globalFile?.sha256 ?? 'none'}:${projectFile?.sha256 ?? 'none'}:${indexed.length}`,
         updatedAt: modifiedAt,
-        dedupeKey: `${input.idPrefix}:${projectId}:${agentRulesFileName}`,
+        dedupeKey: `${input.idPrefix}:${projectId ?? 'global'}:${agentRulesFileName}`,
       },
     };
   }

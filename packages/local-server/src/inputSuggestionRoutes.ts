@@ -64,6 +64,8 @@ export function normalizeInputSuggestion(text: string): string | null {
 async function generateSuggestionText(options: {
   /** 固定材料来自本会话已保存的对话，手动操作可以包含仍在进行的轮次。 */
   context: string;
+  /** 两种模型显式接收同一份全局与项目规则，不依赖 Provider 自行发现项目文件。 */
+  agentRules: string | null;
   /** 明确区分预测下一句与保留原意的草稿润色。 */
   mode: InputSuggestionRequest['mode'];
   /** 主动点击需要优先起草具体回应，自动触发仍可在没有下一步时不提供建议。 */
@@ -94,7 +96,11 @@ async function generateSuggestionText(options: {
   /** 生成档位与会话本身的推理设置分开。 */
   const effort = options.effort ?? lowestSuggestionEffort(selected.supportedReasoningEfforts ?? []);
   /** 两种操作共享模型预算，仅通过提示词区分正文要求。 */
-  const system = options.mode === 'polish' ? inputPolishInstructions : inputSuggestionInstructions + (options.trigger === 'manual' ? manualInputSuggestionInstructions : '');
+  const instructions = options.mode === 'polish' ? inputPolishInstructions : inputSuggestionInstructions + (options.trigger === 'manual' ? manualInputSuggestionInstructions : '');
+  /** 规则单独保留完整正文，不挤占对话预算，也不把其中的执行要求当作本次工具授权。 */
+  const system = options.agentRules
+    ? `${instructions}\n\n以下全局和项目规则按所列优先级约束生成内容的语言、表达、业务要求和权限边界。当前任务仅是起草或改写用户消息，不执行规则中的操作，也不新增执行授权。\n\n${options.agentRules}`
+    : instructions;
   options.onDiagnostic({ event: 'generation_configured', effort: effort ?? 'default', inputCharacters: options.context.length, promptHash: createHash('sha256').update(system).digest('hex').slice(0, 16) });
   if (options.selectedModelRef.startsWith('codex:')) {
     /** 所选 Codex 才读取宿主配置，准备阶段包括进程、账户和临时线程。 */
@@ -180,8 +186,8 @@ export function registerInputSuggestionRoutes(options: {
   loadModels: () => Promise<{ items: Array<InputSuggestionModelOption & { supportedReasoningEfforts?: string[] }>; warning: string }>;
   /** 生成只查选中模型；设置页面仍可读取完整目录。 */
   loadModel: (modelRef: string) => Promise<InputSuggestionModelOption | undefined>;
-  /** 每次从当前项目和会话读取任务描述及已生效记忆。 */
-  readSources: (projectId?: string, conversationId?: string) => InputSuggestionSources;
+  /** 每次从当前项目和会话读取规则、任务描述及已生效记忆。 */
+  readSources: (projectId?: string, conversationId?: string) => Promise<InputSuggestionSources>;
   /** 当前任务运行身份在每次调用时读取。 */
   codexOptions: () => CodexTextGenerationOptions;
   /** 正式宿主写入有界本机日志；只读验收可以不配置落盘。 */
@@ -300,20 +306,26 @@ export function registerInputSuggestionRoutes(options: {
             classifyAssistantMessage({ ...latest.completionOutput.assistantMessage }, latest.completionOutput.phase) !== 'final')
         )
           return { ...result, reason: 'context_unavailable' };
-        /** 原文、任务和生效记忆由同一个读取器按独立预算组装。 */
-        const context = contextReader.read({ snapshot, projectId, sources: options.readSources(projectId, conversationId), draft: input.draft });
-        if (input.mode === 'suggest' && !context.hasDialogue) return { ...result, reason: 'context_unavailable' };
-        /** 用户要求的水位不随普通助手进度改变。 */
+        /** 读取文件前冻结用户要求的水位，读取期间的新要求也会使候选失效。 */
         const userRevision = conversationId ? contextReader.userRevision(conversationId) : '';
+        /** 规则读取纳入原有总时限，失败不能静默退回不带规则的生成。 */
+        const sources = await options.readSources(projectId, conversationId);
+        signal.throwIfAborted();
+        /** 对话、任务和记忆仍用原预算，规则在共同生成入口单独注入。 */
+        const context = contextReader.read({ snapshot, projectId, sources, draft: input.draft });
+        if (input.mode === 'suggest' && !context.hasDialogue) return { ...result, reason: 'context_unavailable' };
         /** 目录加载和生成都是异步边界，每次跨过边界都重新核对本轮归属。 */
-        const isCurrent = (): boolean => {
+        const isCurrent = async (): Promise<boolean> => {
+          /** 先完成异步规则读取，再核对设置和会话，避免读取期间的变化被遗漏。 */
+          const currentSources = await options.readSources(projectId, conversationId);
+          signal.throwIfAborted();
           /** 设置变化不能让本次调用带着旧模型或深度继续。 */
           const current = normalizeInputSuggestionSettings(options.readSettings());
           if ((input.trigger === 'automatic' && current.enabled !== settings.enabled) || current.modelRef !== settings.modelRef || current.effort !== settings.effort || current.serviceTier !== settings.serviceTier) {
             cancellation = 'settings_changed';
             return false;
           }
-          if (inputSuggestionSourcesFingerprint(options.readSources(projectId, conversationId)) !== context.sourcesFingerprint) {
+          if (inputSuggestionSourcesFingerprint(currentSources) !== context.sourcesFingerprint) {
             cancellation = 'sources_changed';
             return false;
           }
@@ -322,6 +334,7 @@ export function registerInputSuggestionRoutes(options: {
           const after = options.repository.readSnapshot(conversationId, { closedTurnLimit: 1, includeSessionMetrics: false });
           /** 持久状态变化单独记录为材料失效，不归为模型故障。 */
           const currentContext =
+            after.conversation.projectId === projectId &&
             !after.conversation.archived &&
             after.orderEpoch === snapshot?.orderEpoch &&
             after.eventStreamGeneration === snapshot?.eventStreamGeneration &&
@@ -334,7 +347,7 @@ export function registerInputSuggestionRoutes(options: {
         /** 生成只解析选中模型，API 请求不等待 Codex 目录或账户读取。 */
         const selected = await options.loadModel(settings.modelRef!);
         signal.throwIfAborted();
-        if (!isCurrent()) return { ...result, reason: 'cancelled' };
+        if (!(await isCurrent())) return { ...result, reason: 'cancelled' };
         /** 显式档位失效必须说明原因，不能悄悄换成更深或更浅的档位。 */
         if (!selected) return { ...result, reason: 'model_unavailable' };
         if (settings.effort && !selected.supportedReasoningEfforts?.includes(settings.effort)) return { ...result, reason: 'effort_unavailable' };
@@ -345,6 +358,7 @@ export function registerInputSuggestionRoutes(options: {
         /** 纯文本生成不注册执行工具，也不进入任务或提交队列。 */
         const text = await generateSuggestionText({
           context: material,
+          agentRules: sources.agentRules,
           mode: input.mode,
           trigger: input.trigger,
           effort: settings.effort ?? null,
@@ -366,7 +380,7 @@ export function registerInputSuggestionRoutes(options: {
         record({ event: 'model_result', outputKind: !text.trim() ? 'empty' : text.trim() === 'NO_SUGGESTION' ? 'explicit_no_suggestion' : 'text', outputCharacters: text.length });
         signal.throwIfAborted();
         /** 主会话或设置已经变化时不返回旧建议。 */
-        if (!isCurrent()) return { ...result, reason: 'cancelled' };
+        if (!(await isCurrent())) return { ...result, reason: 'cancelled' };
         /** 仅模型正常返回空结果时显示没有建议，故障保留独立原因。 */
         const suggestion = input.mode === 'polish' ? (text.trim() ? text : null) : normalizeInputSuggestion(text);
         if (input.mode === 'polish' && suggestion?.trim() === input.draft?.trim()) return { ...result, reason: 'no_change' };
