@@ -1,3 +1,6 @@
+import { ArrowElbowDownLeftIcon as ArrowElbowDownLeft } from '@phosphor-icons/react/dist/csr/ArrowElbowDownLeft';
+import { ArrowLineRightIcon as ArrowLineRight } from '@phosphor-icons/react/dist/csr/ArrowLineRight';
+import { CodeIcon as Code } from '@phosphor-icons/react/dist/csr/Code';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import type { ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourcePreview } from '@zeus/shared';
 import { conversationFileLocationFromReference, conversationMarkdownReferences, enableConversationCjkStrong, normalizeConversationResourceReference } from '@zeus/shared';
@@ -57,10 +60,17 @@ const SMOOTH_STREAMING_OPTIONS = {
   flushOnFinish: true,
 } as const;
 
+/** Markdown 内容和操作提示统一跟随当前界面语言。 */
 const labels = {
   'zh-CN': {
     copied: '已复制',
     copyCode: '复制代码',
+    /** 未标注语言及纯文本别名使用同一个可读标题。 */
+    plainText: '纯文本',
+    /** 换行提示描述点击后执行的操作。 */
+    enableWordWrap: '启用自动换行',
+    /** 已开启时允许恢复原始行布局。 */
+    disableWordWrap: '关闭自动换行',
     copyTable: '复制表格 Markdown',
     copyDiagram: '复制图表源码',
     /** 图表操作采用会话语言，不显示运行库的英文标签页。 */
@@ -79,6 +89,12 @@ const labels = {
   'en-US': {
     copied: 'Copied',
     copyCode: 'Copy code',
+    /** 英文界面使用对应的纯文本标题。 */
+    plainText: 'Plain text',
+    /** 英文换行提示同样描述下一次操作。 */
+    enableWordWrap: 'Enable word wrap',
+    /** 英文关闭提示与按钮状态保持一致。 */
+    disableWordWrap: 'Disable word wrap',
     copyTable: 'Copy table Markdown',
     copyDiagram: 'Copy diagram source',
     /** 英文界面使用同一组紧凑操作。 */
@@ -394,16 +410,40 @@ function SourcePreviewImage(props: { url: string; label: string; language: Sessi
   );
 }
 
+/** 普通代码块共用标题与操作；仅改变显示换行，不改写或执行源码。 */
 function SecureCodeBlockNode(props: NodeComponentProps<MarkstreamNode>) {
+  /** 所有 Markdown 展示入口共享同一语言上下文。 */
   const runtime = useContext(MarkdownRuntimeContext);
+  /** 独立渲染时保持原有英文回退。 */
   const language = runtime?.language ?? 'en-US';
+  /** 标题、换行与复制提示使用相同语言。 */
   const languageLabels = labels[language];
+  /** 原始代码仅接受解析器提供的字符串。 */
   const sourceCode = typeof props.node.code === 'string' ? props.node.code : '';
+  /** 沿用现有单块长度限制和截断提示。 */
   const codeTruncated = sourceCode.length > MAX_CONVERSATION_MARKDOWN_CODE_CHARACTERS;
+  /** 显示与复制共用这一份受限源码，换行不会插入额外字符。 */
   const code = sourceCode.slice(0, MAX_CONVERSATION_MARKDOWN_CODE_CHARACTERS);
+  /** 只清理语言标记的首尾空白，其余语言名称保留原文。 */
+  const codeLanguage = typeof props.node.language === 'string' ? props.node.language.trim() : '';
+  /** 常见纯文本别名不区分大小写，其余语言直接显示名称。 */
+  const title = ['', 'text', 'plain', 'plaintext'].includes(codeLanguage.toLowerCase()) ? languageLabels.plainText : codeLanguage;
+  /** 状态只属于当前块；流式追加不重置，重新挂载后默认关闭。 */
+  const [wrap, setWrap] = useState(false);
+  /** 按钮与全局悬停提示共用下一步操作文案。 */
+  const wrapLabel = wrap ? languageLabels.disableWordWrap : languageLabels.enableWordWrap;
   return (
-    <div className="session-code-block" data-language={typeof props.node.language === 'string' ? props.node.language : undefined} aria-busy={props.node.loading || undefined}>
-      <ConversationMarkdownCopyButton label={languageLabels.copyCode} copiedLabel={languageLabels.copied} text={code} />
+    <div className="session-code-block session-markdown-code-block" data-language={codeLanguage || undefined} data-wrap={wrap} aria-busy={props.node.loading || undefined}>
+      <div className="session-code-toolbar">
+        <span className="session-code-title">
+          <Code aria-hidden="true" weight="regular" />
+          <span>{title}</span>
+        </span>
+        <button type="button" aria-label={wrapLabel} aria-pressed={wrap} data-icon-tooltip={wrapLabel} onClick={() => setWrap((current) => !current)}>
+          {wrap ? <ArrowElbowDownLeft aria-hidden="true" weight="regular" /> : <ArrowLineRight aria-hidden="true" weight="regular" />}
+        </button>
+        <ConversationMarkdownCopyButton label={languageLabels.copyCode} copiedLabel={languageLabels.copied} text={code} />
+      </div>
       <pre>
         <code>{code}</code>
       </pre>

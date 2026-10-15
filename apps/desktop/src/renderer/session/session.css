@@ -5317,6 +5317,99 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   opacity: 1;
 }
 
+/* 普通代码块单独提供主题外壳，不改变图表、表格及数学块的边界。 */
+.session-codex-parity-v1 .session-conversation-markdown .session-markdown-code-block {
+  background: color-mix(in srgb, var(--session-text) 4%, var(--session-code));
+  border: 1px solid var(--session-line);
+  border-radius: 20px;
+  box-sizing: border-box;
+  margin-block: 12px;
+  max-inline-size: 100%;
+  overflow: hidden;
+}
+
+/* 标题与操作常显，只有下方源码参与横向滚动。 */
+.session-codex-parity-v1 .session-code-toolbar {
+  align-items: center;
+  box-sizing: border-box;
+  color: var(--session-text);
+  display: flex;
+  gap: 4px;
+  min-block-size: 44px;
+  padding: 8px 12px 4px 16px;
+}
+
+/* 长语言名称让出按钮空间，窄窗口内仍能操作换行和复制。 */
+.session-codex-parity-v1 .session-code-title {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  gap: 8px;
+  min-inline-size: 0;
+}
+
+.session-codex-parity-v1 .session-code-title > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 两个原生按钮使用相同触控范围，保留共享复制反馈与全局提示。 */
+.session-codex-parity-v1 .session-code-toolbar > button {
+  align-items: center;
+  background: transparent;
+  block-size: 32px;
+  border: 0;
+  border-radius: 50%;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  flex-shrink: 0;
+  inline-size: 32px;
+  justify-content: center;
+  padding: 0;
+}
+
+.session-codex-parity-v1 .session-code-toolbar > button:hover:not(:disabled),
+.session-codex-parity-v1 .session-code-toolbar > button[aria-pressed='true'] {
+  background: var(--session-control-hover);
+}
+
+/* 可见焦点不依赖悬停或颜色变化，键盘切换后仍能定位当前按钮。 */
+.session-codex-parity-v1 .session-code-toolbar > button:focus-visible {
+  outline: 2px solid var(--session-focus-outline);
+  outline-offset: 2px;
+}
+
+.session-codex-parity-v1 .session-code-title > svg,
+.session-codex-parity-v1 .session-code-toolbar > button > svg {
+  block-size: 18px;
+  flex-shrink: 0;
+  inline-size: 18px;
+}
+
+/* 源码沿用等宽字体；移除内层卡片，保留原始行与块内滚动。 */
+.session-codex-parity-v1 .session-conversation-markdown .session-markdown-code-block > pre {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  margin: 0;
+  padding: 8px 16px 16px;
+}
+
+/* 只调整排版，保留缩进、已有换行及超长连续字符的完整内容。 */
+.session-codex-parity-v1 .session-conversation-markdown .session-markdown-code-block[data-wrap='true'] > pre {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.session-codex-parity-v1 .session-conversation-markdown .session-markdown-code-block > .session-markdown-code-truncated {
+  margin: 0;
+  padding: 0 16px 16px;
+}
+
 .session-codex-parity-v1 .session-markdown :where(ul, ol) {
   padding-inline-start: 22px;
 }
