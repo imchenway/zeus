@@ -1,6 +1,7 @@
 import { resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
 import { createAiRuntimeSessionManager, parseModelRef, type AiRuntimeSession } from '@zeus/ai-runtime';
 import {
+  withGitRepositoryOperation,
   buildGitPatchExport,
   buildTaskBranchName,
   buildTaskBranchPrefix,
@@ -1064,9 +1065,31 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     return { destinationId: 'workspace-git-command-application', resourceId, externalOperationId, opaque };
   }
 
+  /** 单步入口和后台组合共用跨进程仓库锁。 */
   async function executeWorkspaceGitCommand(input: { commandType: WorkspaceGitCommandType; operationIdentity: string; prepared: PreparedWorkspaceGitCommand; value: Record<string, unknown> }): Promise<WorkspaceGitRouteExecution> {
+    /** 只从准备阶段核验后的身份取得目录。 */
+    const opaque = input.prepared.opaque as WorkspaceGitPreparedOpaque;
+    const integration = opaque.integrationId ? taskIntegrations.getById(opaque.integrationId) : undefined;
+    const workspace = opaque.workspaceId ? taskWorkspaces.getById(opaque.workspaceId) : integration ? taskWorkspaces.getById(integration.workspaceId) : undefined;
+    const paths = workspace
+      ? [workspace.repositoryPath || projects.getById(workspace.projectId)!.localPath]
+      : opaque.taskId && !opaque.repositoryId
+        ? taskWorkspaces.listByTask(opaque.taskId).map((item) => item.repositoryPath || projects.getById(item.projectId)!.localPath)
+        : [];
+    /** 固定顺序消除多仓批量操作之间的锁顺序差异。 */
+    const ordered = [...new Set(paths)].sort();
+    const executeLocked = (index: number): Promise<WorkspaceGitRouteExecution> => (index === ordered.length ? executeWorkspaceGitCommandUnlocked(input) : withGitRepositoryOperation(ordered[index]!, () => executeLocked(index + 1)));
+    return executeLocked(0).catch((error) => {
+      if ((error as { code?: string }).code === 'ZEUS_GIT_BUSY') workspaceGitReject(409, 'ZEUS_GIT_BUSY', (error as Error).message);
+      throw error;
+    });
+  }
+
+  async function executeWorkspaceGitCommandUnlocked(input: { commandType: WorkspaceGitCommandType; operationIdentity: string; prepared: PreparedWorkspaceGitCommand; value: Record<string, unknown> }): Promise<WorkspaceGitRouteExecution> {
     const opaque = input.prepared.opaque as WorkspaceGitPreparedOpaque;
     switch (input.commandType) {
+      case workspaceGitCommandTypes.deliveryRepositoryAction:
+        workspaceGitReject(400, 'ZEUS_GIT_DELIVERY_SCOPE_REQUIRED', '组合交付必须通过已接纳的运行执行。');
       case workspaceGitCommandTypes.taskRepositoryAttach:
         return executeTaskRepositoryAttach(opaque, input.value);
       case workspaceGitCommandTypes.workbenchAction:
@@ -2155,9 +2178,17 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
   }
 
   async function finalizeTaskIntegrationAfterAi(operationId: string, conversationId: string): Promise<void> {
+    /** AI 的后台收尾也使用同一仓库写锁。 */
     const attempt = taskIntegrationAttempts.getById(operationId);
-    if (attempt) return finalizeTaskIntegrationAttemptAfterAi(attempt.id, conversationId);
-    return finalizeLegacyTaskIntegrationAfterAi(operationId, conversationId);
+    const integration = taskIntegrations.getById(attempt?.integrationId ?? operationId);
+    const workspace = integration ? taskWorkspaces.getById(integration.workspaceId) : undefined;
+    if (!integration || !workspace) return;
+    await withGitRepositoryOperation(workspace.repositoryPath || projects.getById(workspace.projectId)!.localPath, () =>
+      attempt ? finalizeTaskIntegrationAttemptAfterAi(attempt.id, conversationId) : finalizeLegacyTaskIntegrationAfterAi(operationId, conversationId),
+    ).catch((error) => {
+      // 占用时保持原现场；组合运行会在用户继续时再次核对，不能抢占原操作。
+      if ((error as { code?: string }).code !== 'ZEUS_GIT_BUSY') throw error;
+    });
   }
 
   async function finalizeTaskIntegrationAttemptAfterAi(attemptId: string, conversationId: string): Promise<void> {
@@ -2238,6 +2269,10 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
         publishRealtimeEvent('task.git_delivery.changed', { taskId: task.id, integrationId: integration.id, conversationId });
         return;
       }
+      /** 隔离结果落地并回收后，同步命名冲突工作区的真实生命周期。 */
+      const conflictWorkspaceId = conversations.getRecordById(conversationId)?.workspaceId;
+      const conflictWorkspace = conflictWorkspaceId ? taskWorkspaces.getById(conflictWorkspaceId) : undefined;
+      if (conflictWorkspace?.kind === 'conflict' && conflictWorkspace.baseWorkspaceId === workspace.id) taskWorkspaces.update(conflictWorkspace.id, { worktreePath: null, headSha: finalized.resultHeadSha, state: 'merged', lastError: null });
       const taskWorktreeReclaimed = integration.targetBranch === workspace.sourceBranch ? await markTaskWorkspaceDelivered(workspace) : false;
       recordTaskEvent({
         taskId: task.id,

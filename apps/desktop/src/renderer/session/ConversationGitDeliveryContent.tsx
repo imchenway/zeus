@@ -1,3 +1,4 @@
+import { GitDeliveryRunControl } from '../git/GitDeliveryRunControl.js';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { DashboardClient, GitDiffSummary, ProjectGitAction, ProjectGitRepositoryWorkbenchItem, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
 import type { NativeConversationChoice } from './sessionTypes.js';
@@ -34,6 +35,8 @@ export function ConversationGitDeliveryContent(props: { client: DashboardClient;
   const [snapshot, setSnapshot] = useState<ProjectGitWorkbenchSnapshot | null>(null);
   /** 已提交变化只比较真实上游，未配置上游时不伪造来源分支。 */
   const [committed, setCommitted] = useState<Record<string, GitDiffSummary>>({});
+  /** 上游比较完成前保留仓库加载状态。 */
+  const [comparisonLoading, setComparisonLoading] = useState(false);
   /** 比较失败保留仓库级原因，其余仓库继续显示。 */
   const [comparisonErrors, setComparisonErrors] = useState<Record<string, string>>({});
   /** 本次选择不与其他会话共用。 */
@@ -77,6 +80,7 @@ export function ConversationGitDeliveryContent(props: { client: DashboardClient;
       if (revision !== readRevision.current) return;
       setSnapshot(next);
       setCommitted({});
+      setComparisonLoading(true);
       setComparisonErrors({});
       if (busyRef.current === 'loading') {
         busyRef.current = null;
@@ -101,9 +105,11 @@ export function ConversationGitDeliveryContent(props: { client: DashboardClient;
         next.repositories.map((repository) => (repository.snapshot.upstream ? props.client.loadProjectGitComparisonDiff(props.project.id, repository.id, repository.snapshot.upstream, 'current') : Promise.resolve(null))),
       );
       if (revision !== readRevision.current) return;
+      setComparisonLoading(false);
       setCommitted(Object.fromEntries(comparisons.flatMap((result, index) => (result.status === 'fulfilled' && result.value ? [[next.repositories[index]!.id, result.value]] : []))));
       setComparisonErrors(Object.fromEntries(comparisons.flatMap((result, index) => (result.status === 'rejected' ? [[next.repositories[index]!.id, formatVisibleApplicationError(result.reason, zh ? 'zh-CN' : 'en')]] : []))));
     } catch (reason) {
+      setComparisonLoading(false);
       if (revision === readRevision.current) setError(formatVisibleApplicationError(reason, zh ? 'zh-CN' : 'en'));
     } finally {
       if (revision === readRevision.current && busyRef.current === 'loading') {
@@ -140,14 +146,15 @@ export function ConversationGitDeliveryContent(props: { client: DashboardClient;
           workspace: { id: repository.id, branchName: repository.snapshot.branch, state: 'ready', repositoryName: repository.name, repositoryRelativePath: repository.relativePath },
           detail: undefined,
           files,
+          loadState: scope === 'committed' ? (comparisonErrors[repository.id] ? 'error' : comparisonLoading ? 'loading' : undefined) : undefined,
           statusLabel: repository.snapshot.conflictFiles.length
             ? zh
               ? `${repository.snapshot.conflictFiles.length} 个冲突待处理`
               : 'Conflicts pending'
-            : (comparisonErrors[repository.id] ?? (repository.snapshot.clean ? (zh ? '工作目录干净' : 'Clean worktree') : zh ? '有未提交修改' : 'Uncommitted changes')),
+            : ((scope === 'committed' ? comparisonErrors[repository.id] : undefined) ?? (repository.snapshot.clean ? (zh ? '工作目录干净' : 'Clean worktree') : zh ? '有未提交修改' : 'Uncommitted changes')),
         };
       }),
-    [snapshot, scope, committed, comparisonErrors, zh],
+    [snapshot, scope, committed, comparisonErrors, comparisonLoading, zh],
   );
 
   useEffect(() => {
@@ -440,6 +447,28 @@ export function ConversationGitDeliveryContent(props: { client: DashboardClient;
                   mergeCount={mergeCandidates.length}
                   onMerge={() => void execute('merge', mergeCandidates)}
                   mergeFeedback={feedback?.action === 'merge' ? <DeliveryFeedbackNotice feedback={feedback} zh={zh} /> : null}
+                  combination={
+                    <GitDeliveryRunControl
+                      client={props.client}
+                      projectId={props.project.id}
+                      zh={zh}
+                      disabled={Boolean(busyAction)}
+                      onAccepted={props.onClose}
+                      input={{
+                        scope: { kind: 'conversation', conversationId: props.conversation.id },
+                        message,
+                        mode: 'merge',
+                        repositories: selected.map((repository) => ({
+                          repositoryId: repository.id,
+                          paths: selection[repository.id] ?? [],
+                          expectedBranch: repository.snapshot.branch,
+                          expectedHeadSha: repository.snapshot.headSha,
+                          mergeBranch,
+                        })),
+                      }}
+                      repositoryNames={Object.fromEntries((snapshot?.repositories ?? []).map((repository) => [repository.id, repository.name]))}
+                    />
+                  }
                   pushCount={pushCandidates.length}
                   onPush={() => void execute('push', pushCandidates)}
                   pushFeedback={feedback?.action === 'push' ? <DeliveryFeedbackNotice feedback={feedback} zh={zh} /> : null}

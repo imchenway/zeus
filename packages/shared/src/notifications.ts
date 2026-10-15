@@ -1,8 +1,10 @@
+import type { GitDeliveryNotification } from './gitDelivery.js';
 import type { AutomationNotification } from './automationNotifications.js';
 import type { TaskReminder } from './taskDeadline.js';
 
 /** 来源只用于分发原有业务行为，界面不按来源分类。 */
-export type NotificationItem = (AutomationNotification & { /** 原自动化结果。 */ source: 'automation' }) | (TaskReminder & { /** 原任务截止提醒。 */ source: 'task' });
+export type NotificationItem =
+  (AutomationNotification & { /** 原自动化结果。 */ source: 'automation' }) | (TaskReminder & { /** 原任务截止提醒。 */ source: 'task' }) | (GitDeliveryNotification & { /** 后台代码交付结果。 */ source: 'git_delivery' });
 
 /** 统一分页使用全局边界，不依赖上一条通知仍存在或仍未读。 */
 export type NotificationPosition = Pick<NotificationItem, 'occurredAt' | 'source' | 'id'>;
@@ -11,7 +13,7 @@ export type NotificationPosition = Pick<NotificationItem, 'occurredAt' | 'source
 export interface NotificationPage {
   /** 本页按全局顺序排列的未读记录。 */
   items: NotificationItem[];
-  /** 两种来源的全部有效未读数。 */
+  /** 全部来源的有效未读数。 */
   unreadCount: number;
   /** 没有更多未读记录时为空。 */
   nextCursor: string | null;

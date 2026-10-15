@@ -58,6 +58,8 @@ export interface DeliveryRepositoryGroup {
   detail: Pick<TaskWorkspaceSnapshot, 'review'> | undefined;
   files: DeliveryFile[];
   statusLabel: string;
+  /** 未完成或失败的读取不能被当成空目录。 */
+  loadState?: 'loading' | 'error';
 }
 
 /** 本机读取失败保留重试，不能把未加载误报为没有变化。 */
@@ -124,7 +126,9 @@ export function DeliveryRepositoryFileTree(props: {
     return () => window.clearTimeout(timer);
   }, [copiedBranch]);
   /** 同一任务分支下的仓库保持现有排序与交付范围。 */
-  const branchGroups = groupDeliveryRepositoriesByBranch(props.groups);
+  const visibleGroups = props.groups.filter((group) => group.files.length > 0 || group.loadState || props.detailStates[group.workspace.id]);
+  /** 分支全选只作用于当前文件范围中的可见仓库。 */
+  const branchGroups = groupDeliveryRepositoriesByBranch(visibleGroups);
   return (
     <aside className="task-git-delivery-file-browser" aria-label={props.zh ? '按仓库分组的交付文件' : 'Delivery files grouped by repository'}>
       <header className="task-git-review-pane-title task-git-delivery-diff-tabs">
@@ -152,7 +156,7 @@ export function DeliveryRepositoryFileTree(props: {
         </span>
       </header>
       <div className="task-git-delivery-file-tree">
-        {props.groups.length === 0 ? <p className="task-git-delivery-repository-state">{props.zh ? '当前范围没有可交付的 Git 仓库。' : 'No Git repositories are available in this scope.'}</p> : null}
+        {visibleGroups.length === 0 ? <p className="task-git-delivery-repository-state">{props.zh ? '当前范围没有变动文件。' : 'No changed files in this scope.'}</p> : null}
         {branchGroups.map((branchGroup) => {
           /** 分支勾选只覆盖当前分组中的仓库。 */
           const workspaceIds = branchGroup.repositories.map((group) => group.workspace.id);
@@ -216,7 +220,7 @@ export function DeliveryRepositoryFileTree(props: {
                         </span>
                       </label>
                     </summary>
-                    {props.detailStates[workspaceId] === 'loading' ? <small className="task-git-delivery-repository-state">{props.zh ? '正在读取文件…' : 'Loading files…'}</small> : null}
+                    {(group.loadState ?? props.detailStates[workspaceId]) === 'loading' ? <small className="task-git-delivery-repository-state">{props.zh ? '正在读取文件…' : 'Loading files…'}</small> : null}
                     {group.files.length > 0 ? (
                       <DeliveryDirectoryFiles
                         files={group.files}
@@ -230,7 +234,7 @@ export function DeliveryRepositoryFileTree(props: {
                         onSelect={(path) => props.onSelectFile(workspaceId, path)}
                         onOpen={(path) => props.onOpenFile(workspaceId, path)}
                       />
-                    ) : !props.detailStates[workspaceId] ? (
+                    ) : !(group.loadState ?? props.detailStates[workspaceId]) ? (
                       <small className="task-git-delivery-repository-state">{props.diffScope === 'working' ? (props.zh ? '没有未提交文件' : 'No uncommitted files') : props.zh ? '没有已提交成果' : 'No committed result'}</small>
                     ) : null}
                   </details>
@@ -559,6 +563,8 @@ export function GitDeliveryActions(props: {
   pushCount: number;
   onPush: () => void;
   pushFeedback?: ReactNode;
+  /** 两种交付入口共用后台运行入口。 */
+  combination?: ReactNode;
 }) {
   /** 两种入口都在操作期间锁定文件选择。 */
   const busy = props.busyAction !== null;
@@ -632,6 +638,7 @@ export function GitDeliveryActions(props: {
         </div>
         {props.pushFeedback}
       </section>
+      {props.combination}
     </aside>
   );
 }

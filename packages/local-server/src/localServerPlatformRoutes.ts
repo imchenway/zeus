@@ -1,3 +1,4 @@
+import { GitDeliveryExecution } from './gitDeliveryExecution.js';
 import { registerTaskReminderService } from './taskReminderService.js';
 import { registerNotificationRoutes } from './notificationRoutes.js';
 import { repairTaskAttachmentReferences } from './taskAttachmentLifecycle.js';
@@ -30,6 +31,7 @@ import {
 import {
   buildGitPatchExport,
   getGitRepositoryContext,
+  getGitBranchHead,
   getGitWorkingContext,
   getGitWorktreeClean,
   getProjectGitCommitDetail,
@@ -722,6 +724,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     resolveTaskWorkspaceRequest,
     restoreNativeConversation,
     retryTaskIntegrationAiPreparation,
+    finalizeTaskIntegrationAfterAi,
     revokeReleaseNotesCapability,
     runRuntimeLogRetention,
     runtimeEphemeralCapabilities,
@@ -3570,7 +3573,53 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     redact: (message) => redactSensitiveText(message).text,
     publish: publishRealtimeEvent,
   });
-  registerNotificationRoutes({ server, db, automations: automationNotifications, tasks: taskReminders, readOnly: readOnlyValidation });
+  /** 后台交付只复用当前宿主已授权的项目、工作区和命令应用层。 */
+  const gitDelivery = new GitDeliveryExecution({
+    server,
+    db,
+    apiToken: options.apiToken,
+    readOnly: readOnlyValidation,
+    projects,
+    projectRepositories,
+    tasks,
+    taskWorkspaces,
+    taskIntegrations,
+    taskIntegrationAttempts,
+    conversations,
+    conversationSubmissions,
+    commands: workspaceGitCommands,
+    publish: publishRealtimeEvent,
+    statusOptions: (projectId) => resolveTaskManagementStatusConfigForProject(projectId).statuses,
+    finalizeTaskConflict: async (integrationId, conversationId) => {
+      /** 使用当前会话的原尝试，不另建冲突任务或改变固定目标。 */
+      const attempt = taskIntegrationAttempts.getByConversationId(conversationId);
+      if (attempt && attempt.integrationId !== integrationId) throw new Error('冲突会话不属于本次合入。');
+      /** 合入授权固定到原候选，分支推进时不自动重建或扩大范围。 */
+      const integration = taskIntegrations.getById(integrationId);
+      const workspace = integration ? taskWorkspaces.getById(integration.workspaceId) : undefined;
+      if (!integration || !workspace) throw new Error('原冲突合入现场不存在。');
+      const path = workspace.repositoryPath || projects.getById(workspace.projectId)?.localPath;
+      if (!path) throw new Error('原仓库不可用。');
+      const [taskHead, targetHead] = await Promise.all([getGitBranchHead(path, workspace.branchName), getGitBranchHead(path, integration.targetBranch)]);
+      if (taskHead !== integration.taskHeadSha || targetHead !== integration.targetHeadSha) return { integration, message: '原任务分支或目标分支已推进，请重新审阅；不会自动扩大合入范围。' };
+      await finalizeTaskIntegrationAfterAi(attempt?.id ?? integrationId, conversationId);
+      return { integration: taskIntegrations.getById(integrationId), message: attempt ? (taskIntegrationAttempts.getById(attempt.id)?.lastError ?? undefined) : undefined };
+    },
+    conversationState: (id) => {
+      /** 真实等待优先于最近完成的历史轮次。 */
+      const conversation = conversations.getRecordById(id);
+      if (!conversation) return 'failed';
+      const state = inferNativeConversationSnapshotState(conversation);
+      if (state.type === 'waiting') return 'waiting';
+      if (state.type === 'paused' && state.reason !== 'conflict_preparing') return 'failed';
+      if (state.type === 'active' || state.type === 'dispatching' || (state.type === 'paused' && state.reason === 'conflict_preparing')) return 'running';
+      if (conversationSubmissions.listByConversation(id).some((item: { status: string }) => ['queued', 'dispatching', 'active'].includes(item.status))) return 'running';
+      const turn = conversationTurns.listByConversation(id).at(-1);
+      return turn?.status === 'completed' ? 'completed' : 'failed';
+    },
+  });
+  gitDelivery.register();
+  registerNotificationRoutes({ server, db, automations: automationNotifications, tasks: taskReminders, deliveries: gitDelivery.repository, readOnly: readOnlyValidation });
   /** 自动化存储统一接收 ISO 时间，避免 Date 被 SQLite 静默绑定为 NULL。 */
   const automationNow = (): string => now().toISOString();
   /** 无项目自动化复用产品已有临时会话工作区，不创建普通项目。 */
@@ -4814,6 +4863,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
 
   // eslint-disable-next-line prefer-const
   closeLocalServerResources = async () => {
+    await gitDelivery.close();
     const cleanupErrors: unknown[] = [];
     await closeHeavyWorkerJobs();
     platformMutableState.removeStorageWriteFaultListener?.();
@@ -4942,6 +4992,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     },
     recover: () => {
       if (!readOnlyValidation) {
+        gitDelivery.recover();
         workManagementTaskEffects.recover();
         repositoryDiscovery.recover();
         digitalTeamWorkflowCoordinator?.kick();

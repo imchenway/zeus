@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { compareNotificationPositions, type NotificationItem, type NotificationPage, type NotificationPosition } from '@zeus/shared';
-import type { ZeusDatabasePort } from '@zeus/storage';
+import type { ZeusDatabasePort, GitDeliveryRepository } from '@zeus/storage';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { AutomationNotificationService } from './automationNotificationService.js';
 import { AutomationMutationApplication } from './automationMutationApplication.js';
@@ -18,6 +18,8 @@ export function registerNotificationRoutes(options: {
   tasks: TaskReminderService;
   /** 只读诊断不能确认通知。 */
   readOnly: boolean;
+  /** 交付通知直接读取原运行记录。 */
+  deliveries?: GitDeliveryRepository;
 }): void {
   /** 该应用仅处理 HTTP 幂等与事务，不调用调度器或恢复执行。 */
   const mutations = new AutomationMutationApplication(options.db);
@@ -42,7 +44,13 @@ export function registerNotificationRoutes(options: {
       const automations = options.automations.list(undefined, before);
       const tasks = options.tasks.list(undefined, before);
       /** 来源参与身份排序，相同时间与相同业务身份不会互相覆盖。 */
-      const candidates: NotificationItem[] = [...automations.items.map((item) => ({ ...item, source: 'automation' as const })), ...tasks.items.map((item) => ({ ...item, source: 'task' as const }))].sort(compareNotificationPositions);
+      /** 全部交付通知按同一全局边界分页。 */
+      const deliveries = (options.deliveries?.notifications() ?? []).map((item) => ({ ...item, source: 'git_delivery' as const }));
+      const candidates: NotificationItem[] = [
+        ...deliveries.filter((item) => !before || compareNotificationPositions(item, before) > 0),
+        ...automations.items.map((item) => ({ ...item, source: 'automation' as const })),
+        ...tasks.items.map((item) => ({ ...item, source: 'task' as const })),
+      ].sort(compareNotificationPositions);
       // 源查询与全局排序若不一致则拒绝响应，不能静默重复或跳过通知。
       assert(
         candidates.every((item, index) => (!before || compareNotificationPositions(item, before) > 0) && (index === 0 || compareNotificationPositions(candidates[index - 1]!, item) < 0)),
@@ -56,7 +64,7 @@ export function registerNotificationRoutes(options: {
       const hasMore = candidates.length > items.length || Boolean(automations.nextCursor || tasks.nextCursor);
       return {
         items,
-        unreadCount: automations.unreadCount + tasks.unreadCount,
+        unreadCount: automations.unreadCount + tasks.unreadCount + deliveries.length,
         nextCursor: last && hasMore ? Buffer.from(JSON.stringify({ occurredAt: last.occurredAt, source: last.source, id: last.id })).toString('base64url') : null,
       } satisfies NotificationPage;
     } catch (error) {
@@ -74,6 +82,19 @@ export function registerNotificationRoutes(options: {
       const result = mutations.execute({ method: request.method, url: request.url, body: request.body, key: request.headers['idempotency-key'] }, () => {
         options.automations.acknowledgeAll();
         options.tasks.acknowledgeAll();
+        options.deliveries?.acknowledge();
+        return { statusCode: 200, body: { acknowledged: true } };
+      });
+      return reply.code(result.statusCode).send(result.body);
+    } catch (error) {
+      return fail(reply, error);
+    }
+  });
+  options.server.post<{ Params: { runId: string } }>('/api/notifications/git-delivery/:runId/read', async (request, reply) => {
+    try {
+      if (options.readOnly) return reply.code(403).send({ error: 'ZEUS_NOTIFICATION_READ_ONLY', message: '只读模式不能确认通知。' });
+      const result = mutations.execute({ method: request.method, url: request.url, body: {}, key: request.headers['idempotency-key'] }, () => {
+        options.deliveries?.acknowledge(request.params.runId);
         return { statusCode: 200, body: { acknowledged: true } };
       });
       return reply.code(result.statusCode).send(result.body);
@@ -93,7 +114,16 @@ function decodeNotificationCursor(cursor?: string): NotificationPosition | undef
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error();
     /** 只提取用于分页的字段，额外输入不会进入查询。 */
     const { occurredAt, source, id } = value as Record<string, unknown>;
-    if (typeof occurredAt !== 'string' || occurredAt.length > 64 || !Number.isFinite(Date.parse(occurredAt)) || (source !== 'automation' && source !== 'task') || typeof id !== 'string' || !id || id.length > 1024) throw new Error();
+    if (
+      typeof occurredAt !== 'string' ||
+      occurredAt.length > 64 ||
+      !Number.isFinite(Date.parse(occurredAt)) ||
+      (source !== 'automation' && source !== 'task' && source !== 'git_delivery') ||
+      typeof id !== 'string' ||
+      !id ||
+      id.length > 1024
+    )
+      throw new Error();
     return { occurredAt, source, id };
   } catch {
     throw Object.assign(new Error('通知分页位置无效，请重新加载。'), { statusCode: 400 });
