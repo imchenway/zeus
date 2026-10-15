@@ -8,6 +8,7 @@ import { notifyMainAppShellSettingsChanged } from '../appShellBridge.js';
 import { Button } from '../ui/Button.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { SettingsSaveStatus } from './useSettingsAutosave.js';
+import { selectionFromEffectiveServiceTier, serviceTierOptions, serviceTierSelectionValue } from '../session/serviceTierSelection.js';
 
 /** 通用偏好只保存所属字段，避免自动保存顺带覆盖其他页面的配置。 */
 type GeneralPreferences = Pick<AppShellSettings, 'appLanguage' | 'appearance' | 'mainLayout' | 'taskBranchPrefix' | 'desktopNotificationsEnabled' | 'inputSuggestions'>;
@@ -212,7 +213,7 @@ export function GeneralSettingsPane(props: {
               ariaLabel={zh ? '输入建议专用模型' : 'Input suggestion model'}
               value={suggestions.modelRef ?? ''}
               disabled={!props.client || (modelsLoading && !suggestionModels.length)}
-              onChange={(value) => void save({ inputSuggestions: { enabled: suggestions.enabled && Boolean(value), modelRef: value || null, effort: null } })}
+              onChange={(value) => void save({ inputSuggestions: { enabled: suggestions.enabled && Boolean(value), modelRef: value || null, effort: null, serviceTier: null } })}
               options={[
                 { value: '', label: zh ? '请选择模型' : 'Choose a model' },
                 ...suggestionModels.map((model) => ({ value: model.id, label: model.label })),
@@ -236,6 +237,24 @@ export function GeneralSettingsPane(props: {
                 ...suggestionEfforts.map((effort) => ({ value: effort, label: effort })),
                 ...(suggestions.effort && !suggestionEfforts.includes(suggestions.effort) ? [{ value: suggestions.effort, label: `${suggestions.effort} (${zh ? '不可用' : 'unavailable'})`, disabled: true }] : []),
               ]}
+            />
+          </NativeControlRow>
+          <NativeControlRow
+            title={zh ? '生成速度' : 'Generation speed'}
+            description={
+              zh
+                ? '仅用于输入建议和润色。Fast 可降低延迟，但可能增加用量或费用；是否可用以所选模型能力为准。'
+                : 'Applies to suggestions and polishing only. Fast can reduce latency but may increase usage or cost. Availability depends on the selected model.'
+            }
+          >
+            <ZeusSelect
+              size="regular"
+              ariaLabel={zh ? '输入建议生成速度' : 'Input suggestion generation speed'}
+              value={serviceTierSelectionValue(selectionFromEffectiveServiceTier(suggestions.serviceTier))}
+              disabled={!props.client || !selectedSuggestionModel}
+              searchable={false}
+              onChange={(value) => void save({ inputSuggestions: { ...suggestions, serviceTier: value === 'priority' ? 'priority' : null } })}
+              options={serviceTierOptions({ serviceTiers: selectedSuggestionModel?.serviceTiers ?? [] }, zh ? 'zh-CN' : 'en-US')}
             />
           </NativeControlRow>
           {suggestionModelWarning ? (

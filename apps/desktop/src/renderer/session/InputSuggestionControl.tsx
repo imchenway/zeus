@@ -4,7 +4,6 @@ import { SparkleIcon } from '@phosphor-icons/react/dist/csr/Sparkle';
 import { CircleNotchIcon } from '@phosphor-icons/react/dist/csr/CircleNotch';
 import { ArrowClockwiseIcon } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { WarningCircleIcon } from '@phosphor-icons/react/dist/csr/WarningCircle';
-import { InfoIcon } from '@phosphor-icons/react/dist/csr/Info';
 import type { InputSuggestionResult } from '@zeus/shared';
 import { IconTooltip } from '../ui/IconTooltip.js';
 import { formatVisibleApplicationError, reportApplicationError } from '../ui/ApplicationErrorDialog.js';
@@ -20,17 +19,19 @@ const feedback: Record<NonNullable<InputSuggestionResult['reason']>, Record<Sess
   /** 自动开关关闭不影响主动入口。 */
   disabled: { 'zh-CN': '自动输入建议已关闭。', 'en-US': 'Automatic input suggestions are off.' },
   /** 没有对话时仍可输入草稿后主动润色。 */
-  context_unavailable: { 'zh-CN': '暂无可用的对话内容。可先输入草稿，再点击润色。', 'en-US': 'No conversation context is available. Enter a draft to polish it.' },
+  context_unavailable: { 'zh-CN': '暂无可用的对话内容。可先输入目标，再按 Tab 润色。', 'en-US': 'No conversation context is available. Enter your goal, then press Tab to polish it.' },
   /** 专用模型失效时不切换供应商。 */
   model_unavailable: { 'zh-CN': '输入建议模型不可用，请检查通用设置。', 'en-US': 'The suggestion model is unavailable. Check General settings.' },
   /** 显式档位失效需要用户重新选择。 */
   effort_unavailable: { 'zh-CN': '该模型不支持已选推理深度，请在通用设置中重新选择。', 'en-US': 'The selected reasoning effort is unavailable. Choose another in General settings.' },
+  /** Fast 能力变化时说明实际限制，不静默降级并产生不同用量。 */
+  service_tier_unavailable: { 'zh-CN': '该模型不支持已选 Fast 模式，请在通用设置中选择标准速度或更换模型。', 'en-US': 'Fast mode is unavailable for this model. Choose Standard speed or another model in General settings.' },
   /** 没有合理下一句属于正常结果。 */
   no_suggestion: { 'zh-CN': '暂无合适的输入建议。', 'en-US': 'No suitable input suggestion.' },
   /** 原文可直接使用，不创建没有差异的候选。 */
   no_change: { 'zh-CN': '当前表达已清楚，可以直接使用。', 'en-US': 'Your draft is already clear and ready to use.' },
-  /** 超时后保留原文，用户可主动再次点击。 */
-  timed_out: { 'zh-CN': '生成超过 20 秒，已停止。原文已保留。', 'en-US': 'Generation stopped after 20 seconds. Your draft is unchanged.' },
+  /** 每次尝试独立限时，自动重试用尽后仍保留原文。 */
+  timed_out: { 'zh-CN': '单次生成超过 20 秒，已停止。原文已保留。', 'en-US': 'The generation attempt stopped after 20 seconds. Your draft is unchanged.' },
   /** 具体原因由应用共用错误入口显示。 */
   failed: { 'zh-CN': '生成失败。', 'en-US': 'Generation failed.' },
   /** 用户取消不额外打扰输入。 */
@@ -47,30 +48,39 @@ export function InputSuggestionButton(props: { suggestion: SuggestionState; draf
   const previewRef = useRef<HTMLDivElement>(null);
   /** 展开状态只反映浮层显示，收起不丢弃候选。 */
   const [previewOpen, setPreviewOpen] = useState(false);
-  /** 空输入仍沿用灰字，只有需要替换草稿的结果进入紧凑预览。 */
+  /** 空输入仍沿用灰字，润色或生成期间继续输入的结果进入同一个预览。 */
   const hasPreview = Boolean(props.suggestion.polishedText && props.suggestion.sourceDraft !== null);
   useEffect(() => {
     // 结果到达时展示一次，不聚焦按钮或编辑器，避免打断用户继续输入。
     if (props.suggestion.polishedText && props.suggestion.sourceDraft !== null) previewRef.current?.showPopover();
-  }, [props.suggestion.polishedText, props.suggestion.sourceDraft]);
+  }, [props.suggestion.polishedText, props.suggestion.sourceDraft, props.suggestion.adoptionFailed]);
   /** 配置、超时和生成失败仍占用原图标区域，不在输入框下方增加错误行。 */
-  const failed = ['failed', 'timed_out', 'model_unavailable', 'effort_unavailable'].includes(props.suggestion.reason ?? '');
+  const failed = ['failed', 'timed_out', 'model_unavailable', 'effort_unavailable', 'service_tier_unavailable'].includes(props.suggestion.reason ?? '');
   /** 失败不锁定入口；允许输入时，同一按钮直接重试生成。 */
   const canRetry = failed && props.suggestion.available;
   /** 加载、空结果和错误只进入提示及读屏说明，不进入用户草稿。 */
-  const message = props.suggestion.pending
+  const outcomeMessage = props.suggestion.pending
     ? props.suggestion.mode === 'polish'
       ? props.language === 'zh-CN'
-        ? '正在润色草稿…'
-        : 'Polishing your draft…'
+        ? '正在润色草稿，可继续输入…'
+        : 'Polishing your draft; you can keep typing…'
       : props.language === 'zh-CN'
-        ? '正在生成输入建议…'
-        : 'Generating a suggestion…'
+        ? '正在生成输入建议，可继续输入…'
+        : 'Generating a suggestion; you can keep typing…'
     : props.suggestion.reason === 'failed' && props.suggestion.cause
       ? formatVisibleApplicationError(props.suggestion.cause, props.language === 'zh-CN' ? 'zh-CN' : 'en')
       : props.suggestion.reason
         ? feedback[props.suggestion.reason][props.language]
         : '';
+  /** 重试进度仍使用同一个图标和提示，等待期间允许取消且不闪现错误。 */
+  const message =
+    props.suggestion.pending && props.suggestion.retryAttempt > 0
+      ? props.language === 'zh-CN'
+        ? `${props.suggestion.retryAt ? '暂未生成成功，等待自动重试' : '正在自动重试'}（${props.suggestion.retryAttempt}/2），可继续输入…`
+        : `${props.suggestion.retryAt ? 'Waiting to retry' : 'Retrying'} (${props.suggestion.retryAttempt}/2); you can keep typing…`
+      : !props.suggestion.pending && failed && props.suggestion.retryAttempt > 0
+        ? `${props.language === 'zh-CN' ? '自动重试后仍未成功。' : 'Automatic retry did not succeed. '}${outcomeMessage}`
+        : outcomeMessage;
   /** 提示说明点击时将执行的操作，图标不代替名称。 */
   const actionLabel = failed
     ? canRetry
@@ -91,11 +101,11 @@ export function InputSuggestionButton(props: { suggestion: SuggestionState; draf
         : hasPreview
           ? previewOpen
             ? props.language === 'zh-CN'
-              ? '重新生成润色建议'
-              : 'Regenerate draft suggestion'
+              ? '按当前输入重新生成'
+              : 'Generate again from the current draft'
             : props.language === 'zh-CN'
-              ? '查看润色建议'
-              : 'View draft suggestion'
+              ? '查看输入建议'
+              : 'View suggestion'
           : props.draft.trim()
             ? props.language === 'zh-CN'
               ? '润色草稿'
@@ -104,7 +114,14 @@ export function InputSuggestionButton(props: { suggestion: SuggestionState; draf
               ? '生成输入建议'
               : 'Suggest the next message';
   /** 状态与操作同时可读，悬停和键盘焦点使用同一个提示。 */
-  const label = message ? `${message} ${actionLabel}` : actionLabel;
+  const shortcut =
+    props.suggestion.available && !props.suggestion.pending
+      ? props.language === 'zh-CN'
+        ? `输入框内按 Tab ${props.suggestion.text || hasPreview ? '采用' : '生成'}；Escape 后按 Tab 移出输入框。`
+        : `In the editor, press Tab to ${props.suggestion.text || hasPreview ? 'use the suggestion' : 'generate'}; press Escape then Tab to leave.`
+      : '';
+  /** 生成、采用和焦点导航的说明与当前状态保持一致。 */
+  const label = [message, actionLabel, shortcut].filter(Boolean).join(' ');
   // 容器标记忙碌，按钮保留取消操作，避免全局忙碌按钮样式追加圆点并屏蔽点击。
   return (
     <span className="session-suggestion-action" aria-busy={props.suggestion.pending || undefined}>
@@ -153,15 +170,13 @@ export function InputSuggestionButton(props: { suggestion: SuggestionState; draf
             <ArrowClockwiseIcon aria-hidden="true" />
           ) : failed ? (
             <WarningCircleIcon aria-hidden="true" />
-          ) : message ? (
-            <InfoIcon aria-hidden="true" />
           ) : (
             <SparkleIcon aria-hidden="true" />
           )}
         </button>
       </IconTooltip>
       <span className="visually-hidden" role="status">
-        {message}
+        {message || (props.suggestion.text || hasPreview ? (props.language === 'zh-CN' ? '输入建议已生成，按 Tab 采用。' : 'Suggestion ready. Press Tab to use it.') : '')}
       </span>
       {hasPreview ? <InputSuggestionPreview {...props} id={previewId} previewRef={previewRef} triggerRef={triggerRef} onOpenChange={setPreviewOpen} /> : null}
     </span>
@@ -185,13 +200,13 @@ function InputSuggestionPreview(props: {
   /** 按钮的展开语义跟随原生浮层同步。 */
   onOpenChange: (open: boolean) => void;
 }) {
-  /** 引用标签未完整保留时拒绝采用，不能悄悄删除执行意图。 */
-  const [failedCandidate, setFailedCandidate] = useState<{ text: string; source: string } | null>(null);
   /** 只在候选变化时对比，按自然词分段并保留空格、换行和完整字符。 */
   const changes = useMemo(() => {
     /** 缺少有效候选时不创建差异内容。 */
     const { sourceDraft, polishedText } = props.suggestion;
     if (sourceDraft === null || !polishedText) return [];
+    // 继续输入后旧差异不再对应当前草稿，只展示候选全文并说明替换含义。
+    if (props.suggestion.draftChanged) return [{ text: polishedText, changed: false }];
     /** 中英文均使用原生分词，避免把中文整句视为一个词或拆开表情。 */
     const segmenter = new Intl.Segmenter(props.language, { granularity: 'word' });
     /** 所有片段参与比较，空白变化也不能被静默忽略。 */
@@ -213,7 +228,7 @@ function InputSuggestionPreview(props: {
       else result.push({ text: part.text, changed });
       return result;
     }, []);
-  }, [props.suggestion.sourceDraft, props.suggestion.polishedText, props.language]);
+  }, [props.suggestion.sourceDraft, props.suggestion.polishedText, props.suggestion.draftChanged, props.language]);
   if (!props.suggestion.polishedText || props.suggestion.sourceDraft === null) return null;
   return (
     <div
@@ -232,26 +247,35 @@ function InputSuggestionPreview(props: {
         props.triggerRef.current?.focus({ preventScroll: true });
       }}
     >
+      <div id={`${props.id}-hint`} className="session-suggestion-preview-hint">
+        {props.language === 'zh-CN'
+          ? props.suggestion.draftChanged
+            ? '当前输入已变化。点击或在输入框按 Tab 替换，可撤销。'
+            : '点击或在输入框按 Tab 采用，可撤销。'
+          : props.suggestion.draftChanged
+            ? 'Your draft has changed. Click or press Tab in the editor to replace it; you can undo this change.'
+            : 'Click or press Tab in the editor to use this suggestion; you can undo this change.'}
+      </div>
       <button
         type="button"
         className="session-suggestion-preview-text"
         aria-label={`${props.language === 'zh-CN' ? '采用建议' : 'Use suggestion'}: ${props.suggestion.polishedText}`}
+        aria-describedby={`${props.id}-hint`}
         data-icon-tooltip={props.language === 'zh-CN' ? '点击采用，可撤销' : 'Click to use; you can undo this change'}
         onClick={() => {
-          /** 原文和引用仍由编辑器核对，点击候选只产生一次可撤销的替换。 */
-          const adopted = props.inputRef.current?.replaceDraft?.(props.suggestion.sourceDraft!, props.suggestion.polishedText!) === true;
-          if (!adopted) {
-            setFailedCandidate({ text: props.suggestion.polishedText!, source: props.suggestion.sourceDraft! });
-            return;
-          }
-          props.suggestion.dismiss();
+          // 点击和 Tab 通过同一入口核对当前输入及引用，替换可以撤销。
+          if (!props.suggestion.accept(props.inputRef.current)) return;
           props.inputRef.current?.focus();
         }}
       >
         {changes.map((change, index) => (change.changed ? <mark key={index}>{change.text}</mark> : change.text))}
       </button>
-      {failedCandidate?.text === props.suggestion.polishedText && failedCandidate.source === props.suggestion.sourceDraft ? (
-        <div role="status">{props.language === 'zh-CN' ? '原文已变化，或结果未保留引用标签。请保留原文并重新生成。' : 'The draft changed or a reference tag was altered. Keep your draft and generate again.'}</div>
+      {props.suggestion.adoptionFailed ? (
+        <div role="status">
+          {props.language === 'zh-CN'
+            ? '当前输入无法替换，或候选未保留引用标签。原文已保留，可点击建议图标按当前输入重新生成。'
+            : 'The draft cannot be replaced or a reference tag was altered. Your text is unchanged. Use the suggestion icon to generate again from the current draft.'}
+        </div>
       ) : null}
     </div>
   );

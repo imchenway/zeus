@@ -361,21 +361,8 @@ export function ConversationComposer(props: ConversationComposerProps) {
 
   /** 普通输入与 Markdown 输入共用发送条件和附件快捷键。 */
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement | HTMLDivElement>): void {
-    // 输入法和候选菜单先处理按键；仅真正有焦点的空编辑器可以采纳灰字。
-    if (!isComposing && !composingRef.current && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) {
-      if (event.key === 'Tab' && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && suggestion.text && textareaRef.current?.insertSuggestion?.(suggestion.text)) {
-        event.preventDefault();
-        event.stopPropagation();
-        suggestion.dismiss();
-        return;
-      }
-      if (event.key === 'Escape' && (suggestion.text || suggestion.polishedText || suggestion.pending || suggestion.reason)) {
-        event.preventDefault();
-        event.stopPropagation();
-        suggestion.dismiss();
-        return;
-      }
-    }
+    // 输入法和命令菜单优先，建议的生成、采用和取消共用统一入口。
+    if (!isComposing && !composingRef.current && suggestion.handleKeyDown(event, textareaRef.current)) return;
     if (!goalInputActive) inputResources.handlePasteShortcut(event);
     const intent = resolveComposerKeyIntent({
       key: event.key,
@@ -486,7 +473,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
             <StructuredComposerInput
               value={editorValue}
               onValueChange={(nextValue) => {
-                suggestion.dismiss();
                 setEditorValue(nextValue);
                 if (!composingRef.current) props.onDraftChange(nextValue);
               }}
@@ -498,7 +484,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
               language={props.language}
               disabled={!inputWritable || busy || goalOperationBusy}
               ariaLabel={inputLabel}
-              ariaKeyShortcuts="Enter Shift+Enter Escape Meta+A Control+A"
+              ariaKeyShortcuts="Tab Enter Shift+Enter Escape Meta+A Control+A"
               placeholder={props.inputBlocked ? copy.recoveredInputBlocked : copy.placeholder}
               suggestion={suggestion.text}
               loadCatalog={props.onLoadExtensions}
@@ -519,7 +505,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
               }}
               onOpenComputerSettings={props.onOpenComputerSettings}
               onCompositionStart={() => {
-                suggestion.dismiss();
                 composingRef.current = true;
                 setIsComposing(true);
               }}
@@ -537,7 +522,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 props.onDraftChange(nextValue);
               }}
               onPaste={(event) => {
-                suggestion.dismiss();
                 inputResources.handlePaste(event);
               }}
               onKeyDown={handleKeyDown}

@@ -3740,7 +3740,7 @@ export function NewConversationComposer(props: {
     <section
       className="session-composer-shell session-new-conversation-composer"
       aria-label={copy.newInput}
-      data-input-suggestion={suggestion.polishedText || suggestion.pending || suggestion.reason ? 'true' : undefined}
+      data-input-suggestion={suggestion.text || suggestion.polishedText || suggestion.pending || suggestion.reason ? 'true' : undefined}
       aria-busy={submitting || executionContextBusy || capabilitiesLoading || inputResources.processing || undefined}
       data-goal-input={goalInputActive ? 'true' : 'false'}
       data-resource-dragging={inputResources.dragging ? 'true' : 'false'}
@@ -3828,7 +3828,6 @@ export function NewConversationComposer(props: {
               tokenDraft={tokenDraft}
               value={content}
               onValueChange={(value) => {
-                suggestion.dismiss();
                 setContent(value);
               }}
               onSelectionChange={(selection) => {
@@ -3840,8 +3839,9 @@ export function NewConversationComposer(props: {
               disabled={submitting || !props.owner}
               autoFocus={props.autoFocus}
               ariaLabel={copy.newInput}
-              ariaKeyShortcuts="Enter Shift+Enter Escape"
+              ariaKeyShortcuts="Tab Enter Shift+Enter Escape"
               placeholder={copy.newPlaceholder}
+              suggestion={suggestion.text}
               loadCatalog={props.onLoadSkills}
               loadEmployees={props.onLoadDigitalEmployees}
               goalAvailable={goalAvailable}
@@ -3853,21 +3853,14 @@ export function NewConversationComposer(props: {
               }}
               onOpenComputerSettings={props.onOpenComputerSettings}
               onCompositionStart={() => {
-                suggestion.dismiss();
                 setIsComposing(true);
               }}
               onCompositionEnd={() => setIsComposing(false)}
               onPaste={(event) => {
-                suggestion.dismiss();
                 inputResources.handlePaste(event);
               }}
               onKeyDown={(event) => {
-                if (event.key === 'Escape' && (suggestion.polishedText || suggestion.pending || suggestion.reason)) {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  suggestion.dismiss();
-                  return;
-                }
+                if (!isComposing && suggestion.handleKeyDown(event, textareaRef.current)) return;
                 if (!goalInputActive) inputResources.handlePasteShortcut(event);
                 const intent = resolveComposerKeyIntent({
                   key: event.key,
