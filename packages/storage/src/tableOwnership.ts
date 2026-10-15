@@ -196,6 +196,9 @@ const ownershipGroups = [
       'command_aliases',
       'command_runs',
       'command_artifacts',
+      // 任务与会话共用的代码交付运行及步骤由执行与资产维护耐久进度。
+      'git_delivery_runs',
+      'git_delivery_steps',
       'git_snapshots',
       'git_changes',
       'turn_change_sets',
