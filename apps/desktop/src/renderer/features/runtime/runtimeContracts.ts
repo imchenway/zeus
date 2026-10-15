@@ -51,7 +51,7 @@ export interface AiRuntimeAdapterStatus extends AiRuntimeAdapterDescriptor {
 /** Codex 程序更新检测；账号可用模型由运行时目录单独返回。 */
 export interface CodexRuntimeUpdateStatus {
   adapter: AiRuntimeAdapterStatus;
-  /** 用户自行安装的 Codex 只提供检测，不由 Zeus 修改。 */
+  /** 只有 Zeus 管理的安装才参与更新检查、提醒和安装。 */
   managedInstallation: boolean;
   status: 'available' | 'up_to_date' | 'unavailable';
   currentVersion: string | null;
