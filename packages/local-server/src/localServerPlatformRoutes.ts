@@ -4434,7 +4434,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       if (
         previousSettings.inputSuggestions?.enabled !== mutation.result.inputSuggestions?.enabled ||
         previousSettings.inputSuggestions?.modelRef !== mutation.result.inputSuggestions?.modelRef ||
-        previousSettings.inputSuggestions?.effort !== mutation.result.inputSuggestions?.effort
+        previousSettings.inputSuggestions?.effort !== mutation.result.inputSuggestions?.effort ||
+        previousSettings.inputSuggestions?.serviceTier !== mutation.result.inputSuggestions?.serviceTier
       )
         cancelInputSuggestions();
       return platformMutableState.appShellSettings;

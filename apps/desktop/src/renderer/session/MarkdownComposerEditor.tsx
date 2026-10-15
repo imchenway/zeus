@@ -1,7 +1,7 @@
 import { defaultKeymap, history, historyKeymap, insertNewline, invertedEffects, isolateHistory } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { Compartment, EditorState, StateEffect, Transaction } from '@codemirror/state';
-import { EditorView, keymap, placeholder } from '@codemirror/view';
+import { drawSelection, EditorView, keymap, placeholder } from '@codemirror/view';
 import { type ClipboardEventHandler, type KeyboardEventHandler, type RefObject, useLayoutEffect, useRef } from 'react';
 import type { StructuredToken } from './StructuredComposerInput.js';
 import { composerMarkdownPreview } from './composerMarkdownPreview.js';
@@ -11,9 +11,7 @@ const composerTokenReplacement = StateEffect.define<{ before: StructuredToken[];
 
 /** 普通目标输入和 Markdown 输入共用正文、选区与焦点接口，不依赖具体编辑节点。 */
 export type ComposerInputHandle = Pick<HTMLTextAreaElement, 'value' | 'selectionStart' | 'selectionEnd' | 'focus' | 'setSelectionRange' | 'isConnected' | 'contains'> & {
-  /** 仅在空编辑器有焦点时以可撤销的输入事务采纳灰字。 */
-  insertSuggestion?: (text: string) => boolean;
-  /** 明确采用建议或润色后，以独立可撤销事务替换仍与请求一致的原文。 */
+  /** 明确采用建议或润色后，以独立可撤销事务替换仍与界面一致的当前原文。 */
   replaceDraft?: (expected: string, text: string) => boolean;
 };
 
@@ -91,6 +89,8 @@ export function MarkdownComposerEditor(props: MarkdownComposerEditorProps) {
           // 撤销和重做使用同一效果的反向映射，保留原标签身份。
           invertedEffects.of((transaction) => transaction.effects.flatMap((effect) => (effect.is(composerTokenReplacement) ? [composerTokenReplacement.of({ before: effect.value.after, after: effect.value.before })] : []))),
           EditorView.lineWrapping,
+          // 使用编辑器绘制光标，避免多行占位建议拉高浏览器原生光标。
+          drawSelection(),
           keymap.of([{ key: 'Shift-Enter', run: insertNewline }, ...defaultKeymap, ...historyKeymap]),
           composerMarkdownPreview(() => latest.current.tokens, latest.current.language),
           options.current.of([]),
@@ -122,12 +122,6 @@ export function MarkdownComposerEditor(props: MarkdownComposerEditorProps) {
       },
       contains: (node) => view.dom.contains(node),
       focus: () => view.focus(),
-      /** 真实编辑事务会通知草稿同步，并保留撤销和重做。 */
-      insertSuggestion: (text) => {
-        if (!view.hasFocus || view.composing || view.state.readOnly || view.state.doc.length !== 0) return false;
-        view.dispatch({ changes: { from: 0, insert: text }, selection: { anchor: text.length }, annotations: Transaction.userEvent.of('input.inputSuggestion') });
-        return true;
-      },
       /** 替换前核对原文，引用未保留时继续编辑，不删除标签。 */
       replaceDraft: (expected, text) => {
         if (view.composing || view.state.readOnly || view.state.doc.toString() !== expected) return false;

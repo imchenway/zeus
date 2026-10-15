@@ -141,7 +141,7 @@ export interface CodexTextGenerationInput {
   prompt: string;
   /** 可选的目录推理档位；调用前再次核对支持范围。 */
   effort?: string;
-  /** 不传时使用标准速率，输入建议固定为标准速率。 */
+  /** 不传时使用标准速度，调用方可按模型目录明确选择 Fast。 */
   serviceTier?: 'priority' | null;
 }
 

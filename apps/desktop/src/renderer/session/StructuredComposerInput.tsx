@@ -337,7 +337,8 @@ export function StructuredComposerInput(props: StructuredComposerInputProps) {
         setActiveOption((current) => nextEnabledOption(options, current, event.key === 'ArrowDown' ? 1 : -1));
         return;
       }
-      if ((event.key === 'Enter' || event.key === 'Tab') && options[activeOption] && !options[activeOption]!.disabled) {
+      // 纯 Tab 优先选择命令，带修饰键的 Tab 保留焦点或窗口导航。
+      if ((event.key === 'Enter' || (event.key === 'Tab' && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey)) && options[activeOption] && !options[activeOption]!.disabled) {
         event.preventDefault();
         choose(options[activeOption]!);
         return;

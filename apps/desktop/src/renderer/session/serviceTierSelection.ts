@@ -18,11 +18,13 @@ export function serviceTierWireOverride(selection: NativeServiceTierSelection): 
   return { serviceTier: selection.id === 'priority' ? 'priority' : null };
 }
 
-export function fastServiceTier(model: CodexTaskPushModelCapability | null | undefined) {
+/** 只依赖目录的速度能力，供会话和独立文本生成共用。 */
+export function fastServiceTier(model: Pick<CodexTaskPushModelCapability, 'serviceTiers'> | null | undefined) {
   return model?.serviceTiers.find((tier) => tier.id === 'priority');
 }
 
-export function serviceTierOptions(model: CodexTaskPushModelCapability | null | undefined, language: 'zh-CN' | 'en-US') {
+/** 标准与 Fast 使用同一组选项，不支持的 Fast 保持可见但不可选。 */
+export function serviceTierOptions(model: Pick<CodexTaskPushModelCapability, 'serviceTiers'> | null | undefined, language: 'zh-CN' | 'en-US') {
   const fast = fastServiceTier(model);
   return [
     { value: standardValue, label: language === 'zh-CN' ? '标准' : 'Standard' },
