@@ -175,6 +175,7 @@ import { ProjectQueryApplication } from './projectQueryApplication.js';
 import { registerProjectQueryRoutes } from './projectQueryRoutes.js';
 import { createCommitCodexPool } from './gitCommitCodexGeneration.js';
 import { registerInputSuggestionRoutes } from './inputSuggestionRoutes.js';
+import { createInputSuggestionDiagnosticLog } from './inputSuggestionDiagnostics.js';
 import { readGitCommitContext, readCommitFingerprint, resolveCommitRepository, resolveTaskCommitRepository } from './gitCommitContext.js';
 import { PassThrough } from 'node:stream';
 import { generateGitCommitMessage } from './gitCommitMessageGeneration.js';
@@ -1439,6 +1440,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
   });
   registerConversationCapabilityQueryRoutes({ server, application: conversationCapabilityQueries });
 
+  /** 正式运行持久保存诊断；只读验收不向正式目录写入文件。 */
+  const inputSuggestionDiagnostics = readOnlyValidation ? undefined : createInputSuggestionDiagnosticLog({ directory: dataLayout.localLogs, source: 'core', appVersion: executionHostAppVersion, instanceId: executionHostInstanceId });
   /** 建议拥有自己的取消范围，设置修改不会中断主会话。 */
   const cancelInputSuggestions = registerInputSuggestionRoutes({
     server,
@@ -1449,6 +1452,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     hasPendingSubmission: (conversationId) => conversationSubmissions.listQueueProjectionByConversation(conversationId).some((submission: ZeusConversationSubmissionRecord) => ['queued', 'dispatching', 'active'].includes(submission.status)),
     readSettings: () => (readOnlyValidation ? undefined : platformMutableState.appShellSettings.inputSuggestions),
     modelConnections,
+    recordDiagnostic: inputSuggestionDiagnostics?.record,
+    flushDiagnostics: inputSuggestionDiagnostics?.flush,
     loadModels: loadTextGenerationModels,
     loadModel: async (selectedModelRef) => (await loadTextGenerationModels(selectedModelRef)).items.find((model) => model.id === selectedModelRef),
     readSources: (projectId, conversationId) => {

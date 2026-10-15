@@ -215,6 +215,8 @@ declare global {
       onProjectSourceEvent: (listener: (event: ProjectSourceEvent) => void) => () => void;
       reportRendererFatalFailure: (message: string) => void;
       reportRendererRuntimeError: (message: string) => void;
+      /** 本机输入建议阶段日志，不包含草稿或回复正文。 */
+      reportInputSuggestionDiagnostic: (entry: import('@zeus/shared').InputSuggestionUiDiagnostic) => void;
       reportRendererBootstrapReady: () => void;
       chooseProjectDirectory: () => Promise<string | null>;
       revealProjectInFinder: (projectPath: string) => Promise<{ revealed: true; path: string }>;

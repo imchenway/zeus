@@ -1,4 +1,4 @@
-import { userFacingErrorCause, type InputSuggestionRequest, type InputSuggestionResult, type InputSuggestionSettings } from '@zeus/shared';
+import { userFacingErrorCause, type InputSuggestionRequest, type InputSuggestionResult, type InputSuggestionSettings, type InputSuggestionUiDiagnostic } from '@zeus/shared';
 
 /** 后台触发和输入框读取共用完全相同的会话、模型及轮次身份。 */
 export function inputSuggestionIdentity(options: {
@@ -137,12 +137,27 @@ class InputSuggestionSession {
     /** 生成请求继续使用现有 HTTP 通路。 */
     request: InputSuggestionRequest;
     /** 捕获发起时的客户端函数，页面切换不替换正在执行的调用。 */
-    generate: (input: InputSuggestionRequest, signal: AbortSignal) => Promise<InputSuggestionResult>;
+    generate: (input: InputSuggestionRequest, signal: AbortSignal, diagnosticId?: string) => Promise<InputSuggestionResult>;
   }): void {
     if (this.controller) return;
     /** 每次请求使用独立身份，迟到回调不得覆盖后续生成。 */
     const controller = new AbortController();
     this.controller = controller;
+    /** 同一次点击跨界面、HTTP 和模型阶段共用身份，不复用上一轮的编号。 */
+    const diagnosticId = crypto.randomUUID();
+    /** 单调计时不受系统时钟调整影响。 */
+    const startedAt = performance.now();
+    /** 仅把状态、枚举和字数发送给本机 Main，禁止附带草稿与建议正文。 */
+    const record = (event: InputSuggestionUiDiagnostic['event'], outcome?: string, outputCharacters?: number): void => {
+      try {
+        if (typeof window !== 'undefined')
+          window.zeus?.reportInputSuggestionDiagnostic?.({ requestId: diagnosticId, event, mode: options.request.mode, trigger: options.request.trigger, elapsedMs: Math.round(performance.now() - startedAt), outcome, outputCharacters });
+      } catch {
+        /* 诊断不可用不阻断用户的生成操作。 */
+      }
+    };
+    record('ui_started');
+    controller.signal.addEventListener('abort', () => record('ui_cancelled', 'client_cancelled'), { once: true });
     /** 等待和完成使用同一份原文及请求归属。 */
     const snapshot: InputSuggestionSnapshot = {
       key: options.key,
@@ -158,15 +173,22 @@ class InputSuggestionSession {
     void (async () => {
       try {
         /** 结果只写入发起请求的会话，后台完成不操作编辑器。 */
-        const response = await options.generate(options.request, controller.signal);
-        if (this.controller !== controller || controller.signal.aborted) return;
+        const response = await options.generate(options.request, controller.signal, diagnosticId);
+        record('ui_received', response.reason ?? 'generated', response.text?.length ?? 0);
+        if (this.controller !== controller || controller.signal.aborted) {
+          record('ui_discarded', 'request_replaced_or_cancelled');
+          return;
+        }
         if (response.modelRef !== options.modelRef || (options.request.trigger === 'automatic' && response.completedTurnId !== options.request.completedTurnId)) {
+          record('ui_discarded', 'identity_changed');
           this.publish(null);
           return;
         }
         if (options.request.mode === 'suggest' && response.text) this.lastSuggestion = { key: options.turnKey, text: response.text, modelKey: options.modelKey };
         this.publish({ ...snapshot, text: response.text, reason: response.reason, cause: response.cause, pending: false });
+        record('ui_result_stored', response.reason ?? 'generated', response.text?.length ?? 0);
       } catch (error: unknown) {
+        if (!controller.signal.aborted) record('ui_failed', 'request_failed');
         if (this.controller === controller && !controller.signal.aborted) this.publish({ ...snapshot, pending: false, reason: 'failed', cause: userFacingErrorCause(error) });
       } finally {
         if (this.controller === controller) this.controller = null;

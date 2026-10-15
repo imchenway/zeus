@@ -69,9 +69,9 @@ import { createHomebrewUpdateService } from './homebrewUpdateService.js';
 import { createHomebrewUpdateController, type HomebrewUpdateController, type HomebrewUpdateIndicatorState } from './homebrewUpdateController.js';
 import { type AutomaticUpdateScheduler, createAutomaticUpdateScheduler } from './automaticUpdateScheduler.js';
 import { createZeusDataLayout, type ZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
-import { applyNetworkProxyAtStartup, createMacOSKeychainStore, readUnifiedConversationStoreMigrationStatus } from '@zeus/local-server';
+import { applyNetworkProxyAtStartup, createInputSuggestionDiagnosticLog, createMacOSKeychainStore, readUnifiedConversationStoreMigrationStatus } from '@zeus/local-server';
 import { getFileBlame } from '@zeus/git-core';
-import { normalizeNetworkProxySettings } from '@zeus/shared';
+import { normalizeInputSuggestionUiDiagnostic, normalizeNetworkProxySettings } from '@zeus/shared';
 import { checkNetworkProxyConnection, chromiumNetworkProxyConfig } from './networkProxy.js';
 import { prepareZeusDataRoot } from './zeusDataMigration.js';
 import { loadDesktopReadOnlyValidationDescriptor, readOnlyValidationManifestEnvironmentName, verifyDesktopReadOnlyValidationDescriptor } from './readOnlyValidationManifest.js';
@@ -130,6 +130,8 @@ const appCloseLayerActivityByWindow = new Map<number, boolean>();
 let currentTaskGitDeliveryContext: TaskGitDeliveryCurrentContext = { taskId: null, workspaceId: null };
 let menuBarUsageMenu: Menu | undefined;
 let localServerRuntime: DesktopLocalServerRuntime | undefined;
+/** 界面日志由 Main 单独拥有，避免与 Core 同时轮转同一文件。 */
+let inputSuggestionUiDiagnostics: ReturnType<typeof createInputSuggestionDiagnosticLog> | undefined;
 let resolveRendererRuntimeReady!: (runtime: DesktopLocalServerRuntime) => void;
 let rejectRendererRuntimeReady!: (error: unknown) => void;
 const rendererRuntimeReady = new Promise<DesktopLocalServerRuntime>((resolve, reject) => {
@@ -1141,8 +1143,8 @@ async function checkForUpdatesFromMenu(): Promise<void> {
 /** 打开本机日志目录；长日志和导出文件留在用户 Mac 上，不发送到远端渠道。 */
 async function openLogsDirectoryFromMenu(): Promise<void> {
   await openLocalLogDirectory({
-    dbPath: localServerRuntime?.dbPath,
-    fallbackLogsPath: app.getPath('logs'),
+    // 与设置页和 Core 使用同一个数据布局，不再拼接旧的数据库日志路径。
+    fallbackLogsPath: dataRootPreparationError === undefined ? activeZeusDataLayout().localLogs : app.getPath('logs'),
     ensureDirectory: async (path, options) => {
       await mkdir(path, options);
     },
@@ -1937,6 +1939,16 @@ function setupIpc(): void {
         ),
       )
       .catch((error) => console.error('Zeus Renderer 运行日志写入失败。', error));
+  });
+  ipcMain.on('zeus:input-suggestion-diagnostic', (event, value: unknown) => {
+    /** 只接收本应用拥有的窗口，不接受网页或外部窗口伪造记录。 */
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || readOnlyValidationDescriptor || dataRootPreparationError !== undefined) return;
+    /** IPC 白名单只保留已知状态、字数和本次点击的随机身份。 */
+    const entry = normalizeInputSuggestionUiDiagnostic(value);
+    if (!entry) return;
+    inputSuggestionUiDiagnostics ??= createInputSuggestionDiagnosticLog({ directory: activeZeusDataLayout().localLogs, source: 'desktop', appVersion: app.getVersion() });
+    inputSuggestionUiDiagnostics.record({ ...entry });
   });
   ipcMain.on('zeus:task-table-layout-dirty-changed', (event, dirty: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
@@ -3910,6 +3922,9 @@ app.on(
         }
       };
       await attemptCleanup('附属服务初始化', () => auxiliaryServicesReady);
+      await attemptCleanup('输入建议诊断日志', async () => {
+        await inputSuggestionUiDiagnostics?.flush();
+      });
       await attemptCleanup('外部浏览器初始化', () => externalBrowserReady.catch(() => undefined));
       await attemptCleanup('自动更新调度器', () => {
         automaticUpdateScheduler?.stop();

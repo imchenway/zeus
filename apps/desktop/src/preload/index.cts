@@ -283,6 +283,8 @@ contextBridge.exposeInMainWorld('zeus', {
   },
   reportRendererFatalFailure: (message: string) => rendererBootstrapReporter.reportFailure(message),
   reportRendererRuntimeError: (message: string) => ipcRenderer.send('zeus:renderer-runtime-log', message),
+  /** 输入建议只上传有界诊断元数据，不通过日志 IPC 传递正文。 */
+  reportInputSuggestionDiagnostic: (entry: unknown) => ipcRenderer.send('zeus:input-suggestion-diagnostic', entry),
   reportRendererBootstrapReady: () => rendererBootstrapReporter.reportReady(),
   chooseProjectDirectory: () => ipcRenderer.invoke('zeus:choose-project-directory'),
   revealProjectInFinder: (projectPath: string) => ipcRenderer.invoke('zeus:reveal-project-in-finder', projectPath),
