@@ -98,8 +98,6 @@ export function filterCompatibilitySnapshotItemAliases(items: readonly ZeusConve
 }
 
 export interface CodexProviderHistoryProjectionDependencies {
-  /** 自动续接仍在执行时，历史读取不能提前结算原请求。 */
-  isProviderConnectionRetryPending(conversationId: string, providerTurnId: string): boolean;
   options: CreateCodexNativeConversationCoordinatorOptions;
   failedTurnResults: Map<string, Error & { code: string }>;
   processProjector: TurnProcessProjector;
@@ -534,8 +532,6 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
         updatedAt: timestamp,
       });
     }
-
-    if (dependencies.isProviderConnectionRetryPending(conversation.id, providerTurn.id)) return turn;
 
     if (classification === 'active') {
       if (matchedSubmission && (matchedSubmission.status === 'dispatching' || matchedSubmission.status === 'queued')) {

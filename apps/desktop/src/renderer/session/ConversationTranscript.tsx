@@ -382,6 +382,14 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const getStaticReadingAnchor = useCallback(() => staticReadingAnchorRef.current, []);
   const updateHistorySentinelIntersection = useCallback((intersecting: boolean) => setHistorySentinelIntersection({ conversationId: props.state.conversationId, intersecting }), [props.state.conversationId]);
   const activeTurnId = props.historyOnly ? null : props.state.activeTurnId;
+  /** 最新轮次取实时状态，不能等待旧首屏快照刷新后才开放重试。 */
+  const latestTurn = useMemo(
+    () =>
+      Object.values(props.state.turnsByProviderId)
+        .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
+        .at(-1),
+    [props.state.turnsByProviderId],
+  );
   const queuedSubmissions = useMemo(() => visibleQueuedSubmissions(props.state.queue), [props.state.queue]);
   /** 输入框卡片接管的提交不能同时出现在会话时间线。 */
   const composerQueue = useMemo(() => composerQueuedSubmissions(props.state), [props.state.itemOrder, props.state.items, props.state.queue]);
@@ -1193,20 +1201,14 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
         />
       );
     if (row.kind === 'turn_failure') {
-      /** 后台仍在核对本轮时只显示统一运行状态，避免错误卡和重连状态同时闪烁。 */
-      const recovering = props.state.providerReconnectTurnId === row.turnId && props.state.providerReconnectAttempt > 0;
-      // 已由后续尝试接管的失败不再作为独立错误卡；重启后最后一次失败仍可手动恢复。
-      const continuedFailure =
-        row.failure.code === 'ZEUS_MODEL_RESPONSE_RETRYING' &&
-        (props.state.providerReconnectAttempt > 0 || props.state.snapshot?.turns.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)).at(-1)?.providerTurnId !== row.turnId);
-      if (recovering || continuedFailure) return null;
       /** 只对最新停止的网络失败提供续跑，历史轮次不重复提交。 */
       const retryable =
         !props.historyOnly &&
         row.failure.category === 'network' &&
         // 送达尚未核对的提交只开放原恢复入口，不能从旧失败卡发起另一条续接。
         !props.state.queue?.submissions.some((submission) => ['queued', 'paused', 'dispatching', 'active'].includes(submission.status)) &&
-        props.state.snapshot?.turns.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)).at(-1)?.providerTurnId === row.turnId;
+        !props.state.activeTurnId &&
+        latestTurn?.providerTurnId === row.turnId;
       return (
         <TurnFailureCard
           failure={row.failure}
@@ -1549,7 +1551,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
                 language={props.language}
                 kind={activeStatusKind}
                 reconnectAttempt={props.state.providerReconnectAttempt || props.state.reconnectAttempt}
-                reconnectAttempts={props.state.providerReconnectAttempts || 5}
+                reconnectAttempts={props.state.providerReconnectAttempt > 0 ? props.state.providerReconnectAttempts : 5}
               />
             )
           ) : null}
@@ -1758,6 +1760,7 @@ export function SystemMessageNotice(props: { message: ConversationSystemMessageI
   );
 }
 
+/** 失败卡保留官方原因，显式续跑只针对调用方确认可重试的轮次。 */
 function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: SessionUiLanguage; retainedAnswer: boolean; onRetry?: () => void | Promise<void> }) {
   /** 请求提交期间禁用重复点击，失败原因保留在原提示中。 */
   const [pending, setPending] = useState(false);
@@ -1778,7 +1781,7 @@ function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: 
   }
   /** 错误名称和详情入口使用同一语言。 */
   const zh = props.language === 'zh-CN';
-  /** 连接失败只显示停止状态和重试，原始诊断保留在轮次记录中。 */
+  /** 连接失败复用现有错误详情窗口，原始原因和手动重试同时可用。 */
   const connectionFailure = props.failure.category === 'network';
   /** 重试结果接管同一条状态文案，原始错误仍由详情入口说明。 */
   const connectionMessage = pending ? (zh ? '正在重新连接…' : 'Reconnecting…') : retryError ? (zh ? '重试失败，请查看原因。' : 'Retry failed. View details.') : zh ? '连接失败，已停止。' : 'Connection failed. Stopped.';
@@ -1798,9 +1801,14 @@ function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: 
     <ConversationNotice label={connectionFailure ? (zh ? '连接失败' : 'Connection failed') : zh ? '模型返回错误' : 'Model error'}>
       {connectionFailure ? <span>{connectionMessage}</span> : <VisibleApplicationError error={props.failure} language={zh ? 'zh-CN' : 'en'} />}
       <span className="session-message-delivery-actions">
+        {connectionFailure ? (
+          <button type="button" className="application-error-details-link" onClick={() => reportApplicationError(props.failure, { language: zh ? 'zh-CN' : 'en', showDetails: true })}>
+            {zh ? '查看原因' : 'View details'}
+          </button>
+        ) : null}
         {retryError ? (
           <button type="button" className="application-error-details-link" onClick={() => reportApplicationError(retryError, { language: zh ? 'zh-CN' : 'en', showDetails: true })}>
-            {zh ? '查看原因' : 'View details'}
+            {zh ? '重试失败原因' : 'Retry failure details'}
           </button>
         ) : null}
         {props.onRetry ? (
@@ -1973,8 +1981,12 @@ export function projectSystemMessageRows(rows: readonly TranscriptViewportRow[],
 /** 失败属于发生时的会话记录，不依附最后一条消息或整个列表的底部。 */
 export function projectTranscriptFailureRows(rows: readonly TranscriptViewportRow[], turns: NativeSessionState['turnsByProviderId']): TranscriptViewportRow[] {
   /** 本地与服务端身份可能指向同一轮，失败记录按持久轮次身份去重。 */
-  const failures: Extract<TranscriptViewportRow, { kind: 'turn_failure' }>[] = [...new Map(Object.values(turns).map((turn) => [turn.id, turn])).values()]
-    .filter((turn) => turn.status === 'failed' && turn.error)
+  const knownTurns = [...new Map(Object.values(turns).map((turn) => [turn.id, turn])).values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+  /** 已由后续轮次接管的旧续接错误不进入虚拟列表，避免空行留下估算高度。 */
+  const latestTurn = knownTurns.at(-1);
+  /** 最新失败必须保留，不能因残留重连标记而隐藏终态。 */
+  const failures: Extract<TranscriptViewportRow, { kind: 'turn_failure' }>[] = knownTurns
+    .filter((turn) => turn.status === 'failed' && turn.error && (turn.error.code !== 'ZEUS_MODEL_RESPONSE_RETRYING' || turn === latestTurn))
     .map<Extract<TranscriptViewportRow, { kind: 'turn_failure' }>>((turn) => ({
       kind: 'turn_failure',
       key: `turn-failure:${turn.id}`,
@@ -2370,7 +2382,7 @@ function isSamePlanItem(openItem: NativeSessionItemBuffer | null | undefined, it
 export function transcriptRunStatus(state: NativeSessionState): 'starting' | 'executing' | 'compacting' | 'waiting_input' | 'waiting_approval' | 'reconnecting' | null {
   // 暂停或未知送达不代表模型继续运行，错误与核对入口由系统操作行承载。
   if (state.queue?.state.type === 'paused' || state.queue?.submissions.some((submission) => submission.internalOperation && submission.pausedReason === 'outcome_unknown')) return null;
-  if (state.providerReconnectAttempt > 0) return 'reconnecting';
+  if (state.providerReconnectAttempt > 0 && state.providerReconnectTurnId && !state.terminalTurnIds[state.providerReconnectTurnId]) return 'reconnecting';
   if (state.conversationState === 'starting_turn') return 'starting';
   /** 安全队首已经保存但尚未交给模型时，继续使用底部准备状态，不能因运行态暂为空闲而隐藏。 */
   const head = visibleQueuedSubmissions(state.queue).find((submission) => submission.status === 'queued' && !submission.providerTurnId);

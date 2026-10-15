@@ -163,6 +163,15 @@ function verifyFailureOrder(): void {
       updatedAt: at(1),
       error: { category: 'rate_limit', code: 'insufficient_quota', message: '额度不足', providerStatus: 'failed', additionalDetails: [] },
     };
+    /** 多个历史续接不能留下空虚拟行；终态重建后必须仍在列表中。 */
+    const retryTurns = Object.fromEntries(
+      Array.from({ length: 15 }, (_, index) => [`retry-${index}`, { ...turn, id: `retry-${index}`, providerTurnId: `retry-${index}`, createdAt: at(index), error: { ...turn.error!, code: 'ZEUS_MODEL_RESPONSE_RETRYING' } }]),
+    );
+    /** 最新失败拥有真实原因，不能被旧重连记录吞掉。 */
+    const finalTurn = { ...turn, createdAt: at(16) };
+    /** 可见行集合直接作为虚拟列表输入，不在渲染之后返回空内容。 */
+    const visibleFailures = projectTranscriptFailureRows([], { ...retryTurns, failed: finalTurn });
+    assertProbe(visibleFailures.length === 1 && visibleFailures[0]?.key === 'turn-failure:failed', '历史续接必须在进入虚拟列表前移除，最终失败必须保留。');
     for (const orphan of [false, true]) {
       for (const completedAt of [at(1), null]) {
         /** 报错前提交但仍未发送的队列消息也应位于失败提示之后。 */
@@ -550,6 +559,32 @@ function verifyAsyncQuestionRecovery(): void {
   assertProbe(projectTranscriptRows(restored).filter((row) => row.kind === 'item' && row.questionAnswer).length === 1, '冷开必须生成一张结构化回答卡片。');
 }
 verifyAsyncQuestionRecovery();
+
+/** 空行进出渲染窗口、切换会话后仍沿用零高度，内容出现后再更新。 */
+function verifyZeroHeightRows(): void {
+  /** 空行两侧保留真实消息，以核对占位层和挂载层的总高度。 */
+  const keys = ['before', 'empty', 'after'];
+  /** 与会话切换共用同一份测量缓存。 */
+  const cache = new TranscriptRowMeasurementCache();
+  cache.remember('before', 96);
+  cache.remember('after', 96);
+  /** 首次空行尚未测量，随后必须用零替换默认估高。 */
+  const measured = new TranscriptViewportLayout();
+  measured.syncKeys(keys, cache);
+  assertProbe(measured.updateMeasuredHeight('empty', 0, cache), '零高度必须更新高度树');
+  assertProbe(cache.peek('empty') === 0, '零高度必须写入会话缓存');
+  /** 重建布局后仍按两条正文和两个行间距计算，不能重新增加空行估高。 */
+  const restored = new TranscriptViewportLayout();
+  restored.syncKeys(keys, cache);
+  for (const scrollTop of [0, 124]) {
+    /** 挂载窗口只覆盖一端，空行可留在占位层。 */
+    const projection = restored.project({ scrollTop, viewportHeight: 96, overscanPx: 0 });
+    assertProbe(projection.estimatedTotalHeight === 220, '空行进出窗口不能改变总高度');
+    assertProbe(projection.slots.reduce((height, slot) => height + (slot.kind === 'spacer' ? slot.height : cache.peek(slot.rowKey)!), 14 * (projection.slots.length - 1)) === 220, '占位高度必须等于真实行高度');
+  }
+  assertProbe(restored.updateMeasuredHeight('empty', 40, cache) && restored.project({ scrollTop: null, viewportHeight: 96 }).estimatedTotalHeight === 260, '空行出现内容后必须恢复真实高度');
+}
+verifyZeroHeightRows();
 
 const rowCount = 100_000;
 const rowKeys = Array.from({ length: rowCount }, (_, index) => `row-${index}`);
