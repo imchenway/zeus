@@ -1089,7 +1089,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     const opaque = input.prepared.opaque as WorkspaceGitPreparedOpaque;
     switch (input.commandType) {
       case workspaceGitCommandTypes.deliveryRepositoryAction:
-        workspaceGitReject(400, 'ZEUS_GIT_DELIVERY_SCOPE_REQUIRED', '组合交付必须通过已接纳的运行执行。');
+        return workspaceGitReject(400, 'ZEUS_GIT_DELIVERY_SCOPE_REQUIRED', '组合交付必须通过已接纳的运行执行。');
       case workspaceGitCommandTypes.taskRepositoryAttach:
         return executeTaskRepositoryAttach(opaque, input.value);
       case workspaceGitCommandTypes.workbenchAction:
