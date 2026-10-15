@@ -2491,9 +2491,16 @@ export function createConversationApplicationOperations(dependencies: Conversati
     /** 组合冲突会话由已接纳步骤提供隔离目录，客户端不能指定 cwd。 */
     const deliveryWorkspace = body.source === 'delivery_conflict' ? resolveGitDeliveryConflictWorkspace(db, project.id, body.deliveryStepId) : null;
     if (deliveryWorkspace && body.permissionMode !== deliveryWorkspace.permissionMode) throw nativeApiError('ZEUS_INVALID_DELIVERY_CONFLICT', '冲突权限必须与本次交付授权一致。');
+    // 请求字段仍是未知类型，直接比对允许值，拒绝缺失值和非字符串权限。
     if (
       deliveryWorkspace &&
-      (body.collaborationMode !== 'default' || !['auto', 'full-access'].includes(body.permissionMode ?? '') || hasExpertMentions(body) || body.goalObjective || body.worktree || body.workspaceMode || body.attachments !== undefined)
+      (body.collaborationMode !== 'default' ||
+        (body.permissionMode !== 'auto' && body.permissionMode !== 'full-access') ||
+        hasExpertMentions(body) ||
+        body.goalObjective ||
+        body.worktree ||
+        body.workspaceMode ||
+        body.attachments !== undefined)
     )
       throw nativeApiError('ZEUS_INVALID_DELIVERY_CONFLICT', '交付冲突只能在该步骤的独立工作区中执行。');
     const reviewWorkspace = body.source === 'code_review' ? await resolveConversationGitWorkspace(project, typeof body.inheritConversationId === 'string' ? body.inheritConversationId : '', conversations, conversationSubmissions) : null;
