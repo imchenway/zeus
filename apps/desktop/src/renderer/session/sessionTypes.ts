@@ -978,6 +978,8 @@ export interface NativeConversationChoice {
   listRuntimeState?: 'connecting' | 'reconnecting' | 'paused' | 'queued' | 'ready' | 'streaming' | 'pending_approval' | 'pending_user_input' | 'error' | 'legacy_readonly';
   /** 与列表状态同源的任务运行状态，避免客户端从不完整元数据重复猜测。 */
   taskRunStatus?: 'not_started' | 'connecting' | 'reconnecting' | 'running' | 'waiting_user' | 'waiting_approval' | 'paused' | 'idle' | 'failed' | 'legacy_readonly';
+  /** 异步待回复独立于运行状态；后台会话和历史未载入时仍显示提醒。 */
+  hasPendingAsyncQuestion?: boolean;
   resumable: boolean;
   readOnly: boolean;
   permissionMode?: NativePermissionMode;

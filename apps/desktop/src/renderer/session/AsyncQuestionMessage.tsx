@@ -60,6 +60,11 @@ function asyncQuestionStatus(item: NativeSessionItemBuffer, state: NativeSession
   return { confirmed, pending, deliveryStatus, closed, awaitingAnswer: !confirmed && !pending };
 }
 
+/** 侧栏与问题表单共用答复状态，收起表单或轮次结束不会冒充已回答。 */
+export function hasPendingAsyncQuestion(state: NativeSessionState): boolean {
+  return Object.values(state.items).some((item) => item.status === 'completed' && itemRole(item) === 'assistant' && classifyAssistantMessage(item.payload, item.phase) === 'question' && asyncQuestionStatus(item, state).awaitingAnswer);
+}
+
 /** 当前窗口内保留问题选择和稍后回答状态；重启后重新提醒未回答问题。 */
 interface AsyncQuestionDockSelection {
   /** 正在填写的问题保持选择；提交后由答复账本释放输入区。 */

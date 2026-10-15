@@ -15,6 +15,7 @@ import type { NativeConversationChoice, NativeSessionState } from './sessionType
 import { compareConversationStageUpdatedDesc } from './conversationOrdering.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { conversationDisplayTitle } from './conversationDisplayTitle.js';
+import { hasPendingAsyncQuestion } from './AsyncQuestionMessage.js';
 import { useNewItemMotionIds } from '../ui/useNewItemMotion.js';
 import type { TaskAgentRunStatus } from '../apiClient.js';
 import { taskAgentRunStatusLabels } from '../task/TaskRunStatusChip.js';
@@ -481,7 +482,9 @@ export function taskRunStatusFromConversationTreeState(runtimeState: Conversatio
 
 /** 图标与筛选按同一顺序读取实时状态，缺失时回退到会话列表投影。 */
 export function resolveConversationTreeRuntimeState(conversation: NativeConversationChoice, conversationStates?: Record<string, ConversationTreeRuntimeState>): ConversationTreeRuntimeState {
-  return conversationStates?.[conversationNavigationId(conversation)] ?? conversationStates?.[conversation.id] ?? conversationTreeRuntimeStateFromConversation(conversation);
+  /** 运行状态仍采用实时投影；异步待回复独立保留，避免历史分页或后台刷新漏掉原题。 */
+  const runtimeState = conversationStates?.[conversationNavigationId(conversation)] ?? conversationStates?.[conversation.id] ?? conversationTreeRuntimeStateFromConversation(conversation);
+  return conversation.hasPendingAsyncQuestion && runtimeState !== 'pending_approval' ? 'pending_user_input' : runtimeState;
 }
 
 /** 合并项目直属与任务会话，按显示标题搜索，再按会话阶段更新时间排序。 */
@@ -507,6 +510,7 @@ export function conversationTreeRuntimeStateFromSession(state: NativeSessionStat
   const pendingRequest = state.pendingRequests.find((request) => request.status === 'pending');
   if (pendingRequest?.type === 'request_user_input' || pendingRequest?.type === 'userInput' || state.conversationState === 'waiting_user_input') return 'pending_user_input';
   if (pendingRequest || state.conversationState === 'waiting_approval') return 'pending_approval';
+  if (hasPendingAsyncQuestion(state)) return 'pending_user_input';
   if (state.queue?.state.type === 'paused') return 'paused';
   if (
     state.conversationState === 'starting_turn' ||
