@@ -244,11 +244,11 @@ function parseLatestCodexVersion(value: unknown): string {
   return match[1]!;
 }
 
-/** 检查官方稳定版；只读取公开元数据，不下载或切换用户正在使用的程序。 */
+/** 仅为 Zeus 管理的安装检查官方稳定版，外部安装不访问发布源。 */
 async function checkPublishedCodexUpdate(adapter: AiCliAdapterStatus, checkedAt: string, codexHome: string | undefined): Promise<CodexRuntimeUpdateStatus> {
   /** 安装归属来自实际程序路径，不相信界面提供的安装方式。 */
   const managedInstallation = isManagedCodexStandalone(adapter.resolvedCommandPath, codexHome);
-  if (!adapter.version) return { adapter, managedInstallation, status: 'unavailable', currentVersion: null, latestVersion: null, checkedAt };
+  if (!managedInstallation || !adapter.version) return { adapter, managedInstallation, status: 'unavailable', currentVersion: adapter.version, latestVersion: null, checkedAt };
   /** 单次检查总等待上限，页面不会因公网异常长期锁住。 */
   const signal = AbortSignal.timeout(10_000);
   /** 固定官方 HTTPS 来源且禁止重定向，避免版本判断漂移到未知站点。 */
@@ -327,7 +327,7 @@ async function readOfficialCodexInstaller(onProgress: (progress: number | null, 
 
 /** 只调用受管安装的官方安装器；全局程序不会被当作更新命令执行。 */
 async function runCodexSelfUpdate(commandPath: string, codexHome: string | undefined, targetVersion: string, onProgress: (progress: number | null, stage: string) => void): Promise<void> {
-  if (!isManagedCodexStandalone(commandPath, codexHome)) throw Object.assign(new Error('请使用原安装方式更新这份 Codex。'), { code: 'ZEUS_CODEX_UPDATE_EXTERNAL_INSTALLATION' });
+  if (!isManagedCodexStandalone(commandPath, codexHome)) throw Object.assign(new Error('Zeus 不管理这份 Codex。'), { code: 'ZEUS_CODEX_UPDATE_EXTERNAL_INSTALLATION' });
   /** 受管脚本只作为标准输入交给系统 sh，目标版本固定为用户确认的版本。 */
   const installer = await readOfficialCodexInstaller(onProgress);
   /** 更新命令只继承当前服务环境，并显式固定 Zeus 的 Codex 数据目录。 */
