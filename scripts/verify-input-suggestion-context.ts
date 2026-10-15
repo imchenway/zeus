@@ -75,6 +75,8 @@ const first = reader.read({ snapshot, projectId: 'project', sources });
 for (const required of ['最多重试 5 次', '不得覆盖内置供应商配置', '不能自动提交', '45 秒', '简洁自然的中文', '本轮仍在进行']) assert.ok(first.text.includes(required), required);
 assert.ok(first.text.length <= 16_000);
 assert.doesNotMatch(first.text, /不应使用的推测偏好|其他项目的材料|gardening/);
+/** 同轮补充、助手答复和最新修正按真实顺序交错，不能重新按角色分组。 */
+assert.match(first.text, /消息 message-16\][\s\S]*消息 message-17\][\s\S]*消息 message-18\]/u);
 /** 同一来源重复取材不扫描已缓存历史；更换草稿也不会写入缓存。 */
 const queryCount = queries.length;
 assert.equal(reader.read({ snapshot, projectId: 'project', sources, draft: '继续完善原要求' }).text, first.text);
