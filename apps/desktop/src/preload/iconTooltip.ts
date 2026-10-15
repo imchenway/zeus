@@ -167,6 +167,8 @@ export function installIconTooltips(root: Document | ShadowRoot): () => void {
 
   /** Tab 自动滚入视口后重新定位；鼠标滚动或控件已离开视口时关闭。 */
   function scroll(event: Event): void {
+    // 尚未显示时由共用控制器判断滚动范围，避免相邻区域滚动取消等待。
+    if (!active) return;
     // 原生长标题迁移后允许在气泡内滚动阅读，不关闭正在阅读的提示。
     if (event.composedPath().includes(tooltip)) return;
     hoverIntent.cancel();

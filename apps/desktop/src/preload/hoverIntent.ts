@@ -17,7 +17,7 @@ export function createHoverIntent() {
     target?.ownerDocument.removeEventListener('pointerdown', cancel, true);
     target?.ownerDocument.removeEventListener('keydown', keydown, true);
     target?.ownerDocument.removeEventListener('focusin', cancel, true);
-    target?.ownerDocument.removeEventListener('scroll', cancel, true);
+    target?.ownerDocument.removeEventListener('scroll', scroll, true);
     target?.ownerDocument.removeEventListener('visibilitychange', cancel);
     target?.ownerDocument.defaultView?.removeEventListener('blur', cancel);
     target?.ownerDocument.defaultView?.removeEventListener('resize', cancel);
@@ -28,6 +28,19 @@ export function createHoverIntent() {
   /** 等待中的 Escape 不拦截原有菜单或对话框的按键处理。 */
   function keydown(event: KeyboardEvent): void {
     if (event.key === 'Escape') cancel();
+  }
+
+  /** 只在目标所在区域滚动时取消；相邻对话区域的自动滚动不打断固定入口的悬停。 */
+  function scroll(event: Event): void {
+    /** 沿真实祖先查找滚动来源，网页评论的 ShadowRoot 继续向宿主查找。 */
+    let ancestor: Node | null = target;
+    while (ancestor) {
+      if (ancestor === event.target) {
+        cancel();
+        return;
+      }
+      ancestor = ancestor.parentNode ?? (ancestor instanceof ShadowRoot ? ancestor.host : null);
+    }
   }
 
   /** 切换目标重新计时；只有仍在页面内且仍被悬停的目标可以显示。 */
@@ -42,7 +55,7 @@ export function createHoverIntent() {
     next.ownerDocument.addEventListener('pointerdown', cancel, true);
     next.ownerDocument.addEventListener('keydown', keydown, true);
     next.ownerDocument.addEventListener('focusin', cancel, true);
-    next.ownerDocument.addEventListener('scroll', cancel, true);
+    next.ownerDocument.addEventListener('scroll', scroll, true);
     next.ownerDocument.addEventListener('visibilitychange', cancel);
     next.ownerDocument.defaultView?.addEventListener('blur', cancel);
     next.ownerDocument.defaultView?.addEventListener('resize', cancel);

@@ -842,8 +842,6 @@ function CostBreakdownPopover(props: { entries: UsageModelCostBreakdown[]; label
   const pinnedRef = useRef(false);
   /** 展开状态只用于触发器可访问性，实际窗口状态由主进程广播校准。 */
   const [open, setOpen] = useState(false);
-  /** 等待完成后才请求原生费用窗口，避免鼠标经过时创建或展示明细。 */
-  const hoverIntent = useHoverIntent(() => showCostDetail(pinnedRef.current));
   /** 把当前内容和锚点交给独立原生窗口；主进程负责屏幕边界与显示时机。 */
   const showCostDetail = useCallback(
     (pinned: boolean) => {
@@ -907,24 +905,21 @@ function CostBreakdownPopover(props: { entries: UsageModelCostBreakdown[]; label
     };
   }, [open]);
 
-  /** 悬停时记录真实屏幕锚点并打开非固定明细。 */
-  const showFromPointer = (event: { screenX: number; screenY: number; pointerType: string; buttons: number; currentTarget: HTMLElement }) => {
-    if (event.pointerType === 'touch' || event.buttons > 0) return;
+  /** 悬停时记录真实屏幕锚点并立即打开明细，保留已有固定状态。 */
+  const showFromPointer = (event: { screenX: number; screenY: number }) => {
     pointerAnchorRef.current = { x: event.screenX, y: event.screenY };
-    if (open) void window.zeus?.cancelHideMenuBarUsageCostDetail?.();
-    else hoverIntent.schedule(event.currentTarget);
+    void window.zeus?.cancelHideMenuBarUsageCostDetail?.();
+    showCostDetail(pinnedRef.current);
   };
 
   /** 未固定时由主进程延迟关闭，允许鼠标跨过两个原生窗口之间的间距。 */
   const scheduleHoverClose = () => {
-    hoverIntent.cancel();
     if (pinnedRef.current) return;
     void window.zeus?.scheduleHideMenuBarUsageCostDetail?.();
   };
 
   /** 点击在固定与关闭之间切换。 */
   const togglePinned = () => {
-    hoverIntent.cancel();
     if (pinnedRef.current) {
       pinnedRef.current = false;
       void window.zeus?.hideMenuBarUsageCostDetail?.();
@@ -945,7 +940,6 @@ function CostBreakdownPopover(props: { entries: UsageModelCostBreakdown[]; label
         aria-haspopup="dialog"
         onClick={togglePinned}
         onFocus={(event) => {
-          hoverIntent.cancel();
           if (!event.currentTarget.matches(':focus-visible')) return;
           pointerAnchorRef.current = null;
           showCostDetail(true);
@@ -1331,4 +1325,3 @@ function readStoredChartDimension(): ChartDimension {
     return 'tokens';
   }
 }
-import { useHoverIntent } from '../ui/useHoverIntent.js';

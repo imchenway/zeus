@@ -1,5 +1,4 @@
 import { useMotionPresence } from '../ui/useMotionPresence.js';
-import { useHoverIntent } from '../ui/useHoverIntent.js';
 import { type CSSProperties, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { NativeUnifiedUsageSnapshot } from './sessionTypes.js';
@@ -17,9 +16,8 @@ export function ContextUsageIndicator(props: {
 }) {
   const tooltipId = `session-context-usage-${useId().replaceAll(':', '')}`;
   const indicatorRef = useRef<HTMLSpanElement | null>(null);
+  /** 上下文占用恢复即时查看，鼠标移入或获得焦点时直接展开。 */
   const [tooltipOpen, setTooltipOpen] = useState(false);
-  /** 悬停等待与普通按钮一致，主动查看仍即时显示。 */
-  const hoverIntent = useHoverIntent(() => setTooltipOpen(true));
   /** 鼠标移开后平滑退出，并且不把最后位置重置到页面左上角。 */
   const { ref: tooltipRef, present: tooltipPresent } = useMotionPresence<HTMLSpanElement>(tooltipOpen);
   const [tooltipPosition, setTooltipPosition] = useState<{ left: number; top: number } | null>(null);
@@ -142,28 +140,14 @@ export function ContextUsageIndicator(props: {
       role="img"
       aria-label={copy.accessibleLabel}
       aria-describedby={tooltipOpen ? tooltipId : undefined}
-      onPointerEnter={(event) => {
-        if (event.pointerType !== 'touch' && event.buttons === 0) hoverIntent.schedule(event.currentTarget);
-      }}
+      onPointerEnter={() => setTooltipOpen(true)}
       onPointerLeave={(event) => {
-        hoverIntent.cancel();
         if (document.activeElement !== event.currentTarget) setTooltipOpen(false);
       }}
-      onFocus={(event) => {
-        hoverIntent.cancel();
-        if (event.currentTarget.matches(':focus-visible')) setTooltipOpen(true);
-      }}
-      onClick={() => {
-        hoverIntent.cancel();
-        setTooltipOpen(true);
-      }}
-      onBlur={() => {
-        hoverIntent.cancel();
-        setTooltipOpen(false);
-      }}
+      onFocus={() => setTooltipOpen(true)}
+      onBlur={() => setTooltipOpen(false)}
       onKeyDown={(event) => {
         if (event.key === 'Escape') {
-          hoverIntent.cancel();
           event.preventDefault();
           event.stopPropagation();
           setTooltipOpen(false);
