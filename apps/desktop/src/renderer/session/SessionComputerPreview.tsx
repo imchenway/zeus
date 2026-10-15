@@ -103,7 +103,7 @@ export function SessionComputerPreview(props: { conversationId: string; language
   }
 
   if (!props.active || (!preview && !errorMessage && !readFailed)) return null;
-  /** 正常控制只保留辅助说明，异常状态始终展示，不能藏在悬浮详情中。 */
+  /** 状态保留在控制详情和读屏说明中，缩略图下方不展开诊断。 */
   const status =
     preview?.state === 'paused'
       ? zh
@@ -149,8 +149,6 @@ export function SessionComputerPreview(props: { conversationId: string; language
                     : 'No capture yet. You can still stop control.'}
               </p>
             )}
-            {/* 同一张已授权截图提供局部虚化层，画面中心与控件继续使用清晰内容。 */}
-            {preview.imageUrl && failedImage !== preview.imageUrl ? <img className="session-computer-preview-blur" src={preview.imageUrl} alt="" aria-hidden="true" draggable={false} /> : null}
             <div className="session-computer-preview-controls">
               <button
                 type="button"
@@ -173,20 +171,21 @@ export function SessionComputerPreview(props: { conversationId: string; language
                     {status} · {preview.action}
                   </span>
                   {preview.capturedAt ? <time dateTime={preview.capturedAt}>{new Date(preview.capturedAt).toLocaleTimeString()}</time> : null}
-                  {preview.detail ? <span>{preview.detail}</span> : null}
+                  {errorMessage ? <VisibleApplicationError error={errorMessage} language={zh ? 'zh-CN' : 'en'} summary={zh ? '未能停止屏幕控制。' : 'Screen control could not be stopped.'} /> : null}
+                  {/* 失败诊断按需打开；用户接管等正常说明保留原意，不误报成错误。 */}
+                  {preview.detail ? preview.state === 'error' ? <VisibleApplicationError error={preview.detail} language={zh ? 'zh-CN' : 'en'} summary={zh ? '控制说明' : 'Control information'} /> : <span>{preview.detail}</span> : null}
                 </div>
               </details>
             </div>
           </div>
-          <p className="session-computer-preview-status" data-visible={preview.state === 'paused' || preview.state === 'error' || preview.state === 'starting' || preview.needsObservation || !preview.imageUrl || undefined} role="status">
+          <p className="visually-hidden" role="status">
             {status}
-            {preview.detail && (preview.state === 'error' || preview.state === 'paused') ? `：${preview.detail}` : ''}
           </p>
         </>
       ) : null}
-      {errorMessage ? (
+      {errorMessage && !preview ? (
         <p role="alert">
-          <VisibleApplicationError error={errorMessage} language={zh ? 'zh-CN' : 'en'} />
+          <VisibleApplicationError error={errorMessage} language={zh ? 'zh-CN' : 'en'} summary={zh ? '未能停止屏幕控制。' : 'Screen control could not be stopped.'} />
         </p>
       ) : null}
       {readFailed ? <p role="status">{zh ? '屏幕控制状态暂时不可用。' : 'Screen control status is unavailable.'}</p> : null}

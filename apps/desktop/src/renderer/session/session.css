@@ -2,66 +2,26 @@
 /* 屏幕画面独立悬浮在来源卡下方，控制身份仍属于当前会话。 */
 .session-computer-preview {
   flex: 0 0 auto;
-  inline-size: min(400px, calc(100% - 88px));
-  margin: 12px 16px 32px auto;
+  inline-size: min(400px, calc(100% - 32px));
+  min-inline-size: 0;
+  margin: 12px 16px 16px auto;
   color: var(--session-text);
 }
-/* 失败和暂停说明始终可读，正常控制说明仅供辅助技术使用。 */
+/* 空态说明与读取失败提示沿用紧凑排版。 */
 .session-computer-preview p {
   color: var(--session-text-muted);
   font-size: 12px;
   margin: 8px 0 0;
   overflow-wrap: anywhere;
 }
-.session-computer-preview-status:not([data-visible='true']) {
-  position: absolute;
-  inline-size: 1px;
-  block-size: 1px;
-  clip-path: inset(50%);
-  overflow: hidden;
-}
-/* 画面中心保持清晰，四周用窄渐隐和扩散阴影融入会话背景。 */
+/* 截图保持原始清晰度，细边框和轻阴影界定画面。 */
 .session-computer-preview-image {
-  /* 两个方向分别渐隐，交集保留四边一致的柔和过渡。 */
-  --session-computer-edge-inline: linear-gradient(to right, transparent, #000 5px, #000 calc(100% - 5px), transparent);
-  --session-computer-edge-block: linear-gradient(to bottom, transparent, #000 5px, #000 calc(100% - 5px), transparent);
   background: transparent;
-  border-radius: 4px;
-  box-shadow: 0 18px 48px -12px color-mix(in srgb, var(--session-text) 16%, transparent);
+  border: 1px solid var(--session-line);
+  border-radius: 10px;
+  box-shadow: 0 2px 8px -4px var(--session-shadow);
   position: relative;
   isolation: isolate;
-}
-/* 控件后方的柔和主题雾面超出画面边缘，径向遮罩避免出现另一块矩形。 */
-.session-computer-preview-image::before {
-  content: '';
-  position: absolute;
-  inset-block-start: -28px;
-  inset-inline-start: -32px;
-  inline-size: min(210px, calc(56% + 32px));
-  block-size: 150px;
-  background: color-mix(in srgb, var(--session-text) 18%, transparent);
-  mask-image: radial-gradient(ellipse at 42% 42%, #000 12%, rgb(0 0 0 / 85%) 32%, transparent 72%);
-  opacity: 0;
-  pointer-events: none;
-  z-index: 2;
-  transition: opacity 160ms ease;
-}
-.session-computer-preview-image::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: color-mix(in srgb, var(--session-text) 7%, transparent);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 160ms ease;
-}
-/* 遮罩、截图与无图表面使用同一边缘，悬停时也不会重新露出硬边。 */
-.session-computer-preview-image::after,
-.session-computer-preview-open,
-.session-computer-preview-image > p {
-  mask-image: var(--session-computer-edge-inline), var(--session-computer-edge-block);
-  mask-composite: intersect;
 }
 /* 画面按钮与控制按钮分开，禁止嵌套交互控件。 */
 .session-computer-preview .session-computer-preview-open {
@@ -80,45 +40,29 @@
   max-block-size: 300px;
   object-fit: contain;
 }
-/* 共用原图解码缓存，只模糊控件附近的副层，不依赖跨遮罩的背景采样。 */
-.session-computer-preview-blur {
-  position: absolute;
-  inset: 0;
-  inline-size: 100%;
-  block-size: 100%;
-  object-fit: contain;
-  filter: blur(18px);
-  mask-image: radial-gradient(ellipse 120px 90px at 52px 36px, #000 32%, transparent 100%), var(--session-computer-edge-inline), var(--session-computer-edge-block);
-  mask-composite: intersect;
-  opacity: 0;
-  pointer-events: none;
-  z-index: 1;
-  transition: opacity 160ms ease;
-}
+/* 无图和加载失败时为操作保留空间，说明文字不与按钮重叠。 */
 .session-computer-preview-image > p {
   background: light-dark(color-mix(in srgb, var(--session-text) 3%, var(--session-canvas)), var(--zeus-dark-surface));
-  min-block-size: 128px;
+  border-radius: inherit;
+  min-block-size: 104px;
   margin: 0;
-  padding: 64px 20px 20px;
+  padding: 52px 12px 16px;
   box-sizing: border-box;
 }
 /* 悬停和键盘聚焦显示同一组操作，无图时始终保留停止入口。 */
 .session-computer-preview-controls {
-  align-items: start;
+  align-items: center;
   display: flex;
-  gap: 10px;
+  justify-content: flex-end;
+  gap: 4px;
   position: absolute;
-  inset: 20px auto auto 15px;
-  inset-inline-end: 7px;
+  inset: 6px 6px auto;
   pointer-events: none;
   opacity: 0;
   z-index: 3;
   transition: opacity 160ms ease;
 }
-.session-computer-preview-image:is(:hover, :focus-within, :has(details[open]), :not(:has(img))) .session-computer-preview-controls,
-.session-computer-preview-image:is(:hover, :focus-within, :has(details[open])) .session-computer-preview-blur,
-.session-computer-preview-image:is(:hover, :focus-within, :has(details[open]), :not(:has(img)))::before,
-.session-computer-preview-image:is(:hover, :focus-within, :has(details[open]))::after {
+.session-computer-preview-image:is(:hover, :focus-within, :has(details[open]), :not(:has(img))) .session-computer-preview-controls {
   opacity: 1;
 }
 .session-computer-preview-controls > button,
@@ -126,13 +70,15 @@
   align-items: center;
   display: flex;
   justify-content: center;
-  background: transparent;
-  border: 0;
-  border-radius: 7px;
+  background: var(--session-canvas);
+  border: 1px solid var(--session-line);
+  border-radius: 6px;
   color: var(--session-text-muted);
   cursor: pointer;
-  inline-size: 34px;
-  block-size: 34px;
+  box-sizing: border-box;
+  inline-size: 28px;
+  block-size: 28px;
+  flex: 0 0 auto;
   padding: 0;
   list-style: none;
 }
@@ -145,12 +91,8 @@
   pointer-events: auto;
 }
 .session-computer-preview-controls svg {
-  inline-size: 32px;
-  block-size: 32px;
-}
-.session-computer-preview-info > summary > svg {
-  inline-size: 34px;
-  block-size: 34px;
+  inline-size: 16px;
+  block-size: 16px;
 }
 .session-computer-preview-controls > button:hover,
 .session-computer-preview-info > summary:hover {
@@ -168,7 +110,7 @@
 /* 状态详情在画面内展开，不暴露内部进程编号。 */
 .session-computer-preview-info > div {
   position: absolute;
-  inset: 38px auto auto 0;
+  inset: 34px 0 auto auto;
   inline-size: min(240px, 100%);
   max-block-size: 200px;
   overflow: auto;
@@ -188,19 +130,10 @@
   .session-computer-preview-controls {
     opacity: 1;
   }
-  .session-computer-preview-image::before {
-    opacity: 1;
-  }
-  .session-computer-preview-blur {
-    opacity: 1;
-  }
 }
 @media (prefers-reduced-motion: reduce) {
-  /* 减少动态效果时不播放悬浮遮罩的淡入淡出。 */
-  .session-computer-preview-controls,
-  .session-computer-preview-blur,
-  .session-computer-preview-image::before,
-  .session-computer-preview-image::after {
+  /* 减少动态效果时直接显示操作。 */
+  .session-computer-preview-controls {
     transition: none;
   }
 }
@@ -451,6 +384,8 @@
 
 .session-codex-parity-v1 .session-quick-actions-sources ol {
   display: grid;
+  /* 长文件名允许在来源列内省略，不让 Grid 的最小内容宽度撑开面板。 */
+  grid-template-columns: minmax(0, 1fr);
   gap: 2px;
   list-style: none;
   margin: 2px 0 0;
@@ -470,6 +405,8 @@
   background: transparent;
   border: 0;
   border-radius: 8px;
+  /* 按钮与只读来源共用盒模型，100% 宽度包含内边距，避免撑出横向滚动条。 */
+  box-sizing: border-box;
   color: var(--session-text-muted);
   display: flex;
   gap: 9px;
