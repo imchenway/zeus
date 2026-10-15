@@ -254,7 +254,7 @@ function realtimeBufferBudgetError(kind: RealtimeBufferKind): Error {
 
 export interface SessionControllerClient {
   /** 独立生成建议或润色候选；只读客户端可省略此能力。 */
-  generateInputSuggestion?(input: import('@zeus/shared').InputSuggestionRequest, signal: AbortSignal): Promise<import('@zeus/shared').InputSuggestionResult>;
+  generateInputSuggestion?(input: import('@zeus/shared').InputSuggestionRequest, signal: AbortSignal, diagnosticId?: string): Promise<import('@zeus/shared').InputSuggestionResult>;
   /** 独立读取全历史目录，不参与事件消费。 */
   /** 持久系统消息的独立命令与读取端口。 */
   saveConversationSystemMessage?(projectId: string, conversationId: string, input: ConversationSystemMessageInput): Promise<ConversationSystemMessage>;

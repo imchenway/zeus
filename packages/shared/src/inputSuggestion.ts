@@ -1,4 +1,5 @@
 import type { UserFacingErrorCause } from './userFacingError.js';
+import { normalizePerformanceTraceIdentity } from './commandEnvelope.js';
 
 /** 所有会话共用的输入建议偏好，与主会话模型选择分开保存。 */
 export interface InputSuggestionSettings {
@@ -40,6 +41,8 @@ export interface InputSuggestionRequest {
 
 /** 建议回执携带轮次和模型身份，供输入框丢弃过期结果。 */
 export interface InputSuggestionResult {
+  /** 服务端实际使用的诊断身份，便于关联界面接收与服务端结束记录。 */
+  diagnosticId?: string;
   /** 生成所依据的权威已完成轮次。 */
   completedTurnId: string | null;
   /** 实际使用的专用模型；未生成时允许为空。 */
@@ -50,6 +53,46 @@ export interface InputSuggestionResult {
   reason: 'disabled' | 'context_unavailable' | 'model_unavailable' | 'effort_unavailable' | 'no_suggestion' | 'no_change' | 'timed_out' | 'failed' | 'cancelled' | null;
   /** 失败时保留有界、脱敏的原因，复用应用统一错误详情入口。 */
   cause?: UserFacingErrorCause;
+}
+
+/** 界面仅报告状态和长度，不通过诊断通路发送草稿或建议正文。 */
+export interface InputSuggestionUiDiagnostic {
+  /** 与生成请求相同的随机身份。 */
+  requestId: string;
+  /** 接收、保存候选状态、丢弃和失败分别记录；保存不代表用户已看到或采纳。 */
+  event: 'ui_started' | 'ui_received' | 'ui_result_stored' | 'ui_discarded' | 'ui_failed' | 'ui_cancelled';
+  /** 当前操作类型。 */
+  mode: InputSuggestionRequest['mode'];
+  /** 区分主动点击与自动建议。 */
+  trigger: InputSuggestionRequest['trigger'];
+  /** 从本次点击开始的单调耗时，单位为毫秒。 */
+  elapsedMs: number;
+  /** 仅记录固定结果标记，不接收原始错误正文。 */
+  outcome?: string;
+  /** 只保留返回字数，不保留文本。 */
+  outputCharacters?: number;
+}
+
+/** 主进程不信任 IPC 输入，只接收已知界面事件和有界标量。 */
+export function normalizeInputSuggestionUiDiagnostic(value: unknown): InputSuggestionUiDiagnostic | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  /** 未知字段不透传，防止意外记录业务正文。 */
+  const record = value as Record<string, unknown>;
+  /** 身份格式与统一 HTTP trace 合同一致。 */
+  const requestId = normalizePerformanceTraceIdentity(record.requestId);
+  if (!requestId) return null;
+  if (!['ui_started', 'ui_received', 'ui_result_stored', 'ui_discarded', 'ui_failed', 'ui_cancelled'].includes(String(record.event))) return null;
+  if (!['suggest', 'polish'].includes(String(record.mode)) || !['manual', 'automatic'].includes(String(record.trigger))) return null;
+  if (typeof record.elapsedMs !== 'number' || !Number.isFinite(record.elapsedMs) || record.elapsedMs < 0) return null;
+  return {
+    requestId,
+    event: record.event as InputSuggestionUiDiagnostic['event'],
+    mode: record.mode as InputSuggestionRequest['mode'],
+    trigger: record.trigger as InputSuggestionRequest['trigger'],
+    elapsedMs: Math.round(record.elapsedMs),
+    ...(typeof record.outcome === 'string' && /^[a-z_]{1,64}$/u.test(record.outcome) ? { outcome: record.outcome } : {}),
+    ...(typeof record.outputCharacters === 'number' && Number.isFinite(record.outputCharacters) && record.outputCharacters >= 0 ? { outputCharacters: Math.min(16_000, Math.round(record.outputCharacters)) } : {}),
+  };
 }
 
 /** 未配置的新旧用户均保持关闭，不隐式选择付费模型。 */

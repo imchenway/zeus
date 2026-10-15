@@ -32,6 +32,7 @@ import { createMacOSKeychainStore, type SecretPresenceLabel, type SecretStore } 
 import { normalizeNetworkProxySettings } from '@zeus/shared';
 import { applyNetworkProxyAtStartup } from './networkProxyRuntime.js';
 export { applyNetworkProxyAtStartup, networkProxyRuntimeEnvironment } from './networkProxyRuntime.js';
+export { createInputSuggestionDiagnosticLog } from './inputSuggestionDiagnostics.js';
 import {
   cloneTaskManagementStatusConfig,
   defaultTaskManagementStatusLabels,

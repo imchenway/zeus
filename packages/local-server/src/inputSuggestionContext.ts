@@ -191,7 +191,7 @@ export function createInputSuggestionContextReader(repository: SuggestionReposit
           ? '本轮失败或中断，不能假定任务完成。'
           : turn.status === 'completed'
             ? '本轮回复已结束，不代表任务已经验收。'
-            : '本轮仍在进行，不要要求重复启动正在执行的工作。';
+            : '本轮仍在进行，助手阶段进展可能尚无最终结果。';
       /** 任务和记忆单独占用最多 4,000 字符。 */
       const support = renderSources(input.sources, input.projectId, query, state);
       /** 助手最多占用 4,000 字符；其余全部优先留给用户原话。 */

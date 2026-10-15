@@ -55,7 +55,7 @@ export interface ConversationComposerProps {
   /** 主输入框独享建议设置；答题和其他复用输入框保持原有行为。 */
   inputSuggestionSettings?: import('@zeus/shared').InputSuggestionSettings;
   /** 生成灰字或润色候选，不提交下一轮或改变执行队列。 */
-  onGenerateInputSuggestion?: (input: import('@zeus/shared').InputSuggestionRequest, signal: AbortSignal) => Promise<import('@zeus/shared').InputSuggestionResult>;
+  onGenerateInputSuggestion?: (input: import('@zeus/shared').InputSuggestionRequest, signal: AbortSignal, diagnosticId?: string) => Promise<import('@zeus/shared').InputSuggestionResult>;
   state: NativeSessionState;
   language: SessionUiLanguage;
   textareaRef?: RefObject<ComposerInputHandle | null>;

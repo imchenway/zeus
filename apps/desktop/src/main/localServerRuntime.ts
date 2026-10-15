@@ -262,12 +262,12 @@ class ExecutionHostOwnershipError extends Error {
  * 写入可追踪的本机运行配置文件；该文件只记录路径与监听边界，
  * 严禁写入 Renderer API token、Telegram token 等敏感凭据。
  */
-async function writeDesktopLocalAppConfig(input: { configPath: string; userDataPath: string; projectRoot: string; dbPath: string }): Promise<void> {
+async function writeDesktopLocalAppConfig(input: { configPath: string; userDataPath: string; projectRoot: string; dbPath: string; /** 日志目录来自本次运行的数据布局，不按数据库文件名猜测。 */ localLogDirectory: string }): Promise<void> {
   const configFile: DesktopLocalAppConfigFile = {
     appName: 'Zeus',
     projectRoot: input.projectRoot,
     dbPath: input.dbPath,
-    localLogDirectory: `${input.dbPath}.logs`,
+    localLogDirectory: input.localLogDirectory,
     localServerHost: '127.0.0.1',
     updatedAt: new Date().toISOString(),
   };
@@ -771,6 +771,7 @@ export async function startOwnedDesktopLocalServer(options: StartDesktopLocalSer
       userDataPath: options.userDataPath,
       projectRoot: options.projectRoot,
       dbPath,
+      localLogDirectory: dataLayout.localLogs,
     });
   }
   let currentServer: RunningZeusLocalServer;

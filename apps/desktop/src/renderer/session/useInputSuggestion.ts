@@ -20,7 +20,7 @@ export function useInputSuggestion(options: {
   /** 自动开关和专用模型、深度不继承主会话设置。 */
   settings?: InputSuggestionSettings;
   /** 同一次请求始终使用捕获的操作身份。 */
-  generate?: (input: InputSuggestionRequest, signal: AbortSignal) => Promise<InputSuggestionResult>;
+  generate?: (input: InputSuggestionRequest, signal: AbortSignal, diagnosticId?: string) => Promise<InputSuggestionResult>;
 }) {
   /** 目录和正文变化不重复扫描轮次。 */
   const latestTurn = useMemo(

@@ -1,4 +1,4 @@
-import { commandEnvelopeSchemaGeneration, parseCommandEnvelope, userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
+import { commandEnvelopeSchemaGeneration, normalizePerformanceTraceIdentity, parseCommandEnvelope, userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import { currentConversationNavigationTraceId, markConversationNavigationSnapshotSettled } from '../performanceTraceContext.js';
 
 /**
@@ -9,10 +9,16 @@ import { currentConversationNavigationTraceId, markConversationNavigationSnapsho
  */
 export interface LocalApiTransport {
   readonly protocol: 'zeus-local-api-v1';
-  request<T>(path: string, init?: RequestInit): Promise<T>;
+  request<T>(path: string, init?: LocalApiRequestInit): Promise<T>;
   requestBlob(path: string): Promise<Blob>;
   requestStream<T>(path: string, init: RequestInit, onEvent: (event: T) => void): Promise<void>;
   connectEvents<T>(onEvent: (event: T) => void, options?: { afterEventId?: string; conversationId?: string; afterSequence?: number; syncStreamGeneration?: string }): WebSocket;
+}
+
+/** 调用方可关联一次界面操作；HTTP trace 的校验与传递仍由统一传输层负责。 */
+export interface LocalApiRequestInit extends RequestInit {
+  /** 已生成的规范 trace 身份只用于日志关联，不作为幂等键或自动重试授权。 */
+  traceId?: string;
 }
 
 export interface LocalApiConnection {
@@ -69,12 +75,15 @@ class LocalApiReadTimeoutError extends Error {
 }
 
 export function createLocalApiTransport(options: { getConnection(): LocalApiConnection; refreshConnection?: () => Promise<LocalApiConnection>; onPerformanceSpan?: (span: ZeusClientPerformanceSpan) => void }): LocalApiTransport {
-  const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
-    const traceId = createClientTraceId(path);
+  const request = async <T>(path: string, init?: LocalApiRequestInit): Promise<T> => {
+    /** 诊断属性只映射到既有 trace 头，不进入业务正文或 fetch 扩展参数。 */
+    const { traceId: suppliedTraceId, ...requestInit } = init ?? {};
+    /** 复用共享身份校验，避免任意正文经请求头进入服务端日志。 */
+    const traceId = normalizePerformanceTraceIdentity(suppliedTraceId) ?? createClientTraceId(path);
     let completedSuccessfully = false;
     try {
       try {
-        const result = await requestOnce<T>(options.getConnection(), path, init, traceId, 1, options.onPerformanceSpan);
+        const result = await requestOnce<T>(options.getConnection(), path, requestInit, traceId, 1, options.onPerformanceSpan);
         completedSuccessfully = true;
         return result;
       } catch (error) {
@@ -84,7 +93,7 @@ export function createLocalApiTransport(options: { getConnection(): LocalApiConn
         if (!replayable || !isLikelyLocalServerConnectionError(error) || !options.refreshConnection) throw error;
         // 一个逻辑请求最多刷新一次 Main 提供的端口/token，禁止在 context client 内自建重试循环。
         const refreshed = await options.refreshConnection();
-        const result = await requestOnce<T>(refreshed, path, init, traceId, 2, options.onPerformanceSpan);
+        const result = await requestOnce<T>(refreshed, path, requestInit, traceId, 2, options.onPerformanceSpan);
         completedSuccessfully = true;
         return result;
       }

@@ -257,10 +257,76 @@ function streamApiFor(piModel: Model<Api>): ProviderStreams {
   return openAICompletionsApi();
 }
 
-/** 复用已配置连接生成受限文本，不提供工具、不继承会话内容。 */
+/** 独立文本生成的诊断合同只描述传输状态与长度，不暴露正文。 */
+export interface ModelTextGenerationDiagnostic {
+  /** 仅记录请求发出、响应和流式统计，不包含原始事件正文。 */
+  event: 'provider_request_sent' | 'provider_response' | 'provider_transport_failed' | 'provider_first_text' | 'provider_first_reasoning' | 'provider_stream_finished';
+  /** fetch 的实际调用次数，SDK 重试也会单独计数。 */
+  transportAttempts?: number;
+  /** 服务端响应状态；收到响应不代表生成已完成。 */
+  httpStatus?: number;
+  /** 只接受机器错误码，原始网络错误文本可能包含地址或凭据。 */
+  errorCode?: string;
+  /** 已收到的正文增量字符数。 */
+  textCharacters?: number;
+  /** 已收到的推理增量字符数，不保存推理内容。 */
+  reasoningCharacters?: number;
+  /** 固定结束状态，不传递供应商的错误原文。 */
+  outcome?: string;
+}
+
+/** 复用已配置连接生成受限文本，观测回调不能改变原始生成行为。 */
 export async function generateConfiguredModelText(
-  input: ProbeConfiguredModelInput & { system: string; text: string; signal?: AbortSignal; effort?: string; maxTokens?: number; /** 调用方可关闭供应商 SDK 重试，其他独立生成沿用既有默认。 */ maxRetries?: number },
+  input: ProbeConfiguredModelInput & {
+    /** 当前场景的固定系统指令，不写入诊断日志。 */
+    system: string;
+    /** 已授权发送的正文材料，不写入诊断日志。 */
+    text: string;
+    /** 调用方的总取消边界。 */
+    signal?: AbortSignal;
+    /** 所选模型支持的推理档位。 */
+    effort?: string;
+    /** 推理与正文共享的输出额度。 */
+    maxTokens?: number;
+    /** 调用方可关闭供应商 SDK 重试，其他独立生成沿用既有默认。 */
+    maxRetries?: number;
+    /** 可选诊断只接收无正文的状态与统计。 */
+    onDiagnostic?: (event: ModelTextGenerationDiagnostic) => void;
+  },
 ): Promise<string> {
+  /** 诊断属于旁路，日志消费者异常不能使真实生成失败。 */
+  const observe = (event: ModelTextGenerationDiagnostic): void => {
+    try {
+      input.onDiagnostic?.(event);
+    } catch {
+      /* 日志失败不改变模型调用结果。 */
+    }
+  };
+  /** 实际传输次数用于识别 SDK 内部是否重新发送。 */
+  let transportAttempts = 0;
+  /** 保留原始网络实现、响应对象和响应流，只旁路观察次数与状态码。 */
+  const observedFetch: typeof globalThis.fetch = async (request, init) => {
+    observe({ event: 'provider_request_sent', transportAttempts: ++transportAttempts });
+    try {
+      /** 不读取 URL、请求头或响应正文，非成功状态也如实记录。 */
+      const response = await (input.fetch ?? globalThis.fetch)(request, init);
+      observe({ event: 'provider_response', httpStatus: response.status });
+      return response;
+    } catch (error) {
+      /** fetch 和 Node 网络层的错误码可能位于不同深度。 */
+      const failure = error as { code?: unknown; cause?: { code?: unknown } } | null | undefined;
+      /** 无明确机器错误码时不猜测 DNS、TLS 或供应商原因。 */
+      const code = failure?.code ?? failure?.cause?.code;
+      observe({ event: 'provider_transport_failed', errorCode: typeof code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/u.test(code) ? code : 'unclassified' });
+      throw error;
+    }
+  };
+  /** 正文和推理只累计长度，结束或中断时仍保留观测结果。 */
+  let textCharacters = 0;
+  /** 推理长度用于区分模型仍在推理和完全没有语义输出。 */
+  let reasoningCharacters = 0;
+  /** 未收到完成事件前不能记录成功。 */
+  let outcome = 'incomplete';
   /** 沿用真实运行的协议与鉴权适配。 */
   const model = toPiModel(input.model, `zeus-text-${input.connection.id}`, input.connection.baseUrl);
   if (input.effort && !input.model.capability.reasoning.options.some((option) => option.id === input.effort)) throw new Error('所选模型不支持此推理深度。');
@@ -275,22 +341,38 @@ export async function generateConfiguredModelText(
     /** 输入建议固定为零，避免 SDK 在后台重新发送付费请求。 */
     maxRetries: input.maxRetries,
     signal: input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(input.timeoutMs ?? 80_000)]) : AbortSignal.timeout(input.timeoutMs ?? 80_000),
-    ...(input.fetch ? { fetch: input.fetch } : {}),
+    ...(input.onDiagnostic ? { fetch: observedFetch } : input.fetch ? { fetch: input.fetch } : {}),
     ...(reasoning ? { reasoning } : {}),
   };
   /** 用户的密钥只发往原模型连接，不发往输入文本中的网址。 */
   const authenticated = (applyModelAuthentication(options, input.model.authenticationScheme) ?? options) as SimpleStreamOptions;
-  for await (const event of streamApiFor(model).streamSimple(model, normalizeContext({ systemPrompt: input.system, messages: [{ role: 'user', content: input.text, timestamp: Date.now() }] }), authenticated)) {
-    // SDK 错误事件携带实际原因；只保留脱敏说明，不能把整份消息或凭据传给调用方。
-    if (event.type === 'error') throw new Error('模型文本生成请求失败。', { cause: userFacingErrorCause(event.error.errorMessage ?? '模型未提供失败原因。') });
-    if (event.type === 'done') {
-      // 输出上限与连接失败分别说明；不把被截断的内容当成完整建议。
-      if (event.message.stopReason !== 'stop')
-        throw Object.assign(new Error('模型文本生成结果不完整。'), { code: event.message.stopReason === 'length' ? 'ZEUS_MODEL_TEXT_OUTPUT_LIMIT' : 'ZEUS_MODEL_TEXT_INCOMPLETE', details: `stopReason=${event.message.stopReason}` });
-      return event.message.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n');
+  try {
+    for await (const event of streamApiFor(model).streamSimple(model, normalizeContext({ systemPrompt: input.system, messages: [{ role: 'user', content: input.text, timestamp: Date.now() }] }), authenticated)) {
+      if (event.type === 'text_delta') {
+        if (textCharacters === 0 && event.delta.length > 0) observe({ event: 'provider_first_text' });
+        textCharacters += event.delta.length;
+      }
+      if (event.type === 'thinking_delta') {
+        if (reasoningCharacters === 0 && event.delta.length > 0) observe({ event: 'provider_first_reasoning' });
+        reasoningCharacters += event.delta.length;
+      }
+      // SDK 错误事件携带实际原因；只保留脱敏说明，不能把整份消息或凭据传给调用方。
+      if (event.type === 'error') throw new Error('模型文本生成请求失败。', { cause: userFacingErrorCause(event.error.errorMessage ?? '模型未提供失败原因。') });
+      if (event.type === 'done') {
+        outcome = event.message.stopReason;
+        // 输出上限与连接失败分别说明；不把被截断的内容当成完整建议。
+        if (event.message.stopReason !== 'stop')
+          throw Object.assign(new Error('模型文本生成结果不完整。'), { code: event.message.stopReason === 'length' ? 'ZEUS_MODEL_TEXT_OUTPUT_LIMIT' : 'ZEUS_MODEL_TEXT_INCOMPLETE', details: `stopReason=${event.message.stopReason}` });
+        return event.message.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n');
+      }
     }
+    throw new Error('模型文本生成未返回结果。');
+  } catch (error) {
+    if (outcome === 'incomplete') outcome = authenticated.signal?.aborted ? 'cancelled' : 'failed';
+    throw error;
+  } finally {
+    observe({ event: 'provider_stream_finished', transportAttempts, textCharacters, reasoningCharacters, outcome });
   }
-  throw new Error('模型文本生成未返回结果。');
 }
 
 /** 执行一次真实请求并把观测结果收敛成纯数据；失败只返回原因，不抛出。 */
