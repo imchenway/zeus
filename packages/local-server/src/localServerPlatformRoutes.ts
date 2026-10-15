@@ -177,6 +177,7 @@ import { ProjectQueryApplication } from './projectQueryApplication.js';
 import { registerProjectQueryRoutes } from './projectQueryRoutes.js';
 import { createCommitCodexPool } from './gitCommitCodexGeneration.js';
 import { registerInputSuggestionRoutes } from './inputSuggestionRoutes.js';
+import { ContextSourceCatalog } from './contextSourceCatalog.js';
 import { createInputSuggestionDiagnosticLog } from './inputSuggestionDiagnostics.js';
 import { readGitCommitContext, readCommitFingerprint, resolveCommitRepository, resolveTaskCommitRepository } from './gitCommitContext.js';
 import { PassThrough } from 'node:stream';
@@ -1461,12 +1462,21 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     flushDiagnostics: inputSuggestionDiagnostics?.flush,
     loadModels: loadTextGenerationModels,
     loadModel: async (selectedModelRef) => (await loadTextGenerationModels(selectedModelRef)).items.find((model) => model.id === selectedModelRef),
-    readSources: (projectId, conversationId) => {
+    readSources: async (projectId, conversationId) => {
+      /** 项目规则使用登记的项目根，与正常会话一致；新草稿不猜测项目归属。 */
+      const project = projectId ? projects.getById(projectId) : undefined;
+      // 请求指定的项目失效时直接停止，不能降级成只带全局规则的请求。
+      if (projectId && !project) throw Object.assign(new Error('输入建议所属项目已不可用。'), { code: 'ZEUS_PROJECT_NOT_FOUND' });
+      /** 全局与项目规则复用正常会话的受控读取、合并顺序和子目录索引。 */
+      const catalog = new ContextSourceCatalog([{ id: 'zeus:agent-rules', path: dataLayout.agentRules }, ...(project ? [{ id: `project:${project.id}`, path: project.localPath }] : [])]);
+      /** 无项目草稿仍读取全局规则，不扫描无关项目。 */
+      const agentRules = await catalog.agentRulesFragment({ globalRootId: 'zeus:agent-rules', ...(project ? { projectRootId: `project:${project.id}`, projectId: project.id } : {}), idPrefix: 'agent-rules' });
       /** 任务归属来自当前会话，禁止按任务名称寻找其他项目材料。 */
       const conversation = conversationId ? conversations.getRecordById(conversationId) : undefined;
       /** 新草稿没有任务身份，不猜测用户当前选中了哪项任务。 */
       const task = conversation?.taskId ? tasks.getById(conversation.taskId) : undefined;
       return {
+        agentRules: agentRules.fragment ? redactSensitiveText(agentRules.fragment.content).text : null,
         task:
           task?.projectId === projectId && task
             ? {
