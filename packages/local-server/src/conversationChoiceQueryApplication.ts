@@ -20,6 +20,8 @@ type ChoiceSubmission = ReturnType<ConversationSubmissionRepository['listRecover
 type ChoiceTurn = ReturnType<ConversationTurnRepository['listInProgress']>[number];
 
 export interface NativeConversationChoiceProjectionContext {
+  /** 异步问题只影响侧栏注意力，不改变真实运行状态。 */
+  pendingAsyncQuestionConversationIds: ReadonlySet<string>;
   pendingRequestKindByConversationId: ReadonlyMap<string, 'approval' | 'user_input'>;
   workspaceById: ReadonlyMap<string, ZeusTaskWorkspaceRecord>;
   recoverableSubmissionsByConversationId: ReadonlyMap<string, readonly ChoiceSubmission[]>;
@@ -27,8 +29,8 @@ export interface NativeConversationChoiceProjectionContext {
 }
 
 interface ConversationChoiceQueryPorts {
-  /** 正文查询复用持久历史 Repository，目录层只确定可搜索会话。 */
-  snapshots: Pick<ConversationSnapshotV2Repository, 'searchContent'>;
+  /** 正文和异步问题状态复用持久历史 Repository，目录层只读取投影。 */
+  snapshots: Pick<ConversationSnapshotV2Repository, 'searchContent' | 'pendingAsyncQuestionConversationIds'>;
   projects: Pick<ProjectRepository, 'list' | 'listArchived' | 'getById'>;
   tasks: Pick<TaskRepository, 'getById' | 'listByProject' | 'summariesByIds'>;
   conversations: Pick<ConversationRepository, 'getById' | 'hasMessages' | 'listRecordsByProject' | 'listRecordsByTask' | 'listUnarchivedRecords' | 'meaningfulActivityAt'>;
@@ -75,6 +77,7 @@ export class ConversationChoiceQueryApplication {
       inProgressTurnsByConversationId.set(turn.conversationId, entries);
     }
     return {
+      pendingAsyncQuestionConversationIds: this.ports.snapshots.pendingAsyncQuestionConversationIds([projectId]),
       pendingRequestKindByConversationId,
       workspaceById: new Map(this.ports.workspaces.listByProject(projectId).map((workspace) => [workspace.id, workspace])),
       recoverableSubmissionsByConversationId,
@@ -149,6 +152,8 @@ export class ConversationChoiceQueryApplication {
   }
 
   attentionByProject(projectIds: readonly string[]): Record<string, ProjectConversationAttentionState> {
+    /** 未回答的异步问题跨页面保留提醒，不依赖消息是否已读。 */
+    const pendingAsyncQuestionConversationIds = this.ports.snapshots.pendingAsyncQuestionConversationIds(projectIds);
     const targetProjectIds = new Set(projectIds);
     const states = new Map<string, ProjectConversationAttentionState>(projectIds.map((projectId) => [projectId, 'idle']));
     const pendingRequestConversationIds = new Set(this.ports.requests.listPending().map((request) => request.conversationId));
@@ -160,7 +165,7 @@ export class ConversationChoiceQueryApplication {
     );
     for (const conversation of this.ports.conversations.listUnarchivedRecords()) {
       if (!targetProjectIds.has(conversation.projectId) || this.isEphemeral(conversation)) continue;
-      const replyRequired = pendingRequestConversationIds.has(conversation.id) || conversation.providerState === 'waiting';
+      const replyRequired = pendingRequestConversationIds.has(conversation.id) || pendingAsyncQuestionConversationIds.has(conversation.id) || conversation.providerState === 'waiting' || conversation.stage === 'waiting_user';
       const legacyRuntimeRunning = conversation.transportKind === 'legacy_cli' && (conversation.status === 'starting' || conversation.status === 'running');
       const running = runningSubmissionConversationIds.has(conversation.id) || conversation.providerState === 'binding' || conversation.providerState === 'active' || legacyRuntimeRunning;
       if (replyRequired) {
@@ -283,6 +288,7 @@ export class ConversationChoiceQueryApplication {
       permissionMode: conversation.permissionMode,
       collaborationMode: conversation.collaborationMode,
       hasUnreadAttention: conversation.attentionUnread,
+      hasPendingAsyncQuestion: context.pendingAsyncQuestionConversationIds.has(conversation.id),
       attentionKind: conversation.attentionKind,
       attentionRevision: conversation.attentionRevision,
       attentionTurnId: conversation.attentionTurnId,

@@ -2,7 +2,7 @@ import { piSdkBinaryVersion } from '@zeus/ai-runtime';
 /** 桌面动态价格读取复用受限公网访问边界。 */
 export { readPricingDocument } from './modelPricingDocument.js';
 import { resolveContextCapacityPolicy } from './contextCapacitySupport.js';
-import { assertContextCapacitySupported } from '@zeus/shared';
+import { assertContextCapacitySupported, asyncMessageQuestions } from '@zeus/shared';
 import type { ConversationWorktreeOptions } from '@zeus/shared';
 
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
@@ -2857,6 +2857,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     if (!expertRoute) return;
     const mappedType = expertRoute.type;
     payload = expertRoute.payload;
+    /** 异步问题完成后刷新项目待回复提示，普通条目和文本增量不增加聚合查询。 */
+    const asyncQuestionCompleted = mappedType === 'conversation.item.completed' && payload.itemPayload !== null && typeof payload.itemPayload === 'object' && asyncMessageQuestions(payload.itemPayload as Record<string, unknown>).length > 0;
     const conversationIds =
       typeof payload.conversationId === 'string'
         ? [payload.conversationId]
@@ -2935,7 +2937,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
               queue: toNativeQueueApiSnapshot(conversation),
             }
           : {}),
-        ...(nativeConversationAttentionEventTypes.has(mappedType)
+        ...(nativeConversationAttentionEventTypes.has(mappedType) || asyncQuestionCompleted
           ? {
               conversationAttentionState: conversationChoiceQueries.attentionByProject([conversation.projectId])[conversation.projectId] ?? 'idle',
               conversationUnreadCount: conversationChoiceQueries.unreadCountByProject([conversation.projectId])[conversation.projectId] ?? 0,

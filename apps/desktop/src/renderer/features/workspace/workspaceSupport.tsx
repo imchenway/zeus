@@ -6,6 +6,7 @@ import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { type ClipboardEvent as ReactClipboardEvent, type DragEvent as ReactDragEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import {
+  asyncMessageQuestions,
   defaultTaskBranchPrefix,
   defaultTaskManagementStatusConfig,
   extractThirdPartyTaskLink,
@@ -594,8 +595,12 @@ export function isProjectConversationAttentionState(value: unknown): value is Pr
   return value === 'idle' || value === 'running' || value === 'unread' || value === 'completed' || value === 'failed' || value === 'interrupted' || value === 'reply_required';
 }
 
+/** 问题完成时刷新未打开的会话，普通工具输出与流式增量不触发列表查询。 */
 export function shouldRefreshNativeConversationListForRealtimeEvent(event: ZeusRealtimeEvent): boolean {
-  return nativeConversationListLifecycleEventTypes.has(event.type) && typeof event.payload.projectId === 'string' && typeof event.payload.conversationId === 'string';
+  /** 只接受协议中有效的异步问题，不能把普通消息完成当作待回复。 */
+  const asyncQuestionCompleted =
+    event.type === 'conversation.item.completed' && event.payload.itemPayload !== null && typeof event.payload.itemPayload === 'object' && asyncMessageQuestions(event.payload.itemPayload as Record<string, unknown>).length > 0;
+  return (nativeConversationListLifecycleEventTypes.has(event.type) || asyncQuestionCompleted) && typeof event.payload.projectId === 'string' && typeof event.payload.conversationId === 'string';
 }
 
 /** 工作模式属于当前任务或会话，不作为项目偏好。 */

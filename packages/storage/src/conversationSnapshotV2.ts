@@ -757,6 +757,29 @@ export class ConversationSnapshotV2Repository {
     this.systemMessages = new ConversationSystemMessageRepository(db);
   }
 
+  /** 只读取异步问题元数据与答复身份，侧栏不依赖历史分页或加载消息正文。 */
+  pendingAsyncQuestionConversationIds(projectIds: readonly string[]): Set<string> {
+    if (projectIds.length === 0) return new Set();
+    /** 有效答复包括已接收和结果未知的提交；明确失败、取消或删除后允许再次回答。 */
+    const questions = this.db.select<{ conversation_id: string; metadata_json: string }>(
+      `SELECT message.conversation_id, message.metadata_json
+         FROM conversation_messages AS message
+         JOIN conversations AS conversation ON conversation.id = message.conversation_id
+        WHERE conversation.project_id IN (SELECT value FROM json_each(?)) AND conversation.archived = 0
+          AND message.role = 'assistant' AND message.provider_turn_id IS NOT NULL AND message.provider_item_id IS NOT NULL
+          AND json_valid(message.metadata_json) AND json_extract(message.metadata_json, '$.delivery') = 'async'
+          AND NOT EXISTS (
+            SELECT 1 FROM conversation_submissions AS submission
+             WHERE submission.conversation_id = message.conversation_id
+               AND submission.status NOT IN ('failed', 'cancelled', 'deleted') AND json_valid(submission.input_json)
+               AND json_extract(submission.input_json, '$.questionAnswer.providerItemId') = message.provider_item_id
+               AND json_extract(submission.input_json, '$.questionAnswer.providerTurnId') = message.provider_turn_id
+          )`,
+      [JSON.stringify(projectIds)],
+    );
+    return new Set(questions.filter((question) => asyncMessageQuestions(parseJsonRecordOrNull(question.metadata_json) ?? {}).length > 0).map((question) => question.conversation_id));
+  }
+
   /** 只返回可见会话的正文命中身份；大历史保留元数据检索，不拖慢运行宿主。 */
   searchContent(conversationIds: readonly string[], query: string): { conversationIds: string[]; skipped: boolean } {
     /** 搜索范围由上游目录确定，用 JSON 参数避免大量会话超过 SQL 参数上限。 */
