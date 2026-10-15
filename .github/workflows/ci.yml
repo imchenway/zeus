@@ -66,3 +66,38 @@ jobs:
           ZEUS_VERIFY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           ZEUS_VERIFY_HEAD: ${{ github.sha }}
         run: pnpm verify:publish
+
+  # Windows 在两种原生架构 runner 上编译并核对原生资源；安装器由签名发布作业构建。
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            arch: x64
+          - runner: windows-11-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.31.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          architecture: ${{ matrix.arch }}
+          cache: pnpm
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.arch == 'arm64' && 'aarch64-pc-windows-msvc' || 'x86_64-pc-windows-msvc' }}
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+      - run: pnpm install --frozen-lockfile
+      # PR CI 没有可信签名凭据，只编译并检查原生架构，不提供不可启动的安装器。
+      - name: 编译 Windows 与核对原生产物
+        run: pnpm build:windows

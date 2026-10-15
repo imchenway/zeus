@@ -1,6 +1,6 @@
+import { assertPrivatePathSync, openRegularFileNoFollow, openRegularFileNoFollowSync, readPrivateFileSync } from '@zeus/storage/platform-security';
 import { createHash } from 'node:crypto';
 import { constants as fsConstants, closeSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
-import { open } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { ReadOnlyValidationDescriptor } from '@zeus/shared';
@@ -262,6 +262,7 @@ function assertDescriptorDatabaseIdentity(identity: { dev: bigint; ino: bigint; 
 }
 
 function readBoundedFileNoFollow(path: string): string {
+  if (process.platform === 'win32') return readPrivateFileSync(path, maximumManifestBytes).toString('utf8');
   const descriptor = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
   try {
     const stats = fstatSync(descriptor);
@@ -273,7 +274,7 @@ function readBoundedFileNoFollow(path: string): string {
 }
 
 async function digestStableFileNoFollow(path: string, label: string): Promise<{ sha256: string; bytes: number }> {
-  const handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  const handle = await openRegularFileNoFollow(path, fsConstants.O_RDONLY);
   const hash = createHash('sha256');
   let bytes = 0;
   try {
@@ -324,7 +325,7 @@ function assertStableFileIdentity(
 }
 
 function assertRollbackJournalHeader(path: string): void {
-  const descriptor = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  const descriptor = openRegularFileNoFollowSync(path, fsConstants.O_RDONLY);
   try {
     const header = Buffer.alloc(100);
     if (readSync(descriptor, header, 0, header.length, 0) !== header.length || header.subarray(0, 16).toString('binary') !== 'SQLite format 3\0' || header[18] !== 1 || header[19] !== 1) {
@@ -339,7 +340,8 @@ function requireCanonicalRegularFile(value: unknown, label: string, exactMode: n
   const path = requireAbsolutePath(value, label);
   const stats = lstatSync(path, { bigint: true });
   if (!stats.isFile() || stats.isSymbolicLink()) throw validationError('ZEUS_READ_ONLY_VALIDATION_UNSAFE_FILE', `${label} 必须是普通文件且不能是符号链接。`);
-  if (Number(stats.mode & 0o777n) !== exactMode) throw validationError('ZEUS_READ_ONLY_VALIDATION_UNSAFE_FILE', `${label} 权限必须为 ${exactMode.toString(8).padStart(4, '0')}。`);
+  if (process.platform === 'win32') assertPrivatePathSync(path, 'file');
+  if (process.platform !== 'win32' && Number(stats.mode & 0o777n) !== exactMode) throw validationError('ZEUS_READ_ONLY_VALIDATION_UNSAFE_FILE', `${label} 权限必须为 ${exactMode.toString(8).padStart(4, '0')}。`);
   if (typeof process.getuid === 'function' && stats.uid !== BigInt(process.getuid())) throw validationError('ZEUS_READ_ONLY_VALIDATION_UNSAFE_FILE', `${label} 不属于当前用户。`);
   const canonical = realpathSync(path);
   if (canonical !== path) throw validationError('ZEUS_READ_ONLY_VALIDATION_UNSAFE_FILE', `${label} 路径不是规范真实路径。`);
@@ -350,7 +352,8 @@ function requireCanonicalDirectory(value: unknown, label: string): string {
   const path = requireAbsolutePath(value, label);
   const stats = lstatSync(path, { bigint: true });
   if (!stats.isDirectory() || stats.isSymbolicLink()) throw validationError('ZEUS_READ_ONLY_VALIDATION_UNSAFE_FILE', `${label} 必须是普通目录且不能是符号链接。`);
-  if ((stats.mode & 0o077n) !== 0n) throw validationError('ZEUS_READ_ONLY_VALIDATION_UNSAFE_FILE', `${label} 权限范围过宽。`);
+  if (process.platform === 'win32') assertPrivatePathSync(path, 'directory');
+  if (process.platform !== 'win32' && (stats.mode & 0o077n) !== 0n) throw validationError('ZEUS_READ_ONLY_VALIDATION_UNSAFE_FILE', `${label} 权限范围过宽。`);
   if (typeof process.getuid === 'function' && stats.uid !== BigInt(process.getuid())) throw validationError('ZEUS_READ_ONLY_VALIDATION_UNSAFE_FILE', `${label} 不属于当前用户。`);
   const canonical = realpathSync(path);
   if (canonical !== path) throw validationError('ZEUS_READ_ONLY_VALIDATION_UNSAFE_FILE', `${label} 路径不是规范真实路径。`);

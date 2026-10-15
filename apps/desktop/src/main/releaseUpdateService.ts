@@ -5,8 +5,10 @@ import { access, chmod, lstat, mkdir, open, readdir, readFile, rename, rm } from
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { ensurePrivatePathSync, publishFileSync } from '@zeus/storage/platform-security';
 import type { UserFacingErrorCause } from '@zeus/shared';
 import { createLegacyFlatZeusDataLayout, createZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
+import { installWindowsRelease, openWindowsRecoveryInstaller, verifyWindowsReleaseSignature } from './windowsReleaseInstaller.js';
 import { executionHostProtocolVersion } from './executionHostProtocol.js';
 import { releaseInstallerProtocolVersion, releaseInstallerResultPath, writeReleaseInstallerBootstrap } from './releaseInstallerProtocol.js';
 
@@ -23,7 +25,10 @@ export interface DesktopReleaseUpdateStatus {
   releasePageUrl: string;
   artifact: {
     arch: 'arm64' | 'x64';
-    kind: 'dmg';
+    /** 安装器类型严格匹配本机平台。 */
+    kind: 'dmg' | 'exe';
+    /** 原有 macOS 清单允许缺省平台。 */
+    platform?: 'darwin' | 'win32';
     fileName: string;
     sha256: string;
     sizeBytes: number | null;
@@ -69,12 +74,13 @@ export interface CreateReleaseUpdateServiceOptions {
   allowUntrustedTestUpdate: boolean;
   /** 只打开本服务校验过的安装包，由用户通过系统界面手动安装。 */
   openDownloadedArtifact: (path: string) => Promise<void>;
-  onInstallReady: (activate: () => void | Promise<void>) => Promise<boolean>;
+  /** Windows 退出失败时必须等待 cancel 的持久撤销回执，再接受后续退出。 */
+  onInstallReady: (activate: () => void | Promise<void>, cancel?: () => Promise<void>) => Promise<boolean>;
 }
 
 interface PreparedUpdate {
   update: DesktopReleaseUpdateStatus;
-  dmgPath: string;
+  artifactPath: string;
 }
 
 interface PreparedInstallerHandoff {
@@ -95,6 +101,8 @@ export interface ReleaseUpdateService {
   /** 打开前复验当前发布清单和缓存，不执行应用替换或退出。 */
   openDownloaded(): Promise<DesktopReleaseUpdateOperation>;
   install(): Promise<DesktopReleaseUpdateOperation>;
+  /** 打开已验证的上版 Windows 安装器供用户显式恢复。 */
+  openRecoveryInstaller(): Promise<void>;
 }
 
 /**
@@ -125,8 +133,11 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
   let prepared: PreparedUpdate | null = null;
   let preparedInstallerHandoff: PreparedInstallerHandoff | null = null;
   let operationChain: Promise<DesktopReleaseUpdateOperation> | null = null;
+  /** 恢复与下载、安装互斥，不能借用另一个操作的成功结果。 */
+  let recoveryRunning = false;
 
   function exclusive(operation: () => Promise<DesktopReleaseUpdateOperation>): Promise<DesktopReleaseUpdateOperation> {
+    if (recoveryRunning) return Promise.reject(new Error('恢复安装正在进行，请等待当前操作完成。'));
     if (operationChain) return operationChain;
     operationChain = operation().finally(() => {
       operationChain = null;
@@ -136,6 +147,15 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
 
   return {
     check: () => loadUpdateStatus(options),
+    openRecoveryInstaller: async () => {
+      if (operationChain || recoveryRunning) throw new Error('下载或安装操作正在进行，不能同时开始恢复。');
+      recoveryRunning = true;
+      try {
+        await openWindowsRecoveryInstaller(options);
+      } finally {
+        recoveryRunning = false;
+      }
+    },
     manualInstallReason: (update) => manualInstallReason(update, options),
     download: (onProgress) =>
       exclusive(async () => {
@@ -146,17 +166,18 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
         const dataLayout = existsSync(join(options.userDataPath, 'data')) ? createZeusDataLayout(options.userDataPath) : createLegacyFlatZeusDataLayout(options.userDataPath);
         const downloadDirectory = join(dataLayout.releaseUpdates, 'downloads', update.latestVersion);
         await mkdir(downloadDirectory, { recursive: true, mode: 0o700 });
-        await chmod(downloadDirectory, 0o700);
-        const dmgPath = join(downloadDirectory, artifact.fileName);
+        if (process.platform === 'win32') ensurePrivatePathSync(downloadDirectory, 'directory');
+        else await chmod(downloadDirectory, 0o700);
+        const artifactPath = join(downloadDirectory, artifact.fileName);
         await downloadVerifiedArtifact({
           url: artifact.downloadUrl,
-          targetPath: dmgPath,
+          targetPath: artifactPath,
           expectedSha256: artifact.sha256,
           expectedSizeBytes: artifact.sizeBytes,
           testMode: options.testMode && options.allowUntrustedTestUpdate,
           onProgress,
         });
-        prepared = { update, dmgPath };
+        prepared = { update, artifactPath };
         return {
           accepted: true,
           update,
@@ -171,8 +192,9 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
         if (!prepared || prepared.update.latestVersion !== update.latestVersion || prepared.update.artifact?.sha256 !== update.artifact!.sha256) {
           return { accepted: false, update, reason: '已下载更新与当前发布清单不一致，请重新下载。' };
         }
-        if (!(await verifyExistingArtifact(prepared.dmgPath, update.artifact!.sha256, update.artifact!.sizeBytes))) throw new Error('已预取的更新包已变化或不完整，请重新下载。');
-        await options.openDownloadedArtifact(prepared.dmgPath);
+        if (!(await verifyExistingArtifact(prepared.artifactPath, update.artifact!.sha256, update.artifact!.sizeBytes))) throw new Error('已预取的更新包已变化或不完整，请重新下载。');
+        if (process.platform === 'win32' && !(options.testMode && options.allowUntrustedTestUpdate)) await verifyWindowsReleaseSignature(prepared.artifactPath, options.currentExecutablePath);
+        await options.openDownloadedArtifact(prepared.artifactPath);
         return { accepted: true, update, reason: '已请求系统打开安装包，请结束工作并退出 Zeus 后手动替换应用。' };
       }),
     install: () =>
@@ -197,10 +219,14 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
         }
         if (await manualInstallReason(update, options)) throw new Error('当前安装条件已变化，请重新检查更新并打开安装包手动安装。');
         // 安装前重新核对缓存，避免下载后被替换的包进入挂载与复制流程。
-        if (!(await verifyExistingArtifact(prepared.dmgPath, update.artifact!.sha256, update.artifact!.sizeBytes))) throw new Error('已预取的更新包已变化或不完整，请重新下载。');
+        if (!(await verifyExistingArtifact(prepared.artifactPath, update.artifact!.sha256, update.artifact!.sizeBytes))) throw new Error('已预取的更新包已变化或不完整，请重新下载。');
+        if (process.platform === 'win32') {
+          const accepted = await installWindowsRelease(options, prepared.artifactPath, update);
+          return { accepted: true, restartAccepted: accepted, update, reason: accepted ? '安装器已就绪，Zeus 将完整退出后安装更新。' : '更新已保留，等待确认重启。' };
+        }
         const transactionId = randomUUID();
         const staged = await stageUpdateApp({
-          dmgPath: prepared.dmgPath,
+          dmgPath: prepared.artifactPath,
           transactionId,
           targetAppPath: options.currentAppPath,
           expectedVersion: update.latestVersion,
@@ -273,8 +299,12 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
 
 /** 仅将明确不具备自动安装条件的情况引导到手动下载，磁盘读取异常继续报错。 */
 async function manualInstallReason(update: DesktopReleaseUpdateStatus, options: CreateReleaseUpdateServiceOptions): Promise<ReleaseManualInstallReason | null> {
-  if (update.executionHostProtocolVersion !== executionHostProtocolVersion) return 'protocol';
+  if (process.platform !== 'win32' && update.executionHostProtocolVersion !== executionHostProtocolVersion) return 'protocol';
   if (!update.automaticInstallEnabled && !(options.testMode && options.allowUntrustedTestUpdate)) return 'release';
+  if (process.platform === 'win32') {
+    await access(dirname(options.currentExecutablePath), fsConstants.W_OK);
+    return null;
+  }
   const appPath = resolve(options.currentAppPath);
   const appStat = await lstat(appPath);
   if (!options.isPackaged || !appStat.isDirectory() || appStat.isSymbolicLink() || appPath.startsWith('/Volumes/') || appPath.includes('/AppTranslocation/')) return 'location';
@@ -307,17 +337,18 @@ function assertDownloadAllowed(update: DesktopReleaseUpdateStatus, options: Crea
   if (update.currentVersion !== options.currentAppVersion) throw new Error('更新状态中的当前版本与正在运行的 App 不一致。');
   if (update.status !== 'available' || !update.artifact) throw new Error('当前没有可安装的更新。');
   if (!/^\d+\.\d+\.\d+(?:-[\w.-]+)?(?:\+[\w.-]+)?$/u.test(update.latestVersion) || update.latestVersion.length > 128) throw new Error('更新版本号无效。');
-  if (update.artifact.arch !== process.arch) throw new Error('更新安装包与当前 Mac 架构不一致。');
-  if (basename(update.artifact.fileName) !== update.artifact.fileName || !update.artifact.fileName.endsWith('.dmg')) throw new Error('更新包文件名必须是无目录的 DMG 文件名。');
+  if (update.artifact.arch !== process.arch) throw new Error('更新安装包与当前应用架构不一致。');
+  if ((update.artifact.platform ?? 'darwin') !== process.platform || update.artifact.kind !== (process.platform === 'win32' ? 'exe' : 'dmg')) throw new Error('更新安装包平台与当前应用不一致。');
+  if (basename(update.artifact.fileName) !== update.artifact.fileName || !update.artifact.fileName.endsWith(process.platform === 'win32' ? '.exe' : '.dmg')) throw new Error('更新包文件名必须是无目录且匹配平台的安装包文件名。');
   trustedReleaseDownloadUrl(update.artifact.downloadUrl, options.testMode && options.allowUntrustedTestUpdate);
 }
 
 /** 自动替换应用始终保留正式签名、公证和执行宿主协议门禁。 */
 function assertInstallAllowed(update: DesktopReleaseUpdateStatus, options: CreateReleaseUpdateServiceOptions): void {
   assertDownloadAllowed(update, options);
-  if (update.executionHostProtocolVersion !== executionHostProtocolVersion) throw new Error('更新包与当前执行宿主协议不兼容，必须等待任务排空后手动升级。');
+  if (process.platform !== 'win32' && update.executionHostProtocolVersion !== executionHostProtocolVersion) throw new Error('更新包与当前执行宿主协议不兼容，必须等待任务排空后手动升级。');
   if (!update.automaticInstallEnabled && !(options.testMode && options.allowUntrustedTestUpdate)) {
-    throw new Error('更新包未同时通过签名、公证和协议兼容门禁。');
+    throw new Error(process.platform === 'win32' ? '更新包未通过 Windows 正式签名门禁。' : '更新包未同时通过签名、公证和协议兼容门禁。');
   }
 }
 
@@ -375,9 +406,14 @@ async function downloadVerifiedArtifact(input: { url: string; targetPath: string
     await rm(temporaryPath, { force: true });
     throw new Error('更新包摘要或大小与发布清单不一致。');
   }
-  await rm(input.targetPath, { force: true }).catch(() => undefined);
-  await rename(temporaryPath, input.targetPath);
-  await chmod(input.targetPath, 0o600);
+  if (process.platform === 'win32') {
+    ensurePrivatePathSync(temporaryPath, 'file');
+    publishFileSync(temporaryPath, input.targetPath, { replace: true });
+  } else {
+    await rm(input.targetPath, { force: true }).catch(() => undefined);
+    await rename(temporaryPath, input.targetPath);
+    await chmod(input.targetPath, 0o600);
+  }
 }
 
 /** 逐块验证缓存，避免整个安装包常驻内存。 */
@@ -567,7 +603,7 @@ function isReleaseUpdateStatus(value: unknown): value is DesktopReleaseUpdateSta
     (value.artifact === null ||
       (isRecord(value.artifact) &&
         (value.artifact.arch === 'arm64' || value.artifact.arch === 'x64') &&
-        value.artifact.kind === 'dmg' &&
+        (value.artifact.kind === 'dmg' || value.artifact.kind === 'exe') &&
         typeof value.artifact.fileName === 'string' &&
         typeof value.artifact.sha256 === 'string' &&
         /^[a-f0-9]{64}$/u.test(value.artifact.sha256) &&

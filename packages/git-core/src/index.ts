@@ -6,8 +6,68 @@ import { copyFile, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, r
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { defaultTaskBranchPrefix, normalizeTaskBranchPrefix } from '@zeus/shared';
+import { businessProcessEnvironment, spawnManagedProcess } from '@zeus/ai-runtime';
 
-const execFileAsync = promisify(execFile);
+/** 非 Windows 保留原有 execFile 的编码、输出和错误约定。 */
+const execFilePosix = promisify(execFile);
+
+/** Windows 所有 Git 和格式化程序均归属原生 Job，超时或取消收口凭据助手等后代。 */
+async function execFileAsync(command: string, args: string[], options: { cwd?: string; env?: NodeJS.ProcessEnv; timeout?: number; maxBuffer?: number } = {}): Promise<{ stdout: string; stderr: string }> {
+  if (process.platform !== 'win32') return execFilePosix(command, args, { ...options, env: businessProcessEnvironment(options.env) });
+  /** 当前工作台操作的取消和凭据仍与其他并发操作隔离。 */
+  const execution = projectGitExecution.getStore();
+  execution?.signal?.throwIfAborted();
+  return new Promise((resolveResult, reject) => {
+    /** 同一启动入口解析 git.exe 与 PATH，并负责 Job 生命周期。 */
+    const child = spawnManagedProcess(command, args, { cwd: options.cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...execution?.env, ...options.env } });
+    /** 与 execFile 相同，输出按 UTF-8 解码并保留 stdout/stderr 错误字段。 */
+    let stdout = '';
+    /** 错误输出保持独立，交给既有调用方分类。 */
+    let stderr = '';
+    /** 记录先发生的超时或取消，后续退出不会覆盖原因。 */
+    let stopped: Error | undefined;
+    /** 输出限制沿用 execFile 的每条流独立计算。 */
+    const bytes = { stdout: 0, stderr: 0 };
+    /** 只停止当前 Job，不通过进程名称或可复用 PID 搜索进程。 */
+    const stop = (reason: string) => {
+      stopped ??= new Error(reason);
+      child.kill('SIGKILL');
+    };
+    /** 当前工作台取消只影响本次子程序。 */
+    const cancel = () => stop('Git 操作已中止。');
+    /** 未指定超时时沿用工作台命令的两分钟上限。 */
+    const timer = setTimeout(() => stop('ETIMEDOUT: Git 操作超时。'), options.timeout || 120_000);
+    /** 所有退出路径都移除定时器和取消监听。 */
+    const cleanup = () => {
+      clearTimeout(timer);
+      execution?.signal?.removeEventListener('abort', cancel);
+    };
+    execution?.signal?.addEventListener('abort', cancel, { once: true });
+    if (execution?.signal?.aborted) cancel();
+    for (const stream of ['stdout', 'stderr'] as const) {
+      child[stream].setEncoding('utf8');
+      child[stream].on('data', (text: string) => {
+        bytes[stream] += Buffer.byteLength(text);
+        if (bytes[stream] > (options.maxBuffer ?? 1024 * 1024)) {
+          stop(`Git ${stream} 超过输出上限。`);
+          return;
+        }
+        if (stream === 'stdout') stdout += text;
+        else stderr += text;
+      });
+    }
+    child.once('error', (error) => {
+      cleanup();
+      reject(error);
+    });
+    child.once('close', (code) => {
+      cleanup();
+      if (stopped || code !== 0) reject(Object.assign(stopped ?? new Error(stderr || `Git 命令退出码：${code}`), { code, stdout, stderr, interrupted: Boolean(stopped) }));
+      else resolveResult({ stdout, stderr });
+    });
+    child.stdin.end();
+  });
+}
 /** 当前工作台操作的取消、凭据环境和命令记录回调，彼此隔离。 */
 const projectGitExecution = new AsyncLocalStorage<{ signal?: AbortSignal; env?: NodeJS.ProcessEnv; onCommand?: (command: string) => Promise<void> }>();
 
@@ -1052,7 +1112,7 @@ export async function getTaskBranchComparison(repositoryPath: string, sourceBran
 function parseGitNameStatus(stdout: string): Array<{ path: string; originalPath?: string; changeType: GitDiffFileChangeType }> {
   const records = stdout.split('\0');
   const entries: Array<{ path: string; originalPath?: string; changeType: GitDiffFileChangeType }> = [];
-  for (let index = 0; index < records.length; ) {
+  for (let index = 0; index < records.length;) {
     const status = records[index++] ?? '';
     if (!status) continue;
     const code = status[0] ?? 'M';
@@ -2318,12 +2378,18 @@ async function defaultGitCommandRunner(cwd: string, args: string[], input?: stri
   await execution?.onCommand?.(formatGitCommand(args, input !== undefined));
   execution?.signal?.throwIfAborted();
   return new Promise((resolveResult, reject) => {
-    const child = spawn('git', args, {
-      cwd,
-      detached: process.platform !== 'win32',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...execution?.env },
-    });
+    const child =
+      process.platform === 'win32'
+        ? spawnManagedProcess('git', args, {
+            cwd,
+            env: businessProcessEnvironment({ ...process.env, GIT_TERMINAL_PROMPT: '0', ...execution?.env }),
+          })
+        : spawn('git', args, {
+            cwd,
+            detached: true,
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: businessProcessEnvironment({ ...process.env, GIT_TERMINAL_PROMPT: '0', ...execution?.env }),
+          });
     let stdout = '';
     let stderr = '';
     let bytes = 0;
@@ -3860,7 +3926,7 @@ export async function getGitFilePreviewSources(
   /** 默认同名读取；新增和删除由对象或文件的存在性判定。 */
   let oldPath = path;
   let newPath = path;
-  for (let index = 0; index < entries.length - 1; ) {
+  for (let index = 0; index < entries.length - 1;) {
     /** 重命名和复制记录包含两个路径。 */
     const status = entries[index++];
     const left = entries[index++];

@@ -30,8 +30,10 @@ export interface ReleaseStatusSnapshot {
 }
 
 export interface ReleaseUpdateArtifactSnapshot {
+  /** 缺省表示既有 macOS 清单；Windows 产物必须明确标记平台。 */
+  platform?: 'darwin' | 'win32';
   arch: 'arm64' | 'x64';
-  kind: 'dmg' | 'zip';
+  kind: 'dmg' | 'zip' | 'exe';
   fileName: string;
   sha256: string;
   sizeBytes: number | null;

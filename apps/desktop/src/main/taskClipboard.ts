@@ -1,4 +1,4 @@
-import { basename, extname } from 'node:path';
+import { basename, extname, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
 
@@ -134,12 +134,14 @@ export async function readTaskClipboardAttachmentsFromClipboard(reader: NativeTa
   /** 标准格式已有文件引用时无需启动系统回退读取，避免每次粘贴都等待外部进程。 */
   const fileReferences = extractTaskClipboardFileReferences(clipboardTexts);
   if (fileReferences.length === 0) fileReferences.push(...extractTaskClipboardFileReferences(await readSystemClipboardFileReferences(options)));
-  if (isSingleUnsupportedImageReference(fileReferences)) {
+  // Windows 的文件剪贴板图片可能只是资源管理器图标，必须保留原文件。
+  if (process.platform !== 'win32' && isSingleUnsupportedImageReference(fileReferences)) {
     const normalizedImageAttachment = safelyReadTaskClipboardImageAttachment(reader);
     if (normalizedImageAttachment) return [normalizedImageAttachment];
   }
   const fileReferenceAttachments = await readTaskAttachmentFilePathPayloads(fileReferences);
   if (fileReferenceAttachments.length > 0) return fileReferenceAttachments;
+  if (fileReferences.length > 0) throw new Error('剪贴板引用的文件无法读取，请确认文件仍存在且具有访问权限。');
 
   const inlineImageAttachments = extractTaskClipboardInlineImageAttachments(clipboardTexts);
   if (inlineImageAttachments.length > 0) return inlineImageAttachments;
@@ -159,18 +161,14 @@ export async function readTaskClipboardFileReferencesFromClipboard(reader: Nativ
   /** Electron 能识别真实路径时直接授权；私有格式才需要系统读取。 */
   const fileReferences = extractTaskClipboardFileReferences(clipboardTexts);
   if (fileReferences.length === 0) fileReferences.push(...extractTaskClipboardFileReferences(await readSystemClipboardFileReferences(options)));
-  if (isSingleUnsupportedImageReference(fileReferences) && hasReadableClipboardImage(reader)) return [];
+  if (process.platform !== 'win32' && isSingleUnsupportedImageReference(fileReferences) && hasReadableClipboardImage(reader)) return [];
   return fileReferences;
 }
 
 async function readSystemClipboardFileReferences(options: TaskClipboardReadOptions): Promise<string[]> {
   if (!options.readSystemFileReferences) return [];
-  try {
-    return await options.readSystemFileReferences();
-  } catch {
-    // 系统剪贴板私有格式不可读时继续走 Electron 标准格式和 bitmap 回退。
-    return [];
-  }
+  // 成功读取且没有文件格式才可走图片回退；读取失败或超限不能伪装为无文件。
+  return options.readSystemFileReferences();
 }
 
 function isSingleUnsupportedImageReference(fileReferences: string[]): boolean {
@@ -332,7 +330,7 @@ function extractEmbeddedFileReferenceCandidates(value: string): string[] {
 }
 
 /** 剪贴板正文里的 file:// 链接；附件识别与正文剥离共用同一条规则。 */
-const clipboardFileUrlPattern = /\bfile:\/\/\/[^\s"'<>]+/giu;
+const clipboardFileUrlPattern = /\bfile:\/\/[^\s"'<>]+/giu;
 
 /** 判断一段候选文本是否整段都已经变成附件，只有整段命中才允许从正文里移除。 */
 function isConsumedFileReference(candidate: string, consumedPaths: ReadonlySet<string>): boolean {
@@ -363,6 +361,7 @@ function extractFileReferencesFromHtml(value: string): string[] {
   return references;
 }
 
+/** 只把当前系统的绝对路径或合法文件 URL 识别为文件，保留普通正文。 */
 function fileReferenceToPath(value: string): string[] {
   const trimmed = value.trim().replace(/^["']|["']$/gu, '');
   if (!trimmed) return [];
@@ -373,7 +372,9 @@ function fileReferenceToPath(value: string): string[] {
       return [];
     }
   }
-  if (trimmed.startsWith('/')) {
+  if (isAbsolute(trimmed)) {
+    // Windows 文件列表提供原始路径，百分号是文件名内容，不是 URL 转义。
+    if (process.platform === 'win32') return [trimmed];
     try {
       return [decodeURIComponent(trimmed)];
     } catch {

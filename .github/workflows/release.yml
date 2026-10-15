@@ -56,7 +56,13 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
+          if [ -z "$WINDOWS_CERTIFICATE" ] || [ -z "$WINDOWS_CERTIFICATE_PASSWORD" ]; then
+            echo '公开发布需要 Windows Authenticode 签名凭据。' >&2
+            exit 1
+          fi
           if ! printf '%s' "$RELEASE_COMMIT" | grep -Eq '^[a-f0-9]{40}$'; then
             echo "公开发布要求固定的 40 位候选提交：${RELEASE_COMMIT:-empty}" >&2
             exit 1
@@ -240,9 +246,61 @@ jobs:
             dist/homebrew/zeus.rb
           overwrite: true
 
+  # 正式 Windows 安装包必须分别原生构建并通过 Authenticode 验证。
+  package-windows:
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            arch: x64
+          - runner: windows-11-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    env:
+      WIN_CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE }}
+      WIN_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.commit_sha != '' && inputs.commit_sha || github.ref }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.31.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          architecture: ${{ matrix.arch }}
+          cache: pnpm
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.arch == 'arm64' && 'aarch64-pc-windows-msvc' || 'x86_64-pc-windows-msvc' }}
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+      - run: pnpm install --frozen-lockfile
+      - name: 构建并验签正式安装器
+        if: ${{ inputs.publish_release }}
+        run: pnpm package:windows:release
+      - name: 非发布候选仅编译与核对原生产物
+        if: ${{ !inputs.publish_release }}
+        run: pnpm build:windows
+      - uses: actions/upload-artifact@v4
+        if: ${{ inputs.publish_release }}
+        with:
+          name: zeus-windows-${{ inputs.commit_sha != '' && inputs.commit_sha || github.sha }}-${{ matrix.arch }}
+          path: |
+            dist/Zeus-*-win32-*.exe
+            dist/zeus-release-manifest-win32-*.json
+
   publish:
     if: ${{ inputs.publish_release }}
-    needs: [preflight, verify, package-mac]
+    needs: [preflight, verify, package-mac, package-windows]
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -269,6 +327,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: 下载 Windows 两个架构的已验证安装器
+        uses: actions/download-artifact@v4
+        with:
+          pattern: zeus-windows-${{ inputs.commit_sha }}-*
+          path: dist
+          merge-multiple: true
+      - name: 合并并复核 Windows 官方清单
+        run: node scripts/assemble-windows-release.mjs dist
       - name: 复核下载产物的官方来源和候选提交
         run: |
           node --input-type=module <<'NODE'
@@ -314,16 +380,21 @@ jobs:
               echo "同名 GitHub Release 仍是草稿，拒绝同步 Homebrew Tap：$RELEASE_TAG" >&2
               exit 1
             fi
-            local_digest="sha256:$(sha256sum "$local_dmg" | awk '{print $1}')"
-            remote_digest="$(gh release view "$RELEASE_TAG" --json assets --jq ".assets[] | select(.name == \"$(basename "$local_dmg")\") | .digest")"
-            if [ -z "$remote_digest" ] || [ "$local_digest" != "$remote_digest" ]; then
-              echo "既有 Release 的 DMG 摘要与本次构建不一致：tag=$RELEASE_TAG" >&2
-              exit 1
-            fi
+            # 同名发布必须包含两个平台的同一批产物，不能复用缺失 Windows 的旧发布。
+            for local_asset in "$local_dmg" dist/zeus-release-manifest.json dist/Zeus-*-win32-*.exe dist/zeus-release-manifest-win32.json; do
+              local_digest="sha256:$(sha256sum "$local_asset" | awk '{print $1}')"
+              remote_digest="$(gh release view "$RELEASE_TAG" --json assets --jq ".assets[] | select(.name == \"$(basename "$local_asset")\") | .digest")"
+              if [ -z "$remote_digest" ] || [ "$local_digest" != "$remote_digest" ]; then
+                echo "既有 Release 的产物摘要与本次构建不一致：$(basename "$local_asset")，tag=$RELEASE_TAG" >&2
+                exit 1
+              fi
+            done
           else
             gh release create "$RELEASE_TAG" \
               dist/Zeus-*.dmg \
               dist/zeus-release-manifest.json \
+              dist/Zeus-*-win32-*.exe \
+              dist/zeus-release-manifest-win32.json \
               --verify-tag \
               --latest \
               --title "Zeus $RELEASE_TAG" \

@@ -1,0 +1,6 @@
+# .NET 原生桥的中间结果不进入源码交付。
+/bin/
+/obj/
+
+# Rust 原生组件的编译缓存不进入源码和交接包。
+/windows-runtime/target/

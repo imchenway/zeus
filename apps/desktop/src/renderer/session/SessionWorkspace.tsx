@@ -1,3 +1,4 @@
+import { platformShortcutLabel } from '../platform.js';
 import { systemMessageScope, recordSystemMessage, recoverSystemMessageOperation, bindDraftSystemMessages, useConversationSystemMessages } from './conversationSystemMessages.js';
 import { SystemMessageNotice } from './ConversationTranscript.js';
 import type { ConversationProcessGroup } from '@zeus/shared';
@@ -2701,7 +2702,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   className={`session-browser-toggle ${browserOpen ? 'selected' : ''}`}
                   aria-pressed={browserOpen}
                   aria-label={props.language === 'zh-CN' ? '内置浏览器' : 'Built-in browser'}
-                  data-icon-tooltip={props.language === 'zh-CN' ? '内置浏览器（⌘⇧B）' : 'Built-in browser (⌘⇧B)'}
+                  data-icon-tooltip={platformShortcutLabel(props.language === 'zh-CN' ? '内置浏览器（⌘⇧B）' : 'Built-in browser (⌘⇧B)')}
                   onClick={(event) => {
                     contextReturnFocusRef.current = event.currentTarget;
                     if (browserOpen) {
@@ -4077,7 +4078,7 @@ export function NewConversationComposer(props: {
               aria-label={props.language === 'zh-CN' ? '内置浏览器' : 'Built-in browser'}
               aria-pressed={browserOpen}
               aria-keyshortcuts="Meta+Shift+B Control+Shift+B"
-              data-icon-tooltip={props.language === 'zh-CN' ? '内置浏览器（⌘⇧B）' : 'Built-in browser (⌘⇧B)'}
+              data-icon-tooltip={platformShortcutLabel(props.language === 'zh-CN' ? '内置浏览器（⌘⇧B）' : 'Built-in browser (⌘⇧B)')}
               onClick={() => (browserOpen ? void closeBrowser() : setBrowserOpen(true))}
             >
               <GlobeSimple aria-hidden="true" weight="regular" />

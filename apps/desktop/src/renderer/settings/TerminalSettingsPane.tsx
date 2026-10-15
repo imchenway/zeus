@@ -4,6 +4,8 @@ import { NativeControlRow, NativeSettingsPane } from '../features/workspace/work
 import { Button } from '../ui/Button.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { SettingsSaveStatus, useSettingsAutosave } from './useSettingsAutosave.js';
+import type { CommandShell } from '@zeus/shared';
+import { ZeusSelect } from '../ZeusSelect.js';
 
 /** 启动命令需显式保存，避免编辑到一半的文本被新终端执行。 */
 export function TerminalSettingsPane(props: { client: Pick<SettingsApiClient, 'loadRuntimeSettings' | 'saveRuntimeSettings'> | null; language: 'zh-CN' | 'en-US' }) {
@@ -12,6 +14,8 @@ export function TerminalSettingsPane(props: { client: Pick<SettingsApiClient, 'l
   const helpId = useId();
   /** 未读取时禁用保存，空字符串是用户主动关闭启动命令。 */
   const [command, setCommand] = useState<string | null>(null);
+  /** 脚本解释器与正文一起保存，不因切换系统而自动修改。 */
+  const [scriptShell, setScriptShell] = useState<CommandShell>('sh');
   const [error, setError] = useState<unknown>(null);
   /** 读取失败可在原页面重试。 */
   const [revision, setRevision] = useState(0);
@@ -24,7 +28,10 @@ export function TerminalSettingsPane(props: { client: Pick<SettingsApiClient, 'l
     void props.client
       ?.loadRuntimeSettings()
       .then((settings) => {
-        if (!disposed) setCommand(settings.terminalStartupCommand);
+        if (!disposed) {
+          setCommand(settings.terminalStartupCommand);
+          setScriptShell(settings.terminalStartupShell ?? 'sh');
+        }
       })
       .catch((failure: unknown) => {
         if (!disposed) setError(failure);
@@ -41,7 +48,7 @@ export function TerminalSettingsPane(props: { client: Pick<SettingsApiClient, 'l
     const terminalStartupCommand = command;
     await saving.save(async () => {
       const current = await client.loadRuntimeSettings();
-      await client.saveRuntimeSettings({ ...current, terminalStartupCommand });
+      await client.saveRuntimeSettings({ ...current, terminalStartupCommand, terminalStartupShell: scriptShell });
     });
   }
 
@@ -52,6 +59,24 @@ export function TerminalSettingsPane(props: { client: Pick<SettingsApiClient, 'l
         <SettingsSaveStatus status={saving.status} language={props.language} />
       </header>
       <NativeSettingsPane label={zh ? '启动' : 'Startup'}>
+        <NativeControlRow title={zh ? '启动命令解释器' : 'Startup command shell'} description={zh ? '必须与实际终端一致；切换不会自动转换已有脚本。' : 'Must match the terminal. Changing this does not convert the script.'}>
+          <ZeusSelect<CommandShell>
+            ariaLabel={zh ? '启动命令解释器' : 'Startup command shell'}
+            size="regular"
+            value={scriptShell}
+            options={[
+              { value: 'sh', label: 'Unix shell' },
+              { value: 'zsh', label: 'zsh' },
+              { value: 'powershell', label: 'PowerShell' },
+              { value: 'cmd', label: 'cmd' },
+            ]}
+            onChange={(value) => {
+              setScriptShell(value);
+              saving.reset();
+            }}
+            disabled={command === null || saving.status === 'saving'}
+          />
+        </NativeControlRow>
         <NativeControlRow
           className="terminal-startup-row"
           title={zh ? '启动命令' : 'Startup command'}

@@ -3,6 +3,7 @@ import { lstat, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { PluginComponentSnapshot } from '@zeus/storage';
 import { skillFrontmatterScalar } from './skillFrontmatter.js';
+import { isCommandShell } from '@zeus/shared';
 
 const maximumPluginNodes = 10_000;
 const maximumPluginBytes = 256 * 1024 * 1024;
@@ -209,6 +210,11 @@ async function inspectHooks(pluginRoot: string, manifestValue: unknown): Promise
 
 function validateCommandHook(handler: Record<string, unknown>, event: string): void {
   requiredText(handler.command, `Hook ${event} command`, 16_000);
+  if (handler.shell !== undefined && !isCommandShell(handler.shell)) throw new ZeusPluginManifestError('ZEUS_PLUGIN_MANIFEST_INVALID', `Hook ${event} shell 无效。`);
+  if (handler.windows !== undefined) {
+    if (!isRecord(handler.windows) || !isCommandShell(handler.windows.shell)) throw new ZeusPluginManifestError('ZEUS_PLUGIN_MANIFEST_INVALID', `Hook ${event} Windows 覆盖必须声明有效 shell。`);
+    requiredText(handler.windows.command, `Hook ${event} Windows command`, 16_000);
+  }
   validateTimeout(handler.timeout, event);
   if (handler.async !== undefined && typeof handler.async !== 'boolean') throw new ZeusPluginManifestError('ZEUS_PLUGIN_MANIFEST_INVALID', `Hook ${event} async 必须是布尔值。`);
   if (event === 'SessionEnd' && handler.async === true) throw new ZeusPluginManifestError('ZEUS_PLUGIN_MANIFEST_INVALID', 'SessionEnd Hook 不支持异步执行。');

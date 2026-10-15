@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { mkdir, writeFile } from 'node:fs/promises';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import type { PluginHookTrustRecord } from '@zeus/storage';
+import { ensurePrivatePathSync } from '@zeus/storage/platform-security';
 import type { PluginActivationSnapshot } from './zeusPluginService.js';
+import { isCommandShell } from '@zeus/shared';
+import { resolveCommandInvocation, spawnManagedProcess } from '@zeus/ai-runtime';
 
 export type ZeusPluginHookEventName = 'PermissionRequest' | 'PostToolUse' | 'PostCompact' | 'PreCompact' | 'PreToolUse' | 'SessionEnd' | 'SessionStart' | 'SubagentStart' | 'SubagentStop' | 'UserPromptSubmit' | 'Stop';
 
@@ -185,28 +188,51 @@ export function createZeusPluginHookRuntime(options: {
     trustedBypass: boolean;
   }): Promise<ZeusPluginHookRunResult> {
     await mkdir(join(options.dataRoot, input.candidate.activation.pluginId), { recursive: true, mode: 0o700 });
-    const child = spawn('/bin/zsh', ['-lc', input.handler.command], {
-      cwd: input.event.cwd,
-      env: {
+    /** Windows 覆盖与主脚本同属已冻结并获信任的插件定义。 */
+    const handler = process.platform === 'win32' && isRecord(input.handler.windows) ? input.handler.windows : input.handler;
+    /** 未登记解释器的旧 Hook 始终保留 zsh，不按系统猜测脚本语言。 */
+    const shell = isCommandShell(handler.shell) ? handler.shell : 'zsh';
+    /** 长 PowerShell 正文不放入命令行或 helper 环境描述，文件仅属于本次已信任插件调用。 */
+    let temporaryDirectory: string | undefined;
+    try {
+      /** 保留原始解释器和正文，仅更换长脚本的传输方式。 */
+      let script = String(handler.command);
+      if (process.platform === 'win32' && shell === 'powershell' && script.length > 8_000) {
+        temporaryDirectory = await mkdtemp(join(options.dataRoot, input.candidate.activation.pluginId, 'hook-'));
+        ensurePrivatePathSync(temporaryDirectory, 'directory');
+        /** 名称由宿主固定；Windows DACL 限制其他账户读取插件脚本。 */
+        const scriptPath = join(temporaryDirectory, 'command.ps1');
+        await writeFile(scriptPath, script, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+        ensurePrivatePathSync(scriptPath, 'file');
+        // 路径使用 PowerShell 单引号字面量后再整体编码，不经过 cmd 的百分号或感叹号展开。
+        script = `& ([scriptblock]::Create([IO.File]::ReadAllText('${scriptPath.replaceAll("'", "''")}', [Text.Encoding]::UTF8)))`;
+      }
+      input.signal.throwIfAborted();
+      const invocation = resolveCommandInvocation(shell, script, {
         ...process.env,
         PLUGIN_ROOT: input.candidate.activation.installPath,
         PLUGIN_DATA: join(options.dataRoot, input.candidate.activation.pluginId),
         CLAUDE_PLUGIN_ROOT: input.candidate.activation.installPath,
         CLAUDE_PLUGIN_DATA: join(options.dataRoot, input.candidate.activation.pluginId),
-      },
-      stdio: ['pipe', 'pipe', 'pipe'],
-      detached: false,
-    });
-    const abort = () => terminateChild(child);
-    input.signal.addEventListener('abort', abort, { once: true });
-    const output = collectChildOutput(child);
-    child.stdin.end(JSON.stringify(input.input));
-    try {
-      const { exitCode, stdout, stderr } = await output;
-      if (input.signal.aborted) throw input.signal.reason instanceof Error ? input.signal.reason : new Error('Hook 已取消。');
-      return finishHookOutput({ candidate: input.candidate, event: input.event.event, exitCode, stdout, stderr, trustedBypass: input.trustedBypass });
+      });
+      const child = spawnManagedProcess(invocation.command, invocation.args, {
+        cwd: input.event.cwd,
+        env: invocation.env,
+        windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+      });
+      const abort = () => terminateChild(child);
+      input.signal.addEventListener('abort', abort, { once: true });
+      const output = collectChildOutput(child);
+      child.stdin.end(JSON.stringify(input.input));
+      try {
+        const { exitCode, stdout, stderr } = await output;
+        if (input.signal.aborted) throw input.signal.reason instanceof Error ? input.signal.reason : new Error('Hook 已取消。');
+        return finishHookOutput({ candidate: input.candidate, event: input.event.event, exitCode, stdout, stderr, trustedBypass: input.trustedBypass });
+      } finally {
+        input.signal.removeEventListener('abort', abort);
+      }
     } finally {
-      input.signal.removeEventListener('abort', abort);
+      if (temporaryDirectory) await rm(temporaryDirectory, { recursive: true, force: true });
     }
   }
 

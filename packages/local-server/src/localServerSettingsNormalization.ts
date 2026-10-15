@@ -1,5 +1,6 @@
 import {
   defaultTaskBranchPrefix,
+  isCommandShell,
   defaultTaskManagementStatusConfig,
   isTaskStatusFilter,
   normalizeNetworkProxySettings,
@@ -16,7 +17,7 @@ import {
 } from '@zeus/shared';
 import type { TaskManagementStatus, TaskPriority } from '@zeus/storage';
 import { listAiCliAdapters, type AiCliAdapterDescriptor } from '@zeus/ai-runtime';
-import { parse } from 'node:path';
+import { parse, isAbsolute } from 'node:path';
 import type { RuntimeAutoConfirmationPolicy, RuntimeSettingsSnapshot } from './runtimeQueryApplication.js';
 import { SettingsCommandApplicationError } from './settingsCommandApplication.js';
 
@@ -43,6 +44,8 @@ export interface UpdateRuntimeSettingsBody {
   terminalEnv?: Record<string, unknown>;
   /** 只接受普通命令文本，不接受终端控制字符。 */
   terminalStartupCommand?: unknown;
+  /** 旧快照缺字段时保留 Unix 脚本语义。 */
+  terminalStartupShell?: unknown;
   shell?: {
     path?: unknown;
     login?: unknown;
@@ -451,6 +454,7 @@ export const defaultRuntimeSettings: RuntimeSettingsSnapshot = {
   terminalEnv: {},
   shell: { path: null, login: false },
   terminalStartupCommand: '',
+  terminalStartupShell: process.platform === 'win32' ? 'powershell' : 'sh',
   executionTimeoutSeconds: 3600,
   logRetentionDays: 30,
   autoConfirmationPolicy: 'never',
@@ -470,6 +474,7 @@ export function normalizeRuntimeSettings(value: RuntimeSettingsSnapshot | undefi
     adapterCliPaths: normalizeRuntimeAdapterCliPaths(value.adapterCliPaths) ?? {},
     terminalEnv: normalizeRuntimeTerminalEnv(value.terminalEnv) ?? {},
     terminalStartupCommand: normalizeTerminalStartupCommand(value.terminalStartupCommand) ?? '',
+    terminalStartupShell: isCommandShell(value.terminalStartupShell) ? value.terminalStartupShell : 'sh',
     shell: normalizeRuntimeShellSettings(value.shell) ?? defaultRuntimeSettings.shell,
     executionTimeoutSeconds: normalizeRuntimeExecutionTimeoutSeconds(value.executionTimeoutSeconds) ?? defaultRuntimeSettings.executionTimeoutSeconds,
     logRetentionDays: normalizeRuntimeLogRetentionDays(value.logRetentionDays) ?? defaultRuntimeSettings.logRetentionDays,
@@ -485,6 +490,9 @@ export function normalizeImportedRuntimeSettings(value: RuntimeSettingsSnapshot 
   const terminalEnv = normalizeRuntimeTerminalEnv(value.terminalEnv);
   /** 导入与设置保存共用命令文本校验。 */
   const terminalStartupCommand = normalizeTerminalStartupCommand(value.terminalStartupCommand);
+  /** 缺失字段来自旧客户端或历史导出，不能推断成 Windows PowerShell。 */
+  const terminalStartupShell = value.terminalStartupShell ?? 'sh';
+  if (!isCommandShell(terminalStartupShell)) return null;
   const shell = normalizeRuntimeShellSettings(value.shell);
   const executionTimeoutSeconds = normalizeRuntimeExecutionTimeoutSeconds(value.executionTimeoutSeconds);
   const logRetentionDays = normalizeRuntimeLogRetentionDays(value.logRetentionDays);
@@ -500,6 +508,7 @@ export function normalizeImportedRuntimeSettings(value: RuntimeSettingsSnapshot 
     adapterCliPaths,
     terminalEnv,
     terminalStartupCommand,
+    terminalStartupShell,
     shell,
     executionTimeoutSeconds,
     logRetentionDays,
@@ -718,8 +727,14 @@ export function normalizeRuntimeAdapterCliPaths(value: unknown): RuntimeSettings
     const cliPath = rawPath.trim();
     if (!cliPath) continue;
     // CLI 路径只接受本机绝对路径；不检查存在性，避免把“已配置路径”伪造成“已安装/已登录”。
-    if (!cliPath.startsWith('/') || cliPath.length > 256 || hasControlCharacter(cliPath)) return null;
-    const basenameAdapter = listAiCliAdapters().find((adapter) => adapter.command === parse(cliPath).base);
+    if (!isAbsolute(cliPath) || cliPath.length > 32767 || hasControlCharacter(cliPath)) return null;
+    const basenameAdapter = listAiCliAdapters().find(
+      (adapter) =>
+        adapter.command ===
+        parse(cliPath)
+          .base.replace(/\.(exe|cmd|bat|com)$/iu, '')
+          .toLowerCase(),
+    );
     if (basenameAdapter && basenameAdapter.id !== adapterId) return null;
     cliPaths[adapterId] = cliPath;
   }
@@ -754,7 +769,7 @@ export function normalizeRuntimeShellSettings(value: unknown): RuntimeSettingsSn
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const raw = value as { path?: unknown; login?: unknown };
   const path = typeof raw.path === 'string' ? raw.path.trim() : '';
-  if (path && (!path.startsWith('/') || path.length > 256 || hasControlCharacter(path))) return null;
+  if (path && (!isAbsolute(path) || path.length > 32767 || hasControlCharacter(path))) return null;
   return {
     path: path || null,
     login: raw.login === true,

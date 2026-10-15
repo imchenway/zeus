@@ -1,4 +1,4 @@
-import type { CommandArtifact, CommandConfirmation, CommandRun } from '@zeus/shared';
+import type { CommandArtifact, CommandConfirmation, CommandRun, CommandShell } from '@zeus/shared';
 
 export interface AiRuntimeAdapterDescriptor {
   id: 'codex' | 'claude' | 'gemini' | 'generic';
@@ -16,6 +16,8 @@ export interface RuntimeSettings {
   terminalEnv: Record<string, string>;
   /** 每个新交互终端输入一次，空字符串表示不执行。 */
   terminalStartupCommand: string;
+  /** 保存启动脚本的解释器，跨平台导入时保持原意。 */
+  terminalStartupShell?: CommandShell;
   shell: {
     path: string | null;
     login: boolean;

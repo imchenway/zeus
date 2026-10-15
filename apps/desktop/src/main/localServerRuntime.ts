@@ -5,7 +5,7 @@ import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { createCodexRuntimeGenerationManager } from '@zeus/ai-runtime';
+import { createCodexRuntimeGenerationManager, inspectWindowsRuntimeIdentity, spawnDetachedWindowsRuntime, stopWindowsRuntimeIdentity } from '@zeus/ai-runtime';
 import {
   type BrowserAutomationPort,
   createZeusDataLayout,
@@ -564,7 +564,13 @@ export async function startDesktopLocalServer(options: StartDesktopLocalServerOp
       }
       try {
         // Execution Host 是独立进程组组长；结束进程组可同时收口其 Provider 和 Runtime 子进程。
-        process.kill(-connection.pid, 'SIGKILL');
+        if (process.platform === 'win32') {
+          /** 私有通道证明 helper 的出生身份，子进程句柄证明其确实持有此 Core。 */
+          const owned = inspectWindowsRuntimeIdentity(connection.instanceId);
+          if (owned.state !== 'verified' || !owned.identity || owned.childIdentity?.pid !== connection.pid || owned.childIdentity.imagePath.toLocaleLowerCase('en-US') !== process.execPath.toLocaleLowerCase('en-US'))
+            throw new Error('Windows 执行宿主的 Job 身份无法确认，未停止任何进程。');
+          stopWindowsRuntimeIdentity(connection.instanceId, owned.identity.pid);
+        } else process.kill(-connection.pid, 'SIGKILL');
       } catch (error) {
         if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
       }
@@ -751,6 +757,7 @@ export async function startOwnedDesktopLocalServer(options: StartDesktopLocalSer
   const codexAppServerManager = options.readOnlyValidation
     ? createReadOnlyValidationCodexManager()
     : createCodexRuntimeGenerationManager({
+        ensureRemoteControlDaemon: options.browserAutomation?.ensureCodexRemoteControl?.bind(options.browserAutomation),
         codexHome: options.codexHome ?? dataLayout.codexHome,
         toolRuntimeCodexHome: dataLayout.codexToolRuntimeHome,
       });
@@ -1141,17 +1148,18 @@ async function connectOrLaunchExecutionHost(options: StartDesktopLocalServerOpti
   if (options.readOnlyValidation) {
     for (const key of ['CODEX_HOME', 'ZEUS_TELEGRAM_BOT_TOKEN', 'ZEUS_TELEGRAM_ALLOWED_USER_IDS', 'ZEUS_RELEASE_UPDATE_MANIFEST_URL', 'ZEUS_ALLOW_UNTRUSTED_UPDATE_TEST']) delete childEnvironment[key];
   }
-  const child = spawn(process.execPath, [entryPath], {
-    detached: true,
-    stdio: 'ignore',
-    env: {
-      ...childEnvironment,
-      ELECTRON_RUN_AS_NODE: '1',
-      ZEUS_EXECUTION_HOST_BOOTSTRAP_PATH: bootstrapPath,
-      ...(options.readOnlyValidation ? {} : { CODEX_HOME: options.codexHome ?? dataLayout.codexHome }),
-      ...(!options.readOnlyValidation && options.telegramToken ? { ZEUS_TELEGRAM_BOT_TOKEN: options.telegramToken } : {}),
-    },
-  });
+  /** 两个平台传给实际 Core 的环境一致；Windows helper 在启动前移除内部请求字段。 */
+  const executionEnvironment = {
+    ...childEnvironment,
+    ELECTRON_RUN_AS_NODE: '1',
+    ZEUS_EXECUTION_HOST_BOOTSTRAP_PATH: bootstrapPath,
+    ...(options.readOnlyValidation ? {} : { CODEX_HOME: options.codexHome ?? dataLayout.codexHome }),
+    ...(!options.readOnlyValidation && options.telegramToken ? { ZEUS_TELEGRAM_BOT_TOKEN: options.telegramToken } : {}),
+  };
+  const child =
+    process.platform === 'win32'
+      ? spawnDetachedWindowsRuntime(process.execPath, [entryPath], { cwd: options.projectRoot, env: executionEnvironment, generation: requestedInstanceId })
+      : spawn(process.execPath, [entryPath], { detached: true, stdio: 'ignore', env: executionEnvironment });
   let childFailure: Error | null = null;
   child.once('error', (error) => {
     childFailure = error;
@@ -1174,11 +1182,14 @@ async function connectOrLaunchExecutionHost(options: StartDesktopLocalServerOpti
     childFailure: () => childFailure,
   });
   if (launched) {
+    /** Windows spawn 返回 Job helper，清理授权绑定其仍持有的真实 Core，而非把 helper PID 当作 Core。 */
+    const owned = process.platform === 'win32' ? inspectWindowsRuntimeIdentity(requestedInstanceId, child.pid) : undefined;
+    const spawnedHostPid = process.platform === 'win32' ? (owned?.state === 'verified' ? (owned.childIdentity?.pid ?? null) : null) : (child.pid ?? null);
     const cleanupCapability = createExecutionHostLaunchCleanupCapability({
       userDataPath: options.userDataPath,
       dataRootIdentity: options.dataRootIdentity,
       requestedGenerationId: requestedInstanceId,
-      spawnedPid: child.pid ?? null,
+      spawnedPid: spawnedHostPid,
       rendezvous: launched,
     });
     return cleanupCapability ? { rendezvous: launched, launchedByThisInvocation: true, cleanupCapability } : existingExecutionHostConnection(launched);
@@ -1501,6 +1512,11 @@ async function readHealthyExecutionHost(userDataPath: string, expectedDataRootId
     )
       return null;
     if (lock.kind === 'unconfirmed') return null;
+  }
+  if (process.platform === 'win32') {
+    /** 旧元数据不能证明当前 PID 的归属；只有持有真实 Core 句柄的私有 Job helper 可以续用。 */
+    const owned = inspectWindowsRuntimeIdentity(rendezvous.instanceId);
+    if (owned.state !== 'verified' || owned.childIdentity?.pid !== rendezvous.pid || owned.childIdentity.imagePath.toLocaleLowerCase('en-US') !== process.execPath.toLocaleLowerCase('en-US')) return null;
   }
   try {
     const status = await createExecutionHostControlClient(rendezvous).health();

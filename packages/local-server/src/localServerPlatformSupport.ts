@@ -1,5 +1,4 @@
-import { userInfo } from 'node:os';
-import { listAiCliAdapters, type AiCliAdapterDescriptor } from '@zeus/ai-runtime';
+import { listAiCliAdapters, resolveInteractiveShell, type AiCliAdapterDescriptor } from '@zeus/ai-runtime';
 import { type CommandEnvelope, commandEnvelopeSchemaGeneration } from '@zeus/shared';
 import type { FastifyReply } from 'fastify';
 import { relative, resolve } from 'node:path';
@@ -62,7 +61,7 @@ export function normalizeHeaderValue(value: string | string[] | undefined): stri
 
 /** 读取用户配置或系统登记的 shell；前端展示与启动校验使用同一来源。 */
 export function resolveInteractiveRuntimeShell(shell: { path: string | null; login: boolean }): { command: string; args: string[] } {
-  return { command: shell.path || process.env.SHELL?.trim() || userInfo().shell || '/bin/sh', args: shell.login ? ['-l', '-i'] : ['-i'] };
+  return resolveInteractiveShell(shell);
 }
 
 /** Runtime 只允许已登记命令，交互终端额外接纳服务端解析的准确 shell 路径。 */

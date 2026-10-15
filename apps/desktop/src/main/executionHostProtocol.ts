@@ -1,6 +1,7 @@
+import { assertPrivatePathSync, ensurePrivatePathSync, publishFileSync, readPrivateFileSync } from '@zeus/storage/platform-security';
 import { createHash, randomUUID } from 'node:crypto';
-import { chmodSync, constants as fsConstants, existsSync, lstatSync, mkdirSync, realpathSync, type BigIntStats } from 'node:fs';
-import { chmod, link, mkdir, open, rename, unlink, writeFile } from 'node:fs/promises';
+import { constants as fsConstants, existsSync, lstatSync, realpathSync, type BigIntStats } from 'node:fs';
+import { link, mkdir, open, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createLegacyFlatZeusDataLayout, createZeusDataLayout, type ZeusDataLayout, type ZeusDataLayoutKind } from '@zeus/local-server/zeus-data-layout';
@@ -86,10 +87,7 @@ export interface LegacyExecutionHostLockIdentity {
 }
 
 export type ExecutionHostLockObservation =
-  | { kind: 'absent' }
-  | { kind: 'current'; identity: ExecutionHostLockIdentity }
-  | { kind: 'legacy'; identity: LegacyExecutionHostLockIdentity }
-  | { kind: 'unconfirmed'; reason: 'unsafe_file' | 'empty_or_invalid' };
+  { kind: 'absent' } | { kind: 'current'; identity: ExecutionHostLockIdentity } | { kind: 'legacy'; identity: LegacyExecutionHostLockIdentity } | { kind: 'unconfirmed'; reason: 'unsafe_file' | 'empty_or_invalid' };
 
 export type ExecutionHostKernelLeaseState = 'available' | 'held';
 
@@ -344,16 +342,16 @@ export function acquireExecutionHostKernelLease(userDataPath: string, dataRootId
   verifyZeusDataRootHostIdentity({ rootPath: userDataPath, expected: dataRootIdentity });
   const directory = executionHostDirectory(userDataPath);
   if (existsSync(directory)) assertSecureLeasePath(directory, 'directory');
-  else mkdirSync(directory, { recursive: true, mode: 0o700 });
+  else ensurePrivatePathSync(directory, 'directory');
   assertSecureLeasePath(directory, 'directory');
   if (realpathSync(directory) !== directory) throw executionHostLockError('ZEUS_EXECUTION_HOST_PATH_DRIFT', 'Zeus execution-host 目录包含符号链接或规范路径漂移。');
-  chmodSync(directory, 0o700);
+  ensurePrivatePathSync(directory, 'directory');
   const path = executionHostKernelLeasePath(userDataPath);
   if (existsSync(path)) assertSecureLeasePath(path, 'file');
   const database = new DatabaseSync(path);
   let acquired = false;
   try {
-    chmodSync(path, 0o600);
+    ensurePrivatePathSync(path, 'file');
     assertSecureLeasePath(path, 'file');
     // 状态探针会短暂持锁；真正启动者允许其释放，探针自身仍须立即返回。
     // 已运行宿主持续持有内核锁，等待超时后仍拒绝第二个宿主，绝不抢占。
@@ -411,12 +409,11 @@ export async function writeExecutionHostLockIdentity(userDataPath: string, input
   assertActiveExecutionHostKernelLease(lease, userDataPath, input.dataRootIdentity);
   const directory = executionHostDirectory(userDataPath);
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  await chmod(directory, 0o700);
+  ensurePrivatePathSync(directory, 'directory');
   assertSecureLeasePath(directory, 'directory');
   if (realpathSync(directory) !== directory) throw executionHostLockError('ZEUS_EXECUTION_HOST_PATH_DRIFT', 'Zeus execution-host lock 目录包含符号链接或规范路径漂移。');
   const target = executionHostLockPath(userDataPath);
   const temporary = join(directory, `.host-lock-${input.generationId}-${randomUUID()}.tmp`);
-  let published = false;
   try {
     const handle = await open(temporary, 'wx', 0o600);
     try {
@@ -426,17 +423,16 @@ export async function writeExecutionHostLockIdentity(userDataPath: string, input
       await handle.close();
     }
     try {
-      await link(temporary, target);
+      ensurePrivatePathSync(temporary, 'file');
+      publishFileSync(temporary, target, { replace: false });
     } catch (error) {
       if (!isNodeError(error, 'EEXIST')) throw error;
       await replaceRecoverableStaleExecutionHostLock({ userDataPath, input, lease, target, temporary, directory });
     }
-    published = true;
   } finally {
     await unlink(temporary).catch((error: unknown) => {
       if (!isNodeError(error, 'ENOENT')) throw error;
     });
-    if (published) await syncExecutionHostDirectory(directory);
   }
 }
 
@@ -460,7 +456,7 @@ async function replaceRecoverableStaleExecutionHostLock(input: { userDataPath: s
 
   const quarantineDirectory = join(input.directory, 'quarantine');
   await mkdir(quarantineDirectory, { recursive: true, mode: 0o700 });
-  await chmod(quarantineDirectory, 0o700);
+  ensurePrivatePathSync(quarantineDirectory, 'directory');
   assertSecureLeasePath(quarantineDirectory, 'directory');
   if (realpathSync(quarantineDirectory) !== quarantineDirectory) {
     throw executionHostLockError('ZEUS_EXECUTION_HOST_PATH_DRIFT', 'Zeus execution-host quarantine 目录包含符号链接或规范路径漂移。');
@@ -469,14 +465,26 @@ async function replaceRecoverableStaleExecutionHostLock(input: { userDataPath: s
   const quarantinePath = join(quarantineDirectory, `host-lock-v2-${staleHash}.json`);
   let quarantineCreated = false;
   try {
-    await link(input.target, quarantinePath);
+    if (process.platform === 'win32') {
+      // Windows 隔离副本通过已安全读取的内容发布；原文件仍由下方 CAS 检查保护。
+      const quarantineTemporary = `${quarantinePath}.${randomUUID()}.tmp`;
+      try {
+        await writeFile(quarantineTemporary, staleSnapshot.serialized, { flag: 'wx', mode: 0o600 });
+        ensurePrivatePathSync(quarantineTemporary, 'file');
+        publishFileSync(quarantineTemporary, quarantinePath, { replace: false });
+      } finally {
+        await unlink(quarantineTemporary).catch((error: unknown) => {
+          if (!isNodeError(error, 'ENOENT')) throw error;
+        });
+      }
+    } else await link(input.target, quarantinePath);
     quarantineCreated = true;
   } catch (error) {
     if (!isNodeError(error, 'EEXIST')) throw error;
   }
   try {
     const quarantineSnapshot = await readSecureJsonFileSnapshot(quarantinePath);
-    if (!sameSecureMetadataIdentity(staleSnapshot, quarantineSnapshot) || quarantineSnapshot.serialized !== staleSnapshot.serialized) {
+    if ((process.platform !== 'win32' && !sameSecureMetadataIdentity(staleSnapshot, quarantineSnapshot)) || quarantineSnapshot.serialized !== staleSnapshot.serialized) {
       throw executionHostLockError('ZEUS_EXECUTION_HOST_STALE_LOCK_CAS_MISMATCH', 'host.lock quarantine 与已验证残留 inode/content 不一致。');
     }
   } catch (error) {
@@ -485,15 +493,15 @@ async function replaceRecoverableStaleExecutionHostLock(input: { userDataPath: s
     }
     throw error;
   }
-  await syncExecutionHostDirectory(quarantineDirectory);
+  if (process.platform !== 'win32') await syncExecutionHostDirectory(quarantineDirectory);
 
   // kernel lease 串行化所有合规 Host；第二次同 fd 安全读取把普通 path swap 收敛为失败关闭。
   const immediatelyBeforeReplace = await readSecureJsonFileSnapshot(input.target);
   if (!sameSecureMetadataIdentity(staleSnapshot, immediatelyBeforeReplace) || immediatelyBeforeReplace.serialized !== staleSnapshot.serialized) {
     throw executionHostLockError('ZEUS_EXECUTION_HOST_STALE_LOCK_CAS_MISMATCH', 'host.lock 在 quarantine 后发生 path/inode/content 漂移，拒绝替换。');
   }
-  await rename(input.temporary, input.target);
-  await syncExecutionHostDirectory(input.directory);
+  ensurePrivatePathSync(input.temporary, 'file');
+  publishFileSync(input.temporary, input.target, { replace: true });
   const publishedSnapshot = await readSecureJsonFileSnapshot(input.target);
   const publishedIdentity = parseCurrentExecutionHostLockSnapshot(publishedSnapshot);
   if (!publishedIdentity || publishedIdentity.generationId !== input.input.generationId || !sameZeusDataRootHostIdentity(publishedIdentity.dataRootIdentity, input.input.dataRootIdentity)) {
@@ -616,12 +624,13 @@ export async function writeExecutionHostStartupStatus(userDataPath: string, inpu
   verifyZeusDataRootHostIdentity({ rootPath: userDataPath, expected: input.dataRootIdentity });
   const directory = executionHostDirectory(userDataPath);
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  await chmod(directory, 0o700);
+  ensurePrivatePathSync(directory, 'directory');
   const target = executionHostStartupPath(userDataPath);
   const temporary = join(directory, `.startup-${input.generationId}-${randomUUID()}.tmp`);
   await writeFile(temporary, `${JSON.stringify(input, null, 2)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
-  await rename(temporary, target);
-  await chmod(target, 0o600);
+  ensurePrivatePathSync(temporary, 'file');
+  publishFileSync(temporary, target, { replace: true });
+  ensurePrivatePathSync(target, 'file');
 }
 
 export async function removeExecutionHostStartupStatus(userDataPath: string, generationId: string, dataRootIdentity: ZeusDataRootHostIdentity): Promise<void> {
@@ -637,12 +646,15 @@ export async function writeExecutionHostBootstrap(userDataPath: string, input: E
   const layout = executionHostBootstrapDataLayout(input);
   if (userDataPath !== layout.root) throw new Error('Zeus execution-host bootstrap writer root does not match the canonical bootstrap root.');
   const directory = layout.executionHost;
-  await mkdir(directory, { recursive: true, mode: 0o700 });
+  ensurePrivatePathSync(directory, 'directory');
   assertSecureLeasePath(directory, 'directory');
   if (realpathSync(directory) !== directory) throw new Error('Zeus execution-host bootstrap directory must be canonical and must not traverse symbolic links.');
-  await chmod(directory, 0o700);
+  ensurePrivatePathSync(directory, 'directory');
   const path = join(directory, `bootstrap-${input.requestedInstanceId}-${randomUUID()}.json`);
-  await writeFile(path, `${JSON.stringify(input)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(input)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+  ensurePrivatePathSync(temporary, 'file');
+  publishFileSync(temporary, path, { replace: false });
   return path;
 }
 
@@ -676,12 +688,13 @@ export async function writeExecutionHostRendezvous(userDataPath: string, input: 
   verifyZeusDataRootHostIdentity({ rootPath: userDataPath, expected: input.dataRootIdentity });
   const directory = executionHostDirectory(userDataPath);
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  await chmod(directory, 0o700);
+  ensurePrivatePathSync(directory, 'directory');
   const target = executionHostRendezvousPath(userDataPath);
   const temporary = join(directory, `.rendezvous-${input.instanceId}-${randomUUID()}.tmp`);
   await writeFile(temporary, `${JSON.stringify(input, null, 2)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
-  await rename(temporary, target);
-  await chmod(target, 0o600);
+  ensurePrivatePathSync(temporary, 'file');
+  publishFileSync(temporary, target, { replace: true });
+  ensurePrivatePathSync(target, 'file');
 }
 
 export async function removeExecutionHostRendezvous(userDataPath: string, instanceId: string, dataRootIdentity: ZeusDataRootHostIdentity): Promise<void> {
@@ -756,6 +769,13 @@ async function readSecureJsonFile(path: string): Promise<string> {
 }
 
 async function readSecureJsonFileSnapshot(path: string): Promise<SecureExecutionHostMetadataSnapshot> {
+  if (process.platform === 'win32') {
+    const before = lstatSync(path, { bigint: true });
+    const serialized = readPrivateFileSync(path, maximumExecutionHostMetadataBytes).toString('utf8');
+    const after = lstatSync(path, { bigint: true });
+    if (!sameSecureMetadataIdentity({ serialized, stats: before }, { serialized, stats: after })) throw new Error('Zeus execution-host metadata changed while reading.');
+    return { serialized, stats: after };
+  }
   const handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
   try {
     const before = await handle.stat({ bigint: true });
@@ -1046,6 +1066,10 @@ function executionHostLockError(code: string, message: string, cause?: unknown):
 }
 
 function assertSecureLeasePath(path: string, kind: 'directory' | 'file'): void {
+  if (process.platform === 'win32') {
+    assertPrivatePathSync(path, kind);
+    return;
+  }
   const value = lstatSync(path);
   const expectedKind = kind === 'directory' ? value.isDirectory() : value.isFile();
   if (!expectedKind || value.isSymbolicLink()) throw new Error(`Zeus execution-host lease ${kind} must not be a symbolic link.`);

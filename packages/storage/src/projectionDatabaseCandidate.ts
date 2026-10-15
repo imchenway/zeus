@@ -1,5 +1,6 @@
+import { ensurePrivatePathSync, publishFileSync } from './platformSecurity.js';
 import { createHash, randomUUID } from 'node:crypto';
-import { chmod, link, lstat, mkdir, readFile, unlink } from 'node:fs/promises';
+import { lstat, mkdir, readFile, unlink } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { ZeusDatabasePort } from './databasePort.js';
@@ -9,11 +10,7 @@ export const projectionIndexCandidateGeneration = '2026-09-08-conversation-index
 export const projectionCacheCandidateGeneration = '2026-08-21-projection-cache-runtime-v2';
 
 export type ProjectionDatabaseCandidateErrorCode =
-  | 'ZEUS_PROJECTION_CANDIDATE_INVALID_PATH'
-  | 'ZEUS_PROJECTION_CANDIDATE_ALREADY_EXISTS'
-  | 'ZEUS_PROJECTION_CANDIDATE_SOURCE_INVALID'
-  | 'ZEUS_PROJECTION_CANDIDATE_BUILD_FAILED'
-  | 'ZEUS_PROJECTION_CANDIDATE_INTEGRITY_FAILED';
+  'ZEUS_PROJECTION_CANDIDATE_INVALID_PATH' | 'ZEUS_PROJECTION_CANDIDATE_ALREADY_EXISTS' | 'ZEUS_PROJECTION_CANDIDATE_SOURCE_INVALID' | 'ZEUS_PROJECTION_CANDIDATE_BUILD_FAILED' | 'ZEUS_PROJECTION_CANDIDATE_INTEGRITY_FAILED';
 
 export class ProjectionDatabaseCandidateError extends Error {
   readonly name = 'ProjectionDatabaseCandidateError';
@@ -161,7 +158,7 @@ export async function createProjectionIndexCandidate(input: { source: ZeusDataba
     assertCandidateQuickCheck(candidate, 'index.db 候选');
     candidate.close();
     candidate = null;
-    await chmod(temporaryPath, 0o600);
+    ensurePrivatePathSync(temporaryPath, 'file');
     await publishCandidateOnly(temporaryPath, candidatePath);
     return candidateReceipt({ candidateKind: 'index', candidatePath, generationId, sourceDatabaseIdentity, counts, gaps, createdAt });
   } catch (error) {
@@ -218,7 +215,7 @@ export async function createProjectionCacheCandidate(input: { candidatePath: str
     assertCandidateQuickCheck(candidate, 'cache.db 候选');
     candidate.close();
     candidate = null;
-    await chmod(temporaryPath, 0o600);
+    ensurePrivatePathSync(temporaryPath, 'file');
     await publishCandidateOnly(temporaryPath, candidatePath);
     return candidateReceipt({ candidateKind: 'cache', candidatePath, generationId, sourceDatabaseIdentity, counts: { entries: 0 }, gaps: [], createdAt });
   } catch (error) {
@@ -244,8 +241,7 @@ export async function verifyProjectionDatabaseCandidate(
     assertCandidateQuickCheck(db, `${receipt.candidateKind}.db 候选`);
     const table = receipt.candidateKind === 'index' ? 'projection_metadata' : 'cache_metadata';
     const row = db.prepare(`SELECT generation_id, source_database_identity, publication_state, rebuildable FROM ${table} WHERE singleton = 1`).get() as
-      | { generation_id: string; source_database_identity: string; publication_state: string; rebuildable: number }
-      | undefined;
+      { generation_id: string; source_database_identity: string; publication_state: string; rebuildable: number } | undefined;
     if (!row || row.generation_id !== receipt.generationId || row.source_database_identity !== receipt.sourceDatabaseIdentity || row.publication_state !== 'candidate_only' || row.rebuildable !== 1) {
       throw candidateError('ZEUS_PROJECTION_CANDIDATE_INTEGRITY_FAILED', '投影数据库候选身份或候选态契约不匹配。');
     }
@@ -337,13 +333,12 @@ async function validateCandidatePath(pathValue: string, kind: 'index' | 'cache')
 
 async function publishCandidateOnly(temporaryPath: string, candidatePath: string): Promise<void> {
   try {
-    await link(temporaryPath, candidatePath);
+    publishFileSync(temporaryPath, candidatePath, { replace: false });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw candidateError('ZEUS_PROJECTION_CANDIDATE_ALREADY_EXISTS', '候选路径在构建期间被占用，禁止覆盖。');
     throw error;
   }
-  await unlink(temporaryPath);
-  await chmod(candidatePath, 0o600);
+  ensurePrivatePathSync(candidatePath, 'file');
 }
 
 async function candidateReceipt(input: {

@@ -17,7 +17,8 @@ import { StopIcon as Stop } from '@phosphor-icons/react/dist/csr/Stop';
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
-import { commandNeedsHighRiskConfirmation, type CommandRiskFlags } from '@zeus/shared';
+import { commandNeedsHighRiskConfirmation, commandShells, type CommandShell, type CommandRiskFlags } from '@zeus/shared';
+import { ZeusSelect } from './ZeusSelect.js';
 import { projectTerminalOutput } from '@zeus/shared';
 import {
   isLikelyLocalServerConnectionError,
@@ -56,6 +57,8 @@ interface CommandDraft {
   title: string;
   description: string;
   command: string;
+  /** 保存解释器和正文，避免迁移后静默改变脚本语义。 */
+  shell: CommandShell;
   timeoutSeconds: string;
   enabled: boolean;
   telegramEnabled: boolean;
@@ -75,6 +78,7 @@ const emptyDraft: CommandDraft = {
   title: '',
   description: '',
   command: '',
+  shell: typeof navigator !== 'undefined' && navigator.platform.startsWith('Win') ? 'powershell' : 'sh',
   timeoutSeconds: '300',
   enabled: true,
   telegramEnabled: false,
@@ -675,6 +679,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
       title: command.title,
       description: command.description,
       command: command.command,
+      shell: command.shell ?? 'sh',
       timeoutSeconds: String(command.timeoutSeconds),
       enabled: command.enabled,
       telegramEnabled: command.telegramEnabled,
@@ -998,6 +1003,10 @@ function CommandDefinitionDetails(props: { command: CommandDefinition; zh: boole
       <code>{props.command.command}</code>
       <dl>
         <div>
+          <dt>{props.zh ? '解释器' : 'Shell'}</dt>
+          <dd>{props.command.shell ?? 'sh'}</dd>
+        </div>
+        <div>
           <dt>{props.zh ? '名称' : 'Name'}</dt>
           <dd>{props.command.name}</dd>
         </div>
@@ -1179,7 +1188,7 @@ function CommandDefinitionModal(props: {
         <header className="command-modal-header">
           <span>
             <h3 id="command-definition-modal-title">{props.title}</h3>
-            <p>{zh ? '命令会在目标项目目录中执行，使用系统命令解释器（sh -lc）。' : 'Commands run in the target project folder using the system shell (sh -lc).'}</p>
+            <p>{zh ? '命令在目标项目目录中执行。解释器与脚本一起保存，切换解释器不会自动转换脚本。' : 'Commands run in the project folder. The shell is saved with the script; changing it does not convert the script.'}</p>
           </span>
           <button type="button" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={props.busy}>
             ×
@@ -1207,6 +1216,17 @@ function CommandDefinitionModal(props: {
               {zh ? '命令' : 'Command'}
               <textarea required maxLength={1024} rows={4} value={props.draft.command} onChange={(event) => update('command', event.currentTarget.value)} />
             </label>
+            <div>
+              <span>{zh ? '命令解释器' : 'Command shell'}</span>
+              <ZeusSelect<CommandShell>
+                ariaLabel={zh ? '命令解释器' : 'Command shell'}
+                size="regular"
+                value={props.draft.shell}
+                options={commandShells.map((shell) => ({ value: shell, label: shell === 'powershell' ? 'Windows PowerShell' : shell }))}
+                onChange={(shell) => update('shell', shell)}
+                disabled={props.busy}
+              />
+            </div>
             <label>
               {zh ? '超时（秒）' : 'Timeout (seconds)'}
               <input required type="number" min={5} max={3600} value={props.draft.timeoutSeconds} onChange={(event) => update('timeoutSeconds', event.currentTarget.value)} />
@@ -1518,6 +1538,7 @@ function draftToInput(draft: CommandDraft): CommandDefinitionInput {
     title: draft.title.trim(),
     description: draft.description.trim(),
     command: draft.command.trim(),
+    shell: draft.shell,
     timeoutSeconds: Number(draft.timeoutSeconds),
     enabled: draft.enabled,
     telegramEnabled: draft.telegramEnabled,

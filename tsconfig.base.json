@@ -17,7 +17,8 @@
       "@zeus/storage": ["packages/storage/src/index.ts"],
       "@zeus/local-server": ["packages/local-server/src/index.ts"],
       "@zeus/ai-runtime": ["packages/ai-runtime/src/index.ts"],
-      "@zeus/git-core": ["packages/git-core/src/index.ts"]
+      "@zeus/git-core": ["packages/git-core/src/index.ts"],
+      "@zeus/storage/platform-security": ["packages/storage/src/platformSecurity.ts"]
     }
   }
 }

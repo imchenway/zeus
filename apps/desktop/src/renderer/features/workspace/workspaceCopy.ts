@@ -1079,6 +1079,8 @@ export const languageCopy = {
         artifactKindLabels: {
           dmg: 'DMG 安装包',
           zip: 'ZIP 压缩包',
+          // Windows 使用签名的 NSIS 可执行安装包。
+          exe: 'Windows 安装包',
         },
         waitingArtifact: '等待匹配本机架构',
         noArtifact: '暂无匹配本机架构的安装包。',
@@ -2300,6 +2302,8 @@ export const languageCopy = {
         artifactKindLabels: {
           dmg: 'DMG',
           zip: 'ZIP',
+          // Windows 使用签名的 NSIS 可执行安装包。
+          exe: 'Windows installer',
         },
         waitingArtifact: 'Waiting for a matching local architecture',
         noArtifact: 'No installer matches this Mac architecture yet.',

@@ -1,13 +1,17 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { extname, isAbsolute, join, relative, resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { resolveWechatApplicationLaunch } from './wechatApplicationLaunch.js';
+import type { BrowserAutomationPort } from './browserAutomation.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   assertExpectedRevision,
   commandNeedsHighRiskConfirmation,
   commandParameterValueMatchesType,
   defaultCommandRiskFlags,
+  isCommandShell,
   validateCommandDefinitionInput,
   type CommandConfirmation,
   type CommandDefinition,
@@ -17,7 +21,7 @@ import {
   type CommandRunTrigger,
   type CommandScope,
 } from '@zeus/shared';
-import { projectTerminalOutput, type AiRuntimeLogEntry, type AiRuntimeSession, type AiRuntimeSessionManager } from '@zeus/ai-runtime';
+import { projectTerminalOutput, resolveCommandInvocation, type AiRuntimeLogEntry, type AiRuntimeSession, type AiRuntimeSessionManager } from '@zeus/ai-runtime';
 import {
   CommandArtifactRepository,
   CommandDeliveryRepository,
@@ -57,6 +61,8 @@ interface CommandCenterOptions {
   resolveRuntimeSessionLogFiles?: (sessionId: string) => Array<{ relativePath: string; sourcePath: string; mimeType: string }>;
   readProjectSecurity: (projectId: string) => { allowShell: boolean; allowGitWrite: boolean };
   buildRuntimeProcessEnv: () => NodeJS.ProcessEnv;
+  /** 只为冻结的微信内置入口准备用户 GUI；实际 CLI 始终受命令 Job 管理。 */
+  ensureWechatApplication?: BrowserAutomationPort['ensureWechatApplication'];
   createReleaseNotesCapability?: (input: { runId: string; projectId: string }) => { url: string; token: string };
   revokeReleaseNotesCapability?: (runId: string) => void;
   appendAuditLog: (input: Omit<AppendAuditLogInput, 'createdAt'> & { createdAt?: string }) => void;
@@ -298,6 +304,7 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
       title: patch.title ?? existing.title,
       description: patch.description ?? existing.description,
       command: patch.command ?? existing.command,
+      shell: patch.shell ?? existing.shell ?? 'sh',
       parameters: patch.parameters ?? existing.parameters,
       timeoutSeconds: patch.timeoutSeconds ?? existing.timeoutSeconds,
       enabled: patch.enabled ?? existing.enabled,
@@ -578,6 +585,26 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
         reply,
       });
     }
+    /** 缺少解释器在外部写入前确定拒绝，不把未启动的命令标成结果未知。 */
+    let commandInvocation: ReturnType<typeof resolveCommandInvocation>;
+    /** 只有固定模板和内置身份都匹配，才可请求 Main 打开微信用户应用。 */
+    const applicationLaunch = resolveWechatApplicationLaunch(command);
+    try {
+      if (applicationLaunch && !options.ensureWechatApplication) throw new Error('微信用户应用宿主不可用，命令尚未启动。');
+      commandInvocation = applicationLaunch ? { ...applicationLaunch, env: options.buildRuntimeProcessEnv() } : resolveCommandInvocation(command.shell ?? 'sh', command.command, options.buildRuntimeProcessEnv());
+    } catch (error) {
+      return rejectRunStart({
+        parsed,
+        run: pendingRun,
+        confirmation,
+        externalOperationId,
+        error: 'ZEUS_COMMAND_SHELL_UNAVAILABLE',
+        message: error instanceof Error ? error.message : String(error),
+        statusCode: 400,
+        reason: '命令解释器不可用，命令尚未启动',
+        reply,
+      });
+    }
     const preparation = commandApplication.prepareExternal<CommandRunBody, CommandRun>({
       parsed,
       destinationId: 'command-center-runtime',
@@ -599,7 +626,7 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
       const runDirectory = commandRunDirectory(runId);
       mkdirSync(runDirectory, { recursive: true, mode: 0o700 });
       releaseNotesCapability = isReleaseCommand(command.command) ? options.createReleaseNotesCapability?.({ runId, projectId }) : undefined;
-      const environment = {
+      const environment: NodeJS.ProcessEnv = {
         ...options.buildRuntimeProcessEnv(),
         ...parameterEnvironment(command.parameters, parameters.values),
         ZEUS_PROJECT_ROOT: project.localPath,
@@ -617,10 +644,23 @@ export function createCommandCenter(options: CommandCenterOptions): CommandCente
             }
           : {}),
       };
+      if (applicationLaunch) {
+        /** CLI 提示路径与原 runner 一致支持用户家目录，Main 仍必须独立核验安装身份。 */
+        const configuredCli = environment.WX_CLI_PATH?.trim();
+        const cliPathHint = configuredCli ? resolve(project.localPath, configuredCli === '~' ? homedir() : configuredCli.startsWith('~/') ? join(homedir(), configuredCli.slice(2)) : configuredCli) : undefined;
+        /** Main 只打开核实身份的 GUI；返回对应安装的 CLI 路径，避免连接另一份应用。 */
+        const application = await options.ensureWechatApplication!({ runId, ...(cliPathHint ? { cliPathHint } : {}) });
+        if (!isAbsolute(application.cliPath) || !isAbsolute(application.applicationPath)) throw new Error('微信应用宿主返回了无效安装路径。');
+        environment.WX_CLI_PATH = application.cliPath;
+        environment.ELECTRON_RUN_AS_NODE = '1';
+        appendRunAudit('command.run.user_application_prepared', starting, parsed);
+      }
       session = await options.aiRuntimeManager.startSession({
         projectId,
-        command: 'sh',
-        args: ['-lc', command.command],
+        command: commandInvocation.command,
+        args: commandInvocation.args,
+        windowsVerbatimArguments: commandInvocation.windowsVerbatimArguments,
+        ...(applicationLaunch ? { terminal: false } : {}),
         cwd: project.localPath,
         env: environment,
         redactValues: [...confirmation.sensitiveValues, ...(releaseNotesCapability ? [releaseNotesCapability.token] : [])],
@@ -1191,6 +1231,7 @@ function isReleaseCommand(command: string): boolean {
 function normalizeDefinitionInput(input: CommandDefinitionInput | undefined): CommandDefinitionInput | null {
   if (!input || typeof input !== 'object') return null;
   if (typeof input.name !== 'string' || typeof input.title !== 'string' || typeof input.command !== 'string') return null;
+  if (input.shell !== undefined && !isCommandShell(input.shell)) return null;
   if (input.description !== undefined && typeof input.description !== 'string') return null;
   if (input.aliases !== undefined && (!Array.isArray(input.aliases) || !input.aliases.every((alias) => typeof alias === 'string'))) return null;
   if (input.parameters !== undefined && (!Array.isArray(input.parameters) || !input.parameters.every(isCommandParameterDefinition))) return null;
@@ -1207,6 +1248,7 @@ function normalizeDefinitionInput(input: CommandDefinitionInput | undefined): Co
     title: input.title.trim(),
     description: input.description?.trim() ?? '',
     command: input.command.trim(),
+    shell: input.shell ?? 'sh',
     parameters: input.parameters ?? [],
     timeoutSeconds: input.timeoutSeconds ?? 300,
     enabled: input.enabled ?? true,

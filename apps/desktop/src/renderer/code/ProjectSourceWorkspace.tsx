@@ -1,4 +1,5 @@
 import { projectSourcePreviewKind, sourceLanguageOptions } from '@zeus/shared';
+import { isMacOSPlatform } from '../platform.js';
 import { FilePreview } from './FilePreview.js';
 import { useMotionPresence } from '../ui/useMotionPresence.js';
 import { createPortal } from 'react-dom';
@@ -486,7 +487,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   }
 
   /** 快捷键名称沿用当前平台，菜单与执行使用同一组组合键。 */
-  const macShortcuts = navigator.platform.startsWith('Mac');
+  const macShortcuts = isMacOSPlatform();
   /** 菜单显示名称保留平台常见符号，避免用户猜测组合键。 */
   const fileShortcutLabels = {
     createFile: macShortcuts ? '⌘N' : 'Ctrl+N',

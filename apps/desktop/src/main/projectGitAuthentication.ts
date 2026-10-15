@@ -1,9 +1,16 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 
 /** 凭据仅经 askpass 标准输出交给 Git；临时文件不包含用户输入。 */
 export async function withProjectGitAuthentication<T>(operation: (env: NodeJS.ProcessEnv) => Promise<T>): Promise<T> {
+  if (process.platform === 'win32') {
+    // Git 按需启动随包系统提示程序；秘密仅经其标准输出回传，不写入环境或磁盘。
+    const helper = process.env.ZEUS_WINDOWS_SECURITY_HELPER;
+    if (!helper || !isAbsolute(helper)) throw new Error('Windows Git 凭据组件尚未配置。');
+    await access(helper);
+    return operation({ GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: helper, SSH_ASKPASS: helper, SSH_ASKPASS_REQUIRE: 'force', DISPLAY: 'zeus', ZEUS_WINDOWS_DESKTOP_MODE: 'git-askpass' });
+  }
   if (process.platform !== 'darwin') return operation({ GIT_TERMINAL_PROMPT: '0' });
   const directory = await mkdtemp(join(tmpdir(), 'zeus-git-auth-'));
   const helper = join(directory, 'askpass');

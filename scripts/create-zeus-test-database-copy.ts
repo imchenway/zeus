@@ -1,6 +1,7 @@
+import { assertPrivatePathSync, ensurePrivatePathSync, openRegularFileNoFollow, publishFileSync } from '../packages/storage/src/platformSecurity.js';
 import { constants as fsConstants } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { chmod, link, lstat, mkdtemp, open, readdir, realpath, rm, statfs, unlink } from 'node:fs/promises';
+import { lstat, mkdtemp, open, readdir, realpath, rm, statfs } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { backup, DatabaseSync } from 'node:sqlite';
@@ -103,7 +104,7 @@ async function executeCopy(): Promise<void> {
     }
 
     stagingDirectoryPath = await mkdtemp(join(destinationDirectoryPath, '.zeus-test-database-copy-'));
-    await chmod(stagingDirectoryPath, 0o700);
+    ensurePrivatePathSync(stagingDirectoryPath, 'directory');
     const stagingPath = join(stagingDirectoryPath, `${basename(destinationPath)}.${randomUUID()}.staging`);
     let lastProgress: { totalPages: number; remainingPages: number } | null = null;
     const backupStartedAt = new Date().toISOString();
@@ -149,8 +150,7 @@ async function executeCopy(): Promise<void> {
     await requireMissingCompanionPath(`${stagingPath}-wal`, 'WAL');
     await requireMissingCompanionPath(`${stagingPath}-shm`, 'SHM');
     await requireMissingCompanionPath(`${stagingPath}-journal`, 'rollback journal');
-    await chmod(stagingPath, 0o600);
-    await syncFile(stagingPath);
+    ensurePrivatePathSync(stagingPath, 'file');
     const target = inspectCandidateDatabase(stagingPath, 'Zeus Test 最终候选数据库');
 
     const sourceManifestEvidence = plannedSourceTreeSnapshot
@@ -204,23 +204,18 @@ async function executeCopy(): Promise<void> {
     const stagingManifestPath = join(stagingDirectoryPath, `${basename(destinationPath)}.${randomUUID()}.manifest.staging`);
     await writeNewPrivateFile(stagingManifestPath, `${JSON.stringify({ ...validationManifestPayload, manifestHash: validationManifestHash }, null, 2)}\n`);
     try {
-      await link(stagingPath, destinationPath);
+      publishFileSync(stagingPath, destinationPath, { replace: false });
     } catch (error) {
       if (isNodeError(error, 'EEXIST')) fail('ZEUS_TEST_DATABASE_COPY_DESTINATION_EXISTS', 'Test 目标数据库已经存在，拒绝覆盖。');
       throw error;
     }
     destinationPublished = true;
     try {
-      await link(stagingManifestPath, validationManifestPath);
+      publishFileSync(stagingManifestPath, validationManifestPath, { replace: false });
     } catch (error) {
       if (isNodeError(error, 'EEXIST')) fail('ZEUS_TEST_DATABASE_COPY_DESTINATION_EXISTS', '只读验证 manifest 已经存在，拒绝覆盖。');
       throw error;
     }
-    await syncFile(destinationPath);
-    await syncFile(validationManifestPath);
-    await syncDirectory(destinationDirectoryPath);
-    await unlink(stagingPath);
-    await unlink(stagingManifestPath);
     await rm(stagingDirectoryPath, { recursive: true, force: false });
     stagingDirectoryPath = null;
     const dataRootIdentity = publishProvisionedZeusDataRootIdentity({
@@ -511,8 +506,9 @@ function inferSourceDataRoot(path: string): string {
 }
 
 async function requirePrivateOwnedDirectory(path: string): Promise<void> {
+  if (process.platform === 'win32') assertPrivatePathSync(path, 'directory');
   const stats = await lstat(path, { bigint: true });
-  if (!stats.isDirectory() || stats.isSymbolicLink() || Number(stats.mode & 0o777n) !== 0o700) {
+  if (!stats.isDirectory() || stats.isSymbolicLink() || (process.platform !== 'win32' && Number(stats.mode & 0o777n) !== 0o700)) {
     fail('ZEUS_TEST_DATABASE_COPY_INVALID_DESTINATION', `严格只读验证目录必须是 0700 普通目录且不能是软链接：${path}`);
   }
   if (typeof process.getuid === 'function' && stats.uid !== BigInt(process.getuid())) {
@@ -567,7 +563,7 @@ function schemaSha256(database: DatabaseSync): string {
 }
 
 async function digestFile(path: string): Promise<{ sha256: string; bytes: number }> {
-  const handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  const handle = await openRegularFileNoFollow(path, fsConstants.O_RDONLY);
   const hash = createHash('sha256');
   let bytes = 0;
   try {
@@ -636,8 +632,9 @@ async function captureSourceTreeSnapshot(path: string): Promise<SourceTreeSnapsh
   const directoryBefore = await immutableDirectorySnapshot(directoryPath);
   await requireSourceCompanionsMissing(path);
   const database = await immutableFileSnapshot(path);
-  if (database.mode !== '0600' || database.nlink !== '1' || (typeof process.getuid === 'function' && database.uid !== String(process.getuid()))) {
-    fail('ZEUS_TEST_DATABASE_COPY_INVALID_SOURCE', '严格源树零写模式要求正式源数据库是当前用户拥有、nlink=1 的 0600 普通文件。');
+  if (process.platform === 'win32') assertPrivatePathSync(path, 'file');
+  if ((process.platform !== 'win32' && database.mode !== '0600') || database.nlink !== '1' || (typeof process.getuid === 'function' && database.uid !== String(process.getuid()))) {
+    fail('ZEUS_TEST_DATABASE_COPY_INVALID_SOURCE', '严格源树零写模式要求正式源数据库是当前用户私有、nlink=1 的普通文件。');
   }
   await requireSourceCompanionsMissing(path);
   const directoryAfter = await immutableDirectorySnapshot(directoryPath);
@@ -694,7 +691,7 @@ function onlineSourceEvidence(path: string, identity: { dev: bigint; ino: bigint
 }
 
 async function immutableFileSnapshot(path: string): Promise<ImmutableFileSnapshot> {
-  const handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  const handle = await openRegularFileNoFollow(path, fsConstants.O_RDONLY);
   const hash = createHash('sha256');
   try {
     const before = await handle.stat({ bigint: true });
@@ -798,24 +795,7 @@ async function writeNewPrivateFile(path: string, content: string): Promise<void>
   } finally {
     await handle.close();
   }
-}
-
-async function syncFile(path: string): Promise<void> {
-  const handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-}
-
-async function syncDirectory(path: string): Promise<void> {
-  const handle = await open(path, fsConstants.O_RDONLY);
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
+  if (process.platform === 'win32') ensurePrivatePathSync(path, 'file');
 }
 
 function sha256Json(value: unknown): string {

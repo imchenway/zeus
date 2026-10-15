@@ -1,4 +1,5 @@
 import { createContext, lazy, Suspense, useEffect, useMemo, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { isMacOSPlatform } from '../platform.js';
 import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { ArrowCounterClockwiseIcon as ArrowCounterClockwise } from '@phosphor-icons/react/dist/csr/ArrowCounterClockwise';
 import { ArrowSquareOutIcon as ArrowSquareOut } from '@phosphor-icons/react/dist/csr/ArrowSquareOut';
@@ -332,7 +333,7 @@ export function PreviewImage(props: { url: string; name: string; zh: boolean; on
       </div>
       <div className="file-preview-checker">
         {failed ? (
-          <p role="alert">{props.zh ? '图片已损坏或无法解码。请尝试系统预览。' : 'The image could not be decoded. Try system preview.'}</p>
+          <p role="alert">{props.zh ? '图片已损坏或无法解码。请使用“打开文件”。' : 'The image could not be decoded. Use Open to view it in a system app.'}</p>
         ) : (
           <img
             src={props.url}
@@ -442,9 +443,12 @@ function FilePreviewContent(props: {
                           {source ? <Eye size={18} aria-hidden="true" /> : <FileCode size={18} aria-hidden="true" />}
                         </PreviewIconButton>
                       ) : null}
-                      <PreviewIconButton label={props.zh ? '系统预览' : 'Quick Look'} onClick={() => void action('quick-look')}>
-                        <Eye size={18} aria-hidden="true" />
-                      </PreviewIconButton>
+                      {/* Quick Look 仅有 macOS 原生入口，其他系统使用相邻的打开文件操作。 */}
+                      {isMacOSPlatform() ? (
+                        <PreviewIconButton label={props.zh ? '系统预览' : 'Quick Look'} onClick={() => void action('quick-look')}>
+                          <Eye size={18} aria-hidden="true" />
+                        </PreviewIconButton>
+                      ) : null}
                       <PreviewIconButton label={props.zh ? '打开文件' : 'Open'} onClick={() => void action('open')}>
                         <ArrowSquareOut size={18} aria-hidden="true" />
                       </PreviewIconButton>
@@ -488,12 +492,12 @@ function FilePreviewContent(props: {
             src={item.url}
             title={item.name}
             referrerPolicy="no-referrer"
-            onError={() => setError(props.zh ? 'PDF 阅读器加载失败，请使用系统预览。' : 'PDF viewer failed. Try Quick Look.')}
+            onError={() => setError(props.zh ? 'PDF 阅读器加载失败，请使用“打开文件”。' : 'PDF viewer failed. Use Open to view it in a system app.')}
           />
         ) : item.kind === 'audio' && item.url ? (
-          <audio controls preload="metadata" src={item.url} aria-label={item.name} onError={() => setError(props.zh ? '音频无法解码，请使用系统预览。' : 'Audio could not be decoded.')} />
+          <audio controls preload="metadata" src={item.url} aria-label={item.name} onError={() => setError(props.zh ? '音频无法解码，请使用“打开文件”。' : 'Audio could not be decoded. Use Open to play it in a system app.')} />
         ) : item.kind === 'video' && item.url ? (
-          <video controls preload="metadata" src={item.url} aria-label={item.name} onError={() => setError(props.zh ? '视频无法解码，请使用系统预览。' : 'Video could not be decoded.')} />
+          <video controls preload="metadata" src={item.url} aria-label={item.name} onError={() => setError(props.zh ? '视频无法解码，请使用“打开文件”。' : 'Video could not be decoded. Use Open to play it in a system app.')} />
         ) : null}
       </FileReviewContent>
     </article>

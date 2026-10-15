@@ -156,7 +156,7 @@ export function registerRuntimeSessionCommandRoutes(options: {
   readProjectAllowsShell(projectId: string): boolean;
   buildRuntimeProcessEnv(): NodeJS.ProcessEnv;
   /** 仅在创建交互终端时读取，查询和重连不触发启动命令。 */
-  readTerminalStartupCommand(): string;
+  readTerminalStartupCommand(shellCommand?: string): string;
   resolveTaskDefaultManagementStatus(projectId: string): TaskManagementStatus;
   stopPersistedOrphanRuntimeSession(sessionId: string): Promise<AiRuntimeSession | null>;
   toAiRuntimeSession(record: ZeusRuntimeSessionRecord): AiRuntimeSession;
@@ -311,6 +311,8 @@ export function registerRuntimeSessionCommandRoutes(options: {
       });
       validateRuntimeStartShape(parsed.input, parsed.command.commandType);
       let prepared: RuntimeStartPreparation | undefined;
+      /** 启动脚本也必须在外部写入边界之前校验。 */
+      let startupCommand = '';
       const mutation = await application.executeExternal({
         parsed,
         destinationId: 'runtime-process-manager',
@@ -318,12 +320,12 @@ export function registerRuntimeSessionCommandRoutes(options: {
         externalOperationId: `runtime-session-start:${parsed.operationIdentity}`,
         beforeWrite: async () => {
           prepared = await prepareRuntimeStart(options, confirmations, parsed.input);
+          startupCommand = isInteractiveShellSession({ command: parsed.input.command, args: parsed.input.args ?? [] }) ? options.readTerminalStartupCommand(parsed.input.command) : '';
           if (prepared.confirmation) consumeRuntimeConfirmation(options, confirmations, prepared.confirmation);
         },
         invoke: async () => {
           if (!prepared) throw new RuntimeSessionRouteError('ZEUS_RUNTIME_SESSION_REJECTED', 'Runtime session preflight did not complete.', 409);
           /** 与进程创建共用一次性外部操作，重放启动回执不会重复发送命令。 */
-          const startupCommand = isInteractiveShellSession({ command: parsed.input.command, args: parsed.input.args ?? [] }) ? options.readTerminalStartupCommand() : '';
           const session = await options.aiRuntimeManager.startSession({
             id: parsed.operationIdentity,
             projectId: parsed.input.projectId,

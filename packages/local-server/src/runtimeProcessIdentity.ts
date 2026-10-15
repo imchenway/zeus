@@ -1,8 +1,11 @@
 import { spawnSync } from 'node:child_process';
+import { inspectWindowsRuntimeIdentity, stopWindowsRuntimeIdentity } from '@zeus/ai-runtime';
 
 export interface PersistedRuntimeProcessTarget {
   kind: 'process_group' | 'process';
   pid: number;
+  /** 仅在 Windows 原生通道核验成功后登记，禁止裸 PID 停止。 */
+  identityToken?: string;
 }
 
 export type PersistedRuntimeProcessIdentityState = 'verified' | 'mismatch' | 'unavailable';
@@ -44,8 +47,16 @@ export function resolvePersistedRuntimeProcessTarget(pid: number): PersistedRunt
 
 export function inspectPersistedRuntimeProcessIdentity(target: PersistedRuntimeProcessTarget, token: string | null): PersistedRuntimeProcessIdentityState {
   if (!token || !persistedRuntimeProcessIdentityTokenPattern.test(token)) return 'unavailable';
-  // Windows 无法通过当前标准库可靠读取其他进程的出生身份；跨重启停止必须 fail-closed，不能只凭可复用 PID 发信号。
-  if (target.kind !== 'process_group' || process.platform === 'win32') return 'unavailable';
+  if (process.platform === 'win32') {
+    /** 内核命名管道身份、真实映像与出生时间由原生组件统一核对。 */
+    const identity = inspectWindowsRuntimeIdentity(token, target.pid);
+    if (identity.state === 'verified') {
+      target.identityToken = token;
+      return 'verified';
+    }
+    return identity.state === 'mismatch' ? 'mismatch' : 'unavailable';
+  }
+  if (target.kind !== 'process_group') return 'unavailable';
   const processList = spawnSync('/bin/ps', ['-axo', 'pid=,pgid='], {
     encoding: 'utf8',
     timeout: 2_000,
@@ -73,9 +84,15 @@ export function inspectPersistedRuntimeProcessIdentity(target: PersistedRuntimeP
 }
 
 export function discoverPersistedRuntimeProcessTargetByIdentity(token: string | null): PersistedRuntimeProcessDiscovery {
-  if (!token || !persistedRuntimeProcessIdentityTokenPattern.test(token) || process.platform === 'win32' || typeof process.getuid !== 'function') {
+  if (!token || !persistedRuntimeProcessIdentityTokenPattern.test(token)) {
     return { state: 'unavailable', target: null };
   }
+  if (process.platform === 'win32') {
+    const identity = inspectWindowsRuntimeIdentity(token);
+    if (identity.state === 'verified' && identity.identity) return { state: 'found', target: { kind: 'process', pid: identity.identity.pid, identityToken: token } };
+    return { state: identity.state === 'not_found' ? 'not_found' : 'unavailable', target: null };
+  }
+  if (typeof process.getuid !== 'function') return { state: 'unavailable', target: null };
   // 只在异常的 token 已落盘但 PID 缺失窗口执行一次同用户扫描；正常启动和常规恢复不会走这条较重路径。
   const processList = spawnSync('/bin/ps', ['eww', '-U', String(process.getuid()), '-o', 'pid=,pgid=,command='], {
     encoding: 'utf8',
@@ -107,6 +124,11 @@ export function assertPersistedRuntimeProcessIdentity(target: PersistedRuntimePr
 }
 
 export function signalPersistedRuntimeProcessTarget(target: PersistedRuntimeProcessTarget, signal: NodeJS.Signals): void {
+  if (process.platform === 'win32') {
+    if (!target.identityToken) throw new Error('Windows Runtime 进程尚未核验身份，未停止任何进程。');
+    stopWindowsRuntimeIdentity(target.identityToken, target.pid);
+    return;
+  }
   const signalTarget = target.kind === 'process_group' ? -target.pid : target.pid;
   try {
     process.kill(signalTarget, signal);

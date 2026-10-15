@@ -1,5 +1,6 @@
 import type { AiCliAdapterDescriptor, AiCliAdapterStatus, AiRuntimeLogEntry, AiRuntimeSession, AiRuntimeTerminalReplayOperation, AiRuntimeTerminalSnapshot } from '@zeus/ai-runtime';
-import { isAbsolute, resolve } from 'node:path';
+import type { CommandShell } from '@zeus/shared';
+import { isAbsolute, relative, resolve } from 'node:path';
 import type { RuntimeLogStream, RuntimeSessionRepository, TerminalEventRepository, ZeusRuntimeLogRecord, ZeusRuntimeSessionRecord, ZeusTerminalEventRecord } from '@zeus/storage';
 
 export type RuntimeAutoConfirmationPolicy = 'never' | 'low_risk_only';
@@ -12,6 +13,8 @@ export interface RuntimeSettingsSnapshot {
   terminalEnv: Record<string, string>;
   /** 每个新交互终端输入一次，空字符串表示不执行。 */
   terminalStartupCommand: string;
+  /** 启动脚本的解释器类别，跨平台导入不能静默转换。 */
+  terminalStartupShell?: CommandShell;
   shell: {
     path: string | null;
     login: boolean;
@@ -64,7 +67,9 @@ export interface CodexRuntimeUpdateStatus {
 /** 只认探针解析出的绝对程序路径；目录名称相似或用户全局安装都不属于 Zeus。 */
 export function isManagedCodexStandalone(commandPath: string | null | undefined, codexHome: string | undefined): codexHome is string {
   if (!commandPath || !isAbsolute(commandPath) || !codexHome || !isAbsolute(codexHome)) return false;
-  return resolve(commandPath).startsWith(`${resolve(codexHome, 'packages', 'standalone')}/`);
+  /** path.relative 同时遵守 Windows 盘符与路径分隔符，不能用斜杠字符串前缀认领。 */
+  const child = relative(resolve(codexHome, 'packages', 'standalone'), resolve(commandPath));
+  return Boolean(child) && !isAbsolute(child) && child !== '..' && !child.startsWith('../') && !child.startsWith('..\\');
 }
 
 /** 安装前重验归属和用户确认的版本，禁止空请求触发更新或把新发布的版本偷偷替换进去。 */

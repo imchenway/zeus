@@ -1,0 +1,707 @@
+diff --git a/crates/cua-driver/src/private_worker.rs b/crates/cua-driver/src/private_worker.rs
+--- a/crates/cua-driver/src/private_worker.rs
++++ b/crates/cua-driver/src/private_worker.rs
+@@ -249,6 +249,11 @@
+             let arguments = request
+                 .arguments
+                 .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
++            #[cfg(target_os = "windows")]
++            let background_guard = match platform_windows::zeus_background::before(name, &arguments, request.session_handle.as_deref().unwrap_or("")) {
++                Ok(guard) => guard,
++                Err(error) => return ChannelResponse::error(request_id, generation, "input_not_started", error, ActionCompletion::NotStarted),
++            };
+             #[cfg(target_os = "macos")]
+             platform_macos::input::user_guard::begin_operation();
+             #[cfg(target_os = "macos")]
+@@ -332,6 +337,10 @@
+                         );
+                     }
+                 }
++            }
++            #[cfg(target_os = "windows")]
++            if let Some(guard) = background_guard.as_ref() {
++                if let Err(error) = guard.finish() { return ChannelResponse::error(request_id, generation, "input_interrupted", error, ActionCompletion::Unknown); }
+             }
+             invocation
+                 .map_err(|error| error.to_string())
+@@ -366,6 +375,8 @@
+                     ActionCompletion::NotStarted,
+                 );
+             };
++            #[cfg(target_os = "windows")]
++            platform_windows::zeus_background::close_session(handle);
+             if let Some(session) = sessions.remove(handle) {
+                 session.close();
+             }
+diff --git a/crates/platform-windows/src/input/inject.rs b/crates/platform-windows/src/input/inject.rs
+--- a/crates/platform-windows/src/input/inject.rs
++++ b/crates/platform-windows/src/input/inject.rs
+@@ -114,44 +114,18 @@
+ /// `bring_to_front` tool). Single attach, no retry loop — bounded. Returns
+ /// whether `target` actually became foreground.
+ pub(crate) unsafe fn force_foreground_attached(target: HWND) -> bool {
+-    let cur = GetForegroundWindow();
+-    if cur == target {
+-        return true;
+-    }
+-    let my_tid = GetCurrentThreadId();
+-    let mut pid = 0u32;
+-    let cur_tid = GetWindowThreadProcessId(cur, Some(&mut pid));
+-    let attached = cur_tid != 0 && cur_tid != my_tid;
+-    if attached {
+-        let _ = AttachThreadInput(my_tid, cur_tid, true);
+-    }
+-    let _ = SetForegroundWindow(target);
+-    if attached {
+-        let _ = AttachThreadInput(my_tid, cur_tid, false);
+-    }
+-    GetForegroundWindow() == target
++    // Zeus 不使用显式前台抢占或恢复；保留签名供上游安全拒绝路径复用。
++    let _ = target;
++    false
+ }
+ 
+ /// Retry an explicit visible foreground transition after a reserved no-name
+ /// key grants this process the most-recent-input token. The key has no
+ /// application meaning; the retry count keeps the transition bounded.
+ pub(crate) unsafe fn force_foreground_assisted(target: HWND) -> (bool, bool) {
+-    if unsafe { force_foreground_attached(target) } {
+-        return (true, false);
+-    }
+-
+-    const VK_NONAME: u8 = 0xFC;
+-    unsafe {
+-        keybd_event(VK_NONAME, 0, KEYBD_EVENT_FLAGS(0), 0);
+-        keybd_event(VK_NONAME, 0, KEYEVENTF_KEYUP, 0);
+-    }
+-    for _ in 0..3 {
+-        if unsafe { force_foreground_attached(target) } {
+-            return (true, true);
+-        }
+-        sleep(Duration::from_millis(25));
+-    }
+-    (false, true)
++    // Zeus 不使用显式前台抢占或恢复；保留签名供上游安全拒绝路径复用。
++    let _ = target;
++    (false, false)
+ }
+ 
+ /// RAII guard that makes a specific target window **unable to become the
+@@ -311,6 +285,8 @@
+     count: usize,
+     button: &str,
+ ) -> Result<()> {
++    // Zeus 的私有 worker 不允许实体输入或先抢焦点后恢复。
++    crate::zeus_background::reject_physical_input()?;
+     if target == 0 {
+         bail!("inject_click_screen: null target window");
+     }
+@@ -703,6 +679,8 @@
+     steps: usize,
+     button: &str,
+ ) -> Result<()> {
++    // Zeus 的私有 worker 不允许实体输入或先抢焦点后恢复。
++    crate::zeus_background::reject_physical_input()?;
+     if target == 0 {
+         bail!("inject_drag_screen: null target window");
+     }
+diff --git a/crates/platform-windows/src/input/keyboard.rs b/crates/platform-windows/src/input/keyboard.rs
+--- a/crates/platform-windows/src/input/keyboard.rs
++++ b/crates/platform-windows/src/input/keyboard.rs
+@@ -222,6 +222,7 @@
+ 
+ /// Post a Unicode character as WM_CHAR.
+ pub fn post_char(hwnd: u64, ch: char) -> Result<()> {
++    crate::zeus_background::check_window(hwnd)?;
+     if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
+         anyhow::bail!(msg);
+     }
+@@ -298,6 +299,7 @@
+ 
+     let mut prev_was_cr = false;
+     for ch in text.chars() {
++        crate::zeus_background::check_window(hwnd)?;
+         match ch {
+             // `\r\n` (Windows-style line ending) → single Enter. The `\r`
+             // does the Enter; the following `\n` is consumed silently.
+@@ -332,6 +334,7 @@
+ 
+ /// Press a named key (and optional modifiers) via WM_KEYDOWN/WM_KEYUP.
+ pub fn post_key(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
++    crate::zeus_background::check_window(hwnd)?;
+     if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
+         anyhow::bail!(msg);
+     }
+@@ -525,6 +528,7 @@
+     let mut events: Vec<INPUT> = Vec::with_capacity(text.len() * 2);
+     let mut prev_was_cr = false;
+     for ch in text.chars() {
++        crate::zeus_background::check_window(hwnd)?;
+         match ch {
+             '\n' if prev_was_cr => {
+                 prev_was_cr = false;
+@@ -589,6 +593,8 @@
+     focus: impl FnOnce() -> Result<()>,
+     body: impl FnOnce() -> Result<T>,
+ ) -> Result<T> {
++    // Zeus 的私有 worker 不允许实体输入或先抢焦点后恢复。
++    crate::zeus_background::reject_physical_input()?;
+     let previous = unsafe { GetForegroundWindow() };
+     let _ = unsafe { crate::input::force_foreground_assisted(target) };
+     if !wait_for_exact_foreground(target, Duration::from_millis(500)) {
+diff --git a/crates/platform-windows/src/input/mouse.rs b/crates/platform-windows/src/input/mouse.rs
+--- a/crates/platform-windows/src/input/mouse.rs
++++ b/crates/platform-windows/src/input/mouse.rs
+@@ -138,6 +138,7 @@
+     // categorically non-activatable until the complete burst has settled.
+     let _noact = crate::input::NoActivateGuard::arm(hwnd);
+     for i in 0..count {
++        crate::zeus_background::check_window(target_root.0 as u64)?;
+         let press_msg = posted_press_message(down_msg, double_msg, i, wants_double);
+         unsafe {
+             // WM_MOUSEMOVE first so hover state is correct before the click.
+@@ -475,6 +476,8 @@
+     modifiers: &[&str],
+     activate: bool,
+ ) -> Result<()> {
++    // Zeus 的私有 worker 不允许实体输入或先抢焦点后恢复。
++    crate::zeus_background::reject_physical_input()?;
+     let target = HWND(target as *mut _);
+     if target.0.is_null() {
+         bail!("invalid target hwnd");
+@@ -742,6 +745,8 @@
+     steps: usize,
+     button: &str,
+ ) -> Result<()> {
++    // Zeus 的私有 worker 不允许实体输入或先抢焦点后恢复。
++    crate::zeus_background::reject_physical_input()?;
+     let target = HWND(target as *mut _);
+     if target.0.is_null() {
+         bail!("invalid target hwnd");
+@@ -935,6 +940,8 @@
+ /// delivery follows the cursor, so positioning the cursor is sufficient. The
+ /// cursor is restored to its previous position afterward.
+ pub fn send_wheel_synthesized(sx: i32, sy: i32, ticks: i32, horizontal: bool) -> Result<()> {
++    // Zeus 的私有 worker 不允许实体输入或先抢焦点后恢复。
++    crate::zeus_background::reject_physical_input()?;
+     let flag = if horizontal {
+         MOUSEEVENTF_HWHEEL
+     } else {
+@@ -990,6 +997,8 @@
+ 
+ /// Move the real OS pointer to a desktop coordinate.
+ pub fn move_cursor_desktop(x: i32, y: i32) -> Result<()> {
++    // Zeus 的私有 worker 不允许实体输入或先抢焦点后恢复。
++    crate::zeus_background::reject_physical_input()?;
+     unsafe { SetCursorPos(x, y) }
+         .map_err(|error| anyhow::anyhow!("SetCursorPos({x}, {y}) failed: {error}"))
+ }
+diff --git a/crates/platform-windows/src/lib.rs b/crates/platform-windows/src/lib.rs
+--- a/crates/platform-windows/src/lib.rs
++++ b/crates/platform-windows/src/lib.rs
+@@ -17,6 +17,9 @@
+ //! for that work.
+ 
+ use cua_driver_core::tool::ToolRegistry;
++
++#[cfg(target_os = "windows")]
++pub mod zeus_background;
+ 
+ pub mod diagnostics;
+ pub mod health_report;
+diff --git a/crates/platform-windows/src/zeus_background.rs b/crates/platform-windows/src/zeus_background.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/platform-windows/src/zeus_background.rs
+@@ -0,0 +1,186 @@
++//! Zeus 私有 Windows worker 的后台输入边界；不产生实体输入，也不恢复或抢占用户焦点。
++use serde_json::{json, Value};
++use std::{collections::HashMap, sync::{atomic::{AtomicBool, Ordering}, mpsc::{sync_channel, SyncSender}, Mutex, OnceLock}, time::{Duration, Instant}};
++use windows::Win32::{Foundation::{CloseHandle, FILETIME, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM}, System::{LibraryLoader::GetModuleHandleW, Threading::{GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION}}, UI::{WindowsAndMessaging::*}};
++
++/// 每个窗口只保存观察身份和暂停状态，不保存任何键盘内容。
++struct Observation {
++    /// 此次绑定的私有会话句柄。
++    session: String,
++    /// HWND 所属进程。
++    pid: u32,
++    /// 来自真实进程句柄的出生时间，避免 PID 与 HWND 复用。
++    birth: u64,
++    /// 用户接管后必须由新会话重新观察。
++    paused: bool,
++}
++/// 窗口记录由输入监听线程和工具执行线程共同访问。
++static OBSERVATIONS: OnceLock<Mutex<HashMap<usize, Observation>>> = OnceLock::new();
++/// 两个只读低级输入监听实际安装成功后才开放后台输入。
++static READY: AtomicBool = AtomicBool::new(false);
++/// 只安装一次输入监听，不创建任何输入注入线程。
++static INITIALIZED: OnceLock<()> = OnceLock::new();
++/// 有界通知队列避免低级输入监听阻塞在 stderr 写入。
++static EVENTS: OnceLock<SyncSender<u32>> = OnceLock::new();
++
++/// 取得受控窗口表。
++fn observations() -> &'static Mutex<HashMap<usize, Observation>> { OBSERVATIONS.get_or_init(|| Mutex::new(HashMap::new())) }
++/// 读取窗口当前的真实进程身份。
++fn identity(hwnd: HWND) -> Result<(u32, u64), String> {
++    unsafe {
++        let mut pid = 0;
++        GetWindowThreadProcessId(hwnd, Some(&mut pid));
++        if pid == 0 { return Err("window_target_not_found: 窗口已经关闭。".into()); }
++        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).map_err(|_| "background_uipi_blocked: 无法读取目标进程身份。")?;
++        let (mut created, mut exited, mut kernel, mut user) = (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
++        let result = GetProcessTimes(process, &mut created, &mut exited, &mut kernel, &mut user);
++        let _ = CloseHandle(process);
++        result.map_err(|_| "background_unavailable: 无法验证目标进程出生时间。")?;
++        Ok((pid, ((created.dwHighDateTime as u64) << 32) | created.dwLowDateTime as u64))
++    }
++}
++/// 实体输入仅记录应用归属并通知宿主停止当前会话，不读取按键值或文本。
++fn user_input(hwnd: HWND) {
++    let mut pid = 0;
++    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)); }
++    if pid == 0 { return; }
++    let changed = if let Ok(mut records) = observations().lock() {
++        let mut changed = false;
++        for record in records.values_mut().filter(|record| record.pid == pid) { changed |= !record.paused; record.paused = true; }
++        changed
++    } else { false };
++    if changed { if let Some(events) = EVENTS.get() { let _ = events.try_send(pid); } }
++}
++/// 键盘监听不拦截、不修改输入；外部软件注入同样视为用户接管。
++unsafe extern "system" fn keyboard(code: i32, message: WPARAM, data: LPARAM) -> LRESULT {
++    if code >= 0 { user_input(GetForegroundWindow()); }
++    CallNextHookEx(None, code, message, data)
++}
++/// 只响应按下、滚轮和拖动开始，不把鼠标划过窗口视为接管。
++unsafe extern "system" fn mouse(code: i32, message: WPARAM, data: LPARAM) -> LRESULT {
++    if code >= 0 && matches!(message.0 as u32, WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN | WM_MOUSEWHEEL | WM_MOUSEHWHEEL) {
++        let event = &*(data.0 as *const MSLLHOOKSTRUCT);
++        user_input(WindowFromPoint(event.pt));
++    }
++    CallNextHookEx(None, code, message, data)
++}
++/// 回调只处理最小内存状态，消息循环始终保留在专属线程。
++fn initialize() {
++    INITIALIZED.get_or_init(|| {
++        let (sender, receiver) = sync_channel::<u32>(256);
++        let _ = EVENTS.set(sender);
++        std::thread::spawn(move || {
++            for pid in receiver {
++                if let Ok(token) = std::env::var("ZEUS_CUA_EVENT_TOKEN") {
++                    if token.len() == 64 && token.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()) {
++                        eprintln!("_ZEUS_COMPUTER_EVENT_ {}", json!({"token":token,"workerPid":std::process::id(),"pid":pid,"reason":"ZEUS_COMPUTER_USER_CONTROL","otherKeyboardEvents":0}));
++                    }
++                }
++            }
++        });
++        std::thread::spawn(|| unsafe {
++            // 模块句柄必须有效；第二个监听失败时立即撤销第一个监听。
++            let module = match GetModuleHandleW(None) { Ok(value) => HINSTANCE(value.0), Err(_) => return };
++            let Ok(keyboard_hook) = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard), module, 0) else { return; };
++            let Ok(mouse_hook) = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse), module, 0) else { let _ = UnhookWindowsHookEx(keyboard_hook); return; };
++            READY.store(true, Ordering::Release);
++            let mut message = MSG::default();
++            while GetMessageW(&mut message, None, 0, 0).0 > 0 { let _ = TranslateMessage(&message); DispatchMessageW(&message); }
++            READY.store(false, Ordering::Release);
++            let _ = UnhookWindowsHookEx(keyboard_hook);
++            let _ = UnhookWindowsHookEx(mouse_hook);
++        });
++    });
++}
++/// 物理输入、坐标合成和显式前台路径都不能成为后台失败的兜底。
++pub fn reject_physical_input() -> anyhow::Result<()> { anyhow::bail!("background_unavailable: 此控件需要实体输入或前台焦点；Zeus 未投递输入。") }
++
++/// 后台语义动作期间只保存身份与前台窗口，不改变目标可用状态。
++pub struct ActionGuard {
++    /// 不跨 await 保存原始指针。
++    hwnd: usize,
++    /// 本次操作绑定的真实目标身份。
++    identity: (u32, u64),
++    /// 原始用户前台窗口，仅用于检查，不向它发送激活请求。
++    foreground: usize,
++}
++impl ActionGuard {
++    /// 后台行为如果出现未知焦点变化，返回未知结果并让用户接管，禁止重放。
++    pub fn finish(&self) -> Result<(), String> {
++        let hwnd = HWND(self.hwnd as *mut _);
++        if identity(hwnd)? != self.identity { return Err("window_target_mismatch: 目标进程身份已变化。".into()); }
++        if observations().lock().map_err(|_| "后台控制状态不可用")?.get(&self.hwnd).is_some_and(|record| record.paused) { return Err("ZEUS_COMPUTER_USER_CONTROL: 用户已经接管，动作结果需要重新观察。".into()); }
++        if unsafe { GetForegroundWindow().0 as usize } != self.foreground { user_input(hwnd); return Err("ZEUS_COMPUTER_USER_CONTROL: 前台窗口发生变化，动作结果需要重新观察。".into()); }
++        Ok(())
++    }
++}
++/// 关闭会话即释放观察与暂停记录；新指令必须创建新会话并重新观察。
++pub fn close_session(session: &str) { if let Ok(mut records) = observations().lock() { records.retain(|_, record| record.session != session); } }
++/// 读取窗口状态与所有变更入口共享同一个原生闸门。
++pub fn before(name: &str, args: &Value, session: &str) -> Result<Option<ActionGuard>, String> {
++    let mutating = matches!(name, "click" | "double_click" | "right_click" | "drag" | "type_text" | "type_text_chars" | "press_key" | "hotkey" | "set_value" | "scroll" | "invoke_menu");
++    if !mutating && name != "get_window_state" { return Ok(None); }
++    // 锁屏或安全桌面切换后撤销旧观察，不能在不可交互的桌面继续投递。
++    let desktop = unsafe {
++        use windows::Win32::System::StationsAndDesktops::{OpenInputDesktop, CloseDesktop, DESKTOP_CONTROL_FLAGS, DESKTOP_READOBJECTS};
++        OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_READOBJECTS).and_then(|desktop| CloseDesktop(desktop))
++    };
++    if desktop.is_err() {
++        if let Ok(mut records) = observations().lock() { records.clear(); }
++        return Err("ZEUS_COMPUTER_SYSTEM_UNAVAILABLE: 当前桌面不可交互，请恢复后重新观察。".into());
++    }
++    initialize();
++    let deadline = Instant::now() + Duration::from_millis(500);
++    while !READY.load(Ordering::Acquire) && Instant::now() < deadline { std::thread::sleep(Duration::from_millis(5)); }
++    if !READY.load(Ordering::Acquire) { return Err("ZEUS_COMPUTER_INPUT_MONITOR_UNAVAILABLE: 无法监听用户接管，未投递后台输入。".into()); }
++    // 输入工具使用互斥的 target 对象；观察工具使用顶层窗口身份。
++    let target = args.get("target").filter(|target| target.get("kind").and_then(Value::as_str) == Some("window")).unwrap_or(args);
++    let pid = target.get("pid").and_then(Value::as_u64).and_then(|value| u32::try_from(value).ok()).ok_or("后台操作必须指定精确 PID。")?;
++    let window = target.get("window_id").and_then(Value::as_u64).filter(|value| *value > 0 && *value <= usize::MAX as u64).ok_or("后台操作必须指定精确窗口。")? as usize;
++    let hwnd = HWND(window as *mut _);
++    let actual = identity(hwnd)?;
++    if actual.0 != pid { return Err("window_target_mismatch: 窗口不属于指定进程。".into()); }
++    if name == "get_window_state" {
++        let mut records = observations().lock().map_err(|_| "后台观察状态不可用")?;
++        if records.get(&window).is_some_and(|record| record.session == session && record.pid == pid && record.birth == actual.1 && record.paused) { return Err("ZEUS_COMPUTER_USER_CONTROL: 用户已接管，请在新指令中重新观察。".into()); }
++        records.insert(window, Observation { session: session.into(), pid, birth: actual.1, paused: false });
++        return Ok(None);
++    }
++    {
++        let records = observations().lock().map_err(|_| "后台观察状态不可用")?;
++        let record = records.get(&window).ok_or("先观察此窗口，再执行后台操作。")?;
++        if record.session != session || record.pid != pid || record.birth != actual.1 { return Err("window_target_mismatch: 观察身份已经过期。".into()); }
++        if record.paused { return Err("ZEUS_COMPUTER_USER_CONTROL: 用户已接管，未投递后台输入。".into()); }
++    }
++    if args.get("delivery_mode").and_then(Value::as_str).is_some_and(|value| value != "background") || args.get("scope").and_then(Value::as_str) == Some("desktop") { return Err("background_unavailable: Zeus 只允许后台窗口操作。".into()); }
++    let foreground = unsafe { GetForegroundWindow() };
++    // 接管归属按应用判断，前台同一进程的其他窗口也属于用户。
++    let mut foreground_pid = 0;
++    unsafe { GetWindowThreadProcessId(foreground, Some(&mut foreground_pid)); }
++    if foreground_pid == pid { return Err("ZEUS_COMPUTER_USER_CONTROL: 目标应用正由用户前台使用，未投递后台输入。".into()); }
++    // 官方源码明确这些宿主会自行抢焦点；不得临时禁用用户窗口绕过该行为。
++    let mut class = [0u16; 256];
++    let length = unsafe { GetClassNameW(hwnd, &mut class) };
++    if length <= 0 { return Err("background_unavailable: 无法确认窗口的后台能力。".into()); }
++    let class = String::from_utf16_lossy(&class[..length as usize]);
++    if class.starts_with("Chrome_WidgetWin_") || class.starts_with("CefBrowser") || class.starts_with("HwndWrapper[") || matches!(class.as_str(), "ApplicationFrameWindow" | "Windows.UI.Core.CoreWindow" | "WinUIDesktopWin32WindowClass") {
++        return Err("background_unavailable: 此宿主的原生动作会请求前台焦点；请使用已授权浏览器界面或原生后台接口。".into());
++    }
++    // 其他控件继续使用官方后台能力矩阵，实体输入入口已单独封闭。
++    let guard = ActionGuard { hwnd: window, identity: actual, foreground: foreground.0 as usize };
++    Ok(Some(guard))
++}
++
++/// 长文本和分步动作在每次投递前重新确认用户未接管，不重放已发送输入。
++pub fn check_window(window: u64) -> anyhow::Result<()> {
++    let hwnd = HWND(window as *mut _);
++    let root = unsafe { GetAncestor(hwnd, GA_ROOT) };
++    let root = if root.0.is_null() { hwnd } else { root };
++    let actual = identity(root).map_err(anyhow::Error::msg)?;
++    let records = observations().lock().map_err(|_| anyhow::anyhow!("后台观察状态不可用"))?;
++    let record = records.get(&(root.0 as usize)).ok_or_else(|| anyhow::anyhow!("window_target_mismatch: 目标观察已经失效。"))?;
++    if record.paused || record.pid != actual.0 || record.birth != actual.1 || unsafe { GetForegroundWindow() } == root {
++        anyhow::bail!("ZEUS_COMPUTER_USER_CONTROL: 用户已接管，后续输入未投递。");
++    }
++    Ok(())
++}
+diff --git a/crates/platform-windows/src/uia/fg_bypass.rs b/crates/platform-windows/src/uia/fg_bypass.rs
+--- a/crates/platform-windows/src/uia/fg_bypass.rs
++++ b/crates/platform-windows/src/uia/fg_bypass.rs
+@@ -1,129 +1,6 @@
+-//! Foreground-steal bypass for UWP / XAML / WinUI UIA activation calls.
+-//!
+-//! UWP/XAML/WinUI apps self-foreground during UIA `InvokePattern.Invoke`
+-//! (and `ExpandCollapse.Expand`, `Toggle.Toggle`, `SelectionItem.Select` —
+-//! anything the XAML message-loop processes as an input-like event). The
+-//! XAML host unconditionally calls `SetForegroundWindow(self)` when handling
+-//! those, stealing focus from whatever the user had on top.
+-//!
+-//! Wrapping the call in `EnableWindow(host, FALSE) / call / EnableWindow(host, TRUE)`
+-//! silently suppresses the self-activation while letting the UIA pattern call
+-//! still execute — UIA pattern delivery uses the kernel accessibility channel,
+-//! not the input queue gated by `EnableWindow`.
+-//!
+-//! Empirical evidence (`flash-repro/14-multi-uwp-v3.ps1`, 2026-05-24):
+-//!   - Baseline UIA Invoke against UWP Calculator num5 button: user's
+-//!     foreground window dropped below the target in 91% of poller samples.
+-//!   - With this bypass: 0/507 z-drops across Calculator, Clock, Settings.
+-//!
+-//! Chromium / Electron hosts (`Chrome_WidgetWin_*`) exhibit the identical
+-//! self-foreground during UIA `Invoke` and are covered by the same shield (the
+-//! gate also accepts `is_chromium_target_window`). On Windows their content
+-//! window calls `SetForegroundWindow(self)` from the Invoke handler — measured
+-//! 7/8 background ax-bg actions stole focus before this; the `EnableWindow`
+-//! shield blocks it because a disabled top-level cannot become foreground while
+-//! the Invoke still lands over the a11y channel.
+-//!
+-//! Non-UWP / non-Chromium classic Win32 apps don't exhibit the bug
+-//! (`flash-repro/15-non-uwp.ps1`, Notepad: 0/45 baseline z-drops). The bypass
+-//! is therefore gated on `is_xaml_host_hwnd || is_chromium_target_window` and is
+-//! a no-op for other hosts.
++//! Zeus 不允许通过临时禁用用户窗口阻止应用激活；不安全宿主在私有入口提前拒绝。
+ 
+-use windows::Win32::Foundation::HWND;
+-use windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
+-use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GA_ROOT};
+-
+-/// RAII guard that disables a window on construction and restores its
+-/// previous enabled-state on Drop. Always re-arms on Drop even if the
+-/// wrapped action panics.
+-pub struct DisabledHwndGuard {
+-    hwnd: HWND,
+-    was_enabled: bool,
+-    armed: bool,
+-}
+-
+-impl DisabledHwndGuard {
+-    /// Disable `hwnd` for the lifetime of the guard. No-op for null HWND.
+-    pub fn disable(hwnd: HWND) -> Self {
+-        if hwnd.0.is_null() {
+-            return Self {
+-                hwnd,
+-                was_enabled: false,
+-                armed: false,
+-            };
+-        }
+-        // `EnableWindow` returns nonzero iff the window was *previously
+-        // disabled* — invert to get the "was enabled" state we want to
+-        // restore at Drop time.
+-        let was_disabled = unsafe { EnableWindow(hwnd, false).as_bool() };
+-        Self {
+-            hwnd,
+-            was_enabled: !was_disabled,
+-            armed: true,
+-        }
+-    }
+-}
+-
+-impl Drop for DisabledHwndGuard {
+-    fn drop(&mut self) {
+-        if self.armed {
+-            unsafe {
+-                let _ = EnableWindow(self.hwnd, self.was_enabled);
+-            }
+-        }
+-    }
+-}
+-
+-/// Wrap an activation closure (Invoke / Expand / Toggle / SelectionItem.Select)
+-/// in a UWP foreground-steal bypass.
+-///
+-/// `host_hwnd` is the top-level HWND of the window that contains the target
+-/// UIA element. When it identifies as an XAML host (`is_xaml_host_hwnd`), the
+-/// HWND is disabled for the duration of `action`. For non-XAML / classic
+-/// Win32 hosts the closure runs unmodified — empirically those don't
+-/// self-foreground via the input-queue path that EnableWindow gates.
+-///
+-/// **Known limitation, WPF Buttons / TextBoxes:** WPF's automation peers
+-/// call `UIElement.Focus()` synchronously during the UIA Invoke /
+-/// ValuePattern.SetValue handler. `Focus()` routes through
+-/// `SetForegroundWindow`, which is NOT gated by EnableWindow. The bypass
+-/// has no effect there, and the daemon WILL transiently steal foreground
+-/// from the user. Restoring foreground from a non-UIAccess process is
+-/// blocked by the foreground-lock, so the only mitigation is to spawn
+-/// cua-driver-uia.exe (UIAccess-manifested worker) and route UIA
+-/// activations through it. See PR #1699 bg-modality tests for the
+-/// regression guards.
+-pub fn run_with_uwp_bypass<T>(host_hwnd: isize, action: impl FnOnce() -> T) -> T {
+-    let _guard = make_guard(host_hwnd);
++/// 保留官方语义调用接口；私有入口已验证后台路由，不改变目标窗口状态。
++pub fn run_with_uwp_bypass<T>(_host_hwnd: isize, action: impl FnOnce() -> T) -> T {
+     action()
+ }
+-
+-fn make_guard(host_hwnd: isize) -> Option<DisabledHwndGuard> {
+-    if host_hwnd == 0 {
+-        return None;
+-    }
+-    // XAML/UWP/WinUI hosts self-foreground during UIA pattern handling (the
+-    // original case). Chromium/Electron hosts (`Chrome_WidgetWin_*`) exhibit the
+-    // SAME bug: their UIA `InvokePattern.Invoke` handler reaches the browser's
+-    // focus path and calls `SetForegroundWindow(self)`, stealing focus from the
+-    // user's window on a *background* click (measured 7/8 ax-bg actions stole on
+-    // Windows — Chromium-specific; macOS WKWebView / Linux Electron hold).
+-    // `WS_EX_NOACTIVATE` (the injection path's `NoActivateGuard`) does NOT stop
+-    // an explicit self-`SetForegroundWindow`, but the `EnableWindow` shield does:
+-    // a *disabled* top-level cannot be made the foreground window, while the UIA
+-    // Invoke still lands (it's delivered over the kernel accessibility channel,
+-    // not the input queue `EnableWindow` gates). Same mechanism, same 0-z-drop
+-    // result as UWP — so gate the shield on Chromium too.
+-    let shielded = crate::input::is_xaml_host_hwnd(host_hwnd as u64)
+-        || crate::input::is_chromium_target_window(host_hwnd as u64);
+-    if !shielded {
+-        return None;
+-    }
+-    let h = HWND(host_hwnd as *mut _);
+-    // Defensive: walk up to the root in case the caller handed us a child
+-    // HWND inside the XAML host's HWND tree. UWP elements always disable
+-    // cleanly via the AppFrame root.
+-    let root = unsafe { GetAncestor(h, GA_ROOT) };
+-    let target = if root.0.is_null() { h } else { root };
+-    Some(DisabledHwndGuard::disable(target))
+-}
+diff --git a/crates/platform-windows/src/capture.rs b/crates/platform-windows/src/capture.rs
+--- a/crates/platform-windows/src/capture.rs
++++ b/crates/platform-windows/src/capture.rs
+@@ -229,85 +229,9 @@
+     covered_samples >= 2
+ }
+ 
+-/// Fallback capture path: BitBlt the desktop DC over the rectangle covered
+-/// by `hwnd`'s on-screen bounds. Works for UWP / WinUI3 / DirectComposition
+-/// surfaces that PrintWindow can't reach, as long as the window is on-screen
+-/// (the daemon's typical case — see module docs).
+-unsafe fn screenshot_via_screen_region(hwnd: HWND) -> Result<(Vec<u8>, i32, i32, FrameGeometry)> {
+-    use windows::Win32::Foundation::RECT;
+-    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+-
+-    let mut rect = RECT::default();
+-    GetWindowRect(hwnd, &mut rect)?;
+-
+-    // Under Per-Monitor V2 DPI awareness, GetWindowRect already returns
+-    // PHYSICAL pixels (coordinate virtualization only applies to
+-    // DPI-unaware/system-aware processes), and BitBlt operates in physical
+-    // pixels too — use the rect as-is. Scaling by DPI/96 here would shift
+-    // and oversize the captured screen region (issue #1879).
+-    let physical_left = rect.left;
+-    let physical_top = rect.top;
+-
+-    let geometry = FrameGeometry::from_bounds((rect.left, rect.top, rect.right, rect.bottom))
+-        .ok_or_else(|| anyhow::anyhow!("screen-region fallback: invalid window bounds"))?;
+-    let w = geometry.width;
+-    let h = geometry.height;
+-
+-    let screen_dc = GetDC(HWND(std::ptr::null_mut())); // NULL HWND → desktop DC
+-    let mem_dc = CreateCompatibleDC(screen_dc);
+-    let bitmap = CreateCompatibleBitmap(screen_dc, w, h);
+-    let old_bitmap = SelectObject(mem_dc, bitmap);
+-
+-    // Copy from physical screen coords into our memory DC at (0, 0).
+-    let blt_ok = BitBlt(
+-        mem_dc,
+-        0,
+-        0,
+-        w,
+-        h,
+-        screen_dc,
+-        physical_left,
+-        physical_top,
+-        SRCCOPY,
+-    );
+-
+-    let mut bmi = BITMAPINFO {
+-        bmiHeader: BITMAPINFOHEADER {
+-            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+-            biWidth: w,
+-            biHeight: -h, // top-down
+-            biPlanes: 1,
+-            biBitCount: 32,
+-            biCompression: BI_RGB.0,
+-            biSizeImage: (w * h * 4) as u32,
+-            ..Default::default()
+-        },
+-        bmiColors: [RGBQUAD::default(); 1],
+-    };
+-    let pixel_count = (w * h) as usize;
+-    let mut pixels = vec![0u8; pixel_count * 4];
+-    let ok = GetDIBits(
+-        mem_dc,
+-        bitmap,
+-        0,
+-        h as u32,
+-        Some(pixels.as_mut_ptr() as *mut _),
+-        &mut bmi,
+-        DIB_RGB_COLORS,
+-    );
+-
+-    SelectObject(mem_dc, old_bitmap);
+-    let _ = DeleteObject(bitmap);
+-    let _ = DeleteDC(mem_dc);
+-    ReleaseDC(HWND(std::ptr::null_mut()), screen_dc);
+-
+-    if blt_ok.is_err() {
+-        bail!("screen-region fallback: BitBlt failed: {:?}", blt_ok);
+-    }
+-    if ok == 0 {
+-        bail!("screen-region fallback: GetDIBits returned 0");
+-    }
+-    Ok((pixels, w, h, geometry))
++/// 桌面裁剪可能返回遮挡应用的像素；私有后台后端只允许目标窗口自身的采集路线。
++unsafe fn screenshot_via_screen_region(_hwnd: HWND) -> Result<(Vec<u8>, i32, i32, FrameGeometry)> {
++    bail!("ZEUS_COMPUTER_CAPTURE_UNAVAILABLE: 无法采集目标窗口；未读取桌面或遮挡窗口，请重新观察。")
+ }
+ 
+ /// Capture a window by HWND, returning raw PNG bytes.
+@@ -443,41 +367,9 @@
+     // windows WGC may fail; fall back to the screen-region BitBlt
+     // path, then to PrintWindow as a last resort.
+     if crate::input::is_xaml_host_hwnd(hwnd_raw) {
+-        match crate::wgc::screenshot_window_via_wgc(hwnd_raw) {
+-            Ok((pixels, w, h)) => {
+-                return Ok((
+-                    cua_driver_core::image_utils::encode_bgra_to_png(&pixels, w, h)?,
+-                    false, // WGC reads target's own pixels — never occluded by definition
+-                    None,
+-                ));
+-            }
+-            Err(e) => {
+-                tracing::warn!(
+-                    target: "cua-driver",
+-                    "screenshot: WGC failed for XAML target hwnd 0x{hwnd_raw:x}: {e}; \
+-                     falling back to screen-region BitBlt (may be occluded)."
+-                );
+-            }
+-        }
+-        let occluded = target_is_obscured(hwnd);
+-        match screenshot_via_screen_region(hwnd) {
+-            Ok((pixels, w, h, geometry)) => {
+-                return Ok((
+-                    cua_driver_core::image_utils::encode_bgra_to_png(&pixels, w as u32, h as u32)?,
+-                    occluded,
+-                    Some(geometry),
+-                ));
+-            }
+-            Err(e) => {
+-                // Screen-region failed — fall through and try PrintWindow as a
+-                // last resort so the caller at least gets *something*.
+-                tracing::warn!(
+-                    target: "cua-driver",
+-                    "screenshot: XAML target screen-region path failed: {e}; \
+-                     falling back to PrintWindow (likely all-black)."
+-                );
+-            }
+-        }
++        // 合成窗口只能使用其自身的 WGC 画面，不能以屏幕裁剪或空白位图替代。
++        let (pixels, width, height) = crate::wgc::screenshot_window_via_wgc(hwnd_raw)?;
++        return Ok((cua_driver_core::image_utils::encode_bgra_to_png(&pixels, width, height)?, false, None));
+     }
+ 
+     // Size the capture buffer to the WHOLE window (GetWindowRect), not
+@@ -513,7 +405,12 @@
+ 
+     let pw_ok = PrintWindow(hwnd, mem_dc, PW_RENDERFULLCONTENT);
+     if !pw_ok.as_bool() {
+-        BitBlt(mem_dc, 0, 0, w, h, screen_dc, 0, 0, SRCCOPY)?;
++        // GetWindowDC 的 BitBlt 同样可能复制可见遮挡内容；释放资源后由外层尝试 WGC。
++        SelectObject(mem_dc, old_bitmap);
++        let _ = DeleteObject(bitmap);
++        let _ = DeleteDC(mem_dc);
++        ReleaseDC(hwnd, screen_dc);
++        bail!("ZEUS_COMPUTER_CAPTURE_UNAVAILABLE: PrintWindow 未提供目标窗口画面。")
+     }
+ 
+     // Compute the DWM-extended-frame bounds. On Win10+ the OS draws an
+@@ -648,15 +545,8 @@
+                 ));
+             }
+             Err(e) => {
+-                // Screen-region path failed too — return the (black) PrintWindow
+-                // result with an explanatory log rather than erroring outright.
+-                // Caller still gets an image; the fact that it's black is now
+-                // visible in the bytes themselves.
+-                tracing::warn!(
+-                    target: "cua-driver",
+-                    "screenshot: PrintWindow returned a mostly-black bitmap (UWP / \
+-                     DirectComposition target?); screen-region fallback failed: {e}"
+-                );
++                // 无法证明黑色位图是当前画面，保持采集失败，不生成看似有效的截图。
++                return Err(e);
+             }
+         }
+     }

@@ -62,6 +62,41 @@ export function createReconnectableBrowserAutomationProxy(): ReconnectableBrowse
 
   return {
     register,
+    /** Windows daemon 必须在 Core Job 外启动；Main 只接纳固定的受管 Codex。 */
+    async ensureCodexRemoteControl() {
+      /** 一次请求只绑定当前 Main 租约，失败后不跨实例重放。 */
+      const current = registration;
+      if (!current) throw new Error('Zeus 界面离线，无法准备 Codex 远程接管守护进程。');
+      /** 请求不带命令、路径或环境，程序身份由 Main 自身配置决定。 */
+      const response = await fetch(`${current.baseUrl}/applications/codex/remote-control`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${current.token}`, 'content-type': 'application/json' },
+        body: '{}',
+        signal: AbortSignal.timeout(50_000),
+      });
+      /** 官方 CLI 返回的 socket 用于连接，不把 bootstrap 退出当作会话成功。 */
+      const result: unknown = await response.json();
+      if (!response.ok || !isRecord(result) || !isNonEmptyString(result.socketPath)) throw new Error(isRecord(result) && typeof result.message === 'string' ? result.message : 'Codex 守护进程启动结果无法确认，请检查后手动重试。');
+      return { socketPath: result.socketPath };
+    },
+    /** 只调用当前租约一次；连接中断不能向新 Main 重放应用启动。 */
+    async ensureWechatApplication(input) {
+      /** 请求始终绑定发起时的 Main，不能因界面重连换目标。 */
+      const current = registration;
+      if (!current) throw new Error('Zeus 界面离线，无法准备微信开发者工具。命令尚未启动。');
+      /** 固定应用操作沿用回环鉴权桥，不接受可执行文件或环境参数。 */
+      const response = await fetch(`${current.baseUrl}/applications/wechat/open`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${current.token}`, 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+        signal: AbortSignal.timeout(30_000),
+      });
+      /** 只接受宿主核实的 GUI 与 CLI 安装路径。 */
+      const result: unknown = await response.json();
+      if (!response.ok || !isRecord(result) || !isNonEmptyString(result.applicationPath) || !isNonEmptyString(result.cliPath))
+        throw new Error(isRecord(result) && typeof result.message === 'string' ? result.message : '微信开发者工具启动结果无法确认，请检查应用后手动重试。');
+      return { applicationPath: result.applicationPath, cliPath: result.cliPath };
+    },
     async readPricingPage(input) {
       const current = registration;
       if (!current) throw new Error('Zeus 界面离线，暂时无法读取动态价格页面。');
@@ -125,12 +160,30 @@ async function handleDesktopBrowserBridgeRequest(request: IncomingMessage, respo
     sendJson(response, 401, { error: 'ZEUS_BROWSER_BRIDGE_UNAUTHORIZED', message: '浏览器自动化桥凭据无效。' });
     return;
   }
-  if (request.method !== 'POST' || !['/invoke', '/computer/end', '/pricing/read'].includes(request.url ?? '')) {
+  if (request.method !== 'POST' || !['/invoke', '/computer/end', '/pricing/read', '/applications/wechat/open', '/applications/codex/remote-control'].includes(request.url ?? '')) {
     sendJson(response, 404, { error: 'ZEUS_BROWSER_BRIDGE_NOT_FOUND', message: '浏览器自动化桥路径不存在。' });
     return;
   }
   try {
     const input = await readJsonBody(request);
+    if (request.url === '/applications/codex/remote-control') {
+      if (!browserAutomation.ensureCodexRemoteControl || !isRecord(input) || Object.keys(input).length !== 0) throw new Error('Codex 守护进程请求无效或宿主不可用。');
+      sendJson(response, 200, await browserAutomation.ensureCodexRemoteControl());
+      return;
+    }
+    if (request.url === '/applications/wechat/open') {
+      if (
+        !browserAutomation.ensureWechatApplication ||
+        !isRecord(input) ||
+        !isNonEmptyString(input.runId) ||
+        input.runId.length > 128 ||
+        (input.cliPathHint !== undefined && (typeof input.cliPathHint !== 'string' || input.cliPathHint.length > 32767 || /[\0\r\n]/u.test(input.cliPathHint))) ||
+        Object.keys(input).some((key) => key !== 'runId' && key !== 'cliPathHint')
+      )
+        throw new Error('微信应用准备请求无效或宿主不可用。');
+      sendJson(response, 200, await browserAutomation.ensureWechatApplication({ runId: input.runId, ...(typeof input.cliPathHint === 'string' ? { cliPathHint: input.cliPathHint } : {}) }));
+      return;
+    }
     if (request.url === '/pricing/read') {
       if (!isRecord(input) || typeof input.url !== 'string' || !browserAutomation.readPricingPage) throw new Error('动态价格读取不可用。');
       sendJson(response, 200, { text: await browserAutomation.readPricingPage({ url: input.url }) });

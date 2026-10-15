@@ -1,6 +1,7 @@
+import { ensurePrivatePathSync, openRegularFileNoFollow, publishFileSync } from './platformSecurity.js';
 import { constants as fsConstants } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { copyFile, link, lstat, mkdir, open, readFile, realpath, rename, statfs, unlink } from 'node:fs/promises';
+import { chmod, copyFile, lstat, open, readFile, realpath, statfs, unlink } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -185,14 +186,12 @@ export async function promoteValidatedRecoveryCandidate(input: PromoteRecoveryCa
       const stagingDigest = await digestRegularFile(stagingDatabasePath);
       if (stagingDigest.sha256 !== candidateDigest.sha256 || stagingDigest.size !== candidateDigest.size) throw promotionError('ZEUS_RECOVERY_PROMOTION_STAGING_INVALID', '同目录 staging 数据库的哈希或大小不一致。');
       assertDatabaseIntegrity(stagingDatabasePath, true, 'staging 数据库');
-      await syncDirectory(targetDirectoryPath);
       await persistPhase('rollback_ready');
 
       await lease.assertStillExclusive();
       await archiveDatabaseSidecars(targetDatabasePath, rollbackDirectoryPath, promotionId);
-      await rename(stagingDatabasePath, targetDatabasePath);
+      publishFileSync(stagingDatabasePath, targetDatabasePath, { replace: true });
       databasePromoted = true;
-      await syncDirectory(targetDirectoryPath);
       await persistPhase('database_promoted');
       const promotedDigest = await digestRegularFile(targetDatabasePath);
       if (promotedDigest.sha256 !== candidateDigest.sha256 || promotedDigest.size !== candidateDigest.size) throw promotionError('ZEUS_RECOVERY_PROMOTION_POSTCHECK_FAILED', '原子提升后的数据库哈希或大小不一致。');
@@ -389,9 +388,7 @@ async function quarantineInterruptedStagingFile(targetDatabasePath: string, roll
     const stats = await lstat(stagingPath);
     if (!stats.isFile() || stats.isSymbolicLink()) throw promotionError('ZEUS_RECOVERY_PROMOTION_STAGING_INVALID', '中断遗留 staging 不是普通文件。');
     const quarantinePath = join(rollbackDirectoryPath, `${stagingFileName}.interrupted-${randomUUID()}`);
-    await rename(stagingPath, quarantinePath);
-    await syncDirectory(dirname(targetDatabasePath));
-    await syncDirectory(rollbackDirectoryPath);
+    publishFileSync(stagingPath, quarantinePath, { replace: false });
   } catch (error) {
     if (isNodeError(error) && error.code === 'ENOENT') return;
     throw error;
@@ -418,8 +415,7 @@ async function restoreDatabaseFromRollback(input: { targetDatabasePath: string; 
   const digest = await digestRegularFile(rollbackStage);
   if (digest.sha256 !== input.expectedSha256) throw promotionError('ZEUS_RECOVERY_PROMOTION_ROLLBACK_INVALID', '回退 staging 数据库哈希无效。');
   assertDatabaseIntegrity(rollbackStage, true, '回退 staging 数据库');
-  await rename(rollbackStage, input.targetDatabasePath);
-  await syncDirectory(dirname(input.targetDatabasePath));
+  publishFileSync(rollbackStage, input.targetDatabasePath, { replace: true });
   const restored = await digestRegularFile(input.targetDatabasePath);
   if (restored.sha256 !== input.expectedSha256) throw promotionError('ZEUS_RECOVERY_PROMOTION_ROLLBACK_FAILED', '回退后的正式数据库哈希不一致。');
   assertDatabaseIntegrity(input.targetDatabasePath, true, '回退后数据库');
@@ -454,24 +450,26 @@ async function archiveDatabaseSidecars(databasePath: string, rollbackDirectoryPa
     try {
       const stats = await lstat(source);
       if (!stats.isFile() || stats.isSymbolicLink()) throw promotionError('ZEUS_RECOVERY_PROMOTION_SIDECAR_INVALID', `SQLite ${suffix} 旁文件不是普通文件。`);
-      await rename(source, join(rollbackDirectoryPath, `${basename(databasePath)}.recovery-${promotionId}${suffix}`));
+      publishFileSync(source, join(rollbackDirectoryPath, `${basename(databasePath)}.recovery-${promotionId}${suffix}`), { replace: false });
     } catch (error) {
       if (isNodeError(error) && error.code === 'ENOENT') continue;
       throw error;
     }
   }
-  await syncDirectory(dirname(databasePath));
-  await syncDirectory(rollbackDirectoryPath);
 }
 
+/** 复制先落入独立暂存项，刷新并固定权限后无覆盖发布。 */
 async function copyFileExclusive(source: string, destination: string, mode: number): Promise<void> {
-  await copyFile(source, destination, fsConstants.COPYFILE_EXCL);
-  const handle = await open(destination, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  const temporary = `${destination}.${randomUUID()}.tmp`;
+  await copyFile(source, temporary, fsConstants.COPYFILE_EXCL);
+  await chmod(temporary, mode);
   try {
-    await handle.chmod(mode);
-    await handle.sync();
+    if (process.platform === 'win32') ensurePrivatePathSync(temporary, 'file');
+    publishFileSync(temporary, destination, { replace: false });
   } finally {
-    await handle.close();
+    await unlink(temporary).catch((error: unknown) => {
+      if (!(isNodeError(error) && error.code === 'ENOENT')) throw error;
+    });
   }
 }
 
@@ -487,23 +485,14 @@ async function writeAtomicJson(path: string, value: unknown, createOnly: boolean
   }
   let temporaryPublished = false;
   try {
-    if (!createOnly) {
-      await rename(temporaryPath, path);
-      temporaryPublished = true;
-    } else {
-      // lstat + rename 在 POSIX 上存在覆盖竞态；同目录 hard link 以 EEXIST 原子实现不可覆盖发布。
-      try {
-        await link(temporaryPath, path);
-      } catch (error) {
-        if (isNodeError(error) && error.code === 'EEXIST') {
-          throw promotionError('ZEUS_RECOVERY_PROMOTION_JOURNAL_CONFLICT', '同名恢复提升日志已经存在。');
-        }
-        throw error;
-      }
-      await unlink(temporaryPath);
-      temporaryPublished = true;
+    if (process.platform === 'win32') ensurePrivatePathSync(temporaryPath, 'file');
+    try {
+      publishFileSync(temporaryPath, path, { replace: !createOnly });
+    } catch (error) {
+      if (isNodeError(error) && error.code === 'EEXIST') throw promotionError('ZEUS_RECOVERY_PROMOTION_JOURNAL_CONFLICT', '同名恢复提升日志已经存在。');
+      throw error;
     }
-    await syncDirectory(directory);
+    temporaryPublished = true;
   } catch (error) {
     try {
       if (!temporaryPublished) await unlink(temporaryPath);
@@ -515,7 +504,7 @@ async function writeAtomicJson(path: string, value: unknown, createOnly: boolean
 }
 
 async function digestRegularFile(path: string): Promise<{ sha256: string; size: number }> {
-  const handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  const handle = await openRegularFileNoFollow(path, fsConstants.O_RDONLY);
   const hash = createHash('sha256');
   let size = 0;
   try {
@@ -549,7 +538,7 @@ async function requireRealDirectory(pathValue: string, field: string): Promise<s
 
 async function requireOrCreateRealDirectory(pathValue: string, field: string): Promise<string> {
   const path = resolve(pathValue);
-  await mkdir(path, { recursive: true, mode: 0o700 });
+  ensurePrivatePathSync(path, 'directory');
   return requireRealDirectory(path, field);
 }
 
@@ -558,15 +547,6 @@ async function filesystemAvailableBytes(path: string): Promise<number> {
   const bytes = stats.bavail * stats.bsize;
   if (!Number.isSafeInteger(bytes) || bytes < 0) throw promotionError('ZEUS_RECOVERY_PROMOTION_SPACE_UNKNOWN', '无法读取恢复提升目标卷可用空间。');
   return bytes;
-}
-
-async function syncDirectory(path: string): Promise<void> {
-  const handle = await open(path, fsConstants.O_RDONLY);
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
 }
 
 function assertPromotionInput(input: PromoteRecoveryCandidateInput): void {

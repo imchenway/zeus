@@ -159,13 +159,21 @@ _避免：第三份完整会话、全文缓存、默认上下文_
 _避免：整台桌面归某个会话独占、所有会话共用控制画面_
 
 **运行 Profile**：
-数据根和运行宿主所属的 distribution 边界，只取 `production`、`test` 或 `development`；它与 bundle ID、Keychain 命名空间和宿主协议身份一起判定能否读写或附着。
+数据根和运行宿主所属的 distribution 边界，只取 `production`、`test` 或 `development`；它与应用分发身份、系统凭据命名空间和宿主协议身份一起判定能否读写或附着。
 _避免：仅依赖目录名、环境变量、进程名或开发/正式猜测_
 
 **数据根身份**：
-一个数据根首次受控认领后持久保有的唯一身份，同时绑定规范路径、运行 Profile、bundle 身份语义、结构代次和 Keychain service 身份。production/Test 的 bundle 值是打包产物应核验的 code-sign bundle ID；development 通常运行在共享 Electron.app，因此只使用明示的 development distribution label，不声称它是 Zeus 签名 bundle ID。
-_避免：数据目录、Electron userData 路径、可抵抗同 UID 篡改的密码学身份_
+一个数据根首次受控认领后持久保有的唯一身份，同时绑定规范路径、运行 Profile、应用分发身份语义、结构代次和系统凭据 service 身份。macOS production/Test 使用打包产物应核验的 code-sign bundle ID；Windows production/Test 使用由 Authenticode 验签入口确认的 application ID，AUMID 本身不等于签名。development 使用明示的 development distribution label，不声称它是签名身份。既有 marker 的 bundleId/keychainServiceIdentitySha256 字段及 macOS 哈希保持原契约；Windows 通过独立身份种类明确平台语义。
+_避免：数据目录、Electron userData 路径、可抵抗同一系统用户篡改的密码学身份_
 
 **离线数据根认领**：
-所有 Zeus/Provider/Execution Host 均退出后，把既有非空、无 marker 的自定义 production/Test 根显式绑定为数据根身份的两阶段维护操作。操作者必须提供 canonical root、Profile、固定 distribution label，并用当前 inventory 计划令牌二次确认；该操作只发布 marker，不迁移、清理或修复业务内容。
+所有 Zeus/Provider/Execution Host 均退出后，把既有非空、无 marker 的自定义 production/Test 根显式绑定为数据根身份的两阶段维护操作。操作者必须提供 canonical root、Profile、固定 distribution label，并用当前 inventory 计划令牌二次确认；该操作只发布 marker，不迁移、清理或修复业务内容。macOS 用系统打开文件检查，Windows 用拒绝共享的原生文件句柄检查；两者均结合准备锁、SQLite 状态和双目录清单，不能把进程名未命中当作没有 writer。
 _避免：在线补标、按目录内容自动猜 profile、默认读取正式根_
+
+**Windows 受限执行**：
+普通权限宿主通过每次执行独立的 LPAC 身份访问已授权目录，并拥有本次临时工作目录和 AppContainer 私有存储；命令启动前固定权限描述，内部凭据和私有数据路径不因工作区祖先目录被授权而开放。网络权限、进程树停止和残留授权撤销均须明确确认；配置取消、启动未知或恢复未完成时保持拒绝状态。
+_避免：全盘可读、隔离失败改用完整权限、仅凭 PID 停止进程、静态检查等同实机越权拒绝证据_
+
+**Windows 卷日志服务**：
+首次明确系统授权后安装的固定服务，仅为当前系统用户与数据根登记的隔离身份追踪卷变更并处理权限恢复。服务文件位于系统保护目录；正式、验收和开发数据根使用独立服务身份。普通命令不持续提权，服务不接受通用命令或任意文件读取；卸载和升级须先确认没有活跃或待恢复的授权。
+_避免：通用提权代理、按客户端自报 SID 信任请求、目录轮询代替完整崩溃恢复证明_

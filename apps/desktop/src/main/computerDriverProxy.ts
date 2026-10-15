@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { timingSafeEqual } from 'node:crypto';
 import type { CuaDriverLike, PrivateWorkerOptions } from '@trycua/cua-driver';
+import { runWindowsRuntimeHelper, type WindowsRuntimeIdentity } from '@zeus/ai-runtime';
 
 /** 原生只读回调的固定通知，不包含截图、输入内容或任意操作。 */
 export type ComputerControlEvent = {
@@ -187,6 +188,16 @@ export class ComputerDriverProxy implements ComputerDriver {
   async abortStartup(): Promise<void> {
     try {
       if (this.child.pid) {
+        if (process.platform === 'win32') {
+          /** 原生组件在同一真实进程句柄内核对身份后结束，避免 PID 复用。 */
+          const children = (await runWindowsRuntimeHelper('children', { pid: this.child.pid })) as WindowsRuntimeIdentity[];
+          const expected = resolve(dirname(this.options.binaryPath), 'cua-driver.exe');
+          for (const child of children) {
+            if (child.imagePath.toLowerCase() !== expected.toLowerCase()) continue;
+            await runWindowsRuntimeHelper('terminate-child', { ...child, parentPid: this.child.pid });
+          }
+          return;
+        }
         /** comm 不包含命令参数或环境凭据。 */
         const processes = await promisify(execFile)('/bin/ps', ['-axo', 'pid=,ppid=,comm='], { encoding: 'utf8', timeout: 1_500 });
         for (const line of processes.stdout.split('\n')) {

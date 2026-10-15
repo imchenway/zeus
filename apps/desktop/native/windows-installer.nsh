@@ -1,0 +1,116 @@
+; Windows 安装器扩展：复用 NSIS 文件安装，只接管安全退出和结果回执。
+!include "FileFunc.nsh"
+
+; 当前升级事务的结果路径，首次安装时为空。
+Var ZeusResult
+; 当前升级的随机身份，由正在运行的应用生成。
+Var ZeusTransaction
+; 已打开的旧主进程句柄，不通过 PID 轮询猜测进程是否更换。
+Var ZeusMainHandle
+
+; 只写固定状态和已经由应用生成的事务身份，不把用户文本拼接进 JSON。
+!macro ZeusWriteStatus STATUS
+  ${If} $ZeusResult != ""
+    FileOpen $R8 "$ZeusResult.partial" w
+    FileWrite $R8 '{$\"transactionId$\":$\"$ZeusTransaction$\",$\"status$\":$\"${STATUS}$\"}'
+    FileClose $R8
+    Delete "$ZeusResult"
+    Rename "$ZeusResult.partial" "$ZeusResult"
+  ${EndIf}
+!macroend
+
+; 安装和卸载只允许已退出的应用，不调用默认按进程名称强杀的实现。
+!macro customCheckAppRunning
+  ${nsProcess::FindProcess} "${APP_EXECUTABLE_FILENAME}" $R0
+  ${If} $R0 == 0
+    !insertmacro ZeusWriteStatus "failed"
+    MessageBox MB_OK|MB_ICONEXCLAMATION "Zeus 仍在运行。请在 Zeus 中停止工作并退出，再运行安装器。" /SD IDOK
+    SetErrorLevel 2
+    Quit
+  ${EndIf}
+!macroend
+
+; 显式升级先核验旧主进程所在路径，再等待完整退出且退出码为零。
+!macro customInit
+  ; 产品安装门禁为 Windows 10 22H2 的 19045；Windows 11 的具体兼容构建仍由实机验收确认。
+  ReadRegStr $R0 HKLM "SOFTWARE\Microsoft\Windows NT\CurrentVersion" "CurrentBuildNumber"
+  ${If} $R0 < 19045
+    MessageBox MB_OK|MB_ICONEXCLAMATION "Zeus requires Windows 10 22H2 (build 19045) or Windows 11. / Zeus 需要 Windows 10 22H2（构建 19045）或 Windows 11。" /SD IDOK
+    SetErrorLevel 2
+    Quit
+  ${EndIf}
+  ${GetParameters} $R0
+  ${GetOptions} $R0 "/ZEUS-PID=" $R1
+  ${IfNot} ${Errors}
+    ${GetOptions} $R0 "/ZEUS-RESULT=" $ZeusResult
+    ${GetOptions} $R0 "/ZEUS-TRANSACTION=" $ZeusTransaction
+    ${GetOptions} $R0 "/ZEUS-TARGET=" $R2
+    ${If} $ZeusResult == ""
+    ${OrIf} $ZeusTransaction == ""
+      SetErrorLevel 2
+      Quit
+    ${EndIf}
+    System::Call 'kernel32::OpenProcess(i 0x101000, i 0, i $R1) p.r0'
+    StrCpy $ZeusMainHandle $0
+    ${If} $ZeusMainHandle == 0
+      !insertmacro ZeusWriteStatus "failed"
+      SetErrorLevel 2
+      Quit
+    ${EndIf}
+    System::Call 'kernel32::QueryFullProcessImageNameW(p $ZeusMainHandle, i 0, w .r1, *i ${NSIS_MAX_STRLEN}) i.r3'
+    ${If} $3 == 0
+    ${OrIf} $1 != $R2
+    ${OrIf} $1 != "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
+      !insertmacro ZeusWriteStatus "failed"
+      System::Call 'kernel32::CloseHandle(p $ZeusMainHandle)'
+      SetErrorLevel 2
+      Quit
+    ${EndIf}
+    !insertmacro ZeusWriteStatus "ready"
+    ; 等待真实句柄期间也处理撤销，旧事务不能长期持有安装器互斥锁。
+    StrCpy $R4 0
+    ZeusWaitForMain:
+      ${If} ${FileExists} "$ZeusResult.cancel"
+        !insertmacro ZeusWriteStatus "cancelled"
+        System::Call 'kernel32::CloseHandle(p $ZeusMainHandle)'
+        SetErrorLevel 2
+        Quit
+      ${EndIf}
+      System::Call 'kernel32::WaitForSingleObject(p $ZeusMainHandle, i 200) i.r0'
+      IntOp $R4 $R4 + 1
+      ${If} $0 == 258
+      ${AndIf} $R4 < 3000
+        Goto ZeusWaitForMain
+      ${EndIf}
+    System::Call 'kernel32::GetExitCodeProcess(p $ZeusMainHandle, *i .r1) i.r2'
+    System::Call 'kernel32::CloseHandle(p $ZeusMainHandle)'
+    ${If} $0 != 0
+    ${OrIf} $2 == 0
+    ${OrIf} $1 != 0
+      !insertmacro ZeusWriteStatus "failed"
+      SetErrorLevel 2
+      Quit
+    ${EndIf}
+    ; 取消标记单独持久化，迟到的 ready 回执不能覆盖用户取消。
+    ${If} ${FileExists} "$ZeusResult.cancel"
+      SetErrorLevel 2
+      Quit
+    ${EndIf}
+    ; 主程序取消或启动结果未知时会撤销回执，旧安装器不能在未来退出时继续安装。
+    FileOpen $R8 "$ZeusResult" r
+    FileRead $R8 $R9
+    FileClose $R8
+    ${If} $R9 != '{$\"transactionId$\":$\"$ZeusTransaction$\",$\"status$\":$\"ready$\"}'
+      SetErrorLevel 2
+      Quit
+    ${EndIf}
+  ${EndIf}
+!macroend
+
+; 缓存路径来自 electron-builder 自己的安装器缓存，供下次升级前验证并保留恢复包。
+!macro customInstall
+  FileOpen $R8 "$INSTDIR\resources\installer-cache-path.txt" w
+  FileWriteUTF16LE $R8 "$LOCALAPPDATA\${APP_INSTALLER_STORE_FILE}"
+  FileClose $R8
+  !insertmacro ZeusWriteStatus "installed"
+!macroend

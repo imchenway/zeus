@@ -9,11 +9,17 @@ interface NativeAutomationHostOptions {
   beforeNetwork?: () => Promise<void>;
   /** 外部扩展使用时等待自身初始化，不阻挡内置浏览器。 */
   beforeExternalBrowser?: () => Promise<void>;
+  /** 固定微信应用入口不属于任意工具调用，只有可信内置命令可以请求。 */
+  ensureWechatApplication?: BrowserAutomationPort['ensureWechatApplication'];
+  /** 固定 Codex 守护入口只接收当前数据根，不向 Core 暴露通用启动能力。 */
+  ensureCodexRemoteControl?: BrowserAutomationPort['ensureCodexRemoteControl'];
 }
 
 /** Electron Main 的单一自动化端口；执行宿主只持有短期桥租约，不拥有任何 UI 或系统权限。 */
 export function createNativeAutomationHost(options: NativeAutomationHostOptions): BrowserAutomationPort {
   return {
+    ensureWechatApplication: options.ensureWechatApplication,
+    ensureCodexRemoteControl: options.ensureCodexRemoteControl,
     async readPricingPage(input) {
       await options.beforeNetwork?.();
       return readPublicPricingPage(input);

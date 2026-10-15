@@ -1,5 +1,6 @@
+import { assertWindowsPortablePath, assertWindowsPortablePaths, ensurePrivatePathSync, openRegularFileNoFollow, pathIsInside, publishFileSync } from './platformSecurity.js';
 import { constants as fsConstants } from 'node:fs';
-import { access, chmod, link, lstat, mkdir, mkdtemp, open, readdir, realpath, rm, statfs, unlink, type FileHandle } from 'node:fs/promises';
+import { access, chmod, lstat, mkdtemp, open, readdir, realpath, rm, statfs, unlink, type FileHandle } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, scrypt } from 'node:crypto';
 import { backup, DatabaseSync } from 'node:sqlite';
@@ -307,11 +308,11 @@ export async function createEncryptedRecoveryBackup(input: CreateEncryptedRecove
     };
 
     stagingDirectoryPath = await mkdtemp(join(outputDirectoryPath, '.zeus-recovery-backup-'));
-    await chmod(stagingDirectoryPath, 0o700);
+    ensurePrivatePathSync(stagingDirectoryPath, 'directory');
     const snapshotPath = join(stagingDirectoryPath, 'zeus.db.snapshot');
     try {
       await backup(sourceDb, snapshotPath);
-      await chmod(snapshotPath, 0o600);
+      ensurePrivatePathSync(snapshotPath, 'file');
     } catch (error) {
       throw wrapRecoveryError('ZEUS_RECOVERY_BACKUP_IO_FAILED', 'database_snapshot', 'SQLite Backup API 未能生成一致性快照。', error);
     }
@@ -473,7 +474,7 @@ export async function restoreEncryptedRecoveryBackup(input: RestoreEncryptedReco
   }
 
   const candidatePath = await mkdtemp(join(isolationParentPath, '.zeus-recovery-candidate-'));
-  await chmod(candidatePath, 0o700);
+  ensurePrivatePathSync(candidatePath, 'directory');
   let extractor: RecoveryPayloadExtractor | null = null;
   try {
     const opened = await openRecoveryBackupPackage(packagePath);
@@ -509,7 +510,6 @@ export async function restoreEncryptedRecoveryBackup(input: RestoreEncryptedReco
       promotable: true,
     } as const;
     await writeImmutableFile(join(candidatePath, 'recovery-candidate.json'), Buffer.from(`${JSON.stringify(marker, null, 2)}\n`, 'utf8'), 0o400);
-    await syncDirectory(candidatePath);
     return {
       backupId: manifest.backupId,
       candidatePath,
@@ -773,9 +773,7 @@ async function writeEncryptedRecoveryPackage(
     if (staged.packageSha256 !== expectedPackageSha256 || staged.packageBytes !== packageBytes || staged.header.manifestSha256 !== manifestSha256 || staged.header.backupId !== manifest.backupId) {
       throw recoveryError('ZEUS_RECOVERY_BACKUP_PACKAGE_INTEGRITY_FAILED', 'publication', '加密恢复包暂存文件未通过发布前哈希与包头复核。');
     }
-    await link(temporaryPackagePath, packagePath);
-    await unlink(temporaryPackagePath);
-    await syncDirectory(dirname(packagePath));
+    publishFileSync(temporaryPackagePath, packagePath, { replace: false });
   } catch (error) {
     await unlink(temporaryPackagePath).catch(() => undefined);
     if (isNodeError(error) && error.code === 'EEXIST') {
@@ -836,6 +834,8 @@ class RecoveryPayloadExtractor {
   private manifest: RecoveryBackupManifest | null = null;
   private fileIndex = 0;
   private currentHandle: FileHandle | null = null;
+  /** 每个恢复文件先写同目录暂存项，校验完成后耐久发布。 */
+  private currentTemporaryPath: string | null = null;
   private currentHash: ReturnType<typeof createHash> | null = null;
   private currentRemaining = 0;
   private currentWritten = 0;
@@ -927,8 +927,9 @@ class RecoveryPayloadExtractor {
     while (!this.currentHandle && this.fileIndex < this.manifest.files.length) {
       const entry = this.manifest.files[this.fileIndex]!;
       const targetPath = joinArchivePath(this.candidatePath, entry.path);
-      await mkdir(dirname(targetPath), { recursive: true, mode: 0o700 });
-      this.currentHandle = await open(targetPath, fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY, 0o600);
+      ensurePrivatePathSync(dirname(targetPath), 'directory');
+      this.currentTemporaryPath = `${targetPath}.${randomUUID()}.tmp`;
+      this.currentHandle = await open(this.currentTemporaryPath, fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY, 0o600);
       this.currentHash = createHash('sha256');
       this.currentRemaining = entry.size;
       this.currentWritten = 0;
@@ -957,6 +958,10 @@ class RecoveryPayloadExtractor {
         actualBytes: this.currentWritten,
       });
     }
+    if (!this.currentTemporaryPath) throw new Error('恢复文件缺少暂存身份。');
+    if (process.platform === 'win32') ensurePrivatePathSync(this.currentTemporaryPath, 'file');
+    publishFileSync(this.currentTemporaryPath, joinArchivePath(this.candidatePath, entry.path), { replace: false });
+    this.currentTemporaryPath = null;
     this.fileIndex += 1;
     this.currentRemaining = 0;
     this.currentWritten = 0;
@@ -1095,6 +1100,13 @@ function assertRecoveryBackupManifest(value: unknown): asserts value is Recovery
     }
     normalizeSha256(raw.sha256, 'manifest.files.sha256');
   }
+  if (process.platform === 'win32') {
+    try {
+      assertWindowsPortablePaths([...paths]);
+    } catch (error) {
+      throw recoveryError('ZEUS_RECOVERY_BACKUP_FORMAT_INVALID', 'manifest', error instanceof Error ? error.message : 'Windows 恢复路径存在名称冲突。');
+    }
+  }
   const sortedPaths = [...paths].sort(compareCodeUnits);
   if (JSON.stringify([...paths]) !== JSON.stringify(sortedPaths)) {
     throw recoveryError('ZEUS_RECOVERY_BACKUP_FORMAT_INVALID', 'manifest', '恢复包文件清单必须按便携路径稳定排序。');
@@ -1226,7 +1238,6 @@ async function requireWritableDirectory(pathValue: string, field: string): Promi
       await probe.close();
       await unlink(probePath).catch(() => undefined);
     }
-    await syncDirectory(canonicalPath);
   } catch (error) {
     throw wrapRecoveryError('ZEUS_RECOVERY_BACKUP_PERMISSION_DENIED', 'preflight', `${field} 必须是当前用户可写的真实目录。`, error);
   }
@@ -1273,7 +1284,7 @@ async function digestOpenFile(handle: FileHandle): Promise<{ size: number; sha25
 
 async function openNoFollow(path: string, flags: number): Promise<FileHandle> {
   try {
-    return await open(path, flags | fsConstants.O_NOFOLLOW);
+    return await openRegularFileNoFollow(path, flags);
   } catch (error) {
     throw wrapRecoveryError('ZEUS_RECOVERY_BACKUP_IO_FAILED', 'preflight', `无法安全打开普通文件：${path}`, error);
   }
@@ -1321,8 +1332,10 @@ async function readExact(handle: FileHandle, length: number, position: number): 
   return result;
 }
 
+/** 内容和权限准备完成后耐久发布，已有目标绝不覆盖。 */
 async function writeImmutableFile(path: string, contents: Buffer, mode: number): Promise<void> {
-  const handle = await open(path, fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY, 0o600);
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  const handle = await open(temporary, fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY, 0o600);
   try {
     await writeAll(handle, contents);
     await handle.sync();
@@ -1330,14 +1343,13 @@ async function writeImmutableFile(path: string, contents: Buffer, mode: number):
   } finally {
     await handle.close();
   }
-}
-
-async function syncDirectory(path: string): Promise<void> {
-  const handle = await open(path, fsConstants.O_RDONLY);
   try {
-    await handle.sync();
+    if (process.platform === 'win32') ensurePrivatePathSync(temporary, 'file');
+    publishFileSync(temporary, path, { replace: false });
   } finally {
-    await handle.close();
+    await unlink(temporary).catch((error: unknown) => {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    });
   }
 }
 
@@ -1355,6 +1367,7 @@ function validateArchivePath(value: string, field: string): string {
   if (typeof value !== 'string' || value.length === 0 || value.trim() !== value || value.startsWith('/') || value.includes('\\') || value.includes('\0')) {
     throw recoveryError('ZEUS_RECOVERY_BACKUP_INVALID_ARGUMENT', 'preflight', `${field} 必须是非空 POSIX 相对路径。`);
   }
+  if (process.platform === 'win32') assertWindowsPortablePath(value);
   const segments = value.split('/');
   if (segments.some((segment) => segment.length === 0 || segment === '.' || segment === '..')) {
     throw recoveryError('ZEUS_RECOVERY_BACKUP_INVALID_ARGUMENT', 'preflight', `${field} 包含空段、. 或 ..。`);
@@ -1370,8 +1383,7 @@ function joinArchivePath(root: string, archivePath: string): string {
 }
 
 function pathIsWithin(candidate: string, parent: string): boolean {
-  const difference = relative(resolve(parent), resolve(candidate));
-  return difference === '' || (!difference.startsWith(`..${sep}`) && difference !== '..' && !difference.startsWith(sep));
+  return pathIsInside(candidate, parent);
 }
 
 function assertUniqueArchivePaths(files: readonly Pick<PreparedRecoveryFile, 'path'>[]): void {

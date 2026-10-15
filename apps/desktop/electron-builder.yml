@@ -25,10 +25,12 @@ files:
   # 官方 Pi SDK 的导入链包含终端模块，保留完整运行文件以避免打包后缺失依赖。
   - '!node_modules/node-pty/binding.gyp'
   - '!node_modules/node-pty/{deps,scripts,src,typings}/**'
-  - '!node_modules/node-pty/prebuilds/!(darwin-${arch})/**'
+  # 保留对应依赖包提供的原生平台文件，由 Electron ABI rebuild 选择当前目标。
   - '!node_modules/node-pty/lib/**/*.test.js'
   - '!node_modules/node-pty/lib/testUtils.test.js'
 asarUnpack:
+  # Windows ConPTY 的 DLL 和辅助 exe 与 .node 必须同时使用物理路径。
+  - node_modules/node-pty/**
   - dist/native/**
   # CUA 原生渲染器直接读取已编译主题，需要真实文件路径。
   - assets/computer-cursor/*.cua-theme

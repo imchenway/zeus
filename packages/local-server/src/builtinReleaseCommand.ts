@@ -10,6 +10,7 @@ export const builtinReleaseCommand: CommandDefinitionInput = {
   title: '发布新版',
   description: '执行 Zeus 受控发布流程：生成发布说明、递增补丁版本、运行发布门禁、推送并回验 GitHub Release。失败后可用同一命令幂等继续。',
   command: 'pnpm release',
+  shell: process.platform === 'win32' ? 'powershell' : 'sh',
   parameters: [],
   timeoutSeconds: 3_600,
   enabled: true,

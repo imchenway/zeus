@@ -1,6 +1,10 @@
 import { BrowserWindow, clipboard, ipcMain, nativeImage, type IpcMainEvent } from 'electron';
-import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { constants as fileConstants, createReadStream } from 'node:fs';
 import { copyFile, mkdir, open, rename, rm, stat } from 'node:fs/promises';
+import { execFile as execFileCallback } from 'node:child_process';
+import { promisify } from 'node:util';
+import { ensurePrivatePathSync, publishFileSync } from '@zeus/storage/platform-security';
 import { createServer, type Server, type ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -18,6 +22,9 @@ import {
 import type { ZeusBrowserSettings } from '@zeus/shared';
 
 type ExternalSurface = 'chrome' | 'edge';
+
+/** 注册表仅通过系统自带程序和参数数组访问，不拼接命令字符串。 */
+const runRegistry = promisify(execFileCallback);
 
 interface ExternalConnection {
   extensionId: string;
@@ -68,6 +75,10 @@ export class ExternalBrowserHost implements BrowserAutomationPort {
   private server: Server | null = null;
   private port: number | null = null;
   private closed = false;
+  /** 设置变更串行执行；关闭必须等待迟到的注册写入结束。 */
+  private configuration: Promise<unknown> = Promise.resolve();
+  /** 所有关闭调用等待同一次清理，不能把进行中的关闭误报为完成。 */
+  private closing: Promise<void> | null = null;
   private readonly pending = new Map<string, PendingCommand>();
   private readonly surfaces: Record<ExternalSurface, SurfaceRuntime> = {
     chrome: { enabled: false, expectedExtensionId: null, token: randomBytes(32).toString('base64url'), queue: [], waiters: [] },
@@ -80,18 +91,37 @@ export class ExternalBrowserHost implements BrowserAutomationPort {
     state: NonNullable<ZeusBrowserSettings['externalConnectionState']>;
     detail?: string;
   }> {
+    if (this.closed) throw new Error('外部浏览器宿主已关闭。');
+    const snapshot = { externalChromeEnabled: settings.externalChromeEnabled, externalEdgeEnabled: settings.externalEdgeEnabled };
+    const operation = this.configuration.catch(() => undefined).then(() => this.applyConfiguration(snapshot));
+    this.configuration = operation;
+    return operation;
+  }
+
+  /** 只处理本次冻结的设置；失败不会重放，后续显式设置可以独立执行。 */
+  private async applyConfiguration(settings: Pick<ZeusBrowserSettings, 'externalChromeEnabled' | 'externalEdgeEnabled'>): Promise<{
+    state: NonNullable<ZeusBrowserSettings['externalConnectionState']>;
+    detail?: string;
+  }> {
+    if (this.closed) throw new Error('外部浏览器宿主已关闭。');
     if (this.options.readOnlyValidation) return { state: 'disabled', detail: '只读验证模式不安装或启动外部浏览器桥。' };
     this.surfaces.chrome.enabled = settings.externalChromeEnabled;
     this.surfaces.edge.enabled = settings.externalEdgeEnabled;
     if (!settings.externalChromeEnabled && !settings.externalEdgeEnabled) {
       await this.stopServer();
+      if (process.platform === 'win32') {
+        for (const surface of ['chrome', 'edge'] as const) await this.removeWindowsRegistration(surface);
+      }
       return { state: 'disabled', detail: 'Chrome 与 Edge 原生桥均已停用。' };
     }
     await this.ensureServer();
     const pendingStoreIds: ExternalSurface[] = [];
     for (const surface of ['chrome', 'edge'] as const) {
       const runtime = this.surfaces[surface];
-      if (!runtime.enabled) continue;
+      if (!runtime.enabled) {
+        if (process.platform === 'win32') await this.removeWindowsRegistration(surface);
+        continue;
+      }
       const extensionId = this.extensionId(surface);
       runtime.expectedExtensionId = extensionId;
       if (!extensionId) {
@@ -148,9 +178,19 @@ export class ExternalBrowserHost implements BrowserAutomationPort {
   }
 
   async close(): Promise<void> {
-    if (this.closed) return;
+    if (this.closing) return this.closing;
     this.closed = true;
+    this.closing = this.finishClose();
+    return this.closing;
+  }
+
+  /** 先排空已接受的配置，再撤销本实例注册，防止退出后重新开放端口。 */
+  private async finishClose(): Promise<void> {
+    await this.configuration.catch(() => undefined);
     await this.stopServer();
+    if (process.platform === 'win32') {
+      for (const surface of ['chrome', 'edge'] as const) await this.removeWindowsRegistration(surface);
+    }
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timer);
       pending.resolve(textResult('Zeus 外部浏览器宿主已关闭。', false));
@@ -223,8 +263,8 @@ export class ExternalBrowserHost implements BrowserAutomationPort {
   }
 
   private async ensureServer(): Promise<void> {
+    if (this.closed) throw new Error('外部浏览器宿主已关闭。');
     if (this.server && this.port) return;
-    this.closed = false;
     const server = createServer((request, response) => void this.handleNativeRequest(request, response));
     await new Promise<void>((resolveListen, rejectListen) => {
       server.once('error', rejectListen);
@@ -258,18 +298,28 @@ export class ExternalBrowserHost implements BrowserAutomationPort {
     if (!this.port) throw new Error('Zeus 外部浏览器 rendezvous 尚未启动。');
     const runtime = this.surfaces[surface];
     const surfaceRoot = resolve(this.options.runtimeRoot, surface);
-    const helperPath = join(surfaceRoot, 'ZeusBrowserNativeHost');
+    const helperPath = join(surfaceRoot, process.platform === 'win32' ? 'ZeusBrowserNativeHost.exe' : 'ZeusBrowserNativeHost');
     await mkdir(surfaceRoot, { recursive: true, mode: 0o700 });
-    await copyFile(this.options.helperExecutable, helperPath);
-    await import('node:fs/promises').then(({ chmod }) => chmod(helperPath, 0o700));
+    if (process.platform === 'win32') {
+      ensurePrivatePathSync(surfaceRoot, 'directory');
+      await installWindowsBrowserHelper(this.options.helperExecutable, helperPath);
+    } else {
+      await copyFile(this.options.helperExecutable, helperPath);
+      await import('node:fs/promises').then(({ chmod }) => chmod(helperPath, 0o700));
+    }
     await atomicJson(join(surfaceRoot, 'rendezvous.json'), {
       endpoint: `http://127.0.0.1:${this.port}/native`,
       token: runtime.token,
       surface,
       pid: process.pid,
+      extensionId,
     });
     const manifestDirectory =
-      surface === 'chrome' ? join(homedir(), 'Library', 'Application Support', 'Google', 'Chrome', 'NativeMessagingHosts') : join(homedir(), 'Library', 'Application Support', 'Microsoft Edge', 'NativeMessagingHosts');
+      process.platform === 'win32'
+        ? surfaceRoot
+        : surface === 'chrome'
+          ? join(homedir(), 'Library', 'Application Support', 'Google', 'Chrome', 'NativeMessagingHosts')
+          : join(homedir(), 'Library', 'Application Support', 'Microsoft Edge', 'NativeMessagingHosts');
     await mkdir(manifestDirectory, { recursive: true, mode: 0o700 });
     await atomicJson(join(manifestDirectory, `${this.nativeHostName()}.json`), {
       name: this.nativeHostName(),
@@ -278,6 +328,34 @@ export class ExternalBrowserHost implements BrowserAutomationPort {
       type: 'stdio',
       allowed_origins: [`chrome-extension://${extensionId}/`],
     });
+    if (process.platform === 'win32') {
+      await runRegistry(windowsRegistryExecutable(), ['add', this.windowsRegistrationKey(surface), '/ve', '/t', 'REG_SZ', '/d', join(manifestDirectory, `${this.nativeHostName()}.json`), '/f', '/reg:64'], {
+        windowsHide: true,
+        timeout: 5000,
+      });
+    }
+  }
+
+  /** 每种浏览器使用独立的当前用户注册项，正式版和验收版互不覆盖。 */
+  private windowsRegistrationKey(surface: ExternalSurface): string {
+    return `HKCU\\Software\\${surface === 'chrome' ? 'Google\\Chrome' : 'Microsoft\\Edge'}\\NativeMessagingHosts\\${this.nativeHostName()}`;
+  }
+
+  /** 仅清理仍指向本实例清单的注册值，不删除另一实例新登记的路径。 */
+  private async removeWindowsRegistration(surface: ExternalSurface): Promise<void> {
+    const key = this.windowsRegistrationKey(surface);
+    let value: string;
+    try {
+      const { stdout } = await runRegistry(windowsRegistryExecutable(), ['query', key, '/ve', '/reg:64'], { windowsHide: true, timeout: 5000 });
+      value = /REG_SZ\s+([^\r\n]+)/u.exec(stdout)?.[1]?.trim() ?? '';
+    } catch (error) {
+      // 查询失败不据此删除注册项；下次明确配置时仍会完整检查登记结果。
+      if ((error as { code?: unknown }).code === 1) return;
+      throw error;
+    }
+    const expected = join(resolve(this.options.runtimeRoot, surface), `${this.nativeHostName()}.json`);
+    if (value.toLocaleLowerCase() !== expected.toLocaleLowerCase()) return;
+    await runRegistry(windowsRegistryExecutable(), ['delete', key, '/ve', '/f', '/reg:64'], { windowsHide: true, timeout: 5000 });
   }
 
   private async handleNativeRequest(request: import('node:http').IncomingMessage, response: ServerResponse): Promise<void> {
@@ -513,8 +591,10 @@ export function createExternalBrowserHost(options: CreateExternalBrowserHostOpti
   return new ExternalBrowserHost(options);
 }
 
+/** 在私有目录中持久发布会合信息，Windows 不以 chmod 模拟访问控制。 */
 async function atomicJson(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  if (process.platform === 'win32') ensurePrivatePathSync(dirname(path), 'directory');
   const temporary = `${path}.${randomUUID()}.tmp`;
   const handle = await open(temporary, 'wx', 0o600);
   try {
@@ -523,9 +603,44 @@ async function atomicJson(path: string, value: unknown): Promise<void> {
   } finally {
     await handle.close();
   }
+  if (process.platform === 'win32') {
+    ensurePrivatePathSync(temporary, 'file');
+    publishFileSync(temporary, path, { replace: true });
+    return;
+  }
   await rename(temporary, path);
   const descriptor = await stat(path);
   if ((descriptor.mode & 0o077) !== 0) await import('node:fs/promises').then(({ chmod }) => chmod(path, 0o600));
+}
+
+/** 定位系统注册表程序，避免依赖调用方 PATH 中的同名程序。 */
+function windowsRegistryExecutable(): string {
+  return join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'reg.exe');
+}
+
+/** 流式校验原生程序，避免把自带运行时的大文件整体加载到内存。 */
+async function nativeHelperDigest(path: string): Promise<string> {
+  const hash = createHash('sha256');
+  for await (const chunk of createReadStream(path)) hash.update(chunk);
+  return hash.digest('hex');
+}
+
+/** 相同程序不覆盖运行中的 Windows 文件；升级失败保留明确的重新连接提示。 */
+async function installWindowsBrowserHelper(source: string, target: string): Promise<void> {
+  try {
+    await copyFile(source, target, fileConstants.COPYFILE_EXCL);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    const [sourceHash, targetHash] = await Promise.all([nativeHelperDigest(source), nativeHelperDigest(target)]);
+    if (sourceHash !== targetHash) {
+      try {
+        await copyFile(source, target);
+      } catch {
+        throw new Error('浏览器原生桥仍被占用，请关闭对应浏览器后重新启用连接。');
+      }
+    }
+  }
+  ensurePrivatePathSync(target, 'file');
 }
 
 async function readRequestBody(request: import('node:http').IncomingMessage): Promise<Buffer> {

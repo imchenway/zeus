@@ -1,4 +1,5 @@
 import { DotsThreeIcon as DotsThree } from '@phosphor-icons/react/dist/csr/DotsThree';
+import { isMacOSPlatform } from '../platform.js';
 import { GitCommitIcon as GitCommit } from '@phosphor-icons/react/dist/csr/GitCommit';
 import { GitMergeIcon as GitMerge } from '@phosphor-icons/react/dist/csr/GitMerge';
 import { ArrowDownIcon as ArrowDown } from '@phosphor-icons/react/dist/csr/ArrowDown';
@@ -97,7 +98,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   /** 快捷键只投递到当前可见工具栏，继续使用按钮原有禁用条件和操作流程。 */
   const workbenchRef = useRef<HTMLElement>(null);
   /** 数字与工具栏操作顺序对应，避开源码及全局导航的既有快捷键。 */
-  const macShortcuts = typeof navigator !== 'undefined' && navigator.platform.startsWith('Mac');
+  const macShortcuts = isMacOSPlatform();
   /** 无障碍快捷键使用平台主键，显示提示使用常见键盘符号。 */
   const toolbarShortcut = (digit: number) => ({
     'data-git-toolbar-key': String(digit),
