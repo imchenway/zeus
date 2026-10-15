@@ -53,8 +53,9 @@ export class TranscriptRowMeasurementCache {
     return this.entries.get(key);
   }
 
+  /** 零高度也是有效测量，空行移出窗口后不能恢复为估高占位。 */
   remember(key: string, height: number): void {
-    if (!key || !Number.isFinite(height) || height <= 0) return;
+    if (!key || !Number.isFinite(height) || height < 0) return;
     this.entries.delete(key);
     this.entries.set(key, height);
     while (this.entries.size > this.limit) {
@@ -107,9 +108,10 @@ export class TranscriptViewportLayout {
     this.addHeight(index, this.estimatedRowHeight - previous);
   }
 
+  /** 同步真实高度，包括收起后的空行，保持挂载行与占位层的滚动尺度一致。 */
   updateMeasuredHeight(rowKey: string, height: number, measurements: TranscriptRowMeasurementCache): boolean {
     const index = this.indexByKey.get(rowKey);
-    if (index === undefined || !Number.isFinite(height) || height <= 0) return false;
+    if (index === undefined || !Number.isFinite(height) || height < 0) return false;
     measurements.remember(rowKey, height);
     const previous = this.heights[index] ?? this.estimatedRowHeight;
     if (Math.abs(previous - height) < 0.5) return false;
@@ -361,6 +363,8 @@ export function useTranscriptViewportVirtualizer(input: {
 
   const measureElement = useCallback(
     (element: HTMLElement): void => {
+      // 未进入布局或祖先隐藏时没有有效尺寸；有布局框的零高度行仍须记录。
+      if (element.getClientRects().length === 0) return;
       const rowKey = element.dataset.transcriptRowKey;
       if (!rowKey) return;
       const height = element.getBoundingClientRect().height;

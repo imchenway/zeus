@@ -704,8 +704,8 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
   /** 旧快照不能覆盖比它更新的实时摘要。 */
   const currentReasoningItem =
     reasoningSnapshot && reasoningBuffer ? { ...reasoningBuffer, text: reasoningSnapshot.text, payload: reasoningSnapshot.payload, transcript: reasoningSnapshot.transcript, updatedAt: reasoningSnapshot.updatedAt } : null;
-  /** 同线程同轮次的快照刷新不能清掉仍在进行的连接提示；正式结束事件负责收口。 */
-  const retainProviderRetry = state.providerThreadId === snapshot.providerThreadId && snapshot.turns.some((turn) => turn.providerTurnId === state.providerReconnectTurnId && ['running', 'waiting', 'failed'].includes(turn.status));
+  /** 仅活动轮次保留连接提示；权威终态快照也能清除漏收结束事件留下的进度。 */
+  const retainProviderRetry = state.providerThreadId === snapshot.providerThreadId && snapshot.turns.some((turn) => turn.providerTurnId === state.providerReconnectTurnId && ['running', 'waiting'].includes(turn.status));
   return {
     ...state,
     systemMessages: mergeSystemMessages(state.conversationId === snapshot.id ? state.systemMessages : undefined, snapshot.systemMessages?.items ?? []),
@@ -1165,6 +1165,10 @@ function reduceNativeEvent(state: NativeSessionState, event: NativeConversationE
         terminalTurnIds,
         items,
         turnsByProviderId: { ...base.turnsByProviderId, [canonicalTurnId]: turn },
+        // 终态自身结束重连，不能依赖先到的 transport 事件才能显示错误。
+        ...(event.type === 'conversation.turn.completed' && base.providerReconnectTurnId && turnIdentities.has(base.providerReconnectTurnId)
+          ? { providerReconnectAttempt: 0, providerReconnectAttempts: 0, providerReconnectTurnId: null }
+          : {}),
         transcriptRevision: base.transcriptRevision + 1,
       };
       // 自动恢复只封存上一次尝试，保留停止入口和正在连接状态。
@@ -2030,6 +2034,7 @@ function eventNamesKnownQueuedSubmission(state: NativeSessionState, payload: Rec
   return Boolean(queueState?.type === 'active' && turnId && providerTurnId === turnId && providerThreadId && stringValue(queueState.turnId) === turnId);
 }
 
+/** 合并 Provider 身份和原生连接进度，线程切换时清除旧轮次运行状态。 */
 function applyProviderIdentityChange(state: NativeSessionState, payload: Record<string, unknown>, updateTransport: boolean): NativeSessionState {
   const providerThreadId = stringValue(payload.providerThreadId) ?? stringValue(payload.threadId) ?? state.providerThreadId;
   const providerState = stringValue(payload.providerState);
@@ -2038,13 +2043,13 @@ function applyProviderIdentityChange(state: NativeSessionState, payload: Record<
   const recoveryState = stringValue(payload.recoveryState);
   /** 非负整数才可进入进度显示，异常协议值按未提供处理。 */
   const reconnectAttempt = numberValue(payload.reconnectAttempt);
-  /** 总次数至少为一，避免生成无意义的零分母。 */
+  /** 总次数为零表示 Provider 未提供计数，界面只显示连接状态。 */
   const reconnectAttempts = numberValue(payload.reconnectAttempts);
   /** 回复流恢复绑定原失败轮次，不能借当前活动轮次猜测。 */
   const providerReconnectTurnId = stringValue(payload.providerTurnId) ?? stringValue(payload.turnId);
   /** idle 明确结束本轮恢复；其他普通 transport 事件不清空正在运行的 Provider 核对。 */
   const providerRecovery =
-    recoveryState === 'reconnecting' && reconnectAttempt !== null && reconnectAttempt > 0 && reconnectAttempts !== null && reconnectAttempts > 0
+    recoveryState === 'reconnecting' && reconnectAttempt !== null && reconnectAttempt > 0 && reconnectAttempts !== null && reconnectAttempts >= 0
       ? {
           providerReconnectAttempt: Math.floor(reconnectAttempt),
           providerReconnectAttempts: Math.floor(reconnectAttempts),

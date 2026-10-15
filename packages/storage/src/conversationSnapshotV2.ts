@@ -2496,7 +2496,10 @@ interface SequencePageContext {
   byteLimit: number;
 }
 
+/** 轮次摘要只读取有界诊断字段，避免加载完整 Provider 报文。 */
 function turnSummarySelectSql(): string {
+  /** 仅在合法 JSON 内选择官方错误对象；两种已存储结构共用有界字段读取。 */
+  const providerErrorJson = "CASE WHEN json_valid(error_json) THEN CASE WHEN json_type(error_json, '$.providerError') = 'object' THEN json_extract(error_json, '$.providerError') ELSE error_json END ELSE NULL END";
   return `SELECT id, provider_turn_id, client_submission_id, status,
                  CASE WHEN error_json IS NULL THEN 0 ELSE 1 END AS has_error,
                  CASE
@@ -2534,29 +2537,29 @@ function turnSummarySelectSql(): string {
                  CASE
                    WHEN json_valid(error_json) THEN
                      CASE
-                       WHEN json_type(error_json, '$.providerError.codexErrorInfo') = 'text'
-                         THEN substr(json_extract(error_json, '$.providerError.codexErrorInfo'), 1, 120)
-                       WHEN json_type(error_json, '$.providerError.codexErrorInfo') = 'object'
-                         THEN (SELECT substr(key, 1, 120) FROM json_each(json_extract(error_json, '$.providerError.codexErrorInfo')) LIMIT 1)
+                       WHEN json_type(${providerErrorJson}, '$.codexErrorInfo') = 'text'
+                         THEN substr(json_extract(${providerErrorJson}, '$.codexErrorInfo'), 1, 120)
+                       WHEN json_type(${providerErrorJson}, '$.codexErrorInfo') = 'object'
+                         THEN (SELECT substr(key, 1, 120) FROM json_each(json_extract(${providerErrorJson}, '$.codexErrorInfo')) LIMIT 1)
                        ELSE NULL
                      END
                    ELSE NULL
                  END AS error_provider_info,
                  CASE
                    WHEN json_valid(error_json)
-                    AND json_type(error_json, '$.providerError.codexErrorInfo') = 'object'
+                    AND json_type(${providerErrorJson}, '$.codexErrorInfo') = 'object'
                      THEN (SELECT CASE
                        WHEN json_type(value, '$.httpStatusCode') = 'integer'
                          THEN json_extract(value, '$.httpStatusCode')
                        ELSE NULL
-                     END FROM json_each(json_extract(error_json, '$.providerError.codexErrorInfo')) LIMIT 1)
+                     END FROM json_each(json_extract(${providerErrorJson}, '$.codexErrorInfo')) LIMIT 1)
                    ELSE NULL
                  END AS error_provider_http_status,
                  CASE
                    WHEN json_valid(error_json) THEN
                      CASE
-                       WHEN json_type(error_json, '$.providerError.additionalDetails') = 'text'
-                         THEN substr(json_extract(error_json, '$.providerError.additionalDetails'), 1, 1000)
+                       WHEN json_type(${providerErrorJson}, '$.additionalDetails') = 'text'
+                         THEN substr(json_extract(${providerErrorJson}, '$.additionalDetails'), 1, 1000)
                        ELSE NULL
                      END
                    ELSE NULL
@@ -2671,7 +2674,7 @@ function boundedHttpStatusCode(value: unknown): number | null {
 /** 判断官方结构化错误是否要求暂停会话与阻塞上层工作，禁止据此自动重发。 */
 export function isProviderBlockingTurnFailure(value: unknown): boolean {
   const failure = isRecord(value) ? value : {};
-  const providerError = isRecord(failure.providerError) ? failure.providerError : {};
+  const providerError = isRecord(failure.providerError) ? failure.providerError : failure;
   const rawMessage = (typeof failure.message === 'string' && failure.message.trim() ? failure.message : null) ?? (typeof providerError.message === 'string' && providerError.message.trim() ? providerError.message : null) ?? '';
   const identity = providerFailureIdentity(failure, providerError, rawMessage);
   return Boolean(
@@ -2686,7 +2689,7 @@ export function isProviderBlockingTurnFailure(value: unknown): boolean {
 /** 实时事件与 Snapshot V2 共用同一个有界脱敏投影，未经脱敏的 Provider 错误不进入客户端协议。 */
 export function projectConversationTurnFailure(value: unknown): ConversationSnapshotV2TurnFailure {
   const failure = isRecord(value) ? value : {};
-  const providerError = isRecord(failure.providerError) ? failure.providerError : {};
+  const providerError = isRecord(failure.providerError) ? failure.providerError : failure;
   const rawMessage =
     (typeof failure.message === 'string' && failure.message.trim() ? failure.message : null) ??
     (typeof providerError.message === 'string' && providerError.message.trim() ? providerError.message : null) ??
@@ -2704,7 +2707,7 @@ export function projectConversationTurnFailure(value: unknown): ConversationSnap
       : providerInfo
         ? { cause: userFacingErrorCause({ code: providerInfo, message, ...(diagnosticDetails.length > 0 ? { details: diagnosticDetails.join('\n') } : {}) }) }
         : {}),
-    category: classifyTurnFailure(providerInfo, providerIdentity.httpStatusCode, message, !providerIdentity.structured),
+    category: classifyTurnFailure(providerInfo ?? boundedFailureIdentity(typeof failure.code === 'string' ? failure.code : null), providerIdentity.httpStatusCode, message, !providerIdentity.structured),
     code: capacity ? 'ZEUS_CODEX_MODEL_AT_CAPACITY' : boundedFailureIdentity(typeof failure.code === 'string' ? failure.code : null),
     message,
     providerStatus: boundedFailureIdentity(typeof failure.providerStatus === 'string' ? failure.providerStatus : null),
