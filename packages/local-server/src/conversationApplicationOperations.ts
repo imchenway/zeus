@@ -1,3 +1,4 @@
+import { resolveGitDeliveryConflictWorkspace } from './gitDeliveryExecution.js';
 import { piSdkBinaryVersion } from '@zeus/ai-runtime';
 import { projectConversationTurnFailure } from '@zeus/storage';
 import { resolveContextCapacityPolicy } from './contextCapacitySupport.js';
@@ -2486,7 +2487,15 @@ export function createConversationApplicationOperations(dependencies: Conversati
   ) {
     await validateNewConversationCapacity(project, body, reservation.contextCapacityTokens);
     if (!isNativeApiRecord(body) || body.mode !== 'create') throw nativeApiError('ZEUS_INVALID_CONVERSATION_START', 'Project conversations require mode create.');
-    if (body.source !== undefined && body.source !== 'code_review') throw nativeApiError('ZEUS_INVALID_CODE_REVIEW', '不支持的项目会话来源。');
+    if (body.source !== undefined && body.source !== 'code_review' && body.source !== 'delivery_conflict') throw nativeApiError('ZEUS_INVALID_CODE_REVIEW', '不支持的项目会话来源。');
+    /** 组合冲突会话由已接纳步骤提供隔离目录，客户端不能指定 cwd。 */
+    const deliveryWorkspace = body.source === 'delivery_conflict' ? resolveGitDeliveryConflictWorkspace(db, project.id, body.deliveryStepId) : null;
+    if (deliveryWorkspace && body.permissionMode !== deliveryWorkspace.permissionMode) throw nativeApiError('ZEUS_INVALID_DELIVERY_CONFLICT', '冲突权限必须与本次交付授权一致。');
+    if (
+      deliveryWorkspace &&
+      (body.collaborationMode !== 'default' || !['auto', 'full-access'].includes(body.permissionMode ?? '') || hasExpertMentions(body) || body.goalObjective || body.worktree || body.workspaceMode || body.attachments !== undefined)
+    )
+      throw nativeApiError('ZEUS_INVALID_DELIVERY_CONFLICT', '交付冲突只能在该步骤的独立工作区中执行。');
     const reviewWorkspace = body.source === 'code_review' ? await resolveConversationGitWorkspace(project, typeof body.inheritConversationId === 'string' ? body.inheritConversationId : '', conversations, conversationSubmissions) : null;
     if (
       reviewWorkspace &&
@@ -2532,6 +2541,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
     }
     const displayText = normalizeComposerDisplayText(body.displayText, content);
     const skillReferences = normalizeSkillReferences(body.skillReferences);
+    if (deliveryWorkspace && (skillReferences.length !== (deliveryWorkspace.skillId ? 1 : 0) || (deliveryWorkspace.skillId && skillReferences[0]?.id !== deliveryWorkspace.skillId)))
+      throw nativeApiError('ZEUS_INVALID_DELIVERY_CONFLICT', '冲突 Skill 必须与本次交付授权一致。');
     if (skillReferences.length > 0 && !zeusSkillService) throw nativeApiError('ZEUS_SKILLS_UNAVAILABLE', '当前执行宿主不支持 Zeus Skill。');
     const skills = zeusSkillService ? await Promise.all(skillReferences.map((reference) => zeusSkillService.resolve({ cwd: project.localPath, skillId: reference.id }))) : [];
     const providerContent = skills.length > 1 ? `${skills.map((skill) => `$${skill.name}`).join(' ')}\n\n${content}` : content;
@@ -2570,9 +2581,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
         return providerWriteLifecycle.markRpcStarted(resourceId);
       },
     };
-    const executionRoot = reviewWorkspace?.localPath ?? (await prepareProjectConversationWorkspace(project, reservation.conversationId, body.workspaceMode, body.worktree, platformMutableState.appShellSettings.taskBranchPrefix));
+    const executionRoot =
+      deliveryWorkspace?.localPath ?? reviewWorkspace?.localPath ?? (await prepareProjectConversationWorkspace(project, reservation.conversationId, body.workspaceMode, body.worktree, platformMutableState.appShellSettings.taskBranchPrefix));
     /** 首项目始终使用实际执行目录，普通工作树不能授权回原项目。 */
-    const executionRoots = reviewWorkspace ? [executionRoot] : [executionRoot, ...executionProjects.slice(1).map((target) => target.localPath)];
+    const executionRoots = reviewWorkspace || deliveryWorkspace ? [executionRoot] : [executionRoot, ...executionProjects.slice(1).map((target) => target.localPath)];
     /** 目录清单保存授权上限；只读和计划模式由运行策略统一禁止写入。 */
     const writableRoots = executionRoots;
     const resolvedRoute = await resolveConversationExecutionRoute({
@@ -2616,7 +2628,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             projectId: project.id,
             conversationTitle: (displayText || providerContent).slice(0, 120),
             cwd: executionRoot,
-            executionWorkspaceMode: reviewWorkspace?.workspaceMode ?? (body.workspaceMode === 'worktree' ? 'worktree' : 'direct'),
+            executionWorkspaceMode: deliveryWorkspace?.workspaceMode ?? reviewWorkspace?.workspaceMode ?? (body.workspaceMode === 'worktree' ? 'worktree' : 'direct'),
             ...(goalObjective ? { goalObjective } : {}),
             prompt: providerContent,
             browserComments,
@@ -2646,7 +2658,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
             submissionId: reservation.submissionId,
             projectId: project.id,
             projectLocalPath: executionRoot,
-            executionWorkspaceMode: reviewWorkspace?.workspaceMode ?? (body.workspaceMode === 'worktree' ? 'worktree' : 'direct'),
+            executionWorkspaceMode: deliveryWorkspace?.workspaceMode ?? reviewWorkspace?.workspaceMode ?? (body.workspaceMode === 'worktree' ? 'worktree' : 'direct'),
             prompt: providerContent,
             browserComments,
             browserCommentContent,

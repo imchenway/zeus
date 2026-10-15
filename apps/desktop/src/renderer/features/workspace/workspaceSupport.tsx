@@ -211,7 +211,8 @@ export function isTaskModelPushOriginCurrent(origin: TaskModelPushNavigationTarg
   return origin.projectId === current.projectId && origin.activeNavTarget === current.activeNavTarget && origin.activeProjectSection === current.activeProjectSection && origin.taskDetailPaneTaskId === current.taskDetailPaneTaskId;
 }
 export type TrackedTaskModelPushState = TaskModelPushPendingState & { origin: TaskModelPushNavigationTarget };
-export type NativeConversationAppClient = SessionControllerClient &
+export type NativeConversationAppClient = import('../../git/GitDeliveryRunControl.js').GitDeliveryClient &
+  SessionControllerClient &
   Pick<
     DashboardClient,
     | 'loadHomeAttention'

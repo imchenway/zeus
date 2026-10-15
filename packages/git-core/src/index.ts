@@ -1,3 +1,5 @@
+import { withGitRepositoryOperation } from './repositoryOperation.js';
+export { withGitRepositoryOperation } from './repositoryOperation.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -1052,7 +1054,7 @@ export async function getTaskBranchComparison(repositoryPath: string, sourceBran
 function parseGitNameStatus(stdout: string): Array<{ path: string; originalPath?: string; changeType: GitDiffFileChangeType }> {
   const records = stdout.split('\0');
   const entries: Array<{ path: string; originalPath?: string; changeType: GitDiffFileChangeType }> = [];
-  for (let index = 0; index < records.length; ) {
+  for (let index = 0; index < records.length;) {
     const status = records[index++] ?? '';
     if (!status) continue;
     const code = status[0] ?? 'M';
@@ -2896,8 +2898,13 @@ async function readIntegrationState(cwd: string): Promise<'merge' | 'rebase' | n
 }
 
 /** 执行项目 Git 工作台白名单动作；调用方不能传入任意子命令或任意工作目录。 */
+/** 后台交付退出时沿用 Git runner 的进程组取消，覆盖嵌套任务合入命令。 */
+export function withGitOperationSignal<T>(signal: AbortSignal, operation: () => Promise<T>): Promise<T> {
+  return projectGitExecution.run({ ...projectGitExecution.getStore(), signal }, operation);
+}
+
 export async function executeProjectGitAction(cwd: string, action: ProjectGitAction, signal?: AbortSignal, env?: NodeJS.ProcessEnv, onCommand?: (command: string) => Promise<void>): Promise<ProjectGitActionResult> {
-  return projectGitExecution.run({ signal, env, onCommand }, () => executeProjectGitActionInternal(cwd, action));
+  return withGitRepositoryOperation(cwd, () => projectGitExecution.run({ signal, env, onCommand }, () => executeProjectGitActionInternal(cwd, action)));
 }
 
 async function executeProjectGitActionInternal(cwd: string, action: ProjectGitAction): Promise<ProjectGitActionResult> {
@@ -3860,7 +3867,7 @@ export async function getGitFilePreviewSources(
   /** 默认同名读取；新增和删除由对象或文件的存在性判定。 */
   let oldPath = path;
   let newPath = path;
-  for (let index = 0; index < entries.length - 1; ) {
+  for (let index = 0; index < entries.length - 1;) {
     /** 重命名和复制记录包含两个路径。 */
     const status = entries[index++];
     const left = entries[index++];

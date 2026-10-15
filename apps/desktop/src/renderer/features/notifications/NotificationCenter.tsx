@@ -159,11 +159,22 @@ export function NotificationCenter({
                     /** 不同来源的相同业务身份仍是独立通知。 */
                     const key = `${item.source}:${item.id}`;
                     /** 标题沿用原对象名称，不展示技术来源分类。 */
-                    const title = item.source === 'task' ? item.title : item.automationName;
+                    const title = item.source !== 'automation' ? item.title : item.automationName;
                     /** 描述说明截止时间或执行结果，具体异常优先展示原有完整说明组件。 */
-                    const description = item.source === 'task' ? `${zh ? '截止时间：' : 'Due: '}${formatTaskDeadline(item.deadline)}` : notificationDescriptions[item.status][zh ? 0 : 1];
+                    const description =
+                      item.source === 'git_delivery'
+                        ? item.status === 'succeeded'
+                          ? zh
+                            ? '代码交付已完成'
+                            : 'Code delivery completed'
+                          : zh
+                            ? '代码交付需要处理'
+                            : 'Code delivery needs attention'
+                        : item.source === 'task'
+                          ? `${zh ? '截止时间：' : 'Due: '}${formatTaskDeadline(item.deadline)}`
+                          : notificationDescriptions[item.status][zh ? 0 : 1];
                     /** 无会话异常不能伪装成可导航的标题。 */
-                    const canOpen = item.source === 'task' || Boolean(item.conversationId);
+                    const canOpen = item.source !== 'automation' || Boolean(item.conversationId);
                     return (
                       <li key={key} className="automation-notification-item">
                         <div className="automation-notification-item-header">

@@ -5,6 +5,8 @@ import { ArtifactStore, CommandDeliveryRepository, CommandDeliveryStoreError, ty
 import { createCommandValidation } from './commandApplicationPrimitives.js';
 
 export const workspaceGitCommandTypes = {
+  /** 普通会话组合交付的隔离操作仍使用统一 Git 回执。 */
+  deliveryRepositoryAction: 'git.delivery.repository.action',
   workbenchAction: 'git.workbench.repository.action',
   /** 将项目新增仓库补入既有任务环境，与是否配置远端无关。 */
   taskRepositoryAttach: 'git.task_repository.attach',
@@ -95,6 +97,19 @@ export class WorkspaceGitCommandApplication {
       now(): Date;
     },
   ) {}
+
+  /** 后台恢复只读原命令回执，不触发 invoke。 */
+  inspectOutcome(commandId: string) {
+    return this.options.deliveries.get(commandId);
+  }
+
+  /** 只有已接纳且证据身份一致时才返回原 Git 结果。 */
+  async readAcceptedCommand(commandId: string): Promise<unknown> {
+    const snapshot = this.options.deliveries.get(commandId);
+    const attempt = snapshot?.attempts.at(-1);
+    if (!snapshot || attempt?.receipt?.outcome !== 'accepted' || !attempt.externalOperationId) throw outcomeUnknown(new Error('原命令尚无成功回执。'), this.options.redactSensitiveText);
+    return this.readAcceptedResult(attempt.receipt, snapshot.inbox.commandType, attempt.externalOperationId);
+  }
 
   parse<TInput extends object>(input: { value: unknown; commandType: WorkspaceGitCommandType; scopeKind: WorkspaceGitScopeKind; scopeId: string }): ParsedWorkspaceGitMutation<TInput> {
     const request = requireRecord(input.value, 'Body');

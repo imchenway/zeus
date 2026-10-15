@@ -124,6 +124,7 @@ export function useNotifications(input: {
       try {
         /** 只使用点击时的修订，不替换为刷新后尚未看见的修订。 */
         if (item.source === 'automation') await client.acknowledgeAutomationNotification(item.id, item.revision);
+        else if (item.source === 'git_delivery') await client.acknowledgeGitDelivery(item.id);
         else await client.acknowledgeTaskReminders([item.id]);
         await refresh();
       } catch (error) {
@@ -134,7 +135,7 @@ export function useNotifications(input: {
   );
 
   useEffect(() => {
-    if (!pendingRead) return;
+    if (!pendingRead || pendingRead.source === 'git_delivery') return;
     if (pendingRead.source === 'automation') {
       if (!input.contentVisible || pendingRead.conversationId !== input.visibleConversationId || pendingRead.projectId !== input.visibleProjectId) return;
     } else if (!input.taskContentVisible || pendingRead.taskId !== input.visibleTaskId || pendingRead.projectId !== input.visibleTaskProjectId) return;
@@ -185,8 +186,11 @@ export function useNotifications(input: {
         /** 用户取消未保存内容的离开确认时，不产生已读。 */
         let opened = true;
         if (item.source === 'automation') opened = await input.onOpenConversation(item);
-        else await input.onOpenTask(item);
-        if (opened) setPendingRead(item);
+        else if (item.source === 'git_delivery') {
+          if (!window.zeus?.openTaskGitDeliveryWindow) throw new Error('代码交付窗口不可用。');
+          await window.zeus.openTaskGitDeliveryWindow(item.scope.kind === 'task' ? { taskId: item.scope.taskId } : { projectId: item.projectId, conversationId: item.scope.conversationId });
+        } else await input.onOpenTask(item);
+        if (opened && item.source !== 'git_delivery') setPendingRead(item);
         return opened;
       } catch (error) {
         setActionError(formatVisibleApplicationError(error, language === 'zh-CN' ? 'zh-CN' : 'en'));

@@ -1,3 +1,4 @@
+import { GitDeliveryRunControl, type GitDeliveryClient } from '../git/GitDeliveryRunControl.js';
 import { usePresenceOpen } from '../ui/MotionPresence.js';
 import { type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import { buildTaskCommitMessageSuggestion, type TaskWorkspaceConflictRecovery } from '@zeus/shared';
@@ -37,24 +38,25 @@ import { TaskGitConflictWorkspace } from './TaskGitConflictWorkspace.js';
 import { loadGitCommitModelOptions } from '../git/gitCommitModels.js';
 import { type ConflictDocument, countUnresolvedConflictBlocks, createConflictDocument, serializeConflictForGit } from './taskConflictModel.js';
 
-type DeliveryClient = Pick<
-  DashboardClient,
-  | 'loadTaskGitWorkspaceIndex'
-  | 'loadTaskGitWorkspaceSnapshot'
-  | 'loadTaskWorkspaceFileDiff'
-  | 'commitTaskWorkspace'
-  | 'pushTaskIntegration'
-  | 'loadTaskIntegrations'
-  | 'startTaskIntegration'
-  | 'loadTaskIntegrationConflict'
-  | 'startTaskIntegrationConflictAi'
-  | 'resolveTaskIntegrationConflict'
-  | 'finalizeTaskIntegration'
-  | 'loadSkills'
-  | 'sendNativeMessage'
-  | 'loadGitCommitModels'
-  | 'generateGitCommitMessage'
->;
+type DeliveryClient = GitDeliveryClient &
+  Pick<
+    DashboardClient,
+    | 'loadTaskGitWorkspaceIndex'
+    | 'loadTaskGitWorkspaceSnapshot'
+    | 'loadTaskWorkspaceFileDiff'
+    | 'commitTaskWorkspace'
+    | 'pushTaskIntegration'
+    | 'loadTaskIntegrations'
+    | 'startTaskIntegration'
+    | 'loadTaskIntegrationConflict'
+    | 'startTaskIntegrationConflictAi'
+    | 'resolveTaskIntegrationConflict'
+    | 'finalizeTaskIntegration'
+    | 'loadSkills'
+    | 'sendNativeMessage'
+    | 'loadGitCommitModels'
+    | 'generateGitCommitMessage'
+  >;
 
 export interface PendingConflictAiStart {
   idempotencyKey: string;
@@ -246,12 +248,27 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
         return {
           workspace,
           detail,
+          loadState: detailStates[workspace.id] ?? ((diffScope === 'committed' ? detail?.comparisonError : detail?.reviewError) ? ('error' as const) : undefined),
           statusLabel: workspaceStateLabel(workspace, detail, detailStates[workspace.id], zh, integrations, targetBranchesByWorkspace[workspace.id]),
           files: diffScope === 'committed' ? (detail?.branchComparison?.files ?? []).map((file) => toCommittedDeliveryFile(file, zh)) : collectWorkingFiles(detail).map((file) => toWorkingDeliveryFile(file, zh)),
         };
       }),
     [visibleWorkspaceItems, workspaceDetails, diffScope, zh, detailStates, integrations, targetBranchesByWorkspace],
   );
+  /** 文件范围变化后审阅首个实际变动，不保留已隐藏目录的差异。 */
+  useEffect(() => {
+    const current = repositoryGroups.find((group) => group.workspace.id === workspaceId && group.files.length > 0);
+    if (current) return;
+    const first = repositoryGroups.find((group) => group.files.length > 0);
+    if (first && first.workspace.id !== workspaceId) {
+      setWorkspaceId(first.workspace.id);
+      setSelectedFile(first.files[0]!.path);
+    }
+    if (!first) {
+      setSelectedFile('');
+      setFileDiff(null);
+    }
+  }, [repositoryGroups, workspaceId]);
   const totalWorkingFiles = useMemo(() => visibleWorkspaceItems.reduce((total, workspace) => total + collectWorkingFiles(workspaceDetails[workspace.id]).length, 0), [visibleWorkspaceItems, workspaceDetails]);
   const totalCommittedFiles = useMemo(() => visibleWorkspaceItems.reduce((total, workspace) => total + (workspaceDetails[workspace.id]?.branchComparison?.files.length ?? 0), 0), [visibleWorkspaceItems, workspaceDetails]);
   const selectedWorkspaceIdSet = useMemo(() => new Set(selectedWorkspaceIds), [selectedWorkspaceIds]);
@@ -1232,6 +1249,37 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                         </small>
                       ) : null}
                     </>
+                  }
+                  combination={
+                    props.client ? (
+                      <GitDeliveryRunControl
+                        client={props.client}
+                        projectId={props.task.projectId}
+                        zh={zh}
+                        disabled={busy}
+                        onAccepted={props.onClose}
+                        input={{
+                          scope: { kind: 'task', taskId: props.task.id },
+                          message,
+                          mode,
+                          repositories: selectedWorkspaceIds.flatMap((id) => {
+                            const workspace = workspaceDetails[id];
+                            return workspace
+                              ? [
+                                  {
+                                    repositoryId: id,
+                                    paths: selectedPathsByWorkspace[id] ?? [],
+                                    expectedBranch: workspace.branchName,
+                                    expectedHeadSha: workspace.review?.headSha ?? workspace.branchComparison?.taskHeadSha ?? workspace.headSha ?? '',
+                                    mergeBranch: targetBranchesByWorkspace[id],
+                                  },
+                                ]
+                              : [];
+                          }),
+                        }}
+                        repositoryNames={Object.fromEntries(visibleWorkspaceItems.map((workspace) => [workspace.id, repositoryLabel(workspace, zh)]))}
+                      />
+                    ) : null
                   }
                   pushCount={selectedPushCandidateCount}
                   onPush={() => void pushSelected()}

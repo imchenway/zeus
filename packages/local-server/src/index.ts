@@ -626,7 +626,9 @@ export interface StartProjectConversationBody {
   browserComments?: unknown;
   /** 新对话首条消息的网页批注提示词。 */
   browserCommentContent?: string;
-  source?: 'code_review';
+  source?: 'code_review' | 'delivery_conflict';
+  /** 已接纳的普通会话交付冲突步骤。 */
+  deliveryStepId?: string;
   inheritConversationId?: string;
   worktree?: ConversationWorktreeOptions;
   workspaceMode?: 'direct' | 'worktree';
@@ -3387,6 +3389,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     retryTaskIntegrationAiPreparation,
     failTaskIntegrationAiPreparation,
     scheduleTaskIntegrationAiFinalization,
+    finalizeTaskIntegrationAfterAi,
   } = gitIntegrationOperations;
   /** 受管命令按原轮次保存真实退出证据，短等待结束不能被记为命令成功。 */
   function persistConversationCommandEvidence(session: AiRuntimeSession): void {
@@ -3806,6 +3809,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     resolveTaskWorkspaceRequest,
     restoreNativeConversation,
     retryTaskIntegrationAiPreparation,
+    finalizeTaskIntegrationAfterAi,
     revokeReleaseNotesCapability,
     runRuntimeLogRetention,
     runtimeEphemeralCapabilities,

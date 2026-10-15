@@ -17190,11 +17190,12 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-git-conflict-ai-permission > span > small,
-.macos-ai-app .task-git-conflict-ai-permission label small {
+.macos-ai-app :is(.task-git-conflict-ai-permission, .git-delivery-conflict-permissions) label small {
   color: var(--zeus-product-muted);
   line-height: 1.5;
 }
 
+.macos-ai-app .git-delivery-conflict-permissions,
 .macos-ai-app .task-git-conflict-ai-permission fieldset {
   display: grid;
   gap: 0;
@@ -17203,13 +17204,13 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   border: 0;
 }
 
-.macos-ai-app .task-git-conflict-ai-permission legend {
+.macos-ai-app :is(.task-git-conflict-ai-permission, .git-delivery-conflict-permissions) legend {
   margin-block-end: 7px;
   color: var(--zeus-product-muted);
   font-size: 12px;
 }
 
-.macos-ai-app .task-git-conflict-ai-permission label {
+.macos-ai-app :is(.task-git-conflict-ai-permission, .git-delivery-conflict-permissions) label {
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr);
   align-items: center;
@@ -17223,19 +17224,19 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   cursor: pointer;
 }
 
-.macos-ai-app .task-git-conflict-ai-permission label:first-of-type {
+.macos-ai-app :is(.task-git-conflict-ai-permission, .git-delivery-conflict-permissions) label:first-of-type {
   border-block-start: 0;
 }
 
-.macos-ai-app .task-git-conflict-ai-permission label.is-selected {
+.macos-ai-app :is(.task-git-conflict-ai-permission, .git-delivery-conflict-permissions) label.is-selected {
   color: var(--zeus-product-text);
 }
 
-.macos-ai-app .task-git-conflict-ai-permission label.is-selected > span > strong {
+.macos-ai-app :is(.task-git-conflict-ai-permission, .git-delivery-conflict-permissions) label.is-selected > span > strong {
   color: var(--zeus-accent, #3977db);
 }
 
-.macos-ai-app .task-git-conflict-ai-permission label > input {
+.macos-ai-app :is(.task-git-conflict-ai-permission, .git-delivery-conflict-permissions) label > input {
   appearance: none;
   -webkit-appearance: none;
   inline-size: 14px;
@@ -17252,7 +17253,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   box-shadow: none;
 }
 
-.macos-ai-app .task-git-conflict-ai-permission label > input::before {
+.macos-ai-app :is(.task-git-conflict-ai-permission, .git-delivery-conflict-permissions) label > input::before {
   inline-size: 6px;
   block-size: 6px;
   border-radius: 50%;
@@ -17261,21 +17262,21 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   transform: scale(0);
 }
 
-.macos-ai-app .task-git-conflict-ai-permission label > input:checked {
+.macos-ai-app :is(.task-git-conflict-ai-permission, .git-delivery-conflict-permissions) label > input:checked {
   border-color: var(--zeus-accent, #3977db);
 }
 
-.macos-ai-app .task-git-conflict-ai-permission label > input:checked::before {
+.macos-ai-app :is(.task-git-conflict-ai-permission, .git-delivery-conflict-permissions) label > input:checked::before {
   transform: scale(1);
 }
 
-.macos-ai-app .task-git-conflict-ai-permission label > input:focus-visible {
+.macos-ai-app :is(.task-git-conflict-ai-permission, .git-delivery-conflict-permissions) label > input:focus-visible {
   outline: 3px solid color-mix(in oklab, var(--zeus-accent, #3977db) 28%, transparent);
   outline-offset: 2px;
   box-shadow: none;
 }
 
-.macos-ai-app .task-git-conflict-ai-permission label > span {
+.macos-ai-app :is(.task-git-conflict-ai-permission, .git-delivery-conflict-permissions) label > span {
   display: grid;
   gap: 3px;
 }
@@ -23914,4 +23915,52 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 .task-table-pagination button:focus-visible {
   outline: 2px solid var(--brand);
   outline-offset: 2px;
+}
+
+/* 组合交付沿用右侧操作区；长路径与窄窗口允许自然换行。 */
+.git-delivery-combination {
+  border-block-start: 1px solid var(--border-color, #ddd);
+  padding-block-start: 10px;
+  min-inline-size: 0;
+}
+.git-delivery-combination-buttons {
+  display: flex;
+  gap: 6px;
+}
+.git-delivery-combination-buttons > :first-child {
+  flex: 1;
+}
+.git-delivery-selection,
+.git-delivery-run {
+  min-inline-size: 0;
+  font-size: 12px;
+}
+.git-delivery-selection ul,
+.git-delivery-run ol {
+  padding-inline-start: 18px;
+}
+.git-delivery-selection li,
+.git-delivery-run li {
+  margin-block: 6px;
+  overflow-wrap: anywhere;
+}
+.git-delivery-selection small,
+.git-delivery-run small,
+.git-delivery-run li > span {
+  display: block;
+}
+.git-delivery-checkbox {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+}
+.git-delivery-checkbox input {
+  flex: none;
+}
+.git-delivery-conflict-dialog {
+  inline-size: min(1200px, 94vw);
+  max-inline-size: 94vw;
+}
+.git-delivery-conflict-dialog .zeus-form-fields {
+  min-block-size: 300px;
 }

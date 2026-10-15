@@ -135,7 +135,7 @@ declare global {
       getTaskGitDeliveryCurrentContext: () => Promise<{ taskId: string | null; workspaceId: string | null }>;
       notifyTaskGitDeliveryCurrentContext: (context: { taskId: string | null; workspaceId: string | null }) => void;
       notifyTaskGitDeliveryChanged: (taskId: string) => void;
-      openTaskGitDeliveryConversation: (input: { taskId: string; conversationId: string }) => Promise<{ opened: true }>;
+      openTaskGitDeliveryConversation: (input: { taskId: string; conversationId: string } | { projectId: string; conversationId: string }) => Promise<{ opened: true }>;
       /** 任务工作区文件在独立窗口中只读查看。 */
       openTaskGitDiffWindow: (input: Extract<import('@zeus/shared').FilePreviewRequest, { kind: 'task-git' }>) => Promise<{ opened: true }>;
       openProjectGitDiffWindow: (input: {

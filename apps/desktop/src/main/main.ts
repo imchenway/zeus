@@ -1696,14 +1696,17 @@ function setupIpc(): void {
   });
   ipcMain.handle('zeus:task-git-delivery:open-conversation', async (event, input: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
-    const ownedTaskId = requestingWindow ? taskGitDeliveryTargetByWindowId.get(requestingWindow.id)?.taskId : undefined;
-    if (!ownedTaskId || !input || typeof input !== 'object' || Array.isArray(input)) throw new Error('冲突处理会话请求来自不受信任的代码交付窗口。');
-    const candidate = input as { taskId?: unknown; conversationId?: unknown };
-    if (candidate.taskId !== ownedTaskId || typeof candidate.conversationId !== 'string' || !candidate.conversationId.trim()) throw new TypeError('冲突处理会话身份无效。');
+    /** 只能从实际交付窗口打开同一任务或项目的冲突会话。 */
+    const owned = requestingWindow ? taskGitDeliveryTargetByWindowId.get(requestingWindow.id) : undefined;
+    if (!owned || !input || typeof input !== 'object' || Array.isArray(input)) throw new Error('冲突处理会话请求来自不受信任的代码交付窗口。');
+    const candidate = input as { taskId?: unknown; projectId?: unknown; conversationId?: unknown };
+    if (typeof candidate.conversationId !== 'string' || !candidate.conversationId.trim() || (owned.taskId !== undefined ? candidate.taskId !== owned.taskId : candidate.projectId !== owned.projectId))
+      throw new TypeError('冲突处理会话身份无效。');
     await requestMainWindow();
     if (!mainWindow || mainWindow.isDestroyed()) throw new Error('Zeus 主窗口当前不可用。');
     revealMainWindow(mainWindow);
-    mainWindow.webContents.send('zeus:task-git-delivery:open-conversation', { taskId: ownedTaskId, conversationId: candidate.conversationId });
+    if (owned.taskId !== undefined) mainWindow.webContents.send('zeus:task-git-delivery:open-conversation', { taskId: owned.taskId, conversationId: candidate.conversationId });
+    else mainWindow.webContents.send('zeus:conversation-notification:open', { projectId: owned.projectId, conversationId: candidate.conversationId });
     return { opened: true };
   });
   ipcMain.handle('zeus:menu-bar-usage:hide', (event) => {

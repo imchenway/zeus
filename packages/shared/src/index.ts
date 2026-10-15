@@ -1,3 +1,4 @@
+export * from './gitDelivery.js';
 /** 所有文件入口共用预览类型与格式策略。 */
 export * from './filePreview.js';
 /** 任务截止时间与提醒共用的跨层契约。 */
