@@ -8,6 +8,7 @@ import { FileIcon as File } from '@phosphor-icons/react/dist/csr/File';
 import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { OpenWithMenu } from './ConversationResources.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { Button } from '../ui/Button.js';
 import type { ConversationOpenTarget, ConversationResourceOpenTarget } from '@zeus/shared';
 import { listConversationResourceOpenTargetsInMain } from '../appShellBridge.js';
 import { FilePreview, FileReviewContent, PreviewImage } from '../code/FilePreview.js';
@@ -361,9 +362,9 @@ function SourceWorkspaceView(props: {
                   <FileMagnifyingGlass aria-hidden="true" />
                 </button>
                 {markdownPreview ? (
-                  <button type="button" onClick={() => props.onViewModeChange(renderedMarkdown ? 'source' : 'preview')}>
+                  <Button size="compact" className="session-source-mode-toggle" onClick={() => props.onViewModeChange(renderedMarkdown ? 'source' : 'preview')}>
                     {renderedMarkdown ? (zh ? '查看源代码' : 'View source') : zh ? '查看预览' : 'View preview'}
-                  </button>
+                  </Button>
                 ) : null}
                 <button
                   type="button"

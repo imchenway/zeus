@@ -13598,7 +13598,11 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 .session-source-header .session-context-workspace-title > span {
   flex: 1;
 }
-.session-source-actions > button {
+/* 文件操作沿用紧凑控件高度；文字与图标入口共用外框尺寸，宽度按内容保留。 */
+.session-source-actions > button,
+.macos-ai-app .session-source-actions > .session-source-mode-toggle[data-zeus-primitive='button'] {
+  appearance: none;
+  box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -13607,9 +13611,9 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   color: inherit;
   font: inherit;
   cursor: pointer;
-  padding: 8px 14px;
+  padding: 0 12px;
   border-radius: 999px;
-  min-block-size: 40px;
+  min-block-size: var(--zeus-control-height);
   box-shadow: 0 2px 8px color-mix(in srgb, var(--session-text) 3%, transparent);
   white-space: nowrap;
 }
@@ -13696,20 +13700,23 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 }
 
 .session-source-open-group {
+  /* 组合按钮只由外框计入边框，内部按钮不再以各自的最小高度撑高整组。 */
+  box-sizing: border-box;
   display: flex;
   border: 1px solid var(--session-line);
   border-radius: 999px;
   overflow: hidden;
-  min-block-size: 40px;
+  block-size: var(--zeus-control-height);
   background: var(--session-canvas);
   box-shadow: 0 2px 8px color-mix(in srgb, var(--session-text) 3%, transparent);
 }
 .session-source-open-group > button {
+  appearance: none;
   background: transparent;
   border: 0;
   color: inherit;
   font: inherit;
-  padding: 6px 12px;
+  padding: 0 12px;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -13729,11 +13736,15 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   cursor: default;
   opacity: 0.45;
 }
+/* 打开方式复用现有菜单，触发器跟随组合按钮内部高度。 */
+.session-source-open-group > .session-open-with {
+  display: flex;
+}
 .session-source-actions .session-source-open-group .session-open-with-trigger {
   border: 0;
   border-left: 0;
   border-radius: 0;
-  min-block-size: 40px;
+  min-block-size: 0;
   padding: 0 10px;
 }
 
