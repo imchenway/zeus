@@ -87,14 +87,14 @@ export async function verifyDesktopReadOnlyValidationDescriptor(descriptor: Read
   return verifyReadOnlyValidationDescriptor(descriptor);
 }
 
-/** 正式及只读验收身份要求有效签名；普通内部启动可显式接受独立 Test 产品的无签名 PE。 */
-export function readPackagedDesktopApplicationId(executablePath: string, packaged: boolean, allowUnsignedTest = false): string {
+/** 普通启动可接受产品与文件名一致的无签名 PE；只读验收仍默认要求有效签名。 */
+export function readPackagedDesktopApplicationId(executablePath: string, packaged: boolean, allowUnsigned = false): string {
   if (!packaged) throw validationApplicationError('应用身份核验只允许打包产物。');
   if (process.platform === 'win32') {
     const signature = windowsSecurityRequest<{ valid: boolean; status?: number; productName: string | null }>({ operation: 'verify-authenticode', path: executablePath });
-    // TRUST_E_NOSIGNATURE 仅表示无签名；损坏签名、证书错误和其他产品均不进入内部身份。
-    if (allowUnsignedTest && !signature.valid && signature.status === -2146762496 && signature.productName === 'Zeus Test' && basename(executablePath) === 'Zeus Test.exe') return 'dev.hypha.zeus.test';
-    if (!signature.valid || (signature.productName !== 'Zeus Test' && signature.productName !== 'Zeus')) throw validationApplicationError('Windows 应用签名或产品身份无效。');
+    // 原生助手只在证书表为空且返回 TRUST_E_NOSIGNATURE 时提供产品字段，不接受损坏或不可信签名。
+    const unsignedApplication = allowUnsigned && signature.status === -2146762496 && basename(executablePath) === `${signature.productName}.exe`;
+    if ((!signature.valid && !unsignedApplication) || (signature.productName !== 'Zeus Test' && signature.productName !== 'Zeus')) throw validationApplicationError('Windows 应用签名或产品身份无效。');
     return signature.productName === 'Zeus Test' ? 'dev.hypha.zeus.test' : 'dev.hypha.zeus';
   }
   if (process.platform !== 'darwin') throw validationApplicationError('当前平台没有打包应用身份校验器。');

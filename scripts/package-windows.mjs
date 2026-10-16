@@ -9,8 +9,6 @@ import { generateReleaseManifest } from './generate-release-manifest.mjs';
 
 /** 所有路径固定到当前工作树，不依赖调用终端的目录。 */
 const root = resolve(import.meta.dirname, '..');
-/** 正式包必须显式选择，日常构建保持独立测试身份。 */
-const release = process.argv.includes('--release');
 /** 显式编译模式只检查原生产物，安装器由普通或正式打包入口生成。 */
 const compileOnly = process.argv.includes('--compile-only');
 /** 每个架构由原生 Windows runner 构建，避免把 x64 DLL 放进 ARM 包。 */
@@ -19,16 +17,13 @@ const arch = process.arch;
 const pnpmEntry = process.env.npm_execpath;
 /** 当前包使用的 Electron 版本及应用版本只有根清单这一来源。 */
 const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
-/** 测试包与正式包写入独立目录。 */
-const output = resolve(root, process.env.ZEUS_PACKAGE_OUTPUT_DIR || (release ? 'dist' : 'dist/test'));
-/** 内部包按实际凭据决定签名，正式发行始终要求签名。 */
-const hasSigningCredentials = Boolean(process.env.WIN_CSC_LINK?.trim() || process.env.CSC_LINK?.trim());
-/** 不允许缺少或无效的签名凭据降级为未签名正式包。 */
-const requireSignature = release || hasSigningCredentials;
+/** Windows 安装器统一使用正式 Zeus 身份和输出目录。 */
+const output = resolve(root, process.env.ZEUS_PACKAGE_OUTPUT_DIR || 'dist');
+/** 签名取决于实际凭据，不决定产品身份；显式配置的凭据失败时禁止降级。 */
+const requireSignature = Boolean(process.env.WIN_CSC_LINK?.trim() || process.env.CSC_LINK?.trim());
 
 if (process.platform !== 'win32' || !['x64', 'arm64'].includes(arch)) throw new Error('Windows 安装包必须在对应架构的原生 Windows 上构建。');
 if (!pnpmEntry || !/\.(?:c?js|mjs)$/u.test(pnpmEntry)) throw new Error('请通过 pnpm package:windows 执行构建。');
-if (!compileOnly && release && !hasSigningCredentials) throw new Error('Windows 正式安装包必须配置可验签的 Authenticode 凭据；无证书请运行 pnpm package:windows，生成独立的未签名内部安装包。');
 await mkdir(output, { recursive: true });
 await run(process.execPath, [pnpmEntry, 'build']);
 if (compileOnly) {
@@ -47,7 +42,7 @@ await run(
     '--publish',
     'never',
     '--config',
-    release ? 'electron-builder.windows.yml' : 'electron-builder.windows.test.yml',
+    'electron-builder.windows.yml',
     `--config.electronVersion=${manifest.devDependencies.electron}`,
     `--config.directories.output=${output}`,
     `--config.forceCodeSigning=${requireSignature}`,
@@ -55,13 +50,13 @@ await run(
   join(root, 'apps/desktop'),
 );
 /** 安装器必须实际存在且非空；原生资源必须出现在解包后的物理目录。 */
-const installerName = `${release ? 'Zeus' : 'Zeus-Test'}-${manifest.version}-win32-${arch}.exe`;
+const installerName = `Zeus-${manifest.version}-win32-${arch}.exe`;
 if ((await stat(join(output, installerName))).size === 0) throw new Error('Windows 安装器为空。');
 /** electron-builder 对非 x64 目标使用架构后缀。 */
 const unpacked = join(output, arch === 'x64' ? 'win-unpacked' : `win-${arch}-unpacked`);
 await assertNativeArchitecture(join(unpacked, 'resources/native'));
-await assertPeArchitecture(join(unpacked, release ? 'Zeus.exe' : 'Zeus Test.exe'), arch);
-/** 正式和配置了凭据的内部包必须验签；未签名包必须保持独立产品和原生组件名。 */
+await assertPeArchitecture(join(unpacked, 'Zeus.exe'), arch);
+/** 产品身份始终为 Zeus；有凭据时验签，无凭据时只接受真正未签名的安装器和主程序。 */
 await run(
   'powershell.exe',
   [
@@ -69,19 +64,19 @@ await run(
     '-NoProfile',
     '-NonInteractive',
     '-Command',
-    `$ErrorActionPreference='Stop'; $requireSignature=${requireSignature ? '$true' : '$false'}; if ($requireSignature) { $files=@($env:ZEUS_VERIFY_INSTALLER,(Join-Path $env:ZEUS_VERIFY_APP $env:ZEUS_VERIFY_EXECUTABLE))+@(Get-ChildItem -LiteralPath (Join-Path $env:ZEUS_VERIFY_APP 'resources/native') -Recurse -File | Where-Object { $_.Extension -in '.exe','.dll','.node' } | ForEach-Object { $_.FullName }); $subject=$null; foreach($file in $files) { $s=Get-AuthenticodeSignature -LiteralPath $file; if ($s.Status -ne 'Valid') { throw ('Windows signature is invalid: '+$file) }; if ($null -eq $subject) { $subject=$s.SignerCertificate.Subject }; if ($s.SignerCertificate.Subject -ne $subject) { throw ('Windows publisher mismatch: '+$file) } } } else { $main=Get-Item -LiteralPath (Join-Path $env:ZEUS_VERIFY_APP $env:ZEUS_VERIFY_EXECUTABLE); if ($env:ZEUS_VERIFY_EXECUTABLE -cne 'Zeus Test.exe' -or $main.VersionInfo.ProductName -cne 'Zeus Test') { throw 'Unsigned installer must use the isolated Zeus Test identity' } }; $runtime=Get-Item -LiteralPath (Join-Path $env:ZEUS_VERIFY_APP 'resources/native/ZeusWindowsRuntime.exe'); if ($runtime.VersionInfo.InternalName -cne 'ZeusWindowsRuntime') { throw 'Windows runtime component identity is invalid' }`,
+    `$ErrorActionPreference='Stop'; $requireSignature=${requireSignature ? '$true' : '$false'}; $main=Get-Item -LiteralPath (Join-Path $env:ZEUS_VERIFY_APP 'Zeus.exe'); if ($main.VersionInfo.ProductName -cne 'Zeus') { throw 'Windows installer must use the Zeus product identity' }; $files=@($env:ZEUS_VERIFY_INSTALLER,$main.FullName); if ($requireSignature) { $files+=@(Get-ChildItem -LiteralPath (Join-Path $env:ZEUS_VERIFY_APP 'resources/native') -Recurse -File | Where-Object { $_.Extension -in '.exe','.dll','.node' } | ForEach-Object { $_.FullName }); $subject=$null; foreach($file in $files) { $s=Get-AuthenticodeSignature -LiteralPath $file; if ($s.Status -ne 'Valid') { throw ('Windows signature is invalid: '+$file) }; if ($null -eq $subject) { $subject=$s.SignerCertificate.Subject }; if ($s.SignerCertificate.Subject -ne $subject) { throw ('Windows publisher mismatch: '+$file) } } } else { foreach($file in $files) { if ((Get-AuthenticodeSignature -LiteralPath $file).Status -ne 'NotSigned') { throw ('Windows unsigned artifact has an unexpected signature: '+$file) } } }; $runtime=Get-Item -LiteralPath (Join-Path $env:ZEUS_VERIFY_APP 'resources/native/ZeusWindowsRuntime.exe'); if ($runtime.VersionInfo.InternalName -cne 'ZeusWindowsRuntime') { throw 'Windows runtime component identity is invalid' }`,
   ],
   root,
-  { ZEUS_VERIFY_INSTALLER: join(output, installerName), ZEUS_VERIFY_APP: unpacked, ZEUS_VERIFY_EXECUTABLE: release ? 'Zeus.exe' : 'Zeus Test.exe' },
+  { ZEUS_VERIFY_INSTALLER: join(output, installerName), ZEUS_VERIFY_APP: unpacked },
 );
-if (release) await generateReleaseManifest({ version: manifest.version, platform: 'win32', distDir: output, outputPath: join(output, `zeus-release-manifest-win32-${arch}.json`), signed: true });
-console.log(`Windows ${requireSignature ? '已签名' : '未签名内部'}安装包已生成：${join(output, installerName)}`);
+await generateReleaseManifest({ version: manifest.version, platform: 'win32', distDir: output, outputPath: join(output, `zeus-release-manifest-win32-${arch}.json`), signed: requireSignature });
+console.log(`Windows Zeus ${requireSignature ? '已签名' : '未签名'}正式安装包已生成：${join(output, installerName)}`);
 
 /** 构建命令直接传参，输出由调用方保存到构建日志。 */
 async function run(command, args, cwd = root, extraEnvironment = {}) {
   await new Promise((resolveRun, rejectRun) => {
-    /** 无证书的内部构建关闭自动证书发现；显式凭据失败仍由 builder 拒绝。 */
-    const environment = { ...process.env, ...extraEnvironment, ...(requireSignature ? {} : { CSC_IDENTITY_AUTO_DISCOVERY: 'false' }), ZEUS_PACKAGE_VARIANT: release ? 'release' : 'test', ZEUS_RELEASE_BUILD: release ? '1' : '0' };
+    /** 无证书时关闭自动证书发现；正式产品身份与签名状态分别设置。 */
+    const environment = { ...process.env, ...extraEnvironment, ...(requireSignature ? {} : { CSC_IDENTITY_AUTO_DISCOVERY: 'false' }), ZEUS_PACKAGE_VARIANT: 'release', ZEUS_RELEASE_BUILD: '1' };
     /** 当前步骤拥有的唯一构建进程。 */
     const child = spawn(command, args, { cwd, env: environment, stdio: 'inherit', windowsHide: true });
     child.once('error', rejectRun);

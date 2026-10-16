@@ -13,13 +13,13 @@ on:
         description: 与候选 package.json 一致的目标标签
         required: true
       publish_release:
-        description: 上传已签名的 Windows 安装器到已有稳定 Release
+        description: 上传正式 Zeus Windows 安装器到已有稳定 Release，签名状态按实际凭据记录
         required: true
         type: boolean
         default: false
       # 任务交付独立生成安装器附件，不要求创建或修改公开 Release。
       build_installers:
-        description: 仅生成 Zeus Test 安装器附件，无证书时生成未签名内部包
+        description: 生成正式 Zeus 安装器附件，无证书时生成未签名正式包
         required: true
         type: boolean
         default: false
@@ -54,16 +54,6 @@ jobs:
           fi
           if [ "$RELEASE_TAG" != "v$(node -p "require('./package.json').version")" ]; then
             echo 'Windows 目标标签与候选版本不一致。' >&2
-            exit 1
-          fi
-      - name: 核对正式发行签名凭据
-        if: ${{ inputs.publish_release }}
-        env:
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-        run: |
-          if [ -z "$WINDOWS_CERTIFICATE" ] || [ -z "$WINDOWS_CERTIFICATE_PASSWORD" ]; then
-            echo 'Windows 正式安装器构建需要 Authenticode 签名凭据。' >&2
             exit 1
           fi
       - name: 核对已有稳定发行
@@ -105,7 +95,7 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
 
-  # 正式 Windows 安装包必须分别原生构建并通过 Authenticode 验证。
+  # 正式 Windows 安装包分别原生构建，有凭据时要求签名有效，无凭据时如实记录未签名。
   package-windows:
     needs: preflight
     strategy:
@@ -145,7 +135,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: 计算任务安装包的原生缓存身份
         id: cua_inputs
-        # 仅内部附件构建使用任务分支缓存，不改变正式发行缓存策略。
+        # 附件构建使用任务分支缓存，产品身份仍为正式 Zeus。
         if: ${{ inputs.build_installers && !inputs.publish_release }}
         run: node apps/desktop/scripts/build-computer-native.mjs --cache-info | ForEach-Object { $_.Replace('\', '/') } >> $env:GITHUB_OUTPUT
       - name: 恢复任务分支的 CUA 成品
@@ -160,12 +150,9 @@ jobs:
       - name: 清理未精确命中的任务原生成品
         if: ${{ inputs.build_installers && !inputs.publish_release && steps.cua_cache.outputs.cache-hit != 'true' }}
         run: node apps/desktop/scripts/build-computer-native.mjs --clear-artifacts
-      - name: 构建并验签正式安装器
-        if: ${{ inputs.publish_release }}
+      - name: 构建正式 Zeus 安装器
+        if: ${{ inputs.build_installers || inputs.publish_release }}
         run: pnpm package:windows:release
-      - name: 构建任务安装器附件
-        if: ${{ inputs.build_installers && !inputs.publish_release }}
-        run: pnpm package:windows
       - name: 非发布候选仅编译与核对原生产物
         if: ${{ !inputs.build_installers && !inputs.publish_release }}
         run: pnpm build:windows
@@ -186,7 +173,6 @@ jobs:
           path: |
             dist/Zeus-*-win32-*.exe
             dist/zeus-release-manifest-win32-*.json
-            dist/test/Zeus-Test-*-win32-*.exe
 
   # 只追加本平台资产；macOS 发布、Release notes 和 Homebrew 均由原有流程维护。
   publish:
@@ -207,7 +193,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: 下载两个原生架构的已验签安装器
+      - name: 下载两个原生架构的正式安装器
         uses: actions/download-artifact@v4
         with:
           pattern: zeus-windows-${{ inputs.commit_sha }}-*

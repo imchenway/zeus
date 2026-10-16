@@ -2,7 +2,7 @@
 extends: ./electron-builder.yml
 # 每个架构单独发行，下载清单必须精确匹配当前应用架构。
 artifactName: Zeus-${version}-win32-${arch}.${ext}
-# Rust 服务在主程序签名前写入组件名；未签名内部包也必须携带相同版本资源。
+# Rust 服务在主程序签名前写入组件名；未签名正式包也必须携带相同版本资源。
 afterPack: ../../scripts/sign-windows-native.mjs
 # Windows 只保留 resources/native 一份运行时，避免 ASAR 解包区重复携带 .NET。
 files:

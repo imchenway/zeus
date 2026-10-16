@@ -579,8 +579,8 @@ try {
     process.env.ZEUS_WINDOWS_SECURITY_HELPER = nativeDesktopHelperPath('zeus-windows-security.exe');
     process.env.ZEUS_WINDOWS_RUNTIME_HELPER = nativeDesktopHelperPath('ZeusWindowsRuntime.exe');
     if (app.isPackaged) {
-      // 未签名内部包只允许独立 Test 身份；正式身份及只读验收仍由签名确认。
-      const applicationId = readPackagedDesktopApplicationId(process.execPath, true, isTestDistribution());
+      // 产品身份决定数据根，签名状态不改变正式 Zeus 身份；只读验收另行保持严格验签。
+      const applicationId = readPackagedDesktopApplicationId(process.execPath, true, true);
       if (applicationId !== expectedBundleIdForDataRootProfile(activeDataRootProfile())) throw new Error('Zeus 安装包产品身份与运行环境不符。');
     }
   }
