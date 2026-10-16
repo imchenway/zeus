@@ -56,7 +56,7 @@ if ((await stat(join(output, installerName))).size === 0) throw new Error('Windo
 const unpacked = join(output, arch === 'x64' ? 'win-unpacked' : `win-${arch}-unpacked`);
 await assertNativeArchitecture(join(unpacked, 'resources/native'));
 await assertPeArchitecture(join(unpacked, 'Zeus.exe'), arch);
-/** 产品身份始终为 Zeus；有凭据时验签，无凭据时只接受真正未签名的安装器和主程序。 */
+/** 产品身份始终为 Zeus；使用当前 PowerShell 自带模块，避免继承其他版本的模块路径。 */
 await run(
   'powershell.exe',
   [
@@ -64,7 +64,7 @@ await run(
     '-NoProfile',
     '-NonInteractive',
     '-Command',
-    `$ErrorActionPreference='Stop'; $requireSignature=${requireSignature ? '$true' : '$false'}; $main=Get-Item -LiteralPath (Join-Path $env:ZEUS_VERIFY_APP 'Zeus.exe'); if ($main.VersionInfo.ProductName -cne 'Zeus') { throw 'Windows installer must use the Zeus product identity' }; $files=@($env:ZEUS_VERIFY_INSTALLER,$main.FullName); if ($requireSignature) { $files+=@(Get-ChildItem -LiteralPath (Join-Path $env:ZEUS_VERIFY_APP 'resources/native') -Recurse -File | Where-Object { $_.Extension -in '.exe','.dll','.node' } | ForEach-Object { $_.FullName }); $subject=$null; foreach($file in $files) { $s=Get-AuthenticodeSignature -LiteralPath $file; if ($s.Status -ne 'Valid') { throw ('Windows signature is invalid: '+$file) }; if ($null -eq $subject) { $subject=$s.SignerCertificate.Subject }; if ($s.SignerCertificate.Subject -ne $subject) { throw ('Windows publisher mismatch: '+$file) } } } else { foreach($file in $files) { if ((Get-AuthenticodeSignature -LiteralPath $file).Status -ne 'NotSigned') { throw ('Windows unsigned artifact has an unexpected signature: '+$file) } } }; $runtime=Get-Item -LiteralPath (Join-Path $env:ZEUS_VERIFY_APP 'resources/native/ZeusWindowsRuntime.exe'); if ($runtime.VersionInfo.InternalName -cne 'ZeusWindowsRuntime') { throw 'Windows runtime component identity is invalid' }`,
+    `$ErrorActionPreference='Stop'; $env:PSModulePath=[IO.Path]::Combine($PSHOME,'Modules'); $requireSignature=${requireSignature ? '$true' : '$false'}; $main=Get-Item -LiteralPath (Join-Path $env:ZEUS_VERIFY_APP 'Zeus.exe'); if ($main.VersionInfo.ProductName -cne 'Zeus') { throw 'Windows installer must use the Zeus product identity' }; $files=@($env:ZEUS_VERIFY_INSTALLER,$main.FullName); if ($requireSignature) { $files+=@(Get-ChildItem -LiteralPath (Join-Path $env:ZEUS_VERIFY_APP 'resources/native') -Recurse -File | Where-Object { $_.Extension -in '.exe','.dll','.node' } | ForEach-Object { $_.FullName }); $subject=$null; foreach($file in $files) { $s=Get-AuthenticodeSignature -LiteralPath $file; if ($s.Status -ne 'Valid') { throw ('Windows signature is invalid: '+$file) }; if ($null -eq $subject) { $subject=$s.SignerCertificate.Subject }; if ($s.SignerCertificate.Subject -ne $subject) { throw ('Windows publisher mismatch: '+$file) } } } else { foreach($file in $files) { if ((Get-AuthenticodeSignature -LiteralPath $file).Status -ne 'NotSigned') { throw ('Windows unsigned artifact has an unexpected signature: '+$file) } } }; $runtime=Get-Item -LiteralPath (Join-Path $env:ZEUS_VERIFY_APP 'resources/native/ZeusWindowsRuntime.exe'); if ($runtime.VersionInfo.InternalName -cne 'ZeusWindowsRuntime') { throw 'Windows runtime component identity is invalid' }`,
   ],
   root,
   { ZEUS_VERIFY_INSTALLER: join(output, installerName), ZEUS_VERIFY_APP: unpacked },
