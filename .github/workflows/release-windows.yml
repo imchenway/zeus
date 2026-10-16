@@ -143,6 +143,23 @@ jobs:
         with:
           arch: ${{ matrix.arch }}
       - run: pnpm install --frozen-lockfile
+      - name: 计算任务安装包的原生缓存身份
+        id: cua_inputs
+        # 仅内部附件构建使用任务分支缓存，不改变正式发行缓存策略。
+        if: ${{ inputs.build_installers && !inputs.publish_release }}
+        run: node apps/desktop/scripts/build-computer-native.mjs --cache-info | ForEach-Object { $_.Replace('\', '/') } >> $env:GITHUB_OUTPUT
+      - name: 恢复任务分支的 CUA 成品
+        id: cua_cache
+        if: ${{ inputs.build_installers && !inputs.publish_release }}
+        uses: actions/cache/restore@v4
+        continue-on-error: true
+        with:
+          # 缓存仅匹配同一任务分支、平台、架构、源码和工具链。
+          path: ${{ steps.cua_inputs.outputs.artifact_path }}
+          key: windows-task-${{ github.ref_name }}-${{ steps.cua_inputs.outputs.native_key }}
+      - name: 清理未精确命中的任务原生成品
+        if: ${{ inputs.build_installers && !inputs.publish_release && steps.cua_cache.outputs.cache-hit != 'true' }}
+        run: node apps/desktop/scripts/build-computer-native.mjs --clear-artifacts
       - name: 构建并验签正式安装器
         if: ${{ inputs.publish_release }}
         run: pnpm package:windows:release
@@ -152,6 +169,14 @@ jobs:
       - name: 非发布候选仅编译与核对原生产物
         if: ${{ !inputs.build_installers && !inputs.publish_release }}
         run: pnpm build:windows
+      - name: 保存已完成的任务原生成品
+        # 原生构建成功但后续打包失败时也可保存；下轮使用前仍核对输入和两个文件摘要。
+        if: ${{ always() && inputs.build_installers && !inputs.publish_release && steps.cua_inputs.outcome == 'success' && steps.cua_cache.outputs.cache-hit != 'true' && hashFiles(format('{0}/build-receipt.json', steps.cua_inputs.outputs.artifact_path)) != '' }}
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: ${{ steps.cua_inputs.outputs.artifact_path }}
+          key: windows-task-${{ github.ref_name }}-${{ steps.cua_inputs.outputs.native_key }}
       - uses: actions/upload-artifact@v4
         if: ${{ inputs.build_installers || inputs.publish_release }}
         with:
