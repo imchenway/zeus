@@ -5,6 +5,8 @@ export type GitDeliveryScope = { kind: 'task'; taskId: string } | { kind: 'conve
 export interface GitDeliverySettings {
   /** 是否提交勾选文件。 */
   commit: boolean;
+  /** 提交前按所选文件自动生成说明，默认关闭。 */
+  generateCommitMessage: boolean;
   /** 是否执行本入口的合入。 */
   merge: boolean;
   /** 是否推送对应分支。 */
@@ -20,7 +22,7 @@ export interface GitDeliverySettings {
 }
 
 /** 初次使用只启用三个明确的 Git 步骤。 */
-export const defaultGitDeliverySettings: GitDeliverySettings = { commit: true, merge: true, push: true, resolveConflicts: false, permissionMode: 'auto', skillId: null, finalTaskStatus: null };
+export const defaultGitDeliverySettings: GitDeliverySettings = { commit: true, generateCommitMessage: false, merge: true, push: true, resolveConflicts: false, permissionMode: 'auto', skillId: null, finalTaskStatus: null };
 
 /** 一次运行固定的仓库及相对路径。 */
 export interface GitDeliverySelection {
@@ -44,6 +46,17 @@ export interface GitDeliveryInput {
   settings: GitDeliverySettings;
   /** 现有提交说明。 */
   message: string;
+  /** AI 提交使用点击运行时的模型设置；未启用时不读取模型。 */
+  commitMessageGeneration?: {
+    /** 提交说明的默认语言。 */
+    language: 'zh-CN' | 'en';
+    /** 复用现有提交入口选择的完整模型身份。 */
+    modelRef: string;
+    /** 模型目录中已选的推理档位。 */
+    effort: string;
+    /** 标准速率为空，Fast 使用 priority。 */
+    serviceTier: 'priority' | null;
+  };
   /** 任务入口支持已有的合入方式。 */
   mode: 'merge' | 'squash';
   /** 显式选择的仓库及文件。 */

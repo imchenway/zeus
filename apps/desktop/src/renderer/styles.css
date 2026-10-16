@@ -23949,6 +23949,13 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 .git-delivery-run li > span {
   display: block;
 }
+/* 组合步骤与附属选项同行，窄窗口按自然顺序换行。 */
+.git-delivery-operation-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+}
 .git-delivery-checkbox {
   display: flex !important;
   align-items: center;
@@ -23956,6 +23963,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 }
 .git-delivery-checkbox input {
   flex: none;
+}
+/* 提交关闭后保留偏好，但明确显示 AI 选项不可用。 */
+.git-delivery-checkbox[aria-disabled='true'] {
+  opacity: 0.6;
 }
 .git-delivery-conflict-dialog {
   inline-size: min(1200px, 94vw);

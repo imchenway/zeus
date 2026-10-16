@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, relative, sep } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { realpath } from 'node:fs/promises';
@@ -38,6 +38,7 @@ import {
 } from '@zeus/git-core';
 import { AutomationMutationApplication } from './automationMutationApplication.js';
 import { resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
+import { readCommitFingerprint } from './gitCommitContext.js';
 import { workspaceGitCommandTypes, type WorkspaceGitCommandApplication } from './workspaceGitCommandApplication.js';
 
 /** 只读核对远端结果，绝不通过恢复路径推送。 */
@@ -129,6 +130,21 @@ export function parseGitDeliveryInput(value: unknown): GitDeliveryInput {
   const scopeId = input.scope.kind === 'task' ? input.scope.taskId : input.scope.conversationId;
   if (typeof scopeId !== 'string' || !scopeId || scopeId.length > 256) throw deliveryError('缺少有效交付对象。', undefined, 400);
   if (!input.settings || ['commit', 'merge', 'push', 'resolveConflicts'].some((key) => typeof input.settings[key as 'commit'] !== 'boolean')) throw deliveryError('组合操作必须明确勾选。', undefined, 400);
+  if (input.settings.generateCommitMessage !== undefined && typeof input.settings.generateCommitMessage !== 'boolean') throw deliveryError('AI 提交信息选项无效。', undefined, 400);
+  /** 已保存的旧运行未启用 AI；新运行必须明确携带可核验的模型快照。 */
+  const generation = input.commitMessageGeneration;
+  if (
+    generation !== undefined &&
+    (!generation ||
+      !['zh-CN', 'en'].includes(generation.language) ||
+      typeof generation.modelRef !== 'string' ||
+      !generation.modelRef.trim() ||
+      generation.modelRef.length > 2000 ||
+      typeof generation.effort !== 'string' ||
+      generation.effort.length > 100 ||
+      (generation.serviceTier !== null && generation.serviceTier !== 'priority'))
+  )
+    throw deliveryError('AI 提交信息模型设置无效。', undefined, 400);
   if (!input.settings.commit && !input.settings.merge && !input.settings.push) throw deliveryError('至少选择一个 Git 操作。', undefined, 400);
   if (!['auto', 'full-access'].includes(input.settings.permissionMode)) throw deliveryError('冲突 AI 权限无效。', undefined, 400);
   if (
@@ -160,11 +176,16 @@ export function parseGitDeliveryInput(value: unknown): GitDeliveryInput {
     )
       throw deliveryError('提交文件必须属于选中仓库。', undefined, 400);
   }
-  if (input.settings.commit && input.repositories.some((repository) => repository.paths.length > 0) && !input.message.trim()) throw deliveryError('请先填写提交说明。', undefined, 400);
+  if (input.settings.commit && input.repositories.some((repository) => repository.paths.length > 0)) {
+    if (input.settings.generateCommitMessage) {
+      if (!generation) throw deliveryError('请先选择 AI 提交信息使用的模型。', undefined, 400);
+    } else if (!input.message.trim()) throw deliveryError('请先填写提交说明。', undefined, 400);
+  }
   return {
     scope: input.scope.kind === 'task' ? { kind: 'task', taskId: scopeId } : { kind: 'conversation', conversationId: scopeId },
     settings: {
       commit: input.settings.commit,
+      generateCommitMessage: input.settings.generateCommitMessage ?? false,
       merge: input.settings.merge,
       push: input.settings.push,
       resolveConflicts: input.settings.resolveConflicts,
@@ -173,6 +194,7 @@ export function parseGitDeliveryInput(value: unknown): GitDeliveryInput {
       finalTaskStatus: input.settings.finalTaskStatus,
     },
     message: input.message,
+    ...(generation ? { commitMessageGeneration: { language: generation.language, modelRef: generation.modelRef, effort: generation.effort, serviceTier: generation.serviceTier } } : {}),
     mode: input.mode,
     repositories: input.repositories.map((repository) => ({
       repositoryId: repository.repositoryId,
@@ -606,14 +628,16 @@ export class GitDeliveryExecution {
         return true;
       }
       if (snapshot.headSha !== selection.expectedHeadSha) throw deliveryError('提交前 HEAD 已变化，请重新审阅文件。');
+      /** AI 生成成功后才执行原提交命令；失败不会使用旧草稿继续提交。 */
+      const message = run.input.settings.generateCommitMessage ? await this.generateCommitMessage(run, step, selection, context) : run.input.message;
       if (scope.kind === 'task')
         await this.command(run, step, 'commit', `/api/tasks/${scope.taskId}/git-workspaces/${selection.repositoryId}/commit`, workspaceGitCommandTypes.taskWorkspaceCommit, 'task_workspace', selection.repositoryId, {
-          message: run.input.message,
+          message,
           selectedPaths: selection.paths,
         });
       else
-        await this.external(run, step, 'commit', { type: 'commit', message: run.input.message, paths: selection.paths, expectedBranch: selection.expectedBranch, expectedHeadSha: selection.expectedHeadSha }, () =>
-          executeProjectGitAction(context.path, { type: 'commit', message: run.input.message, paths: selection.paths, expectedBranch: selection.expectedBranch, expectedHeadSha: selection.expectedHeadSha }),
+        await this.external(run, step, 'commit', { type: 'commit', message, paths: selection.paths, expectedBranch: selection.expectedBranch, expectedHeadSha: selection.expectedHeadSha }, () =>
+          executeProjectGitAction(context.path, { type: 'commit', message, paths: selection.paths, expectedBranch: selection.expectedBranch, expectedHeadSha: selection.expectedHeadSha }),
         );
       this.succeed(this.step(step));
       return true;
@@ -889,9 +913,58 @@ export class GitDeliveryExecution {
     return value;
   }
 
-  /** 仅本机服务内注入，不发送凭据到任何远端。 */
-  private async http(method: 'GET' | 'POST' | 'PATCH', url: string, body?: object): Promise<Record<string, unknown>> {
-    const response = await this.options.server.inject({ method, url, headers: { authorization: `Bearer ${this.options.apiToken}` }, ...(body ? { payload: body } : {}) });
+  /** 后台复用原生成接口的模型、脱敏和内容校验；已生成文本随步骤保存。 */
+  private async generateCommitMessage(run: GitDeliveryRunRecord, original: GitDeliveryStepRecord, selection: GitDeliverySelection, context: DeliveryRepositoryContext): Promise<string> {
+    this.shutdown.signal.throwIfAborted();
+    /** 恢复时仍核对同一组文件，不能让旧说明用于新的内容。 */
+    const fingerprint = await readCommitFingerprint(context.path, selection.paths);
+    /** 成功生成后手动继续复用原文本，不重复调用模型。 */
+    const step = this.step(original);
+    /** 只有生成结果已持久保存且内容指纹一致时才能复用。 */
+    const saved = step.result?.generatedCommitMessage as { message: string; fingerprint: string } | undefined;
+    if (saved) {
+      if (saved.fingerprint !== fingerprint) throw deliveryError('生成提交信息后所选内容已变化，请重新审阅后运行。');
+      return saved.message;
+    }
+    /** 模型由点击运行时的设置确定，服务端生成入口再次核对当前可用性。 */
+    const generation = run.input.commitMessageGeneration;
+    if (!generation) throw deliveryError('本次运行缺少 AI 提交信息模型设置，请重新运行。');
+    /** 普通项目仓库转换为原生成接口的稳定身份；任务与会话工作树沿用自身身份。 */
+    const isolated = run.scope.kind === 'task' || selection.repositoryId === `conversation:${run.scope.conversationId}`;
+    /** 目录来自本次已经核验的仓库，客户端不能指定任意绝对路径。 */
+    const relativePath = isolated
+      ? '.'
+      : relative(await realpath(this.options.projects.getById(run.projectId)!.localPath), await realpath(context.path))
+          .split(sep)
+          .join('/') || '.';
+    /** 项目登记身份和桌面发现身份统一交给原接口再次验证。 */
+    const repositoryId = isolated ? selection.repositoryId : `project_git_repository_${createHash('sha256').update(`${run.projectId}\0${relativePath}`).digest('hex').slice(0, 24)}`;
+    this.repository.updateStep(step, { message: '正在 AI 生成提交信息…' });
+    this.changed(run.id);
+    /** 只为本仓库冻结的勾选文件生成，关闭交付窗口不影响请求。 */
+    const result = await this.http(
+      'POST',
+      `/api/projects/${run.projectId}/git/commit-message`,
+      {
+        ...generation,
+        repositoryId,
+        ...(run.scope.kind === 'task' ? { taskId: run.scope.taskId } : {}),
+        selection: [{ repositoryId, relativePath, paths: selection.paths }],
+      },
+      this.shutdown.signal,
+    );
+    this.shutdown.signal.throwIfAborted();
+    /** 生成接口已限制标题格式，这里只接受实际成功返回的非空说明。 */
+    const message = typeof result.message === 'string' ? result.message.trim() : '';
+    if (!message) throw deliveryError('AI 未返回有效提交信息，请手动继续。');
+    if (fingerprint !== (await readCommitFingerprint(context.path, selection.paths))) throw deliveryError('生成期间所选内容已变化，请重新审阅后运行。');
+    this.repository.updateStep(this.step(step), { message: null, result: { ...this.step(step).result, generatedCommitMessage: { message, fingerprint, model: result.model, truncated: result.truncated === true } } });
+    return message;
+  }
+
+  /** 仅本机服务内注入，不发送凭据到任何远端；生成请求随宿主退出取消。 */
+  private async http(method: 'GET' | 'POST' | 'PATCH', url: string, body?: object, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    const response = await this.options.server.inject({ method, url, headers: { authorization: `Bearer ${this.options.apiToken}` }, ...(body ? { payload: body } : {}), ...(signal ? { signal } : {}) });
     const value = response.json() as Record<string, unknown>;
     if (response.statusCode >= 400)
       throw Object.assign(deliveryError(typeof value.message === 'string' ? value.message : '交付接口失败。', typeof value.error === 'string' ? value.error : 'ZEUS_GIT_DELIVERY_FAILED', response.statusCode), { details: value });
