@@ -874,6 +874,7 @@ function MessageLayoutQa() {
       /** 松手点放在文字行内，验证右侧与上方各保留 6px。 */
       const clientX = backward ? releaseRect.left + 1 : releaseRect.right - 1;
       const clientY = releaseRect.bottom - 2;
+      paragraph.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX, clientY }));
       paragraph.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX, clientY }));
       await settle();
       window.dispatchEvent(new Event('resize'));
@@ -1214,6 +1215,29 @@ function MessageLayoutQa() {
         ]
       : []),
     ...(!active && parameters.has('deliverable') ? [{ type: 'fileChange', phase: 'prework', text: '', payload: {}, status: 'completed' }] : []),
+    // 评论样例只使用本地预览数据，由生产消息组件展示引用和用户输入。
+    ...(parameters.has('response-comments')
+      ? [
+          {
+            type: 'userMessage',
+            phase: 'user',
+            text: '回答评论',
+            payload: {
+              conversationContext: {
+                responseAnnotations: [
+                  {
+                    id: 'qa-sent-response-comment',
+                    anchor: { itemId: 'qa-response', startOffset: 0, endOffset: 28, selectedText: '已检查会话布局，正文前显示真实用时；展开处理过程后，各段操作仍按需查看。' },
+                    note: '请保留处理过程的展开状态。\n窄窗口下也要能看清引用和我的评论。',
+                  },
+                ],
+                codeComments: [],
+              },
+            },
+            status: 'completed',
+          },
+        ]
+      : []),
     ...Array.from({ length: followupCount }, (_, index) => ({
       type: 'userMessage',
       phase: 'user',

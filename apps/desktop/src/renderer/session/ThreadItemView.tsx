@@ -1523,8 +1523,16 @@ function UserConversationContextSummary(props: { draft: ConversationContextDraft
           {annotations.map((annotation, index) => (
             <article key={annotation.id}>
               <span>{zh ? `评论 ${index + 1}` : `Comment ${index + 1}`}</span>
-              <blockquote>{annotation.anchor.selectedText}</blockquote>
-              {annotation.note?.trim() ? <p>{annotation.note.trim()}</p> : null}
+              <blockquote>
+                <span className="session-response-annotation-label">{zh ? '引用原文' : 'Quoted text'}</span>
+                {annotation.anchor.selectedText}
+              </blockquote>
+              {annotation.note?.trim() ? (
+                <p>
+                  <span className="session-response-annotation-label">{zh ? '我的评论' : 'My comment'}</span>
+                  {annotation.note.trim()}
+                </p>
+              ) : null}
             </article>
           ))}
         </div>

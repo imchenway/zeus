@@ -810,8 +810,16 @@ function ContextDraftAttachment(props: { draft: ConversationContextDraft; langua
           {props.draft.responseAnnotations.map((annotation, index) => (
             <article key={annotation.id}>
               <span>{zh ? `回答评论 ${index + 1}` : `Response comment ${index + 1}`}</span>
-              <blockquote>{annotation.anchor.selectedText}</blockquote>
-              {annotation.note?.trim() ? <p>{annotation.note}</p> : null}
+              <blockquote>
+                <span className="session-response-annotation-label">{zh ? '引用原文' : 'Quoted text'}</span>
+                {annotation.anchor.selectedText}
+              </blockquote>
+              {annotation.note?.trim() ? (
+                <p>
+                  <span className="session-response-annotation-label">{zh ? '我的评论' : 'My comment'}</span>
+                  {annotation.note}
+                </p>
+              ) : null}
             </article>
           ))}
         </div>

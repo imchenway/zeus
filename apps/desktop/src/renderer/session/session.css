@@ -2313,8 +2313,29 @@
   white-space: pre-wrap;
 }
 
+/* 引用采用浅底和侧边线，区别于用户输入的评论正文。 */
 .session-codex-parity-v1 .session-message-response-annotations blockquote {
-  color: var(--session-text-secondary);
+  background: var(--session-canvas);
+  border-inline-start: 2px solid var(--session-line);
+  border-radius: 0 6px 6px 0;
+  color: var(--session-text-muted);
+  padding: 8px 10px;
+}
+
+/* 引用与用户输入采用同一套明确标签，已发送消息和待发送预览保持一致。 */
+.session-codex-parity-v1 .session-message-response-annotations .session-response-annotation-label {
+  color: var(--session-text-muted);
+  display: block;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+  margin-block-end: 4px;
+}
+
+/* 评论正文保留主要文字颜色，与引用之间留出可辨认的间距。 */
+.session-codex-parity-v1 .session-message-response-annotations blockquote + p {
+  color: var(--session-text);
+  padding-block-start: 6px;
 }
 
 /* 评论入口只在当前行号上显露，避免每行常驻符号和额外空白列。 */
