@@ -233,7 +233,7 @@ export interface CodexThreadStartInput extends CodexPerformanceTraceContext {
 }
 
 export interface CodexThreadResumeInput extends CodexPerformanceTraceContext {
-  /** 线程创建和恢复接受本轮上下文容量；不配置压缩时机。 */
+  /** 省略时仅恢复订阅；null 跟随默认，数值指定本轮上下文容量，不配置压缩时机。 */
   contextCapacityTokens?: number | null;
   threadId: string;
   cwd?: string;
@@ -1678,10 +1678,12 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
     },
     async resumeThread(input) {
       const capabilities = await awaitCapabilities();
-      /** 仅在容量变化时卸载空闲线程；保留原线程身份、历史和其他会话的运行。 */
+      /** 省略容量只恢复订阅；默认容量且没有覆盖记录时，也不能因连接换代而卸载会话。 */
       const previousCapacity = threadCapacities.get(input.threadId);
-      const capacityChanged = previousCapacity?.generationId !== capabilities.generationId || previousCapacity.tokens !== (input.contextCapacityTokens ?? null);
-      let capacityApplied = !capacityChanged;
+      const capacityChanged =
+        input.contextCapacityTokens !== undefined &&
+        (input.contextCapacityTokens === null ? previousCapacity?.tokens != null : previousCapacity?.generationId !== capabilities.generationId || previousCapacity.tokens !== input.contextCapacityTokens);
+      let capacityApplied = input.contextCapacityTokens !== undefined && !capacityChanged;
       if (capacityChanged) {
         const metadata = asRecord(await rpc(capabilities.generationId, 'thread/read', { threadId: input.threadId, includeTurns: false }));
         const status = parseThread(metadata.thread).status;
