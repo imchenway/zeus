@@ -1,3 +1,4 @@
+import { platformShortcutLabel } from '../platform.js';
 import { createPortal } from 'react-dom';
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { ArrowLeftIcon as ArrowLeft } from '@phosphor-icons/react/dist/csr/ArrowLeft';
@@ -614,7 +615,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
                 <Plus weight="bold" />
               </span>
               <span className="browser-annotate-label">{activeTab.annotationMode ? labels.annotatingMode : labels.annotate}</span>
-              <kbd>⌘.</kbd>
+              <kbd>{platformShortcutLabel('⌘.')}</kbd>
             </button>
             <button type="button" className="browser-more-trigger" aria-label={labels.more} data-icon-tooltip={labels.more} aria-haspopup="menu" aria-expanded={moreOpen} onClick={(event) => void openMoreMenu(event.currentTarget)}>
               <DotsThreeVertical aria-hidden="true" weight="bold" />

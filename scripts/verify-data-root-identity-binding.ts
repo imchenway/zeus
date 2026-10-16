@@ -72,12 +72,12 @@ try {
 
   const development = claimEmptyRoot(join(probeRoot, 'empty-development-root'), 'development');
   observed.bundleIdentitySemantics = {
-    productionAndTestAreCodeSignBundleIds: test.marker.bundleIdentityKind === 'code_sign_bundle_id',
+    productionAndTestHaveSignedIdentity: test.marker.bundleIdentityKind === (process.platform === 'win32' ? 'authenticode_application_id' : 'code_sign_bundle_id'),
     developmentIsExplicitDistributionLabel: development.marker.bundleIdentityKind === 'development_distribution_label',
     developmentLabel: development.marker.bundleId,
   };
   assert.deepEqual(observed.bundleIdentitySemantics, {
-    productionAndTestAreCodeSignBundleIds: true,
+    productionAndTestHaveSignedIdentity: true,
     developmentIsExplicitDistributionLabel: true,
     developmentLabel: 'dev.hypha.zeus.development',
   });

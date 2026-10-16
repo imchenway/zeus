@@ -39,7 +39,7 @@ const wiring = {
     sources.main.includes("import { resolveDesktopKeychainService } from './secretServiceIdentity.js';") &&
     sources.main.includes('dataRootPath: activeZeusDataLayout().root') &&
     sources.main.includes('const keychainService = activeDesktopKeychainService();'),
-  mainDirectStoreUsesDerivedService: sources.main.includes('createMacOSKeychainStore({ service: activeDesktopKeychainService() })'),
+  mainDirectStoreUsesDerivedService: sources.main.includes('createPlatformSecretStore({ service: activeDesktopKeychainService(), dataRootPath: activeZeusDataLayout().root })'),
   desktopOptionsRequireService: sources.runtime.includes('keychainService: string;'),
   ownedAndDetachedPathsForwardService:
     countMatches(sources.runtime, /keychainService: options\.keychainService/gu) >= 2 &&
@@ -47,9 +47,9 @@ const wiring = {
   bootstrapRequiresAndValidatesService: sources.protocol.includes('keychainService: string;') && sources.protocol.includes('isNonEmptyString(value.keychainService)'),
   executionHostForwardsService: sources.host.includes('keychainService: bootstrap.keychainService'),
   coreOptionsRequireService: sources.core.includes('keychainService: string;'),
-  coreStoreUsesForwardedService: sources.core.includes('createMacOSKeychainStore({ service: options.keychainService })'),
-  noProductDefaultStoreConstruction: countMatches(`${sources.main}\n${sources.core}`, /createMacOSKeychainStore\(\s*\)/gu) === 0,
-  exactlyTwoProductStoreConstructions: countMatches(`${sources.main}\n${sources.core}`, /createMacOSKeychainStore\(/gu) === 2,
+  coreStoreUsesForwardedService: sources.core.includes('createPlatformSecretStore({ service: options.keychainService, dataRootPath: dataLayout.root })'),
+  noProductDefaultStoreConstruction: countMatches(`${sources.main}\n${sources.core}`, /createPlatformSecretStore\(\s*\)/gu) === 0,
+  exactlyTwoProductStoreConstructions: countMatches(`${sources.main}\n${sources.core}`, /createPlatformSecretStore\(/gu) === 2,
 };
 
 for (const [name, passed] of Object.entries(wiring)) assertProbe(passed, `Keychain service 接线证据缺失：${name}`);

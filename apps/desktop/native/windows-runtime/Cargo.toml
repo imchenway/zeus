@@ -1,0 +1,26 @@
+# Windows 原生运行组件保持独立构建，不依赖用户安装的 Provider。
+[package]
+# 产物由桌面构建脚本重命名为 ZeusWindowsRuntime.exe。
+name = "zeus-windows-runtime"
+# Cargo 元数据版本只用于工具链，不进入产品界面。
+version = "0.1.0"
+# 使用与现有原生工具链兼容的 Rust 语法。
+edition = "2021"
+# 本组件不发布到包仓库。
+publish = false
+
+[dependencies]
+# 私有启动与控制消息只使用结构化 JSON。
+serde = { version = "1.0", features = ["derive"] }
+# 禁止通过 shell 或字符串求值解析控制消息。
+serde_json = "1.0"
+
+[target.'cfg(windows)'.dependencies]
+# 仅调用 Windows 官方 API，不引入新的终端或自动化框架。
+windows-sys = { version = "0.59", features = ["Wdk_Storage_FileSystem", "Win32_Foundation", "Win32_Security", "Win32_Security_Cryptography", "Win32_Security_Authorization", "Win32_Security_WinTrust", "Win32_Security_Isolation", "Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_System_SystemServices", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_Console", "Win32_System_Memory", "Win32_System_Diagnostics_ToolHelp", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Services", "Win32_System_Com", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_System_StationsAndDesktops", "Win32_System_RemoteDesktop"] }
+
+[profile.release]
+# 原生组件保持确定性退出，减少异常展开跨越系统句柄的机会。
+panic = "abort"
+# 减少安装包中原生组件体积。
+strip = true

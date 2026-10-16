@@ -16,6 +16,10 @@ export interface AppShellMenuActions {
   showMainWindow: () => void;
   openSettings: () => void | Promise<void>;
   checkForUpdates: () => void | Promise<void>;
+  /** Windows 更新失败后由用户显式选择旧安装器恢复。 */
+  recoverUpdate?: () => void | Promise<void>;
+  /** Windows 隔离设置由用户查看、初始化和清理。 */
+  manageWindowsSandbox?: () => void | Promise<void>;
   openLogsDirectory: () => void | Promise<void>;
   closeFocusedWindow: () => void;
   quit: () => void;
@@ -61,6 +65,8 @@ export function buildAppShellMenuTemplate(actions: AppShellMenuActions): AppShel
           accelerator: 'CommandOrControl+U',
           click: actions.checkForUpdates,
         },
+        ...(actions.recoverUpdate ? [{ label: zh ? '恢复上次安装…' : 'Recover Previous Installation...', click: actions.recoverUpdate }] : []),
+        ...(actions.manageWindowsSandbox ? [{ label: zh ? '受限执行…' : 'Restricted Execution...', click: actions.manageWindowsSandbox }] : []),
         { type: 'separator' },
         { label: zh ? `显示 ${appName}` : `Show ${appName}`, click: actions.showMainWindow },
         {
@@ -142,9 +148,9 @@ export function buildMenuBarTrayTemplate(actions: MenuBarTrayActions): AppShellM
   ];
 }
 
-/** macOS 上只有开启后台模式才常驻；关闭后台模式时最后一个窗口关闭即退出。 */
+/** macOS 与 Windows 均遵守后台运行设置，关闭最后窗口后可继续托盘工作。 */
 export function shouldQuitWhenAllWindowsClosed(input: { platform: NodeJS.Platform | string; backgroundModeEnabled: boolean }): boolean {
-  if (input.platform !== 'darwin') return true;
+  if (input.platform !== 'darwin' && input.platform !== 'win32') return true;
   return !input.backgroundModeEnabled;
 }
 

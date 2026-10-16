@@ -49,7 +49,10 @@
     "format": "prettier --write \"**/*.{ts,tsx,cts,cjs,mjs,js,json,yml,yaml}\" --ignore-path .prettierignore",
     "format:check": "prettier --check \"**/*.{ts,tsx,cts,cjs,mjs,js,json,yml,yaml}\" --ignore-path .prettierignore",
     "security:audit": "pnpm audit --audit-level=moderate",
-    "verify:quick": "pnpm verify:publish"
+    "verify:quick": "pnpm verify:publish",
+    "build:windows": "pnpm --filter @zeus/desktop build:windows",
+    "package:windows": "pnpm --filter @zeus/desktop package:windows",
+    "package:windows:release": "pnpm --filter @zeus/desktop package:windows:release"
   },
   "dependencies": {
     "@fastify/websocket": "^11.3.1",

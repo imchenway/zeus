@@ -3,7 +3,7 @@ import { execFile, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants, createReadStream, createWriteStream } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, open, readFile, realpath, rm, stat } from 'node:fs/promises';
-import { basename, join, relative, resolve, sep } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
@@ -46,7 +46,7 @@ async function authorizedPath(source: FilePreviewSource): Promise<string> {
   const path = await realpath(source.path);
   /** 当前子进程或授权根相对位置。 */
   const child = relative(root, path);
-  if (!child || child === '..' || child.startsWith(`..${sep}`) || resolve(root, child) !== path || child.split(sep).includes('.git')) throw new Error('文件超出授权目录。');
+  if (!child || isAbsolute(child) || child === '..' || child.startsWith(`..${sep}`) || resolve(root, child) !== path || child.split(sep).includes('.git')) throw new Error('文件超出授权目录。');
   if (!(await stat(path)).isFile()) throw new Error('目标不是普通文件。');
   return path;
 }
@@ -266,7 +266,7 @@ export function registerFilePreview(services: {
               item.kind = 'image';
             } catch {
               item.kind = 'system';
-              item.reason = '此图片无法转换为页内预览，请使用系统预览或打开原文件。';
+              item.reason = '此图片无法转换为页内预览，请用系统应用打开原文件。';
             }
           }
           /** 大文本只读取前 2 MiB；无法解码时保留系统操作和编码选择。 */
@@ -287,7 +287,7 @@ export function registerFilePreview(services: {
                 item.mime = 'text/plain';
               }
             } catch {
-              item.reason = input.textEncoding ? '无法按所选编码读取文本。请检查编码，或使用系统预览。' : '此文件不是可识别的 Unicode 文本。可选择其他预览编码，或使用系统预览。';
+              item.reason = input.textEncoding ? '无法按所选编码读取文本。请检查编码，或用系统应用打开。' : '此文件不是可识别的 Unicode 文本。可选择其他预览编码，或用系统应用打开。';
             }
           }
           if (item.kind === 'pdf') {
@@ -307,7 +307,7 @@ export function registerFilePreview(services: {
           }
           if (convertImage && process.platform !== 'darwin') {
             item.kind = 'system';
-            item.reason = '此图片格式使用系统预览。';
+            item.reason = '请用系统应用打开此图片格式。';
           }
           if (item.kind === 'image' && item.byteLength > filePreviewLimits.image) {
             item.kind = 'system';
@@ -316,10 +316,10 @@ export function registerFilePreview(services: {
           if (item.kind === 'system' && !item.reason)
             item.reason =
               item.mime === 'application/octet-stream' && item.byteLength > filePreviewLimits.text
-                ? '此文件使用系统预览；文本页内读取上限为 2 MiB。'
+                ? '请用系统应用打开此文件；文本页内读取上限为 2 MiB。'
                 : item.mime === 'image/icns' && item.byteLength > filePreviewLimits.image
-                  ? '图标超过 16 MiB 页内预览上限，请使用系统预览。'
-                  : '此格式使用系统预览。';
+                  ? '图标超过 16 MiB 页内预览上限，请用系统应用打开。'
+                  : '请用系统应用打开此格式。';
           if ((await fileIdentity(previewPath)) !== identity) throw new Error('读取期间文件发生变化，请刷新。');
           item.id = randomUUID();
           if (['image', 'pdf', 'audio', 'video'].includes(item.kind)) item.url = `zeus-preview://${item.id}/${encodeURIComponent(basename(source.name))}`;

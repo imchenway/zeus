@@ -1,10 +1,13 @@
 import { assertContextCapacity } from '@zeus/shared';
-import { spawn as nodeSpawn } from 'node:child_process';
+import { spawnManagedProcess } from './managedProcess.js';
+import { codexInstallationCommand } from './codexInstallation.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createConnection } from 'node:net';
-import { isAbsolute, join } from 'node:path';
+import { Duplex } from 'node:stream';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import { isAbsolute } from 'node:path';
 import { type RawData, WebSocket } from 'ws';
 import type { CodexBootstrapAdditionalContext } from '@zeus/shared';
 import {
@@ -593,6 +596,8 @@ type PendingRequest = {
 };
 
 interface CreateCodexAppServerManagerOptions {
+  /** Windows 守护进程由 Main 的固定受管安装入口启动，不允许普通命令脱离 Job。 */
+  ensureRemoteControlDaemon?: () => Promise<{ socketPath: string }>;
   /** 提交说明专用进程不读取目标能力和上下文预算，不影响普通会话能力发现。 */
   lightweightGeneration?: boolean;
   spawn?: CodexAppServerSpawn;
@@ -781,7 +786,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       ...(externalAgentHome === null ? {} : { ZEUS_CODEX_EXTERNAL_AGENT_HOME: externalAgentHome }),
     };
     // `-c/--config` 是 Codex 根命令参数，必须位于 app-server 子命令之前。
-    const spawned = remoteControlTransport ? spawnRemoteControlCodexAppServer(command, { env }) : spawn(command, [...(options.appServerFlags ?? []), 'app-server', '--listen', 'stdio://'], { env });
+    const spawned = remoteControlTransport ? spawnRemoteControlCodexAppServer(command, { env }, options.ensureRemoteControlDaemon) : spawn(command, [...(options.appServerFlags ?? []), 'app-server', '--listen', 'stdio://'], { env });
     trackProcessExit(spawned);
     child = spawned;
     spawned.stdout.on('data', (chunk) => {
@@ -878,10 +883,10 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       if (child === spawned) {
         spawned.kill('SIGTERM');
       }
+      /** 启动未知必须保持原诊断，不能改写为依赖缺失或建议重新安装。 */
+      if ('code' in failure && failure.code === 'ZEUS_CODEX_REMOTE_CONTROL_BOOTSTRAP_FAILED') throw failure;
       const unavailableReason = remoteControlTransport ? `Zeus 无法启动会话远程接管所需的 Codex Remote Control（${command}）：${failure.message}` : `用户本机 Codex CLI 无法启动兼容的 app-server（${command}）：${failure.message}`;
-      const recoveryGuidance = remoteControlTransport
-        ? codexRemoteControlRecoveryGuidance(env)
-        : '请运行官方安装命令 curl -fsSL https://chatgpt.com/codex/install.sh | sh，完成登录后在 Zeus 设置中重新检测；Zeus 不会自动安装或使用内置回退。';
+      const recoveryGuidance = remoteControlTransport ? codexRemoteControlRecoveryGuidance(env) : `请运行官方安装命令 ${codexInstallationCommand()}，完成登录后在 Zeus 设置中重新检测；Zeus 不会自动安装或使用内置回退。`;
       if (failure.message.startsWith('ZEUS_CODEX_MODEL_') || ('code' in failure && typeof failure.code === 'string' && failure.code.startsWith('ZEUS_CODEX_MODEL_'))) throw failure;
       throw managerError('ZEUS_CODEX_DEPENDENCY_UNAVAILABLE', `${unavailableReason}。${recoveryGuidance}`);
     });
@@ -1047,6 +1052,11 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       if (request.generationId === generationId) serverRequests.delete(key);
     }
     if (preparingForShutdown || state.type === 'closed') return;
+    /** Main 启动结果未确认时保留本次失败，不通过后台重连再次启动 daemon。 */
+    if ('code' in error && error.code === 'ZEUS_CODEX_REMOTE_CONTROL_BOOTSTRAP_FAILED') {
+      state = { type: 'idle' };
+      return;
+    }
     scheduleRestart(generationId);
   }
 
@@ -2105,8 +2115,9 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
   };
 }
 
+/** Provider 与程序检测共用 Windows 批处理入口，禁止拼接 Provider 参数。 */
 function spawnNodeCodexAppServer(command: string, args: string[], options?: CodexAppServerSpawnOptions): CodexAppServerProcess {
-  const child = nodeSpawn(command, args, { shell: false, stdio: ['pipe', 'pipe', 'pipe'], env: options?.env });
+  const child = spawnManagedProcess(command, args, { env: options?.env });
   return child as unknown as CodexAppServerProcess;
 }
 
@@ -2114,7 +2125,7 @@ function spawnNodeCodexAppServer(command: string, args: string[], options?: Code
  * 连接官方 Remote Control 守护进程，并把 WebSocket 文本帧适配为现有 JSONL 传输。
  * 守护进程由官方 CLI 管理；Zeus 退出只断开自己的控制连接，不擅自停止用户已启用的远程宿主。
  */
-function spawnRemoteControlCodexAppServer(command: string, options: CodexAppServerSpawnOptions): CodexAppServerProcess {
+function spawnRemoteControlCodexAppServer(command: string, options: CodexAppServerSpawnOptions, ensureDaemon?: () => Promise<{ socketPath: string }>): CodexAppServerProcess {
   const stdout = new EventEmitter() as CodexAppServerReadable;
   const stderr = new EventEmitter() as CodexAppServerReadable;
   const lifecycle = new EventEmitter();
@@ -2124,6 +2135,8 @@ function spawnRemoteControlCodexAppServer(command: string, options: CodexAppServ
   let deliveryPaused = false;
   let stopping = false;
   let exited = false;
+  /** Windows 的 Node net 只支持命名管道，由官方 CLI 转接 daemon 的 AF_UNIX 套接字。 */
+  let windowsProxy: ChildProcessWithoutNullStreams | undefined;
 
   stdout.pause = () => {
     deliveryPaused = true;
@@ -2137,6 +2150,7 @@ function spawnRemoteControlCodexAppServer(command: string, options: CodexAppServ
   function finishExit(code: number | null, signal: NodeJS.Signals | null): void {
     if (exited) return;
     exited = true;
+    windowsProxy?.kill('SIGTERM');
     lifecycle.emit('exit', code, signal);
   }
 
@@ -2190,10 +2204,26 @@ function spawnRemoteControlCodexAppServer(command: string, options: CodexAppServ
   };
 
   void (async () => {
-    const daemon = await startRemoteControlDaemon(command, options.env, (chunk) => (stderr as EventEmitter).emit('data', chunk));
+    /** daemon 的生命周期独立于 Core；启动结果未知时不自动重放。 */
+    const daemon =
+      process.platform === 'win32'
+        ? await (ensureDaemon ? ensureDaemon() : Promise.reject(new Error('Windows Codex 守护进程宿主不可用，尚未启动远程接管。'))).catch((error: unknown) => {
+            throw managerError('ZEUS_CODEX_REMOTE_CONTROL_BOOTSTRAP_FAILED', asError(error).message);
+          })
+        : await startRemoteControlDaemon(command, options.env, (chunk) => (stderr as EventEmitter).emit('data', chunk));
+    if (!isAbsolute(daemon.socketPath)) throw new Error('Codex 守护进程返回了无效套接字路径。');
     if (stopping || exited) return;
     socket = new WebSocket('ws://localhost/rpc', {
-      createConnection: () => createConnection({ path: daemon.socketPath }),
+      createConnection: () => {
+        if (process.platform !== 'win32') return createConnection({ path: daemon.socketPath });
+        windowsProxy = spawnManagedProcess(command, ['app-server', 'proxy', '--sock', daemon.socketPath], { env: options.env });
+        windowsProxy.stderr.on('data', (chunk) => (stderr as EventEmitter).emit('data', chunk));
+        windowsProxy.once('error', (error) => fail(error));
+        windowsProxy.once('exit', (code) => {
+          if (!stopping && !exited) fail(new Error(`Codex 控制套接字代理已退出（${code}）。`));
+        });
+        return Duplex.from({ readable: windowsProxy.stdout, writable: windowsProxy.stdin });
+      },
       perMessageDeflate: false,
       maxPayload: codexMaximumFrameBytes,
     });
@@ -2214,7 +2244,8 @@ function spawnRemoteControlCodexAppServer(command: string, options: CodexAppServ
 
 async function startRemoteControlDaemon(command: string, env: NodeJS.ProcessEnv, onStderr: (chunk: Buffer | string) => void): Promise<{ socketPath: string }> {
   return new Promise((resolve, reject) => {
-    const child = nodeSpawn(command, ['remote-control', 'start', '--json'], { shell: false, stdio: ['ignore', 'pipe', 'pipe'], env });
+    const child = spawnManagedProcess(command, ['remote-control', 'start', '--json'], { env });
+    child.stdin.end();
     let stdout = '';
     let stderr = '';
     const timeout = setTimeout(() => {
@@ -2279,15 +2310,10 @@ function parseLastJsonObject(value: string): Record<string, unknown> {
 function codexRemoteControlRecoveryGuidance(env: NodeJS.ProcessEnv): string {
   const codexHome = env.CODEX_HOME?.trim();
   if (!codexHome || !isAbsolute(codexHome)) {
-    return '请运行官方安装命令 curl -fsSL https://chatgpt.com/codex/install.sh | sh，完成登录后在 Zeus 设置中重新检测；Zeus 不会自动安装或使用内置回退。';
+    return `请运行官方安装命令 ${codexInstallationCommand()}，完成登录后在 Zeus 设置中重新检测；Zeus 不会自动安装或使用内置回退。`;
   }
-  const installDirectory = join(codexHome, 'bin');
-  const installCommand = `curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_HOME=${quotePosixShellArgument(codexHome)} CODEX_INSTALL_DIR=${quotePosixShellArgument(installDirectory)} sh`;
+  const installCommand = codexInstallationCommand(codexHome);
   return `默认安装到其他 CODEX_HOME 不能修复 Zeus 的独立运行目录。请运行 ${installCommand}，完成 Zeus 专属 Codex 登录后在设置中重新检测；Zeus 不会自动安装或使用内置回退。`;
-}
-
-function quotePosixShellArgument(value: string): string {
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 function parseModels(value: unknown): CodexModelCapability[] {

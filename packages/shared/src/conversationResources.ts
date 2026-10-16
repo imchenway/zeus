@@ -91,7 +91,9 @@ export type ConversationOpenTarget =
   | 'editor:rider'
   | 'editor:webstorm'
   | 'terminal:terminal'
-  | 'terminal:ghostty';
+  | 'terminal:ghostty'
+  | 'terminal:windows-terminal'
+  | 'terminal:powershell';
 
 export interface ConversationResourceOpenTarget {
   id: ConversationOpenTarget;

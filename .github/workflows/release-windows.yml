@@ -1,0 +1,203 @@
+# Windows 独立构建与发布，不影响原有 macOS / Homebrew 流程。
+name: Release Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      # 候选必须固定，重试不能悄悄换为后续 main。
+      commit_sha:
+        description: 要构建的 40 位固定候选提交
+        required: true
+      # 上传只使用已有稳定 Release，不创建或移动标签。
+      tag:
+        description: 与候选 package.json 一致的目标标签
+        required: true
+      publish_release:
+        description: 上传已签名的 Windows 安装器到已有稳定 Release
+        required: true
+        type: boolean
+        default: false
+
+# 非发布作业只有读取权限，资产写入只授予最后的发布作业。
+permissions:
+  contents: read
+
+# 同一标签只允许一个 Windows 发布流程，避免两个候选争用资产。
+concurrency:
+  group: release-windows-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    # 只允许官方仓库使用发行凭据。
+    if: ${{ github.repository == 'imchenway/zeus' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.commit_sha }}
+      - name: 核对固定候选与版本
+        env:
+          RELEASE_COMMIT: ${{ inputs.commit_sha }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          if ! printf '%s' "$RELEASE_COMMIT" | grep -Eq '^[a-f0-9]{40}$' || [ "$(git rev-parse HEAD)" != "$RELEASE_COMMIT" ]; then
+            echo 'Windows 构建必须使用完整、准确的候选提交。' >&2
+            exit 1
+          fi
+          if [ "$RELEASE_TAG" != "v$(node -p "require('./package.json').version")" ]; then
+            echo 'Windows 目标标签与候选版本不一致。' >&2
+            exit 1
+          fi
+      - name: 核对签名凭据与已有稳定发行
+        if: ${{ inputs.publish_release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          RELEASE_COMMIT: ${{ inputs.commit_sha }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          if [ -z "$WINDOWS_CERTIFICATE" ] || [ -z "$WINDOWS_CERTIFICATE_PASSWORD" ]; then
+            echo 'Windows 公开发布需要 Authenticode 签名凭据。' >&2
+            exit 1
+          fi
+          remote_tag_commit="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG^{}" | awk '{print $1}')"
+          if [ -z "$remote_tag_commit" ]; then
+            remote_tag_commit="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG" | awk '{print $1}')"
+          fi
+          if [ "$remote_tag_commit" != "$RELEASE_COMMIT" ]; then
+            echo 'Windows 发布要求已有标签精确指向本次候选。' >&2
+            exit 1
+          fi
+          gh release view "$RELEASE_TAG" --json tagName,isDraft,isPrerelease |
+            jq -e --arg tag "$RELEASE_TAG" '.tagName == $tag and .isDraft == false and .isPrerelease == false'
+
+  # Windows 静态检查独立执行，不能依赖另一条发行流程的状态。
+  verify:
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit_sha }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.31.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+
+  # 正式 Windows 安装包必须分别原生构建并通过 Authenticode 验证。
+  package-windows:
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            arch: x64
+          - runner: windows-11-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    env:
+      WIN_CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE }}
+      WIN_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.commit_sha }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.31.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          architecture: ${{ matrix.arch }}
+          cache: pnpm
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.arch == 'arm64' && 'aarch64-pc-windows-msvc' || 'x86_64-pc-windows-msvc' }}
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+      - run: pnpm install --frozen-lockfile
+      - name: 构建并验签正式安装器
+        if: ${{ inputs.publish_release }}
+        run: pnpm package:windows:release
+      - name: 非发布候选仅编译与核对原生产物
+        if: ${{ !inputs.publish_release }}
+        run: pnpm build:windows
+      - uses: actions/upload-artifact@v4
+        if: ${{ inputs.publish_release }}
+        with:
+          name: zeus-windows-${{ inputs.commit_sha }}-${{ matrix.arch }}
+          path: |
+            dist/Zeus-*-win32-*.exe
+            dist/zeus-release-manifest-win32-*.json
+
+  # 只追加本平台资产；macOS 发布、Release notes 和 Homebrew 均由原有流程维护。
+  publish:
+    if: ${{ inputs.publish_release }}
+    needs: [preflight, verify, package-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_COMMIT: ${{ inputs.commit_sha }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.commit_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: 下载两个原生架构的已验签安装器
+        uses: actions/download-artifact@v4
+        with:
+          pattern: zeus-windows-${{ inputs.commit_sha }}-*
+          path: dist
+          merge-multiple: true
+      - name: 合并并复核官方 Windows 清单
+        run: node scripts/assemble-windows-release.mjs dist
+      - name: 重新核对标签与稳定发行
+        run: |
+          remote_tag_commit="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG^{}" | awk '{print $1}')"
+          if [ -z "$remote_tag_commit" ]; then
+            remote_tag_commit="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG" | awk '{print $1}')"
+          fi
+          if [ "$remote_tag_commit" != "$RELEASE_COMMIT" ]; then
+            echo '构建期间目标标签已变化，未上传 Windows 产物。' >&2
+            exit 1
+          fi
+          gh release view "$RELEASE_TAG" --json tagName,isDraft,isPrerelease |
+            jq -e --arg tag "$RELEASE_TAG" '.tagName == $tag and .isDraft == false and .isPrerelease == false'
+      - name: 上传并核对 Windows 资产，最后公开更新清单
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          # 同名资产只核对，不覆盖；上传结果未知时停止，后续显式重跑先读取现有事实。
+          # 两个安装器都通过服务器摘要核对后才上传清单，部分失败不会宣布 Windows 可更新。
+          for local_asset in "dist/Zeus-$version-win32-x64.exe" "dist/Zeus-$version-win32-arm64.exe" dist/zeus-release-manifest-win32.json; do
+            name="$(basename "$local_asset")"
+            digest="sha256:$(sha256sum "$local_asset" | awk '{print $1}')"
+            size="$(stat -c '%s' "$local_asset")"
+            release_json="$(gh release view "$RELEASE_TAG" --json assets)"
+            if ! printf '%s' "$release_json" | jq -e --arg name "$name" '.assets | any(.name == $name)' >/dev/null; then
+              gh release upload "$RELEASE_TAG" "$local_asset"
+            fi
+            gh release view "$RELEASE_TAG" --json assets |
+              jq -e --arg name "$name" --arg digest "$digest" --argjson size "$size" '.assets | map(select(.name == $name)) | length == 1 and (.[0].digest == $digest and .[0].size == $size)' >/dev/null
+          done
+          echo "Windows 两个架构和更新清单已核对：$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"

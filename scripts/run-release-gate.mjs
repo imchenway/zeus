@@ -35,9 +35,18 @@ async function main() {
     throw new Error(['发布门禁要求可复现的候选提交，当前工作区不干净。', '请先审阅并处理变更；仅在明确进行本地非正式试跑时设置 ALLOW_DIRTY_WORKTREE=true。', worktreeStatus].join('\n'));
   }
 
-  if (process.platform !== 'darwin') {
-    throw new Error('Zeus 完整发布门禁只能在 macOS 上执行。');
+  if (process.platform === 'win32') {
+    // Windows 本地门禁只确认当前原生架构；完整发布仍要求 CI 的两个架构全部通过。
+    run('pnpm', ['typecheck']);
+    run('pnpm', ['package:windows:release'], { env: { ...process.env, ZEUS_PACKAGE_OUTPUT_DIR: releaseOutputDirectory } });
+    const outputDirectory = resolveOutputDirectory(expectedVersion, headSha.slice(0, 12));
+    mkdirSync(outputDirectory, { recursive: true, mode: 0o700 });
+    const summaryPath = join(outputDirectory, `Zeus-${expectedVersion}-release-gate-summary.md`);
+    writeFileSync(summaryPath, `# Windows 发布门禁\n\n候选：${headSha}\n\n已完成当前 ${process.arch} 架构构建、安装器与原生资源校验和 Authenticode 验签。两个架构的安装与运行结果仍以 Windows CI 和实机验收为准。\n`);
+    console.log(`Windows 本地发布门禁通过：${summaryPath}`);
+    return;
   }
+  if (process.platform !== 'darwin') throw new Error('发布门禁仅支持 macOS 和 Windows。');
 
   console.log(`Zeus 发布门禁：版本 ${expectedVersion}，范围 ${latestTag}..${headSha.slice(0, 12)}`);
   console.log('正在执行静态检查、正式打包和产物校验；不执行 Git 写入或公开发布。');
@@ -214,7 +223,7 @@ function git(args) {
 }
 
 function run(command, args, options = {}) {
-  const result = spawnSync(command, args, {
+  const result = spawnSync(...resolveReleaseCommand(command, args), {
     cwd: repositoryRoot,
     env: options.env ?? process.env,
     encoding: 'utf8',
@@ -225,7 +234,7 @@ function run(command, args, options = {}) {
 }
 
 function capture(command, args, allowFailure = false) {
-  const result = spawnSync(command, args, {
+  const result = spawnSync(...resolveReleaseCommand(command, args), {
     cwd: repositoryRoot,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -241,4 +250,11 @@ function capture(command, args, allowFailure = false) {
       .filter(Boolean)
       .join('\n'),
   };
+}
+
+/** Windows 的 pnpm 是脚本入口，使用当前包管理器的 Node 文件避免 cmd 参数重解释。 */
+function resolveReleaseCommand(command, args) {
+  if (process.platform !== 'win32' || command !== 'pnpm') return [command, args];
+  if (!process.env.npm_execpath) throw new Error('请通过 pnpm 的发布命令执行此脚本。');
+  return [process.execPath, [process.env.npm_execpath, ...args]];
 }

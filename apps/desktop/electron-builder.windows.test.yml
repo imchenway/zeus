@@ -1,0 +1,12 @@
+# 测试身份独立于正式安装、通知、凭据和更新目录。
+extends: ./electron-builder.windows.yml
+appId: dev.hypha.zeus.test
+productName: Zeus Test
+artifactName: Zeus-Test-${version}-win32-${arch}.${ext}
+# 测试包保持独立可执行文件名，安装器不会误判正式实例。
+win:
+  executableName: Zeus Test
+  icon: assets/icon-dev.png
+# 测试构建输出与正式发布隔离。
+directories:
+  output: ../../dist/test

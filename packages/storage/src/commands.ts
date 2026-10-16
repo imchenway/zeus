@@ -1,6 +1,6 @@
 import { randomId } from './randomId.js';
 import { createHash } from 'node:crypto';
-import { type CommandArtifact, type CommandDefinition, type CommandDefinitionInput, type CommandRun, type CommandRunStatus, type CommandRunTrigger, type CommandScope, defaultCommandRiskFlags } from '@zeus/shared';
+import { type CommandArtifact, type CommandDefinition, type CommandDefinitionInput, type CommandRun, type CommandRunStatus, type CommandRunTrigger, type CommandScope, type CommandShell, defaultCommandRiskFlags } from '@zeus/shared';
 import type { ArtifactRef, ArtifactStore } from './artifactStore.js';
 import type { ZeusDatabasePort } from './databasePort.js';
 
@@ -12,6 +12,8 @@ interface DbCommandDefinitionRow {
   title: string;
   description: string;
   command_text: string;
+  /** 保存脚本解释器，历史记录明确为 sh。 */
+  command_shell: CommandShell;
   parameters_json: string;
   timeout_seconds: number;
   enabled: number;
@@ -103,6 +105,7 @@ export function migrateCommandCenterSchema(db: ZeusDatabasePort): void {
   const migrationId = '20260728_0009_command_center';
   if (db.get<{ migration_id: string }>(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, [migrationId])) {
     migrateCommandArtifactRefColumn(db);
+    migrateCommandShell(db);
     return;
   }
   db.transaction(() => {
@@ -183,6 +186,23 @@ export function migrateCommandCenterSchema(db: ZeusDatabasePort): void {
     db.execute(`INSERT INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)`, [migrationId, '增加通用命令定义、别名、执行记录与产物持久化', checksum, nowIso()]);
   });
   migrateCommandArtifactRefColumn(db);
+  migrateCommandShell(db);
+}
+
+/** 用独立迁移固定旧脚本的 sh 语义，不改变已有迁移校验和。 */
+function migrateCommandShell(db: ZeusDatabasePort): void {
+  /** 此迁移只登记解释器，不转换用户脚本。 */
+  const migrationId = '20261015_command_shell';
+  if (db.get('SELECT migration_id FROM schema_migrations WHERE migration_id = ?', [migrationId])) return;
+  db.transaction(() => {
+    db.execute("ALTER TABLE command_definitions ADD COLUMN command_shell TEXT NOT NULL DEFAULT 'sh' CHECK(command_shell IN ('sh', 'zsh', 'powershell', 'cmd'))");
+    db.execute('INSERT INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)', [
+      migrationId,
+      '明确命令脚本解释器，历史脚本保留 sh',
+      `sha256:${createHash('sha256').update('command_definitions.command_shell:sh,zsh,powershell,cmd').digest('hex')}`,
+      nowIso(),
+    ]);
+  });
 }
 
 function migrateCommandArtifactRefColumn(db: ZeusDatabasePort): void {
@@ -202,10 +222,10 @@ export class CommandDefinitionRepository {
     this.db.transaction(() => {
       this.db.execute(
         `INSERT INTO command_definitions
-           (id, scope, project_id, name, normalized_name, title, description, command_text,
+           (id, scope, project_id, name, normalized_name, title, description, command_text, command_shell,
             parameters_json, timeout_seconds, enabled, telegram_enabled, risk_flags_json,
             revision, created_at, updated_at, deleted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
         [
           id,
           input.scope,
@@ -215,6 +235,7 @@ export class CommandDefinitionRepository {
           input.title.trim(),
           input.description?.trim() ?? '',
           input.command.trim(),
+          input.shell ?? 'sh',
           JSON.stringify(input.parameters ?? []),
           input.timeoutSeconds ?? 300,
           input.enabled === false ? 0 : 1,
@@ -237,7 +258,7 @@ export class CommandDefinitionRepository {
     this.db.transaction(() => {
       this.db.execute(
         `UPDATE command_definitions
-         SET name = ?, normalized_name = ?, title = ?, description = ?, command_text = ?,
+         SET name = ?, normalized_name = ?, title = ?, description = ?, command_text = ?, command_shell = ?,
              parameters_json = ?, timeout_seconds = ?, enabled = ?, telegram_enabled = ?,
              risk_flags_json = ?, revision = ?, updated_at = ?
          WHERE id = ? AND deleted_at IS NULL`,
@@ -247,6 +268,7 @@ export class CommandDefinitionRepository {
           input.title.trim(),
           input.description?.trim() ?? '',
           input.command.trim(),
+          input.shell ?? existing.shell ?? 'sh',
           JSON.stringify(input.parameters ?? []),
           input.timeoutSeconds ?? 300,
           input.enabled === false ? 0 : 1,
@@ -374,6 +396,7 @@ export class CommandDefinitionRepository {
       title: row.title,
       description: row.description,
       command: row.command_text,
+      shell: row.command_shell,
       parameters: parseJsonArray(row.parameters_json),
       timeoutSeconds: row.timeout_seconds,
       enabled: row.enabled === 1,
@@ -504,7 +527,7 @@ export class CommandArtifactRepository {
 function commandDefinitionSelectSql(): string {
   return `SELECT command_definitions.id, command_definitions.scope, command_definitions.project_id,
                  command_definitions.name, command_definitions.title, command_definitions.description,
-                 command_definitions.command_text, command_definitions.parameters_json,
+                 command_definitions.command_text, command_definitions.command_shell, command_definitions.parameters_json,
                  command_definitions.timeout_seconds, command_definitions.enabled,
                  command_definitions.telegram_enabled, command_definitions.risk_flags_json,
                  command_definitions.revision, command_definitions.created_at, command_definitions.updated_at
@@ -531,7 +554,7 @@ function mapCommandRunRow(row: DbCommandRunRow): CommandRun {
     runtimeSessionId: row.runtime_session_id,
     trigger: row.trigger,
     status: row.status,
-    commandSnapshot: JSON.parse(row.command_snapshot_json) as CommandDefinition,
+    commandSnapshot: { shell: 'sh', ...JSON.parse(row.command_snapshot_json) } as CommandDefinition,
     parameterSnapshot: parseJsonObject(row.parameter_snapshot_json),
     cwd: row.cwd,
     timeoutSeconds: row.timeout_seconds,

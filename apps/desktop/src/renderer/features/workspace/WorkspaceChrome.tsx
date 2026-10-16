@@ -1,4 +1,5 @@
 import { MotionPresence } from '../../ui/MotionPresence.js';
+import { isMacOSPlatform, platformShortcutLabel } from '../../platform.js';
 import { temporaryWorkspaceId, normalizeSidebarConversationFilters, sidebarConversationRunStatusGroup, sidebarConversationRunStatusGroups, type ProjectSourceContentMatch, type SidebarConversationFilters } from '@zeus/shared';
 import { Collapsible } from '../../ui/Collapsible.js';
 import { handleSourceListKeyboardNavigation } from './workspaceSupport.js';
@@ -788,9 +789,9 @@ export function ProjectWorkspaceNavigation(props: {
           /** 当前入口文案。 */
           const label = labels[item.id];
           /** 读屏和提示保留快捷键说明。 */
-          const shortcutLabel = zh ? `${label}（⌘${item.shortcutKey}）` : `${label} (⌘${item.shortcutKey})`;
+          const shortcutLabel = platformShortcutLabel(zh ? `${label}（⌘${item.shortcutKey}）` : `${label} (⌘${item.shortcutKey})`);
           /** 浮层使用更接近桌面应用菜单的紧凑排版。 */
-          const tooltipLabel = `${label}（⌘${item.shortcutKey}）`;
+          const tooltipLabel = platformShortcutLabel(`${label}（⌘${item.shortcutKey}）`);
           return (
             <button
               data-icon-tooltip={tooltipLabel}
@@ -799,7 +800,7 @@ export function ProjectWorkspaceNavigation(props: {
               className={active ? 'is-active' : ''}
               aria-label={shortcutLabel}
               aria-current={active ? 'page' : undefined}
-              aria-keyshortcuts={`Meta+${item.shortcutKey}`}
+              aria-keyshortcuts={`${isMacOSPlatform() ? 'Meta' : 'Control'}+${item.shortcutKey}`}
               onClick={() => props.onOpen(item.section, item.codeMode)}
             >
               <span className="project-workspace-mode-icon" aria-hidden="true">
@@ -1215,9 +1216,10 @@ export function SidebarNav(props: {
     return matchesProjectSearch(project) || hasTaskMatches || (showConversationNavigation && conversations.length > 0);
   });
   const enteringProjectIds = useNewItemMotionIds(scopedProjects.map((project) => project.id));
-  // 上游沿用 main 的 44px 交通灯安全区；当前布局保留紧凑侧栏。
+  // macOS 避让交通灯；Windows 使用系统标题栏，内容区只保留正常内边距。
   const titlebarProtectedSidebarStyle = {
-    '--zeus-hidden-titlebar-safe-top': props.mainLayout === 'upstream' ? '44px' : '20px',
+    '--zeus-hidden-titlebar-safe-top': isMacOSPlatform() ? (props.mainLayout === 'upstream' ? '44px' : '20px') : '8px',
+    '--zeus-traffic-light-no-content-zone': isMacOSPlatform() ? '44px' : '0px',
     paddingBlockStart: 'var(--zeus-hidden-titlebar-safe-top, 44px)',
     paddingTop: 'var(--zeus-hidden-titlebar-safe-top, 44px)',
   } as CSSProperties;
@@ -1576,7 +1578,7 @@ export function SidebarNav(props: {
                             type="button"
                             className="project-source-button"
                             aria-label={`${props.appLanguage === 'zh-CN' ? '打开源码' : 'Open source'}：${project.name}`}
-                            data-icon-tooltip={props.appLanguage === 'zh-CN' ? '打开源码（⌘3）' : 'Open source (⌘3)'}
+                            data-icon-tooltip={platformShortcutLabel(props.appLanguage === 'zh-CN' ? '打开源码（⌘3）' : 'Open source (⌘3)')}
                             aria-current={isActiveProject && props.activeProjectSection === 'code' ? 'page' : undefined}
                             onClick={() => props.onOpenProjectSection(project, 'code', 'source')}
                           >

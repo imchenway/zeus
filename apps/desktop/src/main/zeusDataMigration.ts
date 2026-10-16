@@ -1,5 +1,6 @@
+import { ensurePrivatePathSync } from '@zeus/storage/platform-security';
 import { createHash, randomUUID } from 'node:crypto';
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createLegacyFlatZeusDataLayout, createZeusDataLayout, type ZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
@@ -261,7 +262,7 @@ function migrateFlatRoot(input: { flat: ZeusDataLayout; layered: ZeusDataLayout;
   mkdirSecure(layered.databaseBackups);
   const databaseBackupPath = join(layered.databaseBackups, `zeus.db.pre-layered-${fileTimestamp()}-${migrationId}.bak`);
   copyFileSync(flat.database, databaseBackupPath, 0);
-  chmodSync(databaseBackupPath, 0o600);
+  ensurePrivatePathSync(databaseBackupPath, 'file');
 
   try {
     moveIfPresent(flat.database, layered.database, moves);
@@ -808,12 +809,13 @@ function inventoryTree(root: string): { bytes: number; files: number } {
 
 function mkdirSecure(path: string): void {
   mkdirSync(path, { recursive: true, mode: 0o700 });
-  chmodSync(path, 0o700);
+  ensurePrivatePathSync(path, 'directory');
 }
 
 function writeJsonFile(path: string, value: unknown): void {
   mkdirSecure(dirname(path));
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+  if (process.platform === 'win32') ensurePrivatePathSync(path, 'file');
 }
 
 function normalizeAbsolutePath(path: string, label: string): string {

@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Windows 安全与桌面桥使用系统 API；发布自带运行时，不要求用户安装 .NET。 -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <!-- 更新窗口使用系统控件，并允许在非 Windows 构建机完成交叉编译检查。 -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <AssemblyName>zeus-windows-security</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PublishSingleFile>true</PublishSingleFile>
+    <!-- 浏览器桥会复制单个 exe；原生 .NET 组件也必须嵌入产物。 -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <SelfContained>true</SelfContained>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- 只编译本安全程序及桌面桥，避免纳入其他原生项目源码。 -->
+    <Compile Include="WindowsSecurityHelper.cs" />
+    <Compile Include="WindowsDesktopBridge.cs" />
+    <Compile Include="WindowsUpdateProgress.cs" />
+  </ItemGroup>
+</Project>

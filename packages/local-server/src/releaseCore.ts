@@ -35,9 +35,14 @@ export interface AutoUpdatePolicy {
 
 export type ReleaseUpdateChannel = 'stable' | 'preview';
 export type ReleaseUpdateArtifactArch = 'arm64' | 'x64';
-export type ReleaseUpdateArtifactKind = 'dmg';
+/** 安装包格式与平台严格对应。 */
+export type ReleaseUpdateArtifactKind = 'dmg' | 'exe';
+/** 官方桌面发行平台，不将 CPU 架构作为操作系统身份。 */
+export type ReleaseUpdatePlatform = 'darwin' | 'win32';
 
 export interface ReleaseUpdateArtifact {
+  /** 已有 macOS 清单缺省平台仍明确归属 Darwin。 */
+  platform?: ReleaseUpdatePlatform;
   arch: ReleaseUpdateArtifactArch;
   kind: ReleaseUpdateArtifactKind;
   fileName: string;
@@ -47,6 +52,8 @@ export interface ReleaseUpdateArtifact {
 }
 
 export interface ReleaseUpdateManifest {
+  /** 每个稳定清单只包含同一平台的安装包。 */
+  platform?: ReleaseUpdatePlatform;
   app: 'Zeus';
   schemaVersion: 1;
   version: string;
@@ -66,7 +73,7 @@ export interface ReleaseUpdateManifest {
     cask: 'zeus';
     installCommand: string;
     upgradeCommand: string;
-  };
+  } | null;
 }
 
 export type ReleaseUpdateStatusKind = 'up_to_date' | 'available' | 'unavailable';
@@ -93,6 +100,8 @@ export interface EvaluateReleaseUpdateAvailabilityInput {
   currentVersion: string;
   manifest: ReleaseUpdateManifest;
   platformArch: ReleaseUpdateArtifactArch;
+  /** 未显式指定时读取当前宿主平台。 */
+  platform?: ReleaseUpdatePlatform;
   executionHostProtocolVersion?: number;
   checkedAt?: string;
 }
@@ -139,7 +148,9 @@ export function evaluateReleaseUpdateAvailability(input: EvaluateReleaseUpdateAv
   const currentVersion = normalizeVersion(input.currentVersion);
   const latestVersion = normalizeVersion(input.manifest.version);
   const checkedAt = input.checkedAt?.trim() || new Date().toISOString();
-  const artifact = selectPreferredArtifact(input.manifest.artifacts, input.platformArch);
+  const platform = input.platform ?? (process.platform === 'win32' ? 'win32' : 'darwin');
+  /** 旧 macOS 清单的平台缺省值是长期协议，不接受跨平台安装包。 */
+  const artifact = (input.manifest.platform ?? 'darwin') === platform ? selectPreferredArtifact(input.manifest.artifacts, input.platformArch, platform) : null;
   if (compareSemverLike(currentVersion, latestVersion) >= 0) {
     return {
       status: 'up_to_date',
@@ -168,12 +179,12 @@ export function evaluateReleaseUpdateAvailability(input: EvaluateReleaseUpdateAv
       automaticInstallEnabled: false,
       recommendedAction: 'open_download_page',
       label: `发现新版本 · ${latestVersion}`,
-      reason: `发现新版本，但没有匹配 ${input.platformArch} 的 macOS 产物。`,
+      reason: `发现新版本，但没有匹配 ${input.platformArch} 的 ${platform} 产物。`,
       checkedAt,
     };
   }
   const protocolCompatible = input.manifest.executionHostProtocolVersion === (input.executionHostProtocolVersion ?? currentExecutionHostProtocolVersion);
-  const automaticInstallEnabled = input.manifest.signed && input.manifest.notarized && protocolCompatible;
+  const automaticInstallEnabled = input.manifest.signed && (platform === 'win32' || input.manifest.notarized) && (platform === 'win32' || protocolCompatible);
   return {
     status: 'available',
     currentVersion,
@@ -186,10 +197,14 @@ export function evaluateReleaseUpdateAvailability(input: EvaluateReleaseUpdateAv
     recommendedAction: automaticInstallEnabled ? 'download_and_install' : 'open_download_page',
     label: `发现新版本 · ${latestVersion}`,
     reason: automaticInstallEnabled
-      ? '发现新版本，产物已签名、公证且执行宿主协议兼容，可下载后安装。'
-      : !protocolCompatible
-        ? '发现新版本，执行宿主协议已变化；通过 Zeus 编排的 Homebrew 升级会先安全关闭旧宿主。'
-        : '发现新版本，但当前产物未同时签名和公证，只允许打开 GitHub Release 手动安装。',
+      ? platform === 'win32'
+        ? '发现已签名 Windows 更新，确认停止活动工作并完整退出后安装。'
+        : '发现新版本，产物已签名、公证且执行宿主协议兼容，可下载后安装。'
+      : platform === 'win32'
+        ? '发现新版本，但更新清单未声明正式签名，只允许打开 GitHub Release 手动安装。'
+        : !protocolCompatible
+          ? '发现新版本，执行宿主协议已变化；通过 Zeus 编排的 Homebrew 升级会先安全关闭旧宿主。'
+          : '发现新版本，但当前产物未同时签名和公证，只允许打开 GitHub Release 手动安装。',
     checkedAt,
   };
 }
@@ -200,6 +215,9 @@ export function parseReleaseUpdateManifest(value: unknown, options: { allowLoopb
   if (value.app !== 'Zeus' || value.schemaVersion !== 1) throw new Error('Release update manifest identity or schema is incompatible.');
   if (value.repository !== 'imchenway/zeus') throw new Error('更新清单不是 Zeus 官方发布来源。');
   if (value.channel !== 'stable') throw new Error('更新清单不是 Zeus 稳定发布渠道。');
+  /** Windows 使用独立清单；原有 macOS 清单名称与格式保持稳定。 */
+  const platform = value.platform ?? 'darwin';
+  if (platform !== 'darwin' && platform !== 'win32') throw new Error('更新清单平台不受支持。');
   if (
     typeof value.version !== 'string' ||
     typeof value.repository !== 'string' ||
@@ -213,18 +231,17 @@ export function parseReleaseUpdateManifest(value: unknown, options: { allowLoopb
     !Number.isInteger(value.executionHostProtocolVersion) ||
     Number(value.executionHostProtocolVersion) <= 0 ||
     !Array.isArray(value.artifacts) ||
-    !isRecord(value.homebrew)
+    (platform === 'darwin' && !isRecord(value.homebrew))
   ) {
     throw new Error('Release update manifest fields are invalid.');
   }
   const repository = normalizeRepository(value.repository);
-  const artifacts = value.artifacts.map((candidate) => parseReleaseArtifact(candidate, repository, Boolean(options.allowLoopbackDownloadUrls)));
-  const homebrewTap = typeof value.homebrew.tap === 'string' ? normalizeRepository(value.homebrew.tap) : '';
+  const artifacts = value.artifacts.map((candidate) => parseReleaseArtifact(candidate, repository, Boolean(options.allowLoopbackDownloadUrls), platform));
+  /** Homebrew 只属于 macOS，不能成为 Windows 清单的必填凭据。 */
+  const homebrew = isRecord(value.homebrew) ? value.homebrew : null;
+  const homebrewTap = typeof homebrew?.tap === 'string' ? normalizeRepository(homebrew.tap) : '';
   if (
-    homebrewTap !== 'imchenway/tap' ||
-    value.homebrew.cask !== 'zeus' ||
-    typeof value.homebrew.installCommand !== 'string' ||
-    typeof value.homebrew.upgradeCommand !== 'string' ||
+    (platform === 'darwin' && (homebrewTap !== 'imchenway/tap' || homebrew?.cask !== 'zeus' || typeof homebrew.installCommand !== 'string' || typeof homebrew.upgradeCommand !== 'string')) ||
     !isTrustedGithubUrl(value.releasePageUrl, repository) ||
     !isTrustedGithubUrl(value.latestReleaseUrl, repository) ||
     !isTrustedGithubUrl(value.releaseNotesUrl, repository)
@@ -233,6 +250,7 @@ export function parseReleaseUpdateManifest(value: unknown, options: { allowLoopb
   }
   return {
     app: 'Zeus',
+    platform,
     schemaVersion: 1,
     version: normalizeVersion(value.version),
     channel: value.channel,
@@ -246,12 +264,15 @@ export function parseReleaseUpdateManifest(value: unknown, options: { allowLoopb
     minimumSystemVersion: value.minimumSystemVersion,
     executionHostProtocolVersion: Number(value.executionHostProtocolVersion),
     artifacts,
-    homebrew: {
-      tap: homebrewTap,
-      cask: 'zeus',
-      installCommand: value.homebrew.installCommand,
-      upgradeCommand: value.homebrew.upgradeCommand,
-    },
+    homebrew:
+      platform === 'darwin' && homebrew
+        ? {
+            tap: homebrewTap,
+            cask: 'zeus',
+            installCommand: String(homebrew.installCommand),
+            upgradeCommand: String(homebrew.upgradeCommand),
+          }
+        : null,
   };
 }
 
@@ -268,8 +289,9 @@ function normalizeVersion(version: string): string {
   return trimmed || '0.0.0';
 }
 
-function selectPreferredArtifact(artifacts: ReleaseUpdateArtifact[], arch: ReleaseUpdateArtifactArch): ReleaseUpdateArtifact | null {
-  return artifacts.find((artifact) => artifact.arch === arch && artifact.kind === 'dmg') ?? artifacts.find((artifact) => artifact.arch === arch) ?? null;
+/** 平台和架构必须同时匹配，禁止以其他平台的同架构产物兜底。 */
+function selectPreferredArtifact(artifacts: ReleaseUpdateArtifact[], arch: ReleaseUpdateArtifactArch, platform: ReleaseUpdatePlatform): ReleaseUpdateArtifact | null {
+  return artifacts.find((artifact) => artifact.arch === arch && (artifact.platform ?? 'darwin') === platform && artifact.kind === (platform === 'win32' ? 'exe' : 'dmg')) ?? null;
 }
 
 /** 比较已规范化的数字版本；Codex 与 Zeus 更新检测共用同一顺序规则。 */
@@ -290,13 +312,14 @@ function parseSemverParts(version: string): number[] {
     .map((part) => (Number.isFinite(part) ? part : 0));
 }
 
-function parseReleaseArtifact(value: unknown, repository: string, allowLoopbackDownloadUrls: boolean): ReleaseUpdateArtifact {
+function parseReleaseArtifact(value: unknown, repository: string, allowLoopbackDownloadUrls: boolean, platform: ReleaseUpdatePlatform): ReleaseUpdateArtifact {
   if (
     !isRecord(value) ||
     (value.arch !== 'arm64' && value.arch !== 'x64') ||
-    value.kind !== 'dmg' ||
+    (value.platform !== undefined && value.platform !== platform) ||
+    value.kind !== (platform === 'win32' ? 'exe' : 'dmg') ||
     typeof value.fileName !== 'string' ||
-    !value.fileName.trim().endsWith('.dmg') ||
+    !value.fileName.trim().endsWith(platform === 'win32' ? '.exe' : '.dmg') ||
     /[\\/]/u.test(value.fileName.trim()) ||
     typeof value.sha256 !== 'string' ||
     !/^[a-f0-9]{64}$/u.test(value.sha256) ||
@@ -307,8 +330,9 @@ function parseReleaseArtifact(value: unknown, repository: string, allowLoopbackD
     throw new Error('Release update artifact is invalid.');
   }
   return {
+    platform,
     arch: value.arch,
-    kind: value.kind,
+    kind: value.kind as ReleaseUpdateArtifactKind,
     fileName: value.fileName.trim(),
     sha256: value.sha256,
     sizeBytes: value.sizeBytes,

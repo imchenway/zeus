@@ -1,3 +1,4 @@
+import { platformShortcutLabel } from '../../platform.js';
 import type { ProjectGitWorkbenchSnapshot } from '../git/gitContracts.js';
 import { toolPages } from '../../tooling/index.js';
 import { temporaryWorkspaceId } from '@zeus/shared';
@@ -665,8 +666,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
         type="button"
         disabled={!props.commandClient}
         onClick={() => openProjectCommands(selectedProject.id)}
-        aria-label={codeWorkspaceZh ? '命令（⌘4）' : 'Commands (⌘4)'}
-        data-icon-tooltip={codeWorkspaceZh ? '命令（⌘4）' : 'Commands (⌘4)'}
+        aria-label={platformShortcutLabel(codeWorkspaceZh ? '命令（⌘4）' : 'Commands (⌘4)')}
+        data-icon-tooltip={platformShortcutLabel(codeWorkspaceZh ? '命令（⌘4）' : 'Commands (⌘4)')}
         aria-haspopup="dialog"
       >
         <TerminalIcon aria-hidden="true" />
@@ -674,8 +675,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       <button
         type="button"
         onClick={() => openProjectSection(selectedProject, 'code', projectCodeWorkspaceMode === 'git' ? 'source' : 'git')}
-        aria-label={projectCodeWorkspaceMode === 'git' ? (codeWorkspaceZh ? '收起 Git 底栏（⌘3）' : 'Hide Git panel (⌘3)') : codeWorkspaceZh ? '打开 Git 底栏（⌘2）' : 'Show Git panel (⌘2)'}
-        data-icon-tooltip={projectCodeWorkspaceMode === 'git' ? (codeWorkspaceZh ? '收起 Git 底栏（⌘3）' : 'Hide Git panel (⌘3)') : codeWorkspaceZh ? '打开 Git 底栏（⌘2）' : 'Show Git panel (⌘2)'}
+        aria-label={platformShortcutLabel(projectCodeWorkspaceMode === 'git' ? (codeWorkspaceZh ? '收起 Git 底栏（⌘3）' : 'Hide Git panel (⌘3)') : codeWorkspaceZh ? '打开 Git 底栏（⌘2）' : 'Show Git panel (⌘2)')}
+        data-icon-tooltip={platformShortcutLabel(projectCodeWorkspaceMode === 'git' ? (codeWorkspaceZh ? '收起 Git 底栏（⌘3）' : 'Hide Git panel (⌘3)') : codeWorkspaceZh ? '打开 Git 底栏（⌘2）' : 'Show Git panel (⌘2)')}
         aria-expanded={projectCodeWorkspaceMode === 'git'}
         aria-controls="project-code-git-panel"
       >

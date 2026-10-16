@@ -1,4 +1,6 @@
+import { createServer } from 'node:net';
 import { spawn } from 'node:child_process';
+import { resolveExecutableInvocation, processEnvironmentValue } from '@zeus/ai-runtime';
 import { accessSync, constants, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -16,15 +18,19 @@ function servicePort(value: string | undefined): string[] {
   return ['--port', value];
 }
 
-/** 自动查找标准 macOS 安装位置；自定义位置仍要求是可执行的 CLI 文件。 */
+/** 自动查找当前平台的标准安装位置，自定义路径错误时不切换到另一份工具。 */
 function resolveWechatCli(projectRoot: string): string {
+  /** Windows 同时检查按用户和按机器安装目录，环境变量决定盘符。 */
+  const windowsRoots = ['ProgramFiles(x86)', 'ProgramFiles', 'LOCALAPPDATA'].map((name) => processEnvironmentValue(process.env, name)).filter((value): value is string => Boolean(value));
   /** 显式配置优先，不在配置错误时悄悄调用另一份开发者工具。 */
   const candidates = process.env.WX_CLI_PATH?.trim()
     ? [localPath(process.env.WX_CLI_PATH.trim(), projectRoot)]
-    : ['/Applications/wechatwebdevtools.app/Contents/MacOS/cli', join(homedir(), 'Applications/wechatwebdevtools.app/Contents/MacOS/cli')];
+    : process.platform === 'win32'
+      ? windowsRoots.flatMap((root) => ['Tencent/微信web开发者工具', 'Tencent/WechatDevTools', 'Tencent/WechatTool', 'Programs/微信开发者工具'].map((directory) => join(root, directory, 'cli.bat')))
+      : ['/Applications/wechatwebdevtools.app/Contents/MacOS/cli', join(homedir(), 'Applications/wechatwebdevtools.app/Contents/MacOS/cli')];
   for (const candidate of candidates) {
     try {
-      accessSync(candidate, constants.X_OK);
+      accessSync(candidate, process.platform === 'win32' ? constants.F_OK : constants.X_OK);
       if (statSync(candidate).isFile()) return candidate;
     } catch {
       // 标准位置可能未安装，全部查找结束后给出统一安装指引。
@@ -36,8 +42,22 @@ function resolveWechatCli(projectRoot: string): string {
 /** 直接传递参数数组，项目路径和版本备注不会作为 shell 代码解释。 */
 async function runCli(cli: string, args: string[], projectRoot: string): Promise<void> {
   await new Promise<void>((resolveRun, reject) => {
-    /** 子进程继承命令中心的输出与进程树，停止和超时沿用既有处理。 */
-    const child = spawn(cli, args, { cwd: projectRoot, stdio: 'inherit', env: process.env });
+    /** runner 与 CLI 继承 Core Job；Main 已先打开用户持有的 GUI，停止命令不关闭该 GUI。 */
+    const invocation = process.platform === 'win32' ? resolveExecutableInvocation(cli, args, { cwd: projectRoot, env: process.env }) : { command: cli, args, env: process.env };
+    /** Unix 保留原有终端输入和输出；只有 Windows 批处理需要管道桥接。 */
+    const child = spawn(invocation.command, invocation.args, {
+      cwd: projectRoot,
+      env: invocation.env,
+      windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+      stdio: process.platform === 'win32' ? ['pipe', 'pipe', 'pipe'] : 'inherit',
+      shell: false,
+      windowsHide: true,
+    });
+    if (process.platform === 'win32') {
+      child.stdout?.pipe(process.stdout, { end: false });
+      child.stderr?.pipe(process.stderr, { end: false });
+      child.stdin?.end();
+    }
     child.once('error', reject);
     child.once('exit', (code, signal) => {
       if (code === 0) resolveRun();
@@ -54,8 +74,8 @@ function registerArtifact(path: string): void {
 
 /** 真机必须完成官方连接流程并返回设备信息，单纯打开开发者工具不算成功。 */
 async function remoteDebug(cli: string, projectPath: string, portArgs: string[], outputPath: string): Promise<void> {
-  /** 官方 SDK 随安装包交付，用户不需要安装 Node.js、npm 或自动化依赖。 */
-  const miniProgram = await automator.launch({ cliPath: cli, projectPath, args: portArgs, timeout: 45_000 });
+  /** Unix 沿用 SDK 的启动和连接时序；Windows 单独处理 SDK 不支持的批处理入口。 */
+  const miniProgram = process.platform === 'win32' ? await launchWindowsAutomation(cli, projectPath, portArgs) : await automator.launch({ cliPath: cli, projectPath, args: portArgs, timeout: 45_000 });
   /** 真机连接与设备查询共用等待上限，结束后释放连接但保留微信调试窗口。 */
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -75,6 +95,39 @@ async function remoteDebug(cli: string, projectPath: string, portArgs: string[],
   } finally {
     clearTimeout(timer);
     miniProgram.disconnect();
+  }
+}
+
+/** Windows 只启动一次批处理，再重试只读连接，不向其他平台改变 SDK 启动语义。 */
+async function launchWindowsAutomation(cli: string, projectPath: string, portArgs: string[]): Promise<Awaited<ReturnType<typeof automator.connect>>> {
+  /** SDK 的 launch 直接 spawn 批处理，由统一解析器提供 Windows 参数转义。 */
+  const port = await reserveAutomationPort();
+  await runCli(cli, ['auto', '--project', projectPath, '--auto-port', String(port), ...portArgs], projectPath);
+  return connectAutomation(port);
+}
+
+/** 让操作系统分配本机空闲端口，避免与用户已打开的自动化会话冲突。 */
+async function reserveAutomationPort(): Promise<number> {
+  return new Promise((resolvePort, reject) => {
+    const server = createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      server.close((error) => (error ? reject(error) : address && typeof address !== 'string' ? resolvePort(address.port) : reject(new Error('无法分配微信自动化端口。'))));
+    });
+  });
+}
+
+/** 工具启动需要时间，只在有限期限内重试连接，不重复触发外部操作。 */
+async function connectAutomation(port: number): Promise<Awaited<ReturnType<typeof automator.connect>>> {
+  const deadline = Date.now() + 45_000;
+  while (true) {
+    try {
+      return await automator.connect({ wsEndpoint: `ws://127.0.0.1:${port}` });
+    } catch (error) {
+      if (Date.now() >= deadline) throw new Error(`无法连接微信开发者工具自动化服务：${error instanceof Error ? error.message : String(error)}`);
+      await new Promise((resolveWait) => setTimeout(resolveWait, 1_000));
+    }
   }
 }
 

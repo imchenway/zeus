@@ -10,7 +10,7 @@ import {
   createCodexAppServerManager,
   type ExternalAgentImportEvent,
 } from './codexAppServerManager.js';
-import { spawn as nodeSpawn } from 'node:child_process';
+import { spawnManagedProcess } from './managedProcess.js';
 import { closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { resolveCliSearchPath } from './cliSearchPath.js';
@@ -99,6 +99,8 @@ export function createCodexRuntimeGenerationManager(
     codexHome?: string;
     toolRuntimeCodexHome?: string;
     runtimeEnvironment?: Record<string, string>;
+    /** 固定 Main 能力负责 Windows daemon，普通 Provider 进程仍受 Core Job 管理。 */
+    ensureRemoteControlDaemon?: () => Promise<{ socketPath: string }>;
     providerVersionProbe?: (commandPath: string) => Promise<string | null>;
     /** 目录检查间隔；官方组件仍自行决定是否需要联网。 */
     modelCatalogRefreshIntervalMs?: number;
@@ -466,6 +468,7 @@ export function createCodexRuntimeGenerationManager(
       runtimeEnvironment,
       ...(appServerFlags.length > 0 ? { appServerFlags } : {}),
       providerVersionFallback,
+      ensureRemoteControlDaemon: options.ensureRemoteControlDaemon,
     });
     const provisional: RuntimeEntry = {
       manager,
@@ -887,7 +890,8 @@ export function createCodexRuntimeGenerationManager(
 function probeCodexProviderVersion(commandPath: string, runtimeEnvironment: Record<string, string>): Promise<string | null> {
   return new Promise((resolve) => {
     /** 版本探针与同一运行实例共用 Codex 和解释器的搜索目录。 */
-    const child = nodeSpawn(commandPath, ['--version'], { shell: false, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...runtimeEnvironment } });
+    const child = spawnManagedProcess(commandPath, ['--version'], { env: { ...process.env, ...runtimeEnvironment } });
+    child.stdin.end();
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let settled = false;

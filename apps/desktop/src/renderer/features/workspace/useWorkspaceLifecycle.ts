@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { isMacOSPlatform } from '../../platform.js';
 import { isDurableNativeConversationAcceptance } from '../../session/SessionWorkspace.js';
 import { clearPendingConflictAiStart, listPendingConflictAiStarts } from '../../task/TaskGitMergeModal.js';
 import { ZeusApiError } from '../../apiClient.js';
@@ -183,7 +184,7 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
   useEffect(() => {
     /** 保留原有快捷键，Git 和命令统一进入源码工作区。 */
     function onProjectWorkspaceShortcut(event: globalThis.KeyboardEvent): void {
-      if (!event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || event.repeat) return;
+      if (!(isMacOSPlatform() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) || event.altKey || event.shiftKey || event.repeat || event.isComposing || event.defaultPrevented) return;
       // 已关闭但仍在退出动画中的弹层不继续屏蔽工作区快捷键。
       if (!['1', '2', '3', '4'].includes(event.key) || activeNavTarget === 'settings' || !selectedProject || document.querySelector('[aria-modal="true"]:not([aria-hidden="true"])')) return;
       event.preventDefault();

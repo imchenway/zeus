@@ -43,11 +43,15 @@ export function renderReleaseManifest(input) {
   const repository = normalizeRepository(input.repository);
   const homebrewTap = normalizeHomebrewTap(input.homebrewTap);
   if (repository !== defaultRepository || homebrewTap !== defaultHomebrewTap || (input.channel ?? 'stable') !== 'stable') throw new Error('只允许生成 Zeus 官方稳定渠道的发布清单。');
+  /** 同一发布生成独立平台清单，避免破坏已安装 macOS 客户端。 */
+  const platform = input.platform ?? 'darwin';
+  if (!['darwin', 'win32'].includes(platform)) throw new Error('发布清单平台无效。');
   const tag = `v${version}`;
   const releaseBaseUrl = `https://github.com/${repository}/releases`;
   const releaseDownloadBaseUrl = `${releaseBaseUrl}/download/${tag}`;
   const manifest = {
     app: 'Zeus',
+    platform,
     // 保留固定候选身份，发布时复核制品确实来自本次提交。
     sourceCommit: input.sourceCommit ?? null,
     schemaVersion: 1,
@@ -60,10 +64,11 @@ export function renderReleaseManifest(input) {
     publishedAt: input.publishedAt ?? new Date(0).toISOString(),
     signed: Boolean(input.signed),
     notarized: Boolean(input.notarized),
-    minimumSystemVersion: input.minimumSystemVersion ?? '13.0',
+    minimumSystemVersion: input.minimumSystemVersion ?? (platform === 'win32' ? '10.0.19045' : '13.0'),
     executionHostProtocolVersion: Number.isInteger(input.executionHostProtocolVersion) && input.executionHostProtocolVersion > 0 ? input.executionHostProtocolVersion : currentExecutionHostProtocolVersion,
     // 只写入真实产物名、hash 和下载地址，不包含任何本机 dist 绝对路径。
     artifacts: (input.artifacts ?? []).map((artifact) => ({
+      platform,
       arch: artifact.arch,
       kind: artifact.kind,
       fileName: artifact.fileName,
@@ -71,21 +76,24 @@ export function renderReleaseManifest(input) {
       sizeBytes: typeof artifact.sizeBytes === 'number' ? artifact.sizeBytes : null,
       downloadUrl: artifact.downloadUrl ?? `${releaseDownloadBaseUrl}/${encodeURIComponent(artifact.fileName)}`,
     })),
-    homebrew: {
-      tap: homebrewTap,
-      cask: 'zeus',
-      installCommand: `brew install --cask ${homebrewTap}/zeus`,
-      upgradeCommand: `brew upgrade --cask ${homebrewTap}/zeus`,
-    },
+    homebrew:
+      platform === 'darwin'
+        ? {
+            tap: homebrewTap,
+            cask: 'zeus',
+            installCommand: `brew install --cask ${homebrewTap}/zeus`,
+            upgradeCommand: `brew upgrade --cask ${homebrewTap}/zeus`,
+          }
+        : null,
   };
   return `${JSON.stringify(manifest, null, 2)}\n`;
 }
 
-async function discoverArtifacts({ distDir, version, repository }) {
+async function discoverArtifacts({ distDir, version, repository, platform }) {
   const files = await readdir(distDir).catch(() => []);
   const artifacts = [];
   for (const fileName of files) {
-    const match = fileName.match(new RegExp(`^Zeus-${version}-(arm64|x64)\\.(dmg)$`, 'u'));
+    const match = fileName.match(new RegExp(`^Zeus-${version}${platform === 'win32' ? '-win32' : ''}-(arm64|x64)\\.(${platform === 'win32' ? 'exe' : 'dmg'})$`, 'u'));
     if (!match) continue;
     const filePath = join(distDir, fileName);
     const fileStat = await stat(filePath);
@@ -101,7 +109,17 @@ async function discoverArtifacts({ distDir, version, repository }) {
   return artifacts.sort((left, right) => `${left.arch}-${left.kind}`.localeCompare(`${right.arch}-${right.kind}`));
 }
 
-export async function generateReleaseManifest({ version, channel = 'stable', repository = defaultRepository, homebrewTap = defaultHomebrewTap, outputPath, distDir = join(rootDir, 'dist'), signed = false, notarized = false }) {
+export async function generateReleaseManifest({
+  version,
+  channel = 'stable',
+  repository = defaultRepository,
+  homebrewTap = defaultHomebrewTap,
+  outputPath,
+  distDir = join(rootDir, 'dist'),
+  signed = false,
+  notarized = false,
+  platform = 'darwin',
+}) {
   const normalizedVersion = normalizeVersion(version);
   const normalizedRepository = normalizeRepository(repository);
   const normalizedHomebrewTap = normalizeHomebrewTap(homebrewTap);
@@ -109,6 +127,7 @@ export async function generateReleaseManifest({ version, channel = 'stable', rep
     distDir,
     version: normalizedVersion,
     repository: normalizedRepository,
+    platform,
   });
   const content = renderReleaseManifest({
     sourceCommit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: rootDir, encoding: 'utf8' }).trim(),
@@ -116,6 +135,7 @@ export async function generateReleaseManifest({ version, channel = 'stable', rep
     channel,
     repository: normalizedRepository,
     homebrewTap: normalizedHomebrewTap,
+    platform,
     signed,
     notarized,
     publishedAt: new Date().toISOString(),

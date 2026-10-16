@@ -1,16 +1,22 @@
 export { modelResponseRetryPolicy, modelResponseRetryDelay, createModelConnectionDeadline, isRetryableModelResponseFailure } from './modelResponseRetry.js';
-import { constants } from 'node:fs';
-import { access, realpath } from 'node:fs/promises';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { Buffer } from 'node:buffer';
 import { randomUUID } from 'node:crypto';
-import { basename, delimiter, isAbsolute, relative, resolve } from 'node:path';
+import { basename, isAbsolute, relative, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { normalizeTerminalChunk } from './terminalOutput.js';
 import { buildTaskPushPrompt, interactiveTerminalInitialSize, isInteractiveShellSession, type TaskPushPromptInput } from '@zeus/shared';
 import { expandCliSearchPath, resolveCliSearchPath } from './cliSearchPath.js';
+import { businessProcessEnvironment, findExecutable, powerShellCommandArguments, resolveExecutableInvocation, resolveInteractiveShell } from './commandExecution.js';
+import { createWindowsNativeRuntimeSpawn, resolveWindowsRuntimeHelper, type WindowsRuntimeSandboxPolicy } from './windowsNativeRuntime.js';
+import { spawnManagedProcess } from './managedProcess.js';
+import { codexInstallationCommand, codexInstallationGuideUrl } from './codexInstallation.js';
 
 export * from './codexAppServerManager.js';
+export * from './commandExecution.js';
+export * from './codexInstallation.js';
+export * from './managedProcess.js';
+export * from './windowsNativeRuntime.js';
 export * from './codexAppServerProtocol.js';
 export * from './codexRuntimeGenerationManager.js';
 export * from './codexModelBudgetSnapshot.js';
@@ -90,6 +96,8 @@ export interface AiCliAdapterInvocation {
   adapterId: NonCodexAiCliAdapterId;
   command: string;
   args: string[];
+  /** 显式 cmd 脚本需要保持已解析的命令行。 */
+  windowsVerbatimArguments?: boolean;
 }
 
 export interface AiCliAdapterInvocationOptions {
@@ -164,13 +172,17 @@ export function createNonCodexAiCliAdapterInvocation(adapterId: NonCodexAiCliAda
     gemini: ['-p', ...defaultArgs, prompt, ...modelArgs],
     generic: ['-lc', prompt],
   };
-  const command = options.commandPath?.trim() || adapter.command;
-  const commandBasename = basename(command);
+  const command = options.commandPath?.trim() || (runtimeAdapterId === 'generic' && process.platform === 'win32' ? resolveInteractiveShell({ path: null, login: false }).command : adapter.command);
+  const commandBasename = basename(command)
+    .toLowerCase()
+    .replace(/\.(?:exe|com|cmd|bat)$/u, '');
   if (AI_CLI_ADAPTER_COMMAND_BASENAMES.has(commandBasename) && commandBasename !== adapter.command) {
     throw Object.assign(new Error(`AI CLI adapter command identity mismatch: ${runtimeAdapterId} cannot use ${commandBasename}`), {
       code: 'AI_CLI_ADAPTER_COMMAND_IDENTITY_MISMATCH',
     });
   }
+  if (runtimeAdapterId === 'generic' && ['powershell', 'pwsh'].includes(commandBasename)) return { adapterId: runtimeAdapterId, command, args: powerShellCommandArguments(prompt) };
+  if (runtimeAdapterId === 'generic' && commandBasename === 'cmd') return { adapterId: runtimeAdapterId, command, args: ['/d', '/s', '/c', `"${prompt}"`], windowsVerbatimArguments: true };
   return { adapterId: runtimeAdapterId, command, args: argsByAdapter[runtimeAdapterId] };
 }
 
@@ -192,7 +204,9 @@ export async function checkAiCliAdapter(adapterId: string, options: CheckAiCliAd
   /** 程序查找成功不能替代其解释器可运行；所有探针沿用同一搜索目录。 */
   const runCommand = options.runCommand ?? ((commandPath, args) => runCommandOnce(commandPath, args, searchPath));
   const configuredCommandPath = options.commandPath?.trim();
-  const commandPath = configuredCommandPath ? await resolveConfiguredCommandPath(configuredCommandPath) : await findCommand(adapter.command);
+  const commandPath = configuredCommandPath
+    ? await resolveConfiguredCommandPath(configuredCommandPath)
+    : await findCommand(adapter.id === 'generic' && process.platform === 'win32' ? resolveInteractiveShell({ path: null, login: false }).command : adapter.command);
   const status: AiCliStatus = commandPath
     ? {
         ...adapter,
@@ -214,13 +228,16 @@ export async function checkAiCliAdapter(adapterId: string, options: CheckAiCliAd
       resolvedCommandPath: null,
       checkedAt,
       compatibility: 'not_checked',
-      installationGuideUrl: adapter.id === 'codex' ? 'https://chatgpt.com/codex/install.sh' : null,
+      installationGuideUrl: adapter.id === 'codex' ? codexInstallationGuideUrl : null,
       installationIssue: configuredCommandPath ? 'invalid_path' : 'not_found',
       authStatus: 'unknown',
       modelConfiguration: 'user-configured',
     };
   }
-  const probe = await runAdapterVersionProbe(commandPath, runCommand);
+  const probe =
+    adapter.id === 'generic' && /(?:powershell|pwsh)\.exe$/iu.test(commandPath)
+      ? await runCommand(commandPath, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.ToString()'])
+      : await runAdapterVersionProbe(commandPath, runCommand);
   const version = extractVersion(probe.stdout || probe.stderr);
   const authStatus = detectAuthStatus(`${probe.stdout}\n${probe.stderr}`);
   /** 手动路径可能指向其他程序，成功退出不能替代 Codex 身份。 */
@@ -242,7 +259,7 @@ export async function checkAiCliAdapter(adapterId: string, options: CheckAiCliAd
     resolvedCommandPath: commandPath,
     checkedAt,
     compatibility: compatible ? 'compatible' : 'incompatible',
-    installationGuideUrl: adapter.id === 'codex' ? 'https://chatgpt.com/codex/install.sh' : null,
+    installationGuideUrl: adapter.id === 'codex' ? codexInstallationGuideUrl : null,
     installationIssue: compatible ? null : probe.exitCode !== 0 ? 'cannot_run' : !recognizedProgram ? 'unrecognized_program' : 'app_server_unavailable',
     authStatus,
     modelConfiguration: 'user-configured',
@@ -287,6 +304,10 @@ export interface StartAiRuntimeSessionInput {
   args?: string[];
   cwd: string;
   env?: NodeJS.ProcessEnv;
+  /** 仅内部解析器可提交已转义 Windows 参数，不由外部 API 直接接受。 */
+  windowsVerbatimArguments?: boolean;
+  /** 仅受信任 Core 授权层传递隔离策略，命令环境变量不能覆盖。 */
+  windowsSandboxPolicy?: WindowsRuntimeSandboxPolicy;
   /** 交互 PTY 的首屏列数；省略时使用 Runtime 默认值。 */
   cols?: number;
   /** 交互 PTY 的首屏行数；省略时使用 Runtime 默认值。 */
@@ -304,6 +325,12 @@ export interface AiRuntimeSpawnOptions {
   cols?: number;
   /** 交互 PTY 的首屏行数。 */
   rows?: number;
+  /** Windows 批处理参数已转义，宿主不得再按普通 argv 二次引用。 */
+  windowsVerbatimArguments?: boolean;
+  /** 已完成授权的 Windows 原生隔离描述，不从用户环境读取。 */
+  windowsSandboxPolicy?: WindowsRuntimeSandboxPolicy;
+  /** Windows 宿主按本次调用选择 ConPTY 或普通管道。 */
+  terminal?: boolean;
 }
 
 export interface AiRuntimeProcessHandle {
@@ -311,6 +338,12 @@ export interface AiRuntimeProcessHandle {
   on(event: 'stdout' | 'stderr' | 'exit' | 'close' | 'error', callback: (value: unknown) => void): AiRuntimeProcessHandle;
   kill(signal?: NodeJS.Signals): void;
   write?(input: string): void;
+  /** 非交互管道发送 EOF，Hook 才能在完整读取请求后结束。 */
+  endInput?(): void;
+  /** Provider 暂停消费时同步暂停原生管道，保持输出背压。 */
+  pauseOutput?(stream: 'stdout' | 'stderr'): void;
+  /** 下游恢复消费后继续读取原生管道。 */
+  resumeOutput?(stream: 'stdout' | 'stderr'): void;
   resize?(cols: number, rows: number): void;
 }
 
@@ -346,6 +379,7 @@ export interface CreateNodePtyRuntimeSpawnOptions {
 }
 
 export function createNodePtyRuntimeSpawn(pty: NodePtyRuntimeModule, defaults: CreateNodePtyRuntimeSpawnOptions = {}): AiRuntimeSpawn {
+  if (process.platform === 'win32') return (command, args, options) => spawnWindowsRuntime(command, args, { ...options, terminal: true });
   return (command, args, spawnOptions) => {
     const child = pty.spawn(command, args, {
       cwd: spawnOptions.cwd,
@@ -388,6 +422,13 @@ export interface CreateOptionalNodePtyRuntimeSpawnOptions extends CreateNodePtyR
  * 尝试加载真实 node-pty；依赖未安装时只返回等待状态，不回退伪 PTY。
  */
 export function createOptionalNodePtyRuntimeSpawn(options: CreateOptionalNodePtyRuntimeSpawnOptions = {}): OptionalNodePtyRuntimeSpawnResult {
+  if (process.platform === 'win32') {
+    try {
+      resolveWindowsRuntimeHelper();
+    } catch (error) {
+      return { available: false, reason: error instanceof Error ? error.message : 'Windows 原生执行组件不可用。' };
+    }
+  }
   const pty = (options.loadNodePty ?? loadNodePtyModule)();
   if (!pty) {
     return {
@@ -475,29 +516,13 @@ const RUNTIME_OUTPUT_FLUSH_BYTE_THRESHOLD = 256 * 1024;
 
 /** 在与实际启动一致的目录中查找程序，保留搜索顺序。 */
 async function findCommandOnPath(command: string, searchPath?: string): Promise<string | null> {
-  /** 已解析的终端目录包含版本管理器安装路径。 */
-  const pathEntries = expandCliSearchPath(searchPath).split(delimiter).filter(Boolean);
-  for (const entry of pathEntries) {
-    const candidate = resolve(entry, command);
-    try {
-      await access(candidate, constants.X_OK);
-      return await realpath(candidate);
-    } catch {
-      // 继续检查 PATH 中下一个目录。
-    }
-  }
-  return null;
+  return findExecutable(command, { ...process.env, PATH: expandCliSearchPath(searchPath) });
 }
 
 /** 显式程序路径必须是可执行的绝对路径，不替换用户选择。 */
 async function resolveConfiguredCommandPath(commandPath: string): Promise<string | null> {
   if (!isAbsolute(commandPath)) return null;
-  try {
-    await access(commandPath, constants.X_OK);
-    return await realpath(commandPath);
-  } catch {
-    return null;
-  }
+  return findExecutable(commandPath);
 }
 
 async function runAdapterVersionProbe(commandPath: string, runCommand: (commandPath: string, args: string[]) => Promise<AiCliProbeResult>): Promise<AiCliProbeResult> {
@@ -528,7 +553,9 @@ async function runAdapterCapabilityProbe(commandPath: string, runCommand: (comma
 function runCommandOnce(commandPath: string, args: string[], searchPath?: string): Promise<AiCliProbeResult> {
   return new Promise((resolveProbe) => {
     /** 只补齐程序搜索路径，保留调用方既有环境。 */
-    const child = nodeSpawn(commandPath, args, { shell: false, env: { ...process.env, PATH: expandCliSearchPath(searchPath) } });
+    const invocation = resolveExecutableInvocation(commandPath, args, { env: { ...process.env, PATH: expandCliSearchPath(searchPath) } });
+    /** 同一解析结果用于 Windows npm shim 与普通原生程序。 */
+    const child = spawnManagedProcess(invocation.command, invocation.args, invocation);
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     const timeout = setTimeout(() => {
@@ -580,7 +607,7 @@ function buildAdapterProbeReason(adapter: AiCliAdapterDescriptor, baseReason: st
 }
 
 function codexInstallationGuidance(reason: string): string {
-  return `${reason}。请在终端运行官方安装命令 curl -fsSL https://chatgpt.com/codex/install.sh | sh，安装完成后回到 Zeus 重新检测并登录订阅。`;
+  return `${reason}。请在${process.platform === 'win32' ? ' PowerShell ' : '终端'}运行官方安装命令 ${codexInstallationCommand()}，安装完成后回到 Zeus 重新检测并登录订阅。`;
 }
 
 /** 创建 AI Runtime 会话管理器；默认使用真实子进程，不伪造 AI 输出。 */
@@ -1019,8 +1046,10 @@ export function createAiRuntimeSessionManager(options: CreateAiRuntimeSessionMan
           cwd: input.cwd,
           cols: input.cols,
           rows: input.rows,
+          windowsVerbatimArguments: input.windowsVerbatimArguments,
+          windowsSandboxPolicy: input.windowsSandboxPolicy,
           env: {
-            ...(input.env ?? process.env),
+            ...businessProcessEnvironment(input.env),
             [RUNTIME_PROCESS_IDENTITY_ENV]: processIdentityToken,
           },
         });
@@ -1266,7 +1295,8 @@ async function waitForRuntimeCompletions(completions: readonly Promise<void>[], 
 
 /** 没有 PTY 时仍保留标准输入通道，供同一个受管命令继续交互。 */
 function spawnWithNodeChildProcess(command: string, args: string[], options: AiRuntimeSpawnOptions): AiRuntimeProcessHandle {
-  const useProcessGroup = process.platform !== 'win32';
+  if (process.platform === 'win32') return spawnWindowsRuntime(command, args, { ...options, terminal: false });
+  const useProcessGroup = true;
   const child = nodeSpawn(command, args, {
     cwd: options.cwd,
     env: options.env ?? process.env,
@@ -1304,6 +1334,13 @@ function spawnWithNodeChildProcess(command: string, args: string[], options: AiR
       child.kill(signal);
     },
   };
+}
+
+/** 受管 Windows Runtime 与 Provider 使用相同程序解析，批处理参数只转义一次。 */
+function spawnWindowsRuntime(command: string, args: string[], options: AiRuntimeSpawnOptions): AiRuntimeProcessHandle {
+  /** 已解析的 cmd 脚本保持原参数，其余命令按 PATH/PATHEXT 查找。 */
+  const invocation = options.windowsVerbatimArguments ? { command, args, env: options.env } : resolveExecutableInvocation(command, args, options);
+  return createWindowsNativeRuntimeSpawn({ terminal: options.terminal })(invocation.command, invocation.args, { ...options, ...invocation });
 }
 
 function assertCwdInsideAllowedRoots(cwd: string, allowedRoots: readonly string[]): void {

@@ -11,6 +11,7 @@
     "@earendil-works/pi-ai": "0.87.1",
     "@earendil-works/pi-coding-agent": "0.87.1",
     "@zeus/shared": "workspace:*",
+    "cross-spawn": "7.0.6",
     "node-pty": "^1.1.0",
     "typebox": "1.3.7"
   }

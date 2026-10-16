@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { access, chmod, readFile } from 'node:fs/promises';
-import { constants as fsConstants } from 'node:fs';
+import { constants as fsConstants, createWriteStream } from 'node:fs';
+import { createRequire } from 'node:module';
 import { fileURLToPath, URL } from 'node:url';
 import process from 'node:process';
 import console from 'node:console';
@@ -26,6 +27,8 @@ for (const name of ['.env', `.env.${mode}`]) {
 const env = { ...configured, ...process.env };
 delete env.ZEUS_RELEASE_BUILD;
 delete env.ZEUS_PACKAGE_VARIANT;
+// Electron 开发宿主必须进入桌面模式，不继承调用方的 Node 子进程开关。
+delete env.ELECTRON_RUN_AS_NODE;
 env.ZEUS_USER_DATA_DIR ||= resolve(root, `.tmp/electron-${mode}-data`);
 // Swift 原生辅助程序的模块缓存放在项目临时目录，避免受外部缓存目录权限影响。
 env.CLANG_MODULE_CACHE_PATH ||= resolve(root, '.tmp/clang-module-cache');
@@ -51,7 +54,16 @@ async function stop(code) {
   // 只终止本次启动的进程组，不匹配或终止已安装的 Zeus。
   if (child?.pid) {
     try {
-      process.kill(-child.pid, 'SIGTERM');
+      if (process.platform === 'win32') {
+        // 只停止本入口仍持有的活跃开发进程树，不按程序名称查找其他 Zeus。
+        if (child.exitCode === null && child.signalCode === null) {
+          await new Promise((resolveStop, rejectStop) => {
+            const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+            killer.once('error', rejectStop);
+            killer.once('exit', resolveStop);
+          });
+        }
+      } else process.kill(-child.pid, 'SIGTERM');
     } catch (error) {
       if (error.code !== 'ESRCH') console.error(error);
     }
@@ -62,18 +74,37 @@ async function stop(code) {
 process.on('SIGINT', () => void stop(130));
 process.on('SIGTERM', () => void stop(143));
 
-function run(command, args, environment) {
+function run(command, args, environment, logPath) {
   return new Promise((resolveExit, reject) => {
-    child = spawn(command, args, { cwd: root, env: environment, stdio: 'inherit', detached: true });
+    child = spawn(command, args, { cwd: root, env: environment, stdio: logPath ? ['inherit', 'pipe', 'pipe'] : 'inherit', detached: process.platform !== 'win32', windowsHide: true });
+    // Windows 日志模式复用同一个开发进程，不创建 shell/tee 进程链。
+    const log = logPath ? createWriteStream(logPath) : null;
+    if (log) {
+      log.once('error', reject);
+      child.stdout.on('data', (chunk) => {
+        process.stdout.write(chunk);
+        log.write(chunk);
+      });
+      child.stderr.on('data', (chunk) => {
+        process.stderr.write(chunk);
+        log.write(chunk);
+      });
+    }
     child.once('error', reject);
-    child.once('exit', (code) => resolveExit(code ?? 1));
+    child.once('exit', (code) => {
+      log?.end();
+      resolveExit(code ?? 1);
+    });
   });
 }
 
 try {
   await ensureNodePtySpawnHelperExecutable();
   // 首次准备主进程、preload 和本地辅助程序；后续前端编辑不再执行构建。
-  const code = await run('pnpm', ['build'], env);
+  // Windows 直接执行当前 pnpm 的 JS 入口，避免 .cmd 与参数的二次解析。
+  const pnpmEntry = process.env.npm_execpath;
+  if (process.platform === 'win32' && (!pnpmEntry || !/\.(?:c?js|mjs)$/u.test(pnpmEntry))) throw new Error('Windows 开发入口请使用 pnpm dev。');
+  const code = await run(process.platform === 'win32' ? process.execPath : 'pnpm', process.platform === 'win32' ? [pnpmEntry, 'build'] : ['build'], env);
   if (code !== 0 || stopping) {
     await stop(code);
   } else {
@@ -96,11 +127,23 @@ try {
     await server.listen();
     const url = server.resolvedUrls.local[0];
     console.log(`Zeus 开发模式：${url}（前端热更新；主进程/preload 修改后重启 pnpm dev）`);
-    const exitCode = await run('bash', ['script/build_and_run.sh', process.argv[2] || 'run'], {
-      ...env,
-      ZEUS_DEV_SERVER_READY: '1',
-      ZEUS_DEV_SERVER_URL: url,
-    });
+    // 两个平台共用 Vite 与数据根，仅桌面宿主启动命令使用系统能力。
+    const launchMode = process.argv[2] || 'run';
+    if (!['run', '--debug', 'debug', '--logs', 'logs', '--telemetry', 'telemetry'].includes(launchMode)) throw new Error('未知开发启动模式。');
+    const windows = process.platform === 'win32';
+    const electronPath = windows ? createRequire(import.meta.url)('electron') : null;
+    const exitCode = await run(
+      windows ? electronPath : 'bash',
+      windows ? [...(['debug', '--debug'].includes(launchMode) ? ['--inspect=9229'] : []), desktop] : ['script/build_and_run.sh', launchMode],
+      {
+        ...env,
+        ZEUS_DEV_SERVER_READY: '1',
+        ZEUS_DEV_SERVER_URL: url,
+        ZEUS_DESKTOP_DIR: desktop,
+        ZEUS_PROJECT_ROOT: root,
+      },
+      windows && ['--logs', 'logs', '--telemetry', 'telemetry'].includes(launchMode) ? resolve(root, '.tmp/zeus-development.log') : undefined,
+    );
     await stop(exitCode);
   }
 } catch (error) {

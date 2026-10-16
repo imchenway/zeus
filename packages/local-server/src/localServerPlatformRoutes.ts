@@ -18,6 +18,10 @@ import { createAutomationNotificationService } from './automationNotificationSer
 import { probeCodexConversation } from './codexConnectionDiagnostic.js';
 import {
   checkAiCliAdapter,
+  codexInstallationCommand,
+  powerShellCommandArguments,
+  resolveInteractiveShell,
+  spawnManagedProcess,
   type AiCliAdapterStatus,
   type CodexRuntimeMaintenanceControl,
   type CodexModelCapability,
@@ -94,7 +98,6 @@ import {
 import { type TaskStatus } from './taskCore.js';
 import { createTelegramBotMessageClient, getTelegramConfigurationState, type TelegramMessageSender, type TelegramPollingService } from './telegramAdapter.js';
 import { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
-import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join, resolve } from 'node:path';
@@ -227,7 +230,7 @@ export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, 
 /** 官方安装器使用的稳定版发布元数据入口。 */
 const codexLatestReleaseUrl = 'https://releases.openai.com/codex/channels/latest';
 /** Zeus 管理的 standalone 由官方安装器原子切换版本。 */
-const codexInstallerUrl = 'https://releases.openai.com/codex/install.sh';
+const codexInstallerUrl = process.platform === 'win32' ? 'https://releases.openai.com/codex/install.ps1' : 'https://releases.openai.com/codex/install.sh';
 /** 发布元数据只需读取版本标签，限制正文避免异常响应占满内存。 */
 const codexReleaseMetadataMaximumBytes = 512_000;
 /** 安装脚本体积远小于发布元数据，单独限制避免执行异常响应。 */
@@ -293,7 +296,7 @@ async function readOfficialCodexInstaller(onProgress: (progress: number | null, 
   /** 安装脚本和资产下载共用更新总等待上限。 */
   const signal = AbortSignal.timeout(codexUpdateTimeoutMs);
   /** 直接访问最终官方地址且禁止重定向，避免执行未知站点内容。 */
-  const response = await fetch(codexInstallerUrl, { headers: { accept: 'text/x-sh' }, redirect: 'error', signal }).catch((cause: unknown) => {
+  const response = await fetch(codexInstallerUrl, { headers: { accept: 'text/plain' }, redirect: 'error', signal }).catch((cause: unknown) => {
     throw Object.assign(new Error('无法下载 Codex 官方安装脚本。', { cause }), { code: signal.aborted ? 'ZEUS_CODEX_UPDATE_TIMEOUT' : 'ZEUS_CODEX_UPDATE_NETWORK' });
   });
   /** 响应必须成功且满足脚本大小上限。 */
@@ -307,6 +310,11 @@ async function readOfficialCodexInstaller(onProgress: (progress: number | null, 
   if (script.byteLength > codexInstallerMaximumBytes) throw Object.assign(new Error('Codex 官方安装脚本超过读取上限。'), { code: 'ZEUS_CODEX_UPDATE_UNAVAILABLE' });
   /** 成功状态不能替代脚本身份，拒绝 HTML 或未知正文。 */
   const header = script.subarray(0, Math.min(script.byteLength, 4_096)).toString('utf8');
+  if (process.platform === 'win32') {
+    if (!script.toString('utf8').includes('$ReleasesBaseUri = "https://releases.openai.com/codex"') || !script.toString('utf8').includes('CODEX_RELEASE'))
+      throw Object.assign(new Error('Codex 官方 Windows 安装脚本格式无法识别。'), { code: 'ZEUS_CODEX_UPDATE_INVALID' });
+    return script;
+  }
   if (!header.startsWith('#!/bin/sh\n') || !header.includes('RELEASES_BASE_URL="https://releases.openai.com/codex"')) {
     throw Object.assign(new Error('Codex 官方安装脚本格式无法识别。'), { code: 'ZEUS_CODEX_UPDATE_INVALID' });
   }
@@ -344,11 +352,11 @@ async function runCodexSelfUpdate(commandPath: string, codexHome: string | undef
   };
   return new Promise((resolveUpdate, rejectUpdate) => {
     /** stdout 与 stderr 只用于有界错误诊断，安装脚本通过标准输入传递。 */
-    const child = spawn('/bin/sh', ['-s'], {
-      shell: false,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: environment,
-    });
+    const invocation =
+      process.platform === 'win32'
+        ? { command: resolveInteractiveShell({ path: null, login: false }, environment).command, args: powerShellCommandArguments('& ([scriptblock]::Create([Console]::In.ReadToEnd()))') }
+        : { command: '/bin/sh', args: ['-s'] };
+    const child = spawnManagedProcess(invocation.command, invocation.args, { env: environment });
     /** stdout 与 stderr 共同使用同一诊断预算。 */
     let output = Buffer.alloc(0);
     /** 防止 error、close 和超时重复收口。 */
@@ -428,11 +436,8 @@ async function stopCodexRemoteControlDaemon(commandPath: string, codexHome: stri
   const environment = { ...process.env, ...(codexHome ? { CODEX_HOME: codexHome } : {}) };
   return new Promise((resolveStop, rejectStop) => {
     /** 官方 stop 命令负责找到并有序结束匹配的数据目录实例。 */
-    const child = spawn(commandPath, ['remote-control', 'stop', '--json'], {
-      shell: false,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: environment,
-    });
+    const child = spawnManagedProcess(commandPath, ['remote-control', 'stop', '--json'], { env: environment });
+    child.stdin.end();
     /** stdout 与 stderr 共用更新链已有的诊断上限。 */
     let output = Buffer.alloc(0);
     /** error、close 与超时只允许一个路径完成 Promise。 */
@@ -1210,7 +1215,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
           installation: {
             mode: remote ? ('remote' as const) : ('local' as const),
             configuredCommandPath: remote ? null : configuredCommandPath?.trim() || null,
-            command: standalone?.installCommand ?? 'curl -fsSL https://chatgpt.com/codex/install.sh | sh',
+            command: standalone?.installCommand ?? codexInstallationCommand(),
           },
         };
       },
@@ -1650,6 +1655,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     buildRuntimeProcessEnv,
     createReleaseNotesCapability,
     revokeReleaseNotesCapability,
+    ensureWechatApplication: options.browserAutomation?.ensureWechatApplication?.bind(options.browserAutomation),
     resolveRuntimeSessionLogFiles: (sessionId) => {
       const sessionDirectory = runtimeSessionDataDirectory(sessionId);
       return [
@@ -4690,7 +4696,19 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       return root && existsSync(root) && statSync(root).isDirectory() ? root : null;
     },
     readProjectAllowsShell: (projectId) => readProjectConfig(projectId).security.allowShell,
-    readTerminalStartupCommand: () => platformMutableState.runtimeSettings.terminalStartupCommand,
+    readTerminalStartupCommand: (shellCommand) => {
+      /** Unix 启动脚本不能在导入后直接交给 Windows 解释器执行。 */
+      const command = platformMutableState.runtimeSettings.terminalStartupCommand;
+      const expected = platformMutableState.runtimeSettings.terminalStartupShell ?? 'sh';
+      const name = (shellCommand ?? '')
+        .split(/[\\/]/u)
+        .at(-1)
+        ?.toLowerCase()
+        .replace(/\.exe$/u, '');
+      const actual = name === 'powershell' || name === 'pwsh' ? 'powershell' : name === 'cmd' ? 'cmd' : 'sh';
+      if (command && actual !== (expected === 'zsh' ? 'sh' : expected)) throw new Error('终端启动命令的解释器与当前终端不同。请在终端设置中确认并适配脚本，或清空启动命令。');
+      return command;
+    },
     buildRuntimeProcessEnv,
     resolveTaskDefaultManagementStatus: (projectId) => resolveTaskManagementStatusConfigForProject(projectId).roles.defaultStatusId,
     stopPersistedOrphanRuntimeSession,

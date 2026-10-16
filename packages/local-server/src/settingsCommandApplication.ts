@@ -84,6 +84,8 @@ export class SettingsCommandApplicationError extends Error {
       | 'ZEUS_SETTINGS_COMMAND_RESULT_TOO_LARGE'
       | 'ZEUS_SETTINGS_COMMAND_OUTCOME_UNKNOWN'
       | 'ZEUS_SETTINGS_COMMAND_EXPLICITLY_REJECTED'
+      // 显式终端配置使用了宿主保留字段，保存前拒绝并指明字段名。
+      | 'ZEUS_RUNTIME_ENVIRONMENT_RESERVED'
       | 'ZEUS_MODEL_SETUP_INVALID'
       | 'ZEUS_TASK_BRANCH_PREFIX_INVALID',
     message: string,

@@ -1,6 +1,17 @@
 /** 内置命令与用户脚本共用全局或项目作用域，不引入业务专属执行类型。 */
 export type CommandScope = 'global' | 'project';
 
+/** 脚本解释器属于命令语义，不能按运行系统静默替换。 */
+export type CommandShell = 'sh' | 'zsh' | 'powershell' | 'cmd';
+
+/** 可保存的解释器名称；历史命令未登记时使用 sh。 */
+export const commandShells: readonly CommandShell[] = ['sh', 'zsh', 'powershell', 'cmd'];
+
+/** 在命令、插件和导入边界校验解释器。 */
+export function isCommandShell(value: unknown): value is CommandShell {
+  return typeof value === 'string' && commandShells.includes(value as CommandShell);
+}
+
 export type CommandParameterType = 'string' | 'number' | 'boolean';
 
 export interface CommandParameterDefinition {
@@ -28,6 +39,8 @@ export interface CommandDefinition {
   title: string;
   description: string;
   command: string;
+  /** 命令正文使用的解释器；历史记录缺省代表 sh。 */
+  shell?: CommandShell;
   parameters: CommandParameterDefinition[];
   timeoutSeconds: number;
   enabled: boolean;
@@ -44,6 +57,8 @@ export interface CommandDefinitionInput {
   title: string;
   description?: string;
   command: string;
+  /** 旧客户端未提交时保留 sh 语义，新客户端显式提交。 */
+  shell?: CommandShell;
   parameters?: CommandParameterDefinition[];
   timeoutSeconds?: number;
   enabled?: boolean;
@@ -127,6 +142,7 @@ export function commandNeedsHighRiskConfirmation(riskFlags: CommandRiskFlags): b
 /** 与 Vibego 命令定义限制保持一致，并补充 Zeus 声明式环境变量约束。 */
 export function validateCommandDefinitionInput(input: CommandDefinitionInput): CommandValidationIssue[] {
   const issues: CommandValidationIssue[] = [];
+  if (input.shell !== undefined && !isCommandShell(input.shell)) issues.push({ field: 'shell', message: '请选择受支持的命令解释器。' });
   const name = input.name?.trim() ?? '';
   const aliases = (input.aliases ?? []).map((alias) => alias.trim());
   const title = input.title?.trim() ?? '';

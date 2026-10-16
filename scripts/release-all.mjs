@@ -270,7 +270,7 @@ function assertRepositoryPreflight() {
   if (![`https://github.com/${repository}.git`, `https://github.com/${repository}`, `git@github.com:${repository}.git`].includes(origin)) {
     throw new Error(`origin 不是受控仓库 ${repository}：${origin}`);
   }
-  if (process.platform !== 'darwin') throw new Error('Zeus 完整发布只能在 macOS 上执行。');
+  if (!['darwin', 'win32'].includes(process.platform)) throw new Error('Zeus 完整发布入口支持 macOS 和 Windows。');
 }
 
 function inspectCommittedCandidateWhitespace(headSha) {
@@ -951,13 +951,13 @@ async function runStage(label, command, args, env, options = {}) {
 }
 
 function runInDirectory(cwd, command, args) {
-  const result = spawnSync(command, args, { cwd, encoding: 'utf8', stdio: 'inherit' });
+  const result = spawnSync(...resolveReleaseCommand(command, args), { cwd, encoding: 'utf8', stdio: 'inherit' });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${command} ${args.join(' ')} 执行失败，退出码 ${result.status ?? 'unknown'}。`);
 }
 
 function captureInDirectory(cwd, command, args, allowFailure = false, timeout = 30_000) {
-  const result = spawnSync(command, args, {
+  const result = spawnSync(...resolveReleaseCommand(command, args), {
     cwd,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -974,7 +974,7 @@ function gitInDirectory(cwd, args) {
 }
 
 function run(command, args) {
-  const result = spawnSync(command, args, { cwd: repositoryRoot, encoding: 'utf8', stdio: 'inherit' });
+  const result = spawnSync(...resolveReleaseCommand(command, args), { cwd: repositoryRoot, encoding: 'utf8', stdio: 'inherit' });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${command} ${args.join(' ')} 执行失败，退出码 ${result.status ?? 'unknown'}。`);
 }
@@ -983,7 +983,7 @@ function runRemoteReadInherited(label, command, args, timeout = releaseRemoteRea
   const outcome = runRemoteReadWithRetrySync({
     attempts,
     execute: () =>
-      spawnSync(command, args, {
+      spawnSync(...resolveReleaseCommand(command, args), {
         cwd: repositoryRoot,
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -1025,7 +1025,7 @@ function runGit(args) {
 }
 
 function capture(command, args, allowFailure = false, timeout = 30_000) {
-  const result = spawnSync(command, args, {
+  const result = spawnSync(...resolveReleaseCommand(command, args), {
     cwd: repositoryRoot,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -1070,7 +1070,7 @@ function captureRemoteRead(label, command, args, timeout = releaseRemoteReadTime
   const outcome = runRemoteReadWithRetrySync({
     attempts,
     execute: () =>
-      spawnSync(command, args, {
+      spawnSync(...resolveReleaseCommand(command, args), {
         cwd: repositoryRoot,
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -1136,4 +1136,11 @@ function describeReleaseFailureImpact(state) {
 function describeReleaseRecovery(state, publicationUnconfirmed = false) {
   if (publicationUnconfirmed) return '先查看该次 Workflow，或重新运行 pnpm release 回验同一候选；脚本会在继续任何远程写入前复验外部事实。';
   return state ? '排除上述原因后重新运行 pnpm release；脚本会读取本地恢复状态，并在继续任何远程写入前复验外部事实。' : '排除上述原因后重新运行 pnpm release；本次没有需要回滚的远程写入。';
+}
+
+/** Windows 的 pnpm 是脚本入口，使用当前包管理器的 Node 文件避免 cmd 参数重解释。 */
+function resolveReleaseCommand(command, args) {
+  if (process.platform !== 'win32' || command !== 'pnpm') return [command, args];
+  if (!process.env.npm_execpath) throw new Error('请通过 pnpm 的发布命令执行此脚本。');
+  return [process.execPath, [process.env.npm_execpath, ...args]];
 }

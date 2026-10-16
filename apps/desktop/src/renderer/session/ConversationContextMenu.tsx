@@ -1,3 +1,4 @@
+import { platformShortcutLabel } from '../platform.js';
 /**
  * 会话右键菜单组件
  *
@@ -41,9 +42,9 @@ export interface ConversationContextMenuProps {
 const labels = {
   'zh-CN': {
     rename: '重命名',
-    renameShortcut: '⌥⌘R',
+    renameShortcut: platformShortcutLabel('⌥⌘R'),
     archive: '归档',
-    archiveShortcut: '⇧⌘A',
+    archiveShortcut: platformShortcutLabel('⇧⌘A'),
     renameDialogTitle: '重命名会话',
     renameLabel: '标题',
     renamePlaceholder: '会话标题',
@@ -53,9 +54,9 @@ const labels = {
   },
   'en-US': {
     rename: 'Rename',
-    renameShortcut: '⌥⌘R',
+    renameShortcut: platformShortcutLabel('⌥⌘R'),
     archive: 'Archive',
-    archiveShortcut: '⇧⌘A',
+    archiveShortcut: platformShortcutLabel('⇧⌘A'),
     renameDialogTitle: 'Rename conversation',
     renameLabel: 'Title',
     renamePlaceholder: 'Conversation title',

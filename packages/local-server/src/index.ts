@@ -1,4 +1,4 @@
-import { piSdkBinaryVersion } from '@zeus/ai-runtime';
+import { piSdkBinaryVersion, codexInstallationCommand, codexStandaloneCandidates, findExecutable } from '@zeus/ai-runtime';
 /** 桌面动态价格读取复用受限公网访问边界。 */
 export { readPricingDocument } from './modelPricingDocument.js';
 import { resolveContextCapacityPolicy } from './contextCapacitySupport.js';
@@ -28,7 +28,7 @@ import {
 } from '@zeus/ai-runtime';
 import { type GitDiffSummary, type GitStatusSummary } from '@zeus/git-core';
 import { type AutoUpdatePolicy, type ReleaseReadiness } from './releaseCore.js';
-import { createMacOSKeychainStore, type SecretPresenceLabel, type SecretStore } from './securityCore.js';
+import { createPlatformSecretStore, type SecretPresenceLabel, type SecretStore } from './securityCore.js';
 import { normalizeNetworkProxySettings } from '@zeus/shared';
 import { applyNetworkProxyAtStartup } from './networkProxyRuntime.js';
 export { applyNetworkProxyAtStartup, networkProxyRuntimeEnvironment } from './networkProxyRuntime.js';
@@ -143,7 +143,7 @@ import { ConversationExecutionCoordinator, type ConversationExecutionRoute } fro
 import { ManagedConversationToolResultStore } from './conversationPortableContext.js';
 import { ConversationQueueCoreMutationApplication, selectAutomaticQueueDispatchCandidate } from './conversationQueueCoreMutationApplication.js';
 import { ConversationQueueDispatchScheduler, mustWaitForInProcessRuntimeTurn, shouldRequestConversationQueueDispatch } from './conversationQueueDispatchScheduler.js';
-import { isObjectLike, quotePosixShellArgument } from './conversationResourcePreview.js';
+import { isObjectLike } from './conversationResourcePreview.js';
 import { normalizeConversationResources, syncConversationResources } from './conversationResources.js';
 import { readNativeSubmissionSkills } from './nativeConversationSubmissionInputs.js';
 import { ConversationSyncProtocol } from './conversationSyncProtocol.js';
@@ -198,7 +198,7 @@ import { createZeusDataLayoutForDatabase, type ZeusDataLayout } from './zeusData
 
 export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, type ReadOnlyValidationApplicationIdentity } from './readOnlyValidation.js';
 import { isReadOnlyValidationExternalRead, readOnlyValidationCapabilityError, readOnlyValidationSkippedCapabilities } from './readOnlyValidation.js';
-export { createMacOSKeychainStore, getSecretPresenceLabel, type SecretPresenceLabel, type SecretStore } from './securityCore.js';
+export { createMacOSKeychainStore, createPlatformSecretStore, getSecretPresenceLabel, type SecretPresenceLabel, type SecretStore } from './securityCore.js';
 export { prepareUnifiedConversationStoreMigration, readUnifiedConversationStoreMigrationStatus, type ConversationStoreMigrationStatus } from './conversationStoreMigration.js';
 
 export type { BrowserAutomationContentItem, BrowserAutomationPort, BrowserAutomationToolCall, BrowserAutomationToolResult } from './browserAutomation.js';
@@ -673,7 +673,7 @@ const telegramSecuritySettingsKey = 'telegram.securitySettings';
 /** 更新清单只信任 Zeus 官方下载目录；隔离验收可显式使用本机服务。 */
 function resolveReleaseUpdateManifestUrl(configured: string | undefined, allowUntrustedTest: boolean): string {
   /** Zeus 官方稳定更新清单。 */
-  const fallback = 'https://github.com/imchenway/zeus/releases/latest/download/zeus-release-manifest.json';
+  const fallback = `https://github.com/imchenway/zeus/releases/latest/download/${process.platform === 'win32' ? 'zeus-release-manifest-win32.json' : 'zeus-release-manifest.json'}`;
   const candidate = configured?.trim() || fallback;
   const url = new URL(candidate);
   if (url.protocol === 'https:' && url.hostname === 'github.com' && !url.port && !url.username && !url.password && url.pathname.startsWith('/imchenway/zeus/releases/')) return url.toString();
@@ -1205,7 +1205,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           throw readOnlyValidationCapabilityError('Keychain 删除');
         },
       }
-    : createMacOSKeychainStore({ service: options.keychainService });
+    : createPlatformSecretStore({ service: options.keychainService, dataRootPath: dataLayout.root });
   let submitPluginHookContinuation: ((input: { conversationId: string; sourceTurnId: string | null; prompt: string; source?: 'goal' }) => Promise<void>) | null = null;
   const dangerouslyBypassPluginHookTrust = process.argv.includes('--dangerously-bypass-plugin-hook-trust');
   const zeusPluginService = readOnlyValidation
@@ -1517,6 +1517,28 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
           events: terminalEvents,
           save: () => db.save(),
           scratchRoot: join(runtimeSessionDirectory, 'command-scratch'),
+          /** 广域工作区不能递归授权 Zeus 私有树；明确 Skill/附件根另行按当前会话授权。 */
+          privateDirectories: [dataLayout.root, ...(options.codexHome ? [options.codexHome] : [])],
+          /** 即使显式请求读取，也不允许受限命令获得当前宿主凭据、数据库或浏览器登录状态。 */
+          privateRoots: [
+            dataLayout.database,
+            `${dataLayout.database}-wal`,
+            `${dataLayout.database}-shm`,
+            `${dataLayout.database}-journal`,
+            dataLayout.localConfig,
+            dataLayout.rootIdentity,
+            dataLayout.conversationAttachmentGrantSecret,
+            join(dataLayout.runtimeDirectory, 'secrets'),
+            dataLayout.executionHost,
+            dataLayout.profileDirectory,
+            dataLayout.backupsDirectory,
+            dataLayout.localLogs,
+            dataLayout.pluginData,
+            dataLayout.pluginRuntime,
+            dataLayout.piConfig,
+            dataLayout.piSessions,
+            ...['auth.json', 'config.toml', 'sessions', 'archived_sessions', 'sqlite', 'logs', 'app-server-daemon'].map((name) => join(options.codexHome ?? dataLayout.codexHome, name)),
+          ],
           environment: () => buildRuntimeProcessEnv(),
         }),
         sessionDirectory: piSessionDirectory,
@@ -1681,10 +1703,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       return {
         available: false,
         commandPath: null,
-        installCommand: 'curl -fsSL https://chatgpt.com/codex/install.sh | sh',
+        installCommand: codexInstallationCommand(),
       };
     }
-    const commandPath = join(codexHome, 'packages', 'standalone', 'current', 'codex');
+    const commandPath = codexStandaloneCandidates(codexHome).find((candidate) => findExecutable(candidate)) ?? codexStandaloneCandidates(codexHome)[0]!;
     let available = false;
     try {
       accessSync(commandPath, fsConstants.X_OK);
@@ -1692,11 +1714,10 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     } catch {
       // Remote Control 只能使用官方安装器在当前 CODEX_HOME 登记的固定入口。
     }
-    const installDirectory = join(codexHome, 'bin');
     return {
       available,
       commandPath,
-      installCommand: `curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_HOME=${quotePosixShellArgument(codexHome)} CODEX_INSTALL_DIR=${quotePosixShellArgument(installDirectory)} sh`,
+      installCommand: codexInstallationCommand(codexHome),
     };
   };
   const requireCodexRemoteControlCommandPath = (): string => {

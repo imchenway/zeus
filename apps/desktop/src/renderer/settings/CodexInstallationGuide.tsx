@@ -31,6 +31,8 @@ export function CodexInstallationGuide(props: {
   const command = props.status.installation?.command;
   /** 只使用结构化检测原因，不从错误文案猜测安装状态。 */
   const issue = props.status.installationIssue;
+  /** 浏览器只负责路径格式提示，服务端仍按实际宿主验证绝对路径。 */
+  const windows = typeof navigator !== 'undefined' && navigator.platform.startsWith('Win');
   /** 检测成功只表示程序准备完成，账号仍需另行认证。 */
   const title = props.status.available
     ? props.zh
@@ -73,7 +75,7 @@ export function CodexInstallationGuide(props: {
   function savePath(): void {
     /** 空值恢复自动检测，路径格式沿用当前桌面设置的绝对路径约束。 */
     const candidate = path.trim();
-    if (candidate && !candidate.startsWith('/')) {
+    if (candidate && !(windows ? /^(?:[a-z]:[\\/]|\\\\[^\\]+\\[^\\]+)/iu.test(candidate) : candidate.startsWith('/'))) {
       setFeedback(props.zh ? '请输入程序的完整绝对路径；留空可恢复自动检测。' : 'Enter the full absolute path, or leave it empty to detect automatically.');
       return;
     }
@@ -153,7 +155,16 @@ export function CodexInstallationGuide(props: {
               }}
             >
               <label htmlFor={pathId}>{props.zh ? 'Codex 程序的完整路径' : 'Full path to Codex'}</label>
-              <input id={pathId} value={path} onChange={(event) => setPath(event.target.value)} disabled={props.busy} placeholder="/opt/homebrew/bin/codex" autoComplete="off" spellCheck={false} maxLength={256} />
+              <input
+                id={pathId}
+                value={path}
+                onChange={(event) => setPath(event.target.value)}
+                disabled={props.busy}
+                placeholder={windows ? 'C:\\Users\\name\\.local\\bin\\codex.exe' : '/opt/homebrew/bin/codex'}
+                autoComplete="off"
+                spellCheck={false}
+                maxLength={32767}
+              />
               <small>{props.zh ? '留空可恢复自动检测。此设置只决定 Zeus 使用的程序。' : 'Leave empty to detect automatically. This only selects the program Zeus uses.'}</small>
               <div className="model-setup-actions">
                 <Button type="submit" variant="primary" disabled={props.busy}>

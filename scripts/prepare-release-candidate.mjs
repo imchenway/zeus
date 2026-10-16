@@ -223,11 +223,18 @@ function git(args) {
 }
 
 function run(command, args) {
-  const result = spawnSync(command, args, {
+  const result = spawnSync(...resolveReleaseCommand(command, args), {
     cwd: repositoryRoot,
     encoding: 'utf8',
     stdio: 'inherit',
   });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${command} ${args.join(' ')} 执行失败，退出码 ${result.status ?? 'unknown'}。`);
+}
+
+/** Windows 的 pnpm 是脚本入口，使用当前包管理器的 Node 文件避免 cmd 参数重解释。 */
+function resolveReleaseCommand(command, args) {
+  if (process.platform !== 'win32' || command !== 'pnpm') return [command, args];
+  if (!process.env.npm_execpath) throw new Error('请通过 pnpm 的发布命令执行此脚本。');
+  return [process.execPath, [process.env.npm_execpath, ...args]];
 }

@@ -1,24 +1,7 @@
+import { assertOwnedPathSync, ensurePrivatePathSync, openRegularFileNoFollowSync, publishFileSync, readPrivateFileSync, windowsSecurityRequest } from '@zeus/storage/platform-security';
 import { createHash, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import {
-  chmodSync,
-  closeSync,
-  constants as fsConstants,
-  existsSync,
-  fstatSync,
-  fsyncSync,
-  linkSync,
-  lstatSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  readSync,
-  readdirSync,
-  realpathSync,
-  unlinkSync,
-  writeFileSync,
-  type BigIntStats,
-} from 'node:fs';
+import { closeSync, constants as fsConstants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, unlinkSync, writeFileSync, type BigIntStats } from 'node:fs';
 import { userInfo } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -41,7 +24,7 @@ const dataRootPreparationWaitBuffer = new Int32Array(new SharedArrayBuffer(4));
 const executionHostMetadataNames = new Set(['host.lock', 'rendezvous.json', 'startup.json', 'owner-lease.sqlite']);
 
 export type ZeusDataRootProfile = 'production' | 'test' | 'development';
-export type ZeusDataRootBundleIdentityKind = 'code_sign_bundle_id' | 'development_distribution_label';
+export type ZeusDataRootBundleIdentityKind = 'code_sign_bundle_id' | 'authenticode_application_id' | 'development_distribution_label';
 
 interface ZeusDataRootIdentityPayload {
   format: typeof markerFormat;
@@ -106,7 +89,7 @@ export interface ZeusDataRootOfflineAdoptionPlan {
   canonicalRoot: string;
   profile: ZeusDataRootOfflineAdoptionProfile;
   distributionLabel: string;
-  bundleIdentityKind: 'code_sign_bundle_id';
+  bundleIdentityKind: Exclude<ZeusDataRootBundleIdentityKind, 'development_distribution_label'>;
   layoutKind: 'layered' | 'legacy-flat';
   markerPath: string;
   rootDevice: string;
@@ -144,7 +127,7 @@ export function expectedBundleIdForDataRootProfile(profile: ZeusDataRootProfile)
 }
 
 export function bundleIdentityKindForDataRootProfile(profile: ZeusDataRootProfile): ZeusDataRootBundleIdentityKind {
-  return profile === 'development' ? 'development_distribution_label' : 'code_sign_bundle_id';
+  return profile === 'development' ? 'development_distribution_label' : process.platform === 'win32' ? 'authenticode_application_id' : 'code_sign_bundle_id';
 }
 
 export function keychainServiceIdentitySha256(keychainService: string): string {
@@ -260,6 +243,7 @@ export function readAndVerifyZeusDataRootIdentity(rootPath: string, expected?: E
   const root = normalizeRoot(rootPath);
   assertCanonicalOwnedRoot(root);
   const markerPath = zeusDataRootIdentityPath(root);
+  if (process.platform === 'win32') return parseAndVerifyMarker(readPrivateFileSync(markerPath, maximumMarkerBytes), root, expected);
   const descriptor = openSync(markerPath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
   try {
     const before = fstatSync(descriptor, { bigint: true });
@@ -279,21 +263,26 @@ export function readAndVerifyZeusDataRootIdentity(rootPath: string, expected?: E
     ) {
       throw dataRootIdentityError('ZEUS_DATA_ROOT_IDENTITY_CHANGED', 'Zeus 数据根身份标记在读取期间发生变化。');
     }
-    let value: unknown;
-    try {
-      value = JSON.parse(serialized.toString('utf8')) as unknown;
-    } catch (error) {
-      throw dataRootIdentityError('ZEUS_DATA_ROOT_IDENTITY_INVALID', 'Zeus 数据根身份标记不是有效 JSON。', error);
-    }
-    const marker = parseMarker(value);
-    if (marker.canonicalRoot !== root) {
-      throw dataRootIdentityError('ZEUS_DATA_ROOT_IDENTITY_REUSED', `Zeus 数据根 rootId ${marker.rootId} 绑定 ${marker.canonicalRoot}，不能复用于 ${root}。`);
-    }
-    if (expected) assertMarkerMatchesExpected(marker, normalizeExpectedIdentity(expected));
-    return Object.freeze(marker);
+    return parseAndVerifyMarker(serialized, root, expected);
   } finally {
     closeSync(descriptor);
   }
+}
+
+/** 读取完成后共同核对 marker 字段、目录绑定和 profile 身份。 */
+function parseAndVerifyMarker(serialized: Buffer, root: string, expected?: ExpectedZeusDataRootIdentity): ZeusDataRootIdentityMarker {
+  let value: unknown;
+  try {
+    value = JSON.parse(serialized.toString('utf8')) as unknown;
+  } catch (error) {
+    throw dataRootIdentityError('ZEUS_DATA_ROOT_IDENTITY_INVALID', 'Zeus 数据根身份标记不是有效 JSON。', error);
+  }
+  const marker = parseMarker(value);
+  if (marker.canonicalRoot !== root) {
+    throw dataRootIdentityError('ZEUS_DATA_ROOT_IDENTITY_REUSED', `Zeus 数据根 rootId ${marker.rootId} 绑定 ${marker.canonicalRoot}，不能复用于 ${root}。`);
+  }
+  if (expected) assertMarkerMatchesExpected(marker, normalizeExpectedIdentity(expected));
+  return Object.freeze(marker);
 }
 
 export function zeusDataRootHostIdentity(marker: ZeusDataRootIdentityMarker): ZeusDataRootHostIdentity {
@@ -492,7 +481,7 @@ function assertNotOfflineAdoptionBlocker(relativePath: string): void {
 }
 
 function hasSqliteHeader(path: string): boolean {
-  const descriptor = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  const descriptor = openRegularFileNoFollowSync(path, fsConstants.O_RDONLY);
   try {
     const header = Buffer.alloc(sqliteHeader.byteLength);
     const bytesRead = readSync(descriptor, header, 0, header.byteLength, 0);
@@ -503,6 +492,10 @@ function hasSqliteHeader(path: string): boolean {
 }
 
 function assertNoObservableDataRootUser(root: string): void {
+  if (process.platform === 'win32') {
+    windowsSecurityRequest({ operation: 'offline-check', path: root });
+    return;
+  }
   const lsofPath = ['/usr/sbin/lsof', '/usr/bin/lsof'].find((candidate) => existsSync(candidate));
   if (!lsofPath) {
     throw dataRootIdentityError('ZEUS_DATA_ROOT_OFFLINE_WRITER_CHECK_UNAVAILABLE', '找不到系统 lsof，无法证明离线数据根没有可观察 writer，拒绝 adoption。');
@@ -556,7 +549,7 @@ function createOfflineAdoptionPlan(normalized: NormalizedOfflineAdoptionRequest,
     canonicalRoot: normalized.root,
     profile: normalized.profile,
     distributionLabel: normalized.distributionLabel,
-    bundleIdentityKind: 'code_sign_bundle_id',
+    bundleIdentityKind: bundleIdentityKindForDataRootProfile(normalized.profile) as Exclude<ZeusDataRootBundleIdentityKind, 'development_distribution_label'>,
     layoutKind: inspection.layoutKind,
     markerPath: zeusDataRootIdentityPath(normalized.root),
     rootDevice: inspection.rootDevice,
@@ -578,7 +571,7 @@ function acquireDataRootPreparationLock(root: string): () => void {
   while (Date.now() < deadline) {
     const lease = new DatabaseSync(lockPath);
     try {
-      chmodSync(lockPath, 0o600);
+      ensurePrivatePathSync(lockPath, 'file');
       lease.exec('PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE');
       let released = false;
       return () => {
@@ -644,11 +637,9 @@ function publishNewMarker(root: string, expected: ReturnType<typeof normalizeExp
     } finally {
       closeSync(descriptor);
     }
-    chmodSync(temporary, 0o600);
-    linkSync(temporary, target);
-    unlinkSync(temporary);
+    ensurePrivatePathSync(temporary, 'file');
+    publishFileSync(temporary, target, { replace: false });
     temporaryPresent = false;
-    syncDirectory(root);
     return readAndVerifyZeusDataRootIdentity(root, {
       profile: expected.profile,
       bundleId: expected.bundleId,
@@ -774,6 +765,7 @@ function assertPrivateMarkerStats(stats: BigIntStats): void {
 
 /** 数据根只校验目录归属与真实路径；私有权限由敏感文件和专用子目录各自保证。 */
 function assertCanonicalOwnedRoot(root: string): void {
+  if (process.platform === 'win32') assertOwnedPathSync(root, 'directory');
   const stats = lstatSync(root);
   if (!stats.isDirectory() || stats.isSymbolicLink()) throw dataRootIdentityError('ZEUS_DATA_ROOT_PATH_UNSAFE', `Zeus 数据根必须是普通目录且不能是符号链接：${root}`);
   if (typeof process.getuid === 'function' && stats.uid !== process.getuid()) throw dataRootIdentityError('ZEUS_DATA_ROOT_PATH_UNSAFE', `Zeus 数据根不属于当前用户：${root}`);
@@ -789,17 +781,8 @@ function createCanonicalPrivateRoot(root: string): void {
   }
   if (realpathSync(ancestor) !== ancestor) throw dataRootIdentityError('ZEUS_DATA_ROOT_PATH_DRIFT', `Zeus 数据根父路径包含符号链接：${ancestor}`);
   mkdirSync(root, { recursive: true, mode: 0o700 });
-  chmodSync(root, 0o700);
+  ensurePrivatePathSync(root, 'directory');
   assertCanonicalOwnedRoot(root);
-}
-
-function syncDirectory(path: string): void {
-  const descriptor = openSync(path, fsConstants.O_RDONLY);
-  try {
-    fsyncSync(descriptor);
-  } finally {
-    closeSync(descriptor);
-  }
 }
 
 function markerIntegrity(payload: ZeusDataRootIdentityPayload): string {

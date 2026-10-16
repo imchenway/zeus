@@ -1,0 +1,34 @@
+# Windows 与 macOS 共用应用资源，安装形式固定为当前用户 NSIS。
+extends: ./electron-builder.yml
+# 每个架构单独发行，下载清单必须精确匹配当前应用架构。
+artifactName: Zeus-${version}-win32-${arch}.${ext}
+# Rust 服务写入签名覆盖的组件名，其他原生资源由 builder 复制阶段签名。
+afterSign: ../../scripts/sign-windows-native.mjs
+# Windows 只保留 resources/native 一份运行时，避免 ASAR 解包区重复携带 .NET。
+files:
+  - '!dist/native/**'
+# Windows 原生服务从真实 resources/native 路径加载。
+extraResources:
+  - from: dist/native
+    to: native
+# Windows 可执行文件及安装器沿用同一发行签名。
+win:
+  executableName: Zeus
+  icon: assets/icon.png
+  target:
+    - nsis
+  # 安装器、主程序、独立助手及 DLL 均纳入 Authenticode 签名。
+  signExts:
+    - .dll
+    - .node
+    # exe 默认签名；此精确名称延后到 afterSign，避免写入资源后重复签名。
+    - '!ZeusWindowsRuntime.exe'
+# 当前用户安装避免以管理员身份运行开发命令与凭据服务。
+nsis:
+  oneClick: true
+  perMachine: false
+  packElevateHelper: false
+  deleteAppDataOnUninstall: false
+  buildUniversalInstaller: false
+  runAfterFinish: true
+  include: native/windows-installer.nsh

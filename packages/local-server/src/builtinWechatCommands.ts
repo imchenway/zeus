@@ -1,5 +1,13 @@
 import { CommandDefinitionRepository, SettingRepository, type ZeusDatabase } from '@zeus/storage';
-import { type CommandDefinitionInput, type CommandParameterDefinition, validateCommandDefinitionInput } from '@zeus/shared';
+import { type CommandDefinitionInput, type CommandParameterDefinition, type CommandShell, validateCommandDefinitionInput } from '@zeus/shared';
+
+/** 内置操作只有固定动作名，用户数据继续通过环境变量传入。 */
+export function builtinWechatInvocation(action: string, platform: NodeJS.Platform = process.platform): { command: string; shell: CommandShell } {
+  if (!['upload', 'preview', 'auto-preview', 'remote-debug'].includes(action)) throw new Error('微信内置操作无效。');
+  return platform === 'win32'
+    ? { shell: 'powershell', command: `$env:ELECTRON_RUN_AS_NODE='1'; & $env:ZEUS_BUILTIN_NODE $env:ZEUS_BUILTIN_WECHAT ${action}; exit $LASTEXITCODE` }
+    : { shell: 'sh', command: `ELECTRON_RUN_AS_NODE=1 "$ZEUS_BUILTIN_NODE" "$ZEUS_BUILTIN_WECHAT" ${action}` };
+}
 
 /** 所有微信操作共用的项目与开发者工具参数；留空时使用当前项目和标准安装位置。 */
 const wechatParameters: CommandParameterDefinition[] = [
@@ -16,7 +24,7 @@ export const builtinWechatCommands: CommandDefinitionInput[] = [
   { name: 'wx-remote-debug', title: '微信真机调试', action: 'remote-debug', description: '发起免扫码真机调试，等待手机连接后保存设备信息。需登录微信开发者工具、开启服务端口。' },
 ].map(({ action, ...definition }) => ({
   ...definition,
-  command: `ELECTRON_RUN_AS_NODE=1 "$ZEUS_BUILTIN_NODE" "$ZEUS_BUILTIN_WECHAT" ${action}`,
+  ...builtinWechatInvocation(action),
   parameters: [
     ...wechatParameters,
     ...(action === 'upload'
@@ -38,9 +46,21 @@ export function installBuiltinWechatCommands(db: ZeusDatabase): void {
   const installationKey = 'commands.builtinWechatInstalled';
   /** 默认命令属于应用设置，不写入受防降级保护的数据库结构迁移历史。 */
   const settings = new SettingRepository(db);
-  if (settings.getJson<boolean>(installationKey)) return;
   /** 使用既有仓库维护名称、参数与别名。 */
   const definitions = new CommandDefinitionRepository(db);
+  if (settings.getJson<boolean>(installationKey)) {
+    /** 只升级未经改写的内置脚本；名称、风险、参数及启用状态保持原值。 */
+    for (const definition of builtinWechatCommands) {
+      const existing = definitions.getById(`builtin_${definition.name}`);
+      if (!existing || (existing.command === definition.command && existing.shell === definition.shell)) continue;
+      /** 两端原始模板均可确认来源，用户修改过正文或解释器时禁止覆盖。 */
+      const action = definition.name === 'wx-dev-upload' ? 'upload' : definition.name === 'wx-dev-preview' ? 'preview' : definition.name.slice(3);
+      const known = (['darwin', 'win32'] as const).map((platform) => builtinWechatInvocation(action, platform));
+      if (!known.some((candidate) => candidate.command === existing.command && candidate.shell === (existing.shell ?? 'sh'))) continue;
+      definitions.update(existing.id, { ...existing, command: definition.command, shell: definition.shell, revision: existing.revision + 1 });
+    }
+    return;
+  }
   db.transaction(() => {
     for (const definition of builtinWechatCommands) {
       if (validateCommandDefinitionInput(definition).length) throw new Error(`内置微信命令定义无效：${definition.name}`);

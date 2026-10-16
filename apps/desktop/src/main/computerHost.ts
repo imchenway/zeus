@@ -10,7 +10,8 @@ import type { BrowserAutomationContentItem, BrowserAutomationPort, BrowserAutoma
 import type { ZeusComputerPreview, ZeusComputerSettings } from '@zeus/shared';
 import type { MainCommandLedger, MainCommandRequest } from './mainCommandLedger.js';
 import { ComputerDriverProxy, type ComputerDriver } from './computerDriverProxy.js';
-import { computerSdkUrl } from './computerSdk.js';
+import { computerSdkUrl, computerNativePath } from './computerSdk.js';
+import { runWindowsRuntimeHelper, type WindowsRuntimeIdentity } from '@zeus/ai-runtime';
 import { projectComputerToolResult } from './computerToolResult.js';
 
 /** CUA SDK 根模块的动态导入类型。 */
@@ -141,9 +142,9 @@ export class ComputerHost implements BrowserAutomationPort {
     this.settings = {
       enabled: false,
       serviceState: 'disabled',
-      accessibilityTrusted: process.platform !== 'darwin',
-      screenCaptureAvailable: process.platform !== 'darwin',
-      permissionCheckState: process.platform === 'darwin' ? 'unchecked' : 'checked',
+      accessibilityTrusted: false,
+      screenCaptureAvailable: false,
+      permissionCheckState: 'unchecked',
     };
     this.restoreSettings();
   }
@@ -203,7 +204,7 @@ export class ComputerHost implements BrowserAutomationPort {
           const cuaElectron = await this.loadCuaElectronModule();
           await cuaElectron.openMacOSScreenRecordingSettings();
         } else {
-          await shell.openExternal(computerPermissionSettingsUrl(permission));
+          await shell.openExternal(process.platform === 'win32' ? 'ms-settings:privacy' : computerPermissionSettingsUrl(permission));
         }
         return { opened: true as const, permission };
       });
@@ -718,18 +719,29 @@ export class ComputerHost implements BrowserAutomationPort {
       });
       /** 同进程与私有 worker 共用不可变授权边界，不开放独立 daemon 或 MCP 入口。 */
       const configuredDriver = cua.ConfiguredDriverOptions.new({ claudeCodeCompatibility: false, authorization });
-      /** 仅传递 AppKit 所需的系统环境，不继承用户凭据或模型配置。 */
-      const environment = ['HOME', 'USER', 'LOGNAME', 'TMPDIR', 'PATH', 'LANG'].flatMap((name) => (process.env[name] === undefined ? [] : [{ name, value: process.env[name]! }]));
+      /** 只传递当前平台运行库所需的环境，不继承 Provider 凭据。 */
+      const environment = [
+        'HOME',
+        'USER',
+        'LOGNAME',
+        'TMPDIR',
+        'PATH',
+        'LANG',
+        ...(process.platform === 'win32' ? ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE', 'LOCALAPPDATA', 'APPDATA', 'PROGRAMFILES', 'PROGRAMFILES(X86)', 'COMSPEC'] : []),
+      ].flatMap((name) => {
+        const key = Object.keys(process.env).find((candidate) => (process.platform === 'win32' ? candidate.toLowerCase() === name.toLowerCase() : candidate === name));
+        return key && process.env[key] !== undefined ? [{ name: key, value: process.env[key]! }] : [];
+      });
       environment.push({ name: 'CUA_DRIVER_RS_TELEMETRY_ENABLED', value: 'false' });
       /** 通知密钥仅在本次私有进程之间传递，防止应用文本伪造暂停事件。 */
       environment.push({ name: 'ZEUS_CUA_EVENT_TOKEN', value: randomBytes(32).toString('hex') });
       if (this.closed || !this.settings.enabled || generation !== this.controlGeneration || (owner && this.owners.get(computerTurnKey(owner.input)) !== owner)) throw computerError('ZEUS_COMPUTER_STOPPED', 'Computer Use 已停止。');
       /** 同步 FFI 初始化在专用 SDK 进程内执行，主线程保留启动阶段停止能力。 */
       const driver: ComputerDriver =
-        process.platform === 'darwin'
+        process.platform === 'darwin' || process.platform === 'win32'
           ? new ComputerDriverProxy(
               cua.PrivateWorkerOptions.new({
-                binaryPath: resolve(app.getAppPath().replace(/\.asar$/u, '.asar.unpacked'), 'dist/native/ZeusComputerWorker'),
+                binaryPath: computerNativePath(process.platform === 'win32' ? 'cua-driver.exe' : 'ZeusComputerWorker'),
                 hostBundleId: this.options.hostBundleId,
                 configuredDriver,
                 environment,
@@ -747,7 +759,14 @@ export class ComputerHost implements BrowserAutomationPort {
           this.startingDriverOwnerId = owner?.id ?? null;
           await computerBounded(driver.initialize(), cuaCallTimeoutMs);
         }
-        if (process.platform === 'darwin') {
+        if (process.platform === 'win32') {
+          /** 私有 stdio 只证明握手；再核对 Windows 内核给出的父进程和映像。 */
+          const metadata = await computerBounded(driver.metadata(), 1_500);
+          const identity = (await runWindowsRuntimeHelper('info', { pid: metadata.pid })) as WindowsRuntimeIdentity;
+          if (identity.pid !== metadata.pid || identity.parentPid !== driver.workerParentPid || identity.imagePath.toLowerCase() !== computerNativePath('cua-driver.exe').toLowerCase())
+            throw computerError('ZEUS_COMPUTER_WORKER_IDENTITY_INVALID', '无法核对本任务私有 worker 身份。');
+          this.workerPid = metadata.pid;
+        } else if (process.platform === 'darwin') {
           /** 仅核对本次 SDK 创建的真实子进程，不接受模型或页面提供的 PID。 */
           const metadata = await computerBounded(driver.metadata(), 1_500);
           const identity = await promisify(execFile)('/bin/ps', ['-p', String(metadata.pid), '-o', 'ppid=', '-o', 'comm='], { encoding: 'utf8', timeout: 1_500 });
@@ -792,6 +811,25 @@ export class ComputerHost implements BrowserAutomationPort {
 
   /** 读取 Zeus 当前进程的系统权限，不读取旧 Helper 身份。 */
   private async refreshPermissions(): Promise<ZeusComputerSettings> {
+    if (process.platform === 'win32') {
+      try {
+        /** 先确认 SDK 与真实交互桌面；每个目标的权限仍由原生操作准确报告。 */
+        await this.loadCuaModule();
+        const capability = (await runWindowsRuntimeHelper('capabilities', {})) as { interactiveDesktop?: unknown };
+        const available = capability.interactiveDesktop === true;
+        if (!available && this.driver) await this.stop('permission_changed', true);
+        this.settings = {
+          ...this.settings,
+          accessibilityTrusted: available,
+          screenCaptureAvailable: available,
+          permissionCheckState: 'checked',
+          detail: available ? '当前 Windows 交互桌面可用；目标窗口权限由实际操作检查，管理员窗口不会自动提权。' : '当前 Windows 输入桌面不可访问。请回到已登录的桌面后重新检查。',
+        };
+      } catch (error) {
+        this.settings = { ...this.settings, accessibilityTrusted: false, screenCaptureAvailable: false, permissionCheckState: 'error', detail: computerErrorMessage(error).slice(0, 1000) };
+      }
+      return this.getSettings();
+    }
     if (process.platform !== 'darwin') {
       this.settings = { ...this.settings, accessibilityTrusted: true, screenCaptureAvailable: true, permissionCheckState: 'checked' };
       return this.getSettings();

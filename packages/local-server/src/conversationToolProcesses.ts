@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { accessSync, constants, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import type { AiRuntimeSessionManager } from '@zeus/ai-runtime';
+import { resolveCommandInvocation, type WindowsRuntimeSandboxPolicy, type AiRuntimeSessionManager } from '@zeus/ai-runtime';
+import { ensurePrivatePathSync } from '@zeus/storage/platform-security';
 import type { ConversationPermissionMode, ConversationRuntimeRepository, RuntimeSessionRepository, TerminalEventRepository } from '@zeus/storage';
 import { canonicalToolPath, conversationSandboxProfile, restrictToolPermission, toolSandboxMode } from './conversationToolPolicy.js';
 
@@ -33,6 +34,10 @@ export function createConversationToolProcesses(options: {
   events: TerminalEventRepository;
   save(): Promise<void>;
   scratchRoot: string;
+  /** 宿主私有树不随 HOME 等广域工作区自动授权。 */
+  privateDirectories: readonly string[];
+  /** 凭据、数据库和运行控制路径始终禁止受限命令读取。 */
+  privateRoots: readonly string[];
   environment(): NodeJS.ProcessEnv;
 }) {
   /** 拒绝跨会话操作和宿主重启后失效的输入句柄。 */
@@ -82,21 +87,46 @@ export function createConversationToolProcesses(options: {
       options.bindings.listProcesses(owner.conversationId).some((binding) => {
         if (binding.turnId !== owner.turnId || binding.permission === 'danger-full-access') return false;
         const session = options.sessions.getById(binding.processId);
-        return session?.cwd === owner.cwd && (JSON.parse(session.argsJson) as string[]).at(-1) === input.command;
+        if (session?.cwd !== owner.cwd) return false;
+        /** PowerShell 保存编码参数，必须按相同解析规则核对原命令。 */
+        return process.platform === 'win32' ? session.argsJson === JSON.stringify(resolveCommandInvocation('powershell', input.command, options.environment()).args) : (JSON.parse(session.argsJson) as string[]).at(-1) === input.command;
       })
     )
       throw new Error('该命令已在本轮受限环境中尝试，可能产生部分结果。请先核对结果，不能通过权限升级自动重放；后续执行需要用户重新明确授权。');
     const scratchDirectory = join(options.scratchRoot, processId);
     if (mode !== 'danger-full-access') {
-      if (process.platform !== 'darwin') throw new Error('当前系统尚未接入可验证的命令隔离组件；命令尚未执行。');
-      try {
-        accessSync('/usr/bin/sandbox-exec', constants.X_OK);
-      } catch {
-        throw new Error('本机命令隔离组件不可用；命令尚未执行。');
+      if (process.platform !== 'darwin' && process.platform !== 'win32') throw new Error('当前系统尚未接入可验证的命令隔离组件；命令尚未执行。');
+      if (process.platform === 'darwin') {
+        try {
+          accessSync('/usr/bin/sandbox-exec', constants.X_OK);
+        } catch {
+          throw new Error('本机命令隔离组件不可用；命令尚未执行。');
+        }
       }
       mkdirSync(scratchDirectory, { recursive: true, mode: 0o700 });
+      ensurePrivatePathSync(scratchDirectory, 'directory');
     }
-    const profile = mode === 'danger-full-access' ? null : conversationSandboxProfile({ cwd: owner.cwd, scratchDirectory, permission: owner.permissionMode, readableRoots: owner.readableRoots, writableRoots: owner.writableRoots });
+    const profile =
+      mode === 'danger-full-access' || process.platform === 'win32'
+        ? null
+        : conversationSandboxProfile({ cwd: owner.cwd, scratchDirectory, permission: owner.permissionMode, readableRoots: owner.readableRoots, writableRoots: owner.writableRoots });
+    /** 读取和写入根均使用本轮冻结值，Windows 不得因隔离组件不可用而放宽。 */
+    const windowsPolicy: WindowsRuntimeSandboxPolicy | undefined =
+      process.platform === 'win32' && mode !== 'danger-full-access'
+        ? {
+            mode,
+            network: 'blocked',
+            deniedRoots: [...new Set(options.privateRoots.map(canonicalToolPath))],
+            excludedRoots: [...new Set(options.privateDirectories.map(canonicalToolPath))],
+            readableRoots: [...new Set([owner.cwd, scratchDirectory, ...owner.readableRoots].map(canonicalToolPath))],
+            writableRoots: [...new Set([scratchDirectory, ...(owner.permissionMode === 'read-only' ? [] : owner.writableRoots.length ? owner.writableRoots : [owner.cwd])].map(canonicalToolPath))],
+            scratchDirectory: canonicalToolPath(scratchDirectory),
+          }
+        : undefined;
+    const invocation =
+      process.platform === 'win32'
+        ? resolveCommandInvocation('powershell', input.command, options.environment())
+        : { command: mode === 'danger-full-access' ? '/bin/zsh' : '/usr/bin/sandbox-exec', args: mode === 'danger-full-access' ? ['-lc', input.command] : ['-p', profile!, '/bin/zsh', '-lc', input.command], env: options.environment() };
     options.bindings.bindProcess({ processId, conversationId: owner.conversationId, turnId: owner.turnId, requestHash, permission: mode });
     await options.save();
     await options.runtime().startSession({
@@ -106,9 +136,9 @@ export function createConversationToolProcesses(options: {
       cwd: owner.cwd,
       // AI 命令通过输出游标和标准输入交互，不需要终端设备或自动分页器。
       terminal: false,
-      command: mode === 'danger-full-access' ? '/bin/zsh' : '/usr/bin/sandbox-exec',
-      args: mode === 'danger-full-access' ? ['-lc', input.command] : ['-p', profile!, '/bin/zsh', '-lc', input.command],
-      env: { ...options.environment(), ...(mode === 'danger-full-access' ? {} : { TMPDIR: scratchDirectory }) },
+      ...invocation,
+      ...(windowsPolicy ? { windowsSandboxPolicy: windowsPolicy } : {}),
+      env: { ...invocation.env, ...(mode === 'danger-full-access' ? {} : process.platform === 'win32' ? { TEMP: scratchDirectory, TMP: scratchDirectory } : { TMPDIR: scratchDirectory }) },
     });
     await options.runtime().waitForSessionCompletion(processId, Math.max(0, Math.min(30_000, input.yieldTimeMs ?? 1_000)));
     await options.save();

@@ -1,3 +1,4 @@
+import { platformShortcutLabel } from '../platform.js';
 import { type FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowBendUpRightIcon as ArrowBendUpRight } from '@phosphor-icons/react/dist/csr/ArrowBendUpRight';
 import { ArrowDownIcon as ArrowDown } from '@phosphor-icons/react/dist/csr/ArrowDown';
@@ -43,7 +44,7 @@ const labels = {
     editLabel: '编辑排队消息内容',
     editPlaceholder: '输入消息内容',
     editAttachmentPlaceholder: '添加说明（可选）',
-    editShortcut: '⌘ Enter 保存',
+    editShortcut: platformShortcutLabel('⌘ Enter 保存'),
     attachments: (count: number) => `${count} 个附件`,
     addAttachments: '添加附件',
     save: '保存',
@@ -71,7 +72,7 @@ const labels = {
     editLabel: 'Edit queued message content',
     editPlaceholder: 'Enter message content',
     editAttachmentPlaceholder: 'Add a note (optional)',
-    editShortcut: '⌘ Enter to save',
+    editShortcut: platformShortcutLabel('⌘ Enter to save'),
     attachments: (count: number) => `${count} attachment${count === 1 ? '' : 's'}`,
     addAttachments: 'Add attachments',
     save: 'Save',

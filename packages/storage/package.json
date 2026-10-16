@@ -9,5 +9,15 @@
   },
   "dependencies": {
     "@zeus/shared": "workspace:*"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./platform-security": {
+      "types": "./dist/platformSecurity.d.ts",
+      "import": "./dist/platformSecurity.js"
+    }
   }
 }

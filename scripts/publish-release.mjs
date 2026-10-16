@@ -320,9 +320,11 @@ export async function verifyPublishedRelease(input) {
 
   const expectedDmgName = `Zeus-${input.releaseVersion}-arm64.dmg`;
   const expectedAssets = new Set([expectedDmgName, 'zeus-release-manifest.json']);
+  /** Windows 独立发布可以稍后追加已知资产；macOS 回验不依赖 Windows 完成，也不替其背书。 */
+  const allowedAssets = new Set([...expectedAssets, 'zeus-release-manifest-win32.json', ...['x64', 'arm64'].map((arch) => `Zeus-${input.releaseVersion}-win32-${arch}.exe`)]);
   const actualAssets = input.release.data.assets ?? [];
   const actualAssetNames = new Set(actualAssets.map((asset) => asset.name));
-  if (actualAssetNames.size !== expectedAssets.size || [...expectedAssets].some((name) => !actualAssetNames.has(name))) {
+  if ([...actualAssetNames].some((name) => !allowedAssets.has(name)) || [...expectedAssets].some((name) => !actualAssetNames.has(name))) {
     throw new Error(`GitHub Release 资产集合不一致：${[...actualAssetNames].join(', ') || 'empty'}`);
   }
 
@@ -415,6 +417,7 @@ function buildPublishResult(input) {
     `- 发布提交：${input.headSha}`,
     `- GitHub Release：${input.releaseUrl}`,
     `- Release Workflow：${input.workflowUrl}`,
+    '- 核对范围：macOS / Homebrew；Windows 由独立工作流发布和回验。',
     `- DMG：${input.dmgName}，${input.dmgSize} 字节，SHA-256 ${input.dmgSha256}`,
     `- manifest：${input.manifestSize} 字节，SHA-256 ${input.manifestSha256}`,
     `- Release notes SHA-256：${input.releaseNotesSha256}`,

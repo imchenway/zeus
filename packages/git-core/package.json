@@ -8,6 +8,7 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@zeus/ai-runtime": "workspace:*",
     "@zeus/shared": "workspace:*"
   }
 }

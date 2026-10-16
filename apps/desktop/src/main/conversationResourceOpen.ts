@@ -1,7 +1,10 @@
 import { isConversationSourcePreviewable } from '@zeus/shared';
 import { getFileBlame } from '@zeus/git-core';
 import { createReadStream } from 'node:fs';
-import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { readdir } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import type { ConversationFileLocation, ConversationOpenTarget, ConversationResourceOpenTarget, ZeusBrowserSettings } from '@zeus/shared';
 import type { RendererLocalServerConfig } from './localServerRuntime.js';
@@ -64,6 +67,10 @@ interface EditorTargetDescriptor {
   label: string;
   appName: string;
   appPaths: string[];
+  /** Windows 安装注册与 PATH 共用的真实程序名称。 */
+  windowsExecutables?: string[];
+  /** 标准安装目录中的产品目录，JetBrains 同时允许明确的版本后缀。 */
+  windowsDirectories?: string[];
   /** 只有兼容 VS Code 命令行的应用才声明精确行定位。 */
   supportsGoto?: boolean;
 }
@@ -79,7 +86,7 @@ export interface ConversationResourceOpenServices {
   /** 从已检测到的应用路径读取图标，失败不阻止打开文件。 */
   getApplicationIcon: (path: string) => Promise<string | undefined>;
   openBrowser: (input: { conversationId: string; url: string }) => Promise<unknown>;
-  executeFile: (file: string, args: string[]) => Promise<unknown>;
+  executeFile: (file: string, args: string[], options?: { cwd?: string }) => Promise<unknown>;
   applicationHome: string;
   getSettings: () => ZeusBrowserSettings;
 }
@@ -91,30 +98,40 @@ const editorTargets: EditorTargetDescriptor[] = [
     label: 'Visual Studio Code',
     appName: 'Visual Studio Code',
     appPaths: ['/Applications/Visual Studio Code.app'],
+    windowsExecutables: ['Code.exe'],
+    windowsDirectories: ['Microsoft VS Code'],
   },
   {
     id: 'editor:vscode-insiders',
     label: 'Visual Studio Code - Insiders',
     appName: 'Visual Studio Code - Insiders',
     appPaths: ['/Applications/Visual Studio Code - Insiders.app'],
+    windowsExecutables: ['Code - Insiders.exe'],
+    windowsDirectories: ['Microsoft VS Code Insiders'],
   },
   {
     id: 'editor:cursor',
     label: 'Cursor',
     appName: 'Cursor',
     appPaths: ['/Applications/Cursor.app'],
+    windowsExecutables: ['Cursor.exe'],
+    windowsDirectories: ['cursor'],
   },
   {
     id: 'editor:windsurf',
     label: 'Windsurf',
     appName: 'Windsurf',
     appPaths: ['/Applications/Windsurf.app'],
+    windowsExecutables: ['Windsurf.exe'],
+    windowsDirectories: ['Windsurf'],
   },
   {
     id: 'editor:intellij-idea',
     label: 'IntelliJ IDEA',
     appName: 'IntelliJ IDEA',
     appPaths: ['/Applications/IntelliJ IDEA.app', '/Applications/IntelliJ IDEA CE.app'],
+    windowsExecutables: ['idea64.exe'],
+    windowsDirectories: ['JetBrains/IntelliJ IDEA'],
     supportsGoto: false,
   },
   {
@@ -122,6 +139,8 @@ const editorTargets: EditorTargetDescriptor[] = [
     label: 'Rider',
     appName: 'Rider',
     appPaths: ['/Applications/Rider.app'],
+    windowsExecutables: ['rider64.exe'],
+    windowsDirectories: ['JetBrains/JetBrains Rider'],
     supportsGoto: false,
   },
   {
@@ -129,15 +148,19 @@ const editorTargets: EditorTargetDescriptor[] = [
     label: 'WebStorm',
     appName: 'WebStorm',
     appPaths: ['/Applications/WebStorm.app'],
+    windowsExecutables: ['webstorm64.exe'],
+    windowsDirectories: ['JetBrains/WebStorm'],
     supportsGoto: false,
   },
 ];
 
 /** 终端只打开已授权文件所在目录，不执行文件或拼接 shell 命令。 */
-const terminalTargets = [
+const terminalTargets: Array<Omit<EditorTargetDescriptor, 'id'> & { id: Extract<ConversationOpenTarget, `terminal:${string}`> }> = [
   { id: 'terminal:terminal', label: 'Terminal', appName: 'Terminal', appPaths: ['/System/Applications/Utilities/Terminal.app'] },
   { id: 'terminal:ghostty', label: 'Ghostty', appName: 'Ghostty', appPaths: ['/Applications/Ghostty.app'] },
-] as const;
+  { id: 'terminal:windows-terminal', label: 'Windows Terminal', appName: 'Windows Terminal', appPaths: [], windowsExecutables: ['wt.exe'], windowsDirectories: [] },
+  { id: 'terminal:powershell', label: 'Windows PowerShell', appName: 'Windows PowerShell', appPaths: [], windowsExecutables: ['powershell.exe'], windowsDirectories: [] },
+];
 
 export async function listConversationResourceOpenTargets(request: ConversationResourceRequest, services: ConversationResourceOpenServices): Promise<{ resourceId: string; targets: ConversationResourceOpenTarget[] }> {
   const intent = await loadConversationResourceIntent(request, services);
@@ -203,6 +226,7 @@ async function listOpenTargetsForIntent(intent: ConversationResourceOpenIntent, 
     }
   }
   for (const terminal of terminalTargets) {
+    if (process.platform === 'win32' ? !terminal.windowsExecutables : terminal.appPaths.length === 0) continue;
     /** 终端与编辑器采用同一检测路径。 */
     const applicationPath = await findInstalledApplication(terminal, services);
     /** 找到本机应用后才允许用户选择。 */
@@ -217,7 +241,7 @@ async function listOpenTargetsForIntent(intent: ConversationResourceOpenIntent, 
     });
   }
   targets.push({ id: 'system_default', label: 'System default', available: true, exactLocation: false });
-  targets.push({ id: 'file_manager', label: 'Show in Finder', available: true, exactLocation: false });
+  targets.push({ id: 'file_manager', label: process.platform === 'win32' ? 'Show in File Explorer' : 'Show in Finder', available: true, exactLocation: false });
   targets.push({ id: 'copy_path', label: 'Copy path', available: true, exactLocation: false });
   return { resourceId: intent.id, targets };
 }
@@ -285,8 +309,13 @@ async function openResourceIntent(
   if (target.startsWith('terminal:')) {
     /** 目标固定在受支持应用列表内，目录来自宿主复验后的文件。 */
     const terminal = terminalTargets.find((candidate) => candidate.id === target);
-    if (!terminal || !(await findInstalledApplication(terminal, services))) throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_TARGET_UNAVAILABLE', 'The selected terminal is not installed.');
-    await services.executeFile('/usr/bin/open', target === 'terminal:ghostty' ? ['-na', terminal.appName, '--args', `--working-directory=${dirname(file.absolutePath)}`] : ['-a', terminal.appName, dirname(file.absolutePath)]);
+    const applicationPath = terminal ? await findInstalledApplication(terminal, services) : null;
+    if (!terminal || !applicationPath) throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_TARGET_UNAVAILABLE', 'The selected terminal is not installed.');
+    if (process.platform === 'win32') {
+      await services.executeFile(applicationPath, target === 'terminal:windows-terminal' ? ['-d', dirname(file.absolutePath)] : ['-NoLogo', '-NoExit'], { cwd: dirname(file.absolutePath) });
+    } else {
+      await services.executeFile('/usr/bin/open', target === 'terminal:ghostty' ? ['-na', terminal.appName, '--args', `--working-directory=${dirname(file.absolutePath)}`] : ['-a', terminal.appName, dirname(file.absolutePath)]);
+    }
     return { opened: true, resourceId: intent.id, target, mode: 'external' };
   }
   if (target.startsWith('editor:')) {
@@ -298,13 +327,13 @@ async function openResourceIntent(
       throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_TARGET_UNAVAILABLE', 'The selected editor is not installed.');
     }
     if (editor.supportsGoto === false) {
-      await services.executeFile('/usr/bin/open', ['-a', applicationPath, file.absolutePath]);
+      await services.executeFile(process.platform === 'win32' ? applicationPath : '/usr/bin/open', process.platform === 'win32' ? [file.absolutePath] : ['-a', applicationPath, file.absolutePath]);
       return { opened: true, resourceId: intent.id, target, mode: 'file' };
     }
     const location = normalizeLocation(request.location) ?? normalizeLocation(intent.target.location);
     await validateLocation(file.absolutePath, location?.line);
     const targetPath = location?.line ? `${file.absolutePath}:${location.line}${location.column ? `:${location.column}` : ''}` : file.absolutePath;
-    await services.executeFile('/usr/bin/open', ['-a', applicationPath, '--args', '--goto', targetPath]);
+    await services.executeFile(process.platform === 'win32' ? applicationPath : '/usr/bin/open', process.platform === 'win32' ? ['--goto', targetPath] : ['-a', applicationPath, '--args', '--goto', targetPath]);
     return { opened: true, resourceId: intent.id, target, mode: 'file' };
   }
   throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_TARGET_UNAVAILABLE', 'The selected open target is unavailable for this resource.');
@@ -426,12 +455,57 @@ async function realPath(path: string): Promise<string | null> {
 }
 
 /** 返回实际安装位置，兼顾系统应用目录和用户应用目录。 */
-async function findInstalledApplication(editor: { readonly appPaths: readonly string[] }, services: ConversationResourceOpenServices): Promise<string | null> {
+async function findInstalledApplication(editor: Pick<EditorTargetDescriptor, 'appPaths' | 'windowsExecutables' | 'windowsDirectories'>, services: ConversationResourceOpenServices): Promise<string | null> {
+  if (process.platform === 'win32') return findWindowsApplication(editor, services);
   /** 按系统目录优先查找，与已有打开方式检测顺序一致。 */
   const paths = [...editor.appPaths, ...editor.appPaths.map((path) => resolve(services.applicationHome, 'Applications', basename(path)))];
   /** 并行检查候选路径，不因添加图标重复扫描目录。 */
   const results = await Promise.all(paths.map((path) => services.pathExists(path)));
   return paths.find((_, index) => results[index]) ?? null;
+}
+
+/** 系统查询使用参数数组，程序路径始终经本机存在性检查。 */
+const executeApplicationProbe = promisify(execFile);
+
+/** 从注册安装位置、标准目录和 PATH 查找 Windows 编辑器或终端。 */
+async function findWindowsApplication(editor: Pick<EditorTargetDescriptor, 'windowsExecutables' | 'windowsDirectories'>, services: ConversationResourceOpenServices): Promise<string | null> {
+  const executables = editor.windowsExecutables ?? [];
+  if (executables.length === 0) return null;
+  const helper = process.env.ZEUS_WINDOWS_SECURITY_HELPER;
+  if (!helper || !isAbsolute(helper)) throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_TARGET_UNAVAILABLE', 'Windows application discovery is not configured.');
+  const { stdout } = await executeApplicationProbe(helper, ['--find-application', ...executables], { windowsHide: true, timeout: 5000, maxBuffer: 64 * 1024 });
+  const registered: unknown = JSON.parse(stdout);
+  if (!Array.isArray(registered) || registered.some((path) => typeof path !== 'string' || !isAbsolute(path))) throw new Error('Windows application registry returned invalid paths.');
+  const paths: string[] = [...registered];
+  const localData = process.env.LOCALAPPDATA || join(services.applicationHome, 'AppData', 'Local');
+  const roots = [join(localData, 'Programs'), process.env.ProgramFiles, process.env['ProgramFiles(x86)']].filter((path): path is string => Boolean(path));
+  for (const root of roots) {
+    for (const directory of editor.windowsDirectories ?? []) {
+      const directoryPath = join(root, directory);
+      for (const executable of executables) paths.push(join(directoryPath, executable), join(directoryPath, 'bin', executable));
+      if (directory.startsWith('JetBrains/')) {
+        let siblings: string[];
+        try {
+          siblings = await readdir(dirname(directoryPath));
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+          throw error;
+        }
+        for (const sibling of siblings
+          .filter((name) => name.startsWith(basename(directoryPath)))
+          .sort()
+          .reverse()) {
+          for (const executable of executables) paths.push(join(dirname(directoryPath), sibling, 'bin', executable));
+        }
+      }
+    }
+  }
+  const searchPath = Object.entries(process.env).find(([key]) => key.toLowerCase() === 'path')?.[1] ?? '';
+  for (const directory of [join(localData, 'Microsoft', 'WindowsApps'), join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0'), ...searchPath.split(delimiter)]) {
+    if (isAbsolute(directory)) for (const executable of executables) paths.push(join(directory, executable));
+  }
+  for (const candidate of [...new Set(paths)]) if (await services.pathExists(candidate)) return candidate;
+  return null;
 }
 
 /** 外部编辑器打开前核实行号，读取量受流缓冲区限制。 */
