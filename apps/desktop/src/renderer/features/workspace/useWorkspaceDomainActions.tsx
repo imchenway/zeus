@@ -1,4 +1,5 @@
 import { useBackgroundInputSuggestions } from '../../session/useBackgroundInputSuggestions.js';
+import { notifyProjectGitChanged } from '../../git/projectGitWorkbenchState.js';
 import type { ProjectRecord } from '../../apiClient.js';
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { temporaryWorkspaceId, describeUserFacingError, isTaskPriority, type ProjectCodeWorkspacePreference, renderTaskPushLayoutText, type ThirdPartyTaskExtract } from '@zeus/shared';
@@ -661,7 +662,13 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
           else if (projectId) void refreshNativeProjectConversationChoices(projectId);
           void refreshArchivedConversations();
         }
-        if (event.type === 'task.git_delivery.changed' && typeof event.payload.taskId === 'string') {
+        if (event.type === 'project.git_delivery.changed' && typeof event.payload.projectId === 'string') {
+          // 后台组合不依赖交付窗口存活，任务与普通会话都从服务端事件刷新真实 Git 快照。
+          if (typeof event.payload.taskId === 'string') taskGitDeliveryChangedRef.current(event.payload.taskId);
+          else setTaskGitDeliveryRevision((current) => current + 1);
+          // 项目工作台沿用同一个失效通知，避免其他入口继续显示旧文件列表。
+          notifyProjectGitChanged(event.payload.projectId);
+        } else if (event.type === 'task.git_delivery.changed' && typeof event.payload.taskId === 'string') {
           taskGitDeliveryChangedRef.current(event.payload.taskId);
         }
         if (event.type === 'task.board.updated' && typeof event.payload.projectId === 'string') {
