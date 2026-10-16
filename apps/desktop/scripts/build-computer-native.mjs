@@ -210,7 +210,7 @@ export async function prepareComputerNativeArtifacts(inputs) {
     } catch {
       await executeFile('git', [
         'clone',
-        ...(process.platform === 'win32' ? ['--config', 'core.autocrlf=false'] : []),
+        ...(process.platform === 'win32' ? ['--config', 'core.autocrlf=false', '--config', 'core.eol=lf'] : []),
         '--depth',
         '1',
         '--filter=blob:none',
@@ -229,11 +229,14 @@ export async function prepareComputerNativeArtifacts(inputs) {
     if (process.platform === 'win32') {
       // 仅将已确认干净的依赖缓存检出为原始 LF，不修改用户或项目的全局 Git 配置。
       await executeFile('git', ['-C', inputs.repository, 'config', '--local', 'core.autocrlf', 'false']);
+      await executeFile('git', ['-C', inputs.repository, 'config', '--local', 'core.eol', 'lf']);
       await executeFile('git', ['-C', inputs.repository, 'checkout', '--force', computerNativeRevision, '--', 'libs/cua-driver/rust']);
     }
     /** 原始副本不接受补丁，工作副本每次从已核对源码重建。 */
     const sourceDirectory = resolve(inputs.repository, 'libs/cua-driver/rust');
-    if (hashComputerNativeBytes(await readFile(resolve(sourceDirectory, 'Cargo.lock'))) !== computerNativeLockSha256) throw new Error('CUA Cargo.lock 与固定源码摘要不一致。');
+    /** 保留原始字节摘要，并在失败时给出可核对的实际值。 */
+    const actualLockSha256 = hashComputerNativeBytes(await readFile(resolve(sourceDirectory, 'Cargo.lock')));
+    if (actualLockSha256 !== computerNativeLockSha256) throw new Error(`CUA Cargo.lock 与固定源码摘要不一致：预期 ${computerNativeLockSha256}，实际 ${actualLockSha256}。`);
     await rm(inputs.workspace, { recursive: true, force: true });
     await cp(sourceDirectory, inputs.workspace, { recursive: true, preserveTimestamps: true });
     for (const patch of inputs.patches) {
