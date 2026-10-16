@@ -31,14 +31,14 @@ brew upgrade --cask imchenway/tap/zeus
 
 ### Windows
 
-当前提供未签名的 **Zeus Test 内部安装包**。登录 GitHub 后，根据“设置 → 系统 → 关于”中的系统类型下载对应附件：
+当前提供 **Zeus 0.4.3 Windows 正式安装包（未签名）**。登录 GitHub 后，根据“设置 → 系统 → 关于”中的系统类型下载对应附件：
 
-- Intel / AMD x64：[下载 x64 附件](https://github.com/imchenway/zeus/actions/runs/38865193239/artifacts/12031641628)。
-- ARM64：[下载 ARM64 附件](https://github.com/imchenway/zeus/actions/runs/38865193239/artifacts/12031073918)。
+- Intel / AMD x64：[下载 x64 附件](https://github.com/imchenway/zeus/actions/runs/38881405369/artifacts/12038411156)。
+- ARM64：[下载 ARM64 附件](https://github.com/imchenway/zeus/actions/runs/38881405369/artifacts/12038182668)。
 
-解压附件 ZIP，双击其中的 `Zeus-Test-0.3.200-win32-x64.exe` 或 `Zeus-Test-0.3.200-win32-arm64.exe`。目标系统为 Windows 10 22H2 和 Windows 11，按当前用户安装，无需 WSL。
+解压附件 ZIP，双击其中的 `Zeus-0.4.3-win32-x64.exe` 或 `Zeus-0.4.3-win32-arm64.exe`。目标系统为 Windows 10 22H2 和 Windows 11，按当前用户安装，无需 WSL。
 
-此包与正式版使用独立数据目录。Windows 可能提示未知发布者，请确认文件来源后运行；手动升级前先退出 Zeus Test。附件受 GitHub 保存期限限制，尚未创建 Windows 公开 Release。
+应用名称为 Zeus，默认使用当前用户的 `.zeus` 正式数据目录。Windows 可能提示未知发布者，请确认文件来源后运行；手动升级前先退出 Zeus。下载附件受 GitHub 保存期限限制。
 
 ## 首次打开
 
