@@ -60,12 +60,17 @@ function asyncQuestionStatus(item: NativeSessionItemBuffer, state: NativeSession
   return { confirmed, pending, deliveryStatus, closed, awaitingAnswer: !confirmed && !pending };
 }
 
-/** 侧栏与问题表单共用答复状态，收起表单或轮次结束不会冒充已回答。 */
+/** 侧栏只提醒仍在进行的轮次；旧问题保留历史回答入口，不继续占用待回复状态。 */
 export function hasPendingAsyncQuestion(state: NativeSessionState): boolean {
-  return Object.values(state.items).some((item) => item.status === 'completed' && itemRole(item) === 'assistant' && classifyAssistantMessage(item.payload, item.phase) === 'question' && asyncQuestionStatus(item, state).awaitingAnswer);
+  return Object.values(state.items).some((item) => {
+    if (item.status !== 'completed' || itemRole(item) !== 'assistant' || classifyAssistantMessage(item.payload, item.phase) !== 'question') return false;
+    /** 轮次终态和最终交付沿用表单已有的结束事实，不把结束当作答案已送达。 */
+    const status = asyncQuestionStatus(item, state);
+    return status.awaitingAnswer && !status.closed;
+  });
 }
 
-/** 当前窗口内保留问题选择和稍后回答状态；重启后重新提醒未回答问题。 */
+/** 当前窗口内保留问题选择和稍后回答状态，不改变原问题的答复记录。 */
 interface AsyncQuestionDockSelection {
   /** 正在填写的问题保持选择；提交后由答复账本释放输入区。 */
   selectedId: string | null;
