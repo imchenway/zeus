@@ -117,6 +117,7 @@ const CodexRemoteControlSettings = lazy(() => import('../../settings/CodexRemote
 /** TaskManagementStatusEditor 仅在对应页面打开时加载。 */
 const TaskManagementStatusEditor = lazy(() => import('../../settings/TaskManagementStatusEditor.js').then((module) => ({ default: module.TaskManagementStatusEditor })));
 
+/** 工作区统一保留按需加载边界，模块就绪前不显示瞬时文字占位。 */
 export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions: WorkspaceDomainActions; operations: WorkspaceOperations }) {
   const [settingsSearchQuery, setSettingsSearchQuery] = useState('');
   const [pendingGlobalTask, setPendingGlobalTask] = useState<{ taskId: string; projectId: string; presentation?: 'full_page' } | null>(null);
@@ -705,15 +706,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       aria-label={uiCopy.shellAriaLabel}
       onPointerDown={handleWindowDragPointerDown}
     >
-      <Suspense
-        fallback={
-          <ModalPortal rootClassName="model-setup-portal" role="dialog" aria-label={appShellSettings.appLanguage === 'zh-CN' ? '模型接入' : 'Model setup'} onDismiss={modelSetup.close}>
-            <section className="model-setup-dialog zeus-solid-form-surface" data-modal-surface="dialog">
-              <p role="status">{appShellSettings.appLanguage === 'zh-CN' ? '正在加载模型设置…' : 'Loading model settings…'}</p>
-            </section>
-          </ModalPortal>
-        }
-      >
+      <Suspense fallback={null}>
         <MotionPresence>{modelSetup.step ? <ModelSetupDialog controller={modelSetup} /> : null}</MotionPresence>
       </Suspense>
       {/* 删除确认属于工作台公共操作，会话中的任务详情也必须能立即显示。 */}
@@ -976,7 +969,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             </button>
           </div>
         ) : null}
-        <Suspense fallback={<div role="status">正在加载页面…</div>}>
+        <Suspense fallback={null}>
           {activeNavTarget === 'projects' && snapshot.projects.length === 0 ? (
             <ProjectStartGuide language={appShellSettings.appLanguage} busy={projectDirectoryChoosing || creatingProjectBusy} available={Boolean(props.onCreateCurrentProject)} onChooseFolder={() => void chooseProjectDirectoryForCreate()} />
           ) : null}
@@ -986,13 +979,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           {/* 全局员工管理直接复用原页面，项目员工绑定仍由项目设置承载。 */}
           {activeNavTarget === 'digital-employees' ? <DigitalEmployeeTemplatesSettings client={props.commandClient ?? null} skillClient={props.nativeConversationClient ?? null} language={appShellSettings.appLanguage} /> : null}
           {activeNavTarget === 'digital-teams' ? (
-            <Suspense
-              fallback={
-                <p className="digital-team-page-loading" role="status">
-                  {appShellSettings.appLanguage === 'zh-CN' ? '正在打开数字团队…' : 'Opening digital teams…'}
-                </p>
-              }
-            >
+            <Suspense fallback={null}>
               <toolPages.digitalTeams
                 key={`${digitalTeamTask?.id ?? 'team'}:${digitalTeamEntrySelection?.kind ?? 'manage'}:${digitalTeamEntrySelection?.kind === 'template' ? digitalTeamEntrySelection.templateId : digitalTeamEntrySelection?.kind === 'run' ? digitalTeamEntrySelection.runId : ''}`}
                 task={currentDigitalTeamTask}
@@ -1071,13 +1058,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                 </div>
                 {projectCodeWorkspaceMode === 'git' ? <GitPaneSeparator name="code-editor" axis="y" label={codeWorkspaceZh ? '调整源码与 Git 底栏高度' : 'Resize source and Git panel'} initial={55} min={20} max={80} /> : null}
                 <div id="project-code-git-panel" className="project-code-mode-pane project-code-git-pane" hidden={projectCodeWorkspaceMode !== 'git'} inert={projectCodeWorkspaceMode !== 'git'}>
-                  <Suspense
-                    fallback={
-                      <div className="project-git-workbench-state" role="status">
-                        {codeWorkspaceZh ? '正在加载 Git…' : 'Loading Git…'}
-                      </div>
-                    }
-                  >
+                  <Suspense fallback={null}>
                     {props.nativeConversationClient ? (
                       <ProjectGitWorkbench
                         key={selectedProject.id}
@@ -1100,7 +1081,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                 {projectCommandsProjectId === selectedProject.id && props.commandClient ? (
                   <ModalPortal role="dialog" aria-label={`${selectedProject.name} · ${codeWorkspaceZh ? '命令' : 'Commands'}`} rootClassName="project-command-portal" onDismiss={() => setProjectCommandsProjectId(null)}>
                     <section className="project-command-dialog zeus-solid-form-surface" data-modal-surface="dialog">
-                      <Suspense fallback={<div role="status">{codeWorkspaceZh ? '正在加载命令…' : 'Loading commands…'}</div>}>
+                      <Suspense fallback={null}>
                         <CommandCenterPanel key={selectedProject.id} mode="project" project={selectedProject} client={props.commandClient} language={appShellSettings.appLanguage} onClose={() => setProjectCommandsProjectId(null)} />
                       </Suspense>
                     </section>

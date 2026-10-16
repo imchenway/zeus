@@ -38,7 +38,7 @@ function TaskGitTextDiffTable(props: {
   }
   return (
     <div className="task-git-review-diff-table code-diff-host">
-      <Suspense fallback={<p role="status">{props.zh ? '正在打开差异…' : 'Opening diff…'}</p>}>
+      <Suspense fallback={null}>
         <CodeDiffView
           file={props.diff}
           singleSide={props.diff.changeType === 'added' ? 'right' : props.diff.changeType === 'deleted' ? 'left' : undefined}

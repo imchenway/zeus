@@ -108,7 +108,7 @@ export function FileReviewContent(props: {
         </p>
       ) : null}
       {showDiff && props.review?.diff ? (
-        <Suspense fallback={<p role="status">{props.zh ? '正在打开差异…' : 'Opening diff…'}</p>}>
+        <Suspense fallback={null}>
           <CodeDiffView file={props.review.diff} unified label={props.zh ? '文件 Git 差异' : 'File Git diff'} />
         </Suspense>
       ) : (
@@ -469,7 +469,7 @@ function FilePreviewContent(props: {
         )}
       >
         {(item.kind === 'text' || source) && item.content !== undefined ? (
-          <Suspense fallback={<p role="status">{props.zh ? '正在打开文本…' : 'Opening text…'}</p>}>
+          <Suspense fallback={null}>
             {markdown && !source ? (
               <div className="file-preview-markdown">
                 <Markdown text={item.content} streamId={item.id} phase="final" language={props.zh ? 'zh-CN' : 'en-US'} />

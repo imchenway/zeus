@@ -425,7 +425,7 @@ function SourceWorkspaceView(props: {
           ) : renderedMarkdown ? (
             <ConversationMarkdown text={props.preview.content} streamId={`source-preview:${props.preview.resource.id}`} phase="final" language={props.language} />
           ) : (
-            <Suspense fallback={<div role="status">{zh ? '正在打开源码…' : 'Opening source…'}</div>}>
+            <Suspense fallback={null}>
               <SourceCodePreview
                 key={props.preview.resource.id}
                 path={displayPath}

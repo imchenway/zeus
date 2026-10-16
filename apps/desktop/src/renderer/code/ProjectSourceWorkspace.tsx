@@ -960,7 +960,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
               ) : (
                 <div className="project-source-document-views" data-view-mode={viewMode}>
                   <div className="project-source-document-editor" hidden={viewMode === 'preview'} inert={viewMode === 'preview'}>
-                    <Suspense fallback={<div className="project-source-code-editor-loading">{zh ? '正在加载代码编辑器…' : 'Loading code editor…'}</div>}>
+                    <Suspense fallback={null}>
                       <ProjectSourceEditor
                         projectId={props.project.id}
                         revision={activeTab.document.revision.sha256}
@@ -981,7 +981,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                     </Suspense>
                   </div>
                   {renderedPreviewKind && viewMode !== 'source' ? (
-                    <Suspense fallback={<div className="project-source-code-editor-loading">{zh ? '正在打开预览…' : 'Opening preview…'}</div>}>
+                    <Suspense fallback={null}>
                       <ProjectSourceRenderedPreview
                         key={`${props.project.id}:${activeTab.document.relativePath}`}
                         projectId={props.project.id}
