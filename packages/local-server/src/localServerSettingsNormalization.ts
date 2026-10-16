@@ -16,7 +16,7 @@ import {
   type TaskStatusFilter,
 } from '@zeus/shared';
 import type { TaskManagementStatus, TaskPriority } from '@zeus/storage';
-import { listAiCliAdapters, type AiCliAdapterDescriptor } from '@zeus/ai-runtime';
+import { isBusinessProcessEnvironmentKey, listAiCliAdapters, type AiCliAdapterDescriptor } from '@zeus/ai-runtime';
 import { parse, isAbsolute } from 'node:path';
 import type { RuntimeAutoConfirmationPolicy, RuntimeSettingsSnapshot } from './runtimeQueryApplication.js';
 import { SettingsCommandApplicationError } from './settingsCommandApplication.js';
@@ -488,6 +488,8 @@ export function normalizeImportedRuntimeSettings(value: RuntimeSettingsSnapshot 
   const adapterDefaultArgs = normalizeRuntimeAdapterDefaultArgs(value.adapterDefaultArgs);
   const adapterCliPaths = normalizeRuntimeAdapterCliPaths(value.adapterCliPaths);
   const terminalEnv = normalizeRuntimeTerminalEnv(value.terminalEnv);
+  // 保存和导入都在写入前拒绝保留字段，不能接受配置后再由执行层静默删除。
+  if (terminalEnv) assertRuntimeTerminalEnvironment(terminalEnv);
   /** 导入与设置保存共用命令文本校验。 */
   const terminalStartupCommand = normalizeTerminalStartupCommand(value.terminalStartupCommand);
   /** 缺失字段来自旧客户端或历史导出，不能推断成 Windows PowerShell。 */
@@ -741,6 +743,14 @@ export function normalizeRuntimeAdapterCliPaths(value: unknown): RuntimeSettings
   return cliPaths;
 }
 
+/** 显式配置不能覆盖宿主控制环境；错误只展示字段名，不回显变量值。 */
+export function assertRuntimeTerminalEnvironment(value: RuntimeSettingsSnapshot['terminalEnv']): void {
+  /** 历史配置仍能显示和修正；校验只放在设置写入前，不打断已经准备的任务状态。 */
+  const reservedKeys = Object.keys(value).filter((key) => !isBusinessProcessEnvironmentKey(key));
+  if (reservedKeys.length > 0) throw new SettingsCommandApplicationError('ZEUS_RUNTIME_ENVIRONMENT_RESERVED', `环境变量使用了 Zeus 保留字段：${reservedKeys.join('、')}。请删除这些字段；自定义业务变量请使用其他前缀。`, 400);
+}
+
+/** 读取历史配置时只核对文本格式，保留字段留给保存及执行边界明确报告。 */
 export function normalizeRuntimeTerminalEnv(value: unknown): RuntimeSettingsSnapshot['terminalEnv'] | null {
   if (value === undefined) return {};
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;

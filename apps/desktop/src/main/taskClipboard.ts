@@ -141,7 +141,8 @@ export async function readTaskClipboardAttachmentsFromClipboard(reader: NativeTa
   }
   const fileReferenceAttachments = await readTaskAttachmentFilePathPayloads(fileReferences);
   if (fileReferenceAttachments.length > 0) return fileReferenceAttachments;
-  if (fileReferences.length > 0) throw new Error('剪贴板引用的文件无法读取，请确认文件仍存在且具有访问权限。');
+  // Windows 禁止把资源管理器图标当附件；其他平台保持原有图片回退顺序。
+  if (process.platform === 'win32' && fileReferences.length > 0) throw new Error('剪贴板引用的文件无法读取，请确认文件仍存在且具有访问权限。');
 
   const inlineImageAttachments = extractTaskClipboardInlineImageAttachments(clipboardTexts);
   if (inlineImageAttachments.length > 0) return inlineImageAttachments;
@@ -165,10 +166,16 @@ export async function readTaskClipboardFileReferencesFromClipboard(reader: Nativ
   return fileReferences;
 }
 
+/** Windows 必须报告原生文件读取失败；其他平台沿用既有图片回退契约。 */
 async function readSystemClipboardFileReferences(options: TaskClipboardReadOptions): Promise<string[]> {
   if (!options.readSystemFileReferences) return [];
-  // 成功读取且没有文件格式才可走图片回退；读取失败或超限不能伪装为无文件。
-  return options.readSystemFileReferences();
+  try {
+    return await options.readSystemFileReferences();
+  } catch (error) {
+    // Windows 读取失败或超限不能伪装为无文件，避免把资源管理器图标当成原文件。
+    if (process.platform === 'win32') throw error;
+    return [];
+  }
 }
 
 function isSingleUnsupportedImageReference(fileReferences: string[]): boolean {

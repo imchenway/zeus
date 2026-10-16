@@ -3,7 +3,7 @@ use crate::{process::{current_user_sid, own, valid_generation, wide}, SandboxPol
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{fs::{self, File, OpenOptions}, io::{self, Read, Write}, mem::{size_of, zeroed}, os::windows::io::{AsRawHandle, OwnedHandle}, path::{Path, PathBuf}, ptr::{null, null_mut}};
-use windows_sys::Win32::{Foundation::*, Security::{*, Authorization::*, Isolation::*}, Storage::FileSystem::*, System::{Threading::*, JobObjects::*, SystemServices::{ACCESS_ALLOWED_ACE_TYPE, ACCESS_DENIED_ACE_TYPE, MAXIMUM_ALLOWED, JOB_OBJECT_QUERY, JOB_OBJECT_TERMINATE}}};
+use windows_sys::{Wdk::Storage::FileSystem::NtSetSecurityObject, Win32::{Foundation::*, Security::{*, Authorization::*, Isolation::*}, Storage::FileSystem::*, System::{Threading::*, JobObjects::*, SystemServices::{ACCESS_ALLOWED_ACE_TYPE, ACCESS_DENIED_ACE_TYPE, SECURITY_DESCRIPTOR_REVISION, JOB_OBJECT_QUERY, JOB_OBJECT_TERMINATE}}}};
 
 /// 每次授权独占一个确定的包名称；随机 generation 不从外部文本推导。
 fn profile_name(generation: &str) -> Result<String, Box<dyn std::error::Error>> {
@@ -102,7 +102,8 @@ fn security_descriptor_for_user(user: &str) -> Result<LocalDescriptor, Box<dyn s
 fn open_path(path: &Path, mutate: bool) -> Result<(OwnedHandle, BY_HANDLE_FILE_INFORMATION), Box<dyn std::error::Error>> {
     let encoded = wide(path)?;
     unsafe {
-        let access = READ_CONTROL | FILE_READ_ATTRIBUTES | if mutate { MAXIMUM_ALLOWED } else { FILE_GENERIC_READ };
+        // ACL 操作不申请数据写入或 DELETE，避免与本次及并行任务的防改名句柄冲突。
+        let access = READ_CONTROL | FILE_READ_ATTRIBUTES | if mutate { WRITE_DAC } else { FILE_GENERIC_READ };
         let handle = own(CreateFileW(encoded.as_ptr(), access, FILE_SHARE_READ | FILE_SHARE_WRITE, null(), OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, null_mut()))?;
         let mut info: BY_HANDLE_FILE_INFORMATION = zeroed();
         if GetFileInformationByHandle(handle.as_raw_handle(), &mut info) == 0 { return Err(io::Error::last_os_error().into()); }
@@ -138,8 +139,7 @@ fn ensure_home(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     unsafe {
         let (mut present, mut defaulted, mut acl) = (0, 0, null_mut());
         if GetSecurityDescriptorDacl(descriptor.0, &mut present, &mut acl, &mut defaulted) == 0 || present == 0 || acl.is_null() { return Err("私有目录安全描述无效".into()); }
-        let result = SetSecurityInfo(handle.as_raw_handle(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, null_mut(), null_mut(), acl, null());
-        if result != ERROR_SUCCESS { return Err(io::Error::from_raw_os_error(result as i32).into()); }
+        set_object_dacl(&handle, acl, SE_DACL_PROTECTED)?;
     }
     Ok(())
 }
@@ -195,7 +195,40 @@ fn journals(home: &Path) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
     for entry in fs::read_dir(home)? { let path = entry?.path(); if path.extension().is_some_and(|value| value == "json") && path.file_name().is_some_and(|value| value != "configured.json") { result.push(path); } }
     Ok(result)
 }
-/// 以 MAXIMUM_ALLOWED 打开的句柄调用 SetSecurityInfo，按官方契约不自动传播；树遍历自行处理重解析点。
+/// 只设置当前句柄的 DACL；原生对象接口不递归传播，后代由显式遍历和 USN 恢复处理。
+unsafe fn set_object_dacl(handle: &OwnedHandle, acl: *mut ACL, control: SECURITY_DESCRIPTOR_CONTROL) -> Result<(), Box<dyn std::error::Error>> {
+    // NtSetSecurityObject 是文档规定的用户态入口，只需 WRITE_DAC，不申请 DELETE 或借路径重开对象。
+    let mut descriptor: SECURITY_DESCRIPTOR = zeroed();
+    let pointer = (&mut descriptor as *mut SECURITY_DESCRIPTOR).cast();
+    if InitializeSecurityDescriptor(pointer, SECURITY_DESCRIPTOR_REVISION) == 0 || SetSecurityDescriptorDacl(pointer, 1, acl, 0) == 0 { return Err(io::Error::last_os_error().into()); }
+    // 保留原对象的保护和自动继承状态；不引入新的自动继承请求，也不修改 owner、SACL。
+    let preserved = SE_DACL_PROTECTED | SE_DACL_AUTO_INHERITED;
+    if SetSecurityDescriptorControl(pointer, preserved, control & preserved) == 0 { return Err(io::Error::last_os_error().into()); }
+    let status = NtSetSecurityObject(handle.as_raw_handle(), DACL_SECURITY_INFORMATION, pointer);
+    if status < 0 { return Err(format!("文件对象 DACL 更新失败，NTSTATUS=0x{:08X}", status as u32).into()); }
+    Ok(())
+}
+/// 元数据探查只识别本次包 SID，不要求读取文件内容或修改无关对象。
+pub(crate) unsafe fn has_package_sid(handle: &OwnedHandle, sid: PSID) -> Result<bool, Box<dyn std::error::Error>> {
+    let mut acl = null_mut();
+    let mut descriptor = null_mut();
+    let result = GetSecurityInfo(handle.as_raw_handle(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, null_mut(), null_mut(), &mut acl, null_mut(), &mut descriptor);
+    if result != ERROR_SUCCESS { return Err(io::Error::from_raw_os_error(result as i32).into()); }
+    let _descriptor = LocalDescriptor(descriptor);
+    if acl.is_null() { return Ok(false); }
+    for index in 0..(*acl).AceCount as u32 {
+        let mut pointer = null_mut();
+        if GetAce(acl, index, &mut pointer) == 0 { return Err(io::Error::last_os_error().into()); }
+        if matches_package_sid(pointer, sid) { return Ok(true); }
+    }
+    Ok(false)
+}
+/// 只匹配本组件写入及继承的标准 allow/deny ACE，其他会话和其他 ACE 原样保留。
+unsafe fn matches_package_sid(pointer: *const std::ffi::c_void, sid: PSID) -> bool {
+    let header = &*(pointer as *const ACE_HEADER);
+    (header.AceType == ACCESS_ALLOWED_ACE_TYPE as u8 || header.AceType == ACCESS_DENIED_ACE_TYPE as u8) && EqualSid((&(*(pointer as *const ACCESS_ALLOWED_ACE)).SidStart as *const u32).cast_mut().cast(), sid) != 0
+}
+/// 按当前 DACL 合并本次 SID，再以对象级接口更新，避免系统沿未核验的后代传播权限。
 pub(crate) unsafe fn edit_acl(handle: &OwnedHandle, sid: PSID, mask: Option<u32>, directory: bool, denied: bool) -> Result<bool, Box<dyn std::error::Error>> {
     let mut old_acl = null_mut();
     let mut raw_descriptor = null_mut();
@@ -216,7 +249,7 @@ pub(crate) unsafe fn edit_acl(handle: &OwnedHandle, sid: PSID, mask: Option<u32>
         let mut pointer = null_mut();
         if GetAce(old_acl, index, &mut pointer) == 0 { return Err(io::Error::last_os_error().into()); }
         let header = &*(pointer as *const ACE_HEADER);
-        if (header.AceType == ACCESS_ALLOWED_ACE_TYPE as u8 || header.AceType == ACCESS_DENIED_ACE_TYPE as u8) && EqualSid((&(*(pointer as *const ACCESS_ALLOWED_ACE)).SidStart as *const u32).cast_mut().cast(), sid) != 0 { found = true; continue; }
+        if matches_package_sid(pointer, sid) { found = true; continue; }
         if header.AceFlags & INHERITED_ACE as u8 != 0 && !inserted {
             if let Some(mask) = mask { if AddAccessAllowedAceEx(acl, ACL_REVISION, if directory { OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE } else { 0 }, mask, sid) == 0 { return Err(io::Error::last_os_error().into()); } }
             inserted = true;
@@ -225,8 +258,9 @@ pub(crate) unsafe fn edit_acl(handle: &OwnedHandle, sid: PSID, mask: Option<u32>
     }
     if mask.is_none() && !found { return Ok(false); }
     if !inserted { if let Some(mask) = mask { if AddAccessAllowedAceEx(acl, ACL_REVISION, if directory { OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE } else { 0 }, mask, sid) == 0 { return Err(io::Error::last_os_error().into()); } } }
-    let result = SetSecurityInfo(handle.as_raw_handle(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, null_mut(), null_mut(), acl, null());
-    if result != ERROR_SUCCESS { return Err(io::Error::from_raw_os_error(result as i32).into()); }
+    let (mut control, mut revision) = (0, 0);
+    if GetSecurityDescriptorControl(raw_descriptor, &mut control, &mut revision) == 0 { return Err(io::Error::last_os_error().into()); }
+    set_object_dacl(handle, acl, control)?;
     Ok(true)
 }
 /// 父目录句柄在递归期间不允许删除或替换，最终分量始终按重解析对象自身打开。

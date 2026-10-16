@@ -21,13 +21,29 @@ const businessZeusEnvironmentKeys = new Set([
   'ZEUS_SHELL_PATH',
   'ZEUS_SHELL_LOGIN',
   'ZEUS_WINDOWS_DESKTOP_MODE',
+  // 项目内的打包和发布脚本已使用这些业务配置，不能当成宿主控制字段删除。
+  'ZEUS_PACKAGE_OUTPUT_DIR',
+  'ZEUS_PACKAGE_VARIANT',
+  'ZEUS_RELEASE_BUILD',
+  'ZEUS_RELEASE_OUTPUT_DIR',
+  'ZEUS_RELEASE_SIGNED',
+  'ZEUS_RELEASE_NOTARIZED',
+  'ZEUS_FAST_RELEASE',
+  'ZEUS_REQUIRE_DISTRIBUTABLE_RELEASE',
+  'ZEUS_RELEASE_ISOLATED_SOURCE',
+  'ZEUS_RELEASE_VALIDATE_ISOLATION',
 ]);
+
+/** Zeus 前缀属于宿主保留空间；已登记的业务配置在保存和执行边界使用同一规则。 */
+export function isBusinessProcessEnvironmentKey(key: string): boolean {
+  return !key.toUpperCase().startsWith('ZEUS_') || businessZeusEnvironmentKeys.has(key.toUpperCase());
+}
 
 /** 保留调用方明确使用的 Provider/业务环境，删除所有未登记的 Zeus 宿主私有字段。 */
 export function businessProcessEnvironment(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   /** 统一大小写后再筛选，防止 Windows 的混合大小写字段绕过边界。 */
   const env = normalizeProcessEnvironment(source);
-  for (const key of Object.keys(env)) if (key.toUpperCase().startsWith('ZEUS_') && !businessZeusEnvironmentKeys.has(key.toUpperCase())) delete env[key];
+  for (const key of Object.keys(env)) if (!isBusinessProcessEnvironmentKey(key)) delete env[key];
   return env;
 }
 

@@ -6,7 +6,7 @@ import type { PluginHookTrustRecord } from '@zeus/storage';
 import { ensurePrivatePathSync } from '@zeus/storage/platform-security';
 import type { PluginActivationSnapshot } from './zeusPluginService.js';
 import { isCommandShell } from '@zeus/shared';
-import { resolveCommandInvocation, spawnManagedProcess } from '@zeus/ai-runtime';
+import { resolveCommandInvocation, resolveExecutableInvocation, spawnManagedProcess } from '@zeus/ai-runtime';
 
 export type ZeusPluginHookEventName = 'PermissionRequest' | 'PostToolUse' | 'PostCompact' | 'PreCompact' | 'PreToolUse' | 'SessionEnd' | 'SessionStart' | 'SubagentStart' | 'SubagentStop' | 'UserPromptSubmit' | 'Stop';
 
@@ -208,13 +208,16 @@ export function createZeusPluginHookRuntime(options: {
         script = `& ([scriptblock]::Create([IO.File]::ReadAllText('${scriptPath.replaceAll("'", "''")}', [Text.Encoding]::UTF8)))`;
       }
       input.signal.throwIfAborted();
-      const invocation = resolveCommandInvocation(shell, script, {
+      /** 插件上下文沿用已授权安装目录，不由解释器选择改变。 */
+      const env = {
         ...process.env,
         PLUGIN_ROOT: input.candidate.activation.installPath,
         PLUGIN_DATA: join(options.dataRoot, input.candidate.activation.pluginId),
         CLAUDE_PLUGIN_ROOT: input.candidate.activation.installPath,
         CLAUDE_PLUGIN_DATA: join(options.dataRoot, input.candidate.activation.pluginId),
-      });
+      };
+      /** 未声明 shell 的旧 Unix Hook 固定为原有 /bin/zsh，避免 PATH 改变解释器。 */
+      const invocation = process.platform !== 'win32' && !isCommandShell(handler.shell) ? resolveExecutableInvocation('/bin/zsh', ['-lc', script], { env }) : resolveCommandInvocation(shell, script, env);
       const child = spawnManagedProcess(invocation.command, invocation.args, {
         cwd: input.event.cwd,
         env: invocation.env,

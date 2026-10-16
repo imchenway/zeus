@@ -43,11 +43,21 @@ function resolveWechatCli(projectRoot: string): string {
 async function runCli(cli: string, args: string[], projectRoot: string): Promise<void> {
   await new Promise<void>((resolveRun, reject) => {
     /** runner 与 CLI 继承 Core Job；Main 已先打开用户持有的 GUI，停止命令不关闭该 GUI。 */
-    const invocation = resolveExecutableInvocation(cli, args, { cwd: projectRoot, env: process.env });
-    const child = spawn(invocation.command, invocation.args, { cwd: projectRoot, env: invocation.env, windowsVerbatimArguments: invocation.windowsVerbatimArguments, stdio: ['pipe', 'pipe', 'pipe'], shell: false, windowsHide: true });
-    child.stdout.pipe(process.stdout, { end: false });
-    child.stderr.pipe(process.stderr, { end: false });
-    child.stdin.end();
+    const invocation = process.platform === 'win32' ? resolveExecutableInvocation(cli, args, { cwd: projectRoot, env: process.env }) : { command: cli, args, env: process.env };
+    /** Unix 保留原有终端输入和输出；只有 Windows 批处理需要管道桥接。 */
+    const child = spawn(invocation.command, invocation.args, {
+      cwd: projectRoot,
+      env: invocation.env,
+      windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+      stdio: process.platform === 'win32' ? ['pipe', 'pipe', 'pipe'] : 'inherit',
+      shell: false,
+      windowsHide: true,
+    });
+    if (process.platform === 'win32') {
+      child.stdout?.pipe(process.stdout, { end: false });
+      child.stderr?.pipe(process.stderr, { end: false });
+      child.stdin?.end();
+    }
     child.once('error', reject);
     child.once('exit', (code, signal) => {
       if (code === 0) resolveRun();
@@ -64,11 +74,8 @@ function registerArtifact(path: string): void {
 
 /** 真机必须完成官方连接流程并返回设备信息，单纯打开开发者工具不算成功。 */
 async function remoteDebug(cli: string, projectPath: string, portArgs: string[], outputPath: string): Promise<void> {
-  /** SDK 的 launch 直接 spawn 批处理；由统一启动器启动一次，再由官方 SDK 连接。 */
-  const port = await reserveAutomationPort();
-  await runCli(cli, ['auto', '--project', projectPath, '--auto-port', String(port), ...portArgs], projectPath);
-  /** 重试只建立只读连接，绝不重放 auto 命令。 */
-  const miniProgram = await connectAutomation(port);
+  /** Unix 沿用 SDK 的启动和连接时序；Windows 单独处理 SDK 不支持的批处理入口。 */
+  const miniProgram = process.platform === 'win32' ? await launchWindowsAutomation(cli, projectPath, portArgs) : await automator.launch({ cliPath: cli, projectPath, args: portArgs, timeout: 45_000 });
   /** 真机连接与设备查询共用等待上限，结束后释放连接但保留微信调试窗口。 */
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -89,6 +96,14 @@ async function remoteDebug(cli: string, projectPath: string, portArgs: string[],
     clearTimeout(timer);
     miniProgram.disconnect();
   }
+}
+
+/** Windows 只启动一次批处理，再重试只读连接，不向其他平台改变 SDK 启动语义。 */
+async function launchWindowsAutomation(cli: string, projectPath: string, portArgs: string[]): Promise<Awaited<ReturnType<typeof automator.connect>>> {
+  /** SDK 的 launch 直接 spawn 批处理，由统一解析器提供 Windows 参数转义。 */
+  const port = await reserveAutomationPort();
+  await runCli(cli, ['auto', '--project', projectPath, '--auto-port', String(port), ...portArgs], projectPath);
+  return connectAutomation(port);
 }
 
 /** 让操作系统分配本机空闲端口，避免与用户已打开的自动化会话冲突。 */

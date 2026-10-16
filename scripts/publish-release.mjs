@@ -319,12 +319,12 @@ export async function verifyPublishedRelease(input) {
   if (actualNotes !== expectedNotes) throw new Error('GitHub Release notes 与标签候选的仓库 Release notes 不一致。');
 
   const expectedDmgName = `Zeus-${input.releaseVersion}-arm64.dmg`;
-  /** 公开发行同时包含 Windows 两个架构和独立清单。 */
-  const windowsNames = ['x64', 'arm64'].map((arch) => `Zeus-${input.releaseVersion}-win32-${arch}.exe`);
-  const expectedAssets = new Set([expectedDmgName, 'zeus-release-manifest.json', 'zeus-release-manifest-win32.json', ...windowsNames]);
+  const expectedAssets = new Set([expectedDmgName, 'zeus-release-manifest.json']);
+  /** Windows 独立发布可以稍后追加已知资产；macOS 回验不依赖 Windows 完成，也不替其背书。 */
+  const allowedAssets = new Set([...expectedAssets, 'zeus-release-manifest-win32.json', ...['x64', 'arm64'].map((arch) => `Zeus-${input.releaseVersion}-win32-${arch}.exe`)]);
   const actualAssets = input.release.data.assets ?? [];
   const actualAssetNames = new Set(actualAssets.map((asset) => asset.name));
-  if (actualAssetNames.size !== expectedAssets.size || [...expectedAssets].some((name) => !actualAssetNames.has(name))) {
+  if ([...actualAssetNames].some((name) => !allowedAssets.has(name)) || [...expectedAssets].some((name) => !actualAssetNames.has(name))) {
     throw new Error(`GitHub Release 资产集合不一致：${[...actualAssetNames].join(', ') || 'empty'}`);
   }
 
@@ -345,36 +345,6 @@ export async function verifyPublishedRelease(input) {
     const manifestSize = statSync(manifestPath).size;
     if (manifestAsset.size !== manifestSize || manifestAsset.digest !== `sha256:${manifestSha256}`) {
       throw new Error('GitHub manifest 资产元数据与下载文件不一致。');
-    }
-    /** Windows 清单及两个安装包必须与相同候选和 GitHub 服务端摘要一致。 */
-    downloadReleaseAsset(input.tag, 'zeus-release-manifest-win32.json', downloadDirectory, publicVerificationReadOptions(input));
-    const windowsManifestPath = join(downloadDirectory, 'zeus-release-manifest-win32.json');
-    const windowsManifest = JSON.parse(readFileSync(windowsManifestPath, 'utf8'));
-    const windowsManifestAsset = actualAssets.find((asset) => asset.name === 'zeus-release-manifest-win32.json');
-    if (
-      windowsManifest.platform !== 'win32' ||
-      windowsManifest.repository !== repository ||
-      windowsManifest.sourceCommit !== input.headSha ||
-      windowsManifest.version !== input.releaseVersion ||
-      windowsManifest.signed !== true ||
-      windowsManifest.channel !== 'stable' ||
-      windowsManifestAsset?.digest !== `sha256:${await sha256File(windowsManifestPath)}` ||
-      windowsManifestAsset.size !== statSync(windowsManifestPath).size
-    )
-      throw new Error('公开 Windows 清单来源或摘要不一致。');
-    if (windowsManifest.artifacts?.length !== 2) throw new Error('公开 Windows 清单必须包含两个原生架构。');
-    for (const [index, name] of windowsNames.entries()) {
-      const arch = ['x64', 'arm64'][index];
-      const artifact = windowsManifest.artifacts.find((item) => item.arch === arch && item.platform === 'win32' && item.kind === 'exe' && item.fileName === name);
-      const remote = actualAssets.find((asset) => asset.name === name);
-      if (
-        !artifact ||
-        !/^[a-f0-9]{64}$/u.test(artifact.sha256) ||
-        remote?.digest !== `sha256:${artifact.sha256}` ||
-        remote.size !== artifact.sizeBytes ||
-        artifact.downloadUrl !== `https://github.com/${repository}/releases/download/${input.tag}/${name}`
-      )
-        throw new Error(`公开 Windows ${arch} 安装包身份不一致。`);
     }
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
     if (manifest.repository !== repository || manifest.sourceCommit !== input.headSha) throw new Error('公开清单不是 Zeus 官方来源或本次候选提交。');
@@ -420,7 +390,6 @@ export async function verifyPublishedRelease(input) {
       headSha: input.headSha,
       releaseUrl: input.release.data.url,
       workflowUrl: input.workflowRun?.url ?? '已有 Release，本次未触发新 Workflow',
-      windowsNames,
       dmgName: expectedDmgName,
       dmgSize,
       dmgSha256,
@@ -448,7 +417,7 @@ function buildPublishResult(input) {
     `- 发布提交：${input.headSha}`,
     `- GitHub Release：${input.releaseUrl}`,
     `- Release Workflow：${input.workflowUrl}`,
-    `- Windows：${input.windowsNames.join('、')}；两个架构均已核对官方签名构建清单与 GitHub 资产摘要。`,
+    '- 核对范围：macOS / Homebrew；Windows 由独立工作流发布和回验。',
     `- DMG：${input.dmgName}，${input.dmgSize} 字节，SHA-256 ${input.dmgSha256}`,
     `- manifest：${input.manifestSize} 字节，SHA-256 ${input.manifestSha256}`,
     `- Release notes SHA-256：${input.releaseNotesSha256}`,

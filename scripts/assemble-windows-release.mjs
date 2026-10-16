@@ -14,6 +14,8 @@ const supportedArchitectures = ['x64', 'arm64'];
 export async function assembleWindowsRelease(directory, version, sourceCommit) {
   /** 发布清单只包含本次固定候选实际产生的资产。 */
   const artifacts = [];
+  /** 合并时间来自固定构建清单，重跑组装时不能产生不同的同名资产。 */
+  let publishedAt = 0;
   for (const arch of supportedArchitectures) {
     /** 每份清单来自对应原生 Windows runner。 */
     const candidate = JSON.parse(await readFile(join(directory, `zeus-release-manifest-win32-${arch}.json`), 'utf8'));
@@ -27,15 +29,20 @@ export async function assembleWindowsRelease(directory, version, sourceCommit) {
       candidate.signed !== true
     )
       throw new Error(`Windows ${arch} 构建清单来源不一致或未签名。`);
+    /** 两个原生构建都完成时才具备完整发行，取较晚的有效时间。 */
+    const builtAt = typeof candidate.publishedAt === 'string' ? Date.parse(candidate.publishedAt) : NaN;
+    if (!Number.isFinite(builtAt) || builtAt <= 0) throw new Error(`Windows ${arch} 构建清单缺少有效发布时间。`);
+    publishedAt = Math.max(publishedAt, builtAt);
     /** 每个架构只允许一个 NSIS 安装包，不接受便携包混入正式升级渠道。 */
     const artifact = candidate.artifacts?.find((item) => item.arch === arch);
     if (!artifact || artifact.platform !== 'win32' || artifact.kind !== 'exe' || artifact.fileName !== `Zeus-${version}-win32-${arch}.exe` || !/^[a-f0-9]{64}$/u.test(artifact.sha256)) throw new Error(`Windows ${arch} 安装包身份无效。`);
+    if (artifact.downloadUrl !== `https://github.com/imchenway/zeus/releases/download/v${version}/${artifact.fileName}`) throw new Error(`Windows ${arch} 安装包下载来源不是本次官方发行。`);
     /** 下载的 CI 资产必须与已验签文件的摘要完全一致。 */
     const path = join(directory, artifact.fileName);
     if ((await stat(path)).size !== artifact.sizeBytes || (await sha256File(path)) !== artifact.sha256) throw new Error(`Windows ${arch} 安装包完整性校验失败。`);
     artifacts.push(artifact);
   }
-  await writeFile(join(directory, 'zeus-release-manifest-win32.json'), renderReleaseManifest({ version, sourceCommit, platform: 'win32', signed: true, artifacts, publishedAt: new Date().toISOString() }));
+  await writeFile(join(directory, 'zeus-release-manifest-win32.json'), renderReleaseManifest({ version, sourceCommit, platform: 'win32', signed: true, artifacts, publishedAt: new Date(publishedAt).toISOString() }));
 }
 
 /** CI 发布作业只组装本地已下载制品，不创建标签或上传远端。 */

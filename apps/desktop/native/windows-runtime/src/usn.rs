@@ -3,7 +3,7 @@ use crate::process::{own, valid_generation, wide};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{fs, io, mem::{size_of, zeroed}, os::windows::io::{AsRawHandle, OwnedHandle}, path::{Path, PathBuf}, ptr::{null, null_mut}, time::{Duration, Instant}};
-use windows_sys::Win32::{Foundation::*, Security::*, Storage::FileSystem::*, System::{IO::DeviceIoControl, Ioctl::*, JobObjects::*, SystemServices::{JOB_OBJECT_QUERY, MAXIMUM_ALLOWED}}};
+use windows_sys::Win32::{Foundation::*, Security::*, Storage::FileSystem::*, System::{IO::DeviceIoControl, Ioctl::*, JobObjects::*, SystemServices::JOB_OBJECT_QUERY}};
 
 /// 每个卷在任何授权前冻结日志身份和起点，日志换代或截断一律拒绝假报清理。
 #[derive(Serialize, Deserialize)]
@@ -111,9 +111,14 @@ fn job_active(registration: &Registration, caller: Option<&Value>) -> Result<boo
         Ok(accounting.ActiveProcesses != 0)
     }
 }
-/// 按卷内文件身份打开元数据；只有系统明确表示不存在时才跳过。
+/// 先以元数据权限识别目标 SID，无关文件不申请修改权限；未确认的错误仍保留登记。
 unsafe fn revoke_record(volume: &OwnedHandle, descriptor: FILE_ID_DESCRIPTOR, sid: PSID) -> Result<bool, Box<dyn std::error::Error>> {
-    let raw = OpenFileById(volume.as_raw_handle(), &descriptor, MAXIMUM_ALLOWED, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, null(), FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+    let raw = OpenFileById(volume.as_raw_handle(), &descriptor, READ_CONTROL | FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, null(), FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+    if raw == INVALID_HANDLE_VALUE { return if GetLastError() == ERROR_FILE_NOT_FOUND { Ok(false) } else { Err(io::Error::last_os_error().into()) }; }
+    let probe = own(raw)?;
+    if !crate::sandbox::has_package_sid(&probe, sid)? { return Ok(false); }
+    // 再次按同一文件 ID 打开，只增加 WRITE_DAC，不与业务文件的数据或删除共享模式冲突。
+    let raw = OpenFileById(volume.as_raw_handle(), &descriptor, READ_CONTROL | FILE_READ_ATTRIBUTES | WRITE_DAC, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, null(), FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
     if raw == INVALID_HANDLE_VALUE { return if GetLastError() == ERROR_FILE_NOT_FOUND { Ok(false) } else { Err(io::Error::last_os_error().into()) }; }
     let handle = own(raw)?;
     let mut information: BY_HANDLE_FILE_INFORMATION = zeroed();
