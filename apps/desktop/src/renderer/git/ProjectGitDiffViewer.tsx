@@ -214,7 +214,7 @@ function TextSideBySideDiff(props: SideBySideDiffProps & { /** 共享文件操�
         {file.hunks.length === 0 ? (
           <p className="project-git-empty-copy">{fileDiffEmptyMessage(file, props.zh)}</p>
         ) : (
-          <Suspense fallback={<p role="status">{props.zh ? '正在打开差异…' : 'Opening diff…'}</p>}>
+          <Suspense fallback={null}>
             {props.partitionHunks ? (
               <div className="project-git-diff-hunks" aria-label={props.zh ? '差异区块' : 'Diff hunks'}>
                 {file.hunks.map((hunk, index) => (

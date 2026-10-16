@@ -552,13 +552,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
           </span>
         </section>
         {props.pageViewMode === 'board' ? (
-          <Suspense
-            fallback={
-              <section className="task-board-state" role="status" aria-live="polite">
-                <strong>{isEnglishCopy ? 'Loading board…' : '正在加载看板…'}</strong>
-              </section>
-            }
-          >
+          <Suspense fallback={null}>
             <LazyTaskBoardView
               projectId={props.activeProjectId ?? ''}
               language={props.appLanguage}

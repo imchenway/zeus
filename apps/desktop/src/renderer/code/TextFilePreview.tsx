@@ -14,7 +14,7 @@ export const TextFilePreview = memo(function TextFilePreview(props: {
 }) {
   return (
     <div className="text-file-preview" style={{ height: 'min(420px, 60vh)', minHeight: 120, minWidth: 0, overflow: 'hidden' }}>
-      <Suspense fallback={<p role="status">{props.title}</p>}>
+      <Suspense fallback={null}>
         <CodeEditor path={props.id} label={props.title} language={null} content={props.content} readOnly />
       </Suspense>
     </div>

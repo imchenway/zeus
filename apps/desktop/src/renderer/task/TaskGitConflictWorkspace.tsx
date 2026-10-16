@@ -478,7 +478,7 @@ function FocusedSidePane(props: {
         <strong>{props.title}</strong>
       </header>
       <small className="task-git-conflict-side-state">{sideStateLabel(props.state, props.zh)}</small>
-      <Suspense fallback={<p role="status">{props.zh ? '正在打开代码…' : 'Opening code…'}</p>}>
+      <Suspense fallback={null}>
         <ConflictCodeEditor
           zh={props.zh}
           path={props.path}
@@ -518,7 +518,7 @@ function FocusedResultEditor(props: {
   return (
     <section className="task-git-conflict-result-pane">
       <strong>{props.title}</strong>
-      <Suspense fallback={<p role="status">{props.title}</p>}>
+      <Suspense fallback={null}>
         <ConflictCodeEditor
           zh={props.zh}
           path={props.path}
@@ -623,7 +623,7 @@ function FullFilePane(props: {
   return (
     <section className={`task-git-conflict-code-pane task-git-conflict-full-pane${props.side ? '' : ' is-result'}`}>
       <strong>{props.title}</strong>
-      <Suspense fallback={<p role="status">{props.zh ? '正在打开代码…' : 'Opening code…'}</p>}>
+      <Suspense fallback={null}>
         <ConflictCodeEditor
           zh={props.zh}
           path={props.path}
