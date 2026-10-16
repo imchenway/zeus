@@ -478,10 +478,10 @@ function activityOutputPreview(output: string, visibleCharacters: number): { tex
   return { text: output.slice(0, visibleCharacters), truncated: true };
 }
 
+/** 计划进度条移入即展开，悬停边界与可见条目宽度一致。 */
 export function SessionPlanProgress(props: { plan: NativeTurnPlanSnapshot; language: SessionUiLanguage }) {
+  /** 鼠标与键盘共用详情展开状态。 */
   const [open, setOpen] = useState(false);
-  /** 计划详情仅在持续悬停后展开，点击与键盘仍直接打开。 */
-  const hoverIntent = useHoverIntent(() => show());
   /** 鼠标离开后仍在面板内输入时保留展开。 */
   const dockRef = useRef<HTMLElement>(null);
   const popoverId = useId();
@@ -494,19 +494,20 @@ export function SessionPlanProgress(props: { plan: NativeTurnPlanSnapshot; langu
   const current = steps[currentIndex];
   const summary = props.language === 'zh-CN' ? `第 ${currentIndex + 1} / ${steps.length} 步` : `Step ${currentIndex + 1} of ${steps.length}`;
 
+  /** 回到进度条或进入详情时撤销待关闭动作。 */
   function cancelClose(): void {
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
     closeTimerRef.current = null;
   }
 
+  /** 恢复移入或聚焦后即时展开，不经过悬停等待。 */
   function show(): void {
-    hoverIntent.cancel();
     cancelClose();
     setOpen(true);
   }
 
+  /** 离开后短暂保留，允许跨越进度条与详情之间的间隙。 */
   function scheduleClose(): void {
-    hoverIntent.cancel();
     cancelClose();
     closeTimerRef.current = setTimeout(() => {
       if (!dockRef.current?.contains(document.activeElement)) setOpen(false);
@@ -514,11 +515,13 @@ export function SessionPlanProgress(props: { plan: NativeTurnPlanSnapshot; langu
     }, 120);
   }
 
+  /** 只有焦点离开整个计划区域才安排关闭。 */
   function handleBlur(event: FocusEvent<HTMLElement>): void {
     if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
     scheduleClose();
   }
 
+  /** Escape 关闭详情并把焦点交回进度条。 */
   function handleKeyDown(event: KeyboardEvent<HTMLElement>): void {
     if (event.key !== 'Escape' || !open) return;
     event.preventDefault();
@@ -541,18 +544,14 @@ export function SessionPlanProgress(props: { plan: NativeTurnPlanSnapshot; langu
     <section
       ref={dockRef}
       className="session-plan-dock"
-      onPointerEnter={(event) => {
-        cancelClose();
-        if (!open && event.pointerType !== 'touch' && event.buttons === 0) hoverIntent.schedule(event.currentTarget);
-      }}
-      onPointerLeave={scheduleClose}
       onFocusCapture={(event) => {
-        if (event.target instanceof HTMLElement && event.target.matches(':focus-visible') && (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget))) show();
+        if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) show();
       }}
       onBlurCapture={handleBlur}
       onKeyDown={handleKeyDown}
     >
-      <div className="session-plan-progress" data-open={open || undefined}>
+      {/* 外层保留居中布局和键盘处理；悬停仅覆盖可见进度条及其详情，左右留白不触发。 */}
+      <div className="session-plan-progress" data-open={open || undefined} onPointerEnter={show} onPointerLeave={scheduleClose}>
         <button ref={triggerRef} type="button" className="session-plan-trigger" aria-expanded={open} aria-controls={popoverId} onClick={show}>
           <ListChecks aria-hidden="true" weight="regular" />
           <span role="status" aria-live="polite" aria-atomic="true">
@@ -1046,4 +1045,3 @@ function primitive(value: unknown): string | null {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
-import { useHoverIntent } from '../ui/useHoverIntent.js';
