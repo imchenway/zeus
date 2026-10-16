@@ -1,6 +1,8 @@
 ; Windows 安装器扩展：复用 NSIS 文件安装，只接管安全退出和结果回执。
 !include "FileFunc.nsh"
 
+; 事务回执只属于安装器；卸载器没有升级事务，也不声明相应变量。
+!ifndef BUILD_UNINSTALLER
 ; 当前升级事务的结果路径，首次安装时为空。
 Var ZeusResult
 ; 当前升级的随机身份，由正在运行的应用生成。
@@ -18,18 +20,23 @@ Var ZeusMainHandle
     Rename "$ZeusResult.partial" "$ZeusResult"
   ${EndIf}
 !macroend
+!endif
 
 ; 安装和卸载只允许已退出的应用，不调用默认按进程名称强杀的实现。
 !macro customCheckAppRunning
   ${nsProcess::FindProcess} "${APP_EXECUTABLE_FILENAME}" $R0
   ${If} $R0 == 0
+    !ifndef BUILD_UNINSTALLER
     !insertmacro ZeusWriteStatus "failed"
+    !endif
     MessageBox MB_OK|MB_ICONEXCLAMATION "Zeus 仍在运行。请在 Zeus 中停止工作并退出，再运行安装器。" /SD IDOK
     SetErrorLevel 2
     Quit
   ${EndIf}
 !macroend
 
+; 安装专用钩子不进入独立卸载器的编译单元。
+!ifndef BUILD_UNINSTALLER
 ; 显式升级先核验旧主进程所在路径，再等待完整退出且退出码为零。
 !macro customInit
   ; 产品安装门禁为 Windows 10 22H2 的 19045；Windows 11 的具体兼容构建仍由实机验收确认。
@@ -114,3 +121,4 @@ Var ZeusMainHandle
   FileClose $R8
   !insertmacro ZeusWriteStatus "installed"
 !macroend
+!endif
