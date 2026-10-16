@@ -38,6 +38,7 @@ const ANNOTATION_MARKER_INLINE_OFFSET = 5;
 /** 标记略高于文字，减少对下一行的遮挡。 */
 const ANNOTATION_MARKER_BLOCK_OFFSET = -5;
 
+/** 回答正文共用选区评论入口、定位标记和草稿编辑框。 */
 export function ResponseSelectionActions(props: {
   articleRef: RefObject<HTMLElement | null>;
   itemId: string;
@@ -66,23 +67,29 @@ export function ResponseSelectionActions(props: {
     const view = article?.ownerDocument.defaultView;
     const selection = view?.getSelection();
     if (!article || !selection?.rangeCount) return;
-    const point = selectionToolbarPoint(selection, candidate.pointerOffset, article, view ?? null, toolbarRef.current);
+    /** 首次校正和后续布局刷新使用相同的正文边界。 */
+    const root = article.querySelector<HTMLElement>('.session-markdown');
+    /** 只测量当前回答中的有效选区。 */
+    const range = root ? selectedResponseRange(root, selection) : null;
+    const point = range ? selectionToolbarPoint(selection, range, candidate.pointerOffset, article, view ?? null, toolbarRef.current) : null;
     if (point && (point.left !== candidate.point.left || point.top !== candidate.point.top || point.placement !== candidate.point.placement)) setCandidate({ ...candidate, point });
   }, [candidate, props.articleRef]);
 
   useEffect(() => {
     const article = props.articleRef.current;
     if (!article || !props.enabled) return;
+    /** 只处理从当前回答开始的拖选，允许在正文外松开。 */
+    let selecting = false;
+    /** 松手后读取最终选区，避免浏览器尚未完成原生选择。 */
     const updateCandidate = (event: PointerEvent) => {
+      if (!selecting) return;
+      selecting = false;
       requestAnimationFrame(() => {
         const root = article.querySelector<HTMLElement>('.session-markdown');
         const selection = article.ownerDocument.defaultView?.getSelection();
-        if (!root || !selection || selection.rangeCount === 0 || selection.isCollapsed) {
-          setCandidate(null);
-          return;
-        }
-        const range = selection.getRangeAt(0);
-        if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) {
+        /** 跨出正文时只引用当前回答，不能带入相邻消息和操作按钮。 */
+        const range = root ? selectedResponseRange(root, selection ?? null) : null;
+        if (!root || !selection || !range) {
           setCandidate(null);
           return;
         }
@@ -99,25 +106,28 @@ export function ResponseSelectionActions(props: {
           return;
         }
         /** 选择终点由原生 Selection 决定，反向拖选不误用选区末尾。 */
-        const focusPoint = selectionFocusPoint(selection);
+        const focusPoint = selectionFocusPoint(selection, range);
         if (!focusPoint) {
           setCandidate(null);
           return;
         }
         /** 首次定位使用真实松手坐标，后续刷新保留与原文的距离。 */
         const pointerOffset = { left: event.clientX - focusPoint.left, top: event.clientY - focusPoint.top };
-        const point = selectionToolbarPoint(selection, pointerOffset, article, article.ownerDocument.defaultView ?? null, toolbarRef.current);
+        const point = selectionToolbarPoint(selection, range, pointerOffset, article, article.ownerDocument.defaultView ?? null, toolbarRef.current);
         setCandidate(point ? { anchor: { itemId: props.itemId, startOffset, endOffset, selectedText }, pointerOffset, point } : null);
       });
     };
+    /** 记录选择起点，操作浮层时不重新生成评论入口。 */
     const clearOnPointerDown = (event: PointerEvent) => {
+      selecting = false;
       if ((event.target as Element | null)?.closest?.('.session-selection-toolbar, .session-response-annotation-marker, .session-response-annotation-editor')) return;
-      if (!article.contains(event.target as Node)) setCandidate(null);
+      selecting = article.querySelector('.session-markdown')?.contains(event.target as Node) ?? false;
+      setCandidate(null);
     };
-    article.addEventListener('pointerup', updateCandidate);
+    article.ownerDocument.addEventListener('pointerup', updateCandidate, true);
     article.ownerDocument.addEventListener('pointerdown', clearOnPointerDown, true);
     return () => {
-      article.removeEventListener('pointerup', updateCandidate);
+      article.ownerDocument.removeEventListener('pointerup', updateCandidate, true);
       article.ownerDocument.removeEventListener('pointerdown', clearOnPointerDown, true);
     };
   }, [props.articleRef, props.enabled, props.itemId]);
@@ -138,10 +148,10 @@ export function ResponseSelectionActions(props: {
         const root = article.querySelector<HTMLElement>('.session-markdown');
         if (!root || !selection?.rangeCount || selection.isCollapsed) return null;
         /** 文字相同也必须属于当前回答，不能跟随另一条消息的选区。 */
-        const selectedRange = selection.getRangeAt(0);
-        if (!root.contains(selectedRange.startContainer) || !root.contains(selectedRange.endContainer) || selectedRange.toString() !== current.anchor.selectedText) return null;
+        const selectedRange = selectedResponseRange(root, selection);
+        if (!selectedRange || selectedRange.toString() !== current.anchor.selectedText) return null;
         /** 原生选区提供滚动及换行后的实际位置，越界时仍关闭入口。 */
-        const point = selectionToolbarPoint(selection, current.pointerOffset, article, view, toolbarRef.current);
+        const point = selectionToolbarPoint(selection, selectedRange, current.pointerOffset, article, view, toolbarRef.current);
         return point ? { ...current, point } : null;
       });
       setRevision((value) => value + 1);
@@ -300,6 +310,15 @@ function ResponseAnnotationEditor(props: {
     event.preventDefault();
     event.currentTarget.form?.requestSubmit();
   }
+  /** Esc 保存已有内容并关闭，纯空白草稿直接删除；输入法取消不影响评论。 */
+  function handleAnnotationDismiss(event: KeyboardEvent<HTMLDivElement>): void {
+    if (event.key !== 'Escape' || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (note.trim()) props.onUpdate?.(props.annotation.id, note);
+    else props.onRemove?.(props.annotation.id);
+    props.onClose();
+  }
   return (
     <PopoverSurface
       ref={props.editorRef}
@@ -309,6 +328,7 @@ function ResponseAnnotationEditor(props: {
       data-expanded={optionsOpen || note.includes('\n') || undefined}
       style={{ left: props.point.left, top: props.point.top, width: props.point.width, maxHeight: props.point.maxHeight }}
       aria-label={zh ? '回答评论' : 'Response comment'}
+      onKeyDown={handleAnnotationDismiss}
     >
       <form className="session-response-annotation-row" onSubmit={submitAnnotation}>
         <button data-icon-tooltip={zh ? '评论选项' : 'Comment options'} type="button" aria-label={zh ? '评论选项' : 'Comment options'} aria-expanded={optionsOpen} onClick={() => setOptionsOpen((open) => !open)}>
@@ -359,12 +379,26 @@ function rangeEndRect(range: Range): DOMRect | null {
   );
 }
 
-/** 原生光标给出拖选终点；整段选择没有光标矩形时使用对应端的文字片段。 */
-function selectionFocusPoint(selection: Selection): SelectionCandidate['pointerOffset'] | null {
+/** 选区裁到当前回答，保留跨出正文时仍有效的文字。 */
+function selectedResponseRange(root: HTMLElement, selection: Selection | null): Range | null {
+  if (!selection?.rangeCount || selection.isCollapsed) return null;
+  /** 副本只用于读取，不改变用户的原生选区。 */
+  const range = selection.getRangeAt(0).cloneRange();
+  if (!range.intersectsNode(root)) return null;
+  /** 正文边界同时排除回答之外的标题、操作和相邻消息。 */
+  const contentRange = root.ownerDocument.createRange();
+  contentRange.selectNodeContents(root);
+  if (range.compareBoundaryPoints(Range.START_TO_START, contentRange) < 0) range.setStart(contentRange.startContainer, contentRange.startOffset);
+  if (range.compareBoundaryPoints(Range.END_TO_END, contentRange) > 0) range.setEnd(contentRange.endContainer, contentRange.endOffset);
+  return range.collapsed ? null : range;
+}
+
+/** 原生光标给出拖选方向；定位使用裁到正文后的对应端。 */
+function selectionFocusPoint(selection: Selection, range: Range): SelectionCandidate['pointerOffset'] | null {
   /** 原生选区按文档顺序保存，focus 才代表用户结束选择的一端。 */
-  const range = selection.getRangeAt(0);
+  const selectedRange = selection.getRangeAt(0);
   /** 反向选择的终点在选区开头。 */
-  const backward = selection.focusNode === range.startContainer && selection.focusOffset === range.startOffset;
+  const backward = selection.focusNode === selectedRange.startContainer && selection.focusOffset === selectedRange.startOffset;
   /** 折叠副本读取光标位置，不改变用户选区。 */
   const focusRange = range.cloneRange();
   focusRange.collapse(backward);
@@ -375,16 +409,19 @@ function selectionFocusPoint(selection: Selection): SelectionCandidate['pointerO
 }
 
 /** 评论入口放在鼠标松手点右上方，按实际尺寸避开会话边界。 */
-function selectionToolbarPoint(selection: Selection, pointerOffset: SelectionCandidate['pointerOffset'], article: HTMLElement, view: Window | null, toolbar: HTMLElement | null): SelectionCandidate['point'] | null {
+function selectionToolbarPoint(selection: Selection, range: Range, pointerOffset: SelectionCandidate['pointerOffset'], article: HTMLElement, view: Window | null, toolbar: HTMLElement | null): SelectionCandidate['point'] | null {
   /** 会话可见范围同时约束短选区和窄分栏。 */
   const bounds = visibleOverlayBounds(article, view);
   /** 布局刷新只重算原文终点，鼠标与终点的相对距离保持不变。 */
-  const focusPoint = selectionFocusPoint(selection);
+  const focusPoint = selectionFocusPoint(selection, range);
   if (!focusPoint) return null;
-  /** 松手位置作为唯一定位基准，不受整段选区宽高影响。 */
-  const left = focusPoint.left + pointerOffset.left;
-  const top = focusPoint.top + pointerOffset.top;
-  if (left < bounds.left || left > bounds.right || top < bounds.top || top > bounds.bottom) return null;
+  /** 原文完全离开可见范围时关闭入口；松手点越界时仍保留有效选区。 */
+  const rect = range.getBoundingClientRect();
+  if (bounds.right <= bounds.left || bounds.bottom <= bounds.top || rect.bottom <= bounds.top || rect.top >= bounds.bottom || rect.right <= bounds.left || rect.left >= bounds.right) return null;
+  /** 松手点夹紧到会话边界，不能因鼠标离开正文而丢掉评论。 */
+  const left = Math.max(bounds.left, Math.min(focusPoint.left + pointerOffset.left, bounds.right));
+  /** 垂直越界同样回到当前可见区域。 */
+  const top = Math.max(bounds.top, Math.min(focusPoint.top + pointerOffset.top, bounds.bottom));
   /** 首次挂载前尺寸为零，布局阶段会在绘制前校正。 */
   const width = toolbar?.offsetWidth ?? 0;
   const height = toolbar?.offsetHeight ?? 0;
