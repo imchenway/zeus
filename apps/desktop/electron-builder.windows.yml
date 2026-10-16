@@ -11,6 +11,9 @@ files:
 extraResources:
   - from: dist/native
     to: native
+  # builder 过滤资源根目录的 node_modules，私有 SDK 依赖必须单独映射。
+  - from: dist/native/node_modules
+    to: native/node_modules
 # Windows 可执行文件及安装器沿用同一发行签名。
 win:
   executableName: Zeus
