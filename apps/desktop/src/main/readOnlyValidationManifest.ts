@@ -87,11 +87,13 @@ export async function verifyDesktopReadOnlyValidationDescriptor(descriptor: Read
   return verifyReadOnlyValidationDescriptor(descriptor);
 }
 
-/** 打包应用身份由平台分发元数据确认，Windows 产品名必须来自已验签的 PE 文件。 */
-export function readPackagedDesktopApplicationId(executablePath: string, packaged: boolean): string {
+/** 正式及只读验收身份要求有效签名；普通内部启动可显式接受独立 Test 产品的无签名 PE。 */
+export function readPackagedDesktopApplicationId(executablePath: string, packaged: boolean, allowUnsignedTest = false): string {
   if (!packaged) throw validationApplicationError('应用身份核验只允许打包产物。');
   if (process.platform === 'win32') {
-    const signature = windowsSecurityRequest<{ valid: boolean; productName: string | null }>({ operation: 'verify-authenticode', path: executablePath });
+    const signature = windowsSecurityRequest<{ valid: boolean; status?: number; productName: string | null }>({ operation: 'verify-authenticode', path: executablePath });
+    // TRUST_E_NOSIGNATURE 仅表示无签名；损坏签名、证书错误和其他产品均不进入内部身份。
+    if (allowUnsignedTest && !signature.valid && signature.status === -2146762496 && signature.productName === 'Zeus Test' && basename(executablePath) === 'Zeus Test.exe') return 'dev.hypha.zeus.test';
     if (!signature.valid || (signature.productName !== 'Zeus Test' && signature.productName !== 'Zeus')) throw validationApplicationError('Windows 应用签名或产品身份无效。');
     return signature.productName === 'Zeus Test' ? 'dev.hypha.zeus.test' : 'dev.hypha.zeus';
   }

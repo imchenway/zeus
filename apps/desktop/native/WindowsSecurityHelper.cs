@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Reflection.PortableExecutable;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
@@ -343,7 +344,26 @@ internal static class WindowsSecurityHelper
             int status = WinVerifyTrust(new IntPtr(-1), ref policy, ref data);
             data.StateAction = 2;
             WinVerifyTrust(new IntPtr(-1), ref policy, ref data);
-            if (status != 0) return new { valid = false, status, subject = (string?)null, thumbprint = (string?)null, productName = (string?)null, originalFilename = (string?)null };
+            if (status != 0)
+            {
+                // 仅无签名且 PE 证书表为空时返回不可信版本字段，损坏或不可信签名不能降级。
+                FileVersionInfo? unsignedIdentity = null;
+                if (status == unchecked((int)0x800B0100))
+                {
+                    try
+                    {
+                        // 复用已锁定的文件流读取 PE 头，期间不允许替换或修改文件。
+                        using PEReader executable = new(signatureLock, PEStreamOptions.LeaveOpen);
+                        if (executable.PEHeaders.PEHeader is { CertificateTableDirectory: { Size: 0, RelativeVirtualAddress: 0 } }) unsignedIdentity = FileVersionInfo.GetVersionInfo(path);
+                    }
+                    catch (BadImageFormatException)
+                    {
+                        // 非法 PE 保持 valid=false，不能让坏文件进入内部包身份或中断候选发现。
+                        unsignedIdentity = null;
+                    }
+                }
+                return new { valid = false, status, subject = (string?)null, thumbprint = (string?)null, productName = unsignedIdentity?.ProductName, originalFilename = unsignedIdentity?.OriginalFilename };
+            }
             using X509Certificate2 certificate = new(X509Certificate.CreateFromSignedFile(path));
             FileVersionInfo identity = FileVersionInfo.GetVersionInfo(path);
             return new { valid = true, status, subject = certificate.Subject, thumbprint = certificate.Thumbprint, productName = identity.ProductName, originalFilename = identity.OriginalFilename };
