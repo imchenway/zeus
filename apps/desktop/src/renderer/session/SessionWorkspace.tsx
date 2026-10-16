@@ -42,7 +42,7 @@ import { ComposerDropdown } from './ComposerDropdown.js';
 import { PlanImplementationRequestSurface } from './PlanImplementationRequestSurface.js';
 import { PlanWorkspace } from './PlanWorkspace.js';
 import { BrowserWorkspace } from './BrowserWorkspace.js';
-import { defaultSourceWorkspaceViewMode, FilePreviewWorkspace, SourceWorkspace, type SourceWorkspaceViewMode } from './SourceWorkspace.js';
+import { defaultSourceWorkspaceViewMode, FilePreviewWorkspace, SourceWorkspace } from './SourceWorkspace.js';
 import { TurnDiffWorkspace } from './TurnChanges.js';
 import { SubagentWorkspace } from './SubagentWorkspace.js';
 import { RuntimeDetails } from './RuntimeDetails.js';
@@ -107,6 +107,7 @@ import type { ConversationModelSetupContext } from '../settings/useModelSetup.js
 import { StructuredComposerInput, type StructuredComposerSelection } from './StructuredComposerInput.js';
 import { isSessionTerminalShortcut, SessionTerminalPanel, type SessionTerminalClient } from './SessionTerminal.js';
 import { useSessionTerminalVisibility } from './useSessionTerminalVisibility.js';
+import { useSessionContextWorkspace, type SessionContextWorkspace } from './useSessionContextWorkspace.js';
 
 export interface SessionWorkspaceTaskManagementStatus {
   id: string;
@@ -1729,15 +1730,6 @@ const labels = {
   },
 } as const;
 
-type SessionContextWorkspace =
-  | { kind: 'none' }
-  | { kind: 'browser' }
-  | { kind: 'subagents' }
-  | { kind: 'plan'; item: NativeSessionItemBuffer }
-  | { kind: 'file'; request: FilePreviewRequest; location?: ConversationFileLocation }
-  | { kind: 'source'; preview: ConversationResourcePreview; viewMode: SourceWorkspaceViewMode }
-  | { kind: 'turn_diff'; turnId: string; initialFileId?: string };
-
 export interface SessionHeaderSnapshot {
   conversationId: string;
   title: string;
@@ -1766,7 +1758,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const actions = props.actions ?? {};
   const owner: SessionConversationOwner | undefined = props.owner ?? (props.task ? { kind: 'task', projectId: props.task.projectId, projectName: props.task.projectId, taskId: props.task.id, taskTitle: props.task.title } : undefined);
   const composerRef = useRef<ComposerInputHandle | null>(null);
-  /** 临时会话接管为真实会话时保留面板状态，切换到其他会话时才重置。 */
+  /** 稳定导航身份让临时会话接管和会话切换都能恢复各自的面板。 */
   const navigationId = props.conversation?.navigationId ?? props.conversation?.id;
   const workspaceIdentityRef = useRef(props.conversation?.id ?? null);
   workspaceIdentityRef.current = props.conversation?.id ?? null;
@@ -1780,12 +1772,13 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const closingBrowserConversationsRef = useRef(new Set<string>());
   const [requestErrors, setRequestErrors] = useState<Record<string, string>>({});
   const [interruptArmed, setInterruptArmed] = useState(false);
-  /** 子智能体列表仅由用户主动打开，历史加载和新增智能体不改变面板状态。 */
-  const [contextWorkspace, setContextWorkspace] = useState<SessionContextWorkspace>({ kind: 'none' });
+  /** 打开的工作区与源码标签属于会话，切换或卸载不自动关闭。 */
+  const { contextWorkspace, setContextWorkspace, contextFullWidth, setContextFullWidth, imagePreviewRequest, setImagePreviewRequest, sourceWorkspaceState, setSourceWorkspaceState } = useSessionContextWorkspace(
+    props.conversation?.projectId,
+    navigationId,
+  );
   /** 关闭上下文工作区失败时保留当前工作面，并在本会话内说明原因。 */
   const [contextWorkspaceError, setContextWorkspaceError] = useState<unknown>(null);
-  /** 图片弹窗独立于右侧审阅，关闭后保留原有阅读位置。 */
-  const [imagePreviewRequest, setImagePreviewRequest] = useState<FilePreviewRequest | null>(null);
   const contextWorkspaceRef = useRef<SessionContextWorkspace>(contextWorkspace);
   contextWorkspaceRef.current = contextWorkspace;
   const [quickActionsPersistentHost, setQuickActionsPersistentHost] = useState<HTMLDivElement | null>(null);
@@ -1793,7 +1786,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const [contextToolbarHost, setContextToolbarHost] = useState<HTMLDivElement | null>(null);
   /** 环境卡在浏览器旁占用实际空间，避免遮盖原生网页。 */
   const [browserEnvironmentHost, setBrowserEnvironmentHost] = useState<HTMLDivElement | null>(null);
-  const [contextFullWidth, setContextFullWidth] = useState(false);
   /** 分栏比例属于本机阅读偏好，跨会话和重启恢复。 */
   const [browserPaneShare, setBrowserPaneShare] = useState(() => {
     try {
@@ -1926,9 +1918,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     clearInterruptResetTimer(interruptResetTimerRef);
     previousBlockingInteractionCountRef.current = 0;
     composerFocusRestorationPendingRef.current = false;
-    setContextWorkspace({ kind: 'none' });
-    setContextFullWidth(false);
-    setImagePreviewRequest(null);
     setGoalPanelOpen(false);
     setGoalBusy(false);
     setGoalError(null);
@@ -2295,15 +2284,18 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   }
 
   /** 图片使用弹窗并保留右侧内容，其他文件打开审阅并记录返回焦点。 */
-  const openFilePreview = useCallback((request: FilePreviewRequest, image = false, location?: ConversationFileLocation): void => {
-    if (image) {
-      setImagePreviewRequest(request);
-      return;
-    }
-    contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setContextFullWidth(false);
-    setContextWorkspace({ kind: 'file', request, location });
-  }, []);
+  const openFilePreview = useCallback(
+    (request: FilePreviewRequest, image = false, location?: ConversationFileLocation): void => {
+      if (image) {
+        setImagePreviewRequest(request);
+        return;
+      }
+      contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      setContextFullWidth(false);
+      setContextWorkspace({ kind: 'file', request, location });
+    },
+    [setContextFullWidth, setContextWorkspace, setImagePreviewRequest],
+  );
 
   /** 会话图片使用弹窗，其余资源进入右侧；显式的系统和编辑器操作按用户选择执行。 */
   async function openConversationResource(resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation): Promise<void> {
@@ -3076,6 +3068,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       ) : null}
                       {contextWorkspace.kind === 'source' ? (
                         <SourceWorkspace
+                          state={sourceWorkspaceState}
+                          onStateChange={setSourceWorkspaceState}
                           canSplit={browserLayoutWidth > 840}
                           toolbarHost={contextToolbarHost}
                           preview={contextWorkspace.preview}
