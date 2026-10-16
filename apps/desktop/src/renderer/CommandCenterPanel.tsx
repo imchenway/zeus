@@ -45,6 +45,10 @@ import { ProjectTerminalPanel } from './features/runtime/ProjectTerminalPanel.js
 export interface CommandCenterPanelProps {
   /** 项目弹窗的关闭入口；关闭显示层不终止后台运行。 */
   onClose?: () => void;
+  /** 通知指定原执行身份，允许直接打开不在最近列表中的记录。 */
+  initialRunId?: string;
+  /** 只有准确执行详情已渲染时回传；收起或关闭后清除可见身份。 */
+  onRunDetailVisible?: (run: CommandRun | null) => void;
   mode: 'global' | 'project';
   project?: ProjectRecord;
   client: DashboardClient;
@@ -489,7 +493,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
   useEffect(() => {
     historyCommandIdRef.current = null;
     setHistoryCommand(null);
-    setSelectedRunId(null);
+    setSelectedRunId(props.initialRunId ?? null);
     if (props.mode !== 'project' || !props.project) {
       setRuns([]);
       return;
@@ -498,7 +502,12 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
     void props.client
       .loadCommandRuns(props.project.id)
       .then((items) => {
-        if (active) setRuns(items);
+        if (active)
+          setRuns((current) => {
+            /** 最近列表与详情可并行返回，不能覆盖通知加载的较早执行。 */
+            const requestedRun = current.find((run) => run.id === props.initialRunId);
+            return requestedRun && !items.some((run) => run.id === requestedRun.id) ? [requestedRun, ...items] : items;
+          });
       })
       .catch((loadError) => {
         if (active) setError(loadError);
@@ -506,7 +515,7 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
     return () => {
       active = false;
     };
-  }, [props.client, props.mode, props.project?.id]);
+  }, [props.client, props.mode, props.project?.id, props.initialRunId]);
 
   useEffect(() => {
     if (!selectedRunId) {
@@ -573,6 +582,11 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
         }
         runLogCursorRef.current = { runId: selectedRunId, nextSeq: detail.nextSeq };
         setRunDetail((current) => mergeCommandRunDetail(current, detail, skippedHistoricalLogs));
+        if (props.initialRunId === detail.run.id && historyCommandIdRef.current === null) {
+          // 已删除的命令也能通过执行时快照查看原结果。
+          historyCommandIdRef.current = detail.run.commandSnapshot.id;
+          setHistoryCommand(detail.run.commandSnapshot);
+        }
         setRuns((current) => {
           const index = current.findIndex((run) => run.id === detail.run.id);
           if (index < 0) return [detail.run, ...current];
@@ -617,7 +631,14 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
       if (pollTimer) window.clearInterval(pollTimer);
       unsubscribe?.();
     };
-  }, [props.client, selectedRunId, selectedRunIsActive, selectedRuntimeSessionId]);
+  }, [props.client, props.initialRunId, selectedRunId, selectedRunIsActive, selectedRuntimeSessionId]);
+
+  // 详情完成渲染后才回传可见身份，关闭或切换时立即撤销回执。
+  useEffect(() => {
+    if (!historyCommand || !runDetail || runDetail.run.id !== selectedRunId) return;
+    props.onRunDetailVisible?.(runDetail.run);
+    return () => props.onRunDetailVisible?.(null);
+  }, [historyCommand?.id, runDetail?.run, selectedRunId, props.onRunDetailVisible]);
 
   async function reloadCommands(): Promise<void> {
     const items = props.mode === 'global' ? await props.client.loadGlobalCommands() : props.project ? await props.client.loadProjectCommands(props.project.id) : [];

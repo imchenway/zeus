@@ -1,7 +1,7 @@
 import { platformShortcutLabel } from '../../platform.js';
 import type { ProjectGitWorkbenchSnapshot } from '../git/gitContracts.js';
 import { toolPages } from '../../tooling/index.js';
-import { temporaryWorkspaceId } from '@zeus/shared';
+import { temporaryWorkspaceId, type CommandRun, type CommandRunNotification } from '@zeus/shared';
 import { MotionPresence } from '../../ui/MotionPresence.js';
 import { SettingsSaveStatus, useSettingsAutosave, type SettingsSaveState } from '../../settings/useSettingsAutosave.js';
 import { FileTextIcon } from '@phosphor-icons/react/dist/csr/FileText';
@@ -127,6 +127,12 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   const [taskField, setTaskField] = useState<'status' | 'priority' | 'runStatus'>('status');
   const [zentaoImportOpen, setZentaoImportOpen] = useState(false);
   const { state, domainActions, operations } = input;
+  /** 命令通知复用原命令弹窗，不切换底层页面或丢弃未保存内容。 */
+  const [notificationCommand, setNotificationCommand] = useState<CommandRunNotification | null>(null);
+  /** 详情组件回传真实可见身份，加载失败或关闭不会提前已读。 */
+  const [visibleNotificationCommandRun, setVisibleNotificationCommandRun] = useState<CommandRun | null>(null);
+  /** 项目以当前目录为准，删除后不继续展示可操作详情。 */
+  const notificationCommandProject = state.snapshot.projects.find((project) => project.id === notificationCommand?.projectId);
   /** 进入会话后通知状态仍驻留，等待准确正文可见再确认已读。 */
   const notifications = useNotifications({
     client: state.props.commandClient ?? null,
@@ -151,6 +157,14 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       const task = await client.loadTask(item.taskId);
       if (!state.snapshot.projects.some((project) => project.id === task.projectId)) throw new Error('任务所属项目不可用。');
       openSearchedTask(task.id, task.projectId);
+    },
+    visibleCommandRun: visibleNotificationCommandRun,
+    commandContentVisible: state.zeusWindowForeground && Boolean(notificationCommand && notificationCommandProject),
+    /** 只叠加原详情弹窗，同一已打开执行保留真实可见回执。 */
+    onOpenCommand: async (item) => {
+      if (!state.props.commandClient) throw new Error('命令服务尚未连接。');
+      if (!state.snapshot.projects.some((project) => project.id === item.projectId)) throw new Error('命令所属项目不可用。');
+      setNotificationCommand(item);
     },
   });
   useEffect(
@@ -707,6 +721,31 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       aria-label={uiCopy.shellAriaLabel}
       onPointerDown={handleWindowDragPointerDown}
     >
+      <MotionPresence>
+        {notificationCommand && notificationCommandProject && props.commandClient ? (
+          <ModalPortal
+            role="dialog"
+            aria-label={`${notificationCommandProject.name} · ${appShellSettings.appLanguage === 'zh-CN' ? '命令' : 'Commands'}`}
+            rootClassName="project-command-portal"
+            onDismiss={() => setNotificationCommand(null)}
+          >
+            <section className="project-command-dialog zeus-solid-form-surface" data-modal-surface="dialog">
+              <Suspense fallback={null}>
+                <CommandCenterPanel
+                  key={notificationCommand.id}
+                  mode="project"
+                  project={notificationCommandProject}
+                  client={props.commandClient}
+                  language={appShellSettings.appLanguage}
+                  initialRunId={notificationCommand.id}
+                  onRunDetailVisible={setVisibleNotificationCommandRun}
+                  onClose={() => setNotificationCommand(null)}
+                />
+              </Suspense>
+            </section>
+          </ModalPortal>
+        ) : null}
+      </MotionPresence>
       <Suspense fallback={null}>
         <MotionPresence>{modelSetup.step ? <ModelSetupDialog controller={modelSetup} /> : null}</MotionPresence>
       </Suspense>
