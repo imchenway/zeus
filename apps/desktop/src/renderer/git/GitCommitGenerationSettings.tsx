@@ -75,6 +75,8 @@ export function GitCommitGenerationSettingsButton(props: { client: GitCommitMode
           onClose={() => setOpen(false)}
           onSubmit={(event) => {
             event.preventDefault();
+            // 设置弹窗可能位于另一表单内，保存模型不能同时保存或关闭外层组合设置。
+            event.stopPropagation();
             if (!settings || !selected || loading) return;
             if (!saveGitCommitGenerationSettings(props.projectId, settings, scope)) {
               setWarning(props.zh ? '设置已用于本次运行，但无法保存到本机。' : 'Settings apply to this run but could not be saved locally.');

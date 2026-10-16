@@ -4,6 +4,8 @@ import { defaultGitDeliverySettings, defaultTaskManagementStatusLabels, type Git
 import type { DashboardClient } from '../apiClient.js';
 import { Button } from '../ui/Button.js';
 import { FormDialog } from '../ui/FormDialog.js';
+import { loadGitCommitModelOptions } from './gitCommitModels.js';
+import { GitCommitGenerationSettingsButton } from './GitCommitGenerationSettings.js';
 import { VisibleApplicationError, formatVisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { SkillSelector } from '../features/skills/SkillSelector.js';
@@ -17,6 +19,7 @@ export type GitDeliveryClient = Pick<
   | 'loadGitDeliveryRuns'
   | 'loadGitDeliveryOptions'
   | 'startGitDeliveryRun'
+  | 'loadGitCommitModels'
   | 'resumeGitDeliveryRun'
   | 'acknowledgeGitDelivery'
   | 'loadGitDeliveryConflict'
@@ -33,6 +36,7 @@ function readSettings(projectId: string): GitDeliverySettings {
     if (
       !value ||
       ['commit', 'merge', 'push', 'resolveConflicts'].some((key) => typeof value[key as 'commit'] !== 'boolean') ||
+      (value.generateCommitMessage !== undefined && typeof value.generateCommitMessage !== 'boolean') ||
       !['auto', 'full-access'].includes(value.permissionMode ?? '') ||
       (value.skillId !== null && typeof value.skillId !== 'string') ||
       (value.finalTaskStatus !== null && typeof value.finalTaskStatus !== 'string')
@@ -81,7 +85,7 @@ export function GitDeliveryRunControl(props: {
   /** 终态清理只能在用户看到真实影响后明确确认。 */
   const [cleanupRun, setCleanupRun] = useState<GitDeliveryRun | null>(null);
   /** 真实接纳身份在未知响应重试时保持不变。 */
-  const request = useRef<{ json: string; key: string } | null>(null);
+  const request = useRef<{ json: string; sourceJson: string; key: string } | null>(null);
   /** React 更新前的同步锁。 */
   const pending = useRef(false);
   /** 后台查询只属于当前入口。 */
@@ -153,10 +157,20 @@ export function GitDeliveryRunControl(props: {
     setBusy(true);
     setError(null);
     try {
-      const input: GitDeliveryInput = { ...props.input, settings: { ...settings, finalTaskStatus: props.input.scope.kind === 'task' ? settings.finalTaskStatus : null } };
-      const json = JSON.stringify(input);
-      if (request.current?.json !== json) request.current = { json, key: crypto.randomUUID() };
-      await props.client.startGitDeliveryRun(props.projectId, JSON.parse(json) as GitDeliveryInput, request.current.key);
+      /** 读取模型前固定文件和设置，接纳重试继续使用同一快照。 */
+      const sourceJson = JSON.stringify({ ...props.input, settings: { ...settings, finalTaskStatus: props.input.scope.kind === 'task' ? settings.finalTaskStatus : null } });
+      if (request.current?.sourceJson !== sourceJson) {
+        /** 模型参数随运行冻结，之后修改项目偏好不影响已接纳步骤。 */
+        const input = JSON.parse(sourceJson) as GitDeliveryInput;
+        if (input.settings.commit && input.settings.generateCommitMessage && input.repositories.some((repository) => repository.paths.length > 0)) {
+          /** 与原 AI 生成按钮共用模型、推理深度和速率偏好。 */
+          const models = await loadGitCommitModelOptions(props.client, props.projectId);
+          if (!models.modelRef) throw new Error(models.warning || (props.zh ? '暂无可用模型，请在 AI 生成设置中选择模型。' : 'No model is available. Choose a model in AI generation settings.'));
+          input.commitMessageGeneration = { ...models.settings, language: props.zh ? 'zh-CN' : 'en' };
+        }
+        request.current = { json: JSON.stringify(input), sourceJson, key: crypto.randomUUID() };
+      }
+      await props.client.startGitDeliveryRun(props.projectId, JSON.parse(request.current.json) as GitDeliveryInput, request.current.key);
       request.current = null;
       props.onAccepted();
     } catch (reason) {
@@ -248,6 +262,7 @@ export function GitDeliveryRunControl(props: {
       </div>
       <small>
         {summary}
+        {settings.commit && settings.generateCommitMessage ? (props.zh ? ' · AI 生成提交信息' : ' · AI-generated commit messages') : ''}
         {settings.resolveConflicts ? (props.zh ? ' · 冲突交给 AI' : ' · AI resolves conflicts') : ''}
         {settings.finalTaskStatus && props.input.scope.kind === 'task' ? (props.zh ? ` · 最后变更为：${finalStatusLabel}` : ` · Final status: ${finalStatusLabel}`) : ''}
       </small>
@@ -378,10 +393,21 @@ export function GitDeliveryRunControl(props: {
         >
           {error ? <VisibleApplicationError error={error} language={props.zh ? 'zh-CN' : 'en'} /> : null}
           {(['commit', 'merge', 'push'] as const).map((action, index) => (
-            <label key={action} className="git-delivery-checkbox">
-              <input type="checkbox" checked={draft[action]} onChange={(event) => setDraft({ ...draft, [action]: event.target.checked })} />
-              {index + 1}. {actionLabel(action, props.zh)}
-            </label>
+            <div key={action} className="git-delivery-operation-row">
+              <label className="git-delivery-checkbox">
+                <input type="checkbox" checked={draft[action]} onChange={(event) => setDraft({ ...draft, [action]: event.target.checked })} />
+                {index + 1}. {actionLabel(action, props.zh)}
+              </label>
+              {action === 'commit' ? (
+                <>
+                  <label className="git-delivery-checkbox" aria-disabled={!draft.commit}>
+                    <input type="checkbox" checked={draft.generateCommitMessage} disabled={!draft.commit || busy} onChange={(event) => setDraft({ ...draft, generateCommitMessage: event.target.checked })} />
+                    {props.zh ? 'AI 生成提交信息' : 'Generate commit messages with AI'}
+                  </label>
+                  <GitCommitGenerationSettingsButton client={props.client} projectId={props.projectId} zh={props.zh} disabled={busy} />
+                </>
+              ) : null}
+            </div>
           ))}
           <label className="git-delivery-checkbox">
             <input type="checkbox" checked={draft.resolveConflicts} onChange={(event) => setDraft({ ...draft, resolveConflicts: event.target.checked })} />
