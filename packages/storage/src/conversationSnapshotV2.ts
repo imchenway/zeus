@@ -757,10 +757,10 @@ export class ConversationSnapshotV2Repository {
     this.systemMessages = new ConversationSystemMessageRepository(db);
   }
 
-  /** 只读取异步问题元数据与答复身份，侧栏不依赖历史分页或加载消息正文。 */
+  /** 只读取未结束轮次的异步问题元数据与答复身份，侧栏不依赖历史分页或加载消息正文。 */
   pendingAsyncQuestionConversationIds(projectIds: readonly string[]): Set<string> {
     if (projectIds.length === 0) return new Set();
-    /** 有效答复包括已接收和结果未知的提交；明确失败、取消或删除后允许再次回答。 */
+    /** 正式终态和最终交付关闭提醒；活动轮次的答复失败、取消或删除后仍允许再次回答。 */
     const questions = this.db.select<{ conversation_id: string; metadata_json: string }>(
       `SELECT message.conversation_id, message.metadata_json
          FROM conversation_messages AS message
@@ -768,6 +768,18 @@ export class ConversationSnapshotV2Repository {
         WHERE conversation.project_id IN (SELECT value FROM json_each(?)) AND conversation.archived = 0
           AND message.role = 'assistant' AND message.provider_turn_id IS NOT NULL AND message.provider_item_id IS NOT NULL
           AND json_valid(message.metadata_json) AND json_extract(message.metadata_json, '$.delivery') = 'async'
+          AND NOT EXISTS (
+            SELECT 1 FROM conversation_turns AS turn
+             WHERE turn.conversation_id = message.conversation_id
+               AND (turn.provider_turn_id = message.provider_turn_id OR turn.id = message.provider_turn_id)
+               AND (turn.status IN ('completed', 'interrupted', 'failed') OR turn.completed_at IS NOT NULL)
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM conversation_messages AS final_message
+             WHERE final_message.conversation_id = message.conversation_id
+               AND final_message.provider_turn_id = message.provider_turn_id AND final_message.role = 'assistant'
+               AND json_valid(final_message.metadata_json) AND json_extract(final_message.metadata_json, '$.messageKind') = 'final'
+          )
           AND NOT EXISTS (
             SELECT 1 FROM conversation_submissions AS submission
              WHERE submission.conversation_id = message.conversation_id
