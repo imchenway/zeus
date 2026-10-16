@@ -1,8 +1,20 @@
 import { randomId } from './randomId.js';
 import { createHash } from 'node:crypto';
-import { type CommandArtifact, type CommandDefinition, type CommandDefinitionInput, type CommandRun, type CommandRunStatus, type CommandRunTrigger, type CommandScope, type CommandShell, defaultCommandRiskFlags } from '@zeus/shared';
+import {
+  type CommandArtifact,
+  type CommandDefinition,
+  type CommandDefinitionInput,
+  type CommandRun,
+  type CommandRunNotification,
+  type CommandRunStatus,
+  type CommandRunTrigger,
+  type CommandScope,
+  type CommandShell,
+  type NotificationPosition,
+  defaultCommandRiskFlags,
+} from '@zeus/shared';
 import type { ArtifactRef, ArtifactStore } from './artifactStore.js';
-import type { ZeusDatabasePort } from './databasePort.js';
+import type { SqlValue, ZeusDatabasePort } from './databasePort.js';
 
 interface DbCommandDefinitionRow {
   id: string;
@@ -106,6 +118,7 @@ export function migrateCommandCenterSchema(db: ZeusDatabasePort): void {
   if (db.get<{ migration_id: string }>(`SELECT migration_id FROM schema_migrations WHERE migration_id = ?`, [migrationId])) {
     migrateCommandArtifactRefColumn(db);
     migrateCommandShell(db);
+    migrateCommandRunNotifications(db);
     return;
   }
   db.transaction(() => {
@@ -187,6 +200,21 @@ export function migrateCommandCenterSchema(db: ZeusDatabasePort): void {
   });
   migrateCommandArtifactRefColumn(db);
   migrateCommandShell(db);
+  migrateCommandRunNotifications(db);
+}
+
+/** 新增执行结果未读状态；历史执行默认已读，不在升级时集中补发。 */
+function migrateCommandRunNotifications(db: ZeusDatabasePort): void {
+  /** 独立登记迁移，保持已有迁移记录不变。 */
+  const migrationId = '20261016_command_run_notifications';
+  if (db.get('SELECT migration_id FROM schema_migrations WHERE migration_id = ?', [migrationId])) return;
+  db.transaction(() => {
+    // 一表示执行结果尚未确认，零表示已读或尚未结束；由命令仓库维护。
+    db.execute('ALTER TABLE command_runs ADD COLUMN notification_unread INTEGER NOT NULL DEFAULT 0 CHECK(notification_unread IN (0, 1))');
+    // 仅索引未读执行，匹配通知列表的结束时间及身份倒序读取。
+    db.execute('CREATE INDEX idx_command_runs_notification_unread ON command_runs(ended_at DESC, id DESC) WHERE notification_unread = 1');
+    db.execute('INSERT INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)', [migrationId, '命令执行结果的耐久未读状态', createHash('sha256').update(migrationId).digest('hex'), nowIso()]);
+  });
 }
 
 /** 用独立迁移固定旧脚本的 sh 语义，不改变已有迁移校验和。 */
@@ -409,7 +437,9 @@ export class CommandDefinitionRepository {
   }
 }
 
+/** 命令执行结果与通知状态共用同一权威记录。 */
 export class CommandRunRepository {
+  /** 复用命令执行及通知确认的事务边界。 */
   constructor(private readonly db: ZeusDatabasePort) {}
 
   create(input: CreateCommandRunRecordInput): CommandRun {
@@ -426,6 +456,7 @@ export class CommandRunRepository {
     return this.getById(id)!;
   }
 
+  /** 首次结束执行时同时置为未读；重复终态更新不会重新提醒。 */
   update(id: string, input: UpdateCommandRunRecordInput): CommandRun {
     const existing = this.getById(id);
     if (!existing) throw new Error(`Command run not found: ${id}`);
@@ -433,7 +464,9 @@ export class CommandRunRepository {
     this.db.execute(
       `UPDATE command_runs
        SET status = ?, runtime_session_id = ?, exit_code = ?, failure_reason = ?,
-           started_at = ?, ended_at = ?, updated_at = ?
+           started_at = ?, ended_at = ?, updated_at = ?,
+           notification_unread = CASE WHEN ended_at IS NULL AND ? IS NOT NULL
+             AND ? IN ('succeeded', 'failed', 'timed_out', 'cancelled') THEN 1 ELSE notification_unread END
        WHERE id = ?`,
       [
         input.status ?? existing.status,
@@ -443,6 +476,8 @@ export class CommandRunRepository {
         input.startedAt === undefined ? existing.startedAt : input.startedAt,
         input.endedAt === undefined ? existing.endedAt : input.endedAt,
         updatedAt,
+        input.endedAt === undefined ? existing.endedAt : input.endedAt,
+        input.status ?? existing.status,
         id,
       ],
     );
@@ -465,6 +500,29 @@ export class CommandRunRepository {
 
   listActive(): CommandRun[] {
     return this.db.select<DbCommandRunRow>(`${commandRunSelectSql()} WHERE status IN ('pending_confirmation', 'starting', 'running', 'stopping') ORDER BY created_at`).map(mapCommandRunRow);
+  }
+
+  /** 与统一通知采用相同全局边界；多读一条以判断下一页，计数覆盖全部未读。 */
+  notifications(before?: NotificationPosition): { items: CommandRunNotification[]; unreadCount: number } {
+    /** 已删除项目的结果不再出现在可导航列表中。 */
+    const unreadWhere = "notification_unread = 1 AND ended_at IS NOT NULL AND status IN ('succeeded', 'failed', 'timed_out', 'cancelled') AND project_id IN (SELECT id FROM projects WHERE deleted_at IS NULL)";
+    /** 相同时间时先比较来源，再比较原执行身份，保持跨来源分页稳定。 */
+    const boundary = before ? " AND (ended_at < ? OR (ended_at = ? AND ('command' < ? OR ('command' = ? AND id < ?))))" : '';
+    /** 所有边界值均使用绑定参数，不拼接外部输入。 */
+    const params: SqlValue[] = before ? [before.occurredAt, before.occurredAt, before.source, before.source, before.id] : [];
+    return {
+      items: this.db.select<DbCommandRunRow>(`${commandRunSelectSql()} WHERE ${unreadWhere}${boundary} ORDER BY ended_at DESC, id DESC LIMIT 21`, params).map((row) => {
+        /** 仅提取可展示摘要，状态和结束时间由查询条件保证。 */
+        const run = mapCommandRunRow(row);
+        return { id: run.id, projectId: run.projectId, title: run.commandSnapshot.title, status: run.status as CommandRunNotification['status'], occurredAt: run.endedAt! };
+      }),
+      unreadCount: this.db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM command_runs WHERE ${unreadWhere}`)?.count ?? 0,
+    };
+  }
+
+  /** 单条及全部确认都由统一通知的耐久幂等事务调用，不修改执行结果。 */
+  acknowledgeNotifications(id?: string): void {
+    this.db.execute('UPDATE command_runs SET notification_unread = 0 WHERE notification_unread = 1 AND (? IS NULL OR id = ?)', [id ?? null, id ?? null]);
   }
 }
 

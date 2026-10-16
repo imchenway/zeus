@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AutomationNotification, NotificationItem, TaskReminder } from '@zeus/shared';
+import type { AutomationNotification, CommandRun, CommandRunNotification, NotificationItem, TaskReminder } from '@zeus/shared';
 import type { DashboardClient } from '../../apiClient.js';
 import type { WorkspacePageProps } from '../workspace/workspaceContracts.js';
 import { formatVisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 
-/** 两类通知共享列表和操作状态，导航后仍等待准确内容可见再确认。 */
+/** 各来源共享列表和操作状态，导航后仍等待准确内容可见再确认。 */
 export function useNotifications(input: {
   /** 复用已认证的命令客户端。 */
   client: DashboardClient | null;
@@ -28,6 +28,12 @@ export function useNotifications(input: {
   onOpenConversation(item: AutomationNotification): Promise<boolean>;
   /** 复用已有任务导航和未保存草稿保护。 */
   onOpenTask(item: TaskReminder): Promise<void>;
+  /** 现有执行历史界面已经显示的准确命令执行。 */
+  visibleCommandRun: Pick<CommandRun, 'id' | 'projectId'> | null;
+  /** 主窗口在前台且命令详情弹窗仍然打开。 */
+  commandContentVisible: boolean;
+  /** 打开原执行历史，不重新执行命令或切换底层页面。 */
+  onOpenCommand(item: CommandRunNotification): Promise<void>;
 }) {
   /** 当前客户端和语言决定刷新函数的生命周期。 */
   const { client, subscribe, language } = input;
@@ -101,7 +107,7 @@ export function useNotifications(input: {
     /** 启动、断线重连以及通知变化均从服务端补读。 */
     const dispose = subscribe?.(
       (event) => {
-        if (event.type.startsWith('automation.') || event.type.startsWith('task.') || event.type.startsWith('project.') || event.type === 'conversation.thread.deleted') scheduleRefresh();
+        if (event.type.startsWith('automation.') || event.type.startsWith('task.') || event.type.startsWith('project.') || event.type.startsWith('command.run.') || event.type === 'conversation.thread.deleted') scheduleRefresh();
       },
       (state) => {
         if (state === 'connected') scheduleRefresh();
@@ -125,6 +131,7 @@ export function useNotifications(input: {
         /** 只使用点击时的修订，不替换为刷新后尚未看见的修订。 */
         if (item.source === 'automation') await client.acknowledgeAutomationNotification(item.id, item.revision);
         else if (item.source === 'git_delivery') await client.acknowledgeGitDelivery(item.id);
+        else if (item.source === 'command') await client.acknowledgeCommandNotification(item.id);
         else await client.acknowledgeTaskReminders([item.id]);
         await refresh();
       } catch (error) {
@@ -138,6 +145,8 @@ export function useNotifications(input: {
     if (!pendingRead || pendingRead.source === 'git_delivery') return;
     if (pendingRead.source === 'automation') {
       if (!input.contentVisible || pendingRead.conversationId !== input.visibleConversationId || pendingRead.projectId !== input.visibleProjectId) return;
+    } else if (pendingRead.source === 'command') {
+      if (!input.commandContentVisible || pendingRead.id !== input.visibleCommandRun?.id || pendingRead.projectId !== input.visibleCommandRun.projectId) return;
     } else if (!input.taskContentVisible || pendingRead.taskId !== input.visibleTaskId || pendingRead.projectId !== input.visibleTaskProjectId) return;
     /** 同一个点击即使重渲染也只发一次确认。 */
     const key = `${pendingRead.source}:${pendingRead.id}:${pendingRead.source === 'automation' ? pendingRead.revision : ''}`;
@@ -147,7 +156,19 @@ export function useNotifications(input: {
       setPendingRead((current) => (current === pendingRead ? null : current));
       if (readInFlight.current === key) readInFlight.current = null;
     });
-  }, [acknowledge, input.contentVisible, input.visibleConversationId, input.visibleProjectId, input.taskContentVisible, input.visibleTaskId, input.visibleTaskProjectId, pendingRead]);
+  }, [
+    acknowledge,
+    input.contentVisible,
+    input.visibleConversationId,
+    input.visibleProjectId,
+    input.taskContentVisible,
+    input.visibleTaskId,
+    input.visibleTaskProjectId,
+    input.commandContentVisible,
+    input.visibleCommandRun?.id,
+    input.visibleCommandRun?.projectId,
+    pendingRead,
+  ]);
 
   return {
     items,
@@ -186,6 +207,7 @@ export function useNotifications(input: {
         /** 用户取消未保存内容的离开确认时，不产生已读。 */
         let opened = true;
         if (item.source === 'automation') opened = await input.onOpenConversation(item);
+        else if (item.source === 'command') await input.onOpenCommand(item);
         else if (item.source === 'git_delivery') {
           if (!window.zeus?.openTaskGitDeliveryWindow) throw new Error('代码交付窗口不可用。');
           await window.zeus.openTaskGitDeliveryWindow(item.scope.kind === 'task' ? { taskId: item.scope.taskId } : { projectId: item.projectId, conversationId: item.scope.conversationId });
