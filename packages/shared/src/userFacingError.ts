@@ -32,6 +32,8 @@ type ErrorExplanation = readonly [zh: string, en: string, action?: UserFacingErr
 const explanations: ReadonlyArray<readonly [codes: readonly string[], explanation: ErrorExplanation]> = [
   // 草稿生成的输入边界需要在现有错误入口明确说明。
   [['ZEUS_INPUT_SUGGESTION_INVALID'], ['输入建议请求无效，草稿最多支持 16,000 个字符。', 'The suggestion request is invalid. Drafts can contain up to 16,000 characters.']],
+  // 空白或放弃标记属于无效正文，只提供主动重试入口。
+  [['ZEUS_INPUT_SUGGESTION_OUTPUT_INVALID'], ['未生成有效的输入建议，请重试。', 'No valid input suggestion was generated. Please retry.', 'retry']],
   // 独立文本生成保留确定的终止原因，不把输出截断引导到连接设置。
   [['ZEUS_MODEL_TEXT_OUTPUT_LIMIT'], ['模型达到输出上限，未生成完整结果。', 'The model reached its output limit before completing the result.']],
   [['ZEUS_MODEL_TEXT_INCOMPLETE'], ['模型提前结束，未生成完整结果。', 'The model ended before completing the result.']],

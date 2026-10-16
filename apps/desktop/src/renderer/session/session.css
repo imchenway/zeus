@@ -6627,13 +6627,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
     0 4px 16px color-mix(in srgb, var(--zeus-brand-primary) 14%, transparent);
 }
 
-/* 明确候选替换当前输入的含义，不占用输入框正文区域。 */
-.session-codex-parity-v1 .session-suggestion-preview-hint {
-  color: var(--session-text-muted);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
 .session-codex-parity-v1 .session-suggestion-preview-text {
   /* 正文本身就是采纳入口，视觉保持文本，键盘沿用原生按钮行为。 */
   display: block;
