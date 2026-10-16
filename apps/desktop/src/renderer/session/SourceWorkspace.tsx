@@ -12,7 +12,7 @@ import { Button } from '../ui/Button.js';
 import type { ConversationOpenTarget, ConversationResourceOpenTarget } from '@zeus/shared';
 import { listConversationResourceOpenTargetsInMain } from '../appShellBridge.js';
 import { FilePreview, FileReviewContent, PreviewImage } from '../code/FilePreview.js';
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowsInIcon as ArrowsIn } from '@phosphor-icons/react/dist/csr/ArrowsIn';
 import { ArrowsOutIcon as ArrowsOut } from '@phosphor-icons/react/dist/csr/ArrowsOut';
@@ -36,16 +36,38 @@ export function defaultSourceWorkspaceViewMode(preview: ConversationResourcePrev
   return supportsMarkdownPreview(preview) ? 'preview' : 'source';
 }
 
-/** 同一预览面板保留已打开文件，关闭当前标签后回到相邻文件。 */
-export function SourceWorkspace(props: Parameters<typeof SourceWorkspaceView>[0]) {
+/** 源码标签状态由会话持有，组件卸载后仍可恢复。 */
+export interface SourceWorkspaceState {
+  /** 已处理的打开请求，恢复面板时不重新选择旧请求。 */
+  requestedPreview: ConversationResourcePreview;
   /** 每个标签保留自己的预览模式和已授权资源。 */
-  const [tabs, setTabs] = useState([{ preview: props.preview, mode: props.viewMode }]);
+  tabs: { preview: ConversationResourcePreview; mode: SourceWorkspaceViewMode }[];
   /** 当前标签独立于最近收到的打开请求。 */
-  const [activeId, setActiveId] = useState(props.preview.resource.id);
+  activeId: string;
+}
+
+/** 同一会话保留已打开文件，关闭当前标签后回到相邻文件。 */
+export function SourceWorkspace(
+  props: Parameters<typeof SourceWorkspaceView>[0] & {
+    /** 会话保存的源码标签状态。 */
+    state: SourceWorkspaceState | null;
+    /** 所有标签操作写回所属会话。 */
+    onStateChange: Dispatch<SetStateAction<SourceWorkspaceState | null>>;
+  },
+) {
+  /** 首次打开可直接展示，后续挂载读取会话保存的选择。 */
+  const { tabs, activeId } = props.state ?? { tabs: [{ preview: props.preview, mode: props.viewMode }], activeId: props.preview.resource.id };
   useEffect(() => {
-    setTabs((current) => [...current.filter((tab) => tab.preview.resource.id !== props.preview.resource.id), { preview: props.preview, mode: props.viewMode }]);
-    setActiveId(props.preview.resource.id);
-  }, [props.preview]);
+    props.onStateChange((current) =>
+      current?.requestedPreview === props.preview
+        ? current
+        : {
+            requestedPreview: props.preview,
+            tabs: [...(current?.tabs ?? []).filter((tab) => tab.preview.resource.id !== props.preview.resource.id), { preview: props.preview, mode: props.viewMode }],
+            activeId: props.preview.resource.id,
+          },
+    );
+  }, [props.onStateChange, props.preview, props.viewMode]);
   /** 外部预览到达但状态尚未同步时仍显示真实文件。 */
   const active = tabs.find((tab) => tab.preview.resource.id === activeId) ?? tabs[0]!;
   return (
@@ -54,16 +76,15 @@ export function SourceWorkspace(props: Parameters<typeof SourceWorkspaceView>[0]
       preview={active.preview}
       viewMode={active.mode}
       tabs={tabs.map((tab) => tab.preview)}
-      onSelectTab={(preview) => setActiveId(preview.resource.id)}
-      onViewModeChange={(mode) => setTabs((current) => current.map((tab) => (tab.preview.resource.id === activeId ? { ...tab, mode } : tab)))}
+      onSelectTab={(preview) => props.onStateChange((current) => (current ? { ...current, activeId: preview.resource.id } : current))}
+      onViewModeChange={(mode) => props.onStateChange((current) => (current ? { ...current, tabs: current.tabs.map((tab) => (tab.preview.resource.id === current.activeId ? { ...tab, mode } : tab)) } : current))}
       onCloseTab={(preview) => {
         const remaining = tabs.filter((tab) => tab.preview.resource.id !== preview.resource.id);
         if (!remaining.length) {
           props.onClose();
           return;
         }
-        setTabs(remaining);
-        if (preview.resource.id === activeId) setActiveId(remaining.at(-1)!.preview.resource.id);
+        props.onStateChange((current) => (current ? { ...current, tabs: remaining, activeId: preview.resource.id === activeId ? remaining.at(-1)!.preview.resource.id : activeId } : current));
       }}
     />
   );
