@@ -63,8 +63,61 @@ for (const variant of variants) {
   }
   await writeFile(resolve(target, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
   // 扩展各尺寸图标直接由应用的同一份原图生成。
-  for (const size of [16, 32, 48, 128]) await run('/usr/bin/sips', ['-s', 'format', 'png', '-z', String(size), String(size), resolve(desktopRoot, 'assets/icon.png'), '--out', resolve(target, `icons/icon-${size}.png`)]);
-  await run('/usr/bin/zip', ['-q', '-r', resolve(outputRoot, variant.zip), '.'], target);
+  if (process.platform === 'win32') {
+    // Windows 使用系统绘图及 ZIP 库；输入路径通过环境传递，不拼接进命令。
+    await run(
+      'powershell.exe',
+      [
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        `
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+# 图标始终从应用原图读取，并在所有尺寸生成后释放文件句柄。
+$source = [System.Drawing.Image]::FromFile($env:BROWSER_EXTENSION_ICON)
+try {
+  # 与扩展清单保持相同的四个图标尺寸。
+  foreach ($size in @(16, 32, 48, 128)) {
+    # 透明画布保留源图的 Alpha 通道。
+    $canvas = [System.Drawing.Bitmap]::new($size, $size, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+    # 绘图上下文仅服务当前尺寸，失败也必须释放。
+    $graphics = [System.Drawing.Graphics]::FromImage($canvas)
+    try {
+      $graphics.CompositingMode = [System.Drawing.Drawing2D.CompositingMode]::SourceCopy
+      $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+      $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+      $graphics.DrawImage($source, 0, 0, $size, $size)
+      $canvas.Save((Join-Path $env:BROWSER_EXTENSION_DIRECTORY ('icons/icon-' + $size + '.png')), [System.Drawing.Imaging.ImageFormat]::Png)
+    } finally {
+      $graphics.Dispose()
+      $canvas.Dispose()
+    }
+  }
+} finally {
+  $source.Dispose()
+}
+# ZIP 根目录直接包含 manifest，与现有 macOS 扩展包结构相同。
+[System.IO.Compression.ZipFile]::CreateFromDirectory($env:BROWSER_EXTENSION_DIRECTORY, $env:BROWSER_EXTENSION_ARCHIVE, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+`,
+      ],
+      target,
+      {
+        ...process.env,
+        // 三个平台扩展沿用同一份应用原图。
+        BROWSER_EXTENSION_ICON: resolve(desktopRoot, 'assets/icon.png'),
+        // 当前扩展的独立输出目录。
+        BROWSER_EXTENSION_DIRECTORY: target,
+        // 当前扩展的归档文件，位于被压缩目录之外。
+        BROWSER_EXTENSION_ARCHIVE: resolve(outputRoot, variant.zip),
+      },
+    );
+  } else {
+    for (const size of [16, 32, 48, 128]) await run('/usr/bin/sips', ['-s', 'format', 'png', '-z', String(size), String(size), resolve(desktopRoot, 'assets/icon.png'), '--out', resolve(target, `icons/icon-${size}.png`)]);
+    await run('/usr/bin/zip', ['-q', '-r', resolve(outputRoot, variant.zip), '.'], target);
+  }
 }
 
 const materials = resolve(outputRoot, 'chrome-web-store-materials');
@@ -73,12 +126,16 @@ for (const file of ['permissions.zh-CN.md', 'privacy.zh-CN.md', 'review-checklis
 for (const [source, target, width, height] of [
   ['promo-small.svg', 'promo-small-440x280.png', 440, 280],
   ['promo-marquee.svg', 'promo-marquee-1400x560.png', 1400, 560],
-])
-  await run('/usr/bin/xcrun', ['swift', svgRenderer, resolve(storeRoot, source), resolve(materials, target), String(width), String(height)], desktopRoot, swiftEnvironment);
+]) {
+  // ponytail: 商店 PNG 沿用 macOS 上架构建；Windows 保留 SVG，需跨平台上架时统一渲染器。
+  if (process.platform === 'darwin') await run('/usr/bin/xcrun', ['swift', svgRenderer, resolve(storeRoot, source), resolve(materials, target), String(width), String(height)], desktopRoot, swiftEnvironment);
+  else await copyFile(resolve(storeRoot, source), resolve(materials, source));
+}
 // 商店素材保留原始 PNG，避免扩展与桌面应用使用不同头像。
 await copyFile(resolve(desktopRoot, 'assets/icon.png'), resolve(materials, 'zeus-browser-icon-source.png'));
 await writeFile(resolve(materials, 'PRODUCTION_EXTENSION_ID_REQUIRED.txt'), '生产扩展 ID 是商店首次上传后的发布输入。本任务禁止使用通配 allowed_origins，也不上传或提交审核。\n', 'utf8');
 
+/** 按平台执行固定构建工具，失败保留原始错误并终止打包。 */
 async function run(command, args, cwd = desktopRoot, env = process.env) {
   await new Promise((resolveRun, rejectRun) => {
     const child = spawn(command, args, { cwd, env, stdio: ['ignore', 'ignore', 'inherit'] });

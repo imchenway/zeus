@@ -1,7 +1,7 @@
 import { copyFile, mkdtemp, readdir, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
-/** Rust 服务需要签名覆盖的组件名；其他原生文件已由 builder 在复制时签名。 */
+/** Rust 服务始终写入组件名，并沿用当前包的签名策略；其他原生文件由复制阶段处理。 */
 export default async function signWindowsNative(context) {
   if (context.electronPlatformName !== 'win32') return;
   /** 保留原生目录的链接边界检查，拒绝将外部目标作为包内组件。 */

@@ -1,5 +1,5 @@
-# pnpm 补丁保留上游文件的原始缩进，补丁载荷不参与仓库空白错误判定。
-patches/*.patch -whitespace
+# 补丁固定 LF，避免 Windows 自动换行改变补丁上下文；保留上游原始缩进。
+patches/*.patch text eol=lf -whitespace
 
-# CUA 补丁保留原始上下文，补丁载荷不参与仓库空白错误判定。
-apps/desktop/native/cua-*.patch -whitespace
+# 原生补丁统一固定 LF 并保留原始上下文，包含全部 CUA 补丁。
+apps/desktop/native/*.patch text eol=lf -whitespace

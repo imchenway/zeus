@@ -17,6 +17,12 @@ on:
         required: true
         type: boolean
         default: false
+      # 任务交付独立生成安装器附件，不要求创建或修改公开 Release。
+      build_installers:
+        description: 仅生成 Zeus Test 安装器附件，无证书时生成未签名内部包
+        required: true
+        type: boolean
+        default: false
 
 # 非发布作业只有读取权限，资产写入只授予最后的发布作业。
 permissions:
@@ -50,19 +56,23 @@ jobs:
             echo 'Windows 目标标签与候选版本不一致。' >&2
             exit 1
           fi
-      - name: 核对签名凭据与已有稳定发行
+      - name: 核对正式发行签名凭据
+        if: ${{ inputs.publish_release }}
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if [ -z "$WINDOWS_CERTIFICATE" ] || [ -z "$WINDOWS_CERTIFICATE_PASSWORD" ]; then
+            echo 'Windows 正式安装器构建需要 Authenticode 签名凭据。' >&2
+            exit 1
+          fi
+      - name: 核对已有稳定发行
         if: ${{ inputs.publish_release }}
         env:
           GH_TOKEN: ${{ github.token }}
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
           RELEASE_COMMIT: ${{ inputs.commit_sha }}
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
-          if [ -z "$WINDOWS_CERTIFICATE" ] || [ -z "$WINDOWS_CERTIFICATE_PASSWORD" ]; then
-            echo 'Windows 公开发布需要 Authenticode 签名凭据。' >&2
-            exit 1
-          fi
           remote_tag_commit="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG^{}" | awk '{print $1}')"
           if [ -z "$remote_tag_commit" ]; then
             remote_tag_commit="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG" | awk '{print $1}')"
@@ -76,6 +86,8 @@ jobs:
 
   # Windows 静态检查独立执行，不能依赖另一条发行流程的状态。
   verify:
+    # 任务附件只执行构建所需步骤，公开发布保留已有静态门禁。
+    if: ${{ !inputs.build_installers || inputs.publish_release }}
     needs: preflight
     runs-on: ubuntu-latest
     steps:
@@ -131,19 +143,50 @@ jobs:
         with:
           arch: ${{ matrix.arch }}
       - run: pnpm install --frozen-lockfile
+      - name: 计算任务安装包的原生缓存身份
+        id: cua_inputs
+        # 仅内部附件构建使用任务分支缓存，不改变正式发行缓存策略。
+        if: ${{ inputs.build_installers && !inputs.publish_release }}
+        run: node apps/desktop/scripts/build-computer-native.mjs --cache-info | ForEach-Object { $_.Replace('\', '/') } >> $env:GITHUB_OUTPUT
+      - name: 恢复任务分支的 CUA 成品
+        id: cua_cache
+        if: ${{ inputs.build_installers && !inputs.publish_release }}
+        uses: actions/cache/restore@v4
+        continue-on-error: true
+        with:
+          # 缓存仅匹配同一任务分支、平台、架构、源码和工具链。
+          path: ${{ steps.cua_inputs.outputs.artifact_path }}
+          key: windows-task-${{ github.ref_name }}-${{ steps.cua_inputs.outputs.native_key }}
+      - name: 清理未精确命中的任务原生成品
+        if: ${{ inputs.build_installers && !inputs.publish_release && steps.cua_cache.outputs.cache-hit != 'true' }}
+        run: node apps/desktop/scripts/build-computer-native.mjs --clear-artifacts
       - name: 构建并验签正式安装器
         if: ${{ inputs.publish_release }}
         run: pnpm package:windows:release
+      - name: 构建任务安装器附件
+        if: ${{ inputs.build_installers && !inputs.publish_release }}
+        run: pnpm package:windows
       - name: 非发布候选仅编译与核对原生产物
-        if: ${{ !inputs.publish_release }}
+        if: ${{ !inputs.build_installers && !inputs.publish_release }}
         run: pnpm build:windows
+      - name: 保存已完成的任务原生成品
+        # 原生构建成功但后续打包失败时也可保存；下轮使用前仍核对输入和两个文件摘要。
+        if: ${{ always() && inputs.build_installers && !inputs.publish_release && steps.cua_inputs.outcome == 'success' && steps.cua_cache.outputs.cache-hit != 'true' && hashFiles(format('{0}/build-receipt.json', steps.cua_inputs.outputs.artifact_path)) != '' }}
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: ${{ steps.cua_inputs.outputs.artifact_path }}
+          key: windows-task-${{ github.ref_name }}-${{ steps.cua_inputs.outputs.native_key }}
       - uses: actions/upload-artifact@v4
-        if: ${{ inputs.publish_release }}
+        if: ${{ inputs.build_installers || inputs.publish_release }}
         with:
           name: zeus-windows-${{ inputs.commit_sha }}-${{ matrix.arch }}
+          # 明确拒绝空附件，不能让编译成功冒充安装器交付成功。
+          if-no-files-found: error
           path: |
             dist/Zeus-*-win32-*.exe
             dist/zeus-release-manifest-win32-*.json
+            dist/test/Zeus-Test-*-win32-*.exe
 
   # 只追加本平台资产；macOS 发布、Release notes 和 Homebrew 均由原有流程维护。
   publish:

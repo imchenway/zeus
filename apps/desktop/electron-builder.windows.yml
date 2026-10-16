@@ -2,8 +2,8 @@
 extends: ./electron-builder.yml
 # 每个架构单独发行，下载清单必须精确匹配当前应用架构。
 artifactName: Zeus-${version}-win32-${arch}.${ext}
-# Rust 服务写入签名覆盖的组件名，其他原生资源由 builder 复制阶段签名。
-afterSign: ../../scripts/sign-windows-native.mjs
+# Rust 服务在主程序签名前写入组件名；未签名内部包也必须携带相同版本资源。
+afterPack: ../../scripts/sign-windows-native.mjs
 # Windows 只保留 resources/native 一份运行时，避免 ASAR 解包区重复携带 .NET。
 files:
   - '!dist/native/**'
@@ -11,6 +11,9 @@ files:
 extraResources:
   - from: dist/native
     to: native
+  # builder 过滤资源根目录的 node_modules，私有 SDK 依赖必须单独映射。
+  - from: dist/native/node_modules
+    to: native/node_modules
 # Windows 可执行文件及安装器沿用同一发行签名。
 win:
   executableName: Zeus
@@ -21,7 +24,7 @@ win:
   signExts:
     - .dll
     - .node
-    # exe 默认签名；此精确名称延后到 afterSign，避免写入资源后重复签名。
+    # exe 默认签名；此精确名称由 afterPack 写资源并按当前凭据签名一次。
     - '!ZeusWindowsRuntime.exe'
 # 当前用户安装避免以管理员身份运行开发命令与凭据服务。
 nsis:
