@@ -1,0 +1,13 @@
+diff --git a/out/node-module-collector/index.js b/out/node-module-collector/index.js
+--- a/out/node-module-collector/index.js
++++ b/out/node-module-collector/index.js
+@@ -56,7 +56,8 @@ async function findWorkspaceRoot(pm, cwd) {
+     let command;
+     switch (pm) {
+         case packageManager_1.PM.PNPM:
+-            command = { command: "pnpm", args: ["--workspace-root", "exec", "pwd"] };
++            // 使用当前 Node 输出原生路径，避免 Windows pwd 缺失或返回 MSYS 路径。
++            command = { command: "pnpm", args: ["--workspace-root", "exec", process.execPath, "-p", "process.cwd()"] };
+             break;
+         case packageManager_1.PM.YARN_BERRY:
+             command = { command: "yarn", args: ["workspaces", "list", "--json"] };
