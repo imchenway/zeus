@@ -208,13 +208,29 @@ export async function prepareComputerNativeArtifacts(inputs) {
     try {
       await access(resolve(inputs.repository, '.git'));
     } catch {
-      await executeFile('git', ['clone', '--depth', '1', '--filter=blob:none', '--no-checkout', '--branch', `cua-driver-rs-v${computerNativeVersion}`, 'https://github.com/trycua/cua.git', inputs.repository]);
+      await executeFile('git', [
+        'clone',
+        ...(process.platform === 'win32' ? ['--config', 'core.autocrlf=false'] : []),
+        '--depth',
+        '1',
+        '--filter=blob:none',
+        '--no-checkout',
+        '--branch',
+        `cua-driver-rs-v${computerNativeVersion}`,
+        'https://github.com/trycua/cua.git',
+        inputs.repository,
+      ]);
     }
     if ((await executeFile('git', ['-C', inputs.repository, 'rev-parse', 'HEAD'])).stdout.trim() !== computerNativeRevision) throw new Error('CUA 发布源码提交不匹配。');
     await executeFile('git', ['-C', inputs.repository, 'sparse-checkout', 'set', '--cone', 'libs/cua-driver/rust']);
     await executeFile('git', ['-C', inputs.repository, 'checkout', '--detach', computerNativeRevision]);
     await executeFile('git', ['-C', inputs.repository, 'diff', '--quiet', computerNativeRevision, '--', 'libs/cua-driver/rust']);
     if ((await executeFile('git', ['-C', inputs.repository, 'ls-files', '--others', '--', 'libs/cua-driver/rust'])).stdout.trim()) throw new Error('CUA 源码缓存含未跟踪文件，不能用于原生构建。');
+    if (process.platform === 'win32') {
+      // 仅将已确认干净的依赖缓存检出为原始 LF，不修改用户或项目的全局 Git 配置。
+      await executeFile('git', ['-C', inputs.repository, 'config', '--local', 'core.autocrlf', 'false']);
+      await executeFile('git', ['-C', inputs.repository, 'checkout', '--force', computerNativeRevision, '--', 'libs/cua-driver/rust']);
+    }
     /** 原始副本不接受补丁，工作副本每次从已核对源码重建。 */
     const sourceDirectory = resolve(inputs.repository, 'libs/cua-driver/rust');
     if (hashComputerNativeBytes(await readFile(resolve(sourceDirectory, 'Cargo.lock'))) !== computerNativeLockSha256) throw new Error('CUA Cargo.lock 与固定源码摘要不一致。');
