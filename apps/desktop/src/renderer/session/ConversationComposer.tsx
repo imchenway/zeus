@@ -473,6 +473,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
             <StructuredComposerInput
               value={editorValue}
               onValueChange={(nextValue) => {
+                if (nextValue !== editorValue) suggestion.beginEditing();
                 setEditorValue(nextValue);
                 if (!composingRef.current) props.onDraftChange(nextValue);
               }}
@@ -505,6 +506,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
               }}
               onOpenComputerSettings={props.onOpenComputerSettings}
               onCompositionStart={() => {
+                suggestion.beginEditing();
                 composingRef.current = true;
                 setIsComposing(true);
               }}
@@ -522,6 +524,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 props.onDraftChange(nextValue);
               }}
               onPaste={(event) => {
+                suggestion.beginEditing();
                 inputResources.handlePaste(event);
               }}
               onKeyDown={handleKeyDown}

@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
 import type { InputSuggestionRequest, InputSuggestionResult, InputSuggestionSettings } from '@zeus/shared';
-import type { NativeSessionState, NativeTurnSnapshot } from './sessionTypes.js';
+import type { NativeSessionState } from './sessionTypes.js';
 import { getInputSuggestionSession, inputSuggestionIdentity, synchronizeInputSuggestionSettings } from './inputSuggestionStore.js';
 import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
 
-/** 自动灰字、主动建议和草稿润色共享请求身份，继续输入保留候选，明确采用才替换草稿。 */
+/** 空输入和已有草稿共用输入建议，编辑即失效，明确采用才替换草稿。 */
 export function useInputSuggestion(options: {
-  /** 已建立的会话提供归属与手动润色参考轮次，不决定后台状态是否显示。 */
+  /** 已建立的会话提供归属，生成材料由服务端读取当前权威状态。 */
   state?: NativeSessionState;
   /** 新会话按项目或任务隔离结果。 */
   scopeKey?: string;
@@ -14,7 +14,7 @@ export function useInputSuggestion(options: {
   projectId?: string;
   /** 当前可见原文用于请求绑定，未主动润色时不发送。 */
   draft: string;
-  /** 只读、组合输入和目标输入限制主动操作及采用，不取消后台请求。 */
+  /** 只读、组合输入和目标输入限制主动操作及采用，编辑事件另行取消请求。 */
   eligible: boolean;
   /** 输入框报告草稿、附件、评论、目标和组合输入限制；服务端交互另行核对。 */
   automaticEligible?: boolean;
@@ -23,24 +23,12 @@ export function useInputSuggestion(options: {
   /** 同一次请求始终使用捕获的操作身份。 */
   generate?: (input: InputSuggestionRequest, signal: AbortSignal, diagnosticId?: string) => Promise<InputSuggestionResult>;
 }) {
-  /** 目录和正文变化不重复扫描轮次。 */
-  const latestTurn = useMemo(
-    () =>
-      Object.values(options.state?.turnsByProviderId ?? {}).reduce<NativeTurnSnapshot | null>(
-        (latest, turn) => (!latest || turn.createdAt > latest.createdAt || (turn.createdAt === latest.createdAt && turn.id > latest.id) ? turn : latest),
-        null,
-      ),
-    [options.state?.turnsByProviderId],
-  );
-  /** Provider 身份在实时事件和历史水合间保持稳定。 */
-  const turnId = latestTurn?.providerTurnId ?? latestTurn?.id ?? null;
   /** 前台展示和后台触发共享身份，不从当前导航猜测归属。 */
-  const { sessionKey, modelKey, resultKey, automaticResultKey } = inputSuggestionIdentity({
+  const { sessionKey, modelKey, resultKey } = inputSuggestionIdentity({
     projectId: options.state?.projectId ?? options.projectId,
     conversationId: options.state?.conversationId,
     scopeKey: options.scopeKey,
     settings: options.settings,
-    turnId,
   });
   /** 请求和结果跨越输入框卸载，订阅仅切换当前显示的会话。 */
   const session = useMemo(() => getInputSuggestionSession(sessionKey), [sessionKey]);
@@ -50,9 +38,17 @@ export function useInputSuggestion(options: {
   const [failedAdoption, setFailedAdoption] = useState<{ result: typeof result; draft: string } | null>(null);
   /** Escape 后的下一次 Tab 保留焦点导航，避免快捷键困住键盘用户。 */
   const allowTabNavigation = useRef(false);
+  /** 采用时直接核对原生预览是否展开，隐藏候选不能由 Tab 采用。 */
+  const previewRef = useRef<HTMLDivElement>(null);
   /** 多处输入框可以共用会话，但即时输入限制各自登记和释放。 */
   const eligibilityOwner = useRef(Symbol('input-suggestion-composer'));
-  useEffect(() => session.observeAutomaticEligibility(eligibilityOwner.current, options.automaticEligible === true && options.draft.length === 0), [session, options.automaticEligible, options.draft]);
+  useLayoutEffect(() => session.observeAutomaticEligibility(eligibilityOwner.current, options.automaticEligible === true && options.draft.length === 0), [session, options.automaticEligible, options.draft]);
+  /** 外部恢复或切换草稿也核对原文；直接编辑由事件入口在状态更新前取消。 */
+  useLayoutEffect(() => {
+    if (result && result.sourceDraft !== options.draft) session.dismiss(result.requestId);
+  }, [session, result, options.draft]);
+  /** 文字变化和组合输入开始共用即时取消入口，清空或改回原文也不能恢复候选。 */
+  const beginEditing = useCallback(() => session.beginEditing(eligibilityOwner.current), [session]);
   /** 回调引用变化不能重启已发出的请求。 */
   const generate = useRef(options.generate);
   generate.current = options.generate;
@@ -79,7 +75,6 @@ export function useInputSuggestion(options: {
     session.start({
       key: resultKey,
       modelKey,
-      turnKey: automaticResultKey,
       sourceDraft: options.draft,
       modelRef,
       request: {
@@ -87,28 +82,36 @@ export function useInputSuggestion(options: {
         trigger: 'manual',
         ...(projectId ? { projectId } : {}),
         ...(conversationId ? { conversationId } : {}),
-        ...(mode === 'polish' ? { draft: options.draft, suggestion: session.getLastSuggestion(automaticResultKey) } : {}),
+        ...(mode === 'polish' ? { draft: options.draft } : {}),
       },
       generate: generate.current,
     });
-  }, [session, options.eligible, options.draft, modelRef, modelKey, projectId, conversationId, resultKey, automaticResultKey]);
+  }, [session, options.eligible, options.draft, modelRef, modelKey, projectId, conversationId, resultKey]);
 
-  /** 采纳、发送或明确取消才清除候选和状态。 */
-  const dismiss = useCallback(() => {
-    session.dismiss();
-  }, [session]);
-  /** 后台状态自身拥有完成轮次；切回时本地正文、轮次或队列可能尚未加载，不能再据此隐藏状态。 */
-  const visible = Boolean(result && result.modelKey === modelKey && (result.trigger === 'manual' ? result.key === resultKey : enabled));
+  /** 浮层按所属请求关闭，输入框主动取消则清理当前请求。 */
+  const dismiss = useCallback(
+    (requestId?: string) => {
+      session.dismiss(requestId);
+    },
+    [session],
+  );
+  /** 后台状态自身拥有完成轮次；展示核对当前草稿和模型，不依赖本地轮次水合。 */
+  const visible = Boolean(result && result.sourceDraft === options.draft && result.modelKey === modelKey && (result.trigger === 'manual' ? result.key === resultKey : enabled));
   /** 输入暂时不可用时仍显示进度和失败原因，只有采用内容继续遵守输入限制。 */
-  const usable = visible && options.eligible && (result?.trigger === 'manual' || options.automaticEligible === true || options.draft.length > 0);
-  /** 用户已经输入时改用预览，不让空草稿生成的结果覆盖当前文字。 */
+  const usable = visible && options.eligible && (result?.trigger === 'manual' || options.automaticEligible === true);
+  /** 有原文的手动结果用预览，空输入继续用灰字。 */
   const preview = result?.mode === 'polish' || options.draft.length > 0 || Boolean(result?.sourceDraft.length);
   /** 主动操作仅使用已配置的模型与当前可编辑状态。 */
   const available = Boolean(modelRef && options.eligible && generate.current);
 
+  /** 灰字直接可见，预览必须实际展开；请求身份和草稿必须仍与生成时一致。 */
+  function canAccept(): boolean {
+    return Boolean(usable && result?.text && session.getSnapshot() === result && result.sourceDraft === options.draft && (!preview || previewRef.current?.matches(':popover-open')));
+  }
+
   /** 鼠标和 Tab 共用可撤销的替换事务，实际原文或引用不匹配时保留输入。 */
   function accept(input: ComposerInputHandle | null): boolean {
-    if (!usable || !result?.text) return false;
+    if (!canAccept() || !result?.text) return false;
     if (input?.replaceDraft?.(options.draft, result.text) !== true) {
       setFailedAdoption({ result, draft: options.draft });
       return false;
@@ -134,18 +137,20 @@ export function useInputSuggestion(options: {
     event.preventDefault();
     event.stopPropagation();
     if (!event.repeat && !(visible && result?.pending)) {
-      if (usable && result?.text) accept(input);
+      if (canAccept()) accept(input);
       else requestManual();
     }
     return true;
   }
 
   return {
+    requestId: visible ? result!.requestId : null,
+    previewRef,
+    claimPreview: session.claimPreview,
     text: usable && !preview ? result!.text : null,
-    // 润色、空白字符和生成期间继续输入的结果共用预览。
+    // 仅有效的手动草稿结果进入预览，继续输入后立即清除。
     polishedText: usable && preview ? result!.text : null,
     sourceDraft: usable ? result!.sourceDraft : null,
-    draftChanged: usable && result!.sourceDraft !== options.draft,
     adoptionFailed: usable && failedAdoption?.result === result && failedAdoption.draft === options.draft,
     pending: Boolean(visible && result?.pending),
     retryAttempt: visible ? (result?.retryAttempt ?? 0) : 0,
@@ -157,6 +162,7 @@ export function useInputSuggestion(options: {
     accept,
     handleKeyDown,
     requestManual,
+    beginEditing,
     dismiss,
   };
 }

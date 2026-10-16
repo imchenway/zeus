@@ -3828,6 +3828,7 @@ export function NewConversationComposer(props: {
               tokenDraft={tokenDraft}
               value={content}
               onValueChange={(value) => {
+                if (value !== content) suggestion.beginEditing();
                 setContent(value);
               }}
               onSelectionChange={(selection) => {
@@ -3853,10 +3854,12 @@ export function NewConversationComposer(props: {
               }}
               onOpenComputerSettings={props.onOpenComputerSettings}
               onCompositionStart={() => {
+                suggestion.beginEditing();
                 setIsComposing(true);
               }}
               onCompositionEnd={() => setIsComposing(false)}
               onPaste={(event) => {
+                suggestion.beginEditing();
                 inputResources.handlePaste(event);
               }}
               onKeyDown={(event) => {

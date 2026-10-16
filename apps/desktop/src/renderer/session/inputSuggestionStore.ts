@@ -27,7 +27,7 @@ const transientSuggestionErrors = new Set([
   'ZEUS_MODEL_TEXT_INCOMPLETE',
 ]);
 
-/** 首次失败等待两秒，再次失败等待五秒；正常空结果和明确配置错误不重复请求。 */
+/** 首次临时失败等待两秒，再次等待五秒；无需改写、无效输出和明确配置错误不重复请求。 */
 export function inputSuggestionRetryDelay(result: Pick<InputSuggestionResult, 'reason' | 'cause'>, retries: number): number | null {
   if (retries >= 2 || (result.reason !== 'timed_out' && result.reason !== 'failed')) return null;
   // 无结构化原因的生成失败也受同一上限约束；不通过报错正文猜测权限或网络状态。
@@ -61,11 +61,13 @@ export function inputSuggestionIdentity(options: {
 
 /** 请求和结果属于会话，输入框只订阅当前会话的快照。 */
 interface InputSuggestionSnapshot extends Pick<InputSuggestionResult, 'text' | 'reason' | 'cause'> {
+  /** 每次主动或自动生成的稳定身份，重试不创建另一份候选。 */
+  requestId: string;
   /** 手动结果绑定会话与模型，自动结果另绑定完成轮次。 */
   key: string;
   /** 专用模型、推理深度和速度共同决定请求配置。 */
   modelKey: string;
-  /** 请求时的原文用于预览对照；采用时另行核对当前编辑器内容。 */
+  /** 请求时的原文用于预览和失效核对，编辑后不得继续使用。 */
   sourceDraft: string;
   /** 空输入建议与草稿润色使用原有生成通路。 */
   mode: InputSuggestionRequest['mode'];
@@ -85,8 +87,8 @@ class InputSuggestionSession {
   private result: InputSuggestionSnapshot | null = null;
   /** 只有明确取消或失效才终止生成，退订不会触发取消。 */
   private controller: AbortController | null = null;
-  /** 已采纳的灰字仍可作为同轮润色的辅助材料。 */
-  private lastSuggestion: { key: string; text: string; modelKey: string } | null = null;
+  /** 已展示预览的请求不因输入框重新挂载而再次弹出。 */
+  private presentedRequestId: string | null = null;
   /** 自动完成事件跨页面去重，重开会话不能重复产生用量。 */
   private requestedTurn: string | null = null;
   /** 用户消息事件可能重复送达，只在新的稳定身份出现时清除旧候选。 */
@@ -108,8 +110,12 @@ class InputSuggestionSession {
   /** 同一结果始终返回同一引用，避免重复渲染。 */
   getSnapshot = (): InputSuggestionSnapshot | null => this.result;
 
-  /** 只为同一会话、轮次和模型提供先前生成的建议。 */
-  getLastSuggestion = (key: string): string | undefined => (this.lastSuggestion?.key === key ? this.lastSuggestion.text : undefined);
+  /** 只有当前手动请求的有效结果可以首次展开预览。 */
+  claimPreview = (requestId: string): boolean => {
+    if (this.result?.requestId !== requestId || this.result.trigger !== 'manual' || this.result.pending || !this.result.text || this.presentedRequestId === requestId) return false;
+    this.presentedRequestId = requestId;
+    return true;
+  };
 
   /** 消费完成事件后不再重放，清空草稿或切换页面都不能重置。 */
   consumeAutomaticTurn(key: string): boolean {
@@ -118,12 +124,19 @@ class InputSuggestionSession {
     return true;
   }
 
-  /** 输入法、目标输入或待处理附件只在该输入框实际挂载时阻止自动生成。 */
+  /** 输入法、目标输入或待处理附件立即阻止并取消自动生成，卸载只释放限制。 */
   observeAutomaticEligibility(owner: symbol, eligible: boolean): () => void {
     this.automaticEligibility.set(owner, eligible);
+    if (!eligible) this.dismissAutomatic();
     return () => {
       this.automaticEligibility.delete(owner);
     };
+  }
+
+  /** 编辑事件立即阻止自动启动并取消旧请求，不等待 React 更新或输入法提交文字。 */
+  beginEditing(owner: symbol): void {
+    this.automaticEligibility.set(owner, false);
+    this.dismiss();
   }
 
   /** 后台事件不覆盖用户正在处理的输入，也不抢占手动结果。 */
@@ -136,12 +149,11 @@ class InputSuggestionSession {
     if (this.result?.trigger === 'automatic') this.dismiss();
   }
 
-  /** 已发送要求变化时同时清除手动润色和辅助建议，普通助手进度不走此入口。 */
+  /** 已发送要求变化时清除候选，普通助手进度不走此入口。 */
   observeUserInput(identity: string): void {
     if (this.observedUserInputs.has(identity)) return;
     this.observedUserInputs.add(identity);
     if (this.observedUserInputs.size > 64) this.observedUserInputs.delete(this.observedUserInputs.values().next().value!);
-    this.lastSuggestion = null;
     this.dismiss();
   }
 
@@ -150,16 +162,17 @@ class InputSuggestionSession {
     return this.controller !== null || this.listeners.size > 0;
   }
 
-  /** 发送、采用或主动取消时清理本会话，继续编辑不走此入口。 */
-  dismiss = (): void => {
+  /** 编辑、发送、采用或取消时清理；旧浮层的关闭事件不能取消新请求。 */
+  dismiss = (requestId?: string): void => {
+    if (requestId !== undefined && this.result?.requestId !== requestId) return;
     this.controller?.abort();
     this.controller = null;
+    this.presentedRequestId = null;
     this.publish(null);
   };
 
   /** 配置变化也清理不可见会话，旧模型的迟到结果不能恢复。 */
   invalidateSettings(modelKey: string, automaticEnabled: boolean): void {
-    if (this.lastSuggestion?.modelKey !== modelKey) this.lastSuggestion = null;
     if (this.result && (this.result.modelKey !== modelKey || (this.result.trigger === 'automatic' && !automaticEnabled))) this.dismiss();
   }
 
@@ -169,9 +182,7 @@ class InputSuggestionSession {
     key: string;
     /** 捕获本次所选模型配置。 */
     modelKey: string;
-    /** 辅助建议身份始终包含当前完成轮次。 */
-    turnKey: string;
-    /** 原文快照用于说明候选依据，继续输入不会改变生成材料。 */
+    /** 原文快照用于说明候选依据，继续输入必须取消本次生成。 */
     sourceDraft: string;
     /** 服务端回执必须匹配实际请求模型。 */
     modelRef: string;
@@ -200,6 +211,7 @@ class InputSuggestionSession {
     controller.signal.addEventListener('abort', () => record('ui_cancelled', 'client_cancelled'), { once: true });
     /** 等待和完成使用同一份原文及请求归属。 */
     const snapshot: InputSuggestionSnapshot = {
+      requestId: diagnosticId,
       key: options.key,
       modelKey: options.modelKey,
       sourceDraft: options.sourceDraft,
@@ -242,7 +254,6 @@ class InputSuggestionSession {
           /** 有效候选不重复生成，剩余失败按明确原因决定是否等待。 */
           const retryDelay = response.text ? null : inputSuggestionRetryDelay(response, retryAttempt);
           if (retryDelay === null) {
-            if (options.request.mode === 'suggest' && response.text) this.lastSuggestion = { key: options.turnKey, text: response.text, modelKey: options.modelKey };
             this.publish({ ...snapshot, text: response.text, reason: response.reason, cause: response.cause, pending: false, retryAttempt });
             record('ui_result_stored', response.reason ?? 'generated', response.text?.length ?? 0);
             return;

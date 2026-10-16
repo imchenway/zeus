@@ -46,8 +46,6 @@ export interface InputSuggestionRequest {
   completedTurnId?: string;
   /** 只有用户主动点击才发送尚未提交的草稿。 */
   draft?: string;
-  /** 已显示的建议只作辅助，不能覆盖草稿中的明确意思。 */
-  suggestion?: string;
 }
 
 /** 建议回执携带轮次和模型身份，供输入框丢弃过期结果。 */
@@ -58,10 +56,10 @@ export interface InputSuggestionResult {
   completedTurnId: string | null;
   /** 实际使用的专用模型；未生成时允许为空。 */
   modelRef: string | null;
-  /** 空值表示没有合理建议或功能不可用，不属于输入正文。 */
+  /** 空值表示无需改写、未生成或生成失败，不属于输入正文。 */
   text: string | null;
-  /** 无正文时明确区分未生成、正常空结果和故障。 */
-  reason: 'disabled' | 'context_unavailable' | 'model_unavailable' | 'effort_unavailable' | 'service_tier_unavailable' | 'no_suggestion' | 'no_change' | 'timed_out' | 'failed' | 'cancelled' | null;
+  /** 无正文时明确区分未生成、无需改写和故障。 */
+  reason: 'disabled' | 'context_unavailable' | 'model_unavailable' | 'effort_unavailable' | 'service_tier_unavailable' | 'no_change' | 'timed_out' | 'failed' | 'cancelled' | null;
   /** 失败时保留有界、脱敏的原因，复用应用统一错误详情入口。 */
   cause?: UserFacingErrorCause;
 }

@@ -111,6 +111,11 @@ assert.equal(reader.read({ snapshot: null, projectId: 'project', sources: { agen
 
 /** 状态层只采纳当前请求的回执，迟到结果不能覆盖新草稿或新要求。 */
 const session = getInputSuggestionSession('input-suggestion-check');
+/** 编辑事件按输入框身份阻止自动触发，取消后不重放同一完成事件。 */
+const editorOwner = Symbol('input-suggestion-check');
+/** 释放模拟输入框时移除即时限制。 */
+const releaseEditor = session.observeAutomaticEligibility(editorOwner, true);
+assert.equal(session.consumeAutomaticTurn('turn'), true);
 /** 可控回执模拟用户输入发生在模型返回之前。 */
 let complete: (result: { completedTurnId: null; modelRef: string; text: string; reason: null }) => void = () => {};
 /** 记录取消传播，不调用模型或创建任务。 */
@@ -118,7 +123,6 @@ let aborted = false;
 session.start({
   key: 'request',
   modelKey: 'model',
-  turnKey: 'turn',
   sourceDraft: '继续',
   modelRef: 'model',
   request: { mode: 'polish', trigger: 'manual', draft: '继续' },
@@ -132,16 +136,19 @@ session.start({
 });
 session.dismissAutomatic();
 assert.equal(session.getSnapshot()?.pending, true);
-session.observeUserInput('new-user-input');
+session.beginEditing(editorOwner);
 assert.equal(aborted, true);
+assert.equal(session.automaticAllowed, false);
 complete({ completedTurnId: null, modelRef: 'model', text: '旧要求的迟到润色', reason: null });
 await new Promise((resolve) => setTimeout(resolve, 0));
 assert.equal(session.getSnapshot(), null);
+session.observeAutomaticEligibility(editorOwner, true);
+assert.equal(session.consumeAutomaticTurn('turn'), false);
+session.observeUserInput('new-user-input');
 /** 取消后可以重新生成；重复用户事件不能取消后来发起的请求。 */
 session.start({
   key: 'new-request',
   modelKey: 'model',
-  turnKey: 'turn',
   sourceDraft: '新草稿',
   modelRef: 'model',
   request: { mode: 'polish', trigger: 'manual', draft: '新草稿' },
@@ -151,7 +158,41 @@ session.observeUserInput('new-user-input');
 await new Promise((resolve) => setTimeout(resolve, 0));
 assert.equal(session.getSnapshot()?.text, '新草稿的润色');
 assert.equal(getInputSuggestionSession('another-conversation').getSnapshot(), null);
-session.dismiss();
+/** 相同候选只展开一次，关闭旧预览不能取消后发的请求。 */
+const previousRequestId = session.getSnapshot()!.requestId;
+assert.equal(session.claimPreview(previousRequestId), true);
+assert.equal(session.claimPreview(previousRequestId), false);
+session.start({
+  key: 'new-request',
+  modelKey: 'model',
+  sourceDraft: '新草稿',
+  modelRef: 'model',
+  request: { mode: 'polish', trigger: 'manual', draft: '新草稿' },
+  generate: async () => ({ completedTurnId: null, modelRef: 'model', text: '新草稿的润色', reason: null }),
+});
+session.dismiss(previousRequestId);
+assert.equal(session.getSnapshot()?.pending, true);
+await new Promise((resolve) => setTimeout(resolve, 0));
+/** 文本相同的新请求仍能首次展开，不能按候选文字去重。 */
+const currentRequestId = session.getSnapshot()!.requestId;
+assert.notEqual(currentRequestId, previousRequestId);
+assert.equal(session.claimPreview(currentRequestId), true);
+session.dismiss(currentRequestId);
+assert.equal(session.getSnapshot(), null);
+assert.equal(session.claimPreview(currentRequestId), false);
+/** 自动生成期间新增附件或其他限制也立即失效，迟到回执不能恢复。 */
+session.start({
+  key: 'automatic-request',
+  modelKey: 'model',
+  sourceDraft: '',
+  modelRef: 'model',
+  request: { mode: 'suggest', trigger: 'automatic', completedTurnId: 'next-turn' },
+  generate: async () => ({ completedTurnId: 'next-turn', modelRef: 'model', text: '失效的自动建议', reason: null }),
+});
+session.observeAutomaticEligibility(editorOwner, false);
+await new Promise((resolve) => setTimeout(resolve, 0));
+assert.equal(session.getSnapshot(), null);
+releaseEditor();
 reader.clear();
 /** 使用任务自有临时库核对实际 SQL、正文句柄和记忆有效期，不读取用户数据库。 */
 const directory = await mkdtemp(join(tmpdir(), 'zeus-0821-context-'));
@@ -433,6 +474,10 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   /** 同一路由支持按原文润色与空输入建议。 */
   const generate = async (input = payload) => (await api.inject({ method: 'POST', url: '/api/input-suggestions/generate', payload: input })).json();
   try {
+    /** 历史建议字段已删除，必须在调用模型前拒绝旧材料。 */
+    const obsolete = await api.inject({ method: 'POST', url: '/api/input-suggestions/generate', payload: { ...payload, suggestion: '旧候选不能夹带到新草稿' } });
+    assert.equal(obsolete.statusCode, 400);
+    assert.equal(requests, 0);
     assert.equal((await generate()).text, answer);
     assert.equal(requests, 1);
     for (const required of ['不能自动提交', '不能代替用户确认和验收', '继续完善', '全局规则样例', '项目规则样例', 'feature/AGENTS.md']) assert.ok(material.includes(required), required);
@@ -449,7 +494,10 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     answer = payload.draft;
     assert.equal((await generate()).reason, 'no_change');
     answer = 'NO_SUGGESTION';
-    assert.equal((await generate({ ...payload, mode: 'suggest', draft: '' })).reason, 'no_suggestion');
+    /** 放弃标记属于无效输出，不再作为正常空建议返回。 */
+    const invalidOutput = await generate({ ...payload, mode: 'suggest', draft: '' });
+    assert.equal(invalidOutput.reason, 'failed');
+    assert.equal(invalidOutput.cause.code, 'ZEUS_INPUT_SUGGESTION_OUTPUT_INVALID');
     answer = '助手普通进度不会打断润色。';
     beforeReply = () => {
       execution.appendModelHistory({ conversationId: conversation.id, turnId: 'current', segmentId: 'check-segment', role: 'assistant', content: { text: '普通进度', phase: 'commentary' }, confirmedAt: '2026-10-14T09:31:00.000Z' });

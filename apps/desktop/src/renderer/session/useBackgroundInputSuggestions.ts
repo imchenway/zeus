@@ -74,7 +74,6 @@ export function useBackgroundInputSuggestions(options: {
       session.start({
         key: identity.automaticResultKey,
         modelKey: identity.modelKey,
-        turnKey: identity.automaticResultKey,
         sourceDraft: '',
         modelRef: selectedSettings.modelRef,
         request: { mode: 'suggest', trigger: 'automatic', projectId, conversationId, completedTurnId: turnId },
@@ -82,7 +81,7 @@ export function useBackgroundInputSuggestions(options: {
           /** 隐藏会话也核对问题和计划确认，不能依赖可见输入框替它阻止生成。 */
           const pending = await client.loadNativePendingRequests(projectId, conversationId);
           signal.throwIfAborted();
-          // 请求开始后允许用户继续输入；只有必须先处理的问题或计划确认阻止本次生成。
+          // 编辑事件会取消本次请求；后台准备阶段也要核对是否出现待处理交互。
           if (pending.requests.some((item) => item.status === 'pending') || pending.planImplementationRequests?.some((item) => item.status === 'pending')) {
             return { completedTurnId: turnId, modelRef: selectedSettings.modelRef, text: null, reason: 'cancelled' };
           }
