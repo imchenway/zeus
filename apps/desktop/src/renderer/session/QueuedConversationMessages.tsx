@@ -104,8 +104,14 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
   const [actionId, setActionId] = useState<string | null>(null);
   /** 操作失败紧邻原消息展示，不污染整段会话。 */
   const [actionError, setActionError] = useState<{ submissionId: string; message: string } | null>(null);
-  /** 排序结果通过礼貌播报提供给辅助技术。 */
-  const [announcement, setAnnouncement] = useState('');
+  /** 排序结果跟随原提交显示，不能只让辅助技术获知位置变化。 */
+  const [reorderFeedback, setReorderFeedback] = useState<{ submissionId: string } | null>(null);
+  /** 移动后在当前排队区查找原消息，不依赖改变后的行号。 */
+  const regionRef = useRef<HTMLElement>(null);
+  /** 异步重排期间保留原按钮，回执到达后恢复其焦点。 */
+  const reorderFocusRef = useRef<HTMLButtonElement | null>(null);
+  /** 播报与可见提示均读取当前实际行序，隐藏或删除后不再报告旧位置。 */
+  const reorderedIndex = reorderFeedback ? queue.findIndex((submission) => submission.id === reorderFeedback.submissionId) : -1;
   /** 只有真实可写连接允许修改权威队列。 */
   const writable = props.state.transportState === 'ready' && props.state.conversationState !== 'legacy_readonly';
   /** 控制器操作和组件本地操作共同锁定按钮。 */
@@ -116,12 +122,26 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
     setEditingId(null);
   }, [editingId, queue]);
 
+  useLayoutEffect(() => {
+    if (!reorderFeedback || busy || !reorderFocusRef.current) return;
+    /** React 移动已有节点或禁用按钮时可能丢失焦点，只恢复本次操作的目标。 */
+    const button = reorderFocusRef.current;
+    reorderFocusRef.current = null;
+    if (document.activeElement !== document.body && document.activeElement !== button) return;
+    /** 到达首尾后原方向禁用，消息本身接管焦点，不跳到另一条消息。 */
+    const row = regionRef.current?.querySelector<HTMLElement>('[data-reordered="true"]');
+    if (!row) return;
+    (button.disabled ? row : button).focus({ preventScroll: true });
+    row.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [reorderFeedback, busy, queue]);
+
   if (queue.length === 0 || props.state.snapshot?.providerState === 'failed' || props.state.snapshot?.providerState === 'closed') return null;
 
   /** 进入编辑态时优先恢复用户在 Composer 中实际输入的草稿。 */
   function startEdit(submission: NativeQueuedSubmission): void {
     setEditingId(submission.id);
     setActionError(null);
+    setReorderFeedback(null);
   }
 
   /** 退出编辑态但不触碰权威排队内容。 */
@@ -150,6 +170,7 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
     if (!operation || busy) return false;
     setActionId(`${action}:${submissionId}`);
     setActionError(null);
+    setReorderFeedback(null);
     try {
       await operation();
       return true;
@@ -162,23 +183,23 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
   }
 
   /** 按完整队列移动一位，避免遗漏隐藏的控制或恢复提交。 */
-  async function reorder(submission: NativeQueuedSubmission, direction: -1 | 1): Promise<void> {
+  async function reorder(submission: NativeQueuedSubmission, direction: -1 | 1, button: HTMLButtonElement): Promise<void> {
     if (!props.onReorder || busy || !canMoveQueueSubmission(reorderableQueue, queue, submission.id, direction)) return;
     /** 新顺序包含服务端认定的全部可重排成员。 */
     const orderedIds = moveQueueSubmission(reorderableQueue, submission.id, direction);
-    /** 辅助技术播报使用真实完整队列位置。 */
-    const position = orderedIds.indexOf(submission.id) + 1;
-    if (await runAction(submission.id, 'reorder', () => props.onReorder?.(orderedIds))) setAnnouncement(copy.reordered(position, orderedIds.length));
+    reorderFocusRef.current = button;
+    if (await runAction(submission.id, 'reorder', () => props.onReorder?.(orderedIds))) setReorderFeedback({ submissionId: submission.id });
+    else reorderFocusRef.current = null;
   }
 
   return (
-    <section className="session-queued-messages" aria-label={copy.region}>
+    <section ref={regionRef} className="session-queued-messages" aria-label={copy.region}>
       <h2 className="session-sr-only">{copy.heading(queue.length)}</h2>
       <output className="session-sr-only" aria-live="polite" aria-atomic="true">
-        {announcement}
+        {reorderedIndex >= 0 ? copy.reordered(reorderedIndex + 1, queue.length) : ''}
       </output>
       <ol>
-        {queue.map((submission) => {
+        {queue.map((submission, index) => {
           /** 本地待接纳投影只负责稳定首帧位置，服务端身份到达前禁止修改。 */
           const submissionWritable = writable && !submission.localOnly;
           /** 旧暂停卡片保留明确继续入口；活动回复和未知送达不能从这里绕过。 */
@@ -205,7 +226,14 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
           const textPreview = queuedMessageTextPreview(submission);
           return (
             <li key={submission.id}>
-              <article className="session-queued-message" data-queue-status={submission.status} data-editing={editingId === submission.id || undefined} aria-busy={actionId?.endsWith(submission.id) || undefined}>
+              <article
+                className="session-queued-message"
+                tabIndex={-1}
+                data-reordered={reorderFeedback?.submissionId === submission.id || undefined}
+                data-queue-status={submission.status}
+                data-editing={editingId === submission.id || undefined}
+                aria-busy={actionId?.endsWith(submission.id) || undefined}
+              >
                 {editingId === submission.id ? (
                   <QueuedMessageEditor
                     submission={submission}
@@ -256,14 +284,27 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
                     >
                       <Trash aria-hidden="true" />
                     </button>
-                    <button type="button" data-icon-tooltip={copy.moveUp} aria-label={copy.moveUp} onClick={() => void reorder(submission, -1)} disabled={!submissionWritable || busy || !props.onReorder || !canMoveUp}>
+                    <button
+                      type="button"
+                      data-icon-tooltip={copy.moveUp}
+                      aria-label={copy.moveUp}
+                      onClick={(event) => void reorder(submission, -1, event.currentTarget)}
+                      disabled={!submissionWritable || busy || !props.onReorder || !canMoveUp}
+                    >
                       <ArrowUp aria-hidden="true" />
                     </button>
-                    <button type="button" data-icon-tooltip={copy.moveDown} aria-label={copy.moveDown} onClick={() => void reorder(submission, 1)} disabled={!submissionWritable || busy || !props.onReorder || !canMoveDown}>
+                    <button
+                      type="button"
+                      data-icon-tooltip={copy.moveDown}
+                      aria-label={copy.moveDown}
+                      onClick={(event) => void reorder(submission, 1, event.currentTarget)}
+                      disabled={!submissionWritable || busy || !props.onReorder || !canMoveDown}
+                    >
                       <ArrowDown aria-hidden="true" />
                     </button>
                   </footer>
                 )}
+                {reorderFeedback?.submissionId === submission.id ? <small className="session-queued-message-reordered">{copy.reordered(index + 1, queue.length)}</small> : null}
                 {rowError ? (
                   <small className="session-queued-message-error" role="alert">
                     <VisibleApplicationError error={rowError} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />

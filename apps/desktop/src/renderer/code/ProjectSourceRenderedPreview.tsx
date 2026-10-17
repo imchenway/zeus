@@ -141,7 +141,7 @@ export function ProjectSourceRenderedPreview(props: {
       ) : (
         <div className="project-source-markdown-preview">
           <Suspense fallback={null}>
-            <Markdown text={preview.content} streamId={`source:${props.projectId}:${props.path}`} phase="final" language={props.language} renderImmediately filePreview={filePreview} />
+            <Markdown text={preview.content} streamId={`source:${props.projectId}:${props.path}`} phase="final" language={props.language} documentMode renderImmediately filePreview={filePreview} />
           </Suspense>
         </div>
       )}

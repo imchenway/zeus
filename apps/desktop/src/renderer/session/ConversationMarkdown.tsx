@@ -3,12 +3,13 @@ import { ArrowLineRightIcon as ArrowLineRight } from '@phosphor-icons/react/dist
 import { CodeIcon as Code } from '@phosphor-icons/react/dist/csr/Code';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import type { ConversationFileLocation, ConversationOpenTarget, ConversationResource, ConversationResourcePreview } from '@zeus/shared';
-import { conversationFileLocationFromReference, conversationMarkdownReferences, enableConversationCjkStrong, normalizeConversationResourceReference } from '@zeus/shared';
+import { conversationFileLocationFromReference, conversationMarkdownReferences, enableConversationCjkStrong, filePreviewLimits, normalizeConversationResourceReference } from '@zeus/shared';
 import MarkdownRender, { MermaidBlockNode, TableNode, setCustomComponents, type CustomComponentMap, type NodeComponentProps, type NodeRendererProps } from 'markstream-react';
 import 'markstream-react/index.css';
 import { memo, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import { ConversationInlineResource, ConversationMarkdownImage, isImageResource } from './ConversationResources.js';
 import { MessageCheckIcon } from './SessionMessageIcons.js';
+import { MarkdownDocumentOutline } from './MarkdownDocumentOutline.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 
 export type ConversationMarkdownPhase = 'streaming' | 'final';
@@ -126,6 +127,8 @@ export interface ConversationMarkdownProps {
   structuredTokens?: readonly StructuredMessageToken[];
   /** 编辑器等场景可主动关闭流式分批；已完成正文默认一次呈现。 */
   renderImmediately?: boolean;
+  /** 文件阅读使用读取上限和屏外延迟绘制，不套用会话的正文、代码与节点截断。 */
+  documentMode?: boolean;
   /** 输入框可替换表格交互，单元格解析、安全链接和内联格式仍沿用正文渲染。 */
   customComponentsId?: string;
   /** 源码页提供自己的已授权相对资源解析，不伪造会话资源身份。 */
@@ -146,6 +149,8 @@ interface MarkdownRuntimeContextValue {
   language: SessionUiLanguage;
   /** 正文整体是否已经结束生成，用于判断图表代码块是否还会继续增长。 */
   phase: ConversationMarkdownPhase;
+  /** 文件代码块保留读取到的完整源码，仍按纯文本显示。 */
+  documentMode?: boolean;
   resources: ConversationResource[];
   onOpenResource?: ConversationMarkdownProps['onOpenResource'];
   onLoadResourcePreview?: ConversationMarkdownProps['onLoadResourcePreview'];
@@ -207,7 +212,7 @@ export const ConversationMarkdown = memo(function ConversationMarkdown(props: Co
   onVisibleContentChangeRef.current = props.onVisibleContentChange;
   onRenderSettledRef.current = props.onRenderSettled;
 
-  const bounded = useMemo(() => boundConversationMarkdown(props.text, props.language), [props.language, props.text]);
+  const bounded = useMemo(() => boundConversationMarkdown(props.text, props.language, props.documentMode), [props.documentMode, props.language, props.text]);
   const customId = props.customComponentsId ?? (props.structuredTokens?.length ? STRUCTURED_CUSTOM_COMPONENTS_ID : CUSTOM_COMPONENTS_ID);
   const parseOptions = useMemo<NonNullable<NodeRendererProps['parseOptions']>>(
     () => ({
@@ -215,21 +220,23 @@ export const ConversationMarkdown = memo(function ConversationMarkdown(props: Co
       streamParse: 'auto',
       // 所有链接都进入 Zeus 自定义节点；节点仅在页内锚点或权威资源匹配成功后才会变为可点击。
       validateLink: (href: string) => Boolean(href.trim()),
-      postTransformNodes: (nodes: MarkstreamNode[]) => limitParsedNodes(nodes, languageLabels.contentTruncated),
+      // 文件保留完整语法树，由浏览器延迟绘制屏外内容；会话继续限制语法树规模。
+      postTransformNodes: props.documentMode ? undefined : (nodes: MarkstreamNode[]) => limitParsedNodes(nodes, languageLabels.contentTruncated),
     }),
-    [languageLabels.contentTruncated],
+    [languageLabels.contentTruncated, props.documentMode],
   );
   const contextValue = useMemo<MarkdownRuntimeContextValue>(
     () => ({
       language: props.language,
       phase: props.phase,
+      documentMode: props.documentMode,
       resources: props.resources ?? EMPTY_RESOURCES,
       onOpenResource: props.onOpenResource,
       onLoadResourcePreview: props.onLoadResourcePreview,
       structuredTokens: props.structuredTokens,
       filePreview: props.filePreview,
     }),
-    [props.language, props.onLoadResourcePreview, props.onOpenResource, props.phase, props.resources, props.structuredTokens, props.filePreview],
+    [props.documentMode, props.language, props.onLoadResourcePreview, props.onOpenResource, props.phase, props.resources, props.structuredTokens, props.filePreview],
   );
 
   useLayoutEffect(() => {
@@ -290,7 +297,9 @@ export const ConversationMarkdown = memo(function ConversationMarkdown(props: Co
         data-render-settled={settled || undefined}
         data-stream-id={props.streamId}
         data-truncated={bounded.truncated || undefined}
+        data-document-mode={props.documentMode || undefined}
       >
+        {props.documentMode ? <MarkdownDocumentOutline key={props.streamId} root={rootRef} language={props.language} /> : null}
         <MarkdownRender
           content={bounded.text}
           final={props.phase === 'final'}
@@ -420,10 +429,10 @@ function SecureCodeBlockNode(props: NodeComponentProps<MarkstreamNode>) {
   const languageLabels = labels[language];
   /** 原始代码仅接受解析器提供的字符串。 */
   const sourceCode = typeof props.node.code === 'string' ? props.node.code : '';
-  /** 沿用现有单块长度限制和截断提示。 */
-  const codeTruncated = sourceCode.length > MAX_CONVERSATION_MARKDOWN_CODE_CHARACTERS;
-  /** 显示与复制共用这一份受限源码，换行不会插入额外字符。 */
-  const code = sourceCode.slice(0, MAX_CONVERSATION_MARKDOWN_CODE_CHARACTERS);
+  /** 文件代码按纯文本完整显示，会话仍保留单块长度限制。 */
+  const codeTruncated = !runtime?.documentMode && sourceCode.length > MAX_CONVERSATION_MARKDOWN_CODE_CHARACTERS;
+  /** 显示与复制共用同一份源码，换行不会插入额外字符。 */
+  const code = codeTruncated ? sourceCode.slice(0, MAX_CONVERSATION_MARKDOWN_CODE_CHARACTERS) : sourceCode;
   /** 只清理语言标记的首尾空白，其余语言名称保留原文。 */
   const codeLanguage = typeof props.node.language === 'string' ? props.node.language.trim() : '';
   /** 常见纯文本别名不区分大小写，其余语言直接显示名称。 */
@@ -687,11 +696,14 @@ function ConversationMarkdownCopyButton(props: { label: string; copiedLabel: str
   );
 }
 
-function boundConversationMarkdown(text: string, language: SessionUiLanguage): { text: string; truncated: boolean } {
+/** 文件遵守现有读取上限；会话额外限制正文和代码块，避免流式输出持续增长。 */
+function boundConversationMarkdown(text: string, language: SessionUiLanguage, documentMode = false): { text: string; truncated: boolean } {
   const languageLabels = labels[language];
-  const documentTruncated = text.length > MAX_CONVERSATION_MARKDOWN_CHARACTERS;
-  const boundedText = documentTruncated ? `${text.slice(0, MAX_CONVERSATION_MARKDOWN_CHARACTERS)}\n\n[${languageLabels.contentTruncated}]` : text;
-  const codeBounded = boundMarkdownCodeBlocks(boundedText, languageLabels.codeTruncated);
+  /** 文件读取已经限制字节数，此处再限制字符数，保护独立使用组件的调用方。 */
+  const characterLimit = documentMode ? filePreviewLimits.text : MAX_CONVERSATION_MARKDOWN_CHARACTERS;
+  const documentTruncated = text.length > characterLimit;
+  const boundedText = documentTruncated ? `${text.slice(0, characterLimit)}\n\n[${languageLabels.contentTruncated}]` : text;
+  const codeBounded = documentMode ? { text: boundedText, truncated: false } : boundMarkdownCodeBlocks(boundedText, languageLabels.codeTruncated);
   return { text: codeBounded.text, truncated: documentTruncated || codeBounded.truncated };
 }
 

@@ -476,7 +476,7 @@ function FilePreviewContent(props: {
           <Suspense fallback={null}>
             {markdown && !source ? (
               <div className="file-preview-markdown">
-                <Markdown text={item.content} streamId={item.id} phase="final" language={props.zh ? 'zh-CN' : 'en-US'} />
+                <Markdown text={item.content} streamId={item.id} phase="final" language={props.zh ? 'zh-CN' : 'en-US'} documentMode />
               </div>
             ) : (
               <div className="file-preview-text">
