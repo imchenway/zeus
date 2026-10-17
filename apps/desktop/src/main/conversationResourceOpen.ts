@@ -67,6 +67,8 @@ interface EditorTargetDescriptor {
   label: string;
   appName: string;
   appPaths: string[];
+  /** macOS 使用应用内置 CLI，把文件请求发送给已经运行的编辑器。 */
+  macosCliName?: string;
   /** Windows 安装注册与 PATH 共用的真实程序名称。 */
   windowsExecutables?: string[];
   /** 标准安装目录中的产品目录，JetBrains 同时允许明确的版本后缀。 */
@@ -98,6 +100,7 @@ const editorTargets: EditorTargetDescriptor[] = [
     label: 'Visual Studio Code',
     appName: 'Visual Studio Code',
     appPaths: ['/Applications/Visual Studio Code.app'],
+    macosCliName: 'code',
     windowsExecutables: ['Code.exe'],
     windowsDirectories: ['Microsoft VS Code'],
   },
@@ -106,6 +109,7 @@ const editorTargets: EditorTargetDescriptor[] = [
     label: 'Visual Studio Code - Insiders',
     appName: 'Visual Studio Code - Insiders',
     appPaths: ['/Applications/Visual Studio Code - Insiders.app'],
+    macosCliName: 'code-insiders',
     windowsExecutables: ['Code - Insiders.exe'],
     windowsDirectories: ['Microsoft VS Code Insiders'],
   },
@@ -114,6 +118,7 @@ const editorTargets: EditorTargetDescriptor[] = [
     label: 'Cursor',
     appName: 'Cursor',
     appPaths: ['/Applications/Cursor.app'],
+    macosCliName: 'cursor',
     windowsExecutables: ['Cursor.exe'],
     windowsDirectories: ['cursor'],
   },
@@ -122,6 +127,7 @@ const editorTargets: EditorTargetDescriptor[] = [
     label: 'Windsurf',
     appName: 'Windsurf',
     appPaths: ['/Applications/Windsurf.app'],
+    macosCliName: 'windsurf',
     windowsExecutables: ['Windsurf.exe'],
     windowsDirectories: ['Windsurf'],
   },
@@ -333,7 +339,12 @@ async function openResourceIntent(
     const location = normalizeLocation(request.location) ?? normalizeLocation(intent.target.location);
     await validateLocation(file.absolutePath, location?.line);
     const targetPath = location?.line ? `${file.absolutePath}:${location.line}${location.column ? `:${location.column}` : ''}` : file.absolutePath;
-    await services.executeFile(process.platform === 'win32' ? applicationPath : '/usr/bin/open', process.platform === 'win32' ? ['--goto', targetPath] : ['-a', applicationPath, '--args', '--goto', targetPath]);
+    /** 使用所选应用自己的 CLI，不依赖 PATH 或只对首次启动生效的 open --args。 */
+    const command = process.platform === 'win32' ? applicationPath : editor.macosCliName ? join(applicationPath, 'Contents', 'Resources', 'app', 'bin', editor.macosCliName) : null;
+    if (!command || !(await services.pathExists(command))) {
+      throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_TARGET_UNAVAILABLE', 'The selected editor command-line launcher is unavailable.');
+    }
+    await services.executeFile(command, location?.line ? ['--goto', targetPath] : [file.absolutePath]);
     return { opened: true, resourceId: intent.id, target, mode: 'file' };
   }
   throw resourceOpenError('ZEUS_CONVERSATION_RESOURCE_TARGET_UNAVAILABLE', 'The selected open target is unavailable for this resource.');

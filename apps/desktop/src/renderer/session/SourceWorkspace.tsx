@@ -445,7 +445,7 @@ function SourceWorkspaceView(props: {
           {props.preview.kind === 'image' ? (
             <PreviewImage key={props.preview.dataUrl} url={props.preview.dataUrl} name={props.preview.resource.displayName} zh={zh} />
           ) : renderedMarkdown ? (
-            <ConversationMarkdown text={props.preview.content} streamId={`source-preview:${props.preview.resource.id}`} phase="final" language={props.language} />
+            <ConversationMarkdown text={props.preview.content} streamId={`source-preview:${props.preview.resource.id}`} phase="final" language={props.language} documentMode />
           ) : (
             <Suspense fallback={null}>
               <SourceCodePreview

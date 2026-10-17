@@ -10,6 +10,12 @@ import { ConnectedSessionWorkspace, SessionWorkspace } from '../src/renderer/ses
 import { createConversationApiClient } from '../src/renderer/features/conversations/conversationApiClient.js';
 import { Button } from '../src/renderer/ui/Button.js';
 import { ConversationMarkdown } from '../src/renderer/session/ConversationMarkdown.js';
+import { FilePreview } from '../src/renderer/code/FilePreview.js';
+import { ProjectSourceRenderedPreview } from '../src/renderer/code/ProjectSourceRenderedPreview.js';
+import { SourceWorkspace, type SourceWorkspaceState } from '../src/renderer/session/SourceWorkspace.js';
+import { TaskDeliverableContent } from '../src/renderer/features/digital-employees/TaskDeliverableReader.js';
+import '../src/renderer/code/projectSourceWorkspace.css';
+import '../src/renderer/features/digital-employees/digitalEmployees.css';
 import { ConversationInlineResource, ConversationResourceCards, defaultOpenTarget } from '../src/renderer/session/ConversationResources.js';
 import { ConversationComposer, type ComposerRuntimeSettings } from '../src/renderer/session/ConversationComposer.js';
 import type { ZeusBrowserPreparedSubmission } from '@zeus/shared';
@@ -195,7 +201,7 @@ export function SessionQaApp(props: { scene: QaScene }) {
   if (props.scene.query === 'error-layout') return <ErrorLayoutQa />;
   if (props.scene.query === 'paste-focus') return <TaskPasteFocusQa />;
   if (props.scene.query === 'composer') return <ComposerMarkdownQa />;
-  if (props.scene.query === 'review') return <MarkdownReviewQa />;
+  if (props.scene.query === 'review') return new URLSearchParams(window.location.search).has('long') ? <LongMarkdownFileQa /> : <MarkdownReviewQa />;
   if (props.scene.query === 'questions') return <QuestionQa />;
   if (props.scene.query === 'plan-implementation') return <PlanImplementationQa />;
   if (props.scene.query === 'images') return <TaskPushImagesQa />;
@@ -612,6 +618,14 @@ function QueueActionsQa() {
       [...(surface.current?.querySelectorAll('button') ?? [])].filter((button) => button.textContent === (language === 'zh-CN' ? '重试' : 'Retry')).length !== expectedRetry
     )
       throw new Error(`队列操作检查失败：${scenario}`);
+    /** 普通多消息样本同时核对实际行序，防止回调成功但页面仍按原顺序排列。 */
+    if (scenario === 'queued' && sample === 'multiple') {
+      /** 只读取排队区，正文历史不参与顺序比较。 */
+      const rows = [...(surface.current?.querySelectorAll('.session-queued-message-preview') ?? [])];
+      /** 已接纳项退出待发送区，剩余项沿用模拟权威快照的位置。 */
+      const pending = submissions.filter((submission) => submission.status !== 'resolved');
+      if (rows.some((row, index) => row.textContent !== pending[index]?.content)) throw new Error('排队消息显示顺序与回执不一致');
+    }
     setResult(`运行检查通过：${scenario} / ${sample} / ${language}`);
   }
   return (
@@ -691,7 +705,9 @@ function QueueActionsQa() {
               setScenario('queued');
               setResult('继续发送回调已触发，原消息恢复排队');
             }}
-            onReorder={(orderedIds) => {
+            onReorder={async (orderedIds) => {
+              await nextQaTask();
+              if (failAction) throw new Error('排序失败，原队列已保留。');
               setQueueOrder(orderedIds);
               setResult(`重排回调已触发：${orderedIds.join(' → ')}`);
             }}
@@ -3093,6 +3109,127 @@ function CopyErrorQa() {
         </Button>
       </nav>
       <ApplicationErrorDialogHost language={language} />
+    </main>
+  );
+}
+
+/** 用真实文件预览检查长文档；浏览器数据同时超过原字符、节点和代码块限制。 */
+function LongMarkdownFileQa() {
+  /** 同一入口覆盖完整长文、无标题和重复标题，语言和主题沿用既有参数。 */
+  const parameters = new URLSearchParams(window.location.search);
+  /** 只切换真实预览组件，不替换其中的大纲实现。 */
+  const [surface, setSurface] = useState('file');
+  /** 会话预览的标签与原文切换由原组件管理。 */
+  const [sourceState, setSourceState] = useState<SourceWorkspaceState | null>(null);
+  /** 文案与实际 Markdown 组件使用相同语言。 */
+  const language = parameters.has('en') ? 'en-US' : 'zh-CN';
+  /** 检查只读取当前样本渲染结果。 */
+  const root = useRef<HTMLElement>(null);
+  /** 仅在模拟读取能力安装后挂载真实预览，避免读取结果受挂载顺序影响。 */
+  const [ready, setReady] = useState(false);
+  /** 文末检查结果供人工核对。 */
+  const [checked, setChecked] = useState(false);
+  /** 预览内容与当前主题、窗口尺寸无关，切换展示不会重建样本。 */
+  const content = useMemo(
+    () =>
+      parameters.has('empty')
+        ? '此文档只有正文，没有标题。'
+        : parameters.has('outline')
+          ? '# Markdown 阅读\n\n文件正文保持完整。\n\n## 开始阅读\n\n点击右侧目录可以定位。\n\n### macOS\n\n沿用系统入口。\n\n### Windows\n\n沿用系统入口。\n\n## 操作说明\n\n第一处相同标题。\n\n## 操作说明\n\n第二处相同标题。\n\n```markdown\n# 代码块里的标题不进入目录\n```\n\n## 结束\n\n完整文档结束标记'
+          : `# 长文档阅读检查\n\n${Array.from({ length: 600 }, (_, index) => `## 第 ${index + 1} 节\n\n**重点**与\`数据\`保留格式。${'此段用于检查文件超过会话限制后仍能阅读。'.repeat(20)}\n\n`).join('')}\n\n\`\`\`text\n${'代码正文\n'.repeat(12_000)}代码结束标记\n\`\`\`\n\n完整文档结束标记`,
+    [],
+  );
+  /** 会话入口使用真实资源结构，避免预览状态随普通重渲染变化。 */
+  const preview = useMemo<ConversationResourcePreview>(
+    () => ({
+      kind: 'source',
+      language: 'markdown',
+      content,
+      lineCount: content.split('\n').length,
+      truncated: false,
+      resource: {
+        id: 'qa-outline-resource',
+        kind: 'file',
+        presentation: 'inline',
+        displayName: '长文档.md',
+        projectRelativePath: '长文档.md',
+        iconKind: 'markdown',
+        projectId: 'qa-project',
+        conversationId: 'qa',
+        turnId: 'qa',
+        itemId: 'qa',
+        createdAt: '',
+        updatedAt: '',
+      },
+    }),
+    [content],
+  );
+  useEffect(() => {
+    /** 独立浏览器页面使用固定内容，禁止替换原生应用桥接。 */
+    if (window.zeus) return;
+    /** 离开场景时撤销模拟能力，不连接正式数据。 */
+    const previous = window.zeus;
+    window.zeus = {
+      loadFilePreview: async () => [{ id: `qa-long-${crypto.randomUUID()}`, name: '长文档.md', label: '完整文件', kind: 'text', mime: 'text/markdown', byteLength: new TextEncoder().encode(content).length, content }],
+      releaseFilePreview: async () => {},
+      prepareProjectSourcePreview: async () => ({ id: 'qa-source-grant', url: `${location.origin}/qa/长文档.md`, rootUrl: `${location.origin}/qa/` }),
+      releaseProjectSourcePreview: async () => {},
+    } as NonNullable<typeof window.zeus>;
+    setReady(true);
+    return () => {
+      window.zeus = previous;
+    };
+  }, [content]);
+  /** 真实正文、章节数和代码尾部缺失时立即报错，防止只隐藏截断提示。 */
+  function checkEnd() {
+    /** 查询范围限定在当前真实文件预览。 */
+    const markdown = root.current?.querySelector('.session-conversation-markdown > .markstream-react');
+    if (
+      markdown?.querySelectorAll('h2').length !== 600 ||
+      !markdown.textContent?.endsWith('完整文档结束标记') ||
+      !markdown.querySelector('.session-code-block code')?.textContent?.includes('代码结束标记') ||
+      markdown.parentElement?.hasAttribute('data-truncated')
+    )
+      throw new Error('长文档正文或代码被截断。');
+    /** 展开目录时必须覆盖全部章节，避免大纲另设节点上限。 */
+    const outline = root.current?.querySelector('.session-markdown-outline');
+    if (outline && outline.querySelectorAll('li').length !== 601) throw new Error('大纲未包含全部标题。');
+    markdown.lastElementChild?.scrollIntoView({ block: 'end' });
+    setChecked(true);
+  }
+  return (
+    <main
+      ref={root}
+      className={`macos-ai-app session-codex-parity-v1${parameters.has('dark') ? ' theme-dark' : ''}`}
+      data-theme={parameters.has('dark') ? 'dark' : 'light'}
+      style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}
+    >
+      <div style={{ display: 'flex', flexShrink: 0, gap: 8 }}>
+        <select aria-label="预览入口" value={surface} onChange={(event) => setSurface(event.target.value)}>
+          <option value="file">文件预览</option>
+          <option value="session">会话审阅</option>
+          <option value="project">项目源码预览</option>
+          <option value="deliverable">成果阅读</option>
+        </select>
+        {!parameters.has('empty') && !parameters.has('outline') ? (
+          <Button onClick={checkEnd} disabled={!ready}>
+            {checked ? '文末检查通过' : '检查文末'}
+          </Button>
+        ) : null}
+      </div>
+      {!ready ? (
+        <p role="status">正在准备长文档…</p>
+      ) : surface === 'session' ? (
+        <SourceWorkspace preview={preview} viewMode="preview" onViewModeChange={() => {}} language={language} fullWidth onFullWidthChange={() => {}} onClose={() => {}} state={sourceState} onStateChange={setSourceState} />
+      ) : surface === 'project' ? (
+        <ProjectSourceRenderedPreview projectId="qa-project" path="长文档.md" kind="markdown" draft={content} language={language} openFile={async () => {}} />
+      ) : surface === 'deliverable' ? (
+        <div className="task-deliverable-reader-body">
+          <TaskDeliverableContent id="qa-deliverable" title="成果文档" content={content} language={language} />
+        </div>
+      ) : (
+        <FilePreview request={{ kind: 'source', projectId: 'qa-project', path: '长文档.md' }} zh={language === 'zh-CN'} />
+      )}
     </main>
   );
 }

@@ -902,6 +902,22 @@
   background: var(--session-working-soft, var(--session-canvas));
 }
 
+/* 排序反馈跟随原消息，显示真实可见位置，便于确认相邻两项的变化。 */
+.session-codex-parity-v1 .session-queued-message[data-reordered='true'] {
+  background: var(--session-working-soft, var(--session-canvas));
+}
+
+.session-codex-parity-v1 .session-queued-message-reordered {
+  color: var(--session-text-muted);
+  font-size: 12px;
+  grid-column: 1 / -1;
+}
+
+.session-codex-parity-v1 .session-queued-message[data-reordered='true']:focus-visible {
+  outline: 2px solid var(--session-focus-outline);
+  outline-offset: -2px;
+}
+
 .session-codex-parity-v1 .session-queued-message-content {
   align-items: center;
   display: flex;
@@ -2807,6 +2823,12 @@
 .session-codex-parity-v1 .session-conversation-markdown .node-slot,
 .session-codex-parity-v1 .session-conversation-markdown .node-content {
   min-inline-size: 0;
+}
+
+/* 文件节点始终保留在 DOM 中；屏外内容延迟绘制，首次按 80px 估算并记住实际高度。 */
+.session-conversation-markdown[data-document-mode='true'] > .markstream-react > .node-slot {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 80px;
 }
 
 .session-codex-parity-v1 .session-conversation-markdown .node-placeholder {
@@ -14037,4 +14059,94 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   margin: 0;
   color: var(--zeus-control-danger-text, #b33a3a);
   font-size: 12px;
+}
+
+/* 文件大纲与正文共用当前预览宽度；收起时保留原有阅读宽度。 */
+.session-markdown.session-conversation-markdown[data-document-mode='true'] {
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 12px;
+  position: relative;
+}
+.session-markdown.session-conversation-markdown[data-document-mode='true']:has(> .session-markdown-outline) {
+  inline-size: 100%;
+  max-inline-size: none;
+}
+.session-markdown.session-conversation-markdown[data-document-mode='true'] > .markstream-react {
+  grid-column: 1;
+  grid-row: 2;
+  min-inline-size: 0;
+}
+/* 按钮与侧栏随预览滚动保持可达，不进入正文的语法树和节点预算。 */
+.session-markdown-outline-toggle {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  justify-self: end;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+}
+.session-markdown-outline {
+  align-self: start;
+  background: var(--zeus-product-panel);
+  border: 1px solid var(--zeus-product-border);
+  border-radius: 8px;
+  box-sizing: border-box;
+  font-size: 12px;
+  grid-column: 2;
+  grid-row: 2;
+  inline-size: 240px;
+  line-height: 1.45;
+  max-block-size: calc(100dvh - 120px);
+  min-inline-size: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  position: sticky;
+  top: 38px;
+  z-index: 2;
+}
+.session-markdown-outline > header {
+  align-items: center;
+  background: inherit;
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 8px 6px 12px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.session-markdown-outline > ol {
+  list-style: none;
+  margin: 0;
+  padding: 0 6px 8px;
+}
+.session-markdown-outline > ol > li {
+  list-style: none;
+  margin: 0;
+}
+.session-markdown-outline > p {
+  font-size: 12px;
+  margin: 8px 12px 16px;
+}
+/* 目录复用统一列表行，只省去文件图标列，标题层级由列表缩进表达。 */
+.session-markdown-outline .zeus-source-list-row-icon {
+  display: none;
+}
+.session-conversation-markdown .session-markdown-outline .zeus-source-list-row[data-source-list-level='nested'] .zeus-source-list-row-main {
+  font-weight: 400;
+  grid-template-columns: minmax(0, 1fr);
+  inline-size: 100%;
+}
+.session-markdown.session-conversation-markdown[data-document-mode='true'] :is(h1, h2, h3, h4, h5, h6) {
+  scroll-margin-block-start: 42px;
+}
+/* 窄分栏在正文右侧覆盖展示，选章后组件自动收起，保留完整正文宽度。 */
+@container (max-width: 640px) {
+  .session-markdown-outline {
+    box-shadow: -8px 0 20px rgb(0 0 0 / 10%);
+    grid-column: 1 / -1;
+    inline-size: min(240px, calc(100cqw - 16px));
+    justify-self: end;
+  }
 }

@@ -185,7 +185,7 @@ export function TaskDeliverableContent(props: {
       {raw ? (
         <TextFilePreview id={props.id} title={props.title} content={props.content} />
       ) : (
-        <ConversationMarkdown text={props.content} streamId={props.id} phase="final" language={props.language} renderImmediately={props.content.length <= 24_000} />
+        <ConversationMarkdown text={props.content} streamId={props.id} phase="final" language={props.language} documentMode renderImmediately={props.content.length <= 24_000} />
       )}
     </section>
   );
