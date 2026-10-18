@@ -356,12 +356,7 @@ function sameToolIdentity(left: ZeusPluginDynamicTool, right: ZeusPluginDynamicT
 /** 校验审批确实属于本次工具身份和最终参数，策略收紧后旧依据立即失效。 */
 function validateApprovalEvidence(tool: ZeusPluginDynamicTool, args: Record<string, unknown>, approval: ZeusPluginMcpApprovalEvidence): void {
   const argumentsSha256 = createHash('sha256').update(canonicalJson(args)).digest('hex');
-  if (
-    approval.pluginRevisionId !== tool.pluginRevisionId ||
-    approval.definitionSha256 !== tool.definitionSha256 ||
-    approval.approvalMode !== tool.approvalMode ||
-    approval.argumentsSha256 !== argumentsSha256
-  ) {
+  if (approval.pluginRevisionId !== tool.pluginRevisionId || approval.definitionSha256 !== tool.definitionSha256 || approval.approvalMode !== tool.approvalMode || approval.argumentsSha256 !== argumentsSha256) {
     throw brokerError('ZEUS_PLUGIN_MCP_APPROVAL_STALE', 'Plugin MCP 工具身份或参数已变化，原审批依据不能继续使用。');
   }
   if (tool.approvalMode === 'prompt' && approval.source === 'policy') {

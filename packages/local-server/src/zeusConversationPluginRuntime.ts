@@ -161,7 +161,19 @@ export function createZeusConversationPluginRuntime(options: {
     const mcp: ZeusPluginMcpCatalog = { tools: [], appTools: [], failures: [] };
     const sessionStart: ZeusPluginHookEventResult = emitSessionStart
       ? await hooks.emit({ event: 'SessionStart', conversationId: input.conversationId, cwd: input.cwd, model: input.model, payload: { source: input.source }, maximumWaitMs: pluginDispatchHookWaitLimitMs })
-      : { event: 'SessionStart', runs: [], continue: true, systemMessages: [], additionalContext: [], continuationPrompts: [], stopReasons: [], permissionDecision: null, permissionDecisionReason: null, updatedInput: null, replaceToolResult: null };
+      : {
+          event: 'SessionStart',
+          runs: [],
+          continue: true,
+          systemMessages: [],
+          additionalContext: [],
+          continuationPrompts: [],
+          stopReasons: [],
+          permissionDecision: null,
+          permissionDecisionReason: null,
+          updatedInput: null,
+          replaceToolResult: null,
+        };
     rejectTimedOutDispatchHooks(sessionStart);
     const skills = activations.flatMap((activation) =>
       activation.components.skills.map((skill) => ({
@@ -176,7 +188,9 @@ export function createZeusConversationPluginRuntime(options: {
     const developerInstructions = [
       ...sessionStart.systemMessages,
       ...sessionStart.additionalContext,
-      activations.some((activation) => activation.components.mcpServers.length > 0 || activation.connectors.some((connector) => connector.connected)) ? 'Plugin MCP 工具按需读取当前目录。Codex 使用 zeus_plugin.catalog/invoke，Pi 使用 zeus_plugin_catalog/zeus_plugin_invoke；删除、停用或权限变更立即影响后续调用。' : '',
+      activations.some((activation) => activation.components.mcpServers.length > 0 || activation.connectors.some((connector) => connector.connected))
+        ? 'Plugin MCP 工具按需读取当前目录。Codex 使用 zeus_plugin.catalog/invoke，Pi 使用 zeus_plugin_catalog/zeus_plugin_invoke；删除、停用或权限变更立即影响后续调用。'
+        : '',
       skills.length > 0 ? `当前可用的 Zeus Plugin Skill 如下；删除或停用后立即不可用：\n${skills.map((skill) => `- ${skill.name}: ${skill.description} (${skill.path})`).join('\n')}` : '',
     ]
       .filter(Boolean)

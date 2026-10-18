@@ -1740,9 +1740,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     }
     const skillReferences = normalizeSkillReferences(body.skillReferences);
     if (skillReferences.length > 0 && !zeusSkillService) throw nativeApiError('ZEUS_SKILLS_UNAVAILABLE', '当前执行宿主不支持 Zeus Skill。');
-    const resolvedSkills = zeusSkillService
-      ? await Promise.all(skillReferences.map((reference) => zeusSkillService.resolve({ cwd: project.localPath, skillId: reference.id })))
-      : [];
+    const resolvedSkills = zeusSkillService ? await Promise.all(skillReferences.map((reference) => zeusSkillService.resolve({ cwd: project.localPath, skillId: reference.id }))) : [];
 
     const providerContent = resolvedSkills.length > 1 ? `${resolvedSkills.map((skill) => `$${skill.name}`).join(' ')}\n\n${content}` : content;
     if (body.computerUseRequested !== undefined && typeof body.computerUseRequested !== 'boolean') {

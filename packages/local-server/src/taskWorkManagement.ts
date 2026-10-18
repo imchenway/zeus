@@ -1252,14 +1252,12 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
         }
         if (currentPlan || !preview || task.updatedAt !== options.tasks.getById(taskId)?.updatedAt || preview.expectedEmployeeRevision !== options.employees.getById(input.employeeId)?.revision)
           throw new TaskWorkStoreError('ZEUS_TASK_DISCUSSION_ASSIGNMENT_CONFLICT', '任务、员工或安排在预检后发生变化，请重新读取。');
-        const created = createWorkItemFromPreview(
-          options,
-          task,
-          requireEmployeeOrThrow(options, task.projectId, input.employeeId),
-          preview,
-          stableIdentity('task_work_item', sourceRef),
-          { source: 'manual', sourceRef, title: input.title, description: input.description },
-        );
+        const created = createWorkItemFromPreview(options, task, requireEmployeeOrThrow(options, task.projectId, input.employeeId), preview, stableIdentity('task_work_item', sourceRef), {
+          source: 'manual',
+          sourceRef,
+          title: input.title,
+          description: input.description,
+        });
         return { item: created.item, run: created.run, message: '已创建正式工作，执行状态与成果将在工作页更新。' };
       },
     }).result;
