@@ -115,9 +115,7 @@ export type NativeSessionAction =
       /** 结果待核对属于可自行收敛的内部状态，允许不携带面向用户的错误。 */
       error?: NativeSessionError;
     }
-  | { type: 'send_accepted'; clientUserMessageId: string; status: string; messageCreatedAt?: string; submissionId?: string; providerTurnId?: string }
-  | { type: 'send_reconciliation_failed'; error: NativeSessionError }
-  | { type: 'send_succeeded' };
+  | { type: 'send_accepted'; clientUserMessageId: string; status: string; messageCreatedAt?: string; submissionId?: string; providerTurnId?: string };
 
 export function nativeSessionItemKey(conversationId: string, threadId: string, turnId: string, itemId: string): string {
   return [conversationId, threadId, turnId, itemId].map((part) => encodeURIComponent(part)).join('/');
@@ -332,8 +330,6 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
             }
           : {}),
         transcriptRevision: state.transcriptRevision + (optimisticEntry ? 1 : 0),
-        conversationState: action.previousConversationState,
-        error: action.error,
       };
     }
     case 'send_uncertain': {
@@ -357,8 +353,6 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
               },
             }
           : {}),
-        conversationState: action.previousConversationState,
-        ...(action.error ? { error: action.error } : {}),
         transcriptRevision: state.transcriptRevision + (optimistic ? 1 : 0),
       };
     }
@@ -366,14 +360,13 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
       const optimisticEntry = optimisticUserItemEntry(state, action.clientUserMessageId);
       const optimisticKey = optimisticEntry?.[0] ?? optimisticUserItemKey(state, action.clientUserMessageId);
       const optimistic = optimisticEntry?.[1];
-      if (!optimistic) return { ...state, error: null };
+      if (!optimistic) return state;
       // 接纳到提交队列即完成本地交接；初始回执不能把已删除或已执行的队列项重新写回正文。
       if (action.submissionId && isUnacceptedTranscriptMessage(optimistic) && !action.providerTurnId) {
         return {
           ...state,
           items: Object.fromEntries(Object.entries(state.items).filter(([key]) => key !== optimisticKey)),
           itemOrder: state.itemOrder.filter((key) => key !== optimisticKey),
-          error: null,
           transcriptRevision: state.transcriptRevision + 1,
         };
       }
@@ -401,13 +394,8 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
           },
         },
         transcriptRevision: state.transcriptRevision + 1,
-        error: null,
       };
     }
-    case 'send_reconciliation_failed':
-      return { ...state, error: action.error };
-    case 'send_succeeded':
-      return { ...state, error: null };
   }
 }
 
@@ -1749,14 +1737,13 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
     timelineAt: action.startedAt,
     updatedAt: action.startedAt,
   };
-  const keepActiveState =
-    action.previousConversationState === 'active_prework' || action.previousConversationState === 'active_final_answer' || action.previousConversationState === 'waiting_approval' || action.previousConversationState === 'waiting_user_input';
   return {
     ...state,
     items: { ...state.items, [key]: item },
     itemOrder: existingOptimisticEntry || state.items[key] ? state.itemOrder : [...state.itemOrder, key],
     transcriptRevision: state.transcriptRevision + 1,
-    conversationState: action.queuedUntilHydrated ? action.previousConversationState : keepActiveState ? action.previousConversationState : 'starting_turn',
+    /** 本地消息状态不推导会话运行状态；队列、轮次和快照拥有该权威状态。 */
+    conversationState: action.previousConversationState,
     ...(action.preserveComposer
       ? {}
       : {
@@ -1765,7 +1752,6 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
           browserSubmission: null,
           contextDraft: structuredClone(emptyConversationContextDraft),
         }),
-    error: null,
   };
 }
 

@@ -1146,7 +1146,6 @@ function setupMenu(): void {
         createNewConversation: () => {
           void startNewConversationFromMenu();
         },
-        toggleDevTools: () => mainWindow?.webContents.toggleDevTools(),
         openSettings: () => {
           void openSettingsFromMenu();
         },
