@@ -9,7 +9,7 @@ import { homedir, tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { access, appendFile, chmod, copyFile, cp, link, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { performance } from 'node:perf_hooks';
 import { DatabaseSync } from 'node:sqlite';
@@ -166,6 +166,8 @@ let zeusDataLayout: ZeusDataLayout | undefined;
 let zeusDataRootIdentity: ZeusDataRootIdentityMarker | undefined;
 let dataRootPreparationError: unknown;
 let readOnlyValidationDescriptor: ReadOnlyValidationDescriptor | undefined;
+/** 只读验收副本销毁助手每个应用进程只能启动一次。 */
+let readOnlyValidationCleanupScheduled = false;
 let projectSourceWorkspace: ProjectSourceWorkspaceService | undefined;
 /** 效果预览沿用同一项目根解析，草稿授权只存活于发起窗口。 */
 const projectSourcePreviews = new ProjectSourcePreviewService({ loadProjectRoot: loadProjectRootForSourceWorkspace });
@@ -526,6 +528,23 @@ function applyReadOnlyValidationDataRoot(descriptor: ReadOnlyValidationDescripto
   zeusDataLayout = layout;
   // 不调用 prepareZeusDataRoot：验证进程禁止迁移、chmod、复制或创建正式数据目录。
   app.setPath('userData', layout.electronUserData);
+}
+
+/** 主进程退出后由独立 Node 助手删除整个 validationRoot，避免 Chromium 仍占用 profile 文件。 */
+async function scheduleReadOnlyValidationCleanup(descriptor: ReadOnlyValidationDescriptor): Promise<void> {
+  if (readOnlyValidationCleanupScheduled) return;
+  const workerPath = fileURLToPath(new URL('./readOnlyValidationCleanupWorker.js', import.meta.url));
+  const child = spawn(process.execPath, [workerPath, descriptor.validationRoot, String(process.pid), descriptor.manifestHash], {
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+  });
+  await new Promise<void>((resolveSpawn, rejectSpawn) => {
+    child.once('spawn', resolveSpawn);
+    child.once('error', rejectSpawn);
+  });
+  child.unref();
+  readOnlyValidationCleanupScheduled = true;
 }
 
 function applyPreparedDataRoot(root: string, legacyRoots: readonly string[] = [], knownProductionAdoptionRoots: readonly string[] = []): void {
@@ -4193,6 +4212,9 @@ app.on(
         await attemptCleanup('旧 App 备份', async () => {
           await cleanupStaleReleaseBackups(currentAppBundlePath());
         });
+      }
+      if (readOnlyValidationDescriptor && cleanupErrors.length === 0) {
+        await attemptCleanup('只读验收副本销毁助手', () => scheduleReadOnlyValidationCleanup(readOnlyValidationDescriptor!));
       }
       if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'Zeus 退出时一个或多个资源未能完整关闭。');
     },

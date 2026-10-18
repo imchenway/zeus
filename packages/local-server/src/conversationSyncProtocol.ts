@@ -151,6 +151,8 @@ export class ConversationSyncProtocol {
     const event = decodeStoredEvent(appended.event);
     this.options.flowControl?.observeAppend(durabilityLevel);
     this.options.db.afterCommit(() => this.options.broadcast(event));
+    // 在线客户端仍在提交后收到归档事件；持久追赶日志立即推进到新 baseline，离线客户端改读权威快照。
+    if (input.type === 'conversation.thread.archived') this.options.repository.pruneArchivedConversation(input.conversationId);
     return event;
   }
 

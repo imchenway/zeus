@@ -7,7 +7,8 @@ import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { conversationSyncProtocolV2Generation, conversationSyncProtocolV2MigrationId } from '../packages/storage/src/conversationSyncEventStore.js';
 
-const maintenanceMigrationId = '20260826_0002_retired_conversation_sync_event_cleanup';
+/** 当前离线回收规则的迁移账本身份。 */
+const maintenanceMigrationId = '20261018_0001_archived_conversation_sync_event_cleanup';
 const maximumRetainedEvents = 4_096;
 const maximumRetainedBytes = 16 * 1024 * 1024;
 const freeSpaceReserveBytes = 2 * 1024 * 1024 * 1024;
@@ -41,6 +42,12 @@ export interface ConversationSyncDatabaseFacts {
   syncBytes: number;
   legacySyncEvents: number;
   legacySyncBytes: number;
+  /** 已归档会话仍保留的同步事件数量。 */
+  archivedSyncEvents: number;
+  /** 已归档会话仍保留的同步事件字节数。 */
+  archivedSyncBytes: number;
+  /** 按退役代次或归档会话去重后的可回收字节数。 */
+  prunableSyncBytes: number;
   currentV2Streams: number;
   currentNonV2Streams: number;
   business: Record<string, { rows: number; minimumId: string | null; maximumId: string | null; idCharacters: number }>;
@@ -77,7 +84,7 @@ if (!arguments_.apply || arguments_.confirmation !== expectedConfirmation) {
 } else {
   const filesystem = await statfs(dirname(canonicalPath));
   const availableBytes = Number(filesystem.bavail) * Number(filesystem.bsize);
-  const estimatedLiveBytes = Math.max(0, (preflight.pageCount - preflight.freelistCount) * preflight.pageSize - preflight.legacySyncBytes);
+  const estimatedLiveBytes = Math.max(0, (preflight.pageCount - preflight.freelistCount) * preflight.pageSize - preflight.prunableSyncBytes);
   const requiredBytes = Math.max(estimatedLiveBytes, 512 * 1024 * 1024) + freeSpaceReserveBytes;
   if (availableBytes < requiredBytes) throw new Error(`候选压缩空间不足：需要至少 ${requiredBytes} 字节，当前 ${availableBytes} 字节。`);
 
@@ -103,14 +110,15 @@ if (!arguments_.apply || arguments_.confirmation !== expectedConfirmation) {
     database.exec('PRAGMA foreign_keys = ON');
     database.exec(`DELETE FROM conversation_sync_events WHERE generation_id <> ${sqlString(conversationSyncProtocolV2Generation)}`);
     database.exec(`DELETE FROM conversation_sync_event_streams WHERE generation_id <> ${sqlString(conversationSyncProtocolV2Generation)}`);
+    pruneArchivedConversationSyncEvents(database);
     compactV2Tails(database);
-    const checksum = createHash('sha256').update('retired-sync-generations-deleted,v2-tail<=4096-events,v2-tail<=16777216-bytes,v1').digest('hex');
+    const checksum = createHash('sha256').update('retired-and-archived-sync-events-deleted,current-tail<=4096-events,current-tail<=16777216-bytes').digest('hex');
     database
       .prepare(
         `INSERT OR IGNORE INTO schema_migrations (migration_id, description, checksum, applied_at)
          VALUES (?, ?, ?, ?)`,
       )
-      .run(maintenanceMigrationId, '离线删除已退役同步流并压缩 V2 连续尾部', `sha256:${checksum}`, new Date().toISOString());
+      .run(maintenanceMigrationId, '离线删除已退役及已归档同步事件并压缩当前连续尾部', `sha256:${checksum}`, new Date().toISOString());
     database.exec('VACUUM');
     database.exec('PRAGMA journal_mode = DELETE');
     database.exec('PRAGMA synchronous = FULL');
@@ -122,7 +130,7 @@ if (!arguments_.apply || arguments_.confirmation !== expectedConfirmation) {
 
   const postflight = inspectConversationSyncDatabase(canonicalPath);
   if (postflight.quickCheck !== 'ok' || postflight.foreignKeyViolations !== 0) throw new Error('候选数据库压缩后未通过完整性检查。');
-  if (postflight.legacySyncEvents !== 0 || postflight.currentNonV2Streams !== 0) throw new Error('候选数据库仍包含已退役同步事件或旧当前流。');
+  if (postflight.legacySyncEvents !== 0 || postflight.archivedSyncEvents !== 0 || postflight.currentNonV2Streams !== 0) throw new Error('候选数据库仍包含已退役或已归档会话的同步事件。');
   if (JSON.stringify(preflight.business) !== JSON.stringify(postflight.business)) throw new Error('候选压缩触碰了会话业务事实，已拒绝晋升。');
   const retainedBudgetViolation = readOnlyDatabase(canonicalPath, (database) =>
     Number(
@@ -191,6 +199,21 @@ function compactV2Tails(database: DatabaseSync): void {
   }
 }
 
+/** 删除已归档会话的短期追赶日志，并保留可触发权威快照水合的当前流水位。 */
+function pruneArchivedConversationSyncEvents(database: DatabaseSync): void {
+  database.exec(`
+    DELETE FROM conversation_sync_events
+     WHERE conversation_id IN (SELECT id FROM conversations WHERE archived = 1);
+    DELETE FROM conversation_sync_event_streams
+     WHERE is_current = 0
+       AND conversation_id IN (SELECT id FROM conversations WHERE archived = 1);
+    UPDATE conversation_sync_event_streams
+       SET base_sequence = latest_sequence + 1
+     WHERE is_current = 1
+       AND conversation_id IN (SELECT id FROM conversations WHERE archived = 1);
+  `);
+}
+
 export function inspectConversationSyncDatabase(path: string): ConversationSyncDatabaseFacts {
   return readOnlyDatabase(path, (database) => {
     const scalar = (sql: string, parameters: unknown[] = []): number => Number((database.prepare(sql).get(...parameters) as Record<string, unknown> | undefined)?.value ?? 0);
@@ -215,6 +238,11 @@ export function inspectConversationSyncDatabase(path: string): ConversationSyncD
       syncBytes: scalar('SELECT COALESCE(SUM(payload_byte_length), 0) AS value FROM conversation_sync_events'),
       legacySyncEvents: scalar('SELECT COUNT(*) AS value FROM conversation_sync_events WHERE generation_id <> ?', [conversationSyncProtocolV2Generation]),
       legacySyncBytes: scalar('SELECT COALESCE(SUM(payload_byte_length), 0) AS value FROM conversation_sync_events WHERE generation_id <> ?', [conversationSyncProtocolV2Generation]),
+      archivedSyncEvents: scalar('SELECT COUNT(*) AS value FROM conversation_sync_events WHERE conversation_id IN (SELECT id FROM conversations WHERE archived = 1)'),
+      archivedSyncBytes: scalar('SELECT COALESCE(SUM(payload_byte_length), 0) AS value FROM conversation_sync_events WHERE conversation_id IN (SELECT id FROM conversations WHERE archived = 1)'),
+      prunableSyncBytes: scalar('SELECT COALESCE(SUM(payload_byte_length), 0) AS value FROM conversation_sync_events WHERE generation_id <> ? OR conversation_id IN (SELECT id FROM conversations WHERE archived = 1)', [
+        conversationSyncProtocolV2Generation,
+      ]),
       currentV2Streams: scalar('SELECT COUNT(*) AS value FROM conversation_sync_event_streams WHERE generation_id = ? AND is_current = 1', [conversationSyncProtocolV2Generation]),
       currentNonV2Streams: scalar('SELECT COUNT(*) AS value FROM conversation_sync_event_streams WHERE generation_id <> ? AND is_current = 1', [conversationSyncProtocolV2Generation]),
       business,

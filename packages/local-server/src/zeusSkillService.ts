@@ -1,14 +1,17 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, cp, link, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { homedir } from 'node:os';
 import type { CodexAppServerManager, CodexSkillMetadata, CodexSkillScope, CodexSkillsListEntry } from '@zeus/ai-runtime';
 import { skillFrontmatterScalar } from './skillFrontmatter.js';
 
+/** Git 安装命令沿用 Node 的异步子进程接口。 */
 const execFileAsync = promisify(execFile);
+/** 单个 Skill 最多允许的文件系统节点数量。 */
 const maximumSkillNodes = 5_000;
+/** 单个 Skill 最多允许的总文件字节数。 */
 const maximumSkillBytes = 50 * 1024 * 1024;
 /** 订阅服务只补充目录，等待预算必须远小于本地接口的读取期限。 */
 const providerCatalogWaitMs = 1_000;
@@ -26,6 +29,8 @@ export interface ZeusSkillDescriptor {
   removable: boolean;
   interface?: Record<string, unknown>;
   dependencies?: Record<string, unknown>;
+  /** 冻结 Skill 的内容摘要；旧清单迁移后补齐。 */
+  contentHash?: string;
 }
 
 export interface ZeusSkillCatalog {
@@ -41,6 +46,8 @@ export interface ZeusSkillService {
   freeze(input: { cwd: string; identity: string }): Promise<ZeusSkillCatalog>;
   /** 只读已冻结的技能清单，供历史过程显示当时的名称。 */
   readFrozen(snapshotId: string): Promise<ZeusSkillCatalog>;
+  /** 将历史整目录副本改为内容对象硬链接，释放重复文件块。 */
+  compact(): Promise<{ snapshotCount: number; linkedFileCount: number; errorCount: number }>;
   install(input: { cwd: string; source: ZeusSkillInstallSource }): Promise<{ skill: ZeusSkillDescriptor; installedAt: string }>;
   remove(input: { cwd: string; skillId: string }): Promise<{ removed: true; skillId: string; name: string }>;
   resolve(input: { cwd: string; skillId: string }): Promise<{ id: string; name: string; description: string; path: string }>;
@@ -74,6 +81,10 @@ const CodexSkillServiceError = ZeusSkillServiceError;
 export function createZeusSkillService(options: { skillsRoot: string; snapshotRoot?: string; manager: Pick<CodexAppServerManager, 'listSkills'>; ensureReady(): Promise<void>; now?: () => Date }): ZeusSkillService {
   const skillsRoot = requireAbsolutePath(options.skillsRoot, 'Zeus Skill Root');
   const skillProfileRoot = dirname(skillsRoot);
+  /** Skill 快照根目录继续保留旧路径契约。 */
+  const snapshotRoot = requireAbsolutePath(options.snapshotRoot ?? join(dirname(skillProfileRoot), 'artifacts', 'skill-resources'), 'Skill 快照根目录');
+  /** 内容对象按目录摘要保存，所有提交快照只保留只读硬链接视图。 */
+  const skillObjectRoot = join(snapshotRoot, 'objects');
   const now = options.now ?? (() => new Date());
   /** 未完成的同类读取共享请求，超时返回本地目录后也不重复堆积订阅请求。 */
   const pendingProviderCatalogs = new Map<string, Promise<CodexSkillsListEntry[]>>();
@@ -205,10 +216,9 @@ export function createZeusSkillService(options: { skillsRoot: string; snapshotRo
     return { id: skill.id, name: skill.name, description: skill.description, path: skill.path };
   }
 
-  /** 同一提交复用已冻结的目录，新提交重新读取本地来源，不移动用户文件。 */
+  /** 同一提交复用已冻结的目录，新提交按内容对象创建兼容旧路径的只读视图。 */
   async function freeze(input: { cwd: string; identity: string }): Promise<ZeusSkillCatalog> {
-    const root = options.snapshotRoot ?? join(dirname(skillProfileRoot), 'artifacts', 'skill-resources');
-    const target = join(root, createHash('sha256').update(input.identity).digest('hex'));
+    const target = join(snapshotRoot, createHash('sha256').update(input.identity).digest('hex'));
     const manifest = join(target, 'catalog.json');
     try {
       return JSON.parse(await readFile(manifest, 'utf8')) as ZeusSkillCatalog;
@@ -216,17 +226,16 @@ export function createZeusSkillService(options: { skillsRoot: string; snapshotRo
       if (!isNodeError(error, 'ENOENT')) throw error;
     }
     const catalog = await list({ cwd: input.cwd });
-    await mkdir(root, { recursive: true, mode: 0o700 });
-    const staging = await mkdtemp(join(root, '.prepare-'));
+    await mkdir(snapshotRoot, { recursive: true, mode: 0o700 });
+    const staging = await mkdtemp(join(snapshotRoot, '.prepare-'));
     try {
       const skills: ZeusSkillDescriptor[] = [];
       for (const skill of catalog.skills) {
         const name = createHash('sha256').update(skill.id).digest('hex').slice(0, 24);
         const destination = join(staging, name);
-        await inspectSkillSource(dirname(skill.path));
-        await cp(dirname(skill.path), destination, { recursive: true, dereference: false, errorOnExist: true });
-        const metadata = await inspectSkillSource(destination);
-        skills.push({ ...skill, ...metadata, path: join(target, name, 'SKILL.md'), removable: false });
+        const object = await publishSkillObject(dirname(skill.path), skillObjectRoot);
+        await materializeSkillHardLinkView(object.path, destination);
+        skills.push({ ...skill, ...object.metadata, path: join(target, name, 'SKILL.md'), removable: false, contentHash: object.hash });
       }
       const frozen = { ...catalog, skills };
       await writeFile(join(staging, 'catalog.json'), JSON.stringify(frozen), { mode: 0o600 });
@@ -245,16 +254,190 @@ export function createZeusSkillService(options: { skillsRoot: string; snapshotRo
   async function readFrozen(snapshotId: string): Promise<ZeusSkillCatalog> {
     if (typeof snapshotId !== 'string' || !/^[a-f0-9]{64}$/u.test(snapshotId)) throw new CodexSkillServiceError('ZEUS_CODEX_SKILL_INPUT_INVALID', '技能快照编号无效。');
     /** 历史展示只读取清单，不重建快照或启动服务。 */
-    const root = options.snapshotRoot ?? join(dirname(skillProfileRoot), 'artifacts', 'skill-resources');
     try {
-      return JSON.parse(await readFile(join(root, snapshotId, 'catalog.json'), 'utf8')) as ZeusSkillCatalog;
+      return JSON.parse(await readFile(join(snapshotRoot, snapshotId, 'catalog.json'), 'utf8')) as ZeusSkillCatalog;
     } catch (error) {
       if (isNodeError(error, 'ENOENT')) throw new CodexSkillServiceError('ZEUS_CODEX_SKILL_NOT_FOUND', '技能快照已不存在。', 404);
       throw error;
     }
   }
 
-  return { list, freeze, readFrozen, install, remove, resolve: resolveSkill };
+  /** 逐个迁移旧快照；单个失败不阻断其他快照，也不删除仍可读取的旧文件。 */
+  async function compact(): Promise<{ snapshotCount: number; linkedFileCount: number; errorCount: number }> {
+    await mkdir(snapshotRoot, { recursive: true, mode: 0o700 });
+    const entries = await readdir(snapshotRoot, { withFileTypes: true });
+    let snapshotCount = 0;
+    let linkedFileCount = 0;
+    let errorCount = 0;
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !/^[a-f0-9]{64}$/u.test(entry.name)) continue;
+      const target = join(snapshotRoot, entry.name);
+      try {
+        const manifest = join(target, 'catalog.json');
+        const catalog = JSON.parse(await readFile(manifest, 'utf8')) as ZeusSkillCatalog;
+        /** 已写入完整内容摘要的快照由上次原子清单写入证明迁移完成，无需重复扫描文件。 */
+        const alreadyCompacted =
+          catalog.skills.every((skill) => typeof skill.contentHash === 'string' && /^[a-f0-9]{64}$/u.test(skill.contentHash)) &&
+          (await Promise.all(catalog.skills.map((skill) => pathExists(join(skillObjectRoot, skill.contentHash!))))).every(Boolean);
+        if (alreadyCompacted) {
+          snapshotCount += 1;
+          continue;
+        }
+        const skills: ZeusSkillDescriptor[] = [];
+        for (const skill of catalog.skills) {
+          const directory = dirname(resolve(skill.path));
+          const relativeDirectory = relative(target, directory);
+          if (basename(skill.path).toLowerCase() !== 'skill.md' || relativeDirectory.split(sep).length !== 1 || !/^[a-f0-9]{24}$/u.test(relativeDirectory)) {
+            throw new Error(`冻结 Skill 路径不属于快照：${skill.path}`);
+          }
+          await removeSkillHardLinkTemps(directory);
+          const object = await publishSkillObject(directory, skillObjectRoot);
+          linkedFileCount += await replaceSkillFilesWithHardLinks(object.path, directory);
+          skills.push({ ...skill, ...object.metadata, contentHash: object.hash });
+        }
+        const temporaryManifest = join(target, `.catalog-${randomUUID()}.json`);
+        await writeFile(temporaryManifest, JSON.stringify({ ...catalog, skills }), { mode: 0o600 });
+        await rename(temporaryManifest, manifest);
+        snapshotCount += 1;
+      } catch (error) {
+        errorCount += 1;
+        console.error(`Skill 快照 ${entry.name} 内容去重失败：${boundedDiagnostic(error)}`);
+      }
+    }
+    return { snapshotCount, linkedFileCount, errorCount };
+  }
+
+  return { list, freeze, readFrozen, compact, install, remove, resolve: resolveSkill };
+}
+
+/** 对目录结构、相对路径、可执行位和文件内容生成稳定摘要。 */
+async function hashSkillDirectory(root: string): Promise<string> {
+  const hash = createHash('sha256');
+  /** 按名称排序，消除文件系统枚举顺序差异。 */
+  const visit = async (directory: string): Promise<void> => {
+    const entries = (await readdir(directory, { withFileTypes: true })).sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      const path = join(directory, entry.name);
+      const relativePath = relative(root, path).split(sep).join('/');
+      const entryStat = await lstat(path);
+      if (entryStat.isSymbolicLink()) throw new CodexSkillServiceError('ZEUS_CODEX_SKILL_UNSAFE_SOURCE', `Skill 不能包含符号链接：${relativePath}`, 422);
+      if (entryStat.isDirectory()) {
+        hash.update(`D\0${relativePath}\0`);
+        await visit(path);
+        continue;
+      }
+      if (!entryStat.isFile()) throw new CodexSkillServiceError('ZEUS_CODEX_SKILL_UNSAFE_SOURCE', `Skill 包含不支持的文件类型：${relativePath}`, 422);
+      hash.update(`F\0${relativePath}\0${entryStat.mode & 0o111}\0${entryStat.size}\0`);
+      hash.update(await readFile(path));
+      hash.update('\0');
+    }
+  };
+  await visit(root);
+  return hash.digest('hex');
+}
+
+/** 将对象文件设为只读并保留可执行位，防止一个快照修改所有硬链接视图。 */
+async function sealSkillDirectory(root: string): Promise<void> {
+  /** 先处理子节点，最后收紧父目录写权限。 */
+  const visit = async (directory: string): Promise<void> => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) await visit(path);
+      else {
+        const entryStat = await stat(path);
+        await chmod(path, 0o444 | (entryStat.mode & 0o111));
+      }
+    }
+    await chmod(directory, 0o555);
+  };
+  await visit(root);
+}
+
+/** 发布不可变内容对象；并发发布相同摘要时复用先完成的对象。 */
+async function publishSkillObject(sourceDirectory: string, objectRoot: string): Promise<{ hash: string; path: string; metadata: { name: string; description: string } }> {
+  const metadata = await inspectSkillSource(sourceDirectory);
+  const hash = await hashSkillDirectory(sourceDirectory);
+  const target = join(objectRoot, hash);
+  await mkdir(objectRoot, { recursive: true, mode: 0o700 });
+  if (await pathExists(target)) {
+    const targetStatus = await lstat(target);
+    if (!targetStatus.isDirectory() || targetStatus.isSymbolicLink()) throw new CodexSkillServiceError('ZEUS_CODEX_SKILL_UNSAFE_SOURCE', 'Skill 内容对象不是受管目录。', 422);
+    const [targetHash, targetMetadata] = await Promise.all([hashSkillDirectory(target), inspectSkillSource(target)]);
+    if (targetHash !== hash) throw new CodexSkillServiceError('ZEUS_CODEX_SKILL_UNSAFE_SOURCE', 'Skill 内容对象摘要与目录身份不匹配。', 422);
+    return { hash, path: target, metadata: targetMetadata };
+  }
+  const staging = await mkdtemp(join(objectRoot, '.prepare-'));
+  const candidate = join(staging, 'content');
+  try {
+    await cp(sourceDirectory, candidate, { recursive: true, dereference: false, errorOnExist: true });
+    const copiedMetadata = await inspectSkillSource(candidate);
+    const copiedHash = await hashSkillDirectory(candidate);
+    if (copiedHash !== hash || copiedMetadata.name !== metadata.name || copiedMetadata.description !== metadata.description) {
+      throw new CodexSkillServiceError('ZEUS_CODEX_SKILL_UNSAFE_SOURCE', 'Skill 在冻结期间发生变化，请确认来源稳定后重试。', 422);
+    }
+    await sealSkillDirectory(candidate);
+    try {
+      await rename(candidate, target);
+    } catch (error) {
+      if (!isNodeError(error, 'EEXIST') && !isNodeError(error, 'ENOTEMPTY')) throw error;
+    }
+    const [publishedHash, publishedMetadata] = await Promise.all([hashSkillDirectory(target), inspectSkillSource(target)]);
+    if (publishedHash !== hash) throw new CodexSkillServiceError('ZEUS_CODEX_SKILL_UNSAFE_SOURCE', 'Skill 内容对象发布后摘要不一致。', 422);
+    return { hash, path: target, metadata: publishedMetadata };
+  } finally {
+    await rm(staging, { recursive: true, force: true });
+  }
+}
+
+/** 递归创建内容对象的只读硬链接视图，保留历史快照路径契约。 */
+async function materializeSkillHardLinkView(objectDirectory: string, destination: string): Promise<void> {
+  await mkdir(destination, { recursive: false, mode: 0o700 });
+  for (const entry of await readdir(objectDirectory, { withFileTypes: true })) {
+    const sourcePath = join(objectDirectory, entry.name);
+    const destinationPath = join(destination, entry.name);
+    if (entry.isDirectory()) await materializeSkillHardLinkView(sourcePath, destinationPath);
+    else await link(sourcePath, destinationPath);
+  }
+  await chmod(destination, 0o555);
+}
+
+/** 清除上次进程异常退出后遗留的内部硬链接临时项。 */
+async function removeSkillHardLinkTemps(root: string): Promise<void> {
+  await chmod(root, 0o755);
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    const path = join(root, entry.name);
+    if (entry.name.startsWith('.zeus-skill-link-')) {
+      await rm(path, { recursive: true, force: true });
+      continue;
+    }
+    if (entry.isDirectory()) await removeSkillHardLinkTemps(path);
+  }
+}
+
+/** 用同内容对象的硬链接原子替换旧快照文件，并返回实际替换数量。 */
+async function replaceSkillFilesWithHardLinks(objectDirectory: string, snapshotDirectory: string): Promise<number> {
+  await chmod(snapshotDirectory, 0o755);
+  let linkedFileCount = 0;
+  for (const entry of await readdir(objectDirectory, { withFileTypes: true })) {
+    const objectPath = join(objectDirectory, entry.name);
+    const snapshotPath = join(snapshotDirectory, entry.name);
+    if (entry.isDirectory()) {
+      linkedFileCount += await replaceSkillFilesWithHardLinks(objectPath, snapshotPath);
+      continue;
+    }
+    const [objectStat, snapshotStat] = await Promise.all([stat(objectPath), stat(snapshotPath)]);
+    if (objectStat.dev === snapshotStat.dev && objectStat.ino === snapshotStat.ino) continue;
+    const temporaryPath = join(snapshotDirectory, `.zeus-skill-link-${randomUUID()}`);
+    try {
+      await link(objectPath, temporaryPath);
+      await rename(temporaryPath, snapshotPath);
+      linkedFileCount += 1;
+    } finally {
+      await rm(temporaryPath, { force: true }).catch(() => undefined);
+    }
+  }
+  await chmod(snapshotDirectory, 0o555);
+  return linkedFileCount;
 }
 
 async function materializeSource(source: ZeusSkillInstallSource, stagingRoot: string): Promise<string> {

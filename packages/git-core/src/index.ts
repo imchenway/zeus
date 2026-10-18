@@ -1856,7 +1856,22 @@ export async function finalizeTaskBranchIntegration(input: { repositoryPath: str
   };
 }
 
-/** 只回收已登记在 Zeus worktree 容器内的临时合入目录。 */
+/** 校验未登记的合入目录仍是 Zeus 创建的精确目录形态，避免递归删除任意用户路径。 */
+async function assertOrphanTaskIntegrationPath(containerRoot: string, integrationPath: string): Promise<void> {
+  const relativePath = relative(containerRoot, integrationPath);
+  const segments = relativePath.split(sep);
+  const matchesIntegration = segments.length === 3 && segments[1] === '.integration';
+  const matchesAttempt = segments.length === 4 && segments[1] === '.integration-attempts';
+  if ((!matchesIntegration && !matchesAttempt) || segments.some((segment) => !segment || segment === '.' || segment === '..')) {
+    throw gitCoreError('ZEUS_GIT_PATH_INVALID', 'Integration worktree path does not match a Zeus-managed layout.');
+  }
+  const status = await lstat(integrationPath);
+  if (!status.isDirectory() || status.isSymbolicLink()) throw gitCoreError('ZEUS_GIT_PATH_INVALID', 'Integration worktree path is not a physical directory.');
+  const [realContainerRoot, realIntegrationPath] = await Promise.all([realpath(containerRoot), realpath(integrationPath)]);
+  if (!isPathInside(realContainerRoot, realIntegrationPath)) throw gitCoreError('ZEUS_GIT_PATH_INVALID', 'Integration worktree resolves outside the Zeus worktree container.');
+}
+
+/** 回收 Zeus worktree 容器内的临时合入目录，并收敛已丢失 Git 登记的孤儿目录。 */
 export async function cleanupTaskIntegrationWorktree(input: { repositoryPath: string; integrationPath: string }): Promise<boolean> {
   const context = await getGitRepositoryContext(input.repositoryPath);
   if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'The selected project is not a Git repository.');
@@ -1864,8 +1879,18 @@ export async function cleanupTaskIntegrationWorktree(input: { repositoryPath: st
   const containerRoot = resolve(join(dirname(context.topLevel), '.zeus-worktrees'));
   if (!isPathInside(containerRoot, integrationPath)) throw gitCoreError('ZEUS_GIT_PATH_INVALID', 'Integration worktree is outside the Zeus worktree container.');
   const registered = context.worktrees.find((entry) => canonicalFilesystemPath(entry.path) === canonicalFilesystemPath(integrationPath));
-  if (!registered) return false;
-  await runGit(context.topLevel, ['worktree', 'remove', '--force', integrationPath]);
+  if (registered) await runGit(context.topLevel, ['worktree', 'remove', '--force', registered.path]);
+  else {
+    const exists = await lstat(integrationPath).then(
+      () => true,
+      (error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+        throw error;
+      },
+    );
+    if (!exists) return false;
+    await assertOrphanTaskIntegrationPath(containerRoot, integrationPath);
+  }
   await rm(integrationPath, { recursive: true, force: true });
   return true;
 }

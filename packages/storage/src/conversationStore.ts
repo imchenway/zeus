@@ -7,6 +7,7 @@ import { type CodexUsageEstimate, type ConversationResourceKind, type Conversati
 import type { ZeusDatabasePort } from './databasePort.js';
 import type { ConversationAgentKind } from './conversationItemTypes.js';
 import { ConversationTranscriptRepository, hashConversationTranscriptContent } from './conversationTranscriptStore.js';
+import { pruneArchivedConversationSyncEvents } from './conversationSyncEventStore.js';
 
 /** 助手图片复用原始绝对路径的稳定附件身份，归档副本与工具输出共用该身份。 */
 export function conversationImageAttachmentRef(absolutePath: string): string {
@@ -1539,6 +1540,8 @@ export class ConversationRepository {
     // 归档只隐藏会话列表，不删除消息，保证历史正文可恢复。
     this.db.execute(`UPDATE conversations SET archived = ?, updated_at = ? WHERE id = ${toSqlStringLiteral(conversationId)}`, [1, timestamp]);
     syncConversationStage(this.db, conversationId, timestamp);
+    // 同步事件只用于在线追赶；归档后推进 baseline，正文和历史事实仍由权威快照保留。
+    pruneArchivedConversationSyncEvents(this.db, conversationId);
     const archived = this.getById(conversationId);
     if (!archived) {
       throw new Error(`Zeus conversation not found: ${conversationId}`);
