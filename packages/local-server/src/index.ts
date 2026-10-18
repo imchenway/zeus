@@ -236,16 +236,6 @@ const nativeConversationAttentionEventTypes = new Set([
 /** 只有条目事件需要附加显示位置，其他事件保持原有有界载荷。 */
 const nativeConversationTranscriptItemEventTypes = new Set(['conversation.item.started', 'conversation.item.delta', 'conversation.item.completed']);
 
-function providerToolSchemaRejection(payload: Record<string, unknown>): boolean {
-  const error = isObjectLike(payload.error) ? payload.error : payload;
-  const code = typeof Reflect.get(error, 'code') === 'string' ? String(Reflect.get(error, 'code')) : '';
-  const message = typeof Reflect.get(error, 'message') === 'string' ? String(Reflect.get(error, 'message')) : '';
-  const normalized = `${code} ${message}`.toLocaleLowerCase();
-  const namesTools = normalized.includes('tool') || normalized.includes('function');
-  const rejectsCapability = normalized.includes('unsupported') || normalized.includes('not supported') || normalized.includes('invalid') || normalized.includes('schema');
-  return namesTools && rejectsCapability;
-}
-
 /**
  * 非枚举启动失败元数据：表示新 local-server 已取得并尝试完成 Codex finalization。
  * Desktop 只能依据该结构化信号决定 owner，不能依赖错误文案。
@@ -1939,13 +1929,9 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         now,
       })
     : undefined;
-  /** 子代理复用父轮次已经冻结的普通 Skill；恢复和换链不会读取更新后的源文件。 */
-  async function loadConversationSkills(cwd: string, identity: string) {
-    const submission = conversationSubmissions.getById(identity);
-    const relation = submission ? conversationRuntime.getSubagent(submission.conversationId) : undefined;
-    const inherited = relation ? (JSON.parse(relation.contextJson) as Record<string, unknown>) : {};
-    const sourceIdentity = typeof inherited.resourceSnapshotIdentity === 'string' ? inherited.resourceSnapshotIdentity : identity;
-    return (await zeusSkillService?.freeze({ cwd, identity: sourceIdentity }))?.skills ?? [];
+  /** Pi 每次从当前目录读取普通 Skill，文件修改或删除立即生效。 */
+  async function loadConversationSkills(cwd: string) {
+    return (await zeusSkillService?.list({ cwd, includeProvider: false }))?.skills ?? [];
   }
   resolveCodexDispatchModelBudget = (modelId, providerGenerationId) => {
     if (!providerGenerationId) return null;
@@ -2083,7 +2069,6 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         if (modelSourceId && modelSourceId !== 'codex') return;
         requireCodexDispatchModelBudget(modelId, providerGenerationId);
       },
-      loadSkills: loadConversationSkills,
       compileDispatchContext: compileProviderDispatchContext,
       broadcast: publishNativeConversationEvent,
       now: () => now().toISOString(),
@@ -2920,15 +2905,14 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       // 实时事件只需要会话元数据；禁止在每个增量事件中加载整段消息历史。
       const conversation = conversations.getRecordById(conversationId);
       if (!conversation || conversation.transportKind !== 'codex_native') continue;
-      if (mappedType === 'plugin.mcp.tool_completed' || (mappedType === 'conversation.native.error' && pluginRepository.hasConversationActivationSet(conversationId) && providerToolSchemaRejection(payload))) {
-        const supported = mappedType === 'plugin.mcp.tool_completed';
+      if (mappedType === 'plugin.mcp.tool_completed') {
         agentCapabilitySnapshots.create({
           agentKind: conversation.agentKind === 'pi' ? 'pi' : 'codex',
           transportKind: conversation.agentKind === 'pi' ? 'sdk' : 'app_server',
-          supportStatus: supported ? 'verified' : 'experimental',
+          supportStatus: 'verified',
           protocolVersion: conversation.agentKind === 'pi' ? piRuntimeWorkerProtocolVersion : 'app-server',
-          capabilities: { tools: { state: supported ? 'supported' : 'unsupported', reason: supported ? 'Plugin MCP 工具完成了真实调用。' : 'Provider 实际拒绝了 Plugin 工具 Schema。' } },
-          evidence: { source: supported ? 'plugin_mcp_tool_completed' : 'provider_tool_schema_rejection', conversationId, model: conversation.modelId ?? conversation.providerModel ?? null, eventType: mappedType },
+          capabilities: { tools: { state: 'supported', reason: 'Plugin MCP 工具完成了真实调用。' } },
+          evidence: { source: 'plugin_mcp_tool_completed', conversationId, model: conversation.modelId ?? conversation.providerModel ?? null, eventType: mappedType },
           checkedAt: now().toISOString(),
         });
       }

@@ -6,6 +6,8 @@ import type { TaskWorkArrangement } from './taskWorkPlanningStore.js';
 
 export const taskWorkSchemaMigrationId = '20260829_0001_task_work_v2';
 export const taskWorkWorkspaceBindingMigrationId = '20260831_0425_task_work_workspace_binding_v1';
+/** 将历史 Skill 执行副本迁移为不可恢复的审计引用。 */
+export const taskWorkCurrentSkillReferenceMigrationId = '20261018_0003_task_work_current_skill_references';
 export const taskWorkDeliverableArtifactGeneration = 'task_work_deliverable_v1';
 
 export const taskWorkItemStatuses = ['queued', 'active', 'waiting_manager', 'completed', 'blocked', 'failed', 'cancelled'] as const;
@@ -337,6 +339,62 @@ export function migrateTaskWorkWorkspaceBindingSchema(db: ZeusDatabasePort): voi
   });
 }
 
+/** 清理所有历史 Skill Artifact 授权，并只保留来源、身份、路径和摘要。 */
+export function migrateTaskWorkCurrentSkillReferences(db: ZeusDatabasePort): void {
+  const checksum = `sha256:${createHash('sha256').update('task-work-skill:current-reference-only').digest('hex')}`;
+  db.transaction(() => {
+    const existing = db.get<{ checksum: string }>(`SELECT checksum FROM schema_migrations WHERE migration_id = ?`, [taskWorkCurrentSkillReferenceMigrationId]);
+    if (existing && existing.checksum !== checksum) throw new Error('任务工作 Skill 当前态迁移账本与定义不一致。');
+    if (existing) return;
+    const rows = db.select<{ id: string; skill_snapshot_json: string }>(`SELECT id, skill_snapshot_json FROM task_work_runs`);
+    for (const row of rows) {
+      const snapshot = record(row.skill_snapshot_json, 'run.skillSnapshot');
+      const selected = Array.isArray(snapshot.selected) ? snapshot.selected.flatMap(currentNativeSkillReference) : [];
+      const pluginSkills = Array.isArray(snapshot.pluginSkills) ? snapshot.pluginSkills.flatMap(currentPluginSkillReference) : [];
+      db.execute(`UPDATE task_work_runs SET skill_snapshot_json = ? WHERE id = ?`, [json({ generation: '2026-10-18-task-work-current-skill-reference', selected, pluginSkills }), row.id]);
+    }
+    const releasedAt = new Date().toISOString();
+    db.execute(`UPDATE artifact_retention_holds SET state = 'released', released_at = ? WHERE owner_kind = 'task_work_run_skill' AND state = 'active'`, [releasedAt]);
+    db.execute(`DELETE FROM artifact_owners WHERE owner_kind = 'task_work_run_skill'`);
+    db.execute(`INSERT INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)`, [
+      taskWorkCurrentSkillReferenceMigrationId,
+      '移除任务运行的 Skill 可执行副本授权并保留当前态审计引用',
+      checksum,
+      releasedAt,
+    ]);
+  });
+}
+
+/** 从历史普通 Skill 快照中提取不可执行的审计字段。 */
+function currentNativeSkillReference(value: unknown): Array<Record<string, unknown>> {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || typeof Reflect.get(value, 'id') !== 'string') return [];
+  return [
+    {
+      source: 'skill',
+      id: Reflect.get(value, 'id'),
+      name: typeof Reflect.get(value, 'name') === 'string' ? Reflect.get(value, 'name') : Reflect.get(value, 'id'),
+      description: typeof Reflect.get(value, 'description') === 'string' ? Reflect.get(value, 'description') : '',
+      path: typeof Reflect.get(value, 'path') === 'string' ? Reflect.get(value, 'path') : '',
+      contentSha256: typeof Reflect.get(value, 'contentSha256') === 'string' ? Reflect.get(value, 'contentSha256') : '',
+    },
+  ];
+}
+
+/** 从历史 Plugin Skill 快照中提取当前目录重新解析所需的身份。 */
+function currentPluginSkillReference(value: unknown): Array<Record<string, unknown>> {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || typeof Reflect.get(value, 'id') !== 'string') return [];
+  return [
+    {
+      source: 'plugin',
+      id: Reflect.get(value, 'id'),
+      name: typeof Reflect.get(value, 'name') === 'string' ? Reflect.get(value, 'name') : Reflect.get(value, 'id'),
+      description: typeof Reflect.get(value, 'description') === 'string' ? Reflect.get(value, 'description') : '',
+      pluginId: typeof Reflect.get(value, 'pluginId') === 'string' ? Reflect.get(value, 'pluginId') : '',
+      pluginRevisionId: typeof Reflect.get(value, 'pluginRevisionId') === 'string' ? Reflect.get(value, 'pluginRevisionId') : '',
+    },
+  ];
+}
+
 function addTaskWorkColumn(db: ZeusDatabasePort, column: string, definition: string): void {
   const exists = db.select<{ name: string }>(`PRAGMA table_info(task_work_runs)`).some((candidate) => candidate.name === column);
   if (!exists) db.execute(`ALTER TABLE task_work_runs ADD COLUMN ${column} ${definition}`);
@@ -485,12 +543,14 @@ export class TaskWorkRunRepository {
     return this.getById(input.id)!;
   }
 
+  /** 更新运行状态及派发时重新解析的当前 Skill 审计引用。 */
   update(
     id: string,
     input: {
       expectedRevision?: number;
       status?: TaskWorkRunStatus;
       enabledSkillIds?: string[];
+      skillSnapshot?: Record<string, unknown>;
       conversationId?: string | null;
       commandRunId?: string | null;
       workspaceSnapshot?: TaskWorkWorkspaceSnapshot | null;
@@ -511,10 +571,11 @@ export class TaskWorkRunRepository {
     if (conversationId && commandRunId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_RUN_REFERENCE_CONFLICT', 'Agent 会话与 Command 运行不能同时绑定。', 400);
     const timestamp = nextTimestamp(current.updatedAt, this.now());
     this.db.execute(
-      `UPDATE task_work_runs SET status = ?, enabled_skill_ids_json = ?, conversation_id = ?, command_run_id = ?, workspace_snapshot_json = ?, environment_id = ?, error_code = ?, error_message = ?, started_at = ?, runtime_completed_at = ?, completed_at = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ?`,
+      `UPDATE task_work_runs SET status = ?, enabled_skill_ids_json = ?, skill_snapshot_json = ?, conversation_id = ?, command_run_id = ?, workspace_snapshot_json = ?, environment_id = ?, error_code = ?, error_message = ?, started_at = ?, runtime_completed_at = ?, completed_at = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ?`,
       [
         status,
         JSON.stringify(input.enabledSkillIds ?? current.enabledSkillIds),
+        json(input.skillSnapshot ?? current.skillSnapshot),
         conversationId,
         commandRunId,
         input.workspaceSnapshot === undefined ? (current.workspaceSnapshot ? json(current.workspaceSnapshot) : null) : input.workspaceSnapshot ? json(input.workspaceSnapshot) : null,

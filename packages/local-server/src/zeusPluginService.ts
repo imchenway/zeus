@@ -3,7 +3,6 @@ import { cp, mkdir, mkdtemp, readFile, readdir, rename, rm, stat } from 'node:fs
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   PluginRepository,
-  type ConversationPluginActivationRecord,
   type PluginApprovalMode,
   type PluginComponentSnapshot,
   type PluginConnectorBindingRecord,
@@ -53,7 +52,7 @@ export interface ZeusMarketplaceCatalog {
   entries: ZeusMarketplaceEntry[];
 }
 
-export interface PluginActivationSnapshot {
+export interface PluginActivationState {
   pluginId: string;
   pluginRevisionId: string;
   name: string;
@@ -65,7 +64,7 @@ export interface PluginActivationSnapshot {
   connectors: PluginConnectorBindingRecord[];
   mcpPolicies: PluginMcpPolicyRecord[];
   explicitReferences: Array<{ kind: 'plugin' | 'skill'; id: string }>;
-  frozenAt: string;
+  resolvedAt: string;
 }
 
 export interface ZeusPluginService {
@@ -86,10 +85,8 @@ export interface ZeusPluginService {
   setMcpPolicy(input: { pluginId: string; serverId: string; toolName?: string; enabled: boolean; approvalMode: PluginApprovalMode }): Promise<PluginMcpPolicyRecord>;
   resolveExplicitReferences(input: { projectId?: string | null; text: string }): Promise<Array<{ kind: 'plugin' | 'skill'; id: string }>>;
   validateExplicitReferences(input: { projectId?: string | null; references: unknown }): Promise<Array<{ kind: 'plugin' | 'skill'; id: string }>>;
-  validateConversationReferences(input: { conversationId: string; references: unknown }): Promise<Array<{ kind: 'plugin' | 'skill'; id: string }>>;
-  /** 子会话继承父会话已冻结的插件，不能换成当前安装版本。 */
-  inheritConversationActivations(parentId: string, childId: string): Promise<void>;
-  getOrFreezeConversationActivations(input: { conversationId: string; projectId?: string | null; explicitReferences?: Array<{ kind: 'plugin' | 'skill'; id: string }> }): Promise<PluginActivationSnapshot[]>;
+  /** 每次派发读取当前启用、权限和修订状态，不保存会话级执行副本。 */
+  resolveCurrentActivations(input: { projectId?: string | null; explicitReferences?: Array<{ kind: 'plugin' | 'skill'; id: string }> }): Promise<PluginActivationState[]>;
 }
 
 export class ZeusPluginServiceError extends Error {
@@ -131,9 +128,9 @@ export function createZeusPluginService(options: {
     for (const descriptor of plugins) {
       if (!descriptor.plugin.enabled || descriptor.providerLegacyConflict) continue;
       for (const skill of descriptor.revision.components.skills) {
-        /** 旧快照可能只保存了 YAML 块标记，按冻结文件恢复真实描述。 */
+        /** 旧安装元数据可能只保存 YAML 块标记，按当前安装修订读取真实描述。 */
         const skillRoot = resolveComponentPath(descriptor.revision.installPath, skill.path);
-        /** 新快照直接复用已解析描述，避免无意义磁盘读取。 */
+        /** 新安装元数据直接复用已解析描述，避免无意义磁盘读取。 */
         const description = /^[>|][+-]?$/u.test(skill.description) ? (skillFrontmatterScalar(await readFile(join(skillRoot, 'SKILL.md'), 'utf8'), 'description') ?? skill.description) : skill.description;
         skills.push({
           id: `plugin:${descriptor.plugin.id}:skill:${skill.id}`,
@@ -247,6 +244,7 @@ export function createZeusPluginService(options: {
     }
   }
 
+  /** 删除 Plugin 后仅保留仍被当前有效注册项引用的安装目录。 */
   async function remove(input: { pluginId: string; expectedRevision?: number }): Promise<{ removed: true; pluginId: string; retainedRevisionIds: string[] }> {
     const plugin = requirePlugin(input.pluginId);
     const revisions = options.repository.listRevisions(plugin.id);
@@ -254,7 +252,7 @@ export function createZeusPluginService(options: {
     await options.save();
     const retainedRevisionIds: string[] = [];
     for (const revision of revisions) {
-      if (options.repository.countRevisionReferences(revision.id) > 0 || options.repository.countInstallPathReferences(revision.installPath) > 0) {
+      if (options.repository.countInstallPathReferences(revision.installPath) > 0) {
         retainedRevisionIds.push(revision.id);
         continue;
       }
@@ -484,39 +482,8 @@ export function createZeusPluginService(options: {
     return references;
   }
 
-  async function validateConversationReferences(input: { conversationId: string; references: unknown }): Promise<Array<{ kind: 'plugin' | 'skill'; id: string }>> {
-    if (!Array.isArray(input.references) || input.references.length > 64) {
-      throw new ZeusPluginServiceError('ZEUS_PLUGIN_REFERENCE_INVALID', 'Plugin/Skill 结构化引用必须是最多 64 项的数组。');
-    }
-    const references = normalizeExplicitReferences(input.references as Array<{ kind: 'plugin' | 'skill'; id: string }>);
-    const activations = hydrateActivationRecords(options.repository.listConversationActivations(requiredIdentity(input.conversationId, 'conversationId')));
-    const pluginIds = new Set(activations.map((activation) => activation.pluginId));
-    const skillIds = new Set(activations.flatMap((activation) => activation.components.skills.map((skill) => `plugin:${activation.pluginId}:skill:${skill.id}`)));
-    for (const reference of references) {
-      const available = reference.kind === 'plugin' ? pluginIds.has(reference.id) : skillIds.has(reference.id);
-      if (!available) {
-        throw new ZeusPluginServiceError('ZEUS_PLUGIN_REFERENCE_NOT_IN_SNAPSHOT', `Plugin/Skill 引用 ${reference.id} 不属于该会话的冻结快照。`, 409);
-      }
-    }
-    return references;
-  }
-
-  /** 引用同一不可变插件内容，权限和启用情况沿用父会话快照。 */
-  async function inheritConversationActivations(parentId: string, childId: string): Promise<void> {
-    if (!options.repository.hasConversationActivationSet(parentId)) throw new Error('父会话尚未冻结插件资源。');
-    if (options.repository.hasConversationActivationSet(childId)) return;
-    const activations = hydrateActivationRecords(options.repository.listConversationActivations(parentId));
-    options.repository.freezeConversationActivations(
-      childId,
-      activations.map((snapshot) => ({ plugin: requirePlugin(snapshot.pluginId), revision: requireRevision(snapshot.pluginRevisionId), snapshot: snapshot as unknown as Record<string, unknown> })),
-      now().toISOString(),
-    );
-    await options.save();
-  }
-
-  async function getOrFreezeConversationActivations(input: { conversationId: string; projectId?: string | null; explicitReferences?: Array<{ kind: 'plugin' | 'skill'; id: string }> }): Promise<PluginActivationSnapshot[]> {
-    const conversationId = requiredIdentity(input.conversationId, 'conversationId');
-    if (options.repository.hasConversationActivationSet(conversationId)) return hydrateActivationRecords(options.repository.listConversationActivations(conversationId));
+  /** 当前态解析只返回本次调用所需数据，不再写入会话快照表。 */
+  async function resolveCurrentActivations(input: { projectId?: string | null; explicitReferences?: Array<{ kind: 'plugin' | 'skill'; id: string }> }): Promise<PluginActivationState[]> {
     const legacyNames = await discoverProviderLegacyNames(codexHome);
     const explicitReferences = normalizeExplicitReferences(input.explicitReferences ?? []);
     let enabled = options.repository.list({ projectId: input.projectId }).filter((plugin) => plugin.enabled && !legacyNames.has(plugin.name));
@@ -529,10 +496,10 @@ export function createZeusPluginService(options: {
       }
       enabled = enabled.filter((plugin) => plugin.name !== duplicateName || plugin.id === selected[0]!.id);
     }
-    const frozenAt = now().toISOString();
-    const activations = enabled.map((plugin) => {
+    const resolvedAt = now().toISOString();
+    return enabled.map((plugin) => {
       const revision = requireRevision(plugin.activeRevisionId);
-      const snapshot: PluginActivationSnapshot = {
+      return {
         pluginId: plugin.id,
         pluginRevisionId: revision.id,
         name: plugin.name,
@@ -544,13 +511,9 @@ export function createZeusPluginService(options: {
         connectors: options.repository.listConnectorBindings(plugin.id),
         mcpPolicies: options.repository.listMcpPolicies(plugin.id),
         explicitReferences: explicitReferences.filter((reference) => (reference.kind === 'plugin' ? reference.id === plugin.id : reference.id.startsWith(`plugin:${plugin.id}:skill:`))),
-        frozenAt,
+        resolvedAt,
       };
-      return { plugin, revision, snapshot: snapshot as unknown as Record<string, unknown> };
     });
-    const records = options.repository.freezeConversationActivations(conversationId, activations, frozenAt);
-    await options.save();
-    return hydrateActivationRecords(records);
   }
 
   /** 插件注册与更新共用归一来源，防止页面 URL 和克隆 URL 形成重复身份。 */
@@ -639,13 +602,10 @@ export function createZeusPluginService(options: {
     return revision;
   }
 
-  function hydrateActivationRecords(records: ConversationPluginActivationRecord[]): PluginActivationSnapshot[] {
-    return records.map((record) => validateActivationSnapshot(record.snapshot));
-  }
-
+  /** 仅保留当前修订以及仍被有效注册项引用的安装目录。 */
   async function pruneUnreferencedRevisions(pluginId: string, activeRevisionId: string): Promise<void> {
     for (const revision of options.repository.listRevisions(pluginId)) {
-      if (revision.id === activeRevisionId || options.repository.countRevisionReferences(revision.id) > 0 || options.repository.countInstallPathReferences(revision.installPath) > 1) continue;
+      if (revision.id === activeRevisionId || options.repository.countInstallPathReferences(revision.installPath) > 0) continue;
       await rm(revision.installPath, { recursive: true, force: true }).catch(() => undefined);
     }
   }
@@ -668,9 +628,7 @@ export function createZeusPluginService(options: {
     setMcpPolicy,
     resolveExplicitReferences,
     validateExplicitReferences,
-    validateConversationReferences,
-    getOrFreezeConversationActivations,
-    inheritConversationActivations,
+    resolveCurrentActivations,
   };
 }
 
@@ -744,26 +702,6 @@ async function discoverProviderLegacyNames(codexHome: string | null): Promise<Se
   }
   await visit(pluginsRoot, 0);
   return result;
-}
-
-function validateActivationSnapshot(value: Record<string, unknown>): PluginActivationSnapshot {
-  if (
-    typeof value.pluginId !== 'string' ||
-    typeof value.pluginRevisionId !== 'string' ||
-    typeof value.name !== 'string' ||
-    typeof value.version !== 'string' ||
-    typeof value.contentSha256 !== 'string' ||
-    typeof value.installPath !== 'string' ||
-    !isRecord(value.components) ||
-    !Array.isArray(value.hooks) ||
-    !Array.isArray(value.connectors) ||
-    !Array.isArray(value.mcpPolicies) ||
-    !Array.isArray(value.explicitReferences) ||
-    typeof value.frozenAt !== 'string'
-  ) {
-    throw new ZeusPluginServiceError('ZEUS_PLUGIN_ACTIVATION_CORRUPT', '会话 Plugin 激活快照损坏，Zeus 不会改用当前版本。', 409);
-  }
-  return value as unknown as PluginActivationSnapshot;
 }
 
 function normalizeExplicitReferences(values: Array<{ kind: 'plugin' | 'skill'; id: string }>): Array<{ kind: 'plugin' | 'skill'; id: string }> {

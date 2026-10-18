@@ -54,6 +54,8 @@ export interface ConversationTranscriptProps {
   language: SessionUiLanguage;
   assistantLabel?: string;
   historyOnly?: boolean;
+  /** 输入框排队区实际挂载时才允许它接管正文中的同一用户消息。 */
+  composerQueueVisible?: boolean;
   /** 子线程等只读投影没有主会话快照时，仍可明确声明时间线已完成水合。 */
   transcriptHydrated?: boolean;
   /** 从历史入口打开后持续补齐已持久化计划；首次续聊不能让旧计划从时间线消失。 */
@@ -392,7 +394,10 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   );
   const queuedSubmissions = useMemo(() => visibleQueuedSubmissions(props.state.queue), [props.state.queue]);
   /** 输入框卡片接管的提交不能同时出现在会话时间线。 */
-  const composerQueue = useMemo(() => composerQueuedSubmissions(props.state), [props.state.itemOrder, props.state.items, props.state.queue]);
+  const composerQueue = useMemo(
+    () => (props.composerQueueVisible === false ? [] : composerQueuedSubmissions(props.state)),
+    [props.composerQueueVisible, props.state.itemOrder, props.state.items, props.state.queue, props.state.snapshot?.providerState],
+  );
   /** 稳定提交身份覆盖冷开时由持久 submission 重建的本地消息。 */
   const composerQueueSubmissionIds = useMemo(() => new Set(composerQueue.map((submission) => submission.id)), [composerQueue]);
   /** 客户端消息身份覆盖首次提交后尚未取得本地提交身份的乐观消息。 */
@@ -431,7 +436,9 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     props.state.terminalTurnIds,
     props.state.turnsByProviderId,
     props.state.snapshot?.snapshotV2,
+    props.state.snapshot?.providerState,
     props.historyOnly,
+    props.composerQueueVisible,
     props.projectPersistedPlans,
     props.creationStatus,
   ];
@@ -1442,7 +1449,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           </button>
         </div>
       ) : null}
-      <div ref={shellRef} className="session-transcript-shell" data-navigation-ready={(showNavigation && !navigation.error) || undefined}>
+      <div ref={shellRef} className="session-transcript-shell" data-conversation-transition="true" data-navigation-ready={(showNavigation && !navigation.error) || undefined}>
         <section
           ref={containerRef}
           className="session-transcript"
@@ -2379,10 +2386,11 @@ function isSamePlanItem(openItem: NativeSessionItemBuffer | null | undefined, it
 }
 
 /** 运行状态只读取权威队列、轮次、请求、连接和过程事件，不从计时或正文猜测。 */
-export function transcriptRunStatus(state: NativeSessionState): 'starting' | 'executing' | 'compacting' | 'waiting_input' | 'waiting_approval' | 'reconnecting' | null {
+export function transcriptRunStatus(state: NativeSessionState): 'starting' | 'checking_plugin' | 'executing' | 'compacting' | 'waiting_input' | 'waiting_approval' | 'reconnecting' | null {
   // 暂停或未知送达不代表模型继续运行，错误与核对入口由系统操作行承载。
   if (state.queue?.state.type === 'paused' || state.queue?.submissions.some((submission) => submission.internalOperation && submission.pausedReason === 'outcome_unknown')) return null;
   if (state.providerReconnectAttempt > 0 && state.providerReconnectTurnId && !state.terminalTurnIds[state.providerReconnectTurnId]) return 'reconnecting';
+  if (state.queue?.waitReason === 'plugin_hook') return 'checking_plugin';
   if (state.conversationState === 'starting_turn') return 'starting';
   /** 安全队首已经保存但尚未交给模型时，继续使用底部准备状态，不能因运行态暂为空闲而隐藏。 */
   const head = visibleQueuedSubmissions(state.queue).find((submission) => submission.status === 'queued' && !submission.providerTurnId);
@@ -2411,6 +2419,7 @@ function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: NonN
   // 整理状态与活动记录沿用同一套用户表述，由当前状态位置统一承载进度。
   const labels = {
     starting: ['正在准备发送', 'Preparing to send'],
+    checking_plugin: ['正在等待 Plugin Hook 检查', 'Waiting for Plugin Hook checks'],
     executing: ['正在执行', 'Executing'],
     compacting: ['正在整理较早对话以继续工作', 'Organizing earlier conversation to continue'],
     waiting_input: ['等待回答，请处理问题表单', 'Waiting for your answer'],

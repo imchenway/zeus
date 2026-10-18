@@ -40,7 +40,7 @@ import { migrateTaskStageSchema } from './taskStageStore.js';
 import { migrateTaskWorkReviewSchema } from './taskWorkReviewStore.js';
 import { migrateTaskWorkDeploymentSchema } from './taskWorkDeploymentStore.js';
 import { migrateTaskWorkPlanningSchema } from './taskWorkPlanningStore.js';
-import { migrateTaskWorkSchema, migrateTaskWorkWorkspaceBindingSchema } from './taskWorkStore.js';
+import { migrateTaskWorkCurrentSkillReferences, migrateTaskWorkSchema, migrateTaskWorkWorkspaceBindingSchema } from './taskWorkStore.js';
 import { migrateDigitalTeamWorkflowSchema, migrateLegacyEmployeeTeamTemplates } from './digitalTeamWorkflowStore.js';
 import { migrateDefectWorkflowSchema } from './defectWorkflowStore.js';
 import { migrateWorkArtifactSchema } from './workArtifactStore.js';
@@ -1061,6 +1061,7 @@ export async function createZeusDatabase(filePath: string, options: CreateZeusDa
     migrateConversationTranscriptStoreSchema(zeusDb);
     await initializeConversationTranscriptIndexes(zeusDb, true);
     migrateArtifactStoreSchema(zeusDb);
+    migrateTaskWorkCurrentSkillReferences(zeusDb);
     migrateConversationSyncEventStoreSchema(zeusDb);
     migrateConversationSyncProtocolV2(zeusDb);
     migrateLongTermMemorySchema(zeusDb);

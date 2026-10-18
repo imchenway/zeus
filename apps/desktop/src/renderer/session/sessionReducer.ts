@@ -116,6 +116,7 @@ export type NativeSessionAction =
       error?: NativeSessionError;
     }
   | { type: 'send_accepted'; clientUserMessageId: string; status: string; messageCreatedAt?: string; submissionId?: string; providerTurnId?: string }
+  | { type: 'send_terminal'; clientUserMessageId: string }
   | { type: 'send_reconciliation_failed'; error: NativeSessionError }
   | { type: 'send_succeeded' };
 
@@ -367,16 +368,7 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
       const optimisticKey = optimisticEntry?.[0] ?? optimisticUserItemKey(state, action.clientUserMessageId);
       const optimistic = optimisticEntry?.[1];
       if (!optimistic) return { ...state, error: null };
-      // 接纳到提交队列即完成本地交接；初始回执不能把已删除或已执行的队列项重新写回正文。
-      if (action.submissionId && isUnacceptedTranscriptMessage(optimistic) && !action.providerTurnId) {
-        return {
-          ...state,
-          items: Object.fromEntries(Object.entries(state.items).filter(([key]) => key !== optimisticKey)),
-          itemOrder: state.itemOrder.filter((key) => key !== optimisticKey),
-          error: null,
-          transcriptRevision: state.transcriptRevision + 1,
-        };
-      }
+      // 接纳只补充稳定身份；本地消息必须保留到同一 Provider 消息在一次状态更新中原位接管。
       const terminal = action.providerTurnId ? state.terminalTurnIds[action.providerTurnId] : undefined;
       const payload: Record<string, unknown> = {
         ...optimistic.payload,
@@ -397,11 +389,24 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
             ...(action.providerTurnId ? { turnId: action.providerTurnId } : {}),
             status: terminal ? 'completed' : action.status,
             payload,
-            optimistic: terminal || action.status === 'completed' || action.status === 'resolved' ? false : optimistic.optimistic,
+            // 提交终态只证明调度结束；持久正文到达前仍由本地显示记录持有，不能伪装成 Provider 正文。
+            optimistic: optimistic.optimistic,
           },
         },
         transcriptRevision: state.transcriptRevision + 1,
         error: null,
+      };
+    }
+    case 'send_terminal': {
+      /** 明确未执行或已删除只移除本地临时项，已经持久化的同身份正文继续保留。 */
+      const optimisticEntry = optimisticUserItemEntry(state, action.clientUserMessageId);
+      if (!optimisticEntry) return state;
+      const [optimisticKey] = optimisticEntry;
+      return {
+        ...state,
+        items: Object.fromEntries(Object.entries(state.items).filter(([key]) => key !== optimisticKey)),
+        itemOrder: state.itemOrder.filter((key) => key !== optimisticKey),
+        transcriptRevision: state.transcriptRevision + 1,
       };
     }
     case 'send_reconciliation_failed':
@@ -633,17 +638,16 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
     orderedItems.push({ key, order: null, stableIndex: stableIndexForClient(clientUserMessageId) });
   }
 
-  // A pending user message is renderer-owned until a durable conversation_message with
-  // either the renderer id or the server-acknowledged canonical id appears in a snapshot.
+  // 本地用户消息由 Renderer 持有，直到同一客户端身份的持久正文在本次归约中原位接管。
   const submissionsByClientId = new Map(snapshot.submissions.flatMap((submission) => (submission.clientUserMessageId ? [[submission.clientUserMessageId, submission] as const] : [])));
   for (const key of state.itemOrder) {
     const item = state.items[key];
     if (!item?.optimistic || item.conversationId !== snapshot.id || key in items) continue;
-    const knownSubmission = userMessageClientIds(item)
+    /** 明确失败、删除、取消或人工确认不会产生 Provider 用户正文，本地临时项应按权威终态退出。 */
+    const terminalSubmission = userMessageClientIds(item)
       .map((clientId) => submissionsByClientId.get(clientId))
-      .find((submission): submission is NativeQueuedSubmission => Boolean(submission));
-    // 权威队列接管后不再保留本地副本；接纳后的正文由持久消息来源提供。
-    if (knownSubmission) continue;
+      .find((submission) => submission && (['failed', 'deleted', 'cancelled'].includes(submission.status) || submission.pausedReason === 'user_confirmation'));
+    if (terminalSubmission) continue;
     if ((item.clientUserMessageId && durableClientIds.has(item.clientUserMessageId)) || (item.durableClientUserMessageId && durableClientIds.has(item.durableClientUserMessageId))) continue;
     items[key] = item;
     orderedItems.push({ key, order: item.transcript?.placement.order ?? null, stableIndex: stableIndexForClient(item.clientUserMessageId ?? item.durableClientUserMessageId ?? null) });
@@ -774,7 +778,8 @@ const boundedProcessItemTypes = new Set(['commandexecution', 'command', 'mcptool
 function shouldPreserveBoundedTranscriptItem(item: NativeSessionItemBuffer, activeTurnIdentities: ReadonlySet<string>, preserveCachedHistory: boolean): boolean {
   // 有界首屏不包含较早输入，不代表该输入被删除；已接纳身份由显示位置接口校正或移除。
   if (isUserMessageItem(item) && !isUnacceptedTranscriptMessage(item) && sessionTranscriptEntryId(item)) return true;
-  if (item.optimistic) return false;
+  // 弱网水合不能删除尚未被服务端持久条目接管的本地输入；相同身份到达时会在上游原位合并。
+  if (item.optimistic) return isUserMessageItem(item);
   // resources 分页会为没有 Provider 正文 item 的交付物合成稳定条目。后续首屏权威
   // 快照不重复携带 resources，不能因此把已取回的图片或文件从正文时间线删除。
   if (typeof item.payload.v2SyntheticAssistantDeliverableItemId === 'string' && isAssistantDeliverableItem(item)) return true;
@@ -1769,34 +1774,13 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
   };
 }
 
-/** 队列只拥有当前提交；本地发送在得到权威身份后移交，不复制成正文。 */
+/** 队列只描述调度位置；用户消息由时间线持有，不能因队列水合被删除。 */
 function projectQueueSubmissionMessages(state: NativeSessionState, queue: NativeQueueSnapshot): NativeSessionState {
   if (state.queue && queue.throughEventSeq < state.queue.throughEventSeq) return state;
-  /** 同一次提交仅凭稳定身份交接，普通重复文本仍是两条消息。 */
-  const submissionIds = new Set(queue.submissions.map((submission) => submission.id));
-  /** HTTP 回执到达前也能用客户端身份确认归属。 */
-  const clientIds = new Set(queue.submissions.map((submission) => submission.clientUserMessageId));
-  /** 明确拒绝后由替代提交接管原气泡，不能把原引导留在已结束轮次中。 */
-  const replacedSubmissionIds = new Set(queue.submissions.map((submission) => submission.replacementOfSubmissionId).filter((id): id is string => Boolean(id)));
-  /** 只移交未接纳的本地输入，持久正文及已进入轮次的插话保留。 */
-  const removedKeys = new Set(
-    state.itemOrder.filter((key) => {
-      const item = state.items[key];
-      return (
-        item &&
-        isUserMessageItem(item) &&
-        ((isUnacceptedTranscriptMessage(item) && (submissionIds.has(stringValue(item.payload.submissionId) ?? '') || userMessageClientIds(item).some((id) => clientIds.has(id)))) ||
-          (!item.providerItemId && replacedSubmissionIds.has(stringValue(item.payload.submissionId) ?? '')))
-      );
-    }),
-  );
   return {
     ...state,
-    items: removedKeys.size ? Object.fromEntries(Object.entries(state.items).filter(([key]) => !removedKeys.has(key))) : state.items,
-    itemOrder: removedKeys.size ? state.itemOrder.filter((key) => !removedKeys.has(key)) : state.itemOrder,
     queue,
     conversationState: conversationStateFromQueue(queue, state),
-    transcriptRevision: state.transcriptRevision + (removedKeys.size ? 1 : 0),
   };
 }
 

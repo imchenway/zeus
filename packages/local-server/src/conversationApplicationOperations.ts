@@ -847,7 +847,6 @@ export function createConversationApplicationOperations(dependencies: Conversati
       const sourceInput = submission ? parseJsonObject(submission.inputJson) : {};
       const contextJson = JSON.stringify({
         snapshot,
-        resourceSnapshotIdentity: submission!.id,
         history: conversationExecution.confirmedModelHistory(parent.id),
         skills: submission ? readNativeSubmissionSkills(submission) : [],
         attachments: sourceInput.attachments ?? [],
@@ -882,7 +881,6 @@ export function createConversationApplicationOperations(dependencies: Conversati
         conversationRuntime.bindSubagent({ conversationId: childId, parentId: parent.id, rootId, depth, requestHash: hash, permissionMode, contextJson });
       });
       await db.save();
-      await zeusPluginService?.inheritConversationActivations(parent.id, childId);
     } else throw new Error('未知子代理操作。');
     const child = conversations.getById(childId)!;
     const relation = conversationRuntime.getSubagent(childId)!;
@@ -1217,7 +1215,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     // HTTP 快照与实时 queue.changed 都从同一个恢复入口读取当前阶段。
     if (conversation.agentKind === 'codex' && codexNativeCoordinator.isRecovering(conversation.id)) return 'conversation_restoring' as const;
     if (state.type === 'active') return 'current_turn' as const;
-    if (state.type === 'dispatching') return 'dispatching' as const;
+    if (state.type === 'dispatching') return submissions.find((submission) => submission.id === state.submissionId)?.pausedReason === 'plugin_hook' ? ('plugin_hook' as const) : ('dispatching' as const);
     if (state.type === 'waiting') return state.reason;
     if (state.type === 'paused') return state.reason;
     if (conversationPlanActions.listByConversation(conversation.id).some((request) => request.status === 'pending')) return 'plan_confirmation' as const;
@@ -1738,22 +1736,12 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const conversationContext = normalizeNativeConversationContext(body.conversationContext);
     if (body.pluginReferences !== undefined) {
       if (!zeusPluginService) throw nativeApiError('ZEUS_PLUGINS_UNAVAILABLE', 'Zeus Plugin Host 当前不可用，不能接受结构化 Plugin/Skill 引用。');
-      await zeusPluginService.validateConversationReferences({ conversationId: conversation.id, references: body.pluginReferences });
+      await zeusPluginService.validateExplicitReferences({ projectId: conversation.projectId, references: body.pluginReferences });
     }
     const skillReferences = normalizeSkillReferences(body.skillReferences);
     if (skillReferences.length > 0 && !zeusSkillService) throw nativeApiError('ZEUS_SKILLS_UNAVAILABLE', '当前执行宿主不支持 Zeus Skill。');
-    const relation = conversationRuntime.getSubagent(conversation.id);
-    const inherited = relation ? parseJsonObject(relation.contextJson) : {};
-    const inheritedCatalog = zeusSkillService && typeof inherited.resourceSnapshotIdentity === 'string' ? (await zeusSkillService.freeze({ cwd: project.localPath, identity: inherited.resourceSnapshotIdentity })).skills : null;
     const resolvedSkills = zeusSkillService
-      ? await Promise.all(
-          skillReferences.map((reference) => {
-            if (!inheritedCatalog) return zeusSkillService.resolve({ cwd: project.localPath, skillId: reference.id });
-            const skill = inheritedCatalog.find((item) => item.id === reference.id);
-            if (!skill) throw nativeApiError('ZEUS_SKILL_NOT_FOUND', '父会话的冻结资源中不存在该 Skill。');
-            return skill;
-          }),
-        )
+      ? await Promise.all(skillReferences.map((reference) => zeusSkillService.resolve({ cwd: project.localPath, skillId: reference.id })))
       : [];
 
     const providerContent = resolvedSkills.length > 1 ? `${resolvedSkills.map((skill) => `$${skill.name}`).join(' ')}\n\n${content}` : content;

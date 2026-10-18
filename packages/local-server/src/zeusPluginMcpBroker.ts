@@ -4,10 +4,12 @@ import { Client, StreamableHTTPClientTransport, type Tool } from '@modelcontextp
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import type { SecretStore } from './securityCore.js';
 import type { PluginApprovalMode } from '@zeus/storage';
-import type { PluginActivationSnapshot } from './zeusPluginService.js';
+import type { PluginActivationState } from './zeusPluginService.js';
 
 const maximumToolResultBytes = 8 * 1024 * 1024;
 const maximumAppDocumentBytes = 2 * 1024 * 1024;
+/** 弱网或失联 MCP Server 最多占用一次按需发现五秒。 */
+const mcpCatalogConnectionTimeoutMs = 5_000;
 
 export interface ZeusPluginDynamicTool {
   name: string;
@@ -50,115 +52,150 @@ export interface ZeusPluginMcpCatalog {
   failures: Array<{ pluginId: string; pluginRevisionId: string; serverId: string; error: string }>;
 }
 
+/** 工具审批的来源；每种来源都必须绑定同一工具定义和最终参数。 */
+export type ZeusPluginMcpApprovalSource = 'policy' | 'pre_tool_hook' | 'permission_hook' | 'user';
+
+/** 传到最终执行边界的审批依据，禁止跨修订、定义、策略或参数复用。 */
+export interface ZeusPluginMcpApprovalEvidence {
+  source: ZeusPluginMcpApprovalSource;
+  pluginRevisionId: string;
+  definitionSha256: string;
+  approvalMode: PluginApprovalMode;
+  argumentsSha256: string;
+}
+
+/** 在所有等待结束后按最终参数生成审批依据。 */
+export function createZeusPluginMcpApprovalEvidence(tool: ZeusPluginDynamicTool, args: Record<string, unknown>, source: ZeusPluginMcpApprovalSource): ZeusPluginMcpApprovalEvidence {
+  return {
+    source,
+    pluginRevisionId: tool.pluginRevisionId,
+    definitionSha256: tool.definitionSha256,
+    approvalMode: tool.approvalMode,
+    argumentsSha256: createHash('sha256').update(canonicalJson(args)).digest('hex'),
+  };
+}
+
 export interface ZeusPluginMcpBroker {
   listTools(conversationId: string): Promise<ZeusPluginMcpCatalog>;
-  invoke(input: { conversationId: string; namespace?: string | null; toolName: string; args: Record<string, unknown>; signal?: AbortSignal }): Promise<ZeusPluginMcpToolResult>;
-  invokeApp(input: { conversationId: string; pluginId: string; serverId: string; toolName: string; args: Record<string, unknown>; approved: boolean; signal?: AbortSignal }): Promise<ZeusPluginMcpToolResult>;
-  invokeHook(input: { conversationId: string; pluginId: string; serverId: string; toolName: string; args: Record<string, unknown>; signal: AbortSignal }): Promise<unknown>;
+  invoke(input: { conversationId: string; tool: ZeusPluginDynamicTool; args: Record<string, unknown>; approval: ZeusPluginMcpApprovalEvidence; signal?: AbortSignal }): Promise<ZeusPluginMcpToolResult>;
+  invokeApp(input: { conversationId: string; tool: ZeusPluginDynamicTool; args: Record<string, unknown>; approval: ZeusPluginMcpApprovalEvidence; signal?: AbortSignal }): Promise<ZeusPluginMcpToolResult>;
+  invokeHook(input: { conversationId: string; pluginId: string; pluginRevisionId: string; serverId: string; toolName: string; args: Record<string, unknown>; signal: AbortSignal }): Promise<unknown>;
   closeConversation(conversationId: string): Promise<void>;
   close(): Promise<void>;
 }
 
 export function createZeusPluginMcpBroker(options: {
   dataRoot: string;
-  getActivations(conversationId: string): Promise<PluginActivationSnapshot[]>;
+  getActivations(conversationId: string): Promise<PluginActivationState[]>;
   secretStore: Pick<SecretStore, 'getSecret'>;
   publish?: (type: string, payload: Record<string, unknown>) => void;
 }): ZeusPluginMcpBroker {
   if (!isAbsolute(options.dataRoot)) throw new Error('Plugin MCP dataRoot 必须是绝对路径。');
   const connections = new Map<string, Promise<McpConnection>>();
-  const catalogs = new Map<string, Promise<ZeusPluginMcpCatalog>>();
 
+  /** 每次调用重新读取当前启用和权限状态，不复用会话级目录。 */
   async function listTools(conversationId: string): Promise<ZeusPluginMcpCatalog> {
-    const existing = catalogs.get(conversationId);
-    if (existing) return existing;
-    const pending = buildCatalog(conversationId).catch((error) => {
-      catalogs.delete(conversationId);
-      throw error;
-    });
-    catalogs.set(conversationId, pending);
-    return pending;
+    return buildCatalog(conversationId);
   }
 
+  /** 当前 MCP Server 并行连接，单个慢服务不再串行放大等待时间。 */
   async function buildCatalog(conversationId: string): Promise<ZeusPluginMcpCatalog> {
     const activations = await options.getActivations(conversationId);
     const tools: ZeusPluginDynamicTool[] = [];
     const appTools: ZeusPluginDynamicTool[] = [];
     const failures: ZeusPluginMcpCatalog['failures'] = [];
-    for (const activation of activations) {
-      for (const server of activationServers(activation)) {
+    const servers = activations.flatMap((activation) => activationServers(activation).map((server) => ({ activation, server })));
+    const activeConnectionKeys = new Set(servers.map(({ activation, server }) => connectionKey(conversationId, activation, server)));
+    await closeStaleConnections(conversationId, activeConnectionKeys);
+    const results = await Promise.all(
+      servers.map(async ({ activation, server }) => {
         try {
           const connection = await requireConnection(conversationId, activation, server);
-          for (const tool of connection.tools) {
-            const visibility = toolVisibility(tool);
-            const policy = resolvePolicy(activation, server.id, tool.name);
-            if (!policy.enabled) continue;
-            const namespace = toolNamespace(activation.name, server.id);
-            const safeToolName = safeToolIdentity(tool.name);
-            const name = `${namespace}__${safeToolName}`;
-            if (tools.some((candidate) => candidate.name === name)) throw new Error(`MCP 工具规范化后重名：${tool.name}`);
-            const dynamicTool: ZeusPluginDynamicTool = {
-              name,
-              namespace,
-              toolName: safeToolName,
-              label: tool.title?.trim() || `${activation.name}/${server.id}/${tool.name}`,
-              description: tool.description?.trim() || `调用 ${activation.name} Plugin 的 ${tool.name} MCP 工具。`,
-              inputSchema: normalizeInputSchema(tool.inputSchema),
-              readOnly: tool.annotations?.readOnlyHint === true,
-              pluginId: activation.pluginId,
-              pluginRevisionId: activation.pluginRevisionId,
-              serverId: server.id,
-              originalToolName: tool.name,
-              approvalMode: policy.approvalMode,
-              appResourceUri: appResourceUri(tool),
-              definitionSha256: toolDefinitionSha256(tool),
-            };
-            if (visibility !== 'app') tools.push(dynamicTool);
-            if (visibility !== 'model') appTools.push(dynamicTool);
-          }
+          return { activation, server, connection };
         } catch (error) {
-          const failure = {
+          return { activation, server, error };
+        }
+      }),
+    );
+    for (const result of results) {
+      const { activation, server } = result;
+      if (result.connection) {
+        for (const tool of result.connection.tools) {
+          const visibility = toolVisibility(tool);
+          const policy = resolvePolicy(activation, server.id, tool.name);
+          if (!policy.enabled) continue;
+          const namespace = toolNamespace(activation.name, server.id);
+          const safeToolName = safeToolIdentity(tool.name);
+          const name = `${namespace}__${safeToolName}`;
+          if (tools.some((candidate) => candidate.name === name)) throw new Error(`MCP 工具规范化后重名：${tool.name}`);
+          const dynamicTool: ZeusPluginDynamicTool = {
+            name,
+            namespace,
+            toolName: safeToolName,
+            label: tool.title?.trim() || `${activation.name}/${server.id}/${tool.name}`,
+            description: tool.description?.trim() || `调用 ${activation.name} Plugin 的 ${tool.name} MCP 工具。`,
+            inputSchema: normalizeInputSchema(tool.inputSchema),
+            readOnly: tool.annotations?.readOnlyHint === true,
             pluginId: activation.pluginId,
             pluginRevisionId: activation.pluginRevisionId,
             serverId: server.id,
-            error: error instanceof Error ? error.message : String(error),
+            originalToolName: tool.name,
+            approvalMode: policy.approvalMode,
+            appResourceUri: appResourceUri(tool),
+            definitionSha256: toolDefinitionSha256(tool),
           };
-          failures.push(failure);
-          options.publish?.('plugin.mcp.connection_failed', { conversationId, ...failure });
+          if (visibility !== 'app') tools.push(dynamicTool);
+          if (visibility !== 'model') appTools.push(dynamicTool);
         }
+        continue;
       }
+      const failure = {
+        pluginId: activation.pluginId,
+        pluginRevisionId: activation.pluginRevisionId,
+        serverId: server.id,
+        error: result.error instanceof Error ? result.error.message : String(result.error),
+      };
+      failures.push(failure);
+      options.publish?.('plugin.mcp.connection_failed', { conversationId, ...failure });
     }
     tools.sort((left, right) => left.name.localeCompare(right.name));
     appTools.sort((left, right) => left.name.localeCompare(right.name));
     return { tools, appTools, failures };
   }
 
-  async function invoke(input: { conversationId: string; namespace?: string | null; toolName: string; args: Record<string, unknown>; signal?: AbortSignal }): Promise<ZeusPluginMcpToolResult> {
+  /** 按已检查的工具身份调用模型可见工具。 */
+  async function invoke(input: { conversationId: string; tool: ZeusPluginDynamicTool; args: Record<string, unknown>; approval: ZeusPluginMcpApprovalEvidence; signal?: AbortSignal }): Promise<ZeusPluginMcpToolResult> {
     const catalog = await listTools(input.conversationId);
-    const tool = catalog.tools.find((candidate) => (input.namespace ? candidate.namespace === input.namespace && candidate.toolName === input.toolName : candidate.name === input.toolName));
-    if (!tool) throw brokerError('ZEUS_PLUGIN_MCP_TOOL_NOT_FOUND', '当前会话的冻结 Plugin 修订未注册该 MCP 工具。');
-    if (tool.approvalMode === 'deny') throw brokerError('ZEUS_PLUGIN_MCP_TOOL_DENIED', 'Plugin MCP 工具策略已拒绝执行。');
-    return invokeFrozenTool(input.conversationId, tool, input.args, input.signal);
+    const currentTool = catalog.tools.find((candidate) => sameToolIdentity(candidate, input.tool));
+    if (!currentTool) throw brokerError('ZEUS_PLUGIN_MCP_TOOL_CHANGED', 'Plugin 修订、工具定义或权限策略已变化，请重新读取当前目录后调用。');
+    return invokeCurrentTool(input.conversationId, currentTool, input.args, input.approval, input.signal);
   }
 
-  async function invokeApp(input: { conversationId: string; pluginId: string; serverId: string; toolName: string; args: Record<string, unknown>; approved: boolean; signal?: AbortSignal }): Promise<ZeusPluginMcpToolResult> {
+  /** 按已检查的 App 工具身份调用，并保留审批边界。 */
+  async function invokeApp(input: { conversationId: string; tool: ZeusPluginDynamicTool; args: Record<string, unknown>; approval: ZeusPluginMcpApprovalEvidence; signal?: AbortSignal }): Promise<ZeusPluginMcpToolResult> {
     const catalog = await listTools(input.conversationId);
-    const tool = catalog.appTools.find((candidate) => candidate.pluginId === input.pluginId && candidate.serverId === input.serverId && candidate.originalToolName === input.toolName);
-    if (!tool) throw brokerError('ZEUS_PLUGIN_MCP_APP_TOOL_NOT_FOUND', '该工具未在当前会话冻结目录中声明为 MCP App 可见。');
-    if (tool.approvalMode === 'deny') throw brokerError('ZEUS_PLUGIN_MCP_TOOL_DENIED', 'Plugin MCP App 工具策略已拒绝执行。');
-    if (tool.approvalMode === 'prompt' && !input.approved) throw brokerError('ZEUS_PLUGIN_MCP_APP_APPROVAL_REQUIRED', 'MCP App 工具需要审批；请在扩展管理中设为允许，或配置可信 PermissionRequest Hook。');
-    return invokeFrozenTool(input.conversationId, tool, input.args, input.signal);
+    const currentTool = catalog.appTools.find((candidate) => sameToolIdentity(candidate, input.tool));
+    if (!currentTool) throw brokerError('ZEUS_PLUGIN_MCP_TOOL_CHANGED', 'MCP App 的 Plugin 修订、工具定义或权限策略已变化，请重新发起操作。');
+    return invokeCurrentTool(input.conversationId, currentTool, input.args, input.approval, input.signal);
   }
 
-  async function invokeFrozenTool(conversationId: string, tool: ZeusPluginDynamicTool, args: Record<string, unknown>, signal?: AbortSignal): Promise<ZeusPluginMcpToolResult> {
+  /** 执行前再次核对当前修订和工具定义，停用、删除或改权限后拒绝旧调用。 */
+  async function invokeCurrentTool(conversationId: string, tool: ZeusPluginDynamicTool, args: Record<string, unknown>, approval: ZeusPluginMcpApprovalEvidence, signal?: AbortSignal): Promise<ZeusPluginMcpToolResult> {
     const activations = await options.getActivations(conversationId);
     const activation = activations.find((candidate) => candidate.pluginId === tool.pluginId && candidate.pluginRevisionId === tool.pluginRevisionId);
-    if (!activation) throw brokerError('ZEUS_PLUGIN_ACTIVATION_MISSING', 'Plugin 激活快照与 MCP 工具目录不一致。');
+    if (!activation) throw brokerError('ZEUS_PLUGIN_ACTIVATION_MISSING', 'Plugin 已停用、删除或更新，当前工具调用已拒绝。');
     const server = activationServers(activation).find((candidate) => candidate.id === tool.serverId);
-    if (!server) throw brokerError('ZEUS_PLUGIN_MCP_SERVER_NOT_FOUND', '冻结 Plugin 修订中不存在该 MCP Server。');
+    if (!server) throw brokerError('ZEUS_PLUGIN_MCP_SERVER_NOT_FOUND', '当前 Plugin 修订中不存在该 MCP Server。');
+    const policy = resolvePolicy(activation, server.id, tool.originalToolName);
+    if (!policy.enabled || policy.approvalMode === 'deny') throw brokerError('ZEUS_PLUGIN_MCP_TOOL_DENIED', 'Plugin MCP 工具策略已拒绝执行。');
+    if (policy.approvalMode !== tool.approvalMode) throw brokerError('ZEUS_PLUGIN_MCP_TOOL_CHANGED', 'Plugin MCP 工具审批策略已变化，请重新发起调用。');
+    validateApprovalEvidence(tool, args, approval);
     const connection = await requireConnection(conversationId, activation, server);
-    const definition = connection.tools.find((candidate) => candidate.name === tool.originalToolName);
-    if (!definition || toolDefinitionSha256(definition) !== tool.definitionSha256) throw brokerError('ZEUS_PLUGIN_MCP_TOOL_CHANGED', 'MCP Server 的工具 Schema 或元数据在会话期间发生漂移；Zeus 不会在旧会话中采用新定义。');
+    /** 最终调用前重新读取 Server 定义，不能只相信审批前的连接缓存。 */
+    const listed = await connection.client.listTools();
+    connection.tools = listed.tools;
+    const definition = listed.tools.find((candidate) => candidate.name === tool.originalToolName);
+    if (!definition || toolDefinitionSha256(definition) !== tool.definitionSha256) throw brokerError('ZEUS_PLUGIN_MCP_TOOL_CHANGED', 'MCP Server 的工具定义已变化，请重新读取当前目录后调用。');
     const result = await connection.client.callTool({ name: tool.originalToolName, arguments: structuredClone(args) }, { ...(signal ? { signal } : {}), timeout: 10 * 60_000, toolDefinition: definition });
     const text = toolResultText(result);
     const app = tool.appResourceUri ? await readMcpAppDocument(connection.client, tool.appResourceUri, signal) : null;
@@ -174,22 +211,26 @@ export function createZeusPluginMcpBroker(options: {
     return { text, images: toolResultImages(result.content), structuredContent: result.structuredContent, isError: result.isError === true, app };
   }
 
-  async function invokeHook(input: { conversationId: string; pluginId: string; serverId: string; toolName: string; args: Record<string, unknown>; signal: AbortSignal }): Promise<unknown> {
+  /** Hook 信任记录绑定候选 Plugin 修订；执行时仍重新核对当前修订、策略和工具定义。 */
+  async function invokeHook(input: { conversationId: string; pluginId: string; pluginRevisionId: string; serverId: string; toolName: string; args: Record<string, unknown>; signal: AbortSignal }): Promise<unknown> {
     const activations = await options.getActivations(input.conversationId);
-    const activation = activations.find((candidate) => candidate.pluginId === input.pluginId);
-    if (!activation) throw brokerError('ZEUS_PLUGIN_ACTIVATION_MISSING', 'Hook 引用的 Plugin 未在会话快照中激活。');
+    const activation = activations.find((candidate) => candidate.pluginId === input.pluginId && candidate.pluginRevisionId === input.pluginRevisionId);
+    if (!activation) throw brokerError('ZEUS_PLUGIN_ACTIVATION_MISSING', 'Hook 引用的 Plugin 当前未启用。');
     const server = activationServers(activation).find((candidate) => candidate.id === input.serverId);
     if (!server) throw brokerError('ZEUS_PLUGIN_MCP_SERVER_NOT_FOUND', 'Hook 引用的 MCP Server 不存在。');
     const policy = resolvePolicy(activation, server.id, input.toolName);
     if (!policy.enabled || policy.approvalMode === 'deny') throw brokerError('ZEUS_PLUGIN_MCP_TOOL_DENIED', 'Hook 引用的 MCP 工具已被权限策略禁用。');
     const connection = await requireConnection(input.conversationId, activation, server);
-    const definition = connection.tools.find((candidate) => candidate.name === input.toolName);
+    const listed = await connection.client.listTools();
+    connection.tools = listed.tools;
+    const definition = listed.tools.find((candidate) => candidate.name === input.toolName);
     if (!definition) throw brokerError('ZEUS_PLUGIN_MCP_TOOL_NOT_FOUND', 'Hook 引用的 MCP 工具不存在。');
     return connection.client.callTool({ name: input.toolName, arguments: structuredClone(input.args) }, { signal: input.signal, timeout: 10 * 60_000, toolDefinition: definition });
   }
 
-  async function requireConnection(conversationId: string, activation: PluginActivationSnapshot, server: ActivationServer): Promise<McpConnection> {
-    const key = connectionKey(conversationId, activation.pluginRevisionId, server.id);
+  /** 同一会话和同一当前配置复用连接，配置变化会产生新身份。 */
+  async function requireConnection(conversationId: string, activation: PluginActivationState, server: ActivationServer): Promise<McpConnection> {
+    const key = connectionKey(conversationId, activation, server);
     const existing = connections.get(key);
     if (existing) return existing;
     const pending = connect(activation, server).catch((error) => {
@@ -200,7 +241,8 @@ export function createZeusPluginMcpBroker(options: {
     return pending;
   }
 
-  async function connect(activation: PluginActivationSnapshot, server: ActivationServer): Promise<McpConnection> {
+  /** 建立单个 MCP 连接并在有界时间内读取目录。 */
+  async function connect(activation: PluginActivationState, server: ActivationServer): Promise<McpConnection> {
     const client = new Client({ name: 'zeus-plugin-host', version: '0.3.74' }, { enforceStrictCapabilities: true, listMaxPages: 64 });
     const dataDirectory = join(options.dataRoot, activation.pluginId);
     const transport =
@@ -224,13 +266,36 @@ export function createZeusPluginMcpBroker(options: {
             requestInit: { headers: await remoteHeaders(server, activation, dataDirectory, options.secretStore) },
             reconnectionOptions: { maxReconnectionDelay: 10_000, initialReconnectionDelay: 1_000, reconnectionDelayGrowFactor: 1.5, maxRetries: 0 },
           });
-    await client.connect(transport);
-    const listed = await client.listTools();
-    return { client, tools: listed.tools, transport };
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const listed = await Promise.race([
+        client.connect(transport).then(() => client.listTools()),
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => reject(brokerError('ZEUS_PLUGIN_MCP_CONNECTION_TIMEOUT', 'MCP Server 连接或目录读取超过五秒。')), mcpCatalogConnectionTimeoutMs);
+        }),
+      ]);
+      return { client, tools: listed.tools, transport };
+    } catch (error) {
+      await client.close().catch(() => undefined);
+      throw error;
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  }
+
+  /** 关闭当前配置中已不存在的连接，防止停用或更新后继续复用旧进程。 */
+  async function closeStaleConnections(conversationId: string, activeKeys: Set<string>): Promise<void> {
+    const targets = [...connections.entries()].filter(([key]) => key.startsWith(`${conversationId}:`) && !activeKeys.has(key));
+    await Promise.allSettled(
+      targets.map(async ([key, promise]) => {
+        connections.delete(key);
+        const connection = await promise;
+        await connection.client.close();
+      }),
+    );
   }
 
   async function closeConversation(conversationId: string): Promise<void> {
-    catalogs.delete(conversationId);
     const targets = [...connections.entries()].filter(([key]) => key.startsWith(`${conversationId}:`));
     await Promise.allSettled(
       targets.map(async ([key, promise]) => {
@@ -244,7 +309,6 @@ export function createZeusPluginMcpBroker(options: {
   async function close(): Promise<void> {
     const conversationIds = new Set([...connections.keys()].map((key) => key.slice(0, key.indexOf(':'))));
     await Promise.all([...conversationIds].map(closeConversation));
-    catalogs.clear();
   }
 
   return { listTools, invoke, invokeApp, invokeHook, closeConversation, close };
@@ -253,7 +317,7 @@ export function createZeusPluginMcpBroker(options: {
 type ActivationServer = { id: string; transport: 'stdio' | 'http'; config: Record<string, unknown> };
 type McpConnection = { client: Client; tools: Tool[]; transport: StdioClientTransport | StreamableHTTPClientTransport };
 
-function activationServers(activation: PluginActivationSnapshot): ActivationServer[] {
+function activationServers(activation: PluginActivationState): ActivationServer[] {
   const servers: ActivationServer[] = activation.components.mcpServers.map((server) => ({ id: server.id, transport: server.transport, config: server.config }));
   for (const connector of activation.connectors) {
     if (!connector.connected) continue;
@@ -261,18 +325,51 @@ function activationServers(activation: PluginActivationSnapshot): ActivationServ
     const transport = typeof config.command === 'string' ? 'stdio' : typeof config.url === 'string' ? 'http' : null;
     if (!transport) continue;
     if (servers.some((candidate) => candidate.id === connector.connectorId)) throw brokerError('ZEUS_PLUGIN_MCP_SERVER_DUPLICATE', `Connector ${connector.connectorId} 与 Plugin MCP Server 同名。`);
-    servers.push({ id: connector.connectorId, transport, config: { ...config, __secretAccount: connector.secretAccount } });
+    servers.push({ id: connector.connectorId, transport, config: { ...config, __secretAccount: connector.secretAccount, __updatedAt: connector.updatedAt } });
   }
   return servers;
 }
 
-function resolvePolicy(activation: PluginActivationSnapshot, serverId: string, toolName: string): { enabled: boolean; approvalMode: PluginApprovalMode } {
+function resolvePolicy(activation: PluginActivationState, serverId: string, toolName: string): { enabled: boolean; approvalMode: PluginApprovalMode } {
   const exact = activation.mcpPolicies.find((policy) => policy.serverId === serverId && policy.toolName === toolName);
   const server = activation.mcpPolicies.find((policy) => policy.serverId === serverId && policy.toolName === '*');
   return exact ?? server ?? { enabled: true, approvalMode: 'prompt' };
 }
 
-async function remoteHeaders(server: ActivationServer, activation: PluginActivationSnapshot, dataDirectory: string, secretStore: Pick<SecretStore, 'getSecret'>): Promise<Record<string, string>> {
+/** 目录发现与最终执行必须引用完全相同的 Plugin、工具定义和审批策略。 */
+function sameToolIdentity(left: ZeusPluginDynamicTool, right: ZeusPluginDynamicTool): boolean {
+  return (
+    left.name === right.name &&
+    left.namespace === right.namespace &&
+    left.toolName === right.toolName &&
+    left.pluginId === right.pluginId &&
+    left.pluginRevisionId === right.pluginRevisionId &&
+    left.serverId === right.serverId &&
+    left.originalToolName === right.originalToolName &&
+    left.definitionSha256 === right.definitionSha256 &&
+    left.approvalMode === right.approvalMode &&
+    left.readOnly === right.readOnly &&
+    left.appResourceUri === right.appResourceUri
+  );
+}
+
+/** 校验审批确实属于本次工具身份和最终参数，策略收紧后旧依据立即失效。 */
+function validateApprovalEvidence(tool: ZeusPluginDynamicTool, args: Record<string, unknown>, approval: ZeusPluginMcpApprovalEvidence): void {
+  const argumentsSha256 = createHash('sha256').update(canonicalJson(args)).digest('hex');
+  if (
+    approval.pluginRevisionId !== tool.pluginRevisionId ||
+    approval.definitionSha256 !== tool.definitionSha256 ||
+    approval.approvalMode !== tool.approvalMode ||
+    approval.argumentsSha256 !== argumentsSha256
+  ) {
+    throw brokerError('ZEUS_PLUGIN_MCP_APPROVAL_STALE', 'Plugin MCP 工具身份或参数已变化，原审批依据不能继续使用。');
+  }
+  if (tool.approvalMode === 'prompt' && approval.source === 'policy') {
+    throw brokerError('ZEUS_PLUGIN_MCP_APP_APPROVAL_REQUIRED', 'Plugin MCP 工具需要本次 Hook 或用户审批。');
+  }
+}
+
+async function remoteHeaders(server: ActivationServer, activation: PluginActivationState, dataDirectory: string, secretStore: Pick<SecretStore, 'getSecret'>): Promise<Record<string, string>> {
   const headers = expandedEnvironment(recordOrEmpty(server.config.headers), activation.installPath, dataDirectory);
   const secretAccount = typeof server.config.__secretAccount === 'string' ? server.config.__secretAccount : null;
   const secret = secretAccount ? await secretStore.getSecret(secretAccount) : undefined;
@@ -398,8 +495,10 @@ function safeToolIdentity(value: string): string {
   return `${base}_${createHash('sha256').update(value).digest('hex').slice(0, 8)}`;
 }
 
-function connectionKey(conversationId: string, revisionId: string, serverId: string): string {
-  return `${conversationId}:${revisionId}:${serverId}`;
+/** 连接身份包含修订和配置摘要，防止更新后复用旧连接。 */
+function connectionKey(conversationId: string, activation: PluginActivationState, server: ActivationServer): string {
+  const configurationSha256 = createHash('sha256').update(canonicalJson(server.config)).digest('hex').slice(0, 16);
+  return `${conversationId}:${activation.pluginRevisionId}:${server.id}:${configurationSha256}`;
 }
 
 function expandedEnvironment(values: Record<string, unknown>, pluginRoot: string, pluginData: string): Record<string, string> {

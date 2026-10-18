@@ -3,11 +3,17 @@ import type { NativeSessionState } from './sessionTypes.js';
 import { resumeCachedConversationSnapshot } from './conversationSnapshotV2Adapter.js';
 import { retainResourcesOwnedByItem } from './conversationResourceProjection.js';
 
+/** 普通会话热缓存的最大数量。 */
 export const ordinarySessionHotCacheLimit = 6;
+/** 全部热缓存的估算字节上限。 */
 export const sessionHotCacheByteLimit = 32 * 1024 * 1024;
+/** 单个会话热缓存的估算字节上限。 */
 export const sessionHotCacheEntryByteLimit = 8 * 1024 * 1024;
+/** 磁盘显示缓存允许保留的最大会话数。 */
 export const sessionViewCacheMaximumEntries = 32;
+/** 磁盘显示缓存的结构代次。 */
 export const sessionViewCacheSchemaGeneration = 'zeus-session-display-cache';
+/** 磁盘显示缓存的最长保留时间。 */
 export const sessionViewCacheMaximumAgeMs = 14 * 24 * 60 * 60 * 1000;
 
 export interface SessionHotCacheEntry {
@@ -40,7 +46,7 @@ export function isCriticalSessionState(state: NativeSessionState): boolean {
 /**
  * 只缓存已经成功取得权威快照且体积受控的会话。
  *
- * JSON 字符数按 UTF-16 上界估算内存体积；估算只在会话离开热路径时执行，不参与流式增量。
+ * JSON 字符数按 UTF-16 上界估算内存体积；估算只在恢复或空闲持久化边界执行，不参与流式增量。
  * Map 顺序表达最近使用顺序，先淘汰普通会话，再淘汰最旧关键会话；缓存永远不是业务事实。
  */
 export function rememberSessionHotState(cache: SessionHotCache, conversationId: string, state: NativeSessionState, options: { ordinaryLimit?: number; totalByteLimit?: number; entryByteLimit?: number; cachedAt?: number } = {}): boolean {
@@ -72,6 +78,17 @@ export function rememberSessionHotState(cache: SessionHotCache, conversationId: 
   return cache.has(conversationId);
 }
 
+/** 流式更新只替换最新引用；缓存未命中也延后到空闲边界测量，避免超限会话逐事件序列化。 */
+export function refreshSessionHotState(cache: SessionHotCache, conversationId: string, state: NativeSessionState): boolean {
+  if (!state.snapshot || state.conversationId !== conversationId || state.snapshot.id !== conversationId) return false;
+  /** 已有估算用于流式期间的临时预算；零值表示尚未在稳定边界测量。 */
+  const previous = cache.get(conversationId);
+  cache.delete(conversationId);
+  cache.set(conversationId, { state, estimatedBytes: previous?.estimatedBytes ?? 0, cachedAt: Date.now() });
+  return true;
+}
+
+/** 仅在稳定边界估算进程内状态的 UTF-16 上界。 */
 function estimateSessionHotStateBytes(state: NativeSessionState): number {
   try {
     return JSON.stringify(state).length * 2;
@@ -109,6 +126,7 @@ export function buildPersistedSessionViewCache(cache: SessionHotCache, now = Dat
   };
 }
 
+/** 估算清洗后磁盘显示副本的 UTF-8 字节数。 */
 function estimatePersistedSessionStateBytes(state: NativeSessionState): number {
   try {
     return new TextEncoder().encode(JSON.stringify(state)).byteLength;
@@ -205,16 +223,19 @@ function sanitizeSessionStateForPersistence(state: NativeSessionState): NativeSe
   }
 }
 
+/** 将缓存时间解析为可比较的毫秒值。 */
 function timestamp(value: unknown): number | null {
   if (typeof value !== 'string') return null;
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+/** 判断持久化输入是否为普通对象。 */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** 按最近使用顺序淘汰普通或关键会话，直到总预算恢复。 */
 function evictUntilWithinByteBudget(cache: SessionHotCache, byteLimit: number, includeCritical: boolean): void {
   let totalBytes = 0;
   for (const entry of cache.values()) totalBytes += entry.estimatedBytes;

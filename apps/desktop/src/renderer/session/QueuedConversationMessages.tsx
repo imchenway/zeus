@@ -95,7 +95,7 @@ export function QueuedConversationMessages(props: QueuedConversationMessagesProp
   /** 当前语言对应的短文案。 */
   const copy = labels[props.language];
   /** 卡片只展示可安全编辑的普通等待项。 */
-  const queue = useMemo(() => composerQueuedSubmissions(props.state), [props.state.itemOrder, props.state.items, props.state.queue]);
+  const queue = useMemo(() => composerQueuedSubmissions(props.state), [props.state.itemOrder, props.state.items, props.state.queue, props.state.snapshot?.providerState]);
   /** 服务端重排要求携带完整可重排队列，不能只提交当前可见卡片。 */
   const reorderableQueue = useMemo(() => reorderableQueuedSubmissions(props.state.queue), [props.state.queue]);
   /** 当前展开编辑器的提交身份。 */

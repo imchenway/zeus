@@ -2,12 +2,64 @@ import { join } from 'node:path';
 import type { CodexDynamicToolSpec, PiDynamicToolSpec } from '@zeus/ai-runtime';
 import type { SecretStore } from './securityCore.js';
 import type { CodexBootstrapAdditionalContext } from '@zeus/shared';
-import { createZeusPluginHookRuntime, type ZeusPluginHookEvent, type ZeusPluginHookEventResult, type ZeusPluginHookRuntime } from './zeusPluginHookRuntime.js';
-import { createZeusPluginMcpBroker, type ZeusPluginDynamicTool, type ZeusPluginMcpBroker, type ZeusPluginMcpCatalog, type ZeusPluginMcpToolResult } from './zeusPluginMcpBroker.js';
-import type { PluginActivationSnapshot, ZeusPluginService } from './zeusPluginService.js';
+import { createZeusPluginHookRuntime, pluginDispatchHookWaitLimitMs, type ZeusPluginHookEvent, type ZeusPluginHookEventResult, type ZeusPluginHookRuntime } from './zeusPluginHookRuntime.js';
+import {
+  createZeusPluginMcpApprovalEvidence,
+  createZeusPluginMcpBroker,
+  type ZeusPluginDynamicTool,
+  type ZeusPluginMcpApprovalEvidence,
+  type ZeusPluginMcpApprovalSource,
+  type ZeusPluginMcpBroker,
+  type ZeusPluginMcpCatalog,
+  type ZeusPluginMcpToolResult,
+} from './zeusPluginMcpBroker.js';
+import type { PluginActivationState, ZeusPluginService } from './zeusPluginService.js';
+
+/** Codex 仅注册两个稳定入口，真实 MCP 目录在模型需要时读取当前状态。 */
+const codexPluginDynamicTools: CodexDynamicToolSpec[] = [
+  {
+    type: 'namespace',
+    name: 'zeus_plugin',
+    description: '按当前安装、启用和权限状态发现并调用 Zeus Plugin MCP 工具。',
+    tools: [
+      {
+        type: 'function',
+        name: 'catalog',
+        description: '搜索当前可用的 Plugin MCP 工具。精确 name 会返回完整参数结构，普通查询最多返回 20 项。',
+        inputSchema: { type: 'object', properties: { name: { type: 'string' }, query: { type: 'string' } }, additionalProperties: false },
+        deferLoading: true,
+      },
+      {
+        type: 'function',
+        name: 'invoke',
+        description: '按 catalog 返回的精确名称调用当前仍可用的 Plugin MCP 工具。',
+        inputSchema: { type: 'object', properties: { name: { type: 'string' }, arguments: { type: 'object', additionalProperties: true } }, required: ['name', 'arguments'], additionalProperties: false },
+        deferLoading: true,
+      },
+    ],
+  },
+];
+
+/** Pi 使用独立的当前态发现入口，避免创建会话时连接全部 MCP Server。 */
+const piPluginDynamicTools: PiDynamicToolSpec[] = [
+  {
+    name: 'zeus_plugin_catalog',
+    label: '发现 Plugin 工具',
+    description: '搜索当前可用的 Plugin MCP 工具。精确 name 会返回完整参数结构，普通查询最多返回 20 项。',
+    inputSchema: { type: 'object', properties: { name: { type: 'string' }, query: { type: 'string' } }, additionalProperties: false },
+    executionMode: 'parallel',
+  },
+  {
+    name: 'zeus_plugin_invoke',
+    label: '调用 Plugin 工具',
+    description: '按 zeus_plugin_catalog 返回的精确名称调用当前仍可用的 Plugin MCP 工具。',
+    inputSchema: { type: 'object', properties: { name: { type: 'string' }, arguments: { type: 'object', additionalProperties: true } }, required: ['name', 'arguments'], additionalProperties: false },
+    executionMode: 'sequential',
+  },
+];
 
 export interface ZeusPluginConversationPreparation {
-  activations: PluginActivationSnapshot[];
+  activations: PluginActivationState[];
   skills: Array<{ id: string; name: string; description: string; path: string }>;
   mcp: ZeusPluginMcpCatalog;
   codexDynamicTools: CodexDynamicToolSpec[];
@@ -27,9 +79,9 @@ export interface ZeusConversationPluginRuntime {
     prompt?: string;
     explicitReferences?: Array<{ kind: 'plugin' | 'skill'; id: string }>;
   }): Promise<ZeusPluginConversationPreparation>;
-  getActivations(conversationId: string): Promise<PluginActivationSnapshot[]>;
+  getActivations(conversationId: string): Promise<PluginActivationState[]>;
   getCatalog(conversationId: string): Promise<ZeusPluginMcpCatalog>;
-  invokeMcp(input: { conversationId: string; namespace?: string | null; toolName: string; args: Record<string, unknown>; signal?: AbortSignal }): Promise<ZeusPluginMcpToolResult>;
+  invokeMcp(input: { conversationId: string; tool: ZeusPluginDynamicTool; args: Record<string, unknown>; approval: ZeusPluginMcpApprovalEvidence; signal?: AbortSignal }): Promise<ZeusPluginMcpToolResult>;
   invokeAppMcp(input: { conversationId: string; pluginId: string; serverId: string; toolName: string; args: Record<string, unknown>; signal?: AbortSignal }): Promise<ZeusPluginMcpToolResult>;
   beforeUserPrompt(input: { conversationId: string; prompt: unknown; turnId?: string | null; permissionMode?: string }): Promise<CodexBootstrapAdditionalContext | undefined>;
   emitHook(event: ZeusPluginHookEvent): Promise<ZeusPluginHookEventResult>;
@@ -49,13 +101,12 @@ export function createZeusConversationPluginRuntime(options: {
 }): ZeusConversationPluginRuntime {
   const contexts = new Map<string, { projectId: string; cwd: string; model: string; explicitReferences: Array<{ kind: 'plugin' | 'skill'; id: string }> }>();
   const pendingReferences = new Map<string, { projectId: string; references: Array<{ kind: 'plugin' | 'skill'; id: string }> }>();
-  const prepared = new Map<string, Promise<ZeusPluginConversationPreparation>>();
   const stopHookActive = new Set<string>();
-  const getActivations = async (conversationId: string): Promise<PluginActivationSnapshot[]> => {
+  /** 每次调用都读取当前 Plugin 状态，删除或停用立即影响下一次派发与工具调用。 */
+  const getActivations = async (conversationId: string): Promise<PluginActivationState[]> => {
     const context = contexts.get(conversationId);
     if (!context) throw runtimeError('ZEUS_PLUGIN_CONVERSATION_CONTEXT_MISSING', 'Plugin Host 尚未绑定该 Zeus 会话。');
-    return options.service.getOrFreezeConversationActivations({
-      conversationId,
+    return options.service.resolveCurrentActivations({
       projectId: context.projectId,
       explicitReferences: context.explicitReferences,
     });
@@ -75,6 +126,7 @@ export function createZeusConversationPluginRuntime(options: {
     publish: options.publish,
   });
 
+  /** 每次派发重建当前本地 Plugin 元数据，且不在这里连接 MCP。 */
   async function prepare(input: {
     conversationId: string;
     projectId: string;
@@ -86,13 +138,13 @@ export function createZeusConversationPluginRuntime(options: {
   }): Promise<ZeusPluginConversationPreparation> {
     const existing = contexts.get(input.conversationId);
     if (existing && (existing.projectId !== input.projectId || existing.cwd !== input.cwd)) {
-      throw runtimeError('ZEUS_PLUGIN_CONVERSATION_IDENTITY_MISMATCH', 'Plugin 会话上下文与已冻结身份不一致。');
+      throw runtimeError('ZEUS_PLUGIN_CONVERSATION_IDENTITY_MISMATCH', 'Plugin 会话上下文与当前项目身份不一致。');
     }
     const pendingReference = pendingReferences.get(input.conversationId);
     if (pendingReference && pendingReference.projectId !== input.projectId) throw runtimeError('ZEUS_PLUGIN_CONVERSATION_IDENTITY_MISMATCH', 'Plugin 结构化引用与会话项目不一致。');
     const explicitReferences =
       input.explicitReferences ??
-      (existing ? existing.explicitReferences : pendingReference ? pendingReference.references : input.prompt ? await options.service.resolveExplicitReferences({ projectId: input.projectId, text: input.prompt }) : []);
+      (pendingReference ? pendingReference.references : existing ? existing.explicitReferences : input.prompt ? await options.service.resolveExplicitReferences({ projectId: input.projectId, text: input.prompt }) : []);
     pendingReferences.delete(input.conversationId);
     contexts.set(input.conversationId, {
       projectId: input.projectId,
@@ -100,26 +152,17 @@ export function createZeusConversationPluginRuntime(options: {
       model: input.model,
       explicitReferences,
     });
-    const cached = prepared.get(input.conversationId);
-    if (cached) return cached;
-    const pending = buildPreparation(input).catch((error) => {
-      prepared.delete(input.conversationId);
-      throw error;
-    });
-    prepared.set(input.conversationId, pending);
-    return pending;
+    return buildPreparation(input, !existing);
   }
 
-  async function buildPreparation(input: { conversationId: string; projectId: string; cwd: string; model: string; source: 'startup' | 'resume' | 'clear' | 'compact' }): Promise<ZeusPluginConversationPreparation> {
+  /** 准备过程只读取本地当前态；MCP 网络连接推迟到 catalog 或 invoke。 */
+  async function buildPreparation(input: { conversationId: string; projectId: string; cwd: string; model: string; source: 'startup' | 'resume' | 'clear' | 'compact' }, emitSessionStart: boolean): Promise<ZeusPluginConversationPreparation> {
     const activations = await getActivations(input.conversationId);
-    const mcp = await broker.listTools(input.conversationId);
-    const sessionStart = await hooks.emit({
-      event: 'SessionStart',
-      conversationId: input.conversationId,
-      cwd: input.cwd,
-      model: input.model,
-      payload: { source: input.source },
-    });
+    const mcp: ZeusPluginMcpCatalog = { tools: [], appTools: [], failures: [] };
+    const sessionStart: ZeusPluginHookEventResult = emitSessionStart
+      ? await hooks.emit({ event: 'SessionStart', conversationId: input.conversationId, cwd: input.cwd, model: input.model, payload: { source: input.source }, maximumWaitMs: pluginDispatchHookWaitLimitMs })
+      : { event: 'SessionStart', runs: [], continue: true, systemMessages: [], additionalContext: [], continuationPrompts: [], stopReasons: [], permissionDecision: null, permissionDecisionReason: null, updatedInput: null, replaceToolResult: null };
+    rejectTimedOutDispatchHooks(sessionStart);
     const skills = activations.flatMap((activation) =>
       activation.components.skills.map((skill) => ({
         id: `plugin:${activation.pluginId}:skill:${skill.id}`,
@@ -128,20 +171,13 @@ export function createZeusConversationPluginRuntime(options: {
         path: join(activation.installPath, skill.path, 'SKILL.md'),
       })),
     );
-    const codexDynamicTools = codexTools(mcp.tools);
-    const piDynamicTools = mcp.tools.map((tool) => ({
-      name: tool.name,
-      label: tool.label,
-      description: tool.description,
-      inputSchema: tool.inputSchema,
-      executionMode: 'sequential' as const,
-      deferLoading: true,
-    }));
+    const codexDynamicTools = codexPluginDynamicTools;
+    const piDynamicTools = piPluginDynamicTools;
     const developerInstructions = [
       ...sessionStart.systemMessages,
       ...sessionStart.additionalContext,
-      mcp.tools.length > 0 ? `当前会话已冻结以下 MCP 工具；通过执行内核的工具目录按名称读取参数后调用（Pi 使用 zeus_tool_catalog 和 zeus_tool_invoke）：\n${mcp.tools.map((tool) => `- ${tool.name}: ${tool.description}`).join('\n')}` : '',
-      skills.length > 0 ? `当前会话已冻结以下 Zeus Plugin Skill。可按描述自主选择，也可响应用户的 @Plugin/@Skill 显式引用：\n${skills.map((skill) => `- ${skill.name}: ${skill.description} (${skill.path})`).join('\n')}` : '',
+      activations.some((activation) => activation.components.mcpServers.length > 0 || activation.connectors.some((connector) => connector.connected)) ? 'Plugin MCP 工具按需读取当前目录。Codex 使用 zeus_plugin.catalog/invoke，Pi 使用 zeus_plugin_catalog/zeus_plugin_invoke；删除、停用或权限变更立即影响后续调用。' : '',
+      skills.length > 0 ? `当前可用的 Zeus Plugin Skill 如下；删除或停用后立即不可用：\n${skills.map((skill) => `- ${skill.name}: ${skill.description} (${skill.path})`).join('\n')}` : '',
     ]
       .filter(Boolean)
       .join('\n');
@@ -149,8 +185,8 @@ export function createZeusConversationPluginRuntime(options: {
       conversationId: input.conversationId,
       pluginCount: activations.length,
       skillCount: skills.length,
-      toolCount: mcp.tools.length,
-      connectionFailureCount: mcp.failures.length,
+      toolCount: null,
+      connectionFailureCount: 0,
     });
     return { activations, skills, mcp, codexDynamicTools, piDynamicTools, developerInstructions, sessionStart };
   }
@@ -161,7 +197,6 @@ export function createZeusConversationPluginRuntime(options: {
     }
     await Promise.allSettled([hooks.closeConversation(input.conversationId), broker.closeConversation(input.conversationId)]);
     contexts.delete(input.conversationId);
-    prepared.delete(input.conversationId);
   }
 
   async function observeConversationEvent(type: string, payload: Record<string, unknown>): Promise<void> {
@@ -213,17 +248,13 @@ export function createZeusConversationPluginRuntime(options: {
     }
     await Promise.allSettled([hooks.close(), broker.close()]);
     contexts.clear();
-    prepared.clear();
     stopHookActive.clear();
   }
 
   return {
     bindExplicitReferences(input) {
       const existing = contexts.get(input.conversationId);
-      if (existing) {
-        if (existing.projectId !== input.projectId) throw runtimeError('ZEUS_PLUGIN_CONVERSATION_IDENTITY_MISMATCH', 'Plugin 结构化引用与会话项目不一致。');
-        return;
-      }
+      if (existing && existing.projectId !== input.projectId) throw runtimeError('ZEUS_PLUGIN_CONVERSATION_IDENTITY_MISMATCH', 'Plugin 结构化引用与会话项目不一致。');
       pendingReferences.set(input.conversationId, { projectId: input.projectId, references: input.references });
     },
     prepare,
@@ -235,18 +266,21 @@ export function createZeusConversationPluginRuntime(options: {
       if (!context) throw runtimeError('ZEUS_PLUGIN_CONVERSATION_CONTEXT_MISSING', 'Plugin Host 尚未绑定该 Zeus 会话。');
       const catalog = await broker.listTools(input.conversationId);
       const tool = catalog.appTools.find((candidate) => candidate.pluginId === input.pluginId && candidate.serverId === input.serverId && candidate.originalToolName === input.toolName);
-      if (!tool) throw runtimeError('ZEUS_PLUGIN_MCP_APP_TOOL_NOT_FOUND', '该 MCP App 工具不属于当前会话冻结目录。');
+      if (!tool) throw runtimeError('ZEUS_PLUGIN_MCP_APP_TOOL_NOT_FOUND', '该 MCP App 工具在当前 Plugin 状态下不可用。');
       const hookToolName = `${tool.namespace}.${tool.toolName}`;
       const pre = await hooks.emit({ event: 'PreToolUse', conversationId: input.conversationId, cwd: context.cwd, model: context.model, payload: { tool_name: hookToolName, tool_input: input.args } });
       if (pre.permissionDecision === 'deny') throw runtimeError('ZEUS_PLUGIN_HOOK_TOOL_DENIED', pre.permissionDecisionReason ?? 'Plugin Hook 已阻断 MCP App 工具。');
       const args = pre.updatedInput ?? input.args;
-      let approved = tool.approvalMode === 'approve' || pre.permissionDecision === 'allow';
-      if (!approved && tool.approvalMode === 'prompt') {
+      if (tool.approvalMode === 'deny') throw runtimeError('ZEUS_PLUGIN_MCP_TOOL_DENIED', 'Plugin MCP App 工具策略已拒绝执行。');
+      let approvalSource: ZeusPluginMcpApprovalSource | null = tool.approvalMode === 'approve' ? 'policy' : pre.permissionDecision === 'allow' ? 'pre_tool_hook' : null;
+      if (!approvalSource && tool.approvalMode === 'prompt') {
         const permission = await hooks.emit({ event: 'PermissionRequest', conversationId: input.conversationId, cwd: context.cwd, model: context.model, payload: { tool_name: hookToolName, tool_input: args } });
         if (permission.permissionDecision === 'deny') throw runtimeError('ZEUS_PLUGIN_HOOK_PERMISSION_DENIED', permission.permissionDecisionReason ?? 'Plugin Hook 已拒绝 MCP App 工具。');
-        approved = permission.permissionDecision === 'allow';
+        if (permission.permissionDecision === 'allow') approvalSource = 'permission_hook';
       }
-      const result = await broker.invokeApp({ ...input, args, approved });
+      if (!approvalSource) throw runtimeError('ZEUS_PLUGIN_MCP_APP_APPROVAL_REQUIRED', 'MCP App 工具需要当前策略允许或可信 PermissionRequest Hook 审批。');
+      const approval = createZeusPluginMcpApprovalEvidence(tool, args, approvalSource);
+      const result = await broker.invokeApp({ conversationId: input.conversationId, tool, args, approval, ...(input.signal ? { signal: input.signal } : {}) });
       const post = await hooks.emit({ event: 'PostToolUse', conversationId: input.conversationId, cwd: context.cwd, model: context.model, payload: { tool_name: hookToolName, tool_input: args, tool_response: result.text } });
       return { ...result, text: post.replaceToolResult ?? result.text };
     },
@@ -261,7 +295,9 @@ export function createZeusConversationPluginRuntime(options: {
         turnId: input.turnId,
         permissionMode: input.permissionMode,
         payload: { prompt: input.prompt },
+        maximumWaitMs: pluginDispatchHookWaitLimitMs,
       });
+      rejectTimedOutDispatchHooks(result);
       if (!result.continue) throw runtimeError('ZEUS_PLUGIN_HOOK_PROMPT_BLOCKED', result.stopReasons.join('\n') || 'Plugin Hook 已阻断本次提示。');
       const value = [...result.systemMessages, ...result.additionalContext].filter(Boolean).join('\n');
       return value ? { zeus_plugin_hook_context: { kind: 'application', value } } : undefined;
@@ -273,21 +309,10 @@ export function createZeusConversationPluginRuntime(options: {
   };
 }
 
-function codexTools(tools: ZeusPluginDynamicTool[]): CodexDynamicToolSpec[] {
-  const grouped = new Map<string, ZeusPluginDynamicTool[]>();
-  for (const tool of tools) grouped.set(tool.namespace, [...(grouped.get(tool.namespace) ?? []), tool]);
-  return [...grouped.entries()].map(([namespace, entries]) => ({
-    type: 'namespace',
-    name: namespace,
-    description: `Zeus Plugin MCP tools for ${entries[0]!.pluginId}/${entries[0]!.serverId}.`,
-    tools: entries.map((tool) => ({
-      type: 'function',
-      name: tool.toolName,
-      description: tool.description,
-      inputSchema: tool.inputSchema as never,
-      deferLoading: true,
-    })),
-  }));
+/** 发送前同步 Hook 超时属于未知外部结果，必须停止本次派发并交给用户明确重试。 */
+function rejectTimedOutDispatchHooks(result: ZeusPluginHookEventResult): void {
+  if (!result.runs.some((run) => run.state === 'timed_out')) return;
+  throw runtimeError('ZEUS_PLUGIN_HOOK_DISPATCH_TIMEOUT', 'Plugin Hook 等待超时，本次消息尚未发送。请检查 Plugin 后重试。');
 }
 
 function runtimeError(code: string, message: string): Error & { code: string } {

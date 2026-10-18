@@ -12,9 +12,9 @@ import { mergeEmployeeWorkSettings, type EmployeeWorkSettings, type EmployeeWork
 import { LongTermMemoryRepository, TaskWorkReviewRepository, TaskWorkDeploymentRepository, TurnChangeSetRepository, ConversationProviderItemRepository, TaskWorkPlanningRepository } from '@zeus/storage';
 import { createHash } from 'node:crypto';
 import { attachDigitalTeamTaskPushPolicy } from './digitalTeamWorkflowExecutionPolicy.js';
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { lstat, readdir, readFile } from 'node:fs/promises';
-import { basename, dirname, join, relative, resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 import {
   buildTaskPushLayout,
   assertContextCapacity,
@@ -68,9 +68,8 @@ import type { ZeusSkillService } from './zeusSkillService.js';
 
 const previewTtlMs = 10 * 60 * 1_000;
 const tickMs = 2_500;
-const maximumSkillSnapshotFiles = 2_000;
-const maximumSkillSnapshotBytes = 32 * 1024 * 1024;
-const taskWorkSkillArtifactGeneration = '2026-08-29-task-work-skill-snapshot-v1';
+/** 运行只保存 Skill 审计引用，不保存可执行资源副本。 */
+const taskWorkSkillReferenceGeneration = '2026-10-18-task-work-current-skill-reference';
 
 export interface TaskWorkPreviewSelection {
   /** 人工换人必须停止旧独立工作，普通新增分工不受影响。 */
@@ -137,10 +136,8 @@ interface TaskWorkNativeSkillPreview {
   id: string;
   name: string;
   description: string;
-  directoryName: string;
+  path: string;
   contentSha256: string;
-  resourceCount: number;
-  totalBytes: number;
 }
 
 interface TaskWorkPluginSkillPreview {
@@ -150,11 +147,6 @@ interface TaskWorkPluginSkillPreview {
   description: string;
   pluginId: string;
   pluginRevisionId: string;
-}
-
-interface PreparedSkillResourceSnapshot {
-  metadata: TaskWorkNativeSkillPreview;
-  files: Array<{ path: string; sha256: string; bytes: number; contentBase64: string }>;
 }
 
 interface TaskWorkCreateInput {
@@ -227,7 +219,6 @@ interface TaskWorkManagementOptions {
   commandDefinitions: CommandDefinitionRepository;
   commandRuns: CommandRunRepository;
   artifacts: ArtifactStore;
-  skillSnapshotRoot: string;
   skills: ZeusSkillService | null;
   plugins: Pick<ZeusPluginService, 'listSkills'> | null;
   conversationCapabilities: ConversationCapabilityQueryApplication;
@@ -633,7 +624,6 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
           kick();
           return reply.code(202).send(workflow);
         }
-        const skillResources = await prepareSkillResourceSnapshots(options, task, preview);
         if (preview.selection.replaceActiveWork) {
           if (!['user', 'local_api', 'remote_control'].includes(parsed.command.actor.kind)) throw new TaskWorkStoreError('ZEUS_TASK_WORK_HANDOFF_ACTOR_REQUIRED', '更换任务执行人需要用户操作。', 400);
           if (options.planning.get(task.id)?.state === 'running') throw new TaskWorkStoreError('ZEUS_TASK_WORK_HANDOFF_PLAN_ACTIVE', '请先暂停当前工作安排，再更换独立执行人。');
@@ -666,7 +656,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
             if (!current || sha256(canonicalJson(current)) !== preview.employee.configurationSha256) throw new TaskWorkStoreError('ZEUS_TASK_WORK_PREVIEW_STALE', '数字员工已变化，请重新预览后指派。');
             /** 只有实际接纳建立绑定，工作与员工关系在同一事务保存。 */
             const employee = options.employees.ensureProjectEmployee(task.projectId, preview.employee.id);
-            return createWorkItemFromPreview(options, task, employee, preview, parsed.operationIdentity, { source: 'manual', sourceRef: `manual:${parsed.operationIdentity}` }, skillResources);
+            return createWorkItemFromPreview(options, task, employee, preview, parsed.operationIdentity, { source: 'manual', sourceRef: `manual:${parsed.operationIdentity}` });
           },
         });
         await options.save();
@@ -860,8 +850,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       const preview = await resolvePreview(options, task, { employeeId, permissionMode, workspace: { mode: 'create' } });
       const blockers = preview.blockers;
       if (blockers.length > 0) throw new TaskWorkStoreError(blockers[0]!.code, blockers[0]!.message);
-      const skillResources = await prepareSkillResourceSnapshots(options, task, preview);
-      const created = createWorkItemFromPreview(options, task, employee, preview, stableIdentity('task_work_item', sourceRef), { source: 'automation', sourceRef }, skillResources);
+      const created = createWorkItemFromPreview(options, task, employee, preview, stableIdentity('task_work_item', sourceRef), { source: 'automation', sourceRef });
       await options.save();
       publishChanged(options, task.id, created.item.id, 'automation_created');
       kick();
@@ -933,9 +922,8 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
         allowTests: executionMode !== 'read_only' && preview.authority.allowTests === true,
         allowCommit: executionMode === 'isolated_write' && preview.authority.allowCommit === true,
       };
-      const skillResources = await prepareSkillResourceSnapshots(options, task, preview);
       const itemId = stableIdentity('task_work_item', sourceRef);
-      const created = createWorkItemFromPreview(options, task, employee, preview, itemId, { source: 'manual', sourceRef, title, description }, skillResources);
+      const created = createWorkItemFromPreview(options, task, employee, preview, itemId, { source: 'manual', sourceRef, title, description });
       await options.save();
       publishChanged(options, task.id, created.item.id, 'workflow_created');
       return created;
@@ -1230,14 +1218,12 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
     const existing = options.items.getBySource('manual', sourceRef);
     /** 异步预检仅为新独立工作准备，不阻断已接纳调用的原回执读取。 */
     let preview: TaskWorkPreview | null = null;
-    let resources: PreparedSkillResourceSnapshot[] = [];
     if (!input.workItemId && !existing) {
       assertCurrentWorkToolTurn(options, call.conversationId, turnId);
       if (options.readOnlyValidation || options.isTaskTerminal(requireTaskOrThrow(options, taskId))) throw new TaskWorkStoreError('ZEUS_TASK_DISCUSSION_CLOSED', '任务已结束或当前处于只读检查。');
       if (plan) throw new TaskWorkStoreError('ZEUS_TASK_DISCUSSION_PLAN_EXISTS', '任务已有工作安排，请指派其中尚未开始的分工，避免重复执行。');
       preview = await resolvePreview(options, task, { employeeId: input.employeeId, supplementalInfo: `${input.title}\n\n${input.description}\n\n来源：任务讨论中的用户请求 ${submission.id}`, permissionMode, workspace: { mode: 'create' } });
       if (preview.blockers.length) throw new TaskWorkStoreError(preview.blockers[0]!.code, preview.blockers[0]!.message);
-      resources = await prepareSkillResourceSnapshots(options, task, preview);
     }
     const result = options.application.executeCore({
       parsed,
@@ -1273,7 +1259,6 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
           preview,
           stableIdentity('task_work_item', sourceRef),
           { source: 'manual', sourceRef, title: input.title, description: input.description },
-          resources,
         );
         return { item: created.item, run: created.run, message: '已创建正式工作，执行状态与成果将在工作页更新。' };
       },
@@ -1393,11 +1378,10 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
         try {
           const preview = await resolvePreview(options, task, { employeeId: item.employeeId, plannedWorkItemId: item.id, workspace: { mode: 'create' } });
           if (preview.blockers.length) throw new TaskWorkStoreError(preview.blockers[0]!.code, preview.blockers[0]!.message);
-          const resources = await prepareSkillResourceSnapshots(options, task, preview);
           /** 异步预检后重新核对暂停与指派，禁止沿用旧人选自动启动。 */
           const fresh = options.items.getById(item.id);
           if (fresh?.arrangement?.cancellationRequested || fresh?.revision !== item.revision || options.planning.get(taskId)?.state !== 'running' || options.isTaskTerminal(options.tasks.getById(taskId)!)) continue;
-          createWorkItemFromPreview(options, task, requireEmployeeOrThrow(options, task.projectId, item.employeeId), preview, item.id, { source: item.source, sourceRef: item.sourceRef! }, resources);
+          createWorkItemFromPreview(options, task, requireEmployeeOrThrow(options, task.projectId, item.employeeId), preview, item.id, { source: item.source, sourceRef: item.sourceRef! });
         } catch (cause) {
           const latest = options.items.getById(item.id);
           if (latest?.arrangement && !latest.currentRunId) options.planning.updateArrangement(latest, { ...latest.arrangement, blockedReason: serializeError(cause).message });
@@ -1571,7 +1555,7 @@ async function resolvePreview(
       employee,
       entrypoint,
       context,
-      skills: skills.map((skill) => (skill.source === 'skill' ? { ...skill, snapshotPath: '（运行创建后冻结）' } : skill)),
+      skills,
     });
     promptPreview = buildTaskWorkPromptPreview(task, supplementalInfo, supplementalAttachments);
   }
@@ -1673,6 +1657,7 @@ function resolveTaskWorkWorkspaceSnapshot(choice: TaskWorkWorkspaceChoice | unde
   return { mode: 'create', repositoryRevision, repositories: resolvedRepositories };
 }
 
+/** 从已核对预览创建工作，并只保存 Skill 审计引用。 */
 function createWorkItemFromPreview(
   options: TaskWorkManagementOptions,
   task: ZeusTaskRecord,
@@ -1680,7 +1665,6 @@ function createWorkItemFromPreview(
   preview: TaskWorkPreview,
   operationIdentity: string,
   source: { source: 'manual' | 'automation'; sourceRef: string; title?: string; description?: string } = { source: 'manual', sourceRef: `manual:${operationIdentity}` },
-  skillResources: PreparedSkillResourceSnapshot[] = [],
 ): { item: TaskWorkItemRecord; run: TaskWorkRunRecord } {
   if (employee.entrypoint?.kind !== 'agent') throw new TaskWorkStoreError('ZEUS_DIGITAL_EMPLOYEE_AGENT_ENTRYPOINT_REQUIRED', '数字员工必须通过 Agent 会话执行。');
   if (!preview.workspace) throw new TaskWorkStoreError('ZEUS_TASK_WORK_WORKSPACE_MISSING', 'Agent 运行缺少已解析代码现场。');
@@ -1699,13 +1683,7 @@ function createWorkItemFromPreview(
   const existingRun = item.currentRunId ? options.runs.getById(item.currentRunId) : undefined;
   if (existingRun) return { item, run: existingRun };
   const runId = stableIdentity('task_work_run', `${item.id}\0attempt:1`);
-  const skillSnapshot = persistSkillResourceSnapshots(
-    options,
-    runId,
-    task.projectId,
-    skillResources,
-    preview.skills.filter((skill): skill is TaskWorkPluginSkillPreview => skill.source === 'plugin'),
-  );
+  const skillSnapshot = skillReferencesFromPreview(preview.skills);
   const run = options.runs.create({
     id: runId,
     projectId: task.projectId,
@@ -1730,7 +1708,9 @@ function createWorkItemFromPreview(
   return { item: updatedItem, run };
 }
 
+/** 推进 Agent 运行，并先撤销旧 Skill Artifact 的恢复权限。 */
 async function processAgentRun(options: TaskWorkManagementOptions, run: TaskWorkRunRecord): Promise<void> {
+  discardLegacySkillArtifacts(options, run.skillSnapshot);
   if (run.status === 'prepared' && options.items.getById(run.workItemId)?.arrangement?.stageId && options.planning.get(run.taskId)?.state !== 'running') return;
   /** 普通旧返工在首次派发前冻结唯一来源，已经执行的上下文保持原样。 */
   if (run.status === 'prepared' && options.workArtifacts.restorePreparedReworkHandoff(run.id)) run = options.runs.getById(run.id)!;
@@ -1738,7 +1718,6 @@ async function processAgentRun(options: TaskWorkManagementOptions, run: TaskWork
     const dispatching = run.status === 'prepared' ? options.runs.update(run.id, { status: 'dispatching', startedAt: options.now().toISOString() }) : run;
     const item = options.items.getById(run.workItemId)!;
     if (item.status === 'queued') options.items.update(item.id, { status: 'active' });
-    verifyFrozenSkillResources(options, dispatching);
     await dispatchAgent(options, dispatching);
     return;
   }
@@ -1776,7 +1755,6 @@ async function processAgentRun(options: TaskWorkManagementOptions, run: TaskWork
     return;
   }
   if (!run.conversationId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_CONVERSATION_MISSING', 'Agent 工作运行缺少会话身份。');
-  verifyFrozenSkillResources(options, run);
   recordActuallyEnabledSkills(options, run);
   const conversation = options.conversations.getById(run.conversationId);
   if (!conversation || conversation.taskId !== run.taskId || conversation.projectId !== run.projectId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_CONVERSATION_MISSING', 'Agent 工作运行的会话已不可用。');
@@ -1869,13 +1847,16 @@ async function processAgentRun(options: TaskWorkManagementOptions, run: TaskWork
   if (!existing) await captureAgentDeliverable(options, run, conversation.messages);
 }
 
+/** 派发前解析当前 Skill 和 Plugin Skill，删除资源时明确失败。 */
 async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRunRecord, processAttached = true): Promise<{ run: TaskWorkRunRecord; submissionId: string | null }> {
   const task = requireTaskOrThrow(options, run.taskId);
   const project = options.projects.getById(run.projectId);
   if (!project) throw new TaskWorkStoreError('ZEUS_PROJECT_NOT_FOUND', '项目不存在。', 404);
   const model = run.modelSnapshot;
   if (!model || typeof model.id !== 'string' || typeof model.agentKind !== 'string') throw new TaskWorkStoreError('ZEUS_TASK_WORK_MODEL_MISSING', 'Agent 运行缺少已解析模型快照。');
-  const pluginReferences = await resolveFrozenPluginSkillReferences(options, run);
+  const currentSkills = await resolveCurrentRunSkills(options, run);
+  const pluginReferences = currentSkills.pluginSkills.map((skill) => ({ kind: 'skill' as const, id: skill.id }));
+  options.runs.update(run.id, { skillSnapshot: skillReferencesFromPreview([...currentSkills.nativeSkills, ...currentSkills.pluginSkills]) });
   const authority = run.authoritySnapshot;
   const writeEnabled = authority.permissionMode !== 'read-only';
   let workspace = run.workspaceSnapshot;
@@ -1892,7 +1873,7 @@ async function dispatchAgent(options: TaskWorkManagementOptions, run: TaskWorkRu
       throw new TaskWorkStoreError('ZEUS_TASK_WORK_DIRECT_WORKSPACE_BUSY', '项目目录已有可写会话，新运行不会隐式共享写入现场。');
     }
   }
-  const supplementalInfo = await buildAgentSupplementalInfo(options, run);
+  const supplementalInfo = await buildAgentSupplementalInfo(options, run, [...currentSkills.nativeSkills, ...currentSkills.pluginSkills]);
   const supplementalAttachments = Array.isArray(run.entrypointSnapshot.supplementalAttachments) ? run.entrypointSnapshot.supplementalAttachments : [];
   const body: Record<string, unknown> = {
     mode: 'create',
@@ -2374,7 +2355,7 @@ function cloneRun(options: TaskWorkManagementOptions, item: TaskWorkItemRecord, 
   }
   const attempt = options.runs.nextAttempt(item.id);
   const runId = stableIdentity('task_work_run', `${item.id}\0attempt:${attempt}`);
-  const skillSnapshot = cloneFrozenSkillSnapshot(options, previous, runId);
+  const skillSnapshot = cloneSkillReferences(options, previous);
   return options.runs.create({
     id: runId,
     projectId: previous.projectId,
@@ -2396,19 +2377,12 @@ function cloneRun(options: TaskWorkManagementOptions, item: TaskWorkItemRecord, 
   });
 }
 
-function cloneFrozenSkillSnapshot(options: TaskWorkManagementOptions, previous: TaskWorkRunRecord, runId: string): Record<string, unknown> {
-  if (!isRecord(previous.skillSnapshot) || !Array.isArray(previous.skillSnapshot.selected)) return structuredClone(previous.skillSnapshot);
-  const selected = previous.skillSnapshot.selected.map((value) => {
-    if (!isRecord(value) || typeof value.id !== 'string' || typeof value.artifactSha256 !== 'string') throw new TaskWorkStoreError('ZEUS_TASK_WORK_SKILL_SNAPSHOT_MISSING', '旧运行缺少可复用的冻结 Skill 资源快照。');
-    const artifactOwnerId = stableIdentity('task_work_run_skill', `${runId}\0${value.id}`);
-    options.artifacts.attachOwner({
-      sha256: value.artifactSha256,
-      owner: { kind: 'task_work_run_skill', id: artifactOwnerId, generationId: taskWorkSkillArtifactGeneration, projectId: previous.projectId },
-    });
-    options.artifacts.hold({ sha256: value.artifactSha256, owner: { kind: 'task_work_run_skill', id: artifactOwnerId }, ownerClass: 'active_task', reason: `task-work-skill:${runId}` });
-    return { ...structuredClone(value), artifactOwnerId };
-  });
-  return { ...structuredClone(previous.skillSnapshot), selected };
+/** 重试只继承 Skill 身份；派发时重新解析当前资源，不复制旧执行内容。 */
+function cloneSkillReferences(options: TaskWorkManagementOptions, previous: TaskWorkRunRecord): Record<string, unknown> {
+  discardLegacySkillArtifacts(options, previous.skillSnapshot);
+  const selected = isRecord(previous.skillSnapshot) && Array.isArray(previous.skillSnapshot.selected) ? nativeSkillReferences(previous.skillSnapshot.selected) : [];
+  const pluginSkills = isRecord(previous.skillSnapshot) && Array.isArray(previous.skillSnapshot.pluginSkills) ? pluginSkillReferences(previous.skillSnapshot.pluginSkills) : [];
+  return { generation: taskWorkSkillReferenceGeneration, selected, pluginSkills };
 }
 
 /** 确认外部执行停止后收口运行与工作项，不删除已经产生的成果证据。 */
@@ -2785,174 +2759,85 @@ function resolveCommandPreview(definition: CommandDefinition, raw: Record<string
   };
 }
 
-async function snapshotSkill(skill: { id: string; name: string; description: string; path: string }): Promise<TaskWorkPreview['skills'][number]> {
-  return (await readSkillResourceSnapshot(skill)).metadata;
+/** 预览只读取 Skill 入口文件并记录摘要，不递归复制资源目录。 */
+async function snapshotSkill(skill: { id: string; name: string; description: string; path: string }): Promise<TaskWorkNativeSkillPreview> {
+  const content = await readFile(skill.path);
+  return { source: 'skill', id: skill.id, name: skill.name, description: skill.description, path: skill.path, contentSha256: sha256(content) };
 }
 
-async function readSkillResourceSnapshot(skill: { id: string; name: string; description: string; path: string }): Promise<PreparedSkillResourceSnapshot> {
-  const root = resolve(dirname(skill.path));
-  let fileCount = 0;
-  let totalBytes = 0;
-  const files: PreparedSkillResourceSnapshot['files'] = [];
-  const visit = async (directory: string): Promise<void> => {
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-      const path = join(directory, entry.name);
-      const stat = await lstat(path);
-      if (stat.isSymbolicLink()) throw new TaskWorkStoreError('ZEUS_TASK_WORK_SKILL_UNSAFE', `Skill 包含符号链接：${relative(root, path)}`);
-      if (stat.isDirectory()) await visit(path);
-      else if (stat.isFile()) {
-        fileCount += 1;
-        totalBytes += stat.size;
-        if (fileCount > maximumSkillSnapshotFiles || totalBytes > maximumSkillSnapshotBytes) throw new TaskWorkStoreError('ZEUS_TASK_WORK_SKILL_TOO_LARGE', 'Skill 资源超出运行快照限制。');
-        const content = await readFile(path);
-        files.push({ path: relative(root, path), sha256: sha256(content), bytes: stat.size, contentBase64: content.toString('base64') });
-      }
-    }
-  };
-  await visit(root);
-  files.sort((left, right) => left.path.localeCompare(right.path));
-  const digests = files.map(({ path, sha256: digest, bytes }) => ({ path, sha256: digest, bytes }));
+/** 运行仅持久化来源、身份和摘要，用于审计，不提供恢复执行内容。 */
+function skillReferencesFromPreview(skills: TaskWorkPreview['skills']): Record<string, unknown> {
   return {
-    metadata: { source: 'skill', id: skill.id, name: skill.name, description: skill.description, directoryName: basename(root), contentSha256: sha256(canonicalJson(digests)), resourceCount: fileCount, totalBytes },
-    files,
+    generation: taskWorkSkillReferenceGeneration,
+    selected: skills.filter((skill): skill is TaskWorkNativeSkillPreview => skill.source === 'skill').map((skill) => structuredClone(skill)),
+    pluginSkills: skills.filter((skill): skill is TaskWorkPluginSkillPreview => skill.source === 'plugin').map((skill) => structuredClone(skill)),
   };
 }
 
-async function prepareSkillResourceSnapshots(options: TaskWorkManagementOptions, task: ZeusTaskRecord, preview: TaskWorkPreview): Promise<PreparedSkillResourceSnapshot[]> {
-  const nativeSkills = preview.skills.filter((skill): skill is TaskWorkNativeSkillPreview => skill.source === 'skill');
-  if (nativeSkills.length === 0) return [];
-  if (!options.skills) throw new TaskWorkStoreError('ZEUS_TASK_WORK_SKILL_CATALOG_UNAVAILABLE', 'Zeus Skill 目录当前不可用。');
-  const project = options.projects.getById(task.projectId);
-  if (!project) throw new TaskWorkStoreError('ZEUS_PROJECT_NOT_FOUND', '项目不存在。', 404);
-  const snapshots: PreparedSkillResourceSnapshot[] = [];
-  for (const expected of nativeSkills) {
-    const skill = await options.skills.resolve({ cwd: project.localPath, skillId: expected.id });
-    const snapshot = await readSkillResourceSnapshot(skill);
-    if (snapshot.metadata.contentSha256 !== expected.contentSha256) throw new TaskWorkStoreError('ZEUS_TASK_WORK_PREVIEW_STALE', `Skill ${expected.name} 已变化，请重新预览后再指派。`);
-    snapshots.push(snapshot);
-  }
-  return snapshots;
-}
-
-function persistSkillResourceSnapshots(options: TaskWorkManagementOptions, runId: string, projectId: string, snapshots: PreparedSkillResourceSnapshot[], pluginSkills: TaskWorkPluginSkillPreview[]): Record<string, unknown> {
-  const selected = snapshots.map((snapshot) => {
-    const artifactOwnerId = stableIdentity('task_work_run_skill', `${runId}\0${snapshot.metadata.id}`);
-    const artifact = options.artifacts.putJsonSync({
-      value: { version: 1, skill: snapshot.metadata, files: snapshot.files },
-      owner: { kind: 'task_work_run_skill', id: artifactOwnerId, generationId: taskWorkSkillArtifactGeneration, projectId },
-    });
-    options.artifacts.hold({ sha256: artifact.sha256, owner: { kind: 'task_work_run_skill', id: artifactOwnerId }, ownerClass: 'active_task', reason: `task-work-skill:${runId}` });
-    const snapshotPath = frozenSkillPath(options.skillSnapshotRoot, runId, snapshot.metadata.id);
-    materializeFrozenSkill(snapshotPath, snapshot.files);
-    return { ...snapshot.metadata, artifactSha256: artifact.sha256, artifactContentSha256: artifact.contentSha256, artifactOwnerId, snapshotPath };
-  });
-  return { generation: taskWorkSkillArtifactGeneration, selected, pluginSkills };
-}
-
-async function resolveFrozenPluginSkillReferences(options: TaskWorkManagementOptions, run: TaskWorkRunRecord): Promise<Array<{ kind: 'skill'; id: string }>> {
-  const selected = isRecord(run.skillSnapshot) && Array.isArray(run.skillSnapshot.pluginSkills) ? run.skillSnapshot.pluginSkills : [];
-  if (selected.length === 0) return [];
-  if (!options.plugins) throw new TaskWorkStoreError('ZEUS_TASK_WORK_PLUGIN_SKILL_CATALOG_UNAVAILABLE', 'Zeus Plugin Skill 目录当前不可用。');
-  const available = await options.plugins.listSkills({ projectId: run.projectId });
-  return selected.map((value) => {
-    if (!isRecord(value) || value.source !== 'plugin' || typeof value.id !== 'string' || typeof value.pluginRevisionId !== 'string') {
-      throw new TaskWorkStoreError('ZEUS_TASK_WORK_PLUGIN_SKILL_SNAPSHOT_INVALID', '运行缺少可信的 Plugin Skill 快照。');
-    }
-    const current = available.find((candidate) => candidate.id === value.id);
-    if (!current) throw new TaskWorkStoreError('ZEUS_TASK_WORK_PLUGIN_SKILL_UNAVAILABLE', `Plugin Skill ${value.id} 在当前项目不可用。`);
-    if (current.pluginRevisionId !== value.pluginRevisionId) throw new TaskWorkStoreError('ZEUS_TASK_WORK_PLUGIN_SKILL_SNAPSHOT_STALE', `Plugin Skill ${current.namespace} 已更新；本次运行不会静默改用新版本。`);
-    return { kind: 'skill', id: value.id };
+/** 兼容读取旧运行时只提取身份字段，主动丢弃 Artifact 与物化路径。 */
+function nativeSkillReferences(values: unknown[]): TaskWorkNativeSkillPreview[] {
+  return values.map((value) => {
+    if (!isRecord(value) || typeof value.id !== 'string') throw new TaskWorkStoreError('ZEUS_TASK_WORK_SKILL_REFERENCE_INVALID', '运行缺少可信的 Skill 身份。');
+    return {
+      source: 'skill',
+      id: value.id,
+      name: typeof value.name === 'string' ? value.name : value.id,
+      description: typeof value.description === 'string' ? value.description : '',
+      path: typeof value.path === 'string' ? value.path : '',
+      contentSha256: typeof value.contentSha256 === 'string' ? value.contentSha256 : '',
+    };
   });
 }
 
-function verifyFrozenSkillResources(options: TaskWorkManagementOptions, run: TaskWorkRunRecord): void {
-  const selected = isRecord(run.skillSnapshot) && Array.isArray(run.skillSnapshot.selected) ? run.skillSnapshot.selected.filter(isRecord) : [];
+/** Plugin Skill 同样只继承身份，修订由下一次派发读取当前目录。 */
+function pluginSkillReferences(values: unknown[]): TaskWorkPluginSkillPreview[] {
+  return values.map((value) => {
+    if (!isRecord(value) || typeof value.id !== 'string') throw new TaskWorkStoreError('ZEUS_TASK_WORK_PLUGIN_SKILL_REFERENCE_INVALID', '运行缺少可信的 Plugin Skill 身份。');
+    return {
+      source: 'plugin',
+      id: value.id,
+      name: typeof value.name === 'string' ? value.name : value.id,
+      description: typeof value.description === 'string' ? value.description : '',
+      pluginId: typeof value.pluginId === 'string' ? value.pluginId : '',
+      pluginRevisionId: typeof value.pluginRevisionId === 'string' ? value.pluginRevisionId : '',
+    };
+  });
+}
+
+/** 旧 Artifact 不再提供恢复能力；访问到旧运行时释放持有者与保留锁。 */
+function discardLegacySkillArtifacts(options: TaskWorkManagementOptions, skillSnapshot: Record<string, unknown>): void {
+  const selected = Array.isArray(skillSnapshot.selected) ? skillSnapshot.selected.filter(isRecord) : [];
   for (const skill of selected) {
-    if (typeof skill.artifactSha256 !== 'string' || typeof skill.artifactOwnerId !== 'string') throw new TaskWorkStoreError('ZEUS_TASK_WORK_SKILL_SNAPSHOT_MISSING', '运行缺少冻结的 Skill 资源快照。');
-    const stored = options.artifacts.readAuthorizedSync({
-      sha256: skill.artifactSha256,
-      owner: { kind: 'task_work_run_skill', id: skill.artifactOwnerId },
-      maximumContentBytes: Math.ceil(maximumSkillSnapshotBytes * 1.5),
-    });
-    if (typeof skill.artifactContentSha256 !== 'string' || stored.ref.contentSha256 !== skill.artifactContentSha256) throw new TaskWorkStoreError('ZEUS_TASK_WORK_SKILL_SNAPSHOT_CORRUPT', '冻结的 Skill 资源快照完整性校验失败。');
-    const bundle = safeJsonParse(Buffer.from(stored.bytes).toString('utf8'));
-    const files = isRecord(bundle) && Array.isArray(bundle.files) ? normalizeFrozenSkillFiles(bundle.files) : null;
-    if (!files || typeof skill.snapshotPath !== 'string') throw new TaskWorkStoreError('ZEUS_TASK_WORK_SKILL_SNAPSHOT_CORRUPT', '冻结的 Skill 资源清单不可读取。');
-    const expectedPath = frozenSkillPath(options.skillSnapshotRoot, run.id, typeof skill.id === 'string' ? skill.id : 'invalid');
-    const reusablePath = run.attempt > 1 && resolve(skill.snapshotPath).startsWith(`${resolve(options.skillSnapshotRoot)}${process.platform === 'win32' ? '\\' : '/'}`) ? resolve(skill.snapshotPath) : expectedPath;
-    if (resolve(skill.snapshotPath) !== reusablePath) throw new TaskWorkStoreError('ZEUS_TASK_WORK_SKILL_SNAPSHOT_PATH_INVALID', '冻结的 Skill 资源路径不可信。');
-    materializeFrozenSkill(reusablePath, files);
+    if (typeof skill.artifactSha256 !== 'string' || typeof skill.artifactOwnerId !== 'string') continue;
+    const owner = { kind: 'task_work_run_skill', id: skill.artifactOwnerId };
+    options.artifacts.releaseOwnerHolds({ owner, sha256: skill.artifactSha256 });
+    options.artifacts.detachOwner({ sha256: skill.artifactSha256, owner });
   }
 }
 
-function normalizeFrozenSkillFiles(values: unknown[]): PreparedSkillResourceSnapshot['files'] | null {
-  const files = values.flatMap((value) => {
-    if (!isRecord(value) || typeof value.path !== 'string' || typeof value.sha256 !== 'string' || typeof value.bytes !== 'number' || typeof value.contentBase64 !== 'string') return [];
-    return [{ path: value.path, sha256: value.sha256, bytes: value.bytes, contentBase64: value.contentBase64 }];
+/** 派发前解析当前 Skill；删除或停用后明确失败，不从历史副本恢复。 */
+async function resolveCurrentRunSkills(options: TaskWorkManagementOptions, run: TaskWorkRunRecord): Promise<{ nativeSkills: TaskWorkNativeSkillPreview[]; pluginSkills: TaskWorkPluginSkillPreview[] }> {
+  const selected = isRecord(run.skillSnapshot) && Array.isArray(run.skillSnapshot.selected) ? nativeSkillReferences(run.skillSnapshot.selected) : [];
+  const selectedPlugins = isRecord(run.skillSnapshot) && Array.isArray(run.skillSnapshot.pluginSkills) ? pluginSkillReferences(run.skillSnapshot.pluginSkills) : [];
+  const project = options.projects.getById(run.projectId);
+  if (!project) throw new TaskWorkStoreError('ZEUS_PROJECT_NOT_FOUND', '项目不存在。', 404);
+  if (selected.length > 0 && !options.skills) throw new TaskWorkStoreError('ZEUS_TASK_WORK_SKILL_CATALOG_UNAVAILABLE', 'Zeus Skill 目录当前不可用。');
+  const nativeSkills: TaskWorkNativeSkillPreview[] = [];
+  for (const reference of selected) {
+    const current = await options.skills!.resolve({ cwd: project.localPath, skillId: reference.id });
+    nativeSkills.push(await snapshotSkill(current));
+  }
+  if (selectedPlugins.length > 0 && !options.plugins) throw new TaskWorkStoreError('ZEUS_TASK_WORK_PLUGIN_SKILL_CATALOG_UNAVAILABLE', 'Zeus Plugin Skill 目录当前不可用。');
+  const availablePlugins = selectedPlugins.length > 0 ? await options.plugins!.listSkills({ projectId: run.projectId }) : [];
+  const pluginSkills = selectedPlugins.map((reference) => {
+    const current = availablePlugins.find((candidate) => candidate.id === reference.id);
+    if (!current) throw new TaskWorkStoreError('ZEUS_TASK_WORK_PLUGIN_SKILL_UNAVAILABLE', `Plugin Skill ${reference.id} 在当前项目不可用。`);
+    return { source: 'plugin' as const, id: current.id, name: current.namespace, description: current.description, pluginId: current.pluginId, pluginRevisionId: current.pluginRevisionId };
   });
-  return files.length === values.length ? files : null;
+  return { nativeSkills, pluginSkills };
 }
 
-function frozenSkillPath(root: string, runId: string, skillId: string): string {
-  return join(resolve(root), sha256(runId).slice(0, 32), sha256(skillId).slice(0, 32));
-}
-
-function materializeFrozenSkill(snapshotPath: string, files: PreparedSkillResourceSnapshot['files']): void {
-  const root = resolve(snapshotPath);
-  if (existsSync(root)) {
-    for (const file of files) {
-      const path = safeFrozenSkillFile(root, file.path);
-      const stat = lstatSync(path);
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== file.bytes || sha256(readFileSync(path)) !== file.sha256) throw new TaskWorkStoreError('ZEUS_TASK_WORK_SKILL_SNAPSHOT_CORRUPT', `冻结的 Skill 文件已变化：${file.path}`);
-    }
-    makeFrozenSkillReadOnly(root, files);
-    return;
-  }
-  const staging = `${root}.staging-${process.pid}-${Date.now()}`;
-  mkdirSync(staging, { recursive: true, mode: 0o700 });
-  try {
-    for (const file of files) {
-      const path = safeFrozenSkillFile(staging, file.path);
-      const content = Buffer.from(file.contentBase64, 'base64');
-      if (content.byteLength !== file.bytes || sha256(content) !== file.sha256) throw new TaskWorkStoreError('ZEUS_TASK_WORK_SKILL_SNAPSHOT_CORRUPT', `冻结的 Skill Artifact 无法验证：${file.path}`);
-      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-      writeFileSync(path, content, { mode: 0o600, flag: 'wx' });
-    }
-    mkdirSync(dirname(root), { recursive: true, mode: 0o700 });
-    renameSync(staging, root);
-  } catch (error) {
-    rmSync(staging, { recursive: true, force: true });
-    if (existsSync(root)) {
-      materializeFrozenSkill(root, files);
-      return;
-    }
-    throw error;
-  }
-  makeFrozenSkillReadOnly(root, files);
-}
-
-function makeFrozenSkillReadOnly(root: string, files: PreparedSkillResourceSnapshot['files']): void {
-  const directories = new Set<string>([root]);
-  for (const file of files) {
-    const path = safeFrozenSkillFile(root, file.path);
-    chmodSync(path, 0o400);
-    let directory = dirname(path);
-    while (directory.startsWith(`${root}${process.platform === 'win32' ? '\\' : '/'}`)) {
-      directories.add(directory);
-      directory = dirname(directory);
-    }
-  }
-  for (const directory of [...directories].sort((left, right) => right.length - left.length)) chmodSync(directory, 0o500);
-}
-
-function safeFrozenSkillFile(root: string, relativePath: string): string {
-  if (!relativePath || relativePath.includes('\0')) throw new TaskWorkStoreError('ZEUS_TASK_WORK_SKILL_SNAPSHOT_CORRUPT', '冻结的 Skill 资源路径无效。');
-  const path = resolve(root, relativePath);
-  const canonicalRoot = resolve(root);
-  if (!path.startsWith(`${canonicalRoot}${process.platform === 'win32' ? '\\' : '/'}`)) throw new TaskWorkStoreError('ZEUS_TASK_WORK_SKILL_SNAPSHOT_CORRUPT', '冻结的 Skill 资源路径越界。');
-  return path;
-}
-
+/** 根据实际读取的当前入口路径记录本轮使用过的 Skill。 */
 function recordActuallyEnabledSkills(options: TaskWorkManagementOptions, run: TaskWorkRunRecord): void {
   if (!run.conversationId) return;
   const selected = isRecord(run.skillSnapshot) && Array.isArray(run.skillSnapshot.selected) ? run.skillSnapshot.selected.filter(isRecord) : [];
@@ -2965,8 +2850,8 @@ function recordActuallyEnabledSkills(options: TaskWorkManagementOptions, run: Ta
     }
   }
   const enabled = selected.flatMap((skill) => {
-    const snapshotDirectory = typeof skill.snapshotPath === 'string' ? basename(skill.snapshotPath) : null;
-    return typeof skill.id === 'string' && snapshotDirectory && readDirectories.has(snapshotDirectory) ? [skill.id] : [];
+    const currentDirectory = typeof skill.path === 'string' && skill.path ? basename(dirname(skill.path)) : null;
+    return typeof skill.id === 'string' && currentDirectory && readDirectories.has(currentDirectory) ? [skill.id] : [];
   });
   if (canonicalJson(enabled) !== canonicalJson(run.enabledSkillIds)) options.runs.update(run.id, { enabledSkillIds: enabled });
 }
@@ -2978,12 +2863,13 @@ function skillManifestPaths(value: unknown): string[] {
   return [];
 }
 
-async function buildAgentSupplementalInfo(options: TaskWorkManagementOptions, run: TaskWorkRunRecord): Promise<string> {
+/** 使用派发时当前 Skill 元数据生成员工补充说明。 */
+async function buildAgentSupplementalInfo(options: TaskWorkManagementOptions, run: TaskWorkRunRecord, skills: TaskWorkPreview['skills']): Promise<string> {
   return buildAgentSupplementalInfoSnapshot(options, {
     employee: run.employeeSnapshot,
     entrypoint: run.entrypointSnapshot,
     context: run.contextManifest,
-    skills: isRecord(run.skillSnapshot) ? [...(Array.isArray(run.skillSnapshot.selected) ? run.skillSnapshot.selected : []), ...(Array.isArray(run.skillSnapshot.pluginSkills) ? run.skillSnapshot.pluginSkills : [])] : [],
+    skills,
   });
 }
 
@@ -3002,7 +2888,7 @@ async function buildAgentSupplementalInfoSnapshot(options: TaskWorkManagementOpt
     typeof input.entrypoint.prompt === 'string' && input.entrypoint.prompt ? `## 员工提示\n\n${input.entrypoint.prompt}` : '',
     `## 冻结的上下文清单\n\n${JSON.stringify(input.context, null, 2)}`,
     input.skills.length > 0
-      ? `## 允许按需加载的 Skill 元数据\n\n${JSON.stringify(input.skills, null, 2)}\n\n普通 Skill 只允许从 snapshotPath 读取冻结资源；Plugin Skill 由本会话的 Plugin Runtime 激活快照加载。不得改读同名的其他来源，且 Skill 不授予额外权限。`
+      ? `## 当前可用的 Skill 元数据\n\n${JSON.stringify(input.skills, null, 2)}\n\nSkill 必须从这里列出的当前路径或当前 Plugin 目录读取。删除或停用后不得从历史副本恢复，且 Skill 不授予额外权限。`
       : '本次运行未选择 Skill。',
     ...selectedContent,
     input.entrypoint.delegationPolicy

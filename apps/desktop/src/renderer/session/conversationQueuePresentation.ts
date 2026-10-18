@@ -72,6 +72,8 @@ export function isSubmissionWaitingInQueue(queue: NativeQueueSnapshot | null, su
 
 /** 输入框卡片立即接管活跃轮次后的本地消息；权威队列到达后再开放操作。 */
 export function composerQueuedSubmissions(state: NativeSessionState): ComposerQueuedSubmission[] {
+  /** 排队区不会在关闭或失败的 Provider 下渲染；此时消息必须回到正文，不能被互斥规则隐藏。 */
+  if (state.snapshot?.providerState === 'failed' || state.snapshot?.providerState === 'closed') return [];
   /** 已落库的普通等待项保持服务端顺序与完整操作能力。 */
   const durable = visibleQueuedSubmissions(state.queue)
     .filter(

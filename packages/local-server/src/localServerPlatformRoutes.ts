@@ -99,7 +99,7 @@ import { type TaskStatus } from './taskCore.js';
 import { createTelegramBotMessageClient, getTelegramConfigurationState, type TelegramMessageSender, type TelegramPollingService } from './telegramAdapter.js';
 import { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { createHash } from 'node:crypto';
-import { existsSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 import { type CodexRemoteControlSnapshot, registerCodexPublicCommandRoutes } from './codexPublicCommandRoutes.js';
 import { CodexSubagentQueryApplication } from './codexSubagentQueryApplication.js';
@@ -3748,6 +3748,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     managedRoot: join(dataLayout.artifactsDirectory, 'task-docs'),
   });
 
+  /** Skill 删除即失效；启动时移除旧设计留下的可执行物化副本。 */
+  rmSync(join(dataLayout.artifactsDirectory, 'task-work-skill-snapshots'), { recursive: true, force: true });
   taskWorkManagement = registerTaskWorkManagement({
     server,
     apiToken: options.apiToken,
@@ -3778,7 +3780,6 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     artifacts: artifactStore,
     workArtifacts,
     acceptProjectWorkflowAssignment,
-    skillSnapshotRoot: join(dataLayout.artifactsDirectory, 'task-work-skill-snapshots'),
     skills: zeusSkillService,
     plugins: zeusPluginService,
     conversationCapabilities: conversationCapabilityQueries,

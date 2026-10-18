@@ -4,6 +4,8 @@ import type { ZeusDatabasePort } from './databasePort.js';
 
 export const pluginStoreSchemaMigrationId = '20260829_0001_zeus_plugin_host';
 export const pluginStoreSourceIdentityMigrationId = '20260829_0002_plugin_source_identity';
+/** 清除旧会话保存的 Plugin 可执行快照，后续只解析当前启用状态。 */
+export const pluginStoreCurrentActivationMigrationId = '20261018_0003_remove_conversation_plugin_activations';
 
 export const pluginScopes = ['personal', 'project'] as const;
 export const pluginSourceKinds = ['local', 'git', 'marketplace'] as const;
@@ -100,14 +102,6 @@ export interface PluginMcpPolicyRecord {
   enabled: boolean;
   approvalMode: PluginApprovalMode;
   updatedAt: string;
-}
-
-export interface ConversationPluginActivationRecord {
-  conversationId: string;
-  pluginId: string;
-  pluginRevisionId: string;
-  snapshot: Record<string, unknown>;
-  createdAt: string;
 }
 
 export interface RecordPluginInstallationInput {
@@ -305,6 +299,21 @@ export function migratePluginStoreSchema(db: ZeusDatabasePort): void {
         new Date().toISOString(),
       ]);
     }
+  });
+  /** 旧表保留以兼容既有数据库结构，但其中的执行副本必须一次性清空。 */
+  const currentActivationChecksum = `sha256:${createHash('sha256').update('conversation-plugin-activations:current-state-only').digest('hex')}`;
+  db.transaction(() => {
+    const existing = db.get<{ checksum: string }>(`SELECT checksum FROM schema_migrations WHERE migration_id = ?`, [pluginStoreCurrentActivationMigrationId]);
+    if (existing && existing.checksum !== currentActivationChecksum) throw new Error('Plugin 当前态迁移账本与定义不一致。');
+    if (existing) return;
+    db.execute(`DELETE FROM conversation_plugin_activations`);
+    db.execute(`DELETE FROM conversation_plugin_activation_sets`);
+    db.execute(`INSERT INTO schema_migrations (migration_id, description, checksum, applied_at) VALUES (?, ?, ?, ?)`, [
+      pluginStoreCurrentActivationMigrationId,
+      '移除会话级 Plugin 执行快照并改用当前启用状态',
+      currentActivationChecksum,
+      new Date().toISOString(),
+    ]);
   });
 }
 
@@ -583,42 +592,13 @@ export class PluginRepository {
     return this.listMcpPolicies(input.pluginId).find((entry) => entry.serverId === input.serverId && entry.toolName === input.toolName)!;
   }
 
-  freezeConversationActivations(conversationId: string, activations: Array<{ plugin: PluginRegistrationRecord; revision: PluginRevisionRecord; snapshot: Record<string, unknown> }>, createdAt: string): ConversationPluginActivationRecord[] {
-    this.db.transaction(() => {
-      this.db.execute(`INSERT OR IGNORE INTO conversation_plugin_activation_sets (conversation_id, created_at) VALUES (?, ?)`, [conversationId, createdAt]);
-      for (const activation of activations) {
-        this.db.execute(`INSERT OR IGNORE INTO conversation_plugin_activations (conversation_id, plugin_id, plugin_revision_id, snapshot_json, created_at) VALUES (?, ?, ?, ?, ?)`, [
-          conversationId,
-          activation.plugin.id,
-          activation.revision.id,
-          serializeRecord(activation.snapshot, 'activationSnapshot', 2_000_000),
-          createdAt,
-        ]);
-      }
-    });
-    return this.listConversationActivations(conversationId);
-  }
-
-  hasConversationActivationSet(conversationId: string): boolean {
-    return Boolean(this.db.get<{ conversation_id: string }>(`SELECT conversation_id FROM conversation_plugin_activation_sets WHERE conversation_id = ?`, [conversationId]));
-  }
-
-  listConversationActivations(conversationId: string): ConversationPluginActivationRecord[] {
-    return this.db.select<ConversationPluginActivationRow>(`SELECT * FROM conversation_plugin_activations WHERE conversation_id = ? ORDER BY plugin_id ASC`, [conversationId]).map(mapConversationActivation);
-  }
-
-  countRevisionReferences(pluginRevisionId: string): number {
-    return this.db.get<{ count: number }>(`SELECT COUNT(*) AS count FROM conversation_plugin_activations WHERE plugin_revision_id = ?`, [pluginRevisionId])?.count ?? 0;
-  }
-
   countInstallPathReferences(installPath: string): number {
     return (
       this.db.get<{ count: number }>(
         `SELECT COUNT(*) AS count
          FROM plugin_revisions revision
-         LEFT JOIN plugin_registrations registration ON registration.id = revision.plugin_id AND registration.deleted_at IS NULL
-         LEFT JOIN conversation_plugin_activations activation ON activation.plugin_revision_id = revision.id
-         WHERE revision.install_path = ? AND (registration.id IS NOT NULL OR activation.plugin_revision_id IS NOT NULL)`,
+         INNER JOIN plugin_registrations registration ON registration.id = revision.plugin_id AND registration.deleted_at IS NULL AND registration.active_revision_id = revision.id
+         WHERE revision.install_path = ?`,
         [boundedText(installPath, 'installPath', 1, 16_000)],
       )?.count ?? 0
     );
@@ -727,14 +707,6 @@ interface PluginMcpPolicyRow {
   updated_at: string;
 }
 
-interface ConversationPluginActivationRow {
-  conversation_id: string;
-  plugin_id: string;
-  plugin_revision_id: string;
-  snapshot_json: string;
-  created_at: string;
-}
-
 function mapRegistration(row: PluginRegistrationRow): PluginRegistrationRecord {
   return {
     id: row.id,
@@ -823,10 +795,6 @@ function mapMcpPolicy(row: PluginMcpPolicyRow): PluginMcpPolicyRecord {
     approvalMode: oneOf(row.approval_mode, pluginApprovalModes, 'mcpPolicy.approvalMode'),
     updatedAt: row.updated_at,
   };
-}
-
-function mapConversationActivation(row: ConversationPluginActivationRow): ConversationPluginActivationRecord {
-  return { conversationId: row.conversation_id, pluginId: row.plugin_id, pluginRevisionId: row.plugin_revision_id, snapshot: parseRecord(row.snapshot_json, 'activation.snapshot'), createdAt: row.created_at };
 }
 
 function parseComponents(value: string): PluginComponentSnapshot {

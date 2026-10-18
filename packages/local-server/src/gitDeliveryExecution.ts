@@ -216,7 +216,7 @@ export function resolveGitDeliveryConflictWorkspace(db: ZeusDatabase, projectId:
   const merge = step?.result?.merge as GitDeliveryMergeResult | undefined;
   if (!run || run.projectId !== projectId || run.scope.kind !== 'conversation' || step?.action !== 'merge' || (!run.input.settings.resolveConflicts && !step.result?.aiAuthorization) || step.state === 'succeeded' || !merge?.integrationPath)
     throw deliveryError('冲突步骤已失效或不属于当前项目。');
-  /** 复用本次已冻结的权限和 Skill，不允许另一个首发请求扩大权限。 */
+  /** 复用本次已接纳的权限和 Skill 选择，不允许另一个首发请求扩大权限。 */
   const settings = (step.result?.aiAuthorization ?? run.input.settings) as { permissionMode: 'auto' | 'full-access'; skillId?: string | null };
   return { localPath: merge.integrationPath, workspaceMode: 'worktree', permissionMode: settings.permissionMode, skillId: settings.skillId ?? null };
 }

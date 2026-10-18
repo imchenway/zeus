@@ -15,6 +15,7 @@ export function isInputSuggestionPendingMessage(item: NativeSessionItemBuffer): 
   return item.optimistic === true && ['user', 'usermessage'].includes(type) && ['pending', 'queued', 'dispatching', 'active'].includes(item.status);
 }
 
+/** 按稳定客户端身份判断持久用户正文是否已经接管本地显示记录。 */
 export function selectHasConfirmedUserMessage(state: NativeSessionState, clientUserMessageId: string): boolean {
   if (!clientUserMessageId) return false;
   return state.itemOrder.some((key) => {

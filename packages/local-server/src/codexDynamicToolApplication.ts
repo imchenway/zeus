@@ -5,6 +5,7 @@ import type { CodexProviderCommandApplicationService } from './codexProviderComm
 import type { ZeusConversationPluginRuntime } from './zeusConversationPluginRuntime.js';
 import { isZeusNativeToolMutation, type ZeusToolBroker } from './zeusToolRegistry.js';
 import type { ConversationPermissionMode, ConversationCollaborationMode } from '@zeus/storage';
+import { createZeusPluginMcpApprovalEvidence, type ZeusPluginMcpApprovalSource } from './zeusPluginMcpBroker.js';
 
 interface CodexDynamicToolApplicationOptions {
   manager: Pick<CodexAppServerManager, 'respondToServerRequest'>;
@@ -129,13 +130,35 @@ async function resolveResponse(input: {
     if (!turn || !segment || (segment.state !== 'current' && segment.state !== 'provisional')) throw dynamicToolError('ZEUS_TOOL_RESULT_CONTEXT_UNAVAILABLE', '工具调用缺少当前轮次的结果归档身份，尚未执行。');
     /** 后续正文与图片共用同一份已核实的身份。 */
     const scope: ToolResultScope = { conversationId: input.conversation.id, turnId: turn.id, segmentId: segment.id };
-    if (input.options.plugins && input.namespace.startsWith('zeus_mcp_') && input.tool) {
+    if (input.options.plugins && input.namespace === 'zeus_plugin' && input.tool === 'catalog') {
+      const catalog = await input.options.plugins.getCatalog(input.conversation.id);
+      const requestedName = typeof input.argumentsValue.name === 'string' ? input.argumentsValue.name.trim() : '';
+      const query = typeof input.argumentsValue.query === 'string' ? input.argumentsValue.query.trim().toLocaleLowerCase() : '';
+      const selected = requestedName
+        ? catalog.tools.filter((candidate) => candidate.name === requestedName)
+        : catalog.tools.filter((candidate) => !query || `${candidate.name}\n${candidate.description}`.toLocaleLowerCase().includes(query)).slice(0, 20);
+      const text = JSON.stringify(
+        selected.map((candidate) => ({
+          name: candidate.name,
+          label: candidate.label,
+          description: candidate.description,
+          readOnly: candidate.readOnly === true,
+          ...(requestedName ? { inputSchema: candidate.inputSchema } : {}),
+        })),
+      );
+      return dynamicToolResponse(input.event, await projectContentItems(input, [{ type: 'inputText', text }], scope), true);
+    }
+    if (input.options.plugins && ((input.namespace === 'zeus_plugin' && input.tool === 'invoke') || (input.namespace.startsWith('zeus_mcp_') && input.tool))) {
       const pluginContext = input.options.pluginContext(input.conversation.id);
       if (!pluginContext) throw dynamicToolError('ZEUS_PLUGIN_CONVERSATION_CONTEXT_MISSING', 'The Plugin Host is not bound to this conversation context.');
       const catalog = await input.options.plugins.getCatalog(input.conversation.id);
-      const tool = catalog.tools.find((candidate) => candidate.namespace === input.namespace && candidate.toolName === input.tool);
-      if (!tool) throw dynamicToolError('ZEUS_PLUGIN_MCP_TOOL_NOT_FOUND', 'The requested MCP tool is not part of this conversation’s frozen Plugin snapshot.');
-      if (pluginContext.permissionMode === 'read-only' && !tool.readOnly) throw dynamicToolError('ZEUS_NATIVE_TOOL_READ_ONLY', '只读模式仅允许明确声明只读的 MCP 工具。');
+      const currentTool =
+        input.namespace === 'zeus_plugin'
+          ? catalog.tools.find((candidate) => candidate.name === requiredString(input.argumentsValue.name, 'Plugin tool name'))
+          : catalog.tools.find((candidate) => candidate.namespace === input.namespace && candidate.toolName === input.tool);
+      if (!currentTool) throw dynamicToolError('ZEUS_PLUGIN_MCP_TOOL_NOT_FOUND', 'The requested MCP tool is not available in the current Plugin state.');
+      const invocationArgs = input.namespace === 'zeus_plugin' ? (isRecord(input.argumentsValue.arguments) ? input.argumentsValue.arguments : {}) : input.argumentsValue;
+      if (pluginContext.permissionMode === 'read-only' && !currentTool.readOnly) throw dynamicToolError('ZEUS_NATIVE_TOOL_READ_ONLY', '只读模式仅允许明确声明只读的 MCP 工具。');
       const pre = await input.options.plugins.emitHook({
         event: 'PreToolUse',
         conversationId: input.conversation.id,
@@ -143,11 +166,13 @@ async function resolveResponse(input: {
         model: pluginContext.model,
         turnId: input.turnId,
         permissionMode: pluginContext.permissionMode,
-        payload: { tool_name: `${input.namespace}.${input.tool}`, tool_input: input.argumentsValue },
+        payload: { tool_name: currentTool.name, tool_input: invocationArgs },
       });
       if (pre.permissionDecision === 'deny') throw dynamicToolError('ZEUS_PLUGIN_HOOK_TOOL_DENIED', pre.permissionDecisionReason ?? 'A Plugin Hook denied the MCP tool call.');
-      const args = pre.updatedInput ?? input.argumentsValue;
-      if (tool.approvalMode === 'prompt' && pre.permissionDecision !== 'allow') {
+      const args = pre.updatedInput ?? invocationArgs;
+      if (currentTool.approvalMode === 'deny') throw dynamicToolError('ZEUS_PLUGIN_MCP_TOOL_DENIED', 'Plugin MCP 工具策略已拒绝执行。');
+      let approvalSource: ZeusPluginMcpApprovalSource | null = currentTool.approvalMode === 'approve' ? 'policy' : pre.permissionDecision === 'allow' ? 'pre_tool_hook' : null;
+      if (!approvalSource && currentTool.approvalMode === 'prompt') {
         const hookApproval = await input.options.plugins.emitHook({
           event: 'PermissionRequest',
           conversationId: input.conversation.id,
@@ -155,26 +180,29 @@ async function resolveResponse(input: {
           model: pluginContext.model,
           turnId: input.turnId,
           permissionMode: pluginContext.permissionMode,
-          payload: { tool_name: `${input.namespace}.${input.tool}`, tool_input: args },
+          payload: { tool_name: currentTool.name, tool_input: args },
         });
         if (hookApproval.permissionDecision === 'deny') throw dynamicToolError('ZEUS_PLUGIN_HOOK_PERMISSION_DENIED', hookApproval.permissionDecisionReason ?? 'A Plugin Hook denied MCP tool approval.');
-        if (
-          hookApproval.permissionDecision !== 'allow' &&
-          !(await input.options.requestPluginApproval({
+        if (hookApproval.permissionDecision === 'allow') {
+          approvalSource = 'permission_hook';
+        } else {
+          const approved = await input.options.requestPluginApproval({
             conversationId: input.conversation.id,
             threadId: input.threadId,
             turnId: input.turnId,
             callId: input.callId,
             generationId: input.event.generationId,
-            namespace: input.namespace,
-            tool: input.tool,
+            namespace: currentTool.namespace,
+            tool: currentTool.toolName,
             argumentKeys: Object.keys(args).sort(),
-          }))
-        ) {
-          throw dynamicToolError('ZEUS_PLUGIN_MCP_TOOL_DECLINED', 'The user declined the Plugin MCP tool call.');
+          });
+          if (!approved) throw dynamicToolError('ZEUS_PLUGIN_MCP_TOOL_DECLINED', 'The user declined the Plugin MCP tool call.');
+          approvalSource = 'user';
         }
       }
-      const result = await input.options.plugins.invokeMcp({ conversationId: input.conversation.id, namespace: input.namespace, toolName: input.tool, args });
+      if (!approvalSource) throw dynamicToolError('ZEUS_PLUGIN_MCP_APPROVAL_REQUIRED', 'Plugin MCP 工具缺少当前调用的审批依据。');
+      const approval = createZeusPluginMcpApprovalEvidence(currentTool, args, approvalSource);
+      const result = await input.options.plugins.invokeMcp({ conversationId: input.conversation.id, tool: currentTool, args, approval });
       const post = await input.options.plugins.emitHook({
         event: 'PostToolUse',
         conversationId: input.conversation.id,
@@ -182,7 +210,7 @@ async function resolveResponse(input: {
         model: pluginContext.model,
         turnId: input.turnId,
         permissionMode: pluginContext.permissionMode,
-        payload: { tool_name: `${input.namespace}.${input.tool}`, tool_input: args, tool_response: result.text },
+        payload: { tool_name: currentTool.name, tool_input: args, tool_response: result.text },
       });
       const text = post.replaceToolResult ?? result.text;
       const contentItems = await projectContentItems(input, [{ type: 'inputText', text }, ...(result.images ?? []).map((image) => ({ type: 'inputImage' as const, imageUrl: `data:${image.mimeType};base64,${image.data}` }))], scope);
@@ -192,10 +220,10 @@ async function resolveResponse(input: {
           providerThreadId: input.threadId,
           providerTurnId: input.turnId,
           callId: input.callId,
-          pluginId: tool.pluginId,
-          pluginRevisionId: tool.pluginRevisionId,
-          serverId: tool.serverId,
-          toolName: tool.originalToolName,
+          pluginId: currentTool.pluginId,
+          pluginRevisionId: currentTool.pluginRevisionId,
+          serverId: currentTool.serverId,
+          toolName: currentTool.originalToolName,
           app: result.app,
           toolResult: { text: result.text, structuredContent: result.structuredContent, isError: result.isError },
         });

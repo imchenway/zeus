@@ -10,7 +10,7 @@ import { createNativeConversationStartEnvelopeManager, createProjectConversation
 import { forgetConversationStartCommandRequest, conversationStartClientCommandTypes } from '../conversations/conversationStartCommandClient.js';
 import type { CodexConversationCapabilities, CodexTaskPushCapabilities, NativeConversationChoice, NativeSessionState, SessionConversationOwner, StartTaskModelPushRequest } from '../../session/sessionTypes.js';
 import { compareConversationStageUpdatedDesc } from '../../session/conversationOrdering.js';
-import { buildPersistedSessionViewCache, initialSessionHotCache, rememberSessionHotState, type SessionHotCache } from '../../session/sessionHotCache.js';
+import { buildPersistedSessionViewCache, initialSessionHotCache, refreshSessionHotState, rememberSessionHotState, type SessionHotCache } from '../../session/sessionHotCache.js';
 import { type TaskModelPushForm, type TaskModelPushModalStatus } from '../../task/TaskModelPushModal.js';
 import { projectTaskModelPushConversationChoices } from '../../task/TaskModelPushPendingWorkspace.js';
 import { useConversationFeatureController } from '../conversations/useConversationFeatureController.js';
@@ -1240,17 +1240,19 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const persistNativeConversationViewCache = useCallback((): void => {
     sessionViewCachePersistTimerRef.current = null;
     const persist = window.zeus?.persistSessionViewCache;
-    if (!persist || nativeConversationHotCacheRef.current.size === 0) return;
+    if (nativeConversationHotCacheRef.current.size === 0) return;
     for (const conversationId of dirtySessionViewCacheRef.current) {
+      /** 空闲边界重新测量最新状态，并在序列化落盘前执行原有体积淘汰。 */
+      const current = nativeConversationHotCacheRef.current.get(conversationId);
+      if (current) rememberSessionHotState(nativeConversationHotCacheRef.current, conversationId, current.state, { cachedAt: current.cachedAt });
       const entry = nativeConversationHotCacheRef.current.get(conversationId);
       if (!entry) continue;
       const snapshot = buildPersistedSessionViewCache(new Map([[conversationId, entry]]));
-      if (snapshot.entries.length > 0) persist(snapshot);
+      if (persist && snapshot.entries.length > 0) persist(snapshot);
     }
     dirtySessionViewCacheRef.current.clear();
   }, []);
   const scheduleNativeConversationViewCachePersistence = useCallback((): void => {
-    if (!window.zeus?.persistSessionViewCache) return;
     if (sessionViewCachePersistTimerRef.current !== null) window.clearTimeout(sessionViewCachePersistTimerRef.current);
     sessionViewCachePersistTimerRef.current = window.setTimeout(persistNativeConversationViewCache, 2_500);
   }, [persistNativeConversationViewCache]);
@@ -1270,7 +1272,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
       // 冷切换的 controller 只有视图加载态，不能覆盖服务端已经给出的会话运行态；
       // 否则用户快速切走后该临时状态无人收尾，会在侧栏永久留下假转圈。
       if (!state.snapshot && (state.transportState === 'connecting' || state.transportState === 'hydrating' || state.transportState === 'reconnecting' || state.transportState === 'disconnected')) return;
-      const remembered = rememberSessionHotState(nativeConversationHotCacheRef.current, conversationId, state);
+      const remembered = refreshSessionHotState(nativeConversationHotCacheRef.current, conversationId, state);
       // 只有本次进程已经完成权威水合，才把显示缓存推进到磁盘；旧缓存刷新失败不能续期。
       if (remembered && state.transportState === 'ready') {
         dirtySessionViewCacheRef.current.add(conversationId);

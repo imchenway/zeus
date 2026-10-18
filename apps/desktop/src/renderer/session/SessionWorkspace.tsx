@@ -2883,6 +2883,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                     language={props.language}
                     assistantLabel={assistantLabel}
                     historyOnly={props.historyOnly}
+                    composerQueueVisible={!props.historyOnly && !props.suppressComposer}
                     projectPersistedPlans={props.projectPersistedPlans}
                     localSubmissionRevision={localSubmissionRevision}
                     historyLoading={Boolean(props.transcriptLoading ?? ((props.state.transportState === 'hydrating' || props.state.transportState === 'connecting') && !props.state.snapshot)) && !props.state.snapshot}

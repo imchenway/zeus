@@ -638,7 +638,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   function queueWaitReason(conversationId: string, state: NativeConversationRunState, entries: readonly ZeusConversationSubmissionRecord[]): NativeQueueWaitReason {
     if (isRecovering(conversationId)) return 'conversation_restoring';
     if (state.type === 'active') return 'current_turn';
-    if (state.type === 'dispatching') return 'dispatching';
+    if (state.type === 'dispatching') return entries.find((submission) => submission.id === state.submissionId)?.pausedReason === 'plugin_hook' ? 'plugin_hook' : 'dispatching';
     if (state.type === 'waiting') return state.reason;
     if (state.type === 'paused') return state.reason;
     if (hasPendingPlanImplementationRequest(conversationId)) return 'plan_confirmation';

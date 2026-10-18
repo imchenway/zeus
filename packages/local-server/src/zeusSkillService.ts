@@ -1,15 +1,22 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { homedir } from 'node:os';
 import type { CodexAppServerManager, CodexSkillMetadata, CodexSkillScope, CodexSkillsListEntry } from '@zeus/ai-runtime';
 import { skillFrontmatterScalar } from './skillFrontmatter.js';
 
+/** Git 安装入口使用 Promise 形式执行受限子进程。 */
 const execFileAsync = promisify(execFile);
+/** 安装安全检查允许的最大资源节点数。 */
 const maximumSkillNodes = 5_000;
+/** 安装安全检查允许的最大资源总字节数。 */
 const maximumSkillBytes = 50 * 1024 * 1024;
+/** 运行时目录只读取入口元数据；单个入口文件仍需设置明确内存上限。 */
+const maximumSkillManifestBytes = 1024 * 1024;
+/** 元数据缓存限制跨项目累计目录数量，避免长期运行时无界增长。 */
+const maximumSkillManifestCacheEntries = 1_000;
 /** 订阅服务只补充目录，等待预算必须远小于本地接口的读取期限。 */
 const providerCatalogWaitMs = 1_000;
 
@@ -36,10 +43,15 @@ export interface ZeusSkillCatalog {
 }
 
 export interface ZeusSkillService {
-  list(input: { cwd: string; forceReload?: boolean }): Promise<ZeusSkillCatalog>;
-  /** 普通 Skill 每轮复制到受管产物目录，元数据和参考文件一起冻结。 */
-  freeze(input: { cwd: string; identity: string }): Promise<ZeusSkillCatalog>;
-  /** 只读已冻结的技能清单，供历史过程显示当时的名称。 */
+  list(input: {
+    /** 发现 Skill 的实际工作目录。 */
+    cwd: string;
+    /** 是否要求 Provider 刷新其补充元数据。 */
+    forceReload?: boolean;
+    /** 发送链路传 false，只读取本地目录并隔离 Provider 网络状态。 */
+    includeProvider?: boolean;
+  }): Promise<ZeusSkillCatalog>;
+  /** 只读历史版本生成的技能清单，不再创建新的 Skill 快照。 */
   readFrozen(snapshotId: string): Promise<ZeusSkillCatalog>;
   install(input: { cwd: string; source: ZeusSkillInstallSource }): Promise<{ skill: ZeusSkillDescriptor; installedAt: string }>;
   remove(input: { cwd: string; skillId: string }): Promise<{ removed: true; skillId: string; name: string }>;
@@ -77,6 +89,8 @@ export function createZeusSkillService(options: { skillsRoot: string; snapshotRo
   const now = options.now ?? (() => new Date());
   /** 未完成的同类读取共享请求，超时返回本地目录后也不重复堆积订阅请求。 */
   const pendingProviderCatalogs = new Map<string, Promise<CodexSkillsListEntry[]>>();
+  /** 目录发现只缓存 SKILL.md 解析结果；文件身份变化或强制刷新时立即失效。 */
+  const installedSkillManifestCache = new Map<string, { signature: string; name: string; description: string }>();
 
   /** 将启动和目录读取一起限时；底层请求自行收尾，不让可选元数据阻塞主流程。 */
   async function readProviderCatalog(input: { cwd: string; forceReload?: boolean; startProvider?: boolean }): Promise<CodexSkillsListEntry[]> {
@@ -91,7 +105,7 @@ export function createZeusSkillService(options: { skillsRoot: string; snapshotRo
       })().finally(() => pendingProviderCatalogs.delete(key));
       pendingProviderCatalogs.set(key, pending);
     }
-    /** 每位调用者独立清理计时器，迟到的结果不修改已经返回或冻结的目录。 */
+    /** 每位调用者独立清理计时器，迟到的结果不修改已经返回的目录。 */
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([
@@ -105,7 +119,7 @@ export function createZeusSkillService(options: { skillsRoot: string; snapshotRo
     }
   }
 
-  async function list(input: { cwd: string; forceReload?: boolean; startProvider?: boolean }): Promise<ZeusSkillCatalog> {
+  async function list(input: { cwd: string; forceReload?: boolean; startProvider?: boolean; includeProvider?: boolean }): Promise<ZeusSkillCatalog> {
     const cwd = await requireDirectory(input.cwd, 'Skill 工作目录');
     /** 普通目录由 Zeus 本地发现，订阅服务只补充原生元数据。 */
     const roots = new Map<string, CodexSkillScope>([
@@ -119,19 +133,21 @@ export function createZeusSkillService(options: { skillsRoot: string; snapshotRo
       if (directory === homedir() || dirname(directory) === directory || (await pathExists(join(directory, '.git')))) break;
     }
     /** 各来源独立报告损坏条目，不让一个 Skill 隐藏整个目录。 */
-    const catalogs = await Promise.all([...roots].map(([root, scope]) => discoverZeusInstalledSkills(root, scope)));
+    const catalogs = await Promise.all([...roots].map(([root, scope]) => discoverZeusInstalledSkills(root, scope, installedSkillManifestCache, input.forceReload === true)));
     const installed = { skills: catalogs.flatMap((catalog) => catalog.skills), errors: catalogs.flatMap((catalog) => catalog.errors) };
-    let providerSkills: CodexSkillMetadata[] = [];
-    let providerErrors: Array<Record<string, unknown>> = [];
-    try {
-      const entries = await readProviderCatalog({ ...input, cwd });
-      const entry = entries.find((candidate) => resolve(candidate.cwd) === cwd) ?? entries[0];
-      if (entry) {
-        providerSkills = entry.skills;
-        providerErrors = entry.errors;
+    const providerSkills: CodexSkillMetadata[] = [];
+    const providerErrors: Array<Record<string, unknown>> = [];
+    if (input.includeProvider !== false) {
+      try {
+        const entries = await readProviderCatalog({ ...input, cwd });
+        const entry = entries.find((candidate) => resolve(candidate.cwd) === cwd) ?? entries[0];
+        if (entry) {
+          providerSkills.push(...entry.skills);
+          providerErrors.push(...entry.errors);
+        }
+      } catch (error) {
+        providerErrors.push({ source: 'codex_app_server', message: boundedDiagnostic(error) });
       }
-    } catch (error) {
-      providerErrors.push({ source: 'codex_app_server', message: boundedDiagnostic(error) });
     }
     const byPath = new Map<string, CodexSkillMetadata>();
     for (const skill of installed.skills) byPath.set(resolve(skill.path), skill);
@@ -199,46 +215,10 @@ export function createZeusSkillService(options: { skillsRoot: string; snapshotRo
   }
 
   async function resolveSkill(input: { cwd: string; skillId: string }): Promise<{ id: string; name: string; description: string; path: string }> {
-    const catalog = await list({ cwd: input.cwd });
+    const catalog = await list({ cwd: input.cwd, includeProvider: false });
     const skill = catalog.skills.find((candidate) => candidate.id === requireSkillId(input.skillId));
     if (!skill) throw new CodexSkillServiceError('ZEUS_CODEX_SKILL_NOT_FOUND', '所选 Skill 在当前项目中不可用，请重新选择。', 404);
     return { id: skill.id, name: skill.name, description: skill.description, path: skill.path };
-  }
-
-  /** 同一提交复用已冻结的目录，新提交重新读取本地来源，不移动用户文件。 */
-  async function freeze(input: { cwd: string; identity: string }): Promise<ZeusSkillCatalog> {
-    const root = options.snapshotRoot ?? join(dirname(skillProfileRoot), 'artifacts', 'skill-resources');
-    const target = join(root, createHash('sha256').update(input.identity).digest('hex'));
-    const manifest = join(target, 'catalog.json');
-    try {
-      return JSON.parse(await readFile(manifest, 'utf8')) as ZeusSkillCatalog;
-    } catch (error) {
-      if (!isNodeError(error, 'ENOENT')) throw error;
-    }
-    const catalog = await list({ cwd: input.cwd });
-    await mkdir(root, { recursive: true, mode: 0o700 });
-    const staging = await mkdtemp(join(root, '.prepare-'));
-    try {
-      const skills: ZeusSkillDescriptor[] = [];
-      for (const skill of catalog.skills) {
-        const name = createHash('sha256').update(skill.id).digest('hex').slice(0, 24);
-        const destination = join(staging, name);
-        await inspectSkillSource(dirname(skill.path));
-        await cp(dirname(skill.path), destination, { recursive: true, dereference: false, errorOnExist: true });
-        const metadata = await inspectSkillSource(destination);
-        skills.push({ ...skill, ...metadata, path: join(target, name, 'SKILL.md'), removable: false });
-      }
-      const frozen = { ...catalog, skills };
-      await writeFile(join(staging, 'catalog.json'), JSON.stringify(frozen), { mode: 0o600 });
-      try {
-        await rename(staging, target);
-      } catch (error) {
-        if (!isNodeError(error, 'EEXIST') && !isNodeError(error, 'ENOTEMPTY')) throw error;
-      }
-      return JSON.parse(await readFile(manifest, 'utf8')) as ZeusSkillCatalog;
-    } finally {
-      await rm(staging, { recursive: true, force: true });
-    }
   }
 
   /** 仅接受受管快照编号，禁止将请求参数作为任意文件路径读取。 */
@@ -254,7 +234,7 @@ export function createZeusSkillService(options: { skillsRoot: string; snapshotRo
     }
   }
 
-  return { list, freeze, readFrozen, install, remove, resolve: resolveSkill };
+  return { list, readFrozen, install, remove, resolve: resolveSkill };
 }
 
 async function materializeSource(source: ZeusSkillInstallSource, stagingRoot: string): Promise<string> {
@@ -330,15 +310,56 @@ async function inspectSkillSource(sourceDirectory: string): Promise<{ name: stri
   }
   const name = skillFrontmatterScalar(skillMarkdown, 'name');
   const description = skillFrontmatterScalar(skillMarkdown, 'description');
+  return validateSkillManifest(name, description);
+}
+
+/** 运行时只校验并读取入口文件；完整资源树检查保留在安装边界。 */
+async function inspectInstalledSkillManifest(directory: string, cache: Map<string, { signature: string; name: string; description: string }>, forceReload: boolean): Promise<{ name: string; description: string }> {
+  /** 目录本身必须是普通目录，不能借符号链接改变资源边界。 */
+  const directoryStat = await lstat(directory);
+  if (directoryStat.isSymbolicLink() || !directoryStat.isDirectory()) throw new CodexSkillServiceError('ZEUS_CODEX_SKILL_UNSAFE_SOURCE', 'Skill 目录不能是符号链接且必须是目录。', 422);
+  /** 运行时发现只读取固定入口文件。 */
+  const skillFile = join(directory, 'SKILL.md');
+  /** 文件身份用于缓存失效，也阻止入口符号链接。 */
+  const skillStat = await lstat(skillFile);
+  if (skillStat.isSymbolicLink() || !skillStat.isFile()) throw new CodexSkillServiceError('ZEUS_CODEX_SKILL_INVALID', 'Skill 根目录必须包含普通文件 SKILL.md。', 422);
+  if (skillStat.size > maximumSkillManifestBytes) throw new CodexSkillServiceError('ZEUS_CODEX_SKILL_INVALID', 'SKILL.md 不能超过 1 MiB。', 422);
+  /** 目录与入口文件身份共同覆盖创建、替换、编辑和删除后重建。 */
+  const signature = [directoryStat.dev, directoryStat.ino, directoryStat.mtimeMs, skillStat.dev, skillStat.ino, skillStat.size, skillStat.mtimeMs, skillStat.ctimeMs].join(':');
+  /** 强制刷新跳过缓存，其余调用只在签名不变时复用解析结果。 */
+  const cached = forceReload ? undefined : cache.get(directory);
+  if (cached?.signature === signature) {
+    cache.delete(directory);
+    cache.set(directory, cached);
+    return { name: cached.name, description: cached.description };
+  }
+  /** 单次读取同时解析名称和说明，避免同一入口重复 I/O。 */
+  const skillMarkdown = await readFile(skillFile, 'utf8');
+  /** 运行时与安装阶段共用同一元数据约束。 */
+  const inspection = validateSkillManifest(skillFrontmatterScalar(skillMarkdown, 'name'), skillFrontmatterScalar(skillMarkdown, 'description'));
+  cache.set(directory, { signature, ...inspection });
+  while (cache.size > maximumSkillManifestCacheEntries) cache.delete(cache.keys().next().value!);
+  return inspection;
+}
+
+/** 统一校验安装和运行时发现所读取的 Skill 入口元数据。 */
+function validateSkillManifest(name: string | null | undefined, description: string | null | undefined): { name: string; description: string } {
   if (!name || !description) throw new CodexSkillServiceError('ZEUS_CODEX_SKILL_INVALID', 'SKILL.md frontmatter 必须包含非空 name 和 description。', 422);
   if ([...name].length > 100 || /[\r\n\0]/u.test(name)) throw new CodexSkillServiceError('ZEUS_CODEX_SKILL_INVALID', 'Skill name 不能超过 100 个字符或包含换行。', 422);
   return { name, description };
 }
 
-/** 复用同一元数据解析与来源检查，发现指定作用域下的本地 Skill。 */
-async function discoverZeusInstalledSkills(skillsRoot: string, scope: CodexSkillScope = 'user'): Promise<{ skills: CodexSkillMetadata[]; errors: Array<Record<string, unknown>> }> {
+/** 使用入口元数据缓存发现指定作用域，不在消息派发时递归扫描资源树。 */
+async function discoverZeusInstalledSkills(
+  skillsRoot: string,
+  scope: CodexSkillScope,
+  cache: Map<string, { signature: string; name: string; description: string }>,
+  forceReload: boolean,
+): Promise<{ skills: CodexSkillMetadata[]; errors: Array<Record<string, unknown>> }> {
   const skills: CodexSkillMetadata[] = [];
   const errors: Array<Record<string, unknown>> = [];
+  /** 当前目录项集合用于清理已删除 Skill 的旧缓存。 */
+  const visibleDirectories = new Set<string>();
   let entries;
   try {
     entries = await readdir(skillsRoot, { withFileTypes: true });
@@ -349,8 +370,9 @@ async function discoverZeusInstalledSkills(skillsRoot: string, scope: CodexSkill
   for (const entry of entries) {
     if (!entry.isDirectory() || entry.name === '.system') continue;
     const directory = join(skillsRoot, entry.name);
+    visibleDirectories.add(directory);
     try {
-      const inspection = await inspectSkillSource(directory);
+      const inspection = await inspectInstalledSkillManifest(directory, cache, forceReload);
       skills.push({
         name: inspection.name,
         description: inspection.description,
@@ -362,6 +384,8 @@ async function discoverZeusInstalledSkills(skillsRoot: string, scope: CodexSkill
       errors.push({ source: 'zeus', path: directory, message: boundedDiagnostic(error) });
     }
   }
+  /** 删除当前根目录已经移除的入口，其他项目的缓存不受影响。 */
+  for (const directory of cache.keys()) if (dirname(directory) === resolve(skillsRoot) && !visibleDirectories.has(directory)) cache.delete(directory);
   return { skills, errors };
 }
 

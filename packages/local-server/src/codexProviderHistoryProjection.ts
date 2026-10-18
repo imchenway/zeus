@@ -577,8 +577,6 @@ export function createCodexProviderHistoryProjection(dependencies: CodexProvider
       runStates.set(conversation.id, classification === 'failed' || recoveryRequired ? { type: 'paused', reason: 'recovery_required' } : interruptedWithQueue ? { type: 'paused', reason: 'interrupted' } : { type: 'idle' });
       options.execution.resolveWarning(conversation.id, 'provider_interaction_authority_missing', completedAt ?? timestamp);
       if (!wasTerminal) {
-        // 补收终态与实时结束事件共用完整快照，不漏掉连接中断期间的脚本修改。
-        await options.changeSets.finishWorkspace({ conversation, turn, timestamp });
         options.changeSets.seal({ conversation, turn, timestamp });
       }
       if (!wasTerminal && !options.goals.get(conversation.id)) {

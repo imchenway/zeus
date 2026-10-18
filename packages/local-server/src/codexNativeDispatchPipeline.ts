@@ -1,4 +1,3 @@
-import { readNativeSubmissionSkills } from './nativeConversationSubmissionInputs.js';
 import { type CodexCollaborationMode, type CodexThreadGoal, toCodexWireReasoningEffort } from '@zeus/ai-runtime';
 import type { ConversationCollaborationMode, ConversationNextTurnSettings, ConversationRepository, ZeusConversationGoalRecord, ZeusConversationSubmissionRecord, ZeusConversationWithMessagesRecord } from '@zeus/storage';
 import { ensureInitialCodexGoal } from './codexGoalApplication.js';
@@ -143,6 +142,23 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
     const state = options.manager.getState();
     return state.type === 'ready' ? state.generationId : null;
   };
+
+  /** 在持久队列中公开 Plugin 检查阶段；结束、取消或失败后的终态不能被清理动作覆盖。 */
+  async function runPluginDispatchCheck<T>(conversationId: string, submissionId: string, operation: () => Promise<T>): Promise<T> {
+    options.submissions.updateStatus(submissionId, 'dispatching', { pausedReason: 'plugin_hook', preserveError: true, preserveSubmissionOutcome: true, updatedAt: now() });
+    await persist();
+    options.broadcast('conversation.queue.changed', { conversationId, submissionId });
+    try {
+      return await operation();
+    } finally {
+      const current = options.submissions.getById(submissionId);
+      if (current?.status === 'dispatching' && current.pausedReason === 'plugin_hook') {
+        options.submissions.updateStatus(submissionId, 'dispatching', { pausedReason: null, preserveError: true, preserveSubmissionOutcome: true, updatedAt: now() });
+        await persist();
+        options.broadcast('conversation.queue.changed', { conversationId, submissionId });
+      }
+    }
+  }
 
   /** 迟到结果不得把已结束或已替换的提交改回排队状态。 */
   function dispatchStopped(submissionId: string): boolean {
@@ -290,14 +306,21 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
           providerGenerationId: commandProviderGenerationId,
         });
       }
-      const pluginPreparation = await options.plugins?.prepare({
-        conversationId: conversation.id,
-        projectId: context.projectId,
-        cwd: context.projectLocalPath,
-        model: context.model,
-        source: providerThreadId ? 'resume' : 'startup',
-        ...(providerThreadId ? {} : { prompt: submissionText(submission) }),
-      });
+      const plugins = options.plugins;
+      /** 会话变量后续可能绑定新线程；Plugin 检查始终使用本次派发的稳定产品会话身份。 */
+      const pluginConversationId = conversation.id;
+      const pluginPreparation = plugins
+        ? await runPluginDispatchCheck(pluginConversationId, submission.id, () =>
+            plugins.prepare({
+              conversationId: pluginConversationId,
+              projectId: context.projectId,
+              cwd: context.projectLocalPath,
+              model: context.model,
+              source: providerThreadId ? 'resume' : 'startup',
+              ...(providerThreadId ? {} : { prompt: submissionText(submission) }),
+            }),
+          )
+        : undefined;
       /** 线程级指令只保存跨模式稳定规则，不能把执行清单永久带进后续计划轮。 */
       const developerInstructions = [developerInstructionsFor(context, options.browserAutomation !== undefined), pluginPreparation?.developerInstructions ?? ''].filter(Boolean).join('\n');
       /** 默认轮补充执行清单规则；计划轮必须把协作模板完全交还 app-server。 */
@@ -413,19 +436,17 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
           providerGenerationId: commandProviderGenerationId,
         });
       }
-      /** 显式选择读取冻结副本；自动选择继续由 App Server 原生 Skill 目录按上下文预算处理。 */
-      const skillCatalog = (await options.loadSkills?.(context.projectLocalPath, submission.id)) ?? [];
-      const providerInput = submissionProviderInput(submission, context).map((item) => {
-        if (item.type !== 'skill') return item;
-        const selected = readNativeSubmissionSkills(submission).find((skill) => skill.path === item.path && skill.name === item.name);
-        const frozen = skillCatalog.find((skill) => skill.id === selected?.id);
-        return frozen ? { ...item, path: frozen.path } : item;
-      });
-      const pluginPromptContext = await options.plugins?.beforeUserPrompt({
-        conversationId: conversation.id,
-        prompt: providerInput,
-        permissionMode: context.permissionMode,
-      });
+      /** Skill 直接使用提交时解析的当前路径，文件后续修改或删除按实际状态生效。 */
+      const providerInput = submissionProviderInput(submission, context);
+      const pluginPromptContext = plugins
+        ? await runPluginDispatchCheck(pluginConversationId, submission.id, () =>
+            plugins.beforeUserPrompt({
+              conversationId: pluginConversationId,
+              prompt: providerInput,
+              permissionMode: context.permissionMode,
+            }),
+          )
+        : undefined;
       const profile = providerPermissionProfile(context);
       const serializedAt = now();
       const wireEffort = toCodexWireReasoningEffort(context.effort) ?? null;
@@ -540,9 +561,6 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
       }
       const additionalContext = mergeCodexAdditionalContext(segmentLifecycle?.codexBootstrapAdditionalContext, compiledDispatchContext?.codexAdditionalContext, context.additionalContext, pluginPromptContext, pluginCompactContext);
       assertSubmissionDispatchable(submission.id);
-      // 模型运行前保存真实工作目录起点，命令行和专用编辑工具共用这一基线。
-      await options.changeSets.beginWorkspace(conversation, submission.id);
-      assertSubmissionDispatchable(submission.id);
       if (segmentLifecycle) segmentLifecycle.markProviderWriteStarted();
       else
         options.commandDeliveries.markProviderWriteStarted({
@@ -579,7 +597,6 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
         approvalsReviewer: profile.approvalsReviewer,
         sandboxPolicy: profile.sandbox,
       });
-      options.changeSets.bindWorkspace(conversation.id, submission.id, turn.id);
       volatileSubmissionText.delete(submission.id);
       const timestamp = now();
       const acceptedTurnId = segmentLifecycle?.acceptSynchronously({

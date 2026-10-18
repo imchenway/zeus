@@ -81,8 +81,6 @@ export interface CreateCodexNativeConversationCoordinatorOptions {
   } | null>;
   /** 实际目标发送或恢复前校验冻结预算；不按旧模型替代新路由。 */
   validateContextCapacity(budget: number | null, sourceId: string | null, modelId: string, runtime: 'codex' | 'pi'): void;
-  /** 两条链路读取同一轮冻结的普通 Skill 目录。 */
-  loadSkills?(cwd: string, identity: string): Promise<NativeConversationSkillInput[]>;
   compileDispatchContext: ProviderDispatchContextCompiler;
   preflightCodexModelBudget: (input: { modelId: string; modelSourceId: string | null; providerGenerationId: string | null }) => void;
 }
@@ -194,6 +192,7 @@ export type NativeQueueWaitReason =
   | 'conversation_restoring'
   | 'current_turn'
   | 'dispatching'
+  | 'plugin_hook'
   | 'user_input'
   | 'approval'
   | 'plan_confirmation'

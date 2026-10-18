@@ -4,11 +4,14 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import type { PluginHookTrustRecord } from '@zeus/storage';
 import { ensurePrivatePathSync } from '@zeus/storage/platform-security';
-import type { PluginActivationSnapshot } from './zeusPluginService.js';
+import type { PluginActivationState } from './zeusPluginService.js';
 import { isCommandShell } from '@zeus/shared';
 import { resolveCommandInvocation, resolveExecutableInvocation, spawnManagedProcess } from '@zeus/ai-runtime';
 
 export type ZeusPluginHookEventName = 'PermissionRequest' | 'PostToolUse' | 'PostCompact' | 'PreCompact' | 'PreToolUse' | 'SessionEnd' | 'SessionStart' | 'SubagentStart' | 'SubagentStop' | 'UserPromptSubmit' | 'Stop';
+
+/** 发送关键路径最多等待同步 Plugin Hook 30 秒，避免合法消息长期卡在准备阶段。 */
+export const pluginDispatchHookWaitLimitMs = 30_000;
 
 export interface ZeusPluginHookEvent {
   event: ZeusPluginHookEventName;
@@ -19,6 +22,8 @@ export interface ZeusPluginHookEvent {
   transcriptPath?: string | null;
   permissionMode?: string;
   payload?: Record<string, unknown>;
+  /** 仅限制当前前台 Hook；显式异步 Hook 继续按自身超时在后台运行。 */
+  maximumWaitMs?: number;
 }
 
 export interface ZeusPluginHookRunResult {
@@ -59,8 +64,8 @@ export interface ZeusPluginHookRuntime {
 export function createZeusPluginHookRuntime(options: {
   runtimeRoot: string;
   dataRoot: string;
-  getActivations(conversationId: string): Promise<PluginActivationSnapshot[]>;
-  executeMcpTool?(input: { conversationId: string; pluginId: string; serverId: string; toolName: string; args: Record<string, unknown>; signal: AbortSignal }): Promise<unknown>;
+  getActivations(conversationId: string): Promise<PluginActivationState[]>;
+  executeMcpTool?(input: { conversationId: string; pluginId: string; pluginRevisionId: string; serverId: string; toolName: string; args: Record<string, unknown>; signal: AbortSignal }): Promise<unknown>;
   dangerouslyBypassTrust?: boolean;
   publish?: (type: string, payload: Record<string, unknown>) => void;
 }): ZeusPluginHookRuntime {
@@ -102,7 +107,7 @@ export function createZeusPluginHookRuntime(options: {
         immediate.push(scheduleBackground(candidate, event, !trusted));
         continue;
       }
-      foreground.push(executeCandidate(candidate, event, !trusted));
+      foreground.push(executeCandidate(candidate, event, !trusted, undefined, event.maximumWaitMs));
     }
     const runs = [...immediate, ...(await Promise.all(foreground))];
     const result = aggregateHookResults(event.event, runs);
@@ -140,23 +145,33 @@ export function createZeusPluginHookRuntime(options: {
     };
   }
 
-  async function executeCandidate(candidate: HookCandidate, event: ZeusPluginHookEvent, trustedBypass: boolean, externalSignal?: AbortSignal): Promise<ZeusPluginHookRunResult> {
+  async function executeCandidate(candidate: HookCandidate, event: ZeusPluginHookEvent, trustedBypass: boolean, externalSignal?: AbortSignal, maximumWaitMs?: number): Promise<ZeusPluginHookRunResult> {
     const handler = hookHandler(candidate.hook.definition);
-    const timeoutSeconds = hookTimeout(handler, event.event);
+    const timeoutMs = hookTimeoutMs(handler, event.event, maximumWaitMs);
     const controller = new AbortController();
     const abort = () => controller.abort(externalSignal?.reason);
-    externalSignal?.addEventListener('abort', abort, { once: true });
-    const timer = setTimeout(() => controller.abort(new Error('timeout')), timeoutSeconds * 1_000);
+    if (externalSignal?.aborted) abort();
+    else externalSignal?.addEventListener('abort', abort, { once: true });
+    const timer = setTimeout(() => controller.abort(new Error(`Plugin Hook 等待超过 ${Math.ceil(timeoutMs / 1_000)} 秒。`)), timeoutMs);
     timer.unref?.();
+    /** 中间目录读取即使不接收 signal，宿主也必须在总预算到期时立即退出发送等待。 */
+    let rejectOnAbort: (() => void) | undefined;
+    /** 迟到的 MCP 链路继续持有已取消 signal，不能越过超时再执行最终工具。 */
+    const aborted = new Promise<never>((_resolve, reject) => {
+      rejectOnAbort = () => reject(controller.signal.reason instanceof Error ? controller.signal.reason : new Error('Plugin Hook 已取消。'));
+      if (controller.signal.aborted) rejectOnAbort();
+      else controller.signal.addEventListener('abort', rejectOnAbort, { once: true });
+    });
     try {
       const input = hookInput(event);
-      if (handler.type === 'command') {
-        return await executeCommandHook({ candidate, event, handler, input, signal: controller.signal, trustedBypass });
-      }
-      if (handler.type === 'mcp_tool') {
-        return await executeMcpHook({ candidate, event, handler, input, signal: controller.signal, trustedBypass });
-      }
-      return skippedRun(candidate, event.event, 'skipped_unsupported', trustedBypass);
+      /** 所有前台实现共用同一总等待竞争，不能依赖具体传输是否及时处理中止。 */
+      const execution =
+        handler.type === 'command'
+          ? executeCommandHook({ candidate, event, handler, input, signal: controller.signal, trustedBypass })
+          : handler.type === 'mcp_tool'
+            ? executeMcpHook({ candidate, event, handler, input, signal: controller.signal, trustedBypass })
+            : Promise.resolve(skippedRun(candidate, event.event, 'skipped_unsupported', trustedBypass));
+      return await Promise.race([execution, aborted]);
     } catch (error) {
       const timedOut = controller.signal.aborted && !externalSignal?.aborted;
       return {
@@ -175,6 +190,7 @@ export function createZeusPluginHookRuntime(options: {
       };
     } finally {
       clearTimeout(timer);
+      if (rejectOnAbort) controller.signal.removeEventListener('abort', rejectOnAbort);
       externalSignal?.removeEventListener('abort', abort);
     }
   }
@@ -252,6 +268,7 @@ export function createZeusPluginHookRuntime(options: {
     const result = await options.executeMcpTool({
       conversationId: input.event.conversationId,
       pluginId: input.candidate.activation.pluginId,
+      pluginRevisionId: input.candidate.activation.pluginRevisionId,
       serverId: input.handler.server,
       toolName: input.handler.tool,
       args,
@@ -320,7 +337,7 @@ export function createZeusPluginHookRuntime(options: {
     };
   }
 
-  async function spillLargeOutput(activation: PluginActivationSnapshot, stdout: string, stderr: string): Promise<{ stdout: string; stderr: string; outputPath: string | null }> {
+  async function spillLargeOutput(activation: PluginActivationState, stdout: string, stderr: string): Promise<{ stdout: string; stderr: string; outputPath: string | null }> {
     const combinedBytes = Buffer.byteLength(stdout, 'utf8') + Buffer.byteLength(stderr, 'utf8');
     if (combinedBytes <= 256 * 1024) return { stdout, stderr, outputPath: null };
     const directory = join(options.runtimeRoot, 'hook_outputs', safePathSegment(activation.pluginId));
@@ -347,8 +364,8 @@ export function createZeusPluginHookRuntime(options: {
 }
 
 interface HookCandidate {
-  activation: PluginActivationSnapshot;
-  hook: PluginActivationSnapshot['components']['hooks'][number];
+  activation: PluginActivationState;
+  hook: PluginActivationState['components']['hooks'][number];
   trust: PluginHookTrustRecord;
 }
 
@@ -357,7 +374,7 @@ interface BackgroundRun {
   promise: Promise<ZeusPluginHookRunResult>;
 }
 
-function matchingHookCandidates(activations: PluginActivationSnapshot[], event: ZeusPluginHookEvent): HookCandidate[] {
+function matchingHookCandidates(activations: PluginActivationState[], event: ZeusPluginHookEvent): HookCandidate[] {
   const result: HookCandidate[] = [];
   for (const activation of activations) {
     for (const hook of activation.components.hooks) {
@@ -498,9 +515,11 @@ function hookHandler(
   return definition.handler as ReturnType<typeof hookHandler>;
 }
 
-function hookTimeout(handler: Record<string, unknown>, event: ZeusPluginHookEventName): number {
-  if (typeof handler.timeout === 'number' && Number.isFinite(handler.timeout) && handler.timeout > 0) return event === 'SessionEnd' ? Math.min(3, handler.timeout) : Math.min(600, handler.timeout);
-  return event === 'SessionEnd' ? 1 : 600;
+/** 合并 Hook 自身超时、宿主上限和发送关键路径总等待上限。 */
+function hookTimeoutMs(handler: Record<string, unknown>, event: ZeusPluginHookEventName, maximumWaitMs?: number): number {
+  const configuredMs = typeof handler.timeout === 'number' && Number.isFinite(handler.timeout) && handler.timeout > 0 ? handler.timeout * 1_000 : event === 'SessionEnd' ? 1_000 : 600_000;
+  const hostLimitMs = event === 'SessionEnd' ? 3_000 : 600_000;
+  return Math.max(1, Math.min(configuredMs, hostLimitMs, maximumWaitMs ?? hostLimitMs));
 }
 
 function collectChildOutput(child: ChildProcessWithoutNullStreams): Promise<{ exitCode: number; stdout: string; stderr: string }> {
@@ -595,6 +614,7 @@ function sanitizeBackgroundResult(result: ZeusPluginHookRunResult): ZeusPluginHo
 
 function validateEvent(event: ZeusPluginHookEvent): void {
   if (!event.conversationId.trim() || !isAbsolute(event.cwd) || !event.model.trim()) throw new Error('Plugin Hook 事件缺少稳定会话、cwd 或模型身份。');
+  if (event.maximumWaitMs !== undefined && (!Number.isFinite(event.maximumWaitMs) || event.maximumWaitMs <= 0)) throw new Error('Plugin Hook 最大等待时间必须是正数。');
 }
 
 function safePathSegment(value: string): string {

@@ -326,6 +326,7 @@ export type NativeQueueWaitReason =
   | 'conversation_restoring'
   | 'current_turn'
   | 'dispatching'
+  | 'plugin_hook'
   | 'user_input'
   | 'approval'
   | 'plan_confirmation'

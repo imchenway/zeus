@@ -121,11 +121,11 @@ export interface AgentRunSkillActivation {
   path: string;
 }
 
-/** 已完成校验的本轮资源身份；宿主权限和模型目录必须来自同一快照。 */
+/** 已完成校验的本轮资源引用；宿主权限和模型目录必须来自同一次准备。 */
 export interface AgentRunResourceSnapshot {
-  /** 沿用提交身份，恢复时不重建另一份资源。 */
+  /** 沿用提交身份，恢复时不创建另一份运行记录。 */
   id: string;
-  /** 目录与选择的路径均指向本轮冻结资源。 */
+  /** 当前普通 Skill 目录；路径直接指向来源文件，不复制内容。 */
   skillCatalog: AgentRunSkillActivation[];
   /** 多个显式选择保持用户顺序。 */
   skills: AgentRunSkillActivation[];
@@ -149,7 +149,7 @@ export interface StartAgentRunInput {
   skill?: AgentRunSkillActivation;
   /** 同一提交的全部显式 Skill。 */
   skills?: AgentRunSkillActivation[];
-  /** 本轮冻结的普通 Skill 目录，与宿主的读取范围保持一致。 */
+  /** 本轮读取的当前普通 Skill 目录，与宿主的读取范围保持一致。 */
   skillCatalog?: AgentRunSkillActivation[];
   /** 产品工作模式，计划模式同时约束宿主工具。 */
   workMode?: 'default' | 'plan';

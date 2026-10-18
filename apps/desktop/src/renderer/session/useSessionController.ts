@@ -53,6 +53,7 @@ import {
 } from './sessionTypes.js';
 import { adaptConversationSnapshotV2, mergeConversationHistoryV2, mergeConversationProcessV2, mergeConversationTurnHistoryV2, resumeCachedConversationSnapshot, updateConversationV2Paging } from './conversationSnapshotV2Adapter.js';
 import { markConversationNavigationRenderReady } from '../performanceTraceContext.js';
+import { selectHasConfirmedUserMessage } from './sessionSelectors.js';
 
 /** 会话事件流按指数退避重试五次，单次等待小于一分钟。 */
 export const reconnectBackoffMs = [1_000, 2_000, 4_000, 8_000, 16_000] as const;
@@ -521,6 +522,8 @@ interface PersistedDraft {
   contextDraft?: ConversationContextDraft;
   pendingSend?: PendingSendEnvelope;
   deferredSends?: PendingSendEnvelope[];
+  /** 已由服务端接纳、但尚未被持久正文接管的本地显示记录。 */
+  acceptedDisplaySends?: PendingSendEnvelope[];
   pendingBrowserCommentMarks?: PendingBrowserCommentMark[];
 }
 
@@ -557,6 +560,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
     composerConsumed: true,
     startedAt: envelope.startedAt ?? new Date().toISOString(),
   }));
+  /** 发送占用释放后，显示记录独立保留到同一持久正文到达。 */
+  let acceptedDisplaySends: PendingSendEnvelope[] = persisted.acceptedDisplaySends ?? [];
   let pendingBrowserCommentMarks = persisted.pendingBrowserCommentMarks ?? [];
   const cachedStateCandidate =
     options.initialCachedState?.projectId === options.projectId &&
@@ -582,6 +587,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
       .map((item) => durableUserMessageIdentity(item))
       .filter((identity): identity is string => identity !== null),
   );
+  /** 同一身份只能由发送账本或显示账本中的一方持有。 */
+  const activeSendIdentities = new Set([pendingSend?.clientUserMessageId, ...deferredSends.map((envelope) => envelope.clientUserMessageId)].filter((identity): identity is string => Boolean(identity)));
+  acceptedDisplaySends = acceptedDisplaySends.filter((envelope) => !activeSendIdentities.has(envelope.clientUserMessageId) && !durableCachedIdentities.has(envelope.clientUserMessageId));
   const initialOptimisticItems = (options.initialOptimisticState?.itemOrder ?? [])
     .map((key) => options.initialOptimisticState?.items[key])
     .filter((item): item is NonNullable<typeof item> => Boolean(item?.optimistic && item.conversationId === options.conversationId))
@@ -611,6 +619,39 @@ export function createSessionController(options: CreateSessionControllerOptions)
     busyOperation: null,
     error: initialCachedState?.error?.recoveryRequired ? null : (initialCachedState?.error ?? null),
   };
+  for (const envelope of acceptedDisplaySends) {
+    const acceptance = envelope.acceptance;
+    if (!acceptance) continue;
+    const previousConversationState = state.conversationState;
+    const startedAt = envelope.startedAt ?? new Date().toISOString();
+    state = sessionReducer(state, {
+      type: 'send_started',
+      clientUserMessageId: envelope.clientUserMessageId,
+      durableClientUserMessageId: envelope.clientUserMessageId,
+      draft: envelope.displayText,
+      attachments: envelope.composerAttachments,
+      submittedAttachments: envelope.attachments,
+      browserSubmission: envelope.browserSubmission,
+      contextDraft: envelope.contextDraft,
+      browserComments: envelope.browserSubmission?.comments ?? [],
+      delivery: envelope.delivery,
+      ...(envelope.questionAnswer ? { questionAnswer: envelope.questionAnswer } : {}),
+      previousConversationState,
+      startedAt,
+      queuedUntilHydrated: true,
+      preserveComposer: true,
+    });
+    state = sessionReducer(state, {
+      type: 'send_accepted',
+      clientUserMessageId: envelope.clientUserMessageId,
+      status: acceptedStatus(acceptance),
+      ...(typeof acceptance.submission?.createdAt === 'string' ? { messageCreatedAt: acceptance.submission.createdAt } : {}),
+      ...(acceptance.submission?.id ? { submissionId: acceptance.submission.id } : {}),
+      ...(typeof (acceptance.submission?.providerTurnId ?? acceptance.operation.providerTurnId) === 'string'
+        ? { providerTurnId: (acceptance.submission?.providerTurnId ?? acceptance.operation.providerTurnId) as string }
+        : {}),
+    });
+  }
   // 退出时仍在发送中的消息只标记为结果待核对；重启不会触发额外发送，也不向用户报错。
   // 旧账本把同一状态写成了错误，升级后一并静默处理，不把已经不该出现的文案再抛给用户。
   if (pendingSend && (!pendingSend.deliveryState || pendingSend.deliveryState === 'pending' || pendingSend.deliveryError?.code === 'ZEUS_NATIVE_ACCEPTANCE_HYDRATION_PENDING')) {
@@ -937,6 +978,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const next = sessionReducer(state, action);
     if (next === state) return;
     state = next;
+    if (reconcileAcceptedDisplays()) persistDraft();
     if (state.providerThreadId !== previousThreadId || (state.snapshot?.transportKind ?? null) !== previousTransportKind) identityEpoch += 1;
     if (renderBatchActive) renderBatchChanged = true;
     else for (const listener of listeners) listener();
@@ -948,7 +990,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const attachments = state.attachments;
     const browserSubmission = state.browserSubmission;
     const contextDraft = state.contextDraft;
-    if (!draft && attachments.length === 0 && !browserSubmission && !hasConversationContext(contextDraft) && !pendingSend && deferredSends.length === 0 && pendingBrowserCommentMarks.length === 0) {
+    if (!draft && attachments.length === 0 && !browserSubmission && !hasConversationContext(contextDraft) && !pendingSend && deferredSends.length === 0 && acceptedDisplaySends.length === 0 && pendingBrowserCommentMarks.length === 0) {
       storage.removeItem(storageKey);
       return;
     }
@@ -961,9 +1003,46 @@ export function createSessionController(options: CreateSessionControllerOptions)
         ...(hasConversationContext(contextDraft) ? { contextDraft } : {}),
         ...(pendingSend ? { pendingSend } : {}),
         ...(deferredSends.length > 0 ? { deferredSends } : {}),
+        ...(acceptedDisplaySends.length > 0 ? { acceptedDisplaySends } : {}),
         ...(pendingBrowserCommentMarks.length > 0 ? { pendingBrowserCommentMarks } : {}),
       } satisfies PersistedDraft),
     );
+  }
+
+  /** 持久正文或明确终态清理显示账本；替代提交按权威队列同步换代。 */
+  function reconcileAcceptedDisplays(): boolean {
+    let changed = false;
+    const retained = acceptedDisplaySends.flatMap((envelope) => {
+      if (selectHasConfirmedUserMessage(state, envelope.clientUserMessageId) || (state.snapshot && envelopeWasTerminalWithoutProviderFact(state.snapshot, envelope))) {
+        changed = true;
+        return [];
+      }
+      const submissionId = envelope.acceptance?.submission?.id;
+      const replacement = submissionId ? state.queue?.submissions.find((submission) => submission.replacementOfSubmissionId === submissionId) : undefined;
+      if (!replacement) return [envelope];
+      const replacementDisplay = replacementDisplayEnvelope(envelope, replacement);
+      changed = true;
+      return replacementDisplay ? [replacementDisplay] : [];
+    });
+    if (!changed) return false;
+    acceptedDisplaySends = retained;
+    return true;
+  }
+
+  /** 接纳回执释放发送占用时，按稳定身份保存唯一显示记录。 */
+  function retainAcceptedDisplay(envelope: PendingSendEnvelope): void {
+    if (selectHasConfirmedUserMessage(state, envelope.clientUserMessageId)) return;
+    acceptedDisplaySends = [...acceptedDisplaySends.filter((candidate) => candidate.clientUserMessageId !== envelope.clientUserMessageId), envelope];
+  }
+
+  /** 明确删除或替换提交时同步移除旧显示记录，防止冷恢复复活。 */
+  function removeAcceptedDisplay(submissionId: string, clientUserMessageId?: string): PendingSendEnvelope | undefined {
+    const removed = acceptedDisplaySends.find(
+      (envelope) => envelope.acceptance?.submission?.id === submissionId || (clientUserMessageId ? envelope.clientUserMessageId === clientUserMessageId : false),
+    );
+    if (!removed) return undefined;
+    acceptedDisplaySends = acceptedDisplaySends.filter((envelope) => envelope !== removed);
+    return removed;
   }
 
   function clearDraftIfItStillMatches(envelope: PendingSendEnvelope): void {
@@ -982,11 +1061,94 @@ export function createSessionController(options: CreateSessionControllerOptions)
     dispatch({ type: 'context_draft_changed', contextDraft: structuredClone(emptyConversationContextDraft) });
   }
 
+  /** 用权威替代提交更新同一条本地显示记录，旧提交身份不会在冷恢复中复活。 */
+  function replacementDisplayEnvelope(previous: PendingSendEnvelope | undefined, submission: NativeQueuedSubmission): PendingSendEnvelope | null {
+    if (!submission.clientUserMessageId) return null;
+    /** 替代提交返回的附件和上下文已经是当前权威输入。 */
+    const attachments = submission.attachments ?? previous?.attachments ?? [];
+    /** 显示账本只恢复正文，不参与再次发送；回执身份用于后续明确删除和持久正文接管。 */
+    const acceptance: NativeOperationAcceptance = {
+      operation: { status: submission.status, clientUserMessageId: submission.clientUserMessageId, ...(submission.providerTurnId ? { providerTurnId: submission.providerTurnId } : {}) },
+      conversation: { id: options.conversationId },
+      submission: {
+        id: submission.id,
+        status: submission.status,
+        clientUserMessageId: submission.clientUserMessageId,
+        ...(submission.providerTurnId ? { providerTurnId: submission.providerTurnId } : {}),
+        ...(submission.createdAt ? { createdAt: submission.createdAt } : {}),
+      },
+    };
+    return {
+      ...(previous ?? {
+        fingerprint: `accepted-display:${submission.id}`,
+        draft: submission.composerDraft ?? submission.content,
+        browserSubmission: null,
+        pluginReferences: [],
+        collaborationMode: state.snapshot?.collaborationMode ?? 'default',
+        idempotencyKey: submission.clientUserMessageId,
+      }),
+      content: submission.content,
+      displayText: submission.content,
+      attachments,
+      composerAttachments: attachments,
+      contextDraft: submission.conversationContext ?? previous?.contextDraft ?? structuredClone(emptyConversationContextDraft),
+      delivery: submission.delivery ?? previous?.delivery ?? 'queue',
+      expectedTurnId: submission.expectedTurnId ?? undefined,
+      ...(submission.questionAnswer ? { questionAnswer: submission.questionAnswer } : {}),
+      clientUserMessageId: submission.clientUserMessageId,
+      startedAt: submission.createdAt ?? previous?.startedAt ?? new Date().toISOString(),
+      composerConsumed: true,
+      deliveryState: 'accepted',
+      acceptance,
+    };
+  }
+
+  /** 将接纳显示记录投影到当前状态；持久正文稍后按同一身份原位接管。 */
+  function projectAcceptedDisplay(envelope: PendingSendEnvelope): void {
+    if (!envelope.acceptance) return;
+    dispatch({
+      type: 'send_started',
+      clientUserMessageId: envelope.clientUserMessageId,
+      durableClientUserMessageId: envelope.clientUserMessageId,
+      draft: envelope.displayText,
+      attachments: envelope.composerAttachments,
+      submittedAttachments: envelope.attachments,
+      browserSubmission: envelope.browserSubmission,
+      contextDraft: envelope.contextDraft,
+      browserComments: envelope.browserSubmission?.comments ?? [],
+      delivery: envelope.delivery,
+      ...(envelope.questionAnswer ? { questionAnswer: envelope.questionAnswer } : {}),
+      previousConversationState: state.conversationState,
+      startedAt: envelope.startedAt ?? new Date().toISOString(),
+      queuedUntilHydrated: true,
+      preserveComposer: true,
+    });
+    dispatchSendAccepted(envelope.clientUserMessageId, envelope.acceptance);
+  }
+
   /** 统一收敛队列和已确认替换的本地消息投影。 */
   async function applyAuthoritativeQueue(queue: NativeQueueSnapshot, replacedSubmissionId?: string): Promise<void> {
     const projectedQueue = queue;
     // 替换成功才移除原提交的本地气泡；编辑、改路由与重试共用已有移除逻辑。
-    if (replacedSubmissionId) dispatch({ type: 'queued_submission_deleted', submissionId: replacedSubmissionId, queue: projectedQueue });
+    if (replacedSubmissionId) {
+      /** 替换前先保存旧身份，队列回执可能已经不再包含原提交。 */
+      const replacedSubmission = state.queue?.submissions.find((submission) => submission.id === replacedSubmissionId);
+      /** 冷恢复账本与当前队列按同一提交身份一起换代。 */
+      const previousDisplay = removeAcceptedDisplay(replacedSubmissionId, replacedSubmission?.clientUserMessageId);
+      const replacement = projectedQueue.submissions.find((submission) => submission.replacementOfSubmissionId === replacedSubmissionId);
+      dispatch({
+        type: 'queued_submission_deleted',
+        submissionId: replacedSubmissionId,
+        ...(previousDisplay?.clientUserMessageId || replacedSubmission?.clientUserMessageId ? { clientUserMessageId: previousDisplay?.clientUserMessageId ?? replacedSubmission?.clientUserMessageId } : {}),
+        queue: projectedQueue,
+      });
+      const replacementDisplay = replacement ? replacementDisplayEnvelope(previousDisplay, replacement) : null;
+      if (replacementDisplay) {
+        retainAcceptedDisplay(replacementDisplay);
+        projectAcceptedDisplay(replacementDisplay);
+      }
+      persistDraft();
+    }
     dispatch({ type: 'queue_hydrated', queue: projectedQueue });
     // 空闲历史没有实时连接；替换后补齐正文并接收后续进展，读取失败不改判已成功的替换。
     if (replacedSubmissionId) await ensureRealtimeConnection().catch(() => undefined);
@@ -1358,6 +1520,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
   function finalizeTerminalEnvelope(envelope: PendingSendEnvelope): void {
     if (pendingSend !== envelope) return;
     pendingSend = null;
+    removeAcceptedDisplay(envelope.acceptance?.submission?.id ?? '', envelope.clientUserMessageId);
+    dispatch({ type: 'send_terminal', clientUserMessageId: envelope.clientUserMessageId });
     dispatch({ type: 'send_succeeded' });
     persistDraft();
     options.client.forgetNativeMessageCommand?.(options.projectId, options.conversationId, envelope.idempotencyKey);
@@ -1462,6 +1626,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     // 先让 accepted envelope 与补偿账本同时落盘；第二阶段失败时仍可从任一身份安全重放。
     if (queuedBrowserMark) persistDraft();
     if (!envelope.composerConsumed) clearDraftIfItStillMatches(envelope);
+    retainAcceptedDisplay(envelope);
     pendingSend = null;
     dispatch({ type: 'send_succeeded' });
     persistDraft();
@@ -3546,6 +3711,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
         () => options.client.deleteNativeQueuedSubmission(options.projectId, options.conversationId, submissionId),
         (queue) => {
           dispatch({ type: 'queued_submission_deleted', submissionId, ...(clientUserMessageId ? { clientUserMessageId } : {}), ...(submission?.questionAnswer ? { questionAnswer: submission.questionAnswer } : {}), queue });
+          removeAcceptedDisplay(submissionId, clientUserMessageId);
+          persistDraft();
         },
         false,
       );
@@ -3824,6 +3991,9 @@ function readPersistedDraft(storage: SessionDraftStorage | undefined, key: strin
     const pendingCandidate = isPendingSendEnvelope(parsed.pendingSend) ? parsed.pendingSend : undefined;
     const pending = pendingCandidate ? { ...pendingCandidate, collaborationMode: pendingCandidate.collaborationMode ?? 'default' } : undefined;
     const deferredSends = Array.isArray(parsed.deferredSends) ? parsed.deferredSends.filter(isPendingSendEnvelope).map((envelope) => ({ ...envelope, collaborationMode: envelope.collaborationMode ?? 'default' })) : [];
+    const acceptedDisplaySends = Array.isArray(parsed.acceptedDisplaySends)
+      ? parsed.acceptedDisplaySends.filter(isPendingSendEnvelope).filter((envelope) => envelope.deliveryState === 'accepted' && envelope.acceptance)
+      : [];
     const pendingBrowserCommentMarks = Array.isArray(parsed.pendingBrowserCommentMarks)
       ? mergePendingBrowserCommentMarks(parsed.pendingBrowserCommentMarks.map(normalizePendingBrowserCommentMark).filter((task): task is PendingBrowserCommentMark => task !== null))
       : [];
@@ -3835,6 +4005,7 @@ function readPersistedDraft(storage: SessionDraftStorage | undefined, key: strin
       contextDraft,
       ...(pending ? { pendingSend: pending } : {}),
       ...(deferredSends.length > 0 ? { deferredSends } : {}),
+      ...(acceptedDisplaySends.length > 0 ? { acceptedDisplaySends } : {}),
       ...(pendingBrowserCommentMarks.length > 0 ? { pendingBrowserCommentMarks } : {}),
     };
   } catch {
@@ -3914,7 +4085,8 @@ function isPendingSendEnvelope(value: unknown): value is PendingSendEnvelope {
     (pending.acceptance === undefined || isNativeOperationAcceptance(pending.acceptance)) &&
     (pending.browserCommentsMarked === undefined || typeof pending.browserCommentsMarked === 'boolean') &&
     (pending.deliveryState !== 'accepted' || isNativeOperationAcceptance(pending.acceptance)) &&
-    ((pending.deliveryState !== 'failed' && pending.deliveryState !== 'uncertain') || isNativeSessionError(pending.deliveryError))
+    /** 弱网关闭产生的 uncertain 可能没有错误对象；只有明确 failed 必须携带失败原因。 */
+    (pending.deliveryState !== 'failed' || isNativeSessionError(pending.deliveryError))
   );
 }
 

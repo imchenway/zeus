@@ -3228,6 +3228,11 @@
   animation: session-title-flow-in 140ms var(--session-ease-out) both;
 }
 
+/* 正文切换只做短促透明度接管，不移动滚动位置或延后可交互时间。 */
+.session-codex-parity-v1 .session-transcript-shell[data-conversation-transition='true'] {
+  animation: session-history-takeover 140ms var(--session-ease-out) both;
+}
+
 /* 冷会话在消息区原位接管，骨架层和记录区共享同一尺寸，不触发布局跳变。 */
 .session-codex-parity-v1 .session-transcript-loading {
   align-content: center;
@@ -3301,6 +3306,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .session-codex-parity-v1 .session-thread-title-copy[data-conversation-transition='true'],
+  .session-codex-parity-v1 .session-transcript-shell[data-conversation-transition='true'],
   .session-codex-parity-v1 .session-transcript-loading[data-visible='true'] {
     animation: none;
     transform: none;
