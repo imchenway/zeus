@@ -62,6 +62,8 @@ export class ZeusApiError extends Error {
 }
 
 const localApiReadTimeoutMs = 8_000;
+/** 任务推送预检超时后恢复手动重试，不能继续占用任务详情主按钮。 */
+const localApiTaskPushCapabilitiesTimeoutMs = 5_000;
 /** 主动程序检测包含终端环境、版本和能力三段有界探针，预留完整返回时间。 */
 const localApiAdapterCheckTimeoutMs = 20_000;
 
@@ -90,7 +92,7 @@ export function createLocalApiTransport(options: { getConnection(): LocalApiConn
         // 无回执保护的写请求结果未知时不能自动重放。
         const method = (init?.method ?? 'GET').toUpperCase();
         const replayable = method === 'GET' || method === 'HEAD' || new Headers(init?.headers).has('idempotency-key');
-        if (!replayable || !isLikelyLocalServerConnectionError(error) || !options.refreshConnection) throw error;
+        if (!replayable || !shouldRefreshLocalApiConnection(error) || !options.refreshConnection) throw error;
         // 一个逻辑请求最多刷新一次 Main 提供的端口/token，禁止在 context client 内自建重试循环。
         const refreshed = await options.refreshConnection();
         const result = await requestOnce<T>(refreshed, path, requestInit, traceId, 2, options.onPerformanceSpan);
@@ -129,7 +131,7 @@ export function createLocalApiTransport(options: { getConnection(): LocalApiConn
         return blob;
       } catch (error) {
         recordClientPerformanceSpan(options.onPerformanceSpan, blobPerformanceSpan(response, traceId, attempt, startedAt, false));
-        if (attempt !== 1 || !isLikelyLocalServerConnectionError(error) || !options.refreshConnection) throw error;
+        if (attempt !== 1 || !shouldRefreshLocalApiConnection(error) || !options.refreshConnection) throw error;
         connection = await options.refreshConnection();
         attempt = 2;
       }
@@ -302,12 +304,21 @@ export function isLikelyLocalServerConnectionError(error: unknown): boolean {
   return /fetch failed|failed to fetch|networkerror|connection refused|connection reset/iu.test(error.message);
 }
 
+/** 已进入读取超时的请求不能靠刷新连接恢复，自动重放只会重复后端工作并延长按钮占用。 */
+function shouldRefreshLocalApiConnection(error: unknown): boolean {
+  return !(error instanceof LocalApiReadTimeoutError) && isLikelyLocalServerConnectionError(error);
+}
+
 async function runWithReadTimeout<T>(init: RequestInit, path: string, operation: (timedInit: RequestInit) => Promise<T>): Promise<T> {
   const method = (init.method ?? 'GET').toUpperCase();
   if (method !== 'GET') return operation(init);
 
-  /** 只放宽明确的检测入口，其他查询继续沿用普通读取时限。 */
-  const timeoutMs = /^\/api\/runtime\/adapters\/[^/?]+\/check(?:\?.*)?$/.test(path) ? localApiAdapterCheckTimeoutMs : localApiReadTimeoutMs;
+  /** 主动检测允许更长时间；任务推送入口优先快速恢复用户操作。 */
+  const timeoutMs = /^\/api\/runtime\/adapters\/[^/?]+\/check(?:\?.*)?$/.test(path)
+    ? localApiAdapterCheckTimeoutMs
+    : /^\/api\/projects\/[^/?]+\/codex-task-push-capabilities(?:\?.*)?$/.test(path)
+      ? localApiTaskPushCapabilitiesTimeoutMs
+      : localApiReadTimeoutMs;
   const controller = new AbortController();
   const callerSignal = init.signal;
   let timedOut = false;
