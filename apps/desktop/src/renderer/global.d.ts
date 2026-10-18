@@ -12,6 +12,7 @@ import type {
   CreateProjectSourceEntryInput,
   MoveProjectSourceEntryInput,
   UsageModelCostBreakdown,
+  UsageModelOutputRateBreakdown,
   ProjectSourceDirectorySnapshot,
   ProjectSourceContentSearchResult,
   ProjectSourceDocument,
@@ -54,18 +55,18 @@ type TaskInputResourceBridge = {
   restorableText?: string;
 };
 
-/** 菜单栏主体与独立透明费用窗口之间共享的纯展示数据。 */
-type MenuBarUsageCostDetailBridgePayload = {
+/** 菜单栏主体与独立透明指标窗口之间共享的基础展示数据。 */
+type MenuBarUsageDetailBridgeBase = {
   id: string;
   label: string;
   language: 'zh-CN' | 'en-US';
   appearance: 'light' | 'dark' | 'system';
-  entries: UsageModelCostBreakdown[];
   anchor: { x: number; y: number };
   pinned: boolean;
-  /** Codex 订阅明细使用等价费用文案，不代表实际扣款。 */
-  equivalentCost?: boolean;
 };
+
+/** 费用或模型速率明细使用可判别联合，Renderer 不猜测条目结构。 */
+type MenuBarUsageCostDetailBridgePayload = MenuBarUsageDetailBridgeBase & ({ kind: 'cost'; entries: UsageModelCostBreakdown[]; equivalentCost: boolean } | { kind: 'output-rate'; entries: UsageModelOutputRateBreakdown[] });
 
 declare global {
   interface Window {

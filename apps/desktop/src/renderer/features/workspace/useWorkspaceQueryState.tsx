@@ -148,10 +148,9 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const workspaceScrollRef = useRef<HTMLElement | null>(null);
   const [dashboardSnapshot, setWorkspaceSnapshot] = useState<WorkspaceSnapshot>(() => props.snapshot ?? createEmptyWorkspaceSnapshot());
   /** 附属摘要分别保留加载与失败状态，不能把读取失败当成空数据。 */
-  const [homeSectionStates, setHomeSectionStates] = useState<Record<'attention' | 'runtime' | 'git', { state: 'unloaded' | 'loading' | 'ready' | 'error'; error?: unknown }>>({
+  const [homeSectionStates, setHomeSectionStates] = useState<Record<'attention' | 'runtime', { state: 'unloaded' | 'loading' | 'ready' | 'error'; error?: unknown }>>({
     attention: { state: 'unloaded' },
     runtime: { state: 'unloaded' },
-    git: { state: 'unloaded' },
   });
   /** 显式重试只刷新附属摘要，不重读项目和完整任务。 */
   const [homeRefreshRevision, setHomeRefreshRevision] = useState(0);
@@ -689,15 +688,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en',
   });
   const projectCreationReady = Boolean(props.onChooseProjectDirectory && props.onCreateCurrentProject);
-  const gitLabel = snapshot.git
-    ? snapshot.git.isRepository
-      ? `Git ${snapshot.git.branch}`
-      : codeWorkspaceCopy.gitNotDetected
-    : homeSectionStates.git.state === 'error'
-      ? 'Git · 读取失败'
-      : homeSectionStates.git.state === 'loading'
-        ? 'Git · 读取中'
-        : 'Git · 未加载';
   useEffect(() => {
     if (!taskCreateModalOpen) return;
     const focusTitleInput = window.setTimeout(() => taskCreateTitleInputRef.current?.focus(), 0);
@@ -1019,26 +1009,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
       active = false;
     };
   }, [props.nativeConversationClient, homeRefreshRevision]);
-  useEffect(() => {
-    const client = props.nativeConversationClient;
-    if (!client || !activeProjectId) return;
-    let active = true;
-    setWorkspaceSnapshot((current) => ({ ...current, git: null }));
-    setHomeSectionStates((current) => ({ ...current, git: { state: 'loading' } }));
-    void client.git
-      .loadProjectGitStatus(activeProjectId)
-      .then((git) => {
-        if (!active) return;
-        setWorkspaceSnapshot((current) => ({ ...current, git }));
-        setHomeSectionStates((current) => ({ ...current, git: { state: 'ready' } }));
-      })
-      .catch((error: unknown) => {
-        if (active) setHomeSectionStates((current) => ({ ...current, git: { state: 'error', error } }));
-      });
-    return () => {
-      active = false;
-    };
-  }, [activeProjectId, props.nativeConversationClient, homeRefreshRevision]);
   /** 任务页已取得真实首批数据并完成绘制，才上报首次可操作。 */
   const homeInteractiveReportedRef = useRef(false);
   useEffect(() => {
@@ -1528,7 +1498,6 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     gitDiff,
     gitDiffCopy,
     gitHunkDecisions,
-    gitLabel,
     homeSectionStates,
     setHomeRefreshRevision,
     gitOperationStatus,

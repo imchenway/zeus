@@ -9,7 +9,7 @@ import { homedir, tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { access, appendFile, chmod, copyFile, cp, link, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { performance } from 'node:perf_hooks';
 import { DatabaseSync } from 'node:sqlite';
@@ -166,6 +166,8 @@ let zeusDataLayout: ZeusDataLayout | undefined;
 let zeusDataRootIdentity: ZeusDataRootIdentityMarker | undefined;
 let dataRootPreparationError: unknown;
 let readOnlyValidationDescriptor: ReadOnlyValidationDescriptor | undefined;
+/** 只读验收副本销毁助手每个应用进程只能启动一次。 */
+let readOnlyValidationCleanupScheduled = false;
 let projectSourceWorkspace: ProjectSourceWorkspaceService | undefined;
 /** 效果预览沿用同一项目根解析，草稿授权只存活于发起窗口。 */
 const projectSourcePreviews = new ProjectSourcePreviewService({ loadProjectRoot: loadProjectRootForSourceWorkspace });
@@ -328,12 +330,14 @@ type MenuBarUsageClickAnchor = {
   position: Electron.Point;
 };
 
-/** 菜单栏 Renderer 交给独立费用明细窗口的可序列化展示数据。 */
+/** 菜单栏 Renderer 交给独立指标明细窗口的可序列化展示数据。 */
 type MenuBarUsageCostDetailPayload = {
   id: string;
   label: string;
   language: 'zh-CN' | 'en-US';
   appearance: 'light' | 'dark' | 'system';
+  /** 明细类型决定 Renderer 使用费用表或模型速率表。 */
+  kind: 'cost' | 'output-rate';
   entries: unknown[];
   anchor: Electron.Point;
   pinned: boolean;
@@ -524,6 +528,23 @@ function applyReadOnlyValidationDataRoot(descriptor: ReadOnlyValidationDescripto
   zeusDataLayout = layout;
   // 不调用 prepareZeusDataRoot：验证进程禁止迁移、chmod、复制或创建正式数据目录。
   app.setPath('userData', layout.electronUserData);
+}
+
+/** 主进程退出后由独立 Node 助手删除整个 validationRoot，避免 Chromium 仍占用 profile 文件。 */
+async function scheduleReadOnlyValidationCleanup(descriptor: ReadOnlyValidationDescriptor): Promise<void> {
+  if (readOnlyValidationCleanupScheduled) return;
+  const workerPath = fileURLToPath(new URL('./readOnlyValidationCleanupWorker.js', import.meta.url));
+  const child = spawn(process.execPath, [workerPath, descriptor.validationRoot, String(process.pid), descriptor.manifestHash], {
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+  });
+  await new Promise<void>((resolveSpawn, rejectSpawn) => {
+    child.once('spawn', resolveSpawn);
+    child.once('error', rejectSpawn);
+  });
+  child.unref();
+  readOnlyValidationCleanupScheduled = true;
 }
 
 function applyPreparedDataRoot(root: string, legacyRoots: readonly string[] = [], knownProductionAdoptionRoots: readonly string[] = []): void {
@@ -1146,7 +1167,6 @@ function setupMenu(): void {
         createNewConversation: () => {
           void startNewConversationFromMenu();
         },
-        toggleDevTools: () => mainWindow?.webContents.toggleDevTools(),
         openSettings: () => {
           void openSettingsFromMenu();
         },
@@ -2682,9 +2702,9 @@ function parseTelegramAllowedUserIds(raw: string | undefined): number[] {
     .filter((item) => Number.isSafeInteger(item));
 }
 
-/** 校验跨 Renderer 边界的费用明细，限制数量和序列化体积，避免异常数据撑爆独立窗口。 */
+/** 校验跨 Renderer 边界的指标明细，限制数量和序列化体积，避免异常数据撑爆独立窗口。 */
 function normalizeMenuBarUsageCostDetailPayload(input: unknown): MenuBarUsageCostDetailPayload {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('菜单栏费用明细请求无效。');
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('菜单栏指标明细请求无效。');
   /** 逐项读取受信任字段，拒绝 Renderer 传入的额外原型或非法屏幕坐标。 */
   const candidate = input as Record<string, unknown>;
   /** 浮层身份用于多个费用指标之间互斥切换。 */
@@ -2698,6 +2718,7 @@ function normalizeMenuBarUsageCostDetailPayload(input: unknown): MenuBarUsageCos
   if (!id || id.length > 160 || !label || label.length > 200) throw new TypeError('菜单栏费用明细身份或标题无效。');
   if (candidate.language !== 'zh-CN' && candidate.language !== 'en-US') throw new TypeError('菜单栏费用明细语言无效。');
   if (candidate.appearance !== 'light' && candidate.appearance !== 'dark' && candidate.appearance !== 'system') throw new TypeError('菜单栏费用明细外观无效。');
+  if (candidate.kind !== 'cost' && candidate.kind !== 'output-rate') throw new TypeError('菜单栏指标明细类型无效。');
   if (!entries?.length || entries.length > 100 || entries.some((entry) => !entry || typeof entry !== 'object' || Array.isArray(entry))) throw new TypeError('菜单栏费用明细条目无效。');
   if (!anchor || typeof anchor.x !== 'number' || !Number.isFinite(anchor.x) || typeof anchor.y !== 'number' || !Number.isFinite(anchor.y)) throw new TypeError('菜单栏费用明细锚点无效。');
   if (typeof candidate.pinned !== 'boolean') throw new TypeError('菜单栏费用明细固定状态无效。');
@@ -2708,6 +2729,7 @@ function normalizeMenuBarUsageCostDetailPayload(input: unknown): MenuBarUsageCos
     label,
     language: candidate.language,
     appearance: candidate.appearance,
+    kind: candidate.kind,
     entries,
     anchor: { x: anchor.x, y: anchor.y },
     pinned: candidate.pinned,
@@ -2893,7 +2915,7 @@ async function createMenuBarUsageCostDetailWindow(): Promise<BrowserWindow> {
   const window = new BrowserWindow({
     ...resolveMenuBarUsageCostDetailMeasurementBounds(payload.anchor),
     parent,
-    title: appShellSettings.appLanguage === 'zh-CN' ? `${desktopDisplayName()} 费用明细` : `${desktopDisplayName()} Cost Detail`,
+    title: appShellSettings.appLanguage === 'zh-CN' ? `${desktopDisplayName()} 用量明细` : `${desktopDisplayName()} Usage Detail`,
     show: false,
     frame: false,
     transparent: true,
@@ -4190,6 +4212,9 @@ app.on(
         await attemptCleanup('旧 App 备份', async () => {
           await cleanupStaleReleaseBackups(currentAppBundlePath());
         });
+      }
+      if (readOnlyValidationDescriptor && cleanupErrors.length === 0) {
+        await attemptCleanup('只读验收副本销毁助手', () => scheduleReadOnlyValidationCleanup(readOnlyValidationDescriptor!));
       }
       if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'Zeus 退出时一个或多个资源未能完整关闭。');
     },

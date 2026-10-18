@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { formatCodexCredits, hasPositiveCodexCredits, isCodexSubscriptionUsage } from '@zeus/shared';
-import type { CodexOfficialRateWindow, UsageModelCostBreakdown, UsageOverviewRange, UsageOverviewSnapshot, UsageProviderSummary } from '@zeus/shared';
+import type { CodexOfficialRateWindow, UsageModelCostBreakdown, UsageModelOutputRateBreakdown, UsageOverviewRange, UsageOverviewSnapshot, UsageProviderSummary } from '@zeus/shared';
 import type { AppShellSettings, DashboardClient } from '../apiClient.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import './MenuBarUsageWindow.css';
@@ -28,14 +28,14 @@ type ChartSource = 'local' | 'account';
 /** 柱图槽位：日期、数值与完整性，数值为 null 表示当天没有可用数据。 */
 type DailySlot = { date: string; value: number | null; complete: boolean };
 
-/** 指标展示值可选携带模型费用明细，数组顺序就是界面顺序。 */
+/** 指标明细复用同一个独立原生浮窗，并由类型决定表格内容。 */
+type MetricDetail = { kind: 'cost'; label: string; entries: UsageModelCostBreakdown[]; equivalentCost: boolean } | { kind: 'output-rate'; label: string; entries: UsageModelOutputRateBreakdown[] };
+
+/** 指标展示值可选携带结构化明细。 */
 type MetricValue = {
   label: string;
   value: string;
-  detailLabel?: string;
-  costBreakdown?: UsageModelCostBreakdown[];
-  /** Codex 订阅费用明细保留等价费用口径。 */
-  equivalentCost?: boolean;
+  detail?: MetricDetail;
 };
 
 /** 菜单栏固定文案按当前语言选择，订阅费用与官方余额分别说明。 */
@@ -61,6 +61,7 @@ const copy = {
     tokens: 'Token',
     cacheHit: '缓存命中率',
     outputRate: '请求输出速率',
+    outputRateDetail: '模型请求输出速率',
     cacheUnsupported: '供应源未提供',
     cost: '费用',
     /** 订阅用量按 API 费率换算的金额，不是实际账单。 */
@@ -73,6 +74,7 @@ const copy = {
     remainingCredits: '剩余点数',
     costDetail: '模型费用明细',
     showCostDetail: '查看模型、单价和 Token 明细',
+    showOutputRateDetail: '查看各模型请求输出速率',
     model: '模型',
     unitPrice: '单价 / 每百万',
     consumedTokens: '消耗 Token',
@@ -134,6 +136,7 @@ const copy = {
     tokens: 'Tokens',
     cacheHit: 'Cache hit rate',
     outputRate: 'Request output rate',
+    outputRateDetail: 'Model request output rates',
     cacheUnsupported: 'Not provided',
     cost: 'Cost',
     /** 英文订阅金额沿用等价费用口径。 */
@@ -146,6 +149,7 @@ const copy = {
     remainingCredits: 'Credits remaining',
     costDetail: 'Model cost details',
     showCostDetail: 'Show model, rate, and token details',
+    showOutputRateDetail: 'Show request output rate by model',
     model: 'Model',
     unitPrice: 'Rate / million',
     consumedTokens: 'Tokens',
@@ -636,12 +640,14 @@ function readMetricValues(provider: UsageProviderSummary, language: Language, ra
     {
       label: equivalentCost ? text.equivalentCost : text.cost,
       value: complete ? formatUsd(local.apiEquivalentUsd, local.priceCoverage, language, text.noPrice) : '—',
-      detailLabel: equivalentCost ? text.equivalentCostDetail : text.costDetail,
-      costBreakdown,
-      equivalentCost,
+      detail: costBreakdown.length ? { kind: 'cost', label: equivalentCost ? text.equivalentCostDetail : text.costDetail, entries: costBreakdown, equivalentCost } : undefined,
     },
     { label: text.cacheHit, value: !complete ? '—' : cacheAvailable ? formatPercent(local.cacheHitRate, language, '—') : text.cacheUnsupported },
-    { label: text.outputRate, value: formatOutputRate(local.outputTokensPerSecond ?? null, language) },
+    {
+      label: text.outputRate,
+      value: formatOutputRate(local.outputTokensPerSecond ?? null, language),
+      detail: summary.outputRateBreakdown.length ? { kind: 'output-rate', label: text.outputRateDetail, entries: summary.outputRateBreakdown } : undefined,
+    },
   ];
 }
 
@@ -811,24 +817,24 @@ function DailyBars(props: { provider: UsageProviderSummary; language: Language }
   );
 }
 
-/** 菜单栏费用指标在名称右侧提供可点击的真实账本明细。 */
+/** 菜单栏指标在名称右侧提供可点击的结构化明细。 */
 function Metric(props: MetricValue & { language: Language }) {
   return (
     <div>
       <dt>
         <span>{props.label}</span>
-        {props.costBreakdown?.length && props.detailLabel ? <CostBreakdownPopover entries={props.costBreakdown} label={props.detailLabel} language={props.language} equivalentCost={props.equivalentCost} /> : null}
+        {props.detail ? <MetricDetailPopover detail={props.detail} language={props.language} /> : null}
       </dt>
       <dd>{props.value}</dd>
     </div>
   );
 }
 
-/** 独立费用明细窗口使用的桥接数据类型。 */
+/** 独立指标明细窗口使用的桥接数据类型。 */
 type MenuBarUsageCostDetailPayload = Awaited<ReturnType<NonNullable<Window['zeus']>['getMenuBarUsageCostDetail']>>;
 
-/** 费用说明在独立透明窗口中从鼠标左下方展开，不再改变菜单栏原生宽度。 */
-function CostBreakdownPopover(props: { entries: UsageModelCostBreakdown[]; label: string; language: Language; equivalentCost?: boolean }) {
+/** 指标说明在独立透明窗口中从鼠标左下方展开，不改变菜单栏原生宽度。 */
+function MetricDetailPopover(props: { detail: MetricDetail; language: Language }) {
   const text = copy[props.language];
   /** 每个指标拥有稳定身份，主进程用它保证多个费用指标互斥切换。 */
   const detailId = useId();
@@ -861,12 +867,12 @@ function CostBreakdownPopover(props: { entries: UsageModelCostBreakdown[]; label
       const anchor = pointerAnchorRef.current ?? { x: window.screenX + triggerRect.right, y: window.screenY + triggerRect.bottom };
       pinnedRef.current = pinned;
       setOpen(true);
-      void showWindow({ id: detailId, label: props.label, language: props.language, appearance, entries: props.entries, anchor, pinned, equivalentCost: props.equivalentCost }).catch((cause: unknown) => {
+      void showWindow({ id: detailId, language: props.language, appearance, anchor, pinned, ...props.detail }).catch((cause: unknown) => {
         setOpen(false);
-        console.warn('菜单栏费用明细无法打开。', cause);
+        console.warn('菜单栏指标明细无法打开。', cause);
       });
     },
-    [detailId, props.entries, props.label, props.language, props.equivalentCost],
+    [detailId, props.detail, props.language],
   );
 
   useEffect(() => {
@@ -935,7 +941,7 @@ function CostBreakdownPopover(props: { entries: UsageModelCostBreakdown[]; label
         ref={triggerRef}
         type="button"
         className="menu-bar-usage-cost-detail-trigger"
-        aria-label={`${props.label} · ${text.showCostDetail}`}
+        aria-label={`${props.detail.label} · ${props.detail.kind === 'cost' ? text.showCostDetail : text.showOutputRateDetail}`}
         aria-expanded={open}
         aria-haspopup="dialog"
         onClick={togglePinned}
@@ -945,7 +951,7 @@ function CostBreakdownPopover(props: { entries: UsageModelCostBreakdown[]; label
           showCostDetail(true);
         }}
       >
-        <span aria-hidden="true">!</span>
+        <span aria-hidden="true">?</span>
       </button>
     </div>
   );
@@ -1004,8 +1010,46 @@ export function MenuBarUsageCostDetailWindow(props: { initialPayload: MenuBarUsa
       onPointerEnter={() => void window.zeus?.cancelHideMenuBarUsageCostDetail?.()}
       onPointerLeave={() => void window.zeus?.scheduleHideMenuBarUsageCostDetail?.()}
     >
-      <CostBreakdownPanel entries={payload.entries} label={payload.label} language={payload.language} equivalentCost={payload.equivalentCost} />
+      <MetricDetailPanel payload={payload} />
     </main>
+  );
+}
+
+/** 独立窗口按载荷类型渲染对应表格，窗口交互和定位保持共用。 */
+function MetricDetailPanel(props: { payload: NonNullable<MenuBarUsageCostDetailPayload> }) {
+  const { payload } = props;
+  return payload.kind === 'cost' ? (
+    <CostBreakdownPanel entries={payload.entries} label={payload.label} language={payload.language} equivalentCost={payload.equivalentCost} />
+  ) : (
+    <OutputRateBreakdownPanel entries={payload.entries} label={payload.label} language={payload.language} />
+  );
+}
+
+/** 按模型展示同一时间范围内加权后的请求输出速率。 */
+function OutputRateBreakdownPanel(props: { entries: UsageModelOutputRateBreakdown[]; label: string; language: Language }) {
+  const text = copy[props.language];
+  return (
+    <section className="menu-bar-usage-cost-detail menu-bar-usage-cost-detail-window" role="dialog" aria-label={props.label}>
+      <strong>{props.label}</strong>
+      <div className="menu-bar-usage-cost-table-scroll" data-scrollable={props.entries.length > 8}>
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">{text.model}</th>
+              <th scope="col">{text.outputRate}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {props.entries.map((entry) => (
+              <tr key={entry.model}>
+                <th scope="row">{entry.model}</th>
+                <td>{formatOutputRate(entry.outputTokensPerSecond, props.language)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
@@ -1273,7 +1317,9 @@ function readStoredSnapshot(): UsageOverviewSnapshot | null {
           (range) =>
             Boolean(provider.overviewRanges?.[range]?.local) &&
             Array.isArray(provider.overviewRanges[range].costBreakdown) &&
-            provider.overviewRanges[range].costBreakdown.every((entry) => typeof entry.longContext === 'boolean' && (entry.serviceTier === null || typeof entry.serviceTier === 'string')),
+            provider.overviewRanges[range].costBreakdown.every((entry) => typeof entry.longContext === 'boolean' && (entry.serviceTier === null || typeof entry.serviceTier === 'string')) &&
+            Array.isArray(provider.overviewRanges[range].outputRateBreakdown) &&
+            provider.overviewRanges[range].outputRateBreakdown.every((entry) => typeof entry.model === 'string' && typeof entry.outputTokensPerSecond === 'number'),
         ),
     );
     return value && Array.isArray(value.providers) && compatible && typeof value.updatedAt === 'string' ? value : null;

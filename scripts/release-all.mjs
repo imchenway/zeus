@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /* global console, process */
 import { spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
 import { commandFailureDetail, commandResultSucceeded, releaseRemoteReadAttempts, releaseRemoteReadTimeoutMs, runRemoteReadWithRetrySync } from './release-remote-read.mjs';
@@ -120,64 +120,79 @@ async function runIsolatedRelease(input) {
   const isolatedRoot = join(repositoryRoot, '.tmp', 'zeus-release-isolated');
   const isolatedRepository = join(isolatedRoot, input.sourceHead);
   mkdirSync(isolatedRoot, { recursive: true, mode: 0o700 });
+  /** 只有完整成功或隔离校验成功才删除副本；失败现场继续用于诊断和恢复。 */
+  let cleanupOnSuccess = false;
 
-  if (!existsSync(isolatedRepository)) {
-    runInDirectory(repositoryRoot, 'git', ['clone', '--shared', '--branch', 'main', '--single-branch', repositoryRoot, isolatedRepository]);
-  } else if (!existsSync(join(isolatedRepository, '.git'))) {
-    throw new Error(`隔离发布目录已存在但不是 Git 仓库，拒绝覆盖或清理：${isolatedRepository}`);
-  }
-
-  runInDirectory(isolatedRepository, 'git', ['remote', 'set-url', 'origin', origin]);
-  runInDirectory(isolatedRepository, 'git', ['fetch', '--force', 'origin', 'refs/heads/main:refs/remotes/origin/main']);
-  const isolatedBranch = gitInDirectory(isolatedRepository, ['branch', '--show-current']) || '(detached HEAD)';
-  const isolatedHead = gitInDirectory(isolatedRepository, ['rev-parse', 'HEAD']);
-  if (isolatedBranch !== 'main') throw new Error(`隔离发布副本不在 main：${isolatedBranch}`);
-  if (isolatedHead !== input.sourceHead && !isRecoverableIsolatedReleaseCommit(isolatedRepository, input.sourceHead, isolatedHead)) {
-    throw new Error(`隔离发布副本已经偏离发布源，拒绝覆盖或清理：source=${input.sourceHead} isolated=${isolatedHead}`);
-  }
-  if (captureInDirectory(isolatedRepository, 'git', ['merge-base', '--is-ancestor', 'origin/main', input.sourceHead], true).status !== 0) {
-    throw new Error(`origin/main 已领先发布源或与之分叉，拒绝隔离发布：source=${input.sourceHead}`);
-  }
-
-  console.log(`检测到未提交内容，改用隔离发布副本：${isolatedRepository}`);
-  console.log(`发布源固定为本地 main HEAD：${input.sourceHead}`);
-  console.log('暂存、未暂存和未跟踪内容均不会复制、提交或打包；原工作区保持原样。');
-
-  await runStage('准备隔离发布依赖', 'pnpm', ['install', '--frozen-lockfile'], process.env, { cwd: isolatedRepository });
-
-  if (parseBoolean(isolationValidationEnvironment, process.env[isolationValidationEnvironment], false)) {
-    const currentHead = git(['rev-parse', 'HEAD']);
-    const currentWorktreeStatus = git(['status', '--short']);
-    if (currentHead !== input.sourceHead || currentWorktreeStatus !== input.worktreeStatus) {
-      throw new Error('隔离校验期间原工作区发生变化，无法证明发布编排保持原样。');
+  try {
+    if (!existsSync(isolatedRepository)) {
+      runInDirectory(repositoryRoot, 'git', ['clone', '--shared', '--branch', 'main', '--single-branch', repositoryRoot, isolatedRepository]);
+    } else if (!existsSync(join(isolatedRepository, '.git'))) {
+      throw new Error(`隔离发布目录已存在但不是 Git 仓库，拒绝覆盖或清理：${isolatedRepository}`);
     }
-    const isolatedStatus = gitInDirectory(isolatedRepository, ['status', '--short']);
-    if (isolatedHead !== input.sourceHead || isolatedStatus) {
-      throw new Error(`隔离副本不是发布源的干净快照：head=${isolatedHead}\n${isolatedStatus}`);
-    }
-    const resultPath = join(input.outputDirectory, `Zeus-isolated-release-${input.sourceHead.slice(0, 12)}-validation.md`);
-    writeFileSync(resultPath, buildIsolationValidationResult(input, isolatedRepository), { mode: 0o600 });
-    console.log('隔离发布校验通过；验证模式没有执行版本写入、提交、push、标签或公开发布。');
-    console.log(`ZEUS_ARTIFACT_FILE=${resultPath}`);
-    return;
-  }
 
-  seedIsolatedReleaseState(isolatedRepository, input.sourceHead);
-  await runStage(
-    '在隔离副本执行端到端发布',
-    'pnpm',
-    ['release'],
-    {
-      ...process.env,
-      [isolatedSourceEnvironment]: input.sourceHead,
-      ZEUS_COMMAND_RUN_DIR: input.outputDirectory,
-    },
-    { cwd: isolatedRepository, preserveArtifactLines: true, publicationUnconfirmedExitCode: releasePublicationUnconfirmedExitCode },
-  );
-  const currentOriginalHead = git(['rev-parse', 'HEAD']);
-  if (currentOriginalHead === input.sourceHead) console.log(`隔离发布已完成；原工作区和本地 main 仍保持在 ${input.sourceHead.slice(0, 12)}。`);
-  else console.log(`隔离发布已完成；原工作区的 main 在执行期间由其他流程移动到 ${currentOriginalHead.slice(0, 12)}，本脚本没有改写它。`);
-  console.log('请在处理完未提交内容后显式同步 origin/main；脚本不会自动 stash、恢复、合并或变基。');
+    runInDirectory(isolatedRepository, 'git', ['remote', 'set-url', 'origin', origin]);
+    runInDirectory(isolatedRepository, 'git', ['fetch', '--force', 'origin', 'refs/heads/main:refs/remotes/origin/main']);
+    const isolatedBranch = gitInDirectory(isolatedRepository, ['branch', '--show-current']) || '(detached HEAD)';
+    const isolatedHead = gitInDirectory(isolatedRepository, ['rev-parse', 'HEAD']);
+    if (isolatedBranch !== 'main') throw new Error(`隔离发布副本不在 main：${isolatedBranch}`);
+    if (isolatedHead !== input.sourceHead && !isRecoverableIsolatedReleaseCommit(isolatedRepository, input.sourceHead, isolatedHead)) {
+      throw new Error(`隔离发布副本已经偏离发布源，拒绝覆盖或清理：source=${input.sourceHead} isolated=${isolatedHead}`);
+    }
+    if (captureInDirectory(isolatedRepository, 'git', ['merge-base', '--is-ancestor', 'origin/main', input.sourceHead], true).status !== 0) {
+      throw new Error(`origin/main 已领先发布源或与之分叉，拒绝隔离发布：source=${input.sourceHead}`);
+    }
+
+    console.log(`检测到未提交内容，改用隔离发布副本：${isolatedRepository}`);
+    console.log(`发布源固定为本地 main HEAD：${input.sourceHead}`);
+    console.log('暂存、未暂存和未跟踪内容均不会复制、提交或打包；原工作区保持原样。');
+
+    await runStage('准备隔离发布依赖', 'pnpm', ['install', '--frozen-lockfile'], process.env, { cwd: isolatedRepository });
+
+    if (parseBoolean(isolationValidationEnvironment, process.env[isolationValidationEnvironment], false)) {
+      const currentHead = git(['rev-parse', 'HEAD']);
+      const currentWorktreeStatus = git(['status', '--short']);
+      if (currentHead !== input.sourceHead || currentWorktreeStatus !== input.worktreeStatus) {
+        throw new Error('隔离校验期间原工作区发生变化，无法证明发布编排保持原样。');
+      }
+      const isolatedStatus = gitInDirectory(isolatedRepository, ['status', '--short']);
+      if (isolatedHead !== input.sourceHead || isolatedStatus) {
+        throw new Error(`隔离副本不是发布源的干净快照：head=${isolatedHead}\n${isolatedStatus}`);
+      }
+      const resultPath = join(input.outputDirectory, `Zeus-isolated-release-${input.sourceHead.slice(0, 12)}-validation.md`);
+      writeFileSync(resultPath, buildIsolationValidationResult(input, isolatedRepository), { mode: 0o600 });
+      console.log('隔离发布校验通过；验证模式没有执行版本写入、提交、push、标签或公开发布。');
+      console.log(`ZEUS_ARTIFACT_FILE=${resultPath}`);
+      cleanupOnSuccess = true;
+      return;
+    }
+
+    seedIsolatedReleaseState(isolatedRepository, input.sourceHead);
+    await runStage(
+      '在隔离副本执行端到端发布',
+      'pnpm',
+      ['release'],
+      {
+        ...process.env,
+        [isolatedSourceEnvironment]: input.sourceHead,
+        ZEUS_COMMAND_RUN_DIR: input.outputDirectory,
+      },
+      { cwd: isolatedRepository, preserveArtifactLines: true, publicationUnconfirmedExitCode: releasePublicationUnconfirmedExitCode },
+    );
+    const currentOriginalHead = git(['rev-parse', 'HEAD']);
+    if (currentOriginalHead === input.sourceHead) console.log(`隔离发布已完成；原工作区和本地 main 仍保持在 ${input.sourceHead.slice(0, 12)}。`);
+    else console.log(`隔离发布已完成；原工作区的 main 在执行期间由其他流程移动到 ${currentOriginalHead.slice(0, 12)}，本脚本没有改写它。`);
+    console.log('请在处理完未提交内容后显式同步 origin/main；脚本不会自动 stash、恢复、合并或变基。');
+    cleanupOnSuccess = true;
+  } finally {
+    if (cleanupOnSuccess) {
+      try {
+        rmSync(isolatedRepository, { recursive: true, force: false });
+      } catch (error) {
+        // 公开发布已经成功时，清理失败只能报告，不能把远端已完成结果伪装成可安全重试的发布失败。
+        console.error(`隔离发布已成功，但本地副本清理失败：${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  }
 }
 
 function isRecoverableIsolatedReleaseCommit(isolatedRepository, sourceHead, isolatedHead) {

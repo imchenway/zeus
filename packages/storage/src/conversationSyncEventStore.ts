@@ -107,6 +107,16 @@ export interface CompactConversationSyncEventTailResult {
   retainedBytes: number;
 }
 
+/** 归档会话同步事件回收结果。 */
+export interface PruneArchivedConversationSyncEventsResult {
+  /** 删除的短期追赶事件数量。 */
+  prunedEvents: number;
+  /** 删除事件的 JSON 字节数。 */
+  prunedBytes: number;
+  /** 删除的退役协议流数量。 */
+  prunedRetiredStreams: number;
+}
+
 interface ConversationSyncEventStreamRow {
   conversation_id: string;
   generation_id: string;
@@ -309,9 +319,48 @@ export function migrateConversationSyncProtocolV2(db: ZeusDatabasePort): void {
   });
 }
 
+/**
+ * 归档只回收可由权威快照重建的短期追赶日志，不删除正文、轮次或 Provider 事实。
+ * 当前流保留单行水位；恢复后旧客户端会触发 baseline_required 并重新读取权威快照。
+ */
+export function pruneArchivedConversationSyncEvents(db: ZeusDatabasePort, conversationIdValue: string): PruneArchivedConversationSyncEventsResult {
+  const conversationId = requiredIdentity(conversationIdValue, 'conversationId');
+  return db.transaction(() => {
+    const archived = db.get<{ archived: number }>(`SELECT archived FROM conversations WHERE id = ?`, [conversationId]);
+    if (!archived || archived.archived !== 1) throw new ConversationSyncEventStoreError('ZEUS_CONVERSATION_SYNC_EVENT_INVALID_ARGUMENT', '只能回收已归档会话的同步事件。', { conversationId });
+    const pruned = db.get<{ event_count: number; byte_count: number }>(
+      `SELECT COUNT(*) AS event_count, COALESCE(SUM(payload_byte_length), 0) AS byte_count
+         FROM conversation_sync_events
+        WHERE conversation_id = ?`,
+      [conversationId],
+    ) ?? { event_count: 0, byte_count: 0 };
+    db.execute(`DELETE FROM conversation_sync_events WHERE conversation_id = ?`, [conversationId]);
+    const retired =
+      db.get<{ stream_count: number }>(
+        `SELECT COUNT(*) AS stream_count
+         FROM conversation_sync_event_streams
+        WHERE conversation_id = ? AND is_current = 0`,
+        [conversationId],
+      )?.stream_count ?? 0;
+    db.execute(`DELETE FROM conversation_sync_event_streams WHERE conversation_id = ? AND is_current = 0`, [conversationId]);
+    db.execute(
+      `UPDATE conversation_sync_event_streams
+          SET base_sequence = latest_sequence + 1
+        WHERE conversation_id = ? AND is_current = 1`,
+      [conversationId],
+    );
+    return { prunedEvents: Number(pruned.event_count), prunedBytes: Number(pruned.byte_count), prunedRetiredStreams: Number(retired) };
+  });
+}
+
 /** Repository 不自行 commit，业务投影、回执和 sync event 可由调用方在同一事务提交。 */
 export class ConversationSyncEventRepository {
   constructor(private readonly db: ZeusDatabasePort) {}
+
+  /** 归档事件完成实时广播登记后，删除该会话全部可重建追赶日志。 */
+  pruneArchivedConversation(conversationId: string): PruneArchivedConversationSyncEventsResult {
+    return pruneArchivedConversationSyncEvents(this.db, conversationId);
+  }
 
   currentStream(conversationIdValue: string): ConversationSyncEventStreamRecord | undefined {
     const conversationId = requiredIdentity(conversationIdValue, 'conversationId');

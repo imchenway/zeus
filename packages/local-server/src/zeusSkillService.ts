@@ -7,11 +7,11 @@ import { homedir } from 'node:os';
 import type { CodexAppServerManager, CodexSkillMetadata, CodexSkillScope, CodexSkillsListEntry } from '@zeus/ai-runtime';
 import { skillFrontmatterScalar } from './skillFrontmatter.js';
 
-/** Git 安装入口使用 Promise 形式执行受限子进程。 */
+/** Git 安装命令沿用 Node 的异步子进程接口。 */
 const execFileAsync = promisify(execFile);
-/** 安装安全检查允许的最大资源节点数。 */
+/** 单个 Skill 最多允许的文件系统节点数量。 */
 const maximumSkillNodes = 5_000;
-/** 安装安全检查允许的最大资源总字节数。 */
+/** 单个 Skill 最多允许的总文件字节数。 */
 const maximumSkillBytes = 50 * 1024 * 1024;
 /** 运行时目录只读取入口元数据；单个入口文件仍需设置明确内存上限。 */
 const maximumSkillManifestBytes = 1024 * 1024;
@@ -33,6 +33,8 @@ export interface ZeusSkillDescriptor {
   removable: boolean;
   interface?: Record<string, unknown>;
   dependencies?: Record<string, unknown>;
+  /** 冻结 Skill 的内容摘要；旧清单迁移后补齐。 */
+  contentHash?: string;
 }
 
 export interface ZeusSkillCatalog {
