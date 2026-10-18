@@ -72,7 +72,6 @@ try {
     applicationName: 'Zeus Test',
     settings: { appLanguage: 'zh-CN', webviewDebugEnabled: false, multiWindowEnabled: true, backgroundModeEnabled: true, desktopNotificationsEnabled: true, openAtLoginEnabled: false },
     createNewConversation: noop,
-    toggleDevTools: noop,
     showMainWindow: noop,
     openSettings: noop,
     checkForUpdates: noop,

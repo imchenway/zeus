@@ -12,7 +12,6 @@ export interface AppShellMenuActions {
   applicationName: string;
   settings: MainAppShellSettings;
   createNewConversation: () => void | Promise<void>;
-  toggleDevTools: () => void;
   showMainWindow: () => void;
   openSettings: () => void | Promise<void>;
   checkForUpdates: () => void | Promise<void>;
@@ -106,11 +105,12 @@ export function buildAppShellMenuTemplate(actions: AppShellMenuActions): AppShel
       submenu: [
         { role: 'reload', label: zh ? '重新加载页面' : 'Reload Page' },
         {
+          // 交给 Electron 定位当前菜单所属窗口，避免多窗口时误操作最后创建的窗口。
+          role: 'toggleDevTools',
           label: zh ? '开发者工具' : 'Toggle Developer Tools',
           accelerator: 'Alt+CommandOrControl+I',
           visible: actions.settings.webviewDebugEnabled,
           enabled: actions.settings.webviewDebugEnabled,
-          click: actions.toggleDevTools,
         },
       ],
     },

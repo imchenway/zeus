@@ -2468,8 +2468,8 @@ export function MessageDeliveryOutcomeFeedback(props: {
   onRetryPendingSend?: (clientUserMessageId: string, intent: 'check' | 'continue') => void | Promise<void>;
   onCancelPendingSend?: (clientUserMessageId: string) => void | Promise<void>;
 }): ReactNode {
-  /** 操作期间禁用按钮，失败原因仍留在原消息旁。 */
-  const [pending, setPending] = useState(false);
+  /** 同一失败消息一次只执行一个恢复动作，失败原因仍留在原消息旁。 */
+  const [pendingAction, setPendingAction] = useState<'retry' | 'cancel' | null>(null);
   /** 保留本次重试或核对的错误，不覆盖原消息的持久送达记录。 */
   const [actionError, setActionError] = useState<unknown>(null);
   const pausedReason = props.item.payload.pausedReason;
@@ -2514,11 +2514,13 @@ export function MessageDeliveryOutcomeFeedback(props: {
           ? '消息尚未发送。'
           : 'This message has not been sent.';
   /** 已落库消息沿用提交身份，本地发送失败沿用原客户端消息身份。 */
-  const canAct = props.submissionId ? Boolean(props.onRetryQueuedSubmission) : Boolean(props.clientUserMessageId && props.onRetryPendingSend);
+  const canRetry = props.submissionId ? Boolean(props.onRetryQueuedSubmission) : Boolean(props.clientUserMessageId && props.onRetryPendingSend);
+  /** 只有明确失败消息可以本地取消；结果未知不能伪装成未发送。 */
+  const canCancelLocalSend = failed && !props.submissionId && Boolean(props.clientUserMessageId && props.onCancelPendingSend);
   /** 现有重试先读取原请求，只有确认未发送才发送；组件不创建新的恢复或重发流程。 */
   async function retryDelivery(): Promise<void> {
-    if (pending || !canAct) return;
-    setPending(true);
+    if (pendingAction || !canRetry) return;
+    setPendingAction('retry');
     setActionError(null);
     try {
       if (props.submissionId) {
@@ -2529,23 +2531,42 @@ export function MessageDeliveryOutcomeFeedback(props: {
     } catch (error) {
       setActionError(error);
     } finally {
-      setPending(false);
+      setPendingAction(null);
+    }
+  }
+
+  /** 取消只清理原消息；明确失败已经提前释放会话发送锁。 */
+  async function cancelDelivery(): Promise<void> {
+    if (pendingAction || !canCancelLocalSend || !props.clientUserMessageId) return;
+    setPendingAction('cancel');
+    setActionError(null);
+    try {
+      await props.onCancelPendingSend?.(props.clientUserMessageId);
+    } catch (error) {
+      setActionError(error);
+    } finally {
+      setPendingAction(null);
     }
   }
 
   return (
     <ConversationNotice deliveryState={feedbackState} label={zh ? '请求错误' : 'Request error'}>
       <span data-zeus-selectable="text">{message}</span>
-      {canAct || feedbackError ? (
+      {canRetry || canCancelLocalSend || feedbackError ? (
         <div className="session-message-delivery-actions">
           {feedbackError ? (
             <button type="button" className="application-error-details-link" onClick={() => reportApplicationError(feedbackError, { language: zh ? 'zh-CN' : 'en', summary: message, showDetails: true })}>
               {zh ? '查看原因' : 'View details'}
             </button>
           ) : null}
-          {canAct ? (
-            <button type="button" disabled={pending} onClick={() => void retryDelivery()}>
-              {pending ? (zh ? '正在重试…' : 'Retrying…') : zh ? '重试' : 'Retry'}
+          {canRetry ? (
+            <button type="button" disabled={pendingAction !== null} onClick={() => void retryDelivery()}>
+              {pendingAction === 'retry' ? (zh ? '正在重试…' : 'Retrying…') : zh ? '重试' : 'Retry'}
+            </button>
+          ) : null}
+          {canCancelLocalSend ? (
+            <button type="button" disabled={pendingAction !== null} onClick={() => void cancelDelivery()}>
+              {pendingAction === 'cancel' ? (zh ? '正在取消…' : 'Cancelling…') : zh ? '取消发送' : 'Cancel send'}
             </button>
           ) : null}
         </div>
