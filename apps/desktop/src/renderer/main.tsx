@@ -342,7 +342,7 @@ async function renderMenuBarUsageWithClient(client: DashboardClient): Promise<vo
   );
 }
 
-/** 独立费用明细只依赖主进程桥接数据，不启动 Dashboard API 客户端。 */
+/** 独立用量明细只依赖主进程桥接数据，不启动 Dashboard API 客户端。 */
 async function renderMenuBarUsageCostDetail(): Promise<void> {
   const [{ MenuBarUsageCostDetailWindow }, initialPayload = null] = await Promise.all([import('./settings/MenuBarUsageWindow.js'), window.zeus?.getMenuBarUsageCostDetail?.()]);
   /** 独立窗口使用自己的透明 surface，避免继承菜单栏主体尺寸。 */

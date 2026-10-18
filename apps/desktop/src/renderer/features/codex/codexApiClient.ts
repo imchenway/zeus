@@ -513,10 +513,10 @@ function normalizeLegacyCodexUsageOverview(analytics: CodexUsageAnalyticsSnapsho
   const todayLocal = analytics.local.daily.find((bucket) => bucket.date === today) ?? emptyLocalUsageTotals();
   /** 旧后台只返回七日分析；更长范围沿用已知下限并明确标记为不完整。 */
   const overviewRanges = {
-    today: { local: todayLocal, costBreakdown: [], complete: false },
-    '7d': { local: analytics.local.totals, costBreakdown: [], complete: false },
-    '30d': { local: analytics.local.totals, costBreakdown: [], complete: false },
-    all: { local: analytics.local.totals, costBreakdown: [], complete: false },
+    today: { local: todayLocal, costBreakdown: [], outputRateBreakdown: [], complete: false },
+    '7d': { local: analytics.local.totals, costBreakdown: [], outputRateBreakdown: [], complete: false },
+    '30d': { local: analytics.local.totals, costBreakdown: [], outputRateBreakdown: [], complete: false },
+    all: { local: analytics.local.totals, costBreakdown: [], outputRateBreakdown: [], complete: false },
   };
   return {
     providers: [

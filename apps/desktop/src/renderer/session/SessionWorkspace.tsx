@@ -4268,7 +4268,7 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
       historyComplete: { state: 'available', value: cost.historyComplete },
     },
     performance: {
-      latestOutputTokensPerSecond: runtimeFact(performance?.latestOutputTokensPerSecond ?? null, props.language === 'zh-CN' ? '最近请求没有输出计时记录。' : 'Output timing for the latest request is unavailable.'),
+      latestOutputTokensPerSecond: runtimeFact(performance?.latestOutputTokensPerSecond ?? null, props.language === 'zh-CN' ? '本会话没有完整的输出计时记录。' : 'Complete output timing is unavailable for this session.'),
       latestFirstVisibleResponseMs: runtimeFact(performance?.latestFirstVisibleResponseMs ?? null, props.language === 'zh-CN' ? '最近请求没有首段回复的计时记录。' : 'Time to first visible response is unavailable.'),
       cumulativeProcessedDurationMs: runtimeFact(performance?.cumulativeProcessedDurationMs ?? null, props.language === 'zh-CN' ? '暂无累计处理时间。' : 'Total processing time is unavailable.'),
     },
