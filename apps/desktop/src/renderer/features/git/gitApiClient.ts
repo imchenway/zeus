@@ -70,7 +70,6 @@ export interface GitApiClient {
     signal?: AbortSignal,
   ) => Promise<{ message: string; model: string; truncated?: boolean }>;
   loadGitDiff: () => Promise<GitDiffSummary>;
-  loadProjectGitStatus: (projectId: string) => Promise<GitStatusSummary>;
   loadProjectGitWorkbench: (projectId: string) => Promise<ProjectGitWorkbenchSnapshot>;
   loadConversationGitHistory: (projectId: string, repositoryId: string, offset: number, ref?: string) => Promise<{ commits: NonNullable<GitStatusSummary['recentCommits']>; hasMore: boolean }>;
   loadProjectGitCommit: (projectId: string, repositoryId: string, commitHash: string) => Promise<ProjectGitCommitDetail>;
@@ -152,7 +151,6 @@ export function createGitApiClient(transport: LocalApiTransport, bridge: () => P
       return result;
     },
     loadGitDiff: () => transport.request<GitDiffSummary>('/api/git/diff'),
-    loadProjectGitStatus: (projectId) => transport.request<GitStatusSummary>(`${projectGitPath(projectId)}/status`),
     loadProjectGitWorkbench: async (projectId) => {
       const snapshot = await (bridge()?.loadWorkbench(projectId) ?? transport.request<ProjectGitWorkbenchSnapshot>(`${projectGitPath(projectId)}/workbench${conversationId ? `?conversationId=${encodeURIComponent(conversationId)}` : ''}`));
       if (conversationId && (snapshot.repositories.length !== 1 || snapshot.repositories[0]?.id !== `conversation:${conversationId}`)) throw new Error('当前执行宿主尚不支持会话工作树交付，请更新后重试。');

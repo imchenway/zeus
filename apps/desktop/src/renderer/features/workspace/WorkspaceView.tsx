@@ -1000,7 +1000,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
               .filter(([, entry]) => entry.state === 'error')
               .map(([section, entry]) => (
                 <div key={section}>
-                  <span>{section === 'attention' ? '会话摘要' : section === 'runtime' ? '集成状态' : 'Git 状态'}读取失败。</span>
+                  <span>{section === 'attention' ? '会话摘要' : '集成状态'}读取失败。</span>
                   <VisibleApplicationError error={entry.error} language={appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en'} />
                 </div>
               ))}
