@@ -1939,6 +1939,15 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         now,
       })
     : undefined;
+  /** 正式数据根启动后在后台幂等迁移历史 Skill 副本；只读验收实例禁止修改产物目录。 */
+  if (zeusSkillService && !readOnlyValidation) {
+    setImmediate(() => {
+      void zeusSkillService
+        .compact()
+        .then((result) => console.info(`[Zeus skill storage] 已核对 ${result.snapshotCount} 个快照，替换 ${result.linkedFileCount} 个重复文件，失败 ${result.errorCount} 个。`))
+        .catch((error) => console.error('Zeus Skill 快照内容去重失败；原快照保持可读。', error));
+    });
+  }
   /** 子代理复用父轮次已经冻结的普通 Skill；恢复和换链不会读取更新后的源文件。 */
   async function loadConversationSkills(cwd: string, identity: string) {
     const submission = conversationSubmissions.getById(identity);
