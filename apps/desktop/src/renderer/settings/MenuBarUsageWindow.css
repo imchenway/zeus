@@ -568,7 +568,7 @@ body:has(.menu-bar-usage-root),
   place-items: center;
 }
 
-/* 视觉上是紧邻名称的小感叹号，实际按钮保留 24px 键盘与触控目标。 */
+/* 视觉上是紧邻名称的小问号，实际按钮保留 24px 键盘与触控目标。 */
 .menu-bar-usage-cost-detail-trigger {
   display: inline-grid;
   inline-size: 24px;

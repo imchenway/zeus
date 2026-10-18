@@ -9,6 +9,7 @@ import {
   type TokenUsageBreakdown,
   type UsageAnalyticsSnapshot,
   type UsageModelCostBreakdown,
+  type UsageModelOutputRateBreakdown,
   type UsageModelPricePeriod,
   type UsageModelRate,
   type UsageOverviewSnapshot,
@@ -30,13 +31,16 @@ interface CreateUsageOverviewServiceOptions {
   now?: () => Date;
 }
 
-/** 同一原生轮次内所有可测速文本请求的加权计算依据。 */
+/** 一组可测速文本请求的加权计算依据。 */
 interface OutputRateTotals {
-  /** 可见输出 Token 总量。 */
-  visibleOutputTokens: number;
+  /** 首个可见 Token 之后的生成间隔总数。 */
+  outputTokenIntervals: number;
   /** 文本生成时长总和。 */
   durationMs: number;
 }
+
+/** 每个原生轮次保留请求级模型身份，供总览和按模型明细共用。 */
+type OutputRateIndex = ReadonlyMap<string, readonly ConversationOutputRateMeasurement[]>;
 
 export interface UsageOverviewService {
   read(): Promise<UsageOverviewSnapshot>;
@@ -172,8 +176,8 @@ export function createUsageOverviewService(options: CreateUsageOverviewServiceOp
 function buildProviderSummary(input: {
   providerId: string;
   rows: CodexUsageLedgerRecord[];
-  /** 所有可测速请求按原生轮次归并后的计算依据。 */
-  outputRateByTurn: ReadonlyMap<string, OutputRateTotals>;
+  /** 所有可测速请求按原生轮次索引后的请求级证据。 */
+  outputRateByTurn: OutputRateIndex;
   readAt: Date;
   official: Awaited<ReturnType<CodexUsageService['refreshOfficialUsage']>>;
   connectionNames: Map<string, string>;
@@ -224,11 +228,12 @@ function buildProviderSummary(input: {
   };
 }
 
-/** 统一构造菜单栏单个时间范围的指标与费用明细。 */
-function buildOverviewRangeSummary(rows: readonly CodexUsageLedgerRecord[], pricePeriods: ReadonlyMap<string, UsageModelPricePeriod>, outputRateByTurn: ReadonlyMap<string, OutputRateTotals>): UsageOverviewRangeSummary {
+/** 统一构造菜单栏单个时间范围的指标、费用明细和模型速率明细。 */
+function buildOverviewRangeSummary(rows: readonly CodexUsageLedgerRecord[], pricePeriods: ReadonlyMap<string, UsageModelPricePeriod>, outputRateByTurn: OutputRateIndex): UsageOverviewRangeSummary {
   return {
     local: aggregateRows(rows, outputRateByTurn),
     costBreakdown: aggregateCostBreakdown(rows, pricePeriods),
+    outputRateBreakdown: aggregateOutputRateBreakdown(rows, outputRateByTurn),
     complete: rows.every((row) => row.usageComplete),
   };
 }
@@ -244,39 +249,54 @@ function outputRateKey(conversationId: string, providerThreadId: string, provide
   return JSON.stringify([conversationId, providerThreadId, providerTurnId]);
 }
 
-/** 同一轮可能包含工具前后多次文本请求；先归并依据，再由时间范围选择对应轮次。 */
-function indexOutputRateMeasurements(measurements: readonly ConversationOutputRateMeasurement[]): ReadonlyMap<string, OutputRateTotals> {
-  const result = new Map<string, OutputRateTotals>();
+/** 同一轮可能包含工具前后多次文本请求；保留每个请求，避免丢失真实模型身份。 */
+function indexOutputRateMeasurements(measurements: readonly ConversationOutputRateMeasurement[]): OutputRateIndex {
+  const result = new Map<string, ConversationOutputRateMeasurement[]>();
   for (const measurement of measurements) {
     const key = outputRateKey(measurement.conversationId, measurement.providerThreadId, measurement.providerTurnId);
-    const totals = result.get(key) ?? { visibleOutputTokens: 0, durationMs: 0 };
-    totals.visibleOutputTokens += measurement.visibleOutputTokens;
-    totals.durationMs += measurement.durationMs;
-    result.set(key, totals);
+    const entries = result.get(key);
+    if (entries) entries.push(measurement);
+    else result.set(key, [measurement]);
   }
   return result;
 }
 
-/** 汇总选中账本记录；请求速率按可见 Token 和真实文本生成时长加权。 */
-function aggregateRows(rows: readonly CodexUsageLedgerRecord[], outputRateByTurn: ReadonlyMap<string, OutputRateTotals>): CodexLocalUsageTotals {
+/** 汇总选中轮次的请求级速率证据。 */
+function aggregateOutputRateTotals(rows: readonly CodexUsageLedgerRecord[], outputRateByTurn: OutputRateIndex): OutputRateTotals {
+  const totals = { outputTokenIntervals: 0, durationMs: 0 };
+  for (const row of rows) {
+    for (const measurement of outputRateByTurn.get(outputRateKey(row.conversationId, row.providerThreadId, row.providerTurnId)) ?? []) {
+      totals.outputTokenIntervals += measurement.outputTokenIntervals;
+      totals.durationMs += measurement.durationMs;
+    }
+  }
+  return totals;
+}
+
+/** 按真实请求模型汇总速率；同模型仍按生成间隔和时长加权。 */
+function aggregateOutputRateBreakdown(rows: readonly CodexUsageLedgerRecord[], outputRateByTurn: OutputRateIndex): UsageModelOutputRateBreakdown[] {
+  const groups = new Map<string, OutputRateTotals>();
+  for (const row of rows) {
+    for (const measurement of outputRateByTurn.get(outputRateKey(row.conversationId, row.providerThreadId, row.providerTurnId)) ?? []) {
+      const totals = groups.get(measurement.modelId) ?? { outputTokenIntervals: 0, durationMs: 0 };
+      totals.outputTokenIntervals += measurement.outputTokenIntervals;
+      totals.durationMs += measurement.durationMs;
+      groups.set(measurement.modelId, totals);
+    }
+  }
+  return [...groups].map(([model, totals]) => ({ model, outputTokensPerSecond: (totals.outputTokenIntervals * 1_000) / totals.durationMs })).sort((left, right) => left.model.localeCompare(right.model));
+}
+
+/** 汇总选中账本记录；请求速率按生成间隔和真实文本生成时长加权。 */
+function aggregateRows(rows: readonly CodexUsageLedgerRecord[], outputRateByTurn: OutputRateIndex): CodexLocalUsageTotals {
   const usage = sumBreakdowns(rows.map((row) => row.usage));
   const billableTokens = rows.reduce((sum, row) => sum + row.estimate.billableTokens, 0);
   const pricedTokens = rows.reduce((sum, row) => sum + row.estimate.pricedTokens, 0);
   const creditValues = rows.flatMap((row) => (row.estimate.credits === null ? [] : [row.estimate.credits]));
   const usdValues = rows.flatMap((row) => (row.estimate.apiEquivalentUsd === null ? [] : [row.estimate.apiEquivalentUsd]));
   const savingsValues = rows.flatMap((row) => (row.estimate.cacheSavingsUsd === null ? [] : [row.estimate.cacheSavingsUsd]));
-  /** 同一范围按总 Token 与总时长加权，不能把长短请求的速率直接求平均。 */
-  const outputRateTotals = rows.reduce<OutputRateTotals>(
-    (total, row) => {
-      const measurement = outputRateByTurn.get(outputRateKey(row.conversationId, row.providerThreadId, row.providerTurnId));
-      if (measurement) {
-        total.visibleOutputTokens += measurement.visibleOutputTokens;
-        total.durationMs += measurement.durationMs;
-      }
-      return total;
-    },
-    { visibleOutputTokens: 0, durationMs: 0 },
-  );
+  /** 同一范围按总生成间隔与总时长加权，不能把长短请求的速率直接求平均。 */
+  const outputRateTotals = aggregateOutputRateTotals(rows, outputRateByTurn);
   return {
     ...usage,
     costs: sumEstimatedCosts(rows.map((row) => row.estimate)),
@@ -284,7 +304,7 @@ function aggregateRows(rows: readonly CodexUsageLedgerRecord[], outputRateByTurn
     conversationCount: new Set(rows.map((row) => row.conversationId)).size,
     turnCount: rows.length,
     cacheHitRate: calculateCacheHitRate(usage),
-    outputTokensPerSecond: outputRateTotals.durationMs > 0 ? (outputRateTotals.visibleOutputTokens * 1_000) / outputRateTotals.durationMs : null,
+    outputTokensPerSecond: outputRateTotals.durationMs > 0 ? (outputRateTotals.outputTokenIntervals * 1_000) / outputRateTotals.durationMs : null,
     estimatedCredits: creditValues.length > 0 ? creditValues.reduce((sum, value) => sum + value, 0) : null,
     apiEquivalentUsd: usdValues.length > 0 ? usdValues.reduce((sum, value) => sum + value, 0) : null,
     cacheSavingsUsd: savingsValues.length > 0 ? savingsValues.reduce((sum, value) => sum + value, 0) : null,

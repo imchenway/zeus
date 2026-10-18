@@ -134,8 +134,10 @@ export interface ConversationOutputRateMeasurement {
   providerThreadId: string;
   /** 原生轮次身份。 */
   providerTurnId: string;
-  /** 不含推理 Token 的可见输出量。 */
-  visibleOutputTokens: number;
+  /** 请求实际使用的模型标识。 */
+  modelId: string;
+  /** 首个可见 Token 之后的生成间隔数。 */
+  outputTokenIntervals: number;
   /** 从首个文本增量到请求完成的毫秒数。 */
   durationMs: number;
 }
@@ -233,6 +235,7 @@ export interface ConversationSessionMetricsSnapshot {
     complete: boolean;
   };
   performance: {
+    /** 本会话全部可测速请求的加权平均输出速率；属性名沿用现有跨层协议。 */
     latestOutputTokensPerSecond: number | null;
     latestFirstVisibleResponseMs: number | null;
     cumulativeProcessedDurationMs: number | null;
@@ -1642,12 +1645,13 @@ export class ConversationExecutionRepository {
       conversation_id: string;
       provider_thread_id: string;
       provider_turn_id: string;
+      model_id: string;
       output_tokens: number;
       reasoning_output_tokens: number;
       first_text_output_at: string;
       completed_at: string;
     }>(
-      `SELECT r.conversation_id, t.provider_thread_id, t.provider_turn_id,
+      `SELECT r.conversation_id, t.provider_thread_id, t.provider_turn_id, r.model_id,
               r.output_tokens, r.reasoning_output_tokens, r.first_text_output_at, r.completed_at
          FROM conversation_model_requests r
          JOIN conversation_turns t ON t.id = r.turn_id
@@ -1656,9 +1660,8 @@ export class ConversationExecutionRepository {
         ORDER BY r.request_sequence`,
     );
     return rows.flatMap((row) => {
-      const durationMs = elapsedMs(row.first_text_output_at, row.completed_at);
-      const visibleOutputTokens = row.output_tokens - row.reasoning_output_tokens;
-      return durationMs !== null && durationMs > 0 && visibleOutputTokens > 0 ? [{ conversationId: row.conversation_id, providerThreadId: row.provider_thread_id, providerTurnId: row.provider_turn_id, visibleOutputTokens, durationMs }] : [];
+      const sample = outputRateSample(row.output_tokens, row.reasoning_output_tokens, row.first_text_output_at, row.completed_at);
+      return sample ? [{ conversationId: row.conversation_id, providerThreadId: row.provider_thread_id, providerTurnId: row.provider_turn_id, modelId: row.model_id, ...sample }] : [];
     });
   }
 
@@ -2591,17 +2594,34 @@ function stringOrNull(value: unknown): string | null {
 export function readConversationSessionMetrics(db: ZeusDatabasePort, conversationId: string, turnId?: string | null): ConversationSessionMetricsSnapshot {
   const usage = readConversationUsageSnapshot(db, conversationId, turnId);
   const providerUsage = readProviderUsageMetrics(db, conversationId);
-  /** 工具调用或交互等待等不可测速请求不能覆盖最近一次完整的文本输出速率。 */
-  const latestOutputTokensPerSecond =
-    db
-      .select<ModelRequestRow>(
-        `SELECT r.* FROM conversation_model_requests r
+  /** 本会话全部可测速请求共用菜单栏的筛选与请求级样本口径，再按总间隔和总时长聚合。 */
+  const outputRateTotals = db
+    .select<{
+      output_tokens: number;
+      reasoning_output_tokens: number;
+      first_text_output_at: string;
+      completed_at: string;
+    }>(
+      `SELECT r.output_tokens, r.reasoning_output_tokens, r.first_text_output_at, r.completed_at
+         FROM conversation_model_requests r
         WHERE r.conversation_id = ? AND ${outputRateMeasurementCondition}
-        ORDER BY r.request_sequence DESC`,
-        [conversationId],
-      )
-      .map((row) => outputRate(mapModelRequest(row)))
-      .find((rate): rate is number => rate !== null) ?? null;
+        ORDER BY r.request_sequence`,
+      [conversationId],
+    )
+    .reduce(
+      (totals, row) => {
+        /** 单个请求仍使用统一的可见输出 Token 间隔和真实生成时长。 */
+        const sample = outputRateSample(row.output_tokens, row.reasoning_output_tokens, row.first_text_output_at, row.completed_at);
+        if (sample) {
+          totals.outputTokenIntervals += sample.outputTokenIntervals;
+          totals.durationMs += sample.durationMs;
+        }
+        return totals;
+      },
+      { outputTokenIntervals: 0, durationMs: 0 },
+    );
+  /** 会话速率按总间隔除以总时长计算，不直接平均各请求速率。 */
+  const outputTokensPerSecond = outputRateTotals.durationMs > 0 ? (outputRateTotals.outputTokenIntervals * 1_000) / outputRateTotals.durationMs : null;
   const latestTurn = db.get<{ id: string; started_at: string | null }>(`SELECT id, started_at FROM conversation_turns WHERE conversation_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`, [conversationId]);
   const latestFirstVisibleAt = latestTurn
     ? (db.get<{ first_visible_output_at: string | null }>(
@@ -2648,10 +2668,10 @@ export function readConversationSessionMetrics(db: ZeusDatabasePort, conversatio
     usage,
     cost: providerUsage,
     performance: {
-      latestOutputTokensPerSecond,
+      latestOutputTokensPerSecond: outputTokensPerSecond,
       latestFirstVisibleResponseMs,
       cumulativeProcessedDurationMs,
-      complete: latestOutputTokensPerSecond !== null && latestFirstVisibleResponseMs !== null && cumulativeProcessedDurationMs !== null,
+      complete: outputTokensPerSecond !== null && latestFirstVisibleResponseMs !== null && cumulativeProcessedDurationMs !== null,
     },
     activity: {
       turnCount: activity?.turn_count ?? 0,
@@ -2666,13 +2686,11 @@ export function readConversationSessionMetrics(db: ZeusDatabasePort, conversatio
   };
 }
 
-/** 仅在文本请求的 Token 与首尾时间都完整时计算输出速率。 */
-function outputRate(request: ConversationModelRequestUsageRecord | null): number | null {
-  if (!request?.measurementComplete || request.outputTokens === null || request.reasoningOutputTokens === null) return null;
-  const durationMs = elapsedMs(request.firstTextOutputAt, request.completedAt);
-  const visibleOutputTokens = request.outputTokens - request.reasoningOutputTokens;
-  if (durationMs === null || durationMs <= 0 || visibleOutputTokens <= 0) return null;
-  return (visibleOutputTokens * 1_000) / durationMs;
+/** 把完整文本请求转换为行业通用的 TPOT 倒数计算依据，首个 Token 不属于后续生成间隔。 */
+function outputRateSample(outputTokens: number, reasoningOutputTokens: number, firstTextOutputAt: string | null, completedAt: string | null): Pick<ConversationOutputRateMeasurement, 'outputTokenIntervals' | 'durationMs'> | null {
+  const durationMs = elapsedMs(firstTextOutputAt, completedAt);
+  const outputTokenIntervals = outputTokens - reasoningOutputTokens - 1;
+  return durationMs !== null && durationMs > 0 && outputTokenIntervals > 0 ? { outputTokenIntervals, durationMs } : null;
 }
 
 function readProviderUsageMetrics(db: ZeusDatabasePort, conversationId: string): ConversationSessionMetricsSnapshot['cost'] {
