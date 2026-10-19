@@ -8,6 +8,10 @@ export const taskWorkSchemaMigrationId = '20260829_0001_task_work_v2';
 export const taskWorkWorkspaceBindingMigrationId = '20260831_0425_task_work_workspace_binding_v1';
 /** 将历史 Skill 执行副本迁移为不可恢复的审计引用。 */
 export const taskWorkCurrentSkillReferenceMigrationId = '20261018_0003_task_work_current_skill_references';
+/** 派发、历史迁移和离线回收共同识别的纯审计引用格式。 */
+export const taskWorkSkillReferenceGeneration = '2026-10-18-task-work-current-skill-reference';
+/** 离线回收必须验证迁移内容，不能仅凭账本名称判断已释放旧授权。 */
+export const taskWorkCurrentSkillReferenceChecksum = `sha256:${createHash('sha256').update('task-work-skill:current-reference-only').digest('hex')}`;
 export const taskWorkDeliverableArtifactGeneration = 'task_work_deliverable_v1';
 
 export const taskWorkItemStatuses = ['queued', 'active', 'waiting_manager', 'completed', 'blocked', 'failed', 'cancelled'] as const;
@@ -341,7 +345,7 @@ export function migrateTaskWorkWorkspaceBindingSchema(db: ZeusDatabasePort): voi
 
 /** 清理所有历史 Skill Artifact 授权，并只保留来源、身份、路径和摘要。 */
 export function migrateTaskWorkCurrentSkillReferences(db: ZeusDatabasePort): void {
-  const checksum = `sha256:${createHash('sha256').update('task-work-skill:current-reference-only').digest('hex')}`;
+  const checksum = taskWorkCurrentSkillReferenceChecksum;
   db.transaction(() => {
     const existing = db.get<{ checksum: string }>(`SELECT checksum FROM schema_migrations WHERE migration_id = ?`, [taskWorkCurrentSkillReferenceMigrationId]);
     if (existing && existing.checksum !== checksum) throw new Error('任务工作 Skill 当前态迁移账本与定义不一致。');
@@ -351,7 +355,7 @@ export function migrateTaskWorkCurrentSkillReferences(db: ZeusDatabasePort): voi
       const snapshot = record(row.skill_snapshot_json, 'run.skillSnapshot');
       const selected = Array.isArray(snapshot.selected) ? snapshot.selected.flatMap(currentNativeSkillReference) : [];
       const pluginSkills = Array.isArray(snapshot.pluginSkills) ? snapshot.pluginSkills.flatMap(currentPluginSkillReference) : [];
-      db.execute(`UPDATE task_work_runs SET skill_snapshot_json = ? WHERE id = ?`, [json({ generation: '2026-10-18-task-work-current-skill-reference', selected, pluginSkills }), row.id]);
+      db.execute(`UPDATE task_work_runs SET skill_snapshot_json = ? WHERE id = ?`, [json({ generation: taskWorkSkillReferenceGeneration, selected, pluginSkills }), row.id]);
     }
     const releasedAt = new Date().toISOString();
     db.execute(`UPDATE artifact_retention_holds SET state = 'released', released_at = ? WHERE owner_kind = 'task_work_run_skill' AND state = 'active'`, [releasedAt]);

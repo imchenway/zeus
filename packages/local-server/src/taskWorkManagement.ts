@@ -1,4 +1,4 @@
-import { ConversationGoalRepository } from '@zeus/storage';
+import { ConversationGoalRepository, taskWorkSkillReferenceGeneration } from '@zeus/storage';
 import { restrictToolPermission } from './conversationToolPolicy.js';
 import { conversationCommandTypes, conversationInputSha256 } from './conversationCommandApplication.js';
 import { EmployeeMemoryProposalRepository } from '@zeus/storage';
@@ -68,8 +68,6 @@ import type { ZeusSkillService } from './zeusSkillService.js';
 
 const previewTtlMs = 10 * 60 * 1_000;
 const tickMs = 2_500;
-/** 运行只保存 Skill 审计引用，不保存可执行资源副本。 */
-const taskWorkSkillReferenceGeneration = '2026-10-18-task-work-current-skill-reference';
 
 export interface TaskWorkPreviewSelection {
   /** 人工换人必须停止旧独立工作，普通新增分工不受影响。 */

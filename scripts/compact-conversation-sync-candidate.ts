@@ -7,23 +7,10 @@ import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { conversationSyncProtocolV2Generation, conversationSyncProtocolV2MigrationId } from '../packages/storage/src/conversationSyncEventStore.js';
 
-/** 当前离线回收规则的迁移账本身份。 */
-const maintenanceMigrationId = '20261018_0001_archived_conversation_sync_event_cleanup';
-const maximumRetainedEvents = 4_096;
-const maximumRetainedBytes = 16 * 1024 * 1024;
+import { assertConversationSyncMaintenance, businessFactTables, inspectConversationSyncMaintenance, maintenanceChecksum, maintenanceMigrationId, maximumRetainedBytes, maximumRetainedEvents } from './conversationSyncMaintenance.js';
+
+/** 候选压缩完成后仍需保留的最小可用空间。 */
 const freeSpaceReserveBytes = 2 * 1024 * 1024 * 1024;
-const businessFactTables = [
-  'conversations',
-  'conversation_turns',
-  'conversation_items',
-  'conversation_model_history',
-  'conversation_process_items',
-  'conversation_resources',
-  'turn_change_sets',
-  'turn_change_files',
-  'conversation_server_requests',
-  'conversation_submissions',
-] as const;
 
 interface Arguments {
   databasePath: string;
@@ -112,13 +99,15 @@ if (!arguments_.apply || arguments_.confirmation !== expectedConfirmation) {
     database.exec(`DELETE FROM conversation_sync_event_streams WHERE generation_id <> ${sqlString(conversationSyncProtocolV2Generation)}`);
     pruneArchivedConversationSyncEvents(database);
     compactV2Tails(database);
-    const checksum = createHash('sha256').update('retired-and-archived-sync-events-deleted,current-tail<=4096-events,current-tail<=16777216-bytes').digest('hex');
+    /** 现有账本必须与同一维护规则一致，不能静默保留冲突标记。 */
+    const marker = database.prepare('SELECT checksum FROM schema_migrations WHERE migration_id = ?').get(maintenanceMigrationId) as { checksum: string } | undefined;
+    if (marker && marker.checksum !== maintenanceChecksum) throw new Error('候选维护标记与当前规则摘要不一致。');
     database
       .prepare(
         `INSERT OR IGNORE INTO schema_migrations (migration_id, description, checksum, applied_at)
          VALUES (?, ?, ?, ?)`,
       )
-      .run(maintenanceMigrationId, '离线删除已退役及已归档同步事件并压缩当前连续尾部', `sha256:${checksum}`, new Date().toISOString());
+      .run(maintenanceMigrationId, '离线删除已退役及已归档同步事件并压缩当前连续尾部', maintenanceChecksum, new Date().toISOString());
     database.exec('VACUUM');
     database.exec('PRAGMA journal_mode = DELETE');
     database.exec('PRAGMA synchronous = FULL');
@@ -132,23 +121,10 @@ if (!arguments_.apply || arguments_.confirmation !== expectedConfirmation) {
   if (postflight.quickCheck !== 'ok' || postflight.foreignKeyViolations !== 0) throw new Error('候选数据库压缩后未通过完整性检查。');
   if (postflight.legacySyncEvents !== 0 || postflight.archivedSyncEvents !== 0 || postflight.currentNonV2Streams !== 0) throw new Error('候选数据库仍包含已退役或已归档会话的同步事件。');
   if (JSON.stringify(preflight.business) !== JSON.stringify(postflight.business)) throw new Error('候选压缩触碰了会话业务事实，已拒绝晋升。');
-  const retainedBudgetViolation = readOnlyDatabase(canonicalPath, (database) =>
-    Number(
-      database
-        .prepare(
-          `SELECT COUNT(*) AS violations
-             FROM (
-               SELECT conversation_id, COUNT(*) AS event_count, COALESCE(SUM(payload_byte_length), 0) AS event_bytes
-                 FROM conversation_sync_events
-                WHERE generation_id = ?
-                GROUP BY conversation_id
-               HAVING event_count > ? OR event_bytes > ?
-             )`,
-        )
-        .get(conversationSyncProtocolV2Generation, maximumRetainedEvents, maximumRetainedBytes)?.violations ?? 0,
-    ),
-  );
-  if (retainedBudgetViolation !== 0) throw new Error('候选数据库的 V2 同步尾部仍超过条数或字节预算。');
+  /** 输出与提升复核使用相同的尾部预算事实。 */
+  const maintenanceFacts = readOnlyDatabase(canonicalPath, inspectConversationSyncMaintenance);
+  assertConversationSyncMaintenance(maintenanceFacts);
+  const retainedBudgetViolation = maintenanceFacts.retainedBudgetViolations;
 
   process.stdout.write(
     `${JSON.stringify(
@@ -216,7 +192,7 @@ function pruneArchivedConversationSyncEvents(database: DatabaseSync): void {
 
 export function inspectConversationSyncDatabase(path: string): ConversationSyncDatabaseFacts {
   return readOnlyDatabase(path, (database) => {
-    const scalar = (sql: string, parameters: unknown[] = []): number => Number((database.prepare(sql).get(...parameters) as Record<string, unknown> | undefined)?.value ?? 0);
+    const scalar = (sql: string, parameters: Array<string | number> = []): number => Number((database.prepare(sql).get(...parameters) as Record<string, unknown> | undefined)?.value ?? 0);
     const business = Object.fromEntries(
       businessFactTables.map((table) => {
         const present = Boolean(database.prepare(`SELECT 1 AS present FROM sqlite_schema WHERE type = 'table' AND name = ?`).get(table));
