@@ -20,6 +20,8 @@ type ChoiceSubmission = ReturnType<ConversationSubmissionRepository['listRecover
 type ChoiceTurn = ReturnType<ConversationTurnRepository['listInProgress']>[number];
 
 export interface NativeConversationChoiceProjectionContext {
+  /** 同批投影复用项目路径，避免逐条会话重复读取项目活跃聚合。 */
+  projectLocalPath: string | null;
   /** 异步问题只影响侧栏注意力，不改变真实运行状态。 */
   pendingAsyncQuestionConversationIds: ReadonlySet<string>;
   pendingRequestKindByConversationId: ReadonlyMap<string, 'approval' | 'user_input'>;
@@ -33,7 +35,7 @@ interface ConversationChoiceQueryPorts {
   snapshots: Pick<ConversationSnapshotV2Repository, 'searchContent' | 'pendingAsyncQuestionConversationIds'>;
   projects: Pick<ProjectRepository, 'list' | 'listArchived' | 'getById'>;
   tasks: Pick<TaskRepository, 'getById' | 'listByProject' | 'summariesByIds'>;
-  conversations: Pick<ConversationRepository, 'getById' | 'hasMessages' | 'listRecordsByProject' | 'listRecordsByTask' | 'listUnarchivedRecords' | 'meaningfulActivityAt'>;
+  conversations: Pick<ConversationRepository, 'getById' | 'hasMessages' | 'listRecordsByProject' | 'listRecordsByTask' | 'listUnarchivedRecords' | 'meaningfulActivityAt' | 'workStartedAt'>;
   requests: Pick<ConversationServerRequestRepository, 'listPending' | 'listPendingByConversation'>;
   submissions: Pick<ConversationSubmissionRepository, 'listRecoverable' | 'getEarliestCreatedByConversation' | 'getEarliestOperationIdentityByConversation'>;
   turns: Pick<ConversationTurnRepository, 'listInProgress'>;
@@ -77,6 +79,7 @@ export class ConversationChoiceQueryApplication {
       inProgressTurnsByConversationId.set(turn.conversationId, entries);
     }
     return {
+      projectLocalPath: this.ports.projects.getById(projectId)?.localPath ?? null,
       pendingAsyncQuestionConversationIds: this.ports.snapshots.pendingAsyncQuestionConversationIds([projectId]),
       pendingRequestKindByConversationId,
       workspaceById: new Map(this.ports.workspaces.listByProject(projectId).map((workspace) => [workspace.id, workspace])),
@@ -248,7 +251,7 @@ export class ConversationChoiceQueryApplication {
     const pendingRequestKind = context.pendingRequestKindByConversationId.get(conversation.id) ?? null;
     const firstSubmission = this.ports.submissions.getEarliestCreatedByConversation(conversation.id);
     const execution = firstSubmission ? parseJsonObject(firstSubmission.inputJson).context : undefined;
-    const projectPath = this.ports.projects.getById(conversation.projectId)?.localPath;
+    const projectPath = context.projectLocalPath;
     const workspace = conversation.workspaceId ? (context.workspaceById.get(conversation.workspaceId) ?? this.ports.workspaces.getById(conversation.workspaceId)) : undefined;
     const executionPath = isRecord(execution) && typeof execution.projectLocalPath === 'string' ? execution.projectLocalPath : (workspace?.worktreePath ?? projectPath ?? null);
     const relativeWorktreePath = projectPath && executionPath ? relative(join(dirname(resolve(projectPath)), '.zeus-worktrees'), resolve(executionPath)) : null;
@@ -306,6 +309,8 @@ export class ConversationChoiceQueryApplication {
       createdAt: conversation.createdAt,
       updatedAt: conversation.updatedAt,
       activityAt: this.ports.conversations.meaningfulActivityAt(conversation.id),
+      /** 项目排序只消费发起时间，不能复用随运行状态变化的 activityAt。 */
+      workStartedAt: this.ports.conversations.workStartedAt(conversation.id),
       archived: conversation.archived,
     };
   }

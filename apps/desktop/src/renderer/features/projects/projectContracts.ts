@@ -8,6 +8,10 @@ export interface ProjectRecord {
   localPath: string;
   description?: string | null;
   note?: string | null;
+  /** 项目原始创建时间，用于没有活跃记录时保持稳定顺序。 */
+  createdAt?: string;
+  /** 最近新建会话或主动提交消息的时间；没有会话时为空。 */
+  lastWorkStartedAt?: string | null;
 }
 
 export interface ProjectWorkspaceSharedPath {

@@ -968,6 +968,8 @@ export interface NativeConversationChoice {
   updatedAt: string;
   /** 最近一次真实会话活动；不包含打开、水合、统计刷新等维护写入。 */
   activityAt?: string;
+  /** 最近创建或主动输入的固定时间；后台状态不推进，辅助会话为空。 */
+  workStartedAt?: string | null;
   archived: boolean;
   hasUnreadAttention: boolean;
   attentionKind: NativeConversationAttentionKind;

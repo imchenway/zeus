@@ -18,7 +18,15 @@ import {
   type TaskType,
 } from '@zeus/shared';
 import type { ZeusDatabasePort } from './databasePort.js';
-import { canonicalJson, type CodexMcpStartupStatusSnapshot, type CodexRateLimitsSnapshot, shouldAcceptProviderSnapshot, validateMcpStartupStatusSnapshot, validateRateLimitsSnapshot } from './conversationStore.js';
+import {
+  canonicalJson,
+  conversationWorkStartedAtSql,
+  type CodexMcpStartupStatusSnapshot,
+  type CodexRateLimitsSnapshot,
+  shouldAcceptProviderSnapshot,
+  validateMcpStartupStatusSnapshot,
+  validateRateLimitsSnapshot,
+} from './conversationStore.js';
 
 export { isTaskManagementStatus, isTaskPriority, isTaskType } from '@zeus/shared';
 export type { TaskManagementStatus, TaskPriority, TaskType } from '@zeus/shared';
@@ -41,6 +49,8 @@ export interface ZeusProjectRecord {
   note: string | null;
   createdAt: string;
   updatedAt: string;
+  /** 最近新建会话或主动提交消息的时间；没有会话时为空。 */
+  lastWorkStartedAt?: string | null;
 }
 
 /** 项目容器内完整发现并登记的真实 Git 仓库。 */
@@ -690,7 +700,12 @@ export class SettingRepository {
   }
 }
 
-/** 项目仓储只保存用户明确创建的真实本地路径记录。 */
+/** 项目查询统一派生活跃时间，归档会话仍保留历史发起事实，不新增持久字段。 */
+const projectSelectFields = `id, name, slug, local_path, description, note, created_at, updated_at,
+  (SELECT MAX(${conversationWorkStartedAtSql}) FROM conversations c
+    WHERE c.project_id = projects.id AND c.listing_scope = 'ordinary' AND c.origin_kind = 'ordinary') AS last_work_started_at`;
+
+/** 项目仓储只保存用户明确创建的真实路径，并统一查询、去重和活跃排序。 */
 export class ProjectRepository {
   constructor(private readonly db: ZeusDatabasePort) {}
 
@@ -730,20 +745,21 @@ export class ProjectRepository {
     const query = options.query?.trim().toLowerCase();
     const projects = this.db
       .select<DbProjectRow>(
-        `SELECT id, name, slug, local_path, description, note, created_at, updated_at
-       FROM projects WHERE archived = 0 AND deleted_at IS NULL ORDER BY created_at ASC`,
+        `SELECT ${projectSelectFields}
+       FROM projects WHERE archived = 0 AND deleted_at IS NULL ORDER BY created_at ASC, id ASC`,
       )
       .map(mapProjectRow)
       .filter((project) => {
         if (!query) return true;
         return `${project.name}\n${project.localPath}\n${project.description ?? ''}\n${project.note ?? ''}`.toLowerCase().includes(query);
       });
-    return dedupeProjectsByLocalPath(projects);
+    // 先按创建顺序确定同路径的权威项目，再排序，避免活跃度改变历史重复项目的身份。
+    return dedupeProjectsByLocalPath(projects).sort((left, right) => (right.lastWorkStartedAt ?? '').localeCompare(left.lastWorkStartedAt ?? '') || left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
   }
 
   getById(projectId: string): ZeusProjectRecord | undefined {
     const row = this.db.get<DbProjectRow>(
-      `SELECT id, name, slug, local_path, description, note, created_at, updated_at
+      `SELECT ${projectSelectFields}
        FROM projects WHERE id = ? AND deleted_at IS NULL`,
       [projectId],
     );
@@ -785,7 +801,7 @@ export class ProjectRepository {
   private findByLocalPath(localPath: string, excludeProjectId?: string): ZeusProjectRecord | undefined {
     return this.db
       .select<DbProjectRow>(
-        `SELECT id, name, slug, local_path, description, note, created_at, updated_at
+        `SELECT ${projectSelectFields}
        FROM projects WHERE deleted_at IS NULL ORDER BY created_at ASC`,
       )
       .map(mapProjectRow)
@@ -838,7 +854,7 @@ export class ProjectRepository {
   listArchived(): ZeusProjectRecord[] {
     return this.db
       .select<DbProjectRow>(
-        `SELECT id, name, slug, local_path, description, note, created_at, updated_at
+        `SELECT ${projectSelectFields}
        FROM projects WHERE archived = 1 AND deleted_at IS NULL ORDER BY updated_at DESC`,
       )
       .map(mapProjectRow);
@@ -2271,6 +2287,8 @@ interface DbProjectRow {
   note: string | null;
   created_at: string;
   updated_at: string;
+  /** 查询派生的最近发起时间，不对应新增数据库列。 */
+  last_work_started_at: string | null;
 }
 
 interface DbProjectRepositoryRow {
@@ -2427,6 +2445,7 @@ function mapProjectRow(row: DbProjectRow): ZeusProjectRecord {
     note: row.note,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    lastWorkStartedAt: row.last_work_started_at,
   };
 }
 
