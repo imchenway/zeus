@@ -1,6 +1,10 @@
 ; Windows 安装器扩展：复用 NSIS 文件安装，只接管安全退出和结果回执。
 !include "FileFunc.nsh"
 
+; 按目标可执行文件的完整路径识别应用；返回 0 为运行中、1 为未运行、2 为无法确认。
+; 路径只通过当前安装进程的环境传入，中文、空格、单引号及命令字符不进入脚本源码。
+!define ZEUS_CHECK_APP_PROCESS `try { $$target = $$env:ZEUS_INSTALLER_TARGET; if ([string]::IsNullOrWhiteSpace($$target)) { exit 2 }; foreach ($$entry in (Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object Name -eq ([IO.Path]::GetFileName($$target)))) { if ([string]::IsNullOrWhiteSpace($$entry.ExecutablePath)) { exit 2 }; if ([string]::Equals($$entry.ExecutablePath, $$target, [StringComparison]::OrdinalIgnoreCase)) { exit 0 } }; exit 1 } catch { exit 2 }`
+
 ; 事务回执只属于安装器；卸载器没有升级事务，也不声明相应变量。
 !ifndef BUILD_UNINSTALLER
 ; 当前升级事务的结果路径，首次安装时为空。
@@ -22,14 +26,25 @@ Var ZeusMainHandle
 !macroend
 !endif
 
-; 安装和卸载只允许已退出的应用，不调用默认按进程名称强杀的实现。
+; 安装和卸载共用路径检查，同名安装程序或其他目录中的应用不占用当前安装。
 !macro customCheckAppRunning
-  ${nsProcess::FindProcess} "${APP_EXECUTABLE_FILENAME}" $R0
-  ${If} $R0 == 0
+  StrCpy $R0 2
+  System::Call 'kernel32::SetEnvironmentVariableW(w "ZEUS_INSTALLER_TARGET", w "$INSTDIR\${APP_EXECUTABLE_FILENAME}") i.r0'
+  ${If} $0 != 0
+    ; 复用 Windows 自带的 PowerShell/CIM；查询失败或超时必须停止，不能按未运行放行。
+    nsExec::Exec /TIMEOUT=15000 `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -Command "${ZEUS_CHECK_APP_PROCESS}"`
+    Pop $R0
+    System::Call 'kernel32::SetEnvironmentVariableW(w "ZEUS_INSTALLER_TARGET", p 0)'
+  ${EndIf}
+  ${If} $R0 != 1
     !ifndef BUILD_UNINSTALLER
     !insertmacro ZeusWriteStatus "failed"
     !endif
-    MessageBox MB_OK|MB_ICONEXCLAMATION "Zeus 仍在运行。请在 Zeus 中停止工作并退出，再运行安装器。" /SD IDOK
+    ${If} $R0 == 0
+      MessageBox MB_OK|MB_ICONEXCLAMATION "${PRODUCT_NAME} 仍在运行。请在 ${PRODUCT_NAME} 中停止工作并退出，再运行安装器。" /SD IDOK
+    ${Else}
+      MessageBox MB_OK|MB_ICONEXCLAMATION "无法确认 ${PRODUCT_NAME} 是否已退出，安装或卸载已停止。请确认系统 PowerShell 和 WMI 可用后重试。" /SD IDOK
+    ${EndIf}
     SetErrorLevel 2
     Quit
   ${EndIf}
