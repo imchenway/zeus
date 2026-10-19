@@ -9,7 +9,7 @@ export type SessionContextWorkspace =
   | { kind: 'browser' }
   | { kind: 'subagents' }
   | { kind: 'plan'; item: NativeSessionItemBuffer }
-  | { kind: 'file'; request: FilePreviewRequest; location?: ConversationFileLocation }
+  | { kind: 'file'; request: FilePreviewRequest; location?: ConversationFileLocation; commentPath?: string }
   | { kind: 'source'; preview: ConversationResourcePreview; viewMode: SourceWorkspaceViewMode }
   | { kind: 'turn_diff'; turnId: string; initialFileId?: string };
 

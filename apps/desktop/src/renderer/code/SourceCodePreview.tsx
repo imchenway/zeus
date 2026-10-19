@@ -35,6 +35,14 @@ interface SourceLineWidget {
   element: HTMLElement;
 }
 
+/** 文件文字评论在 CodeMirror 文档中的稳定选区。 */
+export interface SourceTextHighlight {
+  /** 选区起点的零基字符偏移。 */
+  from: number;
+  /** 选区终点的零基字符偏移，右端不包含在内。 */
+  to: number;
+}
+
 /** 只读源码预览的内容、定位和可选评论入口。 */
 interface SourceCodePreviewProps {
   path: string;
@@ -50,10 +58,14 @@ interface SourceCodePreviewProps {
   searchRequest?: number;
   location?: ConversationFileLocation;
   widgets: SourceLineWidget[];
+  /** 已保存文字评论的高亮范围。 */
+  highlights?: SourceTextHighlight[];
   /** 新打开的评论容器，完成代码区布局后再聚焦。 */
   focusWidget?: HTMLElement;
   onComment?: (line: number, extendRange: boolean) => void;
   commentLabel: (line: number) => string;
+  /** 暴露当前只读编辑器，供文字选区评论读取准确文档偏移和视口坐标。 */
+  onView?: (view: EditorView | null) => void;
 }
 
 /** 复用 CodeMirror 的可视区域渲染和增量高亮，输入框更新不再遍历全文。 */
@@ -69,6 +81,8 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
   const languageSlot = useRef(new Compartment()).current;
   /** 评论装饰单独更新。 */
   const widgetSlot = useRef(new Compartment()).current;
+  /** 文字选区高亮独立更新，不重建编辑器和滚动状态。 */
+  const highlightSlot = useRef(new Compartment()).current;
   /** Git blame 装饰单独更新，不因异步读取结果重建编辑器。 */
   const blameSlot = useRef(new Compartment()).current;
   /** 只读历史仍可查看代码，无评论权限时只显示行号。 */
@@ -95,6 +109,7 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
           syntaxHighlighting(classHighlighter),
           languageSlot.of([]),
           widgetSlot.of([]),
+          highlightSlot.of([]),
           blameSlot.of([]),
           selectedLines,
           commentsEnabled
@@ -107,11 +122,13 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
       }),
     });
     viewRef.current = view;
+    propsRef.current.onView?.(view);
     return () => {
+      propsRef.current.onView?.(null);
       viewRef.current = null;
       view.destroy();
     };
-  }, [props.content, props.path, props.label, commentsEnabled, blameSlot, languageSlot, widgetSlot]);
+  }, [props.content, props.path, props.label, commentsEnabled, blameSlot, highlightSlot, languageSlot, widgetSlot]);
 
   useEffect(() => {
     /** Markdown 搜索切到源码后也查找完整文档，不受可视行范围限制。 */
@@ -152,6 +169,16 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
     props.widgets.forEach((widget) => observer.observe(widget.element));
     return () => observer.disconnect();
   }, [props.widgets, props.content, props.path, props.label, commentsEnabled, widgetSlot]);
+
+  useEffect(() => {
+    /** 只装饰当前文档内的非空选区，失效锚点不影响文件阅读。 */
+    const view = viewRef.current;
+    if (!view) return;
+    const decorations = (props.highlights ?? [])
+      .filter((highlight) => Number.isFinite(highlight.from) && Number.isFinite(highlight.to) && highlight.from >= 0 && highlight.to > highlight.from && highlight.to <= view.state.doc.length)
+      .map((highlight) => Decoration.mark({ class: 'session-source-comment-range' }).range(Math.trunc(highlight.from), Math.trunc(highlight.to)));
+    view.dispatch({ effects: highlightSlot.reconfigure(EditorView.decorations.of(Decoration.set(decorations, true))) });
+  }, [props.highlights, props.content, props.path, props.label, commentsEnabled, highlightSlot]);
 
   useEffect(() => {
     const view = viewRef.current;

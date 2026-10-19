@@ -23,6 +23,8 @@ import {
   type FilePreviewRequest,
   type FileReview,
   type ConversationFileLocation,
+  type ConversationCodeComment,
+  type ConversationCodeCommentSide,
   type UserFacingErrorCause,
 } from '@zeus/shared';
 import { ModalPortal } from '../ui/ModalPortal.js';
@@ -41,6 +43,8 @@ const CodeEditor = lazy(() => import('./CodeEditor.js').then((module) => ({ defa
 const CodeDiffView = lazy(() => import('./CodeDiffView.js').then((module) => ({ default: module.CodeDiffView })));
 /** Markdown 沿用受限渲染器，不加载任意活动 HTML。 */
 const Markdown = lazy(() => import('../session/ConversationMarkdown.js').then((module) => ({ default: module.ConversationMarkdown })));
+/** 只有会话文件允许评论时才加载评论编辑器和门户。 */
+const CommentableSourceCodePreview = lazy(() => import('../session/CommentableSourceCodePreview.js').then((module) => ({ default: module.CommentableSourceCodePreview })));
 
 /** 图标按钮只接受一个功能名称，同时用于悬浮提示和无障碍名称。 */
 export function PreviewIconButton({
@@ -135,11 +139,27 @@ export function FilePreview(props: {
   fileStatus?: string;
   /** 外部已知的修订用于显式刷新当前文件。 */
   revision?: string | number;
+  /** 会话评论使用的稳定文件路径，附件缺省使用预览名称。 */
+  commentPath?: string;
+  /** 当前会话全部代码评论。 */
+  comments?: ConversationCodeComment[];
+  /** 缺省表示只读预览，不展示逐行评论入口。 */
+  onCommentsChange?: (comments: ConversationCodeComment[]) => void;
 }) {
   /** 序列化的请求避免父组件重渲染触发重复读取。 */
   const identity = JSON.stringify(props.request);
   return (
-    <FilePreviewBody key={`${identity}:${JSON.stringify(props.location)}:${props.revision ?? ''}`} identity={identity} location={props.location} zh={props.zh} actions={props.actions} fileStatus={props.fileStatus}>
+    <FilePreviewBody
+      key={`${identity}:${JSON.stringify(props.location)}:${props.revision ?? ''}`}
+      identity={identity}
+      location={props.location}
+      zh={props.zh}
+      actions={props.actions}
+      fileStatus={props.fileStatus}
+      commentPath={props.commentPath}
+      comments={props.comments}
+      onCommentsChange={props.onCommentsChange}
+    >
       {props.children}
     </FilePreviewBody>
   );
@@ -154,6 +174,9 @@ function FilePreviewBody(props: {
   /** 嵌入预览的附加操作。 */ actions?: ReactNode;
   /** 文件的实际 Git 变更状态。 */ fileStatus?: string;
   /** 弹窗提供关闭动作，单张图片据此使用纯预览布局。 */ onClose?: () => void;
+  /** 会话评论使用的稳定文件路径。 */ commentPath?: string;
+  /** 当前会话全部代码评论。 */ comments?: ConversationCodeComment[];
+  /** 缺省表示只读预览，不展示逐行评论入口。 */ onCommentsChange?: (comments: ConversationCodeComment[]) => void;
 }) {
   /** 资源读取完成前不复用旧文件的内容。 */
   const [items, setItems] = useState<FilePreviewItem[] | null>(null);
@@ -282,6 +305,10 @@ function FilePreviewBody(props: {
               item={props.location ? { ...item, review: { ...item.review, location: props.location } } : item}
               zh={props.zh}
               fileStatus={props.fileStatus}
+              commentPath={props.commentPath}
+              commentSide={items.length > 1 && current === items[0] ? 'left' : 'right'}
+              comments={props.comments}
+              onCommentsChange={props.onCommentsChange}
               encoding={textEncoding}
               onEncodingChange={(encoding) => {
                 // 用户选择编码时保留内容预览，避免文本解码成功后跳回默认差异页。
@@ -358,6 +385,10 @@ function FilePreviewContent(props: {
   zh: boolean;
   /** 比较视图提供的真实 Git 状态。 */ fileStatus?: string;
   /** 当前用户选择的解码方式。 */ encoding: FilePreviewTextEncoding | '';
+  /** 会话评论使用的稳定文件路径。 */ commentPath?: string;
+  /** 当前文件版本对应的评论侧。 */ commentSide: ConversationCodeCommentSide;
+  /** 当前会话全部代码评论。 */ comments?: ConversationCodeComment[];
+  /** 缺省表示只读预览，不展示逐行评论入口。 */ onCommentsChange?: (comments: ConversationCodeComment[]) => void;
   /** 编码切换重读已授权文件。 */ onEncodingChange(encoding: FilePreviewTextEncoding | ''): void;
   /** 单文件操作与文件元信息共用一行。 */ toolbar?: ReactNode;
 }) {
@@ -372,6 +403,8 @@ function FilePreviewContent(props: {
   const [error, setError] = useState<UserFacingErrorCause | string>('');
   /** Markdown 使用已有受限阅读组件。 */
   const markdown = /\.(md|markdown)$/iu.test(item.name);
+  /** 只读会话仍展示已保存评论，可写会话同时提供评论入口。 */
+  const commentsVisible = props.comments !== undefined || props.onCommentsChange !== undefined;
   /** 用户动作只发送资源令牌，主进程再次检查所属窗口与文件身份。 */
   async function action(value: 'quick-look' | 'open' | 'reveal' | 'export') {
     setError('');
@@ -480,7 +513,23 @@ function FilePreviewContent(props: {
               </div>
             ) : (
               <div className="file-preview-text">
-                <CodeEditor path={item.name} label={item.name} language={language} content={item.content} location={item.review?.location} extensions={locationDecorations} readOnly />
+                {commentsVisible ? (
+                  <CommentableSourceCodePreview
+                    key={item.id}
+                    identity={`${item.id}:${item.label}`}
+                    path={props.commentPath ?? item.name}
+                    content={item.content}
+                    language={language}
+                    label={item.name}
+                    side={props.commentSide}
+                    locale={props.zh ? 'zh-CN' : 'en-US'}
+                    location={item.review?.location}
+                    comments={props.comments}
+                    onCommentsChange={props.onCommentsChange}
+                  />
+                ) : (
+                  <CodeEditor path={item.name} label={item.name} language={language} content={item.content} location={item.review?.location} extensions={locationDecorations} readOnly />
+                )}
               </div>
             )}
           </Suspense>

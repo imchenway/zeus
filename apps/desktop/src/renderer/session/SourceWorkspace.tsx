@@ -12,7 +12,7 @@ import { Button } from '../ui/Button.js';
 import type { ConversationOpenTarget, ConversationResourceOpenTarget } from '@zeus/shared';
 import { listConversationResourceOpenTargetsInMain } from '../appShellBridge.js';
 import { FilePreview, FileReviewContent, PreviewImage } from '../code/FilePreview.js';
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import { Suspense, lazy, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowsInIcon as ArrowsIn } from '@phosphor-icons/react/dist/csr/ArrowsIn';
 import { ArrowsOutIcon as ArrowsOut } from '@phosphor-icons/react/dist/csr/ArrowsOut';
@@ -22,10 +22,9 @@ import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { ConversationResourcePreview } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { ConversationMarkdown } from './ConversationMarkdown.js';
-import type { FilePreviewRequest, ConversationCodeComment, ConversationCodeCommentPosition } from '@zeus/shared';
-import { CodeCommentPanel } from './CodeCommentPanel.js';
-/** 与项目源码编辑器一样按需加载，避免会话首屏加载编辑器运行时。 */
-const SourceCodePreview = lazy(() => import('../code/SourceCodePreview.js').then((module) => ({ default: module.SourceCodePreview })));
+import type { FilePreviewRequest, ConversationCodeComment } from '@zeus/shared';
+/** 与项目源码编辑器一样按需加载，避免会话首屏加载编辑器和评论运行时。 */
+const CommentableSourceCodePreview = lazy(() => import('./CommentableSourceCodePreview.js').then((module) => ({ default: module.CommentableSourceCodePreview })));
 
 /** Markdown 可在排版预览与源码之间切换。 */
 export type SourceWorkspaceViewMode = 'preview' | 'source';
@@ -199,67 +198,10 @@ function SourceWorkspaceView(props: {
   const markdownPreview = supportsMarkdownPreview(props.preview);
   /** 当前只挂载被选中的一种展示模式。 */
   const renderedMarkdown = Boolean(sourcePreview && markdownPreview && props.viewMode === 'preview');
-  /** 尚未保存的评论行范围。 */
-  const [draftPosition, setDraftPosition] = useState<ConversationCodeCommentPosition | null>(null);
-  /** 当前正在编辑的已保存评论。 */
-  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
-  /** Shift 点击使用上次选中的行作为范围起点。 */
-  const rangeStartLine = useRef<number | null>(null);
-
   useEffect(() => {
     titleRef.current?.focus();
     titleRef.current?.parentElement?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [props.preview.resource.id]);
-
-  useEffect(() => {
-    setDraftPosition(null);
-    setEditingCommentId(null);
-    rangeStartLine.current = null;
-  }, [props.preview.resource.id, displayPath]);
-
-  /** 只处理当前文件的评论，输入正文变化时复用分组结果。 */
-  const comments = useMemo(() => (props.comments ?? []).filter((comment) => comment.position.path === displayPath && comment.position.side === 'right'), [props.comments, displayPath]);
-  /** 容器按行复用，其他评论更新时也保留当前行的输入状态。 */
-  const widgetElements = useRef(new Map<number, HTMLElement>());
-  /** 只为实际存在评论或草稿的行建立容器，滚动隐藏时保留 React 状态。 */
-  const widgets = useMemo(() => {
-    // 评论数量决定门户数量，与文件总行数无关。
-    const lines = new Set(comments.map((comment) => comment.position.line));
-    if (draftPosition) lines.add(draftPosition.line);
-    /** 仅保留当前评论行，移除的评论不长期占用容器。 */
-    const next = [...lines].sort((left, right) => left - right).map((line) => ({ line, element: widgetElements.current.get(line) ?? document.createElement('div') }));
-    widgetElements.current = new Map(next.map((widget) => [widget.line, widget.element]));
-    return next;
-  }, [comments, draftPosition]);
-
-  /** 由编辑器在评论区块完成布局后聚焦，避免提前聚焦离屏节点。 */
-  const activeCommentLine = draftPosition?.line ?? comments.find((comment) => comment.id === editingCommentId)?.position.line;
-
-  /** 复用稳定回调，评论范围不依赖会话正文的更新。 */
-  const beginComment = useCallback(
-    (line: number, extendRange: boolean) => {
-      /** 归一化范围，持久化仍使用结束行与可选起始行。 */
-      const startLine = extendRange && rangeStartLine.current ? Math.min(rangeStartLine.current, line) : line;
-      /** 范围终点不小于起点。 */
-      const endLine = extendRange && rangeStartLine.current ? Math.max(rangeStartLine.current, line) : line;
-      rangeStartLine.current = line;
-      setEditingCommentId(null);
-      setDraftPosition({ path: displayPath, line: endLine, side: 'right', ...(startLine !== endLine ? { startLine, startSide: 'right' as const } : {}) });
-    },
-    [displayPath],
-  );
-  /** 评论入口保持当前界面语言。 */
-  const commentLabel = useCallback((line: number) => (zh ? `评论第 ${line} 行` : `Comment on line ${line}`), [zh]);
-
-  /** 保存到原有会话评论草稿，不修改文件内容。 */
-  function saveComment(position: ConversationCodeCommentPosition, body: string, existingId?: string): void {
-    if (!props.onCommentsChange) return;
-    /** 沿用原有会话草稿回调写入评论。 */
-    const next = existingId ? (props.comments ?? []).map((comment) => (comment.id === existingId ? { ...comment, body } : comment)) : [...(props.comments ?? []), { id: crypto.randomUUID(), body, position }];
-    props.onCommentsChange(next);
-    setDraftPosition(null);
-    setEditingCommentId(null);
-  }
 
   /** 顶栏展示文件名与预览操作，正文从文件信息行直接开始。 */
   const header = (
@@ -448,8 +390,9 @@ function SourceWorkspaceView(props: {
             <ConversationMarkdown text={props.preview.content} streamId={`source-preview:${props.preview.resource.id}`} phase="final" language={props.language} documentMode />
           ) : (
             <Suspense fallback={null}>
-              <SourceCodePreview
+              <CommentableSourceCodePreview
                 key={props.preview.resource.id}
+                identity={props.preview.resource.id}
                 path={displayPath}
                 content={props.preview.content}
                 language={props.preview.language}
@@ -460,51 +403,9 @@ function SourceWorkspaceView(props: {
                 locale={props.language}
                 searchRequest={searchRequest}
                 location={props.preview.location}
-                widgets={widgets}
-                focusWidget={widgets.find((widget) => widget.line === activeCommentLine)?.element}
-                onComment={props.onCommentsChange ? beginComment : undefined}
-                commentLabel={commentLabel}
+                comments={props.comments}
+                onCommentsChange={props.onCommentsChange}
               />
-              {widgets.map((widget) =>
-                createPortal(
-                  <>
-                    {comments
-                      .filter((comment) => comment.position.line === widget.line)
-                      .map((comment) =>
-                        editingCommentId === comment.id ? (
-                          <CodeCommentPanel
-                            key={comment.id}
-                            language={props.language}
-                            position={comment.position}
-                            comment={comment}
-                            onCancel={() => setEditingCommentId(null)}
-                            onSave={(body) => saveComment(comment.position, body, comment.id)}
-                            onDelete={() => {
-                              props.onCommentsChange?.((props.comments ?? []).filter((candidate) => candidate.id !== comment.id));
-                              setEditingCommentId(null);
-                            }}
-                          />
-                        ) : (
-                          <span key={comment.id} className="session-saved-code-comment">
-                            <strong>{zh ? '本地评论' : 'Local comment'}</strong>
-                            <span>{comment.body}</span>
-                            <span className="session-saved-code-comment-actions">
-                              <button type="button" onClick={() => setEditingCommentId(comment.id)}>
-                                {zh ? '编辑' : 'Edit'}
-                              </button>
-                              <button type="button" onClick={() => props.onCommentsChange?.((props.comments ?? []).filter((candidate) => candidate.id !== comment.id))}>
-                                {zh ? '删除' : 'Delete'}
-                              </button>
-                            </span>
-                          </span>
-                        ),
-                      )}
-                    {draftPosition?.line === widget.line ? <CodeCommentPanel language={props.language} position={draftPosition} onCancel={() => setDraftPosition(null)} onSave={(body) => saveComment(draftPosition, body)} /> : null}
-                  </>,
-                  widget.element,
-                  String(widget.line),
-                ),
-              )}
             </Suspense>
           )}
         </div>
@@ -537,10 +438,16 @@ export function FilePreviewWorkspace(props: {
   request: FilePreviewRequest;
   /** 本次点击的位置独立于资源首次登记的行号。 */
   location?: ConversationFileLocation;
+  /** 会话评论使用的项目相对路径或附件名称。 */
+  commentPath?: string;
   language: SessionUiLanguage;
   toolbarHost?: HTMLElement | null;
   fullWidth: boolean;
   canSplit: boolean;
+  /** 当前会话全部代码评论。 */
+  comments?: ConversationCodeComment[];
+  /** 缺省表示当前会话只读。 */
+  onCommentsChange?: (comments: ConversationCodeComment[]) => void;
   onFullWidthChange: (value: boolean) => void;
   onClose: () => void;
 }) {
@@ -577,7 +484,7 @@ export function FilePreviewWorkspace(props: {
   return (
     <section className="session-context-workspace session-source-workspace" aria-label={zh ? '文件审阅' : 'File review'}>
       {props.toolbarHost ? createPortal(header, props.toolbarHost) : header}
-      <FilePreview request={props.request} location={props.location} zh={zh} />
+      <FilePreview request={props.request} location={props.location} zh={zh} commentPath={props.commentPath} comments={props.comments} onCommentsChange={props.onCommentsChange} />
     </section>
   );
 }

@@ -804,7 +804,18 @@ function ContextDraftAttachment(props: { draft: ConversationContextDraft; langua
                 {zh ? `代码评论 ${index + 1}` : `Code comment ${index + 1}`} · {comment.position.path}:
                 {comment.position.startLine && comment.position.startLine !== comment.position.line ? `${comment.position.startLine}-${comment.position.line}` : comment.position.line}
               </span>
-              <p>{comment.body}</p>
+              {comment.position.selectedText?.trim() ? (
+                <blockquote>
+                  <span className="session-response-annotation-label">{zh ? '引用原文' : 'Quoted text'}</span>
+                  {comment.position.selectedText}
+                </blockquote>
+              ) : null}
+              {comment.body.trim() ? (
+                <p>
+                  {comment.position.selectedText?.trim() ? <span className="session-response-annotation-label">{zh ? '我的评论' : 'My comment'}</span> : null}
+                  {comment.body}
+                </p>
+              ) : null}
             </article>
           ))}
           {props.draft.responseAnnotations.map((annotation, index) => (
