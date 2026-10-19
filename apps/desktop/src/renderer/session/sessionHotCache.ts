@@ -4,7 +4,7 @@ import { resumeCachedConversationSnapshot } from './conversationSnapshotV2Adapte
 import { retainResourcesOwnedByItem } from './conversationResourceProjection.js';
 
 /** 普通会话热缓存的最大数量。 */
-export const ordinarySessionHotCacheLimit = 6;
+export const ordinarySessionHotCacheLimit = 12;
 /** 全部热缓存的估算字节上限。 */
 export const sessionHotCacheByteLimit = 32 * 1024 * 1024;
 /** 单个会话热缓存的估算字节上限。 */

@@ -1186,6 +1186,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     if (replacedSubmissionId) await ensureRealtimeConnection().catch(() => undefined);
   }
 
+  /** 原子接管权威会话正文，并在首帧之后渐进补齐非正文信息。 */
   async function applyAuthoritativeSnapshot(snapshot: NativeConversationSnapshot): Promise<void> {
     if (snapshot.conversationSchemaGeneration !== CONVERSATION_SCHEMA_GENERATION || snapshot.syncStreamGeneration !== CONVERSATION_SYNC_STREAM_GENERATION || !Number.isSafeInteger(snapshot.throughEventSeq) || snapshot.throughEventSeq < 0) {
       throw new Error('Zeus Renderer 与本地服务的会话结构代次不匹配，已拒绝猜测旧新字段。');
@@ -1194,9 +1195,15 @@ export function createSessionController(options: CreateSessionControllerOptions)
     for (const sequence of pendingSyncGapEvents.keys()) {
       if (sequence <= snapshot.throughEventSeq) deletePendingSyncGapEvent(sequence);
     }
-    const projectedSnapshot = withoutResolvedRequests(snapshot);
+    /** 首屏不再等待 Git；热切换先保留旧环境，冷切换在正文显示后独立补齐。 */
+    const snapshotWithExecutionContext =
+      !snapshot.executionContext && state.snapshot?.executionContext
+        ? { ...snapshot, executionContext: state.snapshot.executionContext, snapshotV2: snapshot.snapshotV2 ? { ...snapshot.snapshotV2, executionContext: state.snapshot.executionContext } : undefined }
+        : snapshot;
+    const projectedSnapshot = withoutResolvedRequests(snapshotWithExecutionContext);
     dispatch({ type: 'snapshot_hydrated', snapshot: projectedSnapshot });
     if (placementRecovery) await placementRecovery;
+    if (!snapshot.executionContext) void hydrateExecutionContext();
     void hydrateSessionMetrics(projectedSnapshot.id);
   }
 
