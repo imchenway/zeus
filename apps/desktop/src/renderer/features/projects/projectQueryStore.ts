@@ -29,6 +29,13 @@ export class ProjectQueryStore extends ExternalStore<ProjectQuerySnapshot> {
   }
 
   replace(items: readonly ProjectRecord[]): void {
+    /** 项目发起时间只前进；迟到的列表或项目编辑回执不能把已知活跃度写回旧值。 */
+    const previousActivity = new Map(this.snapshot.items.map((item) => [item.id, item.lastWorkStartedAt]));
+    items = items.map((item) => {
+      /** 仅保留更晚的固定发起时间，其他项目字段仍由本次查询接管。 */
+      const lastWorkStartedAt = previousActivity.get(item.id);
+      return (Date.parse(lastWorkStartedAt ?? '') || 0) > (Date.parse(item.lastWorkStartedAt ?? '') || 0) ? { ...item, lastWorkStartedAt } : item;
+    });
     // 任务分页和局部写回不改变项目记录时，不重复发布项目集合。
     if (items === this.snapshot.items || (items.length === this.snapshot.items.length && items.every((item, index) => item === this.snapshot.items[index]))) return;
     const selectedProjectId = this.snapshot.selectedProjectId && items.some((item) => item.id === this.snapshot.selectedProjectId) ? this.snapshot.selectedProjectId : (items[0]?.id ?? null);

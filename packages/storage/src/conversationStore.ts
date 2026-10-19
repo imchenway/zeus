@@ -9,6 +9,18 @@ import type { ConversationAgentKind } from './conversationItemTypes.js';
 import { ConversationTranscriptRepository, hashConversationTranscriptContent } from './conversationTranscriptStore.js';
 import { pruneArchivedConversationSyncEvents } from './conversationSyncEventStore.js';
 
+/** 会话别名固定为 c；辅助会话返回空值，普通会话只读取创建和主动输入时间。 */
+export const conversationWorkStartedAtSql = `CASE WHEN c.listing_scope = 'ordinary' AND c.origin_kind = 'ordinary'
+  AND COALESCE((SELECT json_extract(s.input_json, '$.context.ephemeral') FROM conversation_submissions s
+    WHERE s.conversation_id = c.id ORDER BY s.created_at, s.id LIMIT 1), 0) <> 1
+  THEN MAX(c.created_at,
+  COALESCE((SELECT s.created_at FROM conversation_submissions s
+    WHERE s.conversation_id = c.id AND COALESCE(json_extract(s.input_json, '$.internalOperation'), 0) <> 1
+    ORDER BY s.created_at DESC, s.id DESC LIMIT 1), c.created_at),
+  COALESCE((SELECT m.created_at FROM conversation_messages m
+    WHERE m.conversation_id = c.id AND c.transport_kind <> 'codex_native' AND m.role = 'user' AND m.source = 'user_followup'
+    ORDER BY m.created_at DESC, m.id DESC LIMIT 1), c.created_at)) END`;
+
 /** 助手图片复用原始绝对路径的稳定附件身份，归档副本与工具输出共用该身份。 */
 export function conversationImageAttachmentRef(absolutePath: string): string {
   return `assistant_image_${createHash('sha256').update(resolve(absolutePath)).digest('hex')}`;
@@ -755,6 +767,14 @@ export class AgentCapabilitySnapshotRepository {
 /** 对话仓储保存 AI 对话主记录与消息，不写入任何 seed 对话。 */
 export class ConversationRepository {
   constructor(private readonly db: ZeusDatabasePort) {}
+
+  /** 项目活跃度使用固定的发起时间，不随完成、权限请求、归档或列表维护推进。 */
+  workStartedAt(conversationId: string): string | null {
+    /** 原始时间由存储生成，复用会话及提交的既有时间索引。 */
+    const row = this.db.get<{ work_started_at: string | null }>(`SELECT ${conversationWorkStartedAtSql} AS work_started_at FROM conversations c WHERE c.id = ?`, [conversationId]);
+    if (!row) throw new Error(`Zeus conversation not found: ${conversationId}`);
+    return row.work_started_at;
+  }
 
   /**
    * 会话列表时间只描述用户能理解的真实活动，不使用会被打开、水合、统计或归档维护推进的 conversations.updated_at。

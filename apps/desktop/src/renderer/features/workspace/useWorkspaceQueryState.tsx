@@ -98,7 +98,7 @@ import {
   type MainNavTarget,
   type NativeConversationChoiceTaskLoadState,
   normalizeRendererAppShellSettings,
-  orderProjectsByPinnedIds,
+  orderProjects,
   type ProjectCodeWorkspaceMode,
   type ProjectCreateFormState,
   type ProjectDetailPanel,
@@ -154,7 +154,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   });
   /** 显式重试只刷新附属摘要，不重读项目和完整任务。 */
   const [homeRefreshRevision, setHomeRefreshRevision] = useState(0);
-  const { snapshot: projectQuery, replace: replaceProjectQuery } = useProjectFeatureController({ client: props.nativeConversationClient?.projects ?? null, initialItems: dashboardSnapshot.projects });
+  const { snapshot: projectQuery, replace: replaceProjectQuery, load: reloadProjects } = useProjectFeatureController({ client: props.nativeConversationClient?.projects ?? null, initialItems: dashboardSnapshot.projects });
   const {
     snapshot: taskQuery,
     replace: replaceTaskQuery,
@@ -706,7 +706,10 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   }, [props.shellNavigation]);
 
   const visibleProjects = useMemo(() => dedupeProjectRecordsByLocalPath(snapshot.projects), [snapshot.projects]);
-  const orderedProjects = useMemo(() => orderProjectsByPinnedIds(visibleProjects, appShellSettings.pinnedProjectIds), [visibleProjects, appShellSettings.pinnedProjectIds]);
+  /** 保存窗口已观察到的固定发起时间，关闭或归档会话不会让项目位置回退。 */
+  const [projectWorkStartedAtById, setProjectWorkStartedAtById] = useState<Record<string, string>>({});
+  /** 项目工作区与侧栏共用同一排序，不引用运行状态或会话活动时间。 */
+  const orderedProjects = useMemo(() => orderProjects(visibleProjects, appShellSettings.pinnedProjectIds, projectWorkStartedAtById), [visibleProjects, appShellSettings.pinnedProjectIds, projectWorkStartedAtById]);
   const firstProject = orderedProjects[0];
   const firstProjectId = firstProject?.id;
   const runtime = runtimeStatus ?? {
@@ -1192,8 +1195,20 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
       snapshot.tasks,
     ],
   );
+  /** 同步会话状态与项目发起时间；仅新出现的主动工作可以推进项目排序。 */
   const reconcileNativeConversationProjectionStates = useCallback((choices: readonly NativeConversationChoice[]): void => {
     if (choices.length === 0) return;
+    setProjectWorkStartedAtById((current) => {
+      /** 没有更晚的发起时间时复用原对象，后台状态更新不触发项目重排。 */
+      let next = current;
+      for (const conversation of choices) {
+        if (conversation.taskPushCreating || !conversation.workStartedAt || !Number.isFinite(Date.parse(conversation.workStartedAt))) continue;
+        if (Date.parse(conversation.workStartedAt) <= (Date.parse(next[conversation.projectId] ?? '') || 0)) continue;
+        if (next === current) next = { ...current };
+        next[conversation.projectId] = conversation.workStartedAt;
+      }
+      return next;
+    });
     setNativeConversationRuntimeStates((current) => {
       const next = { ...current };
       for (const conversation of choices) next[conversation.id] = conversationTreeRuntimeStateFromConversation(conversation);
@@ -1583,6 +1598,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     projectedTaskConversationChoices,
     reconcileNativeConversationProjectSnapshot,
     reconcileNativeConversationProjectionStates,
+    reloadProjects,
     recordNativeConversationRuntimeState,
     recoveringConflictAiStartsRef,
     recoveringNativeConversationStartsRef,

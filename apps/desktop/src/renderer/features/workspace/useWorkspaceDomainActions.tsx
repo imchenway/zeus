@@ -190,6 +190,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     props,
     reconcileNativeConversationProjectSnapshot,
     reconcileNativeConversationProjectionStates,
+    reloadProjects,
     requestWorkspaceLeaveRef,
     repeatRealtimeNativeConversationRefreshIdsRef,
     restoringArchivedConversationId,
@@ -714,6 +715,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         statusSyncGeneration += 1;
         clearStatusSyncRetry();
         if (state === 'connected') {
+          // 补读断线期间其他窗口发起的工作，折叠项目也使用完整的持久活跃时间。
+          if (props.nativeConversationClient) void reloadProjects().catch((error: unknown) => recordRealtimeSynchronizationError('project-activity-reconciliation', error));
           // 断线期间可能错过目录事件，连接恢复后补读当前快照。
           window.dispatchEvent(new Event(codexCapabilitiesChangedEvent));
           statusSyncAttempt = 0;
@@ -747,6 +750,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     observeInputSuggestion,
     reconcileNativeConversationProjectSnapshot,
     reconcileNativeConversationProjectionStates,
+    reloadProjects,
     resumeNativeConversationAttentionAcknowledgements,
     updateTaskModelPushPendingByTask,
   ]);
@@ -1541,6 +1545,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       const merged = nativeConversationChoiceLoadCoordinator.commit(taskId, requestVersion, choices);
       if (!merged) return choices;
       setNativeConversationChoicesByTask((current) => ({ ...current, [taskId]: merged }));
+      reconcileNativeConversationProjectionStates(merged.choices);
       setNativeConversationChoiceTaskStates((current) => ({ ...current, [taskId]: completeNativeConversationChoiceTaskLoad(current[taskId]) }));
       return merged;
     } catch (error) {
@@ -1562,6 +1567,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       const merged = nativeProjectConversationChoiceLoadCoordinator.commit(projectId, requestVersion, choices);
       if (!merged) return choices;
       setNativeConversationChoicesByProject((current) => ({ ...current, [projectId]: merged }));
+      reconcileNativeConversationProjectionStates(merged.choices);
       setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: completeNativeConversationChoiceTaskLoad(current[projectId]) }));
       return merged;
     } catch (error) {
@@ -1983,6 +1989,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         envelopeManager: nativeConversationStartEnvelopeManager,
         dispatch: (taskId, request) => client.startNativeConversation(taskId, request),
         onAccepted: async (choice) => {
+          reconcileNativeConversationProjectionStates([choice]);
           await adoptConversationBrowser(input, choice);
           // durable acceptance 到达后必须立即离开创建表单；历史摘要刷新只是 best-effort，
           // 不能把已接受操作重新暴露成使用新 ID 的第二次创建。
@@ -2053,6 +2060,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         envelopeManager: projectConversationStartEnvelopeManager,
         dispatch: (acceptedProjectId, request) => client.startProjectConversation(acceptedProjectId, request),
         onAccepted: async (choice) => {
+          reconcileNativeConversationProjectionStates([choice]);
           await adoptConversationBrowser(input, choice);
           nativeProjectConversationChoiceLoadCoordinator.preserveAccepted(choice);
           setNativeConversationChoicesByProject((current) => {
