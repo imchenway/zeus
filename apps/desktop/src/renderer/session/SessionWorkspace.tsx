@@ -4291,16 +4291,7 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
       nativeSessionPath: runtimeFact(nativeSession?.path ?? null, props.language === 'zh-CN' ? '暂无会话记录文件位置。' : 'The conversation record file location is unavailable.'),
     },
   };
-  return (
-    <RuntimeDetails
-      contextCapacityEvidence={props.state.snapshot?.contextCapacityEvidence}
-      contextCapacityTokens={props.state.snapshot?.contextCapacityTokens ?? props.conversation?.contextCapacityTokens}
-      runtime={runtime}
-      language={props.language}
-      scope="session"
-      mcpStartup={mcpStartup}
-    />
-  );
+  return <RuntimeDetails runtime={runtime} language={props.language} scope="session" mcpStartup={mcpStartup} />;
 }
 
 function runtimeFact<T>(value: T | null | undefined, reason: string): NativeRuntimeFact<T> {
