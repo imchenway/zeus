@@ -78,7 +78,7 @@ import { getFileBlame } from '@zeus/git-core';
 import { canonicalCommandInputJson, commandEnvelopeSchemaGeneration, normalizeInputSuggestionUiDiagnostic, normalizeNetworkProxySettings } from '@zeus/shared';
 import { checkNetworkProxyConnection, chromiumNetworkProxyConfig } from './networkProxy.js';
 import { prepareZeusDataRoot } from './zeusDataMigration.js';
-import { loadDesktopReadOnlyValidationDescriptor, readOnlyValidationManifestEnvironmentName, readPackagedDesktopApplicationId, verifyDesktopReadOnlyValidationDescriptor } from './readOnlyValidationManifest.js';
+import { loadDesktopReadOnlyValidationDescriptor, readOnlyValidationManifestEnvironmentName, readPackagedDesktopApplicationId, resolveDesktopTestDataRoot, verifyDesktopReadOnlyValidationDescriptor } from './readOnlyValidationManifest.js';
 import { installReadOnlyValidationIpcFence } from './readOnlyValidationIpcFence.js';
 import { ProjectSourceWorkspaceService } from './projectSourceWorkspace.js';
 import { ProjectSourcePreviewService } from './projectSourcePreview.js';
@@ -455,13 +455,6 @@ async function updateCodexAutomatically(reserveUpdate: ReserveAutomaticCodexUpda
   if (!updated.ok) throw new Error(`Codex 后台安装未完成（HTTP ${updated.status}），请在设置中检查。`);
 }
 
-function defaultTestDataRoot(): string {
-  // 每个打包 App 的路径代表一个任务 worktree，按路径隔离后多个任务可以并行验收而不共享 SQLite。
-  const appIdentity = resolve(process.execPath);
-  const identityHash = createHash('sha256').update(appIdentity).digest('hex').slice(0, 16);
-  return join(homedir(), '.zeus-test', `instance-${identityHash}`);
-}
-
 /**
  * 移除 Chromium Safe Storage 对 macOS 钥匙串的读取申请。
  * 用户已明确要求 Zeus 不再弹出 `@zeus/desktop Safe Storage` 授权框；
@@ -501,7 +494,8 @@ function applyExplicitUserDataDirectory(): void {
   }
 
   const profileName = activeDataRootProfile();
-  const target = join(homedir(), profileName === 'production' ? '.zeus' : profileName === 'test' ? defaultTestDataRoot() : '.zeus-development');
+  /** Test 与验收 manifest 共用同一个绝对根解析器，home 只拼接一次。 */
+  const target = profileName === 'test' ? resolveDesktopTestDataRoot(process.execPath) : join(homedir(), profileName === 'production' ? '.zeus' : '.zeus-development');
   const legacyCandidates = profileName === 'production' ? [join(app.getPath('appData'), '@zeus', 'desktop'), join(app.getPath('appData'), desktopDisplayName())].filter((path, index, paths) => paths.indexOf(path) === index) : [];
   const targetInitialized = profileName === 'production' ? existsSync(join(target, 'data', 'zeus.db')) || existsSync(join(target, 'zeus.db')) || existsSync(join(target, 'zeus.config.json')) : existsSync(target);
   const legacy = legacyCandidates.find((path) => existsSync(join(path, 'zeus.db')) || existsSync(join(path, 'zeus.config.json')));

@@ -1,20 +1,30 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { lstat, mkdir, readFile, readdir, realpath, rm, statfs, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, realpath, rename, rm, statfs, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs, promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
+import {
+  assertHistoricalCleanupAvailable,
+  assertOfflineMaintenance,
+  inspectMaintenanceTree,
+  type MaintenanceTreeFacts,
+  readMaintenanceAllowlist,
+  readMaintenanceMetadata,
+  requireMaintenanceDirectory,
+  withMaintenanceLease,
+} from './maintenanceSafety.js';
 
 /** 子进程调用统一使用无 shell 的参数数组，避免路径被二次解释。 */
 const executeFile = promisify(execFile);
 /** 清理计划格式使用日期代次，避免把未来布局误认为当前布局。 */
-const planFormat = 'zeus-generated-data-cleanup-2026-10-18';
+const planFormat = 'zeus-generated-data-cleanup-2026-10-19';
 /** 只有终态任务允许进入历史 worktree 清理计划。 */
 const terminalTaskStatuses = new Set(['completed', 'cancelled']);
 /** 这些目录是 Zeus 构建入口生成、删除后可重新生成的缓存。 */
-const rebuildableCacheNames = ['cargo-target', 'zeus-release', 'release-candidate-v0.2.8', 'cua-driver-target-arm64', 'cua-driver-target-darwin-arm64', 'electron-dist', 'rust-toolchains', 'clang-module-cache', 'codex-runtime'] as const;
+const rebuildableCacheNames = ['cargo-target', 'cua-driver-target-arm64', 'cua-driver-target-darwin-arm64', 'electron-dist', 'rust-toolchains', 'clang-module-cache', 'codex-runtime'] as const;
 /** 发布失败现场可能仍有恢复价值，必须通过独立参数纳入计划。 */
 const releaseRecoveryDirectoryName = 'zeus-release-isolated';
 /** Windows 删除刚释放的 SQLite 或 Chromium 文件时允许短暂重试。 */
@@ -24,13 +34,20 @@ const deletionRetryDelayMs = 250;
 
 /** 命令行参数只允许显式覆盖根目录和两类有证据价值的数据。 */
 interface CleanupArguments {
+  /** 只有显式授权的旧产物可在应用运行时回收，工作区仍需离线。 */
+  allowOnline: boolean;
   apply: boolean;
   confirmation: string | null;
   dataRoot: string;
   repositoryPath: string;
   includeValidationSnapshots: boolean;
   includeReleaseRecovery: boolean;
-  includeRepositoryTemp: boolean;
+  /** 删除范围默认限制在正式数据根之外。 */
+  scope: 'external' | 'internal' | 'all';
+  /** 固定路径白名单是执行的必要条件。 */
+  selectedPaths: string[] | null;
+  /** 历史安装包和发布材料需要独立纳入审阅。 */
+  includeReleaseArtifacts: boolean;
 }
 
 /** 数据库 owner 用于在物理目录回收后收敛对应路径状态。 */
@@ -60,13 +77,22 @@ interface PathIdentity {
 
 /** 可删除项只保存执行所需身份，不递归散列大型缓存。 */
 interface CleanupCandidate {
-  kind: 'task_worktree' | 'integration_worktree' | 'metadata_reconciliation' | 'validation_snapshot' | 'rebuildable_cache' | 'release_recovery' | 'repository_temp' | 'standalone_release';
+  kind: 'task_worktree' | 'integration_worktree' | 'metadata_reconciliation' | 'validation_snapshot' | 'rebuildable_cache' | 'release_recovery' | 'release_artifacts' | 'release_copy' | 'standalone_release';
   path: string;
   identity: PathIdentity;
   repositoryPath?: string;
   registered?: boolean;
   dirty?: boolean;
-  orphanedRepository?: boolean;
+  /** 已审阅的提交和其他命名引用必须在删除前复核。 */
+  head?: string;
+  /** 不能仅凭工作树干净丢弃未保全提交。 */
+  preservingRefs?: string[];
+  /** 验收清单内容摘要参与计划身份。 */
+  manifestSha256?: string;
+  /** 历史产物需要复核深层内容是否在审阅后发生变化。 */
+  treeFacts?: MaintenanceTreeFacts;
+  /** 验收数据库身份独立于清单身份。 */
+  validationDatabaseIdentity?: PathIdentity;
   owners?: WorktreeOwner[];
 }
 
@@ -80,16 +106,20 @@ interface ProtectedEntry {
 /** Git 仓库上下文缓存主仓路径和已登记 worktree。 */
 interface RepositoryContext {
   topLevel: string;
-  containerRoot: string;
   worktrees: Set<string>;
 }
 
-/** Skill 快照只检查升级后的内容寻址迁移，不由本脚本删除。 */
-interface SkillCompactionFacts {
+/** 旧资源只展示离线回收状态，不能把历史清单误报为等待后台迁移。 */
+interface SkillResourceFacts {
+  /** 历史清单和旧资源所在根。 */
   root: string;
+  /** 有效编号的快照数量。 */
   snapshotCount: number;
-  compactedSnapshotCount: number;
-  pendingSnapshotCount: number;
+  /** 仍有资源内容、需要独立离线计划的快照数量。 */
+  payloadSnapshotCount: number;
+  /** 仅剩清单与回收凭证的快照数量。 */
+  metadataOnlySnapshotCount: number;
+  /** 清单不完整或存在未知布局的快照数量。 */
   invalidSnapshotCount: number;
 }
 
@@ -101,6 +131,8 @@ interface ConversationSyncFacts {
 
 /** 清理计划不包含生成时间，确保同一现场能得到相同确认摘要。 */
 interface CleanupPlan {
+  /** 执行模式参与确认摘要，不能由确认后的隐含开关改变。 */
+  allowOnline: boolean;
   format: string;
   platform: NodeJS.Platform;
   dataRoot: string;
@@ -109,11 +141,16 @@ interface CleanupPlan {
   repositoryRoot: string;
   includeValidationSnapshots: boolean;
   includeReleaseRecovery: boolean;
-  includeRepositoryTemp: boolean;
+  /** 删除范围默认限制在正式数据根之外。 */
+  scope: 'external' | 'internal' | 'all';
+  /** 固定路径白名单是执行的必要条件。 */
+  selectedPaths: string[] | null;
+  /** 历史安装包和发布材料需要独立纳入审阅。 */
+  includeReleaseArtifacts: boolean;
   candidates: CleanupCandidate[];
   protected: ProtectedEntry[];
-  skillCompaction: SkillCompactionFacts;
-  conversationSync: ConversationSyncFacts;
+  skillResources: SkillResourceFacts | null;
+  conversationSync: ConversationSyncFacts | null;
 }
 
 /** 清理结果逐项记录，失败项可以在修复原因后幂等重跑。 */
@@ -198,42 +235,7 @@ async function readRepositoryContext(repositoryPath: string): Promise<Repository
   const topLevelResult = await executeFile('git', ['-C', repositoryPath, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', maxBuffer: 1024 * 1024 });
   const topLevel = await realpath(resolve(topLevelResult.stdout.trim()));
   const listResult = await executeFile('git', ['-C', topLevel, 'worktree', 'list', '--porcelain', '-z'], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
-  return { topLevel, containerRoot: resolve(dirname(topLevel), '.zeus-worktrees'), worktrees: parseGitWorktreePaths(listResult.stdout) };
-}
-
-/** 校验未登记的目录仍符合 Zeus 合入目录的精确层级。 */
-function isManagedIntegrationLayout(containerRoot: string, candidatePath: string): boolean {
-  const segments = relative(containerRoot, candidatePath).split(sep);
-  const integration = segments.length === 3 && segments[1] === '.integration';
-  const attempt = segments.length === 4 && segments[1] === '.integration-attempts';
-  return (integration || attempt) && segments.every((segment) => Boolean(segment) && segment !== '.' && segment !== '..');
-}
-
-/** 从候选祖先中定位最近的 `.zeus-worktrees`，不接受推导到文件系统根。 */
-function findWorktreeContainer(candidatePath: string): string | null {
-  for (let directory = dirname(candidatePath); dirname(directory) !== directory; directory = dirname(directory)) {
-    if (basename(directory) === '.zeus-worktrees') return directory;
-  }
-  return null;
-}
-
-/** 源仓已经删除时，只接受 `.git` 指向不存在绝对路径的标准终态合入孤儿。 */
-async function inspectMissingRepositoryIntegration(draft: WorktreeDraft): Promise<CleanupCandidate> {
-  if ((await readPathIdentity(draft.repositoryPath)).present) throw new Error('源仓路径仍存在，不能使用缺失源仓的孤儿清理分支。');
-  const candidatePath = resolve(draft.path);
-  const containerRoot = findWorktreeContainer(candidatePath);
-  if (!containerRoot || !isManagedIntegrationLayout(containerRoot, candidatePath)) throw new Error('源仓不存在，且路径不符合标准合入目录层级。');
-  const identity = await readPathIdentity(candidatePath);
-  if (!identity.present) return { kind: 'metadata_reconciliation', path: candidatePath, identity, registered: false, orphanedRepository: true, owners: draft.owners };
-  const status = await lstat(candidatePath);
-  if (!status.isDirectory() || status.isSymbolicLink() || (await realpath(candidatePath)) !== candidatePath) throw new Error('源仓不存在，且合入孤儿不是物理目录。');
-  const gitFile = join(candidatePath, '.git');
-  const gitFileStatus = await lstat(gitFile);
-  if (!gitFileStatus.isFile() || gitFileStatus.isSymbolicLink() || gitFileStatus.size > 4_096) throw new Error('合入孤儿的 .git 身份无效。');
-  const match = (await readFile(gitFile, 'utf8')).trim().match(/^gitdir:\s*(.+)$/u);
-  if (!match || !isAbsolute(match[1]!)) throw new Error('合入孤儿的 .git 未指向绝对登记路径。');
-  if ((await readPathIdentity(resolve(match[1]!))).present) throw new Error('合入孤儿仍有 Git 登记目录，不能绕过原仓清理。');
-  return { kind: 'integration_worktree', path: candidatePath, identity, registered: false, dirty: true, orphanedRepository: true, owners: draft.owners };
+  return { topLevel, worktrees: parseGitWorktreePaths(listResult.stdout) };
 }
 
 /** 检查终态任务是否仍有运行中 Runtime 或 Provider 工作。 */
@@ -249,6 +251,12 @@ function activeTaskIds(database: DatabaseSync): Set<string> {
   return ids;
 }
 
+/** 定位实际容器，兼容项目祖先下的多仓工作区，不推测或扩大到普通目录。 */
+function findManagedWorktreeContainer(path: string): string | null {
+  for (let parent = dirname(path); dirname(parent) !== parent; parent = dirname(parent)) if (basename(parent) === '.zeus-worktrees') return parent;
+  return null;
+}
+
 /** 从数据库读取终态任务拥有的普通、冲突和合入 worktree。 */
 function readWorktreeDrafts(databasePath: string): { drafts: WorktreeDraft[]; protected: ProtectedEntry[] } {
   return readOnlyDatabase(databasePath, (database) => {
@@ -259,8 +267,13 @@ function readWorktreeDrafts(databasePath: string): { drafts: WorktreeDraft[]; pr
     const drafts = new Map<string, WorktreeDraft>();
     const protectedEntries: ProtectedEntry[] = [];
     const activeTasks = activeTaskIds(database);
-    const add = (pathValue: string, repositoryPath: string, owner: WorktreeOwner, managementStatus: string) => {
+    /** 每个 owner 独立判定，最终统一排除任何受保护路径。 */
+    const add = (pathValue: string, repositoryPath: string, owner: WorktreeOwner, managementStatus: string, deletedAt: string | null) => {
       const path = resolve(pathValue);
+      if (deletedAt !== null) {
+        protectedEntries.push({ kind: 'deleted_task_owner', path, reason: `任务 ${owner.taskCode ?? owner.taskId} 已删除，仍需核对遗留内容。` });
+        return;
+      }
       if (!terminalTaskStatuses.has(managementStatus)) {
         if (!protectedEntries.some((entry) => entry.kind === 'active_worktree' && entry.path === path)) {
           protectedEntries.push({ kind: 'active_worktree', path, reason: `任务 ${owner.taskCode ?? owner.taskId} 仍处于 ${managementStatus}。` });
@@ -285,52 +298,59 @@ function readWorktreeDrafts(databasePath: string): { drafts: WorktreeDraft[]; pr
     const workspaceRows = database
       .prepare(
         `SELECT w.id, w.task_id AS taskId, w.workspace_kind AS kind, w.worktree_path AS path, w.state,
-                t.task_code AS taskCode, t.management_status AS managementStatus, ${repositoryExpression} AS repositoryPath
+                t.task_code AS taskCode, t.management_status AS managementStatus, t.deleted_at AS deletedAt, ${repositoryExpression} AS repositoryPath
            FROM task_workspaces w
            JOIN tasks t ON t.id = w.task_id
            JOIN projects p ON p.id = w.project_id
-          WHERE w.worktree_path IS NOT NULL AND t.deleted_at IS NULL`,
+          WHERE w.worktree_path IS NOT NULL`,
       )
-      .all() as Array<{ id: string; taskId: string; kind: string; path: string; state: string; taskCode: string | null; managementStatus: string; repositoryPath: string }>;
-    for (const row of workspaceRows) add(row.path, row.repositoryPath, { type: 'workspace', id: row.id, taskId: row.taskId, taskCode: row.taskCode, state: row.state, kind: row.kind }, row.managementStatus);
+      .all() as Array<{ id: string; taskId: string; kind: string; path: string; state: string; taskCode: string | null; managementStatus: string; deletedAt: string | null; repositoryPath: string }>;
+    for (const row of workspaceRows) add(row.path, row.repositoryPath, { type: 'workspace', id: row.id, taskId: row.taskId, taskCode: row.taskCode, state: row.state, kind: row.kind }, row.managementStatus, row.deletedAt);
 
     const integrationRows = database
       .prepare(
         `SELECT i.id, i.task_id AS taskId, i.integration_path AS path, i.state,
-                t.task_code AS taskCode, t.management_status AS managementStatus, ${repositoryExpression} AS repositoryPath
+                t.task_code AS taskCode, t.management_status AS managementStatus, t.deleted_at AS deletedAt, ${repositoryExpression} AS repositoryPath
            FROM task_integrations i
            JOIN task_workspaces w ON w.id = i.workspace_id
            JOIN tasks t ON t.id = i.task_id
            JOIN projects p ON p.id = i.project_id
-          WHERE i.integration_path IS NOT NULL AND t.deleted_at IS NULL`,
+          WHERE i.integration_path IS NOT NULL`,
       )
-      .all() as Array<{ id: string; taskId: string; path: string; state: string; taskCode: string | null; managementStatus: string; repositoryPath: string }>;
-    for (const row of integrationRows) add(row.path, row.repositoryPath, { type: 'integration', id: row.id, taskId: row.taskId, taskCode: row.taskCode, state: row.state, kind: 'integration' }, row.managementStatus);
+      .all() as Array<{ id: string; taskId: string; path: string; state: string; taskCode: string | null; managementStatus: string; deletedAt: string | null; repositoryPath: string }>;
+    for (const row of integrationRows) add(row.path, row.repositoryPath, { type: 'integration', id: row.id, taskId: row.taskId, taskCode: row.taskCode, state: row.state, kind: 'integration' }, row.managementStatus, row.deletedAt);
 
     const attemptRows = database
       .prepare(
         `SELECT a.id, i.task_id AS taskId, a.worktree_path AS path, a.state,
-                t.task_code AS taskCode, t.management_status AS managementStatus, ${repositoryExpression} AS repositoryPath
+                t.task_code AS taskCode, t.management_status AS managementStatus, t.deleted_at AS deletedAt, ${repositoryExpression} AS repositoryPath
            FROM task_integration_attempts a
            JOIN task_integrations i ON i.id = a.integration_id
            JOIN task_workspaces w ON w.id = i.workspace_id
            JOIN tasks t ON t.id = i.task_id
            JOIN projects p ON p.id = i.project_id
-          WHERE t.deleted_at IS NULL`,
+          WHERE 1 = 1`,
       )
-      .all() as Array<{ id: string; taskId: string; path: string; state: string; taskCode: string | null; managementStatus: string; repositoryPath: string }>;
-    for (const row of attemptRows) add(row.path, row.repositoryPath, { type: 'attempt', id: row.id, taskId: row.taskId, taskCode: row.taskCode, state: row.state, kind: 'attempt' }, row.managementStatus);
-    return { drafts: [...drafts.values()].sort((left, right) => left.path.localeCompare(right.path)), protected: protectedEntries };
+      .all() as Array<{ id: string; taskId: string; path: string; state: string; taskCode: string | null; managementStatus: string; deletedAt: string | null; repositoryPath: string }>;
+    for (const row of attemptRows) add(row.path, row.repositoryPath, { type: 'attempt', id: row.id, taskId: row.taskId, taskCode: row.taskCode, state: row.state, kind: 'attempt' }, row.managementStatus, row.deletedAt);
+    return {
+      drafts: [...drafts.values()].filter((draft) => !protectedEntries.some((entry) => pathContains(entry.path, draft.path) || pathContains(draft.path, entry.path))).sort((left, right) => left.path.localeCompare(right.path)),
+      protected: protectedEntries,
+    };
   });
 }
 
 /** 对数据库候选补齐真实路径、Git 登记和脏状态检查。 */
-async function inspectWorktreeCandidates(databasePath: string): Promise<{ candidates: CleanupCandidate[]; protected: ProtectedEntry[] }> {
+async function inspectWorktreeCandidates(databasePath: string, selectedPaths: string[] | null): Promise<{ candidates: CleanupCandidate[]; protected: ProtectedEntry[] }> {
   const source = readWorktreeDrafts(databasePath);
   const candidates: CleanupCandidate[] = [];
   const protectedEntries = [...source.protected];
   const repositories = new Map<string, Promise<RepositoryContext>>();
   for (const draft of source.drafts) {
+    if (selectedPaths && !selectedPaths.includes(draft.path)) {
+      protectedEntries.push({ kind: 'not_selected', path: draft.path, reason: '不在本次精确路径白名单。' });
+      continue;
+    }
     const integrationOwned = draft.owners.some((owner) => owner.type !== 'workspace' || owner.kind === 'conflict');
     try {
       let pendingContext = repositories.get(draft.repositoryPath);
@@ -340,38 +360,103 @@ async function inspectWorktreeCandidates(databasePath: string): Promise<{ candid
       }
       const context = await pendingContext;
       const candidatePath = resolve(draft.path);
-      if (!pathContains(context.containerRoot, candidatePath)) throw new Error('路径离开项目的 .zeus-worktrees 容器。');
+      /** 容器以实际受管祖先为准，Git 登记和数据库 owner 仍必须同时匹配。 */
+      const container = findManagedWorktreeContainer(candidatePath);
+      if (!container) throw new Error('路径没有受管 .zeus-worktrees 祖先。');
+      await requireMaintenanceDirectory(container);
       const identity = await readPathIdentity(candidatePath);
       const registered = context.worktrees.has(candidatePath);
       if (!identity.present) {
+        if (draft.owners.every((owner) => owner.type === 'attempt' && owner.state !== 'preparing' && owner.state !== 'active')) {
+          protectedEntries.push({ kind: 'reclaimed_historical_path', path: candidatePath, reason: '目录已回收，仅保留非空历史 attempt 路径。' });
+          continue;
+        }
+        if (registered) {
+          protectedEntries.push({ kind: 'missing_registered_worktree', path: candidatePath, reason: '实体目录缺失但 Git 仍登记，需单独修复登记。' });
+          continue;
+        }
         candidates.push({ kind: 'metadata_reconciliation', path: candidatePath, identity, repositoryPath: context.topLevel, registered, owners: draft.owners });
         continue;
       }
       const status = await lstat(candidatePath);
       if (!status.isDirectory() || status.isSymbolicLink()) throw new Error('目标不是物理目录。');
       if ((await realpath(candidatePath)) !== candidatePath) throw new Error('目标真实路径与登记路径不一致。');
-      if (!registered && !(integrationOwned && isManagedIntegrationLayout(context.containerRoot, candidatePath))) throw new Error('普通 worktree 已失去 Git 登记，不能证明可安全删除。');
-      let dirty = false;
-      if (registered) {
-        const state = await executeFile('git', ['-C', candidatePath, 'status', '--porcelain=v1', '-z', '--untracked-files=all'], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
-        dirty = state.stdout.length > 0;
-        if (dirty && !integrationOwned) throw new Error('普通任务 worktree 含未提交或未跟踪内容。');
-      }
-      candidates.push({ kind: integrationOwned ? 'integration_worktree' : 'task_worktree', path: candidatePath, identity, repositoryPath: context.topLevel, registered, dirty, owners: draft.owners });
+      if (!registered) throw new Error('实体目录已经失去 Git 登记，需先保全或明确放弃，不能自动删除。');
+      const facts = await inspectCleanGitFacts(candidatePath, context.topLevel);
+      candidates.push({ kind: integrationOwned ? 'integration_worktree' : 'task_worktree', path: candidatePath, identity, repositoryPath: context.topLevel, registered, dirty: false, owners: draft.owners, ...facts });
     } catch (error) {
-      if (integrationOwned) {
-        try {
-          candidates.push(await inspectMissingRepositoryIntegration(draft));
-          continue;
-        } catch (orphanError) {
-          protectedEntries.push({ kind: 'worktree', path: draft.path, reason: `${errorMessage(error)}；孤儿校验：${errorMessage(orphanError)}` });
-          continue;
-        }
-      }
-      protectedEntries.push({ kind: 'worktree', path: draft.path, reason: errorMessage(error) });
+      protectedEntries.push({ kind: 'worktree_requires_review', path: draft.path, reason: errorMessage(error) });
     }
   }
   return { candidates, protected: protectedEntries };
+}
+
+/** 只沿受管容器的固定层级盘点，不递归读取工作区源码或依赖。 */
+async function inspectUnownedWorktreePaths(databasePath: string): Promise<ProtectedEntry[]> {
+  const owners = readOnlyDatabase(
+    databasePath,
+    (database) =>
+      [
+        ...database.prepare('SELECT worktree_path AS path FROM task_workspaces WHERE worktree_path IS NOT NULL').all(),
+        ...database.prepare('SELECT integration_path AS path FROM task_integrations WHERE integration_path IS NOT NULL').all(),
+        ...database.prepare('SELECT worktree_path AS path FROM task_integration_attempts WHERE worktree_path IS NOT NULL').all(),
+      ] as Array<{ path: string }>,
+  ).map((row) => resolve(row.path));
+  const containers = new Set<string>();
+  for (const path of owners)
+    for (let parent = dirname(path); dirname(parent) !== parent; parent = dirname(parent)) {
+      if (basename(parent) === '.zeus-worktrees') {
+        containers.add(parent);
+        break;
+      }
+    }
+  const entries: ProtectedEntry[] = [];
+  /** 有任何现存或历史 owner 覆盖时由 owner 计划解释，不重复标成无主。 */
+  const inspectLeaf = (path: string) => {
+    if (!owners.some((owner) => pathContains(path, owner) || pathContains(owner, path))) entries.push({ kind: 'unowned_worktree', path, reason: '真实目录没有匹配的数据库 owner，不能按目录名称或年龄删除。' });
+  };
+  for (const container of [...containers].sort()) {
+    if (!(await readPathIdentity(container)).present) continue;
+    try {
+      await requireMaintenanceDirectory(container);
+      for (const project of await readdir(container, { withFileTypes: true })) {
+        const base = join(container, project.name);
+        if (!project.isDirectory() || project.isSymbolicLink()) {
+          entries.push({ kind: 'unknown_container_entry', path: base, reason: '不是标准物理工作区容器。' });
+          continue;
+        }
+        if ((await readPathIdentity(join(base, '.git'))).present) {
+          inspectLeaf(base);
+          continue;
+        }
+        for (const entry of await readdir(base, { withFileTypes: true })) {
+          const parent = join(base, entry.name);
+          if (!entry.isDirectory() || entry.isSymbolicLink()) {
+            entries.push({ kind: 'unknown_container_entry', path: parent, reason: '工作区父目录布局未知。' });
+            continue;
+          }
+          if (entry.name === '.integration') for (const child of await readdir(parent, { withFileTypes: true })) inspectLeaf(join(parent, child.name));
+          else if (entry.name === '.integration-attempts')
+            for (const integration of await readdir(parent, { withFileTypes: true })) {
+              const integrationPath = join(parent, integration.name);
+              if (!integration.isDirectory() || integration.isSymbolicLink()) {
+                inspectLeaf(integrationPath);
+                continue;
+              }
+              for (const attempt of await readdir(integrationPath)) inspectLeaf(join(integrationPath, attempt));
+            }
+          else if (/^[a-f0-9]{20}$/u.test(entry.name)) {
+            const children = await readdir(parent);
+            if (children.length === 0) entries.push({ kind: 'empty_worktree_parent', path: parent, reason: '空父目录仅列出；仍需 Git 登记与 owner 核对后以 rmdir 单独处理。' });
+            else for (const child of children) inspectLeaf(join(parent, child));
+          } else inspectLeaf(parent);
+        }
+      }
+    } catch (error) {
+      entries.push({ kind: 'worktree_inventory_error', path: container, reason: errorMessage(error) });
+    }
+  }
+  return entries;
 }
 
 /** 验证并枚举标准 `.zeus-test` 历史只读验收根。 */
@@ -386,7 +471,12 @@ async function inspectValidationSnapshots(testRoot: string, include: boolean): P
     throw error;
   }
   for (const instance of instances) {
-    if (!instance.isDirectory() || !/^instance-[a-f0-9]{16}$/u.test(instance.name)) continue;
+    if (!instance.isDirectory() || !/^instance-[a-f0-9]{16}$/u.test(instance.name)) {
+      protectedEntries.push({ kind: 'test_root_material', path: join(testRoot, instance.name), reason: '不是受管验收 runId，继续保留。' });
+      continue;
+    }
+    await requireMaintenanceDirectory(join(testRoot, instance.name));
+    protectedEntries.push({ kind: 'test_instance_root', path: join(testRoot, instance.name), reason: '整个 Test 实例保持受保护，仅独立审核 read-only-validation/runId。' });
     const validationBase = join(testRoot, instance.name, 'read-only-validation');
     let runs;
     try {
@@ -402,12 +492,19 @@ async function inspectValidationSnapshots(testRoot: string, include: boolean): P
         const status = await lstat(root);
         if (!status.isDirectory() || status.isSymbolicLink() || (await realpath(root)) !== root) throw new Error('验收根不是物理目录。');
         const manifestPath = join(root, 'data', 'zeus.db.read-only-validation.json');
-        const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as Record<string, unknown>;
+        const metadata = await readMaintenanceMetadata(manifestPath);
+        const manifest = JSON.parse(metadata.text) as Record<string, unknown>;
         const database = manifest.database as Record<string, unknown> | undefined;
         if (manifest.format !== 'zeus-read-only-validation-manifest' || manifest.mode !== 'read_only_validation' || manifest.validationRoot !== root || manifest.runId !== run.name) throw new Error('manifest 与验收根身份不匹配。');
         if (database?.path !== join(root, 'data', 'zeus.db')) throw new Error('manifest 数据库路径不匹配。');
         if (typeof manifest.manifestHash !== 'string' || !/^[a-f0-9]{64}$/u.test(manifest.manifestHash)) throw new Error('manifest 摘要无效。');
-        if (include) candidates.push({ kind: 'validation_snapshot', path: root, identity: await readPathIdentity(root) });
+        /** 自签摘要只核对内容完整性，路径和固定 runId 仍单独检查。 */
+        const payload = { ...manifest };
+        delete payload.manifestHash;
+        if (createHash('sha256').update(JSON.stringify(payload)).digest('hex') !== manifest.manifestHash) throw new Error('验收 manifest 内容与摘要不匹配。');
+        const databaseStatus = await lstat(join(root, 'data', 'zeus.db'));
+        if (!databaseStatus.isFile() || databaseStatus.isSymbolicLink() || databaseStatus.nlink !== 1 || (await realpath(join(root, 'data', 'zeus.db'))) !== join(root, 'data', 'zeus.db')) throw new Error('验收数据库不是独立普通文件。');
+        if (include) candidates.push({ kind: 'validation_snapshot', path: root, identity: await readPathIdentity(root), manifestSha256: metadata.sha256, validationDatabaseIdentity: await readPathIdentity(join(root, 'data', 'zeus.db')) });
         else protectedEntries.push({ kind: 'validation_snapshot', path: root, reason: '只读验收证据默认保留；需要 --include-validation-snapshots 才纳入确认计划。' });
       } catch (error) {
         protectedEntries.push({ kind: 'validation_snapshot', path: root, reason: errorMessage(error) });
@@ -417,43 +514,104 @@ async function inspectValidationSnapshots(testRoot: string, include: boolean): P
   return { candidates, protected: protectedEntries };
 }
 
-/** 枚举固定名称的可重建缓存，并列出没有规则的 `.tmp` 项。 */
-async function inspectRepositoryCaches(repositoryRoot: string, includeReleaseRecovery: boolean, includeRepositoryTemp: boolean): Promise<{ candidates: CleanupCandidate[]; protected: ProtectedEntry[] }> {
-  const temporaryRoot = join(repositoryRoot, '.tmp');
+/** 复核工作树干净且提交由源仓的其他命名引用保全；完整副本还要核对全部引用。 */
+async function inspectCleanGitFacts(path: string, repositoryPath: string, independentCopy = false): Promise<{ head: string; preservingRefs: string[] }> {
+  const options = { encoding: 'utf8' as const, maxBuffer: 32 * 1024 * 1024, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } };
+  const root = (await executeFile('git', ['-C', path, 'rev-parse', '--show-toplevel'], options)).stdout.trim();
+  if (resolve(root) !== path) throw new Error('候选路径不是独立 Git 工作树根。');
+  const state = await executeFile('git', ['-C', path, 'status', '--porcelain=v1', '-z', '--untracked-files=all'], options);
+  if (state.stdout) throw new Error('工作树含未提交或未跟踪内容，需先保全或明确放弃。');
+  const head = (await executeFile('git', ['-C', path, 'rev-parse', 'HEAD'], options)).stdout.trim();
+  let ownBranch: string | null = null;
+  try {
+    ownBranch = (await executeFile('git', ['-C', path, 'symbolic-ref', '-q', 'HEAD'], options)).stdout.trim();
+  } catch (error) {
+    if ((error as { code?: number }).code !== 1) throw error;
+  }
+  const preservingRefs = (await executeFile('git', ['-C', repositoryPath, 'for-each-ref', `--contains=${head}`, '--format=%(refname)'], options)).stdout
+    .trim()
+    .split('\n')
+    .filter((name) => name && (independentCopy || name !== ownBranch))
+    .sort();
+  if (preservingRefs.length === 0) throw new Error('HEAD 没有其他已保全命名引用，不能只凭工作树干净删除。');
+  if (independentCopy) {
+    await requireMaintenanceDirectory(join(path, '.git'));
+    const common = (await executeFile('git', ['-C', path, 'rev-parse', '--path-format=absolute', '--git-common-dir'], options)).stdout.trim();
+    if (resolve(common) !== join(path, '.git')) throw new Error('发布副本不是独立 Git 仓库，必须走 worktree 回收。');
+    await assertSourceObjectsIndependent(repositoryPath, path);
+    const tips = (await executeFile('git', ['-C', path, 'for-each-ref', '--format=%(objectname)'], options)).stdout.trim().split('\n').filter(Boolean);
+    for (const tip of new Set(tips)) {
+      const refs = await executeFile('git', ['-C', repositoryPath, 'for-each-ref', `--contains=${tip}`, '--format=%(refname)'], options);
+      if (!refs.stdout.trim()) throw new Error('发布副本有尚未由源仓命名引用保全的提交。');
+    }
+  }
+  return { head, preservingRefs };
+}
+
+/** 源仓对象库及其 alternates 不能依赖待删除副本，否则命名引用也不能保全提交。 */
+async function assertSourceObjectsIndependent(repositoryPath: string, candidatePath: string): Promise<void> {
+  const common = (await executeFile('git', ['-C', repositoryPath, 'rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8', maxBuffer: 1024 * 1024 })).stdout.trim();
+  const pending = [join(resolve(common), 'objects')];
+  const visited = new Set<string>();
+  while (pending.length) {
+    const directory = await realpath(pending.pop()!);
+    if (pathContains(candidatePath, directory)) throw new Error('源仓对象库仍依赖该发布副本，继续保留。');
+    if (visited.has(directory)) continue;
+    visited.add(directory);
+    if (visited.size > 256) throw new Error('对象库依赖层级过大，需人工核对。');
+    const alternates = join(directory, 'info', 'alternates');
+    if (!(await readPathIdentity(alternates)).present) continue;
+    for (const line of (await readMaintenanceMetadata(alternates)).text.split('\n')) {
+      if (!line.trim()) continue;
+      if (line.startsWith('"')) throw new Error('对象库依赖使用转义路径，需人工核对。');
+      pending.push(resolve(directory, line));
+    }
+  }
+}
+
+/** 枚举固定缓存、独立发布副本与历史产物，禁止整个 .tmp 成为候选。 */
+async function inspectRepositoryCaches(repositoryRoot: string, includeReleaseRecovery: boolean, includeReleaseArtifacts: boolean): Promise<{ candidates: CleanupCandidate[]; protected: ProtectedEntry[] }> {
   const candidates: CleanupCandidate[] = [];
   const protectedEntries: ProtectedEntry[] = [];
-  const temporaryIdentity = await readPathIdentity(temporaryRoot);
-  if (!temporaryIdentity.present) return { candidates, protected: protectedEntries };
-  const temporaryStatus = await lstat(temporaryRoot);
-  if (!temporaryStatus.isDirectory() || temporaryStatus.isSymbolicLink() || (await realpath(temporaryRoot)) !== temporaryRoot) {
-    return { candidates, protected: [{ kind: 'repository_temp', path: temporaryRoot, reason: 'Zeus 主仓 .tmp 不是物理目录。' }] };
-  }
-  if (includeRepositoryTemp) return { candidates: [{ kind: 'repository_temp', path: temporaryRoot, identity: temporaryIdentity }], protected: protectedEntries };
-  let entries;
-  try {
-    entries = await readdir(temporaryRoot, { withFileTypes: true });
-  } catch (error) {
-    if (isNodeError(error, 'ENOENT')) return { candidates, protected: protectedEntries };
-    throw error;
-  }
-  const known = new Set<string>([...rebuildableCacheNames, releaseRecoveryDirectoryName]);
-  for (const entry of entries) {
-    const path = join(temporaryRoot, entry.name);
-    if (!entry.isDirectory() || entry.isSymbolicLink()) {
-      protectedEntries.push({ kind: 'unclassified_tmp', path, reason: '不是受管物理目录。' });
-      continue;
+  const temporaryRoot = join(repositoryRoot, '.tmp');
+  /** 只有固定构建入口的物理缓存可以进入默认候选。 */
+  const inspect = async (path: string, kind: CleanupCandidate['kind'], include: boolean) => {
+    const identity = await readPathIdentity(path);
+    if (!identity.present) return;
+    try {
+      await requireMaintenanceDirectory(path);
+      if (!include) throw new Error('历史发布或验收材料默认保留，需要独立参数与精确路径审阅。');
+      if (kind === 'release_copy') candidates.push({ kind, path, identity, repositoryPath: repositoryRoot, ...(await inspectCleanGitFacts(path, repositoryRoot, true)) });
+      else {
+        if ((await readPathIdentity(join(path, '.git'))).present) throw new Error('目标包含 Git 仓库，不能按缓存或产物删除。');
+        candidates.push({ kind, path, identity, ...(kind === 'release_artifacts' ? { treeFacts: await inspectMaintenanceTree(path) } : {}) });
+      }
+    } catch (error) {
+      protectedEntries.push({ kind, path, reason: errorMessage(error) });
     }
-    if (rebuildableCacheNames.includes(entry.name as (typeof rebuildableCacheNames)[number])) {
-      candidates.push({ kind: 'rebuildable_cache', path, identity: await readPathIdentity(path) });
-      continue;
+  };
+  if ((await readPathIdentity(temporaryRoot)).present) {
+    await requireMaintenanceDirectory(temporaryRoot);
+    for (const entry of await readdir(temporaryRoot, { withFileTypes: true })) {
+      const path = join(temporaryRoot, entry.name);
+      if (!entry.isDirectory() || entry.isSymbolicLink()) {
+        protectedEntries.push({ kind: 'unclassified_tmp', path, reason: '不是已登记的物理构建目录。' });
+        continue;
+      }
+      if (rebuildableCacheNames.includes(entry.name as (typeof rebuildableCacheNames)[number])) await inspect(path, 'rebuildable_cache', true);
+      else if (entry.name === 'zeus-release') await inspect(path, 'release_artifacts', includeReleaseArtifacts);
+      else if (entry.name === 'release-candidate-v0.2.8') await inspect(path, 'release_copy', includeReleaseRecovery);
+      else if (entry.name === releaseRecoveryDirectoryName) {
+        await requireMaintenanceDirectory(path);
+        for (const copy of await readdir(path, { withFileTypes: true })) {
+          const copyPath = join(path, copy.name);
+          if (!/^[a-f0-9]{40,64}$/u.test(copy.name) || !copy.isDirectory() || copy.isSymbolicLink()) protectedEntries.push({ kind: 'release_copy', path: copyPath, reason: '发布副本布局未知，继续保留。' });
+          else await inspect(copyPath, 'release_copy', includeReleaseRecovery);
+        }
+      } else protectedEntries.push({ kind: 'unclassified_tmp', path, reason: '没有可靠所有权或重建规则，继续保留。' });
     }
-    if (entry.name === releaseRecoveryDirectoryName) {
-      if (includeReleaseRecovery) candidates.push({ kind: 'release_recovery', path, identity: await readPathIdentity(path) });
-      else protectedEntries.push({ kind: 'release_recovery', path, reason: '失败发布现场默认保留；需要 --include-release-recovery 才纳入确认计划。' });
-      continue;
-    }
-    if (!known.has(entry.name)) protectedEntries.push({ kind: 'unclassified_tmp', path, reason: '没有可靠所有权或重建规则，已保留。' });
   }
+  await inspect(join(repositoryRoot, 'dist', 'test'), 'release_artifacts', includeReleaseArtifacts);
   return { candidates, protected: protectedEntries };
 }
 
@@ -511,34 +669,33 @@ async function inspectStandaloneReleases(dataRoot: string): Promise<{ candidates
   return { candidates, protected: protectedEntries };
 }
 
-/** 读取 Skill 清单中的内容摘要，确认升级后的硬链接迁移已完成。 */
-async function inspectSkillCompaction(dataRoot: string): Promise<SkillCompactionFacts> {
+/** 仅在显式维护时读取清单与一级内容，不在启动或发送链路扫描。 */
+async function inspectSkillResources(dataRoot: string): Promise<SkillResourceFacts> {
   const root = join(dataRoot, 'artifacts', 'skill-resources');
+  const facts: SkillResourceFacts = { root, snapshotCount: 0, payloadSnapshotCount: 0, metadataOnlySnapshotCount: 0, invalidSnapshotCount: 0 };
   let entries;
   try {
     entries = await readdir(root, { withFileTypes: true });
   } catch (error) {
-    if (isNodeError(error, 'ENOENT')) return { root, snapshotCount: 0, compactedSnapshotCount: 0, pendingSnapshotCount: 0, invalidSnapshotCount: 0 };
+    if (isNodeError(error, 'ENOENT')) return facts;
     throw error;
   }
-  let snapshotCount = 0;
-  let compactedSnapshotCount = 0;
-  let invalidSnapshotCount = 0;
   for (const entry of entries) {
     if (!entry.isDirectory() || !/^[a-f0-9]{64}$/u.test(entry.name)) continue;
-    snapshotCount += 1;
+    facts.snapshotCount += 1;
     try {
-      const catalog = JSON.parse(await readFile(join(root, entry.name, 'catalog.json'), 'utf8')) as { skills?: Array<{ contentHash?: unknown }> };
-      if (!Array.isArray(catalog.skills)) throw new Error('清单缺少 skills。');
-      const hashes = catalog.skills.map((skill) => skill.contentHash).filter((hash): hash is string => typeof hash === 'string' && /^[a-f0-9]{64}$/u.test(hash));
-      if (hashes.length !== catalog.skills.length) continue;
-      const objects = await Promise.all(hashes.map((hash) => readPathIdentity(join(root, 'objects', hash))));
-      if (objects.every((identity) => identity.present)) compactedSnapshotCount += 1;
+      const snapshot = join(root, entry.name);
+      await requireMaintenanceDirectory(snapshot);
+      const catalog = JSON.parse((await readMaintenanceMetadata(join(snapshot, 'catalog.json'))).text) as { skills?: unknown };
+      if (!Array.isArray(catalog.skills)) throw new Error('历史清单缺少 skills。');
+      const children = await readdir(snapshot);
+      if (children.some((name) => name !== 'catalog.json' && name !== 'resources-reclaimed.json')) facts.payloadSnapshotCount += 1;
+      else facts.metadataOnlySnapshotCount += 1;
     } catch {
-      invalidSnapshotCount += 1;
+      facts.invalidSnapshotCount += 1;
     }
   }
-  return { root, snapshotCount, compactedSnapshotCount, pendingSnapshotCount: snapshotCount - compactedSnapshotCount - invalidSnapshotCount, invalidSnapshotCount };
+  return facts;
 }
 
 /** 统计归档会话仍占用的同步投影，正式库只能走候选压缩流程。 */
@@ -560,20 +717,44 @@ function inspectConversationSync(databasePath: string): ConversationSyncFacts {
 /** 创建确定性计划；同一路径只允许出现一次。 */
 async function createPlan(arguments_: CleanupArguments): Promise<CleanupPlan> {
   const databasePath = resolve(arguments_.dataRoot, 'data', 'zeus.db');
+  await requireMaintenanceDirectory(arguments_.dataRoot);
   const repositoryRoot = await resolveRepositoryRoot(arguments_.repositoryPath);
-  const [worktrees, validations, caches, standalone, skillCompaction] = await Promise.all([
-    inspectWorktreeCandidates(databasePath),
-    inspectValidationSnapshots(resolve(homedir(), '.zeus-test'), arguments_.includeValidationSnapshots),
-    inspectRepositoryCaches(repositoryRoot, arguments_.includeReleaseRecovery, arguments_.includeRepositoryTemp),
-    inspectStandaloneReleases(arguments_.dataRoot),
-    inspectSkillCompaction(arguments_.dataRoot),
-  ]);
-  const candidates = [...worktrees.candidates, ...validations.candidates, ...caches.candidates, ...standalone.candidates].sort((left, right) => left.path.localeCompare(right.path));
-  const duplicate = candidates.find((candidate, index) => index > 0 && candidate.path === candidates[index - 1]!.path);
-  if (duplicate) throw new Error(`清理计划包含重复路径：${duplicate.path}`);
-  const protectedEntries = [...worktrees.protected, ...validations.protected, ...caches.protected, ...standalone.protected].sort((left, right) => left.path.localeCompare(right.path) || left.kind.localeCompare(right.kind));
+  const external = arguments_.scope !== 'internal';
+  const internal = arguments_.scope !== 'external';
+  const worktrees = external ? await inspectWorktreeCandidates(databasePath, arguments_.selectedPaths) : { candidates: [], protected: [] };
+  /** 历史重复 home 根只在当前平台能形成合法路径时盘点；Windows 不能包含第二个盘符。 */
+  const standardTestRoot = join(homedir(), '.zeus-test');
+  const legacyTestRoot = join(homedir(), standardTestRoot);
+  const testRoots = [...new Set([standardTestRoot, ...(process.platform !== 'win32' || !relative(homedir(), legacyTestRoot).includes(':') ? [legacyTestRoot] : [])])];
+  const validationGroups = external ? await Promise.all(testRoots.map((root) => inspectValidationSnapshots(root, arguments_.includeValidationSnapshots))) : [];
+  const caches = external ? await inspectRepositoryCaches(repositoryRoot, arguments_.includeReleaseRecovery, arguments_.includeReleaseArtifacts) : { candidates: [], protected: [] };
+  const standalone = internal ? await inspectStandaloneReleases(arguments_.dataRoot) : { candidates: [], protected: [] };
+  const candidates: CleanupCandidate[] = [];
+  const protectedEntries: ProtectedEntry[] = [
+    ...(external ? await inspectUnownedWorktreePaths(databasePath) : []),
+    ...worktrees.protected,
+    ...validationGroups.flatMap((group) => group.protected),
+    ...caches.protected,
+    ...standalone.protected,
+  ];
+  for (const candidate of [...worktrees.candidates, ...validationGroups.flatMap((group) => group.candidates), ...caches.candidates, ...standalone.candidates]) {
+    const inside = pathContains(arguments_.dataRoot, candidate.path);
+    if ((inside && !internal) || (!inside && !external)) protectedEntries.push({ kind: 'outside_scope', path: candidate.path, reason: '不属于本次内外根范围。' });
+    else if (arguments_.selectedPaths && !arguments_.selectedPaths.includes(candidate.path)) protectedEntries.push({ kind: 'not_selected', path: candidate.path, reason: '不在本次精确路径白名单。' });
+    else candidates.push(candidate);
+  }
+  candidates.sort((left, right) => left.path.localeCompare(right.path));
+  for (let index = 0; index < candidates.length; index += 1) {
+    if (candidates.slice(0, index).some((previous) => pathContains(previous.path, candidates[index]!.path) || pathContains(candidates[index]!.path, previous.path))) throw new Error('清理候选包含重复或父子重叠路径，已拒绝整个计划。');
+  }
+  for (const path of arguments_.selectedPaths ?? []) {
+    if (!candidates.some((candidate) => candidate.path === path) && !protectedEntries.some((entry) => entry.path === path))
+      protectedEntries.push({ kind: 'unrecognized_requested_path', path, reason: '白名单路径没有通过受管资源规则，不会删除。' });
+  }
+  protectedEntries.sort((left, right) => left.path.localeCompare(right.path) || left.kind.localeCompare(right.kind));
   return {
     format: planFormat,
+    allowOnline: arguments_.allowOnline,
     platform: process.platform,
     dataRoot: arguments_.dataRoot,
     databasePath,
@@ -581,62 +762,14 @@ async function createPlan(arguments_: CleanupArguments): Promise<CleanupPlan> {
     repositoryRoot,
     includeValidationSnapshots: arguments_.includeValidationSnapshots,
     includeReleaseRecovery: arguments_.includeReleaseRecovery,
-    includeRepositoryTemp: arguments_.includeRepositoryTemp,
+    includeReleaseArtifacts: arguments_.includeReleaseArtifacts,
+    scope: arguments_.scope,
+    selectedPaths: arguments_.selectedPaths,
     candidates,
     protected: protectedEntries,
-    skillCompaction,
-    conversationSync: inspectConversationSync(databasePath),
+    skillResources: internal ? await inspectSkillResources(arguments_.dataRoot) : null,
+    conversationSync: internal ? inspectConversationSync(databasePath) : null,
   };
-}
-
-/** 读取全平台进程命令行，apply 时确认 Zeus、Codex 和构建器已经停止。 */
-async function readProcessCommands(): Promise<Array<{ pid: number; command: string }>> {
-  if (process.platform === 'win32') {
-    const script = 'Get-CimInstance Win32_Process | Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress';
-    const result = await executeFile('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
-    const parsed = JSON.parse(result.stdout || '[]') as Record<string, unknown> | Array<Record<string, unknown>>;
-    const rows = Array.isArray(parsed) ? parsed : [parsed];
-    return rows.map((row) => ({ pid: Number(row.ProcessId), command: `${String(row.ExecutablePath ?? '')} ${String(row.CommandLine ?? '')}` })).filter((row) => Number.isSafeInteger(row.pid));
-  }
-  const result = await executeFile('ps', ['-axo', 'pid=,command='], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
-  return result.stdout
-    .split('\n')
-    .map((line) => line.match(/^\s*(\d+)\s+(.+)$/u))
-    .filter((match): match is RegExpMatchArray => Boolean(match))
-    .map((match) => ({ pid: Number(match[1]), command: match[2]! }));
-}
-
-/** 找出会写入 Zeus 数据、Codex 发布或构建缓存的活动进程。 */
-async function activeProcessBlockers(plan: CleanupPlan): Promise<Array<{ pid: number; command: string }>> {
-  const commands = await readProcessCommands();
-  const standaloneRoot = join(plan.dataRoot, 'providers', 'codex', 'packages', 'standalone', 'releases');
-  return commands.filter(({ pid, command }) => {
-    if (pid === process.pid || pid === process.ppid) return false;
-    const normalized = command.replaceAll('\\', '/');
-    return (
-      /\/Zeus(?: Test)?\.app\/Contents\//iu.test(normalized) ||
-      /(?:^|[\\/])Zeus(?: Test)?\.exe(?:\s|$)/iu.test(command) ||
-      normalized.includes(standaloneRoot.replaceAll('\\', '/')) ||
-      /scripts[\\/]release-all\.mjs|electron-builder|(?:^|\s)cargo(?:\.exe)?\s+(?:build|run|test)|package-(?:mac|windows)\.mjs/iu.test(command)
-    );
-  });
-}
-
-/** macOS 使用 lsof 检查所有进程 cwd，防止删除仍被终端或编辑器占用的 worktree。 */
-async function occupiedCandidatePaths(candidates: CleanupCandidate[]): Promise<Array<{ pid: number; path: string }>> {
-  if (process.platform !== 'darwin') return [];
-  const result = await executeFile('/usr/sbin/lsof', ['-Fn', '-d', 'cwd'], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
-  const occupied: Array<{ pid: number; path: string }> = [];
-  let pid = 0;
-  for (const line of result.stdout.split('\n')) {
-    if (line.startsWith('p')) pid = Number(line.slice(1));
-    if (!line.startsWith('n') || pid === process.pid || pid === process.ppid) continue;
-    const cwd = resolve(line.slice(1));
-    for (const candidate of candidates) {
-      if (pathContains(candidate.path, cwd)) occupied.push({ pid, path: candidate.path });
-    }
-  }
-  return occupied;
 }
 
 /** 物理删除前再次拒绝符号链接和身份漂移。 */
@@ -648,43 +781,75 @@ async function assertCandidateIdentity(candidate: CleanupCandidate): Promise<voi
   if (!status.isDirectory() || status.isSymbolicLink() || (await realpath(candidate.path)) !== candidate.path) throw new Error('目标不再是原物理目录。');
 }
 
-/** 使用 Git 删除已登记 worktree；未登记合入目录才使用受界递归删除。 */
-async function removeWorktreeCandidate(candidate: CleanupCandidate): Promise<void> {
-  await assertCandidateIdentity(candidate);
-  if (candidate.kind === 'task_worktree' && candidate.identity.present) {
-    const state = await executeFile('git', ['-C', candidate.path, 'status', '--porcelain=v1', '-z', '--untracked-files=all'], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
-    if (state.stdout.length > 0) throw new Error('普通任务 worktree 在确认后出现未提交内容，已保留。');
-  }
-  if (candidate.registered) {
-    await executeFile('git', ['-C', candidate.repositoryPath!, 'worktree', 'remove', '--force', candidate.path], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
-  } else if (candidate.identity.present) {
-    await rm(candidate.path, { recursive: true, force: false, maxRetries: deletionRetryCount, retryDelay: deletionRetryDelayMs });
-  }
-  if ((await readPathIdentity(candidate.path)).present) throw new Error('worktree 删除后仍然存在。');
+/** 删除前复核全部路径引用，拒绝 owner 漂移、非终态和活动 Runtime。 */
+function assertCurrentWorktreeOwners(database: DatabaseSync, candidate: CleanupCandidate): void {
+  const references = [
+    ...database
+      .prepare(
+        "SELECT w.id,w.task_id AS taskId,w.state,w.worktree_path AS path,t.management_status AS managementStatus,t.deleted_at AS deletedAt,'workspace' AS type FROM task_workspaces w LEFT JOIN tasks t ON t.id=w.task_id WHERE w.worktree_path IS NOT NULL",
+      )
+      .all(),
+    ...database
+      .prepare(
+        "SELECT i.id,i.task_id AS taskId,i.state,i.integration_path AS path,t.management_status AS managementStatus,t.deleted_at AS deletedAt,'integration' AS type FROM task_integrations i LEFT JOIN tasks t ON t.id=i.task_id WHERE i.integration_path IS NOT NULL",
+      )
+      .all(),
+    ...database
+      .prepare(
+        "SELECT a.id,i.task_id AS taskId,a.state,a.worktree_path AS path,t.management_status AS managementStatus,t.deleted_at AS deletedAt,'attempt' AS type FROM task_integration_attempts a LEFT JOIN task_integrations i ON i.id=a.integration_id LEFT JOIN tasks t ON t.id=i.task_id WHERE a.worktree_path IS NOT NULL",
+      )
+      .all(),
+  ] as Array<{ id: string; taskId: string; state: string; path: string; managementStatus: string; deletedAt: string | null; type: WorktreeOwner['type'] }>;
+  const related = references.filter((row) => pathContains(candidate.path, resolve(row.path)) || pathContains(resolve(row.path), candidate.path));
+  if (
+    related.length !== candidate.owners?.length ||
+    related.some(
+      (row) =>
+        resolve(row.path) !== candidate.path ||
+        row.deletedAt !== null ||
+        !terminalTaskStatuses.has(row.managementStatus) ||
+        !candidate.owners?.some((owner) => owner.type === row.type && owner.id === row.id && owner.taskId === row.taskId && owner.state === row.state),
+    )
+  )
+    throw new Error('工作区的全部 owner、路径或任务状态与计划不一致。');
+  const active = activeTaskIds(database);
+  if (related.some((row) => active.has(row.taskId))) throw new Error('工作区所属任务仍有活动 Runtime 或 Provider。');
 }
 
-/** 物理回收成功后同步收敛 Zeus 数据库中的路径和终态。 */
-function reconcileWorktreeOwners(database: DatabaseSync, owners: WorktreeOwner[]): void {
+/** 只用非强制 Git 回收，任何未提交内容、未保全提交或登记变化都保留。 */
+async function removeWorktreeCandidate(candidate: CleanupCandidate): Promise<void> {
+  await assertCandidateIdentity(candidate);
+  if (!candidate.identity.present) {
+    if (candidate.registered) throw new Error('目录已缺失但 Git 仍登记，需单独修复登记，不能默认为回收成功。');
+    return;
+  }
+  if (!candidate.registered || !candidate.repositoryPath) throw new Error('实体工作区没有有效 Git 登记，继续保留。');
+  const facts = await inspectCleanGitFacts(candidate.path, candidate.repositoryPath);
+  if (facts.head !== candidate.head || JSON.stringify(facts.preservingRefs) !== JSON.stringify(candidate.preservingRefs)) throw new Error('工作区 HEAD 或保全引用在确认后发生变化。');
+  await executeFile('git', ['-C', candidate.repositoryPath, 'worktree', 'remove', candidate.path], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+  if ((await readPathIdentity(candidate.path)).present) throw new Error('Git 回收后原目录仍然存在。');
+}
+
+/** 物理回收成功后条件更新原 owner；事务由调用方持有，失败可重新生成元数据对账计划。 */
+function reconcileWorktreeOwners(database: DatabaseSync, candidate: CleanupCandidate): void {
   const now = new Date().toISOString();
-  database.exec('BEGIN IMMEDIATE');
-  try {
-    for (const owner of owners) {
-      if (owner.type === 'workspace') {
-        database.prepare("UPDATE task_workspaces SET worktree_path = NULL, state = CASE WHEN state IN ('merged', 'discarded') THEN state ELSE 'reclaimed' END, last_error = NULL, updated_at = ? WHERE id = ?").run(now, owner.id);
-      } else if (owner.type === 'integration') {
-        database
-          .prepare(
-            "UPDATE task_integrations SET integration_path = NULL, state = CASE WHEN state = 'merged' THEN 'merged' ELSE 'failed' END, conflict_files_json = '[]', last_error = CASE WHEN state = 'merged' THEN NULL ELSE '历史终态现场已由离线清理回收。' END, updated_at = ? WHERE id = ?",
-          )
-          .run(now, owner.id);
-      } else if (owner.state === 'preparing' || owner.state === 'active') {
-        database.prepare("UPDATE task_integration_attempts SET state = 'stale', last_error = '历史终态现场已由离线清理回收。', updated_at = ? WHERE id = ?").run(now, owner.id);
-      }
-    }
-    database.exec('COMMIT');
-  } catch (error) {
-    database.exec('ROLLBACK');
-    throw error;
+  for (const owner of candidate.owners ?? []) {
+    let changes: number | bigint = 1;
+    if (owner.type === 'workspace')
+      changes = database
+        .prepare("UPDATE task_workspaces SET worktree_path=NULL,state=CASE WHEN state IN ('merged','discarded') THEN state ELSE 'reclaimed' END,last_error=NULL,updated_at=? WHERE id=? AND worktree_path=? AND state=?")
+        .run(now, owner.id, candidate.path, owner.state).changes;
+    else if (owner.type === 'integration')
+      changes = database
+        .prepare(
+          "UPDATE task_integrations SET integration_path=NULL,state=CASE WHEN state='merged' THEN state ELSE 'failed' END,conflict_files_json='[]',last_error=CASE WHEN state='merged' THEN NULL ELSE '历史终态现场已由离线清理回收。' END,updated_at=? WHERE id=? AND integration_path=? AND state=?",
+        )
+        .run(now, owner.id, candidate.path, owner.state).changes;
+    else if (owner.state === 'preparing' || owner.state === 'active')
+      changes = database
+        .prepare("UPDATE task_integration_attempts SET state='stale',last_error='历史终态现场已由离线清理回收。',updated_at=? WHERE id=? AND worktree_path=? AND state=?")
+        .run(now, owner.id, candidate.path, owner.state).changes;
+    if (Number(changes) !== 1) throw new Error('owner 在更新时不再匹配原计划，需重新对账。');
   }
 }
 
@@ -692,91 +857,160 @@ function reconcileWorktreeOwners(database: DatabaseSync, owners: WorktreeOwner[]
 async function removeDirectoryCandidate(candidate: CleanupCandidate): Promise<void> {
   await assertCandidateIdentity(candidate);
   if (!candidate.identity.present) return;
+  if (candidate.manifestSha256 && (await readMaintenanceMetadata(join(candidate.path, 'data', 'zeus.db.read-only-validation.json'))).sha256 !== candidate.manifestSha256) throw new Error('验收清单在确认后已变化。');
+  if (candidate.validationDatabaseIdentity && JSON.stringify(await readPathIdentity(join(candidate.path, 'data', 'zeus.db'))) !== JSON.stringify(candidate.validationDatabaseIdentity)) throw new Error('验收数据库在确认后已变化。');
+  if (candidate.treeFacts && JSON.stringify(await inspectMaintenanceTree(candidate.path)) !== JSON.stringify(candidate.treeFacts)) throw new Error('历史材料的深层内容在确认后已变化。');
+  if (candidate.kind === 'release_copy') {
+    const facts = await inspectCleanGitFacts(candidate.path, candidate.repositoryPath!, true);
+    if (facts.head !== candidate.head || JSON.stringify(facts.preservingRefs) !== JSON.stringify(candidate.preservingRefs)) throw new Error('发布副本引用在确认后已变化。');
+  }
   await rm(candidate.path, { recursive: true, force: false, maxRetries: deletionRetryCount, retryDelay: deletionRetryDelayMs });
 }
 
-/** 执行已确认计划，并把逐项结果写入正式 artifact 审计目录。 */
-async function applyPlan(plan: CleanupPlan): Promise<{ reportPath: string; results: CleanupResult[]; availableBytesBefore: number; availableBytesAfter: number }> {
-  const processBlockers = await activeProcessBlockers(plan);
-  if (processBlockers.length > 0) throw new Error(`仍有 Zeus、Codex 或构建进程运行：${processBlockers.map((entry) => entry.pid).join(', ')}。请完全退出后重试。`);
-  const occupied = await occupiedCandidatePaths(plan.candidates);
-  if (occupied.length > 0) throw new Error(`候选目录仍被进程作为工作目录：${occupied.map((entry) => `${entry.path}(${entry.pid})`).join('，')}`);
-  if (plan.candidates.some((candidate) => pathContains(candidate.path, process.cwd()))) throw new Error('当前脚本工作目录位于清理候选中，请从 Zeus 主仓重新运行。');
+/** 原子更新操作日志，删除中断时仍保留完整计划与当前项目身份。 */
+async function updateCleanupAudit(reportPath: string, value: unknown): Promise<void> {
+  const temporary = `${reportPath}.${randomUUID()}.pending`;
+  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
+  await rename(temporary, reportPath);
+}
 
+/** 执行精确白名单；在线模式仅允许没有正式 owner 写入的历史验收及发布产物。 */
+async function applyPlan(plan: CleanupPlan): Promise<{ reportPath: string; results: CleanupResult[]; availableBytesBefore: number; availableBytesAfter: number }> {
+  if (!plan.selectedPaths || plan.selectedPaths.length !== plan.candidates.length || plan.selectedPaths.some((path) => !plan.candidates.some((candidate) => candidate.path === path)))
+    throw new Error('白名单包含受保护或未知路径，整个计划不执行。');
+  if (plan.allowOnline && (plan.scope !== 'external' || plan.candidates.some((candidate) => candidate.owners || !['validation_snapshot', 'release_artifacts'].includes(candidate.kind))))
+    throw new Error('在线模式只允许外部历史验收快照和发布产物，工作区及其他内容仍需离线。');
+  const paths = plan.candidates.map((candidate) => candidate.path);
+  if (plan.allowOnline) await assertHistoricalCleanupAvailable(paths);
+  else await assertOfflineMaintenance(plan.dataRoot, paths);
+  const auditRoot = join(plan.dataRoot, 'artifacts', 'maintenance');
+  if (plan.candidates.some((candidate) => pathContains(candidate.path, auditRoot))) throw new Error('审计目录不能位于删除候选内。');
+  await mkdir(auditRoot, { recursive: true, mode: 0o700 });
+  await requireMaintenanceDirectory(auditRoot);
+  const reportPath = join(auditRoot, `generated-data-cleanup-${new Date().toISOString().replaceAll(':', '-')}-${randomUUID()}.json`);
   const filesystemBefore = await statfs(plan.dataRoot);
   const availableBytesBefore = Number(filesystemBefore.bavail) * Number(filesystemBefore.bsize);
-  const database = new DatabaseSync(plan.databasePath, { timeout: 30_000, enableForeignKeyConstraints: true, enableDoubleQuotedStringLiterals: false, allowExtension: false });
   const results: CleanupResult[] = [];
+  await writeFile(reportPath, `${JSON.stringify({ format: planFormat, plan, results, availableBytesBefore, inProgress: null }, null, 2)}\n`, { flag: 'wx', mode: 0o600, flush: true });
+  const database = plan.candidates.some((candidate) => candidate.owners) ? new DatabaseSync(plan.databasePath, { timeout: 3_000, enableForeignKeyConstraints: true, enableDoubleQuotedStringLiterals: false, allowExtension: false }) : null;
   try {
     for (const candidate of plan.candidates) {
+      await updateCleanupAudit(reportPath, { format: planFormat, plan, results, availableBytesBefore, inProgress: candidate });
       try {
-        if (candidate.owners) {
-          await removeWorktreeCandidate(candidate);
-          reconcileWorktreeOwners(database, candidate.owners);
-          results.push({ kind: candidate.kind, path: candidate.path, status: candidate.identity.present ? 'removed' : 'reconciled', message: null });
-        } else {
-          await removeDirectoryCandidate(candidate);
-          results.push({ kind: candidate.kind, path: candidate.path, status: candidate.identity.present ? 'removed' : 'reconciled', message: null });
-        }
+        if (plan.allowOnline) await assertHistoricalCleanupAvailable([candidate.path]);
+        else await assertOfflineMaintenance(plan.dataRoot, [candidate.path]);
+        if (candidate.owners && database) {
+          database.exec('BEGIN IMMEDIATE');
+          try {
+            assertCurrentWorktreeOwners(database, candidate);
+            await removeWorktreeCandidate(candidate);
+            reconcileWorktreeOwners(database, candidate);
+            database.exec('COMMIT');
+          } catch (error) {
+            database.exec('ROLLBACK');
+            throw error;
+          }
+        } else await removeDirectoryCandidate(candidate);
+        results.push({ kind: candidate.kind, path: candidate.path, status: candidate.identity.present ? 'removed' : 'reconciled', message: null });
       } catch (error) {
         results.push({ kind: candidate.kind, path: candidate.path, status: 'failed', message: errorMessage(error) });
+        await updateCleanupAudit(reportPath, { format: planFormat, plan, results, availableBytesBefore, inProgress: null, stoppedOnFailure: true });
+        break;
       }
+      await updateCleanupAudit(reportPath, { format: planFormat, plan, results, availableBytesBefore, inProgress: null });
     }
   } finally {
-    database.close();
+    database?.close();
   }
   const filesystemAfter = await statfs(plan.dataRoot);
   const availableBytesAfter = Number(filesystemAfter.bavail) * Number(filesystemAfter.bsize);
-  const auditRoot = join(plan.dataRoot, 'artifacts', 'maintenance');
-  await mkdir(auditRoot, { recursive: true, mode: 0o700 });
-  const reportPath = join(auditRoot, `generated-data-cleanup-${new Date().toISOString().replaceAll(':', '-')}-${randomUUID()}.json`);
-  await writeFile(reportPath, `${JSON.stringify({ format: planFormat, completedAt: new Date().toISOString(), availableBytesBefore, availableBytesAfter, plan, results }, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
+  await updateCleanupAudit(reportPath, {
+    format: planFormat,
+    completedAt: new Date().toISOString(),
+    availableBytesBefore,
+    availableBytesAfter,
+    plan,
+    results,
+    inProgress: null,
+    unattempted: plan.candidates.filter((candidate) => !results.some((result) => result.path === candidate.path)),
+  });
   return { reportPath, results, availableBytesBefore, availableBytesAfter };
 }
 
 /** 解析命令行；默认只输出计划，不接收模糊确认。 */
-function parseArguments(values: string[]): CleanupArguments {
+async function parseArguments(values: string[]): Promise<CleanupArguments> {
   const parsed = parseArgs({
     args: values,
     strict: true,
     options: {
       apply: { type: 'boolean' },
+      'allow-online': { type: 'boolean' },
       confirmation: { type: 'string' },
       'data-root': { type: 'string' },
       repository: { type: 'string' },
       'include-validation-snapshots': { type: 'boolean' },
       'include-release-recovery': { type: 'boolean' },
       'include-repository-temp': { type: 'boolean' },
+      'include-release-artifacts': { type: 'boolean' },
+      scope: { type: 'string', default: 'external' },
+      'paths-file': { type: 'string' },
     },
   }).values;
+  if (parsed['include-repository-temp']) throw new Error('整根 .tmp 删除已移除，请使用 --paths-file 与具体类别参数。');
+  if (!['external', 'internal', 'all'].includes(parsed.scope ?? '')) throw new Error('--scope 只接受 external、internal 或 all。');
+  const selectedPaths = await readMaintenanceAllowlist(parsed['paths-file'] ?? null);
+  if (parsed.apply && !selectedPaths) throw new Error('执行删除必须提供已经审阅的 --paths-file。');
   const dataRoot = resolve(parsed['data-root'] ?? join(homedir(), '.zeus'));
   const repositoryPath = resolve(parsed.repository ?? process.cwd());
   return {
+    allowOnline: parsed['allow-online'] ?? false,
     apply: parsed.apply ?? false,
     confirmation: parsed.confirmation ?? null,
     dataRoot,
     repositoryPath,
     includeValidationSnapshots: parsed['include-validation-snapshots'] ?? false,
     includeReleaseRecovery: parsed['include-release-recovery'] ?? false,
-    includeRepositoryTemp: parsed['include-repository-temp'] ?? false,
+    scope: parsed.scope as CleanupArguments['scope'],
+    selectedPaths,
+    includeReleaseArtifacts: parsed['include-release-artifacts'] ?? false,
   };
 }
 
 /** 主流程先生成计划摘要，只有完全匹配的确认文本才执行删除。 */
 async function main(): Promise<void> {
-  const arguments_ = parseArguments(process.argv.slice(2));
+  const arguments_ = await parseArguments(process.argv.slice(2));
   const plan = await createPlan(arguments_);
-  const planHash = createHash('sha256').update(JSON.stringify(plan)).digest('hex');
+  /** 在线确认只固定删除事实，正式库日常写入和无关保护诊断不改变已批准目录的身份。 */
+  const approvalFacts = plan.allowOnline
+    ? {
+        format: plan.format,
+        platform: plan.platform,
+        allowOnline: true,
+        dataRoot: plan.dataRoot,
+        databasePath: plan.databasePath,
+        databaseIdentity: { present: plan.databaseIdentity.present, device: plan.databaseIdentity.device, inode: plan.databaseIdentity.inode },
+        repositoryRoot: plan.repositoryRoot,
+        scope: plan.scope,
+        includeValidationSnapshots: plan.includeValidationSnapshots,
+        includeReleaseRecovery: plan.includeReleaseRecovery,
+        includeReleaseArtifacts: plan.includeReleaseArtifacts,
+        selectedPaths: plan.selectedPaths,
+        candidates: plan.candidates,
+      }
+    : plan;
+  const planHash = createHash('sha256').update(JSON.stringify(approvalFacts)).digest('hex');
   const expectedConfirmation = `DELETE ZEUS ${planHash}`;
   if (!arguments_.apply || arguments_.confirmation !== expectedConfirmation) {
-    process.stdout.write(`${JSON.stringify({ status: 'confirmation_required', plan, planHash, expectedConfirmation }, null, 2)}\n`);
+    process.stdout.write(
+      `${JSON.stringify({ status: 'confirmation_required', summary: { candidates: plan.candidates.length, protected: plan.protected.length, protectedByKind: Object.fromEntries([...new Set(plan.protected.map((entry) => entry.kind))].sort().map((kind) => [kind, plan.protected.filter((entry) => entry.kind === kind).length])) }, plan, planHash, expectedConfirmation }, null, 2)}\n`,
+    );
     if (arguments_.apply) process.exitCode = 2;
     return;
   }
-  const result = await applyPlan(plan);
+  const result = await withMaintenanceLease(plan.dataRoot, () => applyPlan(plan));
   const failed = result.results.filter((entry) => entry.status === 'failed');
   process.stdout.write(
-    `${JSON.stringify({ status: failed.length === 0 ? 'directory_cleanup_completed' : 'directory_cleanup_partially_completed', remaining: { protected: plan.protected, skillCompaction: plan.skillCompaction, conversationSync: plan.conversationSync }, ...result }, null, 2)}\n`,
+    `${JSON.stringify({ status: failed.length === 0 ? 'directory_cleanup_completed' : 'directory_cleanup_partially_completed', remaining: { protected: plan.protected, skillResources: plan.skillResources, conversationSync: plan.conversationSync }, ...result }, null, 2)}\n`,
   );
   if (failed.length > 0) process.exitCode = 1;
 }

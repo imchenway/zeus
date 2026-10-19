@@ -1,31 +1,18 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
-import { execFile } from 'node:child_process';
 import { lstat, mkdir, open, readFile, realpath, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
-import { parseArgs, promisify } from 'node:util';
+import { parseArgs } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
-import { promoteValidatedRecoveryCandidate, type RecoveryPromotionOfflineLeasePort } from '../packages/storage/src/index.js';
 import { conversationSyncProtocolV2Generation } from '../packages/storage/src/conversationSyncEventStore.js';
+import { assertOfflineMaintenance, maintenancePathContains, withMaintenanceLease } from './maintenanceSafety.js';
+import { promoteValidatedRecoveryCandidate, type RecoveryPromotionOfflineLeasePort } from '../packages/storage/src/index.js';
 
-const executeFile = promisify(execFile);
-const maintenanceMigrationId = '20260826_0002_retired_conversation_sync_event_cleanup';
-const maximumRetainedEvents = 4_096;
-const maximumRetainedBytes = 16 * 1024 * 1024;
+import { assertConversationSyncMaintenance, businessFactTables, inspectConversationSyncMaintenance, maintenanceMigrationId } from './conversationSyncMaintenance.js';
+
+/** 原子提升凭证沿用现有格式。 */
 const markerFormatVersion = 1;
-const businessFactTables = [
-  'conversations',
-  'conversation_turns',
-  'conversation_items',
-  'conversation_model_history',
-  'conversation_process_items',
-  'conversation_resources',
-  'turn_change_sets',
-  'turn_change_files',
-  'conversation_server_requests',
-  'conversation_submissions',
-] as const;
 
 interface Arguments {
   candidateDatabasePath: string;
@@ -40,6 +27,8 @@ interface PromotionDatabaseFacts {
   foreignKeyViolations: number;
   maintenanceMigrationPresent: boolean;
   legacySyncEvents: number;
+  /** 提升前也必须确认归档同步投影已经回收。 */
+  archivedSyncEvents: number;
   currentNonV2Streams: number;
   retainedBudgetViolations: number;
   business: Record<string, { rows: number; minimumId: string | null; maximumId: string | null; idCharacters: number }>;
@@ -54,7 +43,7 @@ if (basename(candidateDatabasePath) !== 'zeus.db' || basename(dirname(candidateD
   throw new Error('候选数据库必须位于隔离候选根的 database/zeus.db。');
 }
 const candidateRoot = dirname(dirname(candidateDatabasePath));
-if (candidateRoot === resolve(join(homedir(), '.zeus')) || candidateRoot.startsWith(`${resolve(join(homedir(), '.zeus'))}/`)) {
+if (maintenancePathContains(resolve(join(homedir(), '.zeus')), candidateRoot)) {
   throw new Error('候选根不得位于正式 Zeus 数据目录。');
 }
 await mkdir(arguments_.rollbackDirectoryPath, { recursive: true, mode: 0o700 });
@@ -113,50 +102,51 @@ if (!arguments_.apply || arguments_.confirmation !== expectedConfirmation) {
   );
   process.exitCode = arguments_.apply ? 2 : 0;
 } else {
-  const lockPath = join(dirname(targetDatabasePath), '.conversation-sync-promotion.lock');
-  const lock = await open(lockPath, fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY | fsConstants.O_NOFOLLOW, 0o600);
-  try {
-    await lock.writeFile(`${JSON.stringify({ pid: process.pid, candidateDatabasePath, expectedPackageSha256, createdAt: new Date().toISOString() })}\n`);
-    await lock.sync();
-    await assertTargetNotOpen(targetDatabasePath);
-    const offlineLeasePort: RecoveryPromotionOfflineLeasePort = {
-      withExclusiveOfflineLease: async (operation) =>
-        operation({
-          leaseId: `conversation-sync-offline-${randomUUID()}`,
-          coreState: 'stopped',
-          databaseWriterCount: 0,
-          acquiredAt: new Date().toISOString(),
-          assertStillExclusive: () => assertTargetNotOpen(targetDatabasePath),
-        }),
-    };
-    const result = await promoteValidatedRecoveryCandidate({
-      candidatePath: candidateRoot,
-      targetDatabasePath,
-      rollbackDirectoryPath,
-      expectedBackupId,
-      expectedPackageSha256,
-      expectedManifestSha256,
-      expectedDatabaseSha256: candidateDigest.sha256,
-      expectedDatabaseBytes: candidateDigest.bytes,
-      expectedManifestFileCount: 1,
-      confirmation: expectedConfirmation,
-      offlineLeasePort,
-    });
-    const promotedFacts = inspectPromotionDatabase(targetDatabasePath);
-    assertCandidateFacts(promotedFacts);
-    if (JSON.stringify(promotedFacts.business) !== JSON.stringify(candidateFacts.business)) throw new Error('提升后业务事实身份发生变化。');
-    process.stdout.write(`${JSON.stringify({ status: 'promoted', ...result, promotedFacts }, null, 2)}\n`);
-  } finally {
-    await lock.close();
-    await unlink(lockPath);
-  }
+  await withMaintenanceLease(dirname(dirname(targetDatabasePath)), async () => {
+    const lockPath = join(dirname(targetDatabasePath), '.conversation-sync-promotion.lock');
+    const lock = await open(lockPath, fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY | fsConstants.O_NOFOLLOW, 0o600);
+    try {
+      await lock.writeFile(`${JSON.stringify({ pid: process.pid, candidateDatabasePath, expectedPackageSha256, createdAt: new Date().toISOString() })}\n`);
+      await lock.sync();
+      await assertTargetNotOpen(targetDatabasePath);
+      const offlineLeasePort: RecoveryPromotionOfflineLeasePort = {
+        withExclusiveOfflineLease: async (operation) =>
+          operation({
+            leaseId: `conversation-sync-offline-${randomUUID()}`,
+            coreState: 'stopped',
+            databaseWriterCount: 0,
+            acquiredAt: new Date().toISOString(),
+            assertStillExclusive: () => assertTargetNotOpen(targetDatabasePath),
+          }),
+      };
+      const result = await promoteValidatedRecoveryCandidate({
+        candidatePath: candidateRoot,
+        targetDatabasePath,
+        rollbackDirectoryPath,
+        expectedBackupId,
+        expectedPackageSha256,
+        expectedManifestSha256,
+        expectedDatabaseSha256: candidateDigest.sha256,
+        expectedDatabaseBytes: candidateDigest.bytes,
+        expectedManifestFileCount: 1,
+        confirmation: expectedConfirmation,
+        offlineLeasePort,
+      });
+      const promotedFacts = inspectPromotionDatabase(targetDatabasePath);
+      assertCandidateFacts(promotedFacts);
+      if (JSON.stringify(promotedFacts.business) !== JSON.stringify(candidateFacts.business)) throw new Error('提升后业务事实身份发生变化。');
+      process.stdout.write(`${JSON.stringify({ status: 'promoted', ...result, promotedFacts }, null, 2)}\n`);
+    } finally {
+      await lock.close();
+      await unlink(lockPath);
+    }
+  });
 }
 
 function inspectPromotionDatabase(path: string): PromotionDatabaseFacts {
   const database = new DatabaseSync(path, { readOnly: true, timeout: 30_000, enableForeignKeyConstraints: true, enableDoubleQuotedStringLiterals: false, allowExtension: false });
   try {
     database.exec('PRAGMA query_only = ON');
-    const scalar = (sql: string, parameters: unknown[] = []): number => Number((database.prepare(sql).get(...parameters) as Record<string, unknown> | undefined)?.value ?? 0);
     const business = Object.fromEntries(
       businessFactTables.map((table) => {
         const present = Boolean(database.prepare(`SELECT 1 AS present FROM sqlite_schema WHERE type = 'table' AND name = ?`).get(table));
@@ -168,20 +158,7 @@ function inspectPromotionDatabase(path: string): PromotionDatabaseFacts {
     return {
       quickCheck: String((database.prepare('PRAGMA quick_check').get() as Record<string, unknown> | undefined)?.quick_check ?? ''),
       foreignKeyViolations: (database.prepare('PRAGMA foreign_key_check').all() as unknown[]).length,
-      maintenanceMigrationPresent: Boolean(database.prepare('SELECT 1 AS present FROM schema_migrations WHERE migration_id = ?').get(maintenanceMigrationId)),
-      legacySyncEvents: scalar('SELECT COUNT(*) AS value FROM conversation_sync_events WHERE generation_id <> ?', [conversationSyncProtocolV2Generation]),
-      currentNonV2Streams: scalar('SELECT COUNT(*) AS value FROM conversation_sync_event_streams WHERE generation_id <> ? AND is_current = 1', [conversationSyncProtocolV2Generation]),
-      retainedBudgetViolations: scalar(
-        `SELECT COUNT(*) AS value
-           FROM (
-             SELECT conversation_id, COUNT(*) AS event_count, COALESCE(SUM(payload_byte_length), 0) AS event_bytes
-               FROM conversation_sync_events
-              WHERE generation_id = ?
-              GROUP BY conversation_id
-             HAVING event_count > ? OR event_bytes > ?
-           )`,
-        [conversationSyncProtocolV2Generation, maximumRetainedEvents, maximumRetainedBytes],
-      ),
+      ...inspectConversationSyncMaintenance(database),
       business,
     };
   } finally {
@@ -191,23 +168,12 @@ function inspectPromotionDatabase(path: string): PromotionDatabaseFacts {
 
 function assertCandidateFacts(facts: PromotionDatabaseFacts): void {
   if (facts.quickCheck !== 'ok' || facts.foreignKeyViolations !== 0) throw new Error('候选数据库未通过完整性检查。');
-  if (!facts.maintenanceMigrationPresent || facts.legacySyncEvents !== 0 || facts.currentNonV2Streams !== 0 || facts.retainedBudgetViolations !== 0) {
-    throw new Error('候选数据库尚未完成同步事件 V2 压缩维护。');
-  }
+  assertConversationSyncMaintenance(facts);
 }
 
+/** 提升前及独占 lease 内复核正式库、WAL 与相关进程，两端使用同一边界。 */
 async function assertTargetNotOpen(target: string): Promise<void> {
-  try {
-    const result = await executeFile('/usr/sbin/lsof', ['-t', '--', target], { encoding: 'utf8' });
-    const pids = result.stdout
-      .split(/\s+/u)
-      .map((value) => Number(value))
-      .filter((value) => Number.isSafeInteger(value) && value > 0 && value !== process.pid);
-    if (pids.length > 0) throw new Error(`正式数据库仍被进程占用：${pids.join(',')}`);
-  } catch (error) {
-    if (isExecError(error) && error.code === 1) return;
-    throw error;
-  }
+  await assertOfflineMaintenance(dirname(dirname(target)), [target, `${target}-wal`, `${target}-shm`]);
 }
 
 async function requireSingleLinkRegularFile(pathValue: string, field: string): Promise<string> {
@@ -277,8 +243,4 @@ function sha256(value: string): string {
 
 function isNodeError(value: unknown): value is NodeJS.ErrnoException {
   return value instanceof Error && 'code' in value;
-}
-
-function isExecError(value: unknown): value is NodeJS.ErrnoException & { code: number } {
-  return value instanceof Error && 'code' in value && typeof value.code === 'number';
 }

@@ -34,6 +34,7 @@ export function loadDesktopReadOnlyValidationDescriptor(input: {
   });
 }
 
+/** 默认 Test 启动与只读验收共用唯一绝对根，避免再次拼接用户 home。 */
 export function resolveDesktopTestDataRoot(executablePathInput: string, homeDirectory = homedir()): string {
   const executablePath = resolve(executablePathInput);
   const identityHash = createHash('sha256').update(executablePath).digest('hex').slice(0, 16);
