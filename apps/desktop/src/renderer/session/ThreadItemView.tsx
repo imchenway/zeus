@@ -1509,39 +1509,57 @@ function isConversationContextPlaceholder(value: string): boolean {
 /** 历史消息统一展示评论名称，回答原文和代码来源继续保留。 */
 function UserConversationContextSummary(props: { draft: ConversationContextDraft; language: SessionUiLanguage }) {
   const annotations = props.draft.responseAnnotations;
-  const comments = props.draft.codeComments.length;
-  if (!annotations.length && !comments) return null;
+  /** 代码评论保留文件、位置、引用原文和可选评论正文。 */
+  const codeComments = props.draft.codeComments;
+  if (!annotations.length && !codeComments.length) return null;
   const zh = props.language === 'zh-CN';
-  if (annotations.length > 0) {
-    return (
-      <section className="session-message-context-summary" aria-label={zh ? '回答评论' : 'Response comments'}>
-        <header>
-          <strong>{zh ? '回答评论' : 'Response comments'}</strong>
-          <span>{annotations.length}</span>
-        </header>
-        <div className="session-message-response-annotations">
-          {annotations.map((annotation, index) => (
-            <article key={annotation.id}>
-              <span>{zh ? `评论 ${index + 1}` : `Comment ${index + 1}`}</span>
+  /** 标题区统一显示回答和文件评论的总数。 */
+  const count = annotations.length + codeComments.length;
+  return (
+    <section className="session-message-context-summary" aria-label={zh ? '评论' : 'Comments'}>
+      <header>
+        <strong>{zh ? '评论' : 'Comments'}</strong>
+        <span>{count}</span>
+      </header>
+      <div className="session-message-response-annotations">
+        {codeComments.map((comment, index) => (
+          <article key={comment.id}>
+            <span>
+              {zh ? `文件评论 ${index + 1}` : `File comment ${index + 1}`} · {comment.position.path}:
+              {comment.position.startLine && comment.position.startLine !== comment.position.line ? `${comment.position.startLine}-${comment.position.line}` : comment.position.line}
+            </span>
+            {comment.position.selectedText?.trim() ? (
               <blockquote>
                 <span className="session-response-annotation-label">{zh ? '引用原文' : 'Quoted text'}</span>
-                {annotation.anchor.selectedText}
+                {comment.position.selectedText}
               </blockquote>
-              {annotation.note?.trim() ? (
-                <p>
-                  <span className="session-response-annotation-label">{zh ? '我的评论' : 'My comment'}</span>
-                  {annotation.note.trim()}
-                </p>
-              ) : null}
-            </article>
-          ))}
-        </div>
-        {comments ? <small>{zh ? `${comments} 条代码评论` : `${comments} ${comments === 1 ? 'code comment' : 'code comments'}`}</small> : null}
-      </section>
-    );
-  }
-  const label = zh ? `${comments} 条评论` : `${comments} ${comments === 1 ? 'comment' : 'comments'}`;
-  return <span className="session-message-context-summary">{label}</span>;
+            ) : null}
+            {comment.body.trim() ? (
+              <p>
+                {comment.position.selectedText?.trim() ? <span className="session-response-annotation-label">{zh ? '我的评论' : 'My comment'}</span> : null}
+                {comment.body.trim()}
+              </p>
+            ) : null}
+          </article>
+        ))}
+        {annotations.map((annotation, index) => (
+          <article key={annotation.id}>
+            <span>{zh ? `回答评论 ${index + 1}` : `Response comment ${index + 1}`}</span>
+            <blockquote>
+              <span className="session-response-annotation-label">{zh ? '引用原文' : 'Quoted text'}</span>
+              {annotation.anchor.selectedText}
+            </blockquote>
+            {annotation.note?.trim() ? (
+              <p>
+                <span className="session-response-annotation-label">{zh ? '我的评论' : 'My comment'}</span>
+                {annotation.note.trim()}
+              </p>
+            ) : null}
+          </article>
+        ))}
+      </div>
+    </section>
+  );
 }
 function primitiveText(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : typeof value === 'number' || typeof value === 'boolean' ? String(value) : null;

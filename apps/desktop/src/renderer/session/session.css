@@ -1922,44 +1922,108 @@
   opacity: 1;
 }
 
-/* 评论入口仅由按钮自身提供留白，左下角贴近鼠标松手点右上方。 */
+/* 评论入口使用中性悬浮面板，左下角贴近鼠标松手点右上方。 */
 .session-selection-toolbar {
   inset: auto;
   margin: 0;
   padding: 0;
-  background: color-mix(in srgb, var(--session-canvas, #fff) 96%, transparent);
-  border: 1px solid var(--session-line, rgb(0 0 0 / 10%));
-  border-radius: 7px;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 12%);
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  box-shadow: none;
   display: flex;
-  overflow: hidden;
+  overflow: visible;
   position: fixed;
   transform: translateY(-100%);
   z-index: 1000;
+}
+
+/* 主题浮层规则不能给胶囊外侧再增加一层底板。 */
+.macos-ai-app.zeus-shell .session-selection-toolbar {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
 }
 
 .session-selection-toolbar[data-placement='below'] {
   transform: none;
 }
 
-.session-selection-toolbar > button {
+.macos-ai-app.zeus-shell .session-selection-toolbar > button {
+  -webkit-backdrop-filter: saturate(140%) blur(16px);
+  align-items: center;
   appearance: none;
-  background: transparent;
-  border: 0;
-  color: var(--session-text, #171717);
+  backdrop-filter: saturate(140%) blur(16px);
+  background: color-mix(in srgb, var(--session-canvas) 94%, transparent);
+  border: 1px solid var(--session-line);
+  border-radius: 10px;
+  box-shadow:
+    0 8px 24px rgb(15 23 42 / 12%),
+    0 1px 2px rgb(15 23 42 / 8%);
+  color: var(--session-text);
   cursor: pointer;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 18px;
-  min-block-size: 26px;
-  padding: 4px 8px;
-  white-space: nowrap;
+  display: inline-flex;
+  inline-size: 32px;
+  justify-content: center;
+  max-inline-size: 32px;
+  min-block-size: 32px;
+  min-inline-size: 32px;
+  padding: 0;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
 }
 
-.session-selection-toolbar > button:hover:not(:disabled):not([aria-disabled='true']),
+.session-selection-toolbar > button svg {
+  background: transparent;
+  block-size: 17px;
+  color: var(--zeus-brand-primary);
+  flex: 0 0 auto;
+  inline-size: 17px;
+}
+
+.macos-ai-app.zeus-shell .session-selection-toolbar > button:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--session-canvas);
+  border-color: color-mix(in srgb, var(--zeus-brand-primary) 24%, var(--session-line));
+  box-shadow:
+    0 10px 28px rgb(15 23 42 / 14%),
+    0 1px 2px rgb(15 23 42 / 9%);
+}
+
+.macos-ai-app.zeus-shell .session-selection-toolbar > button:active:not(:disabled):not([aria-disabled='true']) {
+  background: var(--session-control-hover);
+  box-shadow: 0 4px 12px rgb(15 23 42 / 10%);
+}
+
 .session-selection-toolbar > button:focus-visible {
-  background: var(--session-control-hover, rgb(0 0 0 / 6%));
+  outline: 2px solid var(--zeus-brand-primary);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-selection-toolbar > button,
+  .session-selection-toolbar > button svg {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .macos-ai-app.zeus-shell .session-selection-toolbar > button {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: Highlight;
+    border-color: ButtonText;
+    box-shadow: none;
+    color: HighlightText;
+  }
+
+  .session-selection-toolbar > button svg {
+    background: transparent;
+    color: currentColor;
+  }
 }
 
 /* 批注主操作沿用发送按钮的品牌底色和白色前景，优先于会话通用按钮继承规则。 */
@@ -2486,12 +2550,6 @@
 }
 
 @media (max-width: 760px) {
-  .session-selection-toolbar > button {
-    font-size: 12px;
-    min-block-size: 26px;
-    padding-inline: 8px;
-  }
-
   .session-codex-parity-v1 .session-code-comment-panel,
   .session-codex-parity-v1 .session-saved-code-comment {
     inline-size: calc(100% - 24px);
@@ -8620,6 +8678,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   vertical-align: baseline;
 }
 
+/* 会话评论已引用按钮内文字；这里只恢复对应的原生选区高亮，不改变文件打开行为。 */
+.session-codex-parity-v1 button.session-inline-resource,
+.session-codex-parity-v1 button.session-inline-resource > span {
+  user-select: text;
+}
+
 .session-codex-parity-v1 .session-inline-resource:hover:not(:disabled):not([aria-disabled='true']):not([data-error='true']) {
   /* 悬停加深文字，打开失败的红色状态仍由现有错误规则决定。 */
   color: color-mix(in srgb, var(--zeus-brand-text) 70%, var(--session-text));
@@ -9365,6 +9429,17 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 /* 源码选中行与其他列表共用中性底色。 */
 .session-codex-parity-v1 .session-source-code-preview .cm-line[data-selected='true'] {
   background: var(--zeus-source-list-selected);
+}
+
+/* 已保存的文件文字评论保持轻量高亮，焦点离开代码后仍能看出评论范围。 */
+.session-codex-parity-v1 .session-source-code-preview .session-source-comment-range {
+  background: color-mix(in srgb, var(--zeus-brand-primary) 14%, transparent);
+  box-shadow: inset 0 -1px color-mix(in srgb, var(--zeus-brand-primary) 48%, transparent);
+}
+
+/* 文件评论标记进入文档顶层，固定定位避免被 CodeMirror 滚动区裁剪。 */
+.macos-ai-app.zeus-shell .session-response-annotation-marker.session-source-annotation-marker {
+  position: fixed;
 }
 
 /* 行号与源码正文同底色，保留文字和选中行的区分。 */

@@ -1,10 +1,10 @@
 import { MotionPresence, PopoverSurface } from '../ui/MotionPresence.js';
-import { type FormEvent, type KeyboardEvent, type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { ChatTeardropDotsIcon as ChatTeardropDots } from '@phosphor-icons/react/dist/csr/ChatTeardropDots';
+import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
-import { SlidersHorizontalIcon as SlidersHorizontal } from '@phosphor-icons/react/dist/csr/SlidersHorizontal';
 import type { ConversationResponseAnnotation, ConversationResponseTextAnchor } from '@zeus/shared';
 import type { SessionUiLanguage } from './ThreadItemView.js';
+import { SelectionCommentEditor, selectionCommentEditorPoint, type SelectionOverlayBounds } from './SelectionCommentEditor.js';
 
 /** 评论入口保存松手点与选择终点的相对位置，布局变化后仍跟随原文。 */
 interface SelectionCandidate {
@@ -12,23 +12,6 @@ interface SelectionCandidate {
   /** 鼠标松手点相对选择终点的偏移，支持正向与反向跨行选择。 */
   pointerOffset: { left: number; top: number };
   point: { left: number; top: number; placement: 'above' | 'below' };
-}
-
-interface AnnotationEditorPoint {
-  left: number;
-  top: number;
-  /** 实际可用宽度同步到样式，窄分栏不沿用视口宽度。 */
-  width: number;
-  /** 极矮会话中允许编辑框内部滚动，操作按钮不落到裁剪区域。 */
-  maxHeight: number;
-  placement: 'above' | 'below';
-}
-
-interface OverlayBounds {
-  left: number;
-  right: number;
-  top: number;
-  bottom: number;
 }
 
 /** 标记尺寸与样式保持一致。 */
@@ -208,7 +191,7 @@ export function ResponseSelectionActions(props: {
   const editingRange = root && editingAnnotation ? rangeFromOffsets(root, editingAnnotation.anchor.startOffset, editingAnnotation.anchor.endOffset) : null;
   const editingRect = editingRange ? rangeEndRect(editingRange) : null;
   // 标记必须留在会话可见区，编辑浮层则可利用整个视口的上下空间。
-  const editorPoint = editingRect && rectFitsVisibleBounds(editingRect, overlayBounds) ? annotationEditorPoint(editingRect, view, { ...overlayBounds, top: 0, bottom: view?.innerHeight ?? overlayBounds.bottom }, editorHeight) : null;
+  const editorPoint = editingRect && rectFitsVisibleBounds(editingRect, overlayBounds) ? selectionCommentEditorPoint(editingRect, view, { ...overlayBounds, top: 0, bottom: view?.innerHeight ?? overlayBounds.bottom }, editorHeight) : null;
   void revision;
   const portalRoot = transcript ?? article?.closest<HTMLElement>('.session-codex-parity-v1') ?? article?.ownerDocument.body ?? document.body;
 
@@ -227,6 +210,8 @@ export function ResponseSelectionActions(props: {
           >
             <button
               type="button"
+              aria-label={props.language === 'zh-CN' ? '评论选中文字' : 'Comment on selected text'}
+              data-icon-tooltip={props.language === 'zh-CN' ? '评论' : 'Comment'}
               onPointerDown={(event) => event.preventDefault()}
               onClick={() => {
                 const id = props.onAddAnnotation?.(candidate.anchor);
@@ -234,7 +219,7 @@ export function ResponseSelectionActions(props: {
                 if (id) setEditingId(id);
               }}
             >
-              {props.language === 'zh-CN' ? '评论' : 'Comment'}
+              <ChatTeardropDots aria-hidden="true" weight="regular" />
             </button>
           </PopoverSurface>
         ) : null}
@@ -255,11 +240,13 @@ export function ResponseSelectionActions(props: {
       ))}
       <MotionPresence>
         {editingAnnotation && editorPoint ? (
-          <ResponseAnnotationEditor
+          <SelectionCommentEditor
             editorRef={editorRef}
-            annotation={editingAnnotation}
+            id={editingAnnotation.id}
+            note={editingAnnotation.note}
             point={editorPoint}
             language={props.language}
+            label={props.language === 'zh-CN' ? '回答评论' : 'Response comment'}
             onClose={() => setEditingId(null)}
             onUpdate={props.onUpdateAnnotation}
             onRemove={props.onRemoveAnnotation}
@@ -268,103 +255,6 @@ export function ResponseSelectionActions(props: {
       </MotionPresence>
     </>,
     portalRoot,
-  );
-}
-
-/** 回答评论沿用浏览器的胶囊编辑框，次要操作收进调整面板。 */
-function ResponseAnnotationEditor(props: {
-  /** 供定位逻辑读取实际浮层高度。 */
-  editorRef: RefObject<HTMLDivElement | null>;
-  annotation: ConversationResponseAnnotation;
-  point: AnnotationEditorPoint;
-  language: SessionUiLanguage;
-  onClose: () => void;
-  onUpdate?: (id: string, note: string) => void;
-  onRemove?: (id: string) => void;
-}) {
-  /** 本地编辑内容在确认后写入会话草稿。 */
-  const [note, setNote] = useState(props.annotation?.note ?? '');
-  /** 调整面板保留删除和取消，默认只展示输入与确认。 */
-  const [optionsOpen, setOptionsOpen] = useState(false);
-  /** 多行文字按实际内容增长，避免固定大输入框。 */
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  useLayoutEffect(() => {
-    /** 先恢复单行高度，再测量换行后的实际内容。 */
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-    textarea.style.height = '28px';
-    textarea.style.height = `${Math.min(112, textarea.scrollHeight)}px`;
-  }, [note]);
-  useEffect(() => setNote(props.annotation?.note ?? ''), [props.annotation?.id, props.annotation?.note]);
-  /** 操作文案与会话语言一致。 */
-  const zh = props.language === 'zh-CN';
-  /** 点击确认和键盘确认共用同一条批注提交流程。 */
-  function submitAnnotation(event: FormEvent<HTMLFormElement>): void {
-    event.preventDefault();
-    props.onUpdate?.(props.annotation.id, note);
-    props.onClose();
-  }
-  /** 普通 Enter 提交；输入法确认和 Shift + Enter 保留原生输入行为。 */
-  function handleAnnotationKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
-    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
-    event.preventDefault();
-    event.currentTarget.form?.requestSubmit();
-  }
-  /** Esc 保存已有内容并关闭，纯空白草稿直接删除；输入法取消不影响评论。 */
-  function handleAnnotationDismiss(event: KeyboardEvent<HTMLDivElement>): void {
-    if (event.key !== 'Escape' || event.nativeEvent.isComposing) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (note.trim()) props.onUpdate?.(props.annotation.id, note);
-    else props.onRemove?.(props.annotation.id);
-    props.onClose();
-  }
-  return (
-    <PopoverSurface
-      ref={props.editorRef}
-      popover="manual"
-      className="session-response-annotation-editor"
-      data-placement={props.point.placement}
-      data-expanded={optionsOpen || note.includes('\n') || undefined}
-      style={{ left: props.point.left, top: props.point.top, width: props.point.width, maxHeight: props.point.maxHeight }}
-      aria-label={zh ? '回答评论' : 'Response comment'}
-      onKeyDown={handleAnnotationDismiss}
-    >
-      <form className="session-response-annotation-row" onSubmit={submitAnnotation}>
-        <button data-icon-tooltip={zh ? '评论选项' : 'Comment options'} type="button" aria-label={zh ? '评论选项' : 'Comment options'} aria-expanded={optionsOpen} onClick={() => setOptionsOpen((open) => !open)}>
-          <SlidersHorizontal aria-hidden="true" />
-        </button>
-        <textarea
-          ref={textareaRef}
-          autoFocus
-          rows={1}
-          value={note}
-          aria-label={zh ? '评论内容' : 'Comment text'}
-          placeholder={zh ? '添加可选评论…' : 'Add an optional comment…'}
-          onChange={(event) => setNote(event.currentTarget.value)}
-          onKeyDown={handleAnnotationKeyDown}
-        />
-        <button data-icon-tooltip={zh ? '完成评论' : 'Save comment'} type="submit" className="session-response-annotation-save" aria-label={zh ? '完成评论' : 'Save comment'}>
-          <Check aria-hidden="true" weight="bold" />
-        </button>
-      </form>
-      {optionsOpen ? (
-        <div className="session-response-annotation-options">
-          <button
-            type="button"
-            onClick={() => {
-              props.onRemove?.(props.annotation.id);
-              props.onClose();
-            }}
-          >
-            {zh ? '删除' : 'Delete'}
-          </button>
-          <button type="button" onClick={props.onClose}>
-            {zh ? '取消' : 'Cancel'}
-          </button>
-        </div>
-      ) : null}
-    </PopoverSurface>
   );
 }
 
@@ -435,29 +325,8 @@ function selectionToolbarPoint(selection: Selection, range: Range, pointerOffset
   };
 }
 
-/** 编辑框贴住标记下方，右侧空间不足时只做边界夹紧，不跳到另一侧。 */
-function annotationEditorPoint(rect: DOMRect, view: Window | null, overlayBounds: OverlayBounds, editorHeight: number): AnnotationEditorPoint {
-  const viewportWidth = view?.innerWidth ?? 380;
-  const margin = 12;
-  const gap = 10;
-  const availableWidth = Math.max(1, overlayBounds.right - overlayBounds.left - margin * 2);
-  const editorWidth = Math.min(296, viewportWidth - margin * 2, availableWidth);
-  /** 整个编辑框保留在会话可见区域内，空间不足时内部滚动。 */
-  const maxHeight = Math.max(1, overlayBounds.bottom - overlayBounds.top - margin * 2);
-  const minimumLeft = overlayBounds.left + margin;
-  const maximumLeft = overlayBounds.right - editorWidth - margin;
-  const left = Math.max(minimumLeft, Math.min(rect.right + ANNOTATION_MARKER_INLINE_OFFSET, maximumLeft));
-  const placeBelow = rect.bottom + gap + editorHeight <= overlayBounds.bottom - margin || rect.top + ANNOTATION_MARKER_BLOCK_OFFSET - gap - editorHeight < overlayBounds.top + margin;
-  return {
-    left,
-    width: editorWidth,
-    maxHeight,
-    top: placeBelow ? Math.max(overlayBounds.top + margin, Math.min(rect.bottom + gap, overlayBounds.bottom - margin - editorHeight)) : rect.top + ANNOTATION_MARKER_BLOCK_OFFSET - gap,
-    placement: placeBelow ? 'below' : 'above',
-  };
-}
-
-function visibleOverlayBounds(article: HTMLElement | null, view: Window | null): OverlayBounds {
+/** 取得回答在会话滚动区和视口共同形成的可见边界。 */
+function visibleOverlayBounds(article: HTMLElement | null, view: Window | null): SelectionOverlayBounds {
   const viewport = {
     left: 0,
     right: view?.innerWidth ?? 380,
@@ -475,11 +344,13 @@ function visibleOverlayBounds(article: HTMLElement | null, view: Window | null):
   };
 }
 
-function rectFitsVisibleBounds(rect: DOMRect, bounds: OverlayBounds): boolean {
+/** 只有完整可见的选区末端才显示评论编辑框。 */
+function rectFitsVisibleBounds(rect: DOMRect, bounds: SelectionOverlayBounds): boolean {
   return rect.left >= bounds.left && rect.right <= bounds.right && rect.top >= bounds.top && rect.bottom <= bounds.bottom;
 }
 
-function markerFitsVisibleBounds(rect: DOMRect, bounds: OverlayBounds): boolean {
+/** 只有标记完整落在可见范围内时才显示。 */
+function markerFitsVisibleBounds(rect: DOMRect, bounds: SelectionOverlayBounds): boolean {
   const markerLeft = rect.right + ANNOTATION_MARKER_INLINE_OFFSET;
   const markerTop = rect.top + ANNOTATION_MARKER_BLOCK_OFFSET;
   return markerLeft >= bounds.left && markerLeft + ANNOTATION_MARKER_SIZE <= bounds.right && markerTop >= bounds.top && markerTop + ANNOTATION_MARKER_SIZE <= bounds.bottom;

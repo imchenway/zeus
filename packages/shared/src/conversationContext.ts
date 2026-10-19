@@ -19,6 +19,12 @@ export interface ConversationCodeCommentPosition {
   side: ConversationCodeCommentSide;
   startLine?: number;
   startSide?: ConversationCodeCommentSide;
+  /** 文件正文中选区起点的零基字符偏移。 */
+  startOffset?: number;
+  /** 文件正文中选区终点的零基字符偏移，右端不包含在内。 */
+  endOffset?: number;
+  /** 创建评论时选择的原文，用于发送上下文和检测文件变化。 */
+  selectedText?: string;
 }
 
 export interface ConversationCodeComment {
@@ -71,7 +77,8 @@ export function serializeConversationContext(draft: ConversationContextDraft): s
             `## 评论 ${index + 1}`,
             `文件：${comment.position.path}`,
             `位置：${start === end ? start : `${start}-${end}`}`,
-            `内容：${comment.body.trim()}`,
+            ...(comment.position.selectedText?.trim() ? [`选中文字：${comment.position.selectedText}`] : []),
+            ...(comment.body.trim() ? [`${comment.position.selectedText?.trim() ? '用户评论' : '内容'}：${comment.body.trim()}`] : []),
             ...(comment.diffHunk?.trim() ? [`差异片段：\n\`\`\`diff\n${comment.diffHunk.trim()}\n\`\`\``] : []),
           ];
         }),

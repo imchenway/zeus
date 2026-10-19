@@ -2285,14 +2285,14 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
 
   /** 图片使用弹窗并保留右侧内容，其他文件打开审阅并记录返回焦点。 */
   const openFilePreview = useCallback(
-    (request: FilePreviewRequest, image = false, location?: ConversationFileLocation): void => {
+    (request: FilePreviewRequest, image = false, location?: ConversationFileLocation, commentPath?: string): void => {
       if (image) {
         setImagePreviewRequest(request);
         return;
       }
       contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       setContextFullWidth(false);
-      setContextWorkspace({ kind: 'file', request, location });
+      setContextWorkspace({ kind: 'file', request, location, commentPath });
     },
     [setContextFullWidth, setContextWorkspace, setImagePreviewRequest],
   );
@@ -2308,6 +2308,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
           { kind: 'resource', projectId: resource.projectId, conversationId: resource.conversationId, resourceId: resource.id },
           isImageResource(resource),
           location ?? (resource.kind === 'file' ? resource.location : undefined),
+          path,
         );
         return;
       }
@@ -3059,10 +3060,13 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                         <FilePreviewWorkspace
                           request={contextWorkspace.request}
                           location={contextWorkspace.location}
+                          commentPath={contextWorkspace.commentPath}
                           language={props.language}
                           toolbarHost={contextToolbarHost}
                           canSplit={browserLayoutWidth > 840}
                           fullWidth={contextFullWidth}
+                          comments={props.state?.contextDraft.codeComments}
+                          onCommentsChange={contextDraftWritable ? updateCodeComments : undefined}
                           onFullWidthChange={setContextFullWidth}
                           onClose={closeContextWorkspace}
                         />
