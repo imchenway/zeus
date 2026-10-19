@@ -715,7 +715,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         statusSyncGeneration += 1;
         clearStatusSyncRetry();
         if (state === 'connected') {
-          // 补读断线期间其他窗口发起的工作，折叠项目也使用完整的持久活跃时间。
+          // 补读断线期间的完整项目统计；同一小时仍沿用冻结顺序。
           if (props.nativeConversationClient) void reloadProjects().catch((error: unknown) => recordRealtimeSynchronizationError('project-activity-reconciliation', error));
           // 断线期间可能错过目录事件，连接恢复后补读当前快照。
           window.dispatchEvent(new Event(codexCapabilitiesChangedEvent));
