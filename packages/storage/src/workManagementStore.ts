@@ -18,15 +18,7 @@ import {
   type TaskType,
 } from '@zeus/shared';
 import type { ZeusDatabasePort } from './databasePort.js';
-import {
-  canonicalJson,
-  conversationWorkStartedAtSql,
-  type CodexMcpStartupStatusSnapshot,
-  type CodexRateLimitsSnapshot,
-  shouldAcceptProviderSnapshot,
-  validateMcpStartupStatusSnapshot,
-  validateRateLimitsSnapshot,
-} from './conversationStore.js';
+import { canonicalJson, type CodexMcpStartupStatusSnapshot, type CodexRateLimitsSnapshot, shouldAcceptProviderSnapshot, validateMcpStartupStatusSnapshot, validateRateLimitsSnapshot } from './conversationStore.js';
 
 export { isTaskManagementStatus, isTaskPriority, isTaskType } from '@zeus/shared';
 export type { TaskManagementStatus, TaskPriority, TaskType } from '@zeus/shared';
@@ -49,8 +41,10 @@ export interface ZeusProjectRecord {
   note: string | null;
   createdAt: string;
   updatedAt: string;
-  /** 最近新建会话或主动提交消息的时间；没有会话时为空。 */
-  lastWorkStartedAt?: string | null;
+  /** 统计截止的 UTC 整点，以 Unix 小时数表示；统计范围是此前完整一小时。 */
+  activityHour?: number;
+  /** 上一完整小时用户主动发送次数，不随提交后续状态变化。 */
+  hourlyUserMessageCount?: number;
 }
 
 /** 项目容器内完整发现并登记的真实 Git 仓库。 */
@@ -700,10 +694,27 @@ export class SettingRepository {
   }
 }
 
-/** 项目查询统一派生活跃时间，归档会话仍保留历史发起事实，不新增持久字段。 */
+/** 只读派生上一完整小时的发送次数；复用会话时间索引，归档不抹去发送事实。 */
 const projectSelectFields = `id, name, slug, local_path, description, note, created_at, updated_at,
-  (SELECT MAX(${conversationWorkStartedAtSql}) FROM conversations c
-    WHERE c.project_id = projects.id AND c.listing_scope = 'ordinary' AND c.origin_kind = 'ordinary') AS last_work_started_at`;
+  CAST(strftime('%s', 'now') AS INTEGER) / 3600 AS activity_hour,
+  (SELECT COALESCE(SUM(
+    (SELECT COUNT(*) FROM conversation_submissions s
+      WHERE s.conversation_id = c.id
+        AND s.created_at >= strftime('%Y-%m-%dT%H:00:00.000Z', 'now', '-1 hour')
+        AND s.created_at < strftime('%Y-%m-%dT%H:00:00.000Z', 'now')
+        AND s.replacement_of_submission_id IS NULL
+        AND COALESCE(json_extract(s.input_json, '$.internalOperation'), 0) <> 1
+        AND COALESCE(json_extract(s.input_json, '$.context.ephemeral'), 0) <> 1)
+    + (SELECT COUNT(*) FROM conversation_messages m
+      WHERE m.conversation_id = c.id AND c.transport_kind <> 'codex_native'
+        AND m.role = 'user' AND m.source IN ('task_prompt', 'user_followup')
+        AND m.created_at >= strftime('%Y-%m-%dT%H:00:00.000Z', 'now', '-1 hour')
+        AND m.created_at < strftime('%Y-%m-%dT%H:00:00.000Z', 'now'))), 0)
+    FROM conversations c
+    WHERE c.project_id = projects.id AND c.listing_scope = 'ordinary' AND c.origin_kind = 'ordinary'
+      AND COALESCE((SELECT json_extract(first.input_json, '$.context.ephemeral')
+        FROM conversation_submissions first WHERE first.conversation_id = c.id
+        ORDER BY first.created_at, first.id LIMIT 1), 0) <> 1) AS hourly_user_message_count`;
 
 /** 项目仓储只保存用户明确创建的真实路径，并统一查询、去重和活跃排序。 */
 export class ProjectRepository {
@@ -754,7 +765,7 @@ export class ProjectRepository {
         return `${project.name}\n${project.localPath}\n${project.description ?? ''}\n${project.note ?? ''}`.toLowerCase().includes(query);
       });
     // 先按创建顺序确定同路径的权威项目，再排序，避免活跃度改变历史重复项目的身份。
-    return dedupeProjectsByLocalPath(projects).sort((left, right) => (right.lastWorkStartedAt ?? '').localeCompare(left.lastWorkStartedAt ?? '') || left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+    return dedupeProjectsByLocalPath(projects).sort((left, right) => (right.hourlyUserMessageCount ?? 0) - (left.hourlyUserMessageCount ?? 0) || left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
   }
 
   getById(projectId: string): ZeusProjectRecord | undefined {
@@ -2287,8 +2298,10 @@ interface DbProjectRow {
   note: string | null;
   created_at: string;
   updated_at: string;
-  /** 查询派生的最近发起时间，不对应新增数据库列。 */
-  last_work_started_at: string | null;
+  /** 查询派生的 UTC 截止小时，不对应数据库列。 */
+  activity_hour: number;
+  /** 查询派生的上一小时主动发送次数，不对应数据库列。 */
+  hourly_user_message_count: number;
 }
 
 interface DbProjectRepositoryRow {
@@ -2445,7 +2458,8 @@ function mapProjectRow(row: DbProjectRow): ZeusProjectRecord {
     note: row.note,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    lastWorkStartedAt: row.last_work_started_at,
+    activityHour: row.activity_hour,
+    hourlyUserMessageCount: row.hourly_user_message_count,
   };
 }
 

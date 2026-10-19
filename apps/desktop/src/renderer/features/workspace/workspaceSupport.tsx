@@ -1448,19 +1448,19 @@ export function dedupeProjectRecordsByLocalPath(projects: ProjectRecord[]): Proj
   return deduped;
 }
 
-/** 置顶保持手动次序，其余项目按最近发起工作排序；状态变化不改变排序依据。 */
-export function orderProjects(projects: ProjectRecord[], pinnedProjectIds: string[], observedWorkStartedAt: Readonly<Record<string, string>>): ProjectRecord[] {
+/** 置顶保持手动次序，其余沿用项目查询层冻结的小时顺序。 */
+export function orderProjects(projects: ProjectRecord[], pinnedProjectIds: string[]): ProjectRecord[] {
   /** 置顶顺序始终优先于自动活跃排序。 */
   const pinnedRank = new Map(pinnedProjectIds.map((projectId, index) => [projectId, index]));
-  /** 迟到的查询或列表卸载不能回退本次窗口已经观察到的发起时间。 */
-  const workStartedAt = (project: ProjectRecord): number => Math.max(Date.parse(project.lastWorkStartedAt ?? '') || 0, Date.parse(observedWorkStartedAt[project.id] ?? '') || 0);
   return [...projects].sort((left, right) => {
+    /** 左侧项目的手动置顶位置。 */
     const leftRank = pinnedRank.get(left.id);
+    /** 右侧项目的手动置顶位置。 */
     const rightRank = pinnedRank.get(right.id);
     if (leftRank !== undefined && rightRank !== undefined) return leftRank - rightRank;
     if (leftRank !== undefined) return -1;
     if (rightRank !== undefined) return 1;
-    return workStartedAt(right) - workStartedAt(left) || (left.createdAt ?? '').localeCompare(right.createdAt ?? '') || left.id.localeCompare(right.id);
+    return 0;
   });
 }
 

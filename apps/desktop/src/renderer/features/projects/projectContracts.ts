@@ -10,8 +10,10 @@ export interface ProjectRecord {
   note?: string | null;
   /** 项目原始创建时间，用于没有活跃记录时保持稳定顺序。 */
   createdAt?: string;
-  /** 最近新建会话或主动提交消息的时间；没有会话时为空。 */
-  lastWorkStartedAt?: string | null;
+  /** 统计截止的 UTC 整点，以 Unix 小时数表示。 */
+  activityHour?: number;
+  /** 上一完整小时用户主动发送次数。 */
+  hourlyUserMessageCount?: number;
 }
 
 export interface ProjectWorkspaceSharedPath {
