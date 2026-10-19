@@ -1,0 +1,116 @@
+# 统一发布与独立 Windows 入口共用原生构建，保持同一套架构、签名和产物检查。
+name: Build Windows Release
+
+on:
+  workflow_call:
+    inputs:
+      # 所有 runner 必须检出同一个完整候选提交。
+      commit_sha:
+        required: true
+        type: string
+      # 正式发布构建安装器；独立入口仍可仅执行原生编译。
+      build_installers:
+        type: boolean
+        default: true
+      # 只有独立的任务附件构建复用任务分支缓存。
+      use_task_cache:
+        type: boolean
+        default: false
+    secrets:
+      # 缺少签名凭据时仍按既有规则生成未签名正式包。
+      WINDOWS_CERTIFICATE:
+        required: false
+      WINDOWS_CERTIFICATE_PASSWORD:
+        required: false
+
+# 构建仅上传本次运行的附件，不创建标签或写入公开 Release。
+permissions:
+  contents: read
+
+jobs:
+  package-windows:
+    # 发行凭据只用于官方仓库的候选。
+    if: ${{ github.repository == 'imchenway/zeus' }}
+    strategy:
+      # 两个架构互不取消，并与调用方的 macOS 作业并行。
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            arch: x64
+          - runner: windows-11-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    env:
+      # 沿用正式 Windows 打包入口的凭据名称。
+      WIN_CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE }}
+      WIN_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.commit_sha }}
+      - name: 核对固定候选提交
+        env:
+          RELEASE_COMMIT: ${{ inputs.commit_sha }}
+        run: |
+          if ($env:RELEASE_COMMIT -cnotmatch '^[a-f0-9]{40}$' -or (git rev-parse HEAD) -cne $env:RELEASE_COMMIT) {
+            throw 'Windows 构建必须使用完整、准确的候选提交。'
+          }
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.31.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          architecture: ${{ matrix.arch }}
+          cache: pnpm
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.arch == 'arm64' && 'aarch64-pc-windows-msvc' || 'x86_64-pc-windows-msvc' }}
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+      - run: pnpm install --frozen-lockfile
+      - name: 计算任务安装包的原生缓存身份
+        id: cua_inputs
+        if: ${{ inputs.use_task_cache && inputs.build_installers }}
+        run: node apps/desktop/scripts/build-computer-native.mjs --cache-info | ForEach-Object { $_.Replace('\', '/') } >> $env:GITHUB_OUTPUT
+      - name: 恢复任务分支的 CUA 成品
+        id: cua_cache
+        if: ${{ inputs.use_task_cache && inputs.build_installers }}
+        uses: actions/cache/restore@v4
+        continue-on-error: true
+        with:
+          # 缓存必须精确匹配分支、架构、源码和工具链。
+          path: ${{ steps.cua_inputs.outputs.artifact_path }}
+          key: windows-task-${{ github.ref_name }}-${{ steps.cua_inputs.outputs.native_key }}
+      - name: 清理未精确命中的任务原生成品
+        if: ${{ inputs.use_task_cache && inputs.build_installers && steps.cua_cache.outputs.cache-hit != 'true' }}
+        run: node apps/desktop/scripts/build-computer-native.mjs --clear-artifacts
+      - name: 构建正式 Zeus 安装器
+        if: ${{ inputs.build_installers }}
+        run: pnpm package:windows:release
+      - name: 非发布候选仅编译与核对原生产物
+        if: ${{ !inputs.build_installers }}
+        run: pnpm build:windows
+      - name: 保存已完成的任务原生成品
+        # 后续打包失败也可保留原生成品；复用时仍核对输入和文件摘要。
+        if: ${{ always() && inputs.use_task_cache && inputs.build_installers && steps.cua_inputs.outcome == 'success' && steps.cua_cache.outputs.cache-hit != 'true' && hashFiles(format('{0}/build-receipt.json', steps.cua_inputs.outputs.artifact_path)) != '' }}
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: ${{ steps.cua_inputs.outputs.artifact_path }}
+          key: windows-task-${{ github.ref_name }}-${{ steps.cua_inputs.outputs.native_key }}
+      - uses: actions/upload-artifact@v4
+        if: ${{ inputs.build_installers }}
+        with:
+          name: zeus-windows-${{ inputs.commit_sha }}-${{ matrix.arch }}
+          # 安装器与架构清单必须实际存在，编译通过不能代替安装器交付。
+          if-no-files-found: error
+          path: |
+            dist/Zeus-*-win32-*.exe
+            dist/zeus-release-manifest-win32-*.json

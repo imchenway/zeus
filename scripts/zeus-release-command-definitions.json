@@ -5,7 +5,7 @@
       "name": "zeus-release",
       "aliases": ["release"],
       "title": "发布新版",
-      "description": "执行 Zeus 受控发布流程：生成发布说明、递增补丁版本、运行发布门禁、推送并回验 GitHub Release。失败后可用同一命令幂等继续。",
+      "description": "执行 Zeus 受控发布流程：生成发布说明、递增补丁版本、运行发布门禁，并行构建 macOS 与 Windows 双架构安装包，发布后回验两端资产和 Homebrew。失败后可用同一命令继续核对状态。",
       "command": "pnpm release",
       "parameters": [],
       "timeoutSeconds": 3600,

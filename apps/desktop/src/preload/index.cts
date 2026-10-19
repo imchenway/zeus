@@ -68,7 +68,9 @@ globalThis.addEventListener(
   'error',
   (event) => {
     if (!shouldReportRendererWindowError(rendererBootstrapReporter.getState(), event)) return;
-    rendererBootstrapReporter.reportFailure(event.error ?? event.message);
+    /** 资源加载失败没有 ErrorEvent.message，保留实际入口地址用于定位安装包缺失文件。 */
+    const resource = event.target instanceof Element ? event.target.getAttribute('src') || event.target.getAttribute('href') : null;
+    rendererBootstrapReporter.reportFailure(event.error ?? (event.message || `Renderer startup resource failed: ${resource ?? 'unknown'}`));
   },
   true,
 );

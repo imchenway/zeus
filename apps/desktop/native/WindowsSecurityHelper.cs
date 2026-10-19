@@ -19,8 +19,10 @@ internal static class WindowsSecurityHelper
     private const int MaximumRequestCharacters = 4 * 1024 * 1024;
     // 当前用户 SID 是文件 ACL 和 DPAPI 的共同归属边界。
     private static readonly SecurityIdentifier CurrentSid = WindowsIdentity.GetCurrent().User ?? throw new InvalidOperationException("缺少 Windows 用户 SID。");
+    // 管理员启动的进程可以默认以此组拥有新对象；它不能单独证明当前用户归属。
+    private const string AdministratorsSid = "S-1-5-32-544";
     // SYSTEM 和管理员拥有操作系统级权限；不把它们误述为可由应用隔离的主体。
-    private static readonly HashSet<string> TrustedSids = new(StringComparer.Ordinal) { CurrentSid.Value, "S-1-5-18", "S-1-5-32-544" };
+    private static readonly HashSet<string> TrustedSids = new(StringComparer.Ordinal) { CurrentSid.Value, "S-1-5-18", AdministratorsSid };
 
     /// <summary>桌面桥先按明确入口分流，安全请求只处理一条 JSON。</summary>
     [STAThread]
@@ -114,31 +116,52 @@ internal static class WindowsSecurityHelper
         ? new DirectoryInfo(path).GetAccessControl(AccessControlSections.Owner | AccessControlSections.Access)
         : new FileInfo(path).GetAccessControl(AccessControlSections.Owner | AccessControlSections.Access);
 
-    /// <summary>验证归属，禁止默默接管其他用户的目录。</summary>
+    /// <summary>验证用户归属；管理员组所有的对象还必须以私有 DACL 单独授予当前用户完全控制。</summary>
     internal static void AssertOwnedPath(string path, bool directory)
     {
         path = CanonicalPath(path);
         if (directory ? !Directory.Exists(path) : !File.Exists(path)) throw new FileNotFoundException("安全文件或目录不存在。");
-        if (!CurrentSid.Equals(ReadSecurity(path, directory).GetOwner(typeof(SecurityIdentifier)))) throw new UnauthorizedAccessException("安全文件或目录不属于当前 Windows 用户。");
+        // 只扩大已证实的管理员组所有者场景；其他普通用户和 SYSTEM 所有者继续拒绝。
+        FileSystemSecurity security = ReadSecurity(path, directory);
+        // 所有者和个人授权来自同一份安全描述符，避免混合两次读取的归属信息。
+        IdentityReference? owner = security.GetOwner(typeof(SecurityIdentifier));
+        if (CurrentSid.Equals(owner)) return;
+        if (owner?.Value != AdministratorsSid) throw new UnauthorizedAccessException("安全文件或目录不属于当前 Windows 用户。");
+        AssertPrivateAccess(security, true);
     }
 
     /// <summary>校验 DACL，只允许当前用户和操作系统特权主体获得访问权限。</summary>
     internal static void AssertPrivatePath(string path, bool directory)
     {
         AssertOwnedPath(path, directory);
-        FileSystemSecurity security = ReadSecurity(path, directory);
+        AssertPrivateAccess(ReadSecurity(path, directory), false);
+    }
+
+    /// <summary>共用私有 ACL 校验；管理员组所有者另需完整的个人授权，不能仅靠组成员身份认领。</summary>
+    private static void AssertPrivateAccess(FileSystemSecurity security, bool requireUserFullControl)
+    {
         // 读取校验有效 ACL（包含继承规则）；创建时另行关闭继承，不改动只读验证源。
-        bool userCanRead = false;
+        // 个人授权必须直接写明当前用户 SID；允许从私有父目录继承，禁止拼接组权限。
+        FileSystemRights requiredRights = requireUserFullControl ? FileSystemRights.FullControl : FileSystemRights.ReadData;
+        // 任一适用于当前对象的个人授权必须单独覆盖全部所需权限。
+        bool userHasRequiredAccess = false;
         foreach (FileSystemAccessRule rule in security.GetAccessRules(true, true, typeof(SecurityIdentifier)))
         {
             // 仅向子项继承的规则不授予当前对象访问权；子项在读取时单独校验。
             if ((rule.PropagationFlags & PropagationFlags.InheritOnly) != 0) continue;
-            if (rule.AccessControlType != AccessControlType.Allow) continue;
+            if (rule.AccessControlType != AccessControlType.Allow)
+            {
+                // 拒绝规则可能命中用户所属的组；不猜测组成员和 ACE 顺序产生的有效控制权。
+                if (requireUserFullControl && rule.FileSystemRights != 0) throw new UnauthorizedAccessException("管理员组所有的安全文件或目录包含拒绝规则，无法确认当前用户的完全控制权限。");
+                continue;
+            }
             string sid = ((SecurityIdentifier)rule.IdentityReference).Value;
             if (!TrustedSids.Contains(sid) && rule.FileSystemRights != 0) throw new UnauthorizedAccessException("安全文件或目录向其他 Windows 用户开放。");
-            if (sid == CurrentSid.Value && (rule.FileSystemRights & FileSystemRights.ReadData) != 0) userCanRead = true;
+            if (sid == CurrentSid.Value && (rule.FileSystemRights & requiredRights) == requiredRights) userHasRequiredAccess = true;
         }
-        if (!userCanRead) throw new UnauthorizedAccessException("当前 Windows 用户没有读取安全文件的权限。");
+        if (!userHasRequiredAccess) throw new UnauthorizedAccessException(requireUserFullControl
+            ? "管理员组所有的安全文件或目录未单独授予当前 Windows 用户完全控制权限。"
+            : "当前 Windows 用户没有读取安全文件的权限。");
     }
 
     /// <summary>以当前用户独占 DACL 保护已有对象；不修改其他用户的归属。</summary>

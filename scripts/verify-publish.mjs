@@ -187,4 +187,4 @@ runStep('架构边界检查', 'pnpm', ['verify:architecture']);
 runStep('TypeScript 类型检查', 'pnpm', ['typecheck']);
 if (!releaseCheckOptions['checks-only']) runStep('生产构建', 'pnpm', ['build']);
 
-console.log(releaseCheckOptions['checks-only'] ? '\nZeus 发布前静态检查通过；完整生产构建仍须由 macOS 打包作业通过。' : '\nZeus 发布前门禁通过。');
+console.log(releaseCheckOptions['checks-only'] ? '\nZeus 发布前静态检查通过；完整生产构建仍须由 macOS 与 Windows 双架构打包作业通过。' : '\nZeus 发布前门禁通过。');

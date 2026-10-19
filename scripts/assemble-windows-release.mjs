@@ -38,8 +38,11 @@ export async function assembleWindowsRelease(directory, version, sourceCommit) {
     if (!Number.isFinite(builtAt) || builtAt <= 0) throw new Error(`Windows ${arch} 构建清单缺少有效发布时间。`);
     publishedAt = Math.max(publishedAt, builtAt);
     /** 每个架构只允许一个 NSIS 安装包，不接受便携包混入正式升级渠道。 */
-    const artifact = candidate.artifacts?.find((item) => item.arch === arch);
-    if (!artifact || artifact.platform !== 'win32' || artifact.kind !== 'exe' || artifact.fileName !== `Zeus-${version}-win32-${arch}.exe` || !/^[a-f0-9]{64}$/u.test(artifact.sha256)) throw new Error(`Windows ${arch} 安装包身份无效。`);
+    if (!Array.isArray(candidate.artifacts) || candidate.artifacts.length !== 1) throw new Error(`Windows ${arch} 构建清单必须恰好包含一个安装器。`);
+    /** 不能从混有其他版本或架构的清单中选择性接受一条记录。 */
+    const artifact = candidate.artifacts[0];
+    if (!artifact || artifact.arch !== arch || artifact.platform !== 'win32' || artifact.kind !== 'exe' || artifact.fileName !== `Zeus-${version}-win32-${arch}.exe` || !/^[a-f0-9]{64}$/u.test(artifact.sha256))
+      throw new Error(`Windows ${arch} 安装包身份无效。`);
     if (artifact.downloadUrl !== `https://github.com/imchenway/zeus/releases/download/v${version}/${artifact.fileName}`) throw new Error(`Windows ${arch} 安装包下载来源不是本次官方发行。`);
     /** 下载的 CI 资产必须与对应构建文件的摘要完全一致。 */
     const path = join(directory, artifact.fileName);

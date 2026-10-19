@@ -641,6 +641,8 @@ async function waitForConversationStoreMigration(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 180));
   let status = await bridge.getConversationStoreMigrationStatus();
   if (!status || status.phase === 'completed' || status.phase === 'not_required') return;
+  /** 保留 HTML 的原有启动图标；迁移结束后，业务模块和后台服务仍可能尚未就绪。 */
+  const startupLoader = document.querySelector('#root > .zeus-startup-loader');
   bridge.reportRendererBootstrapReady?.();
   while (status && status.phase !== 'completed' && status.phase !== 'not_required') {
     renderConversationStoreMigration(status);
@@ -648,7 +650,8 @@ async function waitForConversationStoreMigration(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 250));
     status = await bridge.getConversationStoreMigrationStatus();
   }
-  document.getElementById('root')?.replaceChildren();
+  // 不能先清空页面；恢复原有加载状态，待业务页面或错误页实际就绪后再替换。
+  if (startupLoader) document.getElementById('root')?.replaceChildren(startupLoader);
 }
 
 function renderConversationStoreMigration(status: NonNullable<Awaited<ReturnType<NonNullable<Window['zeus']>['getConversationStoreMigrationStatus']>>>): void {

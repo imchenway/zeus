@@ -145,7 +145,7 @@ function writePublishResult(verification, outputDirectory) {
   const resultPath = join(outputDirectory, `Zeus-${verification.releaseVersion}-publish-result.md`);
   writeFileSync(resultPath, buildPublishResult(verification), { mode: 0o600 });
   console.log(`公开发布与${verification.deepVerified ? '完整 DMG' : '轻量资产'}对账通过：${resultPath}`);
-  for (const path of [resultPath, verification.releaseNotesSnapshotPath, verification.manifestSnapshotPath, verification.caskSnapshotPath]) {
+  for (const path of [resultPath, verification.releaseNotesSnapshotPath, verification.manifestSnapshotPath, verification.windowsManifestSnapshotPath, verification.caskSnapshotPath]) {
     console.log(`ZEUS_ARTIFACT_FILE=${path}`);
   }
 }
@@ -242,6 +242,7 @@ function collectPreflight(input) {
   };
 }
 
+/** 说明同一候选的并行构建、公开资产范围和远端写入前置条件。 */
 function buildPlan(preflight, input) {
   return [
     `# Zeus ${input.releaseVersion} 公开发布${input.applyRemote ? '执行前置' : '计划'}`,
@@ -275,9 +276,9 @@ function buildPlan(preflight, input) {
     '## 受控写操作',
     '',
     `1. 仅在阻断项为空、APPLY_REMOTE=true 且确认值精确为 PUBLISH_${input.tag} 时继续。`,
-    '2. 以精确候选 SHA 触发 Release Workflow；Workflow 并行执行 verify:publish 与正式打包。',
-    `3. 所有阻塞作业通过后，由 Workflow 创建不可变标签 ${input.tag}、GitHub Release 并同步 Homebrew Tap。`,
-    '4. 等待 Workflow 后读取 GitHub 资产服务端摘要并下载 manifest，核对 Release notes、SHA-256 与 Tap Cask。',
+    '2. 以精确候选 SHA 触发 Release Workflow；静态检查、macOS 与 Windows 两个原生架构并行执行。',
+    `3. 全部构建和检查通过后，由 Workflow 创建不可变标签 ${input.tag}，上传两端安装包及平台清单，并同步 Homebrew Tap。`,
+    '4. 读取三份安装器和两份平台清单的服务端摘要，下载两端清单并核对候选、Release notes、SHA-256 与 Tap Cask。',
     '',
     '## 不在本命令中执行',
     '',
@@ -288,6 +289,7 @@ function buildPlan(preflight, input) {
   ].join('\n');
 }
 
+/** 仅记录工作流已派发，不把尚未回验的两端资产宣称为发布完成。 */
 function buildDispatchedResult(input) {
   return [
     `# Zeus ${input.releaseVersion} 公开发布已触发`,
@@ -295,8 +297,8 @@ function buildDispatchedResult(input) {
     `- 标签：${input.tag}`,
     `- 提交：${input.headSha}`,
     `- Workflow：${input.workflowRun.url}`,
-    '- 标签将在 Workflow 的阻塞检查和正式打包通过后创建。',
-    '- WAIT_FOR_COMPLETION=false，本次不声称已完成 GitHub Release、Homebrew Tap 或公开产物对账。',
+    '- 标签将在 Workflow 的阻塞检查及 macOS、Windows 两个架构的正式打包通过后创建。',
+    '- WAIT_FOR_COMPLETION=false，本次不声称已完成两端 GitHub Release、Homebrew Tap 或公开产物对账。',
     '- Workflow 结束后应使用同一版本重新执行本命令，完成幂等发布后验证。',
     '',
   ].join('\n');
@@ -319,39 +321,41 @@ export async function verifyPublishedRelease(input) {
   if (actualNotes !== expectedNotes) throw new Error('GitHub Release notes 与标签候选的仓库 Release notes 不一致。');
 
   const expectedDmgName = `Zeus-${input.releaseVersion}-arm64.dmg`;
-  const expectedAssets = new Set([expectedDmgName, 'zeus-release-manifest.json']);
-  /** Windows 独立发布可以稍后追加已知资产；macOS 回验不依赖 Windows 完成，也不替其背书。 */
-  const allowedAssets = new Set([...expectedAssets, 'zeus-release-manifest-win32.json', ...['x64', 'arm64'].map((arch) => `Zeus-${input.releaseVersion}-win32-${arch}.exe`)]);
+  /** 完整发行必须同时具有 macOS、Windows 双架构安装器及两份平台清单。 */
+  const expectedAssets = new Set([expectedDmgName, 'zeus-release-manifest.json', 'zeus-release-manifest-win32.json', ...['x64', 'arm64'].map((arch) => `Zeus-${input.releaseVersion}-win32-${arch}.exe`)]);
   const actualAssets = input.release.data.assets ?? [];
   const actualAssetNames = new Set(actualAssets.map((asset) => asset.name));
-  if ([...actualAssetNames].some((name) => !allowedAssets.has(name)) || [...expectedAssets].some((name) => !actualAssetNames.has(name))) {
-    throw new Error(`GitHub Release 资产集合不一致：${[...actualAssetNames].join(', ') || 'empty'}`);
+  /** 分别显示缺少和多出的文件，让平台遗漏能够直接定位。 */
+  const missingAssets = [...expectedAssets].filter((name) => !actualAssetNames.has(name));
+  /** 同一稳定版不接纳未在本次发行契约内声明的额外文件。 */
+  const unexpectedAssets = [...actualAssetNames].filter((name) => !expectedAssets.has(name));
+  if (actualAssets.length !== expectedAssets.size || missingAssets.length > 0 || unexpectedAssets.length > 0) {
+    throw new Error(`GitHub Release 资产集合不一致：缺少=${missingAssets.join(', ') || '无'}；多余=${unexpectedAssets.join(', ') || '无'}；实际=${[...actualAssetNames].join(', ') || 'empty'}`);
+  }
+  // 所有平台都以 GitHub 服务端元数据为准，缺少摘要不能降级为仅核对文件名。
+  for (const asset of actualAssets) {
+    if (!/^sha256:[a-f0-9]{64}$/u.test(asset.digest ?? '') || !Number.isSafeInteger(asset.size) || asset.size <= 0) throw new Error(`GitHub 资产缺少可信的服务端 SHA-256 或字节数：${asset.name}`);
   }
 
   const dmgAsset = actualAssets.find((asset) => asset.name === expectedDmgName);
-  const manifestAsset = actualAssets.find((asset) => asset.name === 'zeus-release-manifest.json');
-  if (!/^sha256:[a-f0-9]{64}$/u.test(dmgAsset?.digest ?? '') || !Number.isInteger(dmgAsset?.size) || dmgAsset.size <= 0) {
-    throw new Error('GitHub DMG 资产缺少可信的服务端 SHA-256 或字节数。');
-  }
-  if (!/^sha256:[a-f0-9]{64}$/u.test(manifestAsset?.digest ?? '') || !Number.isInteger(manifestAsset?.size) || manifestAsset.size <= 0) {
-    throw new Error('GitHub manifest 资产缺少可信的服务端 SHA-256 或字节数。');
-  }
 
   const downloadDirectory = mkdtempSync(join(tmpdir(), `zeus-release-public-${input.releaseVersion}-`));
   try {
-    downloadReleaseAsset(input.tag, 'zeus-release-manifest.json', downloadDirectory, publicVerificationReadOptions(input));
-    const manifestPath = join(downloadDirectory, 'zeus-release-manifest.json');
-    const manifestSha256 = await sha256File(manifestPath);
-    const manifestSize = statSync(manifestPath).size;
-    if (manifestAsset.size !== manifestSize || manifestAsset.digest !== `sha256:${manifestSha256}`) {
-      throw new Error('GitHub manifest 资产元数据与下载文件不一致。');
-    }
-    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-    if (manifest.repository !== repository || manifest.sourceCommit !== input.headSha) throw new Error('公开清单不是 Zeus 官方来源或本次候选提交。');
-    const manifestArtifact = manifest.artifacts?.find((artifact) => artifact.arch === 'arm64' && artifact.kind === 'dmg' && artifact.fileName === expectedDmgName);
-    if (manifest.version !== input.releaseVersion || manifest.channel !== 'stable' || !manifestArtifact) {
-      throw new Error('公开 manifest 的版本、通道或 DMG 记录不一致。');
-    }
+    /** 两端共用清单下载、元数据和候选身份检查，不能只验证其中一个平台。 */
+    const { manifest, manifestPath, manifestSize, manifestSha256 } = await readVerifiedPlatformManifest(input, actualAssets, downloadDirectory, 'darwin');
+    /** macOS 当前仅发布 Apple Silicon DMG，不允许其他记录混入此平台清单。 */
+    const manifestArtifact = manifest.artifacts?.[0];
+    if (
+      !Array.isArray(manifest.artifacts) ||
+      manifest.artifacts.length !== 1 ||
+      !manifestArtifact ||
+      manifestArtifact.arch !== 'arm64' ||
+      manifestArtifact.platform !== 'darwin' ||
+      manifestArtifact.kind !== 'dmg' ||
+      manifestArtifact.fileName !== expectedDmgName ||
+      manifestArtifact.downloadUrl !== `https://github.com/${repository}/releases/download/${input.tag}/${expectedDmgName}`
+    )
+      throw new Error('公开 macOS 清单的 DMG 记录不一致。');
     if (input.requireAppleDistribution && (!manifest.signed || !manifest.notarized)) {
       throw new Error('本次强制 Apple 正式分发，但公开 manifest 未同时记录 Developer ID 签名和 Apple 公证。');
     }
@@ -360,6 +364,30 @@ export async function verifyPublishedRelease(input) {
     if (manifestArtifact.sha256 !== dmgSha256 || manifestArtifact.sizeBytes !== dmgSize) {
       throw new Error('公开 manifest 与 GitHub DMG 服务端摘要或字节数不一致。');
     }
+
+    /** Windows 清单必须列出同一候选的两个原生架构，并逐项匹配真实公开资产。 */
+    const windowsRelease = await readVerifiedPlatformManifest(input, actualAssets, downloadDirectory, 'win32');
+    if (!Array.isArray(windowsRelease.manifest.artifacts) || windowsRelease.manifest.artifacts.length !== 2) throw new Error('公开 Windows 清单必须恰好包含 x64 和 ARM64 两个安装器。');
+    /** 安装器身份、官方地址、大小和摘要均通过后才写入发布凭证。 */
+    const windowsArtifacts = ['x64', 'arm64'].map((arch) => {
+      /** 每个架构的唯一版本化安装器名称。 */
+      const fileName = `Zeus-${input.releaseVersion}-win32-${arch}.exe`;
+      /** 架构记录与 GitHub 元数据分别读取，禁止以任一单方声明代替完整对账。 */
+      const artifact = windowsRelease.manifest.artifacts.find((candidate) => candidate?.arch === arch);
+      /** 资产集合与元数据格式已在清单下载前验证。 */
+      const asset = actualAssets.find((candidate) => candidate.name === fileName);
+      if (
+        !artifact ||
+        artifact.platform !== 'win32' ||
+        artifact.kind !== 'exe' ||
+        artifact.fileName !== fileName ||
+        artifact.downloadUrl !== `https://github.com/${repository}/releases/download/${input.tag}/${fileName}` ||
+        artifact.sha256 !== asset.digest.slice('sha256:'.length) ||
+        artifact.sizeBytes !== asset.size
+      )
+        throw new Error(`公开 Windows ${arch} 清单与安装器的身份、地址、大小或摘要不一致。`);
+      return { arch, fileName, sizeBytes: asset.size, sha256: artifact.sha256 };
+    });
 
     if (input.deepVerifyPublicDmg) {
       downloadReleaseAsset(input.tag, expectedDmgName, downloadDirectory, { timeout: 15 * 60_000 });
@@ -379,9 +407,12 @@ export async function verifyPublishedRelease(input) {
 
     const releaseNotesSnapshotPath = join(input.outputDirectory, `${input.tag}-release-notes.md`);
     const manifestSnapshotPath = join(input.outputDirectory, `${input.tag}-release-manifest.json`);
+    /** Windows 的公开清单与 macOS 分开保留，现有客户端继续读取各自入口。 */
+    const windowsManifestSnapshotPath = join(input.outputDirectory, `${input.tag}-release-manifest-win32.json`);
     const caskSnapshotPath = join(input.outputDirectory, `${input.tag}-homebrew-cask.rb`);
     writeFileSync(releaseNotesSnapshotPath, releaseNotes, { mode: 0o600 });
     copyFileSync(manifestPath, manifestSnapshotPath);
+    copyFileSync(windowsRelease.manifestPath, windowsManifestSnapshotPath);
     writeFileSync(caskSnapshotPath, cask, { mode: 0o600 });
 
     return {
@@ -399,9 +430,14 @@ export async function verifyPublishedRelease(input) {
       caskSha256: sha256Text(cask),
       signed: Boolean(manifest.signed),
       notarized: Boolean(manifest.notarized),
+      windowsArtifacts,
+      windowsSigned: windowsRelease.manifest.signed,
+      windowsManifestSize: windowsRelease.manifestSize,
+      windowsManifestSha256: windowsRelease.manifestSha256,
       deepVerified: input.deepVerifyPublicDmg,
       releaseNotesSnapshotPath,
       manifestSnapshotPath,
+      windowsManifestSnapshotPath,
       caskSnapshotPath,
     };
   } finally {
@@ -409,6 +445,36 @@ export async function verifyPublishedRelease(input) {
   }
 }
 
+/** 两端使用相同规则下载并核对正式平台清单，且始终绑定当前候选提交。 */
+async function readVerifiedPlatformManifest(input, actualAssets, downloadDirectory, platform) {
+  /** 平台后缀保持已发行客户端使用的固定下载入口。 */
+  const fileName = platform === 'win32' ? 'zeus-release-manifest-win32.json' : 'zeus-release-manifest.json';
+  /** 服务端摘要和大小已由完整资产集合检查约束。 */
+  const asset = actualAssets.find((candidate) => candidate.name === fileName);
+  downloadReleaseAsset(input.tag, fileName, downloadDirectory, publicVerificationReadOptions(input));
+  /** 仅读取本次任务临时目录中的固定文件名。 */
+  const manifestPath = join(downloadDirectory, fileName);
+  /** 实际下载字节必须与 GitHub 服务端公布的摘要一致。 */
+  const manifestSha256 = await sha256File(manifestPath);
+  /** 清单实际字节数也参与完整性检查。 */
+  const manifestSize = statSync(manifestPath).size;
+  if (asset.size !== manifestSize || asset.digest !== `sha256:${manifestSha256}`) throw new Error(`GitHub ${platform} 清单元数据与下载文件不一致。`);
+  /** 每个平台都必须声明正式 Zeus 身份、固定候选和真实签名状态。 */
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  if (
+    manifest.app !== 'Zeus' ||
+    manifest.repository !== repository ||
+    manifest.sourceCommit !== input.headSha ||
+    manifest.platform !== platform ||
+    manifest.version !== input.releaseVersion ||
+    manifest.channel !== 'stable' ||
+    typeof manifest.signed !== 'boolean'
+  )
+    throw new Error(`公开 ${platform} 清单的来源、平台、版本、签名状态或候选提交不一致。`);
+  return { manifest, manifestPath, manifestSize, manifestSha256 };
+}
+
+/** 发布凭证分别列明两端真实资产与签名状态，不能用 macOS 成功代表 Windows 成功。 */
 function buildPublishResult(input) {
   return [
     `# Zeus ${input.releaseVersion} 公开发布结果`,
@@ -417,13 +483,16 @@ function buildPublishResult(input) {
     `- 发布提交：${input.headSha}`,
     `- GitHub Release：${input.releaseUrl}`,
     `- Release Workflow：${input.workflowUrl}`,
-    '- 核对范围：macOS / Homebrew；Windows 由独立工作流发布和回验。',
+    '- 核对范围：macOS、Windows x64 / ARM64、两端更新清单与 Homebrew。',
     `- DMG：${input.dmgName}，${input.dmgSize} 字节，SHA-256 ${input.dmgSha256}`,
     `- manifest：${input.manifestSize} 字节，SHA-256 ${input.manifestSha256}`,
+    ...input.windowsArtifacts.map((artifact) => `- Windows ${artifact.arch}：${artifact.fileName}，${artifact.sizeBytes} 字节，SHA-256 ${artifact.sha256}`),
+    `- Windows manifest：${input.windowsManifestSize} 字节，SHA-256 ${input.windowsManifestSha256}`,
     `- Release notes SHA-256：${input.releaseNotesSha256}`,
     `- Homebrew Cask SHA-256：${input.caskSha256}`,
     `- Developer ID 签名：${input.signed ? '是' : '否'}`,
     `- Apple 公证：${input.notarized ? '是' : '否'}`,
+    `- Windows 签名：${input.windowsSigned ? '是' : '否'}`,
     input.deepVerified ? '- 公开 DMG 已回下载并通过 `hdiutil verify`。' : '- 默认快速模式未回下载完整 DMG；正式 DMG 已在上传前通过 `hdiutil verify`。',
     `- GitHub 服务端资产元数据、manifest、Release notes 和 Homebrew Tap Cask 已完成一致性对账${input.deepVerified ? '，并额外完成公开 DMG 回下载复核' : ''}。`,
     '',
