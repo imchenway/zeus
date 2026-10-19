@@ -12,7 +12,7 @@ on:
         required: false
         default: ''
       publish_release:
-        description: 发布 GitHub Release 并同步 imchenway/homebrew-tap
+        description: 发布 macOS、Windows 双架构安装包并同步 imchenway/homebrew-tap
         required: true
         type: boolean
         default: false
@@ -34,6 +34,10 @@ jobs:
     # 正式发布只允许 Zeus 官方仓库。
     if: ${{ github.repository == 'imchenway/zeus' }}
     runs-on: ubuntu-latest
+    # 两个平台的构建和最终发布始终使用同一个已检出的候选身份。
+    outputs:
+      commit_sha: ${{ steps.candidate.outputs.commit_sha }}
+      tag: ${{ steps.candidate.outputs.tag }}
     steps:
       - name: 检出固定发布候选
         uses: actions/checkout@v4
@@ -97,6 +101,11 @@ jobs:
             echo '公开 Homebrew 发布缺少 HOMEBREW_TAP_TOKEN。' >&2
             exit 1
           fi
+      - name: 固定两端共用的候选身份
+        id: candidate
+        run: |
+          printf 'commit_sha=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          printf 'tag=v%s\n' "$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
   verify:
     needs: preflight
@@ -106,7 +115,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ inputs.commit_sha != '' && inputs.commit_sha || github.ref }}
+          ref: ${{ needs.preflight.outputs.commit_sha }}
       - uses: pnpm/action-setup@v4
         with:
           version: 10.31.0
@@ -117,6 +126,18 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: 执行发布前静态检查
         run: pnpm verify:publish --checks-only
+
+  # Windows 两个原生架构与 macOS 仅依赖同一前置作业，彼此并行。
+  package-windows:
+    needs: preflight
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-windows-release.yml
+    with:
+      commit_sha: ${{ needs.preflight.outputs.commit_sha }}
+    secrets:
+      WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
 
   package-mac:
     needs: preflight
@@ -136,7 +157,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ inputs.commit_sha != '' && inputs.commit_sha || github.ref }}
+          ref: ${{ needs.preflight.outputs.commit_sha }}
       - uses: pnpm/action-setup@v4
         with:
           version: 10.31.0
@@ -224,7 +245,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: zeus-macos-${{ inputs.commit_sha != '' && inputs.commit_sha || github.sha }}
+          name: zeus-macos-${{ needs.preflight.outputs.commit_sha }}
           path: |
             dist/Zeus-*.dmg
             dist/zeus-release-manifest.json
@@ -233,7 +254,7 @@ jobs:
         if: ${{ steps.upload_release_artifact.outcome == 'failure' }}
         uses: actions/upload-artifact@v4
         with:
-          name: zeus-macos-${{ inputs.commit_sha != '' && inputs.commit_sha || github.sha }}
+          name: zeus-macos-${{ needs.preflight.outputs.commit_sha }}
           path: |
             dist/Zeus-*.dmg
             dist/zeus-release-manifest.json
@@ -242,19 +263,20 @@ jobs:
 
   publish:
     if: ${{ inputs.publish_release }}
-    needs: [preflight, verify, package-mac]
+    # 任一平台或架构构建失败均不创建公开标签和 Release。
+    needs: [preflight, verify, package-mac, package-windows]
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
       HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-      RELEASE_COMMIT: ${{ inputs.commit_sha }}
-      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_COMMIT: ${{ needs.preflight.outputs.commit_sha }}
+      RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
     steps:
       - name: 检出固定发布候选
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ inputs.commit_sha }}
+          ref: ${{ needs.preflight.outputs.commit_sha }}
       - name: 检出 Homebrew Tap
         uses: actions/checkout@v4
         with:
@@ -264,18 +286,26 @@ jobs:
       - name: 下载已校验正式产物
         uses: actions/download-artifact@v4
         with:
-          name: zeus-macos-${{ inputs.commit_sha }}
+          name: zeus-macos-${{ needs.preflight.outputs.commit_sha }}
           path: dist
+      - name: 下载 Windows 两个架构的正式产物
+        uses: actions/download-artifact@v4
+        with:
+          pattern: zeus-windows-${{ needs.preflight.outputs.commit_sha }}-*
+          path: dist
+          merge-multiple: true
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: 复核 Windows 安装器并合并平台清单
+        run: node scripts/assemble-windows-release.mjs dist
       - name: 复核下载产物的官方来源和候选提交
         run: |
           node --input-type=module <<'NODE'
           import { readFileSync } from 'node:fs';
           // 下载的清单必须与本次固定候选、官方渠道和目标版本一致。
           const manifest = JSON.parse(readFileSync('dist/zeus-release-manifest.json', 'utf8'));
-          if (manifest.app !== 'Zeus' || manifest.repository !== 'imchenway/zeus' || manifest.sourceCommit !== process.env.RELEASE_COMMIT || manifest.channel !== 'stable' || `v${manifest.version}` !== process.env.RELEASE_TAG) throw new Error('发布清单来源、版本或候选提交不一致。');
+          if (manifest.app !== 'Zeus' || manifest.platform !== 'darwin' || manifest.repository !== 'imchenway/zeus' || manifest.sourceCommit !== process.env.RELEASE_COMMIT || manifest.channel !== 'stable' || `v${manifest.version}` !== process.env.RELEASE_TAG) throw new Error('发布清单来源、平台、版本或候选提交不一致。');
           if (!manifest.artifacts?.length || manifest.artifacts.some((artifact) => !artifact.downloadUrl.startsWith(`https://github.com/imchenway/zeus/releases/download/${process.env.RELEASE_TAG}/`))) throw new Error('发布清单的资产来源不正确。');
           NODE
           if [ "$(git ls-remote origin refs/heads/main | awk '{print $1}')" != "$RELEASE_COMMIT" ]; then
@@ -303,33 +333,41 @@ jobs:
       - name: 发布或核对 GitHub Release
         run: |
           version="$(node -p "require('./package.json').version")"
-          local_dmg="$(node -e "const m=require('./dist/zeus-release-manifest.json'); const a=m.artifacts?.find((x)=>x.kind==='dmg'); if(!a) process.exit(1); process.stdout.write('dist/'+a.fileName)")"
           release_notes_file="releases/${RELEASE_TAG}.md"
           if [ ! -s "$release_notes_file" ]; then
             echo "公开发布缺少面向用户的 Release notes：$release_notes_file" >&2
             exit 1
           fi
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            if [ "$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft')" = "true" ]; then
-              echo "同名 GitHub Release 仍是草稿，拒绝同步 Homebrew Tap：$RELEASE_TAG" >&2
-              exit 1
-            fi
-            local_digest="sha256:$(sha256sum "$local_dmg" | awk '{print $1}')"
-            remote_digest="$(gh release view "$RELEASE_TAG" --json assets --jq ".assets[] | select(.name == \"$(basename "$local_dmg")\") | .digest")"
-            if [ -z "$remote_digest" ] || [ "$local_digest" != "$remote_digest" ]; then
-              echo "既有 Release 的 DMG 摘要与本次构建不一致：tag=$RELEASE_TAG" >&2
-              exit 1
-            fi
-          else
+          # 只有明确不存在才创建；读取失败不能被解释为可安全重复写入。
+          if release_json="$(gh release view "$RELEASE_TAG" --json tagName,isDraft,isPrerelease,assets 2>"$RUNNER_TEMP/zeus-release-read.log")"; then
+            printf '%s' "$release_json" | jq -e --arg tag "$RELEASE_TAG" '.tagName == $tag and .isDraft == false and .isPrerelease == false' >/dev/null
+          elif grep -Eq 'release not found|HTTP 404' "$RUNNER_TEMP/zeus-release-read.log"; then
+            # 先公开三个安装器；两端更新清单在安装器完成服务端摘要核对后上传。
             gh release create "$RELEASE_TAG" \
-              dist/Zeus-*.dmg \
-              dist/zeus-release-manifest.json \
+              "dist/Zeus-$version-arm64.dmg" \
+              "dist/Zeus-$version-win32-x64.exe" \
+              "dist/Zeus-$version-win32-arm64.exe" \
               --verify-tag \
               --latest \
               --title "Zeus $RELEASE_TAG" \
               --notes-file "$release_notes_file"
+          else
+            cat "$RUNNER_TEMP/zeus-release-read.log" >&2
+            exit 1
           fi
-          echo "Zeus $version GitHub Release 已就绪。"
+          # 同名资产只核对，不覆盖；未知上传结果直接停止，下次显式恢复先读现有事实。
+          for local_asset in "dist/Zeus-$version-arm64.dmg" "dist/Zeus-$version-win32-x64.exe" "dist/Zeus-$version-win32-arm64.exe" dist/zeus-release-manifest.json dist/zeus-release-manifest-win32.json; do
+            name="$(basename "$local_asset")"
+            digest="sha256:$(sha256sum "$local_asset" | awk '{print $1}')"
+            size="$(stat -c '%s' "$local_asset")"
+            release_json="$(gh release view "$RELEASE_TAG" --json assets)"
+            if ! printf '%s' "$release_json" | jq -e --arg name "$name" '.assets | any(.name == $name)' >/dev/null; then
+              gh release upload "$RELEASE_TAG" "$local_asset"
+            fi
+            gh release view "$RELEASE_TAG" --json assets |
+              jq -e --arg name "$name" --arg digest "$digest" --argjson size "$size" '.assets | map(select(.name == $name)) | length == 1 and (.[0].digest == $digest and .[0].size == $size)' >/dev/null
+          done
+          echo "Zeus $version macOS、Windows 两个架构及平台清单均已就绪。"
       - name: 同步 Homebrew Cask
         run: |
           mkdir -p .tmp/homebrew-tap/Casks

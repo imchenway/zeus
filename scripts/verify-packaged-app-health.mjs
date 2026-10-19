@@ -127,6 +127,16 @@ export function assertPackagedRendererEntrypoint(asarPath) {
     readAsarTextFile(asarPath, assetPath);
   }
 
+  /** 启动错误捕获必须先于所有业务模块；禁止分块优化重新引入同步依赖。 */
+  const startupRef = assetRefs.find((ref) => /(?:^|\/)startup-runtime-[^/]+\.js$/u.test(ref));
+  if (!startupRef) throw new Error('packaged renderer is missing its independent startup entry');
+  /** 此入口只有动态 import 和原生恢复通知，不依赖 React、Markdown 或应用样式。 */
+  const startupScript = readAsarTextFile(asarPath, posix.normalize(posix.join(posix.dirname(htmlPath), startupRef)));
+  // ponytail: 只检查无业务代码的生成入口；入口包含任意用户脚本时改用打包器依赖图。
+  if (/\bimport\s*["'{*]|\bexport\s*(?:\*|\{[^}]*\})\s*from/u.test(startupScript) || !startupScript.includes('reportRendererFatalFailure')) {
+    throw new Error('packaged renderer startup entry cannot report business module loading failures independently');
+  }
+
   const rendererTextPaths = listAsarFilePaths(asarPath, 'dist/renderer').filter((path) => /\.(?:html|js|mjs|css|svg|json)$/u.test(path));
   for (const path of rendererTextPaths) {
     const content = readAsarTextFile(asarPath, path);

@@ -19,6 +19,12 @@ export default defineConfig(({ command }) => ({
           maxSize: rendererChunkTargetBytes,
           groups: [
             {
+              // Vite 预加载助手也要独立，避免它把 Markdown 等业务运行库重新带回启动入口。
+              name: 'startup-runtime',
+              test: /(?:src[\\/]renderer[\\/]bootstrap\.ts$|vite\/preload-helper\.js$)/u,
+              priority: 110,
+            },
+            {
               name: 'react-runtime',
               test: /node_modules[\\/](?:react|react-dom|scheduler)[\\/]/u,
               priority: 100,
@@ -80,7 +86,8 @@ export default defineConfig(({ command }) => ({
             {
               name: 'renderer-runtime',
               // 源码预览与高亮重模块必须保留为动态入口；renderer-runtime 若吞入它们，Vite 会重新在首屏预加载全部语法解析器。
-              test: /src[\\/]renderer[\\/](?!code[\\/](?:CodeEditor|CodeDiffView|ConflictCodeEditor|SourceCodePreview|sourceLanguageRegistry)\.(?:ts|tsx)$)/u,
+              // 轻量启动入口也必须独立，否则业务模块初始化失败会发生在错误捕获之前。
+              test: /src[\\/]renderer[\\/](?!bootstrap\.ts$|code[\\/](?:CodeEditor|CodeDiffView|ConflictCodeEditor|SourceCodePreview|sourceLanguageRegistry)\.(?:ts|tsx)$)/u,
               priority: 10,
             },
           ],

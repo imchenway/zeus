@@ -26,6 +26,7 @@ main().catch((error) => {
   process.exitCode = error instanceof ReleasePublicationUnconfirmedError ? releasePublicationUnconfirmedExitCode : 1;
 });
 
+/** 固定发布候选并编排交付，两端资产和 Homebrew 回验通过后才记录完成。 */
 async function main() {
   announceReleaseStage('检查本地发布条件');
   const outputDirectory = resolveOutputDirectory();
@@ -58,6 +59,26 @@ async function main() {
   const state = resolveReleaseState({ stableRelease, publicCommit, headSha, packageVersion, nextVersion });
 
   if (state.type === 'already_published') {
+    /** 版本号与标签相同不能证明两端资产齐全；此分支只读回验，不触发新发布。 */
+    const publishedDirectory = join(outputDirectory, 'published');
+    await runStage(
+      '回验当前稳定版的两端公开资产',
+      'pnpm',
+      ['release:publish'],
+      {
+        ...process.env,
+        RELEASE_VERSION: stableRelease.version,
+        RELEASE_COMMIT: publicCommit,
+        VERIFY_PUBLISHED_ONLY: 'true',
+        APPLY_REMOTE: 'false',
+        REQUIRE_APPLE_DISTRIBUTION: 'false',
+        ZEUS_COMMAND_RUN_DIR: publishedDirectory,
+      },
+      { publicationUnconfirmedExitCode: releasePublicationUnconfirmedExitCode },
+    );
+    /** 同一回验入口必须实际生成凭证，不能只依赖子命令退出状态。 */
+    const publishResultPath = join(publishedDirectory, `Zeus-${stableRelease.version}-publish-result.md`);
+    if (!existsSync(publishResultPath)) throw new Error(`当前稳定版没有生成两端资产回验凭证：${publishResultPath}`);
     const resultPath = join(outputDirectory, `Zeus-${stableRelease.version}-release-already-current.md`);
     writeFileSync(
       resultPath,
@@ -67,13 +88,15 @@ async function main() {
         `- 本地 main：${headSha}`,
         `- 公开标签：${stableRelease.tag} → ${publicCommit}`,
         `- GitHub Release：${stableRelease.url}`,
-        '- 最新公开标签之后没有新的 main 提交，本次没有创建新版本或执行任何写操作。',
+        `- macOS、Windows 双架构与 Homebrew 回验：${publishResultPath}`,
+        '- 最新公开标签之后没有新的 main 提交，本次没有创建新版本或执行远端写操作。',
         '',
       ].join('\n'),
       { mode: 0o600 },
     );
     console.log('当前 main 与最新公开稳定版一致；无需重复发布。');
     console.log(`ZEUS_ARTIFACT_FILE=${resultPath}`);
+    console.log(`ZEUS_ARTIFACT_FILE=${publishResultPath}`);
     return;
   }
 
@@ -110,7 +133,7 @@ async function main() {
     if (resolve(source) !== resolve(destination)) copyFileSync(source, destination);
     artifactPaths.push(destination);
   }
-  console.log(`Zeus ${releaseState.version} 已完成 main 推送、公开发布与产物回验。`);
+  console.log(`Zeus ${releaseState.version} 已完成 main 推送、macOS 与 Windows 公开发布及产物回验。`);
   for (const path of artifactPaths) console.log(`ZEUS_ARTIFACT_FILE=${path}`);
 }
 
@@ -782,7 +805,7 @@ async function ensureFastLocalGate(state) {
       '- 锁定依赖已按 frozen-lockfile 同步：通过。',
       '- 本地阻塞级架构边界检查：通过。',
       '- 本地阻塞级 typecheck：通过。',
-      '- 正式 DMG 打包、包内容健康检查、hdiutil 与 manifest 对账：交由同一固定提交的 Release Workflow 执行。',
+      '- macOS 正式 DMG、Windows 双架构安装器及各自平台清单：交由同一固定提交的 Release Workflow 并行构建和核对。',
       '',
     ].join('\n'),
     { mode: 0o600 },
@@ -844,6 +867,7 @@ function assertReleaseHead(state) {
   if (headSha !== state.releaseCommit || status) throw new Error(`发布阶段要求干净且固定的 main 提交：expected=${state.releaseCommit} actual=${headSha}\n${status}`);
 }
 
+/** 保存同一固定候选的两端发布范围和实际回验凭证位置。 */
 function buildFinalResult(state) {
   return [
     `# Zeus ${state.version} 端到端发布结果`,
@@ -854,6 +878,7 @@ function buildFinalResult(state) {
     `- GitHub Release：https://github.com/${repository}/releases/tag/${state.tag}`,
     `- 本地快速检查摘要：${state.gateSummaryPath}`,
     `- 公开资产回验：${state.publishResultPath}`,
+    '- 发布范围：macOS DMG、Windows x64 / ARM64 安装器、两端更新清单及 Homebrew。',
     '- 本次允许 ad-hoc、未公证产物；真实签名与公证状态以公开 manifest 和回验结果为准。',
     '- 未自动安装、升级或随 Zeus 分发 Codex CLI。',
     '',

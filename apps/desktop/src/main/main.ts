@@ -184,10 +184,35 @@ type StartupSettingsSnapshot = Partial<MainAppShellSettings> & { appearance?: un
 let startupSettings: Promise<StartupSettingsSnapshot | null> | undefined;
 /** 主进程启动计时起点。 */
 const applicationStartupStartedAt = performance.now();
-/** 所有启动打点沿用同一时钟。 */
-function traceApplicationStartup(stage: string): void {
-  if (process.env.ZEUS_STARTUP_TIMING !== '1') return;
-  console.info(`[Zeus app startup] ${stage} ${Math.round(performance.now() - applicationStartupStartedAt)}ms`);
+/** 串行追加本进程的少量启动事件，保持阶段顺序并避免诊断写入阻塞窗口加载。 */
+let startupDiagnosticWrites: Promise<void> = Promise.resolve();
+/** 启动日志始终保存到已确认的数据根；控制台计时仍由开发开关控制。 */
+function traceApplicationStartup(stage: string, detail?: string, windowId?: number): void {
+  /** 全部阶段共用进程内单调时钟，不受系统时间调整影响。 */
+  const elapsedMs = Math.round(performance.now() - applicationStartupStartedAt);
+  if (process.env.ZEUS_STARTUP_TIMING === '1') console.info(`[Zeus app startup] ${stage} ${elapsedMs}ms`);
+  if (readOnlyValidationDescriptor) return;
+  /** 数据根尚未核验时不写诊断；已确认准备失败才使用 Electron 的日志目录。 */
+  const logDirectory = zeusDataLayout?.localLogs ?? (dataRootPreparationError !== undefined ? app.getPath('logs') : undefined);
+  if (!logDirectory) return;
+  /** 只记录阶段与宿主、窗口身份；错误说明由调用方先脱敏。 */
+  const record = {
+    timestamp: new Date().toISOString(),
+    event: `desktop.${stage}`,
+    platform: process.platform,
+    arch: process.arch,
+    appVersion: app.getVersion(),
+    mainPid: process.pid,
+    elapsedMs,
+    ...(windowId !== undefined ? { windowId } : {}),
+    ...(detail ? { detail } : {}),
+  };
+  startupDiagnosticWrites = startupDiagnosticWrites
+    .then(async () => {
+      await mkdir(logDirectory, { recursive: true });
+      await appendFile(join(logDirectory, 'desktop-startup.log'), `${JSON.stringify(record)}\n`, { encoding: 'utf8', mode: 0o600 });
+    })
+    .catch((error: unknown) => console.warn('Zeus 无法保存启动诊断。', error));
 }
 
 function activeMainCommandLedger(): MainCommandLedger {
@@ -597,6 +622,7 @@ try {
   // 使用一次性 Chromium profile 只承载统一“启动失败”页，绝不读写用户业务数据。
   const failureProfile = mkdtempSync(join(tmpdir(), 'zeus-startup-failure-'));
   app.setPath('userData', failureProfile);
+  traceApplicationStartup('data_root_preparation_failed', sanitizeRendererRuntimeLogDetail(error instanceof Error ? error.message : String(error)));
   console.error('Zeus data root preparation failed', error);
 }
 
@@ -775,7 +801,24 @@ function isAllowedRendererNavigation(targetUrl: string, rendererUrl: string): bo
   }
 }
 
+/** 统一安装各类工作窗口的启动监控、导航限制和权限策略。 */
 function configureWindowSecurity(window: BrowserWindow, rendererUrl: string): void {
+  // 各类工作窗口共用启动监控，页面或 preload 失败时不能依赖 Renderer 自己绘制错误页。
+  rendererBootstrapMonitor.watch(window);
+  window.webContents.once('preload-error', (_event, preloadPath, error) => {
+    rendererBootstrapMonitor.fail(window, new Error(`Renderer preload failed (${preloadPath}): ${error.message}`));
+  });
+  window.webContents.once('render-process-gone', (_event, details) => {
+    rendererBootstrapMonitor.fail(window, new Error(`Renderer process exited during bootstrap (${details.reason}, exit ${details.exitCode})`));
+  });
+  window.on('unresponsive', () => {
+    rendererBootstrapMonitor.fail(window, new Error('Renderer became unresponsive during bootstrap'));
+  });
+  window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
+    if (!isMainFrame || errorCode === -3) return;
+    rendererBootstrapMonitor.fail(window, new Error(`Renderer failed to load ${validatedUrl}: ${errorDescription} (${errorCode})`));
+  });
+  window.once('closed', () => rendererBootstrapMonitor.dispose(window));
   // Renderer 只允许 Zeus 自身入口导航；所有外部链接必须走显式 shell.openExternal 审计路径。
   window.webContents.setWindowOpenHandler(() => {
     return { action: 'deny' };
@@ -957,8 +1000,8 @@ async function openTaskGitDeliveryWindow(parent: BrowserWindow, target: GitDeliv
     minimizable: true,
     maximizable: true,
     fullscreenable: true,
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 14, y: 16 },
+    // macOS 沿用交通灯布局；Windows 复用主窗口的系统标题栏和窗口控制。
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 16 } } : { titleBarStyle: 'default' as const }),
     webPreferences: {
       preload: join(desktopRoot(), 'dist/preload/index.cjs'),
       contextIsolation: true,
@@ -1050,23 +1093,6 @@ async function createWindow(): Promise<void> {
     window.webContents.send('zeus:unsaved-changes-close-requested');
   });
 
-  rendererBootstrapMonitor.watch(window);
-
-  window.webContents.once('preload-error', (_event, preloadPath, error) => {
-    const detail = error instanceof Error ? error.message : String(error);
-    rendererBootstrapMonitor.fail(window, new Error(`Renderer preload failed (${preloadPath}): ${detail}`));
-  });
-  window.webContents.once('render-process-gone', (_event, details) => {
-    rendererBootstrapMonitor.fail(window, new Error(`Renderer process exited during bootstrap (${details.reason}, exit ${details.exitCode})`));
-  });
-  window.on('unresponsive', () => {
-    rendererBootstrapMonitor.fail(window, new Error('Renderer became unresponsive during bootstrap'));
-  });
-  window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-    if (!isMainFrame || errorCode === -3) return;
-    rendererBootstrapMonitor.fail(window, new Error(`Renderer failed to load ${validatedURL}: ${errorDescription} (${errorCode})`));
-  });
-
   windows.add(window);
   mainWindow = window;
   window.on('focus', () => {
@@ -1091,7 +1117,6 @@ async function createWindow(): Promise<void> {
     sessionContextActivityByWindow.delete(window.id);
     terminalActivityByWindow.delete(window.id);
     appCloseLayerActivityByWindow.delete(window.id);
-    rendererBootstrapMonitor.dispose(window);
     windows.delete(window);
     if (mainWindow === window) mainWindow = [...windows].at(-1);
     if (
@@ -1137,7 +1162,12 @@ async function createWindow(): Promise<void> {
   setTimeout(revealMainWindowOnce, 1200);
 }
 
+/** 启动早期即可使用日志和退出入口；设置就绪后仍复用同一菜单重新生成。 */
 function setupMenu(): void {
+  if (readOnlyValidationDescriptor) {
+    Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'Zeus Test · 只读验证', submenu: [{ role: 'quit' }] }]));
+    return;
+  }
   Menu.setApplicationMenu(
     Menu.buildFromTemplate(
       buildAppShellMenuTemplate({
@@ -2058,7 +2088,7 @@ function setupIpc(): void {
   });
   ipcMain.on('zeus:renderer-bootstrap-failed', (event, message: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
-    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) return;
+    if (!requestingWindow || requestingWindow.isDestroyed() || !isTrustedZeusRendererWindow(requestingWindow) || event.senderFrame !== event.sender.mainFrame) return;
     const detail = typeof message === 'string' && message.trim() ? message.trim().slice(0, 500) : 'Renderer bootstrap failed without detail';
     rendererBootstrapMonitor.fail(requestingWindow, new Error(`Renderer bootstrap failed: ${detail}`));
   });
@@ -2083,9 +2113,11 @@ function setupIpc(): void {
   });
   ipcMain.on('zeus:renderer-bootstrap-ready', (event) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
-    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) return;
-    if (rendererBootstrapMonitor.markReady(requestingWindow)) traceApplicationStartup('renderer_bootstrap_ready');
-    if (process.platform === 'win32' && app.isPackaged && !readOnlyValidationDescriptor) {
+    if (!requestingWindow || requestingWindow.isDestroyed() || !isTrustedZeusRendererWindow(requestingWindow) || event.senderFrame !== event.sender.mainFrame) return;
+    // 失败后的迟到通知与重复通知均不能确认 Windows 升级成功。
+    if (!rendererBootstrapMonitor.markReady(requestingWindow)) return;
+    traceApplicationStartup('renderer_bootstrap_ready');
+    if (windows.has(requestingWindow) && process.platform === 'win32' && app.isPackaged && !readOnlyValidationDescriptor) {
       // 界面和后台宿主均实际就绪后才确认升级，启动失败保留未完成事务。
       void rendererRuntimeReady.then(() => completeWindowsReleaseInstall(activeZeusDataLayout().root, app.getVersion())).catch((error: unknown) => console.error('Zeus 更新完成记录写入失败。', error));
     }
@@ -3579,6 +3611,9 @@ async function initializeApplication(): Promise<void> {
     },
   });
   setupIpc();
+  // 本机日志入口不依赖后台服务，启动失败或维护模式下也必须能使用。
+  setupMenu();
+  traceApplicationStartup('app_menu_ready');
   applyStartupAppearance();
   // 窗口与本地服务并行启动：HTML 启动界面先出现，Renderer 会等待真实服务配置后再挂载业务界面。
   const initialWindowPromise = createWindow();
@@ -3729,9 +3764,7 @@ async function initializeApplication(): Promise<void> {
     traceApplicationStartup('app_shell_settings_ready');
 
     if (!readOnlyValidationDescriptor) applyLoginItemSettings();
-    if (readOnlyValidationDescriptor) {
-      Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'Zeus Test · 只读验证', submenu: [{ role: 'quit' }] }]));
-    } else setupMenu();
+    setupMenu();
     if (!readOnlyValidationDescriptor) {
       setupTraySafely();
       applySystemNotificationBridge();
@@ -3889,6 +3922,7 @@ function isConversationStoreMigrationError(error: unknown): boolean {
 
 function handleFatalStartupError(error: unknown): void {
   fatalStartup = true;
+  traceApplicationStartup('initialization_failed', sanitizeRendererRuntimeLogDetail(error instanceof Error ? error.message : String(error)));
   // Renderer 已通过被拒绝的启动配置进入唯一“启动失败”页；Main 只记录日志，
   // 不再叠加原生错误弹窗或主动退出造成白屏。
   console.error('Zeus startup failed', error);
@@ -3898,14 +3932,50 @@ function handleFatalStartupError(error: unknown): void {
   });
 }
 
+/** 页面和 preload 都可能损坏；系统对话框独立提供人工恢复，不重试结果未知的业务操作。 */
+async function showRendererBootstrapFailure(window: BrowserWindow, error: unknown): Promise<void> {
+  /** 复用运行日志脱敏，避免启动错误中的凭据进入日志或系统对话框。 */
+  const detail = sanitizeRendererRuntimeLogDetail(error instanceof Error ? error.message : String(error));
+  console.error('Zeus renderer bootstrap failed', detail);
+  traceApplicationStartup('renderer_bootstrap_failed', detail, window.id);
+  while (!window.isDestroyed()) {
+    /** 只有主窗口失败才退出整个应用；辅助窗口保留其他正在运行的窗口。 */
+    const isMainWindow = windows.has(window);
+    /** 异步系统对话框不阻塞 Main 的宿主心跳和退出清理。 */
+    const answer = await dialog.showMessageBox(window, {
+      type: 'error',
+      title: desktopDisplayName(),
+      message: nativeText('Zeus 窗口无法加载', 'Zeus could not load this window'),
+      detail: `${detail}\n\n${nativeText('重新启动会中断仍在运行的工作。', 'Restarting will interrupt any work still running.')}`,
+      buttons: [isMainWindow ? nativeText('退出 Zeus', 'Quit Zeus') : nativeText('关闭窗口', 'Close Window'), nativeText('打开运行日志', 'Open Logs'), nativeText('重新启动', 'Restart')],
+      defaultId: 1,
+      cancelId: 0,
+      noLink: true,
+    });
+    if (window.isDestroyed()) return;
+    if (answer.response === 1) {
+      await openLogsDirectoryFromMenu();
+      continue;
+    }
+    if (answer.response === 2) requestFullAppRestart();
+    else if (isMainWindow) app.quit();
+    else window.close();
+    return;
+  }
+}
+
+/** 应用初始化失败由协调器统一记录和唤回主窗口。 */
 const startupCoordinator = createStartupCoordinator({
   initialize: initializeApplication,
   revealOrCreateMainWindow,
   onFatalStartupError: handleFatalStartupError,
 });
+/** 所有工作窗口共用首次就绪状态，实际加载失败只触发一次恢复。 */
 const rendererBootstrapMonitor = createRendererBootstrapMonitor<BrowserWindow>({
-  onFailure: (_window, error) => {
-    void startupCoordinator.fail(error);
+  onFailure: (window, error) => {
+    // 辅助窗口失败不能把整个应用标为启动失败。
+    if (windows.has(window)) void startupCoordinator.fail(error);
+    void showRendererBootstrapFailure(window, error).catch((recoveryError: unknown) => console.error('Zeus 无法显示窗口加载错误。', recoveryError));
   },
 });
 

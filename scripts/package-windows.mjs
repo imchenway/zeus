@@ -6,6 +6,7 @@ import { createRequire } from 'node:module';
 import { mkdir, open, readFile, stat } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { generateReleaseManifest } from './generate-release-manifest.mjs';
+import { assertPackagedPreloadEntrypoint, assertPackagedRendererEntrypoint } from './verify-packaged-app-health.mjs';
 
 /** 所有路径固定到当前工作树，不依赖调用终端的目录。 */
 const root = resolve(import.meta.dirname, '..');
@@ -54,6 +55,10 @@ const installerName = `Zeus-${manifest.version}-win32-${arch}.exe`;
 if ((await stat(join(output, installerName))).size === 0) throw new Error('Windows 安装器为空。');
 /** electron-builder 对非 x64 目标使用架构后缀。 */
 const unpacked = join(output, arch === 'x64' ? 'win-unpacked' : `win-${arch}-unpacked`);
+/** Windows 与 macOS 共用页面和沙箱 preload 检查，不能只检查原生二进制。 */
+const asarPath = join(unpacked, 'resources/app.asar');
+assertPackagedRendererEntrypoint(asarPath);
+assertPackagedPreloadEntrypoint(asarPath);
 await assertNativeArchitecture(join(unpacked, 'resources/native'));
 await assertPeArchitecture(join(unpacked, 'Zeus.exe'), arch);
 /** 产品身份始终为 Zeus；使用当前 PowerShell 自带模块，避免继承其他版本的模块路径。 */
