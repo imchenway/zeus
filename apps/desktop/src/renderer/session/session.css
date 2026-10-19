@@ -3228,9 +3228,26 @@
   animation: session-title-flow-in 140ms var(--session-ease-out) both;
 }
 
-/* 正文切换只做短促透明度接管，不移动滚动位置或延后可交互时间。 */
+/* 正文切换用短促淡入接管，不移动滚动位置或延后可交互时间。 */
 .session-codex-parity-v1 .session-transcript-shell[data-conversation-transition='true'] {
-  animation: session-history-takeover 140ms var(--session-ease-out) both;
+  animation: session-history-takeover 180ms var(--session-ease-out) both;
+}
+
+/* 冷读取先隐藏空记录区；快照到达后正文与加载层原位交叉接管。 */
+.session-codex-parity-v1 .session-transcript-shell > .session-transcript {
+  transition:
+    opacity 180ms var(--session-ease-out),
+    transform 180ms var(--session-ease-out);
+}
+
+.session-codex-parity-v1 .session-transcript-shell[data-history-loading='true'] > .session-transcript {
+  opacity: 0;
+  transform: translateY(3px);
+}
+
+.session-codex-parity-v1 .session-transcript-shell[data-history-ready='true'] > .session-transcript {
+  opacity: 1;
+  transform: none;
 }
 
 /* 冷会话在消息区原位接管，骨架层和记录区共享同一尺寸，不触发布局跳变。 */
@@ -3238,29 +3255,65 @@
   align-content: center;
   background: var(--session-canvas);
   display: grid;
-  gap: 10px;
+  gap: 18px;
   inset: 0;
-  justify-items: center;
+  justify-items: stretch;
   opacity: 0;
   padding: 48px var(--session-gutter);
   pointer-events: none;
   position: absolute;
+  transition:
+    opacity 100ms var(--session-ease-out),
+    visibility 0s linear 100ms;
   visibility: hidden;
   z-index: 3;
 }
 
 .session-codex-parity-v1 .session-transcript-loading[data-visible='true'] {
-  animation: session-history-takeover 140ms var(--session-ease-out) both;
   opacity: 1;
+  transition:
+    opacity 140ms var(--session-ease-out),
+    visibility 0s;
   visibility: visible;
 }
 
-.session-codex-parity-v1 .session-transcript-loading .session-loading-line {
-  inline-size: min(32rem, 74%);
+.session-codex-parity-v1 .session-transcript-loading-content {
+  display: grid;
+  gap: 24px;
+  inline-size: min(var(--session-thread-max), 100%);
+  justify-self: center;
 }
 
-.session-codex-parity-v1 .session-transcript-loading .session-loading-line:nth-child(2) {
-  inline-size: min(24rem, 56%);
+.session-codex-parity-v1 .session-transcript-loading-turn {
+  display: grid;
+  gap: 9px;
+}
+
+.session-codex-parity-v1 .session-transcript-loading-turn[data-speaker='user'] .session-loading-line {
+  block-size: 38px;
+  border-radius: 14px;
+  inline-size: min(20rem, 48%);
+  justify-self: end;
+}
+
+.session-codex-parity-v1 .session-transcript-loading-turn[data-speaker='assistant'] .session-loading-line {
+  inline-size: min(34rem, 78%);
+  justify-self: start;
+}
+
+.session-codex-parity-v1 .session-transcript-loading-turn[data-speaker='assistant'] .session-loading-line:nth-child(2) {
+  inline-size: min(29rem, 66%);
+}
+
+.session-codex-parity-v1 .session-transcript-loading-turn[data-speaker='assistant'] .session-loading-line:nth-child(3) {
+  inline-size: min(22rem, 52%);
+}
+
+.session-codex-parity-v1 .session-transcript-loading > strong {
+  color: var(--session-text-muted);
+  font-size: 12px;
+  font-weight: 550;
+  justify-self: center;
 }
 
 /* 已完成且离开视口的长历史交给浏览器跳过绘制，活动内容和键盘焦点始终完整渲染。 */
@@ -3297,10 +3350,12 @@
 
 @keyframes session-history-takeover {
   from {
-    opacity: 0.9;
+    opacity: 0.78;
+    transform: translateY(3px);
   }
   to {
     opacity: 1;
+    transform: none;
   }
 }
 
@@ -3310,6 +3365,11 @@
   .session-codex-parity-v1 .session-transcript-loading[data-visible='true'] {
     animation: none;
     transform: none;
+  }
+
+  .session-codex-parity-v1 .session-transcript-shell > .session-transcript,
+  .session-codex-parity-v1 .session-transcript-loading {
+    transition: none;
   }
 }
 

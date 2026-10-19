@@ -256,6 +256,7 @@ function useStableOptionalCallback<Arguments extends unknown[], Result>(callback
 }
 
 /** 会话正文、历史过程与当前状态共用原始事件，仅在展示时分配提示职责。 */
+/** 渲染会话正文、渐进资源、完整目录和历史定位。 */
 export function ConversationTranscript(props: ConversationTranscriptProps) {
   /** 产品会话隔离待确认消息，子线程只读投影不接管主会话写入。 */
   const systemScope = systemMessageScope(props.state.projectId ?? '', props.state.conversationId);
@@ -384,6 +385,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const getStaticReadingAnchor = useCallback(() => staticReadingAnchorRef.current, []);
   const updateHistorySentinelIntersection = useCallback((intersecting: boolean) => setHistorySentinelIntersection({ conversationId: props.state.conversationId, intersecting }), [props.state.conversationId]);
   const activeTurnId = props.historyOnly ? null : props.state.activeTurnId;
+  /** 正文先接管首帧；完整目录只能在已有可见历史后渐进读取。 */
+  const historyHydrated = props.transcriptHydrated ?? props.state.snapshot !== null;
   /** 最新轮次取实时状态，不能等待旧首屏快照刷新后才开放重试。 */
   const latestTurn = useMemo(
     () =>
@@ -413,8 +416,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     .filter(isAnsweredUserInputRequest)
     .map((request) => `${request.id}:${request.resolvedAt}`)
     .join('|')}`;
-  /** 完整目录与首屏正文并行取得，绝不要求用户先滚到更早历史。 */
-  const navigation = useConversationNavigation({ scopeKey: props.state.conversationId, refreshKey: navigationRefreshKey, load: props.onLoadNavigation });
+  /** 完整目录覆盖深历史，但不能与首屏正文争抢 Core 的同步读取。 */
+  const navigation = useConversationNavigation({ scopeKey: props.state.conversationId, refreshKey: navigationRefreshKey, load: historyHydrated ? props.onLoadNavigation : undefined });
   useEffect(() => {
     if (!props.onSaveSystemMessage) return;
     /** 同一后台故障已被接纳时不因自动刷新再创建记录。 */
@@ -495,7 +498,6 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   );
   // 原始思考摘要完整保留在会话状态中；会话记录的当前态选择统一交给行投影处理。
   const items = transcriptItems;
-  const historyHydrated = props.transcriptHydrated ?? props.state.snapshot !== null;
   latestContentReadyRef.current = historyHydrated && !props.historyLoading && props.state.transportState === 'ready';
   const enteringItemIds = useNewItemMotionIds(
     items.map((item) => item.key),
@@ -1449,7 +1451,14 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
           </button>
         </div>
       ) : null}
-      <div ref={shellRef} className="session-transcript-shell" data-conversation-transition="true" data-navigation-ready={(showNavigation && !navigation.error) || undefined}>
+      <div
+        ref={shellRef}
+        className="session-transcript-shell"
+        data-conversation-transition="true"
+        data-history-ready={historyHydrated || undefined}
+        data-history-loading={!historyHydrated || undefined}
+        data-navigation-ready={(showNavigation && !navigation.error) || undefined}
+      >
         <section
           ref={containerRef}
           className="session-transcript"
@@ -1607,8 +1616,16 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
 function TranscriptHistoryLoading(props: { visible: boolean; initializing: boolean; language: SessionUiLanguage }) {
   return (
     <section className="session-transcript-loading" data-visible={props.visible || undefined} role={props.visible ? 'status' : undefined} aria-hidden={!props.visible} aria-live={props.visible ? 'polite' : undefined}>
-      <span className="session-loading-line" />
-      <span className="session-loading-line" />
+      <span className="session-transcript-loading-content" aria-hidden="true">
+        <span className="session-transcript-loading-turn" data-speaker="user">
+          <span className="session-loading-line" />
+        </span>
+        <span className="session-transcript-loading-turn" data-speaker="assistant">
+          <span className="session-loading-line" />
+          <span className="session-loading-line" />
+          <span className="session-loading-line" />
+        </span>
+      </span>
       <strong>{props.initializing ? (props.language === 'zh-CN' ? '正在准备会话历史' : 'Preparing conversation history') : props.language === 'zh-CN' ? '正在加载会话' : 'Loading conversation'}</strong>
     </section>
   );

@@ -20,6 +20,7 @@ import {
   type ConversationSnapshotV2PageKind,
   type ConversationSnapshotV2ToolResult,
   type ConversationTranscriptEnvelope,
+  type ConversationTranscriptPlacement,
   type ConversationTranscriptPlacementBatch,
 } from '@zeus/shared';
 import type { ZeusDatabasePort } from './databasePort.js';
@@ -59,6 +60,32 @@ export const conversationSnapshotV2Limits = {
 type ConversationContentKind = 'timeline_payload' | 'model_content' | 'process_detail' | 'change_file_diff';
 type ConversationPageKind = ConversationSnapshotV2PageKind;
 type ConversationProcessKind = 'reasoning' | 'tool' | 'command' | 'retry' | 'context_compaction' | 'waiting' | 'warning';
+
+/** 目录查询直接携带持久位置，避免逐条回查相同的来源别名和显示条目。 */
+interface ConversationNavigationPlacementRow {
+  transcript_entry_id: string | null;
+  transcript_display_order: number | null;
+  transcript_placement_revision: number | null;
+  transcript_turn_id: string | null;
+  transcript_opening_input_id: string | null;
+  transcript_display_stage_id: string | null;
+}
+
+/** 将目录联查结果还原为共享位置；缺失别名仍按原契约拒绝整份损坏目录。 */
+function conversationNavigationPlacement(row: ConversationNavigationPlacementRow, orderEpoch: number): ConversationTranscriptPlacement {
+  if (!row.transcript_entry_id || row.transcript_placement_revision === null) {
+    throw snapshotError('ZEUS_CONVERSATION_SNAPSHOT_V2_CONTENT_CHANGED', '会话显示位置尚未覆盖当前条目，请稍后重试。', 409);
+  }
+  return {
+    entryId: row.transcript_entry_id,
+    order: row.transcript_display_order,
+    orderEpoch,
+    placementRevision: row.transcript_placement_revision,
+    turnId: row.transcript_turn_id,
+    openingInputId: row.transcript_opening_input_id,
+    displayStageId: row.transcript_display_stage_id,
+  };
+}
 
 // 模型历史持久化的是结构化 JSON；普通会话正文只读取其中的可见文本，绝不能把内部 tool_call 包装层当作消息正文。
 // 用户消息的附件、任务布局、回答评论和网页评论是正文展示所需结构，保留原 JSON 交给 Renderer 还原；工具调用没有 text 字段，
@@ -847,29 +874,33 @@ export class ConversationSnapshotV2Repository {
   readNavigation(conversationIdValue: string): ConversationNavigationSnapshot {
     /** 会话范围由路由校验，存储层仍拒绝空身份。 */
     const conversationId = requiredIdentity(conversationIdValue, 'conversationId');
+    /** 全份目录共享同一位置代次，不能为每条消息重复读取状态表。 */
+    const orderEpoch = this.transcript.orderEpoch(conversationId);
     /** 目录和事件进度处于同一次同步读取中。 */
     const throughEventSeq = this.throughEventSeq(conversationId);
     /** 沿现有会话顺序索引读取；数据库内截断，正文不进入目录响应。 */
-    const rows = this.db.select<{
-      id: string;
-      sequence: number;
-      turn_id: string;
-      provider_turn_id: string | null;
-      client_user_message_id: string | null;
-      message_created_at: string | null;
-      provider_item_id: string | null;
-      segment_id: string;
-      role: string;
-      confirmed_at: string;
-      status: string;
-      preview: string;
-      assistant_phase: string | null;
-      assistant_metadata_json: string | null;
-      formal_plan: number;
-      /** 正式计划可能来自思考摘要，位置别名须保持原始分面。 */
-      reasoning_summary: number;
-      question_answer_json: string | null;
-    }>(
+    const rows = this.db.select<
+      {
+        id: string;
+        sequence: number;
+        turn_id: string;
+        provider_turn_id: string | null;
+        client_user_message_id: string | null;
+        message_created_at: string | null;
+        provider_item_id: string | null;
+        segment_id: string;
+        role: string;
+        confirmed_at: string;
+        status: string;
+        preview: string;
+        assistant_phase: string | null;
+        assistant_metadata_json: string | null;
+        formal_plan: number;
+        /** 正式计划可能来自思考摘要，位置别名须保持原始分面。 */
+        reasoning_summary: number;
+        question_answer_json: string | null;
+      } & ConversationNavigationPlacementRow
+    >(
       `SELECT conversation_model_history.id, conversation_model_history.sequence,
         conversation_model_history.turn_id, turn.provider_turn_id, turn.status,
         submission.client_message_id AS client_user_message_id,
@@ -881,6 +912,12 @@ export class ConversationSnapshotV2Repository {
         ${modelHistoryFormalPlanSql} AS formal_plan,
         ${modelHistoryReasoningSummarySql} AS reasoning_summary,
         ${modelHistoryQuestionAnswerSql} AS question_answer_json,
+        transcript_entry.id AS transcript_entry_id,
+        transcript_entry.display_order AS transcript_display_order,
+        transcript_entry.placement_revision AS transcript_placement_revision,
+        transcript_entry.turn_id AS transcript_turn_id,
+        transcript_entry.opening_input_id AS transcript_opening_input_id,
+        transcript_entry.display_stage_id AS transcript_display_stage_id,
         substr(CASE WHEN json_valid(content_json) THEN COALESCE(
           NULLIF(json_extract(content_json, '$.displayText'), ''),
           NULLIF(json_extract(content_json, '$.text'), ''),
@@ -890,6 +927,14 @@ export class ConversationSnapshotV2Repository {
       FROM conversation_model_history
       JOIN conversation_turns AS turn ON turn.id = conversation_model_history.turn_id AND turn.conversation_id = conversation_model_history.conversation_id
       LEFT JOIN conversation_submissions AS submission ON submission.id = conversation_model_history.submission_id AND submission.conversation_id = conversation_model_history.conversation_id
+      LEFT JOIN conversation_transcript_aliases AS transcript_alias
+        ON transcript_alias.conversation_id = conversation_model_history.conversation_id
+       AND transcript_alias.source_domain = 'model_history'
+       AND transcript_alias.source_scope = conversation_model_history.segment_id
+       AND transcript_alias.source_id = conversation_model_history.id
+       AND transcript_alias.facet = CASE WHEN ${modelHistoryReasoningSummarySql} = 1 THEN 'reasoning_block' ELSE 'body' END
+      LEFT JOIN conversation_transcript_entries AS transcript_entry
+        ON transcript_entry.conversation_id = transcript_alias.conversation_id AND transcript_entry.id = transcript_alias.entry_id
       WHERE conversation_model_history.conversation_id = ?
         AND conversation_model_history.role IN ('user', 'assistant') AND tool_pair_id IS NULL
         AND (NOT json_valid(content_json) OR COALESCE(json_extract(content_json, '$.type'), '') <> 'tool_call')
@@ -898,13 +943,15 @@ export class ConversationSnapshotV2Repository {
       ORDER BY conversation_model_history.sequence`,
       [conversationId],
     );
+    /** 消息正文与过程边界复用同一批位置；原本不进入目录的空助手记录仍不要求位置。 */
+    const positionedRows = rows.map((row) => ({ ...row, placement: row.role === 'user' || row.preview.trim() ? conversationNavigationPlacement(row, orderEpoch) : null }));
     /** 同轮补充发言共用最终答复；正式计划只有在没有最终答复时使用。 */
     const answers = new Map<string, { text: string; final: boolean }>();
     /** 内容存在性不依赖最终答复，失败轮次也必须拥有补读入口。 */
     const contentTurnIds = new Set<string>();
     /** 每次用户发言独立占一条刻度，使用持久身份去重。 */
     const entries = new Map<string, ConversationNavigationEntry>();
-    for (const row of rows) {
+    for (const row of positionedRows) {
       /** 脱敏沿用现有历史预览规则。 */
       const text = redactSensitivePreview(row.preview).text;
       if (row.role === 'assistant') {
@@ -932,17 +979,28 @@ export class ConversationSnapshotV2Repository {
           prompt: questionExcerpt ? redactSensitivePreview(questionExcerpt.prompt).text : conversationNavigationExcerpt(text, 160),
           response: questionExcerpt ? redactSensitivePreview(questionExcerpt.response).text : '',
           status: row.status,
-          placement: this.requiredTranscriptEnvelope({ conversationId, sourceDomain: 'model_history', sourceScope: row.segment_id, sourceId: row.id, facet: 'body' }).placement,
+          placement: row.placement!,
         });
     }
     /** 普通发言保持模型历史顺序，答题卡保留自己的答案摘录。 */
     const directory: ConversationNavigationEntry[] = [...entries.values()].map((entry) => ({ ...entry, hasContent: contentTurnIds.has(entry.turnId), response: entry.response || answers.get(entry.turnId)?.text || '' }));
     /** 同步询问独立存储，必须进入完整目录而不能只依赖已加载正文。 */
-    const requests = this.db.select<{ id: string; turn_id: string; provider_turn_id: string | null; payload_json: string; response_json: string; contains_secret: number; occurred_at: string }>(
+    const requests = this.db.select<{ id: string; turn_id: string; provider_turn_id: string | null; payload_json: string; response_json: string; contains_secret: number; occurred_at: string } & ConversationNavigationPlacementRow>(
       `SELECT request.id, request.turn_id, turn.provider_turn_id, request.payload_json, request.response_json, request.contains_secret,
-              COALESCE(request.resolved_at, request.created_at) AS occurred_at
+              COALESCE(request.resolved_at, request.created_at) AS occurred_at,
+              transcript_entry.id AS transcript_entry_id,
+              transcript_entry.display_order AS transcript_display_order,
+              transcript_entry.placement_revision AS transcript_placement_revision,
+              transcript_entry.turn_id AS transcript_turn_id,
+              transcript_entry.opening_input_id AS transcript_opening_input_id,
+              transcript_entry.display_stage_id AS transcript_display_stage_id
          FROM conversation_server_requests AS request
          JOIN conversation_turns AS turn ON turn.id = request.turn_id AND turn.conversation_id = request.conversation_id
+         LEFT JOIN conversation_transcript_aliases AS transcript_alias
+           ON transcript_alias.conversation_id = request.conversation_id AND transcript_alias.source_domain = 'request'
+          AND transcript_alias.source_scope = request.turn_id AND transcript_alias.source_id = request.id AND transcript_alias.facet = 'request_answer'
+         LEFT JOIN conversation_transcript_entries AS transcript_entry
+           ON transcript_entry.conversation_id = transcript_alias.conversation_id AND transcript_entry.id = transcript_alias.entry_id
         WHERE request.conversation_id = ? AND request.status = 'resolved'
           AND request.request_kind = 'request_user_input' AND request.response_json IS NOT NULL
         ORDER BY occurred_at, request.id`,
@@ -952,6 +1010,8 @@ export class ConversationSnapshotV2Repository {
       /** 与正文共享规范题目和脱敏答案口径，整张卡只建立一个身份。 */
       const excerpt = conversationQuestionNavigationExcerpt(parseJsonRecordOrNull(request.payload_json), parseJsonRecordOrNull(request.response_json), request.contains_secret === 1);
       if (!excerpt) continue;
+      /** 已回答卡片与普通发言共用本次目录的位置代次。 */
+      const placement = conversationNavigationPlacement(request, orderEpoch);
       /** 同步卡片没有模型消息序号，按答案提交时间插入并保持模型消息原顺序。
        * ponytail: 插入为 O(卡片数 × 目录数)，目录达到万级卡片时改为双游标合并。 */
       const index = directory.findIndex((entry) => entry.occurredAt > request.occurred_at);
@@ -967,17 +1027,17 @@ export class ConversationSnapshotV2Repository {
         prompt: redactSensitivePreview(excerpt.prompt).text,
         response: redactSensitivePreview(excerpt.response).text,
         status: 'resolved',
-        placement: this.requiredTranscriptEnvelope({ conversationId, sourceDomain: 'request', sourceScope: request.turn_id, sourceId: request.id, facet: 'request_answer' }).placement,
+        placement,
       });
     }
     directory.sort((left, right) => (left.placement?.order ?? Number.MAX_SAFE_INTEGER) - (right.placement?.order ?? Number.MAX_SAFE_INTEGER) || left.id.localeCompare(right.id));
     /** 沟通边界来自持久消息位置，思考与操作详情不进入目录正文。 */
-    const messageBoundaries = rows
+    const messageBoundaries = positionedRows
       .filter((row) => row.preview.trim())
       .map((row) => ({
         turnId: row.turn_id,
         providerTurnId: row.provider_turn_id,
-        placement: this.requiredTranscriptEnvelope({ conversationId, sourceDomain: 'model_history', sourceScope: row.segment_id, sourceId: row.id, facet: row.reasoning_summary === 1 ? 'reasoning_block' : 'body' }).placement,
+        placement: row.placement!,
       }));
     /** 已回答询问也切断过程；同一消息的多个来源只登记一个边界。 */
     const boundaries = [
@@ -1025,7 +1085,7 @@ export class ConversationSnapshotV2Repository {
     /** 空白区间不产生虚假的操作入口。 */
     const countById = new Map(counts.map((row) => [row.id, row.item_count]));
     const processGroups: ConversationProcessGroup[] = ranges.flatMap((range) => (countById.has(range.id) ? [{ ...range, itemCount: countById.get(range.id)! }] : []));
-    return { conversationId, throughEventSeq, orderEpoch: this.transcript.orderEpoch(conversationId), entries: directory, processGroups };
+    return { conversationId, throughEventSeq, orderEpoch, entries: directory, processGroups };
   }
 
   /** 独立文本生成只读取最近三轮已关闭对话，不扩大首屏快照的两轮载入上限。 */

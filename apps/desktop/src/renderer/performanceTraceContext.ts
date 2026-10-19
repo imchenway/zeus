@@ -31,7 +31,7 @@ export function beginConversationNavigationTrace(projectId: string, conversation
   return traceId;
 }
 
-/** 只有当前目标的精确 Snapshot V2 请求才能继承点击 trace；并发后台请求使用自己的身份。 */
+/** 只有当前目标的精确可读快照请求才能继承点击 trace；并发后台请求使用自己的身份。 */
 export function currentConversationNavigationTraceId(requestPath: string): string | null {
   expireStaleTrace();
   if (!activeConversationNavigation || requestPathname(requestPath) !== activeConversationNavigation.snapshotPathname) return null;
@@ -75,8 +75,9 @@ function createTraceId(): string {
   return [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('');
 }
 
+/** 返回当前会话首屏实际使用的可读快照路径。 */
 function conversationSnapshotPathname(projectId: string, conversationId: string): string {
-  return `/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/snapshot-v2`;
+  return `/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/readable-snapshot`;
 }
 
 function requestPathname(requestPath: string): string | null {
