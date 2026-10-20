@@ -101,7 +101,7 @@ import { createTelegramBotMessageClient, getTelegramConfigurationState, type Tel
 import { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync, rmSync, statSync } from 'node:fs';
-import { basename, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { type CodexRemoteControlSnapshot, registerCodexPublicCommandRoutes } from './codexPublicCommandRoutes.js';
 import { CodexSubagentQueryApplication } from './codexSubagentQueryApplication.js';
 import { registerCodexSubagentQueryRoutes } from './codexSubagentQueryRoutes.js';
@@ -2781,7 +2781,18 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       if (input.kind === 'source') {
         const project = projects.getById(input.projectId);
         if (!project?.localPath || typeof input.path !== 'string') throw new Error('项目文件不可用。');
-        intent = { sides: [{ name: input.path, label: '当前文件', root: project.localPath, path: resolve(project.localPath, input.path) }] };
+        intent = {
+          sides: [
+            {
+              name: input.path,
+              label: '当前文件',
+              root: project.localPath,
+              path: resolve(project.localPath, input.path),
+              edit: { root: project.localPath, path: resolve(project.localPath, input.path) },
+              git: { root: project.localPath, path: input.path },
+            },
+          ],
+        };
       } else if (input.kind === 'project-git') {
         const project = projects.getById(input.projectId);
         if (!project || typeof input.repositoryId !== 'string' || !input.repositoryId.startsWith('conversation:')) throw new Error('会话工作树预览身份无效。');
@@ -2797,7 +2808,13 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         const root = input.scope === 'committed' ? workspace.repositoryPath || resolved.project.localPath : workspace.worktreePath;
         if (!root) throw new Error('任务工作区已不可用。');
         const comparison = input.scope === 'committed' ? await getTaskBranchComparison(root, workspace.sourceBranch, workspace.branchName, workspace.sourceHeadSha) : null;
-        intent = { sides: await getGitFilePreviewSources(root, { path: input.path, ...(comparison ? { revisions: [comparison.mergeBaseSha, comparison.taskHeadSha] } : {}) }) };
+        intent = {
+          sides: (await getGitFilePreviewSources(root, { path: input.path, ...(comparison ? { revisions: [comparison.mergeBaseSha, comparison.taskHeadSha] } : {}) })).map((side) => ({
+            ...side,
+            // 已提交成果仍编辑任务工作树，不能跳到比较用的主仓库。
+            edit: workspace.worktreePath && side.edit ? { root: workspace.worktreePath, path: resolve(workspace.worktreePath, relative(root, side.edit.path)) } : undefined,
+          })),
+        };
       } else if (input.kind === 'resource') {
         const record = conversationResources.getById(input.resourceId);
         if (!record || record.projectId !== input.projectId || record.conversationId !== input.conversationId) throw new Error('会话资源不属于当前会话。');
@@ -2807,9 +2824,32 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
         const resource = toConversationResource(record);
         const review = resource && resource.kind !== 'website' ? await readConversationFileReview(resource, grant) : undefined;
         // 预览格式依据真实文件名，正文链接标题可能完全省略扩展名。
-        intent = { sides: [{ name: basename(String(grant.target.absolutePath || '')), label: '会话文件', root: String(grant.authority.allowedRoot || ''), path: String(grant.target.absolutePath || ''), review }] };
+        /** 当前文件位置完全来自会话授权，渲染层不能另指定路径。 */
+        const root = String(grant.authority.allowedRoot || '');
+        /** 工作树文件与资源展示名称分别保存。 */
+        const path = String(grant.target.absolutePath || '');
+        if (input.comparison !== undefined && input.comparison !== 'head') throw new Error('会话文件比较范围无效。');
+        if (input.comparison === 'head') {
+          /** 子仓库比较必须使用文件所属仓库，仍先核对原资源授权边界。 */
+          if (!isPathInsideRoot(realpathSync(path), realpathSync(root))) throw new Error('会话文件已离开授权目录。');
+          const repository = await getGitRepositoryContext(dirname(path));
+          if (!repository.isRepository) throw new Error('此文件不属于 Git 仓库。');
+          intent = {
+            sides: (await getGitFilePreviewSources(repository.topLevel, { path: relative(repository.topLevel, path).split(sep).join('/') })).map((side) => ({
+              ...side,
+              // 编辑只保留原资源允许的目录，不扩大到仓库的其他上级目录。
+              edit: { root, path },
+            })),
+          };
+        } else {
+          intent = { sides: [{ name: basename(path), label: '会话文件', root, path, review, edit: { root, path }, git: { root, path: relative(root, path).split(sep).join('/') } }] };
+        }
       } else if (input.kind === 'turn') {
-        const { file } = resolveTurnChangeFileRecord(input);
+        const { conversation, changeSet, file } = resolveTurnChangeFileRecord(input);
+        /** 编辑只定位会话当前执行目录，不使用轮次证据目录。 */
+        const executionRoot = resolveNativeConversationExecutionRoot(conversation);
+        /** 撤销后的当前文件沿用旧路径。 */
+        const currentPath = changeSet.state === 'undone' ? file.oldPath : file.newPath;
         intent = {
           sides: (['pre', 'post'] as const).map((phase) => {
             const path = phase === 'pre' ? file.preBlobRef : file.postBlobRef;
@@ -2818,6 +2858,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
             return {
               name: (phase === 'pre' ? file.oldPath : file.newPath) || file.newPath || file.oldPath || '文件',
               label: phase === 'pre' ? '变更前 · 轮次快照' : '变更后 · 轮次快照',
+              edit: executionRoot && currentPath ? { root: executionRoot, path: resolve(executionRoot, currentPath) } : undefined,
+              missing: !exists,
               // 预览协议只传纯 SHA-256；存储哈希保留算法前缀。
               ...(exists && path && hash
                 ? { path, root: join(dataLayout.turnChangeSets, input.changeSetId, 'blobs'), sha256: hash.replace(/^sha256:/u, '') }

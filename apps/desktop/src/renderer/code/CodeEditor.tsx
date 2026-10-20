@@ -2,12 +2,14 @@ import { memo, useEffect, useMemo, useRef } from 'react';
 import { basicSetup } from 'codemirror';
 import { defaultKeymap, indentWithTab } from '@codemirror/commands';
 import { Compartment, EditorState, type Extension, type Text } from '@codemirror/state';
-import { EditorView, highlightSpecialChars, keymap, lineNumbers } from '@codemirror/view';
+import { EditorView, drawSelection, highlightSpecialChars, keymap, lineNumbers } from '@codemirror/view';
 import { syntaxHighlighting } from '@codemirror/language';
 import { classHighlighter } from '@lezer/highlight';
 import type { ConversationFileLocation } from '@zeus/shared';
 import { loadSourceLanguage } from './sourceLanguageRegistry.js';
 import { editorTooltips } from './editorTooltips.js';
+import { useCodeReadingOptions } from './codeReadingOptions.js';
+import type { GitBlameLine } from '../features/git/gitContracts.js';
 
 /** 一次编辑在旧文档中的范围及替换后的长度，多光标编辑取共同覆盖范围。 */
 export interface CodeTextChange {
@@ -33,6 +35,10 @@ export interface CodeEditorProps {
   readOnly: boolean;
   /** 无障碍名称默认使用文件路径。 */
   label?: string;
+  /** 归属使用当前显示文档行号，差异调用方负责映射原始行号。 */
+  blameLines?: GitBlameLine[];
+  /** 共享阅读菜单使用所在页面语言。 */
+  locale?: string;
   /** 一基目标行号；定位不会抢占其他输入框焦点。 */
   revealLine?: number | null;
   /** 文件引用保留每次点击的位置对象，同一行重复点击也重新定位。 */
@@ -82,6 +88,10 @@ export const CodeEditor = memo(function CodeEditor(props: CodeEditorProps) {
   const accessSlot = useRef(new Compartment()).current;
   /** 行操作与装饰可独立更新。 */
   const decorationSlot = useRef(new Compartment()).current;
+  /** 阅读选项独立更新，保留选区、滚动和撤销记录。 */
+  const readingSlot = useRef(new Compartment()).current;
+  /** 源码、只读预览和差异共用行号菜单。 */
+  const reading = useCodeReadingOptions(props.blameLines, props.locale);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -93,11 +103,12 @@ export const CodeEditor = memo(function CodeEditor(props: CodeEditorProps) {
         doc: callbacksRef.current.content === callbacksRef.current.savedContent && savedDocumentRef.current ? savedDocumentRef.current : callbacksRef.current.content,
         extensions: [
           // 只读栏同样显示控制字符，CRLF 原文中的 CR 不额外撑开代码行。
-          callbacksRef.current.onChange || callbacksRef.current.onDocumentChange ? basicSetup : [lineNumbers(), highlightSpecialChars(), keymap.of(defaultKeymap)],
+          callbacksRef.current.onChange || callbacksRef.current.onDocumentChange ? basicSetup : [lineNumbers(), drawSelection(), highlightSpecialChars(), keymap.of(defaultKeymap)],
           editorTooltips,
           languageSlot.of([]),
           accessSlot.of([]),
           decorationSlot.of(callbacksRef.current.extensions ?? []),
+          readingSlot.of([]),
           syntaxHighlighting(classHighlighter),
           keymap.of([
             indentWithTab,
@@ -150,7 +161,7 @@ export const CodeEditor = memo(function CodeEditor(props: CodeEditorProps) {
             '.cm-content': { caretColor: 'var(--zeus-control-accent)', paddingBlock: '10px 32px' },
             '.cm-gutters': { backgroundColor: 'var(--zeus-code-editor-gutter, var(--zeus-product-panel-muted))', border: '0', color: 'var(--zeus-product-muted)' },
             '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'var(--zeus-code-editor-active-line)' },
-            '.cm-selectionBackground, ::selection': { backgroundColor: 'var(--zeus-code-editor-selection) !important' },
+            '.cm-selectionBackground, ::selection': { backgroundColor: 'var(--zeus-code-editor-selection, color-mix(in srgb, var(--zeus-brand-primary, #6152d9) 25%, transparent)) !important' },
             '&.cm-focused': { outline: 'none' },
           }),
         ],
@@ -164,6 +175,10 @@ export const CodeEditor = memo(function CodeEditor(props: CodeEditorProps) {
       view.destroy();
     };
   }, [props.path, languageSlot, accessSlot, decorationSlot]);
+
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: readingSlot.reconfigure(reading.extension) });
+  }, [props.path, reading.extension, readingSlot]);
 
   useEffect(() => {
     /** 文件切换后丢弃旧语言加载结果；失败保留可用的纯文本。 */
@@ -217,5 +232,10 @@ export const CodeEditor = memo(function CodeEditor(props: CodeEditorProps) {
     view.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: 'center' }) });
   }, [props.location, props.revealLine, props.path]);
 
-  return <div className="project-source-code-editor" style={{ height: '100%', minHeight: 0, minWidth: 0, overflow: 'hidden' }} ref={hostRef} aria-label={props.label ?? props.path} />;
+  return (
+    <>
+      <div className="project-source-code-editor" style={{ height: '100%', minHeight: 0, minWidth: 0, overflow: 'hidden' }} ref={hostRef} aria-label={props.label ?? props.path} onContextMenu={reading.onContextMenu} />
+      {reading.menu}
+    </>
+  );
 });

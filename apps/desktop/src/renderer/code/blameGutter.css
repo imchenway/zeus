@@ -46,6 +46,35 @@
   opacity: 1;
 }
 
+/* 原生正文选区必须覆盖应用外壳的禁选样式，侧栏保持不可复制。 */
+:is(.project-source-code-editor, .session-source-code-preview) .cm-content,
+:is(.project-source-code-editor, .session-source-code-preview) .cm-line {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* 作者名限制宽度，长名称通过统一提示查看，不挤占全部代码空间。 */
+.code-author-gutter .cm-gutterElement {
+  width: clamp(56px, 9vw, 120px);
+  padding-inline: 6px;
+  text-align: left;
+  overflow: hidden;
+  font:
+    11px/20px ui-sans-serif,
+    system-ui,
+    sans-serif;
+}
+.code-author-gutter .cm-gutterElement > span {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.code-reading-menu button > span {
+  display: inline-block;
+  width: 20px;
+}
+
 .session-source-blame-inline:focus-visible {
   outline: 1px solid var(--session-accent, #408bd8);
   outline-offset: 2px;

@@ -8,6 +8,7 @@ import { MotionPresence, PopoverSurface } from '../ui/MotionPresence.js';
 import { CodeCommentPanel } from './CodeCommentPanel.js';
 import { SelectionCommentEditor, selectionCommentEditorPoint, type SelectionOverlayBounds } from './SelectionCommentEditor.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
+import type { GitBlameLine } from '../features/git/gitContracts.js';
 
 /** 只读源码及文字选区评论共用的输入。 */
 interface CommentableSourceCodePreviewProps {
@@ -35,6 +36,8 @@ interface CommentableSourceCodePreviewProps {
   conversationId?: string;
   /** 会话资源身份用于读取受控资源的 Git blame。 */
   resourceId?: string;
+  /** 通用预览直接传入已校验版本的逐行归属。 */
+  blameLines?: GitBlameLine[];
   /** 当前会话全部代码评论。 */
   comments?: ConversationCodeComment[];
   /** 缺省表示当前会话只读，不展示评论入口。 */
@@ -268,6 +271,7 @@ export function CommentableSourceCodePreview(props: CommentableSourceCodePreview
         projectId={props.projectId}
         conversationId={props.conversationId}
         resourceId={props.resourceId}
+        blameLines={props.blameLines}
         locale={props.locale}
         searchRequest={props.searchRequest}
         location={props.location}

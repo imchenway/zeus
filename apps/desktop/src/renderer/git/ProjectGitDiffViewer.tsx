@@ -1,6 +1,6 @@
-import { FilePreview, PreviewIconButton, fileDiffEmptyMessage } from '../code/FilePreview.js';
+import { FilePreview, FilePreviewDataContext, PreviewIconButton, fileDiffEmptyMessage } from '../code/FilePreview.js';
 import type { FilePreviewRequest } from '@zeus/shared';
-import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ColumnsIcon as Columns } from '@phosphor-icons/react/dist/csr/Columns';
 import { FileTypeIcon } from '../code/FileTypeIcon.js';
 import { RowsIcon as Rows } from '@phosphor-icons/react/dist/csr/Rows';
@@ -165,6 +165,8 @@ export function ProjectGitDiffWindow(props: {
 /** 标题、模式切换与布局操作共用一行，空文本差异仍能切换到内容预览。 */
 function TextSideBySideDiff(props: SideBySideDiffProps & { /** 共享文件操作由预览容器提供。 */ toolbar?: ReactNode }) {
   const [mode, setMode] = useState<DiffViewMode>('side-by-side');
+  /** 全文模式固定左右展示；原有分块操作仍保留在片段模式。 */
+  const full = useContext(FilePreviewDataContext)?.full;
   const file = props.diff?.fileDiffs[0] ?? null;
   if (!file) return <p className="project-git-empty-copy">{props.zh ? '选择一个文件查看差异。' : 'Select a file to inspect its diff.'}</p>;
   const oldPath = file.changeType === 'added' ? (props.zh ? '变更前（空文件）' : 'Before (empty file)') : file.oldPath;
@@ -183,41 +185,43 @@ function TextSideBySideDiff(props: SideBySideDiffProps & { /** 共享文件操�
         ) : null}
         <span>+{file.addedLines}</span>
         <em>-{file.deletedLines}</em>
-        <span className="project-git-diff-mode" aria-label={props.zh ? '差异布局' : 'Diff layout'}>
-          <button
-            type="button"
-            className={mode === 'side-by-side' ? 'is-active' : ''}
-            aria-pressed={mode === 'side-by-side'}
-            aria-label={props.zh ? '左右两栏' : 'Side-by-side'}
-            onClick={() => setMode('side-by-side')}
-            data-icon-tooltip={props.zh ? '左右两栏' : 'Side-by-side'}
-          >
-            <Columns aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            className={mode === 'unified' ? 'is-active' : ''}
-            aria-pressed={mode === 'unified'}
-            aria-label={props.zh ? '统一视图' : 'Unified'}
-            onClick={() => setMode('unified')}
-            data-icon-tooltip={props.zh ? '统一视图' : 'Unified'}
-          >
-            <Rows aria-hidden="true" />
-          </button>
-        </span>
+        {!full ? (
+          <span className="project-git-diff-mode" aria-label={props.zh ? '差异布局' : 'Diff layout'}>
+            <button
+              type="button"
+              className={mode === 'side-by-side' ? 'is-active' : ''}
+              aria-pressed={mode === 'side-by-side'}
+              aria-label={props.zh ? '左右两栏' : 'Side-by-side'}
+              onClick={() => setMode('side-by-side')}
+              data-icon-tooltip={props.zh ? '左右两栏' : 'Side-by-side'}
+            >
+              <Columns aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className={mode === 'unified' ? 'is-active' : ''}
+              aria-pressed={mode === 'unified'}
+              aria-label={props.zh ? '统一视图' : 'Unified'}
+              onClick={() => setMode('unified')}
+              data-icon-tooltip={props.zh ? '统一视图' : 'Unified'}
+            >
+              <Rows aria-hidden="true" />
+            </button>
+          </span>
+        ) : null}
       </header>
       <div className="project-git-diff-side-by-side">
-        {mode === 'side-by-side' ? (
+        {full || mode === 'side-by-side' ? (
           <div className="project-git-diff-side-head">
             <span data-icon-tooltip={oldPath}>{oldPath}</span>
             <span data-icon-tooltip={newPath}>{newPath}</span>
           </div>
         ) : null}
-        {file.hunks.length === 0 ? (
+        {file.hunks.length === 0 && !full ? (
           <p className="project-git-empty-copy">{fileDiffEmptyMessage(file, props.zh)}</p>
         ) : (
           <Suspense fallback={null}>
-            {props.partitionHunks ? (
+            {props.partitionHunks && !full ? (
               <div className="project-git-diff-hunks" aria-label={props.zh ? '差异区块' : 'Diff hunks'}>
                 {file.hunks.map((hunk, index) => (
                   <DiffHunkSection
