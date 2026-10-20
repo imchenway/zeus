@@ -326,6 +326,8 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
   const positionedConversationIdRef = useRef<string | null>(null);
   /** 首次虚拟行测量和贴底收敛后才展示正文，后续更新不重复隐藏已读内容。 */
   const [historyPositioned, setHistoryPositioned] = useState(false);
+  /** 本地首发一旦已显示，后续历史接管也不能重新播放整段淡入。 */
+  const initialLocalSubmissionRef = useRef(false);
   /** 冷读取等待正文；本地创建和读取失败仍可展示已有消息与恢复入口。 */
   const canRevealHistoryRef = useRef(false);
   const trackedUserMessageRef = useRef<{ conversationId: string | null; key: string | null; initialized: boolean }>({ conversationId: null, key: null, initialized: false });
@@ -400,6 +402,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
   const historyHydrated = props.transcriptHydrated ?? props.state.snapshot !== null;
   /** 本地首发已经有正文，不等历史读取或后台定位循环才向用户显示。 */
   const hasLocalSubmission = !historyHydrated && props.state.itemOrder.some((key) => props.state.items[key]?.optimistic && itemRole(props.state.items[key]!) === 'user');
+  if (!historyPositioned && hasLocalSubmission) initialLocalSubmissionRef.current = true;
   /** 本地首帧直接可见；定位完成后保持可见，不随服务端身份接管重新隐藏。 */
   const historyReady = historyPositioned || hasLocalSubmission;
   /** 最新轮次取实时状态，不能等待旧首屏快照刷新后才开放重试。 */
@@ -520,7 +523,8 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
     items.filter((item) => !['assistant', 'commentary'].includes(itemRole(item)) || Boolean(transcriptItemText(item, props.language).trim()) || item.resources.length > 0).map((item) => item.key),
     newItemMotionDurationMs,
     historyHydrated,
-    props.state.transcriptLiveItemKeys ?? [],
+    // 本地发送和实时回执共用同一入场资格；历史首次水合仍由动效钩子建立基线。
+    [...(props.state.transcriptLiveItemKeys ?? []), ...items.filter((item) => item.optimistic).map((item) => item.key)],
   );
   /** 输入样式也承载智能体来信，不能把后台来信当作当前用户发送。 */
   const lastUserItem = [...items].reverse().find((entry) => `${entry.type}`.toLocaleLowerCase().includes('user'));
@@ -666,7 +670,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
   const synchronizeTranscriptViewport = viewportVirtualizer.synchronizeViewport;
   const positionLatest = useCallback(
     (container: HTMLElement): void => {
-      scrollToLatest(container, latestContentMarkerRef.current);
+      scrollToLatest(container);
       // scrollTop 可能已被浏览器随高度变化钳制到同一数值，此时不会再产生 scroll 事件。
       // 程序化贴底必须同时刷新虚拟窗口，不能等用户滚轮来补这次投影。
       synchronizeTranscriptViewport(container);
@@ -915,6 +919,9 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
   }, [props.state.conversationId]);
 
   const maintainLatestPosition = useCallback(() => {
+    /** 高度变化和贴底在绘制前同时生效，不能先显示新布局、下一帧再把整段正文拉回底部。 */
+    const container = containerRef.current;
+    if (container && !userScrollIntentRef.current && scrollController.onDelta().type === 'scroll_to_bottom') positionLatest(container);
     latestPositionConvergenceRequestedRef.current = true;
     if (latestPositionFrameRef.current !== null || latestPositionFallbackTimerRef.current !== null) return;
     let pass = 0;
@@ -1484,7 +1491,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
         className="session-transcript-shell"
         data-history-ready={historyReady || undefined}
         data-history-loading={!historyReady || undefined}
-        data-local-submission={hasLocalSubmission || undefined}
+        data-local-submission={initialLocalSubmissionRef.current || undefined}
         aria-busy={!historyReady || undefined}
         data-navigation-ready={(showNavigation && !navigation.error) || undefined}
       >
@@ -3520,10 +3527,9 @@ function metrics(element: HTMLElement) {
   return { scrollTop: element.scrollTop, scrollHeight: element.scrollHeight, clientHeight: element.clientHeight };
 }
 
-function scrollToLatest(container: Pick<HTMLElement, 'clientHeight' | 'scrollHeight' | 'scrollTop'>, marker?: Pick<HTMLElement, 'scrollIntoView'> | null): void {
-  // 先让底部锚点参与布局，唤醒 content-visibility 跳过的历史高度，再做无动画定位。
-  marker?.scrollIntoView({ block: 'end', inline: 'nearest', behavior: 'auto' });
-  // 自动跟随必须即时定位，避免程序滚动事件被误判为用户主动阅读历史。
+/** 只移动正文自己的滚动容器，不能通过 scrollIntoView 连带滚动外层工作面。 */
+function scrollToLatest(container: Pick<HTMLElement, 'clientHeight' | 'scrollHeight' | 'scrollTop'>): void {
+  // 虚拟列表已负责屏外占位；直接读取本容器高度，不再唤醒或移动祖先滚动区域。
   container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
 }
 
