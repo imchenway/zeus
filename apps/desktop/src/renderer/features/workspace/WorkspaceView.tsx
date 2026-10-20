@@ -829,6 +829,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       {projectToolsVisible && selectedProject ? (
         <ProjectCodeSearch
           key={selectedProject.id}
+          gitSnapshot={projectCodeGitSnapshot}
           project={selectedProject}
           open={searchProjectId === selectedProject.id}
           language={appShellSettings.appLanguage}
@@ -1115,6 +1116,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           project={projectToolsVisible ? selectedProject : undefined}
           open={projectGitOpen}
           sourceVisible={sourceVisible}
+          fileSearchOpen={Boolean(selectedProject && searchProjectId === selectedProject.id)}
           terminalOpen={terminalProjectId === selectedProject?.id}
           terminalHostRef={setTerminalHost}
           onRevealSessionContext={revealSessionContext}

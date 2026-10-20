@@ -22,6 +22,7 @@ import { GitContextMenu, GitMenuActionDialog, type GitMenuItem, type GitMenuConf
 import { GitPaneSeparator } from './GitPaneSeparator.js';
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type MouseEvent as ReactMouseEvent } from 'react';
 import { FileTypeIcon } from '../code/FileTypeIcon.js';
+import { fileStatusLabel } from '../code/fileStatus.js';
 import { createPortal } from 'react-dom';
 import { ArchiveIcon as Archive } from '@phosphor-icons/react/dist/csr/Archive';
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
@@ -2061,6 +2062,7 @@ function LocalChangesSurface(props: {
           </div>
         ) : (
           <SideBySideDiff
+            fileStatus={visibleFileStatuses.find((file) => file.path === props.selectedFilePath && (file.category === 'untracked' || file.category === 'conflict'))?.category}
             previewRequest={repository && props.selectedFilePath ? { kind: 'project-git', projectId: props.projectId, repositoryId: repository.id, path: props.selectedFilePath, stage: props.selectedFileStage } : undefined}
             revision={props.previewRevision}
             diff={selectedDiff ? { isRepository: true, files: [selectedDiff.newPath || selectedDiff.oldPath], diffText: stageDiff?.diffText ?? '', fileDiffs: [selectedDiff] } : null}
@@ -2226,6 +2228,7 @@ interface ChangeTreeNode {
   file: boolean;
 }
 
+/** 工作区文件按真实状态分组，树形与列表模式共用原文件操作。 */
 function ChangeDirectoryTree(props: {
   view?: 'tree' | 'flat';
   files: string[];
@@ -2241,16 +2244,40 @@ function ChangeDirectoryTree(props: {
   onOpenDiff: (repository: ProjectGitRepositoryWorkbenchItem, filePath: string, options?: { stage?: 'combined' | ChangeStage }) => void;
   onExecute: (repository: ProjectGitRepositoryWorkbenchItem, action: ProjectGitAction, label: string) => Promise<ExecutionOutcome>;
 }) {
-  const nodes = useMemo(
-    () => (props.view === 'flat' ? [...props.files].sort((a, b) => a.localeCompare(b)).map((path): ChangeTreeNode => ({ name: path, path, file: true, children: new Map() })) : [...buildChangeTree(props.files).children.values()]),
-    [props.files.join('\0'), props.view],
-  );
-  if (props.files.length === 0) return null;
+  /** 未跟踪文件独立分组；暂存、搜索和树形切换继续使用当前显示路径。 */
+  const groups = useMemo(() => {
+    /** 状态来自仓库快照，不能把未暂存修改当成未跟踪。 */
+    const untrackedPaths = new Set(props.repository.snapshot.fileStatuses.filter((file) => file.category === 'untracked').map((file) => file.path));
+    return [false, true].map((untracked) => {
+      /** 每个分组只组织展示，不改变暂存操作的路径和范围。 */
+      const paths = props.files.filter((path) => untrackedPaths.has(path) === untracked);
+      return {
+        untracked,
+        count: paths.length,
+        nodes: props.view === 'flat' ? paths.sort((a, b) => a.localeCompare(b)).map((path): ChangeTreeNode => ({ name: path, path, file: true, children: new Map() })) : [...buildChangeTree(paths).children.values()],
+      };
+    });
+  }, [props.files, props.view, props.repository.snapshot.fileStatuses]);
   return (
     <div className="project-git-change-directory-tree">
-      {nodes.map((node) => (
-        <ChangeTreeEntry key={node.path} node={node} depth={0} {...props} />
-      ))}
+      {groups
+        .filter((group) => group.count > 0)
+        .map((group) => {
+          /** 两个分组复用文件行的选择、暂存和双击行为。 */
+          const entries = group.nodes.map((node) => <ChangeTreeEntry key={node.path} node={node} depth={0} {...props} />);
+          return group.untracked ? (
+            <details key="untracked" className="project-git-change-folder" open>
+              <summary>
+                <CaretRight aria-hidden="true" />
+                <span>{props.zh ? '未跟踪文件' : 'Unversioned Files'}</span>
+                <small>{group.count}</small>
+              </summary>
+              {entries}
+            </details>
+          ) : (
+            <Fragment key="tracked">{entries}</Fragment>
+          );
+        })}
     </div>
   );
 }
@@ -2273,7 +2300,12 @@ function ChangeTreeEntry(props: Parameters<typeof ChangeDirectoryTree>[0] & { no
   }
   const selected = props.repository.id === props.selectedRepositoryId && props.node.path === props.selectedFilePath && props.stage === props.selectedFileStage;
   const checked = props.stage === 'staged';
+  /** 保留冲突和未跟踪事实；其余状态使用当前暂存范围的差异。 */
   const status = props.repository.snapshot.fileStatuses.find((file) => file.path === props.node.path);
+  /** 同一文件可同时在暂存区新增、在工作区修改，分别呈现对应状态。 */
+  const stageDiff = props.stage === 'staged' ? props.repository.snapshot.stagedDiff : props.repository.snapshot.unstagedDiff;
+  /** 补丁缺失时继续使用真实 Git 状态。 */
+  const category = status?.category === 'untracked' || status?.category === 'conflict' ? status.category : (stageDiff.fileDiffs.find((file) => (file.newPath || file.oldPath) === props.node.path)?.changeType ?? status?.category);
   return (
     <div data-git-context={JSON.stringify({ kind: 'file', repositoryId: props.repository.id, ref: props.node.path, stage: props.stage })} className={`project-git-change-file-row${selected ? ' is-current' : ''}`}>
       <input
@@ -2292,7 +2324,8 @@ function ChangeTreeEntry(props: Parameters<typeof ChangeDirectoryTree>[0] & { no
       <button
         type="button"
         style={{ marginLeft: `${props.depth * 13}px` }}
-        data-icon-tooltip={props.node.path}
+        data-icon-tooltip={`${props.node.path} · ${fileStatusLabel(category ?? 'other', props.zh)}`}
+        aria-label={`${props.node.path} · ${fileStatusLabel(category ?? 'other', props.zh)}`}
         onClick={() => {
           props.onSelectRepository(props.repository.id);
           props.onSelectFile(props.node.path, props.stage);
@@ -2300,8 +2333,7 @@ function ChangeTreeEntry(props: Parameters<typeof ChangeDirectoryTree>[0] & { no
         onDoubleClick={() => props.onOpenDiff(props.repository, props.node.path, { stage: props.stage })}
       >
         <FileTypeIcon name={props.node.path} />
-        <span data-file-status={status?.category}>{props.node.name}</span>
-        {status ? <small className={`project-git-file-status is-${status.category}`}>{gitFileStatusLabel(status.category, props.zh)}</small> : null}
+        <span data-file-status={category}>{props.node.name}</span>
       </button>
     </div>
   );
@@ -2691,19 +2723,6 @@ function CommitDialog(props: {
 function readRememberedTab(projectId: string): GitTab {
   const value = typeof window === 'undefined' ? null : window.localStorage.getItem(`zeus.project-git-tab-v2:${projectId}`);
   return value === 'changes' || value === 'stash' || value === 'console' ? value : 'log';
-}
-
-function gitFileStatusLabel(category: string, zh: boolean): string {
-  const labels: Record<string, [string, string]> = {
-    added: ['新增', 'Added'],
-    modified: ['修改', 'Modified'],
-    deleted: ['删除', 'Deleted'],
-    renamed: ['重命名', 'Renamed'],
-    untracked: ['未跟踪', 'Untracked'],
-    conflict: ['冲突', 'Conflict'],
-    other: ['变更', 'Changed'],
-  };
-  return (labels[category] ?? labels.other)[zh ? 0 : 1];
 }
 
 function displayStashSubject(subject: string, zh: boolean): string {

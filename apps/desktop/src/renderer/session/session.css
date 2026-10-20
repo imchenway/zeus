@@ -8934,13 +8934,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .session-turn-change-path {
-  color: var(--session-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* 此处是会话摘要，文件图标与名称使用中性色；Git 工作区继续使用状态配色。 */
+/* 摘要图标保持中性，文件名与其他列表共用 Git 状态颜色。 */
 .session-codex-parity-v1 .session-turn-change-card .session-turn-change-files svg.file-type-icon {
   color: var(--session-text-muted);
 }

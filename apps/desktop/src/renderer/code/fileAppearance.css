@@ -1,11 +1,13 @@
-/* 文件状态色覆盖主界面和独立门户弹窗；深色主题提高亮度，颜色不取代文字状态。 */
+/* 文件状态色覆盖主界面和独立门户弹窗；深色主题提高亮度，状态说明保留在悬停和无障碍标签中。 */
 .macos-ai-app {
   /* 已修改及重命名使用蓝色。 */
-  --zeus-file-modified: #245fbd;
+  --zeus-file-modified: #003cce;
   /* 已新增及复制使用绿色。 */
   --zeus-file-added: #23733b;
-  /* 未跟踪文件使用 IDEA 风格的棕色。 */
-  --zeus-file-untracked: #95612f;
+  /* 未跟踪文件使用参考图中的红色。 */
+  --zeus-file-untracked: #c52d4b;
+  /* 脚本类型色独立于 Git 未跟踪状态。 */
+  --zeus-file-script: #95612f;
   /* 已删除文件降低强调，并保留删除线。 */
   --zeus-file-deleted: #707680;
   /* 冲突单独使用红色。 */
@@ -18,7 +20,9 @@ html[data-zeus-theme='dark'] .macos-ai-app {
   /* 深色背景上的新增状态。 */
   --zeus-file-added: #8acb91;
   /* 深色背景上的未跟踪状态。 */
-  --zeus-file-untracked: #d6ac79;
+  --zeus-file-untracked: #f58aa0;
+  /* 深色背景上的脚本类型色。 */
+  --zeus-file-script: #d6ac79;
   /* 深色背景上的删除状态。 */
   --zeus-file-deleted: #a4aab4;
   /* 深色背景上的冲突状态。 */
@@ -32,7 +36,9 @@ html[data-zeus-theme='dark'] .macos-ai-app {
     /* 跟随系统的新增和复制状态。 */
     --zeus-file-added: #8acb91;
     /* 跟随系统的未跟踪状态。 */
-    --zeus-file-untracked: #d6ac79;
+    --zeus-file-untracked: #f58aa0;
+    /* 深色背景上的脚本类型色。 */
+    --zeus-file-script: #d6ac79;
     /* 跟随系统的删除状态。 */
     --zeus-file-deleted: #a4aab4;
     /* 跟随系统的冲突状态。 */
@@ -57,6 +63,13 @@ html[data-zeus-theme='dark'] .macos-ai-app {
 .macos-ai-app [data-file-status='conflict'] {
   color: var(--zeus-file-conflict);
 }
+/* 干净文件使用普通正文色，忽略文件降低强调；均不显示额外状态文字。 */
+.macos-ai-app [data-file-status='unchanged'] {
+  color: var(--zeus-control-text);
+}
+.macos-ai-app [data-file-status='ignored'] {
+  color: var(--zeus-control-muted-text);
+}
 /* 文件类型使用同一套 Phosphor 轮廓，以文字色和类型色区分用途。 */
 .macos-ai-app svg.file-type-icon {
   width: 16px;
@@ -71,7 +84,7 @@ html[data-zeus-theme='dark'] .macos-ai-app {
 }
 /* 常用脚本、标记和配置文件保留类型辨识，不再绘制文字徽标或色块。 */
 .macos-ai-app svg.file-type-icon:is([data-file-kind='javascript'], [data-file-kind='jsx'], [data-file-kind='json']) {
-  color: var(--zeus-file-untracked);
+  color: var(--zeus-file-script);
 }
 .macos-ai-app svg.file-type-icon:is([data-file-kind='html'], [data-file-kind='vue']) {
   color: var(--zeus-file-added);

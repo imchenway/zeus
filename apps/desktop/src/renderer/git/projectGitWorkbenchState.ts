@@ -1,5 +1,15 @@
 import type { GitFileStatusSummary, ProjectGitRepositoryWorkbenchItem, ProjectGitWorkbenchSnapshot } from '../apiClient.js';
 
+/** 源码与搜索共用项目相对路径，拒绝将上一项目的快照套到当前项目。 */
+export function projectGitFileStatuses(snapshot: ProjectGitWorkbenchSnapshot | null | undefined, projectId: string): Record<string, GitFileStatusSummary['category']> {
+  if (snapshot?.projectId !== projectId) return {};
+  return Object.fromEntries(
+    snapshot.repositories.flatMap((repository) =>
+      visibleRepositoryFiles(repository, snapshot.repositories).map((file) => [[repository.relativePath === '.' ? '' : repository.relativePath, file.path].filter(Boolean).join('/'), file.category]),
+    ),
+  );
+}
+
 export interface ProjectGitQueryClient {
   loadProjectGitWorkbench(projectId: string): Promise<ProjectGitWorkbenchSnapshot>;
 }

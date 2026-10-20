@@ -1796,28 +1796,6 @@ body:has(.macos-ai-app.zeus-shell) {
   flex-wrap: wrap;
   margin-top: 4px;
 }
-.macos-ai-app.zeus-shell .project-git-file-status {
-  border: 0;
-  border-radius: 999px;
-  background: color-mix(in srgb, currentColor 8%, transparent);
-  box-shadow: none;
-  font-size: 9.5px;
-  line-height: 16px;
-  margin-left: auto;
-  padding: 0 5px;
-  white-space: nowrap;
-}
-.macos-ai-app.zeus-shell .project-git-file-status.is-conflict,
-.macos-ai-app.zeus-shell .project-git-file-status.is-deleted {
-  color: var(--zeus-control-danger-text, #b33a3a);
-}
-.macos-ai-app.zeus-shell .project-git-file-status.is-added,
-.macos-ai-app.zeus-shell .project-git-file-status.is-untracked {
-  color: var(--zeus-code-addition-text);
-}
-.macos-ai-app.zeus-shell .project-git-file-status.is-renamed {
-  color: var(--zeus-product-accent, #306cff);
-}
 .macos-ai-app.zeus-shell .project-git-commit-rail {
   padding: 10px 14px;
   background: var(--zeus-page-background);

@@ -15707,17 +15707,11 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
 }
 
 .macos-ai-app .task-git-review-file-tree button span {
-  /* 文件名紧跟图标并占用剩余空间，状态文字保留在行尾。 */
+  /* 文件名紧跟图标，状态说明由悬停和读屏提供。 */
   flex: 1;
   min-inline-size: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.macos-ai-app .task-git-review-file-tree button small {
-  flex: 0 0 auto;
-  color: var(--zeus-product-muted);
   white-space: nowrap;
 }
 
@@ -16170,6 +16164,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 }
 
 .macos-ai-app .task-git-delivery-file-row button {
+  min-inline-size: 0;
   flex: 1;
   display: flex;
   align-items: center;
@@ -16181,6 +16176,21 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   color: inherit;
   text-align: start;
   white-space: nowrap;
+}
+
+/* 窄窗口保留图标与行数，完整路径通过悬停查看。 */
+.macos-ai-app .task-git-delivery-file-row button > [data-file-status] {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.macos-ai-app .task-git-delivery-file-row button > small {
+  flex-shrink: 0;
+}
+/* 目录和未跟踪分组均保留键盘焦点，不覆盖状态色。 */
+.macos-ai-app .task-git-delivery-repository :is(summary, button):focus-visible {
+  outline: 2px solid var(--zeus-control-accent);
+  outline-offset: -2px;
 }
 
 /* 平面目录图标和源码类型标记保持相同尺寸，采用 IDE 常见的类型颜色。 */
