@@ -3,9 +3,17 @@ import { createPortal } from 'react-dom';
 import { useNativeCloseLayer } from './nativeCloseLayer.js';
 import { usePresenceSurface } from './MotionPresence.js';
 import { useModalFocus } from './useModalFocus.js';
+import { SystemWindowPortal, type SystemWindowKind } from './SystemWindowPortal.js';
+import { WindowDocumentContext, useWindowDocument } from './windowDocument.js';
 
 /** 弹窗共用遮罩、焦点和关闭规则。 */
 export interface ModalPortalProps {
+  /** 已迁移的工作界面由系统窗口承载，浏览器预览仍使用普通门户。 */
+  systemWindow?: SystemWindowKind;
+  /** 系统标题栏名称不依赖正文标题的 DOM 标识。 */
+  windowTitle?: string;
+  /** 入口再次触发时唤回已存在窗口，不重建表单。 */
+  windowActivation?: unknown;
   /** 模态身份与下拉弹层共享门户根，避免选项落在可访问范围外。 */
   role: 'dialog' | 'alertdialog';
   /** 弹窗名称，可直接提供或引用标题。 */
@@ -23,6 +31,20 @@ export interface ModalPortalProps {
 
 /** 业务关闭立即生效，退出边界负责保留视觉表面。 */
 export function ModalPortal(props: ModalPortalProps) {
+  if (props.systemWindow && window.zeus) {
+    return (
+      <SystemWindowPortal kind={props.systemWindow} activation={props.windowActivation} title={props.windowTitle ?? props['aria-label'] ?? 'Zeus'} onClose={props.onDismiss}>
+        <ModalSurface {...props} />
+      </SystemWindowPortal>
+    );
+  }
+  return <ModalSurface {...props} />;
+}
+
+/** 遮罩和焦点仅作用于所属文档，独立窗口不会阻塞主工作区。 */
+function ModalSurface(props: ModalPortalProps) {
+  /** 下拉和内嵌弹层沿用同一个目标文档。 */
+  const ownerDocument = useWindowDocument();
   /** 门户根节点同时用于焦点隔离和退出等待。 */
   const rootRef = useRef<HTMLDivElement>(null);
   /** 关闭中的弹窗不再接受任何新的操作。 */
@@ -55,7 +77,7 @@ export function ModalPortal(props: ModalPortalProps) {
       aria-label={props['aria-label']}
       aria-labelledby={props['aria-labelledby']}
       aria-describedby={props['aria-describedby']}
-      className={['macos-ai-app', 'zeus-modal-portal-root', props.rootClassName].filter(Boolean).join(' ')}
+      className={['macos-ai-app', 'zeus-modal-portal-root', props.rootClassName, props.systemWindow && ownerDocument !== document && 'zeus-system-window-root'].filter(Boolean).join(' ')}
       data-zeus-primitive="modal"
       data-motion-state={open ? 'open' : 'closing'}
       inert={!open}
@@ -83,5 +105,5 @@ export function ModalPortal(props: ModalPortalProps) {
     </div>
   );
 
-  return typeof document !== 'undefined' && document.body ? createPortal(modalSurface, document.body) : modalSurface;
+  return createPortal(<WindowDocumentContext.Provider value={ownerDocument}>{modalSurface}</WindowDocumentContext.Provider>, ownerDocument.body);
 }

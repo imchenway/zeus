@@ -1,5 +1,6 @@
 import type { ProjectGitAction, ProjectGitActionResponse, ProjectGitCommitDetail, ProjectGitWorkbenchSnapshot, ProjectGitOperationPage, GitDiffSummary } from '../features/git/gitContracts.js';
 import type { ZeusClientPerformanceSpan } from './localApiTransport.js';
+import type { ProjectGitPushPreview, ProjectGitPushPreviewInput } from '../features/git/gitContracts.js';
 
 export interface DashboardClientOptions {
   baseUrl: string;
@@ -23,6 +24,8 @@ export interface ProjectGitWorkbenchBridge {
   loadOperations: (projectId: string, cursor?: string) => Promise<ProjectGitOperationPage>;
   loadWorkbench: (projectId: string) => Promise<ProjectGitWorkbenchSnapshot>;
   loadCommit: (projectId: string, repositoryId: string, commitHash: string) => Promise<ProjectGitCommitDetail>;
+  /** 推送预览跟随当前桌面版本，不能交给另一宿主解析仓库身份。 */
+  loadPushPreview: (projectId: string, repositoryId: string, input: ProjectGitPushPreviewInput) => Promise<ProjectGitPushPreview>;
   loadComparison: (projectId: string, repositoryId: string, ref: string, mode: 'current' | 'working-tree') => Promise<GitDiffSummary>;
   execute: (projectId: string, repositoryId: string, action: ProjectGitAction) => Promise<ProjectGitActionResponse>;
 }

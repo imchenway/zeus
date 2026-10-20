@@ -10,6 +10,8 @@ import type {
   ProjectGitAction,
   ProjectGitActionResponse,
   ProjectGitCommitDetail,
+  ProjectGitPushPreview,
+  ProjectGitPushPreviewInput,
   ProjectGitSnapshotResult,
   ProjectGitWorkbenchSnapshot,
   ProjectGitOperationPage,
@@ -73,6 +75,8 @@ export interface GitApiClient {
   loadProjectGitWorkbench: (projectId: string) => Promise<ProjectGitWorkbenchSnapshot>;
   loadConversationGitHistory: (projectId: string, repositoryId: string, offset: number, ref?: string) => Promise<{ commits: NonNullable<GitStatusSummary['recentCommits']>; hasMore: boolean }>;
   loadProjectGitCommit: (projectId: string, repositoryId: string, commitHash: string) => Promise<ProjectGitCommitDetail>;
+  /** 按来源分支和目标远端读取本地推送预览。 */
+  loadProjectGitPushPreview: (projectId: string, repositoryId: string, input: ProjectGitPushPreviewInput) => Promise<ProjectGitPushPreview>;
   loadProjectGitComparisonDiff: (projectId: string, repositoryId: string, ref: string, mode: 'current' | 'working-tree') => Promise<GitDiffSummary>;
   executeProjectGitAction: (projectId: string, repositoryId: string, input: ProjectGitAction) => Promise<ProjectGitActionResponse>;
   loadProjectGitDiff: (projectId: string) => Promise<GitDiffSummary>;
@@ -161,6 +165,12 @@ export function createGitApiClient(transport: LocalApiTransport, bridge: () => P
     loadProjectGitCommit: async (projectId, repositoryId, commitHash) =>
       bridge()?.loadCommit(projectId, repositoryId, commitHash) ??
       transport.request<ProjectGitCommitDetail>(`${projectGitPath(projectId)}/workbench/repositories/${scopedRepositoryId(repositoryId)}/commits/${encodeURIComponent(commitHash)}`),
+    /** 桌面与会话工作树分别沿用各自可信仓库身份。 */
+    loadProjectGitPushPreview: async (projectId, repositoryId, input) =>
+      bridge()?.loadPushPreview(projectId, repositoryId, input) ??
+      transport.request<ProjectGitPushPreview>(
+        `${projectGitPath(projectId)}/workbench/repositories/${scopedRepositoryId(repositoryId)}/push-preview?${new URLSearchParams({ sourceBranch: input.sourceBranch, remote: input.remote, targetBranch: input.targetBranch, offset: String(input.offset ?? 0) })}`,
+      ),
     loadProjectGitComparisonDiff: async (projectId, repositoryId, ref, mode) =>
       bridge()?.loadComparison(projectId, repositoryId, ref, mode) ??
       transport.request<GitDiffSummary>(`${projectGitPath(projectId)}/workbench/repositories/${scopedRepositoryId(repositoryId)}/compare?ref=${encodeURIComponent(ref)}&mode=${mode}`),

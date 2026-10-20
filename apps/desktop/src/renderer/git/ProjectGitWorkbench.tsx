@@ -1,3 +1,4 @@
+import { PushDialog } from './GitPushDialog.js';
 import { DotsThreeIcon as DotsThree } from '@phosphor-icons/react/dist/csr/DotsThree';
 import { isMacOSPlatform } from '../platform.js';
 import { GitCommitIcon as GitCommit } from '@phosphor-icons/react/dist/csr/GitCommit';
@@ -5,19 +6,7 @@ import { GitMergeIcon as GitMerge } from '@phosphor-icons/react/dist/csr/GitMerg
 import { ArrowDownIcon as ArrowDown } from '@phosphor-icons/react/dist/csr/ArrowDown';
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
 import { projectGitWorkbenchCacheEntry, readCachedProjectGitWorkbench, requestProjectGitWorkbench, subscribeProjectGitRefresh, notifyProjectGitChanged, visibleRepositoryFiles } from './projectGitWorkbenchState.js';
-import {
-  BranchSwitcher,
-  MergeBranchDialog,
-  UpdateProjectDialog,
-  NewBranchDialog,
-  RemoteBranchCheckoutDialog,
-  CheckoutRevisionDialog,
-  BranchDirectoryTree,
-  BranchContextMenu,
-  StashDialog,
-  PullDialog,
-  PushDialog,
-} from './GitRepositoryControls.js';
+import { BranchSwitcher, MergeBranchDialog, UpdateProjectDialog, NewBranchDialog, RemoteBranchCheckoutDialog, CheckoutRevisionDialog, BranchDirectoryTree, BranchContextMenu, StashDialog, PullDialog } from './GitRepositoryControls.js';
 import type { ExecutionOutcome } from './gitWorkbenchTypes.js';
 import type { BranchKind } from './gitWorkbenchTypes.js';
 import type { OperationTone } from './gitWorkbenchTypes.js';
@@ -86,7 +75,15 @@ export interface ProjectGitWorkbenchProps {
   project: ProjectRecord;
   client: Pick<
     DashboardClient,
-    'loadConversationGitHistory' | 'loadProjectGitWorkbench' | 'loadProjectGitOperations' | 'loadProjectGitCommit' | 'loadProjectGitComparisonDiff' | 'executeProjectGitAction' | 'generateGitCommitMessage' | 'loadGitCommitModels'
+    | 'loadConversationGitHistory'
+    | 'loadProjectGitWorkbench'
+    | 'loadProjectGitOperations'
+    | 'loadProjectGitPushPreview'
+    | 'loadProjectGitCommit'
+    | 'loadProjectGitComparisonDiff'
+    | 'executeProjectGitAction'
+    | 'generateGitCommitMessage'
+    | 'loadGitCommitModels'
   >;
   language: 'zh-CN' | 'en-US';
 }
@@ -143,11 +140,13 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     projectGitViewPreferences.set(props.project.id, { repositoryId: selectedRepositoryId, searchQuery });
   }, [props.project.id, selectedRepositoryId, searchQuery]);
   const [operationsOpen, setOperationsOpen] = useState(false);
-  const [pushOpen, setPushOpen] = useState(false);
+  /** 打开次数同时用于唤回已存在的系统窗口。 */
+  const [pushOpen, setPushOpen] = useState(0);
   const [pullOpen, setPullOpen] = useState(false);
   const [stashRepositoryId, setStashRepositoryId] = useState<string | null>(null);
   const operationsTriggerRef = useRef<HTMLButtonElement>(null);
-  const [commitOpen, setCommitOpen] = useState(false);
+  /** 重复打开提交界面只唤回原表单。 */
+  const [commitOpen, setCommitOpen] = useState(0);
   const [commitRequest, setCommitRequest] = useState(0);
   const [mergeOpen, setMergeOpen] = useState(false);
   const [fileQuery, setFileQuery] = useState('');
@@ -657,7 +656,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         disabled: busy !== null,
         run: () => {
           setSelectedRepositoryId(repository.id);
-          setPushOpen(true);
+          setPushOpen((count) => count + 1);
         },
       });
       items.push({
@@ -727,7 +726,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       onOpenDiff={openDiffWindow}
       onOpenUpdate={() => setUpdateOpen(true)}
       onOpenCommit={openCommit}
-      onOpenPush={() => setPushOpen(true)}
+      onOpenPush={() => setPushOpen((count) => count + 1)}
       onOpenNewBranch={(baseRef) => {
         setNewBranchBase(baseRef ?? '');
         setNewBranchOpen(true);
@@ -877,7 +876,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           aria-label={toolbarLabel(zh ? '推送' : 'Push', 3)}
           data-icon-tooltip={toolbarLabel(zh ? '推送' : 'Push', 3)}
           disabled={!selectedRepository || busy !== null || selectedRepository.snapshot.detached || !selectedRepository.snapshot.remotes.length}
-          onClick={() => setPushOpen(true)}
+          onClick={() => setPushOpen((count) => count + 1)}
         >
           <ArrowUp aria-hidden="true" />
           {selectedRepository?.snapshot.ahead ? <small>{selectedRepository.snapshot.ahead}</small> : null}
@@ -950,7 +949,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                 zh={zh}
                 onClose={() => setOperationsOpen(false)}
                 onOpenCommit={openCommit}
-                onOpenPush={() => setPushOpen(true)}
+                onOpenPush={() => setPushOpen((count) => count + 1)}
                 onOpenUpdate={() => setUpdateOpen(true)}
                 onOpenNewBranch={() => {
                   setNewBranchBase('');
@@ -1213,7 +1212,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                   run: async () => (await execute(repository, action, title)) === 'completed',
                 })
               }
-              onCommit={() => setCommitOpen(true)}
+              onCommit={() => setCommitOpen((count) => count + 1)}
               commitDrafts={commitDrafts}
               commitModels={commitModels}
               commitModelRef={commitModelRef}
@@ -1253,7 +1252,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       </MotionPresence>
       <MotionPresence>{contextMenu ? <GitContextMenu {...contextMenu} onClose={() => setContextMenu(null)} onError={(reason) => setError(errorMessage(reason, zh))} /> : null}</MotionPresence>
       <MotionPresence>{menuConfirmation ? <GitMenuActionDialog value={menuConfirmation} zh={zh} onClose={() => setMenuConfirmation(null)} /> : null}</MotionPresence>
-      <MotionPresence>{commitOpen ? <CommitDialog open={commitOpen} zh={zh} repositories={repositories} busy={busy} onClose={() => setCommitOpen(false)} onExecute={execute} /> : null}</MotionPresence>
+      <MotionPresence>{commitOpen ? <CommitDialog open={commitOpen > 0} activation={commitOpen} zh={zh} repositories={repositories} busy={busy} onClose={() => setCommitOpen(0)} onExecute={execute} /> : null}</MotionPresence>
       <MotionPresence>{stashRepository ? <StashDialog key={stashRepository.id} repository={stashRepository} zh={zh} busy={busy} onClose={() => setStashRepositoryId(null)} onExecute={execute} /> : null}</MotionPresence>
       <MotionPresence>
         {updateOpen ? (
@@ -1294,14 +1293,18 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       <MotionPresence>
         {pushOpen ? (
           <PushDialog
-            open={pushOpen}
+            projectId={props.project.id}
+            client={props.client}
+            revision={snapshot?.refreshedAt ?? ''}
+            open={pushOpen > 0}
+            activation={pushOpen}
             zh={zh}
             repositories={repositories}
             selectedRepository={selectedRepository}
             busy={busy}
             results={pushResults}
             onClose={() => {
-              setPushOpen(false);
+              setPushOpen(0);
               setPushResults([]);
             }}
             onPush={async (selections, forceWithLease, pushTags) => {
@@ -2618,6 +2621,8 @@ function OperationsMenu(props: {
 
 function CommitDialog(props: {
   open: boolean;
+  /** 保留草稿并唤回已打开窗口。 */
+  activation: number;
   zh: boolean;
   repositories: ProjectGitRepositoryWorkbenchItem[];
   busy: BusyState;
@@ -2629,6 +2634,9 @@ function CommitDialog(props: {
   if (!props.open) return null;
   return (
     <ModalPortal
+      systemWindow="git-commit"
+      windowActivation={props.activation}
+      windowTitle={props.zh ? '提交已暂存变更' : 'Commit staged changes'}
       rootClassName="project-git-modal-root"
       backdropClassName="project-git-modal-backdrop"
       onDismiss={props.onClose}

@@ -23,6 +23,8 @@ export function installIconTooltips(root: Document | ShadowRoot): () => void {
   const document = root.ownerDocument ?? (root as Document);
   /** 当前窗口提供视口尺寸与窗口事件。 */
   const window = document.defaultView!;
+  /** 跨窗口门户中的节点必须使用所属窗口的构造器判断。 */
+  const { Document, HTMLElement, Node } = window as Window & typeof globalThis;
   /** 样式只注入当前根，避免污染被评论的网页。 */
   const style = document.createElement('style');
   style.textContent = iconTooltipStyles;

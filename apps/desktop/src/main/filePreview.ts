@@ -1,3 +1,4 @@
+import { activeSystemWindow } from './systemWindows.js';
 import { BrowserWindow, dialog, ipcMain, protocol, shell } from 'electron';
 import { execFile, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -106,7 +107,7 @@ export function registerFilePreview(services: {
   /** 避免重复安装窗口销毁监听。 */
   const owners = new Set<number>();
   /** 系统快速预览随页内资源关闭。 */
-  const quickLooks = new Map<number, string>();
+  const quickLooks = new Map<number, { id: string; owner: number; window: BrowserWindow }>();
 
   /** 撤销令牌并删除本服务创建的历史副本。 */
   async function release(ids: string[], owner: number): Promise<void> {
@@ -115,9 +116,11 @@ export function registerFilePreview(services: {
       const grant = grants.get(id);
       if (!grant || grant.owner !== owner) continue;
       grants.delete(id);
-      if (quickLooks.get(owner) === id) {
-        BrowserWindow.fromId(owner)?.closeFilePreview();
-        quickLooks.delete(owner);
+      for (const [windowId, preview] of quickLooks) {
+        if (preview.owner !== owner || preview.id !== id) continue;
+        // 多个系统预览各自释放，不能关闭另一窗口正在查看的文件。
+        if (!preview.window.isDestroyed()) preview.window.closeFilePreview();
+        quickLooks.delete(windowId);
       }
       if (grant.temporary) await rm(grant.temporary, { recursive: true, force: true });
     }
@@ -360,6 +363,8 @@ export function registerFilePreview(services: {
   ipcMain.handle('zeus:file-preview:action', async (event, id: string, action: 'quick-look' | 'open' | 'reveal' | 'export') => {
     /** 发起操作的受信窗口。 */
     const window = services.requireWindow(event);
+    /** 读取期间切换焦点不改变原来发起操作的预览窗口。 */
+    const previewWindow = activeSystemWindow(window);
     /** 当前窗口持有的资源授权。 */
     const grant = grants.get(id);
     if (!grant || grant.owner !== window.id) throw new Error('预览授权已失效。');
@@ -367,8 +372,8 @@ export function registerFilePreview(services: {
     const path = await currentPath(grant);
     if (action === 'quick-look') {
       if (process.platform !== 'darwin') throw new Error('当前系统不支持快速预览，请选择打开文件。');
-      quickLooks.set(window.id, id);
-      window.previewFile(path, grant.item.name);
+      quickLooks.set(previewWindow.id, { id, owner: window.id, window: previewWindow });
+      previewWindow.previewFile(path, grant.item.name);
     } else if (action === 'reveal') shell.showItemInFolder(path);
     else if (action === 'open') {
       /** 本次操作的可见错误。 */
@@ -376,7 +381,7 @@ export function registerFilePreview(services: {
       if (error) throw new Error(error);
     } else if (action === 'export') {
       /** 用户操作的实际结果。 */
-      const result = await dialog.showSaveDialog(window, { defaultPath: basename(grant.item.name), title: '导出此版本文件' });
+      const result = await dialog.showSaveDialog(previewWindow, { defaultPath: basename(grant.item.name), title: '导出此版本文件' });
       if (!result.canceled && result.filePath) await copyFile(path, result.filePath);
     } else throw new Error('文件预览操作无效。');
   });

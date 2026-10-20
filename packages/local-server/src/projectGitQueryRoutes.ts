@@ -50,6 +50,23 @@ export function registerProjectGitQueryRoutes(options: { server: FastifyInstance
     },
   );
 
+  /** 推送范围是本地只读查询，不能隐式执行 fetch 或 push。 */
+  options.server.get(
+    '/api/projects/:projectId/git/workbench/repositories/:repositoryId/push-preview',
+    async (request: FastifyRequest<{ Params: { projectId: string; repositoryId: string }; Querystring: { sourceBranch?: string; remote?: string; targetBranch?: string; offset?: string } }>, reply) => {
+      try {
+        return await options.application.readPushPreview(request.params.projectId, request.params.repositoryId, {
+          sourceBranch: request.query.sourceBranch ?? '',
+          remote: request.query.remote ?? '',
+          targetBranch: request.query.targetBranch ?? '',
+          offset: Number(request.query.offset ?? 0),
+        });
+      } catch (error) {
+        return sendNativeQueryRouteError(reply, error);
+      }
+    },
+  );
+
   options.server.get('/api/projects/:projectId/git/diff', async (request: FastifyRequest<{ Params: { projectId: string } }>, reply) => {
     try {
       return await options.application.readDiff(request.params.projectId);

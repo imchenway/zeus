@@ -4,6 +4,7 @@ import type { ProjectRecord } from '../../apiClient.js';
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { temporaryWorkspaceId, describeUserFacingError, isTaskPriority, type ProjectCodeWorkspacePreference, renderTaskPushLayoutText, type ThirdPartyTaskExtract } from '@zeus/shared';
 import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromConversation } from '../../session/ProjectConversationTree.js';
+import { focusTaskPushWindow } from '../../ui/windowDocument.js';
 import {
   loadLegacyConversationDetail,
   cacheCodexConversationCapabilities,
@@ -2332,6 +2333,8 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
 
   /** 点击后立即打开弹窗并异步读取完整资料；只有用户再次确认才会创建会话或执行任务。 */
   async function openTaskModelPush(taskId: string, stage?: TaskStageRecord): Promise<void> {
+    // 同一任务重复点击只唤回已打开的系统窗口，不覆盖补充说明和附件。
+    if (taskModelPushTaskId === taskId && focusTaskPushWindow() && !stage) return;
     /** 当前任务及客户端属于同一次入口操作。 */
     const task = snapshot.tasks.find((candidate) => candidate.id === taskId);
     const client = props.nativeConversationClient;

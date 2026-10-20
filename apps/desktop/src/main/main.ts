@@ -33,6 +33,7 @@ import { extractThirdPartyTaskInfo, openThirdPartyTaskLogin } from './thirdParty
 import { defaultMainWindowSize, findSavedWindowDisplay, minimumMainWindowSize, type PersistedMainWindowState, readPersistedMainWindowState, type ResolvedMainWindowState, resolveMainWindowState } from './windowState.js';
 import { waitForSavedWindowDisplay } from './windowRestoration.js';
 import { createPersistentWindow } from './persistentWindow.js';
+import { activeSystemWindow, registerSystemWindowIpc, systemWindowOpenHandler } from './systemWindows.js';
 import { resolveTestDisplayPlacement } from './testDisplayPlacement.js';
 import {
   buildTaskAttachmentPreviewDataUrl,
@@ -74,7 +75,7 @@ import { createHomebrewUpdateController, type HomebrewUpdateController, type Hom
 import { type AutomaticUpdateScheduler, type ReserveAutomaticCodexUpdate, createAutomaticUpdateScheduler, isAutomaticCodexUpdateTarget } from './automaticUpdateScheduler.js';
 import { createZeusDataLayout, type ZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
 import { applyNetworkProxyAtStartup, createInputSuggestionDiagnosticLog, createPlatformSecretStore, readUnifiedConversationStoreMigrationStatus } from '@zeus/local-server';
-import { getFileBlame } from '@zeus/git-core';
+import { getFileBlame, parseGitUnifiedDiff, type GitDiffSummary } from '@zeus/git-core';
 import { canonicalCommandInputJson, commandEnvelopeSchemaGeneration, normalizeInputSuggestionUiDiagnostic, normalizeNetworkProxySettings } from '@zeus/shared';
 import { checkNetworkProxyConnection, chromiumNetworkProxyConfig } from './networkProxy.js';
 import { prepareZeusDataRoot } from './zeusDataMigration.js';
@@ -124,6 +125,8 @@ let menuBarUsageCostDetailHideTimer: ReturnType<typeof setTimeout> | undefined;
 /** 任务与会话交付复用同一种原生窗口，分别按真实范围定位已有实例。 */
 const taskGitDeliveryWindows = new Map<string, BrowserWindow>();
 const projectGitDiffWindows = new Set<BrowserWindow>();
+/** 推送差异只保存窗口私有展示快照，不把文件路径当作读取授权。 */
+const projectGitDiffSnapshots = new Map<number, { filePath: string; diff: GitDiffSummary }>();
 /** 窗口归属由 Main 创建时固定，Renderer 不能切换到另一项目。 */
 const taskGitDeliveryTargetByWindowId = new Map<number, GitDeliveryWindowTarget>();
 const mainWindowTaskGitContexts = new Map<number, TaskGitDeliveryCurrentContext>();
@@ -836,9 +839,7 @@ function configureWindowSecurity(window: BrowserWindow, rendererUrl: string): vo
   });
   window.once('closed', () => rendererBootstrapMonitor.dispose(window));
   // Renderer 只允许 Zeus 自身入口导航；所有外部链接必须走显式 shell.openExternal 审计路径。
-  window.webContents.setWindowOpenHandler(() => {
-    return { action: 'deny' };
-  });
+  window.webContents.setWindowOpenHandler(systemWindowOpenHandler(window));
   window.webContents.on('will-navigate', (event, targetUrl) => {
     if (!isAllowedRendererNavigation(targetUrl, rendererUrl)) {
       event.preventDefault();
@@ -871,26 +872,29 @@ function rendererEntryUrl(surface?: 'menu-bar-usage' | 'menu-bar-usage-cost-deta
 }
 
 /** 项目与任务文件共用原生差异窗口，读取身份通过参数明确区分。 */
-async function openProjectGitDiffWindow(parent: BrowserWindow, input: Extract<FilePreviewRequest, { kind: 'project-git' | 'task-git' }>): Promise<{ opened: true }> {
-  /** 先核对资源再创建窗口，任务窗口不携带项目默认仓库身份。 */
+/** 系统差异窗口复用持久化边界；快照模式不重新读取仓库或工作区。 */
+async function openProjectGitDiffWindow(parent: BrowserWindow, input: Extract<FilePreviewRequest, { kind: 'project-git' | 'task-git' }>, snapshot?: GitDiffSummary): Promise<{ opened: true }> {
+  /** 业务身份与只读快照使用不同入口，快照地址不携带仓库读取参数。 */
   const rendererUrl = rendererEntryUrl(
     'project-git-diff',
-    input.kind === 'task-git'
-      ? {
-          taskId: input.taskId,
-          workspaceId: input.workspaceId,
-          filePath: input.path,
-          scope: input.scope,
-        }
-      : {
-          projectId: input.projectId,
-          repositoryId: input.repositoryId,
-          filePath: input.path,
-          stage: input.stage ?? 'combined',
-          ...(input.commitHash ? { commitHash: input.commitHash } : {}),
-          ...(input.comparisonRef ? { comparisonRef: input.comparisonRef } : {}),
-          ...(input.comparisonMode ? { comparisonMode: input.comparisonMode } : {}),
-        },
+    snapshot
+      ? { snapshot: 'true' }
+      : input.kind === 'task-git'
+        ? {
+            taskId: input.taskId,
+            workspaceId: input.workspaceId,
+            filePath: input.path,
+            scope: input.scope,
+          }
+        : {
+            projectId: input.projectId,
+            repositoryId: input.repositoryId,
+            filePath: input.path,
+            stage: input.stage ?? 'combined',
+            ...(input.commitHash ? { commitHash: input.commitHash } : {}),
+            ...(input.comparisonRef ? { comparisonRef: input.comparisonRef } : {}),
+            ...(input.comparisonMode ? { comparisonMode: input.comparisonMode } : {}),
+          },
   );
   const workArea = screen.getDisplayMatching(parent.getBounds()).workArea;
   const width = Math.min(workArea.width, Math.max(900, Math.round(workArea.width * 0.84)));
@@ -931,8 +935,10 @@ async function openProjectGitDiffWindow(parent: BrowserWindow, input: Extract<Fi
     },
   });
   projectGitDiffWindows.add(window);
+  if (snapshot) projectGitDiffSnapshots.set(window.id, { filePath: input.path, diff: snapshot });
   window.on('closed', () => {
     projectGitDiffWindows.delete(window);
+    projectGitDiffSnapshots.delete(window.id);
     appCloseLayerActivityByWindow.delete(window.id);
   });
   configureWindowSecurity(window, rendererUrl);
@@ -940,7 +946,12 @@ async function openProjectGitDiffWindow(parent: BrowserWindow, input: Extract<Fi
     reveal();
     window.focus();
   });
-  await window.loadURL(rendererUrl);
+  try {
+    await window.loadURL(rendererUrl);
+  } catch (error) {
+    if (!window.isDestroyed()) window.destroy();
+    throw error;
+  }
   return { opened: true };
 }
 
@@ -1491,9 +1502,12 @@ function requireProjectGitWorkbench(event: Electron.IpcMainInvokeEvent, write = 
   const requestingWindow = BrowserWindow.fromWebContents(event.sender);
   /** 任务窗口仍走任务工作区接口，不借此获得普通项目 Git 写入权限。 */
   const target = requestingWindow ? taskGitDeliveryTargetByWindowId.get(requestingWindow.id) : undefined;
-  /** 会话窗口与只读差异窗口只接受主框架请求。 */
+  /** 只接受主框架请求；快照窗口只读自身内容，不授予项目 Git 查询权限。 */
   const trustedWindow =
-    requestingWindow && !requestingWindow.isDestroyed() && (windows.has(requestingWindow) || Boolean(target?.conversationId) || (!write && projectGitDiffWindows.has(requestingWindow))) && event.senderFrame === event.sender.mainFrame;
+    requestingWindow &&
+    !requestingWindow.isDestroyed() &&
+    (windows.has(requestingWindow) || Boolean(target?.conversationId) || (!write && projectGitDiffWindows.has(requestingWindow) && !projectGitDiffSnapshots.has(requestingWindow.id))) &&
+    event.senderFrame === event.sender.mainFrame;
   if (!trustedWindow || !projectGitWorkbench) throw new Error('项目 Git 请求来自不受信任窗口或 Git 服务尚未就绪。');
   if (target?.conversationId && projectId !== undefined && target.projectId !== projectId) throw new Error('项目 Git 请求与代码交付窗口归属不符。');
   return projectGitWorkbench;
@@ -1516,6 +1530,7 @@ function sanitizeRendererRuntimeLogDetail(message: unknown): string {
 }
 
 function setupIpc(): void {
+  registerSystemWindowIpc();
   /** 明暗设置或系统外观变化时，同步已打开差异窗口的原生底色。 */
   nativeTheme.on('updated', () => {
     for (const window of projectGitDiffWindows) {
@@ -1720,17 +1735,40 @@ function setupIpc(): void {
     const required = ['projectId', 'repositoryId', 'filePath'] as const;
     for (const key of required) if (typeof candidate[key] !== 'string') throw new TypeError(`仓库差异窗口缺少 ${key}。`);
     requireProjectGitWorkbench(event, false, candidate.projectId as string);
+    /** 快照上限沿用 Git 读取的 20 MiB；仅解析补丁，不执行其内容。 */
+    let snapshot: GitDiffSummary | undefined;
+    if (candidate.diffText !== undefined) {
+      if (typeof candidate.diffText !== 'string' || Buffer.byteLength(candidate.diffText, 'utf8') > 20 * 1024 * 1024 || !candidate.filePath || (candidate.filePath as string).includes('\0'))
+        throw new TypeError('差异快照内容或文件身份无效。');
+      /** 只把双击文件交给新窗口，重命名与删除同时匹配旧路径。 */
+      const fileDiffs = parseGitUnifiedDiff(candidate.diffText).filter((file) => file.newPath === candidate.filePath || file.oldPath === candidate.filePath);
+      if (fileDiffs.length !== 1) throw new TypeError('差异快照必须包含唯一的所选文件。');
+      snapshot = { isRepository: true, files: [candidate.filePath as string], diffText: '', fileDiffs };
+    }
     const stage = candidate.stage === 'staged' || candidate.stage === 'unstaged' ? candidate.stage : 'combined';
-    return openProjectGitDiffWindow(requestingWindow, {
-      kind: 'project-git',
-      projectId: candidate.projectId as string,
-      repositoryId: candidate.repositoryId as string,
-      path: candidate.filePath as string,
-      stage,
-      ...(typeof candidate.commitHash === 'string' && candidate.commitHash ? { commitHash: candidate.commitHash } : {}),
-      ...(typeof candidate.comparisonRef === 'string' && candidate.comparisonRef ? { comparisonRef: candidate.comparisonRef } : {}),
-      ...(candidate.comparisonMode === 'working-tree' ? { comparisonMode: 'working-tree' as const } : candidate.comparisonMode === 'current' ? { comparisonMode: 'current' as const } : {}),
-    });
+    return openProjectGitDiffWindow(
+      activeSystemWindow(requestingWindow),
+      {
+        kind: 'project-git',
+        projectId: candidate.projectId as string,
+        repositoryId: candidate.repositoryId as string,
+        path: candidate.filePath as string,
+        stage,
+        ...(typeof candidate.commitHash === 'string' && candidate.commitHash ? { commitHash: candidate.commitHash } : {}),
+        ...(typeof candidate.comparisonRef === 'string' && candidate.comparisonRef ? { comparisonRef: candidate.comparisonRef } : {}),
+        ...(candidate.comparisonMode === 'working-tree' ? { comparisonMode: 'working-tree' as const } : candidate.comparisonMode === 'current' ? { comparisonMode: 'current' as const } : {}),
+      },
+      snapshot,
+    );
+  });
+  ipcMain.handle('zeus:project-git-diff:load-snapshot', (event) => {
+    /** 快照只能由所属系统窗口的主框架读取，调用方不能指定其他窗口。 */
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || event.senderFrame !== event.sender.mainFrame) throw new Error('差异快照请求来自不受信任窗口。');
+    /** 窗口关闭时立即释放其只读内容。 */
+    const snapshot = projectGitDiffSnapshots.get(requestingWindow.id);
+    if (!snapshot) throw new Error('当前窗口没有差异快照。');
+    return snapshot;
   });
   ipcMain.handle('zeus:project-git:load-workbench', (event, projectId: unknown) => {
     if (typeof projectId !== 'string') throw new TypeError('项目 Git 工作台请求缺少项目身份。');
@@ -1757,6 +1795,24 @@ function setupIpc(): void {
     const candidate = input as Record<string, unknown>;
     if (typeof candidate.projectId !== 'string' || typeof candidate.repositoryId !== 'string' || typeof candidate.commitHash !== 'string') throw new TypeError('项目 Git 提交请求身份无效。');
     return requireProjectGitWorkbench(event, false, candidate.projectId).loadCommit(candidate.projectId, candidate.repositoryId, candidate.commitHash);
+  });
+  /** 推送预览只允许受信窗口读取，并在 IPC 边界拒绝畸形输入。 */
+  ipcMain.handle('zeus:project-git:load-push-preview', (event, input: unknown) => {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('推送预览请求无效。');
+    /** 项目和仓库身份必须由已有解析器核对。 */
+    const candidate = input as Record<string, unknown>;
+    if (typeof candidate.projectId !== 'string' || typeof candidate.repositoryId !== 'string' || !candidate.selection || typeof candidate.selection !== 'object' || Array.isArray(candidate.selection))
+      throw new TypeError('推送预览参数无效。');
+    /** 每个输入字段显式检查，不能直接信任类型断言。 */
+    const selection = candidate.selection as Record<string, unknown>;
+    if (typeof selection.sourceBranch !== 'string' || typeof selection.remote !== 'string' || typeof selection.targetBranch !== 'string' || (selection.offset !== undefined && typeof selection.offset !== 'number'))
+      throw new TypeError('推送预览参数无效。');
+    return requireProjectGitWorkbench(event, false, candidate.projectId).loadPushPreview(candidate.projectId, candidate.repositoryId, {
+      sourceBranch: selection.sourceBranch,
+      remote: selection.remote,
+      targetBranch: selection.targetBranch,
+      offset: selection.offset as number | undefined,
+    });
   });
   ipcMain.handle('zeus:project-git:load-comparison', (event, input: unknown) => {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('项目 Git 比较请求无效。');
@@ -2412,7 +2468,7 @@ function setupIpc(): void {
       throw new Error('Project directory picker is unavailable for this window.');
     }
     return chooseProjectDirectory(() =>
-      dialog.showOpenDialog(requestingWindow, {
+      dialog.showOpenDialog(activeSystemWindow(requestingWindow), {
         properties: ['openDirectory'],
         title: nativeText('选择项目目录', 'Choose a project folder'),
       }),
@@ -2430,7 +2486,7 @@ function setupIpc(): void {
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !conversationInputResources) {
       throw new Error('Conversation resource picker is unavailable for this window.');
     }
-    const selected = await dialog.showOpenDialog(requestingWindow, {
+    const selected = await dialog.showOpenDialog(activeSystemWindow(requestingWindow), {
       title: nativeText('选择文件或文件夹', 'Choose files or folders'),
       properties: ['openFile', 'openDirectory', 'multiSelections'],
     });
@@ -2509,7 +2565,7 @@ function setupIpc(): void {
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('任务附件选择来自不受信任窗口。');
     return activeMainCommandLedger().execute(request, 'desktop.task_resources.choose', async (_body, command) => {
       await command.markWriteStarted();
-      const selected = await dialog.showOpenDialog(requestingWindow, {
+      const selected = await dialog.showOpenDialog(activeSystemWindow(requestingWindow), {
         title: nativeText('选择文件或文件夹', 'Choose files or folders'),
         properties: ['openFile', 'openDirectory', 'multiSelections'],
       });

@@ -1,3 +1,4 @@
+import { useWindowDocument } from './ui/windowDocument.js';
 import { createPortal } from 'react-dom';
 import { PushPinIcon } from '@phosphor-icons/react/dist/csr/PushPin';
 import { useMotionPresence } from './ui/useMotionPresence.js';
@@ -133,13 +134,13 @@ function measurePopoverContentWidth(popover: HTMLElement, maxWidth: number): num
       labelMeasurements.push({ option, clone });
     }
 
-    const popoverStyle = window.getComputedStyle(popover);
+    const popoverStyle = popover.ownerDocument.defaultView!.getComputedStyle(popover);
     const popoverHorizontalInset = parseCssPixel(popoverStyle.paddingInlineStart) + parseCssPixel(popoverStyle.paddingInlineEnd) + parseCssPixel(popoverStyle.borderInlineStartWidth) + parseCssPixel(popoverStyle.borderInlineEndWidth);
     const searchRow = popover.querySelector<HTMLElement>('.zeus-select-search-row');
     const searchMeasure = popover.querySelector<HTMLElement>('.zeus-select-search-width-measure');
     let searchRowWidth = 0;
     if (searchRow && searchMeasure) {
-      const searchRowStyle = window.getComputedStyle(searchRow);
+      const searchRowStyle = searchRow.ownerDocument.defaultView!.getComputedStyle(searchRow);
       const searchIcon = searchRow.querySelector<HTMLElement>('.zeus-select-search-icon');
       const firstGridTrack = searchRowStyle.gridTemplateColumns.split(' ')[0];
       const searchIconWidth = Math.max(searchIcon?.getBoundingClientRect().width ?? 0, parseCssPixel(firstGridTrack));
@@ -147,7 +148,7 @@ function measurePopoverContentWidth(popover: HTMLElement, maxWidth: number): num
     }
     let optionWidth = 0;
     for (const { option, clone } of labelMeasurements) {
-      const optionStyle = window.getComputedStyle(option);
+      const optionStyle = option.ownerDocument.defaultView!.getComputedStyle(option);
       const hasColor = option.querySelector('.zeus-select-option-color') !== null;
       const markerWidth = hasColor ? 10 : 0;
       // 标记可在文字前后展示，宽度不再依赖最后一列的位置。
@@ -172,6 +173,10 @@ function measurePopoverContentWidth(popover: HTMLElement, maxWidth: number): num
 }
 
 export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
+  /** 下拉的定位、键盘和外部点击使用触发器所在系统窗口。 */
+  const document = useWindowDocument();
+  /** 业务桥接仍由原 Renderer 管理，这里仅使用目标窗口的 DOM 能力。 */
+  const window = document.defaultView!;
   const generatedId = useId();
   const rootRef = useRef<HTMLSpanElement | null>(null);
   const fallbackTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -436,7 +441,7 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
   useEffect(() => {
     if (!open) return undefined;
     const closeOnOutsidePointerDown = (event: PointerEvent) => {
-      if (event.target instanceof Node && (rootRef.current?.contains(event.target) || popoverRef.current?.contains(event.target))) return;
+      if (event.target && (rootRef.current?.contains(event.target as Node) || popoverRef.current?.contains(event.target as Node))) return;
       closeListbox(false);
     };
     document.addEventListener('pointerdown', closeOnOutsidePointerDown, true);

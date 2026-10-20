@@ -870,7 +870,16 @@ export function TaskModelPushModal(props: {
   }
 
   const modal = (
-    <ModalPortal rootClassName="task-model-push-portal-root" backdropClassName="task-model-push-backdrop" dismissDisabled={busy} onDismiss={props.onClose} role="dialog" aria-labelledby="task-model-push-title">
+    <ModalPortal
+      systemWindow="task-push"
+      windowTitle={`${props.language === 'zh-CN' ? '推送任务' : 'Push task'} · ${props.task?.taskCode ?? props.task?.title ?? 'Zeus'}`}
+      rootClassName="task-model-push-portal-root"
+      backdropClassName="task-model-push-backdrop"
+      dismissDisabled={busy}
+      onDismiss={props.onClose}
+      role="dialog"
+      aria-labelledby="task-model-push-title"
+    >
       <form
         className="task-model-push-modal zeus-solid-form-surface"
         aria-busy={props.status === 'loading' || undefined}
@@ -878,7 +887,7 @@ export function TaskModelPushModal(props: {
         onFocusCapture={(event) => {
           /** 保存接入按钮或具备稳定标识的输入框，返回时保持键盘位置。 */
           const target = event.target;
-          if (!(target instanceof HTMLElement)) return;
+          if (!(target as HTMLElement).matches) return;
           if (target.matches('.task-model-connect-link')) readingPositionRef.current.focusSelector = '.task-model-connect-link';
           else if (target.matches('[data-task-push-primary]')) readingPositionRef.current.focusSelector = '[data-task-push-primary]';
           else if (target.id) readingPositionRef.current.focusSelector = `#${CSS.escape(target.id)}`;

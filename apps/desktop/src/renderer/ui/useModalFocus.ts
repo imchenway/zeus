@@ -1,7 +1,7 @@
 import { useLayoutEffect, type RefObject } from 'react';
 
 /** 活动模态层按打开顺序排列，只有最上层接受键盘焦点。 */
-const layers: HTMLElement[] = [];
+const layersByDocument = new WeakMap<Document, HTMLElement[]>();
 /** 保存背景的原始可访问状态，嵌套层不会互相覆盖恢复记录。 */
 const backgroundStates = new Map<HTMLElement, { inert: boolean; ariaHidden: string | null }>();
 /** 可参与焦点移动的原生和自定义控件。 */
@@ -13,10 +13,13 @@ function focusableElements(root: HTMLElement): HTMLElement[] {
 }
 
 /** 以最上层为准同步背景，关闭顺序变化时仍恢复最初状态。 */
-function syncModalBackground(): void {
+function syncModalBackground(document: Document): void {
+  /** 每个系统窗口单独维护焦点层。 */
+  const layers = layersByDocument.get(document) ?? [];
   const active = layers.at(-1);
-  for (const element of document.body.children) {
-    if (!(element instanceof HTMLElement)) continue;
+  for (const child of document.body.children) {
+    /** DOM 属于目标窗口，不使用主窗口的构造器检查。 */
+    const element = child as HTMLElement;
     if (!backgroundStates.has(element)) backgroundStates.set(element, { inert: element.inert, ariaHidden: element.getAttribute('aria-hidden') });
     const original = backgroundStates.get(element)!;
     const blocked = element.dataset.motionState === 'closing' || Boolean(active && element !== active && !element.contains(active));
@@ -27,7 +30,7 @@ function syncModalBackground(): void {
     else if (isActive || original.ariaHidden === null) element.removeAttribute('aria-hidden');
     else element.setAttribute('aria-hidden', original.ariaHidden);
   }
-  if (!active) backgroundStates.clear();
+  if (!active) for (const element of backgroundStates.keys()) if (element.ownerDocument === document) backgroundStates.delete(element);
 }
 
 /** 弹窗和抽屉共同隔离背景；退出开始即释放焦点，动画不会延迟后续操作。 */
@@ -35,11 +38,16 @@ export function useModalFocus(ref: RefObject<HTMLElement | null>, open: boolean)
   useLayoutEffect(() => {
     const root = ref.current;
     if (!open || !root) return;
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    /** 焦点、事件和背景只属于根节点的实际文档。 */
+    const document = root.ownerDocument;
+    /** 不同窗口的模态栈互不隔离或抢夺焦点。 */
+    const layers = layersByDocument.get(document) ?? [];
+    layersByDocument.set(document, layers);
+    const previous = document.activeElement as HTMLElement | null;
     layers.push(root);
     /** 门户绘制顺序决定顶层，嵌套层同时重开时不受父子副作用的注册顺序影响。 */
     layers.sort((left, right) => (left.compareDocumentPosition(right) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
-    syncModalBackground();
+    syncModalBackground(document);
     /** 首选显式自动聚焦的控件；无控件时落在模态根层。 */
     const focusFirst = () => {
       const elements = focusableElements(root);
@@ -48,7 +56,7 @@ export function useModalFocus(ref: RefObject<HTMLElement | null>, open: boolean)
     focusFirst();
     /** 仅最上层阻止程序性焦点穿透。 */
     const containFocus = (event: FocusEvent) => {
-      if (layers.at(-1) === root && event.target instanceof Node && !root.contains(event.target)) focusFirst();
+      if (layers.at(-1) === root && event.target && !root.contains(event.target as Node)) focusFirst();
     };
     /** Tab 在可操作控件间循环，嵌套模态只处理一次。 */
     const containTab = (event: KeyboardEvent) => {
@@ -75,7 +83,7 @@ export function useModalFocus(ref: RefObject<HTMLElement | null>, open: boolean)
       const wasTop = layers.at(-1) === root;
       const index = layers.indexOf(root);
       if (index >= 0) layers.splice(index, 1);
-      syncModalBackground();
+      syncModalBackground(document);
       if (wasTop) {
         /** 原触发控件可能随子弹窗退出，改为回到仍活动的父层。 */
         const active = layers.at(-1);
