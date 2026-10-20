@@ -1,11 +1,13 @@
 import { useLayoutEffect, useRef, type PointerEvent } from 'react';
 
 /** 尺寸按比例保存；窗口缩放后仍保留可用的内容区域。 */
-export function GitPaneSeparator(props: { name: string; label: string; axis?: 'x' | 'y'; initial: number; min?: number; max?: number; target?: string }) {
+export function GitPaneSeparator(props: { name: string; label: string; axis?: 'x' | 'y'; initial: number; min?: number; max?: number; target?: string; /** 贴底或贴右的面板反向调整自身占比。 */ reverse?: boolean }) {
   const element = useRef<HTMLDivElement>(null);
   const value = useRef(props.initial);
   const start = useRef<{ coordinate: number; value: number; size: number } | null>(null);
   const axis = props.axis ?? 'x';
+  /** 底部面板向上拖动时增大高度，读数仍表示面板自身占比。 */
+  const direction = props.reverse ? -1 : 1;
   const minimum = props.min ?? 15;
   const maximum = props.max ?? 65;
   const storageKey = `zeus.git.panes.v1.${props.name}`;
@@ -65,7 +67,7 @@ export function GitPaneSeparator(props: { name: string; label: string; axis?: 'x
       onPointerMove={(event) => {
         if (!start.current) return;
         const delta = (axis === 'x' ? event.clientX : event.clientY) - start.current.coordinate;
-        apply(start.current.value + (delta / Math.max(1, start.current.size)) * 100);
+        apply(start.current.value + direction * (delta / Math.max(1, start.current.size)) * 100);
       }}
       onPointerUp={end}
       onPointerCancel={end}
@@ -75,7 +77,7 @@ export function GitPaneSeparator(props: { name: string; label: string; axis?: 'x
         const next = axis === 'x' ? 'ArrowRight' : 'ArrowDown';
         if (event.key === previous || event.key === next) {
           event.preventDefault();
-          apply(value.current + (event.key === previous ? -2 : 2), true);
+          apply(value.current + direction * (event.key === previous ? -2 : 2), true);
         } else if (event.key === 'Home' || event.key === 'Enter') {
           event.preventDefault();
           apply(props.initial, true);

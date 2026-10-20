@@ -1,5 +1,6 @@
+import { ZeusSelect } from '../ZeusSelect.js';
 import { FilePreview, PreviewIconButton, fileDiffEmptyMessage } from '../code/FilePreview.js';
-import type { FilePreviewRequest } from '@zeus/shared';
+import type { FilePreviewRequest, FilePreviewItem } from '@zeus/shared';
 import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ColumnsIcon as Columns } from '@phosphor-icons/react/dist/csr/Columns';
 import { FileTypeIcon } from '../code/FileTypeIcon.js';
@@ -25,7 +26,6 @@ interface SideBySideDiffProps {
   zh: boolean;
   title?: string;
   fill?: boolean;
-  partitionHunks?: boolean;
   hunkActionsDisabled?: boolean;
   onHunkAction?: (file: GitFileDiff, hunk: GitDiffHunk, index: number) => void;
   hunkActionLabel?: string;
@@ -163,12 +163,35 @@ export function ProjectGitDiffWindow(props: {
 }
 
 /** 标题、模式切换与布局操作共用一行，空文本差异仍能切换到内容预览。 */
-function TextSideBySideDiff(props: SideBySideDiffProps & { /** 共享文件操作由预览容器提供。 */ toolbar?: ReactNode }) {
+function TextSideBySideDiff(props: SideBySideDiffProps & { /** 共享文件操作由预览容器提供。 */ toolbar?: ReactNode; /** 已授权的前后两版完整正文。 */ items?: FilePreviewItem[] | null }) {
   const [mode, setMode] = useState<DiffViewMode>('side-by-side');
   const file = props.diff?.fileDiffs[0] ?? null;
+  /** 片段操作仍使用原始补丁，连续正文不改变暂存范围。 */
+  const [hunkIndex, setHunkIndex] = useState(0);
+  /** 选择片段时只滚动到原始行，不创建第二个差异编辑器。 */
+  const [revealLine, setRevealLine] = useState<{ line: number; side: 'left' | 'right' }>();
+  /** 内容与补丁不一致时拒绝拼接，提示刷新而不是展示错位行。 */
+  const continuous = useMemo(() => {
+    if (!file || !props.items) return null;
+    try {
+      return { file: continuousDiffFile(file, props.items), error: '' };
+    } catch (error) {
+      return { file: null, error: error instanceof Error ? error.message : '文件读取失败。' };
+    }
+  }, [file, props.items]);
+  /** 只有取得完整文本时，归属才绑定到同一对前后版本。 */
+  const blame = useMemo(() => (props.items ? { left: props.items[0]?.blame ?? [], right: props.items[1]?.blame ?? [] } : undefined), [props.items]);
   if (!file) return <p className="project-git-empty-copy">{props.zh ? '选择一个文件查看差异。' : 'Select a file to inspect its diff.'}</p>;
   const oldPath = file.changeType === 'added' ? (props.zh ? '变更前（空文件）' : 'Before (empty file)') : file.oldPath;
   const newPath = file.changeType === 'deleted' ? (props.zh ? '变更后（空文件）' : 'After (empty file)') : file.newPath;
+  /** 刷新后片段数减少时仍保持有效索引。 */
+  const selectedIndex = Math.min(hunkIndex, Math.max(0, file.hunks.length - 1));
+  /** 操作目标始终来自原始片段，不能使用补齐后的全文补丁。 */
+  const selectedHunk = file.hunks[selectedIndex];
+  /** 没有完整预览来源的快照只展示已有片段，并明确说明范围。 */
+  const visibleFile = continuous?.file ?? file;
+  /** 正文读取失败或发生变化时禁止对旧片段执行操作。 */
+  const actionsDisabled = props.hunkActionsDisabled || Boolean(props.previewRequest && !continuous?.file);
   return (
     <section className={`project-git-diff-preview${props.fill ? ' is-fill' : ''}`} aria-label={props.zh ? '文件差异' : 'File diff'}>
       <header>
@@ -213,90 +236,117 @@ function TextSideBySideDiff(props: SideBySideDiffProps & { /** 共享文件操�
             <span data-icon-tooltip={newPath}>{newPath}</span>
           </div>
         ) : null}
-        {file.hunks.length === 0 ? (
-          <p className="project-git-empty-copy">{fileDiffEmptyMessage(file, props.zh)}</p>
+        {props.items?.some((item) => item.blameError) ? (
+          <p role="status">
+            {props.zh ? '提交归属读取失败：' : 'Could not read line history: '}
+            {props.items.find((item) => item.blameError)?.blameError}
+          </p>
+        ) : null}
+        {continuous?.error ? (
+          <p role="alert">{props.zh ? continuous.error : 'The complete file could not be matched to this diff. Refresh the file and try again.'}</p>
+        ) : props.previewRequest && !props.items ? (
+          <p role="status">{props.zh ? '正在读取完整文件…' : 'Loading complete file…'}</p>
         ) : (
-          <Suspense fallback={null}>
-            {props.partitionHunks ? (
-              <div className="project-git-diff-hunks" aria-label={props.zh ? '差异区块' : 'Diff hunks'}>
-                {file.hunks.map((hunk, index) => (
-                  <DiffHunkSection
-                    key={`${hunk.header}:${index}`}
-                    file={file}
-                    hunk={hunk}
-                    index={index}
-                    unified={mode === 'unified'}
-                    zh={props.zh}
-                    disabled={props.hunkActionsDisabled}
-                    actionLabel={props.hunkActionLabel}
-                    discardLabel={props.hunkDiscardLabel}
-                    onAction={props.onHunkAction}
-                    onDiscard={props.onHunkDiscard}
-                  />
-                ))}
+          <>
+            {!props.previewRequest ? <p role="status">{props.zh ? '此快照仅包含差异片段。' : 'This snapshot contains changed sections only.'}</p> : null}
+            {selectedHunk && (props.onHunkAction || props.onHunkDiscard) ? (
+              <div className="project-git-diff-hunk-commands">
+                <ZeusSelect
+                  ariaLabel={props.zh ? '选择改动片段' : 'Select changed section'}
+                  value={String(selectedIndex)}
+                  size="compact"
+                  className="project-git-diff-hunk-select"
+                  options={file.hunks.map((hunk, index) => ({ value: String(index), label: props.zh ? `改动 ${index + 1} · 行 ${hunk.newStart || hunk.oldStart}` : `Change ${index + 1} · line ${hunk.newStart || hunk.oldStart}` }))}
+                  onChange={(value) => {
+                    /** 只接受当前展示的原始片段索引，定位第一条实际改动。 */
+                    const index = Number(value);
+                    if (!Number.isInteger(index) || !file.hunks[index]) return;
+                    setHunkIndex(index);
+                    /** 删除片段使用旧文件行号，其余片段使用新文件行号。 */
+                    const changed = file.hunks[index]?.lines.find((line) => line.type === 'addition' || line.type === 'deletion');
+                    if (changed) setRevealLine(changed.newLineNumber !== null ? { line: changed.newLineNumber, side: 'right' } : { line: changed.oldLineNumber!, side: 'left' });
+                  }}
+                />
+                {props.onHunkAction ? (
+                  <button type="button" disabled={actionsDisabled} onClick={() => props.onHunkAction?.(file, selectedHunk, selectedIndex)}>
+                    {props.hunkActionLabel}
+                  </button>
+                ) : null}
+                {props.onHunkDiscard ? (
+                  <button type="button" className="is-danger" disabled={actionsDisabled} onClick={() => props.onHunkDiscard?.(file, selectedHunk, selectedIndex)}>
+                    {props.hunkDiscardLabel}
+                  </button>
+                ) : null}
               </div>
+            ) : null}
+            {visibleFile.hunks.length === 0 ? (
+              <p className="project-git-empty-copy">{fileDiffEmptyMessage(file, props.zh)}</p>
             ) : (
-              <CodeDiffView file={file} unified={mode === 'unified'} alignReplacements resizable label={props.zh ? '文件差异' : 'File diff'} />
+              <Suspense fallback={null}>
+                <CodeDiffView
+                  file={visibleFile}
+                  unified={mode === 'unified'}
+                  alignReplacements
+                  resizable
+                  omitHunkHeaders={Boolean(continuous?.file)}
+                  blame={blame}
+                  blameLocale={props.zh ? 'zh-CN' : 'en-US'}
+                  revealLine={revealLine}
+                  label={props.zh ? '文件差异' : 'File diff'}
+                />
+              </Suspense>
             )}
-          </Suspense>
+          </>
         )}
       </div>
     </section>
   );
 }
 
-/** 工作区差异按 hunk 分段呈现，操作始终贴近将被影响的代码。 */
-function DiffHunkSection(props: {
-  file: GitFileDiff;
-  hunk: GitDiffHunk;
-  index: number;
-  unified: boolean;
-  zh: boolean;
-  disabled?: boolean;
-  actionLabel?: string;
-  discardLabel?: string;
-  onAction?: SideBySideDiffProps['onHunkAction'];
-  onDiscard?: SideBySideDiffProps['onHunkDiscard'];
-}) {
-  const file = useMemo(() => ({ ...props.file, hunks: [props.hunk] }), [props.file, props.hunk]);
-  const label = props.zh ? `区块 ${props.index + 1}` : `Hunk ${props.index + 1}`;
-  const range = props.zh
-    ? `原始行 ${formatHunkRange(props.hunk.oldStart, props.hunk.oldLines, true)} → 新行 ${formatHunkRange(props.hunk.newStart, props.hunk.newLines, true)}`
-    : `Old ${formatHunkRange(props.hunk.oldStart, props.hunk.oldLines, false)} → new ${formatHunkRange(props.hunk.newStart, props.hunk.newLines, false)}`;
-  const height = Math.min(560, Math.max(72, props.hunk.lines.length * 20 + 32));
-  return (
-    <section className="project-git-diff-hunk" aria-label={`${label} · ${range}`}>
-      <header className="project-git-diff-hunk-header">
-        <span>
-          <strong>{label}</strong>
-          <small data-icon-tooltip={props.hunk.header}>{range}</small>
-        </span>
-        {props.onAction || props.onDiscard ? (
-          <span className="project-git-diff-hunk-commands">
-            {props.onAction ? (
-              <button type="button" disabled={props.disabled} onClick={() => props.onAction?.(props.file, props.hunk, props.index)}>
-                {props.actionLabel ?? (props.zh ? '应用区块' : 'Apply hunk')}
-              </button>
-            ) : null}
-            {props.onDiscard ? (
-              <button className="is-danger" type="button" disabled={props.disabled} onClick={() => props.onDiscard?.(props.file, props.hunk, props.index)}>
-                {props.discardLabel ?? (props.zh ? '放弃区块' : 'Discard hunk')}
-              </button>
-            ) : null}
-          </span>
-        ) : null}
-      </header>
-      <div className="project-git-diff-hunk-body" style={{ height }}>
-        <CodeDiffView file={file} unified={props.unified} alignReplacements resizable omitHunkHeaders label={`${props.zh ? '文件差异' : 'File diff'} · ${label}`} />
-      </div>
-    </section>
-  );
-}
-
-function formatHunkRange(start: number, lines: number, zh: boolean): string {
-  if (lines === 0) return zh ? '空' : 'empty';
-  const end = start + lines - 1;
-  return start === end ? String(start) : `${start}–${end}`;
+/** 用授权全文补齐未修改行；逐行校验旧补丁，拒绝把不同版本拼在一起。 */
+function continuousDiffFile(file: GitFileDiff, items: FilePreviewItem[]): GitFileDiff {
+  /** Git 不把末尾换行后的空字符串当成额外代码行。 */
+  const readLines = (item: FilePreviewItem | undefined, absent: boolean): string[] => {
+    if (absent) return [];
+    if (!item || item.content === undefined || item.truncated) throw new Error(item?.reason || '完整文件暂不可用，请刷新或在外部编辑器中查看。');
+    if (!item.content) return [];
+    const lines = item.content.split('\n').map((line) => (line.endsWith('\r') ? line.slice(0, -1) : line));
+    if (lines.at(-1) === '') lines.pop();
+    return lines;
+  };
+  /** 前后版本独立读取，新增或删除的缺失侧明确为空。 */
+  const before = readLines(items[0], file.changeType === 'added');
+  const after = readLines(items[1], file.changeType === 'deleted');
+  /** 只给展示层补齐上下文，原始补丁继续用于写操作。 */
+  const lines: GitDiffHunk['lines'] = [];
+  /** 游标对应已消费的前后版本行数。 */
+  let left = 0;
+  let right = 0;
+  /** 任何版本错位都要求重新读取，不静默隐藏中间正文。 */
+  const stale = () => new Error('文件内容已经变化，请刷新 Git 差异。');
+  /** 未修改段必须在两端完全一致。 */
+  const appendContext = (leftEnd: number, rightEnd: number) => {
+    if (leftEnd < left || rightEnd < right || leftEnd > before.length || rightEnd > after.length) throw stale();
+    while (left < leftEnd && right < rightEnd) {
+      if (before[left] !== after[right]) throw stale();
+      lines.push({ type: 'context', content: before[left]!, oldLineNumber: ++left, newLineNumber: ++right });
+    }
+    if (left !== leftEnd || right !== rightEnd) throw stale();
+  };
+  for (const hunk of file.hunks) {
+    appendContext(hunk.oldLines ? hunk.oldStart - 1 : hunk.oldStart, hunk.newLines ? hunk.newStart - 1 : hunk.newStart);
+    for (const line of hunk.lines) {
+      if (line.type === 'metadata') continue;
+      let content = line.content.endsWith('\r') ? line.content.slice(0, -1) : line.content;
+      // 预览解码会去除文件头 BOM，比较同一可见正文时采用一致规则。
+      if ((line.oldLineNumber === 1 || line.newLineNumber === 1) && content.startsWith('\uFEFF')) content = content.slice(1);
+      if (line.type !== 'addition' && (line.oldLineNumber !== left + 1 || before[left++] !== content)) throw stale();
+      if (line.type !== 'deletion' && (line.newLineNumber !== right + 1 || after[right++] !== content)) throw stale();
+      lines.push({ ...line, content });
+    }
+  }
+  appendContext(before.length, after.length);
+  return { ...file, hunks: lines.length ? [{ header: '', oldStart: before.length ? 1 : 0, newStart: after.length ? 1 : 0, oldLines: before.length, newLines: after.length, lines }] : [] };
 }
 
 /** 独立差异窗口只把选中文件交给代码视图。 */
@@ -320,7 +370,7 @@ export function SideBySideDiff(props: SideBySideDiffProps) {
         ) : null
       }
     >
-      {props.diff?.fileDiffs.length ? (toolbar) => <TextSideBySideDiff {...props} toolbar={toolbar} /> : null}
+      {props.diff?.fileDiffs.length ? (toolbar, items) => <TextSideBySideDiff {...props} toolbar={toolbar} items={items} /> : null}
     </FilePreview>
   ) : (
     <TextSideBySideDiff {...props} />

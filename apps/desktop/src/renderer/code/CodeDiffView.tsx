@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { detectSourceLanguage } from '@zeus/shared';
+import { detectSourceLanguage, type FilePreviewBlameLine } from '@zeus/shared';
 import { Decoration, EditorView, GutterMarker, ViewPlugin, gutter, type ViewUpdate } from '@codemirror/view';
 import { Text, type Extension } from '@codemirror/state';
 import type { TaskGitFileDiff } from '../session/sessionTypes.js';
@@ -56,6 +56,12 @@ interface CodeDiffViewProps {
   annotationLines?: DiffAnnotationLine[];
   /** 新建或编辑评论时，在区块挂载后定位并聚焦。 */
   focusAnnotation?: DiffAnnotationLine;
+  /** 归属按原始文件行号关联，未提交和空白对齐行显示空白。 */
+  blame?: { left: FilePreviewBlameLine[]; right: FilePreviewBlameLine[] };
+  /** 光标行详情与左侧日期作者并存，语言跟随调用页面。 */
+  blameLocale?: string;
+  /** 片段导航只滚动同一个连续编辑器。 */
+  revealLine?: DiffAnnotationLine;
   /** 可见行号支持现有评论、范围选择和打开源码操作。 */
   renderLineNumber?: (line: number, side: 'left' | 'right') => ReactNode;
   /** React 继续管理评论编辑，不随代码行滚出而卸载。 */
@@ -87,8 +93,32 @@ export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps)
     });
     return result;
   }, [rows]);
+  /** 归属只在版本内容变化时建立索引，滚动时只渲染可见行。 */
+  const blameByLine = useMemo(() => ({ left: new Map(props.blame?.left.map((line) => [line.line, line])), right: new Map(props.blame?.right.map((line) => [line.line, line])) }), [props.blame]);
+  /** 仅为光标所在显示行解析归属，不复制全文索引或重复读取 Git。 */
+  const cursorBlame = useMemo(() => {
+    /** 统一视图的删除行取旧版，其余行取新版；左右视图各取自身版本。 */
+    const resolve = (side: 'left' | 'right') => (displayLine: number) => {
+      /** 差异显示行可能是片段头或用于两侧对齐的空行。 */
+      const row = rows[displayLine - 1];
+      if (!row) return undefined;
+      /** 版本侧与左侧逐行归属采用相同规则。 */
+      const version = unified ? (row.kind === 'deletion' ? 'left' : 'right') : side;
+      /** 没有原始行号的补位行不显示提交信息。 */
+      const line = row[version === 'left' ? 'leftNumber' : 'rightNumber'];
+      return line === null ? undefined : blameByLine[version].get(line);
+    };
+    return { left: resolve('left'), right: resolve('right') };
+  }, [rows, unified, blameByLine]);
   /** 两个编辑器共用纵向位置，横向保持独立。 */
   const views = useRef<{ left: EditorView | null; right: EditorView | null }>({ left: null, right: null });
+  useEffect(() => {
+    if (!props.revealLine) return;
+    /** 左右视图使用同一显示行，删除行也能准确定位。 */
+    const row = positions.get(`${props.revealLine.side}:${props.revealLine.line}`);
+    const view = views.current.left ?? views.current.right;
+    if (row !== undefined && view) view.dispatch({ effects: EditorView.scrollIntoView(view.state.doc.line(row + 1).from, { y: 'center' }) });
+  }, [props.revealLine, positions]);
   /** 仅在可见行号容器变化时发布一次 React 更新。 */
   const [, setGutterRevision] = useState(0);
   /** 行号容器注册表大小随可视行数变化。 */
@@ -260,6 +290,8 @@ export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps)
           readOnly
           label={props.label}
           extensions={extensions.left}
+          blame={props.blame ? cursorBlame.left : undefined}
+          blameLocale={props.blameLocale}
           onView={(view) => {
             views.current.left = view;
           }}
@@ -274,6 +306,8 @@ export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps)
           readOnly
           label={props.label}
           extensions={extensions.right}
+          blame={props.blame ? cursorBlame.right : undefined}
+          blameLocale={props.blameLocale}
           onView={(view) => {
             views.current.right = view;
           }}
@@ -282,16 +316,28 @@ export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps)
       {[...gutterPortals.entries.values()].map((portal) => {
         const row = rows[portal.row];
         if (!row) return null;
-        const number = row[portal.side === 'left' ? 'leftNumber' : 'rightNumber'];
+        /** 统一视图的删除行使用旧版本，其余行使用新版本。 */
+        const side = unified ? (row.kind === 'deletion' ? 'left' : 'right') : portal.side;
+        const number = row[side === 'left' ? 'leftNumber' : 'rightNumber'];
+        /** 空白对齐行和未提交行不显示占位文案。 */
+        const blame = number === null ? undefined : blameByLine[side].get(number);
+        const attribution = formatDiffBlame(blame);
         return createPortal(
-          unified ? (
-            <>
-              <span>{row.leftNumber ?? ''}</span>
-              <span>{row.rightNumber ?? ''}</span>
-            </>
-          ) : number === null ? null : (
-            (props.renderLineNumber?.(number, portal.side) ?? number)
-          ),
+          <>
+            {props.blame ? (
+              <small className="code-diff-line-blame" data-icon-tooltip={attribution ? `${attribution} · ${blame?.commitHash}` : undefined}>
+                {attribution}
+              </small>
+            ) : null}
+            {unified ? (
+              <>
+                <span>{row.leftNumber ?? ''}</span>
+                <span>{row.rightNumber ?? ''}</span>
+              </>
+            ) : number === null ? null : (
+              (props.renderLineNumber?.(number, portal.side) ?? number)
+            )}
+          </>,
           portal.element,
           `${portal.side}:${portal.row}`,
         );
@@ -376,4 +422,13 @@ function diffRows(file: TaskGitFileDiff, align: boolean, omitHunkHeaders: boolea
   // 二进制或仅文件模式变化的 diff 没有文本 hunk；CodeMirror 文档仍必须至少有一行。
   if (rows.length === 0) rows.push({ left: '', right: '', leftNumber: null, rightNumber: null, kind: 'empty' });
   return rows;
+}
+
+/** 日期固定为年/月/日，时间按用户本机时区显示；未提交行保持空白。 */
+function formatDiffBlame(blame: FilePreviewBlameLine | undefined): string {
+  if (!blame || /^0+$/u.test(blame.commitHash) || !blame.author || !Number.isFinite(blame.authorTime) || blame.authorTime <= 0) return '';
+  /** Unix 秒转换为当前平台的本地日历日期。 */
+  const date = new Date(blame.authorTime * 1000);
+  if (!Number.isFinite(date.getTime())) return '';
+  return `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')} ${blame.author}`;
 }

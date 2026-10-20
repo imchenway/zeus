@@ -5000,55 +5000,6 @@ a {
   border-left: 0;
   grid-column: 3;
 }
-.project-git-diff-hunks {
-  background: var(--zeus-page-background, #f7f8fa);
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 8px;
-  min-height: 0;
-  min-width: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 8px 0;
-  scrollbar-gutter: stable;
-}
-.project-git-diff-hunk {
-  background: var(--zeus-product-panel);
-  border-bottom: 0;
-  border-top: 0;
-  flex: 0 0 auto;
-  min-width: 0;
-}
-.project-git-diff-hunk-header {
-  align-items: center;
-  background: var(--zeus-product-panel-muted);
-  border-bottom: 0;
-  display: flex;
-  gap: 12px;
-  justify-content: space-between;
-  min-height: 30px;
-  padding: 3px 8px 3px 10px;
-}
-.project-git-diff-hunk-header > span:first-child {
-  align-items: baseline;
-  display: flex;
-  gap: 8px;
-  min-width: 0;
-  overflow: hidden;
-}
-.project-git-diff-hunk-header strong {
-  color: var(--zeus-product-text);
-  flex: 0 0 auto;
-  font-size: 11px;
-}
-.project-git-diff-hunk-header small {
-  color: var(--zeus-product-muted);
-  font-size: 10.5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .project-git-diff-hunk-commands {
   align-items: center;
   display: flex;
@@ -5076,14 +5027,6 @@ a {
 .project-git-diff-hunk-commands button:disabled {
   cursor: default;
   opacity: 0.45;
-}
-.project-git-diff-hunk-body {
-  min-height: 0;
-  min-width: 0;
-  overflow: hidden;
-}
-.project-git-diff-hunk-body .code-diff-view {
-  height: 100%;
 }
 body[data-surface='project-git-diff'] {
   background: var(--zeus-product-panel);

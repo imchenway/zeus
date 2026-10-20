@@ -1555,6 +1555,7 @@ function reduceTranscriptPlacements(state: NativeSessionState, batch: NativeConv
   for (const id of removed) removedTranscriptEntryIds[id] = Math.max(removedTranscriptEntryIds[id] ?? 0, batch.revision);
   const items = Object.fromEntries(
     Object.entries(state.items).flatMap(([key, item]) => {
+      /** 先按客户端身份接管正式位置；Provider 别名退休不代表用户正文被删除。 */
       const entryId = sessionTranscriptEntryId(item);
       if (!entryId || removed.has(entryId)) return entryId && removed.has(entryId) ? [] : [[key, item]];
       const placement = placements.get(entryId);
@@ -1616,19 +1617,17 @@ function sortSessionItemOrder(order: readonly string[], items: Readonly<Record<s
  * 用户消息的持久显示身份：落库后统一是 user-message:<客户端身份>。
  * 本地乐观气泡也用它提前声明“我将来就是这一条正文”，因此同身份只能存在一条消息。
  */
-export function durableUserMessageIdentity(item: NativeSessionItemBuffer): string | null {
-  if (!isUserMessageItem(item)) return null;
-  if (item.transcript) return item.transcript.placement.entryId;
+export function durableUserMessageIdentity(item: Pick<NativeSessionItemBuffer, 'type' | 'payload' | 'transcript' | 'clientUserMessageId' | 'durableClientUserMessageId'>): string | null {
+  if (!isUserMessageType(item.type)) return null;
   /** 优先使用正式提交身份；Provider 回显只补充关联，不重新编号用户输入。 */
   const clientId = item.durableClientUserMessageId ?? item.clientUserMessageId ?? stringValue(item.payload.clientUserMessageId) ?? stringValue(item.payload.clientId);
-  return clientId ? `user-message:${clientId}` : null;
+  return clientId ? `user-message:${clientId}` : (item.transcript?.placement.entryId ?? null);
 }
 
 /** 已接纳输入可按持久客户端身份核对原位置；未发送输入不猜位置，也不进入恢复请求。 */
 export function sessionTranscriptEntryId(item: NativeSessionItemBuffer): string | null {
-  if (item.transcript) return item.transcript.placement.entryId;
-  if (!isUserMessageItem(item) || isUnacceptedTranscriptMessage(item)) return null;
-  return durableUserMessageIdentity(item);
+  if (isUserMessageItem(item) && (item.transcript || !isUnacceptedTranscriptMessage(item))) return durableUserMessageIdentity(item);
+  return item.transcript?.placement.entryId ?? null;
 }
 
 function durableUserMessageText(state: NativeSessionState, clientUserMessageId: string): string | null {

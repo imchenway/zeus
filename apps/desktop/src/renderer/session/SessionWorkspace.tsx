@@ -1830,11 +1830,11 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const [localSubmissionRevision, setLocalSubmissionRevision] = useState(0);
   const browserSplitRef = useRef<HTMLDivElement | null>(null);
   const browserResizeActiveRef = useRef(false);
-  /** 项目工具暂占右侧时只隐藏会话工作面，保留文件、网页和全宽偏好。 */
+  /** 项目工具覆盖底部时只协调焦点，保留会话工作面的尺寸和全宽偏好。 */
   const projectTools = useContext(ProjectToolContext);
   /** 仅当前可见的会话工作面可以占用全宽。 */
-  const contextFullWidth = !projectTools.open && requestedContextFullWidth;
-  const contextOpen = !projectTools.open && contextWorkspace.kind !== 'none';
+  const contextFullWidth = requestedContextFullWidth;
+  const contextOpen = contextWorkspace.kind !== 'none';
   /** 通用文件同属审阅，原生焦点通知继续沿用源码类别。 */
   const contextActivityKind = contextWorkspace.kind === 'file' ? 'source' : contextWorkspace.kind;
   const browserOpen = contextOpen && contextWorkspace.kind === 'browser';
@@ -2724,7 +2724,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   data-icon-tooltip={platformShortcutLabel(props.language === 'zh-CN' ? '内置浏览器（⌘⇧B）' : 'Built-in browser (⌘⇧B)')}
                   onClick={(event) => {
                     contextReturnFocusRef.current = event.currentTarget;
-                    if (browserOpen) {
+                    if (browserOpen && !projectTools.open) {
                       closeContextWorkspace();
                       return;
                     }
@@ -2766,7 +2766,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   persistentHost={quickActionsPersistentHost}
                   dockHost={browserOpen ? browserEnvironmentHost : null}
                   conversationColumnWidth={conversationColumnWidth}
-                  suppressed={props.quickActionsSuppressed || projectTools.open}
+                  suppressed={props.quickActionsSuppressed}
                   capabilities={props.capabilities}
                   onLoadCapabilities={actions.onLoadCapabilities}
                   onLoadSkills={actions.onLoadSkills}
@@ -3362,12 +3362,12 @@ export function NewConversationComposer(props: {
   const [restoredDraft] = useState(() => props.drafts?.get(draftKey));
   /** 创建界面重挂载时保留浏览器归属，不提前创建模型会话。 */
   const [browserDraft, setBrowserDraft] = useState<NewConversationBrowserDraft>(() => restoredDraft?.browserDraft ?? { conversationId: `browser-draft-${crypto.randomUUID()}`, submission: null });
-  /** 项目工具与新对话浏览器共用右侧区域。 */
+  /** 项目工具覆盖新对话浏览器时统一协调焦点与原生网页。 */
   const projectTools = useContext(ProjectToolContext);
   /** 浏览器工作面随当前输入草稿恢复。 */
   const [browserOpen, setBrowserOpen] = useState(() => restoredDraft?.browserOpen ?? false);
-  /** 隐藏不改变草稿记录的浏览器打开状态。 */
-  const browserVisible = browserOpen && !projectTools.open;
+  /** 工具覆盖时仍保留草稿浏览器的布局与打开状态。 */
+  const browserVisible = browserOpen;
   /** 主动打开浏览器时收起项目工具。 */
   const openBrowser = useCallback(() => {
     projectTools.revealSessionContext();
@@ -4112,7 +4112,7 @@ export function NewConversationComposer(props: {
               aria-pressed={browserVisible}
               aria-keyshortcuts="Meta+Shift+B Control+Shift+B"
               data-icon-tooltip={platformShortcutLabel(props.language === 'zh-CN' ? '内置浏览器（⌘⇧B）' : 'Built-in browser (⌘⇧B)')}
-              onClick={() => (browserVisible ? void closeBrowser() : openBrowser())}
+              onClick={() => (browserVisible && !projectTools.open ? void closeBrowser() : openBrowser())}
             >
               <GlobeSimple aria-hidden="true" weight="regular" />
             </button>

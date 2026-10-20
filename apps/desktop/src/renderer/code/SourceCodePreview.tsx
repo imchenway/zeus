@@ -5,7 +5,7 @@ import { openSearchPanel, search, searchKeymap } from '@codemirror/search';
 import { syntaxHighlighting } from '@codemirror/language';
 import { Decoration, EditorView, GutterMarker, WidgetType, gutter, keymap, lineNumbers } from '@codemirror/view';
 import { classHighlighter } from '@lezer/highlight';
-import type { ConversationFileLocation } from '@zeus/shared';
+import type { ConversationFileLocation, FilePreviewBlameLine } from '@zeus/shared';
 import { blameDecorations } from './blameDecorations.js';
 import { loadSourceLanguage } from './sourceLanguageRegistry.js';
 import { useGitBlame } from './useGitBlame.js';
@@ -52,6 +52,8 @@ interface SourceCodePreviewProps {
   projectId?: string;
   conversationId?: string;
   resourceId?: string;
+  /** 通用文件预览已经读取的准确版本归属，存在时不再次按项目路径读取。 */
+  blame?: FilePreviewBlameLine[];
   /** 行尾归属日期使用当前界面语言。 */
   locale?: string;
   /** 工具栏递增请求用于打开或重新聚焦原生文件查找面板。 */
@@ -88,7 +90,7 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
   /** 只读历史仍可查看代码，无评论权限时只显示行号。 */
   const commentsEnabled = Boolean(props.onComment);
   /** 自动读取当前资源归属，不再创建额外的按钮或状态行。 */
-  const gitBlame = useGitBlame({ projectId: props.projectId, filePath: props.path, conversationId: props.conversationId, resourceId: props.resourceId, content: props.content });
+  const gitBlame = useGitBlame({ projectId: props.blame === undefined ? props.projectId : undefined, filePath: props.path, conversationId: props.conversationId, resourceId: props.resourceId, content: props.content });
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -184,9 +186,11 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
     const view = viewRef.current;
     if (!view) return;
     /** 只在可信资源内容对应的归属读取完成后添加当前行提示。 */
-    const extension = gitBlame?.lines.length ? blameDecorations(gitBlame.lines, { locale: props.locale }) : [];
+    const lines = props.blame ?? gitBlame?.lines;
+    /** 显式空结果同样属于当前版本，不能回退到其他来源。 */
+    const extension = lines?.length ? blameDecorations(lines, { locale: props.locale }) : [];
     view.dispatch({ effects: blameSlot.reconfigure(extension) });
-  }, [props.locale, blameSlot, gitBlame, props.content, props.path, props.label, commentsEnabled]);
+  }, [props.locale, props.blame, blameSlot, gitBlame, props.content, props.path, props.label, commentsEnabled]);
 
   useEffect(() => {
     /** 新评论先定位到所属行，反向范围评论的结束行也可能在屏幕外。 */

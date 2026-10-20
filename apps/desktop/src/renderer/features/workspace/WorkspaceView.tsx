@@ -1,3 +1,5 @@
+import { ProjectTerminalPanel } from '../runtime/ProjectTerminalPanel.js';
+import { TerminalWindowIcon } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import type { ProjectGitWorkbenchSnapshot } from '../git/gitContracts.js';
 import type { ProjectSourceWorkspaceHandle } from '../../code/ProjectSourceWorkspace.js';
 import { isMacOSPlatform, platformShortcutLabel } from '../../platform.js';
@@ -685,6 +687,19 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   const [projectCodeBranchContainer, setProjectCodeBranchContainer] = useState<HTMLSpanElement | null>(null);
   /** 源码目录沿用 Git 工作台的文件状态快照。 */
   const [projectCodeGitSnapshot, setProjectCodeGitSnapshot] = useState<ProjectGitWorkbenchSnapshot | null>(null);
+  /** 项目终端独立于命令弹窗，项目变化后不会自动开启新 shell。 */
+  const [terminalProjectId, setTerminalProjectId] = useState<string | null>(null);
+  /** 终端门户挂在工作区覆盖层，保持主页面尺寸。 */
+  const [terminalHost, setTerminalHost] = useState<HTMLDivElement | null>(null);
+  /** Git 打开后收起终端显示层，后台会话继续运行。 */
+  useEffect(() => {
+    if (projectGitOpen) setTerminalProjectId(null);
+  }, [projectGitOpen]);
+  /** 会话主动打开文件或网页时，释放底部工具占用的原生显示区域。 */
+  const revealSessionContext = useCallback(() => {
+    closeProjectGit();
+    setTerminalProjectId(null);
+  }, [closeProjectGit]);
   /** 命令内容按调用项目取值，背景页面保持原位。 */
   const commandsProject = snapshot.projects.find((project) => project.id === projectCommandsProjectId);
   /** 两种布局共用右侧入口、原有导航与草稿保护，不另存项目身份。 */
@@ -717,6 +732,24 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
         >
           <TerminalIcon aria-hidden="true" />
         </button>
+        {props.commandClient ? (
+          <ProjectTerminalPanel
+            key={selectedProject.id}
+            project={selectedProject}
+            client={props.commandClient}
+            language={appShellSettings.appLanguage}
+            dockHost={terminalHost}
+            open={terminalProjectId === selectedProject.id && !projectGitOpen}
+            onOpenChange={(open) => {
+              if (open) closeProjectGit();
+              setTerminalProjectId(open ? selectedProject.id : null);
+            }}
+          />
+        ) : (
+          <button type="button" disabled aria-label={codeWorkspaceZh ? '终端' : 'Terminal'} data-icon-tooltip={codeWorkspaceZh ? '终端' : 'Terminal'} data-project-tool="terminal">
+            <TerminalWindowIcon aria-hidden="true" />
+          </button>
+        )}
         <button
           type="button"
           className={projectGitOpen ? 'is-active' : ''}
@@ -1037,6 +1070,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           project={projectToolsVisible ? selectedProject : undefined}
           open={projectGitOpen}
           sourceVisible={sourceVisible}
+          terminalOpen={terminalProjectId === selectedProject?.id}
+          terminalHostRef={setTerminalHost}
+          onRevealSessionContext={revealSessionContext}
           mainRef={workspaceScrollRef}
           gitClient={props.nativeConversationClient}
           language={appShellSettings.appLanguage}

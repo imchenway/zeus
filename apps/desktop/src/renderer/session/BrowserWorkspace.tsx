@@ -205,7 +205,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
     const annotationMode = activeTab?.annotationMode;
     const handleShortcut = (event: KeyboardEvent): void => {
       // 保留挂载但暂时隐藏的会话浏览器不接管快捷键。
-      if (viewportRef.current?.closest('[hidden], [inert]')) return;
+      if (viewportRef.current?.closest('[hidden], [inert], [data-tool-covered="true"]')) return;
       if (!tabId || !window.zeus?.runBrowserCommand || !(event.metaKey || event.ctrlKey) || event.key !== '.') return;
       event.preventDefault();
       void window.zeus
@@ -241,7 +241,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
     // 只保留最新一帧的显示请求，弹窗出现时立即取消。
     let frame = 0;
     // 复用公共浮层标记，同时识别门户和应用内部挂载的菜单。
-    const overlaySelector = '[data-motion-surface="popover"], [data-zeus-primitive="modal"], [data-zeus-primitive="drawer"]';
+    const overlaySelector = '[data-motion-surface="popover"], [data-zeus-primitive="modal"], [data-zeus-primitive="drawer"], [data-zeus-primitive="overlay"]';
     // 只订阅存活浮层的尺寸，移除后解除观察，避免长期保留菜单节点。
     const popovers = new Set<HTMLElement>();
     // 只为前台或退场中的浮层让位；承载当前浏览器的会话抽屉、已被更上层隔离的背景浮层都不遮挡它。
@@ -249,7 +249,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
       // 项目工具接管右侧时立即隐藏原生网页，不能等动画帧或覆盖新面板。
       if (viewport.closest('[hidden], [inert]')) return true;
       if ([...document.body.querySelectorAll(':scope > :is([data-zeus-primitive="modal"], [data-zeus-primitive="drawer"]):is(:not([inert]), [data-motion-state="closing"])')].some((surface) => !surface.contains(viewport))) return true;
-      // 菜单只在实际覆盖网页时让原生视图隐藏，左侧不重叠的下拉保持网页可见。
+      // 菜单和项目底栏只在实际覆盖网页时隐藏原生视图，保留原占位尺寸。
       const viewportRect = viewport.getBoundingClientRect();
       return [...popovers].some((surface) => {
         // 退场动画仍需要让位；被其他弹窗隔离的背景菜单不参与遮挡判断。
@@ -288,7 +288,7 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
         observer.unobserve(surface);
         popovers.delete(surface);
       }
-      for (const surface of document.querySelectorAll<HTMLElement>('[data-motion-surface="popover"]')) {
+      for (const surface of document.querySelectorAll<HTMLElement>('[data-motion-surface="popover"], [data-zeus-primitive="overlay"]')) {
         if (popovers.has(surface)) continue;
         popovers.add(surface);
         observer.observe(surface);

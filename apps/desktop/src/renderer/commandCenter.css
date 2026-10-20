@@ -59,11 +59,6 @@
   overflow: hidden;
 }
 
-/* 门户沿用工作区布局，不生成全屏弹层。 */
-.command-center-terminal-host {
-  display: contents;
-}
-
 .command-center {
   color: var(--zeus-control-text);
   display: flex;

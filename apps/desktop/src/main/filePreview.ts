@@ -1,3 +1,4 @@
+import { getFilePreviewBlame } from '@zeus/git-core';
 import { activeSystemWindow } from './systemWindows.js';
 import { BrowserWindow, dialog, ipcMain, protocol, shell } from 'electron';
 import { execFile, spawn } from 'node:child_process';
@@ -217,6 +218,8 @@ export function registerFilePreview(services: {
         let temporary: string | undefined;
         /** 解码内容绑定本次授权，释放时随授权回收。 */
         let image: Buffer | undefined;
+        /** Git 归属保留 UTF-8 BOM 与原始换行，避免把解码差异误认为未提交修改。 */
+        let blameContent: string | undefined;
         try {
           if (source.reason) return { ...item, reason: source.reason };
           if (source.blob || source.sha256) {
@@ -283,6 +286,7 @@ export function registerFilePreview(services: {
               const decoded = decodeFilePreviewText(bytes, input.textEncoding, item.byteLength > bytes.length);
               item.content = decoded.content;
               item.encoding = decoded.encoding;
+              if (decoded.encoding === 'utf-8') blameContent = bytes.toString('utf8');
               item.truncated = item.byteLength > bytes.length;
               if (item.truncated) item.reason = '只读预览前 2 MiB 内容；请用外部编辑器查看完整文件。';
               if (item.kind === 'system') {
@@ -323,6 +327,15 @@ export function registerFilePreview(services: {
                 : item.mime === 'image/icns' && item.byteLength > filePreviewLimits.image
                   ? '图标超过 16 MiB 页内预览上限，请用系统应用打开。'
                   : '请用系统应用打开此格式。';
+          if (source.gitBlame && source.root && item.content !== undefined && !item.truncated) {
+            try {
+              /** Git 按原始字节比较；其他编码不冒充 UTF-8 提交归属。 */
+              if (item.encoding !== 'utf-8' && ['index', 'worktree'].includes(source.gitBlame.revision)) throw new Error('此编码的工作区文本暂不提供逐行提交归属。');
+              item.blame = await getFilePreviewBlame(source.root, source.gitBlame, blameContent ?? item.content);
+            } catch (error) {
+              item.blameError = error instanceof Error ? error.message : '读取提交归属失败。';
+            }
+          }
           if ((await fileIdentity(previewPath)) !== identity) throw new Error('读取期间文件发生变化，请刷新。');
           item.id = randomUUID();
           if (['image', 'pdf', 'audio', 'video'].includes(item.kind)) item.url = `zeus-preview://${item.id}/${encodeURIComponent(basename(source.name))}`;
