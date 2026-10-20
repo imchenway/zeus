@@ -1,0 +1,67 @@
+/* 系统标题栏负责窗口边界，原表单占满客户区，不叠加网页阴影和留白。 */
+body[data-surface='system-window'] {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--zeus-solid-surface-bg);
+}
+body[data-surface='system-window'] .zeus-system-window-root.macos-ai-app[data-zeus-primitive='modal'],
+body[data-surface='system-window'] .zeus-system-window-root.macos-ai-app[data-zeus-primitive='modal'] > .zeus-modal-backdrop {
+  box-sizing: border-box;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  backdrop-filter: none;
+  pointer-events: auto;
+  transition: none;
+  animation: none;
+}
+body[data-surface='system-window'] .zeus-system-window-root.macos-ai-app[data-zeus-primitive='modal'] > .zeus-modal-backdrop {
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-start;
+}
+body[data-surface='system-window'] .zeus-system-window-root.macos-ai-app[data-zeus-primitive='modal'] > .zeus-modal-backdrop > :first-child {
+  box-sizing: border-box;
+  flex: 1;
+  width: 100%;
+  height: 100dvh;
+  inline-size: 100%;
+  block-size: 100dvh;
+  min-width: 0;
+  max-width: none;
+  max-height: none;
+  max-inline-size: none;
+  max-block-size: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  animation: none;
+  transition: none;
+  transform: none;
+}
+/* 提交说明随窗口增长，仓库列表和操作栏保持可达。 */
+body[data-system-window='git-commit'] .project-git-commit-dialog > main {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+/* 标题和关闭由系统外壳提供；任务的项目身份与提交说明仍保留在正文。 */
+body[data-surface='system-window'] .zeus-system-window-root .git-push-heading,
+body[data-surface='system-window'] .zeus-system-window-root .file-preview-dialog-header,
+body[data-surface='system-window'] .zeus-system-window-root .task-model-push-header > button {
+  display: none;
+}
+/* 创建失败保留明确退出入口，不静默退回旧弹窗。 */
+.system-window-error {
+  position: fixed;
+  inset: auto 24px 24px;
+  z-index: 1000;
+  padding: 16px;
+  background: var(--zeus-solid-surface-bg);
+  color: var(--zeus-product-text);
+  border: 1px solid var(--zeus-product-line);
+}

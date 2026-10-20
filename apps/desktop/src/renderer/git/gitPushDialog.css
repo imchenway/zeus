@@ -1,0 +1,438 @@
+/* 推送确认使用完整双栏工作面，主题与系统窗口仍由 Zeus 统一管理。 */
+.git-push-dialog {
+  width: min(1240px, calc(100vw - 48px));
+  height: min(780px, calc(100dvh - 64px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--zeus-solid-surface-bg);
+  color: var(--zeus-product-text);
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 12px;
+  box-shadow: 0 24px 70px #0003;
+  font-size: 12px;
+}
+/* 标题居中，关闭按钮不占用仓库工作面。 */
+.git-push-heading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  min-height: 42px;
+  border-bottom: 1px solid var(--zeus-product-line);
+}
+.git-push-heading > button {
+  position: absolute;
+  right: 10px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--zeus-product-muted);
+}
+/* 双栏独立滚动，拖动分隔条沿用现有比例存储与键盘操作。 */
+.git-push-layout {
+  display: grid;
+  grid-template-columns: minmax(0, var(--git-push-sidebar, 54%)) 6px minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+}
+.git-push-repositories,
+.git-push-files {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.git-push-scroll,
+.git-push-file-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-block: 7px;
+}
+/* 仓库行的勾选、查看和目标编辑是独立控件，避免点击文本意外改动范围。 */
+.git-push-repository-row {
+  display: flex;
+  align-items: center;
+  min-height: 30px;
+  padding-inline: 4px 8px;
+  gap: 5px;
+}
+.git-push-dialog [data-active='true'] {
+  background: color-mix(in srgb, var(--zeus-accent) 17%, transparent);
+}
+.git-push-repository-row[data-unavailable='true'] {
+  color: var(--zeus-product-muted);
+}
+.git-push-dialog input[type='checkbox'],
+.git-push-targets-editor input[type='checkbox'] {
+  width: 15px;
+  height: 15px;
+  min-height: 0;
+  flex: 0 0 15px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--zeus-accent);
+}
+.git-push-dialog .git-push-disclosure {
+  display: grid;
+  place-items: center;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 24px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--zeus-product-muted);
+}
+.git-push-branch,
+.git-push-target {
+  min-width: 0;
+  padding: 3px 0;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  text-align: start;
+  color: inherit;
+}
+.git-push-branch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 52%;
+}
+.git-push-branch > i {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex: 0 0 9px;
+}
+.git-push-branch > strong {
+  font-weight: 600;
+  max-width: 48%;
+  flex-shrink: 0;
+}
+.git-push-branch > span,
+.git-push-branch > strong,
+.git-push-target {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.git-push-target {
+  flex: 0 1 40%;
+  color: var(--zeus-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.git-push-arrow {
+  flex: 0 0 13px;
+}
+.git-push-count,
+.git-push-commit > small {
+  color: var(--zeus-product-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+/* 提交列表保持紧凑缩进和整行选中，长说明通过标题查看完整内容。 */
+.git-push-commits {
+  padding: 0 5px 7px 44px;
+}
+.git-push-commits > p {
+  margin: 6px 0;
+  color: var(--zeus-product-muted);
+}
+.git-push-commit {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 26px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+}
+.git-push-commit > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.git-push-repository-footer,
+.git-push-files > header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding-inline: 10px;
+}
+.git-push-repository-footer {
+  justify-content: space-between;
+}
+.git-push-files > header {
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--zeus-product-line);
+}
+.git-push-files > header > strong {
+  overflow-wrap: anywhere;
+}
+.git-push-files small,
+.git-push-footer > small {
+  color: var(--zeus-product-muted);
+}
+.git-push-link {
+  background: transparent;
+  color: var(--zeus-accent);
+  padding: 3px 0;
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+/* 文件树仅提供查看操作，不提供会误导推送语义的文件勾选框。 */
+.git-push-file-tree {
+  margin: 0;
+  padding: 0 0 0 15px;
+  list-style: none;
+}
+.git-push-file-tree summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 27px;
+  cursor: pointer;
+  list-style: none;
+}
+.git-push-file-tree summary::-webkit-details-marker {
+  display: none;
+}
+.git-push-file-tree summary::before {
+  content: '›';
+  width: 10px;
+  color: var(--zeus-product-muted);
+}
+.git-push-file-tree details[open] > summary::before {
+  transform: rotate(90deg);
+}
+.git-push-file-tree button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 27px;
+  width: 100%;
+  padding: 2px 8px 2px 16px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--zeus-accent);
+  font: inherit;
+  text-align: start;
+}
+.git-push-file-tree svg {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+}
+.git-push-file-tree :is(button, summary) > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.git-push-file-tree [data-status='added'] {
+  color: var(--zeus-code-addition-text, #278344);
+}
+.git-push-file-tree [data-status='deleted'] {
+  color: var(--zeus-status-danger-fg, #c64c4c);
+}
+.git-push-preview-note {
+  margin: 0;
+  padding: 8px 12px;
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.git-push-empty {
+  margin: 14px;
+  color: var(--zeus-product-muted);
+}
+/* 底部沿用共享按钮，更多选项与主操作组成一个清晰的分段按钮。 */
+.git-push-footer {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 58px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--zeus-product-line);
+}
+.git-push-footer label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.git-push-footer-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+.git-push-split-button {
+  display: flex;
+}
+.git-push-split-button > .zeus-button {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  min-width: 82px;
+}
+.git-push-more {
+  position: relative;
+}
+.git-push-more > summary {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  width: 30px;
+  background: var(--zeus-accent);
+  color: var(--zeus-accent-contrast, white);
+  border-left: 1px solid #ffffff50;
+  border-radius: 0 6px 6px 0;
+  list-style: none;
+  cursor: pointer;
+}
+.git-push-more > summary::-webkit-details-marker {
+  display: none;
+}
+.git-push-more > div {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  z-index: 1;
+  width: 280px;
+  padding: 12px;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 8px;
+  background: var(--zeus-solid-surface-bg);
+  box-shadow: 0 6px 24px #0002;
+}
+.git-push-more small {
+  display: block;
+  margin-top: 8px;
+  color: var(--zeus-product-muted);
+}
+/* 强制推送作为独立菜单动作，不改变主按钮的普通推送语义。 */
+.git-push-force-action {
+  width: 100%;
+  justify-content: flex-start;
+}
+/* 原生可聚焦控件保留清晰焦点；禁用状态不通过隐藏来表达。 */
+.git-push-dialog :is(button, summary, input):focus-visible {
+  outline: 2px solid var(--zeus-accent);
+  outline-offset: -2px;
+}
+.git-push-dialog button:disabled,
+.git-push-more > summary[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: default;
+}
+.git-push-dialog :is(button, summary):hover:not(:disabled):not([aria-disabled='true']) {
+  filter: brightness(0.94);
+}
+.git-push-alert {
+  margin: 0;
+  padding: 8px 14px;
+  color: var(--zeus-status-danger-fg, #c64c4c);
+}
+.git-push-results {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px;
+}
+.git-push-results > section {
+  padding-block: 12px;
+  border-bottom: 1px solid var(--zeus-product-line);
+}
+/* 目标编辑仍用共享选择器，独立滚动避免长仓库列表遮住关闭操作。 */
+.git-push-targets-editor {
+  display: flex;
+  flex-direction: column;
+  width: min(660px, calc(100vw - 40px));
+  max-height: calc(100dvh - 80px);
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 10px;
+  background: var(--zeus-solid-surface-bg);
+}
+.git-push-targets-editor > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--zeus-product-line);
+}
+.git-push-targets-editor > main {
+  padding: 0 16px 16px;
+  overflow: auto;
+}
+.git-push-targets-editor h3 {
+  font-size: 13px;
+  margin: 16px 0 10px;
+}
+.git-push-targets-editor fieldset {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  margin: 0 0 12px;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 6px;
+  padding: 12px;
+}
+.git-push-targets-editor legend {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.git-push-targets-editor label:not(.git-push-track) {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+.git-push-targets-editor .git-push-track {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.git-push-targets-editor small {
+  overflow-wrap: anywhere;
+  color: var(--zeus-product-muted);
+}
+/* 窄窗口改为上下两块；不让宽分支表挤出主操作。 */
+@media (max-width: 760px) {
+  .git-push-dialog {
+    width: calc(100vw - 20px);
+    height: calc(100dvh - 24px);
+    border-radius: 8px;
+  }
+  .git-push-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 45%) minmax(0, 1fr);
+  }
+  .git-push-layout > .git-pane-separator {
+    display: none;
+  }
+  .git-push-repositories {
+    border-bottom: 1px solid var(--zeus-product-line);
+  }
+  .git-push-footer {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .git-push-footer > small {
+    display: none;
+  }
+}

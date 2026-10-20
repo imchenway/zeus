@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import type { GitDiffSummary, GitStatusSummary } from '@zeus/git-core';
+import type { ProjectGitPushPreviewInput } from '@zeus/git-core';
 import type { ProjectRepository, ProjectRepositoryRegistrationRepository, ZeusProjectRecord } from '@zeus/storage';
 
 export interface ProjectGitReadEffectPort {
@@ -10,6 +11,8 @@ export interface ProjectGitReadEffectPort {
   readDiff(localPath: string): Promise<GitDiffSummary>;
   readRepositorySnapshot(localPath: string): Promise<unknown>;
   readCommit(localPath: string, commitHash: string): Promise<unknown>;
+  /** 只读推送范围，与提交查询保持同一仓库隔离边界。 */
+  readPushPreview(localPath: string, input: ProjectGitPushPreviewInput): Promise<unknown>;
   readHistory(localPath: string, offset: number, ref?: string): Promise<unknown>;
   readComparison(localPath: string, ref: string, mode: 'current' | 'working-tree'): Promise<unknown>;
 }
@@ -55,6 +58,13 @@ export class ProjectGitQueryApplication {
   async readCommit(projectId: string, repositoryId: string, commitHash: string): Promise<unknown> {
     const repository = await this.requireRepository(this.requireProject(projectId), repositoryId);
     return this.ports.effects.readCommit(repository.localPath, commitHash);
+  }
+
+  /** 会话工作树和已登记项目仓库均由既有解析器确定路径。 */
+  async readPushPreview(projectId: string, repositoryId: string, input: ProjectGitPushPreviewInput): Promise<unknown> {
+    /** 不允许 HTTP 请求指定磁盘路径。 */
+    const repository = await this.requireRepository(this.requireProject(projectId), repositoryId);
+    return this.ports.effects.readPushPreview(repository.localPath, input);
   }
 
   async readComparison(projectId: string, repositoryId: string, rawRef: string | undefined, rawMode: string | undefined): Promise<unknown> {

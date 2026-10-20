@@ -7,6 +7,8 @@ import {
   discoverGitRepositories,
   executeProjectGitAction,
   getProjectGitCommitDetail,
+  getProjectGitPushPreview,
+  type ProjectGitPushPreviewInput,
   getGitFilePreviewSources,
   getProjectGitHistory,
   getProjectGitComparisonDiff,
@@ -107,6 +109,13 @@ export class ProjectGitWorkbenchService {
     const resolved = await this.resolveRepository(projectId, repositoryId);
     if (!commitHash.trim()) throw projectGitError('ZEUS_GIT_COMMIT_REQUIRED', '必须选择一个提交。');
     return getProjectGitCommitDetail(resolved.repository.localPath, commitHash);
+  }
+
+  /** 复用项目发现的仓库身份，预览不接受 Renderer 指定的本机路径。 */
+  async loadPushPreview(projectId: string, repositoryId: string, input: ProjectGitPushPreviewInput) {
+    /** 只查询当前项目实际拥有的仓库。 */
+    const resolved = await this.resolveRepository(projectId, repositoryId);
+    return getProjectGitPushPreview(resolved.repository.localPath, input);
   }
 
   async loadComparison(projectId: string, repositoryId: string, ref: string, mode: 'current' | 'working-tree'): Promise<GitDiffSummary> {

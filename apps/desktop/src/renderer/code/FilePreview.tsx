@@ -1,3 +1,4 @@
+import { useWindowDocument } from '../ui/windowDocument.js';
 import { createContext, lazy, Suspense, useEffect, useMemo, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { isMacOSPlatform } from '../platform.js';
 import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
@@ -178,6 +179,8 @@ function FilePreviewBody(props: {
   /** 当前会话全部代码评论。 */ comments?: ConversationCodeComment[];
   /** 缺省表示只读预览，不展示逐行评论入口。 */ onCommentsChange?: (comments: ConversationCodeComment[]) => void;
 }) {
+  /** 系统标题栏使用当前文件名，嵌入式预览不改主工作区标题。 */
+  const ownerDocument = useWindowDocument();
   /** 资源读取完成前不复用旧文件的内容。 */
   const [items, setItems] = useState<FilePreviewItem[] | null>(null);
   /** 本次操作的可见错误。 */
@@ -228,6 +231,9 @@ function FilePreviewBody(props: {
   const current = items?.[Math.min(selected, items.length - 1)];
   /** 只精简单图弹窗，仓库内容、版本对比与其他文件仍使用完整操作。 */
   const simpleImage = Boolean(props.onClose && items?.length === 1 && current?.kind === 'image' && current.url);
+  useEffect(() => {
+    if (props.onClose && ownerDocument !== document && current) ownerDocument.title = `${current.name} · ${props.zh ? '文件预览' : 'File preview'}`;
+  }, [ownerDocument, current, props.onClose, props.zh]);
   /** 目录附件或不可解码附件仍保留既有受信打开操作。 */
   const attachment = JSON.parse(props.identity) as FilePreviewRequest;
   /** 继续通过附件凭据打开，不根据错误状态放宽路径权限。 */
@@ -558,7 +564,15 @@ export function FilePreviewDialog(props: { request: FilePreviewRequest; zh: bool
   /** 弹窗与嵌入视图共用加载和释放流程，以请求身份隔离异步结果。 */
   const identity = JSON.stringify(props.request);
   return (
-    <ModalPortal rootClassName="file-preview-portal" onDismiss={props.onClose} role="dialog" aria-label={props.zh ? '文件预览' : 'File preview'}>
+    <ModalPortal
+      systemWindow="file-preview"
+      windowActivation={identity}
+      windowTitle={props.zh ? '文件预览' : 'File preview'}
+      rootClassName="file-preview-portal"
+      onDismiss={props.onClose}
+      role="dialog"
+      aria-label={props.zh ? '文件预览' : 'File preview'}
+    >
       <section className="file-preview-dialog" data-modal-surface="dialog">
         <FilePreviewBody key={identity} identity={identity} zh={props.zh} onClose={props.onClose} />
       </section>

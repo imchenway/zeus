@@ -17,9 +17,11 @@ export const editorTooltips = ViewPlugin.define((view) => {
 
   /** 只扫描本次新增的子树，避免每次输入遍历整个编辑器。 */
   function visit(node: Node): void {
-    if (!(node instanceof Element)) return;
-    if (node.matches(selector)) adopt(node);
-    node.querySelectorAll(selector).forEach(adopt);
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    /** 编辑器可位于系统子窗口，不使用主窗口的 Element 构造器。 */
+    const element = node as Element;
+    if (element.matches(selector)) adopt(element);
+    element.querySelectorAll(selector).forEach(adopt);
   }
 
   /** 虚拟化与折叠会重新生成标记，观察其创建和标题更新。 */

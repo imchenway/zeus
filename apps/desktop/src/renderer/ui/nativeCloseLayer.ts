@@ -1,8 +1,11 @@
 import { useEffect, useRef } from 'react';
+import { useWindowDocument } from './windowDocument.js';
 
 interface NativeCloseLayerEntry {
   id: symbol;
   close: () => void;
+  /** 系统窗口各自维护最上层，不关闭其他窗口里的表单。 */
+  document: Document;
 }
 
 const closeLayers: NativeCloseLayerEntry[] = [];
@@ -12,13 +15,15 @@ let removeNativeCloseListener: (() => void) | undefined;
 export function initializeNativeCloseLayerRouting(): void {
   if (removeNativeCloseListener) return;
   removeNativeCloseListener = window.zeus?.onNativeCloseFrontmostLayer?.(() => {
-    closeLayers.at(-1)?.close();
+    closeDocumentLayer(document);
   });
   syncNativeCloseLayerActivity();
 }
 
 /** 组件卸载或关闭时同步移除注册，避免 Main 进程保留过期的前台层状态。 */
 export function useNativeCloseLayer(active: boolean, close: () => void): void {
+  /** 当前组件所属的实际窗口。 */
+  const ownerDocument = useWindowDocument();
   const closeRef = useRef(close);
   closeRef.current = close;
 
@@ -27,6 +32,7 @@ export function useNativeCloseLayer(active: boolean, close: () => void): void {
     const entry: NativeCloseLayerEntry = {
       id: Symbol('zeus-native-close-layer'),
       close: () => closeRef.current(),
+      document: ownerDocument,
     };
     closeLayers.push(entry);
     syncNativeCloseLayerActivity();
@@ -35,9 +41,14 @@ export function useNativeCloseLayer(active: boolean, close: () => void): void {
       if (index >= 0) closeLayers.splice(index, 1);
       syncNativeCloseLayerActivity();
     };
-  }, [active]);
+  }, [active, ownerDocument]);
+}
+
+/** 系统关闭和应用快捷键共用每个文档的顶层关闭规则。 */
+export function closeDocumentLayer(ownerDocument: Document): void {
+  closeLayers.findLast((entry) => entry.document === ownerDocument)?.close();
 }
 
 function syncNativeCloseLayerActivity(): void {
-  window.zeus?.notifyAppCloseLayerActivity?.(closeLayers.length > 0);
+  window.zeus?.notifyAppCloseLayerActivity?.(closeLayers.some((entry) => entry.document === document));
 }

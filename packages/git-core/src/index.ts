@@ -544,6 +544,36 @@ export interface ProjectGitCommitDetail {
   diff: GitDiffSummary;
 }
 
+/** 推送预览只接受分支与已配置远端，不接受本机路径或任意 Git 参数。 */
+export interface ProjectGitPushPreviewInput {
+  /** 要推送的本地分支。 */
+  sourceBranch: string;
+  /** 仓库已配置的远端名称。 */
+  remote: string;
+  /** 远端目标分支，不含远端前缀。 */
+  targetBranch: string;
+  /** 提交列表的分页位置，默认从头读取。 */
+  offset?: number;
+}
+
+/** 预览依据本地远端跟踪记录；不会抓取远端或改变工作区。 */
+export interface ProjectGitPushPreview {
+  /** 本次读取固定的来源提交，供分页一致性核对。 */
+  sourceHeadSha: string;
+  /** 本地记录的目标提交；空值表示本地没有该目标记录。 */
+  targetHeadSha: string | null;
+  /** 来源分支中尚未包含在目标记录内的提交。 */
+  commits: GitRecentCommit[];
+  /** 待推送提交总数，不受分页上限影响。 */
+  total: number;
+  /** 目标记录中尚未包含在来源分支内的提交数。 */
+  behind: number;
+  /** 是否还有下一页提交。 */
+  hasMore: boolean;
+  /** 第一页携带整个范围的净差异；后续页不重复读取补丁。 */
+  diff: GitDiffSummary | null;
+}
+
 export interface GitDiffSummary {
   isRepository: boolean;
   files: string[];
@@ -2946,6 +2976,46 @@ export async function getProjectGitHistory(cwd: string, offset = 0, ref?: string
   const output = await requireGitStdout(cwd, ['log', '--topo-order', `--skip=${offset}`, '-n', '201', '--date=iso-strict', '--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1f%P', ...revisions, '--']);
   const commits = parseRecentCommits(output);
   return { commits: commits.slice(0, 200), hasMore: commits.length > 200 };
+}
+
+/** 按显式推送目标读取提交与净差异，查询全过程不写对象、索引或远端。 */
+export async function getProjectGitPushPreview(cwd: string, input: ProjectGitPushPreviewInput): Promise<ProjectGitPushPreview> {
+  /** 分页位置与历史查询采用同一边界。 */
+  const offset = input.offset ?? 0;
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000) throw gitCoreError('ZEUS_GIT_HISTORY_OFFSET_INVALID', '提交分页位置无效。');
+  if (typeof input.sourceBranch !== 'string' || typeof input.remote !== 'string' || typeof input.targetBranch !== 'string') throw gitCoreError('ZEUS_GIT_PUSH_PREVIEW_INVALID', '推送预览参数无效。');
+  if (!input.remote.trim()) throw gitCoreError('ZEUS_GIT_REMOTE_REQUIRED', '必须选择已配置的远端。');
+  /** 仓库身份由调用层解析，此处再次确认 Git 元数据。 */
+  const context = await getGitRepositoryContext(cwd);
+  if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', '仓库不可用。');
+  /** 来源必须是确实存在的本地分支。 */
+  const source = await assertNamedBranchExists(context.topLevel, input.sourceBranch);
+  /** 远端只从仓库配置中选择，不能将 URL 作为查询输入。 */
+  const remote = requireKnownRemote(context, input.remote);
+  /** 目标名称沿用实际推送的 Git 校验。 */
+  const target = await assertGitBranchFormat(context.topLevel, input.targetBranch, 'push target branch');
+  /** 用固定提交号读取，避免同一次查询中分支移动造成范围不一致。 */
+  const sourceHeadSha = await resolveCommit(context.topLevel, localBranchRef(source));
+  /** 没有本地记录只表示目标未知，不声明远端分支确实不存在。 */
+  const targetHeadSha = context.remoteBranches.includes(`${remote}/${target}`) ? await resolveCommit(context.topLevel, `refs/remotes/${remote}/${target}`) : null;
+  /** 已知目标使用提交差集；未知目标展示来源分支完整历史。 */
+  const range = targetHeadSha ? `${targetHeadSha}..${sourceHeadSha}` : sourceHeadSha;
+  /** 独立读取提交页、总数、远端独有提交与首屏补丁。 */
+  const [history, total, behind, diff] = await Promise.all([
+    requireGitStdout(context.topLevel, ['log', '--topo-order', `--skip=${offset}`, '-n', '101', '--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1f%P', range, '--']),
+    requireGitStdout(context.topLevel, ['rev-list', '--count', range, '--']),
+    targetHeadSha ? requireGitStdout(context.topLevel, ['rev-list', '--count', `${sourceHeadSha}..${targetHeadSha}`, '--']) : Promise.resolve('0'),
+    offset === 0
+      ? (async () => {
+          /** hash-object 不带 -w，只计算当前对象格式的空树哈希，兼容不同平台与对象格式。 */
+          const base = targetHeadSha ?? (await runGit(context.topLevel, ['hash-object', '-t', 'tree', '--stdin'], '')).stdout.trim();
+          return diffSummaryFromText(await requireGitStdout(context.topLevel, ['-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--no-textconv', '--find-renames', base, sourceHeadSha, '--']));
+        })()
+      : Promise.resolve(null),
+  ]);
+  /** 多读取一条，仅用于判断是否还有下一页。 */
+  const commits = parseRecentCommits(history);
+  return { sourceHeadSha, targetHeadSha, commits: commits.slice(0, 100), total: Number(total), behind: Number(behind), hasMore: commits.length > 100, diff };
 }
 
 async function readRegisteredSubmodules(cwd: string): Promise<{ path: string; initialized: boolean }[]> {

@@ -147,12 +147,18 @@ declare global {
         commitHash?: string;
         comparisonRef?: string;
         comparisonMode?: 'current' | 'working-tree';
+        /** 已加载的推送补丁；提供时新窗口只展示快照，不重读仓库。 */
+        diffText?: string;
       }) => Promise<{ opened: true }>;
+      /** 按调用窗口身份读取展示快照，不接受其他窗口或本机路径。 */
+      loadProjectGitDiffSnapshot: () => Promise<{ filePath: string; diff: import('./apiClient.js').GitDiffSummary }>;
       loadProjectGitWorkbench: (projectId: string) => Promise<import('./apiClient.js').ProjectGitWorkbenchSnapshot>;
       /** 只读获取当前项目的耐久 Git 操作历史页。 */
       loadProjectGitOperations: (input: { projectId: string; cursor?: string }) => Promise<import('./apiClient.js').ProjectGitOperationPage>;
       loadProjectGitHistory: (input: { projectId: string; repositoryId: string; offset: number; ref?: string }) => Promise<{ commits: import('./apiClient.js').ProjectGitRepositorySnapshot['recentCommits']; hasMore: boolean }>;
       loadProjectGitCommit: (input: { projectId: string; repositoryId: string; commitHash: string }) => Promise<import('./apiClient.js').ProjectGitCommitDetail>;
+      /** 按指定远端目标读取待推送范围。 */
+      loadProjectGitPushPreview: (input: { projectId: string; repositoryId: string; selection: import('./apiClient.js').ProjectGitPushPreviewInput }) => Promise<import('./apiClient.js').ProjectGitPushPreview>;
       loadProjectGitComparisonDiff: (input: { projectId: string; repositoryId: string; ref: string; mode: 'current' | 'working-tree' }) => Promise<import('./apiClient.js').GitDiffSummary>;
       cancelProjectGitAction: (repositoryId: string) => Promise<{ cancelled: boolean }>;
       executeProjectGitAction: (input: { projectId: string; repositoryId: string; action: import('./apiClient.js').ProjectGitAction }) => Promise<import('./apiClient.js').ProjectGitActionResponse>;
@@ -338,6 +344,10 @@ declare global {
       notifyTerminalActivity: (active: boolean) => void;
       notifySessionContextActivity: (payload: { active: boolean; kind: 'browser' | 'subagents' | 'plan' | 'source' | 'turn_diff' | 'none' }) => void;
       notifyAppCloseLayerActivity: (active: boolean) => void;
+      /** 管理由当前工作区创建的系统窗口。 */
+      updateSystemWindow: (name: string, action: 'show' | 'close') => Promise<void>;
+      /** 系统窗口关闭回调仍遵守表单的忙碌保护。 */
+      onSystemWindowCloseRequest: (listener: (name: string) => void) => () => void;
       resolveTaskTableLayoutCloseRequest: (proceed: boolean) => void;
       resolveUnsavedChangesCloseRequest: (proceed: boolean) => void;
       onTaskTableLayoutCloseRequested: (listener: () => void) => () => void;

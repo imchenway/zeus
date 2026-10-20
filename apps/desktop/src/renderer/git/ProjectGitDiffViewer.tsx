@@ -35,12 +35,12 @@ interface SideBySideDiffProps {
   onClose?: () => void;
 }
 
-/** 两种差异入口共用窗口，只从明确的业务来源读取内容。 */
+/** 项目、任务和推送快照共用系统差异窗口，只展示明确来源的内容。 */
 export function ProjectGitDiffWindow(props: {
   /** 已有只读接口负责解析仓库和任务工作区。 */
   client: Pick<DashboardClient, 'loadProjectGitWorkbench' | 'loadProjectGitCommit' | 'loadProjectGitComparisonDiff' | 'loadTaskWorkspaceFileDiff'>;
-  /** 任务与项目身份互斥，避免错误读取默认检出。 */
-  source: Extract<FilePreviewRequest, { kind: 'project-git' | 'task-git' }>;
+  /** 快照只展示已选范围；任务与项目来源继续按业务身份读取。 */
+  source: Extract<FilePreviewRequest, { kind: 'project-git' | 'task-git' }> | { kind: 'snapshot'; path: string; diff: GitDiffSummary };
   language: 'zh-CN' | 'en-US';
   /** 独立窗口沿用应用外观，系统模式由主题样式实时跟随。 */
   appearance: 'light' | 'dark' | 'system';
@@ -70,28 +70,30 @@ export function ProjectGitDiffWindow(props: {
     /** 捕获本轮来源；窗口永远按打开时的任务、文件及比较范围读取。 */
     const source = props.source;
     const request =
-      source.kind === 'task-git'
-        ? props.client.loadTaskWorkspaceFileDiff(source.taskId, source.workspaceId, source.path, source.scope).then((result) => {
-            if (!cancelled) setTitle(source.scope === 'working' ? (zh ? '本机未提交' : 'Local uncommitted') : zh ? '已提交成果' : 'Committed result');
-            return result.diff;
-          })
-        : source.commitHash
-          ? props.client.loadProjectGitCommit(source.projectId, source.repositoryId, source.commitHash).then((detail) => {
-              if (!cancelled) setTitle(detail.commit.subject);
-              return detail.diff;
+      source.kind === 'snapshot'
+        ? Promise.resolve(source.diff)
+        : source.kind === 'task-git'
+          ? props.client.loadTaskWorkspaceFileDiff(source.taskId, source.workspaceId, source.path, source.scope).then((result) => {
+              if (!cancelled) setTitle(source.scope === 'working' ? (zh ? '本机未提交' : 'Local uncommitted') : zh ? '已提交成果' : 'Committed result');
+              return result.diff;
             })
-          : source.comparisonRef
-            ? props.client.loadProjectGitComparisonDiff(source.projectId, source.repositoryId, source.comparisonRef, source.comparisonMode ?? 'current').then((summary) => {
-                if (!cancelled) setTitle(`${source.comparisonRef} · ${zh ? '分支差异' : 'Branch diff'}`);
-                return summary;
+          : source.commitHash
+            ? props.client.loadProjectGitCommit(source.projectId, source.repositoryId, source.commitHash).then((detail) => {
+                if (!cancelled) setTitle(detail.commit.subject);
+                return detail.diff;
               })
-            : props.client.loadProjectGitWorkbench(source.projectId).then((workbench) => {
-                /** 项目工作台只在项目来源下解析仓库。 */
-                const repository = workbench.repositories.find((candidate) => candidate.id === source.repositoryId);
-                if (!repository) throw new Error(zh ? '仓库已不在当前项目中。' : 'The repository is no longer part of this project.');
-                if (!cancelled) setTitle(repository.name);
-                return source.stage === 'staged' ? repository.snapshot.stagedDiff : source.stage === 'unstaged' ? repository.snapshot.unstagedDiff : repository.snapshot.diff;
-              });
+            : source.comparisonRef
+              ? props.client.loadProjectGitComparisonDiff(source.projectId, source.repositoryId, source.comparisonRef, source.comparisonMode ?? 'current').then((summary) => {
+                  if (!cancelled) setTitle(`${source.comparisonRef} · ${zh ? '分支差异' : 'Branch diff'}`);
+                  return summary;
+                })
+              : props.client.loadProjectGitWorkbench(source.projectId).then((workbench) => {
+                  /** 项目工作台只在项目来源下解析仓库。 */
+                  const repository = workbench.repositories.find((candidate) => candidate.id === source.repositoryId);
+                  if (!repository) throw new Error(zh ? '仓库已不在当前项目中。' : 'The repository is no longer part of this project.');
+                  if (!cancelled) setTitle(repository.name);
+                  return source.stage === 'staged' ? repository.snapshot.stagedDiff : source.stage === 'unstaged' ? repository.snapshot.unstagedDiff : repository.snapshot.diff;
+                });
     void request
       .then((next) => {
         if (cancelled) return;
@@ -112,7 +114,7 @@ export function ProjectGitDiffWindow(props: {
   }, [selectedPath, title]);
 
   const selectedDiff = useMemo(() => (diff && selectedPath ? selectFileDiff(diff, selectedPath) : diff), [diff, selectedPath]);
-  const viewer = selectedDiff ? <SideBySideDiff previewRequest={{ ...props.source, path: selectedPath }} diff={selectedDiff} zh={zh} title={selectedPath || title} fill /> : null;
+  const viewer = selectedDiff ? <SideBySideDiff previewRequest={props.source.kind === 'snapshot' ? undefined : { ...props.source, path: selectedPath }} diff={selectedDiff} zh={zh} title={selectedPath || title} fill /> : null;
 
   return (
     <main className={`macos-ai-app zeus-shell theme-${appearance} project-git-diff-window`} aria-label={zh ? 'Git 差异窗口' : 'Git diff window'}>

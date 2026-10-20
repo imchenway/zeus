@@ -304,6 +304,8 @@ export type NativeConversationAppClient = import('../../git/GitDeliveryRunContro
     // 控制台与 Git 工作台通过同一个原生客户端读取耐久历史。
     | 'loadProjectGitOperations'
     | 'loadProjectGitCommit'
+    /** 项目 Git 弹窗与源码底栏共用显式推送范围预览。 */
+    | 'loadProjectGitPushPreview'
     | 'executeProjectGitAction'
     | 'generateGitCommitMessage'
     | 'loadGitCommitModels'

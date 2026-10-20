@@ -193,6 +193,9 @@ export interface ProjectGitActionResponse {
   snapshot: ProjectGitRepositorySnapshot;
 }
 
+/** 推送预览契约与 Git 核心共用，类型导出不会加载 Node 实现。 */
+export type { ProjectGitPushPreview, ProjectGitPushPreviewInput } from '@zeus/git-core';
+
 export interface ProjectGitCommitDetail {
   commit: NonNullable<GitStatusSummary['recentCommits']>[number];
   body: string;

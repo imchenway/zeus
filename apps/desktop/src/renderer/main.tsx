@@ -409,16 +409,21 @@ async function renderTaskGitDeliveryWithClient(client: DashboardClient, paramete
 
 async function renderProjectGitDiffWithClient(client: DashboardClient, parameters: URLSearchParams): Promise<void> {
   const [{ ProjectGitDiffWindow }, appShellSettings] = await Promise.all([import('./git/ProjectGitDiffViewer.js'), client.settings.loadAppShellSettings()]);
+  /** 快照来源由主进程固定到当前窗口，不从地址栏接收补丁正文。 */
+  const snapshotMode = parameters.get('snapshot') === 'true';
+  /** 系统窗口只读取自己的预览快照，保留推送时的比较范围。 */
+  const snapshot = snapshotMode ? await window.zeus?.loadProjectGitDiffSnapshot?.() : undefined;
+  if (snapshotMode && !snapshot) throw new Error('当前桌面窗口无法读取差异快照。');
   const projectId = parameters.get('projectId')?.trim();
   const repositoryId = parameters.get('repositoryId')?.trim();
-  const filePath = parameters.get('filePath') ?? '';
+  const filePath = snapshot?.filePath ?? parameters.get('filePath') ?? '';
   /** 任务来源必须同时指定工作区和比较范围。 */
   const taskId = parameters.get('taskId');
   /** 任务工作区与项目仓库使用不同的身份。 */
   const workspaceId = parameters.get('workspaceId');
   /** 任务差异明确区分未提交文件和已提交成果。 */
   const scope = parameters.get('scope');
-  if (taskId ? !workspaceId || !filePath || (scope !== 'working' && scope !== 'committed') : !projectId || !repositoryId) throw new Error('差异窗口缺少有效的读取身份。');
+  if (!snapshot && (taskId ? !workspaceId || !filePath || (scope !== 'working' && scope !== 'committed') : !projectId || !repositoryId)) throw new Error('差异窗口缺少有效的读取身份。');
   const stage = parameters.get('stage') === 'staged' || parameters.get('stage') === 'unstaged' ? (parameters.get('stage') as 'staged' | 'unstaged') : 'combined';
   const root = document.getElementById('root');
   if (!root) throw new Error('Zeus renderer root element is missing');
@@ -431,24 +436,26 @@ async function renderProjectGitDiffWithClient(client: DashboardClient, parameter
         <ProjectGitDiffWindow
           client={client}
           source={
-            taskId && workspaceId && (scope === 'working' || scope === 'committed')
-              ? {
-                  kind: 'task-git',
-                  taskId,
-                  workspaceId,
-                  path: filePath,
-                  scope,
-                }
-              : {
-                  kind: 'project-git',
-                  projectId: projectId!,
-                  repositoryId: repositoryId!,
-                  path: filePath,
-                  stage,
-                  commitHash: parameters.get('commitHash') ?? undefined,
-                  comparisonRef: parameters.get('comparisonRef') ?? undefined,
-                  comparisonMode: parameters.get('comparisonMode') === 'working-tree' ? 'working-tree' : 'current',
-                }
+            snapshot
+              ? { kind: 'snapshot', path: snapshot.filePath, diff: snapshot.diff }
+              : taskId && workspaceId && (scope === 'working' || scope === 'committed')
+                ? {
+                    kind: 'task-git',
+                    taskId,
+                    workspaceId,
+                    path: filePath,
+                    scope,
+                  }
+                : {
+                    kind: 'project-git',
+                    projectId: projectId!,
+                    repositoryId: repositoryId!,
+                    path: filePath,
+                    stage,
+                    commitHash: parameters.get('commitHash') ?? undefined,
+                    comparisonRef: parameters.get('comparisonRef') ?? undefined,
+                    comparisonMode: parameters.get('comparisonMode') === 'working-tree' ? 'working-tree' : 'current',
+                  }
           }
           language={appShellSettings.appLanguage}
           appearance={appShellSettings.appearance}
@@ -531,6 +538,8 @@ async function hydrateRenderer(): Promise<void> {
             /** 桌面历史与动作执行使用同一主进程。 */
             loadOperations: (projectId, cursor) => window.zeus!.loadProjectGitOperations({ projectId, cursor }),
             loadCommit: (projectId, repositoryId, commitHash) => window.zeus!.loadProjectGitCommit({ projectId, repositoryId, commitHash }),
+            /** 推送预览与实际操作使用同一桌面仓库解析器。 */
+            loadPushPreview: (projectId, repositoryId, selection) => window.zeus!.loadProjectGitPushPreview({ projectId, repositoryId, selection }),
             loadComparison: (projectId, repositoryId, ref, mode) => window.zeus!.loadProjectGitComparisonDiff({ projectId, repositoryId, ref, mode }),
             execute: (projectId, repositoryId, action) => window.zeus!.executeProjectGitAction({ projectId, repositoryId, action }),
           },

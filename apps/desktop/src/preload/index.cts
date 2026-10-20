@@ -168,11 +168,15 @@ contextBridge.exposeInMainWorld('zeus', {
   /** 使用任务工作区及比较范围打开只读差异窗口。 */
   openTaskGitDiffWindow: (input: unknown) => ipcRenderer.invoke('zeus:task-git-diff:open', input),
   openProjectGitDiffWindow: (input: unknown) => ipcRenderer.invoke('zeus:project-git-diff:open', input),
+  /** 仅返回当前系统差异窗口的只读快照。 */
+  loadProjectGitDiffSnapshot: () => ipcRenderer.invoke('zeus:project-git-diff:load-snapshot'),
   loadProjectGitWorkbench: (projectId: string) => ipcRenderer.invoke('zeus:project-git:load-workbench', projectId),
   loadProjectGitHistory: (input: unknown) => ipcRenderer.invoke('zeus:project-git:load-history', input),
   /** 分页读取桌面工作台已落盘的操作记录，不触发 Git 执行。 */
   loadProjectGitOperations: (input: unknown) => ipcRenderer.invoke('zeus:project-git:load-operations', input),
   loadProjectGitCommit: (input: unknown) => ipcRenderer.invoke('zeus:project-git:load-commit', input),
+  /** 只读预览复用可信主框架通道。 */
+  loadProjectGitPushPreview: (input: unknown) => ipcRenderer.invoke('zeus:project-git:load-push-preview', input),
   loadProjectGitComparisonDiff: (input: unknown) => ipcRenderer.invoke('zeus:project-git:load-comparison', input),
   cancelProjectGitAction: (repositoryId: string) => ipcRenderer.invoke('zeus:project-git:cancel-action', repositoryId),
   executeProjectGitAction: (input: unknown) => {
@@ -342,6 +346,15 @@ contextBridge.exposeInMainWorld('zeus', {
   notifyTerminalActivity: (active: boolean) => ipcRenderer.send('zeus:terminal-activity-changed', active),
   notifySessionContextActivity: (payload: unknown) => ipcRenderer.send('zeus:session-context-activity-changed', payload),
   notifyAppCloseLayerActivity: (active: boolean) => ipcRenderer.send('zeus:app-close-layer-activity-changed', active),
+  /** 只管理当前工作区创建的空白系统窗口。 */
+  updateSystemWindow: (name: string, action: 'show' | 'close'): Promise<void> => ipcRenderer.invoke('zeus:system-window:update', name, action),
+  /** 原生关闭操作交回原表单，提交中禁用关闭规则保持一致。 */
+  onSystemWindowCloseRequest: (listener: (name: string) => void) => {
+    /** 事件只携带主进程登记的窗口身份。 */
+    const handler = (_event: Electron.IpcRendererEvent, name: string) => listener(name);
+    ipcRenderer.on('zeus:system-window:close-request', handler);
+    return () => ipcRenderer.removeListener('zeus:system-window:close-request', handler);
+  },
   resolveTaskTableLayoutCloseRequest: (proceed: boolean) => ipcRenderer.send('zeus:task-table-layout-close-resolution', { proceed }),
   resolveUnsavedChangesCloseRequest: (proceed: boolean) => ipcRenderer.send('zeus:unsaved-changes-close-resolution', { proceed }),
   onTaskTableLayoutCloseRequested: (listener: () => void) => {
