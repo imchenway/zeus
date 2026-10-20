@@ -1,7 +1,7 @@
 import { lazy, Suspense, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { ArrowsInSimpleIcon } from '@phosphor-icons/react/dist/csr/ArrowsInSimple';
 import { ArrowsOutSimpleIcon } from '@phosphor-icons/react/dist/csr/ArrowsOutSimple';
-import { XIcon } from '@phosphor-icons/react/dist/csr/X';
+import { MinusIcon } from '@phosphor-icons/react/dist/csr/Minus';
 import type { ProjectRecord } from '../../apiClient.js';
 import type { ProjectGitWorkbenchProps } from '../../git/ProjectGitWorkbench.js';
 import type { ProjectGitWorkbenchSnapshot } from '../git/gitContracts.js';
@@ -20,7 +20,7 @@ interface ProjectToolsWorkspaceProps {
   mainRef: RefObject<HTMLElement | null>;
   /** 当前选中的真实项目；临时会话不提供项目工具。 */
   project?: ProjectRecord;
-  /** 只有 Git 使用侧栏，源码和命令保留原展示方式。 */
+  /** Git 底栏覆盖当前页面，源码和命令保留原展示方式。 */
   open: boolean;
   /** 源码可见时加载 Git，为目录提供分支控件和文件状态。 */
   sourceVisible: boolean;
@@ -32,15 +32,21 @@ interface ProjectToolsWorkspaceProps {
   branchToolbarContainer: HTMLElement | null;
   /** 源码文件状态继续读取同一 Git 快照。 */
   onSnapshot(snapshot: ProjectGitWorkbenchSnapshot | null): void;
-  /** 分支操作需要显示 Git 时只打开侧栏。 */
+  /** 分支操作需要显示 Git 时只打开底栏。 */
   onOpenGit(): void;
+  /** 终端与 Git 共用底部覆盖区域，避免原生网页遮挡面板。 */
+  terminalOpen: boolean;
+  /** 项目终端通过门户挂载到页面覆盖层。 */
+  terminalHostRef(host: HTMLDivElement | null): void;
+  /** 会话内容主动打开时收起底部工具。 */
+  onRevealSessionContext(): void;
   /** 收起不改变底层路由、项目或后台任务。 */
   onClose(): void;
 }
 
-/** 非模态项目工具布局：宽度不足或用户展开时暂时隐藏底层页面。 */
+/** Git 和终端覆盖在主页面底部，展开和调高都不改变主页面尺寸。 */
 export function ProjectToolsWorkspace(props: ProjectToolsWorkspaceProps) {
-  /** 用实际工作区宽度判断能否并排，而非只读取窗口宽度。 */
+  /** 底部覆盖层以当前工作区为定位和调高边界。 */
   const layoutRef = useRef<HTMLDivElement>(null);
   /** 切换工具后把键盘焦点放到新的可见面板。 */
   const panelRef = useRef<HTMLElement>(null);
@@ -48,30 +54,16 @@ export function ProjectToolsWorkspace(props: ProjectToolsWorkspaceProps) {
   const returnFocusRef = useRef<HTMLElement | null>(null);
   /** 在关闭后的布局阶段恢复焦点，避免依赖后台窗口的动画帧。 */
   const closingToolRef = useRef(false);
-  /** 用户选择的全屏与窗口宽度触发的全屏分开，窗口变宽后恢复分栏。 */
+  /** 展开只改变覆盖高度，不重建工作台。 */
   const [expanded, setExpanded] = useState(false);
-  /** 主内容和工具合计需要足够宽度，首次测量前保持单栏。 */
-  const [compact, setCompact] = useState(true);
   /** 没有项目时工具状态不能占用页面空间。 */
   const open = Boolean(props.project && props.open);
   /** 全屏只改变显示，不卸载会话控制器或编辑器。 */
-  const fullWidth = open && (expanded || compact);
+  const fullWidth = open && expanded;
   /** 中英文名称用于标题及焦点提示。 */
   const zh = props.language === 'zh-CN';
   /** 会话文件或浏览器主动打开时收起项目工具，原工具内容保留。 */
-  const context = useMemo(() => ({ open, revealSessionContext: props.onClose }), [open, props.onClose]);
-  useLayoutEffect(() => {
-    /** 分栏尺寸由同一容器的 ResizeObserver 维护，两端 Electron 行为一致。 */
-    const element = layoutRef.current;
-    if (!element) return;
-    /** 至少为主页面留 360 像素、工具留 560 像素及分隔空间。 */
-    const measure = () => setCompact(element.getBoundingClientRect().width < 960);
-    measure();
-    /** 观察整个工作区，不因拖动内部比例反复切换模式。 */
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [open]);
+  const context = useMemo(() => ({ open: open || props.terminalOpen, revealSessionContext: props.onRevealSessionContext }), [open, props.terminalOpen, props.onRevealSessionContext]);
   useLayoutEffect(() => {
     if (!open) {
       if (!closingToolRef.current) return;
@@ -83,7 +75,7 @@ export function ProjectToolsWorkspace(props: ProjectToolsWorkspaceProps) {
       return;
     }
     returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    // 项目工具接管焦点后，原生关闭网页快捷键不再指向隐藏的会话侧栏。
+    // 项目工具接管焦点后，原生关闭网页快捷键不再指向被覆盖的会话网页。
     window.zeus?.notifySessionContextActivity?.({ active: false, kind: 'none' });
     panelRef.current?.focus({ preventScroll: true });
   }, [open]);
@@ -97,15 +89,15 @@ export function ProjectToolsWorkspace(props: ProjectToolsWorkspaceProps) {
   }
   return (
     <ProjectToolContext.Provider value={context}>
-      <div ref={layoutRef} className="project-tools-layout" data-tool-open={open} data-tool-full-width={fullWidth}>
-        <section ref={props.mainRef} className="project-main-content" hidden={fullWidth} inert={fullWidth} aria-hidden={fullWidth || undefined}>
+      <div ref={layoutRef} className="project-tools-layout" data-tool-open={open} data-tool-full-width={fullWidth} data-tool-covered={open || props.terminalOpen}>
+        <section ref={props.mainRef} className="project-main-content">
           {props.children}
         </section>
-        {open && !fullWidth ? <GitPaneSeparator name="project-tools" label={zh ? '调整页面与 Git 宽度' : 'Resize page and Git'} initial={45} min={25} max={70} /> : null}
         <aside
           id="project-tool-panel"
           ref={panelRef}
           className="project-tools-panel"
+          data-zeus-primitive="overlay"
           role="region"
           aria-label={`${props.project?.name ?? ''} · Git`}
           hidden={!open}
@@ -118,25 +110,25 @@ export function ProjectToolsWorkspace(props: ProjectToolsWorkspaceProps) {
             closePanel();
           }}
         >
+          {open && !fullWidth ? <GitPaneSeparator name="project-git-height" axis="y" target=".project-tools-layout" label={zh ? '调整 Git 高度' : 'Resize Git height'} initial={55} min={20} max={95} reverse /> : null}
           <header className="project-tools-header">
             <strong>{props.project?.name} · Git</strong>
-            {!compact ? (
-              <button
-                type="button"
-                aria-label={expanded ? (zh ? '恢复分栏' : 'Restore split view') : zh ? '全屏展开' : 'Expand to full width'}
-                data-icon-tooltip={expanded ? (zh ? '恢复分栏' : 'Restore split view') : zh ? '全屏展开' : 'Expand to full width'}
-                aria-pressed={expanded}
-                onClick={() => setExpanded(!expanded)}
-              >
-                {expanded ? <ArrowsInSimpleIcon aria-hidden="true" /> : <ArrowsOutSimpleIcon aria-hidden="true" />}
-              </button>
-            ) : null}
-            <button type="button" aria-label={zh ? '关闭 Git' : 'Close Git'} data-icon-tooltip={zh ? '关闭 Git' : 'Close Git'} onClick={closePanel}>
-              <XIcon aria-hidden="true" />
+            <button
+              type="button"
+              aria-label={expanded ? (zh ? '恢复高度' : 'Restore height') : zh ? '全屏展开' : 'Expand to full height'}
+              data-icon-tooltip={expanded ? (zh ? '恢复高度' : 'Restore height') : zh ? '全屏展开' : 'Expand to full height'}
+              aria-pressed={expanded}
+              onClick={() => setExpanded(!expanded)}
+            >
+              {expanded ? <ArrowsInSimpleIcon aria-hidden="true" /> : <ArrowsOutSimpleIcon aria-hidden="true" />}
+            </button>
+            <button type="button" aria-label={zh ? '最小化 Git' : 'Minimize Git'} data-icon-tooltip={zh ? '最小化 Git' : 'Minimize Git'} onClick={closePanel}>
+              <MinusIcon aria-hidden="true" />
             </button>
           </header>
           {props.project ? <ProjectGitPanel key={props.project.id} {...props} /> : null}
         </aside>
+        <div className="project-terminal-overlay-host" ref={props.terminalHostRef} />
       </div>
     </ProjectToolContext.Provider>
   );

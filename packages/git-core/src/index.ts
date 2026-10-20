@@ -7,7 +7,7 @@ import { constants, realpathSync } from 'node:fs';
 import { copyFile, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
-import { defaultTaskBranchPrefix, normalizeTaskBranchPrefix } from '@zeus/shared';
+import { defaultTaskBranchPrefix, normalizeTaskBranchPrefix, type FilePreviewSource } from '@zeus/shared';
 import { businessProcessEnvironment, spawnManagedProcess } from '@zeus/ai-runtime';
 
 /** 非 Windows 保留原有 execFile 的编码、输出和错误约定。 */
@@ -3991,7 +3991,7 @@ export async function getGitFilePreviewSources(
     /** 已确认的任务分支两端。 */
     revisions?: [string, string];
   },
-): Promise<Array<{ name: string; label: string; root?: string; path?: string; blob?: string; reason?: string }>> {
+): Promise<FilePreviewSource[]> {
   /** 路径沿用工作区校验，Git 管理目录不作为用户文件开放。 */
   const path = requireSafeWorkspacePath(input.path);
   if (path.split('/').includes('.git')) throw new Error('不能预览 Git 管理目录。');
@@ -4039,16 +4039,63 @@ export async function getGitFilePreviewSources(
       break;
     }
   }
+  /** 未暂存比较可能建立在已暂存的重命名上，归属仍追溯 HEAD 的原路径。 */
+  let blamePath = oldPath;
+  if (before === 'index' && head) {
+    /** 只读取名称映射，避免为归属重新加载全部补丁。 */
+    const stagedNames = (await runGit(cwd, ['diff', '--cached', head, '--no-ext-diff', '--find-renames', '--name-status', '-z', '--'])).stdout.split('\0');
+    for (let index = 0; index < stagedNames.length - 1;) {
+      /** 每条记录先读状态，再按重命名或复制规则读取前后路径。 */
+      const status = stagedNames[index++]!;
+      /** HEAD 中用于追溯归属的路径。 */
+      const left = stagedNames[index++]!;
+      /** 索引中的目标路径；普通变更沿用原路径。 */
+      const right = /^[RC]/u.test(status) ? stagedNames[index++]! : left;
+      if (right === oldPath) {
+        blamePath = left;
+        break;
+      }
+    }
+  }
   /** 使用 Git 树记录获取对象，拒绝符号链接和子模块作为普通文件解码。 */
-  async function side(revision: string | null, name: string, prefix: string, fallback?: string | null) {
+  async function side(revision: string | null, name: string, prefix: string, fallback?: string | null): Promise<FilePreviewSource> {
     const label = `${prefix} · ${revision === 'worktree' ? '工作区' : revision === 'index' ? '暂存区' : (revision?.slice(0, 12) ?? '不存在')}`;
     if (!revision) return { name, label, reason: '此版本中不存在该文件。' };
-    if (revision === 'worktree') return { name, label, root: cwd, path: resolve(cwd, requireSafeWorkspacePath(name)) };
+    /** 工作区和索引内容以当前固定 HEAD 为归属基线，重命名沿用原路径。 */
+    const gitBlame = { path: revision === 'worktree' || revision === 'index' ? blamePath : name, revision, head };
+    if (revision === 'worktree') return { name, label, root: cwd, path: resolve(cwd, requireSafeWorkspacePath(name)), gitBlame };
     const output = revision === 'index' ? (await runGit(cwd, ['ls-files', '--stage', '-z', '--', `:(literal)${name}`])).stdout : (await runGit(cwd, ['ls-tree', '-z', revision, '--', `:(literal)${name}`])).stdout;
     const entry = output.split('\0').find((item) => item.slice(item.indexOf('\t') + 1) === name);
     const match = entry?.match(/^(100[0-7]{3}) (?:blob )?([a-f0-9]{40,64})(?: 0)?\t/u);
     if (!match && !entry && fallback) return side(fallback, name, prefix);
-    return match ? { name, label, root: cwd, blob: match[2] } : { name, label, reason: entry ? '符号链接、冲突索引或子模块不能作为普通文件预览。' : '此版本中不存在该文件。' };
+    return match ? { name, label, root: cwd, blob: match[2], gitBlame } : { name, label, reason: entry ? '符号链接、冲突索引或子模块不能作为普通文件预览。' : '此版本中不存在该文件。' };
   }
   return Promise.all([side(before, oldPath, '变更前'), side(after, newPath, '变更后', untrackedTree)]);
+}
+
+/** 归属绑定已授权的预览文本；索引和工作区通过标准输入读取，不触碰原文件。 */
+export async function getFilePreviewBlame(cwd: string, source: NonNullable<FilePreviewSource['gitBlame']>, content: string): Promise<GitBlameLine[]> {
+  /** 路径与引用分别校验，不拼接 shell 命令。 */
+  const path = requireSafeWorkspacePath(source.path);
+  if (path.split('/').includes('.git')) throw new Error('不能读取 Git 管理目录的归属。');
+  /** 统一作者编码，并保留根提交归属，避免本机配置把历史行显示为空白。 */
+  const blameArgs = ['-c', 'core.quotePath=false', '-c', 'blame.blankBoundary=false', 'blame', '--encoding=UTF-8', '--root', '--line-porcelain'];
+  /** 历史版本始终使用固定提交；正文版本由主进程的 blob 授权保证。 */
+  if (source.revision !== 'index' && source.revision !== 'worktree') {
+    if (!/^[a-f0-9]{40,64}$/u.test(source.revision)) throw new Error('提交归属来源无效。');
+    return parseGitBlamePorcelain((await runGit(cwd, [...blameArgs, source.revision, '--', path])).stdout);
+  }
+  if (!source.head) return [];
+  /** --contents 使用 HEAD；前后检查保证期间没有切换基线。 */
+  const verifyHead = async () => {
+    if (!/^[a-f0-9]{40,64}$/u.test(source.head) || (await readGitStdout(cwd, ['rev-parse', '--verify', 'HEAD'])) !== source.head) throw new Error('提交基线已经变化，请刷新差异。');
+  };
+  await verifyHead();
+  /** 新文件没有历史归属，不把空白状态显示为错误。 */
+  const tracked = (await runGit(cwd, ['ls-tree', '-z', source.head, '--', `:(literal)${path}`])).stdout;
+  if (!tracked) return [];
+  /** 复用现有 Git 进程、超时和 Windows Job 管理。 */
+  const result = await runGit(cwd, [...blameArgs, '--contents', '-', '--', path], content);
+  await verifyHead();
+  return parseGitBlamePorcelain(result.stdout);
 }

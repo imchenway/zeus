@@ -40,7 +40,6 @@ import { ModalPortal } from './ui/ModalPortal.js';
 import { MenuSurface } from './ui/MenuSurface.js';
 import { VisibleApplicationError } from './ui/ApplicationErrorDialog.js';
 import './commandCenter.css';
-import { ProjectTerminalPanel } from './features/runtime/ProjectTerminalPanel.js';
 
 export interface CommandCenterPanelProps {
   /** 项目弹窗的关闭入口；关闭显示层不终止后台运行。 */
@@ -437,8 +436,6 @@ async function writeCommandRunClipboard(content: string): Promise<boolean> {
 
 export function CommandCenterPanel(props: CommandCenterPanelProps) {
   const zh = props.language === 'zh-CN';
-  /** 与浏览器工作区一样，将终端停靠到滚动正文之外。 */
-  const [terminalHost, setTerminalHost] = useState<HTMLDivElement | null>(null);
   const [commands, setCommands] = useState<CommandDefinition[]>([]);
   const [runs, setRuns] = useState<CommandRun[]>([]);
   const [loading, setLoading] = useState(true);
@@ -859,7 +856,6 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
             {props.mode === 'global' ? <p>{zh ? '在项目中运行' : 'Run from a project'}</p> : null}
           </span>
           <div className="command-center-header-actions">
-            {props.mode === 'project' && props.project ? <ProjectTerminalPanel dockHost={terminalHost} key={props.project.id} project={props.project} client={props.client} language={props.language} /> : null}
             <Button variant="primary" onClick={openCreate} disabled={!canMaintain || busy}>
               <Plus aria-hidden="true" />
               {zh ? '新建命令' : 'New command'}
@@ -1011,7 +1007,6 @@ export function CommandCenterPanel(props: CommandCenterPanelProps) {
           ) : null}
         </MotionPresence>
       </section>
-      <div className="command-center-terminal-host" ref={setTerminalHost} />
     </div>
   );
 }

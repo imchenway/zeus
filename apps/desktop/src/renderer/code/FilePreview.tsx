@@ -133,7 +133,7 @@ export function FilePreview(props: {
   /** 中英文文案。 */
   zh: boolean;
   /** 文本继续复用原差异与评论界面。 */
-  children?: ReactNode | ((toolbar: ReactNode) => ReactNode);
+  children?: ReactNode | ((toolbar: ReactNode, items: FilePreviewItem[] | null) => ReactNode);
   /** 调用方已有的关闭等操作并入预览工具栏。 */
   actions?: ReactNode;
   /** Git 比较已知的变更状态同时用于媒体文件名称。 */
@@ -171,7 +171,7 @@ function FilePreviewBody(props: {
   location?: ConversationFileLocation;
   identity: string;
   zh: boolean;
-  children?: ReactNode | ((toolbar: ReactNode) => ReactNode);
+  children?: ReactNode | ((toolbar: ReactNode, items: FilePreviewItem[] | null) => ReactNode);
   /** 嵌入预览的附加操作。 */ actions?: ReactNode;
   /** 文件的实际 Git 变更状态。 */ fileStatus?: string;
   /** 弹窗提供关闭动作，单张图片据此使用纯预览布局。 */ onClose?: () => void;
@@ -293,7 +293,7 @@ function FilePreviewBody(props: {
       ) : null}
       {showDiff ? (
         typeof props.children === 'function' ? (
-          props.children(toolbar)
+          props.children(toolbar, items)
         ) : (
           props.children
         )
@@ -525,6 +525,7 @@ function FilePreviewContent(props: {
                     identity={`${item.id}:${item.label}`}
                     path={props.commentPath ?? item.name}
                     content={item.content}
+                    blame={item.blame}
                     language={language}
                     label={item.name}
                     side={props.commentSide}
@@ -534,7 +535,17 @@ function FilePreviewContent(props: {
                     onCommentsChange={props.onCommentsChange}
                   />
                 ) : (
-                  <CodeEditor path={item.name} label={item.name} language={language} content={item.content} location={item.review?.location} extensions={locationDecorations} readOnly />
+                  <CodeEditor
+                    path={item.name}
+                    label={item.name}
+                    language={language}
+                    content={item.content}
+                    location={item.review?.location}
+                    extensions={locationDecorations}
+                    blame={item.blame}
+                    blameLocale={props.zh ? 'zh-CN' : 'en-US'}
+                    readOnly
+                  />
                 )}
               </div>
             )}

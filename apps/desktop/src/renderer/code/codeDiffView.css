@@ -96,3 +96,34 @@
   height: 100%;
   overflow: hidden !important;
 }
+
+/* 日期和作者独立于行号，未提交行保留空白，不挤压数字的对齐。 */
+.code-diff-view .code-diff-line-blame {
+  display: inline-block;
+  flex: 0 0 20ch;
+  width: 20ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+  font: 11px/20px var(--zeus-font-ui, sans-serif);
+  color: var(--zeus-product-muted);
+  padding-inline-end: 10px;
+}
+
+/* 片段操作保留在同一滚动视图上方，不再为每个片段建立编辑器。 */
+.project-git-diff-side-by-side > .project-git-diff-hunk-commands {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--zeus-product-line);
+}
+.project-git-diff-hunk-select {
+  max-width: 50%;
+  min-width: 0;
+  margin-inline-end: auto;
+  font: inherit;
+  color: inherit;
+  background: var(--zeus-product-panel);
+}

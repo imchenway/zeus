@@ -20,6 +20,22 @@ export interface FileReviewDiff {
   }>;
 }
 
+/** 差异行的提交归属；零哈希表示尚未提交，不生成作者占位文案。 */
+export interface FilePreviewBlameLine {
+  /** 完整提交哈希。 */
+  commitHash: string;
+  /** 光标行详情使用的短提交号。 */
+  shortHash: string;
+  /** Git 记录的作者姓名。 */
+  author: string;
+  /** 作者时间，Unix 秒。 */
+  authorTime: number;
+  /** 光标行显示的提交说明。 */
+  subject: string;
+  /** 对应当前版本的原始行号。 */
+  line: number;
+}
+
 /** 源码与通用文件审阅共用位置和当前 Git 状态。 */
 export interface FileReview {
   /** 会话引用的原始位置。 */
@@ -53,6 +69,8 @@ export type FilePreviewRequest = (
 
 /** 仅供受信主进程使用的读取授权，不向渲染层返回文件系统权限。 */
 export interface FilePreviewSource {
+  /** 由仓库解析器固定的归属来源，仅供受信主进程使用。 */
+  gitBlame?: { path: string; revision: string; head: string };
   /** 会话文件的行定位与 Git 差异。 */
   review?: FileReview;
   /** 展示名称保留原始扩展名。 */
@@ -79,6 +97,10 @@ export interface FilePreviewIntent {
 
 /** 单个预览资源；令牌只能用于所属窗口且关闭后撤销。 */
 export interface FilePreviewItem {
+  /** 与本次完整文本对应的逐行提交归属。 */
+  blame?: FilePreviewBlameLine[];
+  /** 归属读取失败不妨碍查看正文，但必须明确显示原因。 */
+  blameError?: string;
   /** 随授权内容返回审阅信息，不扩大文件读取权限。 */
   review?: FileReview;
   /** 主进程生成的不可猜测资源身份。 */

@@ -2065,7 +2065,6 @@ function LocalChangesSurface(props: {
             revision={props.previewRevision}
             diff={selectedDiff ? { isRepository: true, files: [selectedDiff.newPath || selectedDiff.oldPath], diffText: stageDiff?.diffText ?? '', fileDiffs: [selectedDiff] } : null}
             zh={props.zh}
-            partitionHunks
             hunkActionsDisabled={props.busy !== null}
             onHunkAction={
               repository && selectedDiff && selectedDiff.changeType === 'modified'
