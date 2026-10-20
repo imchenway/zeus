@@ -313,6 +313,18 @@
   opacity: 0.58;
 }
 
+/* 环境工具行显示当前打开状态，使用会话已有的选中配色。 */
+.session-quick-actions-list button.session-quick-actions-row[aria-pressed='true'] {
+  background: var(--session-selected);
+}
+
+/* 开关文案与快捷键分列，窄卡片优先保留工具名称。 */
+.session-quick-actions-tool-state {
+  color: var(--session-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .session-codex-parity-v1 .session-quick-actions-row.is-static {
   cursor: default;
 }

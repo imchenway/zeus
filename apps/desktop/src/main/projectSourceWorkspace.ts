@@ -9,6 +9,7 @@ import type {
   MoveProjectSourceEntryInput,
   ProjectSourceDirectorySnapshot,
   ProjectSourceContentSearchResult,
+  ProjectSourceContentSearchOptions,
   ProjectSourceDocument,
   ProjectSourceEntry,
   ProjectSourceEvent,
@@ -20,8 +21,13 @@ import type {
 const maximumEditableBytes = filePreviewLimits.text;
 const maximumSearchResults = 200;
 const maximumSearchVisits = 50_000;
+/** 标题栏只读取少量源码摘要。 */
 const maximumContentSearchResults = 60;
+/** 项目搜索展示有界命中列表，达到上限时明确提示结果不完整。 */
+const maximumProjectContentSearchResults = 500;
+/** 单个搜索文件沿用 UTF-8 文本的读取上限。 */
 const maximumContentSearchFileBytes = 1024 * 1024;
+/** 每次搜索的读取预算防止扫描大型依赖和生成目录。 */
 const maximumContentSearchBytes = 32 * 1024 * 1024;
 const utf8Bom = Buffer.from([0xef, 0xbb, 0xbf]);
 // 生成目录只供按需浏览，不应把高频外部写入放大成主进程与渲染进程之间的事件风暴。
@@ -84,75 +90,141 @@ export class ProjectSourceWorkspaceService {
   }
 
   /** 搜索项目内的路径和 UTF-8 文本内容；跳过依赖、产物、二进制与超大文件。 */
-  async searchContent(projectId: string, query: string): Promise<ProjectSourceContentSearchResult> {
-    const normalizedQuery = query.trim().toLocaleLowerCase();
-    if (!normalizedQuery) return { matches: [], truncated: false };
+  async searchContent(projectId: string, query: string, options: ProjectSourceContentSearchOptions = {}): Promise<ProjectSourceContentSearchResult> {
+    /** 专用内容搜索保留首尾空格，标题栏继续忽略输入两端空白。 */
+    const needle = options.contentOnly ? query : query.trim();
+    if (!needle) return { matches: [], truncated: false };
+    if (needle.length > 512 || /[\r\n]/u.test(needle)) throw new TypeError('请输入不超过 512 个字符的单行搜索内容。');
+    /** 输入只按字面量处理，正则元字符不能变为可执行的匹配规则。 */
+    const escaped = needle.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+    /** 整词包含代码常见的下划线、美元符号和 Unicode 字母。 */
+    const pattern = new RegExp(options.wholeWord ? `(?<![\\p{L}\\p{N}\\p{M}_$])${escaped}(?![\\p{L}\\p{N}\\p{M}_$])` : escaped, options.caseSensitive ? 'gu' : 'giu');
+    /** 内容搜索不按文件截断为三处，所有文件共用一个明确的结果预算。 */
+    const resultLimit = options.contentOnly ? maximumProjectContentSearchResults : maximumContentSearchResults;
+    /** 已确认的项目根仍是唯一文件访问范围。 */
     const root = await this.#projectRoot(projectId);
+    /** 每一项对应一处命中，保留行列用于跳转。 */
     const matches: ProjectSourceContentSearchResult['matches'] = [];
+    /** 目录按队列遍历，符号链接不加入搜索。 */
     const directories = [''];
+    /** 文件和目录访问共用原有预算。 */
     let visited = 0;
+    /** 已读取字节数与命中数量分别计数。 */
     let searchedBytes = 0;
-    while (directories.length > 0 && matches.length < maximumContentSearchResults && visited < maximumSearchVisits && searchedBytes < maximumContentSearchBytes) {
+    /** 读取失败或达到预算都必须提示不完整，不能伪装成没有匹配。 */
+    let truncated = false;
+    while (directories.length > 0 && matches.length < resultLimit && visited < maximumSearchVisits && searchedBytes < maximumContentSearchBytes) {
+      /** 子目录使用与源码浏览一致的真实路径校验。 */
       const directoryRelativePath = directories.shift()!;
+      /** 目录句柄由异步遍历自动关闭。 */
       let handle;
       try {
-        handle = await opendir(resolveLexicalPath(root, directoryRelativePath));
+        /** 防止排队后被替换的目录链接越过项目根。 */
+        const directory = await resolveExistingPath(root, directoryRelativePath, 'directory');
+        handle = await opendir(directory.absolutePath);
       } catch {
+        truncated = true;
         continue;
       }
       for await (const item of handle) {
+        if (visited >= maximumSearchVisits || searchedBytes >= maximumContentSearchBytes) {
+          truncated = true;
+          break;
+        }
         if (item.name === '.git' || ignoredWatchDirectoryNames.has(item.name)) continue;
         visited += 1;
+        /** 搜索结果只返回项目相对路径。 */
         const entryRelativePath = joinRelative(directoryRelativePath, item.name);
         if (item.isDirectory()) {
           directories.push(entryRelativePath);
           continue;
         }
         if (!item.isFile()) continue;
-        if (entryRelativePath.toLocaleLowerCase().includes(normalizedQuery)) {
+        pattern.lastIndex = 0;
+        if (!options.contentOnly && pattern.test(entryRelativePath)) {
           matches.push({ relativePath: entryRelativePath, line: 1, column: 1, preview: '', matchKind: 'path' });
-          if (matches.length >= maximumContentSearchResults) break;
+          if (matches.length >= resultLimit) break;
         }
-        let fileStat;
-        try {
-          fileStat = await stat(resolveLexicalPath(root, entryRelativePath));
-        } catch {
-          continue;
-        }
-        if (fileStat.size === 0 || fileStat.size > maximumContentSearchFileBytes || searchedBytes + fileStat.size > maximumContentSearchBytes) continue;
+        /** 打开后按句柄读取，读取量始终不超过单文件预算。 */
+        let file;
+        /** 搜索数据只保留当前文件，不累计整项目正文。 */
         let bytes: Buffer;
         try {
-          bytes = await readFile(resolveLexicalPath(root, entryRelativePath));
+          /** 文件真实路径继续受项目边界约束。 */
+          const target = await resolveExistingPath(root, entryRelativePath, 'file');
+          file = await open(target.absolutePath, 'r');
+          /** 文件大小只用于预检，实际读取也有独立上限。 */
+          const fileStat = await file.stat();
+          if (fileStat.size === 0 || fileStat.size > maximumContentSearchFileBytes) continue;
+          if (searchedBytes + fileStat.size > maximumContentSearchBytes) {
+            truncated = true;
+            continue;
+          }
+          /** 多读一个字节可识别预检后增长的文件，避免无界 readFile。 */
+          const buffer = Buffer.alloc(fileStat.size + 1);
+          /** 分次读取兼容短读；每次均受剩余缓冲区大小限制。 */
+          let length = 0;
+          while (length < buffer.length) {
+            /** 句柄游标自动推进，不依赖平台的路径分隔符。 */
+            const chunk = await file.read(buffer, length, buffer.length - length, null);
+            if (!chunk.bytesRead) break;
+            length += chunk.bytesRead;
+          }
+          if (length > fileStat.size) {
+            searchedBytes += length;
+            truncated = true;
+            continue;
+          }
+          bytes = buffer.subarray(0, length);
         } catch {
+          truncated = true;
           continue;
+        } finally {
+          await file?.close();
         }
         searchedBytes += bytes.byteLength;
+        if (bytes.byteLength > maximumContentSearchFileBytes || searchedBytes > maximumContentSearchBytes) {
+          truncated = true;
+          continue;
+        }
         if (bytes.includes(0)) continue;
+        /** 仅解码有效 UTF-8 文本，不把二进制转为乱码结果。 */
         let content: string;
         try {
           content = new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, utf8Bom.length).equals(utf8Bom) ? bytes.subarray(utf8Bom.length) : bytes);
         } catch {
           continue;
         }
+        /** 标题栏保留每文件摘要上限，专用搜索则展示全部命中直至总预算。 */
         let fileMatchCount = 0;
         for (const [index, line] of content.split(/\r\n?|\n/u).entries()) {
-          const column = line.toLocaleLowerCase().indexOf(normalizedQuery);
-          if (column < 0) continue;
-          matches.push({
-            relativePath: entryRelativePath,
-            line: index + 1,
-            column: column + 1,
-            preview: line.trim().slice(0, 240),
-            matchKind: 'content',
-          });
-          fileMatchCount += 1;
-          if (fileMatchCount >= 3 || matches.length >= maximumContentSearchResults) break;
+          pattern.lastIndex = 0;
+          for (const match of line.matchAll(pattern)) {
+            /** 预览围绕命中截取，长行末尾的结果也能看到匹配文本。 */
+            const previewStart = Math.max(0, match.index - 72);
+            /** 两侧省略号只说明预览被裁剪，不改变文件内列号。 */
+            const previewEnd = Math.min(line.length, match.index + match[0].length + 120);
+            matches.push({
+              relativePath: entryRelativePath,
+              line: index + 1,
+              column: match.index + 1,
+              preview: `${previewStart ? '…' : ''}${line.slice(previewStart, previewEnd)}${previewEnd < line.length ? '…' : ''}`,
+              previewMatchStart: match.index - previewStart + (previewStart ? 1 : 0),
+              previewMatchLength: match[0].length,
+              matchKind: 'content',
+            });
+            fileMatchCount += 1;
+            if (matches.length >= resultLimit || !options.contentOnly) break;
+          }
+          if (matches.length >= resultLimit || (!options.contentOnly && fileMatchCount >= 3)) {
+            truncated = true;
+            break;
+          }
         }
-        if (matches.length >= maximumContentSearchResults || visited >= maximumSearchVisits || searchedBytes >= maximumContentSearchBytes) break;
+        if (matches.length >= resultLimit || visited >= maximumSearchVisits || searchedBytes >= maximumContentSearchBytes) break;
       }
     }
-    const truncated = matches.length >= maximumContentSearchResults || directories.length > 0 || visited >= maximumSearchVisits || searchedBytes >= maximumContentSearchBytes;
-    return { matches, truncated };
+    return { matches, truncated: truncated || matches.length >= resultLimit || directories.length > 0 || visited >= maximumSearchVisits || searchedBytes >= maximumContentSearchBytes };
   }
 
   /** 在项目目录边界内读取文件；图片返回只读预览，文本继续走原有编辑链路。 */

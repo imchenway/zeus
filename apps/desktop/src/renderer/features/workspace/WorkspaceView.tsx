@@ -1,4 +1,5 @@
 import { ProjectTerminalPanel } from '../runtime/ProjectTerminalPanel.js';
+import { ProjectCodeSearch } from '../../code/ProjectCodeSearch.js';
 import { TerminalWindowIcon } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import type { ProjectGitWorkbenchSnapshot } from '../git/gitContracts.js';
 import type { ProjectSourceWorkspaceHandle } from '../../code/ProjectSourceWorkspace.js';
@@ -125,7 +126,8 @@ const ProjectSourceWorkspace = lazy(() => import('../../code/ProjectSourceWorksp
 export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions: WorkspaceDomainActions; operations: WorkspaceOperations }) {
   const [settingsSearchQuery, setSettingsSearchQuery] = useState('');
   const [pendingGlobalTask, setPendingGlobalTask] = useState<{ taskId: string; projectId: string; presentation?: 'full_page' } | null>(null);
-  const [pendingGlobalSource, setPendingGlobalSource] = useState<{ projectId: string; relativePath: string; line: number } | null>(null);
+  /** 全局和项目搜索共同保留目标行列，等待源码工作区就绪后打开。 */
+  const [pendingGlobalSource, setPendingGlobalSource] = useState<{ projectId: string; relativePath: string; line: number; column?: number } | null>(null);
   /** 一次编辑一个字段，新增字段无需继续拉长页面。 */
   const [taskField, setTaskField] = useState<'status' | 'priority' | 'runStatus'>('status');
   const [zentaoImportOpen, setZentaoImportOpen] = useState(false);
@@ -513,7 +515,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   useEffect(() => {
     if (!sourceReady || !pendingGlobalSource || pendingGlobalSource.projectId !== activeProjectId || activeProjectSection !== 'code' || !projectSourceWorkspaceRef.current) return;
     setPendingGlobalSource(null);
-    void projectSourceWorkspaceRef.current.openFile(pendingGlobalSource.relativePath, pendingGlobalSource.line);
+    void projectSourceWorkspaceRef.current.openFile(pendingGlobalSource.relativePath, pendingGlobalSource.line, pendingGlobalSource.column);
   }, [sourceReady, activeProjectId, activeProjectSection, pendingGlobalSource, projectSourceWorkspaceRef]);
   /** 全局搜索允许跨项目跳转；等目标工作区真正挂载后再打开详情或源码文件。 */
   useEffect(() => {
@@ -681,6 +683,29 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   const codeWorkspaceZh = appShellSettings.appLanguage === 'zh-CN';
   /** 工具只绑定当前选中的真实项目，临时会话不提供项目操作。 */
   const projectToolsVisible = Boolean(selectedProject && selectedProject.id !== temporaryWorkspaceId);
+  /** 搜索弹窗只绑定当前项目；切换项目后关闭，不沿用上个项目的查询范围。 */
+  const [searchProjectId, setSearchProjectId] = useState<string | null>(null);
+  /** 所有项目源码搜索结果共用文件导航与未保存保护。 */
+  function openSourceMatch(project: ProjectRecord, match: ProjectSourceContentMatch): void {
+    setPendingGlobalSource({ projectId: project.id, relativePath: match.relativePath, line: match.line, column: match.column });
+    openProjectSection(project, 'code', 'source');
+  }
+  useEffect(() => {
+    setSearchProjectId(null);
+  }, [selectedProject?.id]);
+  useEffect(() => {
+    /** 使用平台常见的项目内容查找快捷键，不覆盖输入框的普通查找。 */
+    function openCodeSearch(event: KeyboardEvent): void {
+      if (!projectToolsVisible || !selectedProject || event.defaultPrevented || event.isComposing || event.repeat || !event.shiftKey || event.altKey || event.key.toLowerCase() !== 'f') return;
+      if (!(isMacOSPlatform() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey)) return;
+      // 已有弹窗保持其键盘边界，避免跨模态层启动新的搜索。
+      if (document.querySelector('[aria-modal="true"]:not([aria-hidden="true"])')) return;
+      event.preventDefault();
+      setSearchProjectId(selectedProject.id);
+    }
+    window.addEventListener('keydown', openCodeSearch);
+    return () => window.removeEventListener('keydown', openCodeSearch);
+  }, [projectToolsVisible, selectedProject]);
   /** 源码继续占用主页面；Git 打开不影响此页面的挂载状态。 */
   const sourceVisible = (activeNavTarget === 'projects' || activeNavTarget === 'conversations') && activeProjectSection === 'code';
   /** 源码分支控件由侧栏中的唯一 Git 实例提供。 */
@@ -717,6 +742,19 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           aria-current={sourceVisible ? 'page' : undefined}
         >
           <CodeSimpleIcon aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          className={searchProjectId === selectedProject.id ? 'is-active' : ''}
+          onClick={() => setSearchProjectId(selectedProject.id)}
+          aria-label={platformShortcutLabel(codeWorkspaceZh ? '搜索代码（⇧⌘F）' : 'Find in files (⇧⌘F)')}
+          data-icon-tooltip={platformShortcutLabel(codeWorkspaceZh ? '搜索代码（⇧⌘F）' : 'Find in files (⇧⌘F)')}
+          aria-keyshortcuts={`${isMacOSPlatform() ? 'Meta' : 'Control'}+Shift+F`}
+          data-project-tool="search"
+          aria-haspopup="dialog"
+          aria-expanded={searchProjectId === selectedProject.id}
+        >
+          <MagnifyingGlass aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -788,6 +826,16 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       aria-label={uiCopy.shellAriaLabel}
       onPointerDown={handleWindowDragPointerDown}
     >
+      {projectToolsVisible && selectedProject ? (
+        <ProjectCodeSearch
+          key={selectedProject.id}
+          project={selectedProject}
+          open={searchProjectId === selectedProject.id}
+          language={appShellSettings.appLanguage}
+          onClose={() => setSearchProjectId(null)}
+          onOpenMatch={(match) => openSourceMatch(selectedProject, match)}
+        />
+      ) : null}
       <MotionPresence>
         {commandsProject && props.commandClient ? (
           <ModalPortal role="dialog" aria-label={`${commandsProject.name} · ${codeWorkspaceZh ? '命令' : 'Commands'}`} rootClassName="project-command-portal" onDismiss={() => setProjectCommandsProjectId(null)}>
@@ -1001,10 +1049,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
             openSearchedTask(task.id, task.projectId);
           }}
           onOpenConversation={(conversation) => void selectNativeConversation(conversation)}
-          onOpenSourceMatch={(project: ProjectRecord, match: ProjectSourceContentMatch) => {
-            setPendingGlobalSource({ projectId: project.id, relativePath: match.relativePath, line: match.line });
-            openProjectSection(project, 'code', 'source');
-          }}
+          onOpenSourceMatch={openSourceMatch}
         />
       ) : null}
       {!upstreamMainLayout && projectWorkspaceNavigationVisible ? <div className="project-workspace-status-bar" data-workspace-tool-slot="bottom" aria-hidden="true" /> : null}

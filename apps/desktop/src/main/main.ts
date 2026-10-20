@@ -2035,10 +2035,12 @@ function setupIpc(): void {
     if (typeof input?.projectId !== 'string' || typeof input.query !== 'string') throw new TypeError('项目源码搜索请求无效。');
     return service.search(input.projectId, input.query);
   });
-  ipcMain.handle('zeus:project-source:search-content', (event, input: { projectId?: unknown; query?: unknown }) => {
+  ipcMain.handle('zeus:project-source:search-content', (event, input: { projectId?: unknown; query?: unknown; contentOnly?: unknown; caseSensitive?: unknown; wholeWord?: unknown }) => {
+    /** 搜索继续使用原窗口的项目文件访问授权。 */
     const service = requireProjectSourceWorkspace(event);
     if (typeof input?.projectId !== 'string' || typeof input.query !== 'string') throw new TypeError('项目源码内容搜索请求无效。');
-    return service.searchContent(input.projectId, input.query);
+    for (const option of [input.contentOnly, input.caseSensitive, input.wholeWord]) if (option !== undefined && typeof option !== 'boolean') throw new TypeError('项目源码内容搜索选项无效。');
+    return service.searchContent(input.projectId, input.query, { contentOnly: input.contentOnly === true, caseSensitive: input.caseSensitive === true, wholeWord: input.wholeWord === true });
   });
   ipcMain.handle('zeus:project-source:read-file', (event, input: { projectId?: unknown; relativePath?: unknown }) => {
     const service = requireProjectSourceWorkspace(event);

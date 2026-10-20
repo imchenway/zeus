@@ -1,0 +1,223 @@
+/* 搜索沿用共享弹窗表面，结果区独立滚动，不改变背景页面尺寸。 */
+.project-code-search-dialog {
+  width: min(900px, 100%);
+  height: min(720px, calc(100dvh - 40px));
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--zeus-product-text);
+  background: var(--zeus-product-panel);
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 12px;
+}
+
+/* 顶部身份和关闭按钮遵循工具面板的尺寸与焦点规则。 */
+.project-code-search-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px 12px;
+}
+.project-code-search-heading strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 16px;
+}
+.project-code-search-close,
+.project-code-search-field button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  padding: 4px;
+  border: 0;
+  border-radius: 5px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.project-code-search-dialog svg {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+}
+.project-code-search-dialog button:focus-visible {
+  outline: 2px solid var(--zeus-control-accent);
+  outline-offset: -2px;
+}
+.project-code-search-dialog button:hover {
+  background: var(--zeus-interaction-hover);
+}
+
+/* 检索输入和匹配选项保持可见，长结果不会把它们滚出屏幕。 */
+.project-code-search-controls {
+  padding: 0 20px;
+}
+.project-code-search-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 7px;
+}
+.project-code-search-field:focus-within {
+  outline: 2px solid var(--zeus-control-accent);
+  outline-offset: -1px;
+}
+.project-code-search-field input {
+  flex: 1;
+  min-width: 0;
+  height: 38px;
+  padding: 0;
+  border: 0;
+  outline: none;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+}
+.project-code-search-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+.project-code-search-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.project-code-search-options button {
+  margin-left: auto;
+  padding: 4px 8px;
+  border: 1px solid var(--zeus-product-line);
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.project-code-search-options button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.project-code-search-scope {
+  margin: 10px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+}
+
+/* 路径分组与命中行使用已有主题颜色，命中内容按服务端偏移高亮。 */
+.project-code-search-status,
+.project-code-search-error {
+  margin: 0;
+  padding: 10px 20px;
+  font-size: 12px;
+}
+.project-code-search-results {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border-block: 1px solid var(--zeus-product-line);
+}
+.project-code-search-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.project-code-search-file span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-code-search-match {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  width: 100%;
+  padding: 7px 20px;
+  border: 0;
+  text-align: left;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.project-code-search-match[aria-selected='true'] {
+  background: var(--zeus-interaction-hover);
+  box-shadow: inset 3px 0 var(--zeus-control-accent);
+}
+.project-code-search-line {
+  flex: 0 0 64px;
+  color: var(--zeus-product-muted);
+  text-align: right;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.project-code-search-match code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+  font-size: 12px;
+}
+.project-code-search-match mark {
+  color: inherit;
+  background: color-mix(in srgb, var(--zeus-control-accent) 25%, transparent);
+  border-radius: 2px;
+}
+.project-code-search-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px 16px;
+  padding: 12px 20px;
+  font-size: 11px;
+  color: var(--zeus-product-muted);
+}
+.project-code-search-footer p {
+  flex: 0 0 100%;
+  margin: 0 0 4px;
+  color: var(--zeus-product-text);
+}
+
+/* 窄窗口保留单列结果与全部控件，缩小留白而不设置横向最小宽度。 */
+@media (max-width: 600px) {
+  .project-code-search-dialog {
+    height: calc(100dvh - 24px);
+  }
+  .project-code-search-heading,
+  .project-code-search-status,
+  .project-code-search-file,
+  .project-code-search-match,
+  .project-code-search-footer {
+    padding-inline: 12px;
+  }
+  .project-code-search-controls {
+    padding-inline: 12px;
+  }
+  .project-code-search-line {
+    flex-basis: 48px;
+  }
+  .project-code-search-match code {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+}

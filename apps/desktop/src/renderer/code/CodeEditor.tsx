@@ -230,7 +230,11 @@ export const CodeEditor = memo(function CodeEditor(props: CodeEditorProps) {
     const requested = props.location?.line ?? props.revealLine;
     if (!view || !requested || !Number.isFinite(requested)) return;
     const line = view.state.doc.line(Math.max(1, Math.min(Math.trunc(requested), view.state.doc.lines)));
-    view.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: 'center' }) });
+    /** 内容搜索保留命中列，长代码行横向滚动到真实位置。 */
+    const column = props.location?.column;
+    /** 外部列号按当前文档长度收敛，文件变化后仍能安全定位。 */
+    const offset = column && Number.isFinite(column) ? Math.max(0, Math.min(Math.trunc(column) - 1, line.length)) : 0;
+    view.dispatch({ effects: EditorView.scrollIntoView(line.from + offset, { y: 'center' }) });
   }, [props.location, props.revealLine, props.path]);
 
   return <div className="project-source-code-editor" style={{ height: '100%', minHeight: 0, minWidth: 0, overflow: 'hidden' }} ref={hostRef} aria-label={props.label ?? props.path} />;

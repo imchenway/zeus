@@ -1914,7 +1914,6 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
           taskGitDeliveryRevision={state.taskGitDeliveryRevision}
           onOpenTaskGitReview={(taskId, workspaceId, mode) => setTaskGitReviewState({ taskId, workspaceId, mode })}
           onOpenTaskGitDelivery={(taskId, workspaceId) => openTaskGitDelivery(taskId, workspaceId)}
-          onOpenProjectCommands={() => openProjectCommands(selectedNativeConversation.projectId)}
           onLatestContentVisibilityChange={setLatestConversationContentVisible}
         />
       );
