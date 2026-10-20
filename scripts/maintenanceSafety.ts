@@ -32,8 +32,8 @@ export interface MaintenanceTreeFacts {
   allocatedBytes: number;
 }
 
-/** 离线递归统计，不跟随符号链接，也不把嵌套 Git 元数据当作垃圾。 */
-export async function inspectMaintenanceTree(root: string): Promise<MaintenanceTreeFacts> {
+/** 递归统计且不跟随符号链接；只有明确丢弃工作树时才允许把 Git 元数据纳入摘要。 */
+export async function inspectMaintenanceTree(root: string, includeGitMetadata = false): Promise<MaintenanceTreeFacts> {
   await requireMaintenanceDirectory(root);
   const digest = createHash('sha256');
   const pending = [root];
@@ -43,7 +43,7 @@ export async function inspectMaintenanceTree(root: string): Promise<MaintenanceT
     const directory = pending.pop()!;
     for (const entry of (await readdir(directory, { withFileTypes: true })).sort((left, right) => left.name.localeCompare(right.name))) {
       const path = join(directory, entry.name);
-      if (entry.name === '.git') throw new Error(`历史材料中含 Git 元数据，需单独保全：${path}`);
+      if (entry.name === '.git' && !includeGitMetadata) throw new Error(`历史材料中含 Git 元数据，需单独保全：${path}`);
       const value = await lstat(path, { bigint: true });
       const link = value.isSymbolicLink() ? await readlink(path) : null;
       digest.update(JSON.stringify([relative(root, path), String(value.dev), String(value.ino), String(value.mode), String(value.size), String(value.mtimeNs), link]));
