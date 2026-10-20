@@ -52,8 +52,14 @@ const groups = new WeakMap<object, AlignmentGroup>();
 
 /** 用冲突起止位置连接三份不同长度的文档。 */
 class AlignmentGroup {
+  /** 差异按相同行号对齐两栏；冲突继续按原有块边界对齐三栏。 */
+  constructor(private readonly byLine = false) {}
   /** 当前挂载的三栏和各自的冲突位置。 */
   readonly panes = new Map<EditorView, AlignmentRegion[]>();
+  /** 差异只记录已测量的非零补白，不为每行创建 DOM。 */
+  private readonly lineSpaces = new Map<EditorView, Map<number, number>>();
+  /** 宽度或软换行设置变化后，旧的行高不能继续使用。 */
+  private layout = '';
   /** 将一轮编辑和窗口变化合并成一次测量。 */
   private frame = 0;
   /** 记录程序设置的滚动，避免三栏异步滚动事件互相覆盖。 */
@@ -62,14 +68,16 @@ class AlignmentGroup {
   /** 等三栏完成当前事务后，读取最新软换行布局。 */
   schedule(): void {
     if (this.frame) return;
-    this.frame = requestAnimationFrame(() => {
+    /** 独立预览使用所在窗口的刷新时钟，避免主窗口隐藏后停止对齐。 */
+    const ownerWindow = this.panes.keys().next().value?.dom.ownerDocument.defaultView ?? window;
+    this.frame = ownerWindow.requestAnimationFrame(() => {
       this.frame = 0;
-      if (this.panes.size !== 3) return;
+      if (this.panes.size !== (this.byLine ? 2 : 3)) return;
       /** 使用原生测量阶段，补白变化继续由编辑器校准虚拟行高度。 */
       const view = this.panes.keys().next().value!;
       view.requestMeasure({
         key: this,
-        read: () => this.measure(),
+        read: () => (this.byLine ? this.measureLines() : this.measure()),
         // 测量仍处于编辑器更新中，退出当前事务后再发布块装饰。
         write: (updates) =>
           queueMicrotask(() => {
@@ -89,6 +97,48 @@ class AlignmentGroup {
           }),
       });
     });
+  }
+
+  /** 左右差异的显示行已配对，只按可见真实文本行高补白。 */
+  private measureLines(): Map<EditorView, DecorationSet> {
+    /** 此扩展仅用于行数相同的两份显示文档。 */
+    const panes = [...this.panes.keys()];
+    const [left, right] = panes;
+    if (!left || !right || left.state.doc.lines !== right.state.doc.lines) return new Map();
+    /** 隐藏提交人、拖动栏宽和软换行开关都会改变可用行宽。 */
+    const layout = panes.map((view) => `${view.contentDOM.clientWidth}:${view.lineWrapping}`).join(':');
+    if (layout !== this.layout) {
+      this.layout = layout;
+      this.lineSpaces.clear();
+    }
+    for (const view of panes) if (!this.lineSpaces.has(view)) this.lineSpaces.set(view, new Map());
+    /** 仅比较两侧都已由编辑器实际布局的行，不把虚拟行估算当成实测。 */
+    const heights = panes.map((view) => {
+      const result = new Map<number, number>();
+      for (const block of view.viewportLineBlocks) {
+        const parts = Array.isArray(block.type) ? block.type : [block];
+        const height = parts.filter((part) => part.type === BlockType.Text).reduce((sum, part) => sum + part.height, 0);
+        if (height) result.set(view.state.doc.lineAt(block.from).number, height);
+      }
+      return result;
+    });
+    for (const [line, height] of heights[0]!) {
+      /** 不可见的另一侧保留之前已经核实的高度。 */
+      const other = heights[1]!.get(line);
+      if (other === undefined) continue;
+      this.lineSpaces.get(left)!.delete(line);
+      this.lineSpaces.get(right)!.delete(line);
+      if (Math.abs(height - other) >= 1) this.lineSpaces.get(height < other ? left : right)!.set(line, Math.abs(height - other));
+    }
+    return new Map(
+      panes.map((view) => [
+        view,
+        Decoration.set(
+          [...this.lineSpaces.get(view)!].filter(([line]) => line <= view.state.doc.lines).map(([line, height]) => Decoration.widget({ widget: new AlignmentSpace(height), block: true, side: 1 }).range(view.state.doc.line(line).to)),
+          true,
+        ),
+      ]),
+    );
   }
 
   /** 相同冲突位置已补齐高度，只同步纵向滚动。 */
@@ -165,9 +215,19 @@ class AlignmentGroup {
 
 /** 完整文件和聚焦片段共用同一个对齐扩展。 */
 export function conflictAlignmentExtension(identity: object, regions: AlignmentRegion[]): Extension {
+  return alignmentExtension(identity, regions, false);
+}
+
+/** 左右差异复用冲突视图的测量、补白、虚拟高度和滚动同步机制。 */
+export function diffAlignmentExtension(identity: object): Extension {
+  return alignmentExtension(identity, [], true);
+}
+
+/** 根据实际栏数选择相同行对齐或稀疏冲突块对齐。 */
+function alignmentExtension(identity: object, regions: AlignmentRegion[], byLine: boolean): Extension {
   /** 每组三栏只创建一个协调器。 */
   let group = groups.get(identity);
-  if (!group) groups.set(identity, (group = new AlignmentGroup()));
+  if (!group) groups.set(identity, (group = new AlignmentGroup(byLine)));
   /** 插件生命周期只维护本栏注册，不保留已关闭的编辑器。 */
   const alignment = group;
   return [

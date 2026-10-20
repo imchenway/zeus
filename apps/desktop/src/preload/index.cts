@@ -269,6 +269,17 @@ contextBridge.exposeInMainWorld('zeus', {
   loadFilePreview: (input: unknown) => ipcRenderer.invoke('zeus:file-preview:load', input),
   releaseFilePreview: (ids: string[]) => ipcRenderer.invoke('zeus:file-preview:release', ids),
   actOnFilePreview: (id: string, action: string) => ipcRenderer.invoke('zeus:file-preview:action', id, action),
+  /** 按当前窗口的预览令牌读取准确版本归属。 */
+  loadFilePreviewBlame: (id: string) => ipcRenderer.invoke('zeus:file-preview:blame', id),
+  /** 源码窗口的目录身份由主进程固定，不能通过页面参数覆盖。 */
+  loadFilePreviewSourceWorkspace: () => ipcRenderer.invoke('zeus:file-preview:source-workspace'),
+  /** 重复点击编辑入口时重新选中对应文件，保留窗口内其他草稿。 */
+  onFilePreviewSourceFileRequested: (listener: (path: string) => void) => {
+    /** 消息只来自主进程已经校验的编辑目标。 */
+    const handler = (_event: unknown, path: string) => listener(path);
+    ipcRenderer.on('zeus:file-preview:source-open-file', handler);
+    return () => ipcRenderer.removeListener('zeus:file-preview:source-open-file', handler);
+  },
   readProjectSourceFile: (input: unknown) => ipcRenderer.invoke('zeus:project-source:read-file', input),
   /** 只向受信源码页提供草稿效果预览。 */
   prepareProjectSourcePreview: (input: unknown) => ipcRenderer.invoke('zeus:project-source:prepare-preview', input),

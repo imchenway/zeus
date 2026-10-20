@@ -9,6 +9,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
 import { decodeFilePreviewText, filePreviewKind, filePreviewLimits, filePreviewMime, type FilePreviewIntent, type FilePreviewItem, type FilePreviewRequest, type FilePreviewSource } from '@zeus/shared';
+import { getFilePreviewBlame } from '@zeus/git-core';
 
 /** 只读媒体协议必须在 Electron 就绪前登记；不允许任意 file URL。 */
 protocol.registerSchemesAsPrivileged([
@@ -98,9 +99,11 @@ export function registerFilePreview(services: {
   /** 限定正式应用自身的受信窗口主框架。 */
   requireWindow(event: Electron.IpcMainInvokeEvent): BrowserWindow;
   /** 从业务身份解析授权，附件继续复用原有凭据检查。 */
-  resolve(input: FilePreviewRequest): Promise<FilePreviewIntent>;
+  resolve(input: FilePreviewRequest, window: BrowserWindow): Promise<FilePreviewIntent>;
   /** 当前应用数据下独立的临时资源根。 */
   temporaryRoot: string;
+  /** 只有宿主固定的当前工作区路径能进入源码编辑页。 */
+  openSource(window: BrowserWindow, target: { root: string; path: string }): Promise<void>;
 }): void {
   /** 随机令牌只授予单个文件，绝不包含本地服务密钥。 */
   const grants = new Map<string, PreviewGrant>();
@@ -207,12 +210,12 @@ export function registerFilePreview(services: {
       });
     }
     /** 由业务身份解析出的文件读取授权。 */
-    const intent = await services.resolve(input);
+    const intent = await services.resolve(input, window);
     /** 文件数固定为一份或前后两份，避免批量预加载。 */
     const items = await Promise.all(
       intent.sides.slice(0, 2).map(async (source): Promise<FilePreviewItem> => {
         /** 当前已授权的文件描述。 */
-        const item: FilePreviewItem = { id: '', name: source.name, label: source.label, kind: 'unavailable', mime: filePreviewMime(source.name), byteLength: 0, review: source.review };
+        const item: FilePreviewItem = { id: '', name: source.name, label: source.label, kind: 'unavailable', mime: filePreviewMime(source.name), byteLength: 0, review: source.review, missing: source.missing };
         /** 本次资源专属临时目录。 */
         let temporary: string | undefined;
         /** 解码内容绑定本次授权，释放时随授权回收。 */
@@ -324,6 +327,15 @@ export function registerFilePreview(services: {
                   ? '图标超过 16 MiB 页内预览上限，请用系统应用打开。'
                   : '请用系统应用打开此格式。';
           if ((await fileIdentity(previewPath)) !== identity) throw new Error('读取期间文件发生变化，请刷新。');
+          if (source.edit && item.kind === 'text') {
+            try {
+              // 先核对当前文件存在且仍在工作区内，历史不存在的一侧不伪造编辑目标。
+              await authorizedPath({ ...source.edit, name: source.name, label: source.label });
+              item.canEdit = true;
+            } catch {
+              item.canEdit = false;
+            }
+          }
           item.id = randomUUID();
           if (['image', 'pdf', 'audio', 'video'].includes(item.kind)) item.url = `zeus-preview://${item.id}/${encodeURIComponent(basename(source.name))}`;
           grants.set(item.id, { owner: window.id, source, path: previewPath, temporary, identity, item, image });
@@ -334,6 +346,7 @@ export function registerFilePreview(services: {
             ...item,
             id: '',
             kind: 'unavailable',
+            missing: error instanceof Error && 'code' in error && error.code === 'ENOENT',
             reason:
               error instanceof Error && 'code' in error && error.code === 'ENOENT'
                 ? '此版本中不存在该文件。'
@@ -360,7 +373,22 @@ export function registerFilePreview(services: {
     return release(Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [], window.id);
   });
 
-  ipcMain.handle('zeus:file-preview:action', async (event, id: string, action: 'quick-look' | 'open' | 'reveal' | 'export') => {
+  ipcMain.handle('zeus:file-preview:blame', async (event, id: string) => {
+    /** 归属读取只能使用当前窗口持有的版本令牌。 */
+    const window = services.requireWindow(event);
+    /** 查不到授权、截断文本和未记录 Git 身份的快照都不能借用其他版本。 */
+    const grant = grants.get(id);
+    if (!grant || grant.owner !== window.id) throw new Error('预览授权已失效。');
+    if (!grant.source.git || grant.item.truncated || grant.item.encoding !== 'utf-8') return null;
+    /** 读取前后均验证预览文件身份，防止磁盘变更导致归属错行。 */
+    const path = await currentPath(grant);
+    /** 复用 Git Core 的跨平台进程管理。 */
+    const result = await getFilePreviewBlame(grant.source.git, path);
+    await currentPath(grant);
+    return result;
+  });
+
+  ipcMain.handle('zeus:file-preview:action', async (event, id: string, action: 'quick-look' | 'open' | 'reveal' | 'export' | 'edit') => {
     /** 发起操作的受信窗口。 */
     const window = services.requireWindow(event);
     /** 读取期间切换焦点不改变原来发起操作的预览窗口。 */
@@ -368,6 +396,13 @@ export function registerFilePreview(services: {
     /** 当前窗口持有的资源授权。 */
     const grant = grants.get(id);
     if (!grant || grant.owner !== window.id) throw new Error('预览授权已失效。');
+    if (action === 'edit') {
+      if (!grant.item.canEdit || !grant.source.edit) throw new Error('此文件没有可编辑的工作区版本。');
+      /** 编辑读取最新工作区文件，历史副本只负责提供受信的目标身份。 */
+      const path = await authorizedPath({ ...grant.source.edit, name: grant.item.name, label: grant.item.label });
+      await services.openSource(window, { root: await realpath(grant.source.edit.root), path });
+      return;
+    }
     /** 本次读取的准确文件路径。 */
     const path = await currentPath(grant);
     if (action === 'quick-look') {

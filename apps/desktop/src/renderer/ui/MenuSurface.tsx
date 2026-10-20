@@ -23,6 +23,9 @@ export function MenuSurface({ onClose, ref: forwardedRef, submenuAnchor, ...prop
   useLayoutEffect(() => {
     const element = ref.current;
     if (!open || !element) return;
+    /** 系统预览窗口中的菜单使用自身文档和坐标，不把焦点或事件交给主窗口。 */
+    const ownerDocument = element.ownerDocument;
+    const ownerWindow = ownerDocument.defaultView ?? window;
     // 分组展开后菜单高度也会变化，重新定位以保持在窗口内。
     const updatePosition = () => {
       /** 按实际尺寸贴合窗口边缘，不使用预估菜单高度。 */
@@ -33,18 +36,18 @@ export function MenuSurface({ onClose, ref: forwardedRef, submenuAnchor, ...prop
       if (submenuAnchor) {
         const parent = submenuAnchor.parent.getBoundingClientRect();
         const row = submenuAnchor.row.getBoundingClientRect();
-        const rightSpace = window.innerWidth - parent.right - 12;
+        const rightSpace = ownerWindow.innerWidth - parent.right - 12;
         const leftSpace = parent.left - 12;
         left = rightSpace >= width || rightSpace >= leftSpace ? parent.right + 4 : parent.left - width - 4;
         top = row.top - 5;
       }
-      if (typeof left === 'number') element.style.left = `${Math.max(8, Math.min(left, window.innerWidth - width - 8))}px`;
-      if (typeof top === 'number') element.style.top = `${Math.max(8, Math.min(top, window.innerHeight - height - 8))}px`;
+      if (typeof left === 'number') element.style.left = `${Math.max(8, Math.min(left, ownerWindow.innerWidth - width - 8))}px`;
+      if (typeof top === 'number') element.style.top = `${Math.max(8, Math.min(top, ownerWindow.innerHeight - height - 8))}px`;
     };
     updatePosition();
     const observer = new ResizeObserver(updatePosition);
     observer.observe(element);
-    const previous = submenuAnchor?.row ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+    const previous = submenuAnchor?.row ?? (ownerDocument.activeElement as HTMLElement | null);
     activeMenus.push(element);
     /** 禁用项不可被方向键或首次聚焦选中。 */
     const items = () => [...element.querySelectorAll<HTMLElement>(':is([role="menuitem"], button, summary):not(:disabled):not([aria-disabled="true"])')].filter((item) => item.checkVisibility() && !item.closest('[inert]'));
@@ -63,7 +66,7 @@ export function MenuSurface({ onClose, ref: forwardedRef, submenuAnchor, ...prop
         event.stopImmediatePropagation();
         if (event.key === 'Tab') {
           /** 菜单收起后继续正常的前后焦点顺序，避免 Tab 被困在触发器上。 */
-          const candidates = [...document.querySelectorAll<HTMLElement>('button, a[href], input, select, textarea, [tabindex]')].filter(
+          const candidates = [...ownerDocument.querySelectorAll<HTMLElement>('button, a[href], input, select, textarea, [tabindex]')].filter(
             (candidate) => candidate.tabIndex >= 0 && candidate.checkVisibility() && !candidate.matches(':disabled, [aria-disabled="true"]') && !candidate.closest('[inert]') && !element.contains(candidate),
           );
           const current = previous ? candidates.indexOf(previous) : -1;
@@ -78,24 +81,24 @@ export function MenuSurface({ onClose, ref: forwardedRef, submenuAnchor, ...prop
         event.preventDefault();
         event.stopImmediatePropagation();
         const options = items();
-        const current = options.indexOf(document.activeElement as HTMLElement);
+        const current = options.indexOf(ownerDocument.activeElement as HTMLElement);
         const next = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 : (current + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length;
         options[next]?.focus({ preventScroll: true });
       }
     };
-    document.addEventListener('pointerdown', outside, true);
-    document.addEventListener('scroll', outside, true);
-    document.addEventListener('keydown', keydown, true);
-    window.addEventListener('resize', resized);
+    ownerDocument.addEventListener('pointerdown', outside, true);
+    ownerDocument.addEventListener('scroll', outside, true);
+    ownerDocument.addEventListener('keydown', keydown, true);
+    ownerWindow.addEventListener('resize', resized);
     return () => {
       observer.disconnect();
-      document.removeEventListener('pointerdown', outside, true);
-      document.removeEventListener('scroll', outside, true);
-      document.removeEventListener('keydown', keydown, true);
-      window.removeEventListener('resize', resized);
+      ownerDocument.removeEventListener('pointerdown', outside, true);
+      ownerDocument.removeEventListener('scroll', outside, true);
+      ownerDocument.removeEventListener('keydown', keydown, true);
+      ownerWindow.removeEventListener('resize', resized);
       const index = activeMenus.indexOf(element);
       if (index >= 0) activeMenus.splice(index, 1);
-      if (element.contains(document.activeElement) && previous?.isConnected && !previous.closest('[inert]')) previous.focus({ preventScroll: true });
+      if (element.contains(ownerDocument.activeElement) && previous?.isConnected && !previous.closest('[inert]')) previous.focus({ preventScroll: true });
     };
   }, [open, ref, props.style?.left, props.style?.top, submenuAnchor?.row, submenuAnchor?.parent]);
   return <PopoverSurface {...props} ref={ref} role="menu" data-zeus-primitive="menu" />;
