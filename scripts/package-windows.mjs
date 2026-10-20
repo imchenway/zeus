@@ -91,7 +91,7 @@ async function run(command, args, cwd = root, extraEnvironment = {}) {
 
 /** 编译检查和正式打包共用相同原生资源架构门禁。 */
 async function assertNativeArchitecture(directory) {
-  for (const name of ['ZeusWindowsRuntime.exe', 'zeus-windows-security.exe', 'cua-driver.exe']) await assertPeArchitecture(join(directory, name), arch);
+  for (const name of ['ZeusWindowsRuntime.exe', 'zeus-windows-security.exe', 'ZeusGitAskpass.exe', 'cua-driver.exe']) await assertPeArchitecture(join(directory, name), arch);
   for (const name of ['cua_driver_sdk.dll', 'cua_driver_node_runtime.node']) await assertPeArchitecture(join(directory, `node_modules/@trycua/cua-driver-win32-${arch}-msvc`, name), arch);
 }
 

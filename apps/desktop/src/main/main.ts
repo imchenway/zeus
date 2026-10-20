@@ -83,6 +83,7 @@ import { installReadOnlyValidationIpcFence } from './readOnlyValidationIpcFence.
 import { ProjectSourceWorkspaceService } from './projectSourceWorkspace.js';
 import { ProjectSourcePreviewService } from './projectSourcePreview.js';
 import { type ProjectGitProjectIdentity, ProjectGitWorkbenchService } from './projectGitWorkbench.js';
+import { configureProjectGitAuthentication } from './projectGitAuthentication.js';
 import {
   type CreateProjectSourceEntryInput,
   type MoveProjectSourceEntryInput,
@@ -3728,6 +3729,8 @@ async function initializeApplication(): Promise<void> {
     const codexNativeEnabled = !readOnlyValidationDescriptor && process.env.ZEUS_CODEX_NATIVE_ENABLED !== '0';
     const allowUntrustedReleaseUpdateTest = !readOnlyValidationDescriptor && isTestDistribution() && process.env.ZEUS_ALLOW_UNTRUSTED_UPDATE_TEST === '1';
     const keychainService = activeDesktopKeychainService();
+    // 认证辅助程序随包长期存在；Core、交付任务与模型命令继承同一入口和凭据隔离身份。
+    if (!readOnlyValidationDescriptor) configureProjectGitAuthentication(nativeDesktopHelperPath(process.platform === 'win32' ? 'ZeusGitAskpass.exe' : 'ZeusGitAskpass'), keychainService);
     // Main 只持有窗口、BrowserHost 与短期连接凭据；独立 Zeus Core 是唯一业务 SQLite 写入者。
     const { startDesktopLocalServer } = await import('./localServerRuntime.js');
     traceApplicationStartup('local_server_module_ready');

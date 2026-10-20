@@ -81,7 +81,8 @@ export async function ensureWindowsCodexRemoteControl(codexHome: string): Promis
   disableDaemonAutomaticInstallation(home);
   /** daemon 独立于 Core 与 Zeus 安装目录，命令环境不含 Zeus 私有桥凭据。 */
   const env = normalizeProcessEnvironment(process.env);
-  for (const key of Object.keys(env)) if (key.toUpperCase().startsWith('ZEUS_') || key.toUpperCase() === 'ELECTRON_RUN_AS_NODE') delete env[key];
+  // 认证命名空间是公开的非敏感执行上下文；保留它才能与 Git 页面共用系统记忆。
+  for (const key of Object.keys(env)) if ((key.toUpperCase().startsWith('ZEUS_') && key.toUpperCase() !== 'ZEUS_GIT_ASKPASS_SERVICE') || key.toUpperCase() === 'ELECTRON_RUN_AS_NODE') delete env[key];
   env.CODEX_HOME = home;
   return new Promise((resolveDaemon, reject) => {
     /** 只有此固定 bootstrap 在 Main 原生启动；官方 CLI 自行管理后台 daemon 的生命周期。 */

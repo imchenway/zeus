@@ -25,7 +25,8 @@ internal static class WindowsDesktopBridge
         exitCode = 0;
         // 浏览器只能登记程序路径，复制后的文件名选择专用标准输入输出协议。
         bool browser = string.Equals(Path.GetFileNameWithoutExtension(Environment.ProcessPath), "ZeusBrowserNativeHost", StringComparison.OrdinalIgnoreCase);
-        bool askpass = Environment.GetEnvironmentVariable("ZEUS_WINDOWS_DESKTOP_MODE") == "git-askpass";
+        bool askpass = string.Equals(Path.GetFileNameWithoutExtension(Environment.ProcessPath), "ZeusGitAskpass", StringComparison.OrdinalIgnoreCase)
+            || Environment.GetEnvironmentVariable("ZEUS_WINDOWS_DESKTOP_MODE") == "git-askpass";
         bool clipboard = args.Length == 1 && args[0] == "--clipboard-files";
         bool discover = args.Length > 1 && args[0] == "--find-application";
         // 更新窗口使用独立入口，避免把原生消息或凭据协议解释成界面命令。
@@ -34,7 +35,7 @@ internal static class WindowsDesktopBridge
         try
         {
             if (browser) RunBrowser(args);
-            else if (askpass) exitCode = RunGitPrompt(args);
+            else if (askpass) exitCode = WindowsGitAskpass.Run(args);
             else if (clipboard) Console.Write(JsonSerializer.Serialize(ReadClipboardFiles()));
             else if (updateProgress) WindowsUpdateProgress.Run();
             else Console.Write(JsonSerializer.Serialize(FindInstalledApplications(args[1..])));
@@ -239,35 +240,6 @@ internal static class WindowsDesktopBridge
         output.Flush();
     }
 
-    /// <summary>Git 发起的交互使用系统对话框，凭据只经标准输出交还 Git。</summary>
-    private static int RunGitPrompt(string[] args)
-    {
-        if (args.Length != 1 || string.IsNullOrWhiteSpace(args[0]) || args[0].Length > 8192) return 1;
-        string prompt = args[0];
-        if (prompt.Contains("yes/no", StringComparison.OrdinalIgnoreCase))
-        {
-            // 默认选择拒绝，保留 Git 提供的完整服务器指纹。
-            int answer = MessageBoxW(IntPtr.Zero, prompt, "Zeus · 核对 Git 服务器指纹", 0x00000004 | 0x00000030 | 0x00000100);
-            Console.Write(answer == 6 ? "yes" : "no");
-            return 0;
-        }
-        bool usernameRequested = prompt.Contains("Username", StringComparison.OrdinalIgnoreCase);
-        CredentialUiInfo info = new() { Size = Marshal.SizeOf<CredentialUiInfo>(), Message = prompt, Caption = "Zeus · Git 凭据" };
-        StringBuilder username = new(513);
-        StringBuilder password = new(513);
-        if (!usernameRequested) username.Append("Git");
-        bool save = false;
-        // 通用凭据、每次显示、禁止持久保存；已有 Git 凭据管理器仍由 Git 自己管理。
-        uint flags = 0x00040000 | 0x00000080 | 0x00000002;
-        uint status = CredUIPromptForCredentialsW(ref info, "Zeus Git", IntPtr.Zero, 0, username, username.Capacity, password, password.Capacity, ref save, flags);
-        if (status != 0) return 1;
-        Console.OutputEncoding = new UTF8Encoding(false);
-        Console.Write(usernameRequested ? username.ToString() : password.ToString());
-        username.Clear();
-        password.Clear();
-        return 0;
-    }
-
     /// <summary>从 Windows 文件列表读取路径，不把文件图标误当成图片附件。</summary>
     private static string[] ReadClipboardFiles()
     {
@@ -294,28 +266,6 @@ internal static class WindowsDesktopBridge
         finally { CloseClipboard(); }
     }
 
-    /// <summary>系统凭据对话框结构，字符串只在当前提示生命周期内存在。</summary>
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    private struct CredentialUiInfo
-    {
-        // 原生结构大小。
-        internal int Size;
-        // 父窗口为空，由系统管理凭据窗口。
-        internal IntPtr Parent;
-        // Git 原始提示。
-        [MarshalAs(UnmanagedType.LPWStr)] internal string Message;
-        // 对话框产品标题。
-        [MarshalAs(UnmanagedType.LPWStr)] internal string Caption;
-        // 使用系统默认图像。
-        internal IntPtr Banner;
-    }
-
-    /// <summary>调用 Windows 系统凭据对话框。</summary>
-    [DllImport("credui.dll", CharSet = CharSet.Unicode)]
-    private static extern uint CredUIPromptForCredentialsW(ref CredentialUiInfo info, string target, IntPtr reserved, uint error, StringBuilder username, int usernameLength, StringBuilder password, int passwordLength, [MarshalAs(UnmanagedType.Bool)] ref bool save, uint flags);
-    /// <summary>显示默认拒绝的服务器信任确认。</summary>
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern int MessageBoxW(IntPtr parent, string message, string title, uint type);
     /// <summary>在当前用户会话中读取剪贴板。</summary>
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

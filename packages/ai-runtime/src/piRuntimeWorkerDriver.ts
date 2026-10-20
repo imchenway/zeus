@@ -712,6 +712,13 @@ function workerEnvironment(generationId: string): NodeJS.ProcessEnv {
     'SSL_CERT_DIR',
     'NODE_EXTRA_CA_CERTS',
     'ELECTRON_RUN_AS_NODE',
+    // 本地模型和 Git 工作台共用认证入口；这里只传路径、agent 地址与非敏感身份。
+    'GIT_ASKPASS',
+    'SSH_ASKPASS',
+    'SSH_ASKPASS_REQUIRE',
+    'SSH_AUTH_SOCK',
+    'DISPLAY',
+    'ZEUS_GIT_ASKPASS_SERVICE',
   ];
   const environment: NodeJS.ProcessEnv = { ZEUS_PI_WORKER_GENERATION_ID: generationId };
   for (const key of allowed) {

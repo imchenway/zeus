@@ -21,6 +21,8 @@ const businessZeusEnvironmentKeys = new Set([
   'ZEUS_SHELL_PATH',
   'ZEUS_SHELL_LOGIN',
   'ZEUS_WINDOWS_DESKTOP_MODE',
+  // 仅传递非敏感的系统凭据命名空间；口令始终由原生 askpass 通过管道交给 SSH。
+  'ZEUS_GIT_ASKPASS_SERVICE',
   // 项目内的打包和发布脚本已使用这些业务配置，不能当成宿主控制字段删除。
   'ZEUS_PACKAGE_OUTPUT_DIR',
   'ZEUS_PACKAGE_VARIANT',
