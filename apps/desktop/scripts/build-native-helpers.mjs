@@ -21,6 +21,11 @@ await mkdir(outputDirectory, { recursive: true });
 
 if (process.platform === 'darwin') {
   await compileSwift({
+    source: resolve(desktopRoot, 'native/GitAskpass.swift'),
+    output: resolve(outputDirectory, 'ZeusGitAskpass'),
+    frameworks: ['AppKit', 'Security'],
+  });
+  await compileSwift({
     source: resolve(desktopRoot, 'native/UpdateProgressPanel.swift'),
     output: resolve(outputDirectory, 'ZeusUpdateProgress'),
     frameworks: ['AppKit'],
@@ -113,6 +118,8 @@ async function buildWindowsHelpers() {
     publishDirectory,
   ]);
   await copyFile(resolve(publishDirectory, 'zeus-windows-security.exe'), resolve(outputDirectory, 'zeus-windows-security.exe'));
+  // 文件名选择 askpass 入口，避免全局模式变量误导其他安全组件请求。
+  await copyFile(resolve(publishDirectory, 'zeus-windows-security.exe'), resolve(outputDirectory, 'ZeusGitAskpass.exe'));
   /** Rust 产物固定在当前工作树，不污染共享源码或其他架构。 */
   const targetDirectory = resolve(desktopRoot, '../../.tmp/windows-runtime-target', process.arch);
   /** 显式目标防止 ARM Windows 上的 x64 编译器静默生成错误架构。 */

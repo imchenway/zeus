@@ -1,43 +1,15 @@
-import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { accessSync, constants } from 'node:fs';
+import { isAbsolute } from 'node:path';
 
-/** 凭据仅经 askpass 标准输出交给 Git；临时文件不包含用户输入。 */
-export async function withProjectGitAuthentication<T>(operation: (env: NodeJS.ProcessEnv) => Promise<T>): Promise<T> {
-  if (process.platform === 'win32') {
-    // Git 按需启动随包系统提示程序；秘密仅经其标准输出回传，不写入环境或磁盘。
-    const helper = process.env.ZEUS_WINDOWS_SECURITY_HELPER;
-    if (!helper || !isAbsolute(helper)) throw new Error('Windows Git 凭据组件尚未配置。');
-    await access(helper);
-    return operation({ GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: helper, SSH_ASKPASS: helper, SSH_ASKPASS_REQUIRE: 'force', DISPLAY: 'zeus', ZEUS_WINDOWS_DESKTOP_MODE: 'git-askpass' });
-  }
-  if (process.platform !== 'darwin') return operation({ GIT_TERMINAL_PROMPT: '0' });
-  const directory = await mkdtemp(join(tmpdir(), 'zeus-git-auth-'));
-  const helper = join(directory, 'askpass');
-  try {
-    await writeFile(helper, '#!/bin/sh\nexec /usr/bin/osascript "$0.applescript" "$@"\n', { mode: 0o700 });
-    await writeFile(
-      `${helper}.applescript`,
-      `on run arguments
-  if (count of arguments) is 0 then error number -128
-  set promptText to item 1 of arguments
-  if promptText contains "yes/no" then
-    set resultDialog to display dialog promptText with title "Zeus · 核对 Git 服务器指纹" buttons {"取消", "信任此服务器"} default button "取消" cancel button "取消" giving up after 90
-    if gave up of resultDialog then error number -128
-    return "yes"
-  else if promptText contains "Username" then
-    set resultDialog to display dialog promptText with title "Zeus · Git 用户名" default answer "" buttons {"取消", "继续"} default button "继续" cancel button "取消" giving up after 90
-  else
-    set resultDialog to display dialog promptText with title "Zeus · Git 密码或密钥口令" default answer "" with hidden answer buttons {"取消", "继续"} default button "继续" cancel button "取消" giving up after 90
-  end if
-  if gave up of resultDialog then error number -128
-  return text returned of resultDialog
-end run
-`,
-      { mode: 0o600 },
-    );
-    return await operation({ GIT_ASKPASS: helper, SSH_ASKPASS: helper, SSH_ASKPASS_REQUIRE: 'force', DISPLAY: process.env.DISPLAY || ':0', GIT_TERMINAL_PROMPT: '0' });
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
+/** 在 Core 与模型进程启动前安装共用 askpass；系统凭据库按现有产品身份隔离。 */
+export function configureProjectGitAuthentication(helperPath: string, service: string): void {
+  if (process.platform !== 'darwin' && process.platform !== 'win32') return;
+  if (!isAbsolute(helperPath) || !service || service.trim() !== service || service.length > 160 || /\p{Cc}/u.test(service)) throw new Error('Git 系统认证组件配置无效。');
+  accessSync(helperPath, process.platform === 'win32' ? constants.F_OK : constants.X_OK);
+  // 显式提供的 askpass 和禁用交互策略仍由用户控制；默认覆盖没有终端的模型命令。
+  process.env.GIT_ASKPASS ||= helperPath;
+  process.env.SSH_ASKPASS ||= helperPath;
+  process.env.SSH_ASKPASS_REQUIRE ||= 'force';
+  process.env.DISPLAY ||= 'zeus';
+  process.env.ZEUS_GIT_ASKPASS_SERVICE = `${service}.Git.SSH`;
 }

@@ -20,6 +20,8 @@
     <!-- 只编译本安全程序及桌面桥，避免纳入其他原生项目源码。 -->
     <Compile Include="WindowsSecurityHelper.cs" />
     <Compile Include="WindowsDesktopBridge.cs" />
+    <!-- Git 与模型会话共用系统凭据记忆入口。 -->
+    <Compile Include="WindowsGitAskpass.cs" />
     <Compile Include="WindowsUpdateProgress.cs" />
   </ItemGroup>
 </Project>
