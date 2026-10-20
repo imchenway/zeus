@@ -1,6 +1,7 @@
 import { memo, useLayoutEffect } from 'react';
 import type { NativeSessionItemBuffer, NativeSessionState } from './sessionTypes.js';
 import { type SessionUiLanguage, useAdaptiveTranscriptText } from './ThreadItemView.js';
+import { SessionSweepText } from './SessionSweepText.js';
 
 export type ReasoningSummaryStatus = 'active' | 'waiting' | 'completed' | 'failed' | 'interrupted';
 
@@ -28,16 +29,6 @@ export const SessionReasoningSummary = memo(function SessionReasoningSummary(pro
     </p>
   );
 });
-
-/** 单行与多行活动描述共用文字扫光；视觉副本不参与朗读、选中或布局。 */
-export function SessionSweepText(props: { text: string; className: string; active: boolean }) {
-  return (
-    <span className={`session-sweep-text ${props.className}`}>
-      {props.text}
-      {props.active ? <span className="session-sweep-text-light" data-text={props.text} aria-hidden="true" /> : null}
-    </span>
-  );
-}
 
 export function latestReasoningSummaryText(item: NativeSessionItemBuffer): string {
   const presentation = recordValue(item.payload.presentation);

@@ -32,7 +32,8 @@ import { isAssistantDeliverableItem } from './sessionTypes.js';
 import { type ConversationFileLocation, type ConversationOpenTarget, type ConversationResponseAnnotation, type ConversationResponseTextAnchor, parseCanonicalRequestUserInputQuestions } from '@zeus/shared';
 import { useThreadScrollController } from './useThreadScrollController.js';
 import { TurnChangeCard } from './TurnChanges.js';
-import { latestReasoningSummaryText, reasoningSummaryStatus, SessionReasoningSummary, SessionSweepText } from './SessionReasoningSummary.js';
+import { latestReasoningSummaryText, reasoningSummaryStatus, SessionReasoningSummary } from './SessionReasoningSummary.js';
+import { SessionSweepText } from './SessionSweepText.js';
 import { AnsweredRequestHistory, isAnsweredUserInputRequest, type AnsweredRequestHistoryProps } from './AnsweredRequestHistory.js';
 import { newItemMotionDurationMs, useNewItemMotionIds } from '../ui/useNewItemMotion.js';
 import { captureTranscriptViewportAnchor, compensateTranscriptViewportAnchor, type TranscriptViewportAnchor, useTranscriptViewportVirtualizer } from './transcriptViewportVirtualizer.js';
@@ -52,6 +53,8 @@ export interface ConversationTranscriptProps {
   onLoadNavigationTurn?: (turnId: string) => Promise<void>;
   state: NativeSessionState;
   language: SessionUiLanguage;
+  /** 创建期与持久会话交接共用导航身份，只有真正切换会话才重建正文。 */
+  navigationId?: string;
   assistantLabel?: string;
   historyOnly?: boolean;
   /** 输入框排队区实际挂载时才允许它接管正文中的同一用户消息。 */
@@ -255,9 +258,13 @@ function useStableOptionalCallback<Arguments extends unknown[], Result>(callback
   return callback ? stableCallback : undefined;
 }
 
-/** 会话正文、历史过程与当前状态共用原始事件，仅在展示时分配提示职责。 */
-/** 渲染会话正文、渐进资源、完整目录和历史定位。 */
+/** 会话身份隔离滚动、展开和动效状态；主会话与子线程共用同一切换边界。 */
 export function ConversationTranscript(props: ConversationTranscriptProps) {
+  return <ConversationTranscriptContent key={systemMessageScope(props.state.projectId ?? '', props.navigationId ?? props.state.conversationId)} {...props} />;
+}
+
+/** 渲染会话正文、渐进资源、完整目录和历史定位。 */
+function ConversationTranscriptContent(props: ConversationTranscriptProps) {
   /** 产品会话隔离待确认消息，子线程只读投影不接管主会话写入。 */
   const systemScope = systemMessageScope(props.state.projectId ?? '', props.state.conversationId);
   /** 补写中的消息与权威回执共享身份。 */
@@ -317,6 +324,10 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const [completedAnnouncement, setCompletedAnnouncement] = useState<{ key: string; text: string } | null>(null);
   const completedAnnouncementTrackerRef = useRef<CompletedItemAnnouncementTracker>({ hydrated: false, lastCompletedKey: null });
   const positionedConversationIdRef = useRef<string | null>(null);
+  /** 首次虚拟行测量和贴底收敛后才展示正文，后续更新不重复隐藏已读内容。 */
+  const [historyPositioned, setHistoryPositioned] = useState(false);
+  /** 冷读取等待正文；本地创建和读取失败仍可展示已有消息与恢复入口。 */
+  const canRevealHistoryRef = useRef(false);
   const trackedUserMessageRef = useRef<{ conversationId: string | null; key: string | null; initialized: boolean }>({ conversationId: null, key: null, initialized: false });
   const awaitingReplyMessageIdsRef = useRef<Set<string>>(new Set());
   const awaitingReplyConversationIdRef = useRef<string | null>(null);
@@ -387,6 +398,10 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   const activeTurnId = props.historyOnly ? null : props.state.activeTurnId;
   /** 正文先接管首帧；完整目录只能在已有可见历史后渐进读取。 */
   const historyHydrated = props.transcriptHydrated ?? props.state.snapshot !== null;
+  /** 本地首发已经有正文，不等历史读取或后台定位循环才向用户显示。 */
+  const hasLocalSubmission = !historyHydrated && props.state.itemOrder.some((key) => props.state.items[key]?.optimistic && itemRole(props.state.items[key]!) === 'user');
+  /** 本地首帧直接可见；定位完成后保持可见，不随服务端身份接管重新隐藏。 */
+  const historyReady = historyPositioned || hasLocalSubmission;
   /** 最新轮次取实时状态，不能等待旧首屏快照刷新后才开放重试。 */
   const latestTurn = useMemo(
     () =>
@@ -498,9 +513,11 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
   );
   // 原始思考摘要完整保留在会话状态中；会话记录的当前态选择统一交给行投影处理。
   const items = transcriptItems;
-  latestContentReadyRef.current = historyHydrated && !props.historyLoading && props.state.transportState === 'ready';
+  canRevealHistoryRef.current = historyHydrated || !props.historyLoading;
+  latestContentReadyRef.current = historyPositioned && historyHydrated && !props.historyLoading && props.state.transportState === 'ready';
   const enteringItemIds = useNewItemMotionIds(
-    items.map((item) => item.key),
+    // 空的助手事件尚无正文可展示；首段文字或资源到达时才启动已有入场动效。
+    items.filter((item) => !['assistant', 'commentary'].includes(itemRole(item)) || Boolean(transcriptItemText(item, props.language).trim()) || item.resources.length > 0).map((item) => item.key),
     newItemMotionDurationMs,
     historyHydrated,
     props.state.transcriptLiveItemKeys ?? [],
@@ -636,7 +653,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     [turnRowsByKey, expandedRowKeys],
   );
   const viewportVirtualizer = useTranscriptViewportVirtualizer({
-    scopeKey: props.state.conversationId,
+    scopeKey: props.navigationId ?? props.state.conversationId,
     rowKeys: turnRowKeys,
     rowLayoutSignature,
     pinnedRowKeys,
@@ -808,7 +825,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     // 即使底部位置未变化，加载完成或会话身份变化后也必须重新报告可见事实。
     lastReportedLatestVisibilityRef.current = null;
     scheduleLatestContentVisibility();
-  }, [historyHydrated, props.historyLoading, props.state.transportState, props.state.conversationId, props.onLatestContentVisibilityChange, scheduleLatestContentVisibility]);
+  }, [historyHydrated, historyPositioned, props.historyLoading, props.state.transportState, props.state.conversationId, props.onLatestContentVisibilityChange, scheduleLatestContentVisibility]);
 
   /** 只读取已经挂载的可见行，当前刻度变化才刷新状态。 */
   const updateNavigationCurrent = useCallback(
@@ -933,12 +950,14 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       if (userScrollIntentRef.current) {
         latestPositionFrameRef.current = null;
         latestPositionConvergenceRequestedRef.current = false;
+        if (canRevealHistoryRef.current) setHistoryPositioned(true);
         return;
       }
       const effect = scrollController.onDelta();
       if (effect.type !== 'scroll_to_bottom') {
         latestPositionFrameRef.current = null;
         latestPositionConvergenceRequestedRef.current = false;
+        if (canRevealHistoryRef.current) setHistoryPositioned(true);
         scheduleLatestContentVisibility();
         return;
       }
@@ -959,6 +978,8 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       }
       latestPositionFrameRef.current = null;
       latestPositionConvergenceRequestedRef.current = false;
+      // 沿用有上限的定位循环；不额外等待网络、图片或持续输出结束。
+      if (canRevealHistoryRef.current) setHistoryPositioned(true);
     };
     schedulePass();
   }, [positionLatest, scheduleLatestContentVisibility, scrollController]);
@@ -1009,6 +1030,13 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
     },
     [],
   );
+
+  useLayoutEffect(() => {
+    if (!hasLocalSubmission || !containerRef.current) return;
+    // 本地消息在绘制前直接贴底；后续资源仍沿用原有滚动收敛，不重新隐藏正文。
+    positionLatest(containerRef.current);
+    setHistoryPositioned(true);
+  }, [hasLocalSubmission, positionLatest]);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
@@ -1123,7 +1151,7 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
 
   useLayoutEffect(() => {
     maintainLatestPosition();
-  }, [maintainLatestPosition, props.creationStatus?.error, props.creationStatus?.state, props.state.transcriptRevision]);
+  }, [historyHydrated, maintainLatestPosition, props.creationStatus?.error, props.creationStatus?.state, props.historyLoading, props.state.transcriptRevision]);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
@@ -1454,9 +1482,10 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
       <div
         ref={shellRef}
         className="session-transcript-shell"
-        data-conversation-transition="true"
-        data-history-ready={historyHydrated || undefined}
-        data-history-loading={!historyHydrated || undefined}
+        data-history-ready={historyReady || undefined}
+        data-history-loading={!historyReady || undefined}
+        data-local-submission={hasLocalSubmission || undefined}
+        aria-busy={!historyReady || undefined}
         data-navigation-ready={(showNavigation && !navigation.error) || undefined}
       >
         <section
@@ -1606,7 +1635,11 @@ export function ConversationTranscript(props: ConversationTranscriptProps) {
         >
           {props.language === 'zh-CN' ? '返回最新消息' : 'Return to latest'}
         </button>
-        <TranscriptHistoryLoading visible={Boolean(props.historyLoading)} initializing={Boolean(props.state?.transcriptInitializing)} language={props.language} />
+        <TranscriptHistoryLoading
+          visible={!historyReady && (Boolean(props.historyLoading) || (!props.creationStatus && props.state.transportState !== 'failed'))}
+          initializing={Boolean(props.state?.transcriptInitializing)}
+          language={props.language}
+        />
       </div>
     </ConversationImageResourcesContext.Provider>
   );

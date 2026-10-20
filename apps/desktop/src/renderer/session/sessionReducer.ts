@@ -28,6 +28,7 @@ import type {
   TransportState,
 } from './sessionTypes.js';
 import { isAssistantDeliverableItem } from './sessionTypes.js';
+import { hasUnfinishedConversationTurn } from './conversationQueuePresentation.js';
 import type { ZeusBrowserComment, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { type ConversationContextDraft, emptyConversationContextDraft, type TaskPushMessageLayout } from '@zeus/shared';
 import { mergeConversationContentV2, reconcileConversationHistoryCache } from './conversationSnapshotV2Adapter.js';
@@ -1698,23 +1699,14 @@ function mergeStableUserMessagePresentation(previous: Record<string, unknown> | 
   };
 }
 
+/** 本地提交立即进入显示；重复派发只更新原消息，不能被自己的运行状态误判成排队。 */
 function addOptimisticUserItem(state: NativeSessionState, action: Extract<NativeSessionAction, { type: 'send_started' }>): NativeSessionState {
   const existingOptimisticEntry = optimisticUserItemEntry(state, action.clientUserMessageId);
   const key = existingOptimisticEntry?.[0] ?? optimisticUserItemKey(state, action.clientUserMessageId);
   const conversationId = state.conversationId ?? 'pending-conversation';
   const threadId = state.providerThreadId ?? 'pending-thread';
-  /** 活跃轮次后的普通发送进入输入框排队区；任务推送首条消息仍属于新会话正文。 */
-  const queuedForActiveTurn =
-    !action.taskPushLayout &&
-    action.delivery === 'queue' &&
-    (action.previousConversationState === 'starting_turn' ||
-      action.previousConversationState === 'active_prework' ||
-      action.previousConversationState === 'active_final_answer' ||
-      action.previousConversationState === 'waiting_approval' ||
-      action.previousConversationState === 'waiting_user_input' ||
-      state.queue?.state.type === 'active' ||
-      state.queue?.state.type === 'waiting' ||
-      state.queue?.state.type === 'dispatching');
+  /** 只在首次提交时判断等待关系；任务首发和已在正文中的输入不因自身派发改到排队区。 */
+  const queuedForActiveTurn = !action.taskPushLayout && action.delivery === 'queue' && (existingOptimisticEntry ? existingOptimisticEntry[1].payload.queuedForActiveTurn === true : hasUnfinishedConversationTurn(state));
   const item: NativeSessionItemBuffer = {
     key,
     conversationId,

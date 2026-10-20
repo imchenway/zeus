@@ -508,6 +508,8 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
   const controllerEnabled = props.controllerEnabled !== false;
   const [continuedHistoryConversationId, setContinuedHistoryConversationId] = useState<string | null>(null);
   const historySnapshotOnly = Boolean(props.historyOnly && continuedHistoryConversationId !== props.conversation.id);
+  /** 只决定首次读取策略；续聊由原控制器按需连接，不能重建并清空已显示正文。 */
+  const initialRealtimePolicy = useMemo(() => (props.historyOnly ? 'lazy' : 'auto'), [props.conversation.projectId, props.conversation.id]);
   // 真实 id 到达时只重建内部 controller，外层工作面和输入 DOM 保持同一 React 身份。
   const initialCachedState = useMemo(() => props.initialCachedState, [props.conversation.id, props.conversation.projectId]);
   const initialOptimisticState = useMemo(() => props.initialOptimisticState, [props.conversation.id, props.conversation.projectId]);
@@ -518,7 +520,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     initialCachedState,
     initialOptimisticState,
     enabled: controllerEnabled,
-    realtimePolicy: historySnapshotOnly ? 'lazy' : 'auto',
+    realtimePolicy: initialRealtimePolicy,
   });
   const workspaceStateSelector = useMemo(createSessionWorkspaceStateSelector, [controller]);
   const state = useSessionControllerSelector(controller, workspaceStateSelector);
@@ -2881,6 +2883,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   <SessionTranscriptProjection
                     state={props.state}
                     controller={props.stateController}
+                    navigationId={navigationId}
                     language={props.language}
                     assistantLabel={assistantLabel}
                     historyOnly={props.historyOnly}
