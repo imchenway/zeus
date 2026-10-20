@@ -29,6 +29,7 @@ import { pendingResourceDisplayName } from '../ui/pendingResourcePolicy.js';
 import { McpAppFrame, type McpAppToolCall, type McpAppToolResult } from './McpAppFrame.js';
 import { AnsweredRequestHistory, type AnsweredRequestHistoryProps } from './AnsweredRequestHistory.js';
 import { ConversationComposerAttachments } from './ConversationComposerAttachments.js';
+import { SessionSweepText } from './SessionSweepText.js';
 
 export type SessionUiLanguage = 'zh-CN' | 'en-US';
 export type ThreadItemRole = 'user' | 'assistant' | 'commentary' | 'notice' | 'tool' | 'file' | 'image' | 'request' | 'error' | 'unknown';
@@ -683,7 +684,14 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       ) : role === 'error' ? (
         <VisibleApplicationError error={visibleThreadItemError(props.item)} language={props.language === 'zh-CN' ? 'zh-CN' : 'en'} />
       ) : role === 'image' ? (
-        <GeneratedImageItem item={props.item} language={props.language} onOpenResource={props.onOpenResource} onLoadResourcePreview={props.onLoadResourcePreview} onVisibleContentChange={props.onVisibleContentChange} />
+        <GeneratedImageItem
+          item={props.item}
+          language={props.language}
+          motionActive={props.motionActive}
+          onOpenResource={props.onOpenResource}
+          onLoadResourcePreview={props.onLoadResourcePreview}
+          onVisibleContentChange={props.onVisibleContentChange}
+        />
       ) : mcpApp ? (
         <McpAppFrame value={props.item.payload.app} context={props.item.payload} language={props.language} onCallTool={props.onCallMcpAppTool} />
       ) : command ? (
@@ -760,7 +768,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
           onRenderSettled={handleMarkdownSettled}
         />
       ) : role === 'assistant' && props.item.status !== 'completed' ? (
-        <span className="session-thinking-indicator">{labels.thinking}</span>
+        <SessionSweepText className="session-current-status-text" text={labels.thinking} active={Boolean(props.motionActive)} />
       ) : null}
       {!command && !mcpApp && !recoveredRequestUserInput ? <TypedItemFacts item={props.item} role={role} language={props.language} /> : null}
       {role !== 'error' && conversationContext ? <UserConversationContextSummary draft={conversationContext} language={props.language} /> : null}
@@ -1188,6 +1196,8 @@ function TypedItemFacts(props: { item: NativeSessionItemBuffer; role: ThreadItem
 function GeneratedImageItem(props: {
   item: NativeSessionItemBuffer;
   language: SessionUiLanguage;
+  /** 只让当前活动消息播放扫光，历史或失焦消息沿用静态显示。 */
+  motionActive?: boolean;
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
   onLoadResourcePreview?: (resource: ConversationResource) => Promise<ConversationResourcePreview>;
   onVisibleContentChange?: () => void;
@@ -1195,7 +1205,7 @@ function GeneratedImageItem(props: {
   if (props.item.status !== 'completed') {
     return (
       <div className="session-generated-image-progress" role="status">
-        <span className="session-thinking-indicator">{props.language === 'zh-CN' ? '正在生成图片' : 'Generating image'}</span>
+        <SessionSweepText className="session-current-status-text" text={props.language === 'zh-CN' ? '正在生成图片' : 'Generating image'} active={Boolean(props.motionActive)} />
       </div>
     );
   }

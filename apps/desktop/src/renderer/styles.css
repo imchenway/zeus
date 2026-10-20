@@ -14562,10 +14562,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   pointer-events: none;
 }
 
-/* 推送弹窗加宽容纳工作区右栏，标题和底部操作继续固定。 */
+/* 推送弹窗从加载首帧固定高度，内容只在内部滚动；小窗口随视口收缩。 */
 .macos-ai-app .task-model-push-modal {
   inline-size: min(1280px, calc(100vw - 40px));
-  max-block-size: min(820px, calc(100vh - 48px));
+  block-size: min(820px, calc(100dvh - 48px));
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;

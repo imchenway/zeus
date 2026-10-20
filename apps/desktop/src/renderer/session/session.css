@@ -3013,26 +3013,22 @@
   animation: session-title-flow-in 140ms var(--session-ease-out) both;
 }
 
-/* 正文切换用短促淡入接管，不移动滚动位置或延后可交互时间。 */
-.session-codex-parity-v1 .session-transcript-shell[data-conversation-transition='true'] {
-  animation: session-history-takeover 180ms var(--session-ease-out) both;
-}
-
-/* 冷读取先隐藏空记录区；快照到达后正文与加载层原位交叉接管。 */
+/* 冷热切换都在首次定位后原位淡入；滚动容器不做位移，避免污染锚点测量。 */
 .session-codex-parity-v1 .session-transcript-shell > .session-transcript {
-  transition:
-    opacity 180ms var(--session-ease-out),
-    transform 180ms var(--session-ease-out);
+  transition: opacity 220ms var(--session-ease-out);
 }
 
 .session-codex-parity-v1 .session-transcript-shell[data-history-loading='true'] > .session-transcript {
   opacity: 0;
-  transform: translateY(3px);
 }
 
 .session-codex-parity-v1 .session-transcript-shell[data-history-ready='true'] > .session-transcript {
   opacity: 1;
-  transform: none;
+}
+
+/* 本地提交是即时反馈，不参与冷历史淡入，也不等待后台窗口恢复动画。 */
+.session-codex-parity-v1 .session-transcript-shell[data-local-submission='true'] > .session-transcript {
+  transition: none;
 }
 
 /* 冷会话在消息区原位接管，骨架层和记录区共享同一尺寸，不触发布局跳变。 */
@@ -3056,10 +3052,19 @@
 
 .session-codex-parity-v1 .session-transcript-loading[data-visible='true'] {
   opacity: 1;
+  /* 热缓存通常先完成定位，短暂接管不闪出骨架；冷读取继续显示同一加载层。 */
   transition:
-    opacity 140ms var(--session-ease-out),
-    visibility 0s;
+    opacity 140ms var(--session-ease-out) 120ms,
+    visibility 0s linear 120ms;
   visibility: visible;
+}
+
+/* 首次挂载也从隐藏状态开始，让热会话的骨架延迟真正生效。 */
+@starting-style {
+  .session-codex-parity-v1 .session-transcript-loading[data-visible='true'] {
+    opacity: 0;
+    visibility: hidden;
+  }
 }
 
 .session-codex-parity-v1 .session-transcript-loading-content {
@@ -3133,20 +3138,8 @@
   }
 }
 
-@keyframes session-history-takeover {
-  from {
-    opacity: 0.78;
-    transform: translateY(3px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .session-codex-parity-v1 .session-thread-title-copy[data-conversation-transition='true'],
-  .session-codex-parity-v1 .session-transcript-shell[data-conversation-transition='true'],
   .session-codex-parity-v1 .session-transcript-loading[data-visible='true'] {
     animation: none;
     transform: none;
@@ -5379,21 +5372,14 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   inline-size: 100%;
 }
 
-.session-codex-parity-v1 .session-thinking-indicator {
-  animation: session-thinking-enter 600ms var(--session-ease-out) both;
-  color: var(--session-text-muted);
-  display: inline-block;
-  overflow: hidden;
-  position: relative;
-}
-
 .session-codex-parity-v1 .session-transcript-thinking {
   align-items: center;
   display: flex;
   gap: 8px;
 }
 
-/* 连接、重试与执行状态共用字体和字号，文字扫光统一由状态组件承载。 */
+/* 思考、图片生成、连接、重试与执行状态共用字体和字号，扫光由同一组件承载。 */
+.session-codex-parity-v1 .session-current-status-text,
 .session-codex-parity-v1 .session-transcript-thinking,
 .session-codex-parity-v1 .session-creation-status:is(.is-creating, .is-retrying) {
   color: var(--session-text-muted);
@@ -5411,15 +5397,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   block-size: 6px;
   border-radius: 999px;
   inline-size: 6px;
-}
-
-.session-codex-parity-v1 .session-thinking-indicator::after {
-  animation: session-thinking-shimmer 5000ms linear infinite;
-  background: linear-gradient(90deg, transparent, var(--session-shimmer), transparent);
-  content: '';
-  inset: 0;
-  position: absolute;
-  transform: translateX(-110%);
 }
 
 .session-codex-parity-v1 .session-return-latest {
@@ -7727,24 +7704,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
     inset: 0;
     position: absolute;
     z-index: 8;
-  }
-}
-
-@keyframes session-thinking-enter {
-  from {
-    opacity: 0;
-  }
-}
-
-@keyframes session-thinking-shimmer {
-  0% {
-    transform: translateX(-110%);
-  }
-  20% {
-    transform: translateX(110%);
-  }
-  100% {
-    transform: translateX(110%);
   }
 }
 
@@ -11463,6 +11422,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 .session-codex-parity-v1 .session-reasoning-summary,
 .session-codex-parity-v1 .session-activity-live,
 .session-codex-parity-v1 .session-activity-item-title,
+.session-codex-parity-v1 .session-current-status-text,
 .session-codex-parity-v1 .session-transcript-thinking,
 .session-codex-parity-v1 .session-command-summary-copy strong,
 .session-codex-parity-v1 .session-answered-request > details > summary,
@@ -12493,16 +12453,10 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 }
 
 .session-codex-parity-v1 .session-activity-live,
-.session-codex-parity-v1 .session-thinking-indicator,
-.session-codex-parity-v1 .session-thinking-indicator::after,
 .session-codex-parity-v1 .session-thinking-pulse,
 .session-codex-parity-v1 .session-streaming-markdown-placeholder,
 .session-codex-parity-v1 .session-streaming-markdown-placeholder span {
   animation: none;
-}
-
-.session-codex-parity-v1 .session-thinking-indicator::after {
-  display: none;
 }
 
 .session-codex-parity-v1 :where(.session-activity-item-icon, .session-plan-summary-symbol) {
@@ -12535,11 +12489,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   animation: session-working-breathe var(--session-working-cycle) var(--session-ease-out) infinite;
   background: var(--session-working-color);
   box-shadow: 0 0 0 3px var(--session-working-halo);
-  color: var(--session-working-color);
-}
-
-.session-codex-parity-v1 .session-thread-item[data-motion-active='true'] .session-thinking-indicator {
-  animation: session-working-breathe var(--session-working-cycle) var(--session-ease-out) infinite;
   color: var(--session-working-color);
 }
 
@@ -12675,6 +12624,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 .session-codex-parity-v1 .session-transcript {
   /* 自动跟随由滚动控制器逐帧收敛；不能再被全局 smooth 变成延迟滚动。 */
   scroll-behavior: auto;
+  /* 虚拟列表统一补偿阅读锚点，浏览器不能再对同一高度变化重复纠偏。 */
+  overflow-anchor: none;
   /* 总计约三行正文高度，让最新消息与 composer 之间保留稳定的可滚动安全区。 */
   padding-block-end: 72px;
 }
@@ -12758,7 +12709,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
       .session-activity-item-icon,
       .session-plan-summary-symbol,
       .session-thinking-pulse,
-      .session-thinking-indicator,
       .session-streaming-markdown-placeholder,
       .session-streaming-markdown-placeholder span,
       .session-loading-line,

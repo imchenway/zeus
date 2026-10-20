@@ -61,13 +61,27 @@ export function visibleQueuedSubmissions(queue: NativeQueueSnapshot | null): Nat
     .sort((left, right) => left.position - right.position || (left.createdAt ?? '').localeCompare(right.createdAt ?? '') || left.id.localeCompare(right.id));
 }
 
-/** 只有被当前轮次、前序消息或明确等待原因阻塞的提交才展示排队；空闲队首正在交接发送。 */
-export function isSubmissionWaitingInQueue(queue: NativeQueueSnapshot | null, submission: NativeQueuedSubmission | null): boolean {
+/** 轮次结束事件可以先于队列刷新；旧 active 状态不能把下一条输入误放进排队区。 */
+export function hasUnfinishedConversationTurn(state: NativeSessionState): boolean {
+  /** 队列派发还没有轮次身份，但后续输入确实需要等待。 */
+  const queueState = state.queue?.state;
+  if (queueState?.type === 'dispatching') return true;
+  /** 实时轮次和队列可能交错到达，终态身份对两种来源同样有效。 */
+  const turnIds = [state.activeTurnId, queueState?.type === 'active' || queueState?.type === 'waiting' ? queueState.turnId : null];
+  return turnIds.some((id) => Boolean(id && !state.terminalTurnIds[id]));
+}
+
+/** 只有被未结束轮次、前序消息或明确等待原因阻塞的提交才展示排队。 */
+export function isSubmissionWaitingInQueue(state: NativeSessionState, submission: NativeQueuedSubmission | null): boolean {
+  /** 提交和轮次终态必须来自同一份显示快照。 */
+  const queue = state.queue;
   if (!queue || !submission || submission.providerTurnId) return false;
   if (submission.status === 'paused') return true;
   if (submission.status !== 'queued') return false;
   if (queue.state.type === 'dispatching') return queue.state.submissionId !== submission.id;
-  return queue.state.type !== 'idle' || Boolean(queue.waitReason && queue.waitReason !== 'dispatch_pending') || visibleQueuedSubmissions(queue)[0]?.id !== submission.id;
+  /** 已完成轮次留下的旧提交不再占据等待队首；未知送达和明确暂停仍保留。 */
+  const firstWaiting = visibleQueuedSubmissions(queue).find((candidate) => !candidate.providerTurnId || !state.terminalTurnIds[candidate.providerTurnId]);
+  return queue.state.type === 'paused' || hasUnfinishedConversationTurn(state) || Boolean(queue.waitReason && !['dispatch_pending', 'current_turn'].includes(queue.waitReason)) || firstWaiting?.id !== submission.id;
 }
 
 /** 输入框卡片立即接管活跃轮次后的本地消息；权威队列到达后再开放操作。 */
@@ -89,7 +103,7 @@ export function composerQueuedSubmissions(state: NativeSessionState): ComposerQu
         !submission.error &&
         submission.pausedReason !== 'preflight_failed' &&
         submission.pausedReason !== 'runtime_rejected' &&
-        isSubmissionWaitingInQueue(state.queue, submission),
+        isSubmissionWaitingInQueue(state, submission),
     )
     .map((submission) => ({ ...submission, localOnly: false }));
   /** 所有权威提交身份用于在实时事件到达时原位替换本地投影。 */
@@ -101,6 +115,7 @@ export function composerQueuedSubmissions(state: NativeSessionState): ComposerQu
     /** 只读取当前稳定条目，不为已经清理的顺序占位生成空卡片。 */
     const item = state.items[key];
     if (!item || !item.optimistic || item.type !== 'userMessage' || item.payload.delivery !== 'queue' || item.payload.queuedForActiveTurn !== true) return [];
+    if (!hasUnfinishedConversationTurn(state)) return [];
     if (item.status !== 'pending' && item.status !== 'queued') return [];
     /** 本地客户端身份是等待接纳期间唯一可依赖的去重键。 */
     const clientUserMessageId = item.clientUserMessageId ?? item.durableClientUserMessageId;
