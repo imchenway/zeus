@@ -1264,6 +1264,8 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       createdAt: now(),
       dispatchedAt: now(),
     });
+    // 直接引导当前轮次也属于用户发送，与普通队列提交共用活跃刷新事件。
+    options.broadcast('conversation.submission.accepted', { conversationId: conversation.id, submissionId: submission.id });
     if (existingSubmission) {
       if (existingSubmission.status === 'dispatching' || existingSubmission.status === 'active') {
         return accepted(existingSubmission, 'steering', conversation.providerThreadId, input.expectedTurnId);

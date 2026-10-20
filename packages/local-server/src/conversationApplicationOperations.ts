@@ -279,6 +279,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     prepareTaskIntegrationAiAttempt,
     projects,
     publishNativeConversationEvent,
+    publishRealtimeEvent,
     readServiceTierOverride,
     readTaskWorkspaceReview,
     reconnectNonCodexLegacyConversationRuntime,
@@ -678,6 +679,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
       })),
     });
     await db.save();
+    // 专家会话父轮次承载用户发送，内部专家执行仍由项目统计排除。
+    publishNativeConversationEvent('conversation.submission.accepted', { conversationId: parentConversation.id, submissionId });
     publishNativeConversationEvent('conversation.expert.round.changed', {
       conversationId: parentConversation.id,
       submissionId,
@@ -1477,6 +1480,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
     await db.save();
     const updatedConversation = conversations.getById(conversation.id);
     if (!updatedConversation) throw new Error(`Zeus conversation not found: ${conversation.id}`);
+    // 旧运行时的用户追问同样更新项目活跃统计，通知在消息保存后发送。
+    publishRealtimeEvent('conversation.submission.accepted', { projectId: project.id, conversationId: conversation.id });
     return {
       statusCode: 201,
       body: {

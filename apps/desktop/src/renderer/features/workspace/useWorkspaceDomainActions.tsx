@@ -570,6 +570,10 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     const unsubscribe = subscribeRealtimeEvents(
       (event) => {
         observeInputSuggestion(event);
+        // 原生用户发送及旧运行时首条消息刷新完整统计；普通会话状态变化不进入此路径。
+        if (props.nativeConversationClient && (event.type === 'conversation.submission.accepted' || event.type === 'runtime.session.created')) {
+          void reloadProjects().catch((error: unknown) => recordRealtimeSynchronizationError('project-activity-refresh', error));
+        }
         if (event.type === 'codex.models.changed') {
           // 当前连接发布新目录后，所有模型选择器共用一次能力变更通知。
           if (event.payload.succeeded === true) window.dispatchEvent(new Event(codexCapabilitiesChangedEvent));
@@ -715,7 +719,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
         statusSyncGeneration += 1;
         clearStatusSyncRetry();
         if (state === 'connected') {
-          // 补读断线期间的完整项目统计；同一小时仍沿用冻结顺序。
+          // 补读断线期间的完整项目统计；仅尚未记录的本小时首次活跃允许重排。
           if (props.nativeConversationClient) void reloadProjects().catch((error: unknown) => recordRealtimeSynchronizationError('project-activity-reconciliation', error));
           // 断线期间可能错过目录事件，连接恢复后补读当前快照。
           window.dispatchEvent(new Event(codexCapabilitiesChangedEvent));

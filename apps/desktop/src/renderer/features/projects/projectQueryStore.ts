@@ -15,7 +15,7 @@ export interface ProjectQuerySnapshot {
 }
 
 export class ProjectQueryStore extends ExternalStore<ProjectQuerySnapshot> {
-  /** 最近完整小时冻结的顺序，不由会话状态或单条项目更新推进。 */
+  /** 整点及首次活跃共同维护的顺序，不由会话状态或单条项目更新推进。 */
   private activityOrder: ProjectActivityOrder;
 
   /** 首屏恢复已保存的自动顺序，再接入当前小时的完整统计。 */
@@ -43,16 +43,25 @@ export class ProjectQueryStore extends ExternalStore<ProjectQuerySnapshot> {
     return this.activityOrder.hour;
   }
 
-  /** 完整查询允许推进小时；编辑回执及筛选列表只更新内容。 */
+  /** 完整查询允许整点或首次活跃重排；编辑回执及筛选列表只更新内容。 */
   replace(items: readonly ProjectRecord[], complete = true): void {
     /** 迟到响应不能把已知统计时间回退到上个小时。 */
     const previousActivity = new Map(this.snapshot.items.map((item) => [item.id, item]));
+    /** 合并缓存之前判断新鲜度，不能用局部新统计补成一次完整的新小时响应。 */
+    const fresh = complete && items.every((item) => (item.activityHour ?? -1) >= (previousActivity.get(item.id)?.activityHour ?? -1));
     items = items.map((item) => {
       /** 其他项目字段仍由既有查询流程接管。 */
       const previous = previousActivity.get(item.id);
-      return (previous?.activityHour ?? -1) > (item.activityHour ?? -1) ? { ...item, activityHour: previous?.activityHour, hourlyUserMessageCount: previous?.hourlyUserMessageCount } : item;
+      if ((previous?.activityHour ?? -1) > (item.activityHour ?? -1)) {
+        return { ...item, activityHour: previous?.activityHour, hourlyUserMessageCount: previous?.hourlyUserMessageCount, currentHourUserMessageCount: previous?.currentHourUserMessageCount };
+      }
+      // 同小时并发查询可能逆序返回，已确认发送次数不能被旧响应降低。
+      if (previous?.activityHour === item.activityHour && (previous?.currentHourUserMessageCount ?? -1) > (item.currentHourUserMessageCount ?? -1)) {
+        return { ...item, currentHourUserMessageCount: previous?.currentHourUserMessageCount };
+      }
+      return item;
     });
-    this.activityOrder = resolveProjectActivityOrder(items, readProjectActivityOrder(this.activityOrder), complete);
+    this.activityOrder = resolveProjectActivityOrder(items, readProjectActivityOrder(this.activityOrder), fresh);
     writeProjectActivityOrder(this.activityOrder);
     /** 各项目视图直接复用此顺序，不各自计算活跃排名。 */
     const ranks = new Map(this.activityOrder.projectIds.map((id, index) => [id, index]));
@@ -93,8 +102,12 @@ export class ProjectQueryStore extends ExternalStore<ProjectQuerySnapshot> {
     this.replace(items, false);
   }
 
+  /** 删除回执只移除可见记录，不把缓存统计作为一次完整刷新。 */
   remove(projectId: string): void {
-    this.replace(this.snapshot.items.filter((item) => item.id !== projectId));
+    this.replace(
+      this.snapshot.items.filter((item) => item.id !== projectId),
+      false,
+    );
   }
 
   private requireClient(): ProjectApiClient {
