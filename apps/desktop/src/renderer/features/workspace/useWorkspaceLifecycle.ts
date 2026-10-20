@@ -44,7 +44,7 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
     zeusWindowForeground,
   } = state;
   const { acknowledgeNativeConversationAttention, nativeConversationAttentionRetryRevision, openTaskConflictAiConversation, recordLocalError, refreshArchivedConversations } = domainActions;
-  const { openProjectSection, openProjectCommands, refreshCodexConfigImport, requestWorkspaceLeave } = operations;
+  const { openProjectSection, openProjectCommands, toggleProjectGit, refreshCodexConfigImport, requestWorkspaceLeave } = operations;
   useEffect(() => {
     if (activeNavTarget !== 'settings' || settingsCategory !== 'runtime' || codexConfigImportPreview || codexConfigImportLoading || !props.onInspectCodexConfigImport) return;
     void refreshCodexConfigImport();
@@ -182,18 +182,20 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
     return () => window.cancelAnimationFrame(frame);
   }, [sessionDrawerReady, sessionDrawerTarget]);
   useEffect(() => {
-    /** 保留原有快捷键，Git 和命令统一进入源码工作区。 */
+    /** 保留原有快捷键，源码整页、Git 侧栏与命令弹窗共用鼠标入口语义。 */
     function onProjectWorkspaceShortcut(event: globalThis.KeyboardEvent): void {
       if (!(isMacOSPlatform() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) || event.altKey || event.shiftKey || event.repeat || event.isComposing || event.defaultPrevented) return;
       // 已关闭但仍在退出动画中的弹层不继续屏蔽工作区快捷键。
-      if (!['1', '2', '3', '4'].includes(event.key) || activeNavTarget === 'settings' || !selectedProject || document.querySelector('[aria-modal="true"]:not([aria-hidden="true"])')) return;
+      if (!['1', '2', '3', '4'].includes(event.key) || !selectedProject || document.querySelector('[aria-modal="true"]:not([aria-hidden="true"])')) return;
       event.preventDefault();
-      if (event.key === '4') openProjectCommands(selectedProject.id);
-      else openProjectSection(selectedProject, event.key === '1' ? 'tasks' : 'code', event.key === '2' ? 'git' : 'source');
+      if (event.key === '4') {
+        if (props.commandClient) openProjectCommands(selectedProject.id);
+      } else if (event.key === '2') toggleProjectGit();
+      else openProjectSection(selectedProject, event.key === '1' ? 'tasks' : 'code', 'source');
     }
     window.addEventListener('keydown', onProjectWorkspaceShortcut);
     return () => window.removeEventListener('keydown', onProjectWorkspaceShortcut);
-  }, [activeNavTarget, selectedProject, sourceWorkspaceDirty, taskTableLayoutDirty, openProjectSection, openProjectCommands]);
+  }, [activeNavTarget, selectedProject, sourceWorkspaceDirty, taskTableLayoutDirty, openProjectSection, openProjectCommands, toggleProjectGit, props.commandClient]);
   useEffect(() => {
     const bridge = window.zeus;
     if (bridge?.getRequestingWindowForeground && bridge.onRequestingWindowForegroundChanged) {

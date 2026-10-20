@@ -204,6 +204,8 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
     const tabId = activeTab?.id;
     const annotationMode = activeTab?.annotationMode;
     const handleShortcut = (event: KeyboardEvent): void => {
+      // 保留挂载但暂时隐藏的会话浏览器不接管快捷键。
+      if (viewportRef.current?.closest('[hidden], [inert]')) return;
       if (!tabId || !window.zeus?.runBrowserCommand || !(event.metaKey || event.ctrlKey) || event.key !== '.') return;
       event.preventDefault();
       void window.zeus
@@ -244,6 +246,8 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
     const popovers = new Set<HTMLElement>();
     // 只为前台或退场中的浮层让位；承载当前浏览器的会话抽屉、已被更上层隔离的背景浮层都不遮挡它。
     const isSuspended = (): boolean => {
+      // 项目工具接管右侧时立即隐藏原生网页，不能等动画帧或覆盖新面板。
+      if (viewport.closest('[hidden], [inert]')) return true;
       if ([...document.body.querySelectorAll(':scope > :is([data-zeus-primitive="modal"], [data-zeus-primitive="drawer"]):is(:not([inert]), [data-motion-state="closing"])')].some((surface) => !surface.contains(viewport))) return true;
       // 菜单只在实际覆盖网页时让原生视图隐藏，左侧不重叠的下拉保持网页可见。
       const viewportRect = viewport.getBoundingClientRect();
@@ -295,14 +299,14 @@ export function BrowserWorkspace(props: BrowserWorkspaceProps) {
       // 普通文本、图标和输入内容的变化不影响原生视图的覆盖关系。
       const overlayChanged = records.some((record) =>
         record.type === 'attributes'
-          ? record.target instanceof Element && record.target.matches(overlaySelector)
+          ? record.target instanceof Element && (record.target.matches(overlaySelector) || ((record.attributeName === 'hidden' || record.attributeName === 'inert') && record.target.contains(viewport)))
           : [...record.addedNodes, ...record.removedNodes].some((node) => node instanceof Element && (node.matches(overlaySelector) || node.querySelector(overlaySelector))),
       );
       if (!overlayChanged) return;
       observePopovers();
       apply();
     });
-    overlayObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'inert', 'data-motion-state'] });
+    overlayObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'hidden', 'inert', 'data-motion-state'] });
     observePopovers();
     window.addEventListener('resize', apply);
     apply();

@@ -1,4 +1,5 @@
-import { useCallback, useSyncExternalStore, type SetStateAction } from 'react';
+import { ProjectToolContext } from '../features/workspace/projectToolContext.js';
+import { useCallback, useContext, useSyncExternalStore, type SetStateAction } from 'react';
 import type { ConversationFileLocation, FilePreviewRequest } from '@zeus/shared';
 import type { ConversationResourcePreview, NativeSessionItemBuffer } from './sessionTypes.js';
 import type { SourceWorkspaceState, SourceWorkspaceViewMode } from './SourceWorkspace.js';
@@ -42,6 +43,8 @@ function subscribe(listener: () => void): () => void {
 
 /** 按项目和稳定会话身份恢复工作区，手动关闭后释放对应资源引用。 */
 export function useSessionContextWorkspace(projectId: string | undefined, conversationId: string | undefined) {
+  /** 用户主动打开会话内容时，让出项目工具占用的右侧区域。 */
+  const { revealSessionContext } = useContext(ProjectToolContext);
   /** 临时会话接管为真实会话时沿用同一导航身份。 */
   const key = projectId && conversationId ? JSON.stringify([projectId, conversationId]) : null;
   /** 同一状态始终返回同一快照，避免订阅产生重复渲染。 */
@@ -66,13 +69,14 @@ export function useSessionContextWorkspace(projectId: string | undefined, conver
   /** 关闭工作区同时释放源码标签；切换到浏览器等工作区仍保留文件标签。 */
   const setContextWorkspace = useCallback(
     (update: SetStateAction<SessionContextWorkspace>): void => {
+      if (typeof update !== 'function' && update.kind !== 'none') revealSessionContext();
       setState((current) => {
         /** 函数更新接收本会话最新的工作区。 */
         const workspace = typeof update === 'function' ? update(current.workspace) : update;
         return { ...current, workspace, sourceState: workspace.kind === 'none' ? null : current.sourceState };
       });
     },
-    [setState],
+    [setState, revealSessionContext],
   );
   /** 全宽选择跟随会话，不被导航重置。 */
   const setContextFullWidth = useCallback((update: SetStateAction<boolean>) => setState((current) => ({ ...current, fullWidth: typeof update === 'function' ? update(current.fullWidth) : update })), [setState]);

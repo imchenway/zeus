@@ -1,6 +1,6 @@
 import { formatVisibleApplicationError, modelSetupRequestedEvent } from '../../ui/ApplicationErrorDialog.js';
-import { useMemo, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import { cloneTaskManagementStatusConfig, type TaskManagementStatusConfig } from '@zeus/shared';
+import { useCallback, useMemo, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { temporaryWorkspaceId, cloneTaskManagementStatusConfig, type TaskManagementStatusConfig } from '@zeus/shared';
 import { notifyMainAppShellSettingsChanged, recordManualUpdateCheckInMain } from '../../appShellBridge.js';
 import { ConnectedSessionWorkspace, SessionWorkspace, NewConversationComposer, type NewConversationDraftStore } from '../../session/SessionWorkspace.js';
 import type { SessionTerminalClient } from '../../session/SessionTerminal.js';
@@ -148,7 +148,8 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     setGitOperationStatus,
     setLatestConversationContentVisible,
     setPatchExportStatus,
-    setProjectCodeWorkspaceMode,
+    projectGitOpen,
+    setProjectGitOpen,
     setProjectConfig,
     setProjectConfigForm,
     setProjectDetail,
@@ -1474,8 +1475,29 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     requestWorkspaceLeave(navigate);
   }
 
-  /** 源码和 Git 内部切换保留编辑器，只有真正离开才确认未保存内容。 */
+  /** Git 收起不改变底层页面或项目。 */
+  const closeProjectGit = useCallback(() => setProjectGitOpen(false), [setProjectGitOpen]);
+
+  /** 右侧图标与快捷键共用当前项目的 Git 开关。 */
+  function toggleProjectGit(): void {
+    if (!selectedProject || selectedProject.id === temporaryWorkspaceId) return;
+    setProjectGitOpen(!projectGitOpen);
+  }
+
+  /** 源码仍整页导航；Git 只打开侧栏，跨项目时沿用离开保护。 */
   function openProjectSection(project: ProjectRecord, section: ProjectWorkspaceSection, codeMode: ProjectCodeWorkspaceMode = 'source'): void {
+    if (section === 'code' && codeMode === 'git') {
+      if (project.id === temporaryWorkspaceId) return;
+      /** 同项目保留底层页面；跨项目更新身份前保护原草稿。 */
+      const openGit = () => {
+        activeProjectIdRef.current = project.id;
+        setProjectDetail(project);
+        setProjectGitOpen(true);
+      };
+      if (project.id === activeProjectId) openGit();
+      else requestWorkspaceLeave(openGit);
+      return;
+    }
     /** 统一导航状态和地址，不把命令弹窗作为页面模式。 */
     const navigate = () => {
       activeProjectIdRef.current = project.id;
@@ -1483,7 +1505,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
       setConversationDraftOpen(false);
       setActiveNavTarget(section === 'sessions' ? 'conversations' : 'projects');
       setActiveProjectSection(section);
-      if (section === 'code') setProjectCodeWorkspaceMode(codeMode);
+      if (section === 'code') setProjectGitOpen(false);
       setProjectCommandsProjectId(null);
       // 项目设置直接进入数字员工，不再自动打开旧项目配置抽屉。
       setProjectPanel(undefined);
@@ -1497,32 +1519,15 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     requestWorkspaceLeave(navigate);
   }
 
-  /** 命令始终绑定请求项目；在当前源码或 Git 中打开时不触发离开检查。 */
+  /** 命令弹窗绑定请求项目，所有入口均保留点击时的页面和草稿。 */
   function openProjectCommands(projectId: string): void {
     /** 项目必须仍存在，避免旧会话误用当前项目执行命令。 */
     const project = snapshot.projects.find((candidate) => candidate.id === projectId);
-    if (!project) {
+    if (!project || project.id === temporaryWorkspaceId) {
       recordLocalError('project-commands-open', new Error('The conversation project is no longer available.'));
       return;
     }
-    /** 从其他页面进入源码后打开命令，同项目 Git 视图保持原位。 */
-    const navigate = () => {
-      activeProjectIdRef.current = project.id;
-      setProjectDetail(project);
-      setConversationDraftOpen(false);
-      setActiveNavTarget('projects');
-      setActiveProjectSection('code');
-      setProjectCodeWorkspaceMode('source');
-      setProjectCommandsProjectId(project.id);
-      setProjectPanel(undefined);
-      if (typeof window !== 'undefined') window.history.replaceState(null, '', '#project-code-source');
-      workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
-    };
-    if (project.id === activeProjectId && activeNavTarget === 'projects' && activeProjectSection === 'code') {
-      setProjectCommandsProjectId(project.id);
-      return;
-    }
-    requestWorkspaceLeave(navigate);
+    setProjectCommandsProjectId(project.id);
   }
 
   async function togglePinnedProject(projectId: string): Promise<void> {
@@ -2163,6 +2168,8 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     moveTaskBoardTask,
     openProjectSection,
     openProjectCommands,
+    toggleProjectGit,
+    closeProjectGit,
     projectDrawerVisualProps,
     projectSidebarMaximumWidth,
     projectSidebarShellStyle,

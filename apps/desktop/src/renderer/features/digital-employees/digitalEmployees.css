@@ -1,9 +1,9 @@
 /* 首页员工管理独立滚动，沿用原页面的内容宽度与间距。 */
-.macos-ai-app .workspace.ai-workspace:has(> .digital-employee-settings-pane) {
+.macos-ai-app .workspace.ai-workspace:has(.digital-employee-settings-pane) {
   overflow: auto;
 }
 
-.macos-ai-app .workspace.ai-workspace > .digital-employee-settings-pane {
+.macos-ai-app .workspace.ai-workspace > .project-tools-layout > .project-main-content > .digital-employee-settings-pane {
   flex: 0 0 auto;
   padding: 24px;
 }

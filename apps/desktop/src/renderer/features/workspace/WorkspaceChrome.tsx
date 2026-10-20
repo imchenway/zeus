@@ -565,7 +565,7 @@ function GlobalSearchGroup(props: { title: string; icon: ReactNode; children: Re
   );
 }
 
-/** 项目切换器固定在左上角，活动栏保留会话、任务与源码入口。 */
+/** 项目切换器固定在左上角，左侧活动栏保留会话、任务与全局入口。 */
 export function ProjectWorkspaceNavigation(props: {
   project: ProjectRecord;
   projects: ProjectRecord[];
@@ -595,12 +595,10 @@ export function ProjectWorkspaceNavigation(props: {
   /** 各工作区的可见名称。 */
   const labels: Record<ProjectWorkspaceEntryId, string> = {
     tasks: zh ? '任务' : 'Tasks',
-    source: zh ? '源码' : 'Source',
   };
   /** 同一套线性图标保持一致的视觉重量。 */
   const icons: Record<ProjectWorkspaceEntryId, ReactNode> = {
     tasks: <WorkspaceTasksIcon size={18} weight="regular" aria-hidden="true" />,
-    source: <WorkspaceSourceIcon size={18} weight="regular" aria-hidden="true" />,
   };
   /** 全局工作区激活时不保留上一个项目工作区的伪选中态。 */
   const projectWorkspaceActive =
@@ -784,7 +782,7 @@ export function ProjectWorkspaceNavigation(props: {
           <span className="project-workspace-mode-label">{conversationLabel}</span>
         </button>
         {PROJECT_WORKSPACE_ENTRIES.map((item) => {
-          /** Git 属于源码工作区，内部切换仍保持源码入口选中。 */
+          /** 只对当前可见的项目页面显示选中态。 */
           const active = projectWorkspaceActive && props.section === item.section;
           /** 当前入口文案。 */
           const label = labels[item.id];
@@ -1514,7 +1512,7 @@ export function SidebarNav(props: {
                   <SourceListRow
                     rowProps={{
                       ref: (row) => {
-                        /** 返回焦点始终落在项目名称，展开和源码按钮保留各自左键行为。 */
+                        /** 返回焦点始终落在项目名称，展开按钮保留独立左键行为。 */
                         const anchor = row?.querySelector<HTMLButtonElement>('.zeus-source-list-row-main');
                         if (anchor) projectMenuAnchorRefs.current.set(project.id, anchor);
                         else projectMenuAnchorRefs.current.delete(project.id);
@@ -1523,7 +1521,7 @@ export function SidebarNav(props: {
                         if (project.id === temporaryWorkspaceId) return;
                         event.preventDefault();
                         event.stopPropagation();
-                        /** 整行的右边缘作为锚点，不遮挡项目名称和源码入口。 */
+                        /** 整行的右边缘作为锚点，不遮挡项目名称。 */
                         const rect = event.currentTarget.getBoundingClientRect();
                         openProjectContextMenu(project.id, { left: rect.right + 6, top: rect.top });
                       },
@@ -1572,20 +1570,10 @@ export function SidebarNav(props: {
                       onClick: () => props.onOpenProjectSection(project, project.id === temporaryWorkspaceId ? 'sessions' : 'tasks'),
                     }}
                     actions={
-                      project.id === temporaryWorkspaceId ? undefined : (
-                        <>
-                          <button
-                            type="button"
-                            className="project-source-button"
-                            aria-label={`${props.appLanguage === 'zh-CN' ? '打开源码' : 'Open source'}：${project.name}`}
-                            data-icon-tooltip={platformShortcutLabel(props.appLanguage === 'zh-CN' ? '打开源码（⌘3）' : 'Open source (⌘3)')}
-                            aria-current={isActiveProject && props.activeProjectSection === 'code' ? 'page' : undefined}
-                            onClick={() => props.onOpenProjectSection(project, 'code', 'source')}
-                          >
-                            <WorkspaceSourceIcon weight="regular" aria-hidden="true" />
-                          </button>
-                          {projectMenuPortalHost ? createPortal(<MotionPresence>{projectMorePopover}</MotionPresence>, projectMenuPortalHost) : <MotionPresence>{projectMorePopover}</MotionPresence>}
-                        </>
+                      project.id === temporaryWorkspaceId ? undefined : projectMenuPortalHost ? (
+                        createPortal(<MotionPresence>{projectMorePopover}</MotionPresence>, projectMenuPortalHost)
+                      ) : (
+                        <MotionPresence>{projectMorePopover}</MotionPresence>
                       )
                     }
                   />

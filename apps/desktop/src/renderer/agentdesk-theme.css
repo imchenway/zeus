@@ -860,7 +860,7 @@ body:has(.macos-ai-app.zeus-shell) {
 /* 大面积工作面只显示页面底色；导航侧栏是独立的白色浮层。 */
 
 /* 欢迎入口单独采用纯净表面；浅色为白色，深色跟随主题，退出引导即恢复工作区底色。 */
-.macos-ai-app.zeus-shell .ai-workspace:has(> .project-start-guide) {
+.macos-ai-app.zeus-shell .ai-workspace:has(.project-start-guide) {
   box-sizing: border-box;
   padding: 48px 24px clamp(48px, 12vh, 120px);
   overflow-y: auto;
@@ -1165,7 +1165,7 @@ body:has(.macos-ai-app.zeus-shell) {
   }
 }
 
-.macos-ai-app.zeus-shell > .ai-workspace > .workspace-view {
+.macos-ai-app.zeus-shell > .ai-workspace > .project-tools-layout > .project-main-content > .workspace-view {
   background: transparent !important;
   background-image: none !important;
   border: 0 !important;
@@ -1376,7 +1376,7 @@ body:has(.macos-ai-app.zeus-shell) {
 
 /* 设置导航复用主页持久化宽度，包含主页分隔条的 1px，切换时边界不跳动。 */
 @media (min-width: 760px) {
-  .macos-ai-app.zeus-shell.settings-dedicated-shell > .ai-workspace > .settings-reference-shell {
+  .macos-ai-app.zeus-shell.settings-dedicated-shell > .ai-workspace > .project-tools-layout > .project-main-content > .settings-reference-shell {
     grid-template-columns: calc(var(--zeus-project-sidebar-width, 248px) + 1px) minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
   }
@@ -2599,7 +2599,7 @@ body:has(.macos-ai-app.zeus-shell) {
   overflow: hidden;
   background: var(--zeus-page-background) !important;
 }
-.macos-ai-app.zeus-shell.main-layout-upstream .ai-workspace.classic-project-workspace > .workspace-view {
+.macos-ai-app.zeus-shell.main-layout-upstream .ai-workspace.classic-project-workspace > .project-tools-layout > .project-main-content > .workspace-view {
   border: 1px solid var(--zeus-card-border) !important;
 }
 .macos-ai-app.zeus-shell .project-first-sidebar .is-active-project-root {
@@ -2610,7 +2610,7 @@ body:has(.macos-ai-app.zeus-shell) {
   color: var(--zeus-product-text);
 }
 /* 主内容面保留柔和圆角与内容裁剪，移除描边不改变原有轮廓。 */
-.macos-ai-app.zeus-shell .ai-workspace.classic-project-workspace > .workspace-view {
+.macos-ai-app.zeus-shell .ai-workspace.classic-project-workspace > .project-tools-layout > .project-main-content > .workspace-view {
   box-sizing: border-box;
   flex: 1 1 0 !important;
   block-size: auto !important;
@@ -2627,8 +2627,9 @@ body:has(.macos-ai-app.zeus-shell) {
   box-shadow: none !important;
 }
 
-/* 2026-09-12 主工作区导航重构：项目切换固定在左上角，会话、任务和源码入口使用独立活动栏。 */
-.macos-ai-app.zeus-shell.project-navigation-rail-shell {
+/* 项目工具沿用外壳轨道，当前布局和经典布局共用右侧宽度。 */
+.macos-ai-app.zeus-shell.project-navigation-rail-shell,
+.macos-ai-app.zeus-shell[data-project-tools-visible='true'] {
   --zeus-project-activity-rail-width: 40px;
   --zeus-workspace-right-rail-width: 40px;
   --zeus-workspace-status-bar-height: 28px;
@@ -3214,7 +3215,7 @@ body:has(.macos-ai-app.zeus-shell) {
   -webkit-app-region: drag;
 }
 
-.macos-ai-app.zeus-shell .project-workspace-mode-rail > button {
+.macos-ai-app.zeus-shell :is(.project-workspace-mode-rail, .project-workspace-tool-rail) > button {
   align-items: center;
   appearance: none;
   background: transparent;
@@ -3235,18 +3236,18 @@ body:has(.macos-ai-app.zeus-shell) {
   -webkit-app-region: no-drag;
 }
 
-.macos-ai-app.zeus-shell .project-workspace-mode-rail > button:hover:not(:disabled):not([aria-disabled='true']) {
+.macos-ai-app.zeus-shell :is(.project-workspace-mode-rail, .project-workspace-tool-rail) > button:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--zeus-source-list-hover);
   color: var(--agentdesk-text);
 }
 
-.macos-ai-app.zeus-shell .project-workspace-mode-rail > button.is-active {
+.macos-ai-app.zeus-shell :is(.project-workspace-mode-rail, .project-workspace-tool-rail) > button.is-active {
   background: color-mix(in srgb, var(--agentdesk-accent) 9%, var(--zeus-card-background));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--agentdesk-accent) 24%, var(--zeus-card-border));
   color: var(--agentdesk-accent-strong);
 }
 
-.macos-ai-app.zeus-shell .project-workspace-mode-rail > button:focus-visible {
+.macos-ai-app.zeus-shell :is(.project-workspace-mode-rail, .project-workspace-tool-rail) > button:focus-visible {
   outline: 2px solid var(--agentdesk-accent);
   outline-offset: -2px;
 }
@@ -3373,7 +3374,7 @@ body:has(.macos-ai-app.zeus-shell) {
   padding: var(--project-frame-gap) !important;
 }
 
-.macos-ai-app.zeus-shell.project-navigation-rail-shell > .ai-workspace > .workspace-view {
+.macos-ai-app.zeus-shell.project-navigation-rail-shell > .ai-workspace > .project-tools-layout > .project-main-content > .workspace-view {
   background: var(--zeus-card-background) !important;
   block-size: auto !important;
   border: 1px solid var(--zeus-card-border) !important;
@@ -3392,8 +3393,16 @@ body:has(.macos-ai-app.zeus-shell) {
 
 /* 任务、Git、源码、命令及会话共用连续底色；源码和命令共用代码工作区，外层不绘制卡片边缘。 */
 .macos-ai-app.zeus-shell .ai-workspace:has(.session-workspace-root, .workspace-view-project-sessions, .workspace-view-project-tasks, .workspace-view-project-git, .workspace-view-project-code),
-.macos-ai-app.zeus-shell.main-layout-upstream .ai-workspace.classic-project-workspace > :is(.workspace-view-project-sessions, .workspace-view-project-tasks, .workspace-view-project-git, .workspace-view-project-code),
-.macos-ai-app.zeus-shell.project-navigation-rail-shell > .ai-workspace > :is(.workspace-view-project-sessions, .workspace-view-project-tasks, .workspace-view-project-git, .workspace-view-project-code),
+.macos-ai-app.zeus-shell.main-layout-upstream
+  .ai-workspace.classic-project-workspace
+  > .project-tools-layout
+  > .project-main-content
+  > :is(.workspace-view-project-sessions, .workspace-view-project-tasks, .workspace-view-project-git, .workspace-view-project-code),
+.macos-ai-app.zeus-shell.project-navigation-rail-shell
+  > .ai-workspace
+  > .project-tools-layout
+  > .project-main-content
+  > :is(.workspace-view-project-sessions, .workspace-view-project-tasks, .workspace-view-project-git, .workspace-view-project-code),
 .macos-ai-app.zeus-shell .workspace-view:has(.session-workspace-root),
 .macos-ai-app.zeus-shell .conversation-detail-pane:has(.session-workspace-root) {
   background: var(--zeus-page-background) !important;
@@ -3499,7 +3508,7 @@ body:has(.macos-ai-app.zeus-shell) {
 }
 
 /* Git 导航与右侧工作面独立成卡，工作区外层保持透明。 */
-.macos-ai-app.zeus-shell.project-navigation-rail-shell > .ai-workspace > .workspace-view-project-git {
+.macos-ai-app.zeus-shell.project-navigation-rail-shell > .ai-workspace > .project-tools-layout > .project-main-content > .workspace-view-project-git {
   background: transparent !important;
   border: 0 !important;
   border-radius: 0 !important;
@@ -3584,9 +3593,61 @@ body:has(.macos-ai-app.zeus-shell) {
   inline-size: 36px;
 }
 
-.macos-ai-app.zeus-shell .project-workspace-mode-rail > button.is-active {
+.macos-ai-app.zeus-shell :is(.project-workspace-mode-rail, .project-workspace-tool-rail) > button.is-active {
   background: color-mix(in srgb, var(--agentdesk-accent) 12%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--agentdesk-accent) 22%, transparent);
+}
+
+/* 右侧按钮尺寸跟随轨道，窄窗口仍保留独立的键盘焦点与点击区域。 */
+.macos-ai-app.zeus-shell .project-workspace-tool-rail > button {
+  border-radius: 8px;
+  flex-basis: calc(var(--zeus-workspace-right-rail-width) - 8px);
+  inline-size: calc(var(--zeus-workspace-right-rail-width) - 8px);
+  min-block-size: calc(var(--zeus-workspace-right-rail-width) - 8px);
+}
+
+/* 项目工具保持原有线性图标尺寸，不随轨道宽度放大。 */
+.macos-ai-app.zeus-shell .project-workspace-tool-rail > button > svg {
+  block-size: 18px;
+  inline-size: 18px;
+}
+
+/* 经典布局新增真实网格列，避免工具覆盖内容、滚动条或窗口按钮。 */
+.macos-ai-app.zeus-shell.main-layout-upstream[data-project-tools-visible='true'] > .project-workspace-tool-rail {
+  grid-column: -2 / -1;
+  grid-row: 1 / -1;
+  padding-block-start: 44px;
+}
+
+@media (min-width: 760px) {
+  .macos-ai-app.zeus-shell.ai-native-shell.main-layout-upstream[data-project-tools-visible='true'] {
+    grid-template-columns: var(--zeus-project-sidebar-width) 1px minmax(0, 1fr) var(--zeus-workspace-right-rail-width);
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .macos-ai-app.zeus-shell.ai-native-shell.main-layout-upstream.settings-dedicated-shell[data-project-tools-visible='true'] {
+    grid-template-columns: minmax(0, 1fr) var(--zeus-workspace-right-rail-width);
+  }
+}
+
+@media (max-width: 759px) {
+  .macos-ai-app.zeus-shell.ai-native-shell.main-layout-upstream[data-project-tools-visible='true'] {
+    --zeus-workspace-right-rail-width: 36px;
+    grid-template-columns: minmax(0, 1fr) var(--zeus-workspace-right-rail-width);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .macos-ai-app.zeus-shell.main-layout-upstream[data-project-tools-visible='true'] > :is(.project-first-sidebar, .ai-workspace) {
+    grid-column: 1;
+  }
+
+  .macos-ai-app.zeus-shell.main-layout-upstream[data-project-tools-visible='true'] > .project-sidebar-resizer {
+    display: none;
+  }
+
+  .macos-ai-app.zeus-shell.main-layout-upstream.settings-dedicated-shell[data-project-tools-visible='true'] > .ai-workspace {
+    grid-row: 1 / -1;
+  }
 }
 
 /* 分栏顶栏必须与正文共用完整宽度，不能再叠加普通标题栏的左右留白。 */
