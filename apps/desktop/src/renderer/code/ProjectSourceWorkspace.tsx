@@ -35,7 +35,7 @@ import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { EyeIcon as Eye } from '@phosphor-icons/react/dist/csr/Eye';
 import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
 import { ColumnsIcon as Columns } from '@phosphor-icons/react/dist/csr/Columns';
-import type { ProjectCodeWorkspacePreference, ProjectSourceDirectorySnapshot, ProjectSourceDocument, ProjectSourceEntry, ProjectSourceEvent } from '@zeus/shared';
+import type { ConversationFileLocation, ProjectCodeWorkspacePreference, ProjectSourceDirectorySnapshot, ProjectSourceDocument, ProjectSourceEntry, ProjectSourceEvent } from '@zeus/shared';
 import type { Text } from '@codemirror/state';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
@@ -67,7 +67,8 @@ interface SourceTab {
   dirty: boolean;
   saving: boolean;
   externalChange: boolean;
-  revealLine?: number | null;
+  /** 每次点击都保留新的定位对象，同一行重复打开仍会重新滚动。 */
+  revealLocation?: ConversationFileLocation;
   cursorLine: number;
   cursorColumn: number;
 }
@@ -85,7 +86,8 @@ export interface ProjectSourceWorkspaceHandle {
   hasDirtyFiles(): boolean;
   saveAll(): Promise<boolean>;
   discardAll(): void;
-  openFile(relativePath: string, line?: number): Promise<void>;
+  /** 搜索命中可传入一基行列，普通目录打开仍只传路径。 */
+  openFile(relativePath: string, line?: number, column?: number): Promise<void>;
 }
 
 export interface ProjectSourceWorkspaceProps {
@@ -173,13 +175,15 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   );
 
   const openFile = useCallback(
-    async (relativePath: string, line?: number) => {
+    async (relativePath: string, line?: number, column?: number) => {
       fileOpenRequestedRef.current = true;
+      /** 保留每次定位的对象身份，重复查找同一位置也能重新定位。 */
+      const revealLocation = line === undefined ? undefined : { line, column };
       // 搜索与 Git 的行定位必须显示源码，不能把位置藏在效果预览后。
       if (line !== undefined) setViewModes((current) => ({ ...current, [relativePath]: 'source' }));
       const existing = tabsRef.current.find((tab) => tab.document.relativePath === relativePath);
       if (existing) {
-        setTabs((current) => current.map((tab) => (tab.document.relativePath === relativePath ? { ...tab, revealLine: line ?? tab.revealLine } : tab)));
+        setTabs((current) => current.map((tab) => (tab.document.relativePath === relativePath ? { ...tab, revealLocation: revealLocation ?? tab.revealLocation } : tab)));
         setActivePath(relativePath);
         setTreeDrawerOpen(false);
         return;
@@ -194,7 +198,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
         const document = await bridge.readProjectSourceFile({ projectId: props.project.id, relativePath });
         setTabs((current) => {
           if (current.some((tab) => tab.document.relativePath === relativePath)) {
-            return current.map((tab) => (tab.document.relativePath === relativePath ? { ...tab, revealLine: line ?? tab.revealLine } : tab));
+            return current.map((tab) => (tab.document.relativePath === relativePath ? { ...tab, revealLocation: revealLocation ?? tab.revealLocation } : tab));
           }
           const available =
             current.length < 20
@@ -206,7 +210,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
             setError(zh ? '已打开 20 个文件，请先关闭一个标签。' : 'Twenty files are already open. Close a tab first.');
             return current;
           }
-          return [...available, { document, draft: document.content, dirty: false, saving: false, externalChange: false, revealLine: line, cursorLine: line ?? 1, cursorColumn: 1 }];
+          return [...available, { document, draft: document.content, dirty: false, saving: false, externalChange: false, revealLocation, cursorLine: line ?? 1, cursorColumn: column ?? 1 }];
         });
         setActivePath(relativePath);
         setTreeDrawerOpen(false);
@@ -969,8 +973,8 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                         content={activeTab.draft}
                         savedContent={activeTab.document.content}
                         readOnly={false}
-                        revealLine={activeTab.revealLine}
-                        onDocumentChange={(content, dirty) => setTabs((current) => current.map((tab) => (tab.document.relativePath === activeTab.document.relativePath ? { ...tab, draft: content, dirty, revealLine: null } : tab)))}
+                        location={activeTab.revealLocation}
+                        onDocumentChange={(content, dirty) => setTabs((current) => current.map((tab) => (tab.document.relativePath === activeTab.document.relativePath ? { ...tab, draft: content, dirty, revealLocation: undefined } : tab)))}
                         onCursorChange={(cursorLine, cursorColumn) => setTabs((current) => current.map((tab) => (tab.document.relativePath === activeTab.document.relativePath ? { ...tab, cursorLine, cursorColumn } : tab)))}
                         onSave={() => void saveTab(activeTab.document.relativePath)}
                         onSaveAll={() => void saveAll()}

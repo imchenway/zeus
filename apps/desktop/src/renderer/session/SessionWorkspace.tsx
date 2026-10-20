@@ -26,7 +26,6 @@ import { ModelBrainIcon } from './ModelBrainIcon.js';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import { PaperclipIcon as Paperclip } from '@phosphor-icons/react/dist/csr/Paperclip';
 import { TargetIcon as Target } from '@phosphor-icons/react/dist/csr/Target';
-import { TerminalIcon as Terminal } from '@phosphor-icons/react/dist/csr/Terminal';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import {
   isConversationSourcePreviewable,
@@ -249,7 +248,6 @@ export interface SessionWorkspaceActions {
   onLoadTaskWorkspaces?: (taskId: string) => Promise<TaskWorkspacesSnapshot>;
   onOpenTaskGitReview?: (taskId: string, workspaceId: string | null, mode: 'commit' | 'push-only') => void;
   onOpenTaskGitDelivery?: (taskId: string, workspaceId?: string | null) => void;
-  onOpenProjectCommands?: () => void;
   onNextTurnSettingsChange?: (settings: ComposerRuntimeSettings) => void | Promise<void>;
   onPermissionModeChange?: (permissionMode: NativePermissionMode) => void | Promise<void>;
   onCollaborationModeChange?: (collaborationMode: NativeCollaborationMode) => void | Promise<void>;
@@ -408,7 +406,6 @@ export interface ConnectedSessionWorkspaceProps {
   taskGitDeliveryRevision?: number;
   onOpenTaskGitReview?: SessionWorkspaceActions['onOpenTaskGitReview'];
   onOpenTaskGitDelivery?: SessionWorkspaceActions['onOpenTaskGitDelivery'];
-  onOpenProjectCommands?: SessionWorkspaceActions['onOpenProjectCommands'];
   onLatestContentVisibilityChange?: (visible: boolean) => void;
 }
 
@@ -762,7 +759,6 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       onLoadTaskWorkspaces: props.onLoadTaskWorkspaces,
       onOpenTaskGitReview: props.onOpenTaskGitReview,
       onOpenTaskGitDelivery: props.onOpenTaskGitDelivery,
-      onOpenProjectCommands: props.onOpenProjectCommands,
       onLoadCapabilities: props.client.loadCodexConversationCapabilities,
       onLoadSkills: props.onLoadSkills,
       onLoadDigitalEmployees: props.onLoadDigitalEmployees,
@@ -786,7 +782,6 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     props.onLoadDigitalEmployees,
     props.onOpenAiSettings,
     props.onOpenComputerSettings,
-    props.onOpenProjectCommands,
     props.onOpenTaskDetail,
     props.onOpenTaskGitDelivery,
     props.onOpenTaskGitReview,
@@ -1876,12 +1871,27 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   }, [legacy, legacyMessages.length, props.loadState, props.conversation?.id, props.onLatestContentVisibilityChange]);
   // 终端只依赖稳定的项目与会话身份；会话快照重水合期间短暂为空不能关闭仍存活的 PTY 面板。
   const terminalAvailable = Boolean(props.terminalClient && props.conversation && props.projectPath && !legacy);
+  /** 工具收起后恢复可见入口；环境卡因布局变化收起时返回其顶部按钮。 */
+  const restoreToolFocus = useCallback((target: HTMLElement | null): void => {
+    requestAnimationFrame(() => {
+      if (target?.isConnected && target.getClientRects().length && !target.closest('[inert], [hidden], [aria-hidden="true"]')) {
+        target.focus();
+        return;
+      }
+      /** 只在当前会话内查找折叠入口，避免将焦点移到另一个会话。 */
+      const environmentTrigger = target ? browserSplitRef.current?.closest('.session-workspace-root')?.querySelector<HTMLButtonElement>('.session-quick-actions-trigger') : null;
+      if (environmentTrigger?.getClientRects().length) environmentTrigger.focus();
+      else composerRef.current?.focus();
+    });
+  }, []);
+  /** 收起面板保留终端进程，再将焦点交还会话内的可见入口。 */
   const closeSessionTerminal = useCallback((): void => {
     setTerminalOpen(false);
+    /** 先保存本次入口，再清理旧引用，避免后续关闭复用失效节点。 */
     const returnFocus = terminalReturnFocusRef.current;
     terminalReturnFocusRef.current = null;
-    if (returnFocus?.isConnected) requestAnimationFrame(() => returnFocus.focus());
-  }, [setTerminalOpen]);
+    restoreToolFocus(returnFocus);
+  }, [restoreToolFocus, setTerminalOpen]);
   const effectiveProviderState = props.state?.snapshot?.providerState ?? props.conversation?.providerState ?? null;
   const effectiveResumable = props.conversation?.resumable !== false && (props.state?.snapshot ? effectiveProviderState !== 'closed' : effectiveProviderState === 'archived' || props.conversation?.resumable === true);
   // 列表和已水合快照可能跨一个归档操作短暂错代；任一权威来源声明归档都必须 fail-closed。
@@ -2444,12 +2454,10 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     window.zeus?.notifySessionContextActivity?.({ active: false, kind: 'none' });
     setContextWorkspace({ kind: 'none' });
     setContextFullWidth(false);
-    const target = options.focusComposer ? composerRef.current : contextReturnFocusRef.current;
+    /** 显式返回输入框时不再恢复工具入口。 */
+    const target = options.focusComposer ? null : contextReturnFocusRef.current;
     contextReturnFocusRef.current = null;
-    requestAnimationFrame(() => {
-      if (target?.isConnected) target.focus();
-      else composerRef.current?.focus();
-    });
+    restoreToolFocus(target);
   }
 
   async function runGoalAction(action: (() => void | Promise<void>) | undefined, closeAfter = false): Promise<boolean> {
@@ -2715,47 +2723,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
           <div className="session-context-header-tools">
             <div ref={setContextToolbarHost} className="session-context-toolbar-host" />
             <div className="session-thread-header-actions">
-              {!legacy && props.conversation ? (
-                <button
-                  type="button"
-                  className={`session-browser-toggle ${browserOpen ? 'selected' : ''}`}
-                  aria-pressed={browserOpen}
-                  aria-label={props.language === 'zh-CN' ? '内置浏览器' : 'Built-in browser'}
-                  data-icon-tooltip={platformShortcutLabel(props.language === 'zh-CN' ? '内置浏览器（⌘⇧B）' : 'Built-in browser (⌘⇧B)')}
-                  onClick={(event) => {
-                    contextReturnFocusRef.current = event.currentTarget;
-                    if (browserOpen && !projectTools.open) {
-                      closeContextWorkspace();
-                      return;
-                    }
-                    setContextFullWidth(false);
-                    setContextWorkspace({ kind: 'browser' });
-                  }}
-                >
-                  <GlobeSimple aria-hidden="true" weight="regular" />
-                </button>
-              ) : null}
-              {terminalAvailable ? (
-                <button
-                  type="button"
-                  className={`session-browser-toggle session-terminal-toggle ${terminalOpen ? 'selected' : ''}`}
-                  aria-pressed={terminalOpen}
-                  aria-label={props.language === 'zh-CN' ? '会话终端' : 'Conversation terminal'}
-                  data-icon-tooltip={props.language === 'zh-CN' ? '会话终端（⌃`）' : 'Conversation terminal (Ctrl+`)'}
-                  onClick={(event) => {
-                    if (terminalOpen) {
-                      closeSessionTerminal();
-                      return;
-                    }
-                    terminalReturnFocusRef.current = event.currentTarget;
-                    setTerminalMounted(true);
-                    setTerminalOpen(true);
-                    setTerminalFocusRequest((current) => current + 1);
-                  }}
-                >
-                  <Terminal aria-hidden="true" weight="regular" />
-                </button>
-              ) : null}
               {!legacy && props.conversation && props.state ? (
                 <SessionQuickActionsCard
                   gitContext={props.gitContext}
@@ -2775,7 +2742,31 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   onOpenTaskDetail={actions.onOpenTaskDetail}
                   onOpenGitReview={actions.onOpenTaskGitReview}
                   onOpenGitDelivery={actions.onOpenTaskGitDelivery}
-                  onOpenProjectCommands={actions.onOpenProjectCommands}
+                  browserOpen={browserOpen}
+                  onToggleBrowser={(trigger) => {
+                    contextReturnFocusRef.current = trigger;
+                    if (browserOpen && !projectTools.open) {
+                      void closeContextWorkspace();
+                      return;
+                    }
+                    setContextFullWidth(false);
+                    setContextWorkspace({ kind: 'browser' });
+                  }}
+                  terminalOpen={terminalOpen}
+                  onToggleTerminal={
+                    terminalAvailable
+                      ? (trigger) => {
+                          terminalReturnFocusRef.current = trigger;
+                          if (terminalOpen) {
+                            closeSessionTerminal();
+                            return;
+                          }
+                          setTerminalMounted(true);
+                          setTerminalOpen(true);
+                          setTerminalFocusRequest((current) => current + 1);
+                        }
+                      : undefined
+                  }
                   subagentCount={subagentThreadIds.length}
                   onOpenSubagents={
                     actions.onLoadSubagents && actions.onLoadSubagentThread

@@ -14,6 +14,7 @@ import { GearSixIcon as GearSix } from '@phosphor-icons/react/dist/csr/GearSix';
 import { GitBranchIcon as GitBranch } from '@phosphor-icons/react/dist/csr/GitBranch';
 import { GitDiffIcon as GitDiff } from '@phosphor-icons/react/dist/csr/GitDiff';
 import { GithubLogoIcon as GithubLogo } from '@phosphor-icons/react/dist/csr/GithubLogo';
+import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
 import { ShareNetworkIcon as ShareNetwork } from '@phosphor-icons/react/dist/csr/ShareNetwork';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
@@ -35,6 +36,7 @@ import type {
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { VisibleApplicationError, reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 import type { DashboardClient, ProjectRecord, ProjectGitWorkbenchSnapshot } from '../apiClient.js';
+import { platformShortcutLabel } from '../platform.js';
 
 interface SessionQuickActionsCardProps {
   gitContext?: { client: DashboardClient; project: ProjectRecord };
@@ -58,7 +60,14 @@ interface SessionQuickActionsCardProps {
   onOpenTaskDetail?: (taskId: string) => void;
   onOpenGitReview?: (taskId: string, workspaceId: string | null, mode: 'commit' | 'push-only') => void;
   onOpenGitDelivery?: (taskId: string, workspaceId: string | null) => void;
-  onOpenProjectCommands?: () => void;
+  /** 内置浏览器的显示状态由当前会话工作面维护。 */
+  browserOpen: boolean;
+  /** 入口只切换显示，浏览器标签与关闭流程仍由会话管理。 */
+  onToggleBrowser: (trigger: HTMLButtonElement) => void;
+  /** 会话终端继续使用原有会话身份和显示状态。 */
+  terminalOpen: boolean;
+  /** 缺少终端能力时不显示入口，不创建项目级替代终端。 */
+  onToggleTerminal?: (trigger: HTMLButtonElement) => void;
   subagentCount?: number;
   onOpenSubagents?: (trigger: HTMLButtonElement) => void;
   onStartCodeReview?: (
@@ -325,9 +334,13 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
     props.onOpenGitDelivery(taskId, props.conversation.workspaceId ?? workspace?.id ?? null);
   }
 
-  function openCommands(): void {
+  /** 浮层关闭后使用环境入口恢复焦点，避免引用已经卸载的工具行。 */
+  function toggleTool(trigger: HTMLButtonElement, action: ((trigger: HTMLButtonElement) => void) | undefined): void {
+    if (!action) return;
+    /** 常驻卡没有折叠按钮，保留当前工具行作为返回目标。 */
+    const returnTarget = triggerRef.current ?? trigger;
     setOpen(false);
-    props.onOpenProjectCommands?.();
+    action(returnTarget);
   }
 
   function openCodeReview(): void {
@@ -451,14 +464,39 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                   </button>
                 ) : null}
 
-                <button type="button" className="session-quick-actions-row" onClick={openCommands}>
-                  <TerminalWindow aria-hidden="true" weight="regular" />
+                <button
+                  type="button"
+                  className="session-quick-actions-row"
+                  aria-label={zh ? '内置浏览器' : 'Built-in browser'}
+                  aria-pressed={props.browserOpen}
+                  aria-keyshortcuts="Meta+Shift+B Control+Shift+B"
+                  onClick={(event) => toggleTool(event.currentTarget, props.onToggleBrowser)}
+                >
+                  <GlobeSimple aria-hidden="true" weight="regular" />
                   <span className="session-quick-actions-copy">
-                    <strong>{zh ? '命令' : 'Commands'}</strong>
-                    <small>{zh ? '打开当前项目的完整命令中心' : 'Open the full command center for this project'}</small>
+                    <strong>{zh ? '内置浏览器' : 'Built-in browser'}</strong>
+                    <small>{platformShortcutLabel('⌘⇧B')}</small>
                   </span>
-                  <ArrowSquareOut aria-hidden="true" weight="regular" />
+                  <span className="session-quick-actions-tool-state">{props.browserOpen ? (zh ? '关闭' : 'Close') : zh ? '打开' : 'Open'}</span>
                 </button>
+
+                {props.onToggleTerminal ? (
+                  <button
+                    type="button"
+                    className="session-quick-actions-row"
+                    aria-label={zh ? '会话终端' : 'Conversation terminal'}
+                    aria-pressed={props.terminalOpen}
+                    aria-keyshortcuts="Control+`"
+                    onClick={(event) => toggleTool(event.currentTarget, props.onToggleTerminal)}
+                  >
+                    <TerminalWindow aria-hidden="true" weight="regular" />
+                    <span className="session-quick-actions-copy">
+                      <strong>{zh ? '会话终端' : 'Conversation terminal'}</strong>
+                      <small>Ctrl+`</small>
+                    </span>
+                    <span className="session-quick-actions-tool-state">{props.terminalOpen ? (zh ? '收起' : 'Hide') : zh ? '打开' : 'Open'}</span>
+                  </button>
+                ) : null}
 
                 <button type="button" className="session-quick-actions-row" disabled={!canStartCodeReview} data-icon-tooltip={codeReviewUnavailableReason ?? undefined} onClick={openCodeReview}>
                   <FileCode aria-hidden="true" weight="regular" />

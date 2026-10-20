@@ -15,6 +15,7 @@ import type {
   UsageModelOutputRateBreakdown,
   ProjectSourceDirectorySnapshot,
   ProjectSourceContentSearchResult,
+  ProjectSourceContentSearchOptions,
   ProjectSourceDocument,
   ProjectSourceEntry,
   ProjectSourceEvent,
@@ -196,7 +197,7 @@ declare global {
       quitFromMenuBarUsage: () => Promise<{ quitting: true }>;
       listProjectSourceDirectory: (input: { projectId: string; relativePath: string }) => Promise<ProjectSourceDirectorySnapshot>;
       searchProjectSourceEntries: (input: { projectId: string; query: string }) => Promise<ProjectSourceSearchResult>;
-      searchProjectSourceContent: (input: { projectId: string; query: string }) => Promise<ProjectSourceContentSearchResult>;
+      searchProjectSourceContent: (input: { projectId: string; query: string } & ProjectSourceContentSearchOptions) => Promise<ProjectSourceContentSearchResult>;
       loadProjectSourceBlame: (input: { projectId: string; relativePath: string; ref?: string; expectedSha256?: string }) => Promise<GitFileBlame>;
       loadConversationSourceBlame: (input: { projectId: string; conversationId: string; resourceId: string; expectedSha256: string }) => Promise<GitFileBlame>;
 
