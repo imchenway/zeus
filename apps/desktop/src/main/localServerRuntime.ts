@@ -29,6 +29,7 @@ import {
   type ExecutionHostLeaseStatus,
   type ExecutionHostLockObservation,
   executionHostProtocolVersion,
+  executionHostStopWorkTimeoutMs,
   type ExecutionHostRendezvous,
   executionHostRendezvousPath,
   executionHostStartupPath,
@@ -909,7 +910,7 @@ export async function startOwnedDesktopLocalServer(options: StartDesktopLocalSer
         method: 'POST',
         headers: { authorization: `Bearer ${config.apiToken}`, 'content-type': 'application/json' },
         body: serializedBody,
-        signal: AbortSignal.timeout(15_000),
+        signal: AbortSignal.timeout(executionHostStopWorkTimeoutMs),
       });
       if (!response.ok) throw new Error(`Zeus execution-host stop failed with HTTP ${response.status}.`);
     },
