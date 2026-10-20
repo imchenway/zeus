@@ -467,6 +467,24 @@ async function renderProjectGitDiffWithClient(client: DashboardClient, parameter
   );
 }
 
+/** 文件编辑页只使用主进程给当前窗口固定的工作树身份。 */
+async function renderFileSourceWithClient(client: DashboardClient): Promise<void> {
+  /** 页面组件、设置与授权彼此独立，避免串行启动。 */
+  const [{ FileSourceWindow }, settings, workspace] = await Promise.all([import('./code/FileSourceWindow.js'), client.settings.loadAppShellSettings(), window.zeus?.loadFilePreviewSourceWorkspace()]);
+  if (!workspace) throw new Error('当前窗口没有源码编辑授权。');
+  /** 原生窗口承载既有源码页，不通过浏览器 URL 传递目录。 */
+  const root = document.getElementById('root');
+  if (!root) throw new Error('Zeus renderer root element is missing');
+  document.body.dataset.surface = 'file-source';
+  startupLanguage = settings.appLanguage;
+  createRoot(root).render(
+    <RendererErrorBoundary appLanguage={settings.appLanguage} onFatalError={(error) => reportSurfaceFatalError(error, settings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en', 'FileSourceWindow')}>
+      <FileSourceWindow workspace={workspace} language={settings.appLanguage} appearance={settings.appearance} />
+      <RendererBootstrapReady />
+    </RendererErrorBoundary>,
+  );
+}
+
 /** React 首次 commit 后再通知 Main；在此之前的模块、加载和渲染异常都由启动监控器兜底。 */
 function RendererBootstrapReady(): null {
   useEffect(() => {
@@ -556,6 +574,10 @@ async function hydrateRenderer(): Promise<void> {
   }
   if (surface === 'project-git-diff') {
     await renderProjectGitDiffWithClient(client, parameters);
+    return;
+  }
+  if (surface === 'file-source') {
+    await renderFileSourceWithClient(client);
     return;
   }
   await renderWithClient(client, config.executionHostTransition, config.readOnlyValidation, mainWindowBootstrap);
@@ -718,7 +740,7 @@ async function hydrateRendererWithExecutionHostRecovery(): Promise<void> {
 
 hydrateRendererWithExecutionHostRecovery().catch((error: unknown) => {
   const surface = new URLSearchParams(window.location.search).get('surface');
-  const auxiliarySurface = surface === 'menu-bar-usage' || surface === 'menu-bar-usage-cost-detail' || surface === 'task-git-delivery' || surface === 'project-git-diff';
+  const auxiliarySurface = surface === 'menu-bar-usage' || surface === 'menu-bar-usage-cost-detail' || surface === 'task-git-delivery' || surface === 'project-git-diff' || surface === 'file-source';
   console.error(
     surface === 'menu-bar-usage'
       ? 'Zeus menu bar usage hydration failed'

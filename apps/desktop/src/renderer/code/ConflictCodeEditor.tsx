@@ -63,7 +63,6 @@ export const ConflictCodeEditor = memo(function ConflictCodeEditor(props: Confli
     () => [
       // 冲突模型以原文字符定位；保留 CR 字符，避免 CRLF 被折叠后编辑偏移失准。
       EditorState.lineSeparator.of('\n'),
-      EditorView.lineWrapping,
       conflictAlignmentExtension(props.alignment, regions),
       lineNumbers({ formatNumber: (number: number) => String(number + (props.lineOffset ?? 0)) }),
       ViewPlugin.define(
@@ -106,6 +105,7 @@ export const ConflictCodeEditor = memo(function ConflictCodeEditor(props: Confli
     <CodeEditor
       path={props.path}
       label={props.label}
+      locale={props.zh ? 'zh-CN' : 'en-US'}
       content={props.content}
       language={detectSourceLanguage(props.path) ?? null}
       readOnly={props.readOnly}

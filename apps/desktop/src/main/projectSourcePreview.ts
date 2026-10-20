@@ -79,6 +79,11 @@ export class ProjectSourcePreviewService {
     for (const [id, grant] of this.grants) if (grant.owner === owner && (!ids || ids.includes(id))) this.grants.delete(id);
   }
 
+  /** 协议分发只按已登记令牌寻找所属工作区，不接受页面指定根目录。 */
+  owns(id: string): boolean {
+    return this.grants.has(id);
+  }
+
   /** GET/HEAD 只读取本次项目内的已知资源，其他方法与失效授权返回明确失败。 */
   async respond(id: string, pathname: string, request: Request): Promise<Response> {
     /** 当前活动的窗口授权。 */

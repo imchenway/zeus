@@ -3826,12 +3826,13 @@ export function parseGitUnifiedDiff(diffText: string): GitFileDiff[] {
       currentFile.changeType = 'copied';
       continue;
     }
-    if (line.startsWith('--- ')) {
+    // 文件头只出现在首个区块前；区块内的 Markdown 分隔线也是普通删除正文。
+    if (!currentHunk && line.startsWith('--- ')) {
       const path = parseDiffMarkerPath(line.slice(4));
       if (path && path !== '/dev/null') currentFile.oldPath = path;
       continue;
     }
-    if (line.startsWith('+++ ')) {
+    if (!currentHunk && line.startsWith('+++ ')) {
       const path = parseDiffMarkerPath(line.slice(4));
       if (path && path !== '/dev/null') currentFile.newPath = path;
       if (path === '/dev/null') currentFile.changeType = 'deleted';
@@ -3846,7 +3847,7 @@ export function parseGitUnifiedDiff(diffText: string): GitFileDiff[] {
     }
     if (!currentHunk) continue;
 
-    if (line.startsWith('+') && !line.startsWith('+++')) {
+    if (line.startsWith('+')) {
       currentHunk.lines.push({
         type: 'addition',
         content: line.slice(1),
@@ -3857,7 +3858,7 @@ export function parseGitUnifiedDiff(diffText: string): GitFileDiff[] {
       newLine += 1;
       continue;
     }
-    if (line.startsWith('-') && !line.startsWith('---')) {
+    if (line.startsWith('-')) {
       currentHunk.lines.push({
         type: 'deletion',
         content: line.slice(1),
@@ -4067,42 +4068,56 @@ export async function getGitFilePreviewSources(
   /** 使用 Git 树记录获取对象，拒绝符号链接和子模块作为普通文件解码。 */
   async function side(revision: string | null, name: string, prefix: string, fallback?: string | null): Promise<FilePreviewSource> {
     const label = `${prefix} · ${revision === 'worktree' ? '工作区' : revision === 'index' ? '暂存区' : (revision?.slice(0, 12) ?? '不存在')}`;
-    if (!revision) return { name, label, reason: '此版本中不存在该文件。' };
-    /** 工作区和索引内容以当前固定 HEAD 为归属基线，重命名沿用原路径。 */
-    const gitBlame = { path: revision === 'worktree' || revision === 'index' ? blamePath : name, revision, head };
-    if (revision === 'worktree') return { name, label, root: cwd, path: resolve(cwd, requireSafeWorkspacePath(name)), gitBlame };
+    /** 所有历史侧编辑都指向当前工作区的新路径，不打开历史副本。 */
+    const edit = { root: cwd, path: resolve(cwd, requireSafeWorkspacePath(newPath)) };
+    if (!revision) return { name, label, edit, missing: true, reason: '此版本中不存在该文件。' };
+    if (revision === 'worktree') return { name, label, edit, root: cwd, path: resolve(cwd, requireSafeWorkspacePath(name)), git: { root: cwd, path: blamePath, baseRef: head } };
     const output = revision === 'index' ? (await runGit(cwd, ['ls-files', '--stage', '-z', '--', `:(literal)${name}`])).stdout : (await runGit(cwd, ['ls-tree', '-z', revision, '--', `:(literal)${name}`])).stdout;
     const entry = output.split('\0').find((item) => item.slice(item.indexOf('\t') + 1) === name);
     const match = entry?.match(/^(100[0-7]{3}) (?:blob )?([a-f0-9]{40,64})(?: 0)?\t/u);
     if (!match && !entry && fallback) return side(fallback, name, prefix);
-    return match ? { name, label, root: cwd, blob: match[2], gitBlame } : { name, label, reason: entry ? '符号链接、冲突索引或子模块不能作为普通文件预览。' : '此版本中不存在该文件。' };
+    return match
+      ? { name, label, edit, root: cwd, blob: match[2], git: { root: cwd, path: revision === 'index' ? blamePath : name, ...(revision === 'index' ? { baseRef: head } : { ref: revision }) } }
+      : { name, label, edit, missing: !entry, reason: entry ? '符号链接、冲突索引或子模块不能作为普通文件预览。' : '此版本中不存在该文件。' };
   }
   return Promise.all([side(before, oldPath, '变更前'), side(after, newPath, '变更后', untrackedTree)]);
 }
 
-/** 归属绑定已授权的预览文本；索引和工作区通过标准输入读取，不触碰原文件。 */
-export async function getFilePreviewBlame(cwd: string, source: NonNullable<FilePreviewSource['gitBlame']>, content: string): Promise<GitBlameLine[]> {
-  /** 路径与引用分别校验，不拼接 shell 命令。 */
-  const path = requireSafeWorkspacePath(source.path);
-  if (path.split('/').includes('.git')) throw new Error('不能读取 Git 管理目录的归属。');
-  /** 统一作者编码，并保留根提交归属，避免本机配置把历史行显示为空白。 */
-  const blameArgs = ['-c', 'core.quotePath=false', '-c', 'blame.blankBoundary=false', 'blame', '--encoding=UTF-8', '--root', '--line-porcelain'];
-  /** 历史版本始终使用固定提交；正文版本由主进程的 blob 授权保证。 */
-  if (source.revision !== 'index' && source.revision !== 'worktree') {
-    if (!/^[a-f0-9]{40,64}$/u.test(source.revision)) throw new Error('提交归属来源无效。');
-    return parseGitBlamePorcelain((await runGit(cwd, [...blameArgs, source.revision, '--', path])).stdout);
+/** 按已授权预览版本计算逐行归属；工作区与索引使用固定内容，历史使用固定提交。 */
+export async function getFilePreviewBlame(source: NonNullable<FilePreviewSource['git']>, contentPath: string): Promise<GitFileBlame> {
+  /** 路径只作为 Git 的路径参数，不参与 shell 或版本表达式拼接。 */
+  const requested = requireSafeWorkspacePath(source.path);
+  if (requested.split('/').includes('.git')) throw new Error('不能读取 Git 管理目录的归属。');
+  /** Git 返回真实根目录，先统一 macOS 临时目录或工作区别名，避免合法路径被误判为越界。 */
+  const sourceRoot = await realpath(source.root);
+  /** 当前文件可能属于项目下的独立子仓库；历史路径所在目录可以已经删除。 */
+  const context = await getGitRepositoryContext(source.ref || source.baseRef !== undefined ? sourceRoot : dirname(resolve(sourceRoot, requested)));
+  if (!context.isRepository) throw new Error('此文件不属于 Git 仓库。');
+  /** Git 命令始终使用实际仓库根及其相对路径。 */
+  const root = context.topLevel;
+  const path = relative(root, resolve(sourceRoot, requested)).split(sep).join('/');
+  requireSafeWorkspacePath(path);
+  /** 固定历史提交；当前内容使用 HEAD 作为归属基线。 */
+  const ref = source.ref ? await resolveCommit(root, source.ref) : await readGitStdout(root, ['rev-parse', '--verify', 'HEAD']);
+  if (source.baseRef !== undefined && source.baseRef !== ref) throw new Error('Git 基线已变化，请刷新后查看提交人。');
+  /** 未跟踪文件与空仓库没有历史作者，所有真实行明确标为未提交。 */
+  const tracked = ref ? await readGitStdout(root, ['ls-tree', '-z', ref, '--', `:(literal)${path}`]) : '';
+  if (!source.ref && !tracked) {
+    /** 未提交记录保持与 Git porcelain 相同的全零身份。 */
+    const content = (await readFile(contentPath, 'utf8')).split(/\r\n?|\n/u);
+    if (content.at(-1) === '') content.pop();
+    return { path, lines: content.map((_line, index) => ({ line: index + 1, author: '', authorTime: 0, commitHash: '0'.repeat(40), shortHash: '0000000', subject: '' })) };
   }
-  if (!source.head) return [];
-  /** --contents 使用 HEAD；前后检查保证期间没有切换基线。 */
-  const verifyHead = async () => {
-    if (!/^[a-f0-9]{40,64}$/u.test(source.head) || (await readGitStdout(cwd, ['rev-parse', '--verify', 'HEAD'])) !== source.head) throw new Error('提交基线已经变化，请刷新差异。');
-  };
-  await verifyHead();
-  /** 新文件没有历史归属，不把空白状态显示为错误。 */
-  const tracked = (await runGit(cwd, ['ls-tree', '-z', source.head, '--', `:(literal)${path}`])).stdout;
-  if (!tracked) return [];
-  /** 复用现有 Git 进程、超时和 Windows Job 管理。 */
-  const result = await runGit(cwd, [...blameArgs, '--contents', '-', '--', path], content);
-  await verifyHead();
-  return parseGitBlamePorcelain(result.stdout);
+  /** 禁用文本转换，统一作者编码并保留根提交；两端均读取当前授权版本。 */
+  const { stdout } = await execFileAsync(
+    'git',
+    ['-c', 'core.quotePath=false', '-c', 'blame.blankBoundary=false', '--no-pager', 'blame', '--encoding=UTF-8', '--root', '--no-textconv', '--line-porcelain', ...(source.ref ? [ref] : ['--contents', contentPath]), '--', path],
+    {
+      cwd: root,
+      timeout: 30_000,
+      maxBuffer: 32 * 1024 * 1024,
+    },
+  );
+  if (!source.ref && ref !== (await readGitStdout(root, ['rev-parse', '--verify', 'HEAD']))) throw new Error('归属读取期间 Git 基线已变化，请刷新。');
+  return { path, lines: parseGitBlamePorcelain(stdout) };
 }

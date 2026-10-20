@@ -10,7 +10,7 @@ import { Button } from '../ui/Button.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import type { ProjectGitAction, ProjectGitRepositoryWorkbenchItem } from '../apiClient.js';
-import type { BusyState, OperationTone, BranchKind, ExecutionOutcome, ProjectGitUpdateStrategy } from './gitWorkbenchTypes.js';
+import type { BusyState, BranchKind, ExecutionOutcome, ProjectGitUpdateStrategy } from './gitWorkbenchTypes.js';
 import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
 import { CaretRightIcon as CaretRight } from '@phosphor-icons/react/dist/csr/CaretRight';

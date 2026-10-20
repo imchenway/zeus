@@ -206,7 +206,13 @@ declare global {
       /** 页面关闭和选择变化时撤销短期资源。 */
       releaseFilePreview: (ids: string[]) => Promise<void>;
       /** 用户主动请求系统查看或导出当前预览版本。 */
-      actOnFilePreview: (id: string, action: 'quick-look' | 'open' | 'reveal' | 'export') => Promise<void>;
+      actOnFilePreview: (id: string, action: 'quick-look' | 'open' | 'reveal' | 'export' | 'edit') => Promise<void>;
+      /** 预览令牌绑定内容和窗口，不接受任意仓库路径。 */
+      loadFilePreviewBlame: (id: string) => Promise<GitFileBlame | null>;
+      /** 读取当前源码窗口固定的工作区及初始文件。 */
+      loadFilePreviewSourceWorkspace: () => Promise<import('@zeus/shared').FilePreviewSourceWorkspace>;
+      /** 已打开的源码页重新定位初始文件，不覆盖其他文件草稿。 */
+      onFilePreviewSourceFileRequested: (listener: (path: string) => void) => () => void;
       readProjectSourceFile: (input: { projectId: string; relativePath: string }) => Promise<ProjectSourceDocument>;
       /** 项目内的草稿效果预览与相对资源读取。 */
       prepareProjectSourcePreview: (input: import('@zeus/shared').ProjectSourcePreviewRequest) => Promise<import('@zeus/shared').ProjectSourcePreviewGrant>;

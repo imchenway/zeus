@@ -3,7 +3,7 @@ import { Compartment, EditorState } from '@codemirror/state';
 import { defaultKeymap } from '@codemirror/commands';
 import { openSearchPanel, search, searchKeymap } from '@codemirror/search';
 import { syntaxHighlighting } from '@codemirror/language';
-import { Decoration, EditorView, GutterMarker, WidgetType, gutter, keymap, lineNumbers } from '@codemirror/view';
+import { Decoration, EditorView, GutterMarker, WidgetType, drawSelection, gutter, keymap, lineNumbers } from '@codemirror/view';
 import { classHighlighter } from '@lezer/highlight';
 import type { ConversationFileLocation, FilePreviewBlameLine } from '@zeus/shared';
 import { blameDecorations } from './blameDecorations.js';
@@ -11,6 +11,8 @@ import { loadSourceLanguage } from './sourceLanguageRegistry.js';
 import { useGitBlame } from './useGitBlame.js';
 import { sourceLocationDecorations } from './sourceLocationDecorations.js';
 import './blameGutter.css';
+import { useCodeReadingOptions } from './codeReadingOptions.js';
+import type { GitBlameLine } from '../features/git/gitContracts.js';
 
 /** 文件查找采用编辑器原生文案表，界面与会话语言一致。 */
 const sourceSearchPhrases = {
@@ -56,6 +58,8 @@ interface SourceCodePreviewProps {
   blame?: FilePreviewBlameLine[];
   /** 行尾归属日期使用当前界面语言。 */
   locale?: string;
+  /** 通用文件预览按版本令牌读取的归属，优先于项目路径读取。 */
+  blameLines?: GitBlameLine[];
   /** 工具栏递增请求用于打开或重新聚焦原生文件查找面板。 */
   searchRequest?: number;
   location?: ConversationFileLocation;
@@ -87,10 +91,22 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
   const highlightSlot = useRef(new Compartment()).current;
   /** Git blame 装饰单独更新，不因异步读取结果重建编辑器。 */
   const blameSlot = useRef(new Compartment()).current;
+  /** 共享阅读选项不重建评论或文档。 */
+  const readingSlot = useRef(new Compartment()).current;
   /** 只读历史仍可查看代码，无评论权限时只显示行号。 */
   const commentsEnabled = Boolean(props.onComment);
   /** 自动读取当前资源归属，不再创建额外的按钮或状态行。 */
-  const gitBlame = useGitBlame({ projectId: props.blame === undefined ? props.projectId : undefined, filePath: props.path, conversationId: props.conversationId, resourceId: props.resourceId, content: props.content });
+  const gitBlame = useGitBlame({
+    projectId: props.blame === undefined && props.blameLines === undefined ? props.projectId : undefined,
+    filePath: props.path,
+    conversationId: props.conversationId,
+    resourceId: props.resourceId,
+    content: props.content,
+  });
+  /** 当前准确版本的逐行归属。 */
+  const lines = props.blame ?? props.blameLines ?? gitBlame?.lines;
+  /** 左侧菜单与项目编辑器完全一致。 */
+  const reading = useCodeReadingOptions(lines, props.locale);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -103,6 +119,7 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
         doc: props.content,
         extensions: [
           EditorState.readOnly.of(true),
+          drawSelection(),
           EditorView.editable.of(false),
           EditorView.contentAttributes.of({ tabindex: '0', 'aria-label': propsRef.current.label, 'aria-readonly': 'true' }),
           search({ top: true }),
@@ -113,6 +130,7 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
           widgetSlot.of([]),
           highlightSlot.of([]),
           blameSlot.of([]),
+          readingSlot.of([]),
           selectedLines,
           commentsEnabled
             ? gutter({
@@ -186,11 +204,13 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
     const view = viewRef.current;
     if (!view) return;
     /** 只在可信资源内容对应的归属读取完成后添加当前行提示。 */
-    const lines = props.blame ?? gitBlame?.lines;
-    /** 显式空结果同样属于当前版本，不能回退到其他来源。 */
-    const extension = lines?.length ? blameDecorations(lines, { locale: props.locale }) : [];
+    const extension = reading.blame && lines?.length ? blameDecorations(lines, { locale: props.locale }) : [];
     view.dispatch({ effects: blameSlot.reconfigure(extension) });
-  }, [props.locale, props.blame, blameSlot, gitBlame, props.content, props.path, props.label, commentsEnabled]);
+  }, [props.locale, blameSlot, lines, props.content, props.path, props.label, commentsEnabled, reading.blame]);
+
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: readingSlot.reconfigure(reading.extension) });
+  }, [readingSlot, reading.extension, props.content, props.path, props.label, commentsEnabled]);
 
   useEffect(() => {
     /** 新评论先定位到所属行，反向范围评论的结束行也可能在屏幕外。 */
@@ -223,7 +243,12 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
     view.dispatch({ effects: EditorView.scrollIntoView(view.state.doc.line(boundedLine).from, { y: 'center' }) });
   }, [props.location, props.content, props.path, props.label, commentsEnabled]);
 
-  return <div className="session-source-code-preview" ref={hostRef} />;
+  return (
+    <>
+      <div className="session-source-code-preview" ref={hostRef} onContextMenu={reading.onContextMenu} />
+      {reading.menu}
+    </>
+  );
 });
 
 /** 评论入口覆盖当前行号，不为每行另占一列宽度。 */

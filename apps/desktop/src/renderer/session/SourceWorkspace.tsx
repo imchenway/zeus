@@ -11,7 +11,7 @@ import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { Button } from '../ui/Button.js';
 import type { ConversationOpenTarget, ConversationResourceOpenTarget } from '@zeus/shared';
 import { listConversationResourceOpenTargetsInMain } from '../appShellBridge.js';
-import { FilePreview, FileReviewContent, PreviewImage } from '../code/FilePreview.js';
+import { FilePreview, FileReviewContent, FileSourceEditButton, PreviewImage } from '../code/FilePreview.js';
 import { Suspense, lazy, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowsInIcon as ArrowsIn } from '@phosphor-icons/react/dist/csr/ArrowsIn';
@@ -309,6 +309,11 @@ function SourceWorkspaceView(props: {
         </p>
       ) : null}
       <FileReviewContent
+        previewRequest={
+          props.preview.resource.kind === 'file'
+            ? { kind: 'resource', projectId: props.preview.resource.projectId, conversationId: props.preview.resource.conversationId, resourceId: props.preview.resource.id, comparison: 'head' }
+            : undefined
+        }
         sourceRequest={searchRequest}
         key={`${props.preview.resource.id}:${sourcePreview?.location?.line ?? ''}:${sourcePreview?.location?.endLine ?? ''}`}
         review={sourcePreview ? { ...sourcePreview.review, location: sourcePreview.location } : undefined}
@@ -326,6 +331,9 @@ function SourceWorkspaceView(props: {
               </nav>
               <div className="session-source-actions">
                 {reviewActions}
+                {sourcePreview && props.preview.resource.kind === 'file' ? (
+                  <FileSourceEditButton zh={zh} request={{ kind: 'resource', projectId: props.preview.resource.projectId, conversationId: props.preview.resource.conversationId, resourceId: props.preview.resource.id }} />
+                ) : null}
                 <button
                   type="button"
                   aria-label={zh ? '在文件中搜索' : 'Find in file'}

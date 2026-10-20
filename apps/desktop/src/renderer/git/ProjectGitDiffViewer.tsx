@@ -1,7 +1,8 @@
 import { ZeusSelect } from '../ZeusSelect.js';
-import { FilePreview, PreviewIconButton, fileDiffEmptyMessage } from '../code/FilePreview.js';
+import { FilePreview, FilePreviewDataContext, PreviewIconButton, fileDiffEmptyMessage } from '../code/FilePreview.js';
 import type { FilePreviewRequest, FilePreviewItem } from '@zeus/shared';
-import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { fullFileDiff } from '../code/fullFileDiff.js';
 import { ColumnsIcon as Columns } from '@phosphor-icons/react/dist/csr/Columns';
 import { FileTypeIcon } from '../code/FileTypeIcon.js';
 import type { FileStatus } from '../code/fileStatus.js';
@@ -187,6 +188,8 @@ export function ProjectGitDiffWindow(props: {
 /** 标题、模式切换与布局操作共用一行，空文本差异仍能切换到内容预览。 */
 function TextSideBySideDiff(props: SideBySideDiffProps & { /** 共享文件操作由预览容器提供。 */ toolbar?: ReactNode; /** 已授权的前后两版完整正文。 */ items?: FilePreviewItem[] | null }) {
   const [mode, setMode] = useState<DiffViewMode>('side-by-side');
+  /** 全文模式固定左右展示，片段操作仍使用原始补丁。 */
+  const full = useContext(FilePreviewDataContext)?.full;
   const file = props.diff?.fileDiffs[0] ?? null;
   /** 片段操作仍使用原始补丁，连续正文不改变暂存范围。 */
   const [hunkIndex, setHunkIndex] = useState(0);
@@ -228,31 +231,33 @@ function TextSideBySideDiff(props: SideBySideDiffProps & { /** 共享文件操�
         ) : null}
         <span>+{file.addedLines}</span>
         <em>-{file.deletedLines}</em>
-        <span className="project-git-diff-mode" aria-label={props.zh ? '差异布局' : 'Diff layout'}>
-          <button
-            type="button"
-            className={mode === 'side-by-side' ? 'is-active' : ''}
-            aria-pressed={mode === 'side-by-side'}
-            aria-label={props.zh ? '左右两栏' : 'Side-by-side'}
-            onClick={() => setMode('side-by-side')}
-            data-icon-tooltip={props.zh ? '左右两栏' : 'Side-by-side'}
-          >
-            <Columns aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            className={mode === 'unified' ? 'is-active' : ''}
-            aria-pressed={mode === 'unified'}
-            aria-label={props.zh ? '统一视图' : 'Unified'}
-            onClick={() => setMode('unified')}
-            data-icon-tooltip={props.zh ? '统一视图' : 'Unified'}
-          >
-            <Rows aria-hidden="true" />
-          </button>
-        </span>
+        {!full ? (
+          <span className="project-git-diff-mode" aria-label={props.zh ? '差异布局' : 'Diff layout'}>
+            <button
+              type="button"
+              className={mode === 'side-by-side' ? 'is-active' : ''}
+              aria-pressed={mode === 'side-by-side'}
+              aria-label={props.zh ? '左右两栏' : 'Side-by-side'}
+              onClick={() => setMode('side-by-side')}
+              data-icon-tooltip={props.zh ? '左右两栏' : 'Side-by-side'}
+            >
+              <Columns aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className={mode === 'unified' ? 'is-active' : ''}
+              aria-pressed={mode === 'unified'}
+              aria-label={props.zh ? '统一视图' : 'Unified'}
+              onClick={() => setMode('unified')}
+              data-icon-tooltip={props.zh ? '统一视图' : 'Unified'}
+            >
+              <Rows aria-hidden="true" />
+            </button>
+          </span>
+        ) : null}
       </header>
       <div className="project-git-diff-side-by-side">
-        {mode === 'side-by-side' ? (
+        {full || mode === 'side-by-side' ? (
           <div className="project-git-diff-side-head">
             <span data-icon-tooltip={oldPath}>{oldPath}</span>
             <span data-icon-tooltip={newPath}>{newPath}</span>
@@ -306,7 +311,7 @@ function TextSideBySideDiff(props: SideBySideDiffProps & { /** 共享文件操�
             ) : (
               <Suspense fallback={null}>
                 <CodeDiffView
-                  file={visibleFile}
+                  file={full ? file : visibleFile}
                   unified={mode === 'unified'}
                   alignReplacements
                   resizable
@@ -327,48 +332,10 @@ function TextSideBySideDiff(props: SideBySideDiffProps & { /** 共享文件操�
 
 /** 用授权全文补齐未修改行；逐行校验旧补丁，拒绝把不同版本拼在一起。 */
 function continuousDiffFile(file: GitFileDiff, items: FilePreviewItem[]): GitFileDiff {
-  /** Git 不把末尾换行后的空字符串当成额外代码行。 */
-  const readLines = (item: FilePreviewItem | undefined, absent: boolean): string[] => {
-    if (absent) return [];
-    if (!item || item.content === undefined || item.truncated) throw new Error(item?.reason || '完整文件暂不可用，请刷新或在外部编辑器中查看。');
-    if (!item.content) return [];
-    const lines = item.content.split('\n').map((line) => (line.endsWith('\r') ? line.slice(0, -1) : line));
-    if (lines.at(-1) === '') lines.pop();
-    return lines;
-  };
-  /** 前后版本独立读取，新增或删除的缺失侧明确为空。 */
-  const before = readLines(items[0], file.changeType === 'added');
-  const after = readLines(items[1], file.changeType === 'deleted');
-  /** 只给展示层补齐上下文，原始补丁继续用于写操作。 */
-  const lines: GitDiffHunk['lines'] = [];
-  /** 游标对应已消费的前后版本行数。 */
-  let left = 0;
-  let right = 0;
-  /** 任何版本错位都要求重新读取，不静默隐藏中间正文。 */
-  const stale = () => new Error('文件内容已经变化，请刷新 Git 差异。');
-  /** 未修改段必须在两端完全一致。 */
-  const appendContext = (leftEnd: number, rightEnd: number) => {
-    if (leftEnd < left || rightEnd < right || leftEnd > before.length || rightEnd > after.length) throw stale();
-    while (left < leftEnd && right < rightEnd) {
-      if (before[left] !== after[right]) throw stale();
-      lines.push({ type: 'context', content: before[left]!, oldLineNumber: ++left, newLineNumber: ++right });
-    }
-    if (left !== leftEnd || right !== rightEnd) throw stale();
-  };
-  for (const hunk of file.hunks) {
-    appendContext(hunk.oldLines ? hunk.oldStart - 1 : hunk.oldStart, hunk.newLines ? hunk.newStart - 1 : hunk.newStart);
-    for (const line of hunk.lines) {
-      if (line.type === 'metadata') continue;
-      let content = line.content.endsWith('\r') ? line.content.slice(0, -1) : line.content;
-      // 预览解码会去除文件头 BOM，比较同一可见正文时采用一致规则。
-      if ((line.oldLineNumber === 1 || line.newLineNumber === 1) && content.startsWith('\uFEFF')) content = content.slice(1);
-      if (line.type !== 'addition' && (line.oldLineNumber !== left + 1 || before[left++] !== content)) throw stale();
-      if (line.type !== 'deletion' && (line.newLineNumber !== right + 1 || after[right++] !== content)) throw stale();
-      lines.push({ ...line, content });
-    }
-  }
-  appendContext(before.length, after.length);
-  return { ...file, hunks: lines.length ? [{ header: '', oldStart: before.length ? 1 : 0, newStart: after.length ? 1 : 0, oldLines: before.length, newLines: after.length, lines }] : [] };
+  /** 与会话和交付共用全文核对，保留原始文件统计及操作片段。 */
+  const complete = fullFileDiff(file, items);
+  if (!complete) throw new Error('完整文件暂不可用或内容已经变化，请刷新 Git 差异。');
+  return { ...file, hunks: complete.hunks };
 }
 
 /** 独立差异窗口只把选中文件交给代码视图。 */

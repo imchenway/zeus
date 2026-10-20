@@ -1,6 +1,6 @@
 import { registerFilePreview } from './filePreview.js';
 import { getApplicationIcon } from './applicationIcon.js';
-import { filePreviewMime, filePreviewKind, filePreviewLimits, type FilePreviewIntent, type FilePreviewRequest } from '@zeus/shared';
+import { filePreviewMime, filePreviewKind, filePreviewLimits, type FilePreviewIntent, type FilePreviewRequest, type FilePreviewSourceWorkspace } from '@zeus/shared';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, protocol, screen, session, shell, Tray } from 'electron';
 import { execFile as execFileCallback, spawn } from 'node:child_process';
 import { constants as fsConstants, existsSync, type FSWatcher, mkdtempSync } from 'node:fs';
@@ -175,6 +175,16 @@ let readOnlyValidationCleanupScheduled = false;
 let projectSourceWorkspace: ProjectSourceWorkspaceService | undefined;
 /** 效果预览沿用同一项目根解析，草稿授权只存活于发起窗口。 */
 const projectSourcePreviews = new ProjectSourcePreviewService({ loadProjectRoot: loadProjectRootForSourceWorkspace });
+/** 任务工作树源码页独占授权作用域，不能借用其他窗口或项目根。 */
+const fileSourceWindows = new Map<
+  BrowserWindow,
+  {
+    workspace: FilePreviewSourceWorkspace;
+    service: ProjectSourceWorkspaceService;
+    previews: ProjectSourcePreviewService;
+    loadRoot(projectId: string): Promise<string>;
+  }
+>();
 /** 每个预览窗口只登记一次关闭清理。 */
 const sourcePreviewOwners = new Set<number>();
 let projectGitWorkbench: ProjectGitWorkbenchService | undefined;
@@ -861,7 +871,7 @@ function readPackagedResourceIdentity(): string | null {
 }
 
 /** 各类窗口在创建前统一核对资源，避免把新包的二进制片段读成网页。 */
-function rendererEntryUrl(surface?: 'menu-bar-usage' | 'menu-bar-usage-cost-detail' | 'task-git-delivery' | 'project-git-diff', parameters?: Record<string, string>): string {
+function rendererEntryUrl(surface?: 'menu-bar-usage' | 'menu-bar-usage-cost-detail' | 'task-git-delivery' | 'project-git-diff' | 'file-source', parameters?: Record<string, string>): string {
   if (app.isPackaged && (!startupResourceIdentity || readPackagedResourceIdentity() !== startupResourceIdentity)) {
     throw new Error(nativeText('应用文件已更新或暂时不可用。请重新启动 Zeus 后再打开窗口。', 'Application files have changed or are unavailable. Restart Zeus before opening this window.'));
   }
@@ -869,6 +879,80 @@ function rendererEntryUrl(surface?: 'menu-bar-usage' | 'menu-bar-usage-cost-deta
   if (surface) url.searchParams.set('surface', surface);
   for (const [key, value] of Object.entries(parameters ?? {})) url.searchParams.set(key, value);
   return url.toString();
+}
+
+/** 共享源码页使用独立窗口，目录绑定本次受信预览，不切换或丢弃原页面草稿。 */
+async function openFileSourceWindow(parent: BrowserWindow, target: { root: string; path: string }): Promise<void> {
+  /** 同一工作区文件重复点击复用已有源码窗口。 */
+  const relativePath = relative(target.root, target.path).split(sep).join('/');
+  for (const [window, scope] of fileSourceWindows) {
+    if (!window.isDestroyed() && scope.workspace.project.localPath === target.root && scope.workspace.relativePath === relativePath) {
+      window.webContents.send('zeus:file-preview:source-open-file', relativePath);
+      window.show();
+      window.focus();
+      return;
+    }
+  }
+  /** 随机身份只允许当前源码窗口使用，不持久化为业务项目。 */
+  const workspace: FilePreviewSourceWorkspace = { project: { id: `file-source:${randomUUID()}`, name: basename(target.root), localPath: target.root }, relativePath };
+  /** 所有读写、预览与归属通过相同窗口作用域校验。 */
+  const loadRoot = async (projectId: string) => {
+    if (projectId !== workspace.project.id) throw new Error('源码请求不属于当前工作区。');
+    return target.root;
+  };
+  /** 两个平台均沿用系统标题栏和窗口尺寸恢复。 */
+  const { window, reveal } = createPersistentWindow('file-source-window-state.json', {
+    x: parent.getBounds().x + 24,
+    y: parent.getBounds().y + 24,
+    width: 1100,
+    height: 780,
+    minWidth: 640,
+    minHeight: 480,
+    title: `${relativePath} · ${desktopDisplayName()}`,
+    show: false,
+    titleBarStyle: 'default',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#181818' : '#f7f8fa',
+    webPreferences: { preload: join(desktopRoot(), 'dist/preload/index.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, allowRunningInsecureContent: false },
+  });
+  fileSourceWindows.set(window, {
+    workspace,
+    loadRoot,
+    service: new ProjectSourceWorkspaceService({ loadProjectRoot: loadRoot, trashItem: (path) => shell.trashItem(path) }),
+    previews: new ProjectSourcePreviewService({ loadProjectRoot: loadRoot }),
+  });
+  /** 编辑页关闭复用应用已有的未保存更改协议，保存失败时继续保留窗口。 */
+  window.on('close', (event) => {
+    if (taskTableLayoutQuitApproved || taskTableLayoutCloseApprovedWindowIds.has(window.id) || !taskTableLayoutDirtyWindowIds.has(window.id)) return;
+    event.preventDefault();
+    pendingTaskTableLayoutWindowCloseIds.add(window.id);
+    window.webContents.send('zeus:unsaved-changes-close-requested');
+  });
+  /** 关闭后撤销工作区权限、文件监听和草稿预览。 */
+  const watcherKey = window.webContents.id;
+  window.once('closed', () => {
+    fileSourceWindows.get(window)?.previews.release(window.id);
+    fileSourceWindows.delete(window);
+    projectSourceWatchers.get(watcherKey)?.watcher.close();
+    projectSourceWatchers.delete(watcherKey);
+    taskTableLayoutDirtyWindowIds.delete(window.id);
+    unsavedChangeKeysByWindow.delete(window.id);
+    taskTableLayoutCloseApprovedWindowIds.delete(window.id);
+    pendingTaskTableLayoutWindowCloseIds.delete(window.id);
+    appCloseLayerActivityByWindow.delete(window.id);
+  });
+  /** 资源加载与窗口安全使用既有启动链。 */
+  const url = rendererEntryUrl('file-source');
+  configureWindowSecurity(window, url);
+  window.once('ready-to-show', () => {
+    reveal();
+    window.focus();
+  });
+  try {
+    await window.loadURL(url);
+  } catch (error) {
+    if (!window.isDestroyed()) window.destroy();
+    throw error;
+  }
 }
 
 /** 项目与任务文件共用原生差异窗口，读取身份通过参数明确区分。 */
@@ -1255,7 +1339,7 @@ function closeFocusedWindowOrContextTab(): void {
 }
 
 function isTrustedZeusRendererWindow(window: BrowserWindow): boolean {
-  return windows.has(window) || taskGitDeliveryTargetByWindowId.has(window.id) || projectGitDiffWindows.has(window) || menuBarUsageWindow === window || menuBarUsageCostDetailWindow === window;
+  return windows.has(window) || fileSourceWindows.has(window) || taskGitDeliveryTargetByWindowId.has(window.id) || projectGitDiffWindows.has(window) || menuBarUsageWindow === window || menuBarUsageCostDetailWindow === window;
 }
 
 /** Cmd+N 是会话级动作：恢复主窗口并通知 Renderer 打开新会话草稿，不再创建额外窗口。 */
@@ -1489,6 +1573,11 @@ async function loadZentaoExtractServices(command: MainCommandExecutionContext): 
 
 function requireProjectSourceWorkspace(event: Electron.IpcMainInvokeEvent): ProjectSourceWorkspaceService {
   const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+  if (requestingWindow && !requestingWindow.isDestroyed() && event.senderFrame === event.sender.mainFrame) {
+    /** 独立源码页始终返回当前窗口绑定的工作树服务。 */
+    const scoped = fileSourceWindows.get(requestingWindow);
+    if (scoped) return scoped.service;
+  }
   if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !projectSourceWorkspace) {
     throw new Error('项目源码请求来自不受信任窗口或源码服务尚未就绪。');
   }
@@ -2030,6 +2119,14 @@ function setupIpc(): void {
     if (typeof input?.projectId !== 'string' || (input.relativePath !== undefined && typeof input.relativePath !== 'string')) throw new TypeError('项目源码目录请求无效。');
     return service.listDirectory(input.projectId, input.relativePath ?? '');
   });
+  ipcMain.handle('zeus:file-preview:source-workspace', (event) => {
+    /** 页面参数不能创建或更换源码权限。 */
+    const window = BrowserWindow.fromWebContents(event.sender);
+    /** 启动上下文只返回所属窗口已经固定的目标。 */
+    const scope = window && event.senderFrame === event.sender.mainFrame ? fileSourceWindows.get(window) : undefined;
+    if (!scope) throw new Error('当前窗口没有源码工作区授权。');
+    return scope.workspace;
+  });
   ipcMain.handle('zeus:project-source:search', (event, input: { projectId?: unknown; query?: unknown }) => {
     const service = requireProjectSourceWorkspace(event);
     if (typeof input?.projectId !== 'string' || typeof input.query !== 'string') throw new TypeError('项目源码搜索请求无效。');
@@ -2052,17 +2149,19 @@ function setupIpc(): void {
     /** 预览能力只提供给受信主框架，iframe 不能申请项目授权。 */
     const window = BrowserWindow.fromWebContents(event.sender);
     if (!window || event.senderFrame !== event.sender.mainFrame) throw new Error('源码预览请求来自不受信框架。');
+    /** 效果预览与文本保存共用当前窗口的工作树权限。 */
+    const previews = fileSourceWindows.get(window)?.previews ?? projectSourcePreviews;
     if (!sourcePreviewOwners.has(window.id)) {
       sourcePreviewOwners.add(window.id);
       window.once('closed', () => {
         sourcePreviewOwners.delete(window.id);
-        projectSourcePreviews.release(window.id);
+        previews.release(window.id);
       });
     }
     /** 窗口可能在项目读取期间关闭，迟到授权必须立即撤销。 */
-    const grant = await projectSourcePreviews.prepare(window.id, input);
+    const grant = await previews.prepare(window.id, input);
     if (window.isDestroyed()) {
-      projectSourcePreviews.release(window.id);
+      previews.release(window.id);
       throw new Error('源码预览窗口已经关闭。');
     }
     return grant;
@@ -2072,14 +2171,16 @@ function setupIpc(): void {
     /** 释放请求不能撤销其他窗口的资源。 */
     const window = BrowserWindow.fromWebContents(event.sender);
     if (!window || event.senderFrame !== event.sender.mainFrame || !Array.isArray(ids) || ids.length > 24 || ids.some((id) => typeof id !== 'string')) throw new Error('源码预览释放请求无效。');
-    projectSourcePreviews.release(window.id, ids);
+    (fileSourceWindows.get(window)?.previews ?? projectSourcePreviews).release(window.id, ids);
   });
   ipcMain.handle('zeus:project-source:blame', async (event, input: { projectId?: unknown; relativePath?: unknown; ref?: unknown; expectedSha256?: unknown }) => {
     requireProjectSourceWorkspace(event);
     if (typeof input?.projectId !== 'string' || typeof input.relativePath !== 'string' || (input.ref !== undefined && typeof input.ref !== 'string') || (input.expectedSha256 !== undefined && typeof input.expectedSha256 !== 'string')) {
       throw new TypeError('项目源码 blame 请求无效。');
     }
-    const projectRoot = await loadProjectRootForSourceWorkspace(input.projectId);
+    /** 当前窗口决定根目录，不能用另一窗口的临时身份换取权限。 */
+    const window = BrowserWindow.fromWebContents(event.sender)!;
+    const projectRoot = await (fileSourceWindows.get(window)?.loadRoot ?? loadProjectRootForSourceWorkspace)(input.projectId);
     return getFileBlame(projectRoot, input.relativePath, typeof input.ref === 'string' && input.ref.trim() ? input.ref : undefined, input.expectedSha256);
   });
   ipcMain.handle('zeus:conversation-resource:blame', (event, input: ConversationResourceRequest & { expectedSha256: string }) => {
@@ -2250,7 +2351,7 @@ function setupIpc(): void {
   });
   ipcMain.on('zeus:unsaved-change-state', (event, payload: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
-    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !payload || typeof payload !== 'object') return;
+    if (!requestingWindow || requestingWindow.isDestroyed() || (!windows.has(requestingWindow) && !fileSourceWindows.has(requestingWindow)) || !payload || typeof payload !== 'object') return;
     const key = typeof (payload as { key?: unknown }).key === 'string' ? (payload as { key: string }).key.trim() : '';
     if (!/^[a-z0-9:-]{1,80}$/u.test(key)) return;
     const keys = unsavedChangeKeysByWindow.get(requestingWindow.id) ?? new Set<string>();
@@ -2322,7 +2423,7 @@ function setupIpc(): void {
   });
   ipcMain.on('zeus:unsaved-changes-close-resolution', (event, resolution: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
-    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) return;
+    if (!requestingWindow || requestingWindow.isDestroyed() || (!windows.has(requestingWindow) && !fileSourceWindows.has(requestingWindow))) return;
     const proceed = Boolean(resolution && typeof resolution === 'object' && (resolution as { proceed?: unknown }).proceed === true);
     if (!proceed) {
       pendingTaskTableLayoutWindowCloseIds.delete(requestingWindow.id);
@@ -3648,7 +3749,9 @@ async function initializeApplication(): Promise<void> {
   /** 协议页面由受信资源服务响应，页面自身不持有桌面 IPC 能力。 */
   protocol.handle('zeus-source-preview', (request) => {
     const url = new URL(request.url);
-    return projectSourcePreviews.respond(url.hostname, url.pathname, request);
+    /** 根据不可猜测的预览令牌定位所属工作树，不按 URL 接受任意根目录。 */
+    const previews = [...fileSourceWindows.values()].find((scope) => scope.previews.owns(url.hostname))?.previews ?? projectSourcePreviews;
+    return previews.respond(url.hostname, url.pathname, request);
   });
   traceApplicationStartup('electron_ready');
   ensureMacOSDockIconVisible();
@@ -3659,14 +3762,22 @@ async function initializeApplication(): Promise<void> {
     traceApplicationStartup('read_only_validation_verified');
   }
   registerFilePreview({
+    openSource: openFileSourceWindow,
     temporaryRoot: join(app.getPath('userData'), 'cache', 'file-previews', String(process.pid)),
     requireWindow: (event) => {
       const window = BrowserWindow.fromWebContents(event.sender);
       if (!window || window.isDestroyed() || !isTrustedZeusRendererWindow(window) || event.senderFrame !== event.sender.mainFrame) throw new Error('文件预览请求来自不受信窗口。');
       return window;
     },
-    resolve: async (input) => {
+    resolve: async (input, window) => {
       if (!input || typeof input !== 'object') throw new Error('文件预览请求无效。');
+      if (input.kind === 'source' && fileSourceWindows.has(window)) {
+        /** 独立源码页的媒体预览同样由当前窗口作用域检查。 */
+        const scope = fileSourceWindows.get(window)!;
+        const root = await scope.loadRoot(input.projectId);
+        const path = await scope.service.revealPath(input.projectId, input.path);
+        return { sides: [{ name: input.path, label: '当前文件', root, path, edit: { root, path }, git: { root, path: input.path } }] };
+      }
       if (input.kind === 'project-git' && !(typeof input.repositoryId === 'string' && input.repositoryId.startsWith('conversation:'))) {
         if (!projectGitWorkbench) throw new Error('Git 文件服务尚未就绪。');
         return projectGitWorkbench.loadFilePreview(input);
@@ -4265,7 +4376,7 @@ app.on(
     requestQuitConfirmation: () => {
       if (taskTableLayoutQuitPending) return;
       taskTableLayoutQuitPending = true;
-      for (const window of windows) {
+      for (const window of [...windows, ...fileSourceWindows.keys()]) {
         if (!window.isDestroyed() && taskTableLayoutDirtyWindowIds.has(window.id)) {
           window.webContents.send('zeus:unsaved-changes-close-requested');
         }

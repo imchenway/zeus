@@ -1,6 +1,6 @@
-import { FilePreview, fileDiffEmptyMessage } from '../code/FilePreview.js';
+import { FilePreview, FilePreviewDataContext, fileDiffEmptyMessage } from '../code/FilePreview.js';
 import type { FilePreviewRequest } from '@zeus/shared';
-import { lazy, Suspense, type ReactNode } from 'react';
+import { lazy, Suspense, useContext, type ReactNode } from 'react';
 import type { TaskGitFileDiff } from '../session/sessionTypes.js';
 import type { DiffAnnotationLine } from '../code/CodeDiffView.js';
 import type { FileStatus } from '../code/fileStatus.js';
@@ -31,12 +31,14 @@ function TaskGitTextDiffTable(props: {
   /** 仅对实际有评论的行渲染正文。 */
   renderLineComments?: (line: number, side: 'left' | 'right') => ReactNode;
 }) {
+  /** 完整文件可能只有模式或路径变化，不能按空补丁提前隐藏全文。 */
+  const full = useContext(FilePreviewDataContext)?.full;
   if (!props.diff) {
     return (
       <p className="task-git-review-empty">{props.hasSelection ? (props.zh ? '该文件暂无可显示的文本差异。' : 'No text diff is available for this file.') : props.zh ? '请选择文件查看代码差异。' : 'Select a file to view its code diff.'}</p>
     );
   }
-  if (props.diff.hunks.length === 0) {
+  if (props.diff.hunks.length === 0 && !full) {
     return <p className="task-git-review-empty">{fileDiffEmptyMessage(props.diff, props.zh)}</p>;
   }
   return (

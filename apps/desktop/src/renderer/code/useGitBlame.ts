@@ -4,6 +4,8 @@ import { readCachedGitBlame } from './gitBlameCache.js';
 
 /** 项目文件与会话资源分别使用已有的读取权限。 */
 export interface UseGitBlameOptions {
+  /** 预览版本使用窗口私有令牌，不回退到项目工作区。 */
+  previewId?: string;
   projectId?: string;
   filePath?: string;
   ref?: string;
@@ -25,13 +27,16 @@ export function useGitBlame(options: UseGitBlameOptions): GitFileBlame | null {
   const ref = options.ref?.trim() || undefined;
   /** 资源内容参与版本核对，项目文件使用磁盘摘要。 */
   const { conversationId, resourceId, content, revision } = options;
+  /** 令牌与旧的项目、会话读取身份互斥。 */
+  const previewId = options.previewId;
   /** 会话资源不能回退到项目文件读取。 */
   const resource = Boolean(conversationId || resourceId);
   /** 缓存身份区分项目文件与会话资源。 */
-  const cacheKey = projectId ? JSON.stringify(resource ? ['resource', projectId, conversationId, resourceId] : ['project', projectId, filePath, ref]) : '';
+  const cacheKey = previewId ? JSON.stringify(['preview', previewId]) : projectId ? JSON.stringify(resource ? ['resource', projectId, conversationId, resourceId] : ['project', projectId, filePath, ref]) : '';
   /** 桌面能力不可用时保留纯源码显示。 */
   const available = Boolean(
-    projectId && typeof window !== 'undefined' && (resource ? conversationId && resourceId && content !== undefined && window.zeus?.loadConversationSourceBlame : filePath.trim() && window.zeus?.loadProjectSourceBlame),
+    typeof window !== 'undefined' &&
+    (previewId ? window.zeus?.loadFilePreviewBlame : projectId && (resource ? conversationId && resourceId && content !== undefined && window.zeus?.loadConversationSourceBlame : filePath.trim() && window.zeus?.loadProjectSourceBlame)),
   );
   /** 只保存与当前身份和内容匹配的读取结果。 */
   const [blame, setBlame] = useState<{ key: string; revision?: string; content?: string; value: GitFileBlame } | null>(null);
@@ -51,9 +56,11 @@ export function useGitBlame(options: UseGitBlameOptions): GitFileBlame | null {
       const expectedSha256 = content === undefined ? revision : Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(content))), (byte) => byte.toString(16).padStart(2, '0')).join('');
       if (!active) return null;
       return readCachedGitBlame(cacheKey, expectedSha256 ?? '', () =>
-        resource
-          ? window.zeus!.loadConversationSourceBlame({ projectId, conversationId: conversationId!, resourceId: resourceId!, expectedSha256: expectedSha256! })
-          : window.zeus!.loadProjectSourceBlame({ projectId, relativePath: filePath, ...(ref ? { ref } : {}), ...(expectedSha256 ? { expectedSha256 } : {}) }),
+        previewId
+          ? window.zeus!.loadFilePreviewBlame(previewId).then((value) => value ?? { path: '', lines: [] })
+          : resource
+            ? window.zeus!.loadConversationSourceBlame({ projectId, conversationId: conversationId!, resourceId: resourceId!, expectedSha256: expectedSha256! })
+            : window.zeus!.loadProjectSourceBlame({ projectId, relativePath: filePath, ...(ref ? { ref } : {}), ...(expectedSha256 ? { expectedSha256 } : {}) }),
       );
     };
     void load()
@@ -67,7 +74,7 @@ export function useGitBlame(options: UseGitBlameOptions): GitFileBlame | null {
     return () => {
       active = false;
     };
-  }, [available, cacheKey, filePath, projectId, ref, resource, conversationId, resourceId, content, revision]);
+  }, [available, cacheKey, filePath, projectId, ref, resource, conversationId, resourceId, content, revision, previewId]);
 
   return available && blame?.key === cacheKey && blame.revision === revision && blame.content === content ? blame.value : null;
 }

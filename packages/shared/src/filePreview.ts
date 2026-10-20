@@ -61,7 +61,7 @@ export type FilePreviewRequest = (
   | { kind: 'source'; projectId: string; path: string }
   | { kind: 'task-git'; taskId: string; workspaceId: string; path: string; scope: 'working' | 'committed' }
   | { kind: 'project-git'; projectId: string; repositoryId: string; path: string; stage?: 'combined' | 'staged' | 'unstaged'; commitHash?: string; comparisonRef?: string; comparisonMode?: 'current' | 'working-tree' }
-  | { kind: 'resource'; projectId: string; conversationId: string; resourceId: string }
+  | { kind: 'resource'; projectId: string; conversationId: string; resourceId: string; comparison?: 'head' }
   | { kind: 'turn'; projectId: string; conversationId: string; turnId: string; changeSetId: string; fileId: string }
   | { kind: 'attachment'; localPath?: string; uploadRef?: string }
 ) & {
@@ -71,8 +71,12 @@ export type FilePreviewRequest = (
 
 /** 仅供受信主进程使用的读取授权，不向渲染层返回文件系统权限。 */
 export interface FilePreviewSource {
-  /** 由仓库解析器固定的归属来源，仅供受信主进程使用。 */
-  gitBlame?: { path: string; revision: string; head: string };
+  /** 逐行归属绑定仓库路径和固定提交；无 ref 时以本次预览内容计算未提交行。 */
+  git?: { root: string; path: string; ref?: string; baseRef?: string };
+  /** 编辑目标由宿主解析；历史副本与快照目录不能成为编辑目标。 */
+  edit?: { root: string; path: string };
+  /** 确认不存在的一侧可作为空文件；其他读取失败不得冒充空文件。 */
+  missing?: boolean;
   /** 会话文件的行定位与 Git 差异。 */
   review?: FileReview;
   /** 展示名称保留原始扩展名。 */
@@ -103,6 +107,10 @@ export interface FilePreviewItem {
   blame?: FilePreviewBlameLine[];
   /** 归属读取失败不妨碍查看正文，但必须明确显示原因。 */
   blameError?: string;
+  /** 对应工作区的当前文件已通过读取校验，可进入源码编辑。 */
+  canEdit?: boolean;
+  /** 确认不存在的一侧与普通读取错误分开处理。 */
+  missing?: boolean;
   /** 随授权内容返回审阅信息，不扩大文件读取权限。 */
   review?: FileReview;
   /** 主进程生成的不可猜测资源身份。 */
@@ -127,6 +135,14 @@ export interface FilePreviewItem {
   truncated?: boolean;
   /** 可理解的失败原因。 */
   reason?: string;
+}
+
+/** 独立源码页只接收主进程固定的工作区身份，页面不能自行指定目录。 */
+export interface FilePreviewSourceWorkspace {
+  /** 临时作用域身份只在所属窗口内有效。 */
+  project: { id: string; name: string; localPath: string };
+  /** 第一次打开的工作区相对文件路径。 */
+  relativePath: string;
 }
 
 /** 页内文本与图片沿用小内容限制，媒体使用流式读取。 */

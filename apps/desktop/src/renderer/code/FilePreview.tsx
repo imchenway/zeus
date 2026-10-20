@@ -13,6 +13,7 @@ import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/Fol
 import { GitDiffIcon as GitDiff } from '@phosphor-icons/react/dist/csr/GitDiff';
 import { MinusIcon as Minus } from '@phosphor-icons/react/dist/csr/Minus';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
+import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import {
   sourceLanguageOptions,
@@ -30,13 +31,16 @@ import {
 } from '@zeus/shared';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { Button } from '../ui/Button.js';
-import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError, reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { FileTypeIcon } from './FileTypeIcon.js';
 import { sourceLocationDecorations } from './sourceLocationDecorations.js';
 import './filePreview.css';
+import { useGitBlame } from './useGitBlame.js';
 
 /** 会话统一选择预览容器：图片可用弹窗，其他文件进入右侧审阅。 */
 export const FilePreviewOpenContext = createContext<((request: FilePreviewRequest, image?: boolean) => void) | null>(null);
+/** 文本差异复用已经读取的准确前后版本，不重复申请文件或改变授权范围。 */
+export const FilePreviewDataContext = createContext<{ items: FilePreviewItem[] | null; full: boolean; zh: boolean } | null>(null);
 
 /** 文本编辑器仅在真正查看文本时加载。 */
 const CodeEditor = lazy(() => import('./CodeEditor.js').then((module) => ({ default: module.CodeEditor })));
@@ -63,12 +67,46 @@ export function PreviewIconButton({
   );
 }
 
+/** 已经有独立源码预览的页面按需申请编辑目标，不提前重复读取整份文件。 */
+export function FileSourceEditButton(props: { request: FilePreviewRequest; zh: boolean }) {
+  /** 等待窗口打开时禁止重复申请。 */
+  const [busy, setBusy] = useState(false);
+  /** 编辑窗口保存独立授权后立即释放本次临时预览。 */
+  async function openEditor() {
+    if (!window.zeus || busy) return;
+    setBusy(true);
+    /** 释放的令牌只来自本次操作，不影响原页面预览。 */
+    let ids: string[] = [];
+    try {
+      /** 主进程重新检查当前文件存在性和工作区边界。 */
+      const items = await window.zeus.loadFilePreview(props.request);
+      ids = items.map((item) => item.id).filter(Boolean);
+      /** 历史比较优先定位右侧当前工作区。 */
+      const item = items.findLast((candidate) => candidate.canEdit);
+      if (!item) throw new Error(props.zh ? '此文件没有可编辑的工作区版本。' : 'No editable workspace file is available.');
+      await window.zeus.actOnFilePreview(item.id, 'edit');
+    } catch (error) {
+      reportApplicationError(error, { language: props.zh ? 'zh-CN' : 'en' });
+    } finally {
+      if (ids.length) await window.zeus.releaseFilePreview(ids).catch(() => undefined);
+      setBusy(false);
+    }
+  }
+  return (
+    <PreviewIconButton label={props.zh ? '编辑工作区文件' : 'Edit workspace file'} disabled={busy} onClick={() => void openEditor()}>
+      <PencilSimple size={16} aria-hidden="true" />
+    </PreviewIconButton>
+  );
+}
+
 /** 打开引用先阅读文件；有 Git 改动时通过标准按钮进入比较，读取失败仍保留说明。 */
 export function FileReviewContent(props: {
   review?: FileReview;
   zh: boolean;
   /** 工具栏搜索时先显示完整源码，再由源码编辑器打开查找。 */
   sourceRequest?: number;
+  /** 会话源码对比时使用同一资源授权读取前后全文。 */
+  previewRequest?: FilePreviewRequest;
   /** 审阅操作并入调用方的文件工具栏，不再生成独立一行。 */
   toolbar: (actions: ReactNode) => ReactNode;
   children: ReactNode;
@@ -115,7 +153,13 @@ export function FileReviewContent(props: {
       ) : null}
       {showDiff && props.review?.diff ? (
         <Suspense fallback={null}>
-          <CodeDiffView file={props.review.diff} unified label={props.zh ? '文件 Git 差异' : 'File Git diff'} />
+          {props.previewRequest ? (
+            <FilePreview request={props.previewRequest} zh={props.zh}>
+              <CodeDiffView file={props.review.diff} unified label={props.zh ? '文件 Git 差异' : 'File Git diff'} />
+            </FilePreview>
+          ) : (
+            <CodeDiffView file={props.review.diff} unified label={props.zh ? '文件 Git 差异' : 'File Git diff'} />
+          )}
         </Suspense>
       ) : (
         props.children
@@ -193,6 +237,8 @@ function FilePreviewBody(props: {
   const [selected, setSelected] = useState(1);
   /** 当前差异或内容展示方式。 */
   const [mode, setMode] = useState<'auto' | 'preview' | 'diff'>('auto');
+  /** 全文只改变显示范围，不改变 Git 比较端点。 */
+  const [full, setFull] = useState(false);
   useEffect(() => {
     /** 卸载后拒绝迟到结果。 */
     let active = true;
@@ -229,6 +275,12 @@ function FilePreviewBody(props: {
   const images = items && items.length === 2 && items.some((item) => item.kind === 'image') && items.every((item) => item.kind === 'image' || item.kind === 'unavailable');
   /** 当前可用版本侧。 */
   const current = items?.[Math.min(selected, items.length - 1)];
+  /** 优先编辑右侧的当前工作区文件；历史版本也只能打开已授权的当前文件。 */
+  const editableItem = items?.findLast((item) => item.canEdit);
+  /** 完整前后端都存在或明确为空时，才允许宣称左右全文。 */
+  const fullAvailable = items?.length === 2 && items.every((item) => item.missing || (item.kind === 'text' && item.content !== undefined && !item.truncated));
+  /** 内容和显示范围通过上下文传给全部差异入口。 */
+  const previewData = useMemo(() => ({ items, full: full && Boolean(fullAvailable), zh: props.zh }), [items, full, fullAvailable, props.zh]);
   /** 只精简单图弹窗，仓库内容、版本对比与其他文件仍使用完整操作。 */
   const simpleImage = Boolean(props.onClose && items?.length === 1 && current?.kind === 'image' && current.url);
   useEffect(() => {
@@ -253,6 +305,17 @@ function FilePreviewBody(props: {
           <PreviewIconButton label={props.zh ? '差异' : 'Diff'} aria-pressed={showDiff} onClick={() => setMode('diff')}>
             <GitDiff size={16} aria-hidden="true" />
           </PreviewIconButton>
+          <PreviewIconButton
+            label={props.zh ? '两侧全文（保留差异高亮）' : 'Full files with diff highlights'}
+            disabled={!fullAvailable}
+            aria-pressed={showDiff && full}
+            onClick={() => {
+              setFull(!full);
+              setMode('diff');
+            }}
+          >
+            <ArrowsOutSimple size={16} aria-hidden="true" />
+          </PreviewIconButton>
           <PreviewIconButton label={props.zh ? '内容预览' : 'Preview'} aria-pressed={!showDiff} onClick={() => setMode('preview')}>
             <Eye size={16} aria-hidden="true" />
           </PreviewIconButton>
@@ -273,60 +336,81 @@ function FilePreviewBody(props: {
       <PreviewIconButton label={error ? (props.zh ? '重试' : 'Retry') : props.zh ? '刷新' : 'Refresh'} onClick={() => setAttempt((value) => value + 1)}>
         <ArrowClockwise size={16} aria-hidden="true" />
       </PreviewIconButton>
+      {editableItem ? (
+        <PreviewIconButton
+          label={props.zh ? '编辑工作区文件' : 'Edit workspace file'}
+          onClick={() => {
+            void window.zeus?.actOnFilePreview(editableItem.id, 'edit').catch((cause: unknown) => setError(userFacingErrorCause(cause)));
+          }}
+        >
+          <PencilSimple size={16} aria-hidden="true" />
+        </PreviewIconButton>
+      ) : null}
       {props.actions}
     </>
   );
   return (
-    <section className={`file-preview${simpleImage ? ' file-preview-simple-image' : ''}`} aria-label={props.zh ? '文件预览' : 'File preview'}>
-      {props.onClose ? (
-        <header className="file-preview-dialog-header">
-          <strong>{simpleImage ? (props.zh ? '图片预览' : 'Image preview') : props.zh ? '文件预览' : 'File preview'}</strong>
-          <button type="button" className="file-preview-close" aria-label={props.zh ? '关闭' : 'Close'} data-icon-tooltip={props.zh ? '关闭' : 'Close'} onClick={props.onClose}>
-            <X size={18} aria-hidden="true" />
-          </button>
-        </header>
-      ) : null}
-      {(!simpleImage || error) && !(showDiff && typeof props.children === 'function') && (showDiff || images || !current || error) ? (
-        <nav className="file-preview-toolbar" aria-label={props.zh ? '预览操作' : 'Preview actions'}>
-          {toolbar}
-        </nav>
-      ) : null}
-      {showDiff ? (
-        typeof props.children === 'function' ? (
-          props.children(toolbar, items)
+    <FilePreviewDataContext.Provider value={previewData}>
+      <section className={`file-preview${simpleImage ? ' file-preview-simple-image' : ''}`} aria-label={props.zh ? '文件预览' : 'File preview'}>
+        {props.onClose ? (
+          <header className="file-preview-dialog-header">
+            <strong>{simpleImage ? (props.zh ? '图片预览' : 'Image preview') : props.zh ? '文件预览' : 'File preview'}</strong>
+            <button type="button" className="file-preview-close" aria-label={props.zh ? '关闭' : 'Close'} data-icon-tooltip={props.zh ? '关闭' : 'Close'} onClick={props.onClose}>
+              <X size={18} aria-hidden="true" />
+            </button>
+          </header>
+        ) : null}
+        {showDiff && error ? (
+          <p role="alert">
+            <VisibleApplicationError error={error} language={props.zh ? 'zh-CN' : 'en'} />
+          </p>
+        ) : null}
+        {showDiff && items?.some((item) => item.truncated || (item.kind === 'unavailable' && !item.missing)) ? (
+          <p role="status">{props.zh ? '部分版本不可用或已截断，无法显示两侧全文。' : 'A version is unavailable or truncated. Full-file comparison is unavailable.'}</p>
+        ) : null}
+        {(!simpleImage || error) && !(showDiff && typeof props.children === 'function') && (showDiff || images || !current || error) ? (
+          <nav className="file-preview-toolbar" aria-label={props.zh ? '预览操作' : 'Preview actions'}>
+            {toolbar}
+          </nav>
+        ) : null}
+        {showDiff ? (
+          typeof props.children === 'function' ? (
+            props.children(toolbar, items)
+          ) : (
+            props.children
+          )
+        ) : error ? (
+          <p role="alert">{simpleImage && typeof error === 'string' ? error : <VisibleApplicationError error={error} language={props.zh ? 'zh-CN' : 'en'} />}</p>
+        ) : !items ? (
+          <p role="status">{props.zh ? '正在读取文件…' : 'Loading file…'}</p>
+        ) : simpleImage && current?.url ? (
+          <PreviewImage url={current.url} name={current.name} zh={props.zh} compact onError={() => setError(props.zh ? '图片已损坏或无法解码，请重试。' : 'The image could not be decoded. Please retry.')} />
         ) : (
-          props.children
-        )
-      ) : error ? (
-        <p role="alert">{simpleImage && typeof error === 'string' ? error : <VisibleApplicationError error={error} language={props.zh ? 'zh-CN' : 'en'} />}</p>
-      ) : !items ? (
-        <p role="status">{props.zh ? '正在读取文件…' : 'Loading file…'}</p>
-      ) : simpleImage && current?.url ? (
-        <PreviewImage url={current.url} name={current.name} zh={props.zh} compact onError={() => setError(props.zh ? '图片已损坏或无法解码，请重试。' : 'The image could not be decoded. Please retry.')} />
-      ) : (
-        <div className={images ? 'file-preview-pair' : 'file-preview-single'}>
-          {(images ? items : current ? [current] : []).map((item, index) => (
-            <FilePreviewContent
-              key={`${item.id}:${index}:${item.label}`}
-              item={props.location ? { ...item, review: { ...item.review, location: props.location } } : item}
-              zh={props.zh}
-              fileStatus={props.fileStatus}
-              commentPath={props.commentPath}
-              commentSide={items.length > 1 && current === items[0] ? 'left' : 'right'}
-              comments={props.comments}
-              onCommentsChange={props.onCommentsChange}
-              encoding={textEncoding}
-              onEncodingChange={(encoding) => {
-                // 用户选择编码时保留内容预览，避免文本解码成功后跳回默认差异页。
-                setMode('preview');
-                setTextEncoding(encoding);
-              }}
-              toolbar={images ? undefined : toolbar}
-            />
-          ))}
-        </div>
-      )}
-    </section>
+          <div className={images ? 'file-preview-pair' : 'file-preview-single'}>
+            {(images ? items : current ? [current] : []).map((item, index) => (
+              <FilePreviewContent
+                key={`${item.id}:${index}:${item.label}`}
+                item={props.location ? { ...item, review: { ...item.review, location: props.location } } : item}
+                request={attachment}
+                zh={props.zh}
+                fileStatus={props.fileStatus}
+                commentPath={props.commentPath}
+                commentSide={items.length > 1 && current === items[0] ? 'left' : 'right'}
+                comments={props.comments}
+                onCommentsChange={props.onCommentsChange}
+                encoding={textEncoding}
+                onEncodingChange={(encoding) => {
+                  // 用户选择编码时保留内容预览，避免文本解码成功后跳回默认差异页。
+                  setMode('preview');
+                  setTextEncoding(encoding);
+                }}
+                toolbar={images ? undefined : toolbar}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+    </FilePreviewDataContext.Provider>
   );
 }
 
@@ -388,6 +472,8 @@ export function PreviewImage(props: { url: string; name: string; zh: boolean; on
 /** 已授权内容和系统操作共用明确的失败状态，绝不自动打开外部应用。 */
 function FilePreviewContent(props: {
   item: FilePreviewItem;
+  /** 会话资源的文件审阅继续使用原业务身份。 */
+  request: FilePreviewRequest;
   zh: boolean;
   /** 比较视图提供的真实 Git 状态。 */ fileStatus?: string;
   /** 当前用户选择的解码方式。 */ encoding: FilePreviewTextEncoding | '';
@@ -400,6 +486,8 @@ function FilePreviewContent(props: {
 }) {
   /** 当前已授权的文件描述。 */
   const item = props.item;
+  /** 归属绑定预览版本令牌，不根据显示名称猜测目录。 */
+  const blame = useGitBlame({ previewId: item.blame === undefined && !item.blameError ? item.id || undefined : undefined });
   /** 通用文本入口与会话源码使用同一行定位高亮，保留范围终点。 */
   const locationDecorations = useMemo(() => (item.review?.location?.line ? sourceLocationDecorations(() => item.review?.location) : []), [item.review?.location]);
   /** 自动识别可切换为已支持语法或纯文本，不改变文件正文。 */
@@ -423,6 +511,7 @@ function FilePreviewContent(props: {
   return (
     <article className="file-preview-content">
       <FileReviewContent
+        previewRequest={props.request.kind === 'resource' ? { ...props.request, comparison: 'head' } : undefined}
         review={item.kind === 'text' ? item.review : undefined}
         zh={props.zh}
         toolbar={(reviewActions) => (
@@ -530,6 +619,7 @@ function FilePreviewContent(props: {
                     label={item.name}
                     side={props.commentSide}
                     locale={props.zh ? 'zh-CN' : 'en-US'}
+                    blameLines={item.blame ?? blame?.lines}
                     location={item.review?.location}
                     comments={props.comments}
                     onCommentsChange={props.onCommentsChange}
@@ -542,8 +632,10 @@ function FilePreviewContent(props: {
                     content={item.content}
                     location={item.review?.location}
                     extensions={locationDecorations}
-                    blame={item.blame}
+                    blame={item.blame ?? blame?.lines}
                     blameLocale={props.zh ? 'zh-CN' : 'en-US'}
+                    blameLines={item.blame ?? blame?.lines}
+                    locale={props.zh ? 'zh-CN' : 'en-US'}
                     readOnly
                   />
                 )}
