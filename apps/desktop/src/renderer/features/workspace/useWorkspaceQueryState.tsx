@@ -135,8 +135,10 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const activeNavTarget = props.shellNavigation?.activeNavTarget ?? localActiveNavTarget;
   const setActiveNavTarget = props.shellNavigation?.onNavigate ?? setLocalActiveNavTarget;
   const [activeProjectSection, setActiveProjectSection] = useState<ProjectWorkspaceSection>(() => inferInitialProjectSection(props));
-  /** 旧 Git 链接与源码内的新地址统一打开完整 Git 工作台。 */
-  const [projectCodeWorkspaceMode, setProjectCodeWorkspaceMode] = useState<ProjectCodeWorkspaceMode>(() => (typeof window !== 'undefined' && ['#project-git', '#project-code-git'].includes(window.location.hash) ? 'git' : 'source'));
+  /** Git 侧栏独立于底层页面；旧链接仍打开同一个工作台。 */
+  const [projectGitOpen, setProjectGitOpen] = useState(() => props.initialMainNavTarget === 'git-diff' || (typeof window !== 'undefined' && ['#project-git', '#project-code-git'].includes(window.location.hash)));
+  /** 既有导航组件沿用模式参数，源码页面不再承载 Git 底栏。 */
+  const projectCodeWorkspaceMode: ProjectCodeWorkspaceMode = projectGitOpen ? 'git' : 'source';
   /** 弹窗绑定准确项目，后台命令生命周期不依赖弹窗挂载。 */
   const [projectCommandsProjectId, setProjectCommandsProjectId] = useState<string | null>(null);
   const projectSourceWorkspaceRef = useRef<ProjectSourceWorkspaceHandle | null>(null);
@@ -798,13 +800,11 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const selectedProject = projectDetail ?? firstProject;
   const activeProjectId = selectedProject?.id ?? firstProjectId;
   useEffect(() => {
-    // 初始项目就绪后消化旧页面链接，后续导航只写源码工作区地址。
+    // 初始命令链接打开弹窗，背景保留当前任务或会话页面。
     if (!activeProjectId || typeof window === 'undefined') return;
     if (window.location.hash === '#project-commands') {
       setProjectCommandsProjectId(activeProjectId);
-      window.history.replaceState(null, '', '#project-code-source');
-    } else if (window.location.hash === '#project-git') {
-      window.history.replaceState(null, '', '#project-code-git');
+      window.history.replaceState(null, '', `#project-${activeProjectSection}`);
     }
   }, [activeProjectId]);
   useEffect(() => {
@@ -1682,7 +1682,8 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     setPendingTaskStatuses,
     setPatchExportStatus,
     setPendingProjectDeleteId,
-    setProjectCodeWorkspaceMode,
+    setProjectGitOpen,
+    projectGitOpen,
     setProjectConfig,
     setProjectConfigForm,
     setProjectCreateDialogOpen,

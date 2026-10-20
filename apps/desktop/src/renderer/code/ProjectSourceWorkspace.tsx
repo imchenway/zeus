@@ -18,7 +18,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type ReactNode,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -90,8 +89,6 @@ export interface ProjectSourceWorkspaceHandle {
 }
 
 export interface ProjectSourceWorkspaceProps {
-  /** 分支右侧的工作区入口，复用 Git 和命令按钮。 */
-  toolbarActions?: ReactNode;
   /** 分支下拉框挂到目录顶行，替代重复的源码标题。 */
   branchToolbarRef?(element: HTMLSpanElement | null): void;
   /** 文件树复用底部工作台的 Git 快照，不单独读取仓库。 */
@@ -648,7 +645,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
     setTreeResizeSurface((current) => (current?.host === next?.host && current?.left === next?.left && current?.top === next?.top && current?.width === next?.width && current?.height === next?.height ? current : next));
   }, []);
   /** React 已知的宽度、底栏及提示变化立即同步，不等待下一帧观察通知。 */
-  useLayoutEffect(updateTreeResizeSurface, [treeWidth, props.toolbarActions, notice, activeTab?.externalChange, updateTreeResizeSurface]);
+  useLayoutEffect(updateTreeResizeSurface, [treeWidth, notice, activeTab?.externalChange, updateTreeResizeSurface]);
   useLayoutEffect(() => {
     /** 所有测量均来自当前源码页，项目切换后释放观察器。 */
     const track = treeResizeTrackRef.current;
@@ -795,7 +792,6 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
                 {/* 占位文字有独立节点，刷新快照时不清空外部挂载的分支控件。 */}
                 <span hidden={props.gitSnapshot?.projectId === props.project.id}>{zh ? '源码' : 'Source'}</span>
               </span>
-              {props.toolbarActions}
             </div>
             <div className="project-source-search-row">
               <label className="project-source-search">

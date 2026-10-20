@@ -21671,74 +21671,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 .project-code-mode-pane[hidden] {
   display: none;
 }
-/* 源码入口沿用项目行操作区的悬停与键盘聚焦显示规则。 */
-.macos-ai-app .project-source-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  inline-size: 26px;
-  block-size: 26px;
-  padding: 0;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--zeus-control-muted-text);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--zeus-source-list-row-motion);
-}
-
-/* 工作区入口复用同一组按钮，具体间距由所在工具行决定。 */
-.macos-ai-app .project-code-actions {
-  display: flex;
-  flex: 0 0 auto;
-  max-inline-size: 60%;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  -webkit-app-region: no-drag;
-}
-
-/* 分支显示占用有界宽度，长分支名截断并通过原控件提示显示全文。 */
-
-/* 尚未取得仓库快照时不占用文件标签空间。 */
-
-/* 顶部分支控件沿用原有样式，仅移除侧栏布局尺寸。 */
-
-.macos-ai-app .project-code-actions > button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  min-inline-size: 28px;
-  min-block-size: 28px;
-  padding: 4px 6px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--zeus-control-muted-text);
-  white-space: nowrap;
-  font-size: 12px;
-}
-
-.macos-ai-app :is(.project-source-button, .project-code-actions > button) > svg {
-  inline-size: 18px;
-  block-size: 18px;
-}
-
-.macos-ai-app :is(.project-source-button, .project-code-actions > button):hover:not(:disabled),
-.macos-ai-app .project-source-button[aria-current='page'],
-.macos-ai-app .project-code-actions > button[aria-expanded='true'] {
-  background: var(--zeus-interaction-hover);
-  color: var(--zeus-control-text);
-}
-
-.macos-ai-app :is(.project-source-button, .project-code-actions > button):focus-visible {
-  outline: 2px solid var(--zeus-control-accent);
-  outline-offset: -2px;
-}
-
-/* 未找到仓库或读取失败时，底栏显示反馈，源码工具仍保留在顶部。 */
+/* 未找到仓库或读取失败时，底栏显示反馈，项目工具仍保留在右侧。 */
 .project-code-git-pane > .project-git-workbench-state {
   position: relative;
   flex: 1;

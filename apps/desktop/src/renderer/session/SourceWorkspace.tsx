@@ -20,7 +20,7 @@ import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCod
 import { FileTypeIcon } from '../code/FileTypeIcon.js';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { ConversationResourcePreview } from './sessionTypes.js';
-import type { SessionUiLanguage } from './ThreadItemView.js';
+import { copyText, type SessionUiLanguage } from './ThreadItemView.js';
 import { ConversationMarkdown } from './ConversationMarkdown.js';
 import type { FilePreviewRequest, ConversationCodeComment } from '@zeus/shared';
 /** 与项目源码编辑器一样按需加载，避免会话首屏加载编辑器和评论运行时。 */
@@ -94,7 +94,7 @@ function SourceWorkspaceView(props: {
   /** 文件标题与浏览器标签共用会话顶栏位置。 */
   toolbarHost?: HTMLElement | null;
   preview: ConversationResourcePreview;
-  /** 外部打开与复制沿用宿主的资源授权。 */
+  /** 外部打开沿用宿主的资源授权。 */
   onOpen?: (target: ConversationOpenTarget, resource?: ConversationResource) => void | Promise<void>;
   /** 多文件标签由外层持有，正文组件只负责当前文件。 */
   tabs?: ConversationResourcePreview[];
@@ -154,13 +154,25 @@ function SourceWorkspaceView(props: {
   }, [copiedResourceId]);
   /** 工具栏只展示当前文件的复制结果。 */
   const copied = copiedResourceId === props.preview.resource.id;
-  /** 统一处理复制与外部应用打开。 */
+  /** 图标提示与无障碍反馈共用全文复制文案。 */
+  const copyLabel = copied ? (zh ? '已复制全文' : 'Full text copied') : zh ? '复制全文' : 'Copy full text';
+  /** 复制当前文件已完整加载的正文，不复制路径或当前选区。 */
+  async function copyFullText(): Promise<void> {
+    if (props.preview.kind !== 'source' || props.preview.truncated) return;
+    setOpenError(null);
+    setCopiedResourceId(null);
+    try {
+      if (!(await copyText(props.preview.content))) throw new Error(zh ? '复制全文失败，请重试。' : 'Could not copy the full text. Please try again.');
+      setCopiedResourceId(props.preview.resource.id);
+    } catch (error) {
+      setOpenError(error);
+    }
+  }
+  /** 外部应用和打开方式菜单共用原有授权入口。 */
   async function openResource(target: ConversationOpenTarget): Promise<void> {
     setOpenError(null);
     try {
-      if (target === 'copy_path') setCopiedResourceId(null);
       await props.onOpen?.(target, props.preview.resource);
-      if (target === 'copy_path' && props.onOpen) setCopiedResourceId(props.preview.resource.id);
     } catch (error) {
       setOpenError(error);
     }
@@ -331,15 +343,17 @@ function SourceWorkspaceView(props: {
                 ) : null}
                 <button
                   type="button"
-                  aria-label={copied ? (zh ? '已复制路径' : 'Path copied') : zh ? '复制路径' : 'Copy path'}
-                  data-icon-tooltip={copied ? (zh ? '已复制路径' : 'Path copied') : zh ? '复制路径' : 'Copy path'}
-                  disabled={!props.onOpen}
-                  onClick={() => void openResource('copy_path')}
+                  aria-label={copyLabel}
+                  data-icon-tooltip={
+                    !sourcePreview ? (zh ? '当前文件没有可复制的文本' : 'This file has no text to copy') : sourcePreview.truncated ? (zh ? '预览不完整，无法复制全文' : 'The preview is incomplete; full text cannot be copied') : copyLabel
+                  }
+                  disabled={!sourcePreview || sourcePreview.truncated}
+                  onClick={() => void copyFullText()}
                 >
                   {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
                 </button>
                 <span role="status" className="session-source-copy-status">
-                  {copied ? (zh ? '已复制路径' : 'Path copied') : ''}
+                  {copied ? copyLabel : ''}
                 </span>
                 <div className="session-source-open-group">
                   <button type="button" disabled={!props.onOpen} data-icon-tooltip={openApplication?.label} onClick={() => void openResource(openTarget ?? 'system_default')}>

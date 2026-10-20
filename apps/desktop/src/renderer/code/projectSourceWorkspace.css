@@ -196,10 +196,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.macos-ai-app .project-source-module-header > .project-code-actions {
-  max-inline-size: none;
-  padding: 0;
-}
 .project-source-module-actions {
   display: inline-flex;
   align-items: center;

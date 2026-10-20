@@ -12,7 +12,7 @@
   overflow: hidden;
   padding: 0 !important;
 }
-.macos-ai-app.zeus-shell.settings-dedicated-shell > .ai-workspace > .settings-reference-shell {
+.macos-ai-app.zeus-shell.settings-dedicated-shell > .ai-workspace > .project-tools-layout > .project-main-content > .settings-reference-shell {
   display: grid;
   grid-template-columns: 216px minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
@@ -1778,7 +1778,7 @@
   padding-inline: 8px;
 }
 @media (max-width: 640px) {
-  .macos-ai-app.zeus-shell.settings-dedicated-shell > .ai-workspace > .settings-reference-shell {
+  .macos-ai-app.zeus-shell.settings-dedicated-shell > .ai-workspace > .project-tools-layout > .project-main-content > .settings-reference-shell {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
   }
@@ -2221,7 +2221,7 @@
   padding: 8px !important;
 }
 
-.macos-ai-app.zeus-shell.settings-dedicated-shell.project-navigation-rail-shell > .ai-workspace > .settings-reference-shell {
+.macos-ai-app.zeus-shell.settings-dedicated-shell.project-navigation-rail-shell > .ai-workspace > .project-tools-layout > .project-main-content > .settings-reference-shell {
   border: 1px solid var(--zeus-card-border) !important;
   border-radius: 12px !important;
   background: var(--zeus-card-background) !important;
@@ -2232,7 +2232,7 @@
   padding-block-start: 18px !important;
 }
 
-.macos-ai-app.zeus-shell.settings-dedicated-shell > .ai-workspace > .settings-reference-shell > .settings-detail-pane {
+.macos-ai-app.zeus-shell.settings-dedicated-shell > .ai-workspace > .project-tools-layout > .project-main-content > .settings-reference-shell > .settings-detail-pane {
   border: 0 !important;
   border-radius: 0 !important;
   box-shadow: none !important;

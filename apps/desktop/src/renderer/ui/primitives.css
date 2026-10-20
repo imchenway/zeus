@@ -977,8 +977,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app {
   line-height: 1;
 }
 
-/* 源码与设置入口仍只在整行悬停或键盘聚焦时显示。 */
-.macos-ai-app .project-first-sidebar .zeus-source-list-row:where(:hover:not(:disabled):not([aria-disabled='true']), :focus-within) .zeus-source-list-row-actions > .project-source-button,
+/* 设置入口只在整行悬停或键盘聚焦时显示。 */
 .macos-ai-app .project-first-sidebar .zeus-source-list-row:where(:hover:not(:disabled):not([aria-disabled='true']), :focus-within) .zeus-source-list-row-actions > .project-settings-button {
   opacity: 1;
   pointer-events: auto;

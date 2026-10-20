@@ -108,7 +108,7 @@
   color: var(--zeus-product-text);
 }
 
-.macos-ai-app.zeus-shell.project-navigation-rail-shell > .ai-workspace > .automations-workspace {
+.macos-ai-app.zeus-shell.project-navigation-rail-shell > .ai-workspace > .project-tools-layout > .project-main-content > .automations-workspace {
   background: var(--zeus-card-background) !important;
   border: 1px solid var(--zeus-card-border);
   border-radius: 12px;
@@ -119,7 +119,7 @@
   overflow-y: auto;
 }
 
-.macos-ai-app.zeus-shell.project-navigation-rail-shell > .ai-workspace > .workspace-view.extensions-workspace {
+.macos-ai-app.zeus-shell.project-navigation-rail-shell > .ai-workspace > .project-tools-layout > .project-main-content > .workspace-view.extensions-workspace {
   overflow-x: hidden;
   overflow-y: auto;
 }

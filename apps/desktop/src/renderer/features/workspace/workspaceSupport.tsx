@@ -86,8 +86,8 @@ export type LegacyMainNavTarget = MainNavTarget | 'dashboard' | 'tasks' | 'runti
 export type ProjectWorkspaceSection = 'tasks' | 'code' | 'sessions';
 /** 源码编辑与完整 Git 工作台共用同一工作区。 */
 export type ProjectCodeWorkspaceMode = 'source' | 'git';
-/** 可见导航不再为 Git 和命令提供独立页面。 */
-export type ProjectWorkspaceEntryId = 'tasks' | 'source';
+/** 左侧项目导航保留任务，源码、命令与 Git 由右侧工具栏承载。 */
+export type ProjectWorkspaceEntryId = 'tasks';
 /** 项目导航文案与快捷键提示共用入口定义。 */
 export type ProjectWorkspaceEntry = Readonly<{
   id: ProjectWorkspaceEntryId;
@@ -95,11 +95,8 @@ export type ProjectWorkspaceEntry = Readonly<{
   section: ProjectWorkspaceSection;
   codeMode: ProjectCodeWorkspaceMode | undefined;
 }>;
-/** 侧栏只展示任务与源码，命令和 Git 从源码内部进入。 */
-export const PROJECT_WORKSPACE_ENTRIES = [
-  { id: 'tasks', shortcutKey: '1', section: 'tasks', codeMode: undefined },
-  { id: 'source', shortcutKey: '3', section: 'code', codeMode: 'source' },
-] as const satisfies readonly ProjectWorkspaceEntry[];
+/** 左侧任务入口沿用原有快捷键和项目导航。 */
+export const PROJECT_WORKSPACE_ENTRIES = [{ id: 'tasks', shortcutKey: '1', section: 'tasks', codeMode: undefined }] as const satisfies readonly ProjectWorkspaceEntry[];
 export type ProjectDetailPanel = 'diff' | 'edit' | 'config' | 'archive' | undefined;
 export type ConversationDrawer = 'runtime' | 'context' | 'changes' | 'templates' | undefined;
 
@@ -1372,6 +1369,7 @@ export function inferInitialMainNavTarget(props: {
   return 'projects';
 }
 
+/** 源码保持整页，Git 与命令入口保留任务或会话背景。 */
 export function inferInitialProjectSection(props: {
   initialMainNavTarget?: LegacyMainNavTarget;
   initialTaskEvents?: TaskEventRecord[];
@@ -1391,9 +1389,10 @@ export function inferInitialProjectSection(props: {
   snapshot?: WorkspaceSnapshot;
 }): ProjectWorkspaceSection {
   if (props.snapshot?.projects[0]?.id === temporaryWorkspaceId) return 'sessions';
-  if (typeof window !== 'undefined' && (window.location.hash === '#project-git' || window.location.hash === '#project-commands' || window.location.hash.startsWith('#project-code'))) return 'code';
+  if (typeof window !== 'undefined' && ['#project-code-source', '#project-code'].includes(window.location.hash)) return 'code';
   if (props.initialMainNavTarget === 'tasks') return 'tasks';
-  if (props.initialMainNavTarget === 'git-diff' || props.initialMainNavTarget === 'projects') return 'code';
+  if (props.initialMainNavTarget === 'git-diff') return 'tasks';
+  if (props.initialMainNavTarget === 'projects') return 'code';
   if (props.initialMainNavTarget === 'conversations' || props.initialMainNavTarget === 'runtime' || props.initialMainNavTarget === 'dashboard') return 'sessions';
   if (
     props.initialTaskEvents?.length ||
