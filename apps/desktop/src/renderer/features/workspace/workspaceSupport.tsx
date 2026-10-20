@@ -1448,7 +1448,7 @@ export function dedupeProjectRecordsByLocalPath(projects: ProjectRecord[]): Proj
   return deduped;
 }
 
-/** 置顶保持手动次序，其余沿用项目查询层冻结的小时顺序。 */
+/** 置顶保持手动次序，其余沿用项目查询层在整点或首次活跃时确定的顺序。 */
 export function orderProjects(projects: ProjectRecord[], pinnedProjectIds: string[]): ProjectRecord[] {
   /** 置顶顺序始终优先于自动活跃排序。 */
   const pinnedRank = new Map(pinnedProjectIds.map((projectId, index) => [projectId, index]));

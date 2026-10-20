@@ -178,7 +178,8 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
             }
           : received;
       snapshotRef.current = next;
-      replaceProjectQuery(next.projects);
+      // 函数式局部更新和命令回执都不是新读取的完整统计，不能消耗首次活跃机会。
+      replaceProjectQuery(next.projects, typeof updater !== 'function' && received.kind !== 'change');
       replaceTaskQuery(next.tasks);
       setWorkspaceSnapshot(next);
     },

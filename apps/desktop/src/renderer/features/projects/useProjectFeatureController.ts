@@ -8,7 +8,8 @@ import { projectActivityOrderStorageKey } from './projectActivityOrder.js';
 export function useProjectFeatureController(input: { client: ProjectApiClient | null; initialItems: readonly ProjectRecord[] }) {
   const store = useMemo(() => new ProjectQueryStore(input.client, input.initialItems), [input.client]);
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
-  const replace = useCallback((items: readonly ProjectRecord[]) => store.replace(items), [store]);
+  /** 只有完整查询结果可以触发排序，局部命令回执只合并内容。 */
+  const replace = useCallback((items: readonly ProjectRecord[], complete = true) => store.replace(items, complete), [store]);
   const select = useCallback((projectId: string | null) => store.select(projectId), [store]);
   const load = useCallback((query?: string) => store.load(query), [store]);
   const loadOne = useCallback((projectId: string) => store.loadOne(projectId), [store]);

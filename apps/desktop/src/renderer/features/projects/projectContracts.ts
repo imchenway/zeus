@@ -14,6 +14,8 @@ export interface ProjectRecord {
   activityHour?: number;
   /** 上一完整小时用户主动发送次数。 */
   hourlyUserMessageCount?: number;
+  /** 当前小时用户主动发送次数，仅在项目首次活跃时触发全量排序。 */
+  currentHourUserMessageCount?: number;
 }
 
 export interface ProjectWorkspaceSharedPath {

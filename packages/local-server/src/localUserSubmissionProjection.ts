@@ -44,6 +44,11 @@ export function projectLocallyAcceptedUserMessage(input: {
     submissionId: input.submission.id,
     ...(input.requestQueueDispatch === false ? { queueDispatchRequested: false } : {}),
   });
+  // 独立通知用户发送事实；项目统计自行排除临时会话和替换提交，不依赖队列状态。
+  input.broadcast('conversation.submission.accepted', {
+    conversationId: input.submission.conversationId,
+    submissionId: input.submission.id,
+  });
 }
 
 function parseRecord(value: string): Record<string, unknown> {
