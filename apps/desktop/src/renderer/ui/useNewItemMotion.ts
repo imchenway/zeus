@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 /**
  * 条目入场动画的总时长，也是 is-entering 标记的保留时间。
- * 必须不小于 session.css 里 is-entering 动画的时长，否则标记先被摘掉、弹簧动画会被截断成生硬跳变。
+ * 必须不小于 session.css 里 is-entering 动画的时长，否则标记先被摘掉、入场动画会被截断成生硬跳变。
  */
 export const newItemMotionDurationMs = 520;
 

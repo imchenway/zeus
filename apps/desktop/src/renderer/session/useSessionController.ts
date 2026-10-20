@@ -869,7 +869,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
   let renderBatchActive = false;
   let renderBatchChanged = false;
 
-  /** 位置换代期间保留旧画面，所有动作按原顺序等待一次接管。 */
+  /** 位置换代期间保留旧历史，服务端动作按原顺序接管；本地输入不等待位置读取。 */
   let placementRecovery: Promise<void> | null = null;
   let placementEpoch = Math.max(1, ...Object.values(state.items).map((item) => item.transcript?.placement.orderEpoch ?? 1));
   const placementActions: Parameters<typeof sessionReducer>[1][] = [];
@@ -974,7 +974,17 @@ export function createSessionController(options: CreateSessionControllerOptions)
     }
   }
 
+  /** 本地输入同步显示，服务端历史与位置继续在同一次归约中接管。 */
   function dispatch(action: Parameters<typeof sessionReducer>[1]): void {
+    /** 这些动作不引入持久位置；缓冲它们会延迟气泡、读取旧草稿，甚至在恢复失败时丢失本地显示。 */
+    const localInputAction =
+      action.type === 'draft_changed' ||
+      action.type === 'attachments_changed' ||
+      action.type === 'browser_submission_changed' ||
+      action.type === 'context_draft_changed' ||
+      action.type === 'send_started' ||
+      action.type === 'send_failed' ||
+      action.type === 'send_uncertain';
     /** 历史接管前补齐已加载用户输入的位置，不能先把它排到有位置的回复之后。 */
     const missingInputPlacement =
       (action.type === 'snapshot_hydrated' || action.type === 'snapshot_v2_page_merged') &&
@@ -984,6 +994,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const incomingEpoch =
       action.type === 'event_received' && action.event.type === 'conversation.transcript.placement.changed' ? action.event.payload.orderEpoch : Math.max(0, ...actionTranscripts(action).map((envelope) => envelope.placement.orderEpoch));
     if (
+      !localInputAction &&
       action.type !== 'transcript_placements_hydrated' &&
       (placementRecovery ||
         missingInputPlacement ||
