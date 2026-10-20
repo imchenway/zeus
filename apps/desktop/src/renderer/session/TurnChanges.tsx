@@ -137,9 +137,9 @@ export function TurnChangeCard(props: {
           <ul className="session-turn-change-files">
             {visibleFiles.map((file) => (
               <li key={file.id}>
-                <button type="button" onClick={() => props.onReview?.(changeSet, file.id)} disabled={!props.onReview}>
+                <button type="button" aria-label={`${displayPath(file)} · ${localizedChangeType(file, props.language)}`} onClick={() => props.onReview?.(changeSet, file.id)} disabled={!props.onReview}>
                   <FileTypeIcon name={file.newPath ?? file.oldPath ?? ''} />
-                  <span className="session-turn-change-path" data-icon-tooltip={displayPath(file)}>
+                  <span className="session-turn-change-path" data-icon-tooltip={`${displayPath(file)} · ${localizedChangeType(file, props.language)}`} data-file-status={file.changeType === 'binary' ? 'modified' : file.changeType}>
                     {displayPath(file)}
                   </span>
                   <span className="session-turn-change-file-counts">
@@ -488,11 +488,10 @@ export function TurnDiffWorkspace(props: {
           {activeFile ? (
             <>
               <header>
-                <strong data-icon-tooltip={displayPath(activeFile)} data-file-status={activeFile.changeType === 'binary' ? 'modified' : activeFile.changeType}>
+                <strong data-icon-tooltip={`${displayPath(activeFile)} · ${localizedChangeType(activeFile, props.language)}`} data-file-status={activeFile.changeType === 'binary' ? 'modified' : activeFile.changeType}>
                   {displayPath(activeFile)}
                 </strong>
                 <span>
-                  <small>{localizedChangeType(activeFile, props.language)}</small>
                   {props.onOpenFile ? (
                     <button type="button" className="session-turn-diff-open-file" onClick={() => void openFile(activeFile)}>
                       <FileCode aria-hidden="true" />
@@ -586,7 +585,8 @@ function TurnDiffDirectory(props: { files: Array<{ path: string; file: TurnChang
                 type="button"
                 className="session-turn-diff-file"
                 key={file.id}
-                data-icon-tooltip={displayPath(file)}
+                data-icon-tooltip={`${displayPath(file)} · ${localizedChangeType(file, props.language)}`}
+                aria-label={`${displayPath(file)} · ${localizedChangeType(file, props.language)}`}
                 aria-current={file.id === props.activeFileId ? 'true' : undefined}
                 onClick={() => props.onSelect(file.id)}
                 style={{ paddingInlineStart: 7 + props.depth * 14 }}
@@ -595,11 +595,12 @@ function TurnDiffDirectory(props: { files: Array<{ path: string; file: TurnChang
                   <FileTypeIcon name={name} />
                   <span data-file-status={file.changeType === 'binary' ? 'modified' : file.changeType}>{name}</span>
                 </span>
-                <small>
-                  <span>{localizedChangeType(file, props.language)}</span>
-                  {file.addedLines ? <span className="session-change-added">+{file.addedLines}</span> : null}
-                  {file.deletedLines ? <span className="session-change-deleted">-{file.deletedLines}</span> : null}
-                </small>
+                {file.addedLines || file.deletedLines ? (
+                  <small>
+                    {file.addedLines ? <span className="session-change-added">+{file.addedLines}</span> : null}
+                    {file.deletedLines ? <span className="session-change-deleted">-{file.deletedLines}</span> : null}
+                  </small>
+                ) : null}
               </button>
             ))
           )}
@@ -665,7 +666,9 @@ function displayPath(file: TurnChangeFile): string {
   return file.newPath ?? file.oldPath ?? 'unknown';
 }
 
+/** 轮次快照的状态只放入悬停和读屏说明，不与当前工作区状态混用。 */
 function localizedChangeType(file: TurnChangeFile, language: SessionUiLanguage): string {
+  /** 二进制沿用轮次快照自己的说明。 */
   const labels = language === 'zh-CN' ? { added: '新增', deleted: '删除', modified: '修改', renamed: '重命名', binary: '二进制' } : { added: 'Added', deleted: 'Deleted', modified: 'Modified', renamed: 'Renamed', binary: 'Binary' };
   return labels[file.changeType];
 }

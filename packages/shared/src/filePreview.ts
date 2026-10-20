@@ -38,9 +38,11 @@ export interface FilePreviewBlameLine {
 
 /** 源码与通用文件审阅共用位置和当前 Git 状态。 */
 export interface FileReview {
+  /** 当前磁盘文件的真实状态；补丁新增不等于已暂存，忽略和未修改也不伪装为新增。 */
+  status?: FileReviewDiff['changeType'] | 'untracked' | 'conflict' | 'other' | 'unchanged' | 'ignored';
   /** 会话引用的原始位置。 */
   location?: ConversationFileLocation;
-  /** null 表示仓库内没有差异，缺省表示不属于 Git 仓库。 */
+  /** null 表示仓库内没有差异；非仓库或忽略文件不提供比较。 */
   diff?: FileReviewDiff | null;
   /** Git 读取失败仍允许阅读源码，并明确展示原因。 */
   error?: string;

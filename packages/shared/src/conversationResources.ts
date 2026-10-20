@@ -118,6 +118,8 @@ export interface ConversationSourcePreview {
 }
 
 export interface ConversationImagePreview {
+  /** 项目内图片与文本预览共用真实 Git 文件状态。 */
+  review?: FileReview;
   kind: 'image';
   resource: ConversationFileResource | ConversationAttachmentResource;
   mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp' | 'image/avif' | 'image/bmp' | 'image/x-icon' | 'image/svg+xml';

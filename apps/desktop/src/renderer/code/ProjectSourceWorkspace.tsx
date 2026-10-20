@@ -24,6 +24,7 @@ import {
 } from 'react';
 import { sourceConflictExtensions } from './sourceConflictExtensions.js';
 import { FileTypeIcon } from './FileTypeIcon.js';
+import { projectGitFileStatuses } from '../git/projectGitWorkbenchState.js';
 import { FilePlusIcon as FilePlus } from '@phosphor-icons/react/dist/csr/FilePlus';
 import { FolderPlusIcon as FolderPlus } from '@phosphor-icons/react/dist/csr/FolderPlus';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
@@ -116,15 +117,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
   /** 每个文件记住本次会话中的查看方式，不影响已有源码偏好。 */
   const [viewModes, setViewModes] = useState<Record<string, SourceViewMode>>({});
   /** 文件状态跟随同一个 Git 工作台；项目切换时忽略其他项目的快照。 */
-  const gitFileStatuses = useMemo<Record<string, string>>(
-    () =>
-      props.gitSnapshot?.projectId === props.project.id
-        ? Object.fromEntries(
-            props.gitSnapshot.repositories.flatMap((repository) => repository.snapshot.fileStatuses.map((file) => [[repository.relativePath === '.' ? '' : repository.relativePath, file.path].filter(Boolean).join('/'), file.category])),
-          )
-        : {},
-    [props.gitSnapshot, props.project.id],
-  );
+  const gitFileStatuses = useMemo(() => projectGitFileStatuses(props.gitSnapshot, props.project.id), [props.gitSnapshot, props.project.id]);
   const [treeWidth, setTreeWidth] = useState(initialPreference.treeWidth);
   const [treeDrawerOpen, setTreeDrawerOpen] = useState(false);
   /** 窄布局遮罩退出完成后再移除，关闭立即停止命中。 */

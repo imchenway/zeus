@@ -5,10 +5,15 @@ import type { ProjectSourceContentMatch, ProjectSourceContentSearchResult } from
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
 import { FileTypeIcon } from './FileTypeIcon.js';
+import { projectGitFileStatuses } from '../git/projectGitWorkbenchState.js';
+import type { ProjectGitWorkbenchSnapshot } from '../features/git/gitContracts.js';
+import { fileStatusLabel } from './fileStatus.js';
 import './projectCodeSearch.css';
 
 /** 项目搜索只持有当前项目身份，文件打开仍交给现有源码导航。 */
 interface ProjectCodeSearchProps {
+  /** 复用源码和 Git 面板的快照，不为每个搜索命中另行读取。 */
+  gitSnapshot?: ProjectGitWorkbenchSnapshot | null;
   /** 搜索范围固定为当前项目的本地根目录。 */
   project: { id: string; name: string; localPath: string };
   /** 收起保留本项目的检索词；切换项目由外层键重建状态。 */
@@ -35,6 +40,8 @@ interface SearchResponse {
 export function ProjectCodeSearch(props: ProjectCodeSearchProps) {
   /** 文案与系统语言一致。 */
   const zh = props.language === 'zh-CN';
+  /** 搜索保留命中顺序，文件状态按真实项目相对路径读取。 */
+  const gitFileStatuses = useMemo(() => projectGitFileStatuses(props.gitSnapshot, props.project.id), [props.gitSnapshot, props.project.id]);
   /** 输入与结果列表共享稳定的无障碍标识。 */
   const id = useId();
   /** 打开时由共享弹窗聚焦此输入。 */
@@ -218,7 +225,12 @@ export function ProjectCodeSearch(props: ProjectCodeSearchProps) {
                   {index === 0 || matches[index - 1]?.relativePath !== match.relativePath ? (
                     <div className="project-code-search-file" role="presentation">
                       <FileTypeIcon path={match.relativePath} />
-                      <span title={match.relativePath}>{match.relativePath}</span>
+                      <span
+                        data-file-status={gitFileStatuses[match.relativePath]}
+                        data-icon-tooltip={gitFileStatuses[match.relativePath] ? `${match.relativePath} · ${fileStatusLabel(gitFileStatuses[match.relativePath]!, zh)}` : match.relativePath}
+                      >
+                        {match.relativePath}
+                      </span>
                     </div>
                   ) : null}
                   <button

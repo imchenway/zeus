@@ -7,7 +7,7 @@ import { constants, realpathSync } from 'node:fs';
 import { copyFile, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
-import { defaultTaskBranchPrefix, normalizeTaskBranchPrefix, type FilePreviewSource } from '@zeus/shared';
+import { defaultTaskBranchPrefix, normalizeTaskBranchPrefix, type FilePreviewSource, type FileReview } from '@zeus/shared';
 import { businessProcessEnvironment, spawnManagedProcess } from '@zeus/ai-runtime';
 
 /** 非 Windows 保留原有 execFile 的编码、输出和错误约定。 */
@@ -3945,18 +3945,25 @@ function splitNullRecords(value: string): string[] {
   return value.split('\0').filter(Boolean);
 }
 
-/** 只读取指定文件相对 HEAD 的差异；没有提交或未跟踪时以空文件为基线。 */
-export async function getFileReviewDiff(absolutePath: string): Promise<GitFileDiff | null | undefined> {
+/** 只读取指定文件的状态与相对 HEAD 的差异；未跟踪文件不伪装成已暂存新增。 */
+export async function getFileReview(absolutePath: string): Promise<FileReview> {
   /** Git 返回真实仓库路径，先统一 macOS 临时目录等符号链接别名。 */
   absolutePath = await realpath(absolutePath);
   /** 从文件目录识别所属仓库，支持嵌套仓库与独立工作树。 */
   const cwd = dirname(absolutePath);
   /** 非仓库文件保留普通预览，不伪装成干净仓库。 */
   const root = await readGitStdout(cwd, ['rev-parse', '--show-toplevel']);
-  if (!root) return undefined;
+  if (!root) return {};
   /** 只允许字面量相对路径，不将文件名解释成 Git 路径表达式。 */
   const path = requireSafeWorkspacePath(relative(root, absolutePath));
   if (path.split('/').includes('.git')) throw new Error('不能审阅 Git 管理目录。');
+  /** 使用零分隔记录保留含空格、中文的路径；禁止状态读取刷新索引。 */
+  const porcelain = await execFileAsync('git', ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all', '--ignored', '--', `:(literal)${path}`], { cwd: root, timeout: 30_000, maxBuffer: 20 * 1024 * 1024 });
+  /** 忽略目录可能由 Git 汇总返回，单文件路径限定确保结果只属于本次审阅。 */
+  const entry = parseGitPorcelainEntries(porcelain.stdout)[0];
+  /** 干净文件没有状态行，忽略文件的状态码为双感叹号。 */
+  const status: FileReview['status'] = entry?.indexStatus === '!' ? 'ignored' : (entry?.category ?? 'unchanged');
+  if (status === 'ignored') return { status };
   /** HEAD 中存在该文件时合并展示暂存与未暂存结果。 */
   const tracked = await readGitStdout(root, ['ls-tree', '-z', 'HEAD', '--', `:(literal)${path}`]);
   /** 禁用外部差异程序与文本转换，避免读取文件时执行仓库配置的命令。 */
@@ -3971,7 +3978,7 @@ export async function getFileReviewDiff(absolutePath: string): Promise<GitFileDi
   }
   /** 复用 Git 解析器，新增文件的显示路径仍保持仓库相对路径。 */
   const diff = parseGitUnifiedDiff(output)[0];
-  return diff ? { ...diff, oldPath: tracked ? diff.oldPath : '/dev/null', newPath: path } : null;
+  return { status, diff: diff ? { ...diff, oldPath: tracked ? diff.oldPath : '/dev/null', newPath: path } : null };
 }
 
 /** 按差异语义解析可预览的两端；仅返回文件授权和固定对象，不读取二进制到补丁中。 */

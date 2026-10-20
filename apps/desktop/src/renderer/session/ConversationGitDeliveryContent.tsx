@@ -140,8 +140,8 @@ export function ConversationGitDeliveryContent(props: { client: DashboardClient;
         /** 已提交与未提交范围分别来自上游比较及本机快照。 */
         const files =
           scope === 'committed'
-            ? (committed[repository.id]?.fileDiffs ?? []).map((file) => ({ path: file.newPath || file.oldPath, label: zh ? '已提交' : 'Committed', additions: file.addedLines, deletions: file.deletedLines }))
-            : visibleRepositoryFiles(repository, snapshot!.repositories).map((file) => ({ path: file.path, label: zh ? '未提交' : 'Uncommitted', additions: 0, deletions: 0 }));
+            ? (committed[repository.id]?.fileDiffs ?? []).map((file) => ({ path: file.newPath || file.oldPath, status: file.changeType, additions: file.addedLines, deletions: file.deletedLines }))
+            : visibleRepositoryFiles(repository, snapshot!.repositories).map((file) => ({ path: file.path, status: file.category, additions: 0, deletions: 0 }));
         return {
           workspace: { id: repository.id, branchName: repository.snapshot.branch, state: 'ready', repositoryName: repository.name, repositoryRelativePath: repository.relativePath },
           detail: undefined,
@@ -357,6 +357,7 @@ export function ConversationGitDeliveryContent(props: { client: DashboardClient;
               totalRepositories={groups.length}
               selectedFiles={commitCount}
               busy={Boolean(busyAction)}
+              fileStatus={groups.find((group) => group.workspace.id === focus.repositoryId)?.files.find((file) => file.path === focus.path)?.status}
               selectedFile={focus.path}
               diffTitle={focusedRepository ? `${focusedRepository.name} / ${focus.path}` : zh ? '差异对比' : 'Diff'}
               diffLoading={false}

@@ -24,6 +24,8 @@ interface ProjectToolsWorkspaceProps {
   open: boolean;
   /** 源码可见时加载 Git，为目录提供分支控件和文件状态。 */
   sourceVisible: boolean;
+  /** 全文搜索也需要文件状态，复用同一 Git 实例和刷新订阅。 */
+  fileSearchOpen: boolean;
   /** Git 能力复用现有项目工作台接口。 */
   gitClient?: ProjectGitWorkbenchProps['client'];
   /** 控件文案跟随应用语言。 */
@@ -136,9 +138,9 @@ export function ProjectToolsWorkspace(props: ProjectToolsWorkspaceProps) {
 
 /** 每个项目只有一个 Git 实例，收起保留提交草稿和工作台位置。 */
 function ProjectGitPanel(props: ProjectToolsWorkspaceProps) {
-  /** 首次打开 Git 或源码才加载，随后保留到切换项目。 */
-  const [mounted, setMounted] = useState(props.open || props.sourceVisible);
-  if (!mounted && (props.open || props.sourceVisible)) setMounted(true);
+  /** 首次打开 Git、源码或文件搜索时加载，随后保留到切换项目。 */
+  const [mounted, setMounted] = useState(props.open || props.sourceVisible || props.fileSearchOpen);
+  if (!mounted && (props.open || props.sourceVisible || props.fileSearchOpen)) setMounted(true);
   if (!props.project || !mounted) return null;
   return (
     <div className="project-tool-content">
