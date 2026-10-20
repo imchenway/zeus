@@ -14,6 +14,10 @@ export const executionHostRendezvousFileName = 'rendezvous.json';
 export const executionHostStartupFileName = 'startup.json';
 export const executionHostKernelLeaseFileName = 'owner-lease.sqlite';
 const maximumExecutionHostMetadataBytes = 256 * 1024;
+/** 停止工作包含 Provider 中断、终态确认和持久化，等待上限必须覆盖默认 30 秒 RPC 和 8 秒确认。 */
+export const executionHostStopWorkTimeoutMs = 45_000;
+/** 外层控制请求为内层停止回执预留 5 秒，不能先于业务请求超时。 */
+const executionHostStopControlTimeoutMs = executionHostStopWorkTimeoutMs + 5_000;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 export type ExecutionHostNativeConversationSource = 'task_push' | 'code_review' | 'conflict_resolution';
@@ -754,7 +758,7 @@ async function requestExecutionHostControl<T>(controlUrl: string, token: string,
       ...Object.fromEntries(new Headers(init.headers).entries()),
       authorization: `Bearer ${token}`,
     },
-    signal: AbortSignal.timeout(5_000),
+    signal: AbortSignal.timeout(path === '/work/stop' ? executionHostStopControlTimeoutMs : 5_000),
   });
   const payload = (await response.json().catch(() => ({}))) as unknown;
   if (!response.ok) {

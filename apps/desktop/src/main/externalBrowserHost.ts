@@ -20,6 +20,7 @@ import {
   type BrowserAutomationToolCall,
 } from '@zeus/local-server';
 import type { ZeusBrowserSettings } from '@zeus/shared';
+import { closeLocalHttpServer } from './closeLocalHttpServer.js';
 
 type ExternalSurface = 'chrome' | 'edge';
 
@@ -290,7 +291,7 @@ export class ExternalBrowserHost implements BrowserAutomationPort {
       runtime.queue.length = 0;
       for (const response of runtime.waiters.splice(0)) this.respondNative(response, { type: 'noop' });
     }
-    if (server) await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    await closeLocalHttpServer(server);
     await Promise.all((['chrome', 'edge'] as const).map((surface) => rm(join(resolve(this.options.runtimeRoot, surface), 'rendezvous.json'), { force: true })));
   }
 
@@ -360,12 +361,15 @@ export class ExternalBrowserHost implements BrowserAutomationPort {
 
   private async handleNativeRequest(request: import('node:http').IncomingMessage, response: ServerResponse): Promise<void> {
     try {
+      if (this.closed) return this.rejectNative(response, 503);
       if (request.method !== 'POST' || request.url !== '/native') return this.rejectNative(response, 404);
       const surfaceHeader = request.headers['x-zeus-browser-surface'];
       const surface = surfaceHeader === 'chrome' || surfaceHeader === 'edge' ? surfaceHeader : null;
       if (!surface || !this.surfaces[surface].enabled) return this.rejectNative(response, 403);
       if (!this.authorized(request.headers.authorization, this.surfaces[surface].token)) return this.rejectNative(response, 401);
       const body = await readRequestBody(request);
+      // 请求体读取期间可能已开始退出，迟到请求不能重新登记连接或派发命令。
+      if (this.closed) return this.rejectNative(response, 503);
       const message = JSON.parse(body.toString('utf8')) as unknown;
       const record = asRecord(message);
       const runtime = this.surfaces[surface];
@@ -388,6 +392,8 @@ export class ExternalBrowserHost implements BrowserAutomationPort {
       } else if (record.type === 'host_error') {
         runtime.connection = undefined;
       }
+      // 结果处理也会异步落盘，关闭后不能再把迟到响应加入长轮询队列。
+      if (this.closed || response.destroyed) return;
       const next = runtime.queue.shift();
       if (next) return this.respondNative(response, { type: 'command', ...next });
       runtime.waiters.push(response);
