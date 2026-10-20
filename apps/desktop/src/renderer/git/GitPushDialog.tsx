@@ -110,7 +110,9 @@ export function PushDialog(props: PushDialogProps) {
   const active = entries.find((entry) => entryKey(entry) === activeKey) ?? entries[0];
   /** 预览请求只包含展开项和当前查看项。 */
   const queryEntries = JSON.stringify(
-    entries.filter((entry) => entry.sourceBranch && entry.remote && entry.targetBranch.trim() && (expanded.has(entryKey(entry)) || entryKey(entry) === activeKey)).map(({ checked: _checked, ...entry }) => entry),
+    entries
+      .filter((entry) => entry.sourceBranch && entry.remote && entry.targetBranch.trim() && (expanded.has(entryKey(entry)) || entryKey(entry) === activeKey))
+      .map(({ repositoryId, remote, sourceBranch, targetBranch, setUpstream }) => ({ repositoryId, remote, sourceBranch, targetBranch, setUpstream })),
   );
   /** 结果页与提交期间都锁定范围。 */
   const locked = submitting || props.busy !== null;
@@ -208,7 +210,7 @@ export function PushDialog(props: PushDialogProps) {
     setOperationError(null);
     try {
       await props.onPush(
-        entries.filter((entry) => entry.checked).map(({ checked: _checked, ...entry }) => ({ ...entry, targetBranch: entry.targetBranch.trim() })),
+        entries.filter((entry) => entry.checked).map(({ repositoryId, remote, sourceBranch, targetBranch, setUpstream }) => ({ repositoryId, remote, sourceBranch, targetBranch: targetBranch.trim(), setUpstream })),
         forceWithLease,
         pushTags,
       );
