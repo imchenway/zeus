@@ -1,0 +1,322 @@
+/* 会话消息、文件审阅和浏览器批注共用视觉样式；定位与提交行为由各入口负责。 */
+/* 评论入口使用中性悬浮面板，左下角贴近鼠标松手点右上方。 */
+.session-selection-toolbar {
+  inset: auto;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  box-shadow: none;
+  display: flex;
+  overflow: visible;
+  position: fixed;
+  transform: translateY(-100%);
+  z-index: 1000;
+}
+
+/* 主题浮层规则不能给胶囊外侧再增加一层底板。 */
+.session-selection-toolbar,
+.macos-ai-app.zeus-shell .session-selection-toolbar {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.session-selection-toolbar[data-placement='below'] {
+  transform: none;
+}
+
+.session-selection-toolbar > button,
+.macos-ai-app.zeus-shell .session-selection-toolbar > button {
+  -webkit-backdrop-filter: saturate(140%) blur(16px);
+  align-items: center;
+  appearance: none;
+  backdrop-filter: saturate(140%) blur(16px);
+  background: color-mix(in srgb, var(--session-canvas, light-dark(#fff, #181818)) 94%, transparent);
+  border: 1px solid var(--session-line, light-dark(#e3e4e5, #383838));
+  border-radius: 10px;
+  box-shadow:
+    0 8px 24px rgb(15 23 42 / 12%),
+    0 1px 2px rgb(15 23 42 / 8%);
+  color: var(--session-text, light-dark(#222529, #ebebeb));
+  cursor: pointer;
+  display: inline-flex;
+  inline-size: 32px;
+  justify-content: center;
+  max-inline-size: 32px;
+  min-block-size: 32px;
+  min-inline-size: 32px;
+  padding: 0;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.session-selection-toolbar > button svg {
+  background: transparent;
+  block-size: 17px;
+  color: var(--zeus-brand-primary, #6155d8);
+  flex: 0 0 auto;
+  inline-size: 17px;
+}
+
+.session-selection-toolbar > button:hover:not(:disabled):not([aria-disabled='true']),
+.macos-ai-app.zeus-shell .session-selection-toolbar > button:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--session-canvas, light-dark(#fff, #181818));
+  border-color: color-mix(in srgb, var(--zeus-brand-primary, #6155d8) 24%, var(--session-line, light-dark(#e3e4e5, #383838)));
+  box-shadow:
+    0 10px 28px rgb(15 23 42 / 14%),
+    0 1px 2px rgb(15 23 42 / 9%);
+}
+
+.session-selection-toolbar > button:active:not(:disabled):not([aria-disabled='true']),
+.macos-ai-app.zeus-shell .session-selection-toolbar > button:active:not(:disabled):not([aria-disabled='true']) {
+  background: var(--session-control-hover, rgb(97 85 216 / 5%));
+  box-shadow: 0 4px 12px rgb(15 23 42 / 10%);
+}
+
+.session-selection-toolbar > button:focus-visible {
+  outline: 2px solid var(--zeus-brand-primary, #6155d8);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-selection-toolbar > button,
+  .session-selection-toolbar > button svg {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .session-selection-toolbar > button,
+  .macos-ai-app.zeus-shell .session-selection-toolbar > button {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: Highlight;
+    border-color: ButtonText;
+    box-shadow: none;
+    color: HighlightText;
+  }
+
+  .session-selection-toolbar > button svg {
+    background: transparent;
+    color: currentColor;
+  }
+}
+
+/* 批注主操作沿用发送按钮的品牌底色和白色前景，优先于会话通用按钮继承规则。 */
+.session-response-annotation-marker,
+.macos-ai-app.zeus-shell .session-response-annotation-marker {
+  align-items: center;
+  background: var(--zeus-brand-primary, #6155d8);
+  border: 2px solid var(--session-canvas, light-dark(#fff, #181818));
+  border-radius: 999px;
+  box-shadow: 0 3px 12px rgb(15 23 42 / 24%);
+  color: white;
+  cursor: pointer;
+  display: flex;
+  font:
+    650 11px/1 -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+  block-size: 24px;
+  inline-size: 24px;
+  min-block-size: 24px;
+  min-inline-size: 24px;
+  padding: 0;
+  justify-content: center;
+  position: absolute;
+  transition:
+    background-color 120ms ease,
+    box-shadow 120ms ease,
+    scale 120ms ease;
+  z-index: 998;
+}
+
+.session-response-annotation-marker[data-focus='true'],
+.macos-ai-app.zeus-shell .session-response-annotation-marker[data-focus='true'],
+.session-response-annotation-marker[aria-expanded='true'],
+.macos-ai-app.zeus-shell .session-response-annotation-marker[aria-expanded='true'] {
+  background: var(--zeus-brand-primary, #6155d8);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--zeus-brand-primary, #6155d8) 38%, transparent);
+  scale: 1.12;
+}
+
+.session-response-annotation-marker:focus-visible,
+.session-response-annotation-editor button:focus-visible {
+  outline: 2px solid var(--zeus-brand-primary, #6155d8);
+  outline-offset: 2px;
+}
+
+.session-response-annotation-editor {
+  box-sizing: border-box;
+  inset: auto;
+  margin: 0;
+  background: var(--session-canvas, light-dark(#fff, #181818));
+  border: 1px solid var(--session-line, light-dark(#e3e4e5, #383838));
+  border-radius: 999px;
+  box-shadow: var(--zeus-card-shadow, 0 10px 24px light-dark(rgb(15 23 42 / 8%), rgb(0 0 0 / 32%)), 0 1px 2px light-dark(rgb(15 23 42 / 4%), rgb(0 0 0 / 24%)));
+  backdrop-filter: blur(20px);
+  color: var(--session-text, light-dark(#222529, #ebebeb));
+  color-scheme: inherit;
+  /* 隔离网页与应用使用相同的字体合成规则。 */
+  font-synthesis: none;
+  font:
+    14px/1.4 -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+  inline-size: min(296px, calc(100vw - 24px));
+  max-block-size: calc(100vh - 24px);
+  overflow: auto;
+  padding: 4px 5px;
+  position: fixed;
+  z-index: 1001;
+}
+
+.session-response-annotation-editor[data-expanded='true'] {
+  border-radius: 20px;
+}
+
+.session-response-annotation-editor[data-placement='above'] {
+  transform: translateY(-100%);
+}
+
+.session-response-annotation-row {
+  align-items: center;
+  display: flex;
+  gap: 3px;
+  min-block-size: 36px;
+}
+
+/* 输入区继承浮层主题；优先于深色会话的通用输入规则，避免出现异色矩形。 */
+.session-response-annotation-editor .session-response-annotation-row > textarea,
+.macos-ai-app.zeus-shell .session-response-annotation-editor .session-response-annotation-row > textarea {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  box-sizing: border-box;
+  color: var(--session-text, light-dark(#222529, #ebebeb));
+  flex: 1 1 auto;
+  font: inherit;
+  inline-size: 100%;
+  margin: 0;
+  max-block-size: 112px;
+  min-block-size: 28px;
+  min-inline-size: 0;
+  outline: 0;
+  overflow-y: auto;
+  padding: 4px 5px;
+  resize: none;
+}
+
+.session-response-annotation-row > textarea::placeholder {
+  color: var(--session-text-muted, light-dark(#686c73, #ababab));
+}
+
+.session-response-annotation-editor button,
+.macos-ai-app.zeus-shell .session-response-annotation-editor button {
+  appearance: none;
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  color: var(--session-text-muted, light-dark(#686c73, #ababab));
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  block-size: 30px;
+  inline-size: 30px;
+  min-block-size: 30px;
+  justify-content: center;
+  padding: 0;
+}
+
+.session-response-annotation-editor button > svg {
+  block-size: 18px;
+  inline-size: 18px;
+}
+
+.session-response-annotation-editor button:hover:not(:disabled),
+.macos-ai-app.zeus-shell .session-response-annotation-editor button:hover:not(:disabled) {
+  background: var(--zeus-interaction-hover, rgb(97 85 216 / 5%));
+  color: var(--session-text, light-dark(#222529, #ebebeb));
+}
+
+.session-response-annotation-editor .session-response-annotation-save,
+.macos-ai-app.zeus-shell .session-response-annotation-editor .session-response-annotation-save {
+  background: var(--zeus-brand-primary, #6155d8);
+  color: white;
+}
+
+.session-response-annotation-editor .session-response-annotation-save:hover:not(:disabled),
+.macos-ai-app.zeus-shell .session-response-annotation-editor .session-response-annotation-save:hover:not(:disabled),
+.session-response-annotation-marker:hover:not(:disabled),
+.macos-ai-app.zeus-shell .session-response-annotation-marker:hover:not(:disabled) {
+  background: var(--zeus-interaction-primary-hover, color-mix(in srgb, #6155d8 90%, black));
+  color: white;
+}
+
+/* 浏览器与会话批注标记共用悬停放大反馈。 */
+.session-response-annotation-marker:hover:not(:disabled),
+.macos-ai-app.zeus-shell .session-response-annotation-marker:hover:not(:disabled) {
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--zeus-brand-primary, #6155d8) 38%, transparent);
+  scale: 1.12;
+}
+
+/* 按下反馈与会话发送按钮使用同一个主题值。 */
+.session-response-annotation-marker:active:not(:disabled),
+.macos-ai-app.zeus-shell .session-response-annotation-marker:active:not(:disabled),
+.session-response-annotation-editor .session-response-annotation-save:active:not(:disabled),
+.macos-ai-app.zeus-shell .session-response-annotation-editor .session-response-annotation-save:active:not(:disabled) {
+  background: var(--zeus-interaction-primary-pressed, color-mix(in srgb, #6155d8 80%, black));
+}
+
+/* 次要操作按需展开，保留原有删除和取消能力。 */
+.session-response-annotation-options {
+  border-top: 1px solid var(--session-line, light-dark(#e3e4e5, #383838));
+  display: flex;
+  justify-content: space-between;
+  margin: 2px 5px 5px;
+  padding-top: 6px;
+}
+
+.session-response-annotation-editor .session-response-annotation-options > button,
+.macos-ai-app.zeus-shell .session-response-annotation-editor .session-response-annotation-options > button {
+  inline-size: auto;
+  padding-inline: 8px;
+}
+
+@media (forced-colors: active) {
+  .session-response-annotation-row > textarea:focus-visible,
+  .macos-ai-app.zeus-shell .session-response-annotation-row > textarea:focus-visible {
+    outline: 1px solid Highlight;
+    outline-offset: -2px;
+  }
+}
+
+/* 浏览器原生控件与 React 浮层共用隐藏和不可用状态。 */
+.session-response-annotation-editor[hidden],
+.session-response-annotation-options[hidden],
+.session-response-annotation-editor button[hidden] {
+  display: none;
+}
+
+.session-response-annotation-editor button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* 减少动态效果时，编号标记保持静态反馈。 */
+@media (prefers-reduced-motion: reduce) {
+  .session-response-annotation-marker {
+    transition: none;
+  }
+}

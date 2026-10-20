@@ -70,6 +70,8 @@ export function CommentableSourceCodePreview(props: CommentableSourceCodePreview
   const zh = props.locale === 'zh-CN';
   /** 单文件预览缺省属于变更后的右侧。 */
   const side = props.side ?? 'right';
+  /** 监听器只依赖评论权限，避免会话刷新更换回调时丢失正在拖选的状态。 */
+  const commentsEnabled = Boolean(props.onCommentsChange);
   /** 当前只读编辑器提供文档偏移和视口坐标。 */
   const [view, setView] = useState<EditorView | null>(null);
   /** 拖选后尚未确认创建的评论锚点。 */
@@ -126,7 +128,7 @@ export function CommentableSourceCodePreview(props: CommentableSourceCodePreview
   }, [candidate, view]);
 
   useEffect(() => {
-    if (!view || !props.onCommentsChange) return;
+    if (!view || !commentsEnabled) return;
     /** 只有从当前代码正文开始的拖选才生成评论入口。 */
     let selecting = false;
     /** 开始新选区时关闭旧入口，评论浮层上的操作不改变代码选区。 */
@@ -171,7 +173,7 @@ export function CommentableSourceCodePreview(props: CommentableSourceCodePreview
       view.dom.ownerDocument.removeEventListener('pointerdown', handlePointerDown, true);
       view.dom.ownerDocument.removeEventListener('pointerup', handlePointerUp, true);
     };
-  }, [props.onCommentsChange, props.path, side, view]);
+  }, [commentsEnabled, props.path, side, view]);
 
   useEffect(() => {
     if (!view) return;

@@ -1,5 +1,8 @@
+/// <reference types="vite/client" />
 import { ipcRenderer } from 'electron';
 import { installIconTooltips } from './iconTooltip.js';
+import { selectionCommentIcons } from './selectionCommentIcons.js';
+import selectionCommentStyles from '../renderer/session/selectionComment.css?inline';
 
 function invokeBrowserPageCommand(commandType: string, body: unknown): Promise<unknown> {
   const commandId = globalThis.crypto.randomUUID();
@@ -104,33 +107,20 @@ function install(): void {
   /** 评论浮层使用共享提示机制，监听只作用于自己的 ShadowRoot。 */
   const disposeIconTooltips = installIconTooltips(shadow);
   window.addEventListener('pagehide', disposeIconTooltips, { once: true });
+  /** 将同一份评论样式放入封闭 ShadowRoot，不影响被审阅网页。 */
   const style = document.createElement('style');
   style.textContent = `
+    ${selectionCommentStyles}
     :host { all: initial; color-scheme: light dark; }
     * { box-sizing: border-box; }
     .outline { position: fixed; pointer-events: none; border: 2px solid #6155d8; border-radius: 4px; background: rgb(97 85 216 / 14%); display: none; }
     .region { border-style: dashed; border-radius: 8px; background: rgb(97 85 216 / 12%); }
     .markers { position: fixed; inset: 0; pointer-events: none; }
-    .marker { position: fixed; width: 24px; height: 24px; border: 2px solid white; border-radius: 999px; background: #6155d8; color: white; display: grid; place-items: center; font: 650 11px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; box-shadow: 0 3px 12px rgb(15 23 42 / 24%); pointer-events: auto; cursor: pointer; transition: transform 120ms ease, box-shadow 120ms ease; }
-    .marker:hover,.marker[data-focus="true"] { transform: scale(1.12); box-shadow: 0 4px 16px rgb(97 85 216 / 38%); }
+    .marker { position: fixed; pointer-events: auto; }
     .editor-pin { position: fixed; width: 26px; height: 26px; border: 2px solid white; border-radius: 999px; background: #6155d8; box-shadow: 0 3px 12px rgb(15 23 42 / 24%); display: none; pointer-events: none; transform: translate(-50%, -50%); }
     .editor-pin::after { position: absolute; left: 2px; bottom: -3px; width: 8px; height: 8px; border: 2px solid white; border-top: 0; border-right: 0; border-radius: 0 0 0 6px; background: #6155d8; content: ""; transform: rotate(-18deg); }
-    .editor { position: fixed; width: min(296px, calc(100vw - 24px)); padding: 4px 5px; border: 1px solid rgb(23 23 23 / 10%); border-radius: 999px; background: light-dark(#fff, #202124); color: light-dark(#202124, #f1f1f3); box-shadow: 0 8px 28px rgb(15 23 42 / 18%); backdrop-filter: blur(20px); pointer-events: auto; font: 14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
-    .editor[data-expanded="true"] { width: min(360px, calc(100vw - 24px)); border-radius: 20px; }
-    /* 与会话评论共用紧凑尺寸和品牌确认色，多行时收紧圆角。 */
-    .editor[hidden] { display: none; }
-    .editor-row { align-items: center; display: flex; gap: 3px; min-height: 36px; }
-    .editor textarea { flex: 1 1 auto; width: 100%; min-width: 0; min-height: 28px; max-height: 112px; resize: none; overflow-y: auto; border: 0; padding: 4px 5px; background: transparent; color: inherit; font: inherit; outline: none; }
-    .editor textarea::placeholder { color: #8b8b8b; }
-    .editor button { appearance: none; align-items: center; background: transparent; border: 0; border-radius: 999px; color: #737373; cursor: pointer; display: inline-flex; flex: 0 0 auto; height: 30px; justify-content: center; padding: 0; width: 30px; }
-    .editor button:hover { background: rgb(0 0 0 / 6%); color: #202124; }
-    .editor button svg { height: 18px; width: 18px; }
-    .editor button.editor-save { background: #6155d8; color: white; }
-    .editor button.editor-save:hover { background: color-mix(in srgb, #6155d8 90%, black); }
-    .editor button[hidden] { display: none; }
+    .editor { pointer-events: auto; }
     .editor button[data-listening="true"] { background: rgb(97 85 216 / 12%); color: #6155d8; }
-    .editor button:focus-visible,.editor input:focus-visible,.editor textarea:focus-visible { outline: 2px solid #6155d8; outline-offset: 2px; }
-    .editor textarea:focus-visible { outline: 0; }
   `;
   shadow.append(style);
   hoverOutline = document.createElement('div');
@@ -142,7 +132,9 @@ function install(): void {
   editorPin = document.createElement('div');
   editorPin.className = 'editor-pin';
   editor = document.createElement('div');
-  editor.className = 'editor';
+  editor.className = 'editor session-response-annotation-editor';
+  // 批注控件目前使用中文，不继承网页或 ShadowRoot 重置后的字体语言规则。
+  editor.lang = 'zh-CN';
   editor.hidden = true;
   shadow.append(hoverOutline, regionOutline, markerLayer, editorPin, editor);
   (document.documentElement || document.body).append(rootHost);
@@ -283,23 +275,31 @@ function openEditor(
   state.editorTarget = target;
   editor.dataset.expanded = 'false';
   editor.innerHTML = `
-    <div class="editor-row">
-      <button type="button" data-action="cancel" aria-label="取消评论" data-icon-tooltip="取消评论">×</button>
-      <textarea rows="1" aria-label="评论内容" placeholder="添加评论…" maxlength="20000"></textarea>
-      <button type="button" data-action="voice" aria-label="语音输入" data-icon-tooltip="语音输入">
-        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6"></path>
-        </svg>
+    <div class="session-response-annotation-row">
+      <button type="button" data-action="options" aria-label="评论选项" aria-expanded="false" data-icon-tooltip="评论选项">
+        <svg aria-hidden="true" viewBox="${selectionCommentIcons.viewBox}" fill="currentColor"><path d="${selectionCommentIcons.options}"></path></svg>
       </button>
-      <button type="button" class="editor-save" data-action="save" aria-label="完成评论" data-icon-tooltip="完成评论并添加到输入框">
-        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="m6 12.5 4 4L18.5 8"></path>
-        </svg>
+      <textarea rows="1" aria-label="评论内容" placeholder="添加评论…" maxlength="20000"></textarea>
+      <button type="button" class="session-response-annotation-save" data-action="save" aria-label="完成评论" data-icon-tooltip="完成评论并添加到输入框">
+        <svg aria-hidden="true" viewBox="${selectionCommentIcons.viewBox}" fill="currentColor"><path d="${selectionCommentIcons.save}"></path></svg>
       </button>
     </div>
+    <div class="session-response-annotation-options" hidden>
+      <button type="button" data-action="voice" aria-label="语音输入">语音输入</button>
+      <button type="button" data-action="cancel">取消</button>
+    </div>
   `;
+  /** 网页专属操作放在共用的选项区，主输入行与会话、文件保持一致。 */
+  const optionsButton = editor.querySelector<HTMLButtonElement>('[data-action="options"]')!;
+  /** 展开状态由当前编辑器持有，关闭后随 DOM 一同清理。 */
+  const options = editor.querySelector<HTMLDivElement>('.session-response-annotation-options')!;
   const textarea = editor.querySelector<HTMLTextAreaElement>('textarea')!;
   textarea.value = existing?.body ?? '';
+  optionsButton.addEventListener('click', () => {
+    options.hidden = !options.hidden;
+    optionsButton.setAttribute('aria-expanded', String(!options.hidden));
+    syncEditorActions(textarea);
+  });
   editor.querySelector('[data-action="cancel"]')?.addEventListener('click', () => closeEditor());
   editor.querySelector('[data-action="save"]')?.addEventListener('click', () => void saveComment());
   const voiceButton = editor.querySelector<HTMLButtonElement>('[data-action="voice"]');
@@ -345,16 +345,15 @@ function positionEditor(anchor: PageAnchor): void {
   }
 }
 
+/** 输入框按内容增长，选项展开时保留统一圆角并重新定位。 */
 function syncEditorActions(textarea: HTMLTextAreaElement): void {
   if (!editor) return;
   textarea.style.height = 'auto';
   textarea.style.height = `${Math.min(112, Math.max(28, textarea.scrollHeight))}px`;
   const hasBody = Boolean(textarea.value.trim());
   const saveButton = editor.querySelector<HTMLButtonElement>('[data-action="save"]');
-  const voiceButton = editor.querySelector<HTMLButtonElement>('[data-action="voice"]');
   if (saveButton) saveButton.disabled = !hasBody;
-  editor.dataset.expanded = String(textarea.scrollHeight > 36);
-  if (voiceButton) voiceButton.hidden = hasBody;
+  editor.dataset.expanded = String(textarea.scrollHeight > 36 || editor.querySelector('[data-action="options"]')?.getAttribute('aria-expanded') === 'true');
   if (state.editorAnchor) positionEditor(state.editorAnchor);
 }
 
@@ -628,7 +627,7 @@ function renderMarkers(): void {
   markerLayer.replaceChildren();
   for (const comment of state.comments) {
     const marker = document.createElement('button');
-    marker.className = 'marker';
+    marker.className = 'marker session-response-annotation-marker';
     marker.type = 'button';
     marker.textContent = String(comment.number);
     marker.dataset.commentId = comment.id;

@@ -1,6 +1,5 @@
 import { type FormEvent, type KeyboardEvent, type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
-import { SlidersHorizontalIcon as SlidersHorizontal } from '@phosphor-icons/react/dist/csr/SlidersHorizontal';
+import { selectionCommentIcons } from '../../preload/selectionCommentIcons.js';
 import { PopoverSurface } from '../ui/MotionPresence.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 
@@ -73,6 +72,8 @@ export function SelectionCommentEditor(props: {
   const [note, setNote] = useState(props.note ?? '');
   /** 调整面板保留删除和取消，默认只展示输入与确认。 */
   const [optionsOpen, setOptionsOpen] = useState(false);
+  /** 自动折行和手动换行都使用展开外观。 */
+  const [multiline, setMultiline] = useState(false);
   /** 多行文字按实际内容增长，避免固定大输入框。 */
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   useLayoutEffect(() => {
@@ -81,7 +82,8 @@ export function SelectionCommentEditor(props: {
     if (!textarea) return;
     textarea.style.height = '28px';
     textarea.style.height = `${Math.min(112, textarea.scrollHeight)}px`;
-  }, [note]);
+    setMultiline(textarea.scrollHeight > 36);
+  }, [note, props.point.width]);
   useEffect(() => setNote(props.note ?? ''), [props.id, props.note]);
   /** 当前语言用于评论编辑器的操作文案。 */
   const zh = props.language === 'zh-CN';
@@ -115,15 +117,18 @@ export function SelectionCommentEditor(props: {
       ref={props.editorRef}
       popover="manual"
       className="session-response-annotation-editor"
+      lang={props.language}
       data-placement={props.point.placement}
-      data-expanded={optionsOpen || note.includes('\n') || undefined}
+      data-expanded={optionsOpen || multiline || undefined}
       style={{ left: props.point.left, top: props.point.top, width: props.point.width, maxHeight: props.point.maxHeight }}
       aria-label={props.label}
       onKeyDown={handleCommentDismiss}
     >
       <form className="session-response-annotation-row" onSubmit={submitComment}>
         <button data-icon-tooltip={zh ? '评论选项' : 'Comment options'} type="button" aria-label={zh ? '评论选项' : 'Comment options'} aria-expanded={optionsOpen} onClick={() => setOptionsOpen((open) => !open)}>
-          <SlidersHorizontal aria-hidden="true" />
+          <svg aria-hidden="true" viewBox={selectionCommentIcons.viewBox} fill="currentColor">
+            <path d={selectionCommentIcons.options} />
+          </svg>
         </button>
         <textarea
           ref={textareaRef}
@@ -136,7 +141,9 @@ export function SelectionCommentEditor(props: {
           onKeyDown={handleCommentKeyDown}
         />
         <button data-icon-tooltip={zh ? '完成评论' : 'Save comment'} type="submit" className="session-response-annotation-save" aria-label={zh ? '完成评论' : 'Save comment'}>
-          <Check aria-hidden="true" weight="bold" />
+          <svg aria-hidden="true" viewBox={selectionCommentIcons.viewBox} fill="currentColor">
+            <path d={selectionCommentIcons.save} />
+          </svg>
         </button>
       </form>
       {optionsOpen ? (
