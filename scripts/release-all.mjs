@@ -434,6 +434,7 @@ function assertMainRelationship(headSha) {
   }
 }
 
+/** 优先恢复本机进度；已提交的下一版本可依据 Git 与远端事实重建进度。 */
 function resolveReleaseState(input) {
   const currentState = readState(input.packageVersion);
   if (currentState && currentState.version === input.packageVersion && currentState.releaseCommit === input.headSha && currentState.phase !== 'completed') {
@@ -445,15 +446,14 @@ function resolveReleaseState(input) {
     if (worktreeStatus) throw new Error(`发布 main 必须以已提交内容为准；当前工作区不干净：\n${worktreeStatus}`);
     return { type: 'already_published' };
   }
-  if (input.packageVersion === input.nextVersion) {
-    if (!currentState) throw new Error(`检测到包版本 ${input.packageVersion} 高于公开稳定版，但缺少一键发布恢复状态，拒绝推断或创建新版本。`);
+  if (input.packageVersion === input.nextVersion && currentState) {
     validateState(currentState, input.stableRelease);
     if (currentState.releaseCommit && currentState.releaseCommit !== input.headSha && !rebindUnpublishedReleaseRepair(currentState, input.headSha)) {
       throw new Error(`本地 main 已偏离发布提交，且当前阶段不允许自动恢复：expected=${currentState.releaseCommit} actual=${input.headSha}`);
     }
     return { type: 'resume', value: currentState };
   }
-  if (input.packageVersion !== input.stableRelease.version) {
+  if (input.packageVersion !== input.stableRelease.version && input.packageVersion !== input.nextVersion) {
     throw new Error(`当前包版本 ${input.packageVersion} 与公开稳定版 ${input.stableRelease.version} 不一致，也不是可恢复的 ${input.nextVersion}。`);
   }
   const targetState = readState(input.nextVersion);
@@ -479,6 +479,17 @@ function resolveReleaseState(input) {
   const worktreeStatus = git(['status', '--short']);
   if (worktreeStatus) throw new Error(`新发布只能从干净工作区开始：\n${worktreeStatus}`);
   assertAncestor(input.stableRelease.tag, input.headSha);
+  /** 版本已提交但本机进度缺失时，只重建未占用标签的候选，不推断任何门禁或远端写入成功。 */
+  const preparedCandidate = input.packageVersion === input.nextVersion;
+  if (preparedCandidate) {
+    if (resolveLocalTagSha(`v${input.nextVersion}`) || resolveRemoteReference(`refs/tags/v${input.nextVersion}`)) {
+      throw new Error(`目标标签 v${input.nextVersion} 已存在，不能重建缺失的本机发布状态；请先核对该标签对应的发布结果。`);
+    }
+    assertNoActiveReleaseWorkflow(input.headSha);
+    if (!git(['show', `${input.headSha}:releases/v${input.nextVersion}.md`]).trim()) {
+      throw new Error(`已准备的 ${input.nextVersion} 缺少有效的已提交 Release notes，无法重建发布状态。`);
+    }
+  }
   const stateDirectory = releaseStateDirectory(input.nextVersion);
   mkdirSync(stateDirectory, { recursive: true, mode: 0o700 });
   const state = {
@@ -487,17 +498,19 @@ function resolveReleaseState(input) {
     tag: `v${input.nextVersion}`,
     baseTag: input.stableRelease.tag,
     sourceHead: input.headSha,
-    releaseCommit: null,
+    releaseCommit: preparedCandidate ? input.headSha : null,
     notesPath: null,
     gateSummaryPath: null,
     publishResultPath: null,
-    phase: 'initialized',
+    phase: preparedCandidate ? 'release_committed' : 'initialized',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     stateDirectory,
   };
+  if (preparedCandidate) syncReleaseNotesSnapshot(state);
   writeState(state);
-  return { type: 'new', value: state };
+  if (preparedCandidate) console.log(`已根据已提交版本和远端事实重建 ${state.tag} 发布状态，将重新执行发布门禁。`);
+  return { type: preparedCandidate ? 'resume' : 'new', value: state };
 }
 
 function canRebindPreWriteState(state) {
