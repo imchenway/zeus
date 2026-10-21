@@ -12103,6 +12103,19 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   stroke-width: 1.42;
 }
 
+/* 项目标题沿用快捷导航的字形和颜色，只增加末尾的折叠状态列。 */
+.macos-ai-app.zeus-shell .project-first-sidebar .codex-source-list-quick-actions .project-sidebar-group-toggle {
+  grid-template-columns: 22px minmax(0, 1fr) 16px;
+}
+.project-sidebar-group-caret {
+  inline-size: 14px;
+  block-size: 14px;
+  justify-self: end;
+}
+.project-sidebar-group-toggle[aria-expanded='true'] .project-sidebar-group-caret {
+  transform: rotate(90deg);
+}
+
 .macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-heading {
   color: var(--zeus-product-subtle);
   font-size: 13px;
