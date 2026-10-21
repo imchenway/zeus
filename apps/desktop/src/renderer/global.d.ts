@@ -128,11 +128,14 @@ declare global {
         checkedAt: string;
         restartScheduled: true;
       }>;
-      /** 任务与普通会话的代码交付按钮共用同一原生窗口入口。 */
+      /** 任务、普通会话与项目提交按钮共用同一原生窗口入口。 */
       openTaskGitDeliveryWindow: (
-        input: { taskId: string; workspaceId?: string | null; projectId?: never; conversationId?: never } | { taskId?: never; workspaceId?: never; projectId: string; conversationId: string },
+        input:
+          | { taskId: string; workspaceId?: string | null; projectId?: never; conversationId?: never; repositoryId?: never; pathPrefix?: never }
+          | { taskId?: never; workspaceId?: never; projectId: string; conversationId: string; repositoryId?: never; pathPrefix?: never }
+          | { taskId?: never; workspaceId?: never; projectId: string; conversationId?: never; repositoryId: string; pathPrefix?: string },
       ) => Promise<{ opened: true; reused: boolean; taskId?: string; projectId?: string; conversationId?: string }>;
-      /** 两种范围都关闭当前真实交付窗口。 */
+      /** 所有范围都关闭当前真实交付窗口。 */
       closeTaskGitDeliveryWindow: () => Promise<{ closed: true; taskId?: string; projectId?: string; conversationId?: string }>;
       getTaskGitDeliveryCurrentContext: () => Promise<{ taskId: string | null; workspaceId: string | null }>;
       notifyTaskGitDeliveryCurrentContext: (context: { taskId: string | null; workspaceId: string | null }) => void;

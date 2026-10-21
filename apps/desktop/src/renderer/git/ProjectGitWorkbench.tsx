@@ -13,7 +13,6 @@ import type { OperationTone } from './gitWorkbenchTypes.js';
 import type { BusyState } from './gitWorkbenchTypes.js';
 import { MenuSurface } from '../ui/MenuSurface.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
-import { RepositoryGitDeliveryContent } from './RepositoryGitDeliveryContent.js';
 import { repositoryColor } from './repositoryColor.js';
 import { useGitOperationHistory } from './useGitOperationHistory.js';
 import { GitContextMenu, GitMenuActionDialog, type GitMenuItem, type GitMenuConfirmation } from './GitContextMenu.js';
@@ -37,7 +36,8 @@ import { ModalPortal } from '../ui/ModalPortal.js';
 import { formatVisibleApplicationError, reportApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { SideBySideDiff } from './ProjectGitDiffViewer.js';
 
-type GitTab = 'changes' | 'stash' | 'log' | 'console';
+/** Git 工作区保留浏览页面，代码交付通过共用弹窗打开。 */
+type GitTab = 'stash' | 'log' | 'console';
 type ChangeStage = 'staged' | 'unstaged';
 interface GitContextTarget {
   kind: 'local' | 'remote' | 'tag' | 'commit' | 'stash' | 'repository';
@@ -107,8 +107,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const [snapshot, setSnapshot] = useState<ProjectGitWorkbenchSnapshot | null>(() => readCachedProjectGitWorkbench(props.client, props.project.id));
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>(() => (snapshot ? 'ready' : 'loading'));
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<GitTab>(() => (props.conversationScope ? 'changes' : readRememberedTab(props.project.id)));
-  const [subtree, setSubtree] = useState<{ repositoryId: string; path: string } | null>(null);
+  const [tab, setTab] = useState<GitTab>(() => (props.conversationScope ? 'log' : readRememberedTab(props.project.id)));
   const [selectedRepositoryId, setSelectedRepositoryId] = useState(() => projectGitViewPreferences.get(props.project.id)?.repositoryId ?? '');
   /** 只有用户点选才建立提交选择，并绑定仓库，避免初始加载或换仓库产生伪选中。 */
   const [selectedCommit, setSelectedCommit] = useState<{ repositoryId: string; ref: string } | null>(null);
@@ -135,12 +134,8 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const [newBranchBase, setNewBranchBase] = useState('');
   const [remoteCheckoutTarget, setRemoteCheckoutTarget] = useState<{ repositoryId: string; remoteRef: string } | null>(null);
   const [revisionOpen, setRevisionOpen] = useState(false);
-  /** 分支等原有 Git 动作保留工作台执行状态。 */
-  const [operationBusy, setBusy] = useState<BusyState>(null);
-  /** 共用交付页执行期间不能切换仓库或同时执行其他 Git 动作。 */
-  const [deliveryBusy, setDeliveryBusy] = useState(false);
-  /** 所有操作入口共用禁用条件。 */
-  const busy: BusyState = operationBusy ?? (deliveryBusy ? { repositoryId: selectedRepositoryId, action: 'commit' } : null);
+  /** 工作台 Git 动作沿用原有执行状态。 */
+  const [busy, setBusy] = useState<BusyState>(null);
   const actionBusyRef = useRef(false);
   /** 控制台缓存可以销毁，历史由桌面耐久账本恢复。 */
   const operationHistory = useGitOperationHistory(props.client, props.project.id);
@@ -292,7 +287,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
 
   /** 所有入口共用执行状态与错误反馈；源码中的操作先展开工作台。 */
   async function execute(repository: ProjectGitRepositoryWorkbenchItem, action: ProjectGitAction, label: string): Promise<ExecutionOutcome> {
-    if (actionBusyRef.current || deliveryBusy) return null;
+    if (actionBusyRef.current) return null;
     props.onOpenPanel?.();
     actionBusyRef.current = true;
     requestVersionRef.current += 1;
@@ -316,7 +311,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
       );
       if (action.type === 'submodule_update' || action.type === 'subtree') await loadWorkbench();
       notifyProjectGitChanged(props.project.id);
-      if (response.result.outcome === 'conflict') setTab('changes');
+      if (response.result.outcome === 'conflict') openDelivery(repository.id);
       return response.result.outcome;
     } catch (reason) {
       const message = errorMessage(reason, zh, {
@@ -476,7 +471,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         label: label('代码交付', 'Code delivery'),
         run: () => {
           setSelectedRepositoryId(repository.id);
-          setTab('changes');
+          openDelivery(repository.id);
         },
       });
       items.push({
@@ -528,10 +523,18 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
     setSelectedCommit({ repositoryId: repository.id, ref: commitHash });
   }
 
-  /** 提交入口展开底栏并显示共用交付页，不执行提交或重建草稿。 */
+  /** 所有变更入口直接使用既有原生交付窗口服务，工作台不挂载交付页面。 */
+  function openDelivery(repositoryId: string, pathPrefix?: string): void {
+    if (!window.zeus?.openTaskGitDeliveryWindow) {
+      setError(errorMessage(new Error(zh ? '当前环境无法打开代码交付窗口。' : 'The code delivery window is unavailable in this environment.'), zh));
+      return;
+    }
+    void window.zeus.openTaskGitDeliveryWindow({ projectId: props.project.id, repositoryId, pathPrefix }).catch((reason: unknown) => setError(errorMessage(reason, zh)));
+  }
+
+  /** 工具栏和分支菜单沿用当前仓库范围及待提交数量。 */
   function openCommit(): void {
-    props.onOpenPanel?.();
-    setTab('changes');
+    if (selectedRepository) openDelivery(selectedRepository.id);
   }
 
   function openDiffWindow(repository: ProjectGitRepositoryWorkbenchItem, filePath: string, options?: { stage?: 'combined' | ChangeStage; commitHash?: string; comparisonRef?: string; comparisonMode?: 'current' | 'working-tree' }): void {
@@ -693,9 +696,9 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           <WarningCircle aria-hidden="true" />
           <span>
             <strong>{zh ? `存在 ${conflictCount} 个冲突文件` : `${conflictCount} conflicted files`}</strong>
-            <small>{zh ? '请在变更页逐个检查冲突，解决后暂存文件，再继续合并或变基。' : 'Review each file in Local Changes, stage resolved files, then continue the merge or rebase.'}</small>
+            <small>{zh ? '请在代码交付弹窗逐个检查冲突，解决后暂存文件，再继续合并或变基。' : 'Review each file in Code Delivery, stage resolved files, then continue the merge or rebase.'}</small>
           </span>
-          <Button variant="secondary" size="compact" onClick={() => setTab('changes')}>
+          <Button variant="secondary" size="compact" onClick={openCommit}>
             {zh ? '处理冲突' : 'Resolve conflicts'}
           </Button>
         </section>
@@ -707,7 +710,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         <button
           type="button"
           {...toolbarShortcut(1)}
-          aria-current={tab === 'changes' ? 'page' : undefined}
+          aria-haspopup="dialog"
           aria-label={toolbarLabel(zh ? `提交 · ${changedCount} 个待提交文件` : `Commit · ${changedCount} pending files`, 1)}
           data-icon-tooltip={toolbarLabel(zh ? `提交 · ${selectedRepository?.name ?? ''} · ${changedCount} 个待提交文件` : `Commit · ${selectedRepository?.name ?? ''} · ${changedCount} pending files`, 1)}
           disabled={!selectedRepository || busy !== null}
@@ -829,7 +832,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
         {props.toolbarActions}
       </header>
       <div className="project-git-browser-layout">
-        <aside inert={deliveryBusy} className="project-git-navigator" aria-label={zh ? 'Git 导航' : 'Git navigation'}>
+        <aside className="project-git-navigator" aria-label={zh ? 'Git 导航' : 'Git navigation'}>
           {!props.branchToolbarContainer ? <div className="git-toolbar-identity">{branchSwitcher}</div> : null}
           {selectedRepository?.snapshot.submodules?.length ? (
             <details>
@@ -866,7 +869,6 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                   zh={zh}
                   selectedId={selectedRepository?.id}
                   onSelect={(id) => {
-                    setSubtree(null);
                     setSelectedRepositoryId(id);
                     setSelectedFilePath('');
                     setSelectedCommit(null);
@@ -967,15 +969,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                   <span>{zh ? '子树' : 'Subtrees'}</span>
                 </summary>
                 {(selectedRepository.subtreePaths ?? []).map((path) => (
-                  <button
-                    key={path}
-                    type="button"
-                    onClick={() => {
-                      setSubtree({ repositoryId: selectedRepository.id, path });
-                      setSelectedFilePath('');
-                      setTab('changes');
-                    }}
-                  >
+                  <button key={path} type="button" onClick={() => openDelivery(selectedRepository.id, path)}>
                     <Folder aria-hidden="true" />
                     <span>{path}</span>
                   </button>
@@ -985,24 +979,22 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           ) : null}
         </aside>
         <GitPaneSeparator name="navigation" label={zh ? '调整 Git 导航宽度' : 'Resize Git navigation'} initial={20} min={12} max={40} />
-        <div className="project-git-browser-content" data-delivery={tab === 'changes' || undefined}>
-          {tab !== 'changes' ? (
-            <div className="git-content-toolbar">
-              <strong>{tab === 'log' ? (zh ? '提交历史' : 'Commit history') : tab === 'stash' ? (zh ? '贮藏' : 'Stashes') : zh ? '操作记录' : 'Operation history'}</strong>
-              {tab === 'log' ? (
-                <label>
-                  <MagnifyingGlass />
-                  <input
-                    aria-label={zh ? '搜索提交' : 'Search commits'}
-                    type="search"
-                    value={searchQuery}
-                    onChange={(event) => setSearchQuery(event.currentTarget.value)}
-                    placeholder={zh ? '搜索提交、作者或哈希…' : 'Search commits, authors or hashes…'}
-                  />
-                </label>
-              ) : null}
-            </div>
-          ) : null}
+        <div className="project-git-browser-content">
+          <div className="git-content-toolbar">
+            <strong>{tab === 'log' ? (zh ? '提交历史' : 'Commit history') : tab === 'stash' ? (zh ? '贮藏' : 'Stashes') : zh ? '操作记录' : 'Operation history'}</strong>
+            {tab === 'log' ? (
+              <label>
+                <MagnifyingGlass />
+                <input
+                  aria-label={zh ? '搜索提交' : 'Search commits'}
+                  type="search"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.currentTarget.value)}
+                  placeholder={zh ? '搜索提交、作者或哈希…' : 'Search commits, authors or hashes…'}
+                />
+              </label>
+            ) : null}
+          </div>
           {tab === 'log' ? (
             <GitLogSurface
               projectId={props.project.id}
@@ -1020,7 +1012,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
               selectedFilePath={selectedFilePath}
               onSelectRepository={setSelectedRepositoryId}
               onSelectCommit={selectCommit}
-              onOpenChanges={() => setTab('changes')}
+              onOpenChanges={openCommit}
               onSelectFile={setSelectedFilePath}
               busy={busy}
               onExecute={execute}
@@ -1033,20 +1025,6 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
                   run: async () => (await execute(repository, action, title)) === 'completed',
                 })
               }
-            />
-          ) : tab === 'changes' ? (
-            <RepositoryGitDeliveryContent
-              key={`${selectedRepository?.id ?? ''}:${subtree?.repositoryId === selectedRepository?.id ? (subtree?.path ?? '') : ''}`}
-              embedded
-              client={props.client}
-              project={props.project}
-              language={props.language}
-              repositoryId={selectedRepository?.id}
-              initialSnapshot={snapshot}
-              onSnapshot={setSnapshot}
-              onBusyChange={setDeliveryBusy}
-              pathPrefix={subtree?.repositoryId === selectedRepository?.id ? subtree?.path : undefined}
-              onClearPathPrefix={() => setSubtree(null)}
             />
           ) : tab === 'stash' ? (
             <StashSurface
@@ -1936,7 +1914,7 @@ function OperationsMenu(props: {
       <button type="button" role="menuitem" onClick={action(() => props.onSelectTab('log'))}>
         {props.zh ? '显示 Git 历史' : 'Show Git History'}
       </button>
-      <button type="button" role="menuitem" onClick={action(() => props.onSelectTab('changes'))}>
+      <button type="button" role="menuitem" onClick={action(props.onOpenCommit)}>
         {props.zh ? '未提交的变更' : 'Uncommitted Changes'}
       </button>
       <button type="button" role="menuitem" onClick={action(() => props.onSelectTab('stash'))}>
@@ -1954,7 +1932,7 @@ function OperationsMenu(props: {
 
 function readRememberedTab(projectId: string): GitTab {
   const value = typeof window === 'undefined' ? null : window.localStorage.getItem(`zeus.project-git-tab-v2:${projectId}`);
-  return value === 'changes' || value === 'stash' || value === 'console' ? value : 'log';
+  return value === 'stash' || value === 'console' ? value : 'log';
 }
 
 function displayStashSubject(subject: string, zh: boolean): string {

@@ -5,6 +5,7 @@ import type { NativeConversationChoice } from '../session/sessionTypes.js';
 import '../styles.css';
 import '../ui/primitives.css';
 import { TaskGitMergeModal } from './TaskGitMergeModal.js';
+import { RepositoryGitDeliveryContent } from '../git/RepositoryGitDeliveryContent.js';
 import { ConversationGitDeliveryContent } from '../session/ConversationGitDeliveryContent.js';
 
 /** 当前主会话仅为已有任务窗口提供定位提示，不改变窗口固定的交付范围。 */
@@ -13,11 +14,16 @@ export interface TaskGitDeliveryCurrentContext {
   workspaceId: string | null;
 }
 
-/** 同一窗口加载真实任务或真实会话，不创建替代任务。 */
-export type GitDeliveryWindowScope = { kind: 'task'; task: TaskRecord; projectName?: string } | { kind: 'conversation'; project: ProjectRecord; conversation: NativeConversationChoice };
+/** 同一窗口按真实任务、会话或仓库加载交付内容，不创建替代身份。 */
+export type GitDeliveryWindowScope =
+  | { kind: 'task'; task: TaskRecord; projectName?: string }
+  | { kind: 'conversation'; project: ProjectRecord; conversation: NativeConversationChoice }
+  | { kind: 'repository'; project: ProjectRecord; repositoryId: string; pathPrefix?: string };
 
 /** 所有代码交付入口共用原生窗口的页面、主题、布局及关闭行为。 */
 export function TaskGitDeliveryWindow(props: { client: DashboardClient; scope: GitDeliveryWindowScope; language: 'zh-CN' | 'en-US'; appearance: 'light' | 'dark' | 'system'; initialCurrentContext: TaskGitDeliveryCurrentContext }) {
+  /** 项目目录筛选只影响文件清单，清除后展示该仓库全部文件。 */
+  const [pathPrefix, setPathPrefix] = useState(props.scope.kind === 'repository' ? props.scope.pathPrefix : undefined);
   /** 任务窗口跟随主窗口会话定位，普通会话固定为自身绑定范围。 */
   const [currentContext, setCurrentContext] = useState(props.initialCurrentContext);
   /** 主题与语言继续通过现有原生窗口广播更新。 */
@@ -28,7 +34,7 @@ export function TaskGitDeliveryWindow(props: { client: DashboardClient; scope: G
     [props.client, props.scope],
   );
   /** 系统标题使用当前固定交付对象。 */
-  const scopeTitle = props.scope.kind === 'task' ? (props.scope.task.taskCode ?? props.scope.task.id) : props.scope.conversation.title;
+  const scopeTitle = props.scope.kind === 'task' ? (props.scope.task.taskCode ?? props.scope.task.id) : props.scope.kind === 'conversation' ? props.scope.conversation.title : props.scope.project.name;
 
   useEffect(() => window.zeus?.onTaskGitDeliveryCurrentContext?.(setCurrentContext), []);
   useEffect(() => window.zeus?.onTaskGitDeliveryAppearance?.(setSurfaceSettings), []);
@@ -61,6 +67,16 @@ export function TaskGitDeliveryWindow(props: { client: DashboardClient; scope: G
             onOpenConversation={async (taskId, conversationId) => {
               await window.zeus?.openTaskGitDeliveryConversation?.({ taskId, conversationId });
             }}
+            onClose={() => void window.zeus?.closeTaskGitDeliveryWindow?.()}
+          />
+        ) : props.scope.kind === 'repository' ? (
+          <RepositoryGitDeliveryContent
+            client={scopedClient}
+            project={props.scope.project}
+            repositoryId={props.scope.repositoryId}
+            pathPrefix={pathPrefix}
+            onClearPathPrefix={() => setPathPrefix(undefined)}
+            language={surfaceSettings.language}
             onClose={() => void window.zeus?.closeTaskGitDeliveryWindow?.()}
           />
         ) : (

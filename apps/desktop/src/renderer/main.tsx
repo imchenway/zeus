@@ -370,15 +370,19 @@ async function renderMenuBarUsageCostDetail(): Promise<void> {
   );
 }
 
-/** 两种代码交付范围都挂载到同一个原生窗口页面。 */
+/** 所有代码交付范围都挂载到同一个原生窗口页面。 */
 async function renderTaskGitDeliveryWithClient(client: DashboardClient, parameters: URLSearchParams): Promise<void> {
   /** URL 只携带真实业务身份，记录和工作目录由已有接口重新读取。 */
   const taskId = parameters.get('taskId')?.trim();
   /** 普通会话必须同时指定归属项目与会话。 */
   const projectId = parameters.get('projectId')?.trim();
-  /** 任务和会话两种范围不能混用。 */
+  /** 会话身份不能与任务或仓库范围混用。 */
   const conversationId = parameters.get('conversationId')?.trim();
-  if (taskId ? projectId || conversationId : !projectId || !conversationId) throw new Error('代码交付窗口范围无效。');
+  /** 项目提交使用真实仓库身份，不能借用任意会话。 */
+  const repositoryId = parameters.get('repositoryId')?.trim();
+  /** 子树筛选来自原生窗口校验后的相对路径。 */
+  const pathPrefix = parameters.get('pathPrefix') ?? undefined;
+  if (taskId ? projectId || conversationId || repositoryId || pathPrefix : !projectId || Boolean(conversationId) === Boolean(repositoryId) || (pathPrefix && !repositoryId)) throw new Error('代码交付窗口范围无效。');
   /** 元数据与设置并行读取，完整交付页只创建一次。 */
   const [{ TaskGitDeliveryWindow }, task, conversation, snapshot, appShellSettings, currentContext] = await Promise.all([
     import('./task/TaskGitDeliveryWindow.js'),
@@ -393,11 +397,16 @@ async function renderTaskGitDeliveryWithClient(client: DashboardClient, paramete
   if (!root) throw new Error('Zeus renderer root element is missing');
   /** 不接受从其他项目借用的会话或缺失记录。 */
   const project = snapshot.projects.find((item) => item.id === (task?.projectId ?? projectId));
-  if (!task && (!project || !conversation || conversation.projectId !== project.id || conversation.id !== conversationId || conversation.taskId)) throw new Error('代码交付会话归属无效，请从当前会话重新打开。');
+  if (!task && !project) throw new Error('代码交付项目不存在，请从当前项目重新打开。');
+  if (conversationId && (!conversation || conversation.projectId !== project?.id || conversation.id !== conversationId || conversation.taskId)) throw new Error('代码交付会话归属无效，请从当前会话重新打开。');
   /** 控制器能力由真实记录选择，原生窗口壳与交付视图保持一致。 */
-  const scope: import('./task/TaskGitDeliveryWindow.js').GitDeliveryWindowScope = task ? { kind: 'task', task, projectName: project?.name } : { kind: 'conversation', project: project!, conversation: conversation! };
+  const scope: import('./task/TaskGitDeliveryWindow.js').GitDeliveryWindowScope = task
+    ? { kind: 'task', task, projectName: project?.name }
+    : repositoryId
+      ? { kind: 'repository', project: project!, repositoryId, pathPrefix }
+      : { kind: 'conversation', project: project!, conversation: conversation! };
   document.body.dataset.surface = 'task-git-delivery';
-  document.title = `${appShellSettings.appLanguage === 'zh-CN' ? '代码交付' : 'Code Delivery'} · ${task ? (task.taskCode ?? task.id) : conversation!.title}`;
+  document.title = `${appShellSettings.appLanguage === 'zh-CN' ? '代码交付' : 'Code Delivery'} · ${task ? (task.taskCode ?? task.id) : (conversation?.title ?? project!.name)}`;
   startupLanguage = appShellSettings.appLanguage;
   const errorLanguage = appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en';
   createRoot(root).render(
