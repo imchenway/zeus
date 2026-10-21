@@ -53,19 +53,21 @@
   user-select: text;
 }
 
-/* 作者名限制宽度，长名称通过统一提示查看，不挤占全部代码空间。 */
+/* 日期与作者共用自然宽度；只有真实记录才创建侧栏，不为无归属文件预留空白。 */
 .code-author-gutter .cm-gutterElement {
-  width: clamp(56px, 9vw, 120px);
-  padding-inline: 6px;
+  padding-inline: 8px;
   text-align: left;
   overflow: hidden;
-  font:
-    11px/20px ui-sans-serif,
-    system-ui,
-    sans-serif;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  /* 源码编辑与预览的正文字号不同，作者栏仍使用同一字号和主题颜色。 */
+  font-size: 12px;
+  color: var(--session-text, #1f2937);
+  font-variant-numeric: tabular-nums;
 }
 .code-author-gutter .cm-gutterElement > span {
   display: block;
+  /* 保留完整日期和常见作者名，超长名称通过悬停详情查看。 */
+  max-inline-size: clamp(150px, 18vw, 220px);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;

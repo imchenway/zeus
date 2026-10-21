@@ -28,7 +28,8 @@
   z-index: 10;
   height: var(--git-project-git-height, 55%);
   border-top: 1px solid var(--zeus-product-line);
-  box-shadow: 0 -8px 28px rgb(0 0 0 / 10%);
+  /* 覆盖层通过细边界区分，不向主页面投射灰色阴影。 */
+  box-shadow: none;
   display: flex;
   flex-direction: column;
   min-width: 0;

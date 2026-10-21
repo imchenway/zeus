@@ -61,8 +61,6 @@ export function GitDeliveryRunControl(props: {
   projectId: string;
   /** 当前输入；点击时再次固定副本。 */
   input: Omit<GitDeliveryInput, 'settings'>;
-  /** 可读仓库名用于明确隐藏目录之外的交付范围。 */
-  repositoryNames: Record<string, string>;
   /** 原页正在处理单步操作。 */
   disabled: boolean;
   /** 当前语言。 */
@@ -243,9 +241,9 @@ export function GitDeliveryRunControl(props: {
     }
   }
 
-  /** 摘要展示明确的目标状态，避免沿用偏好时看不到实际动作。 */
+  /** 任务状态变更保留按钮提示，具体配置统一在设置中查看。 */
   const finalStatusLabel = statuses.find((status) => status.id === settings.finalTaskStatus)?.label ?? defaultTaskManagementStatusLabels[props.zh ? 'zh-CN' : 'en-US'][settings.finalTaskStatus ?? ''] ?? settings.finalTaskStatus;
-  /** 摘要顺序与实际执行器一致。 */
+  /** 按钮名称直接表达实际执行顺序，不再重复渲染功能说明。 */
   const summary = (['commit', 'merge', 'push'] as const)
     .filter((action) => settings[action])
     .map((action) => actionLabel(action, props.zh))
@@ -253,37 +251,20 @@ export function GitDeliveryRunControl(props: {
   return (
     <section className="task-git-delivery-action-step git-delivery-combination" aria-label={props.zh ? '组合交付' : 'Combined delivery'}>
       <div className="git-delivery-combination-buttons">
-        <Button variant="primary" size="compact" busy={busy} disabled={props.disabled || busy || running || !props.input.repositories.length || !summary} onClick={() => void start()}>
-          {props.zh ? '运行组合' : 'Run combination'}
+        <Button
+          variant="primary"
+          size="compact"
+          busy={busy}
+          disabled={props.disabled || busy || running || !props.input.repositories.length || !summary}
+          data-icon-tooltip={settings.finalTaskStatus && props.input.scope.kind === 'task' ? (props.zh ? `完成后状态：${finalStatusLabel}` : `Final status: ${finalStatusLabel}`) : undefined}
+          onClick={() => void start()}
+        >
+          {summary || (props.zh ? '执行交付' : 'Run delivery')}
         </Button>
         <Button variant="secondary" size="compact" disabled={busy} aria-label={props.zh ? '组合操作设置' : 'Combination settings'} data-icon-tooltip={props.zh ? '组合操作设置' : 'Combination settings'} onClick={() => void openSettings()}>
           <GearSixIcon aria-hidden="true" />
         </Button>
       </div>
-      <small>
-        {summary}
-        {settings.commit && settings.generateCommitMessage ? (props.zh ? ' · AI 生成提交信息' : ' · AI-generated commit messages') : ''}
-        {settings.resolveConflicts ? (props.zh ? ' · 冲突交给 AI' : ' · AI resolves conflicts') : ''}
-        {settings.finalTaskStatus && props.input.scope.kind === 'task' ? (props.zh ? ` · 最后变更为：${finalStatusLabel}` : ` · Final status: ${finalStatusLabel}`) : ''}
-      </small>
-      <details className="git-delivery-selection">
-        <summary>{props.zh ? `本次范围：${props.input.repositories.length} 个仓库` : `${props.input.repositories.length} repositories selected`}</summary>
-        <ul>
-          {props.input.repositories.map((repository) => (
-            <li key={repository.repositoryId}>
-              {props.repositoryNames[repository.repositoryId] ?? repository.repositoryId}
-              <small>
-                {settings.merge
-                  ? props.input.scope.kind === 'task'
-                    ? `${repository.expectedBranch} → ${repository.mergeBranch || (props.zh ? '尚未选择目标分支' : 'Choose target branch')}`
-                    : `${repository.mergeBranch || (props.zh ? '尚未选择来源分支' : 'Choose source branch')} → ${repository.expectedBranch}`
-                  : repository.expectedBranch}{' '}
-                · {repository.paths.length} {props.zh ? '个勾选文件' : 'files selected'}
-              </small>
-            </li>
-          ))}
-        </ul>
-      </details>
       {error ? (
         <div role="alert">
           <VisibleApplicationError error={error} language={props.zh ? 'zh-CN' : 'en'} />
@@ -298,8 +279,8 @@ export function GitDeliveryRunControl(props: {
           </Button>
         </div>
       ) : null}
-      {runs.slice(0, 5).map((run, index) => (
-        <details key={run.id} open={index === 0} className="git-delivery-run">
+      {runs.slice(0, 5).map((run) => (
+        <details key={run.id} open={run.state === 'queued' || run.state === 'running' || run.state === 'attention'} className="git-delivery-run">
           <summary>
             {run.state === 'succeeded' ? (props.zh ? '交付已完成' : 'Delivery completed') : run.state === 'attention' ? (props.zh ? '交付需要处理' : 'Delivery needs attention') : props.zh ? '后台交付中' : 'Delivering in background'} ·{' '}
             {run.steps.filter((step) => step.state === 'succeeded').length}/{run.steps.length}

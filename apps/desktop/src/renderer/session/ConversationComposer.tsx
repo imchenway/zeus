@@ -206,7 +206,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
       recoverInputOperation('input_resource');
       props.onAddAttachments?.(attachments);
     },
-    onRemoveAttachment: (attachment) => props.onRemoveAttachment?.(attachment),
     onError: setInputResourceError,
   });
   useEffect(() => {
@@ -447,7 +446,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
           language={props.language}
           disabled={!inputWritable || busy || inputResources.processing}
           onRemove={(attachment) => props.onRemoveAttachment?.(attachment)}
-          onRestorePastedText={goalInputActive ? undefined : inputResources.restorePastedText}
         />
         {goalInputActive ? (
           <textarea

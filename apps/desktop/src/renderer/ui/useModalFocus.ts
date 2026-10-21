@@ -60,7 +60,7 @@ export function useModalFocus(ref: RefObject<HTMLElement | null>, open: boolean)
     };
     /** Tab 在可操作控件间循环，嵌套模态只处理一次。 */
     const containTab = (event: KeyboardEvent) => {
-      if (event.key !== 'Tab' || layers.at(-1) !== root) return;
+      if (event.defaultPrevented || event.key !== 'Tab' || layers.at(-1) !== root) return;
       const elements = focusableElements(root);
       const first = elements[0];
       const last = elements.at(-1);
@@ -76,10 +76,11 @@ export function useModalFocus(ref: RefObject<HTMLElement | null>, open: boolean)
       }
     };
     document.addEventListener('focusin', containFocus);
-    document.addEventListener('keydown', containTab, true);
+    // 输入框和编辑器先消费列表缩进，剩余 Tab 再用于模态焦点循环。
+    document.addEventListener('keydown', containTab);
     return () => {
       document.removeEventListener('focusin', containFocus);
-      document.removeEventListener('keydown', containTab, true);
+      document.removeEventListener('keydown', containTab);
       const wasTop = layers.at(-1) === root;
       const index = layers.indexOf(root);
       if (index >= 0) layers.splice(index, 1);

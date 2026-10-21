@@ -1104,9 +1104,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
           ) : (
             <GitDeliveryWorkspace
               zh={zh}
-              selectedRepositories={selectedWorkspaceIds.length}
-              totalRepositories={visibleWorkspaceItems.length}
-              selectedFiles={selectedCommitFileCount}
               fileBrowser={
                 <DeliveryRepositoryFileTree
                   groups={repositoryGroups}
@@ -1276,7 +1273,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                               : [];
                           }),
                         }}
-                        repositoryNames={Object.fromEntries(visibleWorkspaceItems.map((workspace) => [workspace.id, repositoryLabel(workspace, zh)]))}
                       />
                     ) : null
                   }
@@ -1291,6 +1287,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
               diffLoading={diffLoading}
               diff={fileDiff}
               revision={snapshotRevision}
+              onFileSaved={() => reload(workspaceId)}
               previewRequest={selectedWorkspace ? { kind: 'task-git', taskId: props.task.id, workspaceId: selectedWorkspace.id, path: selectedFile, scope: diffScope } : undefined}
               onShowCommitted={diffScope === 'working' && totalCommittedFiles > 0 ? () => setDiffScope('committed') : undefined}
               busy={busy}

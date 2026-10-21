@@ -106,7 +106,7 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
   /** 当前准确版本的逐行归属。 */
   const lines = props.blame ?? props.blameLines ?? gitBlame?.lines;
   /** 左侧菜单与项目编辑器完全一致。 */
-  const reading = useCodeReadingOptions(lines, props.locale);
+  const reading = useCodeReadingOptions(hostRef, lines, props.locale);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -203,10 +203,10 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    /** 只在可信资源内容对应的归属读取完成后添加当前行提示。 */
-    const extension = reading.blame && lines?.length ? blameDecorations(lines, { locale: props.locale }) : [];
+    /** 当前行详情保留原有行为，空归属由共享规则过滤，不随左侧栏开关改变。 */
+    const extension = lines?.length ? blameDecorations(lines, { locale: props.locale }) : [];
     view.dispatch({ effects: blameSlot.reconfigure(extension) });
-  }, [props.locale, blameSlot, lines, props.content, props.path, props.label, commentsEnabled, reading.blame]);
+  }, [props.locale, blameSlot, lines, props.content, props.path, props.label, commentsEnabled]);
 
   useEffect(() => {
     viewRef.current?.dispatch({ effects: readingSlot.reconfigure(reading.extension) });
@@ -245,7 +245,7 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
 
   return (
     <>
-      <div className="session-source-code-preview" ref={hostRef} onContextMenu={reading.onContextMenu} />
+      <div className="session-source-code-preview" ref={hostRef} />
       {reading.menu}
     </>
   );

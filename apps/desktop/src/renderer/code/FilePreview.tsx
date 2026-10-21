@@ -1,5 +1,5 @@
 import { useWindowDocument } from '../ui/windowDocument.js';
-import { createContext, lazy, Suspense, useEffect, useMemo, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { createContext, lazy, Suspense, useEffect, useMemo, useState, useRef, useCallback, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { isMacOSPlatform } from '../platform.js';
 import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { ArrowCounterClockwiseIcon as ArrowCounterClockwise } from '@phosphor-icons/react/dist/csr/ArrowCounterClockwise';
@@ -23,6 +23,7 @@ import {
   userFacingErrorCause,
   type FilePreviewItem,
   type FilePreviewRequest,
+  type FilePreviewChangeRange,
   type FileReview,
   type ConversationFileLocation,
   type ConversationCodeComment,
@@ -35,12 +36,31 @@ import { VisibleApplicationError, reportApplicationError } from '../ui/Applicati
 import { FileTypeIcon } from './FileTypeIcon.js';
 import { sourceLocationDecorations } from './sourceLocationDecorations.js';
 import './filePreview.css';
+import { useFilePreviewDraft } from './useFilePreviewDraft.js';
 import { useGitBlame } from './useGitBlame.js';
 
 /** 会话统一选择预览容器：图片可用弹窗，其他文件进入右侧审阅。 */
 export const FilePreviewOpenContext = createContext<((request: FilePreviewRequest, image?: boolean) => void) | null>(null);
 /** 文本差异复用已经读取的准确前后版本，不重复申请文件或改变授权范围。 */
-export const FilePreviewDataContext = createContext<{ items: FilePreviewItem[] | null; full: boolean; zh: boolean } | null>(null);
+export const FilePreviewDataContext = createContext<{
+  /** 已授权的两端内容与显示偏好。 */
+  items: FilePreviewItem[] | null;
+  full: boolean;
+  zh: boolean;
+  unified: boolean;
+  /** 本页恢复后按新快照重建差异。 */
+  reverted?: boolean;
+  /** 可写当前版本的草稿与保存状态，历史侧仍只读。 */
+  editing?: ReturnType<typeof useFilePreviewDraft>;
+  /** 只有工作区配对授权可写；调用期间由共享 Diff 阻止重复操作。 */
+  onRevert?: (range: FilePreviewChangeRange) => Promise<void>;
+  /** 工具栏放入现有标题行，避免重复占用垂直空间。 */
+  toolbarTarget: HTMLElement | null;
+  onFullChange: (full: boolean) => void;
+  onUnifiedChange: (unified: boolean) => void;
+  onPreview: () => void;
+  onRefresh: () => void;
+} | null>(null);
 
 /** 文本编辑器仅在真正查看文本时加载。 */
 const CodeEditor = lazy(() => import('./CodeEditor.js').then((module) => ({ default: module.CodeEditor })));
@@ -69,9 +89,9 @@ export function PreviewIconButton({
 
 /** 已经有独立源码预览的页面按需申请编辑目标，不提前重复读取整份文件。 */
 export function FileSourceEditButton(props: { request: FilePreviewRequest; zh: boolean }) {
-  /** 等待窗口打开时禁止重复申请。 */
+  /** 等待源码页导航时禁止重复申请。 */
   const [busy, setBusy] = useState(false);
-  /** 编辑窗口保存独立授权后立即释放本次临时预览。 */
+  /** 源码页保存独立授权后立即释放本次临时预览。 */
   async function openEditor() {
     if (!window.zeus || busy) return;
     setBusy(true);
@@ -107,6 +127,8 @@ export function FileReviewContent(props: {
   sourceRequest?: number;
   /** 会话源码对比时使用同一资源授权读取前后全文。 */
   previewRequest?: FilePreviewRequest;
+  /** 保存比较中的当前版本后，所属源码预览重新读取正文。 */
+  onSaved?: () => void | Promise<void>;
   /** 审阅操作并入调用方的文件工具栏，不再生成独立一行。 */
   toolbar: (actions: ReactNode) => ReactNode;
   children: ReactNode;
@@ -154,7 +176,7 @@ export function FileReviewContent(props: {
       {showDiff && props.review?.diff ? (
         <Suspense fallback={null}>
           {props.previewRequest ? (
-            <FilePreview request={props.previewRequest} zh={props.zh}>
+            <FilePreview request={props.previewRequest} zh={props.zh} onSaved={props.onSaved}>
               <CodeDiffView file={props.review.diff} unified label={props.zh ? '文件 Git 差异' : 'File Git diff'} />
             </FilePreview>
           ) : (
@@ -184,6 +206,8 @@ export function FilePreview(props: {
   fileStatus?: string;
   /** 外部已知的修订用于显式刷新当前文件。 */
   revision?: string | number;
+  /** 文件保存成功后由所属页面刷新文件列表与统计。 */
+  onSaved?: () => void | Promise<void>;
   /** 会话评论使用的稳定文件路径，附件缺省使用预览名称。 */
   commentPath?: string;
   /** 当前会话全部代码评论。 */
@@ -204,6 +228,7 @@ export function FilePreview(props: {
       commentPath={props.commentPath}
       comments={props.comments}
       onCommentsChange={props.onCommentsChange}
+      onSaved={props.onSaved}
     >
       {props.children}
     </FilePreviewBody>
@@ -222,6 +247,7 @@ function FilePreviewBody(props: {
   /** 会话评论使用的稳定文件路径。 */ commentPath?: string;
   /** 当前会话全部代码评论。 */ comments?: ConversationCodeComment[];
   /** 缺省表示只读预览，不展示逐行评论入口。 */ onCommentsChange?: (comments: ConversationCodeComment[]) => void;
+  /** 正文回执已核实后通知所属页面，不把列表刷新失败当作保存失败。 */ onSaved?: () => void | Promise<void>;
 }) {
   /** 系统标题栏使用当前文件名，嵌入式预览不改主工作区标题。 */
   const ownerDocument = useWindowDocument();
@@ -239,6 +265,10 @@ function FilePreviewBody(props: {
   const [mode, setMode] = useState<'auto' | 'preview' | 'diff'>('auto');
   /** 全文只改变显示范围，不改变 Git 比较端点。 */
   const [full, setFull] = useState(false);
+  /** 布局与全文范围独立，切换范围不会重置布局。 */
+  const [unified, setUnified] = useState(false);
+  /** 实际差异组件将公共控件挂到同一标题行。 */
+  const [toolbarTarget, setToolbarTarget] = useState<HTMLElement | null>(null);
   useEffect(() => {
     /** 卸载后拒绝迟到结果。 */
     let active = true;
@@ -279,8 +309,68 @@ function FilePreviewBody(props: {
   const editableItem = items?.findLast((item) => item.canEdit);
   /** 完整前后端都存在或明确为空时，才允许宣称左右全文。 */
   const fullAvailable = items?.length === 2 && items.every((item) => item.missing || (item.kind === 'text' && item.content !== undefined && !item.truncated));
+  /** 恢复产生的新令牌由当前预览统一管理，关闭后不遗留授权。 */
+  const restoredIds = useRef<string[]>([]);
+  /** 异步恢复回执不再更新已关闭的预览。 */
+  const active = useRef(true);
+  /** 本页正文已由恢复后的新快照接管。 */
+  const [reverted, setReverted] = useState(false);
+  useEffect(() => {
+    active.current = true;
+    return () => {
+      active.current = false;
+      if (restoredIds.current.length) void window.zeus?.releaseFilePreview(restoredIds.current).catch(() => undefined);
+      restoredIds.current = [];
+    };
+  }, []);
+  /** 保存与恢复回执统一接管授权，关闭后的迟到结果立即释放。 */
+  const acceptItems = useCallback(
+    (result: FilePreviewItem[]) => {
+      const ids = result.map((item) => item.id).filter(Boolean);
+      if (!active.current) {
+        void window.zeus?.releaseFilePreview(ids).catch(() => undefined);
+        return;
+      }
+      const previous = restoredIds.current;
+      restoredIds.current = ids;
+      if (previous.length) void window.zeus?.releaseFilePreview(previous).catch(() => undefined);
+      setReverted(true);
+      setItems(result);
+      void Promise.resolve()
+        .then(() => props.onSaved?.())
+        .catch((cause) => reportApplicationError(cause, { language: props.zh ? 'zh-CN' : 'en' }));
+    },
+    [props.onSaved, props.zh],
+  );
+  /** 草稿跨文件切换保留，重新载入仍使用主进程的新版本授权。 */
+  const editing = useFilePreviewDraft(props.identity, items, acceptItems);
+  /** 后端从旧侧读取替换文本，页面只传原始行范围。 */
+  const revertBlock = useCallback(
+    async (range: FilePreviewChangeRange) => {
+      if (editing.dirty || editing.saving) throw new Error('请先保存或放弃当前草稿。');
+      if (!items?.[0]?.id || !items[1]?.canRevert || !window.zeus?.revertFilePreviewBlock) throw new Error('当前差异没有可恢复的工作区版本。');
+      acceptItems(await window.zeus.revertFilePreviewBlock({ ...range, beforeId: items[0].id, afterId: items[1].id }));
+    },
+    [items, acceptItems, editing.dirty, editing.saving],
+  );
   /** 内容和显示范围通过上下文传给全部差异入口。 */
-  const previewData = useMemo(() => ({ items, full: full && Boolean(fullAvailable), zh: props.zh }), [items, full, fullAvailable, props.zh]);
+  const previewData = useMemo(
+    () => ({
+      items,
+      reverted,
+      editing,
+      onRevert: items?.[1]?.canRevert && window.zeus?.revertFilePreviewBlock ? revertBlock : undefined,
+      full: full && Boolean(fullAvailable),
+      zh: props.zh,
+      unified,
+      toolbarTarget,
+      onFullChange: setFull,
+      onUnifiedChange: setUnified,
+      onPreview: () => setMode('preview'),
+      onRefresh: () => setAttempt((value) => value + 1),
+    }),
+    [items, reverted, editing, revertBlock, full, fullAvailable, props.zh, unified, toolbarTarget],
+  );
   /** 只精简单图弹窗，仓库内容、版本对比与其他文件仍使用完整操作。 */
   const simpleImage = Boolean(props.onClose && items?.length === 1 && current?.kind === 'image' && current.url);
   useEffect(() => {
@@ -300,26 +390,13 @@ function FilePreviewBody(props: {
   /** 单文件的刷新、版本切换与系统操作放在同一行；比较视图保留公共操作栏。 */
   const toolbar = (
     <>
-      {props.children ? (
-        <>
-          <PreviewIconButton label={props.zh ? '差异' : 'Diff'} aria-pressed={showDiff} onClick={() => setMode('diff')}>
-            <GitDiff size={16} aria-hidden="true" />
-          </PreviewIconButton>
-          <PreviewIconButton
-            label={props.zh ? '两侧全文（保留差异高亮）' : 'Full files with diff highlights'}
-            disabled={!fullAvailable}
-            aria-pressed={showDiff && full}
-            onClick={() => {
-              setFull(!full);
-              setMode('diff');
-            }}
-          >
-            <ArrowsOutSimple size={16} aria-hidden="true" />
-          </PreviewIconButton>
-          <PreviewIconButton label={props.zh ? '内容预览' : 'Preview'} aria-pressed={!showDiff} onClick={() => setMode('preview')}>
-            <Eye size={16} aria-hidden="true" />
-          </PreviewIconButton>
-        </>
+      {showDiff ? (
+        <span className="diff-review-toolbar-slot" ref={setToolbarTarget} />
+      ) : props.children ? (
+        <Button size="compact" onClick={() => setMode('diff')}>
+          <GitDiff size={16} aria-hidden="true" />
+          {props.zh ? '查看差异' : 'View changes'}
+        </Button>
       ) : null}
       {!showDiff && !images && items && items.length > 1
         ? items.map((item, index) => (
@@ -333,18 +410,26 @@ function FilePreviewBody(props: {
           <ArrowSquareOut size={16} aria-hidden="true" />
         </PreviewIconButton>
       ) : null}
-      <PreviewIconButton label={error ? (props.zh ? '重试' : 'Retry') : props.zh ? '刷新' : 'Refresh'} onClick={() => setAttempt((value) => value + 1)}>
-        <ArrowClockwise size={16} aria-hidden="true" />
-      </PreviewIconButton>
+      {!showDiff ? (
+        <PreviewIconButton label={error ? (props.zh ? '重试' : 'Retry') : props.zh ? '刷新' : 'Refresh'} onClick={() => setAttempt((value) => value + 1)}>
+          <ArrowClockwise size={16} aria-hidden="true" />
+        </PreviewIconButton>
+      ) : null}
       {editableItem ? (
-        <PreviewIconButton
-          label={props.zh ? '编辑工作区文件' : 'Edit workspace file'}
+        <Button
+          size="compact"
+          disabled={editing.dirty || editing.saving}
+          title={editing.dirty ? (props.zh ? '请先保存或放弃 Diff 草稿' : 'Save or discard the diff draft first') : props.zh ? '在源码页编辑工作区文件' : 'Edit workspace file in Source'}
           onClick={() => {
-            void window.zeus?.actOnFilePreview(editableItem.id, 'edit').catch((cause: unknown) => setError(userFacingErrorCause(cause)));
+            void window.zeus
+              ?.actOnFilePreview(editableItem.id, 'edit')
+              .then(() => props.onClose?.())
+              .catch((cause: unknown) => setError(userFacingErrorCause(cause)));
           }}
         >
           <PencilSimple size={16} aria-hidden="true" />
-        </PreviewIconButton>
+          {props.zh ? '编辑' : 'Edit'}
+        </Button>
       ) : null}
       {props.actions}
     </>
@@ -389,6 +474,7 @@ function FilePreviewBody(props: {
           <div className={images ? 'file-preview-pair' : 'file-preview-single'}>
             {(images ? items : current ? [current] : []).map((item, index) => (
               <FilePreviewContent
+                onSaved={() => setAttempt((value) => value + 1)}
                 key={`${item.id}:${index}:${item.label}`}
                 item={props.location ? { ...item, review: { ...item.review, location: props.location } } : item}
                 request={attachment}
@@ -472,6 +558,8 @@ export function PreviewImage(props: { url: string; name: string; zh: boolean; on
 /** 已授权内容和系统操作共用明确的失败状态，绝不自动打开外部应用。 */
 function FilePreviewContent(props: {
   item: FilePreviewItem;
+  /** 嵌套 Git 比较保存后刷新当前资源预览。 */
+  onSaved: () => void;
   /** 会话资源的文件审阅继续使用原业务身份。 */
   request: FilePreviewRequest;
   zh: boolean;
@@ -511,6 +599,7 @@ function FilePreviewContent(props: {
   return (
     <article className="file-preview-content">
       <FileReviewContent
+        onSaved={props.onSaved}
         previewRequest={props.request.kind === 'resource' ? { ...props.request, comparison: 'head' } : undefined}
         review={item.kind === 'text' ? item.review : undefined}
         zh={props.zh}

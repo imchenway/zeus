@@ -13,7 +13,6 @@ export function TaskPushSupplementalAttachmentCards(props: {
   language: 'zh-CN' | 'en-US';
   disabled: boolean;
   onRemove: (attachment: TaskPushSupplementalAttachmentDraft) => void;
-  onRestoreText: (attachment: TaskPushSupplementalAttachmentDraft) => void;
   onError: (message: string) => void;
 }) {
   const [previewAttachment, setPreviewAttachment] = useState<TaskPushSupplementalAttachmentDraft | null>(null);
@@ -30,7 +29,6 @@ export function TaskPushSupplementalAttachmentCards(props: {
         mimeType: attachment.mime,
         size: attachment.size,
         ...(attachment.characterCount !== undefined ? { characterCount: attachment.characterCount } : {}),
-        ...(attachment.restorableText ? { restorable: true } : {}),
         title: attachment.name,
       })),
     [props.attachments],
@@ -72,10 +70,6 @@ export function TaskPushSupplementalAttachmentCards(props: {
         onRemove={(resource) => {
           const attachment = attachmentsById.get(resource.id);
           if (attachment) props.onRemove(attachment);
-        }}
-        onRestoreText={(resource) => {
-          const attachment = attachmentsById.get(resource.id);
-          if (attachment) props.onRestoreText(attachment);
         }}
       />
       <MotionPresence>{previewAttachment ? <FilePreviewDialog request={{ kind: 'attachment', localPath: previewAttachment.localPath, uploadRef: previewAttachment.uploadRef }} zh={zh} onClose={closePreview} /> : null}</MotionPresence>

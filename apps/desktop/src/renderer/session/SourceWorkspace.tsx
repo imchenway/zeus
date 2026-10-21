@@ -309,6 +309,7 @@ function SourceWorkspaceView(props: {
         </p>
       ) : null}
       <FileReviewContent
+        onSaved={() => props.onOpenFile?.(props.preview.resource)}
         previewRequest={
           props.preview.resource.kind === 'file'
             ? { kind: 'resource', projectId: props.preview.resource.projectId, conversationId: props.preview.resource.conversationId, resourceId: props.preview.resource.id, comparison: 'head' }

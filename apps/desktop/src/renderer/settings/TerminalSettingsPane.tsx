@@ -82,7 +82,9 @@ export function TerminalSettingsPane(props: { client: Pick<SettingsApiClient, 'l
           title={zh ? '启动命令' : 'Startup command'}
           description={zh ? '每个新终端在当前项目目录执行一次。留空则不执行，保存后对新终端生效。' : 'Runs once in the current project directory for each new terminal. Leave blank to disable. Changes apply to new terminals after saving.'}
         >
+          {/* 终端启动命令使用 Shell 的原始文本。 */}
           <textarea
+            data-markdown-lists="off"
             aria-label={zh ? '启动命令' : 'Startup command'}
             aria-describedby={helpId}
             rows={5}

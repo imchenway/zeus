@@ -30,7 +30,6 @@ export interface TaskAttachmentPreviewListProps {
   onRemove?: (path: string) => void;
   onLoadPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
   onOpenAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }> | void;
-  onRestoreText?: (attachment: TaskAttachmentPreviewItem) => void;
   className?: string;
   disabled?: boolean;
 }
@@ -163,7 +162,6 @@ export function TaskAttachmentPreviewList(props: TaskAttachmentPreviewListProps)
       ...(previewUrl ? { previewUrl } : {}),
       previewLoading: attachment.kind === 'image' && previewLoaderAvailable && !previewUrl && !previewFailures.has(attachment.path),
       previewFailed: previewFailures.has(attachment.path),
-      ...(attachment.restorableText ? { restorable: true } : {}),
       title: attachment.path,
     };
   });
@@ -180,14 +178,6 @@ export function TaskAttachmentPreviewList(props: TaskAttachmentPreviewListProps)
         language={language}
         disabled={props.disabled}
         onRemove={props.mode === 'editable' && props.onRemove ? (resource) => props.onRemove?.(resource.id) : undefined}
-        onRestoreText={
-          props.mode === 'editable' && props.onRestoreText
-            ? (resource) => {
-                const attachment = attachmentsByPath.get(resource.id);
-                if (attachment) props.onRestoreText?.(attachment);
-              }
-            : undefined
-        }
         onActivate={(resource, trigger) => {
           const attachment = attachmentsByPath.get(resource.id);
           if (!attachment) return;

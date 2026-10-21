@@ -233,7 +233,8 @@ export function PendingRequestSurface(props: PendingRequestSurfaceProps) {
           {acceptsMcpJson ? (
             <label className="session-mcp-response">
               <span>{copy.mcpResponse}</span>
-              <textarea value={mcpResponseJson} onChange={(event) => setMcpResponseJson(event.currentTarget.value)} spellCheck={false} />
+              {/* 结构化响应保留原文，不能由列表编辑改写 JSON。 */}
+              <textarea data-markdown-lists="off" value={mcpResponseJson} onChange={(event) => setMcpResponseJson(event.currentTarget.value)} spellCheck={false} />
             </label>
           ) : null}
           {mcpUrl ? (
@@ -704,7 +705,6 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
       }
       setAnswerAttachments((current) => ({ ...current, [currentQuestion.id]: mergeAnswerAttachments(current[currentQuestion.id] ?? [], attachments) }));
     },
-    onRemoveAttachment: (attachment) => removeAnswerAttachment(currentQuestion.id, attachment),
     onError: setResourceError,
   });
 
@@ -1059,7 +1059,6 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
                       disabled={responding || inputResources.processing}
                       className="session-question-answer-attachments"
                       onRemove={(attachment) => removeAnswerAttachment(currentQuestion.id, attachment)}
-                      onRestorePastedText={inputResources.restorePastedText}
                     />
                     <textarea
                       ref={(element) => {
@@ -1144,7 +1143,6 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
                     disabled={responding || inputResources.processing}
                     className="session-question-answer-attachments"
                     onRemove={(attachment) => removeAnswerAttachment(currentQuestion.id, attachment)}
-                    onRestorePastedText={inputResources.restorePastedText}
                   />
                   <textarea
                     ref={(element) => {

@@ -103,6 +103,10 @@ export interface FilePreviewIntent {
 
 /** 单个预览资源；令牌只能用于所属窗口且关闭后撤销。 */
 export interface FilePreviewItem {
+  /** 当前文本可按同次预览的旧侧恢复区块；历史副本和只读编码不提供此能力。 */
+  canRevert?: boolean;
+  /** 当前预览就是可写工作区正文，历史快照不授予此能力。 */
+  canEditInline?: boolean;
   /** 与本次完整文本对应的逐行提交归属。 */
   blame?: FilePreviewBlameLine[];
   /** 归属读取失败不妨碍查看正文，但必须明确显示原因。 */
@@ -137,8 +141,27 @@ export interface FilePreviewItem {
   reason?: string;
 }
 
-/** 独立源码页只接收主进程固定的工作区身份，页面不能自行指定目录。 */
+/** 区块坐标使用两端原文件的零基行边界，不包含显示补位和折叠行。 */
+export interface FilePreviewChangeRange {
+  /** 旧侧起始行及行数；纯新增的旧侧行数为零。 */
+  oldStart: number;
+  oldLines: number;
+  /** 当前侧起始行及行数；纯删除的当前侧行数为零。 */
+  newStart: number;
+  newLines: number;
+}
+
+/** 撤销只传窗口持有的版本令牌和区块边界，不接受路径或替换正文。 */
+export interface FilePreviewRevertInput extends FilePreviewChangeRange {
+  /** 同一次加载的旧版和工作区版本。 */
+  beforeId: string;
+  afterId: string;
+}
+
+/** 原生源码页只接收主进程固定的工作区身份，页面不能自行指定目录。 */
 export interface FilePreviewSourceWorkspace {
+  /** 业务项目保留导航身份，工作树目录另由临时作用域绑定。 */
+  ownerProjectId: string;
   /** 临时作用域身份只在所属窗口内有效。 */
   project: { id: string; name: string; localPath: string };
   /** 第一次打开的工作区相对文件路径。 */
@@ -206,4 +229,12 @@ export function decodeFilePreviewText(bytes: Uint8Array, requested?: FilePreview
   const content = new TextDecoder(encoding, { fatal: true }).decode(bytes, { stream: truncated });
   if (content.includes('\0')) throw new Error('此文件包含二进制内容。');
   return { content, encoding };
+}
+
+/** 页内编辑仅提交授权令牌和完整正文，不能改变写入路径。 */
+export interface FilePreviewSaveInput {
+  /** 当前工作区预览的版本令牌。 */
+  id: string;
+  /** 完整 UTF-8 正文，换行和 BOM 由源码保存服务保留。 */
+  content: string;
 }

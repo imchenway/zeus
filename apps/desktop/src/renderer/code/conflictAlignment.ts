@@ -12,14 +12,17 @@ interface AlignmentRegion {
 }
 
 /** 补白属于视图，不进入文本、复制内容或撤销记录。 */
-class AlignmentSpace extends WidgetType {
+export class AlignmentSpace extends WidgetType {
   /** 补白高度使用编辑器实际测量的像素。 */
-  constructor(readonly height: number) {
+  constructor(
+    readonly height: number,
+    readonly className = '',
+  ) {
     super();
   }
   /** 高度未变化时复用节点。 */
   eq(other: AlignmentSpace): boolean {
-    return this.height === other.height;
+    return this.height === other.height && this.className === other.className;
   }
   /** 虚拟滚动在节点未挂载时同样知道其高度。 */
   get estimatedHeight(): number {
@@ -30,6 +33,7 @@ class AlignmentSpace extends WidgetType {
     /** 原生块节点仅承担显示高度。 */
     const element = document.createElement('div');
     element.style.height = `${this.height}px`;
+    element.className = this.className;
     element.setAttribute('aria-hidden', 'true');
     return element;
   }
@@ -53,7 +57,10 @@ const groups = new WeakMap<object, AlignmentGroup>();
 /** 用冲突起止位置连接三份不同长度的文档。 */
 class AlignmentGroup {
   /** 差异按相同行号对齐两栏；冲突继续按原有块边界对齐三栏。 */
-  constructor(private readonly byLine = false) {}
+  constructor(
+    private readonly byLine = false,
+    private readonly lineClasses: string[] = [],
+  ) {}
   /** 当前挂载的三栏和各自的冲突位置。 */
   readonly panes = new Map<EditorView, AlignmentRegion[]>();
   /** 差异只记录已测量的非零补白，不为每行创建 DOM。 */
@@ -134,7 +141,9 @@ class AlignmentGroup {
       panes.map((view) => [
         view,
         Decoration.set(
-          [...this.lineSpaces.get(view)!].filter(([line]) => line <= view.state.doc.lines).map(([line, height]) => Decoration.widget({ widget: new AlignmentSpace(height), block: true, side: 1 }).range(view.state.doc.line(line).to)),
+          [...this.lineSpaces.get(view)!]
+            .filter(([line]) => line <= view.state.doc.lines)
+            .map(([line, height]) => Decoration.widget({ widget: new AlignmentSpace(height, this.lineClasses[line - 1]), block: true, side: 1 }).range(view.state.doc.line(line).to)),
           true,
         ),
       ]),
@@ -219,15 +228,15 @@ export function conflictAlignmentExtension(identity: object, regions: AlignmentR
 }
 
 /** 左右差异复用冲突视图的测量、补白、虚拟高度和滚动同步机制。 */
-export function diffAlignmentExtension(identity: object): Extension {
-  return alignmentExtension(identity, [], true);
+export function diffAlignmentExtension(identity: object, lineClasses: string[] = []): Extension {
+  return alignmentExtension(identity, [], true, lineClasses);
 }
 
 /** 根据实际栏数选择相同行对齐或稀疏冲突块对齐。 */
-function alignmentExtension(identity: object, regions: AlignmentRegion[], byLine: boolean): Extension {
+function alignmentExtension(identity: object, regions: AlignmentRegion[], byLine: boolean, lineClasses: string[] = []): Extension {
   /** 每组三栏只创建一个协调器。 */
   let group = groups.get(identity);
-  if (!group) groups.set(identity, (group = new AlignmentGroup(byLine)));
+  if (!group) groups.set(identity, (group = new AlignmentGroup(byLine, lineClasses)));
   /** 插件生命周期只维护本栏注册，不保留已关闭的编辑器。 */
   const alignment = group;
   return [

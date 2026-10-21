@@ -267,18 +267,20 @@ contextBridge.exposeInMainWorld('zeus', {
 
   // 预览只传递业务身份，资源地址与系统操作均由主进程授权。
   loadFilePreview: (input: unknown) => ipcRenderer.invoke('zeus:file-preview:load', input),
+  /** 区块写入使用独立命令身份，不自动重试未知结果。 */
+  /** 页内保存沿用命令回执及版本令牌，不接收本地路径。 */
+  saveFilePreview: (input: { id: string; content: string }) => invokeMainCommand('zeus:file-preview:save', 'desktop.file_preview.save', 'artifact', input.id, input),
+  revertFilePreviewBlock: (input: { afterId: string }) => invokeMainCommand('zeus:file-preview:revert-block', 'desktop.file_preview.revert_block', 'artifact', input.afterId, input),
   releaseFilePreview: (ids: string[]) => ipcRenderer.invoke('zeus:file-preview:release', ids),
   actOnFilePreview: (id: string, action: string) => ipcRenderer.invoke('zeus:file-preview:action', id, action),
   /** 按当前窗口的预览令牌读取准确版本归属。 */
   loadFilePreviewBlame: (id: string) => ipcRenderer.invoke('zeus:file-preview:blame', id),
-  /** 源码窗口的目录身份由主进程固定，不能通过页面参数覆盖。 */
-  loadFilePreviewSourceWorkspace: () => ipcRenderer.invoke('zeus:file-preview:source-workspace'),
-  /** 重复点击编辑入口时重新选中对应文件，保留窗口内其他草稿。 */
-  onFilePreviewSourceFileRequested: (listener: (path: string) => void) => {
-    /** 消息只来自主进程已经校验的编辑目标。 */
-    const handler = (_event: unknown, path: string) => listener(path);
-    ipcRenderer.on('zeus:file-preview:source-open-file', handler);
-    return () => ipcRenderer.removeListener('zeus:file-preview:source-open-file', handler);
+  /** 编辑目标只来自主进程固定的项目与工作树授权。 */
+  onFilePreviewSourceWorkspaceRequested: (listener: (workspace: unknown) => void) => {
+    /** 事件不接受页面自行传入的绝对目录。 */
+    const handler = (_event: unknown, workspace: unknown) => listener(workspace);
+    ipcRenderer.on('zeus:file-preview:source-open-workspace', handler);
+    return () => ipcRenderer.removeListener('zeus:file-preview:source-open-workspace', handler);
   },
   readProjectSourceFile: (input: unknown) => ipcRenderer.invoke('zeus:project-source:read-file', input),
   /** 只向受信源码页提供草稿效果预览。 */

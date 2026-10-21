@@ -1,19 +1,24 @@
 import { memo, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
+import { diffWordsWithSpace } from 'diff';
+import { ModalPortal } from '../ui/ModalPortal.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { createPortal } from 'react-dom';
-import { detectSourceLanguage, type FilePreviewBlameLine } from '@zeus/shared';
-import { Decoration, EditorView, GutterMarker, ViewPlugin, gutter, type ViewUpdate } from '@codemirror/view';
-import { Text, type Extension } from '@codemirror/state';
+import { detectSourceLanguage, type FilePreviewBlameLine, type FilePreviewChangeRange } from '@zeus/shared';
+import { Decoration, EditorView, GutterMarker, ViewPlugin, WidgetType, gutter, gutterLineClass, gutterWidgetClass, type ViewUpdate } from '@codemirror/view';
+import { Text, Prec, RangeSet, type Extension } from '@codemirror/state';
 import type { TaskGitFileDiff } from '../session/sessionTypes.js';
 import { GitPaneSeparator } from '../git/GitPaneSeparator.js';
 import { CodeEditor } from './CodeEditor.js';
 import { CommentWidget } from './SourceCodePreview.js';
 import './codeDiffView.css';
 import { FilePreviewDataContext } from './FilePreview.js';
-import { fullFileDiff, normalizedFileLine } from './fullFileDiff.js';
+import { fullFileDiff, normalizedFileLine, refreshedFileDiff } from './fullFileDiff.js';
 import { useGitBlame } from './useGitBlame.js';
 import type { GitBlameLine } from '../features/git/gitContracts.js';
-import { diffAlignmentExtension } from './conflictAlignment.js';
-import { useCodeReadingPreferences } from './codeReadingOptions.js';
+import { diffAlignmentExtension, AlignmentSpace } from './conflictAlignment.js';
+import { EditableCodeDiffView } from './EditableCodeDiffView.js';
+import { DiffReviewToolbar } from './DiffReviewToolbar.js';
 
 /** 评论位置沿用原始文件的左右行号。 */
 export interface DiffAnnotationLine {
@@ -27,12 +32,27 @@ interface DiffRow {
   leftNumber: number | null;
   rightNumber: number | null;
   kind: string;
+  /** 区块统一底色；修改块两侧同为蓝色，包括行数不等的补位。 */
+  tone?: 'addition' | 'deletion' | 'replacement';
+  /** 只在每个独立改动的首行保存恢复坐标。 */
+  change?: FilePreviewChangeRange;
+  /** 配对修改行中实际变化的字词范围。 */
+  words?: () => DiffWordRanges;
+  /** 折叠行只标识省略范围，不伪造源码行号。 */
+  folded?: { key: string; count: number; unavailable?: boolean };
+}
+/** 字词偏移按各自原始文本计算，不含行号和显示补位。 */
+interface DiffWordRanges {
+  left: Array<[number, number]>;
+  right: Array<[number, number]>;
 }
 /** 当前可见行号的 React 门户容器。 */
 interface GutterPortal {
   element: HTMLElement;
   row: number;
   side: 'left' | 'right';
+  /** 恢复轨道与行号轨道各自拥有可见节点。 */
+  action?: boolean;
 }
 /** 两侧评论容器始终同高，滚出视口后仍保留 React 草稿。 */
 interface AnnotationPair {
@@ -43,15 +63,13 @@ interface AnnotationPair {
   rightBody: HTMLDivElement;
 }
 /** 共用差异视图保留不同入口的行排列及操作能力。 */
-interface CodeDiffViewProps {
+export interface CodeDiffViewProps {
   /** 已解析的补丁，只在文件内容变化时转换一次。 */
   file: TaskGitFileDiff;
   /** 统一视图按行底色区分增删，保留两侧原始行号。 */
   unified?: boolean;
   /** 新增或删除文件只挂载实际存在的一侧，保留原始行号和评论身份。 */
   singleSide?: 'left' | 'right';
-  /** Git 原有左右视图会配对相邻增删行。 */
-  alignReplacements?: boolean;
   /** Git 工作台保留可拖动的左右分隔条。 */
   resizable?: boolean;
   /** 外层已经提供区块标题时，不再重复显示原始 @@ 片段头。 */
@@ -68,6 +86,8 @@ interface CodeDiffViewProps {
   blameLocale?: string;
   /** 片段导航只滚动同一个连续编辑器。 */
   revealLine?: DiffAnnotationLine;
+  /** 外部 Git 操作进行中禁止区块恢复。 */
+  revertDisabled?: boolean;
   /** 可见行号支持现有评论、范围选择和打开源码操作。 */
   renderLineNumber?: (line: number, side: 'left' | 'right') => ReactNode;
   /** React 继续管理评论编辑，不随代码行滚出而卸载。 */
@@ -76,23 +96,62 @@ interface CodeDiffViewProps {
 
 /** 差异全文存于编辑器文档，页面节点只覆盖可视区域。 */
 export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps) {
+  /** 当前工作区有完整两端时使用真实正文编辑；只读证据继续使用原有差异投影。 */
+  const preview = useContext(FilePreviewDataContext);
+  const editable = preview?.editing?.writable && preview.items?.length === 2 && preview.items.every((item) => item.missing || (item.kind === 'text' && !item.truncated));
+  return editable ? <EditableCodeDiffView {...props} /> : <ReadonlyCodeDiffView {...props} />;
+});
+
+/** 纯补丁、暂存版本和历史快照保持原有只读浏览及评论语义。 */
+const ReadonlyCodeDiffView = memo(function ReadonlyCodeDiffView(props: CodeDiffViewProps) {
   /** 所有差异入口共享已有文件读取，版本切换不会重新授权。 */
   const preview = useContext(FilePreviewDataContext);
-  /** 自定义日期作者侧栏与共享菜单使用同一显示开关。 */
-  const reading = useCodeReadingPreferences();
-  /** 仅点击全文后补齐真实上下文，并校验补丁与预览是否一致。 */
-  const full = useMemo(() => (preview?.full && preview.items ? fullFileDiff(props.file, preview.items) : null), [props.file, preview?.full, preview?.items]);
-  /** 显示文件保持原始增删与行号身份。 */
-  const file = full ?? props.file;
+  /** 本页恢复后的补丁绑定新正文，避免等待外部工作区列表刷新。 */
+  const original = useMemo(() => refreshedFileDiff(props.file, preview?.items ?? null, preview?.reverted), [props.file, preview?.items, preview?.reverted]);
+  /** 确认操作绑定当时的两端令牌，预览变化后不再执行旧坐标。 */
+  const [pending, setPending] = useState<{ range: FilePreviewChangeRange; items: unknown } | null>(null);
+  /** 同一预览只允许一个在途恢复请求。 */
+  const [reverting, setReverting] = useState(false);
+  /** 写入失败留在原确认界面，不自动重放。 */
+  const [revertError, setRevertError] = useState<unknown>(null);
+  /** 关闭确认后回到触发箭头；恢复后箭头消失则回到当前代码栏。 */
+  const returnFocus = useRef<HTMLButtonElement | null>(null);
+  /** 校验完整两端一次，范围切换只改变显示行。 */
+  const complete = useMemo(() => (preview?.items ? fullFileDiff(original, preview.items) : null), [original, preview?.items]);
+  /** 没有外层预览的快照也复用布局操作，但不能假装有全文。 */
+  const [localUnified, setLocalUnified] = useState(Boolean(props.unified));
+  /** 局部展开只作用于当前文件，不影响全局显示范围。 */
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  /** 导航序号只用于当前连续差异编辑器。 */
+  const [currentChange, setCurrentChange] = useState(-1);
+  /** 明确区分可用全文与用户当前选择。 */
+  const full = Boolean(preview?.full && complete);
+  /** 全文与片段均保留原始增删身份。 */
+  const file = complete ?? original;
+  useEffect(() => {
+    setExpanded(new Set());
+    setCurrentChange(-1);
+  }, [props.file, preview?.full]);
   /** 左右归属分别绑定实际版本，索引和工作区不共用 HEAD 行号。 */
   const leftBlame = useGitBlame({ previewId: props.blame || preview?.items?.[0]?.blame !== undefined || preview?.items?.[0]?.blameError ? undefined : preview?.items?.[0]?.id });
   const rightBlame = useGitBlame({ previewId: props.blame || preview?.items?.[1]?.blame !== undefined || preview?.items?.[1]?.blameError ? undefined : preview?.items?.[1]?.id });
   /** 所有入口对新增、删除文件只显示有效侧，不留空白旧行号列。 */
   const singleSide = props.singleSide ?? (props.file.changeType === 'added' ? 'right' : props.file.changeType === 'deleted' ? 'left' : undefined);
   /** 两侧均存在时才需要统一视图的双行号。 */
-  const unified = Boolean(props.unified && !singleSide && !preview?.full);
-  /** 文件内容和布局变化时才构造显示行。 */
-  const rows = useMemo(() => diffRows(file, Boolean((props.alignReplacements || preview?.full) && !unified), Boolean(props.omitHunkHeaders || preview?.full)), [file, props.alignReplacements, unified, props.omitHunkHeaders, preview?.full]);
+  const unified = Boolean((preview?.unified ?? localUnified) && !singleSide);
+  /** 先生成准确的连续行，再按差异和评论保留上下文。 */
+  const allRows = useMemo(() => diffRows(file, !unified, true), [file, unified]);
+  /** 恢复能力只对核对成功的当前工作区开放，统一视图也沿用右侧写入语义。 */
+  const canRevert = Boolean(complete && preview?.onRevert && !singleSide);
+  /** 三行上下文之外使用可展开分隔线，评论与定位目标始终可见。 */
+  const rows = useMemo(
+    () => (full ? allRows : collapseContextRows(allRows, expanded, [...(props.annotationLines ?? []), ...(props.revealLine ? [props.revealLine] : [])])),
+    [allRows, full, expanded, props.annotationLines, props.revealLine],
+  );
+  /** 连续增删行算一处差异，片段中的多个改动仍可逐一定位。 */
+  const changes = useMemo(() => rows.flatMap((row, index) => (isChangedRow(row) && !isChangedRow(rows[index - 1]) ? [index] : [])), [rows]);
+  /** 恢复减少改动后，箭头与可见序号使用同一有效范围。 */
+  const visibleChange = Math.min(currentChange, changes.length - 1);
   /** 显示行包含片段头与补位，作者必须按各侧原始行号映射。 */
   const authors = useMemo(() => {
     /** 稀疏数组让补位行显示无归属，而不冒用邻行作者。 */
@@ -136,6 +195,16 @@ export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps)
   }, [rows]);
   /** 两个编辑器共用纵向位置，横向保持独立。 */
   const views = useRef<{ left: EditorView | null; right: EditorView | null }>({ left: null, right: null });
+  useEffect(() => {
+    if (pending || !returnFocus.current) return;
+    /** 等确认门户从文档移除后恢复焦点，避免 React 删除按钮时再次清空焦点。 */
+    const trigger = returnFocus.current;
+    returnFocus.current = null;
+    queueMicrotask(() => {
+      if (trigger.isConnected) trigger.focus({ preventScroll: true });
+      else (views.current.right ?? views.current.left)?.focus();
+    });
+  }, [pending]);
   useEffect(() => {
     if (!props.revealLine) return;
     /** 左右视图使用同一显示行，删除行也能准确定位。 */
@@ -201,7 +270,19 @@ export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps)
   const extensions = useMemo(() => {
     /** 两个侧栏使用相同的显示行和评论高度。 */
     const make = (side: 'left' | 'right'): Extension => [
-      !unified && !singleSide ? diffAlignmentExtension(alignment) : [],
+      !unified && !singleSide
+        ? diffAlignmentExtension(
+            alignment,
+            rows.map((row) => (row.tone ? `code-diff-alignment is-${row.tone}` : '')),
+          )
+        : [],
+      gutterWidgetClass.of((_view, widget, block) => {
+        /** 软换行补白覆盖行号与恢复轨道，评论和折叠分隔仍保持原背景。 */
+        const tone = rows[documents[side].lineAt(block.from).number - 1]?.tone;
+        return widget instanceof AlignmentSpace && tone ? new DiffToneMarker(tone) : null;
+      }),
+      gutterLineClass.of(RangeSet.of(rows.flatMap((row, index) => (row.tone ? [new DiffToneMarker(row.tone).range(documents[side].line(index + 1).from)] : [])))),
+      canRevert && (side === 'right' || unified) ? Prec.high(gutter({ class: 'code-diff-revert-gutter', lineMarker: (view, line) => new DiffGutterMarker(view.state.doc.lineAt(line.from).number - 1, side, gutterPortals, true) })) : [],
       gutter({ class: 'code-diff-gutter', lineMarker: (view, line) => new DiffGutterMarker(view.state.doc.lineAt(line.from).number - 1, side, gutterPortals) }),
       ViewPlugin.define(
         (view) => ({
@@ -211,6 +292,17 @@ export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps)
           },
         }),
         { decorations: (plugin) => plugin.decorations },
+      ),
+      EditorView.decorations.of(
+        Decoration.set(
+          rows.flatMap((row, index) => {
+            if (!row.folded) return [];
+            /** 两侧使用同一个折叠身份，展开后重新对齐。 */
+            const line = documents[side].line(index + 1);
+            return [Decoration.replace({ widget: new DiffFoldWidget(row.folded, preview?.zh !== false, () => setExpanded((current) => new Set(current).add(row.folded!.key))), block: true }).range(line.from, line.to)];
+          }),
+          true,
+        ),
       ),
       EditorView.decorations.of(
         Decoration.set(
@@ -244,7 +336,7 @@ export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps)
       }),
     ];
     return { left: make('left'), right: make('right') };
-  }, [rows, pairs, documents, unified, singleSide, gutterPortals, alignment]);
+  }, [rows, pairs, documents, unified, singleSide, gutterPortals, alignment, preview?.zh, canRevert]);
 
   useEffect(() => {
     /** 评论折行、编辑和左右宽度变化时同步区块高度。 */
@@ -301,81 +393,179 @@ export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps)
     };
   }, [focusBody]);
 
-  if (preview?.full && !full) return <p role="status">{preview.zh ? '差异与文件内容不一致，请刷新差异后重试。' : 'The diff no longer matches the file contents. Refresh the diff and retry.'}</p>;
+  /** 只定位本编辑器中的真实改动，不修改文件选择或片段操作范围。 */
+  function navigateChange(direction: -1 | 1): void {
+    /** 无差异和边界状态没有循环跳转。 */
+    const next = Math.max(0, Math.min(changes.length - 1, visibleChange + direction));
+    /** 差异索引映射到当前范围内的显示行。 */
+    const row = changes[next];
+    if (row === undefined) return;
+    setCurrentChange(next);
+    for (const view of [views.current.left, views.current.right]) {
+      if (!view) continue;
+      /** 滚动目标使用显示行，原始行号继续由左右 gutter 保留。 */
+      const position = view.state.doc.line(row + 1).from;
+      view.dispatch({ selection: { anchor: position }, effects: EditorView.scrollIntoView(position, { y: 'center' }) });
+    }
+  }
+  /** 控件优先进入已有标题行，纯快照在自身顶部显示同一工具栏。 */
+  const toolbar = (
+    <DiffReviewToolbar
+      zh={preview?.zh !== false}
+      full={full}
+      fullAvailable={Boolean(complete)}
+      onFullChange={(value) => {
+        setExpanded(new Set());
+        preview?.onFullChange(value);
+      }}
+      current={visibleChange}
+      count={changes.length}
+      onNavigate={navigateChange}
+      unified={unified}
+      allowLayout={!singleSide}
+      onUnifiedChange={preview?.onUnifiedChange ?? setLocalUnified}
+      onPreview={preview?.onPreview}
+      onRefresh={preview?.onRefresh}
+    />
+  );
+  if ((preview?.full || preview?.reverted) && !complete) return <p role="status">{preview.zh ? '差异与文件内容不一致，请刷新差异后重试。' : 'The diff no longer matches the file contents. Refresh the diff and retry.'}</p>;
   return (
-    <div className={`code-diff-view${unified ? ' is-unified' : ''}${props.resizable ? ' is-resizable' : ''}${singleSide ? ' is-single-side' : ''}`} aria-label={props.label}>
-      {singleSide !== 'right' ? (
-        <CodeEditor
-          path={`${props.file.oldPath || props.file.newPath}:left:${unified}`}
-          language={detectSourceLanguage(unified ? props.file.newPath || props.file.oldPath : props.file.oldPath) ?? null}
-          content={documents.left}
-          readOnly
-          blameLines={authors.left}
-          locale={preview?.zh === false ? 'en-US' : 'zh-CN'}
-          label={props.label}
-          extensions={extensions.left}
-          blame={cursorBlame.left}
-          showAuthorGutter={false}
-          blameLocale={props.blameLocale}
-          onView={(view) => {
-            views.current.left = view;
+    <div className="code-diff-container">
+      {pending ? (
+        <ModalPortal
+          role="alertdialog"
+          aria-label={preview?.zh === false ? 'Revert change' : '恢复此处改动'}
+          onDismiss={() => {
+            if (!reverting) setPending(null);
           }}
-        />
+          dismissDisabled={reverting}
+        >
+          <section className="code-diff-revert-dialog" data-modal-surface="dialog">
+            <strong>{preview?.zh === false ? 'Restore this change from the left version?' : '将此处改动恢复为左侧版本？'}</strong>
+            <p>
+              {original.newPath || original.oldPath} ·{' '}
+              {preview?.zh === false
+                ? `Current lines ${pending.range.newStart + 1}–${pending.range.newStart + Math.max(1, pending.range.newLines)}`
+                : `工作区第 ${pending.range.newStart + 1}–${pending.range.newStart + Math.max(1, pending.range.newLines)} 行`}
+            </p>
+            <p>
+              {preview?.zh === false
+                ? 'Only this block in the working file will change. Other changes and the index stay unchanged. This view cannot undo the write.'
+                : '只修改当前工作区文件的这个区块，保留其他改动和暂存区内容。此视图无法撤销这次写入。'}
+            </p>
+            {pending.items !== preview?.items ? <p role="status">{preview?.zh === false ? 'The preview changed. Cancel and select the change again.' : '文件已刷新，请取消后重新选择改动。'}</p> : null}
+            {revertError ? <VisibleApplicationError error={revertError} language={preview?.zh === false ? 'en' : 'zh-CN'} /> : null}
+            <footer>
+              <button type="button" disabled={reverting} onClick={() => setPending(null)}>
+                {preview?.zh === false ? 'Cancel' : '取消'}
+              </button>
+              <button
+                type="button"
+                disabled={reverting || props.revertDisabled || Boolean(revertError) || pending.items !== preview?.items}
+                onClick={() => {
+                  if (!preview?.onRevert || reverting || pending.items !== preview.items) return;
+                  setReverting(true);
+                  void preview
+                    .onRevert(pending.range)
+                    .then(() => setPending(null))
+                    .catch(setRevertError)
+                    .finally(() => setReverting(false));
+                }}
+              >
+                {reverting ? (preview?.zh === false ? 'Restoring…' : '正在恢复…') : preview?.zh === false ? 'Restore block' : '恢复区块'}
+              </button>
+            </footer>
+          </section>
+        </ModalPortal>
       ) : null}
-      {!unified && !singleSide && props.resizable ? <GitPaneSeparator name="diff" label={props.label} initial={50} min={20} max={80} target=".project-git-diff-side-by-side" /> : null}
-      {!unified && singleSide !== 'left' ? (
-        <CodeEditor
-          path={`${props.file.newPath || props.file.oldPath}:right`}
-          language={detectSourceLanguage(props.file.newPath) ?? null}
-          content={documents.right}
-          readOnly
-          blameLines={authors.right}
-          locale={preview?.zh === false ? 'en-US' : 'zh-CN'}
-          label={props.label}
-          extensions={extensions.right}
-          blame={cursorBlame.right}
-          showAuthorGutter={false}
-          blameLocale={props.blameLocale}
-          onView={(view) => {
-            views.current.right = view;
-          }}
-        />
-      ) : null}
-      {[...gutterPortals.entries.values()].map((portal) => {
-        const row = rows[portal.row];
-        if (!row) return null;
-        /** 统一视图的删除行使用旧版本，其余行使用新版本。 */
-        const side = unified ? (row.kind === 'deletion' ? 'left' : 'right') : portal.side;
-        const number = row[side === 'left' ? 'leftNumber' : 'rightNumber'];
-        /** 空白对齐行和未提交行不显示占位文案。 */
-        const blame = authors[portal.side][portal.row];
-        const attribution = formatDiffBlame(blame);
-        return createPortal(
-          <>
-            {reading.blame ? (
-              <small className="code-diff-line-blame" data-icon-tooltip={attribution ? `${attribution} · ${blame?.commitHash}` : undefined}>
-                {attribution}
-              </small>
-            ) : null}
-            {unified ? (
-              <>
-                <span>{row.leftNumber ?? ''}</span>
-                <span>{row.rightNumber ?? ''}</span>
-              </>
-            ) : number === null ? null : (
-              (props.renderLineNumber?.(number, portal.side) ?? number)
-            )}
-          </>,
-          portal.element,
-          `${portal.side}:${portal.row}`,
-        );
-      })}
-      {pairs.flatMap((pair) =>
-        (['left', 'right'] as const).map((side) => {
-          const number = rows[pair.row]?.[side === 'left' ? 'leftNumber' : 'rightNumber'];
-          return createPortal(number == null ? null : props.renderLineComments?.(number, side), pair[side === 'left' ? 'leftBody' : 'rightBody'], `${side}:${pair.row}:comment`);
-        }),
-      )}
+      {preview?.toolbarTarget ? createPortal(toolbar, preview.toolbarTarget) : toolbar}
+      <div className={`code-diff-view${unified ? ' is-unified' : ''}${props.resizable ? ' is-resizable' : ''}${singleSide ? ' is-single-side' : ''}`} aria-label={props.label}>
+        {singleSide !== 'right' ? (
+          <CodeEditor
+            path={`${props.file.oldPath || props.file.newPath}:left:${unified}`}
+            language={detectSourceLanguage(unified ? props.file.newPath || props.file.oldPath : props.file.oldPath) ?? null}
+            content={documents.left}
+            readOnly
+            blameLines={authors.left}
+            locale={preview?.zh === false ? 'en-US' : 'zh-CN'}
+            label={props.label}
+            extensions={extensions.left}
+            blame={cursorBlame.left}
+            blameLocale={props.blameLocale}
+            onView={(view) => {
+              views.current.left = view;
+              exposeDiffGutters(view);
+            }}
+          />
+        ) : null}
+        {!unified && !singleSide && props.resizable ? <GitPaneSeparator name="diff" label={props.label} initial={50} min={20} max={80} target=".project-git-diff-side-by-side" /> : null}
+        {!unified && singleSide !== 'left' ? (
+          <CodeEditor
+            path={`${props.file.newPath || props.file.oldPath}:right`}
+            language={detectSourceLanguage(props.file.newPath) ?? null}
+            content={documents.right}
+            readOnly
+            blameLines={authors.right}
+            locale={preview?.zh === false ? 'en-US' : 'zh-CN'}
+            label={props.label}
+            extensions={extensions.right}
+            blame={cursorBlame.right}
+            blameLocale={props.blameLocale}
+            onView={(view) => {
+              views.current.right = view;
+              exposeDiffGutters(view);
+            }}
+          />
+        ) : null}
+        {[...gutterPortals.entries.values()].map((portal) => {
+          const row = rows[portal.row];
+          if (!row) return null;
+          if (portal.action)
+            return createPortal(
+              row.change ? (
+                <button
+                  type="button"
+                  className="code-diff-revert"
+                  disabled={reverting || props.revertDisabled}
+                  aria-label={preview?.zh === false ? 'Revert this change to the left version' : '将此处改动恢复为左侧版本'}
+                  data-icon-tooltip={preview?.zh === false ? 'Revert this change to the left version' : '将此处改动恢复为左侧版本'}
+                  onClick={(event) => {
+                    returnFocus.current = event.currentTarget;
+                    setRevertError(null);
+                    setPending({ range: row.change!, items: preview?.items });
+                  }}
+                >
+                  <ArrowRight size={14} aria-hidden="true" />
+                </button>
+              ) : null,
+              portal.element,
+              `revert:${portal.row}`,
+            );
+          /** 统一视图的删除行使用旧版本，其余行使用新版本。 */
+          const side = unified ? (row.kind === 'deletion' ? 'left' : 'right') : portal.side;
+          const number = row[side === 'left' ? 'leftNumber' : 'rightNumber'];
+          return createPortal(
+            <>
+              {unified ? (
+                <>
+                  <span>{row.leftNumber ?? ''}</span>
+                  <span>{row.rightNumber ?? ''}</span>
+                </>
+              ) : number === null ? null : (
+                (props.renderLineNumber?.(number, portal.side) ?? number)
+              )}
+            </>,
+            portal.element,
+            `${portal.side}:${portal.row}`,
+          );
+        })}
+        {pairs.flatMap((pair) =>
+          (['left', 'right'] as const).map((side) => {
+            const number = rows[pair.row]?.[side === 'left' ? 'leftNumber' : 'rightNumber'];
+            return createPortal(number == null ? null : props.renderLineComments?.(number, side), pair[side === 'left' ? 'leftBody' : 'rightBody'], `${side}:${pair.row}:comment`);
+          }),
+        )}
+      </div>
     </div>
   );
 });
@@ -387,18 +577,19 @@ class DiffGutterMarker extends GutterMarker {
     private readonly row: number,
     private readonly side: 'left' | 'right',
     private readonly registry: { entries: Map<HTMLElement, GutterPortal>; notify(): void },
+    private readonly action = false,
   ) {
     super();
   }
   /** 未变化的可见行号不重新挂载。 */
   eq(other: DiffGutterMarker): boolean {
-    return this.row === other.row && this.side === other.side && this.registry === other.registry;
+    return this.row === other.row && this.side === other.side && this.registry === other.registry && this.action === other.action;
   }
   /** 创建用于行号和操作按钮的容器。 */
   toDOM(): HTMLElement {
     const element = document.createElement('span');
-    element.className = 'code-diff-line-number';
-    this.registry.entries.set(element, { element, row: this.row, side: this.side });
+    element.className = this.action ? 'code-diff-revert-slot' : 'code-diff-line-number';
+    this.registry.entries.set(element, { element, row: this.row, side: this.side, action: this.action });
     this.registry.notify();
     return element;
   }
@@ -416,8 +607,13 @@ function diffLineDecorations(view: EditorView, rows: DiffRow[], side: 'left' | '
     for (let position = range.from; position <= range.to;) {
       const line = view.state.doc.lineAt(position);
       const row = rows[line.number - 1];
-      const kind = row?.kind === 'header' || unified ? row?.kind : row?.[side === 'left' ? 'leftNumber' : 'rightNumber'] === null ? 'empty' : row?.kind === (side === 'left' ? 'addition' : 'deletion') ? 'context' : row?.kind;
+      /** 同一区块的补位行继续使用区块色；统一视图的修改行也统一为蓝色。 */
+      const kind = row?.tone ?? row?.kind;
       decorations.push(Decoration.line({ attributes: { class: `code-diff-line is-${kind}`, 'data-diff-row': String(line.number), 'data-file-line': String(row?.[side === 'left' ? 'leftNumber' : 'rightNumber'] ?? '') } }).range(line.from));
+      /** 行内范围已在行模型生成时计算，不随滚动重复比对。 */
+      const wordSide = unified && row?.kind !== 'deletion' ? 'right' : side;
+      for (const [from, to] of row?.words?.()?.[wordSide] ?? [])
+        if (to > from && to <= line.length) decorations.push(Decoration.mark({ class: `code-diff-word is-${wordSide === 'left' ? 'deletion' : 'addition'}` }).range(line.from + from, line.from + to));
       position = line.to + 1;
     }
   }
@@ -427,22 +623,62 @@ function diffLineDecorations(view: EditorView, rows: DiffRow[], side: 'left' | '
 /** 将补丁转换成左右显示行；不截断，完整内容可滚动和复制。 */
 function diffRows(file: TaskGitFileDiff, align: boolean, omitHunkHeaders: boolean): DiffRow[] {
   const rows: DiffRow[] = [];
-  for (const hunk of file.hunks) {
+  for (const [hunkIndex, hunk] of file.hunks.entries()) {
+    /** 片段快照也显示省略边界，但没有授权正文时不提供假展开。 */
+    const previous = file.hunks[hunkIndex - 1];
+    /** 左右省略长度同时约束可确认的上下文范围。 */
+    const oldGap = hunk.oldStart - (previous ? previous.oldStart + previous.oldLines : 1);
+    /** 新侧保留独立原始行号。 */
+    const newGap = hunk.newStart - (previous ? previous.newStart + previous.newLines : 1);
+    /** 只展示两侧都确认省略的行数。 */
+    const gap = Math.max(0, Math.min(oldGap, newGap));
+    if (gap) rows.push({ left: '…', right: '…', leftNumber: null, rightNumber: null, kind: 'fold', folded: { key: `snapshot:${hunk.oldStart}:${hunk.newStart}`, count: gap, unavailable: true } });
     if (!omitHunkHeaders) rows.push({ left: hunk.header, right: hunk.header, leftNumber: null, rightNumber: null, kind: 'header' });
+    /** 两端游标随正文单次推进，避免大量小区块重复扫描前文。 */
+    let oldCursor = hunk.oldStart + (hunk.oldLines === 0 ? 0 : -1);
+    let newCursor = hunk.newStart + (hunk.newLines === 0 ? 0 : -1);
     for (let index = 0; index < hunk.lines.length;) {
       const line = hunk.lines[index]!;
-      if (align && (line.type === 'deletion' || line.type === 'addition')) {
+      if (line.type === 'deletion' || line.type === 'addition') {
+        /** 区块以连续增删为边界，不能用含多个改动的整个 Git hunk 代替。 */
         const deleted: typeof hunk.lines = [];
         const added: typeof hunk.lines = [];
-        while (index < hunk.lines.length && ['deletion', 'addition'].includes(hunk.lines[index]!.type)) {
+        const oldStart = oldCursor;
+        const newStart = newCursor;
+        while (index < hunk.lines.length && ['deletion', 'addition', 'metadata'].includes(hunk.lines[index]!.type)) {
           const changed = hunk.lines[index++]!;
-          (changed.type === 'deletion' ? deleted : added).push(changed);
+          if (changed.type !== 'metadata') (changed.type === 'deletion' ? deleted : added).push(changed);
+          if (changed.oldLineNumber !== null) oldCursor += 1;
+          if (changed.newLineNumber !== null) newCursor += 1;
         }
-        for (let offset = 0; offset < Math.max(deleted.length, added.length); offset += 1) {
-          rows.push({ left: deleted[offset]?.content ?? '', right: added[offset]?.content ?? '', leftNumber: deleted[offset]?.oldLineNumber ?? null, rightNumber: added[offset]?.newLineNumber ?? null, kind: 'replacement' });
+        const tone = deleted.length && added.length ? 'replacement' : deleted.length ? 'deletion' : 'addition';
+        const change = { oldStart, newStart, oldLines: deleted.length, newLines: added.length };
+        const first = rows.length;
+        /** 修改区块整体蓝色，配对行的字词另用更深的增删颜色。 */
+        const words = deleted.map((before, offset) =>
+          added[offset] ? lazyChangedWords(normalizedFileLine(before.content, before.oldLineNumber ?? 0), normalizedFileLine(added[offset]!.content, added[offset]!.newLineNumber ?? 0)) : undefined,
+        );
+        if (align)
+          for (let offset = 0; offset < Math.max(deleted.length, added.length); offset += 1) {
+            rows.push({
+              left: deleted[offset]?.content ?? '',
+              right: added[offset]?.content ?? '',
+              leftNumber: deleted[offset]?.oldLineNumber ?? null,
+              rightNumber: added[offset]?.newLineNumber ?? null,
+              kind: deleted[offset] && added[offset] ? 'replacement' : deleted[offset] ? 'deletion' : 'addition',
+              tone,
+              words: words[offset],
+            });
+          }
+        else {
+          deleted.forEach((item, offset) => rows.push({ left: item.content, right: '', leftNumber: item.oldLineNumber, rightNumber: null, kind: 'deletion', tone, words: words[offset] }));
+          added.forEach((item, offset) => rows.push({ left: '', right: item.content, leftNumber: null, rightNumber: item.newLineNumber, kind: 'addition', tone, words: words[offset] }));
         }
+        rows[first]!.change = change;
       } else {
-        rows.push({ left: line.type === 'addition' ? '' : line.content, right: line.type === 'deletion' ? '' : line.content, leftNumber: line.oldLineNumber, rightNumber: line.newLineNumber, kind: line.type });
+        rows.push({ left: line.content, right: line.content, leftNumber: line.oldLineNumber, rightNumber: line.newLineNumber, kind: line.type });
+        if (line.oldLineNumber !== null) oldCursor += 1;
+        if (line.newLineNumber !== null) newCursor += 1;
         index += 1;
       }
     }
@@ -452,11 +688,116 @@ function diffRows(file: TaskGitFileDiff, align: boolean, omitHunkHeaders: boolea
   return rows.map((row) => ({ ...row, left: normalizedFileLine(row.left, row.leftNumber ?? 0), right: normalizedFileLine(row.right, row.rightNumber ?? 0) }));
 }
 
-/** 日期固定为年/月/日，时间按用户本机时区显示；未提交行保持空白。 */
-function formatDiffBlame(blame: FilePreviewBlameLine | undefined): string {
-  if (!blame || /^0+$/u.test(blame.commitHash) || !blame.author || !Number.isFinite(blame.authorTime) || blame.authorTime <= 0) return '';
-  /** Unix 秒转换为当前平台的本地日历日期。 */
-  const date = new Date(blame.authorTime * 1000);
-  if (!Number.isFinite(date.getTime())) return '';
-  return `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')} ${blame.author}`;
+/** 增删和配对替换都属于可导航的真实差异。 */
+function isChangedRow(row: DiffRow | undefined): boolean {
+  return Boolean(row && ['addition', 'deletion', 'replacement'].includes(row.kind));
+}
+
+/** 未改动片段折叠成单行，保留差异、评论前后三行。 */
+function collapseContextRows(rows: DiffRow[], expanded: Set<string>, annotations: DiffAnnotationLine[]): DiffRow[] {
+  /** 索引只针对当前文件快照，原始行号不会重新编号。 */
+  const visible = new Set<number>();
+  /** 评论查找按原始行身份索引，避免长文件逐行扫描全部评论。 */
+  const annotated = new Set(annotations.map((position) => `${position.side}:${position.line}`));
+  rows.forEach((row, index) => {
+    if (isChangedRow(row) || annotated.has(`left:${row.leftNumber}`) || annotated.has(`right:${row.rightNumber}`)) {
+      for (let neighbor = Math.max(0, index - 3); neighbor <= Math.min(rows.length - 1, index + 3); neighbor += 1) visible.add(neighbor);
+    }
+  });
+  /** 折叠只处理未修改行，不隐藏补丁元信息。 */
+  const result: DiffRow[] = [];
+  for (let index = 0; index < rows.length;) {
+    if (visible.has(index) || rows[index]!.kind !== 'context') {
+      result.push(rows[index++]!);
+      continue;
+    }
+    /** 每个连续未修改区间具有稳定的本地展开身份。 */
+    const start = index;
+    while (index < rows.length && !visible.has(index) && rows[index]!.kind === 'context') index += 1;
+    /** 当前文件中该区间的起止显示行组成展开键。 */
+    const key = `${start}:${index}`;
+    if (index - start < 4 || expanded.has(key)) result.push(...rows.slice(start, index));
+    else result.push({ left: '…', right: '…', leftNumber: null, rightNumber: null, kind: 'fold', folded: { key, count: index - start } });
+  }
+  return result;
+}
+
+/** 折叠提示采用轻量波浪边界，两侧按钮都能展开同一片段。 */
+class DiffFoldWidget extends WidgetType {
+  /** 文案和回调属于当前文件，不读取编辑器外的路径。 */
+  constructor(
+    private readonly folded: { key: string; count: number; unavailable?: boolean },
+    private readonly zh: boolean,
+    private readonly expand: () => void,
+  ) {
+    super();
+  }
+  /** 每次行列表更新都替换回调，避免展开到旧文件。 */
+  toDOM(view: EditorView): HTMLElement {
+    /** 原生按钮提供焦点和键盘激活。 */
+    const button = view.dom.ownerDocument.createElement('button');
+    button.type = 'button';
+    button.className = 'code-diff-fold';
+    /** 文案背板隔开波浪线，窄窗口仍可读。 */
+    const label = view.dom.ownerDocument.createElement('span');
+    label.textContent = this.folded.unavailable
+      ? this.zh
+        ? `已省略 ${this.folded.count} 行，快照未包含原文`
+        : `${this.folded.count} lines omitted from snapshot`
+      : this.zh
+        ? `展开 ${this.folded.count} 行未修改内容`
+        : `Expand ${this.folded.count} unchanged lines`;
+    button.disabled = Boolean(this.folded.unavailable);
+    button.append(label);
+    button.addEventListener('click', this.expand);
+    return button;
+  }
+  /** 按钮自行处理事件，编辑器不会把点击视为源码选择。 */
+  ignoreEvent(): boolean {
+    return true;
+  }
+}
+
+/** 统一行号、提交人和恢复轨道的区块底色。 */
+class DiffToneMarker extends GutterMarker {
+  /** 底色仅取共享区块分类，不接受任意 CSS。 */
+  constructor(private readonly tone: string) {
+    super();
+    this.elementClass = `code-diff-tone is-${tone}`;
+  }
+  /** 行号轨道与正文使用同一区块分类。 */
+  elementClass: string;
+  /** 相同分类复用原行号节点。 */
+  eq(other: DiffToneMarker): boolean {
+    return this.tone === other.tone;
+  }
+}
+
+/** 有界字词比较只处理配对修改行，保留语法高亮和鼠标选区。 */
+function changedWords(before: string, after: string): DiffWordRanges {
+  /** 两侧分别累计 UTF-16 字符偏移，与 CodeMirror 文档一致。 */
+  const result: DiffWordRanges = { left: [], right: [] };
+  const parts = before.length + after.length <= 16000 ? diffWordsWithSpace(before, after, { timeout: 5, maxEditLength: 500 }) : undefined;
+  if (!parts) return result;
+  let left = 0;
+  let right = 0;
+  for (const part of parts) {
+    if (part.removed) result.left.push([left, left + part.value.length]);
+    if (part.added) result.right.push([right, right + part.value.length]);
+    if (!part.added) left += part.value.length;
+    if (!part.removed) right += part.value.length;
+  }
+  return result;
+}
+
+/** 配对行首次进入可见区域才计算字词，左右两栏复用同一结果。 */
+function lazyChangedWords(before: string, after: string): () => DiffWordRanges {
+  /** 缓存只属于当前行模型，换文件或正文更新时自然释放。 */
+  let cached: DiffWordRanges | undefined;
+  return () => (cached ??= changedWords(before, after));
+}
+
+/** 差异行号包含可聚焦的恢复和评论按钮，不能继承 CodeMirror 的装饰性隐藏标记。 */
+function exposeDiffGutters(view: EditorView | null): void {
+  view?.dom.querySelectorAll('.cm-gutters').forEach((element) => element.removeAttribute('aria-hidden'));
 }

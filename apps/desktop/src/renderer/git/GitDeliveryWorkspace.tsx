@@ -81,20 +81,6 @@ export function InitialLoadState(props: { zh: boolean; error?: string | null; on
   );
 }
 
-/** 仓库与文件采用同一选择口径。 */
-export function DeliveryScopeBar(props: { selectedRepositories: number; totalRepositories: number; selectedFiles: number; zh: boolean }) {
-  return (
-    <section className="task-git-delivery-scopebar" aria-label={props.zh ? '当前交付选择' : 'Current delivery selection'}>
-      <strong>{props.zh ? '按文件审查，按仓库交付' : 'Review by file, deliver by repository'}</strong>
-      <span>
-        {props.zh
-          ? `已选 ${props.selectedRepositories}/${props.totalRepositories} 个仓库 · ${props.selectedFiles} 个待提交文件`
-          : `${props.selectedRepositories}/${props.totalRepositories} repositories · ${props.selectedFiles} uncommitted files selected`}
-      </span>
-    </section>
-  );
-}
-
 /** 按任务分支、仓库与目录组织交付范围，审阅操作不改变勾选。 */
 export function DeliveryRepositoryFileTree(props: {
   groups: DeliveryRepositoryGroup[];
@@ -537,9 +523,6 @@ export function repositoryLabel(workspace: Pick<TaskWorkspaceIndexSnapshot, 'rep
 /** 普通目录和任务工作树共用同一文件审查、操作区及差异布局。 */
 export function GitDeliveryWorkspace(props: {
   zh: boolean;
-  selectedRepositories: number;
-  totalRepositories: number;
-  selectedFiles: number;
   fileBrowser: ReactNode;
   actions: ReactNode;
   selectedFile: string;
@@ -549,13 +532,14 @@ export function GitDeliveryWorkspace(props: {
   diffLoading: boolean;
   diff: TaskGitDiffSummary | null;
   revision: string | number;
+  /** Diff 保存后复用业务页的快照刷新，保持文件树和数量一致。 */
+  onFileSaved?: () => void | Promise<void>;
   previewRequest?: ComponentProps<typeof SideBySideDiff>['previewRequest'];
   onShowCommitted?: () => void;
   busy: boolean;
 }) {
   return (
     <div className="task-git-delivery-content">
-      <DeliveryScopeBar {...props} />
       <div className="task-git-review-layout task-git-delivery-layout">
         {props.fileBrowser}
         {props.actions}
@@ -580,7 +564,7 @@ export function GitDeliveryWorkspace(props: {
               {props.zh ? '正在读取差异…' : 'Loading diff…'}
             </p>
           ) : (
-            <SideBySideDiff fileStatus={props.fileStatus} previewRequest={props.previewRequest} revision={props.revision} diff={props.diff} zh={props.zh} title={props.diffTitle} fill />
+            <SideBySideDiff fileStatus={props.fileStatus} previewRequest={props.previewRequest} revision={props.revision} onSaved={props.onFileSaved} diff={props.diff} zh={props.zh} title={props.diffTitle} fill />
           )}
         </main>
       </div>
@@ -605,8 +589,8 @@ export function GitDeliveryActions(props: {
   onCommit: () => void;
   beforeCommit?: ReactNode;
   commitFeedback?: ReactNode;
-  mergeTitle?: string;
-  mergeDescription?: string;
+  /** 合入选择器标明来源或目标，避免额外常驻说明段落。 */
+  mergeLabel?: string;
   mergeTarget: string;
   mergeOptions: ComponentProps<typeof ZeusSelect>['options'];
   onMergeTargetChange: (value: string) => void;
@@ -629,7 +613,7 @@ export function GitDeliveryActions(props: {
     <aside className="task-git-review-options task-git-delivery-actions">
       <section className="task-git-delivery-action-step">
         <div className="task-git-delivery-step-heading">
-          <strong>{props.zh ? '1. 提交文件' : '1. Commit files'}</strong>
+          <strong>{props.zh ? '提交说明' : 'Commit message'}</strong>
           <span className="task-git-generation-controls">
             <Button
               variant="secondary"
@@ -646,27 +630,45 @@ export function GitDeliveryActions(props: {
         </div>
         {props.beforeCommit}
         {props.commitCount > 0 ? (
-          <textarea value={props.message} onChange={(event) => props.onMessageChange(event.target.value)} disabled={busy && props.busyAction !== 'commit-message'} aria-label={props.zh ? '提交说明' : 'Commit message'} />
+          <textarea rows={3} value={props.message} onChange={(event) => props.onMessageChange(event.target.value)} disabled={busy && props.busyAction !== 'commit-message'} aria-label={props.zh ? '提交说明' : 'Commit message'} />
         ) : null}
         {props.generationFeedback ? <small role="status">{props.generationFeedback}</small> : null}
-        <Button variant="secondary" size="compact" busy={props.busyAction === 'commit'} onClick={props.onCommit} disabled={busy || props.commitCount === 0}>
-          {props.zh ? `提交所选文件（${props.commitCount}）` : `Commit selected files (${props.commitCount})`}
+        <Button
+          variant={props.combination ? 'secondary' : 'primary'}
+          size="compact"
+          aria-label={props.zh ? `提交所选文件（${props.commitCount}）` : `Commit selected files (${props.commitCount})`}
+          busy={props.busyAction === 'commit'}
+          onClick={props.onCommit}
+          disabled={busy || props.commitCount === 0}
+        >
+          {props.zh ? '提交' : 'Commit'}
+          {props.commitCount > 0 ? `（${props.commitCount}）` : ''}
         </Button>
         {props.commitFeedback}
       </section>
-      <section className="task-git-delivery-action-step">
-        <strong>{props.mergeTitle ?? (props.zh ? '2. 合入目标分支' : '2. Merge into target branch')}</strong>
-        {props.mergeDescription ? <small>{props.mergeDescription}</small> : null}
-        <ZeusSelect
-          size="compact"
-          ariaLabel={props.mergeTitle ?? (props.zh ? '统一合入目标分支' : 'Merge target for all selected repositories')}
-          value={props.mergeTarget}
-          options={props.mergeOptions}
-          onChange={props.onMergeTargetChange}
-          disabled={busy || props.mergeDisabled}
-          searchPlaceholder={props.zh ? '搜索本地分支' : 'Search local branches'}
-        />
-        {props.mergeIssues}
+      <section className="task-git-delivery-action-step" aria-label={props.zh ? '合入' : 'Merge'}>
+        <div className="task-git-delivery-merge-row">
+          <ZeusSelect
+            size="compact"
+            ariaLabel={props.mergeLabel ?? (props.zh ? '合入目标分支' : 'Target branch')}
+            value={props.mergeTarget}
+            options={props.mergeOptions}
+            onChange={props.onMergeTargetChange}
+            disabled={busy || props.mergeDisabled}
+            searchPlaceholder={props.zh ? '搜索本地分支' : 'Search local branches'}
+          />
+          <Button
+            variant="secondary"
+            size="compact"
+            aria-label={props.zh ? `合入所选仓库（${props.mergeCount}）` : `Merge selected repositories (${props.mergeCount})`}
+            busy={props.busyAction === 'merge'}
+            onClick={props.onMerge}
+            disabled={busy || props.mergeCount === 0}
+          >
+            {props.zh ? '合入' : 'Merge'}
+            {props.mergeCount > 0 ? `（${props.mergeCount}）` : ''}
+          </Button>
+        </div>
         {props.onModeChange ? (
           <ZeusSelect
             size="compact"
@@ -681,18 +683,21 @@ export function GitDeliveryActions(props: {
             searchable={false}
           />
         ) : null}
-        <Button variant="primary" size="compact" busy={props.busyAction === 'merge'} onClick={props.onMerge} disabled={busy || props.mergeCount === 0}>
-          {props.zh ? `合入所选仓库（${props.mergeCount}）` : `Merge selected repositories (${props.mergeCount})`}
-        </Button>
+        {props.mergeIssues}
         {props.mergeFeedback}
       </section>
       <section className="task-git-delivery-action-step">
-        <div className="task-git-delivery-step-heading">
-          <strong>{props.zh ? '3. 推送到远端' : '3. Push to remote'}</strong>
-          <Button variant="secondary" size="compact" busy={props.busyAction === 'push'} onClick={props.onPush} disabled={busy || props.pushCount === 0}>
-            {props.zh ? `推送（${props.pushCount}）` : `Push (${props.pushCount})`}
-          </Button>
-        </div>
+        <Button
+          variant="secondary"
+          size="compact"
+          aria-label={props.zh ? `推送到远端（${props.pushCount}）` : `Push to remote (${props.pushCount})`}
+          busy={props.busyAction === 'push'}
+          onClick={props.onPush}
+          disabled={busy || props.pushCount === 0}
+        >
+          {props.zh ? '推送' : 'Push'}
+          {props.pushCount > 0 ? `（${props.pushCount}）` : ''}
+        </Button>
         {props.pushFeedback}
       </section>
       {props.combination}

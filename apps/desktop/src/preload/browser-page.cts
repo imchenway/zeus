@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 import { ipcRenderer } from 'electron';
 import { installIconTooltips } from './iconTooltip.js';
+import { installMarkdownListInput } from './markdownListInput.js';
 import { selectionCommentIcons } from './selectionCommentIcons.js';
 import selectionCommentStyles from '../renderer/session/selectionComment.css?inline';
 
@@ -106,7 +107,10 @@ function install(): void {
   shadow = rootHost.attachShadow({ mode: 'closed' });
   /** 评论浮层使用共享提示机制，监听只作用于自己的 ShadowRoot。 */
   const disposeIconTooltips = installIconTooltips(shadow);
+  /** 仅增强 Zeus 评论影子根，不修改所浏览网站自己的输入框。 */
+  const disposeListInput = installMarkdownListInput(shadow);
   window.addEventListener('pagehide', disposeIconTooltips, { once: true });
+  window.addEventListener('pagehide', disposeListInput, { once: true });
   /** 将同一份评论样式放入封闭 ShadowRoot，不影响被审阅网页。 */
   const style = document.createElement('style');
   style.textContent = `

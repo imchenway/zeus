@@ -15,7 +15,6 @@ export interface ConversationComposerAttachmentsProps {
   className?: string;
   onActivate?: (attachment: NativeConversationAttachment, trigger: HTMLButtonElement) => void;
   onRemove?: (attachment: NativeConversationAttachment) => void;
-  onRestorePastedText?: (attachment: NativeConversationAttachment) => void;
 }
 
 /** 草稿附件共享缩略图、放大预览和安全打开入口。 */
@@ -58,14 +57,6 @@ export function ConversationComposerAttachments(props: ConversationComposerAttac
               }
             : undefined
         }
-        onRestoreText={
-          props.onRestorePastedText
-            ? (resource) => {
-                const attachment = byId.get(resource.id);
-                if (attachment) props.onRestorePastedText?.(attachment);
-              }
-            : undefined
-        }
       />
       <MotionPresence>{previewAttachment ? <FilePreviewDialog request={{ kind: 'attachment', ...attachmentResource(previewAttachment) }} zh={props.language === 'zh-CN'} onClose={() => setPreviewAttachment(null)} /> : null}</MotionPresence>
     </>
@@ -90,7 +81,6 @@ function toPendingResource(attachment: NativeConversationAttachment): PendingRes
     mimeType: attachment.mime,
     size: attachment.size,
     ...(attachment.characterCount !== undefined ? { characterCount: attachment.characterCount } : {}),
-    ...(attachment.restorableText ? { restorable: true } : {}),
   };
 }
 

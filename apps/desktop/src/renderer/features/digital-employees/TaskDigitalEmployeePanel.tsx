@@ -938,10 +938,6 @@ function TaskEmployeeRunDialog(props: {
       setSupplementalResourceError(null);
       setSupplementalAttachments((current) => mergeTaskPushSupplementalAttachments(current, attachments));
     },
-    onRemoveAttachment: (attachment) => {
-      const identity = taskPushSupplementalAttachmentIdentity(attachment);
-      setSupplementalAttachments((current) => current.filter((candidate) => taskPushSupplementalAttachmentIdentity(candidate) !== identity));
-    },
     onError: setSupplementalResourceError,
   });
 
@@ -1103,7 +1099,6 @@ function TaskEmployeeRunDialog(props: {
                 const identity = taskPushSupplementalAttachmentIdentity(attachment);
                 setSupplementalAttachments((current) => current.filter((candidate) => taskPushSupplementalAttachmentIdentity(candidate) !== identity));
               }}
-              onRestoreText={inputResources.restorePastedText}
               onError={setSupplementalResourceError}
             />
             <textarea

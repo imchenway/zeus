@@ -1,13 +1,15 @@
 import { Decoration, EditorView, ViewPlugin, WidgetType, type ViewUpdate } from '@codemirror/view';
 import type { GitBlameLine } from '../features/git/gitContracts.js';
+import { hasBlameCommit } from './blamePresentation.js';
 
 /** 原文件按行读取，差异视图通过显示行解析前后版本的真实归属。 */
 export type BlameSource = readonly GitBlameLine[] | ((displayLine: number) => GitBlameLine | undefined);
 
 /** 仅在编辑器聚焦且光标为单点时展示当前行；编辑后立即隐藏旧归属，等待磁盘版本刷新。 */
 export function blameDecorations(source: BlameSource, labels: { locale?: string }) {
-  /** 原文件只建立一次索引，差异视图复用已经建立的版本索引。 */
-  const byLine = typeof source === 'function' ? null : new Map(source.map((line) => [line.line, line]));
+  /** 原文件只索引真实提交；差异视图复用版本索引，并在解析当前行后使用同一规则过滤。 */
+  const byLine = typeof source === 'function' ? null : new Map(source.filter(hasBlameCommit).map((line) => [line.line, line]));
+  if (byLine?.size === 0) return [];
   /** 光标移动时只解析当前行，不遍历整个文件。 */
   const resolveLine = typeof source === 'function' ? source : (line: number) => byLine?.get(line);
   return ViewPlugin.define(
@@ -31,7 +33,7 @@ function activeBlameDecorations(view: EditorView, resolveLine: (line: number) =>
   if (!view.hasFocus || selection.ranges.length !== 1 || !selection.main.empty) return Decoration.none;
   const line = view.state.doc.lineAt(selection.main.head);
   const blame = resolveLine(line.number);
-  if (!blame || !view.visibleRanges.some((range) => line.to >= range.from && line.to <= range.to)) return Decoration.none;
+  if (!hasBlameCommit(blame) || !view.visibleRanges.some((range) => line.to >= range.from && line.to <= range.to)) return Decoration.none;
   return Decoration.set([Decoration.widget({ widget: new BlameWidget(blame, labels), side: 1 }).range(line.to)]);
 }
 
@@ -60,8 +62,8 @@ class BlameWidget extends WidgetType {
     const element = document.createElement('span');
     /** 长归属信息在同一行省略，完整详情由外层统一提示提供。 */
     const text = document.createElement('span');
-    /** 作者缺省值沿用已有显示约定。 */
-    const author = this.blame.author || 'Unknown';
+    /** 装饰只接收已确认的真实作者，不生成 Unknown 占位。 */
+    const author = this.blame.author.trim();
     /** 相对时间使用当前界面语言。 */
     const relativeTime = formatRelativeTime(this.blame.authorTime, this.labels.locale);
     /** 无提交说明时显示已有短提交号。 */

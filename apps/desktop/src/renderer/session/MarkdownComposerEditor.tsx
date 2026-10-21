@@ -5,6 +5,7 @@ import { drawSelection, EditorView, keymap, placeholder } from '@codemirror/view
 import { type ClipboardEventHandler, type KeyboardEventHandler, type RefObject, useLayoutEffect, useRef } from 'react';
 import type { StructuredToken } from './StructuredComposerInput.js';
 import { composerMarkdownPreview } from './composerMarkdownPreview.js';
+import { markdownListKeymap } from '../code/markdownListKeymap.js';
 
 /** 标签位置随润色事务进入原生撤销历史，不另建有限长度的草稿缓存。 */
 const composerTokenReplacement = StateEffect.define<{ before: StructuredToken[]; after: StructuredToken[] }>();
@@ -91,6 +92,7 @@ export function MarkdownComposerEditor(props: MarkdownComposerEditorProps) {
           EditorView.lineWrapping,
           // 使用编辑器绘制光标，避免多行占位建议拉高浏览器原生光标。
           drawSelection(),
+          markdownListKeymap,
           keymap.of([{ key: 'Shift-Enter', run: insertNewline }, ...defaultKeymap, ...historyKeymap]),
           composerMarkdownPreview(() => latest.current.tokens, latest.current.language),
           options.current.of([]),
