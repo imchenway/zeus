@@ -10,6 +10,9 @@ import {
   type ZentaoTaskSyncLink,
   type ZentaoTaskSyncRequest,
   type ZentaoInstanceRecord,
+  type ZentaoTaskEffort,
+  type ZentaoTaskEffortRequest,
+  type ZentaoTaskEffortsResult,
 } from '@zeus/shared';
 import type { ZeusTaskRecord } from '@zeus/storage';
 import type { ZentaoCredentialService } from './zentaoCredentialService.js';
@@ -31,6 +34,10 @@ export interface ZentaoSyncService {
   listMyItems(instanceId: string, input: { kind?: ZentaoRemoteKind; query?: string; offset?: number; limit?: number }): Promise<ZentaoRemoteListResult>;
   getItem(instanceId: string, kind: ZentaoRemoteKind, objectId: string): Promise<ZentaoRemoteItemDetail>;
   pushTask(instanceId: string, input: ZentaoTaskSyncRequest, task: ZeusTaskRecord): Promise<ZentaoRemoteWriteResult>;
+  /** 根据本地受控关联读取禅道工时汇总和日志。 */
+  getEfforts(instanceId: string, task: ZeusTaskRecord): Promise<ZentaoTaskEffortsResult>;
+  /** 为已关联的禅道任务登记一次实际工时。 */
+  recordEffort(instanceId: string, input: ZentaoTaskEffortRequest, task: ZeusTaskRecord): Promise<ZentaoRemoteItemDetail>;
 }
 
 /** 禅道数据适配层：接口字段在这里归一化，渲染层不依赖具体禅道版本的字段命名。 */
@@ -48,6 +55,9 @@ export function createZentaoSyncService(options: { credentials: ZentaoCredential
     const response = await request(instanceId, path, method, body);
     if (response.status < 200 || response.status >= 300) {
       throw syncError(`ZEUS_ZENTAO_HTTP_${response.status}`, remoteMessage(response.payload, response.status), response.status >= 400 && response.status < 600 ? response.status : 502);
+    }
+    if (isRecord(response.payload) && (response.payload.status === 'fail' || response.payload.status === 'error' || response.payload.result === false)) {
+      throw syncError('ZEUS_ZENTAO_REMOTE_REJECTED', remoteMessage(response.payload, response.status), 502);
     }
     return response;
   }
@@ -146,26 +156,52 @@ export function createZentaoSyncService(options: { credentials: ZentaoCredential
     async getItem(instanceId, kind, objectId) {
       const id = requireObjectId(objectId);
       const response = await successfulRequest(instanceId, `/${kind === 'task' ? 'tasks' : 'bugs'}/${encodeURIComponent(id)}`);
-      const summary = normalizeSummary(kind, unwrapRecord(response.payload), response.instance, id);
-      if (!summary) throw syncError('ZEUS_ZENTAO_OBJECT_INVALID', '禅道返回的数据缺少对象编号。', 502);
-      const raw = unwrapRecord(response.payload);
-      const reproductionSteps = firstText(raw, ['steps', 'reproductionSteps', 'reproduction']) ?? '';
-      const expectedOutcome = firstText(raw, ['expectedOutcome', 'expected', 'expect', 'verify']) ?? '';
-      const description = firstText(raw, ['desc', 'description', 'spec', 'content']) ?? (kind === 'bug' ? reproductionSteps : '');
+      return normalizeDetail(kind, unwrapRecord(response.payload), response.instance, id);
+    },
+    async getEfforts(instanceId, task) {
+      /** 远端编号只接受本地任务已经保存的关联。 */
+      const link = requireZentaoTaskLink(task, instanceId);
+      /** 汇总与日志互不依赖，可并行读取。 */
+      const [detail, logs] = await Promise.all([successfulRequest(instanceId, `/tasks/${encodeURIComponent(link.objectId)}`), successfulRequest(instanceId, `/tasks/${encodeURIComponent(link.objectId)}/estimate`)]);
+      /** 禅道的日志列表可能按日志编号组成对象。 */
+      const raw = unwrapRecord(logs.payload);
+      if (!isRecord(raw.effort) && !Array.isArray(raw.effort) && !Array.isArray(raw.efforts)) throw syncError('ZEUS_ZENTAO_EFFORT_RESPONSE_INVALID', '禅道日志响应格式无效，无法确认日志列表。', 502);
+      /** 将受限响应归一化为日志数组，不把缺失小时数伪造为零。 */
+      const records: Record<string, unknown>[] = isRecord(raw.effort)
+        ? Object.entries(raw.effort).flatMap(([id, value]) => (isRecord(value) ? [{ ...value, id: value.id ?? id }] : []))
+        : ((Array.isArray(raw.effort) ? raw.effort : raw.efforts) as unknown[]).filter(isRecord);
       return {
-        ...summary,
-        description,
-        currentState: firstText(raw, ['currentState', 'phenomenon', 'actual']) ?? '',
-        reproductionSteps,
-        expectedOutcome,
-        estStarted: firstText(raw, ['estStarted', 'estStart', 'started']) ?? undefined,
-        deadline: firstText(raw, ['deadline', 'dueDate']) ?? undefined,
-        remoteType: firstText(raw, ['type', 'taskType', 'bugType']) ?? undefined,
+        task: normalizeDetail('task', unwrapRecord(detail.payload), detail.instance, link.objectId),
+        items: records
+          .map(normalizeEffort)
+          .filter((entry): entry is ZentaoTaskEffort => entry !== null)
+          .sort((a, b) => b.date.localeCompare(a.date) || Number(b.id) - Number(a.id)),
       };
     },
+    async recordEffort(instanceId, input, task) {
+      validateZentaoEffort(input);
+      /** 受控关联同时隔离实例和对象类型。 */
+      const link = requireZentaoTaskLink(task, instanceId);
+      /** 21.7.5 使用单元素数组登记一条日志，不发送历史累计工时。 */
+      const response = await successfulRequest(instanceId, `/tasks/${encodeURIComponent(link.objectId)}/estimate`, 'POST', {
+        date: [input.date],
+        work: [input.work.trim()],
+        consumed: [input.consumed],
+        left: [input.left],
+      });
+      /** 写入返回必须确实指向目标任务，不能将错误报文当作成功。 */
+      const raw = unwrapRecord(response.payload);
+      if (objectIdFrom(raw, 'task') !== link.objectId || remoteHours(raw.consumed) === undefined || remoteHours(raw.left) === undefined)
+        throw syncError('ZEUS_ZENTAO_EFFORT_RESULT_UNKNOWN', '禅道已响应，但工时登记结果未能确认，请先在禅道核对，勿重复提交。', 502);
+      return normalizeDetail('task', raw, response.instance, link.objectId);
+    },
     async pushTask(instanceId, input, task) {
-      validatePushInput(input);
+      validateZentaoTaskSyncInput(input);
       const existing = readTaskZentaoLink(task.sourceContextJson);
+      if (existing && (existing.instanceId !== instanceId || existing.kind !== input.kind)) throw syncError('ZEUS_ZENTAO_LINK_CONFLICT', '任务已关联禅道对象，不能更换实例或对象类型。', 409);
+      if (!existing && input.kind !== 'task') throw syncError('ZEUS_ZENTAO_SYNC_KIND_INVALID', '新同步对象统一创建为禅道任务。', 400);
+      if (existing && ((existing.projectId && existing.projectId !== input.projectId) || (existing.executionId && input.executionId && existing.executionId !== input.executionId)))
+        throw syncError('ZEUS_ZENTAO_LINK_CONFLICT', '已关联任务不能在同步时更换禅道项目或执行。', 409);
       const sameRemote = existing?.instanceId === instanceId && existing.kind === input.kind;
       const remoteId = sameRemote ? existing?.objectId : undefined;
       const projectId = input.projectId || existing?.projectId;
@@ -179,15 +215,33 @@ export function createZentaoSyncService(options: { credentials: ZentaoCredential
         if (!remoteId && !executionId) throw syncError('ZEUS_ZENTAO_EXECUTION_REQUIRED', '创建禅道任务前必须选择执行。', 400);
         path = remoteId ? `/tasks/${encodeURIComponent(remoteId)}` : `/executions/${encodeURIComponent(executionId!)}/tasks`;
         body = taskPayload(task, { ...input, projectId, executionId });
+        if (remoteId && input.remoteType === undefined) delete body.type;
+        if (!remoteId) {
+          /** 新建任务默认指派给当前验证账号。 */
+          const instance = await options.credentials.get(instanceId);
+          body.assignedTo = instance?.account;
+        } else if (input.estimate !== undefined) {
+          /** 已开始任务的最初预计工时保持不变。 */
+          const current = await successfulRequest(instanceId, path);
+          if (unwrapRecord(current.payload).status !== 'wait') delete body.estimate;
+        }
       } else {
-        if (!remoteId && !productId) throw syncError('ZEUS_ZENTAO_PRODUCT_REQUIRED', '创建禅道缺陷前必须选择产品。', 400);
-        path = remoteId ? `/bugs/${encodeURIComponent(remoteId)}` : `/products/${encodeURIComponent(productId!)}/bugs`;
+        // 历史 Bug 只更新原对象，新建始终进入任务分支。
+        path = `/bugs/${encodeURIComponent(remoteId!)}`;
         body = bugPayload(task, { ...input, projectId, executionId, productId });
+        if (input.remoteType === undefined) delete body.type;
+      }
+      if (remoteId) {
+        // 内容同步不承担移动远端对象的职责，接口层也不发送这些关联字段。
+        delete body.project;
+        delete body.execution;
+        delete body.product;
       }
       const response = await successfulRequest(instanceId, path, remoteId ? 'PUT' : 'POST', body);
       const returned = unwrapRecord(response.payload);
-      const objectId = remoteId ?? extractObjectId(response.payload, input.kind);
-      if (!objectId) throw syncError('ZEUS_ZENTAO_OBJECT_ID_MISSING', '禅道已响应，但没有返回新对象编号；本地未确认关联。', 502);
+      const objectId = extractObjectId(response.payload, input.kind);
+      if (!objectId) throw syncError('ZEUS_ZENTAO_OBJECT_ID_MISSING', '禅道已响应，但未返回对象编号，请先在禅道核对写入结果。', 502);
+      if (remoteId && objectId !== remoteId) throw syncError('ZEUS_ZENTAO_OBJECT_ID_MISMATCH', '禅道返回的对象编号与已关联对象不一致，请先核对写入结果。', 502);
       const remote = normalizeSummary(input.kind, returned, response.instance, objectId) ?? {
         kind: input.kind,
         objectId,
@@ -224,7 +278,16 @@ export function createZentaoSyncService(options: { credentials: ZentaoCredential
 function taskPayload(task: ZeusTaskRecord, input: ZentaoTaskSyncRequest & { projectId: string; executionId?: string }): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     name: task.title,
-    desc: task.description,
+    desc: [
+      task.description,
+      task.defectCurrentState ? `缺陷现象：\n${task.defectCurrentState}` : '',
+      task.defectReproductionSteps ? `重现步骤：\n${task.defectReproductionSteps}` : '',
+      task.defectExpectedOutcome ? `期望结果：\n${task.defectExpectedOutcome}` : '',
+      task.optimizationCurrentState ? `优化现状：\n${task.optimizationCurrentState}` : '',
+      task.optimizationExpectedOutcome ? `优化目标：\n${task.optimizationExpectedOutcome}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n\n'),
     type: input.remoteType?.trim() || 'devel',
     pri: remotePriority(task.priority),
     project: input.projectId,
@@ -232,6 +295,7 @@ function taskPayload(task: ZeusTaskRecord, input: ZentaoTaskSyncRequest & { proj
   if (input.executionId) payload.execution = input.executionId;
   if (input.estStarted) payload.estStarted = input.estStarted;
   if (input.deadline) payload.deadline = input.deadline;
+  if (input.estimate !== undefined) payload.estimate = input.estimate;
   return payload;
 }
 
@@ -253,6 +317,66 @@ function bugPayload(task: ZeusTaskRecord, input: ZentaoTaskSyncRequest & { proje
   };
   if (input.executionId) payload.execution = input.executionId;
   return payload;
+}
+
+/** 只接受禅道实际返回的有限非负小时数。 */
+function remoteHours(value: unknown): number | undefined {
+  if (typeof value !== 'number' && (typeof value !== 'string' || !value.trim())) return undefined;
+  /** 外部系统的数值字符串在适配边界转换。 */
+  const hours = Number(value);
+  return Number.isFinite(hours) && hours >= 0 ? hours : undefined;
+}
+
+/** 任务详情在读取、写入和日志回执中采用同一归一化规则。 */
+function normalizeDetail(kind: ZentaoRemoteKind, raw: Record<string, unknown>, instance: ZentaoInstanceRecord, id: string): ZentaoRemoteItemDetail {
+  if (objectIdFrom(raw, kind) && objectIdFrom(raw, kind) !== id) throw syncError('ZEUS_ZENTAO_OBJECT_INVALID', '禅道返回的对象编号与请求不一致。', 502);
+  /** 对象名称与身份必须来自真实响应。 */
+  const summary = normalizeSummary(kind, raw, instance, id);
+  if (!summary) throw syncError('ZEUS_ZENTAO_OBJECT_INVALID', '禅道返回的对象详情不完整。', 502);
+  return {
+    ...summary,
+    description: firstText(raw, ['desc', 'description', 'spec', 'content', ...(kind === 'bug' ? ['steps'] : [])]) ?? '',
+    currentState: firstText(raw, ['currentState', 'phenomenon', 'actual']) ?? '',
+    reproductionSteps: firstText(raw, ['steps', 'reproductionSteps', 'reproduction']) ?? '',
+    expectedOutcome: firstText(raw, ['expectedOutcome', 'expected', 'expect', 'verify']) ?? '',
+    estStarted: firstText(raw, ['estStarted', 'estStart', 'started']) ?? undefined,
+    deadline: firstText(raw, ['deadline', 'dueDate']) ?? undefined,
+    remoteType: firstText(raw, ['type', 'taskType', 'bugType']) ?? undefined,
+    estimate: remoteHours(raw.estimate),
+    consumed: remoteHours(raw.consumed),
+    left: remoteHours(raw.left),
+  };
+}
+
+/** 无效日志不显示为合法的零小时记录。 */
+function normalizeEffort(raw: Record<string, unknown>): ZentaoTaskEffort | null {
+  /** 日志自己的稳定编号。 */
+  const id = objectIdFrom(raw, 'effort');
+  /** 每条日志的本次耗时和当时剩余工时。 */
+  const consumed = remoteHours(raw.consumed);
+  const left = remoteHours(raw.left);
+  if (!id || consumed === undefined || left === undefined || raw.deleted === '1' || raw.deleted === 1) return null;
+  return { id, date: firstText(raw, ['date']) ?? '', account: firstText(raw, ['account']) ?? '', work: firstText(raw, ['work']) ?? '', consumed, left };
+}
+
+/** 拒绝客户端指定任意远端任务，工时只登记到本地已关联对象。 */
+export function requireZentaoTaskLink(task: ZeusTaskRecord, instanceId: string): ZentaoTaskSyncLink {
+  /** 解析已有受控关联，不创建新的关联。 */
+  const link = readTaskZentaoLink(task.sourceContextJson);
+  if (!link || link.instanceId !== instanceId || link.kind !== 'task') throw syncError('ZEUS_ZENTAO_TASK_LINK_REQUIRED', '工时登记仅支持当前实例中已关联的禅道任务。', 409);
+  return link;
+}
+
+/** HTTP 入口和服务写入均校验工时，防止绕过界面约束。 */
+export function validateZentaoEffort(input: ZentaoTaskEffortRequest): void {
+  if (typeof input.taskId !== 'string' || !input.taskId.trim() || typeof input.expectedUpdatedAt !== 'string' || !input.expectedUpdatedAt.trim()) throw syncError('ZEUS_ZENTAO_EFFORT_INPUT_INVALID', '任务编号和修订时间不能为空。', 400);
+  if (typeof input.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/u.test(input.date)) throw syncError('ZEUS_ZENTAO_DATE_INVALID', '工作日期格式无效。', 400);
+  /** 额外检查日历有效性，拒绝二月三十日等日期。 */
+  const date = new Date(`${input.date}T00:00:00Z`);
+  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== input.date) throw syncError('ZEUS_ZENTAO_DATE_INVALID', '工作日期无效。', 400);
+  if (typeof input.consumed !== 'number' || !Number.isFinite(input.consumed) || input.consumed <= 0 || typeof input.left !== 'number' || !Number.isFinite(input.left) || input.left < 0)
+    throw syncError('ZEUS_ZENTAO_HOURS_INVALID', '本次耗时必须大于零，剩余工时必须为非负数，单位为小时。', 400);
+  if (typeof input.work !== 'string' || !input.work.trim()) throw syncError('ZEUS_ZENTAO_WORK_REQUIRED', '请填写本次工作说明。', 400);
 }
 
 function normalizeProject(value: Record<string, unknown>): ZentaoRemoteProjectSummary | null {
@@ -438,11 +562,16 @@ function readTaskZentaoLink(sourceContextJson: string): ReturnType<typeof parseZ
   }
 }
 
-function validatePushInput(input: ZentaoTaskSyncRequest): void {
+/** 在远端写入标记之前检查同步字段，错误输入可以安全修正后再提交。 */
+export function validateZentaoTaskSyncInput(input: ZentaoTaskSyncRequest): void {
   if (!input.taskId.trim() || !input.expectedUpdatedAt.trim() || !input.projectId.trim()) throw syncError('ZEUS_ZENTAO_SYNC_INPUT_INVALID', '禅道同步参数不完整。', 400);
   if (input.kind !== 'task' && input.kind !== 'bug') throw syncError('ZEUS_ZENTAO_SYNC_KIND_INVALID', '禅道同步对象类型无效。', 400);
+  for (const value of [input.estStarted, input.deadline, input.remoteType]) {
+    if (value !== undefined && typeof value !== 'string') throw syncError('ZEUS_ZENTAO_SYNC_INPUT_INVALID', '禅道日期和任务类型必须为文本。', 400);
+  }
   if (input.estStarted && !/^\d{4}-\d{2}-\d{2}$/u.test(input.estStarted)) throw syncError('ZEUS_ZENTAO_DATE_INVALID', '预计开始日期格式无效。', 400);
   if (input.deadline && !/^\d{4}-\d{2}-\d{2}$/u.test(input.deadline)) throw syncError('ZEUS_ZENTAO_DATE_INVALID', '截止日期格式无效。', 400);
+  if (input.estimate !== undefined && (typeof input.estimate !== 'number' || !Number.isFinite(input.estimate) || input.estimate < 0)) throw syncError('ZEUS_ZENTAO_HOURS_INVALID', '预计工时必须为非负数，单位为小时。', 400);
 }
 
 function requireId(value: string | undefined, label: string): string {

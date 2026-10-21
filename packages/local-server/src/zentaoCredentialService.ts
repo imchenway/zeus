@@ -4,8 +4,11 @@ import { parseZentaoInstanceBaseUrl, zentaoInstanceApiBase, zentaoSecretAccount,
 import type { SecretStore } from './securityCore.js';
 import type { SettingRepository } from '@zeus/storage';
 
+/** 实例设置的持久化键，不保存登录令牌。 */
 const zentaoInstancesSettingKey = 'zentao.instances';
+/** 禅道账号的输入长度上限。 */
 const zentaoAccountMaxLength = 200;
+/** 单次登录验证的最长等待毫秒数。 */
 const zentaoVerifyTimeoutMs = 12_000;
 
 export interface ZentaoCredentialService {
@@ -29,6 +32,26 @@ export interface ZentaoCredentialService {
 export function createZentaoCredentialService(options: { settings: SettingRepository; secretStore: SecretStore; save: () => Promise<void>; now?: () => string; fetch?: typeof fetch }): ZentaoCredentialService {
   const now = options.now ?? (() => new Date().toISOString());
   const fetcher = options.fetch ?? fetch;
+  /** 登录结果只在当前宿主内有效，重启后重新验证。 */
+  const authentication = new Map<string, ZentaoInstanceVerifyResult>();
+  /** 凭据修订阻止旧请求恢复已经清除或替换的登录状态。 */
+  const generations = new Map<string, number>();
+  /** 实例列表和设置页共用正在进行的验证，避免并发重复登录。 */
+  const verifications = new Map<string, Promise<ZentaoInstanceVerifyResult>>();
+
+  /** 凭据变化后立即撤销旧登录结果。 */
+  function invalidateAuthentication(id: string): void {
+    generations.set(id, (generations.get(id) ?? 0) + 1);
+    authentication.delete(id);
+    verifications.delete(id);
+  }
+
+  /** 网络故障不撤销已验证身份，明确认证失败才撤销。 */
+  function rememberAuthentication(id: string, generation: number, result: ZentaoInstanceVerifyResult): void {
+    if ((generations.get(id) ?? 0) !== generation) return;
+    if (result.code === 'network_failed' && authentication.get(id)?.ok) return;
+    authentication.set(id, result);
+  }
 
   function readStored(): ZentaoInstanceRecord[] {
     return normalizeStoredZentaoInstances(options.settings.getJson<unknown>(zentaoInstancesSettingKey));
@@ -36,10 +59,17 @@ export function createZentaoCredentialService(options: { settings: SettingReposi
 
   async function hydrate(records = readStored()): Promise<ZentaoInstanceRecord[]> {
     return Promise.all(
-      records.map(async (record) => ({
-        ...record,
-        passwordConfigured: Boolean(await options.secretStore.getSecret(zentaoSecretAccount(record.id))),
-      })),
+      records.map(async (record) => {
+        /** 密码缺失时无论历史结果如何，均视为未登录。 */
+        const passwordConfigured = Boolean(await options.secretStore.getSecret(zentaoSecretAccount(record.id)));
+        /** 只将非敏感的验证结果交给界面。 */
+        const result = authentication.get(record.id);
+        return {
+          ...record,
+          passwordConfigured,
+          authenticationStatus: !record.account || !passwordConfigured ? 'unauthenticated' : result?.ok ? 'authenticated' : result?.code === 'network_failed' ? 'unavailable' : 'unauthenticated',
+        } as ZentaoInstanceRecord;
+      }),
     );
   }
 
@@ -51,10 +81,12 @@ export function createZentaoCredentialService(options: { settings: SettingReposi
     await options.save();
   }
 
+  /** 单实例操作只访问自身凭据，启动时并行验证不会重复读取所有密码。 */
   async function requireInstance(id: string): Promise<ZentaoInstanceRecord> {
-    const instance = (await hydrate()).find((candidate) => candidate.id === id);
-    if (!instance) throw serviceError('ZEUS_ZENTAO_INSTANCE_NOT_FOUND', '禅道实例不存在。', 404);
-    return instance;
+    /** 元数据查找不触发其他实例的安全存储访问。 */
+    const record = readStored().find((candidate) => candidate.id === id);
+    if (!record) throw serviceError('ZEUS_ZENTAO_INSTANCE_NOT_FOUND', '禅道实例不存在。', 404);
+    return (await hydrate([record]))[0]!;
   }
 
   function normalizeInput(input: SaveZentaoInstanceRequest): { host: string; basePath: string; account: string; password: string | undefined } {
@@ -87,8 +119,10 @@ export function createZentaoCredentialService(options: { settings: SettingReposi
     else records.push(record);
     if (normalized.password) await options.secretStore.setSecret(zentaoSecretAccount(id), normalized.password);
     else if (!normalized.account) await options.secretStore.deleteSecret(zentaoSecretAccount(id));
+    invalidateAuthentication(id);
     await write(records);
-    return record;
+    await verify(id);
+    return requireInstance(id);
   }
 
   async function exchangeToken(instance: ZentaoInstanceRecord, account: string, password: string): Promise<{ token: string } | { code: ZentaoInstanceVerifyCode; message: string; cause?: UserFacingErrorCause }> {
@@ -137,20 +171,54 @@ export function createZentaoCredentialService(options: { settings: SettingReposi
   type ZentaoCredentialResponse = { status: number; payload: unknown };
 
   async function withToken(id: string, send: (instance: ZentaoInstanceRecord, token: string) => Promise<ZentaoCredentialResponse>): Promise<ZentaoCredentialResponse> {
+    /** 捕获当前凭据代次，异步请求不能恢复旧登录。 */
+    const generation = generations.get(id) ?? 0;
     const instance = await requireInstance(id);
     if (!instance.account) throw serviceError('ZEUS_ZENTAO_ACCOUNT_MISSING', '请先为禅道实例配置账号。', 400);
     const password = await options.secretStore.getSecret(zentaoSecretAccount(id));
     if (!password) throw serviceError('ZEUS_ZENTAO_PASSWORD_MISSING', '请先为禅道实例保存密码。', 401);
     const exchange = await exchangeToken(instance, instance.account, password);
+    rememberAuthentication(id, generation, 'token' in exchange ? { ok: true, code: 'verified', checkedAt: now(), message: '登录验证通过。' } : { ok: false, ...exchange, checkedAt: now() });
     if (!('token' in exchange)) throw serviceError(`ZEUS_ZENTAO_${exchange.code.toUpperCase()}`, exchange.message, exchange.code === 'auth_failed' ? 401 : 502);
 
     let result = await send(instance, exchange.token);
     if (result.status === 401 || result.status === 403) {
       const refreshed = await exchangeToken(instance, instance.account, password);
-      if (!('token' in refreshed)) throw serviceError('ZEUS_ZENTAO_AUTH_FAILED', refreshed.message, 401);
+      rememberAuthentication(id, generation, 'token' in refreshed ? { ok: true, code: 'verified', checkedAt: now(), message: '登录验证通过。' } : { ok: false, ...refreshed, checkedAt: now() });
+      if (!('token' in refreshed)) throw serviceError(`ZEUS_ZENTAO_${refreshed.code.toUpperCase()}`, refreshed.message, refreshed.code === 'auth_failed' ? 401 : 502);
       result = await send(instance, refreshed.token);
     }
+    if (result.status === 401) rememberAuthentication(id, generation, { ok: false, code: 'auth_failed', checkedAt: now(), message: '禅道登录已失效。' });
     return result;
+  }
+
+  /** 设置页显式验证和启动时的首次验证共用同一事实来源。 */
+  async function verify(id: string): Promise<ZentaoInstanceVerifyResult> {
+    /** 同一实例的并发验证共享结果。 */
+    const existing = verifications.get(id);
+    if (existing) return existing;
+    /** 绑定本次凭据修订，清除密码后旧结果不再生效。 */
+    const generation = generations.get(id) ?? 0;
+    /** 整个验证操作只向界面返回状态，不返回令牌。 */
+    const pending = (async (): Promise<ZentaoInstanceVerifyResult> => {
+      const checkedAt = now();
+      const instance = await requireInstance(id);
+      const password = instance.account ? await options.secretStore.getSecret(zentaoSecretAccount(id)) : undefined;
+      const exchange = !instance.account
+        ? { code: 'bad_request' as const, message: '请先为该实例配置账号。' }
+        : !password
+          ? { code: 'password_missing' as const, message: '请先为该实例保存密码。' }
+          : await exchangeToken(instance, instance.account, password);
+      const result: ZentaoInstanceVerifyResult = 'token' in exchange ? { ok: true, code: 'verified', checkedAt, message: '登录验证通过。' } : { ok: false, ...exchange, checkedAt };
+      rememberAuthentication(id, generation, result);
+      return result;
+    })();
+    verifications.set(id, pending);
+    try {
+      return await pending;
+    } finally {
+      if (verifications.get(id) === pending) verifications.delete(id);
+    }
   }
 
   async function request(id: string, input: { path: string; method?: 'GET' | 'POST' | 'PUT'; body?: Record<string, unknown> }): Promise<ZentaoCredentialResponse> {
@@ -211,10 +279,18 @@ export function createZentaoCredentialService(options: { settings: SettingReposi
 
   return {
     async list() {
+      // 每个宿主首次读取时验证已保存凭据，之后复用运行期结果。
+      await Promise.all(
+        readStored()
+          .filter((record) => !authentication.has(record.id))
+          .map((record) => verify(record.id)),
+      );
       return hydrate();
     },
     async get(id) {
-      return (await hydrate()).find((candidate) => candidate.id === id);
+      /** 读取单个实例时不请求其他账号的凭据。 */
+      const record = readStored().find((candidate) => candidate.id === id);
+      return record ? (await hydrate([record]))[0] : undefined;
     },
     async create(input) {
       return saveInstance(`zentao_instance_${randomUUID().replace(/-/gu, '')}`, input);
@@ -231,28 +307,21 @@ export function createZentaoCredentialService(options: { settings: SettingReposi
     async remove(id) {
       await requireInstance(id);
       await options.secretStore.deleteSecret(zentaoSecretAccount(id));
+      invalidateAuthentication(id);
       await write(readStored().filter((candidate) => candidate.id !== id));
     },
     async clearPassword(id) {
       const existing = await requireInstance(id);
       await options.secretStore.deleteSecret(zentaoSecretAccount(id));
-      return { ...existing, passwordConfigured: false, updatedAt: now() };
+      invalidateAuthentication(id);
+      return { ...existing, passwordConfigured: false, authenticationStatus: 'unauthenticated', updatedAt: now() };
     },
     /** 先验证实例存在，再读取所属密码，禁止将任意钥匙串键当作实例标识。 */
     async revealPassword(id) {
       await requireInstance(id);
       return (await options.secretStore.getSecret(zentaoSecretAccount(id))) ?? null;
     },
-    async verify(id) {
-      const checkedAt = now();
-      const instance = await requireInstance(id);
-      if (!instance.account) return { ok: false, code: 'bad_request', checkedAt, message: '请先为该实例配置账号。' };
-      const password = await options.secretStore.getSecret(zentaoSecretAccount(id));
-      if (!password) return { ok: false, code: 'password_missing', checkedAt, message: '请先为该实例保存密码。' };
-      const exchange = await exchangeToken(instance, instance.account, password);
-      if ('token' in exchange) return { ok: true, code: 'verified', checkedAt, message: '登录验证通过。' };
-      return { ok: false, code: exchange.code, checkedAt, message: exchange.message, cause: exchange.cause };
-    },
+    verify,
     request,
     requestMyWork,
   };

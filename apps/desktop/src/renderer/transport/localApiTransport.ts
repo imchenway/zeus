@@ -66,6 +66,8 @@ const localApiReadTimeoutMs = 8_000;
 const localApiTaskPushCapabilitiesTimeoutMs = 5_000;
 /** 主动程序检测包含终端环境、版本和能力三段有界探针，预留完整返回时间。 */
 const localApiAdapterCheckTimeoutMs = 20_000;
+/** 禅道读取含一次登录和远端查询，覆盖服务端最长 12 秒加 24 秒的等待。 */
+const localApiZentaoReadTimeoutMs = 40_000;
 
 class LocalApiReadTimeoutError extends Error {
   readonly code = 'ZEUS_LOCAL_API_READ_TIMEOUT';
@@ -313,12 +315,14 @@ async function runWithReadTimeout<T>(init: RequestInit, path: string, operation:
   const method = (init.method ?? 'GET').toUpperCase();
   if (method !== 'GET') return operation(init);
 
-  /** 主动检测允许更长时间；任务推送入口优先快速恢复用户操作。 */
+  /** 主动检测和禅道读取保留完整等待时间；任务推送入口优先快速恢复用户操作。 */
   const timeoutMs = /^\/api\/runtime\/adapters\/[^/?]+\/check(?:\?.*)?$/.test(path)
     ? localApiAdapterCheckTimeoutMs
     : /^\/api\/projects\/[^/?]+\/codex-task-push-capabilities(?:\?.*)?$/.test(path)
       ? localApiTaskPushCapabilitiesTimeoutMs
-      : localApiReadTimeoutMs;
+      : /^\/api\/zentao-instances(?:\/|$)/u.test(path)
+        ? localApiZentaoReadTimeoutMs
+        : localApiReadTimeoutMs;
   const controller = new AbortController();
   const callerSignal = init.signal;
   let timedOut = false;

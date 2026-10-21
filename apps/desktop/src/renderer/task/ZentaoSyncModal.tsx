@@ -1,15 +1,19 @@
 import { parseZentaoTaskSyncLink, type TaskPriority, type ZentaoRemoteItemDetail, type ZentaoRemoteItemSummary, type ZentaoRemoteKind, type ZentaoTaskSyncLink } from '@zeus/shared';
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import type { ZentaoInstanceRecord } from '@zeus/shared';
+import { isZentaoWriteUnknown } from './useZentaoInstances.js';
 import type { DashboardClient } from '../dashboardClient.js';
 import type { CreateTaskRequest, TaskRecord, UpdateTaskRequest } from '../apiClient.js';
 import { Button } from '../ui/Button.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
-import type { ZentaoRemoteExecutionSummary, ZentaoRemoteProductSummary, ZentaoRemoteProjectSummary, ZentaoTaskSyncResult } from '../features/integrations/integrationContracts.js';
+import type { ZentaoRemoteExecutionSummary, ZentaoRemoteProjectSummary, ZentaoTaskSyncResult } from '../features/integrations/integrationContracts.js';
 
 const pageSize = 24;
 
 export interface ZentaoImportModalProps {
+  /** 由工作区统一分发已验证实例，失效后立即移除。 */
+  instances: ZentaoInstanceRecord[];
   open: boolean;
   language: 'zh-CN' | 'en-US';
   client?: DashboardClient;
@@ -21,6 +25,8 @@ export interface ZentaoImportModalProps {
 }
 
 export interface ZentaoPushModalProps {
+  /** 与任务菜单使用同一组已验证实例。 */
+  instances: ZentaoInstanceRecord[];
   open: boolean;
   language: 'zh-CN' | 'en-US';
   client?: DashboardClient;
@@ -34,7 +40,8 @@ export function ZentaoImportModal(props: ZentaoImportModalProps) {
   const zh = props.language === 'zh-CN';
   const titleId = useId();
   const descriptionId = useId();
-  const [instances, setInstances] = useState<Awaited<ReturnType<DashboardClient['loadZentaoInstances']>>>([]);
+  /** 只展示宿主当前验证通过的实例。 */
+  const instances = props.instances;
   const [instanceId, setInstanceId] = useState('');
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(0);
@@ -78,26 +85,20 @@ export function ZentaoImportModal(props: ZentaoImportModalProps) {
 
   useEffect(() => {
     if (!props.open || !client) return;
-    let cancelled = false;
     setError(null);
     setResultMessage(null);
     setConfirming(false);
     setSelected({});
     setPage(0);
-    void client
-      .loadZentaoInstances()
-      .then((loaded) => {
-        if (cancelled) return;
-        setInstances(loaded);
-        setInstanceId((current) => (current && loaded.some((item) => item.id === current) ? current : (loaded[0]?.id ?? '')));
-      })
-      .catch((reason: unknown) => {
-        if (!cancelled) setError(readError(reason, zh ? '禅道实例读取失败。' : 'Unable to load ZenTao instances.'));
-      });
-    return () => {
-      cancelled = true;
-    };
   }, [client, props.open, zh]);
+
+  useEffect(() => {
+    if (!props.open || instances.some((item) => item.id === instanceId)) return;
+    setInstanceId(instances[0]?.id ?? '');
+    setSelected({});
+    setConfirming(false);
+    setPage(0);
+  }, [props.open, instances, instanceId]);
 
   useEffect(() => {
     if (!props.open || !client || !instanceId) {
@@ -296,72 +297,236 @@ export function ZentaoImportModal(props: ZentaoImportModalProps) {
   );
 }
 
-/** 当前任务推送到禅道：创建与更新都先展示目标和远端写入计划。 */
-export function ZentaoPushModal(props: ZentaoPushModalProps) {
-  const zh = props.language === 'zh-CN';
-  const titleId = useId();
-  const descriptionId = useId();
-  const linked = useMemo(() => readTaskZentaoLink(props.task), [props.task]);
-  const [instances, setInstances] = useState<Awaited<ReturnType<DashboardClient['loadZentaoInstances']>>>([]);
-  const [instanceId, setInstanceId] = useState(linked?.instanceId ?? '');
+/** 创建与手动同步共用的禅道目标草稿，工时单位为小时。 */
+export interface ZentaoTaskDestination {
+  /** 已验证的禅道实例。 */
+  instanceId: string;
+  /** 禅道项目编号。 */
+  projectId: string;
+  /** 禅道执行编号。 */
+  executionId: string;
+  /** 预计开始日期。 */
+  estStarted: string;
+  /** 预计结束日期。 */
+  deadline: string;
+  /** 空串表示不提交预计工时，不能隐式改成零。 */
+  estimate: string;
+}
+
+/** 每次新建均使用独立目标草稿，不继承复制来源的远端身份。 */
+export function createZentaoTaskDestination(instanceId = ''): ZentaoTaskDestination {
+  return { instanceId, projectId: '', executionId: '', estStarted: todayDate(), deadline: tomorrowDate(), estimate: '' };
+}
+
+/** 提交前校验目标完整性，避免本地创建后才发现必填信息缺失。 */
+export function isZentaoDestinationComplete(value: ZentaoTaskDestination): boolean {
+  return Boolean(value.instanceId && value.projectId && value.executionId && value.estStarted && value.deadline && (value.estimate === '' || (Number.isFinite(Number(value.estimate)) && Number(value.estimate) >= 0)));
+}
+
+/** 创建与手动同步共享目标选择、日期和预计工时控件。 */
+export function ZentaoTaskDestinationFields(props: {
+  /** 使用现有本地服务客户端。 */
+  client?: DashboardClient;
+  /** 只传入当前服务验证通过的实例。 */
+  instances: ZentaoInstanceRecord[];
+  /** 当前表单值。 */
+  value: ZentaoTaskDestination;
+  /** 原子更新目标草稿，切换上级时清除下级选择。 */
+  onChange: (value: ZentaoTaskDestination) => void;
+  /** 与宿主界面一致的语言。 */
+  zh: boolean;
+  /** 提交中禁止修改。 */
+  disabled?: boolean;
+  /** 已关联对象禁止更换实例、项目和执行。 */
+  lockedTarget?: boolean;
+  /** 已开始的任务以及历史 Bug 不允许改写最初预计工时。 */
+  estimateDisabled?: boolean;
+  /** 历史 Bug 更新不要求补充执行。 */
+  requireExecution?: boolean;
+}) {
+  /** 列表只保存当前实例的数据。 */
   const [projects, setProjects] = useState<ZentaoRemoteProjectSummary[]>([]);
-  const [projectId, setProjectId] = useState(linked?.projectId ?? '');
+  /** 当前项目的可选执行。 */
   const [executions, setExecutions] = useState<ZentaoRemoteExecutionSummary[]>([]);
-  const [executionId, setExecutionId] = useState(linked?.executionId ?? '');
-  const [products, setProducts] = useState<ZentaoRemoteProductSummary[]>([]);
-  const [productId, setProductId] = useState(linked?.productId ?? '');
-  const [kind, setKind] = useState<ZentaoRemoteKind>(linked?.kind ?? (props.task.taskType === 'defect' ? 'bug' : 'task'));
-  const [estStarted, setEstStarted] = useState(todayDate());
-  const [deadline, setDeadline] = useState(tomorrowDate());
-  const [confirming, setConfirming] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [busy, setBusy] = useState(false);
+  /** 加载错误就地展示，只有用户主动操作才重新读取。 */
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<ZentaoTaskSyncResult | null>(null);
-  const client = props.client;
-  const linkedForInstance = linked && linked.instanceId === instanceId ? linked : null;
-  const isUpdate = Boolean(linked && linked.instanceId === instanceId && linked.kind === kind);
-
+  /** 项目列表读取中的交互锁。 */
+  const [loadingProjects, setLoadingProjects] = useState(false);
+  /** 执行列表读取中的交互锁。 */
+  const [loadingExecutions, setLoadingExecutions] = useState(false);
+  /** 用户显式重新读取的操作计数。 */
+  const [reload, setReload] = useState(0);
+  /** 只依赖稳定目标身份，编辑工时不会重新请求列表。 */
+  const { instanceId, projectId } = props.value;
   useEffect(() => {
-    if (!props.open || !client) return;
-    const initialLink = readTaskZentaoLink(props.task);
-    setConfirming(false);
-    setResult(null);
-    setError(null);
-    setKind(initialLink?.kind ?? (props.task.taskType === 'defect' ? 'bug' : 'task'));
-    setInstanceId(initialLink?.instanceId ?? '');
-    setProjectId(initialLink?.projectId ?? '');
-    setExecutionId(initialLink?.executionId ?? '');
-    setProductId(initialLink?.productId ?? '');
-    setEstStarted(todayDate());
-    setDeadline(tomorrowDate());
-    void client
-      .loadZentaoInstances()
-      .then((loaded) => {
-        setInstances(loaded);
-        setInstanceId((current) => (current && loaded.some((item) => item.id === current) ? current : (loaded[0]?.id ?? '')));
-      })
-      .catch((reason: unknown) => setError(readError(reason, zh ? '禅道实例读取失败。' : 'Unable to load ZenTao instances.')));
-  }, [client, props.open, props.task.taskType, props.task.id, zh]);
-
-  useEffect(() => {
-    if (!props.open || !client || !instanceId) {
-      setProjects([]);
-      setProducts([]);
-      return;
-    }
+    /** 关闭或切换目标后丢弃旧响应。 */
     let cancelled = false;
-    setLoading(true);
-    void Promise.all([client.loadZentaoProjects(instanceId), client.loadZentaoProducts(instanceId)])
-      .then(([loadedProjects, loadedProducts]) => {
-        if (cancelled) return;
-        setProjects(loadedProjects);
-        setProducts(loadedProducts);
-        setProjectId((current) => current || linkedForInstance?.projectId || loadedProjects[0]?.id || '');
-        setProductId((current) => current || linkedForInstance?.productId || loadedProducts[0]?.id || '');
+    setProjects([]);
+    setError(null);
+    if (!props.client || !instanceId) return;
+    setLoadingProjects(true);
+    void props.client
+      .loadZentaoProjects(instanceId)
+      .then((items) => {
+        if (!cancelled) setProjects(items);
       })
       .catch((reason: unknown) => {
-        if (!cancelled) setError(readError(reason, zh ? '禅道目标空间读取失败。' : 'Unable to load ZenTao destinations.'));
+        if (!cancelled) setError(readError(reason, '禅道项目读取失败。'));
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingProjects(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [props.client, instanceId, reload]);
+  useEffect(() => {
+    /** 关闭或切换目标后丢弃旧响应。 */
+    let cancelled = false;
+    setExecutions([]);
+    if (!props.client || !instanceId || !projectId) return;
+    setLoadingExecutions(true);
+    void props.client
+      .loadZentaoExecutions(instanceId, projectId)
+      .then((items) => {
+        if (!cancelled) setExecutions(items);
+      })
+      .catch((reason: unknown) => {
+        if (!cancelled) setError(readError(reason, '禅道执行读取失败。'));
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingExecutions(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [props.client, instanceId, projectId, reload]);
+  return (
+    <div className="zentao-sync-target-fields">
+      <div className="zentao-sync-toolbar">
+        <SelectField
+          label={props.zh ? '禅道实例' : 'ZenTao instance'}
+          value={instanceId}
+          onChange={(next) => props.onChange({ ...props.value, instanceId: next, projectId: '', executionId: '' })}
+          options={[{ value: '', label: props.zh ? '请选择实例' : 'Choose instance' }, ...props.instances.map((item) => ({ value: item.id, label: `${item.host}${item.basePath} · ${item.account}` }))]}
+          disabled={props.disabled || props.lockedTarget}
+        />
+        <SelectField
+          label={props.zh ? '禅道项目' : 'ZenTao project'}
+          value={projectId}
+          onChange={(next) => props.onChange({ ...props.value, projectId: next, executionId: '' })}
+          options={[
+            { value: '', label: props.zh ? '请选择项目' : 'Choose project' },
+            ...projects.map((item) => ({ value: item.id, label: item.name })),
+            ...(props.lockedTarget && projectId && !projects.some((item) => item.id === projectId) ? [{ value: projectId, label: `#${projectId}` }] : []),
+          ]}
+          disabled={props.disabled || props.lockedTarget || loadingProjects || !instanceId}
+        />
+        <SelectField
+          label={props.zh ? '禅道执行' : 'ZenTao execution'}
+          value={props.value.executionId}
+          onChange={(next) => props.onChange({ ...props.value, executionId: next })}
+          options={[
+            { value: '', label: props.zh ? '请选择执行' : 'Choose execution' },
+            ...executions.map((item) => ({ value: item.id, label: item.name })),
+            ...(props.lockedTarget && props.value.executionId && !executions.some((item) => item.id === props.value.executionId) ? [{ value: props.value.executionId, label: `#${props.value.executionId}` }] : []),
+          ]}
+          disabled={props.disabled || props.lockedTarget || loadingExecutions || !projectId}
+        />
+      </div>
+      <div className="zentao-sync-toolbar">
+        <label className="zentao-sync-field">
+          <span>{props.zh ? '预计开始' : 'Estimated start'}</span>
+          <input type="date" required value={props.value.estStarted} onChange={(event) => props.onChange({ ...props.value, estStarted: event.currentTarget.value })} disabled={props.disabled} />
+        </label>
+        <label className="zentao-sync-field">
+          <span>{props.zh ? '截止日期' : 'Deadline'}</span>
+          <input type="date" required value={props.value.deadline} onChange={(event) => props.onChange({ ...props.value, deadline: event.currentTarget.value })} disabled={props.disabled} />
+        </label>
+        <label className="zentao-sync-field">
+          <span>{props.zh ? '预计工时（小时）' : 'Estimated hours'}</span>
+          <input type="number" min="0" step="any" value={props.value.estimate} onChange={(event) => props.onChange({ ...props.value, estimate: event.currentTarget.value })} disabled={props.disabled || props.estimateDisabled} />
+        </label>
+      </div>
+      {props.estimateDisabled ? <small>{props.zh ? '已开始的任务保留最初预计工时；历史 Bug 不登记任务工时。' : 'Started tasks keep their original estimate; task hours do not apply to bugs.'}</small> : null}
+      {error ? (
+        <div role="alert" className="zentao-sync-error">
+          {error}{' '}
+          <Button onClick={() => setReload((current) => current + 1)} disabled={props.disabled}>
+            {props.zh ? '重新读取' : 'Reload'}
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** 当前任务推送到禅道：新对象统一为任务，已有对象只更新原关联。 */
+export function ZentaoPushModal(props: ZentaoPushModalProps) {
+  /** 中文和英文界面共享同一写入行为。 */
+  const zh = props.language === 'zh-CN';
+  /** 当前弹窗标题的无障碍关联身份。 */
+  const titleId = useId();
+  /** 服务端验证通过的可用实例。 */
+  const instances = props.instances;
+  /** 当前任务已经保存的远端关联。 */
+  const linked = readTaskZentaoLink(props.task);
+  /** 本次同步的目标、日期和预计工时草稿。 */
+  const [destination, setDestination] = useState(() => createZentaoTaskDestination());
+  /** 读取到的远端任务状态，未知时禁止更新。 */
+  const [remoteStatus, setRemoteStatus] = useState<string | null>(null);
+  /** 远端读取尚未完成的状态。 */
+  const [loading, setLoading] = useState(false);
+  /** 用户显式重新读取的操作计数。 */
+  const [reload, setReload] = useState(0);
+  /** 提交期间禁止编辑和关闭。 */
+  const [busy, setBusy] = useState(false);
+  /** 用户检查目标后进入最终确认。 */
+  const [confirming, setConfirming] = useState(false);
+  /** 写入结果未知时锁定再次提交。 */
+  const [unknown, setUnknown] = useState(false);
+  /** 当前操作的真实错误信息。 */
+  const [error, setError] = useState<string | null>(null);
+  /** 服务端确认接受的同步结果。 */
+  const [result, setResult] = useState<ZentaoTaskSyncResult | null>(null);
+  /** 同一事件循环内的重复点击不能产生两次请求。 */
+  const submitting = useRef(false);
+  /** 固定打开时的任务修订，其他入口变更后不自动接受新的写入目标。 */
+  const submittedTask = useRef(props.task);
+  useEffect(() => {
+    if (!props.open) return;
+    submittedTask.current = props.task;
+    /** 关闭或切换目标后丢弃旧响应。 */
+    let cancelled = false;
+    /** 打开窗口时绑定的真实关联。 */
+    const initialLink = readTaskZentaoLink(props.task);
+    setDestination({ ...createZentaoTaskDestination(initialLink?.instanceId), projectId: initialLink?.projectId ?? '', executionId: initialLink?.executionId ?? '' });
+    setError(null);
+    setResult(null);
+    setConfirming(false);
+    setUnknown(false);
+    setRemoteStatus(null);
+    if (!initialLink || !props.client) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    void props.client
+      .loadZentaoItem(initialLink.instanceId, initialLink.kind, initialLink.objectId)
+      .then((detail) => {
+        if (cancelled) return;
+        setRemoteStatus(detail.status);
+        setDestination({
+          instanceId: initialLink.instanceId,
+          projectId: detail.projectId ?? initialLink.projectId ?? '',
+          executionId: detail.executionId ?? initialLink.executionId ?? '',
+          estStarted: detail.estStarted?.slice(0, 10) ?? todayDate(),
+          deadline: detail.deadline?.slice(0, 10) ?? tomorrowDate(),
+          estimate: detail.estimate === undefined ? '' : String(detail.estimate),
+        });
+      })
+      .catch((reason: unknown) => {
+        if (!cancelled) setError(readError(reason, '禅道详情读取失败。'));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -369,219 +534,108 @@ export function ZentaoPushModal(props: ZentaoPushModalProps) {
     return () => {
       cancelled = true;
     };
-  }, [client, instanceId, linkedForInstance?.productId, linkedForInstance?.projectId, props.open, zh]);
-
-  useEffect(() => {
-    if (!props.open || !client || !instanceId || !projectId) {
-      setExecutions([]);
-      return;
-    }
-    let cancelled = false;
-    void client
-      .loadZentaoExecutions(instanceId, projectId)
-      .then((loaded) => {
-        if (cancelled) return;
-        setExecutions(loaded);
-        setExecutionId((current) => current || linkedForInstance?.executionId || loaded[0]?.id || '');
-      })
-      .catch((reason: unknown) => {
-        if (!cancelled) setError(readError(reason, zh ? '禅道执行读取失败。' : 'Unable to load ZenTao executions.'));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [client, instanceId, linkedForInstance?.executionId, projectId, props.open, zh]);
-
+  }, [props.open, props.task.id, props.client, reload]);
+  /** 提交使用当前任务修订和原关联，不提供静默换绑。 */
   async function syncTask(): Promise<void> {
-    if (!client || !instanceId || !projectId || !props.task.updatedAt) return;
+    if (!props.client || submitting.current || unknown) return;
+    submitting.current = true;
     setBusy(true);
     setError(null);
     try {
-      const next = await client.syncTaskToZentao(instanceId, {
+      /** 本次命令确认接受的完整任务。 */
+      const next = await props.client.syncTaskToZentao(destination.instanceId, {
         taskId: props.task.id,
-        expectedUpdatedAt: props.task.updatedAt,
-        kind,
-        projectId,
-        executionId: kind === 'task' ? executionId : executionId || undefined,
-        productId: kind === 'bug' ? productId : undefined,
-        estStarted: kind === 'task' ? estStarted : undefined,
-        deadline: kind === 'task' ? deadline : undefined,
-        remoteType: kind === 'task' ? 'devel' : 'codeerror',
+        expectedUpdatedAt: submittedTask.current.updatedAt ?? '',
+        kind: linked?.kind ?? 'task',
+        projectId: destination.projectId,
+        executionId: destination.executionId || undefined,
+        productId: linked?.productId,
+        estStarted: destination.estStarted,
+        deadline: destination.deadline,
+        estimate: linked && (linked.kind !== 'task' || remoteStatus !== 'wait') ? undefined : destination.estimate === '' ? undefined : Number(destination.estimate),
       });
       setResult(next);
       setConfirming(false);
       props.onUpdated(next.task);
     } catch (reason) {
-      setError(readError(reason, zh ? '同步到禅道失败。' : 'Unable to sync to ZenTao.'));
+      setError(readError(reason, '同步到禅道失败。'));
+      setUnknown(isZentaoWriteUnknown(reason));
     } finally {
+      submitting.current = false;
       setBusy(false);
     }
   }
-
-  if (!props.open) return null;
-  const targetProject = projects.find((item) => item.id === projectId);
-  const targetExecution = executions.find((item) => item.id === executionId);
-  const targetProduct = products.find((item) => item.id === productId);
-  const ready = Boolean(instanceId && projectId && (kind === 'task' ? executionId : productId));
+  if (!props.open || !props.client || !instances.length || (linked && !instances.some((item) => item.id === linked.instanceId))) return null;
+  /** 只有读到现有对象后才能提交，避免用默认值覆盖远端内容。 */
+  const ready = !loading && (!linked || remoteStatus !== null) && (linked?.kind === 'bug' ? Boolean(destination.projectId) : isZentaoDestinationComplete(destination)) && instances.some((item) => item.id === destination.instanceId);
   return (
     <ModalPortal rootClassName="zentao-sync-modal-portal" dismissDisabled={busy} onDismiss={props.onClose} role="dialog">
-      <section className="zentao-sync-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId}>
+      <section className="zentao-sync-modal zeus-solid-form-surface" role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <header className="zentao-sync-modal-header">
-          <div>
-            <strong id={titleId}>{zh ? '同步到禅道' : 'Sync to ZenTao'}</strong>
-            <p id={descriptionId}>
-              {zh
-                ? `为“${props.task.title}”选择远端目标。${isUpdate ? '当前操作将更新已有禅道对象。' : '当前操作将创建新的禅道对象。'}`
-                : `Choose a ZenTao destination for “${props.task.title}”. ${isUpdate ? 'This will update the linked object.' : 'This will create a new object.'}`}
-            </p>
-          </div>
-          <Button className="zentao-sync-modal-close" aria-label={zh ? '关闭' : 'Close'} onClick={props.onClose} disabled={busy}>
+          <strong id={titleId}>{zh ? '同步到禅道' : 'Sync to ZenTao'}</strong>
+          <Button onClick={props.onClose} disabled={busy} aria-label={zh ? '关闭' : 'Close'}>
             ×
           </Button>
         </header>
-        {confirming ? (
-          <section className="zentao-sync-confirm zentao-sync-modal-body">
-            <h3>{zh ? '确认远端写入' : 'Confirm remote write'}</h3>
-            <p>{zh ? `将${isUpdate ? '更新' : '创建'}禅道${kind === 'bug' ? '缺陷' : '任务'}：${props.task.title}` : `${isUpdate ? 'Update' : 'Create'} a ZenTao ${kind === 'bug' ? 'bug' : 'task'}: ${props.task.title}`}</p>
-            <dl className="zentao-sync-plan">
-              <div>
-                <dt>{zh ? '实例' : 'Instance'}</dt>
-                <dd>{instances.find((item) => item.id === instanceId)?.host ?? instanceId}</dd>
-              </div>
-              <div>
-                <dt>{zh ? '项目' : 'Project'}</dt>
-                <dd>{targetProject?.name ?? projectId}</dd>
-              </div>
-              {kind === 'task' ? (
-                <div>
-                  <dt>{zh ? '执行' : 'Execution'}</dt>
-                  <dd>{targetExecution?.name ?? executionId}</dd>
-                </div>
-              ) : (
-                <div>
-                  <dt>{zh ? '产品' : 'Product'}</dt>
-                  <dd>{targetProduct?.name ?? productId}</dd>
-                </div>
-              )}
-            </dl>
-            <p className="zentao-sync-warning">{zh ? '这一步会真实修改禅道数据，只在你确认后执行。' : 'This action changes data in ZenTao and runs only after confirmation.'}</p>
-            {error ? (
-              <p className="zentao-sync-error" role="alert">
-                <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
-              </p>
-            ) : null}
-            {result ? (
-              <p className="zentao-sync-success" role="status">
-                {zh ? `已${result.mode === 'created' ? '创建' : '更新'}禅道对象 #${result.remote.objectId}。` : `${result.mode === 'created' ? 'Created' : 'Updated'} ZenTao object #${result.remote.objectId}.`}
-              </p>
-            ) : null}
-            <footer className="zentao-sync-modal-footer">
-              <Button onClick={() => setConfirming(false)} disabled={busy}>
-                {zh ? '返回修改' : 'Back'}
-              </Button>
-              <Button variant="primary" busy={busy} onClick={() => void syncTask()}>
-                {zh ? '确认并写入禅道' : 'Confirm and write'}
-              </Button>
-            </footer>
-          </section>
-        ) : (
-          <>
-            <div className="zentao-sync-modal-body">
-              <div className="zentao-sync-task-preview">
-                <strong>{props.task.title}</strong>
-                <span>
-                  {props.task.taskCode ?? props.task.id} · {props.task.taskType === 'defect' ? (zh ? '缺陷' : 'Defect') : zh ? '需求' : 'Requirement'}
-                </span>
-              </div>
-              <div className="zentao-sync-toolbar">
-                <SelectField
-                  label={zh ? '禅道实例' : 'Instance'}
-                  value={instanceId}
-                  onChange={(value) => {
-                    setInstanceId(value);
-                    setProjectId('');
-                    setExecutionId('');
-                    setProductId('');
-                  }}
-                  options={instances.map((item) => ({ value: item.id, label: `${item.host}${item.basePath}` }))}
-                  disabled={loading || instances.length === 0}
-                />
-                <SelectField
-                  label={zh ? '远端类型' : 'Remote type'}
-                  value={kind}
-                  onChange={(value) => setKind(value as ZentaoRemoteKind)}
-                  options={[
-                    { value: 'task', label: zh ? '任务' : 'Task' },
-                    { value: 'bug', label: zh ? '缺陷' : 'Bug' },
-                  ]}
-                  disabled={!instanceId || loading}
-                />
-              </div>
-              <div className="zentao-sync-toolbar">
-                <SelectField
-                  label={zh ? '项目' : 'Project'}
-                  value={projectId}
-                  onChange={(value) => {
-                    setProjectId(value);
-                    setExecutionId('');
-                  }}
-                  options={projects.map((item) => ({ value: item.id, label: item.name }))}
-                  disabled={!instanceId || loading}
-                />
-                {kind === 'task' ? (
-                  <SelectField label={zh ? '执行' : 'Execution'} value={executionId} onChange={setExecutionId} options={executions.map((item) => ({ value: item.id, label: item.name }))} disabled={!projectId || loading} />
-                ) : (
-                  <SelectField label={zh ? '产品' : 'Product'} value={productId} onChange={setProductId} options={products.map((item) => ({ value: item.id, label: item.name }))} disabled={!instanceId || loading} />
-                )}
-              </div>
-              {kind === 'task' && !isUpdate ? (
-                <div className="zentao-sync-toolbar">
-                  <label className="zentao-sync-field">
-                    <span>{zh ? '预计开始' : 'Start date'}</span>
-                    <input type="date" value={estStarted} onChange={(event) => setEstStarted(event.currentTarget.value)} />
-                  </label>
-                  <label className="zentao-sync-field">
-                    <span>{zh ? '截止日期' : 'Deadline'}</span>
-                    <input type="date" value={deadline} onChange={(event) => setDeadline(event.currentTarget.value)} />
-                  </label>
-                </div>
-              ) : null}
-              {error ? (
-                <p className="zentao-sync-error" role="alert">
-                  <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
-                </p>
-              ) : null}
-              {result ? (
-                <p className="zentao-sync-success" role="status">
-                  {zh ? `最近一次已${result.mode === 'created' ? '创建' : '更新'}禅道对象 #${result.remote.objectId}。` : `Last action ${result.mode === 'created' ? 'created' : 'updated'} object #${result.remote.objectId}.`}
-                </p>
-              ) : null}
-              {!instances.length && !loading ? <p className="zentao-sync-empty">{zh ? '请先在设置 → 禅道中配置实例。' : 'Configure a ZenTao instance in Settings → ZenTao first.'}</p> : null}
-              <p className="zentao-sync-help">
-                {isUpdate
-                  ? zh
-                    ? '此任务已保存禅道关联，确认后会更新同一个远端对象。'
-                    : 'This task is linked to ZenTao and will update the same object after confirmation.'
-                  : zh
-                    ? '未发现同类型关联，确认后会在所选目标中创建新对象。'
-                    : 'No matching link was found; confirmation will create a new object in the selected destination.'}
-              </p>
-            </div>
-            <footer className="zentao-sync-modal-footer">
-              <Button onClick={props.onClose} disabled={busy}>
-                {zh ? '取消' : 'Cancel'}
-              </Button>
-              <Button variant="primary" disabled={!ready || busy || !props.task.updatedAt} onClick={() => setConfirming(true)}>
-                {zh ? `审核并${isUpdate ? '更新' : '创建'}` : `Review and ${isUpdate ? 'update' : 'create'}`}
-              </Button>
-            </footer>
-          </>
-        )}
+        <div className="zentao-sync-modal-body">
+          {result ? (
+            <p role="status" className="zentao-sync-success">
+              {zh ? '已同步到禅道' : 'Synced to ZenTao'} #{result.remote.objectId}
+            </p>
+          ) : (
+            <>
+              <p>{linked ? (zh ? `更新已关联对象 #${linked.objectId}` : `Update linked item #${linked.objectId}`) : zh ? '创建新的禅道任务，默认指派给当前禅道账号。' : 'Create a ZenTao task assigned to the current account.'}</p>
+              <ZentaoTaskDestinationFields
+                client={props.client}
+                instances={instances}
+                value={destination}
+                onChange={(value) => {
+                  setDestination(value);
+                  setConfirming(false);
+                }}
+                zh={zh}
+                disabled={busy || loading || confirming || unknown}
+                lockedTarget={Boolean(linked)}
+                estimateDisabled={Boolean(linked && (linked.kind !== 'task' || remoteStatus !== 'wait'))}
+              />
+              {confirming ? <p role="status">{zh ? `确认将“${props.task.title}”${linked ? '更新到已关联对象' : '创建到所选项目和执行'}？` : `Confirm syncing “${props.task.title}”?`}</p> : null}
+            </>
+          )}
+          {error ? (
+            <p role="alert" className="zentao-sync-error">
+              {error}
+            </p>
+          ) : null}
+          {unknown ? <p role="status">{zh ? '写入结果未确认，请先到禅道核对，勿重复提交。' : 'The write result is unknown. Check ZenTao before submitting again.'}</p> : null}
+          {linked ? (
+            <a className="zentao-sync-source-link" href={linked.sourceUrl} target="_blank" rel="noreferrer">
+              {zh ? '在禅道查看' : 'View in ZenTao'}
+              <span aria-hidden="true">↗</span>
+            </a>
+          ) : null}
+          {linked && remoteStatus === null && !loading ? <Button onClick={() => setReload((value) => value + 1)}>{zh ? '重新读取' : 'Reload'}</Button> : null}
+        </div>
+        <footer className="zentao-sync-modal-footer">
+          <Button onClick={props.onClose} disabled={busy}>
+            {zh ? '关闭' : 'Close'}
+          </Button>
+          {confirming && !result && !unknown ? (
+            <Button onClick={() => setConfirming(false)} disabled={busy}>
+              {zh ? '返回修改' : 'Back to edit'}
+            </Button>
+          ) : null}
+          {!result ? (
+            <Button variant="primary" onClick={() => (confirming ? void syncTask() : setConfirming(true))} disabled={!ready || busy || unknown}>
+              {busy ? (zh ? '正在同步…' : 'Syncing…') : confirming ? (zh ? '确认同步' : 'Confirm sync') : zh ? '检查同步内容' : 'Review sync'}
+            </Button>
+          ) : null}
+        </footer>
       </section>
     </ModalPortal>
   );
 }
 
+/** 导入确认继续使用既有共享弹窗布局。 */
 function ConfirmImportView(props: { zh: boolean; items: ZentaoRemoteItemSummary[]; projectName?: string; busy: boolean; onBack: () => void; onConfirm: () => void }) {
   return (
     <section className="zentao-sync-confirm zentao-sync-modal-body">
@@ -680,7 +734,7 @@ function updateTaskFromZentaoDetail(task: TaskRecord, detail: ZentaoRemoteItemDe
   };
 }
 
-function readTaskZentaoLink(task: TaskRecord): ZentaoTaskSyncLink | null {
+export function readTaskZentaoLink(task: TaskRecord): ZentaoTaskSyncLink | null {
   try {
     return parseZentaoTaskSyncLink(readSourceContext(task.sourceContextJson).zentao);
   } catch {
@@ -709,13 +763,17 @@ function toLocalPriority(value: string): TaskPriority {
   return 'p2';
 }
 
-function todayDate(): string {
-  return new Date().toISOString().slice(0, 10);
+/** 使用当前用户日历日期，避免 UTC 在凌晨回退到前一天。 */
+export function todayDate(): string {
+  const date = new Date();
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
+/** 以日历加一天，跨夏令时不使用固定毫秒数。 */
 function tomorrowDate(): string {
-  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
-  return tomorrow.toISOString().slice(0, 10);
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  return `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`;
 }
 
 function readError(reason: unknown, fallback: string): string {

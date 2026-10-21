@@ -1,4 +1,5 @@
-import { normalizeTaskDeadline, type TaskDeadline } from '@zeus/shared';
+import { normalizeTaskDeadline, type TaskDeadline, type ZentaoInstanceRecord } from '@zeus/shared';
+import { createZentaoTaskDestination, isZentaoDestinationComplete, ZentaoTaskDestinationFields, type ZentaoTaskDestination } from '../../task/ZentaoSyncModal.js';
 import { normalizeInputSuggestionSettings, temporaryWorkspaceId } from '@zeus/shared';
 import { usePresenceOpen } from '../../ui/MotionPresence.js';
 import { retainInputFocus } from '../../ui/retainInputFocus.js';
@@ -155,6 +156,8 @@ export type ControlBusyProps = { 'aria-busy'?: true; 'data-loading'?: 'true' };
 export type TaskCreateAttachment = TaskAttachmentView;
 export type TaskCreateAttachmentCandidate = TaskAttachmentCandidate;
 export type TaskCreateFormState = {
+  /** 仅当前创建表单的可选同步意图，不进入本地任务创建请求。 */
+  zentao?: ZentaoTaskDestination;
   /** 独立的截止配置，不从父任务继承。 */
   deadline?: TaskDeadline | null;
   /** 草稿提交目标，与当前浏览的项目独立。 */
@@ -1513,6 +1516,12 @@ export function TaskCreateFieldAttachments(props: {
 
 /** 创建和复制共用内容表单，第三方读取完成后回到草稿确认。 */
 export function TaskCreateModal(props: {
+  /** 禅道控件与其他任务入口共用已验证实例。 */
+  zentaoInstances?: ZentaoInstanceRecord[];
+  /** 沿用现有集成客户端。 */
+  zentaoClient?: DashboardClient;
+  /** 勾选、取消和目标编辑均只修改本次草稿。 */
+  onZentaoChange?: (value: ZentaoTaskDestination | undefined) => void;
   open: boolean;
   /** 复制任务可选择目标项目；新建任务沿用打开时的项目。 */
   projects: ProjectRecord[];
@@ -2176,6 +2185,29 @@ export function TaskCreateModal(props: {
                   </div>
                 </>
               ) : null}
+              {props.zentaoInstances?.length ? (
+                <section className="task-create-zentao-options">
+                  <label className="task-create-zentao-toggle">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(props.form.zentao)}
+                      onChange={(event) => props.onZentaoChange?.(event.currentTarget.checked ? createZentaoTaskDestination(props.zentaoInstances?.[0]?.id) : undefined)}
+                      disabled={interactionBusy}
+                    />
+                    <span>{props.copy.taskCountPrefix === 'Tasks' ? 'Create in ZenTao too' : '同步创建到禅道'}</span>
+                  </label>
+                  {props.form.zentao ? (
+                    <ZentaoTaskDestinationFields
+                      client={props.zentaoClient}
+                      instances={props.zentaoInstances}
+                      value={props.form.zentao}
+                      onChange={(value) => props.onZentaoChange?.(value)}
+                      zh={props.copy.taskCountPrefix !== 'Tasks'}
+                      disabled={interactionBusy}
+                    />
+                  ) : null}
+                </section>
+              ) : null}
               {settingsOpen ? (
                 <div ref={settingsPanelRef} id="task-create-options" className="task-create-options">
                   <div className="task-create-field task-create-parent-field">
@@ -2245,10 +2277,18 @@ export function TaskCreateModal(props: {
               <Button variant="secondary" size="regular" className="task-create-settings-toggle" aria-expanded={settingsOpen} aria-controls="task-create-options" onClick={() => setSettingsOpen((open) => !open)} disabled={interactionBusy}>
                 {props.copy.taskCreateMoreSettings}
               </Button>
-              <Button type="submit" variant="secondary" size="regular" className="task-create-submit-button" busy={props.busy} disabled={interactionBusy}>
+              <Button type="submit" variant="secondary" size="regular" className="task-create-submit-button" busy={props.busy} disabled={interactionBusy || Boolean(props.form.zentao && !isZentaoDestinationComplete(props.form.zentao))}>
                 {props.busy ? props.copy.taskCreateSubmitting : props.copy.taskCreateSubmit}
               </Button>
-              <Button type="submit" name="task-create-action" value="create-and-push" variant="primary" size="regular" className="task-create-push-button" disabled={interactionBusy}>
+              <Button
+                type="submit"
+                name="task-create-action"
+                value="create-and-push"
+                variant="primary"
+                size="regular"
+                className="task-create-push-button"
+                disabled={interactionBusy || Boolean(props.form.zentao && !isZentaoDestinationComplete(props.form.zentao))}
+              >
                 {props.copy.taskCreateSubmitAndPush}
               </Button>
             </>
