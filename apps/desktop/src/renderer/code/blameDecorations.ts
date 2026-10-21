@@ -1,9 +1,12 @@
 import { Decoration, EditorView, ViewPlugin, WidgetType, type ViewUpdate } from '@codemirror/view';
 import type { GitBlameLine } from '../features/git/gitContracts.js';
+import { hasBlameCommit } from './blamePresentation.js';
 
 /** 仅在编辑器聚焦且光标为单点时展示当前行；编辑后立即隐藏旧归属，等待磁盘版本刷新。 */
 export function blameDecorations(lines: GitBlameLine[], labels: { locale?: string }) {
-  const byLine = new Map(lines.map((line) => [line.line, line]));
+  /** 先剔除没有真实提交的记录，所有源码入口都不会生成占位详情。 */
+  const byLine = new Map(lines.filter(hasBlameCommit).map((line) => [line.line, line]));
+  if (byLine.size === 0) return [];
   return ViewPlugin.define(
     (view) => ({
       stale: false,
@@ -53,8 +56,8 @@ class BlameWidget extends WidgetType {
     const element = document.createElement('span');
     /** 长归属信息在同一行省略，完整详情由外层统一提示提供。 */
     const text = document.createElement('span');
-    /** 作者缺省值沿用已有显示约定。 */
-    const author = this.blame.author || 'Unknown';
+    /** 装饰只接收已确认的真实作者，不生成 Unknown 占位。 */
+    const author = this.blame.author.trim();
     /** 相对时间使用当前界面语言。 */
     const relativeTime = formatRelativeTime(this.blame.authorTime, this.labels.locale);
     /** 无提交说明时显示已有短提交号。 */
