@@ -15953,22 +15953,8 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   min-block-size: 0;
   block-size: 100%;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-}
-
-.macos-ai-app .task-git-delivery-scopebar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 14px 20px;
-  border-block-end: 0;
-  background: var(--zeus-product-panel);
-  font-size: 13px;
-}
-
-.macos-ai-app .task-git-delivery-scopebar span {
-  color: var(--zeus-product-muted);
+  /* 文件树、操作区和差异直接使用可用高度，不为重复范围说明保留一行。 */
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .macos-ai-app .task-git-delivery-load-state {
@@ -17347,11 +17333,6 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
 
   .macos-ai-app .task-git-delivery-actions {
     padding: 8px 12px;
-  }
-
-  .macos-ai-app .task-git-delivery-scopebar {
-    flex-wrap: wrap;
-    gap: 6px;
   }
 }
 

@@ -81,20 +81,6 @@ export function InitialLoadState(props: { zh: boolean; error?: string | null; on
   );
 }
 
-/** 仓库与文件采用同一选择口径。 */
-export function DeliveryScopeBar(props: { selectedRepositories: number; totalRepositories: number; selectedFiles: number; zh: boolean }) {
-  return (
-    <section className="task-git-delivery-scopebar" aria-label={props.zh ? '当前交付选择' : 'Current delivery selection'}>
-      <strong>{props.zh ? '按文件审查，按仓库交付' : 'Review by file, deliver by repository'}</strong>
-      <span>
-        {props.zh
-          ? `已选 ${props.selectedRepositories}/${props.totalRepositories} 个仓库 · ${props.selectedFiles} 个待提交文件`
-          : `${props.selectedRepositories}/${props.totalRepositories} repositories · ${props.selectedFiles} uncommitted files selected`}
-      </span>
-    </section>
-  );
-}
-
 /** 按任务分支、仓库与目录组织交付范围，审阅操作不改变勾选。 */
 export function DeliveryRepositoryFileTree(props: {
   groups: DeliveryRepositoryGroup[];
@@ -537,9 +523,6 @@ export function repositoryLabel(workspace: Pick<TaskWorkspaceIndexSnapshot, 'rep
 /** 普通目录和任务工作树共用同一文件审查、操作区及差异布局。 */
 export function GitDeliveryWorkspace(props: {
   zh: boolean;
-  selectedRepositories: number;
-  totalRepositories: number;
-  selectedFiles: number;
   fileBrowser: ReactNode;
   actions: ReactNode;
   selectedFile: string;
@@ -555,7 +538,6 @@ export function GitDeliveryWorkspace(props: {
 }) {
   return (
     <div className="task-git-delivery-content">
-      <DeliveryScopeBar {...props} />
       <div className="task-git-review-layout task-git-delivery-layout">
         {props.fileBrowser}
         {props.actions}

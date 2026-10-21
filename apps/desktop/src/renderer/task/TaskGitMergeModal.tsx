@@ -1104,9 +1104,6 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
           ) : (
             <GitDeliveryWorkspace
               zh={zh}
-              selectedRepositories={selectedWorkspaceIds.length}
-              totalRepositories={visibleWorkspaceItems.length}
-              selectedFiles={selectedCommitFileCount}
               fileBrowser={
                 <DeliveryRepositoryFileTree
                   groups={repositoryGroups}

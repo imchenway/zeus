@@ -353,9 +353,6 @@ export function ConversationGitDeliveryContent(props: { client: DashboardClient;
           ) : (
             <GitDeliveryWorkspace
               zh={zh}
-              selectedRepositories={selectedIds.length}
-              totalRepositories={groups.length}
-              selectedFiles={commitCount}
               busy={Boolean(busyAction)}
               fileStatus={groups.find((group) => group.workspace.id === focus.repositoryId)?.files.find((file) => file.path === focus.path)?.status}
               selectedFile={focus.path}
