@@ -46,14 +46,13 @@ export function createSessionWorkspaceStateSelector(): StateSelector {
   };
 }
 
-/** 会话正文仅订阅可见历史、轮次、请求、分页游标、批注与正文错误。 */
+/** 会话正文订阅可见历史、轮次用量、请求、分页游标、批注与正文错误，保留账本指标供正文显示。 */
 export function createConversationTranscriptStateSelector(): StateSelector {
   return cachedSelector((state) => ({
     ...state,
     providerSettings: null,
     tokenUsage: null,
     unifiedUsage: null,
-    sessionMetrics: null,
     rateLimits: null,
     mcpStartup: null,
     seenEventIds: emptySeenEvents,
