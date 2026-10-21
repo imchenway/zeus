@@ -99,7 +99,7 @@ export const CodeEditor = memo(function CodeEditor(props: CodeEditorProps) {
   /** 阅读选项独立更新，保留选区、滚动和撤销记录。 */
   const readingSlot = useRef(new Compartment()).current;
   /** 源码、只读预览和差异共用行号菜单。 */
-  const reading = useCodeReadingOptions(props.blameLines, props.locale);
+  const reading = useCodeReadingOptions(hostRef, props.blameLines, props.locale);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -254,7 +254,7 @@ export const CodeEditor = memo(function CodeEditor(props: CodeEditorProps) {
 
   return (
     <>
-      <div className="project-source-code-editor" style={{ height: '100%', minHeight: 0, minWidth: 0, overflow: 'hidden' }} ref={hostRef} aria-label={props.label ?? props.path} onContextMenu={reading.onContextMenu} />
+      <div className="project-source-code-editor" style={{ height: '100%', minHeight: 0, minWidth: 0, overflow: 'hidden' }} ref={hostRef} aria-label={props.label ?? props.path} />
       {reading.menu}
     </>
   );

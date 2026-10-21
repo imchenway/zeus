@@ -1,4 +1,4 @@
-import { useMemo, useState, useSyncExternalStore, type MouseEvent } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Prec } from '@codemirror/state';
 import { EditorView, GutterMarker, gutter } from '@codemirror/view';
@@ -52,7 +52,7 @@ class AuthorMarker extends GutterMarker {
 }
 
 /** 源码、差异、评论预览共用菜单、软换行和逐行归属侧栏。 */
-export function useCodeReadingOptions(lines?: GitBlameLine[], locale = 'zh-CN') {
+export function useCodeReadingOptions(hostRef: RefObject<HTMLElement | null>, lines?: GitBlameLine[], locale = 'zh-CN') {
   /** 两侧编辑器读取同一快照，菜单切换不会重建文档。 */
   const options = useCodeReadingPreferences();
   /** 菜单只从行号及其左侧打开，正文保留原生选择和右键行为。 */
@@ -78,15 +78,22 @@ export function useCodeReadingOptions(lines?: GitBlameLine[], locale = 'zh-CN') 
     ],
     [lines, options.wrap, options.blame, zh],
   );
-  /** 只消费侧栏右键，不影响左键拖选和评论按钮。 */
-  function onContextMenu(event: MouseEvent<HTMLElement>) {
-    /** 独立预览文档的节点不一定属于主窗口的 Element 构造器。 */
-    const target = event.target as Element;
-    if (typeof target.closest !== 'function' || !target.closest('.cm-gutters')) return;
-    event.preventDefault();
-    event.stopPropagation();
-    setPoint({ x: event.clientX, y: event.clientY, document: event.currentTarget.ownerDocument });
-  }
+  useEffect(() => {
+    /** 使用 DOM 冒泡覆盖 React portal 渲染的差异行号，所有入口保留同一个菜单。 */
+    const host = hostRef.current;
+    if (!host) return;
+    /** 只消费侧栏右键，不影响左键拖选和评论按钮。 */
+    const onContextMenu = (event: MouseEvent) => {
+      /** 独立预览文档的节点不一定属于主窗口的 Element 构造器。 */
+      const target = event.target as Element;
+      if (typeof target.closest !== 'function' || !target.closest('.cm-gutters')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setPoint({ x: event.clientX, y: event.clientY, document: host.ownerDocument });
+    };
+    host.addEventListener('contextmenu', onContextMenu);
+    return () => host.removeEventListener('contextmenu', onContextMenu);
+  }, [hostRef]);
   /** 两个选项都有可访问的选中状态，菜单关闭交给统一组件。 */
   const menu = point
     ? createPortal(
@@ -117,5 +124,5 @@ export function useCodeReadingOptions(lines?: GitBlameLine[], locale = 'zh-CN') 
         point.document.querySelector('.macos-ai-app') ?? point.document.body,
       )
     : null;
-  return { extension, onContextMenu, menu };
+  return { extension, menu };
 }

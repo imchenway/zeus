@@ -106,7 +106,7 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
   /** 当前准确版本的逐行归属。 */
   const lines = props.blame ?? props.blameLines ?? gitBlame?.lines;
   /** 左侧菜单与项目编辑器完全一致。 */
-  const reading = useCodeReadingOptions(lines, props.locale);
+  const reading = useCodeReadingOptions(hostRef, lines, props.locale);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -245,7 +245,7 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
 
   return (
     <>
-      <div className="session-source-code-preview" ref={hostRef} onContextMenu={reading.onContextMenu} />
+      <div className="session-source-code-preview" ref={hostRef} />
       {reading.menu}
     </>
   );
