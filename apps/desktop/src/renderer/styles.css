@@ -12103,6 +12103,19 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   stroke-width: 1.42;
 }
 
+/* 项目标题沿用快捷导航的字形和颜色，只增加末尾的折叠状态列。 */
+.macos-ai-app.zeus-shell .project-first-sidebar .codex-source-list-quick-actions .project-sidebar-group-toggle {
+  grid-template-columns: 22px minmax(0, 1fr) 16px;
+}
+.project-sidebar-group-caret {
+  inline-size: 14px;
+  block-size: 14px;
+  justify-self: end;
+}
+.project-sidebar-group-toggle[aria-expanded='true'] .project-sidebar-group-caret {
+  transform: rotate(90deg);
+}
+
 .macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-heading {
   color: var(--zeus-product-subtle);
   font-size: 13px;
@@ -20820,28 +20833,17 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   }
 }
 
-/* 项目分组保留独立开关，筛选与新建共用最右侧 26px 槽位。 */
-.macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-heading {
-  grid-template-columns: minmax(0, 1fr) auto;
-  margin-block-end: 10px;
+/* 分组按钮铺满导航行，独立操作位于文字和最右侧箭头之间，避免嵌套按钮。 */
+.project-sidebar-group-header {
+  position: relative;
 }
-
-/* 分组开关直接复用项目行的箭头尺寸、旋转和焦点样式。 */
-.project-sidebar-group-title {
-  align-items: center;
-  display: flex;
-  gap: 4px;
-  min-inline-size: 0;
+.project-sidebar-group-header .project-quick-action-label {
+  padding-inline-end: 54px;
 }
-.project-sidebar-group-title > strong {
-  font-size: inherit;
-  font-weight: inherit;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.project-sidebar-group-title > .project-disclosure-button {
-  flex: 0 0 28px;
+.macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-group-header .project-sidebar-heading-actions {
+  position: absolute;
+  inset-inline-end: 22px;
+  inset-block-start: 0;
 }
 
 .macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-heading-actions {

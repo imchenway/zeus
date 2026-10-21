@@ -8,6 +8,7 @@ import { createPortal } from 'react-dom';
 import { AlarmIcon } from '@phosphor-icons/react/dist/csr/Alarm';
 import { PuzzlePieceIcon } from '@phosphor-icons/react/dist/csr/PuzzlePiece';
 import { FolderIcon } from '@phosphor-icons/react/dist/csr/Folder';
+import { FoldersIcon } from '@phosphor-icons/react/dist/csr/Folders';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import { FolderPlusIcon as FolderPlus } from '@phosphor-icons/react/dist/csr/FolderPlus';
 import { FunnelIcon as Funnel } from '@phosphor-icons/react/dist/csr/Funnel';
@@ -932,23 +933,15 @@ export function SidebarNav(props: {
       )}
       {/* 项目分组始终保留新建入口，空列表也可直接创建项目。 */}
       <section className="project-sidebar-list zeus-source-list" role="navigation" data-source-list-keyboard="vertical" aria-label={copy.projectListLabel} onKeyDown={handleSourceListKeyboardNavigation} onScroll={handleSidebarScroll}>
-        <div className="project-sidebar-heading">
-          <span className="project-sidebar-group-title">
-            <button
-              type="button"
-              className="project-disclosure-button"
-              aria-label={projectsExpanded ? (zh ? '收起所有项目' : 'Collapse all projects') : zh ? '展开所有项目' : 'Expand all projects'}
-              data-icon-tooltip={projectsExpanded ? (zh ? '收起所有项目' : 'Collapse all projects') : zh ? '展开所有项目' : 'Expand all projects'}
-              aria-expanded={projectsExpanded}
-              aria-controls={projectsListId}
-              onClick={() => setProjectsExpanded((value) => !value)}
-            >
-              <span aria-hidden="true">
-                <CaretRight weight="regular" />
-              </span>
-            </button>
-            <strong>{zh ? '项目' : 'Projects'}</strong>
-          </span>
+        {/* 项目标题共用快捷导航样式，筛选和新建位于右侧箭头之前。 */}
+        <div className="project-quick-actions codex-source-list-quick-actions project-sidebar-group-header">
+          <button type="button" className="project-quick-action project-sidebar-group-toggle" aria-label={copy.projects} aria-expanded={projectsExpanded} aria-controls={projectsListId} onClick={() => setProjectsExpanded((value) => !value)}>
+            <span className="project-quick-action-icon" aria-hidden="true">
+              <FoldersIcon weight="regular" data-icon-source="phosphor" />
+            </span>
+            <span className="project-quick-action-label">{copy.projects}</span>
+            <CaretRight className="project-sidebar-group-caret" weight="regular" aria-hidden="true" />
+          </button>
           <span className="project-sidebar-heading-actions">
             {showConversationNavigation ? (
               <ZeusSelect
