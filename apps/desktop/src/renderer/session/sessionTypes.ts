@@ -481,6 +481,8 @@ export interface NativeContextCompactionStatus {
 
 export interface NativeSessionMetricsSnapshot {
   usage: NativeUnifiedUsageSnapshot;
+  /** 持久轮次与实时轮次共用的账本摘要；无账本时保留缺项。 */
+  turnUsage?: Record<string, import('@zeus/shared').ConversationTurnUsage>;
   cost: {
     /** 供应商原币估算。 */
     costs?: import('@zeus/shared').EstimatedMoney[];

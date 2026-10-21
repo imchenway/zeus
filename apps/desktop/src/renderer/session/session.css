@@ -4891,7 +4891,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .session-thread-item.has-message-actions {
-  margin-block-end: 20px;
+  margin-block-end: 0;
 }
 
 /* 结构化回答沿用正文列宽和询问卡片；普通消息继续使用右侧气泡。 */
@@ -4919,7 +4919,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   border-color: var(--zeus-control-accent);
 }
 
-/* 排队消息由正文气泡和正常占位的底栏组成，短消息也为常显操作留出宽度。 */
+/* 用户消息复用排队消息的气泡与操作栏分层，正文与操作独立占位。 */
+.session-codex-parity-v1 .session-thread-item-user.has-message-actions,
 .session-codex-parity-v1 .session-thread-item-user.has-queued-footer {
   background: transparent;
   box-shadow: none;
@@ -4928,10 +4929,14 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   padding: 0;
 }
 
-.session-codex-parity-v1 .session-thread-item-user:not([data-question-answer]) > .session-queued-message-bubble {
+.session-codex-parity-v1 .session-thread-item-user:not([data-question-answer]) > .session-user-message-bubble {
   background: var(--session-message-background);
   box-shadow: none;
   border-radius: 14px;
+  box-sizing: border-box;
+  inline-size: fit-content;
+  margin-inline-start: auto;
+  max-inline-size: 100%;
   padding: 10px 13px;
 }
 
@@ -4955,6 +4960,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
 /* 时间与复制继续按原规则显隐，仅取消绝对定位，不与常显队列操作争用第二行。 */
 .session-codex-parity-v1 .session-queued-thread-footer > .session-thread-item-actions {
+  margin-block-start: 0;
   margin-inline-start: auto;
   position: static;
 }
@@ -5297,15 +5303,18 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   text-underline-offset: 2px;
 }
 
+/* 正文底栏按实际高度占位，用量换行时不遮挡下一条消息。 */
 .session-codex-parity-v1 .session-thread-item-actions {
   align-items: center;
   color: var(--session-message-action);
   display: flex;
+  flex-wrap: wrap;
   gap: 2px;
-  inset-block-start: calc(100% + 5px);
-  inset-inline-end: 0;
+  justify-content: flex-end;
+  margin-block-start: 5px;
+  max-inline-size: 100%;
   opacity: 0;
-  position: absolute;
+  position: static;
   transition: opacity 120ms ease-out;
   z-index: 2;
 }
@@ -5316,8 +5325,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .session-thread-item-actions[data-message-actions='assistant'] {
-  inset-inline-end: auto;
-  inset-inline-start: 0;
+  justify-content: flex-start;
 }
 
 /* 触屏没有悬停能力，操作保持可见；桌面仍在悬停或键盘聚焦时显示。 */
@@ -5371,6 +5379,53 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   line-height: 28px;
   padding-inline: 5px 4px;
   white-space: nowrap;
+}
+
+/* 轮次指标位于正文底部右侧，按实际高度占位，窄窗口按指标换行。 */
+.session-codex-parity-v1 .session-message-turn-usage {
+  color: var(--session-message-action);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  gap: 2px 14px;
+  justify-content: flex-end;
+  line-height: 22px;
+  max-inline-size: 100%;
+  padding-block-start: 10px;
+}
+
+/* 助手指标与 Markdown 正文右缘对齐；展开后跟随展开的正文宽度。 */
+.session-codex-parity-v1 .session-thread-item-assistant > .session-message-turn-usage {
+  max-inline-size: var(--session-markdown-max);
+}
+
+.session-codex-parity-v1 .session-thread-item-assistant.is-message-expanded > .session-message-turn-usage {
+  max-inline-size: none;
+}
+
+/* 多币种金额过长时仍允许在列内换行。 */
+.session-codex-parity-v1 .session-message-turn-usage > span {
+  align-items: center;
+  display: inline-flex;
+  gap: 4px;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+/* 键盘聚焦时保留明确轮廓，与悬停说明共同标识当前指标。 */
+.session-codex-parity-v1 .session-message-turn-usage > span:focus-visible {
+  border-radius: 3px;
+  outline: 2px solid var(--zeus-control-accent);
+  outline-offset: 2px;
+}
+
+/* 轮次消耗与费用采用统一的小号线性图标，不随数值挤压变形。 */
+.session-codex-parity-v1 .session-message-turn-usage svg {
+  block-size: 15px;
+  flex-shrink: 0;
+  inline-size: 15px;
 }
 
 .session-codex-parity-v1 .session-thread-item-assistant.is-message-expanded .session-markdown {
@@ -7757,6 +7812,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
     max-inline-size: 88%;
   }
 
+  .session-codex-parity-v1 .session-thread-item-user.has-message-actions,
   .session-codex-parity-v1 .session-thread-item-user.has-queued-footer {
     min-inline-size: min(320px, 88%);
   }
@@ -10545,17 +10601,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
 .session-codex-parity-v1 .session-turn-duration[data-status='failed'] {
   color: var(--session-danger);
-}
-
-/* 答复底栏保留布局占位，悬停显隐沿用用户消息规则，窄分栏可自然换行。 */
-.session-codex-parity-v1 .session-thread-item-assistant > .session-thread-item-actions {
-  flex-wrap: wrap;
-  margin-block-start: 5px;
-  position: static;
-}
-
-.session-codex-parity-v1 .session-thread-item-assistant.has-message-actions {
-  margin-block-end: 0;
 }
 
 /* 活动轮次的行保留稳定布局层，由合成器承接同一状态行在时间线中的位置变化。 */

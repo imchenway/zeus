@@ -7,6 +7,22 @@ export interface TokenUsageBreakdown {
   reasoningOutputTokens: number;
 }
 
+/** 助手正文底部的轮次消耗，缺少账本时不生成摘要。 */
+export interface ConversationTurnUsage {
+  /** 本轮已记录的 Token 总数，不是单条正文或会话累计量。 */
+  totalTokens: number;
+  /** 本轮账本记录的输入 Token，沿用供应商的输入统计口径。 */
+  inputTokens: number;
+  /** 本轮账本记录的输出 Token，沿用供应商的输出统计口径。 */
+  outputTokens: number;
+  /** 已记录用量是否覆盖完整轮次。 */
+  usageComplete: boolean;
+  /** 按请求价格快照汇总的原币等价费用，不表示实际扣款。 */
+  costs: import('./modelPricing.js').EstimatedMoney[];
+  /** 用量与价格均完整时才为真。 */
+  costComplete: boolean;
+}
+
 /** 固定字段顺序比较供应商用量，避免对象字段顺序影响请求关联。 */
 export function tokenUsageSignature(usage: TokenUsageBreakdown): string {
   return JSON.stringify([usage.inputTokens, usage.cachedInputTokens, usage.cacheWriteInputTokens, usage.outputTokens, usage.reasoningOutputTokens, usage.totalTokens]);

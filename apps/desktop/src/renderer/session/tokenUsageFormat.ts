@@ -1,4 +1,5 @@
 import type { SessionUiLanguage } from './ThreadItemView.js';
+import type { EstimatedMoney } from '@zeus/shared';
 
 const TOKEN_USAGE_UNITS = [
   { suffix: '', divisor: 1 },
@@ -34,4 +35,22 @@ export function formatTokenCount(count: number, language: SessionUiLanguage): { 
     compact: unitIndex === 0 ? exact : `${TOKEN_USAGE_COMPACT_FORMATTER.format(rounded)}${unit.suffix}`,
     exact,
   };
+}
+
+/** 正文与运行详情共用等价费用格式，人民币和美元使用符号，其他币种保留代码。 */
+export function formatRuntimeCosts(costs: EstimatedMoney[], language: SessionUiLanguage): string {
+  return costs
+    .map(({ currency, amount }) => {
+      /** 只替换币种显示，不进行汇率换算。 */
+      const symbol = currency === 'USD' ? '$' : currency === 'CNY' ? '¥' : `${currency} `;
+      /** 保留两位小数，小额以阈值表达，不能把正消耗显示成零。 */
+      const value = new Intl.NumberFormat(language, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount);
+      return amount > 0 && amount < 0.01 ? `~<${symbol}0.01` : `~${symbol}${value}`;
+    })
+    .join(' + ');
+}
+
+/** 仅有历史美元字段时仍走相同的两位小数与小额规则。 */
+export function formatUsdEstimate(value: number, language: SessionUiLanguage): string {
+  return formatRuntimeCosts([{ currency: 'USD', amount: value }], language);
 }

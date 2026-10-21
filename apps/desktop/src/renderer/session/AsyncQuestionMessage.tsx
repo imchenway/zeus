@@ -182,7 +182,7 @@ export function AsyncQuestionMessage(props: { item: NativeSessionItemBuffer; sta
 
   return (
     <section className="session-async-question" aria-label={zh ? '中途问题' : 'Mid-turn question'}>
-      <ThreadItemView item={item} language={language} />
+      <ThreadItemView item={item} language={language} turnUsage={state.sessionMetrics?.turnUsage?.[item.turnId]} />
       <div className="session-message-delivery-actions">
         <span role="status">
           {confirmed

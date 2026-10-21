@@ -2375,6 +2375,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
     <TranscriptV2ContentBoundary item={row.item} onLoadContent={options.props.onLoadV2Content}>
       <ThreadItemView
         item={row.item}
+        turnUsage={options.props.state.sessionMetrics?.turnUsage?.[row.item.turnId]}
         questionAnswer={row.questionAnswer}
         language={options.props.language}
         assistantLabel={options.props.assistantLabel}
