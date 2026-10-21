@@ -1,11 +1,10 @@
-import type { EstimatedMoney } from '@zeus/shared';
 import { CaretUpIcon as CaretUp } from '@phosphor-icons/react/dist/csr/CaretUp';
 import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { NativeRuntimeDetailsSnapshot, NativeRuntimeFact } from './sessionTypes.js';
 import { copyText, type SessionUiLanguage } from './ThreadItemView.js';
-import { formatTokenCount } from './tokenUsageFormat.js';
+import { formatRuntimeCosts, formatTokenCount, formatUsdEstimate } from './tokenUsageFormat.js';
 
 /** 会话与智能体共用的运行事实。 */
 interface RuntimeDetailsProps {
@@ -235,22 +234,6 @@ function formatContextUsage(tokens: NativeRuntimeFact<number>, window: NativeRun
       {percentage} {used.compact} / {total.compact}
     </span>
   );
-}
-
-function formatUsdEstimate(value: number, language: SessionUiLanguage): string {
-  /** 会话费用与菜单栏保持一致，固定显示两位小数。 */
-  const formatted = new Intl.NumberFormat(language, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
-  /** 非零的小额费用保留“低于一分”的事实，不显示成零。 */
-  return value > 0 && value < 0.01 ? '~<$0.01' : `~$${formatted}`;
-}
-
-/** 会话费用统一以波浪号表达估算属性；美元使用符号，其他币种保留代码避免歧义。 */
-function formatRuntimeCosts(costs: EstimatedMoney[], language: SessionUiLanguage): string {
-  return costs
-    .map(({ currency, amount }) =>
-      currency === 'USD' ? formatUsdEstimate(amount, language) : `~${currency} ${amount > 0 && amount < 0.01 ? '<0.01' : new Intl.NumberFormat(language, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount)}`,
-    )
-    .join(' + ');
 }
 
 function formatCostSummary(value: NativeRuntimeFact<number>, coverage: NativeRuntimeFact<number>, complete: boolean, language: SessionUiLanguage): ReactNode {

@@ -1,12 +1,13 @@
 import { BrowserCommentPreview } from './BrowserCommentPreview.js';
-import type { ZeusBrowserComment } from '@zeus/shared';
+import type { ConversationTurnUsage, ZeusBrowserComment } from '@zeus/shared';
+import { formatRuntimeCosts, formatTokenCount } from './tokenUsageFormat.js';
 import { AnimatedSize } from '../ui/AnimatedSize.js';
 import { type FormEvent, type KeyboardEvent, memo, type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowBendUpRightIcon as ArrowBendUpRight } from '@phosphor-icons/react/dist/csr/ArrowBendUpRight';
 import { ClockIcon as Clock } from '@phosphor-icons/react/dist/csr/Clock';
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
-import { MessageCheckIcon, MessageCopyIcon, MessageEditIcon, MessageExpandIcon, MessageRemoteDeviceIcon, MessageThumbIcon } from './SessionMessageIcons.js';
+import { MessageCheckIcon, MessageCopyIcon, MessageCostIcon, MessageEditIcon, MessageExpandIcon, MessageRemoteDeviceIcon, MessageThumbIcon, MessageTokenIcon } from './SessionMessageIcons.js';
 import { isAssistantDeliverableItem, type NativeConversationAttachment, type NativeSessionItemBuffer } from './sessionTypes.js';
 import { autosizeTextarea } from './textareaAutosize.js';
 import {
@@ -143,6 +144,8 @@ const copy = {
 
 export interface ThreadItemViewProps {
   item: NativeSessionItemBuffer;
+  /** 所属轮次的累计消耗，不能用单次请求或会话累计值代替。 */
+  turnUsage?: ConversationTurnUsage;
   /** 异步回答复用询问历史卡片，消息操作与真实送达状态仍由本组件保留。 */
   questionAnswer?: AnsweredRequestHistoryProps['request'];
   language: SessionUiLanguage;
@@ -626,7 +629,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
     }
   }
 
-  /** 消息正文只组装一次，排队时由独立气泡承载附件、正文和上下文。 */
+  /** 消息正文只组装一次，轮次指标仅附在有账本的助手正文末尾。 */
   const messageBody = (
     <>
       {showMeta ? (
@@ -802,6 +805,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
           {retryingExpert ? labels.retryingExpert : labels.retryExpert}
         </button>
       ) : null}
+      {role === 'assistant' && props.turnUsage && hasActions && messageTimestamp && timestampSource ? <MessageTurnUsage language={props.language} usage={props.turnUsage} /> : null}
     </>
   );
 
@@ -861,7 +865,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       data-motion-block="markdown"
       aria-label={accessibleLabel}
     >
-      {showQueuedFooter ? <div className="session-queued-message-bubble">{messageBody}</div> : messageBody}
+      {showQueuedFooter || (role === 'user' && hasActions) ? <div className="session-user-message-bubble">{messageBody}</div> : messageBody}
       {showQueuedFooter ? (
         <div className="session-queued-thread-footer">
           {optimisticStatus ? (
@@ -1341,11 +1345,40 @@ function MessageIconButton(props: { label: string; pressed?: boolean; expanded?:
   );
 }
 
+/** 时间保留在消息操作栏，使用所属正文原有的时间来源。 */
 function MessageTimestamp(props: { dateTime: string; value: string }) {
   return (
     <time className="session-message-timestamp" dateTime={props.dateTime}>
       {props.value}
     </time>
+  );
+}
+
+/** 有账本的助手正文显示轮次指标，输入与输出明细放在悬停和无障碍说明中。 */
+function MessageTurnUsage(props: { language: SessionUiLanguage; usage: ConversationTurnUsage }) {
+  /** 展示文案沿用当前会话语言。 */
+  const zh = props.language === 'zh-CN';
+  /** 可见文本保留总量，浮层使用精确数值。 */
+  const tokens = formatTokenCount(props.usage.totalTokens, props.language);
+  /** 用量与价格完整性分别提示，运行中显示当前已记录值。 */
+  const partial = zh ? '（部分）' : ' (partial)';
+  /** 金额复用运行详情的两位小数和原币符号，不引入汇率。 */
+  const cost = props.usage.costs.length ? formatRuntimeCosts(props.usage.costs, props.language) : null;
+  /** 共享提示支持换行，按账本口径分别列出本轮输入与输出。 */
+  const tokenLabel = `${zh ? '本轮消耗' : 'Turn usage'} ${tokens.exact} Token${props.usage.usageComplete ? '' : partial}\n${zh ? '输入' : 'Input'} ${formatTokenCount(props.usage.inputTokens, props.language).exact} Token\n${zh ? '输出' : 'Output'} ${formatTokenCount(props.usage.outputTokens, props.language).exact} Token`;
+  /** 缺价与部分费用独立说明，不能用零金额掩盖。 */
+  const costLabel = `${zh ? '本轮费用' : 'Turn cost'} ${cost ? `${cost}${props.usage.costComplete ? '' : partial}` : zh ? '暂无价格' : 'Price unavailable'}`;
+  return (
+    <div className="session-message-turn-usage">
+      <span role="group" aria-label={tokenLabel} data-icon-tooltip={tokenLabel} tabIndex={0}>
+        <MessageTokenIcon />
+        <span>{`${tokens.compact}${props.usage.usageComplete ? '' : '*'}`}</span>
+      </span>
+      <span role="group" aria-label={costLabel} data-icon-tooltip={costLabel} tabIndex={0}>
+        <MessageCostIcon />
+        <span>{cost ? `${cost}${props.usage.costComplete ? '' : '*'}` : '—'}</span>
+      </span>
+    </div>
   );
 }
 

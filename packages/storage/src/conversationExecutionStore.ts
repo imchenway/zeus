@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { randomId } from './randomId.js';
 import type { ArtifactRef } from './artifactStore.js';
 import type { ZeusDatabasePort } from './databasePort.js';
-import { conversationProcessProviderItemId } from '@zeus/shared';
+import { conversationProcessProviderItemId, sumEstimatedCosts, type ConversationTurnUsage, type EstimatedMoney } from '@zeus/shared';
 import { ConversationTranscriptRepository, hashConversationTranscriptContent, providerEntryId } from './conversationTranscriptStore.js';
 
 /** 菜单栏与会话共用测速条件；历史记录中混入用户回答、审批或 MCP 交互的请求也必须排除。 */
@@ -224,6 +224,8 @@ export interface ConversationContextCompactionStatus {
 
 export interface ConversationSessionMetricsSnapshot {
   usage: ConversationUsageSnapshot;
+  /** 同一摘要兼容持久轮次与实时轮次身份，历史分页无需另取账本。 */
+  turnUsage: Record<string, ConversationTurnUsage>;
   cost: {
     /** 原币费用，与美元兼容字段独立。 */
     costs?: import('@zeus/shared').EstimatedMoney[];
@@ -2666,6 +2668,7 @@ export function readConversationSessionMetrics(db: ZeusDatabasePort, conversatio
   );
   return {
     usage,
+    turnUsage: readConversationTurnUsage(db, conversationId),
     cost: providerUsage,
     performance: {
       latestOutputTokensPerSecond: outputTokensPerSecond,
@@ -2684,6 +2687,59 @@ export function readConversationSessionMetrics(db: ZeusDatabasePort, conversatio
     changeSummary,
     updatedAt: latestIsoTimestamp(updatedAtCandidates ? Object.values(updatedAtCandidates) : []),
   };
+}
+
+/** 按会话、线程及轮次关联账本，只读输入、输出和金额摘要，不传输请求价格明细。 */
+export function readConversationTurnUsage(db: Pick<ZeusDatabasePort, 'select'>, conversationId: string): Record<string, ConversationTurnUsage> {
+  /** 账本已在写入时校验；金额保留原币，缺价与免费严格区分。 */
+  const rows = db.select<{
+    turn_id: string;
+    provider_turn_id: string;
+    total_tokens: number;
+    /** 账本中的本轮输入总量。 */
+    input_tokens: number;
+    /** 账本中的本轮输出总量。 */
+    output_tokens: number;
+    usage_complete: number;
+    costs_json: string | null;
+    equivalent_usd: number | null;
+    coverage: number | null;
+  }>(
+    `SELECT t.id AS turn_id, l.provider_turn_id, l.total_tokens, l.input_tokens, l.output_tokens, l.usage_complete,
+            json_extract(l.estimate_json, '$.costs') AS costs_json,
+            json_extract(l.estimate_json, '$.apiEquivalentUsd') AS equivalent_usd,
+            json_extract(l.estimate_json, '$.coverage') AS coverage
+       FROM codex_usage_ledger l
+       JOIN conversation_turns t ON t.conversation_id = l.conversation_id
+        AND t.provider_thread_id = l.provider_thread_id AND t.provider_turn_id = l.provider_turn_id
+      WHERE l.conversation_id = ?`,
+    [conversationId],
+  );
+  /** 同一轮可能包含多个供应源账本，按币种合并后供两种身份复用。 */
+  const usageByTurn: Record<string, ConversationTurnUsage> = Object.create(null);
+  for (const row of rows) {
+    /** 已有美元账本沿用原金额，不从当前价格反推历史费用。 */
+    const costs = sumEstimatedCosts([{ costs: row.costs_json === null ? undefined : (JSON.parse(row.costs_json) as EstimatedMoney[]), apiEquivalentUsd: row.equivalent_usd }]);
+    /** 每个账本的覆盖状态独立保留，不能用已定价部分冒充全部。 */
+    const complete = row.usage_complete === 1;
+    /** 持久轮次是汇总身份，实时身份只作为同一摘要的读取别名。 */
+    const previous = usageByTurn[row.turn_id];
+    /** 金额为零仍是有效记录；缺价则保留空数组。 */
+    const usage: ConversationTurnUsage = {
+      totalTokens: (previous?.totalTokens ?? 0) + row.total_tokens,
+      inputTokens: (previous?.inputTokens ?? 0) + row.input_tokens,
+      outputTokens: (previous?.outputTokens ?? 0) + row.output_tokens,
+      usageComplete: (previous?.usageComplete ?? true) && complete,
+      costs: sumEstimatedCosts([
+        { costs: previous?.costs ?? [], apiEquivalentUsd: null },
+        { costs, apiEquivalentUsd: null },
+      ]),
+      costComplete: (previous?.costComplete ?? true) && complete && row.coverage === 1 && costs.length > 0,
+    };
+    usageByTurn[row.turn_id] = usage;
+    usageByTurn[row.provider_turn_id] = usage;
+  }
+  return usageByTurn;
 }
 
 /** 把完整文本请求转换为行业通用的 TPOT 倒数计算依据，首个 Token 不属于后续生成间隔。 */
