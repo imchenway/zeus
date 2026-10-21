@@ -96,3 +96,21 @@
   height: 100%;
   overflow: hidden !important;
 }
+
+/* 片段操作保留在同一滚动视图上方，不再为每个片段建立编辑器。 */
+.project-git-diff-side-by-side > .project-git-diff-hunk-commands {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--zeus-product-line);
+}
+.project-git-diff-hunk-select {
+  max-width: 50%;
+  min-width: 0;
+  margin-inline-end: auto;
+  font: inherit;
+  color: inherit;
+  background: var(--zeus-product-panel);
+}

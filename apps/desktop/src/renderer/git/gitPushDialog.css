@@ -233,7 +233,7 @@
   border: 0;
   border-radius: 3px;
   background: transparent;
-  color: var(--zeus-accent);
+  color: inherit;
   font: inherit;
   text-align: start;
 }
@@ -245,12 +245,6 @@
 .git-push-file-tree :is(button, summary) > span {
   min-width: 0;
   overflow-wrap: anywhere;
-}
-.git-push-file-tree [data-status='added'] {
-  color: var(--zeus-code-addition-text, #278344);
-}
-.git-push-file-tree [data-status='deleted'] {
-  color: var(--zeus-status-danger-fg, #c64c4c);
 }
 .git-push-preview-note {
   margin: 0;

@@ -177,7 +177,7 @@ export function FilePreview(props: {
   /** 中英文文案。 */
   zh: boolean;
   /** 文本继续复用原差异与评论界面。 */
-  children?: ReactNode | ((toolbar: ReactNode) => ReactNode);
+  children?: ReactNode | ((toolbar: ReactNode, items: FilePreviewItem[] | null) => ReactNode);
   /** 调用方已有的关闭等操作并入预览工具栏。 */
   actions?: ReactNode;
   /** Git 比较已知的变更状态同时用于媒体文件名称。 */
@@ -215,7 +215,7 @@ function FilePreviewBody(props: {
   location?: ConversationFileLocation;
   identity: string;
   zh: boolean;
-  children?: ReactNode | ((toolbar: ReactNode) => ReactNode);
+  children?: ReactNode | ((toolbar: ReactNode, items: FilePreviewItem[] | null) => ReactNode);
   /** 嵌入预览的附加操作。 */ actions?: ReactNode;
   /** 文件的实际 Git 变更状态。 */ fileStatus?: string;
   /** 弹窗提供关闭动作，单张图片据此使用纯预览布局。 */ onClose?: () => void;
@@ -375,7 +375,7 @@ function FilePreviewBody(props: {
         ) : null}
         {showDiff ? (
           typeof props.children === 'function' ? (
-            props.children(toolbar)
+            props.children(toolbar, items)
           ) : (
             props.children
           )
@@ -487,7 +487,7 @@ function FilePreviewContent(props: {
   /** 当前已授权的文件描述。 */
   const item = props.item;
   /** 归属绑定预览版本令牌，不根据显示名称猜测目录。 */
-  const blame = useGitBlame({ previewId: item.id || undefined });
+  const blame = useGitBlame({ previewId: item.blame === undefined && !item.blameError ? item.id || undefined : undefined });
   /** 通用文本入口与会话源码使用同一行定位高亮，保留范围终点。 */
   const locationDecorations = useMemo(() => (item.review?.location?.line ? sourceLocationDecorations(() => item.review?.location) : []), [item.review?.location]);
   /** 自动识别可切换为已支持语法或纯文本，不改变文件正文。 */
@@ -519,7 +519,7 @@ function FilePreviewContent(props: {
             <header>
               <FileTypeIcon name={item.name} size={20} />
               <div className="file-preview-identity">
-                <strong data-icon-tooltip={item.kind === 'image' ? undefined : item.name} data-file-status={props.fileStatus ?? item.review?.diff?.changeType}>
+                <strong data-icon-tooltip={item.kind === 'image' ? undefined : item.name} data-file-status={props.fileStatus ?? item.review?.status ?? item.review?.diff?.changeType}>
                   {item.kind === 'image' ? (props.zh ? '图片预览' : 'Image preview') : item.name}
                 </strong>
                 <small>
@@ -614,11 +614,12 @@ function FilePreviewContent(props: {
                     identity={`${item.id}:${item.label}`}
                     path={props.commentPath ?? item.name}
                     content={item.content}
+                    blame={item.blame}
                     language={language}
                     label={item.name}
                     side={props.commentSide}
                     locale={props.zh ? 'zh-CN' : 'en-US'}
-                    blameLines={blame?.lines}
+                    blameLines={item.blame ?? blame?.lines}
                     location={item.review?.location}
                     comments={props.comments}
                     onCommentsChange={props.onCommentsChange}
@@ -631,7 +632,9 @@ function FilePreviewContent(props: {
                     content={item.content}
                     location={item.review?.location}
                     extensions={locationDecorations}
-                    blameLines={blame?.lines}
+                    blame={item.blame ?? blame?.lines}
+                    blameLocale={props.zh ? 'zh-CN' : 'en-US'}
+                    blameLines={item.blame ?? blame?.lines}
                     locale={props.zh ? 'zh-CN' : 'en-US'}
                     readOnly
                   />

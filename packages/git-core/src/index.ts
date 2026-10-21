@@ -7,7 +7,7 @@ import { constants, realpathSync } from 'node:fs';
 import { copyFile, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
-import { defaultTaskBranchPrefix, normalizeTaskBranchPrefix, type FilePreviewSource } from '@zeus/shared';
+import { defaultTaskBranchPrefix, normalizeTaskBranchPrefix, type FilePreviewSource, type FileReview } from '@zeus/shared';
 import { businessProcessEnvironment, spawnManagedProcess } from '@zeus/ai-runtime';
 
 /** 非 Windows 保留原有 execFile 的编码、输出和错误约定。 */
@@ -3946,18 +3946,25 @@ function splitNullRecords(value: string): string[] {
   return value.split('\0').filter(Boolean);
 }
 
-/** 只读取指定文件相对 HEAD 的差异；没有提交或未跟踪时以空文件为基线。 */
-export async function getFileReviewDiff(absolutePath: string): Promise<GitFileDiff | null | undefined> {
+/** 只读取指定文件的状态与相对 HEAD 的差异；未跟踪文件不伪装成已暂存新增。 */
+export async function getFileReview(absolutePath: string): Promise<FileReview> {
   /** Git 返回真实仓库路径，先统一 macOS 临时目录等符号链接别名。 */
   absolutePath = await realpath(absolutePath);
   /** 从文件目录识别所属仓库，支持嵌套仓库与独立工作树。 */
   const cwd = dirname(absolutePath);
   /** 非仓库文件保留普通预览，不伪装成干净仓库。 */
   const root = await readGitStdout(cwd, ['rev-parse', '--show-toplevel']);
-  if (!root) return undefined;
+  if (!root) return {};
   /** 只允许字面量相对路径，不将文件名解释成 Git 路径表达式。 */
   const path = requireSafeWorkspacePath(relative(root, absolutePath));
   if (path.split('/').includes('.git')) throw new Error('不能审阅 Git 管理目录。');
+  /** 使用零分隔记录保留含空格、中文的路径；禁止状态读取刷新索引。 */
+  const porcelain = await execFileAsync('git', ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all', '--ignored', '--', `:(literal)${path}`], { cwd: root, timeout: 30_000, maxBuffer: 20 * 1024 * 1024 });
+  /** 忽略目录可能由 Git 汇总返回，单文件路径限定确保结果只属于本次审阅。 */
+  const entry = parseGitPorcelainEntries(porcelain.stdout)[0];
+  /** 干净文件没有状态行，忽略文件的状态码为双感叹号。 */
+  const status: FileReview['status'] = entry?.indexStatus === '!' ? 'ignored' : (entry?.category ?? 'unchanged');
+  if (status === 'ignored') return { status };
   /** HEAD 中存在该文件时合并展示暂存与未暂存结果。 */
   const tracked = await readGitStdout(root, ['ls-tree', '-z', 'HEAD', '--', `:(literal)${path}`]);
   /** 禁用外部差异程序与文本转换，避免读取文件时执行仓库配置的命令。 */
@@ -3972,7 +3979,7 @@ export async function getFileReviewDiff(absolutePath: string): Promise<GitFileDi
   }
   /** 复用 Git 解析器，新增文件的显示路径仍保持仓库相对路径。 */
   const diff = parseGitUnifiedDiff(output)[0];
-  return diff ? { ...diff, oldPath: tracked ? diff.oldPath : '/dev/null', newPath: path } : null;
+  return { status, diff: diff ? { ...diff, oldPath: tracked ? diff.oldPath : '/dev/null', newPath: path } : null };
 }
 
 /** 按差异语义解析可预览的两端；仅返回文件授权和固定对象，不读取二进制到补丁中。 */
@@ -4040,19 +4047,37 @@ export async function getGitFilePreviewSources(
       break;
     }
   }
+  /** 未暂存比较可能建立在已暂存的重命名上，归属仍追溯 HEAD 的原路径。 */
+  let blamePath = oldPath;
+  if (before === 'index' && head) {
+    /** 只读取名称映射，避免为归属重新加载全部补丁。 */
+    const stagedNames = (await runGit(cwd, ['diff', '--cached', head, '--no-ext-diff', '--find-renames', '--name-status', '-z', '--'])).stdout.split('\0');
+    for (let index = 0; index < stagedNames.length - 1;) {
+      /** 每条记录先读状态，再按重命名或复制规则读取前后路径。 */
+      const status = stagedNames[index++]!;
+      /** HEAD 中用于追溯归属的路径。 */
+      const left = stagedNames[index++]!;
+      /** 索引中的目标路径；普通变更沿用原路径。 */
+      const right = /^[RC]/u.test(status) ? stagedNames[index++]! : left;
+      if (right === oldPath) {
+        blamePath = left;
+        break;
+      }
+    }
+  }
   /** 使用 Git 树记录获取对象，拒绝符号链接和子模块作为普通文件解码。 */
   async function side(revision: string | null, name: string, prefix: string, fallback?: string | null): Promise<FilePreviewSource> {
     const label = `${prefix} · ${revision === 'worktree' ? '工作区' : revision === 'index' ? '暂存区' : (revision?.slice(0, 12) ?? '不存在')}`;
     /** 所有历史侧编辑都指向当前工作区的新路径，不打开历史副本。 */
     const edit = { root: cwd, path: resolve(cwd, requireSafeWorkspacePath(newPath)) };
     if (!revision) return { name, label, edit, missing: true, reason: '此版本中不存在该文件。' };
-    if (revision === 'worktree') return { name, label, edit, root: cwd, path: resolve(cwd, requireSafeWorkspacePath(name)), git: { root: cwd, path: name, baseRef: head } };
+    if (revision === 'worktree') return { name, label, edit, root: cwd, path: resolve(cwd, requireSafeWorkspacePath(name)), git: { root: cwd, path: blamePath, baseRef: head } };
     const output = revision === 'index' ? (await runGit(cwd, ['ls-files', '--stage', '-z', '--', `:(literal)${name}`])).stdout : (await runGit(cwd, ['ls-tree', '-z', revision, '--', `:(literal)${name}`])).stdout;
     const entry = output.split('\0').find((item) => item.slice(item.indexOf('\t') + 1) === name);
     const match = entry?.match(/^(100[0-7]{3}) (?:blob )?([a-f0-9]{40,64})(?: 0)?\t/u);
     if (!match && !entry && fallback) return side(fallback, name, prefix);
     return match
-      ? { name, label, edit, root: cwd, blob: match[2], git: { root: cwd, path: name, ...(revision === 'index' ? { baseRef: head } : { ref: revision }) } }
+      ? { name, label, edit, root: cwd, blob: match[2], git: { root: cwd, path: revision === 'index' ? blamePath : name, ...(revision === 'index' ? { baseRef: head } : { ref: revision }) } }
       : { name, label, edit, missing: !entry, reason: entry ? '符号链接、冲突索引或子模块不能作为普通文件预览。' : '此版本中不存在该文件。' };
   }
   return Promise.all([side(before, oldPath, '变更前'), side(after, newPath, '变更后', untrackedTree)]);
@@ -4083,12 +4108,16 @@ export async function getFilePreviewBlame(source: NonNullable<FilePreviewSource[
     if (content.at(-1) === '') content.pop();
     return { path, lines: content.map((_line, index) => ({ line: index + 1, author: '', authorTime: 0, commitHash: '0'.repeat(40), shortHash: '0000000', subject: '' })) };
   }
-  /** 禁用文本转换和外部 diff；两端不会读取项目主目录的同名文件。 */
-  const { stdout } = await execFileAsync('git', ['-c', 'core.quotePath=false', '--no-pager', 'blame', '--no-textconv', '--line-porcelain', ...(source.ref ? [ref] : ['--contents', contentPath]), '--', path], {
-    cwd: root,
-    timeout: 30_000,
-    maxBuffer: 32 * 1024 * 1024,
-  });
+  /** 禁用文本转换，统一作者编码并保留根提交；两端均读取当前授权版本。 */
+  const { stdout } = await execFileAsync(
+    'git',
+    ['-c', 'core.quotePath=false', '-c', 'blame.blankBoundary=false', '--no-pager', 'blame', '--encoding=UTF-8', '--root', '--no-textconv', '--line-porcelain', ...(source.ref ? [ref] : ['--contents', contentPath]), '--', path],
+    {
+      cwd: root,
+      timeout: 30_000,
+      maxBuffer: 32 * 1024 * 1024,
+    },
+  );
   if (!source.ref && ref !== (await readGitStdout(root, ['rev-parse', '--verify', 'HEAD']))) throw new Error('归属读取期间 Git 基线已变化，请刷新。');
   return { path, lines: parseGitBlamePorcelain(stdout) };
 }

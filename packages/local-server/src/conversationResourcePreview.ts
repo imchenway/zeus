@@ -1,7 +1,7 @@
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { filePreviewMime, filePreviewKind, filePreviewLimits, detectSourceLanguage, type ConversationResource, type ConversationResourcePreview, type FileReview } from '@zeus/shared';
-import { getFileReviewDiff } from '@zeus/git-core';
+import { getFileReview } from '@zeus/git-core';
 import { toConversationResourceOpenIntent } from './conversationResources.js';
 
 export function isObjectLike(value: unknown): value is object {
@@ -73,7 +73,7 @@ export async function readConversationFileReview(resource: Exclude<ConversationR
     const root = realpathSync(String(intent.authority.allowedRoot || ''));
     const path = realpathSync(String(intent.target.absolutePath || ''));
     if (path === root || !isPathInsideRoot(path, root) || relative(root, path).split(sep).includes('.git')) throw new Error('文件不在允许审阅的目录内。');
-    review.diff = await getFileReviewDiff(path);
+    Object.assign(review, await getFileReview(path));
   } catch (error) {
     review.error = error instanceof Error ? error.message : 'Git 差异读取失败。';
   }

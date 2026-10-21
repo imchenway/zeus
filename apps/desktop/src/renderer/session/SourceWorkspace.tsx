@@ -18,6 +18,7 @@ import { ArrowsInIcon as ArrowsIn } from '@phosphor-icons/react/dist/csr/ArrowsI
 import { ArrowsOutIcon as ArrowsOut } from '@phosphor-icons/react/dist/csr/ArrowsOut';
 import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
 import { FileTypeIcon } from '../code/FileTypeIcon.js';
+import { fileStatusLabel } from '../code/fileStatus.js';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import type { ConversationResourcePreview } from './sessionTypes.js';
 import { copyText, type SessionUiLanguage } from './ThreadItemView.js';
@@ -241,11 +242,12 @@ function SourceWorkspaceView(props: {
               className="zeus-workspace-tab"
               tabIndex={preview.resource.id === props.preview.resource.id ? 0 : -1}
               aria-selected={preview.resource.id === props.preview.resource.id}
-              data-icon-tooltip={preview.resource.displayName}
+              data-icon-tooltip={preview.review?.status ? `${preview.resource.displayName} · ${fileStatusLabel(preview.review.status, zh)}` : preview.resource.displayName}
+              aria-label={preview.review?.status ? `${preview.resource.displayName} · ${fileStatusLabel(preview.review.status, zh)}` : preview.resource.displayName}
               onClick={() => props.onSelectTab?.(preview)}
             >
               {supportsMarkdownPreview(preview) ? <File aria-hidden="true" /> : <FileTypeIcon name={preview.resource.kind === 'file' ? preview.resource.projectRelativePath : preview.resource.displayName} />}
-              <span>{basename(preview.resource.kind === 'file' ? preview.resource.projectRelativePath : preview.resource.displayName)}</span>
+              <span data-file-status={preview.review?.status}>{basename(preview.resource.kind === 'file' ? preview.resource.projectRelativePath : preview.resource.displayName)}</span>
             </button>
             <button
               type="button"

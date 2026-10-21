@@ -5,7 +5,7 @@ import { openSearchPanel, search, searchKeymap } from '@codemirror/search';
 import { syntaxHighlighting } from '@codemirror/language';
 import { Decoration, EditorView, GutterMarker, WidgetType, drawSelection, gutter, keymap, lineNumbers } from '@codemirror/view';
 import { classHighlighter } from '@lezer/highlight';
-import type { ConversationFileLocation } from '@zeus/shared';
+import type { ConversationFileLocation, FilePreviewBlameLine } from '@zeus/shared';
 import { blameDecorations } from './blameDecorations.js';
 import { loadSourceLanguage } from './sourceLanguageRegistry.js';
 import { useGitBlame } from './useGitBlame.js';
@@ -54,6 +54,8 @@ interface SourceCodePreviewProps {
   projectId?: string;
   conversationId?: string;
   resourceId?: string;
+  /** 通用文件预览已经读取的准确版本归属，存在时不再次按项目路径读取。 */
+  blame?: FilePreviewBlameLine[];
   /** 行尾归属日期使用当前界面语言。 */
   locale?: string;
   /** 通用文件预览按版本令牌读取的归属，优先于项目路径读取。 */
@@ -94,9 +96,15 @@ export const SourceCodePreview = memo(function SourceCodePreview(props: SourceCo
   /** 只读历史仍可查看代码，无评论权限时只显示行号。 */
   const commentsEnabled = Boolean(props.onComment);
   /** 自动读取当前资源归属，不再创建额外的按钮或状态行。 */
-  const gitBlame = useGitBlame({ projectId: props.projectId, filePath: props.path, conversationId: props.conversationId, resourceId: props.resourceId, content: props.content });
+  const gitBlame = useGitBlame({
+    projectId: props.blame === undefined && props.blameLines === undefined ? props.projectId : undefined,
+    filePath: props.path,
+    conversationId: props.conversationId,
+    resourceId: props.resourceId,
+    content: props.content,
+  });
   /** 当前准确版本的逐行归属。 */
-  const lines = props.blameLines ?? gitBlame?.lines;
+  const lines = props.blame ?? props.blameLines ?? gitBlame?.lines;
   /** 左侧菜单与项目编辑器完全一致。 */
   const reading = useCodeReadingOptions(lines, props.locale);
 

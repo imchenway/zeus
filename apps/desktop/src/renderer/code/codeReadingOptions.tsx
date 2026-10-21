@@ -117,5 +117,5 @@ export function useCodeReadingOptions(lines?: GitBlameLine[], locale = 'zh-CN') 
         point.document.querySelector('.macos-ai-app') ?? point.document.body,
       )
     : null;
-  return { extension, onContextMenu, menu, wrap: options.wrap, blame: options.blame };
+  return { extension, onContextMenu, menu };
 }

@@ -3,12 +3,15 @@ import type { FilePreviewRequest } from '@zeus/shared';
 import { lazy, Suspense, useContext, type ReactNode } from 'react';
 import type { TaskGitFileDiff } from '../session/sessionTypes.js';
 import type { DiffAnnotationLine } from '../code/CodeDiffView.js';
+import type { FileStatus } from '../code/fileStatus.js';
 
 /** 重型代码视图仅在选中差异文件后加载。 */
 const CodeDiffView = lazy(() => import('../code/CodeDiffView.js').then((module) => ({ default: module.CodeDiffView })));
 
 /** 交付与会话审核共用差异；新增、删除只显示有效侧，评论沿用原始行号。 */
 function TaskGitTextDiffTable(props: {
+  /** 文件名状态由工作区提供，正文仍按补丁类型展示。 */
+  fileStatus?: FileStatus;
   /** 文件预览使用业务身份，而非补丁文本推断文件内容。 */
   previewRequest?: FilePreviewRequest;
   /** 工作区快照刷新后重新读取。 */
@@ -60,7 +63,7 @@ function TaskGitTextDiffTable(props: {
 /** 所有任务差异入口通过共享预览选择媒体或原有文字与评论界面。 */
 export function TaskGitDiffTable(props: Parameters<typeof TaskGitTextDiffTable>[0]) {
   return props.previewRequest ? (
-    <FilePreview request={props.previewRequest} revision={props.revision} zh={props.zh} fileStatus={props.diff?.changeType}>
+    <FilePreview request={props.previewRequest} revision={props.revision} zh={props.zh} fileStatus={props.fileStatus ?? props.diff?.changeType}>
       {props.diff ? <TaskGitTextDiffTable {...props} /> : null}
     </FilePreview>
   ) : (

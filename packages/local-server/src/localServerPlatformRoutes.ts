@@ -2334,7 +2334,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       /** 源码与通用文件审阅使用相同的授权和 Git 比较口径。 */
       const intent = toConversationResourceOpenIntent(record);
       const preview = readConversationResourcePreview(resource, intent);
-      return preview.kind === 'source' ? { ...preview, review: await readConversationFileReview(resource, intent) } : preview;
+      return { ...preview, review: await readConversationFileReview(resource, intent) };
     } catch (error) {
       const code = error instanceof Error && 'code' in error ? String((error as Error & { code?: unknown }).code ?? '') : '';
       const status = code === 'ZEUS_CONVERSATION_RESOURCE_FORBIDDEN' ? 403 : code === 'ZEUS_CONVERSATION_RESOURCE_TOO_LARGE' ? 413 : 409;

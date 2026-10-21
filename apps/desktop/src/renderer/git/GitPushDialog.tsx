@@ -10,6 +10,7 @@ import { ModalPortal } from '../ui/ModalPortal.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { FileTypeIcon } from '../code/FileTypeIcon.js';
+import { fileStatusLabel } from '../code/fileStatus.js';
 import { groupDirectoryFiles } from '../code/groupDirectoryFiles.js';
 import { GitPaneSeparator } from './GitPaneSeparator.js';
 import { defaultPushTarget } from './GitRepositoryControls.js';
@@ -419,7 +420,7 @@ export function PushDialog(props: PushDialogProps) {
                     {props.zh ? '正在读取文件变化…' : 'Loading file changes…'}
                   </p>
                 ) : files.length ? (
-                  <PushFileTree files={files} prefix="" selectedPath={selectedFilePath} onSelect={setSelectedFilePath} onOpen={(path) => void openFileDiff(path)} />
+                  <PushFileTree files={files} prefix="" zh={props.zh} selectedPath={selectedFilePath} onSelect={setSelectedFilePath} onOpen={(path) => void openFileDiff(path)} />
                 ) : (
                   <p className="git-push-empty">{props.zh ? '此范围没有文件净变化。' : 'No net file changes in this range.'}</p>
                 )}
@@ -534,7 +535,7 @@ export function PushDialog(props: PushDialogProps) {
 }
 
 /** 文件树复用目录压缩与文件图标；原生 details 提供键盘展开和收起。 */
-function PushFileTree(props: { files: Array<{ path: string; file: GitFileDiff }>; prefix: string; selectedPath: string; onSelect: (path: string) => void; onOpen: (path: string) => void }) {
+function PushFileTree(props: { files: Array<{ path: string; file: GitFileDiff }>; prefix: string; zh: boolean; selectedPath: string; onSelect: (path: string) => void; onOpen: (path: string) => void }) {
   return (
     <ul className="git-push-file-tree">
       {groupDirectoryFiles(props.files, props.prefix).map(([name, children]) =>
@@ -553,10 +554,10 @@ function PushFileTree(props: { files: Array<{ path: string; file: GitFileDiff }>
           <li key={name}>
             <button
               type="button"
-              data-status={children[0]!.file.changeType}
               data-active={props.selectedPath === children[0]!.path}
               aria-pressed={props.selectedPath === children[0]!.path}
-              title={children[0]!.path}
+              data-icon-tooltip={`${children[0]!.path} · ${fileStatusLabel(children[0]!.file.changeType, props.zh)}`}
+              aria-label={`${children[0]!.path} · ${fileStatusLabel(children[0]!.file.changeType, props.zh)}`}
               onClick={() => props.onSelect(children[0]!.path)}
               onDoubleClick={() => props.onOpen(children[0]!.path)}
               onKeyDown={(event) => {
@@ -567,8 +568,7 @@ function PushFileTree(props: { files: Array<{ path: string; file: GitFileDiff }>
               }}
             >
               <FileTypeIcon name={name} />
-              <span>{name}</span>
-              <small>{children[0]!.file.changeType === 'added' ? '+' : children[0]!.file.changeType === 'deleted' ? '−' : children[0]!.file.changeType === 'renamed' ? '↪' : ''}</small>
+              <span data-file-status={children[0]!.file.changeType}>{name}</span>
             </button>
           </li>
         ),

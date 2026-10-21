@@ -33,6 +33,20 @@ export interface ProjectSourceContentMatch {
   column: number;
   preview: string;
   matchKind: 'path' | 'content';
+  /** 匹配文本在预览中的 UTF-16 起点，用于高亮长代码行中的真实命中。 */
+  previewMatchStart?: number;
+  /** 预览内匹配文本的 UTF-16 长度。 */
+  previewMatchLength?: number;
+}
+
+/** 项目内容查找与标题栏快捷搜索共用文件读取边界。 */
+export interface ProjectSourceContentSearchOptions {
+  /** 仅查正文并返回完整命中列表；默认保留标题栏路径与内容摘要。 */
+  contentOnly?: boolean;
+  /** 为真时区分大小写。 */
+  caseSensitive?: boolean;
+  /** 为真时按 Unicode 字母、数字和代码标识符边界匹配整词。 */
+  wholeWord?: boolean;
 }
 
 export interface ProjectSourceContentSearchResult {

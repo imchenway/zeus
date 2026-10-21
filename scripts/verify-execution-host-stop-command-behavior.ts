@@ -252,8 +252,10 @@ try {
     const controlServer = createServer((request, response) => {
       const chunks: Buffer[] = [];
       request.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
-      request.on('end', () => {
+      request.on('end', async () => {
         transportBodies.push(Buffer.concat(chunks).toString('utf8'));
+        // 正常停止确认可以超过原来的 5 秒；回执到达前不能取消退出或重发命令。
+        if (transportBodies.length === 1) await new Promise((resolveDelay) => setTimeout(resolveDelay, 6_000));
         response.writeHead(200, { 'content-type': 'application/json' });
         response.end(JSON.stringify(acceptedBody));
       });

@@ -6,7 +6,6 @@ import { type DashboardClient, type TaskRecord, ZeusApiError } from '../apiClien
 import type {
   TaskBranchFileChange,
   TaskGitDiffSummary,
-  TaskGitFileDiff,
   TaskGitFileStatus,
   TaskIntegrationConflictFile,
   TaskIntegrationConflictPermissionMode,
@@ -240,7 +239,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
     [selectedWorkspaceIds, workspaceDetails, targetBranchesByWorkspace, integrations, zh],
   );
   const workingFiles = useMemo(() => collectWorkingFiles(selectedWorkspace), [selectedWorkspace]);
-  const committedFiles = useMemo(() => (selectedWorkspace?.branchComparison?.files ?? []).map((file) => toCommittedDeliveryFile(file, zh)), [selectedWorkspace?.branchComparison?.files, zh]);
+  const committedFiles = useMemo(() => (selectedWorkspace?.branchComparison?.files ?? []).map(toCommittedDeliveryFile), [selectedWorkspace?.branchComparison?.files]);
   const repositoryGroups = useMemo<DeliveryRepositoryGroup[]>(
     () =>
       visibleWorkspaceItems.map((workspace) => {
@@ -250,7 +249,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
           detail,
           loadState: detailStates[workspace.id] ?? ((diffScope === 'committed' ? detail?.comparisonError : detail?.reviewError) ? ('error' as const) : undefined),
           statusLabel: workspaceStateLabel(workspace, detail, detailStates[workspace.id], zh, integrations, targetBranchesByWorkspace[workspace.id]),
-          files: diffScope === 'committed' ? (detail?.branchComparison?.files ?? []).map((file) => toCommittedDeliveryFile(file, zh)) : collectWorkingFiles(detail).map((file) => toWorkingDeliveryFile(file, zh)),
+          files: diffScope === 'committed' ? (detail?.branchComparison?.files ?? []).map(toCommittedDeliveryFile) : collectWorkingFiles(detail).map(toWorkingDeliveryFile),
         };
       }),
     [visibleWorkspaceItems, workspaceDetails, diffScope, zh, detailStates, integrations, targetBranchesByWorkspace],
@@ -390,10 +389,10 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
   }, [interactionOpen, props.currentConversationWorkspaceId, workspaceIndex, workspaceDetails]);
 
   useEffect(() => {
-    const nextFiles = diffScope === 'committed' ? committedFiles : workingFiles.map((file) => toWorkingDeliveryFile(file, zh));
+    const nextFiles = diffScope === 'committed' ? committedFiles : workingFiles.map(toWorkingDeliveryFile);
     setSelectedFile((current) => (nextFiles.some((file) => file.path === current) ? current : (nextFiles[0]?.path ?? '')));
     setFileDiff(null);
-  }, [workspaceId, diffScope, committedFiles, workingFiles, zh]);
+  }, [workspaceId, diffScope, committedFiles, workingFiles]);
 
   useEffect(() => {
     if (!interactionOpen || !props.task || !props.client || !selectedWorkspace || !selectedFile) {
@@ -1287,6 +1286,7 @@ function TaskGitMergeModalContent(props: TaskGitMergeModalContentProps) {
                 />
               }
               selectedFile={selectedFile}
+              fileStatus={diffScope === 'working' ? workingFiles.find((file) => file.path === selectedFile)?.category : committedFiles.find((file) => file.path === selectedFile)?.status}
               diffTitle={selectedDiffTitle}
               diffLoading={diffLoading}
               diff={fileDiff}
@@ -1445,17 +1445,19 @@ function collectWorkingFiles(workspace: TaskWorkspaceSnapshot | null | undefined
   return [...byPath.values()].sort((left, right) => left.path.localeCompare(right.path));
 }
 
-function toCommittedDeliveryFile(file: TaskBranchFileChange, zh: boolean): DeliveryFile {
+/** 已提交文件保留比较类型，供所有交付文件名着色。 */
+function toCommittedDeliveryFile(file: TaskBranchFileChange): DeliveryFile {
   return {
     path: file.path,
-    label: committedFileLabel(file.changeType, zh),
+    status: file.changeType,
     additions: file.additions,
     deletions: file.deletions,
   };
 }
 
-function toWorkingDeliveryFile(file: TaskGitFileStatus, zh: boolean): DeliveryFile {
-  return { path: file.path, label: workingFileLabel(file, zh), additions: 0, deletions: 0, workingFile: file };
+/** 工作区保留真实状态，区分未跟踪与已暂存新增。 */
+function toWorkingDeliveryFile(file: TaskGitFileStatus): DeliveryFile {
+  return { path: file.path, status: file.category, additions: 0, deletions: 0 };
 }
 
 /** 仓库列表呈现当前目标的交付状态，远端确认仅使用与该目标对应的证据。 */
@@ -1512,34 +1514,6 @@ function mergeWorkspaceAction(workspace: TaskWorkspaceSnapshot | undefined, inte
   }
   if (findDeliveredIntegration(workspace, integrations, targetBranch)) return null;
   return { type: 'start' };
-}
-
-function committedFileLabel(changeType: TaskGitFileDiff['changeType'], zh: boolean): string {
-  const labels = zh ? { added: '新增', deleted: '删除', modified: '修改', renamed: '重命名', copied: '复制' } : { added: 'Added', deleted: 'Deleted', modified: 'Modified', renamed: 'Renamed', copied: 'Copied' };
-  return labels[changeType];
-}
-
-function workingFileLabel(file: TaskGitFileStatus, zh: boolean): string {
-  const labels = zh
-    ? {
-        added: '新增',
-        modified: '修改',
-        deleted: '删除',
-        renamed: '重命名',
-        untracked: '未跟踪',
-        conflict: '冲突',
-        other: '变化',
-      }
-    : {
-        added: 'Added',
-        modified: 'Modified',
-        deleted: 'Deleted',
-        renamed: 'Renamed',
-        untracked: 'Untracked',
-        conflict: 'Conflict',
-        other: 'Changed',
-      };
-  return labels[file.category];
 }
 
 /** 使用实际合入目标说明完成或待同步状态。 */

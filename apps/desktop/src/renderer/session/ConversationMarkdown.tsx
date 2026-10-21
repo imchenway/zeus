@@ -242,18 +242,11 @@ export const ConversationMarkdown = memo(function ConversationMarkdown(props: Co
   useLayoutEffect(() => {
     const root = rootRef.current;
     if (!root || typeof ResizeObserver === 'undefined') return;
-    let frame = 0;
-    const observer = new ResizeObserver(() => {
-      if (frame) return;
-      frame = requestAnimationFrame(() => {
-        frame = 0;
-        onVisibleContentChangeRef.current?.();
-      });
-    });
+    // ResizeObserver 已在绘制前合并尺寸变化；此处再等一帧会把正文增高与贴底拆开。
+    const observer = new ResizeObserver(() => onVisibleContentChangeRef.current?.());
     observer.observe(root);
     return () => {
       observer.disconnect();
-      if (frame) cancelAnimationFrame(frame);
     };
   }, []);
 

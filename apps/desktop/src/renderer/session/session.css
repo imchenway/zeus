@@ -313,6 +313,18 @@
   opacity: 0.58;
 }
 
+/* 环境工具行显示当前打开状态，使用会话已有的选中配色。 */
+.session-quick-actions-list button.session-quick-actions-row[aria-pressed='true'] {
+  background: var(--session-selected);
+}
+
+/* 开关文案与快捷键分列，窄卡片优先保留工具名称。 */
+.session-quick-actions-tool-state {
+  color: var(--session-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .session-codex-parity-v1 .session-quick-actions-row.is-static {
   cursor: default;
 }
@@ -3013,22 +3025,30 @@
   animation: session-title-flow-in 140ms var(--session-ease-out) both;
 }
 
-/* 冷热切换都在首次定位后原位淡入；滚动容器不做位移，避免污染锚点测量。 */
-.session-codex-parity-v1 .session-transcript-shell > .session-transcript {
-  transition: opacity 220ms var(--session-ease-out);
-}
-
+/* 未完成首次定位的正文暂不展示，避免把估高和真实高度之间的校正暴露出来。 */
 .session-codex-parity-v1 .session-transcript-shell[data-history-loading='true'] > .session-transcript {
   opacity: 0;
 }
 
+/* 使用明确的入场关键帧，热缓存即使在首帧内完成定位也能淡入；不移动滚动容器。 */
 .session-codex-parity-v1 .session-transcript-shell[data-history-ready='true'] > .session-transcript {
+  animation: session-history-arrive 260ms var(--session-ease-out) both;
   opacity: 1;
 }
 
 /* 本地提交是即时反馈，不参与冷历史淡入，也不等待后台窗口恢复动画。 */
 .session-codex-parity-v1 .session-transcript-shell[data-local-submission='true'] > .session-transcript {
-  transition: none;
+  animation: none;
+}
+
+/* 冷热历史共用同一淡入，不逐条重播既有消息。 */
+@keyframes session-history-arrive {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 /* 冷会话在消息区原位接管，骨架层和记录区共享同一尺寸，不触发布局跳变。 */
@@ -3143,6 +3163,10 @@
   .session-codex-parity-v1 .session-transcript-loading[data-visible='true'] {
     animation: none;
     transform: none;
+  }
+
+  .session-codex-parity-v1 .session-transcript-shell[data-history-ready='true'] > .session-transcript {
+    animation: none;
   }
 
   .session-codex-parity-v1 .session-transcript-shell > .session-transcript,
@@ -3922,8 +3946,6 @@
   --session-markdown-max: 40rem;
   --session-composer-max: var(--session-thread-max);
   --session-ease-out: cubic-bezier(0.19, 1, 0.22, 1);
-  /* ZEUS-0693：消息入场用带轻微回弹的弹簧收尾，先落一点再收回，避免生硬弹出。 */
-  --session-ease-spring: cubic-bezier(0.21, 1.14, 0.34, 1);
   /* 会话页的全局 source rail 与 native thread 共用同一套明暗 token，避免 dark shell 仍消费旧浅色产品变量。 */
   --zeus-product-canvas: var(--session-canvas);
   --zeus-product-panel: var(--session-sidebar);
@@ -4864,15 +4886,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .session-thread-item.is-entering {
-  animation: session-thread-item-arrive 380ms var(--session-ease-spring) both;
+  /* 新消息轻微上移后停稳，不叠加缩放和回弹；后续流式更新不重播。 */
+  animation: session-thread-item-arrive 320ms var(--session-ease-out) both;
 }
 
 .session-codex-parity-v1 .session-thread-item.has-message-actions {
   margin-block-end: 20px;
-}
-
-.session-codex-parity-v1 .session-thread-item.is-latest.is-entering {
-  animation: session-thread-item-arrive-latest 440ms var(--session-ease-spring) both;
 }
 
 /* 结构化回答沿用正文列宽和询问卡片；普通消息继续使用右侧气泡。 */
@@ -8915,13 +8934,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .session-turn-change-path {
-  color: var(--session-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* 此处是会话摘要，文件图标与名称使用中性色；Git 工作区继续使用状态配色。 */
+/* 摘要图标保持中性，文件名与其他列表共用 Git 状态颜色。 */
 .session-codex-parity-v1 .session-turn-change-card .session-turn-change-files svg.file-type-icon {
   color: var(--session-text-muted);
 }
@@ -12036,18 +12054,9 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
     flex-basis: 28px;
   }
 }
-/* ZEUS-0288：消息从提交到 Provider 接管保持同一视觉身份，流式过程使用持续而非逐增量重启动画。 */
-.session-codex-parity-v1 .session-workspace-root[data-conversation-state] {
-  animation: session-workspace-target-reveal 140ms var(--session-ease-out) both;
-}
-
 /* ZEUS-0327：环境弹层打开时让标题栏越过右侧工作面；原生网页仍由 suspended 通道单独隐藏。 */
 .session-codex-parity-v1 .session-thread-header[data-quick-actions-popover-open='true'] {
   z-index: 35;
-}
-
-.session-codex-parity-v1 .session-thread-item.is-latest.is-entering {
-  animation: session-thread-item-arrive-latest 440ms var(--session-ease-spring) both;
 }
 
 .session-codex-parity-v1 .session-queued-messages-header {
@@ -12085,45 +12094,24 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   outline: none;
 }
 
-@keyframes session-workspace-target-reveal {
-  from {
-    opacity: 0.92;
-  }
-}
-
-/* ZEUS-0693：普通新消息的入场弹簧，中段轻微过冲后回到静止位置。 */
+/* 动效只属于新消息；外层工作面始终不改变透明度。 */
 @keyframes session-thread-item-arrive {
   from {
     opacity: 0;
-    transform: translateY(8px) scale(0.995);
-  }
-
-  60% {
-    opacity: 1;
-    transform: translateY(-1.5px) scale(1);
+    transform: translateY(6px);
   }
 
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: none;
   }
 }
 
-/* 最新一条同时是当前发言，入场幅度略大，让“来了新消息”一眼可读。 */
-@keyframes session-thread-item-arrive-latest {
-  from {
-    opacity: 0;
-    transform: translateY(14px) scale(0.99);
-  }
-
-  58% {
-    opacity: 1;
-    transform: translateY(-2px) scale(1);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
+/* 系统减少动态效果时仍保留消息首帧，关闭位移与淡入。 */
+@media (prefers-reduced-motion: reduce) {
+  .session-codex-parity-v1 .session-thread-item.is-entering {
+    animation: none;
+    transform: none;
   }
 }
 

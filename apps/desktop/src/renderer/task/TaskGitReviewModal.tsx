@@ -1,5 +1,5 @@
 import { usePresenceOpen } from '../ui/MotionPresence.js';
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { buildTaskCommitMessageSuggestion } from '@zeus/shared';
 import { type DashboardClient, type TaskRecord } from '../apiClient.js';
 import type { BatchTaskWorkspaceResponse, TaskGitDiffSummary, TaskGitFileStatus, TaskWorkspaceIndexCollection, TaskWorkspaceIndexSnapshot, TaskWorkspaceSnapshot } from '../session/sessionTypes.js';
@@ -9,6 +9,7 @@ import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/Ap
 import { TaskWorkspaceBranchList } from './TaskWorkspaceBranchList.js';
 import { TaskGitDiffTable } from './TaskGitDiffTable.js';
 import { FileTypeIcon } from '../code/FileTypeIcon.js';
+import { fileStatusLabel } from '../code/fileStatus.js';
 
 type ReviewMode = 'commit' | 'commit-only' | 'push-only' | 'delivery';
 type ReviewStatus = 'loading' | 'ready' | 'submitting' | 'error';
@@ -360,25 +361,42 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
                 <p className="task-git-review-error">{zh ? `存在 ${activeReview.conflictFiles.length} 个冲突文件，请先进入冲突处理。` : `${activeReview.conflictFiles.length} conflicted files require resolution.`}</p>
               ) : null}
               <ol className="task-git-review-file-tree">
-                {files.map((file) => (
-                  <li key={file.path} className={selectedFile === file.path ? 'is-active' : ''}>
-                    <label>
-                      {props.mode !== 'push-only' ? (
-                        <input
-                          type="checkbox"
-                          checked={selectedPaths.includes(file.path)}
-                          onChange={(event) => setSelectedPaths((current) => (event.target.checked ? Array.from(new Set([...current, file.path])) : current.filter((path) => path !== file.path)))}
-                          disabled={busy}
-                        />
-                      ) : null}
-                      <button type="button" onClick={() => setSelectedFile(file.path)}>
-                        <FileTypeIcon name={file.path} />
-                        <span data-file-status={file.category}>{file.path}</span>
-                        <small>{fileStatusLabel(file, zh)}</small>
-                      </button>
-                    </label>
-                  </li>
-                ))}
+                {[false, true].map((untracked) => {
+                  /** 分组仅改变展示顺序，选择和提交继续使用原文件路径。 */
+                  const groupedFiles = files.filter((file) => (file.category === 'untracked') === untracked);
+                  /** 复用现有审阅文件行，保留选中与提交范围。 */
+                  const rows = groupedFiles.map((file) => (
+                    <li key={file.path} className={selectedFile === file.path ? 'is-active' : ''}>
+                      <label>
+                        {props.mode !== 'push-only' ? (
+                          <input
+                            type="checkbox"
+                            checked={selectedPaths.includes(file.path)}
+                            onChange={(event) => setSelectedPaths((current) => (event.target.checked ? Array.from(new Set([...current, file.path])) : current.filter((path) => path !== file.path)))}
+                            disabled={busy}
+                          />
+                        ) : null}
+                        <button type="button" data-icon-tooltip={`${file.path} · ${fileStatusLabel(file.category, zh)}`} aria-label={`${file.path} · ${fileStatusLabel(file.category, zh)}`} onClick={() => setSelectedFile(file.path)}>
+                          <FileTypeIcon name={file.path} />
+                          <span data-file-status={file.category}>{file.path}</span>
+                        </button>
+                      </label>
+                    </li>
+                  ));
+                  if (!groupedFiles.length) return null;
+                  return untracked ? (
+                    <li key="untracked">
+                      <details open>
+                        <summary>
+                          {zh ? '未跟踪文件' : 'Unversioned Files'} <small>{groupedFiles.length}</small>
+                        </summary>
+                        <ol className="task-git-review-file-tree">{rows}</ol>
+                      </details>
+                    </li>
+                  ) : (
+                    <Fragment key="tracked">{rows}</Fragment>
+                  );
+                })}
               </ol>
               {files.length === 0 ? <p className="task-git-review-empty">{zh ? '工作区没有未提交变更。' : 'The workspace has no uncommitted changes.'}</p> : null}
             </section>
@@ -393,6 +411,7 @@ function TaskGitReviewModalContent(props: TaskGitReviewModalContentProps) {
                 ) : null}
               </span>
               <TaskGitDiffTable
+                fileStatus={files.find((file) => file.path === selectedFile)?.category}
                 previewRequest={activeWorkspace && props.task && selectedFile ? { kind: 'task-git', taskId: props.task.id, workspaceId: activeWorkspace.id, path: selectedFile, scope: 'working' } : undefined}
                 diff={fileDiff?.fileDiffs[0] ?? null}
                 hasSelection={Boolean(selectedFile)}
@@ -550,13 +569,6 @@ function collectReviewFiles(workspace: TaskWorkspaceSnapshot | null): TaskGitFil
     byPath.set(file.path, file);
   }
   return [...byPath.values()].sort((left, right) => left.path.localeCompare(right.path));
-}
-
-function fileStatusLabel(file: TaskGitFileStatus, zh: boolean): string {
-  const labels = zh
-    ? { added: '新增', modified: '修改', deleted: '删除', renamed: '重命名', untracked: '未跟踪', conflict: '冲突', other: '变更' }
-    : { added: 'Added', modified: 'Modified', deleted: 'Deleted', renamed: 'Renamed', untracked: 'Untracked', conflict: 'Conflict', other: 'Changed' };
-  return labels[file.category];
 }
 
 function workspaceStateLabel(workspace: TaskWorkspaceIndexSnapshot, detail: TaskWorkspaceSnapshot | undefined, loadState: 'loading' | 'error' | undefined, zh: boolean): string {

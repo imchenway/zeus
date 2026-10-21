@@ -2,19 +2,24 @@ import { Decoration, EditorView, ViewPlugin, WidgetType, type ViewUpdate } from 
 import type { GitBlameLine } from '../features/git/gitContracts.js';
 import { hasBlameCommit } from './blamePresentation.js';
 
+/** 原文件按行读取，差异视图通过显示行解析前后版本的真实归属。 */
+export type BlameSource = readonly GitBlameLine[] | ((displayLine: number) => GitBlameLine | undefined);
+
 /** 仅在编辑器聚焦且光标为单点时展示当前行；编辑后立即隐藏旧归属，等待磁盘版本刷新。 */
-export function blameDecorations(lines: GitBlameLine[], labels: { locale?: string }) {
-  /** 先剔除没有真实提交的记录，所有源码入口都不会生成占位详情。 */
-  const byLine = new Map(lines.filter(hasBlameCommit).map((line) => [line.line, line]));
-  if (byLine.size === 0) return [];
+export function blameDecorations(source: BlameSource, labels: { locale?: string }) {
+  /** 原文件只索引真实提交；差异视图复用版本索引，并在解析当前行后使用同一规则过滤。 */
+  const byLine = typeof source === 'function' ? null : new Map(source.filter(hasBlameCommit).map((line) => [line.line, line]));
+  if (byLine?.size === 0) return [];
+  /** 光标移动时只解析当前行，不遍历整个文件。 */
+  const resolveLine = typeof source === 'function' ? source : (line: number) => byLine?.get(line);
   return ViewPlugin.define(
     (view) => ({
       stale: false,
-      decorations: activeBlameDecorations(view, byLine, labels),
+      decorations: activeBlameDecorations(view, resolveLine, labels),
       update(update: ViewUpdate) {
         if (update.docChanged) this.stale = true;
         if (update.docChanged || update.selectionSet || update.focusChanged || update.viewportChanged) {
-          this.decorations = this.stale ? Decoration.none : activeBlameDecorations(update.view, byLine, labels);
+          this.decorations = this.stale ? Decoration.none : activeBlameDecorations(update.view, resolveLine, labels);
         }
       },
     }),
@@ -22,12 +27,13 @@ export function blameDecorations(lines: GitBlameLine[], labels: { locale?: strin
   );
 }
 
-function activeBlameDecorations(view: EditorView, byLine: Map<number, GitBlameLine>, labels: { locale?: string }) {
+/** 当前单光标沿用原来的行尾详情，差异补位行没有归属时不生成提示。 */
+function activeBlameDecorations(view: EditorView, resolveLine: (line: number) => GitBlameLine | undefined, labels: { locale?: string }) {
   const selection = view.state.selection;
   if (!view.hasFocus || selection.ranges.length !== 1 || !selection.main.empty) return Decoration.none;
   const line = view.state.doc.lineAt(selection.main.head);
-  const blame = byLine.get(line.number);
-  if (!blame || !view.visibleRanges.some((range) => line.to >= range.from && line.to <= range.to)) return Decoration.none;
+  const blame = resolveLine(line.number);
+  if (!hasBlameCommit(blame) || !view.visibleRanges.some((range) => line.to >= range.from && line.to <= range.to)) return Decoration.none;
   return Decoration.set([Decoration.widget({ widget: new BlameWidget(blame, labels), side: 1 }).range(line.to)]);
 }
 

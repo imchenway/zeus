@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from 'react-dom';
 import { ChatTeardropDotsIcon as ChatTeardropDots } from '@phosphor-icons/react/dist/csr/ChatTeardropDots';
 import type { EditorView } from '@codemirror/view';
-import type { ConversationCodeComment, ConversationCodeCommentPosition, ConversationCodeCommentSide, ConversationFileLocation } from '@zeus/shared';
+import type { ConversationCodeComment, ConversationCodeCommentPosition, ConversationCodeCommentSide, ConversationFileLocation, FilePreviewBlameLine } from '@zeus/shared';
 import { SourceCodePreview } from '../code/SourceCodePreview.js';
 import { MotionPresence, PopoverSurface } from '../ui/MotionPresence.js';
 import { CodeCommentPanel } from './CodeCommentPanel.js';
@@ -36,6 +36,8 @@ interface CommentableSourceCodePreviewProps {
   conversationId?: string;
   /** 会话资源身份用于读取受控资源的 Git blame。 */
   resourceId?: string;
+  /** 文件预览提供的版本归属与正文一起传给只读编辑器。 */
+  blame?: FilePreviewBlameLine[];
   /** 通用预览直接传入已校验版本的逐行归属。 */
   blameLines?: GitBlameLine[];
   /** 当前会话全部代码评论。 */
@@ -264,6 +266,7 @@ export function CommentableSourceCodePreview(props: CommentableSourceCodePreview
   return (
     <>
       <SourceCodePreview
+        blame={props.blame}
         path={props.path}
         content={props.content}
         language={props.language}

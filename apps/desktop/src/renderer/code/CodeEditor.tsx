@@ -8,6 +8,8 @@ import { classHighlighter } from '@lezer/highlight';
 import type { ConversationFileLocation } from '@zeus/shared';
 import { loadSourceLanguage } from './sourceLanguageRegistry.js';
 import { editorTooltips } from './editorTooltips.js';
+import { blameDecorations, type BlameSource } from './blameDecorations.js';
+import './blameGutter.css';
 import { useCodeReadingOptions } from './codeReadingOptions.js';
 import type { GitBlameLine } from '../features/git/gitContracts.js';
 
@@ -45,6 +47,10 @@ export interface CodeEditorProps {
   location?: ConversationFileLocation;
   /** 行号、差异标记、评论和滚动同步等实际视图扩展。 */
   extensions?: Extension;
+  /** 已授权的版本归属；差异视图可按显示行映射到原始行。 */
+  blame?: BlameSource;
+  /** 光标行提交详情沿用当前界面的日期语言。 */
+  blameLocale?: string;
   /** 需要字符串的冲突模型在这里接收变更。 */
   onChange?(content: string, change: CodeTextChange): void;
   /** 源码标签保留不可变文档，保存时才转为字符串。 */
@@ -88,6 +94,8 @@ export const CodeEditor = memo(function CodeEditor(props: CodeEditorProps) {
   const accessSlot = useRef(new Compartment()).current;
   /** 行操作与装饰可独立更新。 */
   const decorationSlot = useRef(new Compartment()).current;
+  /** 行尾提交详情独立更新，不重建编辑器或撤销记录。 */
+  const blameSlot = useRef(new Compartment()).current;
   /** 阅读选项独立更新，保留选区、滚动和撤销记录。 */
   const readingSlot = useRef(new Compartment()).current;
   /** 源码、只读预览和差异共用行号菜单。 */
@@ -108,6 +116,7 @@ export const CodeEditor = memo(function CodeEditor(props: CodeEditorProps) {
           languageSlot.of([]),
           accessSlot.of([]),
           decorationSlot.of(callbacksRef.current.extensions ?? []),
+          blameSlot.of([]),
           readingSlot.of([]),
           syntaxHighlighting(classHighlighter),
           keymap.of([
@@ -174,7 +183,7 @@ export const CodeEditor = memo(function CodeEditor(props: CodeEditorProps) {
       viewRef.current = null;
       view.destroy();
     };
-  }, [props.path, languageSlot, accessSlot, decorationSlot]);
+  }, [props.path, languageSlot, accessSlot, decorationSlot, blameSlot, readingSlot]);
 
   useEffect(() => {
     viewRef.current?.dispatch({ effects: readingSlot.reconfigure(reading.extension) });
@@ -224,12 +233,23 @@ export const CodeEditor = memo(function CodeEditor(props: CodeEditorProps) {
   }, [props.content, props.path, props.extensions, decorationSlot]);
 
   useEffect(() => {
+    /** 正文切换后只挂载与本次版本对应的光标行提示。 */
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({ effects: blameSlot.reconfigure(props.blame ? blameDecorations(props.blame, { locale: props.blameLocale ?? props.locale }) : []) });
+  }, [props.blame, props.blameLocale, props.locale, props.content, props.path, blameSlot]);
+
+  useEffect(() => {
     /** 定位仅滚动目标编辑器，不抢占会话或评论输入焦点。 */
     const view = viewRef.current;
     const requested = props.location?.line ?? props.revealLine;
     if (!view || !requested || !Number.isFinite(requested)) return;
     const line = view.state.doc.line(Math.max(1, Math.min(Math.trunc(requested), view.state.doc.lines)));
-    view.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: 'center' }) });
+    /** 内容搜索保留命中列，长代码行横向滚动到真实位置。 */
+    const column = props.location?.column;
+    /** 外部列号按当前文档长度收敛，文件变化后仍能安全定位。 */
+    const offset = column && Number.isFinite(column) ? Math.max(0, Math.min(Math.trunc(column) - 1, line.length)) : 0;
+    view.dispatch({ effects: EditorView.scrollIntoView(line.from + offset, { y: 'center' }) });
   }, [props.location, props.revealLine, props.path]);
 
   return (

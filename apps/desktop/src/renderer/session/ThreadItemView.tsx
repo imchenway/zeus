@@ -574,7 +574,8 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
     autosizeTextarea(editTextareaRef.current, 72, 0.48);
   }, [editDraft, editing]);
 
-  useEffect(() => setMarkdownSettled(false), [itemText, props.item.itemId, props.item.status]);
+  // 本地消息交给 Provider 后沿用显示身份，不能只因原生条目编号变化就重置正文。
+  useEffect(() => setMarkdownSettled(false), [itemText, props.item.key, props.item.status]);
 
   const handleMarkdownSettled = useCallback(() => setMarkdownSettled(true), []);
 
@@ -700,7 +701,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
         <div className="session-commentary-flow" data-streaming={streamActive || undefined}>
           <ConversationMarkdown
             text={visibleText}
-            streamId={`thread-item:${props.item.itemId}`}
+            streamId={`thread-item:${props.item.key}`}
             phase={markdownPhase}
             language={props.language}
             resources={props.item.resources}
@@ -713,7 +714,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       ) : role === 'user' && taskPushLayout ? (
         <TaskPushMessageContent
           layout={taskPushLayout}
-          streamIdPrefix={`task-push:${props.item.itemId}`}
+          streamIdPrefix={`task-push:${props.item.key}`}
           resources={props.item.resources}
           pendingAttachments={pendingAttachments}
           language={props.language}
@@ -726,7 +727,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
           <AnimatedSize changeKey={expanded}>
             <ConversationMarkdown
               text={visibleText}
-              streamId={`thread-item:${props.item.itemId}`}
+              streamId={`thread-item:${props.item.key}`}
               phase="final"
               language={props.language}
               resources={props.item.resources}
@@ -746,7 +747,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
         <div className="session-service-tier-notice" role="status">
           <ConversationMarkdown
             text={visibleText}
-            streamId={`thread-item:${props.item.itemId}`}
+            streamId={`thread-item:${props.item.key}`}
             phase="final"
             language={props.language}
             resources={props.item.resources}
@@ -758,7 +759,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       ) : naturalLanguageStream && (visibleText || (streamActive && itemText)) ? (
         <ConversationMarkdown
           text={visibleText}
-          streamId={`thread-item:${props.item.itemId}`}
+          streamId={`thread-item:${props.item.key}`}
           phase={markdownPhase}
           language={props.language}
           resources={props.item.resources}

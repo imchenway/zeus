@@ -1,6 +1,6 @@
 import { memo, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { detectSourceLanguage } from '@zeus/shared';
+import { detectSourceLanguage, type FilePreviewBlameLine } from '@zeus/shared';
 import { Decoration, EditorView, GutterMarker, ViewPlugin, gutter, type ViewUpdate } from '@codemirror/view';
 import { Text, type Extension } from '@codemirror/state';
 import type { TaskGitFileDiff } from '../session/sessionTypes.js';
@@ -61,6 +61,12 @@ interface CodeDiffViewProps {
   annotationLines?: DiffAnnotationLine[];
   /** 新建或编辑评论时，在区块挂载后定位并聚焦。 */
   focusAnnotation?: DiffAnnotationLine;
+  /** 归属按原始文件行号关联，未提交和空白对齐行显示空白。 */
+  blame?: { left: FilePreviewBlameLine[]; right: FilePreviewBlameLine[] };
+  /** 光标行详情与左侧日期作者并存，语言跟随调用页面。 */
+  blameLocale?: string;
+  /** 片段导航只滚动同一个连续编辑器。 */
+  revealLine?: DiffAnnotationLine;
   /** 可见行号支持现有评论、范围选择和打开源码操作。 */
   renderLineNumber?: (line: number, side: 'left' | 'right') => ReactNode;
   /** React 继续管理评论编辑，不随代码行滚出而卸载。 */
@@ -76,8 +82,8 @@ export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps)
   /** 显示文件保持原始增删与行号身份。 */
   const file = full ?? props.file;
   /** 左右归属分别绑定实际版本，索引和工作区不共用 HEAD 行号。 */
-  const leftBlame = useGitBlame({ previewId: preview?.items?.[0]?.id });
-  const rightBlame = useGitBlame({ previewId: preview?.items?.[1]?.id });
+  const leftBlame = useGitBlame({ previewId: props.blame || preview?.items?.[0]?.blame !== undefined || preview?.items?.[0]?.blameError ? undefined : preview?.items?.[0]?.id });
+  const rightBlame = useGitBlame({ previewId: props.blame || preview?.items?.[1]?.blame !== undefined || preview?.items?.[1]?.blameError ? undefined : preview?.items?.[1]?.id });
   /** 所有入口对新增、删除文件只显示有效侧，不留空白旧行号列。 */
   const singleSide = props.singleSide ?? (props.file.changeType === 'added' ? 'right' : props.file.changeType === 'deleted' ? 'left' : undefined);
   /** 两侧均存在时才需要统一视图的双行号。 */
@@ -89,15 +95,15 @@ export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps)
     /** 稀疏数组让补位行显示无归属，而不冒用邻行作者。 */
     const result = { left: new Array<GitBlameLine>(rows.length), right: new Array<GitBlameLine>(rows.length) };
     /** Git 返回的一基行号与文件行直接匹配。 */
-    const left = new Map(leftBlame?.lines.map((line) => [line.line, line]));
-    const right = new Map(rightBlame?.lines.map((line) => [line.line, line]));
+    const left = new Map((props.blame?.left ?? preview?.items?.[0]?.blame ?? leftBlame?.lines)?.map((line) => [line.line, line]));
+    const right = new Map((props.blame?.right ?? preview?.items?.[1]?.blame ?? rightBlame?.lines)?.map((line) => [line.line, line]));
     /** 补丁与文件分开读取时，内容不匹配的行不展示可能错位的提交人。 */
     const leftContent = preview?.items?.[0]?.content?.split('\n').map((line, index) => normalizedFileLine(line, index + 1));
     const rightContent = preview?.items?.[1]?.content?.split('\n').map((line, index) => normalizedFileLine(line, index + 1));
     rows.forEach((row, index) => {
       /** 片段头、补位和过期行不对应可核实的文件内容。 */
-      const validLeft = row.leftNumber !== null && leftContent?.[row.leftNumber - 1] === row.left;
-      const validRight = row.rightNumber !== null && rightContent?.[row.rightNumber - 1] === row.right;
+      const validLeft = row.leftNumber !== null && (!preview?.items || leftContent?.[row.leftNumber - 1] === row.left);
+      const validRight = row.rightNumber !== null && (!preview?.items || rightContent?.[row.rightNumber - 1] === row.right);
       /** 统一视图中删除行来自左侧，其余来自右侧。 */
       const before = unified && row.kind !== 'deletion' ? validRight && right.get(row.rightNumber ?? 0) : validLeft && left.get(row.leftNumber ?? 0);
       const after = validRight && right.get(row.rightNumber ?? 0);
@@ -105,7 +111,9 @@ export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps)
       if (after) result.right[index] = after;
     });
     return result;
-  }, [rows, leftBlame, rightBlame, unified, preview?.items]);
+  }, [rows, props.blame, leftBlame, rightBlame, unified, preview?.items]);
+  /** 显示行包含补位，行尾详情按显示位置读取，不能再按原文件行号建立索引。 */
+  const cursorBlame = useMemo(() => ({ left: (line: number) => authors.left[line - 1], right: (line: number) => authors.right[line - 1] }), [authors]);
   /** 行文本只生成一次，不跟随评论或会话输入更新。 */
   const documents = useMemo(
     () => ({
@@ -125,6 +133,13 @@ export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps)
   }, [rows]);
   /** 两个编辑器共用纵向位置，横向保持独立。 */
   const views = useRef<{ left: EditorView | null; right: EditorView | null }>({ left: null, right: null });
+  useEffect(() => {
+    if (!props.revealLine) return;
+    /** 左右视图使用同一显示行，删除行也能准确定位。 */
+    const row = positions.get(`${props.revealLine.side}:${props.revealLine.line}`);
+    const view = views.current.left ?? views.current.right;
+    if (row !== undefined && view) view.dispatch({ effects: EditorView.scrollIntoView(view.state.doc.line(row + 1).from, { y: 'center' }) });
+  }, [props.revealLine, positions]);
   /** 文档行变化后释放旧补白，同一显示文档两栏共用对齐身份。 */
   const alignment = useMemo(() => ({}), [rows]);
   /** 仅在可见行号容器变化时发布一次 React 更新。 */
@@ -296,6 +311,8 @@ export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps)
           locale={preview?.zh === false ? 'en-US' : 'zh-CN'}
           label={props.label}
           extensions={extensions.left}
+          blame={cursorBlame.left}
+          blameLocale={props.blameLocale}
           onView={(view) => {
             views.current.left = view;
           }}
@@ -312,6 +329,8 @@ export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps)
           locale={preview?.zh === false ? 'en-US' : 'zh-CN'}
           label={props.label}
           extensions={extensions.right}
+          blame={cursorBlame.right}
+          blameLocale={props.blameLocale}
           onView={(view) => {
             views.current.right = view;
           }}
@@ -320,16 +339,20 @@ export const CodeDiffView = memo(function CodeDiffView(props: CodeDiffViewProps)
       {[...gutterPortals.entries.values()].map((portal) => {
         const row = rows[portal.row];
         if (!row) return null;
-        const number = row[portal.side === 'left' ? 'leftNumber' : 'rightNumber'];
+        /** 统一视图的删除行使用旧版本，其余行使用新版本。 */
+        const side = unified ? (row.kind === 'deletion' ? 'left' : 'right') : portal.side;
+        const number = row[side === 'left' ? 'leftNumber' : 'rightNumber'];
         return createPortal(
-          unified ? (
-            <>
-              <span>{row.leftNumber ?? ''}</span>
-              <span>{row.rightNumber ?? ''}</span>
-            </>
-          ) : number === null ? null : (
-            (props.renderLineNumber?.(number, portal.side) ?? number)
-          ),
+          <>
+            {unified ? (
+              <>
+                <span>{row.leftNumber ?? ''}</span>
+                <span>{row.rightNumber ?? ''}</span>
+              </>
+            ) : number === null ? null : (
+              (props.renderLineNumber?.(number, portal.side) ?? number)
+            )}
+          </>,
           portal.element,
           `${portal.side}:${portal.row}`,
         );

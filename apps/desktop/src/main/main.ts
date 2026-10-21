@@ -730,9 +730,10 @@ function currentAppBundlePath(): string {
   throw new Error('Zeus 无法定位当前 App bundle。');
 }
 
+/** 默认项目根必须是实际目录；安装资源中的 ASAR 只能用于读资源，不能用作原生进程的工作目录。 */
 function resolveMainProjectRoot(): string {
-  // packaged App 从 Finder 启动时 process.cwd() 可能是 "/"；禁止把全局 scan-current 兜底到整机根目录。
-  return process.env.ZEUS_PROJECT_ROOT ?? (app.isPackaged ? desktopRoot() : process.cwd());
+  // 两端打包版都使用真实资源目录，也避免 Finder 启动时把 scan-current 兜底到整机根目录。
+  return process.env.ZEUS_PROJECT_ROOT ?? (app.isPackaged ? process.resourcesPath : process.cwd());
 }
 
 function mainWindowStatePath(): string {
@@ -2132,10 +2133,12 @@ function setupIpc(): void {
     if (typeof input?.projectId !== 'string' || typeof input.query !== 'string') throw new TypeError('项目源码搜索请求无效。');
     return service.search(input.projectId, input.query);
   });
-  ipcMain.handle('zeus:project-source:search-content', (event, input: { projectId?: unknown; query?: unknown }) => {
+  ipcMain.handle('zeus:project-source:search-content', (event, input: { projectId?: unknown; query?: unknown; contentOnly?: unknown; caseSensitive?: unknown; wholeWord?: unknown }) => {
+    /** 搜索继续使用原窗口的项目文件访问授权。 */
     const service = requireProjectSourceWorkspace(event);
     if (typeof input?.projectId !== 'string' || typeof input.query !== 'string') throw new TypeError('项目源码内容搜索请求无效。');
-    return service.searchContent(input.projectId, input.query);
+    for (const option of [input.contentOnly, input.caseSensitive, input.wholeWord]) if (option !== undefined && typeof option !== 'boolean') throw new TypeError('项目源码内容搜索选项无效。');
+    return service.searchContent(input.projectId, input.query, { contentOnly: input.contentOnly === true, caseSensitive: input.caseSensitive === true, wholeWord: input.wholeWord === true });
   });
   ipcMain.handle('zeus:project-source:read-file', (event, input: { projectId?: unknown; relativePath?: unknown }) => {
     const service = requireProjectSourceWorkspace(event);
@@ -3900,7 +3903,7 @@ async function initializeApplication(): Promise<void> {
     if (!readOnlyValidationDescriptor) configureProjectGitAuthentication(nativeDesktopHelperPath(process.platform === 'win32' ? 'ZeusGitAskpass.exe' : 'ZeusGitAskpass'), keychainService);
     // Main 只持有窗口、BrowserHost 与短期连接凭据；独立 Zeus Core 是唯一业务 SQLite 写入者。
     const { startDesktopLocalServer } = await import('./localServerRuntime.js');
-    traceApplicationStartup('local_server_module_ready');
+    traceApplicationStartup('local_server_module_ready', sanitizeRendererRuntimeLogDetail(`Core 项目根目录：${mainProjectRoot}`));
     localServerRuntime = await startDesktopLocalServer({
       userDataPath,
       dataLayout,
@@ -4208,7 +4211,13 @@ async function resolveDesktopQuitMode(): Promise<DesktopLocalServerCloseMode | '
   try {
     status = await runtime.getStatus();
   } catch {
-    if (!fullRestartRequested && !upgradeHandoffRequested) return 'cancel';
+    if (!fullRestartRequested && !upgradeHandoffRequested) {
+      await showRestartCancelled(
+        nativeText('无法确认后台工作状态，本次退出未完成。Zeus 仍在运行，请检查运行日志后重试。', 'The background work status could not be confirmed. Zeus is still running. Check the runtime logs before trying to quit again.'),
+        true,
+      );
+      return 'cancel';
+    }
     const confirmed = await confirmRequestedRestart(
       nativeText(
         '无法确认哪些工作仍在运行。重启可能中断对话、待回答或待授权的请求，以及正在运行的工具和命令。',
@@ -4277,6 +4286,10 @@ async function resolveDesktopQuitMode(): Promise<DesktopLocalServerCloseMode | '
     return 'final_quit';
   } catch (error) {
     console.error('Zeus 未能记录全部活动工作的中断状态，已取消本次退出。', error);
+    await showRestartCancelled(
+      nativeText('停止工作尚未确认，本次退出未完成。Zeus 仍在运行，请检查运行日志后重试。', 'Stopping active work could not be confirmed. Zeus is still running. Check the runtime logs before trying to quit again.'),
+      true,
+    );
     return 'cancel';
   }
 }
@@ -4351,10 +4364,11 @@ async function confirmRequestedRestart(detail: string): Promise<boolean> {
   return result.response === 0;
 }
 
-async function showRestartCancelled(detail: string): Promise<void> {
+/** 退出或重启未完成时明确告知用户，不能只记录日志后保持后台运行。 */
+async function showRestartCancelled(detail: string, quitting = false): Promise<void> {
   const options = {
     type: 'warning' as const,
-    title: nativeText('重启已取消', 'Restart cancelled'),
+    title: quitting ? nativeText('退出未完成', 'Quit not completed') : nativeText('重启已取消', 'Restart cancelled'),
     message: nativeText('Zeus 将保持打开。', 'Zeus will remain open.'),
     detail,
     buttons: [nativeText('知道了', 'OK')],

@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { BrowserAutomationPort, BrowserAutomationToolCall } from '@zeus/local-server';
+import { closeLocalHttpServer } from './closeLocalHttpServer.js';
 
 export interface DesktopBrowserAutomationBridge {
   baseUrl: string;
@@ -28,7 +29,7 @@ export async function startDesktopBrowserAutomationBridge(browserAutomation: Bro
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     token,
-    close: () => closeHttpServer(server),
+    close: () => closeLocalHttpServer(server),
   };
 }
 
@@ -250,15 +251,6 @@ function listenOnLoopback(server: Server): Promise<void> {
     server.listen(0, '127.0.0.1', () => {
       server.off('error', reject);
       resolve();
-    });
-  });
-}
-
-function closeHttpServer(server: Server): Promise<void> {
-  return new Promise((resolve, reject) => {
-    server.close((error) => {
-      if (error) reject(error);
-      else resolve();
     });
   });
 }

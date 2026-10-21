@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { isInteractiveShellSession } from '@zeus/shared';
 import type { AiRuntimeSession, DashboardClient, ProjectRecord } from '../../apiClient.js';
-import { Button } from '../../ui/Button.js';
+import { TerminalWindowIcon } from '@phosphor-icons/react/dist/csr/TerminalWindow';
+import '../../commandCenter.css';
 import { createPortal } from 'react-dom';
 import { MotionPresence, usePresenceSurface } from '../../ui/MotionPresence.js';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
@@ -16,22 +17,21 @@ import { TerminalSearchBar, TerminalSearchButton, useTerminalSearch } from './Te
 const TERMINAL_STATE_STORAGE_KEY_PREFIX = 'zeus.terminal-panel-state.';
 
 /** 从本地存储读取终端面板状态。 */
-function readTerminalPanelState(projectId: string): { open: boolean; heightShare: number } {
+function readTerminalPanelState(projectId: string): { heightShare: number } {
   try {
     const stored = window.localStorage.getItem(`${TERMINAL_STATE_STORAGE_KEY_PREFIX}${projectId}`);
-    if (!stored) return { open: false, heightShare: 42 };
+    if (!stored) return { heightShare: 42 };
     const parsed = JSON.parse(stored);
     return {
-      open: typeof parsed.open === 'boolean' ? parsed.open : false,
       heightShare: typeof parsed.heightShare === 'number' ? Math.min(70, Math.max(25, parsed.heightShare)) : 42,
     };
   } catch {
-    return { open: false, heightShare: 42 };
+    return { heightShare: 42 };
   }
 }
 
 /** 将终端面板状态保存到本地存储。 */
-function saveTerminalPanelState(projectId: string, state: { open: boolean; heightShare: number }): void {
+function saveTerminalPanelState(projectId: string, state: { heightShare: number }): void {
   try {
     window.localStorage.setItem(`${TERMINAL_STATE_STORAGE_KEY_PREFIX}${projectId}`, JSON.stringify(state));
   } catch {
@@ -39,14 +39,21 @@ function saveTerminalPanelState(projectId: string, state: { open: boolean; heigh
   }
 }
 
-/** 命令页入口打开底部停靠面板，沿用浏览器分屏方式，收起不结束后台进程。 */
-export function ProjectTerminalPanel(props: { project: ProjectRecord; client: DashboardClient; language: 'zh-CN' | 'en-US'; dockHost: HTMLDivElement | null }) {
+/** 右侧项目入口打开独立终端底栏，收起不结束后台进程。 */
+export function ProjectTerminalPanel(props: {
+  project: ProjectRecord;
+  client: DashboardClient;
+  language: 'zh-CN' | 'en-US';
+  dockHost: HTMLDivElement | null;
+  /** 显示状态由工作区协调，避免与 Git 底栏重叠。 */ open: boolean;
+  /** 打开或收起只改变显示，不更改后台进程。 */ onOpenChange(open: boolean): void;
+}) {
   /** 当前界面语言。 */
   const zh = props.language === 'zh-CN';
   /** 搜索绑定当前标签的现有终端，独立于启停和连接状态。 */
   const search = useTerminalSearch();
-  /** 面板打开状态按项目ID持久化，切换项目时保持各项目独立状态。 */
-  const [open, setOpen] = useState(() => readTerminalPanelState(props.project.id).open);
+  /** 工具栏与底栏使用同一个显示状态。 */
+  const open = props.open;
   /** 高度比例按项目ID持久化。 */
   const [heightShare, setHeightShare] = useState(() => readTerminalPanelState(props.project.id).heightShare);
   /** 收起后把键盘焦点还给入口。 */
@@ -82,14 +89,13 @@ export function ProjectTerminalPanel(props: { project: ProjectRecord; client: Da
   /** 当项目ID变化时，从持久化存储恢复状态。 */
   useEffect(() => {
     const savedState = readTerminalPanelState(props.project.id);
-    setOpen(savedState.open);
     setHeightShare(savedState.heightShare);
   }, [props.project.id]);
 
-  /** 持久化打开状态和高度。 */
+  /** 只持久化高度，重新进入项目不会自动开启终端。 */
   useEffect(() => {
-    saveTerminalPanelState(props.project.id, { open, heightShare });
-  }, [props.project.id, open, heightShare]);
+    saveTerminalPanelState(props.project.id, { heightShare });
+  }, [props.project.id, heightShare]);
 
   useEffect(() => {
     /** 卸载后不回写，轮询之间不并发。 */
@@ -117,7 +123,7 @@ export function ProjectTerminalPanel(props: { project: ProjectRecord; client: Da
     }
     void refresh();
     /** 事件负责及时更新，轮询负责断线补偿。 */
-    const timer = window.setInterval(() => void refresh(), 2_000);
+    const timer = open ? window.setInterval(() => void refresh(), 2_000) : undefined;
     const unsubscribe = props.client.subscribeEvents(
       (event) => {
         if (event.payload.projectId === props.project.id && ['runtime.session.created', 'runtime.session.ended', 'runtime.session.stopped'].includes(event.type)) void refresh();
@@ -128,10 +134,10 @@ export function ProjectTerminalPanel(props: { project: ProjectRecord; client: Da
     );
     return () => {
       disposed = true;
-      window.clearInterval(timer);
+      if (timer !== undefined) window.clearInterval(timer);
       unsubscribe();
     };
-  }, [props.client, props.project.id]);
+  }, [props.client, props.project.id, open]);
 
   /** 点击即授权开启终端，沿用后台权限与一次性确认记录，不再弹二次提示。 */
   async function start(): Promise<void> {
@@ -166,7 +172,7 @@ export function ProjectTerminalPanel(props: { project: ProjectRecord; client: Da
   /** 优先恢复运行中的终端；没有运行会话时直接创建。 */
   function show(): void {
     if (loading || busy) return;
-    setOpen(true);
+    props.onOpenChange(true);
     const running = sessions.find((session) => session.status === 'running');
     if (running) setSelectedId(running.id);
     else void start();
@@ -219,21 +225,32 @@ export function ProjectTerminalPanel(props: { project: ProjectRecord; client: Da
 
   /** 根据工作区高度调整分屏比例，保留上方页面的操作空间。 */
   function resize(clientY: number): void {
-    const rect = props.dockHost?.parentElement?.getBoundingClientRect();
+    const rect = props.dockHost?.getBoundingClientRect();
     if (rect?.height) setHeightShare(Math.min(70, Math.max(25, ((rect.bottom - clientY) / rect.height) * 100)));
   }
 
   /** 只收起显示端，不终止后台 shell。 */
   function hide(): void {
-    setOpen(false);
+    props.onOpenChange(false);
     entryRef.current?.focus();
   }
 
   return (
     <>
-      <Button ref={entryRef} onClick={() => (open ? hide() : show())} disabled={loading || busy} aria-expanded={open}>
-        {zh ? '终端' : 'Terminal'}
-      </Button>
+      <button
+        ref={entryRef}
+        type="button"
+        className={open ? 'is-active' : ''}
+        data-project-tool="terminal"
+        aria-label={zh ? '终端' : 'Terminal'}
+        data-icon-tooltip={zh ? '终端' : 'Terminal'}
+        aria-controls={panelId}
+        onClick={() => (open ? hide() : show())}
+        disabled={loading || busy}
+        aria-expanded={open}
+      >
+        <TerminalWindowIcon aria-hidden="true" />
+      </button>
       <MotionPresence>
         {open && props.dockHost
           ? createPortal(
@@ -338,6 +355,7 @@ function TerminalDock(props: { heightShare: number; label: string; children: Rea
     <section
       ref={ref}
       className="project-terminal"
+      data-zeus-primitive="overlay"
       aria-label={props.label}
       aria-hidden={!open}
       inert={!open}

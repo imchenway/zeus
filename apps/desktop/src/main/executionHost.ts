@@ -16,6 +16,7 @@ import {
   type ExecutionHostKernelLease,
   type ExecutionHostLockIdentity,
   executionHostProtocolVersion,
+  executionHostStopWorkTimeoutMs,
   type ExecutionHostStartupStage,
   type ExecutionHostRendezvous,
   type ExecutionHostWorkStatus,
@@ -29,6 +30,7 @@ import {
 } from './executionHostProtocol.js';
 import { type DesktopLocalServerRuntime, startOwnedDesktopLocalServer, verifyReadOnlyValidationBeforeOwnedCoreLock } from './localServerRuntime.js';
 import { closeExecutionHostResources } from './executionHostClosePlan.js';
+import { closeLocalHttpServer } from './closeLocalHttpServer.js';
 import { isZeusDataRootHostIdentity, sameZeusDataRootHostIdentity, type ZeusDataRootHostIdentity } from './dataRootIdentity.js';
 
 // Main 的短时高 CPU 或网络恢复不能让仍被界面使用的 Core 误判为孤儿；
@@ -195,7 +197,7 @@ async function runExecutionHost(): Promise<void> {
       await closeExecutionHostResources({
         recordClosing: () => record('execution_host.closing', { reason }),
         closeRuntime: () => runtime.close(mode),
-        closeControlServer: () => closeHttpServer(controlServer),
+        closeControlServer: () => closeLocalHttpServer(controlServer),
         removeRendezvous: () => removeExecutionHostRendezvous(bootstrap.userDataPath, instanceId, bootstrap.dataRootIdentity),
         removeStartupStatus: () => removeExecutionHostStartupStatus(bootstrap.userDataPath, instanceId, bootstrap.dataRootIdentity),
         removeLockIdentity: () => removeExecutionHostLockIdentity(bootstrap.userDataPath, instanceId, bootstrap.dataRootIdentity),
@@ -288,7 +290,7 @@ async function runExecutionHost(): Promise<void> {
           method: 'POST',
           headers: { authorization: `Bearer ${runtime.config.apiToken}`, 'content-type': 'application/json' },
           body: JSON.stringify(input),
-          signal: AbortSignal.timeout(15_000),
+          signal: AbortSignal.timeout(executionHostStopWorkTimeoutMs),
         });
         const payload = (await response.json().catch(() => ({}))) as unknown;
         if (!response.ok) throw new Error(`Zeus execution-host stop failed with HTTP ${response.status}.`);
@@ -510,16 +512,6 @@ function listenOnLoopback(server: Server): Promise<void> {
     server.listen(0, '127.0.0.1', () => {
       server.off('error', reject);
       resolve();
-    });
-  });
-}
-
-function closeHttpServer(server: Server | undefined): Promise<void> {
-  if (!server) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    server.close((error) => {
-      if (error) reject(error);
-      else resolve();
     });
   });
 }

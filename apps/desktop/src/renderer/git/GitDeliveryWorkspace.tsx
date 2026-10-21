@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode, type ComponentProps } from 'react';
-import type { TaskGitFileStatus, TaskWorkspaceIndexSnapshot, TaskWorkspaceSnapshot, TaskGitDiffSummary } from '../session/sessionTypes.js';
+import type { TaskWorkspaceIndexSnapshot, TaskWorkspaceSnapshot, TaskGitDiffSummary } from '../session/sessionTypes.js';
 import { Button } from '../ui/Button.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
@@ -10,6 +10,7 @@ import { CheckIcon } from '@phosphor-icons/react/dist/csr/Check';
 import { WarningCircleIcon } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import { FolderIcon } from '@phosphor-icons/react/dist/csr/Folder';
 import { FileTypeIcon } from '../code/FileTypeIcon.js';
+import { fileStatusLabel, type FileStatus } from '../code/fileStatus.js';
 import { groupDirectoryFiles } from '../code/groupDirectoryFiles.js';
 import { GitCommitGenerationSettingsButton } from './GitCommitGenerationSettings.js';
 import type { GitCommitModelsClient } from './gitCommitModels.js';
@@ -21,11 +22,14 @@ export type BusyAction = 'loading' | 'commit' | 'commit-message' | 'push' | 'mer
 
 /** 文件树保留真实仓库相对路径。 */
 export interface DeliveryFile {
+  /** 仓库相对路径保持文件操作身份。 */
   path: string;
-  label: string;
+  /** 工作区使用 Git 状态，已提交成果使用比较类型。 */
+  status: FileStatus;
+  /** 当前比较中的新增行数。 */
   additions: number;
+  /** 当前比较中的删除行数。 */
   deletions: number;
-  workingFile?: TaskGitFileStatus;
 }
 /** 操作反馈保留逐仓结果。 */
 export interface DeliveryFeedback {
@@ -271,6 +275,50 @@ function DeliveryDirectoryFiles(props: {
   /** 双击打开独立窗口。 */
   onOpen: (path: string) => void;
 }) {
+  // 仓库根目录将未跟踪文件排在已有版本控制文件之后，复用目录勾选与展开行为。
+  if (!props.prefix && props.files.some((file) => file.status === 'untracked')) {
+    /** 已纳入版本控制的文件不受未跟踪分组选择影响。 */
+    const tracked = props.files.filter((file) => file.status !== 'untracked');
+    /** 仅真实未跟踪状态进入此分组，已暂存新增仍在上方。 */
+    const untracked = props.files.filter((file) => file.status === 'untracked');
+    /** 分组勾选直接使用现有路径集合，支持半选。 */
+    const selectedCount = untracked.filter((file) => props.selectedPaths.has(file.path)).length;
+    return (
+      <>
+        <DeliveryDirectoryFiles {...props} files={tracked} />
+        <details open className="task-git-delivery-directory">
+          <summary>
+            {props.working ? (
+              <input
+                type="checkbox"
+                checked={selectedCount === untracked.length}
+                ref={(element) => {
+                  if (element) element.indeterminate = selectedCount > 0 && selectedCount < untracked.length;
+                }}
+                aria-checked={selectedCount > 0 && selectedCount < untracked.length ? 'mixed' : selectedCount === untracked.length}
+                aria-label={props.zh ? '选择未跟踪文件' : 'Select untracked files'}
+                onChange={(event) =>
+                  props.onToggle(
+                    untracked.map((file) => file.path),
+                    event.target.checked,
+                  )
+                }
+                disabled={props.disabled}
+              />
+            ) : null}
+            <span>{props.zh ? '未跟踪文件' : 'Unversioned Files'}</span>
+            <small>{untracked.length}</small>
+          </summary>
+          <DeliveryDirectoryEntries {...props} files={untracked} />
+        </details>
+      </>
+    );
+  }
+  return <DeliveryDirectoryEntries {...props} />;
+}
+
+/** 目录与分组共用同一文件树，展开状态不改变真实路径。 */
+function DeliveryDirectoryEntries(props: Parameters<typeof DeliveryDirectoryFiles>[0]) {
   /** 文件按下一级路径分组，目录排序在普通文件之前。 */
   const entries = useMemo(() => groupDirectoryFiles(props.files, props.prefix), [props.files, props.prefix]);
   return (
@@ -317,13 +365,18 @@ function DeliveryDirectoryFiles(props: {
             ) : (
               <div className={`task-git-delivery-file-row${props.selectedFile === path ? ' is-active' : ''}`}>
                 {checkbox}
-                <button type="button" data-icon-tooltip={path} aria-pressed={props.selectedFile === path} onClick={() => props.onSelect(path)} onDoubleClick={() => props.onOpen(path)} disabled={props.disabled}>
+                <button
+                  type="button"
+                  data-icon-tooltip={`${path} · ${fileStatusLabel(files[0].status, props.zh)}`}
+                  aria-label={`${path} · ${fileStatusLabel(files[0].status, props.zh)}`}
+                  aria-pressed={props.selectedFile === path}
+                  onClick={() => props.onSelect(path)}
+                  onDoubleClick={() => props.onOpen(path)}
+                  disabled={props.disabled}
+                >
                   <DeliveryEntryIcon path={path} />
-                  <span>{name}</span>
-                  <small>
-                    {files[0].label}
-                    {files[0].additions || files[0].deletions ? ` · +${files[0].additions} −${files[0].deletions}` : ''}
-                  </small>
+                  <span data-file-status={files[0].status}>{name}</span>
+                  {files[0].additions || files[0].deletions ? <small>{`+${files[0].additions} −${files[0].deletions}`}</small> : null}
                 </button>
               </div>
             )}
@@ -491,6 +544,8 @@ export function GitDeliveryWorkspace(props: {
   actions: ReactNode;
   selectedFile: string;
   diffTitle: string;
+  /** 与文件树使用同一状态，未跟踪文件不由补丁推断。 */
+  fileStatus?: FileStatus;
   diffLoading: boolean;
   diff: TaskGitDiffSummary | null;
   revision: string | number;
@@ -507,7 +562,9 @@ export function GitDeliveryWorkspace(props: {
         <GitPaneSeparator name="delivery-height" label={props.zh ? '调整文件区与差异区高度' : 'Resize files and diff'} axis="y" initial={42} min={25} max={65} />
         <main className="task-git-review-main task-git-delivery-diff-main">
           <header className="task-git-review-pane-title">
-            <strong data-icon-tooltip={props.selectedFile}>{props.diffTitle}</strong>
+            <strong data-icon-tooltip={props.selectedFile} data-file-status={props.fileStatus}>
+              {props.diffTitle}
+            </strong>
           </header>
           {!props.selectedFile ? (
             <div className="task-git-delivery-empty">
@@ -523,7 +580,7 @@ export function GitDeliveryWorkspace(props: {
               {props.zh ? '正在读取差异…' : 'Loading diff…'}
             </p>
           ) : (
-            <SideBySideDiff previewRequest={props.previewRequest} revision={props.revision} diff={props.diff} zh={props.zh} title={props.diffTitle} fill />
+            <SideBySideDiff fileStatus={props.fileStatus} previewRequest={props.previewRequest} revision={props.revision} diff={props.diff} zh={props.zh} title={props.diffTitle} fill />
           )}
         </main>
       </div>

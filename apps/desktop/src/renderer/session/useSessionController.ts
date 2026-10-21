@@ -609,7 +609,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
   );
   /** 同一身份只能由发送账本或显示账本中的一方持有。 */
   const activeSendIdentities = new Set([...recoverableSends.map((envelope) => envelope.clientUserMessageId), ...deferredSends.map((envelope) => envelope.clientUserMessageId)]);
-  acceptedDisplaySends = acceptedDisplaySends.filter((envelope) => !activeSendIdentities.has(envelope.clientUserMessageId) && !durableCachedIdentities.has(envelope.clientUserMessageId));
+  acceptedDisplaySends = acceptedDisplaySends.filter((envelope) => !activeSendIdentities.has(envelope.clientUserMessageId) && !durableCachedIdentities.has(`user-message:${envelope.clientUserMessageId}`));
   const initialOptimisticItems = (options.initialOptimisticState?.itemOrder ?? [])
     .map((key) => options.initialOptimisticState?.items[key])
     .filter((item): item is NonNullable<typeof item> => Boolean(item?.optimistic && item.conversationId === options.conversationId))
@@ -869,7 +869,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
   let renderBatchActive = false;
   let renderBatchChanged = false;
 
-  /** 位置换代期间保留旧画面，所有动作按原顺序等待一次接管。 */
+  /** 位置换代期间保留旧历史，服务端动作按原顺序接管；本地输入不等待位置读取。 */
   let placementRecovery: Promise<void> | null = null;
   let placementEpoch = Math.max(1, ...Object.values(state.items).map((item) => item.transcript?.placement.orderEpoch ?? 1));
   const placementActions: Parameters<typeof sessionReducer>[1][] = [];
@@ -897,6 +897,27 @@ export function createSessionController(options: CreateSessionControllerOptions)
     return [];
   }
 
+  /** 缓冲动作尚未进入状态，也必须同时核对用户正式身份与事件携带的 Provider 别名。 */
+  function actionTranscriptEntryIds(action: Parameters<typeof sessionReducer>[1]): string[] {
+    /** 原始身份用于确认别名退休，不能只请求替换后的正式身份。 */
+    const ids = new Set(actionTranscripts(action).map((envelope) => envelope.placement.entryId));
+    /** 快照、分页和待处理交互沿用同一份用户身份解析。 */
+    const items = action.type === 'snapshot_hydrated' || action.type === 'snapshot_v2_page_merged' ? action.snapshot.items : action.type === 'pending_requests_hydrated' ? (action.items ?? []) : [];
+    for (const item of items) {
+      /** 只使用显式客户端关联，不用消息内容或时间推测身份。 */
+      const identity = durableUserMessageIdentity(item);
+      if (identity) ids.add(identity);
+    }
+    if (action.type === 'event_received' && (action.event.type === 'conversation.item.started' || action.event.type === 'conversation.item.delta' || action.event.type === 'conversation.item.completed')) {
+      /** 首次用户回显可能与位置重排同时到达，此时旧状态还没有这条消息。 */
+      const payload = action.event.payload;
+      /** 将实时字段映射到共享身份读取器，保持与快照和缓存的规则一致。 */
+      const identity = durableUserMessageIdentity({ type: payload.itemType, payload: payload.itemPayload, transcript: payload.transcript });
+      if (identity) ids.add(identity);
+    }
+    return [...ids];
+  }
+
   /** 分批核对同一代次；跨批又发生重编号时丢弃整批证据重新读取。 */
   async function recoverTranscriptPlacements(generation: number): Promise<void> {
     if (!options.client.loadNativeConversationTranscriptPlacements) throw new Error('当前客户端缺少位置核对接口。');
@@ -908,14 +929,14 @@ export function createSessionController(options: CreateSessionControllerOptions)
     while (!disposed && generation === placementRecoveryGeneration) {
       const ids = new Set([
         ...Object.values(state.items).flatMap((item) => {
-          /** 旧实时事件漏带位置时，仍可用已确认输入的客户端身份取回原位置。 */
+          /** 正式位置与旧别名一起核对，合并身份时原位交接正文，并阻止旧事件重新引入别名。 */
           const entryId = sessionTranscriptEntryId(item);
-          return entryId ? [entryId] : [];
+          return [...(entryId ? [entryId] : []), ...(item.transcript ? [item.transcript.placement.entryId] : [])];
         }),
         ...Object.values(state.systemMessages ?? {}).map((message) => message.transcript.placement.entryId),
         ...state.pendingRequests.flatMap((request) => (request.transcript ? [request.transcript.placement.entryId] : [])),
       ]);
-      for (const action of placementActions) for (const envelope of actionTranscripts(action)) ids.add(envelope.placement.entryId);
+      for (const action of placementActions) for (const entryId of actionTranscriptEntryIds(action)) ids.add(entryId);
       const remaining = [...ids].filter((id) => !placements.has(id) && !removed.has(id));
       if (remaining.length === 0) {
         const notices = placementActions.flatMap((action) => (action.type === 'event_received' && action.event.type === 'conversation.transcript.placement.changed' ? [action.event.payload] : []));
@@ -953,7 +974,17 @@ export function createSessionController(options: CreateSessionControllerOptions)
     }
   }
 
+  /** 本地输入同步显示，服务端历史与位置继续在同一次归约中接管。 */
   function dispatch(action: Parameters<typeof sessionReducer>[1]): void {
+    /** 这些动作不引入持久位置；缓冲它们会延迟气泡、读取旧草稿，甚至在恢复失败时丢失本地显示。 */
+    const localInputAction =
+      action.type === 'draft_changed' ||
+      action.type === 'attachments_changed' ||
+      action.type === 'browser_submission_changed' ||
+      action.type === 'context_draft_changed' ||
+      action.type === 'send_started' ||
+      action.type === 'send_failed' ||
+      action.type === 'send_uncertain';
     /** 历史接管前补齐已加载用户输入的位置，不能先把它排到有位置的回复之后。 */
     const missingInputPlacement =
       (action.type === 'snapshot_hydrated' || action.type === 'snapshot_v2_page_merged') &&
@@ -963,6 +994,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
     const incomingEpoch =
       action.type === 'event_received' && action.event.type === 'conversation.transcript.placement.changed' ? action.event.payload.orderEpoch : Math.max(0, ...actionTranscripts(action).map((envelope) => envelope.placement.orderEpoch));
     if (
+      !localInputAction &&
       action.type !== 'transcript_placements_hydrated' &&
       (placementRecovery ||
         missingInputPlacement ||
