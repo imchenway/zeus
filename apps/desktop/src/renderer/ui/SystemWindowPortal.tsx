@@ -3,6 +3,7 @@ import { closeDocumentLayer } from './nativeCloseLayer.js';
 import { WindowDocumentContext, systemWindowDocuments } from './windowDocument.js';
 import './systemWindow.css';
 import { installIconTooltips } from '../../preload/iconTooltip.js';
+import { installMarkdownListInput } from '../../preload/markdownListInput.js';
 
 /** 仅已迁移的工作窗口可请求主进程白名单。 */
 export type SystemWindowKind = 'git-push' | 'git-commit' | 'task-push' | 'file-preview';
@@ -69,6 +70,8 @@ export function SystemWindowPortal(props: { kind: SystemWindowKind; title: strin
     sync();
     /** 工具提示复用主应用管理器，并监听子窗口自己的键盘与鼠标事件。 */
     const disposeTooltips = installIconTooltips(targetDocument);
+    /** 同源系统窗口使用自己的原生编辑与撤销历史。 */
+    const disposeListInput = installMarkdownListInput(targetDocument);
     /** 动态主题与懒加载组件样式继续使用原应用规则。 */
     const observer = new MutationObserver(sync);
     observer.observe(document.head, { childList: true, subtree: true, characterData: true, attributes: true });
@@ -87,6 +90,7 @@ export function SystemWindowPortal(props: { kind: SystemWindowKind; title: strin
       window.cancelAnimationFrame(frame);
       observer.disconnect();
       disposeTooltips();
+      disposeListInput();
       unsubscribe();
       systemWindowDocuments.delete(targetDocument);
       void bridge.updateSystemWindow(name, 'close').catch(() => undefined);

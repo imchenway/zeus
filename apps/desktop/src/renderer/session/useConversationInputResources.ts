@@ -17,7 +17,6 @@ interface UseConversationInputResourcesOptions {
   disabled: boolean;
   onTextChange: (text: string) => void;
   onAddAttachments: (attachments: NativeConversationAttachment[]) => void;
-  onRemoveAttachment: (attachment: NativeConversationAttachment) => void;
   onError: (message: string) => void;
 }
 
@@ -34,7 +33,6 @@ export interface ConversationInputResourceHandlers {
   handleDragOver(event: DragEvent<HTMLElement>): void;
   handleDragLeave(event: DragEvent<HTMLElement>): void;
   handleDrop(event: DragEvent<HTMLElement>): void;
-  restorePastedText(attachment: NativeConversationAttachment): void;
 }
 
 export function useConversationInputResources(options: UseConversationInputResourcesOptions): ConversationInputResourceHandlers {
@@ -206,13 +204,6 @@ export function useConversationInputResources(options: UseConversationInputResou
     [addFiles],
   );
 
-  const restorePastedText = useCallback((attachment: NativeConversationAttachment) => {
-    if (!attachment.restorableText || latest.current.disabled) return;
-    const textarea = latest.current.textareaRef.current;
-    insertText(latest.current, attachment.restorableText, textarea ? currentSelection(textarea) : { start: latest.current.text.length, end: latest.current.text.length });
-    latest.current.onRemoveAttachment(attachment);
-  }, []);
-
   return {
     pendingResources: previews.pendingResources,
     processing: previews.processing,
@@ -224,7 +215,6 @@ export function useConversationInputResources(options: UseConversationInputResou
     handleDragOver,
     handleDragLeave,
     handleDrop,
-    restorePastedText,
   };
 }
 

@@ -237,7 +237,8 @@ export interface SessionWorkspaceActions {
   onSendQueuedNow?: (submissionId: string) => void | Promise<void>;
   /** 异步问题答复与普通 Composer 消息分开取草稿，共用提交通道。 */
   onAnswerAsyncQuestion?: (item: NativeSessionItemBuffer, answers: AsyncQuestionAnswer['answers'], asNewMessage: boolean, answerAttachments?: Record<string, NativeConversationAttachment[]>) => Promise<void>;
-  onReorderQueue?: (orderedSubmissionIds: string[]) => void | Promise<void>;
+  /** 保留调序回执水位，让卡片即时顺序平稳交给权威快照。 */
+  onReorderQueue?: QueuedConversationMessagesProps['onReorder'];
   onResumeQueue?: () => void | Promise<void>;
   onRestoreArchivedConversation?: () => void | Promise<void>;
   onRespondToRequest?: (requestId: string, response: Record<string, unknown>) => void | Promise<void>;
@@ -913,10 +914,8 @@ export function createConnectedSessionActions(input: { controller: SessionContro
     onAnswerAsyncQuestion: async (item, answers, asNewMessage, answerAttachments) => {
       await input.controller.answerAsyncQuestion(item, answers, asNewMessage, answerAttachments);
     },
-    // 重排失败必须回到原卡片，不能像后台恢复操作一样静默吞掉。
-    onReorderQueue: async (orderedSubmissionIds) => {
-      await input.controller.reorderQueue(orderedSubmissionIds);
-    },
+    // 回执携带权威水位；失败由原卡片展示，不能静默吞掉。
+    onReorderQueue: (orderedSubmissionIds) => input.controller.reorderQueue(orderedSubmissionIds),
     onResumeQueue: () => settle(input.controller.resumeQueue()),
     onRestoreArchivedConversation: () => settle(input.controller.restoreArchivedConversation()),
     onRespondToRequest: (requestId, response) => input.controller.respondToRequest(requestId, response).then(() => undefined),
@@ -3526,9 +3525,6 @@ export function NewConversationComposer(props: {
       recoverDraftOperation('input_resource');
       setAttachments((current) => mergeConversationAttachments(current, selected));
     },
-    onRemoveAttachment: (attachment) => {
-      setAttachments((current) => current.filter((candidate) => candidate !== attachment));
-    },
     onError: (error) => recordSystemMessage(systemScope, error, 'input_resource', '输入附件处理失败。'),
   });
 
@@ -3784,7 +3780,6 @@ export function NewConversationComposer(props: {
         language={props.language}
         disabled={submitting || inputResources.processing}
         onRemove={(attachment) => setAttachments((current) => current.filter((candidate) => candidate !== attachment))}
-        onRestorePastedText={goalInputActive ? undefined : inputResources.restorePastedText}
       />
       {browserDraft.submission ? <BrowserSubmissionAttachment submission={browserDraft.submission} language={props.language} disabled={submitting} onRemove={() => setBrowserDraft((current) => ({ ...current, submission: null }))} /> : null}
       <div className="session-composer-input-frame" data-goal-input={goalInputActive ? 'true' : 'false'}>

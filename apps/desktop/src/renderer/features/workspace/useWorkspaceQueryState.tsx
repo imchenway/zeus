@@ -1,3 +1,4 @@
+import type { FilePreviewSourceWorkspace } from '@zeus/shared';
 import { matchesTaskDeadline, type TaskDeadlineFilter } from '@zeus/shared';
 import type { DigitalTeamEntrySelection } from '../digital-teams/DigitalTeamWorkspace.js';
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -143,6 +144,8 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
   const [projectCommandsProjectId, setProjectCommandsProjectId] = useState<string | null>(null);
   const projectSourceWorkspaceRef = useRef<ProjectSourceWorkspaceHandle | null>(null);
   const [sourceWorkspaceDirty, setSourceWorkspaceDirty] = useState(false);
+  /** 预览编辑使用原生源码页，工作树身份与业务项目分开保存。 */
+  const [sourceWorkspaceTarget, setSourceWorkspaceTarget] = useState<FilePreviewSourceWorkspace | null>(null);
   /** 全局规则草稿复用工作区离开确认。 */
   const globalAgentSettingsRef = useRef<GlobalAgentSettingsHandle | null>(null);
   /** 同时用于设置切换和原生窗口关闭保护。 */
@@ -1778,6 +1781,8 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     settingsWorkspaceCopy,
     snapshot,
     sourceWorkspaceDirty,
+    sourceWorkspaceTarget,
+    setSourceWorkspaceTarget,
     sourceWorkspaceLeaveDialogOpen,
     sourceWorkspaceSaveBusy,
     storageRecoveryFault,

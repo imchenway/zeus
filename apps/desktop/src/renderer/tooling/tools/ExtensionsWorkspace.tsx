@@ -545,7 +545,9 @@ function ConnectorDialog(props: {
       </label>
       <label>
         <span>{props.zh ? '服务配置（JSON）' : 'Server configuration (JSON)'}</span>
+        {/* 服务配置采用 JSON 语法，保持字面换行。 */}
         <textarea
+          data-markdown-lists="off"
           className="extension-connector-config"
           value={config}
           onChange={(event) => setConfig(event.currentTarget.value)}

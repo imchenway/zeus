@@ -207,12 +207,14 @@ declare global {
       releaseFilePreview: (ids: string[]) => Promise<void>;
       /** 用户主动请求系统查看或导出当前预览版本。 */
       actOnFilePreview: (id: string, action: 'quick-look' | 'open' | 'reveal' | 'export' | 'edit') => Promise<void>;
+      /** 只恢复两端预览中选中的行区块，并返回更新后的预览授权。 */
+      /** 将完整草稿保存到当前授权工作区文件。 */
+      saveFilePreview: (input: import('@zeus/shared').FilePreviewSaveInput) => Promise<import('@zeus/shared').FilePreviewItem[]>;
+      revertFilePreviewBlock: (input: import('@zeus/shared').FilePreviewRevertInput) => Promise<import('@zeus/shared').FilePreviewItem[]>;
       /** 预览令牌绑定内容和窗口，不接受任意仓库路径。 */
       loadFilePreviewBlame: (id: string) => Promise<GitFileBlame | null>;
-      /** 读取当前源码窗口固定的工作区及初始文件。 */
-      loadFilePreviewSourceWorkspace: () => Promise<import('@zeus/shared').FilePreviewSourceWorkspace>;
-      /** 已打开的源码页重新定位初始文件，不覆盖其他文件草稿。 */
-      onFilePreviewSourceFileRequested: (listener: (path: string) => void) => () => void;
+      /** 在原生源码页打开主进程校验后的目标，沿用草稿离开保护。 */
+      onFilePreviewSourceWorkspaceRequested: (listener: (workspace: import('@zeus/shared').FilePreviewSourceWorkspace) => void) => () => void;
       readProjectSourceFile: (input: { projectId: string; relativePath: string }) => Promise<ProjectSourceDocument>;
       /** 项目内的草稿效果预览与相对资源读取。 */
       prepareProjectSourcePreview: (input: import('@zeus/shared').ProjectSourcePreviewRequest) => Promise<import('@zeus/shared').ProjectSourcePreviewGrant>;

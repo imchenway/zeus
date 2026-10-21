@@ -916,15 +916,9 @@
   background: var(--session-working-soft, var(--session-canvas));
 }
 
-/* 排序反馈跟随原消息，显示真实可见位置，便于确认相邻两项的变化。 */
+/* 换位高亮跟随原消息，不增加占用一行的成功提示。 */
 .session-codex-parity-v1 .session-queued-message[data-reordered='true'] {
   background: var(--session-working-soft, var(--session-canvas));
-}
-
-.session-codex-parity-v1 .session-queued-message-reordered {
-  color: var(--session-text-muted);
-  font-size: 12px;
-  grid-column: 1 / -1;
 }
 
 .session-codex-parity-v1 .session-queued-message[data-reordered='true']:focus-visible {
@@ -1147,7 +1141,8 @@
   border-radius: 8px;
   flex-basis: min(200px, calc(100vw - 80px));
   grid-template-columns: 22px minmax(0, 1fr);
-  padding: 5px 8px;
+  /* 保留移除按钮的位置，长文件名在按钮之前省略，卡片宽高保持不变。 */
+  padding: 5px 32px 5px 8px;
 }
 
 .session-codex-parity-v1 .session-queued-message-attachments .pending-resource-visual {

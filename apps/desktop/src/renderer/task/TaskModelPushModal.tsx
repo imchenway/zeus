@@ -763,10 +763,6 @@ export function TaskModelPushModal(props: {
       setSupplementalResourceError(null);
       props.onChange((current) => ({ ...current, supplementalAttachments: mergeTaskPushSupplementalAttachments(current.supplementalAttachments, attachments) }));
     },
-    onRemoveAttachment: (attachment) => {
-      const identity = taskPushSupplementalAttachmentIdentity(attachment);
-      props.onChange((current) => ({ ...current, supplementalAttachments: current.supplementalAttachments.filter((candidate) => taskPushSupplementalAttachmentIdentity(candidate) !== identity) }));
-    },
     onError: setSupplementalResourceError,
   });
   useEffect(() => {
@@ -1079,7 +1075,6 @@ export function TaskModelPushModal(props: {
                   const identity = taskPushSupplementalAttachmentIdentity(attachment);
                   props.onChange((current) => ({ ...current, supplementalAttachments: current.supplementalAttachments.filter((candidate) => taskPushSupplementalAttachmentIdentity(candidate) !== identity) }));
                 }}
-                onRestoreText={inputResources.restorePastedText}
                 onError={setSupplementalResourceError}
               />
               <textarea

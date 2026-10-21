@@ -1230,7 +1230,8 @@ function CommandDefinitionModal(props: {
             </label>
             <label className="wide">
               {zh ? '命令' : 'Command'}
-              <textarea required maxLength={1024} rows={4} value={props.draft.command} onChange={(event) => update('command', event.currentTarget.value)} />
+              {/* 可执行命令保留原始缩进和内容。 */}
+              <textarea data-markdown-lists="off" required maxLength={1024} rows={4} value={props.draft.command} onChange={(event) => update('command', event.currentTarget.value)} />
             </label>
             <div>
               <span>{zh ? '命令解释器' : 'Command shell'}</span>

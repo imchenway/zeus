@@ -367,7 +367,11 @@
   background: var(--zeus-product-panel);
   border: 0;
   border-radius: 0;
-  padding: 6px 8px;
+  padding: 6px 0;
+}
+/* 内边距属于分组内容，分支与文件状态的分隔线贯穿导航宽度。 */
+.macos-ai-app.zeus-shell .project-git-workbench .project-git-navigator > :is(.git-toolbar-identity, .git-workspace-navigation, details) {
+  padding-inline: 8px;
 }
 .macos-ai-app.zeus-shell .project-git-workbench .project-git-browser-content {
   background: var(--zeus-product-panel);
@@ -500,4 +504,52 @@
 }
 .git-reference-tree button.is-active {
   background: var(--zeus-source-list-selected);
+}
+
+/* 顶部提交按钮同时标示当前交付页，角标继续使用拉取和推送的共用规则。 */
+.git-command-toolbar > button[aria-current='page'] {
+  background: var(--zeus-source-list-selected);
+  color: var(--zeus-control-accent);
+}
+
+/* 工作台内直接挂载完整交付正文，不保留旧文件状态标题和底部提交栏。 */
+.macos-ai-app.zeus-shell .project-git-browser-content[data-delivery] {
+  overflow: hidden;
+}
+.project-git-delivery-surface {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-inline-size: 0;
+  min-block-size: 0;
+  overflow: hidden;
+  container-type: inline-size;
+}
+.project-git-delivery-surface > .task-git-merge-content {
+  flex: 1;
+}
+
+/* 目录筛选只占一行，清除后恢复整个仓库的交付范围。 */
+.git-delivery-folder-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  min-inline-size: 0;
+}
+.git-delivery-folder-filter > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+/* 嵌入区域比窗口窄时依照可用宽度布局，两侧操作与文件树仍可独立滚动。 */
+@container (max-width: 620px) {
+  .project-git-delivery-surface .task-git-delivery-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(190px, 42%);
+  }
+  .project-git-delivery-surface .task-git-delivery-actions {
+    padding-inline: 8px;
+  }
 }

@@ -52,7 +52,7 @@ class AuthorMarker extends GutterMarker {
 }
 
 /** 源码、差异、评论预览共用菜单、软换行和逐行归属侧栏。 */
-export function useCodeReadingOptions(hostRef: RefObject<HTMLElement | null>, lines?: GitBlameLine[], locale = 'zh-CN') {
+export function useCodeReadingOptions(hostRef: RefObject<HTMLElement | null>, lines?: GitBlameLine[], locale = 'zh-CN', hostIdentity?: unknown) {
   /** 两侧编辑器读取同一快照，菜单切换不会重建文档。 */
   const options = useCodeReadingPreferences();
   /** 菜单只从行号及其左侧打开，正文保留原生选择和右键行为。 */
@@ -93,7 +93,7 @@ export function useCodeReadingOptions(hostRef: RefObject<HTMLElement | null>, li
     };
     host.addEventListener('contextmenu', onContextMenu);
     return () => host.removeEventListener('contextmenu', onContextMenu);
-  }, [hostRef]);
+  }, [hostRef, hostIdentity]);
   /** 两个选项都有可访问的选中状态，菜单关闭交给统一组件。 */
   const menu = point
     ? createPortal(

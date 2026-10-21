@@ -1,3 +1,4 @@
+import type { FilePreviewSourceWorkspace } from '@zeus/shared';
 import { formatVisibleApplicationError, modelSetupRequestedEvent } from '../../ui/ApplicationErrorDialog.js';
 import { useCallback, useMemo, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { temporaryWorkspaceId, cloneTaskManagementStatusConfig, type TaskManagementStatusConfig } from '@zeus/shared';
@@ -186,6 +187,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     setTaskDetailPresentation,
     setTaskEvents,
     setTaskGitReviewState,
+    setTaskGitMergeTaskId,
     setTaskManagementStatusReplacements,
     setTaskTableLayoutDraft,
     setTaskTableLayoutLeaveDialogOpen,
@@ -205,6 +207,8 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
     taskModelPushError,
     taskModelPushTaskId,
     sourceWorkspaceDirty,
+    sourceWorkspaceTarget,
+    setSourceWorkspaceTarget,
     taskBoardSnapshots,
     taskConversationReopenState,
     taskEvents,
@@ -1485,7 +1489,7 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
   }
 
   /** 源码仍整页导航；Git 只打开侧栏，跨项目时沿用离开保护。 */
-  function openProjectSection(project: ProjectRecord, section: ProjectWorkspaceSection, codeMode: ProjectCodeWorkspaceMode = 'source'): void {
+  function openProjectSection(project: ProjectRecord, section: ProjectWorkspaceSection, codeMode: ProjectCodeWorkspaceMode = 'source', sourceTarget: FilePreviewSourceWorkspace | null = null): void {
     if (section === 'code' && codeMode === 'git') {
       if (project.id === temporaryWorkspaceId) return;
       /** 同项目保留底层页面；跨项目更新身份前保护原草稿。 */
@@ -1505,6 +1509,12 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
       setConversationDraftOpen(false);
       setActiveNavTarget(section === 'sessions' ? 'conversations' : 'projects');
       setActiveProjectSection(section);
+      setSourceWorkspaceTarget(section === 'code' ? sourceTarget : null);
+      if (sourceTarget) {
+        // 原生源码页接管显示后关闭当前审阅层，避免旧弹层遮挡编辑器。
+        setTaskGitReviewState(null);
+        setTaskGitMergeTaskId(null);
+      }
       if (section === 'code') setProjectGitOpen(false);
       setProjectCommandsProjectId(null);
       // 项目设置直接进入数字员工，不再自动打开旧项目配置抽屉。
@@ -1512,7 +1522,12 @@ export function useWorkspaceOperations(state: WorkspaceQueryState, domainActions
       if (typeof window !== 'undefined') window.history.replaceState(null, '', section === 'code' ? `#project-code-${codeMode}` : `#project-${section}`);
       workspaceScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
     };
-    if (project.id === activeProjectId && activeNavTarget === (section === 'sessions' ? 'conversations' : 'projects') && section === activeProjectSection) {
+    if (
+      project.id === activeProjectId &&
+      activeNavTarget === (section === 'sessions' ? 'conversations' : 'projects') &&
+      section === activeProjectSection &&
+      (sourceWorkspaceTarget?.project.id ?? activeProjectId) === (sourceTarget?.project.id ?? project.id)
+    ) {
       navigate();
       return;
     }

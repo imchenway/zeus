@@ -3,12 +3,25 @@ import { BrowserWindow, dialog, ipcMain, protocol, shell } from 'electron';
 import { execFile, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants, createReadStream, createWriteStream } from 'node:fs';
-import { copyFile, mkdir, mkdtemp, open, readFile, realpath, rm, stat } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, mkdtemp, open, readFile, realpath, rm, stat } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
-import { decodeFilePreviewText, filePreviewKind, filePreviewLimits, filePreviewMime, type FilePreviewIntent, type FilePreviewItem, type FilePreviewRequest, type FilePreviewSource } from '@zeus/shared';
+import {
+  decodeFilePreviewText,
+  filePreviewKind,
+  filePreviewLimits,
+  filePreviewMime,
+  type FilePreviewIntent,
+  type FilePreviewItem,
+  type FilePreviewRequest,
+  type FilePreviewSource,
+  type FilePreviewRevertInput,
+  type FilePreviewSaveInput,
+} from '@zeus/shared';
+import { ProjectSourceWorkspaceService } from './projectSourceWorkspace.js';
+import type { MainCommandLedger, MainCommandRequest } from './mainCommandLedger.js';
 import { getFilePreviewBlame } from '@zeus/git-core';
 
 /** 只读媒体协议必须在 Electron 就绪前登记；不允许任意 file URL。 */
@@ -25,6 +38,10 @@ const execFileAsync = promisify(execFile);
 interface PreviewGrant {
   /** 窗口销毁时撤销所有关联资源。 */
   owner: number;
+  /** 两端必须来自同一次读取，不能拼接不同文件的令牌。 */
+  batch: string;
+  /** 原始业务来源用于跳回所属项目，不由文件路径猜测项目。 */
+  request: FilePreviewRequest;
   /** 用于重复检查文件未被替换的授权来源。 */
   source: FilePreviewSource;
   /** 原始或历史副本路径。 */
@@ -102,8 +119,10 @@ export function registerFilePreview(services: {
   resolve(input: FilePreviewRequest, window: BrowserWindow): Promise<FilePreviewIntent>;
   /** 当前应用数据下独立的临时资源根。 */
   temporaryRoot: string;
+  /** 文件写入沿用主进程命令回执，结果未知时禁止自动重放。 */
+  commandLedger(): MainCommandLedger;
   /** 只有宿主固定的当前工作区路径能进入源码编辑页。 */
-  openSource(window: BrowserWindow, target: { root: string; path: string }): Promise<void>;
+  openSource(window: BrowserWindow, target: { root: string; path: string }, request: FilePreviewRequest): Promise<void>;
 }): void {
   /** 随机令牌只授予单个文件，绝不包含本地服务密钥。 */
   const grants = new Map<string, PreviewGrant>();
@@ -199,9 +218,10 @@ export function registerFilePreview(services: {
     }
   });
 
-  ipcMain.handle('zeus:file-preview:load', async (event, input: FilePreviewRequest) => {
-    /** 发起操作的受信窗口。 */
-    const window = services.requireWindow(event);
+  /** 加载与区块撤销后的刷新共享同一授权及解码链路。 */
+  async function loadPreview(input: FilePreviewRequest, window: BrowserWindow): Promise<FilePreviewItem[]> {
+    /** 一次读取固定两端关系。 */
+    const batch = randomUUID();
     if (!owners.has(window.id)) {
       owners.add(window.id);
       window.once('closed', () => {
@@ -348,7 +368,7 @@ export function registerFilePreview(services: {
           }
           item.id = randomUUID();
           if (['image', 'pdf', 'audio', 'video'].includes(item.kind)) item.url = `zeus-preview://${item.id}/${encodeURIComponent(basename(source.name))}`;
-          grants.set(item.id, { owner: window.id, source, path: previewPath, temporary, identity, item, image });
+          grants.set(item.id, { owner: window.id, batch, request: input, source, path: previewPath, temporary, identity, item, image });
           return item;
         } catch (error) {
           if (temporary) await rm(temporary, { recursive: true, force: true });
@@ -374,7 +394,115 @@ export function registerFilePreview(services: {
         items.map((item) => item.id),
         window.id,
       );
+    /** 真实工作区正文开放页内编辑，完整旧版配对后再开放逐块恢复。 */
+    const before = items[0];
+    const after = items[1];
+    const target = after?.id ? grants.get(after.id) : undefined;
+    if (
+      target &&
+      after?.canEdit &&
+      after.encoding === 'utf-8' &&
+      !after.truncated &&
+      !target.temporary &&
+      target.source.edit &&
+      !target.source.blob &&
+      !target.source.sha256 &&
+      target.source.edit.path === target.source.path &&
+      (await lstat(target.source.path).catch(() => null))?.isSymbolicLink() === false &&
+      // 混合换行和仅 CR 文件继续交给源码编辑，避免恢复一块时规范化其他行。
+      !/\r(?!\n)/u.test(after.content ?? '') &&
+      !((after.content ?? '').includes('\r\n') && /(?<!\r)\n/u.test(after.content ?? ''))
+    ) {
+      after.canEditInline = true;
+      after.canRevert = Boolean(before?.id && before.kind === 'text' && before.encoding === 'utf-8' && !before.truncated);
+    }
     return items;
+  }
+
+  ipcMain.handle('zeus:file-preview:load', (event, input: FilePreviewRequest) => loadPreview(input, services.requireWindow(event)));
+
+  /** 同一文件的页内保存和区块恢复共用写锁，跨窗口也不能并发覆盖。 */
+  const reverting = new Set<string>();
+  ipcMain.handle('zeus:file-preview:revert-block', (event, request: MainCommandRequest<FilePreviewRevertInput>) => {
+    /** 命令执行前固定发起窗口。 */
+    const window = services.requireWindow(event);
+    return services.commandLedger().execute(request, 'desktop.file_preview.revert_block', async (input, command) => {
+      /** 两个令牌必须属于当前窗口、同一次加载及可写工作区版本。 */
+      const before = grants.get(input?.beforeId);
+      const after = grants.get(input?.afterId);
+      if (!before || !after || before.owner !== window.id || after.owner !== window.id || before.batch !== after.batch || before === after || !after.item.canRevert || !after.source.edit) throw new Error('区块恢复授权已失效，请刷新差异。');
+      if (![input.oldStart, input.oldLines, input.newStart, input.newLines].every((value) => Number.isSafeInteger(value) && value >= 0) || input.oldLines + input.newLines === 0) throw new Error('区块行范围无效。');
+      /** 保留行尾终止符，使文件末尾的换行状态参与恢复。 */
+      const oldLines = before.item.content!.match(/[^\n]*\n|[^\n]+$/gu) ?? [];
+      const newLines = after.item.content!.match(/[^\n]*\n|[^\n]+$/gu) ?? [];
+      if (input.oldStart + input.oldLines > oldLines.length || input.newStart + input.newLines > newLines.length) throw new Error('区块超出文件范围。');
+      /** 替换内容只从已授权的旧版取得，当前版其他行保持原样。 */
+      const replacement = oldLines.slice(input.oldStart, input.oldStart + input.oldLines).join('');
+      if (replacement === newLines.slice(input.newStart, input.newStart + input.newLines).join('')) throw new Error('此区块没有可恢复的差异。');
+      const path = await currentPath(after);
+      await currentPath(before);
+      if (reverting.has(path)) throw new Error('此文件正在恢复区块，请等待完成。');
+      reverting.add(path);
+      try {
+        /** 保存复用源码服务的目录边界、编码、摘要冲突及原子替换规则。 */
+        const root = await realpath(after.source.edit.root);
+        const relativePath = relative(root, path).split(sep).join('/');
+        const workspace = new ProjectSourceWorkspaceService({
+          loadProjectRoot: async () => root,
+          trashItem: async () => {
+            throw new Error('区块恢复不能删除文件。');
+          },
+        });
+        const document = await workspace.readFile('preview', relativePath);
+        if (!document.editable || document.content !== after.item.content!.replace(/\r\n?|\n/gu, '\n')) throw new Error('工作区文件已变化或不可编辑，请刷新差异。');
+        newLines.splice(input.newStart, input.newLines, replacement);
+        await workspace.saveFile({ projectId: 'preview', relativePath, content: newLines.join(''), eol: document.eol, hasBom: document.hasBom, expectedRevision: document.revision }, async () => {
+          await currentPath(after);
+          await currentPath(before);
+          await command.markWriteStarted();
+        });
+        /** 返回新授权与新正文；旧令牌仍由原预览生命周期统一释放。 */
+        return await loadPreview(after.request, window);
+      } finally {
+        reverting.delete(path);
+      }
+    });
+  });
+
+  /** 页内编辑按读取时的授权版本保存，不能将历史副本或任意路径作为目标。 */
+  ipcMain.handle('zeus:file-preview:save', (event, request: MainCommandRequest<FilePreviewSaveInput>) => {
+    /** 保存始终绑定受信发起窗口。 */
+    const window = services.requireWindow(event);
+    return services.commandLedger().execute(request, 'desktop.file_preview.save', async (input, command) => {
+      /** 写入能力只来自主进程登记的当前正文。 */
+      const grant = grants.get(input?.id);
+      if (!grant || grant.owner !== window.id || !grant.item.canEditInline || !grant.source.edit) throw new Error('文件编辑授权已失效，请刷新差异。');
+      if (typeof input.content !== 'string' || Buffer.byteLength(input.content, 'utf8') > filePreviewLimits.text || input.content.includes('\0')) throw new Error('只支持不超过 2 MiB 的文本正文。');
+      /** 新旧正文先通过身份检查，再进入共享写锁。 */
+      const path = await currentPath(grant);
+      if (reverting.has(path)) throw new Error('此文件正在保存，请等待完成。');
+      reverting.add(path);
+      try {
+        /** 使用源码服务已有的路径、摘要冲突、编码及原子替换规则。 */
+        const root = await realpath(grant.source.edit.root);
+        const relativePath = relative(root, path).split(sep).join('/');
+        const workspace = new ProjectSourceWorkspaceService({
+          loadProjectRoot: async () => root,
+          trashItem: async () => {
+            throw new Error('页内编辑不能删除文件。');
+          },
+        });
+        const document = await workspace.readFile('preview', relativePath);
+        if (!document.editable || document.content !== grant.item.content!.replace(/\r\n?|\n/gu, '\n')) throw new Error('文件已变化或不可编辑，请刷新差异。');
+        await workspace.saveFile({ projectId: 'preview', relativePath, content: input.content, eol: document.eol, hasBom: document.hasBom, expectedRevision: document.revision }, async () => {
+          await currentPath(grant);
+          await command.markWriteStarted();
+        });
+        return await loadPreview(grant.request, window);
+      } finally {
+        reverting.delete(path);
+      }
+    });
   });
 
   ipcMain.handle('zeus:file-preview:release', (event, ids: unknown) => {
@@ -413,7 +541,7 @@ export function registerFilePreview(services: {
       if (!grant.item.canEdit || !grant.source.edit) throw new Error('此文件没有可编辑的工作区版本。');
       /** 编辑读取最新工作区文件，历史副本只负责提供受信的目标身份。 */
       const path = await authorizedPath({ ...grant.source.edit, name: grant.item.name, label: grant.item.label });
-      await services.openSource(window, { root: await realpath(grant.source.edit.root), path });
+      await services.openSource(window, { root: await realpath(grant.source.edit.root), path }, grant.request);
       return;
     }
     /** 本次读取的准确文件路径。 */

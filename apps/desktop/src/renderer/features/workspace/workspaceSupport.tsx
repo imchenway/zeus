@@ -1473,7 +1473,6 @@ export function TaskCreateFieldAttachments(props: {
   copy: ReturnType<typeof getLanguageCopy>['taskWorkspace'];
   disabled: boolean;
   onRemove: (path: string) => void;
-  onRestoreText: (attachment: TaskCreateAttachment) => void;
   onLoadPreview?: (path: string) => Promise<{ previewUrl: string; mimeType: string } | null>;
   onOpenAttachment?: (path: string) => Promise<{ opened: boolean; error?: string }>;
 }) {
@@ -1489,7 +1488,6 @@ export function TaskCreateFieldAttachments(props: {
         mode="editable"
         disabled={props.disabled}
         onRemove={props.onRemove}
-        onRestoreText={props.onRestoreText}
         onLoadPreview={props.onLoadPreview}
         onOpenAttachment={props.onOpenAttachment}
         copy={{
@@ -1822,29 +1820,6 @@ export function TaskCreateModal(props: {
     );
   }
 
-  function restoreTaskCreateText(attachment: TaskCreateAttachment): void {
-    if (!attachment.restorableText || interactionBusy) return;
-    const defaultRestoreField = activeTaskCreateContentField(props.form.taskType);
-    const restoreTarget = attachment.restoreTarget ?? {
-      field: defaultRestoreField,
-      start: props.form[defaultRestoreField].length,
-      end: props.form[defaultRestoreField].length,
-    };
-    const currentValue = props.form[restoreTarget.field];
-    const start = Math.min(restoreTarget.start, currentValue.length);
-    const end = Math.min(Math.max(start, restoreTarget.end), currentValue.length);
-    const nextValue = `${currentValue.slice(0, start)}${attachment.restorableText}${currentValue.slice(end)}`;
-    const nextCaretPosition = start + attachment.restorableText.length;
-    props.onFormChange(restoreTarget.field, nextValue);
-    props.onRemoveAttachment(attachment.path);
-    window.requestAnimationFrame(() => {
-      const control = document.getElementById(taskCreateControlId(restoreTarget.field));
-      if (!(control instanceof HTMLInputElement) && !(control instanceof HTMLTextAreaElement)) return;
-      control.focus();
-      control.setSelectionRange(nextCaretPosition, nextCaretPosition);
-    });
-  }
-
   /** 异步回填使用粘贴时的选区，保留处理期间继续输入的正文。 */
   function insertTaskCreatePlainTextPaste(field: TaskCreateTextField, control: HTMLInputElement | HTMLTextAreaElement, text: string, selection?: Pick<TaskAttachmentRestoreTarget, 'start' | 'end'>): void {
     if (!text) return;
@@ -2038,7 +2013,6 @@ export function TaskCreateModal(props: {
                     copy={props.copy}
                     disabled={interactionBusy}
                     onRemove={props.onRemoveAttachment}
-                    onRestoreText={restoreTaskCreateText}
                     onLoadPreview={props.onLoadAttachmentPreview}
                     onOpenAttachment={props.onOpenAttachment}
                   />
@@ -2064,7 +2038,6 @@ export function TaskCreateModal(props: {
                       copy={props.copy}
                       disabled={interactionBusy}
                       onRemove={props.onRemoveAttachment}
-                      onRestoreText={restoreTaskCreateText}
                       onLoadPreview={props.onLoadAttachmentPreview}
                       onOpenAttachment={props.onOpenAttachment}
                     />
@@ -2087,7 +2060,6 @@ export function TaskCreateModal(props: {
                       copy={props.copy}
                       disabled={interactionBusy}
                       onRemove={props.onRemoveAttachment}
-                      onRestoreText={restoreTaskCreateText}
                       onLoadPreview={props.onLoadAttachmentPreview}
                       onOpenAttachment={props.onOpenAttachment}
                     />
@@ -2110,7 +2082,6 @@ export function TaskCreateModal(props: {
                       copy={props.copy}
                       disabled={interactionBusy}
                       onRemove={props.onRemoveAttachment}
-                      onRestoreText={restoreTaskCreateText}
                       onLoadPreview={props.onLoadAttachmentPreview}
                       onOpenAttachment={props.onOpenAttachment}
                     />
@@ -2137,7 +2108,6 @@ export function TaskCreateModal(props: {
                       copy={props.copy}
                       disabled={interactionBusy}
                       onRemove={props.onRemoveAttachment}
-                      onRestoreText={restoreTaskCreateText}
                       onLoadPreview={props.onLoadAttachmentPreview}
                       onOpenAttachment={props.onOpenAttachment}
                     />
@@ -2160,7 +2130,6 @@ export function TaskCreateModal(props: {
                       copy={props.copy}
                       disabled={interactionBusy}
                       onRemove={props.onRemoveAttachment}
-                      onRestoreText={restoreTaskCreateText}
                       onLoadPreview={props.onLoadAttachmentPreview}
                       onOpenAttachment={props.onOpenAttachment}
                     />
@@ -2203,7 +2172,6 @@ export function TaskCreateModal(props: {
                       copy={props.copy}
                       disabled={interactionBusy}
                       onRemove={props.onRemoveAttachment}
-                      onRestoreText={restoreTaskCreateText}
                       onLoadPreview={props.onLoadAttachmentPreview}
                       onOpenAttachment={props.onOpenAttachment}
                     />

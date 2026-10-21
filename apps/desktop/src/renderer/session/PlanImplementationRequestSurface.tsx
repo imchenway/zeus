@@ -54,7 +54,6 @@ export function PlanImplementationRequestSurface(props: {
     disabled: props.busy === true,
     onTextChange: setFeedback,
     onAddAttachments: addAttachments,
-    onRemoveAttachment: removeAttachment,
     onError: setResourceError,
   });
   /** 附件未准备完成时，不允许发送或关闭当前意见。 */
@@ -164,7 +163,6 @@ export function PlanImplementationRequestSurface(props: {
               disabled={responding === true}
               className="session-question-answer-attachments"
               onRemove={removeAttachment}
-              onRestorePastedText={inputResources.restorePastedText}
             />
             <span className="session-question-index">
               <PencilSimple aria-hidden="true" />

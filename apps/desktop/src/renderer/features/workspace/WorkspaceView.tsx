@@ -248,6 +248,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     projectDirectoryChoosing,
     projectSidebarResizing,
     projectSourceWorkspaceRef,
+    sourceWorkspaceTarget,
     globalAgentSettingsRef,
     globalAgentSettingsDirty,
     setGlobalAgentSettingsDirty,
@@ -517,6 +518,26 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     setPendingGlobalSource(null);
     void projectSourceWorkspaceRef.current.openFile(pendingGlobalSource.relativePath, pendingGlobalSource.line, pendingGlobalSource.column);
   }, [sourceReady, activeProjectId, activeProjectSection, pendingGlobalSource, projectSourceWorkspaceRef]);
+  /** 文件预览编辑统一导航到现有源码页，切换工作树仍经过未保存保护。 */
+  useEffect(
+    () =>
+      window.zeus?.onFilePreviewSourceWorkspaceRequested?.((workspace) => {
+        /** 业务项目必须仍在当前工作台，临时作用域不能伪装成新项目。 */
+        const project = snapshot.projects.find((candidate) => candidate.id === workspace.ownerProjectId);
+        if (!project) {
+          reportApplicationError(new Error('文件所属项目已不可用。'), { language: appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en' });
+          return;
+        }
+        openProjectSection(project, 'code', 'source', workspace);
+      }),
+    [snapshot.projects, appShellSettings.appLanguage, openProjectSection],
+  );
+  /** 源码页挂载后消费准确文件位置，重复打开保留其他标签草稿。 */
+  useEffect(() => {
+    if (sourceReady && sourceWorkspaceTarget && sourceWorkspaceTarget.ownerProjectId === activeProjectId && activeProjectSection === 'code') {
+      void projectSourceWorkspaceRef.current?.openFile(sourceWorkspaceTarget.relativePath, 1);
+    }
+  }, [sourceReady, sourceWorkspaceTarget, activeProjectId, activeProjectSection, projectSourceWorkspaceRef]);
   /** 全局搜索允许跨项目跳转；等目标工作区真正挂载后再打开详情或源码文件。 */
   useEffect(() => {
     if (!pendingGlobalTask || pendingGlobalTask.projectId !== activeProjectId || activeProjectSection !== 'tasks') return;
@@ -681,6 +702,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
 
   /** 项目工具与源码工作区共用应用语言。 */
   const codeWorkspaceZh = appShellSettings.appLanguage === 'zh-CN';
+  /** 旧项目的工作树目标不能覆盖新项目源码，目录身份始终跟随所属项目。 */
+  const activeSourceTarget = sourceWorkspaceTarget?.ownerProjectId === selectedProject?.id && activeProjectSection === 'code' && (activeNavTarget === 'projects' || activeNavTarget === 'conversations') ? sourceWorkspaceTarget : null;
   /** 工具只绑定当前选中的真实项目，临时会话不提供项目操作。 */
   const projectToolsVisible = Boolean(selectedProject && selectedProject.id !== temporaryWorkspaceId);
   /** 搜索弹窗只绑定当前项目；切换项目后关闭，不沿用上个项目的查询范围。 */
@@ -828,13 +851,16 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     >
       {projectToolsVisible && selectedProject ? (
         <ProjectCodeSearch
-          key={selectedProject.id}
-          gitSnapshot={projectCodeGitSnapshot}
-          project={selectedProject}
+          key={activeSourceTarget?.project.id ?? selectedProject.id}
+          gitSnapshot={activeSourceTarget?.project.id.startsWith('file-source:') ? undefined : projectCodeGitSnapshot}
+          project={activeSourceTarget?.project ?? selectedProject}
           open={searchProjectId === selectedProject.id}
           language={appShellSettings.appLanguage}
           onClose={() => setSearchProjectId(null)}
-          onOpenMatch={(match) => openSourceMatch(selectedProject, match)}
+          onOpenMatch={(match) => {
+            if (activeSourceTarget) void projectSourceWorkspaceRef.current?.openFile(match.relativePath, match.line, match.column);
+            else openSourceMatch(selectedProject, match);
+          }}
         />
       ) : null}
       <MotionPresence>
@@ -1136,16 +1162,20 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                 <div className="project-code-mode-pane">
                   <Suspense fallback={null}>
                     <ProjectSourceWorkspace
-                      key={selectedProject.id}
+                      key={activeSourceTarget?.project.id ?? selectedProject.id}
                       ref={setSourceRef}
-                      project={selectedProject}
+                      project={activeSourceTarget?.project ?? selectedProject}
                       language={appShellSettings.appLanguage}
-                      preference={appShellSettings.codeWorkspaceByProject?.[selectedProject.id]}
-                      branchToolbarRef={setProjectCodeBranchContainer}
-                      gitSnapshot={projectCodeGitSnapshot}
-                      onPreferenceChange={(preference) => persistCodeWorkspacePreference(selectedProject.id, preference)}
+                      preference={
+                        activeSourceTarget?.project.id.startsWith('file-source:')
+                          ? { activeFile: activeSourceTarget.relativePath, openFiles: [activeSourceTarget.relativePath], expandedDirectories: [], treeWidth: 240 }
+                          : appShellSettings.codeWorkspaceByProject?.[selectedProject.id]
+                      }
+                      branchToolbarRef={activeSourceTarget?.project.id.startsWith('file-source:') ? undefined : setProjectCodeBranchContainer}
+                      gitSnapshot={activeSourceTarget?.project.id.startsWith('file-source:') ? undefined : projectCodeGitSnapshot}
+                      onPreferenceChange={activeSourceTarget?.project.id.startsWith('file-source:') ? undefined : (preference) => persistCodeWorkspacePreference(selectedProject.id, preference)}
                       onDirtyChange={setSourceWorkspaceDirty}
-                      onOpenExternal={(relativePath, line) => void props.onOpenSource?.({ sourceRef: relativePath, lineStart: line, projectRoot: selectedProject.localPath })}
+                      onOpenExternal={(relativePath, line) => void props.onOpenSource?.({ sourceRef: relativePath, lineStart: line, projectRoot: activeSourceTarget?.project.localPath ?? selectedProject.localPath })}
                     />
                   </Suspense>
                 </div>

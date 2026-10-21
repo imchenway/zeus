@@ -1521,7 +1521,14 @@ function EmployeeNodeFields(props: {
           {props.node.data.purpose === 'verify' ? (
             <label>
               <span>验收命令</span>
-              <textarea rows={2} placeholder="可选，每行一项" value={(props.node.data.verificationCommands ?? []).join('\n')} onChange={(event) => update({ verificationCommands: lines(event.currentTarget.value) })} />
+              {/* 验收命令逐行执行，不能插入列表编号。 */}
+              <textarea
+                data-markdown-lists="off"
+                rows={2}
+                placeholder="可选，每行一项"
+                value={(props.node.data.verificationCommands ?? []).join('\n')}
+                onChange={(event) => update({ verificationCommands: lines(event.currentTarget.value) })}
+              />
             </label>
           ) : null}
         </>

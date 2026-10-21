@@ -787,7 +787,9 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
             <div className="project-source-module-header">
               <span className="project-source-branch-slot" ref={props.branchToolbarRef}>
                 {/* 占位文字有独立节点，刷新快照时不清空外部挂载的分支控件。 */}
-                <span hidden={props.gitSnapshot?.projectId === props.project.id}>{zh ? '源码' : 'Source'}</span>
+                <span hidden={props.gitSnapshot?.projectId === props.project.id} title={props.project.localPath}>
+                  {props.project.name}
+                </span>
               </span>
             </div>
             <div className="project-source-search-row">
