@@ -8,6 +8,7 @@ import { detectSourceLanguage } from '@zeus/shared';
 import { CodeEditor } from './CodeEditor.js';
 import { FilePreviewDataContext } from './FilePreview.js';
 import { DiffReviewToolbar } from './DiffReviewToolbar.js';
+import { DiffConnectorLayer } from './DiffConnectorLayer.js';
 import { previewText } from './useFilePreviewDraft.js';
 import { useGitBlame } from './useGitBlame.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
@@ -38,13 +39,13 @@ function editableDiffColors(): Extension {
         const info = getChunks(view.state);
         const lines: ReturnType<Decoration['range']>[] = [];
 
-        for (const chunk of info?.chunks ?? []) {
+        for (const [block, chunk] of (info?.chunks ?? []).entries()) {
           const start = info?.side === 'a' ? chunk.fromA : chunk.fromB;
           const end = info?.side === 'a' ? chunk.toA : chunk.toB;
           for (const range of view.visibleRanges) {
             let position = view.state.doc.lineAt(Math.min(view.state.doc.length, Math.max(range.from, start))).from;
             while (position < Math.min(range.to + 1, end) && position <= view.state.doc.length) {
-              lines.push(Decoration.line({ class: `code-diff-line is-${chunkTone(chunk)}` }).range(position));
+              lines.push(Decoration.line({ attributes: { class: `code-diff-line is-${chunkTone(chunk)}`, 'data-diff-block': String(block) } }).range(position));
 
               position = view.state.doc.lineAt(position).to + 1;
             }
@@ -87,6 +88,36 @@ function editableDiffColors(): Extension {
     provide: (field) => gutterLineClass.from(field, (value) => value.marks),
   });
   return [colors, tones];
+}
+
+/** 原生折叠继续负责双侧展开，只补充紧凑边界的提示和键盘入口。 */
+function accessibleDiffFolds(): Extension {
+  return ViewPlugin.define((view) => {
+    /** 等 CodeMirror 完成节点更新后设置辅助信息，不替换折叠内容或状态。 */
+    const decorate = () =>
+      view.requestMeasure({
+        read: () => [...view.dom.querySelectorAll<HTMLElement>('.cm-collapsedLines')],
+        write: (elements) => {
+          for (const element of elements) {
+            /** 现有本地化行数文本只在悬停和读屏时显示。 */
+            const label = element.textContent ?? '';
+            element.title = label;
+            element.setAttribute('aria-label', label);
+            element.setAttribute('role', 'button');
+            element.tabIndex = 0;
+            element.onkeydown = (event) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return;
+              event.preventDefault();
+              event.stopPropagation();
+              element.click();
+              view.focus();
+            };
+          }
+        },
+      });
+    decorate();
+    return { update: decorate };
+  });
 }
 
 /** 评论容器属于 React，编辑时只映射锚点，不把评论文字写入文档。 */
@@ -244,10 +275,13 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
           queueMicrotask(() => {
             if (!update.view.dom.isConnected) return;
             const info = getChunks(update.view.state);
-            update.view.dom.querySelectorAll<HTMLElement>('.cm-mergeSpacer').forEach((element) => {
+            /** 双栏补白与统一视图的旧文段共用区块分类。 */
+            update.view.dom.querySelectorAll<HTMLElement>('.cm-mergeSpacer, .cm-deletedChunk').forEach((element) => {
               const pos = update.view.posAtDOM(element);
-              const chunk = info?.chunks.find((item) => (info.side === 'a' ? item.fromA <= pos && item.toA >= pos : item.fromB <= pos && item.toB >= pos));
+              const block = info?.chunks.findIndex((item) => (info.side === 'a' ? item.fromA <= pos && item.toA >= pos : item.fromB <= pos && item.toB >= pos)) ?? -1;
+              const chunk = info?.chunks[block];
               element.dataset.diffTone = chunk ? chunkTone(chunk) : '';
+              element.dataset.diffBlock = chunk ? String(block) : '';
             });
           });
       }),
@@ -257,6 +291,7 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
   const extensions = useMemo(() => {
     const make = (side: 'left' | 'right'): Extension => [
       editableDiffColors(),
+      accessibleDiffFolds(),
       commentsField,
       updates,
       EditorState.phrases.of(zh ? { '$ unchanged lines': '省略 $ 行未修改内容' } : {}),
@@ -281,7 +316,11 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'code-diff-revert';
-        button.textContent = '→';
+        /** 两种差异入口使用同一细线双箭头，不受系统字体和基线影响。 */
+        const icon = document.createElement('span');
+        icon.className = 'code-diff-revert-icon';
+        icon.setAttribute('aria-hidden', 'true');
+        button.append(icon);
         button.setAttribute('aria-label', zh ? '将此处改动恢复到草稿' : 'Restore this change in the draft');
         button.title = zh ? '恢复此处改动，可撤销；保存后写入文件' : 'Restore this change; save to write the file';
         // MergeView 以鼠标按下执行恢复；键盘激活使用相同入口，并回到当前正文。
@@ -320,9 +359,17 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
       unifiedMergeView({
         original: before,
         mergeControls: (type, action) => {
+          /** 统一视图同样用紧凑恢复图标，避免白色说明文字覆盖代码。 */
           const button = document.createElement('button');
           button.type = 'button';
-          button.textContent = zh ? '恢复到草稿' : 'Restore in draft';
+          button.className = 'code-diff-revert';
+          button.title = zh ? '恢复此处改动，可撤销；保存后写入文件' : 'Restore this change; save to write the file';
+          button.setAttribute('aria-label', zh ? '将此处改动恢复到草稿' : 'Restore this change in the draft');
+          /** 与双栏和只读差异保持同一图形。 */
+          const icon = document.createElement('span');
+          icon.className = 'code-diff-revert-icon';
+          icon.setAttribute('aria-hidden', 'true');
+          button.append(icon);
           if (type === 'accept') button.style.display = 'none';
           if (type === 'reject')
             button.onclick = (event) => {
@@ -528,6 +575,7 @@ export function EditableCodeDiffView(props: CodeDiffViewProps) {
       ) : null}
       {editing.error ? <VisibleApplicationError error={editing.error} language={zh ? 'zh-CN' : 'en'} /> : null}
       <div className={`code-diff-view code-diff-editable${single || unified ? ' is-single-side' : ''}${props.renderLineNumber ? ' has-line-actions' : ''}`} aria-label={props.label}>
+        {!single && !unified ? <DiffConnectorLayer /> : null}
         {!single && !unified ? <div className="editable-diff-host" ref={host} /> : null}
         {views.left && mergeRef.current && !single && !unified ? (
           <CodeEditor

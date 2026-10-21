@@ -1,5 +1,4 @@
 import { memo, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
 import { diffWordsWithSpace } from 'diff';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
@@ -19,6 +18,7 @@ import type { GitBlameLine } from '../features/git/gitContracts.js';
 import { diffAlignmentExtension, AlignmentSpace } from './conflictAlignment.js';
 import { EditableCodeDiffView } from './EditableCodeDiffView.js';
 import { DiffReviewToolbar } from './DiffReviewToolbar.js';
+import { DiffConnectorLayer } from './DiffConnectorLayer.js';
 
 /** 评论位置沿用原始文件的左右行号。 */
 export interface DiffAnnotationLine {
@@ -32,7 +32,9 @@ interface DiffRow {
   leftNumber: number | null;
   rightNumber: number | null;
   kind: string;
-  /** 区块统一底色；修改块两侧同为蓝色，包括行数不等的补位。 */
+  /** 连续改动身份用于两栏色带衔接，不参与文件正文。 */
+  block?: number;
+  /** 区块语义底色；修改块只给真实内容铺蓝色，空侧由连接带表达。 */
   tone?: 'addition' | 'deletion' | 'replacement';
   /** 只在每个独立改动的首行保存恢复坐标。 */
   change?: FilePreviewChangeRange;
@@ -273,15 +275,15 @@ const ReadonlyCodeDiffView = memo(function ReadonlyCodeDiffView(props: CodeDiffV
       !unified && !singleSide
         ? diffAlignmentExtension(
             alignment,
-            rows.map((row) => (row.tone ? `code-diff-alignment is-${row.tone}` : '')),
+            rows.map((row) => (row.tone && row.tone !== 'replacement' ? `code-diff-alignment is-${row.tone}` : '')),
           )
         : [],
       gutterWidgetClass.of((_view, widget, block) => {
-        /** 软换行补白覆盖行号与恢复轨道，评论和折叠分隔仍保持原背景。 */
+        /** 纯增删补白覆盖行号轨道；修改补白、评论和折叠保持原背景。 */
         const tone = rows[documents[side].lineAt(block.from).number - 1]?.tone;
-        return widget instanceof AlignmentSpace && tone ? new DiffToneMarker(tone) : null;
+        return widget instanceof AlignmentSpace && tone && tone !== 'replacement' ? new DiffToneMarker(tone) : null;
       }),
-      gutterLineClass.of(RangeSet.of(rows.flatMap((row, index) => (row.tone ? [new DiffToneMarker(row.tone).range(documents[side].line(index + 1).from)] : [])))),
+      gutterLineClass.of(RangeSet.of(rows.flatMap((row, index) => (row.tone && visibleRowTone(row, side, unified) !== 'context' ? [new DiffToneMarker(row.tone).range(documents[side].line(index + 1).from)] : [])))),
       canRevert && (side === 'right' || unified) ? Prec.high(gutter({ class: 'code-diff-revert-gutter', lineMarker: (view, line) => new DiffGutterMarker(view.state.doc.lineAt(line.from).number - 1, side, gutterPortals, true) })) : [],
       gutter({ class: 'code-diff-gutter', lineMarker: (view, line) => new DiffGutterMarker(view.state.doc.lineAt(line.from).number - 1, side, gutterPortals) }),
       ViewPlugin.define(
@@ -480,6 +482,7 @@ const ReadonlyCodeDiffView = memo(function ReadonlyCodeDiffView(props: CodeDiffV
       ) : null}
       {preview?.toolbarTarget ? createPortal(toolbar, preview.toolbarTarget) : toolbar}
       <div className={`code-diff-view${unified ? ' is-unified' : ''}${props.resizable ? ' is-resizable' : ''}${singleSide ? ' is-single-side' : ''}`} aria-label={props.label}>
+        {!unified && !singleSide ? <DiffConnectorLayer /> : null}
         {singleSide !== 'right' ? (
           <CodeEditor
             path={`${props.file.oldPath || props.file.newPath}:left:${unified}`}
@@ -535,7 +538,7 @@ const ReadonlyCodeDiffView = memo(function ReadonlyCodeDiffView(props: CodeDiffV
                     setPending({ range: row.change!, items: preview?.items });
                   }}
                 >
-                  <ArrowRight size={14} aria-hidden="true" />
+                  <span className="code-diff-revert-icon" aria-hidden="true" />
                 </button>
               ) : null,
               portal.element,
@@ -607,9 +610,18 @@ function diffLineDecorations(view: EditorView, rows: DiffRow[], side: 'left' | '
     for (let position = range.from; position <= range.to;) {
       const line = view.state.doc.lineAt(position);
       const row = rows[line.number - 1];
-      /** 同一区块的补位行继续使用区块色；统一视图的修改行也统一为蓝色。 */
-      const kind = row?.tone ?? row?.kind;
-      decorations.push(Decoration.line({ attributes: { class: `code-diff-line is-${kind}`, 'data-diff-row': String(line.number), 'data-file-line': String(row?.[side === 'left' ? 'leftNumber' : 'rightNumber'] ?? '') } }).range(line.from));
+      /** 新增和删除的补位继续着色；修改区块只给真实行着色，由中缝连接不同高度。 */
+      const kind = visibleRowTone(row, side, unified);
+      decorations.push(
+        Decoration.line({
+          attributes: {
+            class: `code-diff-line is-${kind}`,
+            'data-diff-row': String(line.number),
+            'data-diff-block': row?.block === undefined || kind === 'context' ? '' : String(row.block),
+            'data-file-line': String(row?.[side === 'left' ? 'leftNumber' : 'rightNumber'] ?? ''),
+          },
+        }).range(line.from),
+      );
       /** 行内范围已在行模型生成时计算，不随滚动重复比对。 */
       const wordSide = unified && row?.kind !== 'deletion' ? 'right' : side;
       for (const [from, to] of row?.words?.()?.[wordSide] ?? [])
@@ -618,6 +630,12 @@ function diffLineDecorations(view: EditorView, rows: DiffRow[], side: 'left' | '
     }
   }
   return Decoration.set(decorations, true);
+}
+
+/** 修改区块的空侧不铺蓝色，统一视图中的真实增删行仍保留修改语义。 */
+function visibleRowTone(row: DiffRow | undefined, side: 'left' | 'right', unified: boolean): string | undefined {
+  if (!unified && row?.tone === 'replacement' && row[side === 'left' ? 'leftNumber' : 'rightNumber'] === null) return 'context';
+  return row?.tone ?? row?.kind;
 }
 
 /** 将补丁转换成左右显示行；不截断，完整内容可滚动和复制。 */
@@ -667,12 +685,13 @@ function diffRows(file: TaskGitFileDiff, align: boolean, omitHunkHeaders: boolea
               rightNumber: added[offset]?.newLineNumber ?? null,
               kind: deleted[offset] && added[offset] ? 'replacement' : deleted[offset] ? 'deletion' : 'addition',
               tone,
+              block: first,
               words: words[offset],
             });
           }
         else {
-          deleted.forEach((item, offset) => rows.push({ left: item.content, right: '', leftNumber: item.oldLineNumber, rightNumber: null, kind: 'deletion', tone, words: words[offset] }));
-          added.forEach((item, offset) => rows.push({ left: '', right: item.content, leftNumber: null, rightNumber: item.newLineNumber, kind: 'addition', tone, words: words[offset] }));
+          deleted.forEach((item, offset) => rows.push({ left: item.content, right: '', leftNumber: item.oldLineNumber, rightNumber: null, kind: 'deletion', tone, block: first, words: words[offset] }));
+          added.forEach((item, offset) => rows.push({ left: '', right: item.content, leftNumber: null, rightNumber: item.newLineNumber, kind: 'addition', tone, block: first, words: words[offset] }));
         }
         rows[first]!.change = change;
       } else {
@@ -732,15 +751,18 @@ class DiffFoldWidget extends WidgetType {
   ) {
     super();
   }
+  /** 虚拟行高与实际波浪线保持一致。 */
+  get estimatedHeight(): number {
+    return 8;
+  }
   /** 每次行列表更新都替换回调，避免展开到旧文件。 */
   toDOM(view: EditorView): HTMLElement {
     /** 原生按钮提供焦点和键盘激活。 */
     const button = view.dom.ownerDocument.createElement('button');
     button.type = 'button';
     button.className = 'code-diff-fold';
-    /** 文案背板隔开波浪线，窄窗口仍可读。 */
-    const label = view.dom.ownerDocument.createElement('span');
-    label.textContent = this.folded.unavailable
+    /** 行数仅用于悬停和读屏，正文不再显示整行说明。 */
+    const label = this.folded.unavailable
       ? this.zh
         ? `已省略 ${this.folded.count} 行，快照未包含原文`
         : `${this.folded.count} lines omitted from snapshot`
@@ -748,7 +770,8 @@ class DiffFoldWidget extends WidgetType {
         ? `展开 ${this.folded.count} 行未修改内容`
         : `Expand ${this.folded.count} unchanged lines`;
     button.disabled = Boolean(this.folded.unavailable);
-    button.append(label);
+    button.title = label;
+    button.setAttribute('aria-label', label);
     button.addEventListener('click', this.expand);
     return button;
   }
