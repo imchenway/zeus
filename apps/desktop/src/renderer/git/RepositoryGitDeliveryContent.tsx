@@ -38,17 +38,9 @@ interface RepositoryGitDeliveryContentProps {
   pathPrefix?: string;
   /** 用户可以回到当前仓库的全部文件。 */
   onClearPathPrefix?(): void;
-  /** 工作台已读取的快照直接用于首屏。 */
-  initialSnapshot?: ProjectGitWorkbenchSnapshot | null;
-  /** 同一次刷新同步角标和源码状态。 */
-  onSnapshot?(snapshot: ProjectGitWorkbenchSnapshot): void;
-  /** 内嵌操作期间锁定工作台其他 Git 动作和仓库切换。 */
-  onBusyChange?(busy: boolean): void;
-  /** 工作台采用同页内容；会话保留现有交付弹窗。 */
-  embedded?: boolean;
   /** 后台组合只接受真实会话范围及其客户端。 */
   conversation?: { id: string; title: string; client: GitDeliveryClient };
-  /** 会话弹窗关闭沿用原有生命周期。 */
+  /** 项目与会话交付弹窗共用关闭生命周期。 */
   onClose?(): void;
 }
 
@@ -78,8 +70,8 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
         })),
     };
   }
-  /** 仓库快照拥有当前分支、文件和提交事实，工作台首屏复用已读结果。 */
-  const [snapshot, setSnapshot] = useState<ProjectGitWorkbenchSnapshot | null>(() => (props.initialSnapshot ? scopedSnapshot(props.initialSnapshot) : null));
+  /** 仓库快照在原生交付窗口内读取，包含当前分支、文件和提交事实。 */
+  const [snapshot, setSnapshot] = useState<ProjectGitWorkbenchSnapshot | null>(null);
   /** 已提交变化只比较真实上游，未配置上游时不伪造来源分支。 */
   const [committed, setCommitted] = useState<Record<string, GitDiffSummary>>({});
   /** 上游比较完成前保留仓库加载状态。 */
@@ -125,26 +117,14 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
   /** 刷新时保留原有选择，首次加载默认勾选变化。 */
   const initialized = useRef(false);
 
-  /** 同一宿主快照只应用一次，防止回传快照触发重复比较。 */
-  const appliedSnapshot = useRef<ProjectGitWorkbenchSnapshot | null>(null);
-
-  /** 交付中的操作同步锁定宿主，卸载时释放，读取不阻挡其他只读导航。 */
-  useEffect(() => {
-    props.onBusyChange?.(Boolean(busyAction && busyAction !== 'loading'));
-    return () => props.onBusyChange?.(false);
-  }, [busyAction, props.onBusyChange]);
-
   /** 仓库及文件读取完成后一次发布，差异直接来自同一快照。 */
-  async function refresh(provided?: ProjectGitWorkbenchSnapshot | null): Promise<void> {
-    if (provided && appliedSnapshot.current === provided) return;
+  async function refresh(): Promise<void> {
     /** 本轮身份在任何 await 之前固定。 */
     const revision = ++readRevision.current;
     try {
       /** 只使用传入的范围客户端；普通项目与绑定会话不会互相回退。 */
-      const complete = provided ?? (await requestProjectGitWorkbench(props.client, props.project.id));
+      const complete = await requestProjectGitWorkbench(props.client, props.project.id);
       if (revision !== readRevision.current) return;
-      appliedSnapshot.current = complete;
-      props.onSnapshot?.(complete);
       /** 写入与展示仅使用入口限定后的真实仓库。 */
       const next = scopedSnapshot(complete);
       setSnapshot(next);
@@ -199,7 +179,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
 
   useEffect(() => {
     if (!open) return;
-    void refresh(props.initialSnapshot);
+    void refresh();
     /** 外部变化只在没有本页操作时刷新，避免提交前覆盖所选快照。 */
     const unsubscribe = subscribeProjectGitRefresh(props.project.id, () => {
       if (!busyRef.current) void refresh();
@@ -209,12 +189,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
       ++readRevision.current;
       generation.current?.abort();
     };
-  }, [open, props.client, props.project.id]);
-
-  /** 顶部刷新或其他 Git 操作发布新快照时，正文与角标同步更新。 */
-  useEffect(() => {
-    if (open && props.initialSnapshot && !busyRef.current) void refresh(props.initialSnapshot);
-  }, [open, props.initialSnapshot]);
+  }, [open, props.client, props.project.id, props.repositoryId, props.pathPrefix]);
 
   /** 同一仓库文件树用于文件选择、计数和差异定位。 */
   const groups = useMemo<DeliveryRepositoryGroup[]>(
@@ -559,8 +534,6 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
       </div>
     </>
   );
-  if (props.embedded) return <div className="project-git-delivery-surface">{content}</div>;
-
   return (
     <ModalPortal
       rootClassName="task-git-merge-portal-root"
