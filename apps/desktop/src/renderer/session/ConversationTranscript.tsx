@@ -1489,6 +1489,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
       <div
         ref={shellRef}
         className="session-transcript-shell"
+        data-history-hydrated={historyHydrated || undefined}
         data-history-ready={historyReady || undefined}
         data-history-loading={!historyReady || undefined}
         data-local-submission={initialLocalSubmissionRef.current || undefined}

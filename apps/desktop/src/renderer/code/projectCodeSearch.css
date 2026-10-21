@@ -121,6 +121,65 @@
   font-size: 11px;
 }
 
+/* 内容分类和项目范围在同一行，窄窗口自动换行而不挤压输入框。 */
+.workspace-search-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+.workspace-search-scopes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.workspace-search-scopes > button {
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--zeus-product-muted);
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+.workspace-search-scopes > button[aria-pressed='true'] {
+  background: var(--zeus-interaction-hover);
+  color: var(--zeus-control-accent);
+}
+.workspace-search-filters > .zeus-select {
+  margin-inline-start: auto;
+  max-inline-size: min(240px, 100%);
+  min-inline-size: 120px;
+}
+
+/* 项目、任务和会话共用双行结果，来源文字不改变结果列表宽度。 */
+.workspace-search-group {
+  padding: 12px 20px 6px;
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.project-code-search-match.workspace-search-item {
+  align-items: stretch;
+  flex-direction: column;
+  gap: 4px;
+}
+.workspace-search-item > :is(strong, small) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-search-item > strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+.workspace-search-item > small {
+  color: var(--zeus-product-muted);
+  font-size: 11px;
+}
+
 /* 路径分组与命中行使用已有主题颜色，命中内容按服务端偏移高亮。 */
 .project-code-search-status,
 .project-code-search-error {

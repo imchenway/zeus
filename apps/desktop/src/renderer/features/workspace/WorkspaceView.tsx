@@ -1,5 +1,5 @@
 import { ProjectTerminalPanel } from '../runtime/ProjectTerminalPanel.js';
-import { ProjectCodeSearch } from '../../code/ProjectCodeSearch.js';
+import { WorkspaceSearch } from '../../code/WorkspaceSearch.js';
 import { TerminalWindowIcon } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import type { ProjectGitWorkbenchSnapshot } from '../git/gitContracts.js';
 import type { ProjectSourceWorkspaceHandle } from '../../code/ProjectSourceWorkspace.js';
@@ -683,29 +683,26 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   const codeWorkspaceZh = appShellSettings.appLanguage === 'zh-CN';
   /** 工具只绑定当前选中的真实项目，临时会话不提供项目操作。 */
   const projectToolsVisible = Boolean(selectedProject && selectedProject.id !== temporaryWorkspaceId);
-  /** 搜索弹窗只绑定当前项目；切换项目后关闭，不沿用上个项目的查询范围。 */
-  const [searchProjectId, setSearchProjectId] = useState<string | null>(null);
+  /** 搜索由右上角和平台快捷键共同控制，项目范围在弹窗内选择。 */
+  const [searchOpen, setSearchOpen] = useState(false);
   /** 所有项目源码搜索结果共用文件导航与未保存保护。 */
   function openSourceMatch(project: ProjectRecord, match: ProjectSourceContentMatch): void {
     setPendingGlobalSource({ projectId: project.id, relativePath: match.relativePath, line: match.line, column: match.column });
     openProjectSection(project, 'code', 'source');
   }
   useEffect(() => {
-    setSearchProjectId(null);
-  }, [selectedProject?.id]);
-  useEffect(() => {
     /** 使用平台常见的项目内容查找快捷键，不覆盖输入框的普通查找。 */
-    function openCodeSearch(event: KeyboardEvent): void {
-      if (!projectToolsVisible || !selectedProject || event.defaultPrevented || event.isComposing || event.repeat || !event.shiftKey || event.altKey || event.key.toLowerCase() !== 'f') return;
+    function openWorkspaceSearch(event: KeyboardEvent): void {
+      if (event.defaultPrevented || event.isComposing || event.repeat || !event.shiftKey || event.altKey || event.key.toLowerCase() !== 'f') return;
       if (!(isMacOSPlatform() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey)) return;
       // 已有弹窗保持其键盘边界，避免跨模态层启动新的搜索。
       if (document.querySelector('[aria-modal="true"]:not([aria-hidden="true"])')) return;
       event.preventDefault();
-      setSearchProjectId(selectedProject.id);
+      setSearchOpen(true);
     }
-    window.addEventListener('keydown', openCodeSearch);
-    return () => window.removeEventListener('keydown', openCodeSearch);
-  }, [projectToolsVisible, selectedProject]);
+    window.addEventListener('keydown', openWorkspaceSearch);
+    return () => window.removeEventListener('keydown', openWorkspaceSearch);
+  }, []);
   /** 源码继续占用主页面；Git 打开不影响此页面的挂载状态。 */
   const sourceVisible = (activeNavTarget === 'projects' || activeNavTarget === 'conversations') && activeProjectSection === 'code';
   /** 源码分支控件由侧栏中的唯一 Git 实例提供。 */
@@ -728,9 +725,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   /** 命令内容按调用项目取值，背景页面保持原位。 */
   const commandsProject = snapshot.projects.find((project) => project.id === projectCommandsProjectId);
   /** 两种布局共用右侧入口、原有导航与草稿保护，不另存项目身份。 */
-  const projectToolRail =
-    projectToolsVisible && selectedProject ? (
-      <nav className="project-workspace-tool-rail" data-workspace-tool-slot="right" aria-label={`${codeWorkspaceZh ? '项目工具' : 'Project tools'}：${selectedProject.name}`}>
+  const projectToolRail = (
+    <nav className="project-workspace-tool-rail" data-workspace-tool-slot="right" aria-label={codeWorkspaceZh ? '工作区工具' : 'Workspace tools'}>
+      {projectToolsVisible && selectedProject ? (
         <button
           type="button"
           className={sourceVisible ? 'is-active' : ''}
@@ -743,66 +740,71 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
         >
           <CodeSimpleIcon aria-hidden="true" />
         </button>
-        <button
-          type="button"
-          className={searchProjectId === selectedProject.id ? 'is-active' : ''}
-          onClick={() => setSearchProjectId(selectedProject.id)}
-          aria-label={platformShortcutLabel(codeWorkspaceZh ? '搜索代码（⇧⌘F）' : 'Find in files (⇧⌘F)')}
-          data-icon-tooltip={platformShortcutLabel(codeWorkspaceZh ? '搜索代码（⇧⌘F）' : 'Find in files (⇧⌘F)')}
-          aria-keyshortcuts={`${isMacOSPlatform() ? 'Meta' : 'Control'}+Shift+F`}
-          data-project-tool="search"
-          aria-haspopup="dialog"
-          aria-expanded={searchProjectId === selectedProject.id}
-        >
-          <MagnifyingGlass aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          className={projectCommandsProjectId === selectedProject.id ? 'is-active' : ''}
-          disabled={!props.commandClient}
-          onClick={() => openProjectCommands(selectedProject.id)}
-          aria-label={platformShortcutLabel(codeWorkspaceZh ? '命令（⌘4）' : 'Commands (⌘4)')}
-          data-icon-tooltip={platformShortcutLabel(codeWorkspaceZh ? '命令（⌘4）' : 'Commands (⌘4)')}
-          aria-keyshortcuts={`${isMacOSPlatform() ? 'Meta' : 'Control'}+4`}
-          data-project-tool="commands"
-          aria-haspopup="dialog"
-          aria-expanded={projectCommandsProjectId === selectedProject.id}
-        >
-          <TerminalIcon aria-hidden="true" />
-        </button>
-        {props.commandClient ? (
-          <ProjectTerminalPanel
-            key={selectedProject.id}
-            project={selectedProject}
-            client={props.commandClient}
-            language={appShellSettings.appLanguage}
-            dockHost={terminalHost}
-            open={terminalProjectId === selectedProject.id && !projectGitOpen}
-            onOpenChange={(open) => {
-              if (open) closeProjectGit();
-              setTerminalProjectId(open ? selectedProject.id : null);
-            }}
-          />
-        ) : (
-          <button type="button" disabled aria-label={codeWorkspaceZh ? '终端' : 'Terminal'} data-icon-tooltip={codeWorkspaceZh ? '终端' : 'Terminal'} data-project-tool="terminal">
-            <TerminalWindowIcon aria-hidden="true" />
+      ) : null}
+      <button
+        type="button"
+        className={searchOpen ? 'is-active' : ''}
+        onClick={() => setSearchOpen(true)}
+        aria-label={platformShortcutLabel(codeWorkspaceZh ? '搜索（⇧⌘F）' : 'Search (⇧⌘F)')}
+        data-icon-tooltip={platformShortcutLabel(codeWorkspaceZh ? '搜索（⇧⌘F）' : 'Search (⇧⌘F)')}
+        aria-keyshortcuts={`${isMacOSPlatform() ? 'Meta' : 'Control'}+Shift+F`}
+        data-project-tool="search"
+        aria-haspopup="dialog"
+        aria-expanded={searchOpen}
+      >
+        <MagnifyingGlass aria-hidden="true" />
+      </button>
+      {projectToolsVisible && selectedProject ? (
+        <>
+          <button
+            type="button"
+            className={projectCommandsProjectId === selectedProject.id ? 'is-active' : ''}
+            disabled={!props.commandClient}
+            onClick={() => openProjectCommands(selectedProject.id)}
+            aria-label={platformShortcutLabel(codeWorkspaceZh ? '命令（⌘4）' : 'Commands (⌘4)')}
+            data-icon-tooltip={platformShortcutLabel(codeWorkspaceZh ? '命令（⌘4）' : 'Commands (⌘4)')}
+            aria-keyshortcuts={`${isMacOSPlatform() ? 'Meta' : 'Control'}+4`}
+            data-project-tool="commands"
+            aria-haspopup="dialog"
+            aria-expanded={projectCommandsProjectId === selectedProject.id}
+          >
+            <TerminalIcon aria-hidden="true" />
           </button>
-        )}
-        <button
-          type="button"
-          className={projectGitOpen ? 'is-active' : ''}
-          onClick={toggleProjectGit}
-          aria-label={platformShortcutLabel('Git (⌘2)')}
-          data-icon-tooltip={platformShortcutLabel('Git (⌘2)')}
-          aria-keyshortcuts={`${isMacOSPlatform() ? 'Meta' : 'Control'}+2`}
-          data-project-tool="git"
-          aria-expanded={projectGitOpen}
-          aria-controls="project-tool-panel"
-        >
-          <GitBranchIcon aria-hidden="true" />
-        </button>
-      </nav>
-    ) : null;
+          {props.commandClient ? (
+            <ProjectTerminalPanel
+              key={selectedProject.id}
+              project={selectedProject}
+              client={props.commandClient}
+              language={appShellSettings.appLanguage}
+              dockHost={terminalHost}
+              open={terminalProjectId === selectedProject.id && !projectGitOpen}
+              onOpenChange={(open) => {
+                if (open) closeProjectGit();
+                setTerminalProjectId(open ? selectedProject.id : null);
+              }}
+            />
+          ) : (
+            <button type="button" disabled aria-label={codeWorkspaceZh ? '终端' : 'Terminal'} data-icon-tooltip={codeWorkspaceZh ? '终端' : 'Terminal'} data-project-tool="terminal">
+              <TerminalWindowIcon aria-hidden="true" />
+            </button>
+          )}
+          <button
+            type="button"
+            className={projectGitOpen ? 'is-active' : ''}
+            onClick={toggleProjectGit}
+            aria-label={platformShortcutLabel('Git (⌘2)')}
+            data-icon-tooltip={platformShortcutLabel('Git (⌘2)')}
+            aria-keyshortcuts={`${isMacOSPlatform() ? 'Meta' : 'Control'}+2`}
+            data-project-tool="git"
+            aria-expanded={projectGitOpen}
+            aria-controls="project-tool-panel"
+          >
+            <GitBranchIcon aria-hidden="true" />
+          </button>
+        </>
+      ) : null}
+    </nav>
+  );
 
   /** 搜索结果先进入所属项目，再复用现有任务详情导航和草稿保护。 */
   function openSearchedTask(taskId: string, projectId: string): void {
@@ -819,24 +821,29 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
       data-theme={appShellSettings.appearance}
       data-language={appShellSettings.appLanguage}
       data-main-layout={appShellSettings.mainLayout}
-      data-project-tools-visible={projectToolsVisible ? 'true' : undefined}
+      data-project-tools-visible="true"
       data-project-sidebar-resizing={projectSidebarResizing ? 'true' : 'false'}
       style={projectSidebarShellStyle}
       lang={uiCopy.documentLang}
       aria-label={uiCopy.shellAriaLabel}
       onPointerDown={handleWindowDragPointerDown}
     >
-      {projectToolsVisible && selectedProject ? (
-        <ProjectCodeSearch
-          key={selectedProject.id}
-          gitSnapshot={projectCodeGitSnapshot}
-          project={selectedProject}
-          open={searchProjectId === selectedProject.id}
-          language={appShellSettings.appLanguage}
-          onClose={() => setSearchProjectId(null)}
-          onOpenMatch={(match) => openSourceMatch(selectedProject, match)}
-        />
-      ) : null}
+      <WorkspaceSearch
+        projects={orderedProjects}
+        tasks={snapshot.tasks}
+        conversationGroups={nativeConversationGroups}
+        loadTaskSearchPage={props.nativeConversationClient?.tasks.loadTaskSummaries}
+        searchConversationContent={props.nativeConversationClient?.conversations.searchConversationContent}
+        loadConversationGroups={props.nativeConversationClient?.conversations.loadProjectConversationChoiceGroups}
+        gitSnapshot={projectCodeGitSnapshot}
+        open={searchOpen}
+        language={appShellSettings.appLanguage}
+        onClose={() => setSearchOpen(false)}
+        onOpenProject={(project) => openProjectSection(project, project.id === temporaryWorkspaceId ? 'sessions' : 'tasks')}
+        onOpenTask={openSearchedTask}
+        onOpenConversation={(conversation) => void selectNativeConversation(conversation)}
+        onOpenSourceMatch={openSourceMatch}
+      />
       <MotionPresence>
         {commandsProject && props.commandClient ? (
           <ModalPortal role="dialog" aria-label={`${commandsProject.name} · ${codeWorkspaceZh ? '命令' : 'Commands'}`} rootClassName="project-command-portal" onDismiss={() => setProjectCommandsProjectId(null)}>
@@ -1043,14 +1050,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           onNavigate={handleMainNavigate}
           onCreateProject={openProjectCreateDialog}
           onCreateConversation={() => prepareNewConversationDraft()}
-          tasks={snapshot.tasks}
           conversationGroups={nativeConversationGroups}
           conversationStates={nativeConversationRuntimeStates}
-          onOpenTask={(task) => {
-            openSearchedTask(task.id, task.projectId);
-          }}
-          onOpenConversation={(conversation) => void selectNativeConversation(conversation)}
-          onOpenSourceMatch={openSourceMatch}
         />
       ) : null}
       {!upstreamMainLayout && projectWorkspaceNavigationVisible ? <div className="project-workspace-status-bar" data-workspace-tool-slot="bottom" aria-hidden="true" /> : null}
@@ -1068,9 +1069,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           conversationFilters={appShellSettings.sidebarConversationFilters}
           onConversationFiltersChange={saveSidebarConversationFilters}
           conversationGroups={nativeConversationGroups}
-          loadTaskSearchPage={props.nativeConversationClient?.tasks.loadTaskSummaries}
-          searchConversationContent={props.nativeConversationClient?.conversations.searchConversationContent}
-          onOpenTaskDetail={openSearchedTask}
           selectedConversationId={selectedNativeConversationId}
           conversationStates={nativeConversationRuntimeStates}
           automaticUpdateIndicator={automaticUpdateIndicator}
@@ -1116,7 +1114,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           project={projectToolsVisible ? selectedProject : undefined}
           open={projectGitOpen}
           sourceVisible={sourceVisible}
-          fileSearchOpen={Boolean(selectedProject && searchProjectId === selectedProject.id)}
+          fileSearchOpen={searchOpen}
           terminalOpen={terminalProjectId === selectedProject?.id}
           terminalHostRef={setTerminalHost}
           onRevealSessionContext={revealSessionContext}

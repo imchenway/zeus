@@ -143,6 +143,16 @@ export function registerConversationSnapshotV2Api(options: ConversationSnapshotV
     }
   });
 
+  // 完整费用与资源清单按需读取，使用相同的项目和会话归属检查。
+  server.get('/api/projects/:projectId/conversations/:conversationId/information', async (request: FastifyRequest<{ Params: ConversationParams }>, reply) => {
+    if (!hasConversationAccess(options, request.params)) return conversationNotFound(reply);
+    try {
+      return repository.readSessionInformation(request.params.conversationId);
+    } catch (error) {
+      return sendSnapshotV2Error(reply, error);
+    }
+  });
+
   // 重新编号或缓存恢复只核对客户端已经加载的身份，未知身份不代表删除。
   server.post('/api/projects/:projectId/conversations/:conversationId/transcript/placements', async (request: FastifyRequest<{ Params: ConversationParams; Body: ConversationTranscriptPlacementRequest }>, reply) => {
     if (!hasConversationAccess(options, request.params)) return conversationNotFound(reply);

@@ -1,3 +1,4 @@
+import { transitionConversation } from '../../session/conversationTransition.js';
 import { useBackgroundInputSuggestions } from '../../session/useBackgroundInputSuggestions.js';
 import { notifyProjectGitChanged } from '../../git/projectGitWorkbenchState.js';
 import type { ProjectRecord } from '../../apiClient.js';
@@ -1711,39 +1712,47 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     if (selectionRevision !== nativeConversationSelectionRevision.current) return;
     if (!targetProject || targetProject.id !== conversation.projectId) throw new Error('原会话所属项目无法读取。');
     if (conversation.taskId && (!task || task.id !== conversation.taskId || task.projectId !== targetProject.id)) throw new Error('原会话所属任务无法读取。');
-    /** 查看无项目会话也只读取已存在的托管工作区，不创建替代项目。 */
-    setSnapshot((current) => (current.projects.some((project) => project.id === targetProject.id) ? current : { ...current, projects: [...current.projects, targetProject] }));
-    activeProjectIdRef.current = targetProject.id;
-    setProjectDetail(targetProject);
-    if (task) mergeTaskRecord(task);
-    setTaskDetail(task);
-    /** 自动化等入口可先于列表拿到会话；选择前补齐列表事实，页面才能解析实际会话。 */
+    /** 已有推送工作面继续使用稳定导航身份，重复选择不重播切换动画。 */
     const listedConversation = resolveSelectedNativeConversationForProject(state.nativeConversationChoices, conversation.id, conversation.projectId);
-    // 创建期入口只属于本地工作面，不能写入正式目录或被当作已接纳会话保留。
-    if (!listedConversation && !conversation.archived && conversation.id !== conversation.navigationId) {
-      if (conversation.taskId) {
-        // 已读取的持久会话不能被迟到的列表快照移除。
-        nativeConversationChoiceLoadCoordinator.preserveAccepted(conversation);
-        setNativeConversationChoicesByTask((current) => ({ ...current, [conversation.taskId!]: upsertTaskConversationChoiceSnapshot(conversation.taskId!, current[conversation.taskId!], conversation) }));
-      } else {
-        // 项目会话复用已有的快照保护，切换页面后的目录刷新也保留本次选择。
-        nativeProjectConversationChoiceLoadCoordinator.preserveAccepted(conversation);
-        setNativeConversationChoicesByProject((current) => ({ ...current, [conversation.projectId]: upsertProjectConversationChoiceSnapshot(current[conversation.projectId], conversation) }));
-      }
-    }
-    /** 已有推送工作面继续使用稳定导航身份。 */
     const navigationId = resolveConversationNavigationId(listedConversation ?? conversation);
-    const resolvedPresentation =
-      presentation ?? resolveNativeConversationSelectionPresentation(conversation, nativeConversationRuntimeStates[navigationId] ?? nativeConversationRuntimeStates[conversation.id] ?? conversation.listRuntimeState);
-    selectedNativeConversationIdRef.current = navigationId;
-    setSelectedNativeConversationId(navigationId);
-    setSelectedNativeConversationPresentation(resolvedPresentation);
-    setFocusedArchivedConversation(conversation.archived ? conversation : null);
-    setConversationDraftOpen(false);
-    if (navigation === 'page') {
-      setActiveNavTarget('conversations');
-      setActiveProjectSection('sessions');
-    }
+    /** 原生快照回调可能晚于下一次点击，必须再次核对选择代次。 */
+    const applySelection = (): boolean => {
+      if (selectionRevision !== nativeConversationSelectionRevision.current) return false;
+      /** 查看无项目会话也只读取已存在的托管工作区，不创建替代项目。 */
+      setSnapshot((current) => (current.projects.some((project) => project.id === targetProject.id) ? current : { ...current, projects: [...current.projects, targetProject] }));
+      activeProjectIdRef.current = targetProject.id;
+      setProjectDetail(targetProject);
+      if (task) mergeTaskRecord(task);
+      setTaskDetail(task);
+      /** 自动化等入口可先于列表拿到会话；选择前补齐列表事实，页面才能解析实际会话。 */
+      // 创建期入口只属于本地工作面，不能写入正式目录或被当作已接纳会话保留。
+      if (!listedConversation && !conversation.archived && conversation.id !== conversation.navigationId) {
+        if (conversation.taskId) {
+          // 已读取的持久会话不能被迟到的列表快照移除。
+          nativeConversationChoiceLoadCoordinator.preserveAccepted(conversation);
+          setNativeConversationChoicesByTask((current) => ({ ...current, [conversation.taskId!]: upsertTaskConversationChoiceSnapshot(conversation.taskId!, current[conversation.taskId!], conversation) }));
+        } else {
+          // 项目会话复用已有的快照保护，切换页面后的目录刷新也保留本次选择。
+          nativeProjectConversationChoiceLoadCoordinator.preserveAccepted(conversation);
+          setNativeConversationChoicesByProject((current) => ({ ...current, [conversation.projectId]: upsertProjectConversationChoiceSnapshot(current[conversation.projectId], conversation) }));
+        }
+      }
+      const resolvedPresentation =
+        presentation ?? resolveNativeConversationSelectionPresentation(conversation, nativeConversationRuntimeStates[navigationId] ?? nativeConversationRuntimeStates[conversation.id] ?? conversation.listRuntimeState);
+      selectedNativeConversationIdRef.current = navigationId;
+      setSelectedNativeConversationId(navigationId);
+      setSelectedNativeConversationPresentation(resolvedPresentation);
+      setFocusedArchivedConversation(conversation.archived ? conversation : null);
+      setConversationDraftOpen(false);
+      if (navigation === 'page') {
+        setActiveNavTarget('conversations');
+        setActiveProjectSection('sessions');
+      }
+      return true;
+    };
+    if (selectedNativeConversationIdRef.current === navigationId) applySelection();
+    else await transitionConversation(applySelection);
+    if (selectionRevision !== nativeConversationSelectionRevision.current) return;
     if (conversation.transportKind === 'codex_native') {
       setNativeLegacyMessageLoadState('empty');
       setNativeLegacyMessageError(null);
