@@ -40,6 +40,7 @@ import { persistPendingConflictAiStart, TaskGitMergeModal } from '../../task/Tas
 import { TaskModelPushModal, writeTaskModelPushPreferences } from '../../task/TaskModelPushModal.js';
 import { TaskWorkspace } from '../../task/TaskWorkspace.js';
 import { ZentaoImportModal } from '../../task/ZentaoSyncModal.js';
+import { useZentaoInstances } from '../../task/useZentaoInstances.js';
 import { SettingsPagination, settingsPage, settingsPageSize } from '../../settings/SettingsPagination.js';
 import { defaultTaskTableEnumSortOrders, normalizeTaskTableEnumSortOrders } from '../../task/taskWorkspaceModel.js';
 import { ZeusSelect } from '../../ZeusSelect.js';
@@ -127,6 +128,11 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   const [taskField, setTaskField] = useState<'status' | 'priority' | 'runStatus'>('status');
   const [zentaoImportOpen, setZentaoImportOpen] = useState(false);
   const { state, domainActions, operations } = input;
+  /** 创建和导入入口共用服务端验证的实例，不按是否保存密码猜测登录。 */
+  const zentaoInstances = useZentaoInstances(state.props.commandClient);
+  useEffect(() => {
+    if (state.taskCreateForm.zentao && !zentaoInstances.some((instance) => instance.id === state.taskCreateForm.zentao?.instanceId)) state.setTaskCreateForm((current) => ({ ...current, zentao: undefined }));
+  }, [zentaoInstances, state.taskCreateForm.zentao?.instanceId, state.setTaskCreateForm]);
   /** 命令通知复用原命令弹窗，不切换底层页面或丢弃未保存内容。 */
   const [notificationCommand, setNotificationCommand] = useState<CommandRunNotification | null>(null);
   /** 详情组件回传真实可见身份，加载失败或关闭不会提前已读。 */
@@ -1042,6 +1048,9 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           <MotionPresence>
             {taskCreateModalOpen ? (
               <TaskCreateModal
+                zentaoClient={props.commandClient}
+                zentaoInstances={zentaoInstances}
+                onZentaoChange={(zentao) => setTaskCreateForm((current) => ({ ...current, zentao }))}
                 projects={snapshot.projects}
                 onProjectChange={(projectId) => setTaskCreateForm((current) => ({ ...current, projectId, parentTaskId: null }))}
                 open={taskCreateModalOpen}
@@ -1215,7 +1224,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                         onTaskTableColumnsChange={(preferences) => setTaskTableLayoutDraft({ preferences })}
                         onSaveTaskTableLayout={() => void saveTaskTableLayout()}
                         onCreateTask={() => openTaskCreateModal()}
-                        onOpenZentaoImport={() => setZentaoImportOpen(true)}
+                        onOpenZentaoImport={zentaoInstances.length ? () => setZentaoImportOpen(true) : undefined}
                         onOpenTaskDetail={(taskId, mode) => void openTaskDetailPane(taskId, mode)}
                         onPushTaskToNewConversation={(taskId) => void openTaskModelPush(taskId)}
                         onOpenTaskCodeDelivery={(taskId) => openTaskGitDelivery(taskId)}
@@ -1240,7 +1249,8 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                     )}
 
                     <ZentaoImportModal
-                      open={zentaoImportOpen}
+                      instances={zentaoInstances}
+                      open={zentaoImportOpen && zentaoInstances.length > 0}
                       language={appShellSettings.appLanguage}
                       client={props.commandClient}
                       projectId={activeProjectId}

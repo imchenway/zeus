@@ -1,8 +1,8 @@
-import type { ZentaoRemoteKind, ZentaoTaskSyncRequest } from '@zeus/shared';
+import type { ZentaoRemoteKind, ZentaoTaskSyncRequest, ZentaoTaskEffortRequest } from '@zeus/shared';
 import type { AppendAuditLogInput, TaskRepository } from '@zeus/storage';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { IntegrationCommandApplication, integrationCommandHttpError, integrationCommandTypes, type IntegrationCommandRequest } from './integrationCommandApplication.js';
-import type { ZentaoSyncService } from './zentaoSyncService.js';
+import { requireZentaoTaskLink, validateZentaoEffort, validateZentaoTaskSyncInput, type ZentaoSyncService } from './zentaoSyncService.js';
 
 /** 禅道列表是只读直连；远端写入必须经过 IntegrationCommandApplication 的确认后命令。 */
 export function registerZentaoSyncRoutes(options: {
@@ -154,8 +154,74 @@ export function registerZentaoSyncRoutes(options: {
       return sendZentaoError(reply, error, options.redactSensitiveText, '同步任务到禅道失败。');
     }
   });
+  /** 工时查询的 taskId 是本地任务身份，不能作为任意远端编号透传。 */
+  server.get('/api/zentao-instances/:instanceId/tasks/:taskId/efforts', async (request: FastifyRequest<{ Params: { instanceId: string; taskId: string } }>, reply) => {
+    try {
+      /** 从任务仓库解析已经保存的关联。 */
+      const task = options.tasks.getById(request.params.taskId);
+      if (!task) throw routeError('ZEUS_TASK_NOT_FOUND', '本地任务不存在。', 404);
+      return await options.service.getEfforts(request.params.instanceId, task);
+    } catch (error) {
+      return sendZentaoError(reply, error, options.redactSensitiveText, '禅道工时读取失败。');
+    }
+  });
+
+  /** 工时写入沿用集成命令的去重、未知结果保护和耐久回执。 */
+  server.post('/api/zentao-instances/:instanceId/tasks/:taskId/efforts', async (request: FastifyRequest<{ Params: { instanceId: string; taskId: string }; Body: IntegrationCommandRequest<ZentaoTaskEffortRequest> }>, reply) => {
+    try {
+      /** 命令身份与实例范围必须与当前路由匹配。 */
+      const parsed = options.application.parse<ZentaoTaskEffortRequest>({
+        value: request.body,
+        commandType: integrationCommandTypes.zentaoTaskEffortRecord,
+        scopeKind: 'integration_account',
+        expectedScopeId: () => request.params.instanceId,
+      });
+      /** 只接受本次登记需要的明确字段。 */
+      const allowed = ['taskId', 'expectedUpdatedAt', 'date', 'consumed', 'left', 'work'];
+      if (Object.keys(parsed.input).some((key) => !allowed.includes(key)) || parsed.input.taskId !== request.params.taskId) throw routeError('ZEUS_ZENTAO_EFFORT_INPUT_INVALID', '工时参数或任务编号无效。', 400);
+      validateZentaoEffort(parsed.input);
+      /** 写入前重新读取任务，禁止将确认过的工时提交到新关联。 */
+      let task = options.tasks.getById(parsed.input.taskId);
+      if (!task) throw routeError('ZEUS_TASK_NOT_FOUND', '本地任务不存在。', 404);
+      /** 回执记录的远端身份只取自任务关联。 */
+      const link = requireZentaoTaskLink(task, request.params.instanceId);
+      /** 重放已接受的命令只返回原回执，不再次登记工时。 */
+      const mutation = await options.application.executeExternal({
+        parsed,
+        destinationId: 'zentao_task',
+        resourceId: `${request.params.instanceId}:${parsed.input.taskId}`,
+        externalOperationId: `${parsed.command.commandType}:${parsed.operationIdentity}`,
+        beforeWrite: async () => {
+          task = options.tasks.getById(parsed.input.taskId);
+          if (!task) throw routeError('ZEUS_TASK_NOT_FOUND', '本地任务不存在。', 404);
+          if (task.updatedAt !== parsed.input.expectedUpdatedAt) throw routeError('ZEUS_TASK_EDIT_CONFLICT', '任务在确认后发生变化，请重新打开工时窗口。', 409);
+          requireZentaoTaskLink(task, request.params.instanceId);
+        },
+        invoke: () => options.service.recordEffort(request.params.instanceId, parsed.input, task!),
+        mutateAcceptedBusinessState: () => {
+          options.recordTaskEvent({
+            taskId: parsed.input.taskId,
+            eventType: 'task.zentao.effort.recorded',
+            title: '已登记禅道工时',
+            payload: { instanceId: request.params.instanceId, objectId: link.objectId, date: parsed.input.date, consumed: parsed.input.consumed, left: parsed.input.left, work: parsed.input.work.trim() },
+          });
+          options.appendAuditLog({
+            actorType: 'local_api',
+            action: 'zentao.task.effort.recorded',
+            resourceType: 'task',
+            resourceId: parsed.input.taskId,
+            payload: { instanceId: request.params.instanceId, objectId: link.objectId, date: parsed.input.date, consumed: parsed.input.consumed, left: parsed.input.left },
+          });
+        },
+      });
+      return { task: mutation.result };
+    } catch (error) {
+      return sendZentaoError(reply, error, options.redactSensitiveText, '禅道工时登记失败。');
+    }
+  });
 }
 
+/** 远端对象类型只接受已知枚举。 */
 function parseRemoteKind(value: string | undefined): ZentaoRemoteKind | null {
   return value === 'task' || value === 'bug' ? value : null;
 }
@@ -167,7 +233,7 @@ function parseQueryInteger(value: string | undefined): number | undefined {
 }
 
 function assertSyncInput(value: ZentaoTaskSyncRequest): void {
-  const allowed = ['taskId', 'expectedUpdatedAt', 'kind', 'projectId', 'executionId', 'productId', 'estStarted', 'deadline', 'remoteType'];
+  const allowed = ['taskId', 'expectedUpdatedAt', 'kind', 'projectId', 'executionId', 'productId', 'estStarted', 'deadline', 'remoteType', 'estimate'];
   const actual = Object.keys(value as object);
   const unexpected = actual.filter((key) => !allowed.includes(key));
   if (unexpected.length > 0) throw routeError('ZEUS_INTEGRATION_COMMAND_INVALID', `禅道同步参数包含不支持的字段：${unexpected.join(', ')}。`, 400);
@@ -175,8 +241,9 @@ function assertSyncInput(value: ZentaoTaskSyncRequest): void {
     throw routeError('ZEUS_ZENTAO_SYNC_INPUT_INVALID', '禅道同步参数不完整。', 400);
   }
   for (const id of [value.projectId, value.executionId, value.productId].filter((candidate): candidate is string => candidate !== undefined)) {
-    if (!/^\d+$/u.test(id)) throw routeError('ZEUS_ZENTAO_ID_INVALID', '禅道目标编号无效。', 400);
+    if (typeof id !== 'string' || !/^\d+$/u.test(id)) throw routeError('ZEUS_ZENTAO_ID_INVALID', '禅道目标编号无效。', 400);
   }
+  validateZentaoTaskSyncInput(value);
 }
 
 function parseSourceContext(value: string): Record<string, unknown> {

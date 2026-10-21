@@ -20,6 +20,8 @@ export const integrationCommandTypes = {
   zentaoInstancePasswordClear: 'integration.zentao_instance.password.clear',
   zentaoInstanceVerify: 'integration.zentao_instance.verify',
   zentaoTaskSync: 'integration.zentao_task.sync',
+  /** 禅道工时写入使用独立操作身份和耐久回执。 */
+  zentaoTaskEffortRecord: 'integration.zentao_task.effort.record',
   telegramBotTokenPut: 'integration.telegram_bot_token.put',
   telegramBotTokenDelete: 'integration.telegram_bot_token.delete',
   externalApiKeyPut: 'integration.external_api_key.put',

@@ -17,6 +17,8 @@ export const integrationClientCommandTypes = {
   zentaoInstancePasswordClear: 'integration.zentao_instance.password.clear',
   zentaoInstanceVerify: 'integration.zentao_instance.verify',
   zentaoTaskSync: 'integration.zentao_task.sync',
+  /** 当前账号手动登记禅道任务工时。 */
+  zentaoTaskEffortRecord: 'integration.zentao_task.effort.record',
   telegramBotTokenPut: 'integration.telegram_bot_token.put',
   telegramBotTokenDelete: 'integration.telegram_bot_token.delete',
   externalApiKeyPut: 'integration.external_api_key.put',

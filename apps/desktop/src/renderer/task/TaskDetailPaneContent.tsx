@@ -35,6 +35,11 @@ import {
 } from './taskAttachments.js';
 import { formatTaskEventTitle, formatTaskSource, formatTaskType, formatTaskUpdatedAt, resolveTaskManagementStatus, type TaskSourceLabels, taskTypes } from './taskWorkspaceModel.js';
 
+import type { DashboardClient } from '../dashboardClient.js';
+import { readTaskZentaoLink, ZentaoPushModal } from './ZentaoSyncModal.js';
+import { ZentaoEffortModal } from './ZentaoEffortModal.js';
+import { useZentaoInstances } from './useZentaoInstances.js';
+
 export interface TaskDetailPaneCopy {
   requestTitle: string;
   noRequest: string;
@@ -75,6 +80,10 @@ export interface TaskDetailPaneCopy {
 }
 
 export interface TaskDetailPaneContentProps {
+  /** 各种详情呈现方式共用同一禅道客户端。 */
+  zentaoClient?: DashboardClient;
+  /** 同步后合并完整任务到现有共享缓存。 */
+  onZentaoTaskUpdated?: (task: TaskRecord) => void;
   /** 可选择的项目来自当前工作区快照。 */
   projects: ProjectRecord[];
   /** 复制先打开可编辑草稿，提交后才创建独立任务。 */
@@ -787,6 +796,22 @@ function TaskProjectActions(props: Pick<TaskDetailPaneContentProps, 'task' | 'pr
 
 /** 展示任务详情及其内容、项目和执行操作。 */
 export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
+  /** 登录验证控制所有禅道操作，不因旧任务含关联就展示入口。 */
+  const zentaoInstances = useZentaoInstances(props.zentaoClient);
+  /** 从任务来源上下文读取的受控关联。 */
+  const zentaoLink = readTaskZentaoLink(props.task);
+  /** 仅对当前已登录实例显示任务操作。 */
+  const zentaoAvailable = zentaoInstances.length > 0 && (!zentaoLink || zentaoInstances.some((instance) => instance.id === zentaoLink.instanceId));
+  /** 手动同步弹窗的打开状态。 */
+  const [zentaoSyncOpen, setZentaoSyncOpen] = useState(false);
+  /** 工时弹窗的打开状态。 */
+  const [zentaoEffortOpen, setZentaoEffortOpen] = useState(false);
+  useEffect(() => {
+    if (!zentaoAvailable) {
+      setZentaoSyncOpen(false);
+      setZentaoEffortOpen(false);
+    }
+  }, [zentaoAvailable]);
   const zh = props.language === 'zh-CN';
   const editCopy = taskEditCopies[props.language];
   const managementStatus = resolveTaskManagementStatus(props.task);
@@ -1187,6 +1212,12 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
 
   return (
     <section className="product-drawer-pane task-detail-pane-content task-detail-pane-shell" aria-label={props.task.title}>
+      {zentaoAvailable && zentaoSyncOpen ? (
+        <ZentaoPushModal open instances={zentaoInstances} language={props.language} client={props.zentaoClient} task={props.task} onUpdated={(task) => props.onZentaoTaskUpdated?.(task)} onClose={() => setZentaoSyncOpen(false)} />
+      ) : null}
+      {zentaoAvailable && zentaoEffortOpen && props.zentaoClient && zentaoLink?.kind === 'task' ? (
+        <ZentaoEffortModal language={props.language} client={props.zentaoClient} task={props.task} onClose={() => setZentaoEffortOpen(false)} />
+      ) : null}
       <header className="task-detail-pane-header task-detail-summary-row">
         <span className="task-detail-pane-title">
           <InlineTaskTextField
@@ -1270,6 +1301,32 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
               >
                 <GitBranchIcon size={16} aria-hidden="true" />
                 {zh ? '代码交付…' : 'Code delivery…'}
+              </Button>
+            ) : null}
+            {zentaoAvailable ? (
+              <Button
+                variant="secondary"
+                size="regular"
+                onClick={() => {
+                  moreActionsRef.current?.hidePopover();
+                  setZentaoSyncOpen(true);
+                }}
+                disabled={props.busy}
+              >
+                {zh ? '同步到禅道…' : 'Sync to ZenTao…'}
+              </Button>
+            ) : null}
+            {zentaoAvailable && zentaoLink?.kind === 'task' ? (
+              <Button
+                variant="secondary"
+                size="regular"
+                onClick={() => {
+                  moreActionsRef.current?.hidePopover();
+                  setZentaoEffortOpen(true);
+                }}
+                disabled={props.busy}
+              >
+                {zh ? '禅道工时…' : 'ZenTao hours…'}
               </Button>
             ) : null}
             <Button

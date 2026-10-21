@@ -696,6 +696,12 @@ export interface ZentaoRemoteItemDetail extends ZentaoRemoteItemSummary {
   estStarted?: string;
   deadline?: string;
   remoteType?: string;
+  /** 禅道保存的最初预计工时，单位为小时；缺失时不伪造为零。 */
+  estimate?: number;
+  /** 禅道累计消耗工时，单位为小时。 */
+  consumed?: number;
+  /** 禅道当前预计剩余工时，单位为小时。 */
+  left?: number;
 }
 
 export interface ZentaoRemoteListResult {
@@ -717,6 +723,48 @@ export interface ZentaoTaskSyncRequest {
   estStarted?: string;
   deadline?: string;
   remoteType?: string;
+  /** 仅新建或未开始任务可填写，单位为小时。 */
+  estimate?: number;
+}
+
+/** 一次由当前禅道账号登记的工时，不使用 AI 运行时长推算。 */
+export interface ZentaoTaskEffortRequest {
+  /** Zeus 本地任务编号，远端编号由服务端关联解析。 */
+  taskId: string;
+  /** 确认时的本地任务修订时间，防止提交到已改变的关联。 */
+  expectedUpdatedAt: string;
+  /** 工作所属的本地日历日期，格式为 YYYY-MM-DD。 */
+  date: string;
+  /** 本次消耗小时数，必须大于零。 */
+  consumed: number;
+  /** 用户重新评估的剩余小时数，允许为零。 */
+  left: number;
+  /** 本次工作的简体中文或用户原始说明。 */
+  work: string;
+}
+
+/** 禅道返回的单条工时日志，记录身份由禅道维护。 */
+export interface ZentaoTaskEffort {
+  /** 禅道日志编号。 */
+  id: string;
+  /** 工作日期。 */
+  date: string;
+  /** 登记账号。 */
+  account: string;
+  /** 工作说明。 */
+  work: string;
+  /** 本次消耗小时数。 */
+  consumed: number;
+  /** 登记时预计剩余小时数。 */
+  left: number;
+}
+
+/** 工时汇总与日志均来自禅道，不在 Zeus 建立独立账本。 */
+export interface ZentaoTaskEffortsResult {
+  /** 远端任务的当前状态和工时汇总。 */
+  task: ZentaoRemoteItemDetail;
+  /** 禅道任务日志。 */
+  items: ZentaoTaskEffort[];
 }
 
 export interface ZentaoTaskSyncLink {
@@ -767,6 +815,8 @@ export interface ZentaoInstanceRecord {
   basePath: string;
   account: string;
   passwordConfigured: boolean;
+  /** 当前进程验证得到的登录状态，不作为设置持久化，也不包含令牌。 */
+  authenticationStatus?: 'authenticated' | 'unauthenticated' | 'unavailable';
   createdAt: string;
   updatedAt: string;
 }

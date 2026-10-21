@@ -1,4 +1,4 @@
-import type { SaveZentaoInstanceRequest, ZentaoInstanceRecord, ZentaoInstanceVerifyResult, ZentaoRemoteKind, ZentaoTaskSyncRequest } from '@zeus/shared';
+import type { SaveZentaoInstanceRequest, ZentaoInstanceRecord, ZentaoInstanceVerifyResult, ZentaoRemoteKind, ZentaoTaskSyncRequest, ZentaoTaskEffortRequest, ZentaoTaskEffortsResult } from '@zeus/shared';
 import type {
   ModelCapabilityProbeSummary,
   ModelReasoningAuditResult,
@@ -15,8 +15,11 @@ import type {
   ZentaoRemoteProjectSummary,
   ZentaoTaskSyncResult,
 } from './integrationContracts.js';
-import { jsonRequest, type LocalApiTransport } from '../../transport/localApiTransport.js';
+import { jsonRequest, ZeusApiError, type LocalApiTransport } from '../../transport/localApiTransport.js';
 import { buildIntegrationCommandRequest, integrationClientCommandTypes } from './integrationCommandClient.js';
+
+/** 禅道配置或认证结果变化后，工作区重新读取同一服务端状态。 */
+export const zentaoInstancesChangedEvent = 'zeus-zentao-instances-changed';
 
 export interface IntegrationApiClient {
   /** 自动识别整份价格页面，返回只读结果。 */
@@ -52,6 +55,10 @@ export interface IntegrationApiClient {
   loadZentaoMyItems: (instanceId: string, input: { kind?: ZentaoRemoteKind; query?: string; offset?: number; limit?: number }) => Promise<ZentaoRemoteListResult>;
   loadZentaoItem: (instanceId: string, kind: ZentaoRemoteKind, objectId: string) => Promise<ZentaoRemoteItemDetail>;
   syncTaskToZentao: (instanceId: string, input: ZentaoTaskSyncRequest) => Promise<ZentaoTaskSyncResult>;
+  /** 读取已关联任务的禅道工时，不传任意远端身份。 */
+  loadZentaoTaskEfforts: (instanceId: string, taskId: string) => Promise<ZentaoTaskEffortsResult>;
+  /** 当前账号显式提交一次工时登记。 */
+  recordZentaoTaskEffort: (instanceId: string, input: ZentaoTaskEffortRequest) => Promise<Pick<ZentaoTaskEffortsResult, 'task'>>;
   loadSelectablePiModels: () => Promise<SelectablePiModel[]>;
   loadSecuritySecrets: () => Promise<SecuritySecretsSnapshot>;
   saveTelegramBotToken: (token: string) => Promise<SecuritySecretsSnapshot>;
@@ -61,6 +68,9 @@ export interface IntegrationApiClient {
 }
 
 export function createIntegrationApiClient(transport: LocalApiTransport): IntegrationApiClient {
+  /** 尚未确认结果的任务写入保留原 Envelope，重新打开窗口也不会生成第二次写入。 */
+  // ponytail: 此缓存限定在客户端生命周期；跨重启恢复原命令时应读取既有耐久回执，不新增重试队列。
+  const pendingZentaoWrites = new Map<string, { signature: string; body: Promise<object> }>();
   const modelConnectionCommand = async <TInput extends object>(
     connectionId: string,
     commandType: Parameters<typeof buildIntegrationCommandRequest>[0]['commandType'],
@@ -87,14 +97,35 @@ export function createIntegrationApiClient(transport: LocalApiTransport): Integr
     suffix: string,
     value: TInput,
   ) => {
-    const body = await buildIntegrationCommandRequest({
-      commandType,
-      scopeKind: 'integration_account',
-      scopeId: () => instanceId,
-      operationPrefix: `zentao_${operation}`,
-      value,
-    });
-    return transport.request(`${zentaoInstancePath(instanceId)}${suffix}`, jsonRequest(method, body));
+    /** 只对远端业务写入保留命令；设置操作沿用既有机制。 */
+    const key = 'taskId' in value ? `${instanceId}:${operation}:${String(value.taskId)}` : null;
+    /** 操作内容绑定原命令身份，未知结果不能靠修改表单重新发送。 */
+    const signature = JSON.stringify(value);
+    const previous = key ? pendingZentaoWrites.get(key) : undefined;
+    if (previous && previous.signature !== signature) throw new ZeusApiError({ status: 409, error: 'ZEUS_INTEGRATION_COMMAND_OUTCOME_UNKNOWN', recoveryRequired: true, message: '前次禅道写入结果尚未确认，请先到禅道核对，勿重复提交。' });
+    /** 同一操作在传输恢复和显式重读时始终复用原命令。 */
+    const pending = previous ?? {
+      signature,
+      body: buildIntegrationCommandRequest({
+        commandType,
+        scopeKind: 'integration_account',
+        scopeId: () => instanceId,
+        operationPrefix: `zentao_${operation}`,
+        value,
+      }),
+    };
+    if (key) pendingZentaoWrites.set(key, pending);
+    try {
+      /** 传输成功后才能解除本次写入保护。 */
+      const result = await transport.request(`${zentaoInstancePath(instanceId)}${suffix}`, jsonRequest(method, await pending.body));
+      if (key) pendingZentaoWrites.delete(key);
+      return result;
+    } catch (error) {
+      if (key && error instanceof ZeusApiError && error.status < 500 && !error.recoveryRequired && error.error !== 'ZEUS_INTEGRATION_COMMAND_OUTCOME_UNKNOWN') pendingZentaoWrites.delete(key);
+      throw error;
+    } finally {
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event(zentaoInstancesChangedEvent));
+    }
   };
 
   const secretCommand = async <TInput extends object>(
@@ -108,6 +139,16 @@ export function createIntegrationApiClient(transport: LocalApiTransport): Integr
     const body = await buildIntegrationCommandRequest({ commandType, scopeKind: 'provider_account', scopeId: () => account, operationPrefix: `provider_account_${operation}`, value });
     return transport.request(path, jsonRequest(method, body));
   };
+
+  /** 读取时发现认证失效也通知所有入口重新核对服务端状态。 */
+  async function zentaoRead<T>(path: string): Promise<T> {
+    try {
+      return await transport.request<T>(path);
+    } catch (error) {
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event(zentaoInstancesChangedEvent));
+      throw error;
+    }
+  }
 
   return {
     refreshModelConnectionPricing: (connectionId) =>
@@ -155,9 +196,9 @@ export function createIntegrationApiClient(transport: LocalApiTransport): Integr
     clearZentaoInstancePassword: (instanceId) =>
       zentaoCommand(instanceId, integrationClientCommandTypes.zentaoInstancePasswordClear, 'password_clear', 'DELETE', '/password', {}) as ReturnType<IntegrationApiClient['clearZentaoInstancePassword']>,
     verifyZentaoInstance: (instanceId) => zentaoCommand(instanceId, integrationClientCommandTypes.zentaoInstanceVerify, 'verify', 'POST', '/verify', {}) as ReturnType<IntegrationApiClient['verifyZentaoInstance']>,
-    loadZentaoProjects: async (instanceId) => (await transport.request<{ items: ZentaoRemoteProjectSummary[] }>(`${zentaoInstancePath(instanceId)}/projects`)).items,
-    loadZentaoExecutions: async (instanceId, projectId) => (await transport.request<{ items: ZentaoRemoteExecutionSummary[] }>(`${zentaoInstancePath(instanceId)}/projects/${encodeURIComponent(projectId)}/executions`)).items,
-    loadZentaoProducts: async (instanceId) => (await transport.request<{ items: ZentaoRemoteProductSummary[] }>(`${zentaoInstancePath(instanceId)}/products`)).items,
+    loadZentaoProjects: async (instanceId) => (await zentaoRead<{ items: ZentaoRemoteProjectSummary[] }>(`${zentaoInstancePath(instanceId)}/projects`)).items,
+    loadZentaoExecutions: async (instanceId, projectId) => (await zentaoRead<{ items: ZentaoRemoteExecutionSummary[] }>(`${zentaoInstancePath(instanceId)}/projects/${encodeURIComponent(projectId)}/executions`)).items,
+    loadZentaoProducts: async (instanceId) => (await zentaoRead<{ items: ZentaoRemoteProductSummary[] }>(`${zentaoInstancePath(instanceId)}/products`)).items,
     loadZentaoItems: (instanceId, input) => {
       const query = new URLSearchParams({ kind: input.kind, projectId: input.projectId });
       if (input.executionId) query.set('executionId', input.executionId);
@@ -165,7 +206,7 @@ export function createIntegrationApiClient(transport: LocalApiTransport): Integr
       if (input.query?.trim()) query.set('query', input.query.trim());
       if (input.offset !== undefined) query.set('offset', String(input.offset));
       if (input.limit !== undefined) query.set('limit', String(input.limit));
-      return transport.request<ZentaoRemoteListResult>(`${zentaoInstancePath(instanceId)}/items?${query.toString()}`);
+      return zentaoRead<ZentaoRemoteListResult>(`${zentaoInstancePath(instanceId)}/items?${query.toString()}`);
     },
     loadZentaoMyItems: (instanceId, input) => {
       const query = new URLSearchParams();
@@ -173,10 +214,13 @@ export function createIntegrationApiClient(transport: LocalApiTransport): Integr
       if (input.query?.trim()) query.set('query', input.query.trim());
       if (input.offset !== undefined) query.set('offset', String(input.offset));
       if (input.limit !== undefined) query.set('limit', String(input.limit));
-      return transport.request<ZentaoRemoteListResult>(`${zentaoInstancePath(instanceId)}/my-items?${query.toString()}`);
+      return zentaoRead<ZentaoRemoteListResult>(`${zentaoInstancePath(instanceId)}/my-items?${query.toString()}`);
     },
-    loadZentaoItem: (instanceId, kind, objectId) => transport.request(`${zentaoInstancePath(instanceId)}/items/${encodeURIComponent(kind)}/${encodeURIComponent(objectId)}`),
+    loadZentaoItem: (instanceId, kind, objectId) => zentaoRead(`${zentaoInstancePath(instanceId)}/items/${encodeURIComponent(kind)}/${encodeURIComponent(objectId)}`),
     syncTaskToZentao: (instanceId, input) => zentaoCommand(instanceId, integrationClientCommandTypes.zentaoTaskSync, 'task_sync', 'POST', '/sync-task', input) as ReturnType<IntegrationApiClient['syncTaskToZentao']>,
+    loadZentaoTaskEfforts: (instanceId, taskId) => zentaoRead(`${zentaoInstancePath(instanceId)}/tasks/${encodeURIComponent(taskId)}/efforts`),
+    recordZentaoTaskEffort: (instanceId, input) =>
+      zentaoCommand(instanceId, integrationClientCommandTypes.zentaoTaskEffortRecord, 'task_effort_record', 'POST', `/tasks/${encodeURIComponent(input.taskId)}/efforts`, input) as ReturnType<IntegrationApiClient['recordZentaoTaskEffort']>,
     loadSelectablePiModels: async () => (await transport.request<{ items: Awaited<ReturnType<IntegrationApiClient['loadSelectablePiModels']>> }>('/api/models/catalog')).items,
     loadSecuritySecrets: () => transport.request('/api/security/secrets'),
     saveTelegramBotToken: (token) =>

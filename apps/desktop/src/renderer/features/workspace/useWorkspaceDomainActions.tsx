@@ -1,5 +1,6 @@
 import { useBackgroundInputSuggestions } from '../../session/useBackgroundInputSuggestions.js';
 import { notifyProjectGitChanged } from '../../git/projectGitWorkbenchState.js';
+import { isZentaoDestinationComplete, type ZentaoTaskDestination } from '../../task/ZentaoSyncModal.js';
 import type { ProjectRecord } from '../../apiClient.js';
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { temporaryWorkspaceId, describeUserFacingError, isTaskPriority, type ProjectCodeWorkspacePreference, renderTaskPushLayoutText, type ThirdPartyTaskExtract } from '@zeus/shared';
@@ -1289,7 +1290,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
   }
 
   /** 新建与复制共用提交身份，目标项目参与去重以免重试落入错误项目。 */
-  async function createProjectTaskFromDraft(draft: TaskCreateDraft, projectId = activeProjectId, pushAfterCreate = false): Promise<boolean> {
+  async function createProjectTaskFromDraft(draft: TaskCreateDraft, projectId = activeProjectId, pushAfterCreate = false, zentao?: ZentaoTaskDestination): Promise<boolean> {
     if (!props.onCreateTaskDraft || !projectId) return false;
     const previousTaskIds = new Set(snapshot.tasks.map((task) => task.id));
     setActionState('creating-task');
@@ -1326,6 +1327,25 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
             .onLoadTaskEvents(createdTask.id)
             .then(setTaskEvents)
             .catch((error: unknown) => recordLocalError('task-event-refresh', error));
+        }
+        if (zentao && props.commandClient) {
+          // 本地创建已成功；远端失败只报告同步结果，不返回到创建重试流程。
+          try {
+            /** 只同步此次保存得到的真实任务编号。 */
+            const synced = await props.commandClient.syncTaskToZentao(zentao.instanceId, {
+              taskId: createdTask.id,
+              expectedUpdatedAt: createdTask.updatedAt ?? '',
+              kind: 'task',
+              projectId: zentao.projectId,
+              executionId: zentao.executionId,
+              estStarted: zentao.estStarted,
+              deadline: zentao.deadline,
+              estimate: zentao.estimate === '' ? undefined : Number(zentao.estimate),
+            });
+            mergeTaskRecord(synced.task);
+          } catch (error) {
+            recordLocalError('本地任务已创建，禅道同步未完成', error);
+          }
         }
       }
       setActionState('idle');
@@ -1513,12 +1533,29 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       return;
     }
     taskCreateSubmittingRef.current = true;
+    setActionState('creating-task');
     try {
+      /** 必填目标和登录事实在创建本地任务之前完成校验。 */
+      const zentao = taskCreateForm.zentao;
+      if (zentao) {
+        if (!isZentaoDestinationComplete(zentao) || !props.commandClient) {
+          setTaskCreateError('请选择完整的禅道目标并填写有效预计工时。');
+          return;
+        }
+        const instances = await props.commandClient.loadZentaoInstances();
+        if (!instances.some((instance) => instance.id === zentao.instanceId && instance.authenticationStatus === 'authenticated')) {
+          setTaskCreateError('禅道登录已失效，请在设置中重新登录。');
+          return;
+        }
+      }
       /** 创建成功与推送检查成功是独立事实，推送失败不重复创建。 */
-      const created = await createProjectTaskFromDraft(normalized.draft, taskCreateForm.projectId, pushAfterCreate);
+      const created = await createProjectTaskFromDraft(normalized.draft, taskCreateForm.projectId, pushAfterCreate, zentao);
       if (created) closeTaskCreateModal();
+    } catch (error) {
+      setTaskCreateError(errorToLocalUiMessage(error, appShellSettings.appLanguage));
     } finally {
       taskCreateSubmittingRef.current = false;
+      setActionState('idle');
     }
   }
 

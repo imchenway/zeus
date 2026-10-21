@@ -156,6 +156,8 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
     setMessage(null);
     try {
       const result: ZentaoInstanceVerifyResult = await props.client.verifyZentaoInstance(draft.id);
+      // 密码存在不代表已登录；网络故障不撤销之前已确认的身份。
+      setInstances((items) => items.map((item) => (item.id === draft.id ? { ...item, authenticationStatus: result.ok ? 'authenticated' : result.code === 'network_failed' ? item.authenticationStatus : 'unauthenticated' } : item)));
       setMessage(
         result.ok
           ? zh
@@ -244,7 +246,9 @@ export function ZentaoSettingsPane(props: { language: 'zh-CN' | 'en-US'; client:
                 <strong>{instance.host}</strong>
                 <small>{instance.account || (zh ? '未配置账号' : 'No account')}</small>
               </span>
-              <em data-configured={instance.passwordConfigured || undefined}>{instance.passwordConfigured ? (zh ? '密码已保存' : 'Password saved') : zh ? '未配置密码' : 'No password'}</em>
+              <em data-configured={instance.authenticationStatus === 'authenticated' || undefined}>
+                {instance.authenticationStatus === 'authenticated' ? (zh ? '已登录' : 'Signed in') : instance.passwordConfigured ? (zh ? '未登录 · 密码已保存' : 'Signed out · password saved') : zh ? '未登录' : 'Signed out'}
+              </em>
             </button>
           ))}
         </nav>
