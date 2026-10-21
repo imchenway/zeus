@@ -1,5 +1,8 @@
 /* 所有差异入口共用可视区域布局，长行横向滚动以保持两侧行号对齐。 */
 .code-diff-view {
+  position: relative;
+  /* 与恢复轨道共享正文起始留白，避免箭头高于实际色块。 */
+  --diff-content-inset: 8px;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   min-height: 0;
@@ -10,6 +13,10 @@
 }
 .code-diff-view.is-resizable {
   grid-template-columns: minmax(0, var(--git-diff, 50%)) 6px minmax(0, 1fr);
+}
+/* 分栏拖动区只在悬停或聚焦时显示手柄，常态不截断连接色带。 */
+.code-diff-view > .git-pane-separator {
+  background: transparent;
 }
 .code-diff-view.is-unified,
 .code-diff-view.is-single-side {
@@ -26,7 +33,7 @@
   display: none !important;
 }
 .code-diff-view .cm-content {
-  padding-block: 8px 24px;
+  padding-block: var(--diff-content-inset) 24px;
 }
 /* 行号区与正文分层；细轨道避免长文档出现醒目的滚动边框。 */
 .code-diff-view .cm-gutters {
@@ -62,11 +69,14 @@
   inline-size: 20px;
   min-inline-size: 20px;
 }
-/* 整块颜色表示改动种类，行内更深的底色表示具体增删文字。 */
+/* 色板独立于状态文字颜色：新增浅绿、删除中性灰、修改浅蓝，深色主题保持同一语义。 */
 .code-diff-view {
-  --diff-addition: color-mix(in srgb, var(--zeus-code-addition-text) 22%, var(--zeus-product-panel));
-  --diff-deletion: color-mix(in srgb, var(--zeus-control-danger-text) 17%, var(--zeus-product-panel));
-  --diff-replacement: color-mix(in srgb, var(--zeus-task-status-blue) 15%, var(--zeus-product-panel));
+  --diff-addition: light-dark(#c7e9c4, #294333);
+  --diff-deletion: light-dark(#dedede, #383a3d);
+  --diff-replacement: light-dark(#e6effb, #273b54);
+  --diff-word-addition: light-dark(#b4dcae, #3b6145);
+  --diff-word-deletion: light-dark(#c9c9c9, #575a60);
+  --diff-fold-line: light-dark(#c5c8cc, #62666c);
 }
 .code-diff-view :is(.code-diff-line, .code-diff-tone, .code-diff-alignment).is-addition {
   background: var(--diff-addition);
@@ -77,11 +87,12 @@
 .code-diff-view :is(.code-diff-line, .code-diff-tone, .code-diff-alignment).is-replacement {
   background: var(--diff-replacement);
 }
+/* 字词高亮只用于配对修改，整块新增或删除不再叠加文字背景。 */
 .code-diff-view .code-diff-word.is-addition {
-  background: color-mix(in srgb, var(--zeus-code-addition-text) 30%, transparent);
+  background: var(--diff-word-addition);
 }
 .code-diff-view .code-diff-word.is-deletion {
-  background: color-mix(in srgb, var(--zeus-control-danger-text) 24%, transparent);
+  background: var(--diff-word-deletion);
 }
 /* 恢复轨道位于右侧编辑器最左边，与原始行号一同滚动和软换行对齐。 */
 .code-diff-revert-slot {
@@ -115,6 +126,16 @@
 .code-diff-revert:focus-visible {
   outline: 2px solid var(--zeus-control-accent);
   outline-offset: -2px;
+}
+/* 细线双箭头表示把左侧区块恢复到右侧，图形始终在首行内居中。 */
+.code-diff-revert-icon {
+  display: block;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  background: currentColor;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m4 3 5 5-5 5m5-10 5 5-5 5' fill='none' stroke='black' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    center / contain no-repeat;
 }
 .code-diff-revert-dialog {
   width: min(420px, calc(100vw - 32px));
@@ -283,39 +304,77 @@
   content: '✓';
   float: right;
 }
-/* 波浪线标记真实省略区间；中间按钮提供明确的展开说明。 */
-.code-diff-fold {
+/* 折叠边界只占 8 像素，完整行数留在悬停提示和辅助阅读名称中。 */
+.code-diff-view .code-diff-fold,
+.code-diff-editable .cm-editor .cm-collapsedLines {
   display: block;
-  width: 100%;
-  height: 26px;
-  padding: 2px 8px;
-  border: 0;
   position: relative;
-  background: var(--zeus-product-panel-muted);
-  color: var(--zeus-product-muted);
-  font: inherit;
-  font-size: 11px;
-  text-align: center;
+  box-sizing: border-box;
+  width: 100%;
+  height: 8px;
+  min-height: 8px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--diff-fold-line);
+  font-size: 0;
+  line-height: 0;
+  text-decoration: none;
   cursor: pointer;
 }
-.code-diff-fold:hover {
-  color: var(--zeus-product-text);
-  background: var(--zeus-control-hover);
+.code-diff-fold:disabled {
+  cursor: default;
 }
-
-/* 使用遮罩绘制波浪边界，自动跟随当前主题颜色。 */
-.code-diff-fold::before {
+.code-diff-view .code-diff-fold:hover:not(:disabled),
+.code-diff-editable .cm-editor .cm-collapsedLines:hover {
+  color: var(--zeus-product-muted);
+}
+/* 两种编辑器共用连续波浪，不再绘制居中文字及两端装饰字符。 */
+.code-diff-view .code-diff-fold::before,
+.code-diff-editable .cm-editor .cm-collapsedLines::before {
   content: '';
   position: absolute;
   inset-inline: 0;
-  top: calc(50% - 3px);
+  top: 1px;
   height: 6px;
+  margin: 0;
   background: currentColor;
-  opacity: 0.35;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='6'%3E%3Cpath d='M0 3 Q4 -2 8 3 T16 3' fill='none' stroke='black'/%3E%3C/svg%3E") repeat-x;
 }
-.code-diff-fold > span {
+.code-diff-editable .cm-editor .cm-collapsedLines::after {
+  content: none;
+}
+.code-diff-editable .cm-collapsedLines:focus-visible {
+  outline: 2px solid var(--zeus-control-accent);
+  outline-offset: 0;
+}
+/* 连接层只绘制两栏间隙，鼠标拖选、恢复和分隔条继续接收原有事件。 */
+.code-diff-connectors {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+.code-diff-connectors .is-addition {
+  fill: var(--diff-addition);
+}
+.code-diff-connectors .is-deletion {
+  fill: var(--diff-deletion);
+}
+.code-diff-connectors .is-replacement {
+  fill: var(--diff-replacement);
+}
+.code-diff-connectors .is-fold {
+  fill: none;
+  stroke: var(--diff-fold-line);
+  stroke-width: 1;
+}
+.code-diff-view .code-diff-revert {
   position: relative;
-  padding-inline: 8px;
-  background: var(--zeus-product-panel-muted);
+  z-index: 2;
 }

@@ -613,7 +613,7 @@ export function GitDeliveryActions(props: {
     <aside className="task-git-review-options task-git-delivery-actions">
       <section className="task-git-delivery-action-step">
         <div className="task-git-delivery-step-heading">
-          <strong>{props.zh ? '提交说明' : 'Commit message'}</strong>
+          <strong>{props.zh ? '提交文件' : 'Commit files'}</strong>
           <span className="task-git-generation-controls">
             <Button
               variant="secondary"
@@ -647,6 +647,9 @@ export function GitDeliveryActions(props: {
         {props.commitFeedback}
       </section>
       <section className="task-git-delivery-action-step" aria-label={props.zh ? '合入' : 'Merge'}>
+        <div className="task-git-delivery-step-heading">
+          <strong>{props.zh ? '合入分支' : 'Merge branch'}</strong>
+        </div>
         <div className="task-git-delivery-merge-row">
           <ZeusSelect
             size="compact"
@@ -687,17 +690,20 @@ export function GitDeliveryActions(props: {
         {props.mergeFeedback}
       </section>
       <section className="task-git-delivery-action-step">
-        <Button
-          variant="secondary"
-          size="compact"
-          aria-label={props.zh ? `推送到远端（${props.pushCount}）` : `Push to remote (${props.pushCount})`}
-          busy={props.busyAction === 'push'}
-          onClick={props.onPush}
-          disabled={busy || props.pushCount === 0}
-        >
-          {props.zh ? '推送' : 'Push'}
-          {props.pushCount > 0 ? `（${props.pushCount}）` : ''}
-        </Button>
+        <div className="task-git-delivery-step-heading">
+          <strong>{props.zh ? '推送到远端' : 'Push to remote'}</strong>
+          <Button
+            variant="secondary"
+            size="compact"
+            aria-label={props.zh ? `推送到远端（${props.pushCount}）` : `Push to remote (${props.pushCount})`}
+            busy={props.busyAction === 'push'}
+            onClick={props.onPush}
+            disabled={busy || props.pushCount === 0}
+          >
+            {props.zh ? '推送' : 'Push'}
+            {props.pushCount > 0 ? `（${props.pushCount}）` : ''}
+          </Button>
+        </div>
         {props.pushFeedback}
       </section>
       {props.combination}

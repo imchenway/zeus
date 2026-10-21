@@ -95,6 +95,9 @@ export function GitDeliveryRunControl(props: {
   /** 当前是否有已接纳运行。 */
   const running = runs.some((run) => run.state === 'queued' || run.state === 'running');
 
+  /** 操作栏只保留进行中或待处理运行，成功历史不再占用交付空间。 */
+  const visibleRuns = runs.filter((run) => run.state !== 'succeeded').slice(0, 5);
+
   /** 重开窗口或实时变化都重新查询服务端进度。 */
   async function refresh(): Promise<void> {
     const result = await props.client.loadGitDeliveryRuns(props.projectId, scopeId);
@@ -279,50 +282,49 @@ export function GitDeliveryRunControl(props: {
           </Button>
         </div>
       ) : null}
-      {runs.slice(0, 5).map((run) => (
-        <details key={run.id} open={run.state === 'queued' || run.state === 'running' || run.state === 'attention'} className="git-delivery-run">
-          <summary>
-            {run.state === 'succeeded' ? (props.zh ? '交付已完成' : 'Delivery completed') : run.state === 'attention' ? (props.zh ? '交付需要处理' : 'Delivery needs attention') : props.zh ? '后台交付中' : 'Delivering in background'} ·{' '}
-            {run.steps.filter((step) => step.state === 'succeeded').length}/{run.steps.length}
-          </summary>
-          <ol>
-            {run.steps.map((step) => (
-              <li key={step.id}>
-                <strong>
-                  {step.repositoryName} · {actionLabel(step.action, props.zh)}
-                </strong>
-                <span>
-                  {
+      {visibleRuns.map((run) => (
+        <section key={run.id} className="git-delivery-run" aria-label={props.zh ? '交付进度' : 'Delivery progress'}>
+          <strong>
+            {run.state === 'attention' ? (props.zh ? '交付需要处理' : 'Delivery needs attention') : props.zh ? '后台交付中' : 'Delivering in background'} · {run.steps.filter((step) => step.state === 'succeeded').length}/{run.steps.length}
+          </strong>
+          <ul>
+            {run.steps
+              .filter((step) => step.state !== 'succeeded' && step.state !== 'pending')
+              .map((step) => (
+                <li key={step.id}>
+                  <strong>{step.action === 'task_status' ? actionLabel(step.action, props.zh) : `${step.repositoryName} · ${actionLabel(step.action, props.zh)}`}</strong>
+                  <span>
                     {
-                      pending: props.zh ? '等待前序步骤' : 'Pending',
-                      running: props.zh ? '执行中' : 'Running',
-                      waiting: props.zh ? 'AI 处理中' : 'AI running',
-                      attention: props.zh ? '需要处理' : 'Needs attention',
-                      unknown: props.zh ? '结果待核对' : 'Outcome unknown',
-                      succeeded: props.zh ? '已完成' : 'Completed',
-                    }[step.state]
-                  }
-                </span>
-                {step.message ? <small>{step.message}</small> : null}
-                {step.conversationId ? (
-                  <Button size="compact" onClick={() => void openConversation(run, step.conversationId!)}>
-                    {props.zh ? '打开冲突会话' : 'Open conflict conversation'}
-                  </Button>
-                ) : null}
-                {step.action === 'merge' && ['attention', 'waiting'].includes(step.state) ? (
-                  <Button size="compact" disabled={busy} onClick={() => void openConflict(run, step)}>
-                    {props.zh ? '处理冲突' : 'Resolve conflicts'}
-                  </Button>
-                ) : null}
-              </li>
-            ))}
-          </ol>
+                      {
+                        pending: props.zh ? '等待前序步骤' : 'Pending',
+                        running: props.zh ? '执行中' : 'Running',
+                        waiting: props.zh ? 'AI 处理中' : 'AI running',
+                        attention: props.zh ? '需要处理' : 'Needs attention',
+                        unknown: props.zh ? '结果待核对' : 'Outcome unknown',
+                        succeeded: props.zh ? '已完成' : 'Completed',
+                      }[step.state]
+                    }
+                  </span>
+                  {step.message ? <small>{step.message}</small> : null}
+                  {step.conversationId ? (
+                    <Button size="compact" onClick={() => void openConversation(run, step.conversationId!)}>
+                      {props.zh ? '打开冲突会话' : 'Open conflict conversation'}
+                    </Button>
+                  ) : null}
+                  {step.action === 'merge' && ['attention', 'waiting'].includes(step.state) ? (
+                    <Button size="compact" disabled={busy} onClick={() => void openConflict(run, step)}>
+                      {props.zh ? '处理冲突' : 'Resolve conflicts'}
+                    </Button>
+                  ) : null}
+                </li>
+              ))}
+          </ul>
           {run.state === 'attention' ? (
             <Button size="compact" disabled={busy} onClick={() => void resume(run)}>
               {props.zh ? '继续未完成步骤' : 'Continue remaining steps'}
             </Button>
           ) : null}
-        </details>
+        </section>
       ))}
       {cleanupRun ? (
         <FormDialog

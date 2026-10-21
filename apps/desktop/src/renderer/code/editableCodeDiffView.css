@@ -46,34 +46,59 @@
 .code-diff-editable .cm-mergeSpacer[data-diff-tone='deletion'] {
   background: var(--diff-deletion);
 }
-.code-diff-editable .cm-line.code-diff-line.is-replacement,
-.code-diff-editable .cm-mergeSpacer[data-diff-tone='replacement'] {
+.code-diff-editable .cm-line.code-diff-line.is-replacement {
   background: var(--diff-replacement);
+}
+/* 修改块的短侧保留空白，中缝按两侧真实内容高度连接。 */
+.code-diff-editable .cm-mergeSpacer[data-diff-tone='replacement'] {
+  background: transparent;
 }
 .code-diff-editable .cm-insertedLine,
 .code-diff-editable .cm-deletedLine {
   background: transparent;
 }
-.code-diff-editable .cm-insertedText {
-  background: color-mix(in srgb, var(--zeus-code-addition-text) 30%, transparent);
+/* 独立插入或删除仅使用区块背景；局部修改的字词才使用强调色。 */
+.code-diff-editable .cm-insertedText,
+.code-diff-editable .cm-deletedText,
+.code-diff-editable .cm-editor .cm-changedText {
+  background: transparent;
+  text-decoration: none;
+  background-image: none;
+}
+.code-diff-editable .cm-editor.cm-merge-a .code-diff-line.is-replacement .cm-changedText {
+  background: var(--diff-word-deletion);
+}
+.code-diff-editable .cm-editor:not(.cm-merge-a) .code-diff-line.is-replacement .cm-changedText {
+  background: var(--diff-word-addition);
+}
+/* 统一视图的旧行仍采用删除底色，不给整行文字重复加深。 */
+.code-diff-editable .cm-editor .cm-deletedChunk {
+  background: var(--diff-deletion);
+}
+.code-diff-editable .cm-editor .cm-deletedChunk .cm-deletedText {
+  background: transparent;
   text-decoration: none;
 }
-.code-diff-editable .cm-deletedText {
-  background: color-mix(in srgb, var(--zeus-control-danger-text) 24%, transparent);
-  text-decoration: none;
+/* 统一视图的配对修改也用浅蓝，仅旧侧变化字词使用灰色强调。 */
+.code-diff-editable .cm-editor .cm-deletedChunk[data-diff-tone='replacement'] {
+  background: var(--diff-replacement);
 }
-/* 未修改片段使用同一波浪边界，不占用伪造的源码行。 */
-.code-diff-editable .cm-collapsedLines {
-  background: var(--zeus-product-panel);
+.code-diff-editable .cm-editor .cm-deletedChunk[data-diff-tone='replacement'] .cm-deletedText {
+  background: var(--diff-word-deletion);
+}
+.code-diff-editable .cm-editor .cm-changedLineGutter {
+  background: var(--diff-replacement);
+}
+/* 统一视图旧文段的细轨道也使用删除灰色，避免残留默认红条。 */
+.code-diff-editable .cm-editor .cm-deletedLineGutter {
+  background: var(--diff-word-deletion);
+}
+/* 覆盖统一视图默认的白色按钮文字，使恢复入口在浅色区块中清晰可见。 */
+.code-diff-editable .cm-editor .cm-chunkButtons button.code-diff-revert {
   color: var(--zeus-product-muted);
+  background: transparent;
   border: 0;
-  text-align: center;
-  font: inherit;
-  font-size: 11px;
-  line-height: 24px;
-  text-decoration: underline wavy var(--zeus-control-border);
-  text-underline-offset: 5px;
-  cursor: pointer;
+  padding: 0;
 }
 .diff-edit-status {
   color: var(--zeus-product-muted);
@@ -97,11 +122,13 @@
   width: 4px;
 }
 
-/* 覆盖 merge 默认细下划线，与已有只读 Diff 使用同一字词底色。 */
-.code-diff-editable .cm-editor.cm-merge-a .cm-changedText,
-.code-diff-editable .cm-editor .cm-deletedChunk .cm-deletedText {
-  background: color-mix(in srgb, var(--zeus-control-danger-text) 24%, transparent);
-}
-.code-diff-editable .cm-editor.cm-merge-b .cm-changedText {
-  background: color-mix(in srgb, var(--zeus-code-addition-text) 30%, transparent);
+/* 恢复按钮在连接色带上方，恢复动作与键盘行为沿用 MergeView。 */
+.code-diff-editable .cm-merge-revert button.code-diff-revert {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* MergeView 的区块坐标不含正文顶端留白，使用同一变量补足。 */
+  margin-block-start: var(--diff-content-inset);
+  z-index: 2;
 }

@@ -16364,7 +16364,7 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   gap: 4px;
 }
 
-/* 合入参数与动作同行，避免重复标题和整行按钮挤占代码审阅空间。 */
+/* 合入参数与动作同行，功能标题在上方保留，说明文字不重复展示。 */
 .macos-ai-app .task-git-delivery-merge-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -24005,8 +24005,11 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   min-inline-size: 0;
   font-size: 12px;
 }
-.git-delivery-run ol {
-  padding-inline-start: 18px;
+/* 只列出正在执行或需要处理的步骤，不使用折叠和历史步骤编号。 */
+.git-delivery-run ul {
+  padding: 0;
+  margin-block: 4px;
+  list-style: none;
 }
 .git-delivery-run li {
   margin-block: 6px;
