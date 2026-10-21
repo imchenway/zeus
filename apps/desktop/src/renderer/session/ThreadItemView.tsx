@@ -629,7 +629,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
     }
   }
 
-  /** 消息正文只组装一次，轮次指标仅附在有账本的助手正文末尾。 */
+  /** 消息正文只组装一次，轮次指标与消息操作统一放在正文底栏。 */
   const messageBody = (
     <>
       {showMeta ? (
@@ -805,7 +805,6 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
           {retryingExpert ? labels.retryingExpert : labels.retryExpert}
         </button>
       ) : null}
-      {role === 'assistant' && props.turnUsage && hasActions && messageTimestamp && timestampSource ? <MessageTurnUsage language={props.language} usage={props.turnUsage} /> : null}
     </>
   );
 
@@ -924,7 +923,16 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
         onUpdateAnnotation={props.onUpdateResponseAnnotation}
         onRemoveAnnotation={props.onRemoveResponseAnnotation}
       />
-      {!showQueuedFooter ? messageActions : null}
+      {!showQueuedFooter ? (
+        role === 'assistant' && hasActions ? (
+          <div className="session-assistant-message-footer">
+            {messageActions}
+            {props.turnUsage && messageTimestamp && timestampSource ? <MessageTurnUsage language={props.language} usage={props.turnUsage} /> : null}
+          </div>
+        ) : (
+          messageActions
+        )
+      ) : null}
     </article>
   );
 });
