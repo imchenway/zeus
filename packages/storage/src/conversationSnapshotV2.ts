@@ -3,6 +3,10 @@ import {
   asyncMessageQuestions,
   classifyAssistantMessage,
   conversationProcessProviderItemId,
+  conversationProcessPresentation,
+  conversationUsedResources,
+  conversationCostBreakdown,
+  type ConversationInformation,
   conversationNavigationExcerpt,
   conversationQuestionNavigationExcerpt,
   type ConversationNavigationEntry,
@@ -31,7 +35,7 @@ import { createHash } from 'node:crypto';
 import { ConversationSystemMessageRepository } from './conversationSystemMessageStore.js';
 import { isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { conversationImageAttachmentRef } from './conversationStore.js';
+import { conversationImageAttachmentRef, CodexUsageLedgerRepository } from './conversationStore.js';
 
 export { conversationSnapshotV2StructureGeneration };
 
@@ -1271,6 +1275,27 @@ export class ConversationSnapshotV2Repository {
     const activeTurnCandidate = this.latestTurnsByStatus(conversationId, ['running', 'dispatching', 'waiting'], 1)[0];
     const activeTurn = conversation.provider_state === 'active' || conversation.provider_state === 'waiting' || this.hasActiveExpertExecution(conversationId) ? activeTurnCandidate : undefined;
     return readConversationSessionMetrics(this.db, conversationId, activeTurn?.id ?? null);
+  }
+
+  /** 浮层打开后才扫描完整会话记录，首屏与实时指标不承担这些读取。 */
+  readSessionInformation(conversationIdValue: string): ConversationInformation {
+    /** 所有查询严格限制在同一个已授权会话内。 */
+    const conversationId = requiredIdentity(conversationIdValue, 'conversationId');
+    /** 账本入口校验金额与请求费率，已有汇总请求不重复累加。 */
+    const requests = new CodexUsageLedgerRepository(this.db).list({ conversationId }).flatMap((row) => row.estimate.requests ?? [{ id: row.id, occurredAt: row.occurredAt, usage: row.usage, estimate: row.estimate }]);
+    /** 队列中尚未被接受的技能不计入使用清单。 */
+    const selectedSkills = this.db.select<{ input_json: string }>(`SELECT input_json FROM conversation_submissions WHERE conversation_id = ? AND accepted_at IS NOT NULL ORDER BY created_at, id`, [conversationId]).flatMap((row) => {
+      /** 持久化输入只用于提取技能，不访问当前磁盘目录。 */
+      const input = parseJsonRecordOrNull(row.input_json);
+      /** 已有单选和多选提交使用相同的名称规则。 */
+      const skills = input?.skills ?? (input?.skill ? [input.skill] : []);
+      return Array.isArray(skills) ? skills.flatMap((skill) => (typeof skill?.name === 'string' && skill.name.trim() ? [skill.name.trim()] : [])) : [];
+    });
+    /** 复用实时和历史消息的工具归一化，清单不受前端消息分页影响。 */
+    const items = this.db
+      .select<{ kind: string; detail_json: string }>(`SELECT kind, detail_json FROM conversation_process_items WHERE conversation_id = ? AND kind IN ('tool', 'command') ORDER BY process_sequence`, [conversationId])
+      .map((row) => conversationProcessPresentation(row.kind, parseJsonRecordOrNull(row.detail_json)));
+    return { cost: conversationCostBreakdown(requests), resources: conversationUsedResources(items, selectedSkills) };
   }
 
   /** 有界核对当前已加载显示身份的位置和显式删除状态。 */

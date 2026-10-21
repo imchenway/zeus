@@ -20820,10 +20820,28 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   }
 }
 
-/* 搜索、源码和会话状态共用最右侧 26px 槽位，标题行与首个项目留出间隙。 */
+/* 项目分组保留独立开关，筛选与新建共用最右侧 26px 槽位。 */
 .macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-heading {
   grid-template-columns: minmax(0, 1fr) auto;
   margin-block-end: 10px;
+}
+
+/* 分组开关直接复用项目行的箭头尺寸、旋转和焦点样式。 */
+.project-sidebar-group-title {
+  align-items: center;
+  display: flex;
+  gap: 4px;
+  min-inline-size: 0;
+}
+.project-sidebar-group-title > strong {
+  font-size: inherit;
+  font-weight: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-sidebar-group-title > .project-disclosure-button {
+  flex: 0 0 28px;
 }
 
 .macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-heading-actions {

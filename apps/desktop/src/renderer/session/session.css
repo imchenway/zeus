@@ -196,14 +196,14 @@
   z-index: 80;
 }
 
-.session-codex-parity-v1 .session-quick-actions-card[data-sources-expanded='true'] {
+.session-codex-parity-v1 .session-quick-actions-card[data-sources-expanded='true'] > [data-zeus-primitive='collapsible'] > div {
   display: flex;
   flex-direction: column;
   overflow-y: hidden;
 }
 
-.session-codex-parity-v1 .session-quick-actions-card[data-sources-expanded='true'] > header,
-.session-codex-parity-v1 .session-quick-actions-card[data-sources-expanded='true'] > .session-quick-actions-list,
+.session-codex-parity-v1 .session-quick-actions-card[data-sources-expanded='true'] > [data-zeus-primitive='collapsible'] > div > header,
+.session-codex-parity-v1 .session-quick-actions-card[data-sources-expanded='true'] > [data-zeus-primitive='collapsible'] > div > .session-quick-actions-list,
 .session-codex-parity-v1 .session-quick-actions-card[data-sources-expanded='true'] .session-quick-actions-sources > header,
 .session-codex-parity-v1 .session-quick-actions-card[data-sources-expanded='true'] .session-quick-actions-view-all {
   flex: 0 0 auto;
@@ -237,19 +237,19 @@
   flex-basis: 332px;
 }
 
-.session-codex-parity-v1 .session-quick-actions-card > header,
+.session-codex-parity-v1 .session-quick-actions-card > [data-zeus-primitive='collapsible'] > div > header,
 .session-codex-parity-v1 .session-quick-actions-sources > header {
   align-items: center;
   display: flex;
   justify-content: space-between;
 }
 
-.session-codex-parity-v1 .session-quick-actions-card > header {
+.session-codex-parity-v1 .session-quick-actions-card > [data-zeus-primitive='collapsible'] > div > header {
   min-block-size: 32px;
   padding: 0 2px 6px;
 }
 
-.session-codex-parity-v1 .session-quick-actions-card > header > strong,
+.session-codex-parity-v1 .session-quick-actions-card > [data-zeus-primitive='collapsible'] > div > header > strong,
 .session-codex-parity-v1 .session-quick-actions-sources > header > strong {
   font-size: 13px;
   font-weight: 640;
@@ -3015,6 +3015,39 @@
   }
 }
 
+/* 只捕获当前会话工作面；侧边栏和其他页面不参与会话切换快照。 */
+:root:has(.session-workspace-root[data-session-transition]) {
+  view-transition-name: none;
+}
+.session-workspace-root[data-session-transition] {
+  view-transition-name: session-workspace;
+}
+/* 独立表面按前后真实尺寸过渡，卡片高度变化不再直接跳到终点。 */
+.session-workspace-root[data-session-transition] .session-thread-header {
+  view-transition-name: session-header;
+}
+.session-workspace-root[data-session-transition] .session-quick-actions-surface[data-presentation='persistent'] {
+  view-transition-name: session-environment;
+}
+::view-transition-group(session-workspace),
+::view-transition-group(session-header),
+::view-transition-group(session-environment) {
+  animation-duration: 260ms;
+  animation-timing-function: cubic-bezier(0.2, 0, 0.2, 1);
+}
+/* 原生快照只提供视觉接管，不遮挡侧边栏的下一次选择。 */
+:root:has(.session-workspace-root[data-session-transition])::view-transition {
+  pointer-events: none;
+}
+/* 卡片尺寸变化时裁切快照，不拉伸文字和图标。 */
+::view-transition-old(session-environment),
+::view-transition-new(session-environment) {
+  height: 100%;
+  object-fit: none;
+  object-position: top left;
+  width: 100%;
+}
+
 /* 会话外壳保持常驻；切换时只让新标题轻微落位，避免整块页头先消失再闪回。 */
 .session-codex-parity-v1 .session-thread-title-copy[data-conversation-transition='true'] {
   animation: session-title-flow-in 140ms var(--session-ease-out) both;
@@ -3033,6 +3066,12 @@
 
 /* 本地提交是即时反馈，不参与冷历史淡入，也不等待后台窗口恢复动画。 */
 .session-codex-parity-v1 .session-transcript-shell[data-local-submission='true'] > .session-transcript {
+  animation: none;
+}
+
+/* 已准备好的原生快照承担本次淡入；标记随正文卸载，不在动画结束后重播。 */
+.session-codex-parity-v1 .session-transcript-shell[data-native-arrival='true'] > .session-transcript,
+.session-workspace-root .session-thread-header[data-native-arrival='true'] .session-thread-title-copy[data-conversation-transition='true'] {
   animation: none;
 }
 
@@ -3154,6 +3193,19 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* 系统设置在过渡期间变化时，也立即停止当前会话快照动画。 */
+  ::view-transition-group(session-workspace),
+  ::view-transition-group(session-header),
+  ::view-transition-group(session-environment),
+  ::view-transition-old(session-workspace),
+  ::view-transition-new(session-workspace),
+  ::view-transition-old(session-header),
+  ::view-transition-new(session-header),
+  ::view-transition-old(session-environment),
+  ::view-transition-new(session-environment) {
+    animation: none;
+  }
+
   .session-codex-parity-v1 .session-thread-title-copy[data-conversation-transition='true'],
   .session-codex-parity-v1 .session-transcript-loading[data-visible='true'] {
     animation: none;
@@ -4175,31 +4227,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   flex: 1 1 220px;
 }
 
-.session-codex-parity-v1 .session-thread-header-runtime {
-  flex: 1 1 720px;
-  min-inline-size: 0;
-  max-inline-size: 100%;
-}
-
-.session-codex-parity-v1 .session-thread-header-runtime:has(.session-runtime-details[open]) {
-  flex-basis: 100%;
-}
-
-/* 摘要由所在容器提供留白，避免比展开详情多缩进一层。 */
-.session-codex-parity-v1 .session-thread-header-runtime .session-runtime-details > summary,
-.session-codex-parity-v1 .session-thread-subtitle-row .session-runtime-details > summary {
-  padding-inline: 0;
-}
-
-/* 移至正文上方的运行信息仍与标题对齐，展开内容沿用同一容器。 */
-.session-codex-parity-v1 .session-conversation-pane > .session-thread-subtitle-row {
-  padding-inline: var(--session-header-inset) 20px;
-}
-
-.session-codex-parity-v1 .session-thread-header:has(.session-thread-header-runtime .session-runtime-details[open]) > .session-context-header-tools {
-  align-self: start;
-}
-
 /* 线程状态沿用标题副文案的阅读层级，主、子工作面共享。 */
 .session-codex-parity-v1 .session-thread-title-copy > small {
   color: var(--session-text-muted);
@@ -4499,246 +4526,193 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   align-self: center;
 }
 
-/* 主会话与子智能体的详情组件自带同样的外观，不依赖标题栏容器。 */
-.session-codex-parity-v1 .session-runtime-details {
-  background: transparent;
-  border: 0;
-  pointer-events: auto;
-  color: var(--session-text-muted);
-  container-type: inline-size;
-  flex: 0 0 auto;
-  font-size: 11px;
-  min-inline-size: 0;
-}
-
-.session-codex-parity-v1 .session-runtime-details > summary {
-  /* 摘要保持透明底色，键盘焦点沿用独立的可见提示。 */
-  --zeus-interaction-hover: transparent;
-  inline-size: fit-content;
-  max-inline-size: 100%;
-  box-sizing: border-box;
-  align-items: baseline;
-  cursor: pointer;
-  display: flex;
-  gap: 12px;
-  min-block-size: 28px;
-  padding: 4px 8px;
-  border-radius: 6px;
-}
-
-/* 收起入口固定在详情底部居中，独立于滚动内容且不挤占摘要宽度。 */
-.session-codex-parity-v1 .session-runtime-detail-footer {
-  display: flex;
-  justify-content: center;
-  padding-block: 4px 0;
-}
-
-.session-codex-parity-v1 .session-runtime-collapse-button {
-  align-items: center;
-  appearance: none;
-  background: transparent;
+/* 会话信息入口与任务状态共用 24px 高度，图标沿用标题的 15px 字号。 */
+.session-thread-title-row .session-thread-task-status.zeus-select[data-zeus-primitive='select'][data-control-size='compact'] > .zeus-select-trigger {
   block-size: 24px;
+  min-block-size: 24px;
+  font-size: 11px;
+  line-height: 18px;
+  padding-block: 0;
+}
+.session-information-trigger {
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+  align-items: center;
+  background: transparent;
   border: 0;
   border-radius: 5px;
+  block-size: 24px;
   color: var(--session-text-muted);
   cursor: pointer;
   display: inline-flex;
-  inline-size: 32px;
+  flex: 0 0 24px;
+  font-size: 15px;
+  inline-size: 24px;
   justify-content: center;
-  padding: 4px;
+  line-height: 20px;
+  padding: 0;
+  pointer-events: auto;
 }
-
-.session-codex-parity-v1 .session-runtime-collapse-button > svg {
-  block-size: 12px;
-  inline-size: 12px;
+.session-information-trigger > svg {
+  block-size: 1em;
+  inline-size: 1em;
 }
-
-.session-codex-parity-v1 .session-runtime-collapse-button:hover:not(:disabled):not([aria-disabled='true']) {
+.session-information-trigger:hover,
+.session-information-trigger[aria-expanded='true'] {
   background: var(--session-control-hover);
   color: var(--session-text);
 }
-
-.session-codex-parity-v1 .session-runtime-collapse-button:focus-visible {
+.session-information-trigger:focus-visible,
+.session-information-popover :where(button, summary, [tabindex='0']):focus-visible {
   outline: 1px solid var(--session-focus-outline);
-  outline-offset: 1px;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px var(--session-focus);
 }
 
-/* 键盘焦点用完整中性描边，保持可见且不出现侧边色条。 */
-.session-codex-parity-v1 .session-runtime-details > summary:focus-visible {
-  outline: 1px solid var(--zeus-focus-line);
-  outline-offset: -1px;
-}
-
-@media (forced-colors: active) {
-  .session-codex-parity-v1 .session-runtime-details > summary:focus-visible {
-    box-shadow: none;
-    outline: 2px solid CanvasText;
-    outline-offset: -2px;
-  }
-}
-
-.session-codex-parity-v1 .session-runtime-summary-primary {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 3px 12px;
-  font-size: 11px;
-  line-height: 20px;
-  min-inline-size: 0;
-}
-
-.session-codex-parity-v1 .session-runtime-summary-metric {
-  align-items: baseline;
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  max-inline-size: 100%;
-  min-inline-size: 0;
-  overflow-wrap: anywhere;
-}
-
-.session-codex-parity-v1 .session-runtime-summary-metric b {
-  color: var(--session-text-muted);
-  font-weight: 400;
-}
-
-.session-codex-parity-v1 .session-runtime-context-row {
-  align-items: center;
-  color: var(--session-text-muted);
-  display: grid;
-  gap: 12px;
-  grid-template-columns: minmax(0, 1fr) minmax(120px, 44%);
-  min-inline-size: 0;
-  padding-inline-start: 1px;
-  white-space: nowrap;
-}
-
-.session-codex-parity-v1 .session-runtime-native-context {
-  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
-}
-
-.session-codex-parity-v1 .session-runtime-context-row > span {
-  align-items: center;
-  display: inline-flex;
-  gap: 5px;
-  min-inline-size: 0;
-  overflow: hidden;
-}
-
-.session-codex-parity-v1 .session-runtime-context-row b {
-  color: var(--session-text);
-  flex: 0 0 auto;
-  font-weight: 570;
-}
-
-.session-codex-parity-v1 .session-runtime-context-row code {
-  color: inherit;
-  font-family: var(--zeus-mono-font, 'SFMono-Regular', 'SF Mono', Consolas, monospace);
-  font-size: 10px;
-  min-inline-size: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.session-codex-parity-v1 .session-runtime-details > summary::marker {
-  color: var(--session-text-muted);
-}
-
-.session-codex-parity-v1 .session-runtime-severity {
-  align-items: center;
-  display: inline-flex;
-  gap: 4px;
-  margin-inline-start: auto;
-}
-
-.session-codex-parity-v1 .session-runtime-details[data-severity='warning'] .session-runtime-severity {
-  color: var(--session-warning);
-}
-
-/* 详情按信息用途分组；列宽由详情容器决定，适配主会话与智能体侧栏。 */
-.session-codex-parity-v1 .session-runtime-detail-groups {
-  border-block-start: 0;
-  display: grid;
-  gap: 14px;
-  max-block-size: min(48vh, 420px);
-  min-inline-size: 0;
-  overflow: auto;
-  overscroll-behavior: contain;
-  padding: 14px 0 4px;
-  margin-top: 6px;
-}
-
-.session-codex-parity-v1 .session-runtime-detail-group {
-  align-items: start;
-  display: grid;
-  gap: 12px;
-  grid-template-columns: 100px minmax(0, 1fr);
-  min-inline-size: 0;
-}
-
-.session-codex-parity-v1 .session-runtime-detail-group + .session-runtime-detail-group {
-  border-block-start: 0;
-  padding-block-start: 14px;
-}
-
-.session-codex-parity-v1 .session-runtime-detail-group > h3 {
+/* 原生顶层浮层复用现有锚点定位，不挤压正文、标题或环境卡片。 */
+.session-information-popover {
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+  background: var(--session-sidebar);
+  border: 1px solid var(--session-line);
+  border-radius: 10px;
+  box-shadow: 0 12px 36px var(--session-shadow-soft);
   color: var(--session-text);
   font-size: 12px;
+  font-weight: 400;
+  inline-size: min(396px, calc(100vw - 32px));
+  line-height: 1.5;
+  margin: 8px 0;
+  max-block-size: min(580px, 70dvh);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 0;
+  pointer-events: auto;
+  position-area: bottom span-right;
+  position-try-fallbacks: flip-inline, flip-block;
+  text-align: start;
+}
+.session-information-popover > header {
+  align-items: center;
+  background: inherit;
+  display: flex;
+  justify-content: space-between;
+  padding: 14px 16px 10px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.session-information-popover > header > strong {
+  font-size: 12px;
   font-weight: 600;
-  line-height: 1.5;
-  margin: 0;
 }
-
-.session-codex-parity-v1 .session-runtime-detail-body {
-  display: grid;
-  gap: 12px 20px;
-  /* 保留空列，让模型设置与用量字段使用相同的列起点。 */
-  grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr));
+.session-information-popover > header > button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  block-size: 24px;
+  color: var(--session-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  inline-size: 24px;
+  justify-content: center;
+  padding: 4px;
+}
+.session-information-popover > header > button:hover {
+  background: var(--session-control-hover);
+  color: var(--session-text);
+}
+.session-information-popover > header svg {
+  block-size: 14px;
+  inline-size: 14px;
+}
+.session-information-popover :where(dl, dt, dd) {
   margin: 0;
   min-inline-size: 0;
 }
-
-.session-codex-parity-v1 .session-runtime-detail-body > div {
-  display: grid;
-  align-content: start;
-  gap: 4px;
-  min-inline-size: 0;
-}
-
-.session-codex-parity-v1 .session-runtime-details :where(dt, dd) {
-  line-height: 1.5;
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.session-codex-parity-v1 .session-runtime-details dt {
+.session-information-popover dt {
   color: var(--session-text-muted);
   font-size: 11px;
-  font-weight: 400;
 }
-
-.session-codex-parity-v1 .session-runtime-details dd {
-  color: var(--session-text);
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 500;
-  min-inline-size: 0;
+.session-information-popover dd {
+  overflow-wrap: anywhere;
 }
-
-/* 环境按目录、分支、线程、日志顺序排成两行两列，窄容器再收为单列。 */
-.session-codex-parity-v1 .session-runtime-detail-group[data-group='environment'] .session-runtime-detail-body {
-  gap: 8px 20px;
+.session-information-metrics {
+  display: grid;
+  gap: 18px 16px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 4px 16px 16px;
 }
-
-.session-codex-parity-v1 .session-runtime-detail-group[data-group='environment'] .session-runtime-detail-body > div {
+.session-information-metrics dd {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 550;
+  margin-top: 4px;
+}
+.session-information-identities {
+  border-top: 1px solid var(--session-line-soft);
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+}
+.session-information-identities > div {
   align-items: center;
-  gap: 8px;
-  grid-template-columns: 100px minmax(0, 1fr);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 64px minmax(0, 1fr);
 }
-
-.session-codex-parity-v1 .session-runtime-detail-group[data-group='environment'] dd {
+.session-information-identities dd {
   font-size: 11px;
+}
+.session-information-resources {
+  border-top: 1px solid var(--session-line-soft);
+  padding: 6px 16px 14px;
+}
+.session-information-resources summary {
+  cursor: pointer;
+  font-size: 11px;
+  padding-block: 10px;
+}
+.session-information-resources summary > span {
+  color: var(--session-text-muted);
+  margin-left: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.session-information-resources ul {
+  list-style: none;
+  margin: 0 0 8px;
+  max-block-size: 160px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 0;
+}
+.session-information-resources li {
+  background: var(--session-control-hover);
+  border-radius: 5px;
+  font-size: 11px;
+  margin-bottom: 4px;
+  overflow-wrap: anywhere;
+  padding: 6px 8px;
+}
+.session-information-resources p {
+  color: var(--session-text-muted);
+  font-size: 11px;
+  margin: 6px 0 0;
+}
+.session-information-error {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.session-information-error > button {
+  background: var(--session-control-hover);
+  border: 0;
+  border-radius: 5px;
+  color: var(--session-text);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 4px 8px;
 }
 
 .session-codex-parity-v1 .session-runtime-code-value {
@@ -4811,13 +4785,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   block-size: 14px;
   display: block;
   inline-size: 14px;
-}
-
-@container (max-width: 620px) {
-  .session-codex-parity-v1 .session-runtime-detail-group,
-  .session-codex-parity-v1 .session-runtime-detail-group[data-group='environment'] .session-runtime-detail-body {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 .session-codex-parity-v1 .session-error-details {
@@ -13283,14 +13250,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 .session-codex-parity-v1 .session-rui-inline-actions button[type='submit']:active:not(:disabled) {
   background: var(--zeus-interaction-primary-pressed);
   color: white;
-}
-
-/* 查看全部来源时由整组内容滚动，尺寸过渡不改变条目的身份。 */
-.session-codex-parity-v1 .session-quick-actions-card[data-sources-expanded='true'] .session-quick-actions-sources > [data-zeus-primitive='animated-size'] {
-  flex: 1 1 auto;
-  min-block-size: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
 }
 
 /* 对话正文始终隐藏原生滚动条；目录加载或失败不改变显示，滚轮、触控板与键盘仍可滚动。 */

@@ -1,3 +1,4 @@
+import { conversationUsedResources } from '@zeus/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeftIcon as ArrowLeft } from '@phosphor-icons/react/dist/csr/ArrowLeft';
 import { ArrowsClockwiseIcon as ArrowsClockwise } from '@phosphor-icons/react/dist/csr/ArrowsClockwise';
@@ -185,6 +186,7 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
           <span className="session-thread-title-copy">
             <span className="session-thread-title-row">
               <strong>{selectedAgent?.title ?? (zh ? '智能体' : 'Agents')}</strong>
+              {thread ? <RuntimeDetails key={thread.agent.id} runtime={thread.runtime} language={props.language} scope="subagent" resources={conversationUsedResources(thread.turns.flatMap((turn) => turn.items))} /> : null}
             </span>
             <small>{selectedAgent ? statusLabel(selectedAgent.status, props.language) : zh ? `${snapshot?.items.length ?? props.hintCount} 个线程` : `${snapshot?.items.length ?? props.hintCount} threads`}</small>
           </span>
@@ -200,11 +202,6 @@ export function SubagentWorkspace(props: SubagentWorkspaceProps) {
             <X aria-hidden="true" />
           </button>
         </nav>
-        {thread ? (
-          <div className="session-thread-subtitle-row">
-            <RuntimeDetails key={thread.agent.id} runtime={thread.runtime} language={props.language} scope="subagent" />
-          </div>
-        ) : null}
       </header>
 
       {error ? (

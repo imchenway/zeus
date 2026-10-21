@@ -270,6 +270,8 @@ export interface SessionControllerClient {
   /** 核对全部已加载位置的服务端代次。 */
   loadNativeConversationTranscriptPlacements?(projectId: string, conversationId: string, entryIds: string[], expectedOrderEpoch?: number): Promise<ConversationTranscriptPlacementBatch>;
   loadNativeConversationSessionMetrics?(projectId: string, conversationId: string): Promise<NativeSessionMetricsSnapshot>;
+  /** 会话浮层按需读取完整费用拆分和实际使用清单。 */
+  loadNativeConversationInformation?(projectId: string, conversationId: string, signal?: AbortSignal): Promise<import('@zeus/shared').ConversationInformation>;
   /** 有界读取环境事实，不影响正文和队列状态。 */
   loadNativeConversationExecutionContext?(projectId: string, conversationId: string): Promise<NativeConversationExecutionContext>;
   loadNativeConversationChoice(projectId: string, conversationId: string): Promise<NativeConversationChoice>;

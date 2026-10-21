@@ -117,6 +117,8 @@ export interface ConversationMarkdownProps {
   text: string;
   streamId: string;
   phase: ConversationMarkdownPhase;
+  /** 实时首段一次性完成时仍淡入；历史水合和虚拟列表恢复不重播。 */
+  animateArrival?: boolean;
   language: SessionUiLanguage;
   resources?: ConversationResource[];
   onOpenResource?: (resource: ConversationResource, target: ConversationOpenTarget, location?: ConversationFileLocation) => void | Promise<void>;
@@ -203,6 +205,10 @@ export function hasMissingMarkdownImages(text: string, resources: ConversationRe
 
 /** 会话正文共用安全 Markdown 渲染与增量显示策略。 */
 export const ConversationMarkdown = memo(function ConversationMarkdown(props: ConversationMarkdownProps) {
+  /** 本次挂载中收到实时正文后，完成事件只结束节流，不截断文字淡入。 */
+  const motion = useRef({ streamId: props.streamId, enabled: false });
+  if (motion.current.streamId !== props.streamId) motion.current = { streamId: props.streamId, enabled: false };
+  motion.current.enabled ||= props.phase === 'streaming' || Boolean(props.animateArrival);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const onVisibleContentChangeRef = useRef(props.onVisibleContentChange);
   const onRenderSettledRef = useRef(props.onRenderSettled);
@@ -302,8 +308,8 @@ export const ConversationMarkdown = memo(function ConversationMarkdown(props: Co
           indexKey={props.streamId}
           htmlPolicy="escape"
           typewriter={false}
-          // 运行库只淡入新增文字，已读正文与完整历史不重复播放动画。
-          fade={props.phase === 'streaming' && !props.renderImmediately}
+          // 最终批次仍淡入新增文字，完整历史与已经读过的文字不重复入场。
+          fade={motion.current.enabled && !props.renderImmediately}
           smoothStreaming={props.phase === 'streaming' && !props.renderImmediately}
           smoothStreamingOptions={SMOOTH_STREAMING_OPTIONS}
           // 文字已有按帧调度；节点直接挂载，避免每个新段落先闪占位条再改变高度。

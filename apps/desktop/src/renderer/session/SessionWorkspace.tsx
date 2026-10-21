@@ -272,6 +272,8 @@ export interface SessionWorkspaceActions {
   /** 审核页直接读取当前文件全文，无需执行打开文件操作。 */
   onLoadTurnChangeFilePreview?: (changeSet: TurnChangeSet, file: TurnChangeFile) => Promise<ConversationResourcePreview>;
   onCallMcpAppTool?: (input: import('./McpAppFrame.js').McpAppToolCall) => Promise<import('./McpAppFrame.js').McpAppToolResult>;
+  /** 会话信息浮层按需读取历史费用与资源使用清单。 */
+  onLoadConversationInformation?: (signal: AbortSignal) => Promise<import('@zeus/shared').ConversationInformation>;
   onLoadSubagents?: () => Promise<NativeSubagentListSnapshot>;
   onLoadSubagentThread?: (threadId: string) => Promise<NativeSubagentThreadSnapshot>;
   onOperateTurnChangeSet?: (changeSet: TurnChangeSet, action: 'undo' | 'reapply') => Promise<TurnChangeSetOperationResult>;
@@ -747,6 +749,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
             },
           }
         : {}),
+      ...(props.client.loadNativeConversationInformation ? { onLoadConversationInformation: (signal: AbortSignal) => props.client.loadNativeConversationInformation!(projectId, conversationId, signal) } : {}),
       ...(props.client.loadNativeSubagents && props.client.loadNativeSubagentThread
         ? {
             onLoadSubagents: () => props.client.loadNativeSubagents!(projectId, conversationId),
@@ -2656,6 +2659,18 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     return null;
   }
 
+  /** 信息入口与当前会话身份绑定，切换后原浮层和读取请求一起卸载。 */
+  const conversationInformation =
+    !legacy && props.state ? (
+      <SessionRuntimeDetails
+        key={`information:${navigationId ?? props.state.conversationId}`}
+        state={props.state}
+        conversation={props.conversation}
+        language={props.language}
+        capabilities={props.capabilities}
+        onLoadInformation={actions.onLoadConversationInformation}
+      />
+    ) : null;
   /** 顶栏、正文与浏览器作为整体让出终端空间，保持各工作面的边界对齐。 */
   const primaryPane = (
     <>
@@ -2686,6 +2701,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 ) : (
                   <strong data-icon-tooltip={displayedHeader.title}>{displayedHeader.title}</strong>
                 )}
+                {conversationInformation}
                 {displayedHeader.taskId && displayedHeader.taskManagementStatus && displayedHeader.taskManagementStatusOptions?.length && actions.onTaskManagementStatusChange ? (
                   <ZeusSelect
                     size="compact"
@@ -2722,6 +2738,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
           <div className="session-context-header-tools">
             <div ref={setContextToolbarHost} className="session-context-toolbar-host" />
             <div className="session-thread-header-actions">
+              {props.embeddedInTask ? conversationInformation : null}
               {!legacy && props.conversation && props.state ? (
                 <SessionQuickActionsCard
                   gitContext={props.gitContext}
@@ -2890,10 +2907,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 data-browser-resizing={browserResizing || undefined}
               >
                 <div className="session-conversation-pane">
-                  {/* 固定在左栏内挂载，开关右侧工作区不重建详情，也不改变浏览器高度。 */}
-                  <div key={`runtime:${navigationId ?? props.state.conversationId}`} className="session-thread-subtitle-row">
-                    <SessionRuntimeDetails state={props.state} conversation={props.conversation} language={props.language} capabilities={props.capabilities} />
-                  </div>
                   <SessionTranscriptProjection
                     state={props.state}
                     controller={props.stateController}
@@ -4239,7 +4252,14 @@ function mergeConversationAttachments(current: NativeConversationAttachment[], a
 }
 
 /** 将会话快照投影为共用详情，并携带所属项目的摘要名称。 */
-function SessionRuntimeDetails(props: { state: NativeSessionState; conversation: NativeConversationChoice | null; language: SessionUiLanguage; capabilities?: CodexConversationCapabilities | null }) {
+/** 已有实时指标与按需信息共用标题旁的浮层。 */
+function SessionRuntimeDetails(props: {
+  state: NativeSessionState;
+  conversation: NativeConversationChoice | null;
+  language: SessionUiLanguage;
+  capabilities?: CodexConversationCapabilities | null;
+  onLoadInformation?: (signal: AbortSignal) => Promise<import('@zeus/shared').ConversationInformation>;
+}) {
   const model = props.state.providerSettings?.model?.trim() || props.state.snapshot?.model?.id?.trim() || props.conversation?.model?.id?.trim() || null;
   const effort = props.state.providerSettings?.effort?.trim() || props.state.snapshot?.nextTurnSettings?.effort?.trim() || null;
   const rawServiceTier = props.state.providerSettings?.serviceTier ?? props.state.snapshot?.nextTurnSettings?.serviceTier;
@@ -4268,7 +4288,6 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
     historyComplete: usage?.historyComplete ?? false,
     complete: Boolean(usage?.costs?.length || usage?.apiEquivalentUsd != null) && usage?.priceCoverage === 1 && usage?.historyComplete === true,
   };
-  const mcpStartup = props.state.mcpStartup?.value ?? null;
   /** 环境展示优先采用最近命令事实，不改变会话默认目录和相对文件打开语义。 */
   const executionContext = props.state.snapshot?.executionContext?.recentCommand ?? props.state.snapshot?.executionContext;
   const nativeSession = props.state.snapshot?.nativeSession ?? props.conversation?.nativeSession;
@@ -4321,7 +4340,7 @@ function SessionRuntimeDetails(props: { state: NativeSessionState; conversation:
       nativeSessionPath: runtimeFact(nativeSession?.path ?? null, props.language === 'zh-CN' ? '暂无会话记录文件位置。' : 'The conversation record file location is unavailable.'),
     },
   };
-  return <RuntimeDetails runtime={runtime} language={props.language} scope="session" mcpStartup={mcpStartup} />;
+  return <RuntimeDetails runtime={runtime} language={props.language} scope="session" onLoadInformation={props.onLoadInformation} />;
 }
 
 function runtimeFact<T>(value: T | null | undefined, reason: string): NativeRuntimeFact<T> {

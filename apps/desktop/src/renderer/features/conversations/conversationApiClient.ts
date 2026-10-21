@@ -74,6 +74,8 @@ export interface ConversationApiClient {
   /** 一次取得同一事件进度下的会话结构与消息尾页。 */
   loadNativeConversationReadableSnapshot: (projectId: string, conversationId: string, options?: { signal?: AbortSignal }) => Promise<NativeConversationReadableSnapshot>;
   loadNativeConversationSessionMetrics: (projectId: string, conversationId: string) => Promise<NativeSessionMetricsSnapshot>;
+  /** 按需读取完整会话明细，关闭浮层时允许取消请求。 */
+  loadNativeConversationInformation: (projectId: string, conversationId: string, signal?: AbortSignal) => Promise<import('@zeus/shared').ConversationInformation>;
   /** 有界核对已加载条目的持久位置代次。 */
   loadNativeConversationTranscriptPlacements: (projectId: string, conversationId: string, entryIds: string[], expectedOrderEpoch?: number) => Promise<NativeConversationTranscriptPlacementBatch>;
   /** 单独刷新执行现场，避免命令事件触发正文重载。 */
@@ -226,6 +228,8 @@ export function createConversationApiClient(transport: LocalApiTransport): Conve
       ),
     loadConversationNavigation: (projectId, conversationId) => transport.request<ConversationNavigationSnapshot>(`${conversationPath(projectId, conversationId)}/navigation`),
     loadNativeConversationSessionMetrics: (projectId, conversationId) => transport.request<NativeSessionMetricsSnapshot>(`${conversationPath(projectId, conversationId)}/session-metrics`),
+    /** 浮层关闭或会话切换后可取消读取，不阻塞消息加载。 */
+    loadNativeConversationInformation: (projectId, conversationId, signal) => transport.request<import('@zeus/shared').ConversationInformation>(`${conversationPath(projectId, conversationId)}/information`, { signal }),
     loadNativeConversationTranscriptPlacements: (projectId, conversationId, entryIds, expectedOrderEpoch) =>
       transport.request<NativeConversationTranscriptPlacementBatch>(`${conversationPath(projectId, conversationId)}/transcript/placements`, {
         ...jsonRequest('POST', { entryIds, ...(expectedOrderEpoch === undefined ? {} : { expectedOrderEpoch }) }),

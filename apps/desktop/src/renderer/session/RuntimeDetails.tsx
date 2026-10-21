@@ -1,89 +1,129 @@
-import { CaretUpIcon as CaretUp } from '@phosphor-icons/react/dist/csr/CaretUp';
+import type { ConversationInformation } from '@zeus/shared';
+import { InfoIcon as Info } from '@phosphor-icons/react/dist/csr/Info';
+import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { CopyIcon as Copy } from '@phosphor-icons/react/dist/csr/Copy';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { PopoverSurface } from '../ui/MotionPresence.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import type { NativeRuntimeDetailsSnapshot, NativeRuntimeFact } from './sessionTypes.js';
 import { copyText, type SessionUiLanguage } from './ThreadItemView.js';
-import { formatRuntimeCosts, formatTokenCount, formatUsdEstimate } from './tokenUsageFormat.js';
+import { formatRuntimeCosts, formatTokenCount } from './tokenUsageFormat.js';
 
-/** 会话与智能体共用的运行事实。 */
+/** 主会话和智能体共用信息浮层，环境字段保留各自已有的入口。 */
 interface RuntimeDetailsProps {
+  /** 已有实时指标不需要等待浮层补载。 */
   runtime: NativeRuntimeDetailsSnapshot;
+  /** 显示语言。 */
   language: SessionUiLanguage;
+  /** 决定累计指标名称与智能体环境补充。 */
   scope: 'session' | 'subagent';
-  mcpStartup?: Record<string, unknown> | null;
+  /** 完整费用与使用记录只在打开后读取。 */
+  onLoadInformation?: (signal: AbortSignal) => Promise<ConversationInformation>;
+  /** 智能体历史已经读取时直接复用其工具事实。 */
+  resources?: ConversationInformation['resources'];
 }
 
-/** 使用原生折叠面板展示摘要及按用途分组的运行事实。 */
+/** 原生浮层不参与正文排版，关闭、外部点击与 Esc 由浏览器统一处理。 */
 export function RuntimeDetails(props: RuntimeDetailsProps) {
-  /** 原生详情节点保留自身展开状态，外部点击只负责收起。 */
-  const detailsRef = useRef<HTMLDetailsElement>(null);
+  /** 每个工作面的锚点独立，避免抽屉和底层页面互相定位。 */
+  const id = useId();
+  /** 锚点名称只使用 React 身份，不包含业务路径。 */
+  const anchor = `--session-information-${id.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+  /** 浮层展开状态控制按需读取与无障碍状态。 */
+  const [open, setOpen] = useState(false);
+  /** 只保存当前挂载会话的完整明细。 */
+  const [information, setInformation] = useState<ConversationInformation | null>(null);
+  /** 失败事实由共享错误组件展示。 */
+  const [error, setError] = useState<unknown>(null);
+  /** 重试只重读浮层，不重建正文。 */
+  const [reload, setReload] = useState(0);
+  /** 最新读取入口不让每次文本增量重新触发请求。 */
+  const loadRef = useRef(props.onLoadInformation);
   useEffect(() => {
-    /** 捕获阶段判断命中范围，详情内部的复制和文本选择不会触发收起。 */
-    const closeFromOutside = (event: PointerEvent): void => {
-      /** 每次读取当前节点，避免保留已经卸载的详情。 */
-      const details = detailsRef.current;
-      if (details?.open && event.target instanceof Node && !details.contains(event.target)) details.open = false;
-    };
-    window.addEventListener('pointerdown', closeFromOutside, true);
-    return () => window.removeEventListener('pointerdown', closeFromOutside, true);
-  }, []);
+    loadRef.current = props.onLoadInformation;
+  });
+  /** 请求完成或工具数量变化时，已打开的明细重新核对。 */
+  const revision = `${numberFact(props.runtime.usage.totalTokens)}:${numberFact(props.runtime.activity.toolOrCommandCount)}`;
+  useEffect(() => {
+    if (!open || !loadRef.current) return;
+    /** 关闭和切换后不让旧结果回写新会话。 */
+    const abort = new AbortController();
+    // 同一会话刷新期间保留已读明细，避免列表短暂清空和浮层高度跳动。
+    setError(null);
+    void loadRef
+      .current(abort.signal)
+      .then((value) => {
+        if (!abort.signal.aborted) setInformation(value);
+      })
+      .catch((cause: unknown) => {
+        if (!abort.signal.aborted) setError(cause);
+      });
+    return () => abort.abort();
+  }, [open, revision, reload]);
+  /** 所有标签共用同一语言分支。 */
   const zh = props.language === 'zh-CN';
-  const copy = runtimeLabels(props.language);
-  const warning = runtimeValueNeedsAttention(props.mcpStartup);
-  const contextUsage = formatContextUsage(props.runtime.usage.contextTokens, props.runtime.usage.contextWindow, props.language);
-  const costComplete =
-    props.runtime.usage.apiEquivalentUsd.state === 'available' &&
-    props.runtime.usage.priceCoverage.state === 'available' &&
-    props.runtime.usage.priceCoverage.value === 1 &&
-    props.runtime.usage.historyComplete.state === 'available' &&
-    props.runtime.usage.historyComplete.value;
-  const tokenScopeLabel = props.scope === 'subagent' ? (zh ? '智能体累计 Token' : 'Agent tokens') : zh ? '会话累计 Token' : 'Session tokens';
+  /** 主入口只显示图标，名称保留给悬浮提示与读屏。 */
+  const title = zh ? '会话信息' : 'Conversation information';
+  /** 价格合计沿用已有币种与历史完整性口径。 */
+  const costs = props.runtime.usage.costs?.length ? props.runtime.usage.costs : props.runtime.usage.apiEquivalentUsd.state === 'available' ? [{ currency: 'USD', amount: props.runtime.usage.apiEquivalentUsd.value }] : [];
+  /** 缺价或历史不完整不能被展示为完整账单。 */
+  const complete = props.runtime.usage.priceCoverage.state === 'available' && props.runtime.usage.priceCoverage.value === 1 && props.runtime.usage.historyComplete.state === 'available' && props.runtime.usage.historyComplete.value;
+  /** 明细区只显示当前会话可确认的使用记录。 */
+  const resources = information?.resources ?? props.resources;
+  /** 简短提示同时供鼠标和键盘读取。 */
+  const tokenHint = `${zh ? '累计输入' : 'Total input'}: ${tokenText(props.runtime.usage.inputTokens, props.language, false)}\n${zh ? '累计输出' : 'Total output'}: ${tokenText(props.runtime.usage.outputTokens, props.language, false)}`;
+  /** 未完成读取时不将缺失明细显示成零费用。 */
+  const costHint = information
+    ? costBreakdownText(information.cost, props.language)
+    : zh
+      ? error
+        ? '费用明细读取失败'
+        : props.onLoadInformation
+          ? '正在读取费用明细…'
+          : '暂无费用明细'
+      : error
+        ? 'Cost details could not be loaded'
+        : props.onLoadInformation
+          ? 'Loading cost details…'
+          : 'Cost details unavailable';
   return (
-    <details ref={detailsRef} className="session-runtime-details" data-language={props.language} data-severity={warning ? 'warning' : 'ready'} data-scope={props.scope} aria-label={copy.runtimeDetails}>
-      <summary>
-        <span className="session-runtime-summary-primary">
-          <RuntimeSummaryMetric label={tokenScopeLabel} value={formatTokenFact(props.runtime.usage.totalTokens, props.language, true)} />
-          <RuntimeSummaryMetric label={copy.contextUsage} value={contextUsage} />
-          <RuntimeSummaryMetric label={copy.cacheHitRate} value={formatPercentageFact(props.runtime.usage.cacheHitRate, props.language)} />
-          <RuntimeSummaryMetric label={zh ? '请求输出速率' : 'Request output rate'} value={formatOutputRateFact(props.runtime.performance.latestOutputTokensPerSecond, props.language)} />
-          <RuntimeSummaryMetric
-            label={zh ? '费用' : 'Cost'}
+    <>
+      <button type="button" className="session-information-trigger" aria-label={title} aria-haspopup="dialog" aria-expanded={open} aria-controls={id} data-icon-tooltip={title} popoverTarget={id} style={{ anchorName: anchor }}>
+        <Info aria-hidden="true" />
+      </button>
+      <PopoverSurface
+        id={id}
+        popover="auto"
+        role="dialog"
+        aria-labelledby={`${id}-title`}
+        className="session-information-popover"
+        style={{ positionAnchor: anchor }}
+        onToggle={(event) => setOpen(event.currentTarget.matches(':popover-open'))}
+      >
+        <header>
+          <strong id={`${id}-title`}>{title}</strong>
+          <button type="button" popoverTarget={id} popoverTargetAction="hide" aria-label={zh ? '关闭会话信息' : 'Close conversation information'} data-icon-tooltip={zh ? '关闭' : 'Close'}>
+            <X aria-hidden="true" />
+          </button>
+        </header>
+        <dl className="session-information-metrics">
+          <RuntimeUsageRow label={props.scope === 'subagent' ? (zh ? '智能体累计 Token' : 'Agent tokens') : zh ? '累计 Token' : 'Session tokens'} value={tokenText(props.runtime.usage.totalTokens, props.language)} hint={tokenHint} />
+          <RuntimeUsageRow label={zh ? '费用' : 'Cost'} value={costs.length ? `${formatRuntimeCosts(costs, props.language)}${complete ? '' : zh ? ' · 部分' : ' · partial'}` : '—'} hint={costHint} />
+          <RuntimeUsageRow
+            label={zh ? '输出速率' : 'Output rate'}
             value={
-              props.runtime.usage.costs?.length
-                ? `${formatRuntimeCosts(props.runtime.usage.costs, props.language)}${props.runtime.usage.priceCoverage.state === 'available' && props.runtime.usage.priceCoverage.value === 1 ? '' : zh ? '（部分）' : ' (partial)'}`
-                : formatCostSummary(props.runtime.usage.apiEquivalentUsd, props.runtime.usage.priceCoverage, costComplete, props.language)
+              numberFact(props.runtime.performance.latestOutputTokensPerSecond) === null
+                ? '—'
+                : `${new Intl.NumberFormat(props.language, { maximumFractionDigits: 1 }).format(numberFact(props.runtime.performance.latestOutputTokensPerSecond)!)} tokens / s`
             }
           />
-        </span>
-      </summary>
-      <div className="session-runtime-detail-groups">
-        <RuntimeDetailGroup title={zh ? '模型设置' : 'Model settings'} kind="session">
-          <RuntimeUsageRow label={zh ? '模型' : 'Model'} value={factValue(props.runtime.model, props.language)} />
-          <RuntimeUsageRow label={zh ? '推理强度' : 'Reasoning effort'} value={factValue(props.runtime.effort, props.language)} />
-          <RuntimeUsageRow label={zh ? '速率' : 'Speed'} value={<ServiceTierValue fact={props.runtime.serviceTier} language={props.language} />} />
-        </RuntimeDetailGroup>
-        <RuntimeDetailGroup title={zh ? '用量与性能' : 'Usage & performance'} kind="usage">
-          <RuntimeUsageRow label={tokenScopeLabel} value={formatTokenFact(props.runtime.usage.totalTokens, props.language, true)} />
-          <RuntimeUsageRow label={zh ? '累计输入' : 'Cumulative input'} value={formatTokenFact(props.runtime.usage.inputTokens, props.language, true)} />
-          <RuntimeUsageRow label={zh ? '累计输出' : 'Cumulative output'} value={formatTokenFact(props.runtime.usage.outputTokens, props.language, true)} />
-          <RuntimeUsageRow label={copy.contextUsage} value={contextUsage} />
-          <RuntimeUsageRow label={copy.cacheHitRate} value={formatPercentageFact(props.runtime.usage.cacheHitRate, props.language)} />
-          <RuntimeUsageRow label={zh ? '请求输出速率' : 'Request output rate'} value={formatOutputRateFact(props.runtime.performance.latestOutputTokensPerSecond, props.language)} />
           <RuntimeUsageRow
-            label={zh ? '费用' : 'Cost'}
-            value={props.runtime.usage.costs?.length ? formatRuntimeCosts(props.runtime.usage.costs, props.language) : formatCoveredCost(props.runtime.usage.apiEquivalentUsd, props.runtime.usage.priceCoverage, props.language)}
+            label={zh ? '缓存命中率' : 'Cache hit rate'}
+            value={numberFact(props.runtime.usage.cacheHitRate) === null ? '—' : new Intl.NumberFormat(props.language, { style: 'percent', maximumFractionDigits: 1 }).format(numberFact(props.runtime.usage.cacheHitRate)!)}
           />
-        </RuntimeDetailGroup>
-        <RuntimeDetailGroup title={zh ? '环境' : 'Environment'} kind="environment">
-          <RuntimeUsageRow
-            label={zh ? '工作目录' : 'Working directory'}
-            value={<RuntimeCode fact={props.runtime.environment.cwd} language={props.language} copyLabel={zh ? '复制工作目录' : 'Copy working directory'} copiedLabel={zh ? '工作目录已复制' : 'Working directory copied'} />}
-          />
-          <RuntimeUsageRow
-            label={zh ? '工作分支' : 'Working branch'}
-            value={<RuntimeCode fact={props.runtime.environment.branch} language={props.language} copyLabel={zh ? '复制工作分支' : 'Copy working branch'} copiedLabel={zh ? '工作分支已复制' : 'Working branch copied'} />}
-          />
+        </dl>
+        <dl className="session-information-identities">
           <RuntimeUsageRow
             label={zh ? '线程 ID' : 'Thread ID'}
             value={<RuntimeCode fact={props.runtime.environment.nativeSessionId} language={props.language} copyLabel={zh ? '复制线程 ID' : 'Copy thread ID'} copiedLabel={zh ? '线程 ID 已复制' : 'Thread ID copied'} />}
@@ -92,62 +132,115 @@ export function RuntimeDetails(props: RuntimeDetailsProps) {
             label="JSONL"
             value={<RuntimeCode fact={props.runtime.environment.nativeSessionPath} language={props.language} copyLabel={zh ? '复制 JSONL 路径' : 'Copy JSONL path'} copiedLabel={zh ? 'JSONL 路径已复制' : 'JSONL path copied'} />}
           />
-          <RuntimeUsageRow label={zh ? 'MCP 启动' : 'MCP startup'} value={props.mcpStartup ? runtimeValueSummary(props.mcpStartup) : unavailableValue(props.language)} />
-        </RuntimeDetailGroup>
-      </div>
-      <div className="session-runtime-detail-footer">
-        <button
-          type="button"
-          className="session-runtime-collapse-button"
-          aria-label={zh ? '收起详情' : 'Collapse details'}
-          data-icon-tooltip={zh ? '收起详情' : 'Collapse details'}
-          onClick={(event) => {
-            // 原生折叠后将焦点交回摘要，避免键盘焦点留在已隐藏的按钮上。
-            const details = event.currentTarget.closest('details');
-            if (!details) return;
-            details.open = false;
-            details.querySelector('summary')?.focus({ preventScroll: true });
-          }}
-        >
-          <CaretUp aria-hidden="true" />
-        </button>
-      </div>
+          {props.scope === 'subagent' ? (
+            <>
+              <RuntimeUsageRow
+                label={zh ? '工作目录' : 'Directory'}
+                value={<RuntimeCode fact={props.runtime.environment.cwd} language={props.language} copyLabel={zh ? '复制工作目录' : 'Copy directory'} copiedLabel={zh ? '工作目录已复制' : 'Directory copied'} />}
+              />
+              <RuntimeUsageRow
+                label={zh ? '工作分支' : 'Branch'}
+                value={<RuntimeCode fact={props.runtime.environment.branch} language={props.language} copyLabel={zh ? '复制工作分支' : 'Copy branch'} copiedLabel={zh ? '工作分支已复制' : 'Branch copied'} />}
+              />
+            </>
+          ) : null}
+        </dl>
+        <div className="session-information-resources">
+          <RuntimeResourceList label={zh ? '已触发 MCP' : 'MCP tools used'} values={resources?.mcp} language={props.language} loading={Boolean(props.onLoadInformation && !information && !error)} />
+          <RuntimeResourceList label={zh ? '已使用 Skills' : 'Skills used'} values={resources?.skills} language={props.language} loading={Boolean(props.onLoadInformation && !information && !error)} />
+          <p>{zh ? '仅展示会话中已记录的使用。' : 'Only recorded usage in this conversation is shown.'}</p>
+          {error ? (
+            <div className="session-information-error">
+              <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
+              <button type="button" onClick={() => setReload((value) => value + 1)}>
+                {zh ? '重试' : 'Retry'}
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </PopoverSurface>
+    </>
+  );
+}
+
+/** 指标提示使用全局悬浮管理器，并支持键盘聚焦读取。 */
+function RuntimeUsageRow(props: { label: string; value: ReactNode; hint?: string }) {
+  return (
+    <div>
+      <dt>{props.label}</dt>
+      <dd>
+        <span tabIndex={props.hint ? 0 : undefined} data-icon-tooltip={props.hint}>
+          {props.value}
+        </span>
+      </dd>
+    </div>
+  );
+}
+
+/** 长清单在浮层内展开，不增加正文或环境卡片的高度。 */
+function RuntimeResourceList(props: { label: string; values?: string[]; language: SessionUiLanguage; loading: boolean }) {
+  return (
+    <details>
+      <summary>
+        {props.label}
+        <span>{props.loading ? '…' : (props.values?.length ?? '—')}</span>
+      </summary>
+      {props.values?.length ? (
+        <ul>
+          {props.values.map((value) => (
+            <li key={value}>{value}</li>
+          ))}
+        </ul>
+      ) : (
+        <p>
+          {props.loading
+            ? props.language === 'zh-CN'
+              ? '读取中…'
+              : 'Loading…'
+            : props.values
+              ? props.language === 'zh-CN'
+                ? '暂无已记录的使用'
+                : 'No recorded usage'
+              : props.language === 'zh-CN'
+                ? '使用记录暂不可用'
+                : 'Usage records unavailable'}
+        </p>
+      )}
     </details>
   );
 }
 
-function ServiceTierValue(props: { fact: NativeRuntimeFact<string | null>; language: SessionUiLanguage }) {
-  if (props.fact.state === 'unavailable') return unavailableValue(props.language);
-  if (props.fact.value === 'priority' || props.fact.value?.toLowerCase() === 'fast') return props.language === 'zh-CN' ? '快速' : 'Fast';
-  return props.fact.value && props.fact.value !== 'default' ? props.fact.value : props.language === 'zh-CN' ? '标准' : 'Standard';
+/** 无数据保持缺失状态，不将未知值转换为零。 */
+function numberFact(fact: NativeRuntimeFact<number>): number | null {
+  return fact.state === 'available' ? fact.value : null;
 }
 
-function RuntimeSummaryMetric(props: { label: string; value: ReactNode }) {
+/** 指标使用紧凑数字，悬浮明细保留完整数量。 */
+function tokenText(fact: NativeRuntimeFact<number>, language: SessionUiLanguage, compact = true): string {
+  if (fact.state !== 'available') return '—';
+  /** 复用累计用量的统一格式。 */
+  const value = formatTokenCount(fact.value, language);
+  return compact ? value.compact : value.exact;
+}
+
+/** 费用明细保留按次项目及缺价提示，不将无法拆分的费用归给输入。 */
+function costBreakdownText(cost: ConversationInformation['cost'], language: SessionUiLanguage): string {
+  /** 标签与主浮层保持同一种语言。 */
+  const zh = language === 'zh-CN';
+  return [
+    `${zh ? '输入（含缓存）' : 'Input (including cache)'}: ${cost.input.length ? formatRuntimeCosts(cost.input, language) : '—'}`,
+    `${zh ? '输出' : 'Output'}: ${cost.output.length ? formatRuntimeCosts(cost.output, language) : '—'}`,
+    ...(cost.perRequest.length ? [`${zh ? '按次费用' : 'Per-request cost'}: ${formatRuntimeCosts(cost.perRequest, language)}`] : []),
+    ...(cost.complete ? [] : [zh ? '部分用量缺少价格，明细不完整' : 'Some usage has no price; breakdown is incomplete']),
+  ].join('\n');
+}
+
+/** 缺失标识保留可访问说明。 */
+function unavailableValue(language: SessionUiLanguage): ReactNode {
   return (
-    <span className="session-runtime-summary-metric">
-      <b>{props.label}</b>
-      <span>{props.value}</span>
+    <span className="session-runtime-unavailable" aria-label={language === 'zh-CN' ? '暂无数据' : 'Data unavailable'}>
+      —
     </span>
-  );
-}
-
-/** 每组只保留一份描述列表，由可用宽度决定字段列数。 */
-function RuntimeDetailGroup(props: { title: string; kind: 'session' | 'usage' | 'environment'; children: ReactNode }) {
-  return (
-    <section className="session-runtime-detail-group" data-group={props.kind}>
-      <h3>{props.title}</h3>
-      <dl className="session-runtime-detail-body">{props.children}</dl>
-    </section>
-  );
-}
-
-/** 字段顺序由描述列表保留，列数由分组布局统一决定。 */
-function RuntimeUsageRow(props: { label: string; value: ReactNode }) {
-  return (
-    <div>
-      <dt>{props.label}</dt>
-      <dd>{props.value}</dd>
-    </div>
   );
 }
 
@@ -173,10 +266,13 @@ function RuntimeCode(props: { fact: NativeRuntimeFact<string>; language: Session
   );
 }
 
-function RuntimeCopyButton(props: { text: string; label: string; copiedLabel: string }) {
+/** 运行标识与环境字段共用复制反馈。 */
+export function RuntimeCopyButton(props: { text: string; label: string; copiedLabel: string }) {
+  /** 复制完成后短暂保留成功反馈。 */
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return;
+    /** 反馈到期后恢复复制入口。 */
     const timer = setTimeout(() => setCopied(false), 1_400);
     return () => clearTimeout(timer);
   }, [copied]);
@@ -192,93 +288,4 @@ function RuntimeCopyButton(props: { text: string; label: string; copiedLabel: st
       {copied ? <Check aria-hidden="true" weight="bold" /> : <Copy aria-hidden="true" weight="regular" />}
     </button>
   );
-}
-
-function factValue<T>(fact: NativeRuntimeFact<T>, language: SessionUiLanguage): ReactNode {
-  return fact.state === 'available' ? String(fact.value) : unavailableValue(language);
-}
-
-/** 无数据时无需重复提示内部采集过程；字段名称已说明缺少哪项数据。 */
-function unavailableValue(language: SessionUiLanguage): ReactNode {
-  return (
-    <span className="session-runtime-unavailable" aria-label={language === 'zh-CN' ? '暂无数据' : 'Data unavailable'}>
-      —
-    </span>
-  );
-}
-
-function formatTokenFact(fact: NativeRuntimeFact<number>, language: SessionUiLanguage, compact = false): ReactNode {
-  if (fact.state === 'unavailable') return unavailableValue(language);
-  const formatted = formatTokenCount(fact.value, language);
-  return (
-    <span data-icon-tooltip={`${formatted.exact} Token`} aria-label={`${formatted.exact} Token`}>
-      {compact ? formatted.compact : formatted.exact}
-    </span>
-  );
-}
-
-function formatPercentageFact(fact: NativeRuntimeFact<number>, language: SessionUiLanguage): ReactNode {
-  if (fact.state === 'unavailable') return unavailableValue(language);
-  return new Intl.NumberFormat(language, { style: 'percent', maximumFractionDigits: 1 }).format(Math.max(0, fact.value));
-}
-
-function formatContextUsage(tokens: NativeRuntimeFact<number>, window: NativeRuntimeFact<number>, language: SessionUiLanguage): ReactNode {
-  if (tokens.state === 'unavailable') return unavailableValue(language);
-  if (window.state === 'unavailable') return unavailableValue(language);
-  if (window.value <= 0) return unavailableValue(language);
-  const percentage = new Intl.NumberFormat(language, { style: 'percent', maximumFractionDigits: 1 }).format(Math.max(0, tokens.value / window.value));
-  const used = formatTokenCount(tokens.value, language);
-  const total = formatTokenCount(window.value, language);
-  return (
-    <span data-icon-tooltip={`${percentage} · ${used.exact} / ${total.exact} Token`} aria-label={`${percentage}, ${used.exact} / ${total.exact} Token`}>
-      {percentage} {used.compact} / {total.compact}
-    </span>
-  );
-}
-
-function formatCostSummary(value: NativeRuntimeFact<number>, coverage: NativeRuntimeFact<number>, complete: boolean, language: SessionUiLanguage): ReactNode {
-  if (complete && value.state === 'available') return formatUsdEstimate(value.value, language);
-  if (value.state === 'available' && coverage.state === 'available' && coverage.value > 0) return language === 'zh-CN' ? '费用不完整' : 'Cost incomplete';
-  return value.state === 'unavailable' ? unavailableValue(language) : unavailableValue(language);
-}
-
-function formatCoveredCost(value: NativeRuntimeFact<number>, coverage: NativeRuntimeFact<number>, language: SessionUiLanguage): ReactNode {
-  if (value.state === 'unavailable') return unavailableValue(language);
-  const amount = formatUsdEstimate(value.value, language);
-  if (coverage.state === 'available' && coverage.value < 1) return `${amount} · ${language === 'zh-CN' ? '已覆盖部分' : 'covered portion'}`;
-  return amount;
-}
-
-function formatOutputRateFact(fact: NativeRuntimeFact<number>, language: SessionUiLanguage): ReactNode {
-  if (fact.state === 'unavailable') return unavailableValue(language);
-  return `${new Intl.NumberFormat(language, { maximumFractionDigits: fact.value < 100 ? 1 : 0 }).format(fact.value)} tokens / s`;
-}
-
-function runtimeValueNeedsAttention(value: unknown, key = ''): boolean {
-  if (typeof value === 'number') return /remaining|available|balance/i.test(key) && value <= 0;
-  if (typeof value === 'string') return /^(error|failed|degraded|unavailable|blocked|exhausted)$/i.test(value.trim());
-  if (Array.isArray(value)) return value.some((entry) => runtimeValueNeedsAttention(entry, key));
-  if (!value || typeof value !== 'object') return false;
-  return Object.entries(value).some(([entryKey, entryValue]) => runtimeValueNeedsAttention(entryValue, entryKey));
-}
-
-function runtimeValueSummary(value: Record<string, unknown>): string {
-  return runtimeValueFragments(value).join(' · ');
-}
-
-function runtimeValueFragments(value: unknown, path: string[] = []): string[] {
-  if (Array.isArray(value)) return value.flatMap((entry, index) => runtimeValueFragments(entry, [...path, String(index + 1)]));
-  if (value && typeof value === 'object') return Object.entries(value).flatMap(([key, entry]) => runtimeValueFragments(entry, [...path, key]));
-  if (value === null || value === undefined) return [];
-  const rawLabel = path.map(humanizeRuntimeKey).join(' ');
-  const label = rawLabel ? `${rawLabel.charAt(0).toUpperCase()}${rawLabel.slice(1)}` : 'Value';
-  return [`${label}: ${String(value)}`];
-}
-
-function humanizeRuntimeKey(value: string): string {
-  return value.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ');
-}
-
-function runtimeLabels(language: SessionUiLanguage) {
-  return language === 'zh-CN' ? { runtimeDetails: '运行详情', contextUsage: '上下文占用', cacheHitRate: '缓存命中率' } : { runtimeDetails: 'Runtime details', contextUsage: 'Context usage', cacheHitRate: 'Cache hit rate' };
 }
