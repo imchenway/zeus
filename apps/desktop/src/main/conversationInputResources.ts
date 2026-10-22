@@ -38,7 +38,8 @@ export interface ConversationResourcePayload {
 }
 
 export interface ConversationInputResourceBroker {
-  describePaths(paths: string[], source: ConversationInputResourceSource): Promise<ConversationInputResource[]>;
+  /** 图片保存受管副本，其他文件和目录保留精确来源授权。 */
+  describePaths(paths: string[], source: ConversationInputResourceSource, commandId: string): Promise<ConversationInputResource[]>;
   materialize(payloads: ConversationResourcePayload[], commandId: string): Promise<ConversationInputResource[]>;
   readClipboard(commandId: string): Promise<{ resources: ConversationInputResource[]; text: string }>;
   resolve(resource: { localPath?: string; uploadRef?: string }): Promise<string | null>;
@@ -64,19 +65,41 @@ export function createConversationInputResourceBroker(options: CreateConversatio
   const attachmentRoot = resolve(options.attachmentRoot);
 
   return {
-    async describePaths(paths, source) {
+    /** 三类路径入口共用图片落盘，避免来源缓存清理后消息丢图。 */
+    async describePaths(paths, source, commandId) {
+      /** 每个路径使用稳定子身份，批内同名图片不会互相覆盖。 */
+      const operationKey = commandResourceKey(commandId);
+      /** 本批成功导入的图片共用现有容量上限。 */
+      let batchBytes = 0;
+      /** 按输入顺序返回已完成授权或保存的附件。 */
       const resources: ConversationInputResource[] = [];
+      /** 同一来源在一批内只导入一次。 */
       const seen = new Set<string>();
-      for (const path of paths.slice(0, maximumResourceCount)) {
+      for (const [index, path] of paths.slice(0, maximumResourceCount).entries()) {
         if (typeof path !== 'string' || !isAbsolute(path) || path.includes('\0')) continue;
         try {
+          /** 使用真实路径读取用户选定的对象。 */
           const canonicalPath = await realpath(path);
           if (seen.has(canonicalPath)) continue;
           seen.add(canonicalPath);
+          /** 在读取图片正文前核对文件类型和大小。 */
           const pathStat = await stat(canonicalPath);
           if (!pathStat.isFile() && !pathStat.isDirectory()) continue;
+          /** 目录仍按现有引用语义处理，不递归复制。 */
           const directory = pathStat.isDirectory();
+          /** 图片识别沿用剪贴板与文件选择的扩展名映射。 */
           const mime = directory ? 'inode/directory' : inferTaskClipboardAttachmentMimeType(canonicalPath);
+          if (mime.startsWith('image/')) {
+            if (pathStat.size > maximumResourceBytes || batchBytes + pathStat.size > maximumBatchBytes) continue;
+            /** 图片副本在加入草稿前完成持久化，不保留临时缓存授权。 */
+            const data = await readFile(canonicalPath);
+            if (batchBytes + data.byteLength > maximumBatchBytes) continue;
+            /** 复用无路径图片的大小校验、内容摘要及原子发布。 */
+            const saved = await this.materialize([{ name: basename(canonicalPath), type: mime, data, source }], `${operationKey}:${index}`);
+            if (saved.length > 0) batchBytes += data.byteLength;
+            resources.push(...saved);
+            continue;
+          }
           resources.push({
             name: basename(canonicalPath) || canonicalPath,
             mime,
@@ -89,6 +112,8 @@ export function createConversationInputResourceBroker(options: CreateConversatio
           // 单个来源失效时保留同批次中的其他成功项。
         }
       }
+      // 不能把全部保存失败伪装成无附件成功，尤其是只含图片的粘贴操作。
+      if (paths.length > 0 && resources.length === 0) throw new Error('附件无法保存，请确认文件仍可读取、磁盘可写，且未超过附件大小限制。');
       return resources;
     },
 
@@ -127,7 +152,7 @@ export function createConversationInputResourceBroker(options: CreateConversatio
       const referencedPaths = await readTaskClipboardFileReferencesFromClipboard(options.clipboard, options.clipboardReadOptions);
       if (referencedPaths.length > 0) {
         return {
-          resources: await this.describePaths(referencedPaths, 'paste'),
+          resources: await this.describePaths(referencedPaths, 'paste', commandId),
           // 路径已经变成附件，剪贴板正文里剩下的说明文字仍要留在输入框。
           text: extractTaskClipboardResidualText(safelyReadClipboardText(options.clipboard), referencedPaths),
         };
@@ -228,11 +253,15 @@ async function writeAtomicResourceFile(destination: string, data: Buffer, expect
       }
     }
     await unlink(temporaryPath);
-    const directory = await open(dirname(destination), 'r');
-    try {
-      await directory.sync();
-    } finally {
-      await directory.close();
+    // Windows 不支持用普通文件句柄同步目录；文件内容已同步，发布仍使用原子硬链接。
+    if (process.platform !== 'win32') {
+      /** 支持目录句柄的平台同步新文件的目录项。 */
+      const directory = await open(dirname(destination), 'r');
+      try {
+        await directory.sync();
+      } finally {
+        await directory.close();
+      }
     }
   } catch (error) {
     await unlink(temporaryPath).catch(() => undefined);

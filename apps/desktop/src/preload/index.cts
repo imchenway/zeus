@@ -115,7 +115,7 @@ async function authorizePendingResourceFiles(files: File[], source: 'paste' | 'd
     if (pathChannel === 'zeus:store-task-resource-paths') {
       return invokeMainCommand(pathChannel, 'desktop.task_resources.store_paths', 'artifact', 'task-input-resources', nativePaths);
     }
-    return ipcRenderer.invoke(pathChannel, nativePaths, source);
+    return invokeMainCommand(pathChannel, 'desktop.conversation_resources.store_paths', 'artifact', 'conversation-input-resources', { paths: nativePaths, source });
   };
   const materializePayloads = (): Promise<unknown> => {
     if (!pathlessPayloads.length) return Promise.resolve([]);
@@ -307,7 +307,8 @@ contextBridge.exposeInMainWorld('zeus', {
   reportRendererBootstrapReady: () => rendererBootstrapReporter.reportReady(),
   chooseProjectDirectory: () => ipcRenderer.invoke('zeus:choose-project-directory'),
   revealProjectInFinder: (projectPath: string) => ipcRenderer.invoke('zeus:reveal-project-in-finder', projectPath),
-  chooseConversationResources: () => ipcRenderer.invoke('zeus:choose-conversation-resources'),
+  /** 选择图片包含持久化副本，使用同一命令身份接收原生结果。 */
+  chooseConversationResources: () => invokeMainCommand('zeus:choose-conversation-resources', 'desktop.conversation_resources.choose', 'artifact', 'conversation-input-resources'),
   authorizeConversationFiles: (files: File[], source: 'paste' | 'drop') => authorizePendingResourceFiles(files, source, 'zeus:authorize-conversation-files', 'zeus:materialize-conversation-resources'),
   materializeConversationResources: (resources: unknown[]) => invokeMainCommand('zeus:materialize-conversation-resources', 'desktop.conversation_resources.materialize', 'artifact', 'conversation-input-resources', resources),
   readConversationClipboardResources: () => invokeMainCommand('zeus:read-conversation-clipboard-resources', 'desktop.conversation_resources.read_clipboard', 'artifact', 'conversation-input-resources'),
