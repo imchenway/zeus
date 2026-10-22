@@ -2599,26 +2599,43 @@ function setupIpc(): void {
     }
     return revealProjectPathInFinder(projectPath);
   });
-  ipcMain.handle('zeus:choose-conversation-resources', async (event) => {
+  // 选图会保存受管副本，选择器和落盘使用同一命令回执。
+  ipcMain.handle('zeus:choose-conversation-resources', async (event, request: MainCommandRequest) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !conversationInputResources) {
       throw new Error('Conversation resource picker is unavailable for this window.');
     }
-    const selected = await dialog.showOpenDialog(activeSystemWindow(requestingWindow), {
-      title: nativeText('选择文件或文件夹', 'Choose files or folders'),
-      properties: ['openFile', 'openDirectory', 'multiSelections'],
+    /** 异步选择期间固定本次附件代理。 */
+    const broker = conversationInputResources;
+    return activeMainCommandLedger().execute(request, 'desktop.conversation_resources.choose', async (_body, command) => {
+      await command.markWriteStarted();
+      /** 只使用用户在受信窗口中选择的路径。 */
+      const selected = await dialog.showOpenDialog(activeSystemWindow(requestingWindow), {
+        title: nativeText('选择文件或文件夹', 'Choose files or folders'),
+        properties: ['openFile', 'openDirectory', 'multiSelections'],
+      });
+      if (selected.canceled) return [];
+      return broker.describePaths(selected.filePaths, 'picker', command.envelope.commandId);
     });
-    if (selected.canceled) return [];
-    return conversationInputResources.describePaths(selected.filePaths, 'picker');
   });
-  ipcMain.handle('zeus:authorize-conversation-files', async (event, paths: unknown, source: unknown) => {
+  // 路径图片与剪贴板二进制都经命令账本保存，结果未知时不自动重放。
+  ipcMain.handle('zeus:authorize-conversation-files', async (event, request: MainCommandRequest) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !conversationInputResources) {
       throw new Error('Conversation file authorization is unavailable for this window.');
     }
-    const filePaths = Array.isArray(paths) ? paths.filter((path): path is string => typeof path === 'string') : [];
-    const normalizedSource: ConversationInputResourceSource = source === 'drop' ? 'drop' : 'paste';
-    return conversationInputResources.describePaths(filePaths, normalizedSource);
+    /** 命令执行期间固定已授权的附件代理。 */
+    const broker = conversationInputResources;
+    return activeMainCommandLedger().execute(request, 'desktop.conversation_resources.store_paths', async (body, command) => {
+      /** Renderer 只能提供路径和来源，不能指定副本目的地。 */
+      const payload = body && typeof body === 'object' && !Array.isArray(body) ? (body as { paths?: unknown; source?: unknown }) : {};
+      /** 非字符串条目不进入原生文件读取。 */
+      const filePaths = Array.isArray(payload.paths) ? payload.paths.filter((path): path is string => typeof path === 'string') : [];
+      /** 拖入之外的路径来源归入粘贴。 */
+      const normalizedSource: ConversationInputResourceSource = payload.source === 'drop' ? 'drop' : 'paste';
+      await command.markWriteStarted();
+      return broker.describePaths(filePaths, normalizedSource, command.envelope.commandId);
+    });
   });
   ipcMain.handle('zeus:materialize-conversation-resources', async (event, request: MainCommandRequest) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
