@@ -1,5 +1,5 @@
 import { classifyAssistantMessage } from '@zeus/shared';
-import { type HTMLAttributes, type KeyboardEvent, type RefObject, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type HTMLAttributes, type KeyboardEvent, type RefObject, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useHoverIntent } from '../ui/useHoverIntent.js';
 import { ChatCircleIcon as ChatCircle } from '@phosphor-icons/react/dist/csr/ChatCircle';
 import { ArrowUpIcon as ArrowUp } from '@phosphor-icons/react/dist/csr/ArrowUp';
@@ -23,7 +23,6 @@ import type {
 import { ComposerDropdown } from './ComposerDropdown.js';
 import { PermissionModeControl } from './PermissionModeControl.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
-import { autosizeTextarea } from './textareaAutosize.js';
 import { CollaborationModeControl } from './CollaborationModeControl.js';
 import { ConversationComposerAttachments } from './ConversationComposerAttachments.js';
 import { ContextUsageIndicator } from './ContextUsageIndicator.js';
@@ -223,10 +222,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
     if (serviceTierSelectionValue(nextServiceTier) !== serviceTierSelectionValue(selectedServiceTier)) setSelectedServiceTier(nextServiceTier);
   }, [props.capabilities, props.runtimeSettings, props.state.snapshot?.nextTurnSettings, props.state.providerSettings?.effort, props.state.providerSettings?.model, selectedEffort, selectedModel, selectedServiceTier]);
 
-  useLayoutEffect(() => {
-    if (textareaRef.current instanceof HTMLTextAreaElement) autosizeTextarea(textareaRef.current);
-  }, [editorValue, goalDraft, goalInputActive, textareaRef]);
-
   /** 自动预测要求空输入且无待处理交互；手动生成可以与主会话并行。 */
   const suggestion = useInputSuggestion({
     state: props.state,
@@ -254,16 +249,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
     setGoalInputOpen(false);
     setGoalDraft('');
   }, [props.goal]);
-
-  useEffect(() => {
-    const textarea = textareaRef.current;
-    if (!(textarea instanceof HTMLTextAreaElement)) return;
-    const view = textarea.ownerDocument.defaultView;
-    if (!textarea || !view) return;
-    const resize = () => autosizeTextarea(textarea);
-    view.addEventListener('resize', resize);
-    return () => view.removeEventListener('resize', resize);
-  }, [textareaRef]);
 
   /** 发送按钮明确允许采纳灰字；输入框 Enter 沿用原有草稿发送行为。 */
   function submit(nextDelivery: 'queue' | 'steer_now', acceptSuggestion = false): void {
@@ -458,7 +443,6 @@ export function ConversationComposer(props: ConversationComposerProps) {
             value={goalDraft}
             disabled={!inputWritable || busy || goalOperationBusy}
             onChange={(event) => {
-              autosizeTextarea(event.currentTarget);
               setGoalDraft(event.currentTarget.value);
             }}
             onCompositionStart={() => setIsComposing(true)}
