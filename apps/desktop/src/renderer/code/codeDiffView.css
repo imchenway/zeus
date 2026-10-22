@@ -35,6 +35,12 @@
 .code-diff-view .cm-content {
   padding-block: var(--diff-content-inset) 24px;
 }
+/* 选区覆盖不透明差异底色；覆盖 CodeMirror 的行内负层级，沿用半透明选区颜色。 */
+.code-diff-view .cm-selectionLayer {
+  z-index: 1 !important;
+  /* 选区只负责绘制，拖选、滚动与行内操作仍由原有节点接收。 */
+  pointer-events: none;
+}
 /* 行号区与正文分层；细轨道避免长文档出现醒目的滚动边框。 */
 .code-diff-view .cm-gutters {
   border-inline-end: 1px solid var(--zeus-control-border);
