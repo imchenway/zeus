@@ -1,6 +1,16 @@
 #!/usr/bin/env node
 /* global console */
-import { isTransientRemoteReadFailure, runRemoteReadWithRetrySync } from './release-remote-read.mjs';
+import { githubAuthenticationRecoveryHint, isTransientRemoteReadFailure, runRemoteReadWithRetrySync } from './release-remote-read.mjs';
+
+/** 认证恢复提示必须包含登录和确认命令，普通网络故障不能引导更换凭证。 */
+assertProbe(
+  ['The token in default is invalid.', 'gh: Requires authentication (HTTP 401)', 'You are not logged into any GitHub hosts.'].every((detail) => {
+    /** 两个发布入口共用同一份提示，环境变量凭证也必须说明处理方式。 */
+    const hint = githubAuthenticationRecoveryHint(detail);
+    return hint.includes('gh auth login --hostname github.com --web') && hint.includes('gh auth status --hostname github.com') && hint.includes('GH_TOKEN') && hint.includes('GITHUB_TOKEN');
+  }) && githubAuthenticationRecoveryHint('connection timed out') === '',
+  '认证失败应显示完整恢复命令，网络超时不应显示登录提示',
+);
 
 function assertProbe(condition, message) {
   if (!condition) throw new Error(`发布公网只读重试行为不符合预期：${message}`);

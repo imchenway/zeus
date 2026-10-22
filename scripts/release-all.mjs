@@ -4,7 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
-import { commandFailureDetail, commandResultSucceeded, releaseRemoteReadAttempts, releaseRemoteReadTimeoutMs, runRemoteReadWithRetrySync } from './release-remote-read.mjs';
+import { commandFailureDetail, commandResultSucceeded, githubAuthenticationRecoveryHint, releaseRemoteReadAttempts, releaseRemoteReadTimeoutMs, runRemoteReadWithRetrySync } from './release-remote-read.mjs';
 import { ReleasePublicationUnconfirmedError, releasePublicationUnconfirmedExitCode, releaseWorkflowQueueWaitLimitMs } from './release-workflow-wait-policy.mjs';
 import { parseBoolean } from './release-script-utils.mjs';
 
@@ -1171,7 +1171,7 @@ function formatReleaseFailure(error) {
     `阶段：${activeReleaseStage}`,
     `原因：${reason}`,
     `影响：${describeReleaseFailureImpact(activeReleaseState)}`,
-    `下一步：${describeReleaseRecovery(activeReleaseState, publicationUnconfirmed)}`,
+    `下一步：${githubAuthenticationRecoveryHint(detail)}${describeReleaseRecovery(activeReleaseState, publicationUnconfirmed)}`,
     `技术详情：${detail}`,
   ].join('\n');
 }

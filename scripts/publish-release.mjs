@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
-import { commandFailureDetail, commandResultSucceeded, isTransientRemoteReadFailure, releaseRemoteReadAttempts, releaseRemoteReadTimeoutMs, runRemoteReadWithRetrySync } from './release-remote-read.mjs';
+import { commandFailureDetail, commandResultSucceeded, githubAuthenticationRecoveryHint, isTransientRemoteReadFailure, releaseRemoteReadAttempts, releaseRemoteReadTimeoutMs, runRemoteReadWithRetrySync } from './release-remote-read.mjs';
 import { parseBoolean, requiredVersion, sha256File, sha256Text, validateReleaseNotes, validateReleaseNotesFile } from './release-script-utils.mjs';
 import {
   formatReleaseWorkflowDuration,
@@ -30,7 +30,12 @@ const homebrewRepository = 'imchenway/homebrew-tap';
 // 直接运行才进入发布编排；导入回验函数不会触发远端写入。
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
+    /** 保留原始失败详情，并为认证失败补充同一套恢复命令。 */
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(detail);
+    /** 只有明确的认证失败才引导重新登录，其他故障仍保留原有提示。 */
+    const recoveryHint = githubAuthenticationRecoveryHint(detail);
+    if (recoveryHint) console.error(`下一步：${recoveryHint}认证通过后，使用原有参数重新执行本发布命令。`);
     process.exitCode = error instanceof ReleasePublicationUnconfirmedError ? releasePublicationUnconfirmedExitCode : 1;
   });
 }
@@ -76,6 +81,9 @@ async function main() {
   if (!applyRemote) {
     console.log(`公开发布计划：${planPath}`);
     console.log(preflight.blockers.length === 0 ? '只读前置检查通过；本次未执行任何 Git 或远程写操作。' : `只读前置检查发现 ${preflight.blockers.length} 个阻断项；本次未执行任何 Git 或远程写操作。`);
+    /** 只读计划也在终端显示认证恢复步骤，避免用户只能打开计划文件查找。 */
+    const recoveryHint = githubAuthenticationRecoveryHint(preflight.blockers.join('\n'));
+    if (recoveryHint) console.error(`下一步：${recoveryHint}认证通过后，使用原有参数重新执行本发布命令。`);
     return;
   }
 
@@ -273,6 +281,7 @@ function buildPlan(preflight, input) {
     '',
     ...(preflight.blockers.length > 0 ? preflight.blockers.map((blocker) => `- ${blocker}`) : ['- 无。']),
     '',
+    githubAuthenticationRecoveryHint(preflight.blockers.join('\n')),
     '## 受控写操作',
     '',
     `1. 仅在阻断项为空、APPLY_REMOTE=true 且确认值精确为 PUBLISH_${input.tag} 时继续。`,

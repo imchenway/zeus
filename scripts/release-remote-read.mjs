@@ -15,6 +15,17 @@ export function commandFailureDetail(result) {
   return String(result.stderr ?? '').trim() || String(result.stdout ?? '').trim() || result.error?.message || `退出码 ${result.status ?? 'unknown'}`;
 }
 
+/** 为明确的 GitHub 认证失败提供两端共用的人工恢复步骤，不把普通网络错误当作凭证失效。 */
+export function githubAuthenticationRecoveryHint(detail) {
+  if (!/(failed to log in to github\.com account|token in [^\r\n]+ is invalid|not logged into any github hosts|gh auth login|HTTP 401)/iu.test(detail)) return '';
+  return (
+    '请在运行发布的同一系统用户环境中恢复 GitHub CLI 认证：\n' +
+    '1. 若设置了 GH_TOKEN 或 GITHUB_TOKEN，请先更新对应环境变量中的凭证；环境变量凭证会优先于本地登录。\n' +
+    '2. 使用本地登录时执行：gh auth login --hostname github.com --web，并完成浏览器授权。\n' +
+    '3. 执行：gh auth status --hostname github.com，确认登录成功。\n'
+  );
+}
+
 export function isTransientRemoteReadFailure(result) {
   if (transientErrorCodes.has(result.error?.code)) return true;
   const detail = `${result.stderr ?? ''}\n${result.stdout ?? ''}\n${result.error?.message ?? ''}`;
