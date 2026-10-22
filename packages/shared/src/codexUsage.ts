@@ -1,3 +1,5 @@
+import type { UsageCostBreakdown } from './modelPricing.js';
+
 export interface TokenUsageBreakdown {
   totalTokens: number;
   inputTokens: number;
@@ -8,7 +10,7 @@ export interface TokenUsageBreakdown {
 }
 
 /** 助手正文底部的轮次消耗，缺少账本时不生成摘要。 */
-export interface ConversationTurnUsage {
+export interface ConversationTurnUsage extends UsageCostBreakdown {
   /** 本轮已记录的 Token 总数，不是单条正文或会话累计量。 */
   totalTokens: number;
   /** 本轮账本记录的输入 Token，沿用供应商的输入统计口径。 */

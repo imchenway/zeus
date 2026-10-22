@@ -5343,6 +5343,16 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   white-space: nowrap;
 }
 
+/* 助手正文与底栏共享内容宽度，普通正文沿用阅读宽度，表格与展开状态同步拓宽。 */
+.session-codex-parity-v1 .session-thread-item-assistant > :is(.session-markdown, .session-assistant-message-footer) {
+  inline-size: var(--session-assistant-content-width, min(var(--session-markdown-max), 100%));
+}
+
+/* 表格沿用整列布局，消息展开时也将同一宽度传给正文与底栏。 */
+.session-codex-parity-v1 .session-thread-item-assistant:is(.is-message-expanded, :has(> .session-markdown .table-node-wrapper)) {
+  --session-assistant-content-width: 100%;
+}
+
 /* 助手操作与用量共用一行底栏，宽度不足时按组换行，避免覆盖相邻消息。 */
 .session-codex-parity-v1 .session-assistant-message-footer {
   align-items: center;
@@ -5350,18 +5360,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   flex-wrap: wrap;
   gap: 4px 8px;
   margin-block-start: 5px;
-  max-inline-size: var(--session-markdown-max);
   min-inline-size: 0;
 }
 
 /* 底栏统一控制上方间距，操作区继续独立响应悬停和焦点。 */
 .session-codex-parity-v1 .session-assistant-message-footer > .session-thread-item-actions {
   margin-block-start: 0;
-}
-
-/* 展开后底栏与展开的正文右缘对齐。 */
-.session-codex-parity-v1 .session-thread-item-assistant.is-message-expanded > .session-assistant-message-footer {
-  max-inline-size: none;
 }
 
 /* 轮次指标始终位于底栏右侧，与操作及时间使用相同行高。 */
@@ -5400,10 +5404,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   block-size: 15px;
   flex-shrink: 0;
   inline-size: 15px;
-}
-
-.session-codex-parity-v1 .session-thread-item-assistant.is-message-expanded .session-markdown {
-  inline-size: 100%;
 }
 
 .session-codex-parity-v1 .session-item-images {

@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { randomId } from './randomId.js';
 import type { ArtifactRef } from './artifactStore.js';
 import type { ZeusDatabasePort } from './databasePort.js';
-import { conversationProcessProviderItemId, sumEstimatedCosts, type ConversationTurnUsage, type EstimatedMoney } from '@zeus/shared';
+import { conversationProcessProviderItemId, splitEstimatedUsageCosts, sumEstimatedCosts, type CodexUsageEstimate, type ConversationTurnUsage, type TokenUsageBreakdown } from '@zeus/shared';
 import { ConversationTranscriptRepository, hashConversationTranscriptContent, providerEntryId } from './conversationTranscriptStore.js';
 
 /** 菜单栏与会话共用测速条件；历史记录中混入用户回答、审批或 MCP 交互的请求也必须排除。 */
@@ -2689,7 +2689,7 @@ export function readConversationSessionMetrics(db: ZeusDatabasePort, conversatio
   };
 }
 
-/** 按会话、线程及轮次关联账本，只读输入、输出和金额摘要，不传输请求价格明细。 */
+/** 按会话、线程及轮次关联账本，在存储层拆分输入输出费用，只向正文传输汇总。 */
 export function readConversationTurnUsage(db: Pick<ZeusDatabasePort, 'select'>, conversationId: string): Record<string, ConversationTurnUsage> {
   /** 账本已在写入时校验；金额保留原币，缺价与免费严格区分。 */
   const rows = db.select<{
@@ -2698,17 +2698,20 @@ export function readConversationTurnUsage(db: Pick<ZeusDatabasePort, 'select'>, 
     total_tokens: number;
     /** 账本中的本轮输入总量。 */
     input_tokens: number;
+    /** 输入中已单列的缓存读取 Token。 */
+    cached_input_tokens: number;
+    /** 输入中已单列的缓存写入 Token。 */
+    cache_write_input_tokens: number;
     /** 账本中的本轮输出总量。 */
     output_tokens: number;
+    /** 输出中已包含的推理 Token，不额外计费。 */
+    reasoning_output_tokens: number;
     usage_complete: number;
-    costs_json: string | null;
-    equivalent_usd: number | null;
-    coverage: number | null;
+    /** 历史整轮与逐请求价格快照，只在此处用于费用投影。 */
+    estimate_json: string;
   }>(
     `SELECT t.id AS turn_id, l.provider_turn_id, l.total_tokens, l.input_tokens, l.output_tokens, l.usage_complete,
-            json_extract(l.estimate_json, '$.costs') AS costs_json,
-            json_extract(l.estimate_json, '$.apiEquivalentUsd') AS equivalent_usd,
-            json_extract(l.estimate_json, '$.coverage') AS coverage
+            l.cached_input_tokens, l.cache_write_input_tokens, l.reasoning_output_tokens, l.estimate_json
        FROM codex_usage_ledger l
        JOIN conversation_turns t ON t.conversation_id = l.conversation_id
         AND t.provider_thread_id = l.provider_thread_id AND t.provider_turn_id = l.provider_turn_id
@@ -2718,8 +2721,21 @@ export function readConversationTurnUsage(db: Pick<ZeusDatabasePort, 'select'>, 
   /** 同一轮可能包含多个供应源账本，按币种合并后供两种身份复用。 */
   const usageByTurn: Record<string, ConversationTurnUsage> = Object.create(null);
   for (const row of rows) {
+    /** 金额与费率来自同一条已校验账本，不读取当前模型价格。 */
+    const estimate = JSON.parse(row.estimate_json) as CodexUsageEstimate;
     /** 已有美元账本沿用原金额，不从当前价格反推历史费用。 */
-    const costs = sumEstimatedCosts([{ costs: row.costs_json === null ? undefined : (JSON.parse(row.costs_json) as EstimatedMoney[]), apiEquivalentUsd: row.equivalent_usd }]);
+    const costs = sumEstimatedCosts([estimate]);
+    /** 旧整轮账本拆分时也保留缓存和推理分类，避免重复计费。 */
+    const tokens: TokenUsageBreakdown = {
+      totalTokens: row.total_tokens,
+      inputTokens: row.input_tokens,
+      cachedInputTokens: row.cached_input_tokens,
+      cacheWriteInputTokens: row.cache_write_input_tokens,
+      outputTokens: row.output_tokens,
+      reasoningOutputTokens: row.reasoning_output_tokens,
+    };
+    /** 新账本逐请求拆分，汇总结果保留各侧缺价状态。 */
+    const breakdown = splitEstimatedUsageCosts(tokens, estimate);
     /** 每个账本的覆盖状态独立保留，不能用已定价部分冒充全部。 */
     const complete = row.usage_complete === 1;
     /** 持久轮次是汇总身份，实时身份只作为同一摘要的读取别名。 */
@@ -2734,7 +2750,17 @@ export function readConversationTurnUsage(db: Pick<ZeusDatabasePort, 'select'>, 
         { costs: previous?.costs ?? [], apiEquivalentUsd: null },
         { costs, apiEquivalentUsd: null },
       ]),
-      costComplete: (previous?.costComplete ?? true) && complete && row.coverage === 1 && costs.length > 0,
+      costComplete: (previous?.costComplete ?? true) && complete && estimate.coverage === 1 && costs.length > 0,
+      inputCosts: sumEstimatedCosts([
+        { costs: previous?.inputCosts ?? [], apiEquivalentUsd: null },
+        { costs: breakdown.inputCosts, apiEquivalentUsd: null },
+      ]),
+      outputCosts: sumEstimatedCosts([
+        { costs: previous?.outputCosts ?? [], apiEquivalentUsd: null },
+        { costs: breakdown.outputCosts, apiEquivalentUsd: null },
+      ]),
+      inputCostComplete: (previous?.inputCostComplete ?? true) && complete && breakdown.inputCostComplete,
+      outputCostComplete: (previous?.outputCostComplete ?? true) && complete && breakdown.outputCostComplete,
     };
     usageByTurn[row.turn_id] = usage;
     usageByTurn[row.provider_turn_id] = usage;
