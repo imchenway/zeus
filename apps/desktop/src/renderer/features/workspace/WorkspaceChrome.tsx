@@ -12,7 +12,6 @@ import { FoldersIcon } from '@phosphor-icons/react/dist/csr/Folders';
 import { FolderOpenIcon as FolderOpen } from '@phosphor-icons/react/dist/csr/FolderOpen';
 import { FolderPlusIcon as FolderPlus } from '@phosphor-icons/react/dist/csr/FolderPlus';
 import { FunnelIcon as Funnel } from '@phosphor-icons/react/dist/csr/Funnel';
-import { CaretRightIcon as CaretRight } from '@phosphor-icons/react/dist/csr/CaretRight';
 import { GearSixIcon as GearSix } from '@phosphor-icons/react/dist/csr/GearSix';
 import { UserCircleIcon } from '@phosphor-icons/react/dist/csr/UserCircle';
 import { PencilSimpleIcon as PencilSimple } from '@phosphor-icons/react/dist/csr/PencilSimple';
@@ -700,6 +699,7 @@ export function SidebarNav(props: {
       clearTimeout(sidebarScrollIdleTimerRef.current);
     };
   }, []);
+  /** 整行切换项目展开偏好，收起时同时重置会话分页。 */
   const toggleProjectCollapsed = (projectId: string, expanded: boolean) => {
     if (expanded) {
       setVisibleConversationCountByProject((current) => {
@@ -933,14 +933,13 @@ export function SidebarNav(props: {
       )}
       {/* 项目分组始终保留新建入口，空列表也可直接创建项目。 */}
       <section className="project-sidebar-list zeus-source-list" role="navigation" data-source-list-keyboard="vertical" aria-label={copy.projectListLabel} onKeyDown={handleSourceListKeyboardNavigation} onScroll={handleSidebarScroll}>
-        {/* 项目标题共用快捷导航样式，筛选和新建位于右侧箭头之前。 */}
+        {/* 整栏切换分组，筛选和新建作为独立按钮覆盖在右侧。 */}
         <div className="project-quick-actions codex-source-list-quick-actions project-sidebar-group-header">
           <button type="button" className="project-quick-action project-sidebar-group-toggle" aria-label={copy.projects} aria-expanded={projectsExpanded} aria-controls={projectsListId} onClick={() => setProjectsExpanded((value) => !value)}>
             <span className="project-quick-action-icon" aria-hidden="true">
               <FoldersIcon weight="regular" data-icon-source="phosphor" />
             </span>
             <span className="project-quick-action-label">{copy.projects}</span>
-            <CaretRight className="project-sidebar-group-caret" weight="regular" aria-hidden="true" />
           </button>
           <span className="project-sidebar-heading-actions">
             {showConversationNavigation ? (
@@ -1048,6 +1047,8 @@ export function SidebarNav(props: {
               const menuOpen = projectContextMenu?.projectId === project.id;
               const menuPosition = menuOpen ? projectContextMenu.position : undefined;
               const conversationGroup = filteredConversationGroups.find((group) => group.projectId === project.id);
+              /** 每个项目的整行按钮与会话区域使用同一稳定关联。 */
+              const projectConversationsId = `${projectsListId}-${project.id}`;
               const projectMorePopover =
                 menuOpen && menuPosition ? (
                   <MenuSurface
@@ -1058,6 +1059,21 @@ export function SidebarNav(props: {
                     style={{ left: menuPosition.left, top: menuPosition.top }}
                   >
                     {/* 项目菜单提升到应用壳层，位置由右键或键盘触发行决定，避免被侧栏滚动容器横向裁剪。 */}
+                    {showConversationNavigation ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          closeProjectContextMenu();
+                          props.onOpenProjectSection(project, 'tasks');
+                        }}
+                      >
+                        <span className="project-more-menu-icon" aria-hidden="true">
+                          <WorkspaceTasksIcon weight="regular" />
+                        </span>
+                        <span>{copy.openProjectTasks}</span>
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       role="menuitem"
@@ -1125,7 +1141,7 @@ export function SidebarNav(props: {
                   <SourceListRow
                     rowProps={{
                       ref: (row) => {
-                        /** 返回焦点始终落在项目名称，展开按钮保留独立左键行为。 */
+                        /** 菜单关闭后返回整行按钮，继续支持键盘展开与收起。 */
                         const anchor = row?.querySelector<HTMLButtonElement>('.zeus-source-list-row-main');
                         if (anchor) projectMenuAnchorRefs.current.set(project.id, anchor);
                         else projectMenuAnchorRefs.current.delete(project.id);
@@ -1151,23 +1167,6 @@ export function SidebarNav(props: {
                     level="root"
                     surface="fill"
                     expanded={showConversationNavigation ? expanded : undefined}
-                    disclosure={
-                      showConversationNavigation ? (
-                        <button
-                          data-icon-tooltip={`${expanded ? copy.collapseProjectPrefix : copy.expandProjectPrefix}${copy.labelSeparator}${project.name}`}
-                          type="button"
-                          className="project-disclosure-button"
-                          aria-label={`${expanded ? copy.collapseProjectPrefix : copy.expandProjectPrefix}${copy.labelSeparator}${project.name}`}
-                          aria-expanded={expanded}
-                          onClick={() => toggleProjectCollapsed(project.id, expanded)}
-                        >
-                          <span aria-hidden="true">
-                            <CaretRight weight="regular" />
-                          </span>
-                        </button>
-                      ) : undefined
-                    }
-                    disclosurePlacement={showConversationNavigation ? 'trailing' : undefined}
                     icon={<FolderIcon className="native-folder-icon zeus-avatar-token" weight="regular" aria-hidden="true" />}
                     label={<strong>{project.name}</strong>}
                     buttonProps={{
@@ -1178,9 +1177,12 @@ export function SidebarNav(props: {
                         project.id === temporaryWorkspaceId ? (props.appLanguage === 'zh-CN' ? '临时会话' : 'Temporary conversations') : `${props.appLanguage === 'zh-CN' ? '项目' : 'Project'}${copy.labelSeparator}${project.name}`,
                       'aria-current': isActiveProject ? 'true' : undefined,
                       'aria-haspopup': project.id === temporaryWorkspaceId ? undefined : 'menu',
-                      'aria-controls': menuOpen ? `project-more-menu-${project.id}` : undefined,
-                      // 侧边栏项目名称固定作为该项目的任务页入口。
-                      onClick: () => props.onOpenProjectSection(project, project.id === temporaryWorkspaceId ? 'sessions' : 'tasks'),
+                      'aria-controls': showConversationNavigation ? projectConversationsId : menuOpen ? `project-more-menu-${project.id}` : undefined,
+                      // 有会话子级的布局整行切换展开；纯项目导航布局继续进入项目。
+                      onClick: () => {
+                        if (showConversationNavigation) toggleProjectCollapsed(project.id, expanded);
+                        else props.onOpenProjectSection(project, project.id === temporaryWorkspaceId ? 'sessions' : 'tasks');
+                      },
                     }}
                     actions={
                       project.id === temporaryWorkspaceId ? undefined : projectMenuPortalHost ? (
@@ -1190,8 +1192,8 @@ export function SidebarNav(props: {
                       )
                     }
                   />
-                  {showConversationNavigation && conversationGroup && ((conversationGroup.conversations?.length ?? 0) > 0 || conversationGroup.tasks.some((task) => task.conversations.length > 0)) ? (
-                    <Collapsible open={expanded}>
+                  {showConversationNavigation ? (
+                    <Collapsible open={expanded} id={projectConversationsId}>
                       <div className="project-sidebar-conversations">
                         {showConversationNavigation && conversationGroup ? (
                           <ProjectConversationTree

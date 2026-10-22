@@ -9,6 +9,18 @@ export interface EstimatedMoney {
   amount: number;
 }
 
+/** 输入、输出费用按原币分别汇总，缺失明细不补造零金额。 */
+export interface UsageCostBreakdown {
+  /** 输入费用包含普通输入、缓存读取和缓存写入。 */
+  inputCosts: EstimatedMoney[];
+  /** 输出费用沿用输出 Token 口径，不重复累加其中的推理 Token。 */
+  outputCosts: EstimatedMoney[];
+  /** 所有输入费用均可按已保存费率拆分时为真。 */
+  inputCostComplete: boolean;
+  /** 所有输出费用均可按已保存费率拆分时为真。 */
+  outputCostComplete: boolean;
+}
+
 /** 页面确认的单价；空值表示未公布，不能当作免费。 */
 export interface ModelPrice {
   /** 当前单价适用的请求输入量；上限外不沿用便宜档位。 */
@@ -115,6 +127,45 @@ export function estimateModelUsageWithSnapshot(usage: TokenUsageBreakdown, snaps
       : null);
   if (amount === null || !Number.isFinite(amount)) return result;
   return { ...result, costs: [{ currency: price.currency, amount }], apiEquivalentUsd: price.currency === 'USD' ? amount : null, pricedTokens: result.billableTokens, coverage: result.billableTokens > 0 ? 1 : null };
+}
+
+/** 复用原请求计价器拆分费用；逐请求使用冻结费率，不按总 Token 比例分摊。 */
+export function splitEstimatedUsageCosts(usage: TokenUsageBreakdown, estimate: CodexUsageEstimate): UsageCostBreakdown {
+  /** 请求级账本优先逐笔拆分，旧账本使用自身保存的整轮费率。 */
+  const requests = estimate.requests?.length ? estimate.requests : [{ usage, estimate }];
+  /** 输入与输出分别保留原币金额，最后再按币种合并。 */
+  const inputEstimates: CodexUsageEstimate[] = [];
+  /** 输出只包含输出用量，避免缓存费用重复计算。 */
+  const outputEstimates: CodexUsageEstimate[] = [];
+  /** 任一请求缺少输入计价依据时，已知部分仍展示但不冒充完整费用。 */
+  let inputCostComplete = true;
+  /** 输出完整性独立于输入缓存费率是否缺失。 */
+  let outputCostComplete = true;
+  /** 每条请求独立保留当时的用量和费率。 */
+  for (const request of requests) {
+    /** 总量计价已选定档位，拆分时保留原档位，不重新匹配输入量区间。 */
+    const snapshot = request.estimate.rateSnapshot;
+    if (
+      !snapshot ||
+      snapshot.price?.perRequest != null ||
+      Object.values(request.usage).some((value) => !Number.isFinite(value) || value < 0) ||
+      request.usage.cachedInputTokens + request.usage.cacheWriteInputTokens > request.usage.inputTokens
+    ) {
+      // 按次费用、缺少快照和矛盾用量均无法可靠拆分，不将同一费用重复归到两侧。
+      inputCostComplete = false;
+      outputCostComplete = false;
+      continue;
+    }
+    /** 输入保留缓存分类，输出清零；价格仍来自原请求。 */
+    const input = estimateModelUsageWithSnapshot({ ...request.usage, totalTokens: request.usage.inputTokens, outputTokens: 0, reasoningOutputTokens: 0 }, snapshot);
+    /** 输出保留原统计量，输入及其缓存分类清零。 */
+    const output = estimateModelUsageWithSnapshot({ ...request.usage, totalTokens: request.usage.outputTokens, inputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 0 }, snapshot);
+    inputEstimates.push(input);
+    outputEstimates.push(output);
+    inputCostComplete &&= sumEstimatedCosts([input]).length > 0;
+    outputCostComplete &&= sumEstimatedCosts([output]).length > 0;
+  }
+  return { inputCosts: sumEstimatedCosts(inputEstimates), outputCosts: sumEstimatedCosts(outputEstimates), inputCostComplete, outputCostComplete };
 }
 
 /** 按币种分别汇总；历史美元记录只补入一次。 */

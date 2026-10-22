@@ -2863,44 +2863,6 @@ a {
   }
 }
 
-/* 项目折叠箭头只改变图标明暗，整行已有悬停反馈，不再叠加窄矩形按钮底色。 */
-.macos-ai-app .project-first-sidebar .project-disclosure-button {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: 5px;
-  color: var(--zeus-project-menu-muted);
-  display: flex;
-  height: 28px;
-  justify-content: center;
-  padding: 0;
-  width: 28px;
-}
-.project-disclosure-button span {
-  align-items: center;
-  display: inline-flex;
-  justify-content: center;
-  line-height: 1;
-  transform: rotate(0);
-  transition: transform 120ms ease;
-}
-.project-disclosure-button span > svg {
-  block-size: 14px;
-  display: block;
-  flex: 0 0 auto;
-  inline-size: 14px;
-}
-.project-disclosure-button[aria-expanded='true'] span {
-  transform: rotate(90deg);
-}
-.macos-ai-app .project-first-sidebar .project-disclosure-button:hover:not(:disabled):not([aria-disabled='true']) {
-  background: transparent;
-  color: var(--zeus-product-text);
-}
-.project-disclosure-button:focus-visible {
-  box-shadow: var(--zeus-control-focus);
-  outline: 0;
-}
 /* 项目与会话共用层级尺寸，主题文件只引用这些值，不再覆盖会话缩进。 */
 .macos-ai-app.zeus-shell .project-first-sidebar {
   /* 项目文件夹图标尺寸。 */
@@ -4498,7 +4460,6 @@ a {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .project-disclosure-button span,
   .project-git-spinner,
   .project-git-inspector-loading svg {
     animation: none;
@@ -9805,8 +9766,8 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   min-block-size: 28px;
 }
 
-.macos-ai-app .project-first-sidebar button:not(.project-disclosure-button):hover:not(:disabled):not([aria-disabled='true']),
-.macos-ai-app .project-first-sidebar button:not(.project-disclosure-button):focus-visible {
+.macos-ai-app .project-first-sidebar button:hover:not(:disabled):not([aria-disabled='true']),
+.macos-ai-app .project-first-sidebar button:focus-visible {
   background: var(--zeus-native-row-hover);
   border-color: var(--zeus-product-line-soft);
 }
@@ -12101,19 +12062,6 @@ html[data-zeus-theme='dark'] .startup-failure-shell {
   block-size: 16px;
   inline-size: 16px;
   stroke-width: 1.42;
-}
-
-/* 项目标题沿用快捷导航的字形和颜色，只增加末尾的折叠状态列。 */
-.macos-ai-app.zeus-shell .project-first-sidebar .codex-source-list-quick-actions .project-sidebar-group-toggle {
-  grid-template-columns: 22px minmax(0, 1fr) 16px;
-}
-.project-sidebar-group-caret {
-  inline-size: 14px;
-  block-size: 14px;
-  justify-self: end;
-}
-.project-sidebar-group-toggle[aria-expanded='true'] .project-sidebar-group-caret {
-  transform: rotate(90deg);
 }
 
 .macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-heading {
@@ -20833,7 +20781,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
   }
 }
 
-/* 分组按钮铺满导航行，独立操作位于文字和最右侧箭头之间，避免嵌套按钮。 */
+/* 分组按钮铺满导航行，右侧独立操作覆盖按钮空白，避免嵌套按钮。 */
 .project-sidebar-group-header {
   position: relative;
 }
@@ -20842,7 +20790,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .native-switch-input {
 }
 .macos-ai-app.zeus-shell .project-first-sidebar .project-sidebar-group-header .project-sidebar-heading-actions {
   position: absolute;
-  inset-inline-end: 22px;
+  inset-inline-end: 0;
   inset-block-start: 0;
 }
 

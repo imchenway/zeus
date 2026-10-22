@@ -1376,8 +1376,14 @@ function MessageTurnUsage(props: { language: SessionUiLanguage; usage: Conversat
   const cost = props.usage.costs.length ? formatRuntimeCosts(props.usage.costs, props.language) : null;
   /** 共享提示支持换行，按账本口径分别列出本轮输入与输出。 */
   const tokenLabel = `${zh ? '本轮消耗' : 'Turn usage'} ${tokens.exact} Token${props.usage.usageComplete ? '' : partial}\n${zh ? '输入' : 'Input'} ${formatTokenCount(props.usage.inputTokens, props.language).exact} Token\n${zh ? '输出' : 'Output'} ${formatTokenCount(props.usage.outputTokens, props.language).exact} Token`;
-  /** 缺价与部分费用独立说明，不能用零金额掩盖。 */
-  const costLabel = `${zh ? '本轮费用' : 'Turn cost'} ${cost ? `${cost}${props.usage.costComplete ? '' : partial}` : zh ? '暂无价格' : 'Price unavailable'}`;
+  /** 缺少拆分依据时明确显示暂无明细，与真实零费用区分。 */
+  const unavailableBreakdown = zh ? '暂无明细' : 'Breakdown unavailable';
+  /** 输入费用包含缓存读取与写入，沿用账本逐请求价格快照。 */
+  const inputCost = props.usage.inputCosts?.length ? `${formatRuntimeCosts(props.usage.inputCosts, props.language)}${props.usage.inputCostComplete ? '' : partial}` : unavailableBreakdown;
+  /** 输出费用单独展示，输入侧缺价不影响输出侧的完整性。 */
+  const outputCost = props.usage.outputCosts?.length ? `${formatRuntimeCosts(props.usage.outputCosts, props.language)}${props.usage.outputCostComplete ? '' : partial}` : unavailableBreakdown;
+  /** 费用与 Token 使用同一三行提示结构；总费用继续保留缺价和部分标识。 */
+  const costLabel = `${zh ? '本轮费用' : 'Turn cost'} ${cost ? `${cost}${props.usage.costComplete ? '' : partial}` : zh ? '暂无价格' : 'Price unavailable'}\n${zh ? '输入' : 'Input'} ${inputCost}\n${zh ? '输出' : 'Output'} ${outputCost}`;
   return (
     <div className="session-message-turn-usage">
       <span role="group" aria-label={tokenLabel} data-icon-tooltip={tokenLabel} tabIndex={0}>

@@ -2382,7 +2382,8 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         assistantLabel={options.props.assistantLabel}
         isLatest={options.activityPresentation === 'detail' && row.item.key === options.items[options.items.length - 1]?.key && !options.showThinking}
         animateEntrance={options.enteringItemIds.has(row.item.key)}
-        showAssistantActions={options.activityPresentation === 'detail' && isFinalAnswerItem(row.item) && !options.showThinking}
+        // 最终回复的底栏只按自身内容类型显示，新一轮运行状态不能隐藏历史回复的时间与用量。
+        showAssistantActions={options.activityPresentation === 'detail' && isFinalAnswerItem(row.item)}
         isLatestUser={row.item.key === options.lastUserKey}
         motionActive={row.item.key === options.motionFocus?.itemKey}
         onEdit={options.props.onEditUserItem}
