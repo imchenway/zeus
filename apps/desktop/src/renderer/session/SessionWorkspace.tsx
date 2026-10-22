@@ -98,7 +98,6 @@ import { createConversationComposerStateSelector, createConversationQueueStateSe
 import { createSessionEscapeController, type SessionEscapeController, type SessionEscapeLayer, type SessionEscapeResult } from './useThreadScrollController.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { ConversationMarkdown } from './ConversationMarkdown.js';
-import { autosizeTextarea } from './textareaAutosize.js';
 import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
 import { conversationAttachmentIdentity, ConversationComposerAttachments } from './ConversationComposerAttachments.js';
 import { useInputSuggestion } from './useInputSuggestion.js';
@@ -3631,20 +3630,6 @@ export function NewConversationComposer(props: {
       ...(currentPreference?.workspaceMode ? { workspaceMode: currentPreference.workspaceMode } : {}),
     });
   }, [collaborationMode, permissionMode, props.owner, selectedEffort, selectedModel, serviceTierSelection]);
-
-  useLayoutEffect(() => {
-    if (textareaRef.current instanceof HTMLTextAreaElement) autosizeTextarea(textareaRef.current);
-  }, [content, goalInputActive, goalObjective]);
-
-  useEffect(() => {
-    const textarea = textareaRef.current;
-    if (!(textarea instanceof HTMLTextAreaElement)) return;
-    const view = textarea.ownerDocument.defaultView;
-    if (!textarea || !view) return;
-    const resize = () => autosizeTextarea(textarea);
-    view.addEventListener('resize', resize);
-    return () => view.removeEventListener('resize', resize);
-  }, []);
 
   async function submit(overrides: { content?: string; goalObjective?: string } = {}): Promise<void> {
     // 键盘提交也需等待导入完成，避免附件落回已发送的草稿。

@@ -1,4 +1,4 @@
-import { type CSSProperties, type KeyboardEvent, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ArrowRightIcon as ArrowRight } from '@phosphor-icons/react/dist/csr/ArrowRight';
 import { CheckIcon as Check } from '@phosphor-icons/react/dist/csr/Check';
 import { CaretDownIcon as CaretDown } from '@phosphor-icons/react/dist/csr/CaretDown';
@@ -15,7 +15,6 @@ import { FullAccessConfirmation } from './PermissionModeControl.js';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import type { NativeConversationAttachment, NativePendingRequest, NativePermissionMode } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
-import { autosizeTextarea } from './textareaAutosize.js';
 import { conversationAttachmentIdentity, ConversationComposerAttachments } from './ConversationComposerAttachments.js';
 import { useConversationInputResources } from './useConversationInputResources.js';
 
@@ -729,11 +728,6 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
   useEffect(() => {
     persistRuiDraft(props.request.id, props.questions, answers, otherAnswers, answerAttachments);
   }, [answerAttachments, answers, otherAnswers, props.questions, props.request.id]);
-
-  useLayoutEffect(() => {
-    if (currentQuestion.secret || !(otherAnswerRef.current instanceof HTMLTextAreaElement)) return;
-    autosizeTextarea(otherAnswerRef.current, 30, 0.24);
-  }, [currentOtherAnswer, currentQuestion.id, currentQuestion.secret]);
 
   useEffect(() => {
     window.zeus?.notifySensitiveRequestDraft?.({ requestId: props.request.id, present: hasSensitiveDraft });

@@ -14,7 +14,6 @@ import { useQueuedMessageReorder, type ReorderQueuedMessages } from './useQueued
 import type { NativeConversationAttachment, NativeQueuedSubmission, NativeSessionState } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { useConversationInputResources } from './useConversationInputResources.js';
-import { autosizeTextarea } from './textareaAutosize.js';
 import { formatAsyncQuestionAnswer } from '@zeus/shared';
 
 /** 输入框上方排队卡片所需的权威操作。 */
@@ -367,9 +366,6 @@ function QueuedMessageEditor(props: {
   useLayoutEffect(() => {
     textareaRef.current?.focus();
   }, []);
-  useLayoutEffect(() => {
-    if (textareaRef.current) autosizeTextarea(textareaRef.current, 42, 0.34);
-  }, [draft]);
 
   /** 表单和快捷键使用同一保存门禁。 */
   function submit(event: FormEvent<HTMLFormElement>): void {

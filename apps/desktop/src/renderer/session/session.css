@@ -1100,6 +1100,8 @@
 }
 
 .session-codex-parity-v1 .session-queued-message-editor textarea {
+  /* 原生内容测量保留编辑区高度，不在输入时临时收缩外层滚动区域。 */
+  field-sizing: content;
   appearance: none;
   background: var(--session-canvas);
   border: 1px solid var(--session-line-soft);
@@ -5004,6 +5006,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .session-thread-item-user .session-user-message-editor > textarea {
+  /* 历史消息编辑随内容伸缩，达到原有高度上限后在输入框内滚动。 */
+  field-sizing: content;
   appearance: none;
   background: transparent;
   border: 0;
@@ -6615,6 +6619,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 }
 
 .session-codex-parity-v1 .session-composer-input-frame > textarea {
+  /* 新会话与已有会话的目标输入共用原生自适应高度。 */
+  field-sizing: content;
   appearance: none;
   background: transparent !important;
   border: 0 !important;
@@ -6624,7 +6630,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   max-block-size: 34vh;
   min-block-size: 48px;
   outline: 0;
-  overflow-y: hidden;
+  overflow-y: auto;
   padding: 4px 5px;
   resize: none;
 }
@@ -10029,6 +10035,9 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 
 .session-codex-parity-v1 .session-rui-request .session-question-answer-editor > textarea,
 .session-codex-parity-v1 .session-rui-request .session-question-freeform-editor > textarea.session-question-freeform {
+  /* 同步、异步提问的自定义回答与自由回答共用内容测量，避免输入法期间反复归零高度。 */
+  field-sizing: content;
+  max-block-size: max(30px, 24vh);
   background: transparent;
   border: 0;
   box-shadow: none;
@@ -10048,8 +10057,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
 .session-codex-parity-v1 .session-rui-request .session-question-freeform-editor > textarea {
   /* 按实际内容撑高并与行尾按钮居中，长答案限制高度后滚动。 */
   align-self: center;
-  field-sizing: content;
-  max-block-size: max(30px, 24vh);
   grid-column: 1;
   grid-row: 1;
 }
@@ -11518,7 +11525,8 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 }
 
 .session-codex-parity-v1 .session-composer-input-frame > textarea {
-  min-block-size: 42px;
+  /* 保持原自动测量函数为目标输入设置的最小高度。 */
+  min-block-size: 48px;
 }
 
 .session-codex-parity-v1 .session-composer-command-row {

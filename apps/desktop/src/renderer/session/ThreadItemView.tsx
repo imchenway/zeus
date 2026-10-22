@@ -2,14 +2,13 @@ import { BrowserCommentPreview } from './BrowserCommentPreview.js';
 import type { ConversationTurnUsage, ZeusBrowserComment } from '@zeus/shared';
 import { formatRuntimeCosts, formatTokenCount } from './tokenUsageFormat.js';
 import { AnimatedSize } from '../ui/AnimatedSize.js';
-import { type FormEvent, type KeyboardEvent, memo, type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type FormEvent, type KeyboardEvent, memo, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { ArrowBendUpRightIcon as ArrowBendUpRight } from '@phosphor-icons/react/dist/csr/ArrowBendUpRight';
 import { ClockIcon as Clock } from '@phosphor-icons/react/dist/csr/Clock';
 import { TrashIcon as Trash } from '@phosphor-icons/react/dist/csr/Trash';
 import { TerminalWindowIcon as TerminalWindow } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import { MessageCheckIcon, MessageCopyIcon, MessageCostIcon, MessageEditIcon, MessageExpandIcon, MessageRemoteDeviceIcon, MessageThumbIcon, MessageTokenIcon } from './SessionMessageIcons.js';
 import { isAssistantDeliverableItem, type NativeConversationAttachment, type NativeSessionItemBuffer } from './sessionTypes.js';
-import { autosizeTextarea } from './textareaAutosize.js';
 import {
   type ConversationContextDraft,
   type ConversationFileLocation,
@@ -571,11 +570,6 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
     if (!needsAuthoritativeAttachmentResources || !props.onLoadResources) return;
     void Promise.resolve(props.onLoadResources(props.item.turnId)).catch(() => undefined);
   }, [needsAuthoritativeAttachmentResources, props.item.turnId, props.onLoadResources]);
-
-  useLayoutEffect(() => {
-    if (!editing || !editTextareaRef.current) return;
-    autosizeTextarea(editTextareaRef.current, 72, 0.48);
-  }, [editDraft, editing]);
 
   // 本地消息交给 Provider 后沿用显示身份，不能只因原生条目编号变化就重置正文。
   useEffect(() => setMarkdownSettled(false), [itemText, props.item.key, props.item.status]);
