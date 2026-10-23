@@ -1,6 +1,6 @@
 import { registerFilePreview } from './filePreview.js';
 import { getApplicationIcon } from './applicationIcon.js';
-import { filePreviewMime, filePreviewKind, filePreviewLimits, type FilePreviewIntent, type FilePreviewRequest, type FilePreviewSourceWorkspace } from '@zeus/shared';
+import { describeUserFacingError, filePreviewMime, filePreviewKind, filePreviewLimits, type FilePreviewIntent, type FilePreviewRequest, type FilePreviewSourceWorkspace } from '@zeus/shared';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, protocol, screen, session, shell, Tray } from 'electron';
 import { execFile as execFileCallback, spawn } from 'node:child_process';
 import { constants as fsConstants, existsSync, type FSWatcher, mkdtempSync } from 'node:fs';
@@ -68,7 +68,7 @@ import {
 } from './conversationInputResources.js';
 import { cleanupStaleReleaseBackups, createReleaseUpdateService, type ReleaseUpdateService } from './releaseUpdateService.js';
 import { completeWindowsReleaseInstall } from './windowsReleaseInstaller.js';
-import { windowsSecurityRequestAsync } from '@zeus/storage/platform-security';
+import { publishFile, windowsSecurityRequestAsync } from '@zeus/storage/platform-security';
 import { businessProcessEnvironment, runWindowsRuntimeHelper } from '@zeus/ai-runtime';
 import { createHomebrewUpdateService } from './homebrewUpdateService.js';
 import { createHomebrewUpdateController, type HomebrewUpdateController, type HomebrewUpdateIndicatorState } from './homebrewUpdateController.js';
@@ -1287,7 +1287,7 @@ function setupMenu(): void {
           void openSettingsFromMenu();
         },
         checkForUpdates: () => {
-          void checkForUpdatesFromMenu();
+          void checkForUpdatesFromMenu().catch(showUpdateOpenFailure);
         },
         recoverUpdate:
           process.platform === 'win32'
@@ -1360,7 +1360,16 @@ async function openSettingsFromMenuBarUsage(category: 'usage' | 'runtime'): Prom
   await mainWindow?.webContents.executeJavaScript(`globalThis.location.hash = "#settings-${category}";`, true).catch(() => undefined);
 }
 
-/** 从 macOS 原生菜单触发真实更新检查；结果、预取和重启决策全部留在非阻断原生窗口。 */
+/** 菜单与工作区共用系统错误提示，更新窗口未能打开时仍能看到失败原因。 */
+function showUpdateOpenFailure(error: unknown): { opened: false } {
+  /** 共用错误说明负责脱敏，并保留结果未知时不得自动重试的语义。 */
+  const failure = describeUserFacingError(error, appShellSettings.appLanguage);
+  console.warn('Zeus 无法打开更新窗口。', failure.details);
+  dialog.showErrorBox(appShellSettings.appLanguage === 'zh-CN' ? '无法检查更新' : 'Unable to Check for Updates', failure.message);
+  return { opened: false };
+}
+
+/** 两端原生菜单共用真实更新检查；结果、预取和重启决策留在原生窗口。 */
 async function checkForUpdatesFromMenu(): Promise<void> {
   const envelope = createSystemMainCommandEnvelope('desktop.automatic_update.menu_check', 'desktop-update');
   await activeMainCommandLedger().execute({ envelope, body: null }, 'desktop.automatic_update.menu_check', async (_body, command) => {
@@ -2509,12 +2518,14 @@ function setupIpc(): void {
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('Automatic update open request came from an untrusted window.');
     await auxiliaryServicesReady;
     const controller = homebrewUpdateController;
-    const result = await activeMainCommandLedger().execute(request, 'desktop.automatic_update.open', async (_body, command) => {
-      if (!controller) throw new Error('Automatic update controller is unavailable.');
-      await command.markWriteStarted();
-      await controller.showOrCheck();
-      return { opened: true, externalOperationId: command.externalOperationId };
-    });
+    const result = await activeMainCommandLedger()
+      .execute(request, 'desktop.automatic_update.open', async (_body, command) => {
+        if (!controller) throw new Error('Automatic update controller is unavailable.');
+        await command.markWriteStarted();
+        await controller.showOrCheck();
+        return { opened: true, externalOperationId: command.externalOperationId };
+      })
+      .catch(showUpdateOpenFailure);
     return result;
   });
   ipcMain.handle('zeus:automatic-update-indicator:record-manual-check', async (event, request: MainCommandRequest) => {
@@ -3526,8 +3537,9 @@ function taskCommandResourceKey(commandId: string): string {
   return `command-${createHash('sha256').update(commandId).digest('hex').slice(0, 24)}`;
 }
 
+/** Windows 刷新文件要求可写句柄；调用前已收紧暂存副本权限并清除只读属性。 */
 async function syncFile(path: string): Promise<void> {
-  const handle = await open(path, 'r');
+  const handle = await open(path, process.platform === 'win32' ? 'r+' : 'r');
   try {
     await handle.sync();
   } finally {
@@ -3544,14 +3556,21 @@ async function syncDirectory(path: string): Promise<void> {
   }
 }
 
+/** 两端均以不覆盖方式发布，Windows 交给写穿透移动完成。 */
 async function publishTaskResourceFile(staging: string, destination: string, parentDirectory: string): Promise<void> {
+  if (process.platform === 'win32') return publishFile(staging, destination, { replace: false });
   // 同一目录 hard-link 发布是原子 no-replace；不会覆盖检查后被并发创建的目标。
   await link(staging, destination);
   await unlink(staging);
   await syncDirectory(parentDirectory);
 }
 
+/** Windows 原生移动支持目录不覆盖发布，POSIX 保留同目录 claim 协议。 */
 async function publishTaskResourceDirectory(staging: string, destination: string, parentDirectory: string): Promise<void> {
+  if (process.platform === 'win32') {
+    await windowsSecurityRequestAsync({ operation: 'move-entry', source: staging, target: destination });
+    return;
+  }
   // Node 没有暴露 renameat2(RENAME_NOREPLACE)。以同目录 O_EXCL claim 串行化协作写者，
   // 在 claim 内再次核对目标不存在，再原子 rename 发布完整目录树。
   const claimPath = join(parentDirectory, `.${basename(destination)}.cas-lock`);
@@ -3582,6 +3601,7 @@ async function publishTaskResourceDirectory(staging: string, destination: string
   }
 }
 
+/** 私有暂存树按平台收紧权限并刷新文件，Windows 目录由最终写穿透移动发布。 */
 async function hardenAndSyncTaskResourceTree(root: string): Promise<void> {
   const directories = [root];
   const pending = [root];
@@ -3589,6 +3609,7 @@ async function hardenAndSyncTaskResourceTree(root: string): Promise<void> {
     const directory = pending.pop();
     if (!directory) continue;
     await chmod(directory, 0o700);
+    if (process.platform === 'win32') await windowsSecurityRequestAsync({ operation: 'ensure-private', path: directory, kind: 'directory' });
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
       const entryStat = await lstat(path);
@@ -3598,13 +3619,14 @@ async function hardenAndSyncTaskResourceTree(root: string): Promise<void> {
         pending.push(path);
       } else if (entryStat.isFile()) {
         await chmod(path, 0o600);
+        if (process.platform === 'win32') await windowsSecurityRequestAsync({ operation: 'ensure-private', path, kind: 'file' });
         await syncFile(path);
       } else {
         throw new Error('Task attachment staging tree contains an unsupported entry.');
       }
     }
   }
-  for (const directory of directories.reverse()) await syncDirectory(directory);
+  if (process.platform !== 'win32') for (const directory of directories.reverse()) await syncDirectory(directory);
 }
 
 async function saveTaskResourcePaths(paths: string[], commandId: string): Promise<TaskStoredResource[]> {
@@ -4069,7 +4091,7 @@ async function initializeApplication(): Promise<void> {
                 title: appShellSettings.appLanguage === 'zh-CN' ? 'Zeus 更新已下载' : 'Zeus Update Downloaded',
                 body: appShellSettings.appLanguage === 'zh-CN' ? `Zeus ${latestVersion} 已下载。重启后可安装更新。` : `Zeus ${latestVersion} is downloaded. Restart to install the update.`,
               });
-              notification.on('click', showProgress);
+              notification.on('click', () => void showProgress().catch(showUpdateOpenFailure));
               notification.show();
               return true;
             },

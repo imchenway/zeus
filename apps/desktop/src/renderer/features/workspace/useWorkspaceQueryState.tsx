@@ -636,7 +636,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
         automaticInstallEnabled: false,
         recommendedAction: 'open_download_page',
         label: '暂未检查更新',
-        reason: '点击检查更新后读取 GitHub Release 发布清单；实际升级由 macOS 原生 Homebrew 更新窗口承载。',
+        reason: '点击检查更新后读取 GitHub Release 发布清单；实际升级由当前系统的原生更新窗口承载。',
         checkedAt: '',
       },
   );

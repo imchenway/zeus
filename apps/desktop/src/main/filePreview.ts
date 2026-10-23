@@ -1,5 +1,6 @@
 import { activeSystemWindow } from './systemWindows.js';
-import { BrowserWindow, dialog, ipcMain, protocol, shell } from 'electron';
+import { openRegularFileNoFollow } from '@zeus/storage/platform-security';
+import { BrowserWindow, dialog, ipcMain, nativeImage, protocol, shell } from 'electron';
 import { execFile, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants, createReadStream, createWriteStream } from 'node:fs';
@@ -202,7 +203,7 @@ export function registerFilePreview(services: {
       if (request.method === 'HEAD' || !size) return new Response(null, { status: range ? 206 : 200, headers });
       if (grant.image) return new Response(new Uint8Array(grant.image.subarray(start, end + 1)), { status: range ? 206 : 200, headers });
       /** 本次读取拥有的文件句柄。 */
-      const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+      const handle = await openRegularFileNoFollow(path, constants.O_RDONLY);
       /** 已打开文件的身份信息。 */
       const opened = await handle.stat();
       if (`${opened.dev}:${opened.ino}:${opened.size}:${opened.mtimeMs}:${opened.ctimeMs}` !== grant.identity) {
@@ -331,9 +332,23 @@ export function registerFilePreview(services: {
               await handle.close();
             }
           }
-          if (convertImage && process.platform !== 'darwin') {
-            item.kind = 'system';
-            item.reason = '请用系统应用打开此图片格式。';
+          if (convertImage && process.platform === 'win32' && item.byteLength <= filePreviewLimits.image) {
+            try {
+              /** Windows 使用已安装的系统缩略图解码器，不把通用文件图标当作图片正文。 */
+              const thumbnail = await nativeImage.createThumbnailFromPath(previewPath, { width: 1024, height: 1024 });
+              if (thumbnail.isEmpty()) throw new Error('系统未返回图片内容。');
+              /** Windows 只按宽度缩放，长图在编码前再限制两边尺寸。 */
+              const size = thumbnail.getSize();
+              /** 保留原图比例，避免长图占用无界 PNG 缓冲区。 */
+              const scale = Math.min(1, 1024 / Math.max(size.width, size.height));
+              image = (scale < 1 ? thumbnail.resize({ width: Math.max(1, Math.round(size.width * scale)), height: Math.max(1, Math.round(size.height * scale)) }) : thumbnail).toPNG();
+              if (image.byteLength > filePreviewLimits.image) throw new Error('解码图片超过预览上限。');
+              item.kind = 'image';
+            } catch {
+              image = undefined;
+              item.kind = 'system';
+              item.reason = 'Windows 无法解码此图片，请用系统应用打开原文件。';
+            }
           }
           if (item.kind === 'image' && item.byteLength > filePreviewLimits.image) {
             item.kind = 'system';

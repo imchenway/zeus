@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { open, realpath, stat } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
+import { openRegularFileNoFollow } from '@zeus/storage/platform-security';
 import { extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { filePreviewLimits, filePreviewMime, projectSourcePreviewKind, type ProjectSourcePreviewGrant, type ProjectSourcePreviewRequest } from '@zeus/shared';
 
@@ -110,7 +111,7 @@ export class ProjectSourcePreviewService {
         const expected = await stat(path);
         if (expected.size > filePreviewLimits.image) return new Response(null, { status: 413 });
         /** 不跟随最后一级被替换的符号链接。 */
-        const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+        const handle = await openRegularFileNoFollow(path, constants.O_RDONLY);
         try {
           /** 打开后的真实文件身份。 */
           const actual = await handle.stat();

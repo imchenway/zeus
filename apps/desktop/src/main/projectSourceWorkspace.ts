@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, watch, type FSWatcher } from 'node:fs';
-import { access, lstat, mkdir, open, opendir, readFile, realpath, rename, stat, unlink } from 'node:fs/promises';
+import { access, lstat, mkdir, open, opendir, readFile, realpath, rename, rmdir, stat, unlink } from 'node:fs/promises';
+import { assertWindowsPortablePath, publishFile, windowsSecurityRequestAsync } from '@zeus/storage/platform-security';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { detectSourceLanguage } from '@zeus/shared';
 import { filePreviewMime, filePreviewKind, filePreviewLimits } from '@zeus/shared';
@@ -294,13 +295,7 @@ export class ProjectSourceWorkspaceService {
       await temporary.close();
     }
     try {
-      await rename(temporaryPath, target.absolutePath);
-      const parentDirectory = await open(dirname(target.absolutePath), 'r');
-      try {
-        await parentDirectory.sync();
-      } finally {
-        await parentDirectory.close();
-      }
+      await publishFile(temporaryPath, target.absolutePath, { replace: true });
     } catch (error) {
       await unlink(temporaryPath).catch(() => undefined);
       throw error;
@@ -317,6 +312,26 @@ export class ProjectSourceWorkspaceService {
     const absolutePath = resolveLexicalPath(root, relativePath);
     await assertMissing(absolutePath);
     await beforeWrite?.();
+    if (process.platform === 'win32') {
+      /** 同目录候选先创建，再原生不覆盖发布；目录不能用文件句柄 fsync。 */
+      const temporaryPath = join(parent.absolutePath, `.${randomUUID()}.zeus-tmp`);
+      try {
+        if (input.kind === 'directory') {
+          await mkdir(temporaryPath);
+          await windowsSecurityRequestAsync({ operation: 'move-entry', source: temporaryPath, target: absolutePath });
+        } else {
+          /** 独占候选文件，不接触任何已有目标。 */
+          const handle = await open(temporaryPath, 'wx', 0o644);
+          await handle.close();
+          await publishFile(temporaryPath, absolutePath, { replace: false });
+        }
+      } finally {
+        await (input.kind === 'directory' ? rmdir(temporaryPath) : unlink(temporaryPath)).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== 'ENOENT') throw error;
+        });
+      }
+      return describeEntry(root, relativePath);
+    }
     if (input.kind === 'directory') {
       await mkdir(absolutePath, { mode: 0o755 });
       await syncDirectory(absolutePath);
@@ -347,6 +362,10 @@ export class ProjectSourceWorkspaceService {
     const targetAbsolutePath = resolveLexicalPath(root, targetRelativePath);
     await assertMissing(targetAbsolutePath);
     await beforeWrite?.();
+    if (process.platform === 'win32') {
+      await windowsSecurityRequestAsync({ operation: 'move-entry', source: source.absolutePath, target: targetAbsolutePath });
+      return describeEntry(root, targetRelativePath);
+    }
     await rename(source.absolutePath, targetAbsolutePath);
     await syncDirectory(dirname(source.absolutePath));
     if (dirname(source.absolutePath) !== dirname(targetAbsolutePath)) await syncDirectory(dirname(targetAbsolutePath));
@@ -443,16 +462,21 @@ function normalizeRelativePath(value: string): string {
   return normalized;
 }
 
+/** Windows 路径必须能无损表示，大小写别名也不能访问 Git 元数据。 */
 function assertSafeRelativePath(value: string, allowRoot: boolean): void {
   if ((!allowRoot && !value) || value.includes('\0') || isAbsolute(value)) throw workspaceError('ZEUS_PROJECT_SOURCE_PATH_INVALID', '项目文件路径无效。');
+  if (value && process.platform === 'win32') assertWindowsPortablePath(value);
   const segments = value.split('/').filter(Boolean);
-  if (segments.some((segment) => segment === '..' || segment === '.' || segment === '.git')) throw workspaceError('ZEUS_PROJECT_SOURCE_PATH_FORBIDDEN', '.git 和项目外路径不允许访问。');
+  if (segments.some((segment) => segment === '..' || segment === '.' || (process.platform === 'win32' ? segment.toLowerCase() : segment) === '.git'))
+    throw workspaceError('ZEUS_PROJECT_SOURCE_PATH_FORBIDDEN', '.git 和项目外路径不允许访问。');
 }
 
+/** 创建与重命名共用名称校验，写入前拒绝 Windows 设备名、ADS 和末尾折叠字符。 */
 function validateEntryName(name: string): void {
-  if (!name || name === '.' || name === '..' || name === '.git' || name.includes('/') || name.includes('\\') || name.includes('\0') || name.length > 255) {
+  if (!name || name === '.' || name === '..' || (process.platform === 'win32' ? name.toLowerCase() : name) === '.git' || name.includes('/') || name.includes('\\') || name.includes('\0') || name.length > 255) {
     throw workspaceError('ZEUS_PROJECT_SOURCE_NAME_INVALID', '文件或目录名称无效。');
   }
+  if (process.platform === 'win32') assertWindowsPortablePath(name);
 }
 
 async function describeEntry(root: string, relativePath: string): Promise<ProjectSourceEntry> {

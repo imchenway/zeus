@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants as fsConstants, createReadStream } from 'node:fs';
-import { chmod, copyFile, link, lstat, mkdir, open, realpath, stat, unlink } from 'node:fs/promises';
+import { chmod, copyFile, lstat, mkdir, open, realpath, stat, unlink } from 'node:fs/promises';
+import { publishFile, windowsSecurityRequestAsync } from '@zeus/storage/platform-security';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { ConversationRepository, ZeusConversationRecord, ZeusDatabase } from '@zeus/storage';
 
@@ -195,6 +196,7 @@ async function prepareTargetDirectory(targetPath: string, targetSessions: string
   const targetDirectory = dirname(targetPath);
   if (!isPathInsideRoot(targetDirectory, targetSessions)) throw new ThreadMigrationSkipError('target_directory_unsafe');
   await mkdir(targetDirectory, { recursive: true, mode: 0o700 });
+  if (process.platform === 'win32') await windowsSecurityRequestAsync({ operation: 'ensure-private', path: targetDirectory, kind: 'directory' });
   const canonicalDirectory = await realpath(targetDirectory);
   if (!isPathInsideRoot(canonicalDirectory, targetSessions)) throw new ThreadMigrationSkipError('target_directory_unsafe');
   return canonicalDirectory;
@@ -207,24 +209,23 @@ async function copyOrAdoptThreadFile(input: { sourcePath: string; sourceSnapshot
   try {
     await copyFile(input.sourcePath, temporaryPath, fsConstants.COPYFILE_EXCL);
     await chmod(temporaryPath, 0o600);
+    if (process.platform === 'win32') await windowsSecurityRequestAsync({ operation: 'ensure-private', path: temporaryPath, kind: 'file' });
     await verifyThreadIdentity(temporaryPath, input.providerThreadId, 'target');
     const [sourceSha256, temporarySha256] = await Promise.all([sha256File(input.sourcePath), sha256File(temporaryPath)]);
     if (!(await matchesFileSnapshot(input.sourcePath, input.sourceSnapshot))) {
       throw new ThreadMigrationSkipError('source_changed_during_copy');
     }
     if (sourceSha256 !== temporarySha256) throw new ThreadMigrationSkipError('target_content_conflict');
-    await syncFile(temporaryPath);
     if (!(await matchesFileSnapshot(input.sourcePath, input.sourceSnapshot))) {
       throw new ThreadMigrationSkipError('source_changed_during_copy');
     }
     try {
-      // 硬链接发布不会覆盖并发创建的目标；临时文件随后删除，目标仍是完整独立入口。
-      await link(temporaryPath, input.targetPath);
+      // 同卷持久发布不覆盖并发创建的目标，Windows 使用原生写穿透移动。
+      await publishFile(temporaryPath, input.targetPath, { replace: false });
     } catch (error) {
       if (errorCode(error) !== 'EEXIST') throw error;
       return await verifyExistingTarget(input);
     }
-    await syncDirectory(dirname(input.targetPath));
     return { result: 'copied', sha256: sourceSha256 };
   } finally {
     await unlink(temporaryPath).catch((error: unknown) => {
@@ -298,24 +299,6 @@ async function sha256File(path: string): Promise<string> {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
   return hash.digest('hex');
-}
-
-async function syncFile(path: string): Promise<void> {
-  const handle = await open(path, 'r');
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-}
-
-async function syncDirectory(path: string): Promise<void> {
-  const handle = await open(path, 'r');
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
 }
 
 async function pathExists(path: string): Promise<boolean> {

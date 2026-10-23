@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { pathIsInside } from '@zeus/storage/platform-security';
 import { StringDecoder } from 'node:string_decoder';
 import { randomId } from './randomId.js';
 import type { CodexBootstrapAdditionalContext, PortableConversationContext, PortableHistoryEntry } from '@zeus/shared';
@@ -381,7 +382,7 @@ export class ManagedConversationToolResultStore {
     } else {
       // 仅供切换前的只读历史；所有新写入都必须包含 ArtifactRef。
       const absolute = resolve(this.root, record.relativePath);
-      if (absolute !== this.root && !absolute.startsWith(`${this.root}/`)) throw toolResultError('ZEUS_CONVERSATION_TOOL_RESULT_PATH_INVALID', '工具结果路径越过了 Zeus 托管目录。');
+      if (!pathIsInside(absolute, this.root)) throw toolResultError('ZEUS_CONVERSATION_TOOL_RESULT_PATH_INVALID', '工具结果路径越过了 Zeus 托管目录。');
       text = await readFile(absolute, 'utf8');
       contentSha256 = createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex');
       if (contentSha256 !== record.sha256) throw toolResultError('ZEUS_CONVERSATION_TOOL_RESULT_HASH_MISMATCH', '旧工具结果完整性校验失败。');

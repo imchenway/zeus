@@ -149,13 +149,12 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
     currentHost.update(lastState);
   }
 
+  /** 后台检查也保存当前窗口状态，用户中途打开时立即显示真实检查进度。 */
   async function checkForUpdate(present: boolean, updateIndicator: boolean): Promise<DesktopReleaseUpdateStatus | null> {
     phase = 'checking';
     lastFailureStep = 'check';
-    if (present) {
-      await publish(copyFor(options.language(), 'checking', options.currentVersion));
-      (await ensureHost()).show();
-    }
+    await publish(copyFor(options.language(), 'checking', options.currentVersion));
+    if (present) (await ensureHost()).show();
     try {
       const update = await retryOperation(options.loadUpdateStatus, 2);
       currentUpdate = update;
@@ -166,7 +165,7 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
         installed = null;
         phase = 'upToDate';
         if (updateIndicator) setIndicator(idleIndicator(options.currentVersion));
-        if (present) await publish(copyFor(options.language(), 'upToDate', options.currentVersion, update));
+        if (!hidden) await publish(copyFor(options.language(), 'upToDate', options.currentVersion, update));
         return update;
       }
       if (update.status !== 'available' || !update.artifact) {
@@ -183,14 +182,14 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
       if (prepared && prepared.method === updateMethod && samePreparedUpdate(prepared, update)) {
         phase = 'ready';
         if (updateIndicator) setIndicator(indicatorForReady(options.language(), update));
-        if (present) await publish(copyFor(options.language(), 'ready', options.currentVersion, update));
+        if (!hidden) await publish(copyFor(options.language(), 'ready', options.currentVersion, update));
         return update;
       }
       prepared = null;
       installed = null;
       phase = 'available';
       if (updateIndicator) setIndicator(indicatorForAvailable(options.language(), update));
-      if (present) await publish(copyFor(options.language(), 'available', options.currentVersion, update));
+      if (!hidden) await publish(copyFor(options.language(), 'available', options.currentVersion, update));
       return update;
     } catch (error) {
       await publishFailure(error, 'check');
@@ -367,7 +366,9 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
     currentHost.show();
   }
 
+  /** 自动调度不改变正在执行的手动操作或窗口可见性。 */
   async function checkAutomatically(input?: { blockedPrepareVersion?: string | null }): Promise<boolean> {
+    if (operation) return false;
     hidden = true;
     let loaded = false;
     await runExclusive(async () => {
@@ -399,6 +400,8 @@ export function createHomebrewUpdateController(options: CreateHomebrewUpdateCont
 
   return {
     showOrCheck: () => {
+      // 手动点击先显示正在执行的任务，不能只等待隐藏的自动检查结束。
+      if (operation) return showCurrent();
       if (phase === 'preparing' || phase === 'installing' || (phase === 'available' && currentUpdate) || (phase === 'failed' && lastState?.state === 'failed')) return showCurrent();
       hidden = false;
       return runExclusive(() => checkForUpdate(true, true).then(() => undefined));

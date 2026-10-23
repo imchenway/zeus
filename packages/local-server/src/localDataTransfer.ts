@@ -1,5 +1,6 @@
 import { normalizeTaskDeadline, taskDeadlineTimes, type TaskDeadline } from '@zeus/shared';
 import { statSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 import { type CommandDefinition, isTaskAttachmentField, type TaskAttachmentField, validateCommandDefinitionInput } from '@zeus/shared';
 import { CommandDefinitionRepository, isTaskManagementStatus, isTaskType, type TaskManagementStatus, type TaskType, type ZeusDatabase } from '@zeus/storage';
 
@@ -356,12 +357,13 @@ export function isPortableCommandDefinition(value: unknown): value is CommandDef
   return validateCommandDefinitionInput(command as CommandDefinition).length === 0;
 }
 
+/** 导入路径必须是当前系统可访问的绝对目录，接纳 Windows 盘符与 UNC 路径。 */
 export function findInvalidPortableProjectPaths(snapshot: LocalDataExportSnapshot): string[] {
   const projects = Array.isArray(snapshot.data.projects) ? snapshot.data.projects.filter(isPortableProjectRecord) : [];
   const invalidPaths: string[] = [];
   for (const project of projects) {
     const localPath = project.localPath.trim();
-    if (!localPath || !localPath.startsWith('/') || localPath.includes('\0')) {
+    if (!localPath || !isAbsolute(localPath) || localPath.includes('\0')) {
       invalidPaths.push(localPath || project.id);
       continue;
     }

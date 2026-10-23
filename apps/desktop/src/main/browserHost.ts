@@ -1,7 +1,8 @@
 import { BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, type IpcMainEvent, type IpcMainInvokeEvent, type Rectangle, session, type Session, type WebContents, WebContentsView } from 'electron';
 import { randomUUID } from 'node:crypto';
+import { publishFile } from '@zeus/storage/platform-security';
 import { readFileSync } from 'node:fs';
-import { mkdir, open, readFile, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, realpath, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { serializeBrowserComments } from '@zeus/shared';
 import type {
@@ -1123,8 +1124,7 @@ export class BrowserHost implements BrowserAutomationPort {
         } finally {
           await screenshot.close();
         }
-        await rename(temporaryPath, screenshotPath);
-        await syncDirectory(this.attachmentRoot);
+        await publishFile(temporaryPath, screenshotPath, { replace: true });
         comment.screenshotPath = screenshotPath;
         comment.updatedAt = this.now();
         tab.snapshot = {
@@ -2042,8 +2042,7 @@ export class BrowserHost implements BrowserAutomationPort {
     } finally {
       await handle.close();
     }
-    await rename(temporaryPath, path);
-    await syncDirectory(directoryPath);
+    await publishFile(temporaryPath, path, { replace: true });
     return path;
   }
 
@@ -3052,8 +3051,7 @@ export class BrowserHost implements BrowserAutomationPort {
     } finally {
       await handle.close();
     }
-    await rename(temporaryPath, this.statePath);
-    await syncDirectory(directoryPath);
+    await publishFile(temporaryPath, this.statePath, { replace: true });
   }
 
   private assertWritableBrowserCapability(): void {
@@ -3078,15 +3076,6 @@ async function loadUserFacingBrowserUrl(webContents: WebContents, url: string): 
     await webContents.loadURL(url);
   } catch {
     // 浏览器页面已经展示可诊断的失败状态，Zeus 不再叠加模态遮罩。
-  }
-}
-
-async function syncDirectory(path: string): Promise<void> {
-  const handle = await open(path, 'r');
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
   }
 }
 

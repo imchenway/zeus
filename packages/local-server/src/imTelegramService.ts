@@ -738,13 +738,13 @@ export class ImTelegramService {
     if (!configuredRoot) throw imError('ZEUS_IM_CONVERSATION_ATTACHMENT_ROOT_UNAVAILABLE', '会话附件授权根不可用，已阻止生成长回复附件。', 503);
     const allowedRoot = resolve(configuredRoot);
     const directory = resolve(allowedRoot, 'im-outbound', connection.id, conversationId);
-    if (!directory.startsWith(`${allowedRoot}/`)) throw imError('ZEUS_IM_ATTACHMENT_PATH_INVALID', '长回复附件路径不在授权根内。', 500);
+    if (!isPathInside(directory, allowedRoot)) throw imError('ZEUS_IM_ATTACHMENT_PATH_INVALID', '长回复附件路径不在授权根内。', 500);
     await mkdir(directory, { recursive: true });
     const realAllowedRoot = await realpath(allowedRoot);
     const realDirectory = await realpath(directory);
     if (!isPathInside(realDirectory, realAllowedRoot)) throw imError('ZEUS_IM_ATTACHMENT_PATH_INVALID', '长回复目录解析到授权根之外。', 500);
     const path = resolve(realDirectory, `${String(item.sequence).padStart(12, '0')}-${item.id.replace(/[^A-Za-z0-9_-]/gu, '_').slice(0, 48)}.md`);
-    if (!path.startsWith(`${realDirectory}/`)) throw imError('ZEUS_IM_ATTACHMENT_PATH_INVALID', '长回复附件路径身份无效。', 500);
+    if (!isPathInside(path, realDirectory)) throw imError('ZEUS_IM_ATTACHMENT_PATH_INVALID', '长回复附件路径身份无效。', 500);
     try {
       await writeFile(path, item.text, { flag: 'wx' });
     } catch (error) {
@@ -1794,7 +1794,7 @@ export class ImTelegramService {
     if (!configuredRoot) throw imError('ZEUS_IM_ATTACHMENT_ROOT_UNAVAILABLE', 'Zeus 附件授权根不可用，已阻止接收 Telegram 附件。', 503);
     const allowedRoot = resolve(configuredRoot);
     const intentRoot = resolve(allowedRoot, 'im-inbound', connection.id, stableIdentity('intent', operationIdentity));
-    if (!intentRoot.startsWith(`${allowedRoot}/`)) throw imError('ZEUS_IM_ATTACHMENT_PATH_INVALID', '附件存储路径不在 Zeus 授权根内。', 500);
+    if (!isPathInside(intentRoot, allowedRoot)) throw imError('ZEUS_IM_ATTACHMENT_PATH_INVALID', '附件存储路径不在 Zeus 授权根内。', 500);
     await mkdir(intentRoot, { recursive: true });
     const realAllowedRoot = await realpath(allowedRoot);
     const realIntentRoot = await realpath(intentRoot);
@@ -1813,7 +1813,7 @@ export class ImTelegramService {
       const baseName = safeAttachmentName(attachment, index, mime);
       const name = baseName;
       const localPath = resolve(realIntentRoot, name);
-      if (!localPath.startsWith(`${realIntentRoot}/`)) throw imError('ZEUS_IM_ATTACHMENT_PATH_INVALID', '附件文件名未通过路径身份校验。', 400);
+      if (!isPathInside(localPath, realIntentRoot)) throw imError('ZEUS_IM_ATTACHMENT_PATH_INVALID', '附件文件名未通过路径身份校验。', 400);
       try {
         await writeFile(localPath, bytes, { flag: 'wx' });
       } catch (error) {

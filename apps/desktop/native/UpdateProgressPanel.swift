@@ -62,6 +62,8 @@ private final class UpdateProgressPanelController: NSObject, NSApplicationDelega
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         readCommands()
+        // AppKit 启动完成后确认窗口可用，与 Windows 使用同一就绪协议。
+        emit(action: "ready")
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {

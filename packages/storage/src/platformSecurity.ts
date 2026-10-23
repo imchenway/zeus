@@ -1,7 +1,7 @@
 import { execFile, spawnSync } from 'node:child_process';
 import { chmodSync, closeSync, constants, existsSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readSync, renameSync, unlinkSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { lstat, open, type FileHandle } from 'node:fs/promises';
+import { link, lstat, open, rename, unlink, type FileHandle } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 /** 平台安全操作明确区分普通文件和目录。 */
@@ -162,6 +162,28 @@ export async function openRegularFileNoFollow(path: string, flags: number): Prom
 }
 
 /** 同卷发布文件：Windows 原生写穿透移动；POSIX 原子发布后刷新目录。 */
+export async function publishFile(source: string, target: string, options: { replace: boolean }): Promise<void> {
+  if (process.platform === 'win32') {
+    await windowsSecurityRequestAsync({ operation: 'publish-file', source, target, replace: options.replace });
+    return;
+  }
+  /** 刷新内容后再发布名称，失败不能被当作已持久化。 */
+  const handle = await open(source, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  if (options.replace) await rename(source, target);
+  else {
+    await link(source, target);
+    await unlink(source);
+  }
+  syncPosixDirectory(dirname(target));
+  if (dirname(source) !== dirname(target)) syncPosixDirectory(dirname(source));
+}
+
+/** 同步调用方沿用相同的持久化发布语义。 */
 export function publishFileSync(source: string, target: string, options: { replace: boolean }): void {
   if (process.platform === 'win32') {
     windowsSecurityRequest({ operation: 'publish-file', source, target, replace: options.replace });

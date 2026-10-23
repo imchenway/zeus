@@ -1,5 +1,6 @@
 import { constants } from 'node:fs';
-import { chmod, lstat, mkdir, open, readdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readdir, unlink, writeFile } from 'node:fs/promises';
+import { openRegularFileNoFollow, publishFile, windowsSecurityRequestAsync } from '@zeus/storage/platform-security';
 import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
@@ -56,11 +57,22 @@ export async function readSessionViewCache(root: string, identity: unknown): Pro
   if (!validIdentity(identity)) return null;
   try {
     const directory = await lstat(root);
-    if (!directory.isDirectory() || directory.isSymbolicLink() || (directory.mode & 0o777) !== 0o700 || (typeof process.getuid === 'function' && directory.uid !== process.getuid())) return null;
-    const file = await open(cachePath(root, identity), constants.O_RDONLY | constants.O_NOFOLLOW);
+    if (!directory.isDirectory() || directory.isSymbolicLink() || (process.platform !== 'win32' && (directory.mode & 0o777) !== 0o700) || (typeof process.getuid === 'function' && directory.uid !== process.getuid())) return null;
+    if (process.platform === 'win32') {
+      await windowsSecurityRequestAsync({ operation: 'assert-private', path: root, kind: 'directory' });
+      await windowsSecurityRequestAsync({ operation: 'assert-private', path: cachePath(root, identity), kind: 'file' });
+    }
+    const file = await openRegularFileNoFollow(cachePath(root, identity), constants.O_RDONLY);
     try {
       const metadata = await file.stat();
-      if (!metadata.isFile() || metadata.nlink !== 1 || (metadata.mode & 0o777) !== 0o600 || (typeof process.getuid === 'function' && metadata.uid !== process.getuid()) || metadata.size <= 0 || metadata.size > cacheLimits.entryBytes)
+      if (
+        !metadata.isFile() ||
+        metadata.nlink !== 1 ||
+        (process.platform !== 'win32' && (metadata.mode & 0o777) !== 0o600) ||
+        (typeof process.getuid === 'function' && metadata.uid !== process.getuid()) ||
+        metadata.size <= 0 ||
+        metadata.size > cacheLimits.entryBytes
+      )
         return null;
       const value: unknown = JSON.parse(await file.readFile('utf8'));
       return validEnvelope(value) && value.entries[0]!.projectId === identity.projectId && value.entries[0]!.conversationId === identity.conversationId ? value : null;
@@ -90,8 +102,9 @@ export function writeSessionViewCache(root: string, value: unknown): Promise<boo
       const directory = await lstat(root);
       if (!directory.isDirectory() || directory.isSymbolicLink() || (typeof process.getuid === 'function' && directory.uid !== process.getuid())) return false;
       await chmod(root, 0o700);
+      if (process.platform === 'win32') await windowsSecurityRequestAsync({ operation: 'ensure-private', path: root, kind: 'directory' });
       await writeFile(temporaryPath, serialized, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
-      await rename(temporaryPath, target);
+      await publishFile(temporaryPath, target, { replace: true });
       const entries = await Promise.all((await readdir(root)).filter((name) => /^[a-f0-9]{64}\.json$/u.test(name)).map(async (name) => ({ path: join(root, name), metadata: await lstat(join(root, name)) })));
       entries.sort((left, right) => right.metadata.mtimeMs - left.metadata.mtimeMs);
       let bytes = 0;

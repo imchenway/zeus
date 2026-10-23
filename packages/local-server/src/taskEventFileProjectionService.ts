@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
-import { chmod, lstat, mkdir, open, opendir, rename, unlink, type FileHandle } from 'node:fs/promises';
+import { chmod, lstat, mkdir, open, opendir, unlink, type FileHandle } from 'node:fs/promises';
+import { openRegularFileNoFollow, publishFile, windowsSecurityRequestAsync } from '@zeus/storage/platform-security';
 import { join } from 'node:path';
 import { TaskEventFileProjectionRepository, TaskEventRepository, type ZeusDatabase, type ZeusTaskEventRecord } from '@zeus/storage';
 
@@ -181,7 +182,8 @@ export class TaskEventFileProjectionService {
     } finally {
       await timelineHandle.close();
     }
-    await fsyncDirectory(paths.directory);
+    // 追加只改变已有文件内容，两个文件均已同步；Windows 不打开目录句柄做 POSIX fsync。
+    if (process.platform !== 'win32') await fsyncDirectory(paths.directory);
     return batchCount;
   }
 
@@ -210,10 +212,9 @@ export class TaskEventFileProjectionService {
 
       await assertSafeProjectionTarget(paths.events);
       await assertSafeProjectionTarget(paths.timeline);
-      await rename(eventsTemporary, paths.events);
+      await publishFile(eventsTemporary, paths.events, { replace: true });
       this.options.onWriteStep?.({ taskId, mode: 'rebuild', step: 'events_renamed', batchCount });
-      await rename(timelineTemporary, paths.timeline);
-      await fsyncDirectory(paths.directory);
+      await publishFile(timelineTemporary, paths.timeline, { replace: true });
       return batchCount;
     } catch (error) {
       if (eventsHandle !== null) await eventsHandle.close().catch(() => undefined);
@@ -270,7 +271,9 @@ interface TaskProjectionPaths {
   timeline: string;
 }
 
+/** 缺失文件必须先完整发布，不能把不存在与空文件的空游标混为一谈。 */
 async function projectionFilesMatchCursor(paths: TaskProjectionPaths, expectedEventId: string | null): Promise<boolean> {
+  if (!(await safeProjectionFileMetadata(paths.events)) || !(await safeProjectionFileMetadata(paths.timeline))) return false;
   const [eventsCursor, timelineCursor] = await Promise.all([readProjectionCursor(paths.events, 'events'), readProjectionCursor(paths.timeline, 'timeline')]);
   return eventsCursor === expectedEventId && timelineCursor === expectedEventId;
 }
@@ -324,6 +327,7 @@ function formatProjectionLine(kind: ProjectionFileKind, event: ZeusTaskEventReco
   return `${event.createdAt} [eventId=${event.id}] [${singleLineProjectionField(event.eventType, 512)}] ${singleLineProjectionField(event.title, 2 * 1024)} taskId=${singleLineProjectionField(event.taskId, 512)} payload=${event.payloadJson}\n`;
 }
 
+/** Windows 使用私有 ACL，POSIX 沿用目录权限位。 */
 async function requireSecureDirectory(path: string, create: boolean): Promise<string> {
   if (create) {
     try {
@@ -335,6 +339,7 @@ async function requireSecureDirectory(path: string, create: boolean): Promise<st
   const metadata = await lstat(path);
   if (metadata.isSymbolicLink() || !metadata.isDirectory()) throw new Error(`任务事件投影目录不是受控普通目录：${path}`);
   await chmod(path, 0o700);
+  if (process.platform === 'win32') await windowsSecurityRequestAsync({ operation: 'ensure-private', path, kind: 'directory' });
   return path;
 }
 
@@ -349,14 +354,16 @@ async function safeProjectionFileMetadata(path: string): Promise<Awaited<ReturnT
   }
 }
 
+/** 写入已有投影前校验对象类型，并按本机权限模型收紧访问。 */
 async function assertSafeProjectionTarget(path: string): Promise<void> {
   const metadata = await safeProjectionFileMetadata(path);
   if (metadata) await chmod(path, 0o600);
+  if (metadata && process.platform === 'win32') await windowsSecurityRequestAsync({ operation: 'ensure-private', path, kind: 'file' });
 }
 
 async function openProjectionFileForAppend(path: string): Promise<FileHandle> {
   await assertSafeProjectionTarget(path);
-  const handle = await open(path, fsConstants.O_WRONLY | fsConstants.O_APPEND | fsConstants.O_CREAT | fsConstants.O_NOFOLLOW, 0o600);
+  const handle = await openRegularFileNoFollow(path, fsConstants.O_WRONLY | fsConstants.O_APPEND);
   try {
     await assertSafeOpenedProjectionFile(handle, path);
     await handle.chmod(0o600);
@@ -400,7 +407,8 @@ async function cleanupStaleProjectionTemporaryFiles(directory: string): Promise<
       if (error.code !== 'ERR_DIR_CLOSED') throw error;
     });
   }
-  if (removed > 0) await fsyncDirectory(directory);
+  // 清理的是可重建的遗留候选，不把删除目录项当作权威事件提交。
+  if (removed > 0 && process.platform !== 'win32') await fsyncDirectory(directory);
 }
 
 async function fsyncDirectory(path: string): Promise<void> {

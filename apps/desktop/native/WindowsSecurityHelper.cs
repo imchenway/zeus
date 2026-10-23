@@ -45,6 +45,7 @@ internal static class WindowsSecurityHelper
                 "inspect-path" => new { canonicalPath = CanonicalPath(RequiredString(value, "path")) },
                 "read-private" => new { bytes = Convert.ToBase64String(ReadPrivateFile(RequiredString(value, "path"), value.GetProperty("maximumBytes").GetInt32())) },
                 "publish-file" => Publish(value),
+                "move-entry" => MoveEntry(value),
                 "secret-set" => SetSecret(value),
                 "secret-get" => GetSecret(value),
                 "secret-delete" => DeleteSecret(value),
@@ -402,6 +403,21 @@ internal static class WindowsSecurityHelper
     private static object AssertOwned(JsonElement value) { AssertOwnedPath(RequiredString(value, "path"), value.GetProperty("kind").GetString() == "directory"); return new { verified = true }; }
     /// <summary>适配 JSON 文件发布请求。</summary>
     private static object Publish(JsonElement value) { PublishFile(RequiredString(value, "source"), RequiredString(value, "target"), value.GetProperty("replace").GetBoolean()); return new { published = true }; }
+
+    /// <summary>同卷写穿透移动文件或目录，禁止覆盖；链接只移动目录项，不访问链接目标。</summary>
+    private static object MoveEntry(JsonElement value)
+    {
+        // 只允许末级对象为链接，父目录仍拒绝重解析路径和网络卷。
+        string source = RequiredString(value, "source");
+        if (!Path.IsPathFullyQualified(source) || source.StartsWith("\\\\", StringComparison.Ordinal) || source.AsSpan(2).Contains(':')) throw new ArgumentException("来源必须是本机绝对路径，不能使用设备路径或 ADS。");
+        source = Path.GetFullPath(source);
+        // 目标路径使用安全组件已有的规范化和重解析点检查。
+        string target = CanonicalPath(RequiredString(value, "target"));
+        CanonicalPath(Path.GetDirectoryName(source) ?? throw new ArgumentException("来源目录无效。"));
+        if (!string.Equals(Path.GetPathRoot(source), Path.GetPathRoot(target), StringComparison.OrdinalIgnoreCase)) throw new IOException("文件移动必须在同一卷内完成。");
+        if (!MoveFileEx(source, target, 8u)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        return new { moved = true };
+    }
     /// <summary>拒绝错误句柄，保留 Windows 错误码。</summary>
     private static void ThrowIfInvalid(SafeFileHandle handle) { if (handle.IsInvalid) { int code = Marshal.GetLastWin32Error(); handle.Dispose(); throw new Win32Exception(code); } }
     /// <summary>在已打开句柄上拒绝目录、reparse point 和硬链接复用。</summary>
