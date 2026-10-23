@@ -246,7 +246,6 @@ export interface SessionWorkspaceActions {
   onOpenTaskDetail?: (taskId: string) => void;
   onTaskManagementStatusChange?: (taskId: string, status: string) => void | Promise<unknown>;
   onLoadTaskWorkspaces?: (taskId: string) => Promise<TaskWorkspacesSnapshot>;
-  onOpenTaskGitReview?: (taskId: string, workspaceId: string | null, mode: 'commit' | 'push-only') => void;
   onOpenTaskGitDelivery?: (taskId: string, workspaceId?: string | null) => void;
   onNextTurnSettingsChange?: (settings: ComposerRuntimeSettings) => void | Promise<void>;
   onPermissionModeChange?: (permissionMode: NativePermissionMode) => void | Promise<void>;
@@ -406,7 +405,6 @@ export interface ConnectedSessionWorkspaceProps {
   onLoadTaskWorkspaces?: SessionWorkspaceActions['onLoadTaskWorkspaces'];
   /** 交付状态变化后刷新环境卡片中的 Git 快照。 */
   taskGitDeliveryRevision?: number;
-  onOpenTaskGitReview?: SessionWorkspaceActions['onOpenTaskGitReview'];
   onOpenTaskGitDelivery?: SessionWorkspaceActions['onOpenTaskGitDelivery'];
   onLatestContentVisibilityChange?: (visible: boolean) => void;
 }
@@ -760,7 +758,6 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       onOpenTaskDetail: props.onOpenTaskDetail,
       onTaskManagementStatusChange: props.onTaskManagementStatusChange,
       onLoadTaskWorkspaces: props.onLoadTaskWorkspaces,
-      onOpenTaskGitReview: props.onOpenTaskGitReview,
       onOpenTaskGitDelivery: props.onOpenTaskGitDelivery,
       onLoadCapabilities: props.client.loadCodexConversationCapabilities,
       onLoadSkills: props.onLoadSkills,
@@ -787,7 +784,6 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     props.onOpenComputerSettings,
     props.onOpenTaskDetail,
     props.onOpenTaskGitDelivery,
-    props.onOpenTaskGitReview,
     props.onStartConversation,
     props.onStartProjectConversation,
     props.onTaskManagementStatusChange,
@@ -2754,8 +2750,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   onLoadSkills={actions.onLoadSkills}
                   onLoadTaskWorkspaces={actions.onLoadTaskWorkspaces}
                   taskGitDeliveryRevision={props.taskGitDeliveryRevision}
-                  onOpenTaskDetail={actions.onOpenTaskDetail}
-                  onOpenGitReview={actions.onOpenTaskGitReview}
                   onOpenGitDelivery={actions.onOpenTaskGitDelivery}
                   browserOpen={browserOpen}
                   onToggleBrowser={(trigger) => {

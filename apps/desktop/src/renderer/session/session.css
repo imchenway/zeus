@@ -256,7 +256,6 @@
   letter-spacing: -0.008em;
 }
 
-.session-codex-parity-v1 .session-quick-actions-settings,
 .session-codex-parity-v1 .session-quick-actions-sources > header > button {
   align-items: center;
   background: transparent;
@@ -270,13 +269,11 @@
   padding: 0;
 }
 
-.session-codex-parity-v1 .session-quick-actions-settings:hover:not(:disabled):not([aria-disabled='true']),
 .session-codex-parity-v1 .session-quick-actions-sources > header > button:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--session-control-hover);
   color: var(--session-text);
 }
 
-.session-codex-parity-v1 .session-quick-actions-settings svg,
 .session-codex-parity-v1 .session-quick-actions-sources > header > button svg {
   block-size: 17px;
   inline-size: 17px;
@@ -318,8 +315,8 @@
   background: var(--session-selected);
 }
 
-/* 开关文案与快捷键分列，窄卡片优先保留工具名称。 */
-.session-quick-actions-tool-state {
+/* 快捷键放在工具行右侧，窄卡片优先保留工具名称。 */
+.session-quick-actions-shortcut {
   color: var(--session-text-muted);
   font-size: 11px;
   white-space: nowrap;
