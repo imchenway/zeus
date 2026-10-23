@@ -4,7 +4,7 @@ import type { AiRuntimeSession, DashboardClient, ProjectRecord } from '../../api
 import { TerminalWindowIcon } from '@phosphor-icons/react/dist/csr/TerminalWindow';
 import '../../commandCenter.css';
 import { createPortal } from 'react-dom';
-import { MotionPresence, usePresenceSurface } from '../../ui/MotionPresence.js';
+import { isMacOSPlatform, platformShortcutLabel } from '../../platform.js';
 import { XIcon as X } from '@phosphor-icons/react/dist/csr/X';
 import { ArrowClockwiseIcon as ArrowClockwise } from '@phosphor-icons/react/dist/csr/ArrowClockwise';
 import { StopIcon as Stop } from '@phosphor-icons/react/dist/csr/Stop';
@@ -54,6 +54,8 @@ export function ProjectTerminalPanel(props: {
   const search = useTerminalSearch();
   /** 工具栏与底栏使用同一个显示状态。 */
   const open = props.open;
+  /** 首次打开后保留显示实例，收起不重新回放或连接。 */
+  const [opened, setOpened] = useState(false);
   /** 高度比例按项目ID持久化。 */
   const [heightShare, setHeightShare] = useState(() => readTerminalPanelState(props.project.id).heightShare);
   /** 收起后把键盘焦点还给入口。 */
@@ -67,6 +69,8 @@ export function ProjectTerminalPanel(props: {
   const [loading, setLoading] = useState(true);
   /** 启停期间防止重复提交。 */
   const [busy, setBusy] = useState(false);
+  /** 连续点击与快捷键在 React 更新前也只提交一次启动。 */
+  const startInFlightRef = useRef(false);
   /** 列表故障直接显示，操作故障沿用应用错误弹窗。 */
   const [loadFailed, setLoadFailed] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -141,7 +145,8 @@ export function ProjectTerminalPanel(props: {
 
   /** 点击即授权开启终端，沿用后台权限与一次性确认记录，不再弹二次提示。 */
   async function start(): Promise<void> {
-    if (busy) return;
+    if (busy || startInFlightRef.current || loadFailed) return;
+    startInFlightRef.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -165,18 +170,36 @@ export function ProjectTerminalPanel(props: {
     } catch (failure) {
       setError(failure);
     } finally {
+      startInFlightRef.current = false;
       setBusy(false);
     }
   }
 
-  /** 优先恢复运行中的终端；没有运行会话时直接创建。 */
+  /** 保留当前标签与历史输出；只有明确读取到空列表时首次创建。 */
   function show(): void {
     if (loading || busy) return;
+    setOpened(true);
     props.onOpenChange(true);
-    const running = sessions.find((session) => session.status === 'running');
-    if (running) setSelectedId(running.id);
-    else void start();
+    if (selected) return;
+    /** 无选中标签时优先恢复运行会话，再恢复已有输出。 */
+    const existing = sessions.find((session) => session.status === 'running') ?? sessions[0];
+    if (existing) setSelectedId(existing.id);
+    else if (!loadFailed) void start();
   }
+
+  useEffect(() => {
+    /** 数字快捷键与按钮使用同一入口及忙碌保护，不把按键传给 Shell。 */
+    function toggleFromKeyboard(event: KeyboardEvent): void {
+      if (event.defaultPrevented || event.isComposing || event.repeat || event.altKey || event.shiftKey || event.key !== '5') return;
+      if (!(isMacOSPlatform() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey)) return;
+      if (document.querySelector('[aria-modal="true"]:not([aria-hidden="true"])')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      entryRef.current?.click();
+    }
+    window.addEventListener('keydown', toggleFromKeyboard, true);
+    return () => window.removeEventListener('keydown', toggleFromKeyboard, true);
+  }, []);
 
   /** 只结束选中终端及其进程树，已产生的输出仍可查看。 */
   async function stop(): Promise<void> {
@@ -242,8 +265,9 @@ export function ProjectTerminalPanel(props: {
         type="button"
         className={open ? 'is-active' : ''}
         data-project-tool="terminal"
-        aria-label={zh ? '终端' : 'Terminal'}
-        data-icon-tooltip={zh ? '终端' : 'Terminal'}
+        aria-label={platformShortcutLabel(zh ? '终端（⌘5）' : 'Terminal (⌘5)')}
+        data-icon-tooltip={platformShortcutLabel(zh ? '终端（⌘5）' : 'Terminal (⌘5)')}
+        aria-keyshortcuts={`${isMacOSPlatform() ? 'Meta' : 'Control'}+5`}
         aria-controls={panelId}
         onClick={() => (open ? hide() : show())}
         disabled={loading || busy}
@@ -251,118 +275,119 @@ export function ProjectTerminalPanel(props: {
       >
         <TerminalWindowIcon aria-hidden="true" />
       </button>
-      <MotionPresence>
-        {open && props.dockHost
-          ? createPortal(
-              <TerminalDock heightShare={heightShare} label={zh ? '项目终端' : 'Project terminal'} search={search}>
-                <div
-                  className="project-terminal-resizer"
-                  role="separator"
-                  aria-label={zh ? '调整终端高度' : 'Resize terminal'}
-                  aria-orientation="horizontal"
-                  aria-valuemin={25}
-                  aria-valuemax={70}
-                  aria-valuenow={Math.round(heightShare)}
-                  tabIndex={0}
-                  onPointerDown={(event) => {
-                    if (event.button !== 0) return;
-                    event.preventDefault();
-                    event.currentTarget.setPointerCapture(event.pointerId);
-                    resize(event.clientY);
-                  }}
-                  onPointerMove={(event) => {
-                    if (event.currentTarget.hasPointerCapture(event.pointerId)) resize(event.clientY);
-                  }}
-                  onPointerUp={(event) => {
-                    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-                  }}
-                  onPointerCancel={(event) => {
-                    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-                  }}
-                  onKeyDown={(event) => {
-                    if (!['ArrowUp', 'ArrowDown'].includes(event.key)) return;
-                    event.preventDefault();
-                    setHeightShare((current) => Math.min(70, Math.max(25, current + (event.key === 'ArrowUp' ? 2 : -2))));
-                  }}
+      {opened && props.dockHost
+        ? createPortal(
+            <TerminalDock open={open} heightShare={heightShare} label={zh ? '项目终端' : 'Project terminal'} search={search}>
+              <div
+                className="project-terminal-resizer"
+                role="separator"
+                aria-label={zh ? '调整终端高度' : 'Resize terminal'}
+                aria-orientation="horizontal"
+                aria-valuemin={25}
+                aria-valuemax={70}
+                aria-valuenow={Math.round(heightShare)}
+                tabIndex={0}
+                onPointerDown={(event) => {
+                  if (event.button !== 0) return;
+                  event.preventDefault();
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  resize(event.clientY);
+                }}
+                onPointerMove={(event) => {
+                  if (event.currentTarget.hasPointerCapture(event.pointerId)) resize(event.clientY);
+                }}
+                onPointerUp={(event) => {
+                  if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+                }}
+                onPointerCancel={(event) => {
+                  if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+                }}
+                onKeyDown={(event) => {
+                  if (!['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+                  event.preventDefault();
+                  setHeightShare((current) => Math.min(70, Math.max(25, current + (event.key === 'ArrowUp' ? 2 : -2))));
+                }}
+              />
+              <header className="zeus-terminal-toolbar">
+                <TerminalTabs
+                  sessions={sessions.slice().reverse()}
+                  activeId={selectedId}
+                  panelId={panelId}
+                  language={props.language}
+                  visible={open}
+                  starting={busy && !closingId && !selected}
+                  newDisabled={busy || loadFailed}
+                  closingId={closingId}
+                  closeDisabled={busy || loadFailed}
+                  onSelect={setSelectedId}
+                  onNew={() => void start()}
+                  onClose={(session) => void closeTab(session)}
                 />
-                <header className="zeus-terminal-toolbar">
-                  <TerminalTabs
-                    sessions={sessions.slice().reverse()}
-                    activeId={selectedId}
-                    panelId={panelId}
-                    language={props.language}
-                    visible={open}
-                    starting={busy && !closingId && !selected}
-                    newDisabled={busy}
-                    closingId={closingId}
-                    closeDisabled={busy || loadFailed}
-                    onSelect={setSelectedId}
-                    onNew={() => void start()}
-                    onClose={(session) => void closeTab(session)}
-                  />
-                  <TerminalSearchButton search={search} language={props.language} />
-                  {selected ? (
-                    <>
-                      <button className="zeus-terminal-action" type="button" data-icon-tooltip={zh ? '重新连接' : 'Reconnect'} aria-label={zh ? '重新连接' : 'Reconnect'} onClick={() => setConnection((value) => value + 1)}>
-                        <ArrowClockwise aria-hidden="true" />
-                      </button>
-                      <button
-                        className="zeus-terminal-action"
-                        type="button"
-                        data-icon-tooltip={zh ? '结束会话' : 'End session'}
-                        aria-label={zh ? '结束会话' : 'End session'}
-                        disabled={busy || loadFailed || !['running', 'orphan_detected'].includes(selected.status)}
-                        onClick={() => void stop()}
-                      >
-                        <Stop aria-hidden="true" />
-                      </button>
-                    </>
-                  ) : null}
-                  <button className="zeus-terminal-action" type="button" data-icon-tooltip={zh ? '收起终端' : 'Hide terminal'} aria-label={zh ? '收起终端' : 'Hide terminal'} onClick={hide}>
-                    <X aria-hidden="true" />
-                  </button>
-                </header>
-                <TerminalSearchBar search={search} language={props.language} />
-                <div className="project-terminal-content" role="tabpanel" id={panelId} aria-labelledby={selectedId ? `${panelId}-${selectedId}` : undefined}>
-                  {loadFailed ? <p role="status">{zh ? '终端列表连接中断，正在重连…' : 'Terminal list disconnected. Reconnecting…'}</p> : null}
-                  {error ? (
-                    <p role="alert">
-                      <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
-                    </p>
-                  ) : null}
-                  {selected ? (
-                    <InteractiveTerminalPane key={`${selected.id}:${connection}`} client={props.client} session={selected} zh={zh} bindSearch={search.bind} />
-                  ) : (
-                    <p role="status">{busy ? (zh ? '正在开启终端…' : 'Opening terminal…') : zh ? '尚无终端会话' : 'No terminal sessions'}</p>
-                  )}
-                </div>
-              </TerminalDock>,
-              props.dockHost,
-            )
-          : null}
-      </MotionPresence>
+                <TerminalSearchButton search={search} language={props.language} />
+                {selected ? (
+                  <>
+                    <button className="zeus-terminal-action" type="button" data-icon-tooltip={zh ? '重新连接' : 'Reconnect'} aria-label={zh ? '重新连接' : 'Reconnect'} onClick={() => setConnection((value) => value + 1)}>
+                      <ArrowClockwise aria-hidden="true" />
+                    </button>
+                    <button
+                      className="zeus-terminal-action"
+                      type="button"
+                      data-icon-tooltip={zh ? '结束会话' : 'End session'}
+                      aria-label={zh ? '结束会话' : 'End session'}
+                      disabled={busy || loadFailed || !['running', 'orphan_detected'].includes(selected.status)}
+                      onClick={() => void stop()}
+                    >
+                      <Stop aria-hidden="true" />
+                    </button>
+                  </>
+                ) : null}
+                <button className="zeus-terminal-action" type="button" data-icon-tooltip={zh ? '收起终端' : 'Hide terminal'} aria-label={zh ? '收起终端' : 'Hide terminal'} onClick={hide}>
+                  <X aria-hidden="true" />
+                </button>
+              </header>
+              <TerminalSearchBar search={search} language={props.language} />
+              <div className="project-terminal-content" role="tabpanel" id={panelId} aria-labelledby={selectedId ? `${panelId}-${selectedId}` : undefined}>
+                {loadFailed ? <p role="status">{zh ? '终端列表连接中断，正在重连…' : 'Terminal list disconnected. Reconnecting…'}</p> : null}
+                {error ? (
+                  <p role="alert">
+                    <VisibleApplicationError error={error} language={zh ? 'zh-CN' : 'en'} />
+                  </p>
+                ) : null}
+                {selected ? (
+                  <InteractiveTerminalPane key={`${selected.id}:${connection}`} client={props.client} session={selected} zh={zh} bindSearch={search.bind} />
+                ) : (
+                  <p role="status">{busy ? (zh ? '正在开启终端…' : 'Opening terminal…') : zh ? '尚无终端会话' : 'No terminal sessions'}</p>
+                )}
+              </div>
+            </TerminalDock>,
+            props.dockHost,
+          )
+        : null}
     </>
   );
 }
 
-/** 注册真实停靠表面，让共享动效边界等待收起完成后再卸载终端。 */
-function TerminalDock(props: { heightShare: number; label: string; children: ReactNode; search: ReturnType<typeof useTerminalSearch> }) {
+/** 保留终端显示实例；高度动效结束后隐藏表面，收起期间立即退出交互。 */
+function TerminalDock(props: { open: boolean; heightShare: number; label: string; children: ReactNode; search: ReturnType<typeof useTerminalSearch> }) {
   /** 高度变化直接发生在分屏表面，与浏览器的宽度展开对应。 */
   const ref = useRef<HTMLElement>(null);
-  /** 关闭立即停止交互，保留最后一帧完成退出动效。 */
-  const open = usePresenceSurface(ref);
+  /** 打开即取得焦点，连接期间 Cmd+W 也归属终端。 */
+  useEffect(() => {
+    if (props.open) (ref.current?.querySelector<HTMLTextAreaElement>('.xterm-helper-textarea') ?? ref.current)?.focus();
+  }, [props.open]);
   return (
     <section
       ref={ref}
       className="project-terminal"
       data-zeus-primitive="overlay"
       aria-label={props.label}
-      aria-hidden={!open}
-      inert={!open}
-      data-open={open}
+      tabIndex={-1}
+      aria-hidden={!props.open}
+      inert={!props.open}
+      data-open={props.open}
       data-terminal-search-open={props.search.open || undefined}
       onKeyDownCapture={props.search.onKeyDownCapture}
-      style={{ height: open ? `${props.heightShare}%` : 0 }}
+      style={{ height: props.open ? `${props.heightShare}%` : 0 }}
     >
       {props.children}
     </section>
@@ -415,6 +440,8 @@ function InteractiveTerminalPane(props: { client: DashboardClient; session: AiRu
 
     function resize(): void {
       if (!terminal || !fitAddon || !containerRef.current || !ready || !runningRef.current) return;
+      // 收起动画和隐藏状态不能把零尺寸同步给后台终端。
+      if (containerRef.current.closest('[inert]') || !containerRef.current.clientHeight) return;
       /** 只在字体和容器已可测量时同步，避免用初始默认值覆盖真实 PTY 尺寸。 */
       const proposed = fitAddon.proposeDimensions();
       if (!proposed) return;
@@ -442,13 +469,14 @@ function InteractiveTerminalPane(props: { client: DashboardClient; session: AiRu
         if (disposed) return;
         offset += page.items.length;
         const caughtUp = offset >= page.total;
-        terminal.options.disableStdin = !caughtUp || !runningRef.current || inputFailed;
         if (caughtUp && !ready) {
           ready = true;
           resize();
-          terminal.focus();
+          if (!containerRef.current?.closest('[inert]')) terminal.focus();
         }
-        if (!inputFailed) setState(caughtUp ? 'ready' : 'connecting');
+        // 首屏回放完成后，后续输出积压不代表连接断开，也不重复禁用输入。
+        terminal.options.disableStdin = !ready || !runningRef.current || inputFailed;
+        if (!inputFailed) setState(ready ? 'ready' : 'connecting');
         if (!caughtUp && page.items.length) scheduleRefresh();
       } catch {
         if (!disposed) {

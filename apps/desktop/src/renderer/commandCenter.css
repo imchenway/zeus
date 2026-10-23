@@ -145,14 +145,18 @@
   background: var(--zeus-product-panel);
   overflow: hidden;
   opacity: 0;
+  visibility: hidden;
   /* 与浏览器侧栏使用相同节奏，改为沿底部高度展开。 */
   transition:
     height 180ms cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 120ms ease-out;
+    opacity 120ms ease-out,
+    visibility 0s 180ms;
 }
 
 .project-terminal[data-open='true'] {
   opacity: 1;
+  visibility: visible;
+  transition-delay: 0s;
 }
 
 @starting-style {

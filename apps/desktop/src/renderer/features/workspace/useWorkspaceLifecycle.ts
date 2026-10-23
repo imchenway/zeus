@@ -188,13 +188,15 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
       // 已关闭但仍在退出动画中的弹层不继续屏蔽工作区快捷键。
       if (!['1', '2', '3', '4'].includes(event.key) || !selectedProject || document.querySelector('[aria-modal="true"]:not([aria-hidden="true"])')) return;
       event.preventDefault();
+      event.stopPropagation();
       if (event.key === '4') {
         if (props.commandClient) openProjectCommands(selectedProject.id);
       } else if (event.key === '2') toggleProjectGit();
       else openProjectSection(selectedProject, event.key === '1' ? 'tasks' : 'code', 'source');
     }
-    window.addEventListener('keydown', onProjectWorkspaceShortcut);
-    return () => window.removeEventListener('keydown', onProjectWorkspaceShortcut);
+    // 在 xterm 处理输入前消费工作区快捷键，Windows 的 Ctrl 数字键也不会进入 Shell。
+    window.addEventListener('keydown', onProjectWorkspaceShortcut, true);
+    return () => window.removeEventListener('keydown', onProjectWorkspaceShortcut, true);
   }, [activeNavTarget, selectedProject, sourceWorkspaceDirty, taskTableLayoutDirty, openProjectSection, openProjectCommands, toggleProjectGit, props.commandClient]);
   useEffect(() => {
     const bridge = window.zeus;
