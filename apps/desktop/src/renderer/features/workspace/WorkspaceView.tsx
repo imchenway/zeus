@@ -761,34 +761,44 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
   const projectToolRail = (
     <nav className="project-workspace-tool-rail" data-workspace-tool-slot="right" aria-label={codeWorkspaceZh ? '工作区工具' : 'Workspace tools'}>
       {projectToolsVisible && selectedProject ? (
-        <button
-          type="button"
-          className={sourceVisible ? 'is-active' : ''}
-          onClick={() => openProjectSection(selectedProject, 'code', 'source')}
-          aria-label={platformShortcutLabel(codeWorkspaceZh ? '源码（⌘3）' : 'Source (⌘3)')}
-          data-icon-tooltip={platformShortcutLabel(codeWorkspaceZh ? '源码（⌘3）' : 'Source (⌘3)')}
-          aria-keyshortcuts={`${isMacOSPlatform() ? 'Meta' : 'Control'}+3`}
-          data-project-tool="source"
-          aria-current={sourceVisible ? 'page' : undefined}
-        >
-          <CodeSimpleIcon aria-hidden="true" />
-        </button>
-      ) : null}
-      <button
-        type="button"
-        className={searchOpen ? 'is-active' : ''}
-        onClick={() => setSearchOpen(true)}
-        aria-label={platformShortcutLabel(codeWorkspaceZh ? '搜索（⇧⌘F）' : 'Search (⇧⌘F)')}
-        data-icon-tooltip={platformShortcutLabel(codeWorkspaceZh ? '搜索（⇧⌘F）' : 'Search (⇧⌘F)')}
-        aria-keyshortcuts={`${isMacOSPlatform() ? 'Meta' : 'Control'}+Shift+F`}
-        data-project-tool="search"
-        aria-haspopup="dialog"
-        aria-expanded={searchOpen}
-      >
-        <MagnifyingGlass aria-hidden="true" />
-      </button>
-      {projectToolsVisible && selectedProject ? (
         <>
+          <button
+            type="button"
+            className={(activeNavTarget === 'projects' || activeNavTarget === 'conversations') && activeProjectSection === 'tasks' ? 'is-active' : ''}
+            onClick={() => openProjectSection(selectedProject, 'tasks')}
+            aria-label={platformShortcutLabel(codeWorkspaceZh ? '任务（⌘1）' : 'Tasks (⌘1)')}
+            data-icon-tooltip={platformShortcutLabel(codeWorkspaceZh ? '任务（⌘1）' : 'Tasks (⌘1)')}
+            aria-keyshortcuts={`${isMacOSPlatform() ? 'Meta' : 'Control'}+1`}
+            data-project-tool="tasks"
+            aria-current={(activeNavTarget === 'projects' || activeNavTarget === 'conversations') && activeProjectSection === 'tasks' ? 'page' : undefined}
+          >
+            <ListChecksIcon aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className={projectGitOpen ? 'is-active' : ''}
+            onClick={toggleProjectGit}
+            aria-label={platformShortcutLabel('Git (⌘2)')}
+            data-icon-tooltip={platformShortcutLabel('Git (⌘2)')}
+            aria-keyshortcuts={`${isMacOSPlatform() ? 'Meta' : 'Control'}+2`}
+            data-project-tool="git"
+            aria-expanded={projectGitOpen}
+            aria-controls="project-tool-panel"
+          >
+            <GitBranchIcon aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className={sourceVisible ? 'is-active' : ''}
+            onClick={() => openProjectSection(selectedProject, 'code', 'source')}
+            aria-label={platformShortcutLabel(codeWorkspaceZh ? '源码（⌘3）' : 'Source (⌘3)')}
+            data-icon-tooltip={platformShortcutLabel(codeWorkspaceZh ? '源码（⌘3）' : 'Source (⌘3)')}
+            aria-keyshortcuts={`${isMacOSPlatform() ? 'Meta' : 'Control'}+3`}
+            data-project-tool="source"
+            aria-current={sourceVisible ? 'page' : undefined}
+          >
+            <CodeSimpleIcon aria-hidden="true" />
+          </button>
           <button
             type="button"
             className={projectCommandsProjectId === selectedProject.id ? 'is-active' : ''}
@@ -821,19 +831,6 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
               <TerminalWindowIcon aria-hidden="true" />
             </button>
           )}
-          <button
-            type="button"
-            className={projectGitOpen ? 'is-active' : ''}
-            onClick={toggleProjectGit}
-            aria-label={platformShortcutLabel('Git (⌘2)')}
-            data-icon-tooltip={platformShortcutLabel('Git (⌘2)')}
-            aria-keyshortcuts={`${isMacOSPlatform() ? 'Meta' : 'Control'}+2`}
-            data-project-tool="git"
-            aria-expanded={projectGitOpen}
-            aria-controls="project-tool-panel"
-          >
-            <GitBranchIcon aria-hidden="true" />
-          </button>
         </>
       ) : null}
     </nav>
@@ -2454,6 +2451,21 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
           </Suspense>
         </ProjectToolsWorkspace>
       </section>
+      <nav className="project-workspace-tool-rail project-workspace-search-rail" aria-label={codeWorkspaceZh ? '全局搜索' : 'Global search'}>
+        <button
+          type="button"
+          className={searchOpen ? 'is-active' : ''}
+          onClick={() => setSearchOpen(true)}
+          aria-label={platformShortcutLabel(codeWorkspaceZh ? '搜索（⇧⌘F）' : 'Search (⇧⌘F)')}
+          data-icon-tooltip={platformShortcutLabel(codeWorkspaceZh ? '搜索（⇧⌘F）' : 'Search (⇧⌘F)')}
+          aria-keyshortcuts={`${isMacOSPlatform() ? 'Meta' : 'Control'}+Shift+F`}
+          data-project-tool="search"
+          aria-haspopup="dialog"
+          aria-expanded={searchOpen}
+        >
+          <MagnifyingGlass aria-hidden="true" />
+        </button>
+      </nav>
       {projectToolRail}
     </main>
   );

@@ -42,6 +42,9 @@ export function TerminalTabs(props: TerminalTabsProps) {
   const selectedRef = useRef<HTMLButtonElement>(null);
   /** 两个终端入口共用焦点归属和原生关闭动作。 */
   const tabsRef = useRef<HTMLDivElement>(null);
+  /** 轮询和操作回调更新只替换数据，不撤销已登记的原生焦点归属。 */
+  const currentPropsRef = useRef(props);
+  currentPropsRef.current = props;
   useEffect(() => {
     if (!props.visible) return;
     /** 面板包含标签与终端输入区，点击任意位置都切换快捷键归属。 */
@@ -55,7 +58,8 @@ export function TerminalTabs(props: TerminalTabsProps) {
       const target = event?.target ?? document.activeElement;
       /** 仅当前可见面板消费快捷键。 */
       const next = target instanceof Node && panel.contains(target);
-      if (next || active) window.zeus?.notifyTerminalActivity?.(next);
+      // 焦点在两个终端面板之间移动时，旧面板不得撤销新面板的原生归属。
+      if (next || active) notifyTerminalActivity(target);
       active = next;
     };
     document.addEventListener('focusin', updateActivity);
@@ -63,18 +67,20 @@ export function TerminalTabs(props: TerminalTabsProps) {
     updateActivity();
     /** 关闭复用标签按钮的流程和并发门禁。 */
     const unsubscribe = window.zeus?.onNativeCloseActiveTerminalTab?.(() => {
-      if (!active || props.closeDisabled) return;
+      /** 关闭读取最新列表和并发门禁，订阅本身保持稳定。 */
+      const current = currentPropsRef.current;
+      if (!active || current.closeDisabled) return;
       /** 只关闭当前选中的后台会话。 */
-      const session = props.sessions.find((item) => item.id === props.activeId);
-      if (session) props.onClose(session);
+      const session = current.sessions.find((item) => item.id === current.activeId);
+      if (session) current.onClose(session);
     });
     return () => {
       document.removeEventListener('focusin', updateActivity);
       document.removeEventListener('pointerdown', updateActivity);
       unsubscribe?.();
-      if (active) window.zeus?.notifyTerminalActivity?.(false);
+      if (active) notifyTerminalActivity(document.activeElement);
     };
-  }, [props.visible, props.activeId, props.sessions, props.closeDisabled, props.onClose]);
+  }, [props.visible]);
   /** 同目录的多个终端按当前显示顺序编号。 */
   const nameCounts = new Map<string, number>();
   /** 后台状态对应完整的可访问文字。 */
@@ -147,4 +153,11 @@ export function TerminalTabs(props: TerminalTabsProps) {
       </button>
     </div>
   );
+}
+
+/** 所有终端面板按真实焦点同步窗口归属，隐藏或退出中的表面不接收关闭动作。 */
+function notifyTerminalActivity(target: EventTarget | null): void {
+  /** 只接受终端表面内部的元素，忽略页面与原生窗口之外的焦点。 */
+  const panel = target instanceof Element ? target.closest('.session-terminal-panel, .project-terminal') : null;
+  window.zeus?.notifyTerminalActivity?.(Boolean(panel && panel.isConnected && !panel.closest('[inert], [aria-hidden="true"]')));
 }

@@ -3328,6 +3328,17 @@ body:has(.macos-ai-app.zeus-shell) {
   padding-block-start: 44px;
 }
 
+/* 搜索固定在内容区最右上角；Windows 原生标题栏位于页面之外。 */
+.macos-ai-app.zeus-shell > .project-workspace-tool-rail.project-workspace-search-rail {
+  position: fixed;
+  inset: 0 0 auto auto;
+  z-index: 32;
+  inline-size: var(--zeus-workspace-right-rail-width);
+  block-size: 44px;
+  padding: 6px 4px;
+  overflow: visible;
+}
+
 @media (min-width: 760px) {
   .macos-ai-app.zeus-shell.ai-native-shell.main-layout-upstream[data-project-tools-visible='true'] {
     grid-template-columns: var(--zeus-project-sidebar-width) 1px minmax(0, 1fr) var(--zeus-workspace-right-rail-width);
