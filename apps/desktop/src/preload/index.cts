@@ -15,7 +15,8 @@ function mainCommandScopeId(value: unknown, fallback: string): string {
   return normalized || fallback;
 }
 
-function invokeMainCommand(channel: string, commandType: string, scopeKind: MainCommandScopeKind, scopeId: string, body: unknown = null): Promise<unknown> {
+/** 每次用户操作固定命令身份；附件出错后仅核对原结果，不重放来源读取。 */
+async function invokeMainCommand(channel: string, commandType: string, scopeKind: MainCommandScopeKind, scopeId: string, body: unknown = null): Promise<unknown> {
   const commandId = globalThis.crypto.randomUUID();
   const envelope = Object.freeze({
     schemaGeneration: 'zeus-command-envelope-v1',
@@ -28,7 +29,20 @@ function invokeMainCommand(channel: string, commandType: string, scopeKind: Main
     issuedAt: new Date().toISOString(),
     payload: Object.freeze({ transport: 'electron-ipc', channel }),
   });
-  return ipcRenderer.invoke(channel, Object.freeze({ envelope, body }));
+  /** 核对与首次执行使用同一载荷，禁止生成新的命令身份。 */
+  const request = Object.freeze({ envelope, body });
+  try {
+    return await ipcRenderer.invoke(channel, request);
+  } catch (error) {
+    if (!['desktop.conversation_resources.choose', 'desktop.conversation_resources.store_paths', 'desktop.conversation_resources.materialize', 'desktop.conversation_resources.read_clipboard'].includes(commandType)) throw error;
+    /** 核对入口只读副本和回执；核对本身失败时保留首次错误。 */
+    const recovery = (await ipcRenderer.invoke('zeus:reconcile-conversation-resources', request).catch(() => null)) as { recovered?: boolean; value?: unknown; error?: string } | null;
+    if (recovery?.recovered) {
+      if (typeof recovery.error === 'string') throw new Error(recovery.error);
+      return recovery.value;
+    }
+    throw error;
+  }
 }
 
 function invokeProjectSourceCommand(channel: string, commandType: string, input: unknown): Promise<unknown> {
@@ -314,7 +328,6 @@ contextBridge.exposeInMainWorld('zeus', {
   readConversationClipboardResources: () => invokeMainCommand('zeus:read-conversation-clipboard-resources', 'desktop.conversation_resources.read_clipboard', 'artifact', 'conversation-input-resources'),
   getConversationResourcePreview: (resource: unknown) => ipcRenderer.invoke('zeus:get-conversation-resource-preview', resource),
   openConversationInputResource: (resource: unknown) => ipcRenderer.invoke('zeus:open-conversation-input-resource', resource),
-  discardConversationResources: (resources: unknown[]) => invokeMainCommand('zeus:discard-conversation-resources', 'desktop.conversation_resources.discard', 'artifact', 'conversation-input-resources', resources),
   chooseTaskAttachments: () => invokeMainCommand('zeus:choose-task-attachments', 'desktop.task_resources.choose', 'artifact', 'task-input-resources'),
   authorizeTaskFiles: (files: File[], source: 'paste' | 'drop') => authorizePendingResourceFiles(files, source, 'zeus:store-task-resource-paths', 'zeus:materialize-task-resources'),
   materializeTaskResources: (resources: unknown[]) => invokeMainCommand('zeus:materialize-task-resources', 'desktop.task_resources.materialize', 'artifact', 'task-input-resources', resources),

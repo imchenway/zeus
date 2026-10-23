@@ -145,7 +145,13 @@ export class MainCommandLedger {
     this.#inlineReceiptByteLimit = options.inlineReceiptByteLimit ?? maximumInlineReceiptBytes;
   }
 
-  async execute<TBody, TResult>(request: MainCommandRequest<TBody>, expectedCommandType: string, effect: (body: TBody, context: MainCommandExecutionContext) => Promise<TResult> | TResult): Promise<TResult> {
+  /** 默认要求实际写入；允许纯读取完成的本地导入可记录取消或明确失败的业务回执。 */
+  async execute<TBody, TResult>(
+    request: MainCommandRequest<TBody>,
+    expectedCommandType: string,
+    effect: (body: TBody, context: MainCommandExecutionContext) => Promise<TResult> | TResult,
+    options: { allowReadOnlyCompletion?: boolean } = {},
+  ): Promise<TResult> {
     const parsed = parseMainCommandRequest<TBody>(request, expectedCommandType);
     const requestSha256 = hashMainCommandBody(parsed.body);
     const commandId = parsed.envelope.commandId;
@@ -157,7 +163,7 @@ export class MainCommandLedger {
       }
       return (await existingInFlight.promise) as TResult;
     }
-    const execution = this.#execute(parsed.envelope, parsed.body, requestSha256, effect);
+    const execution = this.#execute(parsed.envelope, parsed.body, requestSha256, effect, options.allowReadOnlyCompletion === true);
     this.#inFlight.set(commandId, { identitySha256, promise: execution });
     try {
       return (await execution) as TResult;
@@ -173,6 +179,35 @@ export class MainCommandLedger {
     const path = this.#outcomePath(safeCommandId);
     if (!(await lexicalPathExists(path))) return null;
     return this.#readOutcome(path, safeCommandId);
+  }
+
+  /** 只凭原命令身份与已落盘结果恢复回执，绝不执行原操作。 */
+  async reconcile<TResult>(request: MainCommandRequest, expectedCommandType: string, recover: (commandId: string, requestSha256: string) => Promise<TResult | null>): Promise<TResult | null> {
+    await this.#prepare();
+    /** 重新校验请求，不能用其他范围或内容借用既有结果。 */
+    const parsed = parseMainCommandRequest(request, expectedCommandType);
+    /** 命令身份固定结果文件位置。 */
+    const commandId = parsed.envelope.commandId;
+    /** 请求正文摘要必须与首次接纳一致。 */
+    const requestSha256 = hashMainCommandBody(parsed.body);
+    if (this.#inFlight.has(commandId)) return null;
+    if (!(await lexicalPathExists(this.#envelopePath(commandId))) || !(await lexicalPathExists(this.#outcomePath(commandId)))) return null;
+    /** 原始 Envelope 与载荷摘要共同约束核对范围。 */
+    const recorded = await this.#readEnvelopeRecord(this.#envelopePath(commandId), commandId);
+    if (recorded.requestSha256 !== requestSha256 || canonicalCommandInputJson(recorded.envelope) !== canonicalCommandInputJson(parsed.envelope))
+      throw new MainCommandLedgerError('ZEUS_MAIN_COMMAND_IDENTITY_CONFLICT', 'Main command reconciliation supplied a different immutable request.', { commandId });
+    /** 仅未知状态可以凭外部完成证据前进。 */
+    const outcome = await this.#readOutcome(this.#outcomePath(commandId), commandId);
+    if (outcome.state === 'receipted' && outcome.result) return (await this.#loadResult(outcome.result)) as TResult;
+    if (!outcome.writeMarker || !['accepted', 'unknown_after_write'].includes(outcome.state)) return null;
+    /** 调用方必须核对完整证据，空值表示不能确认。 */
+    const result = await recover(commandId, requestSha256);
+    if (result === null) return null;
+    /** 恢复只推进回执，不重新执行副作用。 */
+    const recovered: MainCommandOutcome = { ...outcome, state: 'receipted', result: await this.#storeResult(commandId, result), updatedAt: this.#now() };
+    delete recovered.failure;
+    await writeAtomicJson(this.#outcomePath(commandId), recovered);
+    return result;
   }
 
   /** 按可信调用方限定的范围分页，逐条投影并释放大结果，避免累积仓库快照。 */
@@ -214,7 +249,7 @@ export class MainCommandLedger {
     this.#historyIndex.set(key, scope);
   }
 
-  async #execute<TBody, TResult>(envelope: CommandEnvelope, body: TBody, requestSha256: string, effect: (body: TBody, context: MainCommandExecutionContext) => Promise<TResult> | TResult): Promise<TResult> {
+  async #execute<TBody, TResult>(envelope: CommandEnvelope, body: TBody, requestSha256: string, effect: (body: TBody, context: MainCommandExecutionContext) => Promise<TResult> | TResult, allowReadOnlyCompletion: boolean): Promise<TResult> {
     await this.#prepare();
     const envelopePath = this.#envelopePath(envelope.commandId);
     const outcomePath = this.#outcomePath(envelope.commandId);
@@ -298,7 +333,7 @@ export class MainCommandLedger {
     try {
       const result = await effect(body, context);
       await commandRecording;
-      if (!writeStarted) {
+      if (!writeStarted && !allowReadOnlyCompletion) {
         throw new MainCommandLedgerError('ZEUS_MAIN_COMMAND_REQUEST_INVALID', 'Main mutation completed without a durable pre-write marker.', {
           commandId: envelope.commandId,
           commandType: envelope.commandType,

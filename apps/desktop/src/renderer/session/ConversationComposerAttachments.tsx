@@ -73,6 +73,7 @@ async function loadAttachmentPreview(attachment: NativeConversationAttachment): 
   return (await window.zeus?.getConversationResourcePreview(attachmentResource(attachment))) ?? null;
 }
 
+/** 上传授权代表实时源文件引用；受管路径代表固定附件副本。 */
 function toPendingResource(attachment: NativeConversationAttachment): PendingResourceCardItem {
   return {
     id: conversationAttachmentIdentity(attachment),
@@ -80,6 +81,7 @@ function toPendingResource(attachment: NativeConversationAttachment): PendingRes
     kind: attachmentKind(attachment),
     mimeType: attachment.mime,
     size: attachment.size,
+    reference: Boolean(attachment.uploadRef),
     ...(attachment.characterCount !== undefined ? { characterCount: attachment.characterCount } : {}),
   };
 }

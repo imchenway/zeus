@@ -100,10 +100,12 @@ export function useConversationInputResources(options: UseConversationInputResou
       /** 选择器返回宿主已经授权的资源，保存消息时服务端仍会复验。 */
       const bridge = window.zeus?.chooseConversationResources;
       if (!bridge) throw new Error('当前应用版本未提供会话附件选择能力。');
+      /** 选择结果仍归打开菜单时的草稿，不能落入后来切换的提问字段。 */
+      const addAttachments = latest.current.onAddAttachments;
       /** 取消选择返回空列表，不视为导入失败。 */
       const attachments = await bridge();
       if (!pending.current() || attachments.length === 0) return;
-      latest.current.onAddAttachments(attachments);
+      addAttachments(attachments);
     });
   }, [runResourceOperation]);
 

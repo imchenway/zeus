@@ -420,7 +420,7 @@ function QueuedMessageEditor(props: {
       />
       <footer>
         <small aria-hidden="true">{copy.editShortcut}</small>
-        <button type="button" data-icon-tooltip={copy.addAttachments} aria-label={copy.addAttachments} onClick={inputResources.chooseAttachments} disabled={props.busy || inputResources.processing}>
+        <button type="button" data-icon-tooltip={copy.addAttachments} aria-label={copy.addAttachments} aria-haspopup="menu" onClick={inputResources.chooseAttachments} disabled={props.busy || inputResources.processing}>
           <Paperclip aria-hidden="true" />
         </button>
         <button type="button" className="session-queued-message-editor-cancel" onClick={props.onCancel} disabled={props.busy}>

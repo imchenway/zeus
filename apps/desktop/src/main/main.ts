@@ -1,6 +1,6 @@
 import { registerFilePreview } from './filePreview.js';
 import { getApplicationIcon } from './applicationIcon.js';
-import { describeUserFacingError, filePreviewMime, filePreviewKind, filePreviewLimits, type FilePreviewIntent, type FilePreviewRequest, type FilePreviewSourceWorkspace } from '@zeus/shared';
+import { describeUserFacingError, userFacingErrorCause, filePreviewMime, filePreviewKind, filePreviewLimits, type FilePreviewIntent, type FilePreviewRequest, type FilePreviewSourceWorkspace } from '@zeus/shared';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, protocol, screen, session, shell, Tray } from 'electron';
 import { execFile as execFileCallback, spawn } from 'node:child_process';
 import { constants as fsConstants, existsSync, type FSWatcher, mkdtempSync } from 'node:fs';
@@ -63,6 +63,7 @@ import {
   type ConversationInputResourceBroker,
   type ConversationInputResourceSource,
   type ConversationResourcePayload,
+  type ConversationResourceCommandResult,
   createConversationInputResourceBroker,
   readOrCreateConversationAttachmentGrantSecret,
 } from './conversationInputResources.js';
@@ -242,6 +243,65 @@ function activeMainCommandLedger(): MainCommandLedger {
   return mainCommandLedger;
 }
 traceApplicationStartup('main_module_loaded');
+
+/** 附件的明确失败作为业务回执保存，不能与进程中断或回执丢失混为一谈。 */
+async function executeConversationResourceImport(
+  broker: ConversationInputResourceBroker,
+  request: MainCommandRequest,
+  commandType: string,
+  operation: (body: unknown, command: MainCommandExecutionContext) => Promise<Extract<ConversationResourceCommandResult, { ok: true }>['value']>,
+): Promise<Extract<ConversationResourceCommandResult, { ok: true }>['value']> {
+  /** 只有结果保存失败才交由通用账本判定未知；已返回的文件错误有明确失败回执。 */
+  const result = await activeMainCommandLedger().execute<unknown, ConversationResourceCommandResult>(
+    request,
+    commandType,
+    async (body, command) => {
+      /** 文件导入完成与结果记录使用相同命令身份。 */
+      let outcome: ConversationResourceCommandResult;
+      try {
+        outcome = { ok: true, value: await operation(body, command) };
+      } catch (error) {
+        return { ok: false, error: userFacingErrorCause(error).message };
+      }
+      await broker.recordResult(command, outcome);
+      return outcome;
+    },
+    { allowReadOnlyCompletion: true },
+  );
+  if (!result.ok) throw new Error(result.error);
+  return result.value;
+}
+
+/** 共用附件按钮通过系统菜单明确区分固定副本和实时文件引用。 */
+function chooseConversationResourceMode(window: BrowserWindow): Promise<'copy' | 'reference_file' | 'reference_directory' | null> {
+  return new Promise((resolveMode) => {
+    /** 菜单关闭但未选择时按取消处理。 */
+    let selected: 'copy' | 'reference_file' | 'reference_directory' | null = null;
+    /** 使用现有系统菜单能力，两端均支持键盘选择和退出。 */
+    const menu = Menu.buildFromTemplate([
+      {
+        label: nativeText('添加附件副本', 'Add attachment copy'),
+        click: () => {
+          selected = 'copy';
+        },
+      },
+      {
+        label: nativeText('引用项目文件', 'Reference project file'),
+        click: () => {
+          selected = 'reference_file';
+        },
+      },
+      {
+        label: nativeText('引用项目目录', 'Reference project folder'),
+        click: () => {
+          selected = 'reference_directory';
+        },
+      },
+    ]);
+    menu.popup({ window, callback: () => resolveMode(selected) });
+  });
+}
+
 let appShellSettings: MainAppShellSettings = {
   appLanguage: 'zh-CN',
   webviewDebugEnabled: false,
@@ -2618,15 +2678,18 @@ function setupIpc(): void {
     }
     /** 异步选择期间固定本次附件代理。 */
     const broker = conversationInputResources;
-    return activeMainCommandLedger().execute(request, 'desktop.conversation_resources.choose', async (_body, command) => {
-      await command.markWriteStarted();
+    return executeConversationResourceImport(broker, request, 'desktop.conversation_resources.choose', async (_body, command) => {
+      /** 明确选择副本或引用；取消菜单不触发文件读写。 */
+      const mode = await chooseConversationResourceMode(activeSystemWindow(requestingWindow));
+      if (!mode || requestingWindow.isDestroyed()) return [];
       /** 只使用用户在受信窗口中选择的路径。 */
       const selected = await dialog.showOpenDialog(activeSystemWindow(requestingWindow), {
-        title: nativeText('选择文件或文件夹', 'Choose files or folders'),
-        properties: ['openFile', 'openDirectory', 'multiSelections'],
+        title: mode === 'copy' ? nativeText('添加附件副本', 'Add attachment copy') : mode === 'reference_directory' ? nativeText('引用项目目录', 'Reference project folder') : nativeText('引用项目文件', 'Reference project file'),
+        // Windows 原生选择器不支持同时选择文件和目录，两端统一采用明确入口。
+        properties: mode === 'reference_directory' ? ['openDirectory', 'multiSelections'] : ['openFile', 'multiSelections'],
       });
       if (selected.canceled) return [];
-      return broker.describePaths(selected.filePaths, 'picker', command.envelope.commandId);
+      return broker.describePaths(selected.filePaths, 'picker', command, null, mode === 'copy' ? 'copy' : 'reference');
     });
   });
   // 路径图片与剪贴板二进制都经命令账本保存，结果未知时不自动重放。
@@ -2637,15 +2700,16 @@ function setupIpc(): void {
     }
     /** 命令执行期间固定已授权的附件代理。 */
     const broker = conversationInputResources;
-    return activeMainCommandLedger().execute(request, 'desktop.conversation_resources.store_paths', async (body, command) => {
+    return executeConversationResourceImport(broker, request, 'desktop.conversation_resources.store_paths', async (body, command) => {
       /** Renderer 只能提供路径和来源，不能指定副本目的地。 */
       const payload = body && typeof body === 'object' && !Array.isArray(body) ? (body as { paths?: unknown; source?: unknown }) : {};
-      /** 非字符串条目不进入原生文件读取。 */
-      const filePaths = Array.isArray(payload.paths) ? payload.paths.filter((path): path is string => typeof path === 'string') : [];
+      /** 无效批次明确失败，不能把被过滤掉的条目当成成功添加。 */
+      if (!Array.isArray(payload.paths) || payload.paths.some((path) => typeof path !== 'string')) throw new Error('附件路径列表无效。');
+      const filePaths = payload.paths as string[];
       /** 拖入之外的路径来源归入粘贴。 */
       const normalizedSource: ConversationInputResourceSource = payload.source === 'drop' ? 'drop' : 'paste';
-      await command.markWriteStarted();
-      return broker.describePaths(filePaths, normalizedSource, command.envelope.commandId);
+      // DOM 文件列表没有同次原生图片快照，路径失败不能改读后来变化的剪贴板。
+      return broker.describePaths(filePaths, normalizedSource, command, null);
     });
   });
   ipcMain.handle('zeus:materialize-conversation-resources', async (event, request: MainCommandRequest) => {
@@ -2654,10 +2718,11 @@ function setupIpc(): void {
       throw new Error('Conversation resource materialization is unavailable for this window.');
     }
     const broker = conversationInputResources;
-    return activeMainCommandLedger().execute(request, 'desktop.conversation_resources.materialize', async (payloads, command) => {
-      const normalized = Array.isArray(payloads) ? payloads.filter((payload): payload is ConversationResourcePayload => Boolean(payload) && typeof payload === 'object' && !Array.isArray(payload)) : [];
-      await command.markWriteStarted();
-      return broker.materialize(normalized, command.envelope.commandId);
+    return executeConversationResourceImport(broker, request, 'desktop.conversation_resources.materialize', async (payloads, command) => {
+      if (!Array.isArray(payloads) || payloads.some((payload) => !payload || typeof payload !== 'object' || Array.isArray(payload))) throw new Error('附件内容列表无效。');
+      /** 后续由附件代理统一校验内容、数量和字节上限。 */
+      const normalized = payloads as ConversationResourcePayload[];
+      return broker.materialize(normalized, command);
     });
   });
   ipcMain.handle('zeus:read-conversation-clipboard-resources', async (event, request: MainCommandRequest) => {
@@ -2666,10 +2731,27 @@ function setupIpc(): void {
       throw new Error('Conversation clipboard access is unavailable for this window.');
     }
     const broker = conversationInputResources;
-    return activeMainCommandLedger().execute(request, 'desktop.conversation_resources.read_clipboard', async (_body, command) => {
-      await command.markWriteStarted();
-      return broker.readClipboard(command.envelope.commandId);
+    return executeConversationResourceImport(broker, request, 'desktop.conversation_resources.read_clipboard', async (_body, command) => {
+      return broker.readClipboard(command);
     });
+  });
+  // 回执核对独立于导入执行，调用此入口永远不会打开选择器或再次读取来源。
+  ipcMain.handle('zeus:reconcile-conversation-resources', async (event, request: MainCommandRequest) => {
+    /** 仅允许原受信应用窗口检查附件命令。 */
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !conversationInputResources) throw new Error('附件结果核对来自不受信任窗口。');
+    /** 通道白名单不允许借附件入口恢复 Git 等其他副作用。 */
+    const commandType = request?.envelope && typeof request.envelope === 'object' && 'commandType' in request.envelope ? request.envelope.commandType : null;
+    if (
+      typeof commandType !== 'string' ||
+      !['desktop.conversation_resources.choose', 'desktop.conversation_resources.store_paths', 'desktop.conversation_resources.materialize', 'desktop.conversation_resources.read_clipboard'].includes(commandType)
+    )
+      throw new Error('附件命令类型无效。');
+    /** 固定本次代理，账本还会复验全部原始请求身份。 */
+    const broker = conversationInputResources;
+    const result = await activeMainCommandLedger().reconcile<ConversationResourceCommandResult>(request, commandType, (commandId, requestSha256) => broker.recoverResult(commandId, requestSha256));
+    if (result === null) return { recovered: false };
+    return result.ok ? { recovered: true, value: result.value } : { recovered: true, error: result.error };
   });
   ipcMain.handle('zeus:get-conversation-resource-preview', async (event, resource: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
@@ -2693,18 +2775,6 @@ function setupIpc(): void {
     } catch (error) {
       return { opened: false, error: error instanceof Error ? error.message : 'open_conversation_input_resource_failed' };
     }
-  });
-  ipcMain.handle('zeus:discard-conversation-resources', async (event, request: MainCommandRequest) => {
-    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
-    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !conversationInputResources) {
-      throw new Error('Conversation resource cleanup is unavailable for this window.');
-    }
-    const broker = conversationInputResources;
-    return activeMainCommandLedger().execute(request, 'desktop.conversation_resources.discard', async (resources, command) => {
-      const records = Array.isArray(resources) ? resources.flatMap((resource) => (resource && typeof resource === 'object' && !Array.isArray(resource) ? [resource as { localPath?: string; uploadRef?: string }] : [])) : [];
-      await command.markWriteStarted();
-      return broker.discard(records);
-    });
   });
   ipcMain.handle('zeus:choose-task-attachments', async (event, request: MainCommandRequest) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);

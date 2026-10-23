@@ -17703,6 +17703,19 @@ body[data-surface='task-git-delivery'] .task-git-merge-header :where(button, inp
   outline: 1px solid color-mix(in srgb, var(--zeus-product-text) 8%, transparent);
 }
 
+/* 图片引用也常驻显示实时来源语义，覆盖层不拦截预览和键盘操作。 */
+.macos-ai-app .pending-resource-reference-label {
+  position: absolute;
+  inset-inline-start: 4px;
+  inset-block-end: 4px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--zeus-product-panel);
+  color: var(--zeus-product-text);
+  font-size: 10px;
+  pointer-events: none;
+}
+
 .macos-ai-app .pending-resource-activate {
   display: grid;
   place-items: stretch;

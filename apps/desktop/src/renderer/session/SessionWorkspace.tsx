@@ -3928,23 +3928,7 @@ export function NewConversationComposer(props: {
             {/* 新建会话与共享输入框使用同一可见提示。 */}
             {props.onChooseAttachments ? (
               <IconTooltip label={copy.attach}>
-                <button
-                  type="button"
-                  className="session-attachment-button"
-                  aria-label={copy.attach}
-                  disabled={submitting || inputResources.processing || !props.owner}
-                  onClick={async () => {
-                    try {
-                      const selected = await props.onChooseAttachments?.();
-                      if (selected?.length) {
-                        recoverDraftOperation('input_resource');
-                        setAttachments((current) => mergeConversationAttachments(current, selected));
-                      }
-                    } catch (error) {
-                      recordSystemMessage(systemScope, error, 'input_resource', '输入附件处理失败。');
-                    }
-                  }}
-                >
+                <button type="button" className="session-attachment-button" aria-label={copy.attach} disabled={submitting || inputResources.processing || !props.owner} aria-haspopup="menu" onClick={inputResources.chooseAttachments}>
                   <Paperclip aria-hidden="true" weight="regular" />
                 </button>
               </IconTooltip>

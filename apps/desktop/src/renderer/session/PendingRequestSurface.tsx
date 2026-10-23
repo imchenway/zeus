@@ -787,35 +787,16 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
     setAnswers(nextAnswers);
     if (switchingFromOther) {
       setAnswerAttachments(nextAttachments);
-      void discardAnswerAttachmentResources(currentAttachments);
     }
     if (currentQuestion.kind === 'single' && optionLabel !== otherAnswerControlValue(currentQuestion)) advance(nextAnswers, otherAnswers, nextAttachments);
   }
 
+  /** 仅移除当前草稿的引用，不删除可能仍被已发送消息使用的副本。 */
   function removeAnswerAttachment(questionId: string, attachment: NativeConversationAttachment): void {
     setAnswerAttachments((current) => ({
       ...current,
       [questionId]: (current[questionId] ?? []).filter((candidate) => conversationAttachmentIdentity(candidate) !== conversationAttachmentIdentity(attachment)),
     }));
-    void discardAnswerAttachmentResources([attachment]);
-  }
-
-  async function chooseAnswerAttachments(): Promise<void> {
-    if (!answerAttachmentsEnabled || !props.onChooseAttachments) return;
-    setResourceError(null);
-    try {
-      const selected = await props.onChooseAttachments();
-      if (selected.length > 0) {
-        void snooze();
-        if (currentQuestion.kind !== 'freeform' && !otherSelected) {
-          const controlValue = otherAnswerControlValue(currentQuestion);
-          setAnswers((current) => updateQuestionAnswers(current, currentQuestion, controlValue, true));
-        }
-        setAnswerAttachments((current) => ({ ...current, [currentQuestion.id]: mergeAnswerAttachments(current[currentQuestion.id] ?? [], selected) }));
-      }
-    } catch (error) {
-      setResourceError(error);
-    }
   }
 
   function handleAnswerInputKeyDown(event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>): void {
@@ -895,7 +876,6 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
       await (snoozePromiseRef.current ?? Promise.resolve());
       await props.onRespond(props.request.id, { type: 'userInput', answers: {} });
       if (!props.retainDraft) clearRuiDraft(props.request.id);
-      await discardAnswerAttachmentResources(Object.values(answerAttachments).flat());
     } finally {
       setLocallyResponding(false);
     }
@@ -1091,7 +1071,8 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
                     className="session-question-attachment-button"
                     aria-label={zh ? '添加附件' : 'Add attachment'}
                     disabled={inputResources.processing}
-                    onClick={() => void chooseAnswerAttachments()}
+                    aria-haspopup="menu"
+                    onClick={inputResources.chooseAttachments}
                   >
                     <Paperclip aria-hidden="true" />
                   </button>
@@ -1167,7 +1148,8 @@ export function RequestUserInputPanel(props: RequestUserInputPanelProps) {
                       className="session-question-attachment-button"
                       aria-label={zh ? '添加附件' : 'Add attachment'}
                       disabled={inputResources.processing}
-                      onClick={() => void chooseAnswerAttachments()}
+                      aria-haspopup="menu"
+                      onClick={inputResources.chooseAttachments}
                     >
                       <Paperclip aria-hidden="true" />
                     </button>
@@ -1308,15 +1290,6 @@ function activeRequestAnswerAttachments(questions: readonly RequestQuestion[], a
       return active ? [[question.id, attachments]] : [];
     }),
   );
-}
-
-async function discardAnswerAttachmentResources(attachments: NativeConversationAttachment[]): Promise<void> {
-  if (attachments.length === 0 || !window.zeus?.discardConversationResources) return;
-  try {
-    await window.zeus.discardConversationResources(attachments.map((attachment) => ({ ...(attachment.localPath ? { localPath: attachment.localPath } : {}), ...(attachment.uploadRef ? { uploadRef: attachment.uploadRef } : {}) })));
-  } catch {
-    // 清理失败不能伪造回答失败；Main 仍会拒绝删除任何非托管资源。
-  }
 }
 
 function permissionModeLabel(permissionMode: NativePermissionMode, language: SessionUiLanguage): string {

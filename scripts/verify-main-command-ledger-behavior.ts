@@ -253,16 +253,17 @@ try {
     },
   });
   const conversationPayload = [{ name: 'cas.txt', type: 'text/plain', text: '原子 CAS 内容', source: 'paste' as const, kind: 'pasted_text' as const }];
-  const [casFirst, casConcurrent] = await Promise.all([
-    conversationResourceBroker.materialize(conversationPayload, 'conversation-resource-cas-command'),
-    conversationResourceBroker.materialize(conversationPayload, 'conversation-resource-cas-command'),
-  ]);
-  const casFiles = (await readdir(conversationResourceRoot)).filter((entry) => !entry.startsWith('.'));
-  const casPath = casFirst[0]?.localPath;
-  assertProbe(casFiles.length === 1 && typeof casPath === 'string' && casConcurrent[0]?.localPath === casPath, '并发相同资源命令必须通过原子 no-replace 发布收敛为同一文件。');
-  await writeFile(casPath, 'tampered', { mode: 0o600 });
-  const conversationCasConflict = await captureError(() => conversationResourceBroker.materialize(conversationPayload, 'conversation-resource-cas-command'));
-  assertProbe(conversationCasConflict instanceof Error && conversationCasConflict.message.includes('CAS destination contains different bytes'), '资源目标存在不同字节时 CAS 必须拒绝覆盖。');
+  /** 资源代理的既有调用也使用真实命令上下文，写入标记由代理在保存前触发。 */
+  const casFiles = await ledger.execute(commandRequest('conversation-resource-cas-command', 'desktop.probe.resource_cas', conversationPayload), 'desktop.probe.resource_cas', async (_body, command) => {
+    const [casFirst, casConcurrent] = await Promise.all([conversationResourceBroker.materialize(conversationPayload, command), conversationResourceBroker.materialize(conversationPayload, command)]);
+    const casFiles = (await readdir(conversationResourceRoot)).filter((entry) => !entry.startsWith('.'));
+    const casPath = casFirst[0]?.localPath;
+    assertProbe(casFiles.length === 1 && typeof casPath === 'string' && casConcurrent[0]?.localPath === casPath, '并发相同资源命令必须通过原子 no-replace 发布收敛为同一文件。');
+    await writeFile(casPath, 'tampered', { mode: 0o600 });
+    const conversationCasConflict = await captureError(() => conversationResourceBroker.materialize(conversationPayload, command));
+    assertProbe(conversationCasConflict instanceof Error && conversationCasConflict.message.includes('CAS destination contains different bytes'), '资源目标存在不同字节时 CAS 必须拒绝覆盖。');
+    return casFiles;
+  });
 
   let cleanupErrorCalls = 0;
   const cleanupKeepOpenExitCodes: number[] = [];

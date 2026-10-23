@@ -518,20 +518,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
             {/* 附件入口直接显示功能提示，禁用时仍可识别用途。 */}
             {props.onChooseAttachments ? (
               <IconTooltip label={copy.attach}>
-                <button
-                  type="button"
-                  className="session-attachment-button"
-                  aria-label={copy.attach}
-                  onClick={() => {
-                    setInputResourceError(null);
-                    void Promise.resolve()
-                      .then(() => props.onChooseAttachments?.())
-                      .catch((error: unknown) => {
-                        setInputResourceError(error);
-                      });
-                  }}
-                  disabled={!inputWritable || busy || inputResources.processing}
-                >
+                <button type="button" className="session-attachment-button" aria-label={copy.attach} aria-haspopup="menu" onClick={inputResources.chooseAttachments} disabled={!inputWritable || busy || inputResources.processing}>
                   <Paperclip aria-hidden="true" weight="regular" />
                 </button>
               </IconTooltip>

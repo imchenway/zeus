@@ -37,6 +37,8 @@ export interface PendingResourceCardItem {
   /** 任务表单用字段定位临时卡片，不写入附件持久化。 */
   scope?: string;
   title?: string;
+  /** 明确的源文件引用显示独立标识，避免与固定副本混淆。 */
+  reference?: boolean;
 }
 
 export interface PendingResourceCardsProps {
@@ -76,7 +78,8 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
   const previewUrl = props.resource.previewUrl ?? loadedPreviewUrl;
   const previewLoaderAvailable = Boolean(props.onLoadPreview);
   const extension = pendingResourceExtension(props.resource.name);
-  const typeLabel = pendingResourceTypeLabel(props.resource, props.language);
+  /** 引用语义优先于扩展名显示，用户能直接区分实时来源和固定副本。 */
+  const typeLabel = props.resource.reference ? (props.language === 'zh-CN' ? '源文件引用' : 'Live reference') : pendingResourceTypeLabel(props.resource, props.language);
   /** 外部读取与内部读取共用失败状态，失败不能一直显示加载动画。 */
   const failed = previewFailed || props.resource.previewFailed;
   /** 导入、读取和解码都显示同一骨架，不把等待状态画成文件图标。 */
@@ -142,7 +145,12 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
     >
       {props.onActivate && !props.resource.pending ? (
         /* 预览只读取附件；提交中和只读界面只禁用移除操作。 */
-        <button type="button" className="pending-resource-activate" aria-label={`${pendingResourceOpenLabel(props.resource.kind, props.language)}: ${props.resource.name}`} onClick={activate}>
+        <button
+          type="button"
+          className="pending-resource-activate"
+          aria-label={`${props.resource.reference ? `${typeLabel}: ` : ''}${pendingResourceOpenLabel(props.resource.kind, props.language)}: ${props.resource.name}`}
+          onClick={activate}
+        >
           {visual}
         </button>
       ) : (
@@ -156,6 +164,7 @@ function PendingResourceCard(props: Omit<PendingResourceCardsProps, 'resources' 
           </span>
         </span>
       )}
+      {props.resource.kind === 'image' && props.resource.reference ? <small className="pending-resource-reference-label">{typeLabel}</small> : null}
       {props.resource.pending && !previewLoading ? <ResourceLoading label={loadingLabel} overlay /> : null}
       {props.onRemove && !props.resource.pending ? (
         <button

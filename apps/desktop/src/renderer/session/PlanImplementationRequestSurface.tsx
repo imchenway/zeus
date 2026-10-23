@@ -38,8 +38,6 @@ export function PlanImplementationRequestSurface(props: {
   const [attachments, setAttachments] = useState<NativeConversationAttachment[]>([]);
   /** 资源读取错误使用现有错误提示。 */
   const [resourceError, setResourceError] = useState<unknown>(null);
-  /** 文件选择期间阻止提前提交，文字输入仍可编辑。 */
-  const [choosingAttachments, setChoosingAttachments] = useState(false);
   /** 初次出现时聚焦实施选项。 */
   const primaryRef = useRef<HTMLButtonElement | null>(null);
   /** 展开修改意见后聚焦同一行的输入框。 */
@@ -57,7 +55,7 @@ export function PlanImplementationRequestSurface(props: {
     onError: setResourceError,
   });
   /** 附件未准备完成时，不允许发送或关闭当前意见。 */
-  const responding = props.busy || choosingAttachments || inputResources.processing;
+  const responding = props.busy || inputResources.processing;
 
   /** 相同受信资源只显示一次，选择与粘贴共用添加入口。 */
   function addAttachments(added: NativeConversationAttachment[]): void {
@@ -65,23 +63,9 @@ export function PlanImplementationRequestSurface(props: {
     setAttachments((current) => [...new Map([...current, ...added].map((attachment) => [conversationAttachmentIdentity(attachment), attachment])).values()]);
   }
 
-  /** 只释放用户移除的托管草稿资源，清理失败不影响继续编辑。 */
+  /** 只移除当前意见中的附件引用，保留可能已被其他消息使用的副本。 */
   function removeAttachment(attachment: NativeConversationAttachment): void {
     setAttachments((current) => current.filter((candidate) => conversationAttachmentIdentity(candidate) !== conversationAttachmentIdentity(attachment)));
-    void window.zeus?.discardConversationResources?.([{ ...(attachment.localPath ? { localPath: attachment.localPath } : {}), ...(attachment.uploadRef ? { uploadRef: attachment.uploadRef } : {}) }]).catch(() => undefined);
-  }
-
-  /** 原生文件选择结果与剪贴板资源采用相同预览和提交格式。 */
-  async function chooseAttachments(): Promise<void> {
-    if (!props.onChooseAttachments || responding) return;
-    setChoosingAttachments(true);
-    try {
-      addAttachments(await props.onChooseAttachments());
-    } catch (error) {
-      setResourceError(error);
-    } finally {
-      setChoosingAttachments(false);
-    }
   }
 
   useEffect(() => {
@@ -108,7 +92,8 @@ export function PlanImplementationRequestSurface(props: {
           className="session-question-attachment-button"
           aria-label={zh ? '添加附件' : 'Add attachment'}
           disabled={responding}
-          onClick={() => void chooseAttachments()}
+          aria-haspopup="menu"
+          onClick={inputResources.chooseAttachments}
         >
           <Paperclip aria-hidden="true" />
         </button>

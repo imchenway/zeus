@@ -2034,7 +2034,6 @@ function PlanImplementationQa() {
           uploadRef: 'qa:pasted-text',
         })),
       readConversationClipboardResources: async () => ({ resources: [{ name: '剪贴板附件.txt', kind: 'file', mime: 'text/plain', size: 12, source: 'paste', uploadRef: 'qa:clipboard-file' }], text: '' }),
-      discardConversationResources: async (resources) => ({ discardedCount: resources.length }),
     } as NonNullable<Window['zeus']>;
     return () => {
       delete window.zeus;
