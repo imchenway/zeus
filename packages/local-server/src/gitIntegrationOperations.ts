@@ -15,6 +15,7 @@ import {
   fetchGitRemote,
   finalizeTaskBranchIntegration,
   getGitBranchHead,
+  getGitCommonDirectory,
   getGitRepositoryContext,
   getGitWorktreeClean,
   getProjectGitRepositorySnapshot,
@@ -380,22 +381,32 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       prepared: Awaited<ReturnType<typeof prepareTaskWorktree>>;
       remoteName: string;
     }> = [];
+    /** 存量登记可能包含同仓库的多个工作树；任何目录或 Git 写入之前先核对真实身份。 */
+    const repositoryPathsByIdentity = new Map<string, string>();
+    const repositoryContexts = await mapTaskRepositoriesWithConcurrency(registeredRepositories, async (registeredRepository) => {
+      const projectRelativePath = relative(project.localPath, registeredRepository.localPath);
+      if (projectRelativePath === '..' || projectRelativePath.startsWith(`..${sep}`) || isAbsolute(projectRelativePath)) {
+        throw nativeApiError('ZEUS_PROJECT_REPOSITORY_UNAVAILABLE', `Project repository path is outside the project directory: ${registeredRepository.relativePath}`);
+      }
+      const repository = await getGitRepositoryContext(registeredRepository.localPath);
+      if (!repository.isRepository || resolve(repository.topLevel) !== resolve(registeredRepository.localPath)) {
+        throw nativeApiError('ZEUS_PROJECT_REPOSITORY_UNAVAILABLE', `Project repository is unavailable: ${registeredRepository.relativePath}`);
+      }
+      /** 公共目录由 Git 和文件系统解析，不把不同工作树路径当成不同仓库。 */
+      const commonDirectory = await getGitCommonDirectory(registeredRepository.localPath);
+      /** 提示两条重复登记路径，供刷新清单前核对。 */
+      const priorPath = repositoryPathsByIdentity.get(commonDirectory);
+      if (priorPath !== undefined) {
+        throw nativeApiError('ZEUS_PROJECT_REPOSITORY_DUPLICATED', `同一 Git 仓库被重复登记：${priorPath}、${registeredRepository.relativePath}。请刷新本地仓库后重新推送；已有分支和工作区保持不变。`);
+      }
+      repositoryPathsByIdentity.set(commonDirectory, registeredRepository.relativePath);
+      return repository;
+    });
     try {
       if (registeredRepositories.length > 0) {
         mkdirSync(environmentRoot, { recursive: true });
         mirrorTaskEnvironmentContainer(project, environmentRoot, registeredRepositories, projectSharedPaths.listByProject(project.id));
       }
-      const repositoryContexts = await mapTaskRepositoriesWithConcurrency(registeredRepositories, async (registeredRepository) => {
-        const projectRelativePath = relative(project.localPath, registeredRepository.localPath);
-        if (projectRelativePath === '..' || projectRelativePath.startsWith(`..${sep}`) || isAbsolute(projectRelativePath)) {
-          throw nativeApiError('ZEUS_PROJECT_REPOSITORY_UNAVAILABLE', `Project repository path is outside the project directory: ${registeredRepository.relativePath}`);
-        }
-        const repository = await getGitRepositoryContext(registeredRepository.localPath);
-        if (!repository.isRepository || resolve(repository.topLevel) !== resolve(registeredRepository.localPath)) {
-          throw nativeApiError('ZEUS_PROJECT_REPOSITORY_UNAVAILABLE', `Project repository is unavailable: ${registeredRepository.relativePath}`);
-        }
-        return repository;
-      });
       const sequence = taskEnvironments.listByTask(task.id).length + 1;
       /** 同一提交批次冻结当前设置，所有仓库使用相同分支前缀。 */
       const taskBranchPrefix = readTaskBranchPrefix();

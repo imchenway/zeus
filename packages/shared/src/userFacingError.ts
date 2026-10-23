@@ -468,6 +468,14 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
     ['这个任务工作目录已关闭或移除，请选择可用目录或新建独立工作目录。', 'This task working folder was closed or removed. Select an available folder or create a separate working folder.'],
   ],
   [['ZEUS_TARGET_HEAD_CHANGED'], ['合入期间目标分支发生了变化，请重新合入。', 'The target branch changed during the merge. Start the merge again.']],
+  // 重复仓库应先刷新登记，不引导用户重复创建同名分支。
+  [
+    ['ZEUS_PROJECT_REPOSITORY_DUPLICATED'],
+    [
+      '同一 Git 仓库被重复登记。请刷新本地仓库后重新推送；已有分支和工作区保持不变。',
+      'The same Git repository is registered more than once. Refresh local repositories and start the task again. Existing branches and worktrees are unchanged.',
+    ],
+  ],
   [
     ['ZEUS_TASK_REPOSITORY_SNAPSHOT_CHANGED', 'ZEUS_TASK_PUSH_CONTEXT_CHANGED', 'ZEUS_TASK_HEAD_CHANGED', 'ZEUS_TASK_INTEGRATION_ATTEMPT_STALE'],
     ['任务或代码分支已发生变化，当前预览已过期。请重新打开预览，确认最新内容后继续。', 'The task or code branch has changed, so this preview is out of date. Reopen it and review the current content before continuing.'],

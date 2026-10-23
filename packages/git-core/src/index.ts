@@ -641,8 +641,13 @@ export async function getGitRepositoryContext(cwd: string): Promise<GitRepositor
   }
 }
 
+/** 解析全部 worktree 共用的 Git 目录；真实路径统一系统路径别名，读取失败不生成虚假身份。 */
+export async function getGitCommonDirectory(cwd: string): Promise<string> {
+  return realpath(await requireGitStdout(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir']));
+}
+
 /**
- * 在项目容器内完整发现真实 Git 根目录；只返回候选，不替用户登记仓库。
+ * 在项目容器内完整发现独立 Git 仓库；同仓库优先保留较浅路径，只返回候选，不替用户登记仓库。
  * 扫描跳过依赖、构建产物和 Zeus 自己的 worktree 根，避免把缓存仓库误纳入项目。
  * 目录或仓库不可读时抛出错误，禁止把不完整扫描伪装成空清单；退出可中止遍历。
  */
@@ -683,7 +688,30 @@ export async function discoverGitRepositories(containerPath: string, maxDepth = 
     });
     currentLevel = nested.flat();
   }
-  const discovered = await mapWithConcurrency(candidates, 4, async (localPath) => {
+  /** 先按深度和路径固定顺序，使主目录优先于嵌套工作树，结果不受并发读取顺序影响。 */
+  const identities = await mapWithConcurrency(
+    candidates.sort((left, right) => left.split(sep).length - right.split(sep).length || left.localeCompare(right)),
+    4,
+    async (localPath) => {
+      signal?.throwIfAborted();
+      return { localPath, commonDirectory: await getGitCommonDirectory(localPath) };
+    },
+  );
+  /** 同一公共 Git 目录只占一个项目仓库身份。 */
+  const commonDirectories = new Set<string>();
+  /** 重复工作树内的子仓库属于那份副本，不扩展当前项目的仓库范围。 */
+  const excludedWorktrees: string[] = [];
+  /** 独立子仓库拥有不同的公共 Git 目录，继续保留。 */
+  const independentCandidates = identities.filter(({ localPath, commonDirectory }) => {
+    if (excludedWorktrees.some((worktree) => isPathInside(worktree, localPath))) return false;
+    if (commonDirectories.has(commonDirectory)) {
+      excludedWorktrees.push(localPath);
+      return false;
+    }
+    commonDirectories.add(commonDirectory);
+    return true;
+  });
+  const discovered = await mapWithConcurrency(independentCandidates, 4, async ({ localPath }) => {
     signal?.throwIfAborted();
     const [context, clean] = await Promise.all([getGitRepositoryContext(localPath), getGitWorktreeClean(localPath)]);
     if (!context.isRepository || canonicalFilesystemPath(context.topLevel) !== localPath) throw new Error(`无法读取 Git 仓库 ${localPath}，请检查目录权限和仓库状态。`);
