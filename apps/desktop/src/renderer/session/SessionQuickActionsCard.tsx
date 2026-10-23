@@ -11,9 +11,7 @@ import { fileIconForKind, fileIconKindForName } from '../code/FileTypeIcon.js';
 import { FileCodeIcon as FileCode } from '@phosphor-icons/react/dist/csr/FileCode';
 import { FileImageIcon as FileImage } from '@phosphor-icons/react/dist/csr/FileImage';
 import { FolderIcon as Folder } from '@phosphor-icons/react/dist/csr/Folder';
-import { GearSixIcon as GearSix } from '@phosphor-icons/react/dist/csr/GearSix';
 import { GitBranchIcon as GitBranch } from '@phosphor-icons/react/dist/csr/GitBranch';
-import { GitDiffIcon as GitDiff } from '@phosphor-icons/react/dist/csr/GitDiff';
 import { GithubLogoIcon as GithubLogo } from '@phosphor-icons/react/dist/csr/GithubLogo';
 import { GlobeSimpleIcon as GlobeSimple } from '@phosphor-icons/react/dist/csr/GlobeSimple';
 import { PlusIcon as Plus } from '@phosphor-icons/react/dist/csr/Plus';
@@ -58,8 +56,6 @@ interface SessionQuickActionsCardProps {
   onLoadTaskWorkspaces?: (taskId: string) => Promise<TaskWorkspacesSnapshot>;
   /** 交付通知使当前会话的 Git 快照失效。 */
   taskGitDeliveryRevision?: number;
-  onOpenTaskDetail?: (taskId: string) => void;
-  onOpenGitReview?: (taskId: string, workspaceId: string | null, mode: 'commit' | 'push-only') => void;
   onOpenGitDelivery?: (taskId: string, workspaceId: string | null) => void;
   /** 内置浏览器的显示状态由当前会话工作面维护。 */
   browserOpen: boolean;
@@ -140,7 +136,6 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const sources = useMemo(() => collectSources(props.state), [props.state.attachments, props.state.items]);
   const visibleSources = showAllSources ? sources : sources.slice(0, DEFAULT_VISIBLE_SOURCE_COUNT);
   const dirty = conversationReview ? conversationReviews.some((review) => !review.clean) : workspace?.review ? !workspace.review.clean : false;
-  const canOpenReview = Boolean(conversationReady || (taskId && workspace && props.onOpenGitReview));
   /** 进入页面不依赖预读成功；加载和目录错误由交付页呈现并提供重试。 */
   const canOpenDelivery = Boolean(conversationGitClient || (taskId && props.onOpenGitDelivery));
   const codeReviewUnavailableReason = resolveCodeReviewUnavailableReason({
@@ -186,11 +181,15 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
     setOpen(false);
     setShowAllSources(false);
     setReviewDialogOpen(false);
+  }, [props.conversation.id]);
+
+  /** 切换读取范围时清除旧快照，后台刷新只复用同一范围的成功结果。 */
+  useEffect(() => {
     setConversationGit(null);
     setWorkspaces(null);
     setWorkspaceState('idle');
     setWorkspaceError(null);
-  }, [props.conversation.id]);
+  }, [props.conversation.id, props.conversation.projectId, props.conversation.workspaceId, props.conversation.environmentId, directWorkspace, taskId]);
 
   useEffect(() => {
     if (!cardVisible || (taskId ? !props.onLoadTaskWorkspaces : !conversationGitClient)) return;
@@ -205,7 +204,8 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
       if (document.visibilityState === 'hidden') return;
       /** 当前请求的顺序，用于拒绝迟到的旧结果和旧错误。 */
       const revision = ++requestRevision;
-      setWorkspaceState('loading');
+      // 同一范围刷新保留已显示的快照，避免加载提示反复插入并改变卡片高度。
+      setWorkspaceState((current) => (current === 'ready' ? current : 'loading'));
       setWorkspaceError(null);
       const request = taskId
         ? loadWorkspaces!(taskId).then((snapshot) => {
@@ -233,7 +233,19 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
       window.removeEventListener('focus', refreshWorkspaces);
       document.removeEventListener('visibilitychange', refreshWorkspaces);
     };
-  }, [cardVisible, props.conversation.id, props.conversation.workspaceId, props.onLoadTaskWorkspaces, props.state.activeTurnId, props.taskGitDeliveryRevision, props.conversation.projectId, taskId, conversationGitClient]);
+  }, [
+    cardVisible,
+    props.conversation.id,
+    props.conversation.workspaceId,
+    props.conversation.environmentId,
+    props.onLoadTaskWorkspaces,
+    props.state.activeTurnId,
+    props.taskGitDeliveryRevision,
+    props.conversation.projectId,
+    taskId,
+    directWorkspace,
+    conversationGitClient,
+  ]);
 
   useEffect(() => {
     if (!open) return;
@@ -307,16 +319,6 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
       card.style.removeProperty('--session-quick-actions-available-height');
     };
   }, [cardVisible, persistent, props.persistentHost]);
-
-  function openReview(): void {
-    if (conversationReady) {
-      void openDelivery();
-      return;
-    }
-    if (!taskId || !workspace || !props.onOpenGitReview) return;
-    setOpen(false);
-    props.onOpenGitReview(taskId, workspace.id, 'commit');
-  }
 
   /** 同一个按钮统一打开原生交付窗口，任务范围保留现有工作区定位。 */
   async function openDelivery(): Promise<void> {
@@ -400,50 +402,13 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
               <Collapsible open animateHeight>
                 <header>
                   <strong>{zh ? '环境信息' : 'Environment'}</strong>
-                  {taskId && props.onOpenTaskDetail ? (
-                    <button
-                      type="button"
-                      className="session-quick-actions-settings"
-                      aria-label={zh ? '打开任务详情' : 'Open task details'}
-                      data-icon-tooltip={zh ? '打开任务详情' : 'Open task details'}
-                      onClick={() => {
-                        setOpen(false);
-                        props.onOpenTaskDetail?.(taskId);
-                      }}
-                    >
-                      <GearSix aria-hidden="true" weight="regular" />
-                    </button>
-                  ) : null}
                 </header>
 
                 <div className="session-quick-actions-list">
-                  <button type="button" className="session-quick-actions-row" disabled={!canOpenReview} onClick={openReview}>
-                    <GitDiff aria-hidden="true" weight="regular" />
-                    <span className="session-quick-actions-copy">
-                      <strong>{zh ? '变更' : 'Changes'}</strong>
-                      {workspaceState === 'loading' ? <small>{zh ? '正在读取 Git 状态…' : 'Loading Git status…'}</small> : null}
-                    </span>
-                    <span
-                      className="session-quick-actions-diff"
-                      aria-label={
-                        workspaceState !== 'ready'
-                          ? zh
-                            ? '变更统计尚不可用'
-                            : 'Change counts unavailable'
-                          : zh
-                            ? `新增 ${changes.additions} 行，删除 ${changes.deletions} 行`
-                            : `${changes.additions} additions, ${changes.deletions} deletions`
-                      }
-                    >
-                      <b>{workspaceState === 'ready' ? `+${changes.additions}` : '—'}</b>
-                      <i>{workspaceState === 'ready' ? `−${changes.deletions}` : '—'}</i>
-                    </span>
-                  </button>
-
                   <div className="session-quick-actions-row is-static" data-icon-tooltip={cwd ?? undefined}>
                     <Folder aria-hidden="true" weight="regular" />
                     <span className="session-quick-actions-copy">
-                      <strong>{zh ? '本地' : 'Local'}</strong>
+                      <strong>{zh ? '工作目录' : 'Working directory'}</strong>
                       <small>{cwd ?? (zh ? '执行目录不可用' : 'Execution directory unavailable')}</small>
                     </span>
                     {cwd ? <RuntimeCopyButton text={cwd} label={zh ? '复制工作目录' : 'Copy working directory'} copiedLabel={zh ? '工作目录已复制' : 'Working directory copied'} /> : null}
@@ -453,7 +418,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                     <GitBranch aria-hidden="true" weight="regular" />
                     <span className="session-quick-actions-copy">
                       <strong>{branch ?? (cwd ? (zh ? '非 Git 目录' : 'Not a Git repository') : zh ? '分支不可用' : 'Branch unavailable')}</strong>
-                      {workspace?.sourceBranch ? <small>{zh ? `来源 ${workspace.sourceBranch}` : `Source ${workspace.sourceBranch}`}</small> : null}
+                      {workspace?.sourceBranch ? <small>{zh ? `来源分支 ${workspace.sourceBranch}` : `Source branch ${workspace.sourceBranch}`}</small> : null}
                     </span>
                     {branch && !(directWorkspace && conversationReviews.length > 1) ? (
                       <RuntimeCopyButton text={branch} label={zh ? '复制工作分支' : 'Copy working branch'} copiedLabel={zh ? '工作分支已复制' : 'Working branch copied'} />
@@ -474,17 +439,16 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                   <button
                     type="button"
                     className="session-quick-actions-row"
-                    aria-label={zh ? '内置浏览器' : 'Built-in browser'}
+                    aria-label={zh ? '浏览器' : 'Browser'}
                     aria-pressed={props.browserOpen}
                     aria-keyshortcuts="Meta+Shift+B Control+Shift+B"
                     onClick={(event) => toggleTool(event.currentTarget, props.onToggleBrowser)}
                   >
                     <GlobeSimple aria-hidden="true" weight="regular" />
                     <span className="session-quick-actions-copy">
-                      <strong>{zh ? '内置浏览器' : 'Built-in browser'}</strong>
-                      <small>{platformShortcutLabel('⌘⇧B')}</small>
+                      <strong>{zh ? '浏览器' : 'Browser'}</strong>
                     </span>
-                    <span className="session-quick-actions-tool-state">{props.browserOpen ? (zh ? '关闭' : 'Close') : zh ? '打开' : 'Open'}</span>
+                    <span className="session-quick-actions-shortcut">{platformShortcutLabel('⌘⇧B')}</span>
                   </button>
 
                   {props.onToggleTerminal ? (
@@ -499,9 +463,8 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                       <TerminalWindow aria-hidden="true" weight="regular" />
                       <span className="session-quick-actions-copy">
                         <strong>{zh ? '会话终端' : 'Conversation terminal'}</strong>
-                        <small>Ctrl+`</small>
                       </span>
-                      <span className="session-quick-actions-tool-state">{props.terminalOpen ? (zh ? '收起' : 'Hide') : zh ? '打开' : 'Open'}</span>
+                      <span className="session-quick-actions-shortcut">Ctrl+`</span>
                     </button>
                   ) : null}
 
@@ -544,7 +507,22 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                                   : 'Review, commit, merge, and push'}
                       </small>
                     </span>
-                    <ArrowSquareOut aria-hidden="true" weight="regular" />
+                    {/* 增删统计与代码交付共用一行，沿用原有颜色、占位和读屏说明。 */}
+                    <span
+                      className="session-quick-actions-diff"
+                      aria-label={
+                        workspaceState !== 'ready'
+                          ? zh
+                            ? '变更统计尚不可用'
+                            : 'Change counts unavailable'
+                          : zh
+                            ? `新增 ${changes.additions} 行，删除 ${changes.deletions} 行`
+                            : `${changes.additions} additions, ${changes.deletions} deletions`
+                      }
+                    >
+                      <b>{workspaceState === 'ready' ? `+${changes.additions}` : '—'}</b>
+                      <i>{workspaceState === 'ready' ? `−${changes.deletions}` : '—'}</i>
+                    </span>
                   </button>
                 </div>
 
