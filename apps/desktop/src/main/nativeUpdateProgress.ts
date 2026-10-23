@@ -49,10 +49,6 @@ export async function createNativeUpdateProgressHost(options: CreateNativeUpdate
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
   });
-  await new Promise<void>((resolveSpawn, rejectSpawn) => {
-    child.once('spawn', resolveSpawn);
-    child.once('error', rejectSpawn);
-  });
   const actionListeners = new Set<(action: NativeUpdateProgressAction) => void>();
   const exitListeners = new Set<() => void>();
   let closed = false;
@@ -67,9 +63,38 @@ export async function createNativeUpdateProgressHost(options: CreateNativeUpdate
   });
 
   const stdout = createInterface({ input: child.stdout });
+  /** 进程创建不代表窗口就绪；等待原生消息循环回执，启动失败及时交给入口展示。 */
+  const ready = new Promise<void>((resolveReady, rejectReady) => {
+    /** 就绪、退出与超时共用清理，避免留下启动阶段的监听。 */
+    function finish(error?: Error): void {
+      clearTimeout(timeout);
+      stdout.removeListener('line', onReady);
+      child.removeListener('error', onError);
+      child.removeListener('exit', onEarlyExit);
+      if (error) rejectReady(error);
+      else resolveReady();
+    }
+    /** 只有原生窗口的明确回执才允许调用方宣告打开成功。 */
+    function onReady(line: string): void {
+      if (parseAction(line) === 'ready') finish();
+    }
+    /** 启动失败保留原始原因，供统一错误说明处理。 */
+    function onError(error: Error): void {
+      finish(new Error('原生更新窗口启动失败。', { cause: error }));
+    }
+    /** 助手提前退出不能被误认为窗口正常关闭。 */
+    function onEarlyExit(): void {
+      finish(new Error('原生更新窗口在就绪前退出，请检查 Zeus 安装和运行日志。'));
+    }
+    /** 冷启动最多等待十秒，不让用户点击后无限等待。 */
+    const timeout = setTimeout(() => finish(new Error('原生更新窗口启动超时，请检查 Zeus 安装和运行日志。')), 10_000);
+    stdout.on('line', onReady);
+    child.once('error', onError);
+    child.once('exit', onEarlyExit);
+  });
   stdout.on('line', (line) => {
     const action = parseAction(line);
-    if (!action) return;
+    if (!action || action === 'ready') return;
     for (const listener of actionListeners) listener(action);
   });
   child.stderr.on('data', (chunk: Buffer) => {
@@ -103,6 +128,16 @@ export async function createNativeUpdateProgressHost(options: CreateNativeUpdate
     nativeTheme.removeListener('updated', syncAppearance);
     send({ type: 'quit' });
     child.stdin.end();
+  }
+
+  try {
+    await ready;
+    if (closed) throw new Error('原生更新窗口已退出，无法显示更新状态。');
+  } catch (error) {
+    close();
+    // 这里只终止本次未就绪的显示助手，不接触下载任务或独立安装器。
+    if (!closed) child.kill();
+    throw error;
   }
 
   return {
@@ -139,12 +174,14 @@ export async function createNativeUpdateProgressHost(options: CreateNativeUpdate
   };
 }
 
-function parseAction(line: string): NativeUpdateProgressAction | null {
+/** 就绪回执只用于启动握手，其他动作继续交给共享更新控制器。 */
+function parseAction(line: string): NativeUpdateProgressAction | 'ready' | null {
   try {
     const value = JSON.parse(line) as unknown;
     if (!isRecord(value)) return null;
     const action = value.action;
-    return action === 'download' ||
+    return action === 'ready' ||
+      action === 'download' ||
       action === 'check' ||
       action === 'open_download_page' ||
       action === 'open_installer' ||

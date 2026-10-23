@@ -1,6 +1,7 @@
 import { isInteractiveShellSession } from '@zeus/shared';
 import { realpathSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
+import { pathIsInside as isPathInsideProjectRoot } from '@zeus/storage/platform-security';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { AiCliAdapterDescriptor, AiRuntimeLogEntry, AiRuntimeSession, AiRuntimeSessionManager } from '@zeus/ai-runtime';
 import {
@@ -959,20 +960,41 @@ function canConsumeGenericRuntimeConfirmation(confirmation: RuntimeOperationConf
   );
 }
 
+/** 静态命令提示覆盖本机 shell 的显式脚本参数，隔离与授权仍由执行层负责。 */
 function detectGenericShellRisk(args: string[], projectRoot: string): { kind: 'outside_project' | 'sensitive_path' | 'secret_file'; commandText: string; path: string } | null {
-  const flagIndex = args.findIndex((arg) => arg === '-c' || arg === '-lc' || arg === '-cl');
-  const commandText = flagIndex < 0 ? '' : (args[flagIndex + 1]?.trim() ?? '');
+  const flagIndex = args.findIndex((arg) => ['-c', '-lc', '-cl', ...(process.platform === 'win32' ? ['-command', '-encodedcommand', '/c'] : [])].includes(arg.toLowerCase()));
+  let commandText = flagIndex < 0 ? '' : (args[flagIndex + 1]?.trim() ?? '');
+  if (process.platform === 'win32' && args[flagIndex]?.toLowerCase() === '-encodedcommand') {
+    /** 共用执行器生成 UTF-16LE 编码命令，风险提示读取同一正文而非跳过检查。 */
+    const encoded = commandText.replace(/\s/gu, '');
+    /** 非规范 Base64 或奇数字节不能可靠恢复 PowerShell 正文。 */
+    const bytes = Buffer.from(encoded, 'base64');
+    if (bytes.toString('base64') !== encoded || bytes.length % 2 !== 0) throw new RuntimeSessionRouteError('ZEUS_RUNTIME_COMMAND_INPUT_INVALID', 'PowerShell 编码命令无效。', 400);
+    commandText = bytes.toString('utf16le').trim();
+  }
   if (!commandText) return null;
   const tokens = (commandText.match(/"[^"]*"|'[^']*'|[^\s]+/gu) ?? []).map((token) => token.replace(/^['"]|['"]$/gu, ''));
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index]!;
     const redirect = /^(?:\d*>>?|&>)$/u.test(token) ? tokens[index + 1] : token.match(/^(?:\d*>>?|&>)(.+)$/u)?.[1];
-    if (redirect?.startsWith('/') && redirect !== '/' && !isPathInsideProjectRoot(redirect, projectRoot)) return { kind: 'outside_project', commandText, path: redirect };
+    if (redirect && isAbsolute(redirect) && !isPathInsideProjectRoot(redirect, projectRoot)) return { kind: 'outside_project', commandText, path: redirect };
   }
-  const writeCommands = new Set(['cp', 'mv', 'rm', 'touch', 'mkdir', 'rmdir', 'tee', 'chmod', 'chown', 'ln']);
+  const writeCommands = new Set([
+    'cp',
+    'mv',
+    'rm',
+    'touch',
+    'mkdir',
+    'rmdir',
+    'tee',
+    'chmod',
+    'chown',
+    'ln',
+    ...(process.platform === 'win32' ? ['copy', 'move', 'del', 'erase', 'ren', 'rd', 'md', 'copy-item', 'move-item', 'remove-item', 'rename-item', 'new-item', 'set-content', 'add-content', 'out-file'] : []),
+  ]);
   const commandIndex = tokens.findIndex((token) => !['sudo', 'command', 'env'].includes(token));
-  if (commandIndex >= 0 && writeCommands.has(tokens[commandIndex]!.split('/').pop() ?? tokens[commandIndex]!)) {
-    const path = tokens.slice(commandIndex + 1).find((token) => token.startsWith('/') && token !== '/' && !isPathInsideProjectRoot(token, projectRoot));
+  if (commandIndex >= 0 && writeCommands.has(tokens[commandIndex]!.replaceAll('\\', '/').split('/').pop()!.toLowerCase())) {
+    const path = tokens.slice(commandIndex + 1).find((token) => isAbsolute(token) && !isPathInsideProjectRoot(token, projectRoot));
     if (path) return { kind: 'outside_project', commandText, path };
   }
   const sensitivePrefixes = ['/etc', '/private/etc', '~/.ssh', '~/.aws', '~/.gnupg', '~/.gpg', '~/.config/gcloud', '~/library/keychains', '~/library/application support/com.apple.tcc'];
@@ -997,22 +1019,6 @@ function isRuntimeDirectoryInsideRoot(candidatePath: string, projectRoot: string
   } catch {
     return false;
   }
-}
-
-function isPathInsideProjectRoot(candidatePath: string, projectRoot: string): boolean {
-  const normalizedCandidate = normalizeAbsolutePath(candidatePath);
-  const normalizedRoot = normalizeAbsolutePath(projectRoot);
-  return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}/`);
-}
-
-function normalizeAbsolutePath(value: string): string {
-  const parts: string[] = [];
-  for (const part of value.replace(/\\+/gu, '/').split('/')) {
-    if (!part || part === '.') continue;
-    if (part === '..') parts.pop();
-    else parts.push(part);
-  }
-  return `/${parts.join('/')}`;
 }
 
 function optionalStringArray(value: unknown, field: string): string[] {

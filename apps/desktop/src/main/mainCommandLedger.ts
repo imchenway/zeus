@@ -3,6 +3,7 @@ import { constants as fsConstants } from 'node:fs';
 import { chmod, lstat, mkdir, open, readdir, realpath, rename, unlink } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { canonicalCommandInputJson, parseCommandEnvelope, userFacingErrorCause, type CommandEnvelope, type UserFacingErrorCause } from '@zeus/shared';
+import { openRegularFileNoFollow, windowsSecurityRequestAsync } from '@zeus/storage/platform-security';
 
 export interface MainCommandRequest<TBody = unknown> {
   envelope: unknown;
@@ -281,7 +282,7 @@ export class MainCommandLedger {
             writeMarker: { externalOperationId, startedAt },
             updatedAt: startedAt,
           };
-          // 只有 marker 的原子文件与目录都 fsync 成功后，才允许内存态进入 after-write。
+          // 平台持久发布完成后才允许进入 after-write；Windows 使用写穿透移动。
           await writeAtomicJson(outcomePath, durableMarkerOutcome);
           outcome = durableMarkerOutcome;
           writeStarted = true;
@@ -805,8 +806,10 @@ async function writeImmutableJson(path: string, value: unknown): Promise<boolean
   return writeImmutableBytes(path, Buffer.from(`${canonicalCommandInputJson(value)}\n`, 'utf8'));
 }
 
+/** 不可变记录只允许首次发布，已有记录交给调用方校验身份。 */
 async function writeImmutableBytes(path: string, bytes: Buffer): Promise<boolean> {
   await ensureSecureDirectory(dirname(path));
+  if (process.platform === 'win32') return writeWindowsLedgerBytes(path, bytes, false);
   let handle;
   try {
     handle = await open(path, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW, 0o600);
@@ -833,9 +836,14 @@ async function writeImmutableBytes(path: string, bytes: Buffer): Promise<boolean
   return true;
 }
 
+/** 状态推进必须持久发布，不能用 Windows 不支持的目录 fsync 代替。 */
 async function writeAtomicJson(path: string, value: unknown): Promise<void> {
   await ensureSecureDirectory(dirname(path));
   if (await lexicalPathExists(path)) await assertSecureRegularFile(path);
+  if (process.platform === 'win32') {
+    await writeWindowsLedgerBytes(path, Buffer.from(`${canonicalCommandInputJson(value)}\n`, 'utf8'), true);
+    return;
+  }
   const temporaryPath = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
   const handle = await open(temporaryPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW, 0o600);
   let published = false;
@@ -851,6 +859,36 @@ async function writeAtomicJson(path: string, value: unknown): Promise<void> {
     await fsyncDirectory(dirname(path));
   } finally {
     if (!published) await unlink(temporaryPath).catch(() => undefined);
+  }
+}
+
+/** Windows 暂存文件继承私有目录 ACL，刷新内容后通过原生写穿透移动发布。 */
+async function writeWindowsLedgerBytes(path: string, bytes: Buffer, replace: boolean): Promise<boolean> {
+  /** 同目录暂存保证原子移动不跨卷；随机文件名不会成为账本身份。 */
+  const temporaryPath = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
+  /** 独占创建拒绝已有文件，父目录已通过 Windows 私有 ACL 与重解析点检查。 */
+  const handle = await open(temporaryPath, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL, 0o600);
+  try {
+    try {
+      await handle.writeFile(bytes);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await assertSecureRegularFile(temporaryPath);
+    await windowsSecurityRequestAsync({ operation: 'publish-file', source: temporaryPath, target: path, replace });
+    return true;
+  } catch (error) {
+    if (!replace && isFileExistsError(error)) {
+      await assertSecureRegularFile(path);
+      return false;
+    }
+    throw error;
+  } finally {
+    // 只回收本次暂存项；发布结果未知时不删除目标、不重试移动。
+    await unlink(temporaryPath).catch((error: unknown) => {
+      if (!isMissingFileError(error)) throw error;
+    });
   }
 }
 
@@ -871,10 +909,12 @@ async function readBoundedJson<T>(path: string, maximumBytes: number): Promise<T
   return parseLedgerJson(bytes, path) as T;
 }
 
+/** 有界读取同时核对真实文件身份及本平台权限，不以 Windows mode 位代替 ACL。 */
 async function readBoundedBytes(path: string, maximumBytes: number): Promise<Buffer> {
   if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1) throw receiptCorrupt('Main command bounded read budget is invalid.', path);
   await assertSecureDirectory(dirname(path));
-  const handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW).catch(() => {
+  if (process.platform === 'win32') await assertSecureRegularFile(path);
+  const handle = await openRegularFileNoFollow(path, fsConstants.O_RDONLY).catch(() => {
     throw receiptCorrupt('Main command ledger file could not be opened without following links.', path);
   });
   try {
@@ -910,6 +950,7 @@ async function readBoundedBytes(path: string, maximumBytes: number): Promise<Buf
     ) {
       throw receiptCorrupt('Main command ledger file changed while it was being read.', path);
     }
+    if (process.platform === 'win32') await assertSecureRegularFile(path);
     return Buffer.concat(chunks, totalBytes);
   } finally {
     await handle.close();
@@ -924,7 +965,12 @@ function parseLedgerJson(bytes: Buffer, path: string): unknown {
   }
 }
 
+/** 按平台创建私有账本目录，Windows 由原生助手验证所有者和重解析路径。 */
 async function ensureSecureDirectory(path: string): Promise<void> {
+  if (process.platform === 'win32') {
+    await windowsSecurityRequestAsync({ operation: 'ensure-private', path, kind: 'directory' });
+    return;
+  }
   const target = resolve(path);
   const missing: string[] = [];
   let cursor = target;
@@ -963,7 +1009,12 @@ async function ensureSecureDirectory(path: string): Promise<void> {
   await assertSecureDirectory(target);
 }
 
+/** Windows 校验 DACL，POSIX 保留严格的所有者、规范路径和权限位检查。 */
 async function assertSecureDirectory(path: string): Promise<void> {
+  if (process.platform === 'win32') {
+    await windowsSecurityRequestAsync({ operation: 'assert-private', path, kind: 'directory' });
+    return;
+  }
   const target = resolve(path);
   const status = await lstat(target).catch(() => {
     throw receiptCorrupt('Main command ledger directory is missing.', target);
@@ -974,17 +1025,23 @@ async function assertSecureDirectory(path: string): Promise<void> {
   }
 }
 
+/** 文件权限验证复用平台安全边界，Windows 不接受仅检查只读属性。 */
 async function assertSecureRegularFile(path: string): Promise<void> {
+  if (process.platform === 'win32') {
+    await windowsSecurityRequestAsync({ operation: 'assert-private', path, kind: 'file' });
+    return;
+  }
   const status = await lstat(path);
   if (status.isSymbolicLink()) throw new MainCommandLedgerError('ZEUS_MAIN_COMMAND_RECEIPT_CORRUPT', 'Main command ledger refuses symbolic-link files.', { file: basename(path) });
   assertSecureRegularStat(status, path);
 }
 
+/** 句柄始终要求普通文件；Windows ACL 由读取前后的路径检查负责。 */
 function assertSecureRegularStat(status: Awaited<ReturnType<typeof lstat>>, path: string): void {
   const currentUid = typeof process.getuid === 'function' ? process.getuid() : null;
   const mode = Number(status.mode) & 0o777;
   const uid = Number(status.uid);
-  if (!status.isFile() || mode !== 0o600 || (currentUid !== null && uid !== currentUid)) {
+  if (!status.isFile() || (process.platform !== 'win32' && mode !== 0o600) || (currentUid !== null && uid !== currentUid)) {
     throw new MainCommandLedgerError('ZEUS_MAIN_COMMAND_RECEIPT_CORRUPT', 'Main command ledger file must be a current-user regular file with mode 0600.', {
       file: basename(path),
       mode,

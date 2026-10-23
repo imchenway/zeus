@@ -29,7 +29,8 @@ interface CreateAutomaticUpdateSchedulerOptions {
   failedCheckRetryMs?: number;
   controller: HomebrewUpdateController;
   onIndicatorChange: (state: HomebrewUpdateIndicatorState) => void;
-  notifyReady: (latestVersion: string, showProgress: () => void) => boolean;
+  /** 通知点击保留打开结果，由桌面入口展示窗口启动失败。 */
+  notifyReady: (latestVersion: string, showProgress: () => Promise<void>) => boolean;
   /** 与 Zeus 检测共用到期触发，受管 Codex 经过持久化门禁后进入既有安全更新链。 */
   updateCodexAutomatically?: (reserveUpdate: ReserveAutomaticCodexUpdate) => Promise<void>;
 }
@@ -144,7 +145,7 @@ export function createAutomaticUpdateScheduler(options: CreateAutomaticUpdateSch
     broadcastIndicator(state);
     schedulePersistence();
     if (state.phase !== 'ready' || !state.latestVersion || state.latestVersion === persisted.lastNotifiedVersion) return;
-    const notified = options.notifyReady(state.latestVersion, () => void options.controller.showOrCheck());
+    const notified = options.notifyReady(state.latestVersion, () => options.controller.showOrCheck());
     if (!notified) return;
     persisted = { ...persisted, lastNotifiedVersion: state.latestVersion };
     schedulePersistence();

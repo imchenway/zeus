@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { openRegularFileNoFollow } from '@zeus/storage/platform-security';
 import { constants } from 'node:fs';
 import { mkdir, open, rename, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -27,7 +28,7 @@ export class GlobalAgentSettings {
   /** 从普通文件读取，拒绝跟随符号链接。 */
   async read(): Promise<GlobalAgentSettingsSnapshot> {
     /** 非阻塞打开避免特殊文件阻塞，同时禁止链接跳转。 */
-    const handle = await open(this.path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK).catch((error: NodeJS.ErrnoException) => {
+    const handle = await openRegularFileNoFollow(this.path, constants.O_RDONLY | constants.O_NONBLOCK).catch((error: NodeJS.ErrnoException) => {
       if (error.code === 'ENOENT') return null;
       if (error.code === 'ELOOP') throw new SettingsExternalOperationRejectedError('AGENTS.md 是符号链接，无法通过全局规则页读写。');
       throw error;

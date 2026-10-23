@@ -49,6 +49,8 @@ internal sealed class WindowsUpdateProgress : Form
                 using WindowsUpdateProgress window = new();
                 _ = window.Handle;
                 _ = Task.Run(window.ReadCommands);
+                // 消息循环实际处理回调后才确认就绪，主进程不会把进程创建当作窗口可用。
+                window.BeginInvoke(() => Emit("ready"));
                 // 无主窗口启动消息循环，避免 Application.Run(form) 自动激活窗口。
                 Application.Run();
             }
