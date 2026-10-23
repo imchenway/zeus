@@ -329,7 +329,10 @@ export class MainCommandLedger {
       const errorCode = error && typeof error === 'object' && 'code' in error && typeof (error as { code?: unknown }).code === 'string' ? (error as { code: string }).code : '';
       throw new MainCommandLedgerError(
         'ZEUS_MAIN_COMMAND_OUTCOME_UNKNOWN_AFTER_WRITE',
-        'Main command outcome is unknown after a durable write marker; automatic retry is forbidden.',
+        // Electron IPC 只保证传递 message；附件错误同时携带已脱敏原因，仍保留禁止自动重试的状态。
+        envelope.commandType.startsWith('desktop.conversation_resources.')
+          ? `附件处理未完成，操作结果尚未确认，未自动重试。${userFacingErrorCause(error).message.slice(0, 512)}`
+          : 'Main command outcome is unknown after a durable write marker; automatic retry is forbidden.',
         {
           commandId: envelope.commandId,
           commandType: envelope.commandType,

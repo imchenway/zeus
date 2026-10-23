@@ -1,4 +1,4 @@
-import { filePreviewMime, filePreviewKind, filePreviewLimits } from '@zeus/shared';
+import { filePreviewMime, filePreviewKind, filePreviewLimits, userFacingErrorCause } from '@zeus/shared';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { chmod, link, mkdir, open, readFile, realpath, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
@@ -11,7 +11,9 @@ import {
   isSupportedImageInputMimeType,
   readTaskClipboardAttachmentsFromClipboard,
   readTaskClipboardFileReferencesFromClipboard,
+  safelyReadTaskClipboardImageAttachment,
   type NativeTaskClipboardReader,
+  type TaskClipboardAttachmentPayload,
   type TaskClipboardReadOptions,
 } from './taskClipboard.js';
 
@@ -38,8 +40,8 @@ export interface ConversationResourcePayload {
 }
 
 export interface ConversationInputResourceBroker {
-  /** 图片保存受管副本，其他文件和目录保留精确来源授权。 */
-  describePaths(paths: string[], source: ConversationInputResourceSource, commandId: string): Promise<ConversationInputResource[]>;
+  /** 图片保存受管副本；可选快照只用于单张粘贴图片的源文件读取失败回退。 */
+  describePaths(paths: string[], source: ConversationInputResourceSource, commandId: string, clipboardImage?: TaskClipboardAttachmentPayload | null): Promise<ConversationInputResource[]>;
   materialize(payloads: ConversationResourcePayload[], commandId: string): Promise<ConversationInputResource[]>;
   readClipboard(commandId: string): Promise<{ resources: ConversationInputResource[]; text: string }>;
   resolve(resource: { localPath?: string; uploadRef?: string }): Promise<string | null>;
@@ -66,7 +68,7 @@ export function createConversationInputResourceBroker(options: CreateConversatio
 
   return {
     /** 三类路径入口共用图片落盘，避免来源缓存清理后消息丢图。 */
-    async describePaths(paths, source, commandId) {
+    async describePaths(paths, source, commandId, clipboardImage) {
       /** 每个路径使用稳定子身份，批内同名图片不会互相覆盖。 */
       const operationKey = commandResourceKey(commandId);
       /** 本批成功导入的图片共用现有容量上限。 */
@@ -75,8 +77,19 @@ export function createConversationInputResourceBroker(options: CreateConversatio
       const resources: ConversationInputResource[] = [];
       /** 同一来源在一批内只导入一次。 */
       const seen = new Set<string>();
+      /** 全部失败时保留首个具体原因，避免文件读取和副本写入错误被同一提示遮蔽。 */
+      let firstFailure: unknown;
+      /** 粘贴文件路径与原生剪贴板共用回退；单张图片以外不使用可能丢失文件语义的位图。 */
+      const fallbackImage =
+        process.platform !== 'win32' && source === 'paste' && paths.length === 1 && inferTaskClipboardAttachmentMimeType(paths[0] ?? '').startsWith('image/')
+          ? clipboardImage === undefined
+            ? safelyReadTaskClipboardImageAttachment(options.clipboard)
+            : clipboardImage
+          : null;
       for (const [index, path] of paths.slice(0, maximumResourceCount).entries()) {
         if (typeof path !== 'string' || !isAbsolute(path) || path.includes('\0')) continue;
+        /** 进入副本写入后不再切换图片来源，避免重复发布结果未知的附件。 */
+        let persistenceStarted = false;
         try {
           /** 使用真实路径读取用户选定的对象。 */
           const canonicalPath = await realpath(path);
@@ -94,6 +107,7 @@ export function createConversationInputResourceBroker(options: CreateConversatio
             /** 图片副本在加入草稿前完成持久化，不保留临时缓存授权。 */
             const data = await readFile(canonicalPath);
             if (batchBytes + data.byteLength > maximumBatchBytes) continue;
+            persistenceStarted = true;
             /** 复用无路径图片的大小校验、内容摘要及原子发布。 */
             const saved = await this.materialize([{ name: basename(canonicalPath), type: mime, data, source }], `${operationKey}:${index}`);
             if (saved.length > 0) batchBytes += data.byteLength;
@@ -108,12 +122,18 @@ export function createConversationInputResourceBroker(options: CreateConversatio
             source,
             uploadRef: createConversationAttachmentGrant(canonicalPath, options.grantSecret),
           });
-        } catch {
-          // 单个来源失效时保留同批次中的其他成功项。
+        } catch (error) {
+          firstFailure ??= error;
+          // macOS 图片缓存失效时使用同次粘贴的图片快照；多文件和 Windows 文件图标不参与回退。
+          if (!persistenceStarted && fallbackImage) {
+            resources.push(...(await this.materialize([{ ...fallbackImage, source }], `${operationKey}:${index}`)));
+          }
         }
       }
       // 不能把全部保存失败伪装成无附件成功，尤其是只含图片的粘贴操作。
-      if (paths.length > 0 && resources.length === 0) throw new Error('附件无法保存，请确认文件仍可读取、磁盘可写，且未超过附件大小限制。');
+      if (paths.length > 0 && resources.length === 0) {
+        throw new Error(firstFailure ? `附件无法保存：${userFacingErrorCause(firstFailure).message}` : '附件无法保存，请确认文件仍可读取、磁盘可写，且未超过附件大小限制。', { cause: firstFailure });
+      }
       return resources;
     },
 
@@ -149,10 +169,12 @@ export function createConversationInputResourceBroker(options: CreateConversatio
     },
 
     async readClipboard(commandId) {
+      /** 在异步文件读取前固定图片数据，Windows 文件引用不使用可能为资源管理器图标的位图。 */
+      const clipboardImage = process.platform === 'win32' ? null : safelyReadTaskClipboardImageAttachment(options.clipboard);
       const referencedPaths = await readTaskClipboardFileReferencesFromClipboard(options.clipboard, options.clipboardReadOptions);
       if (referencedPaths.length > 0) {
         return {
-          resources: await this.describePaths(referencedPaths, 'paste', commandId),
+          resources: await this.describePaths(referencedPaths, 'paste', commandId, clipboardImage),
           // 路径已经变成附件，剪贴板正文里剩下的说明文字仍要留在输入框。
           text: extractTaskClipboardResidualText(safelyReadClipboardText(options.clipboard), referencedPaths),
         };

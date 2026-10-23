@@ -192,7 +192,8 @@ function hasReadableClipboardImage(reader: NativeTaskClipboardReader): boolean {
   }
 }
 
-function safelyReadTaskClipboardImageAttachment(reader: NativeTaskClipboardReader): TaskClipboardAttachmentPayload | null {
+/** 立即读取剪贴板图片快照；无图片或格式不可读时返回空值。 */
+export function safelyReadTaskClipboardImageAttachment(reader: NativeTaskClipboardReader): TaskClipboardAttachmentPayload | null {
   try {
     return readTaskClipboardImageAttachment(reader.readImage());
   } catch {
