@@ -254,6 +254,10 @@ function realtimeBufferBudgetError(kind: RealtimeBufferKind): Error {
 }
 
 export interface SessionControllerClient {
+  /** 侧边栏首发复用正式项目与任务会话命令，不改变主导航。 */
+  startProjectConversation?: import('../features/conversations/conversationApiClient.js').ConversationApiClient['startProjectConversation'];
+  /** 任务侧边提问保留任务归属。 */
+  startNativeConversation?: import('../features/conversations/conversationApiClient.js').ConversationApiClient['startNativeConversation'];
   /** 独立生成建议或润色候选；只读客户端可省略此能力。 */
   generateInputSuggestion?(input: import('@zeus/shared').InputSuggestionRequest, signal: AbortSignal, diagnosticId?: string): Promise<import('@zeus/shared').InputSuggestionResult>;
   /** 独立读取全历史目录，不参与事件消费。 */

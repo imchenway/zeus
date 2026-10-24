@@ -171,6 +171,8 @@ export interface PreparedConversationQueueReroute {
   };
 }
 export interface NativeTaskConversationStartPlan {
+  /** 首发与后续消息共用选区评论，保留原文与用户问题。 */
+  conversationContext?: Record<string, unknown>;
   /** 从经过校验的首发输入冻结网页批注。 */
   browserComments?: Record<string, unknown>[];
   /** 从经过校验的首发输入冻结批注提示词。 */
@@ -289,6 +291,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     resolveModelCapability,
     resolveNonCodexLiveSession,
     resolveSelectedTaskPushContext,
+    resolveTaskEnvironmentWritableRoots,
     resolveTaskIntegrationRequest,
     resolveTaskPushEnvironment,
     resolveTaskPushExecutionCapabilities,
@@ -2501,7 +2504,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
     ) {
       throw nativeApiError('ZEUS_INVALID_CODE_REVIEW', '代码审查必须以只读模式使用原会话工作目录。');
     }
-    if (!reviewWorkspace && body.inheritConversationId !== undefined) throw nativeApiError('ZEUS_INVALID_CODE_REVIEW', '继承工作目录仅用于代码审查。');
+    /** 普通侧边提问只接受源会话身份，目录由服务端持久记录解析。 */
+    const inheritedWorkspace = !body.source && typeof body.inheritConversationId === 'string' ? await resolveConversationGitWorkspace(project, body.inheritConversationId, conversations, conversationSubmissions) : reviewWorkspace;
+    if (body.inheritConversationId !== undefined && !inheritedWorkspace) throw nativeApiError('ZEUS_CONVERSATION_WORKTREE_UNAVAILABLE', '无法确认源会话工作目录。');
+    if (!reviewWorkspace && inheritedWorkspace && (body.worktree || body.workspaceMode || hasExpertMentions(body))) throw nativeApiError('ZEUS_INVALID_CONVERSATION_START', '继承会话目录时不能另建工作树或切换讨论归属。');
     if (hasExpertMentions(body)) {
       return acceptExpertRound({
         project,
@@ -2522,6 +2528,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const browserComments = normalizeNativeBrowserComments(body.browserComments).map((comment) => ({ ...comment, conversationId: reservation.conversationId }));
     /** 批注提示词经过与后续消息相同的校验。 */
     const browserCommentContent = normalizeNativeBrowserCommentContent(body.browserCommentContent);
+    /** 首发评论使用后续消息相同的长度与结构校验。 */
+    const conversationContext = normalizeNativeConversationContext(body.conversationContext) ?? undefined;
     const content = reviewWorkspace
       ? [
           '请审查当前会话工作树的代码变化。',
@@ -2580,9 +2588,11 @@ export function createConversationApplicationOperations(dependencies: Conversati
       },
     };
     const executionRoot =
-      deliveryWorkspace?.localPath ?? reviewWorkspace?.localPath ?? (await prepareProjectConversationWorkspace(project, reservation.conversationId, body.workspaceMode, body.worktree, platformMutableState.appShellSettings.taskBranchPrefix));
+      deliveryWorkspace?.localPath ??
+      inheritedWorkspace?.localPath ??
+      (await prepareProjectConversationWorkspace(project, reservation.conversationId, body.workspaceMode, body.worktree, platformMutableState.appShellSettings.taskBranchPrefix));
     /** 首项目始终使用实际执行目录，普通工作树不能授权回原项目。 */
-    const executionRoots = reviewWorkspace || deliveryWorkspace ? [executionRoot] : [executionRoot, ...executionProjects.slice(1).map((target) => target.localPath)];
+    const executionRoots = inheritedWorkspace || deliveryWorkspace ? [executionRoot] : [executionRoot, ...executionProjects.slice(1).map((target) => target.localPath)];
     /** 目录清单保存授权上限；只读和计划模式由运行策略统一禁止写入。 */
     const writableRoots = executionRoots;
     const resolvedRoute = await resolveConversationExecutionRoute({
@@ -2606,7 +2616,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         // 跨会话延续时保留媒体，由模型接口返回实际支持结果。
         media: true,
         contextWindow: resolvedRoute.configuredModel?.contextWindow ?? selectedModel.contextWindow,
-        currentInputUtf8Bytes: Buffer.byteLength(appendConversationResourceContext(providerContent, browserCommentContent, browserComments, undefined), 'utf8') + Buffer.byteLength(JSON.stringify(attachments), 'utf8'),
+        currentInputUtf8Bytes: Buffer.byteLength(appendConversationResourceContext(providerContent, browserCommentContent, browserComments, conversationContext), 'utf8') + Buffer.byteLength(JSON.stringify(attachments), 'utf8'),
       },
       userHistoryContent: {
         text: providerContent,
@@ -2614,6 +2624,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         ...(attachments.length ? { attachments } : {}),
         ...(browserComments.length ? { browserComments } : {}),
         ...(browserCommentContent ? { browserCommentContent } : {}),
+        ...(conversationContext ? { conversationContext } : {}),
       },
     });
     zeusConversationPluginRuntime?.bindExplicitReferences({ conversationId: reservation.conversationId, projectId: project.id, references: pluginReferences });
@@ -2626,11 +2637,12 @@ export function createConversationApplicationOperations(dependencies: Conversati
             projectId: project.id,
             conversationTitle: (displayText || providerContent).slice(0, 120),
             cwd: executionRoot,
-            executionWorkspaceMode: deliveryWorkspace?.workspaceMode ?? reviewWorkspace?.workspaceMode ?? (body.workspaceMode === 'worktree' ? 'worktree' : 'direct'),
+            executionWorkspaceMode: deliveryWorkspace?.workspaceMode ?? inheritedWorkspace?.workspaceMode ?? (body.workspaceMode === 'worktree' ? 'worktree' : 'direct'),
             ...(goalObjective ? { goalObjective } : {}),
             prompt: providerContent,
             browserComments,
             browserCommentContent,
+            conversationContext,
             ...(displayText !== providerContent ? { displayText } : {}),
             model: {
               sourceId: selectedModel.sourceId ?? null,
@@ -2656,10 +2668,11 @@ export function createConversationApplicationOperations(dependencies: Conversati
             submissionId: reservation.submissionId,
             projectId: project.id,
             projectLocalPath: executionRoot,
-            executionWorkspaceMode: deliveryWorkspace?.workspaceMode ?? reviewWorkspace?.workspaceMode ?? (body.workspaceMode === 'worktree' ? 'worktree' : 'direct'),
+            executionWorkspaceMode: deliveryWorkspace?.workspaceMode ?? inheritedWorkspace?.workspaceMode ?? (body.workspaceMode === 'worktree' ? 'worktree' : 'direct'),
             prompt: providerContent,
             browserComments,
             browserCommentContent,
+            conversationContext,
             ...(displayText !== providerContent ? { displayText } : {}),
             attachments,
             allowedAttachmentRoots: executionRoots,
@@ -2911,13 +2924,14 @@ export function createConversationApplicationOperations(dependencies: Conversati
         media: true,
         contextWindow: resolvedRoute.configuredModel?.contextWindow ?? null,
         currentInputUtf8Bytes:
-          Buffer.byteLength(appendConversationResourceContext(plan.prompt, plan.browserCommentContent, plan.browserComments, undefined), 'utf8') +
+          Buffer.byteLength(appendConversationResourceContext(plan.prompt, plan.browserCommentContent, plan.browserComments, plan.conversationContext), 'utf8') +
           Buffer.byteLength(JSON.stringify({ attachments: plan.attachments ?? [], taskPushLayout: plan.taskPushLayout ?? null, legacyReference: plan.legacyReference ?? null }), 'utf8'),
       },
       userHistoryContent: {
         text: plan.prompt,
         ...(plan.browserComments?.length ? { browserComments: plan.browserComments } : {}),
         ...(plan.browserCommentContent ? { browserCommentContent: plan.browserCommentContent } : {}),
+        ...(plan.conversationContext ? { conversationContext: plan.conversationContext } : {}),
         ...(plan.displayText ? { displayText: plan.displayText } : {}),
         ...(plan.attachments?.length ? { attachments: plan.attachments } : {}),
         ...(plan.taskPushLayout ? { taskPushLayout: plan.taskPushLayout } : {}),
@@ -2941,6 +2955,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         prompt: plan.prompt,
         browserComments: plan.browserComments,
         browserCommentContent: plan.browserCommentContent,
+        conversationContext: plan.conversationContext,
         ...(plan.displayText ? { displayText: plan.displayText } : {}),
         model: plan.model,
         ...(plan.effort ? { thinkingLevel: plan.effort } : {}),
@@ -2980,6 +2995,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       prompt: plan.prompt,
       browserComments: plan.browserComments,
       browserCommentContent: plan.browserCommentContent,
+      conversationContext: plan.conversationContext,
       ...(plan.displayText ? { displayText: plan.displayText } : {}),
       ...(plan.attachments ? { attachments: plan.attachments } : {}),
       ...(plan.allowedAttachmentRoots ? { allowedAttachmentRoots: plan.allowedAttachmentRoots } : {}),
@@ -3692,6 +3708,8 @@ export function createConversationApplicationOperations(dependencies: Conversati
         const browserComments = normalizeNativeBrowserComments(body.browserComments).map((comment) => ({ ...comment, conversationId: reservation.conversationId }));
         /** 校验提示词后再冻结派发计划。 */
         const browserCommentContent = normalizeNativeBrowserCommentContent(body.browserCommentContent);
+        /** 首发评论使用后续消息相同的长度与结构校验。 */
+        const conversationContext = normalizeNativeConversationContext(body.conversationContext) ?? undefined;
         const explicitContent = typeof body.content === 'string' ? body.content.trim() : '';
         const canonicalAttachmentInput = body.attachments === undefined && !explicitContent && !browserComments.length ? normalizeTaskPushAttachments(task, project.localPath) : null;
         const attachments = canonicalAttachmentInput?.attachments ?? explicitAttachments;
@@ -3722,24 +3740,46 @@ export function createConversationApplicationOperations(dependencies: Conversati
         // 同上：陈旧档位按默认档归一，不因为配置过时就拦住用户。
         const selectedEffort = requestedEffort && selectedModel.supportedReasoningEfforts.includes(requestedEffort) ? requestedEffort : (selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? null);
         const inheritConversationId = typeof body.inheritConversationId === 'string' ? body.inheritConversationId.trim() : '';
-        let inheritedEnvironment: Awaited<ReturnType<typeof resolveTaskPushEnvironment>> | null = null;
+        /** 新会话保存原任务的精确环境与仓库身份，不重新准备或重开工作树。 */
+        let inheritedBinding: { environmentId?: string; workspaceId?: string; writableRoots: string[] } | null = null;
+        /** 源目录不可用时明确失败，不能退回项目根。 */
+        let inheritedCwd: string | null = null;
         if (inheritConversationId) {
+          /** 原会话归属必须与当前创建目标一致。 */
           const sourceConversation = conversations.getById(inheritConversationId);
-          if (!sourceConversation || sourceConversation.projectId !== project.id || sourceConversation.taskId !== task.id) {
-            throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_INVALID', 'The source conversation does not belong to this task.');
+          if (!sourceConversation || sourceConversation.projectId !== project.id || sourceConversation.taskId !== task.id) throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_INVALID', '源会话不属于当前任务。');
+          inheritedCwd = resolveNativeConversationExecutionRoot(sourceConversation);
+          if (!inheritedCwd) throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_REQUIRED', '源任务会话的工作目录已不可用。');
+          inheritedCwd = realpathSync(inheritedCwd);
+          if (sourceConversation.workspaceId || sourceConversation.environmentId) {
+            /** 只读审阅和开发目录共用原仓库记录，但不能互换各自的执行根。 */
+            const workspace = sourceConversation.workspaceId ? taskWorkspaces.getById(sourceConversation.workspaceId) : undefined;
+            /** 旧记录可从工作区补全所属环境。 */
+            const environmentId = sourceConversation.environmentId ?? workspace?.environmentId;
+            /** 只读提问不恢复环境或更改交付状态。 */
+            const environment = environmentId ? taskEnvironments.getById(environmentId) : undefined;
+            if (
+              !workspace ||
+              workspace.projectId !== project.id ||
+              workspace.taskId !== task.id ||
+              (environmentId && (!environment || environment.projectId !== project.id || environment.taskId !== task.id || environment.state !== 'ready' || workspace.environmentId !== environmentId))
+            )
+              throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_INVALID', '源任务工作区归属或状态已变化。');
+            /** 新会话后续恢复也会使用此目录，首发前先校验两者一致。 */
+            const targetCwd = permissionMode === 'read-only' ? resolveTaskReadOnlyWorkspacePath(project, task.id, workspace, environment) : (environment?.rootPath ?? workspace.worktreePath);
+            if (!targetCwd || realpathSync(targetCwd) !== inheritedCwd) throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_INVALID', '当前权限选择会改变执行目录，请保持源会话的权限模式。');
+            /** 可写会话只能继承仍处于开发状态的环境成员。 */
+            const members: ZeusTaskWorkspaceRecord[] = environment ? taskWorkspaces.listByEnvironment(environment.id) : [workspace];
+            if (permissionMode !== 'read-only' && (!members.length || members.some((member) => member.state !== 'ready' || !member.worktreePath)))
+              throw nativeApiError('ZEUS_TASK_WORKSPACE_CLOSED', '原工作区已结束开发，不能以可写模式创建侧栏会话。');
+            inheritedBinding = { ...(environmentId ? { environmentId } : {}), workspaceId: workspace.id, writableRoots: permissionMode === 'read-only' ? [] : resolveTaskEnvironmentWritableRoots(project, members) };
+          } else if (inheritedCwd !== realpathSync(project.localPath)) {
+            throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_REQUIRED', '源任务会话缺少工作区归属。');
           }
-          if (!sourceConversation.environmentId && !sourceConversation.workspaceId) {
-            throw nativeApiError('ZEUS_TASK_EXECUTION_CONTEXT_REQUIRED', 'The source task conversation has no persisted execution workspace.');
-          }
-          inheritedEnvironment = await resolveTaskPushEnvironment(
-            project,
-            task,
-            sourceConversation.environmentId ? { mode: 'existing', environmentId: sourceConversation.environmentId } : { mode: 'existing', workspaceId: sourceConversation.workspaceId },
-            stableOperationId,
-          );
         }
-        const executionCwd = inheritedEnvironment?.cwd ?? project.localPath;
-        const skills = inheritedEnvironment && zeusSkillService ? await Promise.all(skillReferences.map((reference) => zeusSkillService.resolve({ cwd: executionCwd, skillId: reference.id }))) : projectSkills;
+        /** 首发与恢复使用相同的服务端解析目录。 */
+        const executionCwd = inheritedCwd ?? project.localPath;
+        const skills = inheritedCwd && zeusSkillService ? await Promise.all(skillReferences.map((reference) => zeusSkillService.resolve({ cwd: executionCwd, skillId: reference.id }))) : projectSkills;
         const providerContent = skills.length > 1 ? `${skills.map((skill) => `$${skill.name}`).join(' ')}\n\n${content}` : content;
         nativeOperation = await startNativeTaskConversationFromPlan({
           agentKind: selectedAgentKind,
@@ -3753,6 +3793,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           prompt: providerContent,
           browserComments,
           browserCommentContent,
+          conversationContext,
           ...(displayText !== providerContent ? { displayText } : {}),
           model: { sourceId: selectedModel.sourceId ?? null, modelId: selectedModel.model, displayName: selectedModel.displayName ?? null },
           ...(selectedEffort ? { effort: selectedEffort } : {}),
@@ -3761,14 +3802,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
           ...(requestedServiceTier.present ? { requestedServiceTier: requestedServiceTier.value } : {}),
           permissionMode,
           workMode: collaborationMode,
-          ...(inheritedEnvironment
-            ? {
-                environmentId: inheritedEnvironment.environment.id,
-                ...(inheritedEnvironment.workspaces[0] ? { workspaceId: inheritedEnvironment.workspaces[0].id } : {}),
-              }
-            : {}),
-          executionWorkspaceMode: inheritedEnvironment ? 'worktree' : 'direct',
-          writableRoots: inheritedEnvironment?.writableRoots ?? [project.localPath],
+          ...(inheritedBinding?.environmentId ? { environmentId: inheritedBinding.environmentId } : {}),
+          ...(inheritedBinding?.workspaceId ? { workspaceId: inheritedBinding.workspaceId } : {}),
+          executionWorkspaceMode: realpathSync(executionCwd) === realpathSync(project.localPath) ? 'direct' : 'worktree',
+          writableRoots: inheritedBinding?.writableRoots ?? [project.localPath],
           allowCodeChanges: task.allowCodeChanges,
           allowTests: task.allowTests,
           allowGitCommit: task.allowGitCommit,

@@ -543,6 +543,8 @@ export interface NativeConversationAttachment {
 export type StartTaskConversationBody = (
   | {
       mode: 'create';
+      /** 首发与后续消息共用选区评论，保留原文与用户问题。 */
+      conversationContext?: Record<string, unknown>;
       /** 缺省继承项目；null 明确使用默认。 */
       contextCapacityTokens?: number | null;
       content?: string;
@@ -612,6 +614,8 @@ export type StartTaskConversationBody = (
 };
 
 export interface StartProjectConversationBody {
+  /** 首发与后续消息共用选区评论，保留原文与用户问题。 */
+  conversationContext?: Record<string, unknown>;
   /** 新对话首条消息的结构化网页批注。 */
   browserComments?: unknown;
   /** 新对话首条消息的网页批注提示词。 */

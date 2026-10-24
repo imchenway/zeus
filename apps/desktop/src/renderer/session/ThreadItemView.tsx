@@ -161,6 +161,8 @@ export interface ThreadItemViewProps {
   onCallMcpAppTool?: (input: McpAppToolCall) => Promise<McpAppToolResult>;
   onVisibleContentChange?: () => void;
   responseAnnotations?: ConversationResponseAnnotation[];
+  /** 选区作为右侧会话的评论引用，不写入主会话草稿。 */
+  onAskInSidebar?: (anchor: ConversationResponseTextAnchor) => void;
   onAddResponseAnnotation?: (anchor: ConversationResponseTextAnchor) => string;
   onUpdateResponseAnnotation?: (id: string, note: string) => void;
   onRemoveResponseAnnotation?: (id: string) => void;
@@ -912,9 +914,10 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
       <ResponseSelectionActions
         articleRef={articleRef}
         itemId={props.item.itemId}
-        enabled={role === 'assistant' && props.item.status === 'completed' && markdownSettled && Boolean(visibleText) && Boolean(props.onAddResponseAnnotation)}
+        enabled={role === 'assistant' && props.item.status === 'completed' && markdownSettled && Boolean(visibleText) && Boolean(props.onAddResponseAnnotation || props.onAskInSidebar)}
         language={props.language}
         annotations={props.responseAnnotations ?? []}
+        onAskInSidebar={props.onAskInSidebar}
         onAddAnnotation={props.onAddResponseAnnotation}
         onUpdateAnnotation={props.onUpdateResponseAnnotation}
         onRemoveAnnotation={props.onRemoveResponseAnnotation}

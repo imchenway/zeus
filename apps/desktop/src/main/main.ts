@@ -131,10 +131,11 @@ const projectGitDiffSnapshots = new Map<number, { filePath: string; diff: GitDif
 /** 窗口归属由 Main 创建时固定，Renderer 不能切换到另一项目。 */
 const taskGitDeliveryTargetByWindowId = new Map<number, GitDeliveryWindowTarget>();
 const mainWindowTaskGitContexts = new Map<number, TaskGitDeliveryCurrentContext>();
-type SessionContextKind = 'browser' | 'subagents' | 'plan' | 'source' | 'turn_diff' | 'none';
+type SessionContextKind = 'browser' | 'subagents' | 'plan' | 'source' | 'turn_diff' | 'question' | 'none';
 /** 终端焦点独立于右侧工作面，离开终端不能清除浏览器或审阅的焦点归属。 */
 const terminalActivityByWindow = new Map<number, boolean>();
-const sessionContextActivityByWindow = new Map<number, { active: boolean; kind: SessionContextKind }>();
+/** 原生关闭操作冻结当前面板的会话身份，嵌套面板不能同时响应。 */
+const sessionContextActivityByWindow = new Map<number, { active: boolean; kind: SessionContextKind; ownerConversationId?: string }>();
 const appCloseLayerActivityByWindow = new Map<number, boolean>();
 let currentTaskGitDeliveryContext: TaskGitDeliveryCurrentContext = { taskId: null, workspaceId: null };
 let menuBarUsageMenu: Menu | undefined;
@@ -1388,7 +1389,7 @@ function closeFocusedWindowOrContextTab(): void {
     return;
   }
   if (browserHost?.isVisibleTabFocused(window) || contextActivity?.active) {
-    window.webContents.send('zeus:session-context-close-active-tab');
+    window.webContents.send('zeus:session-context-close-active-tab', contextActivity?.ownerConversationId);
     return;
   }
   window.close();
@@ -2471,10 +2472,14 @@ function setupIpc(): void {
   ipcMain.on('zeus:session-context-activity-changed', (event, payload: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || !payload || typeof payload !== 'object') return;
-    const value = payload as { active?: unknown; kind?: unknown };
+    const value = payload as { active?: unknown; kind?: unknown; ownerConversationId?: unknown };
     const kind = value.kind;
-    if (kind !== 'browser' && kind !== 'subagents' && kind !== 'plan' && kind !== 'source' && kind !== 'turn_diff' && kind !== 'none') return;
-    sessionContextActivityByWindow.set(requestingWindow.id, { active: value.active === true && kind !== 'none', kind });
+    if (kind !== 'browser' && kind !== 'subagents' && kind !== 'plan' && kind !== 'source' && kind !== 'turn_diff' && kind !== 'question' && kind !== 'none') return;
+    sessionContextActivityByWindow.set(requestingWindow.id, {
+      active: value.active === true && kind !== 'none',
+      kind,
+      ...(typeof value.ownerConversationId === 'string' && value.ownerConversationId.length <= 200 ? { ownerConversationId: value.ownerConversationId } : {}),
+    });
   });
   ipcMain.on('zeus:app-close-layer-activity-changed', (event, active: unknown) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);

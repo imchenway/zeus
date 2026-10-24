@@ -288,6 +288,8 @@ export interface NativeQuestionAnswerAttachmentInput {
 }
 
 export interface StartTaskConversationInput {
+  /** 首发与后续消息共用选区评论，保留原文与用户问题。 */
+  conversationContext?: Record<string, unknown>;
   /** 首发与后续消息共用结构化网页批注。 */
   browserComments?: Record<string, unknown>[];
   /** 首发与后续消息共用网页批注提示词。 */
@@ -352,6 +354,8 @@ export interface StartTaskConversationInput {
 }
 
 export interface StartProjectConversationInput {
+  /** 首发与后续消息共用选区评论，保留原文与用户问题。 */
+  conversationContext?: Record<string, unknown>;
   /** 首发与后续消息共用结构化网页批注。 */
   browserComments?: Record<string, unknown>[];
   /** 首发与后续消息共用网页批注提示词。 */

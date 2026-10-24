@@ -410,8 +410,9 @@ contextBridge.exposeInMainWorld('zeus', {
     ipcRenderer.on('zeus:terminal-close-active-tab', handler);
     return () => ipcRenderer.removeListener('zeus:terminal-close-active-tab', handler);
   },
-  onNativeCloseActiveContextTab: (listener: () => void) => {
-    const handler = () => listener();
+  onNativeCloseActiveContextTab: (listener: (ownerConversationId?: string) => void) => {
+    /** 主进程冻结焦点归属，前一个监听器移动焦点不会改变本次关闭目标。 */
+    const handler = (_event: Electron.IpcRendererEvent, ownerConversationId?: string) => listener(ownerConversationId);
     ipcRenderer.on('zeus:session-context-close-active-tab', handler);
     return () => ipcRenderer.removeListener('zeus:session-context-close-active-tab', handler);
   },

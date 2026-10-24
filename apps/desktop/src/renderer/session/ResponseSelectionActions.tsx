@@ -1,4 +1,5 @@
 import { MotionPresence, PopoverSurface } from '../ui/MotionPresence.js';
+import { SidebarSimpleIcon as SidebarSimple } from '@phosphor-icons/react/dist/csr/SidebarSimple';
 import { ChatTeardropDotsIcon as ChatTeardropDots } from '@phosphor-icons/react/dist/csr/ChatTeardropDots';
 import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -28,6 +29,8 @@ export function ResponseSelectionActions(props: {
   enabled: boolean;
   language: SessionUiLanguage;
   annotations: ConversationResponseAnnotation[];
+  /** 在右侧会话中暂存同一段原文，点击本身不发送。 */
+  onAskInSidebar?: (anchor: ConversationResponseTextAnchor) => void;
   onAddAnnotation?: (anchor: ConversationResponseTextAnchor) => string;
   onUpdateAnnotation?: (id: string, note: string) => void;
   onRemoveAnnotation?: (id: string) => void;
@@ -210,6 +213,7 @@ export function ResponseSelectionActions(props: {
           >
             <button
               type="button"
+              disabled={!props.onAddAnnotation}
               aria-label={props.language === 'zh-CN' ? '评论选中文字' : 'Comment on selected text'}
               data-icon-tooltip={props.language === 'zh-CN' ? '评论' : 'Comment'}
               onPointerDown={(event) => event.preventDefault()}
@@ -221,6 +225,21 @@ export function ResponseSelectionActions(props: {
             >
               <ChatTeardropDots aria-hidden="true" weight="regular" />
             </button>
+            {props.onAskInSidebar ? (
+              <button
+                type="button"
+                aria-label={props.language === 'zh-CN' ? '在侧边栏提问' : 'Ask in sidebar'}
+                data-icon-tooltip={props.language === 'zh-CN' ? '在侧边栏提问' : 'Ask in sidebar'}
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  props.onAskInSidebar?.(candidate.anchor);
+                  setCandidate(null);
+                  view?.getSelection()?.removeAllRanges();
+                }}
+              >
+                <SidebarSimple aria-hidden="true" />
+              </button>
+            ) : null}
           </PopoverSurface>
         ) : null}
       </MotionPresence>

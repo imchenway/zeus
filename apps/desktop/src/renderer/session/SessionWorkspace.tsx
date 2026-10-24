@@ -1,3 +1,4 @@
+import { SideQuestionWorkspace, type SideQuestionStartInput, type SideQuestionState } from './SideQuestionWorkspace.js';
 import { ProjectToolContext } from '../features/workspace/projectToolContext.js';
 import { platformShortcutLabel } from '../platform.js';
 import { systemMessageScope, recordSystemMessage, recoverSystemMessageOperation, bindDraftSystemMessages, useConversationSystemMessages } from './conversationSystemMessages.js';
@@ -12,6 +13,8 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  type Dispatch,
+  type SetStateAction,
   useCallback,
   useContext,
   useEffect,
@@ -32,6 +35,7 @@ import {
   mergeBrowserSubmissions,
   type FilePreviewRequest,
   type ConversationContextDraft,
+  type ConversationResponseAnnotation,
   type ConversationFileLocation,
   type ConversationOpenTarget,
   type TurnChangeFile,
@@ -146,6 +150,8 @@ export interface NewConversationBrowserDraft {
 }
 
 export interface SessionWorkspaceStartInput {
+  /** 首发与后续消息共用选区评论，保留原文与用户问题。 */
+  conversationContext?: ConversationContextDraft;
   /** 新对话的浏览器上下文，首发失败时仍属于原草稿。 */
   browserDraft?: NewConversationBrowserDraft;
   /** 缺省继承项目，null 明确保留默认；草稿恢复保留选择。 */
@@ -175,6 +181,8 @@ export interface SessionWorkspaceStartInput {
 }
 
 export interface ProjectSessionWorkspaceStartInput {
+  /** 首发与后续消息共用选区评论，保留原文与用户问题。 */
+  conversationContext?: ConversationContextDraft;
   /** 新对话的浏览器上下文，首发失败时仍属于原草稿。 */
   browserDraft?: NewConversationBrowserDraft;
   /** 缺省继承项目，null 明确保留默认；草稿恢复保留选择。 */
@@ -310,6 +318,8 @@ export interface NativeConversationStartStorage {
 
 type StartNativeConversationPayload =
   | {
+      /** 首发保留结构化评论。 */
+      conversationContext?: ConversationContextDraft;
       mode: 'create';
       source?: 'code_review';
       stageId?: string;
@@ -363,6 +373,12 @@ export async function loadLegacyConversationDetail<T>(conversation: NativeConver
 }
 
 export interface ConnectedSessionWorkspaceProps {
+  /** 嵌入侧栏的会话不再递归创建另一层侧栏。 */
+  sideQuestionDisabled?: boolean;
+  /** 从主会话交付的原文评论，只加入本会话待发送区。 */
+  pendingResponseAnnotations?: ConversationResponseAnnotation[];
+  /** 完成草稿交付后从父页面释放待交付记录。 */
+  onResponseAnnotationsStaged?: (ids: string[]) => void;
   /** 所有 Provider 共用专用建议设置，不继承会话模型。 */
   inputSuggestionSettings?: import('@zeus/shared').InputSuggestionSettings;
   gitContext?: { client: DashboardClient; project: ProjectRecord };
@@ -533,6 +549,15 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     enabled: controllerEnabled,
     realtimePolicy: initialRealtimePolicy,
   });
+  useEffect(() => {
+    if (!controllerEnabled || !props.pendingResponseAnnotations?.length) return;
+    /** 从当前控制器读取最新草稿，不覆盖右侧已写的问题和评论。 */
+    const current = controller.getState().contextDraft;
+    /** 相同评论身份只暂存一次。 */
+    const incoming = props.pendingResponseAnnotations.filter((entry) => !current.responseAnnotations.some((saved) => saved.id === entry.id));
+    if (incoming.length) controller.setContextDraft({ ...current, responseAnnotations: [...current.responseAnnotations, ...incoming] });
+    props.onResponseAnnotationsStaged?.(props.pendingResponseAnnotations.map((entry) => entry.id));
+  }, [controller, controllerEnabled, props.pendingResponseAnnotations, props.onResponseAnnotationsStaged]);
   const workspaceStateSelector = useMemo(createSessionWorkspaceStateSelector, [controller]);
   const state = useSessionControllerSelector(controller, workspaceStateSelector);
   const [subagentScope, setSubagentScope] = useState<ScopedSubagentSnapshot>(() => ({ conversationId: props.conversation.id, snapshot: null }));
@@ -788,8 +813,100 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     props.onStartProjectConversation,
     props.onTaskManagementStatusChange,
   ]);
+  /** 只复用持久首发与回执转换，不执行全局会话导航。 */
+  async function startSideQuestion(input: SideQuestionStartInput, onAccepted: (choice: NativeConversationChoice) => void): Promise<void> {
+    /** 侧栏草稿与主输入框有不同的持久信封空间。 */
+    const prefix = `zeus.side-question:${props.conversation.id}:${input.id}:`;
+    /** 已有首发管理器负责冻结请求及清理成功回执。 */
+    const storage: NativeConversationStartStorage = {
+      getItem: (key) => window.localStorage.getItem(prefix + key),
+      setItem: (key, value) => window.localStorage.setItem(prefix + key, value),
+      removeItem: (key) => window.localStorage.removeItem(prefix + key),
+    };
+    /** 模型与权限来自本次显式发送选择，工作目录只传源会话身份。 */
+    const common = {
+      content: input.content,
+      conversationContext: input.conversationContext,
+      attachments: input.attachments,
+      inheritConversationId: props.conversation.id,
+      ...input.settings,
+      serviceTierSelection: input.settings.serviceTier === undefined ? { type: 'follow' as const } : selectionFromEffectiveServiceTier(input.settings.serviceTier),
+    };
+    if (props.conversation.taskId) {
+      if (!props.task || props.task.id !== props.conversation.taskId || !props.client.startNativeConversation) throw new Error('源任务会话创建能力不可用。');
+      await startNativeConversationWithDurableAcceptance({
+        input: { ...common, mode: 'create', task: props.task },
+        envelopeManager: createNativeConversationStartEnvelopeManager({ storage, createId: () => crypto.randomUUID() }),
+        dispatch: props.client.startNativeConversation,
+        onAccepted,
+        refresh: async () => undefined,
+      });
+    } else {
+      if (!props.client.startProjectConversation || props.owner.kind !== 'project') throw new Error('源项目会话创建能力不可用。');
+      await startProjectConversationWithDurableAcceptance({
+        input: { ...common, owner: props.owner },
+        envelopeManager: createProjectConversationStartEnvelopeManager({ storage, createId: () => crypto.randomUUID() }),
+        dispatch: props.client.startProjectConversation,
+        onAccepted,
+        refresh: async () => undefined,
+      });
+    }
+  }
   return (
     <SessionWorkspace
+      renderSideQuestion={
+        !props.sideQuestionDisabled && controllerEnabled && !props.readOnlyGate && (props.conversation.taskId ? props.task && props.client.startNativeConversation : props.client.startProjectConversation)
+          ? (question, onChange, visible, fullWidth, onFullWidthChange, onClose) => (
+              <SideQuestionWorkspace
+                key={question.id}
+                state={question}
+                onStateChange={onChange}
+                visible={visible}
+                fullWidth={fullWidth}
+                onFullWidthChange={onFullWidthChange}
+                onClose={onClose}
+                language={props.language}
+                projectId={props.conversation.projectId}
+                taskId={props.conversation.taskId ?? undefined}
+                capabilities={capabilities}
+                initialSettings={{
+                  contextCapacityTokens: props.conversation.contextCapacityTokens,
+                  serviceTier:
+                    displayedState.snapshot?.nextTurnSettings && Object.prototype.hasOwnProperty.call(displayedState.snapshot.nextTurnSettings, 'serviceTier')
+                      ? displayedState.snapshot.nextTurnSettings.serviceTier
+                      : displayedState.providerSettings?.serviceTier,
+                  model: displayedState.snapshot?.nextTurnSettings?.model ?? displayedState.providerSettings?.model ?? props.conversation.providerModel ?? '',
+                  effort: displayedState.snapshot?.nextTurnSettings?.effort ?? displayedState.providerSettings?.effort ?? undefined,
+                  permissionMode: displayedState.snapshot?.nextTurnSettings?.permissionMode ?? displayedState.snapshot?.permissionMode ?? props.conversation.permissionMode ?? 'read-only',
+                  collaborationMode: displayedState.snapshot?.nextTurnSettings?.collaborationMode ?? displayedState.snapshot?.collaborationMode ?? 'default',
+                }}
+                onStart={startSideQuestion}
+                renderConversation={(conversation, annotations, onStaged) => (
+                  <ConnectedSessionWorkspace
+                    {...props}
+                    conversation={conversation}
+                    initialCachedState={undefined}
+                    initialOptimisticState={undefined}
+                    stableConversationId={undefined}
+                    localState={undefined}
+                    localActions={undefined}
+                    creationStatus={undefined}
+                    historyOnly={false}
+                    sideQuestionDisabled
+                    suppressComposer={false}
+                    terminalClient={undefined}
+                    pendingResponseAnnotations={annotations}
+                    onResponseAnnotationsStaged={onStaged}
+                    embeddedInTask
+                    quickActionsSuppressed
+                    onLatestContentVisibilityChange={undefined}
+                  />
+                )}
+              />
+            )
+          : undefined
+      }
+      focusComposerRequest={props.sideQuestionDisabled ? (props.pendingResponseAnnotations?.at(-1)?.id ?? props.conversation.id) : undefined}
       language={props.language}
       inputSuggestionSettings={props.inputSuggestionSettings}
       onGenerateInputSuggestion={props.client.generateInputSuggestion}
@@ -1126,7 +1243,8 @@ export async function startProjectConversationWithDurableAcceptance<T>(options: 
   options.envelopeManager.clearAccepted(options.input, request, acceptance, operationIdentity);
   const choice = projectConversationChoiceFromAcceptance(acceptance, options.input.owner);
   bindDraftSystemMessages(options.input.owner.projectId, null, choice.id);
-  choice.workspaceMode ??= request.workspaceMode ?? 'direct';
+  // 继承目录时不把尚未加载的工作树事实猜成项目直连。
+  if (!request.inheritConversationId || request.workspaceMode) choice.workspaceMode ??= request.workspaceMode ?? 'direct';
   await options.onAccepted(choice);
   try {
     return { choice, request, acceptance, refreshResult: await options.refresh(options.input.owner.projectId), refreshError: null };
@@ -1139,12 +1257,13 @@ function buildProjectConversationStartPayload(input: ProjectSessionWorkspaceStar
   if (!input.content.trim() && input.attachments.length === 0 && !input.browserDraft?.submission?.comments.length) throw new Error('Project conversation start content or attachments are required.');
   return {
     mode: 'create',
-    ...(input.source ? { source: input.source, inheritConversationId: input.inheritConversationId } : {}),
-    workspaceMode: input.workspaceMode ?? 'direct',
+    ...(input.source ? { source: input.source, inheritConversationId: input.inheritConversationId } : input.inheritConversationId ? { inheritConversationId: input.inheritConversationId } : {}),
+    ...(!input.inheritConversationId || input.source ? { workspaceMode: input.workspaceMode ?? 'direct' } : {}),
     ...(input.workspaceMode === 'worktree' && input.worktree ? { worktree: input.worktree } : {}),
     content: input.content,
     attachments: input.attachments,
     ...(input.browserDraft?.submission ? { browserComments: input.browserDraft.submission.comments, browserCommentContent: input.browserDraft.submission.content } : {}),
+    ...(input.conversationContext ? { conversationContext: input.conversationContext } : {}),
     permissionMode: input.permissionMode ?? 'auto',
     collaborationMode: input.collaborationMode ?? 'default',
     ...(input.model ? { model: input.model } : {}),
@@ -1378,6 +1497,7 @@ function buildStartNativeConversationPayload(input: SessionWorkspaceStartInput):
       content,
       ...(input.attachments?.length ? { attachments: input.attachments } : {}),
       ...(input.browserDraft?.submission ? { browserComments: input.browserDraft.submission.comments, browserCommentContent: input.browserDraft.submission.content } : {}),
+      ...(input.conversationContext ? { conversationContext: input.conversationContext } : {}),
       ...(input.inheritConversationId ? { inheritConversationId: input.inheritConversationId } : {}),
       permissionMode: input.permissionMode ?? 'auto',
       collaborationMode: input.collaborationMode ?? 'default',
@@ -1533,6 +1653,10 @@ export interface NewConversationDraft {
 export type NewConversationDraftStore = Map<string, NewConversationDraft>;
 
 export interface SessionWorkspaceProps {
+  /** 外部选区进入侧栏后聚焦该会话输入框，不影响主会话。 */
+  focusComposerRequest?: string;
+  /** 右侧会话复用上层客户端与会话创建能力。 */
+  renderSideQuestion?: (state: SideQuestionState, onChange: Dispatch<SetStateAction<SideQuestionState | null>>, visible: boolean, fullWidth: boolean, onFullWidthChange: (value: boolean) => void, onClose: () => void) => ReactNode;
   /** 仅主输入框消费这份独立建议设置。 */
   inputSuggestionSettings?: import('@zeus/shared').InputSuggestionSettings;
   /** 客户端由真实会话身份绑定轮次请求，不接收任意预测材料。 */
@@ -1773,6 +1897,11 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   const responseGuard = useRef(createRequestResponseGuard()).current;
   const escapeController = useRef(createSessionEscapeController()).current;
   const interruptResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** 嵌入的独立会话各自处理键盘，不把 Escape 传给主会话。 */
+  const workspaceRootRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (props.focusComposerRequest) composerRef.current?.focus();
+  }, [props.focusComposerRequest]);
   const contextReturnFocusRef = useRef<HTMLElement | null>(null);
   const terminalReturnFocusRef = useRef<HTMLElement | null>(null);
   const browserSnapshotRef = useRef<ZeusBrowserConversationSnapshot | null>(null);
@@ -1790,6 +1919,8 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     setImagePreviewRequest,
     sourceWorkspaceState,
     setSourceWorkspaceState,
+    sideQuestionState,
+    setSideQuestionState,
   } = useSessionContextWorkspace(props.conversation?.projectId, navigationId);
   /** 关闭上下文工作区失败时保留当前工作面，并在本会话内说明原因。 */
   const [contextWorkspaceError, setContextWorkspaceError] = useState<unknown>(null);
@@ -2057,6 +2188,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   useEffect(() => {
     if (!terminalAvailable || projectTools.open) return;
     const handleShortcut = (event: KeyboardEvent): void => {
+      if (event.target instanceof Element && event.target.closest('.session-workspace-root') !== workspaceRootRef.current) return;
       if (event.repeat || !isSessionTerminalShortcut(event)) return;
       event.preventDefault();
       event.stopPropagation();
@@ -2082,7 +2214,10 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   useEffect(() => {
     const bridge = window.zeus;
     if (!bridge?.onNativeCloseActiveContextTab) return;
-    return bridge.onNativeCloseActiveContextTab(() => {
+    return bridge.onNativeCloseActiveContextTab((ownerConversationId) => {
+      /** 原生关闭命令只作用于当前焦点所在的右侧面板。 */
+      const owner = ownerConversationId ?? document.activeElement?.closest('[data-context-owner]')?.getAttribute('data-context-owner');
+      if (owner && owner !== props.conversation?.id) return;
       const current = contextWorkspaceRef.current;
       if (projectTools.open || current.kind === 'none' || current.kind === 'browser') return;
       closeContextWorkspace();
@@ -2125,6 +2260,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   );
 
   function handleWorkspaceKeyDownCapture(event: ReactKeyboardEvent<HTMLElement>): void {
+    if (event.target instanceof Element && event.target.closest('.session-workspace-root') !== event.currentTarget) return;
     if (event.key !== 'Escape') return;
     // 终端搜索先消费 Escape，不能触发工作区关闭或会话操作。
     if (event.target instanceof Element && event.target.closest('[data-terminal-search-open="true"]')) return;
@@ -2474,6 +2610,16 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
     } finally {
       if (workspaceIdentityRef.current === conversationId) setGoalBusy(false);
     }
+  }
+
+  /** 选中原文只加入右侧草稿，保留主会话输入和正在运行的轮次。 */
+  function askInSidebar(anchor: Parameters<NonNullable<ConversationTranscriptProps['onAskInSidebar']>>[0]): void {
+    contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    /** 独立评论身份支持重复引用同一位置。 */
+    const annotation = { id: crypto.randomUUID(), anchor };
+    setSideQuestionState((current) => (current ? { ...current, annotations: [...current.annotations, annotation] } : { id: crypto.randomUUID(), draft: '', annotations: [annotation], attachments: [], conversation: null }));
+    setContextFullWidth(false);
+    setContextWorkspace({ kind: 'question' });
   }
 
   function addResponseAnnotation(anchor: Parameters<NonNullable<ConversationTranscriptProps['onAddResponseAnnotation']>>[0]): string {
@@ -2962,6 +3108,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                         : undefined
                     }
                     onOperateTurnChangeSet={transcriptInteractionsEnabled && actions.onOperateTurnChangeSet ? operateTurnChangeSet : undefined}
+                    onAskInSidebar={props.renderSideQuestion ? askInSidebar : undefined}
                     onAddResponseAnnotation={contextDraftWritable ? addResponseAnnotation : undefined}
                     onUpdateResponseAnnotation={contextDraftWritable ? updateResponseAnnotation : undefined}
                     onRemoveResponseAnnotation={contextDraftWritable ? removeResponseAnnotation : undefined}
@@ -3012,6 +3159,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                 {props.conversation ? (
                   <aside
                     className="session-browser-sidecar session-context-sidecar"
+                    data-context-owner={props.conversation.id}
                     aria-label={contextWorkspaceLabel(contextWorkspace, props.language)}
                     aria-hidden={!contextOpen}
                     hidden={!contextOpen}
@@ -3039,6 +3187,9 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                       onKeyDown={handleBrowserResizeKeyDown}
                     />
                     <div className="session-browser-pane" data-environment-open={(browserOpen && quickActionsPopoverOpen) || undefined} data-environment-stacked={resolvedBrowserTargetWidth < 760 || undefined}>
+                      {sideQuestionState && props.renderSideQuestion
+                        ? props.renderSideQuestion(sideQuestionState, setSideQuestionState, contextWorkspace.kind === 'question', contextFullWidth, setContextFullWidth, closeContextWorkspace)
+                        : null}
                       {/* 浏览页面不依赖批注发送能力；冷历史等工作面也必须挂载浏览器。 */}
                       {contextWorkspace.kind === 'browser' ? (
                         <BrowserWorkspace
@@ -3199,6 +3350,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   /** 完整会话共享附件预览路由，创建会话前沿用独立附件容器。 */
   const workspace = (
     <section
+      ref={workspaceRootRef}
       className="session-workspace-root"
       aria-label={copy.workspace}
       data-transport-state={props.state?.transportState ?? props.loadState ?? 'empty'}
@@ -3208,12 +3360,12 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
       onPointerDownCapture={(event) => {
         if (!contextOpen || !(event.target instanceof Element)) return;
         const active = Boolean(event.target.closest('.session-context-sidecar, .session-context-toolbar-host'));
-        window.zeus?.notifySessionContextActivity?.({ active, kind: active ? contextActivityKind : 'none' });
+        window.zeus?.notifySessionContextActivity?.({ active, kind: active ? contextActivityKind : 'none', ownerConversationId: props.conversation?.id });
       }}
       onFocusCapture={(event) => {
         if (!contextOpen || !(event.target instanceof Element)) return;
         const active = Boolean(event.target.closest('.session-context-sidecar, .session-context-toolbar-host'));
-        window.zeus?.notifySessionContextActivity?.({ active, kind: active ? contextActivityKind : 'none' });
+        window.zeus?.notifySessionContextActivity?.({ active, kind: active ? contextActivityKind : 'none', ownerConversationId: props.conversation?.id });
       }}
     >
       <div className="session-primary-pane">{primaryPane}</div>
@@ -3249,6 +3401,7 @@ export function selectDockedTurnPlan(state: NativeSessionState): NativeSessionSt
 
 function contextWorkspaceLabel(workspace: SessionContextWorkspace, language: SessionUiLanguage): string {
   const zh = language === 'zh-CN';
+  if (workspace.kind === 'question') return zh ? '侧边栏会话' : 'Sidebar conversation';
   if (workspace.kind === 'browser') return zh ? '会话浏览器' : 'Conversation browser';
   if (workspace.kind === 'subagents') return zh ? '智能体' : 'Agents';
   if (workspace.kind === 'plan') return zh ? '计划工作区' : 'Plan workspace';

@@ -353,7 +353,7 @@ declare global {
       notifySensitiveRequestDraft: (payload: { requestId: string; present: boolean }) => void;
       /** 终端焦点不覆盖右侧工作面的独立归属。 */
       notifyTerminalActivity: (active: boolean) => void;
-      notifySessionContextActivity: (payload: { active: boolean; kind: 'browser' | 'subagents' | 'plan' | 'source' | 'turn_diff' | 'none' }) => void;
+      notifySessionContextActivity: (payload: { active: boolean; kind: 'browser' | 'subagents' | 'plan' | 'source' | 'turn_diff' | 'question' | 'none'; ownerConversationId?: string }) => void;
       notifyAppCloseLayerActivity: (active: boolean) => void;
       /** 管理由当前工作区创建的系统窗口。 */
       updateSystemWindow: (name: string, action: 'show' | 'close') => Promise<void>;
@@ -376,7 +376,7 @@ declare global {
       onNativeNewConversation: (listener: () => void) => () => void;
       /** 原生关闭快捷键仅交给获得焦点的终端。 */
       onNativeCloseActiveTerminalTab: (listener: () => void) => () => void;
-      onNativeCloseActiveContextTab: (listener: () => void) => () => void;
+      onNativeCloseActiveContextTab: (listener: (ownerConversationId?: string) => void) => () => void;
       onNativeCloseFrontmostLayer: (listener: () => void) => () => void;
       /** 系统菜单保持原生网页可见，并返回选择或取消。 */
       /** 系统菜单绑定当前会话和标签，原生网页保持可见。 */

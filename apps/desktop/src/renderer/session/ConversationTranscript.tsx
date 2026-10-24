@@ -74,6 +74,8 @@ export interface ConversationTranscriptProps {
   onLatestContentVisibilityChange?: (visible: boolean) => void;
   historyLoading?: boolean;
   creationStatus?: SessionCreationStatus;
+  /** 选区作为右侧会话的评论引用，不写入主会话草稿。 */
+  onAskInSidebar?: (anchor: ConversationResponseTextAnchor) => void;
   onAddResponseAnnotation?: (anchor: ConversationResponseTextAnchor) => string;
   onUpdateResponseAnnotation?: (id: string, note: string) => void;
   onRemoveResponseAnnotation?: (id: string) => void;
@@ -716,6 +718,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
     onLoadResourcePreview: useStableOptionalCallback(props.onLoadResourcePreview),
     onReviewTurnChanges: useStableOptionalCallback(props.onReviewTurnChanges),
     onOperateTurnChangeSet: useStableOptionalCallback(props.onOperateTurnChangeSet),
+    onAskInSidebar: useStableOptionalCallback(props.onAskInSidebar),
     onAddResponseAnnotation: useStableOptionalCallback(props.onAddResponseAnnotation),
     onUpdateResponseAnnotation: useStableOptionalCallback(props.onUpdateResponseAnnotation),
     onRemoveResponseAnnotation: useStableOptionalCallback(props.onRemoveResponseAnnotation),
@@ -2393,6 +2396,7 @@ function renderTranscriptRow(row: TranscriptRow, options: TranscriptRowRenderOpt
         onCallMcpAppTool={options.props.onCallMcpAppTool}
         onVisibleContentChange={options.onVisibleContentChange}
         responseAnnotations={options.responseAnnotationsByItemId.get(row.item.itemId) ?? emptyResponseAnnotations}
+        onAskInSidebar={options.props.onAskInSidebar}
         onAddResponseAnnotation={options.props.onAddResponseAnnotation}
         onUpdateResponseAnnotation={options.props.onUpdateResponseAnnotation}
         onRemoveResponseAnnotation={options.props.onRemoveResponseAnnotation}

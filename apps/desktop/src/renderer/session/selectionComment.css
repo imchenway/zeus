@@ -9,6 +9,7 @@
   border-radius: 999px;
   box-shadow: none;
   display: flex;
+  gap: 4px;
   overflow: visible;
   position: fixed;
   transform: translateY(-100%);

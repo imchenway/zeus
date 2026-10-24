@@ -1531,6 +1531,8 @@ export type StartNativeConversationRequest =
       /** 本次创建选择的上下文窗口容量。 */
       contextCapacityTokens?: number | null;
       mode: 'create';
+      /** 首发与后续消息共用选区评论，保留原文与用户问题。 */
+      conversationContext?: ConversationContextDraft;
       source?: 'code_review';
       stageId?: string;
       content?: string;
@@ -1574,6 +1576,8 @@ export type StartNativeConversationRequest =
     };
 
 export interface StartProjectConversationRequest {
+  /** 首发与后续消息共用选区评论，保留原文与用户问题。 */
+  conversationContext?: ConversationContextDraft;
   /** 首条消息的结构化网页批注，复用后续消息的处理链路。 */
   browserComments?: ZeusBrowserComment[];
   /** 首条消息的网页批注提示词。 */

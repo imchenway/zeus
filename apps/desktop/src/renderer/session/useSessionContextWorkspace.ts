@@ -1,3 +1,4 @@
+import type { SideQuestionState } from './SideQuestionWorkspace.js';
 import { ProjectToolContext } from '../features/workspace/projectToolContext.js';
 import { useCallback, useContext, useSyncExternalStore, type SetStateAction } from 'react';
 import type { ConversationFileLocation, FilePreviewRequest } from '@zeus/shared';
@@ -7,6 +8,7 @@ import type { SourceWorkspaceState, SourceWorkspaceViewMode } from './SourceWork
 /** 会话右侧工作区仅在用户打开或关闭内容时改变。 */
 export type SessionContextWorkspace =
   | { kind: 'none' }
+  | { kind: 'question' }
   | { kind: 'browser' }
   | { kind: 'subagents' }
   | { kind: 'plan'; item: NativeSessionItemBuffer }
@@ -24,10 +26,12 @@ interface SessionContextState {
   imagePreviewRequest: FilePreviewRequest | null;
   /** 源码标签与当前阅读模式。 */
   sourceState: SourceWorkspaceState | null;
+  /** 右侧会话及未发送评论跨面板关闭和会话切换保留。 */
+  questionState: SideQuestionState | null;
 }
 
 /** 未打开内容的会话共用稳定空快照。 */
-const emptyState: SessionContextState = { workspace: { kind: 'none' }, fullWidth: false, imagePreviewRequest: null, sourceState: null };
+const emptyState: SessionContextState = { workspace: { kind: 'none' }, fullWidth: false, imagePreviewRequest: null, sourceState: null, questionState: null };
 /** 与终端可见性一致，状态跨组件卸载保留到当前窗口结束。 */
 const workspaces = new Map<string, SessionContextState>();
 /** 只有正在展示的工作区订阅变化。 */
@@ -60,7 +64,7 @@ export function useSessionContextWorkspace(projectId: string | undefined, conver
       /** 状态不变时无需通知订阅方。 */
       const next = update(current);
       if (next === current) return;
-      if (next.workspace.kind === 'none' && !next.imagePreviewRequest) workspaces.delete(key);
+      if (next.workspace.kind === 'none' && !next.imagePreviewRequest && !next.questionState) workspaces.delete(key);
       else workspaces.set(key, next);
       for (const listener of listeners) listener();
     },
@@ -92,7 +96,11 @@ export function useSessionContextWorkspace(projectId: string | undefined, conver
       }),
     [setState],
   );
+  /** 评论草稿和已创建会话只更新所属主会话。 */
+  const setSideQuestionState = useCallback((update: SetStateAction<SideQuestionState | null>) => setState((current) => ({ ...current, questionState: typeof update === 'function' ? update(current.questionState) : update })), [setState]);
   return {
+    sideQuestionState: state.questionState,
+    setSideQuestionState,
     contextWorkspace: state.workspace,
     setContextWorkspace,
     contextFullWidth: state.fullWidth,
