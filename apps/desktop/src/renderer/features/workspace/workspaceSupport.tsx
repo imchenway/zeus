@@ -1,83 +1,116 @@
-import { normalizeTaskDeadline, type TaskDeadline, type ZentaoInstanceRecord } from '@zeus/shared';
-import { createZentaoTaskDestination, isZentaoDestinationComplete, ZentaoTaskDestinationFields, type ZentaoTaskDestination } from '../../task/ZentaoSyncModal.js';
-import { normalizeInputSuggestionSettings, temporaryWorkspaceId } from '@zeus/shared';
-import { usePresenceOpen } from '../../ui/MotionPresence.js';
-import { retainInputFocus } from '../../ui/retainInputFocus.js';
-import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
-import { type ClipboardEvent as ReactClipboardEvent, type DragEvent as ReactDragEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from 'react';
-import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import {
-  asyncMessageQuestions,
-  defaultTaskBranchPrefix,
-  defaultTaskManagementStatusConfig,
-  extractThirdPartyTaskLink,
-  isTaskStatusFilter,
-  normalizeTaskBranchPrefix,
-  normalizeTaskManagementStatusConfig,
-  type ProjectCodeWorkspacePreference,
-  type TaskManagementStatusConfig,
-  type TaskManagementStatusDefinition,
-  type ThirdPartyTaskExtract,
+    asyncMessageQuestions,
+    defaultTaskBranchPrefix,
+    defaultTaskManagementStatusConfig,
+    extractThirdPartyTaskLink,
+    isTaskStatusFilter,
+    normalizeInputSuggestionSettings,
+    normalizeTaskBranchPrefix,
+    normalizeTaskDeadline,
+    normalizeTaskManagementStatusConfig,
+    type ProjectCodeWorkspacePreference,
+    type TaskDeadline,
+    type TaskManagementStatusConfig,
+    type TaskManagementStatusDefinition,
+    temporaryWorkspaceId,
+    type ThirdPartyTaskExtract,
+    type ZentaoInstanceRecord
 } from '@zeus/shared';
-import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../../ui/pendingResourcePolicy.js';
-import { clipboardNeedsResourceRead, clipboardTextAfterResources, dataTransferFiles, usePendingResourcePreviews } from '../../ui/usePendingResourcePreviews.js';
-import type { PendingResourceCardItem } from '../../ui/PendingResourceCards.js';
-import { TaskAttachmentPreviewList } from '../../task/TaskAttachmentPreviewList.js';
-import { type NativeConversationStartStorage, type SessionWorkspaceTask } from '../../session/SessionWorkspace.js';
-import type { NativeConversationChoice, NativeConversationChoicesSnapshot, NativeProjectConversationChoicesSnapshot } from '../../session/sessionTypes.js';
-import { compareConversationStageUpdatedDesc } from '../../session/conversationOrdering.js';
-import type { SessionControllerClient } from '../../session/useSessionController.js';
-import { type TaskModelPushPendingState } from '../../task/TaskModelPushPendingWorkspace.js';
-import { type AppLanguage, languageCopy } from './workspaceCopy.js';
 import {
-  type TaskAttachmentCandidate,
-  type TaskAttachmentRestoreTarget,
-  taskAttachmentsForField,
-  type TaskAttachmentView,
-  type TaskResourceAuthorizationResult,
-  type TaskResourcePayload,
-  toPersistedTaskAttachment,
+    createZentaoTaskDestination,
+    isZentaoDestinationComplete,
+    type ZentaoTaskDestination,
+    ZentaoTaskDestinationFields
+} from '../../task/ZentaoSyncModal.js';
+import {usePresenceOpen} from '../../ui/MotionPresence.js';
+import {retainInputFocus} from '../../ui/retainInputFocus.js';
+import {VisibleApplicationError} from '../../ui/ApplicationErrorDialog.js';
+import {
+    type ClipboardEvent as ReactClipboardEvent,
+    type DragEvent as ReactDragEvent,
+    type FormEvent,
+    type KeyboardEvent as ReactKeyboardEvent,
+    type ReactNode,
+    type RefObject,
+    useEffect,
+    useMemo,
+    useRef,
+    useState
+} from 'react';
+import {WarningCircleIcon as WarningCircle} from '@phosphor-icons/react/dist/csr/WarningCircle';
+import {PENDING_RESOURCE_LONG_TEXT_THRESHOLD} from '../../ui/pendingResourcePolicy.js';
+import {
+    clipboardNeedsResourceRead,
+    clipboardTextAfterResources,
+    dataTransferFiles,
+    usePendingResourcePreviews
+} from '../../ui/usePendingResourcePreviews.js';
+import type {PendingResourceCardItem} from '../../ui/PendingResourceCards.js';
+import {TaskAttachmentPreviewList} from '../../task/TaskAttachmentPreviewList.js';
+import {type NativeConversationStartStorage, type SessionWorkspaceTask} from '../../session/SessionWorkspace.js';
+import type {
+    NativeConversationChoice,
+    NativeConversationChoicesSnapshot,
+    NativeProjectConversationChoicesSnapshot
+} from '../../session/sessionTypes.js';
+import {compareConversationStageUpdatedDesc} from '../../session/conversationOrdering.js';
+import type {SessionControllerClient} from '../../session/useSessionController.js';
+import {type TaskModelPushPendingState} from '../../task/TaskModelPushPendingWorkspace.js';
+import {type AppLanguage, languageCopy} from './workspaceCopy.js';
+import {
+    type TaskAttachmentCandidate,
+    type TaskAttachmentRestoreTarget,
+    taskAttachmentsForField,
+    type TaskAttachmentView,
+    type TaskResourceAuthorizationResult,
+    type TaskResourcePayload,
+    toPersistedTaskAttachment,
 } from '../../task/taskAttachments.js';
-import { normalizeTaskTableColumnPreferences, normalizeTaskTableEnumSortOrders, resolveTaskManagementStatus, type TaskWorkspaceViewMode } from '../../task/taskWorkspaceModel.js';
-import { ZeusSelect } from '../../ZeusSelect.js';
-import { Button, type ButtonVariant } from '../../ui/Button.js';
-import { ModalPortal } from '../../ui/ModalPortal.js';
 import {
-  type AiRuntimeAdapterDescriptor,
-  type AiRuntimeAdapterStatus,
-  type AiRuntimeLogEntry,
-  type AiRuntimeSession,
-  type AiRuntimeSessionStatus,
-  type AppShellSettings,
-  type DashboardClient,
-  type WorkspaceSnapshot,
-  type DeleteTaskRequest,
-  type ExecutionHostTransition,
-  type GitDiffSummary,
-  type GitOperationConfirmation,
-  type ConversationHistoryItem,
-  type ProjectConfig,
-  type ProjectConversationAttentionState,
-  type ProjectDatabaseSecretSnapshot,
-  type ProjectRecord,
-  type ReleaseStatusSnapshot,
-  type ReleaseUpdateStatusSnapshot,
-  type RuntimeOperationConfirmation,
-  type RuntimeSettings,
-  type RuntimeStatusSnapshot,
-  type SecurityAuditLogEntry,
-  type SecuritySecretsSnapshot,
-  type TaskEventRecord,
-  type TaskManagementStatus,
-  type TaskPageViewMode,
-  type TaskPriority,
-  type TaskRecord,
-  type TaskStatusFilter,
-  type TaskTableColumnPreferences,
-  type TaskTemplateRecord,
-  type TaskType,
-  ZeusApiError,
-  type ZeusRealtimeEvent,
+    normalizeTaskTableColumnPreferences,
+    normalizeTaskTableEnumSortOrders,
+    resolveTaskManagementStatus,
+    type TaskWorkspaceViewMode
+} from '../../task/taskWorkspaceModel.js';
+import {ZeusSelect} from '../../ZeusSelect.js';
+import {Button, type ButtonVariant} from '../../ui/Button.js';
+import {ModalPortal} from '../../ui/ModalPortal.js';
+import {
+    type AiRuntimeAdapterDescriptor,
+    type AiRuntimeAdapterStatus,
+    type AiRuntimeLogEntry,
+    type AiRuntimeSession,
+    type AiRuntimeSessionStatus,
+    type AppShellSettings,
+    type ConversationHistoryItem,
+    type DashboardClient,
+    type DeleteTaskRequest,
+    type ExecutionHostTransition,
+    type GitDiffSummary,
+    type GitOperationConfirmation,
+    type ProjectConfig,
+    type ProjectConversationAttentionState,
+    type ProjectDatabaseSecretSnapshot,
+    type ProjectRecord,
+    type ReleaseStatusSnapshot,
+    type ReleaseUpdateStatusSnapshot,
+    type RuntimeOperationConfirmation,
+    type RuntimeSettings,
+    type RuntimeStatusSnapshot,
+    type SecurityAuditLogEntry,
+    type SecuritySecretsSnapshot,
+    type TaskEventRecord,
+    type TaskManagementStatus,
+    type TaskPageViewMode,
+    type TaskPriority,
+    type TaskRecord,
+    type TaskStatusFilter,
+    type TaskTableColumnPreferences,
+    type TaskTemplateRecord,
+    type TaskType,
+    type WorkspaceSnapshot,
+    ZeusApiError,
+    type ZeusRealtimeEvent,
 } from '../../apiClient.js';
 
 /** 全局数字员工与数字团队均从首页独立进入。 */
@@ -359,6 +392,12 @@ export function failNativeConversationChoiceTaskLoad(previous: NativeConversatio
 
 export interface NativeConversationChoiceLoadCoordinator {
   begin(taskId: string): number;
+
+    /** 项目批量读取在发出时固定顺序，包含响应中新发现的任务。 */
+    beginSnapshot(taskIds: readonly string[]): number;
+
+    /** 只接收读取期间未被较新请求或实时结果推进的任务。 */
+    commitSnapshot(taskId: string, requestVersion: number, snapshot: NativeConversationChoicesSnapshot): NativeConversationChoicesSnapshot | null;
   isCurrent(taskId: string, requestVersion: number): boolean;
   preserveAccepted(choice: NativeConversationChoice): void;
 
@@ -366,17 +405,54 @@ export interface NativeConversationChoiceLoadCoordinator {
   commit(taskId: string, requestVersion: number, snapshot: NativeConversationChoicesSnapshot): NativeConversationChoicesSnapshot | null;
 }
 
-/** Keeps durable POST acceptance authoritative while eventually consistent GET snapshots race. */
+/** 任务读取共用递增顺序，拒绝迟到快照并保留已经确认创建的会话。 */
 export function createNativeConversationChoiceLoadCoordinator(): NativeConversationChoiceLoadCoordinator {
+    /** 请求顺序在任务之间共享，使项目快照能够保护响应中新发现的任务。 */
+    let requestSequence = 0;
+    /** 每个任务最近发出的读取或已经接收的实时更新。 */
   const requestVersions = new Map<string, number>();
+    /** 创建已确认但尚未出现在目录快照中的会话。 */
   const acceptedByTask = new Map<string, Map<string, NativeConversationChoice>>();
+    /** 单任务读取只允许当前请求写回。 */
   const isCurrent = (taskId: string, requestVersion: number) => requestVersions.get(taskId) === requestVersion;
+    /** 批量与单任务结果共用创建回执保留和排序规则。 */
+    const commit = (taskId: string, requestVersion: number, snapshot: NativeConversationChoicesSnapshot): NativeConversationChoicesSnapshot | null => {
+        if (!isCurrent(taskId, requestVersion)) return null;
+        /** 已经进入快照的会话不再重复补入。 */
+        const loadedIds = new Set(snapshot.choices.map((choice) => choice.id));
+        /** 目录读取不能移除已确认创建但尚未被读取到的入口。 */
+        const preserved = [...(acceptedByTask.get(taskId)?.values() ?? [])].filter((choice) => !loadedIds.has(choice.id));
+        /** 合并后的列表沿用阶段时间顺序。 */
+        const choices = [...preserved, ...snapshot.choices].sort(compareConversationStageUpdatedDesc);
+        return {
+            ...snapshot,
+            hasHistory: choices.length > 0,
+            requiresChoice: choices.length > 0,
+            choices,
+            items: choices
+        };
+    };
   return {
+      /** 发出单任务读取或接收实时结果时推进该任务的顺序。 */
     begin(taskId) {
-      const requestVersion = (requestVersions.get(taskId) ?? 0) + 1;
+          /** 本次操作在全部任务读取中的位置。 */
+          const requestVersion = ++requestSequence;
       requestVersions.set(taskId, requestVersion);
       return requestVersion;
     },
+      /** 已知任务立即阻止旧请求；未知任务在响应返回时使用同一顺序。 */
+      beginSnapshot(taskIds) {
+          /** 批量请求的顺序必须在异步读取前确定。 */
+          const requestVersion = ++requestSequence;
+          for (const taskId of taskIds) requestVersions.set(taskId, requestVersion);
+          return requestVersion;
+      },
+      /** 响应中新发现的任务也不能覆盖读取期间已经收到的实时结果。 */
+      commitSnapshot(taskId, requestVersion, snapshot) {
+          if ((requestVersions.get(taskId) ?? 0) > requestVersion) return null;
+          requestVersions.set(taskId, requestVersion);
+          return commit(taskId, requestVersion, snapshot);
+      },
     isCurrent,
     preserveAccepted(choice) {
       if (!choice.taskId) return;
@@ -386,25 +462,13 @@ export function createNativeConversationChoiceLoadCoordinator(): NativeConversat
     },
     forget(taskId, conversationId) {
       // 已确认归档后，让归档前发出的目录读取失效。
-      requestVersions.set(taskId, (requestVersions.get(taskId) ?? 0) + 1);
+        requestVersions.set(taskId, ++requestSequence);
       const accepted = acceptedByTask.get(taskId);
       if (!accepted) return;
       accepted.delete(conversationId);
       if (accepted.size === 0) acceptedByTask.delete(taskId);
     },
-    commit(taskId, requestVersion, snapshot) {
-      if (!isCurrent(taskId, requestVersion)) return null;
-      const loadedIds = new Set(snapshot.choices.map((choice) => choice.id));
-      const preserved = [...(acceptedByTask.get(taskId)?.values() ?? [])].filter((choice) => !loadedIds.has(choice.id));
-      const choices = [...preserved, ...snapshot.choices].sort(compareConversationStageUpdatedDesc);
-      return {
-        ...snapshot,
-        hasHistory: choices.length > 0,
-        requiresChoice: choices.length > 0,
-        choices,
-        items: choices,
-      };
-    },
+      commit,
   };
 }
 

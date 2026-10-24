@@ -1,106 +1,213 @@
-import { registerFilePreview } from './filePreview.js';
-import { getApplicationIcon } from './applicationIcon.js';
-import { describeUserFacingError, userFacingErrorCause, filePreviewMime, filePreviewKind, filePreviewLimits, type FilePreviewIntent, type FilePreviewRequest, type FilePreviewSourceWorkspace } from '@zeus/shared';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, protocol, screen, session, shell, Tray } from 'electron';
-import { execFile as execFileCallback, spawn } from 'node:child_process';
-import { constants as fsConstants, existsSync, type FSWatcher, mkdtempSync } from 'node:fs';
-import { createHash, randomUUID } from 'node:crypto';
-import { homedir, tmpdir } from 'node:os';
-import { createRequire } from 'node:module';
-import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { access, appendFile, chmod, copyFile, cp, link, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { promisify } from 'node:util';
-import { performance } from 'node:perf_hooks';
-import { DatabaseSync } from 'node:sqlite';
-import { type BeforeQuitCleanupFailureAction, createBeforeQuitCleanupHandler, type DesktopLocalServerCloseMode } from './beforeQuitCleanup.js';
-import type { DesktopLocalServerRuntime, ExecutionHostMaintenanceStatus } from './localServerRuntime.js';
-import { createStartupCoordinator } from './startupCoordinator.js';
-import { createRendererBootstrapMonitor } from './rendererBootstrapMonitor.js';
-import { ensureWindowsCodexRemoteControl } from './codexRemoteControlBootstrap.js';
-import { exportPatchToFile } from './patchExport.js';
-import { exportRuntimeLogsToFile } from './runtimeLogExport.js';
-import { chooseProjectDirectory } from './projectDirectoryPicker.js';
-import { exportSettingsSnapshotToFile, importBusinessDataSnapshotFromFile, importSettingsSnapshotFromFile } from './settingsPortability.js';
-import { type SourceLocation, openSourceLocation } from './sourceOpen.js';
-import { buildAppShellMenuTemplate, buildLoginItemSettings, buildMenuBarTrayTemplate, type MainAppShellSettings, shouldQuitWhenAllWindowsClosed, shouldUseSystemNotifications } from './appShellPolicy.js';
-import { createSystemNotificationBridge, type SystemNotificationBridge } from './systemNotifications.js';
-import { openLocalLogDirectory } from './localLogDirectory.js';
-import { openExternalHttpsUrl } from './externalOpen.js';
-import { readSessionViewCache, writeSessionViewCache } from './sessionViewCache.js';
-import type { ZentaoExtractServices } from './zentaoTaskExtract.js';
-import { extractThirdPartyTaskInfo, openThirdPartyTaskLogin } from './thirdPartyTaskExtract.js';
-import { defaultMainWindowSize, findSavedWindowDisplay, minimumMainWindowSize, type PersistedMainWindowState, readPersistedMainWindowState, type ResolvedMainWindowState, resolveMainWindowState } from './windowState.js';
-import { waitForSavedWindowDisplay } from './windowRestoration.js';
-import { createPersistentWindow } from './persistentWindow.js';
-import { activeSystemWindow, registerSystemWindowIpc, systemWindowOpenHandler } from './systemWindows.js';
-import { resolveTestDisplayPlacement } from './testDisplayPlacement.js';
+import {registerFilePreview} from './filePreview.js';
+import {getApplicationIcon} from './applicationIcon.js';
 import {
-  buildTaskAttachmentPreviewDataUrl,
-  coerceTaskClipboardAttachmentBuffer,
-  extractTaskClipboardResidualText,
-  inferTaskClipboardAttachmentMimeType,
-  isSupportedImageInputMimeType,
-  readTaskClipboardAttachmentsFromClipboard,
-  readTaskClipboardFileReferencesFromClipboard,
-  type TaskClipboardAttachmentPayload,
+    canonicalCommandInputJson,
+    commandEnvelopeSchemaGeneration,
+    type CreateProjectSourceEntryInput,
+    describeUserFacingError,
+    type FilePreviewIntent,
+    filePreviewKind,
+    filePreviewLimits,
+    filePreviewMime,
+    type FilePreviewRequest,
+    type FilePreviewSourceWorkspace,
+    type MoveProjectSourceEntryInput,
+    normalizeInputSuggestionUiDiagnostic,
+    normalizeNetworkProxySettings,
+    type ReadOnlyValidationDescriptor,
+    type SaveProjectSourceFileInput,
+    type TrashProjectSourceEntryInput,
+    userFacingErrorCause,
+    type ZentaoInstanceRecord,
+    zentaoSecretAccount
+} from '@zeus/shared';
+import {
+    app,
+    BrowserWindow,
+    clipboard,
+    dialog,
+    ipcMain,
+    Menu,
+    nativeImage,
+    nativeTheme,
+    Notification,
+    powerMonitor,
+    protocol,
+    screen,
+    session,
+    shell,
+    Tray
+} from 'electron';
+import {execFile as execFileCallback, spawn} from 'node:child_process';
+import {constants as fsConstants, existsSync, type FSWatcher, mkdtempSync} from 'node:fs';
+import {createHash, randomUUID} from 'node:crypto';
+import {homedir, tmpdir} from 'node:os';
+import {createRequire} from 'node:module';
+import {basename, dirname, extname, isAbsolute, join, relative, resolve, sep} from 'node:path';
+import {
+    access,
+    appendFile,
+    chmod,
+    copyFile,
+    cp,
+    link,
+    lstat,
+    mkdir,
+    open,
+    readdir,
+    readFile,
+    realpath,
+    rename,
+    rm,
+    stat,
+    unlink,
+    writeFile
+} from 'node:fs/promises';
+import {fileURLToPath, pathToFileURL} from 'node:url';
+import {promisify} from 'node:util';
+import {performance} from 'node:perf_hooks';
+import {DatabaseSync} from 'node:sqlite';
+import {
+    type BeforeQuitCleanupFailureAction,
+    createBeforeQuitCleanupHandler,
+    type DesktopLocalServerCloseMode
+} from './beforeQuitCleanup.js';
+import type {DesktopLocalServerRuntime, ExecutionHostMaintenanceStatus} from './localServerRuntime.js';
+import {createStartupCoordinator} from './startupCoordinator.js';
+import {createRendererBootstrapMonitor} from './rendererBootstrapMonitor.js';
+import {ensureWindowsCodexRemoteControl} from './codexRemoteControlBootstrap.js';
+import {exportPatchToFile} from './patchExport.js';
+import {exportRuntimeLogsToFile} from './runtimeLogExport.js';
+import {chooseProjectDirectory} from './projectDirectoryPicker.js';
+import {
+    exportSettingsSnapshotToFile,
+    importBusinessDataSnapshotFromFile,
+    importSettingsSnapshotFromFile
+} from './settingsPortability.js';
+import {openSourceLocation, type SourceLocation} from './sourceOpen.js';
+import {
+    buildAppShellMenuTemplate,
+    buildLoginItemSettings,
+    buildMenuBarTrayTemplate,
+    type MainAppShellSettings,
+    shouldQuitWhenAllWindowsClosed,
+    shouldUseSystemNotifications
+} from './appShellPolicy.js';
+import {createSystemNotificationBridge, type SystemNotificationBridge} from './systemNotifications.js';
+import {openLocalLogDirectory} from './localLogDirectory.js';
+import {openExternalHttpsUrl} from './externalOpen.js';
+import {readSessionViewCache, writeSessionViewCache} from './sessionViewCache.js';
+import type {ZentaoExtractServices} from './zentaoTaskExtract.js';
+import {extractThirdPartyTaskInfo, openThirdPartyTaskLogin} from './thirdPartyTaskExtract.js';
+import {
+    defaultMainWindowSize,
+    findSavedWindowDisplay,
+    minimumMainWindowSize,
+    type PersistedMainWindowState,
+    readPersistedMainWindowState,
+    type ResolvedMainWindowState,
+    resolveMainWindowState
+} from './windowState.js';
+import {waitForSavedWindowDisplay} from './windowRestoration.js';
+import {createPersistentWindow} from './persistentWindow.js';
+import {activeSystemWindow, registerSystemWindowIpc, systemWindowOpenHandler} from './systemWindows.js';
+import {resolveTestDisplayPlacement} from './testDisplayPlacement.js';
+import {
+    buildTaskAttachmentPreviewDataUrl,
+    coerceTaskClipboardAttachmentBuffer,
+    extractTaskClipboardResidualText,
+    inferTaskClipboardAttachmentMimeType,
+    isSupportedImageInputMimeType,
+    readTaskClipboardAttachmentsFromClipboard,
+    readTaskClipboardFileReferencesFromClipboard,
+    type TaskClipboardAttachmentPayload,
 } from './taskClipboard.js';
-import { type BrowserHost, browserPartition, createBrowserHost } from './browserHost.js';
-import { type ComputerHost, computerBackgroundLaunchSwitch, computerTargetDisplaySwitch, createComputerHost } from './computerHost.js';
-import { createNativeAutomationHost } from './nativeAutomationHost.js';
-import { type ExternalBrowserHost, createExternalBrowserHost } from './externalBrowserHost.js';
-import { RetiredNativeRuntimeCleanup } from './retiredNativeRuntimeCleanup.js';
+import {type BrowserHost, browserPartition, createBrowserHost} from './browserHost.js';
 import {
-  type ConversationResourceRequest,
-  loadConversationSourceBlame,
-  listConversationResourceOpenTargets,
-  openConversationResource,
-  type OpenConversationResourceRequest,
-  openTurnChangeFile,
-  type OpenTurnChangeFileRequest,
+    computerBackgroundLaunchSwitch,
+    type ComputerHost,
+    computerTargetDisplaySwitch,
+    createComputerHost
+} from './computerHost.js';
+import {createNativeAutomationHost} from './nativeAutomationHost.js';
+import {createExternalBrowserHost, type ExternalBrowserHost} from './externalBrowserHost.js';
+import {RetiredNativeRuntimeCleanup} from './retiredNativeRuntimeCleanup.js';
+import {
+    type ConversationResourceRequest,
+    listConversationResourceOpenTargets,
+    loadConversationSourceBlame,
+    openConversationResource,
+    type OpenConversationResourceRequest,
+    openTurnChangeFile,
+    type OpenTurnChangeFileRequest,
 } from './conversationResourceOpen.js';
 import {
-  type ConversationInputResourceBroker,
-  type ConversationInputResourceSource,
-  type ConversationResourcePayload,
-  type ConversationResourceCommandResult,
-  createConversationInputResourceBroker,
-  readOrCreateConversationAttachmentGrantSecret,
+    type ConversationInputResourceBroker,
+    type ConversationInputResourceSource,
+    type ConversationResourceCommandResult,
+    type ConversationResourcePayload,
+    createConversationInputResourceBroker,
+    readOrCreateConversationAttachmentGrantSecret,
 } from './conversationInputResources.js';
-import { cleanupStaleReleaseBackups, createReleaseUpdateService, type ReleaseUpdateService } from './releaseUpdateService.js';
-import { completeWindowsReleaseInstall } from './windowsReleaseInstaller.js';
-import { publishFile, windowsSecurityRequestAsync } from '@zeus/storage/platform-security';
-import { businessProcessEnvironment, runWindowsRuntimeHelper } from '@zeus/ai-runtime';
-import { createHomebrewUpdateService } from './homebrewUpdateService.js';
-import { createHomebrewUpdateController, type HomebrewUpdateController, type HomebrewUpdateIndicatorState } from './homebrewUpdateController.js';
-import { type AutomaticUpdateScheduler, type ReserveAutomaticCodexUpdate, createAutomaticUpdateScheduler, isAutomaticCodexUpdateTarget } from './automaticUpdateScheduler.js';
-import { createZeusDataLayout, type ZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
-import { applyNetworkProxyAtStartup, createInputSuggestionDiagnosticLog, createPlatformSecretStore, readUnifiedConversationStoreMigrationStatus } from '@zeus/local-server';
-import { getFileBlame, parseGitUnifiedDiff, type GitDiffSummary } from '@zeus/git-core';
-import { canonicalCommandInputJson, commandEnvelopeSchemaGeneration, normalizeInputSuggestionUiDiagnostic, normalizeNetworkProxySettings } from '@zeus/shared';
-import { checkNetworkProxyConnection, chromiumNetworkProxyConfig } from './networkProxy.js';
-import { prepareZeusDataRoot } from './zeusDataMigration.js';
-import { loadDesktopReadOnlyValidationDescriptor, readOnlyValidationManifestEnvironmentName, readPackagedDesktopApplicationId, resolveDesktopTestDataRoot, verifyDesktopReadOnlyValidationDescriptor } from './readOnlyValidationManifest.js';
-import { installReadOnlyValidationIpcFence } from './readOnlyValidationIpcFence.js';
-import { ProjectSourceWorkspaceService } from './projectSourceWorkspace.js';
-import { ProjectSourcePreviewService } from './projectSourcePreview.js';
-import { type ProjectGitProjectIdentity, ProjectGitWorkbenchService } from './projectGitWorkbench.js';
-import { configureProjectGitAuthentication } from './projectGitAuthentication.js';
 import {
-  type CreateProjectSourceEntryInput,
-  type MoveProjectSourceEntryInput,
-  type ReadOnlyValidationDescriptor,
-  type SaveProjectSourceFileInput,
-  type TrashProjectSourceEntryInput,
-  type ZentaoInstanceRecord,
-  zentaoSecretAccount,
-} from '@zeus/shared';
-import { resolveDesktopKeychainService } from './secretServiceIdentity.js';
-import { createSystemMainCommandEnvelope, MainCommandLedger, type MainCommandExecutionContext, type MainCommandRequest } from './mainCommandLedger.js';
-import { StorageRecoveryRestartCoordinator } from './storageRecoveryRestartCoordinator.js';
-import { assertTestDataRootIsolation } from './testDataRootIsolation.js';
-import { expectedBundleIdForDataRootProfile, readAndVerifyZeusDataRootIdentity, zeusDataRootHostIdentity, type ZeusDataRootIdentityMarker, type ZeusDataRootProfile } from './dataRootIdentity.js';
-import { executionHostProtocolVersion } from './executionHostProtocol.js';
+    cleanupStaleReleaseBackups,
+    createReleaseUpdateService,
+    type ReleaseUpdateService
+} from './releaseUpdateService.js';
+import {completeWindowsReleaseInstall} from './windowsReleaseInstaller.js';
+import {publishFile, windowsSecurityRequestAsync} from '@zeus/storage/platform-security';
+import {businessProcessEnvironment, runWindowsRuntimeHelper} from '@zeus/ai-runtime';
+import {createHomebrewUpdateService} from './homebrewUpdateService.js';
+import {
+    createHomebrewUpdateController,
+    type HomebrewUpdateController,
+    type HomebrewUpdateIndicatorState
+} from './homebrewUpdateController.js';
+import {
+    type AutomaticUpdateScheduler,
+    createAutomaticUpdateScheduler,
+    isAutomaticCodexUpdateTarget,
+    type ReserveAutomaticCodexUpdate
+} from './automaticUpdateScheduler.js';
+import {createZeusDataLayout, type ZeusDataLayout} from '@zeus/local-server/zeus-data-layout';
+import {
+    applyNetworkProxyAtStartup,
+    createInputSuggestionDiagnosticLog,
+    createPlatformSecretStore,
+    readUnifiedConversationStoreMigrationStatus
+} from '@zeus/local-server';
+import {getFileBlame, type GitDiffSummary, parseGitUnifiedDiff} from '@zeus/git-core';
+import {checkNetworkProxyConnection, chromiumNetworkProxyConfig} from './networkProxy.js';
+import {prepareZeusDataRoot} from './zeusDataMigration.js';
+import {
+    loadDesktopReadOnlyValidationDescriptor,
+    readOnlyValidationManifestEnvironmentName,
+    readPackagedDesktopApplicationId,
+    resolveDesktopTestDataRoot,
+    verifyDesktopReadOnlyValidationDescriptor
+} from './readOnlyValidationManifest.js';
+import {installReadOnlyValidationIpcFence} from './readOnlyValidationIpcFence.js';
+import {ProjectSourceWorkspaceService} from './projectSourceWorkspace.js';
+import {ProjectSourcePreviewService} from './projectSourcePreview.js';
+import {type ProjectGitProjectIdentity, ProjectGitWorkbenchService} from './projectGitWorkbench.js';
+import {configureProjectGitAuthentication} from './projectGitAuthentication.js';
+import {resolveDesktopKeychainService} from './secretServiceIdentity.js';
+import {
+    createSystemMainCommandEnvelope,
+    type MainCommandExecutionContext,
+    MainCommandLedger,
+    type MainCommandRequest
+} from './mainCommandLedger.js';
+import {StorageRecoveryRestartCoordinator} from './storageRecoveryRestartCoordinator.js';
+import {assertTestDataRootIsolation} from './testDataRootIsolation.js';
+import {
+    expectedBundleIdForDataRootProfile,
+    readAndVerifyZeusDataRootIdentity,
+    zeusDataRootHostIdentity,
+    type ZeusDataRootIdentityMarker,
+    type ZeusDataRootProfile
+} from './dataRootIdentity.js';
+import {executionHostProtocolVersion} from './executionHostProtocol.js';
 
 /** 读取真实资源包属性，避免 Electron 将 asar 虚拟目录的缓存当成磁盘事实。 */
 const resourceFileSystem = createRequire(import.meta.url)('original-fs') as typeof import('node:fs');
@@ -253,22 +360,17 @@ async function executeConversationResourceImport(
   operation: (body: unknown, command: MainCommandExecutionContext) => Promise<Extract<ConversationResourceCommandResult, { ok: true }>['value']>,
 ): Promise<Extract<ConversationResourceCommandResult, { ok: true }>['value']> {
   /** 只有结果保存失败才交由通用账本判定未知；已返回的文件错误有明确失败回执。 */
-  const result = await activeMainCommandLedger().execute<unknown, ConversationResourceCommandResult>(
-    request,
-    commandType,
-    async (body, command) => {
+  const result = await activeMainCommandLedger().execute<unknown, ConversationResourceCommandResult>(request, commandType, async (body, command) => {
       /** 文件导入完成与结果记录使用相同命令身份。 */
       let outcome: ConversationResourceCommandResult;
       try {
-        outcome = { ok: true, value: await operation(body, command) };
+          outcome = {ok: true, value: await operation(body, command)};
       } catch (error) {
-        return { ok: false, error: userFacingErrorCause(error).message };
+          return {ok: false, error: userFacingErrorCause(error).message};
       }
       await broker.recordResult(command, outcome);
       return outcome;
-    },
-    { allowReadOnlyCompletion: true },
-  );
+  });
   if (!result.ok) throw new Error(result.error);
   return result.value;
 }

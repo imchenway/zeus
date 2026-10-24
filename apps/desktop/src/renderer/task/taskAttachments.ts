@@ -1,10 +1,18 @@
-import { isTaskAttachmentField, type TaskAttachmentField, type TaskAttachmentReference } from '@zeus/shared';
+import {isTaskAttachmentField, type TaskAttachmentField, type TaskAttachmentReference} from '@zeus/shared';
 
 export type TaskAttachmentKind = TaskAttachmentReference['kind'];
 
 export type TaskResourcePayload = { name?: string; type?: string; data?: ArrayBuffer; text?: string; kind?: 'image' | 'file' | 'pasted_text' };
 
-export type TaskResourceAuthorizationResult = { resources: TaskAttachmentCandidate[]; failedCount: number };
+/** 附件导入返回成功资源，并保留部分失败的具体原因。 */
+export type TaskResourceAuthorizationResult = {
+    /** 已成功保存、可加入任务的附件。 */
+    resources: TaskAttachmentCandidate[];
+    /** 未完成导入的附件数量，单位为项。 */
+    failedCount: number;
+    /** 部分成功时用于说明未完成原因；全部失败由调用方接收异常。 */
+    failureMessage?: string;
+};
 
 export interface TaskAttachmentRestoreTarget {
   field: TaskAttachmentField;

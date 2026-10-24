@@ -1,136 +1,163 @@
-import { transitionConversation } from '../../session/conversationTransition.js';
-import { useBackgroundInputSuggestions } from '../../session/useBackgroundInputSuggestions.js';
-import { notifyProjectGitChanged } from '../../git/projectGitWorkbenchState.js';
-import { isZentaoDestinationComplete, type ZentaoTaskDestination } from '../../task/ZentaoSyncModal.js';
-import type { ProjectRecord } from '../../apiClient.js';
-import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { temporaryWorkspaceId, describeUserFacingError, isTaskPriority, type ProjectCodeWorkspacePreference, renderTaskPushLayoutText, type ThirdPartyTaskExtract } from '@zeus/shared';
-import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromConversation } from '../../session/ProjectConversationTree.js';
-import { focusTaskPushWindow } from '../../ui/windowDocument.js';
+import {transitionConversation} from '../../session/conversationTransition.js';
+import {useBackgroundInputSuggestions} from '../../session/useBackgroundInputSuggestions.js';
+import {notifyProjectGitChanged} from '../../git/projectGitWorkbenchState.js';
+import {isZentaoDestinationComplete, type ZentaoTaskDestination} from '../../task/ZentaoSyncModal.js';
+import type {ProjectRecord} from '../../apiClient.js';
 import {
-  loadLegacyConversationDetail,
-  cacheCodexConversationCapabilities,
-  preloadCodexConversationCapabilities,
-  readCachedCodexConversationCapabilities,
-  nativeConversationChoiceFromAcceptance,
-  type NativeConversationStartFailure,
-  type NativeConversationStartPreparation,
-  type ProjectSessionWorkspaceStartInput,
-  type SessionWorkspaceActions,
-  type SessionWorkspaceStartInput,
-  startNativeConversationWithDurableAcceptance,
-  startProjectConversationWithDurableAcceptance,
+    type ConversationHistoryItem,
+    isLikelyLocalServerConnectionError,
+    type ProjectGitAction,
+    type ProjectGitActionResponse,
+    type SaveProjectConfigRequest,
+    type TaskBoardOpenMode,
+    type TaskManagementStatus,
+    type TaskPriority,
+    type TaskRecord,
+    type TaskStageRecord,
+    type TaskType,
+    type UpdateTaskRelationshipsRequest,
+    type UpdateTaskRequest,
+    type WorkspaceSnapshot,
+    ZeusApiError,
+    type ZeusRealtimeConnectionState,
+    type ZeusRealtimeEvent,
+} from '../../apiClient.js';
+import {type FormEvent, useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {
+    describeUserFacingError,
+    isTaskPriority,
+    type ProjectCodeWorkspacePreference,
+    renderTaskPushLayoutText,
+    temporaryWorkspaceId,
+    type ThirdPartyTaskExtract
+} from '@zeus/shared';
+import {
+    type ConversationTreeRuntimeState,
+    conversationTreeRuntimeStateFromConversation
+} from '../../session/ProjectConversationTree.js';
+import {focusTaskPushWindow} from '../../ui/windowDocument.js';
+import {
+    cacheCodexConversationCapabilities,
+    loadLegacyConversationDetail,
+    nativeConversationChoiceFromAcceptance,
+    type NativeConversationStartFailure,
+    type NativeConversationStartPreparation,
+    preloadCodexConversationCapabilities,
+    type ProjectSessionWorkspaceStartInput,
+    readCachedCodexConversationCapabilities,
+    type SessionWorkspaceActions,
+    type SessionWorkspaceStartInput,
+    startNativeConversationWithDurableAcceptance,
+    startProjectConversationWithDurableAcceptance,
 } from '../../session/SessionWorkspace.js';
 import type {
-  CodexTaskPushCapabilities,
-  NativeConversationAttachment,
-  NativeConversationChoice,
-  NativeConversationChoicesSnapshot,
-  NativeProjectConversationChoicesSnapshot,
-  NativeTurnSettingsSelection,
-  StartTaskModelPushRequest,
+    CodexTaskPushCapabilities,
+    NativeConversationAttachment,
+    NativeConversationChoice,
+    NativeConversationChoicesSnapshot,
+    NativeProjectConversationChoicesSnapshot,
+    NativeTurnSettingsSelection,
+    StartTaskModelPushRequest,
 } from '../../session/sessionTypes.js';
-import { serviceTierWireOverride } from '../../session/serviceTierSelection.js';
-import { resolveModelCapability } from '../../session/modelSelection.js';
-import { type TaskEditResult } from '../../task/TaskDetailPaneContent.js';
+import {serviceTierWireOverride} from '../../session/serviceTierSelection.js';
+import {resolveModelCapability} from '../../session/modelSelection.js';
+import {type TaskEditResult} from '../../task/TaskDetailPaneContent.js';
 import {
-  buildTaskModelPushLayout,
-  normalizeTaskModelPushCapabilities,
-  readTaskModelPushPreferences,
-  reconcileTaskPushRepositories,
-  resolveTaskModelPushInitialForm,
-  resolveTaskModelPushEntry,
-  selectedTaskPushCurrentConversationPaths,
-  selectedTaskPushParentContexts,
-  selectedTaskPushRelatedContexts,
-  type TaskModelPushForm,
-  taskPushSupplementalLayoutAttachments,
-  taskPushSupplementalRequestAttachments,
-  writeTaskModelPushPreferences,
+    buildTaskModelPushLayout,
+    normalizeTaskModelPushCapabilities,
+    readTaskModelPushPreferences,
+    reconcileTaskPushRepositories,
+    resolveTaskModelPushEntry,
+    resolveTaskModelPushInitialForm,
+    selectedTaskPushCurrentConversationPaths,
+    selectedTaskPushParentContexts,
+    selectedTaskPushRelatedContexts,
+    type TaskModelPushForm,
+    taskPushSupplementalLayoutAttachments,
+    taskPushSupplementalRequestAttachments,
+    writeTaskModelPushPreferences,
 } from '../../task/TaskModelPushModal.js';
 import {
-  acceptTaskModelPushPendingState,
-  attachTaskModelPushChoice,
-  createTaskModelPushPendingState,
-  enqueueTaskModelPushMessage,
-  failTaskModelPushPendingState,
-  identifyTaskModelPushPendingOperation,
-  retryTaskModelPushPendingState,
-  taskModelPushHasRealChoice,
-  type TaskModelPushPendingState,
-  updateTaskModelPushAttachments,
-  updateTaskModelPushDeferredMessages,
-  updateTaskModelPushDraft,
-  updateTaskModelPushRetryProgress,
+    acceptTaskModelPushPendingState,
+    attachTaskModelPushChoice,
+    createTaskModelPushPendingState,
+    enqueueTaskModelPushMessage,
+    failTaskModelPushPendingState,
+    identifyTaskModelPushPendingOperation,
+    retryTaskModelPushPendingState,
+    taskModelPushHasRealChoice,
+    type TaskModelPushPendingState,
+    updateTaskModelPushAttachments,
+    updateTaskModelPushDeferredMessages,
+    updateTaskModelPushDraft,
+    updateTaskModelPushRetryProgress,
 } from '../../task/TaskModelPushPendingWorkspace.js';
-import { parseTaskAttachments, type TaskResourceAuthorizationResult, type TaskResourcePayload } from '../../task/taskAttachments.js';
-import { normalizeTaskTableEnumSortOrders, resolveTaskManagementStatus } from '../../task/taskWorkspaceModel.js';
-import { modelSetupRequestedEvent } from '../../ui/ApplicationErrorDialog.js';
-import { reportStorageReadOnlyFault } from '../../storageRecoveryError.js';
-import { readSkillWorkflowDefault, workflowSkillSelectionRequest } from '../skills/skillWorkflowPreferences.js';
-import { createSessionOperationId } from '../../sessionOperationIdentity.js';
 import {
-  type WorkspaceSnapshot,
-  type ConversationHistoryItem,
-  type ProjectGitAction,
-  type ProjectGitActionResponse,
-  type SaveProjectConfigRequest,
-  type TaskBoardOpenMode,
-  type TaskManagementStatus,
-  type TaskPriority,
-  type TaskRecord,
-  type TaskStageRecord,
-  type TaskType,
-  type UpdateTaskRelationshipsRequest,
-  type UpdateTaskRequest,
-  isLikelyLocalServerConnectionError,
-  ZeusApiError,
-  type ZeusRealtimeConnectionState,
-  type ZeusRealtimeEvent,
-} from '../../apiClient.js';
-import { errorToLocalUiMessage, normalizeProjectConfig, redactLocalUiErrorMessage, toProjectConfigForm } from './WorkspaceChrome.js';
+    parseTaskAttachments,
+    type TaskResourceAuthorizationResult,
+    type TaskResourcePayload
+} from '../../task/taskAttachments.js';
+import {normalizeTaskTableEnumSortOrders, resolveTaskManagementStatus} from '../../task/taskWorkspaceModel.js';
+import {modelSetupRequestedEvent} from '../../ui/ApplicationErrorDialog.js';
+import {reportStorageReadOnlyFault} from '../../storageRecoveryError.js';
+import {readSkillWorkflowDefault, workflowSkillSelectionRequest} from '../skills/skillWorkflowPreferences.js';
+import {createSessionOperationId} from '../../sessionOperationIdentity.js';
 import {
-  isTaskModelPushOriginCurrent,
-  appendRuntimeOutputEventsToConversation,
-  beginNativeConversationChoiceTaskLoad,
-  browserNativeConversationStartStorage,
-  buildTaskCreateInitialForm,
-  completeNativeConversationChoiceTaskLoad,
-  defaultProjectNameFromLocalPath,
-  executionHostSupportsConversationSource,
-  failNativeConversationChoiceTaskLoad,
-  formatConfiguredTaskManagementStatus,
-  formatRuntimeAdapterDisplayName,
-  getLanguageCopy,
-  isDefinitiveNativeConversationStartRejection,
-  isProjectConversationAttentionState,
-  isRuntimeConversationOutputEvent,
-  type NativeConversationAppClient,
-  normalizeCodeWorkspaceByProject,
-  normalizeProjectLocalPath,
-  normalizeRendererAppShellSettings,
-  normalizeTaskCreateDraft,
-  resolveConversationNavigationId,
-  resolveSelectedNativeConversationForProject,
-  resolveNativeConversationSelectionPresentation,
-  resolveTaskManagementStatusConfig,
-  selectCreatedProjectTask,
-  shouldRefreshConversationForRuntimeEvent,
-  shouldRefreshNativeConversationListForRealtimeEvent,
-  type TaskCreateAttachment,
-  type TaskCreateAttachmentCandidate,
-  type TaskCreateDraft,
-  type TaskCreateTextField,
-  toAppShellSettingsSavePayload,
-  type TrackedTaskModelPushState,
-  type TaskModelPushNavigationTarget,
-  upsertProjectConversationChoiceSnapshot,
-  upsertTaskConversationChoiceSnapshot,
+    errorToLocalUiMessage,
+    normalizeProjectConfig,
+    redactLocalUiErrorMessage,
+    toProjectConfigForm
+} from './WorkspaceChrome.js';
+import {
+    appendRuntimeOutputEventsToConversation,
+    beginNativeConversationChoiceTaskLoad,
+    browserNativeConversationStartStorage,
+    buildTaskCreateInitialForm,
+    completeNativeConversationChoiceTaskLoad,
+    defaultProjectNameFromLocalPath,
+    executionHostSupportsConversationSource,
+    failNativeConversationChoiceTaskLoad,
+    formatConfiguredTaskManagementStatus,
+    formatRuntimeAdapterDisplayName,
+    getLanguageCopy,
+    isDefinitiveNativeConversationStartRejection,
+    isProjectConversationAttentionState,
+    isRuntimeConversationOutputEvent,
+    isTaskModelPushOriginCurrent,
+    type NativeConversationAppClient,
+    normalizeCodeWorkspaceByProject,
+    normalizeProjectLocalPath,
+    normalizeRendererAppShellSettings,
+    normalizeTaskCreateDraft,
+    resolveConversationNavigationId,
+    resolveNativeConversationSelectionPresentation,
+    resolveSelectedNativeConversationForProject,
+    resolveTaskManagementStatusConfig,
+    selectCreatedProjectTask,
+    shouldRefreshConversationForRuntimeEvent,
+    shouldRefreshNativeConversationListForRealtimeEvent,
+    type TaskCreateAttachment,
+    type TaskCreateAttachmentCandidate,
+    type TaskCreateDraft,
+    type TaskCreateTextField,
+    type TaskModelPushNavigationTarget,
+    toAppShellSettingsSavePayload,
+    type TrackedTaskModelPushState,
+    upsertProjectConversationChoiceSnapshot,
+    upsertTaskConversationChoiceSnapshot,
 } from './workspaceSupport.js';
-import type { WorkspaceQueryState } from './useWorkspaceQueryState.js';
-import { useProjectRepositoryDiscovery } from './useProjectRepositoryDiscovery.js';
-import { createConversationAttentionAcknowledgementCoordinator, recordConversationBackgroundSynchronizationError } from './conversationAttentionAcknowledgement.js';
-import { codexCapabilitiesChangedEvent, codexRuntimeUpdateCheckedEvent, codexRuntimeUpdateProgressEvent, isCodexRuntimeUpdateStage } from '../codex/codexApiClient.js';
+import type {WorkspaceQueryState} from './useWorkspaceQueryState.js';
+import {useProjectRepositoryDiscovery} from './useProjectRepositoryDiscovery.js';
+import {
+    createConversationAttentionAcknowledgementCoordinator,
+    recordConversationBackgroundSynchronizationError
+} from './conversationAttentionAcknowledgement.js';
+import {
+    codexCapabilitiesChangedEvent,
+    codexRuntimeUpdateCheckedEvent,
+    codexRuntimeUpdateProgressEvent,
+    isCodexRuntimeUpdateStage
+} from '../codex/codexApiClient.js';
 
 /** 旧偏好只保存裸模型名时，只有项目默认来源能解除同名歧义；其他情况一律要求用户重选。 */
 function resolveTaskModelPushCapability(capabilities: CodexTaskPushCapabilities, requestedIdentity: string) {
@@ -1484,13 +1511,17 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
       const result = await props.onAuthorizeTaskFiles(files, source);
       if (result.resources.length > 0 && result.failedCount === 0) setTaskCreateError('');
       else if (result.failedCount > 0) {
-        setTaskCreateError(appShellSettings.appLanguage === 'zh-CN' ? `已添加可读取资源，另有 ${result.failedCount} 项读取失败。` : `Readable resources were added; ${result.failedCount} item(s) failed.`);
+          setTaskCreateError(
+              [appShellSettings.appLanguage === 'zh-CN' ? `已添加可读取资源，另有 ${result.failedCount} 项读取失败。` : `Readable resources were added; ${result.failedCount} item(s) failed.`, result.failureMessage].filter(Boolean).join('\n'),
+          );
       }
       return result;
     } catch (error) {
       recordLocalError('renderer-action', error);
-      setTaskCreateError(taskWorkspaceCopy.taskCreatePasteAttachmentFailed);
-      return { resources: [], failedCount: files.length };
+        /** 向任务创建界面保留读取或保存阶段的真实原因。 */
+        const failureMessage = describeUserFacingError(error, appShellSettings.appLanguage === 'zh-CN' ? 'zh-CN' : 'en').message;
+        setTaskCreateError(failureMessage);
+        return {resources: [], failedCount: files.length, failureMessage};
     }
   }
 

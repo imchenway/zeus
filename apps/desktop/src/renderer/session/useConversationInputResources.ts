@@ -1,11 +1,20 @@
-import { formatVisibleApplicationError, type ApplicationErrorLanguage } from '../ui/ApplicationErrorDialog.js';
-import { type ClipboardEvent, type DragEvent, type KeyboardEvent, type RefObject, useCallback, useEffect, useRef, useState } from 'react';
-import type { NativeConversationAttachment } from './sessionTypes.js';
-import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../ui/pendingResourcePolicy.js';
-import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
-import { retainInputFocus } from '../ui/retainInputFocus.js';
-import type { PendingResourceCardItem } from '../ui/PendingResourceCards.js';
-import { dataTransferFiles, usePendingResourcePreviews } from '../ui/usePendingResourcePreviews.js';
+import {type ApplicationErrorLanguage, formatVisibleApplicationError} from '../ui/ApplicationErrorDialog.js';
+import {
+    type ClipboardEvent,
+    type DragEvent,
+    type KeyboardEvent,
+    type RefObject,
+    useCallback,
+    useEffect,
+    useRef,
+    useState
+} from 'react';
+import type {NativeConversationAttachment} from './sessionTypes.js';
+import {PENDING_RESOURCE_LONG_TEXT_THRESHOLD} from '../ui/pendingResourcePolicy.js';
+import type {ComposerInputHandle} from './MarkdownComposerEditor.js';
+import {retainInputFocus} from '../ui/retainInputFocus.js';
+import type {PendingResourceCardItem} from '../ui/PendingResourceCards.js';
+import {dataTransferFiles, usePendingResourcePreviews} from '../ui/usePendingResourcePreviews.js';
 
 interface UseConversationInputResourcesOptions {
   /** 附件处理失败跟随当前页面语言。 */
@@ -80,14 +89,18 @@ export function useConversationInputResources(options: UseConversationInputResou
         if (!bridge) throw new Error('当前应用版本未提供会话附件导入能力。');
         const result = await bridge(files, source);
         if (!pending.current()) return;
-        if (result.resources.length === 0) throw new Error('没有可读取的文件或文件夹。');
+          if (result.resources.length === 0) throw new Error(result.failureMessage || '附件导入未返回可用资源。');
         pending.complete(
           result.resources.map((attachment) => ({ id: attachment.localPath ?? attachment.uploadRef, name: attachment.name, kind: attachment.kind ?? 'file' })),
           result.failedCount,
         );
         latest.current.onAddAttachments(result.resources);
         if (result.failedCount > 0) {
-          latest.current.onError(latest.current.language === 'zh-CN' ? `已添加可读取的附件，另有 ${result.failedCount} 项无法读取。` : `Readable attachments were added; ${result.failedCount} other item(s) could not be read.`);
+            latest.current.onError(
+                [latest.current.language === 'zh-CN' ? `已添加可读取的附件，另有 ${result.failedCount} 项无法读取。` : `Readable attachments were added; ${result.failedCount} other item(s) could not be read.`, result.failureMessage]
+                    .filter(Boolean)
+                    .join('\n'),
+            );
         }
       }, files);
     },

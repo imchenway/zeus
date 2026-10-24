@@ -1,39 +1,40 @@
-import type { FilePreviewRequest, FilePreviewItem } from '@zeus/shared';
-import type { GitFileBlame } from '@zeus/git-core';
-import type { AutomaticUpdateIndicatorState } from './appShellBridge.js';
-import type { DashboardClientOptions, LocalBusinessDataSnapshot, LocalSettingsExportSnapshot } from './apiClient.js';
 import type {
-  NetworkProxySettings,
-  NetworkProxyCheckTarget,
-  NetworkProxyConnectionResult,
-  ConversationFileLocation,
-  ConversationOpenTarget,
-  ConversationResourceOpenTarget,
-  CreateProjectSourceEntryInput,
-  MoveProjectSourceEntryInput,
-  UsageModelCostBreakdown,
-  UsageModelOutputRateBreakdown,
-  ProjectSourceDirectorySnapshot,
-  ProjectSourceContentSearchResult,
-  ProjectSourceContentSearchOptions,
-  ProjectSourceDocument,
-  ProjectSourceEntry,
-  ProjectSourceEvent,
-  ProjectSourceSearchResult,
-  SaveProjectSourceFileInput,
-  TrashProjectSourceEntryInput,
-  ThirdPartyTaskExtract,
-  ZeusBrowserApprovalDecision,
-  ZeusBrowserCommand,
-  ZeusBrowserConversationSnapshot,
-  ZeusBrowserEvent,
-  ZeusBrowserPreparedSubmission,
-  ZeusBrowserSettings,
-  ZeusComputerSettings,
-  ZeusComputerPreview,
-  ZeusComputerControlIdentity,
-  ZeusRetiredNativeRuntimeState,
+    ConversationFileLocation,
+    ConversationOpenTarget,
+    ConversationResourceOpenTarget,
+    CreateProjectSourceEntryInput,
+    FilePreviewItem,
+    FilePreviewRequest,
+    MoveProjectSourceEntryInput,
+    NetworkProxyCheckTarget,
+    NetworkProxyConnectionResult,
+    NetworkProxySettings,
+    ProjectSourceContentSearchOptions,
+    ProjectSourceContentSearchResult,
+    ProjectSourceDirectorySnapshot,
+    ProjectSourceDocument,
+    ProjectSourceEntry,
+    ProjectSourceEvent,
+    ProjectSourceSearchResult,
+    SaveProjectSourceFileInput,
+    ThirdPartyTaskExtract,
+    TrashProjectSourceEntryInput,
+    UsageModelCostBreakdown,
+    UsageModelOutputRateBreakdown,
+    ZeusBrowserApprovalDecision,
+    ZeusBrowserCommand,
+    ZeusBrowserConversationSnapshot,
+    ZeusBrowserEvent,
+    ZeusBrowserPreparedSubmission,
+    ZeusBrowserSettings,
+    ZeusComputerControlIdentity,
+    ZeusComputerPreview,
+    ZeusComputerSettings,
+    ZeusRetiredNativeRuntimeState
 } from '@zeus/shared';
+import type {GitFileBlame} from '@zeus/git-core';
+import type {AutomaticUpdateIndicatorState} from './appShellBridge.js';
+import type {DashboardClientOptions, LocalBusinessDataSnapshot, LocalSettingsExportSnapshot} from './apiClient.js';
 
 type ConversationInputResourceBridge = {
   name: string;
@@ -246,6 +247,8 @@ declare global {
       ) => Promise<{
         resources: ConversationInputResourceBridge[];
         failedCount: number;
+          /** 部分成功时保留未完成项的具体原因。 */
+          failureMessage?: string;
       }>;
       materializeConversationResources: (
         resources: Array<{
@@ -267,6 +270,8 @@ declare global {
       ) => Promise<{
         resources: TaskInputResourceBridge[];
         failedCount: number;
+          /** 部分成功时保留未完成项的具体原因。 */
+          failureMessage?: string;
       }>;
       materializeTaskResources: (
         resources: Array<{
