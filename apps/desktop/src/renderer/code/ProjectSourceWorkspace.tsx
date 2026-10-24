@@ -189,9 +189,11 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
       setError(null);
       try {
         const document = await bridge.readProjectSourceFile({ projectId: props.project.id, relativePath });
+        // 后端返回的规范路径同时用于去重、行定位和选中，避免入口路径写法差异生成重复标签。
+        if (line !== undefined) setViewModes((current) => ({ ...current, [document.relativePath]: 'source' }));
         setTabs((current) => {
-          if (current.some((tab) => tab.document.relativePath === relativePath)) {
-            return current.map((tab) => (tab.document.relativePath === relativePath ? { ...tab, revealLocation: revealLocation ?? tab.revealLocation } : tab));
+          if (current.some((tab) => tab.document.relativePath === document.relativePath)) {
+            return current.map((tab) => (tab.document.relativePath === document.relativePath ? { ...tab, revealLocation: revealLocation ?? tab.revealLocation } : tab));
           }
           const available =
             current.length < 20
@@ -205,7 +207,7 @@ export const ProjectSourceWorkspace = forwardRef<ProjectSourceWorkspaceHandle, P
           }
           return [...available, { document, draft: document.content, dirty: false, saving: false, externalChange: false, revealLocation, cursorLine: line ?? 1, cursorColumn: column ?? 1 }];
         });
-        setActivePath(relativePath);
+        setActivePath(document.relativePath);
         setTreeDrawerOpen(false);
       } catch (loadError) {
         setError(loadError);

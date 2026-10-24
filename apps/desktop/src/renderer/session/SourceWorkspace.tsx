@@ -30,6 +30,11 @@ const CommentableSourceCodePreview = lazy(() => import('./CommentableSourceCodeP
 /** Markdown 可在排版预览与源码之间切换。 */
 export type SourceWorkspaceViewMode = 'preview' | 'source';
 
+/** 标签按已授权文件去重；资源记录仍独立用于后端读取与打开授权。 */
+function sourceWorkspaceTabId(preview: ConversationResourcePreview): string {
+  return JSON.stringify([preview.resource.projectId, preview.resource.conversationId, preview.fileIdentity ? 'file' : 'resource', preview.fileIdentity ?? preview.resource.id]);
+}
+
 /** Markdown 默认展示排版，其余文件直接展示源码。 */
 export function defaultSourceWorkspaceViewMode(preview: ConversationResourcePreview): SourceWorkspaceViewMode {
   if (preview.kind === 'source' && preview.location?.line) return 'source';
@@ -42,7 +47,7 @@ export interface SourceWorkspaceState {
   requestedPreview: ConversationResourcePreview;
   /** 每个标签保留自己的预览模式和已授权资源。 */
   tabs: { preview: ConversationResourcePreview; mode: SourceWorkspaceViewMode }[];
-  /** 当前标签独立于最近收到的打开请求。 */
+  /** 当前文件标签标识独立于消息中的资源记录。 */
   activeId: string;
 }
 
@@ -56,35 +61,40 @@ export function SourceWorkspace(
   },
 ) {
   /** 首次打开可直接展示，后续挂载读取会话保存的选择。 */
-  const { tabs, activeId } = props.state ?? { tabs: [{ preview: props.preview, mode: props.viewMode }], activeId: props.preview.resource.id };
+  const { tabs, activeId } = props.state ?? { tabs: [{ preview: props.preview, mode: props.viewMode }], activeId: sourceWorkspaceTabId(props.preview) };
   useEffect(() => {
-    props.onStateChange((current) =>
-      current?.requestedPreview === props.preview
-        ? current
-        : {
-            requestedPreview: props.preview,
-            tabs: [...(current?.tabs ?? []).filter((tab) => tab.preview.resource.id !== props.preview.resource.id), { preview: props.preview, mode: props.viewMode }],
-            activeId: props.preview.resource.id,
-          },
-    );
+    props.onStateChange((current) => {
+      if (current?.requestedPreview === props.preview) return current;
+      /** 重复打开只更新正文、授权与定位，保留原标签顺序。 */
+      const id = sourceWorkspaceTabId(props.preview);
+      /** 没有指定行号时保留用户选择的阅读模式。 */
+      const existing = current?.tabs.find((tab) => sourceWorkspaceTabId(tab.preview) === id);
+      /** 行号链接必须显示源码，普通重开沿用原模式。 */
+      const tab = { preview: props.preview, mode: props.preview.kind === 'source' && props.preview.location?.line ? ('source' as const) : (existing?.mode ?? props.viewMode) };
+      return {
+        requestedPreview: props.preview,
+        tabs: existing ? current!.tabs.map((entry) => (sourceWorkspaceTabId(entry.preview) === id ? tab : entry)) : [...(current?.tabs ?? []), tab],
+        activeId: id,
+      };
+    });
   }, [props.onStateChange, props.preview, props.viewMode]);
   /** 外部预览到达但状态尚未同步时仍显示真实文件。 */
-  const active = tabs.find((tab) => tab.preview.resource.id === activeId) ?? tabs[0]!;
+  const active = tabs.find((tab) => sourceWorkspaceTabId(tab.preview) === activeId) ?? tabs[0]!;
   return (
     <SourceWorkspaceView
       {...props}
       preview={active.preview}
       viewMode={active.mode}
       tabs={tabs.map((tab) => tab.preview)}
-      onSelectTab={(preview) => props.onStateChange((current) => (current ? { ...current, activeId: preview.resource.id } : current))}
-      onViewModeChange={(mode) => props.onStateChange((current) => (current ? { ...current, tabs: current.tabs.map((tab) => (tab.preview.resource.id === current.activeId ? { ...tab, mode } : tab)) } : current))}
+      onSelectTab={(preview) => props.onStateChange((current) => (current ? { ...current, activeId: sourceWorkspaceTabId(preview) } : current))}
+      onViewModeChange={(mode) => props.onStateChange((current) => (current ? { ...current, tabs: current.tabs.map((tab) => (sourceWorkspaceTabId(tab.preview) === current.activeId ? { ...tab, mode } : tab)) } : current))}
       onCloseTab={(preview) => {
-        const remaining = tabs.filter((tab) => tab.preview.resource.id !== preview.resource.id);
+        const remaining = tabs.filter((tab) => sourceWorkspaceTabId(tab.preview) !== sourceWorkspaceTabId(preview));
         if (!remaining.length) {
           props.onClose();
           return;
         }
-        props.onStateChange((current) => (current ? { ...current, tabs: remaining, activeId: preview.resource.id === activeId ? remaining.at(-1)!.preview.resource.id : activeId } : current));
+        props.onStateChange((current) => (current ? { ...current, tabs: remaining, activeId: sourceWorkspaceTabId(preview) === activeId ? sourceWorkspaceTabId(remaining.at(-1)!.preview) : activeId } : current));
       }}
     />
   );
@@ -140,6 +150,8 @@ function SourceWorkspaceView(props: {
       active = false;
     };
   }, [props.preview.resource.projectId, props.preview.resource.conversationId, props.preview.resource.id]);
+  /** 文件标签与正文共用稳定身份，消息资源变化不重新挂载同一文件。 */
+  const tabId = sourceWorkspaceTabId(props.preview);
   /** 当前打开应用的真实图标与名称。 */
   const openApplication = openTargets.find((target) => target.id === openTarget);
   /** 展示宿主打开失败，不吞掉权限或应用错误。 */
@@ -214,7 +226,7 @@ function SourceWorkspaceView(props: {
   useEffect(() => {
     titleRef.current?.focus();
     titleRef.current?.parentElement?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  }, [props.preview.resource.id]);
+  }, [tabId, props.preview]);
 
   /** 顶栏展示文件名与预览操作，正文从文件信息行直接开始。 */
   const header = (
@@ -227,21 +239,21 @@ function SourceWorkspaceView(props: {
           if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key) || !(event.target instanceof HTMLElement) || event.target.getAttribute('role') !== 'tab') return;
           event.preventDefault();
           const tabs = props.tabs ?? [props.preview];
-          const index = tabs.findIndex((tab) => tab.resource.id === props.preview.resource.id);
+          const index = tabs.findIndex((tab) => sourceWorkspaceTabId(tab) === tabId);
           const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
           props.onSelectTab?.(tabs[next]!);
           event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
         }}
       >
         {(props.tabs ?? [props.preview]).map((preview) => (
-          <div className="zeus-workspace-tab-shell" data-active={preview.resource.id === props.preview.resource.id || undefined} key={preview.resource.id}>
+          <div className="zeus-workspace-tab-shell" data-active={sourceWorkspaceTabId(preview) === tabId || undefined} key={sourceWorkspaceTabId(preview)}>
             <button
               type="button"
-              ref={preview.resource.id === props.preview.resource.id ? titleRef : undefined}
+              ref={sourceWorkspaceTabId(preview) === tabId ? titleRef : undefined}
               role="tab"
               className="zeus-workspace-tab"
-              tabIndex={preview.resource.id === props.preview.resource.id ? 0 : -1}
-              aria-selected={preview.resource.id === props.preview.resource.id}
+              tabIndex={sourceWorkspaceTabId(preview) === tabId ? 0 : -1}
+              aria-selected={sourceWorkspaceTabId(preview) === tabId}
               data-icon-tooltip={preview.review?.status ? `${preview.resource.displayName} · ${fileStatusLabel(preview.review.status, zh)}` : preview.resource.displayName}
               aria-label={preview.review?.status ? `${preview.resource.displayName} · ${fileStatusLabel(preview.review.status, zh)}` : preview.resource.displayName}
               onClick={() => props.onSelectTab?.(preview)}
@@ -316,7 +328,7 @@ function SourceWorkspaceView(props: {
             : undefined
         }
         sourceRequest={searchRequest}
-        key={`${props.preview.resource.id}:${sourcePreview?.location?.line ?? ''}:${sourcePreview?.location?.endLine ?? ''}`}
+        key={`${tabId}:${sourcePreview?.location?.line ?? ''}:${sourcePreview?.location?.endLine ?? ''}`}
         review={sourcePreview ? { ...sourcePreview.review, location: sourcePreview.location } : undefined}
         zh={zh}
         toolbar={(reviewActions) => (
@@ -412,12 +424,12 @@ function SourceWorkspaceView(props: {
           {props.preview.kind === 'image' ? (
             <PreviewImage key={props.preview.dataUrl} url={props.preview.dataUrl} name={props.preview.resource.displayName} zh={zh} />
           ) : renderedMarkdown ? (
-            <ConversationMarkdown text={props.preview.content} streamId={`source-preview:${props.preview.resource.id}`} phase="final" language={props.language} documentMode />
+            <ConversationMarkdown text={props.preview.content} streamId={`source-preview:${tabId}`} phase="final" language={props.language} documentMode />
           ) : (
             <Suspense fallback={null}>
               <CommentableSourceCodePreview
-                key={props.preview.resource.id}
-                identity={props.preview.resource.id}
+                key={tabId}
+                identity={tabId}
                 path={displayPath}
                 content={props.preview.content}
                 language={props.preview.language}

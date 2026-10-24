@@ -1,4 +1,5 @@
 import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { filePreviewMime, filePreviewKind, filePreviewLimits, detectSourceLanguage, type ConversationResource, type ConversationResourcePreview, type FileReview } from '@zeus/shared';
 import { getFileReview } from '@zeus/git-core';
@@ -27,6 +28,8 @@ export function readConversationResourcePreview(resource: Exclude<ConversationRe
   if (!fileStat.isFile()) {
     throw Object.assign(new Error('Conversation resource is not a regular file.'), { code: 'ZEUS_CONVERSATION_RESOURCE_NOT_FILE' });
   }
+  /** 以授权后的真实路径识别文件，跨消息复用标签，同时区分工作目录与附件副本。 */
+  const fileIdentity = createHash('sha256').update(fileRealPath).digest('hex');
   const imageMimeType = conversationImageMimeType(fileRealPath);
   const maximumPreviewBytes = imageMimeType ? filePreviewLimits.image : filePreviewLimits.text;
   if (fileStat.size > maximumPreviewBytes) {
@@ -36,6 +39,7 @@ export function readConversationResourcePreview(resource: Exclude<ConversationRe
   if (imageMimeType) {
     return {
       kind: 'image',
+      fileIdentity,
       resource,
       mimeType: imageMimeType,
       dataUrl: `data:${imageMimeType};base64,${bytes.toString('base64')}`,
@@ -48,6 +52,7 @@ export function readConversationResourcePreview(resource: Exclude<ConversationRe
   const content = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   return {
     kind: 'source',
+    fileIdentity,
     resource,
     language: sourceLanguageForPath(fileRealPath),
     content,
