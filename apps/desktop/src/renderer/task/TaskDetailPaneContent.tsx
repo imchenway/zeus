@@ -1,85 +1,43 @@
-import {TaskDeadlineEditor} from './TaskDeadlineField.js';
-import {CaretDownIcon} from '@phosphor-icons/react/dist/csr/CaretDown';
-import {GitBranchIcon} from '@phosphor-icons/react/dist/csr/GitBranch';
-import {TrashIcon} from '@phosphor-icons/react/dist/csr/Trash';
-import {retainInputFocus} from '../ui/retainInputFocus.js';
+import { TaskDeadlineEditor } from './TaskDeadlineField.js';
+import { CaretDownIcon } from '@phosphor-icons/react/dist/csr/CaretDown';
+import { GitBranchIcon } from '@phosphor-icons/react/dist/csr/GitBranch';
+import { TrashIcon } from '@phosphor-icons/react/dist/csr/Trash';
+import { retainInputFocus } from '../ui/retainInputFocus.js';
+import { type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { isTaskPriority, type TaskAttachmentField, type TaskAttachmentReference, type TaskManagementStatusDefinition, type UserFacingErrorCause } from '@zeus/shared';
+import { type ProjectRecord, type TaskEventRecord, type TaskManagementStatus, type TaskPriority, type TaskRecord, type TaskType, type UpdateTaskRelationshipsRequest, type UpdateTaskRequest, ZeusApiError } from '../apiClient.js';
+import type { CodexTaskPushCapabilities, NativeConversationChoice } from '../session/sessionTypes.js';
+import { compareConversationCreatedAsc } from '../session/conversationOrdering.js';
+import { Button } from '../ui/Button.js';
+import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { PENDING_RESOURCE_LONG_TEXT_THRESHOLD } from '../ui/pendingResourcePolicy.js';
+import { clipboardNeedsResourceRead, clipboardTextAfterResources, dataTransferFiles, usePendingResourcePreviews } from '../ui/usePendingResourcePreviews.js';
+import type { PendingResourceCardItem } from '../ui/PendingResourceCards.js';
+import { ZeusSelect } from '../ZeusSelect.js';
+import { TaskAttachmentPreviewList } from './TaskAttachmentPreviewList.js';
+import { TaskDigitalEmployeeExecutor, TaskDigitalEmployeePanel, useTaskDigitalEmployeeManagement } from '../features/digital-employees/TaskDigitalEmployeePanel.js';
+import type { DigitalEmployeeApiClient } from '../features/digital-employees/digitalEmployeeApiClient.js';
+import type { DigitalTeamApiClient } from '../features/digital-teams/digitalTeamApiClient.js';
+import type { DigitalTeamProgressSubscription } from '../features/digital-teams/TaskDigitalTeamProgress.js';
+import type { DigitalTeamEntrySelection } from '../features/digital-teams/DigitalTeamWorkspace.js';
+import type { TaskWorkflowClient } from './TaskWorkflowSection.js';
+import type { TaskStageRecord } from '../features/tasks/taskContracts.js';
 import {
-    type ClipboardEvent as ReactClipboardEvent,
-    type CSSProperties,
-    type KeyboardEvent as ReactKeyboardEvent,
-    type ReactNode,
-    useEffect,
-    useId,
-    useRef,
-    useState
-} from 'react';
-import {
-    isTaskPriority,
-    type TaskAttachmentField,
-    type TaskAttachmentReference,
-    type TaskManagementStatusDefinition,
-    type UserFacingErrorCause
-} from '@zeus/shared';
-import {
-    type ProjectRecord,
-    type TaskEventRecord,
-    type TaskManagementStatus,
-    type TaskPriority,
-    type TaskRecord,
-    type TaskType,
-    type UpdateTaskRelationshipsRequest,
-    type UpdateTaskRequest,
-    ZeusApiError
-} from '../apiClient.js';
-import type {CodexTaskPushCapabilities, NativeConversationChoice} from '../session/sessionTypes.js';
-import {compareConversationCreatedAsc} from '../session/conversationOrdering.js';
-import {Button} from '../ui/Button.js';
-import {formatVisibleApplicationError, VisibleApplicationError} from '../ui/ApplicationErrorDialog.js';
-import {PENDING_RESOURCE_LONG_TEXT_THRESHOLD} from '../ui/pendingResourcePolicy.js';
-import {
-    clipboardNeedsResourceRead,
-    clipboardTextAfterResources,
-    dataTransferFiles,
-    usePendingResourcePreviews
-} from '../ui/usePendingResourcePreviews.js';
-import type {PendingResourceCardItem} from '../ui/PendingResourceCards.js';
-import {ZeusSelect} from '../ZeusSelect.js';
-import {TaskAttachmentPreviewList} from './TaskAttachmentPreviewList.js';
-import {
-    TaskDigitalEmployeeExecutor,
-    TaskDigitalEmployeePanel,
-    useTaskDigitalEmployeeManagement
-} from '../features/digital-employees/TaskDigitalEmployeePanel.js';
-import type {DigitalEmployeeApiClient} from '../features/digital-employees/digitalEmployeeApiClient.js';
-import type {DigitalTeamApiClient} from '../features/digital-teams/digitalTeamApiClient.js';
-import type {DigitalTeamProgressSubscription} from '../features/digital-teams/TaskDigitalTeamProgress.js';
-import type {DigitalTeamEntrySelection} from '../features/digital-teams/DigitalTeamWorkspace.js';
-import type {TaskWorkflowClient} from './TaskWorkflowSection.js';
-import type {TaskStageRecord} from '../features/tasks/taskContracts.js';
-import {
-    mergeTaskAttachments,
-    parseTaskAttachments,
-    type TaskAttachmentCandidate,
-    taskAttachmentsForField,
-    type TaskAttachmentView,
-    type TaskResourceAuthorizationResult,
-    type TaskResourcePayload,
-    toPersistedTaskAttachment,
+  mergeTaskAttachments,
+  parseTaskAttachments,
+  type TaskAttachmentCandidate,
+  taskAttachmentsForField,
+  type TaskAttachmentView,
+  type TaskResourceAuthorizationResult,
+  type TaskResourcePayload,
+  toPersistedTaskAttachment,
 } from './taskAttachments.js';
-import {
-    formatTaskEventTitle,
-    formatTaskSource,
-    formatTaskType,
-    formatTaskUpdatedAt,
-    resolveTaskManagementStatus,
-    type TaskSourceLabels,
-    taskTypes
-} from './taskWorkspaceModel.js';
+import { formatTaskEventTitle, formatTaskSource, formatTaskType, formatTaskUpdatedAt, resolveTaskManagementStatus, type TaskSourceLabels, taskTypes } from './taskWorkspaceModel.js';
 
-import type {DashboardClient} from '../dashboardClient.js';
-import {readTaskZentaoLink, ZentaoPushModal} from './ZentaoSyncModal.js';
-import {ZentaoEffortModal} from './ZentaoEffortModal.js';
-import {useZentaoInstances} from './useZentaoInstances.js';
+import type { DashboardClient } from '../dashboardClient.js';
+import { readTaskZentaoLink, ZentaoPushModal } from './ZentaoSyncModal.js';
+import { ZentaoEffortModal } from './ZentaoEffortModal.js';
+import { useZentaoInstances } from './useZentaoInstances.js';
 
 export interface TaskDetailPaneCopy {
   requestTitle: string;
@@ -1016,8 +974,8 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
     };
     let additions: TaskAttachmentCandidate[] = [];
     let failedCount = 0;
-      /** 部分成功时仍显示失败项的读取或保存原因。 */
-      let failureMessage: string | undefined;
+    /** 部分成功时仍显示失败项的读取或保存原因。 */
+    let failureMessage: string | undefined;
     let text = request.plainText;
     let nativeReadFailed = false;
 
@@ -1045,7 +1003,7 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         if (!pending.current()) return {};
         additions = result.resources;
         failedCount = result.failedCount;
-          failureMessage = result.failureMessage;
+        failureMessage = result.failureMessage;
         text = clipboardTextAfterResources(text, additions);
       }
 
@@ -1060,10 +1018,10 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
       if (additions.length === 0) {
         if (failedCount > 0 || request.files.length > 0 || (nativeReadFailed && !text)) {
           attachmentPasteRetryRef.current = retryOperation;
-            setAttachmentSaveState({
-                kind: 'error',
-                message: failureMessage || taskPasteErrorMessage(failedCount || request.files.length)
-            });
+          setAttachmentSaveState({
+            kind: 'error',
+            message: failureMessage || taskPasteErrorMessage(failedCount || request.files.length),
+          });
           return {};
         }
         attachmentPasteRetryRef.current = null;
@@ -1092,10 +1050,10 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
       );
       if (failedCount > 0) {
         attachmentPasteRetryRef.current = retryOperation;
-          setAttachmentSaveState({
-              kind: 'error',
-              message: [taskPasteErrorMessage(failedCount), failureMessage].filter(Boolean).join('\n')
-          });
+        setAttachmentSaveState({
+          kind: 'error',
+          message: [taskPasteErrorMessage(failedCount), failureMessage].filter(Boolean).join('\n'),
+        });
       } else {
         attachmentPasteRetryRef.current = null;
       }
@@ -1106,10 +1064,10 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
       if (request.files.length === 0 && request.plainText.length >= PENDING_RESOURCE_LONG_TEXT_THRESHOLD && additions.length === 0) {
         // 物化失败时保留原文，不让重试再重复插入同一段文字。
         attachmentPasteRetryRef.current = null;
-          setAttachmentSaveState({
-              kind: 'error',
-              message: taskEditErrorMessage(error, taskPasteErrorMessage(), zh ? 'zh-CN' : 'en')
-          });
+        setAttachmentSaveState({
+          kind: 'error',
+          message: taskEditErrorMessage(error, taskPasteErrorMessage(), zh ? 'zh-CN' : 'en'),
+        });
         return { insertText: request.plainText };
       }
       const resourceLikePaste = request.files.length > 0 || text.length >= PENDING_RESOURCE_LONG_TEXT_THRESHOLD;
@@ -1119,10 +1077,10 @@ export function TaskDetailPaneContent(props: TaskDetailPaneContentProps) {
         return { insertText: request.plainText };
       }
       attachmentPasteRetryRef.current = retryOperation;
-        setAttachmentSaveState({
-            kind: 'error',
-            message: taskEditErrorMessage(error, taskPasteErrorMessage(), zh ? 'zh-CN' : 'en')
-        });
+      setAttachmentSaveState({
+        kind: 'error',
+        message: taskEditErrorMessage(error, taskPasteErrorMessage(), zh ? 'zh-CN' : 'en'),
+      });
       return {};
     } finally {
       pending.finish();

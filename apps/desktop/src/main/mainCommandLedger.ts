@@ -1,15 +1,9 @@
-import {createHash, randomUUID} from 'node:crypto';
-import {constants as fsConstants} from 'node:fs';
-import {chmod, lstat, mkdir, open, readdir, realpath, rename, unlink} from 'node:fs/promises';
-import {basename, dirname, join, relative, resolve} from 'node:path';
-import {
-    canonicalCommandInputJson,
-    type CommandEnvelope,
-    parseCommandEnvelope,
-    userFacingErrorCause,
-    type UserFacingErrorCause
-} from '@zeus/shared';
-import {openRegularFileNoFollow, windowsSecurityRequestAsync} from '@zeus/storage/platform-security';
+import { createHash, randomUUID } from 'node:crypto';
+import { constants as fsConstants } from 'node:fs';
+import { chmod, lstat, mkdir, open, readdir, realpath, rename, unlink } from 'node:fs/promises';
+import { basename, dirname, join, relative, resolve } from 'node:path';
+import { canonicalCommandInputJson, type CommandEnvelope, parseCommandEnvelope, userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
+import { openRegularFileNoFollow, windowsSecurityRequestAsync } from '@zeus/storage/platform-security';
 
 export interface MainCommandRequest<TBody = unknown> {
   envelope: unknown;
@@ -154,8 +148,8 @@ export class MainCommandLedger {
     this.#inlineReceiptByteLimit = options.inlineReceiptByteLimit ?? maximumInlineReceiptBytes;
   }
 
-    /** 命令类型决定是否允许无写入完成，避免执行方与重启读取采用不同规则。 */
-    async execute<TBody, TResult>(request: MainCommandRequest<TBody>, expectedCommandType: string, effect: (body: TBody, context: MainCommandExecutionContext) => Promise<TResult> | TResult): Promise<TResult> {
+  /** 命令类型决定是否允许无写入完成，避免执行方与重启读取采用不同规则。 */
+  async execute<TBody, TResult>(request: MainCommandRequest<TBody>, expectedCommandType: string, effect: (body: TBody, context: MainCommandExecutionContext) => Promise<TResult> | TResult): Promise<TResult> {
     const parsed = parseMainCommandRequest<TBody>(request, expectedCommandType);
     const requestSha256 = hashMainCommandBody(parsed.body);
     const commandId = parsed.envelope.commandId;
@@ -167,7 +161,7 @@ export class MainCommandLedger {
       }
       return (await existingInFlight.promise) as TResult;
     }
-        const execution = this.#execute(parsed.envelope, parsed.body, requestSha256, effect);
+    const execution = this.#execute(parsed.envelope, parsed.body, requestSha256, effect);
     this.#inFlight.set(commandId, { identitySha256, promise: execution });
     try {
       return (await execution) as TResult;
@@ -253,7 +247,7 @@ export class MainCommandLedger {
     this.#historyIndex.set(key, scope);
   }
 
-    async #execute<TBody, TResult>(envelope: CommandEnvelope, body: TBody, requestSha256: string, effect: (body: TBody, context: MainCommandExecutionContext) => Promise<TResult> | TResult): Promise<TResult> {
+  async #execute<TBody, TResult>(envelope: CommandEnvelope, body: TBody, requestSha256: string, effect: (body: TBody, context: MainCommandExecutionContext) => Promise<TResult> | TResult): Promise<TResult> {
     await this.#prepare();
     const envelopePath = this.#envelopePath(envelope.commandId);
     const outcomePath = this.#outcomePath(envelope.commandId);
@@ -337,21 +331,21 @@ export class MainCommandLedger {
     try {
       const result = await effect(body, context);
       await commandRecording;
-        if (!writeStarted && !readOnlyCompletionCommandTypes.has(envelope.commandType)) {
+      if (!writeStarted && !readOnlyCompletionCommandTypes.has(envelope.commandType)) {
         throw new MainCommandLedgerError('ZEUS_MAIN_COMMAND_REQUEST_INVALID', 'Main mutation completed without a durable pre-write marker.', {
           commandId: envelope.commandId,
           commandType: envelope.commandType,
         });
       }
       const completedAt = this.#now();
-        /** 成功回执发布完成前不改内存状态，避免发布失败后的失败回执混入成功 result。 */
-        const completedOutcome: MainCommandOutcome = {
+      /** 成功回执发布完成前不改内存状态，避免发布失败后的失败回执混入成功 result。 */
+      const completedOutcome: MainCommandOutcome = {
         ...outcome,
         state: 'receipted',
         result: await this.#storeResult(envelope.commandId, result),
         updatedAt: completedAt,
       };
-        await writeAtomicJson(outcomePath, completedOutcome);
+      await writeAtomicJson(outcomePath, completedOutcome);
       return result;
     } catch (error) {
       // 写入终态前先等已开始的记录写完，不能让记录覆盖终态。
@@ -660,7 +654,7 @@ function parseMainCommandOutcome(value: unknown, expectedCommandId: string, path
     (state === 'accepted' && result === undefined && failure === undefined) ||
     (state === 'failed_before_write' && writeMarker === undefined && result === undefined && failure !== undefined) ||
     (state === 'unknown_after_write' && writeMarker !== undefined && result === undefined && failure !== undefined) ||
-      (state === 'receipted' && (writeMarker !== undefined || readOnlyCompletionCommandTypes.has(record.commandType)) && result !== undefined && failure === undefined);
+    (state === 'receipted' && (writeMarker !== undefined || readOnlyCompletionCommandTypes.has(record.commandType)) && result !== undefined && failure === undefined);
   if (!validStateShape) throw receiptCorrupt('Main command outcome fields do not match its state.', path);
 
   return {

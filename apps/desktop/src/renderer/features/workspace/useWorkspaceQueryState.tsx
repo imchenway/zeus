@@ -1,176 +1,131 @@
-import type {FilePreviewSourceWorkspace} from '@zeus/shared';
+import type { FilePreviewSourceWorkspace } from '@zeus/shared';
+import { cloneTaskManagementStatusConfig, defaultTaskManagementStatusConfig, matchesTaskDeadline, projectTerminalOutput, type TaskDeadlineFilter, temporaryWorkspaceId } from '@zeus/shared';
+import type { DigitalTeamEntrySelection } from '../digital-teams/DigitalTeamWorkspace.js';
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { GlobalAgentSettingsHandle } from '../../settings/GlobalAgentSettingsPane.js';
+import { type AutomaticUpdateIndicatorState, loadAutomaticUpdateIndicatorFromMain } from '../../appShellBridge.js';
+import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromConversation, conversationTreeRuntimeStateFromSession, type ProjectConversationGroup } from '../../session/ProjectConversationTree.js';
+import { createNativeConversationStartEnvelopeManager, createProjectConversationStartEnvelopeManager, preloadCodexConversationCapabilities, type SessionWorkspaceTask } from '../../session/SessionWorkspace.js';
+import { conversationStartClientCommandTypes, forgetConversationStartCommandRequest } from '../conversations/conversationStartCommandClient.js';
+import type { CodexConversationCapabilities, CodexTaskPushCapabilities, NativeConversationChoice, NativeSessionState, SessionConversationOwner, StartTaskModelPushRequest } from '../../session/sessionTypes.js';
+import { compareConversationStageUpdatedDesc } from '../../session/conversationOrdering.js';
+import { buildPersistedSessionViewCache, initialSessionHotCache, refreshSessionHotState, rememberSessionHotState, type SessionHotCache } from '../../session/sessionHotCache.js';
+import { type TaskModelPushForm, type TaskModelPushModalStatus } from '../../task/TaskModelPushModal.js';
+import { projectTaskModelPushConversationChoices } from '../../task/TaskModelPushPendingWorkspace.js';
+import { useConversationFeatureController } from '../conversations/useConversationFeatureController.js';
+import { useGitFeatureController } from '../git/useGitFeatureController.js';
+import { useProjectFeatureController } from '../projects/useProjectFeatureController.js';
+import { useSettingsFeatureController } from '../settings/useSettingsFeatureController.js';
+import { useTaskFeatureController } from '../tasks/useTaskFeatureController.js';
+import { defaultTaskTableEnumSortOrders, filterVisibleTasks, normalizeTaskTableColumnPreferences, resolveTaskManagementStatus, taskAgentRunStatusFromConversation, taskAgentRunStatusFromSession } from '../../task/taskWorkspaceModel.js';
+import { useApplicationErrorDialog } from '../../ui/ApplicationErrorDialog.js';
+import type { StorageRecoveryFaultState } from '../../storageRecoveryError.js';
+import { createSessionOperationId } from '../../sessionOperationIdentity.js';
+import { type ProjectSourceWorkspaceHandle } from '../../code/ProjectSourceWorkspace.js';
 import {
-    cloneTaskManagementStatusConfig,
-    defaultTaskManagementStatusConfig,
-    matchesTaskDeadline,
-    projectTerminalOutput,
-    type TaskDeadlineFilter,
-    temporaryWorkspaceId
-} from '@zeus/shared';
-import type {DigitalTeamEntrySelection} from '../digital-teams/DigitalTeamWorkspace.js';
-import {startTransition, useCallback, useEffect, useMemo, useRef, useState} from 'react';
-import type {GlobalAgentSettingsHandle} from '../../settings/GlobalAgentSettingsPane.js';
-import {type AutomaticUpdateIndicatorState, loadAutomaticUpdateIndicatorFromMain} from '../../appShellBridge.js';
-import {
-    type ConversationTreeRuntimeState,
-    conversationTreeRuntimeStateFromConversation,
-    conversationTreeRuntimeStateFromSession,
-    type ProjectConversationGroup
-} from '../../session/ProjectConversationTree.js';
-import {
-    createNativeConversationStartEnvelopeManager,
-    createProjectConversationStartEnvelopeManager,
-    preloadCodexConversationCapabilities,
-    type SessionWorkspaceTask
-} from '../../session/SessionWorkspace.js';
-import {
-    conversationStartClientCommandTypes,
-    forgetConversationStartCommandRequest
-} from '../conversations/conversationStartCommandClient.js';
-import type {
-    CodexConversationCapabilities,
-    CodexTaskPushCapabilities,
-    NativeConversationChoice,
-    NativeSessionState,
-    SessionConversationOwner,
-    StartTaskModelPushRequest
-} from '../../session/sessionTypes.js';
-import {compareConversationStageUpdatedDesc} from '../../session/conversationOrdering.js';
-import {
-    buildPersistedSessionViewCache,
-    initialSessionHotCache,
-    refreshSessionHotState,
-    rememberSessionHotState,
-    type SessionHotCache
-} from '../../session/sessionHotCache.js';
-import {type TaskModelPushForm, type TaskModelPushModalStatus} from '../../task/TaskModelPushModal.js';
-import {projectTaskModelPushConversationChoices} from '../../task/TaskModelPushPendingWorkspace.js';
-import {useConversationFeatureController} from '../conversations/useConversationFeatureController.js';
-import {useGitFeatureController} from '../git/useGitFeatureController.js';
-import {useProjectFeatureController} from '../projects/useProjectFeatureController.js';
-import {useSettingsFeatureController} from '../settings/useSettingsFeatureController.js';
-import {useTaskFeatureController} from '../tasks/useTaskFeatureController.js';
-import {
-    defaultTaskTableEnumSortOrders,
-    filterVisibleTasks,
-    normalizeTaskTableColumnPreferences,
-    resolveTaskManagementStatus,
-    taskAgentRunStatusFromConversation,
-    taskAgentRunStatusFromSession
-} from '../../task/taskWorkspaceModel.js';
-import {useApplicationErrorDialog} from '../../ui/ApplicationErrorDialog.js';
-import type {StorageRecoveryFaultState} from '../../storageRecoveryError.js';
-import {createSessionOperationId} from '../../sessionOperationIdentity.js';
-import {type ProjectSourceWorkspaceHandle} from '../../code/ProjectSourceWorkspace.js';
-import {
-    type AiRuntimeAdapterDescriptor,
-    type AiRuntimeAdapterStatus,
-    type AiRuntimeLogEntry,
-    type AiRuntimeSession,
-    type CodexConfigImportPreview,
-    type CodexConfigImportResult,
-    type ConversationHistoryItem,
-    createEmptyWorkspaceSnapshot,
-    type GitDiffSummary,
-    type GitOperationConfirmation,
-    type ProjectConfig,
-    type ProjectDatabaseSecretSnapshot,
-    type ProjectRecord,
-    type ReleaseStatusSnapshot,
-    type ReleaseUpdateStatusSnapshot,
-    type RuntimeOperationConfirmation,
-    type RuntimeSettings,
-    type RuntimeStatusSnapshot,
-    type SecurityAuditLogEntry,
-    type SecuritySecretsSnapshot,
-    type TaskAgentRunStatus,
-    type TaskBoardOpenMode,
-    type TaskBoardViewSnapshot,
-    type TaskEventRecord,
-    type TaskManagementStatus,
-    type TaskPageViewMode,
-    type TaskRecord,
-    type TaskStageRecord,
-    type TaskStatusFilter,
-    type TaskTableColumnPreferences,
-    type TaskTemplateRecord,
-    type TelegramNotificationSettings,
-    type TelegramPollingLogEntry,
-    type TelegramPollingStatus,
-    type TelegramSecuritySettings,
-    type WorkspaceSnapshot,
-    type ZeusRealtimeConnectionState,
+  type AiRuntimeAdapterDescriptor,
+  type AiRuntimeAdapterStatus,
+  type AiRuntimeLogEntry,
+  type AiRuntimeSession,
+  type CodexConfigImportPreview,
+  type CodexConfigImportResult,
+  type ConversationHistoryItem,
+  createEmptyWorkspaceSnapshot,
+  type GitDiffSummary,
+  type GitOperationConfirmation,
+  type ProjectConfig,
+  type ProjectDatabaseSecretSnapshot,
+  type ProjectRecord,
+  type ReleaseStatusSnapshot,
+  type ReleaseUpdateStatusSnapshot,
+  type RuntimeOperationConfirmation,
+  type RuntimeSettings,
+  type RuntimeStatusSnapshot,
+  type SecurityAuditLogEntry,
+  type SecuritySecretsSnapshot,
+  type TaskAgentRunStatus,
+  type TaskBoardOpenMode,
+  type TaskBoardViewSnapshot,
+  type TaskEventRecord,
+  type TaskManagementStatus,
+  type TaskPageViewMode,
+  type TaskRecord,
+  type TaskStageRecord,
+  type TaskStatusFilter,
+  type TaskTableColumnPreferences,
+  type TaskTemplateRecord,
+  type TelegramNotificationSettings,
+  type TelegramPollingLogEntry,
+  type TelegramPollingStatus,
+  type TelegramSecuritySettings,
+  type WorkspaceSnapshot,
+  type ZeusRealtimeConnectionState,
 } from '../../apiClient.js';
 import {
-    errorToLocalUiMessage,
-    formatGenericShellRisk,
-    formatRuntimeConfirmationStatus,
-    normalizeLocalUiError,
-    normalizeProjectConfig,
-    normalizeRuntimeSettings,
-    type ProjectConfigFormState,
-    toProjectConfigForm,
+  errorToLocalUiMessage,
+  formatGenericShellRisk,
+  formatRuntimeConfirmationStatus,
+  normalizeLocalUiError,
+  normalizeProjectConfig,
+  normalizeRuntimeSettings,
+  type ProjectConfigFormState,
+  toProjectConfigForm,
 } from './WorkspaceChrome.js';
+import { classifyGenericShellCommandRisk, isGenericShellCriticalConfirmationSatisfied, joinRuntimeLogEntries, runtimeLogMatches } from './workspaceFormatters.js';
 import {
-    classifyGenericShellCommandRisk,
-    isGenericShellCriticalConfirmationSatisfied,
-    joinRuntimeLogEntries,
-    runtimeLogMatches
-} from './workspaceFormatters.js';
-import {
-    beginNativeConversationChoiceTaskLoad,
-    browserNativeConversationStartStorage,
-    browserProjectSidebarWidthStorage,
-    buildConfiguredTaskManagementStatusLabels,
-    buildTaskCreateInitialForm,
-    completeNativeConversationChoiceTaskLoad,
-    type ConversationDrawer,
-    createNativeConversationChoiceLoadCoordinator,
-    createNativeProjectConversationChoiceLoadCoordinator,
-    createSessionWorkspaceTask,
-    type DataPortabilityStatusState,
-    dedupeProjectRecordsByLocalPath,
-    failNativeConversationChoiceTaskLoad,
-    formatConfiguredTaskManagementStatus,
-    formatDataPortabilityStatus,
-    formatRuntimeLogCopyStatus,
-    formatRuntimeLogExportStatus,
-    getLanguageCopy,
-    inferInitialMainNavTarget,
-    inferInitialProjectSection,
-    isTaskModelPushOriginCurrent,
-    type LocalUiErrorSnapshot,
-    type MainNavTarget,
-    type NativeConversationChoiceTaskLoadState,
-    normalizeRendererAppShellSettings,
-    orderProjects,
-    type ProjectCodeWorkspaceMode,
-    type ProjectCreateFormState,
-    type ProjectDetailPanel,
-    type ProjectWorkspaceSection,
-    readCurrentMainNavTarget,
-    readProjectSidebarPreferredWidth,
-    readSettingsCategoryFromHash,
-    resolveConversationNavigationId,
-    resolveNativeConversationSelectionPresentation,
-    resolveSelectedNativeConversationForProject,
-    resolveTaskManagementStatusConfig,
-    resolveTaskStatusFilter,
-    resolveTaskTableColumns,
-    type RuntimeConfirmationStatusState,
-    type RuntimeLogCopyStatusState,
-    type RuntimeLogExportStatusState,
-    type SessionDrawerTarget,
-    type SettingsCategory,
-    syncRecordFromSnapshot,
-    type TaskBulkActionStatusState,
-    type TaskConversationReopenState,
-    type TaskCreateFormState,
-    type TaskModelPushNavigationTarget,
-    taskTableColumnPreferencesEqual,
-    type TrackedTaskModelPushState,
+  beginNativeConversationChoiceTaskLoad,
+  browserNativeConversationStartStorage,
+  browserProjectSidebarWidthStorage,
+  buildConfiguredTaskManagementStatusLabels,
+  buildTaskCreateInitialForm,
+  completeNativeConversationChoiceTaskLoad,
+  type ConversationDrawer,
+  createNativeConversationChoiceLoadCoordinator,
+  createNativeProjectConversationChoiceLoadCoordinator,
+  createSessionWorkspaceTask,
+  type DataPortabilityStatusState,
+  dedupeProjectRecordsByLocalPath,
+  failNativeConversationChoiceTaskLoad,
+  formatConfiguredTaskManagementStatus,
+  formatDataPortabilityStatus,
+  formatRuntimeLogCopyStatus,
+  formatRuntimeLogExportStatus,
+  getLanguageCopy,
+  inferInitialMainNavTarget,
+  inferInitialProjectSection,
+  isTaskModelPushOriginCurrent,
+  type LocalUiErrorSnapshot,
+  type MainNavTarget,
+  type NativeConversationChoiceTaskLoadState,
+  normalizeRendererAppShellSettings,
+  orderProjects,
+  type ProjectCodeWorkspaceMode,
+  type ProjectCreateFormState,
+  type ProjectDetailPanel,
+  type ProjectWorkspaceSection,
+  readCurrentMainNavTarget,
+  readProjectSidebarPreferredWidth,
+  readSettingsCategoryFromHash,
+  resolveConversationNavigationId,
+  resolveNativeConversationSelectionPresentation,
+  resolveSelectedNativeConversationForProject,
+  resolveTaskManagementStatusConfig,
+  resolveTaskStatusFilter,
+  resolveTaskTableColumns,
+  type RuntimeConfirmationStatusState,
+  type RuntimeLogCopyStatusState,
+  type RuntimeLogExportStatusState,
+  type SessionDrawerTarget,
+  type SettingsCategory,
+  syncRecordFromSnapshot,
+  type TaskBulkActionStatusState,
+  type TaskConversationReopenState,
+  type TaskCreateFormState,
+  type TaskModelPushNavigationTarget,
+  taskTableColumnPreferencesEqual,
+  type TrackedTaskModelPushState,
 } from './workspaceSupport.js';
-import type {WorkspacePageProps} from './workspaceContracts.js';
+import type { WorkspacePageProps } from './workspaceContracts.js';
 
 export function useWorkspaceQueryState(props: WorkspacePageProps) {
   /** 异步失败发生时使用最新界面语言，避免早期创建的回调固定中文。 */
@@ -1321,9 +1276,9 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     for (const projectId of JSON.parse(conversationChoiceScopeSignature) as string[]) {
       const taskIds = snapshotRef.current.tasks.filter((task) => task.projectId === projectId).map((task) => task.id);
       const projectRequestVersion = nativeProjectConversationChoiceLoadCoordinator.begin(projectId);
-        /** 已知与响应中新发现的任务共用请求发出时的顺序。 */
-        const taskSnapshotVersion = nativeConversationChoiceLoadCoordinator.beginSnapshot(taskIds);
-        const taskLoads = taskIds.map((taskId) => ({taskId, requestVersion: taskSnapshotVersion}));
+      /** 已知与响应中新发现的任务共用请求发出时的顺序。 */
+      const taskSnapshotVersion = nativeConversationChoiceLoadCoordinator.beginSnapshot(taskIds);
+      const taskLoads = taskIds.map((taskId) => ({ taskId, requestVersion: taskSnapshotVersion }));
       setNativeConversationChoiceProjectStates((current) => ({ ...current, [projectId]: beginNativeConversationChoiceTaskLoad(current[projectId]) }));
       setNativeConversationChoiceTaskStates((current) => ({
         ...current,
@@ -1338,9 +1293,10 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
             : null;
           mergeTaskSummaries(snapshot.tasks);
           for (const taskId of Object.keys(snapshot.taskChoicesByTaskId)) {
-              if (!taskLoads.some((entry) => entry.taskId === taskId)) taskLoads.push({
-                  taskId,
-                  requestVersion: taskSnapshotVersion
+            if (!taskLoads.some((entry) => entry.taskId === taskId))
+              taskLoads.push({
+                taskId,
+                requestVersion: taskSnapshotVersion,
               });
           }
           const mergedTaskChoices = taskLoads.flatMap(({ taskId, requestVersion }) => {
@@ -1352,7 +1308,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
               choices: [],
               items: [],
             };
-              const merged = nativeConversationChoiceLoadCoordinator.commitSnapshot(taskId, requestVersion, loaded);
+            const merged = nativeConversationChoiceLoadCoordinator.commitSnapshot(taskId, requestVersion, loaded);
             return merged ? ([[taskId, merged]] as const) : [];
           });
           if (mergedProjectChoices) setNativeConversationChoicesByProject((current) => ({ ...current, [projectId]: mergedProjectChoices }));
@@ -1391,12 +1347,12 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
       const client = props.nativeConversationClient;
       if (!client) return;
       const projectRequestVersion = nativeProjectConversationChoiceLoadCoordinator.begin(projectId);
-        /** 校准请求返回前到达的实时结果必须保留，不能在返回后重新分配顺序。 */
-        const taskSnapshotVersion = nativeConversationChoiceLoadCoordinator.beginSnapshot(snapshotRef.current.tasks.filter((task) => task.projectId === projectId).map((task) => task.id));
+      /** 校准请求返回前到达的实时结果必须保留，不能在返回后重新分配顺序。 */
+      const taskSnapshotVersion = nativeConversationChoiceLoadCoordinator.beginSnapshot(snapshotRef.current.tasks.filter((task) => task.projectId === projectId).map((task) => task.id));
       const loaded = await client.loadProjectConversationChoiceGroups(projectId);
       const projectChoices = nativeProjectConversationChoiceLoadCoordinator.commit(projectId, projectRequestVersion, loaded.projectChoices);
       const taskChoices = Object.entries(loaded.taskChoicesByTaskId).flatMap(([taskId, choices]) => {
-          const merged = nativeConversationChoiceLoadCoordinator.commitSnapshot(taskId, taskSnapshotVersion, choices);
+        const merged = nativeConversationChoiceLoadCoordinator.commitSnapshot(taskId, taskSnapshotVersion, choices);
         return merged ? ([[taskId, merged]] as const) : [];
       });
 

@@ -1,5 +1,5 @@
-import {contextBridge, ipcRenderer, webUtils} from 'electron';
-import {createRendererBootstrapReporter, shouldReportRendererWindowError} from './rendererBootstrapState.cjs';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import { createRendererBootstrapReporter, shouldReportRendererWindowError } from './rendererBootstrapState.cjs';
 
 type MainCommandScopeKind = 'project' | 'product_conversation' | 'approval' | 'git_repository' | 'artifact' | 'settings' | 'execution_host';
 
@@ -93,10 +93,15 @@ globalThis.addEventListener('unhandledrejection', (event) => {
 });
 
 /** 原生文件与无路径图片共用导入结果，保留每个阶段的具体失败原因。 */
-async function authorizePendingResourceFiles(files: File[], source: 'paste' | 'drop', pathChannel: string, materializeChannel: string): Promise<{
-    resources: unknown[];
-    failedCount: number;
-    failureMessage?: string
+async function authorizePendingResourceFiles(
+  files: File[],
+  source: 'paste' | 'drop',
+  pathChannel: string,
+  materializeChannel: string,
+): Promise<{
+  resources: unknown[];
+  failedCount: number;
+  failureMessage?: string;
 }> {
   if (source === 'paste' && files.length === 1 && isUnsupportedPastedImage(files[0])) {
     const normalized =
@@ -108,12 +113,12 @@ async function authorizePendingResourceFiles(files: File[], source: 'paste' | 'd
     const resources = Array.isArray(normalized.resources) ? normalized.resources : [];
     if (resources.length > 0) return { resources, failedCount: 0 };
   }
-    /** 有磁盘来源的文件继续通过宿主流式保存，不提前装入页面内存。 */
+  /** 有磁盘来源的文件继续通过宿主流式保存，不提前装入页面内存。 */
   const nativePaths: string[] = [];
-    /** 无磁盘路径的图片从本次 File 读取，不重新访问剪贴板。 */
+  /** 无磁盘路径的图片从本次 File 读取，不重新访问剪贴板。 */
   const pathlessFiles: File[] = [];
   for (const file of files) {
-      /** 路径仅从 Electron 文件对象提取，不接受页面自行声明路径。 */
+    /** 路径仅从 Electron 文件对象提取，不接受页面自行声明路径。 */
     let nativePath = '';
     try {
       nativePath = webUtils.getPathForFile(file);
@@ -123,7 +128,7 @@ async function authorizePendingResourceFiles(files: File[], source: 'paste' | 'd
     if (nativePath) nativePaths.push(nativePath);
     else pathlessFiles.push(file);
   }
-    /** 逐项保存读取结果，失败原因随同资源回执返回。 */
+  /** 逐项保存读取结果，失败原因随同资源回执返回。 */
   const pathlessPayloadResults = await Promise.allSettled(
     pathlessFiles.map(async (file) => ({
       name: file.name,
@@ -132,9 +137,9 @@ async function authorizePendingResourceFiles(files: File[], source: 'paste' | 'd
       source,
     })),
   );
-    /** 只有读取完整的内存内容才能交给宿主持久化。 */
+  /** 只有读取完整的内存内容才能交给宿主持久化。 */
   const pathlessPayloads = pathlessPayloadResults.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []));
-    /** 两类资源沿用各自命令身份，不因其中一类失败重放另一类。 */
+  /** 两类资源沿用各自命令身份，不因其中一类失败重放另一类。 */
   const storeNativePaths = (): Promise<unknown> => {
     if (!nativePaths.length) return Promise.resolve([]);
     if (pathChannel === 'zeus:store-task-resource-paths') {
@@ -142,10 +147,10 @@ async function authorizePendingResourceFiles(files: File[], source: 'paste' | 'd
     }
     return invokeMainCommand(pathChannel, 'desktop.conversation_resources.store_paths', 'artifact', 'conversation-input-resources', { paths: nativePaths, source });
   };
-    /** 二进制载荷沿用现有大小校验、副本保存与结果核对。 */
+  /** 二进制载荷沿用现有大小校验、副本保存与结果核对。 */
   const materializePayloads = (): Promise<unknown> => {
     if (!pathlessPayloads.length) return Promise.resolve([]);
-        /** 会话与任务使用各自既有的保存通道。 */
+    /** 会话与任务使用各自既有的保存通道。 */
     const conversation = materializeChannel === 'zeus:materialize-conversation-resources';
     return invokeMainCommand(
       materializeChannel,
@@ -155,29 +160,30 @@ async function authorizePendingResourceFiles(files: File[], source: 'paste' | 'd
       pathlessPayloads,
     );
   };
-    /** 两路独立导入都完成后再报告，保留成功资源及失败原因。 */
+  /** 两路独立导入都完成后再报告，保留成功资源及失败原因。 */
   const [authorizedResult, materializedResult] = await Promise.allSettled([storeNativePaths(), materializePayloads()]);
-    /** 原生文件导入的成功结果。 */
+  /** 原生文件导入的成功结果。 */
   const authorized = authorizedResult.status === 'fulfilled' && Array.isArray(authorizedResult.value) ? authorizedResult.value : [];
-    /** 无路径图片导入的成功结果。 */
+  /** 无路径图片导入的成功结果。 */
   const materialized = materializedResult.status === 'fulfilled' && Array.isArray(materializedResult.value) ? materializedResult.value : [];
-    /** 成功附件不能因为其他项失败而丢失。 */
+  /** 成功附件不能因为其他项失败而丢失。 */
   const resources = [...authorized, ...materialized];
-    /** 读取错误与保存错误都保留，不再将异常转换成没有文件。 */
-    const failures = [...pathlessPayloadResults, authorizedResult, materializedResult].filter((result): result is PromiseRejectedResult => result.status === 'rejected');
-    /** 首个真实原因足够定位本批失败，避免重复堆叠同类错误。 */
-    const failureMessage = failures.length > 0 ? pendingResourceFailureMessage(failures[0]!.reason) : undefined;
-    if (resources.length === 0 && failureMessage) throw new Error(failureMessage);
-    return {
-        resources,
-        failedCount: Math.max(0, files.length - resources.length), ...(failureMessage ? {failureMessage} : {})
-    };
+  /** 读取错误与保存错误都保留，不再将异常转换成没有文件。 */
+  const failures = [...pathlessPayloadResults, authorizedResult, materializedResult].filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+  /** 首个真实原因足够定位本批失败，避免重复堆叠同类错误。 */
+  const failureMessage = failures.length > 0 ? pendingResourceFailureMessage(failures[0]!.reason) : undefined;
+  if (resources.length === 0 && failureMessage) throw new Error(failureMessage);
+  return {
+    resources,
+    failedCount: Math.max(0, files.length - resources.length),
+    ...(failureMessage ? { failureMessage } : {}),
+  };
 }
 
 /** 跨上下文错误不依赖原型，保留宿主已提供的具体失败信息。 */
 function pendingResourceFailureMessage(error: unknown): string {
-    if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string' && error.message.trim()) return error.message;
-    return typeof error === 'string' && error.trim() ? error : '附件读取或保存失败，未取得具体原因。';
+  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string' && error.message.trim()) return error.message;
+  return typeof error === 'string' && error.trim() ? error : '附件读取或保存失败，未取得具体原因。';
 }
 
 function isUnsupportedPastedImage(file: File): boolean {
