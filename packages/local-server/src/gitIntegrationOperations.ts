@@ -886,8 +886,41 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     return hasPendingWrite || providerBusy;
   }
 
-  /** 自动完成进程停止和资源回收，让一次任务状态操作直接完成。 */
+  /** 停止任务执行并回收可确认的工作区；来源仓库不可用时保留目录和登记。 */
   async function closeTaskResourcesForTerminalStatus(taskId: string, cleanup: Awaited<ReturnType<typeof inspectTaskTerminalCleanup>>): Promise<void> {
+    /** 任务、冲突分支和历史合入现场可能指向同一物理目录。 */
+    const cleanupPaths = new Map<string, string>();
+    for (const plan of cleanup.workspaces) if (plan.workspace.worktreePath) cleanupPaths.set(resolve(plan.workspace.worktreePath), plan.repositoryPath);
+    for (const plan of cleanup.integrations) {
+      for (const path of [plan.integration.integrationPath, ...plan.attempts.map((attempt) => attempt.worktreePath)]) if (path) cleanupPaths.set(resolve(path), plan.repositoryPath);
+    }
+    /** 物理目录已不存在时只收口登记，不要求已删除的源仓库继续可用。 */
+    const missingPaths = new Set<string>();
+    /** 缺少来源仓库的目录可能是唯一代码副本，必须保留。 */
+    const orphanedPaths = new Set<string>();
+    /** 同一源仓库只读取一次 Git 状态，不为每条历史记录重复扫描。 */
+    const repositoryAvailability = new Map<string, boolean>();
+    for (const [path, repositoryPath] of cleanupPaths) {
+      /** 只把明确不存在视为已清理，权限和 I/O 错误不能伪装成目录丢失。 */
+      const present = await lstat(path).then(
+        () => true,
+        (error: unknown) => {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+          throw error;
+        },
+      );
+      if (!repositoryAvailability.has(repositoryPath)) repositoryAvailability.set(repositoryPath, (await getGitRepositoryContext(repositoryPath)).isRepository);
+      if (!present) {
+        missingPaths.add(path);
+        continue;
+      }
+      if (!repositoryAvailability.get(repositoryPath)) orphanedPaths.add(path);
+    }
+    /** 同时保留相关父子目录，防止清理父工作区时连带删除已保留的代码。 */
+    // ponytail: 任务内路径逐项比较；资源规模增大时可改为目录树索引。
+    const retainedPaths = [...cleanupPaths.keys()].filter((path) => !missingPaths.has(path) && [...orphanedPaths].some((orphan) => path === orphan || isPathInsideRoot(path, orphan) || isPathInsideRoot(orphan, path)));
+    /** 路径和原因保留在现有资源记录与任务事件中，供后续独立清理。 */
+    const retainedReason = '来源仓库不可用，相关工作区目录已保留，需以后单独清理。';
     await Promise.all(
       cleanup.runtimeSessions.map(async (session) => {
         /** 检查准备清理之后的最新状态，已退出的进程无需再次停止。 */
@@ -938,7 +971,13 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     for (const plan of workspacePlans) {
       if (plan.workspace.worktreePath) {
         const worktreePath = resolve(plan.workspace.worktreePath);
-        if (plan.workspace.kind === 'conflict') {
+        if (retainedPaths.includes(worktreePath)) {
+          taskWorkspaces.update(plan.workspace.id, { state: plan.workspace.state === 'ready' ? 'failed' : plan.workspace.state, lastError: retainedReason });
+          continue;
+        }
+        if (missingPaths.has(worktreePath) && !repositoryAvailability.get(plan.repositoryPath)) {
+          removedPaths.add(worktreePath);
+        } else if (plan.workspace.kind === 'conflict') {
           if (!removedPaths.has(worktreePath)) {
             const removed = await cleanupTaskIntegrationWorktree({ repositoryPath: plan.repositoryPath, integrationPath: worktreePath });
             if (removed) removedIntegrationWorktrees += 1;
@@ -967,22 +1006,25 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
 
     for (const plan of cleanup.integrations) {
       const integrationPaths = [plan.integration.integrationPath, ...plan.attempts.map((attempt) => attempt.worktreePath)].filter((path): path is string => Boolean(path));
+      /** 合入已完成不代表历史冲突目录可以丢弃，保留路径需继续可追溯。 */
+      const hasRetainedPath = integrationPaths.some((path) => retainedPaths.includes(resolve(path)));
       for (const integrationPath of integrationPaths) {
         const normalizedPath = resolve(integrationPath);
-        if (removedPaths.has(normalizedPath)) continue;
+        if (removedPaths.has(normalizedPath) || (missingPaths.has(normalizedPath) && !repositoryAvailability.get(plan.repositoryPath)) || retainedPaths.includes(normalizedPath)) continue;
         const removed = await cleanupTaskIntegrationWorktree({ repositoryPath: plan.repositoryPath, integrationPath: normalizedPath });
         if (removed) removedIntegrationWorktrees += 1;
         removedPaths.add(normalizedPath);
       }
       for (const attempt of plan.attempts) {
         taskConflictAiOperations.delete(attempt.id);
-        if (attempt.state === 'preparing' || attempt.state === 'active') taskIntegrationAttempts.update(attempt.id, { state: 'stale', lastError: '任务已结束，冲突处理现场已回收。' });
+        if (attempt.state === 'preparing' || attempt.state === 'active')
+          taskIntegrationAttempts.update(attempt.id, { state: 'stale', lastError: retainedPaths.includes(resolve(attempt.worktreePath)) ? retainedReason : '任务已结束，冲突处理现场已回收。' });
       }
       taskIntegrations.update(plan.integration.id, {
-        integrationPath: null,
+        integrationPath: plan.integration.integrationPath && retainedPaths.includes(resolve(plan.integration.integrationPath)) ? plan.integration.integrationPath : null,
         state: plan.integration.state === 'merged' ? 'merged' : 'failed',
-        conflictFiles: [],
-        lastError: plan.integration.state === 'merged' ? null : '任务已结束，合入现场已回收。',
+        conflictFiles: hasRetainedPath ? plan.integration.conflictFiles : [],
+        lastError: hasRetainedPath ? retainedReason : plan.integration.state === 'merged' ? null : '任务已结束，合入现场已回收。',
       });
     }
 
@@ -996,10 +1038,11 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     recordTaskEvent({
       taskId,
       eventType: 'task.terminal_resources.cleaned',
-      title: '任务终态资源已清理',
+      title: retainedPaths.length > 0 ? '任务会话已结束，部分工作区已保留' : '任务终态资源已清理',
       payload: {
         removedWorktrees,
         removedIntegrationWorktrees,
+        retainedWorktrees: retainedPaths.map((path) => ({ path, reason: retainedReason })),
         archivedConversations: cleanup.conversations.length,
         archivedRuntimeSessions: cleanup.runtimeSessions.length,
         interrupted,

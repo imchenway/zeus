@@ -219,6 +219,7 @@ const explanations: ReadonlyArray<readonly [codes: readonly string[], explanatio
       'ZEUS_TASK_WORK_STOP_OUTCOME_UNKNOWN',
       'ZEUS_AUTOMATION_DISPATCH_OUTCOME_UNKNOWN',
       'ZEUS_WORKSPACE_GIT_COMMAND_OUTCOME_UNKNOWN',
+      'ZEUS_WORK_MANAGEMENT_EXTERNAL_OUTCOME_UNKNOWN',
       'ZEUS_EXECUTION_HOST_STOP_OUTCOME_UNKNOWN',
     ],
     ['上次操作的结果尚未确认，Zeus 已暂停继续执行，避免重复操作。请检查实际处理状态。', 'The previous action’s result is unconfirmed. Zeus paused further execution to avoid duplicate actions. Check the actual processing state.'],

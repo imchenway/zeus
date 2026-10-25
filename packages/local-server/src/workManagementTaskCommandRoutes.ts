@@ -1,4 +1,4 @@
-import type { TaskDeadline } from '@zeus/shared';
+import { userFacingErrorCause, type TaskDeadline } from '@zeus/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { CommandActor, TaskAttachmentReference, TaskBoardMoveRequest } from '@zeus/shared';
 import type { CommandDeliveryOutcome, TaskPriority, TaskType, ZeusTaskRecord } from '@zeus/storage';
@@ -366,6 +366,8 @@ function sendError(reply: FastifyReply, error: unknown, mapDomainError?: (error:
     return reply.code(503).send({
       error: 'ZEUS_WORK_MANAGEMENT_EXTERNAL_OUTCOME_UNKNOWN',
       message: 'External write started but its result is unknown. Automatic replay is blocked; reconcile the Runtime or external system before retrying.',
+      // 保留经过脱敏的原始失败原因，避免未知结果提示掩盖仓库或进程错误。
+      cause: userFacingErrorCause(error),
       recoveryRequired: true,
     });
   }
