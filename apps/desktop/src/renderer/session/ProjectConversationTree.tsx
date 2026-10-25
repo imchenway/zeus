@@ -12,7 +12,7 @@ import { ShieldCheckIcon as ShieldCheck } from '@phosphor-icons/react/dist/csr/S
 import { WarningIcon as Warning } from '@phosphor-icons/react/dist/csr/Warning';
 import { WarningCircleIcon as WarningCircle } from '@phosphor-icons/react/dist/csr/WarningCircle';
 import type { NativeConversationChoice, NativeSessionState } from './sessionTypes.js';
-import { compareConversationStageUpdatedDesc } from './conversationOrdering.js';
+import { compareConversationWorkStartedDesc } from '@zeus/shared';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { conversationDisplayTitle } from './conversationDisplayTitle.js';
 import { hasPendingAsyncQuestion } from './AsyncQuestionMessage.js';
@@ -487,14 +487,14 @@ export function resolveConversationTreeRuntimeState(conversation: NativeConversa
   return conversation.hasPendingAsyncQuestion && runtimeState !== 'pending_approval' ? 'pending_user_input' : runtimeState;
 }
 
-/** 合并项目直属与任务会话，按显示标题搜索，再按会话阶段更新时间排序。 */
+/** 合并项目直属与任务会话，按显示标题搜索，再按最近创建或主动输入时间排序。 */
 function flattenProjectConversations(project: ProjectConversationGroup, normalizedQuery: string, language: 'zh-CN' | 'en-US'): FlattenedConversation[] {
   return [
     ...(project.conversations ?? []).map((conversation) => ({ conversation, displayTitle: conversationDisplayTitle(conversation.title) })),
     ...project.tasks.flatMap((task) => task.conversations.map((conversation) => ({ conversation, displayTitle: conversationDisplayTitle(conversation.title, task.taskTitle, language) }))),
   ]
     .filter((entry) => !normalizedQuery || entry.displayTitle.toLocaleLowerCase().includes(normalizedQuery))
-    .sort((left, right) => compareConversationStageUpdatedDesc(left.conversation, right.conversation));
+    .sort((left, right) => compareConversationWorkStartedDesc(left.conversation, right.conversation));
 }
 
 /** 将当前已连接 controller 的权威状态映射为全局 source tree 的可读状态。 */

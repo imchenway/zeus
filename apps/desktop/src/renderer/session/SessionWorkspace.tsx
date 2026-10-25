@@ -1102,6 +1102,8 @@ export function nativeConversationChoiceFromAcceptance(acceptance: NativeOperati
     collaborationMode: conversation.collaborationMode === 'plan' ? 'plan' : 'default',
     createdAt: stringField(conversation.createdAt) ?? now,
     updatedAt: stringField(conversation.updatedAt) ?? now,
+    /** 创建回执沿用持久发起时间，避免目录刷新前后改变排序依据。 */
+    workStartedAt: nullableStringField(conversation.workStartedAt),
     archived: conversation.archived === true,
     hasUnreadAttention: conversation.hasUnreadAttention === true,
     attentionKind: conversationAttentionKindField(conversation.attentionKind),
@@ -1218,6 +1220,8 @@ export function projectConversationChoiceFromAcceptance(acceptance: NativeOperat
     collaborationMode: conversation.collaborationMode === 'plan' ? 'plan' : 'default',
     createdAt: stringField(conversation.createdAt) ?? now,
     updatedAt: stringField(conversation.updatedAt) ?? now,
+    /** 项目会话与任务会话使用同一持久排序依据。 */
+    workStartedAt: nullableStringField(conversation.workStartedAt),
     archived: conversation.archived === true,
     hasUnreadAttention: conversation.hasUnreadAttention === true,
     attentionKind: conversationAttentionKindField(conversation.attentionKind),

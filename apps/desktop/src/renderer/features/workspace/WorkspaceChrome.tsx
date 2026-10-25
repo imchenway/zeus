@@ -828,7 +828,7 @@ export function SidebarNav(props: {
         .map((option) => option.label)
         .join(props.appLanguage === 'zh-CN' ? '、' : ', ')
     : copy.allConversations;
-  /** 上游已按阶段时间倒序；先取每个任务首条，再筛选运行状态和分页，避免旧会话重新出现。 */
+  /** 上游已按用户发起时间倒序；先取每个任务首条，再筛选运行状态和分页，避免旧会话重新出现。 */
   const filteredConversationGroups = scopedConversationGroups.map((group) => {
     return {
       ...group,

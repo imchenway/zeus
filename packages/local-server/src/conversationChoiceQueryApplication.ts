@@ -1,4 +1,5 @@
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { compareConversationWorkStartedDesc } from '@zeus/shared';
 import {
   isInFlightSubmission,
   type ConversationAttentionKind,
@@ -90,7 +91,9 @@ export class ConversationChoiceQueryApplication {
 
   listProjectChoices(projectId: string) {
     const context = this.buildContext(projectId);
-    return this.listProjectHistory(projectId).map((conversation) => this.toChoice(conversation, context));
+    return this.listProjectHistory(projectId)
+      .map((conversation) => this.toChoice(conversation, context))
+      .sort(compareConversationWorkStartedDesc);
   }
 
   listTaskChoices(taskId: string, projectId: string) {
@@ -118,7 +121,7 @@ export class ConversationChoiceQueryApplication {
       choices.push(this.toChoice(conversation, context));
       taskChoices.set(conversation.taskId, choices);
     }
-    const sortedProjectChoices = projectChoices.sort(compareConversationStageUpdatedDesc);
+    const sortedProjectChoices = projectChoices.sort(compareConversationWorkStartedDesc);
     return {
       projectId,
       projectChoices: { projectId, choices: sortedProjectChoices, items: sortedProjectChoices },
@@ -138,7 +141,7 @@ export class ConversationChoiceQueryApplication {
       const context = this.buildContext(project.id);
       choices.push(...history.map((conversation) => this.toChoice(conversation, context)));
     }
-    return choices.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    return choices.sort(compareConversationWorkStartedDesc);
   }
 
   toChoice(conversation: ZeusConversationRecord, context: NativeConversationChoiceProjectionContext = this.buildContext(conversation.projectId)) {
@@ -243,7 +246,7 @@ export class ConversationChoiceQueryApplication {
   }
 
   private toTaskSnapshot(taskId: string, projectId: string, choices: ReturnType<ConversationChoiceQueryApplication['toChoice']>[]) {
-    const sortedChoices = [...choices].sort(compareConversationStageUpdatedDesc);
+    const sortedChoices = [...choices].sort(compareConversationWorkStartedDesc);
     return { taskId, projectId, hasHistory: sortedChoices.length > 0, requiresChoice: sortedChoices.length > 0, choices: sortedChoices, items: sortedChoices };
   }
 
@@ -309,7 +312,7 @@ export class ConversationChoiceQueryApplication {
       createdAt: conversation.createdAt,
       updatedAt: conversation.updatedAt,
       activityAt: this.ports.conversations.meaningfulActivityAt(conversation.id),
-      /** 项目排序只消费发起时间，不能复用随运行状态变化的 activityAt。 */
+      /** 项目与会话导航共用发起时间，后台状态和历史补齐不推进排序。 */
       workStartedAt: this.ports.conversations.workStartedAt(conversation.id),
       archived: conversation.archived,
     };
