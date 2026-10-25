@@ -161,8 +161,8 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   const activeStashRef = activeStash?.ref ?? '';
   /** 其他仓库的选择不能借用当前仓库读取详情。 */
   const selectedCommitHash = selectedCommit?.repositoryId === selectedRepository?.id ? (selectedCommit?.ref ?? '') : '';
-  // 角标与文件列表使用同一个仓库，不能把其他子模块的改动算进来。
-  const changedCount = new Set(selectedRepository?.snapshot.fileStatuses.map((file) => file.path) ?? []).size;
+  /** 全局提交覆盖项目内全部仓库，同名文件按所属仓库分别计数。 */
+  const changedCount = repositories.reduce((total, repository) => total + new Set(repository.snapshot.fileStatuses.map((file) => file.path)).size, 0);
   const conflictCount = repositories.reduce((total, repository) => total + repository.snapshot.conflictFiles.length, 0);
   const allCommits = useMemo(
     () =>
@@ -524,17 +524,17 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
   }
 
   /** 所有变更入口直接使用既有原生交付窗口服务，工作台不挂载交付页面。 */
-  function openDelivery(repositoryId: string, pathPrefix?: string): void {
+  function openDelivery(repositoryId?: string, pathPrefix?: string): void {
     if (!window.zeus?.openTaskGitDeliveryWindow) {
       setError(errorMessage(new Error(zh ? '当前环境无法打开代码交付窗口。' : 'The code delivery window is unavailable in this environment.'), zh));
       return;
     }
-    void window.zeus.openTaskGitDeliveryWindow({ projectId: props.project.id, repositoryId, pathPrefix }).catch((reason: unknown) => setError(errorMessage(reason, zh)));
+    void window.zeus.openTaskGitDeliveryWindow(repositoryId ? { projectId: props.project.id, repositoryId, pathPrefix } : { projectId: props.project.id }).catch((reason: unknown) => setError(errorMessage(reason, zh)));
   }
 
-  /** 工具栏和分支菜单沿用当前仓库范围及待提交数量。 */
+  /** 全局提交与冲突入口覆盖项目内全部仓库，文件树负责后续选择。 */
   function openCommit(): void {
-    if (selectedRepository) openDelivery(selectedRepository.id);
+    if (repositories.length) openDelivery();
   }
 
   function openDiffWindow(repository: ProjectGitRepositoryWorkbenchItem, filePath: string, options?: { stage?: 'combined' | ChangeStage; commitHash?: string; comparisonRef?: string; comparisonMode?: 'current' | 'working-tree' }): void {
@@ -712,7 +712,7 @@ export function ProjectGitWorkbench(props: ProjectGitWorkbenchProps) {
           {...toolbarShortcut(1)}
           aria-haspopup="dialog"
           aria-label={toolbarLabel(zh ? `提交 · ${changedCount} 个待提交文件` : `Commit · ${changedCount} pending files`, 1)}
-          data-icon-tooltip={toolbarLabel(zh ? `提交 · ${selectedRepository?.name ?? ''} · ${changedCount} 个待提交文件` : `Commit · ${selectedRepository?.name ?? ''} · ${changedCount} pending files`, 1)}
+          data-icon-tooltip={toolbarLabel(zh ? `提交 · ${repositories.length} 个仓库 · ${changedCount} 个待提交文件` : `Commit · ${repositories.length} repositories · ${changedCount} pending files`, 1)}
           disabled={!selectedRepository || busy !== null}
           onClick={openCommit}
         >

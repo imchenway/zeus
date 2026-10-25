@@ -465,9 +465,10 @@ interface TaskGitDeliveryCurrentContext {
   workspaceId: string | null;
 }
 
-/** 原生交付窗口接受真实任务、项目会话或项目仓库，不能伪造任务或会话身份。 */
+/** 原生交付窗口接受真实任务、项目、项目会话或单仓范围，不能伪造任务或会话身份。 */
 type GitDeliveryWindowTarget =
   | { taskId: string; projectId?: never; conversationId?: never; repositoryId?: never; pathPrefix?: never }
+  | { taskId?: never; projectId: string; conversationId?: never; repositoryId?: never; pathPrefix?: never }
   | { taskId?: never; projectId: string; conversationId: string; repositoryId?: never; pathPrefix?: never }
   | { taskId?: never; projectId: string; conversationId?: never; repositoryId: string; pathPrefix?: string };
 
@@ -1139,7 +1140,15 @@ function revealTaskGitDeliveryWindow(window: BrowserWindow): void {
 /** 所有代码交付按钮共用窗口创建、尺寸记忆、安全配置及实例复用。 */
 async function openTaskGitDeliveryWindow(parent: BrowserWindow, target: GitDeliveryWindowTarget): Promise<GitDeliveryWindowTarget & { opened: true; reused: boolean }> {
   /** 按真实交付范围隔离身份，同一范围重复点击唤回原窗口。 */
-  const key = JSON.stringify(target.taskId ? ['task', target.taskId] : target.conversationId ? ['conversation', target.projectId, target.conversationId] : ['repository', target.projectId, target.repositoryId, target.pathPrefix ?? '']);
+  const key = JSON.stringify(
+    target.taskId
+      ? ['task', target.taskId]
+      : target.conversationId
+        ? ['conversation', target.projectId, target.conversationId]
+        : target.repositoryId
+          ? ['repository', target.projectId, target.repositoryId, target.pathPrefix ?? '']
+          : ['project', target.projectId],
+  );
   /** 查找已经加载或正在加载的窗口，避免重复创建。 */
   const existing = taskGitDeliveryWindows.get(key);
   if (existing && !existing.isDestroyed()) {
@@ -1154,7 +1163,7 @@ async function openTaskGitDeliveryWindow(parent: BrowserWindow, target: GitDeliv
       ? { taskId: target.taskId }
       : target.conversationId !== undefined
         ? { projectId: target.projectId, conversationId: target.conversationId }
-        : { projectId: target.projectId, repositoryId: target.repositoryId, ...(target.pathPrefix ? { pathPrefix: target.pathPrefix } : {}) },
+        : { projectId: target.projectId, ...(target.repositoryId ? { repositoryId: target.repositoryId } : {}), ...(target.pathPrefix ? { pathPrefix: target.pathPrefix } : {}) },
   );
   /** 首次打开时的默认边界，历史偏好由共用入口覆盖。 */
   const defaultBounds = initialTaskGitDeliveryWindowBounds(parent);
@@ -1856,7 +1865,7 @@ function setupIpc(): void {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow) || event.senderFrame !== event.sender.mainFrame) throw new Error('代码交付窗口请求来自不受信任的主窗口。');
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError('代码交付窗口请求无效。');
-    /** 任务、会话和仓库使用同一入口，身份不能混用。 */
+    /** 任务、会话、项目及单仓使用同一入口，身份不能混用。 */
     const candidate = input as { taskId?: unknown; workspaceId?: unknown; projectId?: unknown; conversationId?: unknown; repositoryId?: unknown; pathPrefix?: unknown };
     if (candidate.repositoryId !== undefined) {
       if (
@@ -1885,8 +1894,13 @@ function setupIpc(): void {
     }
     if (candidate.pathPrefix !== undefined) throw new TypeError('目录筛选必须绑定仓库。');
     if (candidate.taskId === undefined) {
-      if (typeof candidate.projectId !== 'string' || !candidate.projectId.trim() || typeof candidate.conversationId !== 'string' || !candidate.conversationId.trim() || candidate.workspaceId !== undefined)
-        throw new TypeError('代码交付会话身份无效。');
+      if (typeof candidate.projectId !== 'string' || !candidate.projectId.trim() || candidate.workspaceId !== undefined) throw new TypeError('代码交付项目身份无效。');
+      if (candidate.conversationId === undefined) {
+        /** 项目范围由主进程重新发现，Renderer 不能传入任意本机目录。 */
+        await requireProjectGitWorkbench(event, false, candidate.projectId).loadWorkbench(candidate.projectId);
+        return openTaskGitDeliveryWindow(requestingWindow, { projectId: candidate.projectId });
+      }
+      if (typeof candidate.conversationId !== 'string' || !candidate.conversationId.trim()) throw new TypeError('代码交付会话身份无效。');
       return openTaskGitDeliveryWindow(requestingWindow, { projectId: candidate.projectId, conversationId: candidate.conversationId });
     }
     if (typeof candidate.taskId !== 'string' || !candidate.taskId.trim() || candidate.projectId !== undefined || candidate.conversationId !== undefined) throw new TypeError('代码交付任务身份无效。');

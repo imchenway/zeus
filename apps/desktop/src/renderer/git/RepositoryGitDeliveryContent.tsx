@@ -32,7 +32,7 @@ interface RepositoryGitDeliveryContentProps {
   project: ProjectRecord;
   /** 界面文案语言。 */
   language: 'zh-CN' | 'en-US';
-  /** Git 工作台只展示当前选中仓库；会话入口展示其全部授权仓库。 */
+  /** 仅单仓入口限制仓库；项目和会话入口展示各自范围内的全部仓库。 */
   repositoryId?: string;
   /** 子树入口只筛选该目录内的文件。 */
   pathPrefix?: string;
@@ -90,8 +90,8 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
   const [mergeBranch, setMergeBranch] = useState('');
   /** 手动编辑和生成失败均保留提交说明。 */
   const [drafts, setDrafts] = useGitCommitDrafts(props.conversation ? `${props.project.id}:conversation:${props.conversation.id}` : props.project.id);
-  /** 项目仓库沿用原提交草稿；会话草稿只属于该会话。 */
-  const draftKey = props.repositoryId ?? `conversation:${props.conversation?.id ?? ''}`;
+  /** 项目全量、单仓和会话分别保存草稿，避免不同提交范围互相覆盖。 */
+  const draftKey = props.repositoryId ?? (props.conversation ? `conversation:${props.conversation.id}` : 'project');
   /** 读取现有草稿，不随工作台收起或切换页签丢失。 */
   const message = drafts[draftKey] ?? '';
   /** 手动输入和生成结果都通过同一草稿存储。 */

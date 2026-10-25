@@ -14,9 +14,10 @@ export interface TaskGitDeliveryCurrentContext {
   workspaceId: string | null;
 }
 
-/** 同一窗口按真实任务、会话或仓库加载交付内容，不创建替代身份。 */
+/** 同一窗口按真实任务、会话、项目或仓库加载交付内容，不创建替代身份。 */
 export type GitDeliveryWindowScope =
   | { kind: 'task'; task: TaskRecord; projectName?: string }
+  | { kind: 'project'; project: ProjectRecord }
   | { kind: 'conversation'; project: ProjectRecord; conversation: NativeConversationChoice }
   | { kind: 'repository'; project: ProjectRecord; repositoryId: string; pathPrefix?: string };
 
@@ -69,11 +70,11 @@ export function TaskGitDeliveryWindow(props: { client: DashboardClient; scope: G
             }}
             onClose={() => void window.zeus?.closeTaskGitDeliveryWindow?.()}
           />
-        ) : props.scope.kind === 'repository' ? (
+        ) : props.scope.kind === 'repository' || props.scope.kind === 'project' ? (
           <RepositoryGitDeliveryContent
             client={scopedClient}
             project={props.scope.project}
-            repositoryId={props.scope.repositoryId}
+            repositoryId={props.scope.kind === 'repository' ? props.scope.repositoryId : undefined}
             pathPrefix={pathPrefix}
             onClearPathPrefix={() => setPathPrefix(undefined)}
             language={surfaceSettings.language}

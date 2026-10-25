@@ -374,15 +374,15 @@ async function renderMenuBarUsageCostDetail(): Promise<void> {
 async function renderTaskGitDeliveryWithClient(client: DashboardClient, parameters: URLSearchParams): Promise<void> {
   /** URL 只携带真实业务身份，记录和工作目录由已有接口重新读取。 */
   const taskId = parameters.get('taskId')?.trim();
-  /** 普通会话必须同时指定归属项目与会话。 */
+  /** 项目范围由已登记项目身份决定，普通会话另带会话身份。 */
   const projectId = parameters.get('projectId')?.trim();
   /** 会话身份不能与任务或仓库范围混用。 */
   const conversationId = parameters.get('conversationId')?.trim();
-  /** 项目提交使用真实仓库身份，不能借用任意会话。 */
+  /** 单仓入口使用真实仓库身份，项目全量入口不指定仓库。 */
   const repositoryId = parameters.get('repositoryId')?.trim();
   /** 子树筛选来自原生窗口校验后的相对路径。 */
   const pathPrefix = parameters.get('pathPrefix') ?? undefined;
-  if (taskId ? projectId || conversationId || repositoryId || pathPrefix : !projectId || Boolean(conversationId) === Boolean(repositoryId) || (pathPrefix && !repositoryId)) throw new Error('代码交付窗口范围无效。');
+  if (taskId ? projectId || conversationId || repositoryId || pathPrefix : !projectId || (conversationId && repositoryId) || (pathPrefix && !repositoryId)) throw new Error('代码交付窗口范围无效。');
   /** 元数据与设置并行读取，完整交付页只创建一次。 */
   const [{ TaskGitDeliveryWindow }, task, conversation, snapshot, appShellSettings, currentContext] = await Promise.all([
     import('./task/TaskGitDeliveryWindow.js'),
@@ -404,7 +404,9 @@ async function renderTaskGitDeliveryWithClient(client: DashboardClient, paramete
     ? { kind: 'task', task, projectName: project?.name }
     : repositoryId
       ? { kind: 'repository', project: project!, repositoryId, pathPrefix }
-      : { kind: 'conversation', project: project!, conversation: conversation! };
+      : conversation
+        ? { kind: 'conversation', project: project!, conversation }
+        : { kind: 'project', project: project! };
   document.body.dataset.surface = 'task-git-delivery';
   document.title = `${appShellSettings.appLanguage === 'zh-CN' ? '代码交付' : 'Code Delivery'} · ${task ? (task.taskCode ?? task.id) : (conversation?.title ?? project!.name)}`;
   startupLanguage = appShellSettings.appLanguage;
