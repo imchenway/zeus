@@ -32,8 +32,8 @@ interface TaskPushContextProjection {
 export interface ExistingProviderCapabilityReadPort {
   /** 只观察既有 transport；GET 路径禁止 ensureReady/activateFreshGeneration。 */
   getState(): CodexTransportState;
-  /** 仅 transport 已 ready 时允许读取既有账户快照，不得刷新 token。 */
-  readAccount(): Promise<CodexAccountSnapshot>;
+  /** 只读取同代本地账户快照，不发送账户 RPC 或刷新 token。 */
+  readAccount(input: { cachedOnly: true }): Promise<CodexAccountSnapshot>;
 }
 
 export interface TaskPushGitReadPort {
@@ -269,12 +269,13 @@ export class ConversationCapabilityQueryApplication {
     };
   }
 
+  /** 目录查询不访问供应商网络，账户快照缺失不阻断本地模型连接。 */
   private async readExisting(project: ZeusProjectRecord, options: { readProviderAccount?: boolean } = {}): Promise<ConversationCapabilitiesSnapshot> {
     const transport = this.ports.provider.getState();
     const codexCapabilities = this.ports.codexNativeEnabled() && transport.type === 'ready' ? transport.capabilities : null;
-    /** 账号通道和自定义模型钥匙串互不依赖，同时读取可避免新的后端瀑布。 */
+    /** 账户信息只补充展示；无缓存或世代切换时保留未知状态，不影响其他供应商。 */
     const [codexAccount, connectionCatalog] = await Promise.all([
-      codexCapabilities && options.readProviderAccount !== false ? this.ports.provider.readAccount() : Promise.resolve(this.unavailableCodexAccount()),
+      codexCapabilities && options.readProviderAccount !== false ? this.ports.provider.readAccount({ cachedOnly: true }).catch(() => this.unavailableCodexAccount()) : Promise.resolve(this.unavailableCodexAccount()),
       this.ports.modelCatalog.listSelectableModels(),
     ]);
     try {

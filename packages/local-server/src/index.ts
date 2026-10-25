@@ -3062,8 +3062,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     codexNativeCoordinator,
     codexNativeEnabled,
     conversationCapabilityQueries: {
-      unavailableCodexAccount: (...args: Parameters<ConversationCapabilityQueryApplication['unavailableCodexAccount']>) => conversationCapabilityQueries.unavailableCodexAccount(...args),
-      buildConversationCapabilities: (...args: Parameters<ConversationCapabilityQueryApplication['buildConversationCapabilities']>) => conversationCapabilityQueries.buildConversationCapabilities(...args),
+      /** 运行预检与界面共用本地能力目录；仅选中 Codex 时才由运行预检准备该服务。 */
+      readConversation: (...args: Parameters<ConversationCapabilityQueryApplication['readConversation']>) => conversationCapabilityQueries.readConversation(...args),
     },
     conversations,
     createNonCodexTaskRuntimeInvocation: (...args: Parameters<ReturnType<typeof createLocalServerSupportOperations>['createNonCodexTaskRuntimeInvocation']>) => supportOperations.createNonCodexTaskRuntimeInvocation(...args),

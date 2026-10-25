@@ -15,7 +15,7 @@ import { mergeEmployeeWorkSettings, type EmployeeWorkSettings } from '@zeus/shar
 import { TaskWorkPlanningRepository } from '@zeus/storage';
 import { asyncMessageQuestions, formatAsyncQuestionAnswer, validateCanonicalRequestUserInputAnswers, type AsyncQuestionAnswer } from '@zeus/shared';
 import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
-import { type AiRuntimeSession, createAiRuntimeSessionManager, modelConnectionCredentialSlotId, modelRef, parseModelRef, piRuntimeWorkerProtocolVersion, runWithCodexRpcRetryContext } from '@zeus/ai-runtime';
+import { type AiRuntimeSession, createAiRuntimeSessionManager, modelConnectionCredentialSlotId, modelRef, piRuntimeWorkerProtocolVersion, runWithCodexRpcRetryContext } from '@zeus/ai-runtime';
 import { getGitBranchHead, getGitRepositoryContext, readTaskIntegrationConflictPaths, type ProjectGitAction } from '@zeus/git-core';
 import {
   parseCanonicalRequestUserInputQuestions,
@@ -125,8 +125,10 @@ export type ConversationApplicationOperationDependencies = Record<string, any> &
   projectRepositories: ProjectRepositoryRegistrationRepository;
   projectSharedPaths: ProjectSharedPathRepository;
   projects: ProjectRepository;
-  resolveConversationCapabilities(project: ZeusProjectRecord, options?: { refreshCodexAccount?: boolean; allowPiWhenCodexUnavailable?: boolean }): ReturnType<ConversationCapabilityQueryApplication['buildConversationCapabilities']>;
-  resolveTaskPushExecutionCapabilities(project: ZeusProjectRecord): Promise<ConversationCapabilitiesSnapshot>;
+  /** 根据本次实际模型准备对应服务，不触发其他供应商的初始化。 */
+  resolveConversationCapabilities(project: ZeusProjectRecord, selectedModelRef?: string | null): ReturnType<ConversationCapabilityQueryApplication['buildConversationCapabilities']>;
+  /** 任务推送使用已冻结的模型身份复验能力。 */
+  resolveTaskPushExecutionCapabilities(project: ZeusProjectRecord, selectedModelRef: string): Promise<ConversationCapabilitiesSnapshot>;
   resolveModelCapability<T extends { id: string; model: string }>(models: readonly T[], identity: string | null | undefined): T | null;
   normalizeTaskPushAttachments(task: ZeusTaskRecord, projectLocalPath: string): { attachments: NativeConversationAttachment[]; allowedRoots: string[]; promptAttachments: TaskPushPromptAttachment[] };
   normalizeTaskPushSupplementalAttachments(value: unknown, projectLocalPath: string): { attachments: NativeConversationAttachment[]; allowedRoots: string[]; promptAttachments: TaskPushSupplementalAttachment[] };
@@ -473,9 +475,14 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const taskAttachments = input.task ? normalizeTaskPushAttachments(input.task, input.project.localPath) : null;
     const attachments = [...(taskAttachments?.attachments ?? []), ...normalizeNativeConversationAttachments(input.body.attachments, input.project.localPath)];
     const taskPrompt = input.task ? renderTaskPushLayoutText(buildTaskPushLayoutForTask(input.task, content, taskAttachments?.promptAttachments ?? [], [], [], [], [])) : content;
-    const capabilities = await resolveConversationCapabilities(input.project);
-    const requestedModel = typeof input.body.model === 'string' && input.body.model.trim() ? input.body.model.trim() : (input.conversation?.modelId ?? input.conversation?.providerModel ?? capabilities.preferredModel);
-    const selectedModel = resolveModelCapability(capabilities.models, requestedModel) ?? capabilities.models[0];
+    /** 继续讨论使用原模型的完整来源身份，避免同名模型触发其他供应商。 */
+    const inheritedModel =
+      input.conversation?.modelId && input.conversation.modelSourceId && input.conversation.modelSourceId !== 'codex'
+        ? modelRef(input.conversation.modelSourceId, input.conversation.modelId)
+        : (input.conversation?.modelId ?? input.conversation?.providerModel);
+    const requestedModel = typeof input.body.model === 'string' && input.body.model.trim() ? input.body.model.trim() : inheritedModel;
+    const capabilities = await resolveConversationCapabilities(input.project, requestedModel);
+    const selectedModel = resolveModelCapability(capabilities.models, requestedModel ?? capabilities.preferredModel) ?? capabilities.models[0];
     if (!selectedModel || selectedModel.available === false) throw nativeApiError('ZEUS_MODEL_NOT_READY', selectedModel?.availabilityReason || '所选模型当前不可运行。');
     const requestedEffort = typeof input.body.effort === 'string' && input.body.effort.trim() ? input.body.effort.trim() : null;
     // 陈旧档位按默认档归一，不报错：档位的合法性由模型自己的清单决定，界面只会给出清单里的值。
@@ -842,7 +849,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       }
       const project = projects.getById(parent.projectId)!;
       const model = typeof input.args.model === 'string' ? input.args.model : modelRef(snapshot.connectionId ?? 'codex', snapshot.modelId);
-      const capabilities = await resolveConversationCapabilities(project);
+      const capabilities = await resolveConversationCapabilities(project, model);
       const selected = resolveModelCapability(capabilities.models, model);
       if (!selected || selected.available === false) throw new Error('指定的子模型不可用。');
       const ancestor = conversationRuntime.getSubagent(parent.id);
@@ -1510,7 +1517,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     if (original.pausedReason === 'outcome_unknown' || original.submissionOutcome === 'outcome_unknown') throw nativeApiError('ZEUS_NATIVE_SUBMISSION_OUTCOME_UNKNOWN', '接纳结果未知的提交禁止改路由，必须先完成恢复核对或取消。');
     const requestedModel = typeof input.settings.model === 'string' ? input.settings.model.trim() : '';
     if (!requestedModel) throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', '改路由必须指定输入框当前模型。');
-    const capabilities = await resolveConversationCapabilities(project);
+    const capabilities = await resolveConversationCapabilities(project, requestedModel);
     const selectedModel = resolveModelCapability(capabilities.models, requestedModel);
     if (!selectedModel || selectedModel.available === false) throw nativeApiError('ZEUS_MODEL_NOT_READY', selectedModel?.availabilityReason || '所选模型当前不可运行。');
     /** 暂停队首改模型时仍保留原提交容量，隔离随后设置的下一轮偏好。 */
@@ -1800,8 +1807,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
     let selectedServiceTier: string | null | undefined;
     let selectedContextWindow: number | null = null;
     if (requestedModel || requestedEffort || requestedServiceTier.present) {
-      const capabilities = await resolveConversationCapabilities(project);
-      const model = requestedModel ?? conversation.providerModel ?? capabilities.preferredModel;
+      /** 只修改推理档位时仍绑定原供应商，不能按同名模型重新猜测连接。 */
+      const inheritedModel = conversation.modelId && conversation.modelSourceId && conversation.modelSourceId !== 'codex' ? modelRef(conversation.modelSourceId, conversation.modelId) : (conversation.modelId ?? conversation.providerModel);
+      const capabilities = await resolveConversationCapabilities(project, requestedModel ?? inheritedModel);
+      const model = requestedModel ?? inheritedModel ?? capabilities.preferredModel;
       const capability = resolveModelCapability(capabilities.models, model);
       if (!capability) throw nativeApiError('ZEUS_INVALID_CONVERSATION_SETTINGS', 'Selected Codex model is not available in the current app-server generation.');
       if (capability.available === false) throw nativeApiError('ZEUS_MODEL_NOT_READY', capability.availabilityReason || '所选模型当前不可运行。');
@@ -2554,9 +2563,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
     const providerContent = skills.length > 1 ? `${skills.map((skill) => `$${skill.name}`).join(' ')}\n\n${content}` : content;
     if (body.computerUseRequested !== undefined && typeof body.computerUseRequested !== 'boolean') throw nativeApiError('ZEUS_COMPUTER_USE_REQUEST_INVALID', 'computerUseRequested 必须是布尔值。');
     const explicitModel = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : null;
-    const capabilities = await resolveConversationCapabilities(project, {
-      allowPiWhenCodexUnavailable: body.agentKind === 'pi' || Boolean(explicitModel && parseModelRef(explicitModel)?.sourceId !== 'codex'),
-    });
+    const capabilities = await resolveConversationCapabilities(project, explicitModel);
     const requestedModel = explicitModel ?? capabilities.preferredModel;
     if (reviewWorkspace && (!explicitModel || !resolveModelCapability(capabilities.models, explicitModel))) throw nativeApiError('ZEUS_MODEL_UNAVAILABLE', '所选审查模型已不可用，请重新选择。');
     const selectedModel = resolveModelCapability(capabilities.models, requestedModel) ?? capabilities.models[0]!;
@@ -2760,8 +2767,10 @@ export function createConversationApplicationOperations(dependencies: Conversati
   async function validateNewConversationCapacity(project: ZeusProjectRecord, body: unknown, budget: number | null): Promise<void> {
     assertContextCapacity(budget);
     if (budget === null) return;
-    const capabilities = await resolveConversationCapabilities(project);
-    const requested = isNativeApiRecord(body) && typeof body.model === 'string' ? body.model : capabilities.preferredModel;
+    /** 容量复验沿用本次明确选择，不能先准备全局默认模型。 */
+    const explicitModel = isNativeApiRecord(body) && typeof body.model === 'string' ? body.model : null;
+    const capabilities = await resolveConversationCapabilities(project, explicitModel);
+    const requested = explicitModel ?? capabilities.preferredModel;
     const model = requested ? resolveModelCapability(capabilities.models, requested) : capabilities.models[0];
     if (!model?.contextCapacity?.choices.includes(budget)) throw nativeApiError('ZEUS_CONTEXT_CAPACITY_UNSUPPORTED', contextCapacityUnavailableReason(model?.contextCapacity));
   }
@@ -3313,7 +3322,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         if (!permissionMode) throw nativeApiError('ZEUS_INVALID_PERMISSION_MODE', 'permissionMode must be read-only, auto, auto-review, or full-access.');
         // 提交阶段只需要复验模型、账户和附件能力；仓库发现与远端刷新由
         // resolveTaskPushEnvironment 在冻结工作区引用时统一完成，不能在这里重复执行。
-        const capabilities = await resolveTaskPushExecutionCapabilities(project);
+        const capabilities = await resolveTaskPushExecutionCapabilities(project, modelName);
         const selectedModel = resolveModelCapability(capabilities.models, modelName);
         if (!selectedModel) throw nativeApiError('ZEUS_CODEX_MODEL_UNAVAILABLE', `Configured Codex model is unavailable: ${modelName}`);
         if (selectedModel.available === false) throw nativeApiError('ZEUS_MODEL_NOT_READY', selectedModel.availabilityReason || '所选模型当前不可运行。');
@@ -3449,7 +3458,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
           throw nativeApiError('ZEUS_CODE_REVIEW_PERMISSION_MISMATCH', 'Code review permission is fixed to read-only.');
         }
 
-        const capabilities = await resolveConversationCapabilities(project);
+        const capabilities = await resolveConversationCapabilities(project, modelName);
         const selectedModel = resolveModelCapability(capabilities.models, modelName);
         if (!selectedModel) throw nativeApiError('ZEUS_MODEL_UNAVAILABLE', `Configured review model is unavailable: ${modelName}`);
         if (selectedModel.available === false) throw nativeApiError('ZEUS_MODEL_NOT_READY', selectedModel.availabilityReason || '所选模型当前不可运行。');
@@ -3721,9 +3730,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         if (body.computerUseRequested !== undefined && typeof body.computerUseRequested !== 'boolean') throw nativeApiError('ZEUS_COMPUTER_USE_REQUEST_INVALID', 'computerUseRequested 必须是布尔值。');
         const pluginReferences = await resolveNewConversationPluginReferences(project.id, content, body.pluginReferences);
         const explicitModel = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : null;
-        const capabilities = await resolveConversationCapabilities(project, {
-          allowPiWhenCodexUnavailable: body.agentKind === 'pi' || Boolean(explicitModel && parseModelRef(explicitModel)?.sourceId !== 'codex'),
-        });
+        const capabilities = await resolveConversationCapabilities(project, explicitModel);
         const selectedModel = resolveModelCapability(capabilities.models, explicitModel ?? capabilities.preferredModel) ?? capabilities.models[0]!;
         if (selectedModel.available === false) throw nativeApiError('ZEUS_MODEL_NOT_READY', selectedModel.availabilityReason || '所选模型当前不可运行。');
         const selectedAgentKind = selectedModel.agentKind === 'pi' ? 'pi' : 'codex';

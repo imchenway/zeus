@@ -957,9 +957,18 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     let warning = '';
     try {
       if (!codexNativeEnabled) throw new Error('Codex 尚未启用。');
-      const capabilities = await codexAppServerManager.ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) });
-      const account = await codexAppServerManager.readAccount();
-      if (!account.signedIn && account.requiresOpenaiAuth) throw new Error('请先在 Zeus 中登录 Codex，再刷新模型列表。');
+      /** 展示目录只读现有世代；明确使用 Codex 生成内容时才准备该服务。 */
+      const transport = codexAppServerManager.getState();
+      /** 其他供应商的目录不能等待 Codex 网络恢复。 */
+      const capabilities = selectedModelRef
+        ? await codexAppServerManager.ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) })
+        : transport.type === 'ready'
+          ? transport.capabilities
+          : null;
+      if (!capabilities) throw new Error('Codex 尚未就绪，其他供应商的模型仍可选择。');
+      /** 缺少账户缓存不等于未登录，实际生成仍由 Codex 执行认证。 */
+      const account = await codexAppServerManager.readAccount({ cachedOnly: true }).catch(() => null);
+      if (account?.requiresOpenaiAuth && !account.signedIn) throw new Error('请先在 Zeus 中登录 Codex，再刷新模型列表。');
       items.push(
         ...capabilities.models
           .filter((model: CodexModelCapability) => model.raw.hidden !== true)
@@ -1433,7 +1442,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     submissions: conversationSubmissions,
     provider: {
       getState: () => codexAppServerManager.getState(),
-      readAccount: () => codexAppServerManager.readAccount(),
+      readAccount: (input) => codexAppServerManager.readAccount(input),
     },
     modelCatalog: {
       hasConfiguredProvider: () => modelConnections.listMetadata().length > 0,

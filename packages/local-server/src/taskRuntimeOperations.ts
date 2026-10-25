@@ -1,4 +1,4 @@
-import { type AiRuntimeLogEntry, type AiRuntimeSession, isNonCodexAiCliAdapterId } from '@zeus/ai-runtime';
+import { type AiRuntimeLogEntry, type AiRuntimeSession, isNonCodexAiCliAdapterId, parseModelRef } from '@zeus/ai-runtime';
 import {
   buildTaskPushLayout,
   isTaskAttachmentField,
@@ -25,6 +25,7 @@ import type { NativeConversationAttachment } from './index.js';
 import { sanitizeRuntimeFileName } from './runtimeLogRetention.js';
 import { compactUtf8Tail, toAiRuntimeLogEntry, toAiRuntimeSession } from './runtimeQueryApplication.js';
 import { hasTaskImageSignature, historicalTaskAttachmentField, resolveCurrentManagedTaskAttachmentPath } from './taskAttachmentLifecycle.js';
+import type { ConversationCapabilitiesSnapshot } from './conversationCapabilityQueryApplication.js';
 
 export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, type ReadOnlyValidationApplicationIdentity } from './readOnlyValidation.js';
 // 拆分期间保留结构化工厂依赖，后续按领域端口继续收窄。
@@ -117,34 +118,23 @@ export function createTaskRuntimeOperations(dependencies: TaskRuntimeOperationDe
     return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.trunc(value) : null;
   }
 
-  async function resolveConversationCapabilities(
-    project: ZeusProjectRecord,
-    options: {
-      refreshCodexAccount?: boolean;
-      allowPiWhenCodexUnavailable?: boolean;
-    } = {},
-  ) {
-    try {
-      const codexCapabilities = codexNativeEnabled ? await codexAppServerManager.ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) }) : null;
-      let codexAccount: Parameters<typeof conversationCapabilityQueries.buildConversationCapabilities>[2] = conversationCapabilityQueries.unavailableCodexAccount();
-      if (codexCapabilities) {
-        if (options.refreshCodexAccount === true) {
-          codexAccount = await codexAppServerManager.readAccount({ refreshToken: true });
-        } else {
-          try {
-            codexAccount = await codexAppServerManager.readAccount({ cachedOnly: true });
-          } catch (error) {
-            if (!error || typeof error !== 'object' || Reflect.get(error, 'code') !== 'ZEUS_CODEX_ACCOUNT_SNAPSHOT_UNAVAILABLE') throw error;
-          }
-        }
-      }
-      return conversationCapabilityQueries.buildConversationCapabilities(project, codexCapabilities, codexAccount);
-    } catch (error) {
-      if (!options.allowPiWhenCodexUnavailable) throw error;
-      const capabilities = await conversationCapabilityQueries.buildConversationCapabilities(project, null, conversationCapabilityQueries.unavailableCodexAccount());
-      if (!capabilities.models.some((model: { agentKind: string; available: boolean }) => model.agentKind === 'pi' && model.available !== false)) throw error;
-      return capabilities;
-    }
+  /** 先按实际目标确定执行服务，API 模型不启动或等待无关的 Codex。 */
+  async function resolveConversationCapabilities(project: ZeusProjectRecord, selectedModelRef?: string | null): Promise<ConversationCapabilitiesSnapshot> {
+    /** 本地目录包含已配置连接和既有 Codex 世代，不发送供应商请求。 */
+    const capabilities: ConversationCapabilitiesSnapshot = await conversationCapabilityQueries.readConversation(project.id, { readProviderAccount: false });
+    /** 显式选择优先，省略时使用同一目录返回的全局默认模型。 */
+    const identity = selectedModelRef?.trim() || capabilities.preferredModel;
+    /** 使用完整来源身份匹配；裸模型名只能唯一命中。 */
+    const selected = resolveModelCapability(capabilities.models, identity);
+    if (selected?.agentKind === 'pi') return capabilities;
+    /** 已删除的 API 模型不能改用 Codex 或其他供应商。 */
+    const reference = identity ? parseModelRef(identity) : null;
+    if (reference && reference.sourceId !== 'codex') throw nativeApiError('ZEUS_MODEL_UNAVAILABLE', '所选模型连接已不可用，请重新选择模型。');
+    if (codexNativeEnabled) await codexAppServerManager.ensureReady({ commandPath: currentCodexRuntimeCommandPath(), ...(codexExternalAgentHome ? { externalAgentHome: codexExternalAgentHome } : {}) });
+    /** 冷启动后读取同代目录；无模型继续返回明确错误，不让调用方解引用空选择。 */
+    const resolved: ConversationCapabilitiesSnapshot = codexNativeEnabled ? await conversationCapabilityQueries.readConversation(project.id) : capabilities;
+    if (resolved.models.length === 0) throw nativeApiError('ZEUS_MODEL_UNAVAILABLE', '当前项目没有可用的 Codex 或 Pi 模型。');
+    return resolved;
   }
 
   /** Codex 订阅模型的账号门禁；模型连接改由 Zeus 内核执行后不再需要在这里放行。 */

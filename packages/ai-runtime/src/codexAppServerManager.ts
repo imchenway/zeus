@@ -1503,16 +1503,18 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
         invalidateAccountState();
       }
     },
+    /** 按调用范围读取本地账户快照或请求当前账户，纯缓存读取不等待进程。 */
     async readAccount(input = {}) {
+      // 目录展示只观察同代缓存，不能在世代切换时等待握手或访问远端。
+      if (input.cachedOnly === true) {
+        if (state.type === 'ready' && lastAccountSnapshot?.value.generationId === state.generationId) return lastAccountSnapshot.value;
+        throw managerError('ZEUS_CODEX_ACCOUNT_SNAPSHOT_UNAVAILABLE', '当前 app-server 世代还没有可复用的账号快照。');
+      }
       const capabilities = await awaitCapabilities();
       /** 读取回执必须仍属于同一登录状态。 */
       const accountRevision = modelAccountRevision;
       const refreshToken = input.refreshToken === true;
       const cached = lastAccountSnapshot?.value.generationId === capabilities.generationId ? lastAccountSnapshot : null;
-      if (input.cachedOnly === true) {
-        if (cached) return cached.value;
-        throw managerError('ZEUS_CODEX_ACCOUNT_SNAPSHOT_UNAVAILABLE', '当前 app-server 世代还没有可复用的账号快照。');
-      }
       const preferCached = input.preferCached ?? !refreshToken;
       if (preferCached && cached && Date.now() - cached.cachedAt < ACCOUNT_SNAPSHOT_TTL_MS) return cached.value;
       const flightKey = `${capabilities.generationId}:${refreshToken ? 'refresh' : 'local'}`;
