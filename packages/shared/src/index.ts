@@ -18,6 +18,8 @@ export * from './executionHostStopCommand.js';
 export * from './readOnlyValidation.js';
 export * from './terminalOutput.js';
 export * from './conversationDispatchWire.js';
+/** 桌面端与服务端共用会话导航排序。 */
+export * from './conversationOrdering.js';
 export * from './conversationSnapshotV2Wire.js';
 export * from './conversationTranscriptWire.js';
 export * from './conversationSystemMessage.js';
