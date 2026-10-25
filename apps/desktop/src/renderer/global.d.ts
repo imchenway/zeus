@@ -133,6 +133,7 @@ declare global {
       openTaskGitDeliveryWindow: (
         input:
           | { taskId: string; workspaceId?: string | null; projectId?: never; conversationId?: never; repositoryId?: never; pathPrefix?: never }
+          | { taskId?: never; workspaceId?: never; projectId: string; conversationId?: never; repositoryId?: never; pathPrefix?: never }
           | { taskId?: never; workspaceId?: never; projectId: string; conversationId: string; repositoryId?: never; pathPrefix?: never }
           | { taskId?: never; workspaceId?: never; projectId: string; conversationId?: never; repositoryId: string; pathPrefix?: string },
       ) => Promise<{ opened: true; reused: boolean; taskId?: string; projectId?: string; conversationId?: string }>;

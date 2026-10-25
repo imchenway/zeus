@@ -35,6 +35,7 @@ import { ModalPortal } from '../ui/ModalPortal.js';
 import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { TaskGitConflictWorkspace } from './TaskGitConflictWorkspace.js';
 import { loadGitCommitModelOptions } from '../git/gitCommitModels.js';
+import { deliveryWorkspacesForConversationBranch } from './taskGitWorkspaceScope.js';
 import { type ConflictDocument, countUnresolvedConflictBlocks, createConflictDocument, serializeConflictForGit } from './taskConflictModel.js';
 
 type DeliveryClient = GitDeliveryClient &
@@ -1354,14 +1355,6 @@ async function loadWorkspaceDetailCollection(client: DeliveryClient, taskId: str
     else states[workspaceId] = 'error';
   });
   return { details, states };
-}
-
-/** 会话入口返回当前 workspace 所在分支的全部仓库；无会话上下文时保持任务全量视图。 */
-function deliveryWorkspacesForConversationBranch(workspaces: TaskWorkspaceIndexSnapshot[], currentConversationWorkspaceId: string | null | undefined): TaskWorkspaceIndexSnapshot[] {
-  if (!currentConversationWorkspaceId) return workspaces;
-  /** 当前分支只能由确切 workspace 身份解析，身份失效时不扩大到其他历史分支。 */
-  const currentBranch = workspaces.find((workspace) => workspace.id === currentConversationWorkspaceId)?.branchName;
-  return currentBranch ? workspaces.filter((workspace) => workspace.branchName === currentBranch) : [];
 }
 
 /** 默认聚焦当前可见分支首个有未提交文件的仓库，由既有文件 effect 选择其第一个文件。 */

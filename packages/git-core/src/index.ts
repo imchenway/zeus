@@ -1041,6 +1041,21 @@ export async function getTaskWorkspaceReview(cwd: string, ignoredPaths: string[]
   const stagedFiles = fileStatuses.filter((file) => file.indexStatus !== ' ' && file.indexStatus !== '?');
   const unstagedFiles = fileStatuses.filter((file) => file.workingTreeStatus !== ' ' && file.workingTreeStatus !== '?');
   const untrackedFiles = fileStatuses.filter((file) => file.indexStatus === '?' && file.workingTreeStatus === '?');
+  /** 新文件与空文件比较行数，最多并发 4 次、单文件限时 15 秒；目录占位不递归扫描。 */
+  const untrackedStats = await mapWithConcurrency(
+    untrackedFiles.filter((file) => !file.path.endsWith('/')),
+    4,
+    async (file) => {
+      try {
+        return (await execFileAsync('git', ['diff', '--no-index', '--numstat', '-z', '--', '/dev/null', requireSafeWorkspacePath(file.path)], { cwd, timeout: 15_000 })).stdout;
+      } catch (error) {
+        /** Git 比较发现变化时退出码为 1；其他错误必须保留，不能当作零行。 */
+        const result = error as { code?: unknown; stdout?: unknown };
+        if (result.code === 1 && typeof result.stdout === 'string') return result.stdout;
+        throw error;
+      }
+    },
+  );
   return {
     cwd: resolve(cwd),
     branch: context.branch,
@@ -1054,7 +1069,7 @@ export async function getTaskWorkspaceReview(cwd: string, ignoredPaths: string[]
     unstagedFiles,
     untrackedFiles,
     stagedDiff: gitDiffStatSummary(stagedStat, stagedFiles),
-    unstagedDiff: gitDiffStatSummary(unstagedStat, unstagedFiles),
+    unstagedDiff: gitDiffStatSummary([unstagedStat, ...untrackedStats].join(''), [...unstagedFiles, ...untrackedFiles.map((file) => ({ ...file, category: 'added' as const }))]),
   };
 }
 
