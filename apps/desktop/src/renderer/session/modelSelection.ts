@@ -1,9 +1,9 @@
 import type { CodexConversationCapabilities } from './sessionTypes.js';
 
-/** 会话和任务推送共用接入判断；未登录或未就绪的 Codex 目录不能当作可用模型。 */
+/** 会话和任务推送共用接入判断；已知未登录的 Codex 不算可用，账户未知交由实际请求认证。 */
 export function hasAvailableConversationModel(capabilities: CodexConversationCapabilities): boolean {
-  /** 占位账号不代表免登录；自定义供应商独立判断可用性。 */
-  const codexReady = capabilities.codexAccount.generationId !== 'codex-unavailable' && (!capabilities.codexAccount.requiresOpenaiAuth || capabilities.codexAccount.signedIn);
+  /** 模型目录已限定就绪世代；缺少账户缓存不等于未登录，自定义供应商独立判断。 */
+  const codexReady = !capabilities.codexAccount.requiresOpenaiAuth || capabilities.codexAccount.signedIn;
   return capabilities.models.some((model) => model.available !== false && (model.agentKind === 'pi' || model.sourceId !== 'codex' || codexReady));
 }
 

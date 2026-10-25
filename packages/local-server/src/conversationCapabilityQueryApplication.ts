@@ -32,8 +32,8 @@ interface TaskPushContextProjection {
 export interface ExistingProviderCapabilityReadPort {
   /** 只观察既有 transport；GET 路径禁止 ensureReady/activateFreshGeneration。 */
   getState(): CodexTransportState;
-  /** 仅 transport 已 ready 时允许读取既有账户快照，不得刷新 token。 */
-  readAccount(): Promise<CodexAccountSnapshot>;
+  /** 只读取同代本地账户快照，不发送账户 RPC 或刷新 token。 */
+  readAccount(input: { cachedOnly: true }): Promise<CodexAccountSnapshot>;
 }
 
 export interface TaskPushGitReadPort {
@@ -269,19 +269,26 @@ export class ConversationCapabilityQueryApplication {
     };
   }
 
-  /** 聚合既有模型目录，单一供应商账号故障不能阻断其他来源。 */
+  /** 目录查询只读本地账户缓存，单一供应商账号故障不能阻断其他来源。 */
   private async readExisting(project: ZeusProjectRecord, options: { readProviderAccount?: boolean } = {}): Promise<ConversationCapabilitiesSnapshot> {
     const transport = this.ports.provider.getState();
     const codexCapabilities = this.ports.codexNativeEnabled() && transport.type === 'ready' ? transport.capabilities : null;
-    /** 账号通道和自定义模型钥匙串互不依赖，同时读取可避免新的后端瀑布。 */
+    /** 缓存缺失属于未知状态，只有其他读取异常才将 Codex 标记为不可用。 */
+    let codexAccountReadFailed = false;
+    /** 账户信息只补充展示；无缓存或世代切换时保留未知状态，不影响其他供应商。 */
     const [codexAccount, connectionCatalog] = await Promise.all([
-      codexCapabilities && options.readProviderAccount !== false ? this.ports.provider.readAccount().catch(() => this.unavailableCodexAccount()) : Promise.resolve(this.unavailableCodexAccount()),
+      codexCapabilities && options.readProviderAccount !== false
+        ? this.ports.provider.readAccount({ cachedOnly: true }).catch((error: unknown) => {
+            codexAccountReadFailed = !isRecord(error) || error.code !== 'ZEUS_CODEX_ACCOUNT_SNAPSHOT_UNAVAILABLE';
+            return this.unavailableCodexAccount();
+          })
+        : Promise.resolve(this.unavailableCodexAccount()),
       this.ports.modelCatalog.listSelectableModels(),
     ]);
     try {
       /** 账号故障只影响 Codex，独立供应商仍使用自己的目录与可用性证据。 */
       const snapshot = await this.buildConversationCapabilities(project, codexCapabilities, codexAccount, connectionCatalog);
-      if (codexCapabilities && options.readProviderAccount !== false && codexAccount.generationId === 'codex-unavailable') {
+      if (codexAccountReadFailed) {
         return {
           ...snapshot,
           models: snapshot.models.map((model) => (model.sourceId === 'codex' ? { ...model, available: false, availabilityReason: 'Codex 账号状态暂时无法读取，请重新读取或选择其他供应商模型。' } : model)),

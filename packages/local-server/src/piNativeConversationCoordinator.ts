@@ -2865,14 +2865,22 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     return conversation;
   }
 
+  /** 归档保留已确认未发送的暂停内容，执行中和送达未确认的消息仍需先处理。 */
   function assertConversationCanBeArchived(conversation: ZeusConversationWithMessagesRecord): void {
     const activeRun = [...runs.values()].find((run) => run.conversationId === conversation.id);
     const pendingApproval = [...pendingApprovals.values()].find((approval) => approval.conversationId === conversation.id);
     const pendingRequest = options.requests.listByConversation(conversation.id).find((request) => request.status === 'pending');
     const unfinishedTurn = options.turns.listByConversation(conversation.id).find((turn) => turn.status === 'dispatching' || turn.status === 'running' || turn.status === 'waiting');
+    /** 与 Codex 共用写出证据，不用缺少 Provider turn 单独判断消息是否发送。 */
     const pendingSubmission = options.submissions
       .listByConversation(conversation.id)
-      .find((submission) => submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active' || (submission.status === 'paused' && !submission.providerTurnId));
+      .find(
+        (submission) =>
+          submission.status === 'queued' ||
+          submission.status === 'dispatching' ||
+          submission.status === 'active' ||
+          (submission.status === 'paused' && !submission.providerTurnId && !hasUnwrittenSubmissionEvidence(options.commandDeliveries, submission)),
+      );
     if (activeRun || pendingApproval || pendingRequest || unfinishedTurn || pendingSubmission || conversation.providerState === 'binding' || conversation.providerState === 'active' || conversation.providerState === 'waiting') {
       throw Object.assign(piError('ZEUS_NATIVE_CONVERSATION_IN_PROGRESS', 'The conversation still has unfinished work and cannot be archived.'), {
         cause: {

@@ -2062,9 +2062,16 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     }
     const pendingRequest = options.requests.listByConversation(conversation.id).find((request) => request.status === 'pending');
     const unfinishedTurn = options.turns.listByConversation(conversation.id).find((turn) => turn.status === 'dispatching' || turn.status === 'running' || turn.status === 'waiting');
+    /** 明确未发送的暂停消息随会话保留，不阻止归档；待发送和送达未确认的消息仍需先处理。 */
     const pendingSubmission = options.submissions
       .listByConversation(conversation.id)
-      .find((submission) => submission.status === 'queued' || submission.status === 'dispatching' || submission.status === 'active' || (submission.status === 'paused' && !submission.providerTurnId));
+      .find(
+        (submission) =>
+          submission.status === 'queued' ||
+          submission.status === 'dispatching' ||
+          submission.status === 'active' ||
+          (submission.status === 'paused' && !submission.providerTurnId && !hasUnwrittenSubmissionEvidence(options.commandDeliveries, submission)),
+      );
     const state = runStates.get(conversation.id) ?? inferRunState(conversation);
     if (
       pendingRequest ||

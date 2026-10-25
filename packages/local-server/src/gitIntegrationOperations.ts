@@ -277,8 +277,8 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
    * 弹窗读取能力时已经需要完整 Git 快照；真正创建工作区时还会再次刷新远端并冻结来源提交。
    * 提交阶段只复验模型和运行能力，避免在工作区准备前再做一次完整仓库扫描。
    */
-  async function resolveTaskPushExecutionCapabilities(project: ZeusProjectRecord) {
-    return resolveConversationCapabilities(project);
+  async function resolveTaskPushExecutionCapabilities(project: ZeusProjectRecord, selectedModelRef: string) {
+    return resolveConversationCapabilities(project, selectedModelRef);
   }
 
   async function resolveTaskPushEnvironment(
