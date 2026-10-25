@@ -1,5 +1,5 @@
 import type { FilePreviewSourceWorkspace } from '@zeus/shared';
-import { cloneTaskManagementStatusConfig, defaultTaskManagementStatusConfig, matchesTaskDeadline, projectTerminalOutput, type TaskDeadlineFilter, temporaryWorkspaceId } from '@zeus/shared';
+import { compareConversationWorkStartedDesc, cloneTaskManagementStatusConfig, defaultTaskManagementStatusConfig, matchesTaskDeadline, projectTerminalOutput, type TaskDeadlineFilter, temporaryWorkspaceId } from '@zeus/shared';
 import type { DigitalTeamEntrySelection } from '../digital-teams/DigitalTeamWorkspace.js';
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GlobalAgentSettingsHandle } from '../../settings/GlobalAgentSettingsPane.js';
@@ -8,7 +8,6 @@ import { type ConversationTreeRuntimeState, conversationTreeRuntimeStateFromConv
 import { createNativeConversationStartEnvelopeManager, createProjectConversationStartEnvelopeManager, preloadCodexConversationCapabilities, type SessionWorkspaceTask } from '../../session/SessionWorkspace.js';
 import { conversationStartClientCommandTypes, forgetConversationStartCommandRequest } from '../conversations/conversationStartCommandClient.js';
 import type { CodexConversationCapabilities, CodexTaskPushCapabilities, NativeConversationChoice, NativeSessionState, SessionConversationOwner, StartTaskModelPushRequest } from '../../session/sessionTypes.js';
-import { compareConversationStageUpdatedDesc } from '../../session/conversationOrdering.js';
 import { buildPersistedSessionViewCache, initialSessionHotCache, refreshSessionHotState, rememberSessionHotState, type SessionHotCache } from '../../session/sessionHotCache.js';
 import { type TaskModelPushForm, type TaskModelPushModalStatus } from '../../task/TaskModelPushModal.js';
 import { projectTaskModelPushConversationChoices } from '../../task/TaskModelPushPendingWorkspace.js';
@@ -1065,7 +1064,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
       for (const choice of choices) choicesById.set(choice.navigationId ?? choice.id, choice);
     }
     if (focusedArchivedConversation) choicesById.set(focusedArchivedConversation.navigationId ?? focusedArchivedConversation.id, focusedArchivedConversation);
-    return [...choicesById.values()].sort(compareConversationStageUpdatedDesc);
+    return [...choicesById.values()].sort(compareConversationWorkStartedDesc);
   }, [focusedArchivedConversation, nativeConversationChoicesByProject, projectedTaskConversationChoices]);
   const selectedNativeConversation = useMemo(
     () => resolveSelectedNativeConversationForProject(nativeConversationChoices, selectedNativeConversationId, activeProjectId),
@@ -1167,7 +1166,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
         return {
           projectId: project.id,
           projectName: project.name,
-          conversations: [...(nativeConversationChoicesByProject[project.id]?.choices ?? [])].filter((conversation) => !conversation.archived).sort(compareConversationStageUpdatedDesc),
+          conversations: [...(nativeConversationChoicesByProject[project.id]?.choices ?? [])].filter((conversation) => !conversation.archived).sort(compareConversationWorkStartedDesc),
           taskStatuses: statusConfig.statuses.map((status) => ({
             id: status.id,
             label: formatConfiguredTaskManagementStatus(status, statusConfig, appShellSettings.appLanguage),
@@ -1180,7 +1179,7 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
               taskCode: task.taskCode?.trim() || task.id,
               taskTitle: task.title,
               managementStatus: resolveTaskManagementStatus(task),
-              conversations: conversationTreeHiddenTaskIds.has(task.id) ? [] : [...(projectedTaskConversationChoices[task.id] ?? [])].filter((conversation) => !conversation.archived).sort(compareConversationStageUpdatedDesc),
+              conversations: conversationTreeHiddenTaskIds.has(task.id) ? [] : [...(projectedTaskConversationChoices[task.id] ?? [])].filter((conversation) => !conversation.archived).sort(compareConversationWorkStartedDesc),
             })),
         };
       }),

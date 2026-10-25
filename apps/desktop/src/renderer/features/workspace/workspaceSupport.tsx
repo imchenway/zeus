@@ -1,5 +1,6 @@
 import {
   asyncMessageQuestions,
+  compareConversationWorkStartedDesc,
   defaultTaskBranchPrefix,
   defaultTaskManagementStatusConfig,
   extractThirdPartyTaskLink,
@@ -28,7 +29,6 @@ import type { PendingResourceCardItem } from '../../ui/PendingResourceCards.js';
 import { TaskAttachmentPreviewList } from '../../task/TaskAttachmentPreviewList.js';
 import { type NativeConversationStartStorage, type SessionWorkspaceTask } from '../../session/SessionWorkspace.js';
 import type { NativeConversationChoice, NativeConversationChoicesSnapshot, NativeProjectConversationChoicesSnapshot } from '../../session/sessionTypes.js';
-import { compareConversationStageUpdatedDesc } from '../../session/conversationOrdering.js';
 import type { SessionControllerClient } from '../../session/useSessionController.js';
 import { type TaskModelPushPendingState } from '../../task/TaskModelPushPendingWorkspace.js';
 import { type AppLanguage, languageCopy } from './workspaceCopy.js';
@@ -392,8 +392,8 @@ export function createNativeConversationChoiceLoadCoordinator(): NativeConversat
     const loadedIds = new Set(snapshot.choices.map((choice) => choice.id));
     /** 目录读取不能移除已确认创建但尚未被读取到的入口。 */
     const preserved = [...(acceptedByTask.get(taskId)?.values() ?? [])].filter((choice) => !loadedIds.has(choice.id));
-    /** 合并后的列表沿用阶段时间顺序。 */
-    const choices = [...preserved, ...snapshot.choices].sort(compareConversationStageUpdatedDesc);
+    /** 合并后的列表沿用用户发起时间顺序。 */
+    const choices = [...preserved, ...snapshot.choices].sort(compareConversationWorkStartedDesc);
     return {
       ...snapshot,
       hasHistory: choices.length > 0,
@@ -480,7 +480,7 @@ export function createNativeProjectConversationChoiceLoadCoordinator(): NativePr
       if (!isCurrent(projectId, requestVersion) || snapshot.projectId !== projectId) return null;
       const loadedIds = new Set(snapshot.choices.map((choice) => choice.id));
       const preserved = [...(acceptedByProject.get(projectId)?.values() ?? [])].filter((choice) => !loadedIds.has(choice.id));
-      const choices = [...preserved, ...snapshot.choices].filter((choice) => choice.projectId === projectId && choice.taskId === null).sort(compareConversationStageUpdatedDesc);
+      const choices = [...preserved, ...snapshot.choices].filter((choice) => choice.projectId === projectId && choice.taskId === null).sort(compareConversationWorkStartedDesc);
       return { projectId, choices, items: choices };
     },
   };
@@ -843,13 +843,11 @@ export function resolveConversationNavigationId(conversation: NativeConversation
 
 export function resolveTaskConversationToView(snapshot: NativeConversationChoicesSnapshot | undefined): NativeConversationChoice | null {
   if (!snapshot?.choices.length) return null;
-  return [...snapshot.choices].sort(compareConversationStageUpdatedDesc)[0] ?? null;
+  return [...snapshot.choices].sort(compareConversationWorkStartedDesc)[0] ?? null;
 }
 
 export function upsertTaskConversationChoiceSnapshot(taskId: string, snapshot: NativeConversationChoicesSnapshot | undefined, metadata: NativeConversationChoice): NativeConversationChoicesSnapshot {
-  const choices = metadata.archived
-    ? (snapshot?.choices ?? []).filter((choice) => choice.id !== metadata.id)
-    : [metadata, ...(snapshot?.choices ?? []).filter((choice) => choice.id !== metadata.id)].sort(compareConversationStageUpdatedDesc);
+  const choices = metadata.archived ? (snapshot?.choices ?? []).filter((choice) => choice.id !== metadata.id) : [metadata, ...(snapshot?.choices ?? []).filter((choice) => choice.id !== metadata.id)].sort(compareConversationWorkStartedDesc);
   return {
     taskId,
     projectId: metadata.projectId,
@@ -861,9 +859,7 @@ export function upsertTaskConversationChoiceSnapshot(taskId: string, snapshot: N
 }
 
 export function upsertProjectConversationChoiceSnapshot(snapshot: NativeProjectConversationChoicesSnapshot | undefined, metadata: NativeConversationChoice): NativeProjectConversationChoicesSnapshot {
-  const choices = metadata.archived
-    ? (snapshot?.choices ?? []).filter((choice) => choice.id !== metadata.id)
-    : [metadata, ...(snapshot?.choices ?? []).filter((choice) => choice.id !== metadata.id)].sort(compareConversationStageUpdatedDesc);
+  const choices = metadata.archived ? (snapshot?.choices ?? []).filter((choice) => choice.id !== metadata.id) : [metadata, ...(snapshot?.choices ?? []).filter((choice) => choice.id !== metadata.id)].sort(compareConversationWorkStartedDesc);
   return { projectId: metadata.projectId, choices, items: choices };
 }
 export const workModeValues = ['plan', 'develop', 'review', 'debug'] as const;

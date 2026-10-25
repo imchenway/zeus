@@ -5,7 +5,7 @@ import type { ProjectGitWorkbenchSnapshot } from '../git/gitContracts.js';
 import type { ProjectSourceWorkspaceHandle } from '../../code/ProjectSourceWorkspace.js';
 import { isMacOSPlatform, platformShortcutLabel } from '../../platform.js';
 import { toolPages } from '../../tooling/index.js';
-import { temporaryWorkspaceId, type CommandRun, type CommandRunNotification } from '@zeus/shared';
+import { compareConversationWorkStartedDesc, temporaryWorkspaceId, type CommandRun, type CommandRunNotification } from '@zeus/shared';
 import { MotionPresence } from '../../ui/MotionPresence.js';
 import { SettingsSaveStatus, useSettingsAutosave, type SettingsSaveState } from '../../settings/useSettingsAutosave.js';
 import { FileTextIcon } from '@phosphor-icons/react/dist/csr/FileText';
@@ -501,7 +501,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
     if (section === 'sessions') {
       const group = nativeConversationGroups.find((item) => item.projectId === project.id);
       const conversations = [...(group?.conversations ?? []), ...(group?.tasks.flatMap((task) => task.conversations) ?? [])];
-      const latest = conversations.filter((conversation) => conversation.projectId === project.id && !conversation.archived).sort((a, b) => Date.parse(b.activityAt ?? b.updatedAt) - Date.parse(a.activityAt ?? a.updatedAt))[0];
+      const latest = conversations.filter((conversation) => conversation.projectId === project.id && !conversation.archived).sort(compareConversationWorkStartedDesc)[0];
       if (latest) {
         void selectNativeConversation(latest);
         return;
