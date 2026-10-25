@@ -269,16 +269,25 @@ export class ConversationCapabilityQueryApplication {
     };
   }
 
+  /** 聚合既有模型目录，单一供应商账号故障不能阻断其他来源。 */
   private async readExisting(project: ZeusProjectRecord, options: { readProviderAccount?: boolean } = {}): Promise<ConversationCapabilitiesSnapshot> {
     const transport = this.ports.provider.getState();
     const codexCapabilities = this.ports.codexNativeEnabled() && transport.type === 'ready' ? transport.capabilities : null;
     /** 账号通道和自定义模型钥匙串互不依赖，同时读取可避免新的后端瀑布。 */
     const [codexAccount, connectionCatalog] = await Promise.all([
-      codexCapabilities && options.readProviderAccount !== false ? this.ports.provider.readAccount() : Promise.resolve(this.unavailableCodexAccount()),
+      codexCapabilities && options.readProviderAccount !== false ? this.ports.provider.readAccount().catch(() => this.unavailableCodexAccount()) : Promise.resolve(this.unavailableCodexAccount()),
       this.ports.modelCatalog.listSelectableModels(),
     ]);
     try {
-      return await this.buildConversationCapabilities(project, codexCapabilities, codexAccount, connectionCatalog);
+      /** 账号故障只影响 Codex，独立供应商仍使用自己的目录与可用性证据。 */
+      const snapshot = await this.buildConversationCapabilities(project, codexCapabilities, codexAccount, connectionCatalog);
+      if (codexCapabilities && options.readProviderAccount !== false && codexAccount.generationId === 'codex-unavailable') {
+        return {
+          ...snapshot,
+          models: snapshot.models.map((model) => (model.sourceId === 'codex' ? { ...model, available: false, availabilityReason: 'Codex 账号状态暂时无法读取，请重新读取或选择其他供应商模型。' } : model)),
+        };
+      }
+      return snapshot;
     } catch (error) {
       if (!isRecord(error) || error.code !== 'ZEUS_MODEL_UNAVAILABLE') throw error;
       return {
