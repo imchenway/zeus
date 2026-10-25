@@ -118,6 +118,7 @@ export function createCodexRuntimeGenerationManager(
   let closePromise: Promise<void> | null = null;
   let activationChain: Promise<unknown> = Promise.resolve();
   let activationSequence = 0;
+  /** 已请求的接管模式独立于启动成功状态，失败后仍约束后续线程的传输选择。 */
   let remoteControlEnabled = false;
   /** 维护窗口只阻止写操作，账号和状态读取仍可完成。 */
   let maintenanceActive = false;
@@ -424,8 +425,11 @@ export function createCodexRuntimeGenerationManager(
     }
   }
 
+  /** 按当前配置复用或建立运行实例，启动失败不改变已请求的接管模式。 */
   async function activate(input: CodexRuntimeActivationInput, forceFreshGeneration = false): Promise<CodexCapabilitiesSnapshot> {
     if (preparingForShutdown) throw managerError('ZEUS_CODEX_CLOSED', 'Codex runtime generation manager is closing.');
+    // 启动回执失败时 daemon 仍可能持有线程；后续省略配置的恢复必须沿用同一传输，不能另起 stdio writer。
+    if (input.remoteControl === true) remoteControlEnabled = true;
     const requestedHome = input.externalAgentHome ?? null;
     const requestedRemoteControl = input.remoteControl ?? remoteControlEnabled;
     const normalizedInput = { ...input, remoteControl: requestedRemoteControl };
@@ -655,11 +659,13 @@ export function createCodexRuntimeGenerationManager(
     async readThread(input) {
       return routeThread(input.threadId).manager.readThread(input);
     },
+    /** 历史查询只能补充本实例已加载的线程，不能迁移现有写入归属。 */
     async listThreads(input) {
       const routeId = input.ancestorThreadId ?? input.parentThreadId;
       const entry = routeId ? routeThread(routeId) : requireActiveEntry();
       const page = await entry.manager.listThreads(input);
-      for (const thread of page.data) bindThread(entry, thread.id);
+      // 历史列表不代表写入所有权；只补充本实例已加载且尚未绑定的线程，保留其他实例的现有归属。
+      for (const thread of page.data) if (!entriesByThread.has(thread.id) && thread.status && thread.status.type !== 'notLoaded') bindThread(entry, thread.id);
       return page;
     },
     async readThreadGoal(input) {

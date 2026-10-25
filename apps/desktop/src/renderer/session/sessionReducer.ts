@@ -363,13 +363,20 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
       const optimisticKey = optimisticEntry?.[0] ?? optimisticUserItemKey(state, action.clientUserMessageId);
       const optimistic = optimisticEntry?.[1];
       if (!optimistic) return state;
+      /** 较晚返回的接纳回执只补身份，不能覆盖已经收到的队列暂停或失败。 */
+      const queuedSubmission = !action.providerTurnId ? state.queue?.submissions.find((submission) => submission.id === action.submissionId || submission.clientUserMessageId === action.clientUserMessageId) : undefined;
       // 接纳只补充稳定身份；本地消息必须保留到同一 Provider 消息在一次状态更新中原位接管。
       const terminal = action.providerTurnId ? state.terminalTurnIds[action.providerTurnId] : undefined;
       const payload: Record<string, unknown> = {
         ...optimistic.payload,
         ...(action.submissionId ? { submissionId: action.submissionId } : {}),
       };
-      if (action.status === 'active' || action.status === 'completed' || action.status === 'resolved' || terminal) {
+      if (queuedSubmission) Object.assign(payload, mergeSubmissionUserMessagePayload(payload, queuedSubmission));
+      // 服务端已经接纳，不再保留本地等待恢复的临时标记。
+      delete payload.queuedUntilHydrated;
+      /** 实时队列优先于迟到回执，已确认轮次终态优先于两者。 */
+      const acceptedStatus = terminal ? 'completed' : (queuedSubmission?.status ?? action.status);
+      if (acceptedStatus === 'active' || acceptedStatus === 'completed' || acceptedStatus === 'resolved') {
         delete payload.pausedReason;
         delete payload.error;
         delete payload.deliveryError;
@@ -382,7 +389,7 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
             ...optimistic,
             messageCreatedAt: action.messageCreatedAt ?? optimistic.messageCreatedAt,
             ...(action.providerTurnId ? { turnId: action.providerTurnId } : {}),
-            status: terminal ? 'completed' : action.status,
+            status: acceptedStatus,
             payload,
             // 提交终态只证明调度结束；持久正文到达前仍由本地显示记录持有，不能伪装成 Provider 正文。
             optimistic: optimistic.optimistic,
@@ -1752,11 +1759,31 @@ function addOptimisticUserItem(state: NativeSessionState, action: Extract<Native
   };
 }
 
-/** 队列只描述调度位置；用户消息由时间线持有，不能因队列水合被删除。 */
+/** 队列更新已有消息的送达状态；正文、附件和稳定身份仍由时间线持有。 */
 function projectQueueSubmissionMessages(state: NativeSessionState, queue: NativeQueueSnapshot): NativeSessionState {
   if (state.queue && queue.throughEventSeq < state.queue.throughEventSeq) return state;
+  /** 两种持久身份分别索引，禁止用相同正文合并不同提交。 */
+  const bySubmission = new Map(queue.submissions.map((submission) => [submission.id, submission]));
+  /** 跨过 HTTP 回执丢失的情况，队列仍能凭客户端身份接管原消息。 */
+  const byClientMessage = new Map(queue.submissions.filter((submission) => submission.clientUserMessageId).map((submission) => [submission.clientUserMessageId, submission]));
+  /** 只复制发生接管的消息，不创建或删除时间线条目。 */
+  let items = state.items;
+  for (const [key, item] of Object.entries(state.items)) {
+    if (!item.optimistic || !isUserMessageItem(item) || item.providerItemId || item.status === 'completed' || item.status === 'resolved') continue;
+    /** 提交身份优先；尚未收到回执时才使用原始客户端身份。 */
+    const submission =
+      bySubmission.get(stringValue(item.payload.submissionId) ?? '') ??
+      userMessageClientIds(item)
+        .map((id) => byClientMessage.get(id))
+        .find(Boolean);
+    if (!submission) continue;
+    if (items === state.items) items = { ...state.items };
+    items[key] = { ...item, status: submission.status, payload: mergeSubmissionUserMessagePayload(item.payload, submission) };
+  }
   return {
     ...state,
+    items,
+    transcriptRevision: state.transcriptRevision + (items === state.items ? 0 : 1),
     queue,
     conversationState: conversationStateFromQueue(queue, state),
   };
@@ -1938,8 +1965,13 @@ function submissionUserMessagePayload(submission: NativeQueuedSubmission): Recor
   };
 }
 
+/** 合并权威送达状态，并保留已展示但本次队列未附带的附件。 */
 function mergeSubmissionUserMessagePayload(previous: Record<string, unknown>, submission: NativeQueuedSubmission): Record<string, unknown> {
+  /** 原正文由时间线保存，队列只补充同一提交的状态和资源。 */
   const next = { ...previous, ...submissionUserMessagePayload(submission) };
+  if (!submission.attachments?.length && previous.attachments) next.attachments = previous.attachments;
+  // 持久队列已经确认消息状态，恢复等待标记不能盖住暂停原因。
+  delete next.queuedUntilHydrated;
   if (!submission.pausedReason) delete next.pausedReason;
   if (!submission.error && submission.pausedReason !== 'user_confirmation') {
     delete next.error;
