@@ -84,7 +84,7 @@ import { resolveWritableNonCodexLegacyConversation, type WritableNonCodexLegacyC
 import { createPiNativeConversationCoordinator } from './piNativeConversationCoordinator.js';
 import { type RuntimeSettingsSnapshot } from './runtimeQueryApplication.js';
 import type { AppShellSettingsSnapshot } from './localServerSettingsNormalization.js';
-import { buildTaskConflictAiConversationTitle, buildTaskConflictAiPrompt } from './taskConflictAi.js';
+import { buildGitConflictIntentContext, buildTaskConflictAiConversationTitle, buildTaskConflictAiPrompt } from './taskConflictAi.js';
 import type { ZeusConversationPluginRuntime } from './zeusConversationPluginRuntime.js';
 import type { ZeusPluginService } from './zeusPluginService.js';
 import { readDigitalTeamTaskPushPolicy } from './digitalTeamWorkflowExecutionPolicy.js';
@@ -3611,6 +3611,9 @@ export function createConversationApplicationOperations(dependencies: Conversati
           conflictBranch: conflictWorkspace.branchName,
           mode: resolved.integration.mode,
           commitMessage: conflictCommitMessage,
+          sourceHeadSha: resolved.integration.targetHeadSha,
+          taskHeadSha: resolved.integration.taskHeadSha,
+          intentContext: buildGitConflictIntentContext({ conversations, projectId: project.id, scope: { taskId: task.id }, excludedConversationId: reservation.conversationId, task }),
         });
         const selectedAgentKind = modelConversation.agentKind;
         const serviceTierPlan = selectedAgentKind === 'codex' ? await resolveDefaultModelServiceTierPlan() : null;

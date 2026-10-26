@@ -2,6 +2,7 @@ import { GitDeliveryRunControl, type GitDeliveryClient } from './GitDeliveryRunC
 import { useGitCommitDrafts } from './useGitCommitDrafts.js';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { DashboardClient, GitDiffSummary, ProjectGitAction, ProjectGitRepositoryWorkbenchItem, ProjectGitWorkbenchSnapshot, ProjectRecord } from '../apiClient.js';
+import { ZeusApiError } from '../apiClient.js';
 import { usePresenceOpen } from '../ui/MotionPresence.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { Button } from '../ui/Button.js';
@@ -111,7 +112,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
   /** 生成取消后不允许旧结果覆盖手动编辑。 */
   const generation = useRef<AbortController | null>(null);
   /** 页面错误保留真实失败原因和重试入口。 */
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   /** 操作反馈使用任务交付页共用的逐仓明细。 */
   const [feedback, setFeedback] = useState<DeliveryFeedback | null>(null);
   /** 刷新时保留原有选择，首次加载默认勾选变化。 */
@@ -168,7 +169,7 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
     } catch (reason) {
       if (revision !== readRevision.current) return;
       setComparisonLoading(false);
-      setError(formatVisibleApplicationError(reason, zh ? 'zh-CN' : 'en'));
+      setError(reason);
     } finally {
       if (revision === readRevision.current && busyRef.current === 'loading') {
         busyRef.current = null;
@@ -314,7 +315,13 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
               message: response.result.outcome === 'conflict' ? (zh ? `${response.result.conflictFiles.length} 个冲突待处理` : 'Conflicts require attention') : `${response.result.branch} · ${response.result.headSha.slice(0, 8)}`,
             };
           } catch (reason) {
-            return { workspaceId: repository.id, repositoryName: repository.name, status: 'failed', message: formatVisibleApplicationError(reason, zh ? 'zh-CN' : 'en') };
+            return {
+              workspaceId: repository.id,
+              repositoryName: repository.name,
+              status: reason instanceof ZeusApiError && reason.recoveryRequired ? 'attention' : 'failed',
+              message: formatVisibleApplicationError(reason, zh ? 'zh-CN' : 'en'),
+              error: reason,
+            };
           }
         }),
       );
@@ -447,14 +454,14 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                       stage: 'combined',
                       ...(scope === 'committed' ? { comparisonRef: snapshot.repositories.find((repository) => repository.id === repositoryId)?.snapshot.upstream ?? undefined, comparisonMode: 'current' } : {}),
                     })
-                    .catch((reason) => setError(formatVisibleApplicationError(reason, zh ? 'zh-CN' : 'en')));
+                    .catch((reason) => setError(reason));
                 }}
                 onCopyBranch={async (branch) => {
                   try {
                     await navigator.clipboard.writeText(branch);
                     return true;
                   } catch (reason) {
-                    setError(formatVisibleApplicationError(reason, zh ? 'zh-CN' : 'en'));
+                    setError(reason);
                     return false;
                   }
                 }}
@@ -513,9 +520,9 @@ export function RepositoryGitDeliveryContent(props: RepositoryGitDeliveryContent
                         scope: { kind: 'conversation', conversationId: props.conversation.id },
                         message,
                         mode: 'merge',
-                        repositories: selected.map((repository) => ({
+                        repositories: snapshot.repositories.map((repository) => ({
                           repositoryId: repository.id,
-                          paths: selection[repository.id] ?? [],
+                          paths: visibleRepositoryFiles(repository, snapshot.repositories).map((file) => file.path),
                           expectedBranch: repository.snapshot.branch,
                           expectedHeadSha: repository.snapshot.headSha,
                           mergeBranch,

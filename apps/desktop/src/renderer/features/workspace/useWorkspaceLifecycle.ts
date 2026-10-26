@@ -148,6 +148,7 @@ export function useWorkspaceLifecycle(state: WorkspaceQueryState, domainActions:
       void client
         .startTaskIntegrationConflictAi(pending.taskId, pending.integrationId, pending.path, pending.content, pending.fingerprint, pending.permissionMode, pending.idempotencyKey, pending.skillId)
         .then(async (operation) => {
+          if (pending.deliveryInput) await client.startGitDeliveryRun(pending.projectId, pending.deliveryInput, `${pending.idempotencyKey}:delivery`);
           clearPendingConflictAiStart(pending.idempotencyKey);
           if (disposed) return;
           await openTaskConflictAiConversation(pending.taskId, operation.conversationId);

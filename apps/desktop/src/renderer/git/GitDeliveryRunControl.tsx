@@ -6,7 +6,7 @@ import { Button } from '../ui/Button.js';
 import { FormDialog } from '../ui/FormDialog.js';
 import { loadGitCommitModelOptions } from './gitCommitModels.js';
 import { GitCommitGenerationSettingsButton } from './GitCommitGenerationSettings.js';
-import { VisibleApplicationError, formatVisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
+import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
 import { SkillSelector } from '../features/skills/SkillSelector.js';
 import { ConflictAiPermissions, TaskGitConflictWorkspace } from '../task/TaskGitConflictWorkspace.js';
@@ -30,7 +30,7 @@ export type GitDeliveryClient = Pick<
 >;
 
 /** 本机项目偏好只保存操作选择，不保存文件或分支。 */
-function readSettings(projectId: string): GitDeliverySettings {
+export function readGitDeliverySettings(projectId: string): GitDeliverySettings {
   try {
     const value = JSON.parse(localStorage.getItem(`zeus.git-delivery.settings:${projectId}`) ?? 'null') as Partial<GitDeliverySettings> | null;
     if (
@@ -69,7 +69,7 @@ export function GitDeliveryRunControl(props: {
   onAccepted(): void;
 }) {
   /** 已保存设置与表单草稿分离。 */
-  const [settings, setSettings] = useState(() => readSettings(props.projectId));
+  const [settings, setSettings] = useState(() => readGitDeliverySettings(props.projectId));
   /** 设置弹窗草稿。 */
   const [draft, setDraft] = useState<GitDeliverySettings | null>(null);
   /** 项目当前真实状态定义。 */
@@ -79,7 +79,7 @@ export function GitDeliveryRunControl(props: {
   /** 加载、接纳或继续时阻止重复操作。 */
   const [busy, setBusy] = useState(false);
   /** 保留失败原因与手动重读入口。 */
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   /** 终态清理只能在用户看到真实影响后明确确认。 */
   const [cleanupRun, setCleanupRun] = useState<GitDeliveryRun | null>(null);
   /** 真实接纳身份在未知响应重试时保持不变。 */
@@ -116,7 +116,7 @@ export function GitDeliveryRunControl(props: {
           if (!disposed) setRuns(result.items);
         })
         .catch((reason) => {
-          if (!disposed) setError(formatVisibleApplicationError(reason, props.zh ? 'zh-CN' : 'en'));
+          if (!disposed) setError(reason);
         });
     };
     reload();
@@ -147,7 +147,7 @@ export function GitDeliveryRunControl(props: {
     try {
       setStatuses((await props.client.loadGitDeliveryOptions(props.projectId)).statuses);
     } catch (reason) {
-      setError(formatVisibleApplicationError(reason, props.zh ? 'zh-CN' : 'en'));
+      setError(reason);
     }
   }
 
@@ -175,7 +175,7 @@ export function GitDeliveryRunControl(props: {
       request.current = null;
       props.onAccepted();
     } catch (reason) {
-      setError(formatVisibleApplicationError(reason, props.zh ? 'zh-CN' : 'en'));
+      setError(reason);
     } finally {
       pending.current = false;
       setBusy(false);
@@ -197,7 +197,7 @@ export function GitDeliveryRunControl(props: {
       setCleanupRun(null);
       await refresh();
     } catch (reason) {
-      setError(formatVisibleApplicationError(reason, props.zh ? 'zh-CN' : 'en'));
+      setError(reason);
     } finally {
       pending.current = false;
       setBusy(false);
@@ -211,7 +211,7 @@ export function GitDeliveryRunControl(props: {
       await window.zeus.openTaskGitDeliveryConversation(run.scope.kind === 'task' ? { taskId: run.scope.taskId, conversationId } : { projectId: run.projectId, conversationId });
       props.onAccepted();
     } catch (reason) {
-      setError(formatVisibleApplicationError(reason, props.zh ? 'zh-CN' : 'en'));
+      setError(reason);
     }
   }
 
@@ -224,7 +224,7 @@ export function GitDeliveryRunControl(props: {
       setConflict({ run, step, ...loaded });
       setDocument(loaded.file ? createConflictDocument(loaded.file) : null);
     } catch (reason) {
-      setError(formatVisibleApplicationError(reason, props.zh ? 'zh-CN' : 'en'));
+      setError(reason);
     } finally {
       setBusy(false);
     }
@@ -238,7 +238,7 @@ export function GitDeliveryRunControl(props: {
       await props.client.saveGitDeliveryConflict(props.projectId, conflict.run.id, conflict.step.id, { path: conflict.file.path, content: serializeConflictForGit(document), fingerprint: conflict.file.fingerprint });
       await openConflict(conflict.run, conflict.step);
     } catch (reason) {
-      setError(formatVisibleApplicationError(reason, props.zh ? 'zh-CN' : 'en'));
+      setError(reason);
     } finally {
       setBusy(false);
     }
@@ -262,6 +262,7 @@ export function GitDeliveryRunControl(props: {
           data-icon-tooltip={settings.finalTaskStatus && props.input.scope.kind === 'task' ? (props.zh ? `完成后状态：${finalStatusLabel}` : `Final status: ${finalStatusLabel}`) : undefined}
           onClick={() => void start()}
         >
+          {props.zh ? '全部仓库：' : 'All repositories: '}
           {summary || (props.zh ? '执行交付' : 'Run delivery')}
         </Button>
         <Button variant="secondary" size="compact" disabled={busy} aria-label={props.zh ? '组合操作设置' : 'Combination settings'} data-icon-tooltip={props.zh ? '组合操作设置' : 'Combination settings'} onClick={() => void openSettings()}>
@@ -275,7 +276,7 @@ export function GitDeliveryRunControl(props: {
             size="compact"
             onClick={() => {
               setError(null);
-              void refresh().catch((reason) => setError(String(reason)));
+              void refresh().catch((reason) => setError(reason));
             }}
           >
             {props.zh ? '重新读取' : 'Reload'}
@@ -305,7 +306,11 @@ export function GitDeliveryRunControl(props: {
                       }[step.state]
                     }
                   </span>
-                  {step.message ? <small>{step.message}</small> : null}
+                  {step.message || step.error ? (
+                    <small>
+                      <VisibleApplicationError error={step.error ?? step.message} summary={step.message ?? undefined} title={`${step.repositoryName} · ${actionLabel(step.action, props.zh)}`} language={props.zh ? 'zh-CN' : 'en'} />
+                    </small>
+                  ) : null}
                   {step.conversationId ? (
                     <Button size="compact" onClick={() => void openConversation(run, step.conversationId!)}>
                       {props.zh ? '打开冲突会话' : 'Open conflict conversation'}
@@ -439,6 +444,7 @@ export function GitDeliveryRunControl(props: {
           {error ? <VisibleApplicationError error={error} language={props.zh ? 'zh-CN' : 'en'} /> : null}
           {conflict.files.length ? (
             <TaskGitConflictWorkspace
+              allRepositories
               zh={props.zh}
               busy={busy}
               aiBusy={busy}

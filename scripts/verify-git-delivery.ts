@@ -21,7 +21,8 @@ import {
   TaskIntegrationRepository,
   TaskIntegrationAttemptRepository,
 } from '../packages/storage/src/index.js';
-import { executeProjectGitAction, getProjectGitRepositorySnapshot, withGitRepositoryOperation } from '../packages/git-core/src/index.js';
+import { commitTaskWorkspace, completeTaskIntegrationCommit, executeProjectGitAction, getProjectGitRepositorySnapshot, withGitRepositoryOperation } from '../packages/git-core/src/index.js';
+import { deliveryWorkspacesForConversationBranch } from '../apps/desktop/src/renderer/task/taskGitWorkspaceScope.js';
 import { GitDeliveryExecution } from '../packages/local-server/src/gitDeliveryExecution.js';
 import { WorkspaceGitCommandApplication } from '../packages/local-server/src/workspaceGitCommandApplication.js';
 import { createGitIntegrationOperations, type GitIntegrationOperationDependencies } from '../packages/local-server/src/gitIntegrationOperations.js';
@@ -219,15 +220,21 @@ try {
   await git(second, 'switch', 'main');
   await writeFile(join(second, 'base.txt'), 'main conflict\n');
   await git(second, 'commit', '-am', '目标冲突');
-  const conflicted = await settle(service, (await start(await inputFor(1, [], { commit: false }), 'run_conflict_001')).id);
+  const conflicted = await settle(service, (await start(await inputFor(1, [], { commit: false, resolveConflicts: false }), 'run_conflict_001')).id);
   assert.equal(conflicted.steps[0]?.state, 'attention', JSON.stringify(conflicted));
   const conflictStep = conflicted.steps[0]!;
   const conflictUrl = `/api/projects/${project.id}/git-delivery-runs/${conflicted.id}/steps/${conflictStep.id}/conflict`;
   const conflict = (await server.inject({ method: 'GET', url: `${conflictUrl}?path=base.txt` })).json();
   const saved = await server.inject({ method: 'PUT', url: conflictUrl, payload: { path: 'base.txt', content: 'resolved\n', fingerprint: conflict.file.fingerprint } });
   assert.equal(saved.statusCode, 200, saved.body);
+  /** 解决冲突后产生的新文件不得被收尾流程忽略，补充暂存后必须进入实际交付结果。 */
+  const conflictWorktree = (service.repository.get(conflicted.id)!.steps[0]!.result!.merge as { integrationPath: string }).integrationPath;
+  await writeFile(join(conflictWorktree, 'new-result.txt'), 'new result\n');
+  await assert.rejects(completeTaskIntegrationCommit({ integrationPath: conflictWorktree, mode: 'merge', commitMessage: '保留新增成果' }), { code: 'ZEUS_TASK_WORKSPACE_DIRTY' });
+  await git(conflictWorktree, 'add', 'new-result.txt');
   assert.equal((await resume(conflicted.id)).state, 'succeeded');
   assert.equal(await readFile(join(second, 'base.txt'), 'utf8'), 'resolved\n');
+  assert.equal(await readFile(join(second, 'new-result.txt'), 'utf8'), 'new result\n');
   checked.push('普通会话真实冲突、指纹保存、人工继续、成功步骤保留');
 
   /** 任务入口复用原提交、合入、回收和推送路由。 */
@@ -251,16 +258,66 @@ try {
     remoteName: 'origin',
     remoteBranch: 'task-delivery',
   });
-  const taskRun = await start(
-    {
-      scope: { kind: 'task', taskId: task.id },
-      settings: { ...defaultGitDeliverySettings },
-      message: '任务交付',
-      mode: 'merge',
-      repositories: [{ repositoryId: workspace.id, paths: ['task.txt'], expectedBranch: 'task-delivery', expectedHeadSha: sourceHead, mergeBranch: 'main' }],
-    },
-    'run_task_001',
+  /** 冲突开发线替换其本仓祖先，仍保留原任务环境的其他仓库。 */
+  const sibling = { ...workspace, id: 'scope-sibling', repositoryId: 'scope-other-repository' };
+  /** 冲突工作区自有环境不能覆盖原任务环境的交付范围。 */
+  const conflictWorkspace = { ...workspace, id: 'scope-conflict', kind: 'conflict' as const, baseWorkspaceId: workspace.id, environmentId: 'scope-conflict-environment', branchName: `${workspace.branchName}-merge` };
+  /** 二次冲突按明确来源关系继续追溯，不能依赖分支名称后缀。 */
+  const nestedConflict = { ...conflictWorkspace, id: 'scope-nested', baseWorkspaceId: conflictWorkspace.id, branchName: `${workspace.branchName}-merge-merge` };
+  /** 不同开发环境的同名分支不能混入本次交付。 */
+  const otherEnvironment = { ...sibling, id: 'scope-unrelated', environmentId: 'other-environment' };
+  /** 使用真实任务环境身份，明确区分旧记录的分支回退。 */
+  const scopeWorkspaces = [{ ...workspace, environmentId: 'scope-environment' }, { ...sibling, environmentId: 'scope-environment' }, conflictWorkspace, nestedConflict, otherEnvironment];
+  assert.deepEqual(
+    deliveryWorkspacesForConversationBranch(scopeWorkspaces, nestedConflict.id).map((item) => item.id),
+    [nestedConflict.id, sibling.id],
   );
+  assert.deepEqual(deliveryWorkspacesForConversationBranch(scopeWorkspaces, 'missing-workspace'), []);
+  assert.deepEqual(deliveryWorkspacesForConversationBranch([conflictWorkspace, nestedConflict], nestedConflict.id), []);
+  assert.deepEqual(deliveryWorkspacesForConversationBranch([{ ...conflictWorkspace, baseWorkspaceId: nestedConflict.id }, nestedConflict], nestedConflict.id), []);
+  assert.deepEqual(
+    deliveryWorkspacesForConversationBranch([workspace, sibling, conflictWorkspace], conflictWorkspace.id).map((item) => item.id),
+    [conflictWorkspace.id, sibling.id],
+  );
+  assert.deepEqual(
+    deliveryWorkspacesForConversationBranch(
+      scopeWorkspaces.map((item) => (item.id === nestedConflict.id ? { ...item, state: 'merged' as const, worktreePath: null } : item)),
+      nestedConflict.id,
+    ).map((item) => item.id),
+    [workspace.id, sibling.id],
+  );
+  checked.push('冲突和二次冲突保留多仓范围、失效关联不扩大范围、未暂存新增成果拒绝收尾');
+  /** 完整请求必须在任何提交前拒绝遗漏同目录的任务仓库。 */
+  const taskInput: GitDeliveryInput = {
+    scope: { kind: 'task', taskId: task.id },
+    settings: { ...defaultGitDeliverySettings },
+    message: '任务交付',
+    mode: 'merge',
+    repositories: [{ repositoryId: workspace.id, paths: ['task.txt'], expectedBranch: 'task-delivery', expectedHeadSha: sourceHead, mergeBranch: 'main' }],
+  };
+  /** 同环境第二个真实来源仓库尚未出现在客户端请求中。 */
+  const omittedWorkspace = taskWorkspaces.create({
+    projectId: project.id,
+    taskId: task.id,
+    environmentId: workspace.environmentId!,
+    repositoryId: registered[1]!.id,
+    repositoryPath: second,
+    repositoryName: '遗漏仓库',
+    repositoryRelativePath: 'second',
+    branchName: 'task-delivery',
+    sourceBranch: 'main',
+    sourceHeadSha: await git(second, 'rev-parse', 'HEAD'),
+    remoteName: 'origin',
+    remoteBranch: 'task-delivery',
+  });
+  /** 缺仓请求只核对接纳拒绝，不执行后续 Git 副作用。 */
+  const incomplete = await server.inject({ method: 'POST', url: `/api/projects/${project.id}/git-delivery-runs`, headers: { 'idempotency-key': 'run_task_incomplete' }, payload: taskInput });
+  assert.equal(incomplete.statusCode, 409, incomplete.body);
+  assert.match(incomplete.body, /遗漏仓库/u);
+  assert.equal(await git(taskPath, 'rev-parse', 'HEAD'), sourceHead);
+  taskWorkspaces.update(omittedWorkspace.id, { state: 'discarded' });
+  /** 明确移除第二个任务仓库后，单仓完整目录可以正常交付。 */
+  const taskRun = await start(taskInput, 'run_task_001');
   console.log('任务运行已接纳', taskRun.id);
   const taskResult = await settle(service, taskRun.id);
   assert.equal(taskResult.state, 'succeeded', JSON.stringify(taskResult));
@@ -286,6 +343,7 @@ try {
   const unknown = await settle(service, (await start(await inputFor(0, [], { commit: false, merge: false }), 'run_unknown_001')).id);
   commands.executeExternal = executeExternal;
   assert.equal(unknown.steps[0]!.state, 'unknown', JSON.stringify(unknown));
+  assert.match(unknown.steps[0]!.error?.message ?? '', /模拟推送后回执丢失/u);
   assert.equal((await resume(unknown.id)).state, 'succeeded');
   assert.equal(pushes, 1);
   checked.push('推送成功后结果未知，远端精确提交核对后完成且没有重推');
@@ -352,6 +410,20 @@ try {
   release();
   await held;
   checked.push('共用 Git 层互斥覆盖原有单步推送');
+  /** 已跟踪文档位于忽略目录内时仍能交付，旁边的新忽略文件不能被夹带。 */
+  const ignoredRepository = await createRepository('ignored-tracked');
+  await mkdir(join(ignoredRepository, 'docs', 'contexts'), { recursive: true });
+  await writeFile(join(ignoredRepository, '.gitignore'), '/docs/*\n');
+  await writeFile(join(ignoredRepository, 'docs', 'contexts', 'intent.md'), '原意图\n');
+  await git(ignoredRepository, 'add', '.gitignore');
+  await git(ignoredRepository, 'add', '-f', '--', 'docs/contexts/intent.md');
+  await git(ignoredRepository, 'commit', '-m', '已有跟踪文档');
+  await writeFile(join(ignoredRepository, 'docs', 'contexts', 'intent.md'), '保留新意图\n');
+  await writeFile(join(ignoredRepository, 'docs', 'contexts', 'private.md'), '未授权纳入的新文件\n');
+  await commitTaskWorkspace({ cwd: ignoredRepository, selectedPaths: ['docs/contexts/intent.md'], message: '更新已跟踪文档' });
+  assert.equal(await git(ignoredRepository, 'show', 'HEAD:docs/contexts/intent.md'), '保留新意图');
+  assert.equal(await git(ignoredRepository, 'ls-files', '--', 'docs/contexts/private.md'), '');
+  checked.push('忽略目录中的已跟踪文件可提交，新忽略文件仍不纳入');
   console.log(JSON.stringify({ status: 'passed', checked, provider: '未调用真实 Provider' }, null, 2));
 } catch (error) {
   console.error(error);

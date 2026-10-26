@@ -878,3 +878,4 @@ export * from './employeeIdentity.js';
 export * from './automationActions.js';
 export * from './digitalTeamWorkflow.js';
 export * from './conversationWorkspace.js';
+export { gitConflictPreservationInstructions } from './gitConflictGuidance.js';

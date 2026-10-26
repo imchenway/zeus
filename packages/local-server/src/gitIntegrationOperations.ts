@@ -78,7 +78,7 @@ import type { BatchTaskWorkspaceResult, WorkspaceGitExplicitRejection, Workspace
 import { ProjectGitQueryApplication } from './projectGitQueryApplication.js';
 import { readProjectRepositoryDiscovery } from './projectRepositoryDiscovery.js';
 import { runtimeSessionIsConfirmedTerminal } from './runtimeQueryApplication.js';
-import { buildTaskConflictAiConversationTitle, buildTaskConflictAiPrompt } from './taskConflictAi.js';
+import { buildGitConflictIntentContext, buildTaskConflictAiConversationTitle, buildTaskConflictAiPrompt } from './taskConflictAi.js';
 import { type WorkspaceGitCommandType, workspaceGitCommandTypes } from './workspaceGitCommandApplication.js';
 import { type PreparedWorkspaceGitCommand, type WorkspaceGitRouteExecution } from './workspaceGitCommandRoutes.js';
 export { inspectReadOnlyValidationManifest, verifyReadOnlyValidationDescriptor, type ReadOnlyValidationApplicationIdentity } from './readOnlyValidation.js';
@@ -1773,7 +1773,16 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     /** 使用目标当前提交建立并发基线；unborn 首次交付以空字符串表示尚无提交。 */
     const targetHeadSha = targetUnborn ? '' : await getGitBranchHead(repositoryPath, targetBranch);
     const active = taskIntegrations.findActive(workspace.id, targetBranch);
-    if (active) return workspaceGitResponse({ integration: await readTaskIntegrationSnapshot(active) }, active.state === 'conflicted' ? 202 : 409);
+    if (active) {
+      if (active.taskHeadSha === taskHeadSha && active.targetHeadSha === targetHeadSha) return workspaceGitResponse({ integration: await readTaskIntegrationSnapshot(active) }, active.state === 'conflicted' ? 202 : 409);
+      /** 冲突开发线可能已交付原任务成果；只用当前 Git 包含关系关闭过期记录，绝不删除旧处理现场。 */
+      const comparison = targetHeadSha ? await getTaskBranchComparison(repositoryPath, targetBranch, workspace.branchName) : null;
+      if (!comparison || comparison.ahead !== 0 || comparison.taskHeadSha !== taskHeadSha || comparison.sourceHeadSha !== targetHeadSha) {
+        workspaceGitReject(409, 'ZEUS_TASK_HEAD_CHANGED', '原合入基线已变化，仍有尚未合入的任务提交；请进入原冲突会话保留已有处理成果后继续完整交付。');
+      }
+      taskIntegrations.update(active.id, { state: 'failed', lastError: '当前来源分支已包含任务提交，旧候选已失效；原处理现场保留，由本次完整交付重新记录当前合入事实。' });
+      await db.save();
+    }
     const integrationId = `task_integration_${createHash('sha256').update(`workspace_git_integration\0${workspace.id}\0${targetBranch}\0${operationIdentity}`).digest('hex').slice(0, 24)}`;
     const integration = taskIntegrations.create({ id: integrationId, projectId: project.id, taskId: task.id, workspaceId: workspace.id, targetBranch, targetHeadSha, taskHeadSha, mode, state: 'preparing' });
     await db.save();
@@ -1857,7 +1866,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       recordTaskEvent({
         taskId: task.id,
         eventType: 'task.git_integration.merged',
-        title: targetBranch === workspace.sourceBranch ? '任务分支已合入来源分支' : `任务分支已合入 ${targetBranch}`,
+        title: `仓库 ${workspace.repositoryName || workspace.repositoryRelativePath} 已合入 ${targetBranch}`,
         payload: { integrationId: integration.id, workspaceId: workspace.id, mode, sourceDelivered: targetBranch === workspace.sourceBranch, taskWorktreeReclaimed, ...finalized },
       });
       await db.save();
@@ -1998,7 +2007,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
     recordTaskEvent({
       taskId: task.id,
       eventType: 'task.git_integration.merged',
-      title: integration.targetBranch === workspace.sourceBranch ? '任务分支已合入来源分支' : `任务分支已合入 ${integration.targetBranch}`,
+      title: `仓库 ${workspace.repositoryName || workspace.repositoryRelativePath} 已合入 ${integration.targetBranch}`,
       payload: { integrationId: integration.id, workspaceId: workspace.id, mode: integration.mode, sourceDelivered: integration.targetBranch === workspace.sourceBranch, taskWorktreeReclaimed, ...finalized },
     });
     await db.save();
@@ -2148,6 +2157,9 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
         mode: integration.mode,
         commitMessage: `${task.taskCode}: 合入 ${workspace.branchName}`,
         sourceLocalChanges: started.localChangesConflict === true,
+        sourceHeadSha: started.targetHeadSha,
+        taskHeadSha: started.taskHeadSha,
+        intentContext: buildGitConflictIntentContext({ conversations, projectId: project.id, scope: { taskId: task.id }, excludedConversationId: attempt.conversationId, task }),
       });
       const operation = await startNativeTaskConversationFromPlan({
         agentKind: input.agentKind,
@@ -2318,7 +2330,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       const repositoryPath = workspace.repositoryPath || project.localPath;
       const [latestTargetHeadSha, latestTaskHeadSha] = await Promise.all([getGitBranchHead(repositoryPath, integration.targetBranch), getGitBranchHead(repositoryPath, workspace.branchName)]);
       if (attempt.targetHeadSha !== latestTargetHeadSha || attempt.taskHeadSha !== latestTaskHeadSha) {
-        throw nativeApiError('ZEUS_TASK_INTEGRATION_ATTEMPT_STALE', '来源分支或任务分支已推进，继续准备最新执行代次。');
+        throw nativeApiError('ZEUS_TASK_INTEGRATION_ATTEMPT_STALE', '来源分支或任务分支已推进，已保留当前冲突处理成果；请在原会话代码交付中审阅并同步最新分支后继续。');
       }
       const commit = await completeTaskIntegrationCommit({
         integrationPath: attempt.worktreePath,
@@ -2384,7 +2396,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       recordTaskEvent({
         taskId: task.id,
         eventType: 'task.git_integration.ai_merged',
-        title: `冲突处理：AI 已完成本地合入 ${integration.targetBranch}`,
+        title: `仓库 ${workspace.repositoryName || workspace.repositoryRelativePath} 冲突已处理并合入 ${integration.targetBranch}`,
         payload: {
           integrationId: integration.id,
           attemptId: attempt.id,
@@ -2400,35 +2412,32 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       await db.save();
       publishRealtimeEvent('task.git_delivery.changed', { taskId: task.id, integrationId: integration.id, conversationId });
     } catch (error) {
+      /** 分支推进只使旧候选失效，不能据此删除已暂存或未提交的冲突处理成果。 */
       const stale = isStaleTaskIntegrationError(error) || taskGitErrorCode(error) === 'ZEUS_TASK_INTEGRATION_ATTEMPT_STALE';
       taskIntegrationAttempts.update(attempt.id, {
-        state: stale ? 'preparing' : 'active',
+        state: 'active',
         lastError: error instanceof Error ? error.message : 'AI 本地合入未完成。',
       });
       const latestIntegration = taskIntegrations.getById(attempt.integrationId);
       if (latestIntegration) {
         recordTaskEvent({
           taskId: latestIntegration.taskId,
-          eventType: stale ? 'task.git_integration.ai_generation_advanced' : 'task.git_integration.ai_failed',
-          title: stale ? '冲突处理：分支已推进，继续当前会话的下一执行代次' : '冲突处理：AI 本地合入未完成',
+          eventType: 'task.git_integration.ai_failed',
+          title: stale ? '冲突处理：分支已推进，已保留成果等待重新审阅' : '冲突处理：AI 本地合入未完成',
           payload: { integrationId: latestIntegration.id, attemptId: attempt.id, workspaceId: latestIntegration.workspaceId, conversationId, error: error instanceof Error ? error.message : 'AI 本地合入未完成。' },
         });
       }
       await db.save();
       if (latestIntegration) publishRealtimeEvent('task.git_delivery.changed', { taskId: latestIntegration.taskId, integrationId: latestIntegration.id, conversationId });
-      if (stale && latestIntegration) {
-        await cleanupTaskIntegrationAttemptWorktree(attempt.worktreePath, latestIntegration).catch(() => undefined);
-        const conversation = conversations.getById(conversationId);
-        const currentAttempt = taskIntegrationAttempts.getById(attempt.id);
-        if (conversation && currentAttempt) await retryTaskIntegrationAiPreparation(conversation, currentAttempt);
-      }
     }
   }
 
+  /** 过期尝试只能回收干净现场；尚未提交的修改必须留在原命名工作区。 */
   async function cleanupTaskIntegrationAttemptWorktree(worktreePath: string, integration: ZeusTaskIntegrationRecord): Promise<void> {
     const workspace = taskWorkspaces.getById(integration.workspaceId);
     const project = projects.getById(integration.projectId);
     if (!workspace || !project || !existsSync(worktreePath)) return;
+    if (!(await getGitWorktreeClean(worktreePath))) throw nativeApiError('ZEUS_TASK_WORKSPACE_DIRTY', '冲突处理现场仍有未提交修改，已保留工作区。');
     await cleanupTaskIntegrationWorktree({ repositoryPath: workspace.repositoryPath || project.localPath, integrationPath: worktreePath });
   }
 
@@ -2493,7 +2502,7 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
       recordTaskEvent({
         taskId: task.id,
         eventType: 'task.git_integration.ai_merged',
-        title: `冲突处理：AI 已完成本地合入 ${integration.targetBranch}`,
+        title: `仓库 ${workspace.repositoryName || workspace.repositoryRelativePath} 冲突已处理并合入 ${integration.targetBranch}`,
         payload: {
           integrationId: integration.id,
           workspaceId: workspace.id,

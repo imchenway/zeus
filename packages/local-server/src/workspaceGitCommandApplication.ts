@@ -314,7 +314,9 @@ function isReceiptConflict(error: unknown): boolean {
 function serializeError(error: unknown, redactSensitiveText: (value: string) => { text: string }): Record<string, unknown> {
   if (error instanceof Error) {
     const code = 'code' in error && (typeof error.code === 'string' || typeof error.code === 'number') ? boundedScalar(error.code) : null;
-    return { cause: userFacingErrorCause(error).cause, code, name: boundedScalar(error.name), message: boundedErrorMessage(error.message, redactSensitiveText) };
+    /** 命令详情与错误链分别保留，二者均经过脱敏和长度限制。 */
+    const cause = userFacingErrorCause(error);
+    return { cause: cause.cause, ...(cause.details ? { details: boundedErrorMessage(cause.details, redactSensitiveText) } : {}), code, name: boundedScalar(error.name), message: boundedErrorMessage(error.message, redactSensitiveText) };
   }
   return { code: null, name: boundedScalar(typeof error), message: boundedErrorMessage(String(error), redactSensitiveText) };
 }

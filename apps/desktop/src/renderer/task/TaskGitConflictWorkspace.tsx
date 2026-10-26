@@ -43,6 +43,8 @@ export function TaskGitConflictWorkspace(props: {
   zh: boolean;
   busy: boolean;
   aiBusy: boolean;
+  /** 同一次确认推进本次交付的全部冲突仓库，草稿仍只应用于当前文件。 */
+  allRepositories?: boolean;
   integration: Pick<TaskIntegrationRecord, 'conflictFiles' | 'targetBranch'>;
   taskBranch: string;
   conflictPath: string;
@@ -265,12 +267,16 @@ export function TaskGitConflictWorkspace(props: {
               onClick={openAiPermissionDialog}
               disabled={!document || props.busy || unresolvedCount === 0}
               title={
-                props.zh
-                  ? `新建命名冲突分支，由 AI 处理全部冲突；随后可在会话中通过代码交付合入 ${props.integration.targetBranch}`
-                  : `Create a named conflict branch for AI resolution, then deliver it into ${props.integration.targetBranch} from the conversation`
+                props.allRepositories
+                  ? props.zh
+                    ? '处理本次交付全部仓库的冲突，完成后逐仓合入来源分支'
+                    : 'Resolve conflicts across this delivery and merge each repository into its source branch'
+                  : props.zh
+                    ? `新建命名冲突分支，由 AI 处理全部冲突；随后可在会话中通过代码交付合入 ${props.integration.targetBranch}`
+                    : `Create a named conflict branch for AI resolution, then deliver it into ${props.integration.targetBranch} from the conversation`
               }
             >
-              {props.zh ? 'AI 处理' : 'Resolve with AI'}
+              {props.zh ? (props.allRepositories ? 'AI 处理全部仓库' : 'AI 处理') : props.allRepositories ? 'Resolve all repositories' : 'Resolve with AI'}
             </Button>
             <Button variant="secondary" size="compact" onClick={undoLastDraft} disabled={props.busy || undoDraft === null} aria-label={props.zh ? '撤销上一次草稿操作' : 'Undo the last draft action'}>
               {props.zh ? '撤销' : 'Undo'}

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import type { GitDeliveryAction, GitDeliveryInput, GitDeliveryRun, GitDeliveryStep, GitDeliveryNotification } from '@zeus/shared';
+import { userFacingErrorCause, type GitDeliveryAction, type GitDeliveryInput, type GitDeliveryRun, type GitDeliveryStep, type GitDeliveryNotification } from '@zeus/shared';
 import type { ZeusDatabasePort } from './databasePort.js';
+import { CommandDeliveryRepository } from './commandDeliveryStore.js';
 
 /** 普通会话的隔离合入事实仅存于 Core，不暴露绝对目录。 */
 export interface GitDeliveryMergeResult {
@@ -198,18 +199,29 @@ export class GitDeliveryRepository {
       state: run.state,
       createdAt: run.createdAt,
       updatedAt: run.updatedAt,
-      steps: run.steps.map(({ id, repositoryId, repositoryName, action, state, message, conversationId, integrationId, result }) => ({
+      steps: run.steps.map(({ id, repositoryId, repositoryName, action, state, message, conversationId, integrationId, result, commandId }) => ({
         id,
         repositoryId,
         repositoryName,
         action,
         state,
         message,
+        error: state === 'attention' || state === 'unknown' ? this.commandError(commandId) : undefined,
         conversationId,
         integrationId,
         ...(result?.cleanupConfirmation ? { cleanupConfirmation: result.cleanupConfirmation as NonNullable<GitDeliveryStep['cleanupConfirmation']> } : {}),
       })),
     };
+  }
+
+  /** 直接读取原命令的最后回执，历史失败无需重放 Git 即可查看。 */
+  private commandError(commandId: string | null): GitDeliveryStep['error'] {
+    if (!commandId) return undefined;
+    /** 只公开统一脱敏后的错误字段，不把命令输入或恢复快照交给界面。 */
+    const evidenceJson = new CommandDeliveryRepository(this.db).get(commandId)?.attempts.at(-1)?.receipt?.evidenceJson;
+    /** 回执由统一命令存储写入规范 JSON；没有回执不能推测失败原因。 */
+    const evidence = evidenceJson ? (JSON.parse(evidenceJson) as { error?: unknown }) : undefined;
+    return evidence?.error ? userFacingErrorCause(evidence.error) : undefined;
   }
 
   /** 交付通知与进度读取同一权威记录。 */

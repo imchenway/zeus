@@ -1361,6 +1361,19 @@ export class ConversationRepository {
       .map(mapConversationMessageRow);
   }
 
+  /** 冲突处理只读取同项目、同任务或指定会话的最近用户意图；正文最多每条 1000 字符，第 13 条用于标记省略。 */
+  listGitConflictIntentMessages(projectId: string, scope: { taskId: string } | { conversationId: string }, excludedConversationId: string | null = null) {
+    return this.db.select<{ messageId: string; conversationId: string; title: string; createdAt: string; content: string; contentLength: number }>(
+      `SELECT message.id AS messageId, conversation.id AS conversationId, conversation.title,
+              message.created_at AS createdAt, substr(message.content, 1, 1000) AS content, length(message.content) AS contentLength
+       FROM conversation_messages message JOIN conversations conversation ON conversation.id = message.conversation_id
+       WHERE conversation.project_id = ? AND ${'taskId' in scope ? 'conversation.task_id' : 'conversation.id'} = ?
+         AND message.role = 'user' AND conversation.id <> ?
+       ORDER BY message.created_at DESC, message.id DESC LIMIT 13`,
+      [projectId, 'taskId' in scope ? scope.taskId : scope.conversationId, excludedConversationId ?? ''],
+    );
+  }
+
   getRecordById(conversationId: string): ZeusConversationRecord | undefined {
     const row = this.db.get<DbConversationRow>(`SELECT ${selectConversationFields} FROM conversations WHERE id = ?`, [conversationId]);
     return row ? mapConversationRow(row) : undefined;

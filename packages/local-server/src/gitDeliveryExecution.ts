@@ -4,9 +4,20 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { realpath } from 'node:fs/promises';
 import type { FastifyInstance } from 'fastify';
-import { commandEnvelopeSchemaGeneration, canonicalCommandInputJson, type CommandScopeKind, type GitDeliveryInput, type GitDeliverySelection, type GitDeliveryRun } from '@zeus/shared';
+import {
+  commandEnvelopeSchemaGeneration,
+  canonicalCommandInputJson,
+  deliveryWorkspacesForConversationBranch,
+  resolveGitDeliveryRootWorkspace,
+  gitConflictPreservationInstructions,
+  type CommandScopeKind,
+  type GitDeliveryInput,
+  type GitDeliverySelection,
+  type GitDeliveryRun,
+} from '@zeus/shared';
 import {
   GitDeliveryRepository,
+  TaskEnvironmentRepository,
   type GitDeliveryRunRecord,
   type GitDeliveryStepRecord,
   type GitDeliveryMergeResult,
@@ -25,6 +36,7 @@ import {
   executeProjectGitAction,
   getProjectGitRepositorySnapshot,
   getGitBranchHead,
+  getGitCommonDirectory,
   startTaskBranchIntegration,
   completeTaskIntegrationCommit,
   finalizeTaskBranchIntegration,
@@ -39,6 +51,7 @@ import {
 import { AutomationMutationApplication } from './automationMutationApplication.js';
 import { resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
 import { readCommitFingerprint } from './gitCommitContext.js';
+import { buildGitConflictIntentContext } from './taskConflictAi.js';
 import { workspaceGitCommandTypes, type WorkspaceGitCommandApplication } from './workspaceGitCommandApplication.js';
 
 /** 只读核对远端结果，绝不通过恢复路径推送。 */
@@ -281,6 +294,7 @@ export class GitDeliveryExecution {
         }
         const names: Record<string, string> = {};
         for (const selection of input.repositories) names[selection.repositoryId] = (await this.resolve(request.params.projectId, input, selection)).name;
+        await this.assertDirectoryCoverage(input);
         const task = input.scope.kind === 'task' ? this.options.tasks.getById(input.scope.taskId) : null;
         if (input.settings.finalTaskStatus && !this.options.statusOptions(request.params.projectId).some((status) => status.id === input.settings.finalTaskStatus)) throw deliveryError('所选任务状态已不存在，请重新设置。');
         const result = mutations.execute({ method: 'POST', url: request.url, body: input, key }, () => ({
@@ -389,7 +403,11 @@ export class GitDeliveryExecution {
           if (!['auto', 'full-access'].includes(request.body.permissionMode) || typeof request.body.path !== 'string' || typeof request.body.content !== 'string' || typeof request.body.fingerprint !== 'string')
             throw deliveryError('冲突 AI 请求无效。', undefined, 400);
           const result = mutations.execute({ method: 'POST', url: request.url, body: request.body, key: request.headers['idempotency-key'] }, () => {
-            this.repository.updateStep(step, { state: 'pending', message: null, result: { ...step.result, aiAuthorization: request.body, manualResolution: false } });
+            for (const pending of run.steps.filter((item) => item.action === 'merge' && (item.state === 'attention' || item.state === 'pending') && !item.conversationId)) {
+              /** 权限覆盖本次交付全部冲突仓库，手工草稿只属于当前确切步骤。 */
+              const authorization = pending.id === step.id ? request.body : { permissionMode: request.body.permissionMode, skillId: request.body.skillId, path: '', content: '', fingerprint: '' };
+              this.repository.updateStep(pending, { state: 'pending', message: null, result: { ...pending.result, aiAuthorization: authorization, manualResolution: false } });
+            }
             this.repository.updateState(run.id, 'queued');
             return { statusCode: 202, body: this.repository.view(this.repository.get(run.id)!) };
           });
@@ -645,7 +663,7 @@ export class GitDeliveryExecution {
     if (step.action === 'merge') {
       if (!snapshot.clean || snapshot.conflictFiles.length) throw deliveryError('合入前仍有未提交文件或原仓库冲突，请先处理。');
       if (scope.kind === 'task') {
-        const existing = this.options.taskIntegrations
+        let existing = this.options.taskIntegrations
           .listByTask(scope.taskId)
           .find(
             (item) =>
@@ -653,6 +671,8 @@ export class GitDeliveryExecution {
               item.targetBranch === selection.mergeBranch &&
               (['preparing', 'conflicted', 'pending_local_sync'].includes(item.state) || (item.state === 'merged' && item.taskHeadSha === snapshot.headSha)),
           );
+        /** 新的一次完整交付先核对旧候选基线，避免已由冲突开发线交付的仓库永远卡在旧冲突记录。 */
+        if (existing && existing.state !== 'merged' && (existing.taskHeadSha !== snapshot.headSha || existing.targetHeadSha !== (await getGitBranchHead(context.repositoryPath!, selection.mergeBranch)))) existing = undefined;
         if (existing) this.repository.updateStep(this.step(step), { integrationId: existing.id });
         else {
           const response = await this.command(run, step, 'merge', `/api/tasks/${scope.taskId}/git-workspaces/${selection.repositoryId}/integrate`, workspaceGitCommandTypes.taskWorkspaceIntegrate, 'task_workspace', selection.repositoryId, {
@@ -722,6 +742,23 @@ export class GitDeliveryExecution {
   /** 只有真实合入终态允许继续推送，不把 AI 轮次结束等同于成功。 */
   private async finishMerge(run: GitDeliveryRunRecord, original: GitDeliveryStepRecord, selection: GitDeliverySelection, context: DeliveryRepositoryContext): Promise<boolean> {
     let step = this.step(original);
+    if (run.scope.kind === 'task' && step.integrationId && !step.conversationId) {
+      /** 全目录运行接管已有单仓冲突会话，不为同一现场再启动第二个 AI。 */
+      const integration = this.options.taskIntegrations.getById(step.integrationId);
+      if (integration?.state === 'merged') {
+        this.succeed(step);
+        return true;
+      }
+      /** 只接管同一精确候选的未失效尝试，不能按创建时间猜测使用哪份结果。 */
+      const attempts = this.options.taskIntegrationAttempts
+        .listByIntegration(step.integrationId)
+        .filter((attempt) => (attempt.state === 'preparing' || attempt.state === 'active') && attempt.targetHeadSha === integration?.targetHeadSha && attempt.taskHeadSha === integration?.taskHeadSha);
+      if (attempts.length > 1) throw deliveryError('同一仓库存在多个有效冲突处理会话，请核对原现场后继续，不能自动选择覆盖。');
+      if (attempts[0]) {
+        this.repository.updateStep(step, { conversationId: attempts[0].conversationId });
+        step = this.step(step);
+      }
+    }
     const acceptedAi = (step.result?.phases as Record<string, Record<string, unknown>> | undefined)?.ai;
     if (!step.conversationId && acceptedAi) {
       const id = acceptedAi.conversationId ?? (acceptedAi.conversation as { id?: string } | undefined)?.id;
@@ -797,18 +834,28 @@ export class GitDeliveryExecution {
     const files = await readTaskIntegrationConflictPaths(merge.integrationPath);
     if (files.length) {
       if ((!run.input.settings.resolveConflicts && !ai) || step.conversationId) throw deliveryError('仍有合入冲突，请打开冲突页处理后继续。');
-      if (ai) {
+      if (ai?.path) {
         const current = await readTaskIntegrationConflict(merge.integrationPath, ai.path);
         if (current.fingerprint !== ai.fingerprint) throw deliveryError('冲突草稿已过期，请重新读取。');
         await this.external(run, step, 'ai_draft', { path: ai.path, content: ai.content, fingerprint: ai.fingerprint }, () => writeTaskIntegrationDraft(merge.integrationPath, ai.path, ai.content));
       }
+      /** 普通目录会话也可能属于任务，意图来源只沿持久身份扩展到同一项目的本任务。 */
+      const origin = this.options.conversations.getRecordById(run.scope.conversationId);
+      /** 任务身份仅用于读取意图，不改变已接纳的仓库写入范围。 */
+      const originTask = origin?.projectId === run.projectId && origin.taskId ? this.options.tasks.getById(origin.taskId) : undefined;
+      /** 防止损坏的跨项目任务关联泄露另一项目的会话内容。 */
+      const task = originTask?.projectId === run.projectId ? originTask : undefined;
       const body = {
         mode: 'create',
         source: 'delivery_conflict',
         deliveryStepId: step.id,
         permissionMode: aiSettings.permissionMode,
         collaborationMode: 'default',
-        content: `处理代码交付的合入冲突：${merge.sourceBranch} → ${merge.targetBranch}。仅在当前隔离工作目录内解决冲突，保留双方有效业务修改。解决后保存并暂存文件。不要自行提交、合入目标分支或推送；后续操作由交付执行器按用户选择完成。无法确定业务语义时询问用户。`,
+        content: [
+          `处理代码交付的合入冲突：${merge.sourceBranch}（${merge.sourceHeadSha}）→ ${merge.targetBranch}（${merge.targetHeadSha}）。仅在当前隔离工作目录内解决全仓冲突。解决后保存并暂存全部已解决文件，保留当前合并状态；不要自行提交、切换分支、reset、rebase、合入目标分支或推送，后续操作由交付执行器按用户选择完成。`,
+          buildGitConflictIntentContext({ conversations: this.options.conversations, projectId: run.projectId, scope: task ? { taskId: task.id } : { conversationId: run.scope.conversationId }, task }),
+          gitConflictPreservationInstructions,
+        ].join('\n\n'),
         ...(aiSettings.skillId ? { skillReferences: [{ id: aiSettings.skillId }] } : {}),
       };
       const response = await this.command(run, step, 'ai', `/api/projects/${run.projectId}/conversations`, 'conversation.project.create', 'project', run.projectId, body);
@@ -831,6 +878,50 @@ export class GitDeliveryExecution {
     if (finalized.localSyncStatus !== 'synced') throw deliveryError('隔离合入已保留，原工作目录尚未安全同步。');
     this.succeed(this.step(step));
     return true;
+  }
+
+  /** 接纳前核对原工作目录的全部仓库，客户端漏传仓库时拒绝把局部操作当作整次交付。 */
+  private async assertDirectoryCoverage(input: GitDeliveryInput): Promise<void> {
+    if (input.scope.kind !== 'task' || !input.settings.merge) return;
+    /** 所有来源关系限定为本任务，冲突开发线回到原环境进行范围核对。 */
+    const workspaces = this.options.taskWorkspaces.listByTask(input.scope.taskId);
+    /** 每个原任务仓库只允许一个交付开发线，避免原分支与冲突分支互相覆盖。 */
+    const roots = new Map<string, (typeof workspaces)[number]>();
+    for (const selection of input.repositories) {
+      /** 全目录交付只能使用当前开发线持久记录的来源分支。 */
+      const workspace = workspaces.find((candidate) => candidate.id === selection.repositoryId);
+      if (!workspace || selection.mergeBranch !== workspace.sourceBranch) throw deliveryError('完整交付必须合入每个仓库记录的来源分支，请刷新后继续。');
+      /** 不通过分支后缀猜测冲突开发线来源。 */
+      const root = resolveGitDeliveryRootWorkspace(workspaces, selection.repositoryId);
+      if (!root) throw deliveryError('原工作目录关联缺失，请刷新交付范围后继续。');
+      if (roots.has(root.id)) throw deliveryError('同一仓库存在多条待交付开发线，请在对应会话中交付，不能同时合入祖先与冲突开发线。');
+      roots.set(root.id, root);
+    }
+    /** 一个工作目录只扫描一次，完整深度扫描仍沿用现有仓库发现的目录排除规则。 */
+    const directories = new Set<string>();
+    /** Git 公共目录跨普通仓库与任务 worktree 保持同一真实仓库身份。 */
+    const commonDirectories = new Set<string>();
+    for (const root of roots.values()) {
+      /** 同一原工作目录中的全部仓库都必须出现在本次输入。 */
+      const missing = deliveryWorkspacesForConversationBranch(workspaces, root.id).filter((workspace) => workspace.state !== 'discarded' && !roots.has(workspace.id));
+      if (missing.length) throw deliveryError(`交付范围不完整，尚缺仓库：${missing.map((workspace) => workspace.repositoryName || workspace.repositoryRelativePath).join('、')}。请刷新后交付全部仓库。`);
+      /** 环境目录来自持久记录，客户端不能扩大到任意目录。 */
+      const environment = root.environmentId ? new TaskEnvironmentRepository(this.options.db).getById(root.environmentId) : undefined;
+      /** 旧单仓工作区沿用自身目录，已回收且没有原目录时不能宣称完整扫描。 */
+      const directory = environment?.rootPath ?? root.worktreePath;
+      if (!directory) throw deliveryError('原工作目录已回收，无法核对全部仓库，请从仍有效的工作目录发起交付。');
+      directories.add(await realpath(directory));
+      commonDirectories.add(await getGitCommonDirectory(root.repositoryPath || this.options.projects.getById(root.projectId)!.localPath));
+    }
+    for (const directory of directories) {
+      /** 新建但未登记的嵌套仓库也不能从整次交付中静默消失。 */
+      const repositories = await discoverGitRepositories(directory, Number.MAX_SAFE_INTEGER);
+      for (const repository of repositories) {
+        if (!commonDirectories.has(await getGitCommonDirectory(repository.localPath))) {
+          throw deliveryError(`当前工作目录还有未纳入交付的仓库：${repository.name}。请先登记其任务工作区和来源分支后继续。`);
+        }
+      }
+    }
   }
 
   /** 管理状态只在全部仓库完成后使用现有业务命令更新。 */
