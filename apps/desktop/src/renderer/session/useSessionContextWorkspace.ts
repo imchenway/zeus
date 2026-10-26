@@ -2,7 +2,7 @@ import type { SideQuestionState } from './SideQuestionWorkspace.js';
 import { ProjectToolContext } from '../features/workspace/projectToolContext.js';
 import { useCallback, useContext, useSyncExternalStore, type SetStateAction } from 'react';
 import type { ConversationFileLocation, FilePreviewRequest } from '@zeus/shared';
-import type { ConversationResourcePreview, NativeSessionItemBuffer } from './sessionTypes.js';
+import type { ConversationResourcePreview, NativeSessionItemBuffer, NativeSessionState } from './sessionTypes.js';
 import type { SourceWorkspaceState, SourceWorkspaceViewMode } from './SourceWorkspace.js';
 
 /** 会话右侧工作区仅在用户打开或关闭内容时改变。 */
@@ -36,6 +36,35 @@ const emptyState: SessionContextState = { workspace: { kind: 'none' }, fullWidth
 const workspaces = new Map<string, SessionContextState>();
 /** 只有正在展示的工作区订阅变化。 */
 const listeners = new Set<() => void>();
+
+/** 归档回执同步到所有主会话保存的侧栏引用，未挂载的侧栏也不能继续复用旧会话。 */
+export function markSideQuestionConversationArchived(conversationId: string): void {
+  /** 仅在有引用变化时通知页面，重复回执不触发重绘。 */
+  let changed = false;
+  for (const [key, current] of workspaces) {
+    /** 同一窗口内的会话身份唯一，项目切换不影响归档定位。 */
+    const question = current.questionState;
+    if (question?.conversation?.id !== conversationId || question.conversation.archived) continue;
+    workspaces.set(key, { ...current, questionState: { ...question, conversation: { ...question.conversation, archived: true } } });
+    changed = true;
+  }
+  if (changed) for (const listener of listeners) listener();
+}
+
+/** 已确认归档后转入独立首发草稿，迟到的旧会话通知不能替换新的侧栏。 */
+export function replaceArchivedSideQuestion(current: SideQuestionState | null, conversationId: string, state: Pick<NativeSessionState, 'draft' | 'attachments' | 'contextDraft'>): SideQuestionState | null {
+  if (current?.conversation?.id !== conversationId) return current;
+  return {
+    ...current,
+    id: crypto.randomUUID(),
+    conversation: null,
+    attempt: undefined,
+    draft: state.draft || current.draft,
+    attachments: [...new Map([...state.attachments, ...current.attachments].map((attachment) => [attachment.localPath ?? attachment.uploadRef, attachment])).values()],
+    annotations: [...new Map([...state.contextDraft.responseAnnotations, ...current.annotations].map((annotation) => [annotation.id, annotation])).values()],
+    codeComments: state.contextDraft.codeComments,
+  };
+}
 
 /** 离开会话只取消订阅，不关闭已打开内容。 */
 function subscribe(listener: () => void): () => void {

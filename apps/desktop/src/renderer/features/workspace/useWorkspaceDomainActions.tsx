@@ -1,4 +1,5 @@
 import { transitionConversation } from '../../session/conversationTransition.js';
+import { markSideQuestionConversationArchived } from '../../session/useSessionContextWorkspace.js';
 import { useBackgroundInputSuggestions } from '../../session/useBackgroundInputSuggestions.js';
 import { notifyProjectGitChanged } from '../../git/projectGitWorkbenchState.js';
 import { isZentaoDestinationComplete, type ZentaoTaskDestination } from '../../task/ZentaoSyncModal.js';
@@ -1653,6 +1654,7 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
 
   /** HTTP 回执与实时通知共用已确认归档的移除逻辑，不依赖下一次列表读取成功。 */
   function removeConfirmedArchivedConversation(conversationId: string, projectId: string | null, taskId: string | null, navigationId = conversationId): void {
+    markSideQuestionConversationArchived(conversationId);
     if (taskId) nativeConversationChoiceLoadCoordinator.forget(taskId, conversationId);
     else if (projectId) nativeProjectConversationChoiceLoadCoordinator.forget(projectId, conversationId);
     setNativeConversationChoicesByProject((current) =>

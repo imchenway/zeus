@@ -34,6 +34,8 @@ export interface SideQuestionState {
   draft: string;
   /** 未交给右侧会话输入框的选区评论。 */
   annotations: ConversationResponseAnnotation[];
+  /** 归档切换时保留原输入框尚未发送的代码评论。 */
+  codeComments?: ConversationContextDraft['codeComments'];
   /** 尚未发送的附件。 */
   attachments: NativeConversationAttachment[];
   /** 尚未发送时选择的运行设置，切换主会话后仍保留。 */
@@ -91,7 +93,7 @@ export function SideQuestionWorkspace(props: {
       ...createInitialSessionState(),
       draft: props.state.draft,
       attachments: props.state.attachments,
-      contextDraft: { responseAnnotations: props.state.annotations, codeComments: [] },
+      contextDraft: { responseAnnotations: props.state.annotations, codeComments: props.state.codeComments ?? [] },
       conversationState: 'native_idle' as const,
       transportState: 'ready' as const,
     }),
@@ -125,6 +127,7 @@ export function SideQuestionWorkspace(props: {
               conversation,
               draft: '',
               attachments: [],
+              codeComments: [],
               attempt: undefined,
               annotations: current.annotations.filter((annotation) => !input.conversationContext.responseAnnotations.some((sent) => sent.id === annotation.id)),
             },
@@ -184,7 +187,7 @@ export function SideQuestionWorkspace(props: {
             onChooseAttachments={() => {}}
             onAddAttachments={(attachments) => props.onStateChange((current) => current && { ...current, attachments: [...current.attachments, ...attachments] })}
             onRemoveAttachment={(attachment) => props.onStateChange((current) => current && { ...current, attachments: current.attachments.filter((entry) => entry !== attachment) })}
-            onContextDraftChange={(context) => props.onStateChange((current) => current && { ...current, annotations: context.responseAnnotations })}
+            onContextDraftChange={(context) => props.onStateChange((current) => current && { ...current, annotations: context.responseAnnotations, codeComments: context.codeComments })}
           />
         </div>
       )}

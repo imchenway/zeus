@@ -123,7 +123,7 @@ import type { ConversationModelSetupContext } from '../settings/useModelSetup.js
 import { StructuredComposerInput, type StructuredComposerSelection } from './StructuredComposerInput.js';
 import { isSessionTerminalShortcut, SessionTerminalPanel, type SessionTerminalClient } from './SessionTerminal.js';
 import { useSessionTerminalVisibility } from './useSessionTerminalVisibility.js';
-import { useSessionContextWorkspace, type SessionContextWorkspace } from './useSessionContextWorkspace.js';
+import { replaceArchivedSideQuestion, useSessionContextWorkspace, type SessionContextWorkspace } from './useSessionContextWorkspace.js';
 
 export interface SessionWorkspaceTaskManagementStatus {
   id: string;
@@ -379,6 +379,8 @@ export interface ConnectedSessionWorkspaceProps {
   pendingResponseAnnotations?: ConversationResponseAnnotation[];
   /** 完成草稿交付后从父页面释放待交付记录。 */
   onResponseAnnotationsStaged?: (ids: string[]) => void;
+  /** 侧栏收到已确认的归档状态后，将未发送内容交回新会话草稿。 */
+  onArchivedSideQuestion?: (state: NativeSessionState) => void;
   /** 所有 Provider 共用专用建议设置，不继承会话模型。 */
   inputSuggestionSettings?: import('@zeus/shared').InputSuggestionSettings;
   gitContext?: { client: DashboardClient; project: ProjectRecord };
@@ -560,6 +562,11 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
   }, [controller, controllerEnabled, props.pendingResponseAnnotations, props.onResponseAnnotationsStaged]);
   const workspaceStateSelector = useMemo(createSessionWorkspaceStateSelector, [controller]);
   const state = useSessionControllerSelector(controller, workspaceStateSelector);
+  useEffect(() => {
+    /** 归档回执或当前会话快照均可确认归档；读取失败不能触发新建。 */
+    const current = controller.getState();
+    if (props.conversation.archived || (current.snapshot?.id === props.conversation.id && current.snapshot.archived)) props.onArchivedSideQuestion?.(current);
+  }, [controller, props.conversation.id, props.conversation.archived, props.onArchivedSideQuestion, state.snapshot?.archived]);
   const [subagentScope, setSubagentScope] = useState<ScopedSubagentSnapshot>(() => ({ conversationId: props.conversation.id, snapshot: null }));
   const subagentListSnapshot = subagentScope.conversationId === props.conversation.id ? subagentScope.snapshot : null;
   useEffect(() => {
@@ -897,6 +904,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
                     terminalClient={undefined}
                     pendingResponseAnnotations={annotations}
                     onResponseAnnotationsStaged={onStaged}
+                    onArchivedSideQuestion={(state) => onChange((current) => replaceArchivedSideQuestion(current, conversation.id, state))}
                     embeddedInTask
                     quickActionsSuppressed
                     onLatestContentVisibilityChange={undefined}
