@@ -235,6 +235,8 @@ export class BrowserHost implements BrowserAutomationPort {
   private readonly managementTabGroups = new Map<string, ManagedBrowserTabGroup>();
   private readonly managementAudit: ManagedBrowserAuditEntry[] = [];
   private cdpSequence = 0;
+  /** 本次宿主运行内不复用快照引用，避免旧 e 编号意外命中新页面元素。 */
+  private elementRefSequence = 0;
   private settings: ZeusBrowserSettings;
   private persistenceTimer: ReturnType<typeof setTimeout> | undefined;
   private persistenceChain: Promise<void> = Promise.resolve();
@@ -1363,22 +1365,39 @@ export class BrowserHost implements BrowserAutomationPort {
     return toolJson({ action, url: webContents.getURL() });
   }
 
+  /** 将页面观察绑定到真实标签和文档代次，引用只对最新一次成功观察有效。 */
   private async pageSnapshot(tab: LiveBrowserTab, maxElements: number): Promise<Record<string, unknown>> {
+    /** 读取期间发生导航时，旧文档的结果不能写回当前引用集合。 */
+    const documentGeneration = tab.documentGeneration;
+    /** 本次页面结果仍是不可信数据，后续操作继续走宿主的检查入口。 */
     const result = (await this.ensureView(tab).webContents.executeJavaScript(`(${pageSnapshotScript})(${JSON.stringify(maxElements)})`, true)) as {
       title: string;
       url: string;
       text: string;
       elements: Array<{ ref: string; selector: string; [key: string]: unknown }>;
     };
+    if (tab.documentGeneration !== documentGeneration || !this.tabs.has(tab.snapshot.id)) {
+      throw Object.assign(new Error('页面在观察期间已切换或关闭，请重新读取快照。'), { code: 'ZEUS_BROWSER_SNAPSHOT_CHANGED' });
+    }
     tab.refs.clear();
     for (const element of result.elements ?? []) {
-      if (typeof element.ref === 'string' && typeof element.selector === 'string') tab.refs.set(element.ref, element.selector);
+      if (typeof element.selector === 'string') {
+        element.ref = `e${++this.elementRefSequence}`;
+        tab.refs.set(element.ref, element.selector);
+      }
     }
-    return result;
+    return { ...result, tabId: tab.snapshot.id, documentGeneration };
   }
 
+  /** 引用缺失时明确要求重新观察，不能把过期引用当作 CSS 选择器。 */
   private resolveTarget(tab: LiveBrowserTab, target: string): string {
-    return tab.refs.get(target.replace(/^\[?ref=|\]$/gu, '')) ?? target;
+    /** 模型可使用裸引用或快照引用标记。 */
+    const reference = /^(?:\[?ref=)?(e\d+)\]?$/u.exec(target)?.[1];
+    if (!reference) return target;
+    /** 映射仅来自当前标签最新的成功快照。 */
+    const selector = tab.refs.get(reference);
+    if (!selector) throw Object.assign(new Error(`元素引用 ${reference} 已过期或不属于当前标签，请重新读取快照。`), { code: 'ZEUS_BROWSER_STALE_REFERENCE' });
+    return selector;
   }
 
   private async elementInfo(tab: LiveBrowserTab, selector: string): Promise<BrowserToolElementInfo> {
@@ -3735,16 +3754,25 @@ const advancedLocatorOperationScript = async function advancedLocatorOperation(q
   throw new Error(`Unsupported locator operation: ${operation}`);
 }.toString();
 
+/** 读取可见交互元素及有界正文；短选择器必须唯一，避免相同名称命中其他控件。 */
 const pageSnapshotScript = function pageSnapshot(maxElements: number) {
+  /** 优先使用唯一属性；无法唯一定位时才构造结构路径。 */
   const selectorFor = (element: Element): string => {
-    if (element.id) return `#${CSS.escape(element.id)}`;
+    /** 页面中的重复 id 不具备唯一身份。 */
+    const idSelector = element.id ? `#${CSS.escape(element.id)}` : '';
+    if (idSelector && document.querySelectorAll(idSelector).length === 1) return idSelector;
     for (const attribute of ['data-testid', 'data-test', 'name', 'aria-label']) {
+      /** 属性值只用于生成选择器，不执行页面提供的代码。 */
       const value = element.getAttribute(attribute);
-      if (value) return `${element.tagName.toLowerCase()}[${attribute}="${CSS.escape(value)}"]`;
+      if (value) {
+        /** 相同名称常出现在多个表单，只有唯一匹配才可简写。 */
+        const candidate = `${element.tagName.toLowerCase()}[${attribute}="${CSS.escape(value)}"]`;
+        if (document.querySelectorAll(candidate).length === 1) return candidate;
+      }
     }
     const parts: string[] = [];
     let current: Element | null = element;
-    while (current && current !== document.documentElement && parts.length < 8) {
+    while (current && current !== document.documentElement) {
       let part = current.tagName.toLowerCase();
       const siblings = current.parentElement ? [...current.parentElement.children].filter((candidate) => candidate.tagName === current!.tagName) : [];
       if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(current) + 1})`;

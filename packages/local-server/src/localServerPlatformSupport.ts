@@ -30,9 +30,11 @@ export function imInternalCommandRequest<TInput extends object>(input: {
   };
 }
 
-/** 判断本地 API 请求来源是否属于 Electron 或本机开发环境。 */
+/** 判断来源是否属于现有桌面、指定 Chromium WebUI 或本机开发环境；授权令牌仍由请求入口校验。 */
 export function isAllowedLocalAppOrigin(origin: string | undefined): boolean {
   if (!origin || origin === 'null') return true;
+  // 仅放行 Zeus 的精确 WebUI origin，不向其他 chrome:// 页面或扩展开放。
+  if (origin === 'chrome://zeus') return true;
   try {
     const parsed = new URL(origin);
     if (parsed.protocol === 'file:' || parsed.protocol === 'app:') return true;

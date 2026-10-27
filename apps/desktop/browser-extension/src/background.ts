@@ -79,6 +79,7 @@ async function receiveCommand(command) {
 }
 
 async function executeCommand(command) {
+  assertCommandDeadline(command);
   if (command.tool === 'catalog') return { value: { contractVersion: ZEUS_CONTRACT_VERSION, surface: ZEUS_SURFACE } };
   if (command.tool === 'release_handles') {
     const requested = Array.isArray(command.arguments?.handles) ? new Set(command.arguments.handles.map(String)) : null;
@@ -105,6 +106,7 @@ async function invokeConvenience(command) {
     return { value: tabProjection(await chrome.tabs.get(tab.id)) };
   }
   const tab = await resolveClaimedConvenienceTab(command, args.tabId);
+  assertCommandDeadline(command);
   if (command.tool === 'select_tab') {
     await chrome.tabs.update(tab.id, { active: true });
     return { value: tabProjection(await chrome.tabs.get(tab.id)) };
@@ -139,6 +141,13 @@ async function invokeConvenience(command) {
   if (command.tool === 'scroll') return { value: await sendPage(tab.id, 'coordinate_scroll', { deltaX: args.x || 0, deltaY: args.y || 0 }) };
   if (command.tool === 'wait') return { value: await sendPage(tab.id, 'wait_selector', args) };
   throw failure('ZEUS_BROWSER_TOOL_UNSUPPORTED', `Unsupported browser tool: ${command.tool}`);
+}
+
+/** 原生消息延迟送达时拒绝过期命令；时间由桌面宿主提供，不能从页面参数覆盖。 */
+function assertCommandDeadline(command) {
+  if (!Number.isSafeInteger(command.deadlineUnixMs) || command.deadlineUnixMs <= Date.now()) {
+    throw failure('ZEUS_BROWSER_CALL_EXPIRED', 'Browser command expired before dispatch. Inspect the page before issuing another action.');
+  }
 }
 
 async function invokeAdvanced(command) {

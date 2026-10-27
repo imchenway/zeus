@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { BrowserAutomationPort, BrowserAutomationToolCall } from '@zeus/local-server';
+import { browserAutomationDeadline, remainingBrowserAutomationTime } from '@zeus/local-server';
 
 export interface DesktopBrowserAutomationBridge {
   baseUrl: string;
@@ -44,13 +45,16 @@ export function createReconnectableBrowserAutomationProxy(): ReconnectableBrowse
     waiters.clear();
   }
 
-  async function waitForRegistration(): Promise<{ leaseId: string; baseUrl: string; token: string }> {
+  /** 离线等待消耗当前调用预算，过期请求不能在界面重连后启动。 */
+  async function waitForRegistration(deadlineUnixMs: number): Promise<{ leaseId: string; baseUrl: string; token: string }> {
+    /** 等待重连不得晚于调用本身的截止时间。 */
+    const waitTimeoutMs = Math.min(browserBridgeWaitTimeoutMs, remainingBrowserAutomationTime(deadlineUnixMs));
     if (registration) return registration;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         waiters.delete(onRegistration);
         reject(Object.assign(new Error('Zeus 界面尚未重新连接浏览器自动化宿主。'), { code: 'ZEUS_BROWSER_AUTOMATION_UI_OFFLINE' }));
-      }, browserBridgeWaitTimeoutMs);
+      }, waitTimeoutMs);
       timer.unref();
       const onRegistration = (value: { leaseId: string; baseUrl: string; token: string }) => {
         clearTimeout(timer);
@@ -125,31 +129,44 @@ export function createReconnectableBrowserAutomationProxy(): ReconnectableBrowse
     },
     /** 单次调用失败不撤销共享连接；登记和撤销只由界面租约生命周期负责。 */
     async invoke(input) {
-      const current = await waitForRegistration();
+      /** 排队、重连和传输使用同一个绝对截止时间。 */
+      const deadlineUnixMs = browserAutomationDeadline(input.deadlineUnixMs);
+      /** 等待阶段尚未发送动作，离线错误与动作结果未知分开。 */
+      const current = await waitForRegistration(deadlineUnixMs);
+      /** 获取租约后再次检查，以覆盖截止时间附近发生的重连。 */
+      const remainingMs = remainingBrowserAutomationTime(deadlineUnixMs);
+      /** 中断只停止等待响应；远端动作可能已经执行，不能自动重放。 */
+      let response: Response;
       try {
-        const response = await fetch(`${current.baseUrl}/invoke`, {
+        response = await fetch(`${current.baseUrl}/invoke`, {
           method: 'POST',
           headers: {
             authorization: `Bearer ${current.token}`,
             'content-type': 'application/json',
           },
-          body: JSON.stringify(input),
+          body: JSON.stringify({ ...input, deadlineUnixMs }),
+          signal: AbortSignal.timeout(remainingMs),
         });
-        const payload = (await response.json().catch(() => ({}))) as unknown;
+      } catch (error) {
+        /** 浏览器和桌面动作都可能已执行，连接失败只能报告未知结果。 */
+        const code = input.namespace === 'zeus_computer' ? 'ZEUS_COMPUTER_EFFECT_UNKNOWN' : 'ZEUS_BROWSER_EFFECT_UNKNOWN';
+        throw Object.assign(new Error(`自动化桥连接中断，动作结果未知。请先检查目标，不要自动重放：${error instanceof Error ? error.message : String(error)}`), { code });
+      }
+      try {
+        /** 响应体读取同样受 fetch 的截止信号约束。 */
+        const payload = (await response.json()) as unknown;
         if (!response.ok) {
           const detail = isRecord(payload) && typeof payload.message === 'string' ? payload.message : `HTTP ${response.status}`;
-          throw new Error(`Zeus BrowserHost bridge failed: ${detail}`);
+          throw Object.assign(new Error(`Zeus BrowserHost bridge failed: ${detail}`), { code: isRecord(payload) && typeof payload.error === 'string' ? payload.error : 'ZEUS_BROWSER_BRIDGE_INVOKE_FAILED' });
         }
         if (!isBrowserAutomationResult(payload)) throw new Error('Zeus BrowserHost bridge returned an invalid result.');
         return payload;
       } catch (error) {
         // 浏览器和桌面动作都可能已执行；失败直接返回，不能在当前或新租约自动重放。
-        if (input.namespace === 'zeus_computer') {
-          throw Object.assign(new Error(`Computer Use 桥连接中断，动作结果未知，请先停止控制并检查目标应用：${error instanceof Error ? error.message : String(error)}`), {
-            code: 'ZEUS_COMPUTER_EFFECT_UNKNOWN',
-          });
-        }
-        throw error;
+        if (isRecord(error) && typeof error.code === 'string') throw error;
+        throw Object.assign(new Error(`自动化桥未返回可确认的结果，请先检查目标，不要自动重放：${error instanceof Error ? error.message : String(error)}`), {
+          code: input.namespace === 'zeus_computer' ? 'ZEUS_COMPUTER_EFFECT_UNKNOWN' : 'ZEUS_BROWSER_EFFECT_UNKNOWN',
+        });
       }
     },
   };
@@ -202,10 +219,13 @@ async function handleDesktopBrowserBridgeRequest(request: IncomingMessage, respo
       sendJson(response, 400, { error: 'ZEUS_BROWSER_BRIDGE_INPUT_INVALID', message: '浏览器自动化请求格式无效。' });
       return;
     }
-    sendJson(response, 200, await browserAutomation.invoke(input));
+    /** 宿主在分发前拒绝过期调用，避免外层停止等待后仍开始操作。 */
+    const deadlineUnixMs = browserAutomationDeadline(input.deadlineUnixMs);
+    remainingBrowserAutomationTime(deadlineUnixMs);
+    sendJson(response, 200, await browserAutomation.invoke({ ...input, deadlineUnixMs }));
   } catch (error) {
     sendJson(response, 500, {
-      error: 'ZEUS_BROWSER_BRIDGE_INVOKE_FAILED',
+      error: isRecord(error) && typeof error.code === 'string' ? error.code : 'ZEUS_BROWSER_BRIDGE_INVOKE_FAILED',
       message: error instanceof Error ? error.message : '浏览器自动化调用失败。',
     });
   }
