@@ -6,6 +6,7 @@ import type { CreateTaskStageRequest, TaskRecord, TaskStageDeliverableRecord, Ta
 import { Button } from '../ui/Button.js';
 import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ZeusSelect } from '../ZeusSelect.js';
+import { compareModelOptions } from '../modelOptionPresentation.js';
 
 export type TaskWorkflowClient = Pick<
   TaskApiClient,
@@ -286,7 +287,11 @@ function TaskStageItem(props: {
   const currentDeliverable = [...stage.deliverables].reverse().find((deliverable) => deliverable.status === 'submitted' || deliverable.status === 'accepted');
   const canStart = !props.terminalReadOnly && Boolean(stage.modelRef) && (stage.status === 'ready' || stage.status === 'changes_requested' || stage.status === 'failed');
   const statusText = stageStatusCopy[stage.status][zh ? 0 : 1];
-  const modelOptions = props.models.filter((model) => model.available !== false).map((model) => ({ value: model.id, label: model.displayName ? `${model.displayName} · ${model.sourceName ?? model.agentKind ?? ''}` : model.id }));
+  /** 模型展示共用名称排序，当前配置的缺失项仍单独保留。 */
+  const modelOptions = props.models
+    .filter((model) => model.available !== false)
+    .sort(compareModelOptions)
+    .map((model) => ({ value: model.id, label: model.displayName ? `${model.displayName} · ${model.sourceName ?? model.agentKind ?? ''}` : model.id }));
   if (stage.modelRef && !modelOptions.some((option) => option.value === stage.modelRef)) modelOptions.unshift({ value: stage.modelRef, label: `${stage.modelRef} · ${zh ? '当前配置' : 'Current'}` });
   const effortOptions = selectedModel?.supportedReasoningEfforts.map((effort) => ({ value: effort, label: effort })) ?? [];
 

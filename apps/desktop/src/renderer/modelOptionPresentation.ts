@@ -43,6 +43,28 @@ function modelName(model: ModelOptionSource): string {
   return model.displayName?.trim() || model.model;
 }
 
+/** 固定英文排序避免系统语言改变 A–Z 顺序，忽略大小写及名称分隔符。 */
+const modelNameCollator = new Intl.Collator('en', { numeric: true, sensitivity: 'base', ignorePunctuation: true });
+
+/** 文本按 A–Z，数字及点分数字段按降序；不把点分型号转成小数。 */
+export function compareModelNames(left: string, right: string): number {
+  /** 连续点分数字作为一个型号段，确保 6.10 在 6.2 和 6 之前。 */
+  const leftParts = left.match(/\d+(?:\.\d+)*|[^\d]+/g) ?? [];
+  /** 保留文本段以维持同一型号内的名称升序。 */
+  const rightParts = right.match(/\d+(?:\.\d+)*|[^\d]+/g) ?? [];
+  for (let index = 0; index < Math.min(leftParts.length, rightParts.length); index += 1) {
+    /** 只有两侧均为数字段时反转比较方向。 */
+    const order = modelNameCollator.compare(leftParts[index]!, rightParts[index]!);
+    if (order) return /^\d/.test(leftParts[index]!) && /^\d/.test(rightParts[index]!) ? -order : order;
+  }
+  return leftParts.length - rightParts.length;
+}
+
+/** 展示名称相同时按模型名和完整身份确定顺序，不改变选择或可用性。 */
+export function compareModelOptions(left: ModelOptionSource, right: ModelOptionSource): number {
+  return compareModelNames(modelName(left), modelName(right)) || compareModelNames(left.model, right.model) || compareModelNames(left.id, right.id);
+}
+
 function speedLabel(model: ModelOptionSource, zh: boolean): string | null {
   if (!model.speedLabel || model.speedLabel === 'standard') return null;
   if (model.speedLabel === 'high_speed') return zh ? '高速' : 'High-speed';
@@ -70,9 +92,6 @@ export function presentModelOptions<Model extends ModelOptionSource>(
   const zh = language === 'zh-CN';
   const availableModels = models.filter((model) => model.available !== false);
   const resolvedSelectedId = resolveSelectedId(availableModels, selectedId, presentationOptions.preserveMissingSelection === true);
-  const selectedModel = availableModels.find((model) => model.id === resolvedSelectedId);
-  const selectedProviderName = selectedModel ? providerName(selectedModel, zh) : null;
-  const collator = new Intl.Collator(language, { numeric: true, sensitivity: 'base' });
   const providerModels = new Map<string, Model[]>();
 
   for (const model of availableModels) {
@@ -82,21 +101,10 @@ export function presentModelOptions<Model extends ModelOptionSource>(
     else providerModels.set(name, [model]);
   }
 
-  const providerNames = [...providerModels.keys()].sort((left, right) => {
-    if (left === selectedProviderName && right !== selectedProviderName) return -1;
-    if (right === selectedProviderName && left !== selectedProviderName) return 1;
-    return collator.compare(left, right);
-  });
+  const providerNames = [...providerModels.keys()].sort(compareModelNames);
   const showProviderGroups = providerNames.length > 1;
   const groups = providerNames.map((name) => {
-    const sortedModels = [...(providerModels.get(name) ?? [])].sort((left, right) => {
-      if (left.id === resolvedSelectedId && right.id !== resolvedSelectedId) return -1;
-      if (right.id === resolvedSelectedId && left.id !== resolvedSelectedId) return 1;
-      const nameOrder = collator.compare(modelName(left), modelName(right));
-      if (nameOrder !== 0) return nameOrder;
-      const modelOrder = collator.compare(left.model, right.model);
-      return modelOrder !== 0 ? modelOrder : collator.compare(left.id, right.id);
-    });
+    const sortedModels = [...(providerModels.get(name) ?? [])].sort(compareModelOptions);
     return { providerName: name, models: sortedModels } satisfies PresentedModelGroup<Model>;
   });
   const sortedModels = groups.flatMap((group) => group.models);

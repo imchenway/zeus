@@ -26,7 +26,7 @@ import type {
 import { ZeusSelect } from '../ZeusSelect.js';
 import { Button } from '../ui/Button.js';
 import { Collapsible } from '../ui/Collapsible.js';
-import { presentModelOptions, type ModelOptionSource } from '../modelOptionPresentation.js';
+import { compareModelNames, presentModelOptions, type ModelOptionSource } from '../modelOptionPresentation.js';
 import { formatVisibleApplicationError, VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { ModalPortal } from '../ui/ModalPortal.js';
 import { SettingsPagination, settingsPage, settingsPageSize } from './SettingsPagination.js';
@@ -167,7 +167,7 @@ export function ModelConnectionsSettingsPane(props: {
     setApiKeyVisible(false);
   }, [draft.id]);
   /** 界面列表只展示已启用模型：没勾选的候选只留在大纲下拉里，避免几十个候选刷屏。 */
-  const enabledModels = draft.models.filter((model) => model.enabled);
+  const enabledModels = draft.models.filter((model) => model.enabled).sort((left, right) => compareModelNames(left.displayName?.trim() || left.id, right.displayName?.trim() || right.id) || compareModelNames(left.id, right.id));
   /** 本地筛选保留全部草稿，翻页不会遗失模型修改。 */
   const filteredModels = enabledModels.filter((model) => model.id.toLocaleLowerCase().includes(modelQuery.trim().toLocaleLowerCase()));
   /** 实际页随模型删除夹紧。 */

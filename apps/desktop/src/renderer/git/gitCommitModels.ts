@@ -1,4 +1,5 @@
 import type { GitApiClient, GitCommitModelOption } from '../features/git/gitApiClient.js';
+import { compareModelOptions } from '../modelOptionPresentation.js';
 
 /** 所有提交入口共用模型目录读取能力。 */
 export type GitCommitModelsClient = Pick<GitApiClient, 'loadGitCommitModels'>;
@@ -108,6 +109,8 @@ export async function loadGitCommitModelOptions(client: GitCommitModelsClient, p
   const selected = models.items.find((model) => model.id === preferred) ?? models.items[0];
   return {
     ...models,
+    /** 排序只影响展示，默认选择仍由原目录和已保存设置确定。 */
+    items: [...models.items].sort(compareModelOptions),
     modelRef: selected?.id ?? '',
     settingsScope,
     settings: selected
