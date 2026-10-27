@@ -1,8 +1,9 @@
+import { reconcileCurrentReasoningItem } from '../src/renderer/session/reasoningSummary.js';
 import { SystemMessagesQa } from './system-messages-qa.js';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ModelSelectQa } from './model-select-qa.js';
 import { asyncMessageQuestions, conversationQuestionNavigationExcerpt, buildTaskPushLayout, describeUserFacingError, formatAsyncQuestionAnswer, type ConversationNavigationEntry, type UserFacingErrorCause } from '@zeus/shared';
-import { ConversationTranscript, MessageDeliveryOutcomeFeedback, type SessionCreationStatus } from '../src/renderer/session/ConversationTranscript.js';
+import { ConversationTranscript, MessageDeliveryOutcomeFeedback, transcriptRunStatus, type SessionCreationStatus } from '../src/renderer/session/ConversationTranscript.js';
 import { ApplicationErrorDialogHost, VisibleApplicationError } from '../src/renderer/ui/ApplicationErrorDialog.js';
 import { GoalPanel, GoalRail } from '../src/renderer/session/GoalPanel.js';
 import type { NativeGoalSnapshot, NativeConversationReadableSnapshot } from '../src/renderer/session/sessionTypes.js';
@@ -88,6 +89,7 @@ const scenes: QaScene[] = [
   { query: 'system-messages', title: 'Zeus 系统消息', summary: '持久化、恢复和草稿归属。', answer: '', activities: [] },
   { query: 'error-order', title: '报错后的消息顺序', summary: '失败记录固定在发生位置。', answer: '', activities: [] },
   { query: 'error-layout', title: '会话错误提示预览', summary: '已确认的提示样式直接来自会话组件。', answer: '', activities: [] },
+  { query: 'send-feedback', title: '发送状态反馈', summary: '本地发送、连接恢复与错误使用生产组件。', answer: '', activities: [] },
   { query: 'review', title: 'Markdown 变更审核', summary: '真实审核组件的预览、差异与读取状态。', answer: '', activities: [] },
   { query: 'questions', title: '询问表单', summary: 'PLAN 和异步询问复用相同组件；这里仅模拟提交结果。', answer: '', activities: [] },
   { query: 'plan-implementation', title: '计划确认与修改', summary: '真实计划确认卡片的单行尺寸、自适应输入和行尾操作。', answer: '', activities: [] },
@@ -200,6 +202,7 @@ export function SessionQaApp(props: { scene: QaScene }) {
   if (props.scene.query === 'system-messages') return <SystemMessagesQa />;
   if (props.scene.query === 'error-order') return <ErrorOrderQa />;
   if (props.scene.query === 'error-layout') return <ErrorLayoutQa />;
+  if (props.scene.query === 'send-feedback') return <SendFeedbackQa />;
   if (props.scene.query === 'paste-focus') return <TaskPasteFocusQa />;
   if (props.scene.query === 'composer') return <ComposerMarkdownQa />;
   if (props.scene.query === 'review') return new URLSearchParams(window.location.search).has('long') ? <LongMarkdownFileQa /> : <MarkdownReviewQa />;
@@ -1875,6 +1878,136 @@ function ErrorOrderQa() {
         </nav>
       </header>
       <ConversationTranscript state={state} language="zh-CN" transcriptHydrated />
+      <ApplicationErrorDialogHost language="zh-CN" />
+    </main>
+  );
+}
+
+/** 仅在本页切换发送阶段，复用真实归约器和展示组件，不访问 Provider。 */
+function SendFeedbackQa() {
+  /** 连接次数和失败由显式操作触发，便于逐帧观察替换关系。 */
+  const [stage, setStage] = useState('pending');
+  /** 窄窗口使用同一组件，尺寸仅限制预览容器。 */
+  const [narrow, setNarrow] = useState(false);
+  /** 连续更新经过共享归约，观察空载荷和旧摘要到达时的布局。 */
+  const [summaryRevision, setSummaryRevision] = useState(0);
+  useEffect(() => {
+    if (stage !== 'live-summary') return;
+    setSummaryRevision(0);
+    /** 每 50 毫秒推进一次，共 120 次；离开场景时释放计时器。 */
+    let revision = 0;
+    /** 浏览器预览内的更新源，不读取或发送真实会话。 */
+    const timer = window.setInterval(() => {
+      revision += 1;
+      setSummaryRevision(revision);
+      if (revision >= 120) window.clearInterval(timer);
+    }, 50);
+    return () => window.clearInterval(timer);
+  }, [stage]);
+  /** 每个阶段都从同一个本地发送动作开始，保留原消息身份。 */
+  let state = sessionReducer(
+    { ...createInitialSessionState(), transportState: 'ready', conversationState: 'native_idle', conversationId: 'send-preview' },
+    {
+      type: 'send_started',
+      clientUserMessageId: 'send-preview-message',
+      durableClientUserMessageId: 'send-preview-message',
+      draft: '整理这个会话相关的改动，把对应的流程图画给我看下',
+      attachments: [],
+      submittedAttachments: [],
+      browserSubmission: null,
+      contextDraft: { responseAnnotations: [], codeComments: [] },
+      browserComments: [],
+      delivery: 'queue',
+      previousConversationState: 'native_idle',
+      startedAt: '2026-10-27T07:00:00.000Z',
+    },
+  );
+  /** 思考与空回复均已进入真实轮次，不能再次生成独立思考占位。 */
+  const generating = stage === 'reasoning' || stage === 'empty-reply' || stage === 'live-summary' || stage === 'summary-retry';
+  if (generating) {
+    state = sessionReducer(state, { type: 'send_accepted', clientUserMessageId: 'send-preview-message', status: 'active', providerTurnId: 'send-preview-turn' });
+    /** 过程保留真实摘要，空助手事件只用于观察正文到达前的布局。 */
+    const item: NativeSessionItemBuffer = {
+      key: 'preview-model',
+      conversationId: 'send-preview',
+      threadId: 'send-preview',
+      turnId: 'send-preview-turn',
+      itemId: 'preview-model',
+      type: stage === 'reasoning' || stage === 'summary-retry' ? 'reasoning' : 'agentMessage',
+      status: 'in_progress',
+      phase: stage === 'reasoning' || stage === 'summary-retry' ? 'prework' : 'final',
+      text: stage === 'reasoning' || stage === 'summary-retry' ? '正在整理本次改动并核对调用链。' : '',
+      payload: stage === 'reasoning' || stage === 'summary-retry' ? { reasoningPresentation: 'process_text', v2SnapshotContentComplete: true } : {},
+      resources: [],
+    };
+    state = {
+      ...state,
+      activeTurnId: item.turnId,
+      startedTurnId: item.turnId,
+      conversationState: stage === 'reasoning' || stage === 'summary-retry' ? 'active_prework' : 'active_final_answer',
+      currentReasoningItem: stage === 'reasoning' || stage === 'summary-retry' ? item : null,
+      items: { ...state.items, [item.key]: item },
+      itemOrder: [...state.itemOrder, item.key],
+    };
+    if (stage === 'summary-retry') {
+      state.providerReconnectAttempt = 1;
+      state.providerReconnectAttempts = 3;
+      state.providerReconnectTurnId = item.turnId;
+    }
+    if (stage === 'live-summary') {
+      /** 交替投递有效摘要、缺项、旧条目和空载荷，复用快照与事件使用的归约规则。 */
+      for (let revision = 1; revision <= summaryRevision; revision += 1) {
+        /** 每四次更新开始一段新摘要，其余更新不应撤销当前有效内容。 */
+        const order = Math.ceil(revision / 4);
+        /** 已发布摘要用稳定位置区分；修订号仅描述同一条目的正文。 */
+        const incoming: NativeSessionItemBuffer = {
+          ...item,
+          itemId: `preview-summary-${revision % 4 === 3 ? order - 1 : order}`,
+          type: 'reasoning',
+          phase: 'prework',
+          text: revision % 4 === 0 ? '' : `正在核对第 ${revision % 4 === 3 ? order - 1 : order} 组调用链。` + '检查共享展示、摘要更新与连接状态。'.repeat(3),
+          transcript: {
+            placement: { entryId: `summary-${revision % 4 === 3 ? order - 1 : order}`, order: revision % 4 === 3 ? order - 1 : order, orderEpoch: 1, placementRevision: 1, turnId: item.turnId, openingInputId: null, displayStageId: null },
+            sources: [{ domain: 'provider_item', scope: 'send-preview', sourceId: 'summary', facet: 'reasoning_block', revision: 1, contentRevision: revision % 4 === 3 ? 100 : 1 }],
+          },
+        };
+        state.currentReasoningItem = reconcileCurrentReasoningItem(state.currentReasoningItem, revision % 4 === 2 ? null : incoming, item.turnId);
+        // 旧摘要的修订号即使更大，也不能覆盖位置更晚的另一条摘要。
+        if (state.currentReasoningItem?.itemId !== `preview-summary-${order}`) throw new Error('摘要被空载荷或旧条目替换。');
+      }
+      // 换轮和终态必须释放临时摘要，避免在下一条消息下显示旧内容。
+      if (reconcileCurrentReasoningItem(state.currentReasoningItem, null, null) || reconcileCurrentReasoningItem(state.currentReasoningItem, null, 'next-turn')) throw new Error('摘要未在轮次结束或切换时清理。');
+      state.conversationState = 'active_prework';
+    }
+  } else if (stage !== 'pending') {
+    state = sessionReducer(state, {
+      type: stage === 'failed' ? 'send_failed' : 'send_uncertain',
+      clientUserMessageId: 'send-preview-message',
+      previousConversationState: 'native_idle',
+      error: { code: 'ZEUS_CONVERSATION_SEND_FAILED', message: '连接已断开，请重试。', retryable: true, recoveryRequired: stage !== 'failed' },
+    });
+    if (stage === '1' || stage === '5') state = sessionReducer(state, { type: 'send_reconcile_progress', clientUserMessageId: 'send-preview-message', attempt: Number(stage), maxAttempts: 5 });
+  }
+  // 预览入口同时保留最小状态检查，错误或核对阶段不能继续显示独立执行提示。
+  if (transcriptRunStatus(state) !== (stage === 'summary-retry' ? 'reconnecting' : stage === 'pending' || generating ? 'executing' : null)) throw new Error('发送状态未被连接或错误正确接管。');
+  return (
+    <main className="macos-ai-app zeus-shell session-codex-parity-v1 qa-error-layout theme-light" data-theme="light" data-summary-revision={summaryRevision}>
+      <nav className="qa-error-layout-heading" aria-label="发送阶段预览">
+        {['pending', 'reasoning', 'empty-reply', '1', '5', 'failed', 'exhausted', 'live-summary', 'summary-retry'].map((value, index) => (
+          <Button key={value} aria-pressed={stage === value} onClick={() => setStage(value)}>
+            {['发送', '思考过程', '空回复', '连接 1/5', '连接 5/5', '明确失败', '恢复耗尽', '连续摘要', '摘要期间重连'][index]}
+          </Button>
+        ))}
+        <Button aria-pressed={narrow} onClick={() => setNarrow(!narrow)}>
+          窄窗口
+        </Button>
+      </nav>
+      <section style={{ width: narrow ? 360 : 1000, maxWidth: '100%', margin: '24px auto' }}>
+        <div style={{ display: 'flex', height: 320 }}>
+          <ConversationTranscript state={state} language="zh-CN" transcriptHydrated onRetryPendingSend={() => setStage('pending')} />
+        </div>
+        <ConversationComposer state={state} language="zh-CN" permissionMode="read-only" collaborationMode="default" onDraftChange={() => {}} onSubmit={() => setStage('pending')} onInterrupt={() => {}} onChooseAttachments={() => {}} />
+      </section>
       <ApplicationErrorDialogHost language="zh-CN" />
     </main>
   );

@@ -78,7 +78,6 @@ export function createConversationComposerStateSelector(): StateSelector {
     return {
       ...state,
       changeSetsByProviderId: emptyChangeSets,
-      terminalTurnIds: emptyTerminalTurns,
       items: previousSuggestionItems,
       // 当前摘要只属于会话正文，不能驱动输入区重新渲染。
       currentReasoningItem: null,

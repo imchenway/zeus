@@ -32,6 +32,7 @@ import { hasUnfinishedConversationTurn } from './conversationQueuePresentation.j
 import type { ZeusBrowserComment, ZeusBrowserPreparedSubmission } from '@zeus/shared';
 import { type ConversationContextDraft, emptyConversationContextDraft, type TaskPushMessageLayout } from '@zeus/shared';
 import { mergeConversationContentV2, reconcileConversationHistoryCache } from './conversationSnapshotV2Adapter.js';
+import { latestReasoningSummaryText, reconcileCurrentReasoningItem } from './reasoningSummary.js';
 import { isTranscriptContentUpdate } from './transcriptProjection.js';
 import { compareTranscriptTimelineOrder, mergeDurableItemResources, mergeTranscriptItem, newestTranscriptPlacement, reconcileTranscriptItems, transcriptContentRevision } from './transcriptReconciliation.js';
 import { mergeSystemMessages } from './systemMessageProjection.js';
@@ -117,7 +118,9 @@ export type NativeSessionAction =
       error?: NativeSessionError;
     }
   | { type: 'send_accepted'; clientUserMessageId: string; status: string; messageCreatedAt?: string; submissionId?: string; providerTurnId?: string }
-  | { type: 'send_terminal'; clientUserMessageId: string };
+  | { type: 'send_terminal'; clientUserMessageId: string }
+  /** 发送结果只读核对的实际次数；零表示核对结束，交回原消息错误组件。 */
+  | { type: 'send_reconcile_progress'; clientUserMessageId: string; attempt: number; maxAttempts: number };
 
 export function nativeSessionItemKey(conversationId: string, threadId: string, turnId: string, itemId: string): string {
   return [conversationId, threadId, turnId, itemId].map((part) => encodeURIComponent(part)).join('/');
@@ -310,6 +313,18 @@ export function sessionReducer(state: NativeSessionState, action: NativeSessionA
       return { ...state, contextDraft: action.contextDraft };
     case 'send_started':
       return addOptimisticUserItem(state, action);
+    case 'send_reconcile_progress': {
+      /** 迟到进度不能覆盖已经接纳或失败的消息。 */
+      const entry = optimisticUserItemEntry(state, action.clientUserMessageId);
+      if (!entry || entry[1].status !== 'unconfirmed') return state;
+      /** 进度只属于当前消息，不写入会话连接状态。 */
+      const [key, item] = entry;
+      return {
+        ...state,
+        items: { ...state.items, [key]: { ...item, payload: { ...item.payload, deliveryReconnectAttempt: action.attempt, deliveryReconnectAttempts: action.maxAttempts } } },
+        transcriptRevision: state.transcriptRevision + 1,
+      };
+    }
     case 'send_failed': {
       const optimisticEntry = optimisticUserItemEntry(state, action.clientUserMessageId);
       const optimisticKey = optimisticEntry?.[0] ?? optimisticUserItemKey(state, action.clientUserMessageId);
@@ -698,8 +713,9 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
     ? Object.values(items).some((item) => item.turnId === activeTurnId && itemProvidesVisibleFeedback(item) && (!latestResolutionAt || (item.updatedAt ?? item.timelineAt ?? '') >= latestResolutionAt))
     : false;
   /** 当前摘要只取权威活动投影，不从已缓存的历史过程选取。 */
-  const reasoningSnapshot =
-    activeTurnId && !snapshot.snapshotV2?.activeTurn?.completionOutput ? snapshot.items.toReversed().find((item) => item.turnId === activeTurnId && item.type === 'reasoning' && item.payload.v2ContentKind === 'active_item') : undefined;
+  const reasoningSnapshot = activeTurnId
+    ? snapshot.items.toReversed().find((item) => item.turnId === activeTurnId && item.type === 'reasoning' && item.status !== 'failed' && item.payload.v2ContentKind === 'active_item' && latestReasoningSummaryText(item))
+    : undefined;
   /** 复用条目的显示身份，摘要正文仍由权威活动投影拥有。 */
   const reasoningBuffer = reasoningSnapshot ? Object.values(stableItems).find((item) => item.localItemId === reasoningSnapshot.id) : undefined;
   /** 旧快照不能覆盖比它更新的实时摘要。 */
@@ -719,7 +735,7 @@ function hydrateSnapshot(state: NativeSessionState, incomingSnapshot: NativeConv
     providerReconnectTurnId: retainProviderRetry ? state.providerReconnectTurnId : null,
     activeTurnId,
     startedTurnId: activeTurnId,
-    currentReasoningItem: currentReasoningItem && state.currentReasoningItem?.turnId === activeTurnId ? mergeTranscriptItem(state.currentReasoningItem, currentReasoningItem) : currentReasoningItem,
+    currentReasoningItem: reconcileCurrentReasoningItem(state.conversationId === snapshot.id ? state.currentReasoningItem : null, currentReasoningItem, activeTurnId && !terminalTurnIds[activeTurnId] ? activeTurnId : null),
     snapshot: { ...snapshot, turns: retainedTurns, changeSets: Object.values(changeSetsByProviderId) },
     turnsByProviderId,
     changeSetsByProviderId,
@@ -1538,7 +1554,7 @@ function reduceItemEvent(state: NativeSessionState, event: Extract<NativeConvers
   return {
     ...state,
     activeTurnId: terminal ? state.activeTurnId : turnId,
-    currentReasoningItem: terminal ? state.currentReasoningItem : effectiveType === 'reasoning' ? next : next.phase === 'final_answer' ? null : state.currentReasoningItem?.turnId === turnId ? state.currentReasoningItem : null,
+    currentReasoningItem: terminal ? state.currentReasoningItem : reconcileCurrentReasoningItem(state.currentReasoningItem, effectiveType === 'reasoning' ? next : null, turnId),
     items,
     itemOrder,
     transcriptRevision: state.transcriptRevision + 1,

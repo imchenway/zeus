@@ -51,7 +51,6 @@ const copy = {
     request: '等待操作',
     error: '本轮错误',
     unknown: '未识别的处理记录',
-    thinking: '正在思考',
     expand: '展开全文',
     collapse: '收起',
     copy: '复制消息',
@@ -99,7 +98,6 @@ const copy = {
     request: 'Action pending',
     error: 'Turn error',
     unknown: 'Unrecognized activity',
-    thinking: 'Thinking',
     expand: 'Expand full text',
     collapse: 'Collapse',
     copy: 'Copy message',
@@ -764,8 +762,6 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
           onVisibleContentChange={props.onVisibleContentChange}
           onRenderSettled={handleMarkdownSettled}
         />
-      ) : role === 'assistant' && props.item.status !== 'completed' ? (
-        <SessionSweepText className="session-current-status-text" text={labels.thinking} active={Boolean(props.motionActive)} />
       ) : null}
       {!command && !mcpApp && !recoveredRequestUserInput ? <TypedItemFacts item={props.item} role={role} language={props.language} /> : null}
       {role !== 'error' && conversationContext ? <UserConversationContextSummary draft={conversationContext} language={props.language} /> : null}
