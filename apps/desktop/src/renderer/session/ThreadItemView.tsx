@@ -70,7 +70,6 @@ const copy = {
     attachments: '附件',
     details: '技术详情',
     queued: '排队中',
-    restoringConversation: '正在恢复会话',
     conflictPreparing: '正在准备冲突现场',
     conflictPreparationFailed: '冲突现场准备失败',
     deliveryPaused: '发送已暂停',
@@ -119,7 +118,6 @@ const copy = {
     attachments: 'Attachments',
     details: 'Technical details',
     queued: 'Queued',
-    restoringConversation: 'Restoring conversation',
     conflictPreparing: 'Preparing conflict workspace',
     conflictPreparationFailed: 'Conflict workspace preparation failed',
     deliveryPaused: 'Sending paused',
@@ -169,8 +167,6 @@ export interface ThreadItemViewProps {
   queuedSubmissionId?: string;
   /** 排队提示与操作共用真实等待事实，避免正常发送交接时短暂出现。 */
   waitingInQueue?: boolean;
-  /** 来自服务端队列的真实恢复阶段，与页面历史加载分开。 */
-  conversationRestoring?: boolean;
   queuedSteerDisabledReason?: string | null;
   onSteerQueuedSubmission?: (submissionId: string) => void | Promise<void>;
   onDeleteQueuedSubmission?: (submissionId: string) => void | Promise<void>;
@@ -346,13 +342,12 @@ function TaskPushMessageContent(
   );
 }
 
-/** 按实际交付阶段显示提示；内部入队不等同于用户需要等待。 */
-function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof copy)[SessionUiLanguage], conversationRestoring = false, waitingInQueue = false): string | null {
+/** 按实际交付阶段显示提示；历史加载不显示状态，内部入队不等同于用户需要等待。 */
+function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof copy)[SessionUiLanguage], waitingInQueue = false): string | null {
   // 接纳或终态已由权威记录确认，不再展示发送途中的提示。
   if (item.providerItemId || item.status === 'active' || item.status === 'completed' || item.status === 'resolved') return null;
   const delivery = primitiveText(item.payload.delivery);
   const pausedReason = primitiveText(item.payload.pausedReason);
-  if (conversationRestoring && (item.status === 'queued' || item.status === 'paused')) return labels.restoringConversation;
   if (item.status === 'failed' || item.status === 'unconfirmed' || pausedReason === 'recovery_required' || pausedReason === 'recovered_unsent' || pausedReason === 'conflict_preparation_failed' || pausedReason === 'user_confirmation')
     return null;
   if (delivery === 'steer_now') {
@@ -370,7 +365,7 @@ function optimisticDeliveryStatus(item: NativeSessionItemBuffer, labels: (typeof
     return labels.deliveryPaused;
   }
   if (item.status !== 'queued') return null;
-  return item.payload.queuedUntilHydrated === true ? labels.restoringConversation : waitingInQueue ? labels.queued : null;
+  return item.payload.queuedUntilHydrated === true ? null : waitingInQueue ? labels.queued : null;
 }
 
 function recoveredRequestAnswers(value: unknown): Record<string, string[]> {
@@ -547,7 +542,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const accessibleLabel = command ? (props.language === 'zh-CN' ? '命令执行' : 'Command execution') : label;
   const showVisibleRoleLabel = Boolean(subagentInput || expertActor) || (role !== 'user' && role !== 'assistant' && role !== 'commentary' && role !== 'error');
   // 任务首发消息已经是工作面的稳定内容，内部创建进度只在底部统一呈现。
-  const optimisticStatus = props.item.optimistic && !taskPushLayout ? optimisticDeliveryStatus(props.item, labels, props.conversationRestoring, props.waitingInQueue) : null;
+  const optimisticStatus = props.item.optimistic && !taskPushLayout ? optimisticDeliveryStatus(props.item, labels, props.waitingInQueue) : null;
   /** 排队操作沿用父级传入的权限，不从外观或本地状态推断可发送性。 */
   const showQueuedActions = Boolean(props.waitingInQueue && props.queuedSubmissionId && (props.onSteerQueuedSubmission || props.onDeleteQueuedSubmission));
   /** 状态与操作共同决定底栏；已确认未发送可只有操作，未知送达可只有状态。 */

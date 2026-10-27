@@ -10,33 +10,7 @@ function visibleWorkspace(): HTMLElement | undefined {
   return [...document.querySelectorAll<HTMLElement>('.session-workspace-root')].filter((element) => element.getClientRects().length > 0 && !element.closest('[inert], [aria-hidden="true"]')).at(-1);
 }
 
-/** 热历史等待已有的首次定位；冷读取立即展示加载态，不把网络等待放进动画。 */
-async function prepareTranscript(workspace: HTMLElement | undefined, revision: string): Promise<void> {
-  /** 子线程与主线程都有正文，只准备当前工作面的主正文。 */
-  const transcript = workspace?.querySelector<HTMLElement>('.session-transcript-shell');
-  if (!transcript || transcript.dataset.historyHydrated !== 'true') return;
-  if (transcript.dataset.historyReady !== 'true') {
-    await new Promise<void>((resolve) => {
-      /** 定位或窗口隐藏都必须结束等待，不能让后台窗口卡住导航。 */
-      const finish = (): void => {
-        observer.disconnect();
-        window.clearTimeout(timer);
-        resolve();
-      };
-      /** 复用正文已完成定位的事实，不另建滚动收敛算法。 */
-      const observer = new MutationObserver(() => {
-        if (transcript.dataset.historyReady === 'true') finish();
-      });
-      /** 这里只给本地布局一个短预算；超时继续使用原正文加载与淡入。 */
-      const timer = window.setTimeout(finish, 160);
-      observer.observe(transcript, { attributes: true, attributeFilter: ['data-history-ready'] });
-    });
-  }
-  // 原生快照负责本次入场，不能再捕获一个透明度为零的正文，也不能结束后重播淡入。
-  if (workspace?.dataset.sessionTransition === revision && transcript.isConnected && transcript.dataset.historyReady === 'true') transcript.dataset.nativeArrival = 'true';
-}
-
-/** 导航统一接管前后画面；只保存浏览器快照，不保留旧会话的可交互 React 实例。 */
+/** 导航只过渡标题与环境卡片；正文直接使用当前会话，不等待或重播页面快照。 */
 export async function transitionConversation(update: () => boolean): Promise<void> {
   activeTransition?.skipTransition();
   /** 无可见旧画面、减少动态效果或不支持原生过渡时直接执行同一导航。 */
@@ -63,7 +37,6 @@ export async function transitionConversation(update: () => boolean): Promise<voi
     /** 标题随快照入场，过渡结束后也不能重新播放局部动画。 */
     const header = next?.querySelector<HTMLElement>('.session-thread-header');
     if (header) header.dataset.nativeArrival = 'true';
-    await prepareTranscript(next, revision);
   });
   activeTransition = transition;
   // 连续切换、隐藏窗口或快照不可用会跳过动画，导航仍以自己的完成结果为准。
