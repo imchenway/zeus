@@ -62,6 +62,7 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
     options.migrateLegacy?.();
     if (!recovered) {
       recoverInterruptedDispatches();
+      reconcileRruleSchedules();
       await options.save();
       recovered = true;
     }
@@ -129,10 +130,40 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
     return snapshot;
   }
 
+  /** 重算旧 RRULE 缓存，截止或周期修正必须在首次接纳之前生效。 */
+  function reconcileRruleSchedules(): void {
+    /** 启动时刻本身仍可触发；更早的计划时间遵循不补跑规则。 */
+    const beforeStartup = new Date(new Date(startedAt).getTime() - 1);
+    // 启动时只推进活动规则；暂停规则在显式恢复时重新计算。
+    for (const task of options.tasks.list().filter((entry) => entry.status === 'active' && entry.triggerKind === 'rrule')) {
+      try {
+        options.tasks.setNextRun(task.id, computeNextRun(task, beforeStartup));
+      } catch (error) {
+        pauseInvalidSchedule(task, error);
+      }
+    }
+  }
+
+  /** 配置错误只暂停对应规则，不接纳工作，也不阻断其他自动化。 */
+  function pauseInvalidSchedule(task: AutomationTaskRecord, error: unknown): void {
+    options.tasks.setStatus(task.id, 'paused');
+    options.tasks.setNextRun(task.id, null);
+    options.publish('automation.schedule.failed', { automationId: task.id, code: errorCode(error), message: error instanceof Error ? error.message : String(error) });
+  }
+
+  /** 在接纳前计算后继时间，避免非法配置先产生运行再中断调度。 */
   function acceptDue(now: string): void {
     for (const task of options.tasks.listDue(now)) {
+      /** 后继时间为空表示本次之后已无有效计划。 */
+      let nextRunAt: string | null;
+      try {
+        nextRunAt = computeNextRun(task, new Date(now));
+      } catch (error) {
+        pauseInvalidSchedule(task, error);
+        continue;
+      }
       if (task.nextRunAt && task.nextRunAt < startedAt) {
-        options.tasks.setNextRun(task.id, computeNextRun(task, new Date(now)));
+        options.tasks.setNextRun(task.id, nextRunAt);
         options.publish('automation.schedule.skipped', { automationId: task.id, scheduledAt: task.nextRunAt, reason: '启动前已错过的时间点不补跑' });
         continue;
       }
@@ -152,7 +183,7 @@ export function createAutomationScheduler(options: AutomationSchedulerOptions): 
         triggerIdentity: `schedule:${scheduledAt}`,
         scheduledAt,
       });
-      options.tasks.setNextRun(task.id, computeNextRun(task, new Date(now)), now);
+      options.tasks.setNextRun(task.id, nextRunAt, now);
     }
   }
 
@@ -416,6 +447,7 @@ function errorCode(error: unknown): string {
   return match?.[1] ?? 'ZEUS_AUTOMATION_DISPATCH_FAILED';
 }
 
+/** 返回严格晚于查询时刻的计划时间；规则已结束时返回空值。 */
 export function computeNextRun(task: AutomationTaskRecord, from: Date): string | null {
   if (task.triggerKind === 'manual' || task.triggerKind === 'event') return null;
   if (task.triggerKind === 'once') {
@@ -427,6 +459,7 @@ export function computeNextRun(task: AutomationTaskRecord, from: Date): string |
     if (!Number.isFinite(minutes) || minutes < 1) throw new Error('ZEUS_AUTOMATION_CONFIG_INTERVAL_INVALID: 间隔必须至少一分钟。');
     return new Date(from.getTime() + Math.trunc(minutes) * 60_000).toISOString();
   }
+  if (task.triggerKind === 'rrule') return nextRrule(task, from);
   const parts = localParts(from, task.timezone);
   const [hour, minute] = parseLocalTime(task.triggerConfig.localTime ?? '09:00');
   if (task.triggerKind === 'daily' || task.triggerKind === 'weekly') {
@@ -439,37 +472,187 @@ export function computeNextRun(task: AutomationTaskRecord, from: Date): string |
     }
     return null;
   }
-  if (task.triggerKind === 'rrule') return nextRrule(task, from);
   return null;
 }
 
-function nextRrule(task: AutomationTaskRecord, from: Date): string | null {
-  const source = task.triggerConfig.rrule?.trim().replace(/^RRULE:/iu, '');
-  if (!source) throw new Error('ZEUS_AUTOMATION_CONFIG_RRULE_REQUIRED: 高级调度必须提供 RRULE。');
-  const values = Object.fromEntries(source.split(';').map((part) => part.split('=', 2).map((value) => value.trim().toUpperCase()))) as Record<string, string>;
-  const frequency = values.FREQ;
-  const interval = Math.max(1, Number.parseInt(values.INTERVAL ?? '1', 10));
-  if (!['MINUTELY', 'HOURLY', 'DAILY', 'WEEKLY'].includes(frequency ?? '') || !Number.isFinite(interval)) throw new Error('ZEUS_AUTOMATION_CONFIG_RRULE_UNSUPPORTED: 当前支持 MINUTELY、HOURLY、DAILY 和 WEEKLY。');
-  if (frequency === 'MINUTELY') return new Date(from.getTime() + interval * 60_000).toISOString();
-  if (frequency === 'HOURLY') return new Date(from.getTime() + interval * 3_600_000).toISOString();
-  const parts = localParts(from, task.timezone);
-  const hour = Number.parseInt(values.BYHOUR ?? '9', 10);
-  const minute = Number.parseInt(values.BYMINUTE ?? '0', 10);
-  const weekdayMap: Record<string, number> = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
-  const weekdays = values.BYDAY
-    ? new Set(
-        values.BYDAY.split(',')
-          .map((value) => weekdayMap[value])
-          .filter((value): value is number => value !== undefined),
-      )
+/** 已校验的规则只包含当前排程支持的字段，时间上限为包含边界的 UTC 毫秒。 */
+interface ParsedAutomationRrule {
+  /** 重复周期的单位。 */
+  frequency: 'MINUTELY' | 'HOURLY' | 'DAILY' | 'WEEKLY';
+  /** 相邻活动周期之间的单位数，至少为一。 */
+  interval: number;
+  /** 日周规则的本地小时列表，按升序排列。 */
+  hours: number[];
+  /** 日周规则的本地分钟列表，按升序排列。 */
+  minutes: number[];
+  /** 星期筛选，零表示星期日；空值表示采用对应频率的默认规则。 */
+  weekdays: number[] | null;
+  /** 每周起始星期，默认星期一。 */
+  weekStart: number;
+  /** 截止时刻，单位为 UTC 毫秒；空值表示没有截止时间。 */
+  until: number | null;
+}
+
+/** RRULE 星期缩写与 JavaScript 星期编号的对应关系。 */
+const rruleWeekdays = new Map<string, number>([
+  ['SU', 0],
+  ['MO', 1],
+  ['TU', 2],
+  ['WE', 3],
+  ['TH', 4],
+  ['FR', 5],
+  ['SA', 6],
+]);
+/** 当前可完整解释的字段；其余字段必须明确拒绝。 */
+const rruleFields = new Set(['FREQ', 'INTERVAL', 'BYHOUR', 'BYMINUTE', 'BYDAY', 'WKST', 'UNTIL']);
+/** 日历日期用 UTC 表示以计算天数，避免把夏令时的一天当成固定实时时长。 */
+const calendarDayMilliseconds = 86_400_000;
+/** RRULE 四位年份所能表示的最后一个日历日期。 */
+const lastRruleCalendarDay = Date.UTC(9999, 11, 31);
+
+/** 解析整数列表，不截断非法尾部，也不把越界时间滚动到其他日期。 */
+function parseRruleNumbers(value: string, field: string, maximum: number): number[] {
+  /** 每个列表项都必须是完整十进制非负整数。 */
+  const numbers = value.split(',').map((entry) => {
+    /** 转换后仍需核对原文，防止空串或科学计数法被接受。 */
+    const number = Number(entry);
+    if (!/^\d+$/u.test(entry) || !Number.isInteger(number) || number < 0 || number > maximum) throw new Error(`ZEUS_AUTOMATION_CONFIG_RRULE_INVALID: ${field} 必须是 0 至 ${maximum} 的整数列表。`);
+    return number;
+  });
+  return [...new Set(numbers)].sort((left, right) => left - right);
+}
+
+/** 带 IANA 时区的计划仅接收 UTC 截止时刻，防止宿主时区改变边界。 */
+function parseRruleUntil(value: string | undefined): number | null {
+  if (value === undefined) return null;
+  if (!/^\d{8}T\d{6}Z$/u.test(value)) throw new Error('ZEUS_AUTOMATION_CONFIG_RRULE_UNTIL_INVALID: UNTIL 必须为 YYYYMMDDTHHMMSSZ 格式的 UTC 时间。');
+  /** 显式 UTC 格式供日期解析，随后回写比对以拒绝不存在的日期。 */
+  const iso = `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}T${value.slice(9, 11)}:${value.slice(11, 13)}:${value.slice(13, 15)}.000Z`;
+  /** 截止时刻，单位为 UTC 毫秒。 */
+  const timestamp = Date.parse(iso);
+  if (!Number.isFinite(timestamp) || new Date(timestamp).toISOString() !== iso) throw new Error('ZEUS_AUTOMATION_CONFIG_RRULE_UNTIL_INVALID: UNTIL 必须是有效的 UTC 日期和时间。');
+  return timestamp;
+}
+
+/** 统一校验规则语法和支持范围，禁止默默忽略未知或重复字段。 */
+function parseAutomationRrule(value: string | undefined): ParsedAutomationRrule {
+  if (typeof value !== 'string' || !value.trim()) throw new Error('ZEUS_AUTOMATION_CONFIG_RRULE_REQUIRED: 高级调度必须提供 RRULE。');
+  /** 可选前缀不参与规则字段解析。 */
+  const source = value.trim().replace(/^RRULE:/iu, '');
+  /** 字段名统一为大写，映射保留重复检查所需的存在性。 */
+  const values = new Map<string, string>();
+  // 每段必须恰好包含一个非空字段和值。
+  for (const part of source.split(';')) {
+    /** 字段允许等号两侧空白，不允许多行日历内容。 */
+    const match = /^([A-Z]+)\s*=\s*([^=\s]+)$/u.exec(part.trim().toUpperCase());
+    if (!match) throw new Error('ZEUS_AUTOMATION_CONFIG_RRULE_INVALID: RRULE 必须由分号分隔的字段和值组成。');
+    /** 当前字段身份和值。 */
+    const [, key, entry] = match;
+    if (!rruleFields.has(key)) throw new Error(`ZEUS_AUTOMATION_CONFIG_RRULE_UNSUPPORTED: 不支持 RRULE 字段 ${key}。`);
+    if (values.has(key)) throw new Error(`ZEUS_AUTOMATION_CONFIG_RRULE_INVALID: RRULE 字段 ${key} 不能重复。`);
+    values.set(key, entry);
+  }
+  /** 当前只支持四种既有重复单位。 */
+  const frequency = values.get('FREQ');
+  if (frequency !== 'MINUTELY' && frequency !== 'HOURLY' && frequency !== 'DAILY' && frequency !== 'WEEKLY') throw new Error('ZEUS_AUTOMATION_CONFIG_RRULE_UNSUPPORTED: 当前支持 MINUTELY、HOURLY、DAILY 和 WEEKLY。');
+  /** INTERVAL 沿用 RFC 整数上限，不截断小数或非法尾部。 */
+  const intervalSource = values.get('INTERVAL') ?? '1';
+  /** 相邻活动周期的单位数。 */
+  const interval = Number(intervalSource);
+  if (!/^\d+$/u.test(intervalSource) || !Number.isInteger(interval) || interval < 1 || interval > 2_147_483_647) throw new Error('ZEUS_AUTOMATION_CONFIG_RRULE_INVALID: INTERVAL 必须是 1 至 2147483647 的整数。');
+  if ((frequency === 'MINUTELY' || frequency === 'HOURLY') && ['BYHOUR', 'BYMINUTE', 'BYDAY', 'WKST'].some((field) => values.has(field)))
+    throw new Error('ZEUS_AUTOMATION_CONFIG_RRULE_UNSUPPORTED: 分钟和小时规则仅支持 FREQ、INTERVAL、UNTIL。');
+  if (frequency !== 'WEEKLY' && values.has('WKST')) throw new Error('ZEUS_AUTOMATION_CONFIG_RRULE_UNSUPPORTED: WKST 仅用于每周规则。');
+  /** 星期列表中任一无效项都会拒绝整条规则。 */
+  const weekdays = values.has('BYDAY')
+    ? values
+        .get('BYDAY')!
+        .split(',')
+        .map((day) => {
+          /** 已登记的星期编号，零也是有效值。 */
+          const weekday = rruleWeekdays.get(day);
+          if (weekday === undefined) throw new Error('ZEUS_AUTOMATION_CONFIG_RRULE_INVALID: BYDAY 必须是 MO、TU、WE、TH、FR、SA、SU 的列表。');
+          return weekday;
+        })
     : null;
-  for (let dayOffset = 0; dayOffset <= 370; dayOffset += 1) {
-    if (dayOffset % interval !== 0 && frequency === 'DAILY') continue;
-    const localDate = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + dayOffset, hour, minute));
-    if (frequency === 'WEEKLY' && Math.floor(dayOffset / 7) % interval !== 0) continue;
-    if (weekdays && !weekdays.has(localDate.getUTCDay())) continue;
-    const candidate = zonedLocalToUtc(localDate, task.timezone);
-    if (candidate > from) return candidate.toISOString();
+  /** 默认以星期一划分活动周。 */
+  const weekStart = rruleWeekdays.get(values.get('WKST') ?? 'MO');
+  if (weekStart === undefined) throw new Error('ZEUS_AUTOMATION_CONFIG_RRULE_INVALID: WKST 必须是有效的星期缩写。');
+  return {
+    frequency,
+    interval,
+    hours: parseRruleNumbers(values.get('BYHOUR') ?? '9', 'BYHOUR', 23),
+    minutes: parseRruleNumbers(values.get('BYMINUTE') ?? '0', 'BYMINUTE', 59),
+    weekdays,
+    weekStart,
+    until: parseRruleUntil(values.get('UNTIL')),
+  };
+}
+
+/** 用不可变的创建时间确定周期相位，查询时刻只限定搜索下界。 */
+function nextRrule(task: AutomationTaskRecord, from: Date): string | null {
+  /** 先校验完整规则，即使已截止也不能掩盖错误配置。 */
+  const rule = parseAutomationRrule(task.triggerConfig.rrule);
+  /** RRULE 以秒为时间精度，创建时间的小数毫秒不参与周期。 */
+  const anchor = new Date(Math.floor(Date.parse(task.createdAt) / 1000) * 1000);
+  if (!Number.isFinite(anchor.getTime()) || !Number.isFinite(from.getTime())) throw new Error('ZEUS_AUTOMATION_CONFIG_RRULE_ANCHOR_INVALID: 周期基点和查询时间必须有效。');
+  if (rule.until !== null && from.getTime() >= rule.until) return null;
+  if (rule.frequency === 'MINUTELY' || rule.frequency === 'HOURLY') {
+    /** 高频规则按实际经过时长推进，单位为毫秒。 */
+    const duration = rule.interval * (rule.frequency === 'MINUTELY' ? 60_000 : 3_600_000);
+    /** 直接跳到查询时刻之后的周期，避免枚举历史发生次数。 */
+    const step = Math.max(0, Math.floor((from.getTime() - anchor.getTime()) / duration) + 1);
+    /** 与创建基点对齐的下一次绝对时刻。 */
+    const candidate = new Date(anchor.getTime() + step * duration);
+    return Number.isFinite(candidate.getTime()) && candidate.getUTCFullYear() <= 9999 && (rule.until === null || candidate.getTime() <= rule.until) ? candidate.toISOString() : null;
+  }
+  /** 周期基点在规则时区中的日期。 */
+  const anchorParts = localParts(anchor, task.timezone);
+  /** 查询下界在同一时区中的日期。 */
+  const fromParts = localParts(from, task.timezone);
+  /** 本地日历日期以 UTC 零点编码，单位为毫秒。 */
+  const anchorDay = Date.UTC(anchorParts.year, anchorParts.month - 1, anchorParts.day);
+  /** 搜索开始日期，不用真实经过的毫秒数推断跨日。 */
+  const fromDay = Date.UTC(fromParts.year, fromParts.month - 1, fromParts.day);
+  /** 周规则未给定 BYDAY 时沿用创建日期的星期。 */
+  const anchorWeekday = new Date(anchorDay).getUTCDay();
+  /** 当前周期是否以自然周划分。 */
+  const weekly = rule.frequency === 'WEEKLY';
+  /** 周期第一天的本地日历日期。 */
+  const firstPeriod = weekly ? anchorDay - ((anchorWeekday - rule.weekStart + 7) % 7) * calendarDayMilliseconds : anchorDay;
+  /** 相邻活动周期的日历跨度，单位为毫秒。 */
+  const period = rule.interval * (weekly ? 7 : 1) * calendarDayMilliseconds;
+  /** 周内候选日按 WKST 排序，日规则每个周期只有起始日。 */
+  const dayOffsets = weekly ? [...new Set((rule.weekdays ?? [anchorWeekday]).map((weekday) => (weekday - rule.weekStart + 7) % 7))].sort((left, right) => left - right) : [0];
+  // 日周期的星期相位最多七次重复即可遍历，提前排除永远不匹配的组合。
+  if (!weekly && rule.weekdays && !Array.from({ length: 7 }, (_, index) => (anchorWeekday + index * (rule.interval % 7)) % 7).some((weekday) => rule.weekdays!.includes(weekday))) return null;
+  /** 截止日期也按规则时区限定搜索，避免无结果时继续扫描。 */
+  const untilParts = rule.until === null ? null : localParts(new Date(rule.until), task.timezone);
+  /** 四位年份和可选截止日期共同限定最后搜索日。 */
+  const lastDay = untilParts ? Math.min(lastRruleCalendarDay, Date.UTC(untilParts.year, untilParts.month - 1, untilParts.day)) : lastRruleCalendarDay;
+  // 直接定位查询所在周期；超出日期范围即结束，不使用任意天数的搜索截断。
+  for (let periodStart = firstPeriod + Math.max(0, Math.floor((fromDay - firstPeriod) / period)) * period; periodStart <= lastDay; periodStart += period) {
+    // 每个活动周期只检查允许的星期。
+    for (const dayOffset of dayOffsets) {
+      /** 候选日历日期，尚未转换为绝对时刻。 */
+      const day = new Date(periodStart + dayOffset * calendarDayMilliseconds);
+      if (day.getTime() < fromDay || day.getTime() > lastDay || (!weekly && rule.weekdays && !rule.weekdays.includes(day.getUTCDay()))) continue;
+      // 小时和分钟都已排序，首个有效结果就是该日最早的下一次时间。
+      for (const hour of rule.hours) {
+        for (const minute of rule.minutes) {
+          /** 本地钟表时间暂用 UTC 字段承载。 */
+          const local = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), hour, minute));
+          /** 规则时区中的候选绝对时刻。 */
+          const candidate = zonedLocalToUtc(local, task.timezone);
+          /** 回读本地钟表时间，跳过夏令时跳跃中不存在的时刻。 */
+          const actual = localParts(candidate, task.timezone);
+          if (Date.UTC(actual.year, actual.month - 1, actual.day, actual.hour, actual.minute) !== local.getTime()) continue;
+          if (candidate < anchor || candidate <= from) continue;
+          if (rule.until !== null && candidate.getTime() > rule.until) return null;
+          return candidate.toISOString();
+        }
+      }
+    }
   }
   return null;
 }
@@ -482,10 +665,13 @@ function parseLocalTime(value: string): [number, number] {
   return [hour, minute];
 }
 
-function localParts(date: Date, timeZone: string): { year: number; month: number; day: number } {
-  const formatter = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
+/** 读取规则时区的日历与钟表字段，小时固定使用 00 至 23。 */
+function localParts(date: Date, timeZone: string): { year: number; month: number; day: number; hour: number; minute: number } {
+  /** 显式时区避免依赖 macOS 或 Windows 的系统默认时区。 */
+  const formatter = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  /** 格式片段按名称读取，不依赖平台的日期排列顺序。 */
   const parts = Object.fromEntries(formatter.formatToParts(date).map((part) => [part.type, part.value]));
-  return { year: Number(parts.year), month: Number(parts.month), day: Number(parts.day) };
+  return { year: Number(parts.year), month: Number(parts.month), day: Number(parts.day), hour: Number(parts.hour), minute: Number(parts.minute) };
 }
 
 function zonedLocalToUtc(local: Date, timeZone: string): Date {

@@ -47,7 +47,8 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
     return mutate(request, reply, () => {
       const created = tasks.create(request.body);
       tasks.setNextRun(created.id, computeNextRun(created, new Date(options.now())));
-      return { statusCode: 201, body: { ...created, projectIds: tasks.listTargets(created.id).map((target) => target.projectId) } };
+      // 返回已写入下一次时间的记录，使界面与持久化排程一致。
+      return { statusCode: 201, body: { ...tasks.getById(created.id)!, projectIds: tasks.listTargets(created.id).map((target) => target.projectId) } };
     });
   });
 
@@ -55,7 +56,8 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
     return mutate(request, reply, () => {
       const updated = tasks.update(request.params.automationId, request.body);
       tasks.setNextRun(updated.id, computeNextRun(updated, new Date(options.now())));
-      return { statusCode: 200, body: { ...updated, projectIds: tasks.listTargets(updated.id).map((target) => target.projectId) } };
+      // 编辑后的回执携带重算结果，不能返回旧的下一次时间。
+      return { statusCode: 200, body: { ...tasks.getById(updated.id)!, projectIds: tasks.listTargets(updated.id).map((target) => target.projectId) } };
     });
   });
 
