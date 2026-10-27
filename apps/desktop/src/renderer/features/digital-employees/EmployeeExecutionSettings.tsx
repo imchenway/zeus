@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import type { EmployeeWorkSettings } from '@zeus/shared';
 import { ZeusSelect, type ZeusSelectOption } from '../../ZeusSelect.js';
+import { compareModelOptions } from '../../modelOptionPresentation.js';
 import { Button } from '../../ui/Button.js';
 import { VisibleApplicationError } from '../../ui/ApplicationErrorDialog.js';
 import { PermissionModeControl } from '../../session/PermissionModeControl.js';
@@ -121,7 +122,7 @@ export function EmployeeExecutionSettings(props: {
             effective.modelOverride ?? '',
             [
               { value: '', label: zh ? '项目默认模型' : 'Project default' },
-              ...models.map((item) => ({ value: item.id, label: `${item.displayName ?? item.model}${item.sourceName ? ` · ${item.sourceName}` : ''}`, disabled: item.available === false })),
+              ...[...models].sort(compareModelOptions).map((item) => ({ value: item.id, label: `${item.displayName ?? item.model}${item.sourceName ? ` · ${item.sourceName}` : ''}`, disabled: item.available === false })),
             ],
             (value) => patch({ modelOverride: value || null }),
           ),

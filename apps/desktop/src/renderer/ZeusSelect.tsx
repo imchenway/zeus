@@ -202,9 +202,9 @@ export function ZeusSelect<T extends string>(props: ZeusSelectProps<T>) {
   /** 已不可用的身份只保留偏好，不重新插入当前可选目录。 */
   const pinnedOptions = useMemo(() => {
     if (!props.pinning) return [];
-    /** 按完整身份索引当前目录，置顶数量增加时也只遍历一遍模型。 */
-    const optionsByValue = new Map<string, ZeusSelectOption<T>>(props.options.filter((option) => !option.disabled).map((option) => [option.value, option]));
-    return pinnedValues.flatMap((value) => optionsByValue.get(value) ?? []);
+    /** 置顶只改变所属分组，组内沿用业务目录顺序，不按置顶时间重排。 */
+    const pinned = new Set(pinnedValues);
+    return props.options.filter((option) => !option.disabled && pinned.has(option.value));
   }, [pinnedValues, props.options, props.pinning]);
   /** 置顶项只出现一次，未置顶项沿用业务原有分组顺序。 */
   const orderedOptions = useMemo(() => [...pinnedOptions, ...props.options.filter((option) => !pinnedOptions.includes(option))], [pinnedOptions, props.options]);

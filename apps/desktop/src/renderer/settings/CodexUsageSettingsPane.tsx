@@ -7,6 +7,7 @@ import { GaugeIcon as Gauge } from '@phosphor-icons/react/dist/csr/Gauge';
 import { VisibleApplicationError } from '../ui/ApplicationErrorDialog.js';
 import { Button } from '../ui/Button.js';
 import { ZeusSelect } from '../ZeusSelect.js';
+import { compareModelNames } from '../modelOptionPresentation.js';
 import { SettingsPagination, settingsPage, settingsPageSize } from './SettingsPagination.js';
 
 /** 用量详情只依赖统一分析接口。 */
@@ -854,9 +855,11 @@ function UsageBreakdownTable(props: { title: string; rows: CodexLocalUsageGroup[
   );
 }
 
-/** 从当前供应商快照生成筛选选项，不合并已经删除的旧目录。 */
+/** 从当前快照生成筛选选项；模型采用统一型号排序，项目沿用名称排序。 */
 function usageFilterOptions(providers: UsageProviderAnalytics[], field: 'models' | 'projects'): Array<Pick<CodexLocalUsageGroup, 'id' | 'label'>> {
-  return [...new Map(providers.flatMap((entry) => entry.filters[field]).map((group) => [group.id, group])).values()].sort((left, right) => left.label.localeCompare(right.label));
+  return [...new Map(providers.flatMap((entry) => entry.filters[field]).map((group) => [group.id, group])).values()].sort((left, right) =>
+    field === 'models' ? compareModelNames(left.label, right.label) : left.label.localeCompare(right.label),
+  );
 }
 
 /** Codex 订阅使用等价费用口径，其他供应商使用普通费用估算。 */
