@@ -467,7 +467,7 @@ registerHooks({
 /** Node 探针不经过 Vite 自动 JSX 运行时，沿用现有转录探针的 React 注入。 */
 (globalThis as typeof globalThis & { React: typeof import('react') }).React = await import('react');
 /** 队列归属和进度提示共用生产转录投影，避免探针另建状态规则。 */
-const { projectQueuedSubmissionItems, projectTranscriptRows, projectTranscriptTurnRows, transcriptRunStatus, shouldShowTranscriptThinking } = await import('../apps/desktop/src/renderer/session/ConversationTranscript.js');
+const { projectQueuedSubmissionItems, projectTranscriptRows, projectTranscriptTurnRows, transcriptRunStatus } = await import('../apps/desktop/src/renderer/session/ConversationTranscript.js');
 
 async function verifyCompatibilityItemIdentity(): Promise<Record<string, unknown>> {
   const firstScopedId = scopedSnapshotProviderItemId('turn-1', 'item-1');
@@ -819,19 +819,19 @@ function verifyQueueMessageOwnership(): Record<string, unknown> {
   for (const waitReason of [undefined, 'dispatch_pending', 'execution_context_preparing', 'conversation_restoring'] as const) {
     /** 回放服务端空闲队首，而非手动设置 starting_turn 绕过问题。 */
     const preparing = sessionReducer(beforePreparation, { type: 'queue_hydrated', queue: { ...preparingQueue, waitReason } });
-    assertBehavior(preparing.conversationState === 'native_idle' && transcriptRunStatus(preparing) === 'starting' && shouldShowTranscriptThinking(preparing), '新消息在模型接纳前必须持续显示准备发送。');
+    assertBehavior(preparing.conversationState === 'native_idle' && transcriptRunStatus(preparing) === 'starting', '新消息在模型接纳前必须持续显示准备发送。');
   }
   /** 人工暂停和失败不能被空闲队首伪装成正在执行。 */
   for (const status of ['paused', 'failed'] as const) {
     /** 权威提交状态仍由生产 reducer 接管。 */
     const blocked = sessionReducer(beforePreparation, { type: 'queue_hydrated', queue: { ...preparingQueue, submissions: [{ ...preparingQueue.submissions[0]!, status, pausedReason: 'interrupted' }] } });
-    assertBehavior(transcriptRunStatus(blocked) === null && !shouldShowTranscriptThinking(blocked), '暂停或失败消息不得持续显示准备发送。');
+    assertBehavior(transcriptRunStatus(blocked) === null, '暂停或失败消息不得持续显示准备发送。');
   }
   /** 等待用户确认的队首保留原操作提示，不能伪装成后台正在推进。 */
   for (const waitReason of ['user_confirmation', 'plan_confirmation', 'provider_stop_pending', 'recovery_required'] as const) {
     /** 原权威等待原因优先于普通队首准备提示。 */
     const waiting = sessionReducer(beforePreparation, { type: 'queue_hydrated', queue: { ...preparingQueue, waitReason } });
-    assertBehavior(transcriptRunStatus(waiting) === null && !shouldShowTranscriptThinking(waiting), '需要用户处理的队列不得显示准备发送。');
+    assertBehavior(transcriptRunStatus(waiting) === null, '需要用户处理的队列不得显示准备发送。');
   }
   /** 较早的失败审计与服务端自动派发选择保持一致，不遮挡新的安全队首。 */
   const historicalFailure = sessionReducer(beforePreparation, {
@@ -841,7 +841,7 @@ function verifyQueueMessageOwnership(): Record<string, unknown> {
   assertBehavior(transcriptRunStatus(historicalFailure) === 'starting', '历史失败记录不得隐藏新队首的准备发送提示。');
   /** 删除全部队首后立即撤销提示，不能遗留空转动画。 */
   const cleared = sessionReducer(beforePreparation, { type: 'queue_hydrated', queue: { ...preparingQueue, submissions: [] } });
-  assertBehavior(transcriptRunStatus(cleared) === null && !shouldShowTranscriptThinking(cleared), '队列清空后不得保留准备状态。');
+  assertBehavior(transcriptRunStatus(cleared) === null, '队列清空后不得保留准备状态。');
   /** 模型正式接手后切回既有执行状态。 */
   const executing: NativeSessionState = { ...beforePreparation, activeTurnId: 'new-turn', conversationState: 'active_prework', queue: preparingQueue };
   assertBehavior(transcriptRunStatus(executing) === 'executing', '模型接手后必须恢复既有执行提示。');

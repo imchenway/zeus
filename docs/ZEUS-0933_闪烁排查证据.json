@@ -1,0 +1,45 @@
+{
+  "recording": {
+    "path": "/Users/david/.zeus/artifacts/conversation-attachments/command-1c3a834755656870eee16c15-1-b5fbb5771b257972-录屏2026-10-27 15.40.18.mov",
+    "durationSeconds": 29.528333,
+    "width": 4096,
+    "height": 2334,
+    "flashingWindowSeconds": [21, 24.1],
+    "observation": "执行提示与多段英文摘要交替占位，随后正文与答题卡上下位移。"
+  },
+  "installedApplication": {
+    "path": "/Applications/Zeus.app",
+    "pid": 19239,
+    "processStartedAt": "2026-10-27T13:43:28+08:00",
+    "archiveModifiedAtLocal": "2026-10-27 13:18",
+    "asset": "dist/renderer/assets/session-workspace-CO8HwTyl.js",
+    "assetSha256": "15cf28958577fc034640426d162b431d6a9ef2d8a7c173205fa79c8aab9feffc",
+    "stillUsesReasoningToReplaceExecuting": true
+  },
+  "candidateMeasurement": {
+    "nodeReplacements": 0,
+    "revision": [0, 120],
+    "samples": 121,
+    "scrollHeight": [320],
+    "scrollTop": [0],
+    "statusCounts": [1],
+    "statusTop": [275],
+    "texts": ["正在执行"],
+    "userTop": [176],
+    "visibility": ["hidden"],
+    "width": [1280]
+  },
+  "limits": ["合成摘要更新，不连接真实 Provider", "visibility 为 hidden；未证明原生可见帧无闪烁", "未替换安装目录或重启用户应用"],
+  "restoredLiveSummaryObservation": {
+    "sampleCount": 118,
+    "firstRevision": 3,
+    "lastRevision": 120,
+    "nodeReplacements": 0,
+    "executionFallbacks": 0,
+    "heightsCssPx": [40],
+    "topsCssPx": [275],
+    "visibility": "hidden",
+    "screenshot": "ZEUS-0933_实时摘要稳定显示.png",
+    "scope": "规则更新前已完成的本地模拟观察；只证明该输入序列的 DOM 和布局结果，不代表真实 Provider 或原生应用验收。"
+  }
+}

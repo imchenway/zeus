@@ -54,6 +54,7 @@ import {
 import { adaptConversationSnapshotV2, mergeConversationHistoryV2, mergeConversationProcessV2, mergeConversationTurnHistoryV2, resumeCachedConversationSnapshot, updateConversationV2Paging } from './conversationSnapshotV2Adapter.js';
 import { markConversationNavigationRenderReady } from '../performanceTraceContext.js';
 import { selectHasConfirmedUserMessage } from './sessionSelectors.js';
+import { handledMessageDeliveryErrors } from './conversationSystemMessages.js';
 
 /** 会话事件流按指数退避重试五次，单次等待小于一分钟。 */
 export const reconnectBackoffMs = [1_000, 2_000, 4_000, 8_000, 16_000] as const;
@@ -990,6 +991,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       action.type === 'context_draft_changed' ||
       action.type === 'send_started' ||
       action.type === 'send_failed' ||
+      action.type === 'send_reconcile_progress' ||
       action.type === 'send_uncertain';
     /** 历史接管前补齐已加载用户输入的位置，不能先把它排到有位置的回复之后。 */
     const missingInputPlacement =
@@ -1829,6 +1831,10 @@ export function createSessionController(options: CreateSessionControllerOptions)
         pendingSendReconcileQueue.delete(clientUserMessageId);
         let resolved = false;
         for (let attempt = 0; attempt < pendingSendReconcileAttempts; attempt += 1) {
+          // 每轮退避期间显示本次连接次数；已接纳消息继续静默核对。
+          if (recoverableSend(clientUserMessageId)?.deliveryState === 'uncertain') {
+            dispatch({ type: 'send_reconcile_progress', clientUserMessageId, attempt: attempt + 1, maxAttempts: pendingSendReconcileAttempts });
+          }
           await waitForPendingSendReconcile(attempt);
           /** 每轮都读取该消息最新状态，忽略排队时的旧引用。 */
           const current = recoverableSend(clientUserMessageId);
@@ -1848,6 +1854,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
             break;
           }
         }
+        // 核对结束仍未知时交回原错误组件；接纳和明确失败已由 reducer 排除。
+        dispatch({ type: 'send_reconcile_progress', clientUserMessageId, attempt: 0, maxAttempts: pendingSendReconcileAttempts });
         if (!resolved && recoverableSend(clientUserMessageId)) window.zeus?.reportRendererRuntimeError?.(`消息 ${clientUserMessageId} 连续 ${pendingSendReconcileAttempts} 次未取得权威状态，已保留原消息。`);
       }
     })().finally(() => {
@@ -2610,7 +2618,12 @@ export function createSessionController(options: CreateSessionControllerOptions)
         );
         persistDraft();
         // 结果不确定只影响本消息，后台只读核对不会阻止用户继续发送。
-        if (!explicitFailure) schedulePendingSendReconcile(unresolvedEnvelope);
+        if (!explicitFailure) {
+          dispatch({ type: 'send_reconcile_progress', clientUserMessageId: trackedEnvelope.clientUserMessageId, attempt: 1, maxAttempts: pendingSendReconcileAttempts });
+          schedulePendingSendReconcile(unresolvedEnvelope);
+        }
+        // 错误继续向调用方传播，但 Composer 不重复记录已由原消息接管的提示。
+        if (error && typeof error === 'object') handledMessageDeliveryErrors.add(error);
         throw error;
       }
     })().finally(() => {

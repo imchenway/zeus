@@ -5410,6 +5410,13 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 .sess
   font-size: 14px;
 }
 
+/* 执行位置也承载多行摘要；长单词在窄窗口内换行，保留模型原有换行。 */
+.session-codex-parity-v1 .session-current-status-text {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+  white-space: break-spaces;
+}
+
 /* 消息间距由内部时间线保留；底部状态与最后一条过程只留紧凑行距。 */
 .session-codex-parity-v1 .session-transcript:has(> .session-transcript-thinking) {
   row-gap: 6px;

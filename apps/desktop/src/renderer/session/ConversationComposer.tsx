@@ -34,11 +34,12 @@ import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, servi
 import { browserProjectModelPreferenceStorage, readProjectModelPreferences } from './projectModelPreferences.js';
 import { contextCapacitySelectionAllowed } from './contextCapacitySelection.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
-import { systemMessageScope, recordSystemMessage, recoverSystemMessage, useConversationSystemMessages } from './conversationSystemMessages.js';
+import { systemMessageScope, recordSystemMessage, recoverSystemMessage, useConversationSystemMessages, handledMessageDeliveryErrors } from './conversationSystemMessages.js';
 import { StructuredComposerInput, type StructuredComposerSelection } from './StructuredComposerInput.js';
 import type { ComposerInputHandle } from './MarkdownComposerEditor.js';
 import { useInputSuggestion } from './useInputSuggestion.js';
 import { InputSuggestionButton } from './InputSuggestionControl.js';
+import { selectPendingExecutionMessage } from './sessionSelectors.js';
 
 export type ComposerKeyIntent = 'submit' | 'newline' | 'escape' | 'ignore';
 export interface ComposerRuntimeSettings {
@@ -179,7 +180,12 @@ export function ConversationComposer(props: ConversationComposerProps) {
   const selectedCapacity = props.runtimeSettings?.contextCapacityTokens !== undefined ? props.runtimeSettings.contextCapacityTokens : (props.state.snapshot?.contextCapacityTokens ?? null);
   const [selectedEffort, setSelectedEffort] = useState(initialEffort);
   const [selectedServiceTier, setSelectedServiceTier] = useState<NativeServiceTierSelection>(initialServiceTier);
-  const active = props.state.conversationState === 'active_prework' || props.state.conversationState === 'active_final_answer';
+  /** 本地发送立即切换主按钮；停止操作仍须取得真实轮次身份后才能启用。 */
+  const active =
+    props.state.conversationState === 'active_prework' ||
+    props.state.conversationState === 'active_final_answer' ||
+    props.state.conversationState === 'starting_turn' ||
+    (props.state.transportState !== 'failed' && Boolean(selectPendingExecutionMessage(props.state)));
   const busy = Boolean(props.state.busyOperation);
   const writable = props.readOnly !== true && props.state.conversationState !== 'legacy_readonly';
   const inputWritable = writable && props.inputBlocked !== true;
@@ -288,7 +294,11 @@ export function ConversationComposer(props: ConversationComposerProps) {
     void Promise.resolve()
       .then(() => props.onSubmit(nextDelivery, settings))
       .then(() => recoverInputOperation('message_send'))
-      .catch((error: unknown) => recordSystemMessage(systemScope, error, 'message_send', '消息提交失败。'));
+      .catch((error: unknown) => {
+        // 发送中的连接恢复与失败已经显示在原消息下；前置拒绝仍由系统消息承载。
+        if (error && typeof error === 'object' && handledMessageDeliveryErrors.has(error)) return;
+        recordSystemMessage(systemScope, error, 'message_send', '消息提交失败。');
+      });
   }
 
   function enterGoalInput(initialObjective?: string): void {

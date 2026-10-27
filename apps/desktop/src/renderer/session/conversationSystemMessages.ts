@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import { parseConversationSystemMessage, redactUserFacingErrorDetails, type ConversationSystemMessage, type ConversationSystemMessageInput } from '@zeus/shared';
 
+/** 原消息已承载的发送错误不再生成第二条系统消息；弱引用不延长错误对象寿命。 */
+export const handledMessageDeliveryErrors = new WeakSet<object>();
+
 /** 仅保存尚未由 Core 接纳的记录；草稿和会话使用明确隔离的键。 */
 const storageKey = 'zeus.system-message-outbox';
 /** 写入失败时仍保留内存副本，后续同步不得无声删除。 */
