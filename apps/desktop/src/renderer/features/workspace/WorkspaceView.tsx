@@ -42,7 +42,7 @@ import { useNotifications } from '../notifications/useNotifications.js';
 import type { NativeConversationChoice } from '../../session/sessionTypes.js';
 import { TaskGitReviewModal } from '../../task/TaskGitReviewModal.js';
 import { persistPendingConflictAiStart, TaskGitMergeModal } from '../../task/TaskGitMergeModal.js';
-import { TaskModelPushModal, writeTaskModelPushPreferences } from '../../task/TaskModelPushModal.js';
+import { TaskModelPushModal } from '../../task/TaskModelPushModal.js';
 import { TaskWorkspace } from '../../task/TaskWorkspace.js';
 import { ZentaoImportModal } from '../../task/ZentaoSyncModal.js';
 import { useZentaoInstances } from '../../task/useZentaoInstances.js';
@@ -56,7 +56,6 @@ import { WorkspaceDrawer } from '../../ui/WorkspaceDrawer.js';
 import { formatRuntimeAdapterDetectionFacts, InlineRecoveryPrompt, ProjectCreateDialog, ProjectStartGuide, ProjectWorkspaceNavigation, SidebarNav } from './WorkspaceChrome.js';
 import { GENERIC_SHELL_CRITICAL_CONFIRMATION_PHRASE } from './workspaceFormatters.js';
 import {
-  browserNativeConversationStartStorage,
   controlBusyProps,
   executionHostSupportsConversationSource,
   formatArchivedConversationDate,
@@ -1410,14 +1409,7 @@ export function WorkspaceView(input: { state: WorkspaceQueryState; domainActions
                         error={taskModelPushError}
                         skillClient={props.nativeConversationClient ?? null}
                         environmentClient={props.nativeConversationClient ?? null}
-                        onChange={(nextForm) => {
-                          setTaskModelPushForm((current) => {
-                            const resolved = typeof nextForm === 'function' ? nextForm(current) : nextForm;
-                            const task = snapshot.tasks.find((candidate) => candidate.id === taskModelPushTaskId);
-                            if (task) writeTaskModelPushPreferences(browserNativeConversationStartStorage(), task.projectId, resolved);
-                            return resolved;
-                          });
-                        }}
+                        onChange={setTaskModelPushForm}
                         onRefreshRepository={(repositoryId) => void refreshTaskModelPushRepository(repositoryId)}
                         onRefreshLocalRepositories={() => void domainActions.refreshTaskModelPushRepositories()}
                         onConnectModel={() => modelSetup.open('choose', taskModelSetupContext ?? null)}

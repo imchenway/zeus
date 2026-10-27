@@ -60,6 +60,7 @@ import {
   reconcileTaskPushRepositories,
   resolveTaskModelPushEntry,
   resolveTaskModelPushInitialForm,
+  selectTaskModelPushModel,
   selectedTaskPushCurrentConversationPaths,
   selectedTaskPushParentContexts,
   selectedTaskPushRelatedContexts,
@@ -2491,21 +2492,23 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
     if (reference !== undefined && (!selected || selected.available === false)) throw new Error('ZEUS_MODEL_UNAVAILABLE');
     setTaskModelPushCapabilities(capabilities);
     setTaskModelPushForm((current) => {
+      /** 接入不同模型时恢复它自己的项目记忆；同模型刷新不覆盖正在编辑的表单。 */
+      const selectedForm = selected && !current.stageId && resolveModelCapability(capabilities.models, current.model)?.id !== selected.id ? selectTaskModelPushModel(current, capabilities.models, task.projectId, selected.id) : current;
       const normalized = resolveTaskModelPushInitialForm(
         capabilities,
         {
-          model: current.stageId ? current.model : (selected?.id ?? current.model),
-          effort: current.effort,
-          serviceTier: current.serviceTier,
-          workMode: current.workMode,
-          permissionMode: current.permissionMode,
-          ...(current.workspaceModeSelected ? { workspaceMode: current.workspaceMode } : {}),
+          model: selectedForm.stageId ? selectedForm.model : (selected?.id ?? selectedForm.model),
+          effort: selectedForm.effort,
+          serviceTier: selectedForm.serviceTier,
+          workMode: selectedForm.workMode,
+          permissionMode: selectedForm.permissionMode,
+          ...(selectedForm.workspaceModeSelected ? { workspaceMode: selectedForm.workspaceMode } : {}),
         },
-        current.skillId,
+        selectedForm.skillId,
       );
       return reconcileTaskPushRepositories(
         {
-          ...current,
+          ...selectedForm,
           model: normalized.model,
           effort: normalized.effort,
           serviceTier: normalized.serviceTier,

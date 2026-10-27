@@ -31,6 +31,8 @@ import { ServiceTierToggle } from './ServiceTierToggle.js';
 import { resolveModelCapability } from './modelSelection.js';
 import { useConversationInputResources } from './useConversationInputResources.js';
 import { normalizeServiceTierSelection, selectionFromEffectiveServiceTier, serviceTierSelectionValue, serviceTierWireOverride } from './serviceTierSelection.js';
+import { browserProjectModelPreferenceStorage, readProjectModelPreferences } from './projectModelPreferences.js';
+import { contextCapacitySelectionAllowed } from './contextCapacitySelection.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
 import { systemMessageScope, recordSystemMessage, recoverSystemMessage, useConversationSystemMessages } from './conversationSystemMessages.js';
 import { StructuredComposerInput, type StructuredComposerSelection } from './StructuredComposerInput.js';
@@ -68,6 +70,8 @@ export interface ConversationComposerProps {
   onRemoveBrowserSubmission?: () => void;
   onContextDraftChange?: (draft: ConversationContextDraft) => void;
   projectId?: string;
+  /** 普通会话切换模型时恢复所属项目的选择。 */
+  restoreProjectModelPreferences?: boolean;
   /** 讨论归属任务，用于读取成员实际继承配置。 */
   taskId?: string;
   onLoadExtensions?: (projectId?: string, forceReload?: boolean) => Promise<import('../features/codex/codexContracts.js').SkillCatalog>;
@@ -612,20 +616,41 @@ export function ConversationComposer(props: ConversationComposerProps) {
                 searchPlaceholder={copy.searchModel}
                 emptyLabel={copy.noModel}
                 onChange={(model) => {
+                  /** 模型能力包含供应商身份及当前允许的参数。 */
                   const capability = resolveModelCapability(props.capabilities?.models, model);
-                  const effort = capability?.defaultReasoningEffort ?? capability?.supportedReasoningEfforts[0] ?? '';
-                  const normalizedTier = normalizeServiceTierSelection({ type: 'standard' }, capability);
+                  /** 完整身份用于区分不同供应商的同名模型。 */
+                  const modelId = capability?.id ?? model;
+                  /** 审查等独立工作流不读取普通会话配置。 */
+                  const storage = props.restoreProjectModelPreferences ? browserProjectModelPreferenceStorage() : undefined;
+                  /** 历史推送模型名只在目录中唯一匹配时恢复。 */
+                  const last = props.projectId ? readProjectModelPreferences(storage, props.projectId) : null;
+                  /** 仅恢复所选项目和模型的选择。 */
+                  const remembered = props.projectId ? (readProjectModelPreferences(storage, props.projectId, modelId) ?? (resolveModelCapability(props.capabilities?.models, last?.model)?.id === modelId ? last : null)) : null;
+                  /** 无已用等级或当前模型不再支持时采用模型默认。 */
+                  const effort = remembered && capability?.supportedReasoningEfforts.includes(remembered.effort) ? remembered.effort : (capability?.defaultReasoningEffort ?? capability?.supportedReasoningEfforts[0] ?? '');
+                  /** 不支持的 Fast 由现有速度控件说明。 */
+                  const normalizedTier = normalizeServiceTierSelection(remembered?.serviceTier ?? { type: 'standard' }, capability);
+                  /** 已记住容量失效时使用默认容量，未有记忆时保留当前会话选择。 */
+                  const capacity = remembered ? (contextCapacitySelectionAllowed(remembered.contextCapacityTokens, capability?.contextCapacity) ? remembered.contextCapacityTokens : null) : selectedCapacity;
+                  if (remembered && remembered.contextCapacityTokens !== capacity) {
+                    recordSystemMessage(
+                      systemScope,
+                      props.language === 'zh-CN' ? '已记住的上下文容量不受当前模型支持，已改用默认容量。' : 'The remembered context capacity is unsupported by this model; the default capacity will be used.',
+                      'message_send',
+                      '模型配置恢复失败。',
+                    );
+                  }
                   setSelectedModel(model);
                   setSelectedEffort(effort);
                   setSelectedServiceTier(normalizedTier.selection);
                   props.onRuntimeSettingsChange?.({
-                    contextCapacityTokens: selectedCapacity,
-                    model,
+                    contextCapacityTokens: capacity,
+                    model: modelId,
                     agentKind: capability?.agentKind,
                     effort,
                     ...serviceTierWireOverride(normalizedTier.selection),
-                    permissionMode: props.permissionMode,
-                    collaborationMode: props.collaborationMode,
+                    permissionMode: remembered?.permissionMode ?? props.permissionMode,
+                    collaborationMode: remembered?.workMode ?? props.collaborationMode,
                   });
                 }}
               />

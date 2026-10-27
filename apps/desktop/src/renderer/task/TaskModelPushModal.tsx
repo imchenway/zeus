@@ -37,7 +37,9 @@ import { ZeusSelect } from '../ZeusSelect.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
 import { TaskPushSupplementalAttachmentCards } from './TaskPushSupplementalAttachmentCards.js';
 import { SkillSelector } from '../features/skills/SkillSelector.js';
+import { readSkillWorkflowDefault } from '../features/skills/skillWorkflowPreferences.js';
 import type { CodexApiClient } from '../features/codex/codexApiClient.js';
+import { browserProjectModelPreferenceStorage, readProjectModelPreferences, writeProjectModelPreferences } from '../session/projectModelPreferences.js';
 
 export interface TaskModelPushForm {
   /** 缺省使用模型默认，具体数值仅用于本次工作。 */
@@ -91,9 +93,6 @@ interface TaskPushCommonSource {
   group: string;
   refsByRepository: Record<string, string>;
 }
-
-/** 保留已有存储前缀，每个项目使用独立记录。 */
-const preferencesKeyPrefix = 'zeus.task-model-push-preferences:v1:';
 
 /** 统一兼容混合版本运行服务缺失的可选上下文集合；模型与仓库等创建必需能力仍保持严格校验。 */
 export function normalizeTaskModelPushCapabilities(capabilities: CodexTaskPushCapabilities): CodexTaskPushCapabilities {
@@ -528,52 +527,52 @@ export function TaskPushLayoutPreview(props: { layout: TaskPushMessageLayout; la
   );
 }
 
-/** 只恢复当前项目的推送选择，其他项目和普通会话的偏好不参与。 */
-export function readTaskModelPushPreferences(storage: Pick<Storage, 'getItem'> | undefined, projectId: string): TaskModelPushPreferences | null {
-  if (!storage) return null;
-  try {
-    /** 推送专属记录不受打开会话或修改会话参数影响。 */
-    const value = JSON.parse(storage.getItem(`${preferencesKeyPrefix}${encodeURIComponent(projectId)}`) ?? 'null') as Partial<TaskModelPushPreferences> | null;
-    if (
-      value?.model &&
-      typeof value.model === 'string' &&
-      typeof value.effort === 'string' &&
-      (value.workMode === 'default' || value.workMode === 'plan') &&
-      (value.permissionMode === 'read-only' || value.permissionMode === 'auto' || value.permissionMode === 'auto-review' || value.permissionMode === 'full-access')
-    ) {
-      return {
-        model: value.model,
-        effort: value.effort,
-        serviceTier: value.serviceTier?.type === 'catalog' && value.serviceTier.id === 'priority' ? { type: 'catalog', id: 'priority' } : { type: 'standard' },
-        workMode: value.workMode,
-        permissionMode: value.permissionMode,
-        contextCapacityTokens: typeof value.contextCapacityTokens === 'number' && Number.isSafeInteger(value.contextCapacityTokens) && value.contextCapacityTokens > 0 ? value.contextCapacityTokens : null,
-        ...(typeof value.skillId === 'string' ? { skillId: value.skillId } : {}),
-        ...(value.workspaceMode === 'direct' || value.workspaceMode === 'worktree' ? { workspaceMode: value.workspaceMode } : {}),
-      };
-    }
-  } catch {
-    // 损坏的记录回到当前项目的初始选项，不借用其他项目的权限。
-  }
-  return null;
+/** 恢复当前项目最近模型或指定模型的选项。 */
+export function readTaskModelPushPreferences(storage: Pick<Storage, 'getItem'> | undefined, projectId: string, model?: string): TaskModelPushPreferences | null {
+  return readProjectModelPreferences(storage, projectId, model);
 }
 
-/** 用户修改选项时自动按项目保存，执行确认仍属于本次推送。 */
+/** 确认推送时保存该项目与模型的选择。 */
 export function writeTaskModelPushPreferences(storage: Pick<Storage, 'getItem' | 'setItem'> | undefined, projectId: string, form: TaskModelPushForm): void {
-  if (!storage) return;
-  storage.setItem(
-    `${preferencesKeyPrefix}${encodeURIComponent(projectId)}`,
-    JSON.stringify({
-      model: form.model,
-      effort: form.effort,
-      serviceTier: form.serviceTier,
-      contextCapacityTokens: form.contextCapacityTokens ?? null,
-      skillId: form.skillId,
-      workMode: form.workMode,
-      permissionMode: form.permissionMode,
-      ...(form.workspaceModeSelected ? { workspaceMode: form.workspaceMode } : {}),
-    }),
-  );
+  writeProjectModelPreferences(storage, projectId, {
+    model: form.model,
+    effort: form.effort,
+    serviceTier: form.serviceTier,
+    contextCapacityTokens: form.contextCapacityTokens ?? null,
+    skillId: form.skillId,
+    workMode: form.workMode,
+    permissionMode: form.permissionMode,
+    ...(form.workspaceModeSelected ? { workspaceMode: form.workspaceMode } : {}),
+  });
+}
+
+/** 模型下拉和接入模型共用同一套项目记忆恢复规则。 */
+export function selectTaskModelPushModel(form: TaskModelPushForm, models: ReadonlyArray<CodexConversationCapabilities['models'][number]>, projectId: string, model: string): TaskModelPushForm {
+  /** 能力目录确认模型来源及可选推理等级。 */
+  const capability = resolveModelCapability(models, model);
+  /** 使用目录中的完整身份区分同名模型。 */
+  const modelId = capability?.id ?? model;
+  /** 推送和对话共用本机项目记忆。 */
+  const storage = browserProjectModelPreferenceStorage();
+  /** 旧记录可能只包含模型名，需用能力目录确认其来源。 */
+  const last = readTaskModelPushPreferences(storage, projectId);
+  /** 指定模型优先；旧模型名只在目录中唯一匹配时恢复。 */
+  const remembered = readTaskModelPushPreferences(storage, projectId, modelId) ?? (resolveModelCapability(models, last?.model)?.id === modelId ? last : null);
+  /** 不支持的速度仍沿用现有降级提示。 */
+  const normalizedTier = normalizeServiceTierSelection(remembered?.serviceTier ?? { type: 'standard' }, capability);
+  return {
+    ...form,
+    model: modelId,
+    effort: remembered && capability?.supportedReasoningEfforts.includes(remembered.effort) ? remembered.effort : (capability?.defaultReasoningEffort ?? capability?.supportedReasoningEfforts[0] ?? ''),
+    serviceTier: normalizedTier.selection,
+    serviceTierDowngraded: normalizedTier.downgraded,
+    contextCapacityTokens: remembered?.contextCapacityTokens ?? null,
+    workMode: remembered?.workMode ?? 'default',
+    permissionMode: remembered?.permissionMode ?? 'read-only',
+    skillId: remembered?.skillId ?? readSkillWorkflowDefault('task_push'),
+    workspaceMode: remembered?.workspaceMode ?? form.workspaceMode,
+    workspaceModeSelected: remembered?.workspaceMode ? true : form.workspaceModeSelected,
+  };
 }
 
 /** 模型目录可先初始化配置；仓库和上下文仍由完整任务查询补齐。 */
@@ -831,16 +830,9 @@ export function TaskModelPushModal(props: {
     taskPushSupplementalLayoutAttachments(props.form.supplementalAttachments),
   );
 
+  /** 切换模型时恢复该模型在当前项目中确认过的选项。 */
   function onModelChange(model: string): void {
-    const capability = resolveModelCapability(runtimeCapabilities?.models, model);
-    const normalizedTier = normalizeServiceTierSelection({ type: 'standard' }, capability);
-    props.onChange({
-      ...props.form,
-      model: capability?.id ?? model,
-      effort: capability?.defaultReasoningEffort ?? capability?.supportedReasoningEfforts[0] ?? '',
-      serviceTier: normalizedTier.selection,
-      serviceTierDowngraded: normalizedTier.downgraded,
-    });
+    if (props.task) props.onChange((current) => selectTaskModelPushModel(current, runtimeCapabilities?.models ?? [], props.task!.projectId, model));
   }
 
   function changeContextSelection(kind: 'parent' | 'related', taskId: string, next: { selected: boolean; conversationIds: string[]; attachmentKeys: string[] }): void {
