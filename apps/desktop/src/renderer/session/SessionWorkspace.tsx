@@ -7,7 +7,7 @@ import type { ConversationProcessGroup } from '@zeus/shared';
 import { ActivitySkillCatalogContext } from './SessionActivity.js';
 import { FilePreviewDialog, FilePreviewOpenContext } from '../code/FilePreview.js';
 import { MotionPresence } from '../ui/MotionPresence.js';
-import { temporaryWorkspaceId, isConversationWorktreeOptions, type ConversationWorktreeOptions, type AsyncQuestionAnswer } from '@zeus/shared';
+import { temporaryWorkspaceId, isConversationWorktreeOptions, splitZeusSkillIds, type ConversationWorktreeOptions, type AsyncQuestionAnswer } from '@zeus/shared';
 import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -113,6 +113,9 @@ import { SessionQuickActionsCard } from './SessionQuickActionsCard.js';
 import type { SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
 import { conversationDisplayTitle } from './conversationDisplayTitle.js';
 import { conversationRuntimePreferenceKind, readConversationRuntimePreferences, writeConversationRuntimePreferences } from './conversationRuntimePreferences.js';
+import { readProjectModelPreferences, singleConversationSkill, writeProjectConversationPreferences, writeProjectModelPreferences } from './projectModelPreferences.js';
+import { contextCapacitySelectionAllowed } from './contextCapacitySelection.js';
+import { SkillSelector } from '../features/skills/SkillSelector.js';
 import { hasAvailableConversationModel, resolveModelCapability } from './modelSelection.js';
 import { GoalPanel, GoalRail } from './GoalPanel.js';
 import { presentModelOptions } from '../modelOptionPresentation.js';
@@ -851,6 +854,19 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
         refresh: async () => undefined,
       });
     }
+    /** 侧栏首发仍继承源会话，但实际发送后更新所属项目的记忆。 */
+    /** 审查和冲突处理保持各自的独立偏好。 */
+    const preferenceKind = conversationRuntimePreferenceKind(props.owner, props.conversation.title);
+    if (input.settings.model && (preferenceKind === 'project' || preferenceKind === 'task_development')) {
+      try {
+        writeProjectConversationPreferences(browserConversationStorage(), props.conversation.projectId, {
+          ...input.settings,
+          contextCapacityTokens: input.settings.contextCapacityTokens ?? props.conversation.contextCapacityTokens ?? null,
+        });
+      } catch (error) {
+        recordSystemMessage(systemMessageScope(props.conversation.projectId, props.conversation.id), error, 'message_send', '消息已提交，但配置记忆保存失败。');
+      }
+    }
   }
   return (
     <SessionWorkspace
@@ -867,6 +883,7 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
                 onClose={onClose}
                 language={props.language}
                 projectId={props.conversation.projectId}
+                restoreProjectModelPreferences={['project', 'task_development'].includes(conversationRuntimePreferenceKind(props.owner, props.conversation.title))}
                 taskId={props.conversation.taskId ?? undefined}
                 capabilities={capabilities}
                 initialSettings={{
@@ -1642,6 +1659,12 @@ export interface NewConversationDraft {
   browserOpen?: boolean;
   worktreeDrafts?: Record<string, ConversationWorktreeOptions>;
   workspaceMode?: 'direct' | 'worktree';
+  /** 草稿中的模型配置所属项目，切换项目时不能沿用。 */
+  runtimeProjectId?: string;
+  /** 推送记忆中已选择的 Skill。 */
+  skillId?: string;
+  /** 上下文容量以 Token 为单位，空值使用模型默认。 */
+  contextCapacityTokens?: number | null;
   content: string;
   attachments: NativeConversationAttachment[];
   permissionMode: NativePermissionMode;
@@ -2689,9 +2712,20 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         language={props.language}
         capabilities={props.capabilities}
         onDraftChange={(draft) => actions.onDraftChange?.(draft)}
-        onSubmit={(delivery, settings) => {
+        onSubmit={async (delivery, settings) => {
           setLocalSubmissionRevision((revision) => revision + 1);
-          return actions.onSubmit?.(delivery, settings);
+          if (!actions.onSubmit) return;
+          await actions.onSubmit(delivery, settings);
+          /** 使用已发送会话的项目身份，避免写入当前导航中的其他项目。 */
+          const projectId = props.state?.projectId ?? props.conversation?.projectId;
+          /** 审查和冲突处理不覆盖普通对话的模型偏好。 */
+          const preferenceKind = conversationRuntimePreferenceKind(owner, props.conversation?.title);
+          if (delivery !== 'queue' || !projectId || !settings || (preferenceKind !== 'project' && preferenceKind !== 'task_development')) return;
+          try {
+            writeProjectConversationPreferences(browserConversationStorage(), projectId, settings);
+          } catch (error) {
+            recordSystemMessage(systemMessageScope(projectId, props.conversation?.id ?? null), error, 'message_send', '消息已提交，但配置记忆保存失败。');
+          }
         }}
         onInterrupt={(turnId) => actions.onInterrupt?.(turnId)}
         onChooseAttachments={actions.onChooseAttachments}
@@ -2700,6 +2734,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
         onRemoveBrowserSubmission={actions.onRemoveBrowserSubmission}
         onContextDraftChange={actions.onContextDraftChange}
         projectId={props.conversation?.projectId}
+        restoreProjectModelPreferences={['project', 'task_development'].includes(conversationRuntimePreferenceKind(owner, props.conversation?.title))}
         onLoadExtensions={actions.onLoadSkills}
         onLoadEmployees={actions.onLoadDigitalEmployees}
         taskId={props.conversation?.taskId ?? undefined}
@@ -3531,7 +3566,13 @@ export function NewConversationComposer(props: {
   /** 新对话和任务内停靠输入共用此布局容器。 */
   const browserLayoutRef = useRef<HTMLDivElement | null>(null);
   const [tokenDraft] = useState(() => restoredDraft?.tokenDraft ?? { current: [] });
-  const runtimePreferencesInitializedRef = useRef(Boolean(restoredDraft));
+  /** 有未发送内容时保留草稿设置；空草稿重新读取最近使用的配置。 */
+  const [runtimeProjectId, setRuntimeProjectId] = useState<string | null>(() =>
+    restoredDraft?.runtimeProjectId === props.owner?.projectId &&
+    (restoredDraft?.content.trim() || restoredDraft?.attachments.length || restoredDraft?.browserDraft?.submission || restoredDraft?.goalInputOpen || restoredDraft?.workspaceMode === 'worktree')
+      ? (restoredDraft.runtimeProjectId ?? null)
+      : null,
+  );
   const structuredSelectionRef = useRef<StructuredComposerSelection>({
     displayText: props.initialContent ?? '',
     promptText: props.initialContent ?? '',
@@ -3550,8 +3591,12 @@ export function NewConversationComposer(props: {
   const [capabilitiesLoading, setCapabilitiesLoading] = useState(!props.capabilities);
   const [selectedModelId, setSelectedModelId] = useState(() => restoredDraft?.selectedModelId ?? '');
   const [selectedEffort, setSelectedEffort] = useState(() => restoredDraft?.selectedEffort ?? '');
-  /** 新会话使用模型默认容量。 */
-  const contextCapacityTokens = null;
+  /** 当前模型的上下文容量以 Token 为单位。 */
+  const [contextCapacityTokens, setContextCapacityTokens] = useState<number | null>(() => restoredDraft?.contextCapacityTokens ?? null);
+  /** 显示并提交项目记住的 Skill。 */
+  const [skillId, setSkillId] = useState(() => restoredDraft?.skillId ?? '');
+  /** Skill 目录按项目读取，客户端身份随读取入口保持稳定。 */
+  const skillClient = useMemo(() => (props.onLoadSkills ? { loadSkills: props.onLoadSkills } : null), [props.onLoadSkills]);
   const [serviceTierSelection, setServiceTierSelection] = useState<NativeServiceTierSelection>(() => restoredDraft?.serviceTierSelection ?? { type: 'standard' });
   const [isComposing, setIsComposing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -3592,6 +3637,7 @@ export function NewConversationComposer(props: {
     props.drafts?.set(draftKey, {
       browserDraft,
       browserOpen,
+      runtimeProjectId: runtimeProjectId ?? undefined,
       workspaceMode,
       worktreeDrafts,
       content,
@@ -3601,6 +3647,8 @@ export function NewConversationComposer(props: {
       selectedModelId,
       selectedEffort,
       serviceTierSelection,
+      contextCapacityTokens,
+      skillId,
       goalInputOpen,
       goalObjective,
       tokenDraft,
@@ -3610,6 +3658,7 @@ export function NewConversationComposer(props: {
     draftKey,
     browserDraft,
     browserOpen,
+    runtimeProjectId,
     workspaceMode,
     worktreeDrafts,
     content,
@@ -3619,6 +3668,8 @@ export function NewConversationComposer(props: {
     selectedModelId,
     selectedEffort,
     serviceTierSelection,
+    contextCapacityTokens,
+    skillId,
     goalInputOpen,
     goalObjective,
     tokenDraft,
@@ -3696,19 +3747,27 @@ export function NewConversationComposer(props: {
     if (props.autoFocus) textareaRef.current?.focus();
   }, [props.autoFocus]);
 
+  useLayoutEffect(() => {
+    /** 项目选择变化后重新读取配置，正文与附件不随之清空。 */
+    const projectId = props.owner?.projectId;
+    if (!projectId || runtimeProjectId === projectId) return;
+    /** 临时项目也使用独立记录，不回退到其他项目的权限。 */
+    const remembered = readProjectModelPreferences(browserConversationStorage(), projectId);
+    setSelectedModelId(remembered?.model ?? '');
+    setSelectedEffort(remembered?.effort ?? '');
+    setPermissionMode(remembered?.permissionMode ?? 'auto');
+    setCollaborationMode(remembered?.workMode ?? 'default');
+    setServiceTierSelection(remembered?.serviceTier ?? { type: 'standard' });
+    setContextCapacityTokens(remembered?.contextCapacityTokens ?? null);
+    setSkillId(remembered?.skillId ?? '');
+    setWorkspaceMode('direct');
+    setRuntimeProjectId(projectId);
+  }, [props.owner?.projectId, runtimeProjectId]);
+
   useEffect(() => {
     const projectId = props.owner?.projectId;
     if (!projectId) return;
-    if (!runtimePreferencesInitializedRef.current) {
-      const remembered = readConversationRuntimePreferences(browserConversationStorage(), projectId, conversationRuntimePreferenceKind(props.owner));
-      setSelectedModelId(remembered?.model ?? '');
-      setSelectedEffort(remembered?.effort ?? '');
-      setPermissionMode(remembered?.permissionMode ?? 'auto');
-      setCollaborationMode(remembered?.collaborationMode ?? 'default');
-      setServiceTierSelection({ type: 'standard' });
-      runtimePreferencesInitializedRef.current = true;
-    }
-    if (props.capabilities && capabilitiesRevision === 0) {
+    if (props.capabilities?.projectId === projectId && capabilitiesRevision === 0) {
       setCapabilities(props.capabilities);
       recoverDraftOperation('model_capabilities');
       setCapabilitiesLoading(false);
@@ -3736,48 +3795,65 @@ export function NewConversationComposer(props: {
     };
   }, [props.capabilities, props.onLoadCapabilities, props.owner?.projectId, capabilitiesRevision, systemScope, recoverDraftOperation]);
 
-  const preferredModel = resolveModelCapability(capabilities?.models, selectedModelId) ?? resolveModelCapability(capabilities?.models, capabilities?.preferredModel);
-  const modelPresentation = useMemo(() => presentModelOptions(capabilities?.models ?? [], preferredModel?.id ?? selectedModelId, props.language), [capabilities?.models, preferredModel?.id, props.language, selectedModelId]);
-  const selectedModel = resolveModelCapability(modelPresentation.models, modelPresentation.selectedId) ?? modelPresentation.models[0] ?? null;
-  const selectedModelLabel = selectedModel ? modelPresentation.triggerLabel : '';
+  /** 模型目录只应用于其所属项目，不用旧项目目录覆盖新选择。 */
+  const activeCapabilities = capabilities?.projectId === props.owner?.projectId ? capabilities : null;
+  const modelPresentation = useMemo(
+    () => presentModelOptions(activeCapabilities?.models ?? [], selectedModelId || activeCapabilities?.preferredModel || '', props.language, { preserveMissingSelection: Boolean(selectedModelId) }),
+    [activeCapabilities, props.language, selectedModelId],
+  );
+  const selectedModel = resolveModelCapability(modelPresentation.models, modelPresentation.selectedId);
+  const selectedModelLabel = modelPresentation.triggerLabel;
   /** 空目录和未登录的订阅目录均允许点击发送进入接入引导。 */
-  const needsModelSetup = Boolean(capabilities && !hasAvailableConversationModel(capabilities));
-  const goalAvailable = Boolean(selectedModel?.features?.goals.state === 'available' || (!selectedModel?.features && capabilities?.goals?.supported && capabilities?.goals?.enabled));
+  const needsModelSetup = Boolean(activeCapabilities && !hasAvailableConversationModel(activeCapabilities));
+  const goalAvailable = Boolean(selectedModel?.features?.goals.state === 'available' || (!selectedModel?.features && activeCapabilities?.goals?.supported && activeCapabilities?.goals?.enabled));
   const goalInputActive = goalInputOpen && goalAvailable;
   const goalCount = [...goalObjective.trim()].length;
   const goalObjectiveValid = goalCount > 0 && goalCount <= 4_000;
 
   useEffect(() => {
     // 能力尚未返回时保留目标草稿，避免导航恢复被误判为不支持目标。
-    if (!capabilitiesLoading && capabilities && !goalAvailable) setGoalInputOpen(false);
-  }, [capabilitiesLoading, capabilities, goalAvailable]);
+    if (!capabilitiesLoading && activeCapabilities && !goalAvailable) setGoalInputOpen(false);
+  }, [activeCapabilities, capabilitiesLoading, goalAvailable]);
 
   useEffect(() => {
-    if (!selectedModel) return;
+    if (!selectedModel || runtimeProjectId !== props.owner?.projectId) return;
     if (selectedModelId !== selectedModel.id) setSelectedModelId(selectedModel.id);
     if (!selectedModel.supportedReasoningEfforts.includes(selectedEffort)) setSelectedEffort(selectedModel.defaultReasoningEffort ?? selectedModel.supportedReasoningEfforts[0] ?? '');
-    /** 模型变化时只校验当前选择，不再读取项目档位。 */
+    /** 不支持的速度保留原选择，并沿用速度控件的提示。 */
     setServiceTierSelection((current) => {
       const normalized = normalizeServiceTierSelection(current, selectedModel).selection;
       return serviceTierSelectionValue(normalized) === serviceTierSelectionValue(current) ? current : normalized;
     });
-  }, [selectedEffort, selectedModel, selectedModelId]);
+    if (!contextCapacitySelectionAllowed(contextCapacityTokens, selectedModel.contextCapacity)) {
+      setContextCapacityTokens(null);
+      setLocalError(props.language === 'zh-CN' ? '已记住的上下文容量不受当前模型支持，已改用默认容量。' : 'The remembered context capacity is unsupported by this model; the default capacity will be used.');
+    }
+  }, [contextCapacityTokens, props.language, props.owner?.projectId, runtimeProjectId, selectedEffort, selectedModel, selectedModelId, setLocalError]);
 
-  useEffect(() => {
+  /** 切换模型时恢复该项目中此模型的执行选项。 */
+  function changeNewConversationModel(value: string, models: ReadonlyArray<CodexConversationCapabilities['models'][number]> = modelPresentation.models): void {
+    /** 目录提供模型完整身份及其可用能力。 */
+    const nextModel = resolveModelCapability(models, value);
+    /** 同名模型按供应商身份分别记忆。 */
+    const modelId = nextModel?.id ?? value;
+    /** 切换项目后只读取新项目的记录。 */
     const projectId = props.owner?.projectId;
-    if (!projectId || !selectedModel) return;
-    const preferenceKind = conversationRuntimePreferenceKind(props.owner);
-    const currentPreference = readConversationRuntimePreferences(browserConversationStorage(), projectId, preferenceKind);
-    writeConversationRuntimePreferences(browserConversationStorage(), projectId, preferenceKind, {
-      model: selectedModel.id,
-      ...(selectedEffort ? { effort: selectedEffort } : {}),
-      serviceTier: serviceTierSelection,
-      permissionMode,
-      collaborationMode,
-      ...(currentPreference?.workspaceMode ? { workspaceMode: currentPreference.workspaceMode } : {}),
-    });
-  }, [collaborationMode, permissionMode, props.owner, selectedEffort, selectedModel, serviceTierSelection]);
+    /** 会话和任务推送使用同一本机存储。 */
+    const storage = browserConversationStorage();
+    /** 原推送记录可能只包含旧模型名。 */
+    const last = projectId ? readProjectModelPreferences(storage, projectId) : null;
+    /** 旧模型名必须在当前能力目录中唯一匹配。 */
+    const remembered = projectId ? (readProjectModelPreferences(storage, projectId, modelId) ?? (resolveModelCapability(models, last?.model)?.id === modelId ? last : null)) : null;
+    setSelectedModelId(modelId);
+    setSelectedEffort(remembered && nextModel?.supportedReasoningEfforts.includes(remembered.effort) ? remembered.effort : (nextModel?.defaultReasoningEffort ?? nextModel?.supportedReasoningEfforts[0] ?? ''));
+    setServiceTierSelection(normalizeServiceTierSelection(remembered?.serviceTier ?? { type: 'standard' }, nextModel).selection);
+    setContextCapacityTokens(remembered?.contextCapacityTokens ?? null);
+    setPermissionMode(remembered?.permissionMode ?? 'auto');
+    setCollaborationMode(remembered?.workMode ?? 'default');
+    setSkillId(remembered?.skillId ?? '');
+  }
 
+  /** 创建会话并在受理后记录实际选择。 */
   async function submit(overrides: { content?: string; goalObjective?: string } = {}): Promise<void> {
     // 键盘提交也需等待导入完成，避免附件落回已发送的草稿。
     if (inputResources.processing) return;
@@ -3792,7 +3868,9 @@ export function NewConversationComposer(props: {
       submitting ||
       executionContextBusy ||
       capabilitiesLoading ||
+      runtimeProjectId !== props.owner.projectId ||
       (!selectedModel && !needsModelSetup) ||
+      (selectedModel && !contextCapacitySelectionAllowed(contextCapacityTokens, selectedModel.contextCapacity)) ||
       (!needsModelSetup && !submittedContent.trim() && attachments.length === 0 && !browserDraft.submission) ||
       (goalInputActive && !submittedGoal)
     )
@@ -3816,7 +3894,8 @@ export function NewConversationComposer(props: {
           if (!refreshed || !hasAvailableConversationModel(refreshed) || !model || model.available === false) throw new Error('ZEUS_MODEL_UNAVAILABLE');
           setCapabilities(refreshed);
           recoverDraftOperation('model_capabilities');
-          setSelectedModelId(model.id);
+          if (resolveModelCapability(refreshed.models, selectedModelId)?.id === model.id) setSelectedModelId(model.id);
+          else changeNewConversationModel(model.id, refreshed.models);
         },
       };
       window.dispatchEvent(new CustomEvent(modelSetupRequestedEvent, { detail: { conversationContext } }));
@@ -3831,6 +3910,16 @@ export function NewConversationComposer(props: {
       return;
     }
     suggestion.dismiss();
+    /** 已记住的 Skill 与正文中的显式引用共用现有协议。 */
+    const rememberedSkills = splitZeusSkillIds(skillId ? [skillId] : []);
+    if (rememberedSkills.invalidIds.length) {
+      setLocalError(props.language === 'zh-CN' ? '已记住的 Skill 无效，请重新选择。' : 'The remembered skill is invalid. Select it again.');
+      return;
+    }
+    /** 原生 Skill 身份去重后使用原有会话协议。 */
+    const skillReferences = [...new Set([...structured.skillReferences.map((item) => item.id), ...rememberedSkills.nativeSkillIds])].map((id) => ({ id }));
+    /** 插件 Skill 保留独立协议，并避免重复提交同一身份。 */
+    const pluginReferences = [...structured.pluginReferences, ...rememberedSkills.pluginReferences.filter((item) => !structured.pluginReferences.some((selected) => selected.kind === item.kind && selected.id === item.id))];
     setSubmitting(true);
     setLocalError(null);
     try {
@@ -3853,9 +3942,9 @@ export function NewConversationComposer(props: {
           model: selectedModel?.id,
           effort: selectedEffort || undefined,
           ...(submittedGoal ? { goalObjective: submittedGoal } : {}),
-          ...(structured.pluginReferences.length ? { pluginReferences: structured.pluginReferences } : {}),
+          ...(pluginReferences.length ? { pluginReferences } : {}),
           ...(structured.expertMentions.length ? { expertMentions: structured.expertMentions } : {}),
-          ...(structured.skillReferences.length ? { skillReferences: structured.skillReferences } : {}),
+          ...(skillReferences.length ? { skillReferences } : {}),
           ...(structured.computerUseRequested ? { computerUseRequested: true } : {}),
           displayText: submittedDisplayText,
         });
@@ -3875,9 +3964,9 @@ export function NewConversationComposer(props: {
           model: selectedModel?.id,
           effort: selectedEffort || undefined,
           ...(submittedGoal ? { goalObjective: submittedGoal } : {}),
-          ...(structured.pluginReferences.length ? { pluginReferences: structured.pluginReferences } : {}),
+          ...(pluginReferences.length ? { pluginReferences } : {}),
           ...(structured.expertMentions.length ? { expertMentions: structured.expertMentions } : {}),
-          ...(structured.skillReferences.length ? { skillReferences: structured.skillReferences } : {}),
+          ...(skillReferences.length ? { skillReferences } : {}),
           ...(structured.computerUseRequested ? { computerUseRequested: true } : {}),
           displayText: submittedDisplayText,
         });
@@ -3886,6 +3975,26 @@ export function NewConversationComposer(props: {
       if (accepted && typeof accepted === 'object' && accepted.state === 'failed') {
         setLocalError(accepted);
         return;
+      }
+      if (selectedModel && (!accepted || typeof accepted !== 'object' || accepted.state !== 'preparing')) {
+        try {
+          /** 工作区方式仅由推送维护，普通会话不覆盖该选择。 */
+          const storage = browserConversationStorage();
+          /** 同模型的推送工作区与对话配置使用同一条记录。 */
+          const remembered = readProjectModelPreferences(storage, props.owner.projectId, selectedModel.id);
+          writeProjectModelPreferences(storage, props.owner.projectId, {
+            model: selectedModel.id,
+            effort: selectedEffort,
+            serviceTier: serviceTierSelection,
+            contextCapacityTokens,
+            workMode: collaborationMode,
+            permissionMode,
+            skillId: skillId || singleConversationSkill({ skillReferences, pluginReferences }) || '',
+            ...(remembered?.workspaceMode ? { workspaceMode: remembered.workspaceMode } : {}),
+          });
+        } catch (error) {
+          recordSystemMessage(systemScope, error, 'conversation_start', '会话已创建，但配置记忆保存失败。');
+        }
       }
       if (!accepted || typeof accepted !== 'object' || accepted.state !== 'preparing') props.drafts?.delete(draftKey);
       await props.onAccepted?.();
@@ -3927,6 +4036,19 @@ export function NewConversationComposer(props: {
         onRemove={(attachment) => setAttachments((current) => current.filter((candidate) => candidate !== attachment))}
       />
       {browserDraft.submission ? <BrowserSubmissionAttachment submission={browserDraft.submission} language={props.language} disabled={submitting} onRemove={() => setBrowserDraft((current) => ({ ...current, submission: null }))} /> : null}
+      {skillId ? (
+        <div className="session-new-conversation-skill">
+          <SkillSelector
+            client={skillClient}
+            projectId={props.owner?.projectId}
+            value={skillId}
+            onChange={setSkillId}
+            language={props.language}
+            disabled={submitting || !props.owner}
+            ariaLabel={props.language === 'zh-CN' ? '会话使用的 Skill' : 'Skill for this conversation'}
+          />
+        </div>
+      ) : null}
       <div className="session-composer-input-frame" data-goal-input={goalInputActive ? 'true' : 'false'}>
         {props.owner?.kind === 'project' && props.projects?.length ? (
           <NewConversationExecutionContext
@@ -4118,10 +4240,10 @@ export function NewConversationComposer(props: {
             ) : null}
           </span>
           <span className="session-composer-trailing-actions">
-            {selectedModel ? (
+            {selectedModel || modelPresentation.options.length > 0 ? (
               <span className="session-composer-runtime-settings">
                 <ContextUsageIndicator contextCapacityTokens={contextCapacityTokens} unifiedUsage={null} language={props.language} />
-                {selectedModel.serviceTiers.length ? (
+                {selectedModel && (selectedModel.serviceTiers.length || serviceTierSelection.type === 'catalog') ? (
                   <ServiceTierToggle
                     language={props.language}
                     model={selectedModel}
@@ -4139,22 +4261,16 @@ export function NewConversationComposer(props: {
                   // 新建会话与已有会话共用窄输入框的模型图标布局。
                   triggerIcon={<ModelBrainIcon />}
                   className="session-composer-model-dropdown"
-                  value={selectedModel?.id ?? ''}
+                  value={modelPresentation.selectedId}
                   options={modelPresentation.options}
                   pinning={modelPresentation.pinning}
-                  disabled={submitting || !props.owner || !selectedModel}
+                  disabled={submitting || !props.owner}
                   searchable
                   searchPlaceholder={props.language === 'zh-CN' ? '搜索供应商或模型' : 'Search providers or models'}
                   emptyLabel={props.language === 'zh-CN' ? '没有匹配模型' : 'No matching models'}
-                  onChange={(value) => {
-                    const nextModel = resolveModelCapability(modelPresentation.models, value);
-                    setSelectedModelId(nextModel?.id ?? value);
-                    setSelectedEffort(nextModel?.defaultReasoningEffort ?? nextModel?.supportedReasoningEfforts[0] ?? '');
-                    const normalized = normalizeServiceTierSelection({ type: 'standard' }, nextModel);
-                    setServiceTierSelection(normalized.selection);
-                  }}
+                  onChange={changeNewConversationModel}
                 />
-                {selectedModel.supportedReasoningEfforts.length ? (
+                {selectedModel?.supportedReasoningEfforts.length ? (
                   <ComposerDropdown
                     label={props.language === 'zh-CN' ? '推理强度' : 'Reasoning effort'}
                     triggerLabel={`${props.language === 'zh-CN' ? '推理强度' : 'Reasoning effort'}：${selectedEffort}`}
@@ -4178,7 +4294,9 @@ export function NewConversationComposer(props: {
                   capabilitiesLoading ||
                   inputResources.processing ||
                   !props.owner ||
+                  runtimeProjectId !== props.owner.projectId ||
                   (!selectedModel && !needsModelSetup) ||
+                  Boolean(selectedModel && !contextCapacitySelectionAllowed(contextCapacityTokens, selectedModel.contextCapacity)) ||
                   (!needsModelSetup && (goalInputActive ? !goalObjectiveValid : !content.trim() && attachments.length === 0 && !browserDraft.submission))
                 }
                 aria-busy={submitting || undefined}

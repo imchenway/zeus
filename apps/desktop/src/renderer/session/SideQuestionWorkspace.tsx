@@ -56,6 +56,8 @@ export function SideQuestionWorkspace(props: {
   language: SessionUiLanguage;
   /** 附件与模型选择使用所属项目。 */
   projectId: string;
+  /** 普通侧栏会话切换模型时复用项目记忆。 */
+  restoreProjectModelPreferences?: boolean;
   /** 任务会话保留原任务身份。 */
   taskId?: string;
   /** 复用已加载的模型能力清单。 */
@@ -175,6 +177,7 @@ export function SideQuestionWorkspace(props: {
             textareaRef={inputRef}
             capabilities={props.capabilities}
             projectId={props.projectId}
+            restoreProjectModelPreferences={props.restoreProjectModelPreferences}
             taskId={props.taskId}
             permissionMode={settings.permissionMode}
             collaborationMode={settings.collaborationMode}
