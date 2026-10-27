@@ -135,7 +135,7 @@ function estimatePersistedSessionStateBytes(state: NativeSessionState): number {
   }
 }
 
-/** 窗口只持有已访问会话的热缓存，磁盘按选择身份异步读取。 */
+/** 窗口按需保留已访问或后台预取的显示缓存，磁盘按选择身份异步读取。 */
 export function initialSessionHotCache(): SessionHotCache {
   return new Map();
 }

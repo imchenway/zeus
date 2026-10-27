@@ -2174,9 +2174,9 @@ export function createSessionController(options: CreateSessionControllerOptions)
             await hooks.onReadable(
               adaptConversationSnapshotV2({
                 ...readable,
-                queue: emptyQueueWhileHydrating(),
-                requests: [],
-                planImplementationRequests: [],
+                queue: state.queue ?? emptyQueueWhileHydrating(),
+                requests: state.pendingRequests,
+                planImplementationRequests: state.planImplementationRequests,
                 goal: latestGoal ?? fallbackGoalForHydration(),
               }),
             );
@@ -2388,15 +2388,12 @@ export function createSessionController(options: CreateSessionControllerOptions)
       // 已有权威快照时保持稳定的重连状态，不能在 reconnecting/hydrating 间反复切换并触发整页同步闪烁。
       if (!reconnecting || !state.snapshot) dispatch({ type: 'transport_changed', transportState: 'hydrating' });
       const progressiveHydration = loadConversationForProgressiveHydration({
-        ...(!state.snapshot
-          ? {
-              onReadable: async (readableSnapshot: NativeConversationSnapshot): Promise<void> => {
-                if (disposed || token !== connectionToken || state.snapshot) return;
-                markConversationNavigationRenderReady(options.projectId, options.conversationId);
-                await applyAuthoritativeSnapshot(readableSnapshot);
-              },
-            }
-          : {}),
+        // 命中旧缓存也立即接管最新正文与摘要，不等待队列、确认项和目标读取。
+        onReadable: async (readableSnapshot: NativeConversationSnapshot): Promise<void> => {
+          if (disposed || token !== connectionToken || (state.snapshot && state.snapshot.throughEventSeq > readableSnapshot.throughEventSeq)) return;
+          if (!state.snapshot) markConversationNavigationRenderReady(options.projectId, options.conversationId);
+          await applyAuthoritativeSnapshot(readableSnapshot);
+        },
         onGoal: (response) => {
           if (disposed || token !== connectionToken) return;
           dispatch({ type: 'goal_hydrated', conversationId: options.conversationId, response });
@@ -2438,8 +2435,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
       }
       // Snapshot 已经权威且可独立阅读；实时连接只负责后续增量，不能继续遮住已取得的历史。
       if (!state.snapshot) markConversationNavigationRenderReady(options.projectId, options.conversationId);
-      const snapshotAlreadyApplied = reconnecting && state.snapshot?.id === snapshot.id && state.snapshot.throughEventSeq === snapshot.throughEventSeq && state.snapshot.syncStreamGeneration === snapshot.syncStreamGeneration;
-      if (!snapshotAlreadyApplied) await applyAuthoritativeSnapshot(snapshot);
+      // 正文可能已在同一事件水位提前显示，完整快照仍须接管队列与交互状态。
+      await applyAuthoritativeSnapshot(snapshot);
       await reconcilePersistedAcceptance(snapshot);
       try {
         await withSessionTimeout(lifecycle.opened, conversationRealtimeOpenTimeoutMs, () => new ConversationRealtimeOpenTimeoutError());

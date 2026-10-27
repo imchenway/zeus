@@ -9,6 +9,7 @@ import { createNativeConversationStartEnvelopeManager, createProjectConversation
 import { conversationStartClientCommandTypes, forgetConversationStartCommandRequest } from '../conversations/conversationStartCommandClient.js';
 import type { CodexConversationCapabilities, CodexTaskPushCapabilities, NativeConversationChoice, NativeSessionState, SessionConversationOwner, StartTaskModelPushRequest } from '../../session/sessionTypes.js';
 import { buildPersistedSessionViewCache, initialSessionHotCache, refreshSessionHotState, rememberSessionHotState, type SessionHotCache } from '../../session/sessionHotCache.js';
+import { useCompletedConversationPreload } from '../../session/useCompletedConversationPreload.js';
 import { type TaskModelPushForm, type TaskModelPushModalStatus } from '../../task/TaskModelPushModal.js';
 import { projectTaskModelPushConversationChoices } from '../../task/TaskModelPushPendingWorkspace.js';
 import { useConversationFeatureController } from '../conversations/useConversationFeatureController.js';
@@ -1229,6 +1230,21 @@ export function useWorkspaceQueryState(props: WorkspacePageProps) {
     if (sessionViewCachePersistTimerRef.current !== null) window.clearTimeout(sessionViewCachePersistTimerRef.current);
     sessionViewCachePersistTimerRef.current = window.setTimeout(persistNativeConversationViewCache, 2_500);
   }, [persistNativeConversationViewCache]);
+  /** 后台首屏与前台水合共用持久化队列，不额外序列化整份缓存。 */
+  const persistPreloadedConversation = useCallback(
+    (conversationId: string): void => {
+      dirtySessionViewCacheRef.current.add(conversationId);
+      scheduleNativeConversationViewCachePersistence();
+    },
+    [scheduleNativeConversationViewCachePersistence],
+  );
+  useCompletedConversationPreload({
+    client: props.nativeConversationClient,
+    groups: nativeConversationGroups,
+    cache: nativeConversationHotCacheRef.current,
+    selectedConversationId: selectedNativeConversation?.id,
+    onCached: persistPreloadedConversation,
+  });
   useEffect(() => {
     const flush = (): void => {
       if (sessionViewCachePersistTimerRef.current !== null) window.clearTimeout(sessionViewCachePersistTimerRef.current);

@@ -3014,12 +3014,9 @@
   }
 }
 
-/* 只捕获当前会话工作面；侧边栏和其他页面不参与会话切换快照。 */
+/* 正文和侧边栏不参与会话快照，避免文字加载后再从过渡画面切回。 */
 :root:has(.session-workspace-root[data-session-transition]) {
   view-transition-name: none;
-}
-.session-workspace-root[data-session-transition] {
-  view-transition-name: session-workspace;
 }
 /* 独立表面按前后真实尺寸过渡，卡片高度变化不再直接跳到终点。 */
 .session-workspace-root[data-session-transition] .session-thread-header {
@@ -3028,7 +3025,6 @@
 .session-workspace-root[data-session-transition] .session-quick-actions-surface[data-presentation='persistent'] {
   view-transition-name: session-environment;
 }
-::view-transition-group(session-workspace),
 ::view-transition-group(session-header),
 ::view-transition-group(session-environment) {
   animation-duration: 260ms;
@@ -3057,31 +3053,14 @@
   opacity: 0;
 }
 
-/* 使用明确的入场关键帧，热缓存即使在首帧内完成定位也能淡入；不移动滚动容器。 */
+/* 首次定位完成后直接显示正文，缓存接管不再让整块文字从透明重播。 */
 .session-codex-parity-v1 .session-transcript-shell[data-history-ready='true'] > .session-transcript {
-  animation: session-history-arrive 260ms var(--session-ease-out) both;
   opacity: 1;
 }
 
-/* 本地提交是即时反馈，不参与冷历史淡入，也不等待后台窗口恢复动画。 */
-.session-codex-parity-v1 .session-transcript-shell[data-local-submission='true'] > .session-transcript {
-  animation: none;
-}
-
-/* 已准备好的原生快照承担本次淡入；标记随正文卸载，不在动画结束后重播。 */
-.session-codex-parity-v1 .session-transcript-shell[data-native-arrival='true'] > .session-transcript,
+/* 原生导航快照已呈现标题，不再叠加局部入场动画。 */
 .session-workspace-root .session-thread-header[data-native-arrival='true'] .session-thread-title-copy[data-conversation-transition='true'] {
   animation: none;
-}
-
-/* 冷热历史共用同一淡入，不逐条重播既有消息。 */
-@keyframes session-history-arrive {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
 }
 
 /* 冷会话在消息区原位接管，骨架层和记录区共享同一尺寸，不触发布局跳变。 */
@@ -3209,10 +3188,6 @@
   .session-codex-parity-v1 .session-transcript-loading[data-visible='true'] {
     animation: none;
     transform: none;
-  }
-
-  .session-codex-parity-v1 .session-transcript-shell[data-history-ready='true'] > .session-transcript {
-    animation: none;
   }
 
   .session-codex-parity-v1 .session-transcript-shell > .session-transcript,

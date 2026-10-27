@@ -13,7 +13,8 @@ export const SessionReasoningSummary = memo(function SessionReasoningSummary(pro
   onVisibleContentChange?: () => void;
 }) {
   const sourceText = latestReasoningSummaryText(props.item);
-  const adaptiveText = useAdaptiveTranscriptText(sourceText, props.status === 'active');
+  // 快照中的摘要已完整取得，只有后续实时增量需要分批显示。
+  const adaptiveText = useAdaptiveTranscriptText(sourceText, props.status === 'active' && props.item.payload.v2SnapshotContentComplete !== true);
   useLayoutEffect(() => {
     if (adaptiveText.revision > 0) props.onVisibleContentChange?.();
   }, [adaptiveText.revision, props.onVisibleContentChange]);
