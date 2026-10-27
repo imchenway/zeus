@@ -755,9 +755,11 @@ function projectNames(ids: string[], projects: ProjectRecord[], zh: boolean): st
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 }
+/** 复用列表排程文案，区分已暂停与自定义规则已无后继时间。 */
 function scheduleLabel(task: AutomationTaskRecord, zh: boolean): string {
   if (task.status === 'paused') return zh ? '已暂停' : 'Paused';
   if (task.triggerKind === 'manual') return zh ? '手动触发' : 'Manual';
+  if (task.triggerKind === 'rrule' && !task.nextRunAt) return zh ? '无后续计划' : 'No upcoming schedule';
   return task.nextRunAt ? formatDate(task.nextRunAt) : zh ? '等待计算' : 'Awaiting schedule';
 }
 /** 运行状态区分执行与成果验收，不能把待验收显示为运行中。 */
