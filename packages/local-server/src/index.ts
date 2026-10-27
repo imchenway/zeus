@@ -927,6 +927,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   const eventSubscribers = new Set<ConversationRealtimeSocket>();
   /** IM 复用现有提交后事件；未启用连接时监听回调只作常量时间判断。 */
   let imRealtimeObserver: ((event: ZeusRealtimeEvent) => void) | undefined;
+  /** 本机领域订阅者在同一提交后事件流内处理失效和交付唤醒。 */
+  const realtimeObservers = new Set<(event: ZeusRealtimeEvent) => void>();
   const nativeLocalEventGenerationId = `zeus-local-${randomUUID()}`;
   const conversationEventFlow = new ConversationEventFlowControl();
   const realtimeSubscriberHighWaterBytes = conversationEventFlowBudgets.websocket.maximumBufferedBytes;
@@ -2683,6 +2685,14 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   /** 慢订阅者在有界高水位断开，随后通过耐久游标补拉，避免 Core 为单个窗口无界缓存。 */
   function broadcastRealtimeEvent(event: ZeusRealtimeEvent): void {
     imRealtimeObserver?.(event);
+    for (const observe of realtimeObservers) {
+      try {
+        observe(event);
+      } catch (error) {
+        // 摘要或交付唤醒失败不能阻断会话事实向其他订阅者传播。
+        console.error('本机领域事件订阅处理失败。', event.type, error);
+      }
+    }
     const encoded = JSON.stringify(event);
     for (const subscriber of eventSubscribers) {
       if (subscriber.readyState !== subscriber.OPEN) continue;
@@ -3739,6 +3749,12 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
     setImRealtimeObserver: (listener: ((event: ZeusRealtimeEvent) => void) | undefined) => {
       imRealtimeObserver = listener;
     },
+    /** 返回注销函数，宿主关闭后不再接收领域事件。 */
+    subscribeRealtimeEvents: (listener: (event: ZeusRealtimeEvent) => void) => {
+      realtimeObservers.add(listener);
+      return () => realtimeObservers.delete(listener);
+    },
+    taskWorkspaceIgnoredPaths: gitIntegrationOperations.taskWorkspaceIgnoredPaths,
     executeConversationDispatchMessage,
     executeConversationDispatchRequestResponse,
     executeProjectConversationIdempotent,

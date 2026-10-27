@@ -1023,7 +1023,10 @@ export async function cleanupPreparedTaskWorktree(input: { repositoryPath: strin
 
 /** 汇总 IDEA 式提交窗口所需的 staged、unstaged、untracked 与冲突状态。 */
 export async function getTaskWorkspaceReview(cwd: string, ignoredPaths: string[] = [], repositoryContext?: GitRepositoryContext): Promise<TaskWorkspaceReview> {
-  const context = repositoryContext ?? (await getGitRepositoryContext(cwd));
+  /** 工作区摘要只需当前分支和 HEAD，不枚举所有分支、远端和工作树。 */
+  const context: Pick<GitRepositoryContext, 'isRepository' | 'branch' | 'headSha'> =
+    repositoryContext ??
+    (await Promise.all([requireGitStdout(cwd, ['branch', '--show-current']), readGitStdout(cwd, ['rev-parse', '--verify', 'HEAD'])]).then(([branch, headSha]) => ({ isRepository: true, branch: branch || 'detached', headSha })));
   if (!context.isRepository) throw gitCoreError('ZEUS_GIT_REPOSITORY_REQUIRED', 'Task workspace is not a Git repository.');
   const ignored = ignoredPaths.map((path) => requireSafeWorkspacePath(path));
   const isIgnored = (path: string): boolean => ignored.some((ignoredPath) => path === ignoredPath || path.startsWith(`${ignoredPath}/`));

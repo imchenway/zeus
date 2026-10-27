@@ -5,7 +5,7 @@ import type { LocalApiTransport } from './localApiTransport.js';
  * 本机事件流的唯一重连策略。领域 client 只接收事件，不掌握 token、端口刷新或退避时钟。
  */
 export function createLocalApiEventSubscription(input: { transport: LocalApiTransport; refreshConnection?: () => Promise<void> }) {
-  return (onEvent: (event: ZeusRealtimeEvent) => void, onConnectionState: (state: ZeusRealtimeConnectionState) => void): (() => void) => {
+  return (onEvent: (event: ZeusRealtimeEvent) => void, onConnectionState: (state: ZeusRealtimeConnectionState) => void, options?: { path: string }): (() => void) => {
     let active = true;
     let socket: WebSocket | null = null;
     let retryTimer: number | undefined;
@@ -44,7 +44,7 @@ export function createLocalApiEventSubscription(input: { transport: LocalApiTran
             onConnectionState('connected');
           }
           onEvent(event);
-        });
+        }, options);
         socket = nextSocket;
         nextSocket.addEventListener(
           'close',

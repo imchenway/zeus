@@ -672,13 +672,14 @@ export function useWorkspaceDomainActions(state: WorkspaceQueryState) {
           void refreshArchivedConversations();
         }
         if (event.type === 'project.git_delivery.changed' && typeof event.payload.projectId === 'string') {
-          // 后台组合不依赖交付窗口存活，任务与普通会话都从服务端事件刷新真实 Git 快照。
+          // 交付进度只更新运行投影，不能把等待和提交说明生成当作 Git 变化。
           if (typeof event.payload.taskId === 'string') taskGitDeliveryChangedRef.current(event.payload.taskId);
           else setTaskGitDeliveryRevision((current) => current + 1);
-          // 项目工作台沿用同一个失效通知，避免其他入口继续显示旧文件列表。
-          notifyProjectGitChanged(event.payload.projectId);
         } else if (event.type === 'task.git_delivery.changed' && typeof event.payload.taskId === 'string') {
           taskGitDeliveryChangedRef.current(event.payload.taskId);
+        } else if (event.type === 'project.git.changed' && typeof event.payload.projectId === 'string') {
+          // 已执行的仓库操作才使文件列表和详情快照失效。
+          notifyProjectGitChanged(event.payload.projectId);
         }
         if (event.type === 'task.board.updated' && typeof event.payload.projectId === 'string') {
           // 全局显示修改使所有缓存失效，当前看板沿用既有加载流程刷新。

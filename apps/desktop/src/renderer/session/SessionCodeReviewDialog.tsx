@@ -36,7 +36,8 @@ interface SessionCodeReviewDialogProps {
   language: SessionUiLanguage;
   conversation: NativeConversationChoice;
   state: NativeSessionState;
-  workspace: TaskWorkspaceSnapshot | null;
+  /** 弹窗只显示仓库身份，不要求加载工作区完整差异。 */
+  workspace: Pick<TaskWorkspaceSnapshot, 'repositoryName' | 'repositoryRelativePath'> | null;
   repositoryName?: string;
   capabilities: CodexConversationCapabilities | null;
   onLoadCapabilities?: (projectId: string) => Promise<CodexConversationCapabilities>;

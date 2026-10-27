@@ -92,7 +92,6 @@ import type {
   SessionConversationOwner,
   StartNativeConversationRequest,
   StartProjectConversationRequest,
-  TaskWorkspacesSnapshot,
   TurnChangeSet,
   TurnChangeSetOperationResult,
 } from './sessionTypes.js';
@@ -253,7 +252,6 @@ export interface SessionWorkspaceActions {
   onSelectTask?: (task: SessionWorkspaceTask) => void;
   onOpenTaskDetail?: (taskId: string) => void;
   onTaskManagementStatusChange?: (taskId: string, status: string) => void | Promise<unknown>;
-  onLoadTaskWorkspaces?: (taskId: string) => Promise<TaskWorkspacesSnapshot>;
   onOpenTaskGitDelivery?: (taskId: string, workspaceId?: string | null) => void;
   onNextTurnSettingsChange?: (settings: ComposerRuntimeSettings) => void | Promise<void>;
   onPermissionModeChange?: (permissionMode: NativePermissionMode) => void | Promise<void>;
@@ -420,9 +418,6 @@ export interface ConnectedSessionWorkspaceProps {
   embeddedInTask?: boolean;
   quickActionsSuppressed?: boolean;
   readOnlyGate?: SessionReadOnlyGate;
-  onLoadTaskWorkspaces?: SessionWorkspaceActions['onLoadTaskWorkspaces'];
-  /** 交付状态变化后刷新环境卡片中的 Git 快照。 */
-  taskGitDeliveryRevision?: number;
   onOpenTaskGitDelivery?: SessionWorkspaceActions['onOpenTaskGitDelivery'];
   onLatestContentVisibilityChange?: (visible: boolean) => void;
 }
@@ -789,7 +784,6 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       onStartProjectConversation: props.onStartProjectConversation,
       onOpenTaskDetail: props.onOpenTaskDetail,
       onTaskManagementStatusChange: props.onTaskManagementStatusChange,
-      onLoadTaskWorkspaces: props.onLoadTaskWorkspaces,
       onOpenTaskGitDelivery: props.onOpenTaskGitDelivery,
       onLoadCapabilities: props.client.loadCodexConversationCapabilities,
       onLoadSkills: props.onLoadSkills,
@@ -809,7 +803,6 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
     props.conversation.projectId,
     props.localActions,
     props.onChooseAttachments,
-    props.onLoadTaskWorkspaces,
     props.onLoadSkills,
     props.onLoadDigitalEmployees,
     props.onOpenAiSettings,
@@ -933,7 +926,6 @@ export function ConnectedSessionWorkspace(props: ConnectedSessionWorkspaceProps)
       projectPersistedPlans
       embeddedInTask={props.embeddedInTask}
       quickActionsSuppressed={props.quickActionsSuppressed}
-      taskGitDeliveryRevision={props.taskGitDeliveryRevision}
       taskManagementStatusChangeBusy={props.taskManagementStatusChangeBusy}
       readOnlyGate={props.readOnlyGate}
       subagentListSnapshot={subagentListSnapshot}
@@ -1694,8 +1686,6 @@ export interface SessionWorkspaceProps {
   historyOnly?: boolean;
   /** 历史入口的稳定身份；续聊后仍用于补齐旧轮次的持久化计划。 */
   projectPersistedPlans?: boolean;
-  /** 交付状态变化后刷新环境卡片中的 Git 快照。 */
-  taskGitDeliveryRevision?: number;
   /** 任务内已展示标题与状态，会话只保留自身操作栏。 */
   embeddedInTask?: boolean;
   quickActionsSuppressed?: boolean;
@@ -2906,8 +2896,6 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
                   capabilities={props.capabilities}
                   onLoadCapabilities={actions.onLoadCapabilities}
                   onLoadSkills={actions.onLoadSkills}
-                  onLoadTaskWorkspaces={actions.onLoadTaskWorkspaces}
-                  taskGitDeliveryRevision={props.taskGitDeliveryRevision}
                   onOpenGitDelivery={actions.onOpenTaskGitDelivery}
                   browserOpen={browserOpen}
                   onToggleBrowser={(trigger) => {
