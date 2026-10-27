@@ -1057,6 +1057,8 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
     clearStaticReadingAnchor();
     const effect = scrollController.onExplicitLatestRequest();
     if (effect.type === 'scroll_to_bottom') positionLatest(container);
+    // 已挂载的正文在绘制前完成首次贴底后立即显示，后续高度校正不能继续隐藏整块内容。
+    setHistoryPositioned(true);
     maintainLatestPosition();
     setReturnToLatestVisible(false);
     setHistoryPagingGate({ conversationId, positioned: true, userIntent: false });
