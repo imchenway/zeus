@@ -22,22 +22,12 @@ import { conversationAttachmentIdentity } from './ConversationComposerAttachment
 import { isImageResource, isPendingImageAttachment, ResourceIcon } from './ConversationResources.js';
 import { SessionCodeReviewDialog, type SessionCodeReviewSelection } from './SessionCodeReviewDialog.js';
 import { SessionComputerPreview } from './SessionComputerPreview.js';
-import type {
-  CodexConversationCapabilities,
-  ConversationResource,
-  ConversationResourcePreview,
-  NativeConversationAttachment,
-  NativeConversationChoice,
-  NativeSessionState,
-  TaskWorkspaceSnapshot,
-  TaskWorkspacesSnapshot,
-} from './sessionTypes.js';
+import type { CodexConversationCapabilities, ConversationResource, ConversationResourcePreview, NativeConversationAttachment, NativeConversationChoice, NativeSessionState } from './sessionTypes.js';
 import type { SessionUiLanguage } from './ThreadItemView.js';
 import { VisibleApplicationError, reportApplicationError } from '../ui/ApplicationErrorDialog.js';
-import type { DashboardClient, ProjectRecord, ProjectGitWorkbenchSnapshot } from '../apiClient.js';
+import type { DashboardClient, ProjectRecord } from '../apiClient.js';
+import type { GitEnvironmentSummary, GitEnvironmentWorkspace } from '@zeus/shared';
 import { platformShortcutLabel } from '../platform.js';
-import { requestProjectGitWorkbench, subscribeProjectGitRefresh, visibleRepositoryFiles } from '../git/projectGitWorkbenchState.js';
-import { deliveryWorkspacesForConversationBranch } from '../task/taskGitWorkspaceScope.js';
 
 interface SessionQuickActionsCardProps {
   gitContext?: { client: DashboardClient; project: ProjectRecord };
@@ -55,9 +45,6 @@ interface SessionQuickActionsCardProps {
   capabilities?: CodexConversationCapabilities | null;
   onLoadCapabilities?: (projectId: string) => Promise<CodexConversationCapabilities>;
   onLoadSkills?: (projectId?: string, forceReload?: boolean) => Promise<import('../features/codex/codexContracts.js').SkillCatalog>;
-  onLoadTaskWorkspaces?: (taskId: string) => Promise<TaskWorkspacesSnapshot>;
-  /** 交付通知使当前会话的 Git 快照失效。 */
-  taskGitDeliveryRevision?: number;
   onOpenGitDelivery?: (taskId: string, workspaceId: string | null) => void;
   /** 内置浏览器的显示状态由当前会话工作面维护。 */
   browserOpen: boolean;
@@ -96,7 +83,8 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const [open, setOpen] = useState(false);
   const [showAllSources, setShowAllSources] = useState(false);
   const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
-  const [workspaces, setWorkspaces] = useState<TaskWorkspacesSnapshot | null>(null);
+  /** 只接收当前范围的共享摘要，后台刷新保留上次显示结果。 */
+  const [summary, setSummary] = useState<GitEnvironmentSummary | null>(null);
   const [workspaceState, setWorkspaceState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [workspaceError, setWorkspaceError] = useState<unknown>(null);
   const taskId = props.task?.id ?? props.conversation.taskId;
@@ -105,46 +93,19 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
   const directWorkspace = props.conversation.workspaceMode === 'direct';
   /** 关联任务不等于使用任务工作树，普通目录任务仍读取项目全部仓库。 */
   const useTaskWorkspaces = Boolean(taskId && !directWorkspace);
-  /** 普通目录共用项目客户端，独立会话保留其受限客户端。 */
-  const conversationGitClient = useMemo(
-    () => (!useTaskWorkspaces && gitClient ? (directWorkspace ? gitClient : { ...gitClient, ...gitClient.forConversationGit(props.conversation.id) }) : null),
-    [gitClient, props.conversation.id, useTaskWorkspaces, directWorkspace],
-  );
-  const [conversationGit, setConversationGit] = useState<{ id: string; snapshot: ProjectGitWorkbenchSnapshot } | null>(null);
-  const conversationRepository = conversationGit?.id === props.conversation.id ? conversationGit.snapshot.repositories[0] : null;
-  const conversationReview = conversationRepository?.snapshot;
-  /** 仓库身份与嵌套关系用于排除父仓重复占位，统计范围与交付页一致。 */
-  const conversationRepositories = conversationGit?.id === props.conversation.id ? conversationGit.snapshot.repositories : [];
-  const conversationReady = !taskId && workspaceState === 'ready' && Boolean(conversationRepository);
-
-  /** 普通目录不能借用同一任务的历史工作树。 */
-  const workspace = useTaskWorkspaces ? resolveConversationWorkspace(workspaces, props.conversation, props.state) : null;
-  /** 与任务交付页复用相同分支筛选，覆盖该分支的全部仓库。 */
-  const deliveryWorkspaces = deliveryWorkspacesForConversationBranch(workspaces?.items ?? [], props.conversation.workspaceId ?? workspace?.id);
+  /** 交付入口沿用原目录模式，摘要订阅不扩大写入范围。 */
+  const conversationGitClient = !useTaskWorkspaces ? gitClient : null;
+  /** 审查入口核对原工作区身份，不借用其他仓库。 */
+  const workspace = summary?.workspace ?? null;
   const exactReviewWorkspace = workspace && workspace.id === props.conversation.workspaceId && workspace.environmentId === props.conversation.environmentId ? workspace : null;
-  /** 两处环境展示采用相同的最近命令事实，工作区交付身份仍沿用会话绑定。 */
+  /** 首次摘要到达前使用最近命令事实作为目录展示。 */
   const executionContext = props.state.snapshot?.executionContext?.recentCommand ?? props.state.snapshot?.executionContext;
-  const cwd = (directWorkspace ? props.gitContext?.project.localPath : conversationRepository?.localPath) ?? executionContext?.cwd ?? workspace?.review?.cwd ?? workspace?.worktreePath ?? null;
-  /** 多仓目录不把首仓分支冒充整个项目的分支，具体选择由交付页呈现。 */
-  const branch =
-    directWorkspace && conversationRepositories.length > 1
-      ? zh
-        ? '多个仓库'
-        : 'Multiple repositories'
-      : (conversationReview?.branch ?? (executionContext?.cwd ? executionContext.branch : (workspace?.review?.branch ?? workspace?.branchName ?? null)));
-  /** 项目快照的完整 diff 包含未跟踪文件；文件数按仓库身份分别去重。 */
-  const changes = conversationGitClient
-    ? conversationRepositories.reduce(
-        (summary, repository) => {
-          /** 文件树与统计共同排除嵌套仓库在父仓内的占位。 */
-          const paths = new Set(visibleRepositoryFiles(repository, conversationRepositories).map((file) => file.path));
-          return repository.snapshot.diff.fileDiffs
-            .filter((file) => paths.has(file.newPath) || paths.has(file.oldPath))
-            .reduce((counts, file) => ({ ...counts, additions: counts.additions + file.addedLines, deletions: counts.deletions + file.deletedLines }), { ...summary, files: summary.files + paths.size });
-        },
-        { files: 0, additions: 0, deletions: 0 },
-      )
-    : summarizeWorkspaceChanges(deliveryWorkspaces);
+  const cwd = summary?.cwd ?? executionContext?.cwd ?? null;
+  /** 普通目录有多个仓库时不把首仓分支冒充整个项目分支。 */
+  const branch = directWorkspace && (summary?.repositoryCount ?? 0) > 1 ? (zh ? '多个仓库' : 'Multiple repositories') : (summary?.branch ?? executionContext?.branch ?? null);
+  /** 摘要覆盖同一交付范围的全部活动仓库。 */
+  const changes = summary ?? { files: 0, additions: 0, deletions: 0 };
+  const conversationReady = !taskId && workspaceState === 'ready' && Boolean(summary?.repositoryCount);
   const sources = useMemo(() => collectSources(props.state), [props.state.attachments, props.state.items]);
   const visibleSources = showAllSources ? sources : sources.slice(0, DEFAULT_VISIBLE_SOURCE_COUNT);
   /** 待提交提示与展示文件数使用同一范围，不受父仓占位的 dirty 状态影响。 */
@@ -196,78 +157,74 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
     setReviewDialogOpen(false);
   }, [props.conversation.id]);
 
-  /** 切换读取范围时清除旧快照，后台刷新只复用同一范围的成功结果。 */
+  /** 可见卡片订阅真实 Git 摘要；隐藏或切换身份后释放服务端文件监听。 */
   useEffect(() => {
-    setConversationGit(null);
-    setWorkspaces(null);
+    setSummary(null);
     setWorkspaceState('idle');
     setWorkspaceError(null);
   }, [props.conversation.id, props.conversation.projectId, props.conversation.workspaceId, props.conversation.environmentId, directWorkspace, taskId]);
 
   useEffect(() => {
-    if (!cardVisible || (useTaskWorkspaces ? !props.onLoadTaskWorkspaces : !conversationGitClient)) return;
-    /** 固定本次订阅的读取入口，切换会话后旧请求不得回写。 */
-    const loadWorkspaces = props.onLoadTaskWorkspaces;
-    /** 隐藏卡片或切换读取范围后，丢弃尚未结束的读取结果。 */
-    let active = true;
-    /** 只接收最近一次读取，避免返回窗口触发的并发请求覆盖新状态。 */
-    let requestRevision = 0;
-    /** 重新打开、交付变化、回合切换和返回窗口时读取真实 Git 状态。 */
-    const refreshWorkspaces = (): void => {
+    if (!cardVisible || !gitClient) return;
+    /** 当前订阅代次阻止关闭后的网络回调覆盖新范围。 */
+    let generation = 0;
+    let unsubscribe: (() => void) | undefined;
+    let focusTimer: ReturnType<typeof setTimeout> | undefined;
+    /** 身份参数由服务端再次核验，客户端不提供磁盘路径。 */
+    const query = new URLSearchParams();
+    if (useTaskWorkspaces && taskId) {
+      query.set('taskId', taskId);
+      if (props.conversation.workspaceId) query.set('workspaceId', props.conversation.workspaceId);
+    } else if (!directWorkspace) query.set('conversationId', props.conversation.id);
+    /** 复用统一认证和重连，连接恢复后服务端补发当前快照。 */
+    const connect = (): void => {
+      unsubscribe?.();
+      unsubscribe = undefined;
+      const current = ++generation;
       if (document.visibilityState === 'hidden') return;
-      /** 当前请求的顺序，用于拒绝迟到的旧结果和旧错误。 */
-      const revision = ++requestRevision;
-      // 同一范围刷新保留已显示的快照，避免加载提示反复插入并改变卡片高度。
-      setWorkspaceState((current) => (current === 'ready' ? current : 'loading'));
-      setWorkspaceError(null);
-      const request = useTaskWorkspaces
-        ? loadWorkspaces!(taskId!).then((snapshot) => {
-            if (active && revision === requestRevision) setWorkspaces(snapshot);
-            /** 读取失败或绑定失效不能作为零变更发布。 */
-            const current = resolveConversationWorkspace(snapshot, props.conversation, props.state);
-            /** 校验范围与卡片统计、点击后打开的任务分支保持一致。 */
-            const scoped = deliveryWorkspacesForConversationBranch(snapshot.items, props.conversation.workspaceId ?? current?.id);
-            /** 保留服务端返回的仓库读取原因。 */
-            const unavailable = scoped.find((item) => item.reviewError || !item.review);
-            if (!scoped.length || unavailable) throw new Error(unavailable?.reviewError || (zh ? '任务工作目录不可用，请在代码交付页检查。' : 'The task working folder is unavailable. Check Code Delivery.'));
-          })
-        : requestProjectGitWorkbench(conversationGitClient!, props.conversation.projectId).then((snapshot) => {
-            if (snapshot.repositories.some((repository) => !repository.snapshot.diff.isRepository)) throw new Error(zh ? '仓库差异读取不完整，请在代码交付页重试。' : 'Repository changes could not be fully loaded. Retry in Code Delivery.');
-            if (active && revision === requestRevision) setConversationGit({ id: props.conversation.id, snapshot });
-          });
-      void request
-        .then(() => {
-          if (!active || revision !== requestRevision) return;
-          setWorkspaceState('ready');
-        })
-        .catch((error: unknown) => {
-          if (!active || revision !== requestRevision) return;
+      setWorkspaceState((state) => (state === 'idle' ? 'loading' : state));
+      unsubscribe = gitClient.subscribeEvents(
+        (event) => {
+          if (current !== generation) return;
+          if (event.type === 'git.summary.updated') {
+            const next = event.payload.summary as GitEnvironmentSummary;
+            if (next.projectId !== props.conversation.projectId) return;
+            setSummary(next);
+            setWorkspaceState('ready');
+            setWorkspaceError(null);
+          } else if (event.type === 'git.summary.error') {
+            setWorkspaceState('error');
+            setWorkspaceError(new Error(String(event.payload.message ?? 'Git 状态读取失败。')));
+          }
+        },
+        (state) => {
+          if (current !== generation || state !== 'reconnecting') return;
           setWorkspaceState('error');
-          setWorkspaceError(error);
-        });
+          setWorkspaceError(new Error(zh ? 'Git 状态连接已断开，正在重新连接。' : 'Git status disconnected. Reconnecting.'));
+        },
+        { path: `/api/projects/${encodeURIComponent(props.conversation.projectId)}/git/summary-events?${query}` },
+      );
     };
-    refreshWorkspaces();
-    /** 工作区写入、项目文件变化与窗口返回共用同一刷新订阅。 */
-    const unsubscribe = subscribeProjectGitRefresh(props.conversation.projectId, refreshWorkspaces);
+    /** 聚合窗口返回与页面可见事件，避免同时重建两次订阅。 */
+    const visibilityChanged = (): void => {
+      clearTimeout(focusTimer);
+      if (document.visibilityState === 'hidden') {
+        generation += 1;
+        unsubscribe?.();
+        unsubscribe = undefined;
+      } else focusTimer = setTimeout(connect, 250);
+    };
+    connect();
+    window.addEventListener('focus', visibilityChanged);
+    document.addEventListener('visibilitychange', visibilityChanged);
     return () => {
-      active = false;
-      unsubscribe();
+      generation += 1;
+      clearTimeout(focusTimer);
+      unsubscribe?.();
+      window.removeEventListener('focus', visibilityChanged);
+      document.removeEventListener('visibilitychange', visibilityChanged);
     };
-  }, [
-    cardVisible,
-    props.conversation.id,
-    props.conversation.workspaceId,
-    props.conversation.environmentId,
-    props.onLoadTaskWorkspaces,
-    props.state.activeTurnId,
-    props.taskGitDeliveryRevision,
-    props.conversation.projectId,
-    taskId,
-    useTaskWorkspaces,
-    directWorkspace,
-    conversationGitClient,
-    zh,
-  ]);
+  }, [cardVisible, gitClient, props.conversation.id, props.conversation.projectId, props.conversation.workspaceId, props.conversation.environmentId, useTaskWorkspaces, directWorkspace, taskId, zh]);
 
   useEffect(() => {
     if (!open) return;
@@ -440,9 +397,9 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                     <GitBranch aria-hidden="true" weight="regular" />
                     <span className="session-quick-actions-copy">
                       <strong>{branch ?? (cwd ? (zh ? '非 Git 目录' : 'Not a Git repository') : zh ? '分支不可用' : 'Branch unavailable')}</strong>
-                      {workspace?.sourceBranch ? <small>{zh ? `来源分支 ${workspace.sourceBranch}` : `Source branch ${workspace.sourceBranch}`}</small> : null}
+                      {summary?.sourceBranch ? <small>{zh ? `来源分支 ${summary.sourceBranch}` : `Source branch ${summary.sourceBranch}`}</small> : null}
                     </span>
-                    {branch && !(directWorkspace && conversationRepositories.length > 1) ? (
+                    {branch && !(directWorkspace && (summary?.repositoryCount ?? 0) > 1) ? (
                       <RuntimeCopyButton text={branch} label={zh ? '复制工作分支' : 'Copy working branch'} copiedLabel={zh ? '工作分支已复制' : 'Working branch copied'} />
                     ) : null}
                   </div>
@@ -522,8 +479,8 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
                               ? zh
                                 ? `${changes.files} 个文件待提交`
                                 : `${changes.files} files to commit`
-                              : workspace?.sourceBranch
-                                ? `${workspace.branchName} → ${workspace.sourceBranch}`
+                              : summary?.sourceBranch
+                                ? `${summary.branch} → ${summary.sourceBranch}`
                                 : zh
                                   ? '查看、提交、合入与推送'
                                   : 'Review, commit, merge, and push'}
@@ -601,7 +558,7 @@ export function SessionQuickActionsCard(props: SessionQuickActionsCardProps) {
             conversation={props.conversation}
             state={props.state}
             workspace={exactReviewWorkspace}
-            repositoryName={conversationRepository?.name}
+            repositoryName={summary?.repositoryName}
             capabilities={props.capabilities ?? null}
             onLoadCapabilities={props.onLoadCapabilities}
             onLoadSkills={props.onLoadSkills}
@@ -707,24 +664,12 @@ function SessionQuickActionsCardMount(props: { persistent: boolean; host?: HTMLE
   return props.host ? createPortal(props.children, props.host) : null;
 }
 
-function resolveConversationWorkspace(workspaces: TaskWorkspacesSnapshot | null, conversation: NativeConversationChoice, state: NativeSessionState): TaskWorkspaceSnapshot | null {
-  if (!workspaces) return null;
-  const executionCwd = state.snapshot?.executionContext?.cwd;
-  return (
-    workspaces.items.find((workspace) => workspace.id === conversation.workspaceId) ??
-    workspaces.items.find((workspace) => Boolean(executionCwd) && (workspace.review?.cwd === executionCwd || workspace.worktreePath === executionCwd)) ??
-    workspaces.items.find((workspace) => workspace.state === 'ready') ??
-    workspaces.items[0] ??
-    null
-  );
-}
-
 /** 审查以原目录是否保留为准，已交付工作区仍可读取。 */
 function resolveCodeReviewUnavailableReason(input: {
   zh: boolean;
   taskId: string | null | undefined;
   conversation: NativeConversationChoice;
-  workspace: TaskWorkspaceSnapshot | null;
+  workspace: GitEnvironmentWorkspace | null;
   workspaceState: 'idle' | 'loading' | 'ready' | 'error';
   startAvailable: boolean;
   conversationReady: boolean;
@@ -741,21 +686,6 @@ function resolveCodeReviewUnavailableReason(input: {
   if (input.workspaceState === 'error') return input.zh ? '读取工作目录失败，请重新打开面板重试' : 'Failed to load the working folder. Reopen this panel to retry';
   if (!input.workspace || !['ready', 'merged'].includes(input.workspace.state) || !input.workspace.worktreePath) return input.zh ? '此任务的工作目录已回收或不可用' : 'This task’s working folder has been reclaimed or is unavailable';
   return null;
-}
-
-/** 汇总当前交付分支的全部仓库，跨仓同名文件分别计数。 */
-function summarizeWorkspaceChanges(workspaces: TaskWorkspaceSnapshot[]): { files: number; additions: number; deletions: number } {
-  return workspaces.reduce(
-    (summary, workspace) => {
-      if (!workspace.review) return summary;
-      /** 同一仓库的已暂存、未暂存和新文件按路径去重。 */
-      const files = new Set([...workspace.review.stagedFiles, ...workspace.review.unstagedFiles, ...workspace.review.untrackedFiles].map((file) => file.path)).size;
-      /** 服务端已经按工作区边界生成差异统计。 */
-      const diffs = [...workspace.review.stagedDiff.fileDiffs, ...workspace.review.unstagedDiff.fileDiffs];
-      return diffs.reduce((counts, file) => ({ ...counts, additions: counts.additions + file.addedLines, deletions: counts.deletions + file.deletedLines }), { ...summary, files: summary.files + files });
-    },
-    { files: 0, additions: 0, deletions: 0 },
-  );
 }
 
 function collectSources(state: NativeSessionState): SourceRow[] {

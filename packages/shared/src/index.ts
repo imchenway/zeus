@@ -879,3 +879,4 @@ export * from './automationActions.js';
 export * from './digitalTeamWorkflow.js';
 export * from './conversationWorkspace.js';
 export { gitConflictPreservationInstructions } from './gitConflictGuidance.js';
+export type { GitEnvironmentScope, GitEnvironmentWorkspace, GitEnvironmentSummary } from './gitEnvironmentSummary.js';

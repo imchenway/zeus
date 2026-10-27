@@ -12,7 +12,7 @@ export interface LocalApiTransport {
   request<T>(path: string, init?: LocalApiRequestInit): Promise<T>;
   requestBlob(path: string): Promise<Blob>;
   requestStream<T>(path: string, init: RequestInit, onEvent: (event: T) => void): Promise<void>;
-  connectEvents<T>(onEvent: (event: T) => void, options?: { afterEventId?: string; conversationId?: string; afterSequence?: number; syncStreamGeneration?: string }): WebSocket;
+  connectEvents<T>(onEvent: (event: T) => void, options?: { path?: string; afterEventId?: string; conversationId?: string; afterSequence?: number; syncStreamGeneration?: string }): WebSocket;
 }
 
 /** 调用方可关联一次界面操作；HTTP trace 的校验与传递仍由统一传输层负责。 */
@@ -140,9 +140,12 @@ export function createLocalApiTransport(options: { getConnection(): LocalApiConn
     }
   };
 
-  const connectEvents = <T>(onEvent: (event: T) => void, eventOptions?: { afterEventId?: string; conversationId?: string; afterSequence?: number; syncStreamGeneration?: string }): WebSocket => {
+  const connectEvents = <T>(onEvent: (event: T) => void, eventOptions?: { path?: string; afterEventId?: string; conversationId?: string; afterSequence?: number; syncStreamGeneration?: string }): WebSocket => {
     const connection = options.getConnection();
-    const wsUrl = new URL(`${connection.baseUrl.replace(/^http/u, 'ws')}/api/events`);
+    /** 领域事件端点共用本机认证，不允许把令牌发送到其他主机。 */
+    const path = eventOptions?.path ?? '/api/events';
+    if (!path.startsWith('/api/') || path.includes('\\')) throw new Error('本机事件路径无效。');
+    const wsUrl = new URL(`${connection.baseUrl.replace(/^http/u, 'ws')}${path}`);
     if (eventOptions?.afterEventId) wsUrl.searchParams.set('afterEventId', eventOptions.afterEventId);
     if (eventOptions?.conversationId) wsUrl.searchParams.set('conversationId', eventOptions.conversationId);
     if (eventOptions?.afterSequence !== undefined) wsUrl.searchParams.set('afterSequence', String(eventOptions.afterSequence));

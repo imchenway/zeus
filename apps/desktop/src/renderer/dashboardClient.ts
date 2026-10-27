@@ -44,7 +44,7 @@ export interface DashboardClient
   git: GitApiClient;
   settings: SettingsApiClient;
   remoteControl: RemoteControlApiClient;
-  subscribeEvents: (onEvent: (event: ZeusRealtimeEvent) => void, onConnectionState: (state: ZeusRealtimeConnectionState) => void) => () => void;
+  subscribeEvents: (onEvent: (event: ZeusRealtimeEvent) => void, onConnectionState: (state: ZeusRealtimeConnectionState) => void, options?: { path: string }) => () => void;
 }
 
 /** Renderer API client：只组合 bounded-context client 与统一本机 transport。 */

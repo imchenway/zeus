@@ -1,4 +1,5 @@
 import { GitDeliveryExecution } from './gitDeliveryExecution.js';
+import { GitEnvironmentSummaryService } from './gitEnvironmentSummary.js';
 import { registerTaskReminderService } from './taskReminderService.js';
 import { registerNotificationRoutes } from './notificationRoutes.js';
 import { repairTaskAttachmentReferences } from './taskAttachmentLifecycle.js';
@@ -648,6 +649,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     dispatchUnifiedConversationQueueHead,
     eventSubscribers,
     setImRealtimeObserver,
+    subscribeRealtimeEvents,
+    taskWorkspaceIgnoredPaths,
     executeConversationDispatchMessage,
     executeConversationDispatchRequestResponse,
     executeProjectConversationIdempotent,
@@ -828,7 +831,9 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     if (request.method === 'GET' && requestPath === '/api/events' && isAuthorizedRealtimeRequest(request)) return;
     if (!readOnlyValidation && authorizeReleaseNotesRequest(request)) return;
     const header = request.headers.authorization;
-    if (header !== `Bearer ${options.apiToken}`) {
+    /** 摘要订阅复用 WebSocket 令牌，但仍继续经过只读模式的外部读取限制。 */
+    const summarySocketAuthorized = request.method === 'GET' && /^\/api\/projects\/[^/]+\/git\/summary-events$/u.test(requestPath) && isAuthorizedRealtimeRequest(request);
+    if (header !== `Bearer ${options.apiToken}` && !summarySocketAuthorized) {
       await reply.code(401).send({
         error: 'ZEUS_UNAUTHORIZED',
         message: 'Missing or invalid Zeus local API token',
@@ -3689,6 +3694,30 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     },
   });
   gitDelivery.register();
+  /** 卡片共享只读摘要，完整交付详情继续使用原查询入口。 */
+  const gitSummaries = new GitEnvironmentSummaryService({
+    server,
+    projects,
+    tasks,
+    workspaces: taskWorkspaces,
+    conversations,
+    submissions: conversationSubmissions,
+    ignoredPaths: taskWorkspaceIgnoredPaths,
+    authorized: isAuthorizedRealtimeRequest,
+  });
+  gitSummaries.register();
+  /** 接收提交后的领域事件，进度消息不再冒充 Git 文件变化。 */
+  const unsubscribeGitEvents = subscribeRealtimeEvents((event: import('./index.js').ZeusRealtimeEvent) => {
+    if (
+      ['conversation.thread.changed', 'conversation.turn.completed', 'conversation.request.created', 'conversation.request.changed', 'conversation.request.resolved', 'conversation.queue.changed'].includes(event.type) &&
+      typeof event.payload.conversationId === 'string'
+    )
+      gitDelivery.wakeWaiting(event.payload.conversationId);
+    if (['project.git.changed', 'task.git_delivery.changed', 'task.updated', 'task.management_status.changed', 'project.updated', 'project.deleted', 'project.repositories.changed'].includes(event.type)) {
+      const projectId = typeof event.payload.projectId === 'string' ? event.payload.projectId : typeof event.payload.taskId === 'string' ? tasks.getById(event.payload.taskId)?.projectId : undefined;
+      if (projectId) gitSummaries.invalidateProject(projectId, typeof event.payload.repositoryId === 'string' ? event.payload.repositoryId : typeof event.payload.workspaceId === 'string' ? event.payload.workspaceId : undefined);
+    }
+  });
   registerNotificationRoutes({ server, db, automations: automationNotifications, tasks: taskReminders, deliveries: gitDelivery.repository, readOnly: readOnlyValidation });
   /** 自动化存储统一接收 ISO 时间，避免 Date 被 SQLite 静默绑定为 NULL。 */
   const automationNow = (): string => now().toISOString();
@@ -4946,6 +4975,8 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
 
   // eslint-disable-next-line prefer-const
   closeLocalServerResources = async () => {
+    unsubscribeGitEvents();
+    gitSummaries.close();
     await gitDelivery.close();
     const cleanupErrors: unknown[] = [];
     await closeHeavyWorkerJobs();

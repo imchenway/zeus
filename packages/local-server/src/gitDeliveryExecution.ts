@@ -248,6 +248,10 @@ export class GitDeliveryExecution {
   private readonly shutdown = new AbortController();
   /** 仅唤醒等待 AI 的运行，进度仍由真实状态决定。 */
   private timer: ReturnType<typeof setInterval> | undefined;
+  /** 已发布的进度投影，无业务变化时不重复广播。 */
+  private readonly publishedProgress = new Map<string, string>();
+  /** 活跃推进期间到达的终态事件，等待本轮结束后再核对。 */
+  private readonly pendingWakeups = new Set<string>();
 
   /** 注入现有命令与查询能力，不启动额外服务。 */
   constructor(private readonly options: DeliveryExecutionDependencies) {
@@ -428,10 +432,21 @@ export class GitDeliveryExecution {
       for (const step of run.steps) if (step.state === 'running') this.repository.updateStep(step, { state: 'unknown', message: '宿主已重启，请继续以核对原命令结果。' });
       this.repository.updateState(run.id, 'attention');
     }
-    this.timer ??= setInterval(() => {
-      for (const id of this.authorized) this.kick(id);
-    }, 1500);
+    // 事件遗漏时只核对已授权运行的 AI 状态，不扫描 Git 或重复推进仍在等待的运行。
+    this.timer ??= setInterval(() => this.wakeWaiting(), 30_000);
     this.timer.unref();
+  }
+
+  /** 会话状态变化唤醒关联交付；仍在运行的 AI 不触发仓库读取。 */
+  wakeWaiting(conversationId?: string): void {
+    if (this.stopped) return;
+    for (const id of this.authorized) {
+      /** 每次读取当前步骤，不能沿用上一次冲突会话身份。 */
+      const run = this.repository.get(id);
+      if (!run?.steps.some((step) => step.state === 'waiting' && step.conversationId && (!conversationId || step.conversationId === conversationId) && this.options.conversationState(step.conversationId) !== 'running')) continue;
+      if (this.active.has(id)) this.pendingWakeups.add(id);
+      else this.kick(id);
+    }
   }
 
   /** 退出时等待已开始的有界操作落盘，不能在数据库关闭后继续下一步。 */
@@ -459,6 +474,8 @@ export class GitDeliveryExecution {
       .finally(() => {
         this.active.delete(id);
         this.changed(id);
+        if (this.pendingWakeups.delete(id)) this.wakeWaiting();
+        if (!this.authorized.has(id)) this.publishedProgress.delete(id);
       });
     this.active.set(id, work);
   }
@@ -475,6 +492,7 @@ export class GitDeliveryExecution {
               if (this.stopped) return;
               if (original.state === 'succeeded') continue;
               if (original.state === 'attention') return;
+              if (original.state === 'waiting' && original.conversationId && this.options.conversationState(original.conversationId) === 'running') return;
               try {
                 if (!(await this.executeStep(run, original, selection, context))) return;
                 this.changed(run.id);
@@ -484,6 +502,9 @@ export class GitDeliveryExecution {
                 const unknown = step.state === 'unknown' || /OUTCOME_UNKNOWN|RESULT_MISSING|结果未知/u.test(`${(error as { code?: string }).code ?? ''} ${message}`);
                 this.repository.updateStep(step, { state: unknown ? 'unknown' : 'attention', message });
                 return;
+              } finally {
+                /** 已执行或尝试写入的步骤使真实仓库状态失效，等待 AI 的检查不会进入这里反复运行。 */
+                this.options.publish('project.git.changed', { projectId: run.projectId, repositoryId: selection.repositoryId, ...(run.scope.kind === 'task' ? { taskId: run.scope.taskId } : { conversationId: run.scope.conversationId }) });
               }
             }
           });
@@ -1102,6 +1123,11 @@ export class GitDeliveryExecution {
   /** 主窗口、交付窗口与通知列表读取同一事件。 */
   private changed(id: string): void {
     const run = this.repository.get(id);
-    if (run) this.options.publish('project.git_delivery.changed', { projectId: run.projectId, runId: run.id, ...(run.scope.kind === 'task' ? { taskId: run.scope.taskId } : { conversationId: run.scope.conversationId }) });
+    if (!run) return;
+    /** 时间戳不代表业务变化，比较对外可见的运行和步骤状态。 */
+    const progress = JSON.stringify([run.state, this.repository.view(run).steps]);
+    if (this.publishedProgress.get(id) === progress) return;
+    this.publishedProgress.set(id, progress);
+    this.options.publish('project.git_delivery.changed', { projectId: run.projectId, runId: run.id, ...(run.scope.kind === 'task' ? { taskId: run.scope.taskId } : { conversationId: run.scope.conversationId }) });
   }
 }

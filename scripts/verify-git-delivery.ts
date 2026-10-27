@@ -363,6 +363,8 @@ try {
   }
   assert.ok(aiId);
   aiStates.set(aiId, 'waiting');
+  /** 会话状态变化通过事件入口唤醒交付，不依赖后台兜底间隔。 */
+  service.wakeWaiting(aiId);
   const waiting = await settle(service, aiRun.id);
   assert.equal(waiting.steps[0]!.state, 'attention');
   assert.equal(waiting.steps[1]!.state, 'pending');
