@@ -207,7 +207,10 @@ export function PendingRequestSurface(props: PendingRequestSurfaceProps) {
           approvalIssue={approvalIssue}
           permissionMode={props.permissionMode ?? 'read-only'}
           onDecision={(decision) => void props.onRespond(props.request.id, buildPendingRequestResponse(props.request, { decision: [decision] }))}
-          onAllowFullAccess={props.onRespondWithFullAccess ? () => void props.onRespondWithFullAccess?.(props.request.id, buildPendingRequestResponse(props.request, { decision: ['accept'] })) : undefined}
+          // 工作安排只确认当前指派，不提供顺带修改会话权限的入口。
+          onAllowFullAccess={
+            props.onRespondWithFullAccess && !props.request.payload.taskWorkAssignment ? () => void props.onRespondWithFullAccess?.(props.request.id, buildPendingRequestResponse(props.request, { decision: ['accept'] })) : undefined
+          }
         />
       );
     }

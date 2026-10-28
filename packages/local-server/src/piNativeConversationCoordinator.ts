@@ -1,6 +1,7 @@
 import { modelResponseRetryPolicy } from '@zeus/ai-runtime';
 import { piSdkBinaryVersion } from '@zeus/ai-runtime';
 import type { TaskWorkToolPort } from './taskWorkDynamicTools.js';
+import { taskWorkAssignmentApproval } from './taskWorkAssignmentApproval.js';
 import type { AsyncQuestionAnswer, ConversationResource } from '@zeus/shared';
 import { createHash } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
@@ -2487,6 +2488,14 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
       if (nativeTool.namespace !== 'zeus_work' && context.permissionMode === 'read-only' && isZeusNativeToolMutation(nativeTool.namespace, nativeTool.tool, request.args)) {
         throw piError('ZEUS_PI_TOOL_READ_ONLY', '当前轮次为只读模式，已拒绝该工具的写入操作。');
       }
+      // 员工指派复用当前会话审批，但不能由自动权限审查代替用户决定。
+      if (nativeTool.namespace === 'zeus_work' && nativeTool.tool === 'assign') {
+        const response = await requestInteraction(context, request, 'command', {
+          ...taskWorkAssignmentApproval(request.toolCallId, request.args),
+          availableDecisions: ['accept', 'decline', 'cancel'],
+        });
+        if (!readApprovalDecision(response)) throw piError('ZEUS_TASK_DISCUSSION_ASSIGNMENT_DECLINED', '用户未确认数字员工指派。请继续在当前会话处理原请求。');
+      }
       // 与 Codex 共用原生宿主的全局开关，不按本轮输入框标签重复授权。
       const result = await zeusToolBroker!.invokePi({
         conversationId: context.conversationId,
@@ -2798,7 +2807,7 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
     try {
       await options.db.save();
       publish('conversation.request.created', context.conversationId, { requestId: persisted.id, requestKind: kind, request: nativePendingRequestProjection(persisted, options.transcripts) });
-      if (kind !== 'request_user_input' && context.permissionMode === 'auto-review') {
+      if (kind !== 'request_user_input' && !payload.taskWorkAssignment && context.permissionMode === 'auto-review') {
         // 审查与人工回答竞争同一持久请求；先解决者生效，迟到结果不得覆盖。
         void (async () => {
           let review;

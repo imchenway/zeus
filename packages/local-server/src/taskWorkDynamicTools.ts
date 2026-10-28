@@ -54,7 +54,7 @@ export function zeusWorkDynamicTools(): CodexDynamicToolSpec[] {
           type: 'function',
           name: 'assign',
           description:
-            '只在用户明确要求执行时，把当前任务讨论转成正式工作。必须引用 inspect 返回的当前用户请求身份；先复用已有待执行分工，不重复另建整项任务。已有安排只调整所选分工，不启动或恢复整套安排；没有安排时按员工默认和任务配置预检后执行。需要调研、建议或头脑风暴时不要调用。工作运行内请使用 delegate。',
+            '仅当用户明确要求指派数字员工或安排独立工作时调用，并由用户确认本次员工与工作范围后执行。“继续修复”“直接实现”等当前会话指令不授权另建工作；只读限制也不能作为转交员工的理由。必须引用 inspect 的当前用户请求身份，优先复用已有未开始的分工；不启动或恢复整套安排，不修改任何会话权限。工作运行内请使用 delegate。',
           inputSchema: {
             type: 'object',
             properties: {

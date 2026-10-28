@@ -6,6 +6,7 @@ import type { ZeusConversationPluginRuntime } from './zeusConversationPluginRunt
 import { isZeusNativeToolMutation, type ZeusToolBroker } from './zeusToolRegistry.js';
 import type { ConversationPermissionMode, ConversationCollaborationMode } from '@zeus/storage';
 import { createZeusPluginMcpApprovalEvidence, type ZeusPluginMcpApprovalSource } from './zeusPluginMcpBroker.js';
+import { taskWorkAssignmentApproval } from './taskWorkAssignmentApproval.js';
 
 interface CodexDynamicToolApplicationOptions {
   manager: Pick<CodexAppServerManager, 'respondToServerRequest'>;
@@ -17,7 +18,17 @@ interface CodexDynamicToolApplicationOptions {
   turns: Pick<ConversationTurnRepository, 'getByProvider'>;
   execution: Pick<ConversationExecutionRepository, 'segmentByNativeSession'>;
   pluginContext(conversationId: string): { cwd: string; model: string; permissionMode: ConversationPermissionMode; workMode: ConversationCollaborationMode } | null;
-  requestPluginApproval(input: { conversationId: string; threadId: string; turnId: string; callId: string; generationId: string; namespace: string; tool: string; argumentKeys: string[] }): Promise<boolean>;
+  requestPluginApproval(input: {
+    conversationId: string;
+    threadId: string;
+    turnId: string;
+    callId: string;
+    generationId: string;
+    namespace: string;
+    tool: string;
+    argumentKeys: string[];
+    taskAssignment?: ReturnType<typeof taskWorkAssignmentApproval>;
+  }): Promise<boolean>;
   broadcast(event: string, payload: Record<string, unknown>): void;
   now(): string;
 }
@@ -238,6 +249,21 @@ async function resolveResponse(input: {
     if (!permissionContext) throw dynamicToolError('ZEUS_TOOL_PERMISSION_CONTEXT_MISSING', '无法核实本轮工具权限。');
     if (input.namespace !== 'zeus_work' && permissionContext.permissionMode === 'read-only' && isZeusNativeToolMutation(input.namespace, input.tool, input.argumentsValue)) {
       throw dynamicToolError('ZEUS_NATIVE_TOOL_READ_ONLY', '当前轮次为只读模式，已拒绝该工具的写入操作。');
+    }
+    // 代码写入权限不包含另建员工工作的授权，独立指派须由当前用户确认具体范围。
+    if (input.namespace === 'zeus_work' && input.tool === 'assign') {
+      const allowed = await input.options.requestPluginApproval({
+        conversationId: input.conversation.id,
+        threadId: input.threadId,
+        turnId: input.turnId,
+        callId: input.callId,
+        generationId: input.event.generationId,
+        namespace: input.namespace,
+        tool: input.tool,
+        argumentKeys: Object.keys(input.argumentsValue),
+        taskAssignment: taskWorkAssignmentApproval(input.callId, input.argumentsValue),
+      });
+      if (!allowed) throw dynamicToolError('ZEUS_TASK_DISCUSSION_ASSIGNMENT_DECLINED', '用户未确认数字员工指派。请继续在当前会话处理原请求。');
     }
     // Computer Use 由原生宿主按全局开关统一检查，输入框标签仅表达调用意图。
     const result = await input.options.toolBroker.invoke({

@@ -2,6 +2,7 @@ import { userFacingErrorCause, type UserFacingErrorCause } from '@zeus/shared';
 import type { NativeConversationChoice, NativeConversationChoicesSnapshot, NativeProjectConversationChoicesSnapshot } from '../../session/sessionTypes.js';
 import type { ConversationApiClient } from './conversationApiClient.js';
 import { errorMessage, ExternalStore } from '../../externalStore.js';
+import { reuseConversationQueryValue } from './conversationQueryReuse.js';
 
 export interface ConversationQuerySnapshot {
   choicesByTask: Readonly<Record<string, NativeConversationChoicesSnapshot>>;
@@ -35,12 +36,14 @@ export class ConversationQueryStore extends ExternalStore<ConversationQuerySnaps
   }
 
   updateTaskChoices(updater: RecordUpdater<NativeConversationChoicesSnapshot>): void {
-    const choicesByTask = typeof updater === 'function' ? updater(this.snapshot.choicesByTask) : updater;
+    const choicesByTask = reuseConversationQueryValue(this.snapshot.choicesByTask, typeof updater === 'function' ? updater(this.snapshot.choicesByTask) : updater);
+    if (choicesByTask === this.snapshot.choicesByTask) return;
     this.publish({ ...this.snapshot, choicesByTask, revision: this.snapshot.revision + 1 });
   }
 
   updateProjectChoices(updater: RecordUpdater<NativeProjectConversationChoicesSnapshot>): void {
-    const choicesByProject = typeof updater === 'function' ? updater(this.snapshot.choicesByProject) : updater;
+    const choicesByProject = reuseConversationQueryValue(this.snapshot.choicesByProject, typeof updater === 'function' ? updater(this.snapshot.choicesByProject) : updater);
+    if (choicesByProject === this.snapshot.choicesByProject) return;
     this.publish({ ...this.snapshot, choicesByProject, revision: this.snapshot.revision + 1 });
   }
 

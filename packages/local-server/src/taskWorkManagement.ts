@@ -823,7 +823,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
             /** 领取只收紧原安排及任务授权，自动化只读授权不能继承已有计划的写权限。 */
             const configured = mergeEmployeeWorkSettings(plan.settings, stage?.settings, assigned.arrangement!.settings).permissionMode ?? (task.allowCodeChanges || task.allowTests || task.allowGitCommit ? 'auto' : 'read-only');
             /** 自动化与原安排取更严格的权限，员工身份不再携带权限副本。 */
-            const boundedPermission = [configured, permissionMode].includes('read-only') ? 'read-only' : [configured, permissionMode].includes('auto') ? 'auto' : 'full-access';
+            const boundedPermission = restrictToolPermission(configured, permissionMode ?? configured);
             options.planning.updateArrangement(assigned, { ...assigned.arrangement!, settings: { ...assigned.arrangement!.settings, permissionMode: boundedPermission } });
           }
           return { kind: 'task_plan', id: plan.id, taskId, generation: plan.generation };
@@ -1170,7 +1170,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
             }
           : null,
         work: options.items.listByTask(taskId).map((item) => ({ id: item.id, title: item.title, employeeId: item.employeeId, status: item.status })),
-        guidance: '仅当用户明确要求开始执行时指派。已有安排先选择原分工；草稿或暂停安排保留原状态。',
+        guidance: '仅当用户明确要求安排数字员工时才提出指派，并等待用户确认本次员工与范围。普通继续修复指令在当前会话执行；不能因只读限制另建工作。已有安排先选择原分工；草稿或暂停安排保留原状态。',
       };
     /** 用户来源只能是当前原生轮次绑定的提交，模型不能引用其他人的消息。 */
     const input = {
@@ -1182,6 +1182,17 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
       expectedRevision: call.arguments.expectedRevision === undefined ? null : Number(call.arguments.expectedRevision),
     };
     if (!submission || submission.conversationId !== call.conversationId || input.sourceRequestId !== submission.id) throw new TaskWorkStoreError('ZEUS_TASK_DISCUSSION_REQUEST_SCOPE', '指派必须来自当前用户请求，不能引用历史或其他会话。');
+    /** 确认摘要覆盖员工、范围、来源请求与所选已有工作，不接受修改参数后的旧确认。 */
+    const assignmentInputSha256 = workManagementInputSha256(call.arguments);
+    /** 消息归属仅证明来源；实际指派还须有本次调用、相同参数的用户确认。 */
+    const assignmentApproved = options.conversationRequests.listByConversation(call.conversationId).some((request) => {
+      if (request.turnId !== turnId || request.requestKind !== 'command' || request.status !== 'resolved') return false;
+      const payload = safeJsonParse(request.payloadJson);
+      const response = safeJsonParse(request.responseJson ?? 'null');
+      const approval = isRecord(payload) ? payload.taskWorkAssignment : null;
+      return isRecord(approval) && approval.callId === call.callId && approval.inputSha256 === assignmentInputSha256 && isRecord(response) && response.decision === 'accept' && !response.reviewer;
+    });
+    if (!assignmentApproved) throw new TaskWorkStoreError('ZEUS_TASK_DISCUSSION_ASSIGNMENT_APPROVAL_REQUIRED', '尚未取得当前用户对本次数字员工安排的确认；普通修复指令不能自动创建独立工作。');
     /** 权限取用户提交时的冻结值，不使用会话后来修改的设置扩大权限。 */
     const permissionMode = readWorkToolPermission(options, call.conversationId, submission.id);
     const identity = sha256([call.conversationId, call.threadId, call.turnId, call.callId].join('\0'));
@@ -1239,7 +1250,7 @@ export function registerTaskWorkManagement(options: TaskWorkManagementOptions): 
           /** 指派不扩大原安排已明确选择的权限，也不突破当前请求权限。 */
           const stage = currentPlan.stages.find((candidate) => candidate.id === assigned.arrangement!.stageId);
           const configured = mergeEmployeeWorkSettings(currentPlan.settings, stage?.settings, assigned.arrangement!.settings).permissionMode;
-          const boundedPermission = configured === 'read-only' || permissionMode === 'read-only' ? 'read-only' : configured === 'auto' || permissionMode === 'auto' ? 'auto' : 'full-access';
+          const boundedPermission = restrictToolPermission(configured ?? permissionMode, permissionMode);
           options.planning.updateArrangement(assigned, { ...assigned.arrangement!, settings: { ...assigned.arrangement!.settings, permissionMode: boundedPermission }, blockedReason: undefined });
           return { item: options.items.getById(assigned.id), planState: currentPlan.state, message: currentPlan.state === 'running' ? '已指派，将在依赖和前序阶段完成后执行。' : '已指派；安排保持原状态，可在工作页启动或继续。' };
         }
