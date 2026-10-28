@@ -1,6 +1,7 @@
 import type { ConversationRepository, ConversationServerRequestRepository, ConversationTurnRepository, ZeusConversationServerRequestRecord } from '@zeus/storage';
 import type { NativeAcceptedOperation, NativeConversationRunState, RespondNativeRequestInput } from './codexNativeConversationContracts.js';
 import { coordinatorError, invalidServerRequestResponse, nativePendingRequestProjection, parseJsonRecord } from './codexNativeConversationPolicy.js';
+import type { taskWorkAssignmentApproval } from './taskWorkAssignmentApproval.js';
 
 export function createCodexPluginToolApprovalApplication(options: {
   conversations: ConversationRepository;
@@ -14,7 +15,17 @@ export function createCodexPluginToolApprovalApplication(options: {
 }) {
   const pending = new Map<string, { resolve(allowed: boolean): void; turnId: string }>();
 
-  async function requestApproval(input: { conversationId: string; threadId: string; turnId: string; callId: string; generationId: string; namespace: string; tool: string; argumentKeys: string[] }): Promise<boolean> {
+  async function requestApproval(input: {
+    conversationId: string;
+    threadId: string;
+    turnId: string;
+    callId: string;
+    generationId: string;
+    namespace: string;
+    tool: string;
+    argumentKeys: string[];
+    taskAssignment?: ReturnType<typeof taskWorkAssignmentApproval>;
+  }): Promise<boolean> {
     const conversation = options.conversations.getById(input.conversationId);
     if (!conversation) throw coordinatorError('ZEUS_PLUGIN_TOOL_CONVERSATION_NOT_FOUND', 'Plugin 工具审批没有对应的持久会话。');
     const turn = options.turns.listByConversation(conversation.id).find((candidate) => candidate.providerThreadId === input.threadId && candidate.providerTurnId === input.turnId);
@@ -38,6 +49,7 @@ export function createCodexPluginToolApprovalApplication(options: {
         tool: input.tool,
         argumentKeys: input.argumentKeys,
         reason: 'Zeus Plugin MCP 工具按当前工具级策略需要审批。',
+        ...input.taskAssignment,
         availableDecisions: ['accept', 'decline', 'cancel'],
       },
       status: 'pending',

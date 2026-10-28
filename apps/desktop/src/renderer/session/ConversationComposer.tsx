@@ -659,7 +659,8 @@ export function ConversationComposer(props: ConversationComposerProps) {
                     agentKind: capability?.agentKind,
                     effort,
                     ...serviceTierWireOverride(normalizedTier.selection),
-                    permissionMode: remembered?.permissionMode ?? props.permissionMode,
+                    // 切换模型只恢复模型配置，不能带入另一会话记住的权限。
+                    permissionMode: props.permissionMode,
                     collaborationMode: remembered?.workMode ?? props.collaborationMode,
                   });
                 }}
