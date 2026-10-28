@@ -433,7 +433,16 @@ export function createGitIntegrationOperations(dependencies: GitIntegrationOpera
           const requested = requestedById.get(registeredRepository.id);
           if (!requested) throw nativeApiError('ZEUS_TASK_REPOSITORY_SELECTION_INCOMPLETE', `Choose a source branch for ${registeredRepository.relativePath}.`);
           const requestedBranchName = typeof requested.branchName === 'string' ? requested.branchName.trim() : '';
-          const branchName = requestedBranchName || buildTaskBranchName(task.taskCode, task.title, sequence, taskBranchPrefix);
+          // 未指定分支时沿用能力查询的避让规则；用户明确指定的名称继续原样校验。
+          const branchName =
+            requestedBranchName ||
+            buildTaskBranchName(
+              task.taskCode,
+              task.title,
+              sequence,
+              taskBranchPrefix,
+              (candidate) => repository.localBranches.includes(candidate) || repository.worktrees.some((worktree) => worktree.branch === candidate) || Boolean(taskWorkspaces.getByRepositoryBranch(registeredRepository.id, candidate)),
+            );
           let sourceKind: 'local' | 'remote' = 'local';
           let sourceRef = branchName;
           let sourceBranch = branchName;

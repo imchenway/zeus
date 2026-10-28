@@ -889,9 +889,10 @@ const selectTaskFields = `id, project_id, task_code, task_sequence, parent_task_
 export class TaskRepository {
   constructor(private readonly db: ZeusDatabasePort) {}
 
+  /** 已删除任务仍可能被分支、工作区和历史文档引用，分配新编号时继续保留其序号。 */
   private nextTaskSequence(projectId: string): number {
-    // 任务编码按项目内未删除任务的最大序号递增，保持与当前列表/回填口径一致。
-    const row = this.db.get<{ sequence: number | null }>(`SELECT MAX(task_sequence) AS sequence FROM tasks WHERE project_id = ? AND deleted_at IS NULL`, [projectId]);
+    /** 同一创建事务读取项目全部任务，避免删除末尾任务后复用已有编号。 */
+    const row = this.db.get<{ sequence: number | null }>(`SELECT MAX(task_sequence) AS sequence FROM tasks WHERE project_id = ?`, [projectId]);
     return (row?.sequence ?? 0) + 1;
   }
 

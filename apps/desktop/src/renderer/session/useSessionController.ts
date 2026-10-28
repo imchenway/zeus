@@ -55,6 +55,7 @@ import { adaptConversationSnapshotV2, mergeConversationHistoryV2, mergeConversat
 import { markConversationNavigationRenderReady } from '../performanceTraceContext.js';
 import { selectHasConfirmedUserMessage } from './sessionSelectors.js';
 import { handledMessageDeliveryErrors } from './conversationSystemMessages.js';
+import { reportApplicationError } from '../ui/ApplicationErrorDialog.js';
 
 /** 会话事件流按指数退避重试五次，单次等待小于一分钟。 */
 export const reconnectBackoffMs = [1_000, 2_000, 4_000, 8_000, 16_000] as const;
@@ -1049,38 +1050,43 @@ export function createSessionController(options: CreateSessionControllerOptions)
     else for (const listener of listeners) listener();
   }
 
+  /** 只有存活的控制器可以保存草稿，避免迟到回执覆盖重新打开后的输入与评论。 */
   function persistDraft(): void {
-    if (!storage) return;
-    const draft = state.draft;
-    const attachments = state.attachments;
-    const browserSubmission = state.browserSubmission;
-    const contextDraft = state.contextDraft;
-    if (
-      !draft &&
-      attachments.length === 0 &&
-      !browserSubmission &&
-      !hasConversationContext(contextDraft) &&
-      recoverableSends.length === 0 &&
-      deferredSends.length === 0 &&
-      acceptedDisplaySends.length === 0 &&
-      pendingBrowserCommentMarks.length === 0
-    ) {
-      storage.removeItem(storageKey);
-      return;
+    if (disposed || (!storage && typeof window === 'undefined')) return;
+    /** 正文、附件和评论作为同一份草稿写入，不能只保存其中一部分。 */
+    const { draft, attachments, browserSubmission, contextDraft } = state;
+    try {
+      if (!storage) throw new Error('本地草稿存储不可用。');
+      if (
+        !draft &&
+        attachments.length === 0 &&
+        !browserSubmission &&
+        !hasConversationContext(contextDraft) &&
+        recoverableSends.length === 0 &&
+        deferredSends.length === 0 &&
+        acceptedDisplaySends.length === 0 &&
+        pendingBrowserCommentMarks.length === 0
+      ) {
+        storage.removeItem(storageKey);
+        return;
+      }
+      storage.setItem(
+        storageKey,
+        JSON.stringify({
+          draft,
+          attachments,
+          ...(browserSubmission ? { browserSubmission } : {}),
+          ...(hasConversationContext(contextDraft) ? { contextDraft } : {}),
+          ...(recoverableSends.length > 0 ? { recoverableSends } : {}),
+          ...(deferredSends.length > 0 ? { deferredSends } : {}),
+          ...(acceptedDisplaySends.length > 0 ? { acceptedDisplaySends } : {}),
+          ...(pendingBrowserCommentMarks.length > 0 ? { pendingBrowserCommentMarks } : {}),
+        } satisfies PersistedDraft),
+      );
+    } catch (error) {
+      reportApplicationError(error, { title: '草稿保存失败', summary: '输入和评论仍保留在当前窗口，但未能保存到本地。请先保留内容再退出 Zeus。' });
+      throw error;
     }
-    storage.setItem(
-      storageKey,
-      JSON.stringify({
-        draft,
-        attachments,
-        ...(browserSubmission ? { browserSubmission } : {}),
-        ...(hasConversationContext(contextDraft) ? { contextDraft } : {}),
-        ...(recoverableSends.length > 0 ? { recoverableSends } : {}),
-        ...(deferredSends.length > 0 ? { deferredSends } : {}),
-        ...(acceptedDisplaySends.length > 0 ? { acceptedDisplaySends } : {}),
-        ...(pendingBrowserCommentMarks.length > 0 ? { pendingBrowserCommentMarks } : {}),
-      } satisfies PersistedDraft),
-    );
   }
 
   /** 持久正文或明确终态清理显示账本；替代提交按权威队列同步换代。 */
@@ -4020,7 +4026,8 @@ function browserStorage(): SessionDraftStorage | undefined {
 
 /** 输入框可显示安全空值，后台调用方同时接收读取失败，避免误启动模型。 */
 function readPersistedDraft(storage: SessionDraftStorage | undefined, key: string, onReadError?: () => void): PersistedDraft {
-  const empty: PersistedDraft = { draft: '', attachments: [], contextDraft: structuredClone(emptyConversationContextDraft) };
+  /** 没有磁盘记录时保留上下文缺省，让会话接管继续使用已有的创建期评论。 */
+  const empty: PersistedDraft = { draft: '', attachments: [] };
   if (!storage) return empty;
   try {
     const raw = storage.getItem(key);

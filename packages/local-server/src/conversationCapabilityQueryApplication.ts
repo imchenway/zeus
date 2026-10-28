@@ -234,7 +234,7 @@ export class ConversationCapabilityQueryApplication {
         primaryClean: primaryRepository?.clean ?? true,
         defaultRemoteName: primaryRepository?.defaultRemoteName ?? '',
         sourceRefs: primaryRepository?.sourceRefs ?? [],
-        suggestedBranchName: buildTaskBranchName(task.taskCode, task.title, this.ports.environments.listByTask(task.id).length + 1, taskBranchPrefix),
+        suggestedBranchName: primaryRepository?.suggestedBranchName ?? buildTaskBranchName(task.taskCode, task.title, this.ports.environments.listByTask(task.id).length + 1, taskBranchPrefix),
         worktreeRoot: join(dirname(project.localPath), '.zeus-worktrees'),
       },
     };
@@ -351,7 +351,14 @@ export class ConversationCapabilityQueryApplication {
         unavailableReason: null,
         sourceRefs,
         localTaskBranches,
-        suggestedBranchName: buildTaskBranchName(task.taskCode, task.title, this.ports.environments.listByTask(task.id).length + 1, taskBranchPrefix),
+        // 已删除任务的工作区仍保留分支占用，不能仅按当前任务的环境数量生成建议。
+        suggestedBranchName: buildTaskBranchName(
+          task.taskCode,
+          task.title,
+          this.ports.environments.listByTask(task.id).length + 1,
+          taskBranchPrefix,
+          (branchName) => repository.localBranches.includes(branchName) || repository.worktrees.some((worktree) => worktree.branch === branchName) || Boolean(this.ports.workspaces.getByRepositoryBranch(registered.id, branchName)),
+        ),
       };
     } catch {
       // 单仓被移除或失去访问权限时，其他仓库和任务表单仍可读取；不得伪造可选分支。

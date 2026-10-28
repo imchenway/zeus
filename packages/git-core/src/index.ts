@@ -757,8 +757,9 @@ export function buildTaskEnvironmentRootPath(projectContainerPath: string, proje
   return join(root, safeProject, safePush, safeTask);
 }
 
-/** 从任务编码、名称和开发线序号生成可读分支；最终合法性仍由 git check-ref-format 判定。 */
-export function buildTaskBranchName(taskCode: string, taskTitle: string, sequence: number, branchPrefix = defaultTaskBranchPrefix): string {
+/** 从任务编码、名称和开发线序号生成可读分支；调用方可用只读占用查询跳过已有名称。 */
+export function buildTaskBranchName(taskCode: string, taskTitle: string, sequence: number, branchPrefix = defaultTaskBranchPrefix, isUnavailable?: (branchName: string) => boolean): string {
+  /** 非拉丁名称使用固定可读短名，任务编码和开发线序号继续区分分支。 */
   const slug =
     taskTitle
       .normalize('NFKD')
@@ -766,7 +767,14 @@ export function buildTaskBranchName(taskCode: string, taskTitle: string, sequenc
       .replace(/[^a-z0-9]+/gu, '-')
       .replace(/^-+|-+$/gu, '')
       .slice(0, 36) || 'task';
-  return `${buildTaskBranchPrefix(taskCode, branchPrefix)}${slug}-${String(Math.max(1, Math.trunc(sequence))).padStart(2, '0')}`;
+  /** 同一任务的候选名称只递增开发线序号，不改写任何已有分支。 */
+  const prefix = `${buildTaskBranchPrefix(taskCode, branchPrefix)}${slug}-`;
+  /** 从调用方建议的下一条开发线开始查找。 */
+  let candidateSequence = Math.max(1, Math.trunc(sequence));
+  /** 最终合法性和创建时占用仍由 Git 校验。 */
+  let branchName = `${prefix}${String(candidateSequence).padStart(2, '0')}`;
+  while (isUnavailable?.(branchName)) branchName = `${prefix}${String(++candidateSequence).padStart(2, '0')}`;
+  return branchName;
 }
 
 /** 用任务编码限定可接管的既有本地任务分支，避免把其他任务分支登记到当前任务。 */
