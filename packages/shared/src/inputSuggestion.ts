@@ -5,8 +5,10 @@ import { normalizePerformanceTraceIdentity } from './commandEnvelope.js';
 export interface InputSuggestionSettings {
   /** 仅显式启用后才自动生成，避免升级后增加模型用量。 */
   enabled: boolean;
-  /** Codex 或模型连接中的完整模型身份；未选择时不生成。 */
+  /** 专用 Codex 或模型连接的完整身份；跟随模式下保留原选择。 */
   modelRef: string | null;
+  /** 显式跟随当前会话模型；缺项沿用旧用户的专用模型配置。 */
+  followConversationModel?: boolean;
   /** 空值自动选择模型支持的最低档位，显式选择仅用于输入建议和润色。 */
   effort?: string | null;
   /** 空值使用标准速度，Fast 仅在所选模型目录明确支持时启用。 */
@@ -46,6 +48,8 @@ export interface InputSuggestionRequest {
   completedTurnId?: string;
   /** 只有用户主动点击才发送尚未提交的草稿。 */
   draft?: string;
+  /** 仅新草稿跟随模型时提供输入框选择；已有会话由服务端读取权威模型。 */
+  draftModelRef?: string;
 }
 
 /** 建议回执携带轮次和模型身份，供输入框丢弃过期结果。 */
@@ -54,8 +58,10 @@ export interface InputSuggestionResult {
   diagnosticId?: string;
   /** 生成所依据的权威已完成轮次。 */
   completedTurnId: string | null;
-  /** 实际使用的专用模型；未生成时允许为空。 */
+  /** 实际解析的建议模型；未生成时允许为空。 */
   modelRef: string | null;
+  /** 原生采样已发出后禁止自动补调；缺项保留独立生成原有的临时故障恢复。 */
+  retryable?: false;
   /** 空值表示无需改写、未生成或生成失败，不属于输入正文。 */
   text: string | null;
   /** 无正文时明确区分未生成、无需改写和故障。 */
@@ -115,5 +121,13 @@ export function normalizeInputSuggestionSettings(value: unknown): InputSuggestio
   const modelRef = typeof record.modelRef === 'string' && record.modelRef.trim() && record.modelRef.length <= 512 ? record.modelRef.trim() : null;
   /** 档位由服务端结合实时模型能力校验，旧设置缺失时采用自动最低。 */
   const effort = typeof record.effort === 'string' && /^[a-z][a-z0-9_-]{0,63}$/u.test(record.effort) ? record.effort : null;
-  return { enabled: record.enabled === true && modelRef !== null, modelRef, effort, serviceTier: record.serviceTier === 'priority' ? 'priority' : null };
+  /** 跟随模式不要求预先选择专用模型，不隐式启用自动生成。 */
+  const followConversationModel = record.followConversationModel === true;
+  return {
+    enabled: record.enabled === true && (modelRef !== null || followConversationModel),
+    modelRef,
+    effort,
+    serviceTier: record.serviceTier === 'priority' ? 'priority' : null,
+    ...(followConversationModel ? { followConversationModel: true } : {}),
+  };
 }

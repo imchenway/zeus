@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { createHash, randomUUID } from 'node:crypto';
-import { currentDatabasePerformanceTraceId, type ConversationSnapshotV2Repository } from '@zeus/storage';
-import { generateConfiguredModelText, modelRef } from '@zeus/ai-runtime';
+import { currentDatabasePerformanceTraceId, type ConversationSnapshotV2Repository, type ZeusConversationRecord } from '@zeus/storage';
+import { generateConfiguredModelText, modelRef, parseModelRef, toCodexWireReasoningEffort, type CodexAppServerManager } from '@zeus/ai-runtime';
 import {
   classifyAssistantMessage,
   normalizeInputSuggestionSettings,
@@ -17,7 +17,7 @@ import { createCodexTextPool, type CodexTextGenerationOptions } from './gitCommi
 import { createInputSuggestionContextReader, inputSuggestionSourcesFingerprint, type InputSuggestionSources } from './inputSuggestionContext.js';
 import type { InputSuggestionDiagnostic } from './inputSuggestionDiagnostics.js';
 
-/** 建议以有依据的用户意图为起点，组织模型可理解和执行的专业提示词。 */
+/** 自动建议表达用户最可能发送的下一句话，不扩展成任务说明书。 */
 const inputSuggestionInstructions = `目的：根据对话、任务资料和已确认记忆，替用户生成下一条要发给 AI 助手的消息，供用户预览和选择，不自动发送。
 
 要求：
@@ -25,7 +25,7 @@ const inputSuggestionInstructions = `目的：根据对话、任务资料和已�
 2. 用户是发信人，助手是收信人。正文的“我”指用户，“你”指 AI 助手，原文引用除外。
 3. 围绕未解决的问题写追问、纠偏、补充或授权下一步；信息不足时，围绕实际缺失的信息提出具体澄清。不要重复已回答的问题、只作催促或重新启动正在执行的工作；
 4. 可以推测用户的回应，以及推测的用户意图来生成表达清晰的提示词用于发送给 AI 助手。
-5. 风格沿用用户的语言、语气和术语，表达自然具体。
+5. 风格沿用用户的语言、语气和术语，表达自然具体。优先写一到两句简短完整的话，通常不超过 300 字符；保留必要条件、路径和引用，不为凑长度删掉语义。
 
 输出：始终只给一条可直接发送给 AI 助手的提示词。不返回空白或 NO_SUGGESTION。`;
 
@@ -57,7 +57,9 @@ export function normalizeInputSuggestion(text: string, mode: InputSuggestionRequ
     .replace(/\n```$/u, '')
     .trim();
   if (!cleaned || cleaned === 'NO_SUGGESTION') throw Object.assign(new Error('未生成有效的输入建议，请重试。'), { code: 'ZEUS_INPUT_SUGGESTION_OUTPUT_INVALID' });
-  return mode === 'polish' ? text : Array.from(cleaned).slice(0, 300).join('');
+  // 只拒绝异常大的建议，不裁剪正文；润色沿用完整草稿输出。
+  if (mode === 'suggest' && cleaned.length > 4_000) throw Object.assign(new Error('输入建议过长，请重新生成。'), { code: 'ZEUS_INPUT_SUGGESTION_OUTPUT_INVALID' });
+  return mode === 'polish' ? text : cleaned;
 }
 
 /** 独立生成只使用明确选中的模型和现有凭据，不回退或创建主会话。 */
@@ -88,6 +90,8 @@ async function generateSuggestionText(options: {
   codexPool: ReturnType<typeof createCodexTextPool>;
   /** 只有真正开始请求模型时才结束准备计时。 */
   onGenerationStarted: () => void;
+  /** 返回空值仅表示未发出采样；已发送后失败不得再换通道调用模型。 */
+  sampleNative?: (instructions: string, effort: string | undefined) => Promise<string | null>;
   /** 状态与计数不携带正文，所有阶段沿用本次请求的诊断身份。 */
   onDiagnostic: (entry: InputSuggestionDiagnostic) => void;
 }): Promise<string> {
@@ -101,6 +105,9 @@ async function generateSuggestionText(options: {
   const system = options.agentRules
     ? `${instructions}\n\n以下全局和项目规则按所列优先级约束生成内容的语言、表达、业务要求和权限边界。当前任务仅是起草或改写用户消息，不执行规则中的操作，也不新增执行授权。\n\n${options.agentRules}`
     : instructions;
+  /** 支持原生采样时复用父会话上下文；其余场景保持已配置的独立生成。 */
+  const sampled = await options.sampleNative?.(instructions, effort);
+  if (sampled !== undefined && sampled !== null) return sampled;
   options.onDiagnostic({ event: 'generation_configured', effort: effort ?? 'default', inputCharacters: options.context.length, promptHash: createHash('sha256').update(system).digest('hex').slice(0, 16) });
   if (options.selectedModelRef.startsWith('codex:')) {
     /** 所选 Codex 才读取宿主配置，准备阶段包括进程、账户和临时线程。 */
@@ -154,7 +161,8 @@ function validInputSuggestionRequest(value: unknown): value is InputSuggestionRe
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   /** 请求只携带操作和会话身份，不允许覆盖模型配置。 */
   const request = value as Record<string, unknown>;
-  if (Object.keys(request).some((key) => !['mode', 'trigger', 'projectId', 'conversationId', 'completedTurnId', 'draft'].includes(key))) return false;
+  if (Object.keys(request).some((key) => !['mode', 'trigger', 'projectId', 'conversationId', 'completedTurnId', 'draft', 'draftModelRef'].includes(key))) return false;
+  if (request.draftModelRef !== undefined && (request.conversationId || request.trigger !== 'manual' || typeof request.draftModelRef !== 'string' || !request.draftModelRef.trim() || request.draftModelRef.length > 512)) return false;
   if (!['suggest', 'polish'].includes(String(request.mode)) || !['automatic', 'manual'].includes(String(request.trigger))) return false;
   for (const key of ['projectId', 'conversationId', 'completedTurnId']) {
     if (request[key] !== undefined && (typeof request[key] !== 'string' || !request[key].trim() || request[key].length > 256)) return false;
@@ -175,6 +183,12 @@ export function registerInputSuggestionRoutes(options: {
   projectExists: (projectId: string) => boolean;
   /** 会话记录拥有所属项目身份。 */
   getConversation: (conversationId: string) => { projectId: string } | undefined;
+  /** 跟随模型来自已建立会话的权威设置，不接受客户端覆盖。 */
+  conversationModelRef?: (conversationId: string) => string | null;
+  /** 原会话所属的多世代管理器，不能使用建议专用进程去读取父会话。 */
+  codexManager?: CodexAppServerManager;
+  /** 原生身份只从本地受控会话记录取得。 */
+  nativeConversation?: (conversationId: string) => Pick<ZeusConversationRecord, 'providerThreadId' | 'agentKind' | 'modelSourceId'> | undefined;
   /** 尚未建立轮次的新提交也阻止生成，不能只看 activeTurn。 */
   hasPendingSubmission: (conversationId: string) => boolean;
   /** 设置变化立即用于取消或拒绝过期输出。 */
@@ -200,10 +214,17 @@ export function registerInputSuggestionRoutes(options: {
   const codexPool = createCodexTextPool();
   /** 宿主关闭时取消并等待独立生成释放自己的进程。 */
   const pending = new Map<AbortController, Promise<unknown>>();
+  /** 专用 Codex 在自动建议启用后预备连接；跟随会话优先使用已有主连接。 */
+  const warmConfiguredModel = () => {
+    const settings = normalizeInputSuggestionSettings(options.readSettings());
+    if (settings.enabled && !settings.followConversationModel && settings.modelRef?.startsWith('codex:')) void codexPool.warm(options.codexOptions()).catch(() => {});
+  };
+  options.server.addHook('onReady', async () => warmConfiguredModel());
   /** 只取消本功能的独立请求，不影响主会话、提交说明或其他任务。 */
   const cancelPending = (reason: 'settings_changed' | 'host_shutdown' = 'settings_changed') => {
     for (const controller of pending.keys()) controller.abort(reason);
     contextReader.clear();
+    if (reason === 'settings_changed') warmConfiguredModel();
   };
   options.server.addHook('onClose', async () => {
     cancelPending('host_shutdown');
@@ -221,7 +242,12 @@ export function registerInputSuggestionRoutes(options: {
     if ((projectId && !options.projectExists(projectId)) || (conversationId && options.getConversation(conversationId)?.projectId !== projectId))
       return reply.code(404).send({ error: 'ZEUS_CONVERSATION_NOT_FOUND', message: '会话不存在。' });
     /** 当前请求捕获模型身份，生成期间不切换模型。 */
-    const settings = normalizeInputSuggestionSettings(options.readSettings());
+    const configuredSettings = normalizeInputSuggestionSettings(options.readSettings());
+    /** 请求开始时冻结实际模型；新草稿仅使用输入框明确选择的已配置模型。 */
+    const settings = {
+      ...configuredSettings,
+      modelRef: configuredSettings.followConversationModel ? (conversationId ? (options.conversationModelRef?.(conversationId) ?? null) : (input.draftModelRef ?? null)) : configuredSettings.modelRef,
+    };
     /** 复用既有 HTTP trace 头；无效或非界面调用使用独立随机身份。 */
     const suppliedTraceId = request.headers['x-zeus-trace-id'];
     /** 所有无建议结果使用相同形状，不改变输入框。 */
@@ -320,7 +346,14 @@ export function registerInputSuggestionRoutes(options: {
           signal.throwIfAborted();
           /** 设置变化不能让本次调用带着旧模型或深度继续。 */
           const current = normalizeInputSuggestionSettings(options.readSettings());
-          if ((input.trigger === 'automatic' && current.enabled !== settings.enabled) || current.modelRef !== settings.modelRef || current.effort !== settings.effort || current.serviceTier !== settings.serviceTier) {
+          if (
+            (input.trigger === 'automatic' && current.enabled !== settings.enabled) ||
+            current.modelRef !== configuredSettings.modelRef ||
+            Boolean(current.followConversationModel) !== Boolean(configuredSettings.followConversationModel) ||
+            current.effort !== settings.effort ||
+            current.serviceTier !== settings.serviceTier ||
+            (current.followConversationModel && conversationId && options.conversationModelRef?.(conversationId) !== settings.modelRef)
+          ) {
             cancellation = 'settings_changed';
             return false;
           }
@@ -374,6 +407,54 @@ export function registerInputSuggestionRoutes(options: {
           selected,
           codexPool,
           onGenerationStarted: () => advanceStage('generation'),
+          sampleNative: async (instructions, effort) => {
+            /** 自动完成事件才具有可采样的稳定来源；手动请求保留独立生成语义。 */
+            const manager = options.codexManager;
+            const parent = conversationId ? options.nativeConversation?.(conversationId) : undefined;
+            const threadId = parent?.providerThreadId;
+            const providerSettings = snapshot?.conversation.providerSettings;
+            const selection = parseModelRef(settings.modelRef!);
+            if (
+              input.trigger !== 'automatic' ||
+              input.mode !== 'suggest' ||
+              !threadId ||
+              parent?.agentKind !== 'codex' ||
+              (parent.modelSourceId && parent.modelSourceId !== 'codex') ||
+              selection?.sourceId !== 'codex' ||
+              !manager?.sampleThread ||
+              !latest?.providerTurnId ||
+              !providerSettings ||
+              !Object.hasOwn(providerSettings, 'serviceTier') ||
+              (parseModelRef(providerSettings.model)?.modelId ?? providerSettings.model) !== selection.modelId ||
+              // 原生接口可能忽略档位覆盖，公开目录未暴露覆盖能力；仅继承已确认相同的档位。
+              toCodexWireReasoningEffort(providerSettings.effort) !== toCodexWireReasoningEffort(effort) ||
+              (providerSettings.serviceTier ?? null) !== (settings.serviceTier ?? null)
+            )
+              return null;
+            /** 保守使用已核对的稳定版本；未知版本与未加载线程不触发恢复或模型调用。 */
+            const generationId = manager.generationForThread(threadId);
+            const version = generationId ? manager.capabilitiesForGeneration(generationId)?.providerVersion?.match(/^(\d+)\.(\d+)\./u) : null;
+            if (!version || !(Number(version[1]) > 0 || Number(version[2]) >= 165)) return null;
+            const thread = await manager.readThread({ threadId, includeTurns: false });
+            signal.throwIfAborted();
+            if (!(await isCurrent())) {
+              controller.abort(cancellation);
+              signal.throwIfAborted();
+            }
+            if (thread.status?.type === 'active') {
+              cancellation = 'conversation_changed';
+              controller.abort(cancellation);
+              signal.throwIfAborted();
+            }
+            if (thread.status?.type !== 'idle') return null;
+            advanceStage('generation');
+            result.retryable = false;
+            record({ event: 'generation_configured', effort: effort ?? 'default', inputCharacters: instructions.length, promptHash: createHash('sha256').update(instructions).digest('hex').slice(0, 16) });
+            // 原生协议限制附加提示为 4,000 字节；任务、规则及历史沿用父会话，不重复注入。
+            const sampled = await manager.sampleThread({ threadId, expectedTurnId: latest.providerTurnId, prompt: instructions, effort, signal });
+            if (sampled.text === null) throw Object.assign(new Error('原生预测未返回有效正文。'), { code: 'ZEUS_INPUT_SUGGESTION_OUTPUT_INVALID' });
+            return sampled.text;
+          },
           onDiagnostic: record,
         });
         record({ event: 'model_result', outputKind: !text.trim() ? 'empty' : text.trim() === 'NO_SUGGESTION' ? 'explicit_no_suggestion' : 'text', outputCharacters: text.length });

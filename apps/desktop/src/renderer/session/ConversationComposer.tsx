@@ -235,6 +235,7 @@ export function ConversationComposer(props: ConversationComposerProps) {
   /** 自动预测要求空输入且无待处理交互；手动生成可以与主会话并行。 */
   const suggestion = useInputSuggestion({
     state: props.state,
+    conversationModelRef: effectiveModel,
     draft: editorValue,
     // 待处理问题由后台读取权威状态；这里仅报告即时输入限制，避免落后的会话投影漏掉完成事件。
     automaticEligible: inputWritable && !hasDraft && editorValue.length === 0 && !goalInputActive && !goalOperationBusy && !isComposing && !inputResources.processing,
