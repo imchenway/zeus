@@ -28,8 +28,8 @@ const transientSuggestionErrors = new Set([
 ]);
 
 /** 首次临时失败等待两秒，再次等待五秒；无需改写、无效输出和明确配置错误不重复请求。 */
-export function inputSuggestionRetryDelay(result: Pick<InputSuggestionResult, 'reason' | 'cause'>, retries: number): number | null {
-  if (retries >= 2 || (result.reason !== 'timed_out' && result.reason !== 'failed')) return null;
+export function inputSuggestionRetryDelay(result: Pick<InputSuggestionResult, 'reason' | 'cause' | 'retryable'>, retries: number): number | null {
+  if (result.retryable === false || retries >= 2 || (result.reason !== 'timed_out' && result.reason !== 'failed')) return null;
   // 无结构化原因的生成失败也受同一上限约束；不通过报错正文猜测权限或网络状态。
   for (let cause = result.cause; cause; cause = cause.cause) {
     if (cause.code && !transientSuggestionErrors.has(cause.code)) return null;
@@ -52,15 +52,15 @@ export function inputSuggestionIdentity(options: {
 }) {
   /** 显式元组防止分隔字符造成身份冲突。 */
   const sessionKey = JSON.stringify(options.conversationId ? ['conversation', options.projectId, options.conversationId] : ['draft', options.projectId ?? '', options.scopeKey ?? '']);
-  /** 专用模型、推理深度和速度共同确定配置身份。 */
-  const modelKey = JSON.stringify([options.settings?.modelRef ?? null, options.settings?.effort ?? null, options.settings?.serviceTier ?? null]);
+  /** 跟随或专用模型、推理深度和速度共同确定配置身份。 */
+  const modelKey = JSON.stringify([options.settings?.followConversationModel ? 'conversation' : (options.settings?.modelRef ?? null), options.settings?.effort ?? null, options.settings?.serviceTier ?? null]);
   /** 手动结果不随主会话轮次推进失效。 */
   const resultKey = JSON.stringify([sessionKey, modelKey]);
   return { sessionKey, modelKey, resultKey, automaticResultKey: JSON.stringify([resultKey, options.turnId ?? null]) };
 }
 
 /** 请求和结果属于会话，输入框只订阅当前会话的快照。 */
-interface InputSuggestionSnapshot extends Pick<InputSuggestionResult, 'text' | 'reason' | 'cause'> {
+interface InputSuggestionSnapshot extends Pick<InputSuggestionResult, 'text' | 'reason' | 'cause' | 'modelRef'> {
   /** 每次主动或自动生成的稳定身份，重试不创建另一份候选。 */
   requestId: string;
   /** 手动结果绑定会话与模型，自动结果另绑定完成轮次。 */
@@ -184,8 +184,8 @@ class InputSuggestionSession {
     modelKey: string;
     /** 原文快照用于说明候选依据，继续输入必须取消本次生成。 */
     sourceDraft: string;
-    /** 服务端回执必须匹配实际请求模型。 */
-    modelRef: string;
+    /** 专用模型核对回执身份；跟随模式由服务端解析并核对当前会话。 */
+    modelRef: string | null;
     /** 生成请求继续使用现有 HTTP 通路。 */
     request: InputSuggestionRequest;
     /** 捕获发起时的客户端函数，页面切换不替换正在执行的调用。 */
@@ -214,6 +214,7 @@ class InputSuggestionSession {
       requestId: diagnosticId,
       key: options.key,
       modelKey: options.modelKey,
+      modelRef: options.modelRef,
       sourceDraft: options.sourceDraft,
       mode: options.request.mode,
       trigger: options.request.trigger,
@@ -246,7 +247,7 @@ class InputSuggestionSession {
             record('ui_discarded', 'request_replaced_or_cancelled');
             return;
           }
-          if (response.modelRef !== options.modelRef || (options.request.trigger === 'automatic' && response.completedTurnId !== options.request.completedTurnId)) {
+          if ((options.modelRef !== null && response.modelRef !== options.modelRef) || (response.text && !response.modelRef) || (options.request.trigger === 'automatic' && response.completedTurnId !== options.request.completedTurnId)) {
             record('ui_discarded', 'identity_changed');
             this.publish(null);
             return;
@@ -254,7 +255,7 @@ class InputSuggestionSession {
           /** 有效候选不重复生成，剩余失败按明确原因决定是否等待。 */
           const retryDelay = response.text ? null : inputSuggestionRetryDelay(response, retryAttempt);
           if (retryDelay === null) {
-            this.publish({ ...snapshot, text: response.text, reason: response.reason, cause: response.cause, pending: false, retryAttempt });
+            this.publish({ ...snapshot, modelRef: response.modelRef, text: response.text, reason: response.reason, cause: response.cause, pending: false, retryAttempt });
             record('ui_result_stored', response.reason ?? 'generated', response.text?.length ?? 0);
             return;
           }

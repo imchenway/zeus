@@ -12,13 +12,15 @@ export function useInputSuggestion(options: {
   scopeKey?: string;
   /** 新草稿也可携带项目归属，不提前创建会话。 */
   projectId?: string;
+  /** 当前输入框模型供新草稿跟随；已有会话仍由服务端核对实际模型。 */
+  conversationModelRef?: string;
   /** 当前可见原文用于请求绑定，未主动润色时不发送。 */
   draft: string;
   /** 只读、组合输入和目标输入限制主动操作及采用，编辑事件另行取消请求。 */
   eligible: boolean;
   /** 输入框报告草稿、附件、评论、目标和组合输入限制；服务端交互另行核对。 */
   automaticEligible?: boolean;
-  /** 自动开关和专用模型、深度不继承主会话设置。 */
+  /** 自动开关、深度和速度独立配置，模型可显式跟随当前会话。 */
   settings?: InputSuggestionSettings;
   /** 同一次请求始终使用捕获的操作身份。 */
   generate?: (input: InputSuggestionRequest, signal: AbortSignal, diagnosticId?: string) => Promise<InputSuggestionResult>;
@@ -52,10 +54,19 @@ export function useInputSuggestion(options: {
   /** 回调引用变化不能重启已发出的请求。 */
   const generate = useRef(options.generate);
   generate.current = options.generate;
-  /** 开关仅控制自动触发，主动点击仍使用已配置的专用模型。 */
+  /** 开关仅控制自动触发，主动点击仍使用已配置的建议模型。 */
   const enabled = options.settings?.enabled === true;
-  /** 没有专用模型时不回退到主会话模型。 */
-  const modelRef = options.settings?.modelRef ?? null;
+  /** 跟随模式由服务端解析已有会话模型，专用模式保留明确身份。 */
+  const modelRef = options.settings?.followConversationModel ? null : (options.settings?.modelRef ?? null);
+  /** 已有会话可由服务端解析模型；新草稿必须已有明确选择。 */
+  const hasModel = Boolean(modelRef || (options.settings?.followConversationModel && (options.state?.conversationId || options.conversationModelRef)));
+  /** 仅同一输入框的模型改变才放弃候选，切换会话或目录初次加载保留后台结果。 */
+  const previousModel = useRef({ session, modelRef: options.conversationModelRef });
+  useLayoutEffect(() => {
+    if (options.settings?.followConversationModel && previousModel.current.session === session && previousModel.current.modelRef && options.conversationModelRef && previousModel.current.modelRef !== options.conversationModelRef)
+      session.dismiss();
+    previousModel.current = { session, modelRef: options.conversationModelRef };
+  }, [session, options.conversationModelRef, options.settings?.followConversationModel]);
   /** 主动请求与自动请求使用同一会话归属。 */
   const projectId = options.state?.projectId ?? options.projectId;
   /** 新草稿没有会话身份。 */
@@ -69,7 +80,7 @@ export function useInputSuggestion(options: {
 
   /** 前台只负责主动生成，自动触发统一由工作台完成事件驱动。 */
   const requestManual = useCallback(() => {
-    if (!options.eligible || !modelRef || !generate.current) return;
+    if (!options.eligible || !hasModel || !generate.current) return;
     /** 按钮和 Tab 都按操作时的真实草稿决定生成类型。 */
     const mode = options.draft.trim() ? 'polish' : 'suggest';
     session.start({
@@ -82,11 +93,12 @@ export function useInputSuggestion(options: {
         trigger: 'manual',
         ...(projectId ? { projectId } : {}),
         ...(conversationId ? { conversationId } : {}),
+        ...(!conversationId && options.settings?.followConversationModel && options.conversationModelRef ? { draftModelRef: options.conversationModelRef } : {}),
         ...(mode === 'polish' ? { draft: options.draft } : {}),
       },
       generate: generate.current,
     });
-  }, [session, options.eligible, options.draft, modelRef, modelKey, projectId, conversationId, resultKey]);
+  }, [session, options.eligible, options.draft, options.conversationModelRef, options.settings?.followConversationModel, hasModel, modelRef, modelKey, projectId, conversationId, resultKey]);
 
   /** 浮层按所属请求关闭，输入框主动取消则清理当前请求。 */
   const dismiss = useCallback(
@@ -96,13 +108,19 @@ export function useInputSuggestion(options: {
     [session],
   );
   /** 后台状态自身拥有完成轮次；展示核对当前草稿和模型，不依赖本地轮次水合。 */
-  const visible = Boolean(result && result.sourceDraft === options.draft && result.modelKey === modelKey && (result.trigger === 'manual' ? result.key === resultKey : enabled));
+  const visible = Boolean(
+    result &&
+    result.sourceDraft === options.draft &&
+    result.modelKey === modelKey &&
+    (!options.settings?.followConversationModel || !result.text || result.modelRef === options.conversationModelRef) &&
+    (result.trigger === 'manual' ? result.key === resultKey : enabled),
+  );
   /** 输入暂时不可用时仍显示进度和失败原因，只有采用内容继续遵守输入限制。 */
   const usable = visible && options.eligible && (result?.trigger === 'manual' || options.automaticEligible === true);
   /** 有原文的手动结果用预览，空输入继续用灰字。 */
   const preview = result?.mode === 'polish' || options.draft.length > 0 || Boolean(result?.sourceDraft.length);
   /** 主动操作仅使用已配置的模型与当前可编辑状态。 */
-  const available = Boolean(modelRef && options.eligible && generate.current);
+  const available = Boolean(hasModel && options.eligible && generate.current);
 
   /** 灰字直接可见，预览必须实际展开；请求身份和草稿必须仍与生成时一致。 */
   function canAccept(): boolean {

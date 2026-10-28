@@ -39,7 +39,7 @@ export function useBackgroundInputSuggestions(options: {
       /** 所有读写都使用服务端事件中的项目和会话身份。 */
       const { projectId, conversationId } = event.payload;
       if (typeof projectId !== 'string' || typeof conversationId !== 'string') return;
-      /** 当前设置冻结到本次请求，不继承主会话模型。 */
+      /** 冻结本次建议配置，跟随模型由服务端按该会话解析。 */
       const selectedSettings = settings.current;
       /** Provider 身份与已打开会话的轮次映射一致。 */
       const turnId = typeof event.payload.providerTurnId === 'string' ? event.payload.providerTurnId : event.payload.turnId;
@@ -65,7 +65,15 @@ export function useBackgroundInputSuggestions(options: {
         return;
       }
       // Provider 明确发布的用户可见完成事件才触发；历史补齐、内部重连和压缩不补发。
-      if (event.payload.inputSuggestionEligible !== true || event.payload.internalOperation || event.payload.retrying || typeof turnId !== 'string' || !selectedSettings?.enabled || !selectedSettings.modelRef) return;
+      if (
+        event.payload.inputSuggestionEligible !== true ||
+        event.payload.internalOperation ||
+        event.payload.retrying ||
+        typeof turnId !== 'string' ||
+        !selectedSettings?.enabled ||
+        (!selectedSettings.modelRef && !selectedSettings.followConversationModel)
+      )
+        return;
       if (!session.consumeAutomaticTurn(turnId)) return;
       /** 断线后直接收到下一轮完成时，也淘汰上一轮的自动候选。 */
       const previous = session.getSnapshot();
@@ -75,7 +83,7 @@ export function useBackgroundInputSuggestions(options: {
         key: identity.automaticResultKey,
         modelKey: identity.modelKey,
         sourceDraft: '',
-        modelRef: selectedSettings.modelRef,
+        modelRef: selectedSettings.followConversationModel ? null : selectedSettings.modelRef,
         request: { mode: 'suggest', trigger: 'automatic', projectId, conversationId, completedTurnId: turnId },
         generate: async (request, signal, diagnosticId) => {
           /** 隐藏会话也核对问题和计划确认，不能依赖可见输入框替它阻止生成。 */

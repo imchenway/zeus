@@ -43,10 +43,12 @@ export function GeneralSettingsPane(props: {
   const [modelsRevision, setModelsRevision] = useState(0);
   /** 加载期间保持已保存的选择，不自动挑选第一个模型。 */
   const [modelsLoading, setModelsLoading] = useState(false);
-  /** 档位只来自已选模型，切换模型时重新采用自动最低。 */
-  const selectedSuggestionModel = suggestionModels.find((model) => model.id === suggestions.modelRef);
+  /** 专用模型读取自身能力，跟随模式在生成时再解析具体模型。 */
+  const selectedSuggestionModel = suggestions.followConversationModel ? undefined : suggestionModels.find((model) => model.id === suggestions.modelRef);
   /** 已失效的显式档位保留可见提示，不静默改用其他档位。 */
-  const suggestionEfforts = selectedSuggestionModel?.supportedReasoningEfforts ?? [];
+  const suggestionEfforts = suggestions.followConversationModel ? [...new Set(suggestionModels.flatMap((model) => model.supportedReasoningEfforts ?? []))] : (selectedSuggestionModel?.supportedReasoningEfforts ?? []);
+  /** 全局跟随配置列出已配置模型的能力，具体会话仍在生成前核对，不静默降档。 */
+  const suggestionServiceTiers = suggestions.followConversationModel ? [...new Map(suggestionModels.flatMap((model) => model.serviceTiers ?? []).map((tier) => [tier.id, tier])).values()] : (selectedSuggestionModel?.serviceTiers ?? []);
 
   useEffect(() => {
     /** 返回窗口或登录能力变化后重新读取目录，省去常驻刷新按钮。 */
@@ -185,12 +187,8 @@ export function GeneralSettingsPane(props: {
         <h3>{zh ? '输入建议' : 'Input suggestions'}</h3>
         <NativeSettingsPane label={zh ? '输入建议' : 'Input suggestions'}>
           <NativeControlRow
-            title={zh ? '自动显示输入建议' : 'Automatic input suggestions'}
-            description={
-              zh
-                ? '回复结束且输入为空时显示灰字，按 Tab 采用。有输入时仅手动触发，可整理、润色和适度扩写；修改输入会取消当前建议。关闭自动建议后仍可点击星光按钮，每次生成使用专用模型。'
-                : 'Show a gray suggestion after a reply when the editor is empty; press Tab to use it. With a draft, generate manually to refine or expand it. Editing cancels the current suggestion. The sparkle button works when automatic suggestions are off. Each generation uses the suggestion model.'
-            }
+            title={zh ? '自动建议' : 'Automatic suggestions'}
+            description={zh ? '回复结束后显示灰字，按 Tab 采纳。关闭后仍可手动生成或润色。' : 'Show a suggestion after a reply; press Tab to accept. Manual suggestions and polishing remain available when off.'}
           >
             <label className="settings-switch-state">
               <input
@@ -198,38 +196,46 @@ export function GeneralSettingsPane(props: {
                 type="checkbox"
                 aria-label={zh ? '启用自动输入建议' : 'Enable automatic input suggestions'}
                 checked={suggestions.enabled}
-                disabled={!props.client || !suggestions.modelRef}
+                disabled={!props.client || (!suggestions.modelRef && !suggestions.followConversationModel)}
                 onChange={(event) => void save({ inputSuggestions: { ...suggestions, enabled: event.currentTarget.checked } })}
               />
               <span className="native-switch-track" aria-hidden="true" />
             </label>
           </NativeControlRow>
           <NativeControlRow
-            title={zh ? '专用模型' : 'Suggestion model'}
-            description={zh ? '独立于会话模型；未选择或模型不可用时不生成建议。' : 'Independent of the conversation model. No suggestion is generated without an available model.'}
+            title={zh ? '建议模型' : 'Suggestion model'}
+            description={suggestions.followConversationModel ? (zh ? '跟随会话模型；新草稿使用输入框选择的模型。' : 'Use the conversation model, or the selected model for a new draft.') : undefined}
           >
             <ZeusSelect
               size="regular"
-              ariaLabel={zh ? '输入建议专用模型' : 'Input suggestion model'}
-              value={suggestions.modelRef ?? ''}
+              ariaLabel={zh ? '输入建议模型' : 'Input suggestion model'}
+              value={suggestions.followConversationModel ? 'conversation' : (suggestions.modelRef ?? '')}
               disabled={!props.client || (modelsLoading && !suggestionModels.length)}
-              onChange={(value) => void save({ inputSuggestions: { enabled: suggestions.enabled && Boolean(value), modelRef: value || null, effort: null, serviceTier: null } })}
+              onChange={(value) =>
+                void save({
+                  inputSuggestions: {
+                    enabled: suggestions.enabled && Boolean(value),
+                    modelRef: value === 'conversation' ? suggestions.modelRef : value || null,
+                    followConversationModel: value === 'conversation',
+                    effort: null,
+                    serviceTier: null,
+                  },
+                })
+              }
               options={[
                 { value: '', label: zh ? '请选择模型' : 'Choose a model' },
+                { value: 'conversation', label: zh ? '跟随当前会话' : 'Use conversation model' },
                 ...suggestionModels.map((model) => ({ value: model.id, label: model.label })),
                 ...(suggestions.modelRef && !suggestionModels.some((model) => model.id === suggestions.modelRef) ? [{ value: suggestions.modelRef, label: `${suggestions.modelRef} (${zh ? '不可用' : 'unavailable'})`, disabled: true }] : []),
               ]}
             />
           </NativeControlRow>
-          <NativeControlRow
-            title={zh ? '推理深度' : 'Reasoning effort'}
-            description={zh ? '仅用于输入建议。较高档位可能更慢、用量更多；每次最多等待 20 秒。' : 'Applies to input suggestions only. Higher effort may take longer and use more tokens. Each request has a 20-second limit.'}
-          >
+          <NativeControlRow title={zh ? '推理深度' : 'Reasoning effort'} description={zh ? '较高档位可能更慢、用量更多。' : 'Higher effort may take longer and use more tokens.'}>
             <ZeusSelect
               size="regular"
               ariaLabel={zh ? '输入建议推理深度' : 'Input suggestion reasoning effort'}
               value={suggestions.effort ?? ''}
-              disabled={!props.client || !selectedSuggestionModel || (!suggestionEfforts.length && !suggestions.effort)}
+              disabled={!props.client || (!selectedSuggestionModel && !suggestions.followConversationModel) || (!suggestionEfforts.length && !suggestions.effort)}
               searchable={false}
               onChange={(effort) => void save({ inputSuggestions: { ...suggestions, effort: effort || null } })}
               options={[
@@ -239,22 +245,15 @@ export function GeneralSettingsPane(props: {
               ]}
             />
           </NativeControlRow>
-          <NativeControlRow
-            title={zh ? '生成速度' : 'Generation speed'}
-            description={
-              zh
-                ? '仅用于输入建议。Fast 可降低延迟，但可能增加用量或费用；是否可用以所选模型能力为准。'
-                : 'Applies to input suggestions only. Fast can reduce latency but may increase usage or cost. Availability depends on the selected model.'
-            }
-          >
+          <NativeControlRow title={zh ? '生成速度' : 'Generation speed'} description={zh ? 'Fast 可能增加用量或费用；可用档位取决于建议模型。' : 'Fast may increase usage or cost. Options are checked against the model used for generation.'}>
             <ZeusSelect
               size="regular"
               ariaLabel={zh ? '输入建议生成速度' : 'Input suggestion generation speed'}
               value={serviceTierSelectionValue(selectionFromEffectiveServiceTier(suggestions.serviceTier))}
-              disabled={!props.client || !selectedSuggestionModel}
+              disabled={!props.client || (!selectedSuggestionModel && !suggestions.followConversationModel)}
               searchable={false}
               onChange={(value) => void save({ inputSuggestions: { ...suggestions, serviceTier: value === 'priority' ? 'priority' : null } })}
-              options={serviceTierOptions({ serviceTiers: selectedSuggestionModel?.serviceTiers ?? [] }, zh ? 'zh-CN' : 'en-US')}
+              options={serviceTierOptions({ serviceTiers: suggestionServiceTiers }, zh ? 'zh-CN' : 'en-US')}
             />
           </NativeControlRow>
           {suggestionModelWarning ? (

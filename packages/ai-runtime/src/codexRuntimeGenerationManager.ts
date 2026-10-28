@@ -659,6 +659,18 @@ export function createCodexRuntimeGenerationManager(
     async readThread(input) {
       return routeThread(input.threadId).manager.readThread(input);
     },
+    async sampleThread(input) {
+      /** 只能租用已加载实例，不能通过会话恢复路径新建连接或恢复父线程。 */
+      const entry = entriesByThread.get(input.threadId);
+      if (!entry || entry.closing || !entry.manager.sampleThread) throw new Error('当前 Codex 会话尚未加载，无法使用原生预测。');
+      /** 采样期间保留所属实例，结束后继续现有世代回收。 */
+      const lease = retainEntry(entry);
+      try {
+        return await entry.manager.sampleThread(input);
+      } finally {
+        lease.release();
+      }
+    },
     /** 历史查询只能补充本实例已加载的线程，不能迁移现有写入归属。 */
     async listThreads(input) {
       const routeId = input.ancestorThreadId ?? input.parentThreadId;

@@ -32,6 +32,8 @@ import {
   isNonCodexAiCliAdapterId,
   listAiCliAdapters,
   type SelectableConnectionModel,
+  modelRef,
+  parseModelRef,
 } from '@zeus/ai-runtime';
 import {
   buildGitPatchExport,
@@ -1476,6 +1478,22 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
     repository: conversationSnapshotV2,
     projectExists: (projectId) => Boolean(projects.getById(projectId)),
     getConversation: (conversationId) => conversations.getRecordById(conversationId),
+    conversationModelRef: (conversationId) => {
+      /** 下一轮明确选择优先；无覆盖时沿用会话的真实模型和连接身份。 */
+      const conversation = conversations.getRecordById(conversationId);
+      if (!conversation) return null;
+      /** 受控快照负责解析持久设置，避免另外维护 JSON 解析规则。 */
+      const snapshot = conversationSnapshotV2.readSnapshot(conversationId, { closedTurnLimit: 1, includeSessionMetrics: false });
+      /** 连接身份必须来自该会话，不能用同名模型替代另一个供应商。 */
+      const sourceId = conversation.modelSourceId ?? (conversation.agentKind === 'codex' ? 'codex' : null);
+      /** 分列保存的模型 ID 可能含冒号，先与连接组合再作为完整身份使用。 */
+      const selected = snapshot.conversation.nextTurnSettings?.model ?? (conversation.modelId && sourceId ? modelRef(sourceId, conversation.modelId) : conversation.providerModel);
+      if (!selected) return null;
+      if (parseModelRef(selected)) return selected;
+      return sourceId ? modelRef(sourceId, selected) : null;
+    },
+    codexManager: codexAppServerManager,
+    nativeConversation: (conversationId) => conversations.getRecordById(conversationId),
     /** 只读取本会话队列，提交尚未建轮次时也不能使用上一轮回复。 */
     hasPendingSubmission: (conversationId) => conversationSubmissions.listQueueProjectionByConversation(conversationId).some((submission: ZeusConversationSubmissionRecord) => ['queued', 'dispatching', 'active'].includes(submission.status)),
     readSettings: () => (readOnlyValidation ? undefined : platformMutableState.appShellSettings.inputSuggestions),
@@ -4585,6 +4603,7 @@ export async function registerLocalServerPlatformRoutes(dependencies: LocalServe
       if (
         previousSettings.inputSuggestions?.enabled !== mutation.result.inputSuggestions?.enabled ||
         previousSettings.inputSuggestions?.modelRef !== mutation.result.inputSuggestions?.modelRef ||
+        previousSettings.inputSuggestions?.followConversationModel !== mutation.result.inputSuggestions?.followConversationModel ||
         previousSettings.inputSuggestions?.effort !== mutation.result.inputSuggestions?.effort ||
         previousSettings.inputSuggestions?.serviceTier !== mutation.result.inputSuggestions?.serviceTier
       )

@@ -4008,6 +4008,7 @@ export function NewConversationComposer(props: {
   /** 新草稿只在用户点击时生成，按项目和任务保存跨页面的请求结果。 */
   const suggestion = useInputSuggestion({
     scopeKey: `new:${props.owner?.kind === 'task' ? props.owner.taskId : (props.owner?.projectId ?? '')}`,
+    conversationModelRef: selectedModel?.id,
     projectId: props.owner?.projectId,
     draft: content,
     eligible: Boolean(props.owner) && !submitting && !goalInputActive && !isComposing && !inputResources.processing,

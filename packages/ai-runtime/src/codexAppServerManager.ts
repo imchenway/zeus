@@ -514,6 +514,28 @@ export interface CodexRemoteControlClientsPage {
   nextCursor: string | null;
 }
 
+/** 原生预测仅从已加载会话的已结束轮次采样，不改变父会话设置。 */
+export interface CodexThreadSampleInput {
+  /** 当前运行实例持有的父会话身份。 */
+  threadId: string;
+  /** 必须与父会话最后结束轮次一致。 */
+  expectedTurnId: string;
+  /** 追加在父上下文之后的预测指令。 */
+  prompt: string;
+  /** 仅在 Provider 支持时使用的预测推理档位。 */
+  effort?: string;
+  /** 编辑、关闭或总时限结束时取消本次采样。 */
+  signal: AbortSignal;
+}
+
+/** 一次原生采样的文本回执，工具调用不会返回可采纳正文。 */
+export interface CodexThreadSampleResult {
+  /** Provider 校验后的来源轮次。 */
+  sourceTurnId: string;
+  /** 空值表示没有有效纯文本结果。 */
+  text: string | null;
+}
+
 export interface CodexAppServerManager {
   ensureReady(input: CodexRuntimeActivationInput): Promise<CodexCapabilitiesSnapshot>;
   /** 在运行身份不变时也激活新世代；多世代管理器保留旧活动轮次并让其自然排空。 */
@@ -536,6 +558,8 @@ export interface CodexAppServerManager {
   archiveThread(input: { threadId: string } & CodexPerformanceTraceContext): Promise<void>;
   unarchiveThread(input: { threadId: string } & CodexPerformanceTraceContext): Promise<CodexThreadSnapshot>;
   readThread(input: { threadId: string; includeTurns?: boolean; priority?: 'control' }): Promise<CodexThreadSnapshot>;
+  /** 可选能力供旧连接保留独立文本生成路径。 */
+  sampleThread?(input: CodexThreadSampleInput): Promise<CodexThreadSampleResult>;
   listThreads(input: CodexThreadListInput): Promise<CodexThreadsPage>;
   readThreadGoal(input: { threadId: string }): Promise<CodexThreadGoal | null>;
   setThreadGoal(input: { threadId: string; objective?: string; status?: CodexThreadGoalStatus; tokenBudget?: number | null } & CodexPerformanceTraceContext): Promise<CodexThreadGoal>;
@@ -1110,12 +1134,13 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const key = pendingKey(generationId, id);
       /** 清理单次请求绑定的取消监听，避免长驻 manager 保留已完成闭包。 */
       const detachAbort = (): void => input.signal?.removeEventListener('abort', abortRequest);
-      /** 只取消 Zeus 的本地等待；Provider 进程会在宿主关闭阶段统一终止。 */
+      /** 原生采样同步请求 Provider 取消，其余 RPC 只结束本地等待。 */
       const abortRequest = (): void => {
         const pending = pendingRequests.get(key);
         if (!pending) return;
         if (pending.timeout) clearTimeout(pending.timeout);
         pendingRequests.delete(key);
+        if (method === 'thread/sample') void rpc(generationId, 'thread/sample/cancel', { requestId: id }).catch(() => {});
         pending.reject(managerError('ZEUS_CODEX_RPC_ABORTED', `Codex app-server request was cancelled: ${method}`));
       };
       /** null 只供无法安全按时限判错的 RPC 使用；其余请求保留原有超时。 */
@@ -1126,6 +1151,7 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
               () => {
                 const pending = pendingRequests.get(key);
                 pendingRequests.delete(key);
+                if (pending && method === 'thread/sample') void rpc(generationId, 'thread/sample/cancel', { requestId: id }).catch(() => {});
                 if (pending) pending.reject(managerError('ZEUS_CODEX_RPC_TIMEOUT', `Codex app-server request timed out: ${method}`));
               },
               Math.max(1, input.timeoutMs ?? requestTimeoutMs),
@@ -1755,6 +1781,24 @@ export function createCodexAppServerManager(options: CreateCodexAppServerManager
       const capabilities = await awaitCapabilities();
       const response = asRecord(await retryableReadRpc(capabilities.generationId, 'thread/read', { threadId: input.threadId, includeTurns: input.includeTurns ?? false }));
       return parseThread(response.thread);
+    },
+    async sampleThread(input) {
+      if (!input.threadId.trim() || !input.expectedTurnId.trim() || !input.prompt.trim() || Buffer.byteLength(input.prompt, 'utf8') > 4_000)
+        throw managerError('ZEUS_CODEX_INVALID_REQUEST', 'Codex 预测需要来源轮次和不超过 4,000 字节的提示词。');
+      /** 只复用当前已激活连接，不初始化另一代进程。 */
+      const capabilities = await awaitCapabilities();
+      /** 沿用普通轮次的推理档位映射，避免把界面 off 值直接传给协议。 */
+      const effort = toCodexWireReasoningEffort(input.effort);
+      const response = asRecord(
+        await rpc(
+          capabilities.generationId,
+          'thread/sample',
+          { threadId: input.threadId, expectedTurnId: input.expectedTurnId, prompt: input.prompt, ...(effort ? { effort } : {}), turnTrigger: 'composer_predictions', disableMcp: true },
+          { signal: input.signal, timeoutMs: 20_000 },
+        ),
+      );
+      if (response.sourceTurnId !== input.expectedTurnId || (response.text !== null && typeof response.text !== 'string')) throw managerError('ZEUS_CODEX_INVALID_RESPONSE', 'Codex 预测返回了无效的轮次或正文。');
+      return { sourceTurnId: response.sourceTurnId, text: response.text as string | null };
     },
     async listThreads(input) {
       const capabilities = await awaitCapabilities();
