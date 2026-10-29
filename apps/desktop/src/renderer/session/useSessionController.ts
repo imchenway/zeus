@@ -3698,7 +3698,7 @@ export function createSessionController(options: CreateSessionControllerOptions)
       await applyAuthoritativeSnapshot(await loadConversationForHydration());
       /** 只续跑最新的明确失败，不自动重放未知送达或已完成的请求。 */
       const turn = state.snapshot?.turns.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)).at(-1);
-      if (turn?.providerTurnId !== providerTurnId || turn.status !== 'failed' || turn.error?.category !== 'network') throw new Error('该轮次已改变，请检查当前会话后重试。');
+      if (turn?.providerTurnId !== providerTurnId || turn.status !== 'failed') throw new Error('该轮次已改变，请检查当前会话后重试。');
       if (activeOperation || sendOperations.size > 0 || deferredSends.length || state.queue?.submissions.some((submission) => ['queued', 'paused', 'dispatching', 'active'].includes(submission.status)))
         throw new Error('请先处理尚未确认的消息。');
       /** 同一失败轮次的重复点击和重启复用发送身份。 */

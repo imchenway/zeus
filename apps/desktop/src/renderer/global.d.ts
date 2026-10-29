@@ -34,6 +34,7 @@ import type {
 } from '@zeus/shared';
 import type { GitFileBlame } from '@zeus/git-core';
 import type { AutomaticUpdateIndicatorState } from './appShellBridge.js';
+import type { ReleaseUpdateStatusSnapshot } from './features/release/releaseContracts.js';
 import type { DashboardClientOptions, LocalBusinessDataSnapshot, LocalSettingsExportSnapshot } from './apiClient.js';
 
 type ConversationInputResourceBridge = {
@@ -327,6 +328,8 @@ declare global {
       activateRequestingWindow: () => Promise<{ activated: boolean; error?: string }>;
       /** 更新状态与侧栏共用同一声明，防止手动更新阶段在桥接层遗漏。 */
       getAutomaticUpdateIndicator: () => Promise<AutomaticUpdateIndicatorState | null>;
+      /** 桌面检查复用原生更新服务的网络与清单校验。 */
+      checkReleaseUpdate: () => Promise<ReleaseUpdateStatusSnapshot>;
       openAutomaticUpdateIndicator: () => Promise<{ opened: boolean }>;
       recordManualUpdateCheck: () => Promise<{ recorded: boolean }>;
       onAutomaticUpdateIndicatorChanged: (listener: (state: AutomaticUpdateIndicatorState) => void) => () => void;

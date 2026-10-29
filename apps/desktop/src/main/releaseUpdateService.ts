@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import { ensurePrivatePathSync, publishFileSync } from '@zeus/storage/platform-security';
 import type { UserFacingErrorCause } from '@zeus/shared';
 import { createLegacyFlatZeusDataLayout, createZeusDataLayout } from '@zeus/local-server/zeus-data-layout';
+import { readReleaseUpdateStatus } from '@zeus/local-server/release-core';
 import { installWindowsRelease, openWindowsRecoveryInstaller, verifyWindowsReleaseSignature } from './windowsReleaseInstaller.js';
 import { executionHostProtocolVersion } from './executionHostProtocol.js';
 import { releaseInstallerProtocolVersion, releaseInstallerResultPath, writeReleaseInstallerBootstrap } from './releaseInstallerProtocol.js';
@@ -72,6 +73,8 @@ export interface CreateReleaseUpdateServiceOptions {
   isPackaged: boolean;
   testMode: boolean;
   allowUntrustedTestUpdate: boolean;
+  /** 隔离验收的清单地址仍经过共享来源校验，正式应用使用官方地址。 */
+  releaseUpdateManifestUrl?: string;
   /** 只打开本服务校验过的安装包，由用户通过系统界面手动安装。 */
   openDownloadedArtifact: (path: string) => Promise<void>;
   /** Windows 退出失败时必须等待 cancel 的持久撤销回执，再接受后续退出。 */
@@ -146,7 +149,7 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
   }
 
   return {
-    check: () => loadUpdateStatus(options),
+    check: () => readDesktopReleaseUpdateStatus(options),
     openRecoveryInstaller: async () => {
       if (operationChain || recoveryRunning) throw new Error('下载或安装操作正在进行，不能同时开始恢复。');
       recoveryRunning = true;
@@ -159,7 +162,7 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
     manualInstallReason: (update) => manualInstallReason(update, options),
     download: (onProgress) =>
       exclusive(async () => {
-        const update = await loadUpdateStatus(options);
+        const update = await readDesktopReleaseUpdateStatus(options);
         assertDownloadAllowed(update, options);
         await discardOutdatedHandoff(update);
         const artifact = update.artifact!;
@@ -187,7 +190,7 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
     openDownloaded: () =>
       exclusive(async () => {
         /** 发布变化后只提示重新准备，不能打开之前下载的旧包。 */
-        const update = await loadUpdateStatus(options);
+        const update = await readDesktopReleaseUpdateStatus(options);
         assertDownloadAllowed(update, options);
         if (!prepared || prepared.update.latestVersion !== update.latestVersion || prepared.update.artifact?.sha256 !== update.artifact!.sha256) {
           return { accepted: false, update, reason: '已下载更新与当前发布清单不一致，请重新下载。' };
@@ -199,7 +202,7 @@ export function createReleaseUpdateService(options: CreateReleaseUpdateServiceOp
       }),
     install: () =>
       exclusive(async () => {
-        const update = await loadUpdateStatus(options);
+        const update = await readDesktopReleaseUpdateStatus(options);
         assertInstallAllowed(update, options);
         await discardOutdatedHandoff(update);
         if (preparedInstallerHandoff) {
@@ -318,17 +321,32 @@ async function manualInstallReason(update: DesktopReleaseUpdateStatus, options: 
   return null;
 }
 
-async function loadUpdateStatus(options: CreateReleaseUpdateServiceOptions): Promise<DesktopReleaseUpdateStatus> {
+/** 清单与安装包共用 Electron 网络，系统代理和应用代理在两个阶段保持一致。 */
+export async function readDesktopReleaseUpdateStatus(options: Pick<CreateReleaseUpdateServiceOptions, 'currentAppVersion' | 'localServerConfig' | 'testMode' | 'allowUntrustedTestUpdate' | 'releaseUpdateManifestUrl'>): Promise<DesktopReleaseUpdateStatus> {
+  /** 本机宿主状态沿用认证连接，不经过外部更新服务。 */
   const config = options.localServerConfig();
-  const response = await fetch(`${config.baseUrl}/api/release/check-update`, {
-    method: 'POST',
+  /** 保留实际宿主协议与工作状态，不能用当前 Main 版本推断旧宿主身份。 */
+  const response = await fetch(`${config.baseUrl}/api/execution-host/status`, {
     headers: { authorization: `Bearer ${config.apiToken}` },
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(10_000),
   });
-  if (!response.ok) throw new Error(`Zeus update status failed with HTTP ${response.status}.`);
-  const value = (await response.json()) as unknown;
-  if (!isReleaseUpdateStatus(value)) throw new Error('Zeus update status response is invalid.');
-  return value;
+  if (!response.ok) throw new Error(`Zeus execution host status failed with HTTP ${response.status}.`);
+  /** 来自本机 API 的状态仍需检查协议字段。 */
+  const executionHost: unknown = await response.json();
+  if (!isRecord(executionHost) || typeof executionHost.protocolVersion !== 'number' || !Number.isInteger(executionHost.protocolVersion)) throw new Error('Zeus execution host status response is invalid.');
+  /** 安装辅助进程导入本模块时不加载 Electron。 */
+  const { net } = await import('electron');
+  /** 共享解析器继续验证官方来源、平台、摘要及安装门禁。 */
+  const update = await readReleaseUpdateStatus({
+    currentVersion: options.currentAppVersion,
+    manifestUrl: options.releaseUpdateManifestUrl,
+    platformArch: process.arch === 'x64' ? 'x64' : 'arm64',
+    platform: process.platform === 'win32' ? 'win32' : 'darwin',
+    executionHostProtocolVersion: executionHost.protocolVersion,
+    allowUntrustedTest: options.testMode && options.allowUntrustedTestUpdate,
+    request: (url, init) => net.fetch(url, init),
+  });
+  return { ...update, executionHost };
 }
 
 /** 下载只要求可信产物和匹配架构，签名、公证及协议约束留在自动安装入口。 */
@@ -589,32 +607,6 @@ function trustedReleaseDownloadUrl(value: string, testMode: boolean): URL {
 
 function isTrustedGithubResponseUrl(url: URL): boolean {
   return url.protocol === 'https:' && ['github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com'].includes(url.hostname);
-}
-
-function isReleaseUpdateStatus(value: unknown): value is DesktopReleaseUpdateStatus {
-  return (
-    isRecord(value) &&
-    (value.status === 'up_to_date' || value.status === 'available' || value.status === 'unavailable') &&
-    typeof value.currentVersion === 'string' &&
-    typeof value.latestVersion === 'string' &&
-    (value.channel === 'stable' || value.channel === 'preview') &&
-    typeof value.releasePageUrl === 'string' &&
-    typeof value.automaticInstallEnabled === 'boolean' &&
-    Number.isInteger(value.executionHostProtocolVersion) &&
-    (value.recommendedAction === 'none' || value.recommendedAction === 'open_download_page' || value.recommendedAction === 'download_and_install') &&
-    typeof value.label === 'string' &&
-    typeof value.reason === 'string' &&
-    typeof value.checkedAt === 'string' &&
-    (value.artifact === null ||
-      (isRecord(value.artifact) &&
-        (value.artifact.arch === 'arm64' || value.artifact.arch === 'x64') &&
-        (value.artifact.kind === 'dmg' || value.artifact.kind === 'exe') &&
-        typeof value.artifact.fileName === 'string' &&
-        typeof value.artifact.sha256 === 'string' &&
-        /^[a-f0-9]{64}$/u.test(value.artifact.sha256) &&
-        (value.artifact.sizeBytes === null || (typeof value.artifact.sizeBytes === 'number' && Number.isSafeInteger(value.artifact.sizeBytes))) &&
-        typeof value.artifact.downloadUrl === 'string'))
-  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

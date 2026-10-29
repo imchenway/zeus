@@ -37,8 +37,10 @@ export function createDashboardApiClient(transport: LocalApiTransport): Dashboar
     },
     loadSecurityAuditLogs: () => transport.request<SecurityAuditLogEntry[]>('/api/security/audit-logs'),
     loadReleaseStatus: () => transport.request<ReleaseStatusSnapshot>('/api/release/status'),
-    loadReleaseUpdateStatus: () => transport.request<ReleaseUpdateStatusSnapshot>('/api/release/update-status'),
+    /** 桌面统一使用系统网络；独立 Web 界面由 Core 读取清单。 */
+    loadReleaseUpdateStatus: () => globalThis.window?.zeus?.checkReleaseUpdate?.() ?? transport.request<ReleaseUpdateStatusSnapshot>('/api/release/update-status'),
     checkReleaseUpdate: () =>
+      globalThis.window?.zeus?.checkReleaseUpdate?.() ??
       transport.request<ReleaseUpdateStatusSnapshot>('/api/release/check-update', {
         method: 'POST',
       }),

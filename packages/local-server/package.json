@@ -161,6 +161,10 @@
       "types": "./dist/conversationCapabilityQueryRoutes.d.ts",
       "import": "./dist/conversationCapabilityQueryRoutes.js"
     },
+    "./release-core": {
+      "types": "./dist/releaseCore.d.ts",
+      "import": "./dist/releaseCore.js"
+    },
     "./zeus-data-layout": {
       "types": "./dist/zeusDataLayout.d.ts",
       "import": "./dist/zeusDataLayout.js"

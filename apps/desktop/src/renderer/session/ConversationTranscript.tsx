@@ -1132,8 +1132,7 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
       const effect = scrollController.onExplicitLatestRequest();
       if (effect.type === 'scroll_to_bottom') positionLatest(container);
     }
-    // 已挂载的正文在绘制前完成首次贴底后立即显示，后续高度校正不能继续隐藏整块内容。
-    setHistoryPositioned(true);
+    // 首次显示沿用定位循环的完成条件，避免暴露行高测量期间的中间位置。
     maintainLatestPosition();
     setReturnToLatestVisible(Boolean(restore));
     setHistoryPagingGate({ conversationId, positioned: true, userIntent: false });
@@ -1341,10 +1340,9 @@ function ConversationTranscriptContent(props: ConversationTranscriptProps) {
         />
       );
     if (row.kind === 'turn_failure') {
-      /** 只对最新停止的网络失败提供续跑，历史轮次不重复提交。 */
+      /** 最新明确失败的轮次允许手动续跑；错误分类只解释原因，不隐藏恢复入口。 */
       const retryable =
         !props.historyOnly &&
-        row.failure.category === 'network' &&
         // 送达尚未核对的提交只开放原恢复入口，不能从旧失败卡发起另一条续接。
         !props.state.queue?.submissions.some((submission) => ['queued', 'paused', 'dispatching', 'active'].includes(submission.status)) &&
         !props.state.activeTurnId &&
@@ -1972,7 +1970,7 @@ function TurnFailureCard(props: { failure: NativeTurnFailureSnapshot; language: 
         ) : null}
         {props.onRetry ? (
           <button type="button" disabled={pending} onClick={() => void retry()}>
-            {pending ? (zh ? '正在连接...' : 'Connecting...') : zh ? '重试' : 'Retry'}
+            {pending ? (zh ? '正在重试…' : 'Retrying…') : zh ? '重试' : 'Retry'}
           </button>
         ) : null}
       </span>

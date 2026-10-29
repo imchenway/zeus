@@ -27,7 +27,7 @@ import {
   readCodexTurnItems,
 } from '@zeus/ai-runtime';
 import { type GitDiffSummary, type GitStatusSummary } from '@zeus/git-core';
-import { type AutoUpdatePolicy, type ReleaseReadiness } from './releaseCore.js';
+import { resolveReleaseUpdateManifestUrl, type AutoUpdatePolicy, type ReleaseReadiness } from './releaseCore.js';
 import { createPlatformSecretStore, type SecretPresenceLabel, type SecretStore } from './securityCore.js';
 import { normalizeNetworkProxySettings } from '@zeus/shared';
 import { applyNetworkProxyAtStartup } from './networkProxyRuntime.js';
@@ -663,17 +663,6 @@ export type ProjectConversationAcceptanceReservation = TaskConversationAcceptanc
 export type TelegramDispatchPreviewBody = TelegramUpdate;
 const telegramNotificationSettingsKey = 'telegram.notificationSettings';
 const telegramSecuritySettingsKey = 'telegram.securitySettings';
-
-/** 更新清单只信任 Zeus 官方下载目录；隔离验收可显式使用本机服务。 */
-function resolveReleaseUpdateManifestUrl(configured: string | undefined, allowUntrustedTest: boolean): string {
-  /** Zeus 官方稳定更新清单。 */
-  const fallback = `https://github.com/imchenway/zeus/releases/latest/download/${process.platform === 'win32' ? 'zeus-release-manifest-win32.json' : 'zeus-release-manifest.json'}`;
-  const candidate = configured?.trim() || fallback;
-  const url = new URL(candidate);
-  if (url.protocol === 'https:' && url.hostname === 'github.com' && !url.port && !url.username && !url.password && url.pathname.startsWith('/imchenway/zeus/releases/')) return url.toString();
-  if (allowUntrustedTest && url.protocol === 'http:' && url.hostname === '127.0.0.1' && Boolean(url.port)) return url.toString();
-  throw new Error('Zeus release update manifest URL is not trusted.');
-}
 
 const telegramRuntimeSummaryLogInterval = 5;
 const NON_CODEX_LEGACY_HISTORY_LIMIT = 12;

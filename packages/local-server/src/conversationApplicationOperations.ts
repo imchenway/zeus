@@ -1,6 +1,5 @@
 import { resolveGitDeliveryConflictWorkspace } from './gitDeliveryExecution.js';
 import { piSdkBinaryVersion } from '@zeus/ai-runtime';
-import { projectConversationTurnFailure } from '@zeus/storage';
 import { resolveContextCapacityPolicy } from './contextCapacitySupport.js';
 import { assertContextCapacity, assertContextCapacitySupported, contextCapacityUnavailableReason } from '@zeus/shared';
 import { resolveConversationGitWorkspace } from './conversationGitWorkspace.js';
@@ -77,7 +76,7 @@ import { type ConversationCapabilitiesSnapshot, ConversationCapabilityQueryAppli
 import { ConversationChoiceQueryApplication } from './conversationChoiceQueryApplication.js';
 import { ConversationExecutionCoordinator, type ConversationExecutionRoute } from './conversationExecutionCoordinator.js';
 import type { NativeConversationSkillInput } from './codexNativeConversationContracts.js';
-import { appendConversationResourceContext, connectionRetryPrompt, conversationTurnHasCompletedOutput, readNativeConversationSkills, readNativeSubmissionSkills } from './nativeConversationSubmissionInputs.js';
+import { appendConversationResourceContext, failedTurnRetryPrompt, conversationTurnHasCompletedOutput, readNativeConversationSkills, readNativeSubmissionSkills } from './nativeConversationSubmissionInputs.js';
 import type { CreateConversationMessageBody, NativeConversationAttachment, ProjectConversationAcceptanceReservation, StartProjectConversationBody, StartTaskConversationBody, TaskConversationAcceptanceReservation } from './index.js';
 import { createModelConnectionService } from './modelConnectionService.js';
 import { resolveWritableNonCodexLegacyConversation, type WritableNonCodexLegacyConversationContext } from './nonCodexLegacyRuntime.js';
@@ -1349,7 +1348,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
         if (parseJsonObject(existing.inputJson).internalOperation !== true) throw nativeApiError('ZEUS_INVALID_CONVERSATION_RETRY', '该恢复身份已由其他请求使用。');
         return { statusCode: 202, body: toNativeDurableAcceptance(input.operationIdentity, idempotencyKey, conversation, existing) };
       }
-      /** 只允许续接最新的明确网络失败，拒绝活动轮次和未知送达。 */
+      /** 手动续接只要求最新轮次明确失败，错误分类不限制恢复；仍拒绝活动轮次和未知送达。 */
       const turn = conversationTurns
         .listByConversation(conversation.id)
         .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
@@ -1357,7 +1356,6 @@ export function createConversationApplicationOperations(dependencies: Conversati
       if (
         turn?.providerTurnId !== retryOfTurnId ||
         turn.status !== 'failed' ||
-        projectConversationTurnFailure(parseJsonObject(turn.errorJson ?? '{}')).category !== 'network' ||
         conversationTurns.getLatestActiveByConversation(conversation.id) ||
         conversationSubmissions.listQueueProjectionByConversation(conversation.id).some((submission) => ['queued', 'paused', 'dispatching', 'active'].includes(submission.status))
       ) {
@@ -1380,7 +1378,7 @@ export function createConversationApplicationOperations(dependencies: Conversati
       /** 新提交只携带服务端生成的续接意图，不复制原用户消息和附件。 */
       const restored = await acceptNativeConversationMessage(
         conversation,
-        connectionRetryPrompt,
+        failedTurnRetryPrompt,
         {
           clientUserMessageId: idempotencyKey,
           displayText: '已请求继续上次中断的操作',

@@ -558,15 +558,17 @@ export function useTranscriptViewportVirtualizer(input: {
   }, []);
 
   const effectiveViewport = viewport.scopeKey === input.scopeKey ? viewport : { scopeKey: input.scopeKey, scrollTop: null, viewportHeight: 720 };
+  /** 跟随最新内容时按当前行高定位末尾，避免旧 scrollTop 将末尾行移出渲染窗口。 */
+  const projectionScrollTop = input.isFollowingLatest?.() ? null : effectiveViewport.scrollTop;
   const projection = useMemo(() => {
     const anchorRowKey = measurementAnchorRef.current?.rowKey;
     const pinnedRowKeys = anchorRowKey ? new Set([...input.pinnedRowKeys, anchorRowKey]) : input.pinnedRowKeys;
     return layout.project({
-      scrollTop: effectiveViewport.scrollTop,
+      scrollTop: projectionScrollTop,
       viewportHeight: effectiveViewport.viewportHeight,
       pinnedRowKeys,
     });
-  }, [effectiveViewport.scrollTop, effectiveViewport.viewportHeight, input.pinnedRowKeys, input.rowKeys, layout, layoutRevision]);
+  }, [projectionScrollTop, effectiveViewport.viewportHeight, input.pinnedRowKeys, input.rowKeys, layout, layoutRevision]);
 
   useLayoutEffect(() => {
     // 行测量会先修改高度树、再提交新的 spacer/窗口投影。必须在投影真正进入 DOM 后

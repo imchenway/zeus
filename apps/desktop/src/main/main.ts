@@ -87,7 +87,7 @@ import {
   createConversationInputResourceBroker,
   readOrCreateConversationAttachmentGrantSecret,
 } from './conversationInputResources.js';
-import { cleanupStaleReleaseBackups, createReleaseUpdateService, type ReleaseUpdateService } from './releaseUpdateService.js';
+import { cleanupStaleReleaseBackups, createReleaseUpdateService, readDesktopReleaseUpdateStatus, type ReleaseUpdateService } from './releaseUpdateService.js';
 import { completeWindowsReleaseInstall } from './windowsReleaseInstaller.js';
 import { publishFile, windowsSecurityRequestAsync } from '@zeus/storage/platform-security';
 import { businessProcessEnvironment, runWindowsRuntimeHelper } from '@zeus/ai-runtime';
@@ -2568,6 +2568,26 @@ function setupIpc(): void {
     revealMainWindow(requestingWindow);
     return { activated: true };
   });
+  /** 设置页与原生更新窗口共用系统网络读取清单，不把地址或代理选择交给 Renderer。 */
+  ipcMain.handle('zeus:release:check-update', async (event) => {
+    /** 只有本应用窗口可以发起官方清单读取。 */
+    const requestingWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('Release update request came from an untrusted window.');
+    if (readOnlyValidationDescriptor) throw new Error('Release update checks are unavailable in read-only validation.');
+    await auxiliaryServicesReady;
+    /** 本机清单覆盖仅限测试发行且显式启用，正式发行不能改写官方地址。 */
+    const allowUntrustedReleaseUpdateTest = isTestDistribution() && process.env.ZEUS_ALLOW_UNTRUSTED_UPDATE_TEST === '1';
+    return readDesktopReleaseUpdateStatus({
+      currentAppVersion: app.getVersion(),
+      localServerConfig: () => {
+        if (!localServerRuntime) throw new Error('Zeus local server is not ready.');
+        return localServerRuntime.config;
+      },
+      testMode: isTestDistribution(),
+      allowUntrustedTestUpdate: allowUntrustedReleaseUpdateTest,
+      releaseUpdateManifestUrl: allowUntrustedReleaseUpdateTest ? process.env.ZEUS_RELEASE_UPDATE_MANIFEST_URL : undefined,
+    });
+  });
   ipcMain.handle('zeus:release:download-update', async (event, request: MainCommandRequest) => {
     const requestingWindow = BrowserWindow.fromWebContents(event.sender);
     if (!requestingWindow || requestingWindow.isDestroyed() || !windows.has(requestingWindow)) throw new Error('Release update request came from an untrusted window.');
@@ -4126,6 +4146,7 @@ async function initializeApplication(): Promise<void> {
             isPackaged: true,
             testMode: isTestDistribution(),
             allowUntrustedTestUpdate: allowUntrustedReleaseUpdateTest,
+            releaseUpdateManifestUrl: allowUntrustedReleaseUpdateTest ? process.env.ZEUS_RELEASE_UPDATE_MANIFEST_URL : undefined,
             /** 保留 macOS 下载安全检查；打开磁盘映像交给系统，不执行自动替换。 */
             openDownloadedArtifact: async (path) => {
               if (process.platform === 'darwin') await execFile(nativeUpdateProgressHelperPath(), ['--quarantine-download', path], { timeout: 10_000 });

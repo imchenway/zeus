@@ -392,6 +392,8 @@ contextBridge.exposeInMainWorld('zeus', {
   openExternalHttpsUrl: (url: string) => ipcRenderer.invoke('zeus:open-external-https-url', url),
   activateRequestingWindow: () => ipcRenderer.invoke('zeus:activate-requesting-window'),
   getAutomaticUpdateIndicator: () => ipcRenderer.invoke('zeus:automatic-update-indicator:get'),
+  /** 更新清单通过 Main 的系统网络读取，避免 Node 与浏览器代理不一致。 */
+  checkReleaseUpdate: () => ipcRenderer.invoke('zeus:release:check-update'),
   openAutomaticUpdateIndicator: () => invokeMainCommand('zeus:automatic-update-indicator:open', 'desktop.automatic_update.open', 'execution_host', 'desktop-update'),
   recordManualUpdateCheck: () => invokeMainCommand('zeus:automatic-update-indicator:record-manual-check', 'desktop.automatic_update.record_manual_check', 'execution_host', 'desktop-update'),
   onAutomaticUpdateIndicatorChanged: (listener: (state: unknown) => void) => {
