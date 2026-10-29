@@ -413,7 +413,18 @@ export interface SessionController {
   removeBrowserComments(commentIds: string[]): void;
   setContextDraft(contextDraft: ConversationContextDraft): void;
 
-  send(delivery: 'queue' | 'steer_now', expectedTurnId?: string, settings?: NativeTurnSettingsSelection): Promise<NativeOperationAcceptance | void>;
+  /** 普通发送消费输入框；独立选区输入保留输入框草稿并复用相同发送队列。 */
+  send(
+    delivery: 'queue' | 'steer_now',
+    expectedTurnId?: string,
+    settings?: NativeTurnSettingsSelection,
+    message?: {
+      /** 本次直接发送的正文。 */
+      content: string;
+      /** 本次直接发送的引用。 */
+      conversationContext: ConversationContextDraft;
+    },
+  ): Promise<NativeOperationAcceptance | void>;
   /** 回答绑定原问题，独立于 Composer 普通消息草稿。 */
   answerAsyncQuestion(item: NativeSessionItemBuffer, answers: AsyncQuestionAnswer['answers'], asNewMessage?: boolean, answerAttachments?: Record<string, NativeConversationAttachment[]>): Promise<NativeOperationAcceptance | void>;
   retryPendingSend(clientUserMessageId: string, intent: 'check' | 'continue'): Promise<NativeOperationAcceptance | void>;
@@ -3537,14 +3548,14 @@ export function createSessionController(options: CreateSessionControllerOptions)
       });
     },
     /** 接收一次发送意图；内部确认未完成时保存到已有队列并自动接续。 */
-    send(delivery, expectedTurnId, settings) {
+    send(delivery, expectedTurnId, settings, message) {
       const normalizedExpectedTurnId = expectedTurnId || undefined;
       const requestedCollaborationMode = settings?.collaborationMode ?? state.snapshot?.collaborationMode ?? 'default';
       if (activeOperation) return rejectSend(new Error(`Session operation already in progress: ${activeOperation.key}`));
-      const draft = state.draft;
-      const composerAttachments = [...state.attachments];
-      const browserSubmission = state.browserSubmission ? structuredClone(state.browserSubmission) : null;
-      const contextDraft = structuredClone(state.contextDraft);
+      const draft = message ? message.content : state.draft;
+      const composerAttachments = message ? [] : [...state.attachments];
+      const browserSubmission = !message && state.browserSubmission ? structuredClone(state.browserSubmission) : null;
+      const contextDraft = structuredClone(message ? message.conversationContext : state.contextDraft);
       if (!draft.trim() && composerAttachments.length === 0 && !browserSubmission && !hasConversationContext(contextDraft)) {
         return rejectSend(new Error('请输入消息，或添加附件、评论后再发送。'));
       }
@@ -3589,6 +3600,8 @@ export function createSessionController(options: CreateSessionControllerOptions)
         browserSubmission,
         contextDraft,
         delivery,
+        // 直接发送的选区不属于输入框，接纳、重连和重试均保留原草稿。
+        ...(message ? { composerConsumed: true } : {}),
         ...(normalizedExpectedTurnId ? { expectedTurnId: normalizedExpectedTurnId } : {}),
         ...(appliedSettings?.model ? { model: appliedSettings.model } : {}),
         ...(appliedSettings?.agentKind ? { agentKind: appliedSettings.agentKind } : {}),

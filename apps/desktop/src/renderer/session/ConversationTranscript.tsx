@@ -76,8 +76,8 @@ export interface ConversationTranscriptProps {
   onLatestContentVisibilityChange?: (visible: boolean) => void;
   historyLoading?: boolean;
   creationStatus?: SessionCreationStatus;
-  /** 选区作为右侧会话的评论引用，不写入主会话草稿。 */
-  onAskInSidebar?: (anchor: ConversationResponseTextAnchor) => void;
+  /** 选区暂存或直接发送到右侧会话，不写入主会话草稿。 */
+  onAskInSidebar?: (anchor: ConversationResponseTextAnchor, sendImmediately?: boolean) => void;
   onAddResponseAnnotation?: (anchor: ConversationResponseTextAnchor) => string;
   onUpdateResponseAnnotation?: (id: string, note: string) => void;
   onRemoveResponseAnnotation?: (id: string) => void;
@@ -2448,8 +2448,8 @@ function isSamePlanItem(openItem: NativeSessionItemBuffer | null | undefined, it
   return openItem.itemId === item.itemId && openItem.turnId === item.turnId;
 }
 
-/** 本地发送先提供即时反馈；队列、轮次、连接及失败事实到达后接管，不改写会话运行状态。 */
-export function transcriptRunStatus(state: NativeSessionState): 'starting' | 'checking_plugin' | 'executing' | 'compacting' | 'waiting_input' | 'waiting_approval' | 'reconnecting' | null {
+/** 本地发送即时反馈，缓存摘要静态显示；权威运行、连接和失败状态到达后接管。 */
+export function transcriptRunStatus(state: NativeSessionState): 'starting' | 'checking_plugin' | 'executing' | 'cached_summary' | 'compacting' | 'waiting_input' | 'waiting_approval' | 'reconnecting' | null {
   // 原题缺少可操作的权威请求时等待交互恢复，不能继续显示执行动画。
   if (hasUnclaimedRecoveredRequestUserInput(state)) return null;
   // 暂停或未知送达不代表模型继续运行，错误与核对入口由系统操作行承载。
@@ -2478,7 +2478,16 @@ export function transcriptRunStatus(state: NativeSessionState): 'starting' | 'ch
   }
   // 切回会话需要重新订阅和读取权威状态，只有明确的重连状态才说明连接中断。
   if (state.transportState === 'reconnecting') return 'reconnecting';
-  if (state.transportState !== 'ready') return null;
+  if (state.transportState !== 'ready') {
+    // 切回时先展示同轮已缓存的摘要，不等待联网；静态文字不代表模型仍在运行。
+    return ['disconnected', 'connecting', 'hydrating'].includes(state.transportState) &&
+      state.snapshot?.id === state.conversationId &&
+      (state.conversationState === 'active_prework' || state.conversationState === 'active_final_answer') &&
+      state.currentReasoningItem?.turnId === state.activeTurnId &&
+      latestReasoningSummaryText(state.currentReasoningItem)
+      ? 'cached_summary'
+      : null;
+  }
   if (state.conversationState === 'waiting_user_input') return 'waiting_input';
   if (state.conversationState === 'waiting_approval') return 'waiting_approval';
   if (state.conversationState !== 'active_prework' && state.conversationState !== 'active_final_answer') return null;
@@ -2493,6 +2502,8 @@ function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: NonN
     starting: ['正在执行', 'Executing'],
     checking_plugin: ['正在等待 Plugin Hook 检查', 'Waiting for Plugin Hook checks'],
     executing: ['正在执行', 'Executing'],
+    // 缓存态只展示已有摘要，缺少摘要时不会进入此状态。
+    cached_summary: ['', ''],
     compacting: ['正在整理较早对话以继续工作', 'Organizing earlier conversation to continue'],
     waiting_input: ['等待回答，请处理问题表单', 'Waiting for your answer'],
     waiting_approval: ['等待审批，请处理审批事项', 'Waiting for your approval'],
@@ -2508,7 +2519,7 @@ function TranscriptActiveStatus(props: { language: SessionUiLanguage; kind: NonN
   return (
     <p className="session-transcript-thinking" role="status" aria-live="polite">
       {props.kind === 'reconnecting' ? sessionConnectionSymbol : null}
-      <SessionSweepText className="session-current-status-text" text={props.kind === 'executing' && props.summaryText ? props.summaryText : retryLabel} active />
+      <SessionSweepText className="session-current-status-text" text={(props.kind === 'executing' || props.kind === 'cached_summary') && props.summaryText ? props.summaryText : retryLabel} active={props.kind !== 'cached_summary'} />
     </p>
   );
 }

@@ -2001,8 +2001,17 @@
   padding: 0;
 }
 
-.session-codex-parity-v1 .session-context-draft-chip > button:hover:not(:disabled):not([aria-disabled='true']) {
+.session-codex-parity-v1 .session-context-draft-chip > button:hover:not(:disabled):not([aria-disabled='true']):not(.session-context-draft-preview-trigger) {
   background: var(--session-control-hover);
+}
+
+/* 摘要悬停覆盖整个胶囊，移除按钮继续提供独立反馈。 */
+.session-codex-parity-v1 .session-context-draft-chip:has(> .session-context-draft-preview-trigger:hover) {
+  background: var(--session-control-hover);
+}
+
+.session-codex-parity-v1 .session-context-draft-chip > .session-context-draft-preview-trigger:hover:not(:disabled):not([aria-disabled='true']) {
+  background: transparent;
 }
 
 /* 摘要保持紧凑，详情只在鼠标悬停或键盘聚焦时出现。 */
@@ -13147,7 +13156,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   padding-block-end: 0;
 }
 
-.session-codex-parity-v1 .session-context-toolbar-host > :is(.browser-tab-strip, .session-context-workspace-header) {
+.session-codex-parity-v1 .session-context-toolbar-host > :is(.browser-tab-strip, .session-context-workspace-header, .session-side-question-header) {
   background: transparent;
   border: 0;
   flex: 1 1 0;
@@ -13977,7 +13986,7 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
 }
 
 /* 顶栏沿用上下文面板的字号、间距与图标按钮。 */
-.session-side-question > header {
+.session-side-question-header {
   align-items: center;
   display: flex;
   flex: 0 0 auto;
@@ -13987,20 +13996,20 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   padding: 0 12px 0 16px;
 }
 
-.session-side-question > header > strong {
+.session-side-question-header > strong {
   font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.session-side-question > header > nav {
+.session-side-question-header > nav {
   display: flex;
   flex: 0 0 auto;
   gap: 7px;
 }
 
-.session-side-question > header > nav > button {
+.session-side-question-header > nav > button {
   align-items: center;
   background: transparent;
   border: 0;
@@ -14014,12 +14023,12 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   padding: 4px;
 }
 
-.session-side-question > header > nav > button:hover {
+.session-side-question-header > nav > button:hover {
   background: var(--session-control-hover);
   color: var(--session-text);
 }
 
-.session-side-question > header > nav > button:focus-visible {
+.session-side-question-header > nav > button:focus-visible {
   outline: 2px solid var(--zeus-brand-primary);
   outline-offset: 2px;
 }
@@ -14037,7 +14046,6 @@ html[data-zeus-theme='dark'] body > .macos-ai-app .session-codex-parity-v1 {
   flex-direction: column;
   gap: 8px;
   overflow: auto;
-  padding: 12px;
 }
 
 .session-side-question-space {
