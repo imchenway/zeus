@@ -2697,7 +2697,7 @@ export function SessionWorkspace(props: SessionWorkspaceProps) {
   function askInSidebar(anchor: Parameters<NonNullable<ConversationTranscriptProps['onAskInSidebar']>>[0], sendImmediately = false): void {
     contextReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     /** 独立评论身份支持重复引用同一位置。 */
-    const annotation = { id: crypto.randomUUID(), anchor };
+    const annotation = { id: crypto.randomUUID(), anchor: { ...anchor, sourceConversationId: props.conversation?.id } };
     setSideQuestionState((current) => ({
       ...(current ?? { id: crypto.randomUUID(), draft: '', annotations: [], attachments: [], conversation: null }),
       ...(sendImmediately ? { pendingExplanations: [...(current?.pendingExplanations ?? []), annotation] } : { annotations: [...(current?.annotations ?? []), annotation] }),

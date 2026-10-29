@@ -3,7 +3,7 @@ export interface BrowserAutomationToolCall {
   threadId: string;
   turnId: string;
   callId: string;
-  namespace?: 'zeus_browser' | 'zeus_computer' | 'zeus_work';
+  namespace?: 'zeus_browser' | 'zeus_computer' | 'zeus_work' | 'zeus_conversation';
   tool: string;
   arguments: Record<string, unknown>;
   /** 调度端指定的调用截止时间，跨进程传递，不接受模型参数延长。 */

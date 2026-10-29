@@ -1,4 +1,4 @@
-import { type CodexCollaborationMode, type CodexThreadGoal, toCodexWireReasoningEffort } from '@zeus/ai-runtime';
+import { type CodexCollaborationMode, type CodexDynamicToolSpec, type CodexThreadGoal, toCodexWireReasoningEffort } from '@zeus/ai-runtime';
 import type { ConversationCollaborationMode, ConversationNextTurnSettings, ConversationRepository, ZeusConversationGoalRecord, ZeusConversationSubmissionRecord, ZeusConversationWithMessagesRecord } from '@zeus/storage';
 import { ensureInitialCodexGoal } from './codexGoalApplication.js';
 import type {
@@ -34,6 +34,11 @@ import type { ConversationSegmentLifecycle } from './conversationExecutionCoordi
 import { isServiceTierUnavailableError } from './codexServiceTierDowngrade.js';
 import { persistThreadProviderSettings } from './codexThreadMetadataProjection.js';
 import type { ZeusToolBroker } from './zeusToolRegistry.js';
+
+/** 新建和恢复共用完整宿主目录，补充来源工具时保留已有工具与 Plugin 入口。 */
+export function codexConversationDynamicTools(broker: ZeusToolBroker | undefined, pluginTools: CodexDynamicToolSpec[] = []): CodexDynamicToolSpec[] {
+  return [...conversationToolResultDynamicTools(), ...(broker ? broker.registry.codexTools : []), ...pluginTools];
+}
 
 interface NativeConversationDispatchLease {
   submissionId: string;
@@ -325,7 +330,7 @@ export function createCodexNativeDispatchPipeline(dependencies: CodexNativeDispa
       const developerInstructions = [developerInstructionsFor(context, options.browserAutomation !== undefined), pluginPreparation?.developerInstructions ?? ''].filter(Boolean).join('\n');
       /** 默认轮补充执行清单规则；计划轮必须把协作模板完全交还 app-server。 */
       const turnDeveloperInstructions = context.workMode === 'default' ? [developerInstructions, defaultModeDeveloperInstructions()].filter(Boolean).join('\n') : null;
-      const dynamicTools = [...conversationToolResultDynamicTools(), ...(zeusToolBroker ? zeusToolBroker.registry.codexTools : []), ...(pluginPreparation?.codexDynamicTools ?? [])];
+      const dynamicTools = codexConversationDynamicTools(zeusToolBroker, pluginPreparation?.codexDynamicTools);
       const providerBootstrapUtf8Bytes = Buffer.byteLength(
         JSON.stringify({
           developerInstructions,

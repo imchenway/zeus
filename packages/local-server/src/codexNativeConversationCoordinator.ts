@@ -95,7 +95,8 @@ import { createCodexModelRequestTimingTracker } from './codexModelRequestTiming.
 import { mergeCodexAdditionalContext } from './codexNativeContextProtocol.js';
 import { contextFromPersistedConversation, contextFromPersistedSubmission, prepareRecoveredCodexPlugins } from './codexConversationDispatchContext.js';
 import { createCodexNativeConversationAccess } from './codexNativeConversationAccess.js';
-import { createCodexNativeDispatchPipeline } from './codexNativeDispatchPipeline.js';
+import { codexConversationDynamicTools, createCodexNativeDispatchPipeline } from './codexNativeDispatchPipeline.js';
+import { codexPluginDynamicTools } from './zeusConversationPluginRuntime.js';
 import {
   appendConversationResourceContext,
   conversationTurnHasCompletedOutput,
@@ -210,7 +211,10 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
     broadcast: options.broadcast,
     setRunState: (conversationId, state) => runStates.set(conversationId, state),
   });
-  const zeusToolBroker = options.browserAutomation || options.workTools ? createZeusToolBroker(options.browserAutomation, { audit: options.auditNativeTool, work: options.workTools }) : undefined;
+  const zeusToolBroker =
+    options.browserAutomation || options.workTools || options.sourceContexts ? createZeusToolBroker(options.browserAutomation, { audit: options.auditNativeTool, work: options.workTools, sources: options.sourceContexts }) : undefined;
+  /** 来源读取启用时，旧线程恢复也使用新建线程的完整工具目录。 */
+  const resumeDynamicTools = options.sourceContexts ? codexConversationDynamicTools(zeusToolBroker, options.plugins ? codexPluginDynamicTools : []) : undefined;
   const handleDynamicToolRequest = createCodexDynamicToolApplication({
     manager: options.manager,
     providerCommands,
@@ -2163,6 +2167,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
       }
       assertOpen();
       const resumed = await options.manager.resumeThread({
+        dynamicTools: resumeDynamicTools,
         contextCapacityTokens: conversation.contextCapacityTokens,
         threadId: providerThreadId,
         cwd: context.projectLocalPath,
@@ -3027,6 +3032,7 @@ export function createCodexNativeConversationCoordinator(options: CreateCodexNat
   });
 
   const providerThreadAuthority = createCodexProviderThreadAuthorityApplication({
+    dynamicTools: resumeDynamicTools,
     manager: options.manager,
     submissions: options.submissions,
     runStates,

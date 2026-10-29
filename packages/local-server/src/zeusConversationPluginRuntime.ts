@@ -16,7 +16,7 @@ import {
 import type { PluginActivationState, ZeusPluginService } from './zeusPluginService.js';
 
 /** Codex 仅注册两个稳定入口，真实 MCP 目录在模型需要时读取当前状态。 */
-const codexPluginDynamicTools: CodexDynamicToolSpec[] = [
+export const codexPluginDynamicTools: CodexDynamicToolSpec[] = [
   {
     type: 'namespace',
     name: 'zeus_plugin',

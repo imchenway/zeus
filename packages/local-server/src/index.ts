@@ -141,6 +141,7 @@ import { ConversationDispatchCommandApplication } from './conversationDispatchCo
 import { createConversationExecutionContextOperations } from './conversationExecutionContextOperations.js';
 import { ConversationExecutionCoordinator, type ConversationExecutionRoute } from './conversationExecutionCoordinator.js';
 import { ManagedConversationToolResultStore } from './conversationPortableContext.js';
+import { ConversationSourceContextReader } from './conversationSourceContext.js';
 import { ConversationQueueCoreMutationApplication, selectAutomaticQueueDispatchCandidate } from './conversationQueueCoreMutationApplication.js';
 import { ConversationQueueDispatchScheduler, mustWaitForInProcessRuntimeTurn, shouldRequestConversationQueueDispatch } from './conversationQueueDispatchScheduler.js';
 import { isObjectLike } from './conversationResourcePreview.js';
@@ -860,6 +861,8 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   let dispatchUnifiedConversationQueueHead: ((conversationId: string) => Promise<void>) | null = null;
   let dispatchQueuedExpertRound: ((submissionId: string) => Promise<void>) | null = null;
   const conversationToolResults = new ManagedConversationToolResultStore(dataLayout.conversationToolResults, conversationExecution, artifactStore);
+  /** 来源身份与原文读取共用产品持久记录，模型不接触本机日志路径。 */
+  const conversationSources = new ConversationSourceContextReader(conversations, conversationSubmissions, conversationProviderItems, conversationSnapshotV2);
   if (!readOnlyValidation) conversationExecution.setDispatchEnabled(false);
   if (!readOnlyValidation) await db.save();
   const executionHostAppVersion = (typeof options.currentAppVersion === 'function' ? options.currentAppVersion() : options.currentAppVersion)?.trim() || '0.0.0';
@@ -1532,6 +1535,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
         redactSensitiveText,
         execution: conversationExecution,
         toolResults: conversationToolResults,
+        sourceContexts: conversationSources,
         plugins: zeusConversationPluginRuntime,
         browserAutomation: options.browserAutomation,
         workTools: nativeWorkTools,
@@ -2036,6 +2040,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
       execution: conversationExecution,
       commandDeliveries,
       toolResults: conversationToolResults,
+      sourceContexts: conversationSources,
       // 只读检查与后台同步都必须核对真正收到本次发送的候选线程。
       reconcileOutcomeUnknownSwitches: (conversationId) => recoverUnifiedOutcomeUnknownSwitches(conversationId),
       eventFlow: conversationEventFlow,
@@ -3221,6 +3226,7 @@ async function createLocalServerWithDatabase(options: CreateLocalServerOptions, 
   traceStartup('runtime_sessions_ready');
 
   conversationOperations = createConversationApplicationOperations({
+    conversationSources,
     settings,
     conversationGoals,
     aiRuntimeManager,

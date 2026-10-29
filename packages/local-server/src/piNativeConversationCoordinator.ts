@@ -70,6 +70,7 @@ import { appendConversationResourceContext, conversationTurnHasCompletedOutput, 
 import { hasUnwrittenSubmissionEvidence } from './unboundConversationArchiveApplication.js';
 import type { ConversationSegmentLifecycle } from './conversationExecutionCoordinator.js';
 import type { ManagedConversationToolResultStore } from './conversationPortableContext.js';
+import type { ConversationSourceContextReader } from './conversationSourceContext.js';
 import { TurnProcessProjector } from './turnProcessProjector.js';
 import { isDurableConversationEventTooLarge } from './conversationSyncProtocol.js';
 import { boundLiveProcessPayload } from './livePayloadBudget.js';
@@ -184,6 +185,8 @@ export interface CreatePiNativeConversationCoordinatorOptions {
   browserAutomation?: BrowserAutomationPort;
   /** 当前任务的本地编排工具。 */
   workTools?: TaskWorkToolPort;
+  /** 与 Codex 共用产品来源及历史读取，不依赖 Pi JSONL 路径。 */
+  sourceContexts?: ConversationSourceContextReader;
   auditNativeTool?: (event: ZeusToolAuditEvent) => void | Promise<void>;
   compileDispatchContext?: ProviderDispatchContextCompiler;
 }
@@ -268,7 +271,8 @@ export function createPiNativeConversationCoordinator(options: CreatePiNativeCon
   const providerCommands = new PiProviderCommandApplicationService(options.commandDeliveries, options.now, options.redactSensitiveText);
   const pendingApprovals = new Map<string, { resolve: (response: unknown) => void; session: AgentSessionIdentity; conversationId: string }>();
   let eventSequence = 0;
-  const zeusToolBroker = options.browserAutomation || options.workTools ? createZeusToolBroker(options.browserAutomation, { audit: options.auditNativeTool, work: options.workTools }) : undefined;
+  const zeusToolBroker =
+    options.browserAutomation || options.workTools || options.sourceContexts ? createZeusToolBroker(options.browserAutomation, { audit: options.auditNativeTool, work: options.workTools, sources: options.sourceContexts }) : undefined;
 
   /** 将 Pi 发送前的 Plugin 检查写入权威队列；异常时保留消息并进入人工重试状态。 */
   async function runPluginDispatchCheck<T>(conversationId: string, submissionId: string, operation: () => Promise<T>): Promise<T> {
